@@ -65,6 +65,7 @@ static void ReplaceEditText(HWND parent, int id, const char* text) {
 }
 
 void ResetAppState(MMDApp* app) {
+    app->ClearPortableSceneSession();
     HWND hwnd = app->MainWindow();
     app->SceneModified() = 0;
 

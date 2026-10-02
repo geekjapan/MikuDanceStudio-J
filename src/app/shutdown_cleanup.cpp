@@ -1,3 +1,5 @@
+#include "mikudancestudio/application_swapchain.hpp"
+#include "mikudancestudio/rhi_history_replay.hpp"
 // ===========================================================================
 // VA 0x00462C40 - ShutdownCleanup  (original: sub_462C40, 0x6A8 bytes)
 // ===========================================================================
@@ -69,6 +71,8 @@
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/rhi_d3d9.hpp"
+#include "mikudancestudio/model_batch_bridge.hpp"
 #include "mikudancestudio/dshow_recorder.hpp"
 
 namespace mikudancestudio {
@@ -313,6 +317,13 @@ void TeardownDShowGraphCoUninit(DShowRecorder* rec) {
 // VA 0x00462C40 - ShutdownCleanup  (original: sub_462C40, __thiscall, app)
 // =========================================================================//
 void ShutdownCleanup(MMDApp* app) {
+    ForgetApplicationSwapchain(app);
+    ForgetSceneFontRgba(app);
+    ForgetHudSpriteRgba(app);
+    ResetHistoryReplay();
+    InvalidateModelBatchComparison();
+    if (app->Renderer())
+        rhi::ForgetApplicationOverlayCache(app->Renderer()->device);
     auto& s = *app;
 
     // A modal-dialog abort can bypass its command's normal cleanup.

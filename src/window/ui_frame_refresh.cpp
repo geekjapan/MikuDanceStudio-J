@@ -26,6 +26,8 @@
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/panel_controls.hpp"
+#include "mikudancestudio/scene_timeline_bridge.hpp"
+#include "mikudancestudio/pmm_scene_evaluation.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -127,14 +129,34 @@ void RefreshLightPanel(MMDApp* app) {
         const std::uint32_t previous = keys[index * 10 + 1];
         const std::uint32_t* leftRecord = keys + previous * 10;
         float* left = reinterpret_cast<float*>(keys + previous * 10);
-        const double amount =
-            static_cast<double>(frame - leftRecord[0]) /
-            static_cast<double>(rightRecord[0] - leftRecord[0]);
+        format::PmmLightKey prior{}, following{};
+        prior.frame = leftRecord[0];
+        following.frame = rightRecord[0];
         for (int lane = 0; lane < 3; ++lane) {
-            direction[lane] = static_cast<float>(
-                (right[3 + lane] - left[3 + lane]) * amount + left[3 + lane]);
-            color[lane] = static_cast<float>(
-                (right[6 + lane] - left[6 + lane]) * amount + left[6 + lane]);
+            prior.direction[lane] = left[3 + lane];
+            prior.color[lane] = left[6 + lane];
+            following.direction[lane] = right[3 + lane];
+            following.color[lane] = right[6 + lane];
+        }
+        std::array<float, 6> interpolated{};
+        if (format::InterpolatePmmLightSegment(
+                prior, following, frame,
+                format::PmmLightInterpolation::FrameSeek,
+                interpolated)) {
+            for (int lane = 0; lane < 3; ++lane) {
+                color[lane] = interpolated[lane];
+                direction[lane] = interpolated[lane + 3];
+            }
+        } else {
+            const double amount =
+                static_cast<double>(frame - leftRecord[0]) /
+                static_cast<double>(rightRecord[0] - leftRecord[0]);
+            for (int lane = 0; lane < 3; ++lane) {
+                direction[lane] = static_cast<float>(
+                    (right[3 + lane] - left[3 + lane]) * amount + left[3 + lane]);
+                color[lane] = static_cast<float>(
+                    (right[6 + lane] - left[6 + lane]) * amount + left[6 + lane]);
+            }
         }
     }
 
@@ -186,6 +208,7 @@ void RefreshSelfShadowPanel(MMDApp* app) {
         static_cast<std::int8_t>(reinterpret_cast<const std::uint8_t*>(record)[12]);
     app->state.physicsInterval =
         *reinterpret_cast<const float*>(record + 4);
+    SeekPortableSceneSelfShadow(app, static_cast<int>(frame));
 
     const double rawRange =
         10000.0 - static_cast<double>(app->state.physicsInterval) * 100000.0;

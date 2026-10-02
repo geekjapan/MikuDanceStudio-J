@@ -361,7 +361,14 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
     }
 
     // ---- camera mode (0x43A905..0x43A9B6)
-    auto* keys = app->CameraKeys();
+    ShiftCameraKeysAfterFrameDelete(app->CameraKeys(), cur);
+    ReloadModels(app);
+    PanelPaint(app);
+    app->SceneModified() = 1;
+}
+
+void ShiftCameraKeysAfterFrameDelete(mdl::CameraKey* keys,
+                                     std::uint32_t cur) {
     for (int r = 0; r < 10000; ++r) {
         mdl::CameraKey& key = keys[r];
         const std::uint32_t f = key.frame;
@@ -381,8 +388,9 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
             const std::uint32_t nf = f2 - 1;
             key.frame = nf;
             if (nf == 0) {
-                // Merge into the predecessor slot; the emptied record is
-                // left as-is apart from its frame number.
+                // Merge into the predecessor slot, then clear the freed
+                // slot's selection and links so later purges cannot rewire
+                // the live chain through it.
                 const std::int32_t prev = key.previous;
                 mdl::CameraKey& dst = keys[prev];
                 dst.next = key.next;
@@ -390,12 +398,12 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
                 const std::int32_t next = key.next;
                 if (next != 0)
                     keys[next].previous = prev;
+                key.selected = 0;
+                key.previous = 0;
+                key.next = 0;
             }
         }
     }
-    ReloadModels(app);
-    PanelPaint(app);
-    app->SceneModified() = 1;
 }
 
 // ---- VA 0x0043B720: insert frame line (facial / light) ---

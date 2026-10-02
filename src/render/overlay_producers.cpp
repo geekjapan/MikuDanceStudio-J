@@ -247,7 +247,8 @@ void PrepareFrameLineOverlay(MMDApp* app) {  // 0x4757C3..0x4759D8
     };
     std::copy(std::begin(vertices), std::end(vertices), out);
     app->LineOverlayPrimitiveCount() = 4;
-    DumpVertexBatch("line_selection", out, 4, 40);
+    if (right - left >= 20.0f && bottom - top >= 20.0f)
+        DumpVertexBatch("line_selection", out, 4, 40);
     vb->Unlock();
 }
 

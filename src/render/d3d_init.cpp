@@ -56,7 +56,8 @@ void ReleaseCom(void* object) {
 #ifdef MIKUDANCESTUDIO_DIAG
 void DumpCreateDeviceFailure(const D3DPRESENT_PARAMETERS& pp,
                              const HRESULT* attempts, int attemptCount,
-                             D3DFORMAT depthFormat) {
+                             D3DFORMAT depthFormat, IDirect3D9* d3d,
+                             HWND hwnd) {
     char directory[MAX_PATH]{};
     const DWORD length = GetEnvironmentVariableA(
         "MIKUDANCESTUDIO_VB_DUMP_DIR", directory, MAX_PATH);
@@ -80,6 +81,38 @@ void DumpCreateDeviceFailure(const D3DPRESENT_PARAMETERS& pp,
     for (int index = 0; index < attemptCount; ++index)
         std::fprintf(stream, "attempt[%d]=0x%08X\r\n", index,
                      static_cast<unsigned>(attempts[index]));
+    RECT windowRect{}, clientRect{};
+    DWORD windowProcess = 0;
+    const DWORD windowThread = GetWindowThreadProcessId(hwnd, &windowProcess);
+    GetWindowRect(hwnd, &windowRect);
+    GetClientRect(hwnd, &clientRect);
+    D3DDISPLAYMODE display{};
+    const HRESULT displayResult = d3d->GetAdapterDisplayMode(0, &display);
+    std::fprintf(stream,
+        "window=%p valid=%d thread=%lu currentThread=%lu process=%lu "
+        "visible=%d rect=(%ld,%ld,%ld,%ld) client=(%ld,%ld,%ld,%ld) "
+        "adapterCount=%u displayResult=0x%08X display=%ux%u format=%u\r\n",
+        static_cast<void*>(hwnd), IsWindow(hwnd), windowThread,
+        GetCurrentThreadId(), windowProcess, IsWindowVisible(hwnd),
+        windowRect.left, windowRect.top, windowRect.right, windowRect.bottom,
+        clientRect.left, clientRect.top, clientRect.right, clientRect.bottom,
+        d3d->GetAdapterCount(), static_cast<unsigned>(displayResult),
+        display.Width, display.Height, static_cast<unsigned>(display.Format));
+    const HWND alternate = CreateWindowW(L"STATIC", L"D3D9 retry probe",
+        WS_OVERLAPPED, 0, 0, 64, 64, nullptr, nullptr,
+        GetModuleHandleW(nullptr), nullptr);
+    if (alternate) {
+        D3DPRESENT_PARAMETERS candidate = pp;
+        candidate.hDeviceWindow = alternate;
+        IDirect3DDevice9* probeDevice = nullptr;
+        const HRESULT probeResult = d3d->CreateDevice(
+            0, D3DDEVTYPE_HAL, alternate, D3DCREATE_SOFTWARE_VERTEXPROCESSING,
+            &candidate, &probeDevice);
+        std::fprintf(stream, "alternate-window=0x%08X\r\n",
+                     static_cast<unsigned>(probeResult));
+        if (probeDevice) probeDevice->Release();
+        DestroyWindow(alternate);
+    }
     std::fclose(stream);
 }
 
@@ -137,7 +170,8 @@ void DumpEffectStatus(bool haveD3dx, int vsMajor, int psMajor,
 }
 #else
 inline void DumpCreateDeviceFailure(const D3DPRESENT_PARAMETERS&,
-                                    const HRESULT*, int, D3DFORMAT) {}
+                                    const HRESULT*, int, D3DFORMAT,
+                                    IDirect3D9*, HWND) {}
 inline void DumpEffectFailure(HRESULT, int, void*) {}
 inline void DumpEffectStatus(bool, int, int, int, int, D3DRenderer*) {}
 #endif
@@ -254,6 +288,13 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
         r->multisampleAvailable = 1;
     }
     // mirror into the object (later code reads the embedded copy)
+#ifdef MIKUDANCESTUDIO_DIAG
+    char historyFlag[2]{};
+    if((GetEnvironmentVariableA("MDS_RHI_SCENE_HISTORY",historyFlag,2)==1 && historyFlag[0]=='1') ||
+       (GetEnvironmentVariableA("MDS_RHI_REPLAY_SINGLE_SAMPLE_CONTROL",historyFlag,2)==1 && historyFlag[0]=='1')) {
+        pp.MultiSampleType=D3DMULTISAMPLE_NONE;pp.MultiSampleQuality=0;r->multisampleAvailable=0;
+    }
+#endif
     r->presentParameters = pp;
 
     // CreateDevice ladder: HAL/64 fmt22, HAL/64 fmt21, (soft flags) HAL/64,
@@ -262,8 +303,21 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
     HRESULT attempts[7]{};
     int attemptCount = 0;
     const auto createDevice = [&](D3DDEVTYPE type, DWORD behavior) {
+        [[maybe_unused]] const D3DPRESENT_PARAMETERS requested = pp;
         const HRESULT result = d3d->CreateDevice(
             0, type, hwnd, behavior, &pp, deviceSlot);
+#ifdef MIKUDANCESTUDIO_DIAG
+        char directory[MAX_PATH]{};
+        const DWORD directoryLength=GetEnvironmentVariableA("MIKUDANCESTUDIO_VB_DUMP_DIR",directory,MAX_PATH);
+        if(directoryLength>0&&directoryLength<MAX_PATH){
+            char path[MAX_PATH]{};std::snprintf(path,sizeof(path),"%s\\d3d_create.attempts.txt",directory);
+            FILE* file=nullptr;
+            if(fopen_s(&file,path,attemptCount?"ab":"wb")==0&&file){
+                std::fprintf(file,"attempt=%d type=%u behavior=%u visible=%d width=%u height=%u format=%u count=%u swap=%u autoDepth=%d depth=%u samples=%u quality=%u flags=%u interval=%u hr=%08lx\n",attemptCount,static_cast<unsigned>(type),behavior,IsWindowVisible(hwnd),requested.BackBufferWidth,requested.BackBufferHeight,requested.BackBufferFormat,requested.BackBufferCount,requested.SwapEffect,requested.EnableAutoDepthStencil,requested.AutoDepthStencilFormat,requested.MultiSampleType,requested.MultiSampleQuality,requested.Flags,requested.PresentationInterval,(unsigned long)result);
+                std::fclose(file);
+            }
+        }
+#endif
         attempts[attemptCount++] = result;
         return result;
     };
@@ -299,7 +353,7 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
                                 DumpCreateDeviceFailure(
                                     pp, attempts, attemptCount,
                                     r->presentParameters
-                                        .AutoDepthStencilFormat);
+                                        .AutoDepthStencilFormat, d3d, hwnd);
                                 MessageBoxA(hwnd, "CreateDevice Failed!",
                                             "Direct3D::Init", MB_OK);
                                 d3d->Release();

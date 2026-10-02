@@ -1,3 +1,5 @@
+#include "mikudancestudio/rhi_scene_history.hpp"
+#include "mikudancestudio/rhi_history_replay.hpp"
 // mme_bridge.cpp - 内置 MMEffect 宿主桥实现。
 //
 // 见 include/mikudancestudio/mme_bridge.hpp。效果引擎静态内置在宿主中，
@@ -40,6 +42,17 @@ namespace {
 
 // 设备已登记到内置效果引擎。标准效果是否齐备由惰性 Initialize 判断。
 bool g_deviceRegistered = false;
+#ifdef MIKUDANCESTUDIO_DIAG
+LONG g_lineDrawCalls = 0;
+LONG g_lineHostCalls = 0;
+LONG g_lineDirectCalls = 0;
+LONG g_triangleDrawCalls = 0;
+LONG g_triangleHostCalls = 0;
+LONG g_triangleDirectCalls = 0;
+LONG g_indexedDrawCalls = 0;
+LONG g_indexedHostCalls = 0;
+LONG g_indexedDirectCalls = 0;
+#endif
 // 已注册给 MME 的主窗口（帧级刷新用；初始化期间 WM_CREATE 的句柄可能
 // 尚未写回 app->Hwnd()）。
 HWND g_registeredWindow = nullptr;
@@ -142,6 +155,13 @@ int ProbeNotEditMode(HWND mainWindow) {
 void OnDeviceCreated(MMDApp* app, HWND hwnd) {
     g_deviceRegistered = false;
     g_registeredWindow = nullptr;
+#ifdef MIKUDANCESTUDIO_DIAG
+    // Isolate a fixed-function material batch from MME for the model A/B
+    // fixture. Normal application startup never sets this diagnostic flag.
+    char noMme[2]{};
+    if (GetEnvironmentVariableA("MDS_RHI_MODEL_NO_MME", noMme, 2) == 1 &&
+        noMme[0] == '1') return;
+#endif
     D3DRenderer* renderer = app->Renderer();
     if (renderer == nullptr || renderer->device == nullptr)
         return;
@@ -192,6 +212,9 @@ void OnResetDevice(MMDApp* app) {
 // ---------------------------------------------------------------------------
 HRESULT ClearScene(MMDApp* app, IDirect3DDevice9* device, unsigned long flags,
                    D3DCOLOR color, float z, unsigned long stencil) {
+#ifdef MIKUDANCESTUDIO_DIAG
+    BlockHistoryReplay("additional_scene_clear");
+#endif
     if (!g_deviceRegistered)
         return device->Clear(0, nullptr, flags, color, z, stencil);
     return MmeHostClear(device, 0, nullptr, flags, color, z, stencil);
@@ -244,26 +267,81 @@ void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device,
 // ---------------------------------------------------------------------------
 HRESULT DrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                       unsigned int start_vertex, unsigned int primitive_count) {
-    if (!g_deviceRegistered)
-        return device->DrawPrimitive(type, start_vertex, primitive_count);
-    return MmeHostDrawPrimitive(device, type, start_vertex, primitive_count);
+#ifdef MIKUDANCESTUDIO_DIAG
+    RecordHistoryDraw(device,type,false,0,0,0,start_vertex,primitive_count);
+    AuditDiagnosticHistoryDraw(device,type,primitive_count,false);
+    if (type == D3DPT_LINELIST) {
+        InterlockedIncrement(&g_lineDrawCalls);
+        InterlockedIncrement(g_deviceRegistered ? &g_lineHostCalls :
+                                                 &g_lineDirectCalls);
+    }
+    if (type == D3DPT_TRIANGLELIST) {
+        InterlockedIncrement(&g_triangleDrawCalls);
+        InterlockedIncrement(g_deviceRegistered ? &g_triangleHostCalls :
+                                                 &g_triangleDirectCalls);
+    }
+#endif
+    const HRESULT result = !g_deviceRegistered
+        ? device->DrawPrimitive(type, start_vertex, primitive_count)
+        : MmeHostDrawPrimitive(device, type, start_vertex, primitive_count);
+#ifdef MIKUDANCESTUDIO_DIAG
+    if (FAILED(result)) BlockHistoryReplay("primitive_submission_failed");
+#endif
+    return result;
 }
+
+#ifdef MIKUDANCESTUDIO_DIAG
+LineDrawBridgeProbe ProbeLineDrawBridge() {
+    return {static_cast<unsigned long>(g_lineDrawCalls),
+            static_cast<unsigned long>(g_lineHostCalls),
+            static_cast<unsigned long>(g_lineDirectCalls)};
+}
+LineDrawBridgeProbe ProbeTriangleDrawBridge() {
+    return {static_cast<unsigned long>(g_triangleDrawCalls),
+            static_cast<unsigned long>(g_triangleHostCalls),
+            static_cast<unsigned long>(g_triangleDirectCalls)};
+}
+
+DrawSnapshotProbe ProbeDrawSnapshot() {
+    const auto state = MmeHostProbeDrawSnapshot();
+    return {state.pending, state.effectEnabled, state.bindingReady,
+            state.bindingActive, state.endSceneFired,
+            state.effectsDisabled, state.lineDisposition};
+}
+#endif
 
 HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                              int base_vertex_index, unsigned int min_vertex_index,
                              unsigned int vertex_count, unsigned int start_index,
                              unsigned int primitive_count) {
-    if (!g_deviceRegistered)
-        return device->DrawIndexedPrimitive(type, base_vertex_index, min_vertex_index,
-                                            vertex_count, start_index, primitive_count);
-    return MmeHostDrawIndexedPrimitive(device, type, base_vertex_index,
-                                       min_vertex_index, vertex_count, start_index,
-                                       primitive_count);
+#ifdef MIKUDANCESTUDIO_DIAG
+    RecordHistoryDraw(device,type,true,base_vertex_index,min_vertex_index,vertex_count,start_index,primitive_count);
+    AuditDiagnosticHistoryDraw(device,type,primitive_count,true);
+    InterlockedIncrement(&g_indexedDrawCalls);
+    InterlockedIncrement(g_deviceRegistered ? &g_indexedHostCalls : &g_indexedDirectCalls);
+#endif
+    const HRESULT result = !g_deviceRegistered
+        ? device->DrawIndexedPrimitive(type, base_vertex_index, min_vertex_index,
+                                      vertex_count, start_index, primitive_count)
+        : MmeHostDrawIndexedPrimitive(device, type, base_vertex_index,
+                                      min_vertex_index, vertex_count, start_index,
+                                      primitive_count);
+#ifdef MIKUDANCESTUDIO_DIAG
+    if (FAILED(result)) BlockHistoryReplay("indexed_submission_failed");
+#endif
+    return result;
 }
 
 bool EffectsActive() {
     return g_deviceRegistered && MmeHostEffectsActive() != 0;
 }
+#ifdef MIKUDANCESTUDIO_DIAG
+LineDrawBridgeProbe ProbeIndexedDrawBridge() {
+    return {static_cast<unsigned long>(g_indexedDrawCalls),
+            static_cast<unsigned long>(g_indexedHostCalls),
+            static_cast<unsigned long>(g_indexedDirectCalls)};
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // 附件网格绘制（ID3DXMesh::DrawSubset 的可见等价物）
@@ -273,8 +351,16 @@ HRESULT DrawAccessorySubset(MMDApp* app, void* accessory, unsigned long material
     auto* mesh = static_cast<ID3DXMesh*>(mdl::Accessory(accessory)->mesh);
     if (mesh == nullptr)
         return E_FAIL;
-    if (!EffectsActive())
-        return mesh->DrawSubset(material);
+    if (!EffectsActive()) {
+#ifdef MIKUDANCESTUDIO_DIAG
+        RecordHistoryMesh(device,mesh,material);
+#endif
+        const HRESULT result=mesh->DrawSubset(material);
+#ifdef MIKUDANCESTUDIO_DIAG
+        if (FAILED(result)) BlockHistoryReplay("mesh_submission_failed");
+#endif
+        return result;
+    }
 
     IDirect3DVertexBuffer9* vb = nullptr;
     IDirect3DIndexBuffer9* ib = nullptr;

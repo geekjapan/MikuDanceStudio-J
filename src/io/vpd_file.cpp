@@ -7,7 +7,8 @@
 // same convention as LoadVmdFile (src/model/vmd_load.cpp).
 //
 // SAVE (0x418750): _wfopen(path, L"wt") then a fixed fprintf sequence with
-// byte-exact .rdata formats (0x52BBDC..0x52BC6C):
+// byte-exact .rdata formats (0x52BBDC..0x52BC6C). The format writer now
+// performs that sequence from a document populated by this Windows adapter:
 //   "Vocaloid Pose Data file\n\n"
 //   "%s.osm;\t\t// <SJIS 親ファイル名>"   arg = model+0x2248 name
 //   "%d;\t\t\t\t// <SJIS 総ポーズボーン数>" arg = count of selected bones
@@ -22,15 +23,12 @@
 //     "}\n\n"
 //   fclose.  (floats are promoted to double by varargs, as in the original)
 //
-// LOAD (0x418A10): _wfopen_s(&fp, path, L"r"); 3 discarded fgets (header,
-// blank, model line); fscanf(fp, "%d;", &count); 2 more discarded fgets
-// (count-line comment tail + blank).  UI: EnableWindow(400,true)/
+// LOAD (0x418A10): the original parsed FILE* text inline; the format reader
+// now validates it before this adapter changes model or UI state. UI:
+// EnableWindow(400,true)/
 // EnableWindow(401,false) like the VMD loader.  Undo ring at model+0x31B4
 // (30 slots of 0x1C at model+0x26EC; slot+0 = type 1 (pose), slot+4 = count,
 // slot+16 = new(0x24*count) snapshot {int boneIdx, float3 pos, quat, flag}).
-// Per VPD record: fgets(name line), strstr "{", sprintf_s(name),
-// strchr(name,'\n')->0, fscanf "  %f,%f,%f;" (trans), fgets (comment tail),
-// fscanf "  %f,%f,%f,%f;" (quat), then 3 discarded fgets (comment/}/blank).
 // Name matched byte-wise against every model bone; on hit: snapshot the old
 // pose into undo, twist-correct type-8 / type-4+0x400 bones exactly like the
 // key registrar 0x49D880 (axis = PMX bone->axis / PMD tail-bone rest delta),
@@ -51,6 +49,7 @@
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/panel_controls.hpp"
+#include "mikudancestudio/vpd_format.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -60,25 +59,8 @@ unsigned char* ActiveModel(MMDApp* app) {
     return app->SelectedModel();
 }
 
-// ---- byte-exact .rdata strings --------------------------------------------
-const char kHdr[] = "Vocaloid Pose Data file\n\n";               // 0x52BC6C
-const char kModelFmt[] =                                         // 0x52BC50
-    "%s.osm;\t\t// \x90\x65\x83\x74\x83\x40\x83\x43\x83\x8b\x96\xbc\n";
-const char kCountFmt[] =                                         // 0x52BC30
-    "%d;\t\t\t\t// \x91\x8d\x83\x7c\x81\x5b\x83\x59\x83\x7b\x81\x5b\x83"
-    "\x93\x90\x94\n\n";
-const char kBoneFmt[] = "Bone%d{%s\n";                           // 0x52BC24
-const char kTransFmt[] =                                         // 0x52BC04
-    "  %f,%f,%f;\t\t\t\t// trans x,y,z\n";
-const char kQuatFmt[] =                                          // 0x52BBDC
-    "  %f,%f,%f,%f;\t\t// Quaternion x,y,z,w\n";
-const char kCloseFmt[] = "}\n\n";                                // 0x52BBD8
 const wchar_t kModeWrite[] = L"wt";                              // 0x52BC88
 const wchar_t kModeRead[] = L"r";                                // 0x52BCB4
-const char kCountScan[] = "%d;";                                 // 0x52BCB0
-const char kBrace[] = "{";                                       // 0x52BCAC
-const char kTransScan[] = "  %f,%f,%f;";                         // 0x52BCA0
-const char kQuatScan[] = "  %f,%f,%f,%f;";                       // 0x52BC90
 
 }  // namespace
 
@@ -96,25 +78,19 @@ void SaveVpdFile(const wchar_t* path) {
     // silently. (documented deviation)
     if (_wfopen_s(&fp, path, kModeWrite) != 0 || fp == nullptr) return;
 
-    std::fprintf(fp, "%s", kHdr);
     mdl::ModelRecord& modelRecord = *mdl::Mdl(model);
-    std::fprintf(fp, kModelFmt, modelRecord.name);
+    format::VpdDocument document;
+    document.modelName = modelRecord.name;
 
     const int boneCnt = modelRecord.boneCount;
     unsigned char* const selBits = modelRecord.boneSelection;
-    int selected = 0;
-    for (int i = 0; i < boneCnt; ++i)
-        if (selBits[i] != 0) ++selected;
-    std::fprintf(fp, kCountFmt, selected);
-
     mikudancestudio::mdl::BoneRecord* const bones = mikudancestudio::mdl::Bones(model);
     const int physMode = app->PlaybackPhysicsMode();
-    int running = 0;
     for (int i = 0; i < boneCnt; ++i) {
         if (selBits[i] == 0) continue;
         mikudancestudio::mdl::BoneRecord* const bone = bones + i;
-        std::fprintf(fp, kBoneFmt, running, bone->name);
-        ++running;
+        format::VpdBone pose;
+        pose.name = bone->name;
         // 0x418860: physics-pose source only for flagged bones with the
         // physics mode >= 2; raw kinematic pose otherwise.
         const float* trans;
@@ -126,10 +102,11 @@ void SaveVpdFile(const wchar_t* path) {
             trans = bone->trans;
             quat = bone->rotQuat;
         }
-        std::fprintf(fp, kTransFmt, trans[0], trans[1], trans[2]);
-        std::fprintf(fp, kQuatFmt, quat[0], quat[1], quat[2], quat[3]);
-        std::fprintf(fp, "%s", kCloseFmt);
+        std::memcpy(pose.translation, trans, sizeof pose.translation);
+        std::memcpy(pose.rotation, quat, sizeof pose.rotation);
+        document.bones.push_back(pose);
     }
+    format::WriteVpd(fp, document);
     std::fclose(fp);
 }
 
@@ -142,15 +119,11 @@ void LoadVpdFile(const wchar_t* path) {
 
     FILE* fp = nullptr;
     if (_wfopen_s(&fp, path, kModeRead) != 0 || fp == nullptr) return;
-
-    char line[256], name[256], tail[256];
-    std::fgets(line, 0x100, fp);   // "Vocaloid Pose Data file"
-    std::fgets(line, 0x100, fp);   // blank
-    std::fgets(line, 0x100, fp);   // "<model>.osm;..."
-    int count = 0;
-    std::fscanf(fp, kCountScan, &count);
-    std::fgets(tail, 0x100, fp);   // count-line comment tail
-    std::fgets(tail, 0x100, fp);   // blank
+    format::VpdDocument document;
+    const bool parsed = format::ReadVpd(fp, document);
+    std::fclose(fp);
+    if (!parsed) return;
+    const int count = static_cast<int>(document.bones.size());
 
     const HWND hwnd = static_cast<HWND>(app->Hwnd());
     EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);
@@ -186,29 +159,15 @@ void LoadVpdFile(const wchar_t* path) {
     const bool pmx = modelRecord.physicsMode == 2;              // 0x418FC4
 
     for (int k = 0; k < count; ++k) {
-        float trans[3] = {0, 0, 0};
-        float quat[4] = {0, 0, 0, 1.0f};
-
-        std::fgets(line, 0x100, fp);                    // "BoneN{name"
-        const char* brace = std::strstr(line, kBrace);
-        // Original has no NULL check here: it calls
-        // sprintf_s(name, 0x100, v18 + 1) (x64 0x7FF7CB48BDC5) with the
-        // format pointer at (char*)1 and crashes when the brace is missing.
-        // Port hardening: skip the record. (documented deviation)
-        if (brace == nullptr) continue;
-        sprintf_s(name, 0x100, "%s", brace + 1);
-        if (char* nl = strchr(name, 10)) *nl = 0;  // 0x507670 strchr
-
-        std::fscanf(fp, kTransScan, &trans[0], &trans[1], &trans[2]);
-        std::fgets(tail, 0x100, fp);                    // comment tail
-        std::fscanf(fp, kQuatScan, &quat[0], &quat[1], &quat[2], &quat[3]);
-        std::fgets(tail, 0x100, fp);                    // "}\n"
-        std::fgets(tail, 0x100, fp);                    // "\n"
-        std::fgets(tail, 0x100, fp);
+        const format::VpdBone& pose = document.bones[k];
+        float trans[3];
+        float quat[4];
+        std::memcpy(trans, pose.translation, sizeof trans);
+        std::memcpy(quat, pose.rotation, sizeof quat);
 
         for (int i = 0; i < boneCnt; ++i) {
             mikudancestudio::mdl::BoneRecord* const bone = bones + i;
-            if (std::strcmp(name, bone->name) != 0)
+            if (std::strcmp(pose.name.c_str(), bone->name) != 0)
                 continue;
 
             // snapshot the pre-load pose into the undo record (0x418E2D..)
@@ -275,7 +234,6 @@ void LoadVpdFile(const wchar_t* path) {
             // so EVERY bone whose name equals the VPD bone gets the pose.
         }
     }
-    std::fclose(fp);
 }
 
 }  // namespace mikudancestudio

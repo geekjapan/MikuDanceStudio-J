@@ -2,8 +2,10 @@
 #include <new>
 
 #include "mikudancestudio/model.hpp"
+#include "mikudancestudio/mmd_app.hpp"
 
 namespace mikudancestudio {
+MMDApp* g_Block = nullptr;
 void ModelInitDefaults(unsigned char*);
 void ModelDispose(unsigned char*);
 }

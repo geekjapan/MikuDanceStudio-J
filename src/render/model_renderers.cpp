@@ -1,3 +1,4 @@
+#include "mikudancestudio/rhi_history_replay.hpp"
 // ===========================================================================
 // VA 0x00425D20 / 0x00426CD0 / 0x004277E0 - model and shadow render passes
 // ===========================================================================
@@ -17,6 +18,7 @@
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
+#include "mikudancestudio/model_batch_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
 namespace mikudancestudio {
@@ -943,9 +945,11 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
                                           firstIndex);
                         stateDumped = true;
                     }
-                    mme::DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0, 0,
+                    if (!TryModelBatchAdapter(app, model, i, firstIndex, indexCount, stride))
+                        mme::DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0, 0,
                                               state.vertexCount,
                                               firstIndex, indexCount / 3);
+                    CaptureModelHistoryResult(app,model,i);
                 };
                 // 0x492203 compares the COPY's Diffuse.a (esp+0x138),
                 // which carries the 0.5 displayState override - not the
@@ -1413,6 +1417,7 @@ void RenderModelsFixed(MMDApp* app) {                         // 0x425D20
     RestoreModelMaterialPass(app, sub, device);
 
     const bool materialCapture = BeginMaterialStateCapture();
+    BeginModelBatchCapture(app, device);
     // x64 twin sub_7FF7CB4BFB20+0x4C0880..0x4C0916 - the main body walk
     // calling sub_7FF7CB4D6D70 at 0x4C0902 (gated by model loadComplete
     // @0x4C08E7): order and slot both run to 0xFF (cmp edi,0FFh @0x4C0910 /
@@ -1431,6 +1436,7 @@ void RenderModelsFixed(MMDApp* app) {                         // 0x425D20
     }
     if (materialCapture)
         EndMaterialStateCapture();
+    EndModelBatchCapture();
 
     // Edge preamble, x64 sub_7FF7CB4BFB20 @0x7FF7CB4C0930..0x7FF7CB4C09C8
     // (inside the wireframe gate): pass=4, SetTexture(0,null),
@@ -1671,6 +1677,9 @@ void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) {   // 0x426CD0
     fx::SetTechnique(effect, "ZValuePlotTec");
     device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 1);
     device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 2);
+#ifdef MIKUDANCESTUDIO_DIAG
+    BlockHistoryReplay("shadow_map_target_switch");
+#endif
     device->SetRenderTarget(0, surface);
     device->SetDepthStencilSurface(depth);
     device->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER,

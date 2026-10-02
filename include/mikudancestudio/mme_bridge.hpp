@@ -47,6 +47,26 @@ void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device,
 // 绘制转发（当前对象/材质/技术等状态由 Exp* 查询面提供）。
 HRESULT DrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                       unsigned int start_vertex, unsigned int primitive_count);
+#ifdef MIKUDANCESTUDIO_DIAG
+struct LineDrawBridgeProbe {
+    unsigned long calls = 0;
+    unsigned long hostCalls = 0;
+    unsigned long directCalls = 0;
+};
+LineDrawBridgeProbe ProbeLineDrawBridge();
+LineDrawBridgeProbe ProbeTriangleDrawBridge();
+LineDrawBridgeProbe ProbeIndexedDrawBridge();
+struct DrawSnapshotProbe {
+    unsigned int pending = 0;
+    int effectEnabled = 0;
+    int bindingReady = 0;
+    int bindingActive = 0;
+    int endSceneFired = 0;
+    int effectsDisabled = 0;
+    int lineDisposition = 0;
+};
+DrawSnapshotProbe ProbeDrawSnapshot();
+#endif
 HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                              int base_vertex_index, unsigned int min_vertex_index,
                              unsigned int vertex_count, unsigned int start_index,

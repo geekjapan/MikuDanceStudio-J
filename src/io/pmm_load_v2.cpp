@@ -454,21 +454,18 @@ static void LoadSceneV2_DisposeAndHeader(PmmV2LoadContext& ctx, int fd) {
     }
 
     // ---- header-field reads (0x450208..0x450331) -------------------------
-    Rd(fd, &s->state.renderW, 4);      // A08D4
-    Rd(fd, &s->state.renderH, 4);      // A08D8
-    {
-        std::int32_t editFlag = 0;
-        Rd(fd, &editFlag, 4);
+    format::PmmSceneSettings settings;
+    if (format::ReadPmmSceneSettings(ReadPmmFileBytes, &fd,
+                                     format::PmmVersion::V2, settings)) {
+        s->state.renderW = settings.renderWidth;
+        s->state.renderH = settings.renderHeight;
         if (s->state.floatingWindow == 0)
-            s->state.sidebarWidth = editFlag;   // A06C8
+            s->state.sidebarWidth = settings.editPanelWidth;
         else
-            s->state.separateWindowSidebarWidth = editFlag;   // A0D3C
-    }
-    Rd(fd, &s->state.cameraFov, 4);        // fov
-    for (int f = 0; f < 7; ++f) {
-        unsigned char b = 0;
-        Rd(fd, &b, 1);
-        s->state.optflag[f] = (b == 1) ? 1 : 0;      // 0x2F8..2FE
+            s->state.separateWindowSidebarWidth = settings.editPanelWidth;
+        s->state.cameraFov = settings.cameraFov;
+        for (int index = 0; index < 7; ++index)
+            s->state.optflag[index] = settings.options[index];
     }
 strcpy_s(text, 0x100, "");                                  // 0x450331
 
@@ -624,7 +621,7 @@ static void LoadSceneV2_SkipRecordConsumption(
 
 
 // ---- 0x452A77..0x45410A: full state load into a (re)loaded model ----
-static void LoadSceneV2_ModelStateLoad(PmmV2LoadContext& ctx, int fd,
+static bool LoadSceneV2_ModelStateLoad(PmmV2LoadContext& ctx, int fd,
                                      unsigned char* model,
                                      PmmModelLoadWorkspace& workspace,
                                      unsigned char modelIdx,
@@ -642,53 +639,41 @@ static void LoadSceneV2_ModelStateLoad(PmmV2LoadContext& ctx, int fd,
                     workspace.ikIndexMap;
                 IndexMapping* const rigidMappings =
                     workspace.rigidIndexMap;
-                Rd(fd, &modelRecord->comboSelIndex,
-                   sizeof modelRecord->comboSelIndex);          // 0x452A77
+                format::PmmModelSelection diskSelection;
+                if (!format::ReadPmmModelSelection(
+                        ReadPmmFileBytes, &fd, format::PmmVersion::V2,
+                        workspace.boneGroupCount, diskSelection)) return false;
+                modelRecord->comboSelIndex = diskSelection.comboIndex;
                 modelRecord->comboSelIndex2 = modelRecord->comboSelIndex;
                 s->state.cameraParentBone =
                     modelRecord->comboSelIndex;
-                {
-                    unsigned char b = 0;
-                    Rd(fd, &b, 1);                              // 0x452ACB
-                    modelRecord->loadComplete = (b == 1) ? 1 : 0;
-                }
-                Rd(fd, &modelRecord->selectedBone,
-                   sizeof modelRecord->selectedBone);           // 0x452B18
+                modelRecord->loadComplete = diskSelection.loadComplete;
+                modelRecord->selectedBone = diskSelection.selectedBone;
                 if (modelRecord->selectedBone >= 0) {
-                    const std::int32_t m = boneMappings[
-                        modelRecord->selectedBone].mappedIndex;
-                    modelRecord->selectedBone = m >= 0 ? m : -1;
+                    if (modelRecord->selectedBone < workspace.displayCount) {
+                        const std::int32_t m = boneMappings[
+                            modelRecord->selectedBone].mappedIndex;
+                        modelRecord->selectedBone = m >= 0 ? m : -1;
+                    } else {
+                        modelRecord->selectedBone = -1;
+                    }
                 }
                 LogPmmModelStage(fd, "selected-display",
                                  modelRecord->selectedBone,
                                  workspace.displayCount,
                                  workspace.boneNameMap);
-                for (std::int32_t& selectedMorph :
-                     mdl::Mdl(model)->selectedMorphs) {
-                    std::int32_t v = 0;
-                    Rd(fd, &v, 4);                              // 0x452B6F
-                    if (workspace.morphsMatch != 0) selectedMorph = v;
+                if (workspace.morphsMatch != 0)
+                    for (std::size_t index = 0; index < diskSelection.selectedMorphs.size(); ++index)
+                        modelRecord->selectedMorphs[index] = diskSelection.selectedMorphs[index];
+                LogPmmModelStage(fd, "bone-flags", workspace.boneGroupCount,
+                                 workspace.boneGroupsMatch, mdl::DisplayGroups(model));
+                if (workspace.boneGroupsMatch != 0) {
+                    mdl::DisplayGroup* const displayGroups = mdl::DisplayGroups(model);
+                    for (std::size_t index = 0; index < diskSelection.groupFlags.size(); ++index)
+                        displayGroups[index].flags = diskSelection.groupFlags[index];
                 }
-                {
-                    unsigned char b = 0;
-                    Rd(fd, &b, 1);                              // 0x452BAD
-                    LogPmmModelStage(fd, "bone-flags", workspace.boneGroupCount,
-                                     workspace.boneGroupsMatch,
-                                     mdl::DisplayGroups(model));
-                    if (workspace.boneGroupsMatch != 0) {
-                        for (int i = 0; i < workspace.boneGroupCount; ++i) {
-                            Rd(fd, &b, 1);                      // 0x452BD9
-                            mdl::DisplayGroups(model)[i].flags =
-                                (b == 1) ? 1 : 0;
-                        }
-                    } else {
-                        for (int i = 0; i < workspace.boneGroupCount; ++i) Rd(fd, &b, 1);
-                    }
-                }
-                Rd(fd, &modelRecord->boneListPos,
-                   sizeof modelRecord->boneListPos);            // 0x452C77
-                Rd(fd, &modelRecord->maxFrame,
-                   sizeof modelRecord->maxFrame);               // 0x452C92
+                modelRecord->boneListPos = diskSelection.boneListPos;
+                modelRecord->maxFrame = diskSelection.maxFrame;
                 LogPmmModelStage(fd, "display-keys",
                                  modelRecord->boneListPos,
                                  modelRecord->maxFrame,
@@ -849,38 +834,31 @@ static void LoadSceneV2_ModelStateLoad(PmmV2LoadContext& ctx, int fd,
                     mdl::DisplayKey* keys = mdl::DisplayKeys(model);
                     LogPmmModelStage(fd, "physics-section", workspace.ikCount,
                                      workspace.rigidBodyCount, keys);
-                    Rd(fd, &keys[0].frame, 4);
-                    Rd(fd, &keys[0].previous, 4);
-                    Rd(fd, &keys[0].next, 4);
-                    unsigned char visible = 0;
-                    Rd(fd, &visible, 1);
-                    keys[0].visible = visible == 1;
-                    for (std::int32_t i = 0; i < workspace.ikCount; ++i) {
-                        unsigned char b = 0;
-                        Rd(fd, &b, 1);                          // 0x4537FB
-                        const std::int32_t m = ikMappings[i].mappedIndex;
-                        if (m >= 0)
-                            mdl::IkStates(keys[0])[m] =
-                                b == 1;
-                    }
-                    for (std::int32_t i = 0; i < workspace.rigidBodyCount; ++i) {
-                        std::int32_t bone = 0, val = 0;
-                        Rd(fd, &bone, 4);                       // 0x45386D
-                        Rd(fd, &val, 4);
-                        const std::int32_t m = rigidMappings[i].mappedIndex;
-                        if (m >= 0) {
-                            auto* tbl = mdl::SelectorStates(keys[0]);
-                            LogPmmModelStage(fd, "physics-rigid-item", i, m,
-                                             tbl);
-                            tbl[m].modelIndex = bone;
-                            std::memcpy(&tbl[m].boneIndex, &val, sizeof(val));
+                    const auto readDisplay = [&](mdl::DisplayKey& key) {
+                        format::PmmDisplayKey disk;
+                        if (!ReadPmmDisplayKey(fd, PmmStream::V2,
+                                                workspace.ikCount,
+                                                workspace.rigidBodyCount, disk)) return;
+                        key.frame = disk.frame;
+                        key.previous = disk.previous;
+                        key.next = disk.next;
+                        key.visible = disk.visible;
+                        key.allocated = disk.allocated;
+                        for (std::size_t i = 0; i < disk.ikEnabled.size(); ++i) {
+                            const std::int32_t mapped = ikMappings[i].mappedIndex;
+                            if (mapped >= 0)
+                                mdl::IkStates(key)[mapped] = disk.ikEnabled[i];
                         }
-                    }
-                    {
-                        unsigned char b = 0;
-                        Rd(fd, &b, 1);                          // 0x4538F4
-                        keys[0].allocated = b == 1;
-                    }
+                        for (std::size_t i = 0; i < disk.rigidStates.size(); ++i) {
+                            const std::int32_t mapped = rigidMappings[i].mappedIndex;
+                            if (mapped >= 0) {
+                                auto* table = mdl::SelectorStates(key);
+                                table[mapped].modelIndex = disk.rigidStates[i].modelIndex;
+                                table[mapped].boneIndex = disk.rigidStates[i].boneIndex;
+                            }
+                        }
+                    };
+                    readDisplay(keys[0]);
                     std::int32_t cnt = 0;
                     Rd(fd, &cnt, 4);                            // 0x453927
                     LogPmmModelStage(fd, "sparse-physics-count", cnt,
@@ -889,35 +867,7 @@ static void LoadSceneV2_ModelStateLoad(PmmV2LoadContext& ctx, int fd,
                         std::int32_t frame = 0;
                         Rd(fd, &frame, 4);
                         mdl::DisplayKey& k = keys[frame];
-                        Rd(fd, &k.frame, 4);
-                        Rd(fd, &k.previous, 4);
-                        Rd(fd, &k.next, 4);
-                        unsigned char visible = 0;
-                        Rd(fd, &visible, 1);
-                        k.visible = visible == 1;
-                        for (std::int32_t j = 0; j < workspace.ikCount; ++j) {
-                            unsigned char b = 0;
-                            Rd(fd, &b, 1);
-                            const std::int32_t m = ikMappings[j].mappedIndex;
-                            if (m >= 0)
-                                mdl::IkStates(k)[m] =
-                                    b == 1;
-                        }
-                        for (std::int32_t j = 0; j < workspace.rigidBodyCount; ++j) {
-                            std::int32_t bone = 0, val = 0;
-                            Rd(fd, &bone, 4);
-                            Rd(fd, &val, 4);
-                            const std::int32_t m = rigidMappings[j].mappedIndex;
-                            if (m >= 0) {
-                                auto* tbl = mdl::SelectorStates(k);
-                                tbl[m].modelIndex = bone;
-                                std::memcpy(&tbl[m].boneIndex, &val,
-                                            sizeof(val));
-                            }
-                        }
-                        unsigned char b = 0;
-                        Rd(fd, &b, 1);                          // 0x453B02
-                        k.allocated = b == 1;
+                        readDisplay(k);
                     }
                 }
                 LogPmmModelStage(fd, "physics-section-complete", 0, 0,
@@ -1024,6 +974,7 @@ static void LoadSceneV2_ModelStateLoad(PmmV2LoadContext& ctx, int fd,
                 LogPmmModelStage(fd, "model-state-complete", modelIdx,
                                  modelCount, model);
                 LogPmmHeapState(fd, "after-model-state");
+    return true;
 }
 
 
@@ -1589,8 +1540,11 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
                 LoadSceneV2_SkipRecordConsumption(fd, workspace, text,
                                                  skipFrom4);
             } else {
-                LoadSceneV2_ModelStateLoad(ctx, fd, model, workspace,
-                                           modelIdx, modelCount);
+                if (!LoadSceneV2_ModelStateLoad(ctx, fd, model, workspace,
+                                                modelIdx, modelCount)) {
+                    AbortV2Load(s, fd, workspaces, modelCount);
+                    return false;
+                }
             }
 
     return true;
@@ -2043,29 +1997,25 @@ static bool LoadSceneV2_AccessoryBlock(PmmV2LoadContext& ctx, int fd) {
                 ReadPmmAccessoryKey(fd, accessoryKeys[frame]);
             }
         }
-        {
-            unsigned char b = 0;                                // 0x4562E5
-            Rd(fd, &b, 1);
-            accessory.visible = b & 1;
-            accessory.opacity =
-                static_cast<float>(100 - (b >> 1)) / 100.0f;
+        format::PmmAccessoryState diskState;
+        if (!format::ReadPmmAccessoryState(
+                ReadPmmFileBytes, &fd, format::PmmVersion::V2, diskState)) {
+            _close(fd);
+            ResetAppState(s);
+            HandleWindowSize(s);
+            return false;
         }
-        Rd(fd, &accessory.parentModel, 4);
-        Rd(fd, &accessory.parentBone, 4);
-        Rd(fd, &accessory.rotation[0], 4);
-        Rd(fd, &accessory.rotation[1], 4);
-        Rd(fd, &accessory.rotation[2], 4);
-        Rd(fd, &accessory.scale, 4);
-        Rd(fd, &accessory.position[0], 4);
-        Rd(fd, &accessory.position[1], 4);
-        Rd(fd, &accessory.position[2], 4);
-        {
-            unsigned char b = 0;
-            Rd(fd, &b, 1);
-            accessory.shadowEnabled = (b == 1) ? 1 : 0;
-            Rd(fd, &b, 1);
-            accessory.additiveBlend = (b == 1) ? 1 : 0;
+        accessory.visible = diskState.visible;
+        accessory.opacity = diskState.opacity;
+        accessory.parentModel = diskState.parentModel;
+        accessory.parentBone = diskState.parentBone;
+        for (int index = 0; index < 3; ++index) {
+            accessory.rotation[index] = diskState.rotation[index];
+            accessory.position[index] = diskState.position[index];
         }
+        accessory.scale = diskState.scale;
+        accessory.shadowEnabled = diskState.shadowEnabled;
+        accessory.additiveBlend = diskState.additiveBlend;
         LogPmmModelStage(fd, "accessory-record-complete", i, accSlot,
                          s->OverlayVertices());
     }
@@ -2102,7 +2052,7 @@ static bool LoadSceneV2_AccessoryBlock(PmmV2LoadContext& ctx, int fd) {
 
 // ---- 0x456617..0x45776E: config block + label_708 menu/checkbox run
 // (the goto stays inside this function) ---------------------------------
-static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
+static bool LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
     auto* const s = ctx.s;
     HWND const main = ctx.main;
     PathResolutionWorkspace& paths = *ctx.paths;
@@ -2112,9 +2062,11 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
     char* const text = ctx.text;
     char* const mbPath = ctx.mbPath;
     // ---- config block head (0x456617..0x4566CB) ---------------------------
-    Rd(fd, &s->state.currentFrame, 4);
-    Rd(fd, &s->state.timelineStartFrame, 4);
-    Rd(fd, &s->state.lastRegisteredFrame, 4);
+    format::PmmTimelineSettings timeline;
+    if (!format::ReadPmmTimelineSettings(ReadPmmFileBytes, &fd, timeline)) return false;
+    s->state.currentFrame = timeline.currentFrame;
+    s->state.timelineStartFrame = timeline.startFrame;
+    s->state.lastRegisteredFrame = timeline.lastRegisteredFrame;
     {
         HWND item = GetDlgItem(main, panel::kCurrentFrameEdit);
         SendMessageA(item, EM_SETSEL, 0, GetWindowTextLengthA(item));
@@ -2129,9 +2081,7 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
     ApplyModelComboSelection(s);
 
     // register radios (0x4566DA..0x456924)
-    std::int32_t savedEditMode = 0;
-    Rd(fd, &savedEditMode, 4);                                  // 0x4566DA
-    s->EditMode() = static_cast<ViewportEditMode>(savedEditMode);
+    s->EditMode() = static_cast<ViewportEditMode>(timeline.editMode);
     {
         const ViewportEditMode mode = s->EditMode();
         switch (mode) {
@@ -2173,7 +2123,7 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
     }
     {
         unsigned char b = 0;
-        Rd(fd, &b, 1);                                          // 0x45692B
+        b = timeline.cameraReferenceMode;
         if (b == 1) {
             SendMessageA(GetDlgItem(main, panel::kCameraRefModelCheckbox), BM_SETCHECK, 1, 0);
             SendMessageA(GetDlgItem(main, panel::kCameraRefBoneCheckbox), BM_SETCHECK, 0, 0);
@@ -2184,17 +2134,17 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
             SendMessageA(GetDlgItem(main, panel::kCameraRefModelCheckbox), BM_SETCHECK, 0, 0);
             SendMessageA(GetDlgItem(main, panel::kCameraRefBoneCheckbox), BM_SETCHECK, 0, 0);
         }
-        Rd(fd, &b, 1);                                          // 0x4569E9
+        b = timeline.playbackLoop;
         s->state.playbackLoopEnabled = b ? 1 : 0;
         SendMessageA(GetDlgItem(main, 411), BM_SETCHECK, b ? 1 : 0, 0);
-        Rd(fd, &b, 1);                                          // 0x456A41
+        b = timeline.returnToStart;
         s->state.playbackReturnsToStartFrame = b ? 1 : 0;
         SendMessageA(GetDlgItem(main, 413), BM_SETCHECK, b ? 1 : 0, 0);
-        Rd(fd, &b, 1);                                          // 0x456A99
+        b = timeline.startAtCurrent;
         s->state.playbackStartsAtCurrentFrame = b ? 1 : 0;
         SendMessageA(GetDlgItem(main, 414), BM_SETCHECK, b ? 1 : 0, 0);
-        std::int32_t playStartFrame = 0, playStopFrame = 0;
-        Rd(fd, &playStartFrame, 4);                                         // 0x456AF4
+        const std::int32_t playStartFrame = timeline.playStartFrame;
+        const std::int32_t playStopFrame = timeline.playStopFrame;
         {
             HWND item = GetDlgItem(main, panel::kPlayStartFrameEdit);
             SendMessageA(item, EM_SETSEL, 0, GetWindowTextLengthA(item));
@@ -2202,7 +2152,6 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
             SendMessageA(item, EM_REPLACESEL, 0,
                          reinterpret_cast<LPARAM>(text));
         }
-        Rd(fd, &playStopFrame, 4);                                         // 0x456B83
         {
             HWND item = GetDlgItem(main, panel::kPlayStopFrameEdit);
             SendMessageA(item, EM_SETSEL, 0, GetWindowTextLengthA(item));
@@ -2211,20 +2160,21 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
                          reinterpret_cast<LPARAM>(text));
         }
         ClearTimelineAndCurveDCs(s);                                           // 0x456C09
-        Rd(fd, &b, 1);                                          // 0x456C16
-        s->state.waveEnabled = b ? 1 : 0;
-        Rd(fd, mbPath, 0x100);                                  // 0x456C43
+        format::PmmWaveReference wave;
+        if (!format::ReadPmmWaveReference(ReadPmmFileBytes, &fd, wave)) return false;
+        s->state.waveEnabled = wave.enabled;
+        std::memcpy(mbPath, wave.pathBytes.data(), wave.pathBytes.size());
         ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap),
                             mbPath,
                             reinterpret_cast<wchar_t*>(s->state.wavPath),
                             0x100, paths);
         if (s->state.waveEnabled != 0)
             LoadWaveFile(s);   // 0x418500 (app-taking; path at +0xD0)
-        std::int32_t w1 = 0, w2 = 0, w3 = 0;
-        Rd(fd, &w1, 4);                                         // 0x456C8C
-        Rd(fd, &w2, 4);
-        Rd(fd, &w3, 4);
-        Rd(fd, mbPath, 0x100);                                  // 0x456CBF
+        format::PmmBackgroundReference avi;
+        if (!format::ReadPmmBackgroundReference(
+                ReadPmmFileBytes, &fd, format::PmmBackgroundKind::Avi,
+                avi)) return false;
+        std::memcpy(mbPath, avi.pathBytes.data(), avi.pathBytes.size());
         ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap),
                             mbPath,
                             s->AviBackgroundPath(),
@@ -2233,10 +2183,10 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
             LoadAviFile(s);    // 0x433250 (app-taking; path at +0x9E1EC)
         // AVI block (0x456D0D..0x456E25)
         if (s->AviBackgroundEnabled() == 1) {
-            Rd(fd, &s->AviBackgroundEnabled(), 4);
-            s->AviOffsetX() = w1;
-            s->AviOffsetY() = w2;
-            std::memcpy(&s->AviScale(), &w3, sizeof w3);
+            s->AviBackgroundEnabled() = avi.enabled;
+            s->AviOffsetX() = avi.offsetX;
+            s->AviOffsetY() = avi.offsetY;
+            s->AviScale() = avi.scale;
             if (s->AviBackgroundEnabled() == 1) {
                 CheckMenuItem(GetMenu(main), 0xD8, 8);
                 AviBgOverlayRefresh(s);
@@ -2244,7 +2194,6 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
                 CheckMenuItem(GetMenu(main), 0xD8, 0);
             }
         } else {
-            Rd(fd, &s->AviBackgroundEnabled(), 4);
             s->AviBackgroundEnabled() = 0;
             CheckMenuItem(GetMenu(main), 0xD8, 0);
             if (s->AviFrameReader() != nullptr) {
@@ -2260,11 +2209,11 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
                 s->AviFile() = nullptr;
             }
         }
-        std::int32_t p1 = 0, p2 = 0, p3 = 0;
-        Rd(fd, &p1, 4);                                         // 0x456E25
-        Rd(fd, &p2, 4);
-        Rd(fd, &p3, 4);
-        Rd(fd, mbPath, 0x100);                                  // 0x456E58
+        format::PmmBackgroundReference picture;
+        if (!format::ReadPmmBackgroundReference(
+                ReadPmmFileBytes, &fd, format::PmmBackgroundKind::Picture,
+                picture)) return false;
+        std::memcpy(mbPath, picture.pathBytes.data(), picture.pathBytes.size());
         ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap),
                             mbPath,
                             s->PictureBackgroundPath(),
@@ -2272,11 +2221,10 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
         s->PictureBackgroundEnabled() = 0;
         if (mbPath[0] != 0) LoadBackgroundPicture(s);   // 0x4337A0
         if (s->PictureBackgroundEnabled() != 0) {
-            Rd(fd, &b, 1);                                      // 0x456EAF
-            s->PictureBackgroundEnabled() = b ? 1 : 0;
-            s->PictureOffsetX() = p1;
-            s->PictureOffsetY() = p2;
-            std::memcpy(&s->PictureScale(), &p3, sizeof p3);
+            s->PictureBackgroundEnabled() = picture.enabled ? 1 : 0;
+            s->PictureOffsetX() = picture.offsetX;
+            s->PictureOffsetY() = picture.offsetY;
+            s->PictureScale() = picture.scale;
             if (s->PictureBackgroundEnabled() != 0) {
                 CheckMenuItem(GetMenu(main), 0xE9, 8);
                 PicBgOverlayRefresh(s);
@@ -2284,18 +2232,19 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
                 CheckMenuItem(GetMenu(main), 0xE9, 0);
             }
         } else {
-            Rd(fd, &b, 1);                                      // 0x456F29
             s->PictureBackgroundEnabled() = 0;
             CheckMenuItem(GetMenu(main), 0xE9, 0);
         }
     }
+    format::PmmViewSettings view;
+    if (!format::ReadPmmViewSettings(ReadPmmFileBytes, &fd, view)) return false;
     {
         unsigned char b = 0;
         const HWND owner =
             s->state.floatingWindow
                 ? reinterpret_cast<HWND>(s->state.floatingWindow)
                 : main;
-        Rd(fd, &b, 1);                                          // 0x456F53
+        b = view.fpsOverlay;
         if (b != 0) {
             s->FpsOverlayEnabled() = 1;
             CheckMenuItem(GetMenu(main), 0xD3, 8);
@@ -2305,7 +2254,7 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
             CheckMenuItem(GetMenu(main), 0xD3, 0);
             SendMessageA(GetDlgItem(owner, panel::kInfoCheckbox), BM_SETCHECK, 0, 0);
         }
-        Rd(fd, &b, 1);                                          // 0x456FEC
+        b = view.groundGrid;
         if (b != 0) {
             s->GroundGridEnabled() = 1;
             CheckMenuItem(GetMenu(main), 0xD7, 8);
@@ -2315,10 +2264,10 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
             CheckMenuItem(GetMenu(main), 0xD7, 0);
             SendMessageA(GetDlgItem(owner, panel::kCoordAxisCheckbox), BM_SETCHECK, 0, 0);
         }
-        Rd(fd, &b, 1);                                          // 0x45707D
+        b = view.groundShadow;
         s->state.groundShadowEnabled = b ? 1 : 0;                // 0x918
         CheckMenuItem(GetMenu(main), 0xDD, b ? 8 : 0);
-        Rd(fd, &s->state.fpsLimit, 4); // 0x4570CF
+        s->state.fpsLimit = view.fpsLimit;
         {
             const float v = s->state.fpsLimit;
             if (v == 1000.0f) {
@@ -2335,8 +2284,7 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
                 CheckMenuItem(GetMenu(main), 0xEC, 8);
             }
         }
-        std::int32_t sm = 0;
-        Rd(fd, &sm, 4);                                         // 0x4571CF
+        const std::int32_t sm = view.captureMode;
         // The original reads the four bytes directly into app+0x9EB84.
         // Keeping the value only in a local makes the menu look correct but
         // leaves the renderer in mode 0, so accessories using screen.bmp see
@@ -2382,8 +2330,11 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
         SendMessageA(GetDlgItem(main, panel::kMainComboNormal), CB_SETCURSEL, 0, 0);
         SendMessageA(GetDlgItem(main, panel::kBoneRegisterCombo), CB_SETCURSEL, 0, 0);
         // 0xA0B20 + shadow distance copies (0x45740E..0x457443)
-        Rd(fd, &s->state.accessoryRenderSplitOrder, 4);
-        Rd(fd, &s->ProjectedShadowAmbientIntensity(), 4);
+        format::PmmPhysicsSettings physics;
+        if (!format::ReadPmmPhysicsSettings(ReadPmmFileBytes, &fd, physics))
+            return false;
+        s->state.accessoryRenderSplitOrder = physics.accessoryRenderOrder;
+        s->ProjectedShadowAmbientIntensity() = physics.projectedShadowAmbient;
         s->SetProjectedShadowAmbientRgb(s->ProjectedShadowAmbientIntensity());
         {
             unsigned char* m = slots[s->SelectedModelSlot()];
@@ -2397,15 +2348,14 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
                 mdl::Accessory(accs[cur])->additiveBlend != 0)
                 SendMessageA(GetDlgItem(main, panel::kAccessoryAddBlendCheckbox), BM_SETCHECK, 1, 0);
         }
-        Rd(fd, &b, 1);                                          // 0x4574DF
+        b = physics.projectedShadowBlend;
         if (b == 1) {
             s->state.projectedShadowBlendEnabled = 1;
             CheckMenuItem(GetMenu(main), 0xFE, 8);
         } else {
             s->state.projectedShadowBlendEnabled = 0;
         }
-        unsigned char pmode = 0;
-        Rd(fd, &pmode, 1);                                      // 0x457523
+        const unsigned char pmode = physics.playbackMode;
         // 0x457523 targets app+0xA0CC4 itself.  The upper bytes are already
         // zero in the original/default state; assign the complete dword here
         // so a previously loaded scene cannot leak stale physics mode bits.
@@ -2440,12 +2390,12 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
         for (int i = 0; i < kModelSlotCount; ++i)               // 0x4576C7
             if (slots[i] != nullptr) ModelKinematicSync(slots[i]);
         // physics reads (0x457713..0x45776E)
-        Rd(fd, &s->state.gravityMagnitude, 4);
-        Rd(fd, &s->state.gravityNoise, 4);
-        Rd(fd, &s->state.gravityX, 4);
-        Rd(fd, &s->state.gravityY, 4);
-        Rd(fd, &s->state.gravityZ, 4);
-        Rd(fd, &b, 1);                                          // 0x45775C
+        s->state.gravityMagnitude = physics.gravityMagnitude;
+        s->state.gravityNoise = physics.gravityNoise;
+        s->state.gravityX = physics.gravityDirection[0];
+        s->state.gravityY = physics.gravityDirection[1];
+        s->state.gravityZ = physics.gravityDirection[2];
+        b = physics.gravityNoiseEnabled;
 #ifdef MIKUDANCESTUDIO_DIAG
         if (std::getenv("MIKUDANCESTUDIO_TRACE_NOISE_OFF") != nullptr)
             std::fprintf(stderr, "noise byte file offset=%ld value=%d\n",
@@ -2453,13 +2403,14 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
 #endif
         s->state.gravityNoiseEnabled = (b == 1) ? 1 : 0;
     }
+    return true;
 }
 
 
 // ---- 0x45777C..0x458112: selection + self-shadow tracks, model color
 // sweep, camera parent re-register, 16 config dwords, optional per-model
 // 0x4CCF0 block, _close --------------------------------------------------
-static void LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
+static bool LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
                                             unsigned char modelCount) {
     auto* const s = ctx.s;
     HWND const main = ctx.main;
@@ -2510,9 +2461,16 @@ static void LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
         }
     }
     // model color sweep (0x457BEE..0x457C76)
-    Rd(fd, &s->state.modelOutlineColorRed, 4);
-    Rd(fd, &s->state.modelOutlineColorGreen, 4);
-    Rd(fd, &s->state.modelOutlineColorBlue, 4);
+    format::PmmSceneAppearance appearance;
+    if (!format::ReadPmmSceneAppearance(ReadPmmFileBytes, &fd, appearance)) {
+        _close(fd);
+        ResetAppState(s);
+        HandleWindowSize(s);
+        return false;
+    }
+    s->state.modelOutlineColorRed = appearance.outlineColor[0];
+    s->state.modelOutlineColorGreen = appearance.outlineColor[1];
+    s->state.modelOutlineColorBlue = appearance.outlineColor[2];
     if (s->state.modelOutlineColorRed != 0 ||
         s->state.modelOutlineColorGreen != 0 ||
         s->state.modelOutlineColorBlue != 0) {
@@ -2526,12 +2484,12 @@ static void LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
     }
     {
         unsigned char b = 0;
-        Rd(fd, &b, 1);                                          // 0x457C80
+        b = appearance.blackBackground;
         s->state.blackBackgroundEnabled = b ? 1 : 0;
         CheckMenuItem(GetMenu(main), 0x11A, b ? 8 : 0);
     }
-    Rd(fd, &s->state.cameraParentModel, 4);        // 0x457CD2
-    Rd(fd, &s->state.cameraParentBone, 4);
+    s->state.cameraParentModel = appearance.cameraParentModel;
+    s->state.cameraParentBone = appearance.cameraParentBone;
     if (s->state.cameraParentModel >= 0) {
         SendMessageA(GetDlgItem(main, panel::kMainComboNormal), CB_SETCURSEL,
                      mdl::Mdl(slots[s->state.cameraParentModel])->comboSelIndex,
@@ -2554,12 +2512,11 @@ static void LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
         }
     }
     // 16 config dwords (0x457E79..0x457F60)
-    Rd(fd, &s->state.cameraAttachmentBasis, 4);      // 0xA0438
-    for (int i = 0; i < 15; ++i)
-        Rd(fd, &s->state.cameraAttachmentBasis[1 + i], 4);      // 0xA043C..
+    for (std::size_t index = 0; index < appearance.cameraAttachmentBasis.size(); ++index)
+        s->state.cameraAttachmentBasis[index] = appearance.cameraAttachmentBasis[index];
     {
         unsigned char b = 0;
-        Rd(fd, &b, 1);                                          // 0x457F6D
+        b = appearance.followCamera;
         if (b == 1) {
             s->state.followCameraEnabled = 1;       // 0x9ED98
             CheckMenuItem(GetMenu(main), 0xF7, 8);
@@ -2569,9 +2526,9 @@ static void LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
             CheckMenuItem(GetMenu(main), 0xF7, 0);
             SendMessageA(GetDlgItem(main, panel::kFollowCameraCheckbox), BM_SETCHECK, 0, 0);
         }
-        Rd(fd, &b, 1);                                          // 0x457FFD
+        b = appearance.suppressCameraTransform;
         s->state.cameraAttachmentTransformSuppressed = (b == 1) ? 1 : 0;
-        Rd(fd, &b, 1);                                          // 0x458018
+        b = appearance.floorVisible;
         btRigidBody* const groundBody = s->Physics()->groundBody;
         if (b == 1) {
             CheckMenuItem(GetMenu(main), 0x11D, 8);
@@ -2584,10 +2541,10 @@ static void LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
         }
     }
     {
-        unsigned char b = 0;
-        Rd(fd, &ctx.maxFrame, 4);                                   // 0x458098
-        const int got = Rd(fd, &b, 1);                          // 0x4580A5
-        if (got > 0 && b == 1) {
+        ctx.maxFrame = appearance.maxFrame;
+        unsigned char tailFlag = 0;
+        const int got = Rd(fd, &tailFlag, 1);
+        if (got > 0 && tailFlag == 1) {
             for (unsigned char i = 0; i < modelCount; ++i) {
                 unsigned char mslot = 0;
                 Rd(fd, &mslot, 1);                              // 0x4580DB
@@ -2599,6 +2556,7 @@ static void LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
         }
     }
     _close(fd);                                                 // 0x458112
+    return true;
 
 }
 
@@ -3007,8 +2965,15 @@ void LoadSceneV2(MMDApp* app, int fd) {  // VA 0x00450000
         delete[] workspaces;
         return;
     }
-    LoadSceneV2_ConfigBlock(ctx, fd);                   // 0x456617..0x45776E
-    LoadSceneV2_PhysicsTracksAndClose(ctx, fd, modelCount);  // 0x45777C..0x458112
+    if (!LoadSceneV2_ConfigBlock(ctx, fd)) {
+        AbortV2Load(s, fd, workspaces, modelCount);
+        return;
+    }
+    if (!LoadSceneV2_PhysicsTracksAndClose(ctx, fd, modelCount)) {
+        FreeRecordArrays(workspaces, modelCount);
+        delete[] workspaces;
+        return;
+    }
     LoadSceneV2_SuccessTail(ctx, workspaces, modelCount);    // 0x458120..0x458F53
 }
 

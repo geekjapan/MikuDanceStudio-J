@@ -45,8 +45,12 @@
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/d3d_wrapper.hpp"
 #include "mikudancestudio/model.hpp"
+#include "mikudancestudio/model_format_header.hpp"
 #include "mikudancestudio/path_workspace.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "model_format_win.hpp"
+#include "mikudancestudio/model_geometry.hpp"
+#include "mikudancestudio/model_sections.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -164,9 +168,13 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     }
 
     // ---- header -----------------------------------------------------------
-    _read(fh, text, 3);
-    if (text[0] != 'P' || text[1] != 'm' || text[2] != 'd') {
-        if (text[0] == 'P' && text[1] == 'M' && text[2] == 'X')
+    if (_read(fh, text, 3) != 3) {
+        _close(fh);
+        return false;
+    }
+    const auto kind = format::IdentifyModel({text[0], text[1], text[2]});
+    if (kind != format::ModelKind::Pmd) {
+        if (kind == format::ModelKind::Pmx)
             return LoadPMX(m, sub, boxGate, englishUi, paths,
                            fh);                              // 0x4B77E0
     _close(fh);
@@ -179,9 +187,14 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         }
         return false;
     }
-    _read(fh, text, 4);                                   // version
-    _read(fh, model.name, mdl::kPmdModelNameBytes);
-    _read(fh, model.comment, sizeof(model.comment));
+    format::PmdHeader header;
+    if (format::ReadPmdHeader(ReadModelFileBytes, &fh, header) !=
+        format::ModelHeaderStatus::Ok) {
+        _close(fh);
+        return false;
+    }
+    std::memcpy(model.name, header.name.data(), header.name.size());
+    std::memcpy(model.comment, header.comment.data(), header.comment.size());
     if (!enData && boxGate &&
         MessageBoxA(hwnd, model.comment,
                     kTitleModelInfoJp, 0x40001u) != 1) {
@@ -193,7 +206,10 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     auto* d3dx = &d3dx::Get();
 
     // ---- vertices ---------------------------------------------------------
-    _read(fh, &model.vertexCount, sizeof(model.vertexCount));
+    if (!format::ReadGeometryCount(ReadModelFileBytes, &fh, model.vertexCount)) {
+        _close(fh);
+        return false;
+    }
     const std::uint32_t vertCount = model.vertexCount;
     if (vertCount != 0) {
         if (dev == nullptr) {
@@ -225,8 +241,19 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
             operator new(sizeof(mdl::PmdVertex) * vertCount));
         model.rawVertices = recs;
         std::memset(recs, 0, sizeof(mdl::PmdVertex) * vertCount);
-        for (std::uint32_t i = 0; i < vertCount; ++i)
-            _read(fh, &recs[i], 0x26);
+        for (std::uint32_t i = 0; i < vertCount; ++i) {
+            format::PmdVertexData vertex;
+            if (!format::ReadPmdVertex(ReadModelFileBytes, &fh, vertex)) {
+                _close(fh);
+                return false;
+            }
+            std::memcpy(recs[i].position, vertex.position, sizeof(vertex.position));
+            std::memcpy(recs[i].normal, vertex.normal, sizeof(vertex.normal));
+            std::memcpy(recs[i].uv, vertex.uv, sizeof(vertex.uv));
+            std::memcpy(recs[i].bone, vertex.bone, sizeof(vertex.bone));
+            recs[i].weightPercent = static_cast<std::int8_t>(vertex.weightPercent);
+            recs[i].edgeDisabled = vertex.edgeDisabled;
+        }
 
         float* p1 = nullptr;
         if (SUCCEEDED(mdl::ResourceAs<IDirect3DVertexBuffer9>(
@@ -258,7 +285,10 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     }
 
     // ---- indices ----------------------------------------------------------
-    _read(fh, &model.indexCount, sizeof(model.indexCount));
+    if (!format::ReadGeometryCount(ReadModelFileBytes, &fh, model.indexCount)) {
+        _close(fh);
+        return false;
+    }
     const std::uint32_t idxCount = model.indexCount;
     if (idxCount != 0) {
         if (dev == nullptr)
@@ -288,7 +318,12 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
             return false;
         }
         for (std::uint32_t j = 0; j < idxCount; ++j) {
-            _read(fh, idx + 2 * j, 2);
+            if (!format::ReadPmdIndex(ReadModelFileBytes, &fh, idx[2 * j])) {
+                mdl::ResourceAs<IDirect3DIndexBuffer9>(
+                    mdl::Mdl(m)->indexBuffer)->Unlock();
+                _close(fh);
+                return false;
+            }
             static_cast<std::uint16_t*>(ib)[j] = idx[2 * j];
         }
         mdl::ResourceAs<IDirect3DIndexBuffer9>(
@@ -296,8 +331,10 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     }
 
     // ---- materials --------------------------------------------------------
-    _read(fh, &mdl::Mdl(m)->materialCount,
-          sizeof mdl::Mdl(m)->materialCount);
+    if (!ReadModelFileCount(fh, 4, mdl::Mdl(m)->materialCount)) {
+        _close(fh);
+        return false;
+    }
     const std::uint32_t matCount = mdl::Mdl(m)->materialCount;
     if (matCount != 0) {
         mdl::ModelMaterialRecord*& materials = mdl::Materials(m);
@@ -306,19 +343,22 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         std::memset(materials, 0, sizeof(*materials) * matCount);
         for (std::uint32_t i = 0; i < matCount; ++i) {
             mdl::ModelMaterialRecord& mat = materials[i];
-            _read(fh, mat.diffuse, sizeof(mat.diffuse));
+            format::MaterialData disk;
+            if (!format::ReadPmdMaterial(ReadModelFileBytes, &fh, disk)) {
+                _close(fh);
+                return false;
+            }
+            std::memcpy(mat.diffuse, disk.diffuse, sizeof(mat.diffuse));
             std::memcpy(mat.diffuseMirror, mat.diffuse,
                         sizeof(mat.diffuseMirror));
-            _read(fh, &mat.specularPower, sizeof(mat.specularPower));
-            _read(fh, mat.specular, sizeof(mat.specular));
-            _read(fh, mat.ambient, sizeof(mat.ambient));
-            _read(fh, &mat.toonReference, sizeof(mat.toonReference));
-            std::uint8_t sphereFlag = 0;
-            _read(fh, &sphereFlag, 1);
-            mat.doubleSided = sphereFlag ? 1 : 0;
-            _read(fh, &mat.faceVertexCount, sizeof(mat.faceVertexCount));
+            mat.specularPower = disk.specularPower;
+            std::memcpy(mat.specular, disk.specular, sizeof(mat.specular));
+            std::memcpy(mat.ambient, disk.ambient, sizeof(mat.ambient));
+            mat.toonReference = disk.toonReference;
+            mat.doubleSided = disk.flags ? 1 : 0;
+            mat.faceVertexCount = disk.faceVertexCount;
             char texName[24] = {};
-            _read(fh, texName, 0x14);
+            std::memcpy(texName, disk.pmdTexture, 20);
             if (texName[0] != '\0') {
                 const wchar_t* dirW = model.modelDirectory;
                 char* star = strstr(texName, "*");
@@ -350,7 +390,10 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     }
 
     // ---- bones ------------------------------------------------------------
-    _read(fh, &model.boneCount, 2);
+    if (!ReadModelFileCount(fh, 2, model.boneCount)) {
+        _close(fh);
+        return false;
+    }
     const std::uint32_t boneCount = model.boneCount;
     mikudancestudio::mdl::BoneRecord* bones = static_cast<mikudancestudio::mdl::BoneRecord*>(
         operator new(sizeof(mikudancestudio::mdl::BoneRecord) * (boneCount ? boneCount : 1)));
@@ -374,24 +417,23 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     std::uint8_t centerSeen = 0;
     for (std::uint32_t i = 0; i < boneCount; ++i) {
         mikudancestudio::mdl::BoneRecord* bone = &bones[i];
-        _read(fh, bone->name, sizeof(bone->name));
+        format::BoneData disk;
+        if (!format::ReadPmdBone(ReadModelFileBytes, &fh, disk)) {
+            _close(fh);
+            return false;
+        }
+        std::memcpy(bone->name, disk.pmdName, sizeof(bone->name));
         if (!std::memcmp(bone->name, kNameCenter2Jp, 9)) {
             model.centerBone = static_cast<std::int32_t>(i);
             centerSeen = 1;
         }
         if (!std::memcmp(bone->name, kNameCenterJp, 9) && !centerSeen)
             model.centerBone = static_cast<std::int32_t>(i);
-        std::int16_t parent = 0;
-        _read(fh, &parent, 2);
-        bone->parent = parent;
-        std::int16_t tail = 0;
-        _read(fh, &tail, 2);
-        bone->tailBone = tail;
-        _read(fh, &bone->type, 1);       // type
-        std::int16_t tailIdx = 0;
-        _read(fh, &tailIdx, 2);
-        bone->tailIdx = tailIdx;
-        _read(fh, bone->position, sizeof(bone->position));
+        bone->parent = disk.parent;
+        bone->tailBone = disk.tailBone;
+        bone->type = static_cast<mdl::BoneType>(disk.type);
+        bone->tailIdx = disk.tailIdx;
+        std::memcpy(bone->position, disk.position, sizeof(bone->position));
         bone->rotQuat[3] = 1.0f;    // scale x/y
         bone->rotQuat2[3] = 1.0f;
         for (int f = 0; f < 16; ++f)  // +180 identity (x64 0x7FF7CB4D34B0)
@@ -402,7 +444,10 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     }
 
     // ---- IK chains --------------------------------------------------------
-    _read(fh, &model.ikChainCount, 2);
+    if (!ReadModelFileCount(fh, 2, model.ikChainCount)) {
+        _close(fh);
+        return false;
+    }
     const std::uint32_t ikCount = model.ikChainCount;
     if (ikCount > 0) {
         mdl::Mdl(m)->ikChains = static_cast<mdl::IkChain*>(
@@ -411,17 +456,22 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                     sizeof(mdl::IkChain) * ikCount);
         for (std::uint32_t i = 0; i < ikCount; ++i) {
             mdl::IkChain& ik = mdl::IkChains(m)[i];
-            _read(fh, &ik.boneIndex, 2);
-            _read(fh, &ik.targetBone, 2);
-            _read(fh, &ik.linkCount, 1);
-            _read(fh, &ik.iterations, 2);
-            _read(fh, &ik.maxAngle, 4);
+            format::PmdIkData disk;
+            if (!format::ReadPmdIk(ReadModelFileBytes, &fh, disk)) {
+                _close(fh);
+                return false;
+            }
+            ik.boneIndex = disk.boneIndex;
+            ik.targetBone = disk.targetBone;
+            ik.linkCount = static_cast<std::uint8_t>(disk.links.size());
+            ik.iterations = disk.iterations;
+            ik.maxAngle = disk.maxAngle;
             ik.enabled = 1;
             const std::uint8_t len = ik.linkCount;
             ik.links = static_cast<std::uint16_t*>(
                 operator new(sizeof(std::uint16_t) * len));
             for (std::uint8_t k = 0; k < len; ++k)
-                _read(fh, &ik.links[k], sizeof(ik.links[k]));
+                ik.links[k] = disk.links[k];
         }
     }
 
@@ -454,7 +504,10 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     //  port invented both, writing past the 136-byte records and
     //  desynchronising the stream - heap corruption with real models,
     //  docs/ARCHITECTURE.md §8.)
-    _read(fh, &model.morphCount, 2);
+    if (!ReadModelFileCount(fh, 2, model.morphCount)) {
+        _close(fh);
+        return false;
+    }
     const std::uint32_t morphCount = model.morphCount;
     if (morphCount > 0) {
         mdl::MorphRecord* morphs = static_cast<mdl::MorphRecord*>(
@@ -469,17 +522,28 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         mdl::Mdl(m)->morphTrackActive = static_cast<unsigned char*>(w2);
         for (std::uint32_t i = 0; i < morphCount; ++i) {
             mdl::MorphRecord& morph = morphs[i];
-            _read(fh, morph.name, sizeof(morph.name));
-            _read(fh, &morph.offsetCount, sizeof(morph.offsetCount));
-            _read(fh, &morph.panel, sizeof(morph.panel));
+            format::PmdMorphHeaderData header;
+            if (!format::ReadPmdMorphHeader(ReadModelFileBytes, &fh, header)) {
+                _close(fh);
+                return false;
+            }
+            std::memcpy(morph.name, header.name, sizeof(morph.name));
+            morph.offsetCount = header.offsetCount;
+            morph.panel = static_cast<mdl::MorphPanel>(header.panel);
             const std::uint32_t n = morph.offsetCount;
             morph.vertexEntries = static_cast<mdl::PmdVertexMorphEntry*>(
                 operator new(sizeof(mdl::PmdVertexMorphEntry) * n));
             std::memset(morph.vertexEntries, 0,
                         sizeof(mdl::PmdVertexMorphEntry) * n);
             for (std::uint32_t k = 0; k < n; ++k) {
-                _read(fh, &morph.vertexEntries[k].vertexIndex, 4);
-                _read(fh, morph.vertexEntries[k].offset, 12);
+                format::PmdMorphOffsetData disk;
+                if (!format::ReadPmdMorphOffset(ReadModelFileBytes, &fh, disk)) {
+                    _close(fh);
+                    return false;
+                }
+                morph.vertexEntries[k].vertexIndex = disk.vertexIndex;
+                std::memcpy(morph.vertexEntries[k].offset, disk.offset,
+                            sizeof(disk.offset));
             }
         }
     }
@@ -510,7 +574,10 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     }
 
     // ---- display frames / face groups -------------------------------------
-    _read(fh, &model.facialFrameCount, sizeof(model.facialFrameCount));
+    if (!ReadModelFileCount(fh, 1, model.facialFrameCount)) {
+        _close(fh);
+        return false;
+    }
     if (model.facialFrameCount != 0) {
         model.displayFrames = static_cast<mdl::FrameGroup*>(
             operator new(sizeof(*model.displayFrames) * model.facialFrameCount));
@@ -518,13 +585,20 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                     sizeof(*model.displayFrames) * model.facialFrameCount);
         for (std::uint8_t i = 0; i < model.facialFrameCount; ++i) {
             mdl::FrameGroup& frame = model.displayFrames[i];
-            _read(fh, &frame.targetIndex, sizeof(frame.targetIndex));
+            if (!format::ReadPmdDisplayTarget(ReadModelFileBytes, &fh,
+                                               frame.targetIndex)) {
+                _close(fh);
+                return false;
+            }
             frame.groupIndex = 1;
             strcpy_s(frame.name, sizeof(frame.name),
                      mdl::Morphs(m)[frame.targetIndex].name);
         }
     }
-    _read(fh, &model.groupCount, sizeof(model.groupCount));
+    if (!ReadModelFileCount(fh, 1, model.groupCount)) {
+        _close(fh);
+        return false;
+    }
     model.groupCount += 2;
     if (model.facialFrameCount != 0)
         ++model.groupCount;
@@ -541,14 +615,23 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         strcpy_s(groups[2].name, sizeof(groups[2].name), kLblFacialJp);
         strcpy_s(groups[2].nameEn, sizeof(groups[2].nameEn), "Facial");
         for (std::uint8_t i = 3; i < grpCount; ++i)
-            _read(fh, groups[i].name, sizeof(groups[i].name));
+            if (!format::ReadPmdGroupName(ReadModelFileBytes, &fh, groups[i].name)) {
+                _close(fh);
+                return false;
+            }
     } else {
         for (std::uint8_t i = 2; i < grpCount; ++i)
-            _read(fh, groups[i].name, sizeof(groups[i].name));
+            if (!format::ReadPmdGroupName(ReadModelFileBytes, &fh, groups[i].name)) {
+                _close(fh);
+                return false;
+            }
     }
 
     // ---- rigid-body group list --------------------------------------------
-    _read(fh, &model.rigidBodyCount, sizeof(model.rigidBodyCount));
+    if (!ReadModelFileCount(fh, 4, model.rigidBodyCount)) {
+        _close(fh);
+        return false;
+    }
     const std::uint32_t rbGroupCount = model.rigidBodyCount;
     mdl::FrameGroup*& rbGroups = mdl::RigidGroups(m);
     rbGroups = static_cast<mdl::FrameGroup*>(
@@ -557,8 +640,13 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                 sizeof(*rbGroups) * (rbGroupCount ? rbGroupCount : 1));
     for (std::uint32_t i = 0; i < rbGroupCount; ++i) {
         mdl::FrameGroup& rb = rbGroups[i];
-        _read(fh, &rb.targetIndex, sizeof(rb.targetIndex));
-        _read(fh, &rb.groupIndex, 1);
+        std::uint8_t diskGroup = 0;
+        if (!format::ReadPmdBoneFrame(ReadModelFileBytes, &fh,
+                                       rb.targetIndex, diskGroup)) {
+            _close(fh);
+            return false;
+        }
+        rb.groupIndex = diskGroup;
         ++rb.groupIndex;
         if (model.facialFrameCount != 0)
             ++rb.groupIndex;
@@ -566,9 +654,13 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     }
 
     // ---- English names section --------------------------------------------
-    std::int8_t hasEn = 0;
-    const int enRead = _read(fh, &hasEn, 1);
-    if (hasEn == 0 || enRead == 0) {
+    format::PmdEnglishPresence englishPresence;
+    if (!format::ReadPmdEnglishPresence(ReadModelFileBytesResult, &fh,
+                                         englishPresence)) {
+        _close(fh);
+        return false;
+    }
+    if (!englishPresence.hasEnglish) {
         if ((boxGate & model.physicsFlags) != 0)
             MessageBoxA(hwnd,
                         "For this model, there is no English data.\n"
@@ -595,9 +687,14 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                 strcpy_s(groups[i].nameEn, sizeof(groups[i].nameEn),
                          groups[i].name);
     } else {
-        _read(fh, model.nameEn, mdl::kPmdModelNameBytes);
+        format::PmdEnglishModelData english;
+        if (!format::ReadPmdEnglishModel(ReadModelFileBytes, &fh, english)) {
+            _close(fh);
+            return false;
+        }
+        std::memcpy(model.nameEn, english.name, sizeof(english.name));
         model.nameEn[19] = 0;
-        _read(fh, model.commentEn, sizeof(model.commentEn));
+        std::memcpy(model.commentEn, english.comment, sizeof(english.comment));
         model.commentEn[255] = 0;
         if (model.physicsFlags != 0 && boxGate &&
             MessageBoxA(hwnd, model.commentEn,
@@ -606,22 +703,38 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
             return false;
         }
         for (std::uint32_t i = 0; i < boneCount; ++i) {
-            _read(fh, &bones[i].nameEn[0], 0x14);
+            if (!format::ReadPmdEnglishName(ReadModelFileBytes, &fh,
+                                             bones[i].nameEn)) {
+                _close(fh);
+                return false;
+            }
             bones[i].nameEn[19] = 0;
         }
         mdl::MorphRecord* morphs = mdl::Morphs(m);
         for (std::uint32_t i = 1; i < morphCount; ++i) {
-            _read(fh, morphs[i].nameEn, sizeof(morphs[i].nameEn));
+            if (!format::ReadPmdEnglishName(ReadModelFileBytes, &fh,
+                                             morphs[i].nameEn)) {
+                _close(fh);
+                return false;
+            }
             morphs[i].nameEn[sizeof(morphs[i].nameEn) - 1] = 0;
         }
         if (model.facialFrameCount != 0)
             for (std::uint8_t i = 3; i < grpCount; ++i) {
-                _read(fh, groups[i].nameEn, sizeof(groups[i].nameEn));
+                if (!format::ReadPmdEnglishGroupName(ReadModelFileBytes, &fh,
+                                                      groups[i].nameEn)) {
+                    _close(fh);
+                    return false;
+                }
                 groups[i].nameEn[sizeof(groups[i].nameEn) - 1] = 0;
             }
         else
             for (std::uint8_t i = 2; i < grpCount; ++i) {
-                _read(fh, groups[i].nameEn, sizeof(groups[i].nameEn));
+                if (!format::ReadPmdEnglishGroupName(ReadModelFileBytes, &fh,
+                                                      groups[i].nameEn)) {
+                    _close(fh);
+                    return false;
+                }
                 groups[i].nameEn[sizeof(groups[i].nameEn) - 1] = 0;
             }
     }
@@ -635,10 +748,13 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                  bones[rbGroups[i].targetIndex].nameEn);
 
     // ---- toon references --------------------------------------------------
-    if (enRead != 0) {
+    if (englishPresence.hasToonFields) {
         auto* toon = model.pmdToonFileNames;
         for (int i = 0; i < 10; ++i) {
-            _read(fh, toon[i], sizeof(toon[i]));
+            if (!format::ReadPmdToonName(ReadModelFileBytes, &fh, toon[i])) {
+                _close(fh);
+                return false;
+            }
             std::uint8_t matched = 0;
             for (int k = 0; k < 10; ++k) {
                 sprintf_s(text, 0x100, "toon%02d.bmp", k + 1);
@@ -665,10 +781,15 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     }
 
     // ---- rigid bodies + joints (physics) ----------------------------------
-    // gated on the rigid-count read itself (original: _read(...) != -1)
-    const int rbRead = _read(fh, &model.rigidCount, sizeof(model.rigidCount));
+    // Preserve the original -1 gate; EOF (0 bytes) enters with zero bodies.
+    const auto rigidRead = format::ReadPmdOptionalCount(
+        ReadModelFileBytesResult, &fh, model.rigidCount);
+    if (rigidRead == format::PmdOptionalRead::Truncated) {
+        _close(fh);
+        return false;
+    }
     const std::uint32_t rigidCount = model.rigidCount;
-    if (rbRead != -1) {
+    if (rigidRead != format::PmdOptionalRead::ReadError) {
         PhysicsScene* physScene = mdl::Mdl(m)->scenePtr;
         SetPhysicsMode(m, 0, nullptr, 0);                    // 0x4A9220
         SetPhysicsMode(m, 1, nullptr, 0);
@@ -680,22 +801,25 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                                   (rigidCount ? rigidCount : 1));
         for (std::uint32_t i = 0; i < rigidCount; ++i) {
             mdl::RigidRecord& rigid = rigids[i];
-            _read(fh, rigid.name, sizeof(rigid.name));
-            std::int16_t boneIndex = -1;
-            _read(fh, &boneIndex, sizeof(boneIndex));
-            rigid.boneIndex = boneIndex;
-            _read(fh, &rigid.group, sizeof(rigid.group));
-            _read(fh, &rigid.noCollapse, sizeof(rigid.noCollapse));
-            _read(fh, &rigid.shape, sizeof(rigid.shape));
-            _read(fh, rigid.size, sizeof(rigid.size));
-            _read(fh, rigid.position, sizeof(rigid.position));
-            _read(fh, rigid.rotation, sizeof(rigid.rotation));
-            _read(fh, &rigid.mass, sizeof(rigid.mass));
-            _read(fh, &rigid.linearDamping, sizeof(rigid.linearDamping));
-            _read(fh, &rigid.angularDamping, sizeof(rigid.angularDamping));
-            _read(fh, &rigid.restitution, sizeof(rigid.restitution));
-            _read(fh, &rigid.friction, sizeof(rigid.friction));
-            _read(fh, &rigid.mode, sizeof(rigid.mode));
+            format::RigidData disk;
+            if (!format::ReadPmdRigid(ReadModelFileBytes, &fh, disk)) {
+                _close(fh);
+                return false;
+            }
+            std::memcpy(rigid.name, disk.pmdName, sizeof(rigid.name));
+            rigid.boneIndex = disk.boneIndex;
+            rigid.group = disk.group;
+            rigid.noCollapse = disk.noCollapse;
+            rigid.shape = disk.shape;
+            std::memcpy(rigid.size, disk.size, sizeof(rigid.size));
+            std::memcpy(rigid.position, disk.position, sizeof(rigid.position));
+            std::memcpy(rigid.rotation, disk.rotation, sizeof(rigid.rotation));
+            rigid.mass = disk.mass;
+            rigid.linearDamping = disk.linearDamping;
+            rigid.angularDamping = disk.angularDamping;
+            rigid.restitution = disk.restitution;
+            rigid.friction = disk.friction;
+            rigid.mode = disk.mode;
             rigid.kinematicFlag = rigid.mode == 2 ? 1 : 0;
             rigid.staticFlag = rigid.mode == 0 ? 1 : 0;
 
@@ -757,7 +881,12 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                 std::memcpy(rigid.invTransform, &inv, sizeof(inv));
             }
         }
-        _read(fh, &model.jointCount, sizeof(model.jointCount));
+        const auto jointRead = format::ReadPmdOptionalCount(
+            ReadModelFileBytesResult, &fh, model.jointCount);
+        if (jointRead == format::PmdOptionalRead::Truncated) {
+            _close(fh);
+            return false;
+        }
         const std::uint32_t jointCount = model.jointCount;
         mdl::JointRecord* joints = static_cast<mdl::JointRecord*>(
             operator new(sizeof(mdl::JointRecord) *
@@ -767,22 +896,18 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                                   (jointCount ? jointCount : 1));
         for (std::uint32_t i = 0; i < jointCount; ++i) {
             mdl::JointRecord& joint = joints[i];
-            _read(fh, joint.name, sizeof(joint.name));
-            // 26 four-byte fields in the original's shuffled order
-            // (0x4C14FB..0x4C1749).  The leading 0 entry in an earlier
-            // port silently replaced this name read, shorting each record
-            // by 16 bytes and desynchronising the stream - wild rigid
-            // indices, AV in memcpy; found by desktop testing with
-            // Luka_Megurine.pmd, docs/ARCHITECTURE.md §8.
-            _read(fh, &joint.rigidA, sizeof(joint.rigidA));
-            _read(fh, &joint.rigidB, sizeof(joint.rigidB));
-            _read(fh, joint.position, sizeof(joint.position));
-            _read(fh, joint.rotation, sizeof(joint.rotation));
-            _read(fh, &joint.limits[3], 3 * sizeof(float));
-            _read(fh, &joint.limits[0], 3 * sizeof(float));
-            _read(fh, &joint.limits[9], 3 * sizeof(float));
-            _read(fh, &joint.limits[6], 3 * sizeof(float));
-            _read(fh, joint.springs, sizeof(joint.springs));
+            format::JointData disk;
+            if (!format::ReadPmdJoint(ReadModelFileBytes, &fh, disk)) {
+                _close(fh);
+                return false;
+            }
+            std::memcpy(joint.name, disk.pmdName, sizeof(joint.name));
+            joint.rigidA = disk.rigidA;
+            joint.rigidB = disk.rigidB;
+            std::memcpy(joint.position, disk.position, sizeof(joint.position));
+            std::memcpy(joint.rotation, disk.rotation, sizeof(joint.rotation));
+            std::memcpy(joint.limits, disk.limits, sizeof(joint.limits));
+            std::memcpy(joint.springs, disk.springs, sizeof(joint.springs));
             {
                 using d3dx::D3DXMATRIXF;
                 mdl::RigidRecord* rigids2 = mdl::Rigids(m);

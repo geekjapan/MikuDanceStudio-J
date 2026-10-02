@@ -44,6 +44,9 @@
 namespace {
 
 using namespace mme;
+#ifdef MIKUDANCESTUDIO_DIAG
+int g_lastLineDrawDisposition = 0;
+#endif
 
 // [0x18005d340] MME_HandleDrawIndexedPrimitive port.
 void MmeHandleDrawIndexedPrimitive(IDirect3DDevice9* device,
@@ -322,8 +325,14 @@ void MmeHandleDrawPrimitive(IDirect3DDevice9* device,
                             unsigned int type, unsigned int startVertex,
                             unsigned int primitiveCount)
 {
+#ifdef MIKUDANCESTUDIO_DIAG
+    if (type == D3DPT_LINELIST) g_lastLineDrawDisposition = 1;
+#endif
     MmeContext* ctx = g_context;
     if (ctx == nullptr) {
+#ifdef MIKUDANCESTUDIO_DIAG
+        if (type == D3DPT_LINELIST) g_lastLineDrawDisposition = 2;
+#endif
         return;
     }
 
@@ -354,6 +363,9 @@ void MmeHandleDrawPrimitive(IDirect3DDevice9* device,
                 static_cast<IDirect3DStateBlock9*>(bindingContext)->Capture();
             }
             ctx->pendingSnapshots.push_back(snap);                  // [L74790]
+#ifdef MIKUDANCESTUDIO_DIAG
+            if (type == D3DPT_LINELIST) g_lastLineDrawDisposition = 3;
+#endif
             return;
         }
         if (ctx->backgroundDrawnFlag == 0) {       // [L74793]
@@ -364,8 +376,15 @@ void MmeHandleDrawPrimitive(IDirect3DDevice9* device,
     // [L74797-74798] forward unless the engine holds a binding pass
     // (device slot 0x288 = DrawPrimitive).
     if (ctx->currentBindingObject == nullptr && device != nullptr) {
+#ifdef MIKUDANCESTUDIO_DIAG
+        if (type == D3DPT_LINELIST) g_lastLineDrawDisposition = 4;
+#endif
         device->DrawPrimitive(static_cast<D3DPRIMITIVETYPE>(type),
                               startVertex, primitiveCount);
+    } else {
+#ifdef MIKUDANCESTUDIO_DIAG
+        if (type == D3DPT_LINELIST) g_lastLineDrawDisposition = 5;
+#endif
     }
 }
 
@@ -433,6 +452,12 @@ std::string MmeBuildSeparatorLine()
 }
 
 } // namespace
+
+#ifdef MIKUDANCESTUDIO_DIAG
+extern "C" int __cdecl MmeProbeLastLineDrawDisposition() {
+    return g_lastLineDrawDisposition;
+}
+#endif
 
 extern "C" {
 

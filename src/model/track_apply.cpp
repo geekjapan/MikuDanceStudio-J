@@ -35,6 +35,7 @@
 #include <cstring>
 
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/scene_timeline_bridge.hpp"
 #include "mikudancestudio/panel_controls.hpp"
 
 namespace mikudancestudio {
@@ -109,6 +110,7 @@ void ApplyGravityTrack(MMDApp* app) {  // VA 0x00412330
                 track[idx].next;
             if (next == 0) {
                 ApplyGravityRecord(app, track[idx]);             // dead end
+                SeekPortableSceneGravity(app, static_cast<int>(frame));
                 RefreshPhysicsDialog(app);
                 return;
             }
@@ -120,6 +122,7 @@ void ApplyGravityTrack(MMDApp* app) {  // VA 0x00412330
     const mdl::GravityKey& rec = track[idx];
     if (recFrame(idx) == frame) {                               // exact hit
         ApplyGravityRecord(app, rec);
+        SeekPortableSceneGravity(app, static_cast<int>(frame));
         RefreshPhysicsDialog(app);
         return;
     }
@@ -150,6 +153,7 @@ void ApplyGravityTrack(MMDApp* app) {  // VA 0x00412330
     std::uint32_t noiseModeWord;
     std::memcpy(&noiseModeWord, &rec.noiseEnabled, sizeof noiseModeWord);
     app->GravityNoiseModeWord() = noiseModeWord;
+    SeekPortableSceneGravity(app, static_cast<int>(frame));
     RefreshPhysicsDialog(app);
 }
 

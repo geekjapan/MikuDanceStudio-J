@@ -15,6 +15,7 @@ configure_file(res/version.rc.in generated/version.rc @ONLY)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+option(MIKUDANCESTUDIO_FORMATS_ONLY "Build only the portable format library and tests" OFF)
 
 if (MSVC)
     add_compile_options(/W3 /permissive-)
@@ -35,21 +36,244 @@ else()
     add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 endif()
 
-if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT MIKUDANCESTUDIO_FORMATS_ONLY)
     message(STATUS
         "Configuring the x64 build (reference: MikuMikuDanceE_v932x64, "
         "VC9 SSE2, d3dx9_43).  Fields are admitted only through the x64 "
         "evidence and parity contract in docs/X64_RECONSTRUCTION.md.")
 endif()
 
-if (NOT WIN32)
-    message(FATAL_ERROR "MikuDanceStudio targets Windows only (Win32/DirectX9).")
+# Portable file formats can be built without Conan, Bullet, Win32, or D3D9.
+add_library(mikudancestudio_formats STATIC
+    src/io/vpd_format.cpp
+    src/io/vmd_format.cpp)
+target_sources(mikudancestudio_formats PRIVATE src/io/model_format_header.cpp)
+target_sources(mikudancestudio_formats PRIVATE src/io/model_geometry.cpp)
+target_sources(mikudancestudio_formats PRIVATE src/io/model_sections.cpp)
+target_sources(mikudancestudio_formats PRIVATE src/io/model_reader.cpp)
+target_sources(mikudancestudio_formats PRIVATE src/io/pmm_format.cpp)
+  target_sources(mikudancestudio_formats PRIVATE src/io/pmm_document.cpp)
+  target_sources(mikudancestudio_formats PRIVATE src/io/pmm_scene_document.cpp)
+  target_sources(mikudancestudio_formats PRIVATE src/io/pmm_scene_writer.cpp)
+  target_sources(mikudancestudio_formats PRIVATE src/io/pmm_scene_evaluation.cpp)
+  target_sources(mikudancestudio_formats PRIVATE src/io/pmm_scene_playback.cpp)
+  target_sources(mikudancestudio_formats PRIVATE src/io/pmm_scene_world.cpp)
+  target_sources(mikudancestudio_formats PRIVATE src/io/scene_session.cpp)
+  target_sources(mikudancestudio_formats PRIVATE src/io/scene_resources.cpp)
+  target_sources(mikudancestudio_formats PRIVATE src/render/render_snapshot.cpp)
+target_include_directories(mikudancestudio_formats PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_library(mikudancestudio_rhi STATIC
+    src/render/rhi_null.cpp
+    src/render/rhi_image.cpp
+    src/render/rhi_assets.cpp
+    src/render/rhi_material_textures.cpp)
+target_sources(mikudancestudio_rhi PRIVATE src/render/rhi_shader_inputs.cpp)
+target_include_directories(mikudancestudio_rhi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+option(MIKUDANCESTUDIO_RHI_D3D9 "Build the opt-in D3D9 RHI adapter" ON)
+if(WIN32 AND MIKUDANCESTUDIO_RHI_D3D9)
+    target_sources(mikudancestudio_rhi PRIVATE src/render/rhi_d3d9.cpp
+        src/render/rhi_d3d9_texture_preparation.cpp
+        src/render/rhi_d3d9_swapchain.cpp)
+    target_link_libraries(mikudancestudio_rhi PUBLIC d3d9)
+    target_compile_definitions(mikudancestudio_rhi PUBLIC
+        MIKUDANCESTUDIO_RHI_D3D9=1)
+endif()
+add_executable(mds_scene_cli src/tools/scene_cli.cpp)
+target_link_libraries(mds_scene_cli PRIVATE mikudancestudio_formats)
+
+include(CTest)
+if(BUILD_TESTING)
+    if(WIN32)
+        add_executable(rhi_d3d11_shader_inputs_test tests/rhi_d3d11_shader_inputs_test.cpp)
+        target_link_libraries(rhi_d3d11_shader_inputs_test PRIVATE mikudancestudio_rhi d3d11 d3dcompiler)
+        add_test(NAME rhi_d3d11_shader_inputs COMMAND rhi_d3d11_shader_inputs_test)
+        set_tests_properties(rhi_d3d11_shader_inputs PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+    if(WIN32 AND MIKUDANCESTUDIO_RHI_D3D9)
+        add_executable(rhi_d3d11_material_pixel_test tests/rhi_d3d11_material_pixel_test.cpp)
+        target_link_libraries(rhi_d3d11_material_pixel_test PRIVATE mikudancestudio_rhi d3d11 d3dcompiler user32)
+        target_compile_definitions(rhi_d3d11_material_pixel_test PRIVATE MDS_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders")
+        add_test(NAME rhi_d3d11_material_pixel COMMAND rhi_d3d11_material_pixel_test)
+        set_tests_properties(rhi_d3d11_material_pixel PROPERTIES SKIP_RETURN_CODE 77)
+        add_test(NAME rhi_d3d11_material_pixel_hardware COMMAND rhi_d3d11_material_pixel_test --hardware --linear)
+        add_test(NAME rhi_d3d11_material_pixel_constant COMMAND rhi_d3d11_material_pixel_test --precision constant)
+        add_test(NAME rhi_d3d11_material_pixel_translucent COMMAND rhi_d3d11_material_pixel_test --precision translucent)
+        set_tests_properties(rhi_d3d11_material_pixel_hardware rhi_d3d11_material_pixel_constant
+            rhi_d3d11_material_pixel_translucent PROPERTIES SKIP_RETURN_CODE 77)
+        add_executable(rhi_d3d11_real_batch_test tests/rhi_d3d11_real_batch_test.cpp)
+        target_link_libraries(rhi_d3d11_real_batch_test PRIVATE mikudancestudio_rhi d3d11 d3dcompiler user32)
+        target_compile_definitions(rhi_d3d11_real_batch_test PRIVATE MDS_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders")
+        add_executable(rhi_d3d11_model_vertex_test tests/rhi_d3d11_model_vertex_test.cpp)
+        target_link_libraries(rhi_d3d11_model_vertex_test PRIVATE mikudancestudio_rhi d3d11 d3dcompiler)
+        target_compile_definitions(rhi_d3d11_model_vertex_test PRIVATE MDS_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders")
+        add_test(NAME rhi_d3d11_model_vertex COMMAND rhi_d3d11_model_vertex_test)
+        set_tests_properties(rhi_d3d11_model_vertex PROPERTIES SKIP_RETURN_CODE 77)
+        add_test(NAME rhi_d3d11_model_vertex_byte COMMAND rhi_d3d11_model_vertex_test --vertex-byte)
+        set_tests_properties(rhi_d3d11_model_vertex_byte PROPERTIES SKIP_RETURN_CODE 77)
+        add_executable(rhi_d3d9_msaa_history_test tests/rhi_d3d9_msaa_history_test.cpp)
+        target_link_libraries(rhi_d3d9_msaa_history_test PRIVATE mikudancestudio_rhi d3d9 d3dcompiler user32)
+        add_test(NAME rhi_d3d9_msaa_history_capability COMMAND rhi_d3d9_msaa_history_test ${CMAKE_CURRENT_BINARY_DIR}/msaa-history-capabilities)
+        add_test(NAME rhi_d3d9_geometry_planes COMMAND rhi_d3d9_msaa_history_test ${CMAKE_CURRENT_BINARY_DIR}/geometry-planes --geometry-planes)
+        set_tests_properties(rhi_d3d9_geometry_planes PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        add_test(NAME rhi_d3d9_triangle_orders COMMAND rhi_d3d9_msaa_history_test ${CMAKE_CURRENT_BINARY_DIR}/triangle-orders --triangle-orders)
+        set_tests_properties(rhi_d3d9_triangle_orders PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        add_test(NAME rhi_d3d9_float_sweep COMMAND rhi_d3d9_msaa_history_test ${CMAKE_CURRENT_BINARY_DIR}/float-sweep --float-sweep)
+        set_tests_properties(rhi_d3d9_float_sweep PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        add_test(NAME rhi_d3d9_float_interpolation COMMAND rhi_d3d9_msaa_history_test ${CMAKE_CURRENT_BINARY_DIR}/float-interpolation --float-interpolation)
+        set_tests_properties(rhi_d3d9_float_interpolation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        add_test(NAME rhi_d3d9_edge_quantization COMMAND rhi_d3d9_msaa_history_test ${CMAKE_CURRENT_BINARY_DIR}/edge-quantization --edge-quantization)
+        set_tests_properties(rhi_d3d9_edge_quantization PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        add_test(NAME rhi_d3d9_prelit_interpolation COMMAND rhi_d3d9_msaa_history_test ${CMAKE_CURRENT_BINARY_DIR}/prelit-interpolation --prelit-interpolation)
+        set_tests_properties(rhi_d3d9_prelit_interpolation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        foreach(shape IN ITEMS triangle pair)
+            add_test(NAME rhi_d3d9_lighting_${shape} COMMAND rhi_d3d9_msaa_history_test ${CMAKE_CURRENT_BINARY_DIR}/lighting-${shape} --lighting-${shape})
+            set_tests_properties(rhi_d3d9_lighting_${shape} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        endforeach()
+        add_test(NAME rhi_d3d9_fixed_lighting COMMAND rhi_d3d9_msaa_history_test ${CMAKE_CURRENT_BINARY_DIR}/fixed-lighting-reproduction --fixed-lighting)
+        set_tests_properties(rhi_d3d9_fixed_lighting PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        add_test(NAME rhi_d3d9_attachment_history COMMAND rhi_d3d9_msaa_history_test ${CMAKE_CURRENT_BINARY_DIR}/msaa-attachment-history --attachment-history)
+        set_tests_properties(rhi_d3d9_attachment_history PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        add_test(NAME rhi_d3d9_sample_coverage COMMAND rhi_d3d9_msaa_history_test ${CMAKE_CURRENT_BINARY_DIR}/msaa-sample-coverage --sample-coverage)
+        set_tests_properties(rhi_d3d9_sample_coverage PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        set_tests_properties(rhi_d3d9_msaa_history_capability PROPERTIES SKIP_RETURN_CODE 77)
+        add_executable(rhi_d3d9_swapchain_test tests/rhi_d3d9_swapchain_test.cpp)
+        target_link_libraries(rhi_d3d9_swapchain_test PRIVATE mikudancestudio_rhi user32)
+        add_test(NAME rhi_d3d9_swapchain COMMAND rhi_d3d9_swapchain_test)
+        set_tests_properties(rhi_d3d9_swapchain PROPERTIES SKIP_RETURN_CODE 77)
+        add_executable(rhi_d3d9_test tests/rhi_d3d9_test.cpp)
+        target_link_libraries(rhi_d3d9_test PRIVATE mikudancestudio_rhi user32)
+        add_test(NAME rhi_d3d9 COMMAND rhi_d3d9_test)
+        set_tests_properties(rhi_d3d9 PROPERTIES SKIP_RETURN_CODE 77)
+        add_executable(rhi_d3d9_parity_test tests/rhi_d3d9_parity_test.cpp)
+        target_link_libraries(rhi_d3d9_parity_test PRIVATE mikudancestudio_rhi user32)
+        add_test(NAME rhi_d3d9_parity COMMAND rhi_d3d9_parity_test)
+        set_tests_properties(rhi_d3d9_parity PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+    add_executable(rhi_null_test tests/rhi_null_test.cpp)
+    target_link_libraries(rhi_null_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME rhi_null COMMAND rhi_null_test)
+    add_executable(rhi_image_test tests/rhi_image_test.cpp)
+    target_link_libraries(rhi_image_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME rhi_image COMMAND rhi_image_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/res/assets/hud_sprites.png")
+    add_executable(rhi_assets_test tests/rhi_assets_test.cpp)
+    target_link_libraries(rhi_assets_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME rhi_assets COMMAND rhi_assets_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/res/assets")
+    add_executable(rhi_material_textures_test tests/rhi_material_textures_test.cpp)
+    target_link_libraries(rhi_material_textures_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME rhi_material_textures COMMAND rhi_material_textures_test)
+    add_executable(rhi_texture_preparation_test tests/rhi_texture_preparation_test.cpp)
+    target_link_libraries(rhi_texture_preparation_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME rhi_texture_preparation COMMAND rhi_texture_preparation_test)
+    add_executable(rhi_history_test tests/rhi_history_test.cpp)
+    target_link_libraries(rhi_history_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME rhi_history COMMAND rhi_history_test)
+    if(WIN32 AND MIKUDANCESTUDIO_RHI_D3D9)
+        add_executable(rhi_texture_preparation_d3d9_test tests/rhi_texture_preparation_d3d9_test.cpp)
+        target_link_libraries(rhi_texture_preparation_d3d9_test PRIVATE mikudancestudio_rhi user32)
+        add_test(NAME rhi_texture_preparation_d3d9 COMMAND rhi_texture_preparation_d3d9_test)
+        set_tests_properties(rhi_texture_preparation_d3d9 PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+    add_executable(mds_scene_fixture tests/scene_cli_fixture.cpp)
+    target_include_directories(mds_scene_fixture PRIVATE tests)
+    target_link_libraries(mds_scene_fixture PRIVATE mikudancestudio_formats)
+    add_test(NAME scene_fixture COMMAND mds_scene_fixture
+        "${CMAKE_CURRENT_BINARY_DIR}/portable_fixture")
+    set_tests_properties(scene_fixture PROPERTIES
+        FIXTURES_SETUP portable_scene_sample)
+    add_executable(render_snapshot_test tests/render_snapshot_test.cpp)
+    add_executable(render_batch_dependency_test tests/render_batch_dependency_test.cpp)
+    target_link_libraries(render_batch_dependency_test PRIVATE mikudancestudio_formats)
+    add_test(NAME render_batch_dependency COMMAND render_batch_dependency_test)
+    target_link_libraries(render_snapshot_test PRIVATE mikudancestudio_formats)
+    add_test(NAME render_snapshot COMMAND render_snapshot_test
+        "${CMAKE_CURRENT_BINARY_DIR}/portable_fixture")
+    set_tests_properties(render_snapshot PROPERTIES
+        FIXTURES_REQUIRED portable_scene_sample)
+    add_test(NAME scene_cli_missing COMMAND mds_scene_cli
+        "${CMAKE_CURRENT_BINARY_DIR}/portable_fixture/scene.pmm"
+        "${CMAKE_CURRENT_BINARY_DIR}/portable_fixture/roundtrip.pmm")
+    set_tests_properties(scene_cli_missing PROPERTIES
+        FIXTURES_REQUIRED portable_scene_sample WILL_FAIL TRUE)
+    add_test(NAME scene_cli_roundtrip COMMAND mds_scene_cli
+        "${CMAKE_CURRENT_BINARY_DIR}/portable_fixture/scene.pmm"
+        "${CMAKE_CURRENT_BINARY_DIR}/portable_fixture/roundtrip.pmm"
+        --reselect 1 "${CMAKE_CURRENT_BINARY_DIR}/portable_fixture/assets/recovered.pmd")
+    set_tests_properties(scene_cli_roundtrip PROPERTIES
+        FIXTURES_REQUIRED portable_scene_sample
+        DEPENDS scene_cli_missing
+        PASS_REGULAR_EXPRESSION "\\\"models\\\":1.*\\\"resolved\\\":1.*\\\"readback\\\":true")
+    add_executable(vpd_format_test tests/vpd_format_test.cpp)
+    target_link_libraries(vpd_format_test PRIVATE mikudancestudio_formats)
+    add_test(NAME vpd_format COMMAND vpd_format_test)
+    add_executable(vmd_format_test tests/vmd_format_test.cpp)
+    target_link_libraries(vmd_format_test PRIVATE mikudancestudio_formats)
+    add_test(NAME vmd_format COMMAND vmd_format_test)
+    add_executable(model_format_header_test tests/model_format_header_test.cpp)
+    target_link_libraries(model_format_header_test PRIVATE mikudancestudio_formats)
+    add_test(NAME model_format_header COMMAND model_format_header_test)
+    add_executable(model_geometry_test tests/model_geometry_test.cpp)
+    target_link_libraries(model_geometry_test PRIVATE mikudancestudio_formats)
+    add_test(NAME model_geometry COMMAND model_geometry_test)
+    add_executable(model_sections_test tests/model_sections_test.cpp)
+    target_link_libraries(model_sections_test PRIVATE mikudancestudio_formats)
+    add_test(NAME model_sections COMMAND model_sections_test)
+    add_executable(model_reader_test tests/model_reader_test.cpp)
+    target_link_libraries(model_reader_test PRIVATE mikudancestudio_formats)
+    add_test(NAME model_reader COMMAND model_reader_test)
+    add_executable(pmm_format_test tests/pmm_format_test.cpp)
+    target_link_libraries(pmm_format_test PRIVATE mikudancestudio_formats)
+    add_test(NAME pmm_format COMMAND pmm_format_test)
+    add_executable(pmm_sections_test tests/pmm_sections_test.cpp)
+    target_link_libraries(pmm_sections_test PRIVATE mikudancestudio_formats)
+    add_test(NAME pmm_sections COMMAND pmm_sections_test)
+    add_executable(pmm_document_test tests/pmm_document_test.cpp)
+    target_link_libraries(pmm_document_test PRIVATE mikudancestudio_formats)
+    add_test(NAME pmm_document COMMAND pmm_document_test)
+    add_executable(pmm_scene_document_test tests/pmm_scene_document_test.cpp)
+    target_link_libraries(pmm_scene_document_test PRIVATE mikudancestudio_formats)
+    add_test(NAME pmm_scene_document COMMAND pmm_scene_document_test)
+    add_executable(pmm_scene_evaluation_test tests/pmm_scene_evaluation_test.cpp)
+    target_link_libraries(pmm_scene_evaluation_test PRIVATE mikudancestudio_formats)
+    add_test(NAME pmm_scene_evaluation COMMAND pmm_scene_evaluation_test)
+    add_executable(pmm_scene_world_test tests/pmm_scene_world_test.cpp)
+    target_link_libraries(pmm_scene_world_test PRIVATE mikudancestudio_formats)
+    add_test(NAME pmm_scene_world COMMAND pmm_scene_world_test)
+    add_executable(pmm_scene_session_external_test
+        tests/pmm_scene_session_external_test.cpp)
+    target_link_libraries(pmm_scene_session_external_test PRIVATE
+        mikudancestudio_formats)
+    add_test(NAME pmm_scene_session_external
+             COMMAND pmm_scene_session_external_test)
+    set_tests_properties(pmm_scene_session_external PROPERTIES
+        SKIP_RETURN_CODE 77)
+endif()
+if(MIKUDANCESTUDIO_FORMATS_ONLY)
+    return()
 endif()
 
 # ---------------------------------------------------------------------------
 # Dependencies (provisioned by Conan; see conanfile.py / recipes/)
 # ---------------------------------------------------------------------------
 find_package(BULLET275 REQUIRED)
+
+# The first portable M1 boundary: Bullet world ownership has no Win32 or D3D9
+# dependency. On non-Windows hosts this target and its headless test can build
+# while the existing GUI and DirectX backends remain Windows-only.
+add_library(mikudancestudio_physics STATIC src/physics/physics_world_state.cpp)
+target_include_directories(mikudancestudio_physics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(mikudancestudio_physics PUBLIC BULLET275::BULLET275)
+
+if(BUILD_TESTING)
+    add_executable(physics_world_state_test tests/physics_world_state_test.cpp)
+    target_link_libraries(physics_world_state_test PRIVATE mikudancestudio_physics)
+    add_test(NAME physics_world_state COMMAND physics_world_state_test)
+endif()
+
+if(NOT WIN32)
+    return()
+endif()
 
 # ---------------------------------------------------------------------------
 # Core static library: application state, math, startup chain, effect API.
@@ -79,6 +303,7 @@ add_library(mikudancestudio_core STATIC
     src/app/playback_catchup.cpp
     src/app/playback_state.cpp
     src/app/timeline_advance.cpp
+    src/app/scene_timeline_bridge.cpp
     src/app/frame_modes.cpp
     src/app/frame_modes_bone.cpp
     src/app/key_ladder.cpp
@@ -98,6 +323,9 @@ add_library(mikudancestudio_core STATIC
     src/render/debug_geometry.cpp
     src/render/accessory.cpp
     src/render/model_renderers.cpp
+    src/render/model_batch_bridge.cpp
+    src/render/rhi_scene_history.cpp
+    src/render/rhi_history_replay.cpp
     src/render/bg_overlay.cpp
     src/render/device_reset.cpp
     src/app/avi_record_start.cpp
@@ -112,6 +340,7 @@ add_library(mikudancestudio_core STATIC
     src/model/bone_edit_undo.cpp
     src/model/model_frame_seek.cpp
     src/model/vmd_load.cpp
+    src/model/vmd_track_apply.cpp
     src/model/track_apply.cpp
     src/model/key_registrars.cpp
     src/model/morph_apply.cpp
@@ -135,6 +364,7 @@ add_library(mikudancestudio_core STATIC
     src/io/vpd_file.cpp
     src/io/vmd_save.cpp
     src/io/pmm_load_dispatch.cpp
+    src/io/pmm_v1_layout_win.cpp
     src/io/pmm_load_v2.cpp
     src/io/pmm_load_v1.cpp
     src/window/ui_scroll_mouse.cpp
@@ -190,6 +420,9 @@ target_include_directories(mikudancestudio_core PUBLIC ${CMAKE_CURRENT_SOURCE_DI
 target_include_directories(mikudancestudio_core PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/include)
 target_link_libraries(mikudancestudio_core PUBLIC
+    mikudancestudio_physics
+    mikudancestudio_formats
+    mikudancestudio_rhi
     BULLET275::BULLET275
     user32      # RegisterClass / CreateWindow / MessageBox
     gdi32       # CreateSolidBrush / GetStockObject
@@ -220,6 +453,9 @@ option(MIKUDANCESTUDIO_DIAG
        "Compile the porting-era diagnostics probes (MIKUDANCESTUDIO_* env dumps/traces)" OFF)
 if (MIKUDANCESTUDIO_DIAG)
     target_compile_definitions(mikudancestudio_core PUBLIC MIKUDANCESTUDIO_DIAG=1)
+    target_link_libraries(mikudancestudio_core PUBLIC d3dcompiler) # diagnostic depth-history shader
+    target_sources(mikudancestudio_core PRIVATE src/io/pmm_runtime_parity_diag.cpp)
+    target_sources(mikudancestudio_core PRIVATE src/io/pmm_world_parity_diag.cpp)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -319,6 +555,9 @@ add_library(MMEffect STATIC
     third_party/mmeffect/src/mmeffect/sas_exec.cpp
     third_party/mmeffect/src/mmeffect/sas_interpreter.cpp
 )
+if(MIKUDANCESTUDIO_DIAG)
+    target_compile_definitions(MMEffect PRIVATE MIKUDANCESTUDIO_DIAG=1)
+endif()
 target_include_directories(MMEffect PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/include
     PRIVATE
@@ -358,8 +597,15 @@ target_sources(MikuDanceStudio PRIVATE
     third_party/mmeffect/res/MMEffect.rc ${MME_ICON_RES})
 target_link_options(MikuDanceStudio PRIVATE "${MME_ICON_RES}")
 
-include(CTest)
 if(BUILD_TESTING)
+    add_executable(vmd_save_adapter_test tests/vmd_save_adapter_test.cpp)
+    target_link_libraries(vmd_save_adapter_test PRIVATE
+        mikudancestudio_core MMEffect dsound)
+    add_test(NAME vmd_save_adapter COMMAND vmd_save_adapter_test)
+    add_executable(vmd_load_adapter_test tests/vmd_load_adapter_test.cpp)
+    target_link_libraries(vmd_load_adapter_test PRIVATE
+        mikudancestudio_core MMEffect dsound)
+    add_test(NAME vmd_load_adapter COMMAND vmd_load_adapter_test)
     add_executable(wave_data_chunk_test tests/wave_data_chunk_test.cpp
         src/media/wave_data_chunk.cpp)
     target_include_directories(wave_data_chunk_test PRIVATE include)
@@ -368,6 +614,190 @@ if(BUILD_TESTING)
     target_link_libraries(pmx_buffer_failure_test PRIVATE
         mikudancestudio_core MMEffect dsound)
     add_test(NAME pmx_buffer_failure COMMAND pmx_buffer_failure_test)
+    add_executable(model_reader_adapter_test tests/model_reader_adapter_test.cpp)
+    target_include_directories(model_reader_adapter_test PRIVATE src/model)
+    target_link_libraries(model_reader_adapter_test PRIVATE
+        mikudancestudio_core MMEffect dsound)
+    add_test(NAME model_reader_pmd_adapter COMMAND model_reader_adapter_test pmd)
+    add_test(NAME model_reader_pmx_adapter COMMAND model_reader_adapter_test pmx)
+    add_test(NAME model_reader_pmx_physics_adapter
+        COMMAND model_reader_adapter_test pmx_physics)
+    add_executable(model_reader_external_test tests/model_reader_external_test.cpp)
+    target_include_directories(model_reader_external_test PRIVATE src/model)
+    target_link_libraries(model_reader_external_test PRIVATE mikudancestudio_formats)
+    add_test(NAME model_reader_external COMMAND model_reader_external_test)
+    set_tests_properties(model_reader_external PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(model_reader_runtime_external_test
+        tests/model_reader_runtime_external_test.cpp)
+    target_include_directories(model_reader_runtime_external_test PRIVATE src/model)
+    target_link_libraries(model_reader_runtime_external_test PRIVATE
+        mikudancestudio_core MMEffect dsound)
+    add_test(NAME model_reader_runtime_external COMMAND model_reader_runtime_external_test)
+    set_tests_properties(model_reader_runtime_external PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(pmm_format_adapter_test tests/pmm_format_adapter_test.cpp)
+    target_include_directories(pmm_format_adapter_test PRIVATE src/io)
+    target_link_libraries(pmm_format_adapter_test PRIVATE mikudancestudio_formats)
+    add_test(NAME pmm_format_adapter COMMAND pmm_format_adapter_test)
+    add_executable(pmm_document_adapter_test tests/pmm_document_adapter_test.cpp)
+    target_include_directories(pmm_document_adapter_test PRIVATE src/io)
+    target_link_libraries(pmm_document_adapter_test PRIVATE mikudancestudio_formats)
+    add_test(NAME pmm_document_adapter COMMAND pmm_document_adapter_test)
+    add_executable(pmm_save_adapter_test tests/pmm_save_adapter_test.cpp)
+    target_include_directories(pmm_save_adapter_test PRIVATE src/io)
+    target_link_libraries(pmm_save_adapter_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME pmm_save_adapter COMMAND pmm_save_adapter_test)
+    set_tests_properties(pmm_save_adapter PROPERTIES TIMEOUT 30)
+    add_executable(pmm_scene_seek_adapter_test
+        tests/pmm_scene_seek_adapter_test.cpp)
+    target_link_libraries(pmm_scene_seek_adapter_test PRIVATE
+        mikudancestudio_core MMEffect dsound)
+    add_test(NAME pmm_scene_seek_adapter COMMAND pmm_scene_seek_adapter_test)
+    add_executable(pmm_scene_timeline_bridge_test
+        tests/pmm_scene_timeline_bridge_test.cpp)
+    target_link_libraries(pmm_scene_timeline_bridge_test PRIVATE
+        mikudancestudio_core MMEffect dsound)
+    add_test(NAME pmm_scene_timeline_bridge
+             COMMAND pmm_scene_timeline_bridge_test)
+    set_tests_properties(pmm_scene_timeline_bridge PROPERTIES
+        SKIP_RETURN_CODE 77)
+    add_executable(pmm_v1_layout_adapter_test tests/pmm_v1_layout_adapter_test.cpp)
+    target_include_directories(pmm_v1_layout_adapter_test PRIVATE src/io)
+    target_link_libraries(pmm_v1_layout_adapter_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME pmm_v1_layout_adapter COMMAND pmm_v1_layout_adapter_test)
+    set_tests_properties(pmm_v1_layout_adapter PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    add_executable(pmm_v1_relocation_gui_test tests/pmm_v1_relocation_gui_test.cpp)
+    target_link_libraries(pmm_v1_relocation_gui_test PRIVATE
+        mikudancestudio_formats uiautomationcore ole32 user32)
+    if(MIKUDANCESTUDIO_DIAG)
+        target_compile_definitions(pmm_v1_relocation_gui_test PRIVATE
+            MDS_EXPECT_RUNTIME_PARITY=1)
+    endif()
+    add_test(NAME pmm_v1_relocation_gui COMMAND pmm_v1_relocation_gui_test
+        $<TARGET_FILE:MikuDanceStudio>)
+    set_tests_properties(pmm_v1_relocation_gui PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK mds_gui_desktop)
+    if(MIKUDANCESTUDIO_DIAG AND TARGET rhi_d3d9_parity_test)
+        add_test(NAME rhi_application_swapchain_gui COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_application_swapchain.py
+            --gui $<TARGET_FILE:pmm_v1_relocation_gui_test>
+            --application $<TARGET_FILE:MikuDanceStudio>
+            --evidence ${CMAKE_CURRENT_BINARY_DIR}/application-swapchain-evidence)
+        set_tests_properties(rhi_application_swapchain_gui PROPERTIES SKIP_RETURN_CODE 77
+            TIMEOUT 300 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        add_test(NAME rhi_application_swapchain_single_gui COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_application_swapchain.py
+            --gui $<TARGET_FILE:pmm_v1_relocation_gui_test>
+            --application $<TARGET_FILE:MikuDanceStudio>
+            --evidence ${CMAKE_CURRENT_BINARY_DIR}/application-swapchain-single-evidence --single-sample)
+        set_tests_properties(rhi_application_swapchain_single_gui PROPERTIES SKIP_RETURN_CODE 77
+            TIMEOUT 300 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+
+        if(TARGET rhi_d3d11_real_batch_test)
+            add_test(NAME rhi_real_d3d11_batch_gui COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_real_d3d11_batch.py
+                --gui $<TARGET_FILE:pmm_v1_relocation_gui_test>
+                --application $<TARGET_FILE:MikuDanceStudio>
+                --dx9-test $<TARGET_FILE:rhi_d3d9_parity_test>
+                --replay $<TARGET_FILE:rhi_d3d11_real_batch_test>
+                --evidence ${CMAKE_CURRENT_BINARY_DIR}/real-dx11-evidence)
+            set_tests_properties(rhi_real_d3d11_batch_gui PROPERTIES SKIP_RETURN_CODE 77
+                TIMEOUT 600 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            add_test(NAME rhi_real_d3d9_history_replay_gui COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_real_d3d9_history_replay.py
+                --gui $<TARGET_FILE:pmm_v1_relocation_gui_test>
+                --application $<TARGET_FILE:MikuDanceStudio>
+                --dx9-test $<TARGET_FILE:rhi_d3d9_parity_test>
+                --probe $<TARGET_FILE:rhi_d3d9_msaa_history_test>
+                --evidence ${CMAKE_CURRENT_BINARY_DIR}/real-dx9-replay-evidence)
+            set_tests_properties(rhi_real_d3d9_history_replay_gui PROPERTIES SKIP_RETURN_CODE 77
+                TIMEOUT 600 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            add_test(NAME rhi_real_d3d11_history_gui COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_real_d3d11_history.py
+                --gui $<TARGET_FILE:pmm_v1_relocation_gui_test>
+                --application $<TARGET_FILE:MikuDanceStudio>
+                --dx9-test $<TARGET_FILE:rhi_d3d9_parity_test>
+                --replay $<TARGET_FILE:rhi_d3d11_real_batch_test>
+                --evidence ${CMAKE_CURRENT_BINARY_DIR}/real-dx11-history-evidence)
+            set_tests_properties(rhi_real_d3d11_history_gui PROPERTIES SKIP_RETURN_CODE 77
+                TIMEOUT 600 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        endif()
+        add_test(NAME rhi_real_shader_inputs_gui COMMAND pmm_v1_relocation_gui_test
+            $<TARGET_FILE:MikuDanceStudio> $<TARGET_FILE:rhi_d3d9_parity_test>)
+        set_tests_properties(rhi_real_shader_inputs_gui PROPERTIES SKIP_RETURN_CODE 77
+            TIMEOUT 180 RUN_SERIAL TRUE ENVIRONMENT "MDS_RHI_GUI_MODE=model_textures_native;MDS_RHI_SHADER_INPUTS=1")
+        foreach(mode IN ITEMS model model_optin model_toon model_toon_optin
+            model_textures model_textures_preparation model_textures_native model_textures_combined model_textures_combined_add
+            model_textures_sphere model_textures_sphere_add)
+            add_test(NAME rhi_real_${mode}_gui COMMAND pmm_v1_relocation_gui_test
+                $<TARGET_FILE:MikuDanceStudio> $<TARGET_FILE:rhi_d3d9_parity_test>)
+            set_tests_properties(rhi_real_${mode}_gui PROPERTIES SKIP_RETURN_CODE 77
+                TIMEOUT 180 RUN_SERIAL TRUE ENVIRONMENT "MDS_RHI_GUI_MODE=${mode}")
+        endforeach()
+        add_test(NAME rhi_real_selection_gui COMMAND pmm_v1_relocation_gui_test
+            $<TARGET_FILE:MikuDanceStudio> $<TARGET_FILE:rhi_d3d9_parity_test>)
+        set_tests_properties(rhi_real_selection_gui PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK mds_gui_desktop)
+        add_test(NAME rhi_real_selection_optin_gui
+            COMMAND pmm_v1_relocation_gui_test
+            $<TARGET_FILE:MikuDanceStudio> $<TARGET_FILE:rhi_d3d9_parity_test>)
+        set_tests_properties(rhi_real_selection_optin_gui PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK mds_gui_desktop
+            ENVIRONMENT "MDS_RHI_GUI_MODE=optin")
+        add_test(NAME rhi_real_sprite_gui
+            COMMAND pmm_v1_relocation_gui_test
+            $<TARGET_FILE:MikuDanceStudio> $<TARGET_FILE:rhi_d3d9_parity_test>)
+        set_tests_properties(rhi_real_sprite_gui PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK mds_gui_desktop
+            ENVIRONMENT "MDS_RHI_GUI_MODE=sprite")
+        add_test(NAME rhi_real_sprite_optin_gui
+            COMMAND pmm_v1_relocation_gui_test
+            $<TARGET_FILE:MikuDanceStudio> $<TARGET_FILE:rhi_d3d9_parity_test>)
+        set_tests_properties(rhi_real_sprite_optin_gui PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK mds_gui_desktop
+            ENVIRONMENT "MDS_RHI_GUI_MODE=sprite_optin")
+        add_test(NAME rhi_real_text_gui COMMAND pmm_v1_relocation_gui_test
+            $<TARGET_FILE:MikuDanceStudio> $<TARGET_FILE:rhi_d3d9_parity_test>)
+        set_tests_properties(rhi_real_text_gui PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK mds_gui_desktop
+            ENVIRONMENT "MDS_RHI_GUI_MODE=text")
+        add_test(NAME rhi_real_text_optin_gui
+            COMMAND pmm_v1_relocation_gui_test
+            $<TARGET_FILE:MikuDanceStudio> $<TARGET_FILE:rhi_d3d9_parity_test>)
+        set_tests_properties(rhi_real_text_optin_gui PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK mds_gui_desktop
+            ENVIRONMENT "MDS_RHI_GUI_MODE=text_optin")
+        add_test(NAME rhi_real_text_portable_candidate_gui
+            COMMAND pmm_v1_relocation_gui_test
+            $<TARGET_FILE:MikuDanceStudio> $<TARGET_FILE:rhi_d3d9_parity_test>)
+        set_tests_properties(rhi_real_text_portable_candidate_gui PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK mds_gui_desktop
+            ENVIRONMENT "MDS_RHI_GUI_MODE=text_optin;MDS_RHI_PORTABLE_FONT=1;MDS_RHI_PORTABLE_FONT_DIR=${CMAKE_CURRENT_SOURCE_DIR}/res/assets")
+    endif()
+    if(MIKUDANCESTUDIO_DIAG)
+        add_executable(d3d9_init_probe_test tests/d3d9_init_probe_test.cpp)
+        target_link_libraries(d3d9_init_probe_test PRIVATE d3d9 user32)
+        add_executable(pmm_v2_selector_gui_test tests/pmm_v2_selector_gui_test.cpp)
+        target_link_libraries(pmm_v2_selector_gui_test PRIVATE
+            mikudancestudio_formats uiautomationcore ole32 user32)
+        add_test(NAME pmm_v2_selector_gui COMMAND pmm_v2_selector_gui_test
+            $<TARGET_FILE:MikuDanceStudio>)
+        set_tests_properties(pmm_v2_selector_gui PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 180)
+        if(TARGET rhi_d3d9_parity_test)
+            add_test(NAME rhi_real_materials_v2_gui COMMAND pmm_v2_selector_gui_test
+                $<TARGET_FILE:MikuDanceStudio>)
+            set_tests_properties(rhi_real_materials_v2_gui PROPERTIES SKIP_RETURN_CODE 77
+                TIMEOUT 180 RUN_SERIAL TRUE ENVIRONMENT "MDS_RHI_MATERIAL_SNAPSHOT=1")
+        endif()
+        add_test(NAME pmm_v2_multi_gui COMMAND pmm_v2_selector_gui_test
+            $<TARGET_FILE:MikuDanceStudio>)
+        set_tests_properties(pmm_v2_multi_gui PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 180
+            ENVIRONMENT "MDS_PMM_V2_MULTI_GUI=1")
+    endif()
+    set_tests_properties(model_reader_pmd_adapter model_reader_pmx_adapter
+        model_reader_pmx_physics_adapter
+        PROPERTIES SKIP_RETURN_CODE 77)
     set_tests_properties(pmx_buffer_failure PROPERTIES SKIP_RETURN_CODE 77)
     add_executable(charset_conv_test tests/charset_conv_test.cpp src/main/charset_conv.cpp)
     target_include_directories(charset_conv_test PRIVATE include)
@@ -462,7 +892,7 @@ if(BUILD_TESTING)
     add_executable(physics_scene_dispose_test tests/physics_scene_dispose_test.cpp
         src/physics/scene_dispose.cpp)
     target_compile_definitions(physics_scene_dispose_test PRIVATE MIKUDANCESTUDIO_DIAG=1)
-    target_link_libraries(physics_scene_dispose_test PRIVATE BULLET275::BULLET275)
+    target_link_libraries(physics_scene_dispose_test PRIVATE mikudancestudio_physics)
     add_executable(physics_gizmo_reset_test tests/physics_gizmo_reset_test.cpp)
     target_include_directories(physics_gizmo_reset_test PRIVATE include)
     target_link_libraries(physics_gizmo_reset_test PRIVATE mikudancestudio_core MMEffect dsound)

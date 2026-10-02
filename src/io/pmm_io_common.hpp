@@ -28,11 +28,13 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <io.h>
 
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/global_key_layout.hpp"
 #include "mikudancestudio/model.hpp"
+#include "pmm_format_win.hpp"
 
 namespace mikudancestudio::pmm_io {
 
@@ -53,26 +55,31 @@ inline int Rd(int fd, void* buf, unsigned int count) {
 // tail byte.
 template <PmmStream S>
 inline void ReadPmmBoneKey(int fd, mdl::BoneKey& key) {
-    Rd(fd, &key.frame, 4); Rd(fd, &key.previous, 4); Rd(fd, &key.next, 4);
-    for (int lane = 0; lane < 4; ++lane) {
-        Rd(fd, &key.interpolation[lane], 1);
-        Rd(fd, &key.interpolation[lane + 4], 1);
-        Rd(fd, &key.interpolation[lane + 8], 1);
-        Rd(fd, &key.interpolation[lane + 12], 1);
-    }
-    Rd(fd, key.position, sizeof key.position);
-    Rd(fd, key.rotation, sizeof key.rotation);
-    Rd(fd, &key.allocated, 1);
-    if constexpr (S == PmmStream::V2)
-        Rd(fd, &key.physicsDisabled, 1);
+    format::PmmBoneKey disk;
+    if (!format::ReadPmmBoneKey(ReadPmmFileBytes, &fd,
+                                S == PmmStream::V2 ? format::PmmVersion::V2
+                                                   : format::PmmVersion::V1, disk))
+        return;
+    key.frame = disk.frame;
+    key.previous = disk.previous;
+    key.next = disk.next;
+    std::memcpy(key.interpolation, disk.interpolation.data(), sizeof key.interpolation);
+    std::memcpy(key.position, disk.position.data(), sizeof key.position);
+    std::memcpy(key.rotation, disk.rotation.data(), sizeof key.rotation);
+    key.allocated = disk.allocated;
+    if constexpr (S == PmmStream::V2) key.physicsDisabled = disk.physicsDisabled;
 }
 
 // v1 body: ReadV1MorphKey (0x45A0D7); v2 body: ReadPmmMorphKey (0x453427).
 // Byte-identical dialects.
 inline void ReadPmmMorphKey(int fd, mdl::MorphKey& key) {
-    Rd(fd, &key.frame, 4); Rd(fd, &key.previous, 4); Rd(fd, &key.next, 4);
-    Rd(fd, &key.value, 4);
-    Rd(fd, &key.allocated, 1);
+    format::PmmMorphKey disk;
+    if (!format::ReadPmmMorphKey(ReadPmmFileBytes, &fd, disk)) return;
+    key.frame = disk.frame;
+    key.previous = disk.previous;
+    key.next = disk.next;
+    key.value = disk.value;
+    key.allocated = disk.allocated;
 }
 
 // Camera track record.  The 0x28-byte head covers frame..target[2] (the
@@ -83,91 +90,91 @@ inline void ReadPmmMorphKey(int fd, mdl::MorphKey& key) {
 // the head and the interpolation table.
 template <PmmStream S>
 inline void ReadPmmCameraKey(int fd, mdl::CameraKey& key) {
-    Rd(fd, &key, 0x28);
+    format::PmmCameraKey disk;
+    if (!format::ReadPmmCameraKey(ReadPmmFileBytes, &fd,
+                                  S == PmmStream::V2 ? format::PmmVersion::V2
+                                                     : format::PmmVersion::V1, disk))
+        return;
+    key.frame = disk.frame;
+    key.previous = disk.previous;
+    key.next = disk.next;
+    key.distance = disk.distance;
+    std::memcpy(key.eye, disk.eye.data(), sizeof key.eye);
+    std::memcpy(key.target, disk.target.data(), sizeof key.target);
     if constexpr (S == PmmStream::V2) {
-        Rd(fd, &key.parentModel, 4);
-        Rd(fd, &key.parentBone, 4);
+        key.parentModel = disk.parentModel;
+        key.parentBone = disk.parentBone;
     }
-    for (int k = 0; k < 6; ++k) {
-        Rd(fd, &key.interpolation[0][k], 1);
-        Rd(fd, &key.interpolation[1][k], 1);
-        Rd(fd, &key.interpolation[2][k], 1);
-        Rd(fd, &key.interpolation[3][k], 1);
-    }
-    unsigned char b = 0;
-    Rd(fd, &b, 1);
-    key.perspective = (b == 1) ? 1 : 0;
-    Rd(fd, &key.fov, 4);
-    Rd(fd, &b, 1);
-    key.selected = (b == 1) ? 1 : 0;
+    std::memcpy(key.interpolation, disk.interpolation.data(), sizeof key.interpolation);
+    key.perspective = disk.perspective;
+    key.fov = disk.fov;
+    key.selected = disk.selected;
 }
 
 // Light track record, 37 stream bytes (v1 0x45B090 / v2 0x455286; identical).
 inline void ReadPmmLightKey(int fd, mdl::LightKey& key) {
-    Rd(fd, &key.frame, 4);
-    Rd(fd, &key.previous, 4);
-    Rd(fd, &key.next, 4);
-    Rd(fd, &key.color[0], 4);
-    Rd(fd, &key.color[1], 4);
-    Rd(fd, &key.color[2], 4);
-    Rd(fd, &key.direction[0], 4);
-    Rd(fd, &key.direction[1], 4);
-    Rd(fd, &key.direction[2], 4);
-    unsigned char b = 0;
-    Rd(fd, &b, 1);
-    key.selected = (b == 1) ? 1 : 0;
+    format::PmmLightKey disk;
+    if (!format::ReadPmmLightKey(ReadPmmFileBytes, &fd, disk)) return;
+    key.frame = disk.frame;
+    key.previous = disk.previous;
+    key.next = disk.next;
+    std::memcpy(key.color, disk.color.data(), sizeof key.color);
+    std::memcpy(key.direction, disk.direction.data(), sizeof key.direction);
+    key.selected = disk.selected;
 }
 
 // Self-shadow track record, 18 stream bytes (v1 readSelRecord 0x45D82D / v2
 // readShadowRecord 0x457A4F; identical).  mode is consumed raw.
 inline void ReadPmmSelfShadowKey(int fd, mdl::SelfShadowKey& key) {
-    Rd(fd, &key.frame, 4);
-    Rd(fd, &key.previous, 4);
-    Rd(fd, &key.next, 4);
-    Rd(fd, &key.mode, 1);
-    Rd(fd, &key.distance, 4);
-    unsigned char b = 0;
-    Rd(fd, &b, 1);
-    key.selected = (b == 1) ? 1 : 0;
+    format::PmmSelfShadowKey disk;
+    if (!format::ReadPmmSelfShadowKey(ReadPmmFileBytes, &fd, disk)) return;
+    key.frame = disk.frame;
+    key.previous = disk.previous;
+    key.next = disk.next;
+    key.mode = disk.mode;
+    key.distance = disk.distance;
+    key.selected = disk.selected;
 }
 
 // Gravity/selection track record, 34 stream bytes (v2 only, 0x45777C region).
 inline void ReadPmmGravityKey(int fd, mdl::GravityKey& key) {
-    Rd(fd, &key.frame, 4);
-    Rd(fd, &key.previous, 4);
-    Rd(fd, &key.next, 4);
-    unsigned char b = 0;
-    Rd(fd, &b, 1);
-    key.noiseEnabled = (b == 1) ? 1 : 0;
-    Rd(fd, &key.noise, 4);
-    Rd(fd, &key.acceleration, 4);
-    Rd(fd, &key.direction[0], 4);
-    Rd(fd, &key.direction[1], 4);
-    Rd(fd, &key.direction[2], 4);
-    Rd(fd, &b, 1);
-    key.selected = (b == 1) ? 1 : 0;
+    format::PmmGravityKey disk;
+    if (!format::ReadPmmGravityKey(ReadPmmFileBytes, &fd, disk)) return;
+    key.frame = disk.frame;
+    key.previous = disk.previous;
+    key.next = disk.next;
+    key.noiseEnabled = disk.noiseEnabled;
+    key.noise = disk.noise;
+    key.acceleration = disk.acceleration;
+    std::memcpy(key.direction, disk.direction.data(), sizeof key.direction);
+    key.selected = disk.selected;
 }
 
-// Accessory track record, 55 stream bytes (v1 0x45BBF3 / v2 0x455DCA;
+// Accessory track record, 51 stream bytes (v1 0x45BBF3 / v2 0x455DCA;
 // identical), including the (100 - b/2)/100.0 transparency quirk byte.
 inline void ReadPmmAccessoryKey(int fd, mdl::AccessoryKey& key) {
-    unsigned char b = 0;
-    Rd(fd, &key.frame, 4);
-    Rd(fd, &key.previous, 4);
-    Rd(fd, &key.next, 4);
-    Rd(fd, &b, 1);
-    key.visible = b & 1;
-    key.opacity =
-        static_cast<float>(100 - (b >> 1)) / 100.0f;
-    Rd(fd, &key.parentModel, 4);
-    Rd(fd, &key.parentBone, 4);
-    Rd(fd, key.position, sizeof key.position);
-    Rd(fd, key.rotation, sizeof key.rotation);
-    Rd(fd, &key.scale, 4);
-    Rd(fd, &b, 1);
-    key.shadowEnabled = (b == 1) ? 1 : 0;
-    Rd(fd, &b, 1);
-    key.selected = (b == 1) ? 1 : 0;
+    format::PmmAccessoryKey disk;
+    if (!format::ReadPmmAccessoryKey(ReadPmmFileBytes, &fd, disk)) return;
+    key.frame = disk.frame;
+    key.previous = disk.previous;
+    key.next = disk.next;
+    key.visible = disk.visible;
+    key.opacity = disk.opacity;
+    key.parentModel = disk.parentModel;
+    key.parentBone = disk.parentBone;
+    std::memcpy(key.position, disk.position.data(), sizeof key.position);
+    std::memcpy(key.rotation, disk.rotation.data(), sizeof key.rotation);
+    key.scale = disk.scale;
+    key.shadowEnabled = disk.shadowEnabled;
+    key.selected = disk.selected;
+}
+inline bool ReadPmmDisplayKey(int fd, PmmStream version,
+                              std::uint32_t ikCount, std::uint32_t rigidCount,
+                              format::PmmDisplayKey& disk) {
+    return format::ReadPmmDisplayKey(ReadPmmFileBytes, &fd,
+                                     version == PmmStream::V1 ? format::PmmVersion::V1
+                                                              : format::PmmVersion::V2,
+                                     ikCount, rigidCount, disk);
 }
 
 // v2 skip-path consumption (a missing model still owns its stream bytes);
@@ -184,19 +191,11 @@ inline void DiscardPmmMorphKey(int fd) {
 
 inline void DiscardPmmDisplayKey(int fd, std::int32_t ikCount,
                                  std::int32_t rigidBodyCount) {
-    std::uint32_t ignoredLink = 0;
-    std::uint8_t ignoredFlag = 0;
-    Rd(fd, &ignoredLink, 4);
-    Rd(fd, &ignoredLink, 4);
-    Rd(fd, &ignoredLink, 4);
-    Rd(fd, &ignoredFlag, 1);
-    for (std::int32_t i = 0; i < ikCount; ++i)
-        Rd(fd, &ignoredFlag, 1);
-    for (std::int32_t i = 0; i < rigidBodyCount; ++i) {
-        Rd(fd, &ignoredLink, 4);
-        Rd(fd, &ignoredLink, 4);
-    }
-    Rd(fd, &ignoredFlag, 1);
+    format::PmmDisplayKey ignored;
+    if (ikCount >= 0 && rigidBodyCount >= 0)
+        format::ReadPmmDisplayKey(ReadPmmFileBytes, &fd, format::PmmVersion::V2,
+                                  static_cast<std::uint32_t>(ikCount),
+                                  static_cast<std::uint32_t>(rigidBodyCount), ignored);
 }
 
 // AVIFIL32 imports used by both loader teardowns.

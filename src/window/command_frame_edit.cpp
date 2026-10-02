@@ -592,6 +592,19 @@ static void ResetCameraRecord(mdl::CameraKey& key, bool head) {
                 107, 12);
 }
 
+void DeleteSelectedCameraKeys(mdl::CameraKey* camera) {
+    if (camera[0].selected != 0)
+        ResetCameraRecord(camera[0], true);
+    for (std::uint32_t i = 1; i < mdl::kTimelineKeyCapacity; ++i) {
+        if (camera[i].selected == 0) continue;
+        // A frame-line merge can leave selection and links in a freed slot.
+        // Unlinking that slot would overwrite its former predecessor's link.
+        if (camera[i].frame != 0)
+            UnlinkGlobalKey(camera, i);
+        ResetCameraRecord(camera[i], false);
+    }
+}
+
 static void ResetLightRecord(mdl::LightKey& key, bool head) {
     key.selected = 0;
     if (head) {
@@ -653,15 +666,7 @@ void DeleteMarkedKeyframes(MMDApp* app) {
     }
     if (app->state.optflag[0] != 0) {
         auto* camera = app->CameraKeys();
-        if (camera[0].selected != 0) {
-            ResetCameraRecord(camera[0], true);
-        }
-        for (std::uint32_t i = 1; i < 10000; ++i) {
-            if (camera[i].selected != 0) {
-                UnlinkGlobalKey(camera, i);
-                ResetCameraRecord(camera[i], false);
-            }
-        }
+        DeleteSelectedCameraKeys(camera);
 
         auto* light = app->LightKeys();
         if (light[0].selected != 0) {

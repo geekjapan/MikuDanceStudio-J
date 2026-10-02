@@ -30,6 +30,7 @@
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/scene_timeline_bridge.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -181,6 +182,7 @@ void ApplyAccessoryTrack(MMDApp* app, int slot) {  // VA 0x00413120
 
     if (terminal) {
         pushState(keys[index], true);
+        SeekPortableSceneAccessory(app, slot, static_cast<int>(cur));
         return;
     }
 
@@ -198,10 +200,12 @@ void ApplyAccessoryTrack(MMDApp* app, int slot) {  // VA 0x00413120
         obj->opacity =
             prec.opacity + t * (rec.opacity - prec.opacity);
         pushState(prec, false);
+        SeekPortableSceneAccessory(app, slot, static_cast<int>(cur));
         return;
     }
 
     pushState(rec, true);  // exact hit (0x413225..0x413297)
+    SeekPortableSceneAccessory(app, slot, static_cast<int>(cur));
 }
 
 // ---- VA 0x00414110: paste one accessory key record --------------------------

@@ -21,9 +21,13 @@
 #include "mmeffect/mme_ui.h"
 #include "mmeffect/mme_util.h"
 #include "mmeffect/mme_context.h"
+#include "mmeffect/mme_globals.h"
 #include "mmeffect/model_data.h"
 #include "mmeffect/device_initialization.h"
 #include "mmeffect/host_object_cache.h"
+#ifdef MIKUDANCESTUDIO_DIAG
+extern "C" int __cdecl MmeProbeLastLineDrawDisposition();
+#endif
 
 extern "C" void __cdecl MmeHostInitializeRuntime(HINSTANCE instance) {
     mme::MmeUiInitializeRuntime(instance);
@@ -503,6 +507,23 @@ HRESULT __cdecl MmeHostDrawPrimitive(IDirect3DDevice9* device,
     OnDrawPrimitive(device, type, start_vertex, primitive_count);
     return 0;
 }
+
+#ifdef MIKUDANCESTUDIO_DIAG
+MmeHostDrawSnapshotProbe __cdecl MmeHostProbeDrawSnapshot() {
+    const auto* context = mme::g_context;
+    MmeHostDrawSnapshotProbe probe{};
+    if (context) {
+        probe.pending = static_cast<unsigned int>(context->pendingSnapshots.size());
+        probe.effectEnabled = context->effectEnabled;
+        probe.bindingReady = context->bindingReadyFlag;
+        probe.bindingActive = context->currentBindingObject != nullptr;
+    }
+    probe.endSceneFired = g_host.endSceneFired;
+    probe.effectsDisabled = g_mmh.effectsDisabled;
+    probe.lineDisposition = MmeProbeLastLineDrawDisposition();
+    return probe;
+}
+#endif
 
 // [0x1800027f0] 设备 DrawIndexedPrimitive 槽 82。
 HRESULT __cdecl MmeHostDrawIndexedPrimitive(IDirect3DDevice9* device,

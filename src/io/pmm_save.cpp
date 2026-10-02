@@ -111,10 +111,13 @@
 #define NOMINMAX
 #include <Windows.h>
 
+#include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <io.h>
+#include <vector>
 
 #include "mikudancestudio/charset_conv.hpp"
 #include "mikudancestudio/accessory_layout.hpp"
@@ -122,6 +125,8 @@
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
+#include "mikudancestudio/pmm_scene_document.hpp"
+#include "mikudancestudio/scene_session.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/panel_controls.hpp"
 
@@ -136,6 +141,27 @@ namespace {
 // fcn.005089ba thunk shape: _write(fd, buf, count), cdecl, result ignored.
 inline void W(int fd, const void* buf, unsigned int count) {
     _write(fd, buf, static_cast<unsigned int>(count));
+}
+
+bool WritePmmFileBytes(void* context, const void* source, std::size_t length) {
+    const int fd = *static_cast<int*>(context);
+    const auto* bytes = static_cast<const unsigned char*>(source);
+    while (length != 0) {
+        const auto block = static_cast<unsigned int>(
+            length < 0x7fffffff ? length : 0x7fffffff);
+        const int written = _write(fd, bytes, block);
+        if (written <= 0) return false;
+        bytes += written;
+        length -= static_cast<std::size_t>(written);
+    }
+    return true;
+}
+
+bool AppendPmmBytes(void* context, const void* source, std::size_t length) {
+    auto& bytes = *static_cast<std::vector<std::uint8_t>*>(context);
+    const auto* first = static_cast<const std::uint8_t*>(source);
+    bytes.insert(bytes.end(), first, first + length);
+    return true;
 }
 
 void WritePmmBoneKey(int fd, const mdl::BoneKey& key) {
@@ -371,9 +397,12 @@ void WritePmmFileHeader(int fd, MMDApp* s, HWND main, char* hdr) {
     W(fd, &s->SelectedModelSlot(), 1);                         // 0x41B31A
 
     {                                                          // 0x41B33F
-        const unsigned char b = static_cast<unsigned char>(
-            SendMessageA(GetDlgItem(main, panel::kMainComboModel), CB_GETCOUNT, 0, 0) - 1);
-        W(fd, &b, 1);
+        // The following model blocks iterate occupied runtime slots. The
+        // combo can lag after a scene load, so count the same slots here.
+        unsigned char count = 0;
+        for (int slot = 0; slot < kModelSlotCount; ++slot)
+            if (s->ModelSlot(slot)) ++count;
+        W(fd, &count, 1);
     }
 }
 
@@ -616,7 +645,71 @@ void WritePmmModelBlocks(int fd, const D3DRenderer* renderer, unsigned char** co
 void WritePmmCameraSection(int fd, MMDApp* s) {
     // ---- 3. camera track (0x41C9AE..0x41CE85) ---------------------------
     const mdl::CameraKey* const cam = s->CameraKeys();  // app+0x374
-    WritePmmCameraKey(fd, cam[0]);                              // 0x41C9AE
+    std::vector<std::uint32_t> occupied{0};
+    occupied.reserve(128);
+    for (std::uint32_t index = 1; index < mdl::kTimelineKeyCapacity; ++index)
+        if (cam[index].frame != 0) occupied.push_back(index);
+    std::vector<bool> visited(mdl::kTimelineKeyCapacity);
+    std::uint32_t cursor = 0;
+    bool linksValid = cam[0].frame == 0 && cam[0].previous == 0;
+    for (std::size_t step = 0; linksValid && step < occupied.size(); ++step) {
+        if (cursor >= mdl::kTimelineKeyCapacity || visited[cursor] ||
+            (cursor != 0 && cam[cursor].frame == 0)) {
+            linksValid = false;
+            break;
+        }
+        visited[cursor] = true;
+        const auto next = cam[cursor].next;
+        if (next != 0 &&
+            (next >= mdl::kTimelineKeyCapacity || cam[next].frame == 0 ||
+             cam[next].previous != cursor ||
+             cam[next].frame <= cam[cursor].frame)) linksValid = false;
+        cursor = next;
+        if (cursor == 0 && step + 1 != occupied.size()) linksValid = false;
+    }
+    if (cursor != 0) linksValid = false;
+    for (const auto index : occupied)
+        if (!visited[index]) linksValid = false;
+    if (!linksValid) {
+        std::sort(occupied.begin() + 1, occupied.end(),
+                  [cam](std::uint32_t left, std::uint32_t right) {
+                      return cam[left].frame == cam[right].frame ?
+                          left < right : cam[left].frame < cam[right].frame;
+                  });
+    }
+#ifdef MIKUDANCESTUDIO_DIAG
+    wchar_t parityReport[1024]{};
+    if (GetEnvironmentVariableW(L"MDS_PMM_RUNTIME_REPORT", parityReport,
+                                1024)) {
+        FILE* report = nullptr;
+        if (_wfopen_s(&report, parityReport, L"ab") == 0 && report) {
+            std::fprintf(report,
+                "CAMERA CHAIN stage=writer head.next=%u occupied=%zu valid=%d\n",
+                cam[0].next, occupied.size() - 1, linksValid ? 1 : 0);
+            std::fclose(report);
+        }
+    }
+#endif
+    std::vector<std::uint32_t> previous, next;
+    if (!linksValid) {
+        previous.resize(mdl::kTimelineKeyCapacity);
+        next.resize(mdl::kTimelineKeyCapacity);
+        for (std::size_t i = 0; i < occupied.size(); ++i) {
+            previous[occupied[i]] = i ? occupied[i - 1] : 0;
+            next[occupied[i]] = i + 1 < occupied.size() ? occupied[i + 1] : 0;
+        }
+    }
+    const auto writeKey = [&](std::uint32_t index) {
+        if (linksValid) {
+            WritePmmCameraKey(fd, cam[index]);
+        } else {
+            auto repaired = cam[index];
+            repaired.previous = previous[index];
+            repaired.next = next[index];
+            WritePmmCameraKey(fd, repaired);
+        }
+    };
+    writeKey(0);                                               // 0x41C9AE
     {  // sparse scan over camera keys 1..9999 (sizeof(mdl::CameraKey) stride)
         const std::int32_t cnt = CountSparseTrackFrames(cam);   // 0x41CBB8..
         W(fd, &cnt, 4);
@@ -624,7 +717,7 @@ void WritePmmCameraSection(int fd, MMDApp* s) {
             if (cam[i].frame == 0)
                 continue;
             W(fd, &i, 4);
-            WritePmmCameraKey(fd, cam[i]);                      // 0x41CC00..
+            writeKey(i);                                       // 0x41CC00..
         }
     }
 
@@ -944,6 +1037,56 @@ void WritePmmModelTail(int fd, unsigned char** const slots) {
     }
 }
 
+// The Windows editor owns the live mutable objects. Copy the supported
+// fields into the portable document before its validated write-back. The
+// legacy serializer still supplies tracks and fields not owned by the
+// portable edit API.
+bool CaptureEditableScene(MMDApp* app, format::PmmSceneDocument& scene) {
+    auto& settings = scene.envelope.settings;
+    settings.renderWidth = app->state.renderW;
+    settings.renderHeight = app->state.renderH;
+    settings.cameraFov = app->state.cameraFov;
+    for (int i = 0; i < 7; ++i)
+        settings.options[i] = app->state.optflag[i] != 0;
+    auto& timeline = scene.timeline;
+    timeline.currentFrame = app->state.currentFrame;
+    timeline.startFrame = app->state.timelineStartFrame;
+    timeline.lastRegisteredFrame = app->state.lastRegisteredFrame;
+    timeline.editMode = static_cast<std::int32_t>(app->EditMode());
+    timeline.cameraReferenceMode = app->state.cameraReferenceMode;
+    timeline.playbackLoop = app->state.playbackLoopEnabled != 0;
+    timeline.returnToStart = app->state.playbackReturnsToStartFrame != 0;
+    timeline.startAtCurrent = app->state.playbackStartsAtCurrentFrame != 0;
+    for (int i = 0; i < 3; ++i) {
+        scene.lightState[i] = app->LightColor()[i];
+        scene.lightState[i + 3] = app->LightDirection()[i];
+    }
+    for (auto& model : scene.models) {
+        const unsigned char* slot = app->ModelSlot(model.slot);
+        if (!slot) return false;
+        const auto* record = mdl::Mdl(slot);
+        if (model.bonePose.size() != record->boneCount ||
+            model.morphPose.size() != record->morphCount ||
+            model.ikPose.size() != record->ikChainCount) return false;
+        for (std::size_t i = 0; i < model.bonePose.size(); ++i) {
+            const auto& bone = record->boneTable[i];
+            auto& pose = model.bonePose[i];
+            for (int axis = 0; axis < 3; ++axis)
+                pose.components[axis] = bone.trans[axis];
+            for (int axis = 0; axis < 4; ++axis)
+                pose.components[axis + 3] = bone.rotQuat[axis];
+            pose.flags[0] = bone.physicsDisabled != 0;
+            pose.flags[1] = record->bonePhysicsState[i] != 0;
+            pose.flags[2] = record->boneSelection[i] != 0;
+        }
+        for (std::size_t i = 0; i < model.morphPose.size(); ++i)
+            model.morphPose[i] = record->morphs[i].value;
+        for (std::size_t i = 0; i < model.ikPose.size(); ++i)
+            model.ikPose[i] = record->ikChains[i].enabled != 0;
+    }
+    return true;
+}
+
 
 }  // namespace
 
@@ -975,20 +1118,22 @@ void SaveSceneFile(MMDApp* app) {
         return;
     }
 
-    s->SceneModified() = 0;                                    // 0x41B0C6
-    int fd = -1;
-    const errno_t err =
-        _wsopen_s(&fd, s->EnvFileName(), 0x8301, 0x40, 0x80);  // 0x41B125
-    if (err != 0) {
+    // The Windows serializer still maps runtime fields to disk bytes. Stage
+    // those bytes, validate the ordered portable document, then let its
+    // writer commit the byte-exact envelope to the selected path.
+    FILE* const staging = tmpfile();
+    if (!staging) {
         if (s->EnglishUI() == 0)
-            sprintf_s(hdr, 0x100, kJpSaveFailFmt, err);
+            sprintf_s(hdr, 0x100, kJpSaveFailFmt, errno);
         else
-            sprintf_s(hdr, 0x100, "Cannot save file:%d", err);
+            sprintf_s(hdr, 0x100, "Cannot save file:%d", errno);
         MessageBoxA(main, hdr,
                     s->EnglishUI() == 0 ? kJpSaveFailCaption : "save file",
                     0);
         return;
     }
+    int fd = _fileno(staging);
+    const auto previousLayoutReady = s->state.windowLayoutReady;
 
     WritePmmFileHeader(fd, s, main, hdr);                   // 1. 0x41B1B3..0x41B355
     WritePmmModelBlocks(fd, s->Renderer(), slots, text);                   // 2. 0x41B355..0x41C981
@@ -1002,12 +1147,58 @@ void SaveSceneFile(MMDApp* app) {
     WritePmmModelTail(fd, slots);                           // 11. 0x41E70D
 
 
+    format::SceneSession session;
+    bool serialized = _lseeki64(fd, 0, SEEK_SET) == 0 &&
+        format::SceneSession::Load(ReadPmmFileBytesResult, &fd,
+                                   nullptr, nullptr, session);
+    if (!serialized) {
+        fclose(staging);
+        s->state.windowLayoutReady = previousLayoutReady;
+        MessageBoxA(main, "Cannot serialize the PMM scene data.", "save file", 0);
+        return;
+    }
+    std::vector<std::uint8_t> portableBytes;
+    bool captured = false;
+    serialized = session.Edit([&](format::PmmSceneDocument& document) {
+        captured = CaptureEditableScene(s, document);
+    }) && captured && session.Save(AppendPmmBytes, &portableBytes);
+    if (!serialized) {
+        fclose(staging);
+        s->state.windowLayoutReady = previousLayoutReady;
+        MessageBoxA(main, "Cannot validate the edited PMM scene data.",
+                    "save file", 0);
+        return;
+    }
+    int destination = -1;
+    const errno_t err =
+        _wsopen_s(&destination, s->EnvFileName(), 0x8301, 0x40, 0x80);
+    if (err != 0) {
+        fclose(staging);
+        s->state.windowLayoutReady = previousLayoutReady;
+        if (s->EnglishUI() == 0)
+            sprintf_s(hdr, 0x100, kJpSaveFailFmt, err);
+        else
+            sprintf_s(hdr, 0x100, "Cannot save file:%d", err);
+        MessageBoxA(main, hdr,
+                    s->EnglishUI() == 0 ? kJpSaveFailCaption : "save file", 0);
+        return;
+    }
+    serialized = WritePmmFileBytes(&destination, portableBytes.data(),
+                                   portableBytes.size());
+    const int closeResult = _close(destination);
+    fclose(staging);
+    if (!serialized || closeResult != 0) {
+        s->state.windowLayoutReady = previousLayoutReady;
+        MessageBoxA(main, "Cannot write the PMM scene data.", "save file", 0);
+        return;
+    }
+
     // ---- 12. success tail (0x41E747) --------------------------------------
-    _close(fd);
     swprintf_s(title, 0x100, pmm_io::kAppTitleFormat, s->EnvFileName());
     SetWindowTextW(main, title);
     MessageBeep(0x40);
     s->state.windowLayoutReady = 1;
+    s->SceneModified() = 0;
 
     // 内置 MMEffect：场景保存成功通知（EMM 自动保存）。
     mme::NotifyPmmSaved(s);

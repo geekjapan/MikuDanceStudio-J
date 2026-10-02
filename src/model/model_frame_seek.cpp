@@ -52,14 +52,14 @@
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
+#include "mikudancestudio/pmm_scene_evaluation.hpp"
+#include "mikudancestudio/scene_timeline_bridge.hpp"
 
 #include "keyframe_common.hpp"
 
 namespace mikudancestudio {
 namespace {
 
-using kfa::CopyIkDisplayFlags;
-using kfa::RefreshIkSelectors;
 using kfa::CopyBoneKeyVerbatim;
 using kfa::WriteBonePrevVerbatim;
 using kfa::MirrorBackupsToWorking;
@@ -93,44 +93,13 @@ int SeekModelFrame(unsigned char* model, int frameArg, int physicsMode) {
     // ==== section 1: IK master track (0x4B426D) ===========================
     {
         mdl::DisplayKey* const keys = mdl::DisplayKeys(m);
-        int found = 0;                                 // v5 / v157
-        bool resolved = false;
-        if (keys[0].frame < frameU32) {
-            // walk the master chain (0x4B4281)
-            for (;;) {
-                const int next = static_cast<int>(keys[found].next);
-                if (next == 0) break;
-                found = next;
-                if (keys[found].frame >= frameU32) {
-                    resolved = true;
-                    break;
-                }
-            }
-            if (!resolved) {
-                // chain exhausted past a2: terminal variant A (0x4B43A0)
-                mikudancestudio::mdl::Mdl(m)->loadComplete = keys[found].visible;
-                CopyIkDisplayFlags(m, keys[found]);
-                RefreshIkSelectors(m, keys, found, found, false, 0, 0);
-            }
-        } else {
-            resolved = true;  // a2 is at/before the first record
-        }
-        if (resolved) {
-            if (keys[found].frame == frameU32) {
-                // exact hit: variant B (0x4B42BF)
-                mikudancestudio::mdl::Mdl(m)->loadComplete = keys[found].visible;
-                CopyIkDisplayFlags(m, keys[found]);
-                RefreshIkSelectors(m, keys, found, found, true, found, found);
-            } else {
-                // between keys: variant C (0x4B46BA) - flags/pairs from the
-                // PREVIOUS record, forward condition against the found one
-                const int prevIdx = static_cast<int>(keys[found].previous);
-                mikudancestudio::mdl::Mdl(m)->loadComplete = keys[prevIdx].visible;
-                CopyIkDisplayFlags(m, keys[prevIdx]);
-                RefreshIkSelectors(m, keys, prevIdx, prevIdx, true, found,
-                                   found);
-            }
-        }
+        format::PmmDisplayCursor cursor;
+        format::PmmDisplaySelection selection;
+        if (format::SelectPmmDisplayKey(
+                kfa::ReadLiveDisplayKeyLink, keys,
+                static_cast<double>(frameU32), format::PmmDisplayTraversal::Seek,
+                cursor, selection))
+            kfa::ApplyDisplaySelection(m, keys, selection);
     }
 
     // ==== section 2: morph tracks (0x4B4917) ==============================
@@ -176,15 +145,8 @@ int SeekModelFrame(unsigned char* model, int frameArg, int physicsMode) {
                 v = (float)((double)tF * (double)delta +
                             (double)prev.value);
 #else
-                // x64 sub_7FF7CB4EBD90 @ 0x7FF7CB4EC4FD..0x7FF7CB4EC549:
-                // single precision end to end - the frame deltas subtract
-                // in integer registers, cvtsi2ss/divss form the fraction,
-                // subss/mulss/addss the value; no double accumulation.
-                const float tF =
-                    static_cast<float>(frameU32 - prev.frame) /
-                    static_cast<float>(static_cast<int>(rec.frame) -
-                                       static_cast<int>(prev.frame));
-                v = tF * (rec.value - prev.value) + prev.value;
+                v = format::InterpolatePmmMorphValue(
+                    prev.value, rec.value, prev.frame, rec.frame, frameU32);
 #endif
             }
             vals[k].value = v;
@@ -234,14 +196,12 @@ int SeekModelFrame(unsigned char* model, int frameArg, int physicsMode) {
                     if (selIdx >= 0) {
                         const mdl::BoneOrderEntry& window =
                             mdl::BoneOrder(m)[selIdx];
-                        const std::uint32_t selStart = window.windowStart;
-                        if (rec.frame < selStart && selStart <= frameU32) {
-                            // zero position + quaternion xyz, w = 1.0
-                            // (0x4B4D79..0x4B4DCB)
-                            for (int o = 0; o < 6; ++o)
-                                bone->trans[o] = 0.0f;
-                            bone->rotQuat[3] = 1.0f;
-                        }
+                        const auto decision =
+                            format::SelectPmmBoneTerminalPose(
+                                rec.frame, frameU32,
+                                kfa::PortableSelector(window));
+                        kfa::ApplyLiveBoneSelectorPose(
+                            bone, decision, rec, rec, false);
                     }
                     result = b + 1;
                     continue;
@@ -346,33 +306,47 @@ int SeekModelFrame(unsigned char* model, int frameArg, int physicsMode) {
                 }
             }
 
-            // selector window (0x4B5190): the snap reference is carried by
-            // the short-circuit - selStart when the start-window test fails,
-            // selEnd when both conditions evaluate (disasm 0x4B51AC jnb)
-            bool doSnap = false;
-            std::uint32_t snapRef = 0;
+            // Selector-window crossing overrides this segment's interpolation.
             const int selIdx = bone->slotIndex;
             if (selIdx >= 0) {
                 const mdl::BoneOrderEntry& window =
                     mdl::BoneOrder(m)[selIdx];
-                const std::uint32_t selStart = window.windowStart;
-                const std::uint32_t selEnd = window.windowEnd;
-                if (selStart < curFrame && prevFrame < selStart) {
-                    doSnap = true;
-                    snapRef = selStart;
-                } else if (!(curFrame < selEnd || prevFrame >= selEnd)) {
-                    doSnap = true;
-                    snapRef = selEnd;
+                const auto decision = format::SelectPmmBoneSegmentPose(
+                    prevFrame, curFrame, frameU32,
+                    kfa::PortableSelector(window));
+                if (kfa::ApplyLiveBoneSelectorPose(
+                        bone, decision, prevRec, rec, false, ppos, pq)) {
+                    result = b + 1;
+                    continue;
                 }
             }
-            if (doSnap) {
-                if (frameU32 >= snapRef)
-                    CopyBoneKeyVerbatim(bone, rec);  // 0x4B51FC
-                else
-                    WriteBonePrevVerbatim(bone, pq, ppos);  // 0x4B51BA
+
+#if defined(_M_X64)
+            // The portable interpolation kernel consumes the current live
+            // key pair. Selector snapping and physics preparation above
+            // remain in the host; edited keys take effect on the next seek.
+            format::PmmBoneKey left{}, right{};
+            left.frame = prevFrame;
+            right.frame = curFrame;
+            std::memcpy(left.position.data(), ppos, sizeof ppos);
+            std::memcpy(left.rotation.data(), pq, sizeof pq);
+            std::memcpy(right.position.data(), rec.position,
+                        sizeof rec.position);
+            std::memcpy(right.rotation.data(), rec.rotation,
+                        sizeof rec.rotation);
+            std::memcpy(right.interpolation.data(), rec.interpolation,
+                        sizeof rec.interpolation);
+            format::PmmEvaluatedBone blended;
+            if (format::InterpolatePmmBoneSegment(left, right, frameU32,
+                                                   blended)) {
+                std::memcpy(bone->trans, blended.translation.data(),
+                            sizeof(float) * 3);
+                std::memcpy(bone->rotQuat, blended.rotation.data(),
+                            sizeof(float) * 4);
                 result = b + 1;
                 continue;
             }
+#endif
 
             // full interpolation (0x4B5284): eased rotation fraction drives
             // the slerp, raw fraction eases each position axis
@@ -500,6 +474,7 @@ int SeekModelFrame(unsigned char* model, int frameArg, int physicsMode) {
             result = b + 1;
         }
     }
+    SeekPortableSceneModel(model, frameArg);
     return result;
 }
 

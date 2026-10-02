@@ -1249,14 +1249,13 @@ INT_PTR CALLBACK GravitySettingDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     const HWND hCtrl = reinterpret_cast<HWND>(lParam);
     if (msg == WM_INITDIALOG) {
         MakeDialogTopmostIfRequested(app, hDlg);
-        // accessory-frame dialog reuses bone-scratch +28 for the saved
-        // wndproc (original blob-reuse semantics)
-        reinterpret_cast<WNDPROC&>(app->BoneFrameScratch()[28]) =
-            reinterpret_cast<WNDPROC>(
-                GetWindowLongPtrA(GetDlgItem(hDlg, panel::kGravityAccelEdit), GWLP_WNDPROC));
+        app->AccessoryFrameEditProc() = reinterpret_cast<WNDPROC>(
+            GetWindowLongPtrA(GetDlgItem(hDlg, panel::kGravityAccelEdit),
+                              GWLP_WNDPROC));
         for (int i = 709; i <= 713; ++i) {
             SetWindowLongPtrA(GetDlgItem(hDlg, i), GWLP_WNDPROC,
-                           (LONG)(LONG_PTR)GravitySettingEditSubclassProc);
+                              reinterpret_cast<LONG_PTR>(
+                                  GravitySettingEditSubclassProc));
         }
         InitGravityDialog(hDlg);  // 0x423160
         return 0;

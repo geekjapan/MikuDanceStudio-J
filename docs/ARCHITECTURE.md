@@ -2,6 +2,8 @@
 
 本项目将 MMD 的 Win32/D3D9 宿主和 MME 效果引擎编译为同一可执行程序。`MMEffect` 是静态库；宿主在设备、绘制、场景和文件边界主动调用桥接接口，不加载代理 `d3d9.dll`，也不恢复 IAT 或虚表注入。文件格式结构与运行时对象布局分别维护。
 
+跨平台内核拆分的首个实际边界和后续验收条件见 [M1 可移植内核](M1_PORTABLE_CORE.md)。
+
 ## 子系统入口
 
 应用与窗口在 `src/app`、`src/window`；模型与格式在 `src/model`、`src/io`；数学、物理、渲染分别在 `src/math`、`src/physics`、`src/render`；内置效果在 `third_party/mmeffect`。每个原版 VA 注释只用于定位，不证明源码原名或等价性。验证规则见 [x64 重建基准](X64_RECONSTRUCTION.md)。

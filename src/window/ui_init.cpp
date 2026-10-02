@@ -32,16 +32,44 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include <cstdio>
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/rhi_assets.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/panel_controls.hpp"
 #include "ui_controls.inc"
 
 namespace mikudancestudio {
+
+namespace {
+struct HudAtlasPixels {
+    rhi::AtlasAsset atlas;
+};
+std::unordered_map<MMDApp*, HudAtlasPixels> g_hudAtlasPixels;
+}
+
+bool LoadHudSpriteRgba(MMDApp* app, const std::uint8_t*& pixels,
+                       std::size_t& bytes, std::uint32_t& width,
+                       std::uint32_t& height, std::uint64_t& revision) {
+    const auto found = g_hudAtlasPixels.find(app);
+    if (found == g_hudAtlasPixels.end()) return false;
+    pixels = found->second.atlas.image.pixels.data();
+    bytes = found->second.atlas.image.pixels.size();
+    width = found->second.atlas.image.width;
+    height = found->second.atlas.image.height;
+    revision = found->second.atlas.revision;
+    return true;
+}
+
+void ForgetHudSpriteRgba(MMDApp* app) {
+    g_hudAtlasPixels.erase(app);
+}
 
 static int EvalPos(const ui::PosExpr& e, int sidebar) {
     switch (e.kind) {
@@ -190,21 +218,39 @@ void ClearTimelineAndCurveDCs(MMDApp* app) {
 
 static bool LoadPngTexture(MMDApp* app, IDirect3DDevice9* device,
                            WORD resourceId, IDirect3DTexture9** output) {
-    HMODULE module = static_cast<HMODULE>(app->HInstance());
-    HRSRC info = FindResourceA(module, MAKEINTRESOURCEA(resourceId), "PNG");
-    if (info == nullptr)
+    if (resourceId == 0x66) ForgetHudSpriteRgba(app);
+    const rhi::CallbackAssetSource source([app](rhi::AssetId id,
+            std::vector<std::uint8_t>& bytes) {
+        const HMODULE module = static_cast<HMODULE>(app->HInstance());
+        const HRSRC info = FindResourceA(module,
+            MAKEINTRESOURCEA(static_cast<WORD>(id)), "PNG");
+        if (!info) return false;
+        const HGLOBAL resource = LoadResource(module, info);
+        const void* data = resource ? LockResource(resource) : nullptr;
+        const DWORD length = SizeofResource(module, info);
+        if (!data || !length || length > 16u * 1024u * 1024u) return false;
+        const auto* begin = static_cast<const std::uint8_t*>(data);
+        bytes.assign(begin, begin + length);
+        return true;
+    });
+    std::vector<std::uint8_t> bytes;
+    if (!source.Read(static_cast<rhi::AssetId>(resourceId), bytes))
         return false;
-    HGLOBAL resource = LoadResource(module, info);
-    const void* bytes = resource != nullptr ? LockResource(resource) : nullptr;
-    const DWORD size = SizeofResource(module, info);
     auto& api = d3dx::Get();
-    if (bytes == nullptr || size == 0)
-        return false;
-    return SUCCEEDED(api.fromMemEx(
-        device, bytes, size, static_cast<UINT>(-1), static_cast<UINT>(-1),
+    const bool loaded = SUCCEEDED(api.fromMemEx(
+        device, bytes.data(), static_cast<UINT>(bytes.size()),
+        static_cast<UINT>(-1), static_cast<UINT>(-1),
         1, 0, D3DFMT_UNKNOWN, D3DPOOL_MANAGED,
         static_cast<DWORD>(-1), static_cast<DWORD>(-1), 0,
         nullptr, nullptr, output));
+    if (loaded && resourceId == 0x66) {
+        HudAtlasPixels atlas;
+        if (rhi::LoadAtlas(source, rhi::AssetId::HudSprites,
+                           atlas.atlas)) {
+            g_hudAtlasPixels[app] = std::move(atlas);
+        }
+    }
+    return loaded;
 }
 
 bool CreateUIControls(MMDApp* app, HWND hwnd) {

@@ -47,3 +47,24 @@ _smoke_*.txt
 
 
 .ida-mcp
+
+# Local real-material captures contain external model and texture bytes.
+/exports/rhi-real-dx11-*/
+
+# Local agent state (project instructions remain tracked).
+/.claude/
+/.zcode/
+
+# Generated GPU captures, external scene/texture bytes and investigation logs.
+/exports/*
+!/exports/MikuMikuDance.def
+!/exports/README.md
+
+# Accidental in-source CMake/CTest outputs.
+/CMakeFiles/
+/CMakeCache.txt
+/Testing/
+*.ilk
+*.exp
+*.pch
+*.ipch

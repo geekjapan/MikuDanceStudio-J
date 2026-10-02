@@ -68,6 +68,8 @@
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/pmm_scene_evaluation.hpp"
+#include "mikudancestudio/scene_timeline_bridge.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -280,6 +282,7 @@ void ReloadModels(MMDApp* app) {
         s.CameraParentBone() = previous.parentBone;
     }
 
+    SeekPortableSceneCamera(app, static_cast<int>(frame));
     D3DRenderer* wrapper = s.Renderer();
     if (wrapper != nullptr) {
         IDirect3DDevice9* device = wrapper->device;    // +120032
@@ -309,6 +312,7 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
         if (models[j] != nullptr)
             AdvanceModelKeyframes(models[j], s.PlaybackCursorSeconds(),
                       s.PlaybackPhysicsMode());
+    AdvancePortableScenePlayback(app);
 
     if (advance != 0)
         return;                                          // 0x4175DB
@@ -402,6 +406,7 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
                 s.CameraParentBone() = previous.parentBone;
             }
         }
+        ApplyPortableSceneCamera(app);
         // projection rebuild (0x417A19..0x417A46)
         D3DRenderer* wrapper = s.Renderer();
         const float fovRad = static_cast<float>(
@@ -446,23 +451,37 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
             } else {
                 const mdl::LightKey& previous = keys[current.previous];
                 const std::uint32_t framePrev = previous.frame;
-                // Single-precision fraction, x64 0x7FF7CB48A126..0x7FF7CB48A14D
-                // (cvtsi2ss/subss/divss); the lerps below are mulss/addss.
-                const float t =
-                    (static_cast<float>(frame) -
-                     static_cast<float>(framePrev)) /
-                    static_cast<float>(frameCur - framePrev);
-                for (int c = 0; c < 3; ++c) {             // 0x417CC0..F2
-                    const float curV = current.direction[c];
-                    const float prevV = previous.direction[c];
-                    s.LightDirection()[c] =
-                        t * (curV - prevV) + prevV;
+                format::PmmLightKey prior{}, following{};
+                prior.frame = framePrev;
+                following.frame = frameCur;
+                for (int c = 0; c < 3; ++c) {
+                    prior.direction[c] = previous.direction[c];
+                    prior.color[c] = previous.color[c];
+                    following.direction[c] = current.direction[c];
+                    following.color[c] = current.color[c];
                 }
-                for (int c = 0; c < 3; ++c) {             // 0x417D2F..5F
-                    const float curV = current.color[c];
-                    const float prevV = previous.color[c];
-                    s.LightColor()[c] =
-                        t * (curV - prevV) + prevV;
+                std::array<float, 6> interpolated{};
+                if (format::InterpolatePmmLightSegment(
+                        prior, following, frame,
+                        format::PmmLightInterpolation::Playback,
+                        interpolated)) {
+                    for (int c = 0; c < 3; ++c) {
+                        s.LightColor()[c] = interpolated[c];
+                        s.LightDirection()[c] = interpolated[c + 3];
+                    }
+                } else {
+                    const float t =
+                        (static_cast<float>(frame) -
+                         static_cast<float>(framePrev)) /
+                        static_cast<float>(frameCur - framePrev);
+                    for (int c = 0; c < 3; ++c) {
+                        s.LightDirection()[c] = t *
+                            (current.direction[c] - previous.direction[c]) +
+                            previous.direction[c];
+                        s.LightColor()[c] = t *
+                            (current.color[c] - previous.color[c]) +
+                            previous.color[c];
+                    }
                 }
                 // mirrors + SetLight (0x417CFE..0x417DB3)
                 s.ApplyTimelineLightState();
@@ -507,6 +526,9 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
             }
         }
     }
+
+    if (editGate && s.ShadowTrackActive() != 0)
+        ApplyPortableSceneSelfShadow(app);
 
     // ---- 4D. physics-gravity track (0x417EB1..0x41808D) -------------------
     if (editGate && s.GravityTrackActive() != 0) {
@@ -570,6 +592,8 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
     }
 
     // ---- 6. accessory tracks (0x418093..0x4184E9) ---------------------------
+    if (editGate) ApplyPortableSceneGravity(app);
+
     for (int i = 0; i < 0xFF; ++i) {
         if (s.AccessoryTrackActive(i) == 0)
             continue;
@@ -634,6 +658,7 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
             applyDiscreteState(recPrev);
         }
     }
+    ApplyPortableSceneAccessories(app);
 }
 
 }  // namespace mikudancestudio

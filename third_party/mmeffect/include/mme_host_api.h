@@ -79,6 +79,18 @@ HRESULT __cdecl MmeHostDrawPrimitive(IDirect3DDevice9* device,
                                        D3DPRIMITIVETYPE type,
                                        unsigned int start_vertex,
                                        unsigned int primitive_count);
+#ifdef MIKUDANCESTUDIO_DIAG
+struct MmeHostDrawSnapshotProbe {
+    unsigned int pending = 0;
+    int effectEnabled = 0;
+    int bindingReady = 0;
+    int bindingActive = 0;
+    int endSceneFired = 0;
+    int effectsDisabled = 0;
+    int lineDisposition = 0;
+};
+MmeHostDrawSnapshotProbe __cdecl MmeHostProbeDrawSnapshot();
+#endif
 HRESULT __cdecl MmeHostDrawIndexedPrimitive(IDirect3DDevice9* device,
                                               D3DPRIMITIVETYPE type,
                                               int base_vertex_index,

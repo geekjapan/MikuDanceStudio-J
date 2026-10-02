@@ -24,12 +24,21 @@
 #include <d3d9.h>
 
 #include <cstdint>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
 namespace mikudancestudio {
 namespace {
+struct FontAtlasPixels {
+    std::vector<std::uint8_t> rgba;
+    std::uint64_t revision = 0;
+};
+std::unordered_map<MMDApp*, FontAtlasPixels> g_fontAtlasPixels;
+std::uint64_t g_nextFontRevision = 0;
 
 struct Glyph { const char* s; short x, y; };
 
@@ -91,6 +100,7 @@ IDirect3DDevice9* DeviceOf(MMDApp* app) {
 }  // namespace
 
 bool InitSceneFontTexture(MMDApp* app) {
+    g_fontAtlasPixels.erase(app);
     auto& s = *app;
     IDirect3DDevice9* device = DeviceOf(app);
     if (device == nullptr)
@@ -157,6 +167,8 @@ bool InitSceneFontTexture(MMDApp* app) {
                                               D3DLOCK_READONLY);
     const HRESULT dstHr = fontTex->LockRect(0, &dstRect, nullptr, 0);
     if (SUCCEEDED(srcHr) && SUCCEEDED(dstHr)) {
+        FontAtlasPixels cpuAtlas;
+        cpuAtlas.rgba.resize(512u * 512u * 4u);
         for (int row = 0; row < 512; ++row) {
             auto* src = static_cast<const unsigned char*>(srcRect.pBits) +
                         row * srcRect.Pitch;
@@ -167,8 +179,14 @@ bool InitSceneFontTexture(MMDApp* app) {
                 unsigned char* out = dst + col * 4;
                 out[0] = out[1] = out[2] = 0xFF;
                 out[3] = alpha;
+                auto* portable = cpuAtlas.rgba.data() +
+                    (static_cast<std::size_t>(row) * 512u + col) * 4u;
+                portable[0] = portable[1] = portable[2] = 0xFF;
+                portable[3] = alpha;
             }
         }
+        cpuAtlas.revision = ++g_nextFontRevision;
+        g_fontAtlasPixels[app] = std::move(cpuAtlas);
     }
     if (SUCCEEDED(dstHr))
         fontTex->UnlockRect(0);
@@ -176,6 +194,17 @@ bool InitSceneFontTexture(MMDApp* app) {
         sourceTex->UnlockRect(0);
     sourceTex->Release();
     return true;
+}
+
+FontAtlasRgbaView GetSceneFontRgba(MMDApp* app) {
+    const auto found = g_fontAtlasPixels.find(app);
+    if (found == g_fontAtlasPixels.end()) return {};
+    return {found->second.rgba.data(), found->second.rgba.size(),
+            found->second.revision};
+}
+
+void ForgetSceneFontRgba(MMDApp* app) {
+    g_fontAtlasPixels.erase(app);
 }
 
 }  // namespace mikudancestudio

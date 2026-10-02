@@ -1,3 +1,4 @@
+#include "mikudancestudio/rhi_history_replay.hpp"
 // ===========================================================================
 // VA 0x00408870 - PathToProjectDir  (original: sub_408870, 0xEF bytes)
 // VA 0x00458F80 - LoadSceneFile    (original: sub_458F80, 0x589B bytes,
@@ -35,16 +36,33 @@
 #define NOMINMAX
 #include <Windows.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <fcntl.h>
 #include <io.h>
 #include <cstdlib>
+#include <share.h>
+#include <sys/stat.h>
 
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/model_batch_bridge.hpp"
+#include "mikudancestudio/model.hpp"
+#include "mikudancestudio/pmm_format.hpp"
+#include "mikudancestudio/pmm_scene_document.hpp"
+#include "mikudancestudio/scene_session.hpp"
+#include "mikudancestudio/scene_resources.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "pmm_format_win.hpp"
+#include "pmm_v1_layout_win.hpp"
 
 namespace mikudancestudio {
+#ifdef MIKUDANCESTUDIO_DIAG
+void WritePmmV2SelectorParityReport(MMDApp* app);
+void PreparePmmWorldParityReport(MMDApp* app);
+void WritePmmWorldParityAtLoad(MMDApp* app);
+#endif
 
 namespace {
 
@@ -104,6 +122,9 @@ void FontSubInit(MMDApp* app, const wchar_t* directory) {
 void LoadSceneFile() {
 
     MMDApp* app = g_Block;
+    app->ClearPortableSceneSession();
+    ResetHistoryReplay();
+    InvalidateModelBatchComparison();
     char box[0x100];
 
     app->SceneModified() = 0;                                  // 0x458FE6
@@ -124,14 +145,10 @@ void LoadSceneFile() {
     PathToProjectDir(app->PathWorkspace().projectDirectory,     // 0x45905C
                       app->EnvFileName());
 
-    char hdr[0x1E];
-    _read(fd, hdr, 0x1E);                                       // 0x459070
-    // x64 @0x7FF7CB4A2D1E: the signature is located via strstr, and the
-    // version field sits at the match point + 0x14 (0x7FF7CB4A2D91/DA5
-    // `lea rsi,[rax+14h]`), not at the buffer head - tolerant of any
-    // leading garbage before "Polygon Movie maker".
-    char* const signature = strstr(hdr, "Polygon Movie maker");
-    if (signature == nullptr) {
+    format::PmmHeader header;
+    const auto status = format::ReadPmmHeader(ReadPmmFileBytes, &fd, header);
+    if (status == format::PmmHeaderStatus::InvalidSignature ||
+        status == format::PmmHeaderStatus::Truncated) {
         MessageBoxA(reinterpret_cast<HWND>(app->Hwnd()),
                     app->EnglishUI() != 0
                         ? "This isn't the data for Polygon Movie Maker!"
@@ -141,16 +158,85 @@ void LoadSceneFile() {
         return;
     }
 
-    // version field at signature+0x14 (5-byte compare incl. NUL as the
-    // original's `repe cmpsb ecx,5`).
-    if (strncmp(signature + 0x14, "0001", 5) == 0) {
+    if (status == format::PmmHeaderStatus::Ok &&
+        header.version == format::PmmVersion::V1) {
+        PmmV1FileLayoutContext layout{app->Renderer(), &app->PathWorkspace()};
+        bool valid = false;
+        if (_lseeki64(fd, 0, SEEK_SET) == 0) {
+            format::PmmSceneDocument document;
+            valid = format::ReadPmmSceneDocument(ReadPmmFileBytesResult, &fd,
+                                                 ResolvePmmV1FileLayout,
+                                                 &layout, document);
+        }
+        // A PMD may have moved since the scene was saved. The existing v1
+        // loader owns the locate-and-retry dialog; let it resolve that case.
+        if ((!valid && !layout.modelUnavailable) ||
+            _lseeki64(fd, 30, SEEK_SET) != 30) {
+            MessageBoxA(reinterpret_cast<HWND>(app->Hwnd()),
+                        app->EnglishUI() != 0
+                            ? "Cannot read the PMM scene data."
+                            : kJpNotPmmText,
+                        app->EnglishUI() == 0 ? kJpOpenCaption : "open file", 0);
+            _close(fd);
+            return;
+        }
         // The inline v1 loader body (0x45916D..0x45E7F7) owns the fd and
         // closes it on every path itself (pmm_load_v1.cpp).
         LoadSceneV1(app, fd);
         return;
     }
-    if (strncmp(signature + 0x14, "0002", 5) == 0) {
+    if (status == format::PmmHeaderStatus::Ok &&
+        header.version == format::PmmVersion::V2) {
+        // V2 stores its model layout counts in the scene. Validate the whole
+        // ordered document before the legacy adapter creates UI, D3D or Bullet
+        // objects. The adapter still owns path recovery and runtime mapping.
+        bool valid = false;
+        auto session = std::make_unique<format::SceneSession>();
+        if (_lseeki64(fd, 0, SEEK_SET) == 0) {
+            valid = format::SceneSession::Load(ReadPmmFileBytesResult, &fd,
+                                                nullptr, nullptr, *session);
+        }
+        if (!valid || _lseeki64(fd, 30, SEEK_SET) != 30) {
+            MessageBoxA(reinterpret_cast<HWND>(app->Hwnd()),
+                        app->EnglishUI() != 0
+                            ? "Cannot read the PMM scene data."
+                            : kJpNotPmmText,
+                        app->EnglishUI() == 0 ? kJpOpenCaption : "open file", 0);
+            _close(fd);
+            return;
+        }
         LoadSceneV2(app, fd);                                     // 0x459106
+        const auto& models = session->Document().models;
+        const bool allModelsLoaded = !models.empty() &&
+            std::all_of(models.begin(), models.end(), [app](const auto& model) {
+                return model.slot < kModelSlotCount &&
+                       app->ModelSlot(model.slot) != nullptr;
+            });
+        if (app->state.windowLayoutReady == 1 && allModelsLoaded) {
+            format::SceneResourceResolver resources(app->EnvFileName());
+            for (const auto& model : models)
+                resources.ReselectModel(model.slot,
+                    mdl::Mdl(app->ModelSlot(model.slot))->path);
+            int resourceFd = -1;
+            if (_wsopen_s(&resourceFd, app->EnvFileName(),
+                          _O_BINARY | _O_RDONLY, _SH_DENYNO, _S_IREAD) == 0) {
+                auto resolved = std::make_unique<format::SceneSession>();
+                const bool available = format::SceneSession::Load(
+                    ReadPmmFileBytesResult, &resourceFd,
+                    format::SceneResourceResolver::Resolve,
+                    &resources, *resolved);
+                _close(resourceFd);
+                if (available) session = std::move(resolved);
+            }
+            app->AttachPortableSceneSession(std::move(session));
+        }
+#ifdef MIKUDANCESTUDIO_DIAG
+        if (app->state.windowLayoutReady == 1) {
+            PreparePmmWorldParityReport(app);
+            WritePmmWorldParityAtLoad(app);
+            WritePmmV2SelectorParityReport(app);
+        }
+#endif
         return;                                                 // 0x45E7F7
     }
     MessageBoxA(reinterpret_cast<HWND>(app->Hwnd()),

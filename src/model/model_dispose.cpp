@@ -58,8 +58,10 @@
 #include <new>
 
 #include "btBulletDynamicsCommon.h"
+#include "BulletDynamics/ConstraintSolver/btGeneric6DofSpringConstraint.h"
 
 #include "mikudancestudio/model.hpp"
+#include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/physics_scene.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
@@ -92,7 +94,13 @@ void ReleasePhysConstraint(PhysicsScene* physics, int constraintId) {
         btTypedConstraint* const item = world->getConstraint(i);
         if (item != nullptr && item->getUid() == constraintId) {
             world->removeConstraint(item);
-            delete item;
+            // CreatePhysJoint allocates this exact type with scalar new. The
+            // Bullet 2.75 x86 virtual deleting destructor corrupts the CRT
+            // heap here; dispatch the destructor explicitly and pair it with
+            // the scalar allocator used at construction.
+            auto* spring = static_cast<btGeneric6DofSpringConstraint*>(item);
+            spring->~btGeneric6DofSpringConstraint();
+            ::operator delete(static_cast<void*>(spring));
             return;
         }
     }
@@ -253,6 +261,12 @@ void ModelDispose(unsigned char* m) {
 // it, kept void.
 // ---------------------------------------------------------------------------
 void DeleteModel(unsigned char* model, int freeFlag) {
+    if (g_Block && g_Block->PortableSceneSession()) {
+        const auto& scene = g_Block->PortableSceneSession()->Document();
+        if (scene.models.size() == 1 &&
+            g_Block->ModelSlot(scene.models[0].slot) == model)
+            g_Block->ClearPortableSceneSession();
+    }
     ModelDispose(model);                                    // 0x40A713
     if ((freeFlag & 1) != 0)
         ::operator delete(model);                                   // 0x40A720

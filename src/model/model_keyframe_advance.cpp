@@ -111,6 +111,7 @@
 #include "btBulletDynamicsCommon.h"
 
 #include "mikudancestudio/model.hpp"
+#include "mikudancestudio/pmm_scene_evaluation.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
 #include "keyframe_common.hpp"
@@ -118,8 +119,6 @@
 namespace mikudancestudio {
 namespace {
 
-using kfa::CopyIkDisplayFlags;
-using kfa::RefreshIkSelectors;
 using kfa::CopyBoneKeyVerbatim;
 using kfa::WriteBonePrevVerbatim;
 using kfa::MirrorBackupsToWorking;
@@ -259,24 +258,15 @@ void InitModelTrackCursors(unsigned char* model, float cursor, int physicsMode) 
     // IK/display master track.  This is a single linked list rooted at 0.
     mdl::DisplayKey* const ikKeys = mdl::DisplayKeys(m);
     mdl::ModelRecord& state = *mdl::Mdl(m);
-    state.displayTrackActive = 1;
-    state.displayKeyCursor = 0;
-    if (static_cast<double>(ikKeys[0].frame) < frame) {
-        for (;;) {
-            const int cur = static_cast<int>(state.displayKeyCursor);
-            const int next = static_cast<int>(ikKeys[cur].next);
-            if (next == 0) {
-                state.displayTrackActive = 0;
-                const mdl::DisplayKey& rec = ikKeys[cur];
-                mikudancestudio::mdl::Mdl(m)->loadComplete = rec.visible;
-                kfa::CopyIkDisplayFlags(m, rec);
-                kfa::RefreshIkSelectors(m, ikKeys, cur, cur, false, 0, 0);
-                break;
-            }
-            state.displayKeyCursor = static_cast<std::uint32_t>(next);
-            if (static_cast<double>(ikKeys[next].frame) >= frame)
-                break;
-        }
+    format::PmmDisplayCursor displayCursor;
+    format::PmmDisplaySelection displaySelection;
+    if (format::SelectPmmDisplayKey(
+            kfa::ReadLiveDisplayKeyLink, ikKeys, frame,
+            format::PmmDisplayTraversal::InitializePlayback,
+            displayCursor, displaySelection)) {
+        state.displayKeyCursor = displayCursor.index;
+        state.displayTrackActive = displayCursor.active ? 1 : 0;
+        kfa::ApplyDisplaySelection(m, ikKeys, displaySelection);
     }
 
     // Morph tracks are independently rooted at their morph index.
@@ -361,39 +351,15 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
     // ==== section 1: IK master tracks (0x4A3236) ==========================
     if (state.displayTrackActive != 0) {
         mdl::DisplayKey* const keys = mdl::DisplayKeys(m);
-        while ((double)keys[state.displayKeyCursor].frame < frame &&
-               state.displayTrackActive != 0) {
-            const int cur = static_cast<int>(state.displayKeyCursor);
-            const mdl::DisplayKey& rec = keys[cur];
-            const int next = static_cast<int>(rec.next);
-            if (next != 0) {
-                state.displayKeyCursor = static_cast<std::uint32_t>(next);
-                continue;
-            }
-            // park: track exhausted (variant A, 0x4A328B)
-            state.displayTrackActive = 0;
-            mikudancestudio::mdl::Mdl(m)->loadComplete = rec.visible;
-            CopyIkDisplayFlags(m, rec);
-            RefreshIkSelectors(m, keys, cur, cur, false, 0, 0);
-        }
-        if (state.displayTrackActive != 0) {
-            const int cur = static_cast<int>(state.displayKeyCursor);
-            const mdl::DisplayKey& rec = keys[cur];
-            if (frame == (double)rec.frame) {
-                // exact hit (variant B, 0x4A3477)
-                mikudancestudio::mdl::Mdl(m)->loadComplete = rec.visible;
-                CopyIkDisplayFlags(m, rec);
-                RefreshIkSelectors(m, keys, cur, cur, true, cur, cur);
-            } else {
-                // between keys (variant C, 0x4A36DF): flags/pairs come from
-                // the PREVIOUS record; forward condition uses the cursor
-                // record's pair
-                const int prevIdx = static_cast<int>(rec.previous);
-                const mdl::DisplayKey& prec = keys[prevIdx];
-                mikudancestudio::mdl::Mdl(m)->loadComplete = prec.visible;
-                CopyIkDisplayFlags(m, prec);
-                RefreshIkSelectors(m, keys, prevIdx, prevIdx, true, cur, cur);
-            }
+        format::PmmDisplayCursor cursor{state.displayKeyCursor, true};
+        format::PmmDisplaySelection selection;
+        if (format::SelectPmmDisplayKey(
+                kfa::ReadLiveDisplayKeyLink, keys, frame,
+                format::PmmDisplayTraversal::AdvancePlayback,
+                cursor, selection)) {
+            state.displayKeyCursor = cursor.index;
+            state.displayTrackActive = cursor.active ? 1 : 0;
+            kfa::ApplyDisplaySelection(m, keys, selection);
         }
     }
 
@@ -437,16 +403,8 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
                 v = (float)((double)tF * (double)delta +
                             (double)prev.value);
 #else
-                // x64 sub_7FF7CB4F08C0 @ 0x7FF7CB4F10F3..0x7FF7CB4F114B:
-                // single precision end to end - subss for the value delta,
-                // cvtsi2ss/divss for the fraction (frame kept as float in
-                // xmm4), then mulss/addss; no double accumulation anywhere.
-                const float tF =
-                    (static_cast<float>(frame) -
-                     static_cast<float>(prev.frame)) /
-                    static_cast<float>(static_cast<int>(rec.frame) -
-                                       static_cast<int>(prev.frame));
-                v = tF * (rec.value - prev.value) + prev.value;
+                v = format::InterpolatePmmMorphValue(
+                    prev.value, rec.value, prev.frame, rec.frame, frame);
 #endif
             }
             vals[k].value = v;
@@ -508,22 +466,12 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
                 } else {
                     const mdl::BoneOrderEntry& window =
                         mdl::BoneOrder(m)[selIdx];
-                    const std::uint32_t selStart = window.windowStart;
-                    if (rec.frame < selStart &&
-                        (double)selStart <= frame) {
-                        // zero position + quaternion xyz (0x4A3C79) - the w
-                        // component (+344) is deliberately NOT cleared.
-                        // was: for (int off = 0; off < 6; ++off)
-                        //           bone->trans[off] = 0.0f;
-                        // (a float[3] overrun on purpose).  The original is
-                        // fldz @0x4A3AB3 + six fst @0x4A3C79..0x4A3CB9
-                        // storing st(0)=0.0 into bone+0x140..0x154, i.e.
-                        // trans[0..2] then rotQuat[0..2]; same six stores.
-                        for (int c = 0; c < 3; ++c)
-                            bone->trans[c] = 0.0f;
-                        for (int c = 0; c < 3; ++c)
-                            bone->rotQuat[c] = 0.0f;
-                    }
+                    const auto decision =
+                        format::SelectPmmBoneTerminalPose(
+                            rec.frame, frame,
+                            kfa::PortableSelector(window));
+                    kfa::ApplyLiveBoneSelectorPose(
+                        bone, decision, rec, rec, true);
                     if (window.windowEnd == 0) active[b] = 0;
                 }
                 break;
@@ -616,34 +564,47 @@ void AdvanceModelKeyframes(unsigned char* model, float cursor, int physicsMode) 
                 }
             }
 
-            // selector window (0x4A41A0): snap inside [selStart, selEnd)
-            bool fullInterp = true;
+            // Selector-window crossing overrides this segment's interpolation.
             const int selIdx = bone->slotIndex;
             if (selIdx >= 0) {
                 const mdl::BoneOrderEntry& window =
                     mdl::BoneOrder(m)[selIdx];
-                const std::uint32_t selStart = window.windowStart;
-                const std::uint32_t selEnd = window.windowEnd;
-                if (selStart < curFrame && prevFrame < selStart) {
-                    if ((double)selStart <= frame) {
-                        CopyBoneKeyVerbatim(bone, rec);
-                        continue;
-                    }
-                    WriteBonePrevVerbatim(bone, pq, ppos);  // 0x4A421E
+                const auto decision = format::SelectPmmBoneSegmentPose(
+                    prevFrame, curFrame, frame,
+                    kfa::PortableSelector(window));
+                if (kfa::ApplyLiveBoneSelectorPose(
+                        bone, decision, prevRec, rec, true, ppos, pq))
                     continue;
-                }
-                if (curFrame < selEnd || prevFrame >= selEnd) {
-                    fullInterp = true;  // LABEL_122
-                } else {
-                    if ((double)selEnd <= frame) {
-                        CopyBoneKeyVerbatim(bone, rec);
-                        continue;
-                    }
-                    WriteBonePrevVerbatim(bone, pq, ppos);  // 0x4A430F
-                    continue;
-                }
             }
-            (void)fullInterp;  // both remaining paths fall through
+
+#if defined(_M_X64)
+            // Continuous playback has distinct float rounding from direct
+            // seeking. The portable kernel consumes the live edited keys;
+            // physics and selector decisions above remain in this adapter.
+            format::PmmBoneKey left{}, right{};
+            left.frame = prevFrame;
+            right.frame = curFrame;
+            std::memcpy(left.position.data(), ppos, sizeof ppos);
+            std::memcpy(left.rotation.data(), pq, sizeof pq);
+            std::memcpy(right.position.data(), rec.position,
+                        sizeof rec.position);
+            std::memcpy(right.rotation.data(), rec.rotation,
+                        sizeof rec.rotation);
+            std::memcpy(right.interpolation.data(), rec.interpolation,
+                        sizeof rec.interpolation);
+            format::PmmEvaluatedBone blended;
+            if (format::InterpolatePmmBonePlaybackSegment(left, right, frame,
+                                                           blended)) {
+                std::memcpy(bone->rotQuat, blended.rotation.data(),
+                            sizeof(float) * 4);
+                const auto boneType = static_cast<std::int8_t>(bone->type);
+                if (boneType <= static_cast<std::int8_t>(mdl::BoneType::Effector) ||
+                    bone->type == mdl::BoneType::FixedAxis)
+                    std::memcpy(bone->trans, blended.translation.data(),
+                                sizeof(float) * 3);
+                continue;
+            }
+#endif
 
             // full interpolation (LABEL_122, 0x4A433D)
             const float cq[4] = {rec.rotation[0], rec.rotation[1],

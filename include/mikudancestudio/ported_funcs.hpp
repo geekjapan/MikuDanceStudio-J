@@ -15,11 +15,25 @@
 #include "mikudancestudio/charset_conv.hpp"
 
 #include <cstdint>
+#include <cstddef>
 #include <cstdio>
 
 namespace mikudancestudio {
 
+namespace mdl { struct CameraKey; }
+
 class MMDApp;
+struct FontAtlasRgbaView {
+    const std::uint8_t* pixels = nullptr;
+    std::size_t bytes = 0;
+    std::uint64_t revision = 0;
+};
+FontAtlasRgbaView GetSceneFontRgba(MMDApp* app);
+void ForgetSceneFontRgba(MMDApp* app);
+bool LoadHudSpriteRgba(MMDApp* app, const std::uint8_t*& pixels,
+                       std::size_t& bytes, std::uint32_t& width,
+                       std::uint32_t& height, std::uint64_t& revision);
+void ForgetHudSpriteRgba(MMDApp* app);
 struct PathResolutionWorkspace;
 struct DShowRecorder;
 class D3DRenderer;  // d3d_wrapper.hpp (the "0x1D574" render/locale object)
@@ -406,6 +420,7 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frame,
 void RegisterDisplayKeyCurrent(unsigned char* model, int frame);  // 0x0049F480
 void RegisterAccessoryKey(MMDApp* app, int frame, int slot);  // 0x00413CB0
 void DeleteMarkedKeyframes(MMDApp* app);         // VA 0x004316B0
+void DeleteSelectedCameraKeys(mdl::CameraKey* camera);
 void SaveVmdFile(const wchar_t* path);            // VA 0x00419370 (src/io/vmd_save.cpp)
 void LoadAviFile(MMDApp* app);                    // VA 0x00433250 (real, src/media/media_load.cpp)
 void LoadBackgroundPicture(MMDApp* app);          // VA 0x004337A0 (real; the
@@ -425,6 +440,8 @@ void InsertBoneCameraFrameLine(MMDApp* app);  // VA 0x00439E40
                                              //  insert frame line (bone/cam)
 void DeleteBoneCameraFrameLine(MMDApp* app);  // VA 0x0043A650
                                              //  delete frame line (bone/cam)
+void ShiftCameraKeysAfterFrameDelete(mdl::CameraKey* keys,
+                                     std::uint32_t frame);
 void InsertFacialLightFrameLine(MMDApp* app); // VA 0x0043B720
                                              //  insert frame line (facial/light)
 void DeleteFacialLightFrameLine(MMDApp* app); // VA 0x0043BB30

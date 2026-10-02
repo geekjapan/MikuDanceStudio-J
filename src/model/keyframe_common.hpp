@@ -13,6 +13,7 @@
 #include <cstring>
 
 #include "mikudancestudio/model.hpp"
+#include "mikudancestudio/pmm_scene_evaluation.hpp"
 
 namespace mikudancestudio {
 namespace kfa {
@@ -45,74 +46,43 @@ inline void CopyIkDisplayFlags(unsigned char* m, const mdl::DisplayKey& rec) {
         chains[k].enabled = flags[k];
 }
 
-// Selector refresh, common tail of the IK master-track updates
-// (0x4A32DE / 0x4A34C9 / 0x4A373E and 0x4B430F / 0x4B471F / 0x4B43EF).
-// sel+12/+16 always take the pair of pairIdx's record.  sel+4: backward
-// walk from backStart over the 28-byte records while the pair is unchanged;
-// 0 if it reaches the frame-0 sentinel, else the frame of the record after
-// the walked predecessor.  sel+8: the "with forward" variants walk forward
-// from fwdStart while nextIdx != 0 and the pair of the record stepped to
-// still matches; 0 on nextIdx == 0, else the frame of the first differing
-// record.  The forward walk is entered when sel+12/+16 match fwdPairIdx's
-// pair (tautology in the exact-hit variant - same record - a real
-// prev-vs-cursor test in the between-keys variant); otherwise sel+8 takes
-// fwdStart's frame.  The terminal variant passes withForward=false.
-inline void RefreshIkSelectors(unsigned char* m, mdl::DisplayKey* keys,
-                               int pairIdx, int backStart, bool withForward,
-                               int fwdStart, int fwdPairIdx) {
+inline bool ReadLiveDisplayKeyLink(void* context, std::uint32_t index,
+                                   format::PmmDisplayKeyLink& output) {
+    if (!context || index >= mdl::kDisplayKeyCapacity) return false;
+    const auto& key = static_cast<const mdl::DisplayKey*>(context)[index];
+    output = {key.frame, key.previous, key.next, key.visible};
+    return true;
+}
+
+inline bool ReadLiveSelectorPair(void* context, std::uint32_t keyIndex,
+                                std::uint32_t selectorIndex,
+                                format::PmmRigidState& output) {
+    if (!context || keyIndex >= mdl::kDisplayKeyCapacity) return false;
+    const auto* keys = static_cast<const mdl::DisplayKey*>(context);
+    if (!mdl::SelectorStates(keys[keyIndex])) return false;
+    const auto& pair = mdl::SelectorStates(keys[keyIndex])[selectorIndex];
+    output = {pair.modelIndex, pair.boneIndex};
+    return true;
+}
+
+inline void ApplyDisplaySelection(unsigned char* m, mdl::DisplayKey* keys,
+                                  const format::PmmDisplaySelection& selection) {
+    using Kind = format::PmmDisplaySelectionKind;
+    if (selection.kind == Kind::None) return;
+    mdl::Mdl(m)->loadComplete = selection.visible;
+    CopyIkDisplayFlags(m, keys[selection.heldIndex]);
     mdl::BoneOrderEntry* const selectors = mdl::BoneOrder(m);
-    const int cnt = static_cast<int>(mdl::Mdl(m)->boneOrderCount);
-    for (int i = 0; i < cnt; ++i) {
-        mdl::BoneOrderEntry& selector = selectors[i];
-        const mdl::BoneReference& pair = mdl::SelectorStates(keys[pairIdx])[i];
-        selector.linkedModel = pair.modelIndex;
-        selector.linkedBone = pair.boneIndex;
-        int walk = backStart;
-        for (;;) {
-            const mdl::DisplayKey& wrec = keys[walk];
-            if (wrec.frame == 0) {  // frame-0 sentinel record
-                selector.windowStart = 0;
-                break;
-            }
-            const int prev = static_cast<int>(wrec.previous);
-            const mdl::BoneReference& previousPair =
-                mdl::SelectorStates(keys[prev])[i];
-            if (selector.linkedBone == previousPair.boneIndex &&
-                selector.linkedModel == previousPair.modelIndex) {
-                walk = prev;
-                continue;
-            }
-            // frame of the record following the walked predecessor
-            selector.windowStart = keys[keys[prev].next].frame;
-            break;
-        }
-        if (!withForward) {
-            selector.windowEnd = 0;
-            continue;
-        }
-        const mdl::BoneReference& forwardPair =
-            mdl::SelectorStates(keys[fwdPairIdx])[i];
-        if (selector.linkedBone == forwardPair.boneIndex &&
-            selector.linkedModel == forwardPair.modelIndex) {
-            int f = fwdStart;
-            bool toEnd = false;
-            for (;;) {
-                const int next = static_cast<int>(keys[f].next);
-                if (next == 0) {
-                    toEnd = true;
-                    break;
-                }
-                f = next;
-                const mdl::BoneReference& nextPair =
-                    mdl::SelectorStates(keys[f])[i];
-                if (!(selector.linkedBone == nextPair.boneIndex &&
-                      selector.linkedModel == nextPair.modelIndex))
-                    break;
-            }
-            selector.windowEnd = toEnd ? 0u : keys[f].frame;
-        } else {
-            selector.windowEnd = keys[fwdStart].frame;
-        }
+    const auto count = mdl::Mdl(m)->boneOrderCount;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        format::PmmEvaluatedSelector window;
+        if (!format::EvaluatePmmSelectorWindow(
+                ReadLiveDisplayKeyLink, ReadLiveSelectorPair, keys,
+                selection, i, window)) continue;
+        auto& selector = selectors[i];
+        selector.linkedModel = window.linkedModel;
+        selector.linkedBone = window.linkedBone;
+        selector.windowStart = window.windowStart;
+        selector.windowEnd = window.windowEnd;
     }
 }
 
@@ -129,6 +99,41 @@ inline void WriteBonePrevVerbatim(mikudancestudio::mdl::BoneRecord* bone,
                                   const float pq[4], const float ppos[3]) {
     for (int c = 0; c < 4; ++c) bone->rotQuat[c] = pq[c];
     for (int c = 0; c < 3; ++c) bone->trans[c] = ppos[c];
+}
+
+inline format::PmmEvaluatedSelector PortableSelector(
+    const mdl::BoneOrderEntry& window) {
+    return {window.linkedModel, window.linkedBone,
+            window.windowStart, window.windowEnd};
+}
+inline format::PmmBoneKey PortableBoneKey(const mdl::BoneKey& key) {
+    format::PmmBoneKey result{};
+    result.frame = key.frame;
+    std::memcpy(result.position.data(), key.position, sizeof key.position);
+    std::memcpy(result.rotation.data(), key.rotation, sizeof key.rotation);
+    return result;
+}
+inline bool ApplyLiveBoneSelectorPose(mdl::BoneRecord* bone,
+                                     format::PmmBoneSelectorResult decision,
+                                     const mdl::BoneKey& previous,
+                                     const mdl::BoneKey& next, bool playback,
+                                     const float previousPosition[3] = nullptr,
+                                     const float previousRotation[4] = nullptr) {
+    if (decision == format::PmmBoneSelectorResult::Unchanged) return false;
+    auto left = PortableBoneKey(previous);
+    const auto right = PortableBoneKey(next);
+    if (previousPosition)
+        std::memcpy(left.position.data(), previousPosition,
+                    sizeof(float) * 3);
+    if (previousRotation)
+        std::memcpy(left.rotation.data(), previousRotation,
+                    sizeof(float) * 4);
+    format::PmmEvaluatedBone pose;
+    if (!format::ApplyPmmBoneSelectorPose(decision, left, right,
+                                          playback, pose)) return false;
+    std::memcpy(bone->trans, pose.translation.data(), sizeof(float) * 3);
+    std::memcpy(bone->rotQuat, pose.rotation.data(), sizeof(float) * 4);
+    return true;
 }
 
 // Working-copy mirror for the IK-off arming: quat backup ikBackup[3..6] ->

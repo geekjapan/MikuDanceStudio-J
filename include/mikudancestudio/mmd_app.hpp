@@ -20,6 +20,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <utility>
 
 #include "mikudancestudio/app_layout.hpp"
 #include "mikudancestudio/accessory_layout.hpp"
@@ -31,6 +33,7 @@
 #include "mikudancestudio/physics_scene.hpp"
 #include "mikudancestudio/path_workspace.hpp"
 #include "mikudancestudio/wave_audio_context.hpp"
+#include "mikudancestudio/scene_session.hpp"
 
 namespace mikudancestudio {
 
@@ -176,6 +179,14 @@ class MMDApp {
 public:
     MMDApp();                                // VA 0x0042AE60
     void InitDefaults();                     // VA 0x0040A730
+    format::SceneSession* PortableSceneSession() {
+        return m_portableSceneSession.get();
+    }
+    void AttachPortableSceneSession(
+            std::unique_ptr<format::SceneSession> session) {
+        m_portableSceneSession = std::move(session);
+    }
+    void ClearPortableSceneSession() { m_portableSceneSession.reset(); }
 
     // The restored application state.  Public by design: the original was
     // one giant class whose fields every subsystem touched directly; free
@@ -1439,6 +1450,7 @@ public:
 private:
 
     DialogOrderArrays m_dialogOrders;
+    std::unique_ptr<format::SceneSession> m_portableSceneSession;
 
 #if defined(_M_X64)
     // In the original x86 blob, 0x9E180 is a D3DLIGHT9 overlay spanning

@@ -19,6 +19,7 @@
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/panel_controls.hpp"
+#include "mikudancestudio/scene_timeline_bridge.hpp"
 
 namespace mikudancestudio {
 
@@ -313,6 +314,7 @@ void UpdateBoneFrames(MMDApp* app) {
             InitModelTrackCursors(model, cursor,
                       app->PlaybackPhysicsMode());
     }
+    StartPortableScenePlayback(app);
 
     if (app->PlaybackFrameChanged() != 0)
         app->PlaybackFrameChanged() = 0;

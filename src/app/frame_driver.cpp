@@ -1,3 +1,4 @@
+#include "mikudancestudio/application_swapchain.hpp"
 // ===========================================================================
 // VA 0x0046B090 - FrameDriver  (original: sub_46B090, 0xED01 = 60KB)
 // ===========================================================================
@@ -354,6 +355,11 @@ void FrameDriver(MMDApp* app) {
         }
     }
 #endif
+    if(!PollApplicationSwapchain(app)) return;
+#ifdef MIKUDANCESTUDIO_DIAG
+    RunApplicationSwapchainDiagnostic(app);
+    if(!ApplicationSwapchainCanRender(app)) return;
+#endif
     AdvanceFrameRenderGate(app);
 #ifdef MIKUDANCESTUDIO_DIAG
     char freezePhysics[2]{};
@@ -614,7 +620,9 @@ void FrameDriver(MMDApp* app) {
                 hr = mme::Present(app, device, &r, &r,
                                   static_cast<HWND>(s.Hwnd()), nullptr);
             }
-            if (hr == D3DERR_DEVICELOST) {
+            if (hr == D3DERR_DEVICELOST && ApplicationSwapchainEnabled()) {
+                PostDeviceReset(app); // nonblocking recovery, poll on later frames
+            } else if (hr == D3DERR_DEVICELOST) {
                 // x64 0x4570B3..0x457139: only NOTRESET ends the wait;
                 // messages are dispatched during fullscreen recovery only.
                 while (s.Renderer()->device->TestCooperativeLevel() != D3DERR_DEVICENOTRESET) {

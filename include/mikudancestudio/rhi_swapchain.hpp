@@ -28,7 +28,7 @@ inline bool ValidSwapchainDesc(const SwapchainDesc& d) {
         (d.swap==SurfaceSwap::Discard || (d.swap==SurfaceSwap::Copy && d.samples==1)) &&
         (d.samples==1 || (d.samples>=2 && d.samples<=16)) && (d.samples!=1 || d.quality==0);
 }
-enum class SurfaceHealth { Ready, TemporarilyLost, Resettable, Removed, Unknown };
+enum class SurfaceHealth { Ready, TemporarilyLost, Resettable, Removed, Unknown, Suspended };
 enum class RebuildReason { Resize, TemporaryLoss, DeviceReplacement };
 enum class RebuildResult { Success, Invalid, Unsupported, Busy, RetryLater, ReplacementRequired, Failed };
 struct SwapchainSupport {

@@ -258,3 +258,12 @@ ctest --test-dir build-x64/build -C Release -R '^rhi_application_swapchain_gui$'
 Repeat sequentially with build-x86/build. The single-sample control does not
 replace the default-MSAA gate. Evidence files and fixture licensing remain
 external to the repository.
+
+
+## Second backend
+
+The minimal DX11 adapter now validates the same epoch/cache/surface protocol.
+See [RHI_DX11_LIFECYCLE.md](RHI_DX11_LIFECYCLE.md) for its intentionally limited
+capabilities, minimize suspension, ResizeBuffers failure/retry and native
+replacement evidence. DX11 surface resize retains both static and dynamic
+buffers; do not inherit DX9 dynamic-buffer invalidation in the portable contract.

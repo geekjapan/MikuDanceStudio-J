@@ -37,6 +37,7 @@
 #include <cstring>
 
 #include "mikudancestudio/accessory_layout.hpp"
+#include "mikudancestudio/scene_preview_ui.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/version.hpp"
 #include "mikudancestudio/model.hpp"
@@ -435,6 +436,7 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
     const std::uint16_t id = LOWORD(wParam);
     const std::uint16_t notification = HIWORD(wParam);
 
+    if(HandleScenePreviewCommand(app,id))return;
     switch (id) {
     case 200:        // File: Exit (0x48BCF9) - flag + WM_CLOSE
         s.state.dialogFlags[0] = 1;

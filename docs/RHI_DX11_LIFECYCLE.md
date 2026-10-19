@@ -20,14 +20,16 @@ one sample with quality zero, Immediate or VSync presentation, and optional D16
 or D24S8 depth. Fullscreen, other windows, copy presentation, XRGB/D24X8 and MSAA
 are rejected. Format support is queried from the actual device.
 
-The implemented drawing subset is a non-indexed triangle list using
+The initial HUD drawing subset is a non-indexed triangle list using
 ScreenPositionColorUv (28-byte XYZRHW/packed ARGB/UV vertices), a single uploaded
 RGBA8 texture and explicit shader modulation. Color channels are converted from
 the packed vertex convention in the vertex shader. Point/linear filtering,
 wrap/clamp, disabled lighting/stencil/alpha-test, no culling, Always/LessEqual
 depth and the existing source-alpha blend rule are supported. All other pipeline
-requests fail closed. Indexed/model draws, compute, render-target textures,
-generated mip chains, Toon/Sphere and deferred command lists are not advertised.
+requests fail closed. A separate model pipeline now adds indexed draws,
+Toon/Sphere, captured/generated mip chains and owned offscreen targets; see
+[DX11 model batch acceptance](RHI_DX11_MODEL_BATCH.md). Compute, arbitrary
+render-target texture handles and deferred command lists remain unsupported.
 Dynamic buffer upload uses whole-buffer DISCARD; partial dynamic writes fail.
 The adapter exposes shaders but does not expose general shader creation yet.
 
@@ -96,7 +98,12 @@ ctest --test-dir build-dx11 -C Release -R '^rhi_d3d11_lifecycle_' --output-on-fa
 ```
 
 Local logs and generated RGBA images are in each build tree's
-`dx11-lifecycle-evidence`; they are ignored build artifacts. The next migration
-is one existing PMM material batch through an explicit shader/buffer contract
-into an offscreen DX11 target. Do not switch application rendering based on
-this lifecycle acceptance.
+`dx11-lifecycle-evidence`; they are ignored build artifacts. The independent
+PMM batch migration and its additional generated-model lifecycle checks are
+documented in [DX11 model batch acceptance](RHI_DX11_MODEL_BATCH.md).
+Do not switch application rendering based on this lifecycle acceptance.
+
+The optional [DX9 measured compatibility mode](RHI_DX11_COMPATIBILITY.md) adds
+capability checks, generated Hardware/WARP lifecycle cases, actual scene-prefix
+rebuild/resource restoration and separate GPU timestamp measurements. Default
+mode and application DX9 selection remain unchanged.

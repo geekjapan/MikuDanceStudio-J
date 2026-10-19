@@ -460,6 +460,18 @@ void WritePmmV1RuntimeParityReport(MMDApp* app) {
                      static_cast<double>(editedX));
         result.Present("v1.camera.chain.after-head-edit",
             ReportCameraChain(report, "after-head-edit", app->CameraKeys()));
+        const auto headNext = cameraHead.next;
+        for (unsigned registration = 0; registration < 2; ++registration) {
+            // Exercise the actual camera register command at frame zero,
+            // with sparse successors. Re-registration must update the dense
+            // head rather than allocate a frame-zero sparse record.
+            SendMessageW(app->MainWindow(), WM_COMMAND, 452, 0);
+            result.Equal("v1.camera.register.head.next", cameraHead.next, headNext);
+            result.Present("v1.camera.chain.after-head-register",
+                ReportCameraChain(report, "after-head-register", app->CameraKeys()));
+        }
+        ReloadModels(app);
+        result.Equal("v1.camera.register.session", timelineSession->Pose().camera.position[0], editedX);
     }
     result.Present("v1.shadow.track",
                    !disk.selfShadowKeys.dense.empty() &&

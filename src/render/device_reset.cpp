@@ -174,6 +174,7 @@ void PostDeviceReset(MMDApp* app) {
     if(lifecycle) lifecycle->blocked=true;
     // Lost callbacks and release run once across failed attempts.
     if(!lifecycle || !lifecycle->released) {
+        app->CpuNativeCaptureTexturePresent()=false;app->CpuNativeBackgroundTexturePresent()=false;
         ReleaseSubSlot(app->CaptureTexture());                        // 0x440DC8
         ReleaseSubSlot(app->AviBackgroundTexture());                  // 0x440DE0
         ReleaseSubSlot(app->AviBackgroundSurface());                  // 0x440DF8
@@ -251,6 +252,7 @@ void PostDeviceReset(MMDApp* app) {
     mme::OnResetDevice(app);
     LogReset(app,"mme_reset",reason,D3D_OK,lifecycle ? lifecycle->adapter->Status() : rhi::DeviceStatus{});
 
+    app->CpuRenderFrame().groundAlphaBlend=false;
     InitRenderStates(app);                                        // 0x406E90
 
     const HWND hwnd = static_cast<HWND>(app->state.hwnd);

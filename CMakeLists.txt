@@ -68,8 +68,20 @@ add_library(mikudancestudio_rhi STATIC
     src/render/rhi_assets.cpp
     src/render/rhi_material_textures.cpp)
 target_sources(mikudancestudio_rhi PRIVATE src/render/rhi_shader_inputs.cpp)
+target_sources(mikudancestudio_rhi PRIVATE src/render/rhi_model_replay.cpp)
+target_sources(mikudancestudio_rhi PRIVATE src/render/rhi_scene_renderer.cpp src/render/rhi_backend.cpp src/render/rhi_scene_preview.cpp)
+target_sources(mikudancestudio_rhi PRIVATE src/render/model_geometry.cpp)
+target_sources(mikudancestudio_rhi PRIVATE src/render/model_inputs.cpp)
+target_sources(mikudancestudio_rhi PRIVATE src/render/scene_passes.cpp src/render/scene_frame.cpp src/render/rhi_texture_mips.cpp)
 target_include_directories(mikudancestudio_rhi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 option(MIKUDANCESTUDIO_RHI_D3D9 "Build the opt-in D3D9 RHI adapter" ON)
+if(WIN32)
+    # CPU transport conversion is also used by the native application's recorder
+    # when the optional DX9 RHI adapter itself is disabled.
+    target_sources(mikudancestudio_rhi PRIVATE src/render/rhi_d3d9_replay_conversion.cpp)
+    target_sources(mikudancestudio_rhi PRIVATE src/render/rhi_d3d9_mip_capture.cpp)
+    target_link_libraries(mikudancestudio_rhi PUBLIC d3dcompiler)
+endif()
 if(WIN32 AND MIKUDANCESTUDIO_RHI_D3D9)
     target_sources(mikudancestudio_rhi PRIVATE src/render/rhi_d3d9.cpp
         src/render/rhi_d3d9_texture_preparation.cpp
@@ -79,20 +91,96 @@ if(WIN32 AND MIKUDANCESTUDIO_RHI_D3D9)
         MIKUDANCESTUDIO_RHI_D3D9=1)
 endif()
 option(MIKUDANCESTUDIO_RHI_D3D11 "Build the isolated minimal DX11 lifecycle adapter" ON)
+option(MIKUDANCESTUDIO_RHI_D3D12 "Build the optional DX12 lifecycle and model adapter" ON)
+if(WIN32 AND (MIKUDANCESTUDIO_RHI_D3D11 OR MIKUDANCESTUDIO_RHI_D3D12))
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/model_material_vertex.hlsl" MDS_MODEL_VS)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/model_material_pixel.hlsl" MDS_MODEL_PS)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/model_dx9_compatibility.hlsl" MDS_MODEL_DX9_COMPATIBILITY)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/fixed_screen.hlsl" MDS_FIXED_SCREEN)
+    configure_file(cmake/rhi_model_shaders.hpp.in generated/rhi_model_shaders.hpp @ONLY)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        src/render/shaders/model_material_vertex.hlsl src/render/shaders/model_material_pixel.hlsl
+        src/render/shaders/model_dx9_compatibility.hlsl src/render/shaders/fixed_screen.hlsl)
+    target_include_directories(mikudancestudio_rhi PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+endif()
 if(WIN32 AND MIKUDANCESTUDIO_RHI_D3D11)
     target_sources(mikudancestudio_rhi PRIVATE src/render/rhi_d3d11.cpp)
     target_link_libraries(mikudancestudio_rhi PUBLIC d3d11 dxgi d3dcompiler)
     target_compile_definitions(mikudancestudio_rhi PUBLIC MIKUDANCESTUDIO_RHI_D3D11=1)
+endif()
+if(WIN32 AND MIKUDANCESTUDIO_RHI_D3D12)
+    target_sources(mikudancestudio_rhi PRIVATE src/render/rhi_d3d12.cpp)
+    target_link_libraries(mikudancestudio_rhi PUBLIC d3d12 dxgi d3dcompiler)
+    target_compile_definitions(mikudancestudio_rhi PUBLIC MIKUDANCESTUDIO_RHI_D3D12=1)
 endif()
 add_executable(mds_scene_cli src/tools/scene_cli.cpp)
 target_link_libraries(mds_scene_cli PRIVATE mikudancestudio_formats)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(rhi_scene_frame_test tests/rhi_scene_frame_test.cpp)
+    target_link_libraries(rhi_scene_frame_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME rhi_scene_frame COMMAND rhi_scene_frame_test)
+    add_executable(rhi_scene_passes_test tests/rhi_scene_passes_test.cpp)
+    target_link_libraries(rhi_scene_passes_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME rhi_scene_passes COMMAND rhi_scene_passes_test)
+    add_executable(rhi_scene_renderer_test tests/rhi_scene_renderer_test.cpp)
+    target_link_libraries(rhi_scene_renderer_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME rhi_scene_renderer COMMAND rhi_scene_renderer_test)
+    add_executable(rhi_model_geometry_test tests/rhi_model_geometry_test.cpp)
+    target_link_libraries(rhi_model_geometry_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME rhi_model_geometry COMMAND rhi_model_geometry_test)
+    add_executable(rhi_model_inputs_test tests/rhi_model_inputs_test.cpp)
+    target_link_libraries(rhi_model_inputs_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME rhi_model_inputs COMMAND rhi_model_inputs_test)
+    if(WIN32 AND MIKUDANCESTUDIO_RHI_D3D11 AND MIKUDANCESTUDIO_RHI_D3D12)
+        add_executable(scene_preview_gui_test tests/scene_preview_gui_test.cpp)
+        target_link_libraries(scene_preview_gui_test PRIVATE user32)
+        add_executable(rhi_scene_preview_test tests/rhi_scene_preview_test.cpp)
+        target_link_libraries(rhi_scene_preview_test PRIVATE mikudancestudio_rhi user32)
+        foreach(api IN ITEMS dx11 dx12)
+            foreach(driver IN ITEMS warp hardware)
+                add_test(NAME rhi_preview_${api}_${driver} COMMAND rhi_scene_preview_test ${api}-${driver})
+                set_tests_properties(rhi_preview_${api}_${driver} PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            endforeach()
+        endforeach()
+        add_executable(rhi_backend_scene_test tests/rhi_backend_scene_test.cpp)
+        target_link_libraries(rhi_backend_scene_test PRIVATE mikudancestudio_rhi user32)
+        foreach(api IN ITEMS dx11 dx12)
+            foreach(driver IN ITEMS warp hardware)
+                add_test(NAME rhi_resident_${api}_${driver} COMMAND rhi_backend_scene_test --${api}-${driver})
+                set_tests_properties(rhi_resident_${api}_${driver} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            endforeach()
+        endforeach()
+        foreach(driver IN ITEMS warp hardware)
+            add_test(NAME rhi_resident_dx12_debug_${driver} COMMAND rhi_backend_scene_test --dx12-${driver}-debug)
+            set_tests_properties(rhi_resident_dx12_debug_${driver} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        endforeach()
+        foreach(api IN ITEMS dx11 dx12)
+            add_test(NAME rhi_specular_policy_${api}_warp COMMAND rhi_backend_scene_test --${api}-warp-debug-specular)
+            set_tests_properties(rhi_specular_policy_${api}_warp PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        endforeach()
+    endif()
+    add_executable(explicit_clip_geometry_test tests/explicit_clip_geometry_test.cpp)
+    add_test(NAME explicit_clip_geometry COMMAND explicit_clip_geometry_test)
     if(WIN32 AND MIKUDANCESTUDIO_RHI_D3D11)
         add_executable(rhi_d3d11_lifecycle_test tests/rhi_d3d11_lifecycle_test.cpp)
         target_link_libraries(rhi_d3d11_lifecycle_test PRIVATE mikudancestudio_rhi user32)
+        add_executable(rhi_d3d11_multimaterial_test tests/rhi_d3d11_multimaterial_test.cpp)
+        target_link_libraries(rhi_d3d11_multimaterial_test PRIVATE mikudancestudio_rhi user32)
+        add_executable(rhi_d3d11_viewport_test tests/rhi_d3d11_viewport_test.cpp)
+        target_link_libraries(rhi_d3d11_viewport_test PRIVATE mikudancestudio_rhi user32)
         foreach(driver IN ITEMS warp hardware)
+            add_test(NAME rhi_d3d11_compatibility_lifecycle_${driver} COMMAND rhi_d3d11_lifecycle_test
+                --compatibility-${driver} ${CMAKE_CURRENT_BINARY_DIR}/dx11-compatibility-lifecycle-evidence)
+            set_tests_properties(rhi_d3d11_compatibility_lifecycle_${driver} PROPERTIES
+                SKIP_RETURN_CODE 77 TIMEOUT 90 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            add_test(NAME rhi_d3d11_viewport_${driver} COMMAND rhi_d3d11_viewport_test --${driver})
+            set_tests_properties(rhi_d3d11_viewport_${driver} PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            add_test(NAME rhi_d3d11_multimaterial_${driver} COMMAND rhi_d3d11_multimaterial_test
+                --${driver} ${CMAKE_CURRENT_BINARY_DIR}/dx11-multimaterial-evidence)
+            set_tests_properties(rhi_d3d11_multimaterial_${driver} PROPERTIES
+                SKIP_RETURN_CODE 77 TIMEOUT 90 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
             add_test(NAME rhi_d3d11_lifecycle_${driver} COMMAND rhi_d3d11_lifecycle_test
                 --${driver} ${CMAKE_CURRENT_BINARY_DIR}/dx11-lifecycle-evidence)
             set_tests_properties(rhi_d3d11_lifecycle_${driver} PROPERTIES
@@ -106,6 +194,57 @@ if(BUILD_TESTING)
         set_tests_properties(rhi_d3d11_shader_inputs PROPERTIES SKIP_RETURN_CODE 77)
     endif()
     if(WIN32 AND MIKUDANCESTUDIO_RHI_D3D9)
+        add_executable(rhi_d3d9_replay_conversion_test tests/rhi_d3d9_replay_conversion_test.cpp)
+        target_link_libraries(rhi_d3d9_replay_conversion_test PRIVATE mikudancestudio_rhi)
+        add_test(NAME rhi_d3d9_replay_conversion COMMAND rhi_d3d9_replay_conversion_test)
+        add_test(NAME rhi_d3d9_null_texture_native COMMAND rhi_d3d9_replay_conversion_test --native-null)
+        set_tests_properties(rhi_d3d9_null_texture_native PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        add_test(NAME rhi_d3d9_mip_capture_native COMMAND rhi_d3d9_replay_conversion_test --native-mips)
+        set_tests_properties(rhi_d3d9_mip_capture_native PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        if(MIKUDANCESTUDIO_RHI_D3D11)
+            target_include_directories(rhi_d3d9_replay_conversion_test PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+            target_sources(rhi_d3d9_replay_conversion_test PRIVATE tests/rhi_d3d11_w_candidate_backend.cpp)
+            add_test(NAME rhi_shared_clip_depth_hardware COMMAND rhi_d3d9_replay_conversion_test --shared-clip-smoke)
+            set_tests_properties(rhi_shared_clip_depth_hardware PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            add_test(NAME rhi_explicit_z_shader_hardware COMMAND rhi_d3d9_replay_conversion_test --z-explicit-smoke)
+            set_tests_properties(rhi_explicit_z_shader_hardware PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            add_test(NAME rhi_shared_color_hardware COMMAND rhi_d3d9_replay_conversion_test --shared-color-smoke)
+            set_tests_properties(rhi_shared_color_hardware PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            add_test(NAME rhi_lighting_order_hardware COMMAND rhi_d3d9_replay_conversion_test --lighting-order-smoke)
+            add_test(NAME rhi_final_modulate_hardware COMMAND rhi_d3d9_replay_conversion_test --final-modulate-smoke ${CMAKE_CURRENT_BINARY_DIR}/final-modulate-evidence)
+            set_tests_properties(rhi_final_modulate_hardware PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            set_tests_properties(rhi_lighting_order_hardware PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            add_test(NAME rhi_normal_precision_hardware COMMAND rhi_d3d9_replay_conversion_test --normal-precision-smoke ${CMAKE_CURRENT_BINARY_DIR}/normal-precision-smoke)
+            set_tests_properties(rhi_normal_precision_hardware PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            add_test(NAME rhi_normal_transforms_hardware COMMAND rhi_d3d9_replay_conversion_test --normal-transforms ${CMAKE_CURRENT_BINARY_DIR}/normal-transform-evidence)
+            add_test(NAME rhi_texture_fma_scope_hardware COMMAND rhi_d3d9_replay_conversion_test --texture-fma-scope ${CMAKE_CURRENT_BINARY_DIR}/texture-fma-evidence)
+            set_tests_properties(rhi_texture_fma_scope_hardware PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            add_test(NAME rhi_specular_scope_hardware COMMAND rhi_d3d9_replay_conversion_test --model-specular-scope ${CMAKE_CURRENT_BINARY_DIR}/specular-scope-evidence)
+            set_tests_properties(rhi_specular_scope_hardware PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            set_tests_properties(rhi_normal_transforms_hardware PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            # Validates repeatability, CPU/GPU arithmetic and shared-clip
+            # controls. Native-equivalence qualification is reported separately.
+            add_test(NAME rhi_independent_xy_controls COMMAND rhi_d3d9_replay_conversion_test
+                --xy-independent-controls ${CMAKE_CURRENT_BINARY_DIR}/independent-xy-evidence)
+            set_tests_properties(rhi_independent_xy_controls PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            add_test(NAME rhi_d3d11_compatibility_generated COMMAND rhi_d3d9_replay_conversion_test
+                --dx11-compatibility-generated ${CMAKE_CURRENT_BINARY_DIR}/dx11-compatibility-generated)
+            set_tests_properties(rhi_d3d11_compatibility_generated PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            foreach(driver IN ITEMS warp hardware)
+                add_test(NAME rhi_d3d9_ground_${driver} COMMAND rhi_d3d9_replay_conversion_test --ground-${driver})
+                set_tests_properties(rhi_d3d9_ground_${driver} PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+                add_test(NAME rhi_d3d9_replay_conversion_${driver} COMMAND rhi_d3d9_replay_conversion_test --${driver})
+                set_tests_properties(rhi_d3d9_replay_conversion_${driver} PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+                add_test(NAME rhi_d3d9_null_texture_${driver} COMMAND rhi_d3d9_replay_conversion_test --null-${driver})
+                set_tests_properties(rhi_d3d9_null_texture_${driver} PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+                add_test(NAME rhi_d3d9_mip_capture_${driver} COMMAND rhi_d3d9_replay_conversion_test --mips-${driver})
+                set_tests_properties(rhi_d3d9_mip_capture_${driver} PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+                add_test(NAME rhi_d3d9_shadow_${driver} COMMAND rhi_d3d9_replay_conversion_test --shadow-${driver})
+                set_tests_properties(rhi_d3d9_shadow_${driver} PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+                add_test(NAME rhi_d3d11_shadow_oracle_${driver} COMMAND rhi_d3d9_replay_conversion_test --shadow-adapter-${driver})
+                set_tests_properties(rhi_d3d11_shadow_oracle_${driver} PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+            endforeach()
+        endif()
         add_executable(rhi_d3d11_material_pixel_test tests/rhi_d3d11_material_pixel_test.cpp)
         target_link_libraries(rhi_d3d11_material_pixel_test PRIVATE mikudancestudio_rhi d3d11 d3dcompiler user32)
         target_compile_definitions(rhi_d3d11_material_pixel_test PRIVATE MDS_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders")
@@ -117,6 +256,15 @@ if(BUILD_TESTING)
         set_tests_properties(rhi_d3d11_material_pixel_hardware rhi_d3d11_material_pixel_constant
             rhi_d3d11_material_pixel_translucent PROPERTIES SKIP_RETURN_CODE 77)
         add_executable(rhi_d3d11_real_batch_test tests/rhi_d3d11_real_batch_test.cpp)
+        if(MIKUDANCESTUDIO_RHI_D3D11)
+            find_package(Python3 COMPONENTS Interpreter REQUIRED)
+            add_test(NAME rhi_d3d11_model_adapter COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_rhi_model_adapter.py
+                --executable $<TARGET_FILE:rhi_d3d11_real_batch_test>
+                --output ${CMAKE_CURRENT_BINARY_DIR}/rhi-model-adapter-evidence)
+            set_tests_properties(rhi_d3d11_model_adapter PROPERTIES SKIP_RETURN_CODE 77
+                TIMEOUT 210 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop)
+        endif()
         target_link_libraries(rhi_d3d11_real_batch_test PRIVATE mikudancestudio_rhi d3d11 d3dcompiler user32)
         target_compile_definitions(rhi_d3d11_real_batch_test PRIVATE MDS_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders")
         add_executable(rhi_d3d11_model_vertex_test tests/rhi_d3d11_model_vertex_test.cpp)
@@ -183,6 +331,9 @@ if(BUILD_TESTING)
     target_link_libraries(rhi_texture_preparation_test PRIVATE mikudancestudio_rhi)
     add_test(NAME rhi_texture_preparation COMMAND rhi_texture_preparation_test)
     add_executable(rhi_history_test tests/rhi_history_test.cpp)
+    add_executable(rhi_model_replay_test tests/rhi_model_replay_test.cpp)
+    target_link_libraries(rhi_model_replay_test PRIVATE mikudancestudio_rhi)
+    add_test(NAME rhi_model_replay COMMAND rhi_model_replay_test)
     target_link_libraries(rhi_history_test PRIVATE mikudancestudio_rhi)
     add_test(NAME rhi_history COMMAND rhi_history_test)
     if(WIN32 AND MIKUDANCESTUDIO_RHI_D3D9)
@@ -190,6 +341,8 @@ if(BUILD_TESTING)
         target_link_libraries(rhi_texture_preparation_d3d9_test PRIVATE mikudancestudio_rhi user32)
         add_test(NAME rhi_texture_preparation_d3d9 COMMAND rhi_texture_preparation_d3d9_test)
         set_tests_properties(rhi_texture_preparation_d3d9 PROPERTIES SKIP_RETURN_CODE 77)
+        add_test(NAME rhi_mip_preparation_d3d9 COMMAND rhi_texture_preparation_d3d9_test --mips)
+        set_tests_properties(rhi_mip_preparation_d3d9 PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE RESOURCE_LOCK mds_gui_desktop TIMEOUT 180)
     endif()
     add_executable(mds_scene_fixture tests/scene_cli_fixture.cpp)
     target_include_directories(mds_scene_fixture PRIVATE tests)
@@ -268,7 +421,6 @@ endif()
 if(MIKUDANCESTUDIO_FORMATS_ONLY)
     return()
 endif()
-
 # ---------------------------------------------------------------------------
 # Dependencies (provisioned by Conan; see conanfile.py / recipes/)
 # ---------------------------------------------------------------------------
@@ -277,7 +429,9 @@ find_package(BULLET275 REQUIRED)
 # The first portable M1 boundary: Bullet world ownership has no Win32 or D3D9
 # dependency. On non-Windows hosts this target and its headless test can build
 # while the existing GUI and DirectX backends remain Windows-only.
-add_library(mikudancestudio_physics STATIC src/physics/physics_world_state.cpp)
+add_library(mikudancestudio_physics STATIC
+    src/physics/physics_world_state.cpp
+    src/physics/cpu_scene_simulation.cpp)
 target_include_directories(mikudancestudio_physics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(mikudancestudio_physics PUBLIC BULLET275::BULLET275)
 
@@ -285,6 +439,9 @@ if(BUILD_TESTING)
     add_executable(physics_world_state_test tests/physics_world_state_test.cpp)
     target_link_libraries(physics_world_state_test PRIVATE mikudancestudio_physics)
     add_test(NAME physics_world_state COMMAND physics_world_state_test)
+    add_executable(cpu_scene_simulation_test tests/cpu_scene_simulation_test.cpp)
+    target_link_libraries(cpu_scene_simulation_test PRIVATE mikudancestudio_physics)
+    add_test(NAME cpu_scene_simulation COMMAND cpu_scene_simulation_test)
 endif()
 
 if(NOT WIN32)
@@ -340,6 +497,10 @@ add_library(mikudancestudio_core STATIC
     src/render/accessory.cpp
     src/render/model_renderers.cpp
     src/render/model_batch_bridge.cpp
+    src/render/model_cpu_preview.cpp
+    src/render/scene_cpu_preview.cpp
+    src/render/scene_cpu_submission.cpp
+    src/render/model_input_bridge.cpp
     src/render/rhi_scene_history.cpp
     src/render/rhi_history_replay.cpp
     src/render/bg_overlay.cpp
@@ -350,6 +511,12 @@ add_library(mikudancestudio_core STATIC
     src/model/model_init.cpp
     src/model/path_resolve.cpp
     src/model/pmd_load.cpp
+    src/model/runtime_cpu_model.cpp
+    src/model/runtime_cpu_scene.cpp
+    src/model/runtime_cpu_accessory.cpp
+    src/render/runtime_cpu_scene_producer.cpp
+    src/model/runtime_cpu_tracks.cpp
+    src/model/cpu_pose_schedule.cpp
     src/model/bone_transform.cpp
     src/model/model_keyframe_advance.cpp
     src/model/model_keyframe_edit.cpp
@@ -467,6 +634,11 @@ endif()
 # ---------------------------------------------------------------------------
 option(MIKUDANCESTUDIO_DIAG
        "Compile the porting-era diagnostics probes (MIKUDANCESTUDIO_* env dumps/traces)" OFF)
+option(MIKUDANCESTUDIO_RHI_PREVIEW "Include optional CPU scene preview menu (runtime default off)" ON)
+if(MIKUDANCESTUDIO_DIAG OR (MIKUDANCESTUDIO_RHI_PREVIEW AND (MIKUDANCESTUDIO_RHI_D3D11 OR MIKUDANCESTUDIO_RHI_D3D12)))
+    target_compile_definitions(mikudancestudio_core PUBLIC MIKUDANCESTUDIO_CPU_RENDERING=1)
+    target_sources(mikudancestudio_core PRIVATE src/main/rhi_preview_host.cpp)
+endif()
 if (MIKUDANCESTUDIO_DIAG)
     target_compile_definitions(mikudancestudio_core PUBLIC MIKUDANCESTUDIO_DIAG=1)
     target_link_libraries(mikudancestudio_core PUBLIC d3dcompiler) # diagnostic depth-history shader
@@ -595,9 +767,32 @@ target_link_libraries(MMEffect PRIVATE
     advapi32
 )
 target_link_libraries(MikuDanceStudio PRIVATE MMEffect)
+if(MIKUDANCESTUDIO_DIAG OR (MIKUDANCESTUDIO_RHI_PREVIEW AND (MIKUDANCESTUDIO_RHI_D3D11 OR MIKUDANCESTUDIO_RHI_D3D12)))
+    add_executable(mds_rhi_preview src/tools/rhi_preview_main.cpp)
+    target_link_libraries(mds_rhi_preview PRIVATE mikudancestudio_core MMEffect dsound)
+    target_link_options(mds_rhi_preview PRIVATE "/MANIFEST:NO" "${CMAKE_CURRENT_SOURCE_DIR}/${MIKUDANCESTUDIO_GEN_RES}")
+endif()
 
 # Resource IDs are distinct from the host. Icon child IDs are explicit too.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+if(BUILD_TESTING)
+    add_test(NAME cpu_live_evidence COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cpu_live_evidence.py)
+    if(TARGET mds_rhi_preview)
+        foreach(api dx11 dx12)
+            if((api STREQUAL "dx11" AND MIKUDANCESTUDIO_RHI_D3D11) OR
+               (api STREQUAL "dx12" AND MIKUDANCESTUDIO_RHI_D3D12))
+                foreach(driver hardware warp)
+                    add_test(NAME rhi_independent_${api}_${driver}
+                        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_independent_rhi.py
+                        --preview $<TARGET_FILE:mds_rhi_preview>
+                        --application $<TARGET_FILE:MikuDanceStudio> --api ${api} --driver ${driver})
+                    set_tests_properties(rhi_independent_${api}_${driver} PROPERTIES
+                        TIMEOUT 180 RUN_SERIAL TRUE LABELS "graphics;cpu-import")
+                endforeach()
+            endif()
+        endforeach()
+    endif()
+endif()
 set(MME_ICON_RES ${CMAKE_CURRENT_BINARY_DIR}/mme_icon.res)
 add_custom_command(
     OUTPUT ${MME_ICON_RES}
@@ -650,6 +845,29 @@ if(BUILD_TESTING)
         mikudancestudio_core MMEffect dsound)
     add_test(NAME model_reader_runtime_external COMMAND model_reader_runtime_external_test)
     set_tests_properties(model_reader_runtime_external PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(runtime_cpu_model_test tests/runtime_cpu_model_test.cpp)
+    target_link_libraries(runtime_cpu_model_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME runtime_cpu_model COMMAND runtime_cpu_model_test)
+    add_executable(runtime_cpu_scene_test tests/runtime_cpu_scene_test.cpp)
+    target_link_libraries(runtime_cpu_scene_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_executable(runtime_cpu_bindings_test tests/runtime_cpu_bindings_test.cpp)
+    target_link_libraries(runtime_cpu_bindings_test PRIVATE mikudancestudio_core MMEffect dsound)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME runtime_cpu_scene COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runtime_cpu_scene.py --test $<TARGET_FILE:runtime_cpu_scene_test>)
+        add_test(NAME runtime_cpu_bindings COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runtime_cpu_scene.py --passes $<TARGET_FILE:runtime_cpu_bindings_test>
+            --assets ${CMAKE_CURRENT_SOURCE_DIR}/res/assets)
+        add_test(NAME runtime_cpu_x_native COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runtime_cpu_scene.py --passes $<TARGET_FILE:runtime_cpu_bindings_test> --native-x)
+        set_tests_properties(runtime_cpu_x_native PROPERTIES LABELS "gpu;dx9")
+    endif()
+    add_executable(cpu_pose_schedule_test tests/cpu_pose_schedule_test.cpp)
+    target_link_libraries(cpu_pose_schedule_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME cpu_pose_schedule COMMAND cpu_pose_schedule_test)
+    add_executable(cpu_scene_simulation_native_test tests/cpu_scene_simulation_native_test.cpp)
+    target_link_libraries(cpu_scene_simulation_native_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME cpu_scene_simulation_native COMMAND cpu_scene_simulation_native_test)
     add_executable(pmm_format_adapter_test tests/pmm_format_adapter_test.cpp)
     target_include_directories(pmm_format_adapter_test PRIVATE src/io)
     target_link_libraries(pmm_format_adapter_test PRIVATE mikudancestudio_formats)
@@ -673,7 +891,8 @@ if(BUILD_TESTING)
     target_link_libraries(pmm_scene_timeline_bridge_test PRIVATE
         mikudancestudio_core MMEffect dsound)
     add_test(NAME pmm_scene_timeline_bridge
-             COMMAND pmm_scene_timeline_bridge_test)
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runtime_cpu_scene.py
+             --bridge $<TARGET_FILE:pmm_scene_timeline_bridge_test>)
     set_tests_properties(pmm_scene_timeline_bridge PROPERTIES
         SKIP_RETURN_CODE 77)
     add_executable(pmm_v1_layout_adapter_test tests/pmm_v1_layout_adapter_test.cpp)
@@ -849,10 +1068,22 @@ if(BUILD_TESTING)
             target_include_directories(pmd_skinning_test PRIVATE include third_party/mmeffect/include)
             target_compile_options(pmd_skinning_test PRIVATE /openmp /Gy)
             target_link_options(pmd_skinning_test PRIVATE /OPT:REF)
-            target_link_libraries(pmd_skinning_test PRIVATE D3DXRuntime)
+            target_link_libraries(pmd_skinning_test PRIVATE D3DXRuntime mikudancestudio_rhi)
             add_test(NAME pmd_skinning COMMAND pmd_skinning_test)
         endif()
     endif()
+    add_executable(model_cpu_geometry_test tests/model_cpu_geometry_test.cpp src/app/app_ctor.cpp)
+    target_include_directories(model_cpu_geometry_test PRIVATE include third_party/mmeffect/include)
+    target_compile_options(model_cpu_geometry_test PRIVATE /Gy)
+    if(MIKUDANCESTUDIO_DIAG)
+        target_compile_definitions(model_cpu_geometry_test PRIVATE MIKUDANCESTUDIO_DIAG=1)
+    endif()
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        target_compile_options(model_cpu_geometry_test PRIVATE /openmp)
+    endif()
+    target_link_options(model_cpu_geometry_test PRIVATE /OPT:REF)
+    target_link_libraries(model_cpu_geometry_test PRIVATE mikudancestudio_rhi mikudancestudio_formats D3DXRuntime)
+    add_test(NAME model_cpu_geometry COMMAND model_cpu_geometry_test)
     add_executable(accessory_selection_test tests/accessory_selection_test.cpp
         src/app/app_utilities.cpp src/window/ui_refresh.cpp)
     target_include_directories(accessory_selection_test PRIVATE include)

@@ -34,13 +34,11 @@ void SceneResourceResolver::ReselectModel(std::uint8_t slot,
                                           std::filesystem::path path) {
     selections_[slot] = std::move(path);
 }
-bool SceneResourceResolver::ResolveModel(
-        std::uint8_t slot, const std::array<char, 256>& path,
-        ModelDocument& model) {
+std::vector<std::filesystem::path> SceneResourceResolver::Candidates(
+        const std::array<char,256>& path,const std::filesystem::path* selection)const{
     std::vector<std::filesystem::path> candidates;
-    const auto override = selections_.find(slot);
-    if (override != selections_.end()) {
-        candidates.push_back(override->second);
+    if (selection) {
+        candidates.push_back(*selection);
     } else if (decoder_) {
         const auto decoded = decoder_(RawPath(path));
         if (decoded && !decoded->empty()) {
@@ -52,6 +50,21 @@ bool SceneResourceResolver::ResolveModel(
             }
         }
     }
+    return candidates;
+}
+void SceneResourceResolver::ReselectAccessory(std::uint8_t slot,std::filesystem::path path){accessorySelections_[slot]=std::move(path);}
+bool SceneResourceResolver::ResolveAccessory(std::uint8_t slot,const std::array<char,256>& path,std::filesystem::path& resolved){
+    const auto selection=accessorySelections_.find(slot);
+    for(const auto& candidate:Candidates(path,selection==accessorySelections_.end()?nullptr:&selection->second)){
+        std::error_code error;if(std::filesystem::is_regular_file(candidate,error)){
+            resolved=std::filesystem::absolute(candidate).lexically_normal();return true;}}
+    return false;
+}
+bool SceneResourceResolver::ResolveModel(
+        std::uint8_t slot, const std::array<char, 256>& path,
+        ModelDocument& model) {
+    const auto override=selections_.find(slot);
+    auto candidates=Candidates(path,override==selections_.end()?nullptr:&override->second);
     for (const auto& candidate : candidates) {
         std::ifstream file(candidate, std::ios::binary);
         ModelDocument parsed;

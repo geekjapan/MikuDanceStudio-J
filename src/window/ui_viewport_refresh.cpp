@@ -11,6 +11,7 @@
 
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/model_input_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
 namespace mikudancestudio {
@@ -127,6 +128,8 @@ void RefreshMainWindowViewport(MMDApp* app) {
     }
     viewport.MinZ = 0.0f;
     viewport.MaxZ = 1.0f;
+    SetCpuRenderViewport(app,{viewport.X,viewport.Y,viewport.Width,viewport.Height,viewport.MinZ,viewport.MaxZ});
+    SetCpuProjectionPolicy(app,render::FovConversion::FloatMultiply);
     device->SetViewport(&viewport);                     // 0x42C9E5
 
     const float aspect = static_cast<float>(renderWidth) /
@@ -227,6 +230,8 @@ void RefreshSeparateWindowViewport(MMDApp* app) {  // 0x4290F0..0x42976B
     }
     viewport.MinZ = 0.0f;
     viewport.MaxZ = 1.0f;
+    SetCpuRenderViewport(app,{viewport.X,viewport.Y,viewport.Width,viewport.Height,viewport.MinZ,viewport.MaxZ});
+    SetCpuProjectionPolicy(app,render::FovConversion::FloatMultiply);
     device->SetViewport(&viewport);
 
     const float aspect = static_cast<float>(renderWidth) /

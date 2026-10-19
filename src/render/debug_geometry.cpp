@@ -24,6 +24,7 @@
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
+#include "mikudancestudio/model_input_bridge.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -581,6 +582,13 @@ void SetupFrameWorldTransform(MMDApp* app) {
 
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
+    // Publish the final CPU light actually installed for this frame. Editor
+    // probes and parked tracks can leave a session evaluation newer than the
+    // applied light; the frame producer is the authoritative application point.
+    // Specular stores the canonical RGB (Ambient takes the accessory round trip).
+    if(auto* session=app->PortableSceneSession())session->SetRuntimeAppliedLight(
+        {app->SceneLight().Specular.r,app->SceneLight().Specular.g,app->SceneLight().Specular.b,
+         timelineDirection[0],timelineDirection[1],timelineDirection[2]});
     device->SetLight(0, &app->SceneLight());
     Matrix world;
     api.multiply(&world, &translation, &rotation);
@@ -611,6 +619,7 @@ void SetupFrameWorldTransform(MMDApp* app) {
     const float up[3] = {0.0f, 1.0f, 0.0f};
     Matrix view;
     api.lookAtLH(&view, eye, at, up);
+    UpdateCpuRenderFrame(app,&world.m[0][0],&rotation.m[0][0]);
     device->SetTransform(D3DTS_VIEW,
                          reinterpret_cast<const D3DMATRIX*>(&view));
 }

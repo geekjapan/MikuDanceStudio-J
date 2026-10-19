@@ -18,8 +18,11 @@
 #include <cstring>
 #include <cwchar>
 #include <new>
+#include <filesystem>
+#include <fstream>
 
 #include "fx_slots.hpp"
+#include "mikudancestudio/model_input_bridge.hpp"
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
@@ -272,6 +275,10 @@ void RenderAccessoryFixedOne(MMDApp* app, void* accessory,
         device->SetTexture(0, nullptr);
         for (DWORD i = 0; i < count; ++i) {
             ++mdl::Accessory(accessory)->currentMaterial;
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
+            Matrix cpuPlacement;AccessoryPlacement(app,accessory,&cpuPlacement);
+            StageCpuAccessoryDraw(app,accessory,i,reinterpret_cast<const float*>(&cpuPlacement),projectedGroundShadow);
+#endif
             mme::DrawAccessorySubset(app, accessory, i);
             ResetAccessoryTextureStages(device);
         }
@@ -285,6 +292,10 @@ void RenderAccessoryFixedOne(MMDApp* app, void* accessory,
             D3DMATERIAL9 material = materials[i];
             material.Diffuse.a *= mdl::Accessory(accessory)->opacity;
             device->SetMaterial(&material);
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
+            Matrix cpuPlacement;AccessoryPlacement(app,accessory,&cpuPlacement);
+            StageCpuAccessoryDraw(app,accessory,i,reinterpret_cast<const float*>(&cpuPlacement),projectedGroundShadow);
+#endif
             mme::DrawAccessorySubset(app, accessory, i);
             ResetAccessoryTextureStages(device);
         }
@@ -439,6 +450,7 @@ void ShowCannotFindXfile(MMDApp* app) {
 // (0x459221 / 0x4541D9) and the shutdown chain (0x462F9C / 0x46324D) bind to
 // this one definition instead of the old no-op stub.
 void DisposeAccessory(void* accessory) {
+    if(g_Block)g_Block->CpuAccessoryResources().erase(accessory);
     if (accessory == nullptr)
         return;
     mdl::AccessoryRecord& record = *mdl::Accessory(accessory);
@@ -586,6 +598,45 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
             D3DXComputeNormals(clone, nullptr);
         }
     }
+    // Legacy import boundary: decode independently into SYSTEMMEM, retain only
+    // owned CPU bytes. The rendering producer never locks the application's mesh.
+    auto& cpu=app->CpuAccessoryResources()[accessory];cpu={};cpu.failure="system_memory_import";
+    ID3DXMesh* decoded=nullptr;DWORD decodedMaterialCount=0;
+    if(SUCCEEDED(D3DXLoadMeshFromXW(meshPath,0x110 /* D3DXMESH_VB_SYSTEMMEM | D3DXMESH_IB_SYSTEMMEM */,sub->device,nullptr,nullptr,nullptr,&decodedMaterialCount,&decoded)) && decoded){
+        cpu.failure="system_memory_layout";
+        if(decoded->GetFVF()!=274){ID3DXMesh* clone=nullptr;
+            if(SUCCEEDED(decoded->CloneMeshFVF(decoded->GetOptions(),274,sub->device,&clone))){decoded->Release();decoded=clone;D3DXComputeNormals(decoded,nullptr);}}
+        if(decoded->GetFVF()==274){
+            cpu.failure="system_memory_buffers";
+            render::ModelGeometry geometry(app->AllocateCpuGeometryIds(),decoded->GetNumVertices());
+            void* vertices=nullptr;void* indices=nullptr;
+            if(SUCCEEDED(decoded->LockVertexBuffer(D3DLOCK_READONLY,&vertices))){
+                std::memcpy(geometry.MainData(),vertices,geometry.MainSize());decoded->UnlockVertexBuffer();
+                if(SUCCEEDED(decoded->LockIndexBuffer(D3DLOCK_READONLY,&indices))){
+                    const bool wide=(decoded->GetOptions()&1 /* D3DXMESH_32BIT */)!=0;
+                    const bool okay=geometry.SetIndices(wide?rhi::IndexFormat::UInt32:rhi::IndexFormat::UInt16,indices,std::size_t(decoded->GetNumFaces())*3*(wide?4:2));
+                    decoded->UnlockIndexBuffer();DWORD count=0;
+                    cpu.failure="system_memory_attributes";
+                    if(okay && SUCCEEDED(decoded->GetAttributeTable(nullptr,&count))){std::vector<D3DXATTRIBUTERANGE> ranges(count);
+                        if(SUCCEEDED(decoded->GetAttributeTable(ranges.data(),&count)) && geometry.Publish()){
+                            cpu.geometry=geometry.Snapshot();cpu.materials.resize(materialCount);cpu.texturesReady.resize(materialCount);
+                            for(const auto& range:ranges)cpu.subsets.push_back({range.AttribId,range.FaceStart*3,range.FaceCount*3});
+                            cpu.failure.clear();}}
+                }
+            }
+        }
+        decoded->Release();
+    }
+#ifdef MIKUDANCESTUDIO_DIAG
+    char cpuDirectory[32768]{};
+    if(GetEnvironmentVariableA("MDS_RHI_CPU_GEOMETRY_DIR",cpuDirectory,sizeof(cpuDirectory))){
+        const auto reportPath=std::filesystem::path(cpuDirectory)/("cpu_accessory_import."+std::to_string(GetCurrentProcessId())+".csv");
+        const bool fresh=!std::filesystem::exists(reportPath);std::ofstream report(reportPath,std::ios::app);
+        if(fresh)report<<"status,reason,vertices,subsets,materials,geometryId,origin\n";
+        report<<(cpu.failure.empty()?"PASS":"BLOCKED")<<","<<(cpu.failure.empty()?"owned_cpu_bytes":cpu.failure)<<","<<cpu.geometry.vertexCount
+            <<","<<cpu.subsets.size()<<","<<cpu.materials.size()<<","<<cpu.geometry.main.key.id<<",independent_d3dx_system_memory\n";
+    }
+#endif
     TraceAccessoryLoadStage("complete", mdl::Accessory(accessory)->mesh);
     return true;
 }

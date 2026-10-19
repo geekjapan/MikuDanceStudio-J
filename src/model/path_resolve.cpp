@@ -169,9 +169,14 @@ errno_t ConvertMaterialName(unsigned char* sub, const char* mbName,
     if (mbName[0] == '\0')
         return result;
 
-    int cw = MultiByteToWideChar(0, 0, mbName, -1, nullptr, 0);
+    // A CPU-only importer has no renderer-owned locale table. PMD filenames
+    // are Shift-JIS; legacy callers retain their original ACP/locale probes.
+    const unsigned codePage=sub?0:932;
+    int cw = MultiByteToWideChar(codePage, 0, mbName, -1, nullptr, 0);
+    if(cw<=0)return EILSEQ;
     wchar_t* tmp = static_cast<wchar_t*>(malloc(2 * cw));
-    if (MultiByteToWideChar(0, 0, mbName,
+    if(!tmp)return ENOMEM;
+    if (MultiByteToWideChar(codePage, 0, mbName,
                             static_cast<int>(strlen(mbName)) + 1, tmp, cw))
         wcsncpy_s(wideOut, sizeWords, tmp, _TRUNCATE);
     free(tmp);
@@ -181,6 +186,7 @@ errno_t ConvertMaterialName(unsigned char* sub, const char* mbName,
         swprintf_s(probe, 0x200, L"%s%s", dirW, wideOut);
         if (WsOpenOk(probe))
             return 0;
+        if (!sub)break;
         if (li < 4)
             _mbstowcs_s_l(nullptr, wideOut, sizeWords, mbName, _TRUNCATE,
                 reinterpret_cast<D3DRenderer*>(sub)->localeTable[li]);

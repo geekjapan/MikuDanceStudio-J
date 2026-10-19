@@ -128,6 +128,12 @@ int main() {
     std::vector<mdl::DisplayKey> displays(Capacity(source.displayKeys));
     std::vector<mdl::CameraKey> cameraKeys(
         Capacity(session->Document().cameraKeys));
+    std::vector<mdl::LightKey> lightKeys(Capacity(session->Document().lightKeys));
+    const auto copyLight=[&](std::size_t index,const format::PmmLightKey& key){auto& target=lightKeys[index];
+        target.frame=key.frame;target.previous=key.previous;target.next=key.next;target.selected=key.selected;
+        std::copy(key.direction.begin(),key.direction.end(),target.direction);std::copy(key.color.begin(),key.color.end(),target.color);};
+    copyLight(0,session->Document().lightKeys.dense[0]);
+    for(const auto& key:session->Document().lightKeys.sparse)copyLight(key.index,key.value);
     std::vector<mdl::SelfShadowKey> shadowKeys;
     if (!session->Document().selfShadowKeys.dense.empty()) {
         shadowKeys.resize(Capacity(session->Document().selfShadowKeys));
@@ -213,6 +219,7 @@ int main() {
     auto* raw = reinterpret_cast<unsigned char*>(model.get());
     app->ModelSlot(source.slot) = raw;
     app->CameraKeys() = cameraKeys.data();
+    app->LightKeys() = lightKeys.data();
     if (!shadowKeys.empty()) app->ShadowKeys() = shadowKeys.data();
     if (!gravityKeys.empty()) app->GravityKeys() = gravityKeys.data();
     app->AttachPortableSceneSession(std::move(session));
@@ -244,7 +251,21 @@ int main() {
     boneKeys[last].next = 0;
     SeekPortableSceneModel(raw, 0);
     app->PlaybackCursorSeconds() = 0.0f;
+    // Accessories round-trip ambient, which overlays LightColor on x86.
+    // Starting playback must retain the unadjusted applied specular RGB.
+    const std::array<float,3> canonicalLight{.0076678241603076458f,.084635414183139801f,.601f};
+    std::copy(canonicalLight.begin(),canonicalLight.end(),app->LightColor());app->ApplyTimelineLightState();
+    auto& adjustedLight=app->SceneLight();
+    for(float* component:{&adjustedLight.Ambient.r,&adjustedLight.Ambient.g,&adjustedLight.Ambient.b}){
+        volatile float value=*component;value=value-.3f;value=value+.3f;*component=value;
+    }
+    const std::array<float,3> adjustedAmbient{adjustedLight.Ambient.r,adjustedLight.Ambient.g,adjustedLight.Ambient.b};
+    const std::array<float,3> scalarMirror{app->LightColor()[0],app->LightColor()[1],app->LightColor()[2]};
+    if(adjustedAmbient[0]==canonicalLight[0])return 25;
     StartPortableScenePlayback(app.get());
+    if(!active->RuntimeAppliedLight() || !std::equal(canonicalLight.begin(),canonicalLight.end(),active->RuntimeAppliedLight()->begin()) ||
+        std::array<float,3>{app->LightColor()[0],app->LightColor()[1],app->LightColor()[2]}!=scalarMirror ||
+        std::array<float,3>{adjustedLight.Ambient.r,adjustedLight.Ambient.g,adjustedLight.Ambient.b}!=adjustedAmbient)return 26;
     app->PlaybackCursorSeconds() = 5.0f / 30.0f;
     AdvancePortableScenePlayback(app.get());
     if (!active->Playing() ||
@@ -252,7 +273,12 @@ int main() {
                   active->Pose().models[0].bones[0].translation[0]) >
             0.00001f) return 7;
     cameraKeys[0].eye[0] += 4.0f;
+    lightKeys[0].color[0]+=.125f;
     SeekPortableSceneCamera(app.get(), 0);
+    if(active->Pose().lightState[0]!=lightKeys[0].color[0] || active->Document().lightKeys.dense[0].color[0]!=lightKeys[0].color[0])return 23;
+    const auto goodNext=lightKeys[0].next;const auto held=active->Pose().lightState;
+    lightKeys[0].next=mdl::kTimelineKeyCapacity;SeekPortableSceneCamera(app.get(),1);
+    if(active->Pose().lightState!=held || active->Pose().frame!=0)return 24;lightKeys[0].next=goodNext;
     if (active->Pose().camera.position[0] != cameraKeys[0].eye[0] ||
         app->CameraPosition()[0] != cameraKeys[0].eye[0]) return 17;
     app->PlaybackCursorSeconds() = 0.0f;
@@ -335,6 +361,10 @@ int main() {
     app->AttachPortableSceneSession(std::move(multi));
     app->ModelSlot(secondSlot) = secondRaw;
     active = app->PortableSceneSession();
+    // Seed each model at the new session's frame. Seeking only the second
+    // deliberately leaves the first untouched; its old edited pose is not
+    // the baseline for this independent two-model fixture.
+    SeekPortableSceneModel(raw, 0);
     SeekPortableSceneModel(secondRaw, 0);
     if (active->Pose().models.size() != 2 ||
         secondBones[0].trans[0] != active->Pose().models[1].bones[0].translation[0] ||

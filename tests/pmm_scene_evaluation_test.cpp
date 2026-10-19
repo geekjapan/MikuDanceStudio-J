@@ -392,6 +392,13 @@ void CheckBrokenCameraLink() {
 }
 }
 int main() {
+    {auto scene=Fixture();std::array<float,6> light{},expected{};
+        const auto& a=scene.lightKeys.dense[0];const auto& b=scene.lightKeys.sparse[0].value;
+        Check(EvaluatePmmLightTrack(scene.lightKeys,3.25,PmmLightInterpolation::Playback,light));
+        Check(InterpolatePmmLightSegment(a,b,3.25,PmmLightInterpolation::Playback,expected) && light==expected);
+        Check(EvaluatePmmLightTrack(scene.lightKeys,3,PmmLightInterpolation::FrameSeek,light));
+        Check(InterpolatePmmLightSegment(a,b,3,PmmLightInterpolation::FrameSeek,expected) && light==expected);
+        scene.lightKeys.sparse[0].value.next=7;Check(!EvaluatePmmLightTrack(scene.lightKeys,0,PmmLightInterpolation::FrameSeek,light));}
     CheckGravityEvaluation();
     CheckSelfShadowEvaluation();
     CheckBrokenCameraLink();

@@ -451,6 +451,7 @@ static void LoadSceneV2_DisposeAndHeader(PmmV2LoadContext& ctx, int fd) {
     if (s->AviBackgroundTexture() != nullptr) {                  // 0x4501F0
         s->AviBackgroundTexture()->Release();
         s->AviBackgroundTexture() = nullptr;
+        s->CpuNativeBackgroundTexturePresent()=false;
     }
 
     // ---- header-field reads (0x450208..0x450331) -------------------------

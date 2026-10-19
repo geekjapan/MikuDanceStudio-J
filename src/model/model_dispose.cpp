@@ -61,6 +61,7 @@
 #include "BulletDynamics/ConstraintSolver/btGeneric6DofSpringConstraint.h"
 
 #include "mikudancestudio/model.hpp"
+#include "mikudancestudio/model_cpu_preview.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/physics_scene.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
@@ -120,6 +121,10 @@ void ReleasePhysRigid(PhysicsScene* physics, void* bodyPointer) {
 
 // VA 0x0048F830
 void ModelDispose(unsigned char* m) {
+#ifdef MIKUDANCESTUDIO_DIAG
+    ReleaseCpuModelPreview(m);
+#endif
+    if(g_Block)g_Block->CpuModelFrames().erase(m);
     mdl::ModelRecord& model = *mdl::Mdl(m);
     PhysicsScene* scene = model.scenePtr;
 

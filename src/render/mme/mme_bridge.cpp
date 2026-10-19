@@ -1,5 +1,6 @@
 #include "mikudancestudio/rhi_scene_history.hpp"
 #include "mikudancestudio/rhi_history_replay.hpp"
+#include "mikudancestudio/model_cpu_preview.hpp"
 // mme_bridge.cpp - 内置 MMEffect 宿主桥实现。
 //
 // 见 include/mikudancestudio/mme_bridge.hpp。效果引擎静态内置在宿主中，
@@ -267,8 +268,10 @@ void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device,
 // ---------------------------------------------------------------------------
 HRESULT DrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                       unsigned int start_vertex, unsigned int primitive_count) {
-#ifdef MIKUDANCESTUDIO_DIAG
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
     RecordHistoryDraw(device,type,false,0,0,0,start_vertex,primitive_count);
+#endif
+#ifdef MIKUDANCESTUDIO_DIAG
     AuditDiagnosticHistoryDraw(device,type,primitive_count,false);
     if (type == D3DPT_LINELIST) {
         InterlockedIncrement(&g_lineDrawCalls);
@@ -284,7 +287,7 @@ HRESULT DrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
     const HRESULT result = !g_deviceRegistered
         ? device->DrawPrimitive(type, start_vertex, primitive_count)
         : MmeHostDrawPrimitive(device, type, start_vertex, primitive_count);
-#ifdef MIKUDANCESTUDIO_DIAG
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
     if (FAILED(result)) BlockHistoryReplay("primitive_submission_failed");
 #endif
     return result;
@@ -314,8 +317,10 @@ HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
                              int base_vertex_index, unsigned int min_vertex_index,
                              unsigned int vertex_count, unsigned int start_index,
                              unsigned int primitive_count) {
-#ifdef MIKUDANCESTUDIO_DIAG
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
     RecordHistoryDraw(device,type,true,base_vertex_index,min_vertex_index,vertex_count,start_index,primitive_count);
+#endif
+#ifdef MIKUDANCESTUDIO_DIAG
     AuditDiagnosticHistoryDraw(device,type,primitive_count,true);
     InterlockedIncrement(&g_indexedDrawCalls);
     InterlockedIncrement(g_deviceRegistered ? &g_indexedHostCalls : &g_indexedDirectCalls);
@@ -326,7 +331,7 @@ HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
         : MmeHostDrawIndexedPrimitive(device, type, base_vertex_index,
                                       min_vertex_index, vertex_count, start_index,
                                       primitive_count);
-#ifdef MIKUDANCESTUDIO_DIAG
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
     if (FAILED(result)) BlockHistoryReplay("indexed_submission_failed");
 #endif
     return result;
@@ -334,6 +339,9 @@ HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
 
 bool EffectsActive() {
     return g_deviceRegistered && MmeHostEffectsActive() != 0;
+}
+bool EffectsEnabled() {
+    return g_deviceRegistered && MmeHostEffectsEnabled() != 0;
 }
 #ifdef MIKUDANCESTUDIO_DIAG
 LineDrawBridgeProbe ProbeIndexedDrawBridge() {
@@ -352,15 +360,20 @@ HRESULT DrawAccessorySubset(MMDApp* app, void* accessory, unsigned long material
     if (mesh == nullptr)
         return E_FAIL;
     if (!EffectsActive()) {
-#ifdef MIKUDANCESTUDIO_DIAG
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
         RecordHistoryMesh(device,mesh,material);
 #endif
         const HRESULT result=mesh->DrawSubset(material);
-#ifdef MIKUDANCESTUDIO_DIAG
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
         if (FAILED(result)) BlockHistoryReplay("mesh_submission_failed");
 #endif
         return result;
     }
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
+    // An empty CPU subset produces no primitive callback on the initialized
+    // bridge route. Consume its explicit no-op before entering that route.
+    if(CpuSceneFrameRecording())ConsumeCpuSceneEmptyMesh();
+#endif
 
     IDirect3DVertexBuffer9* vb = nullptr;
     IDirect3DIndexBuffer9* ib = nullptr;

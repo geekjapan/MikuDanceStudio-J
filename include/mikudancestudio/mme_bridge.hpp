@@ -75,6 +75,8 @@ HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
 // MME 已初始化且效果引擎未被禁用。宿主在需要绕开 ID3DXMesh 内部绘制
 // （其持有真实设备、绕过绘制转发）的路径上以此为分路条件。
 bool EffectsActive();
+// User-visible effect policy, independent of bridge/resource initialization.
+bool EffectsEnabled();
 
 // 附件网格的 DrawSubset 等价物：MME 激活时手工设置流/索引/FVF 并经绘制
 // 转发（复刻 ID3DXMesh::DrawSubset 的硬件路径）；未激活时直呼原

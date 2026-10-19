@@ -27,6 +27,8 @@
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/scene_preview_ui.hpp"
+#include "mikudancestudio/model_cpu_bridge.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -440,6 +442,7 @@ void CopyPmxAdditionalUvs(const mdl::PmxVertex& source,
                           mdl::SkinnedVertex<AdditionalUvCount>& destination) {
     destination.base.uv[0] = source.uv[0];
     destination.base.uv[1] = source.uv[1];
+    if constexpr (AdditionalUvCount > 0)
     for (std::size_t uv = 0; uv < AdditionalUvCount; ++uv)
         for (std::size_t component = 0; component < 4; ++component)
             destination.additionalUv[uv][component] =
@@ -585,8 +588,8 @@ void ApplyPmdVertexMorphs(unsigned char* model) {
     }
 }
 
-float PmdEdgeDistance(MMDApp* app, unsigned char* model,
-                      const float frameWorld[16]) {
+} // namespace
+float CpuModelEdgeDistance(unsigned char* model,const float frameWorld[16],const float camera[3],float fov) {
     const mdl::ModelRecord& record = *mdl::Mdl(model);
     auto* bones = mdl::Bones(model);
     const int boneCount = record.boneCount;
@@ -600,7 +603,6 @@ float PmdEdgeDistance(MMDApp* app, unsigned char* model,
     }
     float worldPoint[3];
     TransformPosition(worldPoint, modelPoint, frameWorld);
-    const float* camera = app->CameraPosition();
     // x64 0x7FF7CB4E29C2..0x7FF7CB4E2A56 is single-precision throughout:
     // subss deltas, mulss squares, call sqrtf, then distance *
     // 4.5e-05f * (fov * 0.6f + 1.0f) * edgeScale (the two constants are
@@ -610,8 +612,12 @@ float PmdEdgeDistance(MMDApp* app, unsigned char* model,
     const float dz = worldPoint[2] - camera[2];
     const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
     return distance * 0.00004500000068219379f *
-           (app->CameraFov() * 0.6000000238418579f + 1.0f) *
+           (fov * 0.6000000238418579f + 1.0f) *
            record.edgeScale;
+}
+namespace {
+float PmdEdgeDistance(MMDApp* app,unsigned char* model,const float world[16]){
+    return CpuModelEdgeDistance(model,world,app->CameraPosition(),app->CameraFov());
 }
 
 void SkinPmd(unsigned char* model, float edgeDistance,
@@ -740,6 +746,76 @@ void SkinPmx(unsigned char* model, float edgeDistance, bool opaqueEdge,
     }
 }
 
+void SkinPmxDispatch(unsigned char* model,float distance,bool opaque,
+    unsigned uv,mdl::EdgeVertex* edge,void* main) {
+    switch(uv){
+    case 0:SkinPmx<0>(model,distance,opaque,edge,static_cast<mdl::SkinnedVertex<0>*>(main));break;
+    case 1:SkinPmx<1>(model,distance,opaque,edge,static_cast<mdl::SkinnedVertex<1>*>(main));break;
+    case 2:SkinPmx<2>(model,distance,opaque,edge,static_cast<mdl::SkinnedVertex<2>*>(main));break;
+    case 3:SkinPmx<3>(model,distance,opaque,edge,static_cast<mdl::SkinnedVertex<3>*>(main));break;
+    case 4:SkinPmx<4>(model,distance,opaque,edge,static_cast<mdl::SkinnedVertex<4>*>(main));break;
+    }
+}
+bool CpuGeometryOption(const char* name) {
+    char flag[2]{};return GetEnvironmentVariableA(name,flag,2)==1 && flag[0]=='1';
+}
+bool AcceptedCpuInputRoute() {
+    if(CpuScenePreviewRequested() && !CpuGeometryOption("MDS_RHI_CPU_INPUTS_AUDIT"))return true;
+#ifdef MIKUDANCESTUDIO_DIAG
+    return CpuGeometryOption("MDS_RHI_CPU_INPUTS") && CpuGeometryOption("MDS_RHI_CPU_INPUTS_ACCEPTED") && !CpuGeometryOption("MDS_RHI_CPU_INPUTS_AUDIT");
+#else
+    return false;
+#endif
+}
+ModelCpuFrame* ProduceCpuGeometry(MMDApp* app,unsigned char* model,float distance,bool opaque) {
+    const auto found=app->CpuModelFrames().find(model);
+    if(found==app->CpuModelFrames().end() || found->second->failed)return nullptr;
+    auto& frame=*found->second;auto& geometry=frame.geometry;
+    // A previous arithmetic gate does not make an unverified new output ready
+    // for drawing (for example if the legacy buffer cannot be locked).
+    frame.ready=false;
+    const auto& state=*mdl::Mdl(model);
+    if(state.physicsMode==2)SkinPmxDispatch(model,distance,opaque,geometry.AdditionalUvCount(),geometry.Edges().data(),geometry.MainData());
+    else SkinPmd(model,distance,geometry.Edges().data(),static_cast<mdl::SkinnedVertexBase*>(geometry.MainData()));
+    if(!geometry.Publish()){frame.failed=true;return nullptr;}
+    // The accepted external audit covers this producer. Direct mode must not
+    // require a native buffer read to publish its current CPU result.
+    if(AcceptedCpuInputRoute())frame.verified=frame.ready=true;
+    return &frame;
+}
+bool CpuUploadAllowed(const ModelCpuFrame* frame) {
+    return frame && frame->verified && !frame->failed && CpuGeometryOption("MDS_RHI_CPU_GEOMETRY_UPLOAD");
+}
+void CompleteCpuGeometry(MMDApp* app,unsigned char* model,ModelCpuFrame* frame,
+    const void* main,const void* edge,bool uploaded) {
+    if(!frame)return;
+    const auto& geometry=frame->geometry;
+    const auto different=[](const void* a,const void* b,std::size_t size){
+        auto* x=static_cast<const unsigned char*>(a);auto* y=static_cast<const unsigned char*>(b);
+        std::size_t count=0;for(std::size_t i=0;i<size;++i)count+=x[i]!=y[i];return count;
+    };
+    const bool direct=AcceptedCpuInputRoute();
+    const auto mainDiff=direct?0:different(main,geometry.MainData(),geometry.MainSize());
+    const auto edgeDiff=direct?0:different(edge,geometry.Edges().data(),geometry.Edges().size()*16);
+    frame->failed=mainDiff || edgeDiff;frame->verified=frame->ready=!frame->failed;++frame->frames;
+    char directory[MAX_PATH]{};
+    const auto length=GetEnvironmentVariableA("MDS_RHI_CPU_GEOMETRY_DIR",directory,MAX_PATH);
+    if(!length || length>=MAX_PATH)return;
+    CreateDirectoryA(directory,nullptr);char path[MAX_PATH]{};
+    if(std::snprintf(path,sizeof(path),"%s\\cpu_geometry.csv",directory)>=MAX_PATH)return;
+    const bool fresh=GetFileAttributesA(path)==INVALID_FILE_ATTRIBUTES;
+    FILE* file=nullptr;if(fopen_s(&file,path,"a") || !file)return;
+    if(fresh)std::fputs("slot,frame,updates,vertices,stride,id,mainVersion,edgeVersion,mainDifferentBytes,edgeDifferentBytes,mode,playing\n",file);
+    int slot=-1;for(int i=0;i<kModelSlotCount;++i)if(app->ModelSlot(i)==model){slot=i;break;}
+    const auto& snapshot=geometry.Snapshot();
+    const auto* session=app->PortableSceneSession();
+    const int evaluatedFrame=session && session->Loaded()?static_cast<int>(session->Pose().frame):app->CurrentFrame();
+    std::fprintf(file,"%d,%d,%llu,%u,%u,%llu,%llu,%llu,%zu,%zu,%s,%u\n",slot,evaluatedFrame,
+        frame->frames,snapshot.vertexCount,32+16*snapshot.additionalUvCount,snapshot.main.key.id,
+        snapshot.main.key.version,snapshot.edge.key.version,mainDiff,edgeDiff,direct?"cpu_source":uploaded?"upload":"independent_compare",app->PlaybackActive()!=0);
+    std::fclose(file);
+}
+
 // x64 RVA 0xC2A5F..0xC2CEC: the PMX branch locks the main buffer with
 // 32 + 16 * additionalUvCount bytes per vertex and the edge buffer with 16,
 // then dispatches the stride worker selected by the additional-UV count.
@@ -754,14 +830,15 @@ void UpdatePmxModelVertexBuffers(MMDApp* app, unsigned char* model,
     const unsigned int additionalUv = state.pmxAdditionalUvCount;
     if (additionalUv > 4)
         return;
+    const bool hasCpu=app->CpuModelFrames().count(model)!=0;
+    const float cpuDistance=hasCpu?PmdEdgeDistance(app,model,(CpuScenePreviewRequested() || CpuGeometryOption("MDS_RHI_CPU_INPUTS")) && app->CpuRenderFrameReady()?app->CpuRenderFrame().world.data():frameWorld):0;
+    auto* cpu=hasCpu?ProduceCpuGeometry(app,model,cpuDistance,app->state.selfShadowEnabled!=0):nullptr;
     auto* mainVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(
         state.vertexBuffer);
     auto* edgeVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(
         state.vertexBuffer2);
     if (mainVb == nullptr || edgeVb == nullptr)
         return;
-    d3dx::Api& d3dxApi = d3dx::Get();
-
     const UINT count = state.vertexCount;
     const UINT stride = 32 + 16 * additionalUv;
     mdl::SkinnedVertexBase* mainVertices = nullptr;
@@ -775,30 +852,16 @@ void UpdatePmxModelVertexBuffers(MMDApp* app, unsigned char* model,
         return;
     }
 
-    const float edgeDistance = PmdEdgeDistance(app, model, frameWorld);
+    const float edgeDistance = hasCpu?cpuDistance:PmdEdgeDistance(app, model, frameWorld);
     const bool opaqueEdge = app->state.selfShadowEnabled != 0;
-    switch (additionalUv) {
-    case 0:
-        SkinPmx<0>(model, edgeDistance, opaqueEdge, edgeVertices,
-                   reinterpret_cast<mdl::SkinnedVertex<0>*>(mainVertices));
-        break;
-    case 1:
-        SkinPmx<1>(model, edgeDistance, opaqueEdge, edgeVertices,
-                   reinterpret_cast<mdl::SkinnedVertex<1>*>(mainVertices));
-        break;
-    case 2:
-        SkinPmx<2>(model, edgeDistance, opaqueEdge, edgeVertices,
-                   reinterpret_cast<mdl::SkinnedVertex<2>*>(mainVertices));
-        break;
-    case 3:
-        SkinPmx<3>(model, edgeDistance, opaqueEdge, edgeVertices,
-                   reinterpret_cast<mdl::SkinnedVertex<3>*>(mainVertices));
-        break;
-    default:
-        SkinPmx<4>(model, edgeDistance, opaqueEdge, edgeVertices,
-                   reinterpret_cast<mdl::SkinnedVertex<4>*>(mainVertices));
-        break;
+    const bool uploaded=CpuUploadAllowed(cpu);
+    if(uploaded){
+        std::memcpy(mainVertices,cpu->geometry.MainData(),cpu->geometry.MainSize());
+        std::memcpy(edgeVertices,cpu->geometry.Edges().data(),count*16);
+    }else{
+        SkinPmxDispatch(model,edgeDistance,opaqueEdge,additionalUv,edgeVertices,mainVertices);
     }
+    CompleteCpuGeometry(app,model,cpu,mainVertices,edgeVertices,uploaded);
     DumpModelVertexBuffers(app, model, mainVertices, edgeVertices, count,
                            stride);
     mainVb->Unlock();
@@ -806,6 +869,52 @@ void UpdatePmxModelVertexBuffers(MMDApp* app, unsigned char* model,
 }
 
 }  // namespace
+
+void InitializeModelCpuGeometry(MMDApp* app,unsigned char* model,bool required) {
+    if(!app || !model)return;
+    app->CpuModelFrames().erase(model);
+    if(!required && !CpuScenePreviewRequested() && !CpuGeometryOption("MDS_RHI_CPU_GEOMETRY"))return;
+    const auto& state=*mdl::Mdl(model);const bool pmx=state.physicsMode==2;
+    const unsigned uv=pmx?state.pmxAdditionalUvCount:0;
+    if(!state.vertexCount || !state.indexCount || uv>4 || !state.indices ||
+       (pmx?!state.pmxVertices:!state.rawVertices))return;
+    const auto id=app->AllocateCpuGeometryIds();if(!id)return;
+    auto frame=std::make_unique<ModelCpuFrame>(id,state.vertexCount,uv);
+    auto& geometry=frame->geometry;auto* main=static_cast<unsigned char*>(geometry.MainData());
+    for(std::uint32_t i=0;i<state.vertexCount;++i){
+        auto* destination=main+std::size_t(i)*(32+16*uv);
+        if(pmx){
+            const auto& source=state.pmxVertices[i];std::memcpy(destination,source.position,32);
+            for(unsigned n=0;n<uv;++n)for(unsigned c=0;c<4;++c)
+                std::memcpy(destination+32+n*16+c*4,&source.additionalUvByComponent[c][n],4);
+            std::memcpy(geometry.Edges()[i].position,source.position,12);
+        }else{
+            std::memcpy(destination,&state.rawVertices[i],32);
+            std::memcpy(geometry.Edges()[i].position,state.rawVertices[i].position,12);
+        }
+        geometry.Edges()[i].diffuse=0xff000000u;
+    }
+    const bool wide=pmx && state.pmxVertexIndexSize>=4;
+    std::vector<std::uint8_t> indices(std::size_t(state.indexCount)*(wide?4:2));
+    for(std::uint32_t i=0;i<state.indexCount;++i){
+        const auto value=pmx?static_cast<std::uint32_t>(mdl::PmxIndices(model)[i]):mdl::Indices(model)[2*i];
+        if(value>=state.vertexCount || (!wide && value>0xffffu))return;
+        std::memcpy(indices.data()+std::size_t(i)*(wide?4:2),&value,wide?4:2);
+    }
+    if(!geometry.SetIndices(wide?rhi::IndexFormat::UInt32:rhi::IndexFormat::UInt16,indices.data(),indices.size()))return;
+    app->CpuModelFrames().emplace(model,std::move(frame));
+}
+
+bool UpdateCpuOnlyModelGeometry(MMDApp* app,unsigned char* model,float edgeDistance,bool opaqueEdge) {
+    if(!app || !model || !std::isfinite(edgeDistance) || edgeDistance<0)return false;
+    const auto& state=*mdl::Mdl(model);
+    if(!state.loadComplete || !state.vertexCount)return false;
+    if(state.physicsMode==2)ApplyPmxVertexMorphs(model);else ApplyPmdVertexMorphs(model);
+    auto* frame=ProduceCpuGeometry(app,model,edgeDistance,opaqueEdge);
+    if(!frame)return false;
+    frame->ready=true;++frame->frames;
+    return true;
+}
 
 void UpdateModelVertexBuffers(MMDApp* app, unsigned char* model,
                               const float frameWorld[16]) {
@@ -824,6 +933,9 @@ void UpdateModelVertexBuffers(MMDApp* app, unsigned char* model,
     }
 
     ApplyPmdVertexMorphs(model);
+    const bool hasCpu=app->CpuModelFrames().count(model)!=0;
+    const float cpuDistance=hasCpu?PmdEdgeDistance(app,model,(CpuScenePreviewRequested() || CpuGeometryOption("MDS_RHI_CPU_INPUTS")) && app->CpuRenderFrameReady()?app->CpuRenderFrame().world.data():frameWorld):0;
+    auto* cpu=hasCpu?ProduceCpuGeometry(app,model,cpuDistance,false):nullptr;
     auto* mainVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(
         state.vertexBuffer);
     auto* edgeVb = mdl::ResourceAs<IDirect3DVertexBuffer9>(
@@ -843,8 +955,14 @@ void UpdateModelVertexBuffers(MMDApp* app, unsigned char* model,
         return;
     }
 
-    SkinPmd(model, PmdEdgeDistance(app, model, frameWorld), edgeVertices,
-            mainVertices);
+    const bool uploaded=CpuUploadAllowed(cpu);
+    if(uploaded){
+        std::memcpy(mainVertices,cpu->geometry.MainData(),cpu->geometry.MainSize());
+        std::memcpy(edgeVertices,cpu->geometry.Edges().data(),count*16);
+    }else{
+        SkinPmd(model,hasCpu?cpuDistance:PmdEdgeDistance(app,model,frameWorld),edgeVertices,mainVertices);
+    }
+    CompleteCpuGeometry(app,model,cpu,mainVertices,edgeVertices,uploaded);
     DumpModelVertexBuffers(app, model, mainVertices, edgeVertices, count, 32);
     mainVb->Unlock();
     edgeVb->Unlock();

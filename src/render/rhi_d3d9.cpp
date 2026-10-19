@@ -319,6 +319,7 @@ public:
     }
     bool Draw(NonIndexedDraw draw) override {
         if (!IsCurrentSubmission(Status(), draw.submission)) return false;
+        if (draw.layout && *draw.layout != currentPipeline_.layout) return false;
         auto* vertex = Find(draw.vertices);
         const bool triangles =
             currentPipeline_.topology == PrimitiveTopology::TriangleList;

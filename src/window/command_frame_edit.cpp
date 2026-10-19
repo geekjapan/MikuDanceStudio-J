@@ -358,6 +358,13 @@ static int InsertGlobalFrame(MMDApp* app, Key* table,
 
     const std::uint32_t frame =
         relativeFrame + static_cast<std::uint32_t>(app->CurrentFrame());
+    // The dense head owns frame zero even when sparse successors exist.
+    // Walking from head.next first would allocate an unused frame-zero slot,
+    // splice it before the first key and invalidate the global track.
+    if (table[0].frame == frame) {
+        fill(table[0], source);
+        return 1;
+    }
     std::uint32_t index = 0;
     std::uint32_t next = table[0].next;
     while (next != 0) {

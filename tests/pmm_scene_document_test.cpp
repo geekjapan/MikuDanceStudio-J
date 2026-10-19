@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#include <limits>
 using namespace mikudancestudio::format;
 namespace {
 struct Bytes {
@@ -160,6 +161,7 @@ void CheckEditableWriteback(Bytes fixture, bool v1) {
         scene.selfShadowKeys.dense[0].distance = 0.02f;
     }
     if (scene.physicsOffset != 0) {
+        scene.physics.playbackMode = 3;
         scene.physics.gravityMagnitude = 7.0f;
         scene.physics.gravityNoise = 17;
         scene.physics.gravityDirection = {0.0f, -0.5f, 0.0f};
@@ -211,7 +213,8 @@ void CheckEditableWriteback(Bytes fixture, bool v1) {
         Check(reloaded.selfShadowKeys.dense[0].mode == 2 &&
               reloaded.selfShadowKeys.dense[0].distance == 0.02f);
     if (scene.physicsOffset != 0)
-        Check(reloaded.physics.gravityMagnitude == 7.0f &&
+        Check(reloaded.physics.playbackMode == 3 &&
+              reloaded.physics.gravityMagnitude == 7.0f &&
               reloaded.physics.gravityNoise == 17 &&
               reloaded.physics.gravityDirection[1] == -0.5f &&
               reloaded.physics.gravityNoiseEnabled == 1);
@@ -267,6 +270,9 @@ void CheckSceneSession() {
         scene.cameraKeys.dense[0].fov = 45;
         scene.cameraKeys.dense[0].interpolation[0][0] = 42;
         scene.models[0].boneKeys.dense[0].position[0] = 2.0f;
+        for (std::size_t n = 0; n < 16; ++n)
+            scene.models[0].boneKeys.dense[0].interpolation[n] =
+                static_cast<std::uint8_t>(n * 7);
         scene.models[0].boneKeys.sparse[0].value.position[1] = 3.0f;
         scene.models[0].morphKeys.dense[0].value = 0.75f;
         scene.models[0].morphKeys.sparse[0].value.value = 0.25f;
@@ -293,6 +299,8 @@ void CheckSceneSession() {
           checked.cameraKeys.dense[0].fov == 45 &&
           checked.cameraKeys.dense[0].interpolation[0][0] == 42 &&
           checked.models[0].boneKeys.dense[0].position[0] == 2.0f &&
+          checked.models[0].boneKeys.dense[0].interpolation ==
+              session.Document().models[0].boneKeys.dense[0].interpolation &&
           checked.models[0].boneKeys.sparse[0].value.position[1] == 3.0f &&
           checked.models[0].morphKeys.dense[0].value == 0.75f &&
           checked.models[0].morphKeys.sparse[0].value.value == 0.25f &&
@@ -465,4 +473,25 @@ int main() {
     CheckEditableWriteback(Fixture(true), true);
     CheckEditableWriteback(PopulatedV2(), false);
     CheckSceneSession();
+    {auto fixture=PopulatedV2();SceneSession session;Check(SceneSession::Load(Read,&fixture,ResolveModel,nullptr,session));
+        auto track=session.Document().lightKeys;const auto original=track;
+        track.dense[0].next=99999;Check(!session.ReplaceRuntimeLightTrack(track));
+        Check(session.Document().lightKeys.dense[0].next==original.dense[0].next && !session.RuntimeTracksChanged());
+        track=original;track.dense[0].color={.125f,.25f,.5f};Check(session.ReplaceRuntimeLightTrack(track) && session.RuntimeTracksChanged());
+        Check(session.Seek(0) && session.Pose().lightState[0]==.125f && session.Pose().lightState[1]==.25f);
+        Check(session.StartPlayback() && session.Advance(0));Check(session.Pose().lightState[2]==.5f);
+        Check(!session.RuntimeAppliedLight());const std::array<float,6> held={.6f,.7f,.8f,0,-1,0};
+        Check(session.SetRuntimeAppliedLight(held) && session.Advance(.1f));
+        Check(*session.RuntimeAppliedLight()==held && session.Seek(0) && *session.RuntimeAppliedLight()==held);
+        auto invalid=held;invalid[0]=std::numeric_limits<float>::infinity();Check(!session.SetRuntimeAppliedLight(invalid) && *session.RuntimeAppliedLight()==held);
+        auto camera=session.Pose().camera;camera.distance=-38;Check(session.SetRuntimeAppliedCamera(camera));
+        Check(session.StartPlayback() && session.Advance(.2f) && session.RuntimeAppliedCamera()->distance==-38);
+        camera.distance=std::numeric_limits<float>::quiet_NaN();Check(!session.SetRuntimeAppliedCamera(camera) && session.RuntimeAppliedCamera()->distance==-38);
+        // Runtime table synchronization deliberately cannot write old byte
+        // sections. The Windows save adapter rebuilds those sections first.
+        std::vector<std::uint8_t> bytes;Check(!session.Save(Write,&bytes));
+        auto portableFixture=PopulatedV2();SceneSession portable;Check(SceneSession::Load(Read,&portableFixture,ResolveModel,nullptr,portable));
+        Check(portable.Edit([](PmmSceneDocument& scene){scene.lightKeys.dense[0].color={.125f,.25f,.5f};}));
+        Check(portable.Seek(0) && portable.Save(Write,&bytes));Bytes input{bytes};SceneSession reload;
+        Check(SceneSession::Load(Read,&input,ResolveModel,nullptr,reload) && reload.Document().lightKeys.dense[0].color[0]==.125f);}
 }

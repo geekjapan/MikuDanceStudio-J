@@ -1,4 +1,5 @@
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/ported_funcs.hpp"
 #include "../src/app/pump_input.hpp"
 #include <cstdio>
 #include <cstring>
@@ -57,6 +58,29 @@ int main() {
             }
         }
     }
+    // An unloaded/disabled AVI refresh must not touch a renderer, allocate a
+    // surface or show a modal error. A non-dereferenceable renderer makes a
+    // regression fail immediately without relying on a GPU or dismissing UI.
+    app->Renderer() = reinterpret_cast<mikudancestudio::D3DRenderer*>(std::uintptr_t{1});
+    mikudancestudio::AviBgOverlayRefresh(nullptr);
+    for (int enabled = 0; enabled != 2; ++enabled) {
+        app->AviBackgroundEnabled() = enabled;
+        app->AviStream() = nullptr;
+        app->AviFrameReader() = nullptr;
+        mikudancestudio::AviBgOverlayRefresh(app.get());
+        app->AviStream() = reinterpret_cast<void*>(std::uintptr_t{1});
+        mikudancestudio::AviBgOverlayRefresh(app.get());
+        app->AviStream() = nullptr;
+        app->AviFrameReader() = reinterpret_cast<void*>(std::uintptr_t{1});
+        mikudancestudio::AviBgOverlayRefresh(app.get());
+        if (app->AviBackgroundSurface() || app->AviBackgroundTexture()) return 1;
+    }
+    app->AviBackgroundEnabled() = 0;
+    app->AviStream() = reinterpret_cast<void*>(std::uintptr_t{1});
+    mikudancestudio::AviBgOverlayRefresh(app.get());
+    app->AviStream() = nullptr;
+    app->AviFrameReader() = nullptr;
+    app->Renderer() = nullptr;
     DestroyWindow(window);
     UnregisterClassW(cls.lpszClassName, cls.hInstance);
     return 0;

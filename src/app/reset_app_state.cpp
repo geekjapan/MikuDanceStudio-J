@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "mikudancestudio/scene_preview_ui.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/scene_ownership.hpp"
@@ -65,6 +66,7 @@ static void ReplaceEditText(HWND parent, int id, const char* text) {
 }
 
 void ResetAppState(MMDApp* app) {
+    ReleaseCpuSceneFrame();
     app->ClearPortableSceneSession();
     HWND hwnd = app->MainWindow();
     app->SceneModified() = 0;
@@ -146,7 +148,7 @@ void ResetAppState(MMDApp* app) {
     swprintf_s(app->state.aviBackgroundPath, 0x100, L"");
     if (app->AviBackgroundTexture() != nullptr) {
         app->AviBackgroundTexture()->Release();
-        app->AviBackgroundTexture() = nullptr;
+        app->AviBackgroundTexture() = nullptr;app->CpuNativeBackgroundTexturePresent()=false;
     }
 
     if (app->state.optflag[0] == 0) {

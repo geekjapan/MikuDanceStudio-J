@@ -149,6 +149,7 @@ public:
     }
     bool Draw(NonIndexedDraw draw) override {
         if (!IsCurrentSubmission(Status(), draw.submission)) return false;
+        if (draw.layout && *draw.layout != currentPipeline_.layout) return false;
         auto* vertices = Find(draw.vertices);
         const bool texturedTriangles =
             currentPipeline_.topology == PrimitiveTopology::TriangleList;

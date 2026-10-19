@@ -31,8 +31,8 @@
 //   3. 0x46EFE8: app+0x330 == 0 -> nothing to advance, jump to 0x46F575.
 //   4. 0x46EFEE: frame-step mode (0x9ED90 != 0):
 //        var_14C8 = 1/fps (dead bookkeeping, never read);
-//        target   = (frameA + 30.0/fps) / (N*30.0)          (0x46F011..54)
-//        gate     : (uint)(int)(frameA + 30.0/fps) < (uint)(frameB+1)
+//        target   = ((float)N*30.0/fps + (u32)frameA) / 30.0
+//        gate     : (uint)(int64)(N*30.0/fps + (u32)frameA) < (uint)(frameB+1)
 //                   -> BLOCK 1 (0x46F12C), else the recording wait (0x46F070).
 //   5. playing (0x9ED90 == 0): target = 9E654 + elapsed (0x46F264);
 //      end(0x9E658) >= target -> BLOCK 2 (0x46F3D6), else the past-end
@@ -40,7 +40,7 @@
 //   BLOCK 1 (0x46F12C..0x46F25B): cursor += 1/60; while target > cursor:
 //     sub_4175A0(app, 1) [timeline advance] - ordered per-model pass
 //     [morph 0x4970B0 + SetPhysicsMode(0, models, count)] - kinematic sync
-//     0x4B22F0 in REVERSE slot order - stepSimulation(1/60, 10, 1/60) -
+//     0x4B22F0 in FORWARD slot order - stepSimulation(1/60, 10, 1/60) -
 //     cursor += 1/60.  No selection skip.  Then cursor = target.
 //   BLOCK 2 (0x46F3D6..0x46F562): same, but the ordered pass and the
 //     FORWARD-order kinematic sync SKIP the selected model
@@ -93,6 +93,7 @@
 #include <Windows.h>
 
 #include <cstdint>
+#include "cpu_simulation_bridge.hpp"
 #include <cstdio>
 #include <cstdlib>
 
@@ -118,70 +119,21 @@ inline float& Cursor(MMDApp* app) {
     return app->PlaybackCursorSeconds();
 }
 
-btDiscreteDynamicsWorld* PlayWorld(MMDApp* app) {
-    PhysicsScene* scene = app->Physics();
-    if (scene == nullptr)
-        return nullptr;
-    return scene->world;   // slot 64 / 0x40
+// The UI owns target/end/loop policy; the shared CPU scheduler owns every
+// catch-up substep and the remaining dt budget. Both old blocks walk forward.
+void CatchupAdvance(void* user, CpuSimulationState& state, bool substep) {
+    auto& app=*static_cast<MMDApp*>(user);
+    app.PlaybackCursorSeconds()=state.cursorSeconds;
+    PlaybackPoseAdvance(&app,substep ? 1 : 0);
+    // Final global-track evaluation can change gravity/reset state. Pull those
+    // edits back before exporting the session, without touching its dt budget.
+    ImportCpuSimulation(app);
 }
-
-void StepWorld(btDiscreteDynamicsWorld* world) {
+void CatchupStepTrace(void*,const CpuSimulationState&,CpuSimulationEvent event,int,float) {
 #ifdef MIKUDANCESTUDIO_DIAG
-    if (getenv("MIKUDANCESTUDIO_TRACE_STEPS") != nullptr)
-        fprintf(stderr, "CATCHUP step (cursor behind target)\n");
+    if(event==CpuSimulationEvent::CatchupBeforeStep && getenv("MIKUDANCESTUDIO_TRACE_STEPS"))
+        fprintf(stderr,"CATCHUP step (cursor behind target)\n");
 #endif
-    world->stepSimulation(1.0f / 60.0f, 10, 1.0f / 60.0f);   // 0x46F206
-}
-
-// Cursor += 1/60.  x64: addss against the .rdata float 0x3C888889
-// (xmm10 slot 0x7FF7CB552D34) - one single-precision rounding.
-void BumpCursor(MMDApp* app) {
-    Cursor(app) += 1.0f / 60.0f;
-}
-
-// 0x46F171..0x46F1DD (block 1) / 0x46F41B..0x46F4BE (block 2): per-model
-// morph application + pose source, ordered by model+0x2D7D.  Block 2 adds
-// the selected-model skip (var_14A1 && 2F8==0 && 910==slot).
-void OrderedMorphPhysicsPass(MMDApp* app, int count, bool selSkip) {
-    auto& s = *app;
-    unsigned char** models = s.ModelSlots();
-    // x64 pump sub_7FF7CB4474F0: both ordering passes run order and slot
-    // walks to 255 (block 1 cmp edi/rbx, 0FFh at 0x7FF7CB44BB0E/0x7FF7CB44BADA;
-    // block 2 at 0x7FF7CB44BDDA/0x7FF7CB44BD7D; comboSelIndex2 = model+0x3109).
-    for (int order = 0; order < kModelSlotCount; ++order) {
-        for (int j = 0; j < kModelSlotCount; ++j) {
-            unsigned char* mdl = models[j];
-            if (mdl == nullptr || mikudancestudio::mdl::Mdl(mdl)->comboSelIndex2 != order)
-                continue;
-            if (selSkip && s.state.optflag[0] == 0 &&
-                s.SelectedModelSlot() == j)
-                continue;                                   // 0x46F471
-            ModelApplyMorphs(mdl);                            // 0x46F1AE
-            SetPhysicsMode(mdl, 0, models, count);
-        }
-    }
-}
-
-// 0x46F1DF..0x46F204 (block 1, forward) / 0x46F4C4..0x46F50B (block 2,
-// forward, with the selected-model skip).
-void KinematicSyncPass(MMDApp* app, bool reverse, bool selSkip) {
-    auto& s = *app;
-    unsigned char** models = s.ModelSlots();
-    // x64: reverse walk is a 255 count-down from slot 254
-    // (mov edi, 0FFh ... dec rdi at 0x7FF7CB44BB16); forward-with-skip walk
-    // counts down 255 from slot 0 (mov esi, 0FFh ... dec rsi at 0x7FF7CB44BDF1).
-    const int begin = reverse ? kModelSlotCount - 1 : 0;
-    const int end = reverse ? -1 : kModelSlotCount;
-    const int step = reverse ? -1 : 1;
-    for (int j = begin; j != end; j += step) {
-        unsigned char* mdl = models[j];
-        if (mdl == nullptr)
-            continue;
-        if (selSkip && s.state.optflag[0] == 0 &&
-            s.SelectedModelSlot() == j)
-            continue;                                       // 0x46F4F1
-        ModelKinematicSync(mdl);                             // 0x46F1F7
-    }
 }
 
 // Recording wait (0x46F070..0x46F127): capture one frame through the
@@ -324,8 +276,8 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
     // set (0x46F00D, x87 double divide, one rounding at the store).  The
     // BLOCK loops below decrement it by 1/60 per substep (0x46F226 and the
     // BLOCK 2 twin) and the settle main step consumes the REMAINDER - see
-    // g_CatchupDtBudget in globals.hpp.
-    g_CatchupDtBudget = s.state.deltaTime;                   // 0xA06BC
+    // the per-scene CpuSimulationState budget.
+    s.CpuSimulation().remainingSeconds = s.state.deltaTime;                   // 0xA06BC
     if (s.PlaybackActive() == 0)
         return;                                    // -> 0x46F575
 
@@ -341,7 +293,7 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
         const std::int32_t n = s.state.recordedFrameCount;
         const std::int32_t frameA = s.AviRecordStartFrame();
         const float fps = s.AviRecordFps();
-        g_CatchupDtBudget = 1.0f / fps;                     // 0x46F00D
+        s.CpuSimulation().remainingSeconds = 1.0f / fps;                     // 0x46F00D
         // x64 0x7FF7CB44B92E..0x7FF7CB44B984, all single precision:
         //   term   = ((float)N * 30.0f) / fps + (float)(u32)frameA
         //            [movd/cvtdq2ss N, mulss 30.0f, divss fps,
@@ -362,38 +314,11 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
         const std::uint32_t limit = static_cast<std::uint32_t>(
             s.AviRecordEndFrame() + 1);
         if (gate < limit) {                                 // 0x46F06A jb
-            // BLOCK 1 (0x46F12C): catch-up loop, no selection skip.  The
-            // block is gated on the physics-mode counter exactly like
-            // BLOCK 2 (x86 `cmp [this+0xA0CC4],1 / jl` at 0x46F12C; x64
-            // `cmp [r12+0xA1D4C],1 / jl` at 0x7FF7CB44BA6A, reached from
-            // the frame-step gate's jb at 0x7FF7CB44B986) - the port
-            // previously ran the loop unconditionally here.
-            if (count >= 1) {
-                BumpCursor(app);
-                btDiscreteDynamicsWorld* world = PlayWorld(app);
-                if (target > Cursor(app)) {
-                    do {
-                        PlaybackPoseAdvance(app, 1);       // 0x46F16C
-                        OrderedMorphPhysicsPass(app, count, false);
-                        // 0x46F1DF: `lea 0x780(%ebx),%edi; add $0x4` -
-                        // FORWARD slot order (block 2 at 0x46F4CA is
-                        // forward too).
-                        KinematicSyncPass(app, false, false);
-                        StepWorld(world);
-                        // 0x46F226 / x64 0x7FF7CB44BB64: the dt budget
-                        // pays for the substep (subss 1/60f).
-                        g_CatchupDtBudget -= 1.0f / 60.0f;
-                        BumpCursor(app);
-                    } while (Cursor(app) < target);         // 0x46F255
-                }
-            }
-            Cursor(app) = target;                           // 0x46F566
-            // 0x46F566 falls THROUGH to 0x46F56C: the final
-            // sub_4175A0(app, 0) runs for BLOCK 1 too (the frame-step
-            // recording path) - omitting it desynchronised every recorded
-            // frame's pose application from the original.
-            PlaybackPoseAdvance(app, 0);                     // 0x46F56C
-            return;                                         // -> 0x46F575
+            auto& simulation=ImportCpuSimulation(s);
+            RunCpuSimulationCatchup(simulation,EditorCpuSimulationContext(s),target,-1,
+                                    {app,CatchupAdvance,CatchupStepTrace});
+            ExportCpuSimulation(s,simulation);
+            return;
         }
         FrameStepBeyondEnd(app);                            // 0x46F070
         return;                                             // -> 0x46F575
@@ -481,24 +406,23 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
 #endif
 
     if (!(end < target)) {                                  // 0x46F2A9 jp
-        // BLOCK 2 (0x46F3D6): playback catch-up with selection skip.
-        if (count >= 1) {
-            BumpCursor(app);
-            btDiscreteDynamicsWorld* world = PlayWorld(app);
-            if (target > Cursor(app)) {
-                do {
-                    PlaybackPoseAdvance(app, 1);           // 0x46F416
-                    OrderedMorphPhysicsPass(app, count, selSkip);
-                    KinematicSyncPass(app, false, selSkip);
-                    StepWorld(world);
-                    // BLOCK 2 twin of 0x46F226 (x64 0x7FF7CB44BE57):
-                    // the substep is paid from the dt budget (subss 1/60f).
-                    g_CatchupDtBudget -= 1.0f / 60.0f;
-                    BumpCursor(app);
+        auto& simulation=ImportCpuSimulation(s);
+        CpuSimulationHooks hooks{app,CatchupAdvance,nullptr};
 #ifdef MIKUDANCESTUDIO_DIAG
-                    if (tracePlayLeft > 0 && getenv("MIKUDANCESTUDIO_TRACE_PLAY")) {
-                        --tracePlayLeft;
-                        unsigned char* mdl = s.ModelSlot(0);
+        struct Trace { MMDApp* app; int* left; float target; } trace{app,&tracePlayLeft,target};
+        hooks.user=&trace;
+        hooks.advance=[](void* user,CpuSimulationState& state,bool substep) {
+            CatchupAdvance(static_cast<Trace*>(user)->app,state,substep);
+        };
+        hooks.observe=[](void* user,const CpuSimulationState& state,CpuSimulationEvent event,int,float) {
+            auto& trace=*static_cast<Trace*>(user);
+            auto& owner=*trace.app;
+            if(event==CpuSimulationEvent::CatchupBeforeStep && getenv("MIKUDANCESTUDIO_TRACE_STEPS"))
+                fprintf(stderr,"CATCHUP step (cursor behind target)\n");
+            if(event==CpuSimulationEvent::CatchupAfterStep) {
+                    if (*trace.left > 0 && getenv("MIKUDANCESTUDIO_TRACE_PLAY")) {
+                        --*trace.left;
+                        unsigned char* mdl = owner.ModelSlot(0);
                         FILE* tf = fopen(getenv("MIKUDANCESTUDIO_TRACE_PLAY"), "a");
                         if (tf) {
                             if (mdl != nullptr) {
@@ -508,7 +432,7 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
                                     mikudancestudio::mdl::Mdl(mdl)->boneCount);
                                 fprintf(tf,
                                         "sub cursor=%.5f target=%.5f bones=",
-                                        Cursor(app), target);
+                                        state.cursorSeconds, trace.target);
                                 for (int bi = 0; bi < boneCount && bi < 8;
                                      ++bi)
                                     fprintf(tf, "%08X%08X%08X%08X,",
@@ -529,12 +453,12 @@ void PlaybackCatchup(MMDApp* app, unsigned char selActive) {
                             fclose(tf);
                         }
                     }
-#endif
-                } while (Cursor(app) < target);             // 0x46F55C
             }
-        }
-        Cursor(app) = target;                               // 0x46F566
-        PlaybackPoseAdvance(app, 0);                        // 0x46F56C
+        };
+#endif
+        const int skip=selSkip && s.state.optflag[0]==0 ? s.SelectedModelSlot() : -1;
+        RunCpuSimulationCatchup(simulation,EditorCpuSimulationContext(s),target,skip,hooks);
+        ExportCpuSimulation(s,simulation);
         return;
     }
 

@@ -127,6 +127,9 @@ void __cdecl MmeHostRecordTextureFile(const wchar_t* path,
 // 效果引擎已初始化且未被禁用（宿主用于 Accessory 手动 DrawSubset 路径等
 // 需要“绕开 ID3DXMesh 内部绘制”的决策点）。仅当标准效果已注册后可能为 1。
 int __cdecl MmeHostEffectsActive(void);
+// CPU policy query: bridge initialization and the user's effect toggle are
+// different states. No device state or resource is read.
+int __cdecl MmeHostEffectsEnabled(void);
 
 #ifdef __cplusplus
 }

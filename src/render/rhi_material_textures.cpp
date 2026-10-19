@@ -5,6 +5,17 @@
 #include <utility>
 
 namespace mikudancestudio::rhi {
+bool PrepareMaterialMipChain(MaterialTextureAsset& asset,MipPreparationPolicy policy,
+    TexturePreparer* backend,bool sceneActive){
+    const auto& source=asset.usePrepared?asset.prepared:asset.content;
+    if(!source.revision || source.revision!=ImageRevision(source.image))return false;
+    PreparedMipChain chain;
+    const bool ready=policy==MipPreparationPolicy::Dx9AutoLinear?
+        backend && backend->SupportsMipPolicy(policy) && backend->PrepareMips(source.image,policy,chain,sceneActive):
+        PreparePortableMipChain(source.image,policy,chain);
+    if(!ready || !ValidatePreparedMipChain(source.image,chain))return false;
+    asset.mipChain=std::move(chain);return true;
+}
 namespace {
 std::filesystem::path Normalized(std::filesystem::path path) {
     auto text = path.generic_u8string();
@@ -115,6 +126,9 @@ bool ToonTextureResolver::Load(const ToonRequest& request,
     return true;
 }
 Handle MaterialTextureCache::Get(const MaterialTextureAsset& asset) {
+    // This legacy top-level upload cache cannot silently discard explicit levels.
+    // Full model textures use SceneRenderer::CreateModelTexture instead.
+    if(asset.mipChain)return {};
     const auto status = device_->Status();
     if (status.state != DeviceState::Ready || !status.identity || !status.epoch) return {};
 

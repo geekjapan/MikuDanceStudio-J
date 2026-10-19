@@ -92,10 +92,11 @@
 
 #include "btBulletDynamicsCommon.h"
 
-#include "mikudancestudio/globals.hpp"
+#include "../app/cpu_simulation_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/cpu_pose_schedule.hpp"
 #include "../app/frame_state_dump.hpp"
 
 namespace mikudancestudio {
@@ -691,150 +692,17 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     btDiscreteDynamicsWorld* world = scene->world;   // slot 64 / 0x40
     if (world == nullptr)
         return;
-    const int count = s.PlaybackPhysicsMode();
-    // ---- random-wind / gravity-noise block (0x46F582..0x46F6B4) ----------
-    // With the noise mode byte 0xA0CD4 set, this REPLACES the normal
-    // per-pass gravity apply (both branches jump to 0x46F7DB, right past
-    // the normal setGravity at 0x46F7D9 - everything else in the pass,
-    // including the settle steps, still runs): the wind timer (0x9EDCC)
-    // accumulates the real dt and every 0.5s a gravity perturbation is
-    // applied through world vtable slot
-    // 0x34 (setGravity - the MMD "wind" is a randomized gravity vector).
-    //   strength = rand()*10.0/32767.0 * [0x9EDC8] + [0x9EDC4]
-    //   axis     = (rand()*0.2/32767.0 - 0.100000001490116 + [0x9EDBx])
-    //              * strength   (x87 doubles, float stores; constants
-    //                          0x52C170/0x52E9F8/0x52E9F0/0x52BEA8)
-    // x64 (0x7FF7CB44BECF..0x7FF7CB44BF98) computes the same chain in
-    // single precision (cvtdq2ps + mulss/divss/addss) with float
-    // constants: divisor 0x7FF7CB552D30 = 0x46FFFE00 = 32767.0f EXACTLY
-    // (an earlier audit note read this as 32768.0f/0x47000000 - that is a
-    // misread; the bytes are 00 FE FF 46), 0.2f at 0x7FF7CB552D2C, 0.1f
-    // at 0x7FF7CB552B38 and 10.0f preloaded from 0x7FF7CB552980.  The
-    // divisor below therefore stays 32767.0 in BOTH paths; only the
-    // arithmetic precision differs (see the #if paths).
-    // Vector element order is (0x9EDB8, 0x9EDBC, 0x9EDC0, 0).
-    bool windRan = false;
-    if (count > 0 && s.state.gravityNoiseEnabled != 0) {
-        // x64 0x7FF7CB44BEA4..0x7FF7CB44BEC9: the timer accumulates with a
-        // single float add (addss, result stored back unconditionally) and
-        // the compare is `comiss xmm0,[0x7FF7CB55298C=0.5f]; jbe skip` -
-        // the perturbation fires only when the timer is STRICTLY greater
-        // than 0.5; an exactly-0.5 timer does not fire.
-        s.state.gravityNoiseTimer = s.state.gravityNoiseTimer + s.DeltaTime();
-        if (s.state.gravityNoiseTimer > 0.5f) {                          // flt_52960C
-#if defined(_M_IX86)
-            // x87 transcription of 0x46F5BA..0x46F66E: every intermediate
-            // stays extended; strength is stored to a FLOAT slot at
-            // 0x46F5DF and reloaded for each component multiply.
-            const int strengthInt =
-                s.GravityNoise();          // fimul (integer)
-            const float gravmag = s.GravityMagnitude();
-            static const double kTen = 10.0;            // dbl_52C170
-            static const double kRandMax = 32767.0;     // dbl_52E9F8
-            static const double kNoise = 0.20000000298023224;   // 52E9F0
-            static const double kOffset = 0.10000000149011612;  // 52BEA8
-            int rStrength = std::rand(), rX = std::rand(),
-                rY = std::rand(), rZ = std::rand();
-            float strengthF, e0, e1, e2;
-            const float dirX = s.GravityX(),
-                        dirY = s.GravityY(),
-                        dirZ = s.GravityZ();
-            __asm {
-                fild        rStrength
-                fmul        qword ptr [kTen]
-                fdiv        qword ptr [kRandMax]
-                fimul       strengthInt
-                fadd        gravmag
-                fstp        strengthF
-                fild        rX
-                fmul        qword ptr [kNoise]
-                fdiv        qword ptr [kRandMax]
-                fsub        qword ptr [kOffset]
-                fadd        dirX
-                fmul        strengthF
-                fstp        e0
-                fild        rY
-                fmul        qword ptr [kNoise]
-                fdiv        qword ptr [kRandMax]
-                fsub        qword ptr [kOffset]
-                fadd        dirY
-                fmul        strengthF
-                fstp        e1
-                fild        rZ
-                fmul        qword ptr [kNoise]
-                fdiv        qword ptr [kRandMax]
-                fsub        qword ptr [kOffset]
-                fadd        dirZ
-                fmul        strengthF
-                fstp        e2
-            }
-            world->setGravity(btVector3(e0, e1, e2));
-            s.state.gravityNoiseTimer = 0.0f;                     // 0x46F6AC
-#else
-            // x64 0x7FF7CB44BECF..0x7FF7CB44BFB7: the SAME chain as the
-            // x87 block but in single precision - cvtdq2ps + mulss 10.0f
-            // + divss 32767.0f (0x46FFFE00) for the strength, then per
-            // axis mulss 0.2f / divss 32767.0f / subss 0.1f / addss dir /
-            // mulss strength.  The strength stays a float value end to
-            // end (no double round-trip).
-            const int rStrength = std::rand();
-            const float noise =
-                static_cast<float>(s.GravityNoise());
-            const float gravmag = s.GravityMagnitude();
-            const float strength =
-                ((static_cast<float>(rStrength) * 10.0f) / 32767.0f) *
-                    noise + gravmag;
-            const float e0 =
-                ((static_cast<float>(std::rand()) * 0.2f) / 32767.0f -
-                 0.1f + s.GravityX()) * strength;
-            const float e1 =
-                ((static_cast<float>(std::rand()) * 0.2f) / 32767.0f -
-                 0.1f + s.GravityY()) * strength;
-            const float e2 =
-                ((static_cast<float>(std::rand()) * 0.2f) / 32767.0f -
-                 0.1f + s.GravityZ()) * strength;
-            world->setGravity(btVector3(e0, e1, e2));
-            s.state.gravityNoiseTimer = 0.0f;                     // 0x46F6AC
-#endif
-        }
-        windRan = true;  // -> 0x46F7DB: jump past the normal gravity apply
-    }
-    // ---- normal per-pass gravity apply (0x46F6B9..0x46F7D9) ------------
-    // Runs every physics pass with the noise mode off: an all-zero
-    // direction gets Y nudged to 0.1f (flt_0x529624), the direction goes
-    // through the real D3DXVec3Normalize, and each gravity component is
-    // (n_i*mag)*10.0f.  x64 0x7FF7CB44C0C1..0x7FF7CB44C0E9 runs that
-    // product as two mulss (mag, then the preloaded 10.0f) - single
-    // precision, one rounding per multiply.  The wind block above jumps
-    // to 0x46F7DB - right past this setGravity - and physics-off
-    // (A0CC4<=0) skips both.
-    if (count > 0 && !windRan) {
-        float dir[3] = {s.state.gravityX,
-                        s.state.gravityY,
-                        s.state.gravityZ};
-        if (dir[0] == 0.0f && dir[1] == 0.0f && dir[2] == 0.0f)
-            // x64 0x7FF7CB44C03A: 三轴 ucomiss 判全零后
-            // `mov dword ptr [app+0x9FCC8], 3DCCCCCDh` - 0.1f 直接写回
-            // 重力 Y 状态字段，不只是本地副本：后续风力 Y 基准、PMM 保存、
-            // 重力对话框读到的都是被拨正后的 0.1。
-            s.state.gravityY = dir[1] = 0.1f;                  // flt 0x529624
-        D3dxVec3Normalize(dir, dir);                          // 0x46F741
-        const float mag = s.state.gravityMagnitude;
-        world->setGravity(btVector3(
-            (dir[0] * mag) * 10.0f,
-            (dir[1] * mag) * 10.0f,
-            (dir[2] * mag) * 10.0f));                         // 0x46F7D9
-    }
-    // 0x46F575: `cmp [ebx+0xA0CC4], 0 / jle 0x46F7DB` - A0CC4 == 0
-    // ("physical operation: no calculation") skips the random-wind block
-    // AND the normal gravity apply (both jump to 0x46F7DB) and continues
-    // into the settle request, the pose passes and the readback.
-    // The early `return` the port used to have here skipped the second
-    // pose pass, leaving the +0x16C/+0x178 pose block on the physics
-    // source instead of restoring the kinematic one (proven by the
-    // AllStar physics-off A/B: orig F-pose = identity, port F-pose =
-    // the physics-source quaternion).
-    unsigned char** models = s.ModelSlots();
+    auto& simulation=ImportCpuSimulation(s);
+    CpuSimulationFrame frame;
+    frame.deltaSeconds=s.DeltaTime();
+    frame.selectionActive=selActive!=0;
+    frame.selectionWasActive=s.state.selectionActiveLatch!=0;
+    frame.modelMode=s.state.optflag[0]!=0;
+    frame.frameStep=s.FrameStepPlayback()!=0;
+    frame.playbackActive=s.PlaybackActive()!=0;
+    frame.accessoryEditing=s.state.accessoryEditDialogOpen!=0;
+    frame.frameCopyPending=s.state.frameCopyDialog!=0;
+    CpuSimulationHooks hooks{app,nullptr,nullptr};
 #ifdef MIKUDANCESTUDIO_DIAG
     char stageCaptureValue[2]{};
     static LONG stagesCaptured = 0;
@@ -852,269 +720,71 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
         // baseline is the first pass that actually owns model rigid bodies.
         s.ModelSlots()[0] != nullptr &&
         InterlockedCompareExchange(&stagesCaptured, 1, 0) == 0;
-    if (captureStages)
-        ArmBoneTransformIkProbe();
-    if (captureStages)
-        DumpWorldSolverInfo(world);
 #endif
-
-    // 0x46F7DB..0x46F808: the settle request sits inside the
-    // "selection active" gate - var_14A1 (selActive, from FrameDriver
-    // 0x46DCA6) && app+0x2F8 == 0 && app+0x9ED90 == 0.  Without the gate
-    // idle load frames keep re-requesting the 3x settle passes, stepping
-    // the world four times per frame instead of once (proven by the
-    // body-3 origin write-watch: original alternates proceed/sync, the
-    // port emitted two proceedToTransform writes per sync).
-    if (selActive != 0 &&
-        s.state.optflag[0] == 0 &&        // 0x2F8 model-mode flag
-        s.state.frameStepPlayback == 0) {     // 0x9ED90 frame-step flag
-        // 0x46F7FF..0x46F808 / x64 0x7FF7CB44C12E..0x7FF7CB44C138：
-        // 两版同一上升沿闩锁语义。x86 `cmp byte [app+0xA03E8],0 /
-        // jnz 0x46F80F / mov byte [app+0x9EDB5],1`，x64 `cmp
-        // [app+0xA137C],r15b / jnz / mov byte [app+0x9FCC1],1`。
-        // 0xA03E8 与 0xA137C 都是上一趟泵的 selActive 滞留闩锁（x86 泵尾
-        // 0x47985A..0x47985E、x64 泵尾 0x7FF7CB456F1C..0x7FF7CB456F21 把
-        // 本趟 selActive 写回；初始化 x86 0x40ABDE / x64 0x7FF7CB42CA4C
-        // 清零；layout_pins.hpp 把 selectionActiveLatch 钉在
-        // 0xA03E8/0xA137C）。0xA03E8 不是"未播放"独立条件——2026-09 审计
-        // 把闩锁本身误读成了第三个丢失条件。settle 只在 selActive 上升沿
-        // （上一趟未激活）请求一次；持续激活期间闩锁抑制重复请求。两版
-        // 唯一差异在泵尾写回的外围门（x86 0x4797C2 套 model+0x2D90>=0 &&
-        // app+0x330==0，x64 无条件），见文件头注释与 frame_driver.cpp。
-        if (s.state.selectionActiveLatch == 0)
-            s.PhysicsResetPending() = 1;
-    }
-
-    // ---- gate B: accessory-edit dialog flag (x64 0x7FF7CB44C65B) --------
-    // `cmp [app+0xA166D],0 / jnz -> 0x7FF7CB44C8D6` (the same landing label
-    // gate A jumps to) skips ONLY the two pose passes, the world pass, the
-    // readback and the moved-flag clear below.  The gravity/wind blocks and
-    // the settle request above have already run by then - the previous
-    // top-of-function early return on accessoryEditDialogOpen (which also killed gravity and
-    // the settle request) did not match x64.
-    if (s.state.accessoryEditDialogOpen != 0)
-        return;                       // 0x7FF7CB44C65B -> 0x7FF7CB44C8D6
-
 #ifdef MIKUDANCESTUDIO_DIAG
-    int stepCount = 0;
-    const char* stepLabels[16]{};
-    const bool traceSteps = getenv("MIKUDANCESTUDIO_TRACE_STEPS") != nullptr;
-    if (traceSteps) {
-        // m_localTime = the stepSimulation substep accumulator (protected
-        // member of btDiscreteDynamicsWorld); use the owned world interface.
-        const float localTime =
-            static_cast<const PhysicsWorld*>(world)->SubstepRemainder();
-        unsigned localBits = 0;
-        std::memcpy(&localBits, &localTime, 4);
-        fprintf(stderr,
-                "PHYSFRAME enter settle=%d count=%d localTime=%08X\n",
-                (int)(s.PhysicsResetPending() != 0), count,
-                localBits);
+    frame.skipIdleWorld=getenv("MIKUDANCESTUDIO_IDLE_NO_STEP")!=nullptr;
+    if(const char* forced=getenv("MIKUDANCESTUDIO_FORCE_MAINDT")) {
+        frame.overrideMainTimeStep=true;
+        frame.mainTimeStep=static_cast<float>(atof(forced));
     }
-    auto stepWorld = [world, &stepCount, &stepLabels](const char* label) {
-        if (stepCount < 16) stepLabels[stepCount] = label;
-        ++stepCount;
-        world->stepSimulation(1.0f / 60.0f, 10, 1.0f / 60.0f);  // 0x46F206
-    };
-#else
-    auto stepWorld = [world](const char*) {
-        world->stepSimulation(1.0f / 60.0f, 10, 1.0f / 60.0f);  // 0x46F206
+    static bool zeroLocalTimeAfterLoad=getenv("MIKUDANCESTUDIO_ZERO_LT_AFTER_LOAD")!=nullptr;
+    struct Trace {
+        MMDApp* app; btDiscreteDynamicsWorld* world; bool capture,trace;
+        bool* zeroLocalTime; int steps=0; const char* labels[16]{};
+        int mode=0; bool settle=false,moved=false;
+    } trace{app,world,captureStages,getenv("MIKUDANCESTUDIO_TRACE_STEPS")!=nullptr,&zeroLocalTimeAfterLoad};
+    hooks.user=&trace;
+    hooks.observe=[](void* user,const CpuSimulationState& state,CpuSimulationEvent event,int index,float) {
+        auto& t=*static_cast<Trace*>(user);
+        auto* app=t.app;
+        ExportCpuSimulation(*app,state);
+        const auto rigid=[&](const char* name) { if(t.capture) DumpRigidBodyState(app,name); };
+        const auto pose=[&](const char* name) { if(t.capture) DumpFrameEntryState(app,name,false); };
+        switch(event) {
+        case CpuSimulationEvent::GravityApplied:
+            if(t.capture) { ArmBoneTransformIkProbe();DumpWorldSolverInfo(t.world); }
+            break;
+        case CpuSimulationEvent::BeforePose:
+            t.mode=state.physicsMode;t.settle=state.resetPending!=0;t.moved=state.bodiesMoved!=0;
+            if(t.trace) {
+                const float localTime=static_cast<const PhysicsWorld*>(t.world)->SubstepRemainder();
+                unsigned bits=0;std::memcpy(&bits,&localTime,4);
+                fprintf(stderr,"PHYSFRAME enter settle=%d count=%d localTime=%08X\n",int(t.settle),t.mode,bits);
+            }
+            pose("physics_pose0.json");break;
+        case CpuSimulationEvent::KinematicSync:
+            rigid("physics_sync.rigids.json");pose("physics_sync.json");break;
+        case CpuSimulationEvent::MainStep:
+        case CpuSimulationEvent::ExtraStep:
+        case CpuSimulationEvent::SettleStep:
+            if(t.steps<16) t.labels[t.steps]=event==CpuSimulationEvent::MainStep ? "main" : event==CpuSimulationEvent::ExtraStep ? "extra" : "settle";
+            ++t.steps;break;
+        case CpuSimulationEvent::Stepped:
+            if(index) { char name[64]{};std::snprintf(name,sizeof(name),"physics_settle_post%d.rigids.json",index);rigid(name); }
+            else { rigid("physics_step.rigids.json");pose("physics_step.json"); }
+            break;
+        case CpuSimulationEvent::SettleReseat: {
+            char name[64]{};std::snprintf(name,sizeof(name),"physics_settle_pre%d.rigids.json",index);rigid(name);break;
+        }
+        case CpuSimulationEvent::Settled:
+            rigid("physics_settle.rigids.json");pose("physics_settle.json");break;
+        case CpuSimulationEvent::Readback:
+            rigid("physics_readback.rigids.json");pose("physics_readback.json");break;
+        case CpuSimulationEvent::AfterPose:
+            if(*t.zeroLocalTime) { static_cast<PhysicsWorld*>(t.world)->ClearSubstepRemainder();*t.zeroLocalTime=false; }
+            pose("physics_pose1.json");break;
+        default: break;
+        }
     };
 #endif
-
-    // var_14C8 - the MAIN step's timeStep.  Initialised in PlaybackCatchup
-    // (0x46EFDE = app+0xA06BC, overwritten with 1/fps in frame-step mode at
-    // 0x46F00D) and DECREMENTED by 1/60 per catch-up substep (0x46F226 and
-    // the BLOCK 2 twin): the settle main step steps only the REMAINDER of
-    // the frame's dt, not the full dt again.  Stepping the full dt here
-    // double-counts the catch-up substeps - in recording mode that is a
-    // 1.5x physics overdrive every pass, which progressively destabilises
-    // the spring/constraint solver (the ③-C upside-down explosion).
-    // The extra step (0x46FD7F) and the settle steps (0x46FE0C) push
-    // flt_52EA00 for BOTH timeStep and fixedTimeStep - they stay 1/60.
-    float mainTimeStep = g_CatchupDtBudget;
+    RunCpuSimulationFrame(simulation,EditorCpuSimulationContext(s),frame,hooks);
+    ExportCpuSimulation(s,simulation);
 #ifdef MIKUDANCESTUDIO_DIAG
-    // DIAGNOSTIC ONLY: force the main step's timeStep to probe which
-    // per-pass dt the original effectively runs at in real time.
-    if (const char* forced = getenv("MIKUDANCESTUDIO_FORCE_MAINDT"))
-        mainTimeStep = static_cast<float>(atof(forced));
-    // DIAGNOSTIC ONLY: zero the substep accumulator after the first
-    // (load) physics pass, isolating the load-pass main substep from the
-    // idle evolution.
-    static bool zeroLocalTimeAfterLoad =
-        getenv("MIKUDANCESTUDIO_ZERO_LT_AFTER_LOAD") != nullptr;
-#endif
-
-    // Per-model morph application + pose source selection, ordered by the
-    // PMM model-display order (the x86 field was model+0x2D7D).
-    const int posePassMode = s.PhysicsResetPending() != 0
-                       ? 0
-                       : count;
-    // x64 pump sub_7FF7CB4474F0: both pose passes run order and slot walks
-    // to 255 (pass 1: cmp rbx/edi, 0FFh at 0x7FF7CB44C69A/0x7FF7CB44C6DD;
-    // pass 2: 0x7FF7CB44C89A/0x7FF7CB44C8CE; comboSelIndex2 = model+0x3109).
-    for (int order = 0; order < kModelSlotCount; ++order) {
-        for (int j = 0; j < kModelSlotCount; ++j) {
-            unsigned char* mdl = models[j];
-            if (mdl != nullptr && mdl::Mdl(mdl)->comboSelIndex2 == order) {
-                ModelApplyMorphs(mdl);                            // 0x46FCB1
-                SetPhysicsMode(mdl, 0, models, posePassMode);
-            }
-        }
+    if(trace.trace && trace.steps>0) {
+        fprintf(stderr,"PHYSFRAME steps=%d settle=%d moved=%d count=%d labels=",trace.steps,int(trace.settle),int(trace.moved),trace.mode);
+        for(int n=0;n<trace.steps && n<16;++n) fprintf(stderr,"%s%s",n ? "," : "",trace.labels[n]);
+        fprintf(stderr,"\n");
     }
-#ifdef MIKUDANCESTUDIO_DIAG
-    if (captureStages)
-        DumpFrameEntryState(app, "physics_pose0.json", false);
-#endif
-
-    // Settle section gate (0x46FCEF..0x46FD39 `test eax,ecx /
-    // jz loc_46FE5F`; x64 0x7FF7CB44C6E5..0x7FF7CB44C73D,
-    // `test eax,edx / jz 0x7FF7CB44C85F`): moved | settle | frame advanced,
-    // model count 1..3, no seek pending (x86 0xA0B74 / x64
-    // app+0xA1BC8 == 0).
-    const bool moved = s.state.physicsBodiesMoved != 0;
-    const bool settle = s.PhysicsResetPending() != 0;
-    const bool frameAdv = s.PlaybackActive() != 0;           // 0x330
-    const bool runWorldPass = count == 1 || count == 2 ||
-        (count == 3 && (moved || settle || frameAdv));
-#ifdef MIKUDANCESTUDIO_DIAG
-    // DIAGNOSTIC ONLY (never set in production): MIKUDANCESTUDIO_IDLE_NO_STEP=1
-    // skips the world pass entirely on passes with no settle/moved/frame
-    // activity, freezing the post-seek state so a capture can tell whether
-    // a rendering divergence originates in the seek pass itself or in the
-    // idle substep evolution that follows it.
-    const bool idleNoStep = getenv("MIKUDANCESTUDIO_IDLE_NO_STEP") != nullptr &&
-        !(moved || settle || frameAdv);
-#else
-    constexpr bool idleNoStep = false;
-#endif
-    // NOTE: the wind block's jump (0x46F6B4 -> 0x46F7DB) skips only the
-    // normal setGravity (handled by the !windRan gate above).  The world
-    // pass itself runs identically with or without wind - do NOT add
-    // !windRan here, that freezes physics while the noise mode is active.
-    if (runWorldPass && !idleNoStep &&
-        s.state.frameCopyDialog == 0) {
-        // x64 twin: 255 count-down walk (mov edi, 0FFh at 0x7FF7CB44C74B).
-        for (int j = 0; j < kModelSlotCount; ++j)
-            if (models[j] != nullptr)
-                ModelKinematicSync(models[j]);              // 0x46FD4D
-#ifdef MIKUDANCESTUDIO_DIAG
-        if (captureStages)
-            DumpRigidBodyState(app, "physics_sync.rigids.json");
-        if (captureStages)
-            DumpFrameEntryState(app, "physics_sync.json", false);
-#endif
-
-        // 0x46FDBB..0x46FDCA: the single-step path pushes var_14C8 as
-        // timeStep (fixedTimeStep stays flt_52EA00 = 1/60).  In the
-        // moved && count==3 path (0x46FD7F) BOTH the main and extra
-        // steps push flt_52EA00 - var_14C8 is skipped entirely there.
-        const float mainDt =
-            (moved && count == 3) ? (1.0f / 60.0f) : mainTimeStep;
-#ifdef MIKUDANCESTUDIO_DIAG
-        if (stepCount < 16) stepLabels[stepCount] = "main";
-        ++stepCount;
-#endif
-        world->stepSimulation(mainDt, 10, 1.0f / 60.0f);
-        if (moved && count == 3)
-            stepWorld("extra");                              // 0x46FD97
-#ifdef MIKUDANCESTUDIO_DIAG
-        if (captureStages)
-            DumpRigidBodyState(app, "physics_step.rigids.json");
-        if (captureStages)
-            DumpFrameEntryState(app, "physics_step.json", false);
-#endif
-
-        if (settle) {
-            for (int iter = 3; iter >= 1; --iter) {
-                // x64 twin: 255 count-down walk (mov edi, 0FFh at 0x7FF7CB44C7E8).
-                for (int j = 0; j < kModelSlotCount; ++j)
-                    if (models[j] != nullptr)
-                        ModelDynamicReseat(models[j]);      // 0x46FDF7
-#ifdef MIKUDANCESTUDIO_DIAG
-                if (captureStages) {
-                    char name[64]{};
-                    std::snprintf(name, sizeof(name),
-                                  "physics_settle_pre%d.rigids.json", 4 - iter);
-                    DumpRigidBodyState(app, name);
-                }
-#endif
-                stepWorld("settle");
-#ifdef MIKUDANCESTUDIO_DIAG
-                if (captureStages) {
-                    char name[64]{};
-                    std::snprintf(name, sizeof(name),
-                                  "physics_settle_post%d.rigids.json", 4 - iter);
-                    DumpRigidBodyState(app, name);
-                }
-#endif
-            }
-            s.PhysicsResetPending() = 0;
-        }
-#ifdef MIKUDANCESTUDIO_DIAG
-        if (captureStages)
-            DumpRigidBodyState(app, "physics_settle.rigids.json");
-        if (captureStages)
-            DumpFrameEntryState(app, "physics_settle.json", false);
-#endif
-
-        // 0x46FE34..0x46FE58 / x64 0x7FF7CB44C834..0x7FF7CB44C857: the
-        // readback walk and the moved clear sit INSIDE the settle gate in
-        // BOTH layouts.  The x86 gate failure 0x46FD39 `jz loc_46FE5F`
-        // and the x64 0x7FF7CB44C73D `jz 0x7FF7CB44C85F` both land on
-        // the second pose pass, PAST the readback walk (x86 100-slot walk
-        // 0x46FE42..0x46FE56, sub_4B25D0 per model; x64 255-slot walk at
-        // 0x7FF7CB44C83C, sub_7FF7CB4E3470 per model) and past the moved
-        // clear (x86 `mov byte [app+0xA066Ch],0` at 0x46FE58; x64
-        // `mov [app+0xA1678h],r15b` at 0x7FF7CB44C857).  The only entries
-        // into x86 0x46FE34 are the in-gate branches 0x46FDD3 (settle
-        // skip) and 0x46FE2D (settle-loop exit).  (The old comment here
-        // claimed x86 ran them outside the gate - a misread; no per-arch
-        // branch is needed.)
-        for (int j = 0; j < kModelSlotCount; ++j)
-            if (models[j] != nullptr)
-                ModelPhysicsReadback(models[j]);            // 0x46FE49
-#ifdef MIKUDANCESTUDIO_DIAG
-        if (captureStages)
-            DumpRigidBodyState(app, "physics_readback.rigids.json");
-        if (captureStages)
-            DumpFrameEntryState(app, "physics_readback.json", false);
-#endif
-        s.state.physicsBodiesMoved = 0;                       // 0x7FF7CB44C857
-    }
-
-#ifdef MIKUDANCESTUDIO_DIAG
-    if (traceSteps && stepCount > 0) {
-        fprintf(stderr, "PHYSFRAME steps=%d settle=%d moved=%d count=%d labels=",
-                stepCount, (int)settle, (int)moved, count);
-        for (int i = 0; i < stepCount && i < 16; ++i)
-            fprintf(stderr, "%s%s", i ? "," : "",
-                    stepLabels[i] ? stepLabels[i] : "?");
-        fprintf(stderr, "\n");
-    }
-#endif
-
-    // Second pose pass with afterPhysics = 1 and physicsMode = model
-    // count (0x46FE5F; x64
-    // 0x7FF7CB44C85F..0x7FF7CB44C8D4, morph call / SetPhysicsMode twin at
-    // 0x7FF7CB44C8A8/0x7FF7CB44C8C7).  x64 keeps this pass INSIDE gate B -
-    // it is skipped while the accessory-edit dialog holds physics.
-    for (int order = 0; order < kModelSlotCount; ++order) {
-        for (int j = 0; j < kModelSlotCount; ++j) {
-            unsigned char* mdl = models[j];
-            if (mdl != nullptr && mdl::Mdl(mdl)->comboSelIndex2 == order) {
-                ModelApplyMorphs(mdl);                            // 0x46FE93
-                SetPhysicsMode(mdl, 1, models, count);
-            }
-        }
-    }
-#ifdef MIKUDANCESTUDIO_DIAG
-    if (zeroLocalTimeAfterLoad) {
-        static_cast<PhysicsWorld*>(world)->ClearSubstepRemainder();
-        zeroLocalTimeAfterLoad = false;
-    }
-    if (captureStages)
-        DumpFrameEntryState(app, "physics_pose1.json", false);
 #endif
 }
 

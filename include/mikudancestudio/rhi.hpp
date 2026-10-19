@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace mikudancestudio::rhi {
@@ -144,7 +145,7 @@ struct Capabilities {
 };
 // Reports implemented adapter behavior, not all capabilities of its native API.
 // Ready describes the adapter reset protocol; it is not a native GPU health probe.
-enum class DeviceState { Unknown, Ready, ResetPending };
+enum class DeviceState { Unknown, Ready, ResetPending, Removed };
 struct DeviceStatus {
     std::uint64_t identity = 0, epoch = 0;
     DeviceState state = DeviceState::Unknown;
@@ -264,8 +265,25 @@ struct NonIndexedDraw {
     Handle vertices;
     std::uint32_t firstVertex = 0, vertexCount = 0;
     SubmissionIdentity submission{};
+    // Legacy fixed draws inherit their pipeline layout. Model draws must name
+    // their layout explicitly; a 16-byte model vertex is not a HUD vertex.
+    std::optional<VertexLayout> layout;
 };
+struct ModelCapabilities {
+    bool supported=false,positionColor=false,positionNormalUv=false;
+    bool indexed=false,nonIndexed=false,lines=false;
+    bool explicitMips=false,generateMips=false,srgb=false;
+    bool offscreen=false,presentation=false;
+    std::uint32_t maxDraws=0;
+};
+// Completion is independent of target epoch: resizing does not change which
+// queue/device submitted prior work. Only the backend determines completion.
+struct CompletionToken {std::uint64_t device=0,value=0;explicit operator bool() const{return device && value;}};
+enum class CompletionState { Invalid, Pending, Complete, DeviceLost };
 
+struct ModelPipeline;
+struct ModelTextureData;
+struct RgbaImage;
 class Device {
 public:
     virtual ~Device() = default;
@@ -301,6 +319,19 @@ public:
     }
     virtual bool Draw(NonIndexedDraw draw) = 0;
     virtual bool DrawIndexed(IndexedDraw draw) = 0;
+    virtual bool SetModelPipeline(const ModelPipeline&) { return false; }
+    virtual ModelCapabilities ModelFeatures() const { return {}; }
+    virtual Handle CreateModelTexture(const ModelTextureData&) { return {}; }
+    // Idempotent for an unchanged target. Return failure before accepting
+    // submissions for an unsupported attachment description.
+    virtual bool EnsureModelTarget(const HistoryDesc&) { return false; }
+    // The swapchain controller owns resizing. This selects its current
+    // attachments only if their dimensions/formats match the scene contract.
+    virtual bool EnsurePresentationTarget(const HistoryDesc&) { return false; }
+    virtual bool ReadModelTarget(RgbaImage&) { return false; }
+    virtual CompletionToken SignalCompletion() { return {}; }
+    virtual CompletionState PollCompletion(CompletionToken) { return CompletionState::Invalid; }
+    virtual bool WaitCompletion(CompletionToken,std::uint32_t) { return false; }
     virtual bool EndFrame() = 0;
     virtual bool Present() = 0;
     virtual bool PrepareForReset() = 0;

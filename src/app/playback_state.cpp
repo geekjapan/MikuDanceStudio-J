@@ -16,6 +16,7 @@
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/model_input_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/panel_controls.hpp"
@@ -127,6 +128,7 @@ void ApplyProjection(MMDApp* app) {
     api.perspectiveFovLH(&matrix, fov, wrapper->aspectRatio,
                          1.0f, 100000.0f);
     IDirect3DDevice9* device = wrapper->device;  // +120032
+    SetCpuProjectionPolicy(app,render::FovConversion::DoubleMultiply);
     device->SetTransform(D3DTS_PROJECTION,
                          reinterpret_cast<const D3DMATRIX*>(&matrix));
 }
@@ -453,7 +455,8 @@ void StopPlayback(MMDApp* app) {
         if (app->AccessorySlot(i) != nullptr)
             ApplyAccessoryTrack(app, i);
     SyncAccessoryEditPanel(app);
-    if (app->EditMode() == ViewportEditMode::BoneBox)
+    if (app->EditMode() == ViewportEditMode::BoneBox &&
+        app->AviBackgroundEnabled() == 1)
         AviBgOverlayRefresh(app);
     app->PhysicsResetPending() = 1;
     PostViewRefresh(app);

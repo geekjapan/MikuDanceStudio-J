@@ -83,7 +83,7 @@ void MMDApp::InitDefaults() {
     state.modelOffsetX = 0.0f;
     s.LastRegisteredFrame() = 0;
     state.modelOffsetY = 0.0f;
-    s.AviBackgroundTexture() = nullptr;
+    s.AviBackgroundTexture() = nullptr; s.CpuNativeBackgroundTexturePresent()=false;
     state.modelOffsetZ = 0.0f;
     s.AviBackgroundSurface() = nullptr;
     s.PictureBackgroundTexture() = nullptr;
@@ -97,7 +97,7 @@ void MMDApp::InitDefaults() {
     state.blinkPhase = 0;
     s.DisplayObjectListMatchCount() = 0;
     s.DisplayObjectListScrollPosition() = 0;
-    s.CaptureTexture() = nullptr;
+    s.CaptureTexture() = nullptr; s.CpuNativeCaptureTexturePresent()=false;
     state.groundGridVertices = nullptr;
     s.CaptureRenderTarget() = nullptr;
     s.FrameStepPlayback() = 0;
@@ -155,7 +155,7 @@ void MMDApp::InitDefaults() {
     state.spriteOverlayVertices = nullptr;        // 0x9EE0C
     state.lineOverlayPrimitiveCount = 0;
     state.groundPlaneVertices = nullptr;
-    s.AviBackgroundTexture() = nullptr;                    // original writes twice
+    s.AviBackgroundTexture() = nullptr; s.CpuNativeBackgroundTexturePresent()=false;                    // original writes twice
     s.PictureOverlayVertices() = nullptr;
     state.separateWindowMouseSeen = 0;
     s.RecordingWindow() = nullptr;

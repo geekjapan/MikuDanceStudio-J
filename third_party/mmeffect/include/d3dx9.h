@@ -7,6 +7,9 @@
 
 #include <d3d9.h>
 
+struct ID3DXFile;
+extern "C" HRESULT WINAPI D3DXFileCreate(ID3DXFile** file);
+
 // ---------------------------------------------------------------------------
 // 基础类型
 // ---------------------------------------------------------------------------
@@ -497,6 +500,7 @@ D3DXMATRIX* WINAPI D3DXMatrixRotationY(D3DXMATRIX*, float);
 D3DXMATRIX* WINAPI D3DXMatrixRotationZ(D3DXMATRIX*, float);
 D3DXMATRIX* WINAPI D3DXMatrixTranslation(D3DXMATRIX*, float, float, float);
 D3DXVECTOR4* WINAPI D3DXVec3Transform(D3DXVECTOR4*, const D3DXVECTOR3*, const D3DXMATRIX*);
+D3DXVECTOR3* WINAPI D3DXVec3TransformCoord(D3DXVECTOR3*, const D3DXVECTOR3*, const D3DXMATRIX*);
 HRESULT WINAPI D3DXLoadMeshFromXInMemory(LPCVOID, DWORD, DWORD, IDirect3DDevice9*,
     ID3DXBuffer**, ID3DXBuffer**, ID3DXBuffer**, DWORD*, ID3DXMesh**);
 HRESULT WINAPI D3DXLoadMeshFromXW(LPCWSTR, DWORD, IDirect3DDevice9*,

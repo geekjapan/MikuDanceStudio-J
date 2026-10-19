@@ -59,11 +59,12 @@ int main() {
         {"minimal", 64, 64, D3DFMT_A8R8G8B8, D3DFMT_D16, false, false},
     };
     D3DADAPTER_IDENTIFIER9 identifier{};
-    d3d->GetAdapterIdentifier(0, 0, &identifier);
+    const HRESULT adapterResult=d3d->GetAdapterIdentifier(0, 0, &identifier);
     std::printf("adapter=%s display=%dx%d\n", identifier.Description,
                 GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
     std::printf("during-WM_CREATE hr=0x%08X\n",
                 static_cast<unsigned>(createWhileCreating));
+    unsigned passed=0,failed=0;
     for (const auto& trial : trials) {
         const DWORD modes[] = {D3DCREATE_HARDWARE_VERTEXPROCESSING,
                                D3DCREATE_SOFTWARE_VERTEXPROCESSING};
@@ -88,10 +89,14 @@ int main() {
             std::printf("%s vp=%s hr=0x%08X\n", trial.name,
                 vertexProcessing == D3DCREATE_HARDWARE_VERTEXPROCESSING ?
                     "hardware" : "software", static_cast<unsigned>(result));
+            if(SUCCEEDED(result) && device)++passed;else ++failed;
             if (device) device->Release();
         }
     }
     d3d->Release();
     DestroyWindow(window);
-    return 0;
+    const bool ready=SUCCEEDED(adapterResult) && SUCCEEDED(createWhileCreating) && !failed;
+    std::printf("SUMMARY status=%s passed=%u failed=%u adapterHr=0x%08X\n",
+        ready?"PASS":"FAIL",passed,failed,static_cast<unsigned>(adapterResult));
+    return ready?0:1;
 }

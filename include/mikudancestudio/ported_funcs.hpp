@@ -13,6 +13,7 @@
 #include <shellapi.h>
 
 #include "mikudancestudio/charset_conv.hpp"
+#include "mikudancestudio/model_import.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -85,14 +86,16 @@ void ModelInitMorphSlots(unsigned char* model);       // VA 0x004A89B0
 bool ModelLoadPMD(unsigned char* model, HWND hwnd, const wchar_t* path,
                   D3DRenderer* sub, int a5, std::uint8_t a6,
                   std::uint8_t a7, PhysicsScene* a8,
-                  PathResolutionWorkspace& paths);    // VA 0x004BF3E0
+                  PathResolutionWorkspace& paths,
+                  ModelResourceMode resources=ModelResourceMode::LegacyDx9); // VA 0x004BF3E0
 // a6 = message-box gate (constant 1 at 0x460430), a7 = EnglishUI flag
 // (stored to model+12740), a8 = 0x048 pointer *(app+0x9EDB0), typed as
 // PhysicsScene* (stored to model+60 - the physics scene wrapper).  Full
 // arg map in pmd_load.cpp header.
 bool LoadPMX(unsigned char* model, D3DRenderer* sub,
              std::uint8_t showInfo, std::uint8_t englishUI,
-             PathResolutionWorkspace& paths, int fh); // VA 0x004B77E0
+             PathResolutionWorkspace& paths, int fh,
+             ModelResourceMode resources=ModelResourceMode::LegacyDx9); // VA 0x004B77E0
 void ModelDispose(unsigned char* model);              // VA 0x0048F830
 void DisposeAccessory(void* accessory);               // VA 0x004C4700
 void InitBoneSortOrder(unsigned char* model);         // VA 0x00490070

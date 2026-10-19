@@ -112,6 +112,12 @@ int main(int argc, char** argv) {
     if (!rooted.ResolveModel(1, relative, resolved) ||
         rooted.Resolved().at(1) !=
             (assets / "recovered.pmd").lexically_normal()) return 7;
+    // Accessory reselection is independent of the same-numbered model slot.
+    std::filesystem::path accessory=directory/"unchanged";
+    if(resources.ResolveAccessory(1, reference, accessory) || accessory!=directory/"unchanged")return 8;
+    resources.ReselectAccessory(1,assets/"recovered.pmd");
+    if(!resources.ResolveAccessory(1,reference,accessory) || accessory!=(assets/"recovered.pmd").lexically_normal())return 9;
+    if(!resources.ResolveModel(1,reference,resolved))return 10;
     std::filesystem::remove(directory / "roundtrip.pmm", error);
     return 0;
 }

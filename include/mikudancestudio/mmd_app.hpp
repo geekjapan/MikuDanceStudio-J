@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <map>
 #include <utility>
 
 #include "mikudancestudio/app_layout.hpp"
@@ -34,8 +35,20 @@
 #include "mikudancestudio/path_workspace.hpp"
 #include "mikudancestudio/wave_audio_context.hpp"
 #include "mikudancestudio/scene_session.hpp"
+#include "mikudancestudio/cpu_scene_simulation.hpp"
+#include "mikudancestudio/render_model_geometry.hpp"
+#include "mikudancestudio/render_scene_passes.hpp"
+#include "mikudancestudio/render_model_inputs.hpp"
 
 namespace mikudancestudio {
+
+struct ModelCpuFrame {
+    render::ModelGeometry geometry;
+    std::map<unsigned,render::ModelMaterialTextureSources> materials;
+    bool verified=false, failed=false, ready=false;
+    std::uint64_t frames=0;
+    ModelCpuFrame(std::uint64_t id,std::uint32_t count,unsigned uv):geometry(id,count,uv){}
+};
 
 enum class UiThemeColor : int {
     WindowFill = 0,
@@ -185,8 +198,26 @@ public:
     void AttachPortableSceneSession(
             std::unique_ptr<format::SceneSession> session) {
         m_portableSceneSession = std::move(session);
+        m_cpuRenderFrameReady=false;
     }
-    void ClearPortableSceneSession() { m_portableSceneSession.reset(); }
+    void ClearPortableSceneSession() { m_portableSceneSession.reset();m_cpuRenderFrameReady=false; }
+    CpuSimulationState& CpuSimulation() { return m_cpuSimulation; }
+    // Application-only association. Published RHI keys never contain a model
+    // address; disposal and reload allocate fresh, non-reused scene IDs.
+    auto& CpuModelFrames() { return m_cpuModelFrames; }
+    auto& CpuAccessoryResources() { return m_cpuAccessoryResources; }
+    // Resource owner publishes availability at creation/release. CPU scene
+    // producers never query a native texture to discover its contents/state.
+    bool& CpuNativeCaptureTexturePresent() { return m_cpuNativeCaptureTexturePresent; }
+    bool& CpuNativeBackgroundTexturePresent() { return m_cpuNativeBackgroundTexturePresent; }
+    render::ModelFrameInputs& CpuRenderFrame() { return m_cpuRenderFrame; }
+    bool& CpuRenderFrameReady() { return m_cpuRenderFrameReady; }
+    bool& CpuAlphaTestSupported() { return m_cpuAlphaTestSupported; }
+    std::uint64_t AllocateCpuGeometryIds() {
+        const auto id=m_nextCpuGeometryId;
+        if(id>UINT64_MAX-3)return 0;
+        m_nextCpuGeometryId+=3;return id;
+    }
 
     // The restored application state.  Public by design: the original was
     // one giant class whose fields every subsystem touched directly; free
@@ -706,6 +737,8 @@ public:
         light.Ambient.r = LightColor()[0];
         light.Ambient.g = LightColor()[1];
         light.Ambient.b = LightColor()[2];
+        if(auto* session=PortableSceneSession())session->SetRuntimeAppliedLight(
+            {LightColor()[0],LightColor()[1],LightColor()[2],LightDirection()[0],LightDirection()[1],LightDirection()[2]});
     }
     std::uint8_t& GroundShadowEnabled() {
         return state.groundShadowEnabled;
@@ -1451,6 +1484,13 @@ private:
 
     DialogOrderArrays m_dialogOrders;
     std::unique_ptr<format::SceneSession> m_portableSceneSession;
+    CpuSimulationState m_cpuSimulation;
+    std::map<const void*,std::unique_ptr<ModelCpuFrame>> m_cpuModelFrames;
+    std::map<const void*,render::AccessoryCpuResource> m_cpuAccessoryResources;
+    bool m_cpuNativeCaptureTexturePresent=false,m_cpuNativeBackgroundTexturePresent=false;
+    std::uint64_t m_nextCpuGeometryId=1;
+    render::ModelFrameInputs m_cpuRenderFrame;
+    bool m_cpuRenderFrameReady=false,m_cpuAlphaTestSupported=false;
 
 #if defined(_M_X64)
     // In the original x86 blob, 0x9E180 is a D3DLIGHT9 overlay spanning

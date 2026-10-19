@@ -19,7 +19,9 @@ struct Vertex { float x,y,z,w; std::uint32_t color; float u,v; };
 const Vertex vertices[]={{8,8,.5f,1,0xffffffff,0,0},{8,48,.5f,1,0xffffffff,0,1},{48,8,.5f,1,0xffffffff,1,0}};
 std::uint64_t Hash(const RgbaImage& image) { std::uint64_t h=14695981039346656037ull; for(auto b:image.pixels) h=(h^b)*1099511628211ull; return h; }
 int main(int argc,char** argv) {
-    const bool hardware=argc>1 && std::string(argv[1])=="--hardware";
+    const bool compatible=argc>1 && (std::string(argv[1])=="--compatibility-hardware" || std::string(argv[1])=="--compatibility-warp");
+    const bool hardware=argc>1 && (std::string(argv[1])=="--hardware" || std::string(argv[1])=="--compatibility-hardware");
+    const D3D11ModelOptions options{compatible?D3D11ModelCompatibility::Dx9Measured:D3D11ModelCompatibility::Default};
     const std::filesystem::path evidence=argc>2 ? argv[2] : "dx11-lifecycle-evidence";
     std::filesystem::create_directories(evidence);
     std::ofstream report(evidence/(hardware ? "hardware.log" : "warp.log"));
@@ -28,18 +30,21 @@ int main(int argc,char** argv) {
     CHECK(window.value);
     SwapchainDesc desc; desc.window={WindowSystem::Win32,reinterpret_cast<std::uintptr_t>(window.value)};
     desc.width=desc.height=64; desc.present=PresentMode::Immediate;
-    auto bundle=CreateD3D11Device(desc,hardware ? D3D11Driver::Hardware : D3D11Driver::Warp);
+    auto bundle=CreateD3D11Device(desc,hardware ? D3D11Driver::Hardware : D3D11Driver::Warp,options);
     if(!bundle) {
         const auto hr=static_cast<HRESULT>(bundle.creationError);
-        const bool unavailable=bundle.stage==D3D11CreationStage::NativeDevice &&
+        const bool unavailable=(bundle.stage==D3D11CreationStage::Compatibility && bundle.creationReason=="shader_doubles_required") || (bundle.stage==D3D11CreationStage::NativeDevice &&
             (hr==DXGI_ERROR_UNSUPPORTED || hr==DXGI_ERROR_NOT_CURRENTLY_AVAILABLE ||
-             hr==DXGI_ERROR_DEVICE_REMOVED || hr==DXGI_ERROR_DEVICE_RESET || hr==DXGI_ERROR_DRIVER_INTERNAL_ERROR);
+             hr==DXGI_ERROR_DEVICE_REMOVED || hr==DXGI_ERROR_DEVICE_RESET || hr==DXGI_ERROR_DRIVER_INTERNAL_ERROR));
         report<<"status="<<(unavailable ? "UNAVAILABLE" : "FAIL")<<" stage="<<static_cast<unsigned>(bundle.stage)
-            <<" creationHR="<<std::hex<<static_cast<std::uint32_t>(hr)<<"\n";
+            <<" creationHR="<<std::hex<<static_cast<std::uint32_t>(hr)<<" reason="<<bundle.creationReason<<"\n";
         return unavailable ? 77 : 1;
     }
     report<<"adapter="<<bundle.adapterName<<" vendor="<<std::hex<<bundle.vendorId<<" device="<<bundle.deviceId<<std::dec<<"\n";
     auto& device=*bundle.device; auto& chain=*bundle.swapchain;
+    const auto support=QueryD3D11ModelSupport(device,options.compatibility);
+    CHECK(support.selected==options.compatibility && support.requestedSupport==D3D11CompatibilityResult::Supported);
+    report<<"compatibility="<<(compatible?"dx9_measured":"default")<<" doubles="<<support.shaderDoubles<<"\n";
     CHECK(device.BackendType()==Backend::D3D11 && chain.Query(desc).supported && chain.Query(desc).controllerOwnsReset);
     auto bad=desc; bad.samples=8; CHECK(!chain.Query(bad).supported && chain.Rebuild(bad,RebuildReason::Resize)==RebuildResult::Unsupported);
     bad=desc; bad.width=0; CHECK(chain.Rebuild(bad,RebuildReason::Resize)==RebuildResult::Invalid);
@@ -99,8 +104,41 @@ int main(int argc,char** argv) {
     report<<"heldBackbufferHR="<<std::hex<<static_cast<std::uint32_t>(chain.LastNativeError())<<std::dec<<" blocked=1\n";
     held.Reset(); CHECK(chain.Rebuild(desc,RebuildReason::Resize)==RebuildResult::Success && device.Status().epoch==failureEpoch+1);
     RgbaImage recovered; CHECK(render(device,buffer,texture,original,recovered) && recovered.pixels==references[80].pixels);
+    // Generated model batch always runs, including when external PMM is absent.
+    CHECK(ResizeD3D11Offscreen(device,64,64));
+    struct ModelVertex {float x,y,z,nx,ny,nz,u,v;};
+    const ModelVertex modelVertices[]={{-.8f,-.8f,.5f,0,0,1,0,1},{-.8f,.8f,.5f,0,0,1,0,0},{.8f,-.8f,.5f,0,0,1,1,1}};
+    const std::uint16_t modelIndices[]={0,1,2};
+    auto modelVb=device.CreateBuffer({BufferUsage::Vertex,sizeof(modelVertices)},modelVertices);
+    auto modelIb=device.CreateBuffer({BufferUsage::Index,sizeof(modelIndices)},modelIndices);CHECK(modelVb && modelIb);
+    ModelPipeline model; model.raster.alphaBlend=false;model.raster.cull=BatchCull::None;
+    for(auto* matrix:{&model.shader.world,&model.shader.view,&model.shader.projection,&model.shader.normalView})
+        *matrix={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+    model.shader.nativeDiffuse={1,1,1,1};
+    for(unsigned stage=0;stage<3;++stage) {
+        auto& t=model.shader.layout.stages[stage];t.role=stage==0?MaterialTextureRole::Toon:stage==1?MaterialTextureRole::Base:MaterialTextureRole::Sphere;
+        t.color=MaterialCombine::Modulate;t.colorArg2=stage==0?MaterialColorSource::LitDiffuse:MaterialColorSource::Previous;
+        model.shader.samplers[stage].min=model.shader.samplers[stage].mag=model.shader.samplers[stage].mip=SamplerFilter::Point;
+    }
+    ModelTextureData white;white.levels.push_back({1,1,{255,255,255,255}});
+    auto whiteTexture=CreateD3D11ModelTexture(device,white);CHECK(whiteTexture);
+    const auto modelCommand=device.Record(IndexedDraw{modelVb,modelIb,0,3,3,VertexLayout::PositionNormalUv});
+    CHECK(device.BeginFrame({0,0,0,1}));
+    auto unsupported=model;unsupported.shader.layout.stages[0].coordinates=MaterialCoordinates::MeshUv1;
+    CHECK(!device.SetModelPipeline(unsupported) && !device.DrawIndexed(modelCommand));
+    CHECK(device.SetModelPipeline(model) && !device.DrawIndexed(modelCommand));
+    CHECK(device.BindTexture(0,whiteTexture) && device.BindTexture(1,whiteTexture) && !device.DrawIndexed(modelCommand));
+    CHECK(device.BindTexture(2,whiteTexture) && device.DrawIndexed(modelCommand) && device.EndFrame());
+    RgbaImage modelImage;CHECK(ReadD3D11Offscreen(device,modelImage) && modelImage.pixels[(40*64+16)*4]==255);
+    CHECK(ResizeD3D11Offscreen(device,80,80) && ResizeD3D11Offscreen(device,64,64));
+    CHECK(device.BeginFrame({0,0,0,1}) && device.SetModelPipeline(model));
+    for(unsigned stage=0;stage<3;++stage)CHECK(device.BindTexture(stage,whiteTexture));
+    CHECK(!device.DrawIndexed(modelCommand) && device.DrawIndexed(device.Record(modelCommand)) && device.EndFrame());
+    RgbaImage modelRestored;CHECK(ReadD3D11Offscreen(device,modelRestored) && modelRestored.pixels==modelImage.pixels);
+    // Restore the presentation target for the original lifecycle controls.
+    CHECK(chain.Rebuild(desc,RebuildReason::Resize)==RebuildResult::Success);
     // Explicit device replacement; use the same CPU asset, no old GPU handles.
-    next=CreateD3D11Device(desc,hardware ? D3D11Driver::Hardware : D3D11Driver::Warp); CHECK(next);
+    next=CreateD3D11Device(desc,hardware ? D3D11Driver::Hardware : D3D11Driver::Warp,options); CHECK(next);
     CHECK(next.device->Status().identity!=device.Status().identity && cache.Rebind(*next.device));
     CHECK(chain.Rebuild(desc,RebuildReason::DeviceReplacement)==RebuildResult::ReplacementRequired && chain.Health()==SurfaceHealth::Removed);
     CHECK(!device.BeginFrame({}) && chain.Rebuild(desc,RebuildReason::Resize)==RebuildResult::ReplacementRequired);

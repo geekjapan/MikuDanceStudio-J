@@ -54,6 +54,24 @@ int main() {
         !cache.Get(asset) || cache.Uploads() != 3 || asset.content.image.pixels != retained) return 7;
     asset.prepared = {};
     if (cache.Get(asset)) return 8;
+    // Independent arithmetic facts, odd/non-square sizes, full-chain sealing,
+    // provenance tampering and failed preparation preserving the accepted asset.
+    RgbaImage square{2,2,{0,10,20,0, 1,11,21,64, 2,12,22,128, 3,13,23,255}};
+    PreparedMipChain chain;
+    if(!PreparePortableMipChain(square,MipPreparationPolicy::BoxLinear,chain) || chain.levels.size()!=2 ||
+       chain.levels[1].pixels!=std::vector<std::uint8_t>({2,12,22,112}) || !ValidatePreparedMipChain(square,chain))return 9;
+    auto tampered=chain;tampered.levels[1].pixels[0]++;if(ValidatePreparedMipChain(square,tampered))return 10;
+    tampered=chain;tampered.providerRevision++;if(ValidatePreparedMipChain(square,tampered))return 11;
+    auto truncated=chain.levels;truncated.pop_back();
+    if(SealPreparedMipChain(square,MipPreparationPolicy::BoxLinear,1,truncated,tampered) || !tampered.levels.empty())return 12;
+    RgbaImage odd{3,1,{0,0,0,255,0,0,0,255,255,255,255,255}};
+    if(!PreparePortableMipChain(odd,MipPreparationPolicy::BoxLinear,tampered) ||
+       tampered.levels.size()!=2 || tampered.levels[1].pixels!=std::vector<std::uint8_t>({85,85,85,255}))return 13;
+    MaterialTextureAsset explicitAsset;explicitAsset.identity="explicit";explicitAsset.content={square,ImageRevision(square)};
+    if(!PrepareMaterialMipChain(explicitAsset,MipPreparationPolicy::BoxLinear) || cache.Get(explicitAsset))return 14;
+    const auto revision=explicitAsset.mipChain->revision;
+    if(PrepareMaterialMipChain(explicitAsset,MipPreparationPolicy::Dx9AutoLinear) || explicitAsset.mipChain->revision!=revision)return 15;
+    auto changedSource=square;changedSource.pixels[0]++;if(ValidatePreparedMipChain(changedSource,chain))return 16;
     std::puts("Original decode preservation, measured 3x3 filter vector, explicit size policy and prepared-resource lifetime: PASS");
     return 0;
 }

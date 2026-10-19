@@ -46,8 +46,10 @@
 #include <share.h>
 #include <sys/stat.h>
 
+#include "mikudancestudio/scene_preview_ui.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model_batch_bridge.hpp"
+#include "mikudancestudio/model_cpu_preview.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/pmm_format.hpp"
 #include "mikudancestudio/pmm_scene_document.hpp"
@@ -125,6 +127,11 @@ void LoadSceneFile() {
     app->ClearPortableSceneSession();
     ResetHistoryReplay();
     InvalidateModelBatchComparison();
+#ifdef MIKUDANCESTUDIO_DIAG
+    ReleaseCpuModelPreview();
+#else
+    ReleaseCpuSceneFrame();
+#endif
     char box[0x100];
 
     app->SceneModified() = 0;                                  // 0x458FE6

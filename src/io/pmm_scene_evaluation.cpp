@@ -22,7 +22,7 @@ template<class Key> struct IndexedTrack {
                 !keys.emplace(static_cast<std::uint32_t>(sparse.index),
                               &sparse.value).second) valid = false;
     }
-    bool Find(std::size_t head, std::uint32_t frame,
+    bool Find(std::size_t head, double frame,
               Bracket<Key>& bracket) const {
         if (!valid || head >= track.dense.size()) return false;
         std::uint32_t index = static_cast<std::uint32_t>(head);
@@ -652,6 +652,18 @@ bool InterpolatePmmLightSegment(const PmmLightKey& left,
     }
     output = result;
     return true;
+}
+
+bool EvaluatePmmLightTrack(const PmmKeyTrack<PmmLightKey>& track,double frame,
+    PmmLightInterpolation mode,std::array<float,6>& output) {
+    if(!std::isfinite(frame) || frame<0 || frame>4294967295.0 || track.dense.size()!=1)return false;
+    IndexedTrack<PmmLightKey> indexed(track);Bracket<PmmLightKey> bracket;
+    for(const auto& item:indexed.keys)for(unsigned i=0;i<3;++i)
+        if(!std::isfinite(item.second->color[i]) || !std::isfinite(item.second->direction[i]))return false;
+    Bracket<PmmLightKey> terminal;if(!indexed.Find(0,4294967295.0,terminal))return false;
+    if(!indexed.Find(0,frame,bracket))return false;
+    if(bracket.left!=bracket.right)return InterpolatePmmLightSegment(*bracket.left,*bracket.right,frame,mode,output);
+    for(unsigned i=0;i<3;++i){output[i]=bracket.right->color[i];output[i+3]=bracket.right->direction[i];}return true;
 }
 
 bool EvaluatePmmSceneFrame(const PmmSceneDocument& scene,

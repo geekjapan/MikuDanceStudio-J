@@ -1,3 +1,4 @@
+#include "legacy_model_cpu_math.hpp"
 #include "mikudancestudio/rhi_history_replay.hpp"
 // ===========================================================================
 // VA 0x00425D20 / 0x00426CD0 / 0x004277E0 - model and shadow render passes
@@ -19,6 +20,8 @@
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/model_batch_bridge.hpp"
+#include "mikudancestudio/model_input_bridge.hpp"
+#include "mikudancestudio/model_cpu_preview.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
 namespace mikudancestudio {
@@ -353,52 +356,6 @@ IDirect3DTexture9* ToonTexture(MMDApp* app, D3DRenderer* sub,
 bool HasSuffix(const wchar_t* value, const wchar_t* lower,
                const wchar_t* upper);
 
-void Cross3(float out[3], const float left[3], const float right[3]) {
-#if defined(_M_IX86)
-    // 0x491BB0..0x491C1A / 0x491C31..0x491C8D keep each
-    // multiply-subtract in the x87 register stack until the float store.
-    // A double-based equivalent differs by a few ULP after normalization.
-    float* destination = out;
-    const float* lhs = left;
-    const float* rhs = right;
-    __asm {
-        mov eax, lhs
-        mov ecx, rhs
-        mov edx, destination
-
-        fld dword ptr [eax + 4]
-        fmul dword ptr [ecx + 8]
-        fld dword ptr [eax + 8]
-        fmul dword ptr [ecx + 4]
-        fsubp st(1), st(0)
-        fstp dword ptr [edx]
-
-        fld dword ptr [eax + 8]
-        fmul dword ptr [ecx]
-        fld dword ptr [eax]
-        fmul dword ptr [ecx + 8]
-        fsubp st(1), st(0)
-        fstp dword ptr [edx + 4]
-
-        fld dword ptr [eax]
-        fmul dword ptr [ecx + 4]
-        fld dword ptr [eax + 4]
-        fmul dword ptr [ecx]
-        fsubp st(1), st(0)
-        fstp dword ptr [edx + 8]
-    }
-#else
-    out[0] = static_cast<float>(
-        static_cast<double>(left[1]) * right[2] -
-        static_cast<double>(left[2]) * right[1]);
-    out[1] = static_cast<float>(
-        static_cast<double>(left[2]) * right[0] -
-        static_cast<double>(left[0]) * right[2]);
-    out[2] = static_cast<float>(
-        static_cast<double>(left[0]) * right[1] -
-        static_cast<double>(left[1]) * right[0]);
-#endif
-}
 
 void BuildToonTransform(MMDApp* app, Matrix* result) {
     auto& api = d3dx::Get();
@@ -411,10 +368,10 @@ void BuildToonTransform(MMDApp* app, Matrix* result) {
         0.0f, direction[0] == 0.0f && direction[2] == 0.0f ? 0.0f : 1.0f,
         direction[0] == 0.0f && direction[2] == 0.0f ? -1.0f : 0.0f};
     float horizontal[3]{};
-    Cross3(horizontal, vertical, direction);
+    LegacyModelCross3(horizontal, vertical, direction);
     api.vec3Normalize(horizontal, horizontal);
     float correctedVertical[3]{};
-    Cross3(correctedVertical, direction, horizontal);
+    LegacyModelCross3(correctedVertical, direction, horizontal);
     api.vec3Normalize(correctedVertical, correctedVertical);
 
     Matrix basis{};
@@ -891,6 +848,9 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
                              reinterpret_cast<const D3DMATRIX*>(&halfTexel));
     }
     UINT firstIndex = 0;
+#ifdef MIKUDANCESTUDIO_DIAG
+    if (!effectPass && !shadowOnly) BeginCpuModelMaterials(app,model);
+#endif
     state.toonShared = static_cast<std::uint32_t>(-1);
     for (UINT i = 0; i < state.materialCount; ++i) {
         unsigned char* material = reinterpret_cast<unsigned char*>(&materials[i]);
@@ -938,6 +898,9 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
                 device->SetFVF(fvf);
                 bool stateDumped = false;
                 const auto issueDraw = [&]() {
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
+                    SubmitLiveCpuModelInputs(app,model,i,firstIndex,indexCount,stride);
+#endif
                     device->SetStreamSource(0, vertices, 0, stride);
                     device->SetIndices(indices);
                     if (!stateDumped) {
@@ -950,6 +913,9 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
                                               state.vertexCount,
                                               firstIndex, indexCount / 3);
                     CaptureModelHistoryResult(app,model,i);
+#ifdef MIKUDANCESTUDIO_DIAG
+                    CaptureCpuMaterialHistory(app,model,i);
+#endif
                 };
                 // 0x492203 compares the COPY's Diffuse.a (esp+0x138),
                 // which carries the 0.5 displayState override - not the
@@ -1052,6 +1018,9 @@ void DrawModelMaterials(MMDApp* app, unsigned char* model, bool effectPass,
         }
         firstIndex += indexCount;
     }
+#ifdef MIKUDANCESTUDIO_DIAG
+    if (!effectPass && !shadowOnly) EndCpuModelMaterials(app,model);
+#endif
     state.toonShared = static_cast<std::uint32_t>(-1);
     // 0x4925FD..0x49261D: terminate the fixed-function texture cascade at
     // stage 1 before outlines, accessories, or the next model are submitted.
@@ -1116,6 +1085,10 @@ void DrawModelEdgeGeometry(MMDApp* app, unsigned char* model,
             device->SetFVF(66);
             device->SetStreamSource(0, vb, 0, 16);
             device->SetIndices(ib);
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
+            if(projectedShadow)StageCpuProjectedModelShadow(app,model,i,firstIndex,count);
+            else StageCpuModelOutline(app,model,i,firstIndex,count);
+#endif
             mme::DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0, 0,
                 state.vertexCount, firstIndex, count / 3);
         }
@@ -1317,6 +1290,9 @@ void DrawGroundGeometry(MMDApp* app, IDirect3DDevice9* device) {
         device->SetFVF(66);
         device->SetStreamSource(0, vb, 0, 16);
         device->SetIndices(ib);
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
+        StageCpuGroundDraw(app,false);
+#endif
         mme::DrawIndexedPrimitive(device, D3DPT_LINELIST, 0, 0, 90, 0, 45);
     }
 
@@ -1329,6 +1305,9 @@ void DrawGroundGeometry(MMDApp* app, IDirect3DDevice9* device) {
     if (plane != nullptr) {
         device->SetStreamSource(0, plane, 0, 16);
         device->SetFVF(66);
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
+        StageCpuGroundDraw(app,true);
+#endif
         mme::DrawPrimitive(device, D3DPT_TRIANGLELIST, 0, 2);
     }
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
@@ -1399,7 +1378,9 @@ void RenderModelsFixed(MMDApp* app) {                         // 0x425D20
         device->SetRenderState(D3DRS_STENCILREF, 1);
         device->SetRenderState(D3DRS_STENCILPASS, D3DSTENCILOP_REPLACE);
     }
+    SetHistoryReplayPass("background");
     DrawPreModelQuads(app, device);
+    SetHistoryReplayPass("ground");
     DrawGroundGeometry(app, device);
     // FILLMODE 排在背景图/AVI 四边形与地面之后：x64 sub_7FF7CB4BFB20 先画
     // 背景四边形（0x7FF7CB4BFC74 图片 / 0x7FF7CB4BFD4A AVI）、地面
@@ -1411,12 +1392,15 @@ void RenderModelsFixed(MMDApp* app) {                         // 0x425D20
 
     const int accessorySplit = std::max(0, std::min(
         app->AccessoryRenderSplitOrder(), 255));
+    SetHistoryReplayPass("accessory");
     RenderAccessoriesFixedRange(app, 0, accessorySplit);
     BeginProjectedShadowPass(sub, device);
+    SetHistoryReplayPass("projected_shadow");
     RenderProjectedGroundShadowPass(app, device);
     RestoreModelMaterialPass(app, sub, device);
 
     const bool materialCapture = BeginMaterialStateCapture();
+    SetHistoryReplayPass("model_material");
     BeginModelBatchCapture(app, device);
     // x64 twin sub_7FF7CB4BFB20+0x4C0880..0x4C0916 - the main body walk
     // calling sub_7FF7CB4D6D70 at 0x4C0902 (gated by model loadComplete
@@ -1449,6 +1433,7 @@ void RenderModelsFixed(MMDApp* app) {                         // 0x425D20
         device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
         device->SetRenderState(D3DRS_CULLMODE, D3DCULL_CW);
         device->SetRenderState(D3DRS_ZFUNC, D3DCMP_LESS);
+        SetHistoryReplayPass("model_outline");
         DrawModelOutlines(app, false);
     }
     // Second accessory range preamble, x64 0x7FF7CB4C0A87..0x7FF7CB4C0B89 -
@@ -1464,6 +1449,7 @@ void RenderModelsFixed(MMDApp* app) {                         // 0x425D20
     device->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
     device->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    SetHistoryReplayPass("accessory_tail");
     RenderAccessoriesFixedRange(app, accessorySplit, 255);
     // Frame tail, x64 sub_7FF7CB4BFB20 @0x7FF7CB4C0FC3/0x7FF7CB4C0FE3:
     // DESTBLEND(20)=INVSRCALPHA then FILLMODE(8)=SOLID.  No ZENABLE write
@@ -1677,7 +1663,7 @@ void RenderShadowMap(MMDApp* app, const float frameMatrix[16]) {   // 0x426CD0
     fx::SetTechnique(effect, "ZValuePlotTec");
     device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 1);
     device->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 2);
-#ifdef MIKUDANCESTUDIO_DIAG
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
     BlockHistoryReplay("shadow_map_target_switch");
 #endif
     device->SetRenderTarget(0, surface);

@@ -48,6 +48,7 @@
 #include "mikudancestudio/model_format_header.hpp"
 #include "mikudancestudio/path_workspace.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/model_cpu_bridge.hpp"
 #include "model_format_win.hpp"
 #include "mikudancestudio/model_geometry.hpp"
 #include "mikudancestudio/model_sections.hpp"
@@ -62,7 +63,7 @@ namespace {
 using mdl::At;
 
 IDirect3DDevice9* DevOf(D3DRenderer* sub) {
-    return sub->device;                       // wrapper + 120032
+    return sub ? sub->device : nullptr;       // wrapper + 120032
 }
 
 bool FailBox(HWND hwnd, bool en, bool enData, const char* enMsg,
@@ -111,7 +112,7 @@ inline void LogPmdRigid(const wchar_t*, std::uint32_t, std::int32_t,
 bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                   D3DRenderer* sub, int unusedA06CE, std::uint8_t boxGate,
                   std::uint8_t englishUi, PhysicsScene* sub048,
-                  PathResolutionWorkspace& paths) {          // 0x4BF3E0
+                  PathResolutionWorkspace& paths, ModelResourceMode resources) { // 0x4BF3E0
     // Arg map (original 0x46050F call site, pushes -0x20..-0x4; the
     // trailing (aN) tags are the original decompiler parameter names):
     //   a2 hwnd, a3 path, a4 sub1d574 (device), unusedA06CE (a5) app+0xA06CE
@@ -121,6 +122,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     //   m+60 - the physics scene wrapper: gizmos +4..44, constraint-id
     //   counter +56, btDiscreteDynamicsWorld* +64), a9 appPathBuf.
     const bool enData = englishUi != 0;
+    const bool cpuOnly=resources==ModelResourceMode::CpuOnly;
     mdl::ModelRecord& model = *mdl::Mdl(m);
     char text[256];
     wchar_t wide1[256], wide2[384], wide3[384];
@@ -164,7 +166,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
             } while (p != model.modelDirectory &&
                      *p != L'\\');
         p[1] = L'\0';
-        SetCurrentDirectoryW(model.modelDirectory);
+        if(!cpuOnly)SetCurrentDirectoryW(model.modelDirectory);
     }
 
     // ---- header -----------------------------------------------------------
@@ -176,7 +178,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     if (kind != format::ModelKind::Pmd) {
         if (kind == format::ModelKind::Pmx)
             return LoadPMX(m, sub, boxGate, englishUi, paths,
-                           fh);                              // 0x4B77E0
+                           fh, resources);                   // 0x4B77E0
     _close(fh);
         if (enData) {
             sprintf_s(text, 0x100, "This file is not for Ploygon Movie Maker !!");
@@ -202,7 +204,8 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         return false;
     }
 
-    IDirect3DDevice9* dev = DevOf(sub);
+    IDirect3DDevice9* dev = cpuOnly ? nullptr : DevOf(sub);
+    if(!cpuOnly && !dev){_close(fh);return false;}
     auto* d3dx = &d3dx::Get();
 
     // ---- vertices ---------------------------------------------------------
@@ -212,10 +215,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     }
     const std::uint32_t vertCount = model.vertexCount;
     if (vertCount != 0) {
-        if (dev == nullptr) {
-            return false;
-        }
-        if (FAILED(dev->CreateVertexBuffer(32 * vertCount, 8, 274 /*FVF*/,
+        if (dev && FAILED(dev->CreateVertexBuffer(32 * vertCount, 8, 274 /*FVF*/,
                                           D3DPOOL_MANAGED,
                                           &mdl::ResourceAs<IDirect3DVertexBuffer9>(
                                               mdl::Mdl(m)->vertexBuffer),
@@ -226,7 +226,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
             _close(fh);
             return false;
         }
-        if (FAILED(dev->CreateVertexBuffer(16 * vertCount, 8, 66 /*FVF*/,
+        if (dev && FAILED(dev->CreateVertexBuffer(16 * vertCount, 8, 66 /*FVF*/,
                                           D3DPOOL_MANAGED,
                                           &mdl::ResourceAs<IDirect3DVertexBuffer9>(
                                               mdl::Mdl(m)->vertexBuffer2),
@@ -256,7 +256,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         }
 
         float* p1 = nullptr;
-        if (SUCCEEDED(mdl::ResourceAs<IDirect3DVertexBuffer9>(
+        if (dev && SUCCEEDED(mdl::ResourceAs<IDirect3DVertexBuffer9>(
                           mdl::Mdl(m)->vertexBuffer)->Lock(
                 0, 32 * vertCount,
                 reinterpret_cast<void**>(&p1), 0))) {
@@ -269,7 +269,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                 mdl::Mdl(m)->vertexBuffer)->Unlock();
         }
         float* p2 = nullptr;
-        if (SUCCEEDED(mdl::ResourceAs<IDirect3DVertexBuffer9>(
+        if (dev && SUCCEEDED(mdl::ResourceAs<IDirect3DVertexBuffer9>(
                           mdl::Mdl(m)->vertexBuffer2)->Lock(
                 0, 16 * vertCount,
                 reinterpret_cast<void**>(&p2), 0))) {
@@ -291,9 +291,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     }
     const std::uint32_t idxCount = model.indexCount;
     if (idxCount != 0) {
-        if (dev == nullptr)
-            return false;
-        if (FAILED(dev->CreateIndexBuffer(2 * idxCount, 0,
+        if (dev && FAILED(dev->CreateIndexBuffer(2 * idxCount, 0,
                                           static_cast<D3DFORMAT>(101),
                                           D3DPOOL_MANAGED,
                                           &mdl::ResourceAs<IDirect3DIndexBuffer9>(
@@ -309,7 +307,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         idx = static_cast<std::uint16_t*>(operator new(4 * idxCount));
         std::memset(idx, 0, 4 * idxCount);
         void* ib = nullptr;
-        if (FAILED(mdl::ResourceAs<IDirect3DIndexBuffer9>(
+        if (dev && FAILED(mdl::ResourceAs<IDirect3DIndexBuffer9>(
                        mdl::Mdl(m)->indexBuffer)->Lock(0, 0, &ib, 0))) {
             FailBox(hwnd, true, enData,
                     "The performance of the graphics card doesn't suffice.",
@@ -319,14 +317,14 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         }
         for (std::uint32_t j = 0; j < idxCount; ++j) {
             if (!format::ReadPmdIndex(ReadModelFileBytes, &fh, idx[2 * j])) {
-                mdl::ResourceAs<IDirect3DIndexBuffer9>(
+                if(dev)mdl::ResourceAs<IDirect3DIndexBuffer9>(
                     mdl::Mdl(m)->indexBuffer)->Unlock();
                 _close(fh);
                 return false;
             }
-            static_cast<std::uint16_t*>(ib)[j] = idx[2 * j];
+            if(ib)static_cast<std::uint16_t*>(ib)[j] = idx[2 * j];
         }
-        mdl::ResourceAs<IDirect3DIndexBuffer9>(
+        if(dev)mdl::ResourceAs<IDirect3DIndexBuffer9>(
             mdl::Mdl(m)->indexBuffer)->Unlock();
     }
 
@@ -366,23 +364,23 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                     *star = '\0';
                     unsigned char* subBytes =
                         reinterpret_cast<unsigned char*>(sub);
-                    ConvertMaterialName(subBytes, texName, wide1, 0x100,
+                    ConvertMaterialName(cpuOnly?nullptr:subBytes, texName, wide1, 0x100,
                                         dirW);
                     swprintf_s(wide2, 0x180, L"%s%s", dirW, wide1);
-                    LoadTextureShared(subBytes, wide2);      // 0x407490
-                    ConvertMaterialName(subBytes, star + 1, wide1, 0x100,
+                    if(!cpuOnly)LoadTextureShared(subBytes, wide2); // 0x407490
+                    ConvertMaterialName(cpuOnly?nullptr:subBytes, star + 1, wide1, 0x100,
                                         dirW);
                     swprintf_s(wide3, 0x180, L"%s%s", dirW, wide1);
-                    if (LoadTextureShared(subBytes, wide3))
+                    if (cpuOnly || LoadTextureShared(subBytes, wide3))
                         wcscpy_s(mat.spherePath, 0x118, wide3);
                     wcscpy_s(mat.texturePath, 0x118, wide2);
                 } else {
                     unsigned char* subBytes =
                         reinterpret_cast<unsigned char*>(sub);
-                    ConvertMaterialName(subBytes, texName, wide1, 0x100,
+                    ConvertMaterialName(cpuOnly?nullptr:subBytes, texName, wide1, 0x100,
                                         dirW);
                     swprintf_s(wide2, 0x180, L"%s%s", dirW, wide1);
-                    LoadTextureShared(subBytes, wide2);
+                    if(!cpuOnly)LoadTextureShared(subBytes, wide2);
                     wcscpy_s(mat.texturePath, 0x118, wide2);
                 }
             }
@@ -761,7 +759,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                 if (!strcmp(toon[i], text))
                     matched = 1;
             }
-            if (!matched) {
+            if (!matched && !cpuOnly) {
                 ConvertAnsiToWide(sub,
                                   toon[i], wide1, 0x100);
                 swprintf_s(wide2, 0x180, L"%s%s",
@@ -1028,8 +1026,9 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
             row.rotation[3] = 1.0f;
         }
     }
+    if(!cpuOnly)InitializeModelCpuGeometry(g_Block,m);
     model.loadComplete = 1;
-    PostLoadInit(m);                                          // 0x49C850
+    if(!cpuOnly)PostLoadInit(m);                               // 0x49C850
     return true;
 }
 

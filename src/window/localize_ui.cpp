@@ -28,6 +28,7 @@
 
 #include <cstdint>
 
+#include "mikudancestudio/scene_preview_ui.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
@@ -88,6 +89,7 @@ const wchar_t* JpControlText(int id) {
 }  // namespace
 
 void LocalizeUI(MMDApp* app) {
+    InstallScenePreviewMenu(app);
     auto& s = *app;
     const bool english = s.EnglishUI() != 0;                       // 658252
     const bool modelMode = s.state.optflag[0] != 0;  // 760

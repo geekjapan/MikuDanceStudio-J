@@ -148,6 +148,8 @@ bool InterpolatePmmBonePlaybackSegment(const PmmBoneKey& previous,
                                        double frame,
                                        PmmEvaluatedBone& output);
 enum class PmmLightInterpolation { FrameSeek, Playback };
+bool EvaluatePmmLightTrack(const PmmKeyTrack<PmmLightKey>&,double frame,
+    PmmLightInterpolation,std::array<float,6>&);
 bool InterpolatePmmLightSegment(const PmmLightKey& previous,
                                 const PmmLightKey& next,
                                 double frame, PmmLightInterpolation mode,

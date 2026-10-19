@@ -23,6 +23,7 @@
 
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/model_cpu_preview.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/rhi_d3d9.hpp"
 #include "mikudancestudio/rhi_assets.hpp"
@@ -1920,6 +1921,7 @@ void ComposeSelfShadow(MMDApp* app, D3DRenderer* sub,
         sub->hdrTexture,
         app->LeftViewportVertices());
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    app->CpuRenderFrame().groundAlphaBlend=true;
 }
 
 void ComposeCallbackTexture(MMDApp* app,
@@ -1954,6 +1956,7 @@ void CaptureAccessoryScreenTexture(MMDApp* app, D3DRenderer* sub,
             return;
     }
 
+    app->CpuNativeCaptureTexturePresent()=true;
     IDirect3DSurface9* textureSurface = nullptr;
     texture->GetSurfaceLevel(0, &textureSurface);
     auto** backBuffer = &sub->backbufferSurface;
@@ -2057,13 +2060,23 @@ void RenderFrameScene(MMDApp* app) {
     (void)sceneClear;
 #ifdef MIKUDANCESTUDIO_DIAG
     BeginDiagnosticHistoryAudit(device);
+    BeginCpuFullSceneValidation(app);
     BeginHistoryReplay(device,clearFlags,clearColor,1.0f,0);
     if(FAILED(sceneClear))BlockHistoryReplay("initial_clear_failed");
 #endif
 
+
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
+    BeginCpuSceneFrame(app,clearFlags,clearColor);
+    if(FAILED(sceneClear))BlockCpuSceneFrame("initial_clear_failed");
+#endif
     app->state.renderPassCount = 1;
-    if (FAILED(mme::BeginScene(app, device)))
+    if (FAILED(mme::BeginScene(app, device))) {
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
+        BlockHistoryReplay("begin_scene_failed");FinishCpuSceneFrame(app);PresentCpuSceneFrame(app);
+#endif
         return;
+    }
 
     const bool effectRenderer = UseEffectModelRenderer(app);
     if (effectRenderer)
@@ -2080,6 +2093,13 @@ void RenderFrameScene(MMDApp* app) {
             RenderModelsFixed(app);
     }
 
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
+    FinishCpuSceneFrame(app);
+#ifdef MIKUDANCESTUDIO_DIAG
+    FinishCpuFullSceneValidation(app);
+#endif
+    PresentCpuSceneFrame(app);
+#endif
     ComposeSelfShadow(app, sub, device);
     ComposeCallbackTexture(app, device);
 
@@ -2130,6 +2150,7 @@ void RenderFrameScene(MMDApp* app) {
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
     device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+    app->CpuRenderFrame().groundAlphaBlend=true;
 
     DrawTextOverlay(app, device);
     DrawLineOverlay(app, sub, device);

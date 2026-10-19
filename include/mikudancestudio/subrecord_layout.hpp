@@ -23,6 +23,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include "model_geometry_vertices.hpp"
 
 #ifndef MIKUDANCESTUDIO_X64
 #if defined(_M_X64) || defined(__x86_64__)
@@ -202,32 +203,20 @@ static_assert(offsetof(PmxVertex, materialIndex) == 184, "PMX material");
 
 // GPU-facing vertex records. The main record has zero to four extra UV
 // vectors appended after base; the x64 worker selection fixes its stride.
-struct SkinnedVertexBase {
-    float position[3];
-    float normal[3];
-    // Initially filled by the PMX loader, then refreshed from PmxVertex by
-    // the common tail shared by all no-additional-UV skinning branches.
-    float uv[2];
-};
+using SkinnedVertexBase = render::ModelVertex;
 static_assert(sizeof(SkinnedVertexBase) == 32, "base GPU vertex ABI");
 
 // The five PMX workers select one of these concrete records by additional UV
 // count. Source storage is component-first for loader convenience, whereas
 // the GPU record keeps each additional UV as its contiguous float4.
 template <std::size_t AdditionalUvCount>
-struct SkinnedVertex {
-    SkinnedVertexBase base;
-    float additionalUv[AdditionalUvCount][4];
-};
+using SkinnedVertex = render::ExtendedModelVertex<AdditionalUvCount>;
 static_assert(sizeof(SkinnedVertex<1>) == 48, "one additional UV GPU ABI");
 static_assert(sizeof(SkinnedVertex<2>) == 64, "two additional UV GPU ABI");
 static_assert(sizeof(SkinnedVertex<3>) == 80, "three additional UV GPU ABI");
 static_assert(sizeof(SkinnedVertex<4>) == 96, "four additional UV GPU ABI");
 
-struct EdgeVertex {
-    float position[3];
-    std::uint32_t diffuse;
-};
+using EdgeVertex = render::ModelEdgeVertex;
 static_assert(sizeof(EdgeVertex) == 16, "edge GPU vertex ABI");
 
 // Renderer material working record. It is deliberately not a PMX on-disk

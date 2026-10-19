@@ -4,6 +4,24 @@ The proposed ownership, lifecycle and call sequence are specified in
 `docs/RHI_INTERFACE_CONTRACT.md`; this file tracks the migration and current
 implementation limits.
 
+The independent CPU full-frame assembler and default-off resident DX11/DX12
+preview are described in [CPU frame and preview](RHI_CPU_FRAME_PREVIEW.md).
+[Preview controller and application entry](RHI_PREVIEW_CONTROLLER.md) records
+the shared backend factory, window/lifecycle ownership, menu entry and current
+x64/x86 audit-to-direct acceptance. The main application renderer remains DX9.
+
+The earlier accessory depth-history and alpha-discard measurements are recorded
+in [accessory depth measurement](RHI_ACCESSORY_DEPTH_MEASUREMENT.md). Later
+single-sample full-scene results use explicit measured backend strategies and
+DX9-compatible Mip preparation; these results do not establish MSAA, MME, PMX
+or other GPU acceptance.
+
+The current DX11/DX12 integration milestones, verified implementation status,
+remaining application/pass/MME boundaries and effort assumptions are tracked in
+[DX11 / DX12 integration roadmap](RHI_DX11_DX12_ROADMAP.md). The dated results
+below describe earlier migration steps; later backend acceptance is recorded
+in the linked DX11 documents and that roadmap.
+
 This is a design boundary, not a renderer replacement. The existing Windows
 application still renders through Direct3D 9. The portable `rhi.hpp` and
 validation-only Null backend have no native window or GPU dependencies. They
@@ -102,6 +120,22 @@ D3DX resizing remains blocked. See [material resource validation](RHI_MATERIAL_T
 
 ## Migration order
 
+The current DX11/DX12 resident scene implementation, native submission lifetime
+and validation scope are documented in [RHI_RESIDENT_SCENE.md](RHI_RESIDENT_SCENE.md).
+It shares model/HUD shaders and scene resource ownership. Live CPU model geometry
+now feeds opt-in DX11/DX12 diagnostic batches; see [RHI_CPU_GEOMETRY.md](RHI_CPU_GEOMETRY.md).
+CPU material/state production now covers an opt-in ordered subset; full pass
+integration remains ahead. The shared measured pixel arithmetic and independent
+control gates are documented in
+[RHI_FINAL_MODULATE_COMPATIBILITY.md](RHI_FINAL_MODULATE_COMPATIBILITY.md).
+CPU producers now cover ground lines, the ground depth plane and projected model
+shadows in an audited optional prefix. Model submissions now transport explicit
+Mip chains with source/recipe/content versions and an optional independent DX9
+compatibility preparation service. Accessories retain captured input.
+See [full Mip preparation and material scope](RHI_CPU_MIP_CONTRACT.md) and
+[CPU scene pass production](RHI_CPU_SCENE_PASSES.md) for exact scope
+and the atomic field/resource replacement gate.
+
 1. Keep PMM loading, resource resolution, and session animation independent
    from rendering. Run their synthetic scene flow on all CI platforms.
 2. Extend the snapshot with actual mesh/texture bindings, deform results,
@@ -121,3 +155,11 @@ convention tests, resize/device-loss handling, GPU resource lifetime tests,
 and captured-frame comparison. MME's D3D9-specific effects are a separate
 compatibility migration; no existing shader or effect is promised to work on
 other backends by the current RHI skeleton.
+
+## ????? CPU ????
+
+????? PMD ????? CPU ?????????????????????
+?????????? Mip ????????? [RHI_CPU_ACCESSORY_OUTLINE.md](RHI_CPU_ACCESSORY_OUTLINE.md)?
+?? Windows `.x` ??????? D3DX SYSTEMMEM ?????? x86 ???????
+x64 ? 66 ????? 4 ????????????
+???????????????????

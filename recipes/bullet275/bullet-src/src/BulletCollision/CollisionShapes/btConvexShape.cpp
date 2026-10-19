@@ -36,7 +36,7 @@ static inline vec_float4 vec_dot3( vec_float4 vec0, vec_float4 vec1 )
 // VC9 (MMD's compiler) normalizes support directions on the x87 stack.
 // MMD 0x4CFD90 (localGetSupportVertexNonVirtual) computes the length fully
 // extended: 1/sqrt((y*y + z*z) + x*x), then scales each component once.
-static __declspec(noinline) void mmdSupportNormalize(btVector3& v)
+static BT_NOINLINE void mmdSupportNormalize(btVector3& v)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
 	float* p = &v.m_floats[0];
@@ -73,7 +73,7 @@ static __declspec(noinline) void mmdSupportNormalize(btVector3& v)
 // MMD 0x4CF6F0 case 0xA (capsule): the length squared is rounded to float
 // first, then 1/sqrt(lenSqr) stays extended while each component is scaled
 // and rounded once.
-static __declspec(noinline) void mmdSupportNormalizeLenSqr(btVector3& v,
+static BT_NOINLINE void mmdSupportNormalizeLenSqr(btVector3& v,
 														   btScalar lenSqr)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)

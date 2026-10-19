@@ -3,6 +3,7 @@
 #include <d3d9.h>
 #include "mikudancestudio/rhi_image.hpp"
 #include "mikudancestudio/rhi_d3d9.hpp"
+#include "mikudancestudio/rhi_d3d9_mip_capture.hpp"
 #include <filesystem>
 #include <fstream>
 #include <cstdio>
@@ -177,7 +178,8 @@ bool FloatDiagnostic(Load load, IDirect3DDevice9* device,
 // external resources; zero-difference is required, mismatch exits 2 (not PASS).
 // --boundary <directory> reproduces the known issue using only an original BMP.
 int wmain(int argc, wchar_t** argv) {
-    if (argc!=1 && argc!=3) return 1;
+    const bool mipOnly=argc==2 && std::wcscmp(argv[1],L"--mips")==0;
+    if (argc!=1 && argc!=3 && !mipOnly) return 1;
     Native native;
     native.api=Direct3DCreate9(D3D_SDK_VERSION);
     native.window=CreateWindowW(L"STATIC",L"texture preparation",WS_OVERLAPPEDWINDOW,
@@ -203,6 +205,46 @@ int wmain(int argc, wchar_t** argv) {
     const auto load=native.dll?reinterpret_cast<Load>(GetProcAddress(native.dll,
         "D3DXCreateTextureFromFileInMemoryEx")):nullptr;
     if (!load) return 77;
+    if(mipOnly){
+        // Independent D3DX file-decode/autogen reference, plus preparation from
+        // original CPU decode. No reference GPU bytes are used as producer input.
+        constexpr unsigned w=8,h=8;std::vector<std::uint8_t> input(54+w*h*3);
+        input[0]='B';input[1]='M';U32(input,2,unsigned(input.size()));U32(input,10,54);U32(input,14,40);
+        U32(input,18,w);U32(input,22,h);input[26]=1;input[28]=24;
+        for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x){const auto at=54+((h-1-y)*w+x)*3;
+            input[at]=std::uint8_t(x*17+y*13);input[at+1]=std::uint8_t(x*23+y*31);input[at+2]=std::uint8_t(x*37+y*11);}
+        RgbaImage source;if(!DecodeTextureRgba(input.data(),input.size(),source)){std::puts("MIP_DECODE failed");return 1;}
+        auto prep=CreateD3D9TexturePreparer(native.device);if(!prep || !prep->SupportsMipPolicy(MipPreparationPolicy::Dx9AutoLinear))return 77;
+        IDirect3DTexture9* reference=nullptr;
+        const auto loaded=load(native.device,input.data(),UINT(input.size()),w,h,1,D3DUSAGE_AUTOGENMIPMAP,D3DFMT_A8R8G8B8,
+            D3DPOOL_MANAGED,0xffffffffu,0xffffffffu,0,nullptr,nullptr,&reference);
+        if(FAILED(loaded)){std::printf("MIP_LOAD hr=%08lx\n",loaded);return 1;}
+        RgbaImage decodedReference;D3DSURFACE_DESC referenceDesc{};
+        if(!ReadTexture(reference,decodedReference,referenceDesc) || decodedReference.pixels!=source.pixels){
+            std::printf("MIP_DECODE_REFERENCE differs dimensions=%ux%u format=%u source=%ux%u\n",decodedReference.width,decodedReference.height,unsigned(referenceDesc.Format),source.width,source.height);
+            for(unsigned i=0;i<16 && i<decodedReference.pixels.size();++i)std::printf("%u:%u/%u ",i,source.pixels[i],decodedReference.pixels[i]);std::puts("");reference->Release();return 1;}
+        reference->AddDirtyRect(nullptr);reference->PreLoad();
+        reference->GenerateMipSubLevels();ModelTextureData expected;
+        const auto hr=CaptureD3D9GeneratedMips(native.device,reference,false,expected);reference->Release();if(FAILED(hr)){std::printf("MIP_REFERENCE hr=%08lx\n",hr);return 1;}
+        PreparedMipChain chain;std::uint64_t revision=0;
+        for(unsigned repeat=0;repeat<3;++repeat){const bool active=repeat==1;
+            if(active && FAILED(native.device->BeginScene())){std::puts("MIP_BEGIN failed");return 1;}
+            const bool ready=prep->PrepareMips(source,MipPreparationPolicy::Dx9AutoLinear,chain,active);
+            if(active && FAILED(native.device->EndScene())){std::puts("MIP_END failed");return 1;}
+            if(!ready || !ValidatePreparedMipChain(source,chain) || chain.levels.size()!=expected.levels.size()){
+                std::printf("MIP_PREPARE failed repeat=%u ready=%u levels=%zu expected=%zu\n",repeat,ready,chain.levels.size(),expected.levels.size());return 1;}
+            for(std::size_t n=0;n<chain.levels.size();++n)if(chain.levels[n].width!=expected.levels[n].width || chain.levels[n].height!=expected.levels[n].height){
+                std::printf("MIP_SIZE level=%zu prepared=%ux%u reference=%ux%u\n",n,chain.levels[n].width,chain.levels[n].height,expected.levels[n].width,expected.levels[n].height);return 1;}
+            else if(chain.levels[n].pixels!=expected.levels[n].pixels){
+                std::size_t differences=0;for(std::size_t i=0;i<chain.levels[n].pixels.size();++i)differences+=chain.levels[n].pixels[i]!=expected.levels[n].pixels[i];
+                std::printf("MIP_BYTES repeat=%u level=%zu different=%zu\n",repeat,n,differences);
+                for(unsigned i=0;i<16 && i<chain.levels[n].pixels.size();++i)std::printf("%u:%u/%u ",i,chain.levels[n].pixels[i],expected.levels[n].pixels[i]);std::puts("");return 1;}
+            if(repeat && revision!=chain.revision){std::printf("MIP_REVISION changed repeat=%u old=%llu new=%llu\n",repeat,revision,chain.revision);return 1;}revision=chain.revision;
+            if(repeat==1){const auto reset=native.device->Reset(&params);if(FAILED(reset)){std::printf("MIP_RESET hr=%08lx\n",reset);return 1;}}
+        }
+        std::printf("MIP_PREPARATION PASS levels=%zu repeats=3 rawSource=independent recipe=%llu resetStable=1 sceneRestored=1\n",chain.levels.size(),chain.providerRevision);
+        return 0;
+    }
     const bool boundary=argc==3 && std::wcscmp(argv[1],L"--boundary")==0;
     auto bytes=boundary?Boundary():Synthetic();
     if (argc==3 && !boundary) {

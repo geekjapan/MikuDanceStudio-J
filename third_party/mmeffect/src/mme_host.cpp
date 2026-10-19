@@ -373,6 +373,10 @@ void __cdecl MmeHostPreRenderTargetCopy(IDirect3DDevice9* device,
         g_host.endSceneFired = 1;
     }
 }
+int __cdecl MmeHostEffectsEnabled(void)
+{
+    return MmeHostEffectsActive() && mme::g_context && mme::g_context->effectEnabled != 0;
+}
 
 // [0x180003cb0] 设备 EndScene 槽 42。
 HRESULT __cdecl MmeHostEndScene(IDirect3DDevice9* device)

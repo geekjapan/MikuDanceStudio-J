@@ -1,5 +1,6 @@
 #include "mikudancestudio/scene_session.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <utility>
@@ -193,11 +194,26 @@ bool SceneSession::Load(ReadPmmBytesResult read, void* readContext,
     return true;
 }
 
+bool SceneSession::SetRuntimeAppliedLight(const std::array<float,6>& light) {
+    if(!loaded_)return false;
+    for(auto value:light)if(!std::isfinite(value))return false;
+    runtimeAppliedLight_=light;return true;
+}
+bool SceneSession::SetRuntimeAppliedCamera(const PmmEvaluatedCamera& camera) {
+    if(!loaded_ || !std::isfinite(camera.distance) || !std::isfinite(camera.fov) || camera.perspective>1)return false;
+    for(auto value:camera.position)if(!std::isfinite(value))return false;
+    for(auto value:camera.rotation)if(!std::isfinite(value))return false;
+    runtimeAppliedCamera_=camera;return true;
+}
+
 bool SceneSession::Seek(std::uint32_t frame) {
     if (!loaded_ || frame > static_cast<std::uint32_t>(
             std::numeric_limits<std::int32_t>::max())) return false;
     PmmSceneEvaluation evaluated;
     if (!EvaluatePmmSceneFrame(scene_, frame, evaluated)) return false;
+    // Windows seek stores the double-fraction light result, while playback
+    // uses float-fraction arithmetic. Rendering observes those few ULP.
+    if(!EvaluatePmmLightTrack(scene_.lightKeys,frame,PmmLightInterpolation::FrameSeek,evaluated.lightState))return false;
     StorePose(scene_, evaluated);
     pose_ = std::move(evaluated);
     playback_ = {};
@@ -325,6 +341,14 @@ bool SceneSession::ReplaceRuntimeCameraTrack(
     playback_ = {};
     playing_ = false;
     return true;
+}
+
+bool SceneSession::ReplaceRuntimeLightTrack(PmmKeyTrack<PmmLightKey> light) {
+    if(!loaded_ || light.dense.size()!=1 || scene_.lightKeys.dense.empty())return false;
+    std::array<float,6> checked;
+    if(!EvaluatePmmLightTrack(light,pose_.frame,PmmLightInterpolation::FrameSeek,checked))return false;
+    scene_.lightKeys=std::move(light);scene_.light.sparse=static_cast<std::uint32_t>(scene_.lightKeys.sparse.size());
+    runtimeTracksChanged_=true;playback_={};playing_=false;return true;
 }
 
 bool SceneSession::ReplaceRuntimeAccessoryTrack(

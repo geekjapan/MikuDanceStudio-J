@@ -25,7 +25,12 @@ struct MaterialTextureAsset {
     std::filesystem::path sourcePath;
     bool fallback = false;
     TextureDesc::Mips mips = TextureDesc::Mips::SingleLevel;
+    // Explicit prepared levels are separate from original decode and from
+    // backend-owned GenerateLinear. SceneRenderer owns their GPU residency.
+    std::optional<PreparedMipChain> mipChain;
 };
+bool PrepareMaterialMipChain(MaterialTextureAsset&,MipPreparationPolicy,
+                             TexturePreparer* backend=nullptr,bool sceneActive=false);
 // Base/Sphere share file identity and content even when used in different slots.
 // An empty reference is Absent; a referenced but unavailable file is Missing.
 enum class MaterialResourceStatus { Absent, Ready, Missing };

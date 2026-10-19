@@ -20,13 +20,38 @@
 #endif
 
 namespace mikudancestudio::rhi {
+namespace {
+// True-color TGA, including RLE, with explicit raster bounds/origin. Keep
+// unsupported palettes/bit depths separate rather than guess their semantics.
+bool DecodeTrueColorTga(const std::uint8_t* source,std::size_t length,RgbaImage& output){
+    if(length<18 || source[1]!=0 || (source[2]!=2 && source[2]!=10))return false;
+    const unsigned width=source[12]|unsigned(source[13])<<8,height=source[14]|unsigned(source[15])<<8;
+    const unsigned bits=source[16],attributes=source[17]&15;
+    if(!width || !height || width>4096 || height>4096 || (bits!=24 && bits!=32) ||
+        (source[17]&0xc0) || (bits==24 && attributes) || (bits==32 && attributes!=0 && attributes!=8))return false;
+    const unsigned stride=bits/8;std::size_t cursor=18+source[0],pixel=0,total=std::size_t(width)*height;
+    if(cursor>length)return false;RgbaImage result{width,height,std::vector<std::uint8_t>(total*4)};
+    const auto write=[&](const std::uint8_t* value){
+        auto x=pixel%width,y=pixel/width;if(source[17]&0x10)x=width-1-x;if(!(source[17]&0x20))y=height-1-y;
+        auto* target=result.pixels.data()+(y*width+x)*4;
+        target[0]=value[2];target[1]=value[1];target[2]=value[0];target[3]=bits==32 && attributes==8?value[3]:255;++pixel;
+    };
+    while(pixel<total){std::size_t count=1;bool repeated=false;
+        if(source[2]==10){if(cursor>=length)return false;const auto packet=source[cursor++];count=(packet&127)+1;repeated=(packet&128)!=0;}
+        if(count>total-pixel)return false;const auto bytes=(repeated?1:count)*stride;
+        if(bytes>length-cursor)return false;
+        for(std::size_t n=0;n<count;++n)write(source+cursor+(repeated?0:n*stride));cursor+=bytes;
+    }
+    output=std::move(result);return true;
+}
+}
 bool DecodeTextureRgba(const void* bytes, std::size_t length, RgbaImage& image) {
     image = {};
     if (!bytes || length == 0 || length > INT_MAX) return false;
     const auto* input = static_cast<const stbi_uc*>(bytes);
     const bool png = length >= 8 && std::memcmp(input, "\x89PNG\r\n\x1a\n", 8) == 0;
     const bool bmp = length >= 54 && input[0] == 'B' && input[1] == 'M';
-    if (!png && !bmp) return false;
+    if (!png && !bmp) return DecodeTrueColorTga(input,length,image);
     if (bmp) {
         const auto u32 = [&](unsigned at) {
             return static_cast<std::uint32_t>(input[at]) |

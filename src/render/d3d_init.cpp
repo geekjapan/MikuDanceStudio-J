@@ -493,6 +493,7 @@ bool InitD3D(MMDApp* app, HWND hwnd, bool english, HMODULE hModule) {
                              reinterpret_cast<const D3DMATRIX*>(&proj));
     }
 
+    app->CpuRenderFrame().groundAlphaBlend=false;
     InitRenderStates(app);                                         // 0x406E90
 
     r->viewScale = 1.0f;

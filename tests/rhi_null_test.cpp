@@ -45,11 +45,14 @@ int main() {
     auto lines = device->CreateBuffer({BufferUsage::Vertex, 160, true});
     auto persistent = device->CreateBuffer({BufferUsage::Vertex, 160, false});
     const auto oldDraw = device->Record(NonIndexedDraw{persistent, 0, 8});
+    auto wrongLayout=device->Record(NonIndexedDraw{lines,0,8});wrongLayout.layout=VertexLayout::PositionColor;
+    auto explicitLayout=wrongLayout;explicitLayout.layout=VertexLayout::ScreenPositionColor;
     const auto oldIndexed = device->Record(IndexedDraw{persistent,replacement,0,3,1});
     if (!lines || !persistent || device->SetFixedPipeline({}) ||
         !device->BeginFrame({}) ||
         device->SetFixedPipeline({PrimitiveTopology::TriangleList}) ||
         !device->SetFixedPipeline({}) ||
+        device->Draw(wrongLayout) || !device->Draw(explicitLayout) ||
         device->Draw(device->Record(NonIndexedDraw{lines, 0, 7})) ||
         device->Draw(device->Record(NonIndexedDraw{lines, 1, 8})) ||
         !device->Draw(device->Record(NonIndexedDraw{lines, 0, 8})) ||

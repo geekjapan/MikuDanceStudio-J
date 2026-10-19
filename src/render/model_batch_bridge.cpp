@@ -1,4 +1,6 @@
 #include "mikudancestudio/model_batch_bridge.hpp"
+#include "mikudancestudio/model_cpu_preview.hpp"
+#include "mikudancestudio/render_model_inputs.hpp"
 #ifdef MIKUDANCESTUDIO_DIAG
 #define NOMINMAX
 #include <Windows.h>
@@ -103,6 +105,36 @@ bool CaptureRaster(IDirect3DDevice9* device, rhi::BatchRasterState& state) {
     state.destinationBlend = static_cast<rhi::BlendFactor>(values[5] - 1);
     state.cull = static_cast<rhi::BatchCull>(values[6] - 1);
     return true;
+}
+// The live diagnostic uses the full portable model raster contract, including
+// separate alpha and stencil. Unsupported native states remain explicit.
+const char* CaptureModelRaster(IDirect3DDevice9* device,rhi::ModelPipeline& pipeline) {
+    for(const auto item:{std::pair{D3DRS_FOGENABLE,"fog"},
+        std::pair{D3DRS_CLIPPLANEENABLE,"user_clip_planes"},
+        std::pair{D3DRS_DEPTHBIAS,"depth_bias"},std::pair{D3DRS_SLOPESCALEDEPTHBIAS,"slope_depth_bias"},
+        std::pair{D3DRS_SRGBWRITEENABLE,"srgb_write"},std::pair{D3DRS_TWOSIDEDSTENCILMODE,"two_sided_stencil"},
+        std::pair{D3DRS_SCISSORTESTENABLE,"scissor"},std::pair{D3DRS_DITHERENABLE,"dither"},
+        std::pair{D3DRS_VERTEXBLEND,"vertex_blend"}}) {
+        DWORD value=0;if(FAILED(device->GetRenderState(item.first,&value)))return "render_state_read_failed";
+        if(value)return item.second;
+    }
+    if(State(device,D3DRS_FILLMODE)!=D3DFILL_SOLID)return "fill_mode";
+    if(!CaptureRaster(device,pipeline.raster))return "raster_capture_failed";
+    constexpr D3DRENDERSTATETYPE keys[]={D3DRS_BLENDOP,D3DRS_SEPARATEALPHABLENDENABLE,
+        D3DRS_SRCBLENDALPHA,D3DRS_DESTBLENDALPHA,D3DRS_BLENDOPALPHA,D3DRS_COLORWRITEENABLE,
+        D3DRS_STENCILENABLE,D3DRS_STENCILFUNC,D3DRS_STENCILREF,D3DRS_STENCILMASK,
+        D3DRS_STENCILWRITEMASK,D3DRS_STENCILFAIL,D3DRS_STENCILZFAIL,D3DRS_STENCILPASS};
+    DWORD v[14]{};for(unsigned n=0;n<14;++n)if(FAILED(device->GetRenderState(keys[n],v+n)))return "render_state_read_failed";
+    if(v[0]<1 || v[0]>5 || v[2]<1 || v[2]>11 || v[3]<1 || v[3]>11 || v[4]<1 || v[4]>5 ||
+       v[5]>15 || v[7]<1 || v[7]>8 || v[11]<1 || v[11]>8 || v[12]<1 || v[12]>8 || v[13]<1 || v[13]>8)
+        return "unsupported_raster_enum";
+    pipeline.colorOperation=static_cast<rhi::ModelBlendOp>(v[0]);pipeline.separateAlpha=v[1]!=0;
+    pipeline.sourceAlpha=static_cast<rhi::BlendFactor>(v[2]-1);pipeline.destinationAlpha=static_cast<rhi::BlendFactor>(v[3]-1);
+    pipeline.alphaOperation=static_cast<rhi::ModelBlendOp>(v[4]);pipeline.colorWriteMask=static_cast<std::uint8_t>(v[5]);
+    pipeline.stencil=v[6]!=0;pipeline.stencilCompare=static_cast<rhi::DepthComparison>(v[7]-1);
+    pipeline.stencilReference=v[8];pipeline.stencilReadMask=static_cast<std::uint8_t>(v[9]);pipeline.stencilWriteMask=static_cast<std::uint8_t>(v[10]);
+    pipeline.stencilFail=static_cast<rhi::ModelStencilOp>(v[11]);pipeline.stencilDepthFail=static_cast<rhi::ModelStencilOp>(v[12]);pipeline.stencilPass=static_cast<rhi::ModelStencilOp>(v[13]);
+    return nullptr;
 }
 std::wstring Decode(const render::TextureReference& ref) {
     if (ref.path.empty()) return {};
@@ -671,6 +703,10 @@ bool Pixels(IDirect3DDevice9* device, IDirect3DSurface9* source,
 }
 
 void BeginModelBatchCapture(MMDApp* app, IDirect3DDevice9* device) {
+    if(Requested("MDS_RHI_CPU_INPUTS")) {
+        g_frameReady=app->PortableSceneSession() && render::CaptureSceneSnapshot(*app->PortableSceneSession(),g_snapshot);
+        return;
+    }
     g_frameReady = false;
     if (app->PortableSceneSession() != g_session) {
         InvalidateModelBatchComparison();
@@ -723,8 +759,47 @@ void EndModelBatchCapture() {
     }
 }
 
+bool AuditLiveCpuModelInputs(MMDApp* app,unsigned char* raw,unsigned material,unsigned first,unsigned count,
+    const rhi::ModelPipeline& generated,const std::array<rhi::MaterialTextureAsset,3>& assets,rhi::ModelPipeline& reference) {
+    const auto* model=FindModel(raw,app);if(!g_frameReady || !model || material>=model->batches.size())return false;
+    const auto& batch=model->batches[material];auto* device=app->Renderer()->device;
+    const char* unsupported=CaptureModelRaster(device,reference);D3DVIEWPORT9 viewport{};
+    bool captured=!unsupported && SUCCEEDED(device->GetViewport(&viewport)) &&
+        CaptureShaderInputs(device,batch,model->kind==format::ModelKind::Pmd,reference.shader);
+    reference.viewport=rhi::ModelViewport{viewport.X,viewport.Y,viewport.Width,viewport.Height,viewport.MinZ,viewport.MaxZ};
+    IDirect3DVertexShader9* vs=nullptr;IDirect3DPixelShader9* ps=nullptr;
+    captured=captured && SUCCEEDED(device->GetVertexShader(&vs)) && SUCCEEDED(device->GetPixelShader(&ps)) && !vs && !ps;
+    Release(vs);Release(ps);
+    const auto differences=render::CompareModelInputs(generated,reference);
+    std::size_t textureDifferences=0;bool texturesSame=true;
+    for(unsigned stage=0;stage<3;++stage)if(generated.shader.layout.stages[stage].role!=rhi::MaterialTextureRole::None) {
+        // Audit a copy. Backend preparation must never silently mutate CPU data.
+        auto asset=assets[stage];D3DSURFACE_DESC desc{};std::size_t different=0;
+        const bool same=CompareTexture(device,stage,asset,desc,different) && !asset.usePrepared;
+        textureDifferences+=different;texturesSame=texturesSame && same;
+    }
+    const bool rangeSame=first==batch.firstIndex && count==batch.indexCount;
+    const bool pass=captured && differences.empty() && texturesSame && rangeSame;
+    char directory[MAX_PATH]{};if(GetEnvironmentVariableA("MDS_RHI_CPU_GEOMETRY_DIR",directory,MAX_PATH)) {
+        char path[MAX_PATH]{};std::snprintf(path,sizeof(path),"%s\\cpu_inputs.%lu.csv",directory,GetCurrentProcessId());const bool fresh=GetFileAttributesA(path)==INVALID_FILE_ATTRIBUTES;
+        FILE* file=nullptr;if(!fopen_s(&file,path,"a") && file) {
+            if(fresh)std::fputs("frame,model,material,playing,cameraSource,status,field,component,generated,reference,delta,differentFields,textureDifferentBytes\n",file);
+            const auto& frame=app->CpuRenderFrame();
+            const auto row=[&](const char* status,const char* field,unsigned component,double cpu,double native) {
+                std::fprintf(file,"%u,%u,%u,%u,%s,%s,%s,%u,%.17g,%.17g,%.17g,%zu,%zu\n",frame.scene.frame,model->slot,material,
+                    app->PortableSceneSession()->Playing(),frame.view.editorNavigation?"editor_navigation":"scene_session",status,field,component,cpu,native,cpu-native,differences.size(),textureDifferences);
+            };
+            row(pass?"PASS":"FAIL",unsupported?unsupported:!captured?"native_reference_unavailable":!rangeSame?"mesh_range":!texturesSame?"texture":"summary",0,0,0);
+            for(const auto& difference:differences)row("DIFFERENCE",difference.field.c_str(),difference.component,difference.generated,difference.reference);
+            std::fclose(file);
+        }
+    }
+    return pass;
+}
+
 bool TryModelBatchAdapter(MMDApp* app, unsigned char* model, unsigned materialIndex,
     unsigned first, unsigned count, unsigned stride) {
+    if(Requested("MDS_RHI_CPU_INPUTS"))return false;
     if (!Requested("MDS_RHI_MODEL_AB") || !g_frameReady) return false;
     auto* device = app->Renderer()->device;
     const auto* snapshot = FindModel(model, app);
@@ -883,16 +958,40 @@ bool TryModelBatchAdapter(MMDApp* app, unsigned char* model, unsigned materialIn
         const auto number = std::strtoul(selected, &end, 10);
         if (!end || *end || number != materialIndex) return false;
     }
-    if (!eligible || (!g_report && !g_snapshotPassed)) return false;
+    if (!eligible || (!g_report && !g_snapshotPassed)) {
+        if(Requested("MDS_RHI_CPU_PREVIEW"))BlockCpuModelPreview(app,model,materialIndex,
+            batch.dependency!=render::BatchDependency::Independent?"dependent_model_batch":
+            !noEffects?"effects_active":!fixed?"custom_shader_active":stride!=32?"unsupported_vertex_stride":
+            !same?"model_snapshot_mismatch":state.displayState!=0?"model_display_override":
+            state.postLoadFlag2!=0?"postload_override":"snapshot_not_verified");
+        return false;
+    }
     if (Requested("MDS_RHI_MODEL_TOON") && !LoadToon(app, model, snapshot->slot,
         materialIndex, batch.toon, resource.kind == format::ModelKind::Pmd)) {
+        if(Requested("MDS_RHI_CPU_PREVIEW"))BlockCpuModelPreview(app,model,materialIndex,"toon_resource_unavailable");
         g_gatePassed = false;
         return false;
     }
     if (Requested("MDS_RHI_MODEL_TEXTURES") && !LoadMaterialInputs(app, model,
         snapshot->slot, materialIndex, batch, resource.kind == format::ModelKind::Pmd, false)) {
+        if(Requested("MDS_RHI_CPU_PREVIEW"))BlockCpuModelPreview(app,model,materialIndex,"material_resource_unavailable");
         g_gatePassed = false;
         return false;
+    }
+    if(Requested("MDS_RHI_CPU_PREVIEW")) {
+        // The live geometry route precedes MeshBytes: it never obtains its
+        // vertex/index data by reading a native DX9 buffer.
+        rhi::ModelPipeline pipeline;pipeline.raster=raster;
+        D3DVIEWPORT9 viewport{};
+        const char* unsupported=CaptureModelRaster(device,pipeline);
+        const bool captured=!unsupported && SUCCEEDED(device->GetViewport(&viewport)) &&
+           CaptureShaderInputs(device,batch,resource.kind==format::ModelKind::Pmd,pipeline.shader);
+        if(captured) {
+            auto assets=g_materialAssets;assets[0]=g_toon;
+            rhi::HistoryDesc target;target.width=viewport.X+viewport.Width;target.height=viewport.Y+viewport.Height;
+            pipeline.viewport=rhi::ModelViewport{viewport.X,viewport.Y,viewport.Width,viewport.Height,viewport.MinZ,viewport.MaxZ};
+            SubmitCpuModelPreview(app,model,materialIndex,first,count,target,pipeline,assets);
+        }else BlockCpuModelPreview(app,model,materialIndex,unsupported?unsupported:"shader_input_capture_failed");
     }
     auto* vb = mdl::ResourceAs<IDirect3DVertexBuffer9>(state.vertexBuffer);
     auto* ib = mdl::ResourceAs<IDirect3DIndexBuffer9>(state.indexBuffer);
@@ -1015,6 +1114,8 @@ void ReportModelBatchComparison(IDirect3DDevice9* device) {
     c.Clear();
 }
 void InvalidateModelBatchComparison() {
+    // This invalidates DX9 resources only. Independent DX11/DX12 devices and
+    // CPU-owned scene resources survive a DX9 Reset.
     g_comparison.Clear();
     if (g_report) { std::fclose(g_report); g_report = nullptr; }
     g_gatePassed = g_snapshotSaved = g_snapshotPassed = g_frameReady = false;

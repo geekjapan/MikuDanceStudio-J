@@ -91,7 +91,7 @@ inline Bytes Pmd(bool english = true, bool physics = true) {
     }
     return bytes;
 }
-inline Bytes Pmx(bool physics = false) {
+inline Bytes Pmx(bool physics = false, bool singleDisplay = false) {
     Bytes bytes;
     bytes.byte('P'); bytes.byte('M'); bytes.byte('X'); bytes.byte(' ');
     bytes.number(2.0f);
@@ -115,10 +115,10 @@ inline Bytes Pmx(bool physics = false) {
     bytes.dword(1); bytes.text('X'); bytes.text();
     bytes.byte(4); bytes.byte(1); bytes.dword(1);
     bytes.word(0); bytes.floats(3, 3);
-    bytes.dword(2);
+    bytes.dword(singleDisplay ? 1 : 2);
     bytes.text('R'); bytes.text(); bytes.byte(1); bytes.dword(1);
     bytes.byte(0); bytes.byte(0);
-    bytes.text('D'); bytes.text(); bytes.byte(0); bytes.dword(0);
+    if(!singleDisplay){bytes.text('D'); bytes.text(); bytes.byte(0); bytes.dword(0);}
     bytes.dword(physics ? 1 : 0);
     if (physics) {
         bytes.text('Q'); bytes.text();

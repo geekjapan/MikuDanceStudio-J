@@ -15,6 +15,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <map>
+#include "cpu_live_checkpoint.hpp"
 #include "mikudancestudio/pmm_document.hpp"
 #include "mikudancestudio/pmm_scene_document.hpp"
 #include "mikudancestudio/scene_session.hpp"
@@ -320,8 +322,15 @@ struct TemporaryScene {
 
 struct ChildProcess {
     PROCESS_INFORMATION info{};
-    ~ChildProcess() {
-        if (!info.hProcess) return;
+    HANDLE job=CreateJobObjectW(nullptr,nullptr);
+    bool Own() {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags=JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        return job && SetInformationJobObject(job,JobObjectExtendedLimitInformation,&limits,sizeof(limits)) &&
+            AssignProcessToJobObject(job,info.hProcess);
+    }
+    void Close() {
+        if (!info.hProcess) {if(job)CloseHandle(job);job=nullptr;return;}
         auto windows = Snapshot(info.dwProcessId);
         if (windows.main) PostMessageW(windows.main, WM_CLOSE, 0, 0);
         if (WaitForSingleObject(info.hProcess, 3000) == WAIT_TIMEOUT) {
@@ -330,7 +339,10 @@ struct ChildProcess {
         }
         CloseHandle(info.hProcess);
         CloseHandle(info.hThread);
+        if(job)CloseHandle(job);
+        info={};job=nullptr;
     }
+    ~ChildProcess() {Close();}
 };
 
 int Run(const fs::path& executable, const fs::path& fixture,
@@ -422,7 +434,7 @@ int Run(const fs::path& executable, const fs::path& fixture,
              fs::copy_options::recursive);
     fs::create_directories(relocated.parent_path());
     fs::rename(userFile / L"Model" / modelName, relocated);
-    if(_wgetenv(L"MDS_RHI_HISTORY_TRANSLUCENT")) {
+    if(_wgetenv(L"MDS_RHI_HISTORY_TRANSLUCENT") || _wgetenv(L"MDS_RHI_CPU_SWITCH_TOON")) {
         const auto modelPath=userFile/L"Model/Miku_Hatsune_metal.pmd";
         std::ifstream input(modelPath,std::ios::binary);std::vector<std::uint8_t> bytes(std::istreambuf_iterator<char>{input},{});
         const auto u32=[&](std::size_t at){if(at+4>bytes.size())return std::uint32_t(0);std::uint32_t v;std::memcpy(&v,bytes.data()+at,4);return v;};
@@ -430,9 +442,15 @@ int Run(const fs::path& executable, const fs::path& fixture,
         const auto materials=indexOffset+4ull+static_cast<std::uint64_t>(u32(indexOffset))*2;
         const auto alphaOffset=materials+4+13*70+12;
         if(bytes.size()<283 || std::memcmp(bytes.data(),"Pmd",3) || u32(materials)<=13 || alphaOffset+4>bytes.size())return 26;
-        const float alpha=.5f;std::memcpy(bytes.data()+alphaOffset,&alpha,4);
+        if(_wgetenv(L"MDS_RHI_HISTORY_TRANSLUCENT")) {
+            const float alpha=.5f;std::memcpy(bytes.data()+alphaOffset,&alpha,4);
+            std::printf("temporary material 13 Alpha=0.5; original source preserved\n");
+        }
+        if(_wgetenv(L"MDS_RHI_CPU_SWITCH_TOON")) {
+            bytes[materials+4+12*70+44]=1; // PMD Toon index: shared toon02
+            std::printf("temporary material 12 Toon=2; original source preserved\n");
+        }
         std::ofstream output(modelPath,std::ios::binary|std::ios::trunc);output.write(reinterpret_cast<const char*>(bytes.data()),bytes.size());if(!output)return 26;
-        std::printf("temporary material 13 Alpha=0.5; original source preserved\n");
     }
     if (configuredMode) {
         // Change only the texture-name field in the temporary original PMD.
@@ -468,6 +486,31 @@ int Run(const fs::path& executable, const fs::path& fixture,
                               ReadBytes, &fixtureStream, source) ||
         source.header.version != mikudancestudio::format::PmmVersion::V1)
         return 1;
+    if(_wgetenv(L"MDS_RHI_GUI_GROUND") && wcscmp(_wgetenv(L"MDS_RHI_GUI_GROUND"),L"1")==0) {
+        struct LayoutContext {fs::path userFile,relocated;} context{userFile,relocated};
+        const auto resolve=[](void* raw,std::uint8_t,const std::array<char,20>&,const std::array<char,256>& reference,mikudancestudio::format::PmmModelLayout& layout)->bool {
+            const auto& context=*static_cast<LayoutContext*>(raw);
+            const std::string path(reference.data(),std::find(reference.begin(),reference.end(),'\0')-reference.begin());
+            const auto name=fs::path(path).filename();auto file=context.userFile/L"Model"/name;
+            if(!fs::is_regular_file(file) && name==context.relocated.filename())file=context.relocated;
+            std::ifstream stream(file,std::ios::binary);mikudancestudio::format::ModelDocument model;
+            if(!stream || !mikudancestudio::format::ReadModelDocument(ReadBytes,&stream,model) || model.kind!=mikudancestudio::format::ModelKind::Pmd)return false;
+            layout={static_cast<std::uint32_t>(model.pmd.bones.size()),static_cast<std::uint32_t>(model.pmd.morphs.size()),static_cast<std::uint32_t>(model.pmd.ikChains.size())};return true;
+        };
+        mikudancestudio::format::PmmSceneDocument parsed;if(!mikudancestudio::format::ParsePmmSceneDocument(source,resolve,&context,parsed))return 33;
+        const auto section=std::find_if(parsed.sections.begin(),parsed.sections.end(),[](const auto& s){return s.kind==mikudancestudio::format::PmmSceneSectionKind::Configuration;});
+        if(section==parsed.sections.end() || section->size<11)return 33;
+        // The documented view record is 11 bytes; groundGrid is its second
+        // byte. Change only the temporary fixture before the first render.
+        const auto offset=section->offset+section->size-10;fixtureStream.close();std::fstream edited(copiedScene,std::ios::in|std::ios::out|std::ios::binary);
+        const bool shadows=_wgetenv(L"MDS_RHI_GUI_PROJECTED_SHADOWS") && wcscmp(_wgetenv(L"MDS_RHI_GUI_PROJECTED_SHADOWS"),L"1")==0;
+        const char enabled=1;edited.seekp(static_cast<std::streamoff>(offset));edited.write(&enabled,1);
+        if(shadows){edited.seekp(static_cast<std::streamoff>(offset+1));edited.write(&enabled,1);}edited.close();if(!edited)return 33;
+        std::ifstream check(copiedScene,std::ios::binary);mikudancestudio::format::PmmSceneDocument verified;
+        if(!mikudancestudio::format::ReadPmmSceneDocument(ReadBytes,&check,resolve,&context,verified) || !verified.view.groundGrid ||
+            (shadows && !verified.view.groundShadow))return 33;
+        std::printf("temporary PMM groundGrid=1 groundShadow=%u offset=%zu; original source preserved\n",verified.view.groundShadow,offset);
+    }
 #ifdef MDS_EXPECT_RUNTIME_PARITY
     // In a diagnostic build the application writes this only after the
     // successful load tail has completed.
@@ -493,6 +536,7 @@ int Run(const fs::path& executable, const fs::path& fixture,
         std::fprintf(stderr, "failed to launch application: %lu\n", GetLastError());
         return 1;
     }
+    if(!child.Own())return 1;
     HWND dialog = nullptr;
     HWND handledDialog = nullptr;
     int recoveries = 0;
@@ -679,6 +723,15 @@ int Run(const fs::path& executable, const fs::path& fixture,
         }
     }
 #endif
+    // The CPU batch preview also needs the model view. This selection is
+    // independent of the optional legacy probe executable.
+    if (parityExecutable.empty() && _wgetenv(L"MDS_RHI_CPU_PREVIEW")) {
+        HWND radio=GetDlgItem(main,491);
+        if(!radio)return 15;
+        SendMessageW(radio,BM_SETCHECK,BST_CHECKED,0);
+        SendMessageW(main,WM_COMMAND,MAKEWPARAM(491,BN_CLICKED),reinterpret_cast<LPARAM>(radio));
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
     if (!parityExecutable.empty()) {
         HWND radio = GetDlgItem(main, 491);
         RECT client{};
@@ -698,6 +751,21 @@ int Run(const fs::path& executable, const fs::path& fixture,
                 if (pixels.find("status=") != std::string::npos) break;
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
+            // Pixel diagnostics can finish before the history recorder. Wait
+            // for its own boundary before copying evidence or checking the gate.
+            if (_wgetenv(L"MDS_RHI_HISTORY_REPLAY")) {
+                const bool portable = _wgetenv(L"MDS_RHI_PORTABLE_REPLAY") &&
+                    wcscmp(_wgetenv(L"MDS_RHI_PORTABLE_REPLAY"), L"1") == 0;
+                const bool dx11 = _wgetenv(L"MDS_RHI_PORTABLE_DX11_COMPARE") &&
+                    wcscmp(_wgetenv(L"MDS_RHI_PORTABLE_DX11_COMPARE"), L"1") == 0;
+                const auto historyDeadline = Clock::now() + std::chrono::seconds(dx11 ? 120 : 25);
+                while (Clock::now() < historyDeadline && WaitForSingleObject(child.info.hProcess, 0) == WAIT_TIMEOUT) {
+                    std::ifstream input(captureDirectory / L"history_replay.dx9");
+                    const std::string text(std::istreambuf_iterator<char>{input}, {});
+                    if (text.find(dx11 ? "DX11_GATE status=" : portable ? "PORTABLE_GATE status=" : "\nGATE status=") != std::string::npos) break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+            }
             std::ifstream statesFile(captureDirectory / L"model_material.snapshot");
             const std::string states(std::istreambuf_iterator<char>{statesFile}, {});
             std::printf("model material snapshot:\n%s\nmodel pixel comparison: %s\n",
@@ -713,7 +781,8 @@ int Run(const fs::path& executable, const fs::path& fixture,
             }
             if (const auto* evidence=_wgetenv(L"MDS_RHI_EVIDENCE_DIR")) {
                 for(const auto& entry:fs::directory_iterator(captureDirectory)){
-                    if(entry.is_regular_file()&&entry.path().filename().wstring().find(L"history_replay.reduction.draw")==0)
+                    const auto name=entry.path().filename().wstring();
+                    if(entry.is_regular_file()&&(name.find(L"history_replay.reduction.draw")==0 || name.find(L"history_replay.shadow_batch")==0 || name.find(L"history_replay.dx11_first_")==0 || name.find(L"history_replay.dx11_prefix.draw")==0 || name.find(L"history_replay.scene_prefix.")==0))
                         fs::copy_file(entry.path(),fs::path(evidence)/entry.path().filename(),fs::copy_options::overwrite_existing);
                 }
             }
@@ -725,12 +794,17 @@ int Run(const fs::path& executable, const fs::path& fixture,
                 while(position<replay.size()){
                     const auto end=replay.find('\n',position);
                     const auto line=replay.substr(position,end==std::string::npos?std::string::npos:end-position);
-                    if(line.find("BEGIN ")==0||line.find("PREFIX ")==0||line.find("GATE ")==0||line.find("CONTROL")==0||line.find("TRACE ")==0)
+                    if(line.find("BEGIN ")==0||line.find("PREFIX ")==0||line.find("GATE ")==0||line.find("CONTROL")==0||line.find("TRACE ")==0||line.find("PORTABLE")==0||line.find("DX11_")==0)
                         std::printf("%s\n",line.c_str());
                     if(end==std::string::npos)break;
                     position=end+1;
                 }
-                if (replay.find("BEGIN samples=8 quality=0") == std::string::npos ||
+                if (_wgetenv(L"MDS_RHI_PORTABLE_REPLAY") && wcscmp(_wgetenv(L"MDS_RHI_PORTABLE_REPLAY"),L"1")==0) {
+                    // 31 is explicit conversion rejection, never graphical success.
+                    if (replay.find("PORTABLE_GATE status=VALIDATED") == std::string::npos) return 31;
+                    if (_wgetenv(L"MDS_RHI_PORTABLE_DX11_COMPARE") && wcscmp(_wgetenv(L"MDS_RHI_PORTABLE_DX11_COMPARE"),L"1")==0 &&
+                        replay.find("DX11_GATE status=PASS") == std::string::npos) return 32;
+                } else if (replay.find("BEGIN samples=8 quality=0") == std::string::npos ||
                     replay.find("PREFIX status=PASS") == std::string::npos ||
                     replay.find("beforeDifferentPixels=0 ") == std::string::npos ||
                     replay.find("GATE status=PASS afterDifferentPixels=0 ") == std::string::npos ||
@@ -1058,6 +1132,53 @@ int Run(const fs::path& executable, const fs::path& fixture,
         if (result == 0) temporary.passed = true;
         return result == 77 ? 77 : result == 0 ? 0 : 17;
     }
+    if(_wgetenv(L"MDS_RHI_CPU_GEOMETRY")) {
+        if(_wgetenv(L"MDS_RHI_CPU_EMPTY_BACKGROUND_SCREEN")){
+            // Explicitly scoped test configuration, selected through the real
+            // menu. Bound background/screen resources still fail the CPU gate.
+            SendMessageW(main,WM_COMMAND,246,0);
+            std::puts("CPU_LIVE screenSource=background; native dynamic screen capture is outside this test");
+        }
+        if(!CpuLiveCheckpoint(main,child.info.dwProcessId,"loaded_edited"))return 34;
+        // Exercise actual painted frames, in addition to the synchronous
+        // runtime/session comparisons above. Leave the saved scene at frame 0.
+        for(unsigned frame=0;frame<10;++frame){
+            SendMessageW(main,WM_COMMAND,MAKEWPARAM(419,BN_CLICKED),reinterpret_cast<LPARAM>(GetDlgItem(main,419)));
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            if((frame==0 || frame==4) && !CpuLiveCheckpoint(main,child.info.dwProcessId,frame==0?"seek1":"seek5"))return 34;
+        }
+        for(unsigned frame=0;frame<10;++frame){
+            SendMessageW(main,WM_COMMAND,MAKEWPARAM(418,BN_CLICKED),reinterpret_cast<LPARAM>(GetDlgItem(main,418)));
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        }
+        if(_wgetenv(L"MDS_RHI_CPU_PLAY")) {
+            std::puts("CPU_PLAY configure");std::fflush(stdout);
+            const bool live=_wgetenv(L"MDS_RHI_CPU_LIVE_HISTORY")!=nullptr;
+            SetWindowTextW(GetDlgItem(main,409),L"0");SetWindowTextW(GetDlgItem(main,410),live?L"9000":L"300");
+            SendMessageW(main,WM_COMMAND,MAKEWPARAM(408,BN_CLICKED),reinterpret_cast<LPARAM>(GetDlgItem(main,408)));
+            if(!CpuLiveCheckpoint(main,child.info.dwProcessId,"playing"))return 34;
+            std::this_thread::sleep_for(std::chrono::milliseconds(700));
+            std::puts("CPU_PLAY stop");std::fflush(stdout);
+            SendMessageW(main,WM_COMMAND,MAKEWPARAM(408,BN_CLICKED),reinterpret_cast<LPARAM>(GetDlgItem(main,408)));
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            wchar_t current[32]{};GetWindowTextW(GetDlgItem(main,417),current,32);
+            const auto stoppedFrame=std::wcstol(current,nullptr,10);
+            if(stoppedFrame<0 || stoppedFrame>(live?9000:300))return 33;
+            if(live){
+                // Use the editor's actual frame-entry commit rather than
+                // issuing thousands of individual steps after a slow capture.
+                const auto edit=GetDlgItem(main,417);SetWindowTextW(edit,L"0");
+                SendMessageW(edit,WM_KEYDOWN,VK_RETURN,0);
+            }
+            for(long frame=0;!live && frame<stoppedFrame;++frame){
+                SendMessageW(main,WM_COMMAND,MAKEWPARAM(418,BN_CLICKED),reinterpret_cast<LPARAM>(GetDlgItem(main,418)));
+                std::this_thread::sleep_for(std::chrono::milliseconds(30));
+            }
+            SetWindowTextW(GetDlgItem(main,410),L"0");
+            std::puts("CPU_PLAY stopped");std::fflush(stdout);
+            if(!CpuLiveCheckpoint(main,child.info.dwProcessId,"stopped_before_save"))return 34;
+        }
+    }
     PostMessageW(main, WM_COMMAND, 0xD0, 0);
     if (!WaitForDialog(child.info.hProcess, child.info.dwProcessId,
                        dialog, true, 20) ||
@@ -1086,6 +1207,45 @@ int Run(const fs::path& executable, const fs::path& fixture,
                 std::printf("%s\n", text.substr(at, text.find('\n', at) - at).c_str());
             }
 #endif
+            if(_wgetenv(L"MDS_RHI_CPU_PREVIEW_UI_TEST")){
+                // Same application process: release the loaded v1 scene, show
+                // the unsupported empty-scene status, then open saved v2 via
+                // the actual file dialog. No native checkpoint is requested.
+                PostMessageW(main,WM_COMMAND,0xcc,0);
+                if(!WaitForDialog(child.info.hProcess,child.info.dwProcessId,dialog,false,20))return 35;
+                PostMessageW(ActionButton(dialog),BM_CLICK,0,0);
+                const auto emptyDeadline=Clock::now()+std::chrono::seconds(20);bool empty=false;
+                while(Clock::now()<emptyDeadline){DWORD_PTR count=0;
+                    if(SendMessageTimeoutW(GetDlgItem(main,436),CB_GETCOUNT,0,0,SMTO_ABORTIFHUNG,1000,&count) && count==1){empty=true;break;}
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));}
+                if(!empty)return 35;
+                SendMessageW(main,WM_COMMAND,0xe110,0);InvalidateRect(main,nullptr,FALSE);
+                const auto ledger=fs::path(_wgetenv(L"MDS_RHI_CPU_GEOMETRY_DIR"))/("cpu_resident."+std::to_string(child.info.dwProcessId)+".csv");
+                const auto presents=[&](){std::ifstream f(ledger);std::string line;unsigned count=0;while(std::getline(f,line))if(line.find(",dx11,present,PASS,")!=std::string::npos)++count;return count;};
+                const auto before=presents();
+                bool statusShown=false;const auto statusDeadline=Clock::now()+std::chrono::seconds(10);
+                while(Clock::now()<statusDeadline){
+                    struct Status {DWORD pid;bool shown=false;};Status state{child.info.dwProcessId};
+                    EnumWindows([](HWND w,LPARAM data)->BOOL{auto& s=*reinterpret_cast<Status*>(data);DWORD pid=0;GetWindowThreadProcessId(w,&pid);
+                        wchar_t type[64]{};GetClassNameW(w,type,64);if(pid==s.pid && !wcscmp(type,L"MDS_CPU_RHI_PREVIEW")){
+                            const auto label=FindWindowExW(w,nullptr,L"STATIC",nullptr);char text[512]{};GetWindowTextA(label,text,sizeof(text));
+                            s.shown=IsWindowVisible(label) && std::strstr(text,"Load a PMM scene");}return TRUE;},reinterpret_cast<LPARAM>(&state));
+                    if(state.shown){statusShown=true;break;}InvalidateRect(main,nullptr,FALSE);std::this_thread::sleep_for(std::chrono::milliseconds(100));}
+                if(!statusShown)return 35;
+                PostMessageW(main,WM_COMMAND,0xcd,0);
+                if(!WaitForDialog(child.info.hProcess,child.info.dwProcessId,dialog,true,20) || !SetFileName(automation.Get(),dialog,saved.wstring()))return 35;
+                PostMessageW(ActionButton(dialog),BM_CLICK,0,0);
+                const auto reloadDeadline=Clock::now()+std::chrono::seconds(40);bool drawn=false;
+                while(Clock::now()<reloadDeadline){InvalidateRect(main,nullptr,FALSE);if(presents()>before){drawn=true;break;}
+                    if(WaitForSingleObject(child.info.hProcess,0)!=WAIT_TIMEOUT)break;std::this_thread::sleep_for(std::chrono::milliseconds(100));}
+                if(!drawn)return 35;
+                std::puts("CPU_PREVIEW_UI same_process_v1_unload_empty_status_v2_reload=PASS");std::fflush(stdout);
+                // This test verifies sequential scene workflows, not two
+                // concurrent full application renderers. Release the first
+                // preview and DX9 device before the fresh-process v2 run.
+                SendMessageW(main,WM_COMMAND,0xe100,0);
+                child.Close();
+            }
             std::wstring reopenCommand = L"\"" + executable.wstring() +
                 L"\" \"" + saved.wstring() + L"\"";
             std::vector<wchar_t> reopenBuffer(reopenCommand.begin(),
@@ -1102,12 +1262,19 @@ int Run(const fs::path& executable, const fs::path& fixture,
                                 nullptr, nullptr, FALSE, 0, nullptr,
                                 workingDirectory.c_str(), &startup,
                                 &reopened.info)) return 11;
+            if(!reopened.Own())return 11;
             bool v2Loaded = false;
             const auto deadline = Clock::now() + std::chrono::seconds(45);
             while (Clock::now() < deadline) {
                 const auto windows = Snapshot(reopened.info.dwProcessId);
-                if (WaitForSingleObject(reopened.info.hProcess, 0) !=
-                    WAIT_TIMEOUT || !windows.dialogs.empty()) break;
+                if (WaitForSingleObject(reopened.info.hProcess, 0) != WAIT_TIMEOUT) {
+                    DWORD exitCode=0;GetExitCodeProcess(reopened.info.hProcess,&exitCode);
+                    std::fprintf(stderr,"v2 application exited during load: 0x%08lx\n",exitCode);break;
+                }
+                if (!windows.dialogs.empty()) {
+                    for(auto w:windows.dialogs){std::fprintf(stderr,"v2 load dialog: %ls\n",DialogMessage(w).c_str());EnumChildWindows(w,PrintChild,0);}
+                    break;
+                }
                 DWORD_PTR modelCount = 0;
                 if (windows.main && GetDlgItem(windows.main, 436) &&
                     SendMessageTimeoutW(GetDlgItem(windows.main, 436),
@@ -1132,6 +1299,18 @@ int Run(const fs::path& executable, const fs::path& fixture,
                 std::fprintf(stderr, "v2 accessory report:\n%s\n",
                              diagnosticText.c_str());
                 return 13;
+            }
+            const auto reopenedMain=Snapshot(reopened.info.dwProcessId).main;
+            if(_wgetenv(L"MDS_RHI_CPU_EMPTY_BACKGROUND_SCREEN"))SendMessageW(reopenedMain,WM_COMMAND,246,0);
+            if(!CpuLiveCheckpoint(reopenedMain,reopened.info.dwProcessId,"v2_loaded_edited"))return 34;
+            if(_wgetenv(L"MDS_RHI_CPU_LIVE_HISTORY")) {
+                SendMessageW(reopenedMain,WM_COMMAND,MAKEWPARAM(419,BN_CLICKED),reinterpret_cast<LPARAM>(GetDlgItem(reopenedMain,419)));
+                if(!CpuLiveCheckpoint(reopenedMain,reopened.info.dwProcessId,"v2_seek"))return 34;
+                SetWindowTextW(GetDlgItem(reopenedMain,409),L"0");SetWindowTextW(GetDlgItem(reopenedMain,410),L"9000");
+                SendMessageW(reopenedMain,WM_COMMAND,MAKEWPARAM(408,BN_CLICKED),reinterpret_cast<LPARAM>(GetDlgItem(reopenedMain,408)));
+                if(!CpuLiveCheckpoint(reopenedMain,reopened.info.dwProcessId,"v2_playing"))return 34;
+                SendMessageW(reopenedMain,WM_COMMAND,MAKEWPARAM(408,BN_CLICKED),reinterpret_cast<LPARAM>(GetDlgItem(reopenedMain,408)));
+                if(!CpuLiveCheckpoint(reopenedMain,reopened.info.dwProcessId,"v2_stopped"))return 34;
             }
             std::puts("relocated model selected; PMM saved, read back, and reopened");
             temporary.passed = true;

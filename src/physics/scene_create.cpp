@@ -83,9 +83,13 @@ bool PutIB(IDirect3DDevice9* dev, IDirect3DIndexBuffer9** slot,
 
 bool SceneConstruct(PhysicsScene* scene, D3DRenderer* d3dSub) {
     scene->owner = d3dSub;                                   // 0x4032F3
-    IDirect3DDevice9* dev = d3dSub->device;                  // +120032
+    // No renderer means a CPU simulation owner; gizmos are renderer resources.
+    // A legacy renderer with a missing device remains an initialization error.
+    IDirect3DDevice9* dev = d3dSub?d3dSub->device:nullptr;    // +120032
+    if(d3dSub && !dev)return false;
 
     // ---- gizmo buffers ----------------------------------------------------
+    if(dev){
     if (!PutVB(dev, &scene->gizmoSphereVB, 928, kGizmoSphere58))    // 0x403308
         return false;
     if (!PutIB(dev, &scene->gizmoSphereIB, 480, kGizmoSphereIdx))   // 0x403BD7
@@ -106,6 +110,7 @@ bool SceneConstruct(PhysicsScene* scene, D3DRenderer* d3dSub) {
         return false;
     if (!PutIB(dev, &scene->gizmoBoxSelIB, 144, kGizmoBoxSelIdx))   // 0x405A0D
         return false;
+    }
 
     // ---- Bullet world stack and static ground -------------------------------
     PhysicsWorldState physics;

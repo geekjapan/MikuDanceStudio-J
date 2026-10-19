@@ -41,7 +41,7 @@ namespace gjkepa2_impl
 // rounds to float exactly once; modern MSVC rounds every mulss/addss step
 // and takes the square root in double precision.  The helpers below replay
 // the original instruction lifetime bit for bit.
-static __declspec(noinline) float mmdX87Length(const btVector3& v)
+static BT_NOINLINE float mmdX87Length(const btVector3& v)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
 	float result;
@@ -71,7 +71,7 @@ static __declspec(noinline) float mmdX87Length(const btVector3& v)
 // GJK::getsupport's normalize (MMD 0x4E9630): the reciprocal 1/sqrt stays
 // extended on the x87 stack for the y/z components, while x multiplies the
 // once-rounded float copy of that reciprocal.
-static __declspec(noinline) void mmdGjkNormalizeDir(const btVector3& d,
+static BT_NOINLINE void mmdGjkNormalizeDir(const btVector3& d,
 													btVector3& out)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
@@ -113,7 +113,7 @@ static __declspec(noinline) void mmdGjkNormalizeDir(const btVector3& d,
 
 // MMD 0x4E9760 (GJK::det): the six-term determinant is evaluated entirely
 // on the x87 stack and rounded to float once.
-static __declspec(noinline) float mmdX87Det(const btVector3& a,
+static BT_NOINLINE float mmdX87Det(const btVector3& a,
 											const btVector3& b,
 											const btVector3& c)
 {
@@ -162,7 +162,7 @@ static __declspec(noinline) float mmdX87Det(const btVector3& a,
 
 // MMD 0x4E9950 tail: w[0]/w[1] are extended-precision products
 // sqrt((z*z+y*y)+x*x) * (1/sqrt(l)), each rounded once.
-static __declspec(noinline) void mmdRank3Weights(const btVector3& c1,
+static BT_NOINLINE void mmdRank3Weights(const btVector3& c1,
 												 const btVector3& c2,
 												 btScalar l,
 												 btScalar* w)
@@ -219,7 +219,7 @@ static __declspec(noinline) void mmdRank3Weights(const btVector3& c1,
 
 // MMD 0x4E9DF0 tail: reciprocal of vl stays extended while the three
 // determinants are scaled; w[3] folds the unrounded w[2] product.
-static __declspec(noinline) void mmdRank4Weights(btScalar detCBD,
+static BT_NOINLINE void mmdRank4Weights(btScalar detCBD,
 												 btScalar detACD,
 												 btScalar detBAD,
 												 btScalar vl,
@@ -262,7 +262,7 @@ static __declspec(noinline) void mmdRank4Weights(btScalar detCBD,
 
 // MMD 0x4EB420 (EPA::newface): length computed extended as
 // sqrt((y*y+z*z)+x*x), rounded to float once.
-static __declspec(noinline) float mmdX87LengthYXZ(const btVector3& v)
+static BT_NOINLINE float mmdX87LengthYXZ(const btVector3& v)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
 	float result;
@@ -289,7 +289,7 @@ static __declspec(noinline) float mmdX87LengthYXZ(const btVector3& v)
 
 // MMD 0x4EC670 tail: each barycentric cross length is computed extended
 // as sqrt((x*x+z*z)+y*y), rounded to float once.
-static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
+static BT_NOINLINE float mmdX87LengthXZY(const btVector3& v)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
 	float result;

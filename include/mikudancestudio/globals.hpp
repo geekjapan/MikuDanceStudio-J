@@ -23,15 +23,6 @@ extern const float g_Wrap32;
 // contains 30.0f; frame-driver divisions at RVA 0x3717B / 0x3719A.
 extern const float g_FrameScale;
 
-// The FrameDriver's var_14C8 dt budget (0x46EFDE/0x46F00D): initialised to
-// the real elapsed time (or 1/fps in frame-step recording mode), decremented
-// by 1/60 per catch-up substep (0x46F226 in BLOCK 1 / the BLOCK 2 twin) and
-// consumed by the settle section's main step (0x46FDBB) as its timeStep -
-// i.e. the settle steps only the REMAINDER of the frame's dt, not the full
-// dt again.  Shared between PlaybackCatchup and PhysicsFrame (the original
-// keeps it in one stack slot of sub_46B090).
-extern float g_CatchupDtBudget;
-
 // Angle-unit conversion pair used by the frame-driver edit boxes:
 // an entered value is converted with degrees = value / PI * 180
 // (the pi factor is the original's truncated double, not true pi).

@@ -67,6 +67,7 @@
 #include "mikudancestudio/model_sections.hpp"
 #include "model_format_win.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/model_cpu_bridge.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -217,7 +218,10 @@ inline void TracePmxOffset(int, const char*, int, int) {}
 }  // namespace
 
 bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
-             std::uint8_t englishUI, PathResolutionWorkspace& paths, int fh) {
+             std::uint8_t englishUI, PathResolutionWorkspace& paths, int fh,
+             ModelResourceMode resources) {
+    const bool cpuOnly=resources==ModelResourceMode::CpuOnly;
+    if(!cpuOnly && (!sub || !DevOf(sub))){_close(fh);return false;}
     (void)englishUI;   // dispatch argument mirrors model.physicsFlags
     (void)paths;
     mdl::ModelRecord& model = *mdl::Mdl(m);
@@ -327,7 +331,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
     }
     const std::int32_t vertCount = static_cast<std::int32_t>(model.vertexCount);
     if (vertCount != 0) {
-        IDirect3DDevice9* dev = DevOf(sub);
+        IDirect3DDevice9* dev = cpuOnly?nullptr:DevOf(sub);
         struct VbSpec { std::uint32_t stride, fvf; };
         static const VbSpec kSpec[5] = {
             {32, 274}, {48, 524818}, {64, 2622226}, {80, 11011090},
@@ -340,9 +344,9 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
         IDirect3DVertexBuffer9* vb = nullptr;
         // pool = D3DPOOL_MANAGED: every addl-UV ladder branch writes the
         // 5th argument slot with 1 (x64 0x7FF7CB4CA1CF)
-        if (FAILED(dev->CreateVertexBuffer(s.stride * vertCount, 8, s.fvf,
+        if (dev && (FAILED(dev->CreateVertexBuffer(s.stride * vertCount, 8, s.fvf,
                                            D3DPOOL_MANAGED, &vb, nullptr))
-            || vb == nullptr) {
+            || vb == nullptr)) {
             sprintf_s(text, 0x100, enData
                 ? "The performance of the graphics card doesn't suffice."
                 : kMsgNoPerfJp);
@@ -354,9 +358,9 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
         mdl::ResourceAs<IDirect3DVertexBuffer9>(mdl::Mdl(m)->vertexBuffer) = vb;
         IDirect3DVertexBuffer9* vb2 = nullptr;
         // edge VB: pool = 1 too (x64 0x7FF7CB4CA272)
-        if (FAILED(dev->CreateVertexBuffer(16 * vertCount, 8, 66,
+        if (dev && (FAILED(dev->CreateVertexBuffer(16 * vertCount, 8, 66,
                                            D3DPOOL_MANAGED, &vb2, nullptr))
-            || vb2 == nullptr) {
+            || vb2 == nullptr)) {
             sprintf_s(text, 0x100, enData
                 ? "The performance of the graphics card doesn't suffice."
                 : kMsgNoPerfJp);
@@ -411,7 +415,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
 
         // Main VB fill: the loader stores additional UVs component-first,
         // whereas the GPU records keep each float4 contiguous.
-        switch (model.pmxAdditionalUvCount) {
+        if(vb)switch (model.pmxAdditionalUvCount) {
         case 0: {
             mdl::SkinnedVertexBase* output = nullptr;
             if (SUCCEEDED(vb->Lock(0, 0,
@@ -463,7 +467,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
 
         // Edge VB fill (position + opaque black diffuse).
         mdl::EdgeVertex* edgeVertices = nullptr;
-        if (SUCCEEDED(vb2->Lock(0, 0,
+        if (vb2 && SUCCEEDED(vb2->Lock(0, 0,
                                 reinterpret_cast<void**>(&edgeVertices), 0))) {
             InitializePmxEdgeVertices(verts, vertCount, edgeVertices);
             vb2->Unlock();
@@ -477,10 +481,10 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
     }
     const std::int32_t faceCount = static_cast<std::int32_t>(model.indexCount);
     if (faceCount != 0) {
-        IDirect3DDevice9* dev = DevOf(sub);
+        IDirect3DDevice9* dev = cpuOnly?nullptr:DevOf(sub);
         const bool wideIdx = model.pmxVertexIndexSize >= 4;
         IDirect3DIndexBuffer9* ib = nullptr;
-        if (FAILED(dev->CreateIndexBuffer(
+        if (dev && FAILED(dev->CreateIndexBuffer(
                 (wideIdx ? 4 : 2) * faceCount, 0,
                 wideIdx ? D3DFMT_INDEX32 : D3DFMT_INDEX16,
                 // x64 LoadPMX 0x7FF7CB4CB3D6: Pool immediate is 1
@@ -505,7 +509,11 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
             MessageBoxA(hwnd, text, "pIndBuf->Lock", 0);
             _close(fh);
         };
-        if (wideIdx) {
+        if(cpuOnly){
+            for(std::int32_t i=0;i<faceCount;++i)
+                if(!format::ReadPmxVertexIndex(ReadModelFileBytes,&fh,model.pmxVertexIndexSize,indices[i]) ||
+                   indices[i]<0 || indices[i]>=vertCount){_close(fh);return false;}
+        } else if (wideIdx) {
             std::uint32_t* gpuIndices = nullptr;
             if (SUCCEEDED(ib->Lock(0, 0,
                                    reinterpret_cast<void**>(&gpuIndices), 0))) {
@@ -627,7 +635,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                                L"%s%s",
                                model.modelDirectory,
                                texPaths[idx]);
-                    if (!LoadTextureShared(
+                    if (!cpuOnly && !LoadTextureShared(
                             subBytes,
                             mat.texturePath))
                         wcscpy_s(mat.texturePath, 0x118, emptyPath);
@@ -641,9 +649,9 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                                    0x118, L"%s%s",
                                    model.modelDirectory,
                                    texPaths[idx]),
-                        !LoadTextureShared(
+                        (!cpuOnly && !LoadTextureShared(
                             subBytes,
-                            mat.spherePath))) {
+                            mat.spherePath)))) {
                     wcscpy_s(mat.spherePath, 0x118, emptyPath);
                 }
             }
@@ -655,7 +663,7 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
                     swprintf_s(mat.toonPath, 0x200, L"%s%s",
                                model.modelDirectory,
                                texPaths[idx]);
-                    if (!LoadTextureShared(
+                    if (!cpuOnly && !LoadTextureShared(
                             subBytes,
                             mat.toonPath)) {
                         wcscpy_s(mat.toonPath, 0x200, emptyPath);
@@ -1485,6 +1493,11 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
     if (model.facialFrameCount)
         model.groupCount =
             static_cast<std::uint8_t>(frameCount + 1);
+    // Root and Disp/IK are synthetic UI groups, even when a CPU import has
+    // only one (or no) display frame. The old allocation wrote group[1]
+    // beyond a one-element table for a valid minimal PMX.
+    const unsigned minimumGroups=model.facialFrameCount?3u:2u;
+    if(model.groupCount<minimumGroups)model.groupCount=static_cast<std::uint8_t>(minimumGroups);
     {
         const int groups = model.groupCount;
         mdl::DisplayGroup*& displayGroups = mdl::DisplayGroups(m);
@@ -1810,8 +1823,9 @@ bool LoadPMX(unsigned char* m, D3DRenderer* sub, std::uint8_t showInfo,
         }
         key.rotation[3] = 1.0f;
     }
+    if(!cpuOnly)InitializeModelCpuGeometry(g_Block,m);
     model.loadComplete = 1;
-    PostLoadInit(m);                                        // 0x49C850
+    if(!cpuOnly)PostLoadInit(m);                            // 0x49C850
     return true;
 }
 

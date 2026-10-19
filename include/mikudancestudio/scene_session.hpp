@@ -20,7 +20,16 @@ public:
                      SceneSession& output);
     bool Seek(std::uint32_t frame);
     bool StartPlayback();
+    // Absolute playback cursor in seconds, not a per-frame delta.
     bool Advance(float seconds);
+    // Optional host application gate: evaluating another subsystem does not
+    // necessarily apply its camera/light tracks. Keep displayed state separate
+    // from Pose while legacy playback gates remain in use. Standalone hosts
+    // omit these overrides and consume Pose directly.
+    bool SetRuntimeAppliedLight(const std::array<float,6>&);
+    const std::optional<std::array<float,6>>& RuntimeAppliedLight() const {return runtimeAppliedLight_;}
+    bool SetRuntimeAppliedCamera(const PmmEvaluatedCamera&);
+    const std::optional<PmmEvaluatedCamera>& RuntimeAppliedCamera() const {return runtimeAppliedCamera_;}
     // Windows runtime bridge: replace one model's linked key tracks after an
     // editor registration. The original byte envelope is then stale, so Save
     // requires reloading a newly serialized envelope first.
@@ -29,6 +38,7 @@ public:
         PmmKeyTrack<PmmMorphKey> morphs,
         PmmKeyTrack<PmmDisplayKey> displays);
     bool ReplaceRuntimeCameraTrack(PmmKeyTrack<PmmCameraKey> camera);
+    bool ReplaceRuntimeLightTrack(PmmKeyTrack<PmmLightKey> light);
     bool ReplaceRuntimeAccessoryTrack(
         std::uint8_t slot, PmmKeyTrack<PmmAccessoryKey> accessory);
     bool ReplaceRuntimeSelfShadowTrack(
@@ -59,6 +69,8 @@ private:
     std::vector<std::optional<ModelDocument>> models_;
     PmmSceneEvaluation pose_;
     PmmScenePlaybackState playback_;
+    std::optional<std::array<float,6>> runtimeAppliedLight_;
+    std::optional<PmmEvaluatedCamera> runtimeAppliedCamera_;
     bool loaded_ = false, playing_ = false;
     bool runtimeTracksChanged_ = false;
 };

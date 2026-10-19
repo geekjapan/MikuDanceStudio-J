@@ -132,6 +132,7 @@ void InitRenderStates(MMDApp* app) {
 
     D3DCAPS9 caps;
     dev->GetDeviceCaps(&caps);
+    app->CpuAlphaTestSupported()=(caps.AlphaCmpCaps & D3DPCMPCAPS_GREATEREQUAL)!=0;
     if (caps.AlphaCmpCaps & D3DPCMPCAPS_GREATEREQUAL) {  // caps+52 & 0x40
         dev->SetRenderState(D3DRS_ALPHAREF, 1);                     // state 24
         dev->SetRenderState(D3DRS_ALPHATESTENABLE, TRUE);           // state 15

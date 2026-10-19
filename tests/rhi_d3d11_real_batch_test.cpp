@@ -6,6 +6,7 @@
 #include <wrl/client.h>
 #include "mikudancestudio/rhi_real_batch_capture.hpp"
 #include "mikudancestudio/rhi_model_shader_constants.hpp"
+#include "mikudancestudio/rhi_d3d11.hpp"
 #include <filesystem>
 #include <fstream>
 #include <vector>
@@ -26,9 +27,12 @@ int main(int argc,char** argv) {
      FAILED(api->CheckDeviceFormat(0,D3DDEVTYPE_HAL,D3DFMT_X8R8G8B8,D3DUSAGE_RENDERTARGET,D3DRTYPE_SURFACE,D3DFMT_R32F)))return 77;
   std::puts("DX9 diagnostic INTZ / R32F history capture supported");return 0;
  }
+ bool adapterMode=false; unsigned overrideWidth=0,overrideHeight=0;
  bool msaa=false,centroid=false,flat=false,srgbResolve=false,vertexByte=false,noDepth=false,noBlend=false,hardwareVertex=false;
  while(argc>1 && argv[1][0]=='-') {
-  if(!std::strcmp(argv[1],"--msaa"))msaa=true;
+  if(!std::strcmp(argv[1],"--size") && argc>3) {overrideWidth=static_cast<unsigned>(std::stoul(argv[2]));overrideHeight=static_cast<unsigned>(std::stoul(argv[3]));argc-=2;argv+=2;}
+  else if(!std::strcmp(argv[1],"--adapter"))adapterMode=true;
+  else if(!std::strcmp(argv[1],"--msaa"))msaa=true;
   else if(!std::strcmp(argv[1],"--centroid"))centroid=true;
   else if(!std::strcmp(argv[1],"--flat"))flat=true;
   else if(!std::strcmp(argv[1],"--srgb-resolve"))srgbResolve=true;
@@ -61,6 +65,7 @@ int main(int argc,char** argv) {
  std::vector<std::uint32_t> historyDepth(h.width*h.height,0x00ffffff);
  if(h.history){if(msaa)return Fail(__LINE__);in.read(reinterpret_cast<char*>(historyColor.data()),historyColor.size());in.read(reinterpret_cast<char*>(historyDepth.data()),historyDepth.size()*4);}
  if(!in || in.peek()!=std::ifstream::traits_type::eof())return Fail(__LINE__);
+ if(overrideWidth || overrideHeight) {if(h.history || !overrideWidth || !overrideHeight || overrideWidth>4096 || overrideHeight>4096)return Fail(__LINE__);h.width=overrideWidth;h.height=overrideHeight;historyColor.assign(h.width*h.height*4,48);for(unsigned i=3;i<historyColor.size();i+=4)historyColor[i]=255;}
  // Fixed FVF has no vertex color/UV1; only directional fixed-function lighting.
  if(h.render[D3DRS_FOGENABLE] || h.render[D3DRS_SRGBWRITEENABLE] || h.render[D3DRS_ZENABLE]!=D3DZB_TRUE || h.render[D3DRS_CLIPPLANEENABLE] || h.render[D3DRS_DEPTHBIAS] || h.render[D3DRS_SLOPESCALEDEPTHBIAS] || h.render[D3DRS_TWOSIDEDSTENCILMODE] || h.render[D3DRS_SCISSORTESTENABLE] || h.render[D3DRS_FILLMODE]!=D3DFILL_SOLID)return Fail(__LINE__);
  for(auto& st:s.layout.stages)if(st.role!=MaterialTextureRole::None && st.coordinates==MaterialCoordinates::MeshUv1)return Fail(__LINE__);
@@ -202,6 +207,131 @@ int main(int argc,char** argv) {
  read9->UnlockRect();c11->Unmap(read11.Get(),0);
  std::filesystem::path out=std::filesystem::u8path(argv[2]);std::filesystem::create_directories(out);
  for(auto pair:{std::pair{"dx9.rgba",&a},std::pair{"dx11.rgba",&b},std::pair{"before.rgba",&historyColor}}){std::ofstream file(out/pair.first,std::ios::binary);file.write(reinterpret_cast<const char*>(pair.second->data()),pair.second->size());if(!file)return Fail(__LINE__);}
+ if(adapterMode) {
+#ifndef MIKUDANCESTUDIO_RHI_D3D11
+  return Fail(__LINE__);
+#else
+  if(msaa || centroid || flat || srgbResolve || vertexByte || noDepth || noBlend || h.history) return Fail(__LINE__);
+  auto factor=[](unsigned native,BlendFactor& out) {
+   switch(native) {
+   case D3DBLEND_ZERO:out=BlendFactor::Zero;break;case D3DBLEND_ONE:out=BlendFactor::One;break;
+   case D3DBLEND_SRCCOLOR:out=BlendFactor::SourceColor;break;case D3DBLEND_INVSRCCOLOR:out=BlendFactor::InvSourceColor;break;
+   case D3DBLEND_SRCALPHA:out=BlendFactor::SourceAlpha;break;case D3DBLEND_INVSRCALPHA:out=BlendFactor::InvSourceAlpha;break;
+   case D3DBLEND_DESTALPHA:out=BlendFactor::DestinationAlpha;break;case D3DBLEND_INVDESTALPHA:out=BlendFactor::InvDestinationAlpha;break;
+   case D3DBLEND_DESTCOLOR:out=BlendFactor::DestinationColor;break;case D3DBLEND_INVDESTCOLOR:out=BlendFactor::InvDestinationColor;break;
+   case D3DBLEND_SRCALPHASAT:out=BlendFactor::SourceAlphaSaturate;break;default:return false;
+   }return true;
+  };
+  ModelPipeline pipeline;pipeline.shader=s;
+  pipeline.raster.depthTest=true;pipeline.raster.depthWrite=h.render[D3DRS_ZWRITEENABLE]!=0;
+  if(h.render[D3DRS_ZFUNC]<1 || h.render[D3DRS_ZFUNC]>8 || h.render[D3DRS_CULLMODE]<1 || h.render[D3DRS_CULLMODE]>3)return Fail(__LINE__);
+  pipeline.raster.depthCompare=static_cast<DepthComparison>(h.render[D3DRS_ZFUNC]-1);
+  pipeline.raster.cull=h.render[D3DRS_CULLMODE]==D3DCULL_NONE?BatchCull::None:h.render[D3DRS_CULLMODE]==D3DCULL_CW?BatchCull::Clockwise:BatchCull::CounterClockwise;
+  pipeline.raster.alphaBlend=h.render[D3DRS_ALPHABLENDENABLE]!=0;
+  if(!factor(h.render[D3DRS_SRCBLEND],pipeline.raster.sourceBlend)||!factor(h.render[D3DRS_DESTBLEND],pipeline.raster.destinationBlend))return Fail(__LINE__);
+  pipeline.separateAlpha=h.render[D3DRS_SEPARATEALPHABLENDENABLE]!=0;
+  pipeline.colorOperation=static_cast<ModelBlendOp>(h.render[D3DRS_BLENDOP]);
+  if(pipeline.separateAlpha) {
+   if(!factor(h.render[D3DRS_SRCBLENDALPHA],pipeline.sourceAlpha)||!factor(h.render[D3DRS_DESTBLENDALPHA],pipeline.destinationAlpha))return Fail(__LINE__);
+   pipeline.alphaOperation=static_cast<ModelBlendOp>(h.render[D3DRS_BLENDOPALPHA]);
+  }
+  pipeline.stencil=h.render[D3DRS_STENCILENABLE]!=0;pipeline.stencilReference=h.render[D3DRS_STENCILREF];
+  pipeline.stencilReadMask=static_cast<std::uint8_t>(h.render[D3DRS_STENCILMASK]);pipeline.stencilWriteMask=static_cast<std::uint8_t>(h.render[D3DRS_STENCILWRITEMASK]);
+  pipeline.stencilCompare=static_cast<DepthComparison>(h.render[D3DRS_STENCILFUNC]-1);
+  pipeline.stencilFail=static_cast<ModelStencilOp>(h.render[D3DRS_STENCILFAIL]);pipeline.stencilDepthFail=static_cast<ModelStencilOp>(h.render[D3DRS_STENCILZFAIL]);pipeline.stencilPass=static_cast<ModelStencilOp>(h.render[D3DRS_STENCILPASS]);
+  pipeline.colorWriteMask=static_cast<std::uint8_t>(h.render[D3DRS_COLORWRITEENABLE]);
+  SwapchainDesc surface;surface.window={WindowSystem::Win32,reinterpret_cast<std::uintptr_t>(window)};surface.width=h.width;surface.height=h.height;surface.present=PresentMode::Immediate;
+  std::ofstream adapterReport(out/"adapter.report");
+  std::vector<unsigned char> firstImage;
+  SubmissionIdentity priorDevice{};
+  for(unsigned replacement=0;replacement<2;++replacement) {
+   auto bundle=CreateD3D11Device(surface,D3D11Driver::Hardware);if(!bundle)return Fail(__LINE__);
+   auto& device=*bundle.device;
+   auto vb=device.CreateBuffer({BufferUsage::Vertex,vbBytes.size()},vbBytes.data());
+   auto ib=device.CreateBuffer({BufferUsage::Index,ibBytes.size()},ibBytes.data());if(!vb || !ib)return Fail(__LINE__);
+   ModelReplayStream captured;captured.complete=true;captured.target.width=h.width;captured.target.height=h.height;
+   captured.clear={48/255.f,48/255.f,48/255.f,1};captured.source.frame=h.frame;
+   captured.events.push_back({1,ModelReplayOp::Clear});
+   auto publish=[&](ModelReplayResource resource) {
+    ModelReplayEvent event;event.sequence=captured.events.size()+1;event.op=ModelReplayOp::PublishResource;event.resource=resource.key;
+    captured.resources.push_back(std::move(resource));captured.events.push_back(event);
+   };
+   ModelReplayResource savedVb;savedVb.key={1,1};savedVb.bytes=vbBytes;publish(std::move(savedVb));
+   ModelReplayResource savedIb;savedIb.key={2,1};savedIb.kind=ReplayResourceKind::Indices;savedIb.bytes=ibBytes;publish(std::move(savedIb));
+   ModelReplayEvent capturedDraw;capturedDraw.op=ModelReplayOp::Draw;capturedDraw.label="captured PMM material";
+   capturedDraw.draw.pipeline=pipeline;capturedDraw.draw.vertices={1,1};capturedDraw.draw.indices={2,1};
+   capturedDraw.draw.firstIndex=h.first;capturedDraw.draw.indexCount=h.count;capturedDraw.draw.vertexCount=h.vertexBytes/32;
+   std::array<Handle,3> owned{};
+   for(unsigned stage=0;stage<3;++stage) if(textures[stage].desc.levels) {
+    const auto& t=textures[stage];ModelTextureData data;data.srgb=s.srgbSample[stage];data.generateMips=t.desc.autogen!=0;
+    for(unsigned level=0;level<(data.generateMips?1u:t.desc.levels);++level) {
+     RgbaImage image{std::max(1u,t.desc.width>>level),std::max(1u,t.desc.height>>level),t.mips[level]};
+     // Capture already stores portable RGBA.
+     data.levels.push_back(std::move(image));
+    }
+    owned[stage]=CreateD3D11ModelTexture(device,data);if(!owned[stage])return Fail(__LINE__);
+    ModelReplayResource snapshot;snapshot.key={10+stage,1};snapshot.kind=ReplayResourceKind::Texture;snapshot.texture=data;
+    capturedDraw.draw.textures[stage]=snapshot.key;publish(std::move(snapshot));
+   }
+   capturedDraw.sequence=captured.events.size()+1;captured.events.push_back(capturedDraw);
+   IndexedDraw stale=device.Record(IndexedDraw{vb,ib,h.first,h.count,h.vertexBytes/32,VertexLayout::PositionNormalUv});
+   ModelTextureData switchPixels;switchPixels.levels.push_back({1,1,{23,157,211,128}});
+   const auto switchTexture=CreateD3D11ModelTexture(device,switchPixels);if(!switchTexture)return Fail(__LINE__);
+   for(unsigned cycle=0;cycle<3;++cycle) {
+    if(cycle==1 && !ResizeD3D11Offscreen(device,h.width+16,h.height+16))return Fail(__LINE__);
+    if(!ResizeD3D11Offscreen(device,h.width,h.height))return Fail(__LINE__);
+    if(!device.BeginFrame({48/255.f,48/255.f,48/255.f,1}))return Fail(__LINE__);
+    // Exercise real-geometry material transitions without altering the isolated
+    // reference's color/depth/stencil history. This is not scene-history replay.
+    auto switching=pipeline;switching.colorWriteMask=0;switching.stencil=false;
+    switching.raster.depthTest=switching.raster.depthWrite=switching.raster.alphaBlend=false;
+    switching.shader.lighting=false;switching.shader.alphaTest=false;
+    switching.shader.nativeDiffuse={.25f,.5f,.75f,1};
+    for(unsigned stage=0;stage<3;++stage) {
+     auto& t=switching.shader.layout.stages[stage];t={};
+     t.role=stage==0?MaterialTextureRole::Toon:stage==1?MaterialTextureRole::Base:MaterialTextureRole::Sphere;
+     t.color=MaterialCombine::Modulate;t.colorArg2=stage==0?MaterialColorSource::LitDiffuse:MaterialColorSource::Previous;
+     switching.shader.srgbSample[stage]=false;
+     switching.shader.samplers[stage].min=switching.shader.samplers[stage].mag=switching.shader.samplers[stage].mip=SamplerFilter::Point;
+    }
+    if(!device.SetModelPipeline(switching))return Fail(__LINE__);
+    for(unsigned stage=0;stage<3;++stage)if(!device.BindTexture(stage,switchTexture))return Fail(__LINE__);
+    auto switchCommand=device.Record(IndexedDraw{vb,ib,h.first,h.count,h.vertexBytes/32,VertexLayout::PositionNormalUv});
+    if(!device.DrawIndexed(switchCommand))return Fail(__LINE__);
+    switching.shader.layout={};switching.shader.alphaTest=true;switching.shader.alphaCompare=DepthComparison::Never;
+    if(!device.SetModelPipeline(switching)||!device.DrawIndexed(switchCommand))return Fail(__LINE__);
+    if(!device.SetModelPipeline(pipeline)) {
+     std::fprintf(stderr,"pipeline hr=%llx sources=%u,%u,%u,%u colorVertex=%u stencil=%u compare=%u ops=%u,%u,%u\n",bundle.swapchain->LastNativeError(),s.materialSources[0],s.materialSources[1],s.materialSources[2],s.materialSources[3],s.colorVertex,pipeline.stencil,unsigned(pipeline.stencilCompare),unsigned(pipeline.stencilFail),unsigned(pipeline.stencilDepthFail),unsigned(pipeline.stencilPass));
+     return Fail(__LINE__);
+    }
+    for(unsigned stage=0;stage<3;++stage)if(owned[stage] && !device.BindTexture(stage,owned[stage]))return Fail(__LINE__);
+    if(device.DrawIndexed(stale))return Fail(__LINE__);
+    auto foreign=device.Record(IndexedDraw{vb,ib,h.first,h.count,h.vertexBytes/32,VertexLayout::PositionNormalUv});
+    if(priorDevice.device) {foreign.submission=priorDevice;if(device.DrawIndexed(foreign))return Fail(__LINE__);}
+    auto command=device.Record(IndexedDraw{vb,ib,h.first,h.count,h.vertexBytes/32,VertexLayout::PositionNormalUv});
+    auto invalid=command;invalid.firstIndex=h.indexBytes/2;if(device.DrawIndexed(invalid))return Fail(__LINE__);
+    if(!device.DrawIndexed(command)||!device.EndFrame())return Fail(__LINE__);
+    RgbaImage image;if(!ReadD3D11Offscreen(device,image))return Fail(__LINE__);
+    unsigned baselineDiff=0,dx9Diff=0;
+    if(image.pixels.size()!=b.size())return Fail(__LINE__);
+    for(std::size_t i=0;i<b.size();i+=4){baselineDiff+=std::memcmp(image.pixels.data()+i,b.data()+i,4)!=0;dx9Diff+=std::memcmp(image.pixels.data()+i,a.data()+i,4)!=0;}
+    adapterReport<<"replacement="<<replacement<<" cycle="<<cycle<<" epoch="<<device.Status().epoch<<" baselineDifferences="<<baselineDiff<<" dx9Differences="<<dx9Diff<<"\n";
+    if(firstImage.empty())firstImage=image.pixels;else if(firstImage!=image.pixels)return Fail(__LINE__);
+    std::ofstream output(out/("adapter-"+std::to_string(replacement)+"-"+std::to_string(cycle)+".rgba"),std::ios::binary);output.write(reinterpret_cast<const char*>(image.pixels.data()),image.pixels.size());
+    if(baselineDiff)return Fail(__LINE__);
+    RgbaImage replay;const auto replayResult=ReplayD3D11ModelPrefix(device,captured,1,replay);
+    if(!replayResult || replay.pixels!=image.pixels) {
+     std::fprintf(stderr,"captured replay failed sequence=%llu reason=%s\n",static_cast<unsigned long long>(replayResult.sequence),replayResult.reason.c_str());return Fail(__LINE__);
+    }
+    adapterReport<<"versionedReplay sequence="<<replayResult.sequence<<" differingPixels=0\n";
+    stale=command;
+   }
+   priorDevice={device.Status().identity,device.Status().epoch};
+   if(!bundle.swapchain->Retire() || ResizeD3D11Offscreen(device,h.width,h.height))return Fail(__LINE__);
+  }
+  adapterReport<<"status=PASS materialTransitions=three-stage,untextured,captured dx9Gate=SEPARATE\n";
+#endif
+ }
  unsigned live9=0,live11=0;
  const bool checkLive=h.history && !noDepth && !noBlend && !flat;
  if(checkLive) {
@@ -211,5 +341,5 @@ int main(int argc,char** argv) {
   for(unsigned i=0;i<a.size();i+=4){live9+=std::memcmp(a.data()+i,live.data()+i,4)!=0;live11+=std::memcmp(b.data()+i,live.data()+i,4)!=0;}
  }
  const bool pass=!pixels && changed9 && changed11 && !live9 && !live11;char report[900];std::snprintf(report,sizeof(report),"status=%s frame=%u slot=%u material=%u first=%u count=%u width=%u height=%u differingPixels=%u differingChannels=%u maxError=%u changedDX9=%u changedDX11=%u originalMSAA=%u replaySamples=%u quality=%u centroid=%u flat=%u srgbResolve=%u vertexByte=%u history=%u noDepth=%u noBlend=%u softwareVertex=%u liveChecked=%u liveDX9Differences=%u liveDX11Differences=%u adapter=%04x:%04x\n",pass?"PASS":"BLOCKED",h.frame,h.slot,h.material,h.first,h.count,h.width,h.height,pixels,channels,maximum,changed9,changed11,h.multisample,sampleCount,quality,centroid,flat,srgbResolve,vertexByte,h.history,noDepth,noBlend,hardwareVertex?0:h.vertexProcessing,checkLive,live9,live11,id.VendorId,id.DeviceId);std::fputs(report,stdout);std::ofstream reportFile(out/"comparison.report");reportFile<<report;if(!reportFile)return Fail(__LINE__);
- return pass?0:2;
+ return adapterMode?0:pass?0:2;
 }

@@ -168,13 +168,20 @@ void PatchCameraKey(Editor& editor, std::size_t offset,
     editor.changed(interpolation + 25, before.fov, after.fov);
     editor.changed(interpolation + 29, before.selected, after.selected);
 }
-void PatchBoneKey(Editor& editor, std::size_t offset,
+void PatchBoneKey(Editor& editor, std::size_t offset, PmmVersion version,
                   const PmmBoneKey& before, const PmmBoneKey& after) {
-    editor.changed(offset + 12, before.interpolation, after.interpolation);
+    for (int lane = 0; lane < 4; ++lane)
+        for (int group = 0; group < 4; ++group)
+            editor.changed(offset + 12 + lane * 4 + group,
+                before.interpolation[lane + group * 4],
+                after.interpolation[lane + group * 4]);
     editor.changed(offset + 28, before.position, after.position);
     editor.changed(offset + 40, before.rotation, after.rotation);
     editor.changed(offset + 56, before.allocated, after.allocated);
-    editor.changed(offset + 57, before.physicsDisabled, after.physicsDisabled);
+    if (version == PmmVersion::V2)
+        editor.changed(offset + 57, before.physicsDisabled, after.physicsDisabled);
+    else if (before.physicsDisabled != after.physicsDisabled)
+        editor.valid = false;
 }
 void PatchMorphKey(Editor& editor, std::size_t offset,
                    const PmmMorphKey& before, const PmmMorphKey& after) {
@@ -304,6 +311,7 @@ bool SameEdits(const PmmSceneDocument& expected,
         !Same(expected.lightState, actual.lightState) ||
         expected.selfShadowMode != actual.selfShadowMode ||
         !Same(expected.physicsInterval, actual.physicsInterval) ||
+        expected.physics.playbackMode != actual.physics.playbackMode ||
         expected.physics.gravityNoiseEnabled != actual.physics.gravityNoiseEnabled ||
         expected.physics.gravityNoise != actual.physics.gravityNoise ||
         !Same(expected.physics.gravityMagnitude, actual.physics.gravityMagnitude) ||
@@ -399,6 +407,9 @@ bool WritePmmSceneDocument(WritePmmBytes write, void* context,
         !PatchTrack(editor, original.lightKeys, scene.lightKeys,
                     PatchLightKey)) return false;
     if (original.physicsOffset != 0) {
+        editor.changed(original.physicsOffset +
+            (patched.header.version == PmmVersion::V2 ? 9 : 0),
+            original.physics.playbackMode, scene.physics.playbackMode);
         const std::size_t base = original.physicsOffset +
             (patched.header.version == PmmVersion::V2 ? 10 : 1);
         editor.changed(base, original.physics.gravityMagnitude,
@@ -409,7 +420,8 @@ bool WritePmmSceneDocument(WritePmmBytes write, void* context,
                        scene.physics.gravityDirection);
         editor.changed(base + 20, original.physics.gravityNoiseEnabled,
                        scene.physics.gravityNoiseEnabled);
-    } else if (original.physics.gravityMagnitude != scene.physics.gravityMagnitude ||
+    } else if (original.physics.playbackMode != scene.physics.playbackMode ||
+               original.physics.gravityMagnitude != scene.physics.gravityMagnitude ||
                original.physics.gravityNoise != scene.physics.gravityNoise ||
                original.physics.gravityDirection != scene.physics.gravityDirection ||
                original.physics.gravityNoiseEnabled != scene.physics.gravityNoiseEnabled)
@@ -434,13 +446,15 @@ bool WritePmmSceneDocument(WritePmmBytes write, void* context,
             model.bonePose.size() != oldModel.bonePose.size() ||
             model.morphPose.size() != oldModel.morphPose.size() ||
             model.ikPose.size() != oldModel.ikPose.size()) return false;
-        if (version == PmmVersion::V2 &&
-            (!PatchTrack(editor, oldModel.boneKeys, model.boneKeys,
-                         PatchBoneKey) ||
+        if (!PatchTrack(editor, oldModel.boneKeys, model.boneKeys,
+                         [version](Editor& target, std::size_t offset,
+                             const PmmBoneKey& before, const PmmBoneKey& after) {
+                             PatchBoneKey(target, offset, version, before, after);
+                         }) ||
              !PatchTrack(editor, oldModel.morphKeys, model.morphKeys,
                          PatchMorphKey) ||
              !PatchTrack(editor, oldModel.displayKeys, model.displayKeys,
-                         PatchDisplayKey))) return false;
+                         PatchDisplayKey)) return false;
         const std::size_t componentCount = version == PmmVersion::V1 ? 8 : 7;
         const std::size_t flagCount = version == PmmVersion::V1 ? 2 : 3;
         const std::size_t stride = 4 * componentCount + flagCount;

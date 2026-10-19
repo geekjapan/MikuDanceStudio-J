@@ -25,6 +25,7 @@
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/rhi_preview_host.hpp"
 #include "mme_host_api.h"
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
@@ -32,6 +33,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     using namespace mikudancestudio;
 
     (void)hPrevInstance;
+
+#ifdef MIKUDANCESTUDIO_CPU_RENDERING
+    int argc=0;auto** argv=CommandLineToArgvW(GetCommandLineW(),&argc);
+    if(argv && argc>1 && std::wcscmp(argv[1],L"--rhi-preview")==0){
+        const int result=RunIndependentRhiPreview(argc-1,argv+1);LocalFree(argv);return result;
+    }
+    if(argv)LocalFree(argv);
+#endif
 
     struct EffectRuntime {
         explicit EffectRuntime(HINSTANCE instance) { MmeHostInitializeRuntime(instance); }

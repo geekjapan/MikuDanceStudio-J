@@ -58,7 +58,7 @@ subject to the following restrictions:
 // MMD 0x4E18B0 (capsule-capsule fast path): the distance is computed as
 // (float)(sqrt(lenSqr) - radiusA - radiusB) with the square root and both
 // subtractions kept extended on the x87 stack.
-static __declspec(noinline) btScalar mmdCapsuleDistance(btScalar lenSqr,
+static BT_NOINLINE btScalar mmdCapsuleDistance(btScalar lenSqr,
                                                        btScalar radiusA,
                                                        btScalar radiusB)
 {
@@ -80,7 +80,7 @@ static __declspec(noinline) btScalar mmdCapsuleDistance(btScalar lenSqr,
 
 // normalOnB = ptsVector * -(1/sqrt(lenSqr)), reciprocal extended and each
 // component rounded once (MMD 0x4E18B0).
-static __declspec(noinline) void mmdCapsuleNormal(btVector3& normal,
+static BT_NOINLINE void mmdCapsuleNormal(btVector3& normal,
                                                  const btVector3& pts,
                                                  btScalar lenSqr)
 {
@@ -114,7 +114,7 @@ static __declspec(noinline) void mmdCapsuleNormal(btVector3& normal,
 
 // MMD's plane-space fallback branches: inv = 1/sqrt(a*a + b*b) stays
 // extended while the two components are scaled once.
-static __declspec(noinline) void mmdCapsulePlaneSpace(btVector3& normal,
+static BT_NOINLINE void mmdCapsulePlaneSpace(btVector3& normal,
                                                      btScalar a, btScalar b,
                                                      bool zBranch)
 {

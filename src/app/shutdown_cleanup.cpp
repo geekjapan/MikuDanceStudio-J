@@ -68,11 +68,13 @@
 #include <cstdlib>
 #include <new>
 
+#include "mikudancestudio/scene_preview_ui.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/rhi_d3d9.hpp"
 #include "mikudancestudio/model_batch_bridge.hpp"
+#include "mikudancestudio/model_cpu_preview.hpp"
 #include "mikudancestudio/dshow_recorder.hpp"
 
 namespace mikudancestudio {
@@ -322,6 +324,11 @@ void ShutdownCleanup(MMDApp* app) {
     ForgetHudSpriteRgba(app);
     ResetHistoryReplay();
     InvalidateModelBatchComparison();
+#ifdef MIKUDANCESTUDIO_DIAG
+    ReleaseCpuModelPreview();
+#else
+    ReleaseCpuSceneFrame();
+#endif
     if (app->Renderer())
         rhi::ForgetApplicationOverlayCache(app->Renderer()->device);
     auto& s = *app;
@@ -388,6 +395,7 @@ void ShutdownCleanup(MMDApp* app) {
     ReleaseSlot(s.OverlayTexture());                            // 0x462E5A
     ReleaseSlot(s.CaptureRenderTarget());                       // 0x462E72
     ReleaseSlot(s.CaptureSystemSurface());                      // 0x462E8A
+    s.CpuNativeCaptureTexturePresent()=false;
     ReleaseSlot(s.CaptureTexture());                            // 0x462EA2
     ReleaseSlot(s.AviBackgroundSurface());                      // 0x462EBA
     ReleaseSlot(s.AviOverlayVertices());                        // 0x462ED2
@@ -395,7 +403,7 @@ void ShutdownCleanup(MMDApp* app) {
     ReleaseSlot(s.PictureBackgroundTexture());                  // 0x462F02
     if (s.AviBackgroundTexture() != nullptr) {                   // 0x462F1A
         s.AviBackgroundTexture()->Release();
-        s.AviBackgroundTexture() = nullptr;
+        s.AviBackgroundTexture() = nullptr; s.CpuNativeBackgroundTexturePresent()=false;
     }
 
     // ---- 9: four global keyframe tracks -----------------------------------

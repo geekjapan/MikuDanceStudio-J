@@ -1,3 +1,4 @@
+#include "mikudancestudio/runtime_cpu_tracks.hpp"
 #include "mikudancestudio/scene_timeline_bridge.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
@@ -88,6 +89,10 @@ format::PmmAccessoryKey Accessory(const mdl::AccessoryKey& key) {
     std::copy_n(key.rotation, 3, value.rotation.begin());
     value.scale = key.scale;
     return value;
+}
+format::PmmLightKey Light(const mdl::LightKey& key) {
+    format::PmmLightKey value;value.frame=key.frame;value.previous=key.previous;value.next=key.next;value.selected=key.selected;
+    std::copy_n(key.direction,3,value.direction.begin());std::copy_n(key.color,3,value.color.begin());return value;
 }
 format::PmmSelfShadowKey SelfShadow(const mdl::SelfShadowKey& key) {
     return {key.frame, key.previous, key.next, key.mode,
@@ -269,6 +274,17 @@ bool SyncLiveCamera(MMDApp* app, format::SceneSession& session) {
                          Camera, camera)) return false;
     return session.ReplaceRuntimeCameraTrack(std::move(camera));
 }
+bool SyncLiveLight(MMDApp* app,format::SceneSession& session) {
+    const auto* live=app->LightKeys();const auto& saved=session.Document().lightKeys;
+    if(!live || saved.dense.empty())return true;
+    const auto same=[](const mdl::LightKey& source,const format::PmmLightKey& item){const auto key=Light(source);
+        return key.frame==item.frame && key.previous==item.previous && key.next==item.next && key.direction==item.direction && key.color==item.color;};
+    bool unchanged=saved.dense.size()==1 && same(live[0],saved.dense[0]);
+    if(unchanged)for(const auto& key:saved.sparse)if(key.index<0 || key.index>=mdl::kTimelineKeyCapacity || !same(live[key.index],key.value)){unchanged=false;break;}
+    if(unchanged)return true;
+    format::PmmKeyTrack<format::PmmLightKey> track;if(!CopyLinkedTrack(live,1,mdl::kTimelineKeyCapacity,Light,track))return false;
+    return session.ReplaceRuntimeLightTrack(std::move(track));
+}
 bool SyncLiveAccessory(MMDApp* app, format::SceneSession& session,
                        const format::PmmSceneAccessory& source) {
     const auto* live = app->AccessoryKeys(source.slot);
@@ -362,66 +378,6 @@ bool SyncLiveGravity(MMDApp* app, format::SceneSession& session) {
                          Gravity, gravity)) return false;
     return session.ReplaceRuntimeGravityTrack(std::move(gravity));
 }
-void ApplyPose(unsigned char* raw, const format::PmmEvaluatedModel& pose,
-               bool applySelectors) {
-    auto& live = *mdl::Mdl(raw);
-    if (pose.bones.size() != live.boneCount ||
-        pose.morphValues.size() != live.morphCount ||
-        pose.ikEnabled.size() != live.ikChainCount ||
-        (applySelectors && pose.selectors.size() != live.boneOrderCount))
-        return;
-    live.loadComplete = pose.visible;
-    for (std::uint32_t i = 0; i < live.ikChainCount; ++i)
-        live.ikChains[i].enabled = pose.ikEnabled[i];
-    for (std::uint32_t i = 0; applySelectors && i < live.boneOrderCount; ++i) {
-        auto& target = live.boneOrderTable[i];
-        const auto& source = pose.selectors[i];
-        target.linkedModel = source.linkedModel;
-        target.linkedBone = source.linkedBone;
-        target.windowStart = source.windowStart;
-        target.windowEnd = source.windowEnd;
-    }
-    for (std::uint32_t i = 0; i < live.morphCount; ++i)
-        live.morphs[i].value = pose.morphValues[i];
-    for (std::uint32_t i = 0; i < live.boneCount; ++i) {
-        auto& target = live.boneTable[i];
-        const auto type = static_cast<std::int8_t>(target.type);
-        if ((type > static_cast<std::int8_t>(mdl::BoneType::Effector) &&
-             target.type != mdl::BoneType::FixedAxis) ||
-            target.hasRigidBody || target.slotIndex >= 0) continue;
-#ifdef MIKUDANCESTUDIO_DIAG
-        if (const char* path = std::getenv("MDS_BONE_POSE_COMPARE")) {
-            float translationDelta = 0.0f;
-            float rotationDelta = 0.0f;
-            for (int component = 0; component < 3; ++component)
-                translationDelta = std::max(translationDelta,
-                    std::fabs(target.trans[component] -
-                              pose.bones[i].translation[component]));
-            for (int component = 0; component < 4; ++component)
-                rotationDelta = std::max(rotationDelta,
-                    std::fabs(target.rotQuat[component] -
-                              pose.bones[i].rotation[component]));
-            if (translationDelta > 0.001f || rotationDelta > 0.001f) {
-                if (auto* output = std::fopen(path, "a")) {
-                    std::fprintf(output,
-                        "slot=%u bone=%u name=%.20s translation_delta=%g rotation_delta=%g "
-                        "live_translation=(%g,%g,%g) session_translation=(%g,%g,%g)\n",
-                        pose.slot, i, target.name, translationDelta, rotationDelta,
-                        target.trans[0], target.trans[1], target.trans[2],
-                        pose.bones[i].translation[0], pose.bones[i].translation[1],
-                        pose.bones[i].translation[2]);
-                    std::fclose(output);
-                }
-            }
-        }
-#endif
-        std::copy(pose.bones[i].translation.begin(),
-                  pose.bones[i].translation.end(), target.trans);
-        std::copy(pose.bones[i].rotation.begin(),
-                  pose.bones[i].rotation.end(), target.rotQuat);
-        target.physicsDisabled = pose.bones[i].physicsDisabled;
-    }
-}
 void ApplyAllPoses(MMDApp* app, const format::SceneSession& session) {
     const auto& pose = session.Pose().models;
     if (pose.size() != session.Document().models.size()) return;
@@ -430,7 +386,7 @@ void ApplyAllPoses(MMDApp* app, const format::SceneSession& session) {
     for (const auto& model : pose)
         if (model.slot < kModelSlotCount)
             if (auto* raw = app->ModelSlot(model.slot))
-                ApplyPose(raw, model, applySelectors);
+                ApplyCpuPmmPose(raw, model, applySelectors);
 }
 void ApplyAccessoryPose(MMDApp* app,
                         const format::PmmEvaluatedAccessory& pose) {
@@ -453,6 +409,7 @@ void SeekPortableSceneModel(unsigned char* model, int frame) {
     std::size_t index = 0;
     if (frame < 0 || !Active(app, model, session, index) ||
         !SyncAllLive(app, *session) ||
+        !SyncLiveLight(app,*session) ||
         !session->Seek(static_cast<std::uint32_t>(frame))) return;
     // SeekModelFrame is called separately for each slot. Applying every
     // evaluated pose here changes models whose legacy seek/transform pass has
@@ -463,13 +420,27 @@ void SeekPortableSceneModel(unsigned char* model, int frame) {
                                    poses[index].slot) return;
     const bool applySelectors = session->Document().envelope.header.version ==
                                 format::PmmVersion::V2;
-    ApplyPose(model, poses[index], applySelectors);
+    ApplyCpuPmmPose(model, poses[index], applySelectors);
 }
 
 void StartPortableScenePlayback(MMDApp* app) {
     auto* session = app ? app->PortableSceneSession() : nullptr;
+    // The old Windows light track can stay parked while model playback
+    // advances. Accessory ambient adjustment aliases LightColor on x86 and
+    // its subtract/add round trip can drift from the applied specular RGB.
+    // Publish the canonical CPU light, not that adjusted ambient mirror.
+    // ApplyTimelineLightState publishes again when the light gate actually runs.
+    if(session)session->SetRuntimeAppliedLight({app->SceneLight().Specular.r,app->SceneLight().Specular.g,app->SceneLight().Specular.b,
+        app->LightDirection()[0],app->LightDirection()[1],app->LightDirection()[2]});
+    if(session) {
+        format::PmmEvaluatedCamera applied;
+        std::copy_n(app->CameraPosition(),3,applied.position.begin());std::copy_n(app->CameraRotation(),3,applied.rotation.begin());
+        applied.distance=app->CameraDistance();applied.fov=app->CameraFov();applied.perspective=app->CameraPerspective();
+        applied.parentModel=app->CameraParentModel();applied.parentBone=app->CameraParentBone();session->SetRuntimeAppliedCamera(applied);
+    }
     if (!session || !SyncAllLive(app, *session) ||
         !SyncLiveCamera(app, *session) ||
+        !SyncLiveLight(app,*session) ||
         !SyncAllAccessories(app, *session) ||
         !SyncLiveSelfShadow(app, *session) ||
         !SyncLiveGravity(app, *session) ||
@@ -482,6 +453,7 @@ void StartPortableScenePlayback(MMDApp* app) {
 void SeekPortableSceneCamera(MMDApp* app, int frame) {
     auto* session = app ? app->PortableSceneSession() : nullptr;
     if (!session || frame < 0 || !SyncLiveCamera(app, *session) ||
+        !SyncLiveLight(app,*session) ||
         !session->Seek(static_cast<std::uint32_t>(frame))) return;
     ApplyPortableSceneCamera(app);
 }
@@ -499,6 +471,7 @@ void ApplyPortableSceneCamera(MMDApp* app) {
     app->CameraPerspective() = pose.perspective;
     app->CameraParentModel() = pose.parentModel;
     app->CameraParentBone() = pose.parentBone;
+    session->SetRuntimeAppliedCamera(pose);
 }
 
 void SeekPortableSceneAccessory(MMDApp* app, int slot, int frame) {

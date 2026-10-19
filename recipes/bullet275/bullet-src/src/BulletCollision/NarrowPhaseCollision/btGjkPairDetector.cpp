@@ -40,7 +40,7 @@ int gNumGjkChecks = 0;
 // VC9 keeps 1/sqrt(length2) in an x87 register while it scales all three
 // components in the penetration-result path.  Modern MSVC rounds the square
 // root to float first and emits divss/mulss, which changes MMD contact normals.
-static __declspec(noinline) void mmdGjkNormalizeX87(btVector3& value,
+static BT_NOINLINE void mmdGjkNormalizeX87(btVector3& value,
 													btScalar lengthSquared)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
@@ -73,7 +73,7 @@ static __declspec(noinline) void mmdGjkNormalizeX87(btVector3& value,
 // x87 stack while every normalInB component is scaled once; the float copy
 // of rlen feeds the (1/rlen - margin) distance, and s is the extended sqrt
 // of squaredDistance rounded once to float.
-static __declspec(noinline) void mmdGjkTailNormalize(btVector3& normal,
+static BT_NOINLINE void mmdGjkTailNormalize(btVector3& normal,
                                                     btScalar lenSqr,
                                                     btScalar squaredDistance,
                                                     btScalar* rlenOut,
@@ -116,7 +116,7 @@ static __declspec(noinline) void mmdGjkTailNormalize(btVector3& normal,
 // MMD 0x4E4970: distance2 = -(float)sqrt(((dz*dz + dy*dy) + dx*dx)) with the
 // differences, squares, sum and square root all kept extended on the x87
 // stack; a single rounding happens at the final store.
-static __declspec(noinline) btScalar mmdGjkNegLengthZXY(const btVector3& a,
+static BT_NOINLINE btScalar mmdGjkNegLengthZXY(const btVector3& a,
 												   const btVector3& b)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
@@ -153,7 +153,7 @@ static __declspec(noinline) btScalar mmdGjkNegLengthZXY(const btVector3& a,
 
 // MMD 0x4E4B30: distance2 = (float)(sqrt(((dz*dz + dy*dy) + dx*dx)) - margin),
 // everything extended until the single float store.
-static __declspec(noinline) btScalar mmdGjkLengthMinusMarginZXY(
+static BT_NOINLINE btScalar mmdGjkLengthMinusMarginZXY(
 	const btVector3& a, const btVector3& b, btScalar margin)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)

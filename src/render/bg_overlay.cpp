@@ -217,7 +217,16 @@ void RefreshOverlayVertexBuffer(MMDApp* app, IDirect3DVertexBuffer9* vb,
 
 // VA 0x004168D0 - AVI background frame -> texture + overlay quad.
 void AviBgOverlayRefresh(MMDApp* app) {
+    if (app == nullptr)
+        return;
     auto& s = *app;
+    // Refresh commands can run with no AVI loaded, or after a decoder error
+    // has closed its handles. Do not allocate GPU surfaces for that state:
+    // default frame dimensions are zero and would report an unrelated DX9
+    // allocation failure every time playback stops.
+    if (s.AviBackgroundEnabled() != 1 || s.AviStream() == nullptr ||
+        s.AviFrameReader() == nullptr)
+        return;
     D3DRenderer* wrapper = s.Renderer();
     if (wrapper == nullptr)
         return;
@@ -231,6 +240,7 @@ void AviBgOverlayRefresh(MMDApp* app) {
             0x400, 0x400, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8,
             D3DPOOL_DEFAULT, &tex, nullptr);
         s.AviBackgroundTexture() = tex;
+        s.CpuNativeBackgroundTexturePresent()=SUCCEEDED(hr);
         if (hr != 0) {
             ReleaseAviBackgroundHandles(app);
             MessageBoxA(OverlayHwnd(app),                         // 0x416988

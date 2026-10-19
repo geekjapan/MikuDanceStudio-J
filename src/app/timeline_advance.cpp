@@ -67,6 +67,7 @@
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/d3dx_dyn.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/model_input_bridge.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/pmm_scene_evaluation.hpp"
 #include "mikudancestudio/scene_timeline_bridge.hpp"
@@ -298,6 +299,7 @@ void ReloadModels(MMDApp* app) {
             device->SetTransform(
                 D3DTS_PROJECTION,
                 reinterpret_cast<const D3DMATRIX*>(&projection));
+            SetCpuProjectionPolicy(app,render::FovConversion::DoubleMultiply);
         }
     }
 }
@@ -419,6 +421,7 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
         IDirect3DDevice9* dev = wrapper->device;   // +120032
         dev->SetTransform(D3DTS_PROJECTION,
                           reinterpret_cast<const D3DMATRIX*>(&mat));
+        SetCpuProjectionPolicy(app,render::FovConversion::DoubleMultiply);
     }
 
     // ---- 4B. light track (0x417A62..0x417DB5) ------------------------------

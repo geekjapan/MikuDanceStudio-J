@@ -149,6 +149,7 @@ add_library(mikudancestudio_core STATIC
       src/window/ui_model_reload.cpp
       src/window/ui_selection_reeval.cpp
     src/window/ui_editor_click.cpp
+    src/window/timeline_selection.cpp
     src/window/ui_frame_step.cpp
     src/window/ui_frame_refresh.cpp
     src/window/ui_mousemove.cpp
@@ -379,6 +380,10 @@ if(BUILD_TESTING)
     add_executable(bone_pick_test tests/bone_pick_test.cpp)
     target_link_libraries(bone_pick_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME bone_pick COMMAND bone_pick_test)
+    add_executable(timeline_selection_test tests/timeline_selection_test.cpp
+        src/window/timeline_selection.cpp)
+    target_include_directories(timeline_selection_test PRIVATE include)
+    add_test(NAME timeline_selection COMMAND timeline_selection_test)
     add_executable(model_key_reduction_test tests/model_key_reduction_test.cpp
         src/model/model_key_reduction.cpp)
     target_include_directories(model_key_reduction_test PRIVATE include)

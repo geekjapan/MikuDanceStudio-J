@@ -50,6 +50,7 @@
 #include <cstring>
 #include <new>
 
+#include "timeline_selection.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
@@ -85,18 +86,6 @@ void PostLanguageSweep2(MMDApp* app);  // VA 0x0040D070 (ui_view_refresh.cpp);
                                        // was declared here as 0x40D070 - same
                                        // function, the local twin was removed
 void SelectionReeval(MMDApp* app);                              // VA 0x00430510 (stubs.cpp)
-
-// qsort comparator of the selection-stat records - original VA 0x0040EC70:
-//   v2 = a1[3]; v3 = a2[3]; return (v2 >= v3) ? (v2 > v3) : -1;
-// (compares the 4th dword of each 16-byte record; -1 when a1 < a2,
-//  (v2>v3) when a1 >= a2 - so equal records return 0)
-int CompareFunction(const void* a, const void* b) {
-    const std::int32_t keyA = static_cast<const std::int32_t*>(a)[3];
-    const std::int32_t keyB = static_cast<const std::int32_t*>(b)[3];
-    if (keyA >= keyB)
-        return keyA > keyB;
-    return -1;
-}
 
 // ---- file-local helpers (extracted from sub_446A70, original VAs in the
 //      comments) -----------------------------------------------------------
@@ -135,34 +124,6 @@ static bool MatchText(const char* a, const char* b) {
         ++b;
     }
     return *b == '\0';
-}
-
-// Clear the four selection-bitmap arrays pointed to by this+0x374 (rigid,
-// 0x54-stride, flag +0x48), this+0x378 (joint, 0x28-stride, flag +0x24),
-// this+0x37C (IK, 0x18-stride, flag +0x14), this+0x380 (morph, 0x24-stride,
-// flag +0x21) - 10000 records each - plus the 255-slot record table at
-// this+0x384 (0x3C-stride, flag +0x18, 10000 records per slot).
-// (sub_446A70 @ 0x447460 / 0x447580 / 0x4476A0 / 0x4477C0 / 0x447900 /
-//  0x4479E0 / 0x447A30)
-static void ClearSelectionBitmaps(MMDApp* app) {
-    for (int i = 0; i < 0x2710; ++i) {
-        app->CameraKeys()[i].selected = 0;
-        app->LightKeys()[i].selected = 0;
-        app->ShadowKeys()[i].selected = 0;
-        app->GravityKeys()[i].selected = 0;
-    }
-    for (int s = 0; s < 0xFF; ++s) {
-        auto* rec = reinterpret_cast<unsigned char*>(app->AccessoryKeys(s));
-        if (rec == nullptr)
-            continue;
-        // Original termination is byte offset 0x927C0 (0x44781E,
-        // 0x44795E, 0x447A3E).  Dividing by the 0x3C record stride gives
-        // exactly 0x2710 records.  The old 0x3D80 loop wrote 344,640 bytes
-        // beyond every 600,000-byte accessory table and made a timeline
-        // key click corrupt the neighbouring heap allocations.
-        for (int i = 0; i < 0x2710; ++i)
-            rec[i * 0x3C + 0x18] = 0;
-    }
 }
 
 // Clear the active model's bone and morph key selections, plus the remaining
@@ -206,42 +167,6 @@ static void SetTimelineSelectionRange(MMDApp* app, std::int32_t firstOffset,
     app->TimelineRangeLastBase() = TimelineAddress(lastBase);
 }
 
-// 16-byte selection-record fill for one record array (original pattern @
-// 0x449070 rigid / 0x4491E0 joint / 0x449340 IK / 0x449490 morph):
-//   recStride-byte records, 5 flag bytes each at flagOff + k*flagStride;
-//   every set flag appends {index = recIdx-2+k, 0, 0, record dword at
-//   flagOff+k*flagStride-flagOff}.  The records are qsorted with the app
-//   comparator (0x40EC70).  Count/ptr land in app+countOff/app+ptrOff.
-static void FillSelectionRecords(MMDApp* app, unsigned char* arr, int recStride,
-                                 int flagOff, int flagStride,
-                                 TimelineSelectionBand band) {
-    const std::int32_t cnt = app->TimelineSelectionCount(band);
-    if (cnt <= 0)
-        return;
-    std::int32_t* out = static_cast<std::int32_t*>(
-        ::operator new(static_cast<std::size_t>(cnt) * 0x10));
-    app->TimelineSelectionRecords(band) =
-        reinterpret_cast<TimelineSelectionRecord*>(out);
-    int recIdx = 2;
-    // The original advances recIdx by five and stops when recIdx-2 reaches
-    // 0x2710.  recStride already spans five timeline records, so this is
-    // 0x2710 / 5 groups rather than 0x2710 groups.  Iterating 0x2710 groups
-    // reads five times past every app track allocation.
-    for (int i = 0; i < 0x2710 / 5; ++i) {
-        for (int k = 0; k < 5; ++k) {
-            if (arr[i * recStride + flagOff + k * flagStride] != 0) {
-                out[0] = recIdx - 2 + k;
-                out[3] = *reinterpret_cast<std::int32_t*>(
-                    arr + i * recStride + k * flagStride);
-                out += 4;
-            }
-        }
-        recIdx += 5;
-    }
-    qsort(app->TimelineSelectionRecords(band), static_cast<std::size_t>(cnt), 0x10,
-          CompareFunction);
-}
-
 // Shared selection-change point (loc_448EEB-0x44A437): dirty flag + click
 // anchor + selection-count re-evaluation (0xA03EC region, per-array flag
 // counting + record fills + qsort), panel repaint (0x414610) and the
@@ -254,73 +179,7 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
     if (app->TimelineSelectionChanged() != 0) {
         memset(app->TimelineSelectionRegion(), 0, 0x40);        // 656364 (0xA03EC)
         if (app->state.optflag[0] != 0) {   // 760 (0x2F8)
-            // ---- display-mode counts (0x448F2A-0x44902F) ---------------------
-            // count set flags in the four record arrays (app+0x374 rigid
-            // 0x54-stride flag+0x48, app+0x378 joint 0x28-stride flag+0x24,
-            // app+0x37C IK 0x18-stride flag+0x14, app+0x380 morph 0x24-stride
-            // flag+0x21; 0x2710 samples each) and in the 255-slot record table
-            // app+0x384 (0x3C-stride flag+0x18, 0x2710 samples per slot).
-            unsigned char* rarr = reinterpret_cast<unsigned char*>(app->CameraKeys());
-            unsigned char* jarr = reinterpret_cast<unsigned char*>(app->LightKeys());
-            unsigned char* iarr = reinterpret_cast<unsigned char*>(app->ShadowKeys());
-            unsigned char* marr = reinterpret_cast<unsigned char*>(app->GravityKeys());
-            for (int off = 0; off < 0x2710; ++off) {
-                if (rarr[off * 0x54 + 0x48] != 0)
-                    ++app->TimelineSelectionCount(TimelineSelectionBand::Camera);
-                if (jarr[off * 0x28 + 0x24] != 0)
-                    ++app->TimelineSelectionCount(TimelineSelectionBand::Light);
-                if (iarr[off * 0x18 + 0x14] != 0)
-                    ++app->TimelineSelectionCount(TimelineSelectionBand::SelfShadow);
-                if (marr[off * 0x24 + 0x21] != 0)
-                    ++app->TimelineSelectionCount(TimelineSelectionBand::Gravity);
-                for (int g = 0; g < 0x33; ++g) {
-                    for (int j = 0; j < 5; ++j) {
-                        unsigned char* slot = reinterpret_cast<unsigned char*>(
-                            app->AccessoryKeys(g * 5 + j));
-                        if (slot[off * 0x3C + 0x18] != 0)
-                            ++app->TimelineSelectionCount(TimelineSelectionBand::Accessory);
-                    }
-                }
-            }
-            // count/ptr pairs: rigid 0xA03EC/0xA03F0, joint 0xA03F4/0xA03F8,
-            // IK 0xA03FC/0xA0400, morph 0xA0404/0xA0408
-            FillSelectionRecords(app, rarr, 0x1A4, 0x48, 0x54,
-                                 TimelineSelectionBand::Camera);
-            FillSelectionRecords(app, jarr, 0xC8, 0x24, 0x28,
-                                 TimelineSelectionBand::Light);
-            FillSelectionRecords(app, iarr, 0x78, 0x14, 0x18,
-                                 TimelineSelectionBand::SelfShadow);
-            FillSelectionRecords(app, marr, 0xB4, 0x21, 0x24,
-                                 TimelineSelectionBand::Gravity);
-            // accessory fill (0x4495B5-0x449790): records
-            // {0, frameIndex, slotIndex, slot[frameIndex].frame}.  The original
-            // keeps the frame index in a separate outer-loop counter and advances
-            // the slot index monotonically across all 51 groups.
-            if (app->TimelineSelectionCount(TimelineSelectionBand::Accessory) > 0) {
-                std::int32_t* out = static_cast<std::int32_t*>(::operator new(
-                    static_cast<std::size_t>(app->TimelineSelectionCount(
-                        TimelineSelectionBand::Accessory)) * 0x10));
-                app->TimelineSelectionRecords(TimelineSelectionBand::Accessory) =
-                    reinterpret_cast<TimelineSelectionRecord*>(out);
-                for (int off = 0; off < 0x2710; ++off) {
-                    for (int g = 0; g < 0x33; ++g) {
-                        for (int j = 0; j < 5; ++j) {
-                            unsigned char* slot = reinterpret_cast<unsigned char*>(
-                                app->AccessoryKeys(g * 5 + j));
-                            if (slot[off * 0x3C + 0x18] != 0) {
-                                out[1] = off;
-                                out[2] = g * 5 + j;
-                                out[3] = *reinterpret_cast<std::int32_t*>(slot + off * 0x3C);
-                                out += 4;
-                            }
-                        }
-                    }
-                }
-                qsort(app->TimelineSelectionRecords(TimelineSelectionBand::Accessory),
-                      static_cast<std::size_t>(app->TimelineSelectionCount(
-                          TimelineSelectionBand::Accessory)),
-                      0x10, CompareFunction);
-            }
+            CollectGlobalTimelineSelection(*app);
             // 0x4495BD jle
         } else {
             // ---- edit-mode stats (loc_4497A1-0x44A426) ------------------------
@@ -481,10 +340,6 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
     SelectionReeval(app);                          // 0x430510
 }
 
-// x64-safe home for the eight timeline-selection record pointers - see the
-// g_timelineSelectionRecords comment in mmd_app.hpp.
-TimelineSelectionRecord* g_timelineSelectionRecords[8] = {};
-
 // ---- HandleLButtonDown region helpers ------------------------------------
 
 // One S5a display-mode cell toggle - the 15-line branch body that the four
@@ -500,7 +355,7 @@ static void ToggleTimelineCell(MMDApp* app, bool shiftActive,
         else
             app->TimelineSelectionChanged() = 1;
     } else if (!shiftActive) {
-        ClearSelectionBitmaps(app);
+        ClearGlobalTimelineKeySelection(*app);
         selected = 1;
     } else {
         selected = 1;
@@ -890,25 +745,13 @@ static void HandleLButtonDown_TimelineAreaHit(MMDApp* app, HWND hwnd,
             joint2dIdx =
                 app->state.rowHitAcc[col * 0xC8 + jrow];
             if (joint2dIdx >= 0) {
-                unsigned char* slot = reinterpret_cast<unsigned char*>(
-                    app->AccessoryKeys(slotIdx));
-                unsigned char* rec = slot + joint2dIdx * 0x3C + 0x18;
-                if (*rec != 0) {
-                    if (shiftActive)
-                        *rec = 0;
-                    else
-                        app->TimelineSelectionChanged() = 1;
-                } else if (!shiftActive) {
-                    ClearSelectionBitmaps(app);
-                    *rec = 1;
-                } else {
-                    *rec = 1;
-                }
+                ToggleTimelineCell(app, shiftActive,
+                                   app->AccessoryKeys(slotIdx)[joint2dIdx].selected);
             }
         }
         // loc_447990: no band hit at all -> wholesale bitmap clear
         if (bandIdx == -1 && joint2dIdx == -1 && !shiftActive) {
-            ClearSelectionBitmaps(app);
+            ClearGlobalTimelineKeySelection(*app);
         }
         SelectionStats(app, x, y, hwnd);       // loc_448EEB
         return;

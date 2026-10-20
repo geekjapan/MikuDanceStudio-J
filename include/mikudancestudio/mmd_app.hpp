@@ -106,7 +106,7 @@ struct TimelineSelectionRecord {
 // count, and the counting pass writes counts over the PREVIOUS pointer's
 // high half - dragging keyframes then read garbage counts and freed wild
 // pointers.  The counts stay at their original blob offsets; the pointers
-// live in this side table instead (defined in ui_editor_click.cpp; the
+// live in this side table instead (defined in timeline_selection.cpp; the
 // slots are transient drag buffers, never persisted).
 extern TimelineSelectionRecord* g_timelineSelectionRecords[8];
 

@@ -37,6 +37,11 @@ constexpr std::size_t kDisplayKeyCapacity = 1000;
 // Select physics-enabled keys of bones that have rigid bodies.
 void SelectPhysicsOnBoneKeys(ModelRecord& model);
 
+// Clear existing key selections and mark redundant interior keys for the
+// delete-unused-frames command. Leaves key data and links intact for the
+// normal deletion backend; returns the number marked.
+std::int32_t MarkRedundantModelKeys(ModelRecord& model);
+
 // Five-int entries used by the post-load bone evaluation order.  This table
 // contains no pointers, so its 20-byte stride is identical on x86 and x64.
 struct BoneReference {

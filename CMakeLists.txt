@@ -109,6 +109,7 @@ add_library(mikudancestudio_core STATIC
     src/model/bone_transform.cpp
     src/model/model_keyframe_advance.cpp
     src/model/model_keyframe_edit.cpp
+    src/model/model_key_reduction.cpp
     src/model/bone_edit_undo.cpp
     src/model/model_frame_seek.cpp
     src/model/vmd_load.cpp
@@ -378,6 +379,10 @@ if(BUILD_TESTING)
     add_executable(bone_pick_test tests/bone_pick_test.cpp)
     target_link_libraries(bone_pick_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME bone_pick COMMAND bone_pick_test)
+    add_executable(model_key_reduction_test tests/model_key_reduction_test.cpp
+        src/model/model_key_reduction.cpp)
+    target_include_directories(model_key_reduction_test PRIVATE include)
+    add_test(NAME model_key_reduction COMMAND model_key_reduction_test)
     add_executable(model_key_selection_test tests/model_key_selection_test.cpp)
     target_link_libraries(model_key_selection_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME model_key_selection COMMAND model_key_selection_test)

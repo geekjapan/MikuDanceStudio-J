@@ -463,6 +463,12 @@ if(BUILD_TESTING)
         src/physics/scene_dispose.cpp)
     target_compile_definitions(physics_scene_dispose_test PRIVATE MIKUDANCESTUDIO_DIAG=1)
     target_link_libraries(physics_scene_dispose_test PRIVATE BULLET275::BULLET275)
+    add_executable(bullet_diagnostics_fixture tests/bullet_diagnostics_fixture.cpp)
+    target_link_libraries(bullet_diagnostics_fixture PRIVATE BULLET275::BULLET275)
+    add_test(NAME bullet_diagnostics COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_bullet_diagnostics.py
+        $<TARGET_FILE:bullet_diagnostics_fixture>)
+    set_tests_properties(bullet_diagnostics PROPERTIES TIMEOUT 60)
     add_executable(physics_gizmo_reset_test tests/physics_gizmo_reset_test.cpp)
     target_include_directories(physics_gizmo_reset_test PRIVATE include)
     target_link_libraries(physics_gizmo_reset_test PRIVATE mikudancestudio_core MMEffect dsound)

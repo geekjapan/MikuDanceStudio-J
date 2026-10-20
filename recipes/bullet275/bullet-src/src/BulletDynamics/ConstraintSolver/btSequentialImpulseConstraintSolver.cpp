@@ -58,10 +58,7 @@ void openmmdHex3(FILE* f, const btVector3& v) {
 	        openmmdBits(v.getZ()));
 }
 int openmmdBodyId(const btRigidBody* body) {
-	if (!body) return -1;
-	int id = -1;
-	memcpy(&id, (const char*)body + 0x224, 4);  // MMD rigid id slot
-	return id;
+	return body ? body->m_debugBodyId : -1;
 }
 int openmmdSolveLimit() {
 	static int limit = -2;

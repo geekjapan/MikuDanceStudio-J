@@ -47,3 +47,6 @@ _smoke_*.txt
 
 
 .ida-mcp
+# Code intelligence: commit graphify-out graph/report; keep local caches out
+graphify-out/cache/
+graphify-out/.graphify_root

@@ -134,7 +134,7 @@ template <class Key>
 void ClearMarks(Key* keys, std::size_t n) {
     for (std::size_t i = 0; i < n; ++i) keys[i].allocated = 0;
 }
-// ClearModelKeyMarks x3, command_frame_edit.cpp:2017-2019. Clearing only the
+// ClearModelKeyMarks x3, frame_clipboard.cpp:526-528. Clearing only the
 // tracked window is equivalent: CheckAll rejects any state whose cursor or
 // links leave the window, so no record past it is ever written.
 void ClearAllMarks() {
@@ -143,7 +143,7 @@ void ClearAllMarks() {
     ClearMarks(M().displayKeys, kWindow);
 }
 
-// Undo slot the bone registrars append to (command_frame_edit.cpp:2020-2088).
+// Undo slot the bone registrars append to (frame_clipboard.cpp:529-594).
 void OpenBoneUndo(int boneRecords) {
     mdl::ModelRecord& m = M();
     m.undoState[0] = m.undoState[0] + 1 >= 30 ? 0 : m.undoState[0] + 1;
@@ -174,7 +174,7 @@ std::string Describe(const Command& c) {
     return s;
 }
 
-// Cmd400_FramePaste (command_frame_edit.cpp:2001-2179): clear marks, then
+// PasteSelectedKeyframes (frame_clipboard.cpp:511-678): clear marks, then
 // ResetBone + bone loop, ResetMorph + morph loop, ResetDisplay + display
 // loop. Each paste here carries one key; the resets run unconditionally.
 void Paste(Kind kind, int target, int frame) {
@@ -205,7 +205,7 @@ void Apply(const Command& c) {
     case kPasteBone: case kPasteMorph: case kPasteDisplay:
         Paste(c.kind, c.target, c.frame);
         break;
-    case kRegisterBone:  // CmdControl500 case 500, command_frame_register.cpp:387
+    case kRegisterBone:  // HandleFrameRegisterControl case 500, command_frame_register.cpp:387
         std::memset(M().boneSelection, 0, kBones);
         M().boneSelection[c.target] = 1;
         RegisterSelectedBoneKeys(g_model, c.frame, 0);
@@ -214,7 +214,7 @@ void Apply(const Command& c) {
         ClearAllMarks();
         RegisterMorphKeyCurrent(g_model, c.target, c.frame);
         break;
-    case kRegisterDisplay:  // case 438, command_frame_edit.cpp:2988-2994
+    case kRegisterDisplay:  // case 438, command_frame_edit.cpp:1562-1568
         ClearAllMarks();
         RegisterDisplayKeyCurrent(g_model, c.frame);
         break;

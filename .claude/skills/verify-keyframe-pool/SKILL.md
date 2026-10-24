@@ -27,10 +27,10 @@ handler:
 
 | Harness command | Real code it replays |
 |---|---|
-| paste bone/morph/display key | `Cmd400_FramePaste`, `src/window/command_frame_edit.cpp:2001-2179`: clear marks, `ResetBoneKeyCursor` + `RegisterBoneKey`, `ResetMorphKeyCursor` + `RegisterMorphKeyFromRecord`, `ResetDisplayKeyCursor` + `RegisterDisplayKeyFromRecord`. VMD load (`vmd_load.cpp`) and frame-range apply use the same reset-then-register shape. |
-| register button: boneN | case 500, `src/window/command_frame_register.cpp:387` → `RegisterSelectedBoneKeys` → `RegisterBonePoseAtFrame` |
-| register morphN | cases 524-527, `command_frame_register.cpp:503-540` → `RegisterMorphKeyCurrent` |
-| register display key | case 438, `command_frame_edit.cpp:2988-2994` → `RegisterDisplayKeyCurrent` |
+| paste bone/morph/display key | `PasteSelectedKeyframes`, `src/window/frame_clipboard.cpp:511-678`: clear marks, `ResetBoneKeyCursor` + `RegisterBoneKey`, `ResetMorphKeyCursor` + `RegisterMorphKeyFromRecord`, `ResetDisplayKeyCursor` + `RegisterDisplayKeyFromRecord`. VMD load (`vmd_load.cpp`) and frame-range apply use the same reset-then-register shape. |
+| register button: boneN | case 500 (`kRegisterFrameButton`), `src/window/command_frame_register.cpp:387` → `RegisterSelectedBoneKeys` → `RegisterBonePoseAtFrame` |
+| register morphN | cases 524-527 (`kRegisterMorphButton0-3`), `command_frame_register.cpp:503-540` → `RegisterMorphKeyCurrent` |
+| register display key | case 438 (`kRegisterModelDisplayButton`), `command_frame_edit.cpp:1562-1568` → `RegisterDisplayKeyCurrent` |
 | click boneN key | harness stand-in for a timeline click: clear marks, set `allocated = 1` on that key |
 | delete selected keys | `DeleteMarkedModelKeys` |
 
@@ -101,14 +101,15 @@ Run the check if the diff touches any of these:
   capacities) and `include/mikudancestudio/model_layout.hpp` (`searchCursor`).
 - Any new writer of `searchCursor`, or a new caller that registers keys:
   `git grep -n "searchCursor\|Register.*Key" src`.
-- The call orders in the table above (`command_frame_edit.cpp` paste,
-  `command_frame_register.cpp` cases 500/524-527, case 438), and the pool
+- The call orders in the table above (`frame_clipboard.cpp` paste,
+  `command_frame_register.cpp` cases 500/524-527, `command_frame_edit.cpp`
+  case 438), and the pool
   setup in `add_model.cpp` / `pmx_load.cpp` / `pmd_load.cpp`.
 
 List what changed in the covered files since the sync commit:
 
 ```sh
-git diff --stat eb6a174 -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/model/add_model.cpp src/model/pmx_load.cpp
+git diff --stat eb6a174 -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp
 ```
 
 ## Real bug or modeling error?

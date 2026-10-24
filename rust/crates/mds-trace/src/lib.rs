@@ -61,11 +61,6 @@ pub enum Difference {
         b: Record,
         field: usize,
     },
-    /// The records name one track but have different numbers of fields.
-    FieldCount {
-        a: Record,
-        b: Record,
-    },
     /// One trace ends while the other still has a record.
     Length {
         line: usize,
@@ -79,23 +74,20 @@ impl fmt::Display for Difference {
             Difference::Level { a, b } => write!(f, "header: level a={a:?} b={b:?}"),
             Difference::Track { line, a, b } => write!(
                 f,
-                "line {line}: track differs: a=frame {} {}/{} b=frame {} {}/{}",
-                a.frame, a.kind, a.index, b.frame, b.kind, b.index
+                "line {line}: track differs: a=frame {} {} b=frame {} {}",
+                a.frame,
+                a.track(),
+                b.frame,
+                b.track()
             ),
-            // Format 1 names no fields, so a field is named by its position.
             Difference::Field { a, b, field } => write!(
                 f,
-                "frame {} track {}/{} field f{}: a={} b={}",
-                a.frame, a.kind, a.index, field, a.fields[*field].text, b.fields[*field].text
-            ),
-            Difference::FieldCount { a, b } => write!(
-                f,
-                "frame {} track {}/{}: field count a={} b={}",
+                "frame {} track {} field {}: a={} b={}",
                 a.frame,
-                a.kind,
-                a.index,
-                a.fields.len(),
-                b.fields.len()
+                a.track(),
+                a.kind.fields[*field],
+                a.fields[*field].text,
+                b.fields[*field].text
             ),
             Difference::Length { line, a_ended } => write!(
                 f,
@@ -202,11 +194,8 @@ pub fn diff(a: impl BufRead, b: impl BufRead) -> Result<Option<Difference>, Erro
             }
             (Some(x), Some(y)) => (x, y),
         };
-        if (ra.frame, &ra.kind, ra.index) != (rb.frame, &rb.kind, rb.index) {
+        if (ra.frame, ra.kind, &ra.indices) != (rb.frame, rb.kind, &rb.indices) {
             return Ok(Some(Difference::Track { line, a: ra, b: rb }));
-        }
-        if ra.fields.len() != rb.fields.len() {
-            return Ok(Some(Difference::FieldCount { a: ra, b: rb }));
         }
         if let Some(field) = (0..ra.fields.len()).find(|&i| ra.fields[i].bits != rb.fields[i].bits)
         {

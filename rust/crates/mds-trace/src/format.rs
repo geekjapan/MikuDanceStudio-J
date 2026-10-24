@@ -2,12 +2,17 @@
 //!
 //! ```text
 //! mds-trace 1 <L1|L2>
-//! <frame> <kind> <index> <hexfloat> <hexfloat> ...
+//! <frame> bone   <slot> <index> tx ty tz rx ry rz rw
+//! <frame> morph  <slot> <index> weight
+//! <frame> camera px py pz rx ry rz distance fov
+//! <frame> light  r g b dx dy dz
 //! ```
 //!
-//! Fields are C99 `%a` hex floats. They are compared as raw `f64` bits, so
-//! `-0` and `0`, and NaNs with different payloads, are different values.
-//! Every line, the last included, ends with `\n`.
+//! `frame`, `slot`, and `index` are unsigned decimal. A track is the kind plus
+//! its indices (`bone 0/3` is slot 0, bone 3). Fields are C99 `%a` hex floats
+//! and are always finite; `nan` and `inf` are parse errors. They are compared
+//! as raw `f64` bits, so `-0` and `0` are different values. Every line, the
+//! last included, ends with `\n`. Level L2 uses the same line kinds.
 
 pub const MAX_LINE: usize = 64 * 1024;
 const MAX_HEX_DIGITS: usize = 32;
@@ -18,6 +23,37 @@ pub enum Level {
     L2,
 }
 
+/// A line kind: how many index columns it has and what its float columns are called.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Kind {
+    pub name: &'static str,
+    pub indices: usize,
+    pub fields: &'static [&'static str],
+}
+
+pub const KINDS: [Kind; 4] = [
+    Kind {
+        name: "bone",
+        indices: 2,
+        fields: &["tx", "ty", "tz", "rx", "ry", "rz", "rw"],
+    },
+    Kind {
+        name: "morph",
+        indices: 2,
+        fields: &["weight"],
+    },
+    Kind {
+        name: "camera",
+        indices: 0,
+        fields: &["px", "py", "pz", "rx", "ry", "rz", "distance", "fov"],
+    },
+    Kind {
+        name: "light",
+        indices: 0,
+        fields: &["r", "g", "b", "dx", "dy", "dz"],
+    },
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
     pub bits: u64,
@@ -27,9 +63,23 @@ pub struct Field {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     pub frame: u32,
-    pub kind: String,
-    pub index: u32,
+    pub kind: &'static Kind,
+    /// `kind.indices` numbers: slot and index for bone and morph, none otherwise.
+    pub indices: Vec<u32>,
+    /// One per name in `kind.fields`.
     pub fields: Vec<Field>,
+}
+
+impl Record {
+    /// The track as `bone 0/3`, or just `camera`.
+    pub fn track(&self) -> String {
+        let mut s = self.kind.name.to_owned();
+        for (i, n) in self.indices.iter().enumerate() {
+            s.push(if i == 0 { ' ' } else { '/' });
+            s.push_str(&n.to_string());
+        }
+        s
+    }
 }
 
 pub fn parse_header(line: &str) -> Result<Level, &'static str> {
@@ -54,29 +104,33 @@ pub fn parse_header(line: &str) -> Result<Level, &'static str> {
 pub fn parse_record(line: &str) -> Result<Record, &'static str> {
     let mut t = line.split(' ');
     let frame = parse_u32(t.next())?;
-    let kind = t.next().ok_or("missing track kind")?;
-    if kind.is_empty()
-        || !kind
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-    {
-        return Err("bad track kind");
-    }
-    let index = parse_u32(t.next())?;
-    let mut fields = Vec::new();
+    let name = t.next().ok_or("missing track kind")?;
+    let kind = KINDS
+        .iter()
+        .find(|k| k.name == name)
+        .ok_or("unknown track kind")?;
+    let indices = (0..kind.indices)
+        .map(|_| parse_u32(t.next()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut fields = Vec::with_capacity(kind.fields.len());
     for tok in t {
-        fields.push(Field {
-            bits: parse_hex_float(tok)?,
-            text: tok.to_owned(),
-        });
+        let bits = parse_hex_float(tok)?;
+        if f64::from_bits(bits).is_finite() {
+            fields.push(Field {
+                bits,
+                text: tok.to_owned(),
+            });
+        } else {
+            return Err("float is not finite");
+        }
     }
-    if fields.is_empty() {
-        return Err("record has no fields");
+    if fields.len() != kind.fields.len() {
+        return Err("wrong number of fields for the track kind");
     }
     Ok(Record {
         frame,
-        kind: kind.to_owned(),
-        index,
+        kind,
+        indices,
         fields,
     })
 }

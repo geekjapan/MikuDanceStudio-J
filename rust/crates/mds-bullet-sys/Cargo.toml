@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
 description = "Vendored Bullet 2.75 behind a C shim, built with deterministic float math"
+license = "MIT"
 publish = false
 links = "mds_bullet"
 build = "build.rs"

@@ -44,7 +44,11 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Options { mip_filter: true, defines: Vec::new(), strict_includes: false }
+        Options {
+            mip_filter: true,
+            defines: Vec::new(),
+            strict_includes: false,
+        }
     }
 }
 
@@ -111,7 +115,11 @@ pub fn decode(bytes: &[u8]) -> Cow<'_, str> {
 /// Resolves `rel` below `base`. Parts match without case, `\` counts as `/`. An exact-case
 /// entry wins over a case-folded one, so the result does not depend on the file system.
 pub fn resolve_ci(base: &Path, rel: &str) -> Option<PathBuf> {
-    let mut cur = if base.as_os_str().is_empty() { PathBuf::from(".") } else { base.to_path_buf() };
+    let mut cur = if base.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        base.to_path_buf()
+    };
     for part in rel.replace('\\', "/").split('/') {
         match part {
             "" | "." => {}
@@ -140,16 +148,26 @@ pub fn resolve_ci(base: &Path, rel: &str) -> Option<PathBuf> {
 
 /// Preprocesses the file at `path`.
 pub fn preprocess_file(path: &Path, opts: &Options) -> Result<Preprocessed, FxError> {
-    let bytes = fs::read(path).map_err(|e| FxError::new(path, 0, format!("cannot read file: {e}")))?;
+    let bytes =
+        fs::read(path).map_err(|e| FxError::new(path, 0, format!("cannot read file: {e}")))?;
     preprocess_bytes(path, &bytes, opts)
 }
 
 /// Preprocesses `bytes` as if they were the file at `path`. Includes still read from disk,
 /// relative to `path`.
-pub fn preprocess_bytes(path: &Path, bytes: &[u8], opts: &Options) -> Result<Preprocessed, FxError> {
+pub fn preprocess_bytes(
+    path: &Path,
+    bytes: &[u8],
+    opts: &Options,
+) -> Result<Preprocessed, FxError> {
     let (r, pp) = run(path, bytes, opts);
     r?;
-    Ok(Preprocessed { text: pp.out, origins: pp.origins, files: pp.files, includes: pp.includes })
+    Ok(Preprocessed {
+        text: pp.out,
+        origins: pp.origins,
+        files: pp.files,
+        includes: pp.includes,
+    })
 }
 
 /// The includes that [`preprocess_bytes`] resolved before it finished or failed. For a file
@@ -181,7 +199,9 @@ fn run(path: &Path, bytes: &[u8], opts: &Options) -> (Result<(), FxError>, Pp) {
         pp.define_object(n, v);
     }
     let id = pp.file_id(path);
-    let r = pp.process(id, &decode(bytes), &root, 0, Term::None).map(|_| ());
+    let r = pp
+        .process(id, &decode(bytes), &root, 0, Term::None)
+        .map(|_| ());
     (r, pp)
 }
 
@@ -218,7 +238,13 @@ struct Lines<'a> {
 
 impl<'a> Lines<'a> {
     fn new(src: &'a str) -> Self {
-        Lines { src, pos: 0, line: 1, in_block: false, terms: Vec::new() }
+        Lines {
+            src,
+            pos: 0,
+            line: 1,
+            in_block: false,
+            terms: Vec::new(),
+        }
     }
 
     /// Reads one logical line into `buf` (comments replaced, continuations joined). Returns
@@ -341,7 +367,11 @@ fn tokenize(s: &str) -> Vec<Tok> {
             continue;
         }
         let (kind, end) = scan(s, i);
-        out.push(Tok { text: s[i..end].to_string(), kind, ws });
+        out.push(Tok {
+            text: s[i..end].to_string(),
+            kind,
+            ws,
+        });
         ws = false;
         i = end;
     }
@@ -394,7 +424,8 @@ fn is_ident_char(c: u8) -> bool {
 impl Pp {
     fn define_object(&mut self, name: &str, value: &str) {
         let body = tokenize(value);
-        self.macros.insert(name.to_string(), Rc::new(Macro { params: None, body }));
+        self.macros
+            .insert(name.to_string(), Rc::new(Macro { params: None, body }));
     }
 
     fn file_id(&mut self, path: &Path) -> u32 {
@@ -412,7 +443,8 @@ impl Pp {
     /// inclusion joins them.
     fn emit(&mut self, text: &str, file: u32, line: u32, term: Term, outer: Term) {
         self.out.push_str(text);
-        self.out.push_str(if term == Term::None { outer } else { term }.as_str());
+        self.out
+            .push_str(if term == Term::None { outer } else { term }.as_str());
         self.origins.push(Origin { file, line });
     }
 
@@ -425,7 +457,14 @@ impl Pp {
 
     /// Preprocesses one file into the output. Returns whether the file ended without a final
     /// newline, so that its last line took the terminator of the including line.
-    fn process(&mut self, file: u32, text: &str, dir: &Path, depth: usize, outer: Term) -> Result<bool, FxError> {
+    fn process(
+        &mut self,
+        file: u32,
+        text: &str,
+        dir: &Path,
+        depth: usize,
+        outer: Term,
+    ) -> Result<bool, FxError> {
         let path = self.files[file as usize].clone();
         let err = |line: u32, m: String| FxError::new(&path, line, m);
         let mut lines = Lines::new(text);
@@ -435,7 +474,10 @@ impl Pp {
             let active = conds.last().map_or(true, |c| c.active);
             if let Some(rest) = buf.trim_start().strip_prefix('#') {
                 let rest = rest.trim_start();
-                let name_end = rest.bytes().position(|c| !is_ident_char(c)).unwrap_or(rest.len());
+                let name_end = rest
+                    .bytes()
+                    .position(|c| !is_ident_char(c))
+                    .unwrap_or(rest.len());
                 let (name, args) = (&rest[..name_end], rest[name_end..].trim());
                 match name {
                     "if" | "ifdef" | "ifndef" => {
@@ -444,9 +486,17 @@ impl Pp {
                         } else if name == "if" {
                             self.eval_if(args).map_err(|m| err(first, m))?
                         } else {
-                            self.macros.contains_key(args.split_whitespace().next().unwrap_or("")) == (name == "ifdef")
+                            self.macros
+                                .contains_key(args.split_whitespace().next().unwrap_or(""))
+                                == (name == "ifdef")
                         };
-                        conds.push(Cond { parent_active: active, taken: v || !active, active: v, seen_else: false, line: first });
+                        conds.push(Cond {
+                            parent_active: active,
+                            taken: v || !active,
+                            active: v,
+                            seen_else: false,
+                            line: first,
+                        });
                     }
                     "elif" => {
                         let (parent, taken, seen_else) = match conds.last() {
@@ -456,7 +506,11 @@ impl Pp {
                         if seen_else {
                             return Err(err(first, "#elif after #else".into()));
                         }
-                        let v = if !parent || taken { false } else { self.eval_if(args).map_err(|m| err(first, m))? };
+                        let v = if !parent || taken {
+                            false
+                        } else {
+                            self.eval_if(args).map_err(|m| err(first, m))?
+                        };
                         if let Some(c) = conds.last_mut() {
                             c.active = v;
                             c.taken |= v;
@@ -476,18 +530,22 @@ impl Pp {
                             return Err(err(first, "#endif without #if".into()));
                         }
                     }
-                    "include" if !active && self.strict => self.eager_include(args, file, first, dir, depth, &path)?,
+                    "include" if !active && self.strict => {
+                        self.eager_include(args, file, first, dir, depth, &path)?
+                    }
                     _ if !active => {}
                     "" | "pragma" | "line" | "warning" => {}
                     "define" => self.define(args).map_err(|m| err(first, m))?,
                     "undef" => {
-                        self.macros.remove(args.split_whitespace().next().unwrap_or(""));
+                        self.macros
+                            .remove(args.split_whitespace().next().unwrap_or(""));
                     }
                     "error" => return Err(err(first, format!("#error {args}"))),
                     "include" => {
                         let dterm = lines.terms.last().copied().unwrap_or(Term::Lf);
                         let eff = if dterm == Term::None { outer } else { dterm };
-                        let unterminated = self.include(args, file, first, dir, depth, &path, eff)?;
+                        let unterminated =
+                            self.include(args, file, first, dir, depth, &path, eff)?;
                         if !unterminated && eff != Term::None {
                             // the content ended with a newline, so the include line's own
                             // terminator makes one more blank line
@@ -508,7 +566,9 @@ impl Pp {
                 let mut terms = lines.terms.clone();
                 let mut more = String::new();
                 while self.needs_more(&toks) {
-                    let Some(_) = lines.next(&mut more) else { break };
+                    let Some(_) = lines.next(&mut more) else {
+                        break;
+                    };
                     let mut extra = tokenize(&more);
                     if let Some(f) = extra.first_mut() {
                         f.ws = true;
@@ -516,7 +576,9 @@ impl Pp {
                     toks.extend(extra);
                     terms.extend_from_slice(&lines.terms);
                 }
-                let out = self.expand(&toks, &mut Vec::new(), 0).map_err(|m| err(first, m))?;
+                let out = self
+                    .expand(&toks, &mut Vec::new(), 0)
+                    .map_err(|m| err(first, m))?;
                 self.emit(&render(&out), file, first, terms[0], outer);
                 self.blanks(file, first + 1, &terms[1..], outer);
             }
@@ -557,7 +619,10 @@ impl Pp {
         let mut i = 0;
         while i < toks.len() {
             let is_call = toks[i].kind == Kind::Ident
-                && self.macros.get(&toks[i].text).is_some_and(|m| m.params.is_some())
+                && self
+                    .macros
+                    .get(&toks[i].text)
+                    .is_some_and(|m| m.params.is_some())
                 && toks.get(i + 1).is_some_and(|t| t.text == "(");
             if is_call {
                 let mut depth = 1;
@@ -582,14 +647,20 @@ impl Pp {
     }
 
     fn define(&mut self, args: &str) -> Result<(), String> {
-        let (kind, name_end) = if args.is_empty() { (Kind::Unknown, 0) } else { scan(args, 0) };
+        let (kind, name_end) = if args.is_empty() {
+            (Kind::Unknown, 0)
+        } else {
+            scan(args, 0)
+        };
         if kind != Kind::Ident {
             return Err("#define needs a macro name".into());
         }
         let name = args[..name_end].to_string();
         let rest = &args[name_end..];
         let m = if let Some(inner) = rest.strip_prefix('(') {
-            let close = inner.find(')').ok_or("#define: missing ')' in parameter list")?;
+            let close = inner
+                .find(')')
+                .ok_or("#define: missing ')' in parameter list")?;
             let mut params = Vec::new();
             for p in inner[..close].split(',') {
                 let p = p.trim();
@@ -605,7 +676,10 @@ impl Pp {
             if let Some(f) = body.first_mut() {
                 f.ws = false;
             }
-            Macro { params: Some(params), body }
+            Macro {
+                params: Some(params),
+                body,
+            }
         } else {
             let mut body = tokenize(rest);
             if let Some(f) = body.first_mut() {
@@ -618,11 +692,19 @@ impl Pp {
     }
 
     fn spend(&mut self, n: usize) -> Result<(), String> {
-        self.budget = self.budget.checked_sub(n).ok_or("macro expansion is too large")?;
+        self.budget = self
+            .budget
+            .checked_sub(n)
+            .ok_or("macro expansion is too large")?;
         Ok(())
     }
 
-    fn expand(&mut self, input: &[Tok], hide: &mut Vec<String>, depth: usize) -> Result<Vec<Tok>, String> {
+    fn expand(
+        &mut self,
+        input: &[Tok],
+        hide: &mut Vec<String>,
+        depth: usize,
+    ) -> Result<Vec<Tok>, String> {
         if depth > MAX_EXPAND_DEPTH {
             return Err("macro expansion nests too deeply".into());
         }
@@ -630,7 +712,11 @@ impl Pp {
         let mut i = 0;
         while i < input.len() {
             let t = &input[i];
-            let mac = if t.kind == Kind::Ident && !hide.contains(&t.text) { self.macros.get(&t.text).cloned() } else { None };
+            let mac = if t.kind == Kind::Ident && !hide.contains(&t.text) {
+                self.macros.get(&t.text).cloned()
+            } else {
+                None
+            };
             let Some(m) = mac else {
                 out.push(t.clone());
                 i += 1;
@@ -651,7 +737,11 @@ impl Pp {
                 i += 1;
                 continue;
             };
-            let call = if input.get(i + 1).is_some_and(|n| n.text == "(") { collect_args(input, i + 2) } else { None };
+            let call = if input.get(i + 1).is_some_and(|n| n.text == "(") {
+                collect_args(input, i + 2)
+            } else {
+                None
+            };
             let Some((mut args, end)) = call else {
                 out.push(t.clone());
                 i += 1;
@@ -661,7 +751,12 @@ impl Pp {
                 args.clear();
             }
             if args.len() != params.len() {
-                return Err(format!("macro {} expects {} arguments, got {}", t.text, params.len(), args.len()));
+                return Err(format!(
+                    "macro {} expects {} arguments, got {}",
+                    t.text,
+                    params.len(),
+                    args.len()
+                ));
             }
             let mut expanded = Vec::with_capacity(args.len());
             for a in &args {
@@ -697,7 +792,11 @@ impl Pp {
                     return Err("'defined(' is missing ')'".into());
                 }
                 let v = self.macros.contains_key(&name.text);
-                pre.push(Tok { text: if v { "1" } else { "0" }.into(), kind: Kind::Number, ws: true });
+                pre.push(Tok {
+                    text: if v { "1" } else { "0" }.into(),
+                    kind: Kind::Number,
+                    ws: true,
+                });
                 i += if paren { 4 } else { 2 };
             } else {
                 pre.push(toks[i].clone());
@@ -705,10 +804,17 @@ impl Pp {
             }
         }
         let ex = self.expand(&pre, &mut Vec::new(), 0)?;
-        let mut ev = Eval { t: &ex, pos: 0, depth: 0 };
+        let mut ev = Eval {
+            t: &ex,
+            pos: 0,
+            depth: 0,
+        };
         let v = ev.ternary()?;
         if ev.pos != ex.len() {
-            return Err(format!("unexpected {:?} in #if expression", ex[ev.pos].text));
+            return Err(format!(
+                "unexpected {:?} in #if expression",
+                ex[ev.pos].text
+            ));
         }
         Ok(v != 0)
     }
@@ -730,11 +836,22 @@ impl Pp {
         Ok(t)
     }
 
-    fn include(&mut self, args: &str, file: u32, line: u32, dir: &Path, depth: usize, path: &Path, outer: Term) -> Result<bool, FxError> {
+    fn include(
+        &mut self,
+        args: &str,
+        file: u32,
+        line: u32,
+        dir: &Path,
+        depth: usize,
+        path: &Path,
+        outer: Term,
+    ) -> Result<bool, FxError> {
         let err = |m: String| FxError::new(path, line, m);
         let mut spec = args.to_string();
         if !spec.starts_with('"') && !spec.starts_with('<') {
-            let ex = self.expand(&tokenize(args), &mut Vec::new(), 0).map_err(&err)?;
+            let ex = self
+                .expand(&tokenize(args), &mut Vec::new(), 0)
+                .map_err(&err)?;
             spec = render(&ex);
         }
         let close = match spec.chars().next() {
@@ -752,8 +869,16 @@ impl Pp {
         let Some((resolved, via)) = self.resolve(&name, dir) else {
             return Err(err(format!("include \"{name}\" not found")));
         };
-        let text = self.load(&resolved).map_err(|e| err(format!("cannot read include \"{name}\": {e}")))?;
-        self.includes.push(Include { from: Origin { file, line }, from_path: self.files[file as usize].clone(), name, resolved: resolved.clone(), via });
+        let text = self
+            .load(&resolved)
+            .map_err(|e| err(format!("cannot read include \"{name}\": {e}")))?;
+        self.includes.push(Include {
+            from: Origin { file, line },
+            from_path: self.files[file as usize].clone(),
+            name,
+            resolved: resolved.clone(),
+            via,
+        });
         let id = self.file_id(&resolved);
         let sub_dir = resolved.parent().map(Path::to_path_buf).unwrap_or_default();
         self.stack.push(resolved);
@@ -764,7 +889,15 @@ impl Pp {
 
     /// Strict mode: resolves an include that sits in a skipped region, then every include of
     /// that file, whatever the conditionals say. Nothing is added to the output.
-    fn eager_include(&mut self, args: &str, file: u32, line: u32, dir: &Path, depth: usize, path: &Path) -> Result<(), FxError> {
+    fn eager_include(
+        &mut self,
+        args: &str,
+        file: u32,
+        line: u32,
+        dir: &Path,
+        depth: usize,
+        path: &Path,
+    ) -> Result<(), FxError> {
         let err = |m: String| FxError::new(path, line, m);
         let Some(name) = args.strip_prefix('"').and_then(|r| r.split('"').next()) else {
             return Ok(());
@@ -776,11 +909,19 @@ impl Pp {
         let Some((resolved, via)) = self.resolve(&name, dir) else {
             return Err(err(format!("include \"{name}\" not found")));
         };
-        self.includes.push(Include { from: Origin { file, line }, from_path: self.files[file as usize].clone(), name: name.clone(), resolved: resolved.clone(), via });
+        self.includes.push(Include {
+            from: Origin { file, line },
+            from_path: self.files[file as usize].clone(),
+            name: name.clone(),
+            resolved: resolved.clone(),
+            via,
+        });
         if self.stack.contains(&resolved) {
             return Ok(());
         }
-        let text = self.load(&resolved).map_err(|e| err(format!("cannot read include \"{name}\": {e}")))?;
+        let text = self
+            .load(&resolved)
+            .map_err(|e| err(format!("cannot read include \"{name}\": {e}")))?;
         let id = self.file_id(&resolved);
         let sub_dir = resolved.parent().map(Path::to_path_buf).unwrap_or_default();
         self.stack.push(resolved.clone());
@@ -789,12 +930,23 @@ impl Pp {
         r
     }
 
-    fn eager_scan(&mut self, file: u32, text: &str, dir: &Path, depth: usize, path: &Path) -> Result<(), FxError> {
+    fn eager_scan(
+        &mut self,
+        file: u32,
+        text: &str,
+        dir: &Path,
+        depth: usize,
+        path: &Path,
+    ) -> Result<(), FxError> {
         let mut lines = Lines::new(text);
         let mut buf = String::new();
         while let Some((first, _)) = lines.next(&mut buf) {
-            let Some(rest) = buf.trim_start().strip_prefix('#') else { continue };
-            let Some(args) = rest.trim_start().strip_prefix("include") else { continue };
+            let Some(rest) = buf.trim_start().strip_prefix('#') else {
+                continue;
+            };
+            let Some(args) = rest.trim_start().strip_prefix("include") else {
+                continue;
+            };
             if args.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
                 continue;
             }
@@ -830,7 +982,13 @@ fn collect_args(input: &[Tok], start: usize) -> Option<(Vec<Vec<Tok>>, usize)> {
 }
 
 fn substitute(m: &Macro, params: &[String], raw: &[Vec<Tok>], expanded: &[Vec<Tok>]) -> Vec<Tok> {
-    let param = |t: &Tok| if t.kind == Kind::Ident { params.iter().position(|p| *p == t.text) } else { None };
+    let param = |t: &Tok| {
+        if t.kind == Kind::Ident {
+            params.iter().position(|p| *p == t.text)
+        } else {
+            None
+        }
+    };
     let is_paste = |t: Option<&Tok>| t.is_some_and(|t| t.text == "##");
     let mut res: Vec<Tok> = Vec::new();
     let mut paste = false;
@@ -845,7 +1003,11 @@ fn substitute(m: &Macro, params: &[String], raw: &[Vec<Tok>], expanded: &[Vec<To
         if b.text == "#" {
             if let Some(pi) = m.body.get(k + 1).and_then(param) {
                 let s = render(&raw[pi]).replace('\\', "\\\\").replace('"', "\\\"");
-                res.push(Tok { text: format!("\"{s}\""), kind: Kind::Str, ws: b.ws });
+                res.push(Tok {
+                    text: format!("\"{s}\""),
+                    kind: Kind::Str,
+                    ws: b.ws,
+                });
                 k += 2;
                 continue;
             }
@@ -943,8 +1105,12 @@ impl Eval<'_> {
                 "+" => lhs.wrapping_add(rhs),
                 "-" => lhs.wrapping_sub(rhs),
                 "*" => lhs.wrapping_mul(rhs),
-                "/" => lhs.checked_div(rhs).ok_or("division by zero in #if expression")?,
-                _ => lhs.checked_rem(rhs).ok_or("division by zero in #if expression")?,
+                "/" => lhs
+                    .checked_div(rhs)
+                    .ok_or("division by zero in #if expression")?,
+                _ => lhs
+                    .checked_rem(rhs)
+                    .ok_or("division by zero in #if expression")?,
             };
         }
     }
@@ -988,7 +1154,9 @@ fn parse_int(s: &str) -> Result<i64, String> {
     let t = s.trim_end_matches(|c: char| matches!(c, 'u' | 'U' | 'l' | 'L'));
     let bad = || format!("bad number {s:?} in #if expression");
     if let Some(h) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        return i64::from_str_radix(h, 16).or_else(|_| u64::from_str_radix(h, 16).map(|v| v as i64)).map_err(|_| bad());
+        return i64::from_str_radix(h, 16)
+            .or_else(|_| u64::from_str_radix(h, 16).map(|v| v as i64))
+            .map_err(|_| bad());
     }
     if t.contains(['.', 'e', 'E']) || t.ends_with(['f', 'F']) {
         let f: f64 = t.trim_end_matches(['f', 'F']).parse().map_err(|_| bad())?;
@@ -999,7 +1167,9 @@ fn parse_int(s: &str) -> Result<i64, String> {
             return Ok(v);
         }
     }
-    t.parse::<i64>().or_else(|_| t.parse::<u64>().map(|v| v as i64)).map_err(|_| bad())
+    t.parse::<i64>()
+        .or_else(|_| t.parse::<u64>().map(|v| v as i64))
+        .map_err(|_| bad())
 }
 
 #[cfg(test)]
@@ -1022,7 +1192,10 @@ mod tests {
         let out = text("a /* x\ny */ b // c \\\nd\n#define M 1 \\\n + 2\nM \"//not\"\n");
         let lines: Vec<_> = out.lines().collect();
         assert_eq!(lines[0].split_whitespace().collect::<Vec<_>>(), ["a", "b"]);
-        assert!(lines.iter().any(|l| l.trim() == "1 + 2 \"//not\""), "{lines:?}");
+        assert!(
+            lines.iter().any(|l| l.trim() == "1 + 2 \"//not\""),
+            "{lines:?}"
+        );
         // one output line per source line
         assert_eq!(lines.len(), 6);
     }
@@ -1063,7 +1236,19 @@ mod tests {
 
     #[test]
     fn malformed_input_is_an_error_not_a_panic() {
-        for src in ["#if\n", "#if (1\n#endif\n", "#endif\n", "#else\n", "#define\n", "#define F(\n", "#if 1/0\n#endif\n", "#bogus\n", "#if 1\n", "#include\n", "#include \"\n"] {
+        for src in [
+            "#if\n",
+            "#if (1\n#endif\n",
+            "#endif\n",
+            "#else\n",
+            "#define\n",
+            "#define F(\n",
+            "#if 1/0\n#endif\n",
+            "#bogus\n",
+            "#if 1\n",
+            "#include\n",
+            "#include \"\n",
+        ] {
             let t = TempTree::new();
             t.write("a.fx", src.as_bytes());
             assert!(pp(&t, "a.fx").is_err(), "{src:?}");

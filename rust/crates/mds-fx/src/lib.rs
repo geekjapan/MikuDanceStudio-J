@@ -49,7 +49,8 @@ impl Effect {
     }
 
     pub fn parse_file_with(path: &Path, opts: &Options) -> Result<Effect, FxError> {
-        let bytes = std::fs::read(path).map_err(|e| FxError::new(path, 0, format!("cannot read file: {e}")))?;
+        let bytes = std::fs::read(path)
+            .map_err(|e| FxError::new(path, 0, format!("cannot read file: {e}")))?;
         Self::parse_bytes_with(path, &bytes, opts)
     }
 
@@ -81,7 +82,12 @@ impl Effect {
     /// to the `compile` arguments.
     pub fn wrapper(&self, entry: &Entry) -> Result<Wrapper, FxError> {
         entries::wrapper(&self.ast, &self.shader, entry).map_err(|m| {
-            let line = self.ast.functions.iter().find(|f| f.name == entry.function).map_or(0, |f| f.line);
+            let line = self
+                .ast
+                .functions
+                .iter()
+                .find(|f| f.name == entry.function)
+                .map_or(0, |f| f.line);
             self.pre.error(line, m)
         })
     }
@@ -136,11 +142,19 @@ fn build_shader_source(src: &str, toks: &[lex::Token], ast: &EffectAst) -> Strin
         if trimmed.starts_with(';') {
             end += rest.len() - trimmed.len() + 1;
         }
-        edits.push((t.span.start, end, "\n".repeat(src[t.span.start..end].matches('\n').count())));
+        edits.push((
+            t.span.start,
+            end,
+            "\n".repeat(src[t.span.start..end].matches('\n').count()),
+        ));
     }
     for t in toks {
         if let Some(raw) = &t.raw {
-            edits.push((t.start, t.end, format!("{raw}{}", "\n".repeat(t.gap_newlines as usize))));
+            edits.push((
+                t.start,
+                t.end,
+                format!("{raw}{}", "\n".repeat(t.gap_newlines as usize)),
+            ));
         }
     }
     edits.sort_by_key(|e| e.0);
@@ -204,12 +218,28 @@ technique T2 { pass { PixelShader = compile ps_3_0 PS(0.5); } };
     fn entries_are_unique() {
         let fx = parse(SRC);
         let e = fx.entries();
-        let names: Vec<_> = e.iter().map(|e| (e.profile.as_str(), e.function.as_str(), e.args_text.as_str())).collect();
+        let names: Vec<_> = e
+            .iter()
+            .map(|e| {
+                (
+                    e.profile.as_str(),
+                    e.function.as_str(),
+                    e.args_text.as_str(),
+                )
+            })
+            .collect();
         assert_eq!(
             names,
-            [("vs_3_0", "VS", "2.0 , float2 ( 1 , 0 )"), ("ps_3_0", "PS", "0.5"), ("ps_3_0", "Plain", "")]
+            [
+                ("vs_3_0", "VS", "2.0 , float2 ( 1 , 0 )"),
+                ("ps_3_0", "PS", "0.5"),
+                ("ps_3_0", "Plain", "")
+            ]
         );
-        assert_eq!(fx.ast.techniques[0].annotations[0].value, Value::Str("RenderColorTarget0=;Pass=P0;".into()));
+        assert_eq!(
+            fx.ast.techniques[0].annotations[0].value,
+            Value::Str("RenderColorTarget0=;Pass=P0;".into())
+        );
     }
 
     #[test]
@@ -225,20 +255,37 @@ technique T2 { pass { PixelShader = compile ps_3_0 PS(0.5); } };
             w.source
         );
         let w = fx.wrapper(&e[1]).unwrap();
-        assert!(w.source.ends_with("float4 __mme_entry(float4 c : COLOR0) : COLOR { return PS(c, 0.5); }\n"));
+        assert!(w
+            .source
+            .ends_with("float4 __mme_entry(float4 c : COLOR0) : COLOR { return PS(c, 0.5); }\n"));
         let w = fx.wrapper(&e[2]).unwrap();
-        assert_eq!((w.entry_point.as_str(), w.source.as_str()), ("Plain", fx.shader_source()));
+        assert_eq!(
+            (w.entry_point.as_str(), w.source.as_str()),
+            ("Plain", fx.shader_source())
+        );
     }
 
     #[test]
     fn wrapper_rejects_mismatched_arguments() {
         let fx = parse("float4 F(uniform float a, uniform float b) : COLOR { return a; }\ntechnique T { pass { PixelShader = compile ps_3_0 F(1); } }");
         let e = fx.entries();
-        assert!(fx.wrapper(&e[0]).unwrap_err().message.contains("more uniform"));
+        assert!(fx
+            .wrapper(&e[0])
+            .unwrap_err()
+            .message
+            .contains("more uniform"));
         let fx = parse("float4 F(uniform float a) : COLOR { return a; }\ntechnique T { pass { PixelShader = compile ps_3_0 F(1, 2); } }");
-        assert!(fx.wrapper(&fx.entries()[0]).unwrap_err().message.contains("fewer uniform"));
+        assert!(fx
+            .wrapper(&fx.entries()[0])
+            .unwrap_err()
+            .message
+            .contains("fewer uniform"));
         let fx = parse("technique T { pass { PixelShader = compile ps_3_0 Nope(); } }");
-        assert!(fx.wrapper(&fx.entries()[0]).unwrap_err().message.contains("not defined"));
+        assert!(fx
+            .wrapper(&fx.entries()[0])
+            .unwrap_err()
+            .message
+            .contains("not defined"));
     }
 
     #[test]
@@ -259,7 +306,10 @@ technique T2 { pass { PixelShader = compile ps_3_0 PS(0.5); } };
             "float4 PS() : COLOR { return 0; }\n#define TEC(n, p) technique n < string MMDPass = p; > { pass P { PixelShader = compile ps_3_0 PS(); } }\nTEC(A, \"object\")\nTEC(B, \"object_ss\")\n",
         );
         assert_eq!(fx.ast.techniques.len(), 2);
-        assert_eq!(fx.ast.techniques[1].annotations[0].value, Value::Str("object_ss".into()));
+        assert_eq!(
+            fx.ast.techniques[1].annotations[0].value,
+            Value::Str("object_ss".into())
+        );
         assert_eq!(fx.entries().len(), 1);
         // a macro expansion maps to the line of its invocation
         assert_eq!(fx.origin(fx.ast.techniques[1].line).unwrap().1, 4);
@@ -267,7 +317,8 @@ technique T2 { pass { PixelShader = compile ps_3_0 PS(0.5); } };
 
     #[test]
     fn shift_jis_and_utf8_agree() {
-        let utf8 = "// \u{30c6}\u{30b9}\u{30c8}\nstring Name = \"\u{30c6}\u{30b9}\u{30c8}\";\nfloat x;\n";
+        let utf8 =
+            "// \u{30c6}\u{30b9}\u{30c8}\nstring Name = \"\u{30c6}\u{30b9}\u{30c8}\";\nfloat x;\n";
         let (sjis, _, bad) = encoding_rs::SHIFT_JIS.encode(&utf8);
         assert!(!bad && std::str::from_utf8(&sjis).is_err());
         let t = TempTree::new();

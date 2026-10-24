@@ -13,7 +13,11 @@ pub struct FxError {
 
 impl FxError {
     pub fn new(path: impl Into<PathBuf>, line: u32, message: impl Into<String>) -> Self {
-        FxError { path: path.into(), line, message: message.into() }
+        FxError {
+            path: path.into(),
+            line,
+            message: message.into(),
+        }
     }
 }
 

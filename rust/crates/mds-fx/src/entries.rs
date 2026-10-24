@@ -60,28 +60,44 @@ pub fn wrapper(ast: &EffectAst, shader_source: &str, entry: &Entry) -> Result<Wr
         .find(|f| f.name == entry.function && f.has_body)
         .ok_or_else(|| format!("function {} is not defined", entry.function))?;
     if entry.args_text.is_empty() {
-        return Ok(Wrapper { source: shader_source.to_string(), entry_point: entry.function.clone() });
+        return Ok(Wrapper {
+            source: shader_source.to_string(),
+            entry_point: entry.function.clone(),
+        });
     }
     let mut call = Vec::new();
     let mut decl = Vec::new();
     let mut next_arg = entry.args.iter();
     for p in &func.params {
         if p.split(' ').next() == Some("uniform") {
-            let a = next_arg
-                .next()
-                .ok_or_else(|| format!("{} has more uniform parameters than the {} compile arguments", func.name, entry.args.len()))?;
+            let a = next_arg.next().ok_or_else(|| {
+                format!(
+                    "{} has more uniform parameters than the {} compile arguments",
+                    func.name,
+                    entry.args.len()
+                )
+            })?;
             call.push(a.clone());
         } else {
-            let name = last_word_before_bracket_or_colon(p).ok_or_else(|| format!("cannot find the name of parameter {p:?}"))?;
+            let name = last_word_before_bracket_or_colon(p)
+                .ok_or_else(|| format!("cannot find the name of parameter {p:?}"))?;
             decl.push(p.clone());
             call.push(name.to_string());
         }
     }
     if next_arg.next().is_some() {
-        return Err(format!("{} has fewer uniform parameters than the {} compile arguments", func.name, entry.args.len()));
+        return Err(format!(
+            "{} has fewer uniform parameters than the {} compile arguments",
+            func.name,
+            entry.args.len()
+        ));
     }
     let ret = func.return_type.rsplit(' ').next().unwrap_or("void");
-    let semantic = func.return_semantic.as_ref().map(|s| format!(": {s}")).unwrap_or_default();
+    let semantic = func
+        .return_semantic
+        .as_ref()
+        .map(|s| format!(": {s}"))
+        .unwrap_or_default();
     let ret_kw = if ret == "void" { "" } else { "return " };
     let wrapper = format!(
         "\n{ret} {WRAPPER_ENTRY}({}) {semantic} {{ {ret_kw}{}({}); }}\n",
@@ -89,5 +105,8 @@ pub fn wrapper(ast: &EffectAst, shader_source: &str, entry: &Entry) -> Result<Wr
         func.name,
         call.join(", ")
     );
-    Ok(Wrapper { source: format!("{shader_source}{wrapper}"), entry_point: WRAPPER_ENTRY.to_string() })
+    Ok(Wrapper {
+        source: format!("{shader_source}{wrapper}"),
+        entry_point: WRAPPER_ENTRY.to_string(),
+    })
 }

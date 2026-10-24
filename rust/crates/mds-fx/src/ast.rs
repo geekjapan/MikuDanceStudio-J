@@ -137,9 +137,13 @@ impl EffectAst {
 
     /// Every `compile` expression in pass order.
     pub fn compiles(&self) -> impl Iterator<Item = &Compile> {
-        self.techniques.iter().flat_map(|t| &t.passes).flat_map(|p| &p.states).filter_map(|s| match &s.value {
-            StateValue::Compile(c) => Some(c),
-            _ => None,
-        })
+        self.techniques
+            .iter()
+            .flat_map(|t| &t.passes)
+            .flat_map(|p| &p.states)
+            .filter_map(|s| match &s.value {
+                StateValue::Compile(c) => Some(c),
+                _ => None,
+            })
     }
 }

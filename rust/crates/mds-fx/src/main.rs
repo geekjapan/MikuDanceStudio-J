@@ -45,7 +45,9 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
         includes: false,
         mip: true,
         strict: true,
-        jobs: std::thread::available_parallelism().map_or(1, |n| n.get()).min(8),
+        jobs: std::thread::available_parallelism()
+            .map_or(1, |n| n.get())
+            .min(8),
         paths: Vec::new(),
     };
     let mut it = args.iter();
@@ -58,7 +60,11 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
             "--lazy-includes" => o.strict = false,
             "-j" => {
                 let n = it.next().ok_or("-j needs a number")?;
-                o.jobs = n.parse::<usize>().ok().filter(|n| *n > 0).ok_or("-j needs a positive number")?;
+                o.jobs = n
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or("-j needs a positive number")?;
             }
             s if s.starts_with('-') && s.len() > 1 => return Err(format!("unknown option {s}")),
             s => o.paths.push(PathBuf::from(s)),
@@ -76,19 +82,28 @@ struct Found {
 }
 
 fn slashed(p: &Path) -> String {
-    p.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/")
+    p.components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// The name a file prints under: relative arguments print as given, absolute ones by the
 /// directory's own name, so `.../mds-corpus/ray-mmd` prints as `ray-mmd/...`.
 fn root_label(root: &Path) -> String {
     if root.is_absolute() {
-        if let Some(rel) = std::env::current_dir().ok().and_then(|cwd| root.strip_prefix(cwd).ok().map(Path::to_path_buf)) {
+        if let Some(rel) = std::env::current_dir()
+            .ok()
+            .and_then(|cwd| root.strip_prefix(cwd).ok().map(Path::to_path_buf))
+        {
             if !rel.as_os_str().is_empty() {
                 return slashed(&rel);
             }
         }
-        return root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        return root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
     }
     slashed(root)
 }
@@ -124,11 +139,18 @@ fn collect(paths: &[PathBuf], errors: &mut Vec<FxError>) -> Vec<Found> {
             let base = root_label(root);
             for f in files {
                 let rel = f.strip_prefix(root).map(slashed).unwrap_or_default();
-                let label = if base.is_empty() { rel } else { format!("{base}/{rel}") };
+                let label = if base.is_empty() {
+                    rel
+                } else {
+                    format!("{base}/{rel}")
+                };
                 found.push(Found { path: f, label });
             }
         } else {
-            found.push(Found { path: root.clone(), label: slashed(root) });
+            found.push(Found {
+                path: root.clone(),
+                label: slashed(root),
+            });
         }
     }
     found.sort_by(|a, b| a.label.cmp(&b.label));
@@ -155,7 +177,11 @@ fn scan_one(path: &Path, opts: &Options) -> Outcome {
     match Effect::parse_file_with(path, opts) {
         Ok(fx) => {
             let entries = fx.entries();
-            let wrapper_errors = entries.iter().filter_map(|e| fx.wrapper(e).err()).map(|e| e.to_string()).collect();
+            let wrapper_errors = entries
+                .iter()
+                .filter_map(|e| fx.wrapper(e).err())
+                .map(|e| e.to_string())
+                .collect();
             Outcome {
                 includes: fx.includes().to_vec(),
                 result: Ok(Parsed {
@@ -168,8 +194,13 @@ fn scan_one(path: &Path, opts: &Options) -> Outcome {
             }
         }
         Err(e) => {
-            let includes = fs::read(path).map(|b| mds_fx::preprocess::resolved_includes(path, &b, opts)).unwrap_or_default();
-            Outcome { result: Err(e), includes }
+            let includes = fs::read(path)
+                .map(|b| mds_fx::preprocess::resolved_includes(path, &b, opts))
+                .unwrap_or_default();
+            Outcome {
+                result: Err(e),
+                includes,
+            }
         }
     }
 }
@@ -177,7 +208,11 @@ fn scan_one(path: &Path, opts: &Options) -> Outcome {
 fn scan(o: &Opts) -> ExitCode {
     let mut walk_errors = Vec::new();
     let found = collect(&o.paths, &mut walk_errors);
-    let opts = Options { mip_filter: o.mip, strict_includes: o.strict, ..Options::default() };
+    let opts = Options {
+        mip_filter: o.mip,
+        strict_includes: o.strict,
+        ..Options::default()
+    };
 
     // Parse on worker threads; keep results in file order so output is deterministic.
     let next = AtomicUsize::new(0);
@@ -185,14 +220,16 @@ fn scan(o: &Opts) -> ExitCode {
     std::thread::scope(|s| {
         for _ in 0..o.jobs.min(found.len().max(1)) {
             // Macro expansion recurses, so give workers a large stack.
-            let worker = std::thread::Builder::new().stack_size(64 << 20).spawn_scoped(s, || loop {
-                let i = next.fetch_add(1, Ordering::Relaxed);
-                let Some(f) = found.get(i) else { break };
-                let r = scan_one(&f.path, &opts);
-                if let Ok(mut g) = results.lock() {
-                    g[i] = Some(r);
-                }
-            });
+            let worker = std::thread::Builder::new()
+                .stack_size(64 << 20)
+                .spawn_scoped(s, || loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(f) = found.get(i) else { break };
+                    let r = scan_one(&f.path, &opts);
+                    if let Ok(mut g) = results.lock() {
+                        g[i] = Some(r);
+                    }
+                });
             if worker.is_err() {
                 eprintln!("error: cannot start a worker thread");
             }
@@ -205,7 +242,8 @@ fn scan(o: &Opts) -> ExitCode {
         eprintln!("error: {e}");
     }
     let mut seen: HashSet<u64> = HashSet::new();
-    let (mut unique, mut techniques, mut passes, mut wrapper_failed) = (0usize, 0usize, 0usize, 0usize);
+    let (mut unique, mut techniques, mut passes, mut wrapper_failed) =
+        (0usize, 0usize, 0usize, 0usize);
     let (mut inc_top, mut inc_nested) = (0usize, 0usize);
     let mut rows: Vec<(String, Entry)> = Vec::new();
     for (f, r) in found.iter().zip(results) {
@@ -220,13 +258,28 @@ fn scan(o: &Opts) -> ExitCode {
                 Via::IncludingDir => inc_nested += 1,
             }
             if o.includes {
-                println!("include\t{}\t{}:{}\t{}\t{:?}\t{}", f.label, i.from_path.display(), i.from.line, i.name, i.via, i.resolved.display());
+                println!(
+                    "include\t{}\t{}:{}\t{}\t{:?}\t{}",
+                    f.label,
+                    i.from_path.display(),
+                    i.from.line,
+                    i.name,
+                    i.via,
+                    i.resolved.display()
+                );
             }
         }
         match out.result {
             Ok(p) => {
                 if o.files {
-                    println!("ok\t{}\t{}\t{}\t{}\t{:016x}", f.label, p.techniques, p.passes, p.entries.len(), p.key);
+                    println!(
+                        "ok\t{}\t{}\t{}\t{}\t{:016x}",
+                        f.label,
+                        p.techniques,
+                        p.passes,
+                        p.entries.len(),
+                        p.key
+                    );
                 }
                 for w in &p.wrapper_errors {
                     eprintln!("wrapper error: {w}");
@@ -248,7 +301,14 @@ fn scan(o: &Opts) -> ExitCode {
             }
         }
     }
-    rows.sort_by(|a, b| (&a.0, &a.1.profile, &a.1.function, &a.1.args_text).cmp(&(&b.0, &b.1.profile, &b.1.function, &b.1.args_text)));
+    rows.sort_by(|a, b| {
+        (&a.0, &a.1.profile, &a.1.function, &a.1.args_text).cmp(&(
+            &b.0,
+            &b.1.profile,
+            &b.1.function,
+            &b.1.args_text,
+        ))
+    });
     if o.entries {
         for (label, e) in &rows {
             println!("{label}\t{}\t{}\t{}", e.profile, e.function, e.args_text);
@@ -286,7 +346,13 @@ fn main() -> ExitCode {
         },
         Some("pp") => match args.get(1) {
             // debugging aid: print the preprocessed text of one file
-            Some(f) => match mds_fx::preprocess::preprocess_file(Path::new(f), &Options { strict_includes: true, ..Options::default() }) {
+            Some(f) => match mds_fx::preprocess::preprocess_file(
+                Path::new(f),
+                &Options {
+                    strict_includes: true,
+                    ..Options::default()
+                },
+            ) {
                 Ok(p) => {
                     print!("{}", p.text);
                     ExitCode::SUCCESS

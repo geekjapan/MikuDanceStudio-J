@@ -46,7 +46,8 @@ pub fn scan(src: &str, i: usize) -> (Kind, usize) {
         let mut j = i + 1;
         while j < len {
             let d = b[j];
-            let exp_sign = (d == b'+' || d == b'-') && matches!(b[j - 1], b'e' | b'E' | b'p' | b'P');
+            let exp_sign =
+                (d == b'+' || d == b'-') && matches!(b[j - 1], b'e' | b'E' | b'p' | b'P');
             if is_ident_char(d) || d == b'.' || exp_sign {
                 j += 1;
             } else {
@@ -171,7 +172,10 @@ pub fn lex(src: &str) -> Result<Vec<Token>, LexError> {
             i += 2;
             loop {
                 if i + 1 >= len {
-                    return Err(LexError { line: start_line, message: "unterminated comment".into() });
+                    return Err(LexError {
+                        line: start_line,
+                        message: "unterminated comment".into(),
+                    });
                 }
                 if b[i] == b'*' && b[i + 1] == b'/' {
                     i += 2;
@@ -190,7 +194,10 @@ pub fn lex(src: &str) -> Result<Vec<Token>, LexError> {
                 let msg = if c == b'"' {
                     "unterminated string literal".to_string()
                 } else {
-                    format!("unexpected character {:?}", src[i..].chars().next().unwrap_or('?'))
+                    format!(
+                        "unexpected character {:?}",
+                        src[i..].chars().next().unwrap_or('?')
+                    )
                 };
                 return Err(LexError { line, message: msg });
             }
@@ -242,7 +249,15 @@ pub fn lex(src: &str) -> Result<Vec<Token>, LexError> {
                 toks.push(tok);
             }
             _ => {
-                toks.push(Token { kind, start: i, end, line, value: String::new(), raw: None, gap_newlines: 0 });
+                toks.push(Token {
+                    kind,
+                    start: i,
+                    end,
+                    line,
+                    value: String::new(),
+                    raw: None,
+                    gap_newlines: 0,
+                });
                 line += src[i..end].matches('\n').count() as u32;
                 i = end;
             }
@@ -279,8 +294,15 @@ mod tests {
     #[test]
     fn numbers_and_punct() {
         let src = "a = -1.5e-3f + .5 << 2 >= 0x1F;";
-        let kinds: Vec<_> = lex(src).unwrap().iter().map(|t| t.text(src).to_string()).collect();
-        assert_eq!(kinds, ["a", "=", "-", "1.5e-3f", "+", ".5", "<<", "2", ">=", "0x1F", ";"]);
+        let kinds: Vec<_> = lex(src)
+            .unwrap()
+            .iter()
+            .map(|t| t.text(src).to_string())
+            .collect();
+        assert_eq!(
+            kinds,
+            ["a", "=", "-", "1.5e-3f", "+", ".5", "<<", "2", ">=", "0x1F", ";"]
+        );
     }
 
     #[test]

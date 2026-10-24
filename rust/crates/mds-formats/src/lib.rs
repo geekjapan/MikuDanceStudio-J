@@ -4,8 +4,8 @@
 //! # Data shape
 //!
 //! Each format is a typed struct that keeps every field the C++ writers emit,
-//! in file order, so `write(read(bytes)) == bytes` for every file that
-//! reads. Integers and floats keep their bits; byte flags keep the value as
+//! in file order, so for the binary formats `write(read(bytes)) == bytes`
+//! for every file that reads (`flipfuzz` checks this). Integers and floats keep their bits; byte flags keep the value as
 //! read, not a `bool`. A field that a flag in the file switches on or off
 //! (PMX bone flags, weight types, morph kinds) is read and written only when
 //! the flag says so. Sections that a file may end before (the PMD English,

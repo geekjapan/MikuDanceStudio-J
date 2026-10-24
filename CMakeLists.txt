@@ -18,6 +18,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 if (MSVC)
     add_compile_options(/W3 /permissive-)
+    # The sources are UTF-8 without a BOM. Without this switch MSVC reads them
+    # in the host code page, and on a Japanese (CP932) host the comments break
+    # the parse. Japanese strings are hex-escaped bytes, so the output does
+    # not change.
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
     # The original binary tolerates implicit narrowing everywhere; keep the
     # port close to VC9 behaviour rather than modern strictness.

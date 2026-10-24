@@ -2,13 +2,13 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use mds_fx::{Effect, Entry, FxError, Options};
+use mds_fx::{discover, Effect, Entry, FxError, Options};
 use mds_shader::vkd3d::Vkd3d;
 use mds_shader::{backend, gpu, reflect, Compiled, Stage, Status};
 
@@ -93,93 +93,6 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
     Ok(o)
 }
 
-// File discovery and labels follow `mds-fx scan`, so paths print as in shaders-direct.tsv.
-
-struct Found {
-    path: PathBuf,
-    label: String,
-}
-
-fn slashed(p: &Path) -> String {
-    p.components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-fn root_label(root: &Path) -> String {
-    if root.is_absolute() {
-        if let Some(rel) = std::env::current_dir()
-            .ok()
-            .and_then(|cwd| root.strip_prefix(cwd).ok().map(Path::to_path_buf))
-        {
-            if !rel.as_os_str().is_empty() {
-                return slashed(&rel);
-            }
-        }
-        return root
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-    }
-    slashed(root)
-}
-
-fn walk(dir: &Path, out: &mut Vec<PathBuf>, errors: &mut Vec<String>) {
-    let rd = match fs::read_dir(dir) {
-        Ok(rd) => rd,
-        Err(e) => {
-            errors.push(format!("{}: cannot read directory: {e}", dir.display()));
-            return;
-        }
-    };
-    for entry in rd.flatten() {
-        let path = entry.path();
-        match entry.file_type() {
-            Ok(t) if t.is_dir() => walk(&path, out, errors),
-            Ok(t)
-                if t.is_file()
-                    && path
-                        .extension()
-                        .is_some_and(|e| e.eq_ignore_ascii_case("fx")) =>
-            {
-                out.push(path)
-            }
-            _ => {}
-        }
-    }
-}
-
-fn collect(paths: &[PathBuf], errors: &mut Vec<String>) -> Vec<Found> {
-    let mut found = Vec::new();
-    for root in paths {
-        if root.is_dir() {
-            let mut files = Vec::new();
-            walk(root, &mut files, errors);
-            let base = root_label(root);
-            for f in files {
-                let rel = f.strip_prefix(root).map(slashed).unwrap_or_default();
-                let label = if base.is_empty() {
-                    rel
-                } else {
-                    format!("{base}/{rel}")
-                };
-                found.push(Found { path: f, label });
-            }
-        } else if root.is_file() {
-            found.push(Found {
-                path: root.clone(),
-                label: slashed(root),
-            });
-        } else {
-            errors.push(format!("{}: no such file or directory", root.display()));
-        }
-    }
-    found.sort_by(|a, b| a.label.cmp(&b.label));
-    found.dedup_by(|a, b| a.label == b.label);
-    found
-}
-
 /// Runs `f` over `0..n` on `jobs` threads with large stacks (macro expansion and vkd3d's
 /// parser recurse) and returns the results in index order.
 fn par_map<T: Send>(n: usize, jobs: usize, f: impl Fn(usize) -> T + Sync) -> Vec<Option<T>> {
@@ -235,8 +148,15 @@ fn run(o: &Opts) -> Result<bool, String> {
     let vk = Vkd3d::load()?;
     eprintln!("loaded {} from {}", vk.version(), vk.path().display());
 
-    let mut walk_errors = Vec::new();
-    let found = collect(&o.paths, &mut walk_errors);
+    let (paths, missing): (Vec<_>, Vec<_>) = o
+        .paths
+        .iter()
+        .cloned()
+        .partition(|p| p.is_dir() || p.is_file());
+    let (found, walk_errors) = discover(&paths);
+    for p in &missing {
+        eprintln!("error: {}: no such file or directory", p.display());
+    }
     for e in &walk_errors {
         eprintln!("error: {e}");
     }

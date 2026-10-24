@@ -21,7 +21,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use mds_fx::ast::EffectAst;
+use mds_fx::ast::{EffectAst, RegisterClass};
 use mds_fx::lex::{self, Kind};
 use rspirv::dr::{self, Operand};
 use rspirv::spirv::{Op, StorageClass};
@@ -255,24 +255,6 @@ fn probe_source(ast: &EffectAst, source: &str, vars: &mut [Var]) -> Result<Strin
             j += 1;
         }
         let insert_at = toks.get(j - 1).map_or(source.len(), |t| t.end);
-        // Look for a reservation the source makes: `: register(c4)`.
-        let mut k = j;
-        while text(k) == ":" {
-            if text(k + 1) == "register" && text(k + 2) == "(" {
-                let r = text(k + 3);
-                let want = if v.class == Class::Numeric { 'c' } else { 's' };
-                if r.starts_with(want) {
-                    v.reserved = r[1..].parse().ok();
-                }
-                k += 4;
-                while k < toks.len() && text(k) != ")" {
-                    k += 1;
-                }
-                k += 1;
-            } else {
-                k += 2;
-            }
-        }
         let slot = if v.class == Class::Numeric { 0 } else { 1 };
         v.base = match v.reserved {
             Some(r) => r,
@@ -394,12 +376,18 @@ fn probe(
             class_of(&g.ty).map(|class| Var {
                 name: g.name.clone(),
                 class,
+                reserved: g.register.and_then(|r| {
+                    let want = match class {
+                        Class::Numeric => RegisterClass::Float,
+                        Class::Sampler => RegisterClass::Sampler,
+                    };
+                    (r.class == want).then_some(r.index)
+                }),
                 span: if class == Class::Numeric {
                     span_of(&g.ty, &g.array)
                 } else {
                     span_of("int", &g.array)
                 },
-                reserved: None,
                 base: 0,
                 bind_count: 0,
             })

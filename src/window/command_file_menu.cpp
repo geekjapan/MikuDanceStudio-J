@@ -85,7 +85,7 @@
 //   247 (0xF7, 0x489E10)  undo on/off toggle: app+0x9ED98 + 0xF7 check +
 //                         0x217 checkbox, camera floats cleared, reload
 //                         chain + PostModelReload/PostViewRefresh/
-//                         PostLanguageSweep2
+//                         InvalidateSelectionReadouts
 //   248 (0xF8, 0x489F5B)  modeless ground-shadow-color dialog (sub_42DFF0, tpl 0x292/0x270)
 //                         stored into app+0xA0B14, SW_SHOW
 //   249 (0xF9, 0x48A03B)  modal accessory-settings dialog (sub_44CA40, tpl 0x293/0x273)
@@ -311,7 +311,6 @@ void PostDeviceReset(MMDApp* app);             // VA 0x00440DB0 (device_reset.cp
 void LayoutViewportPanels(MMDApp* app);             // VA 0x0040CAC0
                                                    // (ui_viewport_layout.cpp)
 void SnapshotSelectedKeysForUndo(unsigned char* model, int frame);  // VA 0x004A1510
-int SeekModelFrame(unsigned char* model, int frame, int physicsMode);  // VA 0x004B4260 frame seek
 void DeleteMarkedKeyframes(MMDApp* app);                       // VA 0x004316B0 frame
                                                    // cleanup (delete unused)
 void LoadVsqFile(MMDApp* app, const wchar_t* path);  // VA 0x00435FE0 VSQ load
@@ -332,7 +331,6 @@ void SyncAccessoryEditPanel(MMDApp* app);                       // VA 0x004134E0
 // 0x4337A0 picture load - real port in src/media/media_load.cpp
 void LoadBackgroundPicture(MMDApp* app);
                                                    // load (0xE8)
-int PasteAccessoryKeyRecord(MMDApp* app, void* rec, int useSelectedSlot);  // VA 0x00414110
                                                    // accessary paste step (returns
                                                    // int: 0 stops the replay loop)
 void ResetBoneKeyCursor(unsigned char* model);              // VA 0x004A4940 frame
@@ -341,9 +339,6 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
                    unsigned char useSelected);  // VA 0x0049D880
                                                    // paste step (0xFA)
 void IdentityCtor(void* obj);                         // VA 0x004C46F0 ctor
-void* ConstructArrayElements(void* block, std::uint32_t elementSize,
-                             std::uint32_t count,
-                             void* ctor);          // VA 0x00401150
 
 // 32-bit multiply with the original's overflow idiom (mul/seto/neg/or):
 // returns 0xFFFFFFFF when the product overflows (case 250 allocations).
@@ -369,7 +364,7 @@ HWND MainHwnd(MMDApp* app) {
 // variant): undo record, panel repaint, selection re-eval, dirty flag.
 void FramePurgeTail(MMDApp* app) {
     unsigned char* model = ActiveModel(app);
-    SeekModelFrame(model, app->state.currentFrame,
+    SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame,
               app->PlaybackPhysicsMode());
     PanelPaint(app);      // 0x414610
     SelectionReeval(app); // 0x430510
@@ -962,8 +957,8 @@ void BuildAccessoryOrderArray(MMDApp* app, int count) {  // VA 0x00439C90
     // x64 sub_7FF7CB4A96E0 stores DWORD slot indices, not object pointers.
     BuildAccessoryOrderIndices(app->DialogOrders().accessoryIndices.get(), count,
         [app](int slot) { return app->AccessorySlot(slot); });
-    PostLanguageSweep(app);                                     // 0x42F1E0
-    PostLanguageSweep2(app);                                    // 0x40D070
+    RebuildTimelineTrackPanel(app);                                     // 0x42F1E0
+    InvalidateSelectionReadouts(app);                                    // 0x40D070
 }
 // VA 0x00439D00 - thiscall app method (this = Block): commits the reorder
 // - order byte (obj+1181) and name (obj+568) updated from the dialog list
@@ -996,8 +991,8 @@ void ApplyAccessorySettingsDialog(MMDApp* app, int count, HWND hDlg) {  // VA 0x
         if (selected != nullptr)
             selected->rowSelected = 1;                          // 0x439E34
     }
-    PostLanguageSweep(app);                                     // 0x42F1E0
-    PostLanguageSweep2(app);                                    // 0x40D070
+    RebuildTimelineTrackPanel(app);                                     // 0x42F1E0
+    InvalidateSelectionReadouts(app);                                    // 0x40D070
 }
 // VA 0x0040F730 (x64 sub_7FF7CB476D30) - value-edit (0x272) subclass wndproc
 // installed by sub_42DFF0's WM_INITDIALOG (SetWindowLongPtrA GWLP_WNDPROC;
@@ -1127,7 +1122,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         PanelPaint(app);      // 0x414610
         SelectionReeval(app); // 0x430510
         model = ActiveModel(app);
-        SeekModelFrame(model, app->state.currentFrame,
+        SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame,
                   app->PlaybackPhysicsMode());
         app->SceneModified() = 1;
         app->PhysicsResetPending() = 1;
@@ -1295,61 +1290,51 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             break;
         }
         app->state.enterKeyState = 1;
-        const std::intptr_t r = DialogBoxParamA(
-            static_cast<HINSTANCE>(app->HInstance()),
-            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? 0x28F : 0x267),
-            MainHwnd(app), FrameShiftDlgProc, 0);
+        const std::intptr_t r =
+            DialogBoxParamA(static_cast<HINSTANCE>(app->HInstance()),
+                            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? 0x28F : 0x267),
+                            MainHwnd(app), FrameShiftDlgProc, 0);
         if (r == 2) {  // IDCANCEL
             break;
         }
         unsigned char* model = ActiveModel(app);
         const std::int32_t morphCount =
             static_cast<std::int32_t>(mdl::Mdl(model)->morphCount);
-        for (std::uint16_t m = 0; static_cast<std::int32_t>(m) < morphCount;
-             ++m) {
+        for (std::uint16_t m = 0; static_cast<std::int32_t>(m) < morphCount; ++m) {
             model = ActiveModel(app);
             const mdl::MorphRecord* const morphs = mdl::Morphs(model);
             if (morphs[m].type != 3) {
                 continue;
             }
-            unsigned char* frames = reinterpret_cast<unsigned char*>(
-                mdl::MorphKeys(model));
-            std::int32_t cur = *reinterpret_cast<std::int32_t*>(
-                frames + 0x14 * m + 8);  // chain head
+            mdl::MorphKey* frames = mdl::MorphKeys(model);
+            std::int32_t cur = frames[m].next;  // chain head
             if (cur == 0) {
                 continue;
             }
             for (;;) {
                 model = ActiveModel(app);
-                frames = reinterpret_cast<unsigned char*>(
-                    mdl::MorphKeys(model));
-                const std::int32_t next = *reinterpret_cast<std::int32_t*>(
-                    frames + 0x14 * cur + 8);
+                frames = mdl::MorphKeys(model);
+                const std::int32_t next = frames[cur].next;
                 if (next != 0) {
                     if (cur == m) {  // self-loop edge (original 0x488F61)
                         cur = next;
                         continue;
                     }
-                    std::int32_t v = *reinterpret_cast<std::int32_t*>(
-                                         frames + 0x14 * cur + 0) +
+                    std::int32_t v = static_cast<std::int32_t>(frames[cur].frame) +
                                      app->MorphFrameShift();
-                    *reinterpret_cast<std::int32_t*>(frames + 0x14 * cur + 0) =
-                        v;
+                    frames[cur].frame = v;
                     if (v > 0) {
-                        cur = *reinterpret_cast<std::int32_t*>(
-                            frames + 0x14 * cur + 8);
+                        cur = frames[cur].next;
                         continue;  // stop dropping, keep walking
                     }
                     // drop cur: relink m's chain past it, zero its record
-                    const std::int32_t oldNext =
-                        *reinterpret_cast<std::int32_t*>(frames + 0x14 * cur + 8);
-                    *reinterpret_cast<std::int32_t*>(frames + 0x14 * m + 8) =
-                        oldNext;
-                    *reinterpret_cast<std::int32_t*>(frames + 0x14 * cur + 0) = 0;
-                    *reinterpret_cast<std::int32_t*>(frames + 0x14 * cur + 8) = 0;
-                    *reinterpret_cast<std::int32_t*>(frames + 0x14 * cur + 4) = 0;
-                    frames[0x14 * cur + 0x10] = 0;
-                    *reinterpret_cast<float*>(frames + 0x14 * cur + 0xC) = 0.0f;
+                    const std::int32_t oldNext = frames[cur].next;
+                    frames[m].next = oldNext;
+                    frames[cur].frame = 0;
+                    frames[cur].next = 0;
+                    frames[cur].previous = 0;
+                    frames[cur].allocated = 0;
+                    frames[cur].value = 0.0f;
                     cur = oldNext;
                     continue;
                 }
@@ -1357,20 +1342,18 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
                 if (cur == m) {
                     break;
                 }
-                std::int32_t v = *reinterpret_cast<std::int32_t*>(
-                                     frames + 0x14 * cur + 0) +
+                std::int32_t v = static_cast<std::int32_t>(frames[cur].frame) +
                                  app->MorphFrameShift();
-                *reinterpret_cast<std::int32_t*>(frames + 0x14 * cur + 0) = v;
+                frames[cur].frame = v;
                 if (v > 0) {
                     break;
                 }
-                *reinterpret_cast<std::int32_t*>(frames + 0x14 * m + 8) =
-                    *reinterpret_cast<std::int32_t*>(frames + 0x14 * cur + 8);
-                *reinterpret_cast<std::int32_t*>(frames + 0x14 * cur + 0) = 0;
-                *reinterpret_cast<std::int32_t*>(frames + 0x14 * cur + 8) = 0;
-                *reinterpret_cast<std::int32_t*>(frames + 0x14 * cur + 4) = 0;
-                frames[0x14 * cur + 0x10] = 0;
-                *reinterpret_cast<float*>(frames + 0x14 * cur + 0xC) = 0.0f;
+                frames[m].next = frames[cur].next;
+                frames[cur].frame = 0;
+                frames[cur].next = 0;
+                frames[cur].previous = 0;
+                frames[cur].allocated = 0;
+                frames[cur].value = 0.0f;
                 break;
             }
         }
@@ -1681,7 +1664,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             PanelPaint(app);
             SelectionReeval(app);
             model = ActiveModel(app);
-            SeekModelFrame(model, app->state.currentFrame,
+            SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame,
                       app->PlaybackPhysicsMode());
             app->PhysicsResetPending() = 1;
             break;
@@ -1792,7 +1775,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             }
         }
         model = ActiveModel(app);
-        SeekModelFrame(model, app->state.currentFrame,
+        SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame,
                   app->PlaybackPhysicsMode());
         PanelPaint(app);      // 0x414610
         SelectionReeval(app); // 0x430510
@@ -1871,7 +1854,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // (ReloadModels, RefreshLightPanel, RefreshSelfShadowPanel, ApplyGravityTrack, per-accessory
     // ApplyAccessoryTrack, SyncAccessoryEditPanel, then PostModelReload when app+0x2F8 is clear;
     // the off path additionally gates on app+0xA0430 == slot index),
-    // finishing with PostViewRefresh + PostLanguageSweep2.
+    // finishing with PostViewRefresh + InvalidateSelectionReadouts.
     // ------------------------------------------------------------------
     case 247: {
         app->state.dialogFlags[2] = 1;
@@ -1899,7 +1882,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             }
             // 0x489F4F/0x489F56: the shared tail runs for BOTH branches.
             PostViewRefresh(app);                          // 0x40D130
-            PostLanguageSweep2(app);                       // 0x40D070
+            InvalidateSelectionReadouts(app);                       // 0x40D070
         } else {
             // ---- disable undo ----
             app->state.followCameraEnabled = 0;
@@ -1908,20 +1891,20 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
                          0, 0);
             if (app->state.optflag[0] != 0) {  // 0x2F8
                 PostViewRefresh(app);                      // 0x40D130
-                PostLanguageSweep2(app);                   // 0x40D070
+                InvalidateSelectionReadouts(app);                   // 0x40D070
                 break;
             }
             const std::int32_t cam = app->CameraParentModel();
             if (cam != app->SelectedModelSlot() ||
                 cam < 0) {
                 PostViewRefresh(app);
-                PostLanguageSweep2(app);
+                InvalidateSelectionReadouts(app);
                 break;
             }
             app->CameraAttachmentTransformSuppressed() = 0;
             PostModelReload(app);                          // 0x41A650
             PostViewRefresh(app);                          // 0x40D130
-            PostLanguageSweep2(app);                       // 0x40D070
+            InvalidateSelectionReadouts(app);                       // 0x40D070
         }
         break;
     }

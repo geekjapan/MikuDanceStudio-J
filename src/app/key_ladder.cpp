@@ -271,7 +271,7 @@ void PumpModelShortcuts(MMDApp* app, const KeyboardInputContext& input) {
                 SelectionReeval(app);                          // 0x430510
                 if (record->undoRings[0].slots[record->undoState[0]].operation
                         != 1) {
-                    SeekModelFrame(model, static_cast<int>(app->CurrentFrame()),
+                    SeekModelFrame(*mdl::Mdl(model), static_cast<int>(app->CurrentFrame()),
                               app->PlaybackPhysicsMode());
                 }
             } else if (!ctrl()) {

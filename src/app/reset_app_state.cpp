@@ -510,7 +510,7 @@ void ResetAppState(MMDApp* app) {
     DrawMenuBar(hwnd);
 
     // ---- refresh tail -------------------------------------------------------
-    PostLanguageSweep(app);                                      // 0x42F1E0
+    RebuildTimelineTrackPanel(app);                                      // 0x42F1E0
     PanelPaint(app);                                             // 0x414610
     SelectionReeval(app);                                        // 0x430510
     ReloadModels(app);                                           // 0x42E640

@@ -624,7 +624,7 @@ void ApplyBoneFrameScaleAdd(MMDApp* app, HWND hDlg) {  // VA 0x0043E000
     }
     PanelPaint(app);         // 0x414610 (x64 sub_7FF7CB480EA0)
     CurvePanelRepaint(app);  // x64 sub_7FF7CB482BB0
-    SeekModelFrame(modelBytes, app->state.currentFrame,
+    SeekModelFrame(*mdl::Mdl(modelBytes), app->state.currentFrame,
               app->state.playbackPhysicsMode);  // 0x4B4260 (x64 0x4EBD90)
     app->SceneModified() = 1;  // x64 0xA1B31 dirty byte
     PostViewRefresh(app);   // 0x40D130 (x64 sub_7FF7CB440DD0)
@@ -662,7 +662,7 @@ void ApplyMorphScaleAdd(MMDApp* app, HWND hDlg) {  // VA 0x0043E680
     }
     PanelPaint(app);         // 0x414610 (x64 sub_7FF7CB480EA0)
     CurvePanelRepaint(app);  // x64 sub_7FF7CB482BB0
-    SeekModelFrame(modelBytes, app->state.currentFrame,
+    SeekModelFrame(*mdl::Mdl(modelBytes), app->state.currentFrame,
               app->state.playbackPhysicsMode);  // 0x4B4260 (x64 0x4EBD90)
     MorphPanelRefresh(modelBytes);               // x64 sub_7FF7CB4ED750
     app->SceneModified() = 1;
@@ -908,7 +908,7 @@ void ApplyPhysicsOnOff(int on) {  // VA 0x004403C0
         }
     }
     PanelPaint(app);  // 0x414610 (x64 sub_7FF7CB480EA0)
-    SeekModelFrame(modelBytes, app->state.currentFrame,
+    SeekModelFrame(*mdl::Mdl(modelBytes), app->state.currentFrame,
               app->state.playbackPhysicsMode);  // 0x4B4260 (x64 0x4EBD90)
 }
 

@@ -710,7 +710,7 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
 // bone-register combo (control 450) refill.  CB_RESETCONTENT, then for the
 // model in slot app+0x780[slot] every bone whose type byte (+484) is < 7
 // or == 8 is appended (CB_ADDSTRING) with the English (+20) or Japanese
-// (+0) name selected by the UI flag; finishes with PostLanguageSweep
+// (+0) name selected by the UI flag; finishes with RebuildTimelineTrackPanel
 // (0x40D070).  Negative slot only clears.  (Return value is the sweep's
 // BOOL; callers ignore it.)
 // ---------------------------------------------------------------------------
@@ -739,7 +739,7 @@ void RefillBoneRegisterCombo(MMDApp* app, int slot) {
             }
         }
     }
-    PostLanguageSweep2(app);                                     // 0x410132
+    InvalidateSelectionReadouts(app);                                     // 0x410132
 }
 
 }  // namespace mikudancestudio

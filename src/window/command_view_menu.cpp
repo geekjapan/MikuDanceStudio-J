@@ -88,8 +88,8 @@
 //                          0x10D/0x109/0x10E; sync loop (no 0x9EDB5)
 //   273 111  0x0048DBFF    gate app+0x2F8; 0x48=1; per-bone selection:
 //                          sel[i] = (frames[i*0x25C+0x1EC] != 0),
-//                          curBone = i when visible; PostLanguageSweep +
-//                          PostLanguageSweep2
+//                          curBone = i when visible; RebuildTimelineTrackPanel +
+//                          InvalidateSelectionReadouts
 //   274 112  0x0048DC96    gate app+0x2F8; 0x30=1; clear frame-selection
 //                          flags of morph (+0x10/0x14), other (+0x14/0x1C)
 //                          and bone (+0x38/0x3C) tables, then mark the
@@ -496,7 +496,7 @@ LRESULT CALLBACK ModelEdgeEditSubclassProc(  // VA 0x0045ECC0
         }
         if (hwnd == GetDlgItem(dlg, panel::kBoneNameEnEdit)) {
             CollectEnglishNameEdit(app, hwnd, 1);
-            PostLanguageSweep(app);                         // 0x42F1E0
+            RebuildTimelineTrackPanel(app);                         // 0x42F1E0
             return 0;
         }
         if (hwnd == GetDlgItem(dlg, panel::kMorphNameEnEdit)) {
@@ -2058,8 +2058,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
                 }
             }
         }
-        PostLanguageSweep(app);   // 0x42F1E0
-        PostLanguageSweep2(app);  // 0x40D070
+        RebuildTimelineTrackPanel(app);   // 0x42F1E0
+        InvalidateSelectionReadouts(app);  // 0x40D070
         return;
     }
 

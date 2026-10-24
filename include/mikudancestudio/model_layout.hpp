@@ -149,7 +149,7 @@ struct ModelRecord {
     // The two pointer fields above grow by eight bytes on x64; preserve the
     // directly recovered offsets of the following timeline fields.
 #endif
-    // Bone-list line bookkeeping written by PostLanguageSweep (0x42F1E0) and
+    // Bone-list line bookkeeping written by RebuildTimelineTrackPanel (0x42F1E0) and
     // read by the panel paint (0x414610) and the name-column click path
     // (0x446A70): the frame-1 head line, the 200 per-line type bytes (1 =
     // bone row / 2 = face row / rigid type otherwise) and the 200 per-line

@@ -38,7 +38,7 @@
 //                          slot table 0x9DD70, confirm MessageBox (EN/JP),
 //                          free + rebuild slot (0x927C0 blob), index fixup,
 //                          combo rebuild, EnableMenuItem 0xF9, RebuildCameraModePanel,
-//                          Refresh(-1), PostLanguageSweep2
+//                          Refresh(-1), InvalidateSelectionReadouts
 //   474,475 1DA,1DB  def_47E903   default (no-op)
 //   476 1DC  0x00486F91    toggle accessory display byte 0x210,
 //                          BM_SETCHECK(0x1DC), Refresh(byte 0x9E170)
@@ -64,7 +64,7 @@
 //   494 1EE  0x0047FB24    select all bones (flags at model+0x26BC, byte
 //                          +0x1E4 type / word +0x1F4 & 0x400 gate), check
 //                          radio 0x1EA, re-dispatch WM_COMMAND(0x1EA),
-//                          PostLanguageSweep + PostLanguageSweep2
+//                          RebuildTimelineTrackPanel + InvalidateSelectionReadouts
 //   495 1EF  0x0047F3FA    insert current-frame keyframes for all selected
 //                          bones (bone-0 seed, D3DXMatrixRotationQuaternion
 //                          bake for parent-less bones, identity for parented,
@@ -240,9 +240,6 @@ void RegisterLightState(MMDApp* app, int frame);   // VA 0x00411630
 void CommitEditControl(MMDApp* app, HWND hwnd);            // VA 0x00463640
 void DeleteAccessory(mdl::AccessoryRecord* accessory, int flag);  // VA 0x0040A6F0
 void IdentityCtor(void* obj);                         // VA 0x004C46F0 (ctor)
-void* ConstructArrayElements(void* block, std::uint32_t elementSize,
-                             std::uint32_t count,
-                             void* ctor);  // VA 0x00401150
 
 void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
                    std::uint16_t notify) {
@@ -447,7 +444,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // confirm box (EN/JP, MB_OKCANCEL + 0x40000 when app+0xA0D38 != 0);
     // dispose slot blob, allocate fresh 0x927C0 blob, fix up indices,
     // rebuild combos 0x1D7/0x1DA/0x1DB, clear checkbox labels 0x1DE..0x1E4,
-    // EnableMenuItem 0xF9, RebuildCameraModePanel, Refresh(-1), PostLanguageSweep2.
+    // EnableMenuItem 0xF9, RebuildCameraModePanel, Refresh(-1), InvalidateSelectionReadouts.
     // ------------------------------------------------------------------
     case 473: {
         const LRESULT sel =
@@ -557,7 +554,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
         app->GlobalTrackSelected(GlobalTimelineTrack::Camera) = 0;
         RefreshRequest(-1);
         InvalidateRect(hwnd, nullptr, FALSE);
-        PostLanguageSweep2(app);
+        InvalidateSelectionReadouts(app);
         break;
     }
 
@@ -685,7 +682,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 494 (0x0047FB24): select all bones.  A bone is selected when
     // (flag word +0x1F4 has bit 0x400 and type byte +0x1E4 == 4) or
     // type == 8 or type <= 6; then check radio 0x1EA, re-dispatch
-    // WM_COMMAND(0x1EA) and run PostLanguageSweep + PostLanguageSweep2.
+    // WM_COMMAND(0x1EA) and run RebuildTimelineTrackPanel + InvalidateSelectionReadouts.
     // ------------------------------------------------------------------
     case 494: {
         unsigned char* model = ActiveModel(app);
@@ -694,8 +691,8 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
             // keep the radio bookkeeping below and skip the scan.
             SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 1, 0);
             SendMessageA(hwnd, WM_COMMAND, 0x1EA, 0);
-            PostLanguageSweep(app);
-            PostLanguageSweep2(app);
+            RebuildTimelineTrackPanel(app);
+            InvalidateSelectionReadouts(app);
             break;
         }
         auto* const modelRecord = mikudancestudio::mdl::Mdl(model);
@@ -718,8 +715,8 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
         // command; the WM_COMMAND switch below keys the same literal.
         SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 1, 0);
         SendMessageA(hwnd, WM_COMMAND, 0x1EA, 0);
-        PostLanguageSweep(app);
-        PostLanguageSweep2(app);
+        RebuildTimelineTrackPanel(app);
+        InvalidateSelectionReadouts(app);
         break;
     }
 
@@ -1022,8 +1019,8 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
             rec.physicsDisabled = frameFlag[found];
             frameFlag[found] = 1;
             modelRecord->selectedBone = found;
-            PostLanguageSweep(app);
-            PostLanguageSweep2(app);
+            RebuildTimelineTrackPanel(app);
+            InvalidateSelectionReadouts(app);
         }
         SetFocus(hwnd);
         app->PhysicsResetPending() = 1;
@@ -1157,8 +1154,8 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
             rec.physicsDisabled = frameFlag[target];
             frameFlag[target] = 1;
             modelRecord->selectedBone = target;
-            PostLanguageSweep(app);
-            PostLanguageSweep2(app);
+            RebuildTimelineTrackPanel(app);
+            InvalidateSelectionReadouts(app);
         }
         SetFocus(hwnd);
         app->PhysicsResetPending() = 1;

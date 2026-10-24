@@ -336,7 +336,7 @@ void UpdateBoneFrames(MMDApp* app) {
     HWND overlay = app->FloatingWindow();
     EnableRange(overlay != nullptr ? overlay : hwnd, 536, 550, FALSE);
     DisablePlaybackMenus(hwnd);
-    PostLanguageSweep2(app);
+    InvalidateSelectionReadouts(app);
 }
 
 void StopPlayback(MMDApp* app) {
@@ -414,7 +414,7 @@ void StopPlayback(MMDApp* app) {
     for (int i = 0; i < kModelSlotCount; ++i) {
         unsigned char* model = app->ModelSlot(i);
         if (model != nullptr)
-            SeekModelFrame(model, frame, app->PlaybackPhysicsMode());
+            SeekModelFrame(*mdl::Mdl(model), frame, app->PlaybackPhysicsMode());
     }
     if (app->state.optflag[0] == 0 &&
         activeModel != nullptr)
@@ -455,7 +455,7 @@ void StopPlayback(MMDApp* app) {
         AviBgOverlayRefresh(app);
     app->PhysicsResetPending() = 1;
     PostViewRefresh(app);
-    PostLanguageSweep2(app);
+    InvalidateSelectionReadouts(app);
 }
 
 }  // namespace mikudancestudio

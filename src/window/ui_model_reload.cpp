@@ -597,8 +597,8 @@ void ApplyModelComboSelection(MMDApp* app) {  // 0x44D940
                      model != nullptr &&
                          mdl::Mdl(model)->redoDirty != 0);
     }
-    PostLanguageSweep(app);
-    PostLanguageSweep2(app);
+    RebuildTimelineTrackPanel(app);
+    InvalidateSelectionReadouts(app);
 }
 
 }  // namespace mikudancestudio

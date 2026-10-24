@@ -11,7 +11,7 @@
 //      SetWindowPos(cy=1920, SWP_NOZORDER).  Position is preserved.
 //   2. 0x4433A4  sidebar width (this+0xA06C8): GetClientRect; when the
 //      accessory-column gate (this+0xA0D38) is set the sidebar is client
-//      width - 3 and the label sweep PostLanguageSweep (0x42F1E0) runs;
+//      width - 3 and the label sweep RebuildTimelineTrackPanel (0x42F1E0) runs;
 //      otherwise sidebar = max(250, (int)(ratio @0xA4428 * client width))
 //      and PanelPaint (0x414610) runs when the sidebar grew.
 //   3. 0x4433F5  control layout, three coordinate families:
@@ -95,7 +95,7 @@ void HandleWindowSize(MMDApp* app) {
     std::int32_t& sidebar = s.SidebarWidth();
     if (s.FloatingWindow() != nullptr) {
         sidebar = cr1.right - 3;                               // 0x4433B8
-        PostLanguageSweep(app);                                // 0x4433BE
+        RebuildTimelineTrackPanel(app);                                // 0x4433BE
     } else {
         std::int32_t newSidebar = static_cast<std::int32_t>(
             static_cast<double>(s.SidebarRatio()) *

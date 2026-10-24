@@ -8,7 +8,7 @@
 // Click regions (gates computed once up front):
 //   var_190 = Y > 160 ; var_1A0 = Y < clientBottom - 0xF8 (248)
 //   A. Margin column  X in (4, 20):    row-type display-flag toggle
-//      (model[0x26D0] table, 0x65-stride, flag at +0x64) + PostLanguageSweep
+//      (model[0x26D0] table, 0x65-stride, flag at +0x64) + RebuildTimelineTrackPanel
 //   B. Name column    X in (20, 95]:  bone/morph row selection + keyframe
 //      insert (0x4A1510) - display-mode sub-branch when byte 0x2F8 set
 //   C. Main area      X in (95, sidebar-18) && Y gates: selection bitmap
@@ -62,7 +62,7 @@ namespace mikudancestudio {
 // in other translation units (not yet registered in ported_funcs.hpp;
 // declared here with their original VAs).
 void PanelPaint(MMDApp* app);                                   // VA 0x00414610
-void PostLanguageSweep(MMDApp* app);                            // VA 0x0042F1E0
+void RebuildTimelineTrackPanel(MMDApp* app);                            // VA 0x0042F1E0
 void TimelineDrawTicks(int frameOffset, int width);             // VA 0x004C2A00
 void SetFrameNormalized(int frame);                             // VA 0x004C2B80
 
@@ -78,11 +78,10 @@ void ApplyAccessoryTrack(MMDApp* app, int idx);                           // VA 
 void SnapshotPoseBeforeFrameChange(unsigned char* model, int frame);  // VA 0x004A0080
 void SyncModelEditControls(unsigned char* model);                     // VA 0x004A02C0
 void SnapshotSelectedKeysForUndo(unsigned char* model, int frame);    // VA 0x004A1510
-int SeekModelFrame(unsigned char* model, int frame, int physicsMode);  // VA 0x004B4260
 void WaveRestartAt(void* sub, double v);                       // VA 0x004C3530
 void AviBgOverlayRefresh(MMDApp* app);                                    // VA 0x004168D0
 void AppendBoneKeyToUndo(unsigned char* model, int index);           // VA 0x0049D410
-void PostLanguageSweep2(MMDApp* app);  // VA 0x0040D070 (ui_view_refresh.cpp);
+void InvalidateSelectionReadouts(MMDApp* app);  // VA 0x0040D070 (ui_view_refresh.cpp);
                                        // was declared here as 0x40D070 - same
                                        // function, the local twin was removed
 void SelectionReeval(MMDApp* app);                              // VA 0x00430510 (stubs.cpp)
@@ -456,7 +455,7 @@ static void HandleLButtonDown_MarginColumnToggle(MMDApp* app,
         if (type > 0) {
             mdl::DisplayGroup& frame = mdl::DisplayGroups(model)[type];
             frame.flags = (frame.flags == 0) ? 1 : 0;   // cmp/setz toggle
-            PostLanguageSweep(app);             // 0x42F1E0
+            RebuildTimelineTrackPanel(app);             // 0x42F1E0
         }
     }
     return;
@@ -503,7 +502,7 @@ static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd,
             if (y >= band.yMin && y < band.yMax) {
                 app->GlobalTrackSelected(band.track) =
                     app->GlobalTrackSelected(band.track) == 0 ? 1 : 0;
-                PostLanguageSweep(app);
+                RebuildTimelineTrackPanel(app);
                 return;
             }
         }
@@ -515,20 +514,20 @@ static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd,
                     mdl::AccessoryRecord*>(app->ObjectSlot(jidx));
                 if (accessory->rowSelected != 0) {
                     accessory->rowSelected = 0;
-                    PostLanguageSweep(app);
-                    PostLanguageSweep2(app);
+                    RebuildTimelineTrackPanel(app);
+                    InvalidateSelectionReadouts(app);
                 } else {
                     accessory->rowSelected = 1;
                     app->state.selectedObjectSlot =
                         static_cast<std::uint8_t>(jidx);
-                    PostLanguageSweep(app);
+                    RebuildTimelineTrackPanel(app);
                     SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_SETCURSEL,
                                  accessory->order, 0);
                     SyncAccessoryEditPanel(app);
-                    PostLanguageSweep2(app);
+                    InvalidateSelectionReadouts(app);
                 }
             } else {
-                PostLanguageSweep2(app);
+                InvalidateSelectionReadouts(app);
             }
             return;
         }
@@ -655,8 +654,8 @@ static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd,
         if (type == 1) {
             mdl::Mdl(m)->displayKeyframesPresent =
                 (mdl::Mdl(m)->displayKeyframesPresent == 0) ? 1 : 0;  // setz
-            PostLanguageSweep(app);
-            PostLanguageSweep2(app);
+            RebuildTimelineTrackPanel(app);
+            InvalidateSelectionReadouts(app);
             return;
         }
         if (type == 2) {
@@ -665,12 +664,12 @@ static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd,
                 mdl::FrameGroup& face = mdl::DisplayFrames(m)[i];
                 face.selected = (face.selected == 0) ? 1 : 0;
             }
-            PostLanguageSweep(app);
-            PostLanguageSweep2(app);
+            RebuildTimelineTrackPanel(app);
+            InvalidateSelectionReadouts(app);
             return;
         }
         if (type <= 0) {                                 // jle loc_447384
-            PostLanguageSweep2(app);
+            InvalidateSelectionReadouts(app);
             return;
         }
         // Rigid-group rows (x86 0x4470FA..0x44718A / x64 0x7FF7CB45A379..):
@@ -691,8 +690,8 @@ static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd,
                     *p = 1;
             }
         }
-        PostLanguageSweep(app);
-        PostLanguageSweep2(app);
+        RebuildTimelineTrackPanel(app);
+        InvalidateSelectionReadouts(app);
         return;
     }
 }
@@ -881,7 +880,7 @@ static void HandleLButtonDown_FrameStripHit(MMDApp* app, HWND hwnd,
             continue;
         // original: sub_4B4260(ecx = model, frame = app+0x980,
         //            app+0xA0CC4)
-        SeekModelFrame(model,
+        SeekModelFrame(*mdl::Mdl(model),
                   app->state.currentFrame,
                   app->PlaybackPhysicsMode());
         if (i == static_cast<int>(app->SelectedModelSlot())) {

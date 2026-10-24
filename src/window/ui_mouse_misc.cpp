@@ -78,7 +78,6 @@ void SyncAccessoryEditPanel(MMDApp* app);                                    // 
 void ApplyAccessoryTrack(MMDApp* app, int idx);                           // VA 0x00413120
 void SnapshotPoseBeforeFrameChange(unsigned char* model, int frame);  // VA 0x004A0080
 void SyncModelEditControls(unsigned char* model);                     // VA 0x004A02C0
-int SeekModelFrame(unsigned char* model, int frame, int physicsMode);  // VA 0x004B4260
 void WaveRestartAt(void* sub, double v);                       // VA 0x004C3530
 void AviBgOverlayRefresh(MMDApp* app);                                    // VA 0x004168D0
 
@@ -153,7 +152,7 @@ void HandleLButtonDblClk(MMDApp* app) {
                 continue;
             // original: sub_4B4260(ecx = model, frame = app+2432,
             //            app+0xA0CC4)
-            SeekModelFrame(model,
+            SeekModelFrame(*mdl::Mdl(model),
                       app->state.currentFrame,
                       app->PlaybackPhysicsMode());
             if (i == static_cast<int>(app->SelectedModelSlot())) {

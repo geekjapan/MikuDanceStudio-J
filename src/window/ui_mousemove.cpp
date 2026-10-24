@@ -82,7 +82,6 @@ void RefreshSelfShadowPanel(MMDApp* a);              // 0x411B90
 void DragInterpolationControlPoint(MMDApp* a);  // 0x416280
 void ReloadModels(MMDApp* a);              // 0x42E640
 void RelayoutSidebarControls(MMDApp* a);              // 0x442EB0
-int SeekModelFrame(unsigned char* model, int frame, int physicsMode);  // 0x4B4260
 void ApplyAccessoryTrack(MMDApp* a, int idx);     // 0x413120
 
 namespace {
@@ -382,7 +381,7 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                 PanelPaint(app);  // 0x446044
                 // 0x446065: original __thiscall(this=model, dword0x980,
                 // dword0xA0CC4).
-                SeekModelFrame(model,
+                SeekModelFrame(*mdl::Mdl(model),
                           app->state.currentFrame,
                           app->state.playbackPhysicsMode);
             } else {

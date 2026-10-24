@@ -849,7 +849,7 @@ void LoadVsqFile(MMDApp* app, const wchar_t* path) {
     SendMessageA(frameEdit, EM_REPLACESEL, 0,
                  reinterpret_cast<LPARAM>(buf));                    // 0x5292B4
 
-    SeekModelFrame(model, frameNow, s.PlaybackPhysicsMode());             // 0x4B4260
+    SeekModelFrame(*mdl::Mdl(model), frameNow, s.PlaybackPhysicsMode());             // 0x4B4260
 
     s.state.timelineStartFrame =
         frameNow > 6 ? frameNow - 6 : 0;

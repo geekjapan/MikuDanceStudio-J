@@ -30,7 +30,7 @@
 
 namespace mikudancestudio {
 void RefreshRequest(int area);
-void PostLanguageSweep2(MMDApp* app);  // VA 0x0040D070, was declared here as
+void InvalidateSelectionReadouts(MMDApp* app);  // VA 0x0040D070, was declared here as
                                        // 0x40D070 (real body: ui_view_refresh.cpp)
 
 namespace {
@@ -698,7 +698,7 @@ void LoadAccessoryFile(const wchar_t* path) {                   // 0x460B30
         frame[0].shadowEnabled = mdl::Accessory(accessory)->shadowEnabled;
     }
     RefreshRequest(app->SelectedAccessorySlot());
-    PostLanguageSweep2(app);
+    InvalidateSelectionReadouts(app);
 }
 
 // VA 0x00413CB0 - register the accessory's current state at

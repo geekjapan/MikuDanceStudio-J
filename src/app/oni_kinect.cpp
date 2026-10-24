@@ -64,6 +64,7 @@
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/model.hpp"
 
 namespace mikudancestudio {
 
@@ -262,7 +263,7 @@ void DisableKinect(MMDApp* app) {
 
     unsigned char* model = s.SelectedModel();
     if (model != nullptr)                                           // 0x42a092
-        SeekModelFrame(model, s.state.currentFrame,
+        SeekModelFrame(*mdl::Mdl(model), s.state.currentFrame,
                   s.PlaybackPhysicsMode());
 
     s.state.fpsLimit =                         // 0x42a0ac

@@ -494,7 +494,7 @@ void FrameDriver(MMDApp* app) {
             RebuildModelModePanel(app);
             app->state.optflag[0] = 0;
             app->EditMode() = ViewportEditMode::Bone;
-            PostLanguageSweep(app);
+            RebuildTimelineTrackPanel(app);
             PostModelReload2(app);
             HandleWindowSize(app);
             InvalidateRect(static_cast<HWND>(app->Hwnd()), nullptr, FALSE);

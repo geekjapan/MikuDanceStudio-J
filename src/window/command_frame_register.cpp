@@ -14,8 +14,8 @@
 //        PanelPaint(0x414610) + SelectionReeval(0x430510)     0x48026F-0x4802C7
 //   501  "all frames" button 0x1F5: BM_SETCHECK(0x1EA,1), re-dispatch
 //        WM_COMMAND 0x1EA, model+0x2D90=-1, per-bone 0x2D94[i]=
-//        (0x2D98[i]!=0), PostLanguageSweep(0x42F1E0) +
-//        PostLanguageSweep2(0x40D070)                         0x47F93D-0x47F9F9
+//        (0x2D98[i]!=0), RebuildTimelineTrackPanel(0x42F1E0) +
+//        InvalidateSelectionReadouts(0x40D070)                         0x47F93D-0x47F9F9
 //   502  option-flag checkbox 0x1FC: byte 0x2FC = 0; PostModelReload2
 //        (0x40D940) + HandleWindowSize(0x443300) + InvalidateRect(main)
 //                                                            0x47EA70-0x47EA77
@@ -76,7 +76,7 @@
 //        camera floats 0x308/0x30C=0, CheckMenuItem(0xF7, MF_CHECKED),
 //        ReloadModels(0x42E640) + 0x411070/0x411B90/0x412330 + slot loop
 //        0x413120 + 0x4134E0, 0xA0478=0 + PostModelReload(0x41A650) when
-//        slot 0xA0430 matches, PostLanguageSweep2; unchecked: 0x9ED98=0,
+//        slot 0xA0430 matches, InvalidateSelectionReadouts; unchecked: 0x9ED98=0,
 //        CheckMenuItem(0xF7, 0), same slot-gated reload           0x48BE6A-0x48BF6A
 //   536  combo 0x1B4 sync 0x218: display mode: 0xA042C==0 -> dispatch
 //        WM_COMMAND 0x1B3, else CB_SETCURSEL(0x1B4, 0xA042C) +
@@ -429,8 +429,8 @@ void CmdControl500(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
             unsigned char* sel = mdl::Mdl(m)->boneSelection;
             sel[i] = (flags[i] != 0) ? 1 : 0;
         }
-        PostLanguageSweep(app);       // 0x42F1E0
-        PostLanguageSweep2(app);      // 0x40D070
+        RebuildTimelineTrackPanel(app);       // 0x42F1E0
+        InvalidateSelectionReadouts(app);      // 0x40D070
         break;
     }
 
@@ -601,7 +601,7 @@ void CmdControl500(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
             // checked: camera cluster 0x308/0x30C = 0, menu 0xF7 checked,
             // full model/slot refresh chain (0x42E640, 0x411070, 0x411B90,
             // 0x412330, per-slot 0x413120, 0x4134E0), then the edit-mode
-            // gated PostModelReload (0x41A650) and PostLanguageSweep2.
+            // gated PostModelReload (0x41A650) and InvalidateSelectionReadouts.
             app->state.followCameraEnabled = 1;
             app->ViewOffsetX() = 0.0f;
             app->ViewOffsetY() = 0.0f;
@@ -619,7 +619,7 @@ void CmdControl500(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
                 app->CameraAttachmentTransformSuppressed() = 0;
                 PostModelReload(app);  // 0x41A650 post-reload refresh
             }
-            PostLanguageSweep2(app);
+            InvalidateSelectionReadouts(app);
         } else {
             // unchecked: byte 0x9ED98 = 0, menu 0xF7 unchecked, reload
             // gated on the selected slot (0xA0430 == slot index).
@@ -633,7 +633,7 @@ void CmdControl500(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
                     PostModelReload(app);
                 }
             }
-            PostLanguageSweep2(app);
+            InvalidateSelectionReadouts(app);
         }
         break;
     }

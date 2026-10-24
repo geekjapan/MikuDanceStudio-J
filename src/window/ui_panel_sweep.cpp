@@ -1,5 +1,5 @@
 // ===========================================================================
-// VA 0x0042F1E0 - PostLanguageSweep  (original: sub_42F1E0, ~0x1320 bytes)
+// VA 0x0042F1E0 - RebuildTimelineTrackPanel  (original: sub_42F1E0, ~0x1320 bytes)
 // ===========================================================================
 // Right-panel label-column sweep: shared tail of LocalizeUI (0x441AD0), the
 // list-scroll handlers (0x440AC0 / 0x44BB30 / 0x44AEE0), HandleWindowSize
@@ -130,7 +130,7 @@ void DrawHeader(MMDApp* app, HDC hdc, const char* text, int y,
 
 void PanelPaint(MMDApp* app);  // VA 0x00414610 (defined in ui_panel_paint.cpp)
 
-void PostLanguageSweep(MMDApp* app) {
+void RebuildTimelineTrackPanel(MMDApp* app) {
     auto& s = *app;
     const bool english = s.EnglishUI() != 0;                        // 658252
     const std::size_t slotIdx = s.SelectedModelSlot();  // 2320

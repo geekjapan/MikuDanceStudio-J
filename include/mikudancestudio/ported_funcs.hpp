@@ -20,6 +20,7 @@
 namespace mikudancestudio {
 
 class MMDApp;
+namespace mdl { struct ModelRecord; }
 struct PathResolutionWorkspace;
 struct DShowRecorder;
 class D3DRenderer;  // d3d_wrapper.hpp (the "0x1D574" render/locale object)
@@ -99,7 +100,7 @@ float BoneEase(unsigned char* model, int channel, int keyIdx,
                float t);  // VA 0x004A05A0 (VMD easing)
 void NotifyBonePhysicsMode(unsigned char* model, int boneIdx,
                            unsigned char mode);  // VA 0x00499B50
-int SeekModelFrame(unsigned char* model, int frame,
+int SeekModelFrame(mdl::ModelRecord& model, int frame,
                   int physicsMode);  // VA 0x004B4260 (frame seek)
 void FinishAviRecord(MMDApp* app);  // VA 0x00464A00
                                   // (recording-end epilogue; full port)
@@ -220,8 +221,8 @@ void HandleLButtonUp(MMDApp*);                              // VA 0x0044A9A0
 void HandleLButtonDblClk(MMDApp*);                          // VA 0x0044AAA0
 void HandleMouseActivate(MMDApp*);                          // VA 0x004632F0
 void HandleMouseWheel(int wheelDelta);                      // VA 0x0044BD70
-void PostLanguageSweep(MMDApp*);                            // VA 0x0042F1E0
-void PostLanguageSweep2(MMDApp*);                           // VA 0x0040D070
+void RebuildTimelineTrackPanel(MMDApp*);                            // VA 0x0042F1E0
+void InvalidateSelectionReadouts(MMDApp*);                           // VA 0x0040D070
 
 // ---- model queries used by the effect-API exports -------------------------
 int GetPmdNum(MMDApp* app);                                   // VA 0x0042A110
@@ -345,7 +346,7 @@ void BeginRangeScaleBoneUndo(unsigned char* model, int frame,
                              int transformedKeyCount);
 // Global-track key registrars (0x410AA0 camera / 0x411900 light /
 // 0x4120B0 self-shadow / 0x412DF0 gravity): real bodies in
-// src/window/command_frame_edit.cpp (sorted 10000-record list insert;
+// src/model/global_key_registration.cpp (sorted 10000-record list insert;
 // the original passes the key record by value on the stack - the port
 // takes (app, rec) with the same record layouts, a stub-era deviation
 // absorbed by those ports).
@@ -372,6 +373,9 @@ INT_PTR CALLBACK DialogFuncStub(HWND hwnd, UINT msg, WPARAM wp,
                                                //  migration dialog proc)
 
 // ---- v2 loader misc dependencies (decls; bodies elsewhere) ----------------
+void* ConstructArrayElements(void* block, std::uint32_t elementSize,
+                             std::uint32_t count, void* constructor);
+int PasteAccessoryKeyRecord(MMDApp* app, void* record, int useSelectedSlot);
 void IdentityCtor(void* obj);                    // VA 0x004C46F0
                                                 // (original: identity ctor
                                                 //  `return this;`; callers

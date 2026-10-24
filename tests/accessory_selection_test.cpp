@@ -6,7 +6,7 @@ namespace { int sweeps = 0, applied = 0, refreshed = 0; }
 namespace mikudancestudio {
 MMDApp::MMDApp() : state{} {}
 MMDApp* g_Block = nullptr;
-void PostLanguageSweep(MMDApp*) { ++sweeps; }
+void RebuildTimelineTrackPanel(MMDApp*) { ++sweeps; }
 void RefreshAfterFrameApply(MMDApp*) { ++applied; }
 void PostViewRefresh(MMDApp*) { ++refreshed; }
 void RefreshRequest(int);

@@ -1193,7 +1193,7 @@ static void LoadSceneV1_ConfigBlock(PmmV1LoadContext& ctx, int fd) {
                      reinterpret_cast<LPARAM>(text));
     }
     PostModelReload2(s);                                         // 0x45C52B
-    PostLanguageSweep(s);                                        // 0x45C532
+    RebuildTimelineTrackPanel(s);                                        // 0x45C532
     HandleWindowSize(s);                                         // 0x45C539
     ApplyModelComboSelection(s);                                                // 0x45C540
 

@@ -44,7 +44,7 @@ void RefreshRequest(int area) {
         if (app->GlobalTrackSelected(GlobalTimelineTrack::Camera) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Camera);
             ClearAccessoryRowSelection(app);
-            PostLanguageSweep(app);         // 0x00440B48 call sub_42F1E0
+            RebuildTimelineTrackPanel(app);         // 0x00440B48 call sub_42F1E0
         }
         return;
     }
@@ -54,7 +54,7 @@ void RefreshRequest(int area) {
         if (app->GlobalTrackSelected(GlobalTimelineTrack::Light) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Light);
             ClearAccessoryRowSelection(app);
-            PostLanguageSweep(app);         // 0x00440BD8 call sub_42F1E0
+            RebuildTimelineTrackPanel(app);         // 0x00440BD8 call sub_42F1E0
         }
         return;
     }
@@ -64,7 +64,7 @@ void RefreshRequest(int area) {
         if (app->GlobalTrackSelected(GlobalTimelineTrack::SelfShadow) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::SelfShadow);
             ClearAccessoryRowSelection(app);
-            PostLanguageSweep(app);         // 0x00440C68 call sub_42F1E0
+            RebuildTimelineTrackPanel(app);         // 0x00440C68 call sub_42F1E0
         }
         return;
     }
@@ -74,7 +74,7 @@ void RefreshRequest(int area) {
         if (app->GlobalTrackSelected(GlobalTimelineTrack::Gravity) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Gravity);
             ClearAccessoryRowSelection(app);
-            PostLanguageSweep(app);         // 0x00440CF8 call sub_42F1E0
+            RebuildTimelineTrackPanel(app);         // 0x00440CF8 call sub_42F1E0
         }
         return;
     }
@@ -84,7 +84,7 @@ void RefreshRequest(int area) {
         app->ClearGlobalTimelineTrackSelection();
         ClearAccessoryRowSelection(app);
         app->AccessorySlots()[area]->rowSelected = 1;
-        PostLanguageSweep(app);
+        RebuildTimelineTrackPanel(app);
     }
 }
 

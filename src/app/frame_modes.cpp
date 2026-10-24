@@ -63,7 +63,7 @@ static void ViewRefreshGate(MMDApp* s) {
         // decimal slip that landed on the frame-range dialog HWND's byte 1)
         s->state.viewDirty = 1;                                   // 0xA05D1
         s->state.windowLayoutReady = 0;
-        PostLanguageSweep2(s);                                    // 0x40D070
+        InvalidateSelectionReadouts(s);                                    // 0x40D070
         s->state.windowLayoutReady = 1;
     }
     PostViewRefresh(s);                                           // 0x40D130
@@ -303,8 +303,8 @@ void PickBoneAtCursor(MMDApp* app) {
     auto* model = mdl::Mdl(ActiveBoneModel(app));
     if (model && PickBoneAtPoint(*model, app->MouseX(), app->MouseY(),
                                 app->PlaybackPhysicsMode(), app->ShiftModifierActive())) {
-        PostLanguageSweep(app);
-        PostLanguageSweep2(app);
+        RebuildTimelineTrackPanel(app);
+        InvalidateSelectionReadouts(app);
     }
 }
 
@@ -345,7 +345,7 @@ void UpdateBoneBoxSelection(MMDApp* app) {
         selected[i] = next;
     }
     if (changed)
-        PostLanguageSweep(app);
+        RebuildTimelineTrackPanel(app);
 }
 
 void BeginOrEndViewportToolDrag(MMDApp* app, int operation) {
@@ -384,7 +384,7 @@ void BeginOrEndViewportToolDrag(MMDApp* app, int operation) {
             const int limit = app->state.optflag[0] != 0 ? 3 : 2;
             if (++target >= limit)
                 target = 0;
-            PostLanguageSweep(app);
+            RebuildTimelineTrackPanel(app);
         } else if (operation == 0 &&
                    app->PlaybackActive() == 0) {
             const RECT view = app->ViewportRect();

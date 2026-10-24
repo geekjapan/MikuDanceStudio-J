@@ -1,5 +1,5 @@
 // ===========================================================================
-// VA 0x0040D070 - PostLanguageSweep2  (original: sub_40D070)
+// VA 0x0040D070 - InvalidateSelectionReadouts  (original: sub_40D070)
 // ===========================================================================
 // Second-stage panel refresh after a language/UI sweep: invalidates two
 // regions of the panel window (it does NOT rewrite control labels).  Called
@@ -46,7 +46,7 @@
 
 namespace mikudancestudio {
 
-void PostLanguageSweep2(MMDApp* app) {
+void InvalidateSelectionReadouts(MMDApp* app) {
     // Target window: this+0xA0D38 doubles as an HWND when non-zero.
     HWND hwnd = reinterpret_cast<HWND>(app->state.floatingWindow);
     RECT client;
@@ -87,7 +87,7 @@ void PostLanguageSweep2(MMDApp* app) {
 // controls 0x220..0x226 of the panel with the current values.
 //
 // Target window: same this+0xA0D38 / this+0xA06B8 selection as
-// PostLanguageSweep2.
+// InvalidateSelectionReadouts.
 //
 // Camera/light mode (this+0x2F8 = kByteOptflag0 != 0):
 //   0x220/0x221/0x222: "%1.2f" of this+0x334/0x338/0x33C (kFloatPosx/y/z);

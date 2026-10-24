@@ -224,7 +224,7 @@ void InsertBoneCameraFrameLine(MMDApp* app) {
             }
         }
 
-        SeekModelFrame(model, static_cast<int>(cur),
+        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(cur),
                   app->PlaybackPhysicsMode());
         PanelPaint(app);
         SelectionReeval(app);
@@ -352,7 +352,7 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
             }
         }
 
-        SeekModelFrame(model, static_cast<int>(cur),
+        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(cur),
                   app->PlaybackPhysicsMode());
         PanelPaint(app);
         SelectionReeval(app);
@@ -436,7 +436,7 @@ void InsertFacialLightFrameLine(MMDApp* app) {
                     static_cast<std::int32_t>(f) + 1;
         }
     }
-    SeekModelFrame(model, static_cast<int>(cur),
+    SeekModelFrame(*mdl::Mdl(model), static_cast<int>(cur),
               app->PlaybackPhysicsMode());
     PanelPaint(app);
     SelectionReeval(app);
@@ -490,7 +490,7 @@ void DeleteFacialLightFrameLine(MMDApp* app) {
                 }
             }
         }
-        SeekModelFrame(model, static_cast<int>(cur),
+        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(cur),
                   app->PlaybackPhysicsMode());
         PanelPaint(app);
         SelectionReeval(app);

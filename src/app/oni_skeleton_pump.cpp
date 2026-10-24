@@ -530,7 +530,7 @@ void PumpKinectSkeleton(MMDApp* app, unsigned char selActive) {
             model, static_cast<unsigned>(s.state.currentFrame));  // [0x1450]
     CurvePanelRepaint(app);                            // 0x7FF7CB482BB0
     if (model != nullptr)
-        SeekModelFrame(model, s.state.currentFrame,
+        SeekModelFrame(*mdl::Mdl(model), s.state.currentFrame,
                       s.PlaybackPhysicsMode());       // 0x7FF7CB4EBD90
 
     // ⑥ 收尾（0x7FF7CB44C609..0x7FF7CB44C656）。

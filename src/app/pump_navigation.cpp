@@ -38,7 +38,7 @@
 // cameraParentModel >= 0 && !playing(0x330) && followCameraEnabled != 0 (the pump reads
 // the BYTE 0x9ED98, unlike frame_modes.cpp ViewRefreshGate's dword read).
 // Hit: view-dirty viewDirty (0xA05D1) = 1 on hold / 0 on release, then the
-// view-lock windowLayoutReady (0xA442C) 0 -> PostLanguageSweep2 (0x40D070)
+// view-lock windowLayoutReady (0xA442C) 0 -> InvalidateSelectionReadouts (0x40D070)
 // -> 1.
 //
 // Static constants (read from the x64 image; the x86 0x52xxxx slots are
@@ -115,12 +115,12 @@ bool BoneEditPathActive(MMDApp* app) {
            state.followCameraEnabled != 0;                           // byte 0x9ED98
 }
 
-// The view-lock sequence around PostLanguageSweep2 (0x40D070):
+// The view-lock sequence around InvalidateSelectionReadouts (0x40D070):
 // 0xA442C = windowLayoutReady, 0xA05D1 = viewDirty view-dirty.
 void EnterBoneEditRefresh(MMDApp* app, bool hold) {
     app->state.viewDirty = hold ? 1 : 0;                 // 0xA05D1
     app->state.windowLayoutReady = 0;                   // 0xA442C
-    PostLanguageSweep2(app);                            // 0x40D070
+    InvalidateSelectionReadouts(app);                            // 0x40D070
     app->state.windowLayoutReady = 1;
 }
 

@@ -150,8 +150,8 @@ void LocalizeUI(MMDApp* app) {
         s.Audio()->englishUI = static_cast<unsigned char>(english);
 
     InvalidateRect(static_cast<HWND>(s.Hwnd()), nullptr, FALSE);
-    PostLanguageSweep(app);                                        // 0x42F1E0
-    PostLanguageSweep2(app);                                       // 0x40D070
+    RebuildTimelineTrackPanel(app);                                        // 0x42F1E0
+    InvalidateSelectionReadouts(app);                                       // 0x40D070
 
     if (modelMode) {
         HWND combo434 = Dlg(app, 434);

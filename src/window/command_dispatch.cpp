@@ -149,8 +149,8 @@ void MorphRowSelect(MMDApp* app, HWND hwnd, HWND combo, std::size_t lane,
     for (std::uint8_t i = 0; i < live->facialFrameCount; ++i) {
         groups[i].selected = (groups[i].targetIndex == index) ? 1 : 0;
     }
-    PostLanguageSweep(app);   // 0x42F1E0 (x64 sub_7FF7CB47F7F0)
-    PostLanguageSweep2(app);  // 0x40D070 (x64 sub_7FF7CB440CE0)
+    RebuildTimelineTrackPanel(app);   // 0x42F1E0 (x64 sub_7FF7CB47F7F0)
+    InvalidateSelectionReadouts(app);  // 0x40D070 (x64 sub_7FF7CB440CE0)
 }
 
 // The default-chain compare chain (def_47E903 @ 0x482897, x64 default at
@@ -207,8 +207,8 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
             app->AccessorySlot(slot)->rowSelected = 1;
             SyncAccessoryEditPanel(app);  // 0x4134E0 accessory edit panel sync
         }
-        PostLanguageSweep(app);
-        PostLanguageSweep2(app);
+        RebuildTimelineTrackPanel(app);
+        InvalidateSelectionReadouts(app);
         SetFocus(hwnd);
         return true;
     }

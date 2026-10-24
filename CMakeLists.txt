@@ -241,6 +241,7 @@ target_include_directories(mikudancestudio_core PUBLIC "${CMAKE_CURRENT_BINARY_D
 add_executable(MikuDanceStudio WIN32
     "${CMAKE_CURRENT_BINARY_DIR}/generated/version.rc"
     src/main/winmain.cpp
+    src/tools/trace_mode.cpp
     res/MMD.rc
     ${MIKUDANCESTUDIO_GEN_RES}
     ${CMAKE_CURRENT_SOURCE_DIR}/exports/MikuMikuDance.def
@@ -548,6 +549,17 @@ if(BUILD_TESTING)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-fixtures/d3dx"
         ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-fixtures/d3dx")
     add_test(NAME d3dx_direct_imports COMMAND d3dx_import_probe)
+    # RM-3: portable L2 trace formatter test; also built standalone on macOS
+    # (command line in the test file header).
+    add_executable(trace_format_test tests/trace_format_test.cpp)
+    target_include_directories(trace_format_test PRIVATE src/tools)
+    add_test(NAME trace_format COMMAND trace_format_test)
+    # RM-3 oracle tools for the Windows host (runbook in tools/oracle/math_vectors.cpp).
+    add_executable(math_vectors tools/oracle/math_vectors.cpp)
+    target_include_directories(math_vectors PRIVATE include tools/oracle)
+    target_link_libraries(math_vectors PRIVATE D3DXRuntime)
+    add_executable(fx_reflect tools/oracle/fx_reflect.cpp)
+    target_link_libraries(fx_reflect PRIVATE D3DXRuntime d3d9 user32)
     add_test(NAME d3dx_pe_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_d3dx_imports.py
         $<TARGET_FILE:MikuDanceStudio>)

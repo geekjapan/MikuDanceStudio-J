@@ -67,15 +67,16 @@ git merge upstream/main
 
 ## ライセンス
 
-ライセンスは範囲ごとに 2 つあります。上流から受け継いだコードの条項は、このフォークでは変えられないためです。
+このフォーク独自の部分は MIT ライセンスです。それ以外の部分は、上流の権利が明確になるまで「ライセンス保留」です。
 
 | 範囲 | ライセンス |
 |---|---|
-| 下の行に挙げたもの以外のすべて。上流から受け継いだコード、それを変更したコード、上流の C++ を移植した `rust/crates/mds-formats` と `rust/crates/mds-scene` を含みます | [LICENSE](../LICENSE)。上流と同じ条項です |
+| 下の行に挙げたもの以外のすべて。上流から受け継いだコード、それを変更したコード、上流の C++ を移植した `rust/crates/mds-formats` と `rust/crates/mds-scene` を含みます | ライセンス保留 |
 | `rust/`（上の 2 crate を除く）、`tools/fixtures/`、`tools/oracle/`、`tools/rust/`、`tools/vkd3d/`、`tests/fixtures/rust/`、`docs/FORK.md`、`docs/RUST_MIGRATION_PLAN.md`、`docs/prototypes/` | [MIT](../LICENSE-MIT) |
 
 2 行目の多くは PR #1 から #10 にあり、まだ `main` に入っていません。
-各 crate のライセンスは、それぞれの `Cargo.toml` にも書いてあります。
+[LICENSE](../LICENSE) は上流のファイルを、文面を変えずにそのまま残しています。
+MIT の crate は、それぞれの `Cargo.toml` にもライセンスを書いてあります。ライセンス保留の crate は `license` 欄を空けています。
 `mds-bullet-sys` はビルドのときに `recipes/bullet275/bullet-src` の Bullet 2.75 を使います。Bullet 自体は zlib ライセンスです。
 
 ### MIT の範囲の書き方
@@ -84,7 +85,7 @@ git merge upstream/main
 MIT の範囲には、上流のコードを写したものも移植したものも入れません。
 新しく書くときに参照してよいのは、公開されている仕様と文書、fixture、上流のプログラムが出力したトレース、形式や手順を文章で書いた仕様書だけです。
 同じ動作かどうかは、トレースを比べて確かめます。
-`mds-formats` と `mds-scene` は上流の C++ を読んで移植したので、上流の条項の範囲に置いています。MIT の範囲で書き直す計画は、[RUST_MIGRATION_PLAN.md](RUST_MIGRATION_PLAN.md) の Licensing 節にあります。
+`mds-formats` と `mds-scene` は上流の C++ を読んで移植したので、ライセンス保留の範囲に置いています。MIT の範囲で書き直す計画は、[RUST_MIGRATION_PLAN.md](RUST_MIGRATION_PLAN.md) の Licensing 節にあります。
 
 ### 上流の部分
 
@@ -93,4 +94,4 @@ MIT の範囲には、上流のコードを写したものも移植したもの�
 両方の readme にあるのは、作った画像や動画の公開に許可は要らないことと、免責です。v2.02 にはさらに、権利者から申し立てがあればツールの公開をやめる場合がある、とあります。
 上流の部分の権利が明確になれば、上流の部分も含めて OSS として公開することを目指しています。
 
-どちらのライセンスも、MikuMikuDance 本体の権利や、モデル、モーションなどのデータの権利を与えるものではありません。
+MIT ライセンスは、MikuMikuDance 本体の権利や、モデル、モーションなどのデータの権利を与えるものではありません。

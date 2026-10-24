@@ -81,16 +81,19 @@ are embedded; optional `Data/toon01.bmp..toon10.bmp` override them.
 
 ### License
 
-This project is licensed under the same freeware terms as MikuMikuDance —
-see [LICENSE](LICENSE). Third-party components follow their own licenses:
+Upstream distributes this project under the freeware terms in
+[LICENSE](LICENSE), which it describes as the same terms as MikuMikuDance.
+Third-party components follow their own licenses:
 Bullet Physics (zlib), DirectX SDK / Windows SDK (Microsoft EULA).
 
-This fork has two licenses. Code inherited from upstream, changes to it, and
-the Rust crates `mds-formats` and `mds-scene`, which port the upstream C++,
-stay under [LICENSE](LICENSE). New code for the cross-platform port, written
-without copying upstream code, is under the [MIT license](LICENSE-MIT).
-[docs/FORK.md](docs/FORK.md) lists which paths are which. Once the rights in
-the upstream code are clear, the aim is to publish all of it as open source.
+In this fork, new code for the cross-platform port, written without copying
+upstream code, is under the [MIT license](LICENSE-MIT). Everything else
+(code inherited from upstream, changes to it, and the Rust crates
+`mds-formats` and `mds-scene`, which port the upstream C++) is license
+pending until the rights in the upstream code are clear. [LICENSE](LICENSE)
+is kept unchanged from upstream. [docs/FORK.md](docs/FORK.md) lists which
+paths are which. Once the rights are clear, the aim is to publish all of it as
+open source.
 
 ---
 
@@ -147,14 +150,14 @@ cmake --build out/ci/build --config Release
 
 ### 许可
 
-本工程采用与 MikuMikuDance 相同的免费软件条款，详见 [LICENSE](LICENSE)。
+上游以 [LICENSE](LICENSE) 中的免费软件条款发布本工程，并说明其与 MikuMikuDance 的条款相同。
 第三方组件遵循各自许可：Bullet Physics（zlib）、
 DirectX SDK / Windows SDK（微软 EULA）。
 
-本分支有两种许可。从上游继承的代码、对其的修改，以及移植上游 C++ 的 Rust crate
-`mds-formats` 和 `mds-scene`，仍适用 [LICENSE](LICENSE)。为跨平台移植新写、未复制上游代码的部分，
-适用 [MIT 许可](LICENSE-MIT)。各路径适用哪种许可，见 [docs/FORK.md](docs/FORK.md)。
-上游部分的权利明确后，目标是将全部代码作为开源软件发布。
+本分支中，为跨平台移植新写、未复制上游代码的部分适用 [MIT 许可](LICENSE-MIT)。
+其余部分（从上游继承的代码、对其的修改，以及移植上游 C++ 的 Rust crate `mds-formats` 和
+`mds-scene`）在上游权利明确之前为“许可待定”。[LICENSE](LICENSE) 保持上游原文不变。
+各路径的划分见 [docs/FORK.md](docs/FORK.md)。权利明确后，目标是将全部代码作为开源软件发布。
 
 ---
 
@@ -224,13 +227,14 @@ cmake --build out/ci/build --config Release
 
 ### ライセンス
 
-本プロジェクトは MikuMikuDance と同じフリーウェア条項の下で配布されます。
-詳細は [LICENSE](LICENSE) を参照してください。サードパーティコンポーネントは
+上流は、[LICENSE](LICENSE) のフリーウェア条項で本プロジェクトを配布しており、
+これを MikuMikuDance と同じ条項だと説明しています。サードパーティコンポーネントは
 それぞれのライセンスに従います：Bullet Physics（zlib）、
 DirectX SDK / Windows SDK（マイクロソフト EULA）。
 
-このフォークのライセンスは 2 つあります。上流から受け継いだコード、それを変更したコード、
-上流の C++ を移植した Rust crate `mds-formats` と `mds-scene` は [LICENSE](LICENSE) のままです。
-クロスプラットフォーム化のために新しく書き、上流のコードを写していない部分は
-[MIT ライセンス](LICENSE-MIT)です。どのパスがどちらかは [docs/FORK.md](docs/FORK.md) にあります。
-上流の部分の権利が明確になれば、すべてを OSS として公開することを目指しています。
+このフォークで、クロスプラットフォーム化のために新しく書き、上流のコードを写していない部分は
+[MIT ライセンス](LICENSE-MIT)です。それ以外の部分（上流から受け継いだコード、それを変更したコード、
+上流の C++ を移植した Rust crate `mds-formats` と `mds-scene`）は、上流の権利が明確になるまで
+「ライセンス保留」です。[LICENSE](LICENSE) は上流のファイルをそのまま残しています。
+どのパスがどちらかは [docs/FORK.md](docs/FORK.md) にあります。権利が明確になれば、
+すべてを OSS として公開することを目指しています。

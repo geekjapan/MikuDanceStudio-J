@@ -62,6 +62,11 @@ target_sources(mikudancestudio_formats PRIVATE src/io/pmm_format.cpp)
   target_sources(mikudancestudio_formats PRIVATE src/io/scene_resources.cpp)
   target_sources(mikudancestudio_formats PRIVATE src/render/render_snapshot.cpp)
 target_include_directories(mikudancestudio_formats PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(NOT MSVC)
+    # No FMA contraction: the L1 trace must not depend on the optimisation
+    # level or the target CPU.
+    target_compile_options(mikudancestudio_formats PRIVATE -ffp-contract=off)
+endif()
 add_library(mikudancestudio_rhi STATIC
     src/render/rhi_null.cpp
     src/render/rhi_image.cpp
@@ -406,6 +411,14 @@ if(BUILD_TESTING)
     add_executable(pmm_scene_evaluation_test tests/pmm_scene_evaluation_test.cpp)
     target_link_libraries(pmm_scene_evaluation_test PRIVATE mikudancestudio_formats)
     add_test(NAME pmm_scene_evaluation COMMAND pmm_scene_evaluation_test)
+    add_executable(scene_trace_test tests/scene_trace_test.cpp)
+    target_include_directories(scene_trace_test PRIVATE src/tools)
+    target_link_libraries(scene_trace_test PRIVATE mikudancestudio_formats)
+    add_test(NAME scene_trace COMMAND scene_trace_test
+        $<TARGET_FILE:mds_scene_cli>
+        "${CMAKE_CURRENT_BINARY_DIR}/portable_fixture")
+    set_tests_properties(scene_trace PROPERTIES
+        FIXTURES_REQUIRED portable_scene_sample)
     add_executable(pmm_scene_world_test tests/pmm_scene_world_test.cpp)
     target_link_libraries(pmm_scene_world_test PRIVATE mikudancestudio_formats)
     add_test(NAME pmm_scene_world COMMAND pmm_scene_world_test)

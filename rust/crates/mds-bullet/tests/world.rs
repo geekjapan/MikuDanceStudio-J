@@ -81,6 +81,7 @@ fn collision_filter_decides_whether_a_body_lands_on_the_plane() {
             mask: 0xffff,
         },
     );
+    eprintln!("excluded group y = {through}, control group y = {rests}");
     assert!(
         (0.0..1.0).contains(&rests),
         "expected a body resting on the plane, y = {rests}"
@@ -197,7 +198,9 @@ fn creating_and_dropping_10000_worlds_does_not_grow_memory() {
     churn(200); // allocator warm-up
     let before = rss_kib();
     churn(10_000);
-    let grown = rss_kib().saturating_sub(before);
+    let after = rss_kib();
+    let grown = after.saturating_sub(before);
+    eprintln!("rss before {before} KiB, after {after} KiB, grown {grown} KiB");
     assert!(grown < 5 * 1024, "RSS grew by {grown} KiB");
     assert_eq!(live_counts().worlds, 0);
 }

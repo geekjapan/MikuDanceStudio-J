@@ -5,9 +5,14 @@
 //!   platform libm. The result then differs between platforms; this exists to
 //!   measure that difference (RM-7 lane 6).
 //! - `MDS_BT_ASAN=1` builds the C++ side with `-fsanitize=address` (clang).
-//!   A dependent binary must then be linked with the ASan runtime, which
-//!   build scripts cannot request for their dependents. Use
-//!   `MDS_BT_ASAN=1 RUSTFLAGS="-C link-arg=-fsanitize=address" cargo run ...`
+//!   A dependent binary must then link the ASan runtime, which a build script
+//!   cannot request for its dependents. On macOS rustc links with
+//!   `-nodefaultlibs`, which makes `-C link-arg=-fsanitize=address` miss the
+//!   runtime, so name the dylib and its rpath instead:
+//!   `RT=$(clang -print-resource-dir)/lib/darwin`
+//!   `MDS_BT_ASAN=1 RUSTFLAGS="-C link-arg=$RT/libclang_rt.asan_osx_dynamic.dylib -C link-arg=-Wl,-rpath,$RT" cargo test --release`
+//!   Only the macOS recipe is verified; `-C link-arg=-fsanitize=address` alone
+//!   does not link on Linux either, because rustc passes `-nodefaultlibs`.
 //! - Cargo feature `bench` also builds `shim/bench_main.cpp` into
 //!   `<target>/<profile>/chain8_bench`.
 //!

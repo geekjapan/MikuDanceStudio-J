@@ -41,6 +41,9 @@ static int InsertGlobalFrame(MMDApp* app, Key* table, std::uint32_t relativeFram
 
     const std::uint32_t frame =
         relativeFrame + static_cast<std::uint32_t>(app->CurrentFrame());
+    // x64 camera RVA 0x5B497 (the other three registrars have the same walk):
+    // compare the head before following next. Frame 0 must overwrite slot 0;
+    // a second frame-0 node would also be mistaken for a free slot below.
     std::uint32_t index = 0;
     while (table[index].frame < frame) {
         const std::uint32_t next = table[index].next;

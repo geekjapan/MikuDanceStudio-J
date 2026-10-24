@@ -374,6 +374,11 @@ if(BUILD_TESTING)
     target_include_directories(global_key_registration_test PRIVATE include)
     target_link_libraries(global_key_registration_test PRIVATE user32)
     add_test(NAME global_key_registration COMMAND global_key_registration_test)
+    add_executable(pmm_display_group_save_test tests/pmm_display_group_save_test.cpp)
+    target_include_directories(pmm_display_group_save_test PRIVATE src/io)
+    target_link_libraries(pmm_display_group_save_test PRIVATE
+        mikudancestudio_core MMEffect dsound)
+    add_test(NAME pmm_display_group_save COMMAND pmm_display_group_save_test)
     add_executable(pmm_playback_options_test tests/pmm_playback_options_test.cpp
         src/io/pmm_playback_options.cpp)
     target_include_directories(pmm_playback_options_test PRIVATE include src/io)

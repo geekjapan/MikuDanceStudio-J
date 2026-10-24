@@ -301,6 +301,7 @@ class Pmm(unittest.TestCase):
         gaps = sorted(set(range(min(used), max(used) + 1)) - used)
         self.assertEqual(len(gaps), 1)
         gap = gaps[0]
+        self.assertEqual(gap, 34)  # between index 25 (frame 200) and 46 (400)
         # The gap lies inside bone 4's track: frames 200 and 400 are linked
         # with each other, and no other track holds a key at frame 300 + gap.
         bridges = [(a, b) for a, b in zip(chains[4], chains[4][1:])

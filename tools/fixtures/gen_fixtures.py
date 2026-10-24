@@ -59,8 +59,10 @@ def key_frames(step):
     return list(range(0, LAST_FRAME, step)) + [LAST_FRAME]
 
 
-# Bone key frames of the swing motion (frame 0 is the track head). Counts are
-# 2, 7, 5, 6, 7, 9, 11, 21 for the chain and 3 for the IK bone.
+# Bone key frames of the swing motion (frame 0 is the track head). Registered
+# counts are 2, 7, 5, 6, 7, 9, 11, 21 for the chain and 3 for the IK bone.
+# After the freed key below, bone 頭 holds 6 keys in swing600.pmm and in
+# swing600.vmd, so the per-bone counts there are 2, 7, 5, 6, 6, 9, 11, 21, 3.
 SWING_FRAMES = {
     "全ての親": key_frames(LAST_FRAME),
     "センター": key_frames(100),
@@ -73,6 +75,7 @@ SWING_FRAMES = {
     "髪ＩＫ": [0, 300, LAST_FRAME],
 }
 # The key that is freed after registration: bone 頭, frame 300. Its pool record
+# (index 34 of slot 0's bone pool, between 25 at frame 200 and 46 at frame 400)
 # stays empty (frame 0), so the pool has a gap and the chain skips over it.
 FREED = ("頭", 300)
 PHYSICS_OFF = ("髪2", 120)  # this key carries physicsDisabled = 1

@@ -741,7 +741,10 @@ def build_pmm(camera_keys=CAMERA_KEYS[:1], light_keys=LIGHT_KEYS):
     o += i32(0, 0) + f32(1.0) + b"\0" * 256 + u32(0)    # avi
     o += i32(0, 0) + f32(1.0) + b"\0" * 256 + u8(0)     # picture
     o += u8(0, 1, 1) + f32(30.0) + i32(0)          # view
-    o += i32(0) + f32(0.0) + u8(1, 0) + f32(9.8000002) + i32(10)
+    o += i32(0) + f32(0.0) + u8(1)                 # split order, shadow ambient, shadow blend
+    # Physics mode 2, "on/off mode", the app default. 0 means no physics, and
+    # the trace would never move a rigid body.
+    o += u8(2) + f32(9.8000002) + i32(10)
     o += f32(0.0, -1.0, 0.0) + u8(1)               # physics
     # gravity track, self shadow state, self shadow track
     o += global_track([Key(0)], pack_gravity_key)

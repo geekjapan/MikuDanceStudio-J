@@ -9,6 +9,8 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/panel_controls.hpp"
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 
 #include <cstdint>
@@ -169,7 +171,7 @@ void InitFlagSubsystem(MMDApp* app) {
                      ? SW_MAXIMIZE
                      : SW_SHOW);                                  // 0x461E98
     UpdateWindow(s.FloatingWindow());                              // 0x461EAD
-    CheckMenuItem(GetMenu(s.MainWindow()), 0x118, 8 /*MF_CHECKED*/);  // 0x461ECA
+    CheckMenuItem(GetMenu(s.MainWindow()), MDS_CMD_TOGGLE_SEPARATE_WINDOW, 8 /*MF_CHECKED*/);  // 0x461ECA
 
     // Stash the main-window client width and lay the panels out against the
     // full client area while they are detached.
@@ -178,11 +180,11 @@ void InitFlagSubsystem(MMDApp* app) {
     RECT rc;                                                       // 0x461EE8
     GetClientRect(main, &rc);
     s.SidebarWidth() = rc.right - 3;                              // 0x461F03
-    if ((GetMenuState(GetMenu(main), 0x119, 0) & 8) == 0)         // 0x461F14
+    if ((GetMenuState(GetMenu(main), MDS_CMD_TOGGLE_ALWAYS_ON_TOP, 0) & 8) == 0)         // 0x461F14
         SetWindowPos(s.FloatingWindow(),
                      reinterpret_cast<HWND>(static_cast<intptr_t>(-2)) /*HWND_TOPMOST*/,
                      0, 0, 0, 0, 0x43 /*SWP_* keep-size activate*/);  // 0x461F29
-    for (int id = 536; id <= 557; ++id)                            // 0x461F3B
+    for (int id = panel::kModelEditToggle; id <= panel::kCoordAxisCheckbox; ++id)                            // 0x461F3B
         SetParent(GetDlgItem(main, id),
                   s.FloatingWindow());                            // 0x461F52
 
@@ -196,7 +198,7 @@ void InitFlagSubsystem(MMDApp* app) {
 void SaveFlagSubsystem(MMDApp* app) {
     auto& s = *app;
     HWND main = s.MainWindow();
-    for (int id = 536; id <= 557; ++id)                            // 0x461FB5
+    for (int id = panel::kModelEditToggle; id <= panel::kCoordAxisCheckbox; ++id)                            // 0x461FB5
         SetParent(GetDlgItem(s.FloatingWindow(), id),
                   main);                                           // 0x461FD2
 
@@ -211,7 +213,7 @@ void SaveFlagSubsystem(MMDApp* app) {
     DestroyWindow(s.FloatingWindow());                             // 0x46203A
     s.FloatingWindow() = nullptr;
 
-    CheckMenuItem(GetMenu(main), 0x118, 0 /*MF_UNCHECKED*/);       // 0x46205F
+    CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_SEPARATE_WINDOW, 0 /*MF_UNCHECKED*/);       // 0x46205F
     s.SidebarWidth() = s.SeparateWindowSidebarWidth();
     PanelPaint(app);                                               // 0x462073
     InvalidateRect(main, nullptr, FALSE);                          // 0x462083

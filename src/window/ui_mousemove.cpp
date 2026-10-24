@@ -348,7 +348,7 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                  app->SelectionBoxAnchorX() - 6) /
                 kRowPitch;  // v15 == v257 (magic /13 = truncating)
             app->SceneModified() = 1;
-            if (app->state.optflag[0] == 0) {
+            if (app->CameraMode() == 0) {
                 // ---- bone-edit mode (0x445887..0x446065) ------------------
                 unsigned char* model = CurrentModel(app);
                 mdl::ModelRecord& record = *mdl::Mdl(model);
@@ -468,7 +468,7 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                 colEnd += 1;
 
             const unsigned char flag = HoverFlag(app);
-            if (app->state.optflag[0] != 0) {
+            if (app->CameraMode() != 0) {
                 // ---- display-mode hover (0x4461B3) ------------------------
                 if (!app->ShiftModifierActive()) {
                     // clear band visibility flags for all 200 rows

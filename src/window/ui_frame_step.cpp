@@ -79,7 +79,7 @@ void ApplyFrameToModels(MMDApp* app) {
 
 void RefreshFrameContext(MMDApp* app) {
     const HWND hwnd = static_cast<HWND>(app->Hwnd());
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         ReloadModels(app);
         RefreshLightPanel(app);
         RefreshSelfShadowPanel(app);

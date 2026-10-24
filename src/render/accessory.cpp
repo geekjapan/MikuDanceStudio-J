@@ -8,6 +8,7 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <d3d9.h>
 
@@ -29,7 +30,6 @@
 #include "mikudancestudio/panel_controls.hpp"
 
 namespace mikudancestudio {
-void RefreshRequest(int area);
 void InvalidateSelectionReadouts(MMDApp* app);  // VA 0x0040D070, was declared here as
                                        // 0x40D070 (real body: ui_view_refresh.cpp)
 
@@ -670,16 +670,16 @@ void LoadAccessoryFile(const wchar_t* path) {                   // 0x460B30
     SendDlgItemMessageA(hwnd, panel::kAttachBoneCombo, CB_SHOWDROPDOWN, 0, 0);
     CheckDlgButton(hwnd, panel::kAccessoryVisibleCheckbox, BST_CHECKED);
     mdl::Accessory(accessory)->parentModel = -1;
-    SetEditFloat(hwnd, 478, "%3.4f", mdl::Accessory(accessory)->position[0]);
-    SetEditFloat(hwnd, 479, "%3.4f", mdl::Accessory(accessory)->position[1]);
-    SetEditFloat(hwnd, 480, "%3.4f", mdl::Accessory(accessory)->position[2]);
+    SetEditFloat(hwnd, panel::kAccPosXEdit, "%3.4f", mdl::Accessory(accessory)->position[0]);
+    SetEditFloat(hwnd, panel::kAccPosYEdit, "%3.4f", mdl::Accessory(accessory)->position[1]);
+    SetEditFloat(hwnd, panel::kAccPosZEdit, "%3.4f", mdl::Accessory(accessory)->position[2]);
     constexpr float kRadToDeg = 180.0f / 3.141592025756836f;
-    SetEditFloat(hwnd, 481, "%3.4f", mdl::Accessory(accessory)->rotation[0] * kRadToDeg);
-    SetEditFloat(hwnd, 482, "%3.4f", mdl::Accessory(accessory)->rotation[1] * kRadToDeg);
-    SetEditFloat(hwnd, 483, "%3.4f", mdl::Accessory(accessory)->rotation[2] * kRadToDeg);
-    SetEditFloat(hwnd, 484, "%3.4f", mdl::Accessory(accessory)->scale);
-    SetEditFloat(hwnd, 485, "%3.2f", mdl::Accessory(accessory)->opacity);
-    EnableMenuItem(GetMenu(hwnd), 0xF9, MF_ENABLED);
+    SetEditFloat(hwnd, panel::kAccRotXEdit, "%3.4f", mdl::Accessory(accessory)->rotation[0] * kRadToDeg);
+    SetEditFloat(hwnd, panel::kAccRotYEdit, "%3.4f", mdl::Accessory(accessory)->rotation[1] * kRadToDeg);
+    SetEditFloat(hwnd, panel::kAccRotZEdit, "%3.4f", mdl::Accessory(accessory)->rotation[2] * kRadToDeg);
+    SetEditFloat(hwnd, panel::kAccScaleEdit, "%3.4f", mdl::Accessory(accessory)->scale);
+    SetEditFloat(hwnd, panel::kAccOpacityEdit, "%3.2f", mdl::Accessory(accessory)->opacity);
+    EnableMenuItem(GetMenu(hwnd), MDS_CMD_ACCESSORY_SETTINGS, MF_ENABLED);
     CheckDlgButton(hwnd, panel::kAccessoryAddBlendCheckbox, BST_UNCHECKED);
     CheckDlgButton(hwnd, panel::kAccessoryShadowCheckbox,
                    mdl::Accessory(accessory)->shadowEnabled ? BST_CHECKED
@@ -697,7 +697,7 @@ void LoadAccessoryFile(const wchar_t* path) {                   // 0x460B30
         frame[0].opacity = mdl::Accessory(accessory)->opacity;
         frame[0].shadowEnabled = mdl::Accessory(accessory)->shadowEnabled;
     }
-    RefreshRequest(app->SelectedAccessorySlot());
+    SelectAccessoryTimelineTrack(app->SelectedAccessorySlot());
     InvalidateSelectionReadouts(app);
 }
 

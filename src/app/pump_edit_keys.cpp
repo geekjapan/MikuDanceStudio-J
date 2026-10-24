@@ -44,7 +44,7 @@ bool PumpPanelFocusChain(MMDApp* app, HWND focus) {
     const HWND owner = PanelEditOwner(app);
     const bool tab = state.tabKeyState == 1;             // +0x80 cell
     const bool shift = state.shiftModifierState == 3;    // +0x24 cell
-    const bool cameraMode = state.optflag[0] != 0;       // +0x2F8 byte
+    const bool cameraMode = app->CameraMode() != 0;       // +0x2F8 byte
     bool notInEdit = true;                               // bl at 0x44DEF6
 
     const auto focusIs = [&](HWND on, int id) {
@@ -77,72 +77,72 @@ bool PumpPanelFocusChain(MMDApp* app, HWND focus) {
     };
 
     // ---- 0x44DF19: frame-scale edits 0x199 <-> 0x19A ----------------------
-    if (focusIs(main, 0x199)) {
+    if (focusIs(main, panel::kPlayStartFrameEdit)) {
         if (tab)
-            moveTo(main, 0x19A, true, false);
+            moveTo(main, panel::kPlayStopFrameEdit, true, false);
         notInEdit = false;
     }
-    if (focusIs(main, 0x19A)) {
+    if (focusIs(main, panel::kPlayStopFrameEdit)) {
         if (tab)
-            moveTo(main, 0x199, true, false);
+            moveTo(main, panel::kPlayStartFrameEdit, true, false);
         notInEdit = false;
     }
     // ---- 0x44E00F: play-button row edit 0x198 -> 0x199 (with beep) --------
-    if (focusIs(main, 0x198)) {
+    if (focusIs(main, panel::kPlayButton)) {
         if (tab)
-            moveTo(main, 0x199, true, true);
+            moveTo(main, panel::kPlayStartFrameEdit, true, true);
         notInEdit = false;
     }
     // ---- 0x44E0B1: frame edit 0x1A1 is gated but has no TAB move ----------
-    if (focusIs(main, 0x1A1))
+    if (focusIs(main, panel::kCurrentFrameEdit))
         notInEdit = false;
     // ---- 0x44E0C8 / 0x44E142: 0x1A9 <-> 0x1AA -----------------------------
-    if (focusIs(main, 0x1A9)) {
+    if (focusIs(main, panel::kRangeStartEdit)) {
         if (tab)
-            moveTo(main, 0x1AA, true, false);
+            moveTo(main, panel::kRangeStopEdit, true, false);
         notInEdit = false;
     }
-    if (focusIs(main, 0x1AA)) {
+    if (focusIs(main, panel::kRangeStopEdit)) {
         if (tab)
-            moveTo(main, 0x1A9, true, false);
+            moveTo(main, panel::kRangeStartEdit, true, false);
         notInEdit = false;
     }
     // ---- 0x44E1C9: 0x19F -> 0x1A9 (camera mode, select-all) or 0x1A8 ------
-    if (focusIs(main, 0x19F)) {
+    if (focusIs(main, panel::kSelectRangeButton)) {
         if (tab) {
             if (cameraMode)
-                moveTo(main, 0x1A9, true, true);
+                moveTo(main, panel::kRangeStartEdit, true, true);
             else
-                moveTo(main, 0x1A8, false, true);
+                moveTo(main, panel::kExpandShrinkButton, false, true);
         }
         notInEdit = false;
     }
     // ---- 0x44E281: 0x1A8 -> 0x1A9 ----------------------------------------
-    if (focusIs(main, 0x1A8)) {
+    if (focusIs(main, panel::kExpandShrinkButton)) {
         if (tab)
-            moveTo(main, 0x1A9, true, false);
+            moveTo(main, panel::kRangeStartEdit, true, false);
         notInEdit = false;
     }
 
     // ---- 0x44E326 loop: 0x1CD..0x1D2, wrapping 0x1D2 <-> 0x1CD -----------
-    for (int id = 0x1CD; id <= 0x1D2; ++id) {
+    for (int id = panel::kLightColorEditR; id <= panel::kLightDirEditZ; ++id) {
         if (!focusIs(main, id))
             continue;
         if (tab) {
             const int target = shift
-                ? (id == 0x1CD ? 0x1D2 : id - 1)
-                : (id == 0x1D2 ? 0x1CD : id + 1);
+                ? (id == panel::kLightColorEditR ? panel::kLightDirEditZ : id - 1)
+                : (id == panel::kLightDirEditZ ? panel::kLightColorEditR : id + 1);
             moveTo(main, target, true, false);
         }
         notInEdit = false;
     }
     // ---- 0x44E4A4 loop: 0x1DE..0x1E4; 0x1E5 commits below ----------------
-    for (int id = 0x1DE; id < 0x1E5; ++id) {
+    for (int id = panel::kAccPosXEdit; id < panel::kAccOpacityEdit; ++id) {
         if (!focusIs(main, id))
             continue;
         if (tab) {
             const int target = shift
-                ? (id == 0x1DE ? 0x1E5 : id - 1)
+                ? (id == panel::kAccPosXEdit ? panel::kAccOpacityEdit : id - 1)
                 : id + 1;
             moveTo(main, target, true, false);
         }
@@ -150,19 +150,19 @@ bool PumpPanelFocusChain(MMDApp* app, HWND focus) {
     }
 
     // ---- 0x44E5D0..0x44E65E: probes without TAB moves (bl only) ----------
-    if (focusIs(main, 0x1FA) || focusIs(main, 0x1FF) ||
-        focusIs(main, 0x204) || focusIs(main, 0x209) ||
-        focusIs(main, 0x231))
+    if (focusIs(main, panel::kMorphEdit0) || focusIs(main, panel::kMorphEdit1) ||
+        focusIs(main, panel::kMorphEdit2) || focusIs(main, panel::kMorphEdit3) ||
+        focusIs(main, panel::kSelfShadowRangeEdit))
         notInEdit = false;
 
     // ---- 0x44E659: 0x1E5 - forward TAB commits the edit -------------------
-    if (focusIs(main, 0x1E5)) {
+    if (focusIs(main, panel::kAccOpacityEdit)) {
         if (tab) {
             if (shift) {
-                moveTo(main, 0x1E4, true, false);
+                moveTo(main, panel::kAccScaleEdit, true, false);
             } else {
-                moveTo(main, 0x1DE, true, false);
-                CommitEditControl(app, GetDlgItem(main, panel::kAccScaleYEdit));     // 0x463640
+                moveTo(main, panel::kAccPosXEdit, true, false);
+                CommitEditControl(app, GetDlgItem(main, panel::kAccOpacityEdit));     // 0x463640
             }
         }
         notInEdit = false;
@@ -172,27 +172,27 @@ bool PumpPanelFocusChain(MMDApp* app, HWND focus) {
     // 0x1DA -> 0x1DB (no select-all), 0x1C1 -> 0x1C2 (no select-all),
     // 0x1DB -> 0x1DE (select-all), 0x1C2 -> 0x1C1 (no select-all); each
     // beeps and hands the arrow keys to the panel root.
-    if (focusIs(main, 0x1DA)) {
+    if (focusIs(main, panel::kMainComboGround)) {
         if (tab)
-            moveTo(main, 0x1DB, false, true);
+            moveTo(main, panel::kAttachBoneCombo, false, true);
         arrowsToPanelRoot();
         notInEdit = false;
     }
-    if (focusIs(main, 0x1C1)) {
+    if (focusIs(main, panel::kMainComboNormal)) {
         if (tab)
-            moveTo(main, 0x1C2, false, true);
+            moveTo(main, panel::kBoneRegisterCombo, false, true);
         arrowsToPanelRoot();
         notInEdit = false;
     }
-    if (focusIs(main, 0x1DB)) {
+    if (focusIs(main, panel::kAttachBoneCombo)) {
         if (tab)
-            moveTo(main, 0x1DE, true, true);
+            moveTo(main, panel::kAccPosXEdit, true, true);
         arrowsToPanelRoot();
         notInEdit = false;
     }
-    if (focusIs(main, 0x1C2)) {
+    if (focusIs(main, panel::kBoneRegisterCombo)) {
         if (tab)
-            moveTo(main, 0x1C1, false, true);
+            moveTo(main, panel::kMainComboNormal, false, true);
         arrowsToPanelRoot();
         notInEdit = false;
     }
@@ -200,20 +200,20 @@ bool PumpPanelFocusChain(MMDApp* app, HWND focus) {
     // ---- 0x44EAF0 loop: 0x220..0x226 on the panel owner ------------------
     // The chain end depends on the mode: 0x226 in camera/accessory mode,
     // 0x225 in model mode (the extra edit only exists there).
-    const int chainEnd = cameraMode ? 0x226 : 0x225;
-    for (int id = 0x220; id <= 0x226; ++id) {
+    const int chainEnd = cameraMode ? panel::kReadoutDistEdit : panel::kReadoutRotZEdit;
+    for (int id = panel::kReadoutPosXEdit; id <= panel::kReadoutDistEdit; ++id) {
         if (!focusIs(owner, id))
             continue;
         if (tab) {
             const int target = shift
-                ? (id == 0x220 ? chainEnd : id - 1)
-                : (id == chainEnd ? 0x220 : id + 1);
+                ? (id == panel::kReadoutPosXEdit ? chainEnd : id - 1)
+                : (id == chainEnd ? panel::kReadoutPosXEdit : id + 1);
             moveTo(owner, target, true, false);
         }
         notInEdit = false;
     }
     // ---- 0x44ECD7: frame edit 0x22A on the panel owner -------------------
-    if (focusIs(owner, 0x22A))
+    if (focusIs(owner, panel::kGotoFrameEdit))
         notInEdit = false;
 
     return !notInEdit;
@@ -251,7 +251,13 @@ void PumpDeleteRebuild(MMDApp* app, HWND focus, bool focusNotInPanelEdit) {
           app->PlaybackActive() == 0 && focusNotInPanelEdit))
         return;
     const HWND current = GetFocus();                      // 0x44F13F
-    static const int kFrameEdits[] = {0x1AA, 0x1A9, 0x1A1, 0x19A, 0x199};
+    static const int kFrameEdits[] = {
+        panel::kRangeStopEdit,
+        panel::kRangeStartEdit,
+        panel::kCurrentFrameEdit,
+        panel::kPlayStopFrameEdit,
+        panel::kPlayStartFrameEdit
+    };
     for (int id : kFrameEdits) {
         if (GetDlgItem(main, id) == current)
             return;
@@ -340,7 +346,7 @@ void PumpGlobalEnterRegister(MMDApp* app, HWND focus,
 
     // ---- G2: camera/accessory mode register ------------------------------
     if (FocusOk(app, focus) && app->PlaybackActive() == 0 &&
-        state.optflag[0] != 0 && focusNotInPanelEdit &&
+        app->CameraMode() != 0 && focusNotInPanelEdit &&
         enterPressed && !altHeld) {
         app->SceneModified() = 1;                          // 0xA0B0D
         for (std::size_t i = 0; i < mdl::kTimelineKeyCapacity; ++i) {
@@ -376,7 +382,7 @@ void PumpGlobalEnterRegister(MMDApp* app, HWND focus,
 // Called only inside the sequencer's model-edit gate, after undo/redo.
 void PumpModelEnterRegister(MMDApp* app) {
     if (app->state.enterKeyState == 1 && app->state.menuKeyState != 3)
-        SendMessageA(static_cast<HWND>(app->Hwnd()), WM_COMMAND, 0x1F4, 0);
+        SendMessageA(static_cast<HWND>(app->Hwnd()), WM_COMMAND, panel::kRegisterFrameButton, 0);
 }
 
 // ---------------------------------------------------------------------------

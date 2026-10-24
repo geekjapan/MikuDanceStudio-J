@@ -153,7 +153,7 @@ void OrderedMorphPhysicsPass(MMDApp* app, int count, bool selSkip) {
             unsigned char* mdl = models[j];
             if (mdl == nullptr || mikudancestudio::mdl::Mdl(mdl)->comboSelIndex2 != order)
                 continue;
-            if (selSkip && s.state.optflag[0] == 0 &&
+            if (selSkip && s.CameraMode() == 0 &&
                 s.SelectedModelSlot() == j)
                 continue;                                   // 0x46F471
             ModelApplyMorphs(mdl);                            // 0x46F1AE
@@ -177,7 +177,7 @@ void KinematicSyncPass(MMDApp* app, bool reverse, bool selSkip) {
         unsigned char* mdl = models[j];
         if (mdl == nullptr)
             continue;
-        if (selSkip && s.state.optflag[0] == 0 &&
+        if (selSkip && s.CameraMode() == 0 &&
             s.SelectedModelSlot() == j)
             continue;                                       // 0x46F4F1
         ModelKinematicSync(mdl);                             // 0x46F1F7

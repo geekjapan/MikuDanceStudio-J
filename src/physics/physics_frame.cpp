@@ -834,7 +834,7 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     // body-3 origin write-watch: original alternates proceed/sync, the
     // port emitted two proceedToTransform writes per sync).
     if (selActive != 0 &&
-        s.state.optflag[0] == 0 &&        // 0x2F8 model-mode flag
+        s.CameraMode() == 0 &&        // 0x2F8 model-mode flag
         s.state.frameStepPlayback == 0) {     // 0x9ED90 frame-step flag
         // 0x46F7FF..0x46F808 / x64 0x7FF7CB44C12E..0x7FF7CB44C138：
         // 两版同一上升沿闩锁语义。x86 `cmp byte [app+0xA03E8],0 /

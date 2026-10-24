@@ -50,7 +50,7 @@ int main() {
         // Accessory, direct camera, parented camera, and view-relative camera.
         for (int branch=0; branch<4; ++branch) {
             app->state.coordinateSystem=branch==0 ? 2 : branch==1 ? 1 : 0;
-            app->state.optflag[0]=1;
+            app->CameraMode()=1;
             app->state.cameraParentModel=branch==2 ? 0 : -1;
             for (int i=0;i<3;++i) { Position(*app,i)=0.1f; app->CameraRotation()[i]=0; accessory.position[i]=0.1f; }
             ModeCameraAdjust(app.get(),axis);
@@ -61,7 +61,7 @@ int main() {
         }
         for (int branch=0;branch<2;++branch) {
             app->state.coordinateSystem=branch==0 ? 2 : 1;
-            app->state.optflag[0]=1;
+            app->CameraMode()=1;
             accessory.rotation[axis]=app->CameraRotation()[axis]=0.1f;
             ModeAngleAdjust(app.get(),axis);
             const auto actual=Bits(branch==0 ? accessory.rotation[axis] : app->CameraRotation()[axis]);
@@ -84,7 +84,7 @@ int main() {
             for (int flag = 0; flag < 2; ++flag)
                 for (int present = 0; present < 2; ++present) {
                     app->state.coordinateSystem = target;
-                    app->state.optflag[0] = static_cast<unsigned char>(flag);
+                    app->CameraMode() = static_cast<unsigned char>(flag);
                     app->AccessorySlot(0) = present ? &accessory : nullptr;
                     for (int i = 0; i < 3; ++i)
                         accessory.rotation[i] = app->CameraRotation()[i] = 0.1f;
@@ -107,7 +107,7 @@ int main() {
     app->state.coordinateSystem = 2;
     app->state.cameraParentModel = -1;
     for (int axis = 0; axis < 3; ++axis) for (int flag = 0; flag < 2; ++flag) {
-        app->state.optflag[0] = static_cast<unsigned char>(flag);
+        app->CameraMode() = static_cast<unsigned char>(flag);
         for (int i = 0; i < 3; ++i) {
             app->CameraRotation()[i] = 0;
             Position(*app, i) = accessory.position[i] = 0.1f;
@@ -130,7 +130,7 @@ int main() {
     if (!window || !edit) { std::fputs("cannot create readout controls\n", stderr); return 1; }
     app->Hwnd() = window;
     app->state.coordinateSystem = 2;
-    app->state.optflag[0] = 1;
+    app->CameraMode() = 1;
     app->MouseY() = app->PreviousMouseY() = 0;
     accessory.rotation[0] = 1000.0f;
     ModeAngleAdjust(app.get(), 0);

@@ -559,7 +559,7 @@ void SetupFrameWorldTransform(MMDApp* app) {
     api.multiply(&rotation, &rotation, &rotationZ);
 
     if (app->state.followCameraEnabled != 0 ||
-        app->state.optflag[0] != 0) {
+        app->CameraMode() != 0) {
         if (targetModel >= 0 &&
             app->CameraAttachmentTransformSuppressed() == 0) {
             // x86 0x46B91F / x64 RVA 0x27A80: transpose the bone's

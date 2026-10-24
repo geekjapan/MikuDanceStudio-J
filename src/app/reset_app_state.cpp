@@ -10,6 +10,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <commctrl.h>   // TBM_SETPOS
 #include <d3d9.h>
@@ -69,10 +70,10 @@ void ResetAppState(MMDApp* app) {
     app->SceneModified() = 0;
 
     // ---- menu checks + physics defaults -----------------------------------
-    CheckMenuItem(GetMenu(hwnd), 0x10D, 8u);                     // 0x44E583
-    CheckMenuItem(GetMenu(hwnd), 0x109, 0u);
-    CheckMenuItem(GetMenu(hwnd), 0x10E, 0u);
-    CheckMenuItem(GetMenu(hwnd), 0x110, 0u);
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_ON_OFF, 8u);                     // 0x44E583
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_ALWAYS, 0u);
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_TRACE, 0u);
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_DISABLED, 0u);
     app->GravityMagnitude() = 9.8000002f;
     PhysicsScene* scene = app->Physics();       // +650672 (kPtrSub048)
     app->PlaybackPhysicsMode() = 2;
@@ -148,12 +149,12 @@ void ResetAppState(MMDApp* app) {
         app->AviBackgroundTexture() = nullptr;
     }
 
-    if (app->state.optflag[0] == 0) {
+    if (app->CameraMode() == 0) {
         SendMessageA(GetDlgItem(hwnd, panel::kIkChainCombo), CB_RESETCONTENT, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kRegisterScopeCombo), CB_RESETCONTENT, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kModelVisibleCheckbox), BM_CLICK, 0, 0);
         RebuildCameraModePanel(app);                                          // 0x44E88F
-        app->state.optflag[0] = 1;
+        app->CameraMode() = 1;
         PostModelReload2(app);                                   // 0x40D940
         HandleWindowSize(app);                                   // 0x443300
         InvalidateRect(hwnd, nullptr, FALSE);
@@ -228,8 +229,16 @@ void ResetAppState(MMDApp* app) {
         SendMessageW(GetDlgItem(hwnd, panel::kMainComboNormal), CB_ADDSTRING, 0,
                      reinterpret_cast<LPARAM>(kJpNone));
     }
-    static const int kResetCombos[] = {475, 450, 471, 504, 509, 514, 519,
-                                       433};
+    static const int kResetCombos[] = {
+        panel::kAttachBoneCombo,
+        panel::kBoneRegisterCombo,
+        panel::kAccessoryCombo,
+        panel::kMorphCombo0,
+        panel::kMorphCombo1,
+        panel::kMorphCombo2,
+        panel::kMorphCombo3,
+        panel::kInterpCurveCombo
+    };
     for (int id : kResetCombos)
         SendMessageA(GetDlgItem(hwnd, id), CB_RESETCONTENT, 0, 0);
     if (app->state.englishUI != 0) {
@@ -251,15 +260,34 @@ void ResetAppState(MMDApp* app) {
     SendMessageA(GetDlgItem(hwnd, panel::kShadowCheckbox), BM_CLICK, 0, 0);
     SendMessageA(GetDlgItem(hwnd, panel::kAddBlendCheckbox), BM_CLICK, 0, 0);
     SendMessageA(GetDlgItem(hwnd, panel::kAccessoryAddBlendCheckbox), BM_CLICK, 0, 0);
-    ReplaceEditText(hwnd, 417, "0");                              // 0x44F01D
-    static const int kDisable[] = {430, 400, 401, 497, 498, 421, 422};
+    ReplaceEditText(hwnd, panel::kCurrentFrameEdit, "0");                              // 0x44F01D
+    static const int kDisable[] = {
+        panel::kCurveCopyButton,
+        panel::kUndoButton,
+        panel::kRedoButton,
+        panel::kBonePasteButton,
+        panel::kBoneReversePasteButton,
+        panel::kPasteButton,
+        panel::kReversePasteButton
+    };
     for (int id : kDisable)
         EnableWindow(GetDlgItem(hwnd, id), FALSE);
     {
         char locale[0x100];
         sprintf_s(locale, 0x100, "%%");                           // 0x529679
-        static const int kPercentEdits[] = {425, 426, 409, 410, 478,
-                                            479, 480, 481, 482, 483, 484};
+        static const int kPercentEdits[] = {
+            panel::kRangeStartEdit,
+            panel::kRangeStopEdit,
+            panel::kPlayStartFrameEdit,
+            panel::kPlayStopFrameEdit,
+            panel::kAccPosXEdit,
+            panel::kAccPosYEdit,
+            panel::kAccPosZEdit,
+            panel::kAccRotXEdit,
+            panel::kAccRotYEdit,
+            panel::kAccRotZEdit,
+            panel::kAccScaleEdit
+        };
         for (int id : kPercentEdits)
             ReplaceEditText(hwnd, id, locale);
     }
@@ -267,16 +295,34 @@ void ResetAppState(MMDApp* app) {
 
     // ---- menu state ---------------------------------------------------------
     static const std::uint32_t kChecks[] = {
-        0xD7u | (8u << 12), 0xDDu | (8u << 12), 0xECu | (8u << 12),
-        0xEBu, 0xEAu, 0xF3u | (8u << 12), 0xF4u, 0xF5u, 0xF6u,
-        0xFEu | (8u << 12)};
+        MDS_CMD_TOGGLE_COORDINATE_AXIS | (8u << 12),
+        MDS_CMD_TOGGLE_GROUND_SHADOW | (8u << 12),
+        MDS_CMD_FPS_60 | (8u << 12),
+        MDS_CMD_FPS_30,
+        MDS_CMD_FPS_UNLIMITED,
+        MDS_CMD_SCREEN_CAPTURE_OFF | (8u << 12),
+        MDS_CMD_SCREEN_CAPTURE_MODE_1,
+        MDS_CMD_SCREEN_CAPTURE_MODE_2,
+        MDS_CMD_SCREEN_CAPTURE_MODE_3,
+        MDS_CMD_TOGGLE_GROUND_SHADOW_TRANSPARENCY | (8u << 12)
+    };
     for (std::uint32_t entry : kChecks)
         CheckMenuItem(GetMenu(hwnd), entry & 0xFFFu, entry >> 12);
     app->EditMode() = ViewportEditMode::None;
-    static const int kClicks[] = {490, 491, 492, 493};
+    static const int kClicks[] = {
+        panel::kBoneSelectRadio,
+        panel::kBoxSelectRadio,
+        panel::kBoneMoveRadio,
+        panel::kBoneRotateRadio
+    };
     for (int id : kClicks)
         SendMessageA(GetDlgItem(hwnd, id), BM_CLICK, 0, 0);
-    static const std::uint32_t kGray[] = {0xF9, 0xFA, 0x120, 0x121};
+    static const std::uint32_t kGray[] = {
+        MDS_CMD_ACCESSORY_SETTINGS,
+        MDS_CMD_PASTE_AT_DIFFERENT_FRAME,
+        MDS_CMD_MODEL_DRAW_ORDER,
+        MDS_CMD_MODEL_CALCULATION_ORDER
+    };
     for (std::uint32_t id : kGray)
         EnableMenuItem(GetMenu(hwnd), id, 1u);                    // MF_GRAYED
 
@@ -296,17 +342,17 @@ void ResetAppState(MMDApp* app) {
         app->AviFile() = nullptr;
     }
     app->state.fpsOverlayEnabled = 0;
-    CheckMenuItem(GetMenu(hwnd), 0xD3, 0u);
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_INFORMATION, 0u);
     SendMessageA(GetDlgItem(app->FloatingWindow() != nullptr
                                 ? app->FloatingWindow() : hwnd, panel::kInfoCheckbox),
                  BM_CLICK, 0, 0);
     app->state.groundGridEnabled = 1;
-    CheckMenuItem(GetMenu(hwnd), 0xD7, 8u);
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_COORDINATE_AXIS, 8u);
     SendMessageA(GetDlgItem(app->FloatingWindow() != nullptr
                                 ? app->FloatingWindow() : hwnd, panel::kCoordAxisCheckbox),
                  BM_CLICK, 1, 0);
     app->state.groundShadowEnabled = 1;
-    CheckMenuItem(GetMenu(hwnd), 0xDD, 8u);
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_GROUND_SHADOW, 8u);
 
     // ---- rebuild the global track arrays ----------------------------------
     auto* camArr = static_cast<mdl::CameraKey*>(
@@ -402,21 +448,21 @@ void ResetAppState(MMDApp* app) {
     app->state.aviBackgroundEnabled = 0;
     app->state.pictureBackgroundEnabled = 0;
     app->state.characterTransparentMode = 0;
-    CheckMenuItem(GetMenu(hwnd), 0xD6, 0u);
-    CheckMenuItem(GetMenu(hwnd), 0xD8, 0u);
-    CheckMenuItem(GetMenu(hwnd), 0xE9, 0u);
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MODEL_TRANSPARENCY, 0u);
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_BACKGROUND_VIDEO, 0u);
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_BACKGROUND_IMAGE, 0u);
     {
         char title[0x100];
         sprintf_s(title, 0x100, "MikuDanceStudio");
         SetWindowTextA(hwnd, title);
     }
     app->state.envFileName[0] = 0;
-    app->state.optflag[1] = 1;
-    app->state.optflag[2] = 1;
-    app->state.optflag[3] = 1;
-    app->state.optflag[4] = 1;
-    app->state.optflag[5] = 1;
-    app->state.optflag[6] = 1;
+    app->PanelExpanded(UiPanel::Camera) = 1;
+    app->PanelExpanded(UiPanel::Light) = 1;
+    app->PanelExpanded(UiPanel::Accessory) = 1;
+    app->PanelExpanded(UiPanel::Bone) = 1;
+    app->PanelExpanded(UiPanel::Morph) = 1;
+    app->PanelExpanded(UiPanel::SelfShadow) = 1;
     app->CameraPerspective() = 0;
     SendMessageA(GetDlgItem(hwnd, panel::kPerspectiveCheckbox), BM_CLICK, 1, 0);
     app->CameraPosition()[0] = 0.0f;
@@ -427,9 +473,9 @@ void ResetAppState(MMDApp* app) {
     SendMessageA(GetDlgItem(hwnd, panel::kCameraRefModelCheckbox), BM_CLICK, 0, 0);
     SendMessageA(GetDlgItem(hwnd, panel::kCameraRefBoneCheckbox), BM_CLICK, 0, 0);
     app->PlaybackLoopEnabled() = 0;
-    SendMessageA(GetDlgItem(hwnd, 411), BM_CLICK, 0, 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kPlaybackLoopCheckbox), BM_CLICK, 0, 0);
     app->state.playbackReturnsToStartFrame = 0;
-    SendMessageA(GetDlgItem(hwnd, 413), BM_CLICK, 0, 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kPlaybackReturnCheckbox), BM_CLICK, 0, 0);
     app->state.viewportToolHovered = 0;
     app->CameraFov() = 45.0f;
     SendMessageA(GetDlgItem(hwnd, panel::kAccessoryShadowCheckbox), BM_CLICK, 0, 0);
@@ -486,17 +532,33 @@ void ResetAppState(MMDApp* app) {
                      static_cast<int>(app->LightDirection()[2] * 100.0)));
 
     // ---- menu enable state --------------------------------------------------
-    static const std::uint32_t kEnable[] = {0xED, 0xEE, 0xEF, 0xF0, 0xF1,
-                                            0xF2};
+    static const std::uint32_t kEnable[] = {
+        MDS_CMD_SELECT_ALL_CAMERA_FRAMES,
+        MDS_CMD_SELECT_ALL_LIGHT_FRAMES,
+        MDS_CMD_SELECT_ALL_SELF_SHADOW_FRAMES,
+        MDS_CMD_SELECT_ALL_GRAVITY_FRAMES,
+        MDS_CMD_SELECT_ALL_ACCESSORY_FRAMES,
+        MDS_CMD_MULTIPLY_CAMERA_FRAMES
+    };
     for (std::uint32_t id : kEnable)
         EnableMenuItem(GetMenu(hwnd), id, 0u);
-    static const std::uint32_t kGray2[] = {0xFD, 0xD9, 0xDC, 0xDA, 0xCA,
-                                           0xCB, 0xDB, 0xDE, 0xFB, 0xFC};
+    static const std::uint32_t kGray2[] = {
+        MDS_CMD_EDGE_THICKNESS,
+        MDS_CMD_SELECT_ALL_BONE_FRAMES,
+        MDS_CMD_SELECT_ALL_MORPH_FRAMES,
+        MDS_CMD_SELECT_ALL_DISPLAY_FRAMES,
+        MDS_CMD_LOAD_POSE,
+        MDS_CMD_SAVE_POSE,
+        MDS_CMD_CENTER_POSITION_BIAS,
+        MDS_CMD_DELETE_UNUSED_FRAMES,
+        MDS_CMD_MULTIPLY_BONE_FRAMES,
+        MDS_CMD_MULTIPLY_MORPH_FRAMES
+    };
     for (std::uint32_t id : kGray2)
         EnableMenuItem(GetMenu(hwnd), id, 1u);
-    for (std::uint32_t id = 224; id <= 231; ++id)
+    for (std::uint32_t id = MDS_CMD_LOAD_LIP_SYNC; id <= MDS_CMD_DELETE_EYEBROW_FRAMES; ++id)
         EnableMenuItem(GetMenu(hwnd), id, 1u);
-    for (std::uint32_t id = 273; id <= 275; ++id)
+    for (std::uint32_t id = MDS_CMD_SELECT_PHYSICS_BONES; id <= MDS_CMD_TOGGLE_FRAME_PHYSICS; ++id)
         EnableMenuItem(GetMenu(hwnd), id, 1u);
     {
         MENUITEMINFOA mii;                                        // 0x44FF64

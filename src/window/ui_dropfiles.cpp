@@ -59,6 +59,7 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <shellapi.h>
 
@@ -117,7 +118,7 @@ HWND MainHwnd(MMDApp* app) {
 // Menu item 0x12D checked state - the "remember current directory" gate.
 // Original: GetMenu(hwnd) -> GetMenuState(menu, 0x12D, 0) & 8.
 bool DirMenuChecked(MMDApp* app) {
-    return (GetMenuState(GetMenu(MainHwnd(app)), 0x12D, 0) & MF_CHECKED) != 0;
+    return (GetMenuState(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & MF_CHECKED) != 0;
 }
 
 // VA 0x00408960 - the port writes at `destination` directly, while the
@@ -180,7 +181,7 @@ void HandleDropFiles(HDROP hDrop) {
         // ---- .vpd - pose data ---------------------------------------------
         if (wcsstr(szFile, L".vpd") || wcsstr(szFile, L".VPD") ||
             wcsstr(szFile, L".Vpd")) {
-            if (app->state.optflag[0] != 0) {  // 760
+            if (app->CameraMode() != 0) {  // 760
                 if (app->EnglishUI())
                     MessageBoxA(MainHwnd(app), "Not selected model!",
                                 "open pose data", MB_OK);
@@ -264,7 +265,7 @@ void HandleDropFiles(HDROP hDrop) {
                     // ---- .vsq - VOCALOID sequence ----
                     if (wcsstr(szFile, L".vsq") || wcsstr(szFile, L".VSQ") ||
                         wcsstr(szFile, L".Vsq")) {
-                        if (app->state.optflag[0] != 0) {
+                        if (app->CameraMode() != 0) {
                             if (app->EnglishUI())
                                 MessageBoxA(MainHwnd(app), "Not selected model!",
                                             "open vsq data", MB_OK);
@@ -279,7 +280,7 @@ void HandleDropFiles(HDROP hDrop) {
                         // ---- .oni - OpenNI/Kinect data ----
                         if (wcsstr(szFile, L".oni") || wcsstr(szFile, L".ONI") ||
                             wcsstr(szFile, L".Oni")) {
-                            if (app->state.optflag[0] != 0) {
+                            if (app->CameraMode() != 0) {
                                 if (app->EnglishUI())
                                     MessageBoxA(MainHwnd(app), "Please select model!",
                                                 "open oni data", MB_OK);

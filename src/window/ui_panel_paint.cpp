@@ -377,7 +377,7 @@ void PanelPaint(MMDApp* app) {
         InvalidateRect(static_cast<HWND>(app->Hwnd()), &rc, FALSE);
     };
 
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         // --- 6a. display mode: four fixed bands + accessory bands ----------
         const std::int32_t limit = scroll + rows;
         DrawBandList(app, panel, icons,

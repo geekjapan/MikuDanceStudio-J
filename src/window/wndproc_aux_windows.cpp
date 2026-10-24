@@ -9,6 +9,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 
 #include <cstdio>
@@ -79,7 +80,7 @@ LRESULT CALLBACK RecWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 //         x/y/z (&bones[idx+320/324/328], idx = model+0x2D90, guard <0)
 //         after PushBoneEditUndo undo, marks the bone edit flag (model+0x2DA8
 //         byte array + idx); camera branch zeroes 0x334/0x338/0x33C ->
-//         820/824/828 + RefreshRequest(-1)
+//         820/824/828 + SelectTimelineTrack(GlobalTimelineTrack::Camera)
 //   0x21C/0x21D/0x21E rotation clear (model branch): degree caches
 //         0xA04C0/0xA04C4/0xA04C8 folded to radians in place (note the
 //         TWO distinct pi constants 3.141592025756836/3.141594886779785),
@@ -104,7 +105,7 @@ void DispatchSeparateWindowCommand(MMDApp* app, unsigned short id) {  // VA 0x00
     HWND separate = s.FloatingWindow();
     char text[0x100];
     switch (id) {
-    case 0x218: {                                                // 0x4620D5
+    case panel::kModelEditToggle: {                                                // 0x4620D5
         if (s.CameraMode() != 0) {
             const std::int32_t sel = s.MainModelComboSelection();
             if (sel != 0) {
@@ -112,9 +113,8 @@ void DispatchSeparateWindowCommand(MMDApp* app, unsigned short id) {  // VA 0x00
                              static_cast<WPARAM>(sel), 0);
                 ApplyModelComboSelection(app);                                  // 0x462127
             } else {
-                // raw command id kept (no macro): 0x1B3 is the
-                // original's model-combo re-dispatch command.
-                SendMessageA(main, WM_COMMAND, 0x1B3, 0);        // 0x4620FB
+                // The original re-dispatches command 0x1B3 here.
+                SendMessageA(main, WM_COMMAND, panel::kLoadModelButton, 0);        // 0x4620FB
             }
         } else {
             SendMessageA(GetDlgItem(main, panel::kMainComboModel), CB_SETCURSEL, 0, 0);
@@ -122,13 +122,13 @@ void DispatchSeparateWindowCommand(MMDApp* app, unsigned short id) {  // VA 0x00
         }
         break;
     }
-    case 0x219:                                                  // 0x46215D
-    case 0x21A:
-    case 0x21B: {
-        const std::size_t axis = id - 0x219;  // 0/1/2 -> +320/+324/+328
+    case panel::kResetPositionXButton:                                                  // 0x46215D
+    case panel::kResetPositionYButton:
+    case panel::kResetPositionZButton: {
+        const std::size_t axis = id - panel::kResetPositionXButton;  // 0/1/2 -> +320/+324/+328
         if (s.CameraMode() != 0) {
             s.CameraPosition()[axis] = 0.0f;
-            RefreshRequest(-1);                                  // 0x440AC0
+            SelectTimelineTrack(GlobalTimelineTrack::Camera);                                  // 0x440AC0
             PostViewRefresh(app);                                // 0x40D130
         } else {
             unsigned char* model = s.SelectedModel();
@@ -148,10 +148,10 @@ void DispatchSeparateWindowCommand(MMDApp* app, unsigned short id) {  // VA 0x00
         }
         break;
     }
-    case 0x21C:                                                  // 0x462314
-    case 0x21D:
-    case 0x21E: {
-        const int axis = id - 0x21C;  // which degree cache stays non-zero
+    case panel::kResetRotationXButton:                                                  // 0x462314
+    case panel::kResetRotationYButton:
+    case panel::kResetRotationZButton: {
+        const int axis = id - panel::kResetRotationXButton;  // which degree cache stays non-zero
         if (s.CameraMode() == 0) {
             unsigned char* model = s.SelectedModel();
             const std::int32_t bone = mikudancestudio::mdl::Mdl(model)->selectedBone;
@@ -195,37 +195,37 @@ void DispatchSeparateWindowCommand(MMDApp* app, unsigned short id) {  // VA 0x00
             PostViewRefresh(app);                                // 0x46252E
         } else {
             s.CameraRotation()[axis] = 0.0f;
-            RefreshRequest(-1);
+            SelectTimelineTrack(GlobalTimelineTrack::Camera);
             PostViewRefresh(app);
         }
         break;
     }
-    case 0x21F:                                                  // 0x46266B
+    case panel::kCameraDistanceButton:                                                  // 0x46266B
         if (s.CameraMode() != 0)
             s.CameraDistance() = 0.0f;
         PostViewRefresh(app);
         break;
-    case 0x227: {                                                // 0x4626DD
+    case panel::kInfoCheckbox: {                                                // 0x4626DD
         if (s.FpsOverlayEnabled() != 0) {
             s.FpsOverlayEnabled() = 0;
-            CheckMenuItem(GetMenu(main), 0xD3, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_INFORMATION, MF_UNCHECKED);
         } else {
             s.FpsOverlayElapsedSeconds() = 0.0f;
             s.FpsOverlayEnabled() = 1;
             s.FpsOverlayFrameCount() = 0;
-            CheckMenuItem(GetMenu(main), 0xD3, MF_CHECKED);
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_INFORMATION, MF_CHECKED);
         }
         break;
     }
-    case 0x228: {                                                // 0x46275A
+    case panel::kFrameVolumeCheckbox: {                                                // 0x46275A
         const bool checked =
-            (GetMenuState(GetMenu(main), 0x12B, 0) & MF_CHECKED) != 0;
-        CheckMenuItem(GetMenu(main), 0x12B,
+            (GetMenuState(GetMenu(main), MDS_CMD_TOGGLE_LOW_POWER, 0) & MF_CHECKED) != 0;
+        CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_LOW_POWER,
                       checked ? MF_UNCHECKED : MF_CHECKED);
         s.FrameVolumeControlEnabled() = checked ? 0 : 1;
         break;
     }
-    case 0x229: {                                                // 0x462810
+    case panel::kGoToFrameButton: {                                                // 0x462810
         GetWindowTextA(GetDlgItem(separate, panel::kGotoFrameEdit), text, 10);
         std::int32_t frame = atol(text);
         if (frame < 0)
@@ -238,12 +238,12 @@ void DispatchSeparateWindowCommand(MMDApp* app, unsigned short id) {  // VA 0x00
         SetWindowTextA(GetDlgItem(main, panel::kCurrentFrameEdit), text);
         break;
     }
-    case 0x22B: {                                                // 0x4627C6
+    case panel::kSetGoToFrameButton: {                                                // 0x4627C6
         sprintf_s(text, 0x100, "%d", s.CurrentFrame());
         SetWindowTextA(GetDlgItem(separate, panel::kGotoFrameEdit), text);
         break;
     }
-    case 0x22C: {                                                // 0x46289B
+    case panel::kSelfShadowCheckbox: {                                                // 0x46289B
         const bool on = SendMessageA(GetDlgItem(separate, panel::kSelfShadowCheckbox),
                                      BM_GETCHECK, 0, 0) == 1;
         const std::int32_t value = on ? 4096 : 2048;
@@ -265,13 +265,13 @@ void DispatchSeparateWindowCommand(MMDApp* app, unsigned short id) {  // VA 0x00
         sub->shadowSurface = nullptr;
         break;
     }
-    case 0x22D: {                                                // 0x46269C
+    case panel::kCoordAxisCheckbox: {                                                // 0x46269C
         if (s.GroundGridEnabled() != 0) {
             s.GroundGridEnabled() = 0;
-            CheckMenuItem(GetMenu(main), 0xD7, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_COORDINATE_AXIS, MF_UNCHECKED);
         } else {
             s.GroundGridEnabled() = 1;
-            CheckMenuItem(GetMenu(main), 0xD7, MF_CHECKED);
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_COORDINATE_AXIS, MF_CHECKED);
         }
         break;
     }

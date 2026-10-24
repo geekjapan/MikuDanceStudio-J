@@ -162,7 +162,7 @@ void HandleLButtonDblClk(MMDApp* app) {
         }
 
         // ---- 4. mode branch: model row / accessory row / light row --------
-        if (app->state.optflag[0] != 0) {  // 760 (0x2F8)
+        if (app->CameraMode() != 0) {  // 760 (0x2F8)
             ReloadModels(app);                                    // 0x42E640
             RefreshLightPanel(app);                                       // 0x411070
             RefreshSelfShadowPanel(app);                                       // 0x411B90
@@ -307,7 +307,7 @@ void HandleMouseActivate(MMDApp* app) {
     const HWND fg = GetForegroundWindow();
     const HWND cached = app->FloatingWindow();  // 658744 (0xA0D38)
 
-    if (app->state.optflag[0] != 0) {    // 760 (0x2F8)
+    if (app->CameraMode() != 0) {    // 760 (0x2F8)
         // mode row: keep the combo selection in sync with the panel state
         if (fg == cached || app->MouseY() <= rect.bottom - 158) {
             SendMessageA(GetDlgItem(hwnd, panel::kMainComboModel), CB_SETCURSEL,

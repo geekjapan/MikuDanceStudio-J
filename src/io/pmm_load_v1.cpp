@@ -100,6 +100,7 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <commdlg.h>
 #include <commctrl.h>
@@ -349,7 +350,7 @@ static void LoadSceneV1_DisposeAndHeader(PmmV1LoadContext& ctx, int fd) {
     s->state.cameraAttachmentBasis[0] = 1.0f;                    // 0xA0438
     s->state.followCameraEnabled = 0;                // 0x9ED98
     // ---- menu/checkbox reset (0x4592F6..0x45933F) ------------------------
-    CheckMenuItem(GetMenu(main), 0xF7, 0);                       // 0x459316
+    CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_CAMERA_TRACKING, 0);                       // 0x459316
     SendMessageA(GetDlgItem(main, panel::kFollowCameraCheckbox), BM_SETCHECK, 0, 0);    // 0x45933A
 
     s->state.physicsInterval = kPhysicsIntervalDefault;           // 0x45934D
@@ -394,12 +395,12 @@ static void LoadSceneV1_DisposeAndHeader(PmmV1LoadContext& ctx, int fd) {
     for (int f = 0; f < 6; ++f) {
         unsigned char b = 0;
         Rd(fd, &b, 1);                                           // 0x459455..
-        s->state.optflag[f] = (b == 1) ? 1 : 0;       // 0x2F8..2FD
+        s->UiOptionFlag(f) = (b == 1) ? 1 : 0;       // 0x2F8..2FD
     }
     strcpy_s(text, 0x100, "");                                   // 0x459526
 
     // ---- UI clear run (0x45953F..0x459630) -------------------------------
-    for (int id = 478; id <= 484; ++id) {  // 0x1DE..0x1E4 edits
+    for (int id = panel::kAccPosXEdit; id <= panel::kAccScaleEdit; ++id) {  // 0x1DE..0x1E4 edits
         HWND item = GetDlgItem(main, id);
         const int len = GetWindowTextLengthA(item);
         SendMessageA(item, EM_SETSEL, 0, len);
@@ -409,9 +410,9 @@ static void LoadSceneV1_DisposeAndHeader(PmmV1LoadContext& ctx, int fd) {
     SendMessageA(GetDlgItem(main, panel::kShadowCheckbox), BM_SETCHECK, 0, 0);     // 0x4595A8
     SendMessageA(GetDlgItem(main, panel::kAddBlendCheckbox), BM_SETCHECK, 0, 0);     // 0x4595C2
     SendMessageA(GetDlgItem(main, panel::kAccessoryAddBlendCheckbox), BM_SETCHECK, 0, 0);     // 0x4595DC
-    CheckMenuItem(GetMenu(main), 0xFE, 0);                       // 0x4595F3
-    EnableMenuItem(GetMenu(main), 0x120, 1);                     // 0x45960E
-    EnableMenuItem(GetMenu(main), 0x121, 1);                     // 0x459629
+    CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_GROUND_SHADOW_TRANSPARENCY, 0);                       // 0x4595F3
+    EnableMenuItem(GetMenu(main), MDS_CMD_MODEL_DRAW_ORDER, 1);                     // 0x45960E
+    EnableMenuItem(GetMenu(main), MDS_CMD_MODEL_CALCULATION_ORDER, 1);                     // 0x459629
 }
 
 
@@ -532,7 +533,7 @@ static bool LoadSceneV1_ModelBlock(PmmV1LoadContext& ctx, int fd) {
                 ofn.nMaxFile = 0x100;
                 ofn.Flags = OFN_FILEMUSTEXIST;
                 ofn.lpstrInitialDir =
-                    (GetMenuState(GetMenu(main), 0x12D, 0) & 8)
+                    (GetMenuState(GetMenu(main), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8)
                         ? reinterpret_cast<LPCWSTR>(s->state.dirModel)
                         : kWUserModel;
                 ofn.lpstrDefExt = L"pmd;pmx";
@@ -546,7 +547,7 @@ static bool LoadSceneV1_ModelBlock(PmmV1LoadContext& ctx, int fd) {
                     AbortV1Load(s, fd);                                 // 0x45A7C5
                     return false;
                 }
-                if (GetMenuState(GetMenu(main), 0x12D, 0) & 8) {
+                if (GetMenuState(GetMenu(main), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) {
                     ExtractDirFromPath(ofnTitle, ofnFile);       // 0x459B3F
                     wcscpy_s(reinterpret_cast<wchar_t*>(
                                  s->state.dirModel),
@@ -732,8 +733,8 @@ static bool LoadSceneV1_ModelBlock(PmmV1LoadContext& ctx, int fd) {
                 ikChains[i].enabled = (b == 1) ? 1 : 0;
             }
             LogV1Stage("state-done", _tell(fd));
-            EnableMenuItem(GetMenu(main), 0x120, 0);             // 0x45A682
-            EnableMenuItem(GetMenu(main), 0x121, 0);             // 0x45A6A2
+            EnableMenuItem(GetMenu(main), MDS_CMD_MODEL_DRAW_ORDER, 0);             // 0x45A682
+            EnableMenuItem(GetMenu(main), MDS_CMD_MODEL_CALCULATION_ORDER, 0);             // 0x45A6A2
     return true;
 }
 
@@ -747,7 +748,7 @@ static void LoadSceneV1_RegisterCombo(PmmV1LoadContext& ctx) {
 
     // ---- register-combo 0x1B1 (0x45A6D3..0x45AA89) -----------------------
     SendMessageA(GetDlgItem(main, panel::kInterpCurveCombo), CB_RESETCONTENT, 0, 0); // 0x45A6D3
-    if (s->state.optflag[0] == 0) {
+    if (s->CameraMode() == 0) {
         // model-edit mode: 5 entries + reselect current model
         if (s->EnglishUI() == 0) {
             SendMessageW(GetDlgItem(main, panel::kInterpCurveCombo), CB_ADDSTRING, 0,
@@ -961,8 +962,22 @@ static void LoadSceneV1_LightTrack(PmmV1LoadContext& ctx, int fd) {
     LogV1Stage("light-done", _tell(fd));
     // rgb/direction slider UI (0x45B399..0x45B74E)
     {
-        const int sliderIds[] = {455, 456, 457, 458, 459, 460};  // 0x1C7..0x1CC
-        const int editIds[] = {461, 462, 463, 464, 465, 466};    // 0x1CD..0x1D2
+        const int sliderIds[] = {
+            panel::kLightColorSliderR,
+            panel::kLightColorSliderG,
+            panel::kLightColorSliderB,
+            panel::kLightDirSliderX,
+            panel::kLightDirSliderY,
+            panel::kLightDirSliderZ
+        };  // 0x1C7..0x1CC
+        const int editIds[] = {
+            panel::kLightColorEditR,
+            panel::kLightColorEditG,
+            panel::kLightColorEditB,
+            panel::kLightDirEditX,
+            panel::kLightDirEditY,
+            panel::kLightDirEditZ
+        };    // 0x1CD..0x1D2
         const float values[] = {
             s->LightColor()[0], s->LightColor()[1], s->LightColor()[2],
             s->LightDirection()[0], s->LightDirection()[1],
@@ -1012,7 +1027,7 @@ static bool LoadSceneV1_AccessoryBlock(PmmV1LoadContext& ctx, int fd) {
     SendMessageA(GetDlgItem(main, panel::kAttachBoneCombo), CB_RESETCONTENT, 0, 0);// 0x45B7A8
     unsigned char accCount = 0;
     Rd(fd, &accCount, 1);                                        // 0x45B7BC
-    EnableMenuItem(GetMenu(main), 0xF9, accCount == 0 ? 1 : 0);  // 0x45B7EA
+    EnableMenuItem(GetMenu(main), MDS_CMD_ACCESSORY_SETTINGS, accCount == 0 ? 1 : 0);  // 0x45B7EA
     // shadow name list (0x45B814..0x45B837)
     for (unsigned char i = 0; i < accCount; ++i) {
         Rd(fd, text, 100);
@@ -1062,7 +1077,7 @@ static bool LoadSceneV1_AccessoryBlock(PmmV1LoadContext& ctx, int fd) {
             ofn.nMaxFile = 0x100;
             ofn.Flags = OFN_FILEMUSTEXIST;
             ofn.lpstrInitialDir =
-                (GetMenuState(GetMenu(main), 0x12D, 0) & 8)
+                (GetMenuState(GetMenu(main), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8)
                     ? reinterpret_cast<LPCWSTR>(s->state.dirAccs)
                     : kWUserAcc;
             ofn.lpstrDefExt = L"x";                              // 0x5297D8
@@ -1076,7 +1091,7 @@ static bool LoadSceneV1_AccessoryBlock(PmmV1LoadContext& ctx, int fd) {
                 AbortV1Load(s, fd);                                     // 0x45A7C5
                 return false;
             }
-            if (GetMenuState(GetMenu(main), 0x12D, 0) & 8) {
+            if (GetMenuState(GetMenu(main), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) {
                 ExtractDirFromPath(ofnTitle, ofnFile);           // 0x45BB47
                 wcscpy_s(reinterpret_cast<wchar_t*>(
                              s->state.dirAccs),
@@ -1223,13 +1238,13 @@ static void LoadSceneV1_ConfigBlock(PmmV1LoadContext& ctx, int fd) {
                      b == 2 ? 1 : 0, 0);
         Rd(fd, &b, 1);                                           // 0x45C821
         s->state.playbackLoopEnabled = b ? 1 : 0;
-        SendMessageA(GetDlgItem(main, 411), BM_SETCHECK, b ? 1 : 0, 0);
+        SendMessageA(GetDlgItem(main, panel::kPlaybackLoopCheckbox), BM_SETCHECK, b ? 1 : 0, 0);
         Rd(fd, &b, 1);                                           // 0x45C879
         s->state.playbackReturnsToStartFrame = b ? 1 : 0;
-        SendMessageA(GetDlgItem(main, 413), BM_SETCHECK, b ? 1 : 0, 0);
+        SendMessageA(GetDlgItem(main, panel::kPlaybackReturnCheckbox), BM_SETCHECK, b ? 1 : 0, 0);
         Rd(fd, &b, 1);                                           // 0x45C8D1
         s->state.playbackStartsAtCurrentFrame = b ? 1 : 0;
-        SendMessageA(GetDlgItem(main, 414), BM_SETCHECK, b ? 1 : 0, 0);
+        SendMessageA(GetDlgItem(main, panel::kPlaybackFromCurrentCheckbox), BM_SETCHECK, b ? 1 : 0, 0);
         std::int32_t playStartFrame = 0, playStopFrame = 0;
         Rd(fd, &playStartFrame, 4);                                          // 0x45C929
         {
@@ -1279,15 +1294,15 @@ static void LoadSceneV1_ConfigBlock(PmmV1LoadContext& ctx, int fd) {
             s->AviOffsetY() = w2;
             std::memcpy(&s->AviScale(), &w3, sizeof w3);
             if (s->AviBackgroundEnabled() == 1) {
-                CheckMenuItem(GetMenu(main), 0xD8, 8);
+                CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BACKGROUND_VIDEO, 8);
                 AviBgOverlayRefresh(s);                                    // 0x45CBA6
             } else {
-                CheckMenuItem(GetMenu(main), 0xD8, 0);
+                CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BACKGROUND_VIDEO, 0);
             }
         } else {
             Rd(fd, &s->AviBackgroundEnabled(), 4);               // 0x45CBD5
             s->AviBackgroundEnabled() = 0;
-            CheckMenuItem(GetMenu(main), 0xD8, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BACKGROUND_VIDEO, 0);
             if (s->AviFrameReader() != nullptr) {
                 AVIStreamGetFrameClose(s->AviFrameReader());
                 s->AviFrameReader() = nullptr;
@@ -1318,7 +1333,7 @@ static void LoadSceneV1_ConfigBlock(PmmV1LoadContext& ctx, int fd) {
         if (s->PictureBackgroundEnabled() == 0) {
             Rd(fd, &b, 1);                                       // 0x45CCF6
             s->PictureBackgroundEnabled() = 0;
-            CheckMenuItem(GetMenu(main), 0xE9, 0);               // 0x45CD7D
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BACKGROUND_IMAGE, 0);               // 0x45CD7D
         } else {
             Rd(fd, &b, 1);                                       // 0x45CCF6
             s->PictureOffsetX() = p1;
@@ -1326,10 +1341,10 @@ static void LoadSceneV1_ConfigBlock(PmmV1LoadContext& ctx, int fd) {
             std::memcpy(&s->PictureScale(), &p3, sizeof p3);
             s->PictureBackgroundEnabled() = b ? 1 : 0;
             if (b != 0) {
-                CheckMenuItem(GetMenu(main), 0xE9, 8);
+                CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BACKGROUND_IMAGE, 8);
                 PicBgOverlayRefresh(s);                                    // 0x45CD4E
             } else {
-                CheckMenuItem(GetMenu(main), 0xE9, 0);           // 0x45CD7D
+                CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BACKGROUND_IMAGE, 0);           // 0x45CD7D
             }
         }
     }
@@ -1343,26 +1358,26 @@ static void LoadSceneV1_ConfigBlock(PmmV1LoadContext& ctx, int fd) {
         Rd(fd, &b, 1);                                           // 0x45CD95
         if (b != 0) {
             s->state.fpsOverlayEnabled = 1;
-            CheckMenuItem(GetMenu(main), 0xD3, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_INFORMATION, 8);
             SendMessageA(GetDlgItem(owner, panel::kInfoCheckbox), BM_SETCHECK, 1, 0);
         } else {
             s->state.fpsOverlayEnabled = 0;
-            CheckMenuItem(GetMenu(main), 0xD3, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_INFORMATION, 0);
             SendMessageA(GetDlgItem(owner, panel::kInfoCheckbox), BM_SETCHECK, 0, 0);
         }
         Rd(fd, &b, 1);                                           // 0x45CE3F
         if (b != 0) {
             s->state.groundGridEnabled = 1;
-            CheckMenuItem(GetMenu(main), 0xD7, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_COORDINATE_AXIS, 8);
             SendMessageA(GetDlgItem(owner, panel::kCoordAxisCheckbox), BM_SETCHECK, 1, 0);
         } else {
             s->state.groundGridEnabled = 0;
-            CheckMenuItem(GetMenu(main), 0xD7, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_COORDINATE_AXIS, 0);
             SendMessageA(GetDlgItem(owner, panel::kCoordAxisCheckbox), BM_SETCHECK, 0, 0);
         }
         Rd(fd, &b, 1);                                           // 0x45CEE9
         s->state.groundShadowEnabled = b ? 1 : 0;
-        CheckMenuItem(GetMenu(main), 0xDD, b ? 8 : 0);           // 0x45CF2C
+        CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_GROUND_SHADOW, b ? 8 : 0);           // 0x45CF2C
     }
 
     LogV1Stage("config-done", _tell(fd));
@@ -1372,45 +1387,45 @@ static void LoadSceneV1_ConfigBlock(PmmV1LoadContext& ctx, int fd) {
     {
         const float v = s->state.fpsLimit;
         if (v == 1000.0f) {
-            CheckMenuItem(GetMenu(main), 0xEB, 0);
-            CheckMenuItem(GetMenu(main), 0xEC, 0);
-            CheckMenuItem(GetMenu(main), 0xEA, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_30, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_60, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_UNLIMITED, 8);
         } else if (v == 30.0f) {
-            CheckMenuItem(GetMenu(main), 0xEA, 0);
-            CheckMenuItem(GetMenu(main), 0xEC, 0);
-            CheckMenuItem(GetMenu(main), 0xEB, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_UNLIMITED, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_60, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_30, 8);
         } else {
-            CheckMenuItem(GetMenu(main), 0xEB, 0);
-            CheckMenuItem(GetMenu(main), 0xEA, 0);
-            CheckMenuItem(GetMenu(main), 0xEC, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_30, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_UNLIMITED, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_60, 8);
         }
     }
     // screen-capture mode (0x45D03D..0x45D1CF)
     Rd(fd, &reinterpret_cast<ScreenCaptureMode&>(s->state.captureMode), 4);         // 0x45D03D
     switch (static_cast<std::int32_t>(s->state.captureMode)) {
         case 0:
-            CheckMenuItem(GetMenu(main), 0xF3, 8);
-            CheckMenuItem(GetMenu(main), 0xF4, 0);
-            CheckMenuItem(GetMenu(main), 0xF5, 0);
-            CheckMenuItem(GetMenu(main), 0xF6, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_OFF, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_1, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_2, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_3, 0);
             break;
         case 1:
-            CheckMenuItem(GetMenu(main), 0xF3, 0);
-            CheckMenuItem(GetMenu(main), 0xF4, 8);
-            CheckMenuItem(GetMenu(main), 0xF5, 0);
-            CheckMenuItem(GetMenu(main), 0xF6, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_OFF, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_1, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_2, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_3, 0);
             break;
         case 2:
-            CheckMenuItem(GetMenu(main), 0xF3, 0);
-            CheckMenuItem(GetMenu(main), 0xF4, 0);
-            CheckMenuItem(GetMenu(main), 0xF5, 8);
-            CheckMenuItem(GetMenu(main), 0xF6, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_OFF, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_1, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_2, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_3, 0);
             break;
         default:
-            CheckMenuItem(GetMenu(main), 0xF3, 0);
-            CheckMenuItem(GetMenu(main), 0xF4, 0);
-            CheckMenuItem(GetMenu(main), 0xF5, 0);
-            CheckMenuItem(GetMenu(main), 0xF6, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_OFF, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_1, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_2, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_3, 8);
             break;
     }
     // physics defaults + combos (0x45D1C8..0x45D265)
@@ -1465,7 +1480,7 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
         if (slots[s->SelectedModelSlot()] != nullptr &&
             mikudancestudio::mdl::Mdl(
                 slots[s->SelectedModelSlot()])->postLoadFlag2 != 0 &&
-            s->state.optflag[0] == 0)
+            s->CameraMode() == 0)
             SendMessageA(GetDlgItem(main, panel::kAddBlendCheckbox), BM_SETCHECK, 1,
                          0);                                     // 0x45D360
         for (int i = 0; i < 255; ++i) {
@@ -1495,7 +1510,7 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
             Rd(fd, &b, 1);                                       // 0x45D44E
             if (b == 1) {
                 s->state.projectedShadowBlendEnabled = 1;
-                CheckMenuItem(GetMenu(main), 0xFE, 8);           // 0x45D47A
+                CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_GROUND_SHADOW_TRANSPARENCY, 8);           // 0x45D47A
             } else {
                 s->state.projectedShadowBlendEnabled = 0;
             }
@@ -1524,22 +1539,22 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                 // them untouched (the v2 body re-checks 0x10E).
                 switch (s->PlaybackPhysicsMode()) {
                     case 0:
-                        CheckMenuItem(GetMenu(main), 0x10D, 0);
-                        CheckMenuItem(GetMenu(main), 0x109, 0);
-                        CheckMenuItem(GetMenu(main), 0x10E, 0);
-                        CheckMenuItem(GetMenu(main), 0x110, 8);
+                        CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_ON_OFF, 0);
+                        CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_ALWAYS, 0);
+                        CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_TRACE, 0);
+                        CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_DISABLED, 8);
                         break;
                     case 1:
-                        CheckMenuItem(GetMenu(main), 0x10D, 0);
-                        CheckMenuItem(GetMenu(main), 0x109, 8);
-                        CheckMenuItem(GetMenu(main), 0x10E, 0);
-                        CheckMenuItem(GetMenu(main), 0x110, 0);
+                        CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_ON_OFF, 0);
+                        CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_ALWAYS, 8);
+                        CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_TRACE, 0);
+                        CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_DISABLED, 0);
                         break;
                     case 2:
-                        CheckMenuItem(GetMenu(main), 0x10D, 8);
-                        CheckMenuItem(GetMenu(main), 0x109, 0);
-                        CheckMenuItem(GetMenu(main), 0x10E, 0);
-                        CheckMenuItem(GetMenu(main), 0x110, 0);
+                        CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_ON_OFF, 8);
+                        CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_ALWAYS, 0);
+                        CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_TRACE, 0);
+                        CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_DISABLED, 0);
                         break;
                     default:
                         break;
@@ -1628,7 +1643,7 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                     unsigned char b194 = 0;
                                     Rd(fd, &b194, 1);            // 0x45DAE1
                                     s->state.blackBackgroundEnabled = (b194 != 0) ? 1 : 0;
-                                    CheckMenuItem(GetMenu(main), 0x11A,
+                                    CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BLACK_BACKGROUND,
                                                   b194 ? 8 : 0);
                                     unsigned char bcam = 0;
                                     const int gotB35 =
@@ -1729,14 +1744,14 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                         if (bf7 == 1) {
                                             s->state.followCameraEnabled = 1;
                                             CheckMenuItem(
-                                                GetMenu(main), 0xF7, 8);
+                                                GetMenu(main), MDS_CMD_TOGGLE_CAMERA_TRACKING, 8);
                                             SendMessageA(
                                                 GetDlgItem(main, panel::kFollowCameraCheckbox),
                                                 BM_SETCHECK, 1, 0);
                                         } else {
                                             s->state.followCameraEnabled = 0;
                                             CheckMenuItem(
-                                                GetMenu(main), 0xF7, 0);
+                                                GetMenu(main), MDS_CMD_TOGGLE_CAMERA_TRACKING, 0);
                                             SendMessageA(
                                                 GetDlgItem(main, panel::kFollowCameraCheckbox),
                                                 BM_SETCHECK, 0, 0);
@@ -1756,14 +1771,14 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                             if (bd2 != 0) {
                                                 CheckMenuItem(
                                                     GetMenu(main),
-                                                    0x11D, 8);
+                                                    MDS_CMD_TOGGLE_PHYSICS_FLOOR, 8);
                                                 s->state.floorVisible = 1;
                                                 s->Physics()->groundBody
                                                     ->setDeactivationTime(1.0f);
                                             } else {
                                                 CheckMenuItem(
                                                     GetMenu(main),
-                                                    0x11D, 0);
+                                                    MDS_CMD_TOGGLE_PHYSICS_FLOOR, 0);
                                                 s->state.floorVisible = 0;
                                                 s->Physics()->groundBody
                                                     ->setDeactivationTime(-1.0f);
@@ -1819,12 +1834,12 @@ static void LoadSceneV1_SuccessTail(PmmV1LoadContext& ctx) {
         s->state.selfShadowEnabled = 0;
         s->state.selfShadowMode = 0;
     }
-    CheckMenuItem(GetMenu(main), 0x117,
+    CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_SELF_SHADOW,
                   s->state.selfShadowEnabled != 0 ? 8 : 0);
     if (slots[s->SelectedModelSlot()] != nullptr &&
         mikudancestudio::mdl::Mdl(
             slots[s->SelectedModelSlot()])->toonFlag != 0 &&
-        s->state.optflag[0] == 0)
+        s->CameraMode() == 0)
         SendMessageA(GetDlgItem(main, panel::kShadowCheckbox), BM_SETCHECK, 1, 0); // 0x45E1C1
     {  // light direction into the physics scene (0x45E1EF..0x45E286)
         float dir[3] = {s->state.gravityX,
@@ -1973,7 +1988,7 @@ static void LoadSceneV1_SuccessTail(PmmV1LoadContext& ctx) {
             reinterpret_cast<HWND>(s->state.floatingWindow),
             nullptr, FALSE);
     }
-    if (s->state.optflag[0] != 0) {
+    if (s->CameraMode() != 0) {
         RefreshLightPanel(s);                                             // 0x45E7C7
         PanelPaint(s);                                            // 0x45E7CE
     }

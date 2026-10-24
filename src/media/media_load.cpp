@@ -23,6 +23,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <d3d9.h>
 #include <vfw.h>
@@ -324,7 +325,7 @@ void LoadAviFile(MMDApp* app) {
     MediaAspect(app, header->biWidth, header->biHeight, scale, pos);
     s.AviScale() = scale;
     s.AviOffsetY() = pos;
-    CheckMenuItem(GetMenu(hwnd), 0xD8, MF_CHECKED);                 // 0x433731
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_BACKGROUND_VIDEO, MF_CHECKED);                 // 0x433731
 
     if (s.AviBackgroundSurface() != nullptr) {                       // 0x433752
         s.AviBackgroundSurface()->Release();
@@ -401,7 +402,7 @@ void LoadBackgroundPicture(MMDApp* app) {
     s.PictureScale() = scale;
     s.PictureOffsetY() = pos;
     s.PictureBackgroundEnabled() = 1;                               // 0x433A07
-    CheckMenuItem(GetMenu(hwnd), 0xE9, MF_CHECKED);                 // 0x4339F3..
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_BACKGROUND_IMAGE, MF_CHECKED);                 // 0x4339F3..
     PicBgOverlayRefresh(app);                                                 // 0x433A22
 }
 

@@ -1,6 +1,7 @@
 // Copy and paste selected keyframes, preserving track and undo ordering.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 
 #include <cstdarg>
@@ -126,7 +127,7 @@ static void ClearSelectedKeys(Key* keys, std::size_t capacity) {
 // ------------------------------------------------------------------
 void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
     std::uint32_t minFrame = 0xFFFFFFFFu;  // ebx
-    if (app->state.optflag[0] == 0) {
+    if (app->CameraMode() == 0) {
         // ---- model mode (loc_483E7C..) ----
         // free the previous camera records' sub-buffers (loc_483E7C)
         if (app->DisplayClipboard() != nullptr &&
@@ -165,11 +166,11 @@ void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
             // loc_48402C..48406D: nothing selected
             EnableWindow(GetDlgItem(hwnd, panel::kPasteButton), FALSE);
             EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton), FALSE);
-            EnableMenuItem(GetMenu(hwnd), 0xFA, TRUE);
+            EnableMenuItem(GetMenu(hwnd), MDS_CMD_PASTE_AT_DIFFERENT_FRAME, TRUE);
             return;  // was: break (switch exit)
         }
         EnableWindow(GetDlgItem(hwnd, panel::kPasteButton), TRUE);
-        EnableMenuItem(GetMenu(hwnd), 0xFA, FALSE);
+        EnableMenuItem(GetMenu(hwnd), MDS_CMD_PASTE_AT_DIFFERENT_FRAME, FALSE);
         EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton),
                      boneSel != 0 ? TRUE : FALSE);
         // bone buffer 0x354 (0x54-stride records)
@@ -374,12 +375,12 @@ void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
             // loc_483657..48369C
             EnableWindow(GetDlgItem(hwnd, panel::kPasteButton), FALSE);
             EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton), FALSE);
-            EnableMenuItem(GetMenu(hwnd), 0xFA, TRUE);
+            EnableMenuItem(GetMenu(hwnd), MDS_CMD_PASTE_AT_DIFFERENT_FRAME, TRUE);
             return;  // was: break (switch exit)
         }
         EnableWindow(GetDlgItem(hwnd, panel::kPasteButton), TRUE);
         EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton), FALSE);
-        EnableMenuItem(GetMenu(hwnd), 0xFA, FALSE);
+        EnableMenuItem(GetMenu(hwnd), MDS_CMD_PASTE_AT_DIFFERENT_FRAME, FALSE);
         // buffers 0x360..0x370 (0x48/0x1C/0x0C/0x1C/0x34 strides)
         ReplaceClipboardBuffer(app->CameraClipboard(), cameraCount);
         ReplaceClipboardBuffer(app->LightClipboard(), lightCount);
@@ -508,7 +509,7 @@ void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
 // RefreshLightPanel, RefreshSelfShadowPanel, ApplyGravityTrack, ApplyAccessoryTrack per slot, SyncAccessoryEditPanel).
 // ------------------------------------------------------------------
 void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
-    if (app->state.optflag[0] == 0) {
+    if (app->CameraMode() == 0) {
         const auto& clipboardCounts = app->ClipboardCounts();
         const std::uint32_t boneSel = clipboardCounts.bones;
         const std::uint32_t morphSel = clipboardCounts.morphs;
@@ -767,7 +768,7 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
         SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame,
                        app->PlaybackPhysicsMode());
     }
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         ReloadModels(app);
         RefreshLightPanel(app);
         RefreshSelfShadowPanel(app);
@@ -789,7 +790,7 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
 // mode branch at all).
 // ------------------------------------------------------------------
 void PasteMirroredBoneKeyframes(MMDApp* app, HWND hwnd) {
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         return;  // was: break (switch exit)
     }
     const std::uint32_t boneSel = app->ClipboardCounts().bones;

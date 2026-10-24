@@ -88,9 +88,9 @@ void LoadModelFile(MMDApp* app, const wchar_t* path) {      // 0x460430
         app->SetSelectedModelSlot(static_cast<std::uint8_t>(slot));
         mikudancestudio::mdl::Mdl(model)->displayState = app->state.characterTransparentMode;
 
-        if (app->state.optflag[0] != 0) {
+        if (app->CameraMode() != 0) {
             RebuildModelModePanel(app);                                   // 0x44D610
-            app->state.optflag[0] = 0;
+            app->CameraMode() = 0;
             RebuildTimelineTrackPanel(app);                           // 0x42F1E0
             PostModelReload2(app);                            // 0x40D940
             HandleWindowSize(app);                            // 0x443300

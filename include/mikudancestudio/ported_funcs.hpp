@@ -20,6 +20,7 @@
 namespace mikudancestudio {
 
 class MMDApp;
+enum class GlobalTimelineTrack : std::uint8_t;
 namespace mdl { struct ModelRecord; }
 struct PathResolutionWorkspace;
 struct DShowRecorder;
@@ -249,7 +250,10 @@ void ModeAngleAdjust(MMDApp*, int part);          // modes 16..18
 void BoneLocalAxes(MMDApp*, float out[16]);       // VA 0x0040E670
 void BoneEditModes(MMDApp*);                      // VA 0x475A6E..0x4786FA
 void PushBoneEditUndo(MMDApp*);                    // VA 0x0042D6E0
-void RefreshRequest(int area);                    // VA 0x00440AC0
+// Select a timeline track, clear the other row selections, and refresh the
+// panel only when the selection changes (original VA 0x00440AC0).
+void SelectTimelineTrack(GlobalTimelineTrack track);
+void SelectAccessoryTimelineTrack(int slot);
 void TimelineAdvance(MMDApp*);                    // VA 0x00460130
 void ReloadModels(MMDApp*);                       // VA 0x0042E640
 void PostModelReload(MMDApp*);                    // VA 0x0041A650 (0x41A650 was an

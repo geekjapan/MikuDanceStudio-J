@@ -28,6 +28,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <commctrl.h>
 #include <commdlg.h>
@@ -48,9 +49,9 @@ namespace mikudancestudio {
 // Family entry points (defined in the per-family TUs listed above).
 void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify);
 void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify);
-void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify);
-void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify);
-void CmdControl500(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify);
+void HandleFrameEditControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify);
+void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify);
+void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify);
 
 namespace {
 
@@ -166,8 +167,8 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
                                          CB_GETCURSEL, 0, 0);
         mdl::IkChain* chains = mdl::Mdl(app->SelectedModel())->ikChains;
         if (chains != nullptr) {
-            CheckRadioButton(hwnd, 0x1BC, 0x1BD,
-                             chains[sel].enabled != 0 ? 0x1BC : 0x1BD);
+            CheckRadioButton(hwnd, panel::kIkOnRadio, panel::kIkOffRadio,
+                             chains[sel].enabled != 0 ? panel::kIkOnRadio : panel::kIkOffRadio);
         }
         SetFocus(hwnd);
         return true;
@@ -219,7 +220,7 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
     // cursor <= 0 detaches, keeping the attach bone's world position
     // (matInit * position, x87 double intermediates), zeroing the rotation
     // and setting the distance to -20.0f (0x52F0B4).  Tail:
-    // RefreshRequest(-1) + PostViewRefresh.
+    // SelectTimelineTrack(GlobalTimelineTrack::Camera) + PostViewRefresh.
     if (ctrl == GetDlgItem(hwnd, panel::kMainComboNormal)) {
         const LRESULT sel = SendMessageA(GetDlgItem(hwnd, panel::kMainComboNormal),
                                          CB_GETCURSEL, 0, 0);
@@ -281,7 +282,7 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
                          CB_RESETCONTENT, 0, 0);
             app->CameraParentModel() = -1;
         }
-        RefreshRequest(-1);    // 0x440AC0 (x64 sub_7FF7CB4BF4F0)
+        SelectTimelineTrack(GlobalTimelineTrack::Camera);    // 0x440AC0 (x64 sub_7FF7CB4BF4F0)
         PostViewRefresh(app);  // 0x40D130 (x64 sub_7FF7CB440DD0)
         SetFocus(hwnd);
         return true;
@@ -303,7 +304,7 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
                 FindBoneByName(app->ModelSlot(parent), text);
             if (index >= 0) {
                 app->CameraParentBone() = index;
-                RefreshRequest(-1);
+                SelectTimelineTrack(GlobalTimelineTrack::Camera);
             }
         }
         SetFocus(hwnd);
@@ -342,8 +343,7 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
                 acc->parentModel = slot;
                 RepopulateBoneCombo(app, boneCombo, slot);
                 acc->parentBone = 0;
-                RefreshRequest(
-                    static_cast<int>(app->SelectedAccessorySlot()));
+                SelectAccessoryTimelineTrack(static_cast<int>(app->SelectedAccessorySlot()));
             }
         } else {
             acc->parentModel = -1;
@@ -368,8 +368,7 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
                 FindBoneByName(app->ModelSlot(acc->parentModel), text);
             if (index >= 0) {
                 acc->parentBone = index;
-                RefreshRequest(
-                    static_cast<int>(app->SelectedAccessorySlot()));
+                SelectAccessoryTimelineTrack(static_cast<int>(app->SelectedAccessorySlot()));
             }
         }
         SetFocus(hwnd);
@@ -379,22 +378,22 @@ bool DefaultSelChangeChain(MMDApp* app, HWND hwnd, HWND ctrl) {
     // ---- 0x1F8 / 0x1FD / 0x202 / 0x207: facial morph row combos (the
     // slider/edit partners 0x1F9/0x1FA etc. never emit WM_COMMAND).
     if (ctrl == GetDlgItem(hwnd, panel::kMorphCombo0)) {
-        MorphRowSelect(app, hwnd, ctrl, 0, 0x1F9, 0x1FA);
+        MorphRowSelect(app, hwnd, ctrl, 0, panel::kMorphSlider0, panel::kMorphEdit0);
         SetFocus(hwnd);
         return true;
     }
     if (ctrl == GetDlgItem(hwnd, panel::kMorphCombo1)) {
-        MorphRowSelect(app, hwnd, ctrl, 1, 0x1FE, 0x1FF);
+        MorphRowSelect(app, hwnd, ctrl, 1, panel::kMorphSlider1, panel::kMorphEdit1);
         SetFocus(hwnd);
         return true;
     }
     if (ctrl == GetDlgItem(hwnd, panel::kMorphCombo2)) {
-        MorphRowSelect(app, hwnd, ctrl, 2, 0x203, 0x204);
+        MorphRowSelect(app, hwnd, ctrl, 2, panel::kMorphSlider2, panel::kMorphEdit2);
         SetFocus(hwnd);
         return true;
     }
     if (ctrl == GetDlgItem(hwnd, panel::kMorphCombo3)) {
-        MorphRowSelect(app, hwnd, ctrl, 3, 0x208, 0x209);
+        MorphRowSelect(app, hwnd, ctrl, 3, panel::kMorphSlider3, panel::kMorphEdit3);
         SetFocus(hwnd);
         return true;
     }
@@ -436,12 +435,12 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
     const std::uint16_t notification = HIWORD(wParam);
 
     switch (id) {
-    case 200:        // File: Exit (0x48BCF9) - flag + WM_CLOSE
+    case MDS_CMD_EXIT:        // File: Exit (0x48BCF9) - flag + WM_CLOSE
         s.state.dialogFlags[0] = 1;
         SendMessageA(hwnd, WM_CLOSE, 0, 0);
         break;
 
-    case 0xC9: {     // Help: About (x64 0x7FF7CB472BAD)
+    case MDS_CMD_ABOUT: {     // Help: About (x64 0x7FF7CB472BAD)
         // Raise the dialog-in-flight flags (x64 app+0x58/+0xC0 =
         // dialogFlags[9]/enterKeyState), compose the banner into a 256-byte ANSI
         // buffer - the Japanese branch carries the Shift-JIS bytes of the
@@ -474,22 +473,22 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
         break;
     }
 
-    case 0xCA:      // File: load VPD pose
+    case MDS_CMD_LOAD_POSE:      // File: load VPD pose
         CmdLoadPose(app);
         break;
-    case 0xCB:      // File: save VPD pose (selected-bones check inside)
+    case MDS_CMD_SAVE_POSE:      // File: save VPD pose (selected-bones check inside)
         CmdSavePose(app);
         break;
-    case 0xCC:      // File: New - reset scene state
+    case MDS_CMD_NEW_PROJECT:      // File: New - reset scene state
         CmdResetState(app);
         break;
-    case 0xCD:      // File: open PMM (dirty confirm + dialog)
+    case MDS_CMD_OPEN_PROJECT:      // File: open PMM (dirty confirm + dialog)
         CmdOpenScene(app);
         break;
-    case 0xCE:      // File: open WAV
+    case MDS_CMD_LOAD_WAVE:      // File: open WAV
         CmdOpenWave(app);
         break;
-    case 0xCF:      // File: save PMM (0x489AF7) - overwrite via stored path,
+    case MDS_CMD_SAVE_PROJECT:      // File: save PMM (0x489AF7) - overwrite via stored path,
         //          falling into the save-as flow (case 0xD0) when unnamed
         // Entry guard first (x64 0x7FF7CB46E041: mov dword [rbx+54h],1 =
         // dialogFlags[8] before the stored-path test), then the path check
@@ -503,16 +502,16 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
             CmdSaveScene(app);
         }
         break;
-    case 0xD0:      // File: save PMM as (0x489B12 GetSaveFileNameW flow)
+    case MDS_CMD_SAVE_PROJECT_AS:      // File: save PMM as (0x489B12 GetSaveFileNameW flow)
         CmdSaveScene(app);
         break;
-    case 0xD1:      // File: load VMD motion
+    case MDS_CMD_LOAD_MOTION:      // File: load VMD motion
         CmdLoadMotion(app);
         break;
-    case 0xD2:      // File: save VMD motion
+    case MDS_CMD_SAVE_MOTION:      // File: save VMD motion
         CmdSaveMotion(app);
         break;
-    case 0xD3: {    // View: information display toggle (0x47EAC7/0x47EB00)
+    case MDS_CMD_TOGGLE_INFORMATION: {    // View: information display toggle (0x47EAC7/0x47EB00)
         // Entry guard (x64 0x7FF7CB45F6EE: mov dword [rbx+44h],1 =
         // dialogFlags[4]) before the app+0x356 toggle - same pattern as
         // sibling case 297 (command_view_menu.cpp).
@@ -520,12 +519,12 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
         auto& flag = s.state.fpsOverlayEnabled;
         if (flag != 0) {
             flag = 0;
-            CheckMenuItem(GetMenu(hwnd), 0xD3, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_INFORMATION, MF_UNCHECKED);
         } else {
             flag = 1;
             s.state.fpsOverlayElapsedSeconds = 0.0f;   // timer cluster reset
             s.state.fpsOverlayFrameCount = 0;
-            CheckMenuItem(GetMenu(hwnd), 0xD3, MF_CHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_INFORMATION, MF_CHECKED);
         }
         // 0x47EB56/0x47EB6F: sync the 0x227 checkbox - owned by the
         // floating window (0xA0D38) when open, else the main window.
@@ -535,13 +534,13 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
                      s.state.fpsOverlayEnabled, 0);
         break;
     }
-    case 0xD5:      // Background: load AVI file
+    case MDS_CMD_LOAD_BACKGROUND_VIDEO:      // Background: load AVI file
         CmdLoadAvi(app);
         break;
-    case 0xD6: {    // View: character transparent mode (0x487FA0)
+    case MDS_CMD_TOGGLE_MODEL_TRANSPARENCY: {    // View: character transparent mode (0x487FA0)
         auto& flag = s.state.characterTransparentMode;
         flag = flag ? 0 : 1;
-        CheckMenuItem(GetMenu(hwnd), 0xD6, flag ? MF_CHECKED : MF_UNCHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MODEL_TRANSPARENCY, flag ? MF_CHECKED : MF_UNCHECKED);
         // 0x487FF5..0x48803C: push the new flag into every loaded model's
         // displayState (+0x2D8C)
         for (int slot = 0; slot < kModelSlotCount; ++slot) {
@@ -551,10 +550,10 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
         }
         break;
     }
-    case 0xD7: {    // View: coordinate axis display (0x47FBF5)
+    case MDS_CMD_TOGGLE_COORDINATE_AXIS: {    // View: coordinate axis display (0x47FBF5)
         auto& flag = s.state.groundGridEnabled;
         flag = flag ? 0 : 1;
-        CheckMenuItem(GetMenu(hwnd), 0xD7, flag ? MF_CHECKED : MF_UNCHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_COORDINATE_AXIS, flag ? MF_CHECKED : MF_UNCHECKED);
         // 0x47FC4F/0x47FC8B: sync the 0x22D checkbox - owned by the
         // floating window (0xA0D38) when open, else the main window.
         HWND owner7 = static_cast<HWND>(s.FloatingWindow());
@@ -563,26 +562,26 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
                      flag, 0);
         break;
     }
-    case 0xD8: {    // Background: AVI display (0x4871F9)
+    case MDS_CMD_TOGGLE_BACKGROUND_VIDEO: {    // Background: AVI display (0x4871F9)
         // Original: clearing is free; setting requires a loaded AVI
         // stream (dword 0x9E400 != 0) - with no AVI the case is a no-op.
         auto& flag = s.state.aviBackgroundEnabled;
         if (flag == 1) {
             flag = 0;
-            CheckMenuItem(GetMenu(hwnd), 0xD8, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_BACKGROUND_VIDEO, MF_UNCHECKED);
         } else if (s.state.aviStream != 0) {
             flag = 1;
-            CheckMenuItem(GetMenu(hwnd), 0xD8, MF_CHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_BACKGROUND_VIDEO, MF_CHECKED);
         }
         break;
     }
-    case 0xD9:      // Edit: select all bone frames (0x4831EA)
+    case MDS_CMD_SELECT_ALL_BONE_FRAMES:      // Edit: select all bone frames (0x4831EA)
         SelectFrameGroup(app, 0);
         break;
-    case 0xDA:      // Edit: select all disp/IK/OP frames (0x4832C8)
+    case MDS_CMD_SELECT_ALL_DISPLAY_FRAMES:      // Edit: select all disp/IK/OP frames (0x4832C8)
         SelectFrameGroup(app, 1);
         break;
-    case 0xDC:      // Edit: select all facial frames (0x483258)
+    case MDS_CMD_SELECT_ALL_MORPH_FRAMES:      // Edit: select all facial frames (0x483258)
         SelectFrameGroup(app, 2);
         break;
 
@@ -597,16 +596,16 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
             DefaultSelChangeChain(app, hwnd, ctrl)) {
             break;
         }
-        if (id >= 200 && id <= 250) {
+        if (id >= MDS_CMD_EXIT && id <= MDS_CMD_PASTE_AT_DIFFERENT_FRAME) {
             CmdFileMenu(app, hwnd, id, notification);
-        } else if (id >= 251 && id <= 302) {
+        } else if (id >= MDS_CMD_MULTIPLY_BONE_FRAMES && id <= MDS_CMD_RESET_BONE_CAMERA_ROTATION) {
             CmdViewMenu(app, hwnd, id, notification);
-        } else if (id >= 400 && id <= 449) {
-            CmdControl400(app, hwnd, id, notification);
-        } else if (id >= 450 && id <= 499) {
-            CmdControl450(app, hwnd, id, notification);
-        } else if (id >= 500 && id <= 567) {
-            CmdControl500(app, hwnd, id, notification);
+        } else if (id >= panel::kUndoButton && id <= panel::kMainComboNormal) {
+            HandleFrameEditControl(app, hwnd, id, notification);
+        } else if (id >= panel::kBoneRegisterCombo && id <= panel::kPhysicsCheckbox) {
+            HandlePanelControl(app, hwnd, id, notification);
+        } else if (id >= panel::kRegisterFrameButton && id <= panel::kExpandSelfShadowPanelButton) {
+            HandleFrameRegisterControl(app, hwnd, id, notification);
         }
         break;
     }

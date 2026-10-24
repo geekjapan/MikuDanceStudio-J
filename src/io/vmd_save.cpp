@@ -75,7 +75,7 @@ void SaveVmdFile(const wchar_t* path) {
     if (app == nullptr) return;
     auto& s = *app;
 
-    const bool cameraMode = s.state.optflag[0] != 0;
+    const bool cameraMode = s.CameraMode() != 0;
     unsigned char* const model = ActiveModel(app);
 
     // ---- pass 1: counts + minimum frame ---------------------------------

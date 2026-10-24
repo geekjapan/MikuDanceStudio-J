@@ -8,6 +8,26 @@
 | 帧定位拆分 | `24d8844` | [model_frame_seek.cpp](../../src/model/model_frame_seek.cpp)、[定位回归](../../tests/model_frame_seek_test.cpp) |
 | 帧编辑器拆分 | `24d8844` | [frame_clipboard.cpp](../../src/window/frame_clipboard.cpp)、[global_key_registration.cpp](../../src/model/global_key_registration.cpp) |
 | PMM v2 配置恢复拆分 | `24d8844` | [pmm_load_v2.cpp](../../src/io/pmm_load_v2.cpp) |
+| 主窗口控件与菜单 ID 命名 | `471159b` | [panel_controls.hpp](../../include/mikudancestudio/panel_controls.hpp)、[menu_commands.h](../../include/mikudancestudio/menu_commands.h) |
+
+## 主窗口控件与菜单 ID
+
+2026-10-25，将主窗口的 168 个控件 ID（400..567）统一为 `panel_controls.hpp` 中的 `constexpr int`，将 103 个菜单命令（200..302）统一为 `menu_commands.h` 中的 `MDS_CMD_*` 宏。菜单头同时供 C++ 和 `.rc` 资源编译器使用，因此采用预处理宏；控件继续使用现有的 `panel` 命名空间。
+
+控件创建表、命令分发、键盘命令、布局、字体、UI 刷新以及 PMM 加载后的状态恢复均引用同一套名称。连续 ID 的范围和索引运算保留原来的顺序。对话框中同值异义的 ID 按所属窗口区分；地面影颜色对话框向不存在的 `0x1CA` 控件发送消息的原版行为，仍保留原数值及说明。
+
+将具名 ID 还原为整数值，忽略注释及新增的 ID 头文件包含后，46 个使用方文件的 token 比较通过。两架构 Release 构建及各 16 项相关回归通过；重新编译的两个菜单、48 个对话框及两份完整 `.res` 均与修改前逐字节一致。
+
+### 状态与调用接口
+
+在具名 ID 的基础上，进一步修正已有命名和接口表达：
+
+- 附件的 `kAccScaleXEdit`、`kAccScaleYEdit` 分别更名为 `kAccScaleEdit`、`kAccOpacityEdit`，与实际写入的 `scale`、`opacity` 字段一致。水平滚动与自定义绘制使用 Win32 常量；原 `case 5` 正确对应 `SB_THUMBTRACK`。
+- 相机模式使用 `CameraMode()`，六个面板的展开状态使用 `PanelExpanded(UiPanel::…)`。接口保留字节引用，应用状态布局不变；PMM v1/v2 的六/七字节读取、保存顺序及原有值归一化规则不变，序列化仍通过按索引访问的 `UiOptionFlag()` 完成。
+- 原 `RefreshRequest(int)` 的使用方改为 `SelectTimelineTrack(GlobalTimelineTrack)` 或 `SelectAccessoryTimelineTrack(slot)`。两种接口调用同一份内部选择主体，保留原负数轨道编号、附件槽位编号、清除其他轨道选择及刷新面板的顺序；已经选中的轨道仍不刷新。
+- `CmdControl400/450/500` 更名为 `HandleFrameEditControl`、`HandlePanelControl`、`HandleFrameRegisterControl`。五个视角按钮使用 `ViewPreset`，预设表保留原角度常量和高度/旋转轴选项；同时清理偏移、寄存器和临时变量命名。
+
+61 个文件在还原命名、常量及访问接口后通过 token 对照；另核对了选择主体、两种轨道编号适配、五个视角预设的参数与执行主体，以及新增访问接口与原状态布局的对应关系。x64/x86 Release 构建通过，相关回归分别通过 18/17 项；两份完整 `.res` 及两个菜单、48 个对话框仍逐字节一致。这些检查验证本轮源码整理，没有重新执行完整原版 GUI A/B。
 
 ## 数值兼容
 

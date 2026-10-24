@@ -105,6 +105,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <commctrl.h>
 
@@ -221,7 +222,6 @@ static const char kBoneNameNeedleModelDelete[] =
 // External targets ported in other translation units (declared here with
 // their original VAs; not yet registered in ported_funcs.hpp).
 // ---------------------------------------------------------------------------
-void RefreshRequest(int area);                     // VA 0x00440AC0
 void PanelPaint(MMDApp* app);                      // VA 0x00414610
 void SelectionReeval(MMDApp* app);                 // VA 0x00430510 (stubs.cpp)
 void CopyDirPathW(wchar_t* dest, const wchar_t* src); // VA 0x0042AE20 path copy
@@ -241,7 +241,7 @@ void CommitEditControl(MMDApp* app, HWND hwnd);            // VA 0x00463640
 void DeleteAccessory(mdl::AccessoryRecord* accessory, int flag);  // VA 0x0040A6F0
 void IdentityCtor(void* obj);                         // VA 0x004C46F0 (ctor)
 
-void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
+void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
                    std::uint16_t notify) {
     (void)notify;  // see header: the default handler's notify gate can never
                    // match any id of this family
@@ -250,7 +250,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 451 (0x00486431): camera reset - position/rotation floats cleared,
     // camera angle gated on app+0xA0430 (camera-cluster flag, default -1).
     // ------------------------------------------------------------------
-    case 451: {
+    case panel::kResetCameraButton: {
         app->CameraPositionX() = 0.0f;
         app->CameraPositionZ() = 0.0f;
         app->CameraPitch() = 0.0f;
@@ -263,7 +263,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
             app->CameraPositionY() = 0.0f;
             app->CameraDistance() = 0.0f;
         }
-        RefreshRequest(-1);
+        SelectTimelineTrack(GlobalTimelineTrack::Camera);
         PostViewRefresh(app);
         break;
     }
@@ -276,24 +276,27 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // refresh chain.  Table-driven: the six bodies are identical except
     // for the flag index and the value stored.
     // ------------------------------------------------------------------
-    case 453:
-    case 454:
-    case 469:
-    case 470:
-    case 488:
-    case 489: {
+    case panel::kCollapseCameraPanelButton:
+    case panel::kExpandCameraPanelButton:
+    case panel::kCollapseLightPanelButton:
+    case panel::kExpandLightPanelButton:
+    case panel::kCollapseAccessoryPanelButton:
+    case panel::kExpandAccessoryPanelButton: {
         static const struct {
             int id;
-            int flagIdx;
+            UiPanel panel;
             unsigned char value;  // optflag is unsigned char[7]
         } kOptFlagRadios[] = {
-            {453, 1, 0}, {454, 1, 1},  // 0x2F9
-            {469, 2, 0}, {470, 2, 1},  // 0x2FA
-            {488, 3, 0}, {489, 3, 1},  // 0x2FB
+            {panel::kCollapseCameraPanelButton, UiPanel::Camera, 0},
+            {panel::kExpandCameraPanelButton, UiPanel::Camera, 1},  // 0x2F9
+            {panel::kCollapseLightPanelButton, UiPanel::Light, 0},
+            {panel::kExpandLightPanelButton, UiPanel::Light, 1},  // 0x2FA
+            {panel::kCollapseAccessoryPanelButton, UiPanel::Accessory, 0},
+            {panel::kExpandAccessoryPanelButton, UiPanel::Accessory, 1},  // 0x2FB
         };
         for (const auto& radio : kOptFlagRadios) {
             if (radio.id == id) {
-                app->state.optflag[radio.flagIdx] = radio.value;
+                app->PanelExpanded(radio.panel) = radio.value;
                 break;
             }
         }
@@ -304,12 +307,12 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     }
 
     // ------------------------------------------------------------------
-    // 452 (0x0048681D): clear frame selection; RefreshRequest(-1),
+    // 452 (0x0048681D): clear frame selection; SelectTimelineTrack(GlobalTimelineTrack::Camera),
     // RegisterCameraState(app, app+0x980), PanelPaint, SelectionReeval.
     // ------------------------------------------------------------------
-    case 452: {
+    case panel::kRegisterCameraButton: {
         ClearFrameSelection(app);
-        RefreshRequest(-1);
+        SelectTimelineTrack(GlobalTimelineTrack::Camera);
         RegisterCameraState(app, app->state.currentFrame);
         PanelPaint(app);
         SelectionReeval(app);
@@ -321,7 +324,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // pose blob memset + kind 3, color 0.6, scene vtable 0xCC/0xD4,
     // %3d / %+3.1f echoes into 461-466, TBM_SETPOS 455-460, Refresh(-2).
     // ------------------------------------------------------------------
-    case 467: {
+    case panel::kResetLightButton: {
         float* const direction = app->LightDirection();
         direction[0] = -0.5f;
         direction[1] = -1.0f;
@@ -350,12 +353,12 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
                       static_cast<int>(static_cast<double>(
                                            app->LightColor()[ch]) *
                                        256.0));  // dbl_52B9E8
-            SetWindowTextA(GetDlgItem(hwnd, 0x1CD + ch), buf);  // 461..463
+            SetWindowTextA(GetDlgItem(hwnd, panel::kLightColorEditR + ch), buf);  // 461..463
         }
         for (int ax = 0; ax < 3; ++ax) {
             sprintf_s(buf, 0x100, "%+3.1f",
                       static_cast<double>(direction[ax]));
-            SetWindowTextA(GetDlgItem(hwnd, 0x1D0 + ax), buf);  // 464..466
+            SetWindowTextA(GetDlgItem(hwnd, panel::kLightDirEditX + ax), buf);  // 464..466
         }
         for (int ch = 0; ch < 3; ++ch) {
             SendMessageA(GetDlgItem(hwnd, panel::kLightColorSliderR + ch), TBM_SETPOS,
@@ -371,7 +374,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
                                     direction[ax]) *
                                 100.0)));  // sliders 458..460, dbl_52B8E0
         }
-        RefreshRequest(-2);
+        SelectTimelineTrack(GlobalTimelineTrack::Light);
         break;
     }
 
@@ -379,9 +382,9 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 468 (0x004868C2): clear frame selection (like 452); Refresh(-2),
     // RegisterLightState(app, app+0x980), PanelPaint.
     // ------------------------------------------------------------------
-    case 468: {
+    case panel::kRegisterLightButton: {
         ClearFrameSelection(app);
-        RefreshRequest(-2);
+        SelectTimelineTrack(GlobalTimelineTrack::Light);
         RegisterLightState(app, app->state.currentFrame);
         PanelPaint(app);
         break;
@@ -393,7 +396,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // dir-copy into app+0xA1D10 when the menu gate is set, then
     // LoadAccessoryFile(app, path).
     // ------------------------------------------------------------------
-    case 472: {
+    case panel::kLoadAccessoryButton: {
         SetCurrentDirectoryW(app->ExeDir());  // 0xA06CE
         wchar_t fileBuf[0x100];
         swprintf_s(fileBuf, 0x100, kEmptyPathFormat, L"", L"");
@@ -411,7 +414,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
             ofn.lpstrFilter = kFilterAccJp;
             ofn.lpstrTitle = kTitleOpenJp;
         }
-        if ((GetMenuState(GetMenu(hwnd), 0x12D, 0) & 8) != 0) {
+        if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
             ofn.lpstrInitialDir = app->DirAccs();  // 0xA1D10
         } else {
             ofn.lpstrInitialDir = L"UserFile\\Accessory";
@@ -426,7 +429,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
         if (!GetOpenFileNameW(&ofn)) {
             break;
         }
-        if ((GetMenuState(GetMenu(hwnd), 0x12D, 0) & 8) != 0) {
+        if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
             // ExtractDirFromPath(app+0x9F338, fileBuf) then copy into DirAccs
             wchar_t* dir =
                 ExtractDirFromPath(app->PathWorkspace().projectDirectory,
@@ -446,7 +449,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // rebuild combos 0x1D7/0x1DA/0x1DB, clear checkbox labels 0x1DE..0x1E4,
     // EnableMenuItem 0xF9, RebuildCameraModePanel, Refresh(-1), InvalidateSelectionReadouts.
     // ------------------------------------------------------------------
-    case 473: {
+    case panel::kDeleteAccessoryButton: {
         const LRESULT sel =
             SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_GETCURSEL, 0, 0);
         std::int32_t found = -1;
@@ -539,20 +542,20 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
         // clear the checkbox labels 0x1DE..0x1E4
         char empty[0x100];
         strcpy_s(empty, 0x100, "");
-        for (int ctl = 0x1DE; ctl <= 0x1E4; ++ctl) {
+        for (int ctl = panel::kAccPosXEdit; ctl <= panel::kAccScaleEdit; ++ctl) {
             HWND edit = GetDlgItem(hwnd, ctl);
             SendMessageA(edit, EM_SETSEL, 0,
                          static_cast<LPARAM>(GetWindowTextLengthA(edit)));
             SendMessageA(edit, EM_REPLACESEL, 0,
                          reinterpret_cast<LPARAM>(empty));
         }
-        EnableMenuItem(GetMenu(hwnd), 0xF9, 1);
+        EnableMenuItem(GetMenu(hwnd), MDS_CMD_ACCESSORY_SETTINGS, 1);
         RebuildCameraModePanel(app);
         SendMessageA(GetDlgItem(hwnd, panel::kInterpCurveCombo), CB_DELETESTRING, 5, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kInterpCurveCombo), CB_DELETESTRING, 4, 0);
         PostModelReload2(app);
         app->GlobalTrackSelected(GlobalTimelineTrack::Camera) = 0;
-        RefreshRequest(-1);
+        SelectTimelineTrack(GlobalTimelineTrack::Camera);
         InvalidateRect(hwnd, nullptr, FALSE);
         InvalidateSelectionReadouts(app);
         break;
@@ -562,7 +565,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 476 (0x00486F91): toggle accessory display flag byte acc+0x210,
     // BM_SETCHECK into checkbox 0x1DC, Refresh(byte 0x9E170).
     // ------------------------------------------------------------------
-    case 476: {
+    case panel::kAccessoryVisibleCheckbox: {
         const std::uint8_t idx = app->state.selectedObjectSlot;
         mdl::AccessoryRecord* acc = app->AccessorySlot(idx);
         if (acc == nullptr) {
@@ -575,7 +578,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
             acc->visible = 1;
             SendMessageA(GetDlgItem(hwnd, panel::kAccessoryVisibleCheckbox), BM_SETCHECK, 1, 0);
         }
-        RefreshRequest(idx);
+        SelectAccessoryTimelineTrack(idx);
         break;
     }
 
@@ -584,7 +587,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // then falls into def_47E903, which is a no-op for this id (see the
     // default note) - equivalent to break here.
     // ------------------------------------------------------------------
-    case 477: {
+    case panel::kAccessoryAddBlendCheckbox: {
         const std::uint8_t idx = app->state.selectedObjectSlot;
         mdl::AccessoryRecord* acc = app->AccessorySlot(idx);
         if (acc == nullptr) {
@@ -598,7 +601,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 486 (0x00487011): toggle accessory flag byte acc+0x49C,
     // BM_SETCHECK into checkbox 0x1E6, Refresh(byte 0x9E170).
     // ------------------------------------------------------------------
-    case 486: {
+    case panel::kAccessoryShadowCheckbox: {
         const std::uint8_t idx = app->state.selectedObjectSlot;
         mdl::AccessoryRecord* acc = app->AccessorySlot(idx);
         if (acc == nullptr) {
@@ -611,7 +614,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
             acc->shadowEnabled = 1;
             SendMessageA(GetDlgItem(hwnd, panel::kAccessoryShadowCheckbox), BM_SETCHECK, 1, 0);
         }
-        RefreshRequest(idx);
+        SelectAccessoryTimelineTrack(idx);
         break;
     }
 
@@ -620,8 +623,8 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // (CommitEditControl), clear the frame selection, then Refresh(byte 0x9E170)
     // + RegisterAccessoryKey(app, app+0x980, byte 0x9E170) + PanelPaint.
     // ------------------------------------------------------------------
-    case 487: {
-        for (int ctl = 0x1DE; ctl <= 0x1E4; ++ctl) {
+    case panel::kRegisterAccessoryButton: {
+        for (int ctl = panel::kAccPosXEdit; ctl <= panel::kAccScaleEdit; ++ctl) {
             CommitEditControl(app, GetDlgItem(hwnd, ctl));
         }
         app->SceneModified() = 1;
@@ -630,7 +633,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
             break;
         }
         ClearFrameSelection(app);
-        RefreshRequest(idx);
+        SelectAccessoryTimelineTrack(idx);
         RegisterAccessoryKey(app, app->state.currentFrame, idx);
         PanelPaint(app);
         break;
@@ -642,7 +645,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // the other three are unchecked and app+0x914 stores the mode
     // (0/1/3/4 when the corresponding radio is checked, 2 when none).
     // ------------------------------------------------------------------
-    case 490: {
+    case panel::kBoneSelectRadio: {
         SendMessageA(GetDlgItem(hwnd, panel::kBoxSelectRadio), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kBoneMoveRadio), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kBoneRotateRadio), BM_SETCHECK, 0, 0);
@@ -651,7 +654,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
         break;
     }
 
-    case 491: {
+    case panel::kBoxSelectRadio: {
         SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kBoneMoveRadio), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kBoneRotateRadio), BM_SETCHECK, 0, 0);
@@ -660,7 +663,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
         break;
     }
 
-    case 492: {
+    case panel::kBoneMoveRadio: {
         SendMessageA(GetDlgItem(hwnd, panel::kBoxSelectRadio), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kBoneRotateRadio), BM_SETCHECK, 0, 0);
@@ -669,7 +672,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
         break;
     }
 
-    case 493: {
+    case panel::kBoneRotateRadio: {
         SendMessageA(GetDlgItem(hwnd, panel::kBoxSelectRadio), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kBoneMoveRadio), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 0, 0);
@@ -684,13 +687,13 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // type == 8 or type <= 6; then check radio 0x1EA, re-dispatch
     // WM_COMMAND(0x1EA) and run RebuildTimelineTrackPanel + InvalidateSelectionReadouts.
     // ------------------------------------------------------------------
-    case 494: {
+    case panel::kSelectAllBonesButton: {
         unsigned char* model = ActiveModel(app);
         if (model == nullptr) {
             // Selected slot empty: walking the null record here is fatal;
             // keep the radio bookkeeping below and skip the scan.
             SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 1, 0);
-            SendMessageA(hwnd, WM_COMMAND, 0x1EA, 0);
+            SendMessageA(hwnd, WM_COMMAND, panel::kBoneSelectRadio, 0);
             RebuildTimelineTrackPanel(app);
             InvalidateSelectionReadouts(app);
             break;
@@ -714,7 +717,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
         // raw command id kept: 0x1EA is the original's bone-select radio
         // command; the WM_COMMAND switch below keys the same literal.
         SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 1, 0);
-        SendMessageA(hwnd, WM_COMMAND, 0x1EA, 0);
+        SendMessageA(hwnd, WM_COMMAND, panel::kBoneSelectRadio, 0);
         RebuildTimelineTrackPanel(app);
         InvalidateSelectionReadouts(app);
         break;
@@ -731,7 +734,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // the frame-flag array model+0x2D98 marks inserted frames.  Float
     // math follows the original x87 shape (double intermediates).
     // ------------------------------------------------------------------
-    case 495: {
+    case panel::kResetBonePoseButton: {
         PushBoneEditUndo(app);  // prep (thiscall)
         unsigned char* model = ActiveModel(app);
         auto* modelRecord = mikudancestudio::mdl::Mdl(model);
@@ -870,7 +873,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // stored pos (0x140..0x148) and stored quat (0x14C..0x158) into a
     // 0x30-stride record array at app+0x350 (name[20], pos[3], quat[4]).
     // ------------------------------------------------------------------
-    case 496: {
+    case panel::kCopyBoneFramesButton: {
         unsigned char* model = ActiveModel(app);
         auto* modelRecord = mikudancestudio::mdl::Mdl(model);
         const std::int32_t boneCount = modelRecord->boneCount;
@@ -937,7 +940,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // the record, new values into the bone frames, selection + frame
     // flags, current bone = pasted index, then the language sweeps.
     // ------------------------------------------------------------------
-    case 497: {
+    case panel::kBonePasteButton: {
         if (app->state.copiedBoneCount == 0) {
             break;  // jz def_47E903 (no-op)
         }
@@ -1035,7 +1038,7 @@ void CmdControl450(MMDApp* app, HWND hwnd, std::uint16_t id,
     // tag search fails the exact-name match index (k1) is used as the
     // fallback target.
     // ------------------------------------------------------------------
-    case 498: {
+    case panel::kBoneReversePasteButton: {
         if (app->state.copiedBoneCount == 0) {
             break;  // jz def_47E903 (no-op)
         }

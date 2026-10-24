@@ -18,6 +18,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/panel_controls.hpp"
 #include <Windows.h>
 
 #include <algorithm>
@@ -54,8 +55,8 @@ static void ViewRefreshGate(MMDApp* s) {
         (s->state.followCameraEnabled | s->state.playbackStartsAtCurrentFrame |
          s->state.projectedShadowBlendEnabled) != 0 &&
         s->state.slotIdx == s->state.cameraParentModel &&
-        (s->state.optflag[0] | s->state.optflag[1] |
-         s->state.optflag[2] | s->state.optflag[3]) == 0 &&
+        (s->CameraMode() | s->PanelExpanded(UiPanel::Camera) |
+         s->PanelExpanded(UiPanel::Light) | s->PanelExpanded(UiPanel::Accessory)) == 0 &&
         s->state.cameraParentModel >= 0 &&
         s->state.playbackActive == 0;
     if (frameGate) {
@@ -166,7 +167,7 @@ int ViewportToolAtPoint(MMDApp* app) {
             column = 2;
         if (column >= 0) {
             const bool modelPanel =
-                app->state.optflag[0] != 0;
+                app->CameraMode() != 0;
             const std::uint32_t axisMode =
                 app->state.v32c;
             if (fy > upperTop && fy < upperBottom) {
@@ -375,13 +376,15 @@ void BeginOrEndViewportToolDrag(MMDApp* app, int operation) {
                 app->state.a06B5 = 1;
             } else {
                 const int target = app->state.coordinateSystem;
-                RefreshRequest(target == 2
-                    ? app->state.selectedObjectSlot : -1);
+                if (target == 2)
+                    SelectAccessoryTimelineTrack(app->state.selectedObjectSlot);
+                else
+                    SelectTimelineTrack(GlobalTimelineTrack::Camera);
                 app->state.a06B5 = 1;
             }
         } else if (operation == 21) {
             int& target = app->state.coordinateSystem;
-            const int limit = app->state.optflag[0] != 0 ? 3 : 2;
+            const int limit = app->CameraMode() != 0 ? 3 : 2;
             if (++target >= limit)
                 target = 0;
             RebuildTimelineTrackPanel(app);
@@ -550,7 +553,7 @@ void MouseInteractionBegin(MMDApp* app) {
             app->CameraDistance() -= static_cast<float>(dy) * 0.1f;
             ViewRefreshGate(app);
         } else if (viewMode == ViewportToolAction::CameraPan) {
-            if (app->state.optflag[0] != 0)
+            if (app->CameraMode() != 0)
                 PanCameraPosition(app, dx, dy);
             else {
                 app->ViewOffsetX() -= static_cast<float>(dx) * DragScale(app);
@@ -619,7 +622,11 @@ void EchoEdit(MMDApp* s, int dlgItem, const char* text) {
 void ModeCameraAdjust(MMDApp* app, int axis) {
     // 0x4786FB..0x4790DF, modes 13..15.  The same operation widgets edit
     // either the camera target or the selected accessory position.
-    static const int kEdit[3] = {0x1DE, 0x1DF, 0x1E0};
+    static const int kEdit[3] = {
+        panel::kAccPosXEdit,
+        panel::kAccPosYEdit,
+        panel::kAccPosZEdit
+    };
     if (axis < 0 || axis > 2) { ViewRefreshGate(app); return; }
     const int target = app->state.coordinateSystem;
     const int dy = DyOf(app);
@@ -628,7 +635,7 @@ void ModeCameraAdjust(MMDApp* app, int axis) {
     else if (SelB3(app)) scale = kPositionDragFine;
     else scale = kPositionDragNormal;
     if (target == 2 &&
-        app->state.optflag[0] != 0) {
+        app->CameraMode() != 0) {
         auto* accessory = app->AccessorySlot(app->state.selectedObjectSlot);
         if (accessory != nullptr) {
             float& value = accessory->position[axis];
@@ -664,7 +671,11 @@ void ModeCameraAdjust(MMDApp* app, int axis) {
 void ModeAngleAdjust(MMDApp* app, int axis) {
     // 0x4790E0..0x4798xx, modes 16..18.  Stored angles are radians;
     // accessory edit controls display degrees.
-    static const int kEdit[3] = {0x1E1, 0x1E2, 0x1E3};
+    static const int kEdit[3] = {
+        panel::kAccRotXEdit,
+        panel::kAccRotYEdit,
+        panel::kAccRotZEdit
+    };
     if (axis < 0 || axis > 2) { ViewRefreshGate(app); return; }
     const int target = app->state.coordinateSystem;
     const int dy = DyOf(app);

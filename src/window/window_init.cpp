@@ -21,6 +21,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <commctrl.h>
 #include <stdio.h>
@@ -439,13 +440,13 @@ bool InitMainWindowAndD3D(MMDApp* app, void* hInstanceIn, int nShowCmd) {
 
     if (checkMenu119) {                                                 // 0x47BFF5
         HMENU menu = GetMenu(static_cast<HWND>(s.Hwnd()));
-        CheckMenuItem(menu, 0x119, MF_CHECKED);
+        CheckMenuItem(menu, MDS_CMD_TOGGLE_ALWAYS_ON_TOP, MF_CHECKED);
     }
     if (runFlagSubsystem)
         InitFlagSubsystem(app);                                 // 0x461E00
     if (checkMenu12D) {                                                 // 0x47C01C
         HMENU menu = GetMenu(static_cast<HWND>(s.Hwnd()));
-        CheckMenuItem(menu, 0x12D, MF_CHECKED);
+        CheckMenuItem(menu, MDS_CMD_TOGGLE_PREVIOUS_FOLDER, MF_CHECKED);
     }
     if (checkPhysicsFrame == 1) {                                            // 0x47C036
         HWND item = GetDlgItem(static_cast<HWND>(s.Hwnd()), panel::kPhysicsFrameCheckbox);

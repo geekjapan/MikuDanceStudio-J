@@ -107,6 +107,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <commctrl.h>
 #include <commdlg.h>
@@ -1046,7 +1047,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // width/height into app+0xA08D4/0xA08D8 and returns 1 (OK) / 2
     // (cancel).  On OK the whole model/render chain is re-initialised.
     // ------------------------------------------------------------------
-    case 212: {
+    case MDS_CMD_SCREEN_SIZE: {
         app->state.enterKeyState = 1;  // 0xBC
         const std::intptr_t result = DialogBoxParamA(
             static_cast<HINSTANCE>(app->HInstance()),  // this+0 hInstance
@@ -1079,8 +1080,8 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // (parent != -1) are skipped; the parent chain is walked when the
     // frame counter exceeds the bone count.
     // ------------------------------------------------------------------
-    case 219: {
-        if (app->state.optflag[0] != 0) {  // 0x2F8
+    case MDS_CMD_CENTER_POSITION_BIAS: {
+        if (app->CameraMode() != 0) {  // 0x2F8
             break;
         }
         app->state.dialogFlags[6] = 1;
@@ -1133,14 +1134,14 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // 221 (0x0047FC97): model-panel display toggle.  Flips app+0x918 and
     // the 0xDD menu checkmark.
     // ------------------------------------------------------------------
-    case 221: {
+    case MDS_CMD_TOGGLE_GROUND_SHADOW: {
         app->state.dialogFlags[8] = 1;
         if (app->state.groundShadowEnabled != 0) {
             app->state.groundShadowEnabled = 0;
-            CheckMenuItem(GetMenu(MainHwnd(app)), 0xDD, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_GROUND_SHADOW, MF_UNCHECKED);
         } else {
             app->state.groundShadowEnabled = 1;
-            CheckMenuItem(GetMenu(MainHwnd(app)), 0xDD, MF_CHECKED);
+            CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_GROUND_SHADOW, MF_CHECKED);
         }
         break;
     }
@@ -1156,8 +1157,8 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // duplicates.  DeleteMarkedKeyframes then purges the marked frames and a MessageBox
     // reports the count.
     // ------------------------------------------------------------------
-    case 222: {
-        if (app->state.optflag[0] != 0) {  // 0x2F8
+    case MDS_CMD_DELETE_UNUSED_FRAMES: {
+        if (app->CameraMode() != 0) {  // 0x2F8
             break;
         }
         app->state.dialogFlags[4] = 1;
@@ -1186,7 +1187,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // (EN) / JP, Flags 0x1000; on OK LoadVsqFile(app, path) (VSQ load) and
     // dirty.  Owner = app+0xA0D38 when set, else the main window.
     // ------------------------------------------------------------------
-    case 224: {
+    case MDS_CMD_LOAD_LIP_SYNC: {
         SetCurrentDirectoryW(app->ExeDir());
         app->state.enterKeyState = 1;
         wchar_t path[0x100];
@@ -1224,7 +1225,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // app+0x9EB90, then the AVI-out options dialog (sub_40F2F0, tpl 0x28E EN /
     // 0x260 JP) and 0x464760 / 0x45E820 depending on app+0xA0D61.
     // ------------------------------------------------------------------
-    case 223: {
+    case MDS_CMD_RENDER_VIDEO: {
         app->state.dialogFlags[3] = 1;
         app->state.enterKeyState = 1;
         SetCurrentDirectoryW(app->ExeDir());
@@ -1236,7 +1237,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         ofn.hwndOwner = MainHwnd(app);
         ofn.lpstrFilter = L"AVI files(*.avi)\0*.avi\0";   // 0x52F720
         ofn.lpstrFile = path;
-        if ((GetMenuState(GetMenu(MainHwnd(app)), 0x12D, 0) & 8) != 0) {
+        if ((GetMenuState(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
             ofn.lpstrInitialDir = app->DirUser();          // 0xA1540
         } else {
             ofn.lpstrInitialDir = L"UserFile";             // 0x529780
@@ -1254,7 +1255,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         if (!GetSaveFileNameW(&ofn)) {
             break;
         }
-        if ((GetMenuState(GetMenu(MainHwnd(app)), 0x12D, 0) & 8) != 0) {
+        if ((GetMenuState(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
             wchar_t* dir = ExtractDirFromPath(
                 app->PathWorkspace().projectDirectory, path);
             CopyDirPathW(app->DirUser(), dir);   // 0x42AE20
@@ -1285,8 +1286,8 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // record zeroed) while (frame0 + shift) <= 0, and the walk stops once
     // the shifted value turns positive; the chain tail ends the walk.
     // ------------------------------------------------------------------
-    case 225: {
-        if (app->state.optflag[0] != 0) {  // 0x2F8
+    case MDS_CMD_SHIFT_MOUTH_FRAMES: {
+        if (app->CameraMode() != 0) {  // 0x2F8
             break;
         }
         app->state.enterKeyState = 1;
@@ -1366,8 +1367,8 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // (EN "Trying to delete all lip frame...", JP) with MB_OKCANCEL +
     // MB_TOPMOST, then PurgeMorphFrames(app, 3) and the shared purge tail.
     // ------------------------------------------------------------------
-    case 226: {
-        if (app->state.optflag[0] != 0) {  // 0x2F8
+    case MDS_CMD_DELETE_MOUTH_FRAMES: {
+        if (app->CameraMode() != 0) {  // 0x2F8
             break;
         }
         app->state.enterKeyState = 1;
@@ -1396,8 +1397,8 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // (value 0/1/1/0 at frame, +2, +3, +6) is registered on the blink
     // morph via RegisterMorphKeyCurrent, using the app+0x9EB7F blink-phase byte.
     // ------------------------------------------------------------------
-    case 227: {
-        if (app->state.optflag[0] != 0) {  // 0x2F8
+    case MDS_CMD_REGISTER_BLINKING: {
+        if (app->CameraMode() != 0) {  // 0x2F8
             break;
         }
         unsigned char* model = ActiveModel(app);
@@ -1489,8 +1490,8 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // ------------------------------------------------------------------
     // 228 (0x004890A7): delete all eyes frames - PurgeMorphFrames(app, 2).
     // ------------------------------------------------------------------
-    case 228: {
-        if (app->state.optflag[0] != 0) {  // 0x2F8
+    case MDS_CMD_DELETE_EYE_FRAMES: {
+        if (app->CameraMode() != 0) {  // 0x2F8
             break;
         }
         app->state.enterKeyState = 1;
@@ -1522,9 +1523,9 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // replay of app+0x9DA28 records of app+0x354 (0x54 stride) through
     // RegisterBoneKey, undo-available flag).
     // ------------------------------------------------------------------
-    case 250: {
+    case MDS_CMD_PASTE_AT_DIFFERENT_FRAME: {
         app->state.dialogFlags[15] = 1;
-        const std::uint8_t opt = app->state.optflag[0];
+        const std::uint8_t opt = app->CameraMode();
         const bool isAcc = opt != 0;
         const auto& clipboardCounts = app->ClipboardCounts();
         if (isAcc ? clipboardCounts.accessories == 0
@@ -1735,8 +1736,8 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // SelectionReeval and dirty again.  (0x48B5A0..0x48B61F; the range
     // beyond belongs to the out-of-scope 282..287 cases.)
     // ------------------------------------------------------------------
-    case 229: {
-        if (app->state.optflag[0] != 0) {  // 0x2F8
+    case MDS_CMD_REGISTER_ALL_MORPH_FRAMES: {
+        if (app->CameraMode() != 0) {  // 0x2F8
             break;
         }
         app->SceneModified() = 1;
@@ -1793,8 +1794,8 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // position 0 (TBM_SETPOS redraw, lParam 0).  No dirty flag, no
     // repaint - the case ends here (0x48DACB..0x48DBFA).
     // ------------------------------------------------------------------
-    case 230: {
-        if (app->state.optflag[0] != 0) {  // 0x2F8
+    case MDS_CMD_RESET_MORPHS: {
+        if (app->CameraMode() != 0) {  // 0x2F8
             break;
         }
         unsigned char* model = ActiveModel(app);
@@ -1822,8 +1823,8 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // 231 (0x00489279): delete all eyebrow frames -
     // PurgeMorphFrames(app, 1).
     // ------------------------------------------------------------------
-    case 231: {
-        if (app->state.optflag[0] != 0) {  // 0x2F8
+    case MDS_CMD_DELETE_EYEBROW_FRAMES: {
+        if (app->CameraMode() != 0) {  // 0x2F8
             break;
         }
         app->state.enterKeyState = 1;
@@ -1856,14 +1857,14 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // the off path additionally gates on app+0xA0430 == slot index),
     // finishing with PostViewRefresh + InvalidateSelectionReadouts.
     // ------------------------------------------------------------------
-    case 247: {
+    case MDS_CMD_TOGGLE_CAMERA_TRACKING: {
         app->state.dialogFlags[2] = 1;
         if (app->state.followCameraEnabled == 0) {
             // ---- enable undo ----
             app->state.followCameraEnabled = 1;
             app->ViewOffsetX() = 0.0f;
             app->ViewOffsetY() = 0.0f;
-            CheckMenuItem(GetMenu(MainHwnd(app)), 0xF7, MF_CHECKED);
+            CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_CAMERA_TRACKING, MF_CHECKED);
             SendMessageA(GetDlgItem(MainHwnd(app), panel::kFollowCameraCheckbox), BM_SETCHECK,
                          1, 0);
             ReloadModels(app);                             // 0x42E640
@@ -1876,7 +1877,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
                 }
             }
             SyncAccessoryEditPanel(app);                                // 0x4134E0
-            if (app->state.optflag[0] == 0) {  // 0x2F8
+            if (app->CameraMode() == 0) {  // 0x2F8
                 app->CameraAttachmentTransformSuppressed() = 0;
                 PostModelReload(app);                      // 0x41A650
             }
@@ -1886,10 +1887,10 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         } else {
             // ---- disable undo ----
             app->state.followCameraEnabled = 0;
-            CheckMenuItem(GetMenu(MainHwnd(app)), 0xF7, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_CAMERA_TRACKING, MF_UNCHECKED);
             SendMessageA(GetDlgItem(MainHwnd(app), panel::kFollowCameraCheckbox), BM_SETCHECK,
                          0, 0);
-            if (app->state.optflag[0] != 0) {  // 0x2F8
+            if (app->CameraMode() != 0) {  // 0x2F8
                 PostViewRefresh(app);                      // 0x40D130
                 InvalidateSelectionReadouts(app);                   // 0x40D070
                 break;
@@ -1917,7 +1918,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // dir-copy into DirBg + path-copy into app+0x9E448, then
     // LoadBackgroundPicture and the dirty flag.
     // ------------------------------------------------------------------
-    case 232: {
+    case MDS_CMD_LOAD_BACKGROUND_IMAGE: {
         app->state.enterKeyState = 1;
         SetCurrentDirectoryW(app->ExeDir());
         wchar_t path[0x100];
@@ -1958,7 +1959,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         ofn.lpstrFile = path;
         ofn.nMaxFile = 0x100;
         ofn.Flags = OFN_FILEMUSTEXIST;
-        if ((GetMenuState(GetMenu(MainHwnd(app)), 0x12D, 0) & 8) != 0) {
+        if ((GetMenuState(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
             ofn.lpstrInitialDir = app->DirBg();           // 0xA3C50
         } else {
             ofn.lpstrInitialDir = L"UserFile\\BackGround";
@@ -1974,7 +1975,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         if (!GetOpenFileNameW(&ofn)) {
             break;
         }
-        if ((GetMenuState(GetMenu(MainHwnd(app)), 0x12D, 0) & 8) != 0) {
+        if ((GetMenuState(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
             wchar_t* dir = ExtractDirFromPath(
                 app->PathWorkspace().projectDirectory, path);
             CopyDirPathW(app->DirBg(), dir);                 // 0x42AE20
@@ -1986,18 +1987,18 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         break;
     }
 
-    case 233: {
+    case MDS_CMD_TOGGLE_BACKGROUND_IMAGE: {
         app->state.dialogFlags[12] = 1;
         if (app->state.pictureBackgroundEnabled != 0) {
             app->state.pictureBackgroundEnabled = 0;
-            CheckMenuItem(GetMenu(MainHwnd(app)), 0xE9, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_BACKGROUND_IMAGE, MF_UNCHECKED);
             break;
         }
         if (app->PictureBackgroundTexture() == 0) {
             break;
         }
         app->state.pictureBackgroundEnabled = 1;
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xE9, MF_CHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_BACKGROUND_IMAGE, MF_CHECKED);
         break;
     }
 
@@ -2006,25 +2007,25 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // radios.  Store the cap float into app+0xA08E0 (kFloatFpslimit) and
     // flip the 0xEA / 0xEB / 0xEC menu checks (unchecked 0, checked 8).
     // ------------------------------------------------------------------
-    case 234:  // 0xEA: no cap (1000.0 = flt_52FCE8)
+    case MDS_CMD_FPS_UNLIMITED:  // 0xEA: no cap (1000.0 = flt_52FCE8)
         app->state.fpsLimit = 1000.0f;
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xEB, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xEC, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xEA, MF_CHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_FPS_30, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_FPS_60, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_FPS_UNLIMITED, MF_CHECKED);
         break;
 
-    case 235:  // 0xEB: 30 fps (flt_52997C)
+    case MDS_CMD_FPS_30:  // 0xEB: 30 fps (flt_52997C)
         app->state.fpsLimit = 30.0f;
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xEA, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xEC, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xEB, MF_CHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_FPS_UNLIMITED, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_FPS_60, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_FPS_30, MF_CHECKED);
         break;
 
-    case 236:  // 0xEC: 60 fps (flt_52A1E0)
+    case MDS_CMD_FPS_60:  // 0xEC: 60 fps (flt_52A1E0)
         app->state.fpsLimit = 60.0f;
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xEB, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xEA, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xEC, MF_CHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_FPS_30, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_FPS_UNLIMITED, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_FPS_60, MF_CHECKED);
         break;
 
     // ------------------------------------------------------------------
@@ -2033,9 +2034,9 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // DialogBoxParamA with proc sub_44D2D0, template 0x291 (EN) / 0x26F
     // (JP); the result is discarded.
     // ------------------------------------------------------------------
-    case 242: {
+    case MDS_CMD_MULTIPLY_CAMERA_FRAMES: {
         app->state.dialogFlags[7] = 1;
-        if (app->state.optflag[0] == 0) {  // 0x2F8
+        if (app->CameraMode() == 0) {  // 0x2F8
             break;
         }
         app->state.enterKeyState = 1;
@@ -2057,7 +2058,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // (camera/light, 0x18, +0x14), app+0x380 (accessory, 0x24, +0x21) and
     // the 255 tables at app+0x384 (0x3C, +0x18).
     // ------------------------------------------------------------------
-    case 237: {  // 0xED: bone frames
+    case MDS_CMD_SELECT_ALL_CAMERA_FRAMES: {  // 0xED: bone frames
         app->state.dialogFlags[2] = 1;
         std::int32_t esi = 0;
         auto* frames = app->CameraKeys();
@@ -2074,7 +2075,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         break;
     }
 
-    case 238: {  // 0xEE: morph frames
+    case MDS_CMD_SELECT_ALL_LIGHT_FRAMES: {  // 0xEE: morph frames
         app->state.dialogFlags[17] = 1;
         std::int32_t esi = 0;
         auto* frames = app->LightKeys();
@@ -2090,7 +2091,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         break;
     }
 
-    case 239: {  // 0xEF: camera/light frames
+    case MDS_CMD_SELECT_ALL_SELF_SHADOW_FRAMES: {  // 0xEF: camera/light frames
         app->state.dialogFlags[8] = 1;
         std::int32_t esi = 0;
         auto* frames = app->ShadowKeys();
@@ -2106,7 +2107,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         break;
     }
 
-    case 240: {  // 0xF0: accessory frames
+    case MDS_CMD_SELECT_ALL_GRAVITY_FRAMES: {  // 0xF0: accessory frames
         app->state.dialogFlags[3] = 1;
         std::int32_t esi = 0;
         auto* frames = app->GravityKeys();
@@ -2122,7 +2123,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         break;
     }
 
-    case 241: {  // 0xF1: all 255 accessory frame tables
+    case MDS_CMD_SELECT_ALL_ACCESSORY_FRAMES: {  // 0xF1: all 255 accessory frame tables
         app->state.dialogFlags[5] = 1;
         for (int tbl = 0; tbl < 0xFF; ++tbl) {
             unsigned char* frames = reinterpret_cast<unsigned char*>(
@@ -2148,41 +2149,41 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // (0..3), the corresponding 0xF3..0xF6 menu item gets the checkmark
     // (8), the other three are cleared (0).
     // ------------------------------------------------------------------
-    case 243: {  // 0xF3
+    case MDS_CMD_SCREEN_CAPTURE_OFF: {  // 0xF3
         app->state.dialogFlags[3] = 1;
         app->CaptureMode() = ScreenCaptureMode::Disabled;
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF3, MF_CHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF4, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF5, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF6, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_OFF, MF_CHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_MODE_1, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_MODE_2, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_MODE_3, MF_UNCHECKED);
         break;
     }
 
-    case 244: {  // 0xF4
+    case MDS_CMD_SCREEN_CAPTURE_MODE_1: {  // 0xF4
         app->CaptureMode() = ScreenCaptureMode::FullFrame;
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF3, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF4, MF_CHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF5, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF6, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_OFF, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_MODE_1, MF_CHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_MODE_2, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_MODE_3, MF_UNCHECKED);
         break;
     }
 
-    case 245: {  // 0xF5
+    case MDS_CMD_SCREEN_CAPTURE_MODE_2: {  // 0xF5
         app->CaptureMode() = ScreenCaptureMode::CropFourByThree;
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF3, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF4, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF5, MF_CHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF6, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_OFF, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_MODE_1, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_MODE_2, MF_CHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_MODE_3, MF_UNCHECKED);
         break;
     }
 
-    case 246: {  // 0xF6
+    case MDS_CMD_SCREEN_CAPTURE_MODE_3: {  // 0xF6
         app->state.dialogFlags[6] = 1;
         app->CaptureMode() = ScreenCaptureMode::BackgroundRefresh;
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF3, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF4, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF5, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(MainHwnd(app)), 0xF6, MF_CHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_OFF, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_MODE_1, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_MODE_2, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_MODE_3, MF_CHECKED);
         break;
     }
 
@@ -2192,7 +2193,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // SW_SHOW and updated.  When it is already open the case falls into
     // the (no-op) default handler.
     // ------------------------------------------------------------------
-    case 248: {
+    case MDS_CMD_GROUND_SHADOW_COLOR: {
         app->state.dialogFlags[0] = 1;
         if (app->GroundShadowColorDialog() != 0) {
             break;  // def_47E903 (no-op for this id)
@@ -2211,7 +2212,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // 249 (0x0048A03B): modal dialog (proc sub_44CA40, template 0x293 EN /
     // 0x273 JP); a cancel result falls through to the no-op default.
     // ------------------------------------------------------------------
-    case 249: {
+    case MDS_CMD_ACCESSORY_SETTINGS: {
         app->state.dialogFlags[8] = 1;
         app->state.enterKeyState = 1;
         const std::intptr_t r = DialogBoxParamA(

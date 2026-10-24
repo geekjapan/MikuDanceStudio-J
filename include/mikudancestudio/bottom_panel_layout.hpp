@@ -18,19 +18,19 @@ struct BottomPanelLayout {
 
 inline BottomPanelLayout ComputeBottomPanelLayout(const MMDApp* app) {
     const bool camera =
-        app->state.optflag[0] != 0;
+        app->CameraMode() != 0;
     const bool cameraExpanded =
-        app->state.optflag[1] != 0;
+        app->PanelExpanded(UiPanel::Camera) != 0;
     const bool lightExpanded =
-        app->state.optflag[2] != 0;
+        app->PanelExpanded(UiPanel::Light) != 0;
     const bool accessoryExpanded =
-        app->state.optflag[3] != 0;
+        app->PanelExpanded(UiPanel::Accessory) != 0;
     const bool boneExpanded =
-        app->state.optflag[4] != 0;
+        app->PanelExpanded(UiPanel::Bone) != 0;
     const bool facialExpanded =
-        app->state.optflag[5] != 0;
+        app->PanelExpanded(UiPanel::Morph) != 0;
     const bool shadowExpanded =
-        app->state.optflag[6] != 0;
+        app->PanelExpanded(UiPanel::SelfShadow) != 0;
 
     BottomPanelLayout result{};
     if (camera)

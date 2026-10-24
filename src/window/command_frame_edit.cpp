@@ -3,6 +3,7 @@
 // Original command ledger: docs/reconstruction/source_refactoring.md.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 
 #include <commdlg.h>
@@ -132,7 +133,7 @@ void DeleteMarkedKeyframes(MMDApp* app) {
     if (app == nullptr) {
         return;
     }
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         auto* camera = app->CameraKeys();
         if (camera[0].selected != 0) {
             ResetCameraRecord(camera[0], true);
@@ -202,7 +203,7 @@ void DeleteMarkedKeyframes(MMDApp* app) {
 
     PanelPaint(app);
     SelectionReeval(app);
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         ReloadModels(app);
         RefreshLightPanel(app);
         RefreshSelfShadowPanel(app);
@@ -222,11 +223,11 @@ void DeleteMarkedKeyframes(MMDApp* app) {
     }
 }
 
-// The view-reset shared tail loc_47EFF6: PostViewRefresh + RefreshRequest(-1)
+// The view-reset shared tail loc_47EFF6: PostViewRefresh + SelectTimelineTrack(GlobalTimelineTrack::Camera)
 // (the 0x2F8!=0 fast paths and the gate-skip path all land here).
 void ViewResetRefresh(MMDApp* app) {
     PostViewRefresh(app);
-    RefreshRequest(-1);
+    SelectTimelineTrack(GlobalTimelineTrack::Camera);
 }
 
 void ResetCameraAttachmentBasis(MMDApp* app) {
@@ -238,39 +239,55 @@ void ResetCameraAttachmentBasis(MMDApp* app) {
     basis.m[3][3] = 1.0f;
 }
 
-// Shared body of cases 402..406 (0x47EEDF / 0x47F163 / 0x47F211 / 0x47F00B /
-// 0x47F0B5): `rot` is the per-case rotation constant (flt_52A1E8-adjacent
-// table: 0 / PI / -PI/2 / +PI/2 / -PI/2) placed in 0x314 except for case 404
-// which places it in 0x310; `gate30C` is false only for 404, whose 0x30C
-// store skips the byte-0x340 gate (always 0).  The 0x2F8!=0 fast path stores
-// 0x310/0x314/0x318 + angle -45 and jumps straight to loc_47EFF6; the full
-// path applies the 0xA0430/0x910/0x330/0x9ED98 gate and resets the light
-// matrix (0xA0438) to identity.
-void ResetViewVariant(MMDApp* app, float rot, bool gate30C, bool rotIn310) {
-    if (app->state.optflag[0] != 0) {
-        app->CameraRotation()[0] = rotIn310 ? rot : 0.0f;
-        app->CameraRotation()[1] = rotIn310 ? 0.0f : rot;
+namespace {
+
+enum class ViewPreset { Front, Back, Top, Left, Right };
+
+struct ViewPresetSettings {
+    float rotation;
+    bool useReferenceHeight;
+    bool rotatePitch;
+};
+
+// Shared behavior of original cases 402..406 (0x47EEDF / 0x47F163 /
+// 0x47F211 / 0x47F00B / 0x47F0B5). Keep the original float constants:
+// flt_52B738 = PI, flt_52E8FC = -PI/2, flt_52E900 = +PI/2.
+// Top view rotates pitch and always clears the height; the other presets
+// rotate yaw and select height from the camera's bone-reference mode.
+void ResetViewPreset(MMDApp* app, ViewPreset preset) {
+    static constexpr ViewPresetSettings kPresets[] = {
+        {0.0f, true, false},        // Front
+        {3.1415927f, true, false},  // Back
+        {-1.5707964f, false, true}, // Top
+        {1.5707964f, true, false},  // Left
+        {-1.5707964f, true, false}, // Right
+    };
+    const ViewPresetSettings& settings = kPresets[static_cast<std::size_t>(preset)];
+    if (app->CameraMode() != 0) {
+        app->CameraRotation()[0] = settings.rotatePitch ? settings.rotation : 0.0f;
+        app->CameraRotation()[1] = settings.rotatePitch ? 0.0f : settings.rotation;
         app->CameraRotation()[2] = 0.0f;
         app->CameraDistance() = -45.0f;
         ViewResetRefresh(app);
         return;
     }
-    const std::int32_t a0430 = app->CameraParentModel();
-    const std::uint8_t slot = app->SelectedModelSlot();
-    const std::uint8_t esi = app->state.followCameraEnabled;
-    const bool c = a0430 >= 0;  // setnl cl
-    const bool b = (slot == a0430) && app->PlaybackActive() == 0 &&
-                   esi != 0;  // setz bl / setz al / and / and
-    if (c && b) {
+    const std::int32_t parentModelSlot = app->CameraParentModel();
+    const std::uint8_t selectedModelSlot = app->SelectedModelSlot();
+    const std::uint8_t followCameraEnabled = app->state.followCameraEnabled;
+    const bool hasParentModel = parentModelSlot >= 0;  // setnl cl
+    const bool followingParentModelWhileStopped =
+        (selectedModelSlot == parentModelSlot) && app->PlaybackActive() == 0 &&
+        followCameraEnabled != 0;  // setz bl / setz al / and / and
+    if (hasParentModel && followingParentModelWhileStopped) {
         ViewResetRefresh(app);  // test ecx, ebx; jnz loc_47EFF6
         return;
     }
-    if (c && esi != 0) {
+    if (hasParentModel && followCameraEnabled != 0) {
         app->CameraAttachmentTransformSuppressed() = 1;
     }
     app->ViewOffsetX() = 0.0f;
     app->CameraDistance() = -45.0f;
-    if (gate30C) {
+    if (settings.useReferenceHeight) {
         if (app->CameraReferenceMode() == CameraAttachmentReference::SelectedBone) {
             app->ViewOffsetY() = 0.0f;
         } else {
@@ -279,12 +296,14 @@ void ResetViewVariant(MMDApp* app, float rot, bool gate30C, bool rotIn310) {
     } else {
         app->ViewOffsetY() = 0.0f;
     }
-    app->CameraRotation()[0] = rotIn310 ? rot : 0.0f;
-    app->CameraRotation()[1] = rotIn310 ? 0.0f : rot;
+    app->CameraRotation()[0] = settings.rotatePitch ? settings.rotation : 0.0f;
+    app->CameraRotation()[1] = settings.rotatePitch ? 0.0f : settings.rotation;
     app->CameraRotation()[2] = 0.0f;
     ResetCameraAttachmentBasis(app);
     ViewResetRefresh(app);
 }
+
+}  // namespace
 
 // The frame/30 conversion of case 408 (0x487446): fild (int -> double),
 // fadd 4294967296.0 when negative (i.e. unsigned re-interpretation), then
@@ -497,7 +516,7 @@ static const wchar_t kTitleOpenFileJp[] = L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B
 // def_47E903, a no-op for this id (control 0x190 != 0x1B4).
 // ------------------------------------------------------------------
 static void UndoKeyframeEdit(MMDApp* app, HWND hwnd) {
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         return;  // was: break (switch exit)
     }
     app->SceneModified() = 1;
@@ -530,7 +549,7 @@ static void UndoKeyframeEdit(MMDApp* app, HWND hwnd) {
 // app+0xA0CC4) - the stub only takes this + pos).
 // ------------------------------------------------------------------
 static void RedoKeyframeEdit(MMDApp* app, HWND hwnd) {
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         return;  // was: break (switch exit)
     }
     app->SceneModified() = 1;
@@ -564,7 +583,7 @@ static void RedoKeyframeEdit(MMDApp* app, HWND hwnd) {
 // ReloadModels (0x42E640) + PostModelReload, refresh.
 // ------------------------------------------------------------------
 static void ResetViewAndReloadModels(MMDApp* app) {
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         app->CameraRotation()[0] = 1.5707964f;
         app->CameraRotation()[1] = 0.0f;
         app->CameraRotation()[2] = 0.0f;
@@ -687,7 +706,7 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
     GetWindowTextA(GetDlgItem(hwnd, panel::kRangeStopEdit), text, 8);
     const std::int32_t to = atol(text);  // var_A40
     GetWindowTextA(GetDlgItem(hwnd, panel::kRegisterScopeCombo), text, 20);
-    if (app->state.optflag[0] == 0) {
+    if (app->CameraMode() == 0) {
         // ---- name-compare chain (loc_482CF2..loc_4831CB) ----
         if (TextEqN(text, kJpAllFrame, 7) || TextEqN(text, "All frame", 10)) {
             // bone sweep (loc_482D40..482DB2)
@@ -826,7 +845,7 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
 // other blobs.  Tail: PanelPaint + SelectionReeval (no SetFocus).
 // ------------------------------------------------------------------
 static void SyncKeyframeSelection(MMDApp* app) {
-    if (app->state.optflag[0] == 0) {
+    if (app->CameraMode() == 0) {
         // ---- model mode (loc_480D1D..loc_4810F3) ----
         unsigned char* model = ActiveModel(app);
         mdl::ModelRecord* modelRecord = mdl::Mdl(model);
@@ -973,7 +992,7 @@ static void SyncKeyframeSelection(MMDApp* app) {
 static void CopyInterpolationCurve(MMDApp* app, HWND hwnd) {
     const LRESULT sel =
         SendMessageA(GetDlgItem(hwnd, panel::kInterpCurveCombo), CB_GETCURSEL, 0, 0);
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         const std::int32_t idx = FindFirstSelectedCameraKey(app);
         if (idx < 0) {
             SetFocus(hwnd);
@@ -1020,7 +1039,7 @@ static void PasteInterpolationCurve(MMDApp* app, HWND hwnd) {
     app->SceneModified() = 1;
     const LRESULT sel =
         SendMessageA(GetDlgItem(hwnd, panel::kInterpCurveCombo), CB_GETCURSEL, 0, 0);
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         auto* keys = app->CameraKeys();
         for (std::int32_t i = 0; i < 10000; ++i) {
             mdl::CameraKey& key = keys[i];
@@ -1070,7 +1089,7 @@ static void ResetInterpolationCurves(MMDApp* app, HWND hwnd) {
     app->SceneModified() = 1;
     const LRESULT sel =
         SendMessageA(GetDlgItem(hwnd, panel::kInterpCurveCombo), CB_GETCURSEL, 0, 0);
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         auto* keys = app->CameraKeys();
         for (std::int32_t i = 0; i < 10000; ++i) {
             mdl::CameraKey& key = keys[i];
@@ -1118,7 +1137,7 @@ static void ResetInterpolationCurves(MMDApp* app, HWND hwnd) {
 // else "UserFile\\Model", def-ext "pmd;pmx", title "load model" (JP:
 // "ファイルを開く"); on OK and menu gate: ExtractDirFromPath(app+0x9F338,
 // path) -> CopyDirPathW(DirModel(), dir); LoadModelFile(app, path);
-// always RefreshRequest(-1) (also when cancelled).
+// always SelectTimelineTrack(GlobalTimelineTrack::Camera) (also when cancelled).
 // ------------------------------------------------------------------
 static void OpenModelFile(MMDApp* app, HWND hwnd) {
     SetCurrentDirectoryW(app->ExeDir());
@@ -1135,7 +1154,7 @@ static void OpenModelFile(MMDApp* app, HWND hwnd) {
     ofn.lpstrFile = fileBuf;
     ofn.nMaxFile = 0x100;
     ofn.Flags = OFN_FILEMUSTEXIST;
-    ofn.lpstrInitialDir = (GetMenuState(GetMenu(hwnd), 0x12D, 0) & 8) != 0
+    ofn.lpstrInitialDir = (GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0
                               ? app->DirModel()
                               : kInitDirModel;
     ofn.lpstrDefExt = kDefExtPmd;
@@ -1143,14 +1162,14 @@ static void OpenModelFile(MMDApp* app, HWND hwnd) {
     ofn.lpstrFileTitle = nullptr;
     ofn.lpstrTitle = app->state.englishUI != 0 ? kTitleLoadModel : kTitleOpenFileJp;
     if (GetOpenFileNameW(&ofn) != 0) {
-        if ((GetMenuState(GetMenu(hwnd), 0x12D, 0) & 8) != 0) {
+        if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
             wchar_t* dir =
                 ExtractDirFromPath(app->PathWorkspace().projectDirectory, fileBuf);
             CopyDirPathW(app->DirModel(), dir);
         }
         LoadModelFile(app, fileBuf);
     }
-    RefreshRequest(-1);
+    SelectTimelineTrack(GlobalTimelineTrack::Camera);
 }
 // ------------------------------------------------------------------
 // 437 (0x0047FCF5): delete model selected in combo 0x1B4.  Gate
@@ -1253,16 +1272,16 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
         SendMessageA(GetDlgItem(hwnd, panel::kRegisterScopeCombo), CB_ADDSTRING, 0,
                      reinterpret_cast<LPARAM>(buf));
     }
-    EnableMenuItem(GetMenu(hwnd), 0x120, 1);
-    EnableMenuItem(GetMenu(hwnd), 0x121, 1);
+    EnableMenuItem(GetMenu(hwnd), MDS_CMD_MODEL_DRAW_ORDER, 1);
+    EnableMenuItem(GetMenu(hwnd), MDS_CMD_MODEL_CALCULATION_ORDER, 1);
     // per-slot fixup：x64 0x7FF7CB460DB5 mov rax,r13（=0xFF）+ 尾部 dec rax/jne
     for (std::int32_t j = 0; j < kModelSlotCount; ++j) {
         unsigned char* m = app->ModelSlot(j);
         if (m == nullptr) {
             continue;
         }
-        EnableMenuItem(GetMenu(hwnd), 0x120, 0);
-        EnableMenuItem(GetMenu(hwnd), 0x121, 0);
+        EnableMenuItem(GetMenu(hwnd), MDS_CMD_MODEL_DRAW_ORDER, 0);
+        EnableMenuItem(GetMenu(hwnd), MDS_CMD_MODEL_CALCULATION_ORDER, 0);
         if (mdl::Mdl(m)->comboSelIndex > oldSel) {
             --mdl::Mdl(m)->comboSelIndex;
         }
@@ -1370,13 +1389,13 @@ static void EditAccessoryAttachments(MMDApp* app, HWND hwnd) {
     SelectionReeval(app);
 }
 
-void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify) {
+void HandleFrameEditControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify) {
     switch (id) {
-        case 400:  // undo (0x00482766) -> UndoKeyframeEdit
+        case panel::kUndoButton:  // undo (0x00482766) -> UndoKeyframeEdit
             UndoKeyframeEdit(app, hwnd);
             break;
 
-        case 401:  // redo (0x004828DF) -> RedoKeyframeEdit
+        case panel::kRedoButton:  // redo (0x004828DF) -> RedoKeyframeEdit
             RedoKeyframeEdit(app, hwnd);
             break;
 
@@ -1386,34 +1405,34 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         // 0x2F8==0 path is gated: skipped when dword[0xA0430] >= 0 AND slot
         // == dword[0xA0430] AND byte 0x330 == 0 AND byte 0x9ED98 != 0; flag
         // 0xA0478 set when (0xA0430 >= 0 && 0x9ED98 != 0).  All paths end at
-        // loc_47EFF6 (PostViewRefresh + RefreshRequest(-1)).
+        // loc_47EFF6 (PostViewRefresh + SelectTimelineTrack(GlobalTimelineTrack::Camera)).
         // 403 (0x0047F163): same with 0x314 = PI (flt_52B738).
         // 404 (0x0047F211): 0x310 = -PI/2 (flt_52E8FC), 0x30C = 0 without the
         // byte-0x340 gate.
         // 405 (0x0047F00B): 0x314 = +PI/2 (flt_52E900).
         // 406 (0x0047F0B5): 0x314 = -PI/2 (flt_52E8FC).
         // ------------------------------------------------------------------
-        case 402:
-            ResetViewVariant(app, 0.0f, true, false);
+        case panel::kViewFrontButton:
+            ResetViewPreset(app, ViewPreset::Front);
             break;
-        case 403:
-            ResetViewVariant(app, 3.1415927f, true, false);  // flt_52B738 = PI
+        case panel::kViewBackButton:
+            ResetViewPreset(app, ViewPreset::Back);
             break;
-        case 404:
-            ResetViewVariant(app, -1.5707964f, false, true);  // flt_52E8FC
+        case panel::kViewTopButton:
+            ResetViewPreset(app, ViewPreset::Top);
             break;
-        case 405:
-            ResetViewVariant(app, 1.5707964f, true, false);  // flt_52E900
+        case panel::kViewLeftButton:
+            ResetViewPreset(app, ViewPreset::Left);
             break;
-        case 406:
-            ResetViewVariant(app, -1.5707964f, true, false);  // flt_52E8FC
+        case panel::kViewRightButton:
+            ResetViewPreset(app, ViewPreset::Right);
             break;
 
-        case 407:  // view reset + reload (0x0047F29C) -> ResetViewAndReloadModels
+        case panel::kViewBottomButton:  // view reset + reload (0x0047F29C) -> ResetViewAndReloadModels
             ResetViewAndReloadModels(app);
             break;
 
-        case 408:  // play-range edits (0x00487446) -> ApplyPlaybackRangeEdits
+        case panel::kPlayButton:  // play-range edits (0x00487446) -> ApplyPlaybackRangeEdits
             ApplyPlaybackRangeEdits(app, hwnd);
             break;
 
@@ -1421,14 +1440,14 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         // 411/413/414 (0x0047FAE5 / 0x0047FAFA / 0x0047FB0F): toggle bytes
         // 0x341 / 0x342 / 0x9ED99 (setz cl / al / cl; mov [..], cl).
         // ------------------------------------------------------------------
-        case 411:
+        case panel::kPlaybackLoopCheckbox:
             app->PlaybackLoopEnabled() = app->PlaybackLoopEnabled() == 0 ? 1 : 0;
             break;
-        case 413:
+        case panel::kPlaybackReturnCheckbox:
             app->state.playbackReturnsToStartFrame =
                 app->state.playbackReturnsToStartFrame == 0 ? 1 : 0;
             break;
-        case 414:
+        case panel::kPlaybackFromCurrentCheckbox:
             app->PlaybackStartsAtCurrentFrame() =
                 app->PlaybackStartsAtCurrentFrame() == 0 ? 1 : 0;
             break;
@@ -1439,7 +1458,7 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         // 0) in the checked branch; ApplyCameraReferenceModeChange(app, old value) runs only when
         // byte 0x2F8 == 0.
         // ------------------------------------------------------------------
-        case 412: {
+        case panel::kCameraRefModelCheckbox: {
             const LRESULT checked = SendMessageA(
                 GetDlgItem(hwnd, panel::kCameraRefModelCheckbox), BM_GETCHECK, 0, 0);
             const int prev = static_cast<int>(app->CameraReferenceMode());
@@ -1447,13 +1466,13 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
                 app->CameraReferenceMode() = CameraAttachmentReference::ModelRoot;
                 SendMessageA(GetDlgItem(hwnd, panel::kCameraRefBoneCheckbox),
                              BM_SETCHECK, 0, 0);
-                if (app->state.optflag[0] != 0) {
+                if (app->CameraMode() != 0) {
                     break;
                 }
                 ApplyCameraReferenceModeChange(app, prev);
             } else {
                 app->CameraReferenceMode() = CameraAttachmentReference::None;
-                if (app->state.optflag[0] != 0) {
+                if (app->CameraMode() != 0) {
                     break;
                 }
                 ApplyCameraReferenceModeChange(app, prev);
@@ -1464,10 +1483,10 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         // ------------------------------------------------------------------
         // 418/419 (0x00480734 / 0x0048072A): single refresh helpers.
         // ------------------------------------------------------------------
-        case 418:
+        case panel::kPreviousFrameButton:
             StepFrame(app, false);
             break;
-        case 419:
+        case panel::kNextFrameButton:
             StepFrame(app, true);
             break;
 
@@ -1478,7 +1497,7 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         // 0x4C2A00(0xCC sub, x = 0x97C, ho = sidebar) + InvalidateRect of
         // {6, 0x5F, sidebar-3, 0x92}.
         // ------------------------------------------------------------------
-        case 429: {
+        case panel::kShowCurrentFrameButton: {
             const std::int32_t sidebar = app->SidebarWidth();
             const std::int32_t count = (sidebar - 0x54) / 26;
             const std::int32_t frame = app->state.currentFrame;
@@ -1500,19 +1519,19 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
             break;
         }
 
-        case 430:  // curve <- frame (0x00481109) -> CopyInterpolationCurve
+        case panel::kCurveCopyButton:  // curve <- frame (0x00481109) -> CopyInterpolationCurve
             CopyInterpolationCurve(app, hwnd);
             break;
 
-        case 431:  // curve -> frames (0x00481430) -> PasteInterpolationCurve
+        case panel::kCurvePasteButton:  // curve -> frames (0x00481430) -> PasteInterpolationCurve
             PasteInterpolationCurve(app, hwnd);
             break;
 
-        case 432:  // curve reset (0x004816E6) -> ResetInterpolationCurves
+        case panel::kCurveLinearButton:  // curve reset (0x004816E6) -> ResetInterpolationCurves
             ResetInterpolationCurves(app, hwnd);
             break;
 
-        case 435:  // load model (0x0047EB7B) -> OpenModelFile
+        case panel::kLoadModelButton:  // load model (0x0047EB7B) -> OpenModelFile
             OpenModelFile(app, hwnd);
             break;
 
@@ -1521,7 +1540,7 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         // than its command-ID jump table: CBN_SELCHANGE from the model combo
         // enters ApplyModelComboSelection when the modal/model-load gate at 0xA0B50 is clear.
         // ------------------------------------------------------------------
-        case 436:
+        case panel::kMainComboModel:
             if (notify == CBN_SELCHANGE && app->FrameRangeDialog() == nullptr) {
                 ApplyModelComboSelection(app);
                 // x86 0x48F2DA / x64 RVA 0x53DE0: return arrow keys to
@@ -1530,7 +1549,7 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
             }
             break;
 
-        case 437:  // delete model (0x0047FCF5) -> DeleteSelectedModel
+        case panel::kDeleteModelButton:  // delete model (0x0047FCF5) -> DeleteSelectedModel
             DeleteSelectedModel(app, hwnd);
             break;
 
@@ -1540,7 +1559,7 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         // +0x14) of the active model; RegisterDisplayKeyCurrent(model, dword 0x980);
         // 0x9E16C = max(0x9E16C, model+0x31B0); PanelPaint.  Dirty 0xA0B0D.
         // ------------------------------------------------------------------
-        case 438: {
+        case panel::kRegisterModelDisplayButton: {
             app->SceneModified() = 1;
             unsigned char* model = ActiveModel(app);
             ClearModelKeyMarks(mdl::BoneKeys(model), mdl::kBoneKeyCapacity);
@@ -1558,7 +1577,7 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         // ------------------------------------------------------------------
         // 439 (0x0047F3AF): checkbox 0x1B7 -> model byte 0x2D8D (1/0).
         // ------------------------------------------------------------------
-        case 439: {
+        case panel::kModelVisibleCheckbox: {
             mdl::Mdl(ActiveModel(app))->loadComplete =
                 IsDlgButtonChecked(hwnd, panel::kModelVisibleCheckbox) == 1 ? 1 : 0;
             break;
@@ -1569,7 +1588,7 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         // 0x31BE when the active model exists; the original then jumps into
         // def_47E903, a no-op for these ids.
         // ------------------------------------------------------------------
-        case 440: {
+        case panel::kShadowCheckbox: {
             unsigned char* model = ActiveModel(app);
             if (model != nullptr) {
                 mdl::ModelRecord& record = *mdl::Mdl(model);
@@ -1577,7 +1596,7 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
             }
             break;
         }
-        case 441: {
+        case panel::kAddBlendCheckbox: {
             unsigned char* model = ActiveModel(app);
             if (model != nullptr) {
                 mdl::ModelRecord& record = *mdl::Mdl(model);
@@ -1590,7 +1609,7 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         // 444/445 (0x0047F319 / 0x0047F364): combo 0x1BB selection writes the
         // flag byte +0x12 of the 24-byte-stride table model+0x26C0 (1 / 0).
         // ------------------------------------------------------------------
-        case 444: {
+        case panel::kIkOnRadio: {
             const LRESULT sel = SendMessageA(GetDlgItem(hwnd, panel::kIkChainCombo),
                                              CB_GETCURSEL, 0, 0);
             unsigned char* model = ActiveModel(app);
@@ -1600,7 +1619,7 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
             }
             break;
         }
-        case 445: {
+        case panel::kIkOffRadio: {
             const LRESULT sel = SendMessageA(GetDlgItem(hwnd, panel::kIkChainCombo),
                                              CB_GETCURSEL, 0, 0);
             unsigned char* model = ActiveModel(app);
@@ -1616,10 +1635,10 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         // clear it and rebuild the projection - D3DXMatrixPerspectiveFovLH(
         // &m, fov = 0x9E1E8 * pi/180, aspect = locale->aspectRatio (0x1D4EC),
         // zn = 1, zf = 100000.0), scene (locale->device, 0x1D4E0) vtable slot 0xB0
-        // (obj, 3, &m), RefreshRequest(-1).  Else: byte 0x31C = 1 +
-        // RefreshRequest(-1).
+        // (obj, 3, &m), SelectTimelineTrack(GlobalTimelineTrack::Camera).  Else: byte 0x31C = 1 +
+        // SelectTimelineTrack(GlobalTimelineTrack::Camera).
         // ------------------------------------------------------------------
-        case 446: {
+        case panel::kPerspectiveCheckbox: {
             if (app->CameraPerspective() != 0) {
                 app->CameraPerspective() = 0;
                 d3dx::D3DXMATRIXF mat{};
@@ -1635,10 +1654,10 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
                 IDirect3DDevice9* device = locale->device;
                 device->SetTransform(D3DTS_PROJECTION,
                                      reinterpret_cast<const D3DMATRIX*>(&mat));
-                RefreshRequest(-1);
+                SelectTimelineTrack(GlobalTimelineTrack::Camera);
             } else {
                 app->CameraPerspective() = 1;
-                RefreshRequest(-1);
+                SelectTimelineTrack(GlobalTimelineTrack::Camera);
             }
             break;
         }
@@ -1646,32 +1665,32 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         // ------------------------------------------------------------------
         // 423 (0x004810F8): DeleteMarkedKeyframes(app) then dirty 0xA0B0D.
         // ------------------------------------------------------------------
-        case 423:
+        case panel::kDeleteFramesButton:
             DeleteMarkedKeyframes(app);
             app->SceneModified() = 1;
             break;
 
-        case 442:  // accessory edit dialog (0x0048D759) -> EditAccessoryAttachments
+        case panel::kEditExternalParentButton:  // accessory edit dialog (0x0048D759) -> EditAccessoryAttachments
             EditAccessoryAttachments(app, hwnd);
             break;
 
-        case 415:  // frame-range selection (0x004829E4) -> SelectKeyframesInRange
+        case panel::kSelectRangeButton:  // frame-range selection (0x004829E4) -> SelectKeyframesInRange
             SelectKeyframesInRange(app, hwnd);
             break;
 
-        case 416:  // selection-mark sync (0x0048073E) -> SyncKeyframeSelection
+        case panel::kSelectColumnButton:  // selection-mark sync (0x0048073E) -> SyncKeyframeSelection
             SyncKeyframeSelection(app);
             break;
 
-        case 420:  // frame copy (0x004834D2) -> CopySelectedKeyframes
+        case panel::kCopyFramesButton:  // frame copy (0x004834D2) -> CopySelectedKeyframes
             CopySelectedKeyframes(app, hwnd);
             break;
 
-        case 421:  // frame paste (0x00484973) -> PasteSelectedKeyframes
+        case panel::kPasteButton:  // frame paste (0x00484973) -> PasteSelectedKeyframes
             PasteSelectedKeyframes(app, hwnd);
             break;
 
-        case 422:  // reverse paste (0x00485CF2) -> PasteMirroredBoneKeyframes
+        case panel::kReversePasteButton:  // reverse paste (0x00485CF2) -> PasteMirroredBoneKeyframes
             PasteMirroredBoneKeyframes(app, hwnd);
             break;
 
@@ -1681,8 +1700,8 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         // when byte 0xA0B4C == 0 i.e. JP UI, 0x28C otherwise) and the
         // sub_44C5D0 dialog proc.
         // ------------------------------------------------------------------
-        case 424: {
-            if (app->state.optflag[0] != 0) {
+        case panel::kExpandShrinkButton: {
+            if (app->CameraMode() != 0) {
                 break;
             }
             app->state.enterKeyState = 1;

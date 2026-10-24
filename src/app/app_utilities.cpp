@@ -367,7 +367,7 @@ void JumpNextKeyframe(MMDApp* app) {  // 0x441070
     auto& s = *app;
     const std::uint32_t cur = s.state.currentFrame;
 
-    if (s.state.optflag[0] != 0) {        // 0x441089
+    if (s.CameraMode() != 0) {        // 0x441089
         std::uint32_t best = 0xFFFFFFFAu;
 
         // camera tree (+884, node stride 21 dwords)
@@ -589,7 +589,7 @@ void JumpPrevKeyframe(MMDApp* app) {  // 0x4414C0
     auto& s = *app;
     const std::uint32_t cur = s.state.currentFrame;
 
-    if (s.state.optflag[0] != 0) {        // 0x4414d9
+    if (s.CameraMode() != 0) {        // 0x4414d9
         std::uint32_t best = 0;
 
         // camera tree (+884, node stride 21 dwords)

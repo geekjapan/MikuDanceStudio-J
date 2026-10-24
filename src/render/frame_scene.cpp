@@ -450,7 +450,7 @@ void RenderFrameScene(MMDApp* app) {
     }
 
     // 0x46E556..0x46E592: selected-bone local/global operation axis.
-    if (app->state.optflag[0] == 0 &&
+    if (app->CameraMode() == 0 &&
         app->PlaybackActive() == 0 &&
         app->state.frameCopyDialog == 0) {
         DrawBoneOperationAxis(app,

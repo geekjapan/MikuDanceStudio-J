@@ -19,6 +19,7 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <d3d9.h>
 
@@ -92,7 +93,7 @@ void PostDeviceReset(MMDApp* app) {
     InitRenderStates(app);                                        // 0x406E90
 
     const HWND hwnd = static_cast<HWND>(app->state.hwnd);
-    const UINT menuState = GetMenuState(GetMenu(hwnd), 0x115, 0);// 0x440F7C
+    const UINT menuState = GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_ANTIALIASING, 0);// 0x440F7C
     device->SetRenderState(                                       // 0x440FAD
         static_cast<D3DRENDERSTATETYPE>(0xA1),
         (menuState & 8) != 0 ? 1 : 0);

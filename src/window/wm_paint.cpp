@@ -155,8 +155,8 @@ void HandleWindowPaint(MMDApp* app) {
     // like the original (each active panel reserves its width).
     const BottomPanelLayout panelLayout = ComputeBottomPanelLayout(app);
     int panelShift = panelLayout.leading;
-    if (app->state.optflag[0] != 0) {
-        if (app->state.optflag[1] != 0) {
+    if (app->CameraMode() != 0) {
+        if (app->PanelExpanded(UiPanel::Camera) != 0) {
             if (en) {
                 Lbl(app, "camera", hdc, 12, 423, rc.bottom - 155);
                 Lbl(app, "view angle ", hdc, 11, 368, rc.bottom - 107);
@@ -182,7 +182,7 @@ void HandleWindowPaint(MMDApp* app) {
                 Lbl(app, kJpLblSaku, hdc, 12, 364, rc.bottom - 50);
             }
         }
-    } else if (app->state.optflag[4] != 0) {
+    } else if (app->PanelExpanded(UiPanel::Bone) != 0) {
         if (en)
             Lbl(app, "bone manipulation", hdc, 12, 413, rc.bottom - 155);
         else
@@ -203,8 +203,8 @@ void HandleWindowPaint(MMDApp* app) {
     }
 
     // light panel (only reachable in camera mode, mirrors the original)
-    if (app->state.optflag[0] != 0) {
-        if (app->state.optflag[2] != 0) {
+    if (app->CameraMode() != 0) {
+        if (app->PanelExpanded(UiPanel::Light) != 0) {
             if (en) {
                 Lbl(app, "light manipulation", hdc, 12, 548 - panelShift, rc.bottom - 155);
                 Lbl(app, "R", hdc, 12, 502 - panelShift, rc.bottom - 137);
@@ -236,7 +236,7 @@ void HandleWindowPaint(MMDApp* app) {
                 Lbl(app, kJpLblSaku, hdc, 12, 502 - panelShift, rc.bottom - 70);
             }
         }
-    } else if (app->state.optflag[5] != 0) {
+    } else if (app->PanelExpanded(UiPanel::Morph) != 0) {
         // facial panel
         if (en) {
             Lbl(app, "facial manipulation", hdc, 12, 683 - panelShift, rc.bottom - 155);
@@ -267,8 +267,8 @@ void HandleWindowPaint(MMDApp* app) {
     panelShift = panelLayout.afterLightOrFace;
 
     // self-shadow panel
-    if (app->state.optflag[0] != 0) {
-        if (app->state.optflag[6] != 0) {
+    if (app->CameraMode() != 0) {
+        if (app->PanelExpanded(UiPanel::SelfShadow) != 0) {
             if (en) {
                 Lbl(app, "self_shadow manipulation", hdc, 12, 708 - panelShift, rc.bottom - 155);
                 Lbl(app, "shadow range", hdc, 12, 690 - panelShift, rc.bottom - 95);
@@ -302,9 +302,9 @@ void HandleWindowPaint(MMDApp* app) {
     panelShift = panelLayout.afterSelfShadow;
 
     // accessory panel
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         panelShift = panelLayout.accessory;
-        if (app->state.optflag[3] != 0) {
+        if (app->PanelExpanded(UiPanel::Accessory) != 0) {
             if (en) {
                 Lbl(app, "accessory manipulation", hdc, 12, 723 - panelShift, rc.bottom - 155);
                 Lbl(app, "X", hdc, 12, 686 - panelShift, rc.bottom - 68);
@@ -403,7 +403,7 @@ void HandleWindowPaint(MMDApp* app) {
     app->state.scrollCbSize = 28;
     app->state.scrollFMask = 7;        // SIF_ALL
     app->state.scrollNMin = 0;
-    if (app->state.optflag[0] == 0) {
+    if (app->CameraMode() == 0) {
         unsigned char* model = app->SelectedModel();
         app->state.scrollNMax =
             mikudancestudio::mdl::Mdl(model)->boneListRows - 3;

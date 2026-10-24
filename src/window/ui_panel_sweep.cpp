@@ -147,7 +147,7 @@ void RebuildTimelineTrackPanel(MMDApp* app) {
 
     std::memset(s.PanelRowFlags(), 0, 0xC8);     // 200 flags
 
-    if (s.state.optflag[0] == 0) {
+    if (s.CameraMode() == 0) {
         // === bone-edit mode: current model display tree (0x42F744) ========
         unsigned char* model = CurrentModel(app, slotIdx);
         mdl::ModelRecord* const record = mdl::Mdl(model);

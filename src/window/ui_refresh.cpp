@@ -31,12 +31,12 @@ constexpr std::size_t kStreamAsyncActive = 0x234;  // async-read active (dword)
 constexpr std::size_t kStreamFileHandle  = 0x244;  // file HANDLE
 constexpr std::size_t kStreamCompletion  = 0x248;  // 0 idle / 1 stop / 2 done
 
-}  // namespace
-
 // ===========================================================================
 // VA 0x00440AC0 - original: sub_440AC0
 // ===========================================================================
-void RefreshRequest(int area) {
+// Original IDs are -1..-4 for global tracks and 0..254 for accessory slots.
+// Keep the original selection and notification sequence behind typed callers.
+void SelectTimelineTrackById(int area) {
     MMDApp* app = g_Block;
 
     // ---- area == -1: activate track 0 ------------------------------------
@@ -86,6 +86,16 @@ void RefreshRequest(int area) {
         app->AccessorySlots()[area]->rowSelected = 1;
         RebuildTimelineTrackPanel(app);
     }
+}
+
+}  // namespace
+
+void SelectTimelineTrack(GlobalTimelineTrack track) {
+    SelectTimelineTrackById(-1 - static_cast<int>(track));
+}
+
+void SelectAccessoryTimelineTrack(int slot) {
+    SelectTimelineTrackById(slot);
 }
 
 // ===========================================================================

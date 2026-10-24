@@ -5,8 +5,8 @@
 // terminates the process (original: `if (!sub_466D20(hWnd)) exit(1);`).
 //
 // PHASE A (this file): drag-and-drop acceptance + the full 168-control
-// creation sequence (table generated from the raw decompilation by
-// scripts/gen_ui_controls.py - ids, classes, texts, styles, geometry and
+// creation sequence (recovered table in ui_controls.inc - ids,
+// classes, texts, styles, geometry and
 // sidebar-relative positions are the original's, in original order).
 //
 // TODO(port) remaining phases of the original (tracked in docs/PORTING_STATUS.md):
@@ -20,6 +20,7 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <commctrl.h>
 #include <d3d9.h>
@@ -420,11 +421,11 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
 
     // ---- 0x467637..0x467674: default-checked menu items -------------------
     HMENU menu = GetMenu(hwnd);
-    CheckMenuItem(menu, 0xD7, MF_CHECKED);
-    CheckMenuItem(menu, 0xDD, MF_CHECKED);
-    CheckMenuItem(menu, 0xEC, MF_CHECKED);
-    CheckMenuItem(menu, 0xF3, MF_CHECKED);
-    CheckMenuItem(menu, 0xFE, MF_CHECKED);
+    CheckMenuItem(menu, MDS_CMD_TOGGLE_COORDINATE_AXIS, MF_CHECKED);
+    CheckMenuItem(menu, MDS_CMD_TOGGLE_GROUND_SHADOW, MF_CHECKED);
+    CheckMenuItem(menu, MDS_CMD_FPS_60, MF_CHECKED);
+    CheckMenuItem(menu, MDS_CMD_SCREEN_CAPTURE_OFF, MF_CHECKED);
+    CheckMenuItem(menu, MDS_CMD_TOGGLE_GROUND_SHADOW_TRANSPARENCY, MF_CHECKED);
 
     // ---- 0x46767B..0x467747: the four global track key arrays -------------
     // 10000-key arrays consumed by PlaybackPoseAdvance (0x4175A0): camera
@@ -521,12 +522,22 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
     const auto initializeTrackRange = [](HWND control, int id) {
         int lo = 0, hi = 0;
         switch (id) {
-        case 447: lo = 1; hi = 125; break;
-        case 455: case 456: case 457: lo = 0; hi = 255; break;
-        case 458: case 459: case 460: lo = -100; hi = 100; break;
-        case 505: case 510: case 515: case 520: case 534:
+        case panel::kFovSlider: lo = 1; hi = 125; break;
+        case panel::kLightColorSliderR:
+        case panel::kLightColorSliderG:
+        case panel::kLightColorSliderB:
+            lo = 0; hi = 255; break;
+        case panel::kLightDirSliderX:
+        case panel::kLightDirSliderY:
+        case panel::kLightDirSliderZ:
+            lo = -100; hi = 100; break;
+        case panel::kMorphSlider0:
+        case panel::kMorphSlider1:
+        case panel::kMorphSlider2:
+        case panel::kMorphSlider3:
+        case panel::kFrameVolumeSlider:
             lo = 0; hi = 100; break;
-        case 560: lo = 0; hi = 9999; break;
+        case panel::kSelfShadowRangeSlider: lo = 0; hi = 9999; break;
         default: return;
         }
         SendMessageA(control, TBM_SETRANGEMIN, 0, lo);
@@ -538,7 +549,8 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
         // merge into two horizontal rules.  Original sites:
         //   Light X/Y/Z  0x468B34 / 0x468BF9 / 0x468CBE
         //   Shadow range 0x46A2F2
-        if (id == 458 || id == 459 || id == 460 || id == 560)
+        if (id == panel::kLightDirSliderX || id == panel::kLightDirSliderY ||
+            id == panel::kLightDirSliderZ || id == panel::kSelfShadowRangeSlider)
             SendMessageA(control, TBM_SETTICFREQ, 1000, 0);
     };
 
@@ -589,37 +601,37 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
     sprintf_s(text, 0x100, "%3d",
               static_cast<int>(static_cast<double>(s.LightColor()[0]) *
                                256.0));
-    setEdit(461, text);
+    setEdit(panel::kLightColorEditR, text);
     sprintf_s(text, 0x100, "%3d",
               static_cast<int>(static_cast<double>(s.LightColor()[1]) *
                                256.0));
-    setEdit(462, text);
+    setEdit(panel::kLightColorEditG, text);
     sprintf_s(text, 0x100, "%3d",
               static_cast<int>(static_cast<double>(s.LightColor()[2]) *
                                256.0));
-    setEdit(463, text);
+    setEdit(panel::kLightColorEditB, text);
     sprintf_s(text, 0x100, "%+3.1f", direction[0]);
-    setEdit(464, text);
+    setEdit(panel::kLightDirEditX, text);
     sprintf_s(text, 0x100, "%+3.1f", direction[1]);
-    setEdit(465, text);
+    setEdit(panel::kLightDirEditY, text);
     sprintf_s(text, 0x100, "%+3.1f", direction[2]);
-    setEdit(466, text);
+    setEdit(panel::kLightDirEditZ, text);
     sprintf_s(text, 0x100, "%3d",
               static_cast<int>(s.CameraFov()));
-    setEdit(448, text);
-    setTrack(447, static_cast<int>(s.CameraFov()));
-    setEdit(417, "0");
-    setTrack(455, static_cast<int>(static_cast<double>(s.LightColor()[0]) *
+    setEdit(panel::kFovEdit, text);
+    setTrack(panel::kFovSlider, static_cast<int>(s.CameraFov()));
+    setEdit(panel::kCurrentFrameEdit, "0");
+    setTrack(panel::kLightColorSliderR, static_cast<int>(static_cast<double>(s.LightColor()[0]) *
                                   256.0));
-    setTrack(456, static_cast<int>(static_cast<double>(s.LightColor()[1]) *
+    setTrack(panel::kLightColorSliderG, static_cast<int>(static_cast<double>(s.LightColor()[1]) *
                                   256.0));
-    setTrack(457, static_cast<int>(static_cast<double>(s.LightColor()[2]) *
+    setTrack(panel::kLightColorSliderB, static_cast<int>(static_cast<double>(s.LightColor()[2]) *
                                   256.0));
-    setTrack(458, static_cast<int>(static_cast<double>(direction[0]) *
+    setTrack(panel::kLightDirSliderX, static_cast<int>(static_cast<double>(direction[0]) *
                                   100.0));
-    setTrack(459, static_cast<int>(static_cast<double>(direction[1]) *
+    setTrack(panel::kLightDirSliderY, static_cast<int>(static_cast<double>(direction[1]) *
                                   100.0));
-    setTrack(460, static_cast<int>(static_cast<double>(direction[2]) *
+    setTrack(panel::kLightDirSliderZ, static_cast<int>(static_cast<double>(direction[2]) *
                                   100.0));
 
     // ---- 0x46AC60..0x46AF22: initial command availability/state ----------
@@ -627,42 +639,59 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
     // become available later when a model, accessory, motion or media file
     // establishes the corresponding editing context.
     static constexpr UINT kInitiallyDisabled[] = {
-        0xFD, 0xD9, 0xDC, 0xDA, 0xCA, 0xCB, 0xDB, 0xDE,
-        0xF9, 0xFA, 0xFB, 0xFC, 0x120, 0x121, 0x124,
+        MDS_CMD_EDGE_THICKNESS,
+        MDS_CMD_SELECT_ALL_BONE_FRAMES,
+        MDS_CMD_SELECT_ALL_MORPH_FRAMES,
+        MDS_CMD_SELECT_ALL_DISPLAY_FRAMES,
+        MDS_CMD_LOAD_POSE,
+        MDS_CMD_SAVE_POSE,
+        MDS_CMD_CENTER_POSITION_BIAS,
+        MDS_CMD_DELETE_UNUSED_FRAMES,
+        MDS_CMD_ACCESSORY_SETTINGS,
+        MDS_CMD_PASTE_AT_DIFFERENT_FRAME,
+        MDS_CMD_MULTIPLY_BONE_FRAMES,
+        MDS_CMD_MULTIPLY_MORPH_FRAMES,
+        MDS_CMD_MODEL_DRAW_ORDER,
+        MDS_CMD_MODEL_CALCULATION_ORDER,
+        MDS_CMD_TOGGLE_MOTION_CAPTURE,
     };
     for (UINT id : kInitiallyDisabled)
         EnableMenuItem(menu, id, MF_BYCOMMAND | MF_GRAYED);
-    for (UINT id = 0xE0; id <= 0xE7; ++id)
+    for (UINT id = MDS_CMD_LOAD_LIP_SYNC; id <= MDS_CMD_DELETE_EYEBROW_FRAMES; ++id)
         EnableMenuItem(menu, id, MF_BYCOMMAND | MF_GRAYED);
-    for (UINT id = 0x111; id <= 0x113; ++id)
+    for (UINT id = MDS_CMD_SELECT_PHYSICS_BONES; id <= MDS_CMD_TOGGLE_FRAME_PHYSICS; ++id)
         EnableMenuItem(menu, id, MF_BYCOMMAND | MF_GRAYED);
 
     if (w->multisampleAvailable == 0)
-        EnableMenuItem(menu, 0x115, MF_BYCOMMAND | MF_GRAYED);
+        EnableMenuItem(menu, MDS_CMD_TOGGLE_ANTIALIASING, MF_BYCOMMAND | MF_GRAYED);
     else
-        CheckMenuItem(menu, 0x115, MF_BYCOMMAND | MF_CHECKED);
+        CheckMenuItem(menu, MDS_CMD_TOGGLE_ANTIALIASING, MF_BYCOMMAND | MF_CHECKED);
 
     if (w->postProcessEnabled == 0) {
-        EnableMenuItem(menu, 0x117, MF_BYCOMMAND | MF_GRAYED);
+        EnableMenuItem(menu, MDS_CMD_TOGGLE_SELF_SHADOW, MF_BYCOMMAND | MF_GRAYED);
         s.SelfShadowMode() = 0;
         s.state.selfShadowEnabled = 0;
     } else {
-        CheckMenuItem(menu, 0x117, MF_BYCOMMAND | MF_CHECKED);
+        CheckMenuItem(menu, MDS_CMD_TOGGLE_SELF_SHADOW, MF_BYCOMMAND | MF_CHECKED);
         s.SelfShadowMode() = 1;
         s.state.selfShadowEnabled = 1;
     }
 
     if (s.FrameVolumeControlEnabled() != 0) {
-        CheckMenuItem(menu, 0x12B, MF_BYCOMMAND | MF_CHECKED);
+        CheckMenuItem(menu, MDS_CMD_TOGGLE_LOW_POWER, MF_BYCOMMAND | MF_CHECKED);
         SendMessageA(GetDlgItem(hwnd, panel::kFrameVolumeCheckbox), BM_SETCHECK, BST_CHECKED, 0);
     }
     static constexpr UINT kInitiallyChecked[] = {
-        0x11D, 0x125, 0x127, 0x12A, 0x10D,
+        MDS_CMD_TOGGLE_PHYSICS_FLOOR,
+        MDS_CMD_TOGGLE_CAPTURE_MIRROR,
+        MDS_CMD_TOGGLE_CAPTURE_SKELETON,
+        MDS_CMD_TOGGLE_MIPMAP,
+        MDS_CMD_PHYSICS_ON_OFF,
     };
     for (UINT id : kInitiallyChecked)
         CheckMenuItem(menu, id, MF_BYCOMMAND | MF_CHECKED);
 
-    setTrack(0x216, 100 - s.FrameNormalization());
+    setTrack(panel::kFrameVolumeSlider, 100 - s.FrameNormalization());
     SendMessageA(GetDlgItem(hwnd, panel::kCoordAxisCheckbox), BM_SETCHECK, BST_CHECKED, 0);
     SendMessageA(GetDlgItem(hwnd, panel::kPhysicsCheckbox), BM_SETCHECK, BST_CHECKED, 0);
 
@@ -699,7 +728,7 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
         10000.0 - static_cast<double>(s.state.physicsInterval) *
                       100000.0;
     const int rangePos = static_cast<int>(rangeValue + 0.5);
-    setTrack(0x230, rangePos);
+    setTrack(panel::kSelfShadowRangeSlider, rangePos);
     sprintf_s(text, 0x100, "%d", rangePos);
     SetWindowTextA(GetDlgItem(hwnd, panel::kSelfShadowRangeEdit), text);
     return true;

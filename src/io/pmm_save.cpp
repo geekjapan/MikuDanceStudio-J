@@ -366,7 +366,7 @@ void WritePmmFileHeader(int fd, MMDApp* s, HWND main, char* hdr) {
 
     for (int f = 0; f < 7; ++f) {                              // 0x41B22E..0x41B303
         const unsigned char b =
-            s->state.optflag[f] != 0;               // 0x2F8..0x2FE
+            s->UiOptionFlag(f) != 0;               // 0x2F8..0x2FE
         W(fd, &b, 1);
     }
     W(fd, &s->SelectedModelSlot(), 1);                         // 0x41B31A

@@ -64,6 +64,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 
 #include <cstdint>
@@ -485,7 +486,7 @@ void PumpKinectSkeleton(MMDApp* app, unsigned char selActive) {
 
     // 0x7FF7CB44C106..0x7FF7CB44C128 三重门。
     if (selActive == 0 ||
-        s.state.optflag[0] != 0 ||            // x64 0x328（相机模式）
+        s.CameraMode() != 0 ||            // x64 0x328（相机模式）
         s.state.frameStepPlayback != 0)       // x64 0x9FC98（x86 0x9ED90）
         return;
 
@@ -508,7 +509,7 @@ void PumpKinectSkeleton(MMDApp* app, unsigned char selActive) {
     // ③ SM-Lip 采样满 12600 -> 关掉自动帧记录菜单并复位捕获阶段
     // （0x7FF7CB44C51C..0x7FF7CB44C558）。
     if (static_cast<std::uint32_t>(mdl::Mdl(model)->matMisc) >= 12600) {
-        CheckMenuItem(GetMenu(static_cast<HWND>(s.Hwnd())), 0x124,
+        CheckMenuItem(GetMenu(static_cast<HWND>(s.Hwnd())), MDS_CMD_TOGGLE_MOTION_CAPTURE,
                       MF_UNCHECKED);
         s.state.autoRepeat = 0;                  // x64 0xA1E14 / x86 0xA0D68
     }
@@ -574,12 +575,12 @@ void ManageKinectRecordGate(MMDApp* app, unsigned char selActive) {
 
     // ② 菜单 0x124：跟踪中且非相机模式才可用。
     HMENU menu = GetMenu(static_cast<HWND>(s.Hwnd()));
-    if (selActive != 0 && s.state.optflag[0] == 0) {
-        EnableMenuItem(menu, 0x124, 0);           // MF_ENABLED
+    if (selActive != 0 && s.CameraMode() == 0) {
+        EnableMenuItem(menu, MDS_CMD_TOGGLE_MOTION_CAPTURE, 0);           // MF_ENABLED
         return;
     }
-    EnableMenuItem(menu, 0x124, 1);               // MF_GRAYED
-    CheckMenuItem(menu, 0x124, MF_UNCHECKED);
+    EnableMenuItem(menu, MDS_CMD_TOGGLE_MOTION_CAPTURE, 1);               // MF_GRAYED
+    CheckMenuItem(menu, MDS_CMD_TOGGLE_MOTION_CAPTURE, MF_UNCHECKED);
     s.state.autoRepeat = 0;                       // x64 0xA1E14 / x86 0xA0D68
 }
 

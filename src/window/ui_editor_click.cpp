@@ -177,7 +177,7 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
     app->SelectionBoxAnchorY() = y - 0x91;
     if (app->TimelineSelectionChanged() != 0) {
         memset(app->TimelineSelectionRegion(), 0, 0x40);        // 656364 (0xA03EC)
-        if (app->state.optflag[0] != 0) {   // 760 (0x2F8)
+        if (app->CameraMode() != 0) {   // 760 (0x2F8)
             CollectGlobalTimelineSelection(*app);
             // 0x4495BD jle
         } else {
@@ -445,7 +445,7 @@ static void StageRangeRow(MMDApp* app, std::int32_t type, KeyT* keys,
 // whose flag at +0x64 is toggled.
 static void HandleLButtonDown_MarginColumnToggle(MMDApp* app,
                                                  std::int32_t y) {
-    if (app->state.optflag[0] == 0) {  // 760 (0x2F8)
+    if (app->CameraMode() == 0) {  // 760 (0x2F8)
         unsigned char* model = app->SelectedModel();
         if (model == nullptr)
             return;
@@ -469,7 +469,7 @@ static void HandleLButtonDown_MarginColumnToggle(MMDApp* app,
 // sub-branch below.
 static void HandleLButtonDown_NameColumnHit(MMDApp* app, HWND hwnd,
                                             std::int32_t y) {
-    if (app->state.optflag[0] != 0) {  // 760 (0x2F8)
+    if (app->CameraMode() != 0) {  // 760 (0x2F8)
         // ---- S4: display-mode name column sub-branch (loc_44719F) ---
         if (!app->ShiftModifierActive()) {
             // clear the accessory-row selection flag of all 255 accessory
@@ -707,7 +707,7 @@ static void HandleLButtonDown_TimelineAreaHit(MMDApp* app, HWND hwnd,
     if (app->PlaybackActive() != 0)
         return;
     app->TimelineSelectionChanged() = 0;
-    if (app->state.optflag[0] != 0) {  // 760 (0x2F8)
+    if (app->CameraMode() != 0) {  // 760 (0x2F8)
         // ---- S5a: display-mode selection columns --------------------
         // (0x4473DA-0x4479BB) band selected by this+8, row by
         // (x-100)/13 (magic 0x4EC4EC4F, sar 2).  Selection indices are
@@ -888,7 +888,7 @@ static void HandleLButtonDown_FrameStripHit(MMDApp* app, HWND hwnd,
         }
     }
     // mode branch (0x44A608-0x44A72B)
-    if (app->state.optflag[0] != 0) {  // 760 (0x2F8)
+    if (app->CameraMode() != 0) {  // 760 (0x2F8)
         ReloadModels(app);                            // 0x42E640
         RefreshLightPanel(app);                               // 0x411070
         RefreshSelfShadowPanel(app);                               // 0x411B90

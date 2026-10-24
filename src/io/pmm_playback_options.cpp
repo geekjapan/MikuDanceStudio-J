@@ -23,13 +23,13 @@ void RestorePmmPlaybackOptions(MMDApp* app, HWND main, int fd, char* text,
 
     pmm_io::Rd(fd, &playbackByte, 1);
     app->state.playbackLoopEnabled = playbackByte ? 1 : 0;
-    SendMessageA(GetDlgItem(main, 411), BM_SETCHECK, playbackByte ? 1 : 0, 0);
+    SendMessageA(GetDlgItem(main, panel::kPlaybackLoopCheckbox), BM_SETCHECK, playbackByte ? 1 : 0, 0);
     pmm_io::Rd(fd, &playbackByte, 1);
     app->state.playbackReturnsToStartFrame = playbackByte ? 1 : 0;
-    SendMessageA(GetDlgItem(main, 413), BM_SETCHECK, playbackByte ? 1 : 0, 0);
+    SendMessageA(GetDlgItem(main, panel::kPlaybackReturnCheckbox), BM_SETCHECK, playbackByte ? 1 : 0, 0);
     pmm_io::Rd(fd, &playbackByte, 1);
     app->state.playbackStartsAtCurrentFrame = playbackByte ? 1 : 0;
-    SendMessageA(GetDlgItem(main, 414), BM_SETCHECK, playbackByte ? 1 : 0, 0);
+    SendMessageA(GetDlgItem(main, panel::kPlaybackFromCurrentCheckbox), BM_SETCHECK, playbackByte ? 1 : 0, 0);
     std::int32_t playStartFrame = 0, playStopFrame = 0;
     pmm_io::Rd(fd, &playStartFrame, 4);
     {

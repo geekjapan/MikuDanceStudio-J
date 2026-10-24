@@ -140,7 +140,7 @@ void DragInterpolationControlPoint(MMDApp* app) {  // VA 0x00416280
     const int selected = static_cast<int>(SendMessageA(
         GetDlgItem(window, panel::kInterpCurveCombo), CB_GETCURSEL, 0, 0));
 
-    if (app->state.optflag[0] != 0) {   // 0x416337
+    if (app->CameraMode() != 0) {   // 0x416337
         unsigned char* records =
             reinterpret_cast<unsigned char*>(app->CameraKeys());
         if (records != nullptr) {

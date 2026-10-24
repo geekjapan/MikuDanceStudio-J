@@ -4,6 +4,7 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <d3d9.h>
 
@@ -65,14 +66,14 @@ void SetPhysicsMenuState(HWND hwnd, UINT state) {
 // the original rather than treating it as a Boolean.
 void DisablePlaybackMenus(HWND hwnd) {
     HMENU menu = GetMenu(hwnd);
-    SetMenuRange(menu, 202, 210, MF_GRAYED);
-    SetMenuRange(menu, 212, 213, MF_GRAYED);
-    SetMenuRange(menu, 217, 220, MF_GRAYED);
-    SetMenuRange(menu, 222, 232, MF_GRAYED);
-    SetMenuRange(menu, 237, 242, MF_GRAYED);
-    EnableMenuItem(menu, 251, MF_GRAYED);
-    EnableMenuItem(menu, 252, MF_GRAYED);
-    EnableMenuItem(menu, 276, MF_GRAYED);
+    SetMenuRange(menu, MDS_CMD_LOAD_POSE, MDS_CMD_SAVE_MOTION, MF_GRAYED);
+    SetMenuRange(menu, MDS_CMD_SCREEN_SIZE, MDS_CMD_LOAD_BACKGROUND_VIDEO, MF_GRAYED);
+    SetMenuRange(menu, MDS_CMD_SELECT_ALL_BONE_FRAMES, MDS_CMD_SELECT_ALL_MORPH_FRAMES, MF_GRAYED);
+    SetMenuRange(menu, MDS_CMD_DELETE_UNUSED_FRAMES, MDS_CMD_LOAD_BACKGROUND_IMAGE, MF_GRAYED);
+    SetMenuRange(menu, MDS_CMD_SELECT_ALL_CAMERA_FRAMES, MDS_CMD_MULTIPLY_CAMERA_FRAMES, MF_GRAYED);
+    EnableMenuItem(menu, MDS_CMD_MULTIPLY_BONE_FRAMES, MF_GRAYED);
+    EnableMenuItem(menu, MDS_CMD_MULTIPLY_MORPH_FRAMES, MF_GRAYED);
+    EnableMenuItem(menu, MDS_CMD_RENDER_IMAGE, MF_GRAYED);
     SetPhysicsMenuState(hwnd, MFS_DISABLED | MFS_GRAYED);
     DrawMenuBar(hwnd);
 }
@@ -82,28 +83,45 @@ void DisablePlaybackMenus(HWND hwnd) {
 void RestorePlaybackMenus(MMDApp* app) {
     HWND hwnd = static_cast<HWND>(app->Hwnd());
     HMENU menu = GetMenu(hwnd);
-    SetMenuRange(menu, 202, 210, MF_ENABLED);
-    SetMenuRange(menu, 212, 213, MF_ENABLED);
-    SetMenuRange(menu, 217, 220, MF_ENABLED);
-    SetMenuRange(menu, 222, 232, MF_ENABLED);
-    SetMenuRange(menu, 237, 242, MF_ENABLED);
-    EnableMenuItem(menu, 276, MF_ENABLED);
+    SetMenuRange(menu, MDS_CMD_LOAD_POSE, MDS_CMD_SAVE_MOTION, MF_ENABLED);
+    SetMenuRange(menu, MDS_CMD_SCREEN_SIZE, MDS_CMD_LOAD_BACKGROUND_VIDEO, MF_ENABLED);
+    SetMenuRange(menu, MDS_CMD_SELECT_ALL_BONE_FRAMES, MDS_CMD_SELECT_ALL_MORPH_FRAMES, MF_ENABLED);
+    SetMenuRange(menu, MDS_CMD_DELETE_UNUSED_FRAMES, MDS_CMD_LOAD_BACKGROUND_IMAGE, MF_ENABLED);
+    SetMenuRange(menu, MDS_CMD_SELECT_ALL_CAMERA_FRAMES, MDS_CMD_MULTIPLY_CAMERA_FRAMES, MF_ENABLED);
+    EnableMenuItem(menu, MDS_CMD_RENDER_IMAGE, MF_ENABLED);
 
-    if (app->state.optflag[0] != 0) {
-        const int disabled[] = {217, 220, 218, 202, 203, 219, 222, 251, 252};
+    if (app->CameraMode() != 0) {
+        const int disabled[] = {
+            MDS_CMD_SELECT_ALL_BONE_FRAMES,
+            MDS_CMD_SELECT_ALL_MORPH_FRAMES,
+            MDS_CMD_SELECT_ALL_DISPLAY_FRAMES,
+            MDS_CMD_LOAD_POSE,
+            MDS_CMD_SAVE_POSE,
+            MDS_CMD_CENTER_POSITION_BIAS,
+            MDS_CMD_DELETE_UNUSED_FRAMES,
+            MDS_CMD_MULTIPLY_BONE_FRAMES,
+            MDS_CMD_MULTIPLY_MORPH_FRAMES
+        };
         for (int id : disabled)
             EnableMenuItem(menu, id, MF_GRAYED);
-        SetMenuRange(menu, 224, 231, MF_GRAYED);
-        SetMenuRange(menu, 273, 275, MF_GRAYED);
+        SetMenuRange(menu, MDS_CMD_LOAD_LIP_SYNC, MDS_CMD_DELETE_EYEBROW_FRAMES, MF_GRAYED);
+        SetMenuRange(menu, MDS_CMD_SELECT_PHYSICS_BONES, MDS_CMD_TOGGLE_FRAME_PHYSICS, MF_GRAYED);
         EnableWindow(GetDlgItem(hwnd, panel::kExpandShrinkButton), FALSE);
-        EnableRange(hwnd, 437, 445, FALSE);
+        EnableRange(hwnd, panel::kDeleteModelButton, panel::kIkOffRadio, FALSE);
     } else {
-        SetMenuRange(menu, 237, 242, MF_GRAYED);
-        const int enabled[] = {202, 203, 219, 222, 251, 252};
+        SetMenuRange(menu, MDS_CMD_SELECT_ALL_CAMERA_FRAMES, MDS_CMD_MULTIPLY_CAMERA_FRAMES, MF_GRAYED);
+        const int enabled[] = {
+            MDS_CMD_LOAD_POSE,
+            MDS_CMD_SAVE_POSE,
+            MDS_CMD_CENTER_POSITION_BIAS,
+            MDS_CMD_DELETE_UNUSED_FRAMES,
+            MDS_CMD_MULTIPLY_BONE_FRAMES,
+            MDS_CMD_MULTIPLY_MORPH_FRAMES
+        };
         for (int id : enabled)
             EnableMenuItem(menu, id, MF_ENABLED);
-        SetMenuRange(menu, 224, 231, MF_ENABLED);
-        SetMenuRange(menu, 273, 275, MF_ENABLED);
+        SetMenuRange(menu, MDS_CMD_LOAD_LIP_SYNC, MDS_CMD_DELETE_EYEBROW_FRAMES, MF_ENABLED);
+        SetMenuRange(menu, MDS_CMD_SELECT_PHYSICS_BONES, MDS_CMD_TOGGLE_FRAME_PHYSICS, MF_ENABLED);
         EnableWindow(GetDlgItem(hwnd, panel::kExpandShrinkButton), TRUE);
 
         unsigned char* model = app->SelectedModel();
@@ -321,20 +339,20 @@ void UpdateBoneFrames(MMDApp* app) {
 
     const float frame = static_cast<float>(
         static_cast<double>(cursor) * kFrameRate);
-    if (app->state.optflag[0] != 0 ||
+    if (app->CameraMode() != 0 ||
         app->state.followCameraEnabled != 0)
         InitGlobalTracks(app, frame);
     InitAccessoryTracks(app, frame);
 
     HWND hwnd = static_cast<HWND>(app->Hwnd());
-    EnableRange(hwnd, 400, 401, FALSE);
-    EnableRange(hwnd, 409, 410, FALSE);
-    EnableRange(hwnd, 415, 468, FALSE);
-    EnableRange(hwnd, 471, 487, FALSE);
-    EnableRange(hwnd, 490, 501, FALSE);
-    EnableRange(hwnd, 504, 527, FALSE);
+    EnableRange(hwnd, panel::kUndoButton, panel::kRedoButton, FALSE);
+    EnableRange(hwnd, panel::kPlayStartFrameEdit, panel::kPlayStopFrameEdit, FALSE);
+    EnableRange(hwnd, panel::kSelectRangeButton, panel::kRegisterLightButton, FALSE);
+    EnableRange(hwnd, panel::kAccessoryCombo, panel::kRegisterAccessoryButton, FALSE);
+    EnableRange(hwnd, panel::kBoneSelectRadio, panel::kSelectUnregisteredBonesButton, FALSE);
+    EnableRange(hwnd, panel::kMorphCombo0, panel::kRegisterMorphButton2, FALSE);
     HWND overlay = app->FloatingWindow();
-    EnableRange(overlay != nullptr ? overlay : hwnd, 536, 550, FALSE);
+    EnableRange(overlay != nullptr ? overlay : hwnd, panel::kModelEditToggle, panel::kReadoutDistEdit, FALSE);
     DisablePlaybackMenus(hwnd);
     InvalidateSelectionReadouts(app);
 }
@@ -347,14 +365,14 @@ void StopPlayback(MMDApp* app) {
     }
 #endif
     HWND hwnd = static_cast<HWND>(app->Hwnd());
-    EnableRange(hwnd, 400, 401, TRUE);
-    EnableRange(hwnd, 409, 410, TRUE);
-    EnableRange(hwnd, 415, 468, TRUE);
-    EnableRange(hwnd, 471, 487, TRUE);
-    EnableRange(hwnd, 490, 501, TRUE);
-    EnableRange(hwnd, 504, 527, TRUE);
+    EnableRange(hwnd, panel::kUndoButton, panel::kRedoButton, TRUE);
+    EnableRange(hwnd, panel::kPlayStartFrameEdit, panel::kPlayStopFrameEdit, TRUE);
+    EnableRange(hwnd, panel::kSelectRangeButton, panel::kRegisterLightButton, TRUE);
+    EnableRange(hwnd, panel::kAccessoryCombo, panel::kRegisterAccessoryButton, TRUE);
+    EnableRange(hwnd, panel::kBoneSelectRadio, panel::kSelectUnregisteredBonesButton, TRUE);
+    EnableRange(hwnd, panel::kMorphCombo0, panel::kRegisterMorphButton2, TRUE);
     HWND overlay = app->FloatingWindow();
-    EnableRange(overlay != nullptr ? overlay : hwnd, 536, 550, TRUE);
+    EnableRange(overlay != nullptr ? overlay : hwnd, panel::kModelEditToggle, panel::kReadoutDistEdit, TRUE);
 
     // snapshot bytes saved at playback start (command_frame_edit.cpp):
     // [0]=497 [1]=498 [2]=421 [3]=422 [4]=431 [5]=400 [6]=401
@@ -375,10 +393,10 @@ void StopPlayback(MMDApp* app) {
 
     const bool enable250 =
         (app->ClipboardCounts().bones == 0 ||
-         app->state.optflag[0] != 0) &&
+         app->CameraMode() != 0) &&
         !(app->ClipboardCounts().accessories != 0 &&
-          app->state.optflag[0] != 0);
-    EnableMenuItem(GetMenu(hwnd), 250,
+          app->CameraMode() != 0);
+    EnableMenuItem(GetMenu(hwnd), MDS_CMD_PASTE_AT_DIFFERENT_FRAME,
                    enable250 ? MF_ENABLED : MF_GRAYED);
     RestorePlaybackMenus(app);
 
@@ -416,14 +434,14 @@ void StopPlayback(MMDApp* app) {
         if (model != nullptr)
             SeekModelFrame(*mdl::Mdl(model), frame, app->PlaybackPhysicsMode());
     }
-    if (app->state.optflag[0] == 0 &&
+    if (app->CameraMode() == 0 &&
         activeModel != nullptr)
         SyncModelEditControls(activeModel);
 
     app->CameraParentModel() = -1;
     SendMessageA(GetDlgItem(hwnd, panel::kBoneRegisterCombo), CB_SETCURSEL, 0, 0);
 
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         app->ViewOffsetX() = 0.0f;
         app->ViewOffsetY() = 0.0f;
         ReloadModels(app);

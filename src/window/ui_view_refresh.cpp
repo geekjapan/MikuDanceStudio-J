@@ -142,7 +142,7 @@ void PostViewRefresh(MMDApp* app) {
 
     char text[260];  // CHAR String[260] @ ebp-108h; sprintf_s count 0x100
 
-    if (app->state.optflag[0] != 0) {   // this+0x2F8
+    if (app->CameraMode() != 0) {   // this+0x2F8
         // ---- camera / light readout ----------------------------------------
         sprintf_s(text, 0x100, "%1.2f",
                   static_cast<double>(app->CameraPositionX()));
@@ -187,7 +187,7 @@ void PostViewRefresh(MMDApp* app) {
     unsigned char* model = app->SelectedModel();
     const std::int32_t boneIdx = mikudancestudio::mdl::Mdl(model)->selectedBone;
     if (boneIdx < 0) {                                     // 0x40D401 jl
-        for (int id = 0x220; id <= 0x226; ++id)
+        for (int id = panel::kReadoutPosXEdit; id <= panel::kReadoutDistEdit; ++id)
             SetWindowTextA(GetDlgItem(hwnd, id), "-----");
         return;
     }

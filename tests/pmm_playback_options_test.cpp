@@ -46,8 +46,13 @@ int main() {
     HWND main = CreateWindowExW(0, L"STATIC", L"PMM test", WS_OVERLAPPED,
                                 0, 0, 200, 200, nullptr, nullptr, nullptr, nullptr);
     if (!main) return 1;
-    const int checkboxIds[] = {panel::kCameraRefModelCheckbox,
-        panel::kCameraRefBoneCheckbox, 411, 413, 414};
+    const int checkboxIds[] = {
+        panel::kCameraRefModelCheckbox,
+        panel::kCameraRefBoneCheckbox,
+        panel::kPlaybackLoopCheckbox,
+        panel::kPlaybackReturnCheckbox,
+        panel::kPlaybackFromCurrentCheckbox
+    };
     for (int id : checkboxIds) {
         check(CreateWindowExW(0, L"BUTTON", L"", WS_CHILD | BS_AUTOCHECKBOX,
                               0, 0, 20, 20, main,

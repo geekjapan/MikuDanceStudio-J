@@ -142,8 +142,9 @@ fn flipfuzz(seed: u64, iters: u64, files: &[&str]) -> Outcome {
         let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
         let (mut accepted, mut mismatches) = (0u64, 0u64);
         let mut data = original.clone();
-        for _ in 0..iters {
+        for iter in 0..iters {
             data.copy_from_slice(original);
+            let mut flips = Vec::new();
             for _ in 0..1 + rng.below(4) {
                 let at = rng.below(data.len());
                 data[at] = if rng.below(2) == 0 {
@@ -151,6 +152,7 @@ fn flipfuzz(seed: u64, iters: u64, files: &[&str]) -> Outcome {
                 } else {
                     rng.next() as u8
                 };
+                flips.push((at, data[at]));
             }
             let Ok(doc) = Document::read(&data) else {
                 continue;
@@ -164,6 +166,9 @@ fn flipfuzz(seed: u64, iters: u64, files: &[&str]) -> Outcome {
                 Err(_) => false,
             };
             if !holds {
+                if mismatches == 0 {
+                    println!("  {name}: first mismatch at iteration {iter}, bytes (offset, value) {flips:?}");
+                }
                 mismatches += 1;
             }
         }

@@ -96,9 +96,25 @@ fn scan_float(s: &[u8]) -> Option<(f32, &[u8])> {
         i += 1 + frac;
     }
     if int + frac == 0 {
-        // ponytail: strtod also takes "inf", "nan" and hex floats; MMD never
+        // "%f" prints infinities and NaN as words; strtod reads them back.
+        // ponytail: strtod also takes "nan(...)" and hex floats; MMD never
         // writes them, so they fail here.
-        return None;
+        let negative = s.first() == Some(&b'-');
+        let word = |w: &[u8]| {
+            s.get(i..i + w.len())
+                .is_some_and(|t| t.eq_ignore_ascii_case(w))
+        };
+        let (value, len) = if word(b"infinity") {
+            (f32::INFINITY, 8)
+        } else if word(b"inf") {
+            (f32::INFINITY, 3)
+        } else if word(b"nan") {
+            (f32::NAN, 3)
+        } else {
+            return None;
+        };
+        let value = if negative { -value } else { value };
+        return Some((value, &s[i + len..]));
     }
     if matches!(s.get(i), Some(b'e' | b'E')) {
         let sign = usize::from(matches!(s.get(i + 1), Some(b'+' | b'-')));
@@ -207,7 +223,12 @@ impl Vpd {
         // zero would print the last digit one higher.
         let f = |v: &[f32]| -> String {
             v.iter()
-                .map(|&x| format!("{:.6}", f64::from(x)))
+                .map(|&x| match x {
+                    // glibc's spelling; Rust would print "NaN".
+                    _ if x.is_nan() && x.is_sign_negative() => "-nan".into(),
+                    _ if x.is_nan() => "nan".into(),
+                    _ => format!("{:.6}", f64::from(x)),
+                })
                 .collect::<Vec<_>>()
                 .join(",")
         };
@@ -261,6 +282,8 @@ mod tests {
         assert_eq!(scan_float(b"-0.25e1;"), Some((-2.5, &b";"[..])));
         assert_eq!(scan_float(b"3e;"), Some((3.0, &b"e;"[..])));
         assert_eq!(scan_float(b".;"), None);
+        assert_eq!(scan_float(b"-inf,"), Some((f32::NEG_INFINITY, &b","[..])));
+        assert!(scan_float(b"nan;").is_some_and(|(x, _)| x.is_nan()));
         assert_eq!(scan_values::<3>(b"  1,2,3 // ;"), Some([1.0, 2.0, 3.0]));
         assert_eq!(scan_values::<3>(b"  1,2,3"), None, "needs a ';'");
         assert_eq!(

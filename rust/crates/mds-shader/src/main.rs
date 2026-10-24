@@ -231,7 +231,7 @@ fn percentile(sorted: &[Duration], p: f64) -> f64 {
 
 fn run(o: &Opts) -> Result<bool, String> {
     let vk = Vkd3d::load()?;
-    eprintln!("vkd3d-shader {} from {}", vk.version(), vk.path().display());
+    eprintln!("loaded {} from {}", vk.version(), vk.path().display());
 
     let mut walk_errors = Vec::new();
     let found = collect(&o.paths, &mut walk_errors);

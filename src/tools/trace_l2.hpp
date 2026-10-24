@@ -60,11 +60,12 @@ inline std::size_t FormatHexFloat(float value, char out[20]) {
     std::memcpy(&bits, &value, sizeof bits);
     const std::uint32_t biased = (bits >> 23) & 0xFFu;
     std::uint32_t mantissa = bits & 0x7FFFFFu;
-    if (biased == 0xFFu) return 0;
+    if (biased == 0xFFu)
+        return 0;
     int exponent = 0;
     if (biased != 0) {
         exponent = static_cast<int>(biased) - 127;
-    } else if (mantissa != 0) {  // float subnormal: normal as a double
+    } else if (mantissa != 0) { // float subnormal: normal as a double
         exponent = -126;
         while ((mantissa & 0x800000u) == 0) {
             mantissa <<= 1;
@@ -73,9 +74,10 @@ inline std::size_t FormatHexFloat(float value, char out[20]) {
         mantissa &= 0x7FFFFFu;
     }
     const bool isZero = biased == 0 && (bits & 0x7FFFFFu) == 0;
-    const std::uint32_t digits = mantissa << 1;  // 23 bits -> 24 bits -> 6 hex digits
+    const std::uint32_t digits = mantissa << 1; // 23 bits -> 24 bits -> 6 hex digits
     std::size_t n = 0;
-    if ((bits >> 31) != 0) out[n++] = '-';
+    if ((bits >> 31) != 0)
+        out[n++] = '-';
     out[n++] = '0';
     out[n++] = 'x';
     out[n++] = isZero ? '0' : '1';
@@ -85,8 +87,10 @@ inline std::size_t FormatHexFloat(float value, char out[20]) {
     out[n++] = 'p';
     out[n++] = exponent < 0 ? '-' : '+';
     const unsigned magnitude = static_cast<unsigned>(exponent < 0 ? -exponent : exponent);
-    if (magnitude >= 100) out[n++] = static_cast<char>('0' + magnitude / 100);
-    if (magnitude >= 10) out[n++] = static_cast<char>('0' + magnitude / 10 % 10);
+    if (magnitude >= 100)
+        out[n++] = static_cast<char>('0' + magnitude / 100);
+    if (magnitude >= 10)
+        out[n++] = static_cast<char>('0' + magnitude / 10 % 10);
     out[n++] = static_cast<char>('0' + magnitude % 10);
     out[n] = '\0';
     return n;
@@ -94,26 +98,30 @@ inline std::size_t FormatHexFloat(float value, char out[20]) {
 
 inline bool WriteFloat(std::ostream& out, float value) {
     char text[20];
-    if (FormatHexFloat(value, text) == 0) return false;
+    if (FormatHexFloat(value, text) == 0)
+        return false;
     out << ' ' << text;
     return true;
 }
 
 inline bool WriteFloats(std::ostream& out, const float* values, std::size_t count) {
     for (std::size_t i = 0; i < count; ++i)
-        if (!WriteFloat(out, values[i])) return false;
+        if (!WriteFloat(out, values[i]))
+            return false;
     return true;
 }
 
-inline void WriteHeader(std::ostream& out) { out << "mds-trace 1 L2\n"; }
+inline void WriteHeader(std::ostream& out) {
+    out << "mds-trace 1 L2\n";
+}
 
 // Each Write*Line returns false when a value is not finite (the caller then
 // discards the whole trace); the line is then incomplete.
-inline bool WriteBoneLine(std::ostream& out, std::uint32_t frame, unsigned slot,
-                          std::size_t index, const float translation[3],
-                          const float rotation[4]) {
+inline bool WriteBoneLine(std::ostream& out, std::uint32_t frame, unsigned slot, std::size_t index,
+                          const float translation[3], const float rotation[4]) {
     out << frame << " bone " << slot << ' ' << index;
-    if (!WriteFloats(out, translation, 3) || !WriteFloats(out, rotation, 4)) return false;
+    if (!WriteFloats(out, translation, 3) || !WriteFloats(out, rotation, 4))
+        return false;
     out << '\n';
     return true;
 }
@@ -121,25 +129,27 @@ inline bool WriteBoneLine(std::ostream& out, std::uint32_t frame, unsigned slot,
 inline bool WriteBoneWorldLine(std::ostream& out, std::uint32_t frame, unsigned slot,
                                std::size_t index, const float matrix[16]) {
     out << frame << " bonew " << slot << ' ' << index;
-    if (!WriteFloats(out, matrix, 16)) return false;
+    if (!WriteFloats(out, matrix, 16))
+        return false;
     out << '\n';
     return true;
 }
 
-inline bool WriteMorphLine(std::ostream& out, std::uint32_t frame, unsigned slot,
-                           std::size_t index, float weight) {
+inline bool WriteMorphLine(std::ostream& out, std::uint32_t frame, unsigned slot, std::size_t index,
+                           float weight) {
     out << frame << " morph " << slot << ' ' << index;
-    if (!WriteFloat(out, weight)) return false;
+    if (!WriteFloat(out, weight))
+        return false;
     out << '\n';
     return true;
 }
 
-inline bool WriteRigidLine(std::ostream& out, std::uint32_t frame, unsigned slot,
-                           std::size_t index, const float position[3],
-                           const float rotation[4]) {
+inline bool WriteRigidLine(std::ostream& out, std::uint32_t frame, unsigned slot, std::size_t index,
+                           const float position[3], const float rotation[4]) {
     out << frame << " rigid " << slot << ' ' << index;
-    if (!WriteFloats(out, position, 3) || !WriteFloats(out, rotation, 4)) return false;
+    if (!WriteFloats(out, position, 3) || !WriteFloats(out, rotation, 4))
+        return false;
     out << '\n';
     return true;
 }
-}  // namespace mikudancestudio::tools::l2
+} // namespace mikudancestudio::tools::l2

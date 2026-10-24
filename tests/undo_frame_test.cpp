@@ -30,14 +30,14 @@ int main() {
     auto& undo = model->undoRings[0].slots[0];
     // A valid empty key edit still restores its saved frame. This drives
     // the actual Undo/Redo entry points without needing a window or model.
-    undo.operation = 2;
+    undo.operation = mdl::UndoOperation::BoneKeys;
     undo.frame = 47;
     std::int32_t frame = 0;
     mds::UndoModelEdit(bytes, frame);
-    bool ok = frame == 47 && model->undoState[0] == 29;
+    bool ok = frame == 47 && model->UndoCursor() == 29;
     frame = 99;
     mds::RedoModelEdit(bytes, frame);
-    ok = ok && frame == 47 && model->undoState[0] == 0;
+    ok = ok && frame == 47 && model->UndoCursor() == 0;
     ::operator delete(model->undoRings[1].slots[0].bonePose);
     ::operator delete(model->undoRings[1].slots[0].auxiliaryPose);
     if (!ok)

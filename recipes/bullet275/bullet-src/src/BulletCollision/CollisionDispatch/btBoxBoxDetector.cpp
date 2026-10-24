@@ -124,39 +124,7 @@ static btScalar mmdSubFloat(btScalar left, btScalar right)
    reciprocal variant wrong: its clipped contacts differ from the original by
    1-14 ULP while the float-rounded reciprocal reproduces the original
    exactly, so the plain C path below is the faithful one. */
-#if 0
-__declspec(noinline)
-static void mmdInv22Scale(btScalar* pm11, btScalar* pm12,
-                          btScalar* pm21, btScalar* pm22)
-{
-  const float det = (*pm11) * (*pm22) - (*pm12) * (*pm21);
-  const float* pdet = &det;
-  __asm
-  {
-    mov eax, pdet
-    mov ecx, pm11
-    mov edx, pm12
-    fld dword ptr [eax]
-    fld1
-    fdivrp st(1), st      ; extended 1/det
-    fld dword ptr [ecx]
-    fmul st, st(1)
-    fstp dword ptr [ecx]  ; m11 scaled once
-    mov eax, pm21
-    fld dword ptr [edx]
-    fmul st, st(1)
-    fstp dword ptr [edx]  ; m12
-    mov edx, pm22
-    fld dword ptr [eax]
-    fmul st, st(1)
-    fstp dword ptr [eax]  ; m21
-    fld dword ptr [edx]
-    fmul st, st(1)
-    fstp dword ptr [edx]  ; m22
-    fstp st(0)
-  }
-}
-#endif
+
 
 #define dMULTIPLYOP1_331(A,op,B,C) \
 {\

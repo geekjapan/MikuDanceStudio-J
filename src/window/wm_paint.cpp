@@ -39,11 +39,10 @@ namespace {
 #include "wm_paint_labels.inc"
 
 void Lbl(MMDApp* a, const char* s, HDC hdc, int size, int x, int y) {
-    DrawGlyph(a, s, hdc, size, x, y,
-              a->UiTextRed(), a->UiTextGreen(), a->UiTextBlue(), 0);
+    DrawGlyph(a, s, hdc, size, x, y, a->UiTextRed(), a->UiTextGreen(), a->UiTextBlue(), 0);
 }
 
-}  // namespace
+} // namespace
 
 void HandleWindowPaint(MMDApp* app) {
     HWND hwnd = static_cast<HWND>(app->Hwnd());
@@ -59,10 +58,8 @@ void HandleWindowPaint(MMDApp* app) {
     GetClientRect(hwnd, &rc);
     HDC hdc = BeginPaint(hwnd, &ps);
 
-    HPEN pen = CreatePen(0, 1,
-        app->ThemeColor(UiThemeColor::WindowFill));
-    HBRUSH brush = CreateSolidBrush(
-        app->ThemeColor(UiThemeColor::WindowFill));
+    HPEN pen = CreatePen(0, 1, app->ThemeColor(UiThemeColor::WindowFill));
+    HBRUSH brush = CreateSolidBrush(app->ThemeColor(UiThemeColor::WindowFill));
     HGDIOBJ oldPen = SelectObject(hdc, pen);
     HGDIOBJ oldBrush = SelectObject(hdc, brush);
     const int side = app->SidebarWidth();
@@ -72,13 +69,13 @@ void HandleWindowPaint(MMDApp* app) {
     Rectangle(hdc, 0, 47, side, 50);
     Rectangle(hdc, side - 2, 0, side + 9, rc.bottom - 160);
     FillPanelBottom(hdc, 0, rc.bottom - 160, rc.right, rc.bottom,
-        app->ThemeColor(UiThemeColor::WindowFill),
-        app->ThemeColor(UiThemeColor::WindowBorder), 1);         // 0x40DF10
+                    app->ThemeColor(UiThemeColor::WindowFill),
+                    app->ThemeColor(UiThemeColor::WindowBorder), 1); // 0x40DF10
     SelectObject(hdc, oldBrush);
     DeleteObject(brush);
     SelectObject(hdc, oldPen);
     DeleteObject(pen);
-    HandlePaletteChanged(hdc);                                    // 0x42CEB0
+    HandlePaletteChanged(hdc); // 0x42CEB0
 
     HPEN black = CreatePen(0, 1, 0);
     SelectObject(hdc, black);
@@ -104,16 +101,11 @@ void HandleWindowPaint(MMDApp* app) {
         SelectObject(hdc, blk);
         const int top = app->state.hideTop;
         if (top <= rc.top + 25) {
-            Rectangle(hdc, side + 9, 0,
-                      app->state.hideRight,
-                      rc.bottom - 160);
-            Rectangle(hdc, app->state.hideLeft, 0,
-                      rc.right, rc.bottom - 160);
+            Rectangle(hdc, side + 9, 0, app->state.hideRight, rc.bottom - 160);
+            Rectangle(hdc, app->state.hideLeft, 0, rc.right, rc.bottom - 160);
         } else {
             Rectangle(hdc, side + 9, 0, rc.right, top - 25);
-            Rectangle(hdc, side + 9,
-                      app->state.hideBottom + 32,
-                      rc.right, rc.bottom - 160);
+            Rectangle(hdc, side + 9, app->state.hideBottom + 32, rc.right, rc.bottom - 160);
         }
         SelectObject(hdc, oldBrush);
         DeleteObject(blk);
@@ -155,8 +147,8 @@ void HandleWindowPaint(MMDApp* app) {
     // like the original (each active panel reserves its width).
     const BottomPanelLayout panelLayout = ComputeBottomPanelLayout(app);
     int panelShift = panelLayout.leading;
-    if (app->state.optflag[0] != 0) {
-        if (app->state.optflag[1] != 0) {
+    if (app->CameraMode() != 0) {
+        if (app->PanelExpanded(UiPanel::Camera) != 0) {
             if (en) {
                 Lbl(app, "camera", hdc, 12, 423, rc.bottom - 155);
                 Lbl(app, "view angle ", hdc, 11, 368, rc.bottom - 107);
@@ -182,7 +174,7 @@ void HandleWindowPaint(MMDApp* app) {
                 Lbl(app, kJpLblSaku, hdc, 12, 364, rc.bottom - 50);
             }
         }
-    } else if (app->state.optflag[4] != 0) {
+    } else if (app->PanelExpanded(UiPanel::Bone) != 0) {
         if (en)
             Lbl(app, "bone manipulation", hdc, 12, 413, rc.bottom - 155);
         else
@@ -203,8 +195,8 @@ void HandleWindowPaint(MMDApp* app) {
     }
 
     // light panel (only reachable in camera mode, mirrors the original)
-    if (app->state.optflag[0] != 0) {
-        if (app->state.optflag[2] != 0) {
+    if (app->CameraMode() != 0) {
+        if (app->PanelExpanded(UiPanel::Light) != 0) {
             if (en) {
                 Lbl(app, "light manipulation", hdc, 12, 548 - panelShift, rc.bottom - 155);
                 Lbl(app, "R", hdc, 12, 502 - panelShift, rc.bottom - 137);
@@ -236,7 +228,7 @@ void HandleWindowPaint(MMDApp* app) {
                 Lbl(app, kJpLblSaku, hdc, 12, 502 - panelShift, rc.bottom - 70);
             }
         }
-    } else if (app->state.optflag[5] != 0) {
+    } else if (app->PanelExpanded(UiPanel::Morph) != 0) {
         // facial panel
         if (en) {
             Lbl(app, "facial manipulation", hdc, 12, 683 - panelShift, rc.bottom - 155);
@@ -267,8 +259,8 @@ void HandleWindowPaint(MMDApp* app) {
     panelShift = panelLayout.afterLightOrFace;
 
     // self-shadow panel
-    if (app->state.optflag[0] != 0) {
-        if (app->state.optflag[6] != 0) {
+    if (app->CameraMode() != 0) {
+        if (app->PanelExpanded(UiPanel::SelfShadow) != 0) {
             if (en) {
                 Lbl(app, "self_shadow manipulation", hdc, 12, 708 - panelShift, rc.bottom - 155);
                 Lbl(app, "shadow range", hdc, 12, 690 - panelShift, rc.bottom - 95);
@@ -302,9 +294,9 @@ void HandleWindowPaint(MMDApp* app) {
     panelShift = panelLayout.afterSelfShadow;
 
     // accessory panel
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         panelShift = panelLayout.accessory;
-        if (app->state.optflag[3] != 0) {
+        if (app->PanelExpanded(UiPanel::Accessory) != 0) {
             if (en) {
                 Lbl(app, "accessory manipulation", hdc, 12, 723 - panelShift, rc.bottom - 155);
                 Lbl(app, "X", hdc, 12, 686 - panelShift, rc.bottom - 68);
@@ -385,35 +377,28 @@ void HandleWindowPaint(MMDApp* app) {
         Lbl(app, kJpLblVolume, hdc, 12, 1016 - panelShift, rc.bottom - 77);
 
     if (app->FloatingWindow() == nullptr)
-        HandlePaletteChanged2(hdc);                               // 0x42C140
+        HandlePaletteChanged2(hdc); // 0x42C140
 
-    BitBlt(hdc, 6, 95, side - 10, 50,
-           app->TimelineDC(), 0, 0, SRCCOPY);
-    BitBlt(hdc, 6, 145, side - 25, rc.bottom - 393,
-           app->PanelDC(), 0, 0, SRCCOPY);
-    BitBlt(hdc, 8, rc.bottom - 135, 128, 128,
-           app->CurveDC(), 0, 0, SRCCOPY);
+    BitBlt(hdc, 6, 95, side - 10, 50, app->TimelineDC(), 0, 0, SRCCOPY);
+    BitBlt(hdc, 6, 145, side - 25, rc.bottom - 393, app->PanelDC(), 0, 0, SRCCOPY);
+    BitBlt(hdc, 8, rc.bottom - 135, 128, 128, app->CurveDC(), 0, 0, SRCCOPY);
     EndPaint(hwnd, &ps);
 
     app->state.messageSeen = 1;
     if (app->WindowLayoutReady() != 0)
-        FrameDriver(app);                                         // 0x46B090
+        FrameDriver(app); // 0x46B090
 
     // bone-list scrollbar refresh (SCROLLINFO embedded at this+2372)
     app->state.scrollCbSize = 28;
-    app->state.scrollFMask = 7;        // SIF_ALL
+    app->state.scrollFMask = 7; // SIF_ALL
     app->state.scrollNMin = 0;
-    if (app->state.optflag[0] == 0) {
+    if (app->CameraMode() == 0) {
         unsigned char* model = app->SelectedModel();
-        app->state.scrollNMax =
-            mikudancestudio::mdl::Mdl(model)->boneListRows - 3;
-        app->state.scrollNPos =
-            mikudancestudio::mdl::Mdl(model)->boneListPos;
+        app->state.scrollNMax = mikudancestudio::mdl::Mdl(model)->boneListRows - 3;
+        app->state.scrollNPos = mikudancestudio::mdl::Mdl(model)->boneListPos;
     } else {
-        app->state.scrollNMax =
-            app->DisplayObjectListMatchCount() - 2;
-        app->state.scrollNPos =
-            app->DisplayObjectListScrollPosition();
+        app->state.scrollNMax = app->DisplayObjectListMatchCount() - 2;
+        app->state.scrollNPos = app->DisplayObjectListScrollPosition();
     }
     const int page = (rc.bottom - 398) / 14 - 1;
     app->state.scrollNMax += page;
@@ -422,4 +407,4 @@ void HandleWindowPaint(MMDApp* app) {
                   reinterpret_cast<SCROLLINFO*>(&app->state.scrollCbSize), TRUE);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

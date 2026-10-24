@@ -63,24 +63,23 @@ namespace mikudancestudio {
 // Forward declarations for functions ported in this wave whose bodies live
 // in other translation units (not yet registered in ported_funcs.hpp;
 // declared here with their original VAs).
-void PanelPaint(MMDApp* app);                                   // VA 0x00414610
-void TimelineDrawTicks(int frameOffset, int width);             // VA 0x004C2A00
-void SetFrameNormalized(int frame);                             // VA 0x004C2B80
+void PanelPaint(MMDApp* app);                       // VA 0x00414610
+void TimelineDrawTicks(int frameOffset, int width); // VA 0x004C2A00
+void SetFrameNormalized(int frame);                 // VA 0x004C2B80
 
 // Editor-panel refresh helpers still living in src/app/late_ports.cpp
 // (signatures below are the placeholder ones from stubs.cpp; where the
 // original passes a MODEL pointer or extra arguments the call site casts
 // and marks TODO(port) - see the individual call sites).
-void RefreshLightPanel(MMDApp* app);                                    // VA 0x00411070
-void RefreshSelfShadowPanel(MMDApp* app);                                    // VA 0x00411B90
-void ApplyGravityTrack(MMDApp* app);                                    // VA 0x00412330
-void SyncAccessoryEditPanel(MMDApp* app);                                    // VA 0x004134E0
-void ApplyAccessoryTrack(MMDApp* app, int idx);                           // VA 0x00413120
-void SnapshotPoseBeforeFrameChange(unsigned char* model, int frame);  // VA 0x004A0080
-void SyncModelEditControls(unsigned char* model);                     // VA 0x004A02C0
-int SeekModelFrame(unsigned char* model, int frame, int physicsMode);  // VA 0x004B4260
-void WaveRestartAt(void* sub, double v);                       // VA 0x004C3530
-void AviBgOverlayRefresh(MMDApp* app);                                    // VA 0x004168D0
+void RefreshLightPanel(MMDApp* app);                                 // VA 0x00411070
+void RefreshSelfShadowPanel(MMDApp* app);                            // VA 0x00411B90
+void ApplyGravityTrack(MMDApp* app);                                 // VA 0x00412330
+void SyncAccessoryEditPanel(MMDApp* app);                            // VA 0x004134E0
+void ApplyAccessoryTrack(MMDApp* app, int idx);                      // VA 0x00413120
+void SnapshotPoseBeforeFrameChange(unsigned char* model, int frame); // VA 0x004A0080
+void SyncModelEditControls(unsigned char* model);                    // VA 0x004A02C0
+void WaveRestartAt(void* sub, double v);                             // VA 0x004C3530
+void AviBgOverlayRefresh(MMDApp* app);                               // VA 0x004168D0
 
 // VA 0x0044D940 - row/panel mode toggle (combobox-driven rebuild of the
 // accessory/camera panel + menu enable state).  Full port lives in
@@ -90,22 +89,18 @@ void AviBgOverlayRefresh(MMDApp* app);                                    // VA 
 void ApplyModelComboSelection(MMDApp* app);
 
 void HandleLButtonDblClk(MMDApp* app) {
-    if (app->FullscreenMode() != 0)                             // 655988 (0xA0274)
+    if (app->FullscreenMode() != 0) // 655988 (0xA0274)
         return;
 
-    const HWND hwnd = static_cast<HWND>(app->state.hwnd);  // 657080
+    const HWND hwnd = static_cast<HWND>(app->state.hwnd); // 657080
     app->CameraAttachmentTransformSuppressed() = 0;
     RECT rect;
-    GetClientRect(hwnd, &rect);                                 // output never read in the original
+    GetClientRect(hwnd, &rect); // output never read in the original
 
     // compact-panel geometry gate (asm order: width < sidebar-18, height
     // < 160, height > 144, width > 100, then byte 0x330 clear)
-    if (app->MouseY() > 144 &&
-        app->MouseY() < 160 &&
-        app->MouseX() <
-            app->SidebarWidth() - 18 &&
-        app->MouseX() > 100 &&
-        app->PlaybackActive() == 0) {
+    if (app->MouseY() > 144 && app->MouseY() < 160 && app->MouseX() < app->SidebarWidth() - 18 &&
+        app->MouseX() > 100 && app->PlaybackActive() == 0) {
 
         // ---- 1. model IK sweep: snapshot + clear any set IK flags ---------
         // x64 twin sub_7FF7CB45D790 sweeps all 255 slots (count-down from
@@ -126,21 +121,18 @@ void HandleLButtonDblClk(MMDApp* app) {
             if (idx < flagCount) {
                 // original: sub_4A0080(ecx = model, stack = app+2432 frame)
                 SnapshotPoseBeforeFrameChange(model, app->state.currentFrame);
-                for (int j = 0;
-                     j < static_cast<int>(mdl::Mdl(model)->boneCount); ++j)
+                for (int j = 0; j < static_cast<int>(mdl::Mdl(model)->boneCount); ++j)
                     mdl::Mdl(model)->bonePhysicsState[j] = 0;
             }
         }
 
         // ---- 2. frame number -> edit box (control 0x1A1 = 417) ------------
         // this+0x980 = this+0x97C + (this+4 - 100) / 13
-        app->state.currentFrame =
-            app->state.timelineStartFrame + (app->MouseX() - 100) / 13;
+        app->state.currentFrame = app->state.timelineStartFrame + (app->MouseX() - 100) / 13;
         const LRESULT textLen = GetWindowTextLengthA(GetDlgItem(hwnd, panel::kCurrentFrameEdit));
         SendMessageA(GetDlgItem(hwnd, panel::kCurrentFrameEdit), EM_SETSEL, 0, textLen);
-        char frameText[256];                                    // 0x100
-        sprintf_s(frameText, 0x100u, "%d",
-                  app->state.currentFrame);
+        char frameText[256]; // 0x100
+        sprintf_s(frameText, 0x100u, "%d", app->state.currentFrame);
         SendMessageA(GetDlgItem(hwnd, panel::kCurrentFrameEdit), EM_REPLACESEL, 0,
                      reinterpret_cast<LPARAM>(frameText));
 
@@ -153,9 +145,7 @@ void HandleLButtonDblClk(MMDApp* app) {
                 continue;
             // original: sub_4B4260(ecx = model, frame = app+2432,
             //            app+0xA0CC4)
-            SeekModelFrame(model,
-                      app->state.currentFrame,
-                      app->PlaybackPhysicsMode());
+            SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
             if (i == static_cast<int>(app->SelectedModelSlot())) {
                 // original: sub_4A02C0(ecx = model)
                 SyncModelEditControls(model);
@@ -163,20 +153,20 @@ void HandleLButtonDblClk(MMDApp* app) {
         }
 
         // ---- 4. mode branch: model row / accessory row / light row --------
-        if (app->state.optflag[0] != 0) {  // 760 (0x2F8)
-            ReloadModels(app);                                    // 0x42E640
-            RefreshLightPanel(app);                                       // 0x411070
-            RefreshSelfShadowPanel(app);                                       // 0x411B90
-            ApplyGravityTrack(app);                                       // 0x412330
-            for (int i = 0; i < 255; ++i) {                       // 0xFF slots
+        if (app->CameraMode() != 0) {       // 760 (0x2F8)
+            ReloadModels(app);              // 0x42E640
+            RefreshLightPanel(app);         // 0x411070
+            RefreshSelfShadowPanel(app);    // 0x411B90
+            ApplyGravityTrack(app);         // 0x412330
+            for (int i = 0; i < 255; ++i) { // 0xFF slots
                 if (app->AccessorySlot(i) != nullptr)
-                    ApplyAccessoryTrack(app, i);                            // 0x413120
+                    ApplyAccessoryTrack(app, i); // 0x413120
             }
-            SyncAccessoryEditPanel(app);                                       // 0x4134E0
-        } else if (app->state.followCameraEnabled != 0) {  // 650648
+            SyncAccessoryEditPanel(app);                  // 0x4134E0
+        } else if (app->state.followCameraEnabled != 0) { // 650648
             app->ViewOffsetX() = 0.0f;
             app->ViewOffsetY() = 0.0f;
-            ReloadModels(app);                                    // 0x42E640
+            ReloadModels(app); // 0x42E640
             RefreshLightPanel(app);
             RefreshSelfShadowPanel(app);
             ApplyGravityTrack(app);
@@ -185,57 +175,50 @@ void HandleLButtonDblClk(MMDApp* app) {
                     ApplyAccessoryTrack(app, i);
             }
             SyncAccessoryEditPanel(app);
-            const std::int32_t sel =
-                app->CameraParentModel();
+            const std::int32_t sel = app->CameraParentModel();
             if (sel >= 0) {
                 unsigned char* selModel = app->ModelSlot(sel);
                 // original: sub_4970B0(ecx = model at slot sel)
-                ModelApplyMorphs(selModel);                       // 0x4970B0
-                SetPhysicsMode(selModel, 0,
-                               app->ModelSlots(),
-                               app->PlaybackPhysicsMode());                    // 0x4A9220
+                ModelApplyMorphs(selModel); // 0x4970B0
+                SetPhysicsMode(selModel, 0, app->ModelSlots(),
+                               app->PlaybackPhysicsMode()); // 0x4A9220
             }
-            PostModelReload(app);                                 // 0x41A650
+            PostModelReload(app); // 0x41A650
         } else {
-            EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);            // 0x190
-            EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);           // 0x191
+            EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);  // 0x190
+            EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE); // 0x191
         }
 
         // ---- 5. scroll clamp + panel repaint -------------------------------
-        const std::int32_t pages =
-            (app->SidebarWidth() - 84) / 26;
-        const std::uint32_t frameU =
-            static_cast<std::uint32_t>(app->state.currentFrame);
-        if (frameU <= static_cast<std::uint32_t>(pages))          // unsigned compare (jbe)
-            app->state.timelineStartFrame = 0;       // 2428 (0x97C)
+        const std::int32_t pages = (app->SidebarWidth() - 84) / 26;
+        const std::uint32_t frameU = static_cast<std::uint32_t>(app->state.currentFrame);
+        if (frameU <= static_cast<std::uint32_t>(pages)) // unsigned compare (jbe)
+            app->state.timelineStartFrame = 0;           // 2428 (0x97C)
         else
             app->state.timelineStartFrame =
                 static_cast<std::int32_t>(frameU - static_cast<std::uint32_t>(pages));
-        PanelPaint(app);                                          // 0x414610
+        PanelPaint(app); // 0x414610
 
         // ---- 6. timeline strip redraw + normalized-time seek ---------------
-        if (app->state.waveEnabled != 0) {   // 657100 (0xA06CC)
-            TimelineDrawTicks(app->state.timelineStartFrame,
-                              app->SidebarWidth());
+        if (app->state.waveEnabled != 0) { // 657100 (0xA06CC)
+            TimelineDrawTicks(app->state.timelineStartFrame, app->SidebarWidth());
             RECT rc;
             rc.left = 6;
             rc.top = 95;
             rc.right = app->SidebarWidth() - 3;
             rc.bottom = 146;
             InvalidateRect(hwnd, &rc, 0);
-            if (app->state.wavPlaysOnFrameMove != 0) {  // 655766 (0xA0196)
+            if (app->state.wavPlaysOnFrameMove != 0) { // 655766 (0xA0196)
                 // gate flag read BEFORE the 0xA02B6 store (asm zf capture)
-                const bool gate =
-                    app->state.automaticFrameAdvanceEnabled == 0;  // 656361 (0xA03E9)
-                app->AudioSeekReady() = 1;  // 0xA02B6
+                const bool gate = app->state.automaticFrameAdvanceEnabled == 0; // 656361 (0xA03E9)
+                app->AudioSeekReady() = 1;                                      // 0xA02B6
                 if (gate) {
-                    SetFrameNormalized(app->FrameNormalization());  // 0x4C2B80
-                    const std::int32_t frameMinus1 =
-                        app->state.currentFrame - 1;
+                    SetFrameNormalized(app->FrameNormalization()); // 0x4C2B80
+                    const std::int32_t frameMinus1 = app->state.currentFrame - 1;
                     // fild + (negative ? fadd 2^32f) + fdiv 30.0 ==
                     // (double)(unsigned)v31 / 30.0
                     double t = static_cast<double>(static_cast<std::uint32_t>(frameMinus1)) / 30.0;
-                    if (t < 0.0)                                  // fldz/fcom clamp, never fires
+                    if (t < 0.0) // fldz/fcom clamp, never fires
                         t = 0.0;
                     // original: sub_4C3530(ecx = app+0xCC subsystem, t)
                     WaveRestartAt(app->Audio(), t);
@@ -244,8 +227,8 @@ void HandleLButtonDblClk(MMDApp* app) {
         }
 
         // ---- 7. tail ---------------------------------------------------------
-        if (app->state.aviBackgroundEnabled == 1)      // 2332 (0x91C)
-            AviBgOverlayRefresh(app);                                       // 0x4168D0
+        if (app->state.aviBackgroundEnabled == 1) // 2332 (0x91C)
+            AviBgOverlayRefresh(app);             // 0x4168D0
         app->PhysicsResetPending() = 1;
     }
 }
@@ -299,27 +282,26 @@ void HandleLButtonDblClk(MMDApp* app) {
 //   MikuMikuDance.exe 0x4632F0.
 // =========================================================================//
 void HandleMouseActivate(MMDApp* app) {
-    const HWND hwnd = static_cast<HWND>(app->state.hwnd);  // 657080
+    const HWND hwnd = static_cast<HWND>(app->state.hwnd); // 657080
     RECT rect;
     GetClientRect(hwnd, &rect);
     if (app->PlaybackActive() != 0)
         return;
 
     const HWND fg = GetForegroundWindow();
-    const HWND cached = app->FloatingWindow();  // 658744 (0xA0D38)
+    const HWND cached = app->FloatingWindow(); // 658744 (0xA0D38)
 
-    if (app->state.optflag[0] != 0) {    // 760 (0x2F8)
+    if (app->CameraMode() != 0) { // 760 (0x2F8)
         // mode row: keep the combo selection in sync with the panel state
         if (fg == cached || app->MouseY() <= rect.bottom - 158) {
             SendMessageA(GetDlgItem(hwnd, panel::kMainComboModel), CB_SETCURSEL,
-                         app->MainModelComboSelection(), 0);     // 656428 (0xA042C)
-            ApplyModelComboSelection(app);                                       // 0x44D940 (ui_model_reload.cpp)
+                         app->MainModelComboSelection(), 0); // 656428 (0xA042C)
+            ApplyModelComboSelection(app);                   // 0x44D940 (ui_model_reload.cpp)
             return;
         }
-    } else if (app->MouseY() > rect.bottom - 158 &&
-               fg != cached) {
+    } else if (app->MouseY() > rect.bottom - 158 && fg != cached) {
         SendMessageA(GetDlgItem(hwnd, panel::kMainComboModel), CB_SETCURSEL, 0, 0);
-        ApplyModelComboSelection(app);                                           // 0x44D940 (ui_model_reload.cpp)
+        ApplyModelComboSelection(app); // 0x44D940 (ui_model_reload.cpp)
         return;
     } else if (app->EditMode() != ViewportEditMode::Bone) {
         // panel already active: checkboxes 491/492/493 off, 490 on
@@ -329,28 +311,24 @@ void HandleMouseActivate(MMDApp* app) {
         SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 1, 0);
         app->EditMode() = ViewportEditMode::Bone;
 
-        const float scale =
-            app->Renderer()->viewScale;  // locale-sub + 0x1D4F0
-        const std::int32_t hideLeft =
-            app->state.hideLeft;      // 658760 (0xA0D48)
-        const std::int32_t hideBottom =
-            app->state.hideBottom;    // 658764 (0xA0D4C)
+        const float scale = app->Renderer()->viewScale;        // locale-sub + 0x1D4F0
+        const std::int32_t hideLeft = app->state.hideLeft;     // 658760 (0xA0D48)
+        const std::int32_t hideBottom = app->state.hideBottom; // 658764 (0xA0D4C)
         const std::int32_t winW = app->MouseX();
         const std::int32_t winH = app->MouseY();
 
         // fild/fmul/fsubp/ftol2_sse: truncation of the double expression
-        const bool inside =
-            winH > static_cast<std::int32_t>(static_cast<double>(hideBottom) -
-                                             static_cast<double>(scale) * 80.0) &&
-            winW > static_cast<std::int32_t>(static_cast<double>(hideLeft) -
-                                             static_cast<double>(scale) * 127.0);
+        const bool inside = winH > static_cast<std::int32_t>(static_cast<double>(hideBottom) -
+                                                             static_cast<double>(scale) * 80.0) &&
+                            winW > static_cast<std::int32_t>(static_cast<double>(hideLeft) -
+                                                             static_cast<double>(scale) * 127.0);
         if ((inside && winW < hideLeft) && winH < hideBottom) {
             POINT pt;
-            pt.x = 40;                                            // 0x28
-            pt.y = 150;                                           // 0x96
+            pt.x = 40;  // 0x28
+            pt.y = 150; // 0x96
             ClientToScreen(hwnd, &pt);
             SetCursorPos(pt.x, pt.y);
-            app->state.separateWindowMouseSeen = 1;      // 651564 (0x9F12C)
+            app->state.separateWindowMouseSeen = 1; // 651564 (0x9F12C)
             SetForegroundWindow(hwnd);
         }
     } else {
@@ -362,13 +340,10 @@ void HandleMouseActivate(MMDApp* app) {
         SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 0, 0);
         app->EditMode() = ViewportEditMode::None;
 
-        const float scale =
-            app->Renderer()->viewScale;  // locale-sub + 0x1D4F0
+        const float scale = app->Renderer()->viewScale; // locale-sub + 0x1D4F0
         POINT pt;
-        pt.x = app->state.hideLeft -
-               static_cast<std::int32_t>(static_cast<double>(scale) * 110.0);
-        pt.y = app->state.hideBottom -
-               static_cast<std::int32_t>(static_cast<double>(scale) * 65.0);
+        pt.x = app->state.hideLeft - static_cast<std::int32_t>(static_cast<double>(scale) * 110.0);
+        pt.y = app->state.hideBottom - static_cast<std::int32_t>(static_cast<double>(scale) * 65.0);
         if (cached != nullptr) {
             ClientToScreen(cached, &pt);
             SetForegroundWindow(cached);
@@ -376,8 +351,8 @@ void HandleMouseActivate(MMDApp* app) {
             ClientToScreen(hwnd, &pt);
         }
         SetCursorPos(pt.x, pt.y);
-        app->state.separateWindowMouseSeen = 1;          // 651564 (0x9F12C)
+        app->state.separateWindowMouseSeen = 1; // 651564 (0x9F12C)
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

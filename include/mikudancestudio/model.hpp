@@ -73,14 +73,10 @@ struct FrameGroup {
 };
 static_assert(sizeof(FrameGroup) == 46, "frame group ABI");
 static_assert(offsetof(FrameGroup, name) == 0, "frame group name ABI");
-static_assert(offsetof(FrameGroup, nameEn) == 20,
-              "frame group English name ABI");
-static_assert(offsetof(FrameGroup, groupIndex) == 40,
-              "frame group index ABI");
-static_assert(offsetof(FrameGroup, targetIndex) == 42,
-              "frame group target ABI");
-static_assert(offsetof(FrameGroup, selected) == 44,
-              "frame group selection ABI");
+static_assert(offsetof(FrameGroup, nameEn) == 20, "frame group English name ABI");
+static_assert(offsetof(FrameGroup, groupIndex) == 40, "frame group index ABI");
+static_assert(offsetof(FrameGroup, targetIndex) == 42, "frame group target ABI");
+static_assert(offsetof(FrameGroup, selected) == 44, "frame group selection ABI");
 
 // One entry in the display-group name table.  The final byte is tested by
 // several UI paths, but its zero/non-zero polarity has not yet been unified.
@@ -90,39 +86,31 @@ struct DisplayGroup {
     std::uint8_t flags;
 };
 static_assert(sizeof(DisplayGroup) == 101, "display group ABI");
-static_assert(offsetof(DisplayGroup, name) == 0,
-              "display group name ABI");
-static_assert(offsetof(DisplayGroup, nameEn) == 50,
-              "display group English name ABI");
-static_assert(offsetof(DisplayGroup, flags) == 100,
-              "display group flags ABI");
+static_assert(offsetof(DisplayGroup, name) == 0, "display group name ABI");
+static_assert(offsetof(DisplayGroup, nameEn) == 50, "display group English name ABI");
+static_assert(offsetof(DisplayGroup, flags) == 100, "display group flags ABI");
 
 // PMX display-frame entries normalize the variable-width file index to a
 // signed 32-bit value.  They are temporary loader records only.
 struct PmxDisplayFrameEntry {
-    std::uint8_t type;  // 0 bone, 1 morph
+    std::uint8_t type; // 0 bone, 1 morph
     unsigned char padding[3];
     std::int32_t index;
 };
-static_assert(sizeof(PmxDisplayFrameEntry) == 8,
-              "PMX display-frame entry ABI");
+static_assert(sizeof(PmxDisplayFrameEntry) == 8, "PMX display-frame entry ABI");
 
 #if MIKUDANCESTUDIO_X64
 static_assert(sizeof(IkChain) == 32, "IK chain x64 ABI");
 static_assert(offsetof(IkChain, links) == 16, "IK chain links x64 ABI");
-static_assert(offsetof(IkChain, iterations) == 24,
-              "IK chain iterations x64 ABI");
+static_assert(offsetof(IkChain, iterations) == 24, "IK chain iterations x64 ABI");
 static_assert(offsetof(IkChain, enabled) == 26, "IK chain enabled x64 ABI");
-static_assert(offsetof(IkChain, maxAngle) == 28,
-              "IK chain angle x64 ABI");
+static_assert(offsetof(IkChain, maxAngle) == 28, "IK chain angle x64 ABI");
 #else
 static_assert(sizeof(IkChain) == 24, "IK chain x86 ABI");
 static_assert(offsetof(IkChain, links) == 12, "IK chain links x86 ABI");
-static_assert(offsetof(IkChain, iterations) == 16,
-              "IK chain iterations x86 ABI");
+static_assert(offsetof(IkChain, iterations) == 16, "IK chain iterations x86 ABI");
 static_assert(offsetof(IkChain, enabled) == 18, "IK chain enabled x86 ABI");
-static_assert(offsetof(IkChain, maxAngle) == 20,
-              "IK chain angle x86 ABI");
+static_assert(offsetof(IkChain, maxAngle) == 20, "IK chain angle x86 ABI");
 #endif
 
 static_assert(sizeof(BoneReference) == 8, "bone reference ABI");
@@ -146,13 +134,11 @@ static_assert(sizeof(BoneKey) == 60, "bone key ABI");
 static_assert(offsetof(BoneKey, frame) == 0, "bone key frame ABI");
 static_assert(offsetof(BoneKey, previous) == 4, "bone key previous ABI");
 static_assert(offsetof(BoneKey, next) == 8, "bone key next ABI");
-static_assert(offsetof(BoneKey, interpolation) == 12,
-              "bone key interpolation ABI");
+static_assert(offsetof(BoneKey, interpolation) == 12, "bone key interpolation ABI");
 static_assert(offsetof(BoneKey, position) == 28, "bone key position ABI");
 static_assert(offsetof(BoneKey, rotation) == 40, "bone key rotation ABI");
 static_assert(offsetof(BoneKey, allocated) == 56, "bone key allocated ABI");
-static_assert(offsetof(BoneKey, physicsDisabled) == 57,
-              "bone key physics ABI");
+static_assert(offsetof(BoneKey, physicsDisabled) == 57, "bone key physics ABI");
 
 struct MorphKey {
     std::uint32_t frame;
@@ -182,27 +168,19 @@ struct DisplayKey {
 };
 #if MIKUDANCESTUDIO_X64
 static_assert(sizeof(DisplayKey) == 40, "display key x64 ABI");
-static_assert(offsetof(DisplayKey, ikStates) == 16,
-              "display key IK state x64 ABI");
-static_assert(offsetof(DisplayKey, allocated) == 24,
-              "display key allocated x64 ABI");
-static_assert(offsetof(DisplayKey, selectorStates) == 32,
-              "display key selector state x64 ABI");
+static_assert(offsetof(DisplayKey, ikStates) == 16, "display key IK state x64 ABI");
+static_assert(offsetof(DisplayKey, allocated) == 24, "display key allocated x64 ABI");
+static_assert(offsetof(DisplayKey, selectorStates) == 32, "display key selector state x64 ABI");
 #else
 static_assert(sizeof(DisplayKey) == 28, "display key x86 ABI");
-static_assert(offsetof(DisplayKey, ikStates) == 16,
-              "display key IK state x86 ABI");
-static_assert(offsetof(DisplayKey, allocated) == 20,
-              "display key allocated x86 ABI");
-static_assert(offsetof(DisplayKey, selectorStates) == 24,
-              "display key selector state x86 ABI");
+static_assert(offsetof(DisplayKey, ikStates) == 16, "display key IK state x86 ABI");
+static_assert(offsetof(DisplayKey, allocated) == 20, "display key allocated x86 ABI");
+static_assert(offsetof(DisplayKey, selectorStates) == 24, "display key selector state x86 ABI");
 #endif
 static_assert(offsetof(DisplayKey, frame) == 0, "display key frame ABI");
-static_assert(offsetof(DisplayKey, previous) == 4,
-              "display key previous ABI");
+static_assert(offsetof(DisplayKey, previous) == 4, "display key previous ABI");
 static_assert(offsetof(DisplayKey, next) == 8, "display key next ABI");
-static_assert(offsetof(DisplayKey, visible) == 12,
-              "display key visible ABI");
+static_assert(offsetof(DisplayKey, visible) == 12, "display key visible ABI");
 
 inline BoneReference*& SelectorStates(DisplayKey& key) {
     return key.selectorStates;
@@ -231,13 +209,11 @@ enum class PmxTextBufferSlot : std::size_t {
     englishComment,
 };
 
-template <typename T>
-inline T& At(unsigned char* m, std::size_t off) {
+template <typename T> inline T& At(unsigned char* m, std::size_t off) {
     return *reinterpret_cast<T*>(m + off);
 }
 
-template <typename T>
-inline const T& At(const unsigned char* m, std::size_t off) {
+template <typename T> inline const T& At(const unsigned char* m, std::size_t off) {
     return *reinterpret_cast<const T*>(m + off);
 }
 
@@ -284,8 +260,7 @@ inline BoneMorphOffsetRecord*& BoneMorphOffsets(unsigned char* m) {
     return Mdl(m)->boneMorphTable;
 }
 
-template <typename T>
-inline T*& ResourceAs(void*& storage) {
+template <typename T> inline T*& ResourceAs(void*& storage) {
     return reinterpret_cast<T*&>(storage);
 }
 
@@ -339,8 +314,7 @@ inline PmxUvMorphEntry*& PmxUvMorphBaseTable(unsigned char* m) {
     return UvMorphTables(m).byFamily[0];
 }
 
-inline PmxUvMorphEntry*& AdditionalUvMorphTable(unsigned char* m,
-                                                 std::size_t family) {
+inline PmxUvMorphEntry*& AdditionalUvMorphTable(unsigned char* m, std::size_t family) {
     return UvMorphTables(m).byFamily[family + 1];
 }
 
@@ -423,4 +397,4 @@ inline std::uint32_t& BoneOrderCount(unsigned char* m) {
     return Mdl(m)->boneOrderCount;
 }
 
-}  // namespace mikudancestudio::mdl
+} // namespace mikudancestudio::mdl

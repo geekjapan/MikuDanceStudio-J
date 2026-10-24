@@ -56,12 +56,13 @@
 namespace mikudancestudio::tools {
 namespace {
 
-constexpr std::size_t kEnvFileNameLength = 0x100;  // MMDApp::EnvFileName() capacity
+constexpr std::size_t kEnvFileNameLength = 0x100; // MMDApp::EnvFileName() capacity
 
 std::wstring FullPath(const std::wstring& path) {
     wchar_t buffer[MAX_PATH * 4];
     const DWORD length = GetFullPathNameW(path.c_str(), MAX_PATH * 4, buffer, nullptr);
-    if (length == 0 || length >= MAX_PATH * 4) return std::wstring();
+    if (length == 0 || length >= MAX_PATH * 4)
+        return std::wstring();
     return std::wstring(buffer, length);
 }
 
@@ -74,7 +75,8 @@ void PoseAllModels(MMDApp* app) {
     for (int order = 0; order < kModelSlotCount; ++order) {
         for (int slot = 0; slot < kModelSlotCount; ++slot) {
             unsigned char* model = models[slot];
-            if (model == nullptr || mdl::Mdl(model)->comboSelIndex2 != order) continue;
+            if (model == nullptr || mdl::Mdl(model)->comboSelIndex2 != order)
+                continue;
             ModelApplyMorphs(model);
             SetPhysicsMode(model, 0, models, mode);
         }
@@ -86,7 +88,8 @@ void PoseAllModels(MMDApp* app) {
 bool WriteFrame(std::ostream& out, MMDApp* app, std::uint32_t frame) {
     for (int slot = 0; slot < kModelSlotCount; ++slot) {
         unsigned char* model = app->ModelSlot(slot);
-        if (model == nullptr) continue;
+        if (model == nullptr)
+            continue;
         const auto* record = mdl::Mdl(model);
         const mdl::BoneRecord* bones = mdl::Bones(model);
         const mdl::MorphRecord* morphs = mdl::Morphs(model);
@@ -96,18 +99,22 @@ bool WriteFrame(std::ostream& out, MMDApp* app, std::uint32_t frame) {
             if (!l2::WriteBoneLine(out, frame, id, i, bones[i].trans, bones[i].rotQuat))
                 return false;
         for (std::uint32_t i = 0; i < record->boneCount; ++i)
-            if (!l2::WriteBoneWorldLine(out, frame, id, i, bones[i].matInit)) return false;
+            if (!l2::WriteBoneWorldLine(out, frame, id, i, bones[i].matInit))
+                return false;
         for (std::uint32_t i = 0; i < record->morphCount; ++i)
-            if (!l2::WriteMorphLine(out, frame, id, i, morphs[i].value)) return false;
+            if (!l2::WriteMorphLine(out, frame, id, i, morphs[i].value))
+                return false;
         for (std::uint32_t i = 0; i < record->rigidCount; ++i) {
             const auto* body = static_cast<const btRigidBody*>(rigids[i].body);
-            if (body == nullptr) return false;
+            if (body == nullptr)
+                return false;
             const btTransform& transform = body->getWorldTransform();
             const btVector3& origin = transform.getOrigin();
             const btQuaternion rotation = transform.getRotation();
             const float position[3] = {origin.x(), origin.y(), origin.z()};
             const float quaternion[4] = {rotation.x(), rotation.y(), rotation.z(), rotation.w()};
-            if (!l2::WriteRigidLine(out, frame, id, i, position, quaternion)) return false;
+            if (!l2::WriteRigidLine(out, frame, id, i, position, quaternion))
+                return false;
         }
     }
     return out.good();
@@ -132,20 +139,23 @@ void ArmFrameStep(MMDApp* app, std::uint32_t frames) {
     // rebuild the track cursors and compute the frame-0 bone matrices.
     for (int slot = 0; slot < kModelSlotCount; ++slot)
         if (unsigned char* model = s.ModelSlot(slot))
-            SeekModelFrame(model, 0, s.PlaybackPhysicsMode());
+            SeekModelFrame(*mdl::Mdl(model), 0, s.PlaybackPhysicsMode());
     UpdateBoneFrames(app);
     s.state.recordedFrameCount = 0;
     PoseAllModels(app);
 }
 
-void DeleteTemp(const std::wstring& temp) { DeleteFileW(temp.c_str()); }
+void DeleteTemp(const std::wstring& temp) {
+    DeleteFileW(temp.c_str());
+}
 
 std::wstring g_guardTemp;
-std::ofstream* g_guardFile = nullptr;  // the open temp file while RunTraceMode writes it
+std::ofstream* g_guardFile = nullptr; // the open temp file while RunTraceMode writes it
 
 std::string Utf8(const wchar_t* text) {
     const int size = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
-    if (size <= 1) return std::string();
+    if (size <= 1)
+        return std::string();
     std::string utf8(static_cast<std::size_t>(size), '\0');
     WideCharToMultiByte(CP_UTF8, 0, text, -1, &utf8[0], size, nullptr, nullptr);
     utf8.pop_back();
@@ -160,7 +170,8 @@ BOOL CALLBACK AppendStaticText(HWND child, LPARAM lParam) {
     if (GetClassNameW(child, childClass, 8) != 0 && _wcsicmp(childClass, L"Static") == 0 &&
         GetWindowTextW(child, text, 1024) > 0) {
         std::string& out = *reinterpret_cast<std::string*>(lParam);
-        if (!out.empty()) out += " | ";
+        if (!out.empty())
+            out += " | ";
         out += Utf8(text);
     }
     return TRUE;
@@ -177,12 +188,14 @@ BOOL CALLBACK AppendStaticText(HWND child, LPARAM lParam) {
     if (error != nullptr && error != INVALID_HANDLE_VALUE)
         WriteFile(error, line.data(), static_cast<DWORD>(line.size()), &written, nullptr);
     OutputDebugStringA(line.c_str());
-    if (g_guardFile != nullptr) g_guardFile->close();  // DeleteFileW needs it closed
+    if (g_guardFile != nullptr)
+        g_guardFile->close(); // DeleteFileW needs it closed
     DeleteTemp(g_guardTemp);
     // Not ExitProcess: this runs inside MessageBox with the app half built,
     // and DLL detach would wait on the audio and DirectShow threads.
     TerminateProcess(GetCurrentProcess(), 1);
-    for (;;) Sleep(INFINITE);
+    for (;;)
+        Sleep(INFINITE);
 }
 
 LRESULT CALLBACK DialogGuardProc(int code, WPARAM wParam, LPARAM lParam) {
@@ -194,7 +207,7 @@ LRESULT CALLBACK DialogGuardProc(int code, WPARAM wParam, LPARAM lParam) {
     }
     return CallNextHookEx(nullptr, code, wParam, lParam);
 }
-}  // namespace
+} // namespace
 
 bool ArmTraceDialogGuard(const TraceRequest& request) {
     g_guardTemp = request.out + L".tmp";
@@ -204,9 +217,12 @@ bool ArmTraceDialogGuard(const TraceRequest& request) {
 bool PrepareTraceRequest(TraceRequest* request) {
     const std::wstring pmm = FullPath(request->pmm);
     const std::wstring out = FullPath(request->out);
-    if (pmm.empty() || out.empty() || pmm.size() >= kEnvFileNameLength) return false;
-    if (out.size() + 4 >= MAX_PATH * 4) return false;
-    if (_wcsicmp(pmm.c_str(), out.c_str()) == 0) return false;
+    if (pmm.empty() || out.empty() || pmm.size() >= kEnvFileNameLength)
+        return false;
+    if (out.size() + 4 >= MAX_PATH * 4)
+        return false;
+    if (_wcsicmp(pmm.c_str(), out.c_str()) == 0)
+        return false;
     const DWORD attributes = GetFileAttributesW(pmm.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
         return false;
@@ -226,15 +242,17 @@ int RunTraceMode(MMDApp* app, const TraceRequest& request) {
     }
 
     const std::wstring temp = request.out + L".tmp";
-    std::ofstream file(std::filesystem::path(temp), std::ios::binary | std::ios::trunc);  // LF stays LF
-    if (!file) return 1;
+    std::ofstream file(std::filesystem::path(temp),
+                       std::ios::binary | std::ios::trunc); // LF stays LF
+    if (!file)
+        return 1;
     g_guardFile = &file;
 
     ArmFrameStep(app, request.frames);
     l2::WriteHeader(file);
     bool ok = WriteFrame(file, app, 0);
     for (std::uint32_t frame = 1; ok && frame < request.frames; ++frame) {
-        app->state.messageSeen = 2;  // the render gate of AdvanceFrameRenderGate, playing
+        app->state.messageSeen = 2; // the render gate of AdvanceFrameRenderGate, playing
         PlaybackCatchup(app, 0);
         PhysicsFrame(app, 0);
         ok = WriteFrame(file, app, frame);
@@ -254,4 +272,4 @@ int RunTraceMode(MMDApp* app, const TraceRequest& request) {
     }
     return 0;
 }
-}  // namespace mikudancestudio::tools
+} // namespace mikudancestudio::tools

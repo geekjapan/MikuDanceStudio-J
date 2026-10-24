@@ -5,20 +5,18 @@
 
 namespace mikudancestudio {
 namespace {
-template <typename T>
-void DeleteOwned(T*& value) {
+template <typename T> void DeleteOwned(T*& value) {
     delete value;
     value = nullptr;
 }
 
-template <typename T>
-void ReleaseOwned(T*& value) {
+template <typename T> void ReleaseOwned(T*& value) {
     if (value != nullptr) {
         value->Release();
         value = nullptr;
     }
 }
-}  // namespace
+} // namespace
 
 // Reference: MMD x64 sub_7FF7CB422580. Preserve its reverse traversal and
 // destruction order, using Bullet interfaces rather than x86 field offsets.
@@ -40,7 +38,7 @@ void DisposePhysicsWorld(PhysicsScene* scene) {
             delete object;
         }
     }
-    scene->groundBody = nullptr;  // non-owning alias into the world
+    scene->groundBody = nullptr; // non-owning alias into the world
     DeleteOwned(scene->world);
     DeleteOwned(scene->solver);
     DeleteOwned(scene->broadphase);
@@ -59,4 +57,4 @@ void DisposePhysicsWorld(PhysicsScene* scene) {
     ReleaseOwned(scene->gizmoBoxSelIB);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

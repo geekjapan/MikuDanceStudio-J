@@ -58,11 +58,11 @@ namespace {
 using mdl::At;
 
 IDirect3DDevice9* DevOf(D3DRenderer* sub) {
-    return sub->device;                       // wrapper + 120032
+    return sub->device; // wrapper + 120032
 }
 
-bool FailBox(HWND hwnd, bool en, bool enData, const char* enMsg,
-             const char* jpMsg, const char* enTitle, const char* jpTitle) {
+bool FailBox(HWND hwnd, bool en, bool enData, const char* enMsg, const char* jpMsg,
+             const char* enTitle, const char* jpTitle) {
     char text[256];
     if (enData) {
         sprintf_s(text, 0x100, "%s", enMsg);
@@ -78,9 +78,8 @@ bool FailBox(HWND hwnd, bool en, bool enData, const char* enMsg,
 // MIKUDANCESTUDIO_DIAG, default OFF); the OFF stub keeps the call site
 // valid and inlines away to nothing.
 #ifdef MIKUDANCESTUDIO_DIAG
-void LogPmdRigid(const wchar_t* path, std::uint32_t rigidIndex,
-                 std::int32_t boneIndex, std::uint32_t boneCount,
-                 const void* bones) {
+void LogPmdRigid(const wchar_t* path, std::uint32_t rigidIndex, std::int32_t boneIndex,
+                 std::uint32_t boneCount, const void* bones) {
     const char* dir = std::getenv("MIKUDANCESTUDIO_PMM_TRACE_DIR");
     if (dir == nullptr || dir[0] == '\0')
         return;
@@ -89,25 +88,24 @@ void LogPmdRigid(const wchar_t* path, std::uint32_t rigidIndex,
     FILE* stream = nullptr;
     if (fopen_s(&stream, logPath, "ab") != 0 || stream == nullptr)
         return;
-    fprintf(stream, "pmd-rigid path=%ls rigid=%lu bone=%ld bone_count=%lu "
-                    "bones=%p\r\n",
+    fprintf(stream,
+            "pmd-rigid path=%ls rigid=%lu bone=%ld bone_count=%lu "
+            "bones=%p\r\n",
             path != nullptr ? path : L"", static_cast<unsigned long>(rigidIndex),
-            static_cast<long>(boneIndex), static_cast<unsigned long>(boneCount),
-            bones);
+            static_cast<long>(boneIndex), static_cast<unsigned long>(boneCount), bones);
     fclose(stream);
 }
 #else
-inline void LogPmdRigid(const wchar_t*, std::uint32_t, std::int32_t,
-                        std::uint32_t, const void*) {}
+inline void LogPmdRigid(const wchar_t*, std::uint32_t, std::int32_t, std::uint32_t, const void*) {
+}
 #endif
 
+} // namespace
 
-}  // namespace
-
-bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
-                  D3DRenderer* sub, int unusedA06CE, std::uint8_t boxGate,
-                  std::uint8_t englishUi, PhysicsScene* sub048,
-                  PathResolutionWorkspace& paths) {          // 0x4BF3E0
+bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path, D3DRenderer* sub,
+                  int unusedA06CE, std::uint8_t boxGate, std::uint8_t englishUi,
+                  PhysicsScene* sub048,
+                  PathResolutionWorkspace& paths) { // 0x4BF3E0
     // Arg map (original 0x46050F call site, pushes -0x20..-0x4; the
     // trailing (aN) tags are the original decompiler parameter names):
     //   a2 hwnd, a3 path, a4 sub1d574 (device), unusedA06CE (a5) app+0xA06CE
@@ -122,16 +120,14 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     wchar_t wide1[256], wide2[384], wide3[384];
 
     model.hwnd = hwnd;
-    model.scenePtr = sub048;               // 0x4BF42B
-    model.physicsFlags = englishUi;           // 0x4BF431: English-data byte
+    model.scenePtr = sub048;        // 0x4BF42B
+    model.physicsFlags = englishUi; // 0x4BF431: English-data byte
 
-    ResolveUserFilePath(paths, path);                         // 0x4089F0
+    ResolveUserFilePath(paths, path); // 0x4089F0
     wcscpy_s(model.path, 0x100, paths.resolvedPath);
 
     int fh = -1;
-    errno_t err = _wsopen_s(&fh,
-        model.path,
-        _O_BINARY, _SH_DENYNO, _S_IREAD);
+    errno_t err = _wsopen_s(&fh, model.path, _O_BINARY, _SH_DENYNO, _S_IREAD);
     if (err != 0) {
         if (boxGate) {
             if (enData)
@@ -141,10 +137,10 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                           "If Japanese font is included in the filename"
                           "(*.pmd),please rewrite it in English font.",
                           err),
-                MessageBoxA(hwnd, text, "open file", 0);
+                    MessageBoxA(hwnd, text, "open file", 0);
             else
                 sprintf_s(text, 0x100, "%s:%d", kMsgOpenFailJp, err),
-                MessageBoxA(hwnd, text, kTitleOpenFailJp, 0);
+                    MessageBoxA(hwnd, text, kTitleOpenFailJp, 0);
         }
         return false;
     }
@@ -153,12 +149,12 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     wcscpy_s(model.modelDirectory, 0x100, model.path);
     {
         wchar_t* p = model.modelDirectory;
-        while (*p) ++p;
+        while (*p)
+            ++p;
         if (*p != L'\\')
             do {
                 --p;
-            } while (p != model.modelDirectory &&
-                     *p != L'\\');
+            } while (p != model.modelDirectory && *p != L'\\');
         p[1] = L'\0';
         SetCurrentDirectoryW(model.modelDirectory);
     }
@@ -168,8 +164,8 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     if (text[0] != 'P' || text[1] != 'm' || text[2] != 'd') {
         if (text[0] == 'P' && text[1] == 'M' && text[2] == 'X')
             return LoadPMX(m, sub, boxGate, englishUi, paths,
-                           fh);                              // 0x4B77E0
-    _close(fh);
+                           fh); // 0x4B77E0
+        _close(fh);
         if (enData) {
             sprintf_s(text, 0x100, "This file is not for Ploygon Movie Maker !!");
             MessageBoxA(hwnd, text, "open file", 0);
@@ -179,12 +175,11 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         }
         return false;
     }
-    _read(fh, text, 4);                                   // version
+    _read(fh, text, 4); // version
     _read(fh, model.name, mdl::kPmdModelNameBytes);
     _read(fh, model.comment, sizeof(model.comment));
     if (!enData && boxGate &&
-        MessageBoxA(hwnd, model.comment,
-                    kTitleModelInfoJp, 0x40001u) != 1) {
+        MessageBoxA(hwnd, model.comment, kTitleModelInfoJp, 0x40001u) != IDOK) {
         _close(fh);
         return false;
     }
@@ -199,61 +194,48 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         if (dev == nullptr) {
             return false;
         }
-        if (FAILED(dev->CreateVertexBuffer(32 * vertCount, 8, 274 /*FVF*/,
-                                          D3DPOOL_MANAGED,
-                                          &mdl::ResourceAs<IDirect3DVertexBuffer9>(
-                                              mdl::Mdl(m)->vertexBuffer),
-                                          nullptr))) {
-            FailBox(hwnd, true, enData,
-                    "The performance of the graphics card doesn't suffice.",
+        if (FAILED(dev->CreateVertexBuffer(
+                32 * vertCount, 8, 274 /*FVF*/, D3DPOOL_MANAGED,
+                &mdl::ResourceAs<IDirect3DVertexBuffer9>(mdl::Mdl(m)->vertexBuffer), nullptr))) {
+            FailBox(hwnd, true, enData, "The performance of the graphics card doesn't suffice.",
                     kMsgNoPerfJp, "open file", kTitleOpenFailJp);
             _close(fh);
             return false;
         }
-        if (FAILED(dev->CreateVertexBuffer(16 * vertCount, 8, 66 /*FVF*/,
-                                          D3DPOOL_MANAGED,
-                                          &mdl::ResourceAs<IDirect3DVertexBuffer9>(
-                                              mdl::Mdl(m)->vertexBuffer2),
-                                          nullptr))) {
-            FailBox(hwnd, true, enData,
-                    "The performance of the graphics card doesn't suffice.",
+        if (FAILED(dev->CreateVertexBuffer(
+                16 * vertCount, 8, 66 /*FVF*/, D3DPOOL_MANAGED,
+                &mdl::ResourceAs<IDirect3DVertexBuffer9>(mdl::Mdl(m)->vertexBuffer2), nullptr))) {
+            FailBox(hwnd, true, enData, "The performance of the graphics card doesn't suffice.",
                     kMsgNoPerfJp, "open file", kTitleLoad2Jp);
             _close(fh);
             return false;
         }
-        mdl::PmdVertex* recs = static_cast<mdl::PmdVertex*>(
-            operator new(sizeof(mdl::PmdVertex) * vertCount));
+        mdl::PmdVertex* recs =
+            static_cast<mdl::PmdVertex*>(operator new(sizeof(mdl::PmdVertex) * vertCount));
         model.rawVertices = recs;
         std::memset(recs, 0, sizeof(mdl::PmdVertex) * vertCount);
         for (std::uint32_t i = 0; i < vertCount; ++i)
             _read(fh, &recs[i], 0x26);
 
         float* p1 = nullptr;
-        if (SUCCEEDED(mdl::ResourceAs<IDirect3DVertexBuffer9>(
-                          mdl::Mdl(m)->vertexBuffer)->Lock(
-                0, 32 * vertCount,
-                reinterpret_cast<void**>(&p1), 0))) {
+        if (SUCCEEDED(mdl::ResourceAs<IDirect3DVertexBuffer9>(mdl::Mdl(m)->vertexBuffer)
+                          ->Lock(0, 32 * vertCount, reinterpret_cast<void**>(&p1), 0))) {
             for (std::uint32_t i = 0; i < vertCount; ++i) {
-                float* dst = reinterpret_cast<float*>(
-                    reinterpret_cast<unsigned char*>(p1) + 32 * i);
+                float* dst =
+                    reinterpret_cast<float*>(reinterpret_cast<unsigned char*>(p1) + 32 * i);
                 std::memcpy(dst, &recs[i], 32);
             }
-            mdl::ResourceAs<IDirect3DVertexBuffer9>(
-                mdl::Mdl(m)->vertexBuffer)->Unlock();
+            mdl::ResourceAs<IDirect3DVertexBuffer9>(mdl::Mdl(m)->vertexBuffer)->Unlock();
         }
         float* p2 = nullptr;
-        if (SUCCEEDED(mdl::ResourceAs<IDirect3DVertexBuffer9>(
-                          mdl::Mdl(m)->vertexBuffer2)->Lock(
-                0, 16 * vertCount,
-                reinterpret_cast<void**>(&p2), 0))) {
+        if (SUCCEEDED(mdl::ResourceAs<IDirect3DVertexBuffer9>(mdl::Mdl(m)->vertexBuffer2)
+                          ->Lock(0, 16 * vertCount, reinterpret_cast<void**>(&p2), 0))) {
             for (std::uint32_t i = 0; i < vertCount; ++i) {
-                unsigned char* dst =
-                    reinterpret_cast<unsigned char*>(p2) + 16 * i;
+                unsigned char* dst = reinterpret_cast<unsigned char*>(p2) + 16 * i;
                 std::memcpy(dst, recs[i].position, 12);
                 *reinterpret_cast<std::uint32_t*>(dst + 12) = 0xFF000000u;
             }
-            mdl::ResourceAs<IDirect3DVertexBuffer9>(
-                mdl::Mdl(m)->vertexBuffer2)->Unlock();
+            mdl::ResourceAs<IDirect3DVertexBuffer9>(mdl::Mdl(m)->vertexBuffer2)->Unlock();
         }
     }
 
@@ -263,14 +245,10 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     if (idxCount != 0) {
         if (dev == nullptr)
             return false;
-        if (FAILED(dev->CreateIndexBuffer(2 * idxCount, 0,
-                                          static_cast<D3DFORMAT>(101),
-                                          D3DPOOL_MANAGED,
-                                          &mdl::ResourceAs<IDirect3DIndexBuffer9>(
-                                              mdl::Mdl(m)->indexBuffer),
-                                          nullptr))) {
-            FailBox(hwnd, true, enData,
-                    "The performance of the graphics card doesn't suffice.",
+        if (FAILED(dev->CreateIndexBuffer(
+                2 * idxCount, 0, static_cast<D3DFORMAT>(101), D3DPOOL_MANAGED,
+                &mdl::ResourceAs<IDirect3DIndexBuffer9>(mdl::Mdl(m)->indexBuffer), nullptr))) {
+            FailBox(hwnd, true, enData, "The performance of the graphics card doesn't suffice.",
                     kMsgNoPerfJp, "CreateIndexBuffer", "CreateIndexBuffer");
             _close(fh);
             return false;
@@ -279,10 +257,9 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         idx = static_cast<std::uint16_t*>(operator new(4 * idxCount));
         std::memset(idx, 0, 4 * idxCount);
         void* ib = nullptr;
-        if (FAILED(mdl::ResourceAs<IDirect3DIndexBuffer9>(
-                       mdl::Mdl(m)->indexBuffer)->Lock(0, 0, &ib, 0))) {
-            FailBox(hwnd, true, enData,
-                    "The performance of the graphics card doesn't suffice.",
+        if (FAILED(mdl::ResourceAs<IDirect3DIndexBuffer9>(mdl::Mdl(m)->indexBuffer)
+                       ->Lock(0, 0, &ib, 0))) {
+            FailBox(hwnd, true, enData, "The performance of the graphics card doesn't suffice.",
                     kMsgNoPerfJp, "pIndBuf->Lock", "pIndBuf->Lock");
             _close(fh);
             return false;
@@ -291,24 +268,21 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
             _read(fh, idx + 2 * j, 2);
             static_cast<std::uint16_t*>(ib)[j] = idx[2 * j];
         }
-        mdl::ResourceAs<IDirect3DIndexBuffer9>(
-            mdl::Mdl(m)->indexBuffer)->Unlock();
+        mdl::ResourceAs<IDirect3DIndexBuffer9>(mdl::Mdl(m)->indexBuffer)->Unlock();
     }
 
     // ---- materials --------------------------------------------------------
-    _read(fh, &mdl::Mdl(m)->materialCount,
-          sizeof mdl::Mdl(m)->materialCount);
+    _read(fh, &mdl::Mdl(m)->materialCount, sizeof mdl::Mdl(m)->materialCount);
     const std::uint32_t matCount = mdl::Mdl(m)->materialCount;
     if (matCount != 0) {
         mdl::ModelMaterialRecord*& materials = mdl::Materials(m);
-        materials = static_cast<mdl::ModelMaterialRecord*>(
-            operator new(sizeof(*materials) * matCount));
+        materials =
+            static_cast<mdl::ModelMaterialRecord*>(operator new(sizeof(*materials) * matCount));
         std::memset(materials, 0, sizeof(*materials) * matCount);
         for (std::uint32_t i = 0; i < matCount; ++i) {
             mdl::ModelMaterialRecord& mat = materials[i];
             _read(fh, mat.diffuse, sizeof(mat.diffuse));
-            std::memcpy(mat.diffuseMirror, mat.diffuse,
-                        sizeof(mat.diffuseMirror));
+            std::memcpy(mat.diffuseMirror, mat.diffuse, sizeof(mat.diffuseMirror));
             _read(fh, &mat.specularPower, sizeof(mat.specularPower));
             _read(fh, mat.specular, sizeof(mat.specular));
             _read(fh, mat.ambient, sizeof(mat.ambient));
@@ -324,23 +298,18 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                 char* star = strstr(texName, "*");
                 if (star != nullptr) {
                     *star = '\0';
-                    unsigned char* subBytes =
-                        reinterpret_cast<unsigned char*>(sub);
-                    ConvertMaterialName(subBytes, texName, wide1, 0x100,
-                                        dirW);
+                    unsigned char* subBytes = reinterpret_cast<unsigned char*>(sub);
+                    ConvertMaterialName(subBytes, texName, wide1, 0x100, dirW);
                     swprintf_s(wide2, 0x180, L"%s%s", dirW, wide1);
-                    LoadTextureShared(subBytes, wide2);      // 0x407490
-                    ConvertMaterialName(subBytes, star + 1, wide1, 0x100,
-                                        dirW);
+                    LoadTextureShared(subBytes, wide2); // 0x407490
+                    ConvertMaterialName(subBytes, star + 1, wide1, 0x100, dirW);
                     swprintf_s(wide3, 0x180, L"%s%s", dirW, wide1);
                     if (LoadTextureShared(subBytes, wide3))
                         wcscpy_s(mat.spherePath, 0x118, wide3);
                     wcscpy_s(mat.texturePath, 0x118, wide2);
                 } else {
-                    unsigned char* subBytes =
-                        reinterpret_cast<unsigned char*>(sub);
-                    ConvertMaterialName(subBytes, texName, wide1, 0x100,
-                                        dirW);
+                    unsigned char* subBytes = reinterpret_cast<unsigned char*>(sub);
+                    ConvertMaterialName(subBytes, texName, wide1, 0x100, dirW);
                     swprintf_s(wide2, 0x180, L"%s%s", dirW, wide1);
                     LoadTextureShared(subBytes, wide2);
                     wcscpy_s(mat.texturePath, 0x118, wide2);
@@ -352,8 +321,9 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     // ---- bones ------------------------------------------------------------
     _read(fh, &model.boneCount, 2);
     const std::uint32_t boneCount = model.boneCount;
-    mikudancestudio::mdl::BoneRecord* bones = static_cast<mikudancestudio::mdl::BoneRecord*>(
-        operator new(sizeof(mikudancestudio::mdl::BoneRecord) * (boneCount ? boneCount : 1)));
+    mikudancestudio::mdl::BoneRecord* bones =
+        static_cast<mikudancestudio::mdl::BoneRecord*>(operator new(
+            sizeof(mikudancestudio::mdl::BoneRecord) * (boneCount ? boneCount : 1)));
     mikudancestudio::mdl::Bones(m) = bones;
     std::memset(bones, 0, sizeof(mikudancestudio::mdl::BoneRecord) * (boneCount ? boneCount : 1));
     {
@@ -387,14 +357,14 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         std::int16_t tail = 0;
         _read(fh, &tail, 2);
         bone->tailBone = tail;
-        _read(fh, &bone->type, 1);       // type
+        _read(fh, &bone->type, 1); // type
         std::int16_t tailIdx = 0;
         _read(fh, &tailIdx, 2);
         bone->tailIdx = tailIdx;
         _read(fh, bone->position, sizeof(bone->position));
-        bone->rotQuat[3] = 1.0f;    // scale x/y
+        bone->rotQuat[3] = 1.0f; // scale x/y
         bone->rotQuat2[3] = 1.0f;
-        for (int f = 0; f < 16; ++f)  // +180 identity (x64 0x7FF7CB4D34B0)
+        for (int f = 0; f < 16; ++f) // +180 identity (x64 0x7FF7CB4D34B0)
             bone->matWorld[f] = (f % 5 == 0) ? 1.0f : 0.0f;
         bone->slotIndex = -1;
         bone->rigidIdx = -296;
@@ -405,10 +375,9 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     _read(fh, &model.ikChainCount, 2);
     const std::uint32_t ikCount = model.ikChainCount;
     if (ikCount > 0) {
-        mdl::Mdl(m)->ikChains = static_cast<mdl::IkChain*>(
-            operator new(sizeof(mdl::IkChain) * ikCount));
-        std::memset(mdl::Mdl(m)->ikChains, 0,
-                    sizeof(mdl::IkChain) * ikCount);
+        mdl::Mdl(m)->ikChains =
+            static_cast<mdl::IkChain*>(operator new(sizeof(mdl::IkChain) * ikCount));
+        std::memset(mdl::Mdl(m)->ikChains, 0, sizeof(mdl::IkChain) * ikCount);
         for (std::uint32_t i = 0; i < ikCount; ++i) {
             mdl::IkChain& ik = mdl::IkChains(m)[i];
             _read(fh, &ik.boneIndex, 2);
@@ -418,8 +387,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
             _read(fh, &ik.maxAngle, 4);
             ik.enabled = 1;
             const std::uint8_t len = ik.linkCount;
-            ik.links = static_cast<std::uint16_t*>(
-                operator new(sizeof(std::uint16_t) * len));
+            ik.links = static_cast<std::uint16_t*>(operator new(sizeof(std::uint16_t) * len));
             for (std::uint8_t k = 0; k < len; ++k)
                 _read(fh, &ik.links[k], sizeof(ik.links[k]));
         }
@@ -434,18 +402,15 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         const std::int32_t parent = bone->parent;
         const std::int32_t tail = bone->tailIdx;
         const mikudancestudio::mdl::BoneType tailType = bones[tail].type;
-        const bool arm1 =
-            parent >= 0 &&
-            mikudancestudio::mdl::Bones(m)[parent].hasFlag != 0;
-        const bool arm2 =
-            (bone->type == mikudancestudio::mdl::BoneType::RotateGrant ||
-             ((bone->flags & mikudancestudio::mdl::kBoneFlagInheritMask) != 0 &&
-              model.physicsMode == 2)) &&
-            (tailType == mikudancestudio::mdl::BoneType::Ik ||
-             tailType == mikudancestudio::mdl::BoneType::UnderIk);
+        const bool arm1 = parent >= 0 && mikudancestudio::mdl::Bones(m)[parent].hasFlag != 0;
+        const bool arm2 = (bone->type == mikudancestudio::mdl::BoneType::RotateGrant ||
+                           ((bone->flags & mikudancestudio::mdl::kBoneFlagInheritMask) != 0 &&
+                            model.physicsMode == 2)) &&
+                          (tailType == mikudancestudio::mdl::BoneType::Ik ||
+                           tailType == mikudancestudio::mdl::BoneType::UnderIk);
         bone->hasFlag = (arm1 || arm2) ? 1 : 0;
     }
-    InitBoneSortOrder(m);                                    // x86 0x490070; bone_sort.cpp
+    InitBoneSortOrder(m); // x86 0x490070; bone_sort.cpp
 
     // ---- morphs -----------------------------------------------------------
     // (original 0x4C0330..0x4C0613: per-morph offset table of 16-byte
@@ -457,8 +422,8 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     _read(fh, &model.morphCount, 2);
     const std::uint32_t morphCount = model.morphCount;
     if (morphCount > 0) {
-        mdl::MorphRecord* morphs = static_cast<mdl::MorphRecord*>(
-            operator new(sizeof(mdl::MorphRecord) * morphCount));
+        mdl::MorphRecord* morphs =
+            static_cast<mdl::MorphRecord*>(operator new(sizeof(mdl::MorphRecord) * morphCount));
         mdl::Morphs(m) = morphs;
         std::memset(morphs, 0, sizeof(mdl::MorphRecord) * morphCount);
         void* w1 = operator new(4 * morphCount);
@@ -473,10 +438,9 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
             _read(fh, &morph.offsetCount, sizeof(morph.offsetCount));
             _read(fh, &morph.panel, sizeof(morph.panel));
             const std::uint32_t n = morph.offsetCount;
-            morph.vertexEntries = static_cast<mdl::PmdVertexMorphEntry*>(
-                operator new(sizeof(mdl::PmdVertexMorphEntry) * n));
-            std::memset(morph.vertexEntries, 0,
-                        sizeof(mdl::PmdVertexMorphEntry) * n);
+            morph.vertexEntries = static_cast<mdl::PmdVertexMorphEntry*>(operator new(
+                sizeof(mdl::PmdVertexMorphEntry) * n));
+            std::memset(morph.vertexEntries, 0, sizeof(mdl::PmdVertexMorphEntry) * n);
             for (std::uint32_t k = 0; k < n; ++k) {
                 _read(fh, &morph.vertexEntries[k].vertexIndex, 4);
                 _read(fh, morph.vertexEntries[k].offset, 12);
@@ -491,19 +455,16 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         if (morphs != nullptr) {
             const std::uint32_t n = morphs[0].offsetCount;
             mdl::BaseVertexMorphCount(m) = n;
-            mdl::BaseVertexMorphTable(m) = static_cast<mdl::PmdVertexMorphEntry*>(
-                operator new(sizeof(mdl::PmdVertexMorphEntry) * n));
-            std::memset(mdl::BaseVertexMorphTable(m), 0,
-                        sizeof(mdl::PmdVertexMorphEntry) * n);
+            mdl::BaseVertexMorphTable(m) = static_cast<mdl::PmdVertexMorphEntry*>(operator new(
+                sizeof(mdl::PmdVertexMorphEntry) * n));
+            std::memset(mdl::BaseVertexMorphTable(m), 0, sizeof(mdl::PmdVertexMorphEntry) * n);
             std::memcpy(mdl::BaseVertexMorphTable(m), morphs[0].vertexEntries,
                         sizeof(mdl::PmdVertexMorphEntry) * n);
             for (std::uint32_t i = 1; i < morphCount; ++i) {
                 mdl::MorphRecord& morph = morphs[i];
-                for (std::uint32_t k = 0;
-                     k < static_cast<std::uint32_t>(morph.offsetCount); ++k) {
+                for (std::uint32_t k = 0; k < static_cast<std::uint32_t>(morph.offsetCount); ++k) {
                     mdl::PmdVertexMorphEntry& entry = morph.vertexEntries[k];
-                    entry.vertexIndex = mdl::BaseVertexMorphTable(m)[entry.vertexIndex]
-                        .vertexIndex;
+                    entry.vertexIndex = mdl::BaseVertexMorphTable(m)[entry.vertexIndex].vertexIndex;
                 }
             }
         }
@@ -512,16 +473,14 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     // ---- display frames / face groups -------------------------------------
     _read(fh, &model.facialFrameCount, sizeof(model.facialFrameCount));
     if (model.facialFrameCount != 0) {
-        model.displayFrames = static_cast<mdl::FrameGroup*>(
-            operator new(sizeof(*model.displayFrames) * model.facialFrameCount));
-        std::memset(model.displayFrames, 0,
-                    sizeof(*model.displayFrames) * model.facialFrameCount);
+        model.displayFrames = static_cast<mdl::FrameGroup*>(operator new(
+            sizeof(*model.displayFrames) * model.facialFrameCount));
+        std::memset(model.displayFrames, 0, sizeof(*model.displayFrames) * model.facialFrameCount);
         for (std::uint8_t i = 0; i < model.facialFrameCount; ++i) {
             mdl::FrameGroup& frame = model.displayFrames[i];
             _read(fh, &frame.targetIndex, sizeof(frame.targetIndex));
             frame.groupIndex = 1;
-            strcpy_s(frame.name, sizeof(frame.name),
-                     mdl::Morphs(m)[frame.targetIndex].name);
+            strcpy_s(frame.name, sizeof(frame.name), mdl::Morphs(m)[frame.targetIndex].name);
         }
     }
     _read(fh, &model.groupCount, sizeof(model.groupCount));
@@ -530,8 +489,8 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         ++model.groupCount;
     const std::uint8_t grpCount = model.groupCount;
     mdl::DisplayGroup*& groups = mdl::DisplayGroups(m);
-    groups = static_cast<mdl::DisplayGroup*>(
-        operator new(sizeof(*groups) * (grpCount ? grpCount : 1)));
+    groups =
+        static_cast<mdl::DisplayGroup*>(operator new(sizeof(*groups) * (grpCount ? grpCount : 1)));
     std::memset(groups, 0, sizeof(*groups) * (grpCount ? grpCount : 1));
     strcpy_s(groups[0].name, sizeof(groups[0].name), bones[0].name);
     strcpy_s(groups[1].name, sizeof(groups[1].name), kLblDispIkOpJp);
@@ -551,10 +510,9 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     _read(fh, &model.rigidBodyCount, sizeof(model.rigidBodyCount));
     const std::uint32_t rbGroupCount = model.rigidBodyCount;
     mdl::FrameGroup*& rbGroups = mdl::RigidGroups(m);
-    rbGroups = static_cast<mdl::FrameGroup*>(
-        operator new(sizeof(*rbGroups) * (rbGroupCount ? rbGroupCount : 1)));
-    std::memset(rbGroups, 0,
-                sizeof(*rbGroups) * (rbGroupCount ? rbGroupCount : 1));
+    rbGroups = static_cast<mdl::FrameGroup*>(operator new(sizeof(*rbGroups) *
+                                                          (rbGroupCount ? rbGroupCount : 1)));
+    std::memset(rbGroups, 0, sizeof(*rbGroups) * (rbGroupCount ? rbGroupCount : 1));
     for (std::uint32_t i = 0; i < rbGroupCount; ++i) {
         mdl::FrameGroup& rb = rbGroups[i];
         _read(fh, &rb.targetIndex, sizeof(rb.targetIndex));
@@ -584,24 +542,20 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                      reinterpret_cast<const char*>(&bones[i]));
         mdl::MorphRecord* morphs = mdl::Morphs(m);
         for (std::uint32_t i = 0; i < morphCount; ++i)
-            strcpy_s(morphs[i].nameEn, sizeof(morphs[i].nameEn),
-                     morphs[i].name);
+            strcpy_s(morphs[i].nameEn, sizeof(morphs[i].nameEn), morphs[i].name);
         if (model.facialFrameCount != 0)
             for (std::uint8_t i = 3; i < grpCount; ++i)
-                strcpy_s(groups[i].nameEn, sizeof(groups[i].nameEn),
-                         groups[i].name);
+                strcpy_s(groups[i].nameEn, sizeof(groups[i].nameEn), groups[i].name);
         else
             for (std::uint8_t i = 2; i < grpCount; ++i)
-                strcpy_s(groups[i].nameEn, sizeof(groups[i].nameEn),
-                         groups[i].name);
+                strcpy_s(groups[i].nameEn, sizeof(groups[i].nameEn), groups[i].name);
     } else {
         _read(fh, model.nameEn, mdl::kPmdModelNameBytes);
         model.nameEn[19] = 0;
         _read(fh, model.commentEn, sizeof(model.commentEn));
         model.commentEn[255] = 0;
         if (model.physicsFlags != 0 && boxGate &&
-            MessageBoxA(hwnd, model.commentEn,
-                        "model infomation", 0x40001u) != 1) {
+            MessageBoxA(hwnd, model.commentEn, "model infomation", 0x40001u) != IDOK) {
             _close(fh);
             return false;
         }
@@ -627,8 +581,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     }
     for (std::uint8_t i = 0; i < model.facialFrameCount; ++i) {
         mdl::FrameGroup& frame = model.displayFrames[i];
-        strcpy_s(frame.nameEn, sizeof(frame.nameEn),
-                 mdl::Morphs(m)[frame.targetIndex].nameEn);
+        strcpy_s(frame.nameEn, sizeof(frame.nameEn), mdl::Morphs(m)[frame.targetIndex].nameEn);
     }
     for (std::uint32_t i = 0; i < rbGroupCount; ++i)
         strcpy_s(rbGroups[i].nameEn, sizeof(rbGroups[i].nameEn),
@@ -646,21 +599,16 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                     matched = 1;
             }
             if (!matched) {
-                ConvertAnsiToWide(sub,
-                                  toon[i], wide1, 0x100);
-                swprintf_s(wide2, 0x180, L"%s%s",
-                           model.modelDirectory,
-                           wide1);
-                if (!LoadTextureShared(
-                        reinterpret_cast<unsigned char*>(sub), wide2))
+                ConvertAnsiToWide(sub, toon[i], wide1, 0x100);
+                swprintf_s(wide2, 0x180, L"%s%s", model.modelDirectory, wide1);
+                if (!LoadTextureShared(reinterpret_cast<unsigned char*>(sub), wide2))
                     strcpy_s(toon[i], sizeof(toon[i]), text);
             }
         }
     } else {
         for (int i = 0; i < 10; ++i) {
             sprintf_s(text, 0x100, "toon%02d.bmp", i + 1);
-            strcpy_s(model.pmdToonFileNames[i],
-                     sizeof(model.pmdToonFileNames[i]), text);
+            strcpy_s(model.pmdToonFileNames[i], sizeof(model.pmdToonFileNames[i]), text);
         }
     }
 
@@ -670,14 +618,12 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     const std::uint32_t rigidCount = model.rigidCount;
     if (rbRead != -1) {
         PhysicsScene* physScene = mdl::Mdl(m)->scenePtr;
-        SetPhysicsMode(m, 0, nullptr, 0);                    // 0x4A9220
+        SetPhysicsMode(m, 0, nullptr, 0); // 0x4A9220
         SetPhysicsMode(m, 1, nullptr, 0);
-        mdl::RigidRecord* rigids = static_cast<mdl::RigidRecord*>(
-            operator new(sizeof(mdl::RigidRecord) *
-                         (rigidCount ? rigidCount : 1)));
+        mdl::RigidRecord* rigids = static_cast<mdl::RigidRecord*>(operator new(
+            sizeof(mdl::RigidRecord) * (rigidCount ? rigidCount : 1)));
         mdl::Rigids(m) = rigids;
-        std::memset(rigids, 0, sizeof(mdl::RigidRecord) *
-                                  (rigidCount ? rigidCount : 1));
+        std::memset(rigids, 0, sizeof(mdl::RigidRecord) * (rigidCount ? rigidCount : 1));
         for (std::uint32_t i = 0; i < rigidCount; ++i) {
             mdl::RigidRecord& rigid = rigids[i];
             _read(fh, rigid.name, sizeof(rigid.name));
@@ -707,8 +653,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                 d3dx->multiply(&mat, &mat, &tmp);
                 d3dx->rotY(&tmp, rigid.rotation[1]);
                 d3dx->multiply(&mat, &mat, &tmp);
-                d3dx->translation(&tmp, rigid.position[0], rigid.position[1],
-                                  rigid.position[2]);
+                d3dx->translation(&tmp, rigid.position[0], rigid.position[1], rigid.position[2]);
                 d3dx->multiply(&mat, &mat, &tmp);
                 const std::int32_t boneIdx = rigid.boneIndex;
                 LogPmdRigid(path, i, boneIdx, boneCount, bones);
@@ -721,12 +666,10 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                 d3dx->multiply(&mat, &mat, &tmp);
                 // create the Bullet body (shape + limits + world add)
                 void* bodyOut[2] = {nullptr, nullptr};
-                CreateRigidBody(physScene, bodyOut, rigid.shape, rigid.size[0],
-                                rigid.size[1], rigid.size[2],
-                                reinterpret_cast<const float*>(&mat),
-                                rigid.mode, rigid.mass, rigid.linearDamping,
-                                rigid.angularDamping, rigid.restitution,
-                                rigid.friction, static_cast<char>(rigid.group),
+                CreateRigidBody(physScene, bodyOut, rigid.shape, rigid.size[0], rigid.size[1],
+                                rigid.size[2], reinterpret_cast<const float*>(&mat), rigid.mode,
+                                rigid.mass, rigid.linearDamping, rigid.angularDamping,
+                                rigid.restitution, rigid.friction, static_cast<char>(rigid.group),
                                 rigid.noCollapse); // 0x4064F0
                 rigid.keyData = bodyOut[0];
                 rigid.body = bodyOut[1];
@@ -740,13 +683,10 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                 // matExtra instead of the rest position.  The inverse rigid
                 // transform is also the basis for every joint anchor and for
                 // physics readback; use the ABI-independent member here.
-                const mdl::BoneRecord& linkedBone =
-                    bones[boneIdx < 0 ? 0 : boneIdx];
+                const mdl::BoneRecord& linkedBone = bones[boneIdx < 0 ? 0 : boneIdx];
                 const float* bonePosition = linkedBone.position;
-                d3dx->translation(&inv, -bonePosition[0], -bonePosition[1],
-                                  -bonePosition[2]);
-                d3dx->translation(&t2, -rigid.position[0], -rigid.position[1],
-                                  -rigid.position[2]);
+                d3dx->translation(&inv, -bonePosition[0], -bonePosition[1], -bonePosition[2]);
+                d3dx->translation(&t2, -rigid.position[0], -rigid.position[1], -rigid.position[2]);
                 d3dx->multiply(&inv, &inv, &t2);
                 d3dx->rotY(&t2, -rigid.rotation[1]);
                 d3dx->multiply(&inv, &inv, &t2);
@@ -759,12 +699,10 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         }
         _read(fh, &model.jointCount, sizeof(model.jointCount));
         const std::uint32_t jointCount = model.jointCount;
-        mdl::JointRecord* joints = static_cast<mdl::JointRecord*>(
-            operator new(sizeof(mdl::JointRecord) *
-                         (jointCount ? jointCount : 1)));
+        mdl::JointRecord* joints = static_cast<mdl::JointRecord*>(operator new(
+            sizeof(mdl::JointRecord) * (jointCount ? jointCount : 1)));
         mdl::Joints(m) = joints;
-        std::memset(joints, 0, sizeof(mdl::JointRecord) *
-                                  (jointCount ? jointCount : 1));
+        std::memset(joints, 0, sizeof(mdl::JointRecord) * (jointCount ? jointCount : 1));
         for (std::uint32_t i = 0; i < jointCount; ++i) {
             mdl::JointRecord& joint = joints[i];
             _read(fh, joint.name, sizeof(joint.name));
@@ -800,10 +738,8 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                 TransformJointPointOriginal(pivotB, point, &mb.m[0][0]);
                 const float ax = pivotA[0], ay = pivotA[1], az = pivotA[2];
                 const float bx = pivotB[0], by = pivotB[1], bz = pivotB[2];
-                const float distA =
-                    std::sqrt(ax * ax + ay * ay + az * az);
-                const float distB =
-                    std::sqrt(bx * bx + by * by + bz * bz);
+                const float distA = std::sqrt(ax * ax + ay * ay + az * az);
+                const float distB = std::sqrt(bx * bx + by * by + bz * bz);
                 // 过拉伸限位半径：限位范数叠加两锚点距离
                 // （x64 @0x7FF7CB4D51B0..0x4D526D，见 JointRadiusBound）
                 joint.radiusBound = JointRadiusBound(joint.limits, distA, distB);
@@ -835,17 +771,13 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                 float qb[4];
                 d3dx->quatFromMatrix(qb, &rot);
                 joint.constraint = CreatePhysJoint(
-                    physScene,
-                    rigidA.body, rigidB.body,
-                    ax, ay, az, qa[0], qa[1], qa[2], qa[3],
-                    bx, by, bz, qb[0], qb[1], qb[2], qb[3],
-                    joint.limits[0], joint.limits[1], joint.limits[2],
-                    joint.limits[3], joint.limits[4], joint.limits[5],
-                    joint.limits[6], joint.limits[7], joint.limits[8],
-                    joint.limits[9], joint.limits[10], joint.limits[11],
-                    joint.springs[0], joint.springs[1], joint.springs[2],
-                    joint.springs[3], joint.springs[4],
-                    joint.springs[5]);  // 0x406010
+                    physScene, rigidA.body, rigidB.body, ax, ay, az, qa[0], qa[1], qa[2], qa[3], bx,
+                    by, bz, qb[0], qb[1], qb[2], qb[3], joint.limits[0], joint.limits[1],
+                    joint.limits[2], joint.limits[3], joint.limits[4], joint.limits[5],
+                    joint.limits[6], joint.limits[7], joint.limits[8], joint.limits[9],
+                    joint.limits[10], joint.limits[11], joint.springs[0], joint.springs[1],
+                    joint.springs[2], joint.springs[3], joint.springs[4],
+                    joint.springs[5]); // 0x406010
             }
         }
     }
@@ -854,22 +786,18 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
 
     // ---- animation pools --------------------------------------------------
     {
-        mdl::BoneKeys(m) = static_cast<mdl::BoneKey*>(
-            operator new(sizeof(mdl::BoneKey) * mdl::kBoneKeyCapacity));
-        std::memset(mdl::BoneKeys(m), 0,
-                    sizeof(mdl::BoneKey) * mdl::kBoneKeyCapacity);
-        mdl::MorphKeys(m) = static_cast<mdl::MorphKey*>(
-            operator new(sizeof(mdl::MorphKey) * mdl::kMorphKeyCapacity));
-        std::memset(mdl::MorphKeys(m), 0,
-                    sizeof(mdl::MorphKey) * mdl::kMorphKeyCapacity);
-        mdl::DisplayKeys(m) = static_cast<mdl::DisplayKey*>(
-            operator new(sizeof(mdl::DisplayKey) * mdl::kDisplayKeyCapacity));
-        std::memset(mdl::DisplayKeys(m), 0,
-                    sizeof(mdl::DisplayKey) * mdl::kDisplayKeyCapacity);
+        mdl::BoneKeys(m) =
+            static_cast<mdl::BoneKey*>(operator new(sizeof(mdl::BoneKey) * mdl::kBoneKeyCapacity));
+        std::memset(mdl::BoneKeys(m), 0, sizeof(mdl::BoneKey) * mdl::kBoneKeyCapacity);
+        mdl::MorphKeys(m) = static_cast<mdl::MorphKey*>(operator new(sizeof(mdl::MorphKey) *
+                                                                     mdl::kMorphKeyCapacity));
+        std::memset(mdl::MorphKeys(m), 0, sizeof(mdl::MorphKey) * mdl::kMorphKeyCapacity);
+        mdl::DisplayKeys(m) = static_cast<mdl::DisplayKey*>(operator new(sizeof(mdl::DisplayKey) *
+                                                                         mdl::kDisplayKeyCapacity));
+        std::memset(mdl::DisplayKeys(m), 0, sizeof(mdl::DisplayKey) * mdl::kDisplayKeyCapacity);
         const std::uint32_t ikn = model.ikChainCount;
         const std::uint32_t ctr = model.boneOrderCount;
-        for (std::size_t keyIndex = 0;
-             keyIndex < mdl::kDisplayKeyCapacity; ++keyIndex) {
+        for (std::size_t keyIndex = 0; keyIndex < mdl::kDisplayKeyCapacity; ++keyIndex) {
             mdl::DisplayKey& key = mdl::DisplayKeys(m)[keyIndex];
             if (ikn > 0) {
                 auto* flags = static_cast<std::uint8_t*>(operator new(ikn));
@@ -879,8 +807,8 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
             }
             key.visible = 1;
             if (static_cast<std::int32_t>(ctr) > 0) {
-                auto* pairs = static_cast<mdl::BoneReference*>(
-                    operator new(sizeof(mdl::BoneReference) * ctr));
+                auto* pairs = static_cast<mdl::BoneReference*>(operator new(
+                    sizeof(mdl::BoneReference) * ctr));
                 mdl::SelectorStates(key) = pairs;
                 for (std::uint32_t k = 0; k < ctr; ++k) {
                     pairs[k].modelIndex = -1;
@@ -888,10 +816,10 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
                 }
             }
         }
-        mdl::BoneKeyIndices(m) = static_cast<std::uint32_t*>(
-            operator new(sizeof(*mdl::BoneKeyIndices(m)) * boneCount));
-        mdl::MorphKeyIndices(m) = static_cast<std::uint32_t*>(
-            operator new(sizeof(*mdl::MorphKeyIndices(m)) * model.morphCount));
+        mdl::BoneKeyIndices(m) =
+            static_cast<std::uint32_t*>(operator new(sizeof(*mdl::BoneKeyIndices(m)) * boneCount));
+        mdl::MorphKeyIndices(m) = static_cast<std::uint32_t*>(operator new(
+            sizeof(*mdl::MorphKeyIndices(m)) * model.morphCount));
         for (std::uint32_t i = 0; i < boneCount; ++i) {
             mdl::BoneKey& row = mdl::BoneKeys(m)[i];
             for (int k = 0; k < 4; ++k) {
@@ -904,8 +832,8 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         }
     }
     model.loadComplete = 1;
-    PostLoadInit(m);                                          // 0x49C850
+    PostLoadInit(m); // 0x49C850
     return true;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

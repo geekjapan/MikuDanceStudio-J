@@ -29,4 +29,4 @@ bool ArmTraceDialogGuard(const TraceRequest& request);
 // "<out>.tmp", renamed to <out> only on success. Returns the process exit
 // code: 0 on success, 1 on any failure (the temp file is deleted).
 int RunTraceMode(MMDApp* app, const TraceRequest& request);
-}  // namespace mikudancestudio::tools
+} // namespace mikudancestudio::tools

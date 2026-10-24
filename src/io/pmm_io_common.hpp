@@ -37,7 +37,10 @@
 namespace mikudancestudio::pmm_io {
 
 // Stream dialect selector for the two parameterized readers.
-enum class PmmStream { V1, V2 };
+enum class PmmStream {
+    V1,
+    V2
+};
 
 // _read thunk shape shared by both loader bodies (v1 0x4593F9-region /
 // v2 0x450208-region call pattern); the result is only tested by the v1
@@ -51,9 +54,10 @@ inline int Rd(int fd, void* buf, unsigned int count) {
 // v1 body: ReadV1BoneKey (0x459DF4 dense / 0x459F18 sparse helper shape);
 // v2 body: ReadPmmBoneKey (0x452C97 / 0x453087).  Only difference: the v2
 // tail byte.
-template <PmmStream S>
-inline void ReadPmmBoneKey(int fd, mdl::BoneKey& key) {
-    Rd(fd, &key.frame, 4); Rd(fd, &key.previous, 4); Rd(fd, &key.next, 4);
+template <PmmStream S> inline void ReadPmmBoneKey(int fd, mdl::BoneKey& key) {
+    Rd(fd, &key.frame, 4);
+    Rd(fd, &key.previous, 4);
+    Rd(fd, &key.next, 4);
     for (int lane = 0; lane < 4; ++lane) {
         Rd(fd, &key.interpolation[lane], 1);
         Rd(fd, &key.interpolation[lane + 4], 1);
@@ -70,7 +74,9 @@ inline void ReadPmmBoneKey(int fd, mdl::BoneKey& key) {
 // v1 body: ReadV1MorphKey (0x45A0D7); v2 body: ReadPmmMorphKey (0x453427).
 // Byte-identical dialects.
 inline void ReadPmmMorphKey(int fd, mdl::MorphKey& key) {
-    Rd(fd, &key.frame, 4); Rd(fd, &key.previous, 4); Rd(fd, &key.next, 4);
+    Rd(fd, &key.frame, 4);
+    Rd(fd, &key.previous, 4);
+    Rd(fd, &key.next, 4);
     Rd(fd, &key.value, 4);
     Rd(fd, &key.allocated, 1);
 }
@@ -81,8 +87,7 @@ inline void ReadPmmMorphKey(int fd, mdl::MorphKey& key) {
 // address).  v1 (0x45AC10) stops after head + interpolation + perspective +
 // fov + selected; v2 (0x454E07) reads the parent-model/bone dwords between
 // the head and the interpolation table.
-template <PmmStream S>
-inline void ReadPmmCameraKey(int fd, mdl::CameraKey& key) {
+template <PmmStream S> inline void ReadPmmCameraKey(int fd, mdl::CameraKey& key) {
     Rd(fd, &key, 0x28);
     if constexpr (S == PmmStream::V2) {
         Rd(fd, &key.parentModel, 4);
@@ -157,8 +162,7 @@ inline void ReadPmmAccessoryKey(int fd, mdl::AccessoryKey& key) {
     Rd(fd, &key.next, 4);
     Rd(fd, &b, 1);
     key.visible = b & 1;
-    key.opacity =
-        static_cast<float>(100 - (b >> 1)) / 100.0f;
+    key.opacity = static_cast<float>(100 - (b >> 1)) / 100.0f;
     Rd(fd, &key.parentModel, 4);
     Rd(fd, &key.parentBone, 4);
     Rd(fd, key.position, sizeof key.position);
@@ -182,8 +186,7 @@ inline void DiscardPmmMorphKey(int fd) {
     ReadPmmMorphKey(fd, ignored);
 }
 
-inline void DiscardPmmDisplayKey(int fd, std::int32_t ikCount,
-                                 std::int32_t rigidBodyCount) {
+inline void DiscardPmmDisplayKey(int fd, std::int32_t ikCount, std::int32_t rigidBodyCount) {
     std::uint32_t ignoredLink = 0;
     std::uint8_t ignoredFlag = 0;
     Rd(fd, &ignoredLink, 4);
@@ -207,47 +210,42 @@ __declspec(dllimport) std::int32_t __stdcall AVIFileRelease(void* pfile);
 }
 
 // ---- UI strings (wide .rdata mirrors; VA recorded) -----------------------
-inline const wchar_t kWNashi[]    = L"\x306A\x3057";                    // 0x52D360
-inline const wchar_t kWGround[]   = L"\x5730\x9762";                    // 0x52D368
-inline const wchar_t kWCamLight[] =
-    L"\xFF76\xFF92\xFF97\xFF65\x7167\x660E\xFF65"
-      L"\xFF71\xFF78\xFF7E\xFF7B\xFF98";                         // 0x52D370
-inline const wchar_t kWLight[]    = L"\x7167\x660E";                    // 0x52D390
-inline const wchar_t kWSelfSh[]   = L"\x30BB\x30EB\x30D5\x5F71";        // 0x52D398
-inline const wchar_t kWGravity[]  = L"\x91CD\x529B";                    // 0x52D3A4
-inline const wchar_t kWAll[]      = L"\x3059\x3079\x3066";              // 0x52D3AC
-inline const wchar_t kWViewAng[]  = L"\x8996\x91CE\x89D2";              // 0x52D3B4
-inline const wchar_t kWDist[]     = L"\x8DDD\x3000\x96E2";              // 0x52D3BC
-inline const wchar_t kWZMove[]    = L"\xFF5A\x79FB\x52D5";              // 0x52D3C4
-inline const wchar_t kWYMove[]    = L"\xFF59\x79FB\x52D5";              // 0x52D3CC
-inline const wchar_t kWXMove[]    = L"\xFF58\x79FB\x52D5";              // 0x52D3D4
-inline const wchar_t kWRot[]      = L"\x56DE\x3000\x8EE2";              // 0x52D470
-inline const wchar_t kWCamera[]   = L"\x30AB\x30E1\x30E9";              // 0x52B784
+inline const wchar_t kWNashi[] = L"\x306A\x3057";  // 0x52D360
+inline const wchar_t kWGround[] = L"\x5730\x9762"; // 0x52D368
+inline const wchar_t kWCamLight[] = L"\xFF76\xFF92\xFF97\xFF65\x7167\x660E\xFF65"
+                                    L"\xFF71\xFF78\xFF7E\xFF7B\xFF98"; // 0x52D370
+inline const wchar_t kWLight[] = L"\x7167\x660E";                      // 0x52D390
+inline const wchar_t kWSelfSh[] = L"\x30BB\x30EB\x30D5\x5F71";         // 0x52D398
+inline const wchar_t kWGravity[] = L"\x91CD\x529B";                    // 0x52D3A4
+inline const wchar_t kWAll[] = L"\x3059\x3079\x3066";                  // 0x52D3AC
+inline const wchar_t kWViewAng[] = L"\x8996\x91CE\x89D2";              // 0x52D3B4
+inline const wchar_t kWDist[] = L"\x8DDD\x3000\x96E2";                 // 0x52D3BC
+inline const wchar_t kWZMove[] = L"\xFF5A\x79FB\x52D5";                // 0x52D3C4
+inline const wchar_t kWYMove[] = L"\xFF59\x79FB\x52D5";                // 0x52D3CC
+inline const wchar_t kWXMove[] = L"\xFF58\x79FB\x52D5";                // 0x52D3D4
+inline const wchar_t kWRot[] = L"\x56DE\x3000\x8EE2";                  // 0x52D470
+inline const wchar_t kWCamera[] = L"\x30AB\x30E1\x30E9";               // 0x52B784
 inline const wchar_t kWOpenFile[] = L"\x30D5\x30A1\x30A4\x30EB\x3092"
-                                    L"\x958B\x304F";                    // 0x52DC84
+                                    L"\x958B\x304F"; // 0x52DC84
 inline const wchar_t kWUserModel[] = L"UserFile\\Model";
-inline const wchar_t kWUserAcc[]   = L"UserFile\\Accessory";
-inline const wchar_t kWFilterModel[] =
-    L"All Model files(*.pmd,*.pmx)\0*.pmd;*.pmx\0";              // 0x52DCE0
-inline const wchar_t kWFilterAccJp[] =
-    L"\x8AAD\x8FBC\x53EF\x80FD\x30D5\x30A1\x30A4\x30EB"
-      L"(*.x,*.vac)\0*.x;*.vac\0";                               // 0x52D948
-inline const wchar_t kWFilterAccEn[] =
-    L"accessory file(*.x,*.vac)\0*.x;*.vac\0";
-inline const char kNon[] = "non";                                       // 0x52D38C
+inline const wchar_t kWUserAcc[] = L"UserFile\\Accessory";
+inline const wchar_t kWFilterModel[] = L"All Model files(*.pmd,*.pmx)\0*.pmd;*.pmx\0"; // 0x52DCE0
+inline const wchar_t kWFilterAccJp[] = L"\x8AAD\x8FBC\x53EF\x80FD\x30D5\x30A1\x30A4\x30EB"
+                                       L"(*.x,*.vac)\0*.x;*.vac\0"; // 0x52D948
+inline const wchar_t kWFilterAccEn[] = L"accessory file(*.x,*.vac)\0*.x;*.vac\0";
+inline const char kNon[] = "non"; // 0x52D38C
 
 // ---- SJIS box texts shared verbatim by both loader bodies ----------------
 inline const char kJpChainCapPhys[] =
     "\x95\x5C\x8E\xA6\xA5\x49\x4B\xA5\x8A\x4F\x90\x65\x83\x66\x81\x5B"
-    "\x83\x5E\x88\xD9\x8F\xED";                                  // 0x52D82C
+    "\x83\x5E\x88\xD9\x8F\xED"; // 0x52D82C
 inline const char kJpCannotOpenModel[] =
     "\x83\x82\x83\x66\x83\x8B\x83\x74\x83\x40\x83\x43\x83\x8B\x93\xC7"
-    "\x82\xDD\x8D\x9E\x82\xDD\x8E\xB8\x94\x73";                  // 0x52DB64
-inline const char kJpOpenCaption[] =
-    "\x83\x74\x83\x40\x83\x43\x83\x8B\x93\xC7\x8D\x9E";          // 0x52DB80
+    "\x82\xDD\x8D\x9E\x82\xDD\x8E\xB8\x94\x73";                                          // 0x52DB64
+inline const char kJpOpenCaption[] = "\x83\x74\x83\x40\x83\x43\x83\x8B\x93\xC7\x8D\x9E"; // 0x52DB80
 
 // Main-window title format set after every successful load/save (v1 load
 // tail 0x45E2A4 / v2 load tail 0x4582C2 / save tail 0x41E747).
 inline const wchar_t kAppTitleFormat[] = L"MikuDanceStudio [%s]";
 
-}  // namespace mikudancestudio::pmm_io
+} // namespace mikudancestudio::pmm_io

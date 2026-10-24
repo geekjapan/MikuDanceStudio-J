@@ -13,12 +13,11 @@
 
 namespace mikudancestudio {
 
-void PushBoneEditUndo(MMDApp* app) {  // VA 0x0042D6E0
+void PushBoneEditUndo(MMDApp* app) { // VA 0x0042D6E0
     if (app == nullptr)
         return;
     const unsigned modelSlot = app->state.slotIdx;
-    auto* model = static_cast<unsigned char*>(
-        app->state.modelSlots[modelSlot]);
+    auto* model = static_cast<unsigned char*>(app->state.modelSlots[modelSlot]);
     if (model == nullptr)
         return;
 
@@ -47,14 +46,14 @@ void PushBoneEditUndo(MMDApp* app) {  // VA 0x0042D6E0
     // typed 字段（双架构偏移由 model_layout.hpp 钉死）。
     mikudancestudio::mdl::Mdl(model)->undoDirty = 1;
     mikudancestudio::mdl::Mdl(model)->redoDirty = 0;
-    auto& ringIndex = mikudancestudio::mdl::Mdl(model)->undoState[0];
+    auto& ringIndex = mikudancestudio::mdl::Mdl(model)->UndoCursor();
     if (++ringIndex >= 30)
         ringIndex = 0;
-    mikudancestudio::mdl::Mdl(model)->undoState[1] = ringIndex;
+    mikudancestudio::mdl::Mdl(model)->LatestUndoCursor() = ringIndex;
 
     auto& undo = mikudancestudio::mdl::Mdl(model)->undoRings[0].slots[ringIndex];
-    undo.operation = 1;
-    undo.dirty = selectedCount;
+    undo.operation = mdl::UndoOperation::BonePose;
+    undo.recordCount = selectedCount;
     auto*& oldSnapshot = undo.bonePose;
     if (oldSnapshot != nullptr) {
         ::operator delete(oldSnapshot);
@@ -79,4 +78,4 @@ void PushBoneEditUndo(MMDApp* app) {  // VA 0x0042D6E0
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

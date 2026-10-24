@@ -8,6 +8,7 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <d3d9.h>
 
@@ -29,9 +30,8 @@
 #include "mikudancestudio/panel_controls.hpp"
 
 namespace mikudancestudio {
-void RefreshRequest(int area);
-void PostLanguageSweep2(MMDApp* app);  // VA 0x0040D070, was declared here as
-                                       // 0x40D070 (real body: ui_view_refresh.cpp)
+void InvalidateSelectionReadouts(MMDApp* app); // VA 0x0040D070, was declared here as
+                                               // 0x40D070 (real body: ui_view_refresh.cpp)
 
 namespace {
 
@@ -43,14 +43,13 @@ using Matrix = d3dx::D3DXMATRIXF;
 
 void Identity(Matrix* value) {
     std::memset(value, 0, sizeof(*value));
-    value->m[0][0] = value->m[1][1] = value->m[2][2] =
-        value->m[3][3] = 1.0f;
+    value->m[0][0] = value->m[1][1] = value->m[2][2] = value->m[3][3] = 1.0f;
 }
 
 void ReleaseCom(void* object) {
     if (object == nullptr)
         return;
-    reinterpret_cast<IUnknown*>(object)->Release();  // vtable slot 2
+    reinterpret_cast<IUnknown*>(object)->Release(); // vtable slot 2
 }
 
 // Porting-era trace under MIKUDANCESTUDIO_PMM_TRACE_DIR (CMake option
@@ -70,20 +69,19 @@ void TraceAccessoryLoadStage(const char* stage, const void* value) {
     fclose(stream);
 }
 #else
-inline void TraceAccessoryLoadStage(const char*, const void*) {}
+inline void TraceAccessoryLoadStage(const char*, const void*) {
+}
 #endif
 
 IDirect3DTexture9* CachedTexture(D3DRenderer* sub, const wchar_t* path) {
     if (path == nullptr || path[0] == L'\0')
         return nullptr;
     for (int i = 0; i < 10000; ++i) {
-        const wchar_t* name = static_cast<const wchar_t*>(
-            sub->resourcePool[i].heapBuffer);
+        const wchar_t* name = static_cast<const wchar_t*>(sub->resourcePool[i].heapBuffer);
         if (name == nullptr)
             return nullptr;
         if (wcscmp(name, path) == 0)
-            return reinterpret_cast<IDirect3DTexture9*>(
-                sub->resourcePool[i].comObject);
+            return reinterpret_cast<IDirect3DTexture9*>(sub->resourcePool[i].comObject);
     }
     return nullptr;
 }
@@ -114,8 +112,7 @@ void AccessoryPlacement(MMDApp* app, void* accessory, Matrix* world) {
     auto* bones = mikudancestudio::mdl::Bones(model);
     const int boneIndex = std::max(mdl::Accessory(accessory)->parentBone, 0);
     auto* bone = &bones[boneIndex];
-    api.translation(&part, bone->position[0], bone->position[1],
-                    bone->position[2]);
+    api.translation(&part, bone->position[0], bone->position[1], bone->position[2]);
     api.multiply(world, world, &part);
     api.multiply(world, world, reinterpret_cast<Matrix*>(bone->matInit));
 }
@@ -127,17 +124,13 @@ void AccessoryPlacement(MMDApp* app, void* accessory, Matrix* world) {
 // half-texel matrix diag(0.5, -0.5, 0) + translation (0.5, 0.5) built once
 // in the prologue; the old reconstruction used CAMERASPACEREFLECTIONVECTOR
 // and no transform.
-void ConfigureFixedTexture(void* accessory, D3DRenderer* sub,
-                           IDirect3DDevice9* device, DWORD material,
-                           IDirect3DTexture9* screenTexture) {
+void ConfigureFixedTexture(void* accessory, D3DRenderer* sub, IDirect3DDevice9* device,
+                           DWORD material, IDirect3DTexture9* screenTexture) {
     auto* paths = mdl::Accessory(accessory)->texturePaths;
     auto* types = mdl::Accessory(accessory)->textureTypes;
     const unsigned char type = types != nullptr ? types[material] : 0;
-    const wchar_t* first = paths != nullptr
-        ? paths[material].primary : L"";
-    const wchar_t* second = paths != nullptr
-        ? paths[material].sphere
-        : L"";
+    const wchar_t* first = paths != nullptr ? paths[material].primary : L"";
+    const wchar_t* second = paths != nullptr ? paths[material].sphere : L"";
 
     // x64 sub_7FF7CB4FD350 序言自 rdata 0x7FF7CB54A4F0 整体加载的常量矩阵：
     // diag(0.5, -0.5, 0) 加平移 _41=0.5、_42=0.5（COUNT2 下 u'=0.5u+0.5、
@@ -152,37 +145,33 @@ void ConfigureFixedTexture(void* accessory, D3DRenderer* sub,
     sphereTexel._44 = 1.0f;
 
     switch (type) {
-    case 1:  // 0x4C4D94: sphere modulate
+    case 1: // 0x4C4D94: sphere modulate
         device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
-        device->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS,
-                                     D3DTTFF_COUNT2);
+        device->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
         device->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0x10000);
         device->SetTransform(D3DTS_TEXTURE0, &sphereTexel);
         device->SetTexture(0, CachedTexture(sub, first));
         break;
-    case 2:  // 0x4C4E2A: sphere add
+    case 2: // 0x4C4E2A: sphere add
         device->SetTransform(D3DTS_TEXTURE0, &sphereTexel);
         device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_ADD);
-        device->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS,
-                                     D3DTTFF_COUNT2);
+        device->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
         device->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0x10000);
         device->SetTexture(0, CachedTexture(sub, first));
         break;
-    case 3:  // 0x4C4EBC: screen texture
+    case 3: // 0x4C4EBC: screen texture
         device->SetTexture(0, screenTexture);
         break;
-    case 4:  // 0x4C4EE0: sub texture, stage-1 modulate
-    case 5:  // 0x4C4F25: sub texture, stage-1 add
+    case 4: // 0x4C4EE0: sub texture, stage-1 modulate
+    case 5: // 0x4C4F25: sub texture, stage-1 add
         device->SetTexture(0, CachedTexture(sub, first));
         device->SetTransform(D3DTS_TEXTURE1, &sphereTexel);
-        device->SetTextureStageState(1, D3DTSS_COLOROP,
-            type == 5 ? D3DTOP_ADD : D3DTOP_MODULATE);
-        device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS,
-                                     D3DTTFF_COUNT2);
+        device->SetTextureStageState(1, D3DTSS_COLOROP, type == 5 ? D3DTOP_ADD : D3DTOP_MODULATE);
+        device->SetTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
         device->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 0x10000);
         device->SetTexture(1, CachedTexture(sub, second));
         break;
-    default:  // 0x4C4FE6: plain texture
+    default: // 0x4C4FE6: plain texture
         device->SetTexture(0, CachedTexture(sub, first));
         break;
     }
@@ -201,9 +190,8 @@ void ResetAccessoryTextureStages(IDirect3DDevice9* device) {
 }
 
 IDirect3DTexture9* AccessoryScreenTexture(MMDApp* app) {
-    return app->CaptureMode() == ScreenCaptureMode::BackgroundRefresh
-        ? app->AviBackgroundTexture()
-        : app->CaptureTexture();
+    return app->CaptureMode() == ScreenCaptureMode::BackgroundRefresh ? app->AviBackgroundTexture()
+                                                                      : app->CaptureTexture();
 }
 
 // The original order lookup dereferences the slot pointer directly; the
@@ -213,29 +201,25 @@ IDirect3DTexture9* AccessoryScreenTexture(MMDApp* app) {
 void* FindAccessoryByOrder(MMDApp* app, int order) {
     for (int slot = 0; slot < 255; ++slot) {
         void* accessory = app->AccessorySlot(slot);
-        if (accessory != nullptr &&
-            mdl::Accessory(accessory)->order == order)
+        if (accessory != nullptr && mdl::Accessory(accessory)->order == order)
             return accessory;
     }
     return nullptr;
 }
 
-void SetAccessoryLight(MMDApp* app, IDirect3DDevice9* device,
-                       bool accessoryPass) {
+void SetAccessoryLight(MMDApp* app, IDirect3DDevice9* device, bool accessoryPass) {
     D3DLIGHT9& light = app->SceneLight();
     light.Diffuse.r = accessoryPass ? 10.0f : 0.0f;
     light.Diffuse.g = accessoryPass ? 10.0f : 0.0f;
     light.Diffuse.b = accessoryPass ? 10.0f : 0.0f;
-    const float delta = accessoryPass ? -0.300000011920929f
-                                      : 0.300000011920929f;
+    const float delta = accessoryPass ? -0.300000011920929f : 0.300000011920929f;
     light.Ambient.r += delta;
     light.Ambient.g += delta;
     light.Ambient.b += delta;
     device->SetLight(0, &light);
 }
 
-void RenderAccessoryFixedOne(MMDApp* app, void* accessory,
-                             bool projectedGroundShadow) {
+void RenderAccessoryFixedOne(MMDApp* app, void* accessory, bool projectedGroundShadow) {
     if (accessory == nullptr || mdl::Accessory(accessory)->visible == 0)
         return;
     D3DRenderer* sub = app->Renderer();
@@ -248,12 +232,12 @@ void RenderAccessoryFixedOne(MMDApp* app, void* accessory,
     device->GetTransform(D3DTS_WORLD, reinterpret_cast<D3DMATRIX*>(&base));
     AccessoryPlacement(app, accessory, &world);
     d3dx::Get().multiply(&world, &world, &base);
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&world));
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&world));
     device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     device->SetRenderState(D3DRS_DESTBLEND,
-        !projectedGroundShadow && mdl::Accessory(accessory)->additiveBlend != 0
-            ? D3DBLEND_ONE : D3DBLEND_INVSRCALPHA);
+                           !projectedGroundShadow && mdl::Accessory(accessory)->additiveBlend != 0
+                               ? D3DBLEND_ONE
+                               : D3DBLEND_INVSRCALPHA);
     device->SetRenderState(static_cast<D3DRENDERSTATETYPE>(143), TRUE);
 
     const DWORD count = mdl::Accessory(accessory)->materialCount;
@@ -280,8 +264,7 @@ void RenderAccessoryFixedOne(MMDApp* app, void* accessory,
             ++mdl::Accessory(accessory)->currentMaterial;
             // 0x4C4D86: texture states first, then the material copy
             // (alpha scaled by +1184) immediately before the subset draw.
-            ConfigureFixedTexture(accessory, sub, device, i,
-                                  AccessoryScreenTexture(app));
+            ConfigureFixedTexture(accessory, sub, device, i, AccessoryScreenTexture(app));
             D3DMATERIAL9 material = materials[i];
             material.Diffuse.a *= mdl::Accessory(accessory)->opacity;
             device->SetMaterial(&material);
@@ -293,21 +276,16 @@ void RenderAccessoryFixedOne(MMDApp* app, void* accessory,
     // 0x4C50FD..0x4C5141: color write off, world restore - and no texture
     // unbinding (the original leaves the last bindings in place).
     device->SetRenderState(static_cast<D3DRENDERSTATETYPE>(143), FALSE);
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&base));
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&base));
 }
 
-void SelectEffectTechnique(void* accessory, D3DRenderer* sub,
-                           IDirect3DDevice9* device, void* effect,
-                           DWORD material, IDirect3DTexture9* screenTexture) {
+void SelectEffectTechnique(void* accessory, D3DRenderer* sub, IDirect3DDevice9* device,
+                           void* effect, DWORD material, IDirect3DTexture9* screenTexture) {
     auto* paths = mdl::Accessory(accessory)->texturePaths;
     auto* types = mdl::Accessory(accessory)->textureTypes;
     const unsigned char type = types != nullptr ? types[material] : 0;
-    const wchar_t* first = paths != nullptr
-        ? paths[material].primary : L"";
-    const wchar_t* second = paths != nullptr
-        ? paths[material].sphere
-        : L"";
+    const wchar_t* first = paths != nullptr ? paths[material].primary : L"";
+    const wchar_t* second = paths != nullptr ? paths[material].sphere : L"";
     device->SetTexture(1, nullptr);
     device->SetTexture(2, nullptr);
     if (type == 3) {
@@ -347,8 +325,7 @@ bool ExtractXTexture(const wchar_t* xFile, int material, char out[256]) {
     int seen = 0;
     while (fgets(line, sizeof(line), stream) != nullptr) {
         char* word = strstr(line, "Material");
-        if (word != nullptr && word != line &&
-            (word[-1] == ' ' || word[-1] == '\t')) {
+        if (word != nullptr && word != line && (word[-1] == ' ' || word[-1] == '\t')) {
             bool onlySpace = true;
             for (char* p = line; p < word - 1; ++p)
                 onlySpace = onlySpace && (*p == ' ' || *p == '\t');
@@ -378,17 +355,15 @@ bool ExtractXTexture(const wchar_t* xFile, int material, char out[256]) {
 
 void WideToAnsi(const wchar_t* source, char* destination, int count) {
     destination[0] = '\0';
-    WideCharToMultiByte(CP_ACP, 0, source, -1, destination, count,
-                        nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, source, -1, destination, count, nullptr, nullptr);
 }
 
-bool LoadOneTexture(D3DRenderer* sub, void* accessory, DWORD material,
-                    const char* name, wchar_t* destination) {
+bool LoadOneTexture(D3DRenderer* sub, void* accessory, DWORD material, const char* name,
+                    wchar_t* destination) {
     wchar_t converted[256] = {};
     wchar_t* directory = mdl::Accessory(accessory)->directory;
     auto* wrapperBytes = reinterpret_cast<unsigned char*>(sub);
-    ConvertMaterialName(wrapperBytes, name, converted,
-                        0x100, directory);
+    ConvertMaterialName(wrapperBytes, name, converted, 0x100, directory);
     swprintf_s(destination, 0x200, L"%s%s", directory, converted);
     if (LoadTextureShared(wrapperBytes, destination))
         return true;
@@ -396,8 +371,7 @@ bool LoadOneTexture(D3DRenderer* sub, void* accessory, DWORD material,
     const wchar_t* xFile = mdl::Accessory(accessory)->sourcePath;
     if (!ExtractXTexture(xFile, static_cast<int>(material), fallback))
         return false;
-    ConvertMaterialName(wrapperBytes, fallback, converted,
-                        0x100, directory);
+    ConvertMaterialName(wrapperBytes, fallback, converted, 0x100, directory);
     swprintf_s(destination, 0x200, L"%s%s", directory, converted);
     return LoadTextureShared(wrapperBytes, destination) != 0;
 }
@@ -412,9 +386,8 @@ constexpr char kMsgCannotFindXfileJp[] =
     "\x82\xE8\x82\xDC\x82\xB9\x82\xF1";
 // 0x7FF7CB551458: JP twin of the caller's "This is not x_file." text
 // ("正しいｘファイルではありません").
-constexpr char kMsgNotXFileJp[] =
-    "\x90\xB3\x82\xB5\x82\xA2\x82\x98\x83\x74\x83\x40\x83\x43\x83\x8B"
-    "\x82\xC5\x82\xCD\x82\xA0\x82\xE8\x82\xDC\x82\xB9\x82\xF1";
+constexpr char kMsgNotXFileJp[] = "\x90\xB3\x82\xB5\x82\xA2\x82\x98\x83\x74\x83\x40\x83\x43\x83\x8B"
+                                  "\x82\xC5\x82\xCD\x82\xA0\x82\xE8\x82\xDC\x82\xB9\x82\xF1";
 
 // The original object loader pops this box (uType 0) on every not-found
 // path - empty resolved path, missing directory separator, and a failed
@@ -424,16 +397,14 @@ constexpr char kMsgNotXFileJp[] =
 void ShowCannotFindXfile(MMDApp* app) {
     const bool english = app->state.englishUI != 0;
     MessageBoxA(static_cast<HWND>(app->Hwnd()),
-                english
-                    ? "Cannot find xfile!!\n\nIf Japanese font is "
-                      "included in the filename,please rewrite it in "
-                      "English font."
-                    : kMsgCannotFindXfileJp,
-                english ? "load accessory" : kCaptionLoadAccessoryJp,
-                MB_OK);
+                english ? "Cannot find xfile!!\n\nIf Japanese font is "
+                          "included in the filename,please rewrite it in "
+                          "English font."
+                        : kMsgCannotFindXfileJp,
+                english ? "load accessory" : kCaptionLoadAccessoryJp, MB_OK);
 }
 
-}  // namespace
+} // namespace
 
 // VA 0x004C4700 - moved out of the anonymous namespace so the PMM loaders
 // (0x459221 / 0x4541D9) and the shutdown chain (0x462F9C / 0x46324D) bind to
@@ -459,7 +430,7 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
     PathResolutionWorkspace& paths = app->PathWorkspace();
     const wchar_t* resolved = ResolveUserFilePath(paths, path);
     if (resolved[0] == L'\0') {
-        ShowCannotFindXfile(app);  // x64 sub_7FF7CB4FC5CC path
+        ShowCannotFindXfile(app); // x64 sub_7FF7CB4FC5CC path
         return false;
     }
 
@@ -467,7 +438,7 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
     wcscpy_s(source, resolved);
     wchar_t* tail = wcsrchr(source, L'\\');
     if (tail == nullptr) {
-        ShowCannotFindXfile(app);  // x64 sub_7FF7CB4FC768 path
+        ShowCannotFindXfile(app); // x64 sub_7FF7CB4FC768 path
         return false;
     }
     mdl::AccessoryRecord& record = *mdl::Accessory(accessory);
@@ -497,20 +468,17 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
         fgets(line, sizeof(line), vac);
         if (char* lf = strchr(line, '\n'))
             *lf = '\0';
-        if (!ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(sub),
-                                 line, meshPath, 0x100,
+        if (!ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(sub), line, meshPath, 0x100,
                                  paths)) {
             fclose(vac);
             return false;
         }
         const wchar_t* meshName = wcsrchr(meshPath, L'\\');
-        WideToAnsi(meshName != nullptr ? meshName + 1 : meshPath,
-                   record.name, static_cast<unsigned>(sizeof record.name));
+        WideToAnsi(meshName != nullptr ? meshName + 1 : meshPath, record.name,
+                   static_cast<unsigned>(sizeof record.name));
         fscanf_s(vac, "%f", &record.scale);
-        fscanf_s(vac, "%f,%f,%f", &record.position[0],
-                 &record.position[1], &record.position[2]);
-        fscanf_s(vac, "%f,%f,%f", &record.rotation[0],
-                 &record.rotation[1], &record.rotation[2]);
+        fscanf_s(vac, "%f,%f,%f", &record.position[0], &record.position[1], &record.position[2]);
+        fscanf_s(vac, "%f,%f,%f", &record.rotation[0], &record.rotation[1], &record.rotation[2]);
         fgets(line, sizeof(line), vac);
         fgets(line, sizeof(line), vac);
         std::int32_t shadowDisabled = 0;
@@ -522,9 +490,8 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
     ID3DXBuffer* materialBuffer = nullptr;
     DWORD materialCount = 0;
     ID3DXMesh* mesh = nullptr;
-    if (FAILED(D3DXLoadMeshFromXW(meshPath, 544,
-            sub->device, nullptr, &materialBuffer,
-            nullptr, &materialCount, &mesh)))
+    if (FAILED(D3DXLoadMeshFromXW(meshPath, 544, sub->device, nullptr, &materialBuffer, nullptr,
+                                  &materialCount, &mesh)))
         return false;
     TraceAccessoryLoadStage("mesh-loaded", mesh);
     record.mesh = mesh;
@@ -532,15 +499,13 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
     record.materials = ::operator new(sizeof(D3DMATERIAL9) * materialCount);
     record.texturePaths = static_cast<mdl::AccessoryTexturePaths*>(
         ::operator new(sizeof(mdl::AccessoryTexturePaths) * materialCount));
-    record.textureTypes = static_cast<std::uint8_t*>(
-        ::operator new(materialCount));
+    record.textureTypes = static_cast<std::uint8_t*>(::operator new(materialCount));
     std::memset(record.texturePaths, 0, sizeof(mdl::AccessoryTexturePaths) * materialCount);
     std::memset(record.textureTypes, 0, materialCount);
 
     if (materialBuffer != nullptr) {
         TraceAccessoryLoadStage("material-buffer", materialBuffer);
-        auto* sourceMaterials = static_cast<D3DXMATERIAL*>(
-            materialBuffer->GetBufferPointer());
+        auto* sourceMaterials = static_cast<D3DXMATERIAL*>(materialBuffer->GetBufferPointer());
         for (DWORD i = 0; i < materialCount; ++i) {
             const D3DXMATERIAL& source = sourceMaterials[i];
             auto* material = &static_cast<D3DMATERIAL9*>(record.materials)[i];
@@ -560,13 +525,15 @@ bool LoadAccessoryObject(MMDApp* app, void* accessory, const wchar_t* path) {
                 *star = '\0';
                 LoadOneTexture(sub, accessory, i, texture, record.texturePaths[i].primary);
                 const char* sphere = star + 1;
-                types[i] = strstr(sphere, ".sph") != nullptr ? 4
-                    : strstr(sphere, ".spa") != nullptr ? 5 : 0;
+                types[i] = strstr(sphere, ".sph") != nullptr   ? 4
+                           : strstr(sphere, ".spa") != nullptr ? 5
+                                                               : 0;
                 LoadOneTexture(sub, accessory, i, sphere, record.texturePaths[i].sphere);
             } else {
                 types[i] = strstr(texture, "screen.bmp") != nullptr ? 3
-                    : strstr(texture, ".sph") != nullptr ? 1
-                    : strstr(texture, ".spa") != nullptr ? 2 : 0;
+                           : strstr(texture, ".sph") != nullptr     ? 1
+                           : strstr(texture, ".spa") != nullptr     ? 2
+                                                                    : 0;
                 if (types[i] != 3)
                     LoadOneTexture(sub, accessory, i, texture, record.texturePaths[i].primary);
             }
@@ -596,15 +563,14 @@ void SetEditFloat(HWND hwnd, int id, const char* format, float value) {
     SetDlgItemTextA(hwnd, id, text);
 }
 
-
 void DeleteAccessory(mdl::AccessoryRecord* accessory,
-                     int releaseObject) {                              // 0x40A6F0
+                     int releaseObject) { // 0x40A6F0
     DisposeAccessory(accessory);
     if ((releaseObject & 1) != 0)
         ::operator delete(accessory);
 }
 
-void LoadAccessoryFile(const wchar_t* path) {                   // 0x460B30
+void LoadAccessoryFile(const wchar_t* path) { // 0x460B30
     MMDApp* app = g_Block;
     if (app == nullptr || path == nullptr)
         return;
@@ -613,25 +579,20 @@ void LoadAccessoryFile(const wchar_t* path) {                   // 0x460B30
         ++slot;
     if (slot >= 255) {
         app->state.enterKeyState = 1;
-        static const char kJpAccLimit[] =
-            "\x92\xc7\x89\xc1\x82\xc5\x82\xab\x82\xe9\x83\x41\x83\x4e"
-            "\x83\x5a\x83\x54\x83\x8a\x82\xcc\x8d\xc5\x91\xe5\x90\x94"
-            "\x82\xcd%d\x8c\xc2\x82\xdc\x82\xc5\x82\xc5\x82\xb7";
+        static const char kJpAccLimit[] = "\x92\xc7\x89\xc1\x82\xc5\x82\xab\x82\xe9\x83\x41\x83\x4e"
+                                          "\x83\x5a\x83\x54\x83\x8a\x82\xcc\x8d\xc5\x91\xe5\x90\x94"
+                                          "\x82\xcd%d\x8c\xc2\x82\xdc\x82\xc5\x82\xc5\x82\xb7";
         static const char kJpAccTitle[] =
-            "\x83\x41\x83\x4e\x83\x5a\x83\x54\x83\x8a\x93\xc7\x8d\x9e";  // アクセサリ読込
+            "\x83\x41\x83\x4e\x83\x5a\x83\x54\x83\x8a\x93\xc7\x8d\x9e"; // アクセサリ読込
         const bool english = app->EnglishUI() != 0;
         char text[256];
-        sprintf_s(text,
-                  english ? "You cannot add accessory over %d"
-                          : kJpAccLimit,
-                  255);
-        MessageBoxA(static_cast<HWND>(app->Hwnd()), text,
-                    english ? "load accessory" : kJpAccTitle, MB_OK);
+        sprintf_s(text, english ? "You cannot add accessory over %d" : kJpAccLimit, 255);
+        MessageBoxA(static_cast<HWND>(app->Hwnd()), text, english ? "load accessory" : kJpAccTitle,
+                    MB_OK);
         return;
     }
 
-    void* accessory = ::operator new(sizeof(mdl::AccessoryRecord),
-                                     std::nothrow);
+    void* accessory = ::operator new(sizeof(mdl::AccessoryRecord), std::nothrow);
     if (accessory == nullptr)
         return;
     std::memset(accessory, 0, sizeof(mdl::AccessoryRecord));
@@ -640,11 +601,10 @@ void LoadAccessoryFile(const wchar_t* path) {                   // 0x460B30
     if (!LoadAccessoryObject(app, accessory, path)) {
         const bool english = app->state.englishUI != 0;
         MessageBoxA(static_cast<HWND>(app->Hwnd()),
-            english
-                ? "This is not x_file.\n\nIf Japanese font is included in "
-                  "the filename,please rewrite it in English font."
-                : kMsgNotXFileJp,
-            english ? "load accessory" : kCaptionLoadAccessoryJp, MB_OK);
+                    english ? "This is not x_file.\n\nIf Japanese font is included in "
+                              "the filename,please rewrite it in English font."
+                            : kMsgNotXFileJp,
+                    english ? "load accessory" : kCaptionLoadAccessoryJp, MB_OK);
         DisposeAccessory(accessory);
         ::operator delete(accessory);
         app->AccessorySlot(slot) = nullptr;
@@ -654,14 +614,12 @@ void LoadAccessoryFile(const wchar_t* path) {                   // 0x460B30
     HWND hwnd = static_cast<HWND>(app->Hwnd());
     app->state.sceneModified = 1;
     const char* name = mdl::Accessory(accessory)->name;
-    LRESULT displayIndex = SendDlgItemMessageA(
-        hwnd, panel::kAccessoryCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(name));
-    mdl::Accessory(accessory)->order =
-        static_cast<std::uint8_t>(displayIndex);
+    LRESULT displayIndex = SendDlgItemMessageA(hwnd, panel::kAccessoryCombo, CB_ADDSTRING, 0,
+                                               reinterpret_cast<LPARAM>(name));
+    mdl::Accessory(accessory)->order = static_cast<std::uint8_t>(displayIndex);
     if (displayIndex >= 0)
-        app->AccessoryRenderSplitOrder() = std::max(
-            app->AccessoryRenderSplitOrder(),
-            static_cast<std::int32_t>(displayIndex + 1));
+        app->AccessoryRenderSplitOrder() =
+            std::max(app->AccessoryRenderSplitOrder(), static_cast<std::int32_t>(displayIndex + 1));
     SendDlgItemMessageA(hwnd, panel::kAccessoryCombo, CB_SETCURSEL, displayIndex, 0);
     app->SelectedAccessorySlot() = static_cast<std::uint8_t>(slot);
     SendDlgItemMessageA(hwnd, panel::kRegisterScopeCombo, CB_ADDSTRING, 0,
@@ -670,20 +628,22 @@ void LoadAccessoryFile(const wchar_t* path) {                   // 0x460B30
     SendDlgItemMessageA(hwnd, panel::kAttachBoneCombo, CB_SHOWDROPDOWN, 0, 0);
     CheckDlgButton(hwnd, panel::kAccessoryVisibleCheckbox, BST_CHECKED);
     mdl::Accessory(accessory)->parentModel = -1;
-    SetEditFloat(hwnd, 478, "%3.4f", mdl::Accessory(accessory)->position[0]);
-    SetEditFloat(hwnd, 479, "%3.4f", mdl::Accessory(accessory)->position[1]);
-    SetEditFloat(hwnd, 480, "%3.4f", mdl::Accessory(accessory)->position[2]);
+    SetEditFloat(hwnd, panel::kAccPosXEdit, "%3.4f", mdl::Accessory(accessory)->position[0]);
+    SetEditFloat(hwnd, panel::kAccPosYEdit, "%3.4f", mdl::Accessory(accessory)->position[1]);
+    SetEditFloat(hwnd, panel::kAccPosZEdit, "%3.4f", mdl::Accessory(accessory)->position[2]);
     constexpr float kRadToDeg = 180.0f / 3.141592025756836f;
-    SetEditFloat(hwnd, 481, "%3.4f", mdl::Accessory(accessory)->rotation[0] * kRadToDeg);
-    SetEditFloat(hwnd, 482, "%3.4f", mdl::Accessory(accessory)->rotation[1] * kRadToDeg);
-    SetEditFloat(hwnd, 483, "%3.4f", mdl::Accessory(accessory)->rotation[2] * kRadToDeg);
-    SetEditFloat(hwnd, 484, "%3.4f", mdl::Accessory(accessory)->scale);
-    SetEditFloat(hwnd, 485, "%3.2f", mdl::Accessory(accessory)->opacity);
-    EnableMenuItem(GetMenu(hwnd), 0xF9, MF_ENABLED);
+    SetEditFloat(hwnd, panel::kAccRotXEdit, "%3.4f",
+                 mdl::Accessory(accessory)->rotation[0] * kRadToDeg);
+    SetEditFloat(hwnd, panel::kAccRotYEdit, "%3.4f",
+                 mdl::Accessory(accessory)->rotation[1] * kRadToDeg);
+    SetEditFloat(hwnd, panel::kAccRotZEdit, "%3.4f",
+                 mdl::Accessory(accessory)->rotation[2] * kRadToDeg);
+    SetEditFloat(hwnd, panel::kAccScaleEdit, "%3.4f", mdl::Accessory(accessory)->scale);
+    SetEditFloat(hwnd, panel::kAccOpacityEdit, "%3.2f", mdl::Accessory(accessory)->opacity);
+    EnableMenuItem(GetMenu(hwnd), MDS_CMD_ACCESSORY_SETTINGS, MF_ENABLED);
     CheckDlgButton(hwnd, panel::kAccessoryAddBlendCheckbox, BST_UNCHECKED);
     CheckDlgButton(hwnd, panel::kAccessoryShadowCheckbox,
-                   mdl::Accessory(accessory)->shadowEnabled ? BST_CHECKED
-                                                     : BST_UNCHECKED);
+                   mdl::Accessory(accessory)->shadowEnabled ? BST_CHECKED : BST_UNCHECKED);
 
     auto* frame = app->AccessoryKeys(slot);
     if (frame != nullptr) {
@@ -697,15 +657,15 @@ void LoadAccessoryFile(const wchar_t* path) {                   // 0x460B30
         frame[0].opacity = mdl::Accessory(accessory)->opacity;
         frame[0].shadowEnabled = mdl::Accessory(accessory)->shadowEnabled;
     }
-    RefreshRequest(app->SelectedAccessorySlot());
-    PostLanguageSweep2(app);
+    SelectAccessoryTimelineTrack(app->SelectedAccessorySlot());
+    InvalidateSelectionReadouts(app);
 }
 
 // VA 0x00413CB0 - register the accessory's current state at
 // one frame into its 10000-record key list (visible/shadow/parent fields +
 // pos/rot/scale/opacity), the same walk/overwrite/splice insert as the
 // other registrars.
-void RegisterAccessoryKey(MMDApp* app, int frameArg, int slot) {  // 0x413CB0
+void RegisterAccessoryKey(MMDApp* app, int frameArg, int slot) { // 0x413CB0
     if (app == nullptr || slot < 0 || slot >= 255)
         return;
     auto* object = reinterpret_cast<unsigned char*>(app->AccessorySlot(slot));
@@ -751,9 +711,9 @@ void RegisterAccessoryKey(MMDApp* app, int frameArg, int slot) {  // 0x413CB0
         char text[256];
         sprintf_s(text, 0x100,
                   "You cannot regist over %dpoint.\n"
-                  "Please execute 'delete unused frame'", 10000);
-        MessageBoxA(static_cast<HWND>(app->Hwnd()), text,
-                    "register frame", 0);
+                  "Please execute 'delete unused frame'",
+                  10000);
+        MessageBoxA(static_cast<HWND>(app->Hwnd()), text, "register frame", 0);
         return;
     }
 
@@ -773,12 +733,11 @@ void RegisterAccessoryKey(MMDApp* app, int frameArg, int slot) {  // 0x413CB0
         app->LastRegisteredFrame() = frame;
 }
 
-void RenderAccessoriesFixed(MMDApp* app) {                      // 0x4C4A10
+void RenderAccessoriesFixed(MMDApp* app) { // 0x4C4A10
     RenderAccessoriesFixedRange(app, 0, 255);
 }
 
-void RenderAccessoriesFixedRange(MMDApp* app, int firstOrder,
-                                 int lastOrder) {
+void RenderAccessoriesFixedRange(MMDApp* app, int firstOrder, int lastOrder) {
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
     if (device == nullptr)
@@ -802,16 +761,14 @@ void RenderAccessoriesProjectedGroundShadowGeometry(MMDApp* app) {
     auto* device = sub->device;
     if (device == nullptr)
         return;
-    app->ActiveRenderPass() =
-        AccessoryRenderPass::ProjectedGroundShadow;
+    app->ActiveRenderPass() = AccessoryRenderPass::ProjectedGroundShadow;
     for (int slot = 0; slot < 255; ++slot) {
         void* accessory = app->AccessorySlot(slot);
         if (accessory == nullptr)
             continue;
         if (mdl::Accessory(accessory)->shadowEnabled == 0)
             continue;
-        device->SetRenderState(D3DRS_ALPHABLENDENABLE,
-                               app->ProjectedShadowBlendEnabled());
+        device->SetRenderState(D3DRS_ALPHABLENDENABLE, app->ProjectedShadowBlendEnabled());
         app->ActiveRenderObject() = accessory;
         RenderAccessoryFixedOne(app, accessory, true);
         app->ActiveRenderObject() = nullptr;
@@ -824,11 +781,10 @@ void RenderAccessoriesProjectedGroundShadowGeometry(MMDApp* app) {
     // 之前，按"transparent ground shadow(&T)"开关（app+0x9FCA2）重写
     // ALPHABLENDENABLE；pass 起始段不写 RS(27)。该字节即 PMM 存档里的
     // projectedShadowBlendEnabled（保存点 0x7FF7CB498408）。
-    device->SetRenderState(D3DRS_ALPHABLENDENABLE,
-                           app->ProjectedShadowBlendEnabled());
+    device->SetRenderState(D3DRS_ALPHABLENDENABLE, app->ProjectedShadowBlendEnabled());
 }
 
-void RenderAccessoriesShadow(MMDApp* app) {                     // 0x4C52D0
+void RenderAccessoriesShadow(MMDApp* app) { // 0x4C52D0
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
     void* effect = sub->effect;
@@ -843,9 +799,8 @@ void RenderAccessoriesShadow(MMDApp* app) {                     // 0x4C52D0
         Matrix world;
         Matrix light;
         AccessoryPlacement(app, accessory, &world);
-        d3dx::Get().multiply(
-            &light, &world,
-            reinterpret_cast<const Matrix*>(&app->LightViewProjection()));
+        d3dx::Get().multiply(&light, &world,
+                             reinterpret_cast<const Matrix*>(&app->LightViewProjection()));
         fx::SetMatrix(effect, "matLightViewProj", &light);
         fx::SetMatrix(effect, "matWorldViewProj", &light);
         D3DMATERIAL9 material{};
@@ -867,12 +822,11 @@ void RenderAccessoriesShadow(MMDApp* app) {                     // 0x4C52D0
     }
 }
 
-void RenderAccessoriesEffect(MMDApp* app) {                     // 0x4C55C0
+void RenderAccessoriesEffect(MMDApp* app) { // 0x4C55C0
     RenderAccessoriesEffectRange(app, 0, 255);
 }
 
-void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder,
-                                  int lastOrder) {
+void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder, int lastOrder) {
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
     void* effect = sub->effect;
@@ -895,8 +849,7 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder,
             continue;
         app->ActiveRenderObject() = accessory;
         if (mdl::Accessory(accessory)->shadowEnabled == 0) {
-            app->ActiveRenderPass() =
-                AccessoryRenderPass::FixedFunction;
+            app->ActiveRenderPass() = AccessoryRenderPass::FixedFunction;
             RenderAccessoryFixedOne(app, accessory, false);
             app->ActiveRenderObject() = nullptr;
             continue;
@@ -907,13 +860,11 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder,
         Matrix world;
         Matrix value;
         AccessoryPlacement(app, accessory, &world);
-        d3dx::Get().multiply(
-            &value, &world,
-            reinterpret_cast<const Matrix*>(&app->LightViewProjection()));
+        d3dx::Get().multiply(&value, &world,
+                             reinterpret_cast<const Matrix*>(&app->LightViewProjection()));
         fx::SetMatrix(effect, "matLightViewProj", &value);
-        d3dx::Get().multiply(
-            &value, &world,
-            reinterpret_cast<const Matrix*>(&app->WorldViewProjection()));
+        d3dx::Get().multiply(&value, &world,
+                             reinterpret_cast<const Matrix*>(&app->WorldViewProjection()));
         fx::SetMatrix(effect, "matWorldViewProj", &value);
         fx::SetMatrix(effect, "matWorld", &world);
         Matrix inverseScale;
@@ -928,9 +879,9 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder,
         fx::GetMatrix(effect, "matRotate", &inverseScale);
         d3dx::Get().multiply(&value, &value, &inverseScale);
         fx::SetMatrix(effect, "matWRotate", &value);
-        device->SetRenderState(D3DRS_DESTBLEND,
-            mdl::Accessory(accessory)->additiveBlend != 0
-                ? D3DBLEND_ONE : D3DBLEND_INVSRCALPHA);
+        device->SetRenderState(D3DRS_DESTBLEND, mdl::Accessory(accessory)->additiveBlend != 0
+                                                    ? D3DBLEND_ONE
+                                                    : D3DBLEND_INVSRCALPHA);
 
         const DWORD count = mdl::Accessory(accessory)->materialCount;
         auto* materials = static_cast<const D3DMATERIAL9*>(mdl::Accessory(accessory)->materials);
@@ -941,29 +892,20 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder,
             D3DMATERIAL9 copy = *material;
             copy.Diffuse.a *= mdl::Accessory(accessory)->opacity;
             device->SetMaterial(&copy);
-            float edge[4] = {
-                (material->Ambient.r * light[9] + material->Emissive.r) *
-                    edgeFactor,
-                (material->Ambient.g * light[10] + material->Emissive.g) *
-                    edgeFactor,
-                (material->Ambient.b * light[11] + material->Emissive.b) *
-                    edgeFactor,
-                copy.Diffuse.a};
-            float specular[4] = {
-                material->Specular.r * light[5],
-                material->Specular.g * light[6],
-                material->Specular.b * light[7], material->Power};
+            float edge[4] = {(material->Ambient.r * light[9] + material->Emissive.r) * edgeFactor,
+                             (material->Ambient.g * light[10] + material->Emissive.g) * edgeFactor,
+                             (material->Ambient.b * light[11] + material->Emissive.b) * edgeFactor,
+                             copy.Diffuse.a};
+            float specular[4] = {material->Specular.r * light[5], material->Specular.g * light[6],
+                                 material->Specular.b * light[7], material->Power};
             if (specular[3] == 0.0f)
                 specular[3] = 0.1f;
-            float diffuse[4] = {
-                material->Diffuse.r * light[9],
-                material->Diffuse.g * light[10],
-                material->Diffuse.b * light[11], 1.0f};
+            float diffuse[4] = {material->Diffuse.r * light[9], material->Diffuse.g * light[10],
+                                material->Diffuse.b * light[11], 1.0f};
             fx::SetFloatArray(effect, "EgColor", edge, 4);
             fx::SetFloatArray(effect, "SpcColor", specular, 4);
             fx::SetFloatArray(effect, "DifColor", diffuse, 4);
-            SelectEffectTechnique(accessory, sub, device, effect, i,
-                AccessoryScreenTexture(app));
+            SelectEffectTechnique(accessory, sub, device, effect, i, AccessoryScreenTexture(app));
             fx::Begin(effect);
             fx::BeginPass(effect);
             mme::DrawAccessorySubset(app, accessory, i);
@@ -978,4 +920,4 @@ void RenderAccessoriesEffectRange(MMDApp* app, int firstOrder,
     SetAccessoryLight(app, device, false);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

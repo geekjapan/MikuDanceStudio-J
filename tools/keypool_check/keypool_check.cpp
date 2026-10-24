@@ -76,7 +76,7 @@ void OnAsanReport(const char* report) {
 
 mdl::ModelRecord& M() { return *mdl::Mdl(g_model); }
 
-// add_model.cpp:58-64 then the pool tail of pmx_load.cpp:1725-1767.
+// add_model.cpp:57-63 then the pool tail of pmx_load.cpp:1672-1709.
 void BuildModel() {
     g_model = static_cast<unsigned char*>(operator new(mdl::kSize));
     std::memset(g_model, 0, mdl::kSize);
@@ -134,7 +134,7 @@ template <class Key>
 void ClearMarks(Key* keys, std::size_t n) {
     for (std::size_t i = 0; i < n; ++i) keys[i].allocated = 0;
 }
-// ClearModelKeyMarks x3, command_frame_edit.cpp:2017-2019. Clearing only the
+// ClearModelKeyMarks x3, frame_clipboard.cpp:521-523. Clearing only the
 // tracked window is equivalent: CheckAll rejects any state whose cursor or
 // links leave the window, so no record past it is ever written.
 void ClearAllMarks() {
@@ -143,7 +143,7 @@ void ClearAllMarks() {
     ClearMarks(M().displayKeys, kWindow);
 }
 
-// Undo slot the bone registrars append to (command_frame_edit.cpp:2020-2088).
+// Undo slot the bone registrars append to (frame_clipboard.cpp:524-590).
 void OpenBoneUndo(int boneRecords) {
     mdl::ModelRecord& m = M();
     m.undoState[0] = m.undoState[0] + 1 >= 30 ? 0 : m.undoState[0] + 1;
@@ -151,7 +151,7 @@ void OpenBoneUndo(int boneRecords) {
     operator delete(u.auxiliaryPose);
     u.auxiliaryPose = operator new(boneRecords * 3 * 0x40);
     std::memset(u.auxiliaryPose, 0, boneRecords * 3 * 0x40);
-    u.dirty = 0;
+    u.recordCount = 0;
     std::memset(m.keyVisitMap, 0, sizeof m.keyVisitMap);
 }
 
@@ -174,7 +174,7 @@ std::string Describe(const Command& c) {
     return s;
 }
 
-// Cmd400_FramePaste (command_frame_edit.cpp:2001-2179): clear marks, then
+// PasteSelectedKeyframes (frame_clipboard.cpp:506-769): clear marks, then
 // ResetBone + bone loop, ResetMorph + morph loop, ResetDisplay + display
 // loop. Each paste here carries one key; the resets run unconditionally.
 void Paste(Kind kind, int target, int frame) {
@@ -205,16 +205,16 @@ void Apply(const Command& c) {
     case kPasteBone: case kPasteMorph: case kPasteDisplay:
         Paste(c.kind, c.target, c.frame);
         break;
-    case kRegisterBone:  // CmdControl500 case 500, command_frame_register.cpp:387
+    case kRegisterBone:  // HandleFrameRegisterControl case 500, command_frame_register.cpp:375
         std::memset(M().boneSelection, 0, kBones);
         M().boneSelection[c.target] = 1;
         RegisterSelectedBoneKeys(g_model, c.frame, 0);
         break;
-    case kRegisterMorph:  // cases 524-527, command_frame_register.cpp:503-540
+    case kRegisterMorph:  // cases 524-527, command_frame_register.cpp:496-543
         ClearAllMarks();
         RegisterMorphKeyCurrent(g_model, c.target, c.frame);
         break;
-    case kRegisterDisplay:  // case 438, command_frame_edit.cpp:2988-2994
+    case kRegisterDisplay:  // case 438, command_frame_edit.cpp:1548-1561
         ClearAllMarks();
         RegisterDisplayKeyCurrent(g_model, c.frame);
         break;

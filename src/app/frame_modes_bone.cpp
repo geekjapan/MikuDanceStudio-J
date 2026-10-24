@@ -36,6 +36,9 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#if defined(_M_IX86)
+#include "LinearMath/btMmdMath.h"
+#endif
 #include <Windows.h>
 
 #include <cmath>
@@ -53,24 +56,14 @@ namespace mikudancestudio {
 namespace {
 
 constexpr double kAngBase = 0.004999999888241291; // dbl 0x52E9C0
-constexpr double kCoarse = 5.0;       // dbl 0x52A270
-constexpr double kFine = 0.10000000149011612; // dbl 0x52BEA8 (0.1f image)
-constexpr double kWrap = 6.28;        // dbl 0x52E8E8 (+) / 0x52E8E0 (-)
-constexpr double kAccDrag = 0.01;     // dbl 0x52E9C8
+constexpr double kCoarse = 5.0;                   // dbl 0x52A270
+constexpr double kFine = 0.10000000149011612;     // dbl 0x52BEA8 (0.1f image)
+constexpr double kWrap = 6.28;                    // dbl 0x52E8E8 (+) / 0x52E8E0 (-)
+constexpr double kAccDrag = 0.01;                 // dbl 0x52E9C8
 
 float OriginalSinTimes(float angle, float factor) {
 #if defined(_M_IX86)
-    float sine;
-    float result;
-    __asm {
-        fld angle
-        fsin
-        fstp sine
-        fld sine
-        fmul factor
-        fstp result
-    }
-    return result;
+    return btMmdMath::sinTimes(angle, factor);
 #else
     return static_cast<float>(std::sin(angle) * factor);
 #endif
@@ -78,13 +71,7 @@ float OriginalSinTimes(float angle, float factor) {
 
 float OriginalCos(float angle) {
 #if defined(_M_IX86)
-    float result;
-    __asm {
-        fld angle
-        fcos
-        fstp result
-    }
-    return result;
+    return btMmdMath::cosine(angle);
 #else
     return static_cast<float>(std::cos(angle));
 #endif
@@ -92,13 +79,13 @@ float OriginalCos(float angle) {
 
 // SJIS bone-name needles (.rdata 0x52B7F0..0x52B81C); memcmp lengths in the
 // original include the NUL byte.
-const char kNeedleStrstr[] = "\x8E\x77";                    // 0x52B7F0
-const char kNameR1[] = "\x89\x45\x8E\xE8\x8E\xF1";          // 0x52B7F4 (7)
-const char kNameR2[] = "\x89\x45\x82\xD0\x82\xB6";          // 0x52B7FC (7)
-const char kNameR3[] = "\x89\x45\x98\x72";                  // 0x52B804 (5)
-const char kNameL1[] = "\x8D\xB6\x8E\xE8\x8E\xF1";          // 0x52B80C (7)
-const char kNameL2[] = "\x8D\xB6\x82\xD0\x82\xB6";          // 0x52B814 (7)
-const char kNameL3[] = "\x8D\xB6\x98\x72";                  // 0x52B81C (5)
+const char kNeedleStrstr[] = "\x8E\x77";           // 0x52B7F0
+const char kNameR1[] = "\x89\x45\x8E\xE8\x8E\xF1"; // 0x52B7F4 (7)
+const char kNameR2[] = "\x89\x45\x82\xD0\x82\xB6"; // 0x52B7FC (7)
+const char kNameR3[] = "\x89\x45\x98\x72";         // 0x52B804 (5)
+const char kNameL1[] = "\x8D\xB6\x8E\xE8\x8E\xF1"; // 0x52B80C (7)
+const char kNameL2[] = "\x8D\xB6\x82\xD0\x82\xB6"; // 0x52B814 (7)
+const char kNameL3[] = "\x8D\xB6\x98\x72";         // 0x52B81C (5)
 
 float* Vec3Normalize(float v[3]) {
     return d3dx::Get().vec3Normalize(v, v);
@@ -113,8 +100,8 @@ unsigned char* CurrentModel(MMDApp* app) {
 }
 
 bool IsSelectedRoot(unsigned char* model, int index, bool excludeSelected) {
-    const auto* selected = static_cast<const unsigned char*>(
-        mikudancestudio::mdl::Mdl(model)->boneSelection);
+    const auto* selected =
+        static_cast<const unsigned char*>(mikudancestudio::mdl::Mdl(model)->boneSelection);
     if (selected == nullptr || selected[index] == 0)
         return false;
     if (excludeSelected && index == mikudancestudio::mdl::Mdl(model)->selectedBone)
@@ -127,16 +114,15 @@ bool IsSelectedRoot(unsigned char* model, int index, bool excludeSelected) {
     return parent == -1 || selected[parent] == 0;
 }
 
-void TransformBoneVector(const mdl::BoneRecord& bone, const float matrix[16],
-                         const float in[3], float out[3]) {
+void TransformBoneVector(const mdl::BoneRecord& bone, const float matrix[16], const float in[3],
+                         float out[3]) {
     out[0] = matrix[0] * in[0] + matrix[4] * in[1] + matrix[8] * in[2];
     out[1] = matrix[1] * in[0] + matrix[5] * in[1] + matrix[9] * in[2];
     out[2] = matrix[2] * in[0] + matrix[6] * in[1] + matrix[10] * in[2];
 }
 
 void BoneWorldPoint(const mdl::BoneRecord& bone, float out[3]) {
-    const float rest[3] = {bone.position[0], bone.position[1],
-                           bone.position[2]};
+    const float rest[3] = {bone.position[0], bone.position[1], bone.position[2]};
     TransformBoneVector(bone, bone.matInit, rest, out);
     out[0] += bone.matInit[12];
     out[1] += bone.matInit[13];
@@ -181,28 +167,24 @@ bool EditModeRecord(MMDApp* app, int mode) {
             // Physics-editor joint page: drag edits the joint rotation
             // (dialog edits 754..756).
             auto* joints =
-                static_cast<mikudancestudio::mdl::JointRecord*>(
-                    app->state.jointScratchArray);
+                static_cast<mikudancestudio::mdl::JointRecord*>(app->state.jointScratchArray);
             const int index = app->state.selectedJointIndex;
             if (joints != nullptr && index >= 0) {
                 float& value = joints[index].rotation[axis];
-                value = static_cast<float>(value -
-                    static_cast<double>(dy) * kAccDrag);
+                value = static_cast<float>(value - static_cast<double>(dy) * kAccDrag);
                 EchoRecord(dialog, 754 + axis, "%3.2f",
-                    value / g_AnglePiTruncated * g_AngleDegreesScale);
+                           value / g_AnglePiTruncated * g_AngleDegreesScale);
             }
         } else {
             // Rigid-body page: drag edits the body rotation (715..717).
             auto* bodies =
-                static_cast<mikudancestudio::mdl::RigidRecord*>(
-                    app->state.rigidScratchArray);
+                static_cast<mikudancestudio::mdl::RigidRecord*>(app->state.rigidScratchArray);
             const int index = app->state.selectedRigidIndex;
             if (bodies != nullptr && index >= 0) {
                 float& value = bodies[index].rotation[axis];
-                value = static_cast<float>(value -
-                    static_cast<double>(dy) * kAccDrag);
+                value = static_cast<float>(value - static_cast<double>(dy) * kAccDrag);
                 EchoRecord(dialog, 715 + axis, "%3.2f",
-                    value / g_AnglePiTruncated * g_AngleDegreesScale);
+                           value / g_AnglePiTruncated * g_AngleDegreesScale);
             }
         }
         return true;
@@ -214,8 +196,7 @@ bool EditModeRecord(MMDApp* app, int mode) {
         if (app->state.physicsEditorJointPage != 0) {
             // Joint position drag (744..746).
             auto* joints =
-                static_cast<mikudancestudio::mdl::JointRecord*>(
-                    app->state.jointScratchArray);
+                static_cast<mikudancestudio::mdl::JointRecord*>(app->state.jointScratchArray);
             const int index = app->state.selectedJointIndex;
             if (joints != nullptr && index >= 0) {
                 float& value = joints[index].position[axis];
@@ -226,13 +207,11 @@ bool EditModeRecord(MMDApp* app, int mode) {
             // Rigid body: shift-drag scales the shape size (709..711),
             // plain drag moves the body (712..714).
             auto* bodies =
-                static_cast<mikudancestudio::mdl::RigidRecord*>(
-                    app->state.rigidScratchArray);
+                static_cast<mikudancestudio::mdl::RigidRecord*>(app->state.rigidScratchArray);
             const int index = app->state.selectedRigidIndex;
             if (bodies != nullptr && index >= 0) {
                 const bool scale = app->ShiftModifierActive();
-                float& value = scale ? bodies[index].size[axis]
-                                     : bodies[index].position[axis];
+                float& value = scale ? bodies[index].size[axis] : bodies[index].position[axis];
                 value = static_cast<float>(value - dy * kStep);
                 if (scale && value < 0.1f)
                     value = 0.1f;
@@ -258,18 +237,16 @@ void ApplyScreenPlaneBoneMove(MMDApp* app, unsigned char* model, int mode) {
         return;
     const int viewWidth = render->screenWidth;    // wrapper+120036
     const int viewHeight = render->screenHeight;  // wrapper+120040
-    const float overlayScale = render->viewScale;  // wrapper+120048
+    const float overlayScale = render->viewScale; // wrapper+120048
     const int outputWidth = app->RenderWidth();
     const int outputHeight = app->RenderHeight();
-    if (viewWidth == 0 || viewHeight == 0 || outputHeight == 0 ||
-        overlayScale == 0.0f)
+    if (viewWidth == 0 || viewHeight == 0 || outputHeight == 0 || overlayScale == 0.0f)
         return;
 
     const double mouseScale = app->state.selectedClipW;
     float delta[3]{};
     if (mode == 7 || mode == 9) {
-        double amount = static_cast<double>(
-            app->MouseX() - app->PreviousMouseX());
+        double amount = static_cast<double>(app->MouseX() - app->PreviousMouseX());
         amount *= mouseScale / viewWidth;
         amount *= static_cast<double>(outputWidth) / outputHeight;
         if (app->CameraPerspective() != 0)
@@ -283,8 +260,7 @@ void ApplyScreenPlaneBoneMove(MMDApp* app, unsigned char* model, int mode) {
     }
 
     if (mode == 8 || mode == 9) {
-        double amount = static_cast<double>(
-            app->PreviousMouseY() - app->MouseY());
+        double amount = static_cast<double>(app->PreviousMouseY() - app->MouseY());
         amount *= mouseScale / viewHeight;
         if (app->CameraPerspective() != 0)
             amount *= -static_cast<double>(app->CameraDistance()) * 0.95;
@@ -315,9 +291,8 @@ void ApplyLocalAxisBoneMove(MMDApp* app, unsigned char* model, int mode) {
         step = 0.5;
     else if (app->CtrlModifierActive())
         step = 0.004999999888241291;
-    const int mouseDelta = mode == 12
-        ? app->MouseY() - app->PreviousMouseY()
-        : app->PreviousMouseY() - app->MouseY();
+    const int mouseDelta =
+        mode == 12 ? app->MouseY() - app->PreviousMouseY() : app->PreviousMouseY() - app->MouseY();
 
     float delta[3]{};
     delta[mode - 10] = static_cast<float>(mouseDelta * step);
@@ -325,16 +300,14 @@ void ApplyLocalAxisBoneMove(MMDApp* app, unsigned char* model, int mode) {
         float basis[16]{};
         BoneLocalAxes(app, basis);
         const int axis = mode - 10;
-        float local[3] = {
-            basis[axis * 4 + 0] * delta[axis],
-            basis[axis * 4 + 1] * delta[axis],
-            basis[axis * 4 + 2] * delta[axis]};
+        float local[3] = {basis[axis * 4 + 0] * delta[axis], basis[axis * 4 + 1] * delta[axis],
+                          basis[axis * 4 + 2] * delta[axis]};
         TransformBoneVector(selected, selected.matInit, local, delta);
     }
     ApplySelectedRootTranslation(model, delta);
 }
 
-}  // namespace
+} // namespace
 
 // VA 0x0040E670 - local-axis basis matrix of the selected bone.
 // Fills a 16-float matrix: identity, unless the selected bone carries local
@@ -351,28 +324,22 @@ void BoneLocalAxes(MMDApp* app, float out[16]) {
     if (model == nullptr || mikudancestudio::mdl::Mdl(model)->selectedBone < 0)
         return;
     auto* bones = mikudancestudio::mdl::Bones(model);
-    const mdl::BoneRecord& bone =
-        bones[mikudancestudio::mdl::Mdl(model)->selectedBone];
+    const mdl::BoneRecord& bone = bones[mikudancestudio::mdl::Mdl(model)->selectedBone];
 
-    const bool hasAxes = !(bone.localAxes[0] == 0.0f &&
-                           bone.localAxes[1] == 0.0f &&
-                           bone.localAxes[2] == 0.0f);
+    const bool hasAxes =
+        !(bone.localAxes[0] == 0.0f && bone.localAxes[1] == 0.0f && bone.localAxes[2] == 0.0f);
     if (hasAxes && mdl::Mdl(model)->physicsMode == 2) {
-        float a[3] = {bone.localAxes[0], bone.localAxes[1],
-                      bone.localAxes[2]};
-        float b[3] = {bone.localAxes[3], bone.localAxes[4],
-                      bone.localAxes[5]};
+        float a[3] = {bone.localAxes[0], bone.localAxes[1], bone.localAxes[2]};
+        float b[3] = {bone.localAxes[3], bone.localAxes[4], bone.localAxes[5]};
         Vec3Normalize(a);
         Vec3Normalize(b);
-        float c[3] = {b[1] * a[2] - b[2] * a[1],
-                      b[2] * a[0] - b[0] * a[2],
+        float c[3] = {b[1] * a[2] - b[2] * a[1], b[2] * a[0] - b[0] * a[2],
                       b[0] * a[1] - b[1] * a[0]};
         Vec3Normalize(c);
         c[0] = -c[0];
         c[1] = -c[1];
         c[2] = -c[2];
-        float e[3] = {c[2] * a[1] - c[1] * a[2],
-                      a[2] * c[0] - c[2] * a[0],
+        float e[3] = {c[2] * a[1] - c[1] * a[2], a[2] * c[0] - c[2] * a[0],
                       a[0] * c[1] - c[0] * a[1]};
         Vec3Normalize(e);
         out[0] = a[0];
@@ -386,12 +353,9 @@ void BoneLocalAxes(MMDApp* app, float out[16]) {
         out[10] = e[2];
     } else {
         const char* name = bone.name;
-        if (std::memcmp(name, kNameR1, 7) == 0 ||
-            std::memcmp(name, kNameR2, 7) == 0 ||
-            std::memcmp(name, kNameR3, 5) == 0 ||
-            std::memcmp(name, kNameL1, 7) == 0 ||
-            std::memcmp(name, kNameL2, 7) == 0 ||
-            std::memcmp(name, kNameL3, 5) == 0 ||
+        if (std::memcmp(name, kNameR1, 7) == 0 || std::memcmp(name, kNameR2, 7) == 0 ||
+            std::memcmp(name, kNameR3, 5) == 0 || std::memcmp(name, kNameL1, 7) == 0 ||
+            std::memcmp(name, kNameL2, 7) == 0 || std::memcmp(name, kNameL3, 5) == 0 ||
             std::strstr(name, kNeedleStrstr) != nullptr) {
             const mdl::BoneRecord& p = bones[bone.tailBone];
             const float dx = p.position[0] - bone.position[0];
@@ -434,8 +398,8 @@ void BoneEditModes(MMDApp* app) {
     auto* bones = mikudancestudio::mdl::Bones(model);
     mdl::BoneRecord& bone = bones[sel];
 
-    const bool selA = app->state.shiftModifierState == 3;  // coarse selector
-    const bool selB = app->state.ctrlModifierState == 3;   // fine selector
+    const bool selA = app->state.shiftModifierState == 3; // coarse selector
+    const bool selB = app->state.ctrlModifierState == 3;  // fine selector
     const auto scaleOf = [&](float base) -> float {
         if (selA)
             return static_cast<float>(kCoarse * base);
@@ -451,8 +415,7 @@ void BoneEditModes(MMDApp* app) {
 
     if (mode == 1) {
         const float base = static_cast<float>(
-            static_cast<double>(app->state.previousMouseX -
-                                app->state.mouseX) * kAngBase);
+            static_cast<double>(app->state.previousMouseX - app->state.mouseX) * kAngBase);
         ang = scaleOf(base);
         const double aX = -static_cast<double>(app->CameraRotation()[0]);
         const double aY = -static_cast<double>(app->CameraRotation()[1]);
@@ -464,8 +427,7 @@ void BoneEditModes(MMDApp* app) {
         axis[2] = matWorld[10] * az + matWorld[9] * ax + matWorld[8] * ay;
     } else if (mode == 2) {
         const float base = static_cast<float>(
-            static_cast<double>(app->state.previousMouseY -
-                                app->state.mouseY) * kAngBase);
+            static_cast<double>(app->state.previousMouseY - app->state.mouseY) * kAngBase);
         ang = scaleOf(base);
         const double aX = -static_cast<double>(app->CameraRotation()[0]);
         const double aY = -static_cast<double>(app->CameraRotation()[1]);
@@ -475,14 +437,12 @@ void BoneEditModes(MMDApp* app) {
         axis[1] = matWorld[4] * ax + matWorld[6] * az;
         axis[2] = matWorld[8] * ax + matWorld[10] * az;
     } else if (mode == 3) {
-        const double angCurRad = std::atan2(
-            static_cast<double>(app->state.mouseX - app->state.dragOriginX),
-            static_cast<double>(app->state.mouseY - app->state.dragOriginY));
-        const double angPrevRad = std::atan2(
-            static_cast<double>(app->state.previousMouseX -
-                                app->state.dragOriginX),
-            static_cast<double>(app->state.previousMouseY -
-                                app->state.dragOriginY));
+        const double angCurRad =
+            std::atan2(static_cast<double>(app->state.mouseX - app->state.dragOriginX),
+                       static_cast<double>(app->state.mouseY - app->state.dragOriginY));
+        const double angPrevRad =
+            std::atan2(static_cast<double>(app->state.previousMouseX - app->state.dragOriginX),
+                       static_cast<double>(app->state.previousMouseY - app->state.dragOriginY));
         float ang1 = static_cast<float>(angCurRad * g_MouseScaleA);
         float ang2 = static_cast<float>(angPrevRad * g_MouseScaleA);
         if (kWrap < static_cast<double>(ang1) - ang2)
@@ -501,8 +461,7 @@ void BoneEditModes(MMDApp* app) {
     } else {
         // modes 4/5/6 - local axes
         const float base = static_cast<float>(
-            static_cast<double>(app->state.previousMouseY -
-                                app->state.mouseY) * kAngBase);
+            static_cast<double>(app->state.previousMouseY - app->state.mouseY) * kAngBase);
         ang = scaleOf(base);
         // "direct" mode selector 0x9EDB4 (physicsEditorJointPage; the pre-promotion call
         // read offset 650076, an unpinned typo of the pinned 650676)
@@ -530,10 +489,8 @@ void BoneEditModes(MMDApp* app) {
 
     {
         // ---- bone edit ------------------------------------------------------
-        if ((bone.flags & mdl::kBoneFlagFixedAxis) ==
-                mdl::kBoneFlagFixedAxis &&
-            (bone.type == mdl::BoneType::UnderIk ||
-             bone.type == mdl::BoneType::FixedAxis)) {
+        if ((bone.flags & mdl::kBoneFlagFixedAxis) == mdl::kBoneFlagFixedAxis &&
+            (bone.type == mdl::BoneType::UnderIk || bone.type == mdl::BoneType::FixedAxis)) {
             if (mdl::Mdl(model)->physicsMode == 2) {
                 axis[0] = bone.axis[0];
                 axis[1] = bone.axis[1];
@@ -546,18 +503,15 @@ void BoneEditModes(MMDApp* app) {
                 Vec3Normalize(axis);
             }
         }
-        unsigned char* dirty =
-            mikudancestudio::mdl::Mdl(model)->bonePhysicsState;
+        unsigned char* dirty = mikudancestudio::mdl::Mdl(model)->bonePhysicsState;
         if (dirty != nullptr)
             dirty[sel] = 1;
 
         // 0x476D6D/0x476DA3: sin/cos of the FULL drag angle (the 0.5
         // half-angle multiplication does NOT exist in the instruction
         // stream; var_14D4 already carries the scaled full angle)
-        float dq[4] = {OriginalSinTimes(ang, axis[0]),
-                       OriginalSinTimes(ang, axis[1]),
-                       OriginalSinTimes(ang, axis[2]),
-                       OriginalCos(ang)};
+        float dq[4] = {OriginalSinTimes(ang, axis[0]), OriginalSinTimes(ang, axis[1]),
+                       OriginalSinTimes(ang, axis[2]), OriginalCos(ang)};
         float out[4];
         QuatMultiply(out, bone.rotQuat, dq);
         std::memcpy(bone.rotQuat, out, sizeof(out));
@@ -577,20 +531,19 @@ void BoneEditModes(MMDApp* app) {
                 if (!IsSelectedRoot(model, i, true))
                     continue;
                 if (dirty != nullptr)
-                    dirty[i] = 1;                    // t4 mark (0x476FB2)
+                    dirty[i] = 1; // t4 mark (0x476FB2)
                 float point[3]{};
                 BoneWorldPoint(ch, point);
-                const float off[4] = {
-                    point[0] - piv[0], point[1] - piv[1], point[2] - piv[2],
-                    0.0f};
+                const float off[4] = {point[0] - piv[0], point[1] - piv[1], point[2] - piv[2],
+                                      0.0f};
                 float r1[4], r2[4];
-                QuatMultiply(r1, invq, off);         // 0x4770A6
-                QuatMultiply(r2, r1, dq);            // 0x4770FB sandwich
+                QuatMultiply(r1, invq, off); // 0x4770A6
+                QuatMultiply(r2, r1, dq);    // 0x4770FB sandwich
                 ch.trans[0] += r2[0] - off[0];
                 ch.trans[1] += r2[1] - off[1];
                 ch.trans[2] += r2[2] - off[2];
                 float oq[4];
-                QuatMultiply(oq, ch.rotQuat, dq);    // 0x4771EB
+                QuatMultiply(oq, ch.rotQuat, dq); // 0x4771EB
                 std::memcpy(ch.rotQuat, oq, sizeof(oq));
             }
         }
@@ -598,4 +551,4 @@ void BoneEditModes(MMDApp* app) {
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

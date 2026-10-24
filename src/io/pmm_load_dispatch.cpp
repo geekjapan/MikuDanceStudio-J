@@ -49,22 +49,22 @@ namespace mikudancestudio {
 namespace {
 
 // Shift-JIS texts from the original .rdata (embedded byte-exact).
-const char kJpOpenFailFmt[] =         // 0x52CDD4
+const char kJpOpenFailFmt[] = // 0x52CDD4
     "\x83\x74\x83\x40\x83\x43\x83\x8b\x82\xaa\x93\xc7\x82\xdd\x8d\x9e"
     "\x82\xdf\x82\xdc\x82\xb9\x82\xf1:%d";
-const char kJpOpenCaption[] =         // 0x52DB80
+const char kJpOpenCaption[] = // 0x52DB80
     "\x83\x74\x83\x40\x83\x43\x83\x8b\x93\xc7\x8d\x9e";
-const char kJpNotPmmText[] =          // 0x52DF78
+const char kJpNotPmmText[] = // 0x52DF78
     "\x82\xb1\x82\xcc\x83\x74\x83\x40\x83\x43\x83\x8b\x82\xcd"
     "Polygon Movie Maker"
     "\x97\x70\x83\x74\x83\x40\x83\x43\x83\x8b\x82\xc5\x82\xcd\x82\xa0"
     "\x82\xe8\x82\xdc\x82\xb9\x82\xf1";
-const char kJpBadVersionText[] =      // 0x52DF1C
+const char kJpBadVersionText[] = // 0x52DF1C
     "\x82\xb1\x82\xcc\x83\x6f\x81\x5b\x83\x57\x83\x87\x83\x93\x82\xcc"
     "\x70\x6d\x6d\x83\x74\x83\x40\x83\x43\x83\x8b\x82\xcd\x93\xc7\x82\xdf"
     "\x82\xdc\x82\xb9\x82\xf1";
 
-}  // namespace
+} // namespace
 
 // VA 0x00408870 - wide path -> project directory (truncate at "UserFile").
 void PathToProjectDir(wchar_t* destination, const wchar_t* source) {
@@ -106,10 +106,9 @@ void LoadSceneFile() {
     MMDApp* app = g_Block;
     char box[0x100];
 
-    app->SceneModified() = 0;                                  // 0x458FE6
+    app->SceneModified() = 0; // 0x458FE6
     int fd = -1;
-    const errno_t err =
-        _wsopen_s(&fd, app->EnvFileName(), 0x8000, 0x40, 0x80);
+    const errno_t err = _wsopen_s(&fd, app->EnvFileName(), 0x8000, 0x40, 0x80);
     if (err != 0) {
         if (app->EnglishUI() == 0)
             sprintf_s(box, 0x100, kJpOpenFailFmt, err);
@@ -120,12 +119,12 @@ void LoadSceneFile() {
         return;
     }
 
-    app->state.windowLayoutReady = 0;              // 0x459055
-    PathToProjectDir(app->PathWorkspace().projectDirectory,     // 0x45905C
-                      app->EnvFileName());
+    app->state.windowLayoutReady = 0;                       // 0x459055
+    PathToProjectDir(app->PathWorkspace().projectDirectory, // 0x45905C
+                     app->EnvFileName());
 
     char hdr[0x1E];
-    _read(fd, hdr, 0x1E);                                       // 0x459070
+    _read(fd, hdr, 0x1E); // 0x459070
     // x64 @0x7FF7CB4A2D1E: the signature is located via strstr, and the
     // version field sits at the match point + 0x14 (0x7FF7CB4A2D91/DA5
     // `lea rsi,[rax+14h]`), not at the buffer head - tolerant of any
@@ -133,11 +132,10 @@ void LoadSceneFile() {
     char* const signature = strstr(hdr, "Polygon Movie maker");
     if (signature == nullptr) {
         MessageBoxA(reinterpret_cast<HWND>(app->Hwnd()),
-                    app->EnglishUI() != 0
-                        ? "This isn't the data for Polygon Movie Maker!"
-                        : kJpNotPmmText,
+                    app->EnglishUI() != 0 ? "This isn't the data for Polygon Movie Maker!"
+                                          : kJpNotPmmText,
                     app->EnglishUI() == 0 ? kJpOpenCaption : "open file", 0);
-        _close(fd);                                             // 0x4590C1
+        _close(fd); // 0x4590C1
         return;
     }
 
@@ -150,15 +148,13 @@ void LoadSceneFile() {
         return;
     }
     if (strncmp(signature + 0x14, "0002", 5) == 0) {
-        LoadSceneV2(app, fd);                                     // 0x459106
-        return;                                                 // 0x45E7F7
+        LoadSceneV2(app, fd); // 0x459106
+        return;               // 0x45E7F7
     }
     MessageBoxA(reinterpret_cast<HWND>(app->Hwnd()),
-                app->EnglishUI() != 0
-                    ? "Cannot read this version of pmm!"
-                    : kJpBadVersionText,
+                app->EnglishUI() != 0 ? "Cannot read this version of pmm!" : kJpBadVersionText,
                 app->EnglishUI() == 0 ? kJpOpenCaption : "open file", 0);
-    _close(fd);                                                 // 0x459149
+    _close(fd); // 0x459149
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

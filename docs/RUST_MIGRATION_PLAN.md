@@ -584,6 +584,15 @@ Each live lane runs at the PR head on this Mac, in Docker, or on the Windows hos
 - [ ] Write the wave 2 plan from Appendix D with the evidence that RM-3, RM-6, RM-7, and RM-9 produced.
 - [ ] Reply to the operator with the report the execution playbook names.
 
+## Licensing
+
+New code is `MIT` only if it copies and ports no upstream code. Upstream code, changes to it, and any port of it are license pending until the rights in the upstream code are clear. `docs/FORK.md` lists the split by path.
+
+- RM-5 and RM-6 port the upstream C++, so `mds-formats` and `mds-scene` are license pending and leave the `license` field unset.
+- RM-1, RM-4, and RM-7 to RM-9 do not port upstream code, so their crates and tools are `MIT`.
+- A crate moves to `MIT` only when it is rewritten in two steps. First, a spec writer, who may read the upstream source, writes the formats and the evaluation steps as prose, with no code. Second, an implementer who has only that spec, the public format documents, the fixtures, and the traces writes the crate in a workspace without the upstream source. The trace lanes decide whether the rewrite matches. Record in the PR which inputs the implementer had.
+- Rewriting `mds-formats` and `mds-scene` this way is a later wave and is not part of RM-1 to RM-9.
+
 ## Appendix A. Prototype evidence
 
 Both prototypes ran on 2026-10-24 at `main` commit `4708ef8`. Their files are under `docs/prototypes/` and are not committed yet.

@@ -12,6 +12,8 @@ use mds_fx::{discover, Effect, Entry, FxError, Include, Options, Via};
 const USAGE: &str = "\
 usage: mds-fx scan [options] <path>...
        mds-fx pp <file>        print the preprocessed text of one file (debugging)
+       mds-fx reflect <label>=<file>...
+                               print one JSON line per file in the shape of fx_reflect.exe
 
 Parses every .fx file below each directory (or the file itself), and prints the number of
 files, techniques, and unique entries. Files with the same preprocessed content count once.
@@ -261,6 +263,20 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        Some("reflect") if args.len() > 1 => {
+            let mut failed = false;
+            for a in &args[1..] {
+                let (label, path) = a.split_once('=').unwrap_or((a, a));
+                match Effect::parse_file_with(Path::new(path), &Options::default()) {
+                    Ok(fx) => println!("{}", mds_fx::reflect::reflect(label, &fx)),
+                    Err(e) => {
+                        failed = true;
+                        println!("{}", mds_fx::reflect::reflect_error(label, &e.to_string()));
+                    }
+                }
+            }
+            ExitCode::from(u8::from(failed))
+        }
         Some("pp") => match args.get(1) {
             // debugging aid: print the preprocessed text of one file
             Some(f) => match mds_fx::preprocess::preprocess_file(

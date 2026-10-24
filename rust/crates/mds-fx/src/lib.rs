@@ -319,7 +319,7 @@ technique T2 { pass { PixelShader = compile ps_3_0 PS(0.5); } };
     fn shift_jis_and_utf8_agree() {
         let utf8 =
             "// \u{30c6}\u{30b9}\u{30c8}\nstring Name = \"\u{30c6}\u{30b9}\u{30c8}\";\nfloat x;\n";
-        let (sjis, _, bad) = encoding_rs::SHIFT_JIS.encode(&utf8);
+        let (sjis, _, bad) = encoding_rs::SHIFT_JIS.encode(utf8);
         assert!(!bad && std::str::from_utf8(&sjis).is_err());
         let t = TempTree::new();
         t.write("sjis.fx", &sjis);

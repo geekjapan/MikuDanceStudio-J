@@ -579,9 +579,7 @@ impl<'a> P<'a> {
         let line = self.line();
         let head_start = self.pos;
         loop {
-            if self.kind_at(self.pos) == Some(Kind::Ident) {
-                self.pos += 1;
-            } else if self.peek() == "::" && !self.eof() {
+            if self.kind_at(self.pos) == Some(Kind::Ident) || (self.peek() == "::" && !self.eof()) {
                 self.pos += 1;
             } else if self.peek() == "<"
                 && self.pos > head_start

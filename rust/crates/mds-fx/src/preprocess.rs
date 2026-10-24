@@ -145,7 +145,7 @@ pub fn resolve_ci(base: &Path, rel: &str) -> Option<PathBuf> {
                         exact = Some(name.clone());
                         break;
                     }
-                    if s.to_lowercase() == want && folded.as_ref().map_or(true, |f| name < *f) {
+                    if s.to_lowercase() == want && folded.as_ref().is_none_or(|f| name < *f) {
                         folded = Some(name.clone());
                     }
                 }
@@ -481,7 +481,7 @@ impl Pp {
         let mut buf = String::new();
         let mut conds: Vec<Cond> = Vec::new();
         while let Some((first, _)) = lines.next(&mut buf) {
-            let active = conds.last().map_or(true, |c| c.active);
+            let active = conds.last().is_none_or(|c| c.active);
             if let Some(rest) = buf.trim_start().strip_prefix('#') {
                 let rest = rest.trim_start();
                 let name_end = rest
@@ -554,8 +554,7 @@ impl Pp {
                     "include" => {
                         let dterm = lines.terms.last().copied().unwrap_or(Term::Lf);
                         let eff = if dterm == Term::None { outer } else { dterm };
-                        let unterminated =
-                            self.include(args, file, first, dir, depth, &path, eff)?;
+                        let unterminated = self.include(args, file, first, dir, depth, eff)?;
                         if !unterminated && eff != Term::None {
                             // the content ended with a newline, so the include line's own
                             // terminator makes one more blank line
@@ -853,10 +852,10 @@ impl Pp {
         line: u32,
         dir: &Path,
         depth: usize,
-        path: &Path,
         outer: Term,
     ) -> Result<bool, FxError> {
-        let err = |m: String| FxError::new(path, line, m);
+        let path = self.files[file as usize].clone();
+        let err = |m: String| FxError::new(&path, line, m);
         let mut spec = args.to_string();
         if !spec.starts_with('"') && !spec.starts_with('<') {
             let ex = self
@@ -884,7 +883,7 @@ impl Pp {
             .map_err(|e| err(format!("cannot read include \"{name}\": {e}")))?;
         self.includes.push(Include {
             from: Origin { file, line },
-            from_path: self.files[file as usize].clone(),
+            from_path: path.clone(),
             name,
             resolved: resolved.clone(),
             via,
@@ -1161,7 +1160,7 @@ impl Eval<'_> {
 }
 
 fn parse_int(s: &str) -> Result<i64, String> {
-    let t = s.trim_end_matches(|c: char| matches!(c, 'u' | 'U' | 'l' | 'L'));
+    let t = s.trim_end_matches(['u', 'U', 'l', 'L']);
     let bad = || format!("bad number {s:?} in #if expression");
     if let Some(h) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
         return i64::from_str_radix(h, 16)

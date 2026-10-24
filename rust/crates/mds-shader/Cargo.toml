@@ -1,0 +1,25 @@
+[package]
+name = "mds-shader"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+description = "Compiles MikuMikuEffect shader entries to WGSL, MSL, and HLSL through vkd3d-shader and naga"
+publish = false
+
+[lib]
+name = "mds_shader"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mds-shader"
+path = "src/main.rs"
+
+[dependencies]
+mds-fx = { path = "../mds-fx" }
+# vkd3d-shader is LGPL-2.1 and is loaded at run time only (gate G3).
+libloading = "0.9"
+rspirv = "=0.13.0"
+# naga and wgpu stay on the same release; wgpu 30.0.1 depends on naga 30.
+naga = { version = "=30.0.1", features = ["spv-in", "wgsl-in", "wgsl-out", "msl-out", "hlsl-out"] }
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "metal", "vulkan", "dx12"] }
+pollster = "1"

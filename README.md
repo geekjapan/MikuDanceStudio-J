@@ -1,5 +1,10 @@
 # MikuDanceStudio
 
+> **MikuDanceStudio-J** is a fork of [jstzwj/MikuDanceStudio](https://github.com/jstzwj/MikuDanceStudio).
+> 本仓库 MikuDanceStudio-J 是 jstzwj/MikuDanceStudio 的分支（fork）。
+> 本リポジトリ MikuDanceStudio-J は jstzwj/MikuDanceStudio のフォークです。
+> Fork notes / 分支说明 / フォークについて: [docs/FORK.md](docs/FORK.md)
+
 Product version: [VERSION](VERSION). Release instructions: [RELEASES.md](docs/RELEASES.md).
 
 [English](#english) | [中文](#中文) | [日本語](#日本語)
@@ -65,6 +70,8 @@ are embedded; optional `Data/toon01.bmp..toon10.bmp` override them.
 
 ### Acknowledgments
 
+* [jstzwj/MikuDanceStudio](https://github.com/jstzwj/MikuDanceStudio) — the
+  upstream project this fork is based on
 * [MikuMikuDance](https://learnmmd.com/downloads/) (Yu Higuchi) — the program
   whose behavior this project aligns to; thank you for two decades of
   contribution to the creative community
@@ -77,6 +84,10 @@ are embedded; optional `Data/toon01.bmp..toon10.bmp` override them.
 This project is licensed under the same freeware terms as MikuMikuDance —
 see [LICENSE](LICENSE). Third-party components follow their own licenses:
 Bullet Physics (zlib), DirectX SDK / Windows SDK (Microsoft EULA).
+
+The LICENSE in this fork is the same as upstream, and it covers this fork's
+changes too. A separate license for work original to this fork has not been
+chosen. See [docs/FORK.md](docs/FORK.md).
 
 ---
 
@@ -124,6 +135,8 @@ cmake --build out/ci/build --config Release
 
 ### 致谢
 
+* [jstzwj/MikuDanceStudio](https://github.com/jstzwj/MikuDanceStudio) ——
+  本分支所基于的上游工程
 * [MikuMikuDance](https://learnmmd.com/downloads/)（樋口優）——
   本工程对齐行为的目标程序，感谢二十年来对创作社区的贡献
 * [Bullet Physics](https://github.com/bulletphysics/bullet3)（zlib 许可）
@@ -134,6 +147,9 @@ cmake --build out/ci/build --config Release
 本工程采用与 MikuMikuDance 相同的免费软件条款，详见 [LICENSE](LICENSE)。
 第三方组件遵循各自许可：Bullet Physics（zlib）、
 DirectX SDK / Windows SDK（微软 EULA）。
+
+本分支的 LICENSE 与上游相同，也适用于本分支的修改。本分支原创部分是否另行授权，尚未决定。详见
+[docs/FORK.md](docs/FORK.md)。
 
 ---
 
@@ -192,6 +208,8 @@ cmake --build out/ci/build --config Release
 
 ### 謝辞
 
+* [jstzwj/MikuDanceStudio](https://github.com/jstzwj/MikuDanceStudio) ——
+  このフォークの元になった上流プロジェクト
 * [MikuMikuDance](https://learnmmd.com/downloads/)（樋口優）——
   本プロジェクトが動作を合わせ込む対象のプログラム。20 年にわたる創作コミュニティへの
   貢献に感謝します
@@ -205,3 +223,7 @@ cmake --build out/ci/build --config Release
 詳細は [LICENSE](LICENSE) を参照してください。サードパーティコンポーネントは
 それぞれのライセンスに従います：Bullet Physics（zlib）、
 DirectX SDK / Windows SDK（マイクロソフト EULA）。
+
+このフォークの LICENSE は上流と同じで、このフォークでの変更にも適用されます。
+フォーク独自の部分に別のライセンスを付けるかどうかは、まだ決めていません。
+詳しくは [docs/FORK.md](docs/FORK.md) を参照してください。

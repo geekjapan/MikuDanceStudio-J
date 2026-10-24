@@ -95,6 +95,12 @@ is kept unchanged from upstream. [docs/FORK.md](docs/FORK.md) lists which
 paths are which. Once the rights are clear, the aim is to publish all of it as
 open source.
 
+As a rule, this fork follows and states the intentions of the original authors,
+Yu Higuchi (MikuMikuDance) and jstzwj (upstream). To contribute to the
+community, it is published as open source. If any problem arises, we will work
+in good faith to resolve it. Please report problems in
+[Issues](https://github.com/geekjapan/MikuDanceStudio-J/issues).
+
 ---
 
 ## 中文
@@ -158,6 +164,10 @@ DirectX SDK / Windows SDK（微软 EULA）。
 其余部分（从上游继承的代码、对其的修改，以及移植上游 C++ 的 Rust crate `mds-formats` 和
 `mds-scene`）在上游权利明确之前为“许可待定”。[LICENSE](LICENSE) 保持上游原文不变。
 各路径的划分见 [docs/FORK.md](docs/FORK.md)。权利明确后，目标是将全部代码作为开源软件发布。
+
+本分支原则上遵从并明示原作者（MikuMikuDance 的作者樋口優与上游作者 jstzwj）的意愿。
+在此基础上，为回馈社区，本分支作为开源软件公开。如有任何问题，我们将诚实地设法解决。
+请在 [Issues](https://github.com/geekjapan/MikuDanceStudio-J/issues) 中告知。
 
 ---
 
@@ -238,3 +248,8 @@ DirectX SDK / Windows SDK（マイクロソフト EULA）。
 「ライセンス保留」です。[LICENSE](LICENSE) は上流のファイルをそのまま残しています。
 どのパスがどちらかは [docs/FORK.md](docs/FORK.md) にあります。権利が明確になれば、
 すべてを OSS として公開することを目指しています。
+
+このフォークは、原則として原作者（MikuMikuDance の作者の樋口優さんと、上流の作者の jstzwj さん）の
+意向に従い、その意向を明示します。そのうえで、コミュニティへの寄与のために OSS として公開します。
+万が一問題があれば、誠実に解決を図ります。問題のご指摘は
+[Issues](https://github.com/geekjapan/MikuDanceStudio-J/issues) にお寄せください。

@@ -152,12 +152,26 @@ std::string Utf8(const wchar_t* text) {
     return utf8;
 }
 
+// Appends the text of each Static child. MessageBox and the app's own
+// dialogs give their message different control IDs, so match by class.
+BOOL CALLBACK AppendStaticText(HWND child, LPARAM lParam) {
+    wchar_t childClass[8] = L"";
+    wchar_t text[1024] = L"";
+    if (GetClassNameW(child, childClass, 8) != 0 && _wcsicmp(childClass, L"Static") == 0 &&
+        GetWindowTextW(child, text, 1024) > 0) {
+        std::string& out = *reinterpret_cast<std::string*>(lParam);
+        if (!out.empty()) out += " | ";
+        out += Utf8(text);
+    }
+    return TRUE;
+}
+
 [[noreturn]] void AbortOnDialog(HWND dialog) {
     wchar_t caption[256] = L"";
-    wchar_t text[2048] = L"";
     GetWindowTextW(dialog, caption, 256);
-    GetDlgItemTextW(dialog, -1, text, 2048);  // IDC_STATIC: the message of a MessageBox
-    const std::string line = "mds-trace: dialog: " + Utf8(caption) + ": " + Utf8(text) + "\n";
+    std::string text;
+    EnumChildWindows(dialog, AppendStaticText, reinterpret_cast<LPARAM>(&text));
+    const std::string line = "mds-trace: dialog: " + Utf8(caption) + ": " + text + "\n";
     HANDLE error = GetStdHandle(STD_ERROR_HANDLE);
     DWORD written = 0;
     if (error != nullptr && error != INVALID_HANDLE_VALUE)

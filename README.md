@@ -1,5 +1,10 @@
 # MikuDanceStudio
 
+> **MikuDanceStudio-J** is a fork of [jstzwj/MikuDanceStudio](https://github.com/jstzwj/MikuDanceStudio).
+> 本仓库 MikuDanceStudio-J 是 jstzwj/MikuDanceStudio 的分支（fork）。
+> 本リポジトリ MikuDanceStudio-J は jstzwj/MikuDanceStudio のフォークです。
+> Fork notes / 分支说明 / フォークについて: [docs/FORK.md](docs/FORK.md)
+
 Product version: [VERSION](VERSION). Release instructions: [RELEASES.md](docs/RELEASES.md).
 
 [English](#english) | [中文](#中文) | [日本語](#日本語)
@@ -65,6 +70,8 @@ are embedded; optional `Data/toon01.bmp..toon10.bmp` override them.
 
 ### Acknowledgments
 
+* [jstzwj/MikuDanceStudio](https://github.com/jstzwj/MikuDanceStudio) — the
+  upstream project this fork is based on
 * [MikuMikuDance](https://learnmmd.com/downloads/) (Yu Higuchi) — the program
   whose behavior this project aligns to; thank you for two decades of
   contribution to the creative community
@@ -74,9 +81,25 @@ are embedded; optional `Data/toon01.bmp..toon10.bmp` override them.
 
 ### License
 
-This project is licensed under the same freeware terms as MikuMikuDance —
-see [LICENSE](LICENSE). Third-party components follow their own licenses:
+Upstream distributes this project under the freeware terms in
+[LICENSE](LICENSE), which it describes as the same terms as MikuMikuDance.
+Third-party components follow their own licenses:
 Bullet Physics (zlib), DirectX SDK / Windows SDK (Microsoft EULA).
+
+In this fork, new code for the cross-platform port, written without copying
+upstream code, is under the [MIT license](LICENSE-MIT). Everything else
+(code inherited from upstream, changes to it, and the Rust crates
+`mds-formats` and `mds-scene`, which port the upstream C++) is license
+pending until the rights in the upstream code are clear. [LICENSE](LICENSE)
+is kept unchanged from upstream. [docs/FORK.md](docs/FORK.md) lists which
+paths are which. Once the rights are clear, the aim is to publish all of it as
+open source.
+
+As a rule, this fork follows and states the intentions of the original authors,
+Yu Higuchi (MikuMikuDance) and jstzwj (upstream). To contribute to the
+community, it is published as open source. If any problem arises, we will work
+in good faith to resolve it. Please report problems in
+[Issues](https://github.com/geekjapan/MikuDanceStudio-J/issues).
 
 ---
 
@@ -124,6 +147,8 @@ cmake --build out/ci/build --config Release
 
 ### 致谢
 
+* [jstzwj/MikuDanceStudio](https://github.com/jstzwj/MikuDanceStudio) ——
+  本分支所基于的上游工程
 * [MikuMikuDance](https://learnmmd.com/downloads/)（樋口優）——
   本工程对齐行为的目标程序，感谢二十年来对创作社区的贡献
 * [Bullet Physics](https://github.com/bulletphysics/bullet3)（zlib 许可）
@@ -131,9 +156,18 @@ cmake --build out/ci/build --config Release
 
 ### 许可
 
-本工程采用与 MikuMikuDance 相同的免费软件条款，详见 [LICENSE](LICENSE)。
+上游以 [LICENSE](LICENSE) 中的免费软件条款发布本工程，并说明其与 MikuMikuDance 的条款相同。
 第三方组件遵循各自许可：Bullet Physics（zlib）、
 DirectX SDK / Windows SDK（微软 EULA）。
+
+本分支中，为跨平台移植新写、未复制上游代码的部分适用 [MIT 许可](LICENSE-MIT)。
+其余部分（从上游继承的代码、对其的修改，以及移植上游 C++ 的 Rust crate `mds-formats` 和
+`mds-scene`）在上游权利明确之前为“许可待定”。[LICENSE](LICENSE) 保持上游原文不变。
+各路径的划分见 [docs/FORK.md](docs/FORK.md)。权利明确后，目标是将全部代码作为开源软件发布。
+
+本分支原则上遵从并明示原作者（MikuMikuDance 的作者樋口優与上游作者 jstzwj）的意愿。
+在此基础上，为回馈社区，本分支作为开源软件公开。如有任何问题，我们将诚实地设法解决。
+请在 [Issues](https://github.com/geekjapan/MikuDanceStudio-J/issues) 中告知。
 
 ---
 
@@ -192,6 +226,8 @@ cmake --build out/ci/build --config Release
 
 ### 謝辞
 
+* [jstzwj/MikuDanceStudio](https://github.com/jstzwj/MikuDanceStudio) ——
+  このフォークの元になった上流プロジェクト
 * [MikuMikuDance](https://learnmmd.com/downloads/)（樋口優）——
   本プロジェクトが動作を合わせ込む対象のプログラム。20 年にわたる創作コミュニティへの
   貢献に感謝します
@@ -201,7 +237,19 @@ cmake --build out/ci/build --config Release
 
 ### ライセンス
 
-本プロジェクトは MikuMikuDance と同じフリーウェア条項の下で配布されます。
-詳細は [LICENSE](LICENSE) を参照してください。サードパーティコンポーネントは
+上流は、[LICENSE](LICENSE) のフリーウェア条項で本プロジェクトを配布しており、
+これを MikuMikuDance と同じ条項だと説明しています。サードパーティコンポーネントは
 それぞれのライセンスに従います：Bullet Physics（zlib）、
 DirectX SDK / Windows SDK（マイクロソフト EULA）。
+
+このフォークで、クロスプラットフォーム化のために新しく書き、上流のコードを写していない部分は
+[MIT ライセンス](LICENSE-MIT)です。それ以外の部分（上流から受け継いだコード、それを変更したコード、
+上流の C++ を移植した Rust crate `mds-formats` と `mds-scene`）は、上流の権利が明確になるまで
+「ライセンス保留」です。[LICENSE](LICENSE) は上流のファイルをそのまま残しています。
+どのパスがどちらかは [docs/FORK.md](docs/FORK.md) にあります。権利が明確になれば、
+すべてを OSS として公開することを目指しています。
+
+このフォークは、原則として原作者（MikuMikuDance の作者の樋口優さんと、上流の作者の jstzwj さん）の
+意向に従い、その意向を明示します。そのうえで、コミュニティへの寄与のために OSS として公開します。
+万が一問題があれば、誠実に解決を図ります。問題のご指摘は
+[Issues](https://github.com/geekjapan/MikuDanceStudio-J/issues) にお寄せください。

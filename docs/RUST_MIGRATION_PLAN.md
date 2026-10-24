@@ -4,7 +4,7 @@ MikuDanceStudio moves from C++ with Win32 and DirectX 9 to Rust, so that one cod
 Wave 1 builds the headless core that later waves draw on. It covers the file formats, the keyframe evaluation, the Bullet binding, the MME effect parser, and the shader compiler. Each PR compares Rust output with an oracle built from the C++ port.
 The rule the program enforces is that no Rust module lands without a byte-level comparison against the C++ oracle or a recorded corpus count.
 PR ids in order are RM-1, RM-2, RM-3, RM-4, RM-5, RM-6, RM-7, RM-8, and RM-9. Appendix D lists the later waves.
-RM-3, and some lanes of RM-4, RM-5, RM-6, RM-7, RM-8, and RM-9, need a Windows host. Those PRs cannot reach merge-ready until gate G2 names one.
+RM-3, and some lanes of RM-4, RM-5, RM-6, RM-7, RM-8, and RM-9, need a Windows host. Gate G2 names `nanoha-lan`.
 
 ## How to read this
 
@@ -77,6 +77,9 @@ Each live lane runs at the PR head on this Mac, in Docker, or on the Windows hos
 
 - [ ] `git fetch origin <head-branch> && git checkout <head SHA>`.
 - [ ] Build what the lane needs. Run `tools/rust/check.sh` for Rust crates, `tools/oracle/build_l1.sh` for the C++ oracle, and `tools/rust/check-linux.sh` for Docker lanes. Wait for exit 0.
+- [ ] On the Windows host, build the app with `conan create recipes/bullet275` and `conan install .`, both with `--profile:all profiles/x64 -s compiler.cppstd=17 -s build_type=Release -s compiler.version=194`, then CMake with the `Visual Studio 17 2022` generator. On a Japanese-locale host, set `CL=/utf-8` until PR #15 merges. The app needs the VC++ 2008 x64 runtime (9.0.30729.6161) that its manifest names.
+- [ ] Before any Windows lane opens a PMM, copy `chain8.pmd`, `chain8.pmx`, `chain8_ik.pmx`, and `morph4.pmx` from `tests/fixtures/rust/` next to `MikuDanceStudio.exe`. The app resolves the model paths in a PMM from the exe directory, so a run without them stops at the model-load dialog.
+- [ ] Run GUI and D3D9 lanes in the console session. On a host reached over OpenSSH, start them through a one-shot `schtasks /Create /IT` task, because the SSH session cannot create a D3D9 device.
 - [ ] Run the lane's command with its full output piped through `tee`. Read-only diagnostics are `ls`, `shasum`, `cmp`, `otool -L`, `ldd`, and `mds-trace-diff`.
 - [ ] Save every log as the lane's screenshot in `/tmp/swarm-<pr-id>/worker-<n>/<slug>.txt` and return the paths with the report.
 
@@ -223,7 +226,7 @@ Each live lane runs at the PR head on this Mac, in Docker, or on the Windows hos
 - [ ] Lane 1. Regression lane against trunk. Open `swing600.pmm` in the normal GUI at trunk and at the head without `--mds-trace`, move to frame 600, and save the project as a new PMM. Save `regression.txt` with both sha256 values. Pass when the two saved files are identical.
 - [ ] Lane 2. Write the L2 trace for `swing600.pmm` twice. Save `l2-repeat.txt`. Pass when the two traces are byte-identical.
 - [ ] Lane 3. Write the L2 trace for `chain8_ik.pmx` in a PMM. Save `l2-ik.txt`. Pass when the trace exists and two runs are identical.
-- [ ] Lane 4. Write the L2 trace for the `chain8` rigid bodies. Save `l2-physics.txt`. Pass when the trace has 600 frames of rigid body transforms and two runs are identical.
+- [ ] Lane 4. Write the L2 trace for the `chain8` rigid bodies. Save `l2-physics.txt`. Pass when the trace has 600 frames of rigid body transforms, at least one dynamic body's transform differs between frame 0 and frame 599, and two runs are identical. The fixture PMMs store physics mode 2. Mode 0 turns physics off, and the transforms then never change.
 - [ ] Lane 5. Compare the L2 local poses with the L1 trace from RM-2 for the same file. Save `l1-vs-l2.txt`. Pass when the lane log lists every differing track, so the gap between the two C++ evaluators is on record.
 - [ ] Lane 6. Run `math_vectors.exe` for the D3DX functions. Save `d3dx-vectors.txt`. Pass when the output covers every function pointer in `struct Api` of `include/mikudancestudio/d3dx_dyn.hpp` that `src/model` or `src/physics` calls through `d3dx::Get()`.
 - [ ] Lane 7. Run `math_vectors.exe` for the CRT float functions. Save `crt-digests.txt`. Pass when the output has 4096 block digests for each of the 10 functions.
@@ -664,7 +667,7 @@ Wave 2 gets its own plan when RM-3, RM-6, RM-7, and RM-9 have merged. Each later
 Each gate has a default. The program applies the default when the operator gives no answer, and reports it.
 
 - **G1. Branch for RM-2.** Default. RM-2 targets `next`, because `mds_scene_cli` and the portable evaluator exist only there. The Rust PRs target `main` and build the oracle from a pinned `next` SHA. The operator could instead merge `next` into `main` first.
-- **G2. Windows host.** Default. The operator's Windows PC runs the Windows lanes, and those lanes wait until the operator says it is ready. The operator could instead name a GitHub Actions Windows runner once the quota returns.
+- **G2. Windows host.** Decided 2026-10-25. The operator's Windows PC `nanoha-lan` runs the Windows lanes. It has an i9-12900K, an RTX 3090, Windows with the CP932 code page, and VS Build Tools 2022 17.14. The operator could later add a GitHub Actions Windows runner.
 - **G3. vkd3d-shader license terms.** Default. Ship vkd3d-shader as a separate shared library with its LGPL-2.1 text and a source offer, and load it at run time. The operator could instead choose a different license plan or ask for a Rust HLSL front end, which costs much more work.
 - **G4. Push and PR authorization.** Default. None. Owners stop before the first push until the operator authorizes pushes and PRs for this program.
 - **G5. Operator models.** Default. Wave 1 uses synthetic fixtures and the ray-mmd corpus only. The operator could instead name a local directory of MMD models in `MDS_CORPUS`, which lanes read and never commit.

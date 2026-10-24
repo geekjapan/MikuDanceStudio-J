@@ -144,7 +144,7 @@ here together.
 
 ## Coverage record
 
-Sync commit: `699ce59`. The verification was last confirmed to describe the
+Sync commit: `16a642f`. The verification was last confirmed to describe the
 files and functions listed under "Does my change touch the verified code?" at
 this commit.
 

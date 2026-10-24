@@ -77,8 +77,8 @@
 //                          wrap at 0x1E, undo records at model+0x26FC
 //                          (0x24-stride), name-match paste loop, SetFocus,
 //                          undo-flag 0x9EDB5 = 1
-//   498 1F2  0x0048203D    bone paste (delete-tag variant, "ボーン削除"
-//                          name filter); head ported, tail TODO(port)
+//   498 1F2  0x0048203D    bone reverse paste (left/right suffix matching,
+//                          mirrored pose and undo snapshot)
 //   499 1F3  def_47E903    default (no-op)
 //
 // Default handler def_47E903 (0x482897): only acts when HIWORD(notify)==1
@@ -124,13 +124,7 @@
 
 namespace mikudancestudio {
 
-struct BoneCopyRecord {
-    char name[20];
-    float position[3];
-    float rotation[4];
-};
-static_assert(sizeof(BoneCopyRecord) == 0x30,
-              "bone copy record ABI");
+using BoneCopyRecord = mdl::BonePoseClipboardRecord;
 
 // 32-bit multiply with the original's overflow idiom (mul/seto/neg/or):
 // returns 0xFFFFFFFF when the product overflows (cases 496/497/498).
@@ -210,13 +204,6 @@ static const wchar_t kFilterAccJp[] =
     L"vac files(*.vac)\x00";
 // 0x52DC84: JP dialog title "ファイルを開く"
 static const wchar_t kTitleOpenJp[] = L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B\x304F";
-
-// strstr needles of case 498, matched against bone names:
-//   kBoneNameNeedleRight = Shift-JIS 右 ("right"),
-//   kBoneNameNeedleModelDelete = Shift-JIS モデル削除 ("model delete").
-static const char kBoneNameNeedleRight[] = "\x89\x45";
-static const char kBoneNameNeedleModelDelete[] =
-    "\x83\x82\x83\x66\x83\x8B\x8D\xED\x8F\x9C";
 
 // ---------------------------------------------------------------------------
 // External targets ported in other translation units (declared here with
@@ -1041,137 +1028,12 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
     }
 
     // ------------------------------------------------------------------
-    // 498 (0x0048203D): bone paste, delete-tag variant.  Same undo-record
-    // bookkeeping as 497; the paste target is resolved through the
-    // "ボーン削除" name tags instead of a plain name match, and the pasted
-    // transform is mirrored (X position and quat Y/Z negated).  When the
-    // tag search fails the exact-name match index (k1) is used as the
-    // fallback target.
+    // 498 (0x0048203D): mirror the copied pose onto the opposite-side bone,
+    // falling back to the exact-name bone when no matching side suffix exists.
+    // Undo bookkeeping and axis mirroring live in bone_pose_paste.cpp.
     // ------------------------------------------------------------------
     case panel::kBoneReversePasteButton: {
-        if (app->state.copiedBoneCount == 0) {
-            break;  // jz def_47E903 (no-op)
-        }
-        unsigned char* model = ActiveModel(app);
-        auto* modelRecord = mikudancestudio::mdl::Mdl(model);
-        const std::int32_t boneCount = modelRecord->boneCount;
-        unsigned char* sel = modelRecord->boneSelection;
-        for (std::int32_t i = 0; i < boneCount; ++i) {
-            sel[i] = 0;
-        }
-        EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);
-        EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
-        modelRecord->undoDirty = 1;
-        modelRecord->redoDirty = 0;
-        ++modelRecord->undoState[0];
-        if (modelRecord->undoState[0] >= 0x1E) {
-            modelRecord->undoState[0] = 0;
-        }
-        const std::int32_t pasteIdx = modelRecord->undoState[0];
-        modelRecord->undoState[1] = pasteIdx;
-        auto& undo = modelRecord->undoRings[0].slots[pasteIdx];
-        undo.operation = 1;
-        undo.dirty = app->state.copiedBoneCount;
-        unsigned char* pasteBlob =
-            reinterpret_cast<unsigned char*>(undo.bonePose);
-        if (pasteBlob != nullptr) {
-            ::operator delete(pasteBlob);
-            undo.bonePose = nullptr;
-        }
-        const std::int32_t count =
-            app->state.copiedBoneCount;
-        pasteBlob = static_cast<unsigned char*>(::operator new(
-            MulOrMax(static_cast<std::uint32_t>(count), 0x24u)));
-        if (pasteBlob != nullptr) {
-            ConstructArrayElements(pasteBlob, 0x24,
-                                   static_cast<std::uint32_t>(count),
-                                   &IdentityCtor);
-        }
-        undo.bonePose = reinterpret_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
-            pasteBlob);
-        memset(pasteBlob, 0, static_cast<std::size_t>(count) * 0x24u);
-
-        auto& records =
-            reinterpret_cast<BoneCopyRecord*&>(app->BoneCopyRecords());
-        for (std::int32_t j = 0; j < count; ++j) {
-            model = ActiveModel(app);
-            modelRecord = mikudancestudio::mdl::Mdl(model);
-            const std::int32_t nBones = modelRecord->boneCount;
-            sel = modelRecord->boneSelection;
-            mikudancestudio::mdl::BoneRecord* const bones = modelRecord->boneTable;
-            unsigned char* frameFlag = modelRecord->bonePhysicsState;
-            const BoneCopyRecord& src = records[j];
-            // step 1: exact name match -> k1
-            std::int32_t k1 = -1;
-            for (std::int32_t k = 0; k < nBones; ++k) {
-                if (strcmp(bones[k].name, src.name) == 0) {
-                    k1 = k;
-                    break;
-                }
-            }
-            if (k1 < 0) {
-                continue;  // no exact-name bone: record skipped
-            }
-            std::int32_t target = -1;
-            const char* tag1 = strstr(bones[k1].name, kBoneNameNeedleModelDelete);
-            if (tag1 != nullptr) {
-                // k1 carries the "ボーン削除" tag: find the "\x89\x45"-tagged
-                // bone whose suffix matches the tag suffix
-                const char* suffix = tag1 + 2;
-                for (std::int32_t k = 0; k < nBones; ++k) {
-                    const char* q = strstr(bones[k].name, kBoneNameNeedleRight);
-                    if (q != nullptr && strcmp(q + 2, suffix) == 0) {
-                        target = k;
-                        break;
-                    }
-                }
-            }
-            if (target < 0) {
-                // second search: needle from frames+j (raw byte offset, as
-                // in the original) against the "ボーン削除" tag
-                const char* suffix = strstr(
-                    reinterpret_cast<const char*>(bones) + j, kBoneNameNeedleRight);
-                if (suffix != nullptr) {
-                    suffix += 2;
-                    for (std::int32_t k = 0; k < nBones; ++k) {
-                        const char* q = strstr(bones[k].name, kBoneNameNeedleModelDelete);
-                        if (q != nullptr && strcmp(q + 2, suffix) == 0) {
-                            target = k;
-                            break;
-                        }
-                    }
-                }
-            }
-            if (target < 0) {
-                target = k1;  // fallback to the exact-name match
-            }
-            pasteBlob = reinterpret_cast<unsigned char*>(undo.bonePose);
-            auto& rec = reinterpret_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
-                pasteBlob)[j];
-            mikudancestudio::mdl::BoneRecord* bone = &bones[target];
-            rec.boneIndex = target;
-            sel[target] = 1;
-            // old pos into the undo record
-            memcpy(rec.position, bone->trans, sizeof rec.position);
-            // new pos from the copy record - X negated (fchs)
-            bone->trans[0] = -src.position[0];
-            bone->trans[1] = src.position[1];
-            bone->trans[2] = src.position[2];
-            // old quat into the undo record
-            memcpy(rec.rotation, bone->rotQuat, sizeof rec.rotation);
-            // new quat from the copy record - Y and Z negated (fchs)
-            bone->rotQuat[0] = src.rotation[0];
-            bone->rotQuat[1] = -src.rotation[1];
-            bone->rotQuat[2] = -src.rotation[2];
-            bone->rotQuat[3] = src.rotation[3];
-            rec.physicsDisabled = frameFlag[target];
-            frameFlag[target] = 1;
-            modelRecord->selectedBone = target;
-            RebuildTimelineTrackPanel(app);
-            InvalidateSelectionReadouts(app);
-        }
-        SetFocus(hwnd);
-        app->PhysicsResetPending() = 1;
+        PasteMirroredBonePose(app, hwnd);
         break;
     }
 

@@ -14,10 +14,8 @@
 //   677 0x2A5 combo display-group list      680 0x2A8 edit  group EN name
 //   0x29E/0x29F, 0x2A2/0x2A3, 0x2A6/0x2A7 next/prev buttons of the combos.
 //
-// The dialog procedure EnglishNameDlgProc and the edit
-// subclass EnglishNameEditSubclassProc live in
-// command_view_menu.cpp; the subclass commits an edit on Enter through the
-// collector CollectEnglishNameEdit below.  Every function keeps its original x86 VA.
+// The dialog procedure, edit subclass and name-commit helpers live together.
+// Every function keeps its original x86 VA.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -30,6 +28,7 @@
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "enhanced_model_messages.hpp"
 
 namespace mikudancestudio {
 namespace {
@@ -98,8 +97,6 @@ void RefreshNameEdit(HWND edit, const char* text) {
     SetFocus(edit);
 }
 
-}  // namespace
-
 // ===========================================================================
 // 0x0043BED0 - English-name collector (original: sub_43BED0)
 // ===========================================================================
@@ -119,9 +116,6 @@ void RefreshNameEdit(HWND edit, const char* text) {
 // Edit texts are capped at the record widths before the copy (19 chars for
 // the 20-byte names, 49 for the 50-byte group name).
 //
-// NOTE: command_view_menu.cpp carries only a forward declaration of this
-// function for its subclass call sites; this body is the real port used by
-// the dialog helpers in this file.
 // =========================================================================//
 void CollectEnglishNameEdit(MMDApp* app, HWND hEdit, int idx) {  // VA 0x0043BED0
     mdl::ModelRecord* model = mdl::Mdl(app->SelectedModel());
@@ -475,6 +469,179 @@ void SelectEnglishNameGroup(HWND hDlg) {  // VA 0x0045EDC0
     char buf[256];
     strcpy_s(buf, 0x100, groups[GroupNameSlot(app, model)].nameEn);
     RefreshNameEdit(GetDlgItem(hDlg, kEditGroupNameEn), buf);
+}
+
+// VA 0x0045ECC0 - English-name dialog (259) edit subclass: WM_KEYDOWN +
+// VK_RETURN sets the in-dialog flag (app+0xA0D6C) and dispatches to the
+// edge collector (0x43BED0) with 0/1/2/3 for edits 0x29B/0x2A0/0x2A4/
+// 0x2A8 (edit 0x2A0 additionally runs the language sweep 0x42F1E0);
+// everything else goes to the saved original proc (app+0xA0B54).
+LRESULT CALLBACK EnglishNameEditSubclassProc(  // VA 0x0045ECC0
+    HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    MMDApp* app = g_Block;
+    if (msg == WM_KEYDOWN && wParam == VK_RETURN) {
+        app->state.messageSeen = 1;
+        const HWND dlg = app->EnglishNameDialog();
+        if (hwnd == GetDlgItem(dlg, panel::kModelNameEnEdit)) {
+            CollectEnglishNameEdit(app, hwnd, 0);                        // 0x43BED0
+            return 0;
+        }
+        if (hwnd == GetDlgItem(dlg, panel::kBoneNameEnEdit)) {
+            CollectEnglishNameEdit(app, hwnd, 1);
+            RebuildTimelineTrackPanel(app);                         // 0x42F1E0
+            return 0;
+        }
+        if (hwnd == GetDlgItem(dlg, panel::kMorphNameEnEdit)) {
+            CollectEnglishNameEdit(app, hwnd, 2);
+            return 0;
+        }
+        if (hwnd == GetDlgItem(dlg, panel::kGroupNameEnEdit)) {
+            CollectEnglishNameEdit(app, hwnd, 3);
+            return 0;
+        }
+    }
+    return CallWindowProcA(app->EnglishNameEditProc(),
+                           hwnd, msg, wParam, lParam);
+}
+}  // namespace
+
+// ===========================================================================
+// 0x464BD0 - case 259 English-name dialog (0x29A EN / 0x299 JP), modeless at
+// app+0xA0B50.  WM_INITDIALOG: subclass edits 667/672/676/680 with
+// sub_45ECC0 (old proc of 667 saved at app+0xA0B54), sub_43C430 init.
+// WM_COMMAND: sets app+0xA0B6C = 1.  id 1/2 close (sub_45F240 apply,
+// DestroyWindow, app+0xA0B50 = 0, re-enable main-window combo 0x1B4; id 1
+// additionally shows the "preserve edit result" box and sets app+0xA0B64).
+// ids 0x29E/0x29F/0x2A2/0x2A3/0x2A6/679 are the prev/next buttons of the
+// three combos 669/673/677 (CB_SETCURSEL wrap-around + refresh helper).
+// CBN_SELCHANGE of 669/673/677 refreshes the matching combo helper.
+// Reference: MikuMikuDance.exe sub_464BD0.
+// ===========================================================================
+INT_PTR CALLBACK EnglishNameDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
+                                  LPARAM lParam) {  // VA 0x00464BD0
+    MMDApp* app = g_Block;
+    const HWND hCtrl = reinterpret_cast<HWND>(lParam);
+    if (msg == WM_INITDIALOG) {
+        app->EnglishNameEditProc() =
+            reinterpret_cast<WNDPROC>(
+                GetWindowLongPtrA(GetDlgItem(hDlg, panel::kModelNameEnEdit), GWLP_WNDPROC));
+        SetWindowLongPtrA(GetDlgItem(hDlg, panel::kModelNameEnEdit), GWLP_WNDPROC,
+                       (LONG)(LONG_PTR)EnglishNameEditSubclassProc);
+        SetWindowLongPtrA(GetDlgItem(hDlg, panel::kBoneNameEnEdit), GWLP_WNDPROC,
+                       (LONG)(LONG_PTR)EnglishNameEditSubclassProc);
+        SetWindowLongPtrA(GetDlgItem(hDlg, panel::kMorphNameEnEdit), GWLP_WNDPROC,
+                       (LONG)(LONG_PTR)EnglishNameEditSubclassProc);
+        SetWindowLongPtrA(GetDlgItem(hDlg, panel::kGroupNameEnEdit), GWLP_WNDPROC,
+                       (LONG)(LONG_PTR)EnglishNameEditSubclassProc);
+        InitEnglishNameDialog(hDlg);  // 0x43C430
+        return 0;
+    }
+    if (msg != WM_COMMAND) {
+        return 0;
+    }
+    // dirty write: the English-name dialog deliberately invalidates the
+    // cached time (original blob reuse of app+0xA0B6C == timeNowHigh)
+    reinterpret_cast<std::int32_t&>(app->state.timeNowHigh) = 1;
+    switch (LOWORD(wParam)) {
+    case IDOK:
+    case IDCANCEL:
+        ApplyEnglishNameDialog(hDlg);  // 0x45F240
+        DestroyWindow(hDlg);
+        app->EnglishNameDialog() = nullptr;
+        EnableWindow(GetDlgItem(app->state.hwnd, panel::kMainComboModel), TRUE);
+        if (LOWORD(wParam) == IDOK) {
+            if (app->state.englishUI != 0) {
+                MessageBoxA(app->state.hwnd,
+                            "Please preserve the edit result as a new model by "
+                            "'save enhanced model'.",
+                            "enhance model", 0);
+            } else {
+                MessageBoxA(app->state.hwnd, kMsgEnhanceModelJp,
+                            kCaptionEnhanceModelJp, 0);
+            }
+            app->EnhancedModelDirty() = 1;
+        }
+        return 1;
+    case 0x29E: {  // combo 669 next button
+        const int cur = app->EnglishNameComboCursor(0);
+        const int count = static_cast<int>(
+            SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_GETCOUNT, 0, 0));
+        SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_SETCURSEL,
+                     cur + 1 >= count ? 0 : cur + 1, 0);
+        SelectEnglishNameBone(hDlg);  // 0x45F050
+        return 0;
+    }
+    case 0x29F: {  // combo 669 prev button
+        int sel = app->EnglishNameComboCursor(0) - 1;
+        if (sel < 0) {
+            sel = static_cast<int>(
+                      SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_GETCOUNT,
+                                   0, 0)) -
+                  1;
+        }
+        SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_SETCURSEL, sel, 0);
+        SelectEnglishNameBone(hDlg);  // 0x45F050 (LABEL_16)
+        return 0;
+    }
+    case 0x2A2: {  // combo 673 next button
+        const int cur = app->EnglishNameComboCursor(1);
+        const int count = static_cast<int>(
+            SendMessageA(GetDlgItem(hDlg, panel::kMorphNameCombo), CB_GETCOUNT, 0, 0));
+        SendMessageA(GetDlgItem(hDlg, panel::kMorphNameCombo), CB_SETCURSEL,
+                     cur + 1 >= count ? 0 : cur + 1, 0);
+        SelectEnglishNameMorph(hDlg);  // 0x45EF10
+        return 0;
+    }
+    case 0x2A3: {  // combo 673 prev button
+        int sel = app->EnglishNameComboCursor(1) - 1;
+        if (sel < 0) {
+            sel = static_cast<int>(
+                      SendMessageA(GetDlgItem(hDlg, panel::kMorphNameCombo), CB_GETCOUNT,
+                                   0, 0)) -
+                  1;
+        }
+        SendMessageA(GetDlgItem(hDlg, panel::kMorphNameCombo), CB_SETCURSEL, sel, 0);
+        SelectEnglishNameMorph(hDlg);  // 0x45EF10 (LABEL_23)
+        return 0;
+    }
+    case 0x2A6: {  // combo 677 next button
+        const int cur = app->EnglishNameComboCursor(2);
+        const int count = static_cast<int>(
+            SendMessageA(GetDlgItem(hDlg, panel::kGroupNameCombo), CB_GETCOUNT, 0, 0));
+        SendMessageA(GetDlgItem(hDlg, panel::kGroupNameCombo), CB_SETCURSEL,
+                     cur + 1 >= count ? 0 : cur + 1, 0);
+        SelectEnglishNameGroup(hDlg);  // 0x45EDC0
+        return 0;
+    }
+    case 679: {  // combo 677 prev button
+        int sel = app->EnglishNameComboCursor(2) - 1;
+        if (sel < 0) {
+            sel = static_cast<int>(
+                      SendMessageA(GetDlgItem(hDlg, panel::kGroupNameCombo), CB_GETCOUNT,
+                                   0, 0)) -
+                  1;
+        }
+        SendMessageA(GetDlgItem(hDlg, panel::kGroupNameCombo), CB_SETCURSEL, sel, 0);
+        SelectEnglishNameGroup(hDlg);  // 0x45EDC0
+        return 0;
+    }
+    default:
+        break;
+    }
+    if (HIWORD(wParam) == 1 /*CBN_SELCHANGE*/) {
+        if (hCtrl == GetDlgItem(hDlg, panel::kBoneNameCombo)) {
+            SelectEnglishNameBone(hDlg);  // 0x45F050 (LABEL_16)
+            return 0;
+        }
+        if (hCtrl == GetDlgItem(hDlg, panel::kMorphNameCombo)) {
+            SelectEnglishNameMorph(hDlg);  // 0x45EF10 (LABEL_23)
+            return 0;
+        }
+        if (hCtrl == GetDlgItem(hDlg, panel::kGroupNameCombo)) {
+            SelectEnglishNameGroup(hDlg);  // 0x45EDC0
+        }
+    }
+    return 0;
 }
 
 }  // namespace mikudancestudio

@@ -11,6 +11,7 @@
 | 主窗口控件与菜单 ID 命名 | `471159b` | [panel_controls.hpp](../../include/mikudancestudio/panel_controls.hpp)、[menu_commands.h](../../include/mikudancestudio/menu_commands.h) |
 | 状态命名、帧组接口与对话框资源 ID | `d7b851e` | [keyboard_state.hpp](../../include/mikudancestudio/keyboard_state.hpp)、[frame_edit.hpp](../../include/mikudancestudio/frame_edit.hpp)、[dialog_resources.h](../../include/mikudancestudio/dialog_resources.h) |
 | 面板长分支分批提取 | `d7b851e` | [command_panel_toggles.cpp](../../src/window/command_panel_toggles.cpp) |
+| 反转粘贴核对与英文名称窗口归拢 | `7e944f3` | [bone_pose_paste.cpp](../../src/window/bone_pose_paste.cpp)、[english_name_dialog.cpp](../../src/window/english_name_dialog.cpp) |
 
 ## 主窗口控件与菜单 ID
 
@@ -44,9 +45,24 @@
 
 ### 面板分支提取批次
 
-第一批将附件删除提取为文件内的 `DeleteSelectedAccessory()`，第二批将普通骨骼粘贴提取为 `PasteCopiedBonePose()`。分发分支仅调用对应函数；前者的两个提前退出与后者的一个提前退出由退出 switch 改为返回辅助函数。槽位检查、释放/分配、撤销记录、名称匹配及面板刷新仍按原顺序执行。反转粘贴等其他长分支留待后续批次分别核对。
+第一批将附件删除提取为文件内的 `DeleteSelectedAccessory()`，第二批将普通骨骼粘贴提取为 `PasteCopiedBonePose()`。分发分支仅调用对应函数；前者的两个提前退出与后者的一个提前退出由退出 switch 改为返回辅助函数。槽位检查、释放/分配、撤销记录、名称匹配及面板刷新仍按原顺序执行。
 
 两批分别通过提取主体与其余翻译单元的 token 对照，第一批另完成两架构编译和各 4 项附件/时间线回归。最终将两个辅助函数内联回原位置，再还原命名、常量和访问接口，35 个现有源码/头文件与基线的 token 对照通过；另核对键盘槽位及引用接口、帧组数值与状态布局、48 个模板 ID 展开、CMake 文件更名。最终两架构 Release 编译通过，相关回归分别通过 x64 18 项、x86 17 项。两份完整 `.res` 及 48 个对话框、两个菜单均逐字节一致；本轮未重新执行原版完整 GUI A/B。
+
+第三批以 `7e944f3` 为基线，将控件 498 的反转粘贴提取为 [PasteMirroredBonePose](../../src/window/bone_pose_paste.cpp)。分发分支只调用该函数；普通/反转粘贴共用 `BonePoseClipboardRecord`，仍为 48 字节。先确认提取前后主体与分发器其余部分的 token 一致，再用 IDA 核对原版 x64 的名称匹配、坐标反转与撤销写入，修正两处已有移植错误：
+
+| 行为 | 原版 x64 证据（RVA） | 修正 |
+|---|---|---|
+| 左右标记 | `0x44580/0x445D1/0x4464A/0x44693`；字串位于 `0x12D9BC/0x12D9C0` | 使用 Shift-JIS 左 `8D B6` / 右 `89 45`，移除误用的“模型删除”字串 |
+| 右到左的来源 | `0x4456E..0x44578` 保存同名骨骼的记录偏移，`0x4463C..0x44651` 再读取该名称 | 从 `bones[sourceBoneIndex].name` 查找右标记，修正原来的骨骼表起点加复制序号 |
+| 坐标镜像 | `0x447A9..0x447EF`、`0x4486E..0x448FC` | 保留位置 X、四元数 Y/Z 取反，其余分量直接复制 |
+| 撤销与刷新 | `0x44313..0x444B9`、`0x4470E..0x44782`、`0x44821..0x4484C`、`0x44912..0x449AB` | 保留 30 槽游标、操作号 1、旧目标姿势/物理状态快照及每次匹配后的刷新顺序 |
+
+与原版一致，名称匹配先找同名骨骼，再比较侧标记后的后缀；找不到对侧时回退到同名骨骼，无同名骨骼时跳过，跳过记录在撤销缓冲中仍占一个清零槽。没有合并普通粘贴与反转粘贴的控制流程。
+
+[bone_mirror_paste_test.cpp](../../tests/bone_mirror_paste_test.cpp) 直接编译生产反转粘贴和撤销/重做实现，仅隔离 UI 刷新与原本为空的元素构造函数。六组场景覆盖左右互换、侧标记前缀、后缀不匹配、中央骨骼回退、缺失名称、空剪贴板，以及游标回绕、旧目标快照、轴反转和实际撤销/重做。修复前两架构均失败，修复后均通过；第三批另通过两架构完整 Release 编译和各 5 项相关测试。
+
+第四批将 `EnglishNameDlgProc` 与 `EnglishNameEditSubclassProc` 从菜单模块移入英文名称模块，初始化、应用、名称提交和三种组合框选择函数均改为模块内部实现。菜单只保留打开窗口的调用；英文名称编辑和 toon 设置共用的日文保存提醒移入 `enhanced_model_messages.hpp`。移动的两个窗口过程逐语句一致，共用提示文本字节不变，其余菜单/名称编辑代码也通过 token 对照。最终两架构 Release 编译通过，相关测试分别通过 x64 19 项、x86 18 项。本轮核对范围包含上述原版指令与测试场景，未执行完整 GUI/图像 A/B。
 
 ## 数值兼容
 

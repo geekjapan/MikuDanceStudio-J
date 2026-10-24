@@ -4,6 +4,14 @@
 
 namespace mikudancestudio::mdl {
 
+// Current bone poses copied by the bone panel, without timeline key data.
+struct BonePoseClipboardRecord {
+    char name[20];
+    float position[3];
+    float rotation[4];
+};
+static_assert(sizeof(BonePoseClipboardRecord) == 0x30, "bone pose clipboard ABI");
+
 struct ClipboardSelectionCounts {
     std::uint32_t bones;
     std::uint32_t morphs;

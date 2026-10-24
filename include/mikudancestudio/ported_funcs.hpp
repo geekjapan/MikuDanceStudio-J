@@ -133,6 +133,8 @@ void InstallControlSubclass(MMDApp* app, HWND control, int id);
 // ---- dialog procs (dialog_procs.cpp) --------------------------------------
 INT_PTR CALLBACK FrameRangeDlgProc(HWND, UINT, WPARAM, LPARAM);  // VA 0x0044C5D0
 INT_PTR CALLBACK SelectNavDlgProc(HWND, UINT, WPARAM, LPARAM);  // VA 0x0047A3F0
+// English-name editor; window procedure and helpers: english_name_dialog.cpp.
+INT_PTR CALLBACK EnglishNameDlgProc(HWND, UINT, WPARAM, LPARAM);  // VA 0x00464BD0
 void SetPhysicsMode(unsigned char* model, int a2,
                     unsigned char* const* modelSlots,
                     int a4);                          // VA 0x004A9220
@@ -429,6 +431,8 @@ void CopyDirPathW(wchar_t* dest, const wchar_t* src);  // VA 0x0042AE20
                                                        //  the 1000-wchar
                                                        //  directory buffers)
 void SelectFrameGroup(MMDApp*, FrameGroup group);        // 0xD9/0xDA/0xDC target
+// Bone reverse-paste body extracted from control 498 (x86 0x0048203D).
+void PasteMirroredBonePose(MMDApp* app, HWND hwnd);
 // ---- frame-line edit commands (src/window/frame_line_edit.cpp) -----------
 void InsertBoneCameraFrameLine(MMDApp* app);  // VA 0x00439E40
                                              //  insert frame line (bone/cam)

@@ -179,6 +179,7 @@ add_library(mikudancestudio_core STATIC
     src/window/frame_clipboard.cpp
     src/model/global_key_registration.cpp
     src/window/command_panel_toggles.cpp
+    src/window/bone_pose_paste.cpp
     src/window/command_frame_register.cpp
     src/features/dialog_helpers.cpp
     src/features/audio_pose_helpers.cpp
@@ -455,6 +456,14 @@ if(BUILD_TESTING)
     target_link_options(accessory_selection_test PRIVATE /OPT:REF)
     target_link_libraries(accessory_selection_test PRIVATE user32)
     add_test(NAME accessory_selection COMMAND accessory_selection_test)
+    add_executable(bone_mirror_paste_test tests/bone_mirror_paste_test.cpp
+        src/window/bone_pose_paste.cpp src/window/accessory_paste.cpp
+        src/model/model_keyframe_edit.cpp)
+    target_include_directories(bone_mirror_paste_test PRIVATE include)
+    target_compile_options(bone_mirror_paste_test PRIVATE /Gy)
+    target_link_options(bone_mirror_paste_test PRIVATE /OPT:REF)
+    target_link_libraries(bone_mirror_paste_test PRIVATE user32)
+    add_test(NAME bone_mirror_paste COMMAND bone_mirror_paste_test)
     add_executable(mme_anime_timeline_test tests/mme_anime_timeline_test.cpp)
     target_include_directories(mme_anime_timeline_test PRIVATE
         third_party/mmeffect/include third_party/mmeffect/src/mmhack)

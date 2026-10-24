@@ -143,7 +143,7 @@ mod tests {
             put(&mut t, 0);
         }
         t.extend_from_slice(b"World\0Samp\0");
-        while t.len() % 4 != 0 {
+        while !t.len().is_multiple_of(4) {
             t.push(0);
         }
         let mut b = Vec::new();

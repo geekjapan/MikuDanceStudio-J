@@ -174,12 +174,13 @@ fn probe_source(ast: &EffectAst, source: &str, vars: &mut [Var]) -> Result<Strin
     // Brace and paren depth at each token; declarators sit at depth 0.
     let mut depth = Vec::with_capacity(toks.len());
     let mut d = 0i32;
-    for i in 0..toks.len() {
-        if toks[i].kind == Kind::Punct && matches!(text(i), "}" | ")" | "]") {
+    for t in &toks {
+        let punct = |p: &[&str]| t.kind == Kind::Punct && p.contains(&t.text(source));
+        if punct(&["}", ")", "]"]) {
             d -= 1;
         }
         depth.push(d);
-        if toks[i].kind == Kind::Punct && matches!(text(i), "{" | "(" | "[") {
+        if punct(&["{", "(", "["]) {
             d += 1;
         }
     }

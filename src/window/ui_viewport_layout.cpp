@@ -30,26 +30,26 @@
 
 namespace mikudancestudio {
 
-void LayoutViewportPanels(MMDApp* app) {  // VA 0x0040CAC0
+void LayoutViewportPanels(MMDApp* app) { // VA 0x0040CAC0
     auto& s = *app;
 
-    HWND separate = s.FloatingWindow();                           // 658744
+    HWND separate = s.FloatingWindow(); // 658744
     HWND base;
     int inset;
     RECT rc;
-    if (separate != nullptr) {                                    // 0x40CADB
+    if (separate != nullptr) { // 0x40CADB
         base = separate;
         GetClientRect(base, &rc);
         inset = 0;
     } else {
-        base = s.MainWindow();                                    // 657080
+        base = s.MainWindow(); // 657080
         GetClientRect(base, &rc);
-        inset = s.SidebarWidth() + 9;                             // 657096
+        inset = s.SidebarWidth() + 9; // 657096
     }
     const int right = rc.right;
     const RECT& viewport = s.ViewportRect();
-    const int stripY = viewport.bottom;                           // 658764
-    const int rowY = viewport.top;                                // 658756
+    const int stripY = viewport.bottom; // 658764
+    const int rowY = viewport.top;      // 658756
 
     // Camera strip: x = inset + K, shown while inset + K <= right.
     auto moveLeft = [&](int id, int k, int dy, int w, int h) {
@@ -66,31 +66,31 @@ void LayoutViewportPanels(MMDApp* app) {  // VA 0x0040CAC0
             MoveWindow(GetDlgItem(base, id), -9000, -9000, 1, 1, TRUE);
     };
 
-    moveLeft(panel::kModelEditToggle,   5,  3, 55, 27);   // 0x40CB25 model-select strip label
-    moveLeft(panel::kResetPositionXButton, 140,  9, 16, 17);   // X
-    moveLeft(panel::kReadoutPosXEdit, 157, 11, 53, 14);   // X value
-    moveLeft(panel::kResetPositionYButton, 213,  9, 16, 17);   // Y
-    moveLeft(panel::kReadoutPosYEdit, 230, 11, 53, 14);   // Y value
-    moveLeft(panel::kResetPositionZButton, 286,  9, 16, 17);   // Z
-    moveLeft(panel::kReadoutPosZEdit, 303, 11, 53, 14);   // Z value
-    moveLeft(panel::kResetRotationXButton, 400,  9, 16, 17);   // scale label
+    moveLeft(panel::kModelEditToggle, 5, 3, 55, 27);        // 0x40CB25 model-select strip label
+    moveLeft(panel::kResetPositionXButton, 140, 9, 16, 17); // X
+    moveLeft(panel::kReadoutPosXEdit, 157, 11, 53, 14);     // X value
+    moveLeft(panel::kResetPositionYButton, 213, 9, 16, 17); // Y
+    moveLeft(panel::kReadoutPosYEdit, 230, 11, 53, 14);     // Y value
+    moveLeft(panel::kResetPositionZButton, 286, 9, 16, 17); // Z
+    moveLeft(panel::kReadoutPosZEdit, 303, 11, 53, 14);     // Z value
+    moveLeft(panel::kResetRotationXButton, 400, 9, 16, 17); // scale label
     moveLeft(panel::kReadoutRotXEdit, 417, 11, 38, 14);
-    moveLeft(panel::kResetRotationYButton, 458,  9, 16, 17);
+    moveLeft(panel::kResetRotationYButton, 458, 9, 16, 17);
     moveLeft(panel::kReadoutRotYEdit, 475, 11, 38, 14);
-    moveLeft(panel::kResetRotationZButton, 516,  9, 16, 17);
+    moveLeft(panel::kResetRotationZButton, 516, 9, 16, 17);
     moveLeft(panel::kReadoutRotZEdit, 533, 11, 38, 14);
-    moveLeft(panel::kCameraDistanceButton, 579,  8, 36, 21);   // distance
+    moveLeft(panel::kCameraDistanceButton, 579, 8, 36, 21); // distance
     moveLeft(panel::kReadoutDistEdit, 616, 11, 53, 14);
 
-    moveRight(panel::kCoordAxisCheckbox, 140, -22, 50, 20); // 0x40D018 coordinate-axis toggle
+    moveRight(panel::kCoordAxisCheckbox, 140, -22, 50, 20);   // 0x40D018 coordinate-axis toggle
     moveRight(panel::kFrameVolumeCheckbox, 195, -22, 50, 20); // power-save
-    moveRight(panel::kInfoCheckbox, 250, -22, 50, 20); // info display
+    moveRight(panel::kInfoCheckbox, 250, -22, 50, 20);        // info display
     moveRight(panel::kSelfShadowCheckbox, 305, -22, 50, 20);
     moveRight(panel::kGoToFrameButton, 360, -22, 40, 20);
     moveRight(panel::kGotoFrameEdit, 398, -19, 35, 14); // frame edit box
     moveRight(panel::kSetGoToFrameButton, 441, -22, 40, 20);
 
-    for (int i = panel::kModelEditToggle; i <= panel::kCoordAxisCheckbox; ++i) {                            // 0x40D053
+    for (int i = panel::kModelEditToggle; i <= panel::kCoordAxisCheckbox; ++i) { // 0x40D053
         HWND overlay = GetDlgItem(base, i);
         if (IsWindowVisible(overlay)) {
             ShowWindow(overlay, SW_HIDE);
@@ -99,4 +99,4 @@ void LayoutViewportPanels(MMDApp* app) {  // VA 0x0040CAC0
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

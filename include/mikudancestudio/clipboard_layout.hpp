@@ -22,8 +22,7 @@ struct ClipboardSelectionCounts {
     std::uint32_t gravity;
     std::uint32_t accessories;
 };
-static_assert(sizeof(ClipboardSelectionCounts) == 32,
-              "clipboard selection counts ABI");
+static_assert(sizeof(ClipboardSelectionCounts) == 32, "clipboard selection counts ABI");
 
 struct BoneClipboardRecord {
     char name[30];
@@ -56,8 +55,7 @@ struct SelectorClipboardState {
     std::int32_t modelIndex;
     std::int32_t boneIndex;
 };
-static_assert(sizeof(SelectorClipboardState) == 28,
-              "selector clipboard state ABI");
+static_assert(sizeof(SelectorClipboardState) == 28, "selector clipboard state ABI");
 
 struct DisplayClipboardRecord {
     std::uint32_t frame;
@@ -69,11 +67,9 @@ struct DisplayClipboardRecord {
     SelectorClipboardState* selectorStates;
 };
 #if defined(_M_X64)
-static_assert(sizeof(DisplayClipboardRecord) == 40,
-              "display clipboard x64 ABI");
+static_assert(sizeof(DisplayClipboardRecord) == 40, "display clipboard x64 ABI");
 #else
-static_assert(sizeof(DisplayClipboardRecord) == 24,
-              "display clipboard x86 ABI");
+static_assert(sizeof(DisplayClipboardRecord) == 24, "display clipboard x86 ABI");
 #endif
 
 struct CameraClipboardRecord {
@@ -115,4 +111,4 @@ struct GravityClipboardRecord {
 };
 static_assert(sizeof(GravityClipboardRecord) == 28, "gravity clipboard ABI");
 
-}  // namespace mikudancestudio::mdl
+} // namespace mikudancestudio::mdl

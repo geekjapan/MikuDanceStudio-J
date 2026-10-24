@@ -8,4 +8,4 @@ enum class FrameGroup : int {
     Morph = 2,
 };
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

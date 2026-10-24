@@ -50,14 +50,12 @@ static_assert(offsetof(UndoRecord, recordCount) == 4, "undo record count ABI");
 static_assert(sizeof(UndoRecord) == 40, "undo record x64 ABI");
 static_assert(sizeof(UndoRing) == 1200, "undo ring x64 ABI");
 static_assert(offsetof(UndoRecord, bonePose) == 16, "undo bone pose x64");
-static_assert(offsetof(UndoRecord, auxiliaryPose) == 24,
-              "undo auxiliary pose x64");
+static_assert(offsetof(UndoRecord, auxiliaryPose) == 24, "undo auxiliary pose x64");
 #else
 static_assert(sizeof(UndoRecord) == 28, "undo record x86 ABI");
 static_assert(sizeof(UndoRing) == 840, "undo ring x86 ABI");
 static_assert(offsetof(UndoRecord, bonePose) == 16, "undo bone pose x86");
-static_assert(offsetof(UndoRecord, auxiliaryPose) == 20,
-              "undo auxiliary pose x86");
+static_assert(offsetof(UndoRecord, auxiliaryPose) == 20, "undo auxiliary pose x86");
 #endif
 
-}  // namespace mikudancestudio::mdl
+} // namespace mikudancestudio::mdl

@@ -23,8 +23,8 @@
 
 #if !defined(_M_X64)
 // ---- x86 wall: every field pinned to the original x86 binary ----------
-#define MIKUDANCESTUDIO_APP_OFF(f, off)                                        \
-    static_assert(offsetof(MMDAppState, f) == (off),                          \
+#define MIKUDANCESTUDIO_APP_OFF(f, off)                                                            \
+    static_assert(offsetof(MMDAppState, f) == (off),                                               \
                   #f " x86 offset must match the original binary")
 
 MIKUDANCESTUDIO_APP_OFF(hInstance, 0);
@@ -442,13 +442,13 @@ MIKUDANCESTUDIO_APP_OFF(statusText, 672813);
 
 // The inline path-resolution workspace (was fontSubOrPtr + 3535 pad bytes)
 // must fill the blob region up to the next live field.
-static_assert(offsetof(MMDAppState, leftViewportVertices) -
-                  offsetof(MMDAppState, pathWorkspace) == 3536,
+static_assert(offsetof(MMDAppState, leftViewportVertices) - offsetof(MMDAppState, pathWorkspace) ==
+                  3536,
               "pathWorkspace x86 span must end at the next app field");
 #else
 // ---- x64 anchors --------------------------------------------------------
-#define MIKUDANCESTUDIO_APP_OFF64(f, off)                                      \
-    static_assert(offsetof(MMDAppState, f) == (off),                          \
+#define MIKUDANCESTUDIO_APP_OFF64(f, off)                                                          \
+    static_assert(offsetof(MMDAppState, f) == (off),                                               \
                   #f " x64 anchor must match the original binary")
 
 MIKUDANCESTUDIO_APP_OFF64(audioContext, 208);

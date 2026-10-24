@@ -69,46 +69,45 @@ void ToggleVisible(HWND parent, int firstId, int lastId) {
     }
 }
 
-}  // namespace
+} // namespace
 
-void PanelPaint(MMDApp* app);  // VA 0x00414610 (defined in ui_panel_paint.cpp)
-void LayoutViewportPanels(MMDApp* app);   // VA 0x0040CAC0
-                                          // (ui_viewport_layout.cpp)
+void PanelPaint(MMDApp* app);           // VA 0x00414610 (defined in ui_panel_paint.cpp)
+void LayoutViewportPanels(MMDApp* app); // VA 0x0040CAC0
+                                        // (ui_viewport_layout.cpp)
 
 void HandleWindowSize(MMDApp* app) {
     auto& s = *app;
-    const HWND hwnd = static_cast<HWND>(app->Hwnd());  // 657080 (0xA06B8)
+    const HWND hwnd = static_cast<HWND>(app->Hwnd()); // 657080 (0xA06B8)
 
     // --- clamp the window to 2560 x 1920 (0x44331B..0x443391) --------------
     RECT wr;
     GetWindowRect(hwnd, &wr);
     if (wr.right - wr.left > 2560)
-        SetWindowPos(hwnd, nullptr, wr.left, wr.top, 2560,
-                     wr.bottom - wr.top, SWP_NOZORDER);
+        SetWindowPos(hwnd, nullptr, wr.left, wr.top, 2560, wr.bottom - wr.top, SWP_NOZORDER);
     GetWindowRect(hwnd, &wr);
     if (wr.bottom - wr.top > 1920)
-        SetWindowPos(hwnd, nullptr, wr.left, wr.top, wr.right - wr.left,
-                     1920, SWP_NOZORDER);
+        SetWindowPos(hwnd, nullptr, wr.left, wr.top, wr.right - wr.left, 1920, SWP_NOZORDER);
 
     // --- sidebar width (0x4433A4..0x4433F2) --------------------------------
     RECT cr1;
-    GetClientRect(hwnd, &cr1);  // var_10 - only .right feeds the sidebar
+    GetClientRect(hwnd, &cr1); // var_10 - only .right feeds the sidebar
     std::int32_t& sidebar = s.SidebarWidth();
     if (s.FloatingWindow() != nullptr) {
-        sidebar = cr1.right - 3;                               // 0x4433B8
-        RebuildTimelineTrackPanel(app);                                // 0x4433BE
+        sidebar = cr1.right - 3;        // 0x4433B8
+        RebuildTimelineTrackPanel(app); // 0x4433BE
     } else {
-        std::int32_t newSidebar = static_cast<std::int32_t>(
-            static_cast<double>(s.SidebarRatio()) *
-            cr1.right);                                        // 0x4433CF
-        if (newSidebar < 250) newSidebar = 250;                                // 0x4433D9
-        const bool grew = sidebar < newSidebar;                        // 0x4433E0
-        sidebar = newSidebar;                                          // 0x4433E6
-        if (grew) PanelPaint(app);                             // 0x4433EC
+        std::int32_t newSidebar = static_cast<std::int32_t>(static_cast<double>(s.SidebarRatio()) *
+                                                            cr1.right); // 0x4433CF
+        if (newSidebar < 250)
+            newSidebar = 250;                   // 0x4433D9
+        const bool grew = sidebar < newSidebar; // 0x4433E0
+        sidebar = newSidebar;                   // 0x4433E6
+        if (grew)
+            PanelPaint(app); // 0x4433EC
     }
     const std::int32_t side = sidebar;
-    RECT cb;                                                   // var_30
-    GetClientRect(hwnd, &cb);                                  // 0x443563
+    RECT cb;                  // var_30
+    GetClientRect(hwnd, &cb); // 0x443563
     const std::int32_t bottom = cb.bottom;
 
     // --- left tool row (0x4433F5..0x443555) --------------------------------
@@ -165,16 +164,17 @@ void HandleWindowSize(MMDApp* app) {
     // --- option band 1: base bandXBase (original v52; 0x443B02..0x443D9E) --
     // bandXBase = -18, or 117 while bone mode is off (optflag[0] set) and the
     // expand toggle optflag[1] is clear.
-    const std::uint8_t cameraMode = s.CameraMode();     // 760
-    const std::uint8_t cameraPanelExpanded = s.PanelExpanded(UiPanel::Camera);  // 761
-    const std::uint8_t lightPanelExpanded = s.PanelExpanded(UiPanel::Light);  // 762
-    const std::uint8_t accessoryPanelExpanded = s.PanelExpanded(UiPanel::Accessory);  // 763
-    const std::uint8_t bonePanelExpanded = s.PanelExpanded(UiPanel::Bone);  // 764
-    const std::uint8_t morphPanelExpanded = s.PanelExpanded(UiPanel::Morph);  // 765
-    const std::uint8_t selfShadowPanelExpanded = s.PanelExpanded(UiPanel::SelfShadow);  // 766
+    const std::uint8_t cameraMode = s.CameraMode();                                    // 760
+    const std::uint8_t cameraPanelExpanded = s.PanelExpanded(UiPanel::Camera);         // 761
+    const std::uint8_t lightPanelExpanded = s.PanelExpanded(UiPanel::Light);           // 762
+    const std::uint8_t accessoryPanelExpanded = s.PanelExpanded(UiPanel::Accessory);   // 763
+    const std::uint8_t bonePanelExpanded = s.PanelExpanded(UiPanel::Bone);             // 764
+    const std::uint8_t morphPanelExpanded = s.PanelExpanded(UiPanel::Morph);           // 765
+    const std::uint8_t selfShadowPanelExpanded = s.PanelExpanded(UiPanel::SelfShadow); // 766
 
     std::int32_t bandXBase = -18;
-    if (cameraMode != 0 && cameraPanelExpanded == 0) bandXBase = 117;                   // 0x443B1A
+    if (cameraMode != 0 && cameraPanelExpanded == 0)
+        bandXBase = 117; // 0x443B1A
     MoveCtrl(hwnd, panel::kLightColorSliderR, 514 - bandXBase, bottom - 140, 136, 18);
     MoveCtrl(hwnd, panel::kLightColorEditR, 650 - bandXBase, bottom - 140, 23, 14);
     MoveCtrl(hwnd, panel::kLightColorSliderG, 514 - bandXBase, bottom - 122, 136, 18);
@@ -193,7 +193,8 @@ void HandleWindowSize(MMDApp* app) {
     MoveCtrl(hwnd, panel::kCollapseLightPanelButton, 501 - bandXBase, bottom - 155, 14, 14);
 
     // --- option band 2: bandXBase += 162 with expand toggle optflag[2] (0x443DB3)
-    if (cameraMode != 0 && lightPanelExpanded == 0) bandXBase += 162;
+    if (cameraMode != 0 && lightPanelExpanded == 0)
+        bandXBase += 162;
     MoveCtrl(hwnd, panel::kExpandSelfShadowPanelButton, 684 - bandXBase, bottom - 155, 14, 14);
     MoveCtrl(hwnd, panel::kCollapseSelfShadowPanelButton, 684 - bandXBase, bottom - 155, 14, 14);
     MoveCtrl(hwnd, panel::kEditOffCheckbox, 688 - bandXBase, bottom - 135, 54, 22);
@@ -204,7 +205,8 @@ void HandleWindowSize(MMDApp* app) {
     MoveCtrl(hwnd, panel::kRegisterSelfShadowButton, 745 - bandXBase, bottom - 36, 54, 30);
 
     // --- option band 3: bandXBase += 160 with expand toggle optflag[6] (0x443F19)
-    if (cameraMode != 0 && selfShadowPanelExpanded == 0) bandXBase += 160;
+    if (cameraMode != 0 && selfShadowPanelExpanded == 0)
+        bandXBase += 160;
     MoveCtrl(hwnd, panel::kExpandAccessoryPanelButton, 864 - bandXBase, bottom - 155, 14, 14);
     MoveCtrl(hwnd, panel::kCollapseAccessoryPanelButton, 864 - bandXBase, bottom - 155, 14, 14);
     MoveCtrl(hwnd, panel::kAccessoryCombo, 868 - bandXBase, bottom - 140, 125, 150);
@@ -227,7 +229,8 @@ void HandleWindowSize(MMDApp* app) {
 
     // --- option band 4: bandXBase += 178 with expand toggle optflag[3] (0x44422B);
     // band 4 controls use fixed X -------------------------------------------
-    if (cameraMode != 0 && accessoryPanelExpanded == 0) bandXBase += 178;
+    if (cameraMode != 0 && accessoryPanelExpanded == 0)
+        bandXBase += 178;
     MoveCtrl(hwnd, panel::kExpandBonePanelButton, 363, bottom - 155, 14, 14);
     MoveCtrl(hwnd, panel::kCollapseBonePanelButton, 363, bottom - 155, 14, 14);
     MoveCtrl(hwnd, panel::kBoneSelectRadio, 366, bottom - 140, 60, 28);
@@ -248,8 +251,9 @@ void HandleWindowSize(MMDApp* app) {
     // optflag[4]/optflag[0] both clear -> bandXBase += 179; then bandXBase2 = bandXBase - 180
     // (bone mode on) or bandXBase + 53; optflag[5]/optflag[0] both clear -> bandXBase2 +=
     // 251; optflag[0] clear -> bandXBase2 += 13.
-    if (bonePanelExpanded == 0 && cameraMode == 0) bandXBase += 179;                   // 0x444453
-    std::int32_t bandXBase2 = cameraMode != 0 ? bandXBase - 180 : bandXBase + 53;     // 0x44445D
+    if (bonePanelExpanded == 0 && cameraMode == 0)
+        bandXBase += 179;                                                         // 0x444453
+    std::int32_t bandXBase2 = cameraMode != 0 ? bandXBase - 180 : bandXBase + 53; // 0x44445D
     MoveCtrl(hwnd, panel::kExpandMorphPanelButton, 598 - bandXBase2, bottom - 155, 14, 14);
     MoveCtrl(hwnd, panel::kCollapseMorphPanelButton, 598 - bandXBase2, bottom - 155, 14, 14);
     MoveCtrl(hwnd, panel::kMorphCombo1, 618 - bandXBase2, bottom - 120, 92, 500);
@@ -279,8 +283,10 @@ void HandleWindowSize(MMDApp* app) {
 
     // The original updates bandXBase2 only after the complete facial group above;
     // the adjusted base belongs exclusively to the following view/play band.
-    if (morphPanelExpanded == 0 && cameraMode == 0) bandXBase2 += 251;                  // 0x4448A8
-    if (cameraMode == 0) bandXBase2 += 13;                                // 0x444895
+    if (morphPanelExpanded == 0 && cameraMode == 0)
+        bandXBase2 += 251; // 0x4448A8
+    if (cameraMode == 0)
+        bandXBase2 += 13; // 0x444895
     MoveCtrl(hwnd, panel::kViewFrontButton, 886 - bandXBase2, bottom - 141, 38, 17);
     MoveCtrl(hwnd, panel::kViewBackButton, 925 - bandXBase2, bottom - 141, 37, 17);
     MoveCtrl(hwnd, panel::kViewTopButton, 963 - bandXBase2, bottom - 141, 37, 17);
@@ -307,7 +313,7 @@ void HandleWindowSize(MMDApp* app) {
 
     // --- refresh tail (0x444C9D..0x444CB0) ---------------------------------
     RefreshMainWindowViewport(app);
-    LayoutViewportPanels(app);  // original tail call: `return sub_40CAC0(this);`
+    LayoutViewportPanels(app); // original tail call: `return sub_40CAC0(this);`
 }
 
 // VA 0x00442EB0 - live relayout of the sidebar-anchored
@@ -355,4 +361,4 @@ void RelayoutSidebarControls(MMDApp* app) {
     LayoutViewportPanels(app);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

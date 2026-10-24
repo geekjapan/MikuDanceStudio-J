@@ -242,40 +242,38 @@
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/panel_controls.hpp"
 
-
 #include "dialog_scaffold.hpp"
 #include "enhanced_model_messages.hpp"
 
 namespace mikudancestudio {
 
-
 // ---- dialog helpers moved to dedicated TUs (original VAs kept) ----------
 // physics-model editor (menu 262, dialog 0x2AC): physics_model_dialog.cpp
-void AddRigidBody(HWND hDlg);                    // VA 0x0045F480
-LRESULT CALLBACK PhysicsEditSubclassProc(HWND, UINT, WPARAM, LPARAM);  // VA 0x0041EC50
-void InitPhysicsModelDialog(HWND hDlg);          // VA 0x0045F670
-void CollectBodyEdits(MMDApp* app);              // VA 0x0041FF30
-void CollectJointEdits(MMDApp* app);             // VA 0x004204F0
-void AddJoint(HWND hDlg);                        // VA 0x0043CA50
-void ApplyBodyRecordToEdits(HWND hDlg, int idx);  // VA 0x0043CCD0
-void ApplyJointRecordToEdits(HWND hDlg, int idx);  // VA 0x004214A0
-void FlipPhysicsDialogPage(HWND hDlg, int flag);  // VA 0x00421C20
-void UpdateShapeControls(HWND hDlg, int mode, int idx);  // VA 0x00421CE0
-void CommitPhysicsEdits(HWND hDlg);              // VA 0x004220F0
-void PickPivotBone(HWND hDlg);                   // VA 0x00420DC0
-INT_PTR CALLBACK PhysicsModelDlgProc(HWND, UINT, WPARAM, LPARAM);  // VA 0x00465020
+void AddRigidBody(HWND hDlg);                                         // VA 0x0045F480
+LRESULT CALLBACK PhysicsEditSubclassProc(HWND, UINT, WPARAM, LPARAM); // VA 0x0041EC50
+void InitPhysicsModelDialog(HWND hDlg);                               // VA 0x0045F670
+void CollectBodyEdits(MMDApp* app);                                   // VA 0x0041FF30
+void CollectJointEdits(MMDApp* app);                                  // VA 0x004204F0
+void AddJoint(HWND hDlg);                                             // VA 0x0043CA50
+void ApplyBodyRecordToEdits(HWND hDlg, int idx);                      // VA 0x0043CCD0
+void ApplyJointRecordToEdits(HWND hDlg, int idx);                     // VA 0x004214A0
+void FlipPhysicsDialogPage(HWND hDlg, int flag);                      // VA 0x00421C20
+void UpdateShapeControls(HWND hDlg, int mode, int idx);               // VA 0x00421CE0
+void CommitPhysicsEdits(HWND hDlg);                                   // VA 0x004220F0
+void PickPivotBone(HWND hDlg);                                        // VA 0x00420DC0
+INT_PTR CALLBACK PhysicsModelDlgProc(HWND, UINT, WPARAM, LPARAM);     // VA 0x00465020
 // enhance-model IO (toon collect / save model): enhance_model_io.cpp
-int CollectToonFileNames(HWND hDlg);             // VA 0x0041EA20
+int CollectToonFileNames(HWND hDlg); // VA 0x0041EA20
 // (SaveEnhancedModel / SetModelColor declared in ported_funcs.hpp; RefreshMenuLanguage below)
-void RefreshMenuLanguage(MMDApp* app);           // VA 0x0040B5A0
+void RefreshMenuLanguage(MMDApp* app); // VA 0x0040B5A0
 // misc dialog bodies: misc_dialogs.cpp
-void ApplyCameraFrameScaleAdd(MMDApp* app, HWND hDlg);  // VA 0x0043DAD0
-void ApplyBoneFrameScaleAdd(MMDApp* app, HWND hDlg);    // VA 0x0043E000
-void ApplyMorphScaleAdd(MMDApp* app, HWND hDlg);  // VA 0x0043E680
-void ApplyPhysicsOnOff(int on);                  // VA 0x004403C0
+void ApplyCameraFrameScaleAdd(MMDApp* app, HWND hDlg); // VA 0x0043DAD0
+void ApplyBoneFrameScaleAdd(MMDApp* app, HWND hDlg);   // VA 0x0043E000
+void ApplyMorphScaleAdd(MMDApp* app, HWND hDlg);       // VA 0x0043E680
+void ApplyPhysicsOnOff(int on);                        // VA 0x004403C0
 
 // Model-frame seek helper shared by the numeric-input dialogs.
-void SeekSelectedModelToCurrentFrame(MMDApp* app);  // VA 0x004220C0 (model_frame_seek.cpp)
+void SeekSelectedModelToCurrentFrame(MMDApp* app); // VA 0x004220C0 (model_frame_seek.cpp)
 
 namespace {
 
@@ -283,28 +281,24 @@ namespace {
 // C++17 has no std::bit_cast; MSVC's __builtin_bit_cast is accepted in
 // constant expressions, so the static_asserts pin each literal below to
 // the original .rdata bit pattern.
-constexpr double kPiTruncatedDouble = static_cast<double>(3.141592f);  // pi (truncated)
-static_assert(__builtin_bit_cast(std::uint64_t, kPiTruncatedDouble) ==
-                  0x400921FB00000000ull,
+constexpr double kPiTruncatedDouble = static_cast<double>(3.141592f); // pi (truncated)
+static_assert(__builtin_bit_cast(std::uint64_t, kPiTruncatedDouble) == 0x400921FB00000000ull,
               "dbl_52B768 bit-exact");
-constexpr double kDegreesScale = 180.0;                           // 180.0
-static_assert(__builtin_bit_cast(std::uint64_t, kDegreesScale) ==
-                  0x4066800000000000ull,
+constexpr double kDegreesScale = 180.0; // 180.0
+static_assert(__builtin_bit_cast(std::uint64_t, kDegreesScale) == 0x4066800000000000ull,
               "dbl_52B760 bit-exact");
 // 3.141594886779785 is the shortest round-trip decimal for dbl_52E678.
-constexpr double kPiWidenedFloat = 3.141594886779785;               // (double)(float)pi
-static_assert(__builtin_bit_cast(std::uint64_t, kPiWidenedFloat) ==
-                  0x400921FC80000000ull,
+constexpr double kPiWidenedFloat = 3.141594886779785; // (double)(float)pi
+static_assert(__builtin_bit_cast(std::uint64_t, kPiWidenedFloat) == 0x400921FC80000000ull,
               "dbl_52E678 bit-exact");
-constexpr float kAngleEpsilon = 1e-6f;  // ~1e-6 threshold
+constexpr float kAngleEpsilon = 1e-6f; // ~1e-6 threshold
 static_assert(__builtin_bit_cast(std::uint32_t, kAngleEpsilon) == 0x358637BDu,
               "flt_52B740 bit-exact");
-constexpr float kNegativePiFloat = -3.141592f;  // -pi float
+constexpr float kNegativePiFloat = -3.141592f; // -pi float
 static_assert(__builtin_bit_cast(std::uint32_t, kNegativePiFloat) == 0xC0490FD8u,
               "flt_52B73C bit-exact");
-constexpr float kPiFloat = 3.141592f;  // +pi float
-static_assert(__builtin_bit_cast(std::uint32_t, kPiFloat) == 0x40490FD8u,
-              "flt_52B738 bit-exact");
+constexpr float kPiFloat = 3.141592f; // +pi float
+static_assert(__builtin_bit_cast(std::uint32_t, kPiFloat) == 0x40490FD8u, "flt_52B738 bit-exact");
 
 // 0x529688: swprintf_s format L"\0\0%s%s" - the leading NULs make the
 // original call (which passes NO varargs) write an empty string; the %s
@@ -320,9 +314,15 @@ static unsigned char* ActiveModel(MMDApp* app) {
 // bone-rotation dialog (case 300).  sub_40A6B0 dispatches to the CRT
 // atan2 (cintrin table entry "atan2" at 0x544C40): arg0 = x, arg1 = y;
 // every result is rounded to float before it is stored.
-double AngleFabs(float x) { return static_cast<double>(std::fabs(x)); }
-double AngleAsin(float x) { return static_cast<double>(std::asin(x)); }
-double AngleCos(float x)  { return static_cast<double>(std::cos(x)); }
+double AngleFabs(float x) {
+    return static_cast<double>(std::fabs(x));
+}
+double AngleAsin(float x) {
+    return static_cast<double>(std::asin(x));
+}
+double AngleCos(float x) {
+    return static_cast<double>(std::cos(x));
+}
 double AngleAtan2(float y, float x) {
     return static_cast<double>(static_cast<float>(std::atan2(y, x)));
 }
@@ -330,13 +330,12 @@ double AngleAtan2(float y, float x) {
 // Capture uses the renderer-owned surface when multisampling is unavailable.
 void BindCaptureRenderTarget(MMDApp* app) {
     D3DRenderer* locale = app->Renderer();
-    locale->device->SetRenderTarget(0, locale->captureSurface);  // 0x1D534
+    locale->device->SetRenderTarget(0, locale->captureSurface); // 0x1D534
 }
 
 void SetMultisampleAntialias(MMDApp* app, int on) {
     D3DRenderer* locale = app->Renderer();
-    locale->device->SetRenderState(
-        D3DRS_MULTISAMPLEANTIALIAS, static_cast<DWORD>(on));
+    locale->device->SetRenderState(D3DRS_MULTISAMPLEANTIALIAS, static_cast<DWORD>(on));
 }
 
 // Shared tail of cases 300/302 (0x48A805): D3DXQuaternionRotationMatrix of
@@ -370,17 +369,17 @@ static const char kCaptionCreateWndJp[] =
     "\x98\x5E\x89\xE6\x83\x45\x83\x42\x83\x93\x83\x68\x83\x45\x8D\xEC"
     "\x90\xAC";
 // 0x52F1C0: window title "描画中(0 frame)" (ANSI)
-static const char kRecWndTitle[] =
-    "\x98\x5E\x89\xE6\x92\x86(0 frame)";
+static const char kRecWndTitle[] = "\x98\x5E\x89\xE6\x92\x86(0 frame)";
 // 0x52E2F4: "モデルを選択していないとoniデータは読めません"
 static const char kMsgOpenOniJp[] =
     "\x83\x4A\x83\x81\x83\x89\x81\x45\x8F\xC6\x96\xBE\x83\x82\x81\x5B"
-    "\x83\x68\x82\xC5\x82\xCD" "oni" "\x83\x66\x81\x5B\x83\x5E\x82\xCD"
+    "\x83\x68\x82\xC5\x82\xCD"
+    "oni"
+    "\x83\x66\x81\x5B\x83\x5E\x82\xCD"
     "\x93\xC7\x82\xDF\x82\xDC\x82\xB9\x82\xF1";
 
 // 0x52F650: JP title "拡張モデル保存"
-static const wchar_t kTitleSaveModelJp[] =
-    L"\x62E1\x5F35\x30E2\x30C7\x30EB\x4FDD\x5B58";
+static const wchar_t kTitleSaveModelJp[] = L"\x62E1\x5F35\x30E2\x30C7\x30EB\x4FDD\x5B58";
 // 0x52F218: JP picture filter label "書きの画像フォーマット" (label is
 // followed by a double NUL in the binary - the pattern list is empty).
 static const wchar_t kFilterPicJp[] =
@@ -389,45 +388,41 @@ static const wchar_t kFilterPicJp[] =
     L"*.bmp;*.jpg;*.png;*.dds;*.dib;*.pfm;*.hdr\x00\x00"
     L"Bmp files(*.bmp)\x00\x00*.bmp\x00\x00";
 // 0x52F1D0: JP title "画像ファイル出力"
-static const wchar_t kTitleRenderJp[] =
-    L"\x753B\x50CF\x30D5\x30A1\x30A4\x30EB\x51FA\x529B";
+static const wchar_t kTitleRenderJp[] = L"\x753B\x50CF\x30D5\x30A1\x30A4\x30EB\x51FA\x529B";
 // 0x52DC84: JP title "ファイルを開く"
-static const wchar_t kTitleOpenJp[] =
-    L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B\x304F";
+static const wchar_t kTitleOpenJp[] = L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B\x304F";
 
 // ---- dialog helpers retained in this translation unit ----------------------
 
 // Forward declarations (bodies below / later in this TU).
-void SetEdgeThickness(MMDApp* app, float thickness);      // VA 0x0041E980
+void SetEdgeThickness(MMDApp* app, float thickness); // VA 0x0041E980
 // VA 0x0042E270 - edit-646 (0x286) subclass of the edge-thickness dialog
 // (253): on WM_KEYDOWN+VK_RETURN it reads the edit text, applies it through
 // the thickness setter (0x41E980) and parks the percent value on trackbar
 // 647 (TBM_SETPOS, dbl 0x52B8E0 = 100.0); anything else goes to the saved
 // original procedure (app+0xA0B48, captured when case 253 subclasses).
-LRESULT CALLBACK EdgeThicknessEditSubclassProc(  // VA 0x0042E270
+LRESULT CALLBACK EdgeThicknessEditSubclassProc( // VA 0x0042E270
     HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     MMDApp* app = g_Block;
-    if (msg == WM_KEYDOWN && wParam == VK_RETURN) {  // 0x100 / 0x0D
+    if (msg == WM_KEYDOWN && wParam == VK_RETURN) { // 0x100 / 0x0D
         const HWND dlg = app->state.edgeThicknessDialog;
         if (hwnd == GetDlgItem(dlg, panel::kEdgeThicknessEdit /*646*/)) {
             char buf[8];
             GetWindowTextA(hwnd, buf, 8);
             const float v = static_cast<float>(atof(buf));
-            SetEdgeThickness(app, v);                   // 0x41E980
-            SendMessageA(GetDlgItem(dlg, panel::kEdgeThicknessSlider /*647*/),
-                         TBM_SETPOS, 1,
-                         static_cast<int>(v * 100.0));  // dbl 0x52B8E0
+            SetEdgeThickness(app, v); // 0x41E980
+            SendMessageA(GetDlgItem(dlg, panel::kEdgeThicknessSlider /*647*/), TBM_SETPOS, 1,
+                         static_cast<int>(v * 100.0)); // dbl 0x52B8E0
             return 0;
         }
     }
-    return CallWindowProcA(app->EdgeThicknessEditProc(),
-                           hwnd, msg, wParam, lParam);
+    return CallWindowProcA(app->EdgeThicknessEditProc(), hwnd, msg, wParam, lParam);
 }
 // VA 0x0041E950 - edge-thickness getter: camera mode (byte 0x2F8) reports a
 // constant 1.0, model mode the active model's thickness float (+0x31C0).
 // (Template caption "thickness of edge line" / エッジ太さ設定, scale 0..2 -
 // model+0x31C0 is the per-model edge thickness, not a FPS.)
-float GetEdgeThickness(MMDApp* app) {  // VA 0x0041E950
+float GetEdgeThickness(MMDApp* app) { // VA 0x0041E950
     if (app->CameraMode() != 0)
         return 1.0f;
     unsigned char* model = app->SelectedModel();
@@ -436,7 +431,7 @@ float GetEdgeThickness(MMDApp* app) {  // VA 0x0041E950
 // VA 0x0041E980 - edge-thickness setter (model mode only): marks the
 // in-dialog and dirty flags, then stores into the active model's thickness
 // float (+0x31C0).
-void SetEdgeThickness(MMDApp* app, float thickness) {  // VA 0x0041E980
+void SetEdgeThickness(MMDApp* app, float thickness) { // VA 0x0041E980
     if (app->CameraMode() != 0)
         return;
     app->state.messageSeen = 1;
@@ -446,13 +441,12 @@ void SetEdgeThickness(MMDApp* app, float thickness) {  // VA 0x0041E980
 }
 // VA 0x0041E9C0 - enhance-model dialog init: mirrors the ten 100-byte SJIS
 // toon texture file-name slots of the active model (+0x33D8) into edits 709..718.
-void FillToonTextureEdits(MMDApp* app, HWND hDlg) {  // VA 0x0041E9C0
+void FillToonTextureEdits(MMDApp* app, HWND hDlg) { // VA 0x0041E9C0
     unsigned char* model = app->SelectedModel();
     for (int i = 0; i < 10; ++i)
         SendMessageA(GetDlgItem(hDlg, panel::kToon01Edit + i), EM_REPLACESEL, 0,
                      reinterpret_cast<LPARAM>(mdl::Mdl(model)->pmdToonFileNames[i]));
 }
-
 
 // ---- JP strings of the dialogs, byte-exact -------------------------------
 // 0x52E628: "ON (X印)" (SJIS 0x88F3 = 印); 0x52E624: "OFF".
@@ -462,8 +456,7 @@ static const char kOff[] = "OFF";
 // caption = the Fshadow button's two-kanji label + "モード"; JP text =
 // "この命令は画面右上の「<Fshadow label>」ボタンに取って変わりました"
 // (SJIS, byte-exact).
-static const char kCaptionFineShadowJp[] =
-    "\x94\xFC\x89\x65\x83\x82\x81\x5B\x83\x68";
+static const char kCaptionFineShadowJp[] = "\x94\xFC\x89\x65\x83\x82\x81\x5B\x83\x68";
 static const char kMsgFineShadowJp[] =
     "\x82\xB1\x82\xCC\x89\x42\x82\xB5\x83\x52\x83\x7D\x83\x93\x83\x68\x82\xCD"
     "\x89\xE6\x96\xCA\x89\x45\x8F\xE3\x82\xCC\x81\x75\x94\xFC\x81\x40\x89\x65"
@@ -480,7 +473,7 @@ static const char kMsgFineShadowJp[] =
 // Reference: MikuMikuDance.exe sub_44D3F0.
 // ===========================================================================
 INT_PTR CALLBACK BoneFrameMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
-                                          LPARAM lParam) {  // VA 0x0044D3F0
+                                          LPARAM lParam) { // VA 0x0044D3F0
     (void)lParam;
     if (msg == WM_INITDIALOG) {
         MMDApp* app = g_Block;
@@ -497,7 +490,7 @@ INT_PTR CALLBACK BoneFrameMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     if (msg == WM_COMMAND) {
         const WORD id = LOWORD(wParam);
         if (id == IDOK) {
-            ApplyBoneFrameScaleAdd(g_Block, hDlg);  // 0x43E000
+            ApplyBoneFrameScaleAdd(g_Block, hDlg); // 0x43E000
             EndDialog(hDlg, IDOK);
             return 0;
         }
@@ -518,7 +511,7 @@ INT_PTR CALLBACK BoneFrameMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 // Reference: MikuMikuDance.exe sub_44D510.
 // ===========================================================================
 INT_PTR CALLBACK FacialMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
-                                       LPARAM lParam) {  // VA 0x0044D510
+                                       LPARAM lParam) { // VA 0x0044D510
     (void)lParam;
     if (msg == WM_INITDIALOG) {
         MMDApp* app = g_Block;
@@ -531,7 +524,7 @@ INT_PTR CALLBACK FacialMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     if (msg == WM_COMMAND) {
         const WORD id = LOWORD(wParam);
         if (id == IDOK) {
-            ApplyMorphScaleAdd(g_Block, hDlg);  // 0x43E680
+            ApplyMorphScaleAdd(g_Block, hDlg); // 0x43E680
             EndDialog(hDlg, IDOK);
             return 0;
         }
@@ -555,18 +548,17 @@ INT_PTR CALLBACK FacialMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 // Reference: MikuMikuDance.exe sub_44C7F0.
 // ===========================================================================
 INT_PTR CALLBACK EdgeThicknessDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
-                                      LPARAM lParam) {  // VA 0x0044C7F0
+                                      LPARAM lParam) { // VA 0x0044C7F0
     (void)lParam;
     MMDApp* app = g_Block;
     switch (msg) {
     case WM_INITDIALOG: {
         MakeDialogTopmostIfRequested(app, hDlg);
-        app->EdgeThicknessEditProc() =
-            reinterpret_cast<WNDPROC>(
-                GetWindowLongPtrA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit), GWLP_WNDPROC));
+        app->EdgeThicknessEditProc() = reinterpret_cast<WNDPROC>(
+            GetWindowLongPtrA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit), GWLP_WNDPROC));
         SetWindowLongPtrA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit), GWLP_WNDPROC,
-                       (LONG)(LONG_PTR)EdgeThicknessEditSubclassProc);
-        const float thickness = GetEdgeThickness(app);  // 0x41E950
+                          (LONG)(LONG_PTR)EdgeThicknessEditSubclassProc);
+        const float thickness = GetEdgeThickness(app); // 0x41E950
         char buf[0x100];
         sprintf_s(buf, 0x100, "%3.2f", static_cast<double>(thickness));
         PrefillEdit(hDlg, panel::kEdgeThicknessEdit, buf);
@@ -585,17 +577,15 @@ INT_PTR CALLBACK EdgeThicknessDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         }
         break;
     case WM_HSCROLL: {
-        const double v =
-            static_cast<double>(
-                SendMessageA(GetDlgItem(hDlg, panel::kEdgeThicknessSlider), TBM_GETPOS, 0, 0)) /
-            100.0;
-        SetEdgeThickness(app, static_cast<float>(v));  // 0x41E980
+        const double v = static_cast<double>(SendMessageA(
+                             GetDlgItem(hDlg, panel::kEdgeThicknessSlider), TBM_GETPOS, 0, 0)) /
+                         100.0;
+        SetEdgeThickness(app, static_cast<float>(v)); // 0x41E980
         char buf[0x100];
         sprintf_s(buf, 0x100, "%3.2f", v);
         SendMessageA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit), EM_SETSEL, 0,
                      GetWindowTextLengthA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit)));
-        SendMessageA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit), EM_REPLACESEL, 0,
-                     (LPARAM)buf);
+        SendMessageA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit), EM_REPLACESEL, 0, (LPARAM)buf);
         return 1;
     }
     default:
@@ -613,12 +603,12 @@ INT_PTR CALLBACK EdgeThicknessDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 // Reference: MikuMikuDance.exe sub_43C9A0.
 // ===========================================================================
 INT_PTR CALLBACK EnhanceModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
-                                     LPARAM lParam) {  // VA 0x0043C9A0
+                                     LPARAM lParam) { // VA 0x0043C9A0
     (void)lParam;
     if (msg == WM_INITDIALOG) {
         MMDApp* app = g_Block;
         MakeDialogTopmostIfRequested(app, hDlg);
-        FillToonTextureEdits(app, hDlg);  // 0x41E9C0
+        FillToonTextureEdits(app, hDlg); // 0x41E9C0
         return 0;
     }
     if (msg != WM_COMMAND) {
@@ -626,7 +616,7 @@ INT_PTR CALLBACK EnhanceModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     }
     const WORD id = LOWORD(wParam);
     if (id == IDOK) {
-        if (CollectToonFileNames(hDlg) != 0) {  // 0x41EA20
+        if (CollectToonFileNames(hDlg) != 0) { // 0x41EA20
             EndDialog(hDlg, IDOK);
         } else {
             EndDialog(hDlg, IDCANCEL);
@@ -640,7 +630,6 @@ INT_PTR CALLBACK EnhanceModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     return 0;
 }
 
-
 // ===========================================================================
 // 0x461CE0 - case 275 physics ON/OFF frame dialog (template caption "change
 // physics ON/OFF frame" / 物理ON/OFFフレーム変換; 0x32D EN / 0x32C JP).
@@ -651,29 +640,23 @@ INT_PTR CALLBACK EnhanceModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 // Reference: MikuMikuDance.exe sub_461CE0.
 // ===========================================================================
 INT_PTR CALLBACK PhysicsOnOffFrameDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
-                                          LPARAM lParam) {  // VA 0x00461CE0
+                                          LPARAM lParam) { // VA 0x00461CE0
     (void)lParam;
     if (msg == WM_INITDIALOG) {
         SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_RESETCONTENT, 0, 0);
-        const char* first =
-            g_Block->state.englishUI != 0
-                ? "ON (X mark)"
-                : kOnXMarkJp;
-        SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_ADDSTRING, 0,
-                     (LPARAM)first);
-        SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_ADDSTRING, 0,
-                     (LPARAM)kOff);
+        const char* first = g_Block->state.englishUI != 0 ? "ON (X mark)" : kOnXMarkJp;
+        SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_ADDSTRING, 0, (LPARAM)first);
+        SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_ADDSTRING, 0, (LPARAM)kOff);
         SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_SETCURSEL, 0, 0);
         return 0;
     }
     if (msg == WM_COMMAND) {
         const WORD id = LOWORD(wParam);
         if (id == IDOK) {
-            if (SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_GETCURSEL, 0,
-                             0) != 0) {
-                ApplyPhysicsOnOff(1);  // 0x4403C0
+            if (SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_GETCURSEL, 0, 0) != 0) {
+                ApplyPhysicsOnOff(1); // 0x4403C0
             } else {
-                ApplyPhysicsOnOff(0);  // 0x4403C0
+                ApplyPhysicsOnOff(0); // 0x4403C0
             }
             EndDialog(hDlg, IDOK);
             return 0;
@@ -698,7 +681,7 @@ INT_PTR CALLBACK PhysicsOnOffFrameDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 // Reference: MikuMikuDance.exe sub_40FBC0.
 // ===========================================================================
 INT_PTR CALLBACK CameraNumericInputDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
-                                           LPARAM lParam) {  // VA 0x0040FBC0
+                                           LPARAM lParam) { // VA 0x0040FBC0
     (void)lParam;
     MMDApp* app = g_Block;
     if (msg == WM_INITDIALOG) {
@@ -706,8 +689,7 @@ INT_PTR CALLBACK CameraNumericInputDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         static const std::size_t kEditIds[7] = {637, 638, 639, 640, 641, 642, 644};
         char buf[20];
         for (int i = 0; i < 7; ++i) {
-            sprintf_s(buf, 0x14, "%7.3f",
-                      static_cast<double>(app->RotationDialogTemp(i)));
+            sprintf_s(buf, 0x14, "%7.3f", static_cast<double>(app->RotationDialogTemp(i)));
             PrefillEdit(hDlg, static_cast<int>(kEditIds[i]), buf);
         }
         SelectAllEdit(hDlg, panel::kNumInputPosXEdit);
@@ -718,8 +700,7 @@ INT_PTR CALLBACK CameraNumericInputDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         if (id == IDOK) {
             static const std::size_t kEditIds[7] = {637, 638, 639, 640, 641, 642, 644};
             for (int i = 0; i < 7; ++i) {
-                app->RotationDialogTemp(i) =
-                    ReadFloatFromEdit(hDlg, static_cast<int>(kEditIds[i]));
+                app->RotationDialogTemp(i) = ReadFloatFromEdit(hDlg, static_cast<int>(kEditIds[i]));
             }
             EndDialog(hDlg, IDOK);
         } else if (id == IDCANCEL) {
@@ -740,7 +721,7 @@ INT_PTR CALLBACK CameraNumericInputDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 // Reference: MikuMikuDance.exe sub_40F860.
 // ===========================================================================
 INT_PTR CALLBACK BoneNumericInputDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
-                                         LPARAM lParam) {  // VA 0x0040F860
+                                         LPARAM lParam) { // VA 0x0040F860
     (void)lParam;
     MMDApp* app = g_Block;
     if (msg == WM_INITDIALOG) {
@@ -748,8 +729,7 @@ INT_PTR CALLBACK BoneNumericInputDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         static const std::size_t kEditIds[6] = {637, 638, 639, 640, 641, 642};
         char buf[20];
         for (int i = 0; i < 6; ++i) {
-            sprintf_s(buf, 0x14, "%7.3f",
-                      static_cast<double>(app->RotationDialogTemp(i)));
+            sprintf_s(buf, 0x14, "%7.3f", static_cast<double>(app->RotationDialogTemp(i)));
             PrefillEdit(hDlg, static_cast<int>(kEditIds[i]), buf);
         }
         SelectAllEdit(hDlg, panel::kNumInputPosXEdit);
@@ -760,8 +740,7 @@ INT_PTR CALLBACK BoneNumericInputDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         if (id == IDOK) {
             static const std::size_t kEditIds[6] = {637, 638, 639, 640, 641, 642};
             for (int i = 0; i < 6; ++i) {
-                app->RotationDialogTemp(i) =
-                    ReadFloatFromEdit(hDlg, static_cast<int>(kEditIds[i]));
+                app->RotationDialogTemp(i) = ReadFloatFromEdit(hDlg, static_cast<int>(kEditIds[i]));
             }
             EndDialog(hDlg, IDOK);
         } else if (id == IDCANCEL) {
@@ -771,8 +750,7 @@ INT_PTR CALLBACK BoneNumericInputDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     return 0;
 }
 
-
-}  // namespace
+} // namespace
 
 // ===========================================================================
 // "fine shadow mode" notice - the Ctrl+S branch of the 'S' letter hotkey
@@ -799,17 +777,13 @@ INT_PTR CALLBACK BoneNumericInputDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 void FineShadowModeNotice(MMDApp* app) {
     const bool english = app->state.englishUI != 0;
     MessageBoxA(app->state.hwnd,
-                english
-                    ? "This command is changed for \"Fshadow\" button."
-                    : kMsgFineShadowJp,
-                english ? "fine shadow mode" : kCaptionFineShadowJp,
-                0);
+                english ? "This command is changed for \"Fshadow\" button." : kMsgFineShadowJp,
+                english ? "fine shadow mode" : kCaptionFineShadowJp, 0);
 }
 
-void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
-                 std::uint16_t notify) {
-    (void)notify;  // see header: the default handler's notify gate can never
-                   // match any id of this family
+void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify) {
+    (void)notify; // see header: the default handler's notify gate can never
+                  // match any id of this family
     HINSTANCE hInst = static_cast<HINSTANCE>(app->HInstance());
     const bool english = app->state.englishUI != 0;
 
@@ -825,7 +799,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         }
         app->state.enterKeyState = 1;
         if (DialogBoxParamA(hInst,
-                            MAKEINTRESOURCEA(english ? MDS_DLG_BONE_FRAME_MULTIPLY_EN : MDS_DLG_BONE_FRAME_MULTIPLY_JP),
+                            MAKEINTRESOURCEA(english ? MDS_DLG_BONE_FRAME_MULTIPLY_EN
+                                                     : MDS_DLG_BONE_FRAME_MULTIPLY_JP),
                             hwnd, BoneFrameMultiplyDlgProc, 0) == IDCANCEL) {
             return;
         }
@@ -841,9 +816,10 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
             return;
         }
         app->state.enterKeyState = 1;
-        if (DialogBoxParamA(hInst,
-                            MAKEINTRESOURCEA(english ? MDS_DLG_MORPH_MULTIPLY_EN : MDS_DLG_MORPH_MULTIPLY_JP),
-                            hwnd, FacialMultiplyDlgProc, 0) == IDCANCEL) {
+        if (DialogBoxParamA(
+                hInst,
+                MAKEINTRESOURCEA(english ? MDS_DLG_MORPH_MULTIPLY_EN : MDS_DLG_MORPH_MULTIPLY_JP),
+                hwnd, FacialMultiplyDlgProc, 0) == IDCANCEL) {
             return;
         }
         break;
@@ -855,14 +831,15 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // ------------------------------------------------------------------
     case MDS_CMD_EDGE_THICKNESS: {
         if (app->state.edgeThicknessDialog != nullptr) {
-            break;  // jnz def_47E903 (no-op)
+            break; // jnz def_47E903 (no-op)
         }
         if (app->CameraMode() != 0) {
             break;
         }
         HWND dlg = CreateDialogParamA(
-            hInst, MAKEINTRESOURCEA(english ? MDS_DLG_EDGE_THICKNESS_EN : MDS_DLG_EDGE_THICKNESS_JP),
-            hwnd, EdgeThicknessDlgProc, 0);
+            hInst,
+            MAKEINTRESOURCEA(english ? MDS_DLG_EDGE_THICKNESS_EN : MDS_DLG_EDGE_THICKNESS_JP), hwnd,
+            EdgeThicknessDlgProc, 0);
         app->state.edgeThicknessDialog = dlg;
         ShowWindow(dlg, SW_SHOW);
         UpdateWindow(dlg);
@@ -899,10 +876,14 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
             LetterKey letterKey;
             void (*frameLineOp)(MMDApp*);
         } kFrameEditDialogs[] = {
-            {MDS_CMD_INSERT_BONE_CAMERA_FRAME_LINE, LetterKey::I, InsertBoneCameraFrameLine},    // 0x439E40
-            {MDS_CMD_DELETE_BONE_CAMERA_FRAME_LINE, LetterKey::K, DeleteBoneCameraFrameLine},   // 0x43A650
-            {MDS_CMD_INSERT_MORPH_LIGHT_FRAME_LINE, LetterKey::U, InsertFacialLightFrameLine},  // 0x43B720
-            {MDS_CMD_DELETE_MORPH_LIGHT_FRAME_LINE, LetterKey::J, DeleteFacialLightFrameLine},  // 0x43BB30
+            {MDS_CMD_INSERT_BONE_CAMERA_FRAME_LINE, LetterKey::I,
+             InsertBoneCameraFrameLine}, // 0x439E40
+            {MDS_CMD_DELETE_BONE_CAMERA_FRAME_LINE, LetterKey::K,
+             DeleteBoneCameraFrameLine}, // 0x43A650
+            {MDS_CMD_INSERT_MORPH_LIGHT_FRAME_LINE, LetterKey::U,
+             InsertFacialLightFrameLine}, // 0x43B720
+            {MDS_CMD_DELETE_MORPH_LIGHT_FRAME_LINE, LetterKey::J,
+             DeleteFacialLightFrameLine}, // 0x43BB30
         };
         for (const auto& entry : kFrameEditDialogs) {
             if (entry.id == id) {
@@ -940,11 +921,10 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // language sweep (0x441AD0 LocalizeUI) and UI refresh (0x40B5A0).
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_UI_LANGUAGE: {
-        const std::uint8_t cur =
-            app->state.englishUI;
+        const std::uint8_t cur = app->state.englishUI;
         app->state.englishUI = (cur == 0) ? 1 : 0;
-        LocalizeUI(app);                             // 0x441AD0
-        RefreshMenuLanguage(app);                              // 0x40B5A0
+        LocalizeUI(app);          // 0x441AD0
+        RefreshMenuLanguage(app); // 0x40B5A0
         return;
     }
 
@@ -970,8 +950,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
                         "'save enhanced model'.",
                         "enhance model", MB_TOPMOST);
         } else {
-            MessageBoxA(hwnd, kMsgEnhanceModelJp, kCaptionEnhanceModelJp,
-                        MB_TOPMOST);
+            MessageBoxA(hwnd, kMsgEnhanceModelJp, kCaptionEnhanceModelJp, MB_TOPMOST);
         }
         app->EnhancedModelDirty() = 1;
         return;
@@ -1018,9 +997,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = hwnd;
         ofn.nFilterIndex = 1;
-        ofn.lpstrFilter =
-            L"Polygon Model files(*.pmd)\x00\x00*.pmd\x00\x00"
-            L"All Files(*.*)\x00\x00";
+        ofn.lpstrFilter = L"Polygon Model files(*.pmd)\x00\x00*.pmd\x00\x00"
+                          L"All Files(*.*)\x00\x00";
         ofn.lpstrFile = fileBuf;
         ofn.nMaxFile = 0x100;
         ofn.Flags = (OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY);
@@ -1038,12 +1016,10 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
             return;
         }
         if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
-            wchar_t* dir = ExtractDirFromPath(
-                app->PathWorkspace().projectDirectory,
-                fileBuf);
+            wchar_t* dir = ExtractDirFromPath(app->PathWorkspace().projectDirectory, fileBuf);
             CopyDirPathW(app->DirModel(), dir);
         }
-        SaveEnhancedModel(app, fileBuf);                     // 0x41EC10
+        SaveEnhancedModel(app, fileBuf); // 0x41EC10
         return;
     }
 
@@ -1080,7 +1056,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         for (int i = 0; i < kModelSlotCount; ++i) {
             unsigned char* model = app->ModelSlot(i);
             if (model != nullptr) {
-                ModelKinematicSync(model);  // orig: thiscall(model, 0xA0CC4)
+                ModelKinematicSync(model); // orig: thiscall(model, 0xA0CC4)
             }
         }
         app->PhysicsResetPending() = 1;
@@ -1145,8 +1121,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         app->LetterKeyState(LetterKey::G) = 1;
         app->state.enterKeyState = 1;
         HWND dlg = CreateDialogParamA(
-            hInst, MAKEINTRESOURCEA(english ? MDS_DLG_GRAVITY_EN : MDS_DLG_GRAVITY_JP),
-            hwnd, GravitySettingDlgProc, 0);
+            hInst, MAKEINTRESOURCEA(english ? MDS_DLG_GRAVITY_EN : MDS_DLG_GRAVITY_JP), hwnd,
+            GravitySettingDlgProc, 0);
         app->GravitySettingDialog() = dlg;
         ShowWindow(dlg, SW_SHOW);
         UpdateWindow(dlg);
@@ -1207,8 +1183,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         }
         app->LetterKeyState(LetterKey::B) = 1;
         unsigned char* model = ActiveModel(app);
-        const std::int32_t boneCount =
-            static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
+        const std::int32_t boneCount = static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
         if (boneCount > 0) {
             mdl::BoneRecord* const bones = mdl::Bones(model);
             unsigned char* sel = mdl::Mdl(model)->boneSelection;
@@ -1222,7 +1197,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
             }
         }
         RebuildTimelineTrackPanel(app);   // 0x42F1E0
-        InvalidateSelectionReadouts(app);  // 0x40D070
+        InvalidateSelectionReadouts(app); // 0x40D070
         return;
     }
 
@@ -1236,7 +1211,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         }
         app->LetterKeyState(LetterKey::X) = 1;
         mdl::SelectPhysicsOnBoneKeys(*mdl::Mdl(ActiveModel(app)));
-        PanelPaint(app);  // 0x414610
+        PanelPaint(app); // 0x414610
         return;
     }
 
@@ -1248,7 +1223,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         app->LetterKeyState(LetterKey::C) = 1;
         app->state.enterKeyState = 1;
         DialogBoxParamA(hInst,
-                        MAKEINTRESOURCEA(english ? MDS_DLG_PHYSICS_FRAME_CONVERSION_EN : MDS_DLG_PHYSICS_FRAME_CONVERSION_JP),
+                        MAKEINTRESOURCEA(english ? MDS_DLG_PHYSICS_FRAME_CONVERSION_EN
+                                                 : MDS_DLG_PHYSICS_FRAME_CONVERSION_JP),
                         hwnd, PhysicsOnOffFrameDlgProc, 0);
         return;
 
@@ -1274,11 +1250,10 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         std::memset(&ofn, 0, sizeof(ofn));
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = hwnd;
-        ofn.lpstrFilter = english
-            ? L"All picture format\x00\x00"
-              L"*.bmp;*.jpg;*.png;*.dds;*.dib;*.pfm;*.hdr\x00\x00"
-              L"Bmp files(*.bmp)\x00\x00*.bmp\x00\x00"
-            : kFilterPicJp;
+        ofn.lpstrFilter = english ? L"All picture format\x00\x00"
+                                    L"*.bmp;*.jpg;*.png;*.dds;*.dib;*.pfm;*.hdr\x00\x00"
+                                    L"Bmp files(*.bmp)\x00\x00*.bmp\x00\x00"
+                                  : kFilterPicJp;
         ofn.lpstrFile = fileBuf;
         ofn.nFilterIndex = 1;
         ofn.nMaxFile = 0x100;
@@ -1297,25 +1272,21 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
             return;
         }
         if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
-            wchar_t* dir = ExtractDirFromPath(
-                app->PathWorkspace().projectDirectory,
-                fileBuf);
+            wchar_t* dir = ExtractDirFromPath(app->PathWorkspace().projectDirectory, fileBuf);
             CopyDirPathW(app->DirUser(), dir);
         }
         wcscpy_s(app->CaptureSavePath(), 0x100, fileBuf);
         D3DRenderer* locale = app->Renderer();
-        const std::int32_t oldW = locale->screenWidth;   // 0x1D4E4
-        const std::int32_t oldH = locale->screenHeight;  // 0x1D4E8
-        const std::int32_t renderW =
-            app->RenderWidth();
-        const std::int32_t renderH =
-            app->RenderHeight();
+        const std::int32_t oldW = locale->screenWidth;  // 0x1D4E4
+        const std::int32_t oldH = locale->screenHeight; // 0x1D4E8
+        const std::int32_t renderW = app->RenderWidth();
+        const std::int32_t renderH = app->RenderHeight();
         if (renderW > oldW || renderH > oldH) {
-            locale->presentParameters.BackBufferWidth = renderW;   // 0x1D4FC
-            locale->presentParameters.BackBufferHeight = renderH;  // 0x1D500
-            locale->screenWidth = renderW;                         // 0x1D4E4
-            locale->screenHeight = renderH;                        // 0x1D4E8
-            PostDeviceReset(app);  // 0x440DB0
+            locale->presentParameters.BackBufferWidth = renderW;  // 0x1D4FC
+            locale->presentParameters.BackBufferHeight = renderH; // 0x1D500
+            locale->screenWidth = renderW;                        // 0x1D4E4
+            locale->screenHeight = renderH;                       // 0x1D4E8
+            PostDeviceReset(app);                                 // 0x440DB0
         }
         RECT rc;
         rc.left = 0;
@@ -1323,30 +1294,26 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         rc.right = renderW;
         rc.bottom = renderH;
         AdjustWindowRect(&rc, WS_POPUP | WS_CAPTION, FALSE);
-        HWND recWnd = CreateWindowExA(
-            0, "RecWindow", kRecWndTitle, 0x80C80000,
-            app->SidebarWidth() + 0x32, 0x64,
-            rc.right - rc.left, rc.bottom - rc.top, hwnd, nullptr, hInst,
-            nullptr);
-        app->RecordingWindow() = recWnd;                    // 0xA0D24
+        HWND recWnd = CreateWindowExA(0, "RecWindow", kRecWndTitle, 0x80C80000,
+                                      app->SidebarWidth() + 0x32, 0x64, rc.right - rc.left,
+                                      rc.bottom - rc.top, hwnd, nullptr, hInst, nullptr);
+        app->RecordingWindow() = recWnd; // 0xA0D24
         if (recWnd == nullptr) {
             MessageBoxA(hwnd, "CreateWindow failed",
-                        english ? "create main window" : kCaptionCreateWndJp,
-                        MB_TOPMOST);
+                        english ? "create main window" : kCaptionCreateWndJp, MB_TOPMOST);
             return;
         }
         ShowWindow(recWnd, SW_SHOW);
         UpdateWindow(recWnd);
-        if (locale->multisampleAvailable == 0) {  // 0x1D4F8
+        if (locale->multisampleAvailable == 0) { // 0x1D4F8
             BindCaptureRenderTarget(app);
         }
-        const bool needRefresh =
-            app->CaptureMode() == ScreenCaptureMode::BackgroundRefresh ||
-            app->state.aviBackgroundEnabled == 1;
+        const bool needRefresh = app->CaptureMode() == ScreenCaptureMode::BackgroundRefresh ||
+                                 app->state.aviBackgroundEnabled == 1;
         if (needRefresh && app->state.aviStream != 0) {
-            AviBgOverlayRefresh(app);  // 0x4168D0
+            AviBgOverlayRefresh(app); // 0x4168D0
         }
-        RefreshMainWindowViewport(app);  // 0x42C810
+        RefreshMainWindowViewport(app); // 0x42C810
         InvalidateRect(hwnd, &app->ViewportRect(), FALSE);
         app->state.timelineAdvanceRequested = 1;
         return;
@@ -1374,8 +1341,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // InitToonTextures), then the locale refresh sub_4076E0.
     // ------------------------------------------------------------------
     case MDS_CMD_RESTORE_TEXTURES:
-        InitToonTextures(app);  // 0x424DC0
-        ReloadTextureCache(app->Renderer());  // 0x4076E0
+        InitToonTextures(app);               // 0x424DC0
+        ReloadTextureCache(app->Renderer()); // 0x4076E0
         return;
 
     // ------------------------------------------------------------------
@@ -1399,9 +1366,9 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_SEPARATE_WINDOW:
         if (app->state.floatingWindow != 0) {
-            SaveFlagSubsystem(app);  // 0x461FA0
+            SaveFlagSubsystem(app); // 0x461FA0
         } else {
-            InitFlagSubsystem(app);  // 0x461E00
+            InitFlagSubsystem(app); // 0x461E00
         }
         return;
 
@@ -1415,14 +1382,12 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_ALWAYS_ON_TOP, 0) & 8) == 0) {
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_ALWAYS_ON_TOP, MF_CHECKED);
             if (app->state.floatingWindow != 0) {
-                SetWindowPos(app->state.floatingWindow,
-                             HWND_TOPMOST, 0, 0, 0, 0, 0x43);
+                SetWindowPos(app->state.floatingWindow, HWND_TOPMOST, 0, 0, 0, 0, 0x43);
             }
         } else {
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_ALWAYS_ON_TOP, MF_UNCHECKED);
             if (app->state.floatingWindow != 0) {
-                SetWindowPos(app->state.floatingWindow,
-                             HWND_NOTOPMOST, 0, 0, 0, 0, 0x43);
+                SetWindowPos(app->state.floatingWindow, HWND_NOTOPMOST, 0, 0, 0, 0, 0x43);
             }
         }
         return;
@@ -1471,8 +1436,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
 
     case MDS_CMD_TOGGLE_PHYSICS_FLOOR: {
         app->LetterKeyState(LetterKey::F) = 1;
-        unsigned char* target = reinterpret_cast<unsigned char*>(
-            app->Physics()->groundBody);   // scene slot 0x44
+        unsigned char* target =
+            reinterpret_cast<unsigned char*>(app->Physics()->groundBody); // scene slot 0x44
         // x64 0x7FF7CB4700BC / 0x7FF7CB4700FB: mov dword ptr [rcx+0E0h], 1 /
         // r14d(-1) on the btRigidBody* at scene+0x88.  +0xE0 is the x64
         // twin of the x86 +0xD4 store (three pointer members earlier in
@@ -1503,17 +1468,12 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         std::memset(&cc, 0, sizeof(cc));
         cc.lStructSize = sizeof(cc);
         cc.hwndOwner = hwnd;
-        const std::uint8_t r =
-            app->state.modelOutlineColorRed;
-        const std::uint16_t g =
-            app->state.modelOutlineColorGreen;
-        const std::uint8_t b =
-            app->state.modelOutlineColorBlue;
-        cc.rgbResult = (static_cast<COLORREF>(b) << 16) |
-                       (static_cast<COLORREF>(g) << 8) | r;
-        cc.lpCustColors =
-            reinterpret_cast<COLORREF*>(app->state.customColorTable);
-        cc.Flags = 3;  // CC_RGBINIT | CC_FULLOPEN
+        const std::uint8_t r = app->state.modelOutlineColorRed;
+        const std::uint16_t g = app->state.modelOutlineColorGreen;
+        const std::uint8_t b = app->state.modelOutlineColorBlue;
+        cc.rgbResult = (static_cast<COLORREF>(b) << 16) | (static_cast<COLORREF>(g) << 8) | r;
+        cc.lpCustColors = reinterpret_cast<COLORREF*>(app->state.customColorTable);
+        cc.Flags = 3; // CC_RGBINIT | CC_FULLOPEN
         if (!ChooseColorA(&cc)) {
             return;
         }
@@ -1554,9 +1514,10 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // ------------------------------------------------------------------
     case MDS_CMD_MODEL_DRAW_ORDER:
         app->state.enterKeyState = 1;
-        DialogBoxParamA(hInst,
-                        MAKEINTRESOURCEA(english ? MDS_DLG_MODEL_DRAW_ORDER_EN : MDS_DLG_MODEL_DRAW_ORDER_JP),
-                        hwnd, ModelDisplayOrderDlgProc, 0);
+        DialogBoxParamA(
+            hInst,
+            MAKEINTRESOURCEA(english ? MDS_DLG_MODEL_DRAW_ORDER_EN : MDS_DLG_MODEL_DRAW_ORDER_JP),
+            hwnd, ModelDisplayOrderDlgProc, 0);
         return;
 
     // ------------------------------------------------------------------
@@ -1567,7 +1528,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         app->LetterKeyState(LetterKey::C) = 1;
         app->state.enterKeyState = 1;
         DialogBoxParamA(hInst,
-                        MAKEINTRESOURCEA(english ? MDS_DLG_MODEL_CALCULATE_ORDER_EN : MDS_DLG_MODEL_CALCULATE_ORDER_JP),
+                        MAKEINTRESOURCEA(english ? MDS_DLG_MODEL_CALCULATE_ORDER_EN
+                                                 : MDS_DLG_MODEL_CALCULATE_ORDER_JP),
                         hwnd, ModelCalculateOrderDlgProc, 0);
         return;
 
@@ -1577,8 +1539,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_FULL_SCREEN:
         app->FullscreenMode() = 1;
-        ApplyFullscreenWindowState(app);  // 0x4629D0
-        PostDeviceReset(app);  // 0x440DB0
+        ApplyFullscreenWindowState(app); // 0x4629D0
+        PostDeviceReset(app);            // 0x440DB0
         return;
 
     // ------------------------------------------------------------------
@@ -1588,9 +1550,9 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     case MDS_CMD_TOGGLE_KINECT:
         app->LetterKeyState(LetterKey::K) = 1;
         if (app->state.depthDeviceEnabled != 0) {
-            DisableKinect(app);  // 0x42A020
+            DisableKinect(app); // 0x42A020
         } else {
-            OpenNiInit(app, nullptr);  // 0x429CB0
+            OpenNiInit(app, nullptr); // 0x429CB0
         }
         return;
 
@@ -1676,11 +1638,9 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     case MDS_CMD_LOAD_ONI: {
         if (app->CameraMode() != 0) {
             if (english) {
-                MessageBoxA(hwnd, "Please select model!", "open oni data",
-                            MB_TOPMOST);
+                MessageBoxA(hwnd, "Please select model!", "open oni data", MB_TOPMOST);
             } else {
-                MessageBoxA(hwnd, kMsgOpenOniJp, "oni",
-                            MB_TOPMOST);
+                MessageBoxA(hwnd, kMsgOpenOniJp, "oni", MB_TOPMOST);
             }
             return;
         }
@@ -1690,11 +1650,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         OPENFILENAMEW ofn;
         std::memset(&ofn, 0, sizeof(ofn));
         ofn.lStructSize = sizeof(ofn);
-        ofn.hwndOwner = app->state.floatingWindow != 0
-                            ? app->state.floatingWindow
-                            : hwnd;
-        ofn.lpstrFilter =
-            L"oni files(*.oni)\x00\x00*.oni\x00\x00All Files(*.*)\x00\x00";
+        ofn.hwndOwner = app->state.floatingWindow != 0 ? app->state.floatingWindow : hwnd;
+        ofn.lpstrFilter = L"oni files(*.oni)\x00\x00*.oni\x00\x00All Files(*.*)\x00\x00";
         ofn.lpstrFile = fileBuf;
         ofn.nMaxFile = 0x100;
         ofn.Flags = OFN_FILEMUSTEXIST;
@@ -1708,11 +1665,11 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
             return;
         }
         if (app->state.depthDeviceEnabled != 0) {
-            DisableKinect(app);  // 0x42A020
+            DisableKinect(app); // 0x42A020
         }
         char sjisPath[0x100];
-        WideToSjis(app->Renderer(), sjisPath, fileBuf, 0x100);  // 0x407910
-        OpenNiInit(app, sjisPath);  // 0x429CB0
+        WideToSjis(app->Renderer(), sjisPath, fileBuf, 0x100); // 0x407910
+        OpenNiInit(app, sjisPath);                             // 0x429CB0
         return;
     }
 
@@ -1740,11 +1697,11 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         D3DRenderer* locale = app->Renderer();
         if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_MIPMAP, 0) & 8) == 0) {
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MIPMAP, MF_CHECKED);
-            locale->runtimeToggle = 1;  // 0x1D570
-            InitRenderStates(app);  // 0x406E90 (orig: thiscall(locale))
+            locale->runtimeToggle = 1; // 0x1D570
+            InitRenderStates(app);     // 0x406E90 (orig: thiscall(locale))
         } else {
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MIPMAP, MF_UNCHECKED);
-            locale->runtimeToggle = 0;  // 0x1D570
+            locale->runtimeToggle = 0; // 0x1D570
             InitRenderStates(app);
         }
         return;
@@ -1756,9 +1713,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // BM_SETCHECK, byte app+0xA4420 mirrors.
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_LOW_POWER: {
-        HWND owner = app->state.floatingWindow != 0
-                         ? app->state.floatingWindow
-                         : hwnd;
+        HWND owner = app->state.floatingWindow != 0 ? app->state.floatingWindow : hwnd;
         if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_LOW_POWER, 0) & 8) == 0) {
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_LOW_POWER, MF_CHECKED);
             SendMessageA(GetDlgItem(owner, panel::kFrameVolumeCheckbox), BM_SETCHECK, 1, 0);
@@ -1783,10 +1738,10 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // shared with the dialog procs in the original.
     // ------------------------------------------------------------------
     case MDS_CMD_NUMERIC_INPUT: {
-        const double kD1 = kPiTruncatedDouble;  // pi (truncated)
-        const double kD2 = kDegreesScale;  // 180.0
-        const double kD3 = kPiWidenedFloat;  // (double)(float)pi
-        const float kPi = kPiFloat;   // +pi float
+        const double kD1 = kPiTruncatedDouble; // pi (truncated)
+        const double kD2 = kDegreesScale;      // 180.0
+        const double kD3 = kPiWidenedFloat;    // (double)(float)pi
+        const float kPi = kPiFloat;            // +pi float
         const float kNegPi = kNegativePiFloat;
         const float kThr = kAngleEpsilon;
         app->state.enterKeyState = 1;
@@ -1795,35 +1750,26 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
             const float t0 = app->CameraPositionX();
             const float t1 = app->CameraPositionY();
             const float t2 = app->CameraPositionZ();
-            const float t3 = static_cast<float>(
-                -static_cast<double>(app->CameraPitch()) *
-                kD2 / kD1);
-            const float t4 = static_cast<float>(
-                static_cast<double>(app->CameraYaw()) *
-                kD2 / kD1);
-            const float t5 = static_cast<float>(
-                static_cast<double>(app->CameraRoll()) *
-                kD2 / kD1);
-            const float t6 = static_cast<float>(
-                -static_cast<double>(app->CameraDistance()));
-            if (DialogBoxParamA(
-                    hInst, MAKEINTRESOURCEA(english ? MDS_DLG_CAMERA_NUMERIC_INPUT_EN : MDS_DLG_CAMERA_NUMERIC_INPUT_JP),
-                    hwnd, CameraNumericInputDlgProc, 0) == IDCANCEL) {
+            const float t3 =
+                static_cast<float>(-static_cast<double>(app->CameraPitch()) * kD2 / kD1);
+            const float t4 = static_cast<float>(static_cast<double>(app->CameraYaw()) * kD2 / kD1);
+            const float t5 = static_cast<float>(static_cast<double>(app->CameraRoll()) * kD2 / kD1);
+            const float t6 = static_cast<float>(-static_cast<double>(app->CameraDistance()));
+            if (DialogBoxParamA(hInst,
+                                MAKEINTRESOURCEA(english ? MDS_DLG_CAMERA_NUMERIC_INPUT_EN
+                                                         : MDS_DLG_CAMERA_NUMERIC_INPUT_JP),
+                                hwnd, CameraNumericInputDlgProc, 0) == IDCANCEL) {
                 return;
             }
             app->CameraPositionX() = t0;
             app->CameraPositionY() = t1;
             app->CameraPositionZ() = t2;
-            app->CameraPitch() = static_cast<float>(
-                -static_cast<double>(t3) * kD3 / kD2);
-            app->CameraYaw() = static_cast<float>(
-                static_cast<double>(t4) * kD3 / kD2);
-            app->CameraRoll() = static_cast<float>(
-                kD2 / (kD3 * static_cast<double>(t5)));
-            app->CameraDistance() =
-                static_cast<float>(-static_cast<double>(t6));
+            app->CameraPitch() = static_cast<float>(-static_cast<double>(t3) * kD3 / kD2);
+            app->CameraYaw() = static_cast<float>(static_cast<double>(t4) * kD3 / kD2);
+            app->CameraRoll() = static_cast<float>(kD2 / (kD3 * static_cast<double>(t5)));
+            app->CameraDistance() = static_cast<float>(-static_cast<double>(t6));
             app->SceneModified() = 1;
-            PostViewRefresh(app);  // 0x40D130
+            PostViewRefresh(app); // 0x40D130
             return;
         }
         // ---- bone path (0x48A40C..0x48A85D) -----------------------------
@@ -1838,8 +1784,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         const float t2 = bone->trans[2];
         // rotation matrix from the bone's stored quaternion (0x14C)
         d3dx::D3DXMATRIXF m{};
-        d3dx::Get().matrixRotationQuaternion(
-            &m, reinterpret_cast<const float*>(bone->rotQuat));
+        d3dx::Get().matrixRotationQuaternion(&m, reinterpret_cast<const float*>(bone->rotQuat));
         // euler extraction: t5 = atan2(m10, m01), t3 = asin(-m20),
         // t4 = atan2(m21, m13) - helper results are float-rounded
         float t5 = static_cast<float>(AngleAtan2(m.m[1][0], m.m[0][1]));
@@ -1851,10 +1796,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         // 0.0-vs-m13 compare)
         const double r1 = AngleFabs(static_cast<float>(AngleCos(t3)));
         if (r1 < static_cast<double>(kThr)) {
-            t5 = static_cast<float>(static_cast<double>(t5) +
-                                    (!(m.m[0][1] > 0.0f) ? kNegPi : kPi));
-            t4 = static_cast<float>(static_cast<double>(t4) +
-                                    (!(m.m[1][3] > 0.0f) ? kNegPi : kPi));
+            t5 = static_cast<float>(static_cast<double>(t5) + (!(m.m[0][1] > 0.0f) ? kNegPi : kPi));
+            t4 = static_cast<float>(static_cast<double>(t4) + (!(m.m[1][3] > 0.0f) ? kNegPi : kPi));
         }
         // clamp to zero (0x48A5BF..0x48A632)
         if (static_cast<float>(AngleFabs(t3)) < kThr) {
@@ -1870,12 +1813,13 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         t3 = static_cast<float>(static_cast<double>(t3) * kD2 / kD1);
         t4 = static_cast<float>(-static_cast<double>(t4) * kD2 / kD1);
         t5 = static_cast<float>(-kD1 * kD2 / static_cast<double>(t5));
-        if (DialogBoxParamA(
-                hInst, MAKEINTRESOURCEA(english ? MDS_DLG_BONE_NUMERIC_INPUT_EN : MDS_DLG_BONE_NUMERIC_INPUT_JP),
-                hwnd, BoneNumericInputDlgProc, 0) == IDCANCEL) {
+        if (DialogBoxParamA(hInst,
+                            MAKEINTRESOURCEA(english ? MDS_DLG_BONE_NUMERIC_INPUT_EN
+                                                     : MDS_DLG_BONE_NUMERIC_INPUT_JP),
+                            hwnd, BoneNumericInputDlgProc, 0) == IDCANCEL) {
             return;
         }
-        PushBoneEditUndo(app);  // 0x42D6E0 (bone-edit keyframe register)
+        PushBoneEditUndo(app); // 0x42D6E0 (bone-edit keyframe register)
         // write back position and angles
         model = ActiveModel(app);
         bone = mdl::Bones(model) + curBone;
@@ -1931,7 +1875,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         if (mdl::Mdl(model)->selectedBone == -1) {
             return;
         }
-        PushBoneEditUndo(app);  // 0x42D6E0
+        PushBoneEditUndo(app); // 0x42D6E0
         d3dx::D3DXMATRIXF ident{};
         for (int i = 0; i < 4; ++i) {
             ident.m[i][i] = 1.0f;
@@ -1948,4 +1892,4 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

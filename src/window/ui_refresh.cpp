@@ -25,11 +25,11 @@ void ClearAccessoryRowSelection(MMDApp* app) {
 // Offsets inside the 0x25C-byte stream/read context object (reached as
 // app+0xCC (audioContext); e.g. Timer100 0x429770 does
 // "mov ecx, [esi+0CCh]; call sub_4C2680").
-constexpr std::size_t kStreamBufOffset   = 0x14;   // read buffer offset (dword)
-constexpr std::size_t kStreamFilePtr     = 0x2C;   // FILE* stream
-constexpr std::size_t kStreamAsyncActive = 0x234;  // async-read active (dword)
-constexpr std::size_t kStreamFileHandle  = 0x244;  // file HANDLE
-constexpr std::size_t kStreamCompletion  = 0x248;  // 0 idle / 1 stop / 2 done
+constexpr std::size_t kStreamBufOffset = 0x14;    // read buffer offset (dword)
+constexpr std::size_t kStreamFilePtr = 0x2C;      // FILE* stream
+constexpr std::size_t kStreamAsyncActive = 0x234; // async-read active (dword)
+constexpr std::size_t kStreamFileHandle = 0x244;  // file HANDLE
+constexpr std::size_t kStreamCompletion = 0x248;  // 0 idle / 1 stop / 2 done
 
 // ===========================================================================
 // VA 0x00440AC0 - original: sub_440AC0
@@ -40,41 +40,41 @@ void SelectTimelineTrackById(int area) {
     MMDApp* app = g_Block;
 
     // ---- area == -1: activate track 0 ------------------------------------
-    if (area == -1) {                       // 0x00440AC8 cmp ebx, -1
+    if (area == -1) { // 0x00440AC8 cmp ebx, -1
         if (app->GlobalTrackSelected(GlobalTimelineTrack::Camera) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Camera);
             ClearAccessoryRowSelection(app);
-            RebuildTimelineTrackPanel(app);         // 0x00440B48 call sub_42F1E0
+            RebuildTimelineTrackPanel(app); // 0x00440B48 call sub_42F1E0
         }
         return;
     }
 
     // ---- area == -2: activate track 1 ------------------------------------
-    if (area == -2) {                       // 0x00440B53 cmp ebx, -2
+    if (area == -2) { // 0x00440B53 cmp ebx, -2
         if (app->GlobalTrackSelected(GlobalTimelineTrack::Light) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Light);
             ClearAccessoryRowSelection(app);
-            RebuildTimelineTrackPanel(app);         // 0x00440BD8 call sub_42F1E0
+            RebuildTimelineTrackPanel(app); // 0x00440BD8 call sub_42F1E0
         }
         return;
     }
 
     // ---- area == -3: activate track 2 ------------------------------------
-    if (area == -3) {                       // 0x00440BE3 cmp ebx, -3
+    if (area == -3) { // 0x00440BE3 cmp ebx, -3
         if (app->GlobalTrackSelected(GlobalTimelineTrack::SelfShadow) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::SelfShadow);
             ClearAccessoryRowSelection(app);
-            RebuildTimelineTrackPanel(app);         // 0x00440C68 call sub_42F1E0
+            RebuildTimelineTrackPanel(app); // 0x00440C68 call sub_42F1E0
         }
         return;
     }
 
     // ---- area == -4: activate track 3 ------------------------------------
-    if (area == -4) {                       // 0x00440C73 cmp ebx, -4
+    if (area == -4) { // 0x00440C73 cmp ebx, -4
         if (app->GlobalTrackSelected(GlobalTimelineTrack::Gravity) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Gravity);
             ClearAccessoryRowSelection(app);
-            RebuildTimelineTrackPanel(app);         // 0x00440CF8 call sub_42F1E0
+            RebuildTimelineTrackPanel(app); // 0x00440CF8 call sub_42F1E0
         }
         return;
     }
@@ -88,7 +88,7 @@ void SelectTimelineTrackById(int area) {
     }
 }
 
-}  // namespace
+} // namespace
 
 void SelectTimelineTrack(GlobalTimelineTrack track) {
     SelectTimelineTrackById(-1 - static_cast<int>(track));
@@ -131,13 +131,13 @@ void CloseDataFile(void* file) {
     // ---- step 2: close the FILE* stream ----------------------------------
     FILE* stream = audio->parseStream;
     if (stream != nullptr)
-        std::fclose(stream);                // 0x004C26CE (original imports
-                                            // _fclose; same CRT function)
+        std::fclose(stream); // 0x004C26CE (original imports
+                             // _fclose; same CRT function)
 
     // ---- step 3: close the file handle -----------------------------------
     HANDLE hFile = audio->fileHandle;
     if (hFile != nullptr)
-        CloseHandle(hFile);                 // 0x004C26E1
+        CloseHandle(hFile); // 0x004C26E1
 
     // ---- step 4: reset context fields (tail call to sub_4C2660) ----------
     // 0x004C2660: xor eax,eax; mov [ecx+2Ch],eax; mov [ecx+234h],eax;
@@ -148,4 +148,4 @@ void CloseDataFile(void* file) {
     audio->fileHandle = nullptr;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

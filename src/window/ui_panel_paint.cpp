@@ -83,21 +83,21 @@ namespace mikudancestudio {
 namespace {
 
 // --- layout / draw constants from the original instruction stream --------
-constexpr int kListLeft = 91;     // 0x5B  list column x
-constexpr int kIconLeft = 95;     // 0x5F  marker x; centred on grid x=100
-constexpr int kRowH = 13;         // 0x0D  row pitch (grid lines, bands)
-constexpr int kBandH = 14;        // 0x0E  band pitch (icon rows)
-constexpr int kBandLastY = 2816;  // 0xB00 band loops run while y < 2816
-constexpr int kGridX0 = 100;      // 0x64  first grid-line x
-constexpr int kGridTopY = 16;     // 0x10  grid lines start at y = 16
-constexpr int kIcon = 11;         // 0x0B  icon square
-constexpr int kAccY0 = 73;        // 0x49  first accessory band y
-constexpr int kAccLastY = 2873;   //      accessory bands run while y < 2873
-constexpr int kSheetMaskX = 44;   // 0x2C  SRCAND source column
-constexpr int kSheetOnX = 22;     // 0x16  SRCPAINT "enabled" column
-constexpr int kSheetNegX = 33;    // 0x21  SRCPAINT "reverse link" column
-constexpr int kSheetAltX = 11;    // 0x0B  SRCPAINT alternate column
-constexpr int kSheetOffX = 0;     //      SRCPAINT "disabled" column
+constexpr int kListLeft = 91;    // 0x5B  list column x
+constexpr int kIconLeft = 95;    // 0x5F  marker x; centred on grid x=100
+constexpr int kRowH = 13;        // 0x0D  row pitch (grid lines, bands)
+constexpr int kBandH = 14;       // 0x0E  band pitch (icon rows)
+constexpr int kBandLastY = 2816; // 0xB00 band loops run while y < 2816
+constexpr int kGridX0 = 100;     // 0x64  first grid-line x
+constexpr int kGridTopY = 16;    // 0x10  grid lines start at y = 16
+constexpr int kIcon = 11;        // 0x0B  icon square
+constexpr int kAccY0 = 73;       // 0x49  first accessory band y
+constexpr int kAccLastY = 2873;  //      accessory bands run while y < 2873
+constexpr int kSheetMaskX = 44;  // 0x2C  SRCAND source column
+constexpr int kSheetOnX = 22;    // 0x16  SRCPAINT "enabled" column
+constexpr int kSheetNegX = 33;   // 0x21  SRCPAINT "reverse link" column
+constexpr int kSheetAltX = 11;   // 0x0B  SRCPAINT alternate column
+constexpr int kSheetOffX = 0;    //      SRCPAINT "disabled" column
 
 // --- row-hit map base (200 ints per band/row) ----------------------------
 
@@ -124,8 +124,8 @@ unsigned char* CurrentModel(MMDApp* app) {
 // 0x414A51 / 0x414B30 / 0x414C10 / 0x414CF0; the accessory band loop
 // (0x414E00) keeps its own body because its map is laid out per row.
 template <typename Key>
-void DrawBandList(MMDApp* app, HDC panel, HDC icons, Key* keys,
-                  int bandY, std::int32_t (&map)[200], int rowCount) {
+void DrawBandList(MMDApp* app, HDC panel, HDC icons, Key* keys, int bandY, std::int32_t (&map)[200],
+                  int rowCount) {
     // The original never sees these four lists null because 0x466D20
     // (reached via the window proc on WM_CREATE) allocates them before
     // LocalizeUI; that path is not ported yet, so guard until it lands.
@@ -142,27 +142,26 @@ void DrawBandList(MMDApp* app, HDC panel, HDC icons, Key* keys,
         if (row >= 0) {
             const int x = kRowH * row + kIconLeft;
             BitBlt(panel, x, bandY, kIcon, kIcon, icons, kSheetMaskX, 0, SRCAND);
-            BitBlt(panel, x, bandY, kIcon, kIcon, icons,
-                   key.selected ? kSheetOnX : kSheetOffX, 0, SRCPAINT);
+            BitBlt(panel, x, bandY, kIcon, kIcon, icons, key.selected ? kSheetOnX : kSheetOffX, 0,
+                   SRCPAINT);
             map[row] = record;
         }
         const int next = static_cast<int>(key.next);
         record = next;
-        if (next == 0 ||
-            static_cast<std::int32_t>(keys[next].frame) >= limit)
+        if (next == 0 || static_cast<std::int32_t>(keys[next].frame) >= limit)
             return;
     }
 }
 
-}  // namespace
+} // namespace
 
 void PanelPaint(MMDApp* app) {
     const std::int32_t sidebar = app->SidebarWidth();
     D3DRenderer* sub = app->Renderer();
     // (The 0x1D574 render wrapper's "list width/height" reads below are its
     // screenWidth/screenHeight fields, sub+0x1D4E4/0x1D4E8.)
-    const std::int32_t listW = sub->screenWidth;   // sub+0x1D4E4 "list width"
-    const std::int32_t listH = sub->screenHeight;  // sub+0x1D4E8 "list height"
+    const std::int32_t listW = sub->screenWidth;  // sub+0x1D4E4 "list width"
+    const std::int32_t listH = sub->screenHeight; // sub+0x1D4E8 "list height"
     HDC panel = app->PanelDC();
     const std::int32_t scroll = app->state.timelineStartFrame;
 
@@ -179,11 +178,8 @@ void PanelPaint(MMDApp* app) {
     DeleteDC(dc);
 
     // --- 2. band backgrounds (0x414696 / 0x414757) ------------------------
-    HPEN pen = CreatePen(
-        PS_SOLID, 1,
-        app->ThemeColor(UiThemeColor::PanelHeader));
-    HBRUSH brush = CreateSolidBrush(
-        app->ThemeColor(UiThemeColor::PanelHeader));
+    HPEN pen = CreatePen(PS_SOLID, 1, app->ThemeColor(UiThemeColor::PanelHeader));
+    HBRUSH brush = CreateSolidBrush(app->ThemeColor(UiThemeColor::PanelHeader));
     HGDIOBJ oldPen = SelectObject(panel, pen);
     HGDIOBJ oldBrush = SelectObject(panel, brush);
     unsigned char* flags = app->PanelRowFlags() + 1;
@@ -196,11 +192,8 @@ void PanelPaint(MMDApp* app) {
     SelectObject(panel, oldBrush);
     DeleteObject(brush);
 
-    HPEN pen2 = CreatePen(
-        PS_SOLID, 1,
-        app->ThemeColor(UiThemeColor::PanelBody));
-    HBRUSH brush2 = CreateSolidBrush(
-        app->ThemeColor(UiThemeColor::PanelBody));
+    HPEN pen2 = CreatePen(PS_SOLID, 1, app->ThemeColor(UiThemeColor::PanelBody));
+    HBRUSH brush2 = CreateSolidBrush(app->ThemeColor(UiThemeColor::PanelBody));
     SelectObject(panel, pen2);
     SelectObject(panel, brush2);
     flags = app->PanelRowFlags();
@@ -214,7 +207,7 @@ void PanelPaint(MMDApp* app) {
     DeleteObject(brush2);
 
     // --- 3. row labels + grid lines (0x414812) -----------------------------
-    const int rows = (sidebar - 84) / kRowH;      // signed, as the original
+    const int rows = (sidebar - 84) / kRowH; // signed, as the original
     if (rows < 0)
         return;
     if (rows > 0) {
@@ -230,25 +223,20 @@ void PanelPaint(MMDApp* app) {
                 // selected-row colour); the G/B reads take the byte view of
                 // the COLORREF instead of raw offsets, whose +1/+2 bytes do
                 // not translate on x64.
-                DrawGlyph(app, sel, panel, 12, x - 3, 3,
-                          app->state.themeColors[30],
-                          reinterpret_cast<const unsigned char*>(
-                              &app->state.themeColors[30])[1],
-                          reinterpret_cast<const unsigned char*>(
-                              &app->state.themeColors[30])[2], 1);
-                color = static_cast<COLORREF>(
-                    app->state.themeColors[30]);
+                DrawGlyph(app, sel, panel, 12, x - 3, 3, app->state.themeColors[30],
+                          reinterpret_cast<const unsigned char*>(&app->state.themeColors[30])[1],
+                          reinterpret_cast<const unsigned char*>(&app->state.themeColors[30])[2],
+                          1);
+                color = static_cast<COLORREF>(app->state.themeColors[30]);
             } else if (static_cast<std::uint32_t>(n) % 5 != 0) {
-                color = static_cast<COLORREF>(
-                    app->state.themeColors[32]);
+                color = static_cast<COLORREF>(app->state.themeColors[32]);
             } else {
                 sprintf_s(label, sizeof(label), "%-4d", n);
-                DrawGlyph(app, label, panel, 12, x - 3, 3,
-                          app->state.themeColors[33],
+                DrawGlyph(app, label, panel, 12, x - 3, 3, app->state.themeColors[33],
                           reinterpret_cast<const unsigned char*>(&app->state.themeColors[33])[1],
-                          reinterpret_cast<const unsigned char*>(&app->state.themeColors[33])[2], 1);
-                color = static_cast<COLORREF>(
-                    app->state.themeColors[31]);
+                          reinterpret_cast<const unsigned char*>(&app->state.themeColors[33])[2],
+                          1);
+                color = static_cast<COLORREF>(app->state.themeColors[31]);
             }
             HPEN line = CreatePen(PS_SOLID, 1, color);
             SelectObject(panel, line);
@@ -280,11 +268,9 @@ void PanelPaint(MMDApp* app) {
         std::int32_t* const morphMap = app->state.rowHitMorph;
         std::int32_t* const boneMap = app->state.rowHitIk;
         for (int column = 0; column < rows; ++column) {
-            const std::size_t base =
-                static_cast<std::size_t>(column) * 200;
+            const std::size_t base = static_cast<std::size_t>(column) * 200;
             for (int index = 0; index < 200; ++index) {
-                const std::size_t slot = base +
-                    static_cast<std::size_t>(index);
+                const std::size_t slot = base + static_cast<std::size_t>(index);
                 ikMap[slot] = 0;
                 morphMap[slot] = 0;
                 boneMap[slot] = 0;
@@ -328,36 +314,39 @@ void PanelPaint(MMDApp* app) {
         scrollInfo.fMask = SIF_ALL;
         scrollInfo.nMin = 0;
         std::uint32_t nMax = pos + static_cast<std::uint32_t>(rows);
-        if (nMax < a) nMax = a;
-        if (nMax < b) nMax = b;
-        const std::uint32_t mid =
-            static_cast<std::uint32_t>(app->state.currentFrame) +
-            static_cast<std::uint32_t>(rows / 2);
-        if (nMax < mid) nMax = mid;
+        if (nMax < a)
+            nMax = a;
+        if (nMax < b)
+            nMax = b;
+        const std::uint32_t mid = static_cast<std::uint32_t>(app->state.currentFrame) +
+                                  static_cast<std::uint32_t>(rows / 2);
+        if (nMax < mid)
+            nMax = mid;
         scrollInfo.nMax = static_cast<int>(nMax) - 1;
         scrollInfo.nPage = static_cast<DWORD>(rows);
         scrollInfo.nPos = static_cast<int>(pos);
         // 别名回写：不回写则 page/thumb 滚动读到 0，SB_PAGEUP/DOWN 不动、
         // SB_THUMBPOSITION 每次都跳到绝对滑块位置（x64 里这两格永驻 app 结构）。
-        app->state.timelineScrollNPage =
-            static_cast<std::int32_t>(scrollInfo.nPage);
+        app->state.timelineScrollNPage = static_cast<std::int32_t>(scrollInfo.nPage);
         app->state.timelineScrollNPos = scrollInfo.nPos;
         SetScrollInfo(GetDlgItem(static_cast<HWND>(app->Hwnd()), panel::kTimelineHScroll), SB_CTL,
-                      &scrollInfo,
-                      TRUE);
+                      &scrollInfo, TRUE);
 
         RECT rc;
         GetClientRect(static_cast<HWND>(app->Hwnd()), &rc);
-        if (app->SelectionBoxDragging() != 0 &&
-            app->TimelineSelectionChanged() == 0) {
+        if (app->SelectionBoxDragging() != 0 && app->TimelineSelectionChanged() == 0) {
             HPEN box = CreatePen(PS_SOLID, 1, 0x969696);
             SelectObject(panel, box);
             int x2 = app->MouseX() - 6;
             int y2 = app->MouseY() - 145;
-            if (x2 < kListLeft) x2 = kListLeft;
-            if (y2 < 17) y2 = 17;
-            if (x2 > sidebar - 28) x2 = sidebar - 28;
-            if (y2 > rc.bottom - 396) y2 = rc.bottom - 396;
+            if (x2 < kListLeft)
+                x2 = kListLeft;
+            if (y2 < 17)
+                y2 = 17;
+            if (x2 > sidebar - 28)
+                x2 = sidebar - 28;
+            if (y2 > rc.bottom - 396)
+                y2 = rc.bottom - 396;
             const int ax = app->SelectionBoxAnchorX();
             const int ay = app->SelectionBoxAnchorY();
             MoveToEx(panel, ax, ay, nullptr);
@@ -380,18 +369,10 @@ void PanelPaint(MMDApp* app) {
     if (app->CameraMode() != 0) {
         // --- 6a. display mode: four fixed bands + accessory bands ----------
         const std::int32_t limit = scroll + rows;
-        DrawBandList(app, panel, icons,
-                     app->CameraKeys(),
-                     17, app->state.rowHitBand0, rows);
-        DrawBandList(app, panel, icons,
-                     app->LightKeys(),
-                     31, app->state.rowHitBand1, rows);
-        DrawBandList(app, panel, icons,
-                     app->ShadowKeys(),
-                     45, app->state.rowHitBand2, rows);
-        DrawBandList(app, panel, icons,
-                     app->GravityKeys(),
-                     59, app->state.rowHitBand3, rows);
+        DrawBandList(app, panel, icons, app->CameraKeys(), 17, app->state.rowHitBand0, rows);
+        DrawBandList(app, panel, icons, app->LightKeys(), 31, app->state.rowHitBand1, rows);
+        DrawBandList(app, panel, icons, app->ShadowKeys(), 45, app->state.rowHitBand2, rows);
+        DrawBandList(app, panel, icons, app->GravityKeys(), 59, app->state.rowHitBand3, rows);
         // accessory bands (0x414DC7..0x414F17)
         // state.jointLineMap is the 0x9DA50 array: 0x414DB1
         // `lea eax,[esi+9DA50h]` reads the SAME 200-int array
@@ -407,7 +388,7 @@ void PanelPaint(MMDApp* app) {
             if (idx < 0)
                 break;
             mdl::AccessoryKey* list = app->AccessoryKeys(idx);
-            if (list == nullptr)  // see the DrawBandList note
+            if (list == nullptr) // see the DrawBandList note
                 break;
             int record = 0;
             if (static_cast<std::int32_t>(list[0].frame) < limit) {
@@ -416,31 +397,26 @@ void PanelPaint(MMDApp* app) {
                     const int row = static_cast<std::int32_t>(key.frame) - scroll;
                     if (row >= 0) {
                         const int x = kRowH * row + kIconLeft;
-                        BitBlt(panel, x, bandY, kIcon, kIcon, icons, kSheetMaskX, 0,
-                               SRCAND);
+                        BitBlt(panel, x, bandY, kIcon, kIcon, icons, kSheetMaskX, 0, SRCAND);
                         BitBlt(panel, x, bandY, kIcon, kIcon, icons,
-                               key.selected ? kSheetOnX : kSheetOffX,
-                               0, SRCPAINT);
+                               key.selected ? kSheetOnX : kSheetOffX, 0, SRCPAINT);
                         // NOTE: kept as raw - the index band+200*row reaches
                         // beyond state.rowHitAcc[800] into the unnamed pad95
                         // region (the x86 blob reserves 200 rows of 200 ints
                         // here), and the x64 xlate carries element entries
                         // only for the first 800 ints.
-                        app->state.rowHitAcc[static_cast<unsigned>(band) +
-                                             200u * row] = record;
+                        app->state.rowHitAcc[static_cast<unsigned>(band) + 200u * row] = record;
                     }
                     const int next = static_cast<int>(key.next);
                     record = next;
-                    if (next == 0 ||
-                        static_cast<std::int32_t>(list[next].frame) >= limit)
+                    if (next == 0 || static_cast<std::int32_t>(list[next].frame) >= limit)
                         break;
                 }
             }
             ++band;
             bandY += kBandH;
         }
-        const std::uint32_t len =
-            static_cast<std::uint32_t>(app->LastRegisteredFrame()) + 20;
+        const std::uint32_t len = static_cast<std::uint32_t>(app->LastRegisteredFrame()) + 20;
         FinishPanel(len, len);
     } else {
         // --- 6b. bone-edit mode: bone / morph / IK lists -------------------
@@ -453,8 +429,7 @@ void PanelPaint(MMDApp* app) {
             int record = 0;
             for (;;) {
                 const mdl::DisplayKey& key = displayKeys[record];
-                const int row =
-                    static_cast<std::int32_t>(key.frame) - scroll;
+                const int row = static_cast<std::int32_t>(key.frame) - scroll;
                 if (row >= 0) {
                     const int link = mdl::Mdl(model)->boneListSelLine;
                     if (link != 0) {
@@ -462,16 +437,13 @@ void PanelPaint(MMDApp* app) {
                         const int y = kBandH * link + 17;
                         BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetMaskX, 0, SRCAND);
                         BitBlt(panel, x, y, kIcon, kIcon, icons,
-                               key.allocated ? kSheetOnX : kSheetOffX,
-                               0, SRCPAINT);
-                        app->state.rowHitIk[link + 200 * row] =
-                            record != 0 ? record : -10;
+                               key.allocated ? kSheetOnX : kSheetOffX, 0, SRCPAINT);
+                        app->state.rowHitIk[link + 200 * row] = record != 0 ? record : -10;
                     }
                 }
                 const int next = static_cast<int>(key.next);
                 record = next;
-                if (next == 0 ||
-                    static_cast<std::int32_t>(displayKeys[next].frame) >= limit)
+                if (next == 0 || static_cast<std::int32_t>(displayKeys[next].frame) >= limit)
                     break;
             }
         }
@@ -482,30 +454,27 @@ void PanelPaint(MMDApp* app) {
             mdl::MorphKey* morphList = mdl::MorphKeys(model);
             std::uint32_t* morphLinks = modelRecord->morphKeyIndices;
             std::int32_t* mapMorph = app->state.rowHitMorph;
-            const std::int32_t morphCnt =
-                static_cast<std::int32_t>(modelRecord->morphCount);
+            const std::int32_t morphCnt = static_cast<std::int32_t>(modelRecord->morphCount);
             for (int head = 0; head < morphCnt; ++head) {
                 if (static_cast<std::int32_t>(morphList[head].frame) >= limit)
                     continue;
                 int rec = head;
                 for (;;) {
                     mdl::MorphKey& key = morphList[rec];
-                    const int row =
-                        static_cast<std::int32_t>(key.frame) - scroll;
+                    const int row = static_cast<std::int32_t>(key.frame) - scroll;
                     if (row >= 0) {
                         const int link = morphLinks[head];
                         if (link != 0) {
                             // visibility flag (+16) maintenance (0x4151B7)
                             if (app->SelectionBoxDragging() != 0 &&
-                                app->TimelineSelectionChanged() == 0 &&
-                                link < 0) {
+                                app->TimelineSelectionChanged() == 0 && link < 0) {
                                 const int neg = -link;
                                 if (app->TimelineRangeFirstOffset() <= row &&
                                     row < app->TimelineRangeLastOffset() &&
                                     neg < app->TimelineRangeLastBase() &&
                                     app->TimelineRangeFirstBase() <= neg) {
-                                    key.allocated = static_cast<std::uint8_t>(
-                                        !app->CtrlModifierActive());
+                                    key.allocated =
+                                        static_cast<std::uint8_t>(!app->CtrlModifierActive());
                                 } else if (!app->ShiftModifierActive()) {
                                     key.allocated = 0;
                                 }
@@ -537,10 +506,8 @@ void PanelPaint(MMDApp* app) {
                                 }
                             } else if (mapMorph[200 * row - link] >= 0) {
                                 const int y = 17 - kBandH * link;
-                                BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetMaskX, 0,
-                                       SRCAND);
-                                BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetAltX, 0,
-                                       SRCPAINT);
+                                BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetMaskX, 0, SRCAND);
+                                BitBlt(panel, x, y, kIcon, kIcon, icons, kSheetAltX, 0, SRCPAINT);
                                 mapMorph[200 * row - link] = -2;
                             }
                             // final map write (0x4154CB)
@@ -550,22 +517,20 @@ void PanelPaint(MMDApp* app) {
                     }
                     const int next = static_cast<int>(key.next);
                     rec = next;
-                    if (next == 0 ||
-                        static_cast<std::int32_t>(morphList[next].frame) >= limit)
+                    if (next == 0 || static_cast<std::int32_t>(morphList[next].frame) >= limit)
                         break;
                 }
             }
         }
 
         // IK list (model+0x26E0, 60-byte records) - 0x41557A..0x415C6B
-        const std::int32_t ikCnt =
-            static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
+        const std::int32_t ikCnt = static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
         if (ikCnt > 0) {
             mdl::BoneKey* ikList = mdl::BoneKeys(model);
             mdl::BoneRecord* bones = mdl::Bones(model);
             std::uint32_t* ikLinks = mdl::Mdl(model)->boneKeyIndices;
-            std::int32_t* mapIk = app->state.rowHitBone;  // old name kMapIk
-            for (int head = 0; head < ikCnt; ++head) {    // chain-head index (x)
+            std::int32_t* mapIk = app->state.rowHitBone; // old name kMapIk
+            for (int head = 0; head < ikCnt; ++head) {   // chain-head index (x)
                 if (static_cast<std::int32_t>(ikList[head].frame) >= limit)
                     continue;
                 int rec = head;
@@ -574,12 +539,10 @@ void PanelPaint(MMDApp* app) {
                     const int row = static_cast<std::int32_t>(key.frame) - scroll;
                     if (row >= 0) {
                         const int link = ikLinks[head];
-                        if (link != 0 ||
-                            head == mdl::Mdl(model)->displayRootBone) {
+                        if (link != 0 || head == mdl::Mdl(model)->displayRootBone) {
                             // visibility flag (+56) maintenance (0x415631..0x4156CB)
                             if (app->SelectionBoxDragging() != 0 &&
-                                app->TimelineSelectionChanged() == 0 &&
-                                link < 0) {
+                                app->TimelineSelectionChanged() == 0 && link < 0) {
                                 const int neg = -link;
                                 if (neg < app->TimelineRangeLastBase() &&
                                     row < app->TimelineRangeLastOffset() &&
@@ -588,8 +551,7 @@ void PanelPaint(MMDApp* app) {
                                     key.allocated =
                                         app->TimelineRangeApplyEnabled() != 0
                                             ? 0
-                                            : static_cast<std::uint8_t>(
-                                                  !app->CtrlModifierActive());
+                                            : static_cast<std::uint8_t>(!app->CtrlModifierActive());
                                 } else if (!app->ShiftModifierActive()) {
                                     key.allocated = 0;
                                 }
@@ -644,18 +606,15 @@ void PanelPaint(MMDApp* app) {
                     }
                     const int next = static_cast<int>(key.next);
                     rec = next;
-                    if (next == 0 ||
-                        static_cast<std::int32_t>(ikList[next].frame) >= limit)
+                    if (next == 0 || static_cast<std::int32_t>(ikList[next].frame) >= limit)
                         break;
                 }
             }
         }
-        const std::uint32_t a =
-            static_cast<std::uint32_t>(mdl::Mdl(model)->maxFrame) + 20;
-        const std::uint32_t b =
-            static_cast<std::uint32_t>(app->LastRegisteredFrame()) + 20;
+        const std::uint32_t a = static_cast<std::uint32_t>(mdl::Mdl(model)->maxFrame) + 20;
+        const std::uint32_t b = static_cast<std::uint32_t>(app->LastRegisteredFrame()) + 20;
         FinishPanel(a, b);
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

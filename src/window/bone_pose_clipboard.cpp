@@ -28,7 +28,7 @@ static std::uint32_t MulOrMax(std::uint32_t a, std::uint32_t b) {
 static const char kBoneNameNeedleLeft[] = "\x8D\xB6";
 static const char kBoneNameNeedleRight[] = "\x89\x45";
 
-}  // namespace
+} // namespace
 
 // Copy the selected current poses; no keyframe times are stored.
 void CopySelectedBonePose(MMDApp* app, HWND hwnd) {
@@ -45,29 +45,25 @@ void CopySelectedBonePose(MMDApp* app, HWND hwnd) {
         }
     }
     if (count == 0) {
-        return;  // jz def_47E903 (no-op)
+        return; // jz def_47E903 (no-op)
     }
     EnableWindow(GetDlgItem(hwnd, panel::kBonePasteButton), TRUE);
     EnableWindow(GetDlgItem(hwnd, panel::kBoneReversePasteButton), TRUE);
     app->state.copiedBoneCount = count;
-    auto& records =
-        reinterpret_cast<BoneCopyRecord*&>(app->BoneCopyRecords());
+    auto& records = reinterpret_cast<BoneCopyRecord*&>(app->BoneCopyRecords());
     if (records != nullptr) {
         free(records);
         records = nullptr;
     }
-    auto* block = static_cast<BoneCopyRecord*>(::operator new(
-        MulOrMax(static_cast<std::uint32_t>(count),
-                 sizeof(BoneCopyRecord))));
+    auto* block = static_cast<BoneCopyRecord*>(
+        ::operator new(MulOrMax(static_cast<std::uint32_t>(count), sizeof(BoneCopyRecord))));
     if (block != nullptr) {
-        ConstructArrayElements(block, sizeof(BoneCopyRecord),
-                               static_cast<std::uint32_t>(count),
+        ConstructArrayElements(block, sizeof(BoneCopyRecord), static_cast<std::uint32_t>(count),
                                &IdentityCtor);
     }
     records = block;
-    memset(block, 0,
-           static_cast<std::size_t>(count) * sizeof(BoneCopyRecord));
-    app->state.copiedBoneCount = 0;  // fill cursor
+    memset(block, 0, static_cast<std::size_t>(count) * sizeof(BoneCopyRecord));
+    app->state.copiedBoneCount = 0; // fill cursor
     model = app->SelectedModel();
     modelRecord = mikudancestudio::mdl::Mdl(model);
     const std::int32_t nBones = modelRecord->boneCount;
@@ -92,7 +88,7 @@ void CopySelectedBonePose(MMDApp* app, HWND hwnd) {
 // Paste by exact name, recording the displaced poses for undo.
 void PasteCopiedBonePose(MMDApp* app, HWND hwnd) {
     if (app->state.copiedBoneCount == 0) {
-        return;  // jz def_47E903 (no-op)
+        return; // jz def_47E903 (no-op)
     }
     unsigned char* model = app->SelectedModel();
     auto* modelRecord = mikudancestudio::mdl::Mdl(model);
@@ -115,27 +111,22 @@ void PasteCopiedBonePose(MMDApp* app, HWND hwnd) {
     undo.operation = mdl::UndoOperation::BonePose;
     // count stored 28*(undoCursor+0x164) dwords past the undo-table base
     undo.recordCount = app->state.copiedBoneCount;
-    unsigned char* undoPoseBytes =
-        reinterpret_cast<unsigned char*>(undo.bonePose);
+    unsigned char* undoPoseBytes = reinterpret_cast<unsigned char*>(undo.bonePose);
     if (undoPoseBytes != nullptr) {
         ::operator delete(undoPoseBytes);
         undo.bonePose = nullptr;
     }
-    const std::int32_t count =
-        app->state.copiedBoneCount;
-    undoPoseBytes = static_cast<unsigned char*>(::operator new(
-        MulOrMax(static_cast<std::uint32_t>(count), 0x24u)));
+    const std::int32_t count = app->state.copiedBoneCount;
+    undoPoseBytes = static_cast<unsigned char*>(
+        ::operator new(MulOrMax(static_cast<std::uint32_t>(count), 0x24u)));
     if (undoPoseBytes != nullptr) {
-        ConstructArrayElements(undoPoseBytes, 0x24,
-                               static_cast<std::uint32_t>(count),
+        ConstructArrayElements(undoPoseBytes, 0x24, static_cast<std::uint32_t>(count),
                                &IdentityCtor);
     }
-    undo.bonePose = reinterpret_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
-        undoPoseBytes);
+    undo.bonePose = reinterpret_cast<mikudancestudio::mdl::BonePoseSnapshot*>(undoPoseBytes);
     memset(undoPoseBytes, 0, static_cast<std::size_t>(count) * 0x24u);
 
-    auto& records =
-        reinterpret_cast<BoneCopyRecord*&>(app->BoneCopyRecords());
+    auto& records = reinterpret_cast<BoneCopyRecord*&>(app->BoneCopyRecords());
     for (std::int32_t copiedPoseIndex = 0; copiedPoseIndex < count; ++copiedPoseIndex) {
         model = app->SelectedModel();
         modelRecord = mikudancestudio::mdl::Mdl(model);
@@ -147,7 +138,8 @@ void PasteCopiedBonePose(MMDApp* app, HWND hwnd) {
         // exact name match (the original's inline 2-byte-step compare
         // is byte-identical to strcmp)
         std::int32_t targetBoneIndex = -1;
-        for (std::int32_t candidateBoneIndex = 0; candidateBoneIndex < nBones; ++candidateBoneIndex) {
+        for (std::int32_t candidateBoneIndex = 0; candidateBoneIndex < nBones;
+             ++candidateBoneIndex) {
             if (strcmp(bones[candidateBoneIndex].name, copiedPose.name) == 0) {
                 targetBoneIndex = candidateBoneIndex;
                 break;
@@ -182,7 +174,7 @@ void PasteCopiedBonePose(MMDApp* app, HWND hwnd) {
 // Paste the mirrored copied pose, preserving each target pose in the undo slot.
 void PasteMirroredBonePose(MMDApp* app, HWND hwnd) {
     if (app->state.copiedBoneCount == 0) {
-        return;  // jz def_47E903 (no-op)
+        return; // jz def_47E903 (no-op)
     }
     unsigned char* model = app->SelectedModel();
     auto* modelRecord = mikudancestudio::mdl::Mdl(model);
@@ -204,28 +196,23 @@ void PasteMirroredBonePose(MMDApp* app, HWND hwnd) {
     auto& undo = modelRecord->undoRings[0].slots[undoCursor];
     undo.operation = mdl::UndoOperation::BonePose;
     undo.recordCount = app->state.copiedBoneCount;
-    unsigned char* undoPoseBytes =
-        reinterpret_cast<unsigned char*>(undo.bonePose);
+    unsigned char* undoPoseBytes = reinterpret_cast<unsigned char*>(undo.bonePose);
     if (undoPoseBytes != nullptr) {
         ::operator delete(undoPoseBytes);
         undo.bonePose = nullptr;
     }
     const std::int32_t count = app->state.copiedBoneCount;
-    undoPoseBytes = static_cast<unsigned char*>(::operator new(
-        MulOrMax(static_cast<std::uint32_t>(count), 0x24u)));
+    undoPoseBytes = static_cast<unsigned char*>(
+        ::operator new(MulOrMax(static_cast<std::uint32_t>(count), 0x24u)));
     if (undoPoseBytes != nullptr) {
-        ConstructArrayElements(undoPoseBytes, 0x24,
-                               static_cast<std::uint32_t>(count),
+        ConstructArrayElements(undoPoseBytes, 0x24, static_cast<std::uint32_t>(count),
                                &IdentityCtor);
     }
-    undo.bonePose = reinterpret_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
-        undoPoseBytes);
+    undo.bonePose = reinterpret_cast<mikudancestudio::mdl::BonePoseSnapshot*>(undoPoseBytes);
     memset(undoPoseBytes, 0, static_cast<std::size_t>(count) * 0x24u);
 
-    auto& records =
-        reinterpret_cast<BoneCopyRecord*&>(app->BoneCopyRecords());
-    for (std::int32_t copiedPoseIndex = 0; copiedPoseIndex < count;
-         ++copiedPoseIndex) {
+    auto& records = reinterpret_cast<BoneCopyRecord*&>(app->BoneCopyRecords());
+    for (std::int32_t copiedPoseIndex = 0; copiedPoseIndex < count; ++copiedPoseIndex) {
         model = app->SelectedModel();
         modelRecord = mikudancestudio::mdl::Mdl(model);
         const std::int32_t nBones = modelRecord->boneCount;
@@ -242,19 +229,16 @@ void PasteMirroredBonePose(MMDApp* app, HWND hwnd) {
             }
         }
         if (sourceBoneIndex < 0) {
-            continue;  // no exact-name bone: record skipped
+            continue; // no exact-name bone: record skipped
         }
         std::int32_t targetBoneIndex = -1;
-        const char* leftMarker =
-            strstr(bones[sourceBoneIndex].name, kBoneNameNeedleLeft);
+        const char* leftMarker = strstr(bones[sourceBoneIndex].name, kBoneNameNeedleLeft);
         if (leftMarker != nullptr) {
             // Left to right: compare the suffix after the two-byte side marker.
             const char* nameSuffix = leftMarker + 2;
             for (std::int32_t k = 0; k < nBones; ++k) {
-                const char* candidateMarker =
-                    strstr(bones[k].name, kBoneNameNeedleRight);
-                if (candidateMarker != nullptr &&
-                    strcmp(candidateMarker + 2, nameSuffix) == 0) {
+                const char* candidateMarker = strstr(bones[k].name, kBoneNameNeedleRight);
+                if (candidateMarker != nullptr && strcmp(candidateMarker + 2, nameSuffix) == 0) {
                     targetBoneIndex = k;
                     break;
                 }
@@ -262,13 +246,11 @@ void PasteMirroredBonePose(MMDApp* app, HWND hwnd) {
         }
         if (targetBoneIndex < 0) {
             // Right to left uses the same exact-name bone (x64 RVA 0x4463C..0x44651).
-            const char* nameSuffix = strstr(
-                bones[sourceBoneIndex].name, kBoneNameNeedleRight);
+            const char* nameSuffix = strstr(bones[sourceBoneIndex].name, kBoneNameNeedleRight);
             if (nameSuffix != nullptr) {
                 nameSuffix += 2;
                 for (std::int32_t k = 0; k < nBones; ++k) {
-                    const char* candidateMarker =
-                        strstr(bones[k].name, kBoneNameNeedleLeft);
+                    const char* candidateMarker = strstr(bones[k].name, kBoneNameNeedleLeft);
                     if (candidateMarker != nullptr &&
                         strcmp(candidateMarker + 2, nameSuffix) == 0) {
                         targetBoneIndex = k;
@@ -278,7 +260,7 @@ void PasteMirroredBonePose(MMDApp* app, HWND hwnd) {
             }
         }
         if (targetBoneIndex < 0) {
-            targetBoneIndex = sourceBoneIndex;  // fallback to the exact-name match
+            targetBoneIndex = sourceBoneIndex; // fallback to the exact-name match
         }
         undoPoseBytes = reinterpret_cast<unsigned char*>(undo.bonePose);
         auto& rec = reinterpret_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
@@ -309,4 +291,4 @@ void PasteMirroredBonePose(MMDApp* app, HWND hwnd) {
     app->PhysicsResetPending() = 1;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

@@ -31,30 +31,24 @@ namespace {
 // dword (0x9EDCC) into edit 713; checkbox 731 mirrors the noise-mode byte
 // 0xA0CD4 and gates edit 713 through EnableWindow.
 // =========================================================================//
-void InitGravityDialog(HWND hDlg) {  // VA 0x00423160
+void InitGravityDialog(HWND hDlg) { // VA 0x00423160
     MMDApp* app = g_Block;
     char buf[0x100];
-    sprintf_s(buf, 0x100, "%3.2f",
-              static_cast<double>(app->state.gravityMagnitude));
+    sprintf_s(buf, 0x100, "%3.2f", static_cast<double>(app->state.gravityMagnitude));
     SetWindowTextA(GetDlgItem(hDlg, panel::kGravityAccelEdit), buf);
-    const float direction[3] = {app->state.gravityX, app->state.gravityY,
-                                app->state.gravityZ};
-    static const int kDirectionEdits[3] = {panel::kGravityDirXEdit, panel::kGravityDirYEdit, panel::kGravityDirZEdit};
-    static const int kDirectionTracks[3] = {panel::kGravityDirXSlider, panel::kGravityDirYSlider, panel::kGravityDirZSlider};
+    const float direction[3] = {app->state.gravityX, app->state.gravityY, app->state.gravityZ};
+    static const int kDirectionEdits[3] = {panel::kGravityDirXEdit, panel::kGravityDirYEdit,
+                                           panel::kGravityDirZEdit};
+    static const int kDirectionTracks[3] = {panel::kGravityDirXSlider, panel::kGravityDirYSlider,
+                                            panel::kGravityDirZSlider};
     for (int axis = 0; axis < 3; ++axis) {
-        sprintf_s(buf, 0x100, "%3.2f",
-                  static_cast<double>(direction[axis]));
+        sprintf_s(buf, 0x100, "%3.2f", static_cast<double>(direction[axis]));
         SetWindowTextA(GetDlgItem(hDlg, kDirectionEdits[axis]), buf);
-        SendMessageA(GetDlgItem(hDlg, kDirectionTracks[axis]),
-                     TBM_SETRANGEMIN, 0, -100);
-        SendMessageA(GetDlgItem(hDlg, kDirectionTracks[axis]),
-                     TBM_SETRANGEMAX, 0, 100);
-        SendMessageA(GetDlgItem(hDlg, kDirectionTracks[axis]),
-                     TBM_SETTICFREQ, 0x3E8, 0);
-        SendMessageA(GetDlgItem(hDlg, kDirectionTracks[axis]),
-                     TBM_SETPOS, 1,
-                     static_cast<int>(
-                         static_cast<double>(direction[axis]) * 100.0));
+        SendMessageA(GetDlgItem(hDlg, kDirectionTracks[axis]), TBM_SETRANGEMIN, 0, -100);
+        SendMessageA(GetDlgItem(hDlg, kDirectionTracks[axis]), TBM_SETRANGEMAX, 0, 100);
+        SendMessageA(GetDlgItem(hDlg, kDirectionTracks[axis]), TBM_SETTICFREQ, 0x3E8, 0);
+        SendMessageA(GetDlgItem(hDlg, kDirectionTracks[axis]), TBM_SETPOS, 1,
+                     static_cast<int>(static_cast<double>(direction[axis]) * 100.0));
     }
     sprintf_s(buf, 0x100, "%d", app->state.gravityNoise);
     SetWindowTextA(GetDlgItem(hDlg, panel::kGravityNoiseEdit), buf);
@@ -75,45 +69,38 @@ void InitGravityDialog(HWND hDlg) {  // VA 0x00423160
 // slot 0x34/4 = 13).  An all-zero direction gets Y nudged to
 // flt 0x529624 = 0.1f first.  Channel 4 stores (int)value into app+0x9EDC8.
 // Ends with SelectTimelineTrack(GlobalTimelineTrack::Gravity) on every path.
-void SetGravityChannel(MMDApp* app, int channel, float value) {  // VA 0x0045FD80
+void SetGravityChannel(MMDApp* app, int channel, float value) { // VA 0x0045FD80
     switch (channel) {
     case 0:
         app->state.gravityMagnitude = value;
-        if (app->state.gravityX == 0.0f &&
-            app->state.gravityY == 0.0f &&
+        if (app->state.gravityX == 0.0f && app->state.gravityY == 0.0f &&
             app->state.gravityZ == 0.0f)
-            app->state.gravityY = 0.1f;  // flt 0x529624
+            app->state.gravityY = 0.1f; // flt 0x529624
         break;
     case 1:
         app->state.gravityX = value;
-        if (value == 0.0f && app->state.gravityY == 0.0f &&
-            app->state.gravityZ == 0.0f)
+        if (value == 0.0f && app->state.gravityY == 0.0f && app->state.gravityZ == 0.0f)
             app->state.gravityY = 0.1f;
         break;
     case 2:
         app->state.gravityY = value;
-        if (app->state.gravityX == 0.0f &&
-            app->state.gravityZ == 0.0f && value == 0.0f)
+        if (app->state.gravityX == 0.0f && app->state.gravityZ == 0.0f && value == 0.0f)
             app->state.gravityY = 0.1f;
         break;
     case 3:
         app->state.gravityZ = value;
-        if (app->state.gravityX == 0.0f &&
-            app->state.gravityY == 0.0f && value == 0.0f)
+        if (app->state.gravityX == 0.0f && app->state.gravityY == 0.0f && value == 0.0f)
             app->state.gravityY = 0.1f;
         break;
     default:
         if (channel == 4)
-            app->state.gravityNoise =
-                static_cast<std::int32_t>(value);
-        SelectTimelineTrack(GlobalTimelineTrack::Gravity);                                 // 0x440AC0
+            app->state.gravityNoise = static_cast<std::int32_t>(value);
+        SelectTimelineTrack(GlobalTimelineTrack::Gravity); // 0x440AC0
         return;
     }
 
     // common tail: normalise, scale by magnitude * 10, setGravity
-    float dir[3] = {app->state.gravityX,
-                    app->state.gravityY,
-                    app->state.gravityZ};
+    float dir[3] = {app->state.gravityX, app->state.gravityY, app->state.gravityZ};
     d3dx::Get().vec3Normalize(dir, dir);
     const float mag = app->state.gravityMagnitude;
     float vec[4] = {static_cast<float>(dir[0] * mag * 10.0),
@@ -123,7 +110,7 @@ void SetGravityChannel(MMDApp* app, int channel, float value) {  // VA 0x0045FD8
         if (btDiscreteDynamicsWorld* world = physicsScene->world)
             world->setGravity(btVector3(vec[0], vec[1], vec[2]));
     }
-    SelectTimelineTrack(GlobalTimelineTrack::Gravity);                                     // 0x440AC0
+    SelectTimelineTrack(GlobalTimelineTrack::Gravity); // 0x440AC0
 }
 
 // VA 0x00466370 - gravity-setting dialog (266) edit subclass: WM_KEYDOWN +
@@ -131,7 +118,7 @@ void SetGravityChannel(MMDApp* app, int channel, float value) {  // VA 0x0045FD8
 // it through 0x45FD80 with channel 0..4; edits 710..712 additionally park
 // the percent value on their trackbars 637..639 (TBM_SETPOS, dbl 0x52B8E0
 // = 100.0); everything else goes to the saved proc (app+0xA0CD0).
-LRESULT CALLBACK GravitySettingEditSubclassProc(  // VA 0x00466370
+LRESULT CALLBACK GravitySettingEditSubclassProc( // VA 0x00466370
     HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     MMDApp* app = g_Block;
     if (msg == WM_KEYDOWN && wParam == VK_RETURN) {
@@ -144,15 +131,13 @@ LRESULT CALLBACK GravitySettingEditSubclassProc(  // VA 0x00466370
             const float v = static_cast<float>(atof(buf));
             // Original x64 RVA 0x957A7/0x9583D/0x958E0: X/Y/Z use 637/638/639.
             if (ch >= 1 && ch <= 3)
-                SendMessageA(GetDlgItem(dlg, panel::kGravityDirXSlider + (ch - 1)),
-                             TBM_SETPOS, 1,
-                             static_cast<int>(v * 100.0));  // dbl 0x52B8E0
-            SetGravityChannel(app, ch, v);                   // 0x45FD80
+                SendMessageA(GetDlgItem(dlg, panel::kGravityDirXSlider + (ch - 1)), TBM_SETPOS, 1,
+                             static_cast<int>(v * 100.0)); // dbl 0x52B8E0
+            SetGravityChannel(app, ch, v);                 // 0x45FD80
             return 0;
         }
     }
-    return CallWindowProcA(app->GravitySettingEditProc(),
-                           hwnd, msg, wParam, lParam);
+    return CallWindowProcA(app->GravitySettingEditProc(), hwnd, msg, wParam, lParam);
 }
 
 // VA 0x00460080 - gravity-setting dialog OK ("register"): dirty flag, clear the
@@ -160,7 +145,7 @@ LRESULT CALLBACK GravitySettingEditSubclassProc(  // VA 0x00466370
 // light 0x378 +0x24, self-shadow 0x37C +0x14, gravity 0x380 +0x21) and of
 // all 255 accessory tracks (0x384 blobs, +0x18, 0x3C stride), rebuild via
 // 0x412B20 at the current frame, then SelectTimelineTrack(GlobalTimelineTrack::Gravity) + PanelPaint.
-void ApplyGravitySettingDialog(MMDApp* app) {  // VA 0x00460080
+void ApplyGravitySettingDialog(MMDApp* app) { // VA 0x00460080
     app->SceneModified() = 1;
     mdl::CameraKey* camera = app->CameraKeys();
     mdl::LightKey* light = app->LightKeys();
@@ -179,12 +164,12 @@ void ApplyGravitySettingDialog(MMDApp* app) {  // VA 0x00460080
         for (std::size_t i = 0; i < 10000; ++i)
             acc[i].selected = 0;
     }
-    RegisterGravityKeyCurrent(app, app->state.currentFrame);  // 0x412B20
-    SelectTimelineTrack(GlobalTimelineTrack::Gravity);                                       // 0x440AC0
-    PanelPaint(app);                                          // 0x414610
+    RegisterGravityKeyCurrent(app, app->state.currentFrame); // 0x412B20
+    SelectTimelineTrack(GlobalTimelineTrack::Gravity);       // 0x440AC0
+    PanelPaint(app);                                         // 0x414610
 }
 
-}  // namespace
+} // namespace
 
 // ===========================================================================
 // 0x479E90 - case 266 gravity-setting dialog (template caption "gravity
@@ -199,20 +184,19 @@ void ApplyGravitySettingDialog(MMDApp* app) {  // VA 0x00460080
 // Reference: MikuMikuDance.exe sub_479E90.
 // ===========================================================================
 INT_PTR CALLBACK GravitySettingDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
-                                       LPARAM lParam) {  // VA 0x00479E90
+                                       LPARAM lParam) { // VA 0x00479E90
     MMDApp* app = g_Block;
     const HWND hCtrl = reinterpret_cast<HWND>(lParam);
     if (msg == WM_INITDIALOG) {
         MakeDialogTopmostIfRequested(app, hDlg);
         // Original x64 0x7FF7CB4B5682 / 0x7FF7CB4B5AFF use the same saved proc.
-        app->GravitySettingEditProc() =
-            reinterpret_cast<WNDPROC>(
-                GetWindowLongPtrA(GetDlgItem(hDlg, panel::kGravityAccelEdit), GWLP_WNDPROC));
+        app->GravitySettingEditProc() = reinterpret_cast<WNDPROC>(
+            GetWindowLongPtrA(GetDlgItem(hDlg, panel::kGravityAccelEdit), GWLP_WNDPROC));
         for (int i = panel::kGravityAccelEdit; i <= panel::kGravityNoiseEdit; ++i) {
             SetWindowLongPtrA(GetDlgItem(hDlg, i), GWLP_WNDPROC,
-                           reinterpret_cast<LONG_PTR>(GravitySettingEditSubclassProc));
+                              reinterpret_cast<LONG_PTR>(GravitySettingEditSubclassProc));
         }
-        InitGravityDialog(hDlg);  // 0x423160
+        InitGravityDialog(hDlg); // 0x423160
         return 0;
     }
     if (msg == WM_COMMAND) {
@@ -229,35 +213,35 @@ INT_PTR CALLBACK GravitySettingDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             char buf[0x100];
             if (hCtrl == GetDlgItem(app->GravitySettingDialog(), panel::kGravityAccelEdit)) {
                 GetWindowTextA(hCtrl, buf, 256);
-                SetGravityChannel(app,0, static_cast<float>(atof(buf)));  // 0x45FD80
+                SetGravityChannel(app, 0, static_cast<float>(atof(buf))); // 0x45FD80
             } else if (hCtrl == GetDlgItem(app->GravitySettingDialog(), panel::kGravityDirXEdit)) {
                 GetWindowTextA(hCtrl, buf, 256);
                 const float f = static_cast<float>(atof(buf));
                 SendMessageA(GetDlgItem(app->GravitySettingDialog(), panel::kGravityDirXSlider),
                              TBM_SETPOS, 1, (int)(f * 100.0));
-                SetGravityChannel(app,1, f);  // 0x45FD80
+                SetGravityChannel(app, 1, f); // 0x45FD80
             } else if (hCtrl == GetDlgItem(app->GravitySettingDialog(), panel::kGravityDirYEdit)) {
                 GetWindowTextA(hCtrl, buf, 256);
                 const float f = static_cast<float>(atof(buf));
                 SendMessageA(GetDlgItem(app->GravitySettingDialog(), panel::kGravityDirYSlider),
                              TBM_SETPOS, 1, (int)(f * 100.0));
-                SetGravityChannel(app,2, f);  // 0x45FD80
+                SetGravityChannel(app, 2, f); // 0x45FD80
             } else if (hCtrl == GetDlgItem(app->GravitySettingDialog(), panel::kGravityDirZEdit)) {
                 GetWindowTextA(hCtrl, buf, 256);
                 const float f = static_cast<float>(atof(buf));
                 SendMessageA(GetDlgItem(app->GravitySettingDialog(), panel::kGravityDirZSlider),
                              TBM_SETPOS, 1, (int)(f * 100.0));
-                SetGravityChannel(app,3, f);  // 0x45FD80
+                SetGravityChannel(app, 3, f); // 0x45FD80
             } else if (hCtrl == GetDlgItem(app->GravitySettingDialog(), panel::kGravityNoiseEdit)) {
                 GetWindowTextA(hCtrl, buf, 256);
-                SetGravityChannel(app,4, static_cast<float>(atof(buf)));  // 0x45FD80
+                SetGravityChannel(app, 4, static_cast<float>(atof(buf))); // 0x45FD80
             }
         } else if (id == IDOK) {
-            ApplyGravitySettingDialog(app);  // 0x460080
+            ApplyGravitySettingDialog(app); // 0x460080
         } else if (id == IDCANCEL) {
             DestroyWindow(hDlg);
             app->GravitySettingDialog() = 0;
-            ApplyGravityTrack(app);  // 0x412330
+            ApplyGravityTrack(app); // 0x412330
             return 1;
         }
         return 0;
@@ -266,34 +250,25 @@ INT_PTR CALLBACK GravitySettingDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         return 0;
     }
     if (hCtrl == GetDlgItem(hDlg, panel::kGravityDirXSlider)) {
-        const double v =
-            static_cast<double>(
-                SendMessageA(hCtrl, TBM_GETPOS, 0, 0)) /
-            100.0;
+        const double v = static_cast<double>(SendMessageA(hCtrl, TBM_GETPOS, 0, 0)) / 100.0;
         char buf[0x100];
         sprintf_s(buf, 0x100, "%3.2f", v);
         SetWindowTextA(GetDlgItem(hDlg, panel::kGravityDirXEdit), buf);
-        SetGravityChannel(app,1, static_cast<float>(v));  // 0x45FD80
+        SetGravityChannel(app, 1, static_cast<float>(v)); // 0x45FD80
     } else if (hCtrl == GetDlgItem(hDlg, panel::kGravityDirYSlider)) {
-        const double v =
-            static_cast<double>(
-                SendMessageA(hCtrl, TBM_GETPOS, 0, 0)) /
-            100.0;
+        const double v = static_cast<double>(SendMessageA(hCtrl, TBM_GETPOS, 0, 0)) / 100.0;
         char buf[0x100];
         sprintf_s(buf, 0x100, "%3.2f", v);
         SetWindowTextA(GetDlgItem(hDlg, panel::kGravityDirYEdit), buf);
-        SetGravityChannel(app,2, static_cast<float>(v));  // 0x45FD80
+        SetGravityChannel(app, 2, static_cast<float>(v)); // 0x45FD80
     } else if (hCtrl == GetDlgItem(hDlg, panel::kGravityDirZSlider)) {
-        const double v =
-            static_cast<double>(
-                SendMessageA(hCtrl, TBM_GETPOS, 0, 0)) /
-            100.0;
+        const double v = static_cast<double>(SendMessageA(hCtrl, TBM_GETPOS, 0, 0)) / 100.0;
         char buf[0x100];
         sprintf_s(buf, 0x100, "%3.2f", v);
         SetWindowTextA(GetDlgItem(hDlg, panel::kGravityDirZEdit), buf);
-        SetGravityChannel(app,3, static_cast<float>(v));  // 0x45FD80
+        SetGravityChannel(app, 3, static_cast<float>(v)); // 0x45FD80
     }
     return 1;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

@@ -107,15 +107,14 @@ using kfa::Wr32;
 using kfa::WrF32;
 
 // JP overflow strings (0x52B918 / 0x52B908, SJIS byte-exact)
-const char kJpOverflow[] =
-    "\x93\x6f\x98\x5e\x83\x7c\x83\x43\x83\x93\x83\x67\x90\x94\x82\xaa%d"
-    "\x8c\xc2\x82\xf0\x89\x7a\x82\xa6\x82\xdc\x82\xb5\x82\xbd\n"
-    "\x82\xb1\x82\xea\x88\xc8\x8f\xe3\x82\xcc\x93\x6f\x98\x5e\x82\xcd\x8d"
-    "\x73\x82\xa6\x82\xdc\x82\xb9\x82\xf1\n"
-    "\x81\x75\xcc\xda\xb0\xd1\x95\xd2\x8f\x57\x81\x76\x82\xcc\x81\x75\x95"
-    "\x73\x97\x70\xcc\xda\xb0\xd1\x8d\xed\x8f\x9c\x81\x76\x82\xf0\x8e\xc0"
-    "\x8d\x73\x82\xb5\x82\xc4\x89\xba\x82\xb3\x82\xa2";
-const char kJpFrameRegTitle[] =  // 0x52B908 "フレーム登録"
+const char kJpOverflow[] = "\x93\x6f\x98\x5e\x83\x7c\x83\x43\x83\x93\x83\x67\x90\x94\x82\xaa%d"
+                           "\x8c\xc2\x82\xf0\x89\x7a\x82\xa6\x82\xdc\x82\xb5\x82\xbd\n"
+                           "\x82\xb1\x82\xea\x88\xc8\x8f\xe3\x82\xcc\x93\x6f\x98\x5e\x82\xcd\x8d"
+                           "\x73\x82\xa6\x82\xdc\x82\xb9\x82\xf1\n"
+                           "\x81\x75\xcc\xda\xb0\xd1\x95\xd2\x8f\x57\x81\x76\x82\xcc\x81\x75\x95"
+                           "\x73\x97\x70\xcc\xda\xb0\xd1\x8d\xed\x8f\x9c\x81\x76\x82\xf0\x8e\xc0"
+                           "\x8d\x73\x82\xb5\x82\xc4\x89\xba\x82\xb3\x82\xa2";
+const char kJpFrameRegTitle[] = // 0x52B908 "フレーム登録"
     "\xcc\xda\xb0\xd1\x93\x6f\x98\x5e";
 
 // shared overflow message (limit differs per registrar); the box owner
@@ -127,22 +126,21 @@ void OverflowBox(unsigned char* m, int limit) {
     if (mikudancestudio::mdl::Mdl(m)->physicsFlags != 0) {
         sprintf_s(text, 0x100,
                   "You cannot regist over %d point\n"
-                  "Please execute 'delete unused frame'", limit);
-        MessageBoxA(*reinterpret_cast<HWND*>(m), text,
-                    "register frame", 0);
+                  "Please execute 'delete unused frame'",
+                  limit);
+        MessageBoxA(*reinterpret_cast<HWND*>(m), text, "register frame", 0);
     } else {
         sprintf_s(text, 0x100, kJpOverflow, limit);
-        MessageBoxA(*reinterpret_cast<HWND*>(m), text,
-                    kJpFrameRegTitle, 0);
+        MessageBoxA(*reinterpret_cast<HWND*>(m), text, kJpFrameRegTitle, 0);
     }
 }
 
 // copy the parsed bone-key fields into a 60-byte record (the exact-
 // overwrite and fresh-record paths share this; dst frame/links excluded)
-void FillBoneRecord(mdl::BoneKey& dst, const unsigned char* rec,
-                    bool writePos) {
+void FillBoneRecord(mdl::BoneKey& dst, const unsigned char* rec, bool writePos) {
     std::memcpy(dst.rotation, rec + 36, sizeof dst.rotation);
-    if (writePos) std::memcpy(dst.position, rec + 52, sizeof dst.position);
+    if (writePos)
+        std::memcpy(dst.position, rec + 52, sizeof dst.position);
     dst.physicsDisabled = rec[64];
     std::memcpy(dst.interpolation, rec + 65, sizeof dst.interpolation);
     dst.allocated = 1;
@@ -171,10 +169,10 @@ int FindMirroredBone(unsigned char* model, const unsigned char* rec) {
     const mdl::BoneRecord* const bones = state.boneTable;
     const int boneCount = static_cast<int>(state.boneCount);
 
-    const auto findOpposite = [&](const char* marker,
-                                  const char* opposite) -> int {
+    const auto findOpposite = [&](const char* marker, const char* opposite) -> int {
         const char* hit = std::strstr(name, marker);
-        if (hit == nullptr || boneCount <= 0) return -1;
+        if (hit == nullptr || boneCount <= 0)
+            return -1;
         const char* const suffix = hit + 2;
         for (int i = 0; i < boneCount; ++i) {
             const char* const boneName = bones[i].name;
@@ -189,9 +187,11 @@ int FindMirroredBone(unsigned char* model, const unsigned char* rec) {
     // strstr @0x7FF7CB4E9DF7) -> bones containing 右; only when the name
     // lacks 左 does the 右-in-source -> 左-in-bones pass run (0x7FF7CB4E9E7C).
     int index = findOpposite(kLeft, kRight);
-    if (index >= 0) return index;
+    if (index >= 0)
+        return index;
     index = findOpposite(kRight, kLeft);
-    if (index >= 0) return index;
+    if (index >= 0)
+        return index;
     for (int i = 0; i < boneCount; ++i) {
         if (std::strcmp(name, bones[i].name) == 0)
             return i;
@@ -202,10 +202,9 @@ int FindMirroredBone(unsigned char* model, const unsigned char* rec) {
 // Name probes of 0x4A27F0 (SJIS byte-exact, compare lengths as in the
 // binary, NUL included; x86 0x531120 / 0x531118 = x64 0x552048 /
 // 0x5524D8).
-const unsigned char kJpDispIkOp[] =   // 表示･IK･外親 (13)
-    {0x95, 0x5C, 0x8E, 0xA6, 0xA5, 0x49, 0x4B,
-     0xA5, 0x8A, 0x4F, 0x90, 0x65, 0x00};
-const unsigned char kJpBone01[] =     // ﾎﾞｰﾝ01 (7)
+const unsigned char kJpDispIkOp[] = // 表示･IK･外親 (13)
+    {0x95, 0x5C, 0x8E, 0xA6, 0xA5, 0x49, 0x4B, 0xA5, 0x8A, 0x4F, 0x90, 0x65, 0x00};
+const unsigned char kJpBone01[] = // ﾎﾞｰﾝ01 (7)
     {0xCE, 0xDE, 0xB0, 0xDD, 0x30, 0x31, 0x00};
 
 // Track walk + mark shared by every branch of 0x4A27F0: `root` is the
@@ -215,31 +214,35 @@ const unsigned char kJpBone01[] =     // ﾎﾞｰﾝ01 (7)
 // byte of every record with frame <= to.  Returns the last record index
 // marked, 0 when nothing was in range.
 template <typename Key>
-int MarkTrackRange(Key* keys, int root, std::uint32_t from,
-                   std::uint32_t to) {
+int MarkTrackRange(Key* keys, int root, std::uint32_t from, std::uint32_t to) {
     int cur = root;
     if (keys[cur].frame < from) {
         for (;;) {
             const int next = static_cast<int>(keys[cur].next);
-            if (next == 0) return 0;
+            if (next == 0)
+                return 0;
             cur = next;
-            if (keys[cur].frame >= from) break;
+            if (keys[cur].frame >= from)
+                break;
         }
     }
-    if (keys[cur].frame > to) return 0;                    // 0x4A2B3C
+    if (keys[cur].frame > to)
+        return 0; // 0x4A2B3C
     int last = 0;
     for (;;) {
-        keys[cur].allocated = 1;                           // 0x4A2B50
+        keys[cur].allocated = 1; // 0x4A2B50
         last = cur;
         const int next = static_cast<int>(keys[cur].next);
-        if (next == 0) break;                              // 0x4A2B60
-        if (keys[next].frame > to) break;                  // 0x4A2B79
+        if (next == 0)
+            break; // 0x4A2B60
+        if (keys[next].frame > to)
+            break; // 0x4A2B79
         cur = next;
     }
     return last;
 }
 
-}  // namespace
+} // namespace
 
 // ---- VA 0x004A4940 --------------------------------------------------------
 void ResetBoneKeyCursor(unsigned char* model) {
@@ -264,7 +267,8 @@ int ResetMorphKeyCursor(unsigned char* model) {
     int result = 5 * cursor;
     if (keys[cursor].frame != 0) {
         do {
-            if (++cursor >= 0x4E20) break;
+            if (++cursor >= 0x4E20)
+                break;
             result = 5 * cursor;
         } while (keys[cursor].frame != 0);
     }
@@ -279,7 +283,8 @@ int ResetMorphKeyCursor(unsigned char* model) {
 void RegisterMorphKeyCurrent(unsigned char* model, int morph, int frameArg) {
     unsigned char* const m = model;
     if (m == nullptr || morph < 0 ||
-        (mikudancestudio::mdl::Mdl(m)->physicsMode != 2 && morph == 0) || mikudancestudio::mdl::Morphs(m) == nullptr)
+        (mikudancestudio::mdl::Mdl(m)->physicsMode != 2 && morph == 0) ||
+        mikudancestudio::mdl::Morphs(m) == nullptr)
         return;
 
     mdl::MorphKey* const keys = mdl::MorphKeys(m);
@@ -316,7 +321,8 @@ void RegisterMorphKeyCurrent(unsigned char* model, int morph, int frameArg) {
         }
         if (keys[current].frame < frame) {
             const int fresh = allocate();
-            if (fresh < 0) return;
+            if (fresh < 0)
+                return;
             keys[current].next = static_cast<std::uint32_t>(fresh);
             keys[fresh].previous = static_cast<std::uint32_t>(current);
             fill(fresh);
@@ -331,7 +337,8 @@ void RegisterMorphKeyCurrent(unsigned char* model, int morph, int frameArg) {
     }
 
     const int fresh = allocate();
-    if (fresh < 0) return;
+    if (fresh < 0)
+        return;
     const int previous = static_cast<int>(keys[current].previous);
     keys[previous].next = static_cast<std::uint32_t>(fresh);
     keys[fresh].previous = static_cast<std::uint32_t>(previous);
@@ -345,8 +352,7 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
                      unsigned char useSelected) {
     unsigned char* const m = model;
     mdl::BoneKey* const keys = mdl::BoneKeys(m);
-    const std::uint32_t frame =
-        static_cast<std::uint32_t>(frameOffset) + Rd32(rec + 32);
+    const std::uint32_t frame = static_cast<std::uint32_t>(frameOffset) + Rd32(rec + 32);
 
     // bone lookup by name (or the selected index)
     int boneIdx;
@@ -355,20 +361,21 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
     } else {
         boneIdx = 0;
         const int boneCnt = static_cast<int>(mdl::Mdl(m)->boneCount);
-        if (boneCnt <= 0) return true;
+        if (boneCnt <= 0)
+            return true;
         const mdl::BoneRecord* bone = mdl::Bones(m);
-        while (std::strcmp(reinterpret_cast<const char*>(rec),
-                           bone->name) != 0) {
-            if (++boneIdx >= boneCnt) return true;
+        while (std::strcmp(reinterpret_cast<const char*>(rec), bone->name) != 0) {
+            if (++boneIdx >= boneCnt)
+                return true;
             ++bone;
         }
     }
-    if (boneIdx == -1) return true;
+    if (boneIdx == -1)
+        return true;
 
     mdl::BoneRecord& bone = mdl::Bones(m)[boneIdx];
     const mdl::BoneType btype = bone.type;
-    const bool writePos = btype == mdl::BoneType::RotateMove ||
-                          btype == mdl::BoneType::Move ||
+    const bool writePos = btype == mdl::BoneType::RotateMove || btype == mdl::BoneType::Move ||
                           btype == mdl::BoneType::Ik;
 
     // twist correction: force the rotation axis onto the bone's own axis
@@ -376,7 +383,7 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
         (btype == mdl::BoneType::UnderIk &&
          (bone.flags & mdl::kBoneFlagFixedAxis) == mdl::kBoneFlagFixedAxis)) {
         float boneAxis[3];
-        if (mikudancestudio::mdl::Mdl(m)->physicsMode == 2) {  // PMX
+        if (mikudancestudio::mdl::Mdl(m)->physicsMode == 2) { // PMX
             std::memcpy(boneAxis, bone.axis, sizeof boneAxis);
         } else {
             const mdl::BoneRecord& tail = mdl::Bones(m)[bone.tailBone];
@@ -390,10 +397,12 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
         float axisOut[3], angle;
         {
             auto* d3 = &d3dx::Get();
-            if (d3->quatToAxisAngle == nullptr) return false;
+            if (d3->quatToAxisAngle == nullptr)
+                return false;
             d3->quatToAxisAngle(q, axisOut, &angle);
         }
-        if (!_finite(q[3])) q[3] = 1.0f;  // w
+        if (!_finite(q[3]))
+            q[3] = 1.0f; // w
         float sinHalf;
         const float ww = q[3] * q[3];
         if (ww <= 1.0f) {
@@ -402,22 +411,21 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
             q[3] = 1.0f;
             sinHalf = 0.0f;
         }
-        const float dot = boneAxis[0] * axisOut[0] +
-                          boneAxis[1] * axisOut[1] +
-                          boneAxis[2] * axisOut[2];
-        const float nA = sqrtf(boneAxis[0] * boneAxis[0] +
-                               boneAxis[1] * boneAxis[1] +
+        const float dot =
+            boneAxis[0] * axisOut[0] + boneAxis[1] * axisOut[1] + boneAxis[2] * axisOut[2];
+        const float nA = sqrtf(boneAxis[0] * boneAxis[0] + boneAxis[1] * boneAxis[1] +
                                boneAxis[2] * boneAxis[2]);
-        const float nB = sqrtf(axisOut[0] * axisOut[0] +
-                               axisOut[1] * axisOut[1] +
-                               axisOut[2] * axisOut[2]);
+        const float nB =
+            sqrtf(axisOut[0] * axisOut[0] + axisOut[1] * axisOut[1] + axisOut[2] * axisOut[2]);
         const float cosT = dot / (nB * nA);
-        if (cosT < 0.0f) sinHalf = -sinHalf;
+        if (cosT < 0.0f)
+            sinHalf = -sinHalf;
         q[0] = sinHalf * axisOut[0];
         q[1] = sinHalf * axisOut[1];
         q[2] = sinHalf * axisOut[2];
         auto* d3 = &d3dx::Get();
-        if (d3->quatNormalize != nullptr) d3->quatNormalize(q, q);
+        if (d3->quatNormalize != nullptr)
+            d3->quatNormalize(q, q);
     }
 
     // walk the per-bone chain from the bone index itself
@@ -425,9 +433,11 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
     if (keys[cur].frame < frame) {
         for (;;) {
             const int next = static_cast<int>(keys[cur].next);
-            if (next == 0) break;
+            if (next == 0)
+                break;
             cur = next;
-            if (keys[cur].frame >= frame) break;
+            if (keys[cur].frame >= frame)
+                break;
         }
         if (keys[cur].frame < frame) {
             // append after the last record (0x49DDA1 path)
@@ -440,7 +450,8 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
                         OverflowBox(m, static_cast<int>(mdl::kBoneKeyCapacity));
                         return false;
                     }
-                    if (keys[free_].frame == 0) break;
+                    if (keys[free_].frame == 0)
+                        break;
                 }
             }
             AppendBoneKeyToUndo(m, cur);
@@ -471,7 +482,8 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
                     OverflowBox(m, static_cast<int>(mdl::kBoneKeyCapacity));
                     return false;
                 }
-                if (keys[free_].frame == 0) break;
+                if (keys[free_].frame == 0)
+                    break;
             }
         }
         const int prev = static_cast<int>(keys[cur].previous);
@@ -494,14 +506,13 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
 // ---- VA 0x0049E310 -----------------------------------------
 // Register a left/right-reflected bone key. This is frame-edit command 422
 // ("reverse paste"), not a delete routine.
-bool RegisterMirroredBoneKey(unsigned char* model, unsigned char* rec,
-                             int frameOffset) {
+bool RegisterMirroredBoneKey(unsigned char* model, unsigned char* rec, int frameOffset) {
     unsigned char* const m = model;
     mdl::BoneKey* const keys = mdl::BoneKeys(m);
-    const std::uint32_t frame =
-        static_cast<std::uint32_t>(frameOffset) + Rd32(rec + 32);
+    const std::uint32_t frame = static_cast<std::uint32_t>(frameOffset) + Rd32(rec + 32);
     const int boneIdx = FindMirroredBone(m, rec);
-    if (boneIdx < 0) return true;
+    if (boneIdx < 0)
+        return true;
 
     mdl::BoneRecord& bone = mdl::Bones(m)[boneIdx];
     const mdl::BoneType btype = bone.type;
@@ -524,9 +535,11 @@ bool RegisterMirroredBoneKey(unsigned char* model, unsigned char* rec,
         float* const q = reinterpret_cast<float*>(rec + 36);
         float sourceAxis[3], angle;
         auto* d3 = &d3dx::Get();
-        if (d3->quatToAxisAngle == nullptr) return false;
+        if (d3->quatToAxisAngle == nullptr)
+            return false;
         d3->quatToAxisAngle(q, sourceAxis, &angle);
-        if (!_finite(q[3])) q[3] = 1.0f;
+        if (!_finite(q[3]))
+            q[3] = 1.0f;
         float sinHalf;
         const float ww = q[3] * q[3];
         if (ww <= 1.0f) {
@@ -537,29 +550,30 @@ bool RegisterMirroredBoneKey(unsigned char* model, unsigned char* rec,
         }
         sourceAxis[0] = -sourceAxis[0];
         sinHalf = -sinHalf;
-        const float dot = boneAxis[0] * sourceAxis[0] +
-                          boneAxis[1] * sourceAxis[1] +
-                          boneAxis[2] * sourceAxis[2];
-        const float nA = sqrtf(boneAxis[0] * boneAxis[0] +
-                               boneAxis[1] * boneAxis[1] +
+        const float dot =
+            boneAxis[0] * sourceAxis[0] + boneAxis[1] * sourceAxis[1] + boneAxis[2] * sourceAxis[2];
+        const float nA = sqrtf(boneAxis[0] * boneAxis[0] + boneAxis[1] * boneAxis[1] +
                                boneAxis[2] * boneAxis[2]);
-        const float nB = sqrtf(sourceAxis[0] * sourceAxis[0] +
-                               sourceAxis[1] * sourceAxis[1] +
+        const float nB = sqrtf(sourceAxis[0] * sourceAxis[0] + sourceAxis[1] * sourceAxis[1] +
                                sourceAxis[2] * sourceAxis[2]);
-        if (dot / (nA * nB) < 0.0f) sinHalf = -sinHalf;
+        if (dot / (nA * nB) < 0.0f)
+            sinHalf = -sinHalf;
         q[0] = sinHalf * boneAxis[0];
         q[1] = -sinHalf * boneAxis[1];
         q[2] = -sinHalf * boneAxis[2];
-        if (d3->quatNormalize != nullptr) d3->quatNormalize(q, q);
+        if (d3->quatNormalize != nullptr)
+            d3->quatNormalize(q, q);
     }
 
     int cur = boneIdx;
     if (keys[cur].frame < frame) {
         for (;;) {
             const int next = static_cast<int>(keys[cur].next);
-            if (next == 0) break;
+            if (next == 0)
+                break;
             cur = next;
-            if (keys[cur].frame >= frame) break;
+            if (keys[cur].frame >= frame)
+                break;
         }
         if (keys[cur].frame < frame) {
             int free_ = mdl::Mdl(m)->searchCursor;
@@ -571,7 +585,8 @@ bool RegisterMirroredBoneKey(unsigned char* model, unsigned char* rec,
                         OverflowBox(m, static_cast<int>(mdl::kBoneKeyCapacity));
                         return false;
                     }
-                    if (keys[free_].frame == 0) break;
+                    if (keys[free_].frame == 0)
+                        break;
                 }
             }
             AppendBoneKeyToUndo(m, cur);
@@ -599,7 +614,8 @@ bool RegisterMirroredBoneKey(unsigned char* model, unsigned char* rec,
                     OverflowBox(m, static_cast<int>(mdl::kBoneKeyCapacity));
                     return false;
                 }
-                if (keys[free_].frame == 0) break;
+                if (keys[free_].frame == 0)
+                    break;
             }
         }
         const int prev = static_cast<int>(keys[cur].previous);
@@ -620,31 +636,34 @@ bool RegisterMirroredBoneKey(unsigned char* model, unsigned char* rec,
 
 // ---- VA 0x0049F190 --------------------------------------------------------
 //  - name-matched morph registrar over a parsed 0x28 record.
-bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec,
-                                int frameOffset) {
+bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec, int frameOffset) {
     unsigned char* const m = model;
     mdl::MorphKey* const keys = mdl::MorphKeys(m);
-    const std::uint32_t frame =
-        static_cast<std::uint32_t>(frameOffset) + Rd32(rec + 32);
+    const std::uint32_t frame = static_cast<std::uint32_t>(frameOffset) + Rd32(rec + 32);
 
     int morphIdx = 0;
     const int morphCnt = static_cast<int>(mdl::Mdl(m)->morphCount);
-    if (morphCnt <= 0) return true;
+    if (morphCnt <= 0)
+        return true;
     const mikudancestudio::mdl::MorphRecord* mrec = mikudancestudio::mdl::Morphs(m);
-    while (std::strcmp(reinterpret_cast<const char*>(rec),
-                       reinterpret_cast<const char*>(mrec)) != 0) {
-        if (++morphIdx >= morphCnt) return true;
+    while (std::strcmp(reinterpret_cast<const char*>(rec), reinterpret_cast<const char*>(mrec)) !=
+           0) {
+        if (++morphIdx >= morphCnt)
+            return true;
         mrec += 136;
     }
-    if (morphIdx == -1) return true;
+    if (morphIdx == -1)
+        return true;
 
     int cur = morphIdx;
     if (keys[cur].frame < frame) {
         for (;;) {
             const int next = static_cast<int>(keys[cur].next);
-            if (next == 0) break;
+            if (next == 0)
+                break;
             cur = next;
-            if (keys[cur].frame >= frame) break;
+            if (keys[cur].frame >= frame)
+                break;
         }
         if (keys[cur].frame < frame) {
             // append
@@ -657,7 +676,8 @@ bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec,
                         OverflowBox(m, 20000);
                         return false;
                     }
-                    if (keys[free_].frame == 0) break;
+                    if (keys[free_].frame == 0)
+                        break;
                 }
             }
             keys[cur].next = static_cast<std::uint32_t>(free_);
@@ -686,7 +706,8 @@ bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec,
                 OverflowBox(m, 20000);
                 return false;
             }
-            if (keys[free_].frame == 0) break;
+            if (keys[free_].frame == 0)
+                break;
         }
     }
     const int prev = static_cast<int>(keys[cur].previous);
@@ -704,15 +725,12 @@ bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec,
 
 // ---- VA 0x0049F8C0 --------------------------------------------------------
 //  - display/IK registrar over parsed 21-/28-byte entries.
-bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg,
-                                  unsigned char view, int cnt,
+bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg, unsigned char view, int cnt,
                                   const unsigned char* entries21, int cnt2,
-                                  const unsigned char* entries28,
-                                  int frameOffset) {
+                                  const unsigned char* entries28, int frameOffset) {
     unsigned char* const m = model;
     mdl::DisplayKey* const keys = mdl::DisplayKeys(m);
-    const std::uint32_t frame =
-        static_cast<std::uint32_t>(frameOffset + frameArg);
+    const std::uint32_t frame = static_cast<std::uint32_t>(frameOffset + frameArg);
     // 注意：x64（sub_7FF7CB4EB3C0 完整反编译）注册显示键时 *不* 写
     // displayKeyframesPresent。该字段是左面板 表示/IK 行的轨道选中开关，
     // 只在行点击时翻转（0x7FF7CB45A2DD..0x7FF7CB45A2EA，port 见
@@ -726,13 +744,11 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg,
         for (int i = 0; i < ikCnt; ++i) {
             if (cnt > 0) {
                 const unsigned char* e = entries21;
-                const unsigned char* const chainBone =
-                    reinterpret_cast<const unsigned char*>(
-                        mdl::Bones(m) + mdl::IkChains(m)[i].boneIndex);
+                const unsigned char* const chainBone = reinterpret_cast<const unsigned char*>(
+                    mdl::Bones(m) + mdl::IkChains(m)[i].boneIndex);
                 int k = 0;
                 while (std::strcmp(reinterpret_cast<const char*>(e),
-                                   reinterpret_cast<const char*>(
-                                       chainBone)) != 0) {
+                                   reinterpret_cast<const char*>(chainBone)) != 0) {
                     ++k;
                     e += 21;
                     if (k >= cnt)
@@ -747,19 +763,16 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg,
             }
         }
         const int selCnt = static_cast<int>(mdl::Mdl(m)->boneOrderCount);
-        mdl::BoneReference* const pairBase =
-            mdl::SelectorStates(keys[index]);
+        mdl::BoneReference* const pairBase = mdl::SelectorStates(keys[index]);
         const mdl::BoneOrderEntry* const relationships = mdl::BoneOrder(m);
         for (int i = 0; i < selCnt; ++i) {
             if (cnt2 > 0) {
                 const unsigned char* e = entries28;
-                const unsigned char* const selBone =
-                    reinterpret_cast<const unsigned char*>(mdl::Bones(m) +
-                                                            relationships[i].boneIndex);
+                const unsigned char* const selBone = reinterpret_cast<const unsigned char*>(
+                    mdl::Bones(m) + relationships[i].boneIndex);
                 int k = 0;
                 while (std::strcmp(reinterpret_cast<const char*>(e),
-                                   reinterpret_cast<const char*>(
-                                       selBone)) != 0) {
+                                   reinterpret_cast<const char*>(selBone)) != 0) {
                     ++k;
                     e += 28;
                     if (k >= cnt2)
@@ -768,10 +781,8 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg,
                 if (k < cnt2) {
                     // Likewise 0x49FD4D..0x49FD7F and its two sibling paths
                     // derive the payload address from the original a7 base.
-                    pairBase[i].modelIndex =
-                        RdI32(entries28 + 28 * k + 20);
-                    pairBase[i].boneIndex =
-                        RdI32(entries28 + 28 * k + 24);
+                    pairBase[i].modelIndex = RdI32(entries28 + 28 * k + 20);
+                    pairBase[i].boneIndex = RdI32(entries28 + 28 * k + 24);
                 }
             }
         }
@@ -781,9 +792,11 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg,
     if (keys[0].frame < frame) {
         for (;;) {
             const int next = static_cast<int>(keys[cur].next);
-            if (next == 0) break;
+            if (next == 0)
+                break;
             cur = next;
-            if (keys[cur].frame >= frame) break;
+            if (keys[cur].frame >= frame)
+                break;
         }
         if (keys[cur].frame < frame) {
             // append
@@ -796,7 +809,8 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg,
                         OverflowBox(m, 1000);
                         return false;
                     }
-                    if (keys[free_].frame == 0) break;
+                    if (keys[free_].frame == 0)
+                        break;
                 }
             }
             keys[cur].next = static_cast<std::uint32_t>(free_);
@@ -827,7 +841,8 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg,
                 OverflowBox(m, 1000);
                 return false;
             }
-            if (keys[free_].frame == 0) break;
+            if (keys[free_].frame == 0)
+                break;
         }
     }
     const int prev = static_cast<int>(keys[cur].previous);
@@ -920,8 +935,8 @@ void RegisterDisplayKeyCurrent(unsigned char* model, int frameArg) {
 // header for the resolution chain.  Walks are unsigned frame compares over
 // the per-track next-linked chains, exactly like the registrar family
 // above; the first branch that matches owns the walk and returns.
-int MarkKeyTrackRangeByName(unsigned char* model, std::uint32_t from,
-                            std::uint32_t to, const char* name) {
+int MarkKeyTrackRangeByName(unsigned char* model, std::uint32_t from, std::uint32_t to,
+                            const char* name) {
     mdl::ModelRecord& record = *mdl::Mdl(model);
 
     // 1. facial display-frame groups (0x4A2806..0x4A2855): SJIS name only
@@ -931,46 +946,39 @@ int MarkKeyTrackRangeByName(unsigned char* model, std::uint32_t from,
         mdl::FrameGroup* const groups = mdl::DisplayFrames(model);
         for (int g = 0; g < facialCount; ++g) {
             if (std::strcmp(name, groups[g].name) == 0)
-                return MarkTrackRange(mdl::MorphKeys(model),
-                                      groups[g].targetIndex, from, to);
+                return MarkTrackRange(mdl::MorphKeys(model), groups[g].targetIndex, from, to);
         }
     }
 
     // 2. 表示･IK･外親 / "disp/IK/OP" (0x4A285F..0x4A2892): display track.
-    if (std::memcmp(name, kJpDispIkOp, 13) == 0 ||
-        std::strcmp(name, "disp/IK/OP") == 0) {
+    if (std::memcmp(name, kJpDispIkOp, 13) == 0 || std::strcmp(name, "disp/IK/OP") == 0) {
         return MarkTrackRange(mdl::DisplayKeys(model), 0, from, to);
     }
 
     // 3. the root bone's own name, SJIS or English (0x4A29B2..0x4A2A25) -
     //    combo 434's center-bone entry -> bone-key record 0.
     const mdl::BoneRecord* const rootBone = mdl::Bones(model);
-    if (std::strcmp(name, rootBone->name) == 0 ||
-        std::strcmp(name, rootBone->nameEn) == 0) {
+    if (std::strcmp(name, rootBone->name) == 0 || std::strcmp(name, rootBone->nameEn) == 0) {
         return MarkTrackRange(mdl::BoneKeys(model), 0, from, to);
     }
 
     // 4. ﾎﾞｰﾝ01 / "bone01" (0x4A2AB8..0x4A2AEB): the bundled ダミーボーン
     //    model's combo entries -> bone-key record 0.
-    if (std::memcmp(name, kJpBone01, 7) == 0 ||
-        std::strcmp(name, "bone01") == 0) {
+    if (std::memcmp(name, kJpBone01, 7) == 0 || std::strcmp(name, "bone01") == 0) {
         return MarkTrackRange(mdl::BoneKeys(model), 0, from, to);
     }
 
     // 5. bone display-frame groups (0x4A2B88..0x4A2C25): SJIS or English
     //    name, targetIndex roots the bone track.
-    const std::int32_t groupCount =
-        static_cast<std::int32_t>(record.rigidBodyCount);
+    const std::int32_t groupCount = static_cast<std::int32_t>(record.rigidBodyCount);
     if (groupCount > 0) {
         mdl::FrameGroup* const groups = mdl::RigidGroups(model);
         for (std::int32_t g = 0; g < groupCount; ++g) {
-            if (std::strcmp(name, groups[g].name) == 0 ||
-                std::strcmp(name, groups[g].nameEn) == 0)
-                return MarkTrackRange(mdl::BoneKeys(model),
-                                      groups[g].targetIndex, from, to);
+            if (std::strcmp(name, groups[g].name) == 0 || std::strcmp(name, groups[g].nameEn) == 0)
+                return MarkTrackRange(mdl::BoneKeys(model), groups[g].targetIndex, from, to);
         }
     }
     return 0;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

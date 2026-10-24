@@ -34,23 +34,20 @@ void OnLostDevice(MMDApp* app);
 void OnResetDevice(MMDApp* app);
 
 // 帧级：Clear / BeginScene / EndScene / 主渲染目标回读前触发。
-HRESULT ClearScene(MMDApp* app, IDirect3DDevice9* device, unsigned long flags,
-                   D3DCOLOR color, float z, unsigned long stencil);
+HRESULT ClearScene(MMDApp* app, IDirect3DDevice9* device, unsigned long flags, D3DCOLOR color,
+                   float z, unsigned long stencil);
 HRESULT BeginScene(MMDApp* app, IDirect3DDevice9* device);
 HRESULT EndScene(MMDApp* app, IDirect3DDevice9* device);
-HRESULT Present(MMDApp* app, IDirect3DDevice9* device,
-                const RECT* source, const RECT* destination,
+HRESULT Present(MMDApp* app, IDirect3DDevice9* device, const RECT* source, const RECT* destination,
                 HWND destinationWindow, const RGNDATA* dirtyRegion);
-void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device,
-                         IDirect3DSurface9* source);
+void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device, IDirect3DSurface9* source);
 
 // 绘制转发（当前对象/材质/技术等状态由 Exp* 查询面提供）。
-HRESULT DrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
-                      unsigned int start_vertex, unsigned int primitive_count);
-HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
-                             int base_vertex_index, unsigned int min_vertex_index,
-                             unsigned int vertex_count, unsigned int start_index,
-                             unsigned int primitive_count);
+HRESULT DrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type, unsigned int start_vertex,
+                      unsigned int primitive_count);
+HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type, int base_vertex_index,
+                             unsigned int min_vertex_index, unsigned int vertex_count,
+                             unsigned int start_index, unsigned int primitive_count);
 
 // MME 已初始化且效果引擎未被禁用。宿主在需要绕开 ID3DXMesh 内部绘制
 // （其持有真实设备、绕过绘制转发）的路径上以此为分路条件。
@@ -68,5 +65,5 @@ void NotifyPmmSaved(MMDApp* app);
 // 纹理按路径登记（模型/附件/toon 纹理创建成功点；供 GetToonTexture 查询）。
 void RecordTexture(const wchar_t* path, IDirect3DBaseTexture9* texture);
 
-}  // namespace mme
-}  // namespace mikudancestudio
+} // namespace mme
+} // namespace mikudancestudio

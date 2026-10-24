@@ -13,12 +13,11 @@
 
 namespace mikudancestudio {
 
-void PushBoneEditUndo(MMDApp* app) {  // VA 0x0042D6E0
+void PushBoneEditUndo(MMDApp* app) { // VA 0x0042D6E0
     if (app == nullptr)
         return;
     const unsigned modelSlot = app->state.slotIdx;
-    auto* model = static_cast<unsigned char*>(
-        app->state.modelSlots[modelSlot]);
+    auto* model = static_cast<unsigned char*>(app->state.modelSlots[modelSlot]);
     if (model == nullptr)
         return;
 
@@ -79,4 +78,4 @@ void PushBoneEditUndo(MMDApp* app) {  // VA 0x0042D6E0
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

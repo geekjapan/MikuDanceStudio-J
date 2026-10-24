@@ -20,10 +20,10 @@ using ResetPositionScalar = float;
 #else
 using ResetPositionScalar = double;
 #endif
-}  // namespace
+} // namespace
 
 void ResetSelectedBonePose(MMDApp* app) {
-    PushBoneEditUndo(app);  // prep (thiscall)
+    PushBoneEditUndo(app); // prep (thiscall)
     unsigned char* model = app->SelectedModel();
     auto* modelRecord = mikudancestudio::mdl::Mdl(model);
     unsigned char* selected = modelRecord->boneSelection;
@@ -55,16 +55,10 @@ void ResetSelectedBonePose(MMDApp* app) {
             // ---- no parent: bake via own quaternion ----------------
             d3dx::D3DXMATRIXF mat{};
             auto* d3dx = &d3dx::Get();
-            {
-                d3dx->matrixRotationQuaternion(
-                    &mat, reinterpret_cast<const float*>(bone->rotQuat));
-            }
-            const ResetPositionScalar posX =
-                *reinterpret_cast<float*>(bone->position);
-            const ResetPositionScalar posY =
-                bone->position[1];
-            const ResetPositionScalar posZ =
-                bone->position[2];
+            { d3dx->matrixRotationQuaternion(&mat, reinterpret_cast<const float*>(bone->rotQuat)); }
+            const ResetPositionScalar posX = *reinterpret_cast<float*>(bone->position);
+            const ResetPositionScalar posY = bone->position[1];
+            const ResetPositionScalar posZ = bone->position[2];
             // var_9CC = _11*x + _21*y + _31*z + _41 - x + frame0.x
 #if defined(_M_X64) || defined(__x86_64__)
             ResetPositionScalar resetPositionX = posX * mat.m[0][0];
@@ -104,57 +98,35 @@ void ResetSelectedBonePose(MMDApp* app) {
             // Compare against the current stored pose.
             const int positionXChanged =
                 (*reinterpret_cast<float*>(bone->trans) != resetPositionX) ? 1 : 0;
-            const int positionYChanged =
-                (bone->trans[1] != resetPositionY) ? 1 : 0;
-            const int positionZChanged =
-                (bone->trans[2] != resetPositionZ) ? 1 : 0;
-            const int rotationXChanged = (*reinterpret_cast<float*>(bone->rotQuat) !=
-                            bones[0].rotQuat[0])
-                               ? 1
-                               : 0;
-            const int rotationYChanged = (bone->rotQuat[1] !=
-                            bones[0].rotQuat[1])
-                               ? 1
-                               : 0;
-            const int rotationZChanged = (bone->rotQuat[2] !=
-                            bones[0].rotQuat[2])
-                               ? 1
-                               : 0;
-            const int rotationWChanged = (bone->rotQuat[3] !=
-                            bones[0].rotQuat[3])
-                               ? 1
-                               : 0;
-            if ((positionXChanged | positionYChanged | positionZChanged | rotationXChanged | rotationYChanged | rotationZChanged | rotationWChanged) != 0) {
-                *reinterpret_cast<float*>(bone->trans) =
-                    static_cast<float>(resetPositionX);
-                bone->trans[1] =
-                    static_cast<float>(resetPositionY);
-                bone->trans[2] =
-                    static_cast<float>(resetPositionZ);
+            const int positionYChanged = (bone->trans[1] != resetPositionY) ? 1 : 0;
+            const int positionZChanged = (bone->trans[2] != resetPositionZ) ? 1 : 0;
+            const int rotationXChanged =
+                (*reinterpret_cast<float*>(bone->rotQuat) != bones[0].rotQuat[0]) ? 1 : 0;
+            const int rotationYChanged = (bone->rotQuat[1] != bones[0].rotQuat[1]) ? 1 : 0;
+            const int rotationZChanged = (bone->rotQuat[2] != bones[0].rotQuat[2]) ? 1 : 0;
+            const int rotationWChanged = (bone->rotQuat[3] != bones[0].rotQuat[3]) ? 1 : 0;
+            if ((positionXChanged | positionYChanged | positionZChanged | rotationXChanged |
+                 rotationYChanged | rotationZChanged | rotationWChanged) != 0) {
+                *reinterpret_cast<float*>(bone->trans) = static_cast<float>(resetPositionX);
+                bone->trans[1] = static_cast<float>(resetPositionY);
+                bone->trans[2] = static_cast<float>(resetPositionZ);
                 // Root quaternion copied into this bone's pose.
-                memcpy(bone->rotQuat, bones[0].rotQuat,
-                       sizeof bone->rotQuat);
+                memcpy(bone->rotQuat, bones[0].rotQuat, sizeof bone->rotQuat);
                 physicsState[i] = 1;
             }
         } else {
             // ---- has parent: identity written ----------------------
             // comparisons are made against 0.0 for pos + quat x/y/z and
             // 1.0 for quat w (the x87 keeps a live [1.0, 0.0] pair)
-            const int positionXChanged =
-                (*reinterpret_cast<float*>(bone->trans) != 0.0) ? 1 : 0;
-            const int positionYChanged =
-                (bone->trans[1] != 0.0) ? 1 : 0;
-            const int positionZChanged =
-                (bone->trans[2] != 0.0) ? 1 : 0;
-            const int rotationXChanged =
-                (*reinterpret_cast<float*>(bone->rotQuat) != 0.0) ? 1 : 0;
-            const int rotationYChanged =
-                (bone->rotQuat[1] != 0.0) ? 1 : 0;
-            const int rotationZChanged =
-                (bone->rotQuat[2] != 0.0) ? 1 : 0;
-            const int rotationWChanged =
-                (bone->rotQuat[3] != 1.0) ? 1 : 0;
-            if ((positionXChanged | positionYChanged | positionZChanged | rotationXChanged | rotationYChanged | rotationZChanged | rotationWChanged) != 0) {
+            const int positionXChanged = (*reinterpret_cast<float*>(bone->trans) != 0.0) ? 1 : 0;
+            const int positionYChanged = (bone->trans[1] != 0.0) ? 1 : 0;
+            const int positionZChanged = (bone->trans[2] != 0.0) ? 1 : 0;
+            const int rotationXChanged = (*reinterpret_cast<float*>(bone->rotQuat) != 0.0) ? 1 : 0;
+            const int rotationYChanged = (bone->rotQuat[1] != 0.0) ? 1 : 0;
+            const int rotationZChanged = (bone->rotQuat[2] != 0.0) ? 1 : 0;
+            const int rotationWChanged = (bone->rotQuat[3] != 1.0) ? 1 : 0;
+            if ((positionXChanged | positionYChanged | positionZChanged | rotationXChanged |
+                 rotationYChanged | rotationZChanged | rotationWChanged) != 0) {
                 bone->trans[0] = 0.0f;
                 bone->trans[1] = 0.0f;
                 bone->trans[2] = 0.0f;
@@ -170,4 +142,4 @@ void ResetSelectedBonePose(MMDApp* app) {
     PostViewRefresh(app);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

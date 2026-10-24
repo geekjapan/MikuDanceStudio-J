@@ -21,4 +21,4 @@ const float g_FrameScale = 30.0f;
 // run yet (matches the original's 0x46EFDE initialisation order).
 float g_CatchupDtBudget = 0.0f;
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

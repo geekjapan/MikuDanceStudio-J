@@ -37,36 +37,33 @@ namespace mikudancestudio {
 // Forward declaration for a function ported in this wave whose body lives
 // in ui_timeline_gfx.cpp (not yet added to ported_funcs.hpp; declared here
 // with its original VA).
-void SetFrameNormalized(int frame);   // VA 0x004C2B80
+void SetFrameNormalized(int frame); // VA 0x004C2B80
 
 void HandleVScroll(LPARAM lParam, WPARAM wParam) {
     MMDApp* app = g_Block;
     HWND hwnd = static_cast<HWND>(app->Hwnd());
-    const HWND ctrl = reinterpret_cast<HWND>(lParam);          // a2: control HWND
-    const std::uint32_t code = LOWORD(wParam);                 // a3: SB_ code
+    const HWND ctrl = reinterpret_cast<HWND>(lParam); // a2: control HWND
+    const std::uint32_t code = LOWORD(wParam);        // a3: SB_ code
 
     if (ctrl == GetDlgItem(hwnd, panel::kTimelineVScroll)) {
         if (app->CameraMode() != 0) {
             // mode 0x2F8 set: operate on the app timeline frame counter
             switch (code) {
-            case 0:  // SB_LINEUP
+            case 0: // SB_LINEUP
                 --app->DisplayObjectListScrollPosition();
                 break;
-            case 1:  // SB_LINEDOWN
+            case 1: // SB_LINEDOWN
                 ++app->DisplayObjectListScrollPosition();
                 break;
-            case 2:  // SB_PAGEUP
-                app->DisplayObjectListScrollPosition() -=
-                    app->state.scrollNPage;
+            case 2: // SB_PAGEUP
+                app->DisplayObjectListScrollPosition() -= app->state.scrollNPage;
                 break;
-            case 3:  // SB_PAGEDOWN
-                app->DisplayObjectListScrollPosition() +=
-                    app->state.scrollNPage;
+            case 3: // SB_PAGEDOWN
+                app->DisplayObjectListScrollPosition() += app->state.scrollNPage;
                 break;
-            case 5:  // SB_THUMBTRACK
+            case 5: // SB_THUMBTRACK
                 app->DisplayObjectListScrollPosition() +=
-                    static_cast<std::int32_t>(HIWORD(wParam)) -
-                    app->state.scrollNPos;
+                    static_cast<std::int32_t>(HIWORD(wParam)) - app->state.scrollNPos;
                 break;
             default:
                 break;
@@ -80,24 +77,21 @@ void HandleVScroll(LPARAM lParam, WPARAM wParam) {
             unsigned char* model = app->SelectedModel();
             mikudancestudio::mdl::ModelRecord& record = *mikudancestudio::mdl::Mdl(model);
             switch (code) {
-            case 0:  // SB_LINEUP
+            case 0: // SB_LINEUP
                 --record.boneListPos;
                 break;
-            case 1:  // SB_LINEDOWN
+            case 1: // SB_LINEDOWN
                 ++record.boneListPos;
                 break;
-            case 2:  // SB_PAGEUP
-                record.boneListPos -=
-                    app->state.scrollNPage;
+            case 2: // SB_PAGEUP
+                record.boneListPos -= app->state.scrollNPage;
                 break;
-            case 3:  // SB_PAGEDOWN
-                record.boneListPos +=
-                    app->state.scrollNPage;
+            case 3: // SB_PAGEDOWN
+                record.boneListPos += app->state.scrollNPage;
                 break;
-            case 5:  // SB_THUMBTRACK
+            case 5: // SB_THUMBTRACK
                 record.boneListPos +=
-                    static_cast<std::int32_t>(HIWORD(wParam)) -
-                    app->state.scrollNPos;
+                    static_cast<std::int32_t>(HIWORD(wParam)) - app->state.scrollNPos;
                 break;
             default:
                 break;
@@ -107,7 +101,7 @@ void HandleVScroll(LPARAM lParam, WPARAM wParam) {
             if (record.boneListPos > record.boneListRows - 2)
                 record.boneListPos = record.boneListRows - 2;
         }
-        RebuildTimelineTrackPanel(app);                                   // 0x42F1E0
+        RebuildTimelineTrackPanel(app); // 0x42F1E0
         return;
     }
 
@@ -115,7 +109,7 @@ void HandleVScroll(LPARAM lParam, WPARAM wParam) {
         HWND slider = GetDlgItem(hwnd, panel::kFrameVolumeSlider);
         LRESULT pos = SendMessageA(slider, TBM_GETPOS, 0, 0);
         app->FrameNormalization() = 100 - static_cast<int>(pos);
-        SetFrameNormalized(100 - static_cast<int>(pos));          // 0x4C2B80
+        SetFrameNormalized(100 - static_cast<int>(pos)); // 0x4C2B80
     }
 }
 
@@ -160,10 +154,9 @@ void HandleVScroll(LPARAM lParam, WPARAM wParam) {
 void HandleMouseWheel(int delta) {
     MMDApp* app = g_Block;
     HWND hwnd = static_cast<HWND>(app->Hwnd());
-    const std::int16_t wheel = static_cast<std::int16_t>(delta);  // original __int16
+    const std::int16_t wheel = static_cast<std::int16_t>(delta); // original __int16
 
-    if (app->MouseX() <=
-        app->SidebarWidth()) {
+    if (app->MouseX() <= app->SidebarWidth()) {
         // playing: three line-steps on the timeline strip per notch
         if (wheel <= 0) {
             HandleVScroll(reinterpret_cast<LPARAM>(GetDlgItem(hwnd, panel::kTimelineVScroll)), 1);
@@ -178,13 +171,12 @@ void HandleMouseWheel(int delta) {
     }
 
     const std::int32_t axis = app->CameraParentModel();
-    const std::uint8_t mode = app->CameraMode();  // 760
+    const std::uint8_t mode = app->CameraMode(); // 760
 
     if ((mode & (axis >= 0 ? 1u : 0u)) != 0) {
         // camera distance: this+828 (float) += wheel * 0.05
         // (x64 0x7FF7CB45F340: cvtdq2ps/mulss 0.05f/addss/movss)
-        app->CameraPosition()[2] =
-            static_cast<float>(wheel) * 0.05f + app->CameraPosition()[2];
+        app->CameraPosition()[2] = static_cast<float>(wheel) * 0.05f + app->CameraPosition()[2];
         if (app->GlobalTrackSelected(GlobalTimelineTrack::Camera) == 0) {
             // switch the edit selection to the camera row (x64 0x7FF7CB45F36F:
             // DWORD store - camera 656356 = 1, light / self-shadow / gravity
@@ -197,28 +189,24 @@ void HandleMouseWheel(int delta) {
                 if (accessory != nullptr)
                     accessory->rowSelected = 0;
             }
-            RebuildTimelineTrackPanel(app);                             // 0x42F1E0
+            RebuildTimelineTrackPanel(app); // 0x42F1E0
         }
     } else {
-        const bool morphFollow =
-            mode == 0 &&
-            app->state.followCameraEnabled != 0 &&
-            app->PlaybackActive() == 0 &&
-            axis == static_cast<int>(app->SelectedModelSlot()) &&
-            axis >= 0;
+        const bool morphFollow = mode == 0 && app->state.followCameraEnabled != 0 &&
+                                 app->PlaybackActive() == 0 &&
+                                 axis == static_cast<int>(app->SelectedModelSlot()) && axis >= 0;
         if (morphFollow) {
-            app->state.viewDirty = 1;                       // 656849 (0xA05D1)
+            app->state.viewDirty = 1; // 656849 (0xA05D1)
             app->WindowLayoutReady() = 0;
-            InvalidateSelectionReadouts(app);                              // 0x40D070
+            InvalidateSelectionReadouts(app); // 0x40D070
             app->WindowLayoutReady() = 1;
-            app->state.b6568482 = 1;                       // 656850 (0xA05D2)
-            PostViewRefresh(app);                                 // 0x40D130
+            app->state.b6568482 = 1; // 656850 (0xA05D2)
+            PostViewRefresh(app);    // 0x40D130
             return;
         }
         // view angle: this+657628 (float) += wheel * 0.05
         // (x64 0x7FF7CB45F410: same single-precision chain)
-        app->CameraDistance() =
-            static_cast<float>(wheel) * 0.05f + app->CameraDistance();
+        app->CameraDistance() = static_cast<float>(wheel) * 0.05f + app->CameraDistance();
         if (app->GlobalTrackSelected(GlobalTimelineTrack::Camera) == 0) {
             // same camera-row switch on the angle branch (x64 DWORD store
             // 0x7FF7CB45F434, slot loop 0x7FF7CB45F43E)
@@ -228,10 +216,10 @@ void HandleMouseWheel(int delta) {
                 if (accessory != nullptr)
                     accessory->rowSelected = 0;
             }
-            RebuildTimelineTrackPanel(app);                             // 0x42F1E0
+            RebuildTimelineTrackPanel(app); // 0x42F1E0
         }
     }
-    PostViewRefresh(app);     // 0x40D130 (x64 sub_7FF7CB440DD0)
+    PostViewRefresh(app); // 0x40D130 (x64 sub_7FF7CB440DD0)
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

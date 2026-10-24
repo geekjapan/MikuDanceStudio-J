@@ -48,33 +48,28 @@ namespace {
 
 // JP wide labels (.rdata 0x531090/0x53107C/0x53106C/0x531048/0x531038/
 // 0x531024) and the SJIS name/format constants (0x5310A8 / 0x531054).
-const wchar_t* kJpAllFrame = L"\x5168\xFF8C\xFF9A\xFF70\xFF91";          // 全ﾌﾚｰﾑ
-const wchar_t* kJpDispIkOp =
-    L"\x8868\x793A\xFF65I\x004B\xFF65\x5916\x89AA";                      // 表示･IK･外親
-const wchar_t* kJpSelBone =
-    L"\x9078\x629E\xFF8E\xFF9E\xFF70\xFF9D";                             // 選択ﾎﾞｰﾝ
-const wchar_t* kJpSelFacial = L"\x9078\x629E\x8868\x60C5";               // 選択表情
-const wchar_t* kJpAllFacial =
-    L"\x5168\x8868\x60C5\xFF8C\xFF9A\xFF70\xFF91";                       // 全表情ﾌﾚｰﾑ
-const wchar_t* kJpAllBone =
-    L"\x5168\x30DC\x30FC\x30F3\xFF8C\xFF9A\xFF70\xFF91";                 // 全ボーンﾌﾚｰﾑ
-const char kJpBoneFmt[] =
-    "\xCE\xDE\xB0\xDD" "%02d";                                           // ﾎﾞｰﾝ%02d
-const char kDummyBoneName[13] = {
-    char(0x83), char(0x5F), char(0x83), char(0x7E), char(0x81), char(0x5B),
-    char(0x83), char(0x7B), char(0x81), char(0x5B), char(0x83), char(0x93),
-    '\0'};                                        // ダミーボーン (0x5310A8 =
-                                                  // x64 0x5523E0; the SJIS was
-                                                  // previously misread as
-                                                  // ミクボーン - 0x835F is ダ)
+const wchar_t* kJpAllFrame = L"\x5168\xFF8C\xFF9A\xFF70\xFF91";                  // 全ﾌﾚｰﾑ
+const wchar_t* kJpDispIkOp = L"\x8868\x793A\xFF65I\x004B\xFF65\x5916\x89AA";     // 表示･IK･外親
+const wchar_t* kJpSelBone = L"\x9078\x629E\xFF8E\xFF9E\xFF70\xFF9D";             // 選択ﾎﾞｰﾝ
+const wchar_t* kJpSelFacial = L"\x9078\x629E\x8868\x60C5";                       // 選択表情
+const wchar_t* kJpAllFacial = L"\x5168\x8868\x60C5\xFF8C\xFF9A\xFF70\xFF91";     // 全表情ﾌﾚｰﾑ
+const wchar_t* kJpAllBone = L"\x5168\x30DC\x30FC\x30F3\xFF8C\xFF9A\xFF70\xFF91"; // 全ボーンﾌﾚｰﾑ
+const char kJpBoneFmt[] = "\xCE\xDE\xB0\xDD"
+                          "%02d"; // ﾎﾞｰﾝ%02d
+const char kDummyBoneName[13] = {char(0x83), char(0x5F), char(0x83), char(0x7E), char(0x81),
+                                 char(0x5B), char(0x83), char(0x7B), char(0x81), char(0x5B),
+                                 char(0x83), char(0x93), '\0'}; // ダミーボーン (0x5310A8 =
+                                                                // x64 0x5523E0; the SJIS was
+                                                                // previously misread as
+                                                                // ミクボーン - 0x835F is ダ)
 
 HWND Dlg(unsigned char* m, int id) {
     return GetDlgItem(*reinterpret_cast<HWND*>(m), id);
 }
 
 // One morph-category group (see header comment).
-void RefreshMorphGroup(unsigned char* m, mdl::MorphPanel panel, int comboId,
-                       int sliderId, int editId, std::size_t selector) {
+void RefreshMorphGroup(unsigned char* m, mdl::MorphPanel panel, int comboId, int sliderId,
+                       int editId, std::size_t selector) {
     HWND main = *reinterpret_cast<HWND*>(m);
     HWND combo = Dlg(m, comboId);
     SendMessage(combo, CB_RESETCONTENT, 0, 0);
@@ -87,8 +82,7 @@ void RefreshMorphGroup(unsigned char* m, mdl::MorphPanel panel, int comboId,
             const mdl::MorphRecord& morph = morphs[i];
             if (morph.panel == panel)
                 SendMessageA(combo, CB_ADDSTRING, 0,
-                             reinterpret_cast<LPARAM>(
-                                 useEnglishNames ? morph.nameEn : morph.name));
+                             reinterpret_cast<LPARAM>(useEnglishNames ? morph.nameEn : morph.name));
         }
     }
     if (morphs != nullptr) {
@@ -100,8 +94,7 @@ void RefreshMorphGroup(unsigned char* m, mdl::MorphPanel panel, int comboId,
             text = "0.0000";
         } else {
             const float val = morphs[sel].value;
-            SendMessage(Dlg(m, sliderId), TBM_SETPOS, TRUE,
-                        static_cast<LPARAM>(val * 100.0f));
+            SendMessage(Dlg(m, sliderId), TBM_SETPOS, TRUE, static_cast<LPARAM>(val * 100.0f));
             sprintf_s(buf, 0x100, "%5.4f", val);
             text = buf;
         }
@@ -134,7 +127,7 @@ void RefreshMorphGroup(unsigned char* m, mdl::MorphPanel panel, int comboId,
     }
 }
 
-}  // namespace
+} // namespace
 
 void PostLoadInit(unsigned char* m) {
     HWND main = *reinterpret_cast<HWND*>(m);
@@ -150,9 +143,8 @@ void PostLoadInit(unsigned char* m) {
         for (int i = 0; i < chainCount; ++i) {
             const std::int32_t boneIdx = mdl::IkChains(m)[i].boneIndex;
             SendMessageA(boneCombo, CB_ADDSTRING, 0,
-                reinterpret_cast<LPARAM>(
-                    useEnglishNames ? bones[boneIdx].nameEn
-                                    : bones[boneIdx].name));
+                         reinterpret_cast<LPARAM>(useEnglishNames ? bones[boneIdx].nameEn
+                                                                  : bones[boneIdx].name));
         }
     }
     if (mdl::IkChains(m) != nullptr) {
@@ -162,18 +154,21 @@ void PostLoadInit(unsigned char* m) {
     }
 
     // ---- three checkboxes ---------------------------------------------------
-    SendMessage(Dlg(m, panel::kModelVisibleCheckbox), BM_SETCHECK,
-                model->loadComplete != 0 ? 1 : 0, 0);
-    SendMessage(Dlg(m, panel::kAddBlendCheckbox), BM_SETCHECK,
-                model->postLoadFlag2 != 0 ? 1 : 0, 0);
-    SendMessage(Dlg(m, panel::kShadowCheckbox), BM_SETCHECK,
-                model->toonFlag != 0 ? 1 : 0, 0);
+    SendMessage(Dlg(m, panel::kModelVisibleCheckbox), BM_SETCHECK, model->loadComplete != 0 ? 1 : 0,
+                0);
+    SendMessage(Dlg(m, panel::kAddBlendCheckbox), BM_SETCHECK, model->postLoadFlag2 != 0 ? 1 : 0,
+                0);
+    SendMessage(Dlg(m, panel::kShadowCheckbox), BM_SETCHECK, model->toonFlag != 0 ? 1 : 0, 0);
 
     // ---- four morph groups --------------------------------------------------
-    RefreshMorphGroup(m, mdl::MorphPanel::eyebrow, panel::kMorphCombo0, panel::kMorphSlider0, panel::kMorphEdit0, 0);
-    RefreshMorphGroup(m, mdl::MorphPanel::eye, panel::kMorphCombo1, panel::kMorphSlider1, panel::kMorphEdit1, 1);
-    RefreshMorphGroup(m, mdl::MorphPanel::mouth, panel::kMorphCombo2, panel::kMorphSlider2, panel::kMorphEdit2, 2);
-    RefreshMorphGroup(m, mdl::MorphPanel::other, panel::kMorphCombo3, panel::kMorphSlider3, panel::kMorphEdit3, 3);
+    RefreshMorphGroup(m, mdl::MorphPanel::eyebrow, panel::kMorphCombo0, panel::kMorphSlider0,
+                      panel::kMorphEdit0, 0);
+    RefreshMorphGroup(m, mdl::MorphPanel::eye, panel::kMorphCombo1, panel::kMorphSlider1,
+                      panel::kMorphEdit1, 1);
+    RefreshMorphGroup(m, mdl::MorphPanel::mouth, panel::kMorphCombo2, panel::kMorphSlider2,
+                      panel::kMorphEdit2, 2);
+    RefreshMorphGroup(m, mdl::MorphPanel::other, panel::kMorphCombo3, panel::kMorphSlider3,
+                      panel::kMorphEdit3, 3);
 
     // ---- frame-registration combo 434 ---------------------------------------
     HWND frameCombo = Dlg(m, panel::kRegisterScopeCombo);
@@ -182,85 +177,55 @@ void PostLoadInit(unsigned char* m) {
     if (std::memcmp(model->name, kDummyBoneName, 13) == 0) {
         // bundled "ダミーボーン" dummy-bone model: fixed registration list
         if (useEnglishNames) {
-            SendMessageA(frameCombo, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>("All frame"));
-            SendMessageA(frameCombo, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>("disp/IK/OP"));
-            SendMessageA(frameCombo, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>("Sel Bone"));
+            SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("All frame"));
+            SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("disp/IK/OP"));
+            SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("Sel Bone"));
         } else {
-            SendMessageW(frameCombo, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>(kJpAllFrame));
-            SendMessageW(frameCombo, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>(kJpDispIkOp));
-            SendMessageW(frameCombo, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>(kJpSelBone));
+            SendMessageW(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kJpAllFrame));
+            SendMessageW(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kJpDispIkOp));
+            SendMessageW(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kJpSelBone));
         }
         for (int i = 1; i <= 15; ++i) {
             if (useEnglishNames)
                 sprintf_s(buf, 0x100, "bone%02d", i);
             else
                 sprintf_s(buf, 0x100, kJpBoneFmt, i);
-            SendMessageA(frameCombo, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>(buf));
+            SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(buf));
         }
     } else if (useEnglishNames) {
+        SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("All frame"));
         SendMessageA(frameCombo, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>("All frame"));
-        SendMessageA(frameCombo, CB_ADDSTRING, 0,
-            reinterpret_cast<LPARAM>(
-                bones[model->displayRootBone].nameEn));
-        SendMessageA(frameCombo, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>("disp/IK/OP"));
-        SendMessageA(frameCombo, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>("Sel Bone"));
-        SendMessageA(frameCombo, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>("Sel facial"));
-        SendMessageA(frameCombo, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>("All facial"));
-        const auto* groups =
-            model->displayFrames;
+                     reinterpret_cast<LPARAM>(bones[model->displayRootBone].nameEn));
+        SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("disp/IK/OP"));
+        SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("Sel Bone"));
+        SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("Sel facial"));
+        SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("All facial"));
+        const auto* groups = model->displayFrames;
         for (std::uint8_t g = 0; g < model->facialFrameCount; ++g)
-            SendMessageA(frameCombo, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>(groups[g].nameEn));
-        SendMessageA(frameCombo, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>("All bone"));
-        const auto* frames =
-            static_cast<const mdl::FrameGroup*>(model->rbGroups);
+            SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(groups[g].nameEn));
+        SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("All bone"));
+        const auto* frames = static_cast<const mdl::FrameGroup*>(model->rbGroups);
         const std::int32_t frameCount = model->rigidBodyCount;
         for (int f = 0; f < frameCount; ++f)
-            SendMessageA(frameCombo, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>(frames[f].nameEn));
+            SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(frames[f].nameEn));
     } else {
-        SendMessageW(frameCombo, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>(kJpAllFrame));
+        SendMessageW(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kJpAllFrame));
         SendMessageA(frameCombo, CB_ADDSTRING, 0,
-            reinterpret_cast<LPARAM>(
-                bones[model->displayRootBone].name));
-        SendMessageW(frameCombo, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>(kJpDispIkOp));
-        SendMessageW(frameCombo, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>(kJpSelBone));
-        SendMessageW(frameCombo, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>(kJpSelFacial));
-        SendMessageW(frameCombo, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>(kJpAllFacial));
-        const auto* groups =
-            model->displayFrames;
+                     reinterpret_cast<LPARAM>(bones[model->displayRootBone].name));
+        SendMessageW(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kJpDispIkOp));
+        SendMessageW(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kJpSelBone));
+        SendMessageW(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kJpSelFacial));
+        SendMessageW(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kJpAllFacial));
+        const auto* groups = model->displayFrames;
         for (std::uint8_t g = 0; g < model->facialFrameCount; ++g)
-            SendMessageA(frameCombo, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>(groups[g].name));
-        SendMessageW(frameCombo, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>(kJpAllBone));
-        const auto* frames =
-            static_cast<const mdl::FrameGroup*>(model->rbGroups);
+            SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(groups[g].name));
+        SendMessageW(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kJpAllBone));
+        const auto* frames = static_cast<const mdl::FrameGroup*>(model->rbGroups);
         const std::int32_t frameCount = model->rigidBodyCount;
         for (int f = 0; f < frameCount; ++f)
-            SendMessageA(frameCombo, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>(frames[f].name));
+            SendMessageA(frameCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(frames[f].name));
     }
-    SendMessageA(frameCombo, CB_SETCURSEL,
-                 model->frameRegistrationSelection, 0);
+    SendMessageA(frameCombo, CB_SETCURSEL, model->frameRegistrationSelection, 0);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

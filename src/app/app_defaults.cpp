@@ -144,18 +144,18 @@ void MMDApp::InitDefaults() {
     // fcn_0040a730 lines 161-182: six dwords zeroed in two blocks of three
     // around the RecentFile sprintf calls - 0x9EE20/0x9EE1C/0x9EE18 first,
     // then 0x9EE14/0x9EE10/0x9EE0C.
-    state.sceneFontTexture = nullptr;      // 0x9EE20
-    state.textOverlayPrimitiveCount = 0;   // 0x9EE1C
-    state.overlayVertices = nullptr;       // 0x9EE18
+    state.sceneFontTexture = nullptr;    // 0x9EE20
+    state.textOverlayPrimitiveCount = 0; // 0x9EE1C
+    state.overlayVertices = nullptr;     // 0x9EE18
     sprintf_s(RecentFile(0), 0x100, "%s", g_Locale);
     sprintf_s(RecentFile(1), 0x100, "%s", g_Locale);
     sprintf_s(RecentFile(2), 0x100, "%s", g_Locale);
     state.overlayTexture = nullptr;        // 0x9EE14
     state.spriteOverlayPrimitiveCount = 0; // 0x9EE10
-    state.spriteOverlayVertices = nullptr;        // 0x9EE0C
+    state.spriteOverlayVertices = nullptr; // 0x9EE0C
     state.lineOverlayPrimitiveCount = 0;
     state.groundPlaneVertices = nullptr;
-    s.AviBackgroundTexture() = nullptr;                    // original writes twice
+    s.AviBackgroundTexture() = nullptr; // original writes twice
     s.PictureOverlayVertices() = nullptr;
     state.separateWindowMouseSeen = 0;
     s.RecordingWindow() = nullptr;
@@ -180,7 +180,7 @@ void MMDApp::InitDefaults() {
     state.activeRenderPass = 0;
     state.renderPassCount = 0;
     s.FullscreenMode() = 0;
-    s.SavedPlacement().length = sizeof(WINDOWPLACEMENT);  // 44
+    s.SavedPlacement().length = sizeof(WINDOWPLACEMENT); // 44
     state.fullscreenFlagsSaved = 0;
     state.stereoActivated = 0;
     state.recordFullscreenActive = 0;
@@ -204,7 +204,7 @@ void MMDApp::InitDefaults() {
     state.globalTrackSelected[1] = 0;
     state.globalTrackSelected[2] = 0;
     state.globalTrackSelected[3] = 0;
-    state.selectionActiveLatch = 0;   // x64 0x7FF7CB42CA4C: `mov [app+0xA137C], di`
+    state.selectionActiveLatch = 0; // x64 0x7FF7CB42CA4C: `mov [app+0xA137C], di`
     state.automaticFrameAdvanceEnabled = 0;
     state.messageSeen = 1;
     s.TimelineSelectionChanged() = 0;
@@ -242,4 +242,4 @@ void MMDApp::InitDefaults() {
     state.a06B6 = 0;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

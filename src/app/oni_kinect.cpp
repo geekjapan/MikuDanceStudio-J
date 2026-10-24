@@ -75,7 +75,7 @@ static IDirect3DDevice9* OniRenderDevice(MMDApp* app) {
     D3DRenderer* r = app->Renderer();
     if (r == nullptr)
         return nullptr;
-    return r->device;  // +0x1D4E0
+    return r->device; // +0x1D4E0
 }
 
 namespace {
@@ -92,83 +92,77 @@ const char* const kOniExports[7] = {
 };
 
 void KinMessageBox(MMDApp* app, const char* en, const char* jp) {
-    MessageBoxA(static_cast<HWND>(app->Hwnd()),
-                app->EnglishUI() != 0 ? en : jp, "Kinect", MB_OK);  // 0x5292a8
+    MessageBoxA(static_cast<HWND>(app->Hwnd()), app->EnglishUI() != 0 ? en : jp, "Kinect",
+                MB_OK); // 0x5292a8
 }
 
 // bool __stdcall OpenNIInit(HWND, bool, IDirect3DDevice9*, wchar_t*, char*)
-using OpenNiInitFn = unsigned char(__stdcall*)(HWND, unsigned char,
-                                               IDirect3DDevice9*,
+using OpenNiInitFn = unsigned char(__stdcall*)(HWND, unsigned char, IDirect3DDevice9*,
                                                const wchar_t*, const char*);
 
 // JP-locale MessageBox texts - verbatim Shift-JIS bytes from .rdata.
 // 0x52C528 "DxOpenNI.dllがDataフォルダ内にありません。…" (DLL missing)
-const char kJpOniNotFound[] =
-    "\x44\x78\x4f\x70\x65\x6e\x4e\x49\x2e\x64\x6c\x6c\x82\xaa\x44\x61"
-    "\x74\x61\x83\x74\x83\x48\x83\x8b\x83\x5f\x93\xe0\x82\xc9\x82\xa0"
-    "\x82\xe8\x82\xdc\x82\xb9\x82\xf1\x81\x42\x0a\x0a\x68\x74\x74\x70"
-    "\x3a\x2f\x2f\x77\x77\x77\x2e\x67\x65\x6f\x63\x69\x74\x69\x65\x73"
-    "\x2e\x6a\x70\x2f\x68\x69\x67\x75\x63\x68\x75\x75\x34\x2f\x20\x82"
-    "\xe6\x82\xe8\x44\x78\x4f\x70\x65\x6e\x4e\x49\x2e\x64\x6c\x6c\x82"
-    "\xf0\x83\x5f\x83\x45\x83\x93\x83\x8d\x81\x5b\x83\x68\x82\xb5\x82"
-    "\xc4\x0a\x44\x61\x74\x61\x83\x74\x83\x48\x83\x8b\x83\x5f\x93\xe0"
-    "\x82\xc9\x92\x75\x82\xa2\x82\xc4\x89\xba\x82\xb3\x82\xa2\x81\x42";
+const char kJpOniNotFound[] = "\x44\x78\x4f\x70\x65\x6e\x4e\x49\x2e\x64\x6c\x6c\x82\xaa\x44\x61"
+                              "\x74\x61\x83\x74\x83\x48\x83\x8b\x83\x5f\x93\xe0\x82\xc9\x82\xa0"
+                              "\x82\xe8\x82\xdc\x82\xb9\x82\xf1\x81\x42\x0a\x0a\x68\x74\x74\x70"
+                              "\x3a\x2f\x2f\x77\x77\x77\x2e\x67\x65\x6f\x63\x69\x74\x69\x65\x73"
+                              "\x2e\x6a\x70\x2f\x68\x69\x67\x75\x63\x68\x75\x75\x34\x2f\x20\x82"
+                              "\xe6\x82\xe8\x44\x78\x4f\x70\x65\x6e\x4e\x49\x2e\x64\x6c\x6c\x82"
+                              "\xf0\x83\x5f\x83\x45\x83\x93\x83\x8d\x81\x5b\x83\x68\x82\xb5\x82"
+                              "\xc4\x0a\x44\x61\x74\x61\x83\x74\x83\x48\x83\x8b\x83\x5f\x93\xe0"
+                              "\x82\xc9\x92\x75\x82\xa2\x82\xc4\x89\xba\x82\xb3\x82\xa2\x81\x42";
 // 0x52C430 "OpenNIが動作しません。…" (LoadLibrary failed)
-const char kJpOniCannotMove[] =
-    "\x4f\x70\x65\x6e\x4e\x49\x82\xaa\x93\xae\x8d\xec\x82\xb5\x82\xdc"
-    "\x82\xb9\x82\xf1\x81\x42\x82\xa8\x82\xbb\x82\xe7\x82\xad\x4f\x70"
-    "\x65\x6e\x4e\x49\x82\xcc\x83\x43\x83\x93\x83\x58\x83\x67\x81\x5b"
-    "\x83\x8b\x82\xc9\x8e\xb8\x94\x73\x82\xb5\x82\xc4\x82\xa2\x82\xdc"
-    "\x82\xb7\x81\x42\x0a\x4f\x70\x65\x6e\x4e\x49\x82\xcc\x83\x54\x83"
-    "\x93\x83\x76\x83\x8b\x81\x41\x4e\x69\x55\x73\x65\x72\x54\x72\x61"
-    "\x63\x6b\x65\x72\x82\xaa\x90\xb3\x82\xb5\x82\xad\x93\xae\x8d\xec"
-    "\x82\xb7\x82\xe9\x82\xe6\x82\xa4\x82\xc9\x4f\x70\x65\x6e\x4e\x49"
-    "\x82\xf0\x83\x43\x83\x93\x83\x58\x83\x67\x81\x5b\x83\x8b\x82\xb5"
-    "\x92\xbc\x82\xb5\x82\xc4\x89\xba\x82\xb3\x82\xa2\x81\x42";
+const char kJpOniCannotMove[] = "\x4f\x70\x65\x6e\x4e\x49\x82\xaa\x93\xae\x8d\xec\x82\xb5\x82\xdc"
+                                "\x82\xb9\x82\xf1\x81\x42\x82\xa8\x82\xbb\x82\xe7\x82\xad\x4f\x70"
+                                "\x65\x6e\x4e\x49\x82\xcc\x83\x43\x83\x93\x83\x58\x83\x67\x81\x5b"
+                                "\x83\x8b\x82\xc9\x8e\xb8\x94\x73\x82\xb5\x82\xc4\x82\xa2\x82\xdc"
+                                "\x82\xb7\x81\x42\x0a\x4f\x70\x65\x6e\x4e\x49\x82\xcc\x83\x54\x83"
+                                "\x93\x83\x76\x83\x8b\x81\x41\x4e\x69\x55\x73\x65\x72\x54\x72\x61"
+                                "\x63\x6b\x65\x72\x82\xaa\x90\xb3\x82\xb5\x82\xad\x93\xae\x8d\xec"
+                                "\x82\xb7\x82\xe9\x82\xe6\x82\xa4\x82\xc9\x4f\x70\x65\x6e\x4e\x49"
+                                "\x82\xf0\x83\x43\x83\x93\x83\x58\x83\x67\x81\x5b\x83\x8b\x82\xb5"
+                                "\x92\xbc\x82\xb5\x82\xc4\x89\xba\x82\xb3\x82\xa2\x81\x42";
 // 0x52C298 "DxOpenNI.dllのバージョンが異なります\n(バージョン1.30が必要です)"
-const char kJpOniVersion130[] =
-    "\x44\x78\x4f\x70\x65\x6e\x4e\x49\x2e\x64\x6c\x6c\x82\xcc\x83\x6f"
-    "\x81\x5b\x83\x57\x83\x87\x83\x93\x82\xaa\x88\xd9\x82\xc8\x82\xe8"
-    "\x82\xdc\x82\xb7\x0a\x28\x83\x6f\x81\x5b\x83\x57\x83\x87\x83\x93"
-    "\x31\x2e\x33\x30\x82\xaa\x95\x4b\x97\x76\x82\xc5\x82\xb7\x29";
+const char kJpOniVersion130[] = "\x44\x78\x4f\x70\x65\x6e\x4e\x49\x2e\x64\x6c\x6c\x82\xcc\x83\x6f"
+                                "\x81\x5b\x83\x57\x83\x87\x83\x93\x82\xaa\x88\xd9\x82\xc8\x82\xe8"
+                                "\x82\xdc\x82\xb7\x0a\x28\x83\x6f\x81\x5b\x83\x57\x83\x87\x83\x93"
+                                "\x31\x2e\x33\x30\x82\xaa\x95\x4b\x97\x76\x82\xc5\x82\xb7\x29";
 // 0x52C1F8 "DxOpenNI.dllのバージョンが異なります\n(バージョン1.30〜1.50までのどれか)"
-const char kJpOniVersionRange[] =
-    "\x44\x78\x4f\x70\x65\x6e\x4e\x49\x2e\x64\x6c\x6c\x82\xcc\x83\x6f"
-    "\x81\x5b\x83\x57\x83\x87\x83\x93\x82\xaa\x88\xd9\x82\xc8\x82\xe8"
-    "\x82\xdc\x82\xb7\x0a\x28\x83\x6f\x81\x5b\x83\x57\x83\x87\x83\x93"
-    "\x31\x2e\x33\x30\x81\x60\x31\x2e\x35\x30\x82\xdc\x82\xc5\x82\xcc"
-    "\x82\xc7\x82\xea\x82\xa9\x29";
+const char kJpOniVersionRange[] = "\x44\x78\x4f\x70\x65\x6e\x4e\x49\x2e\x64\x6c\x6c\x82\xcc\x83\x6f"
+                                  "\x81\x5b\x83\x57\x83\x87\x83\x93\x82\xaa\x88\xd9\x82\xc8\x82\xe8"
+                                  "\x82\xdc\x82\xb7\x0a\x28\x83\x6f\x81\x5b\x83\x57\x83\x87\x83\x93"
+                                  "\x31\x2e\x33\x30\x81\x60\x31\x2e\x35\x30\x82\xdc\x82\xc5\x82\xcc"
+                                  "\x82\xc7\x82\xea\x82\xa9\x29";
 
-}  // namespace
+} // namespace
 
 // VA 0x00429CB0 - load Data\DxOpenNI.dll and arm Kinect capture.
 void OpenNiInit(MMDApp* app, const char* sjisPath) {
     auto& s = *app;
-    HWND hwnd = static_cast<HWND>(s.Hwnd());                     // 0xa06b8
+    HWND hwnd = static_cast<HWND>(s.Hwnd()); // 0xa06b8
 
-    SetCurrentDirectoryW(s.state.exeDir);   // 0x429cbe
+    SetCurrentDirectoryW(s.state.exeDir); // 0x429cbe
 
     // 0x429cc4..0x429ce4: probe the DLL with _wsopen_s (CRT 0x50747B).
     int fd = -1;
-    if (_wsopen_s(&fd, L"Data\\DxOpenNI.dll",
-                  _O_BINARY /*0x8000*/, _SH_DENYNO /*0x40*/,
+    if (_wsopen_s(&fd, L"Data\\DxOpenNI.dll", _O_BINARY /*0x8000*/, _SH_DENYNO /*0x40*/,
                   _S_IWRITE /*0x80*/) != 0) {
         KinMessageBox(app,
-            "DxOpenNI.dll cannot find in Data folder.\n\n"
-            "Please download it from http://www.geocities.jp/higuchuu4/"
-            "index_e.htm \nand set it into data folder.",           // 0x52c5c0
-            kJpOniNotFound);                                       // 0x52c528
+                      "DxOpenNI.dll cannot find in Data folder.\n\n"
+                      "Please download it from http://www.geocities.jp/higuchuu4/"
+                      "index_e.htm \nand set it into data folder.", // 0x52c5c0
+                      kJpOniNotFound);                              // 0x52c528
         return;
     }
-    _close(fd);                                                    // 0x506b88
+    _close(fd); // 0x506b88
 
-    HMODULE module = LoadLibraryA("Data\\DxOpenNI.dll");           // 0x429d3d
+    HMODULE module = LoadLibraryA("Data\\DxOpenNI.dll"); // 0x429d3d
     s.state.oniModule = module;
     if (module == nullptr) {
         ShowWin32ErrorMessage(app, "GetProcAddress", GetLastError());
         KinMessageBox(app,
-            "Cannot move OpenNI.\nOpenNI might be failed install.", // 0x52c4d0
-            kJpOniCannotMove);                                      // 0x52c430
+                      "Cannot move OpenNI.\nOpenNI might be failed install.", // 0x52c4d0
+                      kJpOniCannotMove);                                      // 0x52c430
         return;
     }
 
@@ -176,38 +170,36 @@ void OpenNiInit(MMDApp* app, const char* sjisPath) {
     // The slots are the 0xA03C0..0xA03DC pointer row (OniExportSlot maps
     // the heterogeneous blob members behind one index).
     for (int i = 0; i < 7; ++i)
-        s.OniExportSlot(i) =
-            reinterpret_cast<void*>(GetProcAddress(module, kOniExports[i]));
+        s.OniExportSlot(i) = reinterpret_cast<void*>(GetProcAddress(module, kOniExports[i]));
     bool anyNull = false;
     for (int i = 0; i < 7; ++i)
         anyNull = anyNull || s.OniExportSlot(i) == nullptr;
     if (anyNull) {
         KinMessageBox(app,
-            "\"DxOpenNI.dll\" version is wrong.\n"
-            "(Version1.30 is necessary)",                           // 0x52c2d8
-            kJpOniVersion130);                                      // 0x52c298
-        FreeLibrary(module);                                        // 0x42a008
+                      "\"DxOpenNI.dll\" version is wrong.\n"
+                      "(Version1.30 is necessary)", // 0x52c2d8
+                      kJpOniVersion130);            // 0x52c298
+        FreeLibrary(module);                        // 0x42a008
         s.state.oniModule = nullptr;
         return;
     }
 
     // 0x429ed4..0x429f2d: version gate (1.30 / 1.40 / 1.50 bit-exact).
-    auto getVersion = reinterpret_cast<void(__stdcall*)(float*)>(
-        s.state.oniExportSlot6);
+    auto getVersion = reinterpret_cast<void(__stdcall*)(float*)>(s.state.oniExportSlot6);
     float version = 0.0f;
     getVersion(&version);
     std::uint8_t versionCode;
-    if (version == 1.3f) {                                          // 0x52c290
+    if (version == 1.3f) { // 0x52c290
         versionCode = 0x0D;
-    } else if (version == 1.4f) {                                  // 0x52c28c
+    } else if (version == 1.4f) { // 0x52c28c
         versionCode = 0x0E;
-    } else if (version == 1.5f) {                                  // 0x52bf5c
+    } else if (version == 1.5f) { // 0x52bf5c
         versionCode = 0x0F;
     } else {
         KinMessageBox(app,
-            "\"DxOpenNI.dll\" version is wrong.\n"
-            "(Version1.30 or 1.40 or 1.50 is necessary)",           // 0x52c240
-            kJpOniVersionRange);                                    // 0x52c1f8
+                      "\"DxOpenNI.dll\" version is wrong.\n"
+                      "(Version1.30 or 1.40 or 1.50 is necessary)", // 0x52c240
+                      kJpOniVersionRange);                          // 0x52c1f8
         FreeLibrary(module);
         s.state.oniModule = nullptr;
         return;
@@ -215,33 +207,30 @@ void OpenNiInit(MMDApp* app, const char* sjisPath) {
     s.state.openniVersion = versionCode;
 
     // 0x429f2f..0x429f5b: OpenNIInit(hwnd, english, device, exedir, path).
-    auto init = reinterpret_cast<OpenNiInitFn>(
-        s.state.oniExportSlot0);
-    const unsigned char ok = init(hwnd, s.EnglishUI(), OniRenderDevice(app),
-                                  s.state.exeDir,
-                                  sjisPath);
+    auto init = reinterpret_cast<OpenNiInitFn>(s.state.oniExportSlot0);
+    const unsigned char ok =
+        init(hwnd, s.EnglishUI(), OniRenderDevice(app), s.state.exeDir, sjisPath);
     if (ok == 0) {
-        FreeLibrary(module);                                        // 0x42a001
+        FreeLibrary(module); // 0x42a001
         s.state.oniModule = nullptr;
         return;
     }
 
-    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_KINECT, MF_CHECKED);                // 0x429f61
-    s.state.depthDeviceEnabled = 1;                   // 0x429f85
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_KINECT, MF_CHECKED); // 0x429f61
+    s.state.depthDeviceEnabled = 1;                                  // 0x429f85
 
-    if (s.CameraMode() == 0) {         // 0x429f8b
+    if (s.CameraMode() == 0) { // 0x429f8b
         unsigned char* model = s.SelectedModel();
-        ModelInitMorphSlots(model);                                 // 0x4a89b0
+        ModelInitMorphSlots(model); // 0x4a89b0
     }
 
     // 0x429fa0..0x429fbc: save the fps limit; a capture file caps it to 30.
-    s.state.fpsLimitSaved =
-        s.state.fpsLimit;
+    s.state.fpsLimitSaved = s.state.fpsLimit;
     if (sjisPath != nullptr) {
         s.state.kinectCaptureActive = 1;
-        s.state.fpsLimit = 30.0f;              // 0x52997c
+        s.state.fpsLimit = 30.0f; // 0x52997c
     }
-    s.state.autoRepeat = 0;                   // 0x429fc4
+    s.state.autoRepeat = 0; // 0x429fc4
 }
 
 // VA 0x0042A020 - stop Kinect capture and restore the saved fps limit.
@@ -249,28 +238,26 @@ void DisableKinect(MMDApp* app) {
     auto& s = *app;
     HWND hwnd = static_cast<HWND>(s.Hwnd());
 
-    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_KINECT, MF_UNCHECKED);              // 0x42a029
-    EnableMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MOTION_CAPTURE, 1);                        // 0x42a044
-    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MOTION_CAPTURE, MF_UNCHECKED);              // 0x42a05b
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_KINECT, MF_UNCHECKED);         // 0x42a029
+    EnableMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MOTION_CAPTURE, 1);           // 0x42a044
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MOTION_CAPTURE, MF_UNCHECKED); // 0x42a05b
 
     // Unconditional call through the stored OpenNIClean pointer, exactly
     // like the original (reachable only after a successful OpenNiInit).
-    auto clean = reinterpret_cast<void(__stdcall*)()>(
-        s.state.oniExportSlot1);
-    clean();                                                        // 0x42a074
+    auto clean = reinterpret_cast<void(__stdcall*)()>(s.state.oniExportSlot1);
+    clean(); // 0x42a074
 
-    s.state.depthDeviceEnabled = 0;                   // 0x42a084
-    s.state.autoRepeat = 0;                   // 0x42a08b
+    s.state.depthDeviceEnabled = 0; // 0x42a084
+    s.state.autoRepeat = 0;         // 0x42a08b
 
     unsigned char* model = s.SelectedModel();
-    if (model != nullptr)                                           // 0x42a092
-        SeekModelFrame(*mdl::Mdl(model), s.state.currentFrame,
-                  s.PlaybackPhysicsMode());
+    if (model != nullptr) // 0x42a092
+        SeekModelFrame(*mdl::Mdl(model), s.state.currentFrame, s.PlaybackPhysicsMode());
 
-    s.state.fpsLimit =                         // 0x42a0ac
+    s.state.fpsLimit = // 0x42a0ac
         s.state.fpsLimitSaved;
-    s.PhysicsResetPending() = 1;                                   // 0x42a0b9
-    s.state.kinectCaptureActive = 0;                   // 0x42a0c0
+    s.PhysicsResetPending() = 1;     // 0x42a0b9
+    s.state.kinectCaptureActive = 0; // 0x42a0c0
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

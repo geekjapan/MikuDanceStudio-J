@@ -67,8 +67,7 @@ namespace mikudancestudio {
 namespace {
 
 // Model-owned tables are raw storage from scalar ::operator new.
-template <typename T>
-inline void DeleteOwnedStorage(T*& pointer) {
+template <typename T> inline void DeleteOwnedStorage(T*& pointer) {
     ::operator delete(pointer);
     pointer = nullptr;
 }
@@ -108,7 +107,7 @@ void ReleasePhysRigid(PhysicsScene* physics, void* bodyPointer) {
     delete body;
 }
 
-}  // namespace
+} // namespace
 
 // VA 0x0048F830
 void ModelDispose(unsigned char* m) {
@@ -203,8 +202,7 @@ void ModelDispose(unsigned char* m) {
     DeleteOwnedStorage(model.morphs);
 
     // ---- IK chains ---------------------------------------------------------
-    if (mdl::Mdl(m)->ikChains != nullptr &&
-        mikudancestudio::mdl::Mdl(m)->ikChainCount > 0) {
+    if (mdl::Mdl(m)->ikChains != nullptr && mikudancestudio::mdl::Mdl(m)->ikChainCount > 0) {
         const int n = mikudancestudio::mdl::Mdl(m)->ikChainCount;
         for (int i = 0; i < n; ++i)
             DeleteOwnedStorage(mdl::IkChains(m)[i].links);
@@ -253,9 +251,9 @@ void ModelDispose(unsigned char* m) {
 // it, kept void.
 // ---------------------------------------------------------------------------
 void DeleteModel(unsigned char* model, int freeFlag) {
-    ModelDispose(model);                                    // 0x40A713
+    ModelDispose(model); // 0x40A713
     if ((freeFlag & 1) != 0)
-        ::operator delete(model);                                   // 0x40A720
+        ::operator delete(model); // 0x40A720
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

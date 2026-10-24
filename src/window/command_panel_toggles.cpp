@@ -124,7 +124,6 @@
 
 namespace mikudancestudio {
 
-
 // Active model = slot array at this+0x780 indexed by byte this+0x910.
 // (sub_47E8A0 pattern; the original re-derives it on every use.)
 static unsigned char* ActiveModel(MMDApp* app) {
@@ -190,10 +189,9 @@ static const wchar_t kEmptyPathFormat[] = L"\x0\x0%s%s";
 
 // 0x52D948: JP open-filter for accessories (double-NUL terminated):
 // "読込可能ファイル(*.x,*.vac)"
-static const wchar_t kFilterAccJp[] =
-    L"\x8AAD\x8FBC\x53EF\x80FD\x30D5\x30A1\x30A4\x30EB"
-    L"(*.x,*.vac)\x00*.x;*.vac\x00x files(*.x)\x00*.x\x00"
-    L"vac files(*.vac)\x00";
+static const wchar_t kFilterAccJp[] = L"\x8AAD\x8FBC\x53EF\x80FD\x30D5\x30A1\x30A4\x30EB"
+                                      L"(*.x,*.vac)\x00*.x;*.vac\x00x files(*.x)\x00*.x\x00"
+                                      L"vac files(*.vac)\x00";
 // 0x52DC84: JP dialog title "ファイルを開く"
 static const wchar_t kTitleOpenJp[] = L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B\x304F";
 
@@ -201,32 +199,30 @@ static const wchar_t kTitleOpenJp[] = L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B\x30
 // External targets ported in other translation units (declared here with
 // their original VAs; not yet registered in ported_funcs.hpp).
 // ---------------------------------------------------------------------------
-void PanelPaint(MMDApp* app);                      // VA 0x00414610
-void SelectionReeval(MMDApp* app);                 // VA 0x00430510 (ui_selection_reeval.cpp)
+void PanelPaint(MMDApp* app);                         // VA 0x00414610
+void SelectionReeval(MMDApp* app);                    // VA 0x00430510 (ui_selection_reeval.cpp)
 void CopyDirPathW(wchar_t* dest, const wchar_t* src); // VA 0x0042AE20 path copy
 
 // ---------------------------------------------------------------------------
 // Shared panel-operation dependencies (implemented in their own modules).
 // ---------------------------------------------------------------------------
-void PushBoneEditUndo(MMDApp* app);                       // VA 0x0042D6E0
-void RebuildCameraModePanel(MMDApp* app);                       // VA 0x0044D780
-void SyncAccessoryEditPanel(MMDApp* app);                       // VA 0x004134E0
-void RegisterAccessoryKey(MMDApp* app, int frame, int slot);   // VA 0x00413CB0
-void RegisterCameraState(MMDApp* app, int frame);  // VA 0x00410560
-void RegisterLightState(MMDApp* app, int frame);   // VA 0x00411630
-void CommitEditControl(MMDApp* app, HWND hwnd);            // VA 0x00463640
-void DeleteAccessory(mdl::AccessoryRecord* accessory, int flag);  // VA 0x0040A6F0
-void IdentityCtor(void* obj);                         // VA 0x004C46F0 (ctor)
+void PushBoneEditUndo(MMDApp* app);                              // VA 0x0042D6E0
+void RebuildCameraModePanel(MMDApp* app);                        // VA 0x0044D780
+void SyncAccessoryEditPanel(MMDApp* app);                        // VA 0x004134E0
+void RegisterAccessoryKey(MMDApp* app, int frame, int slot);     // VA 0x00413CB0
+void RegisterCameraState(MMDApp* app, int frame);                // VA 0x00410560
+void RegisterLightState(MMDApp* app, int frame);                 // VA 0x00411630
+void CommitEditControl(MMDApp* app, HWND hwnd);                  // VA 0x00463640
+void DeleteAccessory(mdl::AccessoryRecord* accessory, int flag); // VA 0x0040A6F0
+void IdentityCtor(void* obj);                                    // VA 0x004C46F0 (ctor)
 
 // Delete the selected accessory, then rebuild its track and panel state.
 static void DeleteSelectedAccessory(MMDApp* app, HWND hwnd) {
-    const LRESULT sel =
-        SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_GETCURSEL, 0, 0);
+    const LRESULT sel = SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_GETCURSEL, 0, 0);
     std::int32_t found = -1;
     for (int i = 0; i < 0xFF; ++i) {
         mdl::AccessoryRecord* acc = app->AccessorySlot(i);
-        if (acc != nullptr &&
-            static_cast<int>(acc->order) == static_cast<int>(sel)) {
+        if (acc != nullptr && static_cast<int>(acc->order) == static_cast<int>(sel)) {
             found = i;
             break;
         }
@@ -234,7 +230,7 @@ static void DeleteSelectedAccessory(MMDApp* app, HWND hwnd) {
     if (found < 0) {
         return;
     }
-    app->state.enterKeyState = 1;  // 0xBC
+    app->state.enterKeyState = 1; // 0xBC
     mdl::AccessoryRecord* acc = app->AccessorySlot(found);
 
     char text[0x100];
@@ -245,14 +241,11 @@ static void DeleteSelectedAccessory(MMDApp* app, HWND hwnd) {
                   "too.\n(This operation cannot undo!!)\n\nAre you OK?",
                   acc->name);
     } else {
-        sprintf_s(text, 0x100, kMsgDelAccessoryJp,
-                  acc->name);
+        sprintf_s(text, 0x100, kMsgDelAccessoryJp, acc->name);
     }
     const std::uint32_t flags =
         app->state.floatingWindow != 0 ? (MB_OKCANCEL | MB_TOPMOST) : MB_OKCANCEL;
-    const char* caption = app->state.englishUI != 0
-                              ? "delete accessory"
-                              : kCaptionDelAccessoryJp;
+    const char* caption = app->state.englishUI != 0 ? "delete accessory" : kCaptionDelAccessoryJp;
     if (MessageBoxA(hwnd, text, caption, flags) != IDOK) {
         return;
     }
@@ -304,8 +297,7 @@ static void DeleteSelectedAccessory(MMDApp* app, HWND hwnd) {
         SendMessageA(GetDlgItem(hwnd, panel::kMainComboGround), CB_SETCURSEL, -1, 0);
     } else {
         SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_SETCURSEL, 0, 0);
-        app->state.selectedObjectSlot =
-            static_cast<std::uint8_t>(firstFree);
+        app->state.selectedObjectSlot = static_cast<std::uint8_t>(firstFree);
         SyncAccessoryEditPanel(app);
     }
     SendMessageA(GetDlgItem(hwnd, panel::kAttachBoneCombo), CB_RESETCONTENT, 0, 0);
@@ -314,10 +306,8 @@ static void DeleteSelectedAccessory(MMDApp* app, HWND hwnd) {
     strcpy_s(empty, 0x100, "");
     for (int ctl = panel::kAccPosXEdit; ctl <= panel::kAccScaleEdit; ++ctl) {
         HWND edit = GetDlgItem(hwnd, ctl);
-        SendMessageA(edit, EM_SETSEL, 0,
-                     static_cast<LPARAM>(GetWindowTextLengthA(edit)));
-        SendMessageA(edit, EM_REPLACESEL, 0,
-                     reinterpret_cast<LPARAM>(empty));
+        SendMessageA(edit, EM_SETSEL, 0, static_cast<LPARAM>(GetWindowTextLengthA(edit)));
+        SendMessageA(edit, EM_REPLACESEL, 0, reinterpret_cast<LPARAM>(empty));
     }
     EnableMenuItem(GetMenu(hwnd), MDS_CMD_ACCESSORY_SETTINGS, 1);
     RebuildCameraModePanel(app);
@@ -330,11 +320,9 @@ static void DeleteSelectedAccessory(MMDApp* app, HWND hwnd) {
     InvalidateSelectionReadouts(app);
 }
 
-
-void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
-                   std::uint16_t notify) {
-    (void)notify;  // see header: the default handler's notify gate can never
-                   // match any id of this family
+void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify) {
+    (void)notify; // see header: the default handler's notify gate can never
+                  // match any id of this family
     switch (id) {
     // ------------------------------------------------------------------
     // 451 (0x00486431): camera reset - position/rotation floats cleared,
@@ -375,14 +363,14 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
         static const struct {
             int id;
             UiPanel panel;
-            unsigned char value;  // optflag is unsigned char[7]
+            unsigned char value; // optflag is unsigned char[7]
         } kOptFlagRadios[] = {
             {panel::kCollapseCameraPanelButton, UiPanel::Camera, 0},
-            {panel::kExpandCameraPanelButton, UiPanel::Camera, 1},  // 0x2F9
+            {panel::kExpandCameraPanelButton, UiPanel::Camera, 1}, // 0x2F9
             {panel::kCollapseLightPanelButton, UiPanel::Light, 0},
-            {panel::kExpandLightPanelButton, UiPanel::Light, 1},  // 0x2FA
+            {panel::kExpandLightPanelButton, UiPanel::Light, 1}, // 0x2FA
             {panel::kCollapseAccessoryPanelButton, UiPanel::Accessory, 0},
-            {panel::kExpandAccessoryPanelButton, UiPanel::Accessory, 1},  // 0x2FB
+            {panel::kExpandAccessoryPanelButton, UiPanel::Accessory, 1}, // 0x2FB
         };
         for (const auto& radio : kOptFlagRadios) {
             if (radio.id == id) {
@@ -428,7 +416,7 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
         // (0x7FF7CB46A492..0x7FF7CB46A4BC, written to all three light
         // channels and copied into Specular); same constant as the
         // light-key default in command_frame_edit.cpp ResetLightRecord.
-        const float col = 0.602f;  // flt_52C9A4
+        const float col = 0.602f; // flt_52C9A4
         app->LightColor()[0] = col;
         app->LightColor()[1] = col;
         app->LightColor()[2] = col;
@@ -439,30 +427,26 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
 
         char buf[256];
         for (int ch = 0; ch < 3; ++ch) {
-            sprintf_s(buf, 0x100, "%3d",
-                      static_cast<int>(static_cast<double>(
-                                           app->LightColor()[ch]) *
-                                       256.0));  // dbl_52B9E8
-            SetWindowTextA(GetDlgItem(hwnd, panel::kLightColorEditR + ch), buf);  // 461..463
+            sprintf_s(
+                buf, 0x100, "%3d",
+                static_cast<int>(static_cast<double>(app->LightColor()[ch]) * 256.0)); // dbl_52B9E8
+            SetWindowTextA(GetDlgItem(hwnd, panel::kLightColorEditR + ch), buf);       // 461..463
         }
         for (int ax = 0; ax < 3; ++ax) {
-            sprintf_s(buf, 0x100, "%+3.1f",
-                      static_cast<double>(direction[ax]));
-            SetWindowTextA(GetDlgItem(hwnd, panel::kLightDirEditX + ax), buf);  // 464..466
+            sprintf_s(buf, 0x100, "%+3.1f", static_cast<double>(direction[ax]));
+            SetWindowTextA(GetDlgItem(hwnd, panel::kLightDirEditX + ax), buf); // 464..466
         }
         for (int ch = 0; ch < 3; ++ch) {
-            SendMessageA(GetDlgItem(hwnd, panel::kLightColorSliderR + ch), TBM_SETPOS,
-                         1, static_cast<LPARAM>(static_cast<int>(
-                                static_cast<double>(
-                                    app->LightColor()[ch]) *
-                                256.0)));  // sliders 455..457
+            SendMessageA(
+                GetDlgItem(hwnd, panel::kLightColorSliderR + ch), TBM_SETPOS, 1,
+                static_cast<LPARAM>(static_cast<int>(static_cast<double>(app->LightColor()[ch]) *
+                                                     256.0))); // sliders 455..457
         }
         for (int ax = 0; ax < 3; ++ax) {
-            SendMessageA(GetDlgItem(hwnd, panel::kLightDirSliderX + ax), TBM_SETPOS,
-                         1, static_cast<LPARAM>(static_cast<int>(
-                                static_cast<double>(
-                                    direction[ax]) *
-                                100.0)));  // sliders 458..460, dbl_52B8E0
+            SendMessageA(
+                GetDlgItem(hwnd, panel::kLightDirSliderX + ax), TBM_SETPOS, 1,
+                static_cast<LPARAM>(static_cast<int>(static_cast<double>(direction[ax]) *
+                                                     100.0))); // sliders 458..460, dbl_52B8E0
         }
         SelectTimelineTrack(GlobalTimelineTrack::Light);
         break;
@@ -487,15 +471,14 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
     // LoadAccessoryFile(app, path).
     // ------------------------------------------------------------------
     case panel::kLoadAccessoryButton: {
-        SetCurrentDirectoryW(app->ExeDir());  // 0xA06CE
+        SetCurrentDirectoryW(app->ExeDir()); // 0xA06CE
         wchar_t fileBuf[0x100];
         swprintf_s(fileBuf, 0x100, kEmptyPathFormat, L"", L"");
         OPENFILENAMEW ofn;
         memset(&ofn, 0, sizeof(ofn));
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = app->state.floatingWindow != 0
-                            ? reinterpret_cast<HWND>(
-                                  app->state.floatingWindow)
+                            ? reinterpret_cast<HWND>(app->state.floatingWindow)
                             : hwnd;
         if (app->state.englishUI != 0) {
             ofn.lpstrFilter = L"accessory files(*.x,*.vac)\0*.x;*.vac\0";
@@ -505,7 +488,7 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
             ofn.lpstrTitle = kTitleOpenJp;
         }
         if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
-            ofn.lpstrInitialDir = app->DirAccs();  // 0xA1D10
+            ofn.lpstrInitialDir = app->DirAccs(); // 0xA1D10
         } else {
             ofn.lpstrInitialDir = L"UserFile\\Accessory";
         }
@@ -521,9 +504,7 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
         }
         if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
             // ExtractDirFromPath(app+0x9F338, fileBuf) then copy into DirAccs
-            wchar_t* dir =
-                ExtractDirFromPath(app->PathWorkspace().projectDirectory,
-                                   fileBuf);
+            wchar_t* dir = ExtractDirFromPath(app->PathWorkspace().projectDirectory, fileBuf);
             CopyDirPathW(app->DirAccs(), dir);
         }
         // original thiscall: LoadAccessoryFile(app, fileBuf)
@@ -633,7 +614,8 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
         SendMessageA(GetDlgItem(hwnd, panel::kBoneMoveRadio), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kBoneRotateRadio), BM_SETCHECK, 0, 0);
         app->EditMode() = IsDlgButtonChecked(hwnd, panel::kBoneSelectRadio) != 0
-            ? ViewportEditMode::Bone : ViewportEditMode::None;
+                              ? ViewportEditMode::Bone
+                              : ViewportEditMode::None;
         break;
     }
 
@@ -642,7 +624,8 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
         SendMessageA(GetDlgItem(hwnd, panel::kBoneMoveRadio), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kBoneRotateRadio), BM_SETCHECK, 0, 0);
         app->EditMode() = IsDlgButtonChecked(hwnd, panel::kBoxSelectRadio) != 0
-            ? ViewportEditMode::BoneBox : ViewportEditMode::None;
+                              ? ViewportEditMode::BoneBox
+                              : ViewportEditMode::None;
         break;
     }
 
@@ -651,7 +634,8 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
         SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kBoneRotateRadio), BM_SETCHECK, 0, 0);
         app->EditMode() = IsDlgButtonChecked(hwnd, panel::kBoneMoveRadio) != 0
-            ? ViewportEditMode::Move : ViewportEditMode::None;
+                              ? ViewportEditMode::Move
+                              : ViewportEditMode::None;
         break;
     }
 
@@ -660,7 +644,8 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
         SendMessageA(GetDlgItem(hwnd, panel::kBoneMoveRadio), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 0, 0);
         app->EditMode() = IsDlgButtonChecked(hwnd, panel::kBoneRotateRadio) != 0
-            ? ViewportEditMode::Rotate : ViewportEditMode::None;
+                              ? ViewportEditMode::Rotate
+                              : ViewportEditMode::None;
         break;
     }
 
@@ -688,11 +673,9 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
         for (std::int32_t i = 0; i < boneCount; ++i) {
             const mdl::BoneType type = bones[i].type;
             const std::uint16_t flag = bones[i].flags;
-            const bool hit =
-                ((flag & mdl::kBoneFlagFixedAxis) == mdl::kBoneFlagFixedAxis &&
-                 type == mdl::BoneType::UnderIk) ||
-                type == mdl::BoneType::FixedAxis ||
-                type <= mdl::BoneType::Effector;
+            const bool hit = ((flag & mdl::kBoneFlagFixedAxis) == mdl::kBoneFlagFixedAxis &&
+                              type == mdl::BoneType::UnderIk) ||
+                             type == mdl::BoneType::FixedAxis || type <= mdl::BoneType::Effector;
             if (hit) {
                 sel[i] = 1;
             }
@@ -758,4 +741,4 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

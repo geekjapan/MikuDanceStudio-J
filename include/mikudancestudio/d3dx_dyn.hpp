@@ -40,7 +40,7 @@ using FnComputeNormals = HRESULT(WINAPI*)(void*, const DWORD*);
 using FnVecQuat = float*(WINAPI*)(float out[4], const D3DXMATRIXF* m);
 using FnVec3Normalize = float*(WINAPI*)(float out[3], const float* src);
 using FnQuatMultiply = float*(WINAPI*)(float out[4], const float* q1, const float* q2);
-using FnMatrixQuat = D3DXMATRIXF*(WINAPI*)(D3DXMATRIXF* out, const float q[4]);
+using FnMatrixQuat = D3DXMATRIXF*(WINAPI*)(D3DXMATRIXF * out, const float q[4]);
 using FnQuatToAxisAngle = void(WINAPI*)(const float q[4], float axis[3], float* angle);
 using FnQuatNormalize = float*(WINAPI*)(float out[4], const float q[4]);
 using FnSaveSurfaceToFileW = HRESULT(WINAPI*)(const wchar_t*, int /*D3DXIMAGE_FILEFORMAT*/,
@@ -187,7 +187,7 @@ struct Api {
         return reinterpret_cast<D3DXMATRIXF*>(::D3DXMatrixScaling(Matrix(out), x, y, z));
     }
 
-   private:
+private:
     static D3DXMATRIX* Matrix(D3DXMATRIXF* value) { return reinterpret_cast<D3DXMATRIX*>(value); }
     static const D3DXMATRIX* Matrix(const D3DXMATRIXF* value) {
         return reinterpret_cast<const D3DXMATRIX*>(value);
@@ -207,4 +207,4 @@ inline Api& Get() {
     static Api api;
     return api;
 }
-}  // namespace mikudancestudio::d3dx
+} // namespace mikudancestudio::d3dx

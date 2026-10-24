@@ -9,4 +9,4 @@ class MMDApp;
 void CopySelectedKeyframes(MMDApp* app, HWND owner);
 void PasteSelectedKeyframes(MMDApp* app, HWND owner);
 void PasteMirroredBoneKeyframes(MMDApp* app, HWND owner);
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

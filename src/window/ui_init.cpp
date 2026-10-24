@@ -26,8 +26,8 @@
 #include <d3d9.h>
 #include <mmsystem.h>
 #include <dsound.h>
-#include <shellapi.h>   // DragAcceptFiles
-#include <objbase.h>    // CoInitialize (0x408EF0 DirectShowInit)
+#include <shellapi.h> // DragAcceptFiles
+#include <objbase.h>  // CoInitialize (0x408EF0 DirectShowInit)
 
 #include <cstdint>
 #include <cstdlib>
@@ -46,9 +46,12 @@ namespace mikudancestudio {
 
 static int EvalPos(const ui::PosExpr& e, int sidebar) {
     switch (e.kind) {
-        case 1:  return sidebar + e.off;        // sidebar + off
-        case 2:  return sidebar / 2 + e.off;    // sidebar/2 + off
-        default: return e.off;                  // fixed literal
+    case 1:
+        return sidebar + e.off; // sidebar + off
+    case 2:
+        return sidebar / 2 + e.off; // sidebar/2 + off
+    default:
+        return e.off; // fixed literal
     }
 }
 
@@ -73,17 +76,16 @@ static void TraceInitialAccessoryTrack(const MMDApp& app) {
     FILE* stream = nullptr;
     if (fopen_s(&stream, path, "ab") != 0 || stream == nullptr)
         return;
-    fprintf(stream,
-            "stage=ui-initial-accessory-track-174 image=%p track=%p\r\n",
+    fprintf(stream, "stage=ui-initial-accessory-track-174 image=%p track=%p\r\n",
             GetModuleHandleW(nullptr), app.AccessoryKeyTracks()[174]);
     fclose(stream);
 }
 #else
-static inline void TraceInitialAccessoryTrack(const MMDApp&) {}
+static inline void TraceInitialAccessoryTrack(const MMDApp&) {
+}
 #endif
 
-static bool InitTimelineAudio(MMDApp* app, HWND hwnd, HDC timeline,
-                              bool english) {
+static bool InitTimelineAudio(MMDApp* app, HWND hwnd, HDC timeline, bool english) {
     WaveAudioContext* audio = app->Audio();
     audio->englishUI = english ? 1 : 0;
     audio->mainWindow = hwnd;
@@ -107,10 +109,8 @@ static bool InitTimelineAudio(MMDApp* app, HWND hwnd, HDC timeline,
             "DirectSound\x82\xAA\x90\xB6\x90\xAC\x82\xC5\x82\xAB\x82\xDC"
             "\x82\xB9\x82\xF1\nDirectSound\x82\xCC\x8E\x67\x97\x70\x82\xAA"
             "\x95\x73\x89\xC2\x94\x5C\x82\xC5\x82\xB7";
-        MessageBoxA(hwnd,
-                    english ? "Cannot make DirectSound!!"
-                            : kJpCannotMakeDirectSound,
-                    "", MB_OK);
+        MessageBoxA(hwnd, english ? "Cannot make DirectSound!!" : kJpCannotMakeDirectSound, "",
+                    MB_OK);
         return false;
     }
     if (FAILED(directSound->SetCooperativeLevel(hwnd, DSSCL_PRIORITY))) {
@@ -119,9 +119,8 @@ static bool InitTimelineAudio(MMDApp* app, HWND hwnd, HDC timeline,
         static const char kJpFailedCooperateDirectSound[] =
             "DirectSound\x82\xCC\x8B\xA2\x92\xB2\x82\xC9\x8E\xB8\x94\x73\x82\xB5\x82\xDC\x82\xB5\x82\xBD";
         MessageBoxA(hwnd,
-                    english ? "Failed cooperate DirectSound!!"
-                            : kJpFailedCooperateDirectSound,
-                    "", MB_OK);
+                    english ? "Failed cooperate DirectSound!!" : kJpFailedCooperateDirectSound, "",
+                    MB_OK);
         return false;
     }
 
@@ -189,8 +188,8 @@ void ClearTimelineAndCurveDCs(MMDApp* app) {
     DeleteObject(blackPen);
 }
 
-static bool LoadPngTexture(MMDApp* app, IDirect3DDevice9* device,
-                           WORD resourceId, IDirect3DTexture9** output) {
+static bool LoadPngTexture(MMDApp* app, IDirect3DDevice9* device, WORD resourceId,
+                           IDirect3DTexture9** output) {
     HMODULE module = static_cast<HMODULE>(app->HInstance());
     HRSRC info = FindResourceA(module, MAKEINTRESOURCEA(resourceId), "PNG");
     if (info == nullptr)
@@ -201,19 +200,17 @@ static bool LoadPngTexture(MMDApp* app, IDirect3DDevice9* device,
     auto& api = d3dx::Get();
     if (bytes == nullptr || size == 0)
         return false;
-    return SUCCEEDED(api.fromMemEx(
-        device, bytes, size, static_cast<UINT>(-1), static_cast<UINT>(-1),
-        1, 0, D3DFMT_UNKNOWN, D3DPOOL_MANAGED,
-        static_cast<DWORD>(-1), static_cast<DWORD>(-1), 0,
-        nullptr, nullptr, output));
+    return SUCCEEDED(api.fromMemEx(device, bytes, size, static_cast<UINT>(-1),
+                                   static_cast<UINT>(-1), 1, 0, D3DFMT_UNKNOWN, D3DPOOL_MANAGED,
+                                   static_cast<DWORD>(-1), static_cast<DWORD>(-1), 0, nullptr,
+                                   nullptr, output));
 }
 
 bool CreateUIControls(MMDApp* app, HWND hwnd) {
     auto& s = *app;
 
     // D3D bootstrap first (original call site 0x00466D5B, top of UI init).
-    if (!InitD3D(app, hwnd, app->EnglishUI() != 0,
-                 static_cast<HMODULE>(app->HInstance())))
+    if (!InitD3D(app, hwnd, app->EnglishUI() != 0, static_cast<HMODULE>(app->HInstance())))
         return false;
 
     // Physics scene construction (original call site 0x00466D78, directly
@@ -238,63 +235,61 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
     const int bbW = wrap->screenWidth;
     const int bbH = wrap->screenHeight;
 
-    s.TimelineDC() = CreateCompatibleDC(hdc);                          // 0x466D97
-    HBITMAP ruler = CreateCompatibleBitmap(hdc, bbW, 0x32);            // 0x466DB3
+    s.TimelineDC() = CreateCompatibleDC(hdc);               // 0x466D97
+    HBITMAP ruler = CreateCompatibleBitmap(hdc, bbW, 0x32); // 0x466DB3
     s.TimelineBitmap() = ruler;
     SelectObject(s.TimelineDC(), ruler);
 
-    s.PanelDC() = CreateCompatibleDC(hdc);                            // 0x466DD0
-    HBITMAP panel = CreateCompatibleBitmap(hdc, bbW, bbH);             // 0x466DF1
+    s.PanelDC() = CreateCompatibleDC(hdc);                 // 0x466DD0
+    HBITMAP panel = CreateCompatibleBitmap(hdc, bbW, bbH); // 0x466DF1
     s.PanelBitmap() = panel;
-    HBITMAP spare = CreateCompatibleBitmap(hdc, bbW, bbH);             // 0x466E12
+    HBITMAP spare = CreateCompatibleBitmap(hdc, bbW, bbH); // 0x466E12
     s.PanelSpareBitmap() = spare;
     SelectObject(s.PanelDC(), panel);
 
-    s.CurveDC() = CreateCompatibleDC(hdc);                             // 0x466E2F
-    HBITMAP curve = CreateCompatibleBitmap(hdc, 0x80, 0x80);           // 0x466E46
+    s.CurveDC() = CreateCompatibleDC(hdc);                   // 0x466E2F
+    HBITMAP curve = CreateCompatibleBitmap(hdc, 0x80, 0x80); // 0x466E46
     s.CurveBitmap() = curve;
     SelectObject(s.CurveDC(), curve);
 
-    HDC scratch = CreateCompatibleDC(hdc);                             // 0x466E5D
+    HDC scratch = CreateCompatibleDC(hdc); // 0x466E5D
     SelectObject(scratch, spare);
 
     // ---- 0x466E7A..0x467023: pre-draw fills on the spare bitmap -------------
     // Pen+brush of the same COLORREF, Rectangle, restore, delete - three
     // passes with the color.txt palette fields.
     auto fill = [&](COLORREF color, void (*rects)(HDC, int, int)) {
-        HPEN pen = CreatePen(PS_SOLID, 1, color);                      // 0x466E7A
-        HBRUSH brush = CreateSolidBrush(color);                        // 0x466E8B
-        HGDIOBJ oldPen = SelectObject(scratch, pen);                   // 0x466E97
-        HGDIOBJ oldBrush = SelectObject(scratch, brush);               // 0x466EA3
+        HPEN pen = CreatePen(PS_SOLID, 1, color);        // 0x466E7A
+        HBRUSH brush = CreateSolidBrush(color);          // 0x466E8B
+        HGDIOBJ oldPen = SelectObject(scratch, pen);     // 0x466E97
+        HGDIOBJ oldBrush = SelectObject(scratch, brush); // 0x466EA3
         rects(scratch, bbW, bbH);
-        SelectObject(scratch, oldBrush);                               // 0x466ECE
-        SelectObject(scratch, oldPen);                                 // 0x466ED6
-        DeleteObject(pen);                                             // 0x466EE1
-        DeleteObject(brush);                                           // 0x466EEC
+        SelectObject(scratch, oldBrush); // 0x466ECE
+        SelectObject(scratch, oldPen);   // 0x466ED6
+        DeleteObject(pen);               // 0x466EE1
+        DeleteObject(brush);             // 0x466EEC
     };
-    fill(s.ThemeColor(UiThemeColor::TimelineBase),                     // base fill
+    fill(s.ThemeColor(UiThemeColor::TimelineBase), // base fill
          [](HDC dc, int w, int h) { Rectangle(dc, 0, 0, w, h); });
-    fill(s.ThemeColor(UiThemeColor::HeaderBand),                       // header bands
+    fill(s.ThemeColor(UiThemeColor::HeaderBand), // header bands
          [](HDC dc, int w, int h) {
-             Rectangle(dc, 1, 0xF, 0x5A, h);      // 0x466F3C
-             Rectangle(dc, 0x5A, 1, w, 0xF);      // 0x466F56
+             Rectangle(dc, 1, 0xF, 0x5A, h); // 0x466F3C
+             Rectangle(dc, 0x5A, 1, w, 0xF); // 0x466F56
          });
-    fill(s.ThemeColor(UiThemeColor::RowBand),                          // row bands
+    fill(s.ThemeColor(UiThemeColor::RowBand), // row bands
          [](HDC dc, int w, int h) {
-             for (int i = 0xF; i + 0xF < h; i += 0x1C)                // 0x466FE4
+             for (int i = 0xF; i + 0xF < h; i += 0x1C) // 0x466FE4
                  Rectangle(dc, 1, i, 0x5A, i + 0xF);
          });
 
     // ---- 0x467023..0x46725F: remaining palette fills and grid lines -------
     fill(ColorLerp(s.ThemeColor(UiThemeColor::ControlLight),
-                   s.ThemeColor(UiThemeColor::ControlDark),
-                   0.08281938f),
+                   s.ThemeColor(UiThemeColor::ControlDark), 0.08281938f),
          [](HDC dc, int, int) { Rectangle(dc, 0, 0, 0x59, 0xF); });
-    fill(s.ThemeColor(UiThemeColor::TimelineRows),
-         [](HDC dc, int w, int h) {
-             for (int y = 0xF; y < h; y += 0x1C)
-                 Rectangle(dc, 0x5B, y, w, y + 0xF);
-         });
+    fill(s.ThemeColor(UiThemeColor::TimelineRows), [](HDC dc, int w, int h) {
+        for (int y = 0xF; y < h; y += 0x1C)
+            Rectangle(dc, 0x5B, y, w, y + 0xF);
+    });
 
     auto drawRows = [&](COLORREF color, int x0, int x1) {
         HPEN rowPen = CreatePen(PS_SOLID, 1, color);
@@ -311,26 +306,24 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
 
     // The original releases the window DC and destroys the temporary DC,
     // then copies the completed spare bitmap into the persistent panel DC.
-    ReleaseDC(hwnd, hdc);                                             // 0x46726B
-    DeleteDC(scratch);                                                // 0x467272
-    HDC copyDc = CreateCompatibleDC(nullptr);                          // 0x46727A
+    ReleaseDC(hwnd, hdc);                     // 0x46726B
+    DeleteDC(scratch);                        // 0x467272
+    HDC copyDc = CreateCompatibleDC(nullptr); // 0x46727A
     SelectObject(copyDc, spare);
-    BitBlt(s.PanelDC(), 0, 0, bbW, bbH,
-           copyDc, 0, 0, SRCCOPY);                                    // 0x4672B5
+    BitBlt(s.PanelDC(), 0, 0, bbW, bbH, copyDc, 0, 0, SRCCOPY); // 0x4672B5
     DeleteDC(copyDc);
 
     // 0x4672C2..0x4672E4: initialize the ruler/curve caches, then bind the
     // ruler HDC to the wave/timeline object while DirectSound is initialized.
-    ClearTimelineAndCurveDCs(app);  // 0x40AE00
+    ClearTimelineAndCurveDCs(app); // 0x40AE00
     s.DirectSoundAvailable() = static_cast<std::uint8_t>(
-        InitTimelineAudio(app, hwnd, s.TimelineDC(),
-                          app->EnglishUI() != 0));
+        InitTimelineAudio(app, hwnd, s.TimelineDC(), app->EnglishUI() != 0));
 
-    SetCurrentDirectoryW(app->ExeDir());                              // 0x4672F1
-    s.state.bmpRes101 = LoadBitmapA(
-        static_cast<HMODULE>(s.HInstance()), MAKEINTRESOURCEA(0x65)); // 0x467303
-    s.state.bmpRes119 = LoadBitmapA(
-        static_cast<HMODULE>(s.HInstance()), MAKEINTRESOURCEA(0x77)); // 0x467311
+    SetCurrentDirectoryW(app->ExeDir()); // 0x4672F1
+    s.state.bmpRes101 =
+        LoadBitmapA(static_cast<HMODULE>(s.HInstance()), MAKEINTRESOURCEA(0x65)); // 0x467303
+    s.state.bmpRes119 =
+        LoadBitmapA(static_cast<HMODULE>(s.HInstance()), MAKEINTRESOURCEA(0x77)); // 0x467311
 
     // 0x467320: DirectShowInit (sub_408EF0, this = the 0x6C AVI-codec
     // subsystem object at app+0xA06C0 which only supplies the failure
@@ -366,36 +359,25 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
     // post-process quads. RefreshMainWindowViewport rewrites the latter after every resize.
     IDirect3DDevice9* device = wrap->device;
     if (device != nullptr) {
-        if (FAILED(device->CreateVertexBuffer(
-                0x6D60, D3DUSAGE_WRITEONLY, 0x144, D3DPOOL_MANAGED,
-                &s.OverlayVertices(),
-                nullptr)))
+        if (FAILED(device->CreateVertexBuffer(0x6D60, D3DUSAGE_WRITEONLY, 0x144, D3DPOOL_MANAGED,
+                                              &s.OverlayVertices(), nullptr)))
             return false;
-        device->CreateVertexBuffer(6 * 28, D3DUSAGE_WRITEONLY, 0x144,
-                                   D3DPOOL_MANAGED,
-                                   &s.LeftViewportVertices(),
-                                   nullptr);
-        device->CreateVertexBuffer(6 * 28, D3DUSAGE_WRITEONLY, 0x144,
-                                   D3DPOOL_MANAGED,
-                                   &s.RightViewportVertices(),
-                                   nullptr);
+        device->CreateVertexBuffer(6 * 28, D3DUSAGE_WRITEONLY, 0x144, D3DPOOL_MANAGED,
+                                   &s.LeftViewportVertices(), nullptr);
+        device->CreateVertexBuffer(6 * 28, D3DUSAGE_WRITEONLY, 0x144, D3DPOOL_MANAGED,
+                                   &s.RightViewportVertices(), nullptr);
         // PMM picture/AVI background refreshes write one 6-vertex textured
         // quad per layer.  These are distinct scene resources (and are
         // released independently at shutdown), not aliases of the viewport
         // post-process quads.
-        device->CreateVertexBuffer(0xA8, D3DUSAGE_WRITEONLY, 0x144,
-                                   D3DPOOL_MANAGED,
+        device->CreateVertexBuffer(0xA8, D3DUSAGE_WRITEONLY, 0x144, D3DPOOL_MANAGED,
                                    &s.AviOverlayVertices(), nullptr);
-        device->CreateVertexBuffer(0xA8, D3DUSAGE_WRITEONLY, 0x144,
-                                   D3DPOOL_MANAGED,
+        device->CreateVertexBuffer(0xA8, D3DUSAGE_WRITEONLY, 0x144, D3DPOOL_MANAGED,
                                    &s.PictureOverlayVertices(), nullptr);
-        device->CreateVertexBuffer(
-            0x445C0, D3DUSAGE_WRITEONLY, 0x144, D3DPOOL_MANAGED,
-            &s.SpriteOverlayVertices(), nullptr);
-        device->CreateVertexBuffer(
-            0x30D40, D3DUSAGE_WRITEONLY, 0x44, D3DPOOL_MANAGED,
-            &wrap->lineVertexBuffer,
-            nullptr);
+        device->CreateVertexBuffer(0x445C0, D3DUSAGE_WRITEONLY, 0x144, D3DPOOL_MANAGED,
+                                   &s.SpriteOverlayVertices(), nullptr);
+        device->CreateVertexBuffer(0x30D40, D3DUSAGE_WRITEONLY, 0x44, D3DPOOL_MANAGED,
+                                   &wrap->lineVertexBuffer, nullptr);
 
         // 0x467509 and 0x46759E: the HUD sprite sheet and accessory helper
         // texture are PNG resources 102 and 114 in the original image.
@@ -410,13 +392,10 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
             static const char kJpHudSheetLoadFailed[] =
                 "splite.tga\x93\xC7\x8D\x9E\x8E\xB8\x94\x73";
             MessageBoxA(hwnd,
-                        app->EnglishUI() != 0
-                            ? "cannot load splite.tga"
-                            : kJpHudSheetLoadFailed,
+                        app->EnglishUI() != 0 ? "cannot load splite.tga" : kJpHudSheetLoadFailed,
                         "InitFont", MB_OK);
         }
-        LoadPngTexture(app, device, 0x72,
-            &s.ProjectedShadowRestoreTexture());
+        LoadPngTexture(app, device, 0x72, &s.ProjectedShadowRestoreTexture());
     }
 
     // ---- 0x467637..0x467674: default-checked menu items -------------------
@@ -434,50 +413,50 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
     // slot at app+0x780 is deliberately left unallocated by the original -
     // it reads the first model-slot pointer there, gated off by its zero
     // active flag in a fresh app).
-    unsigned char* cam = NewZeroed(0xCD140);                    // 840000
-    s.state.cameraKeyTrack = cam;                               // 0x374
-    unsigned char* trkLight = NewZeroed(0x61A80);               // 400000
-    s.state.lightKeyTrack = trkLight;                           // 0x378
-    unsigned char* trkShadow = NewZeroed(0x3A980);              // 240000
-    s.state.selfShadowKeyTrack = trkShadow;                     // 0x37C
-    unsigned char* trkPhys = NewZeroed(0x57E40);                // 360000
-    s.state.gravityKeyTrack = trkPhys;                          // 0x380
-    for (int i = 0; i < 255; ++i) {                             // 0x467705
-        unsigned char* acc = NewZeroed(0x927C0);                // 600000
+    unsigned char* cam = NewZeroed(0xCD140);       // 840000
+    s.state.cameraKeyTrack = cam;                  // 0x374
+    unsigned char* trkLight = NewZeroed(0x61A80);  // 400000
+    s.state.lightKeyTrack = trkLight;              // 0x378
+    unsigned char* trkShadow = NewZeroed(0x3A980); // 240000
+    s.state.selfShadowKeyTrack = trkShadow;        // 0x37C
+    unsigned char* trkPhys = NewZeroed(0x57E40);   // 360000
+    s.state.gravityKeyTrack = trkPhys;             // 0x380
+    for (int i = 0; i < 255; ++i) {                // 0x467705
+        unsigned char* acc = NewZeroed(0x927C0);   // 600000
         s.AccessoryKeys(i) = reinterpret_cast<mdl::AccessoryKey*>(acc);
-        acc[12] = 1;                                            // mode byte
+        acc[12] = 1; // mode byte
         *reinterpret_cast<std::int32_t*>(acc + 16) = -1;
-        *reinterpret_cast<float*>(acc + 52) = 1.0f;             // scale x
-        *reinterpret_cast<float*>(acc + 56) = 1.0f;             // scale y
-        s.ObjectSlot(i) = nullptr;                              // 0x9DD70[i]
+        *reinterpret_cast<float*>(acc + 52) = 1.0f; // scale x
+        *reinterpret_cast<float*>(acc + 56) = 1.0f; // scale y
+        s.ObjectSlot(i) = nullptr;                  // 0x9DD70[i]
     }
     TraceInitialAccessoryTrack(s);
 #ifdef MIKUDANCESTUDIO_DIAG
     if (std::getenv("MIKUDANCESTUDIO_PMM_GUARD_ACCESSORY_TRACKS") != nullptr) {
         SYSTEM_INFO systemInfo{};
         GetSystemInfo(&systemInfo);
-        const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(
-            &s.AccessoryKeyTracks()[174]);
-        const std::uintptr_t page = address & ~(
-            static_cast<std::uintptr_t>(systemInfo.dwPageSize) - 1);
+        const std::uintptr_t address =
+            reinterpret_cast<std::uintptr_t>(&s.AccessoryKeyTracks()[174]);
+        const std::uintptr_t page =
+            address & ~(static_cast<std::uintptr_t>(systemInfo.dwPageSize) - 1);
         DWORD previousProtection = 0;
-        VirtualProtect(reinterpret_cast<void*>(page), systemInfo.dwPageSize,
-                       PAGE_READONLY, &previousProtection);
+        VirtualProtect(reinterpret_cast<void*>(page), systemInfo.dwPageSize, PAGE_READONLY,
+                       &previousProtection);
     }
 #endif
 
     // ---- 0x467749..0x46787B: camera work record + per-key defaults --------
-    *reinterpret_cast<float*>(cam + 12) = -45.0f;   // flt_52A1E8 (angle)
-    *reinterpret_cast<float*>(cam + 20) = 10.0f;    // flt_52A1E4 (distance)
-    cam[64] = 0;                                    // perspective flag
-    *reinterpret_cast<std::int32_t*>(cam + 68) = 30;            // fov 30deg
-    for (int k = 0; k < 840000; k += 84) {                      // 0x467780
-        *reinterpret_cast<std::int32_t*>(cam + k + 76) = -1;    // 0xA0430 src
+    *reinterpret_cast<float*>(cam + 12) = -45.0f;            // flt_52A1E8 (angle)
+    *reinterpret_cast<float*>(cam + 20) = 10.0f;             // flt_52A1E4 (distance)
+    cam[64] = 0;                                             // perspective flag
+    *reinterpret_cast<std::int32_t*>(cam + 68) = 30;         // fov 30deg
+    for (int k = 0; k < 840000; k += 84) {                   // 0x467780
+        *reinterpret_cast<std::int32_t*>(cam + k + 76) = -1; // 0xA0430 src
         for (int j = 0; j < 6; ++j) {
-            cam[k + 40 + j] = 20;                    // x1 column, 6 channels
-            cam[k + 46 + j] = 20;                    // y1 column
+            cam[k + 40 + j] = 20; // x1 column, 6 channels
+            cam[k + 46 + j] = 20; // y1 column
         }
-        std::memset(cam + k + 52, 107, 12);          // x2/y2 columns 0x6B
+        std::memset(cam + k + 52, 107, 12); // x2/y2 columns 0x6B
     }
 
     // ---- 0x46787E..0x467967: light cluster + device light 0 ---------------
@@ -495,25 +474,25 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
     }
     std::memcpy(&light.Direction, direction, sizeof(light.Direction));
     D3DRenderer* w = app->Renderer();
-    IDirect3DDevice9* dev = w->device;                          // +0x1D4E0
+    IDirect3DDevice9* dev = w->device; // +0x1D4E0
     dev->SetLight(0, &light);
-    dev->LightEnable(0, TRUE);                       // vtable 0xD4
+    dev->LightEnable(0, TRUE); // vtable 0xD4
 
     // ---- 0x467984..0x467A2E: track work records ---------------------------
-    *reinterpret_cast<float*>(trkLight + 24) = 0.602f;          // rgb
+    *reinterpret_cast<float*>(trkLight + 24) = 0.602f; // rgb
     *reinterpret_cast<float*>(trkLight + 28) = 0.602f;
     *reinterpret_cast<float*>(trkLight + 32) = 0.602f;
-    *reinterpret_cast<float*>(trkLight + 12) = -0.5f;           // dir xyz
+    *reinterpret_cast<float*>(trkLight + 12) = -0.5f; // dir xyz
     *reinterpret_cast<float*>(trkLight + 16) = -1.0f;
     *reinterpret_cast<float*>(trkLight + 20) = 0.5f;
-    trkShadow[12] = w->postProcessEnabled != 0 ? 1 : 0;  // +0x1D544 caps byte
-    *reinterpret_cast<float*>(trkShadow + 16) = 0.01125f;       // flt_52A1D8
-    *reinterpret_cast<std::int32_t*>(trkPhys + 28) = 10;        // 0x9EDC8 nof
-    *reinterpret_cast<float*>(trkPhys + 12) = 9.8000002f;       // flt_52A1DC
-    *reinterpret_cast<float*>(trkPhys + 20) = -1.0f;            // gravity y
+    trkShadow[12] = w->postProcessEnabled != 0 ? 1 : 0;   // +0x1D544 caps byte
+    *reinterpret_cast<float*>(trkShadow + 16) = 0.01125f; // flt_52A1D8
+    *reinterpret_cast<std::int32_t*>(trkPhys + 28) = 10;  // 0x9EDC8 nof
+    *reinterpret_cast<float*>(trkPhys + 12) = 9.8000002f; // flt_52A1DC
+    *reinterpret_cast<float*>(trkPhys + 20) = -1.0f;      // gravity y
 
-    const int sidebar = app->SidebarWidth();                            // 657096
-    HINSTANCE hInst = static_cast<HINSTANCE>(app->HInstance());          // this+0
+    const int sidebar = app->SidebarWidth();                    // 657096
+    HINSTANCE hInst = static_cast<HINSTANCE>(app->HInstance()); // this+0
 
     // The font object is created before the first UI child in the original.
     // Every child then receives its font/range/subclass messages immediately
@@ -522,23 +501,36 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
     const auto initializeTrackRange = [](HWND control, int id) {
         int lo = 0, hi = 0;
         switch (id) {
-        case panel::kFovSlider: lo = 1; hi = 125; break;
+        case panel::kFovSlider:
+            lo = 1;
+            hi = 125;
+            break;
         case panel::kLightColorSliderR:
         case panel::kLightColorSliderG:
         case panel::kLightColorSliderB:
-            lo = 0; hi = 255; break;
+            lo = 0;
+            hi = 255;
+            break;
         case panel::kLightDirSliderX:
         case panel::kLightDirSliderY:
         case panel::kLightDirSliderZ:
-            lo = -100; hi = 100; break;
+            lo = -100;
+            hi = 100;
+            break;
         case panel::kMorphSlider0:
         case panel::kMorphSlider1:
         case panel::kMorphSlider2:
         case panel::kMorphSlider3:
         case panel::kFrameVolumeSlider:
-            lo = 0; hi = 100; break;
-        case panel::kSelfShadowRangeSlider: lo = 0; hi = 9999; break;
-        default: return;
+            lo = 0;
+            hi = 100;
+            break;
+        case panel::kSelfShadowRangeSlider:
+            lo = 0;
+            hi = 9999;
+            break;
+        default:
+            return;
         }
         SendMessageA(control, TBM_SETRANGEMIN, 0, lo);
         SendMessageA(control, TBM_SETRANGEMAX, 0, hi);
@@ -559,18 +551,16 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
         // exact wire bytes for both variants (wide flag from the original
         // call site), so ANSI captions reach the A entry points verbatim.
         HWND control = c.wide
-            ? CreateWindowExW(c.ex, c.wcls, c.wtext, c.style,
-                              EvalPos(c.x, sidebar), EvalPos(c.y, sidebar),
-                              c.w, c.h, hwnd,
-                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(c.id)),
-                              hInst, nullptr)
-            : CreateWindowExA(c.ex, c.acls, c.atext, c.style,
-                              EvalPos(c.x, sidebar), EvalPos(c.y, sidebar),
-                              c.w, c.h, hwnd,
-                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(c.id)),
-                              hInst, nullptr);
+                           ? CreateWindowExW(c.ex, c.wcls, c.wtext, c.style, EvalPos(c.x, sidebar),
+                                             EvalPos(c.y, sidebar), c.w, c.h, hwnd,
+                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(c.id)),
+                                             hInst, nullptr)
+                           : CreateWindowExA(c.ex, c.acls, c.atext, c.style, EvalPos(c.x, sidebar),
+                                             EvalPos(c.y, sidebar), c.w, c.h, hwnd,
+                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(c.id)),
+                                             hInst, nullptr);
         if (control == nullptr)
-            return false;   // original exits the process from WM_CREATE
+            return false; // original exits the process from WM_CREATE
         ApplyUiFontToControl(app, control, c.id);
         initializeTrackRange(control, c.id);
         InstallControlSubclass(app, control, c.id);
@@ -592,23 +582,16 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
     // ---- 0x46A99F..0x46AC5E: edit/trackbar mirrors of the work records ---
     char text[0x100];
     auto setEdit = [&](int id, const char* t) {
-        SendMessageA(GetDlgItem(hwnd, id), EM_REPLACESEL, 0,
-                     reinterpret_cast<LPARAM>(t));
+        SendMessageA(GetDlgItem(hwnd, id), EM_REPLACESEL, 0, reinterpret_cast<LPARAM>(t));
     };
     auto setTrack = [&](int id, int pos) {
         SendMessageA(GetDlgItem(hwnd, id), TBM_SETPOS, 1, pos);
     };
-    sprintf_s(text, 0x100, "%3d",
-              static_cast<int>(static_cast<double>(s.LightColor()[0]) *
-                               256.0));
+    sprintf_s(text, 0x100, "%3d", static_cast<int>(static_cast<double>(s.LightColor()[0]) * 256.0));
     setEdit(panel::kLightColorEditR, text);
-    sprintf_s(text, 0x100, "%3d",
-              static_cast<int>(static_cast<double>(s.LightColor()[1]) *
-                               256.0));
+    sprintf_s(text, 0x100, "%3d", static_cast<int>(static_cast<double>(s.LightColor()[1]) * 256.0));
     setEdit(panel::kLightColorEditG, text);
-    sprintf_s(text, 0x100, "%3d",
-              static_cast<int>(static_cast<double>(s.LightColor()[2]) *
-                               256.0));
+    sprintf_s(text, 0x100, "%3d", static_cast<int>(static_cast<double>(s.LightColor()[2]) * 256.0));
     setEdit(panel::kLightColorEditB, text);
     sprintf_s(text, 0x100, "%+3.1f", direction[0]);
     setEdit(panel::kLightDirEditX, text);
@@ -616,23 +599,19 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
     setEdit(panel::kLightDirEditY, text);
     sprintf_s(text, 0x100, "%+3.1f", direction[2]);
     setEdit(panel::kLightDirEditZ, text);
-    sprintf_s(text, 0x100, "%3d",
-              static_cast<int>(s.CameraFov()));
+    sprintf_s(text, 0x100, "%3d", static_cast<int>(s.CameraFov()));
     setEdit(panel::kFovEdit, text);
     setTrack(panel::kFovSlider, static_cast<int>(s.CameraFov()));
     setEdit(panel::kCurrentFrameEdit, "0");
-    setTrack(panel::kLightColorSliderR, static_cast<int>(static_cast<double>(s.LightColor()[0]) *
-                                  256.0));
-    setTrack(panel::kLightColorSliderG, static_cast<int>(static_cast<double>(s.LightColor()[1]) *
-                                  256.0));
-    setTrack(panel::kLightColorSliderB, static_cast<int>(static_cast<double>(s.LightColor()[2]) *
-                                  256.0));
-    setTrack(panel::kLightDirSliderX, static_cast<int>(static_cast<double>(direction[0]) *
-                                  100.0));
-    setTrack(panel::kLightDirSliderY, static_cast<int>(static_cast<double>(direction[1]) *
-                                  100.0));
-    setTrack(panel::kLightDirSliderZ, static_cast<int>(static_cast<double>(direction[2]) *
-                                  100.0));
+    setTrack(panel::kLightColorSliderR,
+             static_cast<int>(static_cast<double>(s.LightColor()[0]) * 256.0));
+    setTrack(panel::kLightColorSliderG,
+             static_cast<int>(static_cast<double>(s.LightColor()[1]) * 256.0));
+    setTrack(panel::kLightColorSliderB,
+             static_cast<int>(static_cast<double>(s.LightColor()[2]) * 256.0));
+    setTrack(panel::kLightDirSliderX, static_cast<int>(static_cast<double>(direction[0]) * 100.0));
+    setTrack(panel::kLightDirSliderY, static_cast<int>(static_cast<double>(direction[1]) * 100.0));
+    setTrack(panel::kLightDirSliderZ, static_cast<int>(static_cast<double>(direction[2]) * 100.0));
 
     // ---- 0x46AC60..0x46AF22: initial command availability/state ----------
     // MF_GRAYED is passed by command ID in the original.  These commands
@@ -682,10 +661,8 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
         SendMessageA(GetDlgItem(hwnd, panel::kFrameVolumeCheckbox), BM_SETCHECK, BST_CHECKED, 0);
     }
     static constexpr UINT kInitiallyChecked[] = {
-        MDS_CMD_TOGGLE_PHYSICS_FLOOR,
-        MDS_CMD_TOGGLE_CAPTURE_MIRROR,
-        MDS_CMD_TOGGLE_CAPTURE_SKELETON,
-        MDS_CMD_TOGGLE_MIPMAP,
+        MDS_CMD_TOGGLE_PHYSICS_FLOOR,    MDS_CMD_TOGGLE_CAPTURE_MIRROR,
+        MDS_CMD_TOGGLE_CAPTURE_SKELETON, MDS_CMD_TOGGLE_MIPMAP,
         MDS_CMD_PHYSICS_ON_OFF,
     };
     for (UINT id : kInitiallyChecked)
@@ -703,17 +680,13 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
     SetMenuItemInfoA(GetSubMenu(menu, 7), 2, TRUE, &mii);
     DrawMenuBar(hwnd);
 
-    static const char kJpFullScreen[] =
-        "\x83\x74\x83\x8B\x83\x58\x83\x4E\x83\x8A\x81\x5B"
-        "\x83\x93\x95\x5C\x8E\xA6(Alt+Enter)";
-    static const char kJpNvidia3D[] =
-        "NVIDIA 3D Vision\x95\x5C\x8E\xA6(Alt+Enter)";
+    static const char kJpFullScreen[] = "\x83\x74\x83\x8B\x83\x58\x83\x4E\x83\x8A\x81\x5B"
+                                        "\x83\x93\x95\x5C\x8E\xA6(Alt+Enter)";
+    static const char kJpNvidia3D[] = "NVIDIA 3D Vision\x95\x5C\x8E\xA6(Alt+Enter)";
     const bool stereoCapable = w->stereoEnabled != 0;
     const char* fullScreenText;
     if (app->EnglishUI() != 0)
-        fullScreenText = stereoCapable
-            ? "NDIVIA 3D Vision(Alt+Enter)"
-            : "full screen(Alt+Enter)";
+        fullScreenText = stereoCapable ? "NDIVIA 3D Vision(Alt+Enter)" : "full screen(Alt+Enter)";
     else
         fullScreenText = stereoCapable ? kJpNvidia3D : kJpFullScreen;
     mii = {};
@@ -724,9 +697,7 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
 
     // ---- 0x46AFD4..0x46B06E: self-shadow mode/range mirrors ---------------
     SendMessageA(GetDlgItem(hwnd, panel::kEditMode1Checkbox), BM_SETCHECK, BST_CHECKED, 0);
-    const double rangeValue =
-        10000.0 - static_cast<double>(s.state.selfShadowDistance) *
-                      100000.0;
+    const double rangeValue = 10000.0 - static_cast<double>(s.state.selfShadowDistance) * 100000.0;
     const int rangePos = static_cast<int>(rangeValue + 0.5);
     setTrack(panel::kSelfShadowRangeSlider, rangePos);
     sprintf_s(text, 0x100, "%d", rangePos);
@@ -745,30 +716,25 @@ bool CreateUIControls(MMDApp* app, HWND hwnd) {
 // ---------------------------------------------------------------------------
 void RefillBoneRegisterCombo(MMDApp* app, int slot) {
     HWND combo = GetDlgItem(static_cast<HWND>(app->Hwnd()), panel::kBoneRegisterCombo);
-    SendMessageA(combo, CB_RESETCONTENT, 0, 0);                  // 0x41006D
+    SendMessageA(combo, CB_RESETCONTENT, 0, 0); // 0x41006D
     if (slot >= 0) {
         unsigned char* model = app->ModelSlot(slot);
         if (model != nullptr) {
-            const std::int32_t boneCount =
-                *reinterpret_cast<std::int32_t*>(model + 11652);
-            mikudancestudio::mdl::BoneRecord* bones =
-                mikudancestudio::mdl::Bones(model);
-            for (std::int32_t i = 0; i < boneCount; ++i) {       // 0x4100B1
+            const std::int32_t boneCount = *reinterpret_cast<std::int32_t*>(model + 11652);
+            mikudancestudio::mdl::BoneRecord* bones = mikudancestudio::mdl::Bones(model);
+            for (std::int32_t i = 0; i < boneCount; ++i) { // 0x4100B1
                 mikudancestudio::mdl::BoneRecord* bone = &bones[i];
                 const mdl::BoneType type = bone->type;
-                if (type < mdl::BoneType::InertTip ||
-                    type == mdl::BoneType::FixedAxis) {
-                    const char* name =
-                        app->EnglishUI() != 0
-                            ? reinterpret_cast<const char*>(bone->nameEn)
-                            : reinterpret_cast<const char*>(bone);
-                    SendMessageA(combo, CB_ADDSTRING, 0,
-                                 reinterpret_cast<LPARAM>(name));
+                if (type < mdl::BoneType::InertTip || type == mdl::BoneType::FixedAxis) {
+                    const char* name = app->EnglishUI() != 0
+                                           ? reinterpret_cast<const char*>(bone->nameEn)
+                                           : reinterpret_cast<const char*>(bone);
+                    SendMessageA(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(name));
                 }
             }
         }
     }
-    InvalidateSelectionReadouts(app);                                     // 0x410132
+    InvalidateSelectionReadouts(app); // 0x410132
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

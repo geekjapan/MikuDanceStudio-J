@@ -84,19 +84,18 @@ void DrawControlText(MMDApp* app, HWND hwnd, HDC hdc, RECT rc);
 // lParam viewed as NMCUSTOMDRAW (x86, 4-byte fields, no padding; only the
 // fields this handler touches are declared).
 struct NotifyCd {
-    HWND hwndFrom;          // +0
-    std::uint32_t idFrom;   // +4  NMHDR.idFrom
-    std::int32_t code;      // +8  NMHDR.code
-    std::uint32_t stage;    // +12 dwDrawStage
-    HDC hdc;                // +16
-    RECT rc;                // +20
+    HWND hwndFrom;        // +0
+    std::uint32_t idFrom; // +4  NMHDR.idFrom
+    std::int32_t code;    // +8  NMHDR.code
+    std::uint32_t stage;  // +12 dwDrawStage
+    HDC hdc;              // +16
+    RECT rc;              // +20
 };
 
 LRESULT HandleNotify(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     MMDApp* app = g_Block;
     const NotifyCd* customDraw = reinterpret_cast<const NotifyCd*>(lParam);
-    const HWND mainHwnd =
-        static_cast<HWND>(app->state.hwnd);  // this+0xA06B8 (657080)
+    const HWND mainHwnd = static_cast<HWND>(app->state.hwnd); // this+0xA06B8 (657080)
 
     // Gate: NM_CUSTOMDRAW (-12) on NMHDR.code and CDDS_PREPAINT (1) on
     // dwDrawStage, else default.  (asm 0x4398B9 / 0x4398C7)
@@ -109,9 +108,8 @@ LRESULT HandleNotify(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     const LRESULT mainShadowCheck =
         SendMessageA(GetDlgItem(mainHwnd, panel::kSelfShadowCheckbox), BM_GETCHECK, 0, 0);
     const std::uint32_t shadowMode =
-        static_cast<std::uint32_t>(app->state.selfShadowMode);  // 658736
-    const std::uint32_t editMode =
-        static_cast<std::uint32_t>(app->EditMode());
+        static_cast<std::uint32_t>(app->state.selfShadowMode); // 658736
+    const std::uint32_t editMode = static_cast<std::uint32_t>(app->EditMode());
     const std::uint8_t playbackActive = app->PlaybackActive();
     // Second BM_GETCHECK probe: ctrl 556 on the sub-window this+0xA0D38
     // (658744, read as HWND).  Runs eagerly like the first one.
@@ -120,26 +118,27 @@ LRESULT HandleNotify(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
         SendMessageA(GetDlgItem(subWnd, panel::kSelfShadowCheckbox), BM_GETCHECK, 0, 0);
 
     const bool mainShadowChecked = (mainShadowCheck == BST_CHECKED);
-    const std::uint32_t ctrlId = customDraw->idFrom;  // control id (lParam+4)
+    const std::uint32_t ctrlId = customDraw->idFrom; // control id (lParam+4)
 
     // ---- 14-term useActiveTextColor test (asm 0x439943..0x439A8B) ----------------------
     // Fully unrolled bitwise OR in the original - no short-circuit; every
     // term below must therefore be evaluated.  Mirrored with &/| on bools.
     const bool useActiveTextColor = static_cast<bool>(
-        ((floatingShadowCheck == BST_CHECKED) | mainShadowChecked) & (ctrlId == panel::kSelfShadowCheckbox)                       // ctrl 556
-        | (ctrlId == panel::kPerspectiveCheckbox) & (app->CameraPerspective() == 0)
-        | (ctrlId == panel::kBoneMoveRadio) & (editMode == 4)
-        | (ctrlId == panel::kBoneRotateRadio) & (editMode == 3)
-        | (ctrlId == panel::kBoxSelectRadio) & (editMode == 1)
-        | (ctrlId == panel::kBoneSelectRadio) & (editMode == 0)
-        | (ctrlId == panel::kFrameVolumeCheckbox) & app->FrameVolumeControlEnabled()  // 672800
-        | (ctrlId == panel::kCoordAxisCheckbox) & app->state.groundGridEnabled  // 797
-        | (ctrlId == panel::kEditMode2Checkbox) & (shadowMode == 2)
-        | (ctrlId == panel::kInfoCheckbox) & app->state.fpsOverlayEnabled  // 798
-        | (ctrlId == panel::kEditMode1Checkbox) & (shadowMode == 1)
-        | (ctrlId == panel::kEditOffCheckbox) & (shadowMode == 0)
-        | (ctrlId == panel::kFollowCameraCheckbox) & app->state.followCameraEnabled  // 650648
-        | (ctrlId == panel::kPlayButton) & (playbackActive != 0));                          // 816
+        ((floatingShadowCheck == BST_CHECKED) | mainShadowChecked) &
+            (ctrlId == panel::kSelfShadowCheckbox) // ctrl 556
+        | (ctrlId == panel::kPerspectiveCheckbox) & (app->CameraPerspective() == 0) |
+        (ctrlId == panel::kBoneMoveRadio) & (editMode == 4) |
+        (ctrlId == panel::kBoneRotateRadio) & (editMode == 3) |
+        (ctrlId == panel::kBoxSelectRadio) & (editMode == 1) |
+        (ctrlId == panel::kBoneSelectRadio) & (editMode == 0) |
+        (ctrlId == panel::kFrameVolumeCheckbox) & app->FrameVolumeControlEnabled() // 672800
+        | (ctrlId == panel::kCoordAxisCheckbox) & app->state.groundGridEnabled     // 797
+        | (ctrlId == panel::kEditMode2Checkbox) & (shadowMode == 2) |
+        (ctrlId == panel::kInfoCheckbox) & app->state.fpsOverlayEnabled // 798
+        | (ctrlId == panel::kEditMode1Checkbox) & (shadowMode == 1) |
+        (ctrlId == panel::kEditOffCheckbox) & (shadowMode == 0) |
+        (ctrlId == panel::kFollowCameraCheckbox) & app->state.followCameraEnabled // 650648
+        | (ctrlId == panel::kPlayButton) & (playbackActive != 0));                // 816
 
     if (useActiveTextColor) {
         // Blue path (asm 0x439A8F..0x439AD5): SetTextColor then
@@ -150,7 +149,7 @@ LRESULT HandleNotify(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     }
 
     // ---- Per-control-id chain (asm 0x439AD8..0x439C5F) ------------------
-    if (ctrlId == panel::kPhysicsCheckbox) {  // 0x1F3
+    if (ctrlId == panel::kPhysicsCheckbox) { // 0x1F3
         // Blue iff the 499 checkbox on the main window is checked.
         if (IsDlgButtonChecked(mainHwnd, panel::kPhysicsCheckbox) == BST_CHECKED) {
             SetTextColor(customDraw->hdc, 0xC86400);
@@ -160,8 +159,8 @@ LRESULT HandleNotify(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
         return DefWindowProcA(hwnd, message, wParam, lParam);
     }
 
-    if (ctrlId == panel::kShadowCheckbox) {  // 0x1B8
-        if (app->CameraMode() != 0)  // this+0x2F8 (760)
+    if (ctrlId == panel::kShadowCheckbox) { // 0x1B8
+        if (app->CameraMode() != 0)         // this+0x2F8 (760)
             return DefWindowProcA(hwnd, message, wParam, lParam);
         const std::uint8_t idx = app->SelectedModelSlot();
         const mdl::ModelRecord& model = *mdl::Mdl(app->ModelSlot(idx));
@@ -173,8 +172,8 @@ LRESULT HandleNotify(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
         return CDRF_SKIPDEFAULT;
     }
 
-    if (ctrlId == panel::kAddBlendCheckbox) {  // 0x1B9
-        if (app->CameraMode() != 0)  // this+0x2F8 (760)
+    if (ctrlId == panel::kAddBlendCheckbox) { // 0x1B9
+        if (app->CameraMode() != 0)           // this+0x2F8 (760)
             return DefWindowProcA(hwnd, message, wParam, lParam);
         const std::uint8_t idx = app->SelectedModelSlot();
         const mdl::ModelRecord& model = *mdl::Mdl(app->ModelSlot(idx));
@@ -186,7 +185,7 @@ LRESULT HandleNotify(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
         return CDRF_SKIPDEFAULT;
     }
 
-    if (ctrlId == panel::kAccessoryAddBlendCheckbox) {  // 0x1DD
+    if (ctrlId == panel::kAccessoryAddBlendCheckbox) { // 0x1DD
         const std::uint8_t idx = app->SelectedAccessorySlot();
         const mdl::AccessoryRecord* rec = app->AccessorySlot(idx);
         if (rec == nullptr)
@@ -198,7 +197,7 @@ LRESULT HandleNotify(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
         return CDRF_SKIPDEFAULT;
     }
 
-    if (ctrlId == panel::kCameraDistanceButton) {  // 0x21F
+    if (ctrlId == panel::kCameraDistanceButton) { // 0x21F
         // Black (no 0xC86400 step - jumps straight to the SetTextColor call
         // with color 0 pushed, asm 0x439BE2).
         SetTextColor(customDraw->hdc, 0);
@@ -208,18 +207,21 @@ LRESULT HandleNotify(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
 
     // Default: red/green/blue variants, all requiring playbackActive == 0
     // (this+0x330 / 816).  Each draws with DrawControlText and returns 4.
-    if ((ctrlId == panel::kResetPositionXButton || ctrlId == panel::kResetRotationXButton) && playbackActive == 0) {
-        SetTextColor(customDraw->hdc, 0x96);  // dark red (BGR)
+    if ((ctrlId == panel::kResetPositionXButton || ctrlId == panel::kResetRotationXButton) &&
+        playbackActive == 0) {
+        SetTextColor(customDraw->hdc, 0x96); // dark red (BGR)
         DrawControlText(app, customDraw->hwndFrom, customDraw->hdc, customDraw->rc);
         return CDRF_SKIPDEFAULT;
     }
-    if ((ctrlId == panel::kResetPositionYButton || ctrlId == panel::kResetRotationYButton) && playbackActive == 0) {
-        SetTextColor(customDraw->hdc, 0x6400);  // green (BGR)
+    if ((ctrlId == panel::kResetPositionYButton || ctrlId == panel::kResetRotationYButton) &&
+        playbackActive == 0) {
+        SetTextColor(customDraw->hdc, 0x6400); // green (BGR)
         DrawControlText(app, customDraw->hwndFrom, customDraw->hdc, customDraw->rc);
         return CDRF_SKIPDEFAULT;
     }
-    if ((ctrlId == panel::kResetPositionZButton || ctrlId == panel::kResetRotationZButton) && playbackActive == 0) {
-        SetTextColor(customDraw->hdc, 0x960000);  // blue (BGR)
+    if ((ctrlId == panel::kResetPositionZButton || ctrlId == panel::kResetRotationZButton) &&
+        playbackActive == 0) {
+        SetTextColor(customDraw->hdc, 0x960000); // blue (BGR)
         DrawControlText(app, customDraw->hwndFrom, customDraw->hdc, customDraw->rc);
         return CDRF_SKIPDEFAULT;
     }
@@ -227,4 +229,4 @@ LRESULT HandleNotify(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     return DefWindowProcA(hwnd, message, wParam, lParam);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

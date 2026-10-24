@@ -34,32 +34,31 @@
 namespace mikudancestudio {
 namespace {
 
-template <typename ComPtr>
-void ReleaseSubSlot(ComPtr& slot) {
+template <typename ComPtr> void ReleaseSubSlot(ComPtr& slot) {
     if (slot != nullptr) {
         slot->Release();
         slot = nullptr;
     }
 }
 
-}  // namespace
+} // namespace
 
 void PostDeviceReset(MMDApp* app) {
-    ReleaseSubSlot(app->CaptureTexture());                        // 0x440DC8
-    ReleaseSubSlot(app->AviBackgroundTexture());                  // 0x440DE0
-    ReleaseSubSlot(app->AviBackgroundSurface());                  // 0x440DF8
-    ReleaseSubSlot(app->CaptureRenderTarget());                   // 0x440E10
-    ReleaseSubSlot(app->CaptureSystemSurface());                  // 0x440E28
+    ReleaseSubSlot(app->CaptureTexture());       // 0x440DC8
+    ReleaseSubSlot(app->AviBackgroundTexture()); // 0x440DE0
+    ReleaseSubSlot(app->AviBackgroundSurface()); // 0x440DF8
+    ReleaseSubSlot(app->CaptureRenderTarget());  // 0x440E10
+    ReleaseSubSlot(app->CaptureSystemSurface()); // 0x440E28
 
     D3DRenderer* r = app->Renderer();
     if (r == nullptr)
         return;
-    ReleaseSubSlot(r->captureSurface);                            // 0x440E4A
-    ReleaseSubSlot(r->depthStencilSurface);                       // 0x440E72
-    ReleaseSubSlot(r->backbufferSurface);                         // 0x440E9A
-    ReleaseSubSlot(r->shadowSurface);                             // 0x440EC2
-    ReleaseSubSlot(r->hdrTexture);                                // 0x440EEA
-    ReleaseSubSlot(r->shadowDepthSurface);                        // 0x440F12
+    ReleaseSubSlot(r->captureSurface);      // 0x440E4A
+    ReleaseSubSlot(r->depthStencilSurface); // 0x440E72
+    ReleaseSubSlot(r->backbufferSurface);   // 0x440E9A
+    ReleaseSubSlot(r->shadowSurface);       // 0x440EC2
+    ReleaseSubSlot(r->hdrTexture);          // 0x440EEA
+    ReleaseSubSlot(r->shadowDepthSurface);  // 0x440F12
 
     if (r->effect != nullptr) {
         // ID3DXEffect::OnLostDevice（vtable 槽 69 / +0x228，对应原版
@@ -78,7 +77,7 @@ void PostDeviceReset(MMDApp* app) {
     IDirect3DDevice9* device = r->device;
     if (device == nullptr)
         return;
-    device->Reset(&r->presentParameters);                          // 0x440F57
+    device->Reset(&r->presentParameters); // 0x440F57
 
     // 内置 MMEffect：拦截器 [0x180003d30] 后半——OnResetDevice(0x180058A20)
     // 紧贴真 Reset 返回、InitRenderStates 之前调用。原版合成顺序：
@@ -90,13 +89,12 @@ void PostDeviceReset(MMDApp* app) {
     // SetDrawnWindow 预置覆盖，无需在此重复。
     mme::OnResetDevice(app);
 
-    InitRenderStates(app);                                        // 0x406E90
+    InitRenderStates(app); // 0x406E90
 
     const HWND hwnd = static_cast<HWND>(app->state.hwnd);
-    const UINT menuState = GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_ANTIALIASING, 0);// 0x440F7C
-    device->SetRenderState(                                       // 0x440FAD
-        static_cast<D3DRENDERSTATETYPE>(0xA1),
-        (menuState & 8) != 0 ? 1 : 0);
+    const UINT menuState = GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_ANTIALIASING, 0); // 0x440F7C
+    device->SetRenderState(                                                             // 0x440FAD
+        static_cast<D3DRENDERSTATETYPE>(0xA1), (menuState & 8) != 0 ? 1 : 0);
 
     if (r->effect != nullptr) {
         // ID3DXEffect::OnResetDevice（vtable 槽 70 / +0x230，对应原版
@@ -105,14 +103,14 @@ void PostDeviceReset(MMDApp* app) {
     }
 
     if (app->FullscreenMode() != 0) {
-        RefreshSeparateWindowViewport(app);                                           // 0x4290F0
+        RefreshSeparateWindowViewport(app); // 0x4290F0
     } else {
-        RefreshMainWindowViewport(app);                                           // 0x42C810
+        RefreshMainWindowViewport(app); // 0x42C810
     }
 
-    app->state.recentFile0[0] = 0;                                 // 0x440FE2
+    app->state.recentFile0[0] = 0; // 0x440FE2
     app->state.recentFile1[0] = 0;
     app->state.recentFile2[0] = 0;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

@@ -1524,6 +1524,9 @@ void CmdControl400(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notif
         case 436:
             if (notify == CBN_SELCHANGE && app->FrameRangeDialog() == nullptr) {
                 ApplyModelComboSelection(app);
+                // x86 0x48F2DA / x64 RVA 0x53DE0: return arrow keys to
+                // the editor after changing the selected model/camera.
+                SetFocus(app->MainWindow());
             }
             break;
 

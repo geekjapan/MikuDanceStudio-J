@@ -210,6 +210,15 @@ Matrix* BoneMatrix(mikudancestudio::mdl::BoneRecord* bone) {
     return reinterpret_cast<Matrix*>(bone->matInit);
 }
 
+void BoneWorldPosition(const mdl::BoneRecord& bone, float position[3]) {
+    for (int row = 0; row < 3; ++row) {
+        position[row] = bone.matInit[row] * bone.position[0] +
+                        bone.matInit[4 + row] * bone.position[1] +
+                        bone.matInit[8 + row] * bone.position[2] +
+                        bone.matInit[12 + row];
+    }
+}
+
 void AttachToBone(MMDApp* app, Matrix* world, int boneIndex) {
     auto& api = d3dx::Get();
     unsigned char* model = CurrentModel(app);
@@ -509,37 +518,39 @@ void SetupFrameWorldTransform(MMDApp* app) {
     Matrix attachment;
     Identity(&attachment);
 
-    // Display mode translates the world by the negative camera target.
-    // A selected follow bone replaces that target with its world position.
-    float focusX = 0.0f;
-    float focusY = 0.0f;
-    float focusZ = 0.0f;
+    // x86 0x46B2CF / x64 RVA 0x277F8:
+    // model editing keeps its reference pivot unless Track selects the
+    // camera path (playback, or the camera's own parent model is selected).
+    float focus[3]{};
     const int targetModel = app->CameraParentModel();
     const int targetBone = app->CameraParentBone();
-    mdl::BoneRecord* target = nullptr;
-    if (app->state.optflag[0] != 0 &&
-        targetModel < 0) {
-        focusX = app->CameraPositionX();
-        focusY = app->CameraPositionY();
-        focusZ = app->CameraPositionZ();
-    } else if (targetModel >= 0) {
-        auto* model = app->ModelSlot(targetModel);
-        auto* bones = mikudancestudio::mdl::Bones(model);
-        target = &bones[targetBone];
-        const float x = target->position[0];
-        const float y = target->position[1];
-        const float z = target->position[2];
-        focusX = target->matInit[0] * x + target->matInit[4] * y +
-                 target->matInit[8] * z + target->matInit[12];
-        focusY = target->matInit[1] * x + target->matInit[5] * y +
-                 target->matInit[9] * z + target->matInit[13];
-        focusZ = target->matInit[2] * x + target->matInit[6] * y +
-                 target->matInit[10] * z + target->matInit[14];
-        app->ViewOffsetX() = app->CameraPositionX();
-        app->ViewOffsetY() = app->CameraPositionY();
-        app->CameraDistance() = app->CameraPositionZ();
+    const bool cameraView = app->CameraMode() != 0 ||
+        (app->state.followCameraEnabled != 0 &&
+         (app->PlaybackActive() != 0 ||
+          (targetModel >= 0 && app->SelectedModelSlot() == targetModel)));
+    if (cameraView) {
+        if (targetModel < 0) {
+            focus[0] = app->CameraPositionX();
+            focus[1] = app->CameraPositionY();
+            focus[2] = app->CameraPositionZ();
+        } else {
+            const auto& bone = mdl::Bones(app->ModelSlot(targetModel))[targetBone];
+            BoneWorldPosition(bone, focus);
+            app->ViewOffsetX() = app->CameraPositionX();
+            app->ViewOffsetY() = app->CameraPositionY();
+            app->CameraDistance() = app->CameraPositionZ();
+        }
+    } else if (app->CameraReferenceMode() == CameraAttachmentReference::ModelRoot) {
+        auto* model = app->SelectedModel();
+        const auto& bone = mdl::Bones(model)[mdl::Mdl(model)->centerBone];
+        std::memcpy(focus, &bone.matInit[12], sizeof(focus));
+    } else if (app->CameraReferenceMode() == CameraAttachmentReference::SelectedBone) {
+        auto* model = app->SelectedModel();
+        const int selected = mdl::Mdl(model)->selectedBone;
+        if (selected >= 0)
+            BoneWorldPosition(mdl::Bones(model)[selected], focus);
     }
-    api.translation(&translation, -focusX, -focusY, -focusZ);
+    api.translation(&translation, -focus[0], -focus[1], -focus[2]);
 
     api.rotY(&rotationY, app->CameraYaw());
     api.rotX(&rotationX, app->CameraPitch());
@@ -549,16 +560,19 @@ void SetupFrameWorldTransform(MMDApp* app) {
 
     if (app->state.followCameraEnabled != 0 ||
         app->state.optflag[0] != 0) {
-        if (target != nullptr &&
+        if (targetModel >= 0 &&
             app->CameraAttachmentTransformSuppressed() == 0) {
-            std::memcpy(&attachment, BoneMatrix(target), sizeof(attachment));
-            attachment.m[0][3] = 0.0f;
-            attachment.m[1][3] = 0.0f;
-            attachment.m[2][3] = 0.0f;
-            attachment.m[3][0] = 0.0f;
-            attachment.m[3][1] = 0.0f;
-            attachment.m[3][2] = 0.0f;
-            attachment.m[3][3] = 1.0f;
+            // x86 0x46B91F / x64 RVA 0x27A80: transpose the bone's
+            // rotation only. The saved free-view basis is not overwritten.
+            const auto& bone = mdl::Bones(app->ModelSlot(targetModel))[targetBone];
+            for (int row = 0; row < 3; ++row)
+                for (int col = 0; col < 3; ++col)
+                    attachment.m[row][col] = bone.matInit[col * 4 + row];
+        } else {
+            // x86 0x46BAB1 / x64 RVA 0x27C72 also clears the saved basis,
+            // so subsequently disabling Track cannot reuse a stale parent.
+            std::memcpy(&app->CameraAttachmentBasis(), &attachment,
+                        sizeof(attachment));
         }
     } else {
         std::memcpy(&attachment, &app->CameraAttachmentBasis(),

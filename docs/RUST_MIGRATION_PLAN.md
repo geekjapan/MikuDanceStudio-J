@@ -632,7 +632,7 @@ Both prototypes ran on 2026-10-24 at `main` commit `4708ef8`. Their files are un
 - **No rendering oracle.** Wave 2 needs golden images captured on Windows with MMD and MME. The images stay outside the repository.
 - **No licensed models.** Only `res/assets/axis.x` ships in the repository. RM-1 makes synthetic fixtures. Operator models stay outside the repository, per gate G5.
 - **No `control-cli` or `deslop` skill.** Lanes run shell commands and save logs. The desktop UI in a later wave has no control skill either.
-- **vkd3d-shader defects.** The owner of RM-9 pins version 2.1, carries the `sampler2D` rewrite, and files the E9022 and E5027 cases upstream.
+- **vkd3d-shader defects.** The owner of RM-9 pins version 2.1, carries the `sampler2D` rewrite, and tracks the E9022 and E5027 cases in issues #11 and #12. Filing them upstream is on hold.
 - **The LGPL terms of vkd3d-shader.** The project license is freeware with all rights reserved. Gate G3 decides the terms.
 - **PMM files store key pool indices.** `src/io/pmm_save.cpp:141` writes `previous` and `next`. If the Rust key pool allocates in a different order, saved files differ from MMD files. The owner of RM-5 matches the allocation in `kfa::AllocateFromCursor`, and the editing wave ports `verify-keyframe-pool` as a Rust property test.
 - **Two PMM writers.** `pmm_scene_writer.cpp` on `next` is a separate writer from the MMD port `src/io/pmm_save.cpp` on `main`. Files that MMD or the MMD port write are the parity target. RM-5 checks identity with the input file and round-trips a file from RM-3 lane 1.

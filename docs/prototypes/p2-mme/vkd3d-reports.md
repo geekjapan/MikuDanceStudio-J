@@ -1,9 +1,9 @@
-# Draft vkd3d-shader reports
+# vkd3d-shader defects
 
-Drafts for https://bugs.winehq.org (product vkd3d). Not filed yet. A search
-of Bugzilla and of gitlab.winehq.org/wine/vkd3d on 2026-10-24 found no report
-of either case. Both reproduce with `vkd3d-compiler` 2.1 built by
-`tools/vkd3d/build.sh`.
+These two cases are tracked in issues #11 (E9022) and #12 (E5027). Filing them
+upstream is on hold. A search of bugs.winehq.org (product vkd3d) and of
+gitlab.winehq.org/wine/vkd3d on 2026-10-24 found no report of either case.
+Both reproduce with `vkd3d-compiler` 2.1 built by `tools/vkd3d/build.sh`.
 
 ## E9022 when a ps_3_0 shader reads VPOS after a TEXCOORD input
 

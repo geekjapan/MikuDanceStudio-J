@@ -385,3 +385,12 @@ fn l2_field_counts_and_errors() {
         assert!(msg.contains(why), "{rec}: {msg}");
     }
 }
+
+#[test]
+fn committed_l2_references_parse_to_the_end() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/rust/l2");
+    for name in ["swing600-600.trace", "swing600-nophys-600.trace"] {
+        let open = || std::io::BufReader::new(std::fs::File::open(dir.join(name)).unwrap());
+        assert_eq!(diff(open(), open()).unwrap(), None, "{name}");
+    }
+}

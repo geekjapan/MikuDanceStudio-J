@@ -25,5 +25,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-scene"
+version = "0.1.0"
+dependencies = [
+ "mds-formats",
+ "mds-trace",
+]
+
+[[package]]
 name = "mds-trace"
 version = "0.1.0"

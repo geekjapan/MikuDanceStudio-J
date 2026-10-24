@@ -110,7 +110,7 @@ void MMDApp::InitDefaults() {
     state.projectedShadowBlendEnabled = 1;
     state.coordinateSystem = 0;
     state.englishUI = 1;
-    FrameRangeDialog() = nullptr;
+    EnglishNameDialog() = nullptr;
     s.EnhancedModelDirty() = 0;
     state.frameCopyDialog = nullptr;
     state.rigidScratchArray = nullptr;
@@ -164,7 +164,7 @@ void MMDApp::InitDefaults() {
     s.LeftViewportVertices() = nullptr;
     s.RightViewportVertices() = nullptr;
     state.selfShadowCompositionEnabled = 0;
-    s.PhysicsInterval() = 0.01125f;
+    s.ShadowDistance() = 0.01125f;
     s.FloatingWindow() = nullptr;
     state.selectionBoxDragging = 0;
     state.blackBackgroundEnabled = 0;

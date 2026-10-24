@@ -805,7 +805,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
 
     // ---- 565: physics-interval edit box 0x235 ---------------------------
     case panel::kRegisterSelfShadowButton: {  // 0x48D9A5
-        // atof of the 0x231 text (max 8 chars); physics interval float
+        // atof of the 0x231 text (max 8 chars); self-shadow distance float
         // 0xA0D2C = (10000 - v) / 100000 (dbl_52B9F8 / dbl_52BA00); slider
         // 0x230 pos = (int)v; dirty flag; selection-bitmap clear; then the
         // frame-scroll apply sub_411DF0(app, frame), SelectTimelineTrack(GlobalTimelineTrack::SelfShadow) and
@@ -813,7 +813,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         char buf[0x100];
         GetWindowTextA(GetDlgItem(hwnd, panel::kSelfShadowRangeEdit), buf, 8);
         const float v = static_cast<float>(atof(buf));
-        app->state.physicsInterval =
+        app->state.selfShadowDistance =
             static_cast<float>((10000.0 - (double)v) / 100000.0);
         SendMessageA(GetDlgItem(hwnd, panel::kSelfShadowRangeSlider), TBM_SETPOS, 1,
                      static_cast<LPARAM>(static_cast<std::int32_t>(v)));

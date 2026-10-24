@@ -876,7 +876,7 @@ void WritePmmSelectionSection(int fd, MMDApp* s) {
         const unsigned char b = s->state.selfShadowEnabled != 0;
         W(fd, &b, 1);                                          // 0x41E25E
     }
-    W(fd, &s->state.physicsInterval, 4);        // 0xA0D2C
+    W(fd, &s->state.selfShadowDistance, 4);        // 0xA0D2C
 }
 
 

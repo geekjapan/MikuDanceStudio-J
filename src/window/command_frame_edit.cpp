@@ -3,6 +3,7 @@
 // Original command ledger: docs/reconstruction/source_refactoring.md.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/dialog_resources.h"
 #include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 
@@ -1193,7 +1194,7 @@ static void OpenModelFile(MMDApp* app, HWND hwnd) {
 // blob +0x10/+0x0C); ApplyModelComboSelection.
 // ------------------------------------------------------------------
 static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
-    if (app->FrameRangeDialog() != nullptr) {
+    if (app->EnglishNameDialog() != nullptr) {
         return;  // was: break (switch exit)
     }
     const LRESULT sel =
@@ -1222,7 +1223,7 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
     }
     const std::uint32_t flags =
         app->state.floatingWindow != 0 ? (MB_OKCANCEL | MB_TOPMOST) : MB_OKCANCEL;
-    if (MessageBoxA(hwnd, text, kCaptionDelModelJp, flags) != 1) {
+    if (MessageBoxA(hwnd, text, kCaptionDelModelJp, flags) != IDOK) {
         return;  // was: break (switch exit)
     }
     if (app->state.frameCopyDialog != 0) {
@@ -1358,10 +1359,10 @@ static void EditAccessoryAttachments(MMDApp* app, HWND hwnd) {
     app->state.accessoryEditDialogOpen = 1;
     const std::intptr_t result =
         DialogBoxParamA(static_cast<HINSTANCE>(app->HInstance()),
-                        app->state.englishUI != 0 ? reinterpret_cast<LPCSTR>(0x329)
-                                                  : reinterpret_cast<LPCSTR>(0x328),
+                        app->state.englishUI != 0 ? MAKEINTRESOURCEA(MDS_DLG_OUTSIDE_PARENT_EN)
+                                                  : MAKEINTRESOURCEA(MDS_DLG_OUTSIDE_PARENT_JP),
                         hwnd, &SelectNavDlgProc, 0);
-    if (result == 2) {
+    if (result == IDCANCEL) {
         return;  // was: break (switch exit)
     }
     app->SceneModified() = 1;
@@ -1541,7 +1542,7 @@ void HandleFrameEditControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint1
         // enters ApplyModelComboSelection when the modal/model-load gate at 0xA0B50 is clear.
         // ------------------------------------------------------------------
         case panel::kMainComboModel:
-            if (notify == CBN_SELCHANGE && app->FrameRangeDialog() == nullptr) {
+            if (notify == CBN_SELCHANGE && app->EnglishNameDialog() == nullptr) {
                 ApplyModelComboSelection(app);
                 // x86 0x48F2DA / x64 RVA 0x53DE0: return arrow keys to
                 // the editor after changing the selected model/camera.
@@ -1707,11 +1708,11 @@ void HandleFrameEditControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint1
             app->state.enterKeyState = 1;
             if (app->state.englishUI != 0) {
                 DialogBoxParamA(static_cast<HINSTANCE>(app->HInstance()),
-                                reinterpret_cast<LPCSTR>(0x28C), hwnd,
+                                MAKEINTRESOURCEA(MDS_DLG_FRAME_SCALE_EN), hwnd,
                                 &FrameRangeDlgProc, 0);
             } else {
                 DialogBoxParamA(static_cast<HINSTANCE>(app->HInstance()),
-                                reinterpret_cast<LPCSTR>(0x25E), hwnd,
+                                MAKEINTRESOURCEA(MDS_DLG_FRAME_SCALE_JP), hwnd,
                                 &FrameRangeDlgProc, 0);
             }
             break;

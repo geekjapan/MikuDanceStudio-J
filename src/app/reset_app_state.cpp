@@ -108,10 +108,10 @@ void ResetAppState(MMDApp* app) {
     if (w292 != nullptr)
         DestroyWindow(w292);
     app->state.frameCopyDialog = nullptr;
-    HWND w256 = app->FrameRangeDialog();
+    HWND w256 = app->EnglishNameDialog();
     if (w256 != nullptr)
         DestroyWindow(w256);
-    app->FrameRangeDialog() = nullptr;
+    app->EnglishNameDialog() = nullptr;
     HWND w244 = app->state.edgeThicknessDialog;
     if (w244 != nullptr)
         DestroyWindow(w244);

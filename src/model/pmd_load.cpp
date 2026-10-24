@@ -184,7 +184,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
     _read(fh, model.comment, sizeof(model.comment));
     if (!enData && boxGate &&
         MessageBoxA(hwnd, model.comment,
-                    kTitleModelInfoJp, 0x40001u) != 1) {
+                    kTitleModelInfoJp, 0x40001u) != IDOK) {
         _close(fh);
         return false;
     }
@@ -601,7 +601,7 @@ bool ModelLoadPMD(unsigned char* m, HWND hwnd, const wchar_t* path,
         model.commentEn[255] = 0;
         if (model.physicsFlags != 0 && boxGate &&
             MessageBoxA(hwnd, model.commentEn,
-                        "model infomation", 0x40001u) != 1) {
+                        "model infomation", 0x40001u) != IDOK) {
             _close(fh);
             return false;
         }

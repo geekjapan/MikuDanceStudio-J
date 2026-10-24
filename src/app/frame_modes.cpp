@@ -61,7 +61,7 @@ static void ViewRefreshGate(MMDApp* s) {
         s->state.playbackActive == 0;
     if (frameGate) {
         // 0xA05D1 = viewDirty view-dirty byte (the old literal 658257 was a
-        // decimal slip that landed on the frame-range dialog HWND's byte 1)
+        // decimal slip that landed on the English-name dialog HWND's byte 1)
         s->state.viewDirty = 1;                                   // 0xA05D1
         s->state.windowLayoutReady = 0;
         InvalidateSelectionReadouts(s);                                    // 0x40D070
@@ -503,21 +503,21 @@ void MouseInteractionBegin(MMDApp* app) {
         PollKey(app, app->state.*slot.state, slot.key);
 
     // Letter hotkeys share the dialog re-entry guard ints (see
-    // MMDAppState::dialogFlags): lowercase and uppercase VK pairs fold
+    // MMDAppState::letterKeyState): lowercase and uppercase VK pairs fold
     // onto the same slot.
-    static constexpr struct { int key; int flagIndex; } kLetterKeys[] = {
-        {'x', 0}, {'X', 0}, {'z', 1}, {'Z', 1},
-        {'c', 2}, {'C', 2}, {'v', 3}, {'V', 3},
-        {'d', 4}, {'D', 4}, {'a', 5}, {'A', 5},
-        {'b', 6}, {'B', 6}, {'g', 7}, {'G', 7},
-        {'s', 8}, {'S', 8}, {'i', 9}, {'I', 9},
-        {'h', 10}, {'H', 10}, {'k', 11}, {'K', 11},
-        {'p', 12}, {'P', 12}, {'u', 13}, {'U', 13},
-        {'j', 14}, {'J', 14}, {'f', 15}, {'F', 15},
-        {'r', 16}, {'R', 16}, {'l', 17}, {'L', 17},
+    static constexpr struct { int key; LetterKey letterKey; } kLetterKeys[] = {
+        {'x', LetterKey::X}, {'X', LetterKey::X}, {'z', LetterKey::Z}, {'Z', LetterKey::Z},
+        {'c', LetterKey::C}, {'C', LetterKey::C}, {'v', LetterKey::V}, {'V', LetterKey::V},
+        {'d', LetterKey::D}, {'D', LetterKey::D}, {'a', LetterKey::A}, {'A', LetterKey::A},
+        {'b', LetterKey::B}, {'B', LetterKey::B}, {'g', LetterKey::G}, {'G', LetterKey::G},
+        {'s', LetterKey::S}, {'S', LetterKey::S}, {'i', LetterKey::I}, {'I', LetterKey::I},
+        {'h', LetterKey::H}, {'H', LetterKey::H}, {'k', LetterKey::K}, {'K', LetterKey::K},
+        {'p', LetterKey::P}, {'P', LetterKey::P}, {'u', LetterKey::U}, {'U', LetterKey::U},
+        {'j', LetterKey::J}, {'J', LetterKey::J}, {'f', LetterKey::F}, {'F', LetterKey::F},
+        {'r', LetterKey::R}, {'R', LetterKey::R}, {'l', LetterKey::L}, {'L', LetterKey::L},
     };
     for (const auto& slot : kLetterKeys)
-        PollKey(app, app->state.dialogFlags[slot.flagIndex], slot.key);
+        PollKey(app, app->LetterKeyState(slot.letterKey), slot.key);
 
     for (int i = 0; i < 10; ++i)
         PollKey(app, app->state.numpadKeyState[i], VK_NUMPAD0 + i);

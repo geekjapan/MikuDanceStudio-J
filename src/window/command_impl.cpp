@@ -3,7 +3,7 @@
 // ===========================================================================
 // x64 sub_7FF7CB45F550 的 0xCA..0xD5 案（jumptable 0x7FF7CB45F5DD）一比一还原，
 // 以 x64 为行为基准（x86 仅对意图）。共用骨架：
-//   * 入口写 dialogFlags[i]=1 / enterKeyState=1（x64 dword [app+0x34+4i] /
+//   * 入口写 letterKeyState[i]=1 / enterKeyState=1（x64 dword [app+0x34+4i] /
 //     [app+0xC0]，索引经 221/233/248 三案校准：0x34+4*12=0x64、0x34+4*17=0x78）。
 //   * SetCurrentDirectoryW(exe 目录 x64 app+0xA16EE) -> swprintf_s(空路径)
 //     -> OPENFILENAMEW（filter/标题用原串，nMaxFile=nMaxFileTitle=0x100，
@@ -149,12 +149,12 @@ constexpr DWORD kDialogPathLen = 0x100;
 
 // ---------------------------------------------------------------------------
 // 202 (0xCA, 入口 0x7FF7CB46BCB5): File: 载入 VPD 姿势。
-//   [dialogFlags[12]]=1; enterKeyState=1 -> 相机/配件模式门（x64 app+0x328
+//   [letterKeyState[12]]=1; enterKeyState=1 -> 相机/配件模式门（x64 app+0x328
 //   非 0 直接退出）-> 打开对话框 -> 载入。尾部只置 reseat 待处理
 //   （0x9FCC1，泵内 3 次重置刚性体消费）——不置脏。
 // ---------------------------------------------------------------------------
 void CmdLoadPose(MMDApp* app) {
-    app->state.dialogFlags[12] = 1;             // 0x46BCB5 [app+0x64]
+    app->LetterKeyState(LetterKey::P) = 1;             // 0x46BCB5 [app+0x64]
     app->state.enterKeyState = 1;               // 0x46BCBC [app+0xC0]
     if (app->CameraMode() != 0) {           // 0x46BCC6 门：相机/配件模式不弹框
         return;
@@ -404,14 +404,14 @@ void CmdOpenWave(MMDApp* app) {
 // ---------------------------------------------------------------------------
 // 208 (0xD0, 入口 0x7FF7CB46E05F): File: 另存 PMM 场景（0xCF 快存无名时
 //   也落入本案）。
-//   [dialogFlags[5]]=1; enterKeyState=1 -> 保存对话框（owner=主窗，
+//   [letterKeyState[5]]=1; enterKeyState=1 -> 保存对话框（owner=主窗，
 //   nFilterIndex=1，Flags=6，DirUser/0xA25EC 或 "UserFile"，defExt "pmm"，
 //   EN 标题 "save file"/JP 0x54F188）-> 确定后回写目录、整路径存
 //   EnvFileName、SaveSceneFile。派发层无任何标志写（不清脏——脏标志由
 //   SaveSceneFile 内部处理）。
 // ---------------------------------------------------------------------------
 void CmdSaveScene(MMDApp* app) {
-    app->state.dialogFlags[5] = 1;              // 0x46E05F [app+0x48]
+    app->LetterKeyState(LetterKey::A) = 1;              // 0x46E05F [app+0x48]
     app->state.enterKeyState = 1;               // 0x46E066 [app+0xC0]
     SetCurrentDirectoryW(app->ExeDir());
     wchar_t path[kDialogPathLen];
@@ -493,7 +493,7 @@ void CmdLoadMotion(MMDApp* app) {
 
 // ---------------------------------------------------------------------------
 // 210 (0xD2, 入口 0x7FF7CB46BE50): File: 保存 VMD 动作。
-//   [dialogFlags[17]]=1; enterKeyState=1 -> 有选中帧点门：
+//   [letterKeyState[17]]=1; enterKeyState=1 -> 有选中帧点门：
 //     * 相机/配件模式（optflag[0] 非 0）：扫相机（+0x48/0x54 步长，1 万）、
 //       照明（+0x24/0x28，1 万）、自影（+0x14/0x18，1 万）三张 app 表，
 //       自影命中直接进对话框；
@@ -504,7 +504,7 @@ void CmdLoadMotion(MMDApp* app) {
 //   "vmd"）。SaveVmdFile 之后无任何标志写（不置脏）。
 // ---------------------------------------------------------------------------
 void CmdSaveMotion(MMDApp* app) {
-    app->state.dialogFlags[17] = 1;             // 0x46BE50 [app+0x78]
+    app->LetterKeyState(LetterKey::L) = 1;             // 0x46BE50 [app+0x78]
     app->state.enterKeyState = 1;               // 0x46BE57 [app+0xC0]
     // 选中帧点扫描（0x46BE61..0x46BF64）。
     auto anySelectedByte = [](unsigned char* table, std::size_t off,
@@ -588,13 +588,13 @@ void CmdSaveMotion(MMDApp* app) {
 
 // ---------------------------------------------------------------------------
 // 213 (0xD5, 入口 0x7FF7CB46B1BF): File: 载入 AVI 背景。
-//   [dialogFlags[17]]=1; enterKeyState=1（无模式门）-> 打开对话框（owner=
+//   [letterKeyState[17]]=1; enterKeyState=1（无模式门）-> 打开对话框（owner=
 //   浮动窗否则主窗，DirBg/0xA4CFC 或 "UserFile\BackGround"，defExt "avi"，
 //   EN 标题 "load AVI file"/JP 即 L"AVI"）-> 回写目录、整路径入
 //   aviBackgroundPath（0x9F0B8）-> LoadAviFile -> 置脏。不置 reseat。
 // ---------------------------------------------------------------------------
 void CmdLoadAvi(MMDApp* app) {
-    app->state.dialogFlags[17] = 1;             // 0x46B1BF [app+0x78]
+    app->LetterKeyState(LetterKey::L) = 1;             // 0x46B1BF [app+0x78]
     app->state.enterKeyState = 1;               // 0x46B1C6 [app+0xC0]
     SetCurrentDirectoryW(app->ExeDir());
     wchar_t path[kDialogPathLen];

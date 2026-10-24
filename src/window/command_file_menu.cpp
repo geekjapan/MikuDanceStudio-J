@@ -107,6 +107,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/dialog_resources.h"
 #include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <commctrl.h>
@@ -458,7 +459,7 @@ INT_PTR __stdcall ScreenSizeDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         PrefillEdit(hDlg, panel::kScreenHeightEdit, text);
         SelectAllEdit(hDlg, panel::kScreenWidthEdit);
     } else if (msg == WM_COMMAND) {
-        if (LOWORD(wParam) == 1) {  // IDOK
+        if (LOWORD(wParam) == IDOK) {  // IDOK
             const int w = ReadIntFromEdit(hDlg, panel::kScreenWidthEdit);
             const int h = ReadIntFromEdit(hDlg, panel::kScreenHeightEdit);
             const D3DRenderer* sub = app->Renderer();
@@ -471,10 +472,10 @@ INT_PTR __stdcall ScreenSizeDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             } else {
                 app->RenderWidth() = w;
                 app->RenderHeight() = h;
-                EndDialog(hDlg, 1);
+                EndDialog(hDlg, IDOK);
             }
-        } else if (LOWORD(wParam) == 2) {  // IDCANCEL
-            EndDialog(hDlg, 2);
+        } else if (LOWORD(wParam) == IDCANCEL) {  // IDCANCEL
+            EndDialog(hDlg, IDCANCEL);
         }
     }
     return 0;
@@ -495,13 +496,13 @@ INT_PTR __stdcall ModelOffsetDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         PrefillEdit(hDlg, panel::kBiasZEdit, "0.0");
         SelectAllEdit(hDlg, panel::kBiasXEdit);
     } else if (msg == WM_COMMAND) {
-        if (LOWORD(wParam) == 1) {  // IDOK
+        if (LOWORD(wParam) == IDOK) {  // IDOK
             app->state.modelOffsetX = ReadFloatFromEdit(hDlg, panel::kBiasXEdit);
             app->state.modelOffsetY = ReadFloatFromEdit(hDlg, panel::kBiasYEdit);
             app->state.modelOffsetZ = ReadFloatFromEdit(hDlg, panel::kBiasZEdit);
-            EndDialog(hDlg, 1);
-        } else if (LOWORD(wParam) == 2) {  // IDCANCEL
-            EndDialog(hDlg, 2);
+            EndDialog(hDlg, IDOK);
+        } else if (LOWORD(wParam) == IDCANCEL) {  // IDCANCEL
+            EndDialog(hDlg, IDCANCEL);
         }
     }
     return 0;
@@ -521,11 +522,11 @@ INT_PTR __stdcall FrameShiftDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         PrefillEdit(hDlg, panel::kShiftFramesEdit, "0");
         SelectAllEdit(hDlg, panel::kShiftFramesEdit);
     } else if (msg == WM_COMMAND) {
-        if (LOWORD(wParam) == 1) {  // IDOK
+        if (LOWORD(wParam) == IDOK) {  // IDOK
             app->MorphFrameShift() = ReadIntFromEdit(hDlg, panel::kShiftFramesEdit);
-            EndDialog(hDlg, 1);
-        } else if (LOWORD(wParam) == 2) {  // IDCANCEL
-            EndDialog(hDlg, 2);
+            EndDialog(hDlg, IDOK);
+        } else if (LOWORD(wParam) == IDCANCEL) {  // IDCANCEL
+            EndDialog(hDlg, IDCANCEL);
         }
     }
     return 0;
@@ -541,12 +542,12 @@ INT_PTR __stdcall BlinkRegisterDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     if (msg == WM_INITDIALOG) {
         MakeDialogTopmostIfRequested(app, hDlg);
     } else if (msg == WM_COMMAND) {
-        if (LOWORD(wParam) == 1) {  // IDOK
+        if (LOWORD(wParam) == IDOK) {  // IDOK
             app->BlinkStartFrame() = ReadIntFromEdit(hDlg, panel::kBlinkStartEdit);
             app->BlinkEndFrame() = ReadIntFromEdit(hDlg, panel::kBlinkEndEdit);
-            EndDialog(hDlg, 1);
-        } else if (LOWORD(wParam) == 2) {  // IDCANCEL
-            EndDialog(hDlg, 2);
+            EndDialog(hDlg, IDOK);
+        } else if (LOWORD(wParam) == IDCANCEL) {  // IDCANCEL
+            EndDialog(hDlg, IDCANCEL);
         }
     }
     return 0;
@@ -601,7 +602,7 @@ INT_PTR __stdcall AviOutDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             app->EnglishUI());
         EnableWindow(GetDlgItem(hDlg, panel::kAviSettingsButton), FALSE);
     } else if (msg == WM_COMMAND) {
-        if (LOWORD(wParam) == 1) {  // IDOK
+        if (LOWORD(wParam) == IDOK) {  // IDOK
             app->AviRecordStartFrame() =
                 ReadIntFromEdit(hDlg, panel::kAviStartFrameEdit);
             app->AviRecordEndFrame() =
@@ -615,15 +616,15 @@ INT_PTR __stdcall AviOutDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             app->AviStereoWidthMultiplier() =
                 (IsDlgButtonChecked(hDlg, panel::kAviLeftHalfCheckbox) != 1) + 1;
             if (app->AviRecordEndFrame() >= app->AviRecordStartFrame()) {
-                EndDialog(hDlg, 1);
+                EndDialog(hDlg, IDOK);
             } else if (app->EnglishUI() != 0) {
                 MessageBoxA(hDlg, "End frame is less than start frame!",
                             "WARNING", 0);
             } else {
                 MessageBoxA(hDlg, kMsgEndLessJp, "WARNING", 0);
             }
-        } else if (LOWORD(wParam) == 2) {  // IDCANCEL
-            EndDialog(hDlg, 2);
+        } else if (LOWORD(wParam) == IDCANCEL) {  // IDCANCEL
+            EndDialog(hDlg, IDCANCEL);
         } else if (HIWORD(wParam) == 1 /*CBN_SELCHANGE*/) {
             if (reinterpret_cast<HWND>(lParam) == GetDlgItem(hDlg, panel::kAviCodecCombo)) {
                 const LRESULT sel = SendMessageA(GetDlgItem(hDlg, panel::kAviCodecCombo),
@@ -666,13 +667,13 @@ INT_PTR __stdcall CameraFrameMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         }
         SelectAllEdit(hDlg, panel::kCamMulPosXScaleEdit);
     } else if (msg == WM_COMMAND) {
-        if (LOWORD(wParam) == 1) {  // IDOK
+        if (LOWORD(wParam) == IDOK) {  // IDOK
             ApplyCameraFrameScaleAdd(app, hDlg);  // 0x43DAD0
-            EndDialog(hDlg, 1);
+            EndDialog(hDlg, IDOK);
             return 0;
         }
-        if (LOWORD(wParam) == 2) {  // IDCANCEL
-            EndDialog(hDlg, 2);
+        if (LOWORD(wParam) == IDCANCEL) {  // IDCANCEL
+            EndDialog(hDlg, IDCANCEL);
             return 0;
         }
     }
@@ -710,7 +711,7 @@ INT_PTR __stdcall GroundShadowColorDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
                          static_cast<int>(app->GroundShadowColor()[0] * 100.0)));
         break;
     case WM_COMMAND:
-        if (LOWORD(wParam) == 2) {  // IDCANCEL
+        if (LOWORD(wParam) == IDCANCEL) {  // IDCANCEL
             DestroyWindow(hDlg);
             app->GroundShadowColorDialog() = 0;
             return 1;
@@ -867,12 +868,12 @@ INT_PTR __stdcall AccessorySettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
                              (LPARAM)buf);
             }
             SendMessageA(GetDlgItem(main, panel::kRegisterScopeCombo), CB_SETCURSEL, 0, 0);
-            EndDialog(hDlg, 1);
+            EndDialog(hDlg, IDOK);
             app->DialogOrders().accessoryIndices.reset();
             return 0;
         }
-        case 2:  // IDCANCEL
-            EndDialog(hDlg, 2);
+        case IDCANCEL:  // IDCANCEL
+            EndDialog(hDlg, IDCANCEL);
             app->DialogOrders().accessoryIndices.reset();
             return 0;
         }
@@ -1051,9 +1052,9 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         app->state.enterKeyState = 1;  // 0xBC
         const std::intptr_t result = DialogBoxParamA(
             static_cast<HINSTANCE>(app->HInstance()),  // this+0 hInstance
-            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? 0x28D : 0x25F),
+            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? MDS_DLG_SCREEN_SIZE_EN : MDS_DLG_SCREEN_SIZE_JP),
             MainHwnd(app), ScreenSizeDlgProc, 0);
-        if (result == 2) {  // IDCANCEL
+        if (result == IDCANCEL) {  // IDCANCEL
             break;
         }
         app->SceneModified() = 1;
@@ -1084,13 +1085,13 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         if (app->CameraMode() != 0) {  // 0x2F8
             break;
         }
-        app->state.dialogFlags[6] = 1;
+        app->LetterKeyState(LetterKey::B) = 1;
         app->state.enterKeyState = 1;
         const std::intptr_t result = DialogBoxParamA(
             static_cast<HINSTANCE>(app->HInstance()),
-            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? 0x28B : 0x258),
+            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? MDS_DLG_CENTER_POSITION_BIAS_EN : MDS_DLG_CENTER_POSITION_BIAS_JP),
             MainHwnd(app), ModelOffsetDlgProc, 0);
-        if (result == 2) {  // IDCANCEL
+        if (result == IDCANCEL) {  // IDCANCEL
             break;
         }
         unsigned char* model = ActiveModel(app);
@@ -1135,7 +1136,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // the 0xDD menu checkmark.
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_GROUND_SHADOW: {
-        app->state.dialogFlags[8] = 1;
+        app->LetterKeyState(LetterKey::S) = 1;
         if (app->state.groundShadowEnabled != 0) {
             app->state.groundShadowEnabled = 0;
             CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_GROUND_SHADOW, MF_UNCHECKED);
@@ -1161,7 +1162,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         if (app->CameraMode() != 0) {  // 0x2F8
             break;
         }
-        app->state.dialogFlags[4] = 1;
+        app->LetterKeyState(LetterKey::D) = 1;
         const std::int32_t deleted =
             mdl::MarkRedundantModelKeys(*mdl::Mdl(ActiveModel(app)));
 
@@ -1226,7 +1227,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // 0x260 JP) and 0x464760 / 0x45E820 depending on app+0xA0D61.
     // ------------------------------------------------------------------
     case MDS_CMD_RENDER_VIDEO: {
-        app->state.dialogFlags[3] = 1;
+        app->LetterKeyState(LetterKey::V) = 1;
         app->state.enterKeyState = 1;
         SetCurrentDirectoryW(app->ExeDir());
         wchar_t path[0x100];
@@ -1264,9 +1265,9 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         app->state.enterKeyState = 1;
         const std::intptr_t r = DialogBoxParamA(
             static_cast<HINSTANCE>(app->HInstance()),
-            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? 0x28E : 0x260),
+            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? MDS_DLG_AVI_OUTPUT_EN : MDS_DLG_AVI_OUTPUT_JP),
             MainHwnd(app), AviOutDlgProc, 0);
-        if (r == 2) {  // IDCANCEL
+        if (r == IDCANCEL) {  // IDCANCEL
             break;
         }
         if (app->AviStereoOutput() != 0) {
@@ -1293,9 +1294,9 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         app->state.enterKeyState = 1;
         const std::intptr_t r =
             DialogBoxParamA(static_cast<HINSTANCE>(app->HInstance()),
-                            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? 0x28F : 0x267),
+                            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? MDS_DLG_FRAME_SHIFT_EN : MDS_DLG_FRAME_SHIFT_JP),
                             MainHwnd(app), FrameShiftDlgProc, 0);
-        if (r == 2) {  // IDCANCEL
+        if (r == IDCANCEL) {  // IDCANCEL
             break;
         }
         unsigned char* model = ActiveModel(app);
@@ -1431,9 +1432,9 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
         app->state.enterKeyState = 1;
         const std::intptr_t r = DialogBoxParamA(
             static_cast<HINSTANCE>(app->HInstance()),
-            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? 0x290 : 0x269),
+            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? MDS_DLG_REGISTER_BLINKING_EN : MDS_DLG_REGISTER_BLINKING_JP),
             MainHwnd(app), BlinkRegisterDlgProc, 0);
-        if (r == 2) {  // IDCANCEL
+        if (r == IDCANCEL) {  // IDCANCEL
             break;
         }
         std::int32_t frame = app->BlinkStartFrame();
@@ -1524,7 +1525,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // RegisterBoneKey, undo-available flag).
     // ------------------------------------------------------------------
     case MDS_CMD_PASTE_AT_DIFFERENT_FRAME: {
-        app->state.dialogFlags[15] = 1;
+        app->LetterKeyState(LetterKey::F) = 1;
         const std::uint8_t opt = app->CameraMode();
         const bool isAcc = opt != 0;
         const auto& clipboardCounts = app->ClipboardCounts();
@@ -1545,7 +1546,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
                                                 : kCaptionPasteJp;
         const std::uint32_t flags =
             app->state.floatingWindow != 0 ? (MB_OKCANCEL | MB_TOPMOST) : MB_OKCANCEL;
-        if (MessageBoxA(MainHwnd(app), msg, cap, flags) != 1) {
+        if (MessageBoxA(MainHwnd(app), msg, cap, flags) != IDOK) {
             break;
         }
         if (!isAcc) {
@@ -1858,7 +1859,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // finishing with PostViewRefresh + InvalidateSelectionReadouts.
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_CAMERA_TRACKING: {
-        app->state.dialogFlags[2] = 1;
+        app->LetterKeyState(LetterKey::C) = 1;
         if (app->state.followCameraEnabled == 0) {
             // ---- enable undo ----
             app->state.followCameraEnabled = 1;
@@ -1988,7 +1989,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     }
 
     case MDS_CMD_TOGGLE_BACKGROUND_IMAGE: {
-        app->state.dialogFlags[12] = 1;
+        app->LetterKeyState(LetterKey::P) = 1;
         if (app->state.pictureBackgroundEnabled != 0) {
             app->state.pictureBackgroundEnabled = 0;
             CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_BACKGROUND_IMAGE, MF_UNCHECKED);
@@ -2035,14 +2036,14 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // (JP); the result is discarded.
     // ------------------------------------------------------------------
     case MDS_CMD_MULTIPLY_CAMERA_FRAMES: {
-        app->state.dialogFlags[7] = 1;
+        app->LetterKeyState(LetterKey::G) = 1;
         if (app->CameraMode() == 0) {  // 0x2F8
             break;
         }
         app->state.enterKeyState = 1;
         DialogBoxParamA(
             static_cast<HINSTANCE>(app->HInstance()),
-            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? 0x291 : 0x26F),
+            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? MDS_DLG_CAMERA_FRAME_MULTIPLY_EN : MDS_DLG_CAMERA_FRAME_MULTIPLY_JP),
             MainHwnd(app), CameraFrameMultiplyDlgProc, 0);
         break;
     }
@@ -2059,7 +2060,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // the 255 tables at app+0x384 (0x3C, +0x18).
     // ------------------------------------------------------------------
     case MDS_CMD_SELECT_ALL_CAMERA_FRAMES: {  // 0xED: bone frames
-        app->state.dialogFlags[2] = 1;
+        app->LetterKeyState(LetterKey::C) = 1;
         std::int32_t esi = 0;
         auto* frames = app->CameraKeys();
         for (std::size_t key = 0; key < 10000; ++key) {
@@ -2076,7 +2077,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     }
 
     case MDS_CMD_SELECT_ALL_LIGHT_FRAMES: {  // 0xEE: morph frames
-        app->state.dialogFlags[17] = 1;
+        app->LetterKeyState(LetterKey::L) = 1;
         std::int32_t esi = 0;
         auto* frames = app->LightKeys();
         for (std::size_t key = 0; key < 10000; ++key) {
@@ -2092,7 +2093,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     }
 
     case MDS_CMD_SELECT_ALL_SELF_SHADOW_FRAMES: {  // 0xEF: camera/light frames
-        app->state.dialogFlags[8] = 1;
+        app->LetterKeyState(LetterKey::S) = 1;
         std::int32_t esi = 0;
         auto* frames = app->ShadowKeys();
         for (std::size_t key = 0; key < 10000; ++key) {
@@ -2108,7 +2109,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     }
 
     case MDS_CMD_SELECT_ALL_GRAVITY_FRAMES: {  // 0xF0: accessory frames
-        app->state.dialogFlags[3] = 1;
+        app->LetterKeyState(LetterKey::V) = 1;
         std::int32_t esi = 0;
         auto* frames = app->GravityKeys();
         for (std::size_t key = 0; key < 10000; ++key) {
@@ -2124,7 +2125,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     }
 
     case MDS_CMD_SELECT_ALL_ACCESSORY_FRAMES: {  // 0xF1: all 255 accessory frame tables
-        app->state.dialogFlags[5] = 1;
+        app->LetterKeyState(LetterKey::A) = 1;
         for (int tbl = 0; tbl < 0xFF; ++tbl) {
             unsigned char* frames = reinterpret_cast<unsigned char*>(
                 app->AccessoryKeys(tbl));
@@ -2150,7 +2151,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // (8), the other three are cleared (0).
     // ------------------------------------------------------------------
     case MDS_CMD_SCREEN_CAPTURE_OFF: {  // 0xF3
-        app->state.dialogFlags[3] = 1;
+        app->LetterKeyState(LetterKey::V) = 1;
         app->CaptureMode() = ScreenCaptureMode::Disabled;
         CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_OFF, MF_CHECKED);
         CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_MODE_1, MF_UNCHECKED);
@@ -2178,7 +2179,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     }
 
     case MDS_CMD_SCREEN_CAPTURE_MODE_3: {  // 0xF6
-        app->state.dialogFlags[6] = 1;
+        app->LetterKeyState(LetterKey::B) = 1;
         app->CaptureMode() = ScreenCaptureMode::BackgroundRefresh;
         CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_OFF, MF_UNCHECKED);
         CheckMenuItem(GetMenu(MainHwnd(app)), MDS_CMD_SCREEN_CAPTURE_MODE_1, MF_UNCHECKED);
@@ -2194,13 +2195,13 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // the (no-op) default handler.
     // ------------------------------------------------------------------
     case MDS_CMD_GROUND_SHADOW_COLOR: {
-        app->state.dialogFlags[0] = 1;
+        app->LetterKeyState(LetterKey::X) = 1;
         if (app->GroundShadowColorDialog() != 0) {
             break;  // def_47E903 (no-op for this id)
         }
         HWND dlg = CreateDialogParamA(
             static_cast<HINSTANCE>(app->HInstance()),
-            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? 0x292 : 0x270),
+            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? MDS_DLG_GROUND_SHADOW_COLOR_EN : MDS_DLG_GROUND_SHADOW_COLOR_JP),
             MainHwnd(app), GroundShadowColorDlgProc, 0);
         app->GroundShadowColorDialog() = dlg;
         ShowWindow(dlg, SW_SHOW);
@@ -2213,13 +2214,13 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
     // 0x273 JP); a cancel result falls through to the no-op default.
     // ------------------------------------------------------------------
     case MDS_CMD_ACCESSORY_SETTINGS: {
-        app->state.dialogFlags[8] = 1;
+        app->LetterKeyState(LetterKey::S) = 1;
         app->state.enterKeyState = 1;
         const std::intptr_t r = DialogBoxParamA(
             static_cast<HINSTANCE>(app->HInstance()),
-            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? 0x293 : 0x273),
+            MAKEINTRESOURCEA(app->EnglishUI() != 0 ? MDS_DLG_ACCESSORY_ORDER_EN : MDS_DLG_ACCESSORY_ORDER_JP),
             MainHwnd(app), AccessorySettingsDlgProc, 0);
-        if (r == 2) {  // IDCANCEL
+        if (r == IDCANCEL) {  // IDCANCEL
             break;
         }
         break;  // def_47E903 (no-op for this id)

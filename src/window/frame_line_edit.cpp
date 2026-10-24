@@ -182,18 +182,18 @@ void ClearCameraKeyRecord(mdl::CameraKey& key) {
 
 // ---- VA 0x00439E40: insert frame line (bone / camera) ----
 void InsertBoneCameraFrameLine(MMDApp* app) {
-    const std::uint32_t cur = static_cast<std::uint32_t>(app->CurrentFrame());
+    const std::uint32_t currentFrame = static_cast<std::uint32_t>(app->CurrentFrame());
 
     if (app->CameraMode() == 0) {
-        // ---- bone mode: shift every non-head key at frame >= cur up one
+        // ---- bone mode: shift every non-head key at frame >= currentFrame up one
         unsigned char* model = ActiveModel(app);
         const std::int32_t boneCount = mdl::Mdl(model)->boneCount;
         mdl::BoneKey* keys = mdl::BoneKeys(model);
 
         int affected = 0;  // stack0xfffffff8 (0x439E75..0x439F9D)
         for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i) {
-            const std::uint32_t f = keys[i].frame;
-            if (f != 0 && i >= boneCount && f >= cur) ++affected;
+            const std::uint32_t keyFrame = keys[i].frame;
+            if (keyFrame != 0 && i >= boneCount && keyFrame >= currentFrame) ++affected;
         }
         if (affected == 0) return;
 
@@ -202,7 +202,7 @@ void InsertBoneCameraFrameLine(MMDApp* app) {
         EnableWindow(GetDlgItem(app->state.hwnd, panel::kRedoButton),
                      FALSE);
 
-        BeginUndoEdit(model, cur);                     // 0x43A02F..
+        BeginUndoEdit(model, currentFrame);                     // 0x43A02F..
         SnapshotPose(model);                           // 0x43A275..
         // undo 键缓冲按受影响键数分配：x64 0x7FF7CB4A9F98
         // operator new(saturated_mul(v9, 0x40))，v9 即上面数出的 affected。
@@ -213,18 +213,18 @@ void InsertBoneCameraFrameLine(MMDApp* app) {
 
         for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i) {             // 0x43A56D..
             mdl::BoneKey& key = keys[i];
-            const std::uint32_t f = key.frame;
-            if (f != 0 && i >= boneCount && f >= cur) {
+            const std::uint32_t keyFrame = key.frame;
+            if (keyFrame != 0 && i >= boneCount && keyFrame >= currentFrame) {
                 AppendBoneKeyToUndo(model, i);                   // snapshot record
-                key.frame = f + 1;
+                key.frame = keyFrame + 1;
                 if (static_cast<std::int32_t>(mdl::Mdl(model)->maxFrame) <
-                    static_cast<std::int32_t>(f) + 1)
+                    static_cast<std::int32_t>(keyFrame) + 1)
                     mdl::Mdl(model)->maxFrame =
-                        static_cast<std::int32_t>(f) + 1;
+                        static_cast<std::int32_t>(keyFrame) + 1;
             }
         }
 
-        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(cur),
+        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(currentFrame),
                   app->PlaybackPhysicsMode());
         PanelPaint(app);
         SelectionReeval(app);
@@ -232,16 +232,16 @@ void InsertBoneCameraFrameLine(MMDApp* app) {
         return;
     }
 
-    // ---- camera mode: shift every camera key at frame >= cur up one
+    // ---- camera mode: shift every camera key at frame >= currentFrame up one
     // (0x439FBB..0x439FAA; only the 0x374 table moves)
     auto* keys = app->CameraKeys();
-    for (int r = 0; r < 10000; ++r) {
+    for (int r = 0; r < static_cast<int>(mdl::kTimelineKeyCapacity); ++r) {
         mdl::CameraKey& key = keys[r];
-        const std::uint32_t f = key.frame;
-        if (f != 0 && f >= cur) {
-            key.frame = f + 1;
-            if (app->LastRegisteredFrame() < static_cast<std::int32_t>(f + 1))
-                app->LastRegisteredFrame() = static_cast<std::int32_t>(f + 1);
+        const std::uint32_t keyFrame = key.frame;
+        if (keyFrame != 0 && keyFrame >= currentFrame) {
+            key.frame = keyFrame + 1;
+            if (app->LastRegisteredFrame() < static_cast<std::int32_t>(keyFrame + 1))
+                app->LastRegisteredFrame() = static_cast<std::int32_t>(keyFrame + 1);
         }
     }
     ReloadModels(app);   // VA 0x0042E640 (camera key seek/evaluate)
@@ -251,7 +251,7 @@ void InsertBoneCameraFrameLine(MMDApp* app) {
 
 // ---- VA 0x0043A650: delete frame line (bone / camera) ----
 void DeleteBoneCameraFrameLine(MMDApp* app) {
-    const std::uint32_t cur = static_cast<std::uint32_t>(app->CurrentFrame());
+    const std::uint32_t currentFrame = static_cast<std::uint32_t>(app->CurrentFrame());
 
     if (app->CameraMode() == 0) {
         // ---- bone mode
@@ -264,10 +264,10 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
         // above it one.
         int affected = 0;  // uStack_c
         for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i) {
-            const std::uint32_t f = keys[i].frame;
-            if (i >= boneCount && f != 0) {
-                if (f == cur) affected += 3;
-                else if (cur < f) affected += 1;
+            const std::uint32_t keyFrame = keys[i].frame;
+            if (i >= boneCount && keyFrame != 0) {
+                if (keyFrame == currentFrame) affected += 3;
+                else if (currentFrame < keyFrame) affected += 1;
             }
         }
         if (affected == 0) return;
@@ -277,7 +277,7 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
         EnableWindow(GetDlgItem(app->state.hwnd, panel::kRedoButton),
                      FALSE);
 
-        BeginUndoEdit(model, cur);                     // 0x43AB9C..
+        BeginUndoEdit(model, currentFrame);                     // 0x43AB9C..
         SnapshotPose(model);                           // 0x43ACF2..
         AllocUndoKeys(model,                           // 0x43AF60..
                       static_cast<std::size_t>(affected) * 0x40);
@@ -292,9 +292,9 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
 
         for (int i = 0; i < static_cast<int>(mdl::kBoneKeyCapacity); ++i) {             // 0x43B018..
             mdl::BoneKey& key = keys[i];
-            const std::uint32_t f = key.frame;
+            const std::uint32_t keyFrame = key.frame;
 
-            if (f != 0 && i >= boneCount && f == cur) {
+            if (keyFrame != 0 && i >= boneCount && keyFrame == currentFrame) {
                 // Key exactly at the current frame: unlink and clear.
                 const std::int32_t prev = static_cast<std::int32_t>(key.previous);
                 const std::int32_t next = static_cast<std::int32_t>(key.next);
@@ -319,12 +319,12 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
                 continue;
             }
 
-            if (f != 0 && i >= boneCount && cur < f) {
+            if (keyFrame != 0 && i >= boneCount && currentFrame < keyFrame) {
                 // Key above the current frame: shift down by one.
                 AppendBoneKeyToUndo(model, i);                   // 0x43B28B
-                const std::uint32_t nf = f - 1;
-                key.frame = nf;
-                if (nf == 0) {
+                const std::uint32_t shiftedFrame = keyFrame - 1;
+                key.frame = shiftedFrame;
+                if (shiftedFrame == 0) {
                     // Landed on frame 0: merge the payload into the
                     // predecessor record slot (0x43B2B0..0x43B630).
                     const std::int32_t prev =
@@ -352,7 +352,7 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
             }
         }
 
-        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(cur),
+        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(currentFrame),
                   app->PlaybackPhysicsMode());
         PanelPaint(app);
         SelectionReeval(app);
@@ -362,11 +362,11 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
 
     // ---- camera mode (0x43A905..0x43A9B6)
     auto* keys = app->CameraKeys();
-    for (int r = 0; r < 10000; ++r) {
+    for (int r = 0; r < static_cast<int>(mdl::kTimelineKeyCapacity); ++r) {
         mdl::CameraKey& key = keys[r];
-        const std::uint32_t f = key.frame;
+        const std::uint32_t keyFrame = key.frame;
 
-        if (f != 0 && f == cur) {
+        if (keyFrame != 0 && keyFrame == currentFrame) {
             // Unlink and clear (no undo for the camera table).
             const std::int32_t prev = key.previous;
             const std::int32_t next = key.next;
@@ -376,11 +376,11 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
             continue;
         }
 
-        const std::uint32_t f2 = key.frame;
-        if (f2 != 0 && cur < f2) {
-            const std::uint32_t nf = f2 - 1;
-            key.frame = nf;
-            if (nf == 0) {
+        const std::uint32_t remainingFrame = key.frame;
+        if (remainingFrame != 0 && currentFrame < remainingFrame) {
+            const std::uint32_t shiftedFrame = remainingFrame - 1;
+            key.frame = shiftedFrame;
+            if (shiftedFrame == 0) {
                 // Merge into the predecessor slot; the emptied record is
                 // left as-is apart from its frame number.
                 const std::int32_t prev = key.previous;
@@ -400,19 +400,19 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
 
 // ---- VA 0x0043B720: insert frame line (facial / light) ---
 void InsertFacialLightFrameLine(MMDApp* app) {
-    const std::uint32_t cur = static_cast<std::uint32_t>(app->CurrentFrame());
+    const std::uint32_t currentFrame = static_cast<std::uint32_t>(app->CurrentFrame());
 
     if (app->CameraMode() != 0) {
-        // ---- light mode: shift every light key at frame >= cur up one
+        // ---- light mode: shift every light key at frame >= currentFrame up one
         // (0x43B72D..0x43B878; only the 0x378 table moves; no undo)
         auto* keys = app->LightKeys();
-        for (int r = 0; r < 10000; ++r) {
+        for (int r = 0; r < static_cast<int>(mdl::kTimelineKeyCapacity); ++r) {
             mdl::LightKey& key = keys[r];
-            const std::uint32_t f = key.frame;
-            if (f != 0 && f >= cur) {
-                key.frame = f + 1;
-                if (app->LastRegisteredFrame() < static_cast<std::int32_t>(f + 1))
-                    app->LastRegisteredFrame() = static_cast<std::int32_t>(f + 1);
+            const std::uint32_t keyFrame = key.frame;
+            if (keyFrame != 0 && keyFrame >= currentFrame) {
+                key.frame = keyFrame + 1;
+                if (app->LastRegisteredFrame() < static_cast<std::int32_t>(keyFrame + 1))
+                    app->LastRegisteredFrame() = static_cast<std::int32_t>(keyFrame + 1);
             }
         }
         RefreshLightPanel(app);
@@ -425,18 +425,18 @@ void InsertFacialLightFrameLine(MMDApp* app) {
     unsigned char* model = ActiveModel(app);
     const std::int32_t morphCount = mdl::Mdl(model)->morphCount;
     mdl::MorphKey* keys = mdl::MorphKeys(model);
-    for (int i = 0; i < 20000; ++i) {
+    for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i) {
         mdl::MorphKey& key = keys[i];
-        const std::uint32_t f = key.frame;
-        if (f != 0 && i >= morphCount && f >= cur) {
-            key.frame = f + 1;
+        const std::uint32_t keyFrame = key.frame;
+        if (keyFrame != 0 && i >= morphCount && keyFrame >= currentFrame) {
+            key.frame = keyFrame + 1;
             if (static_cast<std::int32_t>(mdl::Mdl(model)->maxFrame) <
-                static_cast<std::int32_t>(f) + 1)
+                static_cast<std::int32_t>(keyFrame) + 1)
                 mdl::Mdl(model)->maxFrame =
-                    static_cast<std::int32_t>(f) + 1;
+                    static_cast<std::int32_t>(keyFrame) + 1;
         }
     }
-    SeekModelFrame(*mdl::Mdl(model), static_cast<int>(cur),
+    SeekModelFrame(*mdl::Mdl(model), static_cast<int>(currentFrame),
               app->PlaybackPhysicsMode());
     PanelPaint(app);
     SelectionReeval(app);
@@ -445,18 +445,18 @@ void InsertFacialLightFrameLine(MMDApp* app) {
 
 // ---- VA 0x0043BB30: delete frame line (facial / light) ---
 void DeleteFacialLightFrameLine(MMDApp* app) {
-    const std::uint32_t cur = static_cast<std::uint32_t>(app->CurrentFrame());
+    const std::uint32_t currentFrame = static_cast<std::uint32_t>(app->CurrentFrame());
 
     if (app->CameraMode() == 0) {
         // ---- facial mode: morph keys, 0x14 stride x 20000
         unsigned char* model = ActiveModel(app);
         const std::int32_t morphCount = mdl::Mdl(model)->morphCount;
         mdl::MorphKey* keys = mdl::MorphKeys(model);
-        for (int i = 0; i < 20000; ++i) {
+        for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i) {
             mdl::MorphKey& key = keys[i];
-            const std::uint32_t f = key.frame;
+            const std::uint32_t keyFrame = key.frame;
 
-            if (f != 0 && i >= morphCount && f == cur) {
+            if (keyFrame != 0 && i >= morphCount && keyFrame == currentFrame) {
                 // Unlink and clear (0x43BB44..0x43BBB6); no undo.
                 const std::int32_t prev = key.previous;
                 const std::int32_t next = key.next;
@@ -470,10 +470,10 @@ void DeleteFacialLightFrameLine(MMDApp* app) {
                 continue;
             }
 
-            if (f != 0 && i >= morphCount && cur < f) {
-                const std::uint32_t nf = f - 1;
-                key.frame = nf;
-                if (nf == 0) {
+            if (keyFrame != 0 && i >= morphCount && currentFrame < keyFrame) {
+                const std::uint32_t shiftedFrame = keyFrame - 1;
+                key.frame = shiftedFrame;
+                if (shiftedFrame == 0) {
                     // Merge the payload (+0xC value, +0x10 used flag)
                     // into the predecessor slot (0x43BC0E..0x43BC5F);
                     // the emptied record keeps only frame 0.
@@ -490,7 +490,7 @@ void DeleteFacialLightFrameLine(MMDApp* app) {
                 }
             }
         }
-        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(cur),
+        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(currentFrame),
                   app->PlaybackPhysicsMode());
         PanelPaint(app);
         SelectionReeval(app);
@@ -500,11 +500,11 @@ void DeleteFacialLightFrameLine(MMDApp* app) {
 
     // ---- light mode: 40B records x 10000 (0x43BC64..0x43BC88)
     auto* keys = app->LightKeys();
-    for (int r = 0; r < 10000; ++r) {
+    for (int r = 0; r < static_cast<int>(mdl::kTimelineKeyCapacity); ++r) {
         mdl::LightKey& key = keys[r];
-        const std::uint32_t f = key.frame;
+        const std::uint32_t keyFrame = key.frame;
 
-        if (f != 0 && f == cur) {
+        if (keyFrame != 0 && keyFrame == currentFrame) {
             const std::int32_t prev = key.previous;
             const std::int32_t next = key.next;
             keys[prev].next = next;
@@ -517,11 +517,11 @@ void DeleteFacialLightFrameLine(MMDApp* app) {
             continue;
         }
 
-        const std::uint32_t f2 = key.frame;
-        if (f2 != 0 && cur < f2) {
-            const std::uint32_t nf = f2 - 1;
-            key.frame = nf;
-            if (nf == 0) {
+        const std::uint32_t remainingFrame = key.frame;
+        if (remainingFrame != 0 && currentFrame < remainingFrame) {
+            const std::uint32_t shiftedFrame = remainingFrame - 1;
+            key.frame = shiftedFrame;
+            if (shiftedFrame == 0) {
                 const std::int32_t prev = key.previous;
                 mdl::LightKey& dst = keys[prev];
                 dst.next = key.next;
@@ -547,10 +547,10 @@ void DeleteFacialLightFrameLine(MMDApp* app) {
 // record 0's flag after the loop.  x64 twins 0x7FF7CB465460 / 0x7FF7CB465540
 // / 0x7FF7CB4654D0 use BYTE stores on the flag only (the x86 build's dword
 // store also swept the physics byte and padding - not reproduced).
-void SelectFrameGroup(MMDApp* app, int group) {
+void SelectFrameGroup(MMDApp* app, FrameGroup group) {
     unsigned char* model = ActiveModel(app);
 
-    if (group == 0) {
+    if (group == FrameGroup::Bone) {
         // 0xD9: all bone frames (0x26E0 table, 0x3C x kBoneKeyCapacity).
         // x64 dispatcher 0x7FF7CB465460..0x7FF7CB4654BA touches ONLY the
         // +0x38 flag byte (clear, then conditional byte store of 1); the
@@ -565,12 +565,12 @@ void SelectFrameGroup(MMDApp* app, int group) {
                 key.allocated = 1;
             }
         }
-    } else if (group == 1) {
+    } else if (group == FrameGroup::Display) {
         // 0xDA: all disp/IK/OP frames (0x26E8 table, 0x28 x 1000 on x64).
         // 0x7FF7CB465540..0x7FF7CB4655A2: byte stores at +0x18 only, plus
         // the forced record-0 flag after the loop.
         mdl::DisplayKey* frames = mdl::DisplayKeys(model);
-        for (int i = 0; i < 1000; ++i) {
+        for (int i = 0; i < static_cast<int>(mdl::kDisplayKeyCapacity); ++i) {
             frames[i].allocated = 0;
             if (frames[i].frame != 0) {
                 frames[i].allocated = 1;
@@ -582,7 +582,7 @@ void SelectFrameGroup(MMDApp* app, int group) {
         // 0x7FF7CB4654D0..0x7FF7CB46552E: byte stores at +0x10 only.
         mdl::MorphKey* frames = mdl::MorphKeys(model);
         const std::int32_t morphCount = mdl::Mdl(model)->morphCount;
-        for (int i = 0; i < 20000; ++i) {
+        for (int i = 0; i < static_cast<int>(mdl::kMorphKeyCapacity); ++i) {
             frames[i].allocated = 0;
             if (i < morphCount || frames[i].frame != 0) {
                 frames[i].allocated = 1;

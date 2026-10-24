@@ -321,11 +321,11 @@ INT_PTR CALLBACK DialogFuncStub(HWND hDlg, UINT msg, WPARAM wp, LPARAM lp) {
     }
     if (msg == WM_COMMAND) {                                       // 0x40FF98
         switch (LOWORD(wp)) {
-        case 0x2AF: EndDialog(hDlg, 1); return 0;                  // 0x40FFA2
+        case 0x2AF: EndDialog(hDlg, IDOK); return 0;                  // 0x40FFA2
         case 0x2B0: EndDialog(hDlg, 3); return 0;                  // 0x40FFBA
         case 0x2B1: EndDialog(hDlg, 4); return 0;                  // 0x40FFD2
         case 0x2B2: EndDialog(hDlg, 5); return 0;                  // 0x40FFEA
-        case 2:     EndDialog(hDlg, 2); return 0;                  // 0x410002
+        case IDCANCEL: EndDialog(hDlg, IDCANCEL); return 0;                  // 0x410002
         default: break;
         }
     }

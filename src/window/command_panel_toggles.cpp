@@ -241,6 +241,208 @@ void CommitEditControl(MMDApp* app, HWND hwnd);            // VA 0x00463640
 void DeleteAccessory(mdl::AccessoryRecord* accessory, int flag);  // VA 0x0040A6F0
 void IdentityCtor(void* obj);                         // VA 0x004C46F0 (ctor)
 
+// Delete the selected accessory, then rebuild its track and panel state.
+static void DeleteSelectedAccessory(MMDApp* app, HWND hwnd) {
+    const LRESULT sel =
+        SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_GETCURSEL, 0, 0);
+    std::int32_t found = -1;
+    for (int i = 0; i < 0xFF; ++i) {
+        mdl::AccessoryRecord* acc = app->AccessorySlot(i);
+        if (acc != nullptr &&
+            static_cast<int>(acc->order) == static_cast<int>(sel)) {
+            found = i;
+            break;
+        }
+    }
+    if (found < 0) {
+        return;
+    }
+    app->state.enterKeyState = 1;  // 0xBC
+    mdl::AccessoryRecord* acc = app->AccessorySlot(found);
+
+    char text[0x100];
+    if (app->state.englishUI != 0) {
+        sprintf_s(text, 0x100,
+                  "Trying to delete Accessory(%s).\n"
+                  "All flame data about this accessory will be deleted "
+                  "too.\n(This operation cannot undo!!)\n\nAre you OK?",
+                  acc->name);
+    } else {
+        sprintf_s(text, 0x100, kMsgDelAccessoryJp,
+                  acc->name);
+    }
+    const std::uint32_t flags =
+        app->state.floatingWindow != 0 ? (MB_OKCANCEL | MB_TOPMOST) : MB_OKCANCEL;
+    const char* caption = app->state.englishUI != 0
+                              ? "delete accessory"
+                              : kCaptionDelAccessoryJp;
+    if (MessageBoxA(hwnd, text, caption, flags) != IDOK) {
+        return;
+    }
+
+    const std::int32_t oldSel = acc->order;
+    // dispose the accessory blob
+    if (acc != nullptr) {
+        DeleteAccessory(acc, 1);
+    }
+    app->AccessorySlot(found) = nullptr;
+    // dispose the previous frame blob of this slot
+    if (app->AccessoryKeys(found) != nullptr) {
+        ::operator delete(app->AccessoryKeys(found));
+        app->AccessoryKeys(found) = nullptr;
+    }
+    // fresh 0x927C0 frame blob with an identity frame seeded
+    app->SceneModified() = 1;
+    unsigned char* blob = static_cast<unsigned char*>(::operator new(0x927C0));
+    app->AccessoryKeys(found) = reinterpret_cast<mdl::AccessoryKey*>(blob);
+    memset(blob, 0, 0x927C0);
+    blob[0x0C] = 1;
+    *reinterpret_cast<std::int32_t*>(blob + 0x10) = -1;
+    *reinterpret_cast<float*>(blob + 0x34) = 1.0f;
+    *reinterpret_cast<float*>(blob + 0x38) = 1.0f;
+    // combo rebuild: 0x1D7 select = oldSel, 0x1B2 index shifted
+    SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_DELETESTRING,
+                 static_cast<WPARAM>(sel), 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kRegisterScopeCombo), CB_DELETESTRING,
+                 static_cast<WPARAM>(sel + 4), 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_SETCURSEL, 0, 0);
+    // fix indices above the deleted one
+    for (int i = 0; i < 0xFF; ++i) {
+        mdl::AccessoryRecord* p = app->AccessorySlot(i);
+        if (p != nullptr && static_cast<int>(p->order) > oldSel) {
+            --p->order;
+        }
+    }
+    // find the first slot with index 0 (new selection)
+    std::int32_t firstFree = 0x100;
+    for (int i = 0; i < 0xFF; ++i) {
+        mdl::AccessoryRecord* p = app->AccessorySlot(i);
+        if (p != nullptr && p->order == 0) {
+            firstFree = i;
+            break;
+        }
+    }
+    if (firstFree == 0x100) {
+        app->state.selectedObjectSlot = 0;
+        SendMessageA(GetDlgItem(hwnd, panel::kMainComboGround), CB_SETCURSEL, -1, 0);
+    } else {
+        SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_SETCURSEL, 0, 0);
+        app->state.selectedObjectSlot =
+            static_cast<std::uint8_t>(firstFree);
+        SyncAccessoryEditPanel(app);
+    }
+    SendMessageA(GetDlgItem(hwnd, panel::kAttachBoneCombo), CB_RESETCONTENT, 0, 0);
+    // clear the checkbox labels 0x1DE..0x1E4
+    char empty[0x100];
+    strcpy_s(empty, 0x100, "");
+    for (int ctl = panel::kAccPosXEdit; ctl <= panel::kAccScaleEdit; ++ctl) {
+        HWND edit = GetDlgItem(hwnd, ctl);
+        SendMessageA(edit, EM_SETSEL, 0,
+                     static_cast<LPARAM>(GetWindowTextLengthA(edit)));
+        SendMessageA(edit, EM_REPLACESEL, 0,
+                     reinterpret_cast<LPARAM>(empty));
+    }
+    EnableMenuItem(GetMenu(hwnd), MDS_CMD_ACCESSORY_SETTINGS, 1);
+    RebuildCameraModePanel(app);
+    SendMessageA(GetDlgItem(hwnd, panel::kInterpCurveCombo), CB_DELETESTRING, 5, 0);
+    SendMessageA(GetDlgItem(hwnd, panel::kInterpCurveCombo), CB_DELETESTRING, 4, 0);
+    PostModelReload2(app);
+    app->GlobalTrackSelected(GlobalTimelineTrack::Camera) = 0;
+    SelectTimelineTrack(GlobalTimelineTrack::Camera);
+    InvalidateRect(hwnd, nullptr, FALSE);
+    InvalidateSelectionReadouts(app);
+}
+
+// Paste copied bones by exact name and record the original poses for undo.
+static void PasteCopiedBonePose(MMDApp* app, HWND hwnd) {
+    if (app->state.copiedBoneCount == 0) {
+        return;  // jz def_47E903 (no-op)
+    }
+    unsigned char* model = ActiveModel(app);
+    auto* modelRecord = mikudancestudio::mdl::Mdl(model);
+    const std::int32_t boneCount = modelRecord->boneCount;
+    unsigned char* sel = modelRecord->boneSelection;
+    for (std::int32_t i = 0; i < boneCount; ++i) {
+        sel[i] = 0;
+    }
+    EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);
+    EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
+    modelRecord->undoDirty = 1;
+    modelRecord->redoDirty = 0;
+    ++modelRecord->undoState[0];
+    if (modelRecord->undoState[0] >= 0x1E) {
+        modelRecord->undoState[0] = 0;
+    }
+    const std::int32_t pasteIdx = modelRecord->undoState[0];
+    modelRecord->undoState[1] = pasteIdx;
+    auto& undo = modelRecord->undoRings[0].slots[pasteIdx];
+    undo.operation = 1;
+    // count stored 28*(pasteIdx+0x164) dwords past the undo-table base
+    undo.dirty = app->state.copiedBoneCount;
+    unsigned char* pasteBlob =
+        reinterpret_cast<unsigned char*>(undo.bonePose);
+    if (pasteBlob != nullptr) {
+        ::operator delete(pasteBlob);
+        undo.bonePose = nullptr;
+    }
+    const std::int32_t count =
+        app->state.copiedBoneCount;
+    pasteBlob = static_cast<unsigned char*>(::operator new(
+        MulOrMax(static_cast<std::uint32_t>(count), 0x24u)));
+    if (pasteBlob != nullptr) {
+        ConstructArrayElements(pasteBlob, 0x24,
+                               static_cast<std::uint32_t>(count),
+                               &IdentityCtor);
+    }
+    undo.bonePose = reinterpret_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
+        pasteBlob);
+    memset(pasteBlob, 0, static_cast<std::size_t>(count) * 0x24u);
+
+    auto& records =
+        reinterpret_cast<BoneCopyRecord*&>(app->BoneCopyRecords());
+    for (std::int32_t j = 0; j < count; ++j) {
+        model = ActiveModel(app);
+        modelRecord = mikudancestudio::mdl::Mdl(model);
+        const std::int32_t nBones = modelRecord->boneCount;
+        sel = modelRecord->boneSelection;
+        mikudancestudio::mdl::BoneRecord* const bones = modelRecord->boneTable;
+        unsigned char* frameFlag = modelRecord->bonePhysicsState;
+        const BoneCopyRecord& src = records[j];
+        // exact name match (the original's inline 2-byte-step compare
+        // is byte-identical to strcmp)
+        std::int32_t found = -1;
+        for (std::int32_t k = 0; k < nBones; ++k) {
+            if (strcmp(bones[k].name, src.name) == 0) {
+                found = k;
+                break;
+            }
+        }
+        if (found < 0) {
+            continue;
+        }
+        pasteBlob = reinterpret_cast<unsigned char*>(undo.bonePose);
+        auto& rec = reinterpret_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
+            pasteBlob)[j];
+        mikudancestudio::mdl::BoneRecord* bone = &bones[found];
+        rec.boneIndex = found;
+        sel[found] = 1;
+        // old pos into the undo record
+        memcpy(rec.position, bone->trans, sizeof rec.position);
+        // new pos from the copy record
+        memcpy(bone->trans, src.position, sizeof bone->trans);
+        // old quat into the undo record, new quat into the bone
+        memcpy(rec.rotation, bone->rotQuat, sizeof rec.rotation);
+        memcpy(bone->rotQuat, src.rotation, sizeof bone->rotQuat);
+        rec.physicsDisabled = frameFlag[found];
+        frameFlag[found] = 1;
+        modelRecord->selectedBone = found;
+        RebuildTimelineTrackPanel(app);
+        InvalidateSelectionReadouts(app);
+    }
+    SetFocus(hwnd);
+    app->PhysicsResetPending() = 1;
+}
+
 void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
                    std::uint16_t notify) {
     (void)notify;  // see header: the default handler's notify gate can never
@@ -450,114 +652,7 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
     // EnableMenuItem 0xF9, RebuildCameraModePanel, Refresh(-1), InvalidateSelectionReadouts.
     // ------------------------------------------------------------------
     case panel::kDeleteAccessoryButton: {
-        const LRESULT sel =
-            SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_GETCURSEL, 0, 0);
-        std::int32_t found = -1;
-        for (int i = 0; i < 0xFF; ++i) {
-            mdl::AccessoryRecord* acc = app->AccessorySlot(i);
-            if (acc != nullptr &&
-                static_cast<int>(acc->order) == static_cast<int>(sel)) {
-                found = i;
-                break;
-            }
-        }
-        if (found < 0) {
-            break;
-        }
-        app->state.enterKeyState = 1;  // 0xBC
-        mdl::AccessoryRecord* acc = app->AccessorySlot(found);
-
-        char text[0x100];
-        if (app->state.englishUI != 0) {
-            sprintf_s(text, 0x100,
-                      "Trying to delete Accessory(%s).\n"
-                      "All flame data about this accessory will be deleted "
-                      "too.\n(This operation cannot undo!!)\n\nAre you OK?",
-                      acc->name);
-        } else {
-            sprintf_s(text, 0x100, kMsgDelAccessoryJp,
-                      acc->name);
-        }
-        const std::uint32_t flags =
-            app->state.floatingWindow != 0 ? (MB_OKCANCEL | MB_TOPMOST) : MB_OKCANCEL;
-        const char* caption = app->state.englishUI != 0
-                                  ? "delete accessory"
-                                  : kCaptionDelAccessoryJp;
-        if (MessageBoxA(hwnd, text, caption, flags) != IDOK) {
-            break;
-        }
-
-        const std::int32_t oldSel = acc->order;
-        // dispose the accessory blob
-        if (acc != nullptr) {
-            DeleteAccessory(acc, 1);
-        }
-        app->AccessorySlot(found) = nullptr;
-        // dispose the previous frame blob of this slot
-        if (app->AccessoryKeys(found) != nullptr) {
-            ::operator delete(app->AccessoryKeys(found));
-            app->AccessoryKeys(found) = nullptr;
-        }
-        // fresh 0x927C0 frame blob with an identity frame seeded
-        app->SceneModified() = 1;
-        unsigned char* blob = static_cast<unsigned char*>(::operator new(0x927C0));
-        app->AccessoryKeys(found) = reinterpret_cast<mdl::AccessoryKey*>(blob);
-        memset(blob, 0, 0x927C0);
-        blob[0x0C] = 1;
-        *reinterpret_cast<std::int32_t*>(blob + 0x10) = -1;
-        *reinterpret_cast<float*>(blob + 0x34) = 1.0f;
-        *reinterpret_cast<float*>(blob + 0x38) = 1.0f;
-        // combo rebuild: 0x1D7 select = oldSel, 0x1B2 index shifted
-        SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_DELETESTRING,
-                     static_cast<WPARAM>(sel), 0);
-        SendMessageA(GetDlgItem(hwnd, panel::kRegisterScopeCombo), CB_DELETESTRING,
-                     static_cast<WPARAM>(sel + 4), 0);
-        SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_SETCURSEL, 0, 0);
-        // fix indices above the deleted one
-        for (int i = 0; i < 0xFF; ++i) {
-            mdl::AccessoryRecord* p = app->AccessorySlot(i);
-            if (p != nullptr && static_cast<int>(p->order) > oldSel) {
-                --p->order;
-            }
-        }
-        // find the first slot with index 0 (new selection)
-        std::int32_t firstFree = 0x100;
-        for (int i = 0; i < 0xFF; ++i) {
-            mdl::AccessoryRecord* p = app->AccessorySlot(i);
-            if (p != nullptr && p->order == 0) {
-                firstFree = i;
-                break;
-            }
-        }
-        if (firstFree == 0x100) {
-            app->state.selectedObjectSlot = 0;
-            SendMessageA(GetDlgItem(hwnd, panel::kMainComboGround), CB_SETCURSEL, -1, 0);
-        } else {
-            SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_SETCURSEL, 0, 0);
-            app->state.selectedObjectSlot =
-                static_cast<std::uint8_t>(firstFree);
-            SyncAccessoryEditPanel(app);
-        }
-        SendMessageA(GetDlgItem(hwnd, panel::kAttachBoneCombo), CB_RESETCONTENT, 0, 0);
-        // clear the checkbox labels 0x1DE..0x1E4
-        char empty[0x100];
-        strcpy_s(empty, 0x100, "");
-        for (int ctl = panel::kAccPosXEdit; ctl <= panel::kAccScaleEdit; ++ctl) {
-            HWND edit = GetDlgItem(hwnd, ctl);
-            SendMessageA(edit, EM_SETSEL, 0,
-                         static_cast<LPARAM>(GetWindowTextLengthA(edit)));
-            SendMessageA(edit, EM_REPLACESEL, 0,
-                         reinterpret_cast<LPARAM>(empty));
-        }
-        EnableMenuItem(GetMenu(hwnd), MDS_CMD_ACCESSORY_SETTINGS, 1);
-        RebuildCameraModePanel(app);
-        SendMessageA(GetDlgItem(hwnd, panel::kInterpCurveCombo), CB_DELETESTRING, 5, 0);
-        SendMessageA(GetDlgItem(hwnd, panel::kInterpCurveCombo), CB_DELETESTRING, 4, 0);
-        PostModelReload2(app);
-        app->GlobalTrackSelected(GlobalTimelineTrack::Camera) = 0;
-        SelectTimelineTrack(GlobalTimelineTrack::Camera);
-        InvalidateRect(hwnd, nullptr, FALSE);
-        InvalidateSelectionReadouts(app);
+        DeleteSelectedAccessory(app, hwnd);
         break;
     }
 
@@ -941,92 +1036,7 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
     // flags, current bone = pasted index, then the language sweeps.
     // ------------------------------------------------------------------
     case panel::kBonePasteButton: {
-        if (app->state.copiedBoneCount == 0) {
-            break;  // jz def_47E903 (no-op)
-        }
-        unsigned char* model = ActiveModel(app);
-        auto* modelRecord = mikudancestudio::mdl::Mdl(model);
-        const std::int32_t boneCount = modelRecord->boneCount;
-        unsigned char* sel = modelRecord->boneSelection;
-        for (std::int32_t i = 0; i < boneCount; ++i) {
-            sel[i] = 0;
-        }
-        EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);
-        EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
-        modelRecord->undoDirty = 1;
-        modelRecord->redoDirty = 0;
-        ++modelRecord->undoState[0];
-        if (modelRecord->undoState[0] >= 0x1E) {
-            modelRecord->undoState[0] = 0;
-        }
-        const std::int32_t pasteIdx = modelRecord->undoState[0];
-        modelRecord->undoState[1] = pasteIdx;
-        auto& undo = modelRecord->undoRings[0].slots[pasteIdx];
-        undo.operation = 1;
-        // count stored 28*(pasteIdx+0x164) dwords past the undo-table base
-        undo.dirty = app->state.copiedBoneCount;
-        unsigned char* pasteBlob =
-            reinterpret_cast<unsigned char*>(undo.bonePose);
-        if (pasteBlob != nullptr) {
-            ::operator delete(pasteBlob);
-            undo.bonePose = nullptr;
-        }
-        const std::int32_t count =
-            app->state.copiedBoneCount;
-        pasteBlob = static_cast<unsigned char*>(::operator new(
-            MulOrMax(static_cast<std::uint32_t>(count), 0x24u)));
-        if (pasteBlob != nullptr) {
-            ConstructArrayElements(pasteBlob, 0x24,
-                                   static_cast<std::uint32_t>(count),
-                                   &IdentityCtor);
-        }
-        undo.bonePose = reinterpret_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
-            pasteBlob);
-        memset(pasteBlob, 0, static_cast<std::size_t>(count) * 0x24u);
-
-        auto& records =
-            reinterpret_cast<BoneCopyRecord*&>(app->BoneCopyRecords());
-        for (std::int32_t j = 0; j < count; ++j) {
-            model = ActiveModel(app);
-            modelRecord = mikudancestudio::mdl::Mdl(model);
-            const std::int32_t nBones = modelRecord->boneCount;
-            sel = modelRecord->boneSelection;
-            mikudancestudio::mdl::BoneRecord* const bones = modelRecord->boneTable;
-            unsigned char* frameFlag = modelRecord->bonePhysicsState;
-            const BoneCopyRecord& src = records[j];
-            // exact name match (the original's inline 2-byte-step compare
-            // is byte-identical to strcmp)
-            std::int32_t found = -1;
-            for (std::int32_t k = 0; k < nBones; ++k) {
-                if (strcmp(bones[k].name, src.name) == 0) {
-                    found = k;
-                    break;
-                }
-            }
-            if (found < 0) {
-                continue;
-            }
-            pasteBlob = reinterpret_cast<unsigned char*>(undo.bonePose);
-            auto& rec = reinterpret_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
-                pasteBlob)[j];
-            mikudancestudio::mdl::BoneRecord* bone = &bones[found];
-            rec.boneIndex = found;
-            sel[found] = 1;
-            // old pos into the undo record
-            memcpy(rec.position, bone->trans, sizeof rec.position);
-            // new pos from the copy record
-            memcpy(bone->trans, src.position, sizeof bone->trans);
-            // old quat into the undo record, new quat into the bone
-            memcpy(rec.rotation, bone->rotQuat, sizeof rec.rotation);
-            memcpy(bone->rotQuat, src.rotation, sizeof bone->rotQuat);
-            rec.physicsDisabled = frameFlag[found];
-            frameFlag[found] = 1;
-            modelRecord->selectedBone = found;
-            RebuildTimelineTrackPanel(app);
-            InvalidateSelectionReadouts(app);
-        }
-        SetFocus(hwnd);
-        app->PhysicsResetPending() = 1;
+        PasteCopiedBonePose(app, hwnd);
         break;
     }
 

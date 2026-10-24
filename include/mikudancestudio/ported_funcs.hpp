@@ -13,6 +13,7 @@
 #include <shellapi.h>
 
 #include "mikudancestudio/charset_conv.hpp"
+#include "mikudancestudio/frame_edit.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -427,7 +428,7 @@ void CopyDirPathW(wchar_t* dest, const wchar_t* src);  // VA 0x0042AE20
                                                        // (real; wcscpy_s with
                                                        //  the 1000-wchar
                                                        //  directory buffers)
-void SelectFrameGroup(MMDApp*, int group);        // 0xD9/0xDA/0xDC target
+void SelectFrameGroup(MMDApp*, FrameGroup group);        // 0xD9/0xDA/0xDC target
 // ---- frame-line edit commands (src/window/frame_line_edit.cpp) -----------
 void InsertBoneCameraFrameLine(MMDApp* app);  // VA 0x00439E40
                                              //  insert frame line (bone/cam)

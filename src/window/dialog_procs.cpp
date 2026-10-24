@@ -94,11 +94,11 @@ INT_PTR CALLBACK FrameRangeDlgProc(HWND hDlg, UINT Msg, WPARAM wParam, LPARAM lP
         return 0;
     }
     if (Msg == WM_COMMAND) {                        // 0x44C5FD
-        if (LOWORD(wParam) == 1) {                  // OK
+        if (LOWORD(wParam) == IDOK) {                  // OK
             ApplyFrameRangeScale(hDlg);              // 0x0043E970
-            EndDialog(hDlg, 1);
-        } else if (LOWORD(wParam) == 2) {           // Cancel
-            EndDialog(hDlg, 2);
+            EndDialog(hDlg, IDOK);
+        } else if (LOWORD(wParam) == IDCANCEL) {           // Cancel
+            EndDialog(hDlg, IDCANCEL);
         }
     }
     return 0;
@@ -115,8 +115,8 @@ INT_PTR CALLBACK SelectNavDlgProc(HWND hDlg, UINT Msg, WPARAM wParam, LPARAM lPa
     if (Msg != WM_COMMAND)
         return 0;
 
-    if (LOWORD(wParam) == 2) {                      // 0x47A40F cancel
-        EndDialog(hDlg, 1);
+    if (LOWORD(wParam) == IDCANCEL) {                      // 0x47A40F cancel
+        EndDialog(hDlg, IDOK);
         return 0;
     }
     if (LOWORD(wParam) == 671) {                    // 0x47A42A previous

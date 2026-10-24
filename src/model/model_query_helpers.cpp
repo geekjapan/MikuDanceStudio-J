@@ -188,7 +188,7 @@ void PollKeyboardStates(MMDApp* app) {
                     reinterpret_cast<std::uint32_t*>(&(app->state.*e.cell)));
 
     // 0x42D435..0x42D525 (two keys per cell): letter hotkeys share the
-    // dialog re-entry guard ints (MMDAppState::dialogFlags, cells
+    // dialog re-entry guard ints (MMDAppState::letterKeyState, cells
     // app+48..+116); lowercase/uppercase VK pairs fold onto one slot.
     // Pairings verified against both binaries' poll tables: 'g' lands on
     // slot 7 (x86 0x42D4CE writes 'g' to app+0x4C) and 's' on slot 8
@@ -196,21 +196,21 @@ void PollKeyboardStates(MMDApp* app) {
     // shadow / fine-shadow three-way branch (x86 0x4726B2) gates on the
     // 'G' cell.  'h' (slot 10) is scanned before 'i' (slot 9).
     // frame_modes.cpp kLetterKeys carries the same pairing.
-    static constexpr struct { int key; int flagIndex; } kLetterKeys[] = {
-        {'x', 0}, {'X', 0}, {'z', 1}, {'Z', 1},
-        {'c', 2}, {'C', 2}, {'v', 3}, {'V', 3},
-        {'d', 4}, {'D', 4}, {'a', 5}, {'A', 5},
-        {'b', 6}, {'B', 6}, {'g', 7}, {'G', 7},
-        {'s', 8}, {'S', 8}, {'h', 10}, {'H', 10},
-        {'i', 9}, {'I', 9}, {'k', 11}, {'K', 11},
-        {'p', 12}, {'P', 12}, {'u', 13}, {'U', 13},
-        {'j', 14}, {'J', 14}, {'f', 15}, {'F', 15},
-        {'r', 16}, {'R', 16}, {'l', 17}, {'L', 17},
+    static constexpr struct { int key; LetterKey letterKey; } kLetterKeys[] = {
+        {'x', LetterKey::X}, {'X', LetterKey::X}, {'z', LetterKey::Z}, {'Z', LetterKey::Z},
+        {'c', LetterKey::C}, {'C', LetterKey::C}, {'v', LetterKey::V}, {'V', LetterKey::V},
+        {'d', LetterKey::D}, {'D', LetterKey::D}, {'a', LetterKey::A}, {'A', LetterKey::A},
+        {'b', LetterKey::B}, {'B', LetterKey::B}, {'g', LetterKey::G}, {'G', LetterKey::G},
+        {'s', LetterKey::S}, {'S', LetterKey::S}, {'h', LetterKey::H}, {'H', LetterKey::H},
+        {'i', LetterKey::I}, {'I', LetterKey::I}, {'k', LetterKey::K}, {'K', LetterKey::K},
+        {'p', LetterKey::P}, {'P', LetterKey::P}, {'u', LetterKey::U}, {'U', LetterKey::U},
+        {'j', LetterKey::J}, {'J', LetterKey::J}, {'f', LetterKey::F}, {'F', LetterKey::F},
+        {'r', LetterKey::R}, {'R', LetterKey::R}, {'l', LetterKey::L}, {'L', LetterKey::L},
     };
     for (const auto& e : kLetterKeys)
         KeyEdgeScan(app, e.key,
                     reinterpret_cast<std::uint32_t*>(
-                        &app->state.dialogFlags[e.flagIndex]));
+                        &app->LetterKeyState(e.letterKey)));
 
     // 0x42D5D6..0x42D6B6 tail: VK_NUMPAD0..9 twin scans -> app+144..+180
     for (int i = 0; i < 10; ++i)

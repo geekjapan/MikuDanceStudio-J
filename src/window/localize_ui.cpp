@@ -265,7 +265,7 @@ void LocalizeUI(MMDApp* app) {
     // add every loaded model's name to all three selectors; x64 twin
     // sub_7FF7CB438E70 runs the comboSelIndex (model+0x3108) slot scan and
     // the order walk to 255 (cmp edx, 0FFh at 0x7FF7CB43A96C / cmp ebp,
-    // 0FFh at 0x7FF7CB43AA8D) - same family as model_edge_dialog.cpp.
+    // 0FFh at 0x7FF7CB43AA8D) - same family as english_name_dialog.cpp.
     for (int order = 1; order < kModelSlotCount; ++order) {
         int slotIdx = -1;
         for (int i = 0; i < kModelSlotCount; ++i) {

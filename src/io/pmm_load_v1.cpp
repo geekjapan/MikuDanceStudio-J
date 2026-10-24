@@ -135,25 +135,13 @@ using namespace pmm_io;
 namespace {
 
 // flt_52A1D8 (0x3C3851EC = 0.01125f) - the float the original seeds into
-// A0D2C/physicsInterval at 0x45934D.  C++17 has no std::bit_cast; MSVC's
+// A0D2C/selfShadowDistance at 0x45934D.  C++17 has no std::bit_cast; MSVC's
 // __builtin_bit_cast is accepted in constant expressions, so the
 // static_assert pins the literal to the original .rdata bit pattern.
-constexpr float kPhysicsIntervalDefault = 0.01125f;
+constexpr float kSelfShadowDistanceDefault = 0.01125f;
 static_assert(
-    __builtin_bit_cast(std::uint32_t, kPhysicsIntervalDefault) == 0x3C3851ECu,
+    __builtin_bit_cast(std::uint32_t, kSelfShadowDistanceDefault) == 0x3C3851ECu,
     "flt_52A1D8 bit-exact");
-
-// Model-relative field access (offsets kept as verified literals).
-inline std::int32_t& M32(unsigned char* m, std::size_t o) {
-    return *reinterpret_cast<std::int32_t*>(m + o);
-}
-inline std::uint8_t& M8(unsigned char* m, std::size_t o) { return m[o]; }
-inline float& MF(unsigned char* m, std::size_t o) {
-    return *reinterpret_cast<float*>(m + o);
-}
-inline unsigned char*& MP(unsigned char* m, std::size_t o) {
-    return *reinterpret_cast<unsigned char**>(m + o);
-}
 
 // Tracks share the same ownership as initial/v2/rebuilt scene tracks.
 // Pair the raw allocation with operator delete at scene teardown.
@@ -353,7 +341,7 @@ static void LoadSceneV1_DisposeAndHeader(PmmV1LoadContext& ctx, int fd) {
     CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_CAMERA_TRACKING, 0);                       // 0x459316
     SendMessageA(GetDlgItem(main, panel::kFollowCameraCheckbox), BM_SETCHECK, 0, 0);    // 0x45933A
 
-    s->state.physicsInterval = kPhysicsIntervalDefault;           // 0x45934D
+    s->state.selfShadowDistance = kSelfShadowDistanceDefault;           // 0x45934D
     s->state.selfShadowMode = 0;                 // 0x45935C
 
     // ---- AVI teardown trio (0x459369..0x45939D) --------------------------
@@ -1497,26 +1485,27 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                 SendMessageA(GetDlgItem(main, panel::kAccessoryAddBlendCheckbox), BM_SETCHECK, 1,
                              0);                                 // 0x45D3FB
         }
-        std::int32_t v31C0 = 0;
+        std::int32_t sharedEdgeScaleBits = 0;
         // [read-gate 2] end-of-stream unwinds here
-        if (Rd(fd, &v31C0, 4) > 0) {                             // 0x45D40F
-            float edgeScaleBits;
-            std::memcpy(&edgeScaleBits, &v31C0, sizeof edgeScaleBits);
+        if (Rd(fd, &sharedEdgeScaleBits, 4) > 0) {                             // 0x45D40F
+            float sharedEdgeScale;
+            std::memcpy(&sharedEdgeScale, &sharedEdgeScaleBits, sizeof sharedEdgeScale);
             for (int i = 0; i < kModelSlotCount; ++i)
                 if (slots[i] != nullptr)
                     mikudancestudio::mdl::Mdl(slots[i])->edgeScale =
-                        edgeScaleBits;
-            unsigned char b = 0;
-            Rd(fd, &b, 1);                                       // 0x45D44E
-            if (b == 1) {
+                        sharedEdgeScale;
+            // Keep this shared byte: a short read carries the preceding value.
+            unsigned char shadowBlendOrEdgeScaleFlag = 0;
+            Rd(fd, &shadowBlendOrEdgeScaleFlag, 1);                                       // 0x45D44E
+            if (shadowBlendOrEdgeScaleFlag == 1) {
                 s->state.projectedShadowBlendEnabled = 1;
                 CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_GROUND_SHADOW_TRANSPARENCY, 8);           // 0x45D47A
             } else {
                 s->state.projectedShadowBlendEnabled = 0;
             }
-            const int got48F = Rd(fd, &b, 1);                    // 0x45D48F
+            const int individualEdgeScaleFlagBytesRead = Rd(fd, &shadowBlendOrEdgeScaleFlag, 1);                    // 0x45D48F
             // [read-gate 3] end-of-stream unwinds here
-            if (b == 1 && got48F > 0) {
+            if (shadowBlendOrEdgeScaleFlag == 1 && individualEdgeScaleFlagBytesRead > 0) {
                 // per-model 0x31C0 re-read pass (0x45D4B0..0x45D4FB):
                 // ONE float dword per occupied slot, unlike the broadcast
                 // sweep of the first dword above.
@@ -1528,10 +1517,10 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                     &edge, sizeof edge);
                     }
                 }
-                unsigned char b509 = 0;
-                const int got509 = Rd(fd, &b509, 1);             // 0x45D509
+                unsigned char physicsSectionPresent = 0;
+                const int physicsSectionFlagBytesRead = Rd(fd, &physicsSectionPresent, 1);             // 0x45D509
                 // [read-gate 4] end-of-stream unwinds here
-                if (b509 == 1 && got509 > 0) {
+                if (physicsSectionPresent == 1 && physicsSectionFlagBytesRead > 0) {
                 Rd(fd, reinterpret_cast<unsigned char*>(
                            &s->PlaybackPhysicsMode()),
                    1);                                           // 0x45D538
@@ -1566,27 +1555,27 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                 Rd(fd, &s->state.gravityX, 4);
                 Rd(fd, &s->state.gravityY, 4);
                 Rd(fd, &s->state.gravityZ, 4);
-                unsigned char bc = 0;
-                Rd(fd, &bc, 1);                                  // 0x45D6F4
+                unsigned char gravityNoiseFlag = 0;
+                Rd(fd, &gravityNoiseFlag, 1);                                  // 0x45D6F4
                 s->state.gravityNoiseEnabled =
-                    (bc == 1) ? 1 : 0;
+                    (gravityNoiseFlag == 1) ? 1 : 0;
                 {
-                    unsigned char bd = 0;
-                    const int got716 = Rd(fd, &bd, 1);           // 0x45D716
+                    unsigned char selfShadowSectionPresent = 0;
+                    const int selfShadowSectionFlagBytesRead = Rd(fd, &selfShadowSectionPresent, 1);           // 0x45D716
                     // [read-gate 5] end-of-stream unwinds here
-                    if (bd == 1 && got716 > 0) {
-                        unsigned char be = 0;
-                        Rd(fd, &be, 1);                          // 0x45D743
-                        s->state.selfShadowMode = be;
+                    if (selfShadowSectionPresent == 1 && selfShadowSectionFlagBytesRead > 0) {
+                        unsigned char selfShadowMode = 0;
+                        Rd(fd, &selfShadowMode, 1);                          // 0x45D743
+                        s->state.selfShadowMode = selfShadowMode;
                         s->state.selfShadowEnabled =
-                            (be != 0) ? 1 : 0;
-                        Rd(fd, &s->state.physicsInterval,
+                            (selfShadowMode != 0) ? 1 : 0;
+                        Rd(fd, &s->state.selfShadowDistance,
                            4);                                   // 0x45D76E
                         selfShadowKeys[0].mode =
                             static_cast<unsigned char>(
                                 s->state.selfShadowMode);
                         selfShadowKeys[0].distance =
-                            s->state.physicsInterval;
+                            s->state.selfShadowDistance;
                         for (int i = 0; i < kModelSlotCount; ++i) {
                             if (slots[i] != nullptr) {
                                 unsigned char b = 0;
@@ -1595,10 +1584,10 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                     (b == 1) ? 1 : 0;
                             }
                         }
-                        unsigned char bs = 0;
-                        const int got7FE = Rd(fd, &bs, 1);       // 0x45D7FE
+                        unsigned char selfShadowKeysPresent = 0;
+                        const int selfShadowKeysFlagBytesRead = Rd(fd, &selfShadowKeysPresent, 1);       // 0x45D7FE
                         // [read-gate 6] end-of-stream unwinds here
-                        if (bs == 1 && got7FE > 0) {
+                        if (selfShadowKeysPresent == 1 && selfShadowKeysFlagBytesRead > 0) {
                             // selection/self-shadow track on app+0x37C
                             // (24-byte records); shape lives in
                             // pmm_io_common.hpp ReadPmmSelfShadowKey.
@@ -1612,10 +1601,10 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                                      selfShadowKeys[
                                                          timelineFrame]);
                             }
-                            unsigned char bq = 0;
-                            const int got9EC = Rd(fd, &bq, 1);   // 0x45D9EC
+                            unsigned char outlineColorSectionPresent = 0;
+                            const int outlineColorFlagBytesRead = Rd(fd, &outlineColorSectionPresent, 1);   // 0x45D9EC
                             // [read-gate 7] end-of-stream unwinds here
-                            if (bq == 1 && got9EC > 0) {
+                            if (outlineColorSectionPresent == 1 && outlineColorFlagBytesRead > 0) {
                                 // model color sweep (0x45DA1B..0x45DA91)
                                 Rd(fd, &s->state.modelOutlineColorRed,
                                    4);
@@ -1636,32 +1625,32 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                                 s->state.modelOutlineColorBlue);
                                 }
 
-                                unsigned char br = 0;
-                                const int gotAB4 = Rd(fd, &br, 1); // 0x45DAB4
+                                unsigned char backgroundSectionPresent = 0;
+                                const int backgroundFlagBytesRead = Rd(fd, &backgroundSectionPresent, 1); // 0x45DAB4
                                 // [read-gate 8] end-of-stream unwinds here
-                                if (br == 1 && gotAB4 > 0) {
-                                    unsigned char b194 = 0;
-                                    Rd(fd, &b194, 1);            // 0x45DAE1
-                                    s->state.blackBackgroundEnabled = (b194 != 0) ? 1 : 0;
+                                if (backgroundSectionPresent == 1 && backgroundFlagBytesRead > 0) {
+                                    unsigned char blackBackgroundFlag = 0;
+                                    Rd(fd, &blackBackgroundFlag, 1);            // 0x45DAE1
+                                    s->state.blackBackgroundEnabled = (blackBackgroundFlag != 0) ? 1 : 0;
                                     CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BLACK_BACKGROUND,
-                                                  b194 ? 8 : 0);
-                                    unsigned char bcam = 0;
-                                    const int gotB35 =
-                                        Rd(fd, &bcam, 1);        // 0x45DB35
+                                                  blackBackgroundFlag ? 8 : 0);
+                                    unsigned char cameraParentSectionPresent = 0;
+                                    const int cameraParentFlagBytesRead =
+                                        Rd(fd, &cameraParentSectionPresent, 1);        // 0x45DB35
                                     // [read-gate 9] end-of-stream unwinds here
-                                    if (bcam == 1 && gotB35 > 0) {
+                                    if (cameraParentSectionPresent == 1 && cameraParentFlagBytesRead > 0) {
                                         // camera parent reregister
                                         // (0x45DB67..0x45DC76)
                                         Rd(fd, &cameraKeys[0].parentModel, 4);
                                         Rd(fd, &cameraKeys[0].parentBone, 4);
-                                        const std::int32_t nFrame =
+                                        const std::int32_t parentBoneIndex =
                                             cameraKeys[0].parentBone;
-                                        const std::int32_t nParent =
+                                        const std::int32_t parentModelIndex =
                                             cameraKeys[0].parentModel;
-                                        if (nFrame >= 0 &&
-                                            nFrame < 10000 &&
-                                            nParent > -1 &&
-                                            nParent < 1000) {
+                                        if (parentBoneIndex >= 0 &&
+                                            parentBoneIndex < 10000 &&
+                                            parentModelIndex > -1 &&
+                                            parentModelIndex < 1000) {
 
                                             std::int32_t cnt = 0;
                                             Rd(fd, &cnt, 4);     // 0x45DBD3
@@ -1676,20 +1665,20 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                             }
                                             Rd(fd, &s->state.cameraParentModel, 4);              // 0x45DC59
                                             Rd(fd, &s->state.cameraParentBone, 4);              // 0x45DC6C
-                                            const std::int32_t sel0 = s->state.cameraParentModel;
-                                            const std::int32_t sel1 = s->state.cameraParentBone;
-                                            if (sel0 >= 0) {
+                                            const std::int32_t selectedParentModel = s->state.cameraParentModel;
+                                            const std::int32_t selectedParentBone = s->state.cameraParentBone;
+                                            if (selectedParentModel >= 0) {
                                                 SendMessageA(
                                                     GetDlgItem(main,
                                                                panel::kMainComboNormal),
                                                     CB_SETCURSEL,
                                                     mikudancestudio::mdl::Mdl(
-                                                        slots[sel0])->comboSelIndex,
+                                                        slots[selectedParentModel])->comboSelIndex,
                                                     0);        // 0x45DC9D
                                             }
-                                            RefillBoneRegisterCombo(s, sel0); // 0x45DCAE
+                                            RefillBoneRegisterCombo(s, selectedParentModel); // 0x45DCAE
 
-                                            if (sel0 >= 0) {
+                                            if (selectedParentModel >= 0) {
                                                 const LRESULT n =
                                                     SendMessageA(
                                                         GetDlgItem(
@@ -1709,10 +1698,10 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                                             lbText));
                                                     mdl::BoneRecord*
                                                         entry =
-                                                        mdl::Bones(slots[sel0]) +
+                                                        mdl::Bones(slots[selectedParentModel]) +
                                                         static_cast<
                                                             std::size_t>(
-                                                                sel1);
+                                                                selectedParentBone);
                                                     if (strcmp(
                                                             lbText,
                                                             entry->name) ==
@@ -1728,20 +1717,20 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                                 }
                                             }
                                         }
-                                        unsigned char bdd = 0;
-                                        const int gotDDFC =
-                                            Rd(fd, &bdd, 1);    // 0x45DDFC
+                                        unsigned char cameraAttachmentSectionPresent = 0;
+                                        const int cameraAttachmentFlagBytesRead =
+                                            Rd(fd, &cameraAttachmentSectionPresent, 1);    // 0x45DDFC
                                         // [read-gate 10] end-of-stream unwinds here
-                                        if (bdd == 1 && gotDDFC > 0) {
+                                        if (cameraAttachmentSectionPresent == 1 && cameraAttachmentFlagBytesRead > 0) {
                                         // 16 config dwords
                                         // (0x45DE2B..0x45DF4E)
                                         Rd(fd, &s->state.cameraAttachmentBasis[0],
                                            4);
                                         for (int i = 0; i < 15; ++i)
                                             Rd(fd, &s->state.cameraAttachmentBasis[1 + i], 4);
-                                        unsigned char bf7 = 0;
-                                        Rd(fd, &bf7, 1);        // 0x45DF5F
-                                        if (bf7 == 1) {
+                                        unsigned char followCameraFlag = 0;
+                                        Rd(fd, &followCameraFlag, 1);        // 0x45DF5F
+                                        if (followCameraFlag == 1) {
                                             s->state.followCameraEnabled = 1;
                                             CheckMenuItem(
                                                 GetMenu(main), MDS_CMD_TOGGLE_CAMERA_TRACKING, 8);
@@ -1757,18 +1746,18 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                                 BM_SETCHECK, 0, 0);
                                         }
 
-                                        unsigned char b478 = 0;
-                                        Rd(fd, &b478, 1);        // 0x45DFEF
+                                        unsigned char suppressAttachmentTransformFlag = 0;
+                                        Rd(fd, &suppressAttachmentTransformFlag, 1);        // 0x45DFEF
                                         s->state.cameraAttachmentTransformSuppressed =
-                                            (b478 == 1) ? 1 : 0;
-                                        unsigned char b11d = 0;
-                                        const int got00E =
-                                            Rd(fd, &b11d, 1);    // 0x45E00E
+                                            (suppressAttachmentTransformFlag == 1) ? 1 : 0;
+                                        unsigned char physicsFloorSectionPresent = 0;
+                                        const int physicsFloorFlagBytesRead =
+                                            Rd(fd, &physicsFloorSectionPresent, 1);    // 0x45E00E
                                         // [read-gate 11] end-of-stream unwinds here
-                                        if (b11d == 1 && got00E > 0) {
-                                            unsigned char bd2 = 0;
-                                            Rd(fd, &bd2, 1);    // 0x45E03B
-                                            if (bd2 != 0) {
+                                        if (physicsFloorSectionPresent == 1 && physicsFloorFlagBytesRead > 0) {
+                                            unsigned char physicsFloorFlag = 0;
+                                            Rd(fd, &physicsFloorFlag, 1);    // 0x45E03B
+                                            if (physicsFloorFlag != 0) {
                                                 CheckMenuItem(
                                                     GetMenu(main),
                                                     MDS_CMD_TOGGLE_PHYSICS_FLOOR, 8);
@@ -1783,11 +1772,11 @@ static void LoadSceneV1_ReadGatedTail(PmmV1LoadContext& ctx, int fd) {
                                                 s->Physics()->groundBody
                                                     ->setDeactivationTime(-1.0f);
                                             }
-                                            unsigned char bfin = 0;
-                                            const int got0BC =
-                                                Rd(fd, &bfin, 1); // 0x45E0BC
+                                            unsigned char modelOrderSectionPresent = 0;
+                                            const int modelOrderFlagBytesRead =
+                                                Rd(fd, &modelOrderSectionPresent, 1); // 0x45E0BC
                                             // [read-gate 12] end-of-stream unwinds here
-                                            if (bfin == 1 && got0BC > 0) {
+                                            if (modelOrderSectionPresent == 1 && modelOrderFlagBytesRead > 0) {
                                                 for (int i = 0;
                                                      i < kModelSlotCount;
                                                      ++i)

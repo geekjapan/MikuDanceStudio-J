@@ -269,7 +269,7 @@ void PumpDeleteRebuild(MMDApp* app, HWND focus, bool focusNotInPanelEdit) {
 // G5 - TAB / VK226 combo cycle (x86 0x47244E..0x472524 and
 // 0x47252B..0x472609, x64 0x44F32D..0x44F42E and 0x44F42E..0x44F52F).
 // Gate per half: focusOK && cell pressed && !playing && !panel-edit focus
-// && frame-range dialog closed (0xA0B50).  Body: step the model combo
+// && English-name dialog closed (0xA0B50).  Body: step the model combo
 // 0x1B4 (436) selection - Shift steps back with a wrap to count-1,
 // plain steps forward with a wrap to 0 - then CB_SETCURSEL and apply via
 // ApplyModelComboSelection (ui_model_reload.cpp).
@@ -278,7 +278,7 @@ void PumpTabCycle(MMDApp* app, HWND focus, bool focusNotInPanelEdit) {
     const auto cycle = [&](bool cellPressed) {
         if (!cellPressed || !FocusOk(app, focus) ||
             app->PlaybackActive() != 0 || !focusNotInPanelEdit ||
-            app->FrameRangeDialog() != nullptr)
+            app->EnglishNameDialog() != nullptr)
             return;
         const HWND main = static_cast<HWND>(app->Hwnd());
         const HWND combo = GetDlgItem(main, panel::kMainComboModel);

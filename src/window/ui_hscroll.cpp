@@ -283,7 +283,7 @@ void HandleHScroll(LPARAM lParam, WPARAM wParam) {
     else if (ctrl == GetDlgItem(hwnd, panel::kSelfShadowRangeSlider)) {
         const LRESULT pos = SendMessageA(GetDlgItem(hwnd, panel::kSelfShadowRangeSlider),
                                          TBM_GETPOS, 0, 0);
-        app->state.physicsInterval = static_cast<float>(
+        app->state.selfShadowDistance = static_cast<float>(
             static_cast<double>(10000 - static_cast<int>(pos)) / 100000.0);
         char buf[256];
         sprintf_s(buf, 0x100, "%d", static_cast<int>(pos));

@@ -676,7 +676,7 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
     // top of FrameDriver) refreshes it to 1 while playing ([0x368]/[0x330]),
     // while the idle-physics suppress toggle is OFF ([0xA54CC] / x86
     // 0xA4420 = FrameVolumeControlEnabled, menu 299) or while the modeless
-    // model-edge dialog is open ([0xA1B98] / x86 0xA0B50 = FrameRangeDialog,
+    // English-name dialog is open ([0xA1B98] / x86 0xA0B50 = EnglishNameDialog,
     // menu 259); otherwise it walks 1->2->3->0.  0x7FF7CB44B8E7
     // (`cmp [app+0xA1E18],0 / jz -> 0x7FF7CB44C8D6`, x86 twin 0x46EFBE)
     // skips the ENTIRE physics section - wind, gravity, settle request,

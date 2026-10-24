@@ -92,6 +92,7 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/dialog_resources.h"
 #include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <commdlg.h>
@@ -130,13 +131,13 @@ using namespace pmm_io;
 namespace {
 
 // flt_52A1D8 (0x3C3851EC = 0.01125f) - the float the original seeds into
-// A0D2C/physicsInterval (see the reset run below).  C++17 has no
+// A0D2C/selfShadowDistance (see the reset run below).  C++17 has no
 // std::bit_cast; MSVC's __builtin_bit_cast is accepted in constant
 // expressions, so the static_assert pins the literal to the original
 // .rdata bit pattern.
-constexpr float kPhysicsIntervalDefault = 0.01125f;
+constexpr float kSelfShadowDistanceDefault = 0.01125f;
 static_assert(
-    __builtin_bit_cast(std::uint32_t, kPhysicsIntervalDefault) == 0x3C3851ECu,
+    __builtin_bit_cast(std::uint32_t, kSelfShadowDistanceDefault) == 0x3C3851ECu,
     "flt_52A1D8 bit-exact");
 
 struct NameMapping {
@@ -428,7 +429,7 @@ static void LoadSceneV2_DisposeAndHeader(PmmV2LoadContext& ctx, int fd) {
     SendMessageA(GetDlgItem(main, panel::kFollowCameraCheckbox), BM_SETCHECK, 0, 0);
 
     s->state.selfShadowMode = 0;                // 0x450161
-    s->state.physicsInterval = kPhysicsIntervalDefault;     // flt_52A1D8
+    s->state.selfShadowDistance = kSelfShadowDistanceDefault;     // flt_52A1D8
 
     // ---- AVI teardown trio (0x45016D..0x4501B5) --------------------------
     if (s->AviFrameReader() != nullptr) {
@@ -1098,13 +1099,13 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
         else
             sprintf_s(s->state.statusText, 0x100, kJpQuoted, workspace.modelName);
         const INT_PTR r = DialogBoxParamA(
-            hInst, MAKEINTRESOURCEA(s->EnglishUI() != 0 ? 0x32F : 0x32E), main,
+            hInst, MAKEINTRESOURCEA(s->EnglishUI() != 0 ? MDS_DLG_PMM_MISSING_MODEL_EN : MDS_DLG_PMM_MISSING_MODEL_JP), main,
             DialogFuncStub, 0);
-        if (r == 2 || r == 4) {
+        if (r == IDCANCEL || r == 4) {
             AbortV2Load(s, fd, workspaces, modelCount);
             return false;
         }              // 0x45426C
-        if (r == 1) {  // 0x4506FD
+        if (r == IDOK) {  // 0x4506FD
             SetCurrentDirectoryW(reinterpret_cast<const wchar_t*>(s->state.exeDir));
             swprintf_s(ofnFile, 0x100, L"%s", ofnFile);  // quirk
             OPENFILENAMEW ofn;
@@ -1342,7 +1343,7 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
             if (workspace.morphsMatch != 0 && workspace.displaysMatch != 0) break;
 
             const INT_PTR r = DialogBoxParamA(
-                hInst, MAKEINTRESOURCEA(s->EnglishUI() != 0 ? 0x331 : 0x330), main,
+                hInst, MAKEINTRESOURCEA(s->EnglishUI() != 0 ? MDS_DLG_PMM_MODEL_MISMATCH_EN : MDS_DLG_PMM_MODEL_MISMATCH_JP), main,
                 DialogFuncStub, 0);
             // x64 分派表（0x7FF7CB49AA72..0x7FF7CB49BB78）：
             //   r==2/r==5 -> 中止装载（0x49AA88 jnz 0x49D73F）
@@ -1350,7 +1351,7 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
             //   r==4      -> 跳过该模型（0x49B29D cmp 4）
             //   其余值    -> 0x49B2A1 jnz 0x49BB78，与双匹配成立时
             //                （0x49AA2F 的 jz）同一出口：继续状态装载
-            if (r == 2 || r == 5) {
+            if (r == IDCANCEL || r == 5) {
                 AbortV2Load(s, fd, workspaces, modelCount);
                 return false;
             }
@@ -2431,9 +2432,9 @@ static void LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
         s->state.selfShadowMode = b;
         s->state.selfShadowEnabled = (b != 0) ? 1 : 0;
     }
-    Rd(fd, &s->state.physicsInterval, 4);  // 0x457A22
+    Rd(fd, &s->state.selfShadowDistance, 4);  // 0x457A22
     selfShadowKeys[0].mode = static_cast<unsigned char>(s->state.selfShadowMode);
-    selfShadowKeys[0].distance = s->state.physicsInterval;
+    selfShadowKeys[0].distance = s->state.selfShadowDistance;
     // self-shadow track read (0x457A4F..0x457BDE), 24-byte app+0x37C;
     // record shape lives in pmm_io_common.hpp ReadPmmSelfShadowKey.
     {

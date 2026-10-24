@@ -223,6 +223,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/dialog_resources.h"
 #include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <commctrl.h>
@@ -270,12 +271,12 @@ void UpdateShapeControls(HWND hDlg, int mode, int idx);  // VA 0x00421CE0
 void CommitPhysicsEdits(HWND hDlg);              // VA 0x004220F0
 void PickPivotBone(HWND hDlg);                   // VA 0x00420DC0
 INT_PTR CALLBACK PhysicsModelDlgProc(HWND, UINT, WPARAM, LPARAM);  // VA 0x00465020
-// model-edge / English-name dialog (menu 259): model_edge_dialog.cpp
-void InitModelEdgeDialog(HWND hDlg);             // VA 0x0043C430
-void ApplyModelEdgeDialog(HWND hDlg);            // VA 0x0045F240
-void SelectModelEdgeBone(HWND hDlg);             // VA 0x0045F050
-void SelectModelEdgeMorph(HWND hDlg);            // VA 0x0045EF10
-void SelectModelEdgeGroup(HWND hDlg);             // VA 0x0045EDC0
+// English-name / English-name dialog (menu 259): english_name_dialog.cpp
+void InitEnglishNameDialog(HWND hDlg);             // VA 0x0043C430
+void ApplyEnglishNameDialog(HWND hDlg);            // VA 0x0045F240
+void SelectEnglishNameBone(HWND hDlg);             // VA 0x0045F050
+void SelectEnglishNameMorph(HWND hDlg);            // VA 0x0045EF10
+void SelectEnglishNameGroup(HWND hDlg);             // VA 0x0045EDC0
 void CollectEnglishNameEdit(MMDApp* app, HWND hEdit, int idx);  // VA 0x0043BED0 (collector)
 // enhance-model IO (toon collect / save model): enhance_model_io.cpp
 int CollectToonFileNames(HWND hDlg);             // VA 0x0041EA20
@@ -480,17 +481,17 @@ void FillEnhanceModelNameEdits(MMDApp* app, HWND hDlg) {  // VA 0x0041E9C0
         SendMessageA(GetDlgItem(hDlg, panel::kToon01Edit + i), EM_REPLACESEL, 0,
                      reinterpret_cast<LPARAM>(mdl::Mdl(model)->pmdToonFileNames[i]));
 }
-// VA 0x0045ECC0 - model-edge dialog (259) edit subclass: WM_KEYDOWN +
+// VA 0x0045ECC0 - English-name dialog (259) edit subclass: WM_KEYDOWN +
 // VK_RETURN sets the in-dialog flag (app+0xA0D6C) and dispatches to the
 // edge collector (0x43BED0) with 0/1/2/3 for edits 0x29B/0x2A0/0x2A4/
 // 0x2A8 (edit 0x2A0 additionally runs the language sweep 0x42F1E0);
 // everything else goes to the saved original proc (app+0xA0B54).
-LRESULT CALLBACK ModelEdgeEditSubclassProc(  // VA 0x0045ECC0
+LRESULT CALLBACK EnglishNameEditSubclassProc(  // VA 0x0045ECC0
     HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     MMDApp* app = g_Block;
     if (msg == WM_KEYDOWN && wParam == VK_RETURN) {
         app->state.messageSeen = 1;
-        const HWND dlg = app->FrameRangeDialog();
+        const HWND dlg = app->EnglishNameDialog();
         if (hwnd == GetDlgItem(dlg, panel::kModelNameEnEdit)) {
             CollectEnglishNameEdit(app, hwnd, 0);                        // 0x43BED0
             return 0;
@@ -509,7 +510,7 @@ LRESULT CALLBACK ModelEdgeEditSubclassProc(  // VA 0x0045ECC0
             return 0;
         }
     }
-    return CallWindowProcA(app->ModelEdgeEditProc(),
+    return CallWindowProcA(app->EnglishNameEditProc(),
                            hwnd, msg, wParam, lParam);
 }
 // VA 0x0041E910 - calculate-order dialog OK apply: walks the order array
@@ -686,7 +687,7 @@ int g_displayOrderDialogCount = 0;    // was g_dword545938, VA 0x00545938 -
 
 // Newly-required unported dependencies (0x45ECC0 / 0x460080 call sites) -
 // file-local stub bodies so the call sites link (stubs.cpp must not be
-// modified).  CollectEnglishNameEdit's real body now lives in model_edge_dialog.cpp;
+// modified).  CollectEnglishNameEdit's real body now lives in english_name_dialog.cpp;
 // only the forward declaration at the top of this TU is needed.
 }  // namespace (anonymous) - RegisterGravityKeyCurrent is consumed by pump_edit_keys.cpp
 // and stays at mikudancestudio scope.
@@ -858,13 +859,13 @@ INT_PTR CALLBACK BoneFrameMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     }
     if (msg == WM_COMMAND) {
         const WORD id = LOWORD(wParam);
-        if (id == 1) {
+        if (id == IDOK) {
             ApplyBoneFrameScaleAdd(g_Block, hDlg);  // 0x43E000
-            EndDialog(hDlg, 1);
+            EndDialog(hDlg, IDOK);
             return 0;
         }
-        if (id == 2) {
-            EndDialog(hDlg, 2);
+        if (id == IDCANCEL) {
+            EndDialog(hDlg, IDCANCEL);
             return 0;
         }
     }
@@ -892,13 +893,13 @@ INT_PTR CALLBACK FacialMultiplyDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     }
     if (msg == WM_COMMAND) {
         const WORD id = LOWORD(wParam);
-        if (id == 1) {
+        if (id == IDOK) {
             ApplyMorphScaleAdd(g_Block, hDlg);  // 0x43E680
-            EndDialog(hDlg, 1);
+            EndDialog(hDlg, IDOK);
             return 0;
         }
-        if (id == 2) {
-            EndDialog(hDlg, 2);
+        if (id == IDCANCEL) {
+            EndDialog(hDlg, IDCANCEL);
             return 0;
         }
     }
@@ -940,7 +941,7 @@ INT_PTR CALLBACK EdgeThicknessDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         break;
     }
     case WM_COMMAND:
-        if (LOWORD(wParam) == 2) {
+        if (LOWORD(wParam) == IDCANCEL) {
             DestroyWindow(hDlg);
             app->state.edgeThicknessDialog = nullptr;
             return 1;
@@ -987,23 +988,23 @@ INT_PTR CALLBACK EnhanceModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         return 0;
     }
     const WORD id = LOWORD(wParam);
-    if (id == 1) {
+    if (id == IDOK) {
         if (CollectToonFileNames(hDlg) != 0) {  // 0x41EA20
-            EndDialog(hDlg, 1);
+            EndDialog(hDlg, IDOK);
         } else {
-            EndDialog(hDlg, 2);
+            EndDialog(hDlg, IDCANCEL);
         }
         return 0;
     }
-    if (id == 2) {
-        EndDialog(hDlg, 2);
+    if (id == IDCANCEL) {
+        EndDialog(hDlg, IDCANCEL);
         return 0;
     }
     return 0;
 }
 
 // ===========================================================================
-// 0x464BD0 - case 259 model-edge dialog (0x29A EN / 0x299 JP), modeless at
+// 0x464BD0 - case 259 English-name dialog (0x29A EN / 0x299 JP), modeless at
 // app+0xA0B50.  WM_INITDIALOG: subclass edits 667/672/676/680 with
 // sub_45ECC0 (old proc of 667 saved at app+0xA0B54), sub_43C430 init.
 // WM_COMMAND: sets app+0xA0B6C = 1.  id 1/2 close (sub_45F240 apply,
@@ -1014,39 +1015,39 @@ INT_PTR CALLBACK EnhanceModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 // CBN_SELCHANGE of 669/673/677 refreshes the matching combo helper.
 // Reference: MikuMikuDance.exe sub_464BD0.
 // ===========================================================================
-INT_PTR CALLBACK ModelEdgeDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
+INT_PTR CALLBACK EnglishNameDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
                                   LPARAM lParam) {  // VA 0x00464BD0
     MMDApp* app = g_Block;
     const HWND hCtrl = reinterpret_cast<HWND>(lParam);
     if (msg == WM_INITDIALOG) {
-        app->ModelEdgeEditProc() =
+        app->EnglishNameEditProc() =
             reinterpret_cast<WNDPROC>(
                 GetWindowLongPtrA(GetDlgItem(hDlg, panel::kModelNameEnEdit), GWLP_WNDPROC));
         SetWindowLongPtrA(GetDlgItem(hDlg, panel::kModelNameEnEdit), GWLP_WNDPROC,
-                       (LONG)(LONG_PTR)ModelEdgeEditSubclassProc);
+                       (LONG)(LONG_PTR)EnglishNameEditSubclassProc);
         SetWindowLongPtrA(GetDlgItem(hDlg, panel::kBoneNameEnEdit), GWLP_WNDPROC,
-                       (LONG)(LONG_PTR)ModelEdgeEditSubclassProc);
+                       (LONG)(LONG_PTR)EnglishNameEditSubclassProc);
         SetWindowLongPtrA(GetDlgItem(hDlg, panel::kMorphNameEnEdit), GWLP_WNDPROC,
-                       (LONG)(LONG_PTR)ModelEdgeEditSubclassProc);
+                       (LONG)(LONG_PTR)EnglishNameEditSubclassProc);
         SetWindowLongPtrA(GetDlgItem(hDlg, panel::kGroupNameEnEdit), GWLP_WNDPROC,
-                       (LONG)(LONG_PTR)ModelEdgeEditSubclassProc);
-        InitModelEdgeDialog(hDlg);  // 0x43C430
+                       (LONG)(LONG_PTR)EnglishNameEditSubclassProc);
+        InitEnglishNameDialog(hDlg);  // 0x43C430
         return 0;
     }
     if (msg != WM_COMMAND) {
         return 0;
     }
-    // dirty write: the frame-edit dialog deliberately invalidates the
+    // dirty write: the English-name dialog deliberately invalidates the
     // cached time (original blob reuse of app+0xA0B6C == timeNowHigh)
     reinterpret_cast<std::int32_t&>(app->state.timeNowHigh) = 1;
     switch (LOWORD(wParam)) {
-    case 1:
-    case 2:
-        ApplyModelEdgeDialog(hDlg);  // 0x45F240
+    case IDOK:
+    case IDCANCEL:
+        ApplyEnglishNameDialog(hDlg);  // 0x45F240
         DestroyWindow(hDlg);
-        app->FrameRangeDialog() = nullptr;
+        app->EnglishNameDialog() = nullptr;
         EnableWindow(GetDlgItem(app->state.hwnd, panel::kMainComboModel), TRUE);
-        if (LOWORD(wParam) == 1) {
+        if (LOWORD(wParam) == IDOK) {
             if (app->state.englishUI != 0) {
                 MessageBoxA(app->state.hwnd,
                             "Please preserve the edit result as a new model by "
@@ -1060,16 +1061,16 @@ INT_PTR CALLBACK ModelEdgeDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         }
         return 1;
     case 0x29E: {  // combo 669 next button
-        const int cur = app->ModelEdgeComboCursor(0);
+        const int cur = app->EnglishNameComboCursor(0);
         const int count = static_cast<int>(
             SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_GETCOUNT, 0, 0));
         SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_SETCURSEL,
                      cur + 1 >= count ? 0 : cur + 1, 0);
-        SelectModelEdgeBone(hDlg);  // 0x45F050
+        SelectEnglishNameBone(hDlg);  // 0x45F050
         return 0;
     }
     case 0x29F: {  // combo 669 prev button
-        int sel = app->ModelEdgeComboCursor(0) - 1;
+        int sel = app->EnglishNameComboCursor(0) - 1;
         if (sel < 0) {
             sel = static_cast<int>(
                       SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_GETCOUNT,
@@ -1077,20 +1078,20 @@ INT_PTR CALLBACK ModelEdgeDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
                   1;
         }
         SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_SETCURSEL, sel, 0);
-        SelectModelEdgeBone(hDlg);  // 0x45F050 (LABEL_16)
+        SelectEnglishNameBone(hDlg);  // 0x45F050 (LABEL_16)
         return 0;
     }
     case 0x2A2: {  // combo 673 next button
-        const int cur = app->ModelEdgeComboCursor(1);
+        const int cur = app->EnglishNameComboCursor(1);
         const int count = static_cast<int>(
             SendMessageA(GetDlgItem(hDlg, panel::kMorphNameCombo), CB_GETCOUNT, 0, 0));
         SendMessageA(GetDlgItem(hDlg, panel::kMorphNameCombo), CB_SETCURSEL,
                      cur + 1 >= count ? 0 : cur + 1, 0);
-        SelectModelEdgeMorph(hDlg);  // 0x45EF10
+        SelectEnglishNameMorph(hDlg);  // 0x45EF10
         return 0;
     }
     case 0x2A3: {  // combo 673 prev button
-        int sel = app->ModelEdgeComboCursor(1) - 1;
+        int sel = app->EnglishNameComboCursor(1) - 1;
         if (sel < 0) {
             sel = static_cast<int>(
                       SendMessageA(GetDlgItem(hDlg, panel::kMorphNameCombo), CB_GETCOUNT,
@@ -1098,20 +1099,20 @@ INT_PTR CALLBACK ModelEdgeDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
                   1;
         }
         SendMessageA(GetDlgItem(hDlg, panel::kMorphNameCombo), CB_SETCURSEL, sel, 0);
-        SelectModelEdgeMorph(hDlg);  // 0x45EF10 (LABEL_23)
+        SelectEnglishNameMorph(hDlg);  // 0x45EF10 (LABEL_23)
         return 0;
     }
     case 0x2A6: {  // combo 677 next button
-        const int cur = app->ModelEdgeComboCursor(2);
+        const int cur = app->EnglishNameComboCursor(2);
         const int count = static_cast<int>(
             SendMessageA(GetDlgItem(hDlg, panel::kGroupNameCombo), CB_GETCOUNT, 0, 0));
         SendMessageA(GetDlgItem(hDlg, panel::kGroupNameCombo), CB_SETCURSEL,
                      cur + 1 >= count ? 0 : cur + 1, 0);
-        SelectModelEdgeGroup(hDlg);  // 0x45EDC0
+        SelectEnglishNameGroup(hDlg);  // 0x45EDC0
         return 0;
     }
     case 679: {  // combo 677 prev button
-        int sel = app->ModelEdgeComboCursor(2) - 1;
+        int sel = app->EnglishNameComboCursor(2) - 1;
         if (sel < 0) {
             sel = static_cast<int>(
                       SendMessageA(GetDlgItem(hDlg, panel::kGroupNameCombo), CB_GETCOUNT,
@@ -1119,7 +1120,7 @@ INT_PTR CALLBACK ModelEdgeDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
                   1;
         }
         SendMessageA(GetDlgItem(hDlg, panel::kGroupNameCombo), CB_SETCURSEL, sel, 0);
-        SelectModelEdgeGroup(hDlg);  // 0x45EDC0
+        SelectEnglishNameGroup(hDlg);  // 0x45EDC0
         return 0;
     }
     default:
@@ -1127,15 +1128,15 @@ INT_PTR CALLBACK ModelEdgeDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     }
     if (HIWORD(wParam) == 1 /*CBN_SELCHANGE*/) {
         if (hCtrl == GetDlgItem(hDlg, panel::kBoneNameCombo)) {
-            SelectModelEdgeBone(hDlg);  // 0x45F050 (LABEL_16)
+            SelectEnglishNameBone(hDlg);  // 0x45F050 (LABEL_16)
             return 0;
         }
         if (hCtrl == GetDlgItem(hDlg, panel::kMorphNameCombo)) {
-            SelectModelEdgeMorph(hDlg);  // 0x45EF10 (LABEL_23)
+            SelectEnglishNameMorph(hDlg);  // 0x45EF10 (LABEL_23)
             return 0;
         }
         if (hCtrl == GetDlgItem(hDlg, panel::kGroupNameCombo)) {
-            SelectModelEdgeGroup(hDlg);  // 0x45EDC0
+            SelectEnglishNameGroup(hDlg);  // 0x45EDC0
         }
     }
     return 0;
@@ -1214,15 +1215,15 @@ INT_PTR CALLBACK ModelCalculateOrderDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     }
     if (id == 632) {  // OK (0x42E52E)
         ApplyModelCalculateOrderDialog(app, g_calculateOrderDialogCount, hDlg);  // 0x41E910
-        EndDialog(hDlg, 1);
+        EndDialog(hDlg, IDOK);
         if (app->DialogOrders().modelIndices == nullptr) {
             return 0;
         }
         app->DialogOrders().modelIndices.reset();
         return 0;
     }
-    if (id == 2) {  // Cancel (0x42E57E)
-        EndDialog(hDlg, 2);
+    if (id == IDCANCEL) {  // Cancel (0x42E57E)
+        EndDialog(hDlg, IDCANCEL);
         if (app->DialogOrders().modelIndices == nullptr) {
             return 0;
         }
@@ -1299,9 +1300,9 @@ INT_PTR CALLBACK GravitySettingDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
                 GetWindowTextA(hCtrl, buf, 256);
                 SetGravityChannel(app,4, static_cast<float>(atof(buf)));  // 0x45FD80
             }
-        } else if (id == 1) {
+        } else if (id == IDOK) {
             ApplyGravitySettingDialog(app);  // 0x460080
-        } else if (id == 2) {
+        } else if (id == IDCANCEL) {
             DestroyWindow(hDlg);
             app->GravitySettingDialog() = 0;
             ApplyGravityTrack(app);  // 0x412330
@@ -1370,18 +1371,18 @@ INT_PTR CALLBACK PhysicsOnOffFrameDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     }
     if (msg == WM_COMMAND) {
         const WORD id = LOWORD(wParam);
-        if (id == 1) {
+        if (id == IDOK) {
             if (SendMessageA(GetDlgItem(hDlg, panel::kBoneNameCombo), CB_GETCURSEL, 0,
                              0) != 0) {
                 ApplyPhysicsOnOff(1);  // 0x4403C0
             } else {
                 ApplyPhysicsOnOff(0);  // 0x4403C0
             }
-            EndDialog(hDlg, 1);
+            EndDialog(hDlg, IDOK);
             return 0;
         }
-        if (id == 2) {
-            EndDialog(hDlg, 1);
+        if (id == IDCANCEL) {
+            EndDialog(hDlg, IDOK);
             return 0;
         }
     }
@@ -1417,15 +1418,15 @@ INT_PTR CALLBACK CameraNumericInputDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     }
     if (msg == WM_COMMAND) {
         const WORD id = LOWORD(wParam);
-        if (id == 1) {
+        if (id == IDOK) {
             static const std::size_t kEditIds[7] = {637, 638, 639, 640, 641, 642, 644};
             for (int i = 0; i < 7; ++i) {
                 app->RotationDialogTemp(i) =
                     ReadFloatFromEdit(hDlg, static_cast<int>(kEditIds[i]));
             }
-            EndDialog(hDlg, 1);
-        } else if (id == 2) {
-            EndDialog(hDlg, 2);
+            EndDialog(hDlg, IDOK);
+        } else if (id == IDCANCEL) {
+            EndDialog(hDlg, IDCANCEL);
         }
     }
     return 0;
@@ -1459,15 +1460,15 @@ INT_PTR CALLBACK BoneNumericInputDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     }
     if (msg == WM_COMMAND) {
         const WORD id = LOWORD(wParam);
-        if (id == 1) {
+        if (id == IDOK) {
             static const std::size_t kEditIds[6] = {637, 638, 639, 640, 641, 642};
             for (int i = 0; i < 6; ++i) {
                 app->RotationDialogTemp(i) =
                     ReadFloatFromEdit(hDlg, static_cast<int>(kEditIds[i]));
             }
-            EndDialog(hDlg, 1);
-        } else if (id == 2) {
-            EndDialog(hDlg, 2);
+            EndDialog(hDlg, IDOK);
+        } else if (id == IDCANCEL) {
+            EndDialog(hDlg, IDCANCEL);
         }
     }
     return 0;
@@ -1592,15 +1593,15 @@ INT_PTR CALLBACK ModelDisplayOrderDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         }
         SendMessageA(GetDlgItem(mainWnd, panel::kMainComboModel), CB_SETCURSEL, 0, 0);
         ApplyModelDisplayOrderDialog(app, g_displayOrderDialogCount, hDlg);  // 0x45EC80
-        EndDialog(hDlg, 1);
+        EndDialog(hDlg, IDOK);
         if (app->DialogOrders().modelIndices == nullptr) {
             return 0;
         }
         app->DialogOrders().modelIndices.reset();
         return 0;
     }
-    if (id == 2) {  // Cancel (0x464613)
-        EndDialog(hDlg, 2);
+    if (id == IDCANCEL) {  // Cancel (0x464613)
+        EndDialog(hDlg, IDCANCEL);
         if (app->DialogOrders().modelIndices == nullptr) {
             return 0;
         }
@@ -1621,7 +1622,7 @@ INT_PTR CALLBACK ModelDisplayOrderDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 // ported in src/app/key_ladder.cpp, which calls this from its 'G' block).
 // Original block:
 //   gate: (GetFocus() == main window || separate-window byte 0x9FCDD) &&
-//         dialogFlags[7] == 1 ('G' pressed this frame - the cell the
+//         letterKeyState[7] == 1 ('G' pressed this frame - the cell the
 //         PollKey letter table assigns to 'g'/'G') &&
 //         GetFocus() != the frame-number edit 0x22A
 //   - Shift held (shiftModifierState == 3): toggle the byte at
@@ -1663,8 +1664,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         }
         app->state.enterKeyState = 1;
         if (DialogBoxParamA(hInst,
-                            MAKEINTRESOURCEA(english ? 0x294 : 0x27C),
-                            hwnd, BoneFrameMultiplyDlgProc, 0) == 2) {
+                            MAKEINTRESOURCEA(english ? MDS_DLG_BONE_FRAME_MULTIPLY_EN : MDS_DLG_BONE_FRAME_MULTIPLY_JP),
+                            hwnd, BoneFrameMultiplyDlgProc, 0) == IDCANCEL) {
             return;
         }
         break;
@@ -1680,8 +1681,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         }
         app->state.enterKeyState = 1;
         if (DialogBoxParamA(hInst,
-                            MAKEINTRESOURCEA(english ? 0x295 : 0x283),
-                            hwnd, FacialMultiplyDlgProc, 0) == 2) {
+                            MAKEINTRESOURCEA(english ? MDS_DLG_MORPH_MULTIPLY_EN : MDS_DLG_MORPH_MULTIPLY_JP),
+                            hwnd, FacialMultiplyDlgProc, 0) == IDCANCEL) {
             return;
         }
         break;
@@ -1699,7 +1700,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
             break;
         }
         HWND dlg = CreateDialogParamA(
-            hInst, MAKEINTRESOURCEA(english ? 0x296 : 0x285),
+            hInst, MAKEINTRESOURCEA(english ? MDS_DLG_EDGE_THICKNESS_EN : MDS_DLG_EDGE_THICKNESS_JP),
             hwnd, EdgeThicknessDlgProc, 0);
         app->state.edgeThicknessDialog = dlg;
         ShowWindow(dlg, SW_SHOW);
@@ -1734,17 +1735,17 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     case MDS_CMD_DELETE_MORPH_LIGHT_FRAME_LINE: {
         static const struct {
             int id;
-            int flagIdx;
+            LetterKey letterKey;
             void (*frameLineOp)(MMDApp*);
         } kFrameEditDialogs[] = {
-            {MDS_CMD_INSERT_BONE_CAMERA_FRAME_LINE, 9, InsertBoneCameraFrameLine},    // 0x439E40
-            {MDS_CMD_DELETE_BONE_CAMERA_FRAME_LINE, 11, DeleteBoneCameraFrameLine},   // 0x43A650
-            {MDS_CMD_INSERT_MORPH_LIGHT_FRAME_LINE, 13, InsertFacialLightFrameLine},  // 0x43B720
-            {MDS_CMD_DELETE_MORPH_LIGHT_FRAME_LINE, 14, DeleteFacialLightFrameLine},  // 0x43BB30
+            {MDS_CMD_INSERT_BONE_CAMERA_FRAME_LINE, LetterKey::I, InsertBoneCameraFrameLine},    // 0x439E40
+            {MDS_CMD_DELETE_BONE_CAMERA_FRAME_LINE, LetterKey::K, DeleteBoneCameraFrameLine},   // 0x43A650
+            {MDS_CMD_INSERT_MORPH_LIGHT_FRAME_LINE, LetterKey::U, InsertFacialLightFrameLine},  // 0x43B720
+            {MDS_CMD_DELETE_MORPH_LIGHT_FRAME_LINE, LetterKey::J, DeleteFacialLightFrameLine},  // 0x43BB30
         };
         for (const auto& entry : kFrameEditDialogs) {
             if (entry.id == id) {
-                app->state.dialogFlags[entry.flagIdx] = 1;
+                app->LetterKeyState(entry.letterKey) = 1;
                 entry.frameLineOp(app);
                 app->SceneModified() = 1;
                 return;
@@ -1754,20 +1755,20 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     }
 
     // ------------------------------------------------------------------
-    // 259 (0x0048A8E3): model-edge dialog (0x29A EN / 0x299 JP,
+    // 259 (0x0048A8E3): English-name dialog (0x29A EN / 0x299 JP,
     // sub_464BD0) at app+0xA0B50.
     // ------------------------------------------------------------------
     case MDS_CMD_EDIT_ENGLISH_NAMES: {
-        if (app->FrameRangeDialog() != nullptr) {
+        if (app->EnglishNameDialog() != nullptr) {
             break;
         }
         if (app->CameraMode() != 0) {
             break;
         }
         HWND dlg = CreateDialogParamA(
-            hInst, MAKEINTRESOURCEA(english ? 0x29A : 0x299),
-            hwnd, ModelEdgeDlgProc, 0);
-        app->FrameRangeDialog() = dlg;
+            hInst, MAKEINTRESOURCEA(english ? MDS_DLG_ENGLISH_NAMES_EN : MDS_DLG_ENGLISH_NAMES_JP),
+            hwnd, EnglishNameDlgProc, 0);
+        app->EnglishNameDialog() = dlg;
         ShowWindow(dlg, SW_SHOW);
         UpdateWindow(dlg);
         return;
@@ -1797,9 +1798,9 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         }
         app->state.enterKeyState = 1;
         const INT_PTR r = DialogBoxParamA(
-            hInst, MAKEINTRESOURCEA(english ? 0x2AA : 0x2A9),
+            hInst, MAKEINTRESOURCEA(english ? MDS_DLG_TOON_TEXTURE_EN : MDS_DLG_TOON_TEXTURE_JP),
             hwnd, EnhanceModelDlgProc, 0);
-        if (r == 2) {
+        if (r == IDCANCEL) {
             return;
         }
         if (english) {
@@ -1826,10 +1827,10 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         if (app->CameraMode() != 0) {
             return;
         }
-        app->state.dialogFlags[6] = 1;
+        app->LetterKeyState(LetterKey::B) = 1;
         app->state.enterKeyState = 1;
         HWND dlg = CreateDialogParamA(
-            hInst, MAKEINTRESOURCEA(english ? 0x2AC : 0x2AB),
+            hInst, MAKEINTRESOURCEA(english ? MDS_DLG_PHYSICS_MODEL_EN : MDS_DLG_PHYSICS_MODEL_JP),
             hwnd, PhysicsModelDlgProc, 0);
         app->state.frameCopyDialog = dlg;
         ShowWindow(dlg, SW_SHOW);
@@ -1846,7 +1847,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // copies the directory into DirModel, then sub_41EC10 saves the file.
     // ------------------------------------------------------------------
     case MDS_CMD_SAVE_ENHANCED_MODEL: {
-        app->state.dialogFlags[12] = 1;
+        app->LetterKeyState(LetterKey::P) = 1;
         app->state.enterKeyState = 1;
         SetCurrentDirectoryW(app->ExeDir());
         wchar_t fileBuf[0x100];
@@ -1889,7 +1890,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 264 (0x0048ABB0): toggle byte app+0xA0CC8 with CheckMenuItem 0x108.
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_PHYSICS_BODIES: {
-        app->state.dialogFlags[4] = 1;
+        app->LetterKeyState(LetterKey::D) = 1;
         if (app->state.rigidBodyDisplayEnabled != 0) {
             app->state.rigidBodyDisplayEnabled = 0;
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_PHYSICS_BODIES, MF_UNCHECKED);
@@ -1980,10 +1981,10 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         if (app->GravitySettingDialog() != 0) {
             return;
         }
-        app->state.dialogFlags[7] = 1;
+        app->LetterKeyState(LetterKey::G) = 1;
         app->state.enterKeyState = 1;
         HWND dlg = CreateDialogParamA(
-            hInst, MAKEINTRESOURCEA(english ? 0x323 : 0x322),
+            hInst, MAKEINTRESOURCEA(english ? MDS_DLG_GRAVITY_EN : MDS_DLG_GRAVITY_JP),
             hwnd, GravitySettingDlgProc, 0);
         app->GravitySettingDialog() = dlg;
         ShowWindow(dlg, SW_SHOW);
@@ -1995,7 +1996,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 267 (0x0048AF57): physical-engine about box.
     // ------------------------------------------------------------------
     case MDS_CMD_ABOUT_PHYSICS: {
-        app->state.dialogFlags[5] = 1;
+        app->LetterKeyState(LetterKey::A) = 1;
         if (english) {
             MessageBoxA(hwnd,
                         "Bullet Physics Library Ver.2.75\n\n"
@@ -2014,7 +2015,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 268 (0x0048AECE): 0x54 = 1, undo-available byte 0x9EDB5 = 1.
     // ------------------------------------------------------------------
     case MDS_CMD_RESET_PHYSICS_BODIES:
-        app->state.dialogFlags[9] = 1;
+        app->LetterKeyState(LetterKey::I) = 1;
         app->PhysicsResetPending() = 1;
         return;
 
@@ -2023,7 +2024,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // GetMenuState bit 8; byte app+0xA066D mirrors the checked state.
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_PLAYBACK_PHYSICS_ON_OFF: {
-        app->state.dialogFlags[12] = 1;
+        app->LetterKeyState(LetterKey::P) = 1;
         if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PLAYBACK_PHYSICS_ON_OFF, 0) & 8) == 0) {
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_PLAYBACK_PHYSICS_ON_OFF, MF_CHECKED);
             app->state.playbackAlwaysOnOffMode = 1;
@@ -2043,7 +2044,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         if (app->CameraMode() != 0) {
             return;
         }
-        app->state.dialogFlags[6] = 1;
+        app->LetterKeyState(LetterKey::B) = 1;
         unsigned char* model = ActiveModel(app);
         const std::int32_t boneCount =
             static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
@@ -2072,7 +2073,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         if (app->CameraMode() != 0) {
             return;
         }
-        app->state.dialogFlags[0] = 1;
+        app->LetterKeyState(LetterKey::X) = 1;
         mdl::SelectPhysicsOnBoneKeys(*mdl::Mdl(ActiveModel(app)));
         PanelPaint(app);  // 0x414610
         return;
@@ -2083,10 +2084,10 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // no close handling in the original (always returns).
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_FRAME_PHYSICS:
-        app->state.dialogFlags[2] = 1;
+        app->LetterKeyState(LetterKey::C) = 1;
         app->state.enterKeyState = 1;
         DialogBoxParamA(hInst,
-                        MAKEINTRESOURCEA(english ? 0x32D : 0x32C),
+                        MAKEINTRESOURCEA(english ? MDS_DLG_PHYSICS_FRAME_CONVERSION_EN : MDS_DLG_PHYSICS_FRAME_CONVERSION_JP),
                         hwnd, PhysicsOnOffFrameDlgProc, 0);
         return;
 
@@ -2103,7 +2104,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // app+0xA0D24 and the refresh tail runs.
     // ------------------------------------------------------------------
     case MDS_CMD_RENDER_IMAGE: {
-        app->state.dialogFlags[6] = 1;
+        app->LetterKeyState(LetterKey::B) = 1;
         app->state.enterKeyState = 1;
         SetCurrentDirectoryW(app->ExeDir());
         wchar_t fileBuf[0x100];
@@ -2196,7 +2197,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // vtable+0x1C8 = 槽 57; x86 +0xE4/4 = 槽 57).
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_ANTIALIASING: {
-        app->state.dialogFlags[10] = 1;
+        app->LetterKeyState(LetterKey::H) = 1;
         if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_ANTIALIASING, 0) & 8) == 0) {
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_ANTIALIASING, MF_CHECKED);
             SetMultisampleAntialias(app, 1);
@@ -2221,7 +2222,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // app+0xA0188 mirrors.
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_SELF_SHADOW: {
-        app->state.dialogFlags[12] = 1;
+        app->LetterKeyState(LetterKey::P) = 1;
         if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_SELF_SHADOW, 0) & 8) == 0) {
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_SELF_SHADOW, MF_CHECKED);
             app->state.selfShadowEnabled = 1;
@@ -2249,7 +2250,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // HWND_TOPMOST / HWND_NOTOPMOST with flags 0x43.
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_ALWAYS_ON_TOP: {
-        app->state.dialogFlags[15] = 1;
+        app->LetterKeyState(LetterKey::F) = 1;
         if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_ALWAYS_ON_TOP, 0) & 8) == 0) {
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_ALWAYS_ON_TOP, MF_CHECKED);
             if (app->state.floatingWindow != 0) {
@@ -2272,7 +2273,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // Case 285 additionally stores 1 / -1 into scene->groundBody -> +0xD4.
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_BLACK_BACKGROUND: {
-        app->state.dialogFlags[4] = 1;
+        app->LetterKeyState(LetterKey::D) = 1;
         if (app->state.blackBackgroundEnabled != 0) {
             app->state.blackBackgroundEnabled = 0;
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_BLACK_BACKGROUND, MF_UNCHECKED);
@@ -2284,7 +2285,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     }
 
     case MDS_CMD_TOGGLE_MODEL_NON_DISPLAY: {
-        app->state.dialogFlags[5] = 1;
+        app->LetterKeyState(LetterKey::A) = 1;
         if (app->state.modelNonDisplayMode != 0) {
             app->state.modelNonDisplayMode = 0;
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MODEL_NON_DISPLAY, MF_UNCHECKED);
@@ -2296,7 +2297,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     }
 
     case MDS_CMD_TOGGLE_WAVE_ON_FRAME: {
-        app->state.dialogFlags[15] = 1;
+        app->LetterKeyState(LetterKey::F) = 1;
         if (app->state.wavPlaysOnFrameMove != 0) {
             app->state.wavPlaysOnFrameMove = 0;
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_WAVE_ON_FRAME, MF_UNCHECKED);
@@ -2308,7 +2309,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     }
 
     case MDS_CMD_TOGGLE_PHYSICS_FLOOR: {
-        app->state.dialogFlags[15] = 1;
+        app->LetterKeyState(LetterKey::F) = 1;
         unsigned char* target = reinterpret_cast<unsigned char*>(
             app->Physics()->groundBody);   // scene slot 0x44
         // x64 0x7FF7CB4700BC / 0x7FF7CB4700FB: mov dword ptr [rcx+0E0h], 1 /
@@ -2335,7 +2336,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // via SetModelColor(model, r, g, b) over the 100 model slots.
     // ------------------------------------------------------------------
     case MDS_CMD_EDGE_COLOR: {
-        app->state.dialogFlags[6] = 1;
+        app->LetterKeyState(LetterKey::B) = 1;
         app->state.enterKeyState = 1;
         CHOOSECOLORA cc;
         std::memset(&cc, 0, sizeof(cc));
@@ -2393,7 +2394,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     case MDS_CMD_MODEL_DRAW_ORDER:
         app->state.enterKeyState = 1;
         DialogBoxParamA(hInst,
-                        MAKEINTRESOURCEA(english ? 0x325 : 0x324),
+                        MAKEINTRESOURCEA(english ? MDS_DLG_MODEL_DRAW_ORDER_EN : MDS_DLG_MODEL_DRAW_ORDER_JP),
                         hwnd, ModelDisplayOrderDlgProc, 0);
         return;
 
@@ -2402,10 +2403,10 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // return when closed.
     // ------------------------------------------------------------------
     case MDS_CMD_MODEL_CALCULATION_ORDER:
-        app->state.dialogFlags[2] = 1;
+        app->LetterKeyState(LetterKey::C) = 1;
         app->state.enterKeyState = 1;
         DialogBoxParamA(hInst,
-                        MAKEINTRESOURCEA(english ? 0x32B : 0x32A),
+                        MAKEINTRESOURCEA(english ? MDS_DLG_MODEL_CALCULATE_ORDER_EN : MDS_DLG_MODEL_CALCULATE_ORDER_JP),
                         hwnd, ModelCalculateOrderDlgProc, 0);
         return;
 
@@ -2424,7 +2425,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // plugin loader (0x42A020) and the OpenNi init (0x429CB0, arg 0).
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_KINECT:
-        app->state.dialogFlags[11] = 1;
+        app->LetterKeyState(LetterKey::K) = 1;
         if (app->state.depthDeviceEnabled != 0) {
             DisableKinect(app);  // 0x42A020
         } else {
@@ -2439,7 +2440,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // uncheck, dirty + 0x9EDB5 = 1.
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_MOTION_CAPTURE: {
-        app->state.dialogFlags[2] = 1;
+        app->LetterKeyState(LetterKey::C) = 1;
         if (app->state.autoRepeat == 0) {
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MOTION_CAPTURE, MF_CHECKED);
             app->state.autoRepeat = 1;
@@ -2479,7 +2480,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     }
 
     case MDS_CMD_TOGGLE_LOST_BONE_RESET: {
-        app->state.dialogFlags[17] = 1;
+        app->LetterKeyState(LetterKey::L) = 1;
         if (app->state.kinectInitLostBone != 0) {
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_LOST_BONE_RESET, MF_UNCHECKED);
             app->state.kinectInitLostBone = 0;
@@ -2491,7 +2492,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     }
 
     case MDS_CMD_TOGGLE_CAPTURE_SKELETON: {
-        app->state.dialogFlags[4] = 1;
+        app->LetterKeyState(LetterKey::D) = 1;
         if (app->state.depthTextureCompositionEnabled != 0) {
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_CAPTURE_SKELETON, MF_UNCHECKED);
             app->state.depthTextureCompositionEnabled = 0;
@@ -2558,7 +2559,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 297 (0x0048BC9B): toggle byte app+0xA03E9 with CheckMenuItem 0x129.
     // ------------------------------------------------------------------
     case MDS_CMD_TOGGLE_WAVE_DISABLED: {
-        app->state.dialogFlags[4] = 1;
+        app->LetterKeyState(LetterKey::D) = 1;
         if (app->state.automaticFrameAdvanceEnabled != 0) {
             app->state.automaticFrameAdvanceEnabled = 0;
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_WAVE_DISABLED, MF_UNCHECKED);
@@ -2645,8 +2646,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
             const float t6 = static_cast<float>(
                 -static_cast<double>(app->CameraDistance()));
             if (DialogBoxParamA(
-                    hInst, MAKEINTRESOURCEA(english ? 0x298 : 0x289),
-                    hwnd, CameraNumericInputDlgProc, 0) == 2) {
+                    hInst, MAKEINTRESOURCEA(english ? MDS_DLG_CAMERA_NUMERIC_INPUT_EN : MDS_DLG_CAMERA_NUMERIC_INPUT_JP),
+                    hwnd, CameraNumericInputDlgProc, 0) == IDCANCEL) {
                 return;
             }
             app->CameraPositionX() = t0;
@@ -2709,8 +2710,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         t4 = static_cast<float>(-static_cast<double>(t4) * kD2 / kD1);
         t5 = static_cast<float>(-kD1 * kD2 / static_cast<double>(t5));
         if (DialogBoxParamA(
-                hInst, MAKEINTRESOURCEA(english ? 0x297 : 0x288),
-                hwnd, BoneNumericInputDlgProc, 0) == 2) {
+                hInst, MAKEINTRESOURCEA(english ? MDS_DLG_BONE_NUMERIC_INPUT_EN : MDS_DLG_BONE_NUMERIC_INPUT_JP),
+                hwnd, BoneNumericInputDlgProc, 0) == IDCANCEL) {
             return;
         }
         PushBoneEditUndo(app);  // 0x42D6E0 (bone-edit keyframe register)
@@ -2756,7 +2757,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // tail (0x48A805), frameFlag[cur] = 1, dirty, PostViewRefresh.
     // ------------------------------------------------------------------
     case MDS_CMD_RESET_BONE_CAMERA_ROTATION: {
-        app->state.dialogFlags[1] = 1;
+        app->LetterKeyState(LetterKey::Z) = 1;
         if (app->CameraMode() != 0) {
             app->CameraPitch() = 0.0f;
             app->CameraYaw() = 0.0f;

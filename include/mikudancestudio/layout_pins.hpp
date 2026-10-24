@@ -7,7 +7,7 @@
 //     (the ground truth this port mirrors; recovered from IDA + probes).
 //     The wall below is ordered by offset, i.e. by struct order; one
 //     MIKUDANCESTUDIO_APP_OFF line per pinned field (array elements get
-//     their own line, e.g. dialogFlags[17]).
+//     their own line, e.g. letterKeyState[17]).
 //   * x64: anchor members only - instruction-level ground truth
 //     (vote-grade twin reads); the tail from lastRegisteredFrame (0x9F038)
 //     to statusText (0xA54D9) is anchored field-by-field, and the struct
@@ -39,9 +39,9 @@ MIKUDANCESTUDIO_APP_OFF(rightKeyState, 32);
 MIKUDANCESTUDIO_APP_OFF(shiftModifierState, 36);
 MIKUDANCESTUDIO_APP_OFF(spaceKeyState, 40);
 MIKUDANCESTUDIO_APP_OFF(escKeyState, 44);
-MIKUDANCESTUDIO_APP_OFF(dialogFlags, 48);
-MIKUDANCESTUDIO_APP_OFF(dialogFlags[16], 112);
-MIKUDANCESTUDIO_APP_OFF(dialogFlags[17], 116);
+MIKUDANCESTUDIO_APP_OFF(letterKeyState, 48);
+MIKUDANCESTUDIO_APP_OFF(letterKeyState[16], 112);
+MIKUDANCESTUDIO_APP_OFF(letterKeyState[17], 116);
 MIKUDANCESTUDIO_APP_OFF(keyState221, 120);
 MIKUDANCESTUDIO_APP_OFF(keyState226, 124);
 MIKUDANCESTUDIO_APP_OFF(tabKeyState, 128);
@@ -377,9 +377,9 @@ MIKUDANCESTUDIO_APP_OFF(rotationDialogTemp, 658216);
 MIKUDANCESTUDIO_APP_OFF(edgeThicknessDialog, 658244);
 MIKUDANCESTUDIO_APP_OFF(edgeThicknessEditProc, 658248);
 MIKUDANCESTUDIO_APP_OFF(englishUI, 658252);
-MIKUDANCESTUDIO_APP_OFF(frameRangeDialog, 658256);
-MIKUDANCESTUDIO_APP_OFF(modelEdgeEditProc, 658260);
-MIKUDANCESTUDIO_APP_OFF(modelEdgeComboCursor, 658264);
+MIKUDANCESTUDIO_APP_OFF(englishNameDialog, 658256);
+MIKUDANCESTUDIO_APP_OFF(englishNameEditProc, 658260);
+MIKUDANCESTUDIO_APP_OFF(englishNameComboCursor, 658264);
 MIKUDANCESTUDIO_APP_OFF(enhancedModelDirty, 658276);
 MIKUDANCESTUDIO_APP_OFF(timeNowLow, 658280);
 MIKUDANCESTUDIO_APP_OFF(timeNowHigh, 658284);
@@ -408,7 +408,7 @@ MIKUDANCESTUDIO_APP_OFF(projectedShadowAmbientA, 658684);
 MIKUDANCESTUDIO_APP_OFF(projectedShadowSpecularAlpha, 658700);
 MIKUDANCESTUDIO_APP_OFF(recordingWindow, 658724);
 MIKUDANCESTUDIO_APP_OFF(selfShadowCompositionEnabled, 658728);
-MIKUDANCESTUDIO_APP_OFF(physicsInterval, 658732);
+MIKUDANCESTUDIO_APP_OFF(selfShadowDistance, 658732);
 MIKUDANCESTUDIO_APP_OFF(selfShadowMode, 658736);
 MIKUDANCESTUDIO_APP_OFF(floatingWindow, 658744);
 MIKUDANCESTUDIO_APP_OFF(separateWindowSidebarWidth, 658748);
@@ -606,7 +606,7 @@ MIKUDANCESTUDIO_APP_OFF64(rigidBodyDisplayEnabled, 662864);
 MIKUDANCESTUDIO_APP_OFF64(gravityNoiseEnabled, 662888);
 MIKUDANCESTUDIO_APP_OFF64(recordingWindow, 662976);
 MIKUDANCESTUDIO_APP_OFF64(selfShadowCompositionEnabled, 662984);
-MIKUDANCESTUDIO_APP_OFF64(physicsInterval, 662988);
+MIKUDANCESTUDIO_APP_OFF64(selfShadowDistance, 662988);
 MIKUDANCESTUDIO_APP_OFF64(floatingWindow, 663008);
 MIKUDANCESTUDIO_APP_OFF64(aviStereoOutput, 663053);
 MIKUDANCESTUDIO_APP_OFF64(aviStereoWidthMultiplier, 663056);

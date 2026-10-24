@@ -409,7 +409,7 @@ void CommitEditControl(MMDApp* app, HWND edit) {
         char text[256];
         GetWindowTextA(edit, text, 8);
         const double v = atof(text);
-        s.state.physicsInterval =   // 0xA0D2C
+        s.state.selfShadowDistance =   // 0xA0D2C
             static_cast<float>((10000.0 - v) / 100000.0);
         SendMessageA(GetDlgItem(main, panel::kSelfShadowRangeSlider), TBM_SETPOS, 1,
                      static_cast<LPARAM>(static_cast<int>(v)));

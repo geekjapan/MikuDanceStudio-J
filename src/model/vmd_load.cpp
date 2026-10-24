@@ -329,7 +329,7 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) {  // VA 0x00434B60
             sprintf_s(buffer, 0x100, kJpModelMismatch, text);
         if (MessageBoxA(hwnd, buffer,
                         english ? "load motion data" : kJpTitleMotionLoad,
-                        1 /*MB_OKCANCEL*/) != 1 /*IDOK*/) {
+                        1 /*MB_OKCANCEL*/) != IDOK /*IDOK*/) {
             _close(fileHandle);
             return 0;
         }

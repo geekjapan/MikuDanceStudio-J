@@ -22,6 +22,7 @@
 #include <cstdint>
 
 #include "mikudancestudio/app_layout.hpp"
+#include "mikudancestudio/keyboard_state.hpp"
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/clipboard_layout.hpp"
 #include "mikudancestudio/d3d_wrapper.hpp"
@@ -194,12 +195,20 @@ public:
     // like the original's `this-><field>`.
     MMDAppState state;
 
-    // Frame-range output dialog HWND (x86 blob slot 0xA0B50).
-    HWND& FrameRangeDialog() {
+    // Polling stores key edges; menu commands also write 1 to suppress re-entry.
+    std::int32_t& LetterKeyState(LetterKey key) {
+        return state.letterKeyState[static_cast<int>(key)];
+    }
+    const std::int32_t& LetterKeyState(LetterKey key) const {
+        return state.letterKeyState[static_cast<int>(key)];
+    }
+
+    // English-name editor dialog HWND (x86 blob slot 0xA0B50).
+    HWND& EnglishNameDialog() {
 #if defined(_M_X64)
-        return m_frameRangeDialog;
+        return m_englishNameDialog;
 #else
-        return state.frameRangeDialog;
+        return state.englishNameDialog;
 #endif
     }
 
@@ -258,7 +267,7 @@ public:
     }
 
     // Saved wndprocs of subclassed dialog edits (x86 blob slots
-    // 0xA0B48/0xA0B54/0xA0B78/0xA0CD0) and the model-edge combo edit
+    // 0xA0B48/0xA0B54/0xA0B78/0xA0CD0) and the English-name combo edit
     // positions (0xA0B58..0xA0B60).
     WNDPROC& EdgeThicknessEditProc() {  // was ModelInfoEditProc - slot
                                         // 0xA0B48 is the edge-thickness
@@ -269,18 +278,18 @@ public:
         return state.edgeThicknessEditProc;
 #endif
     }
-    WNDPROC& ModelEdgeEditProc() {
+    WNDPROC& EnglishNameEditProc() {
 #if defined(_M_X64)
-        return m_modelEdgeEditProc;
+        return m_englishNameEditProc;
 #else
-        return state.modelEdgeEditProc;
+        return state.englishNameEditProc;
 #endif
     }
-    std::int32_t& ModelEdgeComboCursor(int combo) {  // 0:669 1:673 2:677
+    std::int32_t& EnglishNameComboCursor(int combo) {  // 0:669 1:673 2:677
 #if defined(_M_X64)
-        return m_modelEdgeComboCursor[combo];
+        return m_englishNameComboCursor[combo];
 #else
-        return state.modelEdgeComboCursor[combo];
+        return state.englishNameComboCursor[combo];
 #endif
     }
     WNDPROC& FrameCopyEditProc() {
@@ -1165,7 +1174,7 @@ public:
     }
     // x64 app+0xA1E18 / x86 app+0xA0D6C = state.messageSeen: ONE shared
     // counter in both originals (refreshed from playing / idle-suppress-off
-    // / model-edge-dialog-open at the main-pump prologue, walks 1->2->3->0,
+    // / English-name-dialog-open at the main-pump prologue, walks 1->2->3->0,
     // reset to 1 by every window message) that gates the physics section
     // (0x7FF7CB44B8E7 / x86 0x46EFBE), the pump regions and the Present.
     // Use MessageSeen() directly - see PhysicsFrame and
@@ -1332,7 +1341,7 @@ public:
         return state.selfShadowMode;
     }
     float& ShadowDistance() {
-        return state.physicsInterval;
+        return state.selfShadowDistance;
     }
     float* GravityDirection() { return &GravityX(); }
     std::int32_t& GravityNoise() {
@@ -1447,7 +1456,6 @@ public:
     float& GravityY()               { return state.gravityY; }
     float& GravityZ()               { return state.gravityZ; }
     float& GravityMagnitude()       { return state.gravityMagnitude; }
-    float& PhysicsInterval()        { return state.physicsInterval; }  // 0.01125
 
     // Recent-file ANSI buffers (char[256] each)
     char* RecentFile(int index) {
@@ -1530,15 +1538,15 @@ private:
     wchar_t m_aviOutputPath[256]{};
     std::int32_t m_aviCodecSelection{};
     HWND m_gravitySettingDialog = nullptr;
-    HWND m_frameRangeDialog = nullptr;
+    HWND m_englishNameDialog = nullptr;
     HWND m_groundShadowColorDialog = nullptr;
     WNDPROC m_groundShadowColorEditProc = nullptr;
     std::int32_t m_morphFrameShift = 0;
     std::int32_t m_blinkStartFrame = 0;
     std::int32_t m_blinkEndFrame = 0;
     WNDPROC m_edgeThicknessEditProc = nullptr;
-    WNDPROC m_modelEdgeEditProc = nullptr;
-    std::int32_t m_modelEdgeComboCursor[3] = {};
+    WNDPROC m_englishNameEditProc = nullptr;
+    std::int32_t m_englishNameComboCursor[3] = {};
     WNDPROC m_frameCopyEditProc = nullptr;
     WNDPROC m_accessoryFrameEditProc = nullptr;
     float m_rotationDialogTemp[7] = {};

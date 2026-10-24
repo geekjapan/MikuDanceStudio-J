@@ -70,7 +70,8 @@ struct MMDAppState {
     // 's' on slot 8, per the binary poll tables - 'p u j f r l' fill
     // 0x60..0x78); modal dialog pumps never run PollKey, so the
     // two roles never collide.
-    std::int32_t dialogFlags[18];
+    // Shared letter-key edges and menu re-entry latches; values are not booleans.
+    std::int32_t letterKeyState[18];
     std::int32_t keyState221;               // +0x78 (GetKeyState(221))
     std::int32_t keyState226;               // +0x7C (GetKeyState(226))
     std::int32_t tabKeyState;               // +0x80 (VK_TAB)
@@ -748,20 +749,20 @@ struct MMDAppState {
     unsigned char englishUI;  // x64 pin 662416 (0xA1B98; the x64E build
                               // inits it to 1)
 #if defined(_M_X64)
-    RawPad<7> pad353;  // frameRangeDialog needs the full 8-alignment here
+    RawPad<7> pad353;  // englishNameDialog needs the full 8-alignment here
 #else
     RawPad<3> pad353;
 #endif
 #if defined(_M_X64)
-    // blob slots: frame-range dialog HWND (0xA1BA0), model-edge edit
+    // blob slots: English-name dialog HWND (0xA1BA0), English-name edit
     // proc (0xA1BA8) and the three combo cursors (0xA1BB0..0xA1BBB);
     // the port works on MMDApp mirrors
     RawPad<8> pad356;
     RawPad<20> pad358;
 #else
-    HWND frameRangeDialog;
-    WNDPROC modelEdgeEditProc;      // saved wndproc of edit 667
-    std::int32_t modelEdgeComboCursor[3];  // combos 669/673/677 edit pos
+    HWND englishNameDialog;
+    WNDPROC englishNameEditProc;      // saved wndproc of edit 667
+    std::int32_t englishNameComboCursor[3];  // combos 669/673/677 edit pos
 #endif
     unsigned char enhancedModelDirty;  // x64 pin 662452 (0xA1BB4)
     RawPad<3> pad355;
@@ -849,7 +850,7 @@ struct MMDAppState {
     HWND recordingWindow;  // x64 pin 662976
     unsigned char selfShadowCompositionEnabled;  // x64 pin 662984
     RawPad<3> pad378;
-    float physicsInterval;  // x64 pin 662988 (0xA1DCC, init 0.0125f)
+    float selfShadowDistance;  // x64 pin 662988 (0xA1DCC, init 0.01125f)
     std::int32_t selfShadowMode;
 #if defined(_M_X64)
     RawPad<12> pad380;  // x64 floatingWindow lands on the next 8-grid

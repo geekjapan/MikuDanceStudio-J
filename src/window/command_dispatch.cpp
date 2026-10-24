@@ -436,13 +436,13 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
 
     switch (id) {
     case MDS_CMD_EXIT:        // File: Exit (0x48BCF9) - flag + WM_CLOSE
-        s.state.dialogFlags[0] = 1;
+        s.LetterKeyState(LetterKey::X) = 1;
         SendMessageA(hwnd, WM_CLOSE, 0, 0);
         break;
 
     case MDS_CMD_ABOUT: {     // Help: About (x64 0x7FF7CB472BAD)
         // Raise the dialog-in-flight flags (x64 app+0x58/+0xC0 =
-        // dialogFlags[9]/enterKeyState), compose the banner into a 256-byte ANSI
+        // letterKeyState[9]/enterKeyState), compose the banner into a 256-byte ANSI
         // buffer - the Japanese branch carries the Shift-JIS bytes of the
         // author's name (樋口優, 0x7FF7CB54F980) - and pop it over the
         // floating viewport window when one exists (x64 app+0xA1DE0).
@@ -450,7 +450,7 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
         // 0x7FF7CB54F980（JP）为 "(64bitOS Version)"，x86 原版为
         // "(DirectX9 Version)"（机制同 kModelSlotCount 的按架构取值，但括注
         // 嵌在字面量中间，只能用预处理拼接而非 sizeof(void*) 三元）。
-        s.state.dialogFlags[9] = 1;
+        s.LetterKeyState(LetterKey::I) = 1;
         s.state.enterKeyState = 1;
         char text[256];
 #if defined(_M_X64)
@@ -491,11 +491,11 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
     case MDS_CMD_SAVE_PROJECT:      // File: save PMM (0x489AF7) - overwrite via stored path,
         //          falling into the save-as flow (case 0xD0) when unnamed
         // Entry guard first (x64 0x7FF7CB46E041: mov dword [rbx+54h],1 =
-        // dialogFlags[8] before the stored-path test), then the path check
+        // letterKeyState[8] before the stored-path test), then the path check
         // (cmp [rbx+0A1924h] = EnvFileName[0]): quick save via sub_7FF7CB4950A0
         // when a path exists, else the case 0xD0 save-as flow (which raises
-        // dialogFlags[5]/enterKeyState itself inside CmdSaveScene).
-        s.state.dialogFlags[8] = 1;             // 0x7FF7CB46E041 [app+0x54]
+        // letterKeyState[5]/enterKeyState itself inside CmdSaveScene).
+        s.LetterKeyState(LetterKey::S) = 1;             // 0x7FF7CB46E041 [app+0x54]
         if (app->EnvFileName()[0] != L'\0') {
             SaveSceneFile(app);
         } else {
@@ -513,9 +513,9 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
         break;
     case MDS_CMD_TOGGLE_INFORMATION: {    // View: information display toggle (0x47EAC7/0x47EB00)
         // Entry guard (x64 0x7FF7CB45F6EE: mov dword [rbx+44h],1 =
-        // dialogFlags[4]) before the app+0x356 toggle - same pattern as
+        // letterKeyState[4]) before the app+0x356 toggle - same pattern as
         // sibling case 297 (command_view_menu.cpp).
-        s.state.dialogFlags[4] = 1;             // 0x7FF7CB45F6EE [app+0x44]
+        s.LetterKeyState(LetterKey::D) = 1;             // 0x7FF7CB45F6EE [app+0x44]
         auto& flag = s.state.fpsOverlayEnabled;
         if (flag != 0) {
             flag = 0;
@@ -576,13 +576,13 @@ void CommandDispatch(HWND ctrl, WPARAM wParam) {
         break;
     }
     case MDS_CMD_SELECT_ALL_BONE_FRAMES:      // Edit: select all bone frames (0x4831EA)
-        SelectFrameGroup(app, 0);
+        SelectFrameGroup(app, FrameGroup::Bone);
         break;
     case MDS_CMD_SELECT_ALL_DISPLAY_FRAMES:      // Edit: select all disp/IK/OP frames (0x4832C8)
-        SelectFrameGroup(app, 1);
+        SelectFrameGroup(app, FrameGroup::Display);
         break;
     case MDS_CMD_SELECT_ALL_MORPH_FRAMES:      // Edit: select all facial frames (0x483258)
-        SelectFrameGroup(app, 2);
+        SelectFrameGroup(app, FrameGroup::Morph);
         break;
 
     default:

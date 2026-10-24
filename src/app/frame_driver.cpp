@@ -67,7 +67,7 @@ void AdvanceFrameRenderGate(MMDApp* app) {
         state = 1;
     if (app->state.frameVolumeControlEnabled == 0)
         state = 1;
-    if (app->FrameRangeDialog() != nullptr)
+    if (app->EnglishNameDialog() != nullptr)
         state = 1;
 
     if (state == 1)

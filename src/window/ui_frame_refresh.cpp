@@ -184,11 +184,11 @@ void RefreshSelfShadowPanel(MMDApp* app) {
 
     app->SelfShadowMode() =
         static_cast<std::int8_t>(reinterpret_cast<const std::uint8_t*>(record)[12]);
-    app->state.physicsInterval =
+    app->state.selfShadowDistance =
         *reinterpret_cast<const float*>(record + 4);
 
     const double rawRange =
-        10000.0 - static_cast<double>(app->state.physicsInterval) * 100000.0;
+        10000.0 - static_cast<double>(app->state.selfShadowDistance) * 100000.0;
     int range = static_cast<int>(rawRange);
     if (rawRange - static_cast<double>(range) >= 0.5)
         ++range;
@@ -321,7 +321,7 @@ void RegisterSelfShadowState(MMDApp* app, int frameValue) {
         reinterpret_cast<std::uint8_t*>(currentRecord)[12] =
             static_cast<std::uint8_t>(app->SelfShadowMode());
         *reinterpret_cast<float*>(currentRecord + 4) =
-            app->state.physicsInterval;
+            app->state.selfShadowDistance;
         reinterpret_cast<std::uint8_t*>(currentRecord)[20] = 1;
         return;
     }
@@ -353,7 +353,7 @@ void RegisterSelfShadowState(MMDApp* app, int frameValue) {
     added[0] = frame;
     reinterpret_cast<std::uint8_t*>(added)[12] =
         static_cast<std::uint8_t>(app->SelfShadowMode());
-    *reinterpret_cast<float*>(added + 4) = app->state.physicsInterval;
+    *reinterpret_cast<float*>(added + 4) = app->state.selfShadowDistance;
     reinterpret_cast<std::uint8_t*>(added)[20] = 1;
     if (frame > app->state.lastRegisteredFrame)
         app->state.lastRegisteredFrame = frame;

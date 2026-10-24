@@ -84,6 +84,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-fx"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+]
+
+[[package]]
 name = "mds-trace"
 version = "0.1.0"
 

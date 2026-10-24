@@ -1,0 +1,19 @@
+[package]
+name = "mds-fx"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+description = "Preprocessor, lexer, and parser for MikuMikuEffect (.fx) effect files"
+license = "MIT"
+publish = false
+
+[lib]
+name = "mds_fx"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mds-fx"
+path = "src/main.rs"
+
+[dependencies]
+encoding_rs = "0.8"

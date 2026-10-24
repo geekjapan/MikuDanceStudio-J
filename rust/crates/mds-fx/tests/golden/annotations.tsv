@@ -1,0 +1,32 @@
+# Hand-checked annotation values from the ray-mmd corpus (commit 218a91cd1c53f49850b2772ebbcb98bf258e75b1).
+#
+# Each row was verified by reading the source line(s) named in `source` and, where the value
+# depends on a macro or an #if, the define chain in `notes`. A row passes when the effect parsed
+# from `effect` has an annotation `annotation` on `owner` whose value formats as `expected`, and
+# the annotation's source line (mapped back through the include map) is `source`.
+#
+# Paths are relative to the corpus directory that holds `ray-mmd/` (env MDS_CORPUS).
+# Owner: `global NAME` or `technique NAME`.
+# Expected: "text" string; ^"text" string that starts with text; 3 int; 1.0 float; true/false
+# bool; {1.0, 2.0} vector.
+# effect	source	owner	annotation	expected	notes
+ray-mmd/ray.fx	ray-mmd/ray.fx:9	global mSunLightP	name	"ray_controller.pmx"	CONTROLOBJECT; line: float mSunLightP : CONTROLOBJECT<string name="ray_controller.pmx"; string item = "SunLight+";>;
+ray-mmd/ray.fx	ray-mmd/ray.fx:9	global mSunLightP	item	"SunLight+"	same line as the row above
+ray-mmd/ray.fx	ray-mmd/ray.fx:173	global Script	ScriptOutput	"color"	line: string ScriptOutput = "color";
+ray-mmd/ray.fx	ray-mmd/ray.fx:175	global Script	ScriptOrder	"postprocess"	line: string ScriptOrder  = "postprocess";
+ray-mmd/ray.fx	ray-mmd/ray.fx:179	technique DeferredLighting	Script	^"RenderColorTarget=ScnMap;RenderDepthStencilTarget=DepthBuffer;ClearSetColor=BackColor;ClearSetDepth=ClearDepth;ClearSetStencil=ClearStencil;Clear=Color;Clear=Depth;ScriptExternal=Color;RenderColorTarget=ShadowMap;ClearSetColor=WhiteColor;Clear=Color;Pass=ShadowMapGen;ClearSetColor=BackColor;"	joined strings of lines 180-187 and 190-194; the second group is active because ray.conf sets SUN_SHADOW_QUALITY 3 (line 13) and SUN_LIGHT_ENABLE 1 (line 5)
+ray-mmd/ray.fx	ray-mmd/Shader/textures.fxsub:14	global DepthBuffer	ViewportRatio	{1.0, 1.0}	float2 ViewportRatio = {1.0,1.0}; ints and floats in a float2 initializer become floats
+ray-mmd/ray.fx	ray-mmd/Shader/textures.fxsub:15	global DepthBuffer	Format	"D24S8"	line: string Format = "D24S8";
+ray-mmd/ray.fx	ray-mmd/Shader/textures.fxsub:19	global ScnMap	Format	"A16B16G16R16F"	line: string Format = "A16B16G16R16F";
+ray-mmd/ray.fx	ray-mmd/Shader/textures.fxsub:28	global FogMap	Description	"Multi volumetirc fog map for ray"	spelling is the source's; active because ray.conf sets FOG_ENABLE 1 (line 23)
+ray-mmd/ray.fx	ray-mmd/Shader/textures.fxsub:31	global FogMap	ClearColor	{0.0, 0.0, 0.0, 0.0}	float4 ClearColor = { 0, 0, 0, 0 }; ints in a float4 become floats
+ray-mmd/ray.fx	ray-mmd/Shader/textures.fxsub:32	global FogMap	ClearDepth	1.0	line: float ClearDepth = 1.0;
+ray-mmd/ray.fx	ray-mmd/Shader/textures.fxsub:122	global MaterialMap	DefaultEffect	"self = hide;*fog.pmx=hide;*controller*.pmx=hide;*editor*.pmx=hide;Volumetric*.pmx=hide;sky*box*.* = ./materials/material_skybox.fx;LED*.pmx =./materials/Video/material_screen_led.fx;*Light*.pmx =./materials/Emissive/material_lighting.fx;*.pmd = ./materials/material_2.0.fx;*.pmx = ./materials/material_2.0.fx;*.x = hide;* = hide;"	twelve adjacent string literals on lines 123-134 joined into one
+ray-mmd/ray.fx	ray-mmd/Shader/textures.fxsub:201	global PSSM1	Dimensions	{2048, 2048}	int2 Dimensions = { SHADOW_MAP_SIZE, SHADOW_MAP_SIZE }; SHADOW_MAP_SIZE is 2048 at textures.fxsub:6 because ray.conf sets SUN_SHADOW_QUALITY 3; region active also needs SUN_LIGHT_ENABLE 1
+ray-mmd/ray.fx	ray-mmd/Shader/textures.fxsub:182	global SSAOMap	ClearColor	{1.0, 1.0, 1.0, 1.0}	float4 ClearColor = { 1, 1, 1, 1 }; region active because ray.conf sets SSDO_QUALITY 2 (line 51)
+ray-mmd/Extension/DummyScreen/DummyScreen.fx	ray-mmd/Extension/DummyScreen/DummyScreen.fx:8	global DummyScreenTex	ViewportRatio	{1.0, 1.0}	line: float2 ViewportRatio = {1.0, 1.0};
+ray-mmd/Extension/DummyScreen/DummyScreen.fx	ray-mmd/Extension/DummyScreen/DummyScreen.fx:9	global DummyScreenTex	Miplevels	0	line: int Miplevels = 0;
+ray-mmd/Extension/DummyScreen/DummyScreen.fx	ray-mmd/Extension/DummyScreen/DummyScreen.fx:10	global DummyScreenTex	Format	"A2B10G10R10"	line: string Format= "A2B10G10R10";
+ray-mmd/Extension/Debug/DebugController.fx	ray-mmd/Extension/Debug/DebugController.fx:36	global ScnMap	AntiAlias	false	line: bool AntiAlias = false;
+ray-mmd/Main/main.fx	ray-mmd/Main/main.fxsub:447	technique MainTecBS0	MMDPass	"object_ss"	made by macro OBJECT_TEC(MainTecBS0, "object_ss") at main.fxsub:447; the macro is defined at lines 436-444 and a macro expansion maps to its call line
+ray-mmd/Main/main.fx	ray-mmd/Main/main.fxsub:449	technique EdgeTec	MMDPass	"edge"	line: technique EdgeTec<string MMDPass = "edge";>{}

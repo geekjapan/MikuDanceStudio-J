@@ -93,6 +93,49 @@ pub fn verify_probe(
     probe(vk, ast, source, name, profile, entry_point)
 }
 
+/// Checks `constants` against the SPIR-V the shader ships with: every constant row and
+/// sampler register the module reads lies in exactly one parameter, and every parameter has
+/// a register the module reads.
+pub fn check_coverage(spirv: &[u32], constants: &[Constant]) -> Result<(), String> {
+    let (rows, samplers) = usage(spirv)?;
+    let mut errs = Vec::new();
+    let reads = |set: RegisterSet| -> Vec<u32> {
+        let s = if set == RegisterSet::Sampler {
+            &samplers
+        } else {
+            &rows
+        };
+        s.iter().map(|r| r & !DYNAMIC).collect()
+    };
+    for set in [RegisterSet::Float4, RegisterSet::Sampler] {
+        for r in reads(set) {
+            let n = constants
+                .iter()
+                .filter(|c| {
+                    c.set == set && (c.index as u32..(c.index + c.count) as u32).contains(&r)
+                })
+                .count();
+            if n != 1 {
+                errs.push(format!(
+                    "{}{r} is read and lies in {n} parameters",
+                    set.prefix()
+                ));
+            }
+        }
+    }
+    for c in constants {
+        let range = c.index as u32..(c.index + c.count) as u32;
+        if !reads(c.set).iter().any(|r| range.contains(r)) {
+            errs.push(format!("{c} is not read"));
+        }
+    }
+    if errs.is_empty() {
+        Ok(())
+    } else {
+        Err(errs.join("; "))
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Class {
     Numeric,

@@ -111,6 +111,16 @@ fn ctab_names_of_buffer_shadow_ps() {
             "transp=c5"
         ]
     );
+
+    // The table covers exactly the registers the SPIR-V of the same entry reads.
+    let spv = vk
+        .compile_hlsl(&src, "sm3", &profile, &ep, Target::SpirvBinary)
+        .unwrap();
+    let words = spirv_fix::words(&spv).unwrap();
+    reflect::check_coverage(&words, &c).unwrap();
+    let without_light: Vec<_> = c.iter().filter(|c| c.name != "LightDir").cloned().collect();
+    let err = reflect::check_coverage(&words, &without_light).unwrap_err();
+    assert!(err.contains("c2 is read and lies in 0 parameters"), "{err}");
 }
 
 #[test]

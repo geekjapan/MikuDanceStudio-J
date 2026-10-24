@@ -25,7 +25,8 @@ options:
   --times         print the compile time of each shader in milliseconds
   --reflect       print the parameter registers of each compiled shader and their source
   --reflect-verify  with --reflect, also run the probe on every shader that has a CTAB and
-                  report each difference
+                  report each difference, and check each reflection against the registers
+                  its SPIR-V reads
   --reparse-wgsl  parse and validate each WGSL output again with naga
   --wgpu-check    create a wgpu device, then a shader module and a render pipeline per WGSL
   --emit <dir>    write the vkd3d input, WGSL, MSL, and HLSL of each shader to <dir>
@@ -217,6 +218,7 @@ struct Done {
     time: Duration,
     reflection: Option<Result<reflect::Reflection, String>>,
     probe: Option<Result<Vec<mds_shader::ctab::Constant>, String>>,
+    coverage: Option<Result<(), String>>,
     reparsed: Option<Result<naga::Module, String>>,
 }
 
@@ -308,6 +310,10 @@ fn run(o: &Opts) -> Result<bool, String> {
                 &compiled.entry_point,
             )
         });
+        let coverage = match (o.verify, &reflection, &compiled.spirv) {
+            (true, Some(Ok(r)), Some(words)) => Some(reflect::check_coverage(words, &r.constants)),
+            _ => None,
+        };
         let reparsed = (o.reparse || o.wgpu)
             .then(|| compiled.outputs.as_ref().and_then(|x| x.wgsl.as_ref().ok()))
             .flatten()
@@ -317,6 +323,7 @@ fn run(o: &Opts) -> Result<bool, String> {
             time,
             reflection,
             probe,
+            coverage,
             reparsed,
         }
     });
@@ -362,6 +369,7 @@ fn run(o: &Opts) -> Result<bool, String> {
     let (mut reparse_ok, mut reparse_fail) = (0, 0);
     let (mut from_ctab, mut from_probe, mut no_reflection) = (0, 0, 0);
     let (mut verify_equal, mut verify_differ) = (0, 0);
+    let (mut coverage_ok, mut coverage_fail) = (0, 0);
     let mut times = Vec::new();
     for (j, d) in jobs.iter().zip(&done) {
         let Some(d) = d else {
@@ -422,6 +430,14 @@ fn run(o: &Opts) -> Result<bool, String> {
                 }
                 _ => {}
             }
+            match (&d.coverage, r) {
+                (Some(Ok(())), _) => coverage_ok += 1,
+                (Some(Err(e)), Ok(r)) => {
+                    coverage_fail += 1;
+                    println!("coverage-fail\t{row}\t{}\t{e}", r.source.as_str());
+                }
+                _ => {}
+            }
             match r {
                 Ok(r) if r.source == reflect::Source::Ctab => from_ctab += 1,
                 Ok(_) => from_probe += 1,
@@ -462,11 +478,13 @@ fn run(o: &Opts) -> Result<bool, String> {
     }
     if o.verify {
         println!("probe check equal {verify_equal} differ {verify_differ}");
+        println!("spirv coverage ok {coverage_ok} fail {coverage_fail}");
     }
     if o.reparse {
         println!("wgsl reparse ok {reparse_ok} fail {reparse_fail}");
     }
-    let mut good = reparse_fail == 0 && no_reflection == 0 && verify_differ == 0;
+    let mut good =
+        reparse_fail == 0 && no_reflection == 0 && verify_differ == 0 && coverage_fail == 0;
 
     if o.wgpu {
         let g = gpu::Gpu::new()?;

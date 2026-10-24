@@ -128,6 +128,7 @@ FILE_NAMES = [
     "pose.vpd",
     "swing600.pmm",
     "camera3.pmm",
+    "swing600-nophys.pmm",
 ]
 
 # ---------------------------------------------------------------------------
@@ -714,7 +715,7 @@ def model_bytes(slot, model):
     return bytes(o), motion
 
 
-def build_pmm(camera_keys=CAMERA_KEYS[:1], light_keys=LIGHT_KEYS):
+def build_pmm(camera_keys=CAMERA_KEYS[:1], light_keys=LIGHT_KEYS, physics_mode=2):
     o = bytearray(b"Polygon Movie maker 0002" + b"\0" * 6)
     o += i32(1280, 720, 244) + f32(30.0) + u8(0, 1, 0, 0, 0, 0, 0)
     o += u8(0, len(PMM_MODELS))
@@ -742,9 +743,9 @@ def build_pmm(camera_keys=CAMERA_KEYS[:1], light_keys=LIGHT_KEYS):
     o += i32(0, 0) + f32(1.0) + b"\0" * 256 + u8(0)     # picture
     o += u8(0, 1, 1) + f32(30.0) + i32(0)          # view
     o += i32(0) + f32(0.0) + u8(1)                 # split order, shadow ambient, shadow blend
-    # Physics mode 2, "on/off mode", the app default. 0 means no physics, and
-    # the trace would never move a rigid body.
-    o += u8(2) + f32(9.8000002) + i32(10)
+    # Physics mode 2, "on/off mode", the app default. 0 is "no calculation":
+    # swing600-nophys.pmm uses it so its L2 trace isolates the pose pipeline.
+    o += u8(physics_mode) + f32(9.8000002) + i32(10)
     o += f32(0.0, -1.0, 0.0) + u8(1)               # physics
     # gravity track, self shadow state, self shadow track
     o += global_track([Key(0)], pack_gravity_key)
@@ -854,6 +855,7 @@ def generate():
         "pose.vpd": build_vpd(),
         "swing600.pmm": build_pmm(),
         "camera3.pmm": build_pmm(CAMERA_KEYS, LIGHT3_KEYS),
+        "swing600-nophys.pmm": build_pmm(physics_mode=0),
     }
     assert list(out) == FILE_NAMES
     return out

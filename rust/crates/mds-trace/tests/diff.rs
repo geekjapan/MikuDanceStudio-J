@@ -96,8 +96,7 @@ fn level_and_length() {
         run(BASE, &l2).unwrap(),
         Some(Difference::Level { .. })
     ));
-    // L2 uses the same line kinds.
-    assert_eq!(run(&l2, &l2).unwrap(), None);
+    assert_eq!(run(L2, L2).unwrap(), None);
     let cut = BASE.lines().take(2).collect::<Vec<_>>().join("\n") + "\n";
     assert_eq!(
         run(BASE, &cut).unwrap(),
@@ -286,4 +285,103 @@ fn binary_exit_codes() {
         .output()
         .unwrap();
     assert_eq!(o.status.code(), Some(2));
+}
+
+// L2: lines as trace_l2.hpp writes them (six hex digits; zero is 0x0.000000p+0;
+// a float subnormal is a normal double, so 2^-149 prints as 0x1.000000p-149).
+const L2: &str = "mds-trace 1 L2\n\
+0 bone 0 0 0x0.000000p+0 0x1.000000p+0 -0x1.800000p-1 0x0.000000p+0 0x0.000000p+0 0x0.000000p+0 0x1.000000p+0\n\
+0 bonew 0 0 0x1.000000p+0 0x0.000000p+0 0x0.000000p+0 0x0.000000p+0 \
+0x0.000000p+0 0x1.000000p+0 0x0.000000p+0 0x0.000000p+0 \
+0x0.000000p+0 0x0.000000p+0 0x1.000000p+0 0x0.000000p+0 \
+0x0.000000p+0 -0x1.99999ap+1 0x1.000000p-149 0x1.000000p+0\n\
+0 morph 0 0 0x1.fffffcp-127\n\
+0 rigid 0 0 0x0.000000p+0 -0x1.000000p+0 0x1.000000p-149 0x0.000000p+0 0x0.000000p+0 0x0.000000p+0 0x1.000000p+0\n\
+1 bone 0 0 0x0.000000p+0 0x1.000000p+0 -0x1.800000p-1 0x0.000000p+0 0x0.000000p+0 0x0.000000p+0 0x1.000000p+0\n";
+
+#[test]
+fn l2_identical_and_field_names() {
+    assert_eq!(run(L2, L2).unwrap(), None);
+    for (line, name, last) in [
+        ("0 bone 0 0", "rw", 7),
+        ("0 bonew 0 0", "m33", 16),
+        ("0 morph 0 0", "weight", 1),
+        ("0 rigid 0 0", "qw", 7),
+    ] {
+        let b: String = L2
+            .lines()
+            .map(|l| {
+                if l.starts_with(line) {
+                    format!("{} 0x1.7p+9\n", l.rsplit_once(' ').unwrap().0)
+                } else {
+                    format!("{l}\n")
+                }
+            })
+            .collect();
+        let d = run(L2, &b).unwrap().unwrap();
+        assert!(matches!(d, Difference::Field { ref a, .. } if a.fields.len() == last));
+        let msg = d.to_string();
+        assert!(msg.contains(&format!("field {name}:")), "{msg}");
+    }
+}
+
+#[test]
+fn l2_bonew_middle_field_and_bits() {
+    // The subnormal in m32 and the negative value in m31 are compared exactly.
+    let b = L2.replace(
+        "0x1.000000p-149 0x1.000000p+0\n0 morph",
+        "0x1.000002p-149 0x1.000000p+0\n0 morph",
+    );
+    let msg = run(L2, &b).unwrap().unwrap().to_string();
+    assert_eq!(
+        msg,
+        "frame 0 track bonew 0/0 field m32: a=0x1.000000p-149 b=0x1.000002p-149"
+    );
+    // -0 and 0 differ in L2 too.
+    let b = L2.replace("1 bone 0 0 0x0.000000p+0", "1 bone 0 0 -0x0.000000p+0");
+    let msg = run(L2, &b).unwrap().unwrap().to_string();
+    assert!(
+        msg.contains("field tx: a=0x0.000000p+0 b=-0x0.000000p+0"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn l2_and_l1_kinds_are_level_checked() {
+    let cases = [
+        ("mds-trace 1 L1", "0 bonew 0 0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0"),
+        ("mds-trace 1 L1", "0 rigid 0 0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0"),
+        ("mds-trace 1 L2", "0 camera 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0"),
+        ("mds-trace 1 L2", "0 light 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0"),
+    ];
+    for (header, rec) in cases {
+        // Line 3, after a good bone line; the other side is a good trace of the same level.
+        let bone = "0 bone 0 0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0 0x0p+0";
+        let a = format!("{header}\n{bone}\n{rec}\n");
+        let b = format!("{header}\n{bone}\n{bone}\n");
+        match run(&a, &b) {
+            Err(Error::Parse { line, msg, .. }) => {
+                assert_eq!(line, 3, "{rec}");
+                assert!(msg.contains("not part of this trace level"), "{msg}");
+            }
+            other => panic!("{rec}: expected a parse error, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn l2_field_counts_and_errors() {
+    for (rec, why) in [
+        ("0 bonew 0 0 0x0.000000p+0", "wrong number of fields"),
+        ("0 rigid 0 0 0x0.000000p+0 0x0.000000p+0", "wrong number of fields"),
+        ("0 rigid 0 0 0x0.000000p+0 0x0.000000p+0 0x0.000000p+0 0x0.000000p+0 0x0.000000p+0 0x0.000000p+0 nan", "float is not finite"),
+        ("0 rigid 0", "missing frame or index"),
+    ] {
+        let (line, msg) = match run(&format!("mds-trace 1 L2\n{rec}\n"), "mds-trace 1 L2\n") {
+            Err(Error::Parse { line, msg, .. }) => (line, msg),
+            other => panic!("{rec}: expected a parse error, got {other:?}"),
+        };
+        assert_eq!(line, 2, "{rec}");
+        assert!(msg.contains(why), "{rec}: {msg}");
+    }
 }

@@ -6,13 +6,21 @@
 //! <frame> morph  <slot> <index> weight
 //! <frame> camera px py pz rx ry rz distance fov
 //! <frame> light  r g b dx dy dz
+//! <frame> bonew  <slot> <index> m00 m01 m02 m03 m10 .. m33
+//! <frame> rigid  <slot> <index> px py pz qx qy qz qw
 //! ```
+//!
+//! `bone` and `morph` are in both levels. `camera` and `light` are L1 only;
+//! `bonew` (16 floats, row-major world matrix) and `rigid` are L2 only. A line
+//! of a kind that the header's level does not have is a parse error.
 //!
 //! `frame`, `slot`, and `index` are unsigned decimal. A track is the kind plus
 //! its indices (`bone 0/3` is slot 0, bone 3). Fields are C99 `%a` hex floats
 //! and are always finite; `nan` and `inf` are parse errors. They are compared
 //! as raw `f64` bits, so `-0` and `0` are different values. Every line, the
-//! last included, ends with `\n`. Level L2 uses the same line kinds.
+//! last included, ends with `\n`. L2 writers (`src/tools/trace_l2.hpp`) emit
+//! `[-]0x1.hhhhhhp[+-]d` with six hex digits and `0x0.000000p+0` for zero;
+//! this parser takes any exact hex float and compares by bits.
 
 pub const MAX_LINE: usize = 64 * 1024;
 const MAX_HEX_DIGITS: usize = 32;
@@ -27,30 +35,51 @@ pub enum Level {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Kind {
     pub name: &'static str,
+    /// The trace levels this kind may appear in.
+    pub levels: &'static [Level],
     pub indices: usize,
     pub fields: &'static [&'static str],
 }
 
-pub const KINDS: [Kind; 4] = [
+pub const KINDS: [Kind; 6] = [
     Kind {
         name: "bone",
+        levels: &[Level::L1, Level::L2],
         indices: 2,
         fields: &["tx", "ty", "tz", "rx", "ry", "rz", "rw"],
     },
     Kind {
         name: "morph",
+        levels: &[Level::L1, Level::L2],
         indices: 2,
         fields: &["weight"],
     },
     Kind {
         name: "camera",
+        levels: &[Level::L1],
         indices: 0,
         fields: &["px", "py", "pz", "rx", "ry", "rz", "distance", "fov"],
     },
     Kind {
         name: "light",
+        levels: &[Level::L1],
         indices: 0,
         fields: &["r", "g", "b", "dx", "dy", "dz"],
+    },
+    Kind {
+        name: "bonew",
+        levels: &[Level::L2],
+        indices: 2,
+        fields: &[
+            "m00", "m01", "m02", "m03", "m10", "m11", "m12", "m13", "m20", "m21", "m22", "m23",
+            "m30", "m31", "m32", "m33",
+        ],
+    },
+    Kind {
+        name: "rigid",
+        levels: &[Level::L2],
+        indices: 2,
+        fields: &["px", "py", "pz", "qx", "qy", "qz", "qw"],
     },
 ];
 
@@ -64,7 +93,7 @@ pub struct Field {
 pub struct Record {
     pub frame: u32,
     pub kind: &'static Kind,
-    /// `kind.indices` numbers: slot and index for bone and morph, none otherwise.
+    /// `kind.indices` numbers: slot and index for the model kinds, none for camera and light.
     pub indices: Vec<u32>,
     /// One per name in `kind.fields`.
     pub fields: Vec<Field>,
@@ -101,7 +130,7 @@ pub fn parse_header(line: &str) -> Result<Level, &'static str> {
     Ok(level)
 }
 
-pub fn parse_record(line: &str) -> Result<Record, &'static str> {
+pub fn parse_record(line: &str, level: Level) -> Result<Record, &'static str> {
     let mut t = line.split(' ');
     let frame = parse_u32(t.next())?;
     let name = t.next().ok_or("missing track kind")?;
@@ -109,6 +138,9 @@ pub fn parse_record(line: &str) -> Result<Record, &'static str> {
         .iter()
         .find(|k| k.name == name)
         .ok_or("unknown track kind")?;
+    if !kind.levels.contains(&level) {
+        return Err("track kind is not part of this trace level");
+    }
     let indices = (0..kind.indices)
         .map(|_| parse_u32(t.next()))
         .collect::<Result<Vec<_>, _>>()?;

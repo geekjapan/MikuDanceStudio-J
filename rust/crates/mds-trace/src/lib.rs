@@ -150,10 +150,10 @@ impl<R: BufRead> Reader<R> {
         }
     }
 
-    fn record(&mut self) -> Result<Option<Record>, Error> {
+    fn record(&mut self, level: Level) -> Result<Option<Record>, Error> {
         match self.next_line()? {
             None => Ok(None),
-            Some(l) => parse_record(&l).map(Some).map_err(|m| self.err(m)),
+            Some(l) => parse_record(&l, level).map(Some).map_err(|m| self.err(m)),
         }
     }
 }
@@ -176,7 +176,7 @@ pub fn diff(a: impl BufRead, b: impl BufRead) -> Result<Option<Difference>, Erro
         return Ok(Some(Difference::Level { a: la, b: lb }));
     }
     loop {
-        let (ra, rb) = (a.record()?, b.record()?);
+        let (ra, rb) = (a.record(la)?, b.record(la)?);
         let line = a.line.max(b.line);
         let (ra, rb) = match (ra, rb) {
             (None, None) => return Ok(None),

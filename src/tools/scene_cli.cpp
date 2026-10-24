@@ -1,5 +1,6 @@
 #include "mikudancestudio/scene_resources.hpp"
 #include "mikudancestudio/render_snapshot.hpp"
+#include "scene_trace.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cmath>
@@ -37,14 +38,32 @@ bool Unsigned(const char* text, std::uint32_t& result) {
         return true;
     } catch (...) { return false; }
 }
+int Usage() {
+    std::cerr << "usage: mds_scene_cli input.pmm output.pmm "
+                 "[--root directory] [--reselect slot model] "
+                 "[--frame index] [--seconds elapsed] "
+                 "[--trace file --frames count]\n";
+    return 2;
+}
+// Removes the trace temporary unless Commit() renamed it into place.
+struct TraceFile {
+    fs::path path, temporary;
+    bool Wanted() const { return !path.empty(); }
+    bool Commit() {
+        std::error_code error;
+        fs::rename(temporary, path, error);
+        if (error) fs::remove(temporary, error);
+        temporary.clear();
+        return !error;
+    }
+    ~TraceFile() {
+        std::error_code error;
+        if (!temporary.empty()) fs::remove(temporary, error);
+    }
+};
 }
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::cerr << "usage: mds_scene_cli input.pmm output.pmm "
-                     "[--root directory] [--reselect slot model] "
-                     "[--frame index] [--seconds elapsed]\n";
-        return 2;
-    }
+    if (argc < 3) return Usage();
     const fs::path input = fs::u8path(argv[1]);
     const fs::path output = fs::u8path(argv[2]);
     if (fs::absolute(input).lexically_normal() ==
@@ -53,19 +72,21 @@ int main(int argc, char** argv) {
         return 2;
     }
     SceneResourceResolver resources(input);
-    std::uint32_t frame = 0;
+    std::uint32_t frame = 0, traceFrames = 0;
+    bool haveFrames = false;
+    TraceFile trace;
     float seconds = 5.0f / 30.0f;
     for (int index = 3; index < argc;) {
         const std::string option(argv[index++]);
-        if (index >= argc) return 2;
+        if (index >= argc) return Usage();
         const char* value = argv[index++];
         if (option == "--root") resources.AddSearchRoot(fs::u8path(value));
         else if (option == "--frame") {
-            if (!Unsigned(value, frame)) return 2;
+            if (!Unsigned(value, frame)) return Usage();
         } else if (option == "--reselect") {
-            if (index >= argc) return 2;
+            if (index >= argc) return Usage();
             std::uint32_t slot = 0;
-            if (!Unsigned(value, slot) || slot > 255) return 2;
+            if (!Unsigned(value, slot) || slot > 255) return Usage();
             resources.ReselectModel(static_cast<std::uint8_t>(slot),
                                     fs::u8path(argv[index++]));
         } else if (option == "--seconds") {
@@ -73,10 +94,17 @@ int main(int argc, char** argv) {
                 std::size_t end = 0;
                 seconds = std::stof(value, &end);
                 if (end != std::string(value).size() ||
-                    !std::isfinite(seconds) || seconds < 0) return 2;
-            } catch (...) { return 2; }
-        } else return 2;
+                    !std::isfinite(seconds) || seconds < 0) return Usage();
+            } catch (...) { return Usage(); }
+        } else if (option == "--trace") {
+            if (!*value) return Usage();
+            trace.path = fs::u8path(value);
+        } else if (option == "--frames") {
+            if (!Unsigned(value, traceFrames)) return Usage();
+            haveFrames = true;
+        } else return Usage();
     }
+    if (trace.Wanted() != haveFrames) return Usage();
     std::ifstream source(input, std::ios::binary);
     SceneSession session;
     if (!source || !SceneSession::Load(Read, &source,
@@ -90,6 +118,17 @@ int main(int argc, char** argv) {
         }
         std::cerr << "scene load failed\n";
         return 3;
+    }
+    if (trace.Wanted()) {
+        // Trace the document as loaded, before the re-save edits below. The
+        // file only appears under its final name once the whole run succeeds.
+        trace.temporary = fs::path(trace.path.string() + ".tmp");
+        std::ofstream file(trace.temporary, std::ios::binary);
+        if (!file || !mikudancestudio::tools::WriteSceneTrace(
+                file, session.Document(), traceFrames) || !file.flush()) {
+            std::cerr << "trace failed\n";
+            return 7;
+        }
     }
     if (!session.Seek(frame)) return 4;
     const auto previousWidth = session.Document().envelope.settings.renderWidth;
@@ -197,6 +236,10 @@ int main(int argc, char** argv) {
     if (error) {
         fs::remove(temporary, error);
         return 6;
+    }
+    if (trace.Wanted() && !trace.Commit()) {
+        std::cerr << "trace failed\n";
+        return 7;
     }
     std::cout << "{\"version\":" << static_cast<int>(
             session.Document().envelope.header.version)

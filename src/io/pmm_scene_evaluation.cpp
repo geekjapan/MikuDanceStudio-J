@@ -1,4 +1,5 @@
 #include "mikudancestudio/pmm_scene_evaluation.hpp"
+#include "mikudancestudio/det_math.hpp"
 #include <cmath>
 #include <unordered_map>
 #include <utility>
@@ -551,19 +552,19 @@ bool InterpolatePmmBoneSegment(const PmmBoneKey& left,
     float clamped = dot;
     if (clamped > 1.0f) clamped = 0.999999f;
     else if (clamped < -1.0f) clamped = -0.999999f;
-    const float angle = std::acos(clamped);
+    const float angle = det::Acos(clamped);
     if (angle > 1.570796012878418f && clamped < 0.0f) {
-        const float shortest = std::acos(-clamped);
-        const float divisor = std::sin(shortest);
-        const float w0 = std::sin((1.0f - fraction) * shortest) / divisor;
-        const float w1 = std::sin(fraction * shortest) / divisor;
+        const float shortest = det::Acos(-clamped);
+        const float divisor = det::Sin(shortest);
+        const float w0 = det::Sin((1.0f - fraction) * shortest) / divisor;
+        const float w1 = det::Sin(fraction * shortest) / divisor;
         for (int i = 0; i < 4; ++i)
             result.rotation[i] = left.rotation[i] * w0 -
                                  right.rotation[i] * w1;
     } else {
-        const float divisor = std::sin(angle);
-        const float w0 = std::sin((1.0f - fraction) * angle) / divisor;
-        const float w1 = std::sin(fraction * angle) / divisor;
+        const float divisor = det::Sin(angle);
+        const float w0 = det::Sin((1.0f - fraction) * angle) / divisor;
+        const float w1 = det::Sin(fraction * angle) / divisor;
         for (int i = 0; i < 4; ++i)
             result.rotation[i] = left.rotation[i] * w0 +
                                  right.rotation[i] * w1;
@@ -595,19 +596,19 @@ bool InterpolatePmmBonePlaybackSegment(const PmmBoneKey& left,
         float clamped = dot;
         if (clamped > 1.0f) clamped = 0.999999f;
         else if (clamped < -1.0f) clamped = -0.999999f;
-        const float angle = std::acos(clamped);
+        const float angle = det::Acos(clamped);
         if (angle > 1.570796012878418f && clamped < 0.0f) {
-            const float shortest = std::acos(-clamped);
-            const float reciprocal = 1.0f / std::sin(shortest);
-            const float w0 = std::sin((1.0f - fraction) * shortest) * reciprocal;
-            const float w1 = std::sin(fraction * shortest) * reciprocal;
+            const float shortest = det::Acos(-clamped);
+            const float reciprocal = 1.0f / det::Sin(shortest);
+            const float w0 = det::Sin((1.0f - fraction) * shortest) * reciprocal;
+            const float w1 = det::Sin(fraction * shortest) * reciprocal;
             for (int i = 0; i < 4; ++i)
                 result.rotation[i] = left.rotation[i] * w0 -
                                      w1 * right.rotation[i];
         } else {
-            const float reciprocal = 1.0f / std::sin(angle);
-            const float w0 = std::sin((1.0f - fraction) * angle) * reciprocal;
-            const float w1 = std::sin(fraction * angle) * reciprocal;
+            const float reciprocal = 1.0f / det::Sin(angle);
+            const float w0 = det::Sin((1.0f - fraction) * angle) * reciprocal;
+            const float w1 = det::Sin(fraction * angle) * reciprocal;
             for (int i = 0; i < 4; ++i)
                 result.rotation[i] = left.rotation[i] * w0 +
                                      w1 * right.rotation[i];

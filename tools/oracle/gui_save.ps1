@@ -72,7 +72,8 @@ try {
   $edit = [U]::GetDlgItem($main, 417)   # current-frame edit
   [void][U]::SetForegroundWindow($main); Start-Sleep -Milliseconds 300
   Click $edit
-  [void][U]::SendMessageW($edit, 0xB1, [IntPtr]0, [IntPtr](-1))   # EM_SETSEL all
+  # Clear with End + Backspace; a selection made by EM_SETSEL does not survive the click.
+  Key 0x23; for ($i = 0; $i -lt 12; $i++) { Key 0x08 }
   [U]::Type("$Frame"); Key 0x0D
   Start-Sleep -Seconds 2
   "frame: $([U]::Get($edit))"

@@ -139,7 +139,7 @@ void ArmFrameStep(MMDApp* app, std::uint32_t frames) {
     // rebuild the track cursors and compute the frame-0 bone matrices.
     for (int slot = 0; slot < kModelSlotCount; ++slot)
         if (unsigned char* model = s.ModelSlot(slot))
-            SeekModelFrame(model, 0, s.PlaybackPhysicsMode());
+            SeekModelFrame(*mdl::Mdl(model), 0, s.PlaybackPhysicsMode());
     UpdateBoneFrames(app);
     s.state.recordedFrameCount = 0;
     PoseAllModels(app);

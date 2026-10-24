@@ -120,8 +120,9 @@ int main(int argc, char** argv) {
         return 3;
     }
     if (trace.Wanted()) {
-        // Trace the document as loaded, before the re-save edits below. The
-        // file only appears under its final name once the whole run succeeds.
+        // Pure evaluation path: trace the document as loaded and exit. No
+        // edit, playback, re-save, or output.pmm. The file only appears under
+        // its final name once the whole trace is written.
         trace.temporary = fs::path(trace.path.string() + ".tmp");
         std::ofstream file(trace.temporary, std::ios::binary);
         if (!file || !mikudancestudio::tools::WriteSceneTrace(
@@ -129,6 +130,12 @@ int main(int argc, char** argv) {
             std::cerr << "trace failed\n";
             return 7;
         }
+        file.close();
+        if (!trace.Commit()) {
+            std::cerr << "trace failed\n";
+            return 7;
+        }
+        return 0;
     }
     if (!session.Seek(frame)) return 4;
     const auto previousWidth = session.Document().envelope.settings.renderWidth;
@@ -236,10 +243,6 @@ int main(int argc, char** argv) {
     if (error) {
         fs::remove(temporary, error);
         return 6;
-    }
-    if (trace.Wanted() && !trace.Commit()) {
-        std::cerr << "trace failed\n";
-        return 7;
     }
     std::cout << "{\"version\":" << static_cast<int>(
             session.Document().envelope.header.version)

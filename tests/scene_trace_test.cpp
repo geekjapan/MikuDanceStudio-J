@@ -178,6 +178,8 @@ void CheckCli(const fs::path& cli, const fs::path& fixture) {
     const auto a = Slurp(work / "a.trace");
     Check(Lines(a).size() == 1 + 4 * 4 && Lines(a)[0] == "mds-trace 1 L1");
     Check(a == Slurp(work / "b.trace"));
+    // Trace mode only evaluates: it writes no output scene.
+    Check(!fs::exists(work / "a.pmm") && !fs::exists(work / "b.pmm"));
     // Bad --frames: exit 2, no trace file.
     for (const char* frames : {"-1", "abc", ""}) {
         Check(Run(base + " " + Quote(work / "c.pmm") + reselect + " --trace " +

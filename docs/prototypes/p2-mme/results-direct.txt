@@ -1,0 +1,26 @@
+SAMPLE E9022 /ray/Lighting/DiskLight/Default Ambient/disk_fog.fx ps_3_0 VolumetricFogPS | float GetPhysicalLightAttenuation ( float3 L , float radius , float attenuationBulbSize ) | Failed to compile shader, ret -4.
+SAMPLE E9022 /ray/Lighting/DiskLight/Default Ambient/disk_fog_with_shadow_high.fx ps_3_0 VolumetricFogPS | static float2 ShadowmapOffset2 = 1.0 / 256 ; | Failed to compile shader, ret -4.
+SAMPLE E5027 /ray/Outline/Fixed Color x1/outline blue.fx ps_3_0 MaterialPS | return float4 ( pow ( edgeLineColor , 2.2 ) , 0.0 ) ; | Failed to compile shader, ret -4.
+SAMPLE E5027 /ray/Outline/Fixed Color x1/outline blue.fx ps_3_0 EdgeLinePS | return float4 ( pow ( edgeLineColor , 2.2 ) , 1.0 ) ; | Failed to compile shader, ret -4.
+{
+ "file_unique": 490,
+ "shader_total": 1483,
+ "spirv_ok": 1413,
+ "naga_wgsl_ok": 1413,
+ "naga_metal_ok": 1413,
+ "naga_hlsl_ok": 1413,
+ "psize_stripped": 557,
+ "inc_root": 2303,
+ "direct_fail": 70,
+ "file_dup": 26,
+ "shader_wrapped": 30,
+ "file_include_missing": 1
+}
+== hlsl->spirv
+    40  E9022: Unable to resolve I/O register type 0x1, index 2, swizzle 0x3020100, to a signature element.
+    30  E5027: Infinities and NaNs are not allowed by the shader model.
+== sample
+     2  E9022
+     2  E5027
+== include
+     1  shader/CameraMotion.fxsub

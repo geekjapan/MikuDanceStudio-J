@@ -1,5 +1,8 @@
 # Versions and releases / 版本与发布
 
+> MikuDanceStudio-J: this fork does not push release tags or publish releases.
+> `VERSION` stays at the upstream version of the fork point. See [FORK.md](FORK.md).
+
 The root `VERSION` file is the single editable product version, starting at
 `10.00`. CMake generates the C++ version header and Windows EXE version resource;
 the About dialog, Conan metadata and ZIP filenames read the same value.

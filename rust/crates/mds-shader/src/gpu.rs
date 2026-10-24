@@ -4,8 +4,8 @@
 //! An MME pass pairs a vertex and a pixel shader, but this check takes each shader alone, so
 //! every pipeline gets a generated counterpart:
 //!
-//! - A vertex shader gets one vertex buffer that holds every `@location` input, and no
-//!   fragment stage.
+//! - A vertex shader gets one vertex buffer that holds every `@location` input, and a
+//!   fragment shader that reads nothing and writes one `Rgba8Unorm` target.
 //! - A fragment shader gets a generated vertex shader that writes every `@location` the
 //!   fragment shader reads, with the same type and interpolation, and one color target per
 //!   output location (a float format with no more components than the output), plus a depth
@@ -19,6 +19,9 @@ use std::fmt::Write as _;
 use naga::{Binding, BuiltIn, Interpolation, Sampling, ScalarKind, ShaderStage, TypeInner};
 
 use crate::Stage;
+
+const COUNTERPART_FRAGMENT: &str =
+    "@fragment fn main() -> @location(0) vec4<f32> { return vec4<f32>(0.0); }\n";
 
 pub struct Gpu {
     device: wgpu::Device,
@@ -230,9 +233,15 @@ impl Gpu {
     }
 
     fn scoped<T>(&self, f: impl FnOnce() -> T) -> Result<T, String> {
-        let guard = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        // Internal errors carry backend compile failures (for example of the generated MSL).
+        let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
+        let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let v = f();
-        match pollster::block_on(guard.pop()) {
+        let errors = [
+            pollster::block_on(validation.pop()),
+            pollster::block_on(internal.pop()),
+        ];
+        match errors.into_iter().flatten().next() {
             None => Ok(v),
             Some(e) => Err(e.to_string()),
         }
@@ -285,6 +294,14 @@ impl Gpu {
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &attrs,
                 })];
+                // A pipeline needs an attachment; a fragment shader that reads no inputs
+                // matches any vertex outputs.
+                let fs = self.module("counterpart fragment shader", COUNTERPART_FRAGMENT)?;
+                let target = [Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })];
                 self.scoped(|| {
                     self.device
                         .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -299,7 +316,12 @@ impl Gpu {
                             primitive: Default::default(),
                             depth_stencil: None,
                             multisample: Default::default(),
-                            fragment: None,
+                            fragment: Some(wgpu::FragmentState {
+                                module: &fs,
+                                entry_point: Some("main"),
+                                compilation_options: Default::default(),
+                                targets: &target,
+                            }),
                             multiview_mask: None,
                             cache: None,
                         })

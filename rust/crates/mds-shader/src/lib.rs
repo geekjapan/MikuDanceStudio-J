@@ -17,6 +17,8 @@ pub mod reflect;
 pub mod spirv_fix;
 pub mod vkd3d;
 
+use std::time::{Duration, Instant};
+
 use mds_fx::{Effect, Entry};
 
 pub use backend::Outputs;
@@ -70,6 +72,8 @@ pub struct Compiled {
     pub spirv: Option<Vec<u32>>,
     pub point_size_removed: bool,
     pub outputs: Option<Outputs>,
+    /// Time spent in `vkd3d_shader_compile`.
+    pub vkd3d_time: Duration,
     /// The first error, when the status is not [`Status::Ok`].
     pub error: Option<String>,
 }
@@ -83,6 +87,7 @@ impl Compiled {
             spirv: None,
             point_size_removed: false,
             outputs: None,
+            vkd3d_time: Duration::ZERO,
             error: Some(error),
         }
     }
@@ -147,9 +152,16 @@ pub fn compile(vk: &Vkd3d, fx: &Effect, entry: &Entry, name: &str) -> Compiled {
         Ok(s) => s,
         Err(e) => return Compiled::fail(Status::Fail, String::new(), String::new(), e),
     };
-    let bytes = match vk.compile_hlsl(&source, name, &entry.profile, &ep, Target::SpirvBinary) {
+    let t = Instant::now();
+    let compiled = vk.compile_hlsl(&source, name, &entry.profile, &ep, Target::SpirvBinary);
+    let vkd3d_time = t.elapsed();
+    let bytes = match compiled {
         Ok(b) => b,
-        Err(e) => return Compiled::fail(Status::Fail, source, ep, e.summary()),
+        Err(e) => {
+            let mut c = Compiled::fail(Status::Fail, source, ep, e.summary());
+            c.vkd3d_time = vkd3d_time;
+            return c;
+        }
     };
     let fixed = spirv_fix::words(&bytes).and_then(|w| spirv_fix::strip_point_size(&w));
     let (words, removed) = match fixed {
@@ -162,6 +174,7 @@ pub fn compile(vk: &Vkd3d, fx: &Effect, entry: &Entry, name: &str) -> Compiled {
             let mut c = Compiled::fail(Status::NagaFail, source, ep, e);
             c.spirv = Some(words);
             c.point_size_removed = removed;
+            c.vkd3d_time = vkd3d_time;
             return c;
         }
     };
@@ -180,6 +193,7 @@ pub fn compile(vk: &Vkd3d, fx: &Effect, entry: &Entry, name: &str) -> Compiled {
         spirv: Some(words),
         point_size_removed: removed,
         outputs: Some(outputs),
+        vkd3d_time,
         error,
     }
 }

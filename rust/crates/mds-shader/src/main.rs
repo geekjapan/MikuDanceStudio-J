@@ -22,7 +22,10 @@ through vkd3d-shader to SPIR-V, then through naga to WGSL, MSL, and HLSL, and pr
 options:
   --list          print one line per shader: path, profile, function, args, OK/FAIL/NAGA_FAIL
   --errors        print the first error of each shader that is not OK
+  --times         print the compile time of each shader in milliseconds
   --reflect       print the parameter registers of each compiled shader and their source
+  --reflect-verify  with --reflect, also run the probe on every shader that has a CTAB and
+                  report each difference
   --reparse-wgsl  parse and validate each WGSL output again with naga
   --wgpu-check    create a wgpu device, then a shader module and a render pipeline per WGSL
   --emit <dir>    write the vkd3d input, WGSL, MSL, and HLSL of each shader to <dir>
@@ -35,7 +38,9 @@ the executable (tools/vkd3d/build.sh builds it).
 struct Opts {
     list: bool,
     errors: bool,
+    times: bool,
     reflect: bool,
+    verify: bool,
     reparse: bool,
     wgpu: bool,
     emit: Option<PathBuf>,
@@ -47,7 +52,9 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
     let mut o = Opts {
         list: false,
         errors: false,
+        times: false,
         reflect: false,
+        verify: false,
         reparse: false,
         wgpu: false,
         emit: None,
@@ -61,7 +68,9 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
         match a.as_str() {
             "--list" => o.list = true,
             "--errors" => o.errors = true,
+            "--times" => o.times = true,
             "--reflect" => o.reflect = true,
+            "--reflect-verify" => o.verify = true,
             "--reparse-wgsl" => o.reparse = true,
             "--wgpu-check" => o.wgpu = true,
             "--emit" => o.emit = Some(PathBuf::from(it.next().ok_or("--emit needs a directory")?)),
@@ -207,6 +216,7 @@ struct Done {
     compiled: Compiled,
     time: Duration,
     reflection: Option<Result<reflect::Reflection, String>>,
+    probe: Option<Result<Vec<mds_shader::ctab::Constant>, String>>,
     reparsed: Option<Result<naga::Module, String>>,
 }
 
@@ -280,6 +290,18 @@ fn run(o: &Opts) -> Result<bool, String> {
         let reflection = (o.reflect && compiled.spirv.is_some()).then(|| {
             reflect::reflect(
                 &vk,
+                &j.fx.ast,
+                &compiled.source,
+                j.label,
+                &j.entry.profile,
+                &compiled.entry_point,
+            )
+        });
+        let ctab = matches!(&reflection, Some(Ok(r)) if r.source == reflect::Source::Ctab);
+        let probe = (o.verify && ctab).then(|| {
+            reflect::verify_probe(
+                &vk,
+                &j.fx.ast,
                 &compiled.source,
                 j.label,
                 &j.entry.profile,
@@ -294,6 +316,7 @@ fn run(o: &Opts) -> Result<bool, String> {
             compiled,
             time,
             reflection,
+            probe,
             reparsed,
         }
     });
@@ -316,6 +339,9 @@ fn run(o: &Opts) -> Result<bool, String> {
             ));
             let w = |ext: &str, s: &str| fs::write(dir.join(format!("{i:04}.{ext}")), s);
             let mut r = w("in.hlsl", &c.source);
+            if let Some(spv) = &c.spirv {
+                r = r.and(w("spvasm", &mds_shader::spirv_fix::disassemble(spv)));
+            }
             if let Some(out) = &c.outputs {
                 for (ext, s) in [
                     ("wgsl", &out.wgsl),
@@ -334,6 +360,8 @@ fn run(o: &Opts) -> Result<bool, String> {
 
     let (mut spirv, mut wgsl, mut msl, mut hlsl, mut ok, mut stripped) = (0, 0, 0, 0, 0, 0);
     let (mut reparse_ok, mut reparse_fail) = (0, 0);
+    let (mut from_ctab, mut from_probe, mut no_reflection) = (0, 0, 0);
+    let (mut verify_equal, mut verify_differ) = (0, 0);
     let mut times = Vec::new();
     for (j, d) in jobs.iter().zip(&done) {
         let Some(d) = d else {
@@ -361,6 +389,13 @@ fn run(o: &Opts) -> Result<bool, String> {
         if o.list {
             println!("{row}\t{}", c.status.as_str());
         }
+        if o.times {
+            println!(
+                "time\t{row}\t{:.3}\t{:.3}",
+                d.time.as_secs_f64() * 1000.0,
+                c.vkd3d_time.as_secs_f64() * 1000.0
+            );
+        }
         if o.errors {
             if let Some(err) = &c.error {
                 println!("error\t{row}\t{}", err.lines().next().unwrap_or(""));
@@ -373,6 +408,24 @@ fn run(o: &Opts) -> Result<bool, String> {
                     println!("reflect\t{row}\t{}\t{}", r.source.as_str(), regs.join(" "));
                 }
                 Err(err) => println!("reflect\t{row}\tnone\t{err}"),
+            }
+            match (r, &d.probe) {
+                (Ok(r), Some(Ok(p))) if &r.constants == p => verify_equal += 1,
+                (Ok(_), Some(Ok(p))) => {
+                    verify_differ += 1;
+                    let regs: Vec<String> = p.iter().map(|c| c.to_string()).collect();
+                    println!("verify-differ\t{row}\tprobe\t{}", regs.join(" "));
+                }
+                (_, Some(Err(e))) => {
+                    verify_differ += 1;
+                    println!("verify-differ\t{row}\terror\t{e}");
+                }
+                _ => {}
+            }
+            match r {
+                Ok(r) if r.source == reflect::Source::Ctab => from_ctab += 1,
+                Ok(_) => from_probe += 1,
+                Err(_) => no_reflection += 1,
             }
         }
         if o.reparse {
@@ -404,10 +457,16 @@ fn run(o: &Opts) -> Result<bool, String> {
         times.len(),
         o.jobs
     );
+    if o.reflect {
+        println!("reflection ctab {from_ctab} probe {from_probe} none {no_reflection}");
+    }
+    if o.verify {
+        println!("probe check equal {verify_equal} differ {verify_differ}");
+    }
     if o.reparse {
         println!("wgsl reparse ok {reparse_ok} fail {reparse_fail}");
     }
-    let mut good = reparse_fail == 0;
+    let mut good = reparse_fail == 0 && no_reflection == 0 && verify_differ == 0;
 
     if o.wgpu {
         let g = gpu::Gpu::new()?;

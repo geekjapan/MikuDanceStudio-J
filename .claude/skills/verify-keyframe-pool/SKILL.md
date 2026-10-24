@@ -43,7 +43,8 @@ the morph pool (20000) with its own-scan registrar, then pastes one key.
 ## Scope and bounds
 
 - Verified: 2 bones, 2 morphs, 1 IK chain, 1 bone-order entry, frames 0..2,
-  every command sequence up to depth 4 (8211 states, 61235 transitions).
+  every command sequence up to depth 4 (10989 states, 83509 transitions;
+  depth 5: 43703 states).
   Each pool is tracked over its first 24 records. A state whose cursor or
   links leave that window is cut and counted ("bound, not a finding").
 - Layout: x64 only (`-D_M_X64 -D_WIN64 -fshort-wchar` on clang). The x86
@@ -59,49 +60,36 @@ the morph pool (20000) with its own-scan registrar, then pastes one key.
 ## Run
 
 ```sh
-tools/keypool_check/run.sh        # depth 4, about 50 s on an M-series Mac
-tools/keypool_check/run.sh 5      # deeper, about 5 min
+tools/keypool_check/run.sh        # depth 4, about 20 s on an M-series Mac
+tools/keypool_check/run.sh 5      # deeper, about 75 s
 ```
 
 Needs `clang++` with AddressSanitizer. Confirmed with Apple clang 21.0.0.
 Exit 0 means PASS; exit 1 prints each violation once with its shortest trace.
 Full ASan reports go to `${TMPDIR:-/tmp}/keypool_check/asan.log`.
 
-## Baseline at the sync commit (known findings, not yet fixed)
+## Baseline at the sync commit
 
-At the sync commit the check FAILS with exactly these six violations. A run
-that shows only these is "back to baseline". A new kind is a new problem.
+At the sync commit the check PASSES: no violation at depth 4 or 5, and both
+pool-full runs print `ok`. Any violation is a new problem.
 
-1. `bone track 0: head record moved off frame 0`, from step 1 `register button: bone0 at frame 1`.
-   A freshly loaded model has `searchCursor == 0`. `RegisterBonePoseAtFrame`
-   (`model_keyframe_edit.cpp:319`) scans for a free record from the cursor
-   without a reset. Record 0, bone 0's head, has frame 0 and so looks free.
-   The new key overwrites bone 0's head, and the frame-0 key is lost.
-2. `bone track 0: links into the head record of track 1`, from `paste ...` then `register button: bone0 at frame 1`.
-   Every paste ends with `ResetDisplayKeyCursor`, which leaves the shared
-   `searchCursor` at the first free display record (1). The next register
-   button press takes record 1, bone 1's head, as its free record.
-3. `bone track 1: head record moved off frame 0`, from `paste ...` then `register button: bone1 at frame 1`. Same cause as 2.
-4. `invalid memory access at key_registrars.cpp:634 in RegisterMorphKeyFromRecord`, from `paste morph1 key at frame 0`.
-   `mrec` is a `const MorphRecord*`, so `mrec += 136` advances 136 records,
-   not one record of 136 bytes. The loaders allocate exactly `morphCount`
-   records (`pmx_load.cpp:969`, `pmd_load.cpp:460`). A paste or VMD morph key
-   for any morph after morph 0 is matched against records 136, 272, and so on.
-   With fewer than 137 morphs, the first step already reads past the table.
-   With more, the key can match the wrong morph or none.
-5. `display pool full (1000)`: invalid access at `key_registrars.cpp:791`.
-   `ResetDisplayKeyCursor` can stop at 1000. `RegisterDisplayKeyFromRecord`
-   then reads `keys[searchCursor]` before its bound check.
-6. `morph pool full (20000)`: invalid access at `key_registrars.cpp:652`.
-   This is the same shape in `RegisterMorphKeyFromRecord`. `RegisterBoneKey`
-   has the same shape too, but the bone pool is not run at capacity.
+These earlier findings are fixed. If one comes back, a change undid its fix:
 
-When a fix removes one of these, delete it from this list in the same change.
+- A bone head record taken as a free record (`head record moved off frame 0`,
+  `links into the head record of track N`). The shared `searchCursor` can hold
+  another pool's position. `kfa::AllocateFromCursor`
+  (`src/model/keyframe_common.hpp`) never starts below the first non-head
+  record. All cursor-based registrars and `RegisterBonePoseAtFrame` use it.
+- A read one past a full pool. `AllocateFromCursor` stops at capacity before
+  it reads.
+- An invalid access in `RegisterMorphKeyFromRecord`'s name scan. The scan now
+  steps one `MorphRecord` at a time (`++mrec`).
 
 ## Does my change touch the verified code?
 
 Run the check if the diff touches any of these:
 
+- `src/model/keyframe_common.hpp`: `AllocateFromCursor`.
 - `src/model/key_registrars.cpp`: `ResetBoneKeyCursor`, `ResetMorphKeyCursor`,
   `RegisterBoneKey`, `RegisterMorphKeyFromRecord`, `RegisterMorphKeyCurrent`,
   `RegisterDisplayKeyFromRecord`, `RegisterDisplayKeyCurrent`.
@@ -120,7 +108,7 @@ Run the check if the diff touches any of these:
 List what changed in the covered files since the sync commit:
 
 ```sh
-git diff --stat d7425a5 -- src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/model/add_model.cpp src/model/pmx_load.cpp
+git diff --stat d7425a5 -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/model/add_model.cpp src/model/pmx_load.cpp
 ```
 
 ## Real bug or modeling error?

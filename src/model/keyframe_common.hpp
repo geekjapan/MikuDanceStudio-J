@@ -33,6 +33,20 @@ inline float RdF32(const unsigned char* p) {
     std::memcpy(&v, p, 4);
     return v;
 }
+// Free-record scan of the cursor-based key registrars.  searchCursor is one
+// field shared by the bone, morph and display pools, so on entry it may hold
+// another pool's position.  Records below firstFree are track heads (frame 0,
+// so they look free) and are never handed out.  The scan advances the cursor
+// to the free record, as the original does, and stops at capacity before
+// reading past the pool.  Returns -1 when the pool is full.
+template <typename Key>
+int AllocateFromCursor(std::int32_t& cursor, const Key* keys, int firstFree,
+                       int capacity) {
+    if (cursor < firstFree) cursor = firstFree;
+    while (cursor < capacity && keys[cursor].frame != 0) ++cursor;
+    return cursor < capacity ? cursor : -1;
+}
+
 inline void Wr32(unsigned char* p, std::uint32_t v) { std::memcpy(p, &v, 4); }
 inline void WrF32(unsigned char* p, float v) { std::memcpy(p, &v, 4); }
 // Per-IK display flags copy (0x4A329F / 0x4A3487 / 0x4A3709 /

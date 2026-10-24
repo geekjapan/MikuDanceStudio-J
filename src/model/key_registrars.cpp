@@ -431,17 +431,13 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
         }
         if (keys[cur].frame < frame) {
             // append after the last record (0x49DDA1 path)
-            int free_ = mdl::Mdl(m)->searchCursor;
-            if (keys[free_].frame != 0) {
-                for (;;) {
-                    ++mdl::Mdl(m)->searchCursor;
-                    ++free_;
-                    if (free_ >= static_cast<int>(mdl::kBoneKeyCapacity)) {
-                        OverflowBox(m, static_cast<int>(mdl::kBoneKeyCapacity));
-                        return false;
-                    }
-                    if (keys[free_].frame == 0) break;
-                }
+            const int free_ = kfa::AllocateFromCursor(
+                mdl::Mdl(m)->searchCursor, keys,
+                static_cast<int>(mdl::Mdl(m)->boneCount),
+                static_cast<int>(mdl::kBoneKeyCapacity));
+            if (free_ < 0) {
+                OverflowBox(m, static_cast<int>(mdl::kBoneKeyCapacity));
+                return false;
             }
             AppendBoneKeyToUndo(m, cur);
             AppendBoneKeyToUndo(m, free_);
@@ -462,17 +458,13 @@ bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
         FillBoneRecord(keys[cur], rec, writePos);
     } else {
         // insert before cur
-        int free_ = mdl::Mdl(m)->searchCursor;
-        if (keys[free_].frame != 0) {
-            for (;;) {
-                ++mdl::Mdl(m)->searchCursor;
-                ++free_;
-                if (free_ >= static_cast<int>(mdl::kBoneKeyCapacity)) {
-                    OverflowBox(m, static_cast<int>(mdl::kBoneKeyCapacity));
-                    return false;
-                }
-                if (keys[free_].frame == 0) break;
-            }
+        const int free_ = kfa::AllocateFromCursor(
+            mdl::Mdl(m)->searchCursor, keys,
+            static_cast<int>(mdl::Mdl(m)->boneCount),
+            static_cast<int>(mdl::kBoneKeyCapacity));
+        if (free_ < 0) {
+            OverflowBox(m, static_cast<int>(mdl::kBoneKeyCapacity));
+            return false;
         }
         const int prev = static_cast<int>(keys[cur].previous);
         AppendBoneKeyToUndo(m, prev);
@@ -562,17 +554,13 @@ bool RegisterMirroredBoneKey(unsigned char* model, unsigned char* rec,
             if (keys[cur].frame >= frame) break;
         }
         if (keys[cur].frame < frame) {
-            int free_ = mdl::Mdl(m)->searchCursor;
-            if (keys[free_].frame != 0) {
-                for (;;) {
-                    ++mdl::Mdl(m)->searchCursor;
-                    ++free_;
-                    if (free_ >= static_cast<int>(mdl::kBoneKeyCapacity)) {
-                        OverflowBox(m, static_cast<int>(mdl::kBoneKeyCapacity));
-                        return false;
-                    }
-                    if (keys[free_].frame == 0) break;
-                }
+            const int free_ = kfa::AllocateFromCursor(
+                mdl::Mdl(m)->searchCursor, keys,
+                static_cast<int>(mdl::Mdl(m)->boneCount),
+                static_cast<int>(mdl::kBoneKeyCapacity));
+            if (free_ < 0) {
+                OverflowBox(m, static_cast<int>(mdl::kBoneKeyCapacity));
+                return false;
             }
             AppendBoneKeyToUndo(m, cur);
             AppendBoneKeyToUndo(m, free_);
@@ -590,17 +578,13 @@ bool RegisterMirroredBoneKey(unsigned char* model, unsigned char* rec,
         AppendBoneKeyToUndo(m, cur);
         FillMirroredBoneRecord(keys[cur], rec);
     } else {
-        int free_ = mdl::Mdl(m)->searchCursor;
-        if (keys[free_].frame != 0) {
-            for (;;) {
-                ++mdl::Mdl(m)->searchCursor;
-                ++free_;
-                if (free_ >= static_cast<int>(mdl::kBoneKeyCapacity)) {
-                    OverflowBox(m, static_cast<int>(mdl::kBoneKeyCapacity));
-                    return false;
-                }
-                if (keys[free_].frame == 0) break;
-            }
+        const int free_ = kfa::AllocateFromCursor(
+            mdl::Mdl(m)->searchCursor, keys,
+            static_cast<int>(mdl::Mdl(m)->boneCount),
+            static_cast<int>(mdl::kBoneKeyCapacity));
+        if (free_ < 0) {
+            OverflowBox(m, static_cast<int>(mdl::kBoneKeyCapacity));
+            return false;
         }
         const int prev = static_cast<int>(keys[cur].previous);
         AppendBoneKeyToUndo(m, prev);
@@ -634,7 +618,7 @@ bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec,
     while (std::strcmp(reinterpret_cast<const char*>(rec),
                        reinterpret_cast<const char*>(mrec)) != 0) {
         if (++morphIdx >= morphCnt) return true;
-        mrec += 136;
+        ++mrec;  // one 136-byte MorphRecord (the original stepped bytes)
     }
     if (morphIdx == -1) return true;
 
@@ -648,17 +632,13 @@ bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec,
         }
         if (keys[cur].frame < frame) {
             // append
-            int free_ = mdl::Mdl(m)->searchCursor;
-            if (keys[free_].frame != 0) {
-                for (;;) {
-                    ++mdl::Mdl(m)->searchCursor;
-                    ++free_;
-                    if (20 * free_ >= 400000) {
-                        OverflowBox(m, 20000);
-                        return false;
-                    }
-                    if (keys[free_].frame == 0) break;
-                }
+            const int free_ = kfa::AllocateFromCursor(
+                mdl::Mdl(m)->searchCursor, keys,
+                static_cast<int>(mdl::Mdl(m)->morphCount),
+                static_cast<int>(mdl::kMorphKeyCapacity));
+            if (free_ < 0) {
+                OverflowBox(m, 20000);
+                return false;
             }
             keys[cur].next = static_cast<std::uint32_t>(free_);
             keys[free_].previous = static_cast<std::uint32_t>(cur);
@@ -677,17 +657,13 @@ bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec,
         return true;
     }
     // insert before cur
-    int free_ = mdl::Mdl(m)->searchCursor;
-    if (keys[free_].frame != 0) {
-        for (;;) {
-            ++mdl::Mdl(m)->searchCursor;
-            ++free_;
-            if (20 * free_ >= 400000) {
-                OverflowBox(m, 20000);
-                return false;
-            }
-            if (keys[free_].frame == 0) break;
-        }
+    const int free_ = kfa::AllocateFromCursor(
+        mdl::Mdl(m)->searchCursor, keys,
+        static_cast<int>(mdl::Mdl(m)->morphCount),
+        static_cast<int>(mdl::kMorphKeyCapacity));
+    if (free_ < 0) {
+        OverflowBox(m, 20000);
+        return false;
     }
     const int prev = static_cast<int>(keys[cur].previous);
     keys[prev].next = static_cast<std::uint32_t>(free_);
@@ -787,17 +763,12 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg,
         }
         if (keys[cur].frame < frame) {
             // append
-            int free_ = mdl::Mdl(m)->searchCursor;
-            if (keys[free_].frame != 0) {
-                for (;;) {
-                    ++mdl::Mdl(m)->searchCursor;
-                    ++free_;
-                    if (free_ >= 1000) {
-                        OverflowBox(m, 1000);
-                        return false;
-                    }
-                    if (keys[free_].frame == 0) break;
-                }
+            const int free_ = kfa::AllocateFromCursor(
+                mdl::Mdl(m)->searchCursor, keys, 1,
+                static_cast<int>(mdl::kDisplayKeyCapacity));
+            if (free_ < 0) {
+                OverflowBox(m, 1000);
+                return false;
             }
             keys[cur].next = static_cast<std::uint32_t>(free_);
             keys[free_].previous = static_cast<std::uint32_t>(cur);
@@ -818,17 +789,12 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg,
         return true;
     }
     // insert before cur
-    int free_ = mdl::Mdl(m)->searchCursor;
-    if (keys[free_].frame != 0) {
-        for (;;) {
-            ++mdl::Mdl(m)->searchCursor;
-            ++free_;
-            if (free_ >= 1000) {
-                OverflowBox(m, 1000);
-                return false;
-            }
-            if (keys[free_].frame == 0) break;
-        }
+    const int free_ = kfa::AllocateFromCursor(
+        mdl::Mdl(m)->searchCursor, keys, 1,
+        static_cast<int>(mdl::kDisplayKeyCapacity));
+    if (free_ < 0) {
+        OverflowBox(m, 1000);
+        return false;
     }
     const int prev = static_cast<int>(keys[cur].previous);
     keys[prev].next = static_cast<std::uint32_t>(free_);

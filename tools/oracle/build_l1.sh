@@ -24,7 +24,11 @@ if [ -n "$bin" ] && [ -e "$root/.built" ]; then
 else
   rm -rf "$root"
   mkdir -p "$src"
-  git -C "$repo" archive "$sha" | tar -x -C "$src"
+  # A file, not a pipe: tar can stop before git finishes, and pipefail then
+  # ends the script on SIGPIPE with no message.
+  git -C "$repo" archive -o "$root/src.tar" "$sha"
+  tar -x -C "$src" -f "$root/src.tar"
+  rm "$root/src.tar"
   cmake -S "$src" -B "$build" -DMIKUDANCESTUDIO_FORMATS_ONLY=ON -DCMAKE_BUILD_TYPE=Release >&2
   cmake --build "$build" --target mds_scene_cli --parallel >&2
   bin="$(find_bin)"

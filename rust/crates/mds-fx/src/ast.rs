@@ -70,6 +70,31 @@ pub enum Initializer {
     Value(Value),
 }
 
+/// The register class of a `register(...)` reservation: the letter before the index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegisterClass {
+    /// `b`: boolean constants.
+    Bool,
+    /// `c`: float constants.
+    Float,
+    /// `i`: integer constants.
+    Int,
+    /// `s`: samplers.
+    Sampler,
+    /// `t`: textures.
+    Texture,
+    /// `u`: unordered access views.
+    Uav,
+}
+
+/// `register(c5)`: the register a global asks for. A shader profile before the register
+/// (`register(ps_3_0, c5)`) and a trailing component or space are not kept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Register {
+    pub class: RegisterClass,
+    pub index: u32,
+}
+
 /// A global variable, texture, or sampler.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Global {
@@ -80,6 +105,9 @@ pub struct Global {
     /// Array dimensions as written (`[2]` gives `"2"`).
     pub array: Vec<String>,
     pub semantic: Option<String>,
+    /// The first `register(...)` the declarator names; `None` when there is none or it does
+    /// not name a register.
+    pub register: Option<Register>,
     pub annotations: Vec<Annotation>,
     pub initializer: Option<Initializer>,
     pub line: u32,

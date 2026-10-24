@@ -113,3 +113,16 @@ fn truncation_every_byte() {
     assert_eq!(panics, 0);
     assert_eq!(ok + err, len as usize + 1);
 }
+
+#[test]
+fn discovery_labels_the_files_of_a_directory_by_its_name() {
+    let assets = common::repo_assets().canonicalize().unwrap();
+    let (found, errors) = mds_fx::discover(std::slice::from_ref(&assets));
+    assert!(errors.is_empty());
+    let labels: Vec<_> = found.iter().map(|f| f.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        ["assets/skin_effect_sm2.fx", "assets/skin_effect_sm3.fx"]
+    );
+    assert_eq!(found[0].path, assets.join("skin_effect_sm2.fx"));
+}

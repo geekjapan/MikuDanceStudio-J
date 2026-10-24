@@ -65,6 +65,27 @@ fn closer(open: &str) -> Option<&'static str> {
     }
 }
 
+/// `c5` or `S0`; not a profile (`ps_3_0`) or a space (`space1`).
+fn parse_register(text: &str) -> Option<Register> {
+    let class = match text.chars().next()?.to_ascii_lowercase() {
+        'b' => RegisterClass::Bool,
+        'c' => RegisterClass::Float,
+        'i' => RegisterClass::Int,
+        's' => RegisterClass::Sampler,
+        't' => RegisterClass::Texture,
+        'u' => RegisterClass::Uav,
+        _ => return None,
+    };
+    let digits = &text[1..];
+    if !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(Register {
+        class,
+        index: digits.parse().ok()?,
+    })
+}
+
 fn is_vector_type(name: &str) -> bool {
     ["float", "int", "uint", "half", "bool", "double"]
         .iter()
@@ -623,6 +644,7 @@ impl<'a> P<'a> {
                 name,
                 array: Vec::new(),
                 semantic: None,
+                register: None,
                 annotations: Vec::new(),
                 initializer: None,
                 line,
@@ -639,8 +661,14 @@ impl<'a> P<'a> {
                         if matches!(self.peek(), "register" | "packoffset")
                             && self.peek_at(1) == "("
                         {
+                            let is_register = self.peek() == "register";
                             self.pos += 1;
+                            let open = self.pos;
                             self.skip_group()?;
+                            if is_register && g.register.is_none() {
+                                g.register = (open + 1..self.pos - 1)
+                                    .find_map(|i| parse_register(self.tx(i)));
+                            }
                         } else {
                             let sem = self.ident()?;
                             g.semantic.get_or_insert(sem);
@@ -736,6 +764,46 @@ mod tests {
 
     fn fails(src: &str) -> ParseError {
         parse(src, &lex(src).unwrap()).unwrap_err()
+    }
+
+    #[test]
+    fn register_reservations() {
+        use RegisterClass::*;
+        let reg = |class, index| Some(Register { class, index });
+        let a = ast("float4 a : register(c5);\n\
+             sampler s : register(s0) = sampler_state { Texture = <t>; };\n\
+             float4 plain : COLOR;\n\
+             float4 withsem : SEM : register(C12);\n\
+             float4 prof : register(ps_3_0, c7);\n\
+             float4 comp : register(c9.x);\n\
+             Texture2D tex : register(t3, space1);\n\
+             float4 packed : packoffset(c1);\n\
+             float4 first : register(c2) : register(c3), second : register(c4), third;\n\
+             float4 notreg : register(space1);\n\
+             float4 none;");
+        let got: Vec<_> = a
+            .globals
+            .iter()
+            .map(|g| (g.name.as_str(), g.register, g.semantic.as_deref()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("a", reg(Float, 5), None),
+                ("s", reg(Sampler, 0), None),
+                ("plain", None, Some("COLOR")),
+                ("withsem", reg(Float, 12), Some("SEM")),
+                ("prof", reg(Float, 7), None),
+                ("comp", reg(Float, 9), None),
+                ("tex", reg(Texture, 3), None),
+                ("packed", None, None),
+                ("first", reg(Float, 2), None),
+                ("second", reg(Float, 4), None),
+                ("third", None, None),
+                ("notreg", None, None),
+                ("none", None, None),
+            ]
+        );
     }
 
     #[test]

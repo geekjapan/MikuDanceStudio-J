@@ -3,6 +3,9 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#if defined(_M_IX86)
+#include "LinearMath/btMmdMath.h"
+#endif
 #include <Windows.h>
 #include <d3d9.h>
 
@@ -353,38 +356,7 @@ bool HasSuffix(const wchar_t* value, const wchar_t* lower,
 
 void Cross3(float out[3], const float left[3], const float right[3]) {
 #if defined(_M_IX86)
-    // 0x491BB0..0x491C1A / 0x491C31..0x491C8D keep each
-    // multiply-subtract in the x87 register stack until the float store.
-    // A double-based equivalent differs by a few ULP after normalization.
-    float* destination = out;
-    const float* lhs = left;
-    const float* rhs = right;
-    __asm {
-        mov eax, lhs
-        mov ecx, rhs
-        mov edx, destination
-
-        fld dword ptr [eax + 4]
-        fmul dword ptr [ecx + 8]
-        fld dword ptr [eax + 8]
-        fmul dword ptr [ecx + 4]
-        fsubp st(1), st(0)
-        fstp dword ptr [edx]
-
-        fld dword ptr [eax + 8]
-        fmul dword ptr [ecx]
-        fld dword ptr [eax]
-        fmul dword ptr [ecx + 8]
-        fsubp st(1), st(0)
-        fstp dword ptr [edx + 4]
-
-        fld dword ptr [eax]
-        fmul dword ptr [ecx + 4]
-        fld dword ptr [eax + 4]
-        fmul dword ptr [ecx]
-        fsubp st(1), st(0)
-        fstp dword ptr [edx + 8]
-    }
+    btMmdMath::cross3(out, left, right);
 #else
     out[0] = static_cast<float>(
         static_cast<double>(left[1]) * right[2] -

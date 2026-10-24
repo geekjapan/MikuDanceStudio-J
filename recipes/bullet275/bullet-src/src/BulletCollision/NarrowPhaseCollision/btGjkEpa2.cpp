@@ -22,6 +22,7 @@ misrepresented as being the original software.
 /*
 GJK-EPA collision solver by Nathanael Presson, 2008
 */
+#include "LinearMath/btMmdMath.h"
 #include "BulletCollision/CollisionShapes/btConvexInternalShape.h"
 #include "BulletCollision/CollisionShapes/btSphereShape.h"
 #include "btGjkEpa2.h"
@@ -44,25 +45,7 @@ namespace gjkepa2_impl
 static __declspec(noinline) float mmdX87Length(const btVector3& v)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	float result;
-	const float* p = &v.m_floats[0];
-	__asm
-	{
-		mov eax, p
-		fld dword ptr [eax+8]
-		fld dword ptr [eax+4]
-		fld dword ptr [eax]
-		fmul st, st
-		fld st(1)
-		fmulp st(2), st
-		faddp st(1), st
-		fld st(1)
-		fmulp st(2), st
-		faddp st(1), st
-		fsqrt
-		fstp dword ptr [result]
-	}
-	return result;
+	return btMmdMath::lengthXYZ(v);
 #else
 	return v.length();
 #endif
@@ -75,37 +58,7 @@ static __declspec(noinline) void mmdGjkNormalizeDir(const btVector3& d,
 													btVector3& out)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	float invf;
-	const float* src = &d.m_floats[0];
-	float* dst = &out.m_floats[0];
-	__asm
-	{
-		mov eax, src
-		mov edx, dst
-		fld dword ptr [eax+8]
-		fld dword ptr [eax+4]
-		fld dword ptr [eax]
-		fmul st, st
-		fld st(1)
-		fmulp st(2), st
-		faddp st(1), st
-		fld st(1)
-		fmulp st(2), st
-		faddp st(1), st
-		fsqrt
-		fld1
-		fdivrp st(1), st
-		fst dword ptr [invf]
-		fld st
-		fmul dword ptr [eax+4]
-		movss xmm0, dword ptr [eax]
-		mulss xmm0, dword ptr [invf]
-		movss dword ptr [edx], xmm0
-		fstp dword ptr [edx+4]
-		fmul dword ptr [eax+8]
-		fstp dword ptr [edx+8]
-	}
-	out.m_floats[3] = 0;
+	btMmdMath::normalizeDirection(d, out);
 #else
 	out = d / d.length();
 #endif
@@ -118,41 +71,7 @@ static __declspec(noinline) float mmdX87Det(const btVector3& a,
 											const btVector3& c)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	float result;
-	const float* pa = &a.m_floats[0];
-	const float* pb = &b.m_floats[0];
-	const float* pc = &c.m_floats[0];
-	__asm
-	{
-		mov eax, pa
-		mov ecx, pb
-		mov edx, pc
-		fld dword ptr [ecx]      ; b.x
-		fmul dword ptr [edx+4]   ; *c.y
-		fmul dword ptr [eax+8]   ; *a.z   -> t1
-		fld dword ptr [edx]      ; c.x
-		fmul dword ptr [ecx+8]   ; *b.z
-		fmul dword ptr [eax+4]   ; *a.y   -> t2
-		faddp st(1), st
-		fld dword ptr [ecx+8]    ; b.z
-		fmul dword ptr [edx+4]   ; *c.y
-		fmul dword ptr [eax]     ; *a.x   -> t3
-		fsubp st(1), st
-		fld dword ptr [eax+4]    ; a.y
-		fmul dword ptr [ecx]     ; *b.x
-		fmul dword ptr [edx+8]   ; *c.z   -> t4
-		fsubp st(1), st
-		fld dword ptr [edx+8]    ; c.z
-		fmul dword ptr [ecx+4]   ; *b.y
-		fmul dword ptr [eax]     ; *a.x   -> t5
-		faddp st(1), st
-		fld dword ptr [ecx+4]    ; b.y
-		fmul dword ptr [eax+8]   ; *a.z
-		fmul dword ptr [edx]     ; *c.x   -> t6
-		fsubp st(1), st
-		fstp dword ptr [result]
-	}
-	return result;
+	return btMmdMath::determinant(a, b, c);
 #else
 	return a.y()*b.z()*c.x()+a.z()*b.x()*c.y()-
 		a.x()*b.z()*c.y()-a.y()*b.x()*c.z()+
@@ -168,47 +87,7 @@ static __declspec(noinline) void mmdRank3Weights(const btVector3& c1,
 												 btScalar* w)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	const float* p1 = &c1.m_floats[0];
-	const float* p2 = &c2.m_floats[0];
-	__asm
-	{
-		mov eax, p1
-		mov ecx, p2
-		mov edx, w
-		fld dword ptr [l]
-		fsqrt
-		fld1
-		fdivrp st(1), st        ; st0 = 1/sqrt(l), extended
-		fld dword ptr [eax+8]
-		fmul st, st
-		fld dword ptr [eax+4]
-		fmul st, st
-		faddp st(1), st
-		fld dword ptr [eax]
-		fmul st, st
-		faddp st(1), st
-		fsqrt
-		fmul st, st(1)          ; w[0] extended, st1 = inv
-		fld st
-		fstp dword ptr [edx]    ; w[0] float (keep extended below)
-		fld dword ptr [ecx+8]
-		fmul st, st
-		fld dword ptr [ecx+4]
-		fmul st, st
-		faddp st(1), st
-		fld dword ptr [ecx]
-		fmul st, st
-		faddp st(1), st
-		fsqrt
-		fmul st, st(2)          ; w[1] extended, st2 = inv
-		fld st
-		fstp dword ptr [edx+4]  ; w[1] float (keep extended below)
-		faddp st(1), st         ; w1e + w0e
-		fld1
-		fsubrp st(1), st        ; 1 - (w1e + w0e)
-		fstp dword ptr [edx+8]  ; w[2]
-		fstp st(0)
-	}
+	btMmdMath::triangleWeights(c1, c2, l, w);
 #else
 	const btScalar s = btSqrt(l);
 	w[0] = c1.length() / s;
@@ -226,31 +105,7 @@ static __declspec(noinline) void mmdRank4Weights(btScalar detCBD,
 												 btScalar* w)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	__asm
-	{
-		mov edx, w
-		fld dword ptr [vl]
-		fld1
-		fdivrp st(1), st        ; st0 = 1/vl extended
-		fld dword ptr [detCBD]
-		fmul st, st(1)          ; w[0] extended
-		fld st
-		fstp dword ptr [edx]    ; w[0] float
-		fld dword ptr [detACD]
-		fmul st, st(2)          ; w[1] extended (inv at st2)
-		fld st
-		fstp dword ptr [edx+4]  ; w[1] float
-		fld dword ptr [detBAD]
-		fmul st, st(3)          ; w[2] extended (inv at st3)
-		fld st
-		fstp dword ptr [edx+8]  ; w[2] float
-		faddp st(1), st         ; w2e + w1e
-		faddp st(1), st         ; + w0e
-		fld1
-		fsubrp st(1), st        ; 1 - ((w2e+w1e)+w0e)
-		fstp dword ptr [edx+12] ; w[3]
-		fstp st(0)
-	}
+	btMmdMath::tetrahedronWeights(detCBD, detACD, detBAD, vl, w);
 #else
 	const btScalar inv = btScalar(1.) / vl;
 	w[0] = detCBD * inv;
@@ -265,23 +120,7 @@ static __declspec(noinline) void mmdRank4Weights(btScalar detCBD,
 static __declspec(noinline) float mmdX87LengthYXZ(const btVector3& v)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	float result;
-	const float* p = &v.m_floats[0];
-	__asm
-	{
-		mov eax, p
-		fld dword ptr [eax+4]
-		fmul st, st
-		fld dword ptr [eax+8]
-		fmul st, st
-		faddp st(1), st
-		fld dword ptr [eax]
-		fmul st, st
-		faddp st(1), st
-		fsqrt
-		fstp dword ptr [result]
-	}
-	return result;
+	return btMmdMath::lengthYZX(v);
 #else
 	return v.length();
 #endif
@@ -292,23 +131,7 @@ static __declspec(noinline) float mmdX87LengthYXZ(const btVector3& v)
 static __declspec(noinline) float mmdX87LengthXZY(const btVector3& v)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	float result;
-	const float* p = &v.m_floats[0];
-	__asm
-	{
-		mov eax, p
-		fld dword ptr [eax]
-		fmul st, st
-		fld dword ptr [eax+8]
-		fmul st, st
-		faddp st(1), st
-		fld dword ptr [eax+4]
-		fmul st, st
-		faddp st(1), st
-		fsqrt
-		fstp dword ptr [result]
-	}
-	return result;
+	return btMmdMath::lengthXZY(v);
 #else
 	return v.length();
 #endif

@@ -36,6 +36,9 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#if defined(_M_IX86)
+#include "LinearMath/btMmdMath.h"
+#endif
 #include <Windows.h>
 
 #include <cmath>
@@ -60,17 +63,7 @@ constexpr double kAccDrag = 0.01;     // dbl 0x52E9C8
 
 float OriginalSinTimes(float angle, float factor) {
 #if defined(_M_IX86)
-    float sine;
-    float result;
-    __asm {
-        fld angle
-        fsin
-        fstp sine
-        fld sine
-        fmul factor
-        fstp result
-    }
-    return result;
+    return btMmdMath::sinTimes(angle, factor);
 #else
     return static_cast<float>(std::sin(angle) * factor);
 #endif
@@ -78,13 +71,7 @@ float OriginalSinTimes(float angle, float factor) {
 
 float OriginalCos(float angle) {
 #if defined(_M_IX86)
-    float result;
-    __asm {
-        fld angle
-        fcos
-        fstp result
-    }
-    return result;
+    return btMmdMath::cosine(angle);
 #else
     return static_cast<float>(std::cos(angle));
 #endif

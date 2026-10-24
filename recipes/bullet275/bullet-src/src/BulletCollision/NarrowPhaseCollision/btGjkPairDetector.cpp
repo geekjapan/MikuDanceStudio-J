@@ -13,6 +13,7 @@ subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 */
 
+#include "LinearMath/btMmdMath.h"
 #include "btGjkPairDetector.h"
 #include "BulletCollision/CollisionShapes/btConvexShape.h"
 #include "BulletCollision/NarrowPhaseCollision/btSimplexSolverInterface.h"
@@ -44,26 +45,7 @@ static __declspec(noinline) void mmdGjkNormalizeX87(btVector3& value,
 													btScalar lengthSquared)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	btScalar* components = &value[0];
-	__asm
-	{
-		mov eax, components
-		fld dword ptr [lengthSquared]
-		fsqrt
-		fld1
-		fdivrp st(1), st
-
-		fld dword ptr [eax]
-		fmul st, st(1)
-		fstp dword ptr [eax]
-		fld dword ptr [eax+4]
-		fmul st, st(1)
-		fstp dword ptr [eax+4]
-		fld dword ptr [eax+8]
-		fmul st, st(1)
-		fstp dword ptr [eax+8]
-		fstp st(0)
-	}
+	btMmdMath::normalize(value, lengthSquared);
 #else
 	value /= btSqrt(lengthSquared);
 #endif
@@ -80,31 +62,7 @@ static __declspec(noinline) void mmdGjkTailNormalize(btVector3& normal,
                                                     btScalar* sOut)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	btScalar* components = &normal.m_floats[0];
-	__asm
-	{
-		mov eax, components
-		mov edx, rlenOut
-		fld dword ptr [lenSqr]
-		fsqrt
-		fld1
-		fdivrp st(1), st		; st0 = 1/sqrt(lenSqr), extended
-		fst dword ptr [edx]		; float copy for the distance term
-		fld dword ptr [eax]
-		fmul st, st(1)
-		fstp dword ptr [eax]
-		fld dword ptr [eax+4]
-		fmul st, st(1)
-		fstp dword ptr [eax+4]
-		fld dword ptr [eax+8]
-		fmul st, st(1)
-		fstp dword ptr [eax+8]
-		fstp st(0)
-		mov edx, sOut
-		fld dword ptr [squaredDistance]
-		fsqrt
-		fstp dword ptr [edx]
-	}
+	btMmdMath::tailNormalize(normal, lenSqr, squaredDistance, rlenOut, sOut);
 #else
 	const btScalar rlen = btScalar(1.)/btSqrt(lenSqr);
 	normal *= rlen;
@@ -120,31 +78,7 @@ static __declspec(noinline) btScalar mmdGjkNegLengthZXY(const btVector3& a,
 												   const btVector3& b)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	const float* pa = a.m_floats;
-	const float* pb = b.m_floats;
-	btScalar result;
-	__asm
-	{
-		mov eax, pa
-		mov edx, pb
-		fld dword ptr [eax]
-		fsub dword ptr [edx]		; dx
-		fld dword ptr [eax+4]
-		fsub dword ptr [edx+4]	; dy
-		fld dword ptr [eax+8]
-		fsub dword ptr [edx+8]	; dz
-		fmul st, st				; dz*dz
-		fld st(1)
-		fmulp st(2), st			; dy*dy
-		faddp st(1), st			; dz*dz + dy*dy
-		fld st(1)
-		fmulp st(2), st			; dx*dx
-		faddp st(1), st			; (dz*dz + dy*dy) + dx*dx
-		fsqrt
-		fchs
-		fstp dword ptr [result]
-	}
-	return result;
+	return btMmdMath::negativeDistance(a, b);
 #else
 	const btVector3 d = a - b;
 	return -btSqrt((d.z()*d.z() + d.y()*d.y()) + d.x()*d.x());
@@ -157,31 +91,7 @@ static __declspec(noinline) btScalar mmdGjkLengthMinusMarginZXY(
 	const btVector3& a, const btVector3& b, btScalar margin)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	const float* pa = a.m_floats;
-	const float* pb = b.m_floats;
-	btScalar result;
-	__asm
-	{
-		mov eax, pa
-		mov edx, pb
-		fld dword ptr [eax]
-		fsub dword ptr [edx]		; dx
-		fld dword ptr [eax+4]
-		fsub dword ptr [edx+4]	; dy
-		fld dword ptr [eax+8]
-		fsub dword ptr [edx+8]	; dz
-		fmul st, st				; dz*dz
-		fld st(1)
-		fmulp st(2), st			; dy*dy
-		faddp st(1), st			; dz*dz + dy*dy
-		fld st(1)
-		fmulp st(2), st			; dx*dx
-		faddp st(1), st			; (dz*dz + dy*dy) + dx*dx
-		fsqrt
-		fsub dword ptr [margin]
-		fstp dword ptr [result]
-	}
-	return result;
+	return btMmdMath::distanceMinusMargin(a, b, margin);
 #else
 	const btVector3 d = a - b;
 	return btSqrt((d.z()*d.z() + d.y()*d.y()) + d.x()*d.x()) - margin;

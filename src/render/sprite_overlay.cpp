@@ -3,6 +3,9 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#if defined(_M_IX86)
+#include "LinearMath/btMmdMath.h"
+#endif
 #include <Windows.h>
 #include <d3d9.h>
 
@@ -112,19 +115,7 @@ bool ProjectBonePoint(mikudancestudio::mdl::BoneRecord* bone, std::size_t pointO
 __declspec(noinline) float BoneVCoordinate(int numerator, int origin,
                                            float lengthValue, float scale) {
 #if defined(_M_IX86)
-    static const double kEight = 8.0;
-    float result = 0.0f;
-    // 0x49A541..0x49A58E and 0x49A60E..0x49A654 retain every
-    // intermediate on the x87 stack before the final float store.
-    __asm {
-        fild dword ptr numerator
-        fdiv dword ptr lengthValue
-        fmul qword ptr kEight
-        fmul dword ptr scale
-        fiadd dword ptr origin
-        fstp dword ptr result
-    }
-    return result;
+    return btMmdMath::boneVCoordinate(numerator, origin, lengthValue, scale);
 #else
     return static_cast<float>(static_cast<double>(numerator) / lengthValue *
                               8.0 * scale + origin);
@@ -141,32 +132,7 @@ __declspec(noinline) void BoneMarkerBounds(int x, int y, float scale,
     // 0x49AFBD onward keeps the half extent on the x87 stack, stores the
     // leading edge as float, reloads it, then adds the full extent.
 #if defined(_M_IX86)
-    static const double kHalf = 9.5;
-    static const double kSize = 18.0;
-    __asm {
-        fld dword ptr scale
-        fmul qword ptr kHalf
-
-        fild dword ptr x
-        fsub st, st(1)
-        fstp dword ptr l
-        fld dword ptr l
-        fld dword ptr scale
-        fmul qword ptr kSize
-        faddp st(1), st
-        fstp dword ptr r
-
-        fild dword ptr y
-        fsub st, st(1)
-        fstp dword ptr t
-        fld dword ptr t
-        fld dword ptr scale
-        fmul qword ptr kSize
-        faddp st(1), st
-        fstp dword ptr b
-
-        fstp st(0)
-    }
+    btMmdMath::boneMarkerBounds(x, y, scale, &l, &t, &r, &b);
 #else
     l = static_cast<float>(x - scale * 9.5);
     r = static_cast<float>(l + scale * 18.0);

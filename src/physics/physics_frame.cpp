@@ -79,6 +79,9 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#if defined(_M_IX86)
+#include "LinearMath/btMmdMath.h"
+#endif
 #include <Windows.h>
 
 #include "mikudancestudio/d3dx_dyn.hpp"
@@ -723,52 +726,17 @@ void PhysicsFrame(MMDApp* app, unsigned char selActive) {
         s.state.gravityNoiseTimer = s.state.gravityNoiseTimer + s.DeltaTime();
         if (s.state.gravityNoiseTimer > 0.5f) {                          // flt_52960C
 #if defined(_M_IX86)
-            // x87 transcription of 0x46F5BA..0x46F66E: every intermediate
-            // stays extended; strength is stored to a FLOAT slot at
-            // 0x46F5DF and reloaded for each component multiply.
-            const int strengthInt =
-                s.GravityNoise();          // fimul (integer)
-            const float gravmag = s.GravityMagnitude();
-            static const double kTen = 10.0;            // dbl_52C170
-            static const double kRandMax = 32767.0;     // dbl_52E9F8
-            static const double kNoise = 0.20000000298023224;   // 52E9F0
-            static const double kOffset = 0.10000000149011612;  // 52BEA8
-            int rStrength = std::rand(), rX = std::rand(),
-                rY = std::rand(), rZ = std::rand();
-            float strengthF, e0, e1, e2;
-            const float dirX = s.GravityX(),
-                        dirY = s.GravityY(),
-                        dirZ = s.GravityZ();
-            __asm {
-                fild        rStrength
-                fmul        qword ptr [kTen]
-                fdiv        qword ptr [kRandMax]
-                fimul       strengthInt
-                fadd        gravmag
-                fstp        strengthF
-                fild        rX
-                fmul        qword ptr [kNoise]
-                fdiv        qword ptr [kRandMax]
-                fsub        qword ptr [kOffset]
-                fadd        dirX
-                fmul        strengthF
-                fstp        e0
-                fild        rY
-                fmul        qword ptr [kNoise]
-                fdiv        qword ptr [kRandMax]
-                fsub        qword ptr [kOffset]
-                fadd        dirY
-                fmul        strengthF
-                fstp        e1
-                fild        rZ
-                fmul        qword ptr [kNoise]
-                fdiv        qword ptr [kRandMax]
-                fsub        qword ptr [kOffset]
-                fadd        dirZ
-                fmul        strengthF
-                fstp        e2
-            }
-            world->setGravity(btVector3(e0, e1, e2));
+            const int strengthInt = s.GravityNoise();
+            const float magnitude = s.GravityMagnitude();
+            const int rStrength = std::rand();
+            const int rX = std::rand();
+            const int rY = std::rand();
+            const int rZ = std::rand();
+            const float direction[3] = {s.GravityX(), s.GravityY(), s.GravityZ()};
+            float gravity[3];
+            btMmdMath::gravityNoise(rStrength, rX, rY, rZ, strengthInt,
+                                   magnitude, direction, gravity);
+            world->setGravity(btVector3(gravity[0], gravity[1], gravity[2]));
             s.state.gravityNoiseTimer = 0.0f;                     // 0x46F6AC
 #else
             // x64 0x7FF7CB44BECF..0x7FF7CB44BFB7: the SAME chain as the

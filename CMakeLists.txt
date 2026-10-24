@@ -362,6 +362,11 @@ target_link_options(MikuDanceStudio PRIVATE "${MME_ICON_RES}")
 
 include(CTest)
 if(BUILD_TESTING)
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+        add_executable(mmd_math_test tests/mmd_math_test.cpp)
+        target_link_libraries(mmd_math_test PRIVATE BULLET275::BULLET275)
+        add_test(NAME mmd_math COMMAND mmd_math_test)
+    endif()
     add_executable(wave_data_chunk_test tests/wave_data_chunk_test.cpp
         src/media/wave_data_chunk.cpp)
     target_include_directories(wave_data_chunk_test PRIVATE include)

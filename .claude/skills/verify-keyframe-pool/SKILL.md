@@ -109,7 +109,7 @@ Run the check if the diff touches any of these:
 List what changed in the covered files since the sync commit:
 
 ```sh
-git diff --stat eb6a174 -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp
+git diff --stat 699ce59 -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp
 ```
 
 ## Real bug or modeling error?
@@ -144,7 +144,7 @@ here together.
 
 ## Coverage record
 
-Sync commit: `eb6a174`. The verification was last confirmed to describe the
+Sync commit: `699ce59`. The verification was last confirmed to describe the
 files and functions listed under "Does my change touch the verified code?" at
 this commit.
 

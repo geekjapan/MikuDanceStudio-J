@@ -1,0 +1,1483 @@
+res/assets/skin_effect_sm2.fx	ps_2_0	BShadowSphiaTexture_PS		OK
+res/assets/skin_effect_sm2.fx	ps_2_0	BShadowSphia_PS		OK
+res/assets/skin_effect_sm2.fx	ps_2_0	BShadowTexCd2_PS		OK
+res/assets/skin_effect_sm2.fx	ps_2_0	BShadowTextureTexCd2Tec_PS		OK
+res/assets/skin_effect_sm2.fx	ps_2_0	BShadowTexture_PS		OK
+res/assets/skin_effect_sm2.fx	ps_2_0	BufferShadow_PS		OK
+res/assets/skin_effect_sm2.fx	ps_2_0	ColorRender_PS		OK
+res/assets/skin_effect_sm2.fx	ps_2_0	DiffuseBSSphiaTex_PS		OK
+res/assets/skin_effect_sm2.fx	ps_2_0	DiffuseBSSphia_PS		OK
+res/assets/skin_effect_sm2.fx	ps_2_0	DiffuseBSTexture_PS		OK
+res/assets/skin_effect_sm2.fx	ps_2_0	DiffuseBufferShadow_PS		OK
+res/assets/skin_effect_sm2.fx	ps_2_0	ZValuePlot_PS		OK
+res/assets/skin_effect_sm2.fx	vs_2_0	BShadowSphiaTexture_VS		OK
+res/assets/skin_effect_sm2.fx	vs_2_0	BShadowSphia_VS		OK
+res/assets/skin_effect_sm2.fx	vs_2_0	BShadowTexCd2_VS		OK
+res/assets/skin_effect_sm2.fx	vs_2_0	BShadowTextureTexCd2Tec_VS		OK
+res/assets/skin_effect_sm2.fx	vs_2_0	BShadowTexture_VS		OK
+res/assets/skin_effect_sm2.fx	vs_2_0	BufferShadow_VS		OK
+res/assets/skin_effect_sm2.fx	vs_2_0	ColorRender_VS		OK
+res/assets/skin_effect_sm2.fx	vs_2_0	DiffuseBSSphiaTex_VS		OK
+res/assets/skin_effect_sm2.fx	vs_2_0	DiffuseBSSphia_VS		OK
+res/assets/skin_effect_sm2.fx	vs_2_0	DiffuseBSTexture_VS		OK
+res/assets/skin_effect_sm2.fx	vs_2_0	DiffuseBufferShadow_VS		OK
+res/assets/skin_effect_sm2.fx	vs_2_0	ZValuePlot_VS		OK
+res/assets/skin_effect_sm3.fx	ps_3_0	BShadowSphiaTexture_PS		OK
+res/assets/skin_effect_sm3.fx	ps_3_0	BShadowSphia_PS		OK
+res/assets/skin_effect_sm3.fx	ps_3_0	BShadowTexCd2_PS		OK
+res/assets/skin_effect_sm3.fx	ps_3_0	BShadowTextureTexCd2Tec_PS		OK
+res/assets/skin_effect_sm3.fx	ps_3_0	BShadowTexture_PS		OK
+res/assets/skin_effect_sm3.fx	ps_3_0	BufferShadow_PS		OK
+res/assets/skin_effect_sm3.fx	ps_3_0	ColorRender_PS		OK
+res/assets/skin_effect_sm3.fx	ps_3_0	DiffuseBSSphiaTex_PS		OK
+res/assets/skin_effect_sm3.fx	ps_3_0	DiffuseBSSphia_PS		OK
+res/assets/skin_effect_sm3.fx	ps_3_0	DiffuseBSTexture_PS		OK
+res/assets/skin_effect_sm3.fx	ps_3_0	DiffuseBufferShadow_PS		OK
+res/assets/skin_effect_sm3.fx	ps_3_0	ZValuePlot_PS		OK
+res/assets/skin_effect_sm3.fx	vs_3_0	BShadowSphiaTexture_VS		OK
+res/assets/skin_effect_sm3.fx	vs_3_0	BShadowSphia_VS		OK
+res/assets/skin_effect_sm3.fx	vs_3_0	BShadowTexCd2_VS		OK
+res/assets/skin_effect_sm3.fx	vs_3_0	BShadowTextureTexCd2Tec_VS		OK
+res/assets/skin_effect_sm3.fx	vs_3_0	BShadowTexture_VS		OK
+res/assets/skin_effect_sm3.fx	vs_3_0	BufferShadow_VS		OK
+res/assets/skin_effect_sm3.fx	vs_3_0	ColorRender_VS		OK
+res/assets/skin_effect_sm3.fx	vs_3_0	DiffuseBSSphiaTex_VS		OK
+res/assets/skin_effect_sm3.fx	vs_3_0	DiffuseBSSphia_VS		OK
+res/assets/skin_effect_sm3.fx	vs_3_0	DiffuseBSTexture_VS		OK
+res/assets/skin_effect_sm3.fx	vs_3_0	DiffuseBufferShadow_VS		OK
+res/assets/skin_effect_sm3.fx	vs_3_0	ZValuePlot_VS		OK
+ray-mmd/Extension/Debug/DebugController.fx	ps_3_0	DebugControllerPS		OK
+ray-mmd/Extension/Debug/DebugController.fx	vs_3_0	DebugControllerVS		OK
+ray-mmd/Extension/DummyScreen/DummyScreen.fx	ps_3_0	DummyScreenPS		OK
+ray-mmd/Extension/DummyScreen/DummyScreen.fx	vs_3_0	DummyScreenVS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray high.fx	ps_3_0	AtmosphericFogMieBlurPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray high.fx	ps_3_0	AtmosphericFogPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray high.fx	ps_3_0	AtmosphericScatteringPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray high.fx	vs_3_0	AtmosphericFogMieBlurVS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray high.fx	vs_3_0	AtmosphericFogVS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray low.fx	ps_3_0	AtmosphericFogMieBlurPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray low.fx	ps_3_0	AtmosphericFogPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray low.fx	ps_3_0	AtmosphericScatteringPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray low.fx	vs_3_0	AtmosphericFogMieBlurVS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray low.fx	vs_3_0	AtmosphericFogVS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray medium.fx	ps_3_0	AtmosphericFogMieBlurPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray medium.fx	ps_3_0	AtmosphericFogPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray medium.fx	ps_3_0	AtmosphericScatteringPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray medium.fx	vs_3_0	AtmosphericFogMieBlurVS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog with godray medium.fx	vs_3_0	AtmosphericFogVS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog.fx	ps_3_0	AtmosphericFogPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog.fx	vs_3_0	AtmosphericFogVS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray high.fx	ps_3_0	AtmosphericFogMieBlurPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray high.fx	ps_3_0	AtmosphericFogPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray high.fx	ps_3_0	AtmosphericScatteringPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray high.fx	vs_3_0	AtmosphericFogMieBlurVS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray high.fx	vs_3_0	AtmosphericFogVS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray low.fx	ps_3_0	AtmosphericFogMieBlurPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray low.fx	ps_3_0	AtmosphericFogPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray low.fx	ps_3_0	AtmosphericScatteringPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray low.fx	vs_3_0	AtmosphericFogMieBlurVS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray low.fx	vs_3_0	AtmosphericFogVS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray medium.fx	ps_3_0	AtmosphericFogMieBlurPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray medium.fx	ps_3_0	AtmosphericFogPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray medium.fx	ps_3_0	AtmosphericScatteringPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray medium.fx	vs_3_0	AtmosphericFogMieBlurVS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky with godray medium.fx	vs_3_0	AtmosphericFogVS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky.fx	ps_3_0	AtmosphericFogPS		OK
+ray-mmd/Fog/AtmosphericFog/atmospheric_fog_without sky.fx	vs_3_0	AtmosphericFogVS		OK
+ray-mmd/Fog/GroundFog/ground_fog.fx	ps_3_0	GroundFogPS		OK
+ray-mmd/Fog/GroundFog/ground_fog.fx	vs_3_0	GroundFogVS		OK
+ray-mmd/Fog/VolumetricCube/volumetric_cube.fx	ps_3_0	VolumetricCubePS		OK
+ray-mmd/Fog/VolumetricCube/volumetric_cube.fx	vs_3_0	VolumetricCubeVS		OK
+ray-mmd/Fog/VolumetricSphere/volumetric_sphere.fx	ps_3_0	SphereFogPS		OK
+ray-mmd/Fog/VolumetricSphere/volumetric_sphere.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/DirectionalLight/Default/directional_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/DirectionalLight/Default/directional_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/DirectionalLight/Default/directional_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/DirectionalLight/Default/directional_lighting_ambient.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/DirectionalLight/Default/directional_lighting_ambient.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/DirectionalLight/Default/directional_lighting_ambient.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/DirectionalLight/Default/directional_lighting_ambient_with_shadow.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/DirectionalLight/Default/directional_lighting_ambient_with_shadow.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/DirectionalLight/Default/directional_lighting_ambient_with_shadow.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/DirectionalLight/Default/directional_lighting_with_shadow.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/DirectionalLight/Default/directional_lighting_with_shadow.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/DirectionalLight/Default/directional_lighting_with_shadow.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/DirectionalLight/PSSM1.fx	ps_3_0	CascadeShadowMapPS		OK
+ray-mmd/Lighting/DirectionalLight/PSSM1.fx	vs_3_0	CascadeShadowMapVS		OK
+ray-mmd/Lighting/DirectionalLight/PSSM2.fx	ps_3_0	CascadeShadowMapPS		OK
+ray-mmd/Lighting/DirectionalLight/PSSM2.fx	vs_3_0	CascadeShadowMapVS		OK
+ray-mmd/Lighting/DirectionalLight/PSSM3.fx	ps_3_0	CascadeShadowMapPS		OK
+ray-mmd/Lighting/DirectionalLight/PSSM3.fx	vs_3_0	CascadeShadowMapVS		OK
+ray-mmd/Lighting/DirectionalLight/PSSM4.fx	ps_3_0	CascadeShadowMapPS		OK
+ray-mmd/Lighting/DirectionalLight/PSSM4.fx	vs_3_0	CascadeShadowMapVS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_fog.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_fog.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_fog_with_shadow_high.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_fog_with_shadow_high.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_fog_with_shadow_low.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_fog_with_shadow_low.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_fog_with_shadow_medium.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_fog_with_shadow_medium.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_fog_with_shadow_very_high.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_fog_with_shadow_very_high.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/DiskLight/Default Ambient/disk_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/DiskLight/Default/disk_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/DiskLight/disk_fog_shadow.fx	ps_3_0	ShadowMapPS		OK
+ray-mmd/Lighting/DiskLight/disk_fog_shadow.fx	vs_3_0	ShadowMapVS		OK
+ray-mmd/Lighting/DiskLight/disk_shadow.fx	ps_3_0	ShadowMapPS		OK
+ray-mmd/Lighting/DiskLight/disk_shadow.fx	vs_3_0	ShadowMapVS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_fog.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/PointLight/Default Ambient/point_fog.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_fog_with_shadow_high.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/PointLight/Default Ambient/point_fog_with_shadow_high.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_fog_with_shadow_low.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/PointLight/Default Ambient/point_fog_with_shadow_low.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_fog_with_shadow_medium.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/PointLight/Default Ambient/point_fog_with_shadow_medium.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_fog_with_shadow_very_high.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/PointLight/Default Ambient/point_fog_with_shadow_very_high.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLight/Default Ambient/point_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLight/Default/point_fog_with_shadow_very_high.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/PointLight/Default/point_fog_with_shadow_very_high.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLight/Default/point_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLight/point_fog_shadow.fx	ps_3_0	ShadowMapGenPS	- 1	OK
+ray-mmd/Lighting/PointLight/point_fog_shadow.fx	ps_3_0	ShadowMapGenPS	1	OK
+ray-mmd/Lighting/PointLight/point_fog_shadow.fx	vs_3_0	ShadowMapGenVS	- 1	OK
+ray-mmd/Lighting/PointLight/point_fog_shadow.fx	vs_3_0	ShadowMapGenVS	1	OK
+ray-mmd/Lighting/PointLight/point_shadow.fx	ps_3_0	ShadowMapGenPS	- 1	OK
+ray-mmd/Lighting/PointLight/point_shadow.fx	ps_3_0	ShadowMapGenPS	1	OK
+ray-mmd/Lighting/PointLight/point_shadow.fx	vs_3_0	ShadowMapGenVS	- 1	OK
+ray-mmd/Lighting/PointLight/point_shadow.fx	vs_3_0	ShadowMapGenVS	1	OK
+ray-mmd/Lighting/PointLightIES/Default/IES_fog.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/PointLightIES/Default/IES_fog.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_fog_with_shadow_high.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/PointLightIES/Default/IES_fog_with_shadow_high.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_fog_with_shadow_low.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/PointLightIES/Default/IES_fog_with_shadow_low.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_fog_with_shadow_medium.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/PointLightIES/Default/IES_fog_with_shadow_medium.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_fog_with_shadow_very_high.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/PointLightIES/Default/IES_fog_with_shadow_very_high.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/PointLightIES/Default/IES_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/PointLightIES/IES_shadow.fx	ps_3_0	ShadowMapGenPS	- 1	OK
+ray-mmd/Lighting/PointLightIES/IES_shadow.fx	ps_3_0	ShadowMapGenPS	1	OK
+ray-mmd/Lighting/PointLightIES/IES_shadow.fx	vs_3_0	ShadowMapGenVS	- 1	OK
+ray-mmd/Lighting/PointLightIES/IES_shadow.fx	vs_3_0	ShadowMapGenVS	1	OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default Ambient/rectangle_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default GIF/rectangle_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default LED/rectangle_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/RectangleLight/Default/rectangle_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/RectangleLight/rectangle_shadow.fx	ps_3_0	ShadowMapPS		OK
+ray-mmd/Lighting/RectangleLight/rectangle_shadow.fx	vs_3_0	ShadowMapVS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_fog.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_fog.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_fog_with_shadow_high.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_fog_with_shadow_high.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_fog_with_shadow_low.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_fog_with_shadow_low.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_fog_with_shadow_medium.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_fog_with_shadow_medium.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_fog_with_shadow_very_high.fx	ps_3_0	SphereFogPS		FAIL
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_fog_with_shadow_very_high.fx	vs_3_0	SphereFogVS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default Ambient/sphere_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default IBL/sphere_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SphereLight/Default/sphere_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SphereLight/sphere_fog_shadow.fx	ps_3_0	ShadowMapGenPS	- 1	OK
+ray-mmd/Lighting/SphereLight/sphere_fog_shadow.fx	ps_3_0	ShadowMapGenPS	1	OK
+ray-mmd/Lighting/SphereLight/sphere_fog_shadow.fx	vs_3_0	ShadowMapGenVS	- 1	OK
+ray-mmd/Lighting/SphereLight/sphere_fog_shadow.fx	vs_3_0	ShadowMapGenVS	1	OK
+ray-mmd/Lighting/SphereLight/sphere_shadow.fx	ps_3_0	ShadowMapGenPS	- 1	OK
+ray-mmd/Lighting/SphereLight/sphere_shadow.fx	ps_3_0	ShadowMapGenPS	1	OK
+ray-mmd/Lighting/SphereLight/sphere_shadow.fx	vs_3_0	ShadowMapGenVS	- 1	OK
+ray-mmd/Lighting/SphereLight/sphere_shadow.fx	vs_3_0	ShadowMapGenVS	1	OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_fog.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_fog.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_fog_with_shadow_high.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_fog_with_shadow_high.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_fog_with_shadow_low.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_fog_with_shadow_low.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_fog_with_shadow_medium.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_fog_with_shadow_medium.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_fog_with_shadow_very_high.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_fog_with_shadow_very_high.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLight/Default Ambient/spot_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_fog_with_shadow_low.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/SpotLight/Default/spot_fog_with_shadow_low.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_fog_with_shadow_medium.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/SpotLight/Default/spot_fog_with_shadow_medium.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLight/Default/spot_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLight/spot_fog_shadow.fx	ps_3_0	ShadowMapPS		OK
+ray-mmd/Lighting/SpotLight/spot_fog_shadow.fx	vs_3_0	ShadowMapVS		OK
+ray-mmd/Lighting/SpotLight/spot_shadow.fx	ps_3_0	ShadowMapPS		OK
+ray-mmd/Lighting/SpotLight/spot_shadow.fx	vs_3_0	ShadowMapVS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_fog.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/SpotLightIES/Default/IES_fog.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_fog_with_shadow_high.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/SpotLightIES/Default/IES_fog_with_shadow_high.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_fog_with_shadow_low.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/SpotLightIES/Default/IES_fog_with_shadow_low.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_fog_with_shadow_medium.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/SpotLightIES/Default/IES_fog_with_shadow_medium.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_fog_with_shadow_very_high.fx	ps_3_0	VolumetricFogPS		FAIL
+ray-mmd/Lighting/SpotLightIES/Default/IES_fog_with_shadow_very_high.fx	vs_3_0	VolumetricFogVS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/SpotLightIES/Default/IES_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/SpotLightIES/IES_fog_shadow.fx	ps_3_0	ShadowMapPS		OK
+ray-mmd/Lighting/SpotLightIES/IES_fog_shadow.fx	vs_3_0	ShadowMapVS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/TubeLight/Default Ambient/tube_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting_with_shadow_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting_with_shadow_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting_with_shadow_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting_with_shadow_low.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting_with_shadow_low.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting_with_shadow_low.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting_with_shadow_medium.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting_with_shadow_medium.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting_with_shadow_medium.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting_with_shadow_very_high.fx	ps_3_0	LightSourcePS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting_with_shadow_very_high.fx	ps_3_0	LightSourceShadowlessPS		OK
+ray-mmd/Lighting/TubeLight/Default/tube_lighting_with_shadow_very_high.fx	vs_3_0	LightSourceVS		OK
+ray-mmd/Lighting/TubeLight/tube_shadow.fx	ps_3_0	ShadowMapGenPS	- 1	OK
+ray-mmd/Lighting/TubeLight/tube_shadow.fx	ps_3_0	ShadowMapGenPS	1	OK
+ray-mmd/Lighting/TubeLight/tube_shadow.fx	vs_3_0	ShadowMapGenVS	- 1	OK
+ray-mmd/Lighting/TubeLight/tube_shadow.fx	vs_3_0	ShadowMapGenVS	1	OK
+ray-mmd/Main/main.fx	ps_3_0	MainPS		OK
+ray-mmd/Main/main.fx	vs_3_0	MainVS		OK
+ray-mmd/Main/main_ex_alpha.fx	ps_3_0	MainPS		OK
+ray-mmd/Main/main_ex_alpha.fx	vs_3_0	MainVS		OK
+ray-mmd/Main/main_ex_mask.fx	ps_3_0	MainPS		OK
+ray-mmd/Main/main_ex_mask.fx	vs_3_0	MainVS		OK
+ray-mmd/Main/main_ex_noalpha.fx	ps_3_0	MainPS		OK
+ray-mmd/Main/main_ex_noalpha.fx	vs_3_0	MainVS		OK
+ray-mmd/Main/main_ex_with_sphmap.fx	ps_3_0	MainPS		OK
+ray-mmd/Main/main_ex_with_sphmap.fx	vs_3_0	MainVS		OK
+ray-mmd/Materials/ClearCoat/material_albedo.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/ClearCoat/material_albedo.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/ClearCoat/material_albedo.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/ClearCoat/material_black.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/ClearCoat/material_black.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/ClearCoat/material_black.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/ClearCoat/material_metal_clearcoat.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/ClearCoat/material_metal_clearcoat.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/ClearCoat/material_metal_clearcoat.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/ClearCoat/material_white.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/ClearCoat/material_white.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/ClearCoat/material_white.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Cloth/material_black_coat.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Cloth/material_black_coat.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Cloth/material_black_coat.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Cloth/material_cloth.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Cloth/material_cloth.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Cloth/material_cloth.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Cloth/material_white.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Cloth/material_white.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Cloth/material_white.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__10.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__10.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__10.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__3.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__3.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__3.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__5.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__5.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__5.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__6.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__6.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__6.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__7.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__7.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__7.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__8.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__8.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__8.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__9.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__9.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic without map/material_aniso__9.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__10.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__10.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__10.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__3.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__3.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__3.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__5.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__5.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__5.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__6.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__6.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__6.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__7.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__7.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__7.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__8.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__8.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__8.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__9.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__9.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Anisotropic/material_aniso__9.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__10.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__10.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__10.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__3.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__3.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__3.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__5.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__5.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__5.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__6.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__6.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__6.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__7.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__7.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__7.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__8.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__8.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__8.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__9.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__9.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat without map/material_clearcoat__9.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__10.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__10.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__10.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__3.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__3.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__3.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__5.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__5.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__5.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__6.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__6.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__6.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__7.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__7.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__7.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__8.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__8.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__8.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__9.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__9.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/ClearCoat/material_clearcoat__9.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__10.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__10.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__10.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__3.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__3.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__3.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__5.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__5.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__5.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__6.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__6.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__6.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__7.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__7.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__7.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__8.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__8.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__8.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__9.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__9.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth without map/material_cloth__9.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__10.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__10.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__10.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__3.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__3.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__3.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__5.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__5.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__5.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__6.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__6.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__6.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__7.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__7.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__7.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__8.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__8.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__8.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__9.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__9.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Cloth/material_cloth__9.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__10.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__10.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__10.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__3.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__3.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__3.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__5.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__5.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__5.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__6.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__6.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__6.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__7.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__7.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__7.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__8.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__8.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__8.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__9.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__9.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass without map/material_glass__9.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__10.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__10.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__10.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__3.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__3.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__3.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__5.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__5.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__5.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__6.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__6.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__6.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__7.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__7.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__7.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__8.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__8.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__8.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__9.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__9.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Glass/material_glass__9.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__10.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__10.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__10.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__3.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__3.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__3.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__5.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__5.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__5.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__6.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__6.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__6.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__7.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__7.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__7.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__8.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__8.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__8.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__9.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__9.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin without map/material_skin__9.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__10.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__10.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__10.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__3.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__3.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__3.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__5.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__5.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__5.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__6.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__6.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__6.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__7.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__7.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__7.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__8.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__8.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__8.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__9.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__9.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Skin/material_skin__9.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__10.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__10.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__10.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__3.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__3.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__3.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__5.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__5.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__5.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__6.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__6.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__6.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__7.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__7.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__7.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__8.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__8.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__8.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__9.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__9.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard without map/material_editor__9.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__10.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__10.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__10.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__3.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__3.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__3.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__5.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__5.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__5.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__6.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__6.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__6.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__7.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__7.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__7.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__8.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__8.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__8.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__9.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__9.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Standard/material_editor__9.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__10.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__10.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__10.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__3.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__3.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__3.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__5.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__5.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__5.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__6.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__6.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__6.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__7.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__7.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__7.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__8.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__8.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__8.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__9.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__9.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface without map/material_subsurface__9.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__10.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__10.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__10.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__3.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__3.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__3.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__5.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__5.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__5.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__6.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__6.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__6.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__7.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__7.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__7.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__8.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__8.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__8.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__9.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__9.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Editor/Subsurface/material_subsurface__9.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/BodyLine/material.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/BodyLine/material.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/BodyLine/material.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_albedo_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_albedo_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_albedo_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_blue_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_blue_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_blue_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_green_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_green_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_green_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_orange_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_orange_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_orange_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_purple_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_purple_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_purple_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_red_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_red_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_red_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_white_blue_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_white_blue_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_white_blue_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_white_pink_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_white_pink_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_white_pink_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_white_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_white_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_white_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_yellow_green_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_yellow_green_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_yellow_green_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_yellow_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_yellow_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x1/material_yellow_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_albedo_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_albedo_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_albedo_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_blue_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_blue_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_blue_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_green_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_green_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_green_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_orange_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_orange_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_orange_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_purple_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_purple_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_purple_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_red_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_red_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_red_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_white_blue_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_white_blue_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_white_blue_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_white_pink_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_white_pink_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_white_pink_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_white_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_white_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_white_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_yellow_green_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_yellow_green_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_yellow_green_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_yellow_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_yellow_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x2/material_yellow_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_albedo_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_albedo_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_albedo_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_blue_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_blue_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_blue_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_green_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_green_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_green_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_orange_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_orange_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_orange_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_purple_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_purple_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_purple_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_red_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_red_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_red_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_white_blue_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_white_blue_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_white_blue_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_white_pink_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_white_pink_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_white_pink_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_white_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_white_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_white_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_yellow_green_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_yellow_green_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_yellow_green_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_yellow_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_yellow_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color Blink x4/material_yellow_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_albedo_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_albedo_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_albedo_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_blue_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_blue_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_blue_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_green_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_green_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_green_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_orange_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_orange_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_orange_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_purple_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_purple_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_purple_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_red_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_red_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_red_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_white_blue_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_white_blue_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_white_blue_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_white_pink_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_white_pink_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_white_pink_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_white_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_white_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_white_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_yellow_green_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_yellow_green_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_yellow_green_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_yellow_x1.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_yellow_x1.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x1/material_yellow_x1.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_albedo_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_albedo_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_albedo_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_blue_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_blue_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_blue_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_green_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_green_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_green_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_orange_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_orange_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_orange_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_purple_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_purple_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_purple_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_red_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_red_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_red_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_white_blue_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_white_blue_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_white_blue_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_white_pink_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_white_pink_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_white_pink_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_white_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_white_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_white_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_yellow_green_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_yellow_green_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_yellow_green_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_yellow_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_yellow_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x2/material_yellow_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_albedo_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_albedo_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_albedo_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_blue_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_blue_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_blue_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_green_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_green_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_green_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_orange_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_orange_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_orange_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_purple_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_purple_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_purple_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_red_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_red_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_red_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_white_blue_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_white_blue_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_white_blue_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_white_pink_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_white_pink_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_white_pink_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_white_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_white_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_white_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_yellow_green_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_yellow_green_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_yellow_green_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_yellow_x4.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_yellow_x4.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Fixed Color x4/material_yellow_x4.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Rainbow/material.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Rainbow/material.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Rainbow/material.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/Rainbow/material_emissive_x2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/Rainbow/material_emissive_x2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/Rainbow/material_emissive_x2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Emissive/material_lighting.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Emissive/material_lighting.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Emissive/material_lighting.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Hair/material_hair.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Hair/material_hair.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Hair/material_hair.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Hair/material_hair_sss.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Hair/material_hair_sss.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Hair/material_hair_sss.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Hair/material_hair_with_anisotropy.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Hair/material_hair_with_anisotropy.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Hair/material_hair_with_anisotropy.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Hair/material_hair_with_anisotropy2.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Hair/material_hair_with_anisotropy2.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Hair/material_hair_with_anisotropy2.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_brass.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_brass.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_brass.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_copper.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_copper.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_copper.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_gold.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_gold.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_gold.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_iron.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_iron.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_iron.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_metal.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_metal.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_metal.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_silver.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_silver.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot rough/material_rough_silver.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_brass.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_brass.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_brass.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_copper.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_copper.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_copper.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_gold.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_gold.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_gold.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_iron.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_iron.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_iron.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_metal.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_metal.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_metal.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_silver.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_silver.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot smooth/material_smooth_silver.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_brass.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_brass.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_brass.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_copper.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_copper.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_copper.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_gold.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_gold.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_gold.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_iron.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_iron.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_iron.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_metal.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_metal.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_metal.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_silver.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_silver.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Flat ingot worn/material_worn_silver.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_brass.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_brass.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_brass.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_copper.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_copper.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_copper.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_gold.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_gold.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_gold.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_iron.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_iron.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_iron.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_metal.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_metal.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_metal.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_silver.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_silver.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Metallic/Ingot Bricks/material_rough_silver.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Programmable/Water/material_water.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Programmable/Water/material_water.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Programmable/Wetness/material_wetness.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Programmable/Wetness/material_wetness.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Programmable/Wetness/material_wetness.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Skin/Human/material_body.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Skin/Human/material_body.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Skin/Human/material_body.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Skin/Human/material_body_melanoderm.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Skin/Human/material_body_melanoderm.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Skin/Human/material_body_melanoderm.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Skin/TDA/material_TDA_body.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Skin/TDA/material_TDA_body.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Skin/TDA/material_TDA_body.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Skin/TDA/material_TDA_body_red.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Skin/TDA/material_TDA_body_red.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Skin/TDA/material_TDA_body_red.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Skin/TDA/material_TDA_face.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Skin/TDA/material_TDA_face.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Skin/TDA/material_TDA_face.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Skin/TDA/material_TDA_face_red.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Skin/TDA/material_TDA_face_red.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Skin/TDA/material_TDA_face_red.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Skin/material_body.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Skin/material_body.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Skin/material_body.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Skin/material_body_beige.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Skin/material_body_beige.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Skin/material_body_beige.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Skin/material_body_beige_dark.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Skin/material_body_beige_dark.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Skin/material_body_beige_dark.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Skin/material_skin.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Skin/material_skin.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Skin/material_skin.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Skin/material_skin_beige.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Skin/material_skin_beige.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Skin/material_skin_beige.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Skin/material_skin_beige_dark.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Skin/material_skin_beige_dark.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Skin/material_skin_beige_dark.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Skin/material_skin_melanoderm.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Skin/material_skin_melanoderm.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Skin/material_skin_melanoderm.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Subsurface/material_jade_white.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Subsurface/material_jade_white.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Subsurface/material_jade_white.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Subsurface/material_lampshade.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Subsurface/material_lampshade.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Subsurface/material_lampshade.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Subsurface/material_marble.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Subsurface/material_marble.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Subsurface/material_marble.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Transparent/material_glass.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Transparent/material_glass.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Transparent/material_glass.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Transparent/material_glass_metal.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Transparent/material_glass_metal.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Transparent/material_glass_metal.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Video/material_screen.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Video/material_screen.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Video/material_screen.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Video/material_screen_emissive.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Video/material_screen_emissive.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Video/material_screen_emissive.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/Video/material_screen_led.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/Video/material_screen_led.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/Video/material_screen_led.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/material_2.0.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/material_2.0.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/material_2.0.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Materials/material_skybox.fx	ps_3_0	Material2PS		OK
+ray-mmd/Materials/material_skybox.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Materials/material_skybox.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x1/outline blue.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color x1/outline blue.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color x1/outline blue.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x1/outline blue.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x1/outline brown.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color x1/outline brown.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color x1/outline brown.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x1/outline brown.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x1/outline orange.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color x1/outline orange.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color x1/outline orange.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x1/outline orange.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x1/outline pink.fx	ps_3_0	EdgeLinePS		OK
+ray-mmd/Outline/Fixed Color x1/outline pink.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Outline/Fixed Color x1/outline pink.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x1/outline pink.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x1/outline purple.fx	ps_3_0	EdgeLinePS		OK
+ray-mmd/Outline/Fixed Color x1/outline purple.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Outline/Fixed Color x1/outline purple.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x1/outline purple.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x1/outline_black.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color x1/outline_black.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color x1/outline_black.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x1/outline_black.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x2/outline black.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color x2/outline black.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color x2/outline black.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x2/outline black.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x2/outline blue.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color x2/outline blue.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color x2/outline blue.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x2/outline blue.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x2/outline brown.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color x2/outline brown.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color x2/outline brown.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x2/outline brown.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x2/outline orange.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color x2/outline orange.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color x2/outline orange.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x2/outline orange.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x2/outline pink.fx	ps_3_0	EdgeLinePS		OK
+ray-mmd/Outline/Fixed Color x2/outline pink.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Outline/Fixed Color x2/outline pink.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x2/outline pink.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x2/outline purple.fx	ps_3_0	EdgeLinePS		OK
+ray-mmd/Outline/Fixed Color x2/outline purple.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Outline/Fixed Color x2/outline purple.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x2/outline purple.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x3/outline blue.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color x3/outline blue.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color x3/outline blue.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x3/outline blue.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x3/outline brown.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color x3/outline brown.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color x3/outline brown.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x3/outline brown.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x3/outline orange.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color x3/outline orange.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color x3/outline orange.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x3/outline orange.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x3/outline pink.fx	ps_3_0	EdgeLinePS		OK
+ray-mmd/Outline/Fixed Color x3/outline pink.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Outline/Fixed Color x3/outline pink.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x3/outline pink.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color x3/outline purple.fx	ps_3_0	EdgeLinePS		OK
+ray-mmd/Outline/Fixed Color x3/outline purple.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Outline/Fixed Color x3/outline purple.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color x3/outline purple.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color/outline blue.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color/outline blue.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color/outline blue.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color/outline blue.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color/outline brown.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color/outline brown.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color/outline brown.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color/outline brown.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color/outline orange.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color/outline orange.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color/outline orange.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color/outline orange.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color/outline pink.fx	ps_3_0	EdgeLinePS		OK
+ray-mmd/Outline/Fixed Color/outline pink.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Outline/Fixed Color/outline pink.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color/outline pink.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color/outline purple.fx	ps_3_0	EdgeLinePS		OK
+ray-mmd/Outline/Fixed Color/outline purple.fx	ps_3_0	MaterialPS		OK
+ray-mmd/Outline/Fixed Color/outline purple.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color/outline purple.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Outline/Fixed Color/outline_black.fx	ps_3_0	EdgeLinePS		FAIL
+ray-mmd/Outline/Fixed Color/outline_black.fx	ps_3_0	MaterialPS		FAIL
+ray-mmd/Outline/Fixed Color/outline_black.fx	vs_3_0	EdgeLineVS		OK
+ray-mmd/Outline/Fixed Color/outline_black.fx	vs_3_0	MaterialVS		OK
+ray-mmd/Shadow/PSSM1.fx	ps_3_0	CascadeShadowMapPS		OK
+ray-mmd/Shadow/PSSM1.fx	vs_3_0	CascadeShadowMapVS		OK
+ray-mmd/Shadow/PSSM2.fx	ps_3_0	CascadeShadowMapPS		OK
+ray-mmd/Shadow/PSSM2.fx	vs_3_0	CascadeShadowMapVS		OK
+ray-mmd/Shadow/PSSM3.fx	ps_3_0	CascadeShadowMapPS		OK
+ray-mmd/Shadow/PSSM3.fx	vs_3_0	CascadeShadowMapVS		OK
+ray-mmd/Shadow/PSSM4.fx	ps_3_0	CascadeShadowMapPS		OK
+ray-mmd/Shadow/PSSM4.fx	vs_3_0	CascadeShadowMapVS		OK
+ray-mmd/Shadow/SSAO visibility 0.0.fx	ps_3_0	DepthObjectPS		OK
+ray-mmd/Shadow/SSAO visibility 0.0.fx	vs_3_0	DepthObjectVS		OK
+ray-mmd/Shadow/SSAO visibility 0.1.fx	ps_3_0	DepthObjectPS		OK
+ray-mmd/Shadow/SSAO visibility 0.1.fx	vs_3_0	DepthObjectVS		OK
+ray-mmd/Shadow/SSAO visibility 0.2.fx	ps_3_0	DepthObjectPS		OK
+ray-mmd/Shadow/SSAO visibility 0.2.fx	vs_3_0	DepthObjectVS		OK
+ray-mmd/Shadow/SSAO visibility 0.3.fx	ps_3_0	DepthObjectPS		OK
+ray-mmd/Shadow/SSAO visibility 0.3.fx	vs_3_0	DepthObjectVS		OK
+ray-mmd/Shadow/SSAO visibility 0.4.fx	ps_3_0	DepthObjectPS		OK
+ray-mmd/Shadow/SSAO visibility 0.4.fx	vs_3_0	DepthObjectVS		OK
+ray-mmd/Shadow/SSAO visibility 0.5.fx	ps_3_0	DepthObjectPS		OK
+ray-mmd/Shadow/SSAO visibility 0.5.fx	vs_3_0	DepthObjectVS		OK
+ray-mmd/Shadow/SSAO visibility 0.6.fx	ps_3_0	DepthObjectPS		OK
+ray-mmd/Shadow/SSAO visibility 0.6.fx	vs_3_0	DepthObjectVS		OK
+ray-mmd/Shadow/SSAO visibility 0.7.fx	ps_3_0	DepthObjectPS		OK
+ray-mmd/Shadow/SSAO visibility 0.7.fx	vs_3_0	DepthObjectVS		OK
+ray-mmd/Shadow/SSAO visibility 0.8.fx	ps_3_0	DepthObjectPS		OK
+ray-mmd/Shadow/SSAO visibility 0.8.fx	vs_3_0	DepthObjectVS		OK
+ray-mmd/Shadow/SSAO visibility 0.9.fx	ps_3_0	DepthObjectPS		OK
+ray-mmd/Shadow/SSAO visibility 0.9.fx	vs_3_0	DepthObjectVS		OK
+ray-mmd/Shadow/SSAO visibility 1.0.fx	ps_3_0	DepthObjectPS		OK
+ray-mmd/Shadow/SSAO visibility 1.0.fx	vs_3_0	DepthObjectVS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with box blur with rotation.fx	ps_3_0	SkyboxPS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with box blur with rotation.fx	vs_3_0	SkyboxVS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with box blur.fx	ps_3_0	SkyboxPS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with box blur.fx	vs_3_0	SkyboxVS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with box with rotation.fx	ps_3_0	SkyboxPS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with box with rotation.fx	vs_3_0	SkyboxVS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with box.fx	ps_3_0	SkyboxPS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with box.fx	vs_3_0	SkyboxVS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with dome with rotation.fx	ps_3_0	SkyboxPS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with dome with rotation.fx	vs_3_0	SkyboxVS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with dome.fx	ps_3_0	SkyboxPS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with dome.fx	vs_3_0	SkyboxVS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with lighting fast.fx	ps_3_0	EnvLightingPS		FAIL
+ray-mmd/Skybox/Helipad GoldenHour/Sky with lighting fast.fx	vs_3_0	EnvLightingVS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with lighting with rotation.fx	ps_3_0	EnvLightingPS		FAIL
+ray-mmd/Skybox/Helipad GoldenHour/Sky with lighting with rotation.fx	vs_3_0	EnvLightingVS		OK
+ray-mmd/Skybox/Helipad GoldenHour/Sky with lighting.fx	ps_3_0	EnvLightingPS		FAIL
+ray-mmd/Skybox/Helipad GoldenHour/Sky with lighting.fx	vs_3_0	EnvLightingVS		OK
+ray-mmd/Skybox/Sky Hemisphere/Sky with box.fx	ps_3_0	SkyboxPS		OK
+ray-mmd/Skybox/Sky Hemisphere/Sky with box.fx	vs_3_0	SkyboxVS		OK
+ray-mmd/Skybox/Sky Hemisphere/Sky with lighting.fx	ps_3_0	EnvLightingPS		FAIL
+ray-mmd/Skybox/Sky Hemisphere/Sky with lighting.fx	vs_3_0	EnvLightingVS		OK
+ray-mmd/Skybox/Sky Night/Sky with box.fx	ps_3_0	MoonPS	MoonMapSamp	OK
+ray-mmd/Skybox/Sky Night/Sky with box.fx	ps_3_0	SkyboxPS		OK
+ray-mmd/Skybox/Sky Night/Sky with box.fx	vs_3_0	MoonVS	moonTranslate , moonScaling	OK
+ray-mmd/Skybox/Sky Night/Sky with box.fx	vs_3_0	SkyboxVS		OK
+ray-mmd/Skybox/Sky Night/Sky with lighting.fx	ps_3_0	EnvLightingPS		FAIL
+ray-mmd/Skybox/Sky Night/Sky with lighting.fx	vs_3_0	EnvLightingVS		OK
+ray-mmd/Skybox/Time of day/Time of day fast.fx	ps_3_0	ScatteringPS		OK
+ray-mmd/Skybox/Time of day/Time of day fast.fx	vs_3_0	ScatteringVS		OK
+ray-mmd/Skybox/Time of day/Time of day.fx	ps_3_0	ScatteringPS		OK
+ray-mmd/Skybox/Time of day/Time of day.fx	ps_3_0	ScatteringWithCloudsPS		OK
+ray-mmd/Skybox/Time of day/Time of day.fx	vs_3_0	ScatteringVS		OK
+ray-mmd/Skybox/Time of day/Time of fog with godray with cloud caster.fx	ps_3_0	AtmosphericFogMieBlurPS		OK
+ray-mmd/Skybox/Time of day/Time of fog with godray with cloud caster.fx	ps_3_0	AtmosphericFogMiePS		OK
+ray-mmd/Skybox/Time of day/Time of fog with godray with cloud caster.fx	ps_3_0	AtmosphericFogPS		OK
+ray-mmd/Skybox/Time of day/Time of fog with godray with cloud caster.fx	ps_3_0	AtmosphericScatteringPS		OK
+ray-mmd/Skybox/Time of day/Time of fog with godray with cloud caster.fx	vs_3_0	AtmosphericFogMieBlurVS		OK
+ray-mmd/Skybox/Time of day/Time of fog with godray with cloud caster.fx	vs_3_0	AtmosphericFogVS		OK
+ray-mmd/Skybox/Time of day/Time of fog with godray.fx	ps_3_0	AtmosphericFogMieBlurPS		OK
+ray-mmd/Skybox/Time of day/Time of fog with godray.fx	ps_3_0	AtmosphericFogMiePS		OK
+ray-mmd/Skybox/Time of day/Time of fog with godray.fx	ps_3_0	AtmosphericFogPS		OK
+ray-mmd/Skybox/Time of day/Time of fog with godray.fx	ps_3_0	AtmosphericScatteringPS		OK
+ray-mmd/Skybox/Time of day/Time of fog with godray.fx	vs_3_0	AtmosphericFogMieBlurVS		OK
+ray-mmd/Skybox/Time of day/Time of fog with godray.fx	vs_3_0	AtmosphericFogVS		OK
+ray-mmd/Skybox/Time of day/Time of fog.fx	ps_3_0	AtmosphericFogPS		OK
+ray-mmd/Skybox/Time of day/Time of fog.fx	vs_3_0	AtmosphericFogVS		OK
+ray-mmd/Skybox/Time of day/Time of lighting.fx	ps_3_0	EnvLightingPS		FAIL
+ray-mmd/Skybox/Time of day/Time of lighting.fx	ps_3_0	GenDiffuseMapPS		OK
+ray-mmd/Skybox/Time of day/Time of lighting.fx	ps_3_0	GenSpecularMapPS		OK
+ray-mmd/Skybox/Time of day/Time of lighting.fx	vs_3_0	EnvLightingVS		OK
+ray-mmd/Skybox/Time of day/Time of lighting.fx	vs_3_0	GenDiffuseMapVS		OK
+ray-mmd/Skybox/Time of day/Time of lighting.fx	vs_3_0	GenSpecularMapVS		OK
+ray-mmd/Skybox/Time of night/Time of fog.fx	ps_3_0	ScatteringFogPS		OK
+ray-mmd/Skybox/Time of night/Time of fog.fx	vs_3_0	ScatteringFogVS		OK
+ray-mmd/Skybox/Time of night/Time of lighting.fx	ps_3_0	EnvLightingPS		FAIL
+ray-mmd/Skybox/Time of night/Time of lighting.fx	ps_3_0	GenDiffuseMapPS		OK
+ray-mmd/Skybox/Time of night/Time of lighting.fx	ps_3_0	GenSpecularMapPS		OK
+ray-mmd/Skybox/Time of night/Time of lighting.fx	vs_3_0	EnvLightingVS		OK
+ray-mmd/Skybox/Time of night/Time of lighting.fx	vs_3_0	GenDiffuseMapVS		OK
+ray-mmd/Skybox/Time of night/Time of lighting.fx	vs_3_0	GenSpecularMapVS		OK
+ray-mmd/Skybox/Time of night/Time of night without milkway.fx	ps_3_0	MoonPS	MoonMapSamp	OK
+ray-mmd/Skybox/Time of night/Time of night without milkway.fx	ps_3_0	ScatteringPS		OK
+ray-mmd/Skybox/Time of night/Time of night without milkway.fx	ps_3_0	StarsPS		OK
+ray-mmd/Skybox/Time of night/Time of night without milkway.fx	vs_3_0	MoonVS	moonTranslate , moonScaling	OK
+ray-mmd/Skybox/Time of night/Time of night without milkway.fx	vs_3_0	ScatteringVS		OK
+ray-mmd/Skybox/Time of night/Time of night without milkway.fx	vs_3_0	StarsVS		OK
+ray-mmd/Skybox/Time of night/Time of night.fx	ps_3_0	MoonPS	MoonMapSamp	OK
+ray-mmd/Skybox/Time of night/Time of night.fx	ps_3_0	ScatteringPS		OK
+ray-mmd/Skybox/Time of night/Time of night.fx	ps_3_0	StarsPS		OK
+ray-mmd/Skybox/Time of night/Time of night.fx	vs_3_0	MoonVS	moonTranslate , moonScaling	OK
+ray-mmd/Skybox/Time of night/Time of night.fx	vs_3_0	ScatteringVS		OK
+ray-mmd/Skybox/Time of night/Time of night.fx	vs_3_0	StarsVS		OK

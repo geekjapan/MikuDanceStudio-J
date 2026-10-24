@@ -808,14 +808,14 @@ struct MMDAppState {
     unsigned char rigidBodyDisplayEnabled;  // x64 pin 662864 (0xA1D50)
 #if defined(_M_X64)
     // x64 blob slots: the alignment fill plus the gravity-setting dialog
-    // (0xA1D58) and the accessory-frame edit proc (0xA1D60); the port
+    // (0xA1D58) and the gravity-setting edit proc (0xA1D60); the port
     // keeps both in MMDApp mirrors
     RawPad<23> pad367;
 #else
     RawPad<3> pad367;
     HWND gravitySettingDialog;  // 0xA0CCC, gravity-setting dlg 266
                                 // (was accessoryFrameDialog)
-    WNDPROC accessoryFrameEditProc;  // saved wndproc of edit 709
+    WNDPROC gravitySettingEditProc;  // saved wndproc of edit 709
 #endif
     unsigned char gravityNoiseEnabled;
 #if defined(_M_X64)

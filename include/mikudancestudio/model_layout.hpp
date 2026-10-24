@@ -125,8 +125,8 @@ struct ModelRecord {
     MorphKey* morphKeys;  // 9956  (20-byte morph key records; x64 0x2798)
     DisplayKey* displayKeys;  // 9960  (28/40-byte display key records; x64 0x27A0)
     UndoRing undoRings[2];  // 9964  (two consecutive 30-slot rings; x64 slots grow 28 -> 40 bytes)
-    unsigned char comboSelIndex;  // 11644  (0x460430)
-    unsigned char comboSelIndex2;  // 11645
+    unsigned char comboSelIndex;  // 11644: model combo / draw order (x64 +0x3108)
+    unsigned char comboSelIndex2;  // 11645: calculation order (x64 +0x3109)
     RawPad<2> gap12;  // 11646..11648 (unrecovered)
     std::uint32_t morphCount;  // 11648  (pmd/pmx loaders _read(fh, m+11648, 2/4); x64 twin 0x310C)
     std::uint32_t boneCount;  // 11652  (x64 twin 12560)
@@ -163,7 +163,7 @@ struct ModelRecord {
     std::int32_t boneListRows;  // 12712  (scrollbar 0x47C0A0)
     std::int32_t boneListPos;  // 12716
     std::uint32_t maxFrame;  // 12720  (model timeline upper bound)
-    std::uint32_t undoState[2];  // 12724  (bone_edit_undo)
+    std::uint32_t undoState[2];  // 12724: current / latest undo-ring cursors
     unsigned char undoDirty;  // 12732  (undo snapshot pending)
     unsigned char redoDirty;  // 12733  (redo snapshot pending)
     unsigned char postLoadFlag2;  // 12734
@@ -214,6 +214,13 @@ struct ModelRecord {
     std::uint32_t boneOrderCount;  // 314600  (x64 0x96478)
     std::int32_t centerBone;  // 314604  (physics_frame 0x4B3460)
     std::int32_t frameRegistrationSelection;  // 314608  (combo 434 selection)
+
+    std::uint32_t& UndoCursor() { return undoState[0]; }
+    const std::uint32_t& UndoCursor() const { return undoState[0]; }
+    // New edits set both cursors; undo/redo move only UndoCursor(). Equal
+    // cursors mean the newest edit is applied and no redo entries remain.
+    std::uint32_t& LatestUndoCursor() { return undoState[1]; }
+    const std::uint32_t& LatestUndoCursor() const { return undoState[1]; }
 };
 
 #if !defined(_M_X64)
@@ -403,7 +410,7 @@ static_assert(offsetof(ModelRecord, nameEn) == 8946,
 static_assert(offsetof(ModelRecord, comboSelIndex) == 12552,
               "comboSelIndex x64 (0x3108)");
 static_assert(offsetof(ModelRecord, comboSelIndex2) == 12553,
-              "comboSelIndex2 x64 (0x3109; display-order byte scans in "
+              "comboSelIndex2 x64 (0x3109; calculation-order byte scans in "
               "physics_frame/playback_catchup and the select dialog)");
 static_assert(offsetof(ModelRecord, comment) == 8996,
               "comment x64");

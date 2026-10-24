@@ -236,7 +236,7 @@ void HandleWindowSize(MMDApp* app) {
     MoveCtrl(hwnd, panel::kBoxSelectRadio, 366, bottom - 105, 60, 24);
     MoveCtrl(hwnd, panel::kSelectAllBonesButton, 430, bottom - 105, 60, 24);
     MoveCtrl(hwnd, panel::kSelectUnregisteredBonesButton, 494, bottom - 105, 60, 24);
-    MoveCtrl(hwnd, panel::kCopyBoneFramesButton, 366, bottom - 70, 60, 24);
+    MoveCtrl(hwnd, panel::kCopyBonePoseButton, 366, bottom - 70, 60, 24);
     MoveCtrl(hwnd, panel::kBonePasteButton, 430, bottom - 70, 60, 24);
     MoveCtrl(hwnd, panel::kBoneReversePasteButton, 494, bottom - 70, 60, 24);
     MoveCtrl(hwnd, panel::kPhysicsCheckbox, 500, bottom - 36, 48, 28);

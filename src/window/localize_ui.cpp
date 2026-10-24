@@ -95,7 +95,7 @@ constexpr TextEntry kEnTexts[] = {
     {panel::kBoxSelectRadio, "BOX-sel"},
     {panel::kSelectAllBonesButton, "select all"},
     {panel::kSelectUnregisteredBonesButton, "unregisted"},
-    {panel::kCopyBoneFramesButton, "copy"},
+    {panel::kCopyBonePoseButton, "copy"},
     {panel::kBonePasteButton, "paste"},
     {panel::kBoneReversePasteButton, "revers"},
     {panel::kRegisterFrameButton, "register"},

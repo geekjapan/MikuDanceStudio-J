@@ -65,10 +65,10 @@
 //                          +0x1E4 type / word +0x1F4 & 0x400 gate), check
 //                          radio 0x1EA, re-dispatch WM_COMMAND(0x1EA),
 //                          RebuildTimelineTrackPanel + InvalidateSelectionReadouts
-//   495 1EF  0x0047F3FA    insert current-frame keyframes for all selected
-//                          bones (bone-0 seed, D3DXMatrixRotationQuaternion
-//                          bake for parent-less bones, identity for parented,
-//                          change detection, frame-flag 0x2D98 marks,
+//   495 1EF  0x0047F3FA    reset selected bone poses (root-Y reset,
+//                          quaternion transform for parentless bones,
+//                          identity for parented bones, change detection,
+//                          bone-physics state updates,
 //                          PostViewRefresh)
 //   496 1F0  0x00481926    bone copy: count selected bones, enable 0x1F1/
 //                          0x1F2, allocate 0x30-stride record array (app+0x350)
@@ -124,14 +124,6 @@
 
 namespace mikudancestudio {
 
-using BoneCopyRecord = mdl::BonePoseClipboardRecord;
-
-// 32-bit multiply with the original's overflow idiom (mul/seto/neg/or):
-// returns 0xFFFFFFFF when the product overflows (cases 496/497/498).
-static std::uint32_t MulOrMax(std::uint32_t a, std::uint32_t b) {
-    const std::uint64_t r = static_cast<std::uint64_t>(a) * b;
-    return r > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(r);
-}
 
 // Active model = slot array at this+0x780 indexed by byte this+0x910.
 // (sub_47E8A0 pattern; the original re-derives it on every use.)
@@ -210,13 +202,11 @@ static const wchar_t kTitleOpenJp[] = L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B\x30
 // their original VAs; not yet registered in ported_funcs.hpp).
 // ---------------------------------------------------------------------------
 void PanelPaint(MMDApp* app);                      // VA 0x00414610
-void SelectionReeval(MMDApp* app);                 // VA 0x00430510 (stubs.cpp)
+void SelectionReeval(MMDApp* app);                 // VA 0x00430510 (ui_selection_reeval.cpp)
 void CopyDirPathW(wchar_t* dest, const wchar_t* src); // VA 0x0042AE20 path copy
 
 // ---------------------------------------------------------------------------
-// Unported dependencies - kept as file-local external stubs with the call
-// sites intact (stubs.cpp must not be touched).  TODO(port): replace with
-// real bodies as the corresponding functions are ported.
+// Shared panel-operation dependencies (implemented in their own modules).
 // ---------------------------------------------------------------------------
 void PushBoneEditUndo(MMDApp* app);                       // VA 0x0042D6E0
 void RebuildCameraModePanel(MMDApp* app);                       // VA 0x0044D780
@@ -340,95 +330,6 @@ static void DeleteSelectedAccessory(MMDApp* app, HWND hwnd) {
     InvalidateSelectionReadouts(app);
 }
 
-// Paste copied bones by exact name and record the original poses for undo.
-static void PasteCopiedBonePose(MMDApp* app, HWND hwnd) {
-    if (app->state.copiedBoneCount == 0) {
-        return;  // jz def_47E903 (no-op)
-    }
-    unsigned char* model = ActiveModel(app);
-    auto* modelRecord = mikudancestudio::mdl::Mdl(model);
-    const std::int32_t boneCount = modelRecord->boneCount;
-    unsigned char* sel = modelRecord->boneSelection;
-    for (std::int32_t i = 0; i < boneCount; ++i) {
-        sel[i] = 0;
-    }
-    EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);
-    EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
-    modelRecord->undoDirty = 1;
-    modelRecord->redoDirty = 0;
-    ++modelRecord->undoState[0];
-    if (modelRecord->undoState[0] >= 0x1E) {
-        modelRecord->undoState[0] = 0;
-    }
-    const std::int32_t pasteIdx = modelRecord->undoState[0];
-    modelRecord->undoState[1] = pasteIdx;
-    auto& undo = modelRecord->undoRings[0].slots[pasteIdx];
-    undo.operation = 1;
-    // count stored 28*(pasteIdx+0x164) dwords past the undo-table base
-    undo.dirty = app->state.copiedBoneCount;
-    unsigned char* pasteBlob =
-        reinterpret_cast<unsigned char*>(undo.bonePose);
-    if (pasteBlob != nullptr) {
-        ::operator delete(pasteBlob);
-        undo.bonePose = nullptr;
-    }
-    const std::int32_t count =
-        app->state.copiedBoneCount;
-    pasteBlob = static_cast<unsigned char*>(::operator new(
-        MulOrMax(static_cast<std::uint32_t>(count), 0x24u)));
-    if (pasteBlob != nullptr) {
-        ConstructArrayElements(pasteBlob, 0x24,
-                               static_cast<std::uint32_t>(count),
-                               &IdentityCtor);
-    }
-    undo.bonePose = reinterpret_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
-        pasteBlob);
-    memset(pasteBlob, 0, static_cast<std::size_t>(count) * 0x24u);
-
-    auto& records =
-        reinterpret_cast<BoneCopyRecord*&>(app->BoneCopyRecords());
-    for (std::int32_t j = 0; j < count; ++j) {
-        model = ActiveModel(app);
-        modelRecord = mikudancestudio::mdl::Mdl(model);
-        const std::int32_t nBones = modelRecord->boneCount;
-        sel = modelRecord->boneSelection;
-        mikudancestudio::mdl::BoneRecord* const bones = modelRecord->boneTable;
-        unsigned char* frameFlag = modelRecord->bonePhysicsState;
-        const BoneCopyRecord& src = records[j];
-        // exact name match (the original's inline 2-byte-step compare
-        // is byte-identical to strcmp)
-        std::int32_t found = -1;
-        for (std::int32_t k = 0; k < nBones; ++k) {
-            if (strcmp(bones[k].name, src.name) == 0) {
-                found = k;
-                break;
-            }
-        }
-        if (found < 0) {
-            continue;
-        }
-        pasteBlob = reinterpret_cast<unsigned char*>(undo.bonePose);
-        auto& rec = reinterpret_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
-            pasteBlob)[j];
-        mikudancestudio::mdl::BoneRecord* bone = &bones[found];
-        rec.boneIndex = found;
-        sel[found] = 1;
-        // old pos into the undo record
-        memcpy(rec.position, bone->trans, sizeof rec.position);
-        // new pos from the copy record
-        memcpy(bone->trans, src.position, sizeof bone->trans);
-        // old quat into the undo record, new quat into the bone
-        memcpy(rec.rotation, bone->rotQuat, sizeof rec.rotation);
-        memcpy(bone->rotQuat, src.rotation, sizeof bone->rotQuat);
-        rec.physicsDisabled = frameFlag[found];
-        frameFlag[found] = 1;
-        modelRecord->selectedBone = found;
-        RebuildTimelineTrackPanel(app);
-        InvalidateSelectionReadouts(app);
-    }
-    SetFocus(hwnd);
-    app->PhysicsResetPending() = 1;
-}
 
 void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
                    std::uint16_t notify) {
@@ -750,7 +651,7 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
         SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kBoneRotateRadio), BM_SETCHECK, 0, 0);
         app->EditMode() = IsDlgButtonChecked(hwnd, panel::kBoneMoveRadio) != 0
-            ? ViewportEditMode::Light : ViewportEditMode::None;
+            ? ViewportEditMode::Move : ViewportEditMode::None;
         break;
     }
 
@@ -759,7 +660,7 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
         SendMessageA(GetDlgItem(hwnd, panel::kBoneMoveRadio), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kBoneSelectRadio), BM_SETCHECK, 0, 0);
         app->EditMode() = IsDlgButtonChecked(hwnd, panel::kBoneRotateRadio) != 0
-            ? ViewportEditMode::Camera : ViewportEditMode::None;
+            ? ViewportEditMode::Rotate : ViewportEditMode::None;
         break;
     }
 
@@ -806,146 +707,11 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
     }
 
     // ------------------------------------------------------------------
-    // 495 (0x0047F3FA): insert keyframes at the current frame for all
-    // selected bones.  Bone 0 seeds identity; a selected bone without
-    // parent bakes its current transform via D3DXMatrixRotationQuaternion
-    // of its stored quaternion (rotation applied to the bone's own
-    // position, frame-0 position added, minus the position offset); a
-    // parented bone gets identity written.  Values are only written when
-    // they differ from the stored frame (fucompp change detection), and
-    // the frame-flag array model+0x2D98 marks inserted frames.  Float
-    // math follows the original x87 shape (double intermediates).
+    // 495 (0x0047F3FA): reset the selected bone poses, preserving the old
+    // poses for undo. Root/unparented/parented handling lives in bone_pose_edit.cpp.
     // ------------------------------------------------------------------
     case panel::kResetBonePoseButton: {
-        PushBoneEditUndo(app);  // prep (thiscall)
-        unsigned char* model = ActiveModel(app);
-        auto* modelRecord = mikudancestudio::mdl::Mdl(model);
-        unsigned char* boneSel = modelRecord->boneSelection;
-        if (boneSel[0] != 0) {
-            // bone-0 seed: pos/rot identity (0x144, 0x14C..0x154 = 0,
-            // 0x158 = 1); the x87 0.0/1.0 pair is kept live across the
-            // stores in the original
-            auto& root = modelRecord->boneTable[0];
-            root.trans[1] = 0.0f;
-            root.rotQuat[0] = 0.0f;
-            root.rotQuat[1] = 0.0f;
-            root.rotQuat[2] = 0.0f;
-            root.rotQuat[3] = 1.0f;
-        }
-        const std::int32_t boneCount = modelRecord->boneCount;
-        unsigned char* frameFlag = modelRecord->bonePhysicsState;
-        for (std::int32_t i = 1; i < boneCount; ++i) {
-            model = ActiveModel(app);
-            modelRecord = mikudancestudio::mdl::Mdl(model);
-            boneSel = modelRecord->boneSelection;
-            frameFlag = modelRecord->bonePhysicsState;
-            if (boneSel[i] == 0) {
-                continue;
-            }
-            mikudancestudio::mdl::BoneRecord* const bones = modelRecord->boneTable;
-            mikudancestudio::mdl::BoneRecord* bone = &bones[i];
-            if (bone->parent == -1) {
-                // ---- no parent: bake via own quaternion ----------------
-                d3dx::D3DXMATRIXF mat{};
-                auto* d3dx = &d3dx::Get();
-                {
-                    d3dx->matrixRotationQuaternion(
-                        &mat, reinterpret_cast<const float*>(bone->rotQuat));
-                }
-                const double posX =
-                    *reinterpret_cast<float*>(bone->position);
-                const double posY =
-                    bone->position[1];
-                const double posZ =
-                    bone->position[2];
-                // var_9CC = _11*x + _21*y + _31*z + _41 - x + frame0.x
-                double nX = posY * mat.m[1][0];
-                nX += posX * mat.m[0][0];
-                nX += posZ * mat.m[2][0];
-                nX += mat.m[3][0];
-                nX -= posX;
-                nX += bones[0].trans[0];
-                // var_9C8 = _12*x + _22*y + _32*z + _42 - y + frame0.y
-                double nY = posY * mat.m[1][1];
-                nY += posX * mat.m[0][1];
-                nY += posZ * mat.m[2][1];
-                nY += mat.m[3][1];
-                nY -= posY;
-                nY += bones[0].trans[1];
-                // var_9C4 = _13*x + _23*y + _33*z + _43 - z + frame0.z
-                double nZ = posY * mat.m[1][2];
-                nZ += posX * mat.m[0][2];
-                nZ += posZ * mat.m[2][2];
-                nZ += mat.m[3][2];
-                nZ -= posZ;
-                nZ += bones[0].trans[2];
-                // change detection vs stored keyframe
-                const int f0 =
-                    (*reinterpret_cast<float*>(bone->trans) != nX) ? 1 : 0;
-                const int f1 =
-                    (bone->trans[1] != nY) ? 1 : 0;
-                const int f2 =
-                    (bone->trans[2] != nZ) ? 1 : 0;
-                const int f3 = (*reinterpret_cast<float*>(bone->rotQuat) !=
-                                bones[0].rotQuat[0])
-                                   ? 1
-                                   : 0;
-                const int f4 = (bone->rotQuat[1] !=
-                                bones[0].rotQuat[1])
-                                   ? 1
-                                   : 0;
-                const int f5 = (bone->rotQuat[2] !=
-                                bones[0].rotQuat[2])
-                                   ? 1
-                                   : 0;
-                const int f6 = (bone->rotQuat[3] !=
-                                bones[0].rotQuat[3])
-                                   ? 1
-                                   : 0;
-                if ((f0 | f1 | f2 | f3 | f4 | f5 | f6) != 0) {
-                    *reinterpret_cast<float*>(bone->trans) =
-                        static_cast<float>(nX);
-                    bone->trans[1] =
-                        static_cast<float>(nY);
-                    bone->trans[2] =
-                        static_cast<float>(nZ);
-                    // frame-0 quaternion copied into this bone's frame
-                    memcpy(bone->rotQuat, bones[0].rotQuat,
-                           sizeof bone->rotQuat);
-                    frameFlag[i] = 1;
-                }
-            } else {
-                // ---- has parent: identity written ----------------------
-                // comparisons are made against 0.0 for pos + quat x/y/z and
-                // 1.0 for quat w (the x87 keeps a live [1.0, 0.0] pair)
-                const int g0 =
-                    (*reinterpret_cast<float*>(bone->trans) != 0.0) ? 1 : 0;
-                const int g1 =
-                    (bone->trans[1] != 0.0) ? 1 : 0;
-                const int g2 =
-                    (bone->trans[2] != 0.0) ? 1 : 0;
-                const int g3 =
-                    (*reinterpret_cast<float*>(bone->rotQuat) != 0.0) ? 1 : 0;
-                const int g4 =
-                    (bone->rotQuat[1] != 0.0) ? 1 : 0;
-                const int g5 =
-                    (bone->rotQuat[2] != 0.0) ? 1 : 0;
-                const int g6 =
-                    (bone->rotQuat[3] != 1.0) ? 1 : 0;
-                if ((g0 | g1 | g2 | g3 | g4 | g5 | g6) != 0) {
-                    float* b = reinterpret_cast<float*>(bone->trans);
-                    b[0] = 0.0f;  // 0x140
-                    b[1] = 0.0f;  // 0x144
-                    b[2] = 0.0f;  // 0x148
-                    b[3] = 0.0f;  // 0x14C
-                    b[4] = 0.0f;  // 0x150
-                    // 0x154 untouched by the original
-                    b[6] = 1.0f;  // 0x158
-                    frameFlag[i] = 1;
-                }
-            }
-        }
-        PostViewRefresh(app);
+        ResetSelectedBonePose(app);
         break;
     }
 
@@ -955,62 +721,8 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
     // stored pos (0x140..0x148) and stored quat (0x14C..0x158) into a
     // 0x30-stride record array at app+0x350 (name[20], pos[3], quat[4]).
     // ------------------------------------------------------------------
-    case panel::kCopyBoneFramesButton: {
-        unsigned char* model = ActiveModel(app);
-        auto* modelRecord = mikudancestudio::mdl::Mdl(model);
-        const std::int32_t boneCount = modelRecord->boneCount;
-        std::int32_t count = 0;
-        if (boneCount > 0) {
-            unsigned char* sel = modelRecord->boneSelection;
-            for (std::int32_t i = 0; i < boneCount; ++i) {
-                if (sel[i] != 0) {
-                    ++count;
-                }
-            }
-        }
-        if (count == 0) {
-            break;  // jz def_47E903 (no-op)
-        }
-        EnableWindow(GetDlgItem(hwnd, panel::kBonePasteButton), TRUE);
-        EnableWindow(GetDlgItem(hwnd, panel::kBoneReversePasteButton), TRUE);
-        app->state.copiedBoneCount = count;
-        auto& records =
-            reinterpret_cast<BoneCopyRecord*&>(app->BoneCopyRecords());
-        if (records != nullptr) {
-            free(records);
-            records = nullptr;
-        }
-        auto* block = static_cast<BoneCopyRecord*>(::operator new(
-            MulOrMax(static_cast<std::uint32_t>(count),
-                     sizeof(BoneCopyRecord))));
-        if (block != nullptr) {
-            ConstructArrayElements(block, sizeof(BoneCopyRecord),
-                                   static_cast<std::uint32_t>(count),
-                                   &IdentityCtor);
-        }
-        records = block;
-        memset(block, 0,
-               static_cast<std::size_t>(count) * sizeof(BoneCopyRecord));
-        app->state.copiedBoneCount = 0;  // fill cursor
-        model = ActiveModel(app);
-        modelRecord = mikudancestudio::mdl::Mdl(model);
-        const std::int32_t nBones = modelRecord->boneCount;
-        mikudancestudio::mdl::BoneRecord* const bones = modelRecord->boneTable;
-        unsigned char* sel = modelRecord->boneSelection;
-        std::int32_t cursor = 0;
-        for (std::int32_t i = 0; i < nBones; ++i) {
-            if (sel[i] == 0) {
-                continue;
-            }
-            BoneCopyRecord& rec = records[cursor];
-            strcpy_s(rec.name, bones[i].name);
-            memcpy(rec.position, bones[i].trans, sizeof rec.position);
-            memcpy(rec.rotation, bones[i].rotQuat, sizeof rec.rotation);
-            ++cursor;
-            // 0x481B1E updates the shared copy count after every emitted
-            // record.  Paste (497/498) gates directly on this field.
-            app->state.copiedBoneCount = cursor;
-        }
+    case panel::kCopyBonePoseButton: {
+        CopySelectedBonePose(app, hwnd);
         break;
     }
 
@@ -1030,7 +742,7 @@ void HandlePanelControl(MMDApp* app, HWND hwnd, std::uint16_t id,
     // ------------------------------------------------------------------
     // 498 (0x0048203D): mirror the copied pose onto the opposite-side bone,
     // falling back to the exact-name bone when no matching side suffix exists.
-    // Undo bookkeeping and axis mirroring live in bone_pose_paste.cpp.
+    // Undo bookkeeping and axis mirroring live in bone_pose_clipboard.cpp.
     // ------------------------------------------------------------------
     case panel::kBoneReversePasteButton: {
         PasteMirroredBonePose(app, hwnd);

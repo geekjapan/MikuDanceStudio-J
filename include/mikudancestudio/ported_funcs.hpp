@@ -135,6 +135,9 @@ INT_PTR CALLBACK FrameRangeDlgProc(HWND, UINT, WPARAM, LPARAM);  // VA 0x0044C5D
 INT_PTR CALLBACK SelectNavDlgProc(HWND, UINT, WPARAM, LPARAM);  // VA 0x0047A3F0
 // English-name editor; window procedure and helpers: english_name_dialog.cpp.
 INT_PTR CALLBACK EnglishNameDlgProc(HWND, UINT, WPARAM, LPARAM);  // VA 0x00464BD0
+INT_PTR CALLBACK ModelCalculateOrderDlgProc(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK ModelDisplayOrderDlgProc(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK GravitySettingDlgProc(HWND, UINT, WPARAM, LPARAM);
 void SetPhysicsMode(unsigned char* model, int a2,
                     unsigned char* const* modelSlots,
                     int a4);                          // VA 0x004A9220
@@ -366,6 +369,7 @@ int RegisterLightKey(MMDApp* app, const void* rec);       // VA 0x00411900
 int RegisterSelfShadowKey(MMDApp* app, const void* rec);  // VA 0x004120B0
 int RegisterGravityKey(MMDApp* app, const void* rec);     // VA 0x00412DF0
 // Track appliers (src/model/track_apply.cpp)
+void RegisterGravityKeyCurrent(MMDApp* app, std::int32_t frame);  // VA 0x00412B20
 void ApplyGravityTrack(MMDApp* app);                // VA 0x00412330
 void ApplyAccessoryTrack(MMDApp* app, int slot);    // VA 0x00413120
 
@@ -431,7 +435,10 @@ void CopyDirPathW(wchar_t* dest, const wchar_t* src);  // VA 0x0042AE20
                                                        //  the 1000-wchar
                                                        //  directory buffers)
 void SelectFrameGroup(MMDApp*, FrameGroup group);        // 0xD9/0xDA/0xDC target
-// Bone reverse-paste body extracted from control 498 (x86 0x0048203D).
+// Bone-pose operations (controls 495..498).
+void ResetSelectedBonePose(MMDApp* app);
+void CopySelectedBonePose(MMDApp* app, HWND hwnd);
+void PasteCopiedBonePose(MMDApp* app, HWND hwnd);
 void PasteMirroredBonePose(MMDApp* app, HWND hwnd);
 // ---- frame-line edit commands (src/window/frame_line_edit.cpp) -----------
 void InsertBoneCameraFrameLine(MMDApp* app);  // VA 0x00439E40

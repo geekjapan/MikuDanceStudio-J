@@ -350,13 +350,13 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) {  // VA 0x00434B60
     mdl::ModelRecord& record = *mdl::Mdl(model);
     record.undoDirty = 1;
     record.redoDirty = 0;
-    std::uint32_t& ringIdx = record.undoState[0];
+    std::uint32_t& ringIdx = record.UndoCursor();
     if (++ringIdx >= 30) ringIdx = 0;
-    record.undoState[1] = ringIdx;
+    record.LatestUndoCursor() = ringIdx;
 
     auto& undo = mikudancestudio::mdl::Mdl(model)->undoRings[0].slots[ringIdx];
-    undo.operation = 2;
-    undo.dirty = 0;
+    undo.operation = mdl::UndoOperation::BoneKeys;
+    undo.recordCount = 0;
     undo.frame = s.state.currentFrame;
     if (undo.bonePose != nullptr)
         operator delete(undo.bonePose);  // x64 @0x7FF7CB48DE1C ??3

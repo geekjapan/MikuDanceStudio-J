@@ -117,7 +117,7 @@ inline constexpr ControlSpec kControls[] = {
   {panel::kBoxSelectRadio, L"BUTTON", nullptr, L"\x0042\x004f\x0058\x9078\x629e" /*0x52D45C*/, nullptr, 0x40001003, 0x0, {0, 8}, {0, 55}, 60, 22, true},  // line 4678
   {panel::kSelectAllBonesButton, L"BUTTON", nullptr, L"", nullptr, 0x40000000, 0x0, {0, 72}, {0, 55}, 60, 22, true},  // line 4702
   {panel::kSelectUnregisteredBonesButton, L"BUTTON", nullptr, L"", nullptr, 0x40000000, 0x0, {0, 136}, {0, 55}, 60, 22, true},  // line 4726
-  {panel::kCopyBoneFramesButton, L"BUTTON", nullptr, L"\x30b3\x30d4\x30fc" /*0x52D550*/, nullptr, 0x40000000, 0x0, {0, 8}, {0, 90}, 60, 22, true},  // line 4750
+  {panel::kCopyBonePoseButton, L"BUTTON", nullptr, L"\x30b3\x30d4\x30fc" /*0x52D550*/, nullptr, 0x40000000, 0x0, {0, 8}, {0, 90}, 60, 22, true},  // line 4750
   {panel::kBonePasteButton, L"BUTTON", nullptr, L"\x30da\x30fc\x30b9\x30c8" /*0x52D50C*/, nullptr, 0x40000000, 0x0, {0, 72}, {0, 90}, 60, 22, true},  // line 4774
   {panel::kBoneReversePasteButton, L"BUTTON", nullptr, L"\x53cd\x8ee2\xff8d\xff9f\xff70\xff7d\xff84" /*0x52D414*/, nullptr, 0x40000000, 0x0, {0, 136}, {0, 90}, 60, 22, true},  // line 4798
   {panel::kRegisterFrameButton, L"BUTTON", nullptr, L"\x767b\x3000\x9332" /*0x52D4E4*/, nullptr, 0x40000000, 0x0, {0, 30}, {0, 122}, 60, 28, true},  // line 4822

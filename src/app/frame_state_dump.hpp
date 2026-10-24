@@ -216,8 +216,8 @@ inline void DumpFrameEntryState(MMDApp* app,
                 if (secondary != nullptr && secondary[i] != 0) ++secondaryCount;
             }
         }
-        const int undoCursor = mdl::Mdl(model)->undoState[0];
-        const int undoCurrent = mdl::Mdl(model)->undoState[1];
+        const int undoCursor = mdl::Mdl(model)->UndoCursor();
+        const int undoCurrent = mdl::Mdl(model)->LatestUndoCursor();
         const mdl::UndoRecord* undo =
             undoCursor >= 0 && undoCursor < 30
                 ? &mdl::Mdl(model)->undoRings[0].slots[undoCursor]
@@ -242,8 +242,8 @@ inline void DumpFrameEntryState(MMDApp* app,
             static_cast<int>(state.maxFrame),
             undoCursor, undoCurrent, unsigned(state.undoDirty),
             unsigned(state.redoDirty),
-            undo != nullptr ? undo->operation : -1,
-            undo != nullptr ? undo->dirty : -1,
+            undo != nullptr ? static_cast<int>(undo->operation) : -1,
+            undo != nullptr ? undo->recordCount : -1,
             undo != nullptr ? static_cast<int>(undo->frame) : -1);
         std::fputs(", \"undo_ring\": [", stream);
         for (int undoIndex = 0; undoIndex < 30; ++undoIndex) {
@@ -254,7 +254,7 @@ inline void DumpFrameEntryState(MMDApp* app,
                          "{\"index\":%d,\"type\":%d,\"count\":%d,"
                          "\"frame\":%d}",
                          undoIndex,
-                         entry.operation, entry.dirty,
+                         static_cast<int>(entry.operation), entry.recordCount,
                          static_cast<int>(entry.frame));
         }
         std::fputc(']', stream);

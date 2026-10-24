@@ -160,14 +160,14 @@ void LoadVpdFile(const wchar_t* path) {
     mdl::ModelRecord& modelRecord = *mdl::Mdl(model);
     modelRecord.undoDirty = 1;                          // 0x418AE9
     modelRecord.redoDirty = 0;                          // 0x418AF0
-    int ring = ++mdl::Mdl(model)->undoState[0];
-    if (ring >= 30) mdl::Mdl(model)->undoState[0] = 0;
-    ring = mdl::Mdl(model)->undoState[0];
-    mdl::Mdl(model)->undoState[1] = ring;
+    int ring = ++mdl::Mdl(model)->UndoCursor();
+    if (ring >= 30) mdl::Mdl(model)->UndoCursor() = 0;
+    ring = mdl::Mdl(model)->UndoCursor();
+    mdl::Mdl(model)->LatestUndoCursor() = ring;
 
     mdl::UndoRecord& undo = mdl::Mdl(model)->undoRings[0].slots[ring];
-    undo.operation = 1;
-    undo.dirty = count;
+    undo.operation = mdl::UndoOperation::BonePose;
+    undo.recordCount = count;
     if (undo.bonePose != nullptr) {
         ::operator delete(undo.bonePose);
         undo.bonePose = nullptr;
@@ -177,7 +177,7 @@ void LoadVpdFile(const wchar_t* path) {
             operator new(sizeof(mdl::BonePoseSnapshot) * count));
     undo.bonePose = snap;
     std::memset(snap, 0, sizeof(mdl::BonePoseSnapshot) * count);
-    undo.dirty = count;
+    undo.recordCount = count;
 
     const int boneCnt = modelRecord.boneCount;
     mikudancestudio::mdl::BoneRecord* const bones = mikudancestudio::mdl::Bones(model);

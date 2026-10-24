@@ -1207,8 +1207,8 @@ static void LoadSceneV1_ConfigBlock(PmmV1LoadContext& ctx, int fd) {
     s->EditMode() = static_cast<ViewportEditMode>(savedEditMode);
     {
         const ViewportEditMode mode = s->EditMode();
-        const int check4 = mode == ViewportEditMode::Camera ? 1 : 0;
-        const int check2 = mode == ViewportEditMode::Light ? 1 : 0;
+        const int check4 = mode == ViewportEditMode::Rotate ? 1 : 0;
+        const int check2 = mode == ViewportEditMode::Move ? 1 : 0;
         SendMessageA(GetDlgItem(main, panel::kBoneSelectRadio), BM_SETCHECK,
                      mode == ViewportEditMode::Bone ? 1 : 0, 0);
         SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK,

@@ -32,7 +32,7 @@ LRESULT CALLBACK CommandSink(HWND window, UINT message, WPARAM w, LPARAM l) {
         commands.push_back({id, editor->EditMode(), editor->PlaybackActive() != 0,
             SendMessageW(GetDlgItem(window, panel::kPlayButton), BM_GETCHECK, 0, 0),
             editor->CurrentFrame(), editor->SelectedModel()
-                ? static_cast<int>(mdl::Mdl(editor->SelectedModel())->undoState[0]) : -1});
+                ? static_cast<int>(mdl::Mdl(editor->SelectedModel())->UndoCursor()) : -1});
         if (id == panel::kPlayButton) {
             editor->PlaybackActive() = !editor->PlaybackActive();
         }
@@ -85,7 +85,7 @@ int main() {
     app->state.enterKeyState = 1;
     ConsumeKeyboardInput(app.get(), input);
     ok &= expect(commands.size() == 1 && commands[0].id == panel::kRegisterFrameButton &&
-        commands[0].mode == ViewportEditMode::Camera,
+        commands[0].mode == ViewportEditMode::Rotate,
         "X + Enter registered before changing the edit mode");
 
     reset();
@@ -95,7 +95,7 @@ int main() {
     app->ModelSlot(0) = reinterpret_cast<unsigned char*>(model.get());
     model->hwnd = window;
     model->undoDirty = 1;
-    model->undoRings[0].slots[0].operation = 2;
+    model->undoRings[0].slots[0].operation = mdl::UndoOperation::BoneKeys;
     model->undoRings[0].slots[0].frame = 47;
     app->CurrentFrame() = 99;
     app->state.ctrlModifierState = 3;

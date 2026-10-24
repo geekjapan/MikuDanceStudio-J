@@ -10,13 +10,6 @@
 //   ApplyBoneFrameScaleAdd ->  sub_7FF7CB4BC9C0   (called by bone dialog proc sub_7FF7CB4789D0, x86 0x43E000)
 //   RegisterBoneUndoSnapshot  ->  sub_7FF7CB4EEBD0   (bone apply's pre-loop undo registration)
 //   ApplyMorphScaleAdd  ->  sub_7FF7CB4BD120   (called by dialog proc sub_7FF7CB478B40)
-//   InitModelOrderDialog  ->  sub_7FF7CB4A98C0   (array builder; the listbox fill + the
-//                                       allocation live in dialog proc
-//                                       sub_7FF7CB477D70's WM_INITDIALOG -
-//                                       the x86 0x41E810 rolls all three
-//                                       together because its caller
-//                                       ModelCalculateOrderDlgProc only passes (count, hDlg))
-//   InitGravityDialog  ->  sub_7FF7CB4B5F00   (gravity cluster echo into 709..713)
 //   ApplyPhysicsOnOff  ->  sub_7FF7CB4BED40   (called by dialog proc sub_7FF7CB4BEC00)
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
@@ -471,15 +464,15 @@ void RegisterBoneUndoSnapshot(unsigned char* modelBytes,
     HWND window = static_cast<HWND>(model->hwnd);
     EnableWindow(GetDlgItem(window, panel::kUndoButton), TRUE);
     EnableWindow(GetDlgItem(window, panel::kRedoButton), FALSE);
-    std::uint32_t& cursor = model->undoState[0];
+    std::uint32_t& cursor = model->UndoCursor();
     if (++cursor >= 30)
         cursor = 0;
-    model->undoState[1] = cursor;
+    model->LatestUndoCursor() = cursor;
     model->undoDirty = 1;
     model->redoDirty = 0;
     mdl::UndoRecord& undo = model->undoRings[0].slots[cursor];
-    undo.operation = 2;
-    undo.dirty = 0;
+    undo.operation = mdl::UndoOperation::BoneKeys;
+    undo.recordCount = 0;
     undo.frame = static_cast<std::uint32_t>(frame);
 
     if (undo.bonePose != nullptr) {
@@ -518,18 +511,18 @@ void RegisterBoneUndoSnapshot(unsigned char* modelBytes,
     std::memset(model->keyVisitMap, 0, sizeof(model->keyVisitMap));
 
     // 64-byte auxiliary record = {int recordIndex, 60-byte BoneKey copy};
-    // the append uses undo.dirty as its counter like the physics apply.
+    // the append uses undo.recordCount as its counter like the physics apply.
     for (std::size_t i = 0; i < mdl::kBoneKeyCapacity; ++i) {
         if (keys[i].allocated == 0 || model->keyVisitMap[i] != 0)
             continue;
         model->keyVisitMap[i] = 1;
         auto* records = static_cast<unsigned char*>(undo.auxiliaryPose);
         *reinterpret_cast<std::int32_t*>(
-            records + 0x40 * static_cast<std::size_t>(undo.dirty)) =
+            records + 0x40 * static_cast<std::size_t>(undo.recordCount)) =
             static_cast<std::int32_t>(i);
-        std::memcpy(records + 0x40 * static_cast<std::size_t>(undo.dirty) + 4,
+        std::memcpy(records + 0x40 * static_cast<std::size_t>(undo.recordCount) + 4,
                     &keys[i], 0x3C);
-        ++undo.dirty;
+        ++undo.recordCount;
     }
 }
 
@@ -678,100 +671,6 @@ void ApplyMorphScaleAdd(MMDApp* app, HWND hDlg) {  // VA 0x0043E680
     app->SceneModified() = 1;
 }
 
-// ===========================================================================
-// 0x0041E810 - case-289 reorder-dialog init fill (x64 sub_7FF7CB4A98C0)
-// ===========================================================================
-// `count` is CB_GETCOUNT(main combo 0x1B4) - 1 (cached in
-// g_calculateOrderDialogCount by
-// the caller ModelCalculateOrderDlgProc).  The helper owns three steps the x64 dialog proc
-// (sub_7FF7CB477D70) performs inline:
-//   1. allocate the int scratch array app+0xA0B1C (count+1 dwords - the
-//      original allocates CB_GETCOUNT entries),
-//   2. copy combo entries 1..count into listbox 628 (entry 0 is the
-//      "camera/light/accessory" header row),
-//   3. build the order array: for order = 1..count scan the model slots for
-//      the model whose combo order byte (+0x2D7C) equals `order` and store
-//      slotIndex+1 (the +1 quirk ApplyModelCalculateOrderDialog relies on).
-// =========================================================================//
-void InitModelOrderDialog(int count, HWND hDlg) {  // VA 0x0041E810
-    MMDApp* app = g_Block;
-    constexpr std::size_t kModelOrder2D7C = 0x2D7C;  // combo order byte
-    // value-init: element 0 stays untouched by the fill below, and the OK
-    // apply (ApplyModelCalculateOrderDialog) walks the array from index 0
-    app->DialogOrders().modelIndices.reset(
-        new std::int32_t[static_cast<std::size_t>(count) + 1]());
-
-    char buf[0x100];
-    for (int i = 1; i <= count; ++i) {
-        SendMessageA(GetDlgItem(app->state.hwnd, panel::kMainComboModel),
-                     CB_GETLBTEXT, i, reinterpret_cast<LPARAM>(buf));
-        SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>(buf));
-    }
-
-    std::int32_t* order =
-        app->DialogOrders().modelIndices.get();
-    // x64 sub_7FF7CB4A98C0+0x4A98F0: order runs 1..count (the combo count
-    // cached at dword_7FF7CB564604), the slot scan to 0xFF (cmp ecx,0FFh
-    // @0x4A991A) - kModelSlotCount wide.
-    for (int ord = 1; ord <= count; ++ord) {
-        for (int slot = 0; slot < kModelSlotCount; ++slot) {
-            unsigned char* model = app->ModelSlot(slot);
-            if (model != nullptr &&
-                mdl::Mdl(model)->comboSelIndex ==
-                    static_cast<unsigned char>(ord)) {
-                order[ord] = slot + 1;
-                break;
-            }
-        }
-    }
-}
-
-// ===========================================================================
-// 0x00423160 - case-266 accessory-frame dialog init (x64 sub_7FF7CB4B5F00)
-// ===========================================================================
-// Echoes the gravity cluster into the dialog controls: "%3.2f" of the
-// magnitude (0x9EDC8) into edit 709 and of the direction X/Y/Z (0x9EDBC /
-// 0x9EDC0 / 0x9EDC4) into edits 710..712; trackbars 637..639 get range
-// -100..100, tick frequency 0x3E8 and pos = value * 100; "%d" of the noise
-// dword (0x9EDCC) into edit 713; checkbox 731 mirrors the noise-mode byte
-// 0xA0CD4 and gates edit 713 through EnableWindow.
-// =========================================================================//
-void InitGravityDialog(HWND hDlg) {  // VA 0x00423160
-    MMDApp* app = g_Block;
-    char buf[0x100];
-    sprintf_s(buf, 0x100, "%3.2f",
-              static_cast<double>(app->state.gravityMagnitude));
-    SetWindowTextA(GetDlgItem(hDlg, panel::kGravityAccelEdit), buf);
-    const float direction[3] = {app->state.gravityX, app->state.gravityY,
-                                app->state.gravityZ};
-    static const int kDirectionEdits[3] = {710, 711, 712};
-    static const int kDirectionTracks[3] = {637, 638, 639};
-    for (int axis = 0; axis < 3; ++axis) {
-        sprintf_s(buf, 0x100, "%3.2f",
-                  static_cast<double>(direction[axis]));
-        SetWindowTextA(GetDlgItem(hDlg, kDirectionEdits[axis]), buf);
-        SendMessageA(GetDlgItem(hDlg, kDirectionTracks[axis]),
-                     TBM_SETRANGEMIN, 0, -100);
-        SendMessageA(GetDlgItem(hDlg, kDirectionTracks[axis]),
-                     TBM_SETRANGEMAX, 0, 100);
-        SendMessageA(GetDlgItem(hDlg, kDirectionTracks[axis]),
-                     TBM_SETTICFREQ, 0x3E8, 0);
-        SendMessageA(GetDlgItem(hDlg, kDirectionTracks[axis]),
-                     TBM_SETPOS, 1,
-                     static_cast<int>(
-                         static_cast<double>(direction[axis]) * 100.0));
-    }
-    sprintf_s(buf, 0x100, "%d", app->state.gravityNoise);
-    SetWindowTextA(GetDlgItem(hDlg, panel::kGravityNoiseEdit), buf);
-    if (app->state.gravityNoiseEnabled != 0) {
-        SendMessageA(GetDlgItem(hDlg, panel::kGravityNoiseCheckbox), BM_SETCHECK, 1, 0);
-        EnableWindow(GetDlgItem(hDlg, panel::kGravityNoiseEdit), TRUE);
-    } else {
-        SendMessageA(GetDlgItem(hDlg, panel::kGravityNoiseCheckbox), BM_SETCHECK, 0, 0);
-        EnableWindow(GetDlgItem(hDlg, panel::kGravityNoiseEdit), FALSE);
-    }
-}
 
 // 0x00412330 ApplyGravityTrack (gravity-track apply + physics dialog refresh) is
 // ported in src/model/track_apply.cpp.
@@ -837,12 +736,12 @@ void ApplyPhysicsOnOff(int on) {  // VA 0x004403C0
     EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
     model->undoDirty = 1;
     model->redoDirty = 0;
-    std::uint32_t& cursor = model->undoState[0];
+    std::uint32_t& cursor = model->UndoCursor();
     if (++cursor >= 30)
         cursor = 0;
-    model->undoState[1] = cursor;
+    model->LatestUndoCursor() = cursor;
     mdl::UndoRecord& undo = model->undoRings[0].slots[cursor];
-    undo.operation = 2;
+    undo.operation = mdl::UndoOperation::BoneKeys;
     undo.frame = static_cast<std::uint32_t>(app->state.currentFrame);
 
     if (undo.bonePose != nullptr) {
@@ -869,7 +768,7 @@ void ApplyPhysicsOnOff(int on) {  // VA 0x004403C0
                 ? model->bonePhysicsState[i]
                 : 0;
     }
-    undo.dirty = 0;
+    undo.recordCount = 0;
     if (undo.auxiliaryPose != nullptr) {
         ::operator delete(undo.auxiliaryPose);
         undo.auxiliaryPose = nullptr;
@@ -890,12 +789,12 @@ void ApplyPhysicsOnOff(int on) {  // VA 0x004403C0
         auto* records =
             static_cast<unsigned char*>(undo.auxiliaryPose);
         *reinterpret_cast<std::int32_t*>(
-            records + 0x40 * static_cast<std::size_t>(undo.dirty)) =
+            records + 0x40 * static_cast<std::size_t>(undo.recordCount)) =
             boneIndex;
-        std::memcpy(records + 0x40 * static_cast<std::size_t>(undo.dirty) +
+        std::memcpy(records + 0x40 * static_cast<std::size_t>(undo.recordCount) +
                         4,
                     &model->boneKeys[boneIndex], 0x3C);
-        ++undo.dirty;
+        ++undo.recordCount;
     };
     for (int i = 0; i < boneCount; ++i) {
         if (bones[i].hasRigidBody == 0)

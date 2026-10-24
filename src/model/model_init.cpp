@@ -68,8 +68,8 @@ void ModelInitDefaults(unsigned char* m) {                   // 0x4A8DC0
     mdl::MorphKeyIndices(m) = nullptr;
     model.boneListPos = 0;
     model.maxFrame = 0;
-    model.undoState[0] = 0;
-    model.undoState[1] = 0;
+    model.UndoCursor() = 0;
+    model.LatestUndoCursor() = 0;
     model.postLoadFlag2 = 0;
     std::memset(model.undoRings, 0,
                 sizeof(model.undoRings));

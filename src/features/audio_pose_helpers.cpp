@@ -400,15 +400,15 @@ void RegisterPhysicsPose(unsigned char* m, std::uint32_t frame) {
     EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), 1);                        // 0x4A5713
     EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), 0);                        // 0x4A572A
 
-    if (++model.undoState[0] >= 30)
-        model.undoState[0] = 0;                                   // 0x4A574D
-    const int slot = model.undoState[0];
-    model.undoState[1] = slot;                                    // 0x4A5762
+    if (++model.UndoCursor() >= 30)
+        model.UndoCursor() = 0;                                   // 0x4A574D
+    const int slot = model.UndoCursor();
+    model.LatestUndoCursor() = slot;                                    // 0x4A5762
     model.undoDirty = 1;                                          // 0x4A573D
     model.redoDirty = 0;                                          // 0x4A5744
 
     auto& undo = mikudancestudio::mdl::Mdl(m)->undoRings[0].slots[slot];
-    undo.operation = 2;                                            // 0x4A5768
+    undo.operation = mdl::UndoOperation::BoneKeys;                                            // 0x4A5768
     undo.frame = frame;                                             // 0x4A5786
 
     const int boneCnt = model.boneCount;
@@ -432,7 +432,7 @@ void RegisterPhysicsPose(unsigned char* m, std::uint32_t frame) {
             rec.physicsDisabled = flags[b];                        // 0x4A58F2
         }
     }
-    undo.dirty = 0;                                                 // 0x4A5922
+    undo.recordCount = 0;                                                 // 0x4A5922
 
     auto*& poseSrc = undo.auxiliaryPose;
     if (poseSrc != nullptr) {                                      // 0x4A5939

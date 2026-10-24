@@ -183,7 +183,7 @@ int ViewportToolAtPoint(MMDApp* app) {
             }
         }
 
-        if (operation == 0 && app->EditMode() == ViewportEditMode::Camera) {
+        if (operation == 0 && app->EditMode() == ViewportEditMode::Rotate) {
             const int cx = app->ViewportToolCenterX();
             const int cy = app->ViewportToolCenterY();
             const int px = x - cx;
@@ -204,7 +204,7 @@ int ViewportToolAtPoint(MMDApp* app) {
                     operation = 5;
             }
         } else if (operation == 0 &&
-                   app->EditMode() == ViewportEditMode::Light) {
+                   app->EditMode() == ViewportEditMode::Move) {
             const int px = x - app->ViewportToolCenterX();
             const int py = y - app->ViewportToolCenterY();
             if (px > 41 && px < 61 && py > -8 && py < 8)
@@ -416,9 +416,9 @@ void BeginOrEndViewportToolDrag(MMDApp* app, int operation) {
         }
         if (mode != 0) {
             if (mode >= 1 && mode <= 3)
-                app->EditMode() = ViewportEditMode::Camera;
+                app->EditMode() = ViewportEditMode::Rotate;
             else if (mode >= 7 && mode <= 9)
-                app->EditMode() = ViewportEditMode::Light;
+                app->EditMode() = ViewportEditMode::Move;
             if (viewOperation >= 9 && viewOperation <= 20) {
                 RestoreViewportToolCursor(app, viewOperation);
                 app->ViewToolDragOperation() = ViewportToolAction::None;

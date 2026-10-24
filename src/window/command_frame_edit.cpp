@@ -524,13 +524,13 @@ static void UndoKeyframeEdit(MMDApp* app, HWND hwnd) {
     unsigned char* model = ActiveModel(app);
     mdl::ModelRecord& record = *mdl::Mdl(model);
     UndoModelEdit(model, app->state.currentFrame);
-    const std::int32_t cnt = record.undoState[0];
-    if (record.undoRings[0].slots[cnt].operation == 0) {
+    const std::int32_t cnt = record.UndoCursor();
+    if (record.undoRings[0].slots[cnt].operation == mdl::UndoOperation::Empty) {
         EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), FALSE);
         record.undoDirty = 0;
         SetFocus(hwnd);
     }
-    if (record.undoState[0] == record.undoState[1]) {
+    if (record.UndoCursor() == record.LatestUndoCursor()) {
         EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), FALSE);
         record.undoDirty = 0;
         SetFocus(hwnd);
@@ -557,7 +557,7 @@ static void RedoKeyframeEdit(MMDApp* app, HWND hwnd) {
     unsigned char* model = ActiveModel(app);
     mdl::ModelRecord& record = *mdl::Mdl(model);
     RedoModelEdit(model, app->state.currentFrame);
-    if (record.undoState[0] == record.undoState[1]) {
+    if (record.UndoCursor() == record.LatestUndoCursor()) {
         EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
         record.redoDirty = 0;
         SetFocus(hwnd);
@@ -566,8 +566,8 @@ static void RedoKeyframeEdit(MMDApp* app, HWND hwnd) {
     record.undoDirty = 1;
     PanelPaint(app);
     SelectionReeval(app);
-    const std::int32_t cnt = record.undoState[0];
-    if (record.undoRings[0].slots[cnt].operation != 1) {
+    const std::int32_t cnt = record.UndoCursor();
+    if (record.undoRings[0].slots[cnt].operation != mdl::UndoOperation::BonePose) {
         // original: sub_4B4260(ecx = model, frame = app+0x980,
         // app+0xA0CC4)
         SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame,

@@ -533,12 +533,12 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
             mdl::Mdl(model)->undoDirty = 1;
             mdl::Mdl(model)->redoDirty = 0;
             mdl::ModelRecord& record = *mdl::Mdl(model);
-            const std::int32_t next = record.undoState[0] + 1;
-            record.undoState[0] = next >= 0x1E ? 0 : next;
-            const std::int32_t cur = record.undoState[0];
-            record.undoState[1] = cur;
+            const std::int32_t next = record.UndoCursor() + 1;
+            record.UndoCursor() = next >= 0x1E ? 0 : next;
+            const std::int32_t cur = record.UndoCursor();
+            record.LatestUndoCursor() = cur;
             auto& undo = mikudancestudio::mdl::Mdl(model)->undoRings[0].slots[cur];
-            undo.operation = 2;
+            undo.operation = mdl::UndoOperation::BoneKeys;
             undo.frame = frame;
             // bone-name snapshot buffer (+0x10 of the entry, 0x24-
             // stride records)
@@ -576,7 +576,7 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
             }
             // second undo-history table (0x23F0 base, 0x1C stride):
             // entry cnt+0x164 cleared
-            undo.dirty = 0;
+            undo.recordCount = 0;
             // light snapshot buffer (+0x14 of the entry, 3*0x40 *
             // boneSel bytes)
             p = undo.auxiliaryPose;
@@ -810,12 +810,12 @@ void PasteMirroredBoneKeyframes(MMDApp* app, HWND hwnd) {
     mdl::Mdl(model)->undoDirty = 1;
     mdl::Mdl(model)->redoDirty = 0;
     mdl::ModelRecord& record = *mdl::Mdl(model);
-    const std::int32_t next = record.undoState[0] + 1;
-    record.undoState[0] = next >= 0x1E ? 0 : next;
-    const std::int32_t cur = record.undoState[0];
-    record.undoState[1] = cur;
+    const std::int32_t next = record.UndoCursor() + 1;
+    record.UndoCursor() = next >= 0x1E ? 0 : next;
+    const std::int32_t cur = record.UndoCursor();
+    record.LatestUndoCursor() = cur;
     auto& undo = mikudancestudio::mdl::Mdl(model)->undoRings[0].slots[cur];
-    undo.operation = 2;
+    undo.operation = mdl::UndoOperation::BoneKeys;
     undo.frame = frame;
     void* p = undo.bonePose;
     if (p != nullptr) {
@@ -847,7 +847,7 @@ void PasteMirroredBoneKeyframes(MMDApp* app, HWND hwnd) {
             rec.physicsDisabled = boneState[i];
         }
     }
-    undo.dirty = 0;
+    undo.recordCount = 0;
     p = undo.auxiliaryPose;
     if (p != nullptr) {
         ::operator delete(p);

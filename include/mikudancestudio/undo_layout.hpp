@@ -15,9 +15,21 @@ struct BonePoseSnapshot {
 };
 static_assert(sizeof(BonePoseSnapshot) == 36, "bone pose snapshot ABI");
 
+// Values stored in the original undo/redo rings. ChainedBoneKeys joins a
+// preceding key edit to the following entry (range-scale is one example).
+enum class UndoOperation : std::int32_t {
+    Empty = 0,
+    BonePose = 1,
+    BoneKeys = 2,
+    BonePoseWithFrame = 3,
+    ChainedBoneKeys = 4,
+};
+
 struct UndoRecord {
-    std::int32_t operation;
-    std::int32_t dirty;
+    UndoOperation operation;
+    // Pose count for BonePose/BonePoseWithFrame; auxiliary key-record count
+    // for BoneKeys/ChainedBoneKeys (their pose snapshot covers all bones).
+    std::int32_t recordCount;
     std::int32_t reserved0;
     std::uint32_t frame;
     // Owned raw storage: allocate with ::operator new, release with
@@ -30,6 +42,9 @@ struct UndoRecord {
 struct UndoRing {
     UndoRecord slots[30];
 };
+
+static_assert(sizeof(UndoOperation) == 4, "undo operation ABI");
+static_assert(offsetof(UndoRecord, recordCount) == 4, "undo record count ABI");
 
 #if defined(_M_X64) || defined(__x86_64__)
 static_assert(sizeof(UndoRecord) == 40, "undo record x64 ABI");

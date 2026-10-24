@@ -292,12 +292,12 @@ void SavePlaybackUndoSnapshot(MMDApp* app, unsigned char* model) {
     EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
     state.undoDirty = 1;
     state.redoDirty = 0;
-    std::uint32_t& undoIndex = state.undoState[0];
+    std::uint32_t& undoIndex = state.UndoCursor();
     undoIndex = (undoIndex + 1) % 30;
-    state.undoState[1] = undoIndex;
+    state.LatestUndoCursor() = undoIndex;
     auto& undo = state.undoRings[0].slots[undoIndex];
-    undo.operation = 3;
-    undo.dirty = boneCount;
+    undo.operation = mdl::UndoOperation::BonePoseWithFrame;
+    undo.recordCount = boneCount;
     undo.frame = app->state.currentFrame;
     auto*& buffer = undo.bonePose;
     ::operator delete(buffer);

@@ -2106,7 +2106,7 @@ static void RestoreSceneTimeline(PmmV2LoadContext& ctx, int fd) {
                 SendMessageA(GetDlgItem(main, panel::kBoneRotateRadio), BM_SETCHECK, 0,
                              0);
                 break;
-            case ViewportEditMode::Camera:
+            case ViewportEditMode::Rotate:
                 // 0x456862..0x45674D: case 3 checks 0x1ED (493) only.
                 SendMessageA(GetDlgItem(main, panel::kBoneSelectRadio), BM_SETCHECK, 0,
                              0);
@@ -2117,7 +2117,7 @@ static void RestoreSceneTimeline(PmmV2LoadContext& ctx, int fd) {
                 SendMessageA(GetDlgItem(main, panel::kBoneRotateRadio), BM_SETCHECK, 1,
                              0);
                 break;
-            case ViewportEditMode::Light:
+            case ViewportEditMode::Move:
                 SendMessageA(GetDlgItem(main, panel::kBoneSelectRadio), BM_SETCHECK, 0,
                              0);
                 SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK, 0,

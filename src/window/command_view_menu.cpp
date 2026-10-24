@@ -211,11 +211,8 @@
 //     dbl_52E678 = 0x400921FC80000000 (= (double)(float)pi),
 //     flt_52B740 = 0x358637BD, flt_52B73C = 0xC0490FD8 (-pi float),
 //     flt_52B738 = 0x40490FD8 (+pi float).
-//   * Dialog procedures of this family are ported below (BoneFrameMultiplyDlgProc
-//     .. ModelDisplayOrderDlgProc with their original VAs); helpers they call that have no
-//     port anywhere yet remain as external-linkage stubs in this TU with the
-//     original VAs (call sites preserved, TODO(port); stubs.cpp is
-//     off-limits).
+//   * Model-order and gravity dialogs live in dedicated translation units;
+//     this file opens those dialogs and keeps the remaining menu handlers.
 //
 // Reference: ../translated/MikuMikuDance/fcn_0047e8a0.cpp
 //   (the translated file covers only cases 200..0xDC; this port follows the
@@ -244,18 +241,13 @@
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/panel_controls.hpp"
-#include "mikudancestudio/physics_scene.hpp"
 
-#include "btBulletDynamicsCommon.h"
 
 #include "dialog_scaffold.hpp"
 #include "enhanced_model_messages.hpp"
 
 namespace mikudancestudio {
 
-// Gravity keyframe registrar, defined below at mikudancestudio scope (the
-// pump's Enter register-frame block in pump_edit_keys.cpp also calls it).
-void RegisterGravityKeyCurrent(MMDApp* app, std::int32_t frame);  // VA 0x00412B20
 
 // ---- dialog helpers moved to dedicated TUs (original VAs kept) ----------
 // physics-model editor (menu 262, dialog 0x2AC): physics_model_dialog.cpp
@@ -280,12 +272,9 @@ void RefreshMenuLanguage(MMDApp* app);           // VA 0x0040B5A0
 void ApplyCameraFrameScaleAdd(MMDApp* app, HWND hDlg);  // VA 0x0043DAD0
 void ApplyBoneFrameScaleAdd(MMDApp* app, HWND hDlg);    // VA 0x0043E000
 void ApplyMorphScaleAdd(MMDApp* app, HWND hDlg);  // VA 0x0043E680
-void InitModelOrderDialog(int count, HWND hDlg);  // VA 0x0041E810
-void InitGravityDialog(HWND hDlg);               // VA 0x00423160
 void ApplyPhysicsOnOff(int on);                  // VA 0x004403C0
 
-// Defined in stubs.cpp - declared here (before the anonymous namespace) so
-// the dialog procs inside it can call it.
+// Model-frame seek helper shared by the numeric-input dialogs.
 void SeekSelectedModelToCurrentFrame(MMDApp* app);  // VA 0x004220C0 (model_frame_seek.cpp)
 
 namespace {
@@ -406,13 +395,10 @@ static const wchar_t kTitleRenderJp[] =
 static const wchar_t kTitleOpenJp[] =
     L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B\x304F";
 
-// ---- dialog-helper call targets with no port anywhere yet (TODO(port) ----
-// (SeekSelectedModelToCurrentFrame is declared at mikudancestudio scope below - defined in
-//  src/model/model_frame_seek.cpp.)
+// ---- dialog helpers retained in this translation unit ----------------------
 
 // Forward declarations (bodies below / later in this TU).
 void SetEdgeThickness(MMDApp* app, float thickness);      // VA 0x0041E980
-void SetGravityChannel(MMDApp* app, int channel, float value);  // VA 0x0045FD80
 // VA 0x0042E270 - edit-646 (0x286) subclass of the edge-thickness dialog
 // (253): on WM_KEYDOWN+VK_RETURN it reads the edit text, applies it through
 // the thickness setter (0x41E980) and parks the percent value on trackbar
@@ -459,317 +445,19 @@ void SetEdgeThickness(MMDApp* app, float thickness) {  // VA 0x0041E980
     mdl::Mdl(model)->edgeScale = thickness;
 }
 // VA 0x0041E9C0 - enhance-model dialog init: mirrors the ten 100-byte SJIS
-// name slots of the active model (+0x33D8) into edits 709..718.
-void FillEnhanceModelNameEdits(MMDApp* app, HWND hDlg) {  // VA 0x0041E9C0
+// toon texture file-name slots of the active model (+0x33D8) into edits 709..718.
+void FillToonTextureEdits(MMDApp* app, HWND hDlg) {  // VA 0x0041E9C0
     unsigned char* model = app->SelectedModel();
     for (int i = 0; i < 10; ++i)
         SendMessageA(GetDlgItem(hDlg, panel::kToon01Edit + i), EM_REPLACESEL, 0,
                      reinterpret_cast<LPARAM>(mdl::Mdl(model)->pmdToonFileNames[i]));
 }
-// VA 0x0041E910 - calculate-order dialog OK apply: walks the order array
-// (app+0xA0B1C, filled by 0x41E7B0 with slotIndex+1 per order) and stores
-// the combo order byte into model+0x2D7C (x64 twin 12552, the same field
-// ExpGetPmdOrder reads - verified on the x64 binary's OK handler).
-// Two quirks kept as-is from the original: element [0] is never written
-// (values start at 1), and the 0x780 slot array is indexed with the stored
-// slotIndex+1 value verbatim (no -1), i.e. it addresses slot+1.
-void ApplyModelCalculateOrderDialog(MMDApp* app, int count, HWND hDlg) {  // VA 0x0041E910
-    (void)hDlg;  // the original's second pushed argument is never read
-    std::int32_t* order =
-        app->DialogOrders().modelIndices.get();
-    for (int i = 1; i < count; ++i) {
-        unsigned char* model = app->ModelSlot(order[i]);
-        mdl::Mdl(model)->comboSelIndex = static_cast<unsigned char>(i);
-    }
-}
-// VA 0x00466370 - gravity-setting dialog (266) edit subclass: WM_KEYDOWN +
-// VK_RETURN reads the edit (0x2C5..0x2C9 = 709..713) as a float and applies
-// it through 0x45FD80 with channel 0..4; edits 710..712 additionally park
-// the percent value on their trackbars 637..639 (TBM_SETPOS, dbl 0x52B8E0
-// = 100.0); everything else goes to the saved proc (app+0xA0CD0).
-LRESULT CALLBACK GravitySettingEditSubclassProc(  // VA 0x00466370
-    HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    MMDApp* app = g_Block;
-    if (msg == WM_KEYDOWN && wParam == VK_RETURN) {
-        const HWND dlg = app->GravitySettingDialog();
-        char buf[0x100];
-        for (int ch = 0; ch < 5; ++ch) {
-            if (hwnd != GetDlgItem(dlg, panel::kToon01Edit + ch))
-                continue;
-            GetWindowTextA(hwnd, buf, 0x100);
-            const float v = static_cast<float>(atof(buf));
-            if (ch >= 1 && ch <= 3)
-                SendMessageA(GetDlgItem(dlg, panel::kGravityDirXSlider + ch),
-                             TBM_SETPOS, 1,
-                             static_cast<int>(v * 100.0));  // dbl 0x52B8E0
-            SetGravityChannel(app, ch, v);                   // 0x45FD80
-            return 0;
-        }
-    }
-    return CallWindowProcA(app->AccessoryFrameEditProc(),
-                           hwnd, msg, wParam, lParam);
-}
-// VA 0x0045FD80 - gravity-setting dialog channel setter.  Channels 0..3
-// write the gravity cluster (magnitude / direction X / Y / Z, app+0x9EDC4 /
-// 0x9EDB8 / 0x9EDBC / 0x9EDC0), normalise the direction (D3DXVec3Normalize,
-// in place), scale it by magnitude * dbl 0x52C170 (10.0) and push it into
-// the physics world setGravity (world = *(app+0x9EDB0)->world, vtable
-// slot 0x34/4 = 13).  An all-zero direction gets Y nudged to
-// flt 0x529624 = 0.1f first.  Channel 4 stores (int)value into app+0x9EDC8.
-// Ends with SelectTimelineTrack(GlobalTimelineTrack::Gravity) on every path.
-void SetGravityChannel(MMDApp* app, int channel, float value) {  // VA 0x0045FD80
-    switch (channel) {
-    case 0:
-        app->state.gravityMagnitude = value;
-        if (app->state.gravityX == 0.0f &&
-            app->state.gravityY == 0.0f &&
-            app->state.gravityZ == 0.0f)
-            app->state.gravityY = 0.1f;  // flt 0x529624
-        break;
-    case 1:
-        app->state.gravityX = value;
-        if (value == 0.0f && app->state.gravityY == 0.0f &&
-            app->state.gravityZ == 0.0f)
-            app->state.gravityY = 0.1f;
-        break;
-    case 2:
-        app->state.gravityY = value;
-        if (app->state.gravityX == 0.0f &&
-            app->state.gravityZ == 0.0f && value == 0.0f)
-            app->state.gravityY = 0.1f;
-        break;
-    case 3:
-        app->state.gravityZ = value;
-        if (app->state.gravityX == 0.0f &&
-            app->state.gravityY == 0.0f && value == 0.0f)
-            app->state.gravityY = 0.1f;
-        break;
-    default:
-        if (channel == 4)
-            app->state.gravityNoise =
-                static_cast<std::int32_t>(value);
-        SelectTimelineTrack(GlobalTimelineTrack::Gravity);                                 // 0x440AC0
-        return;
-    }
 
-    // common tail: normalise, scale by magnitude * 10, setGravity
-    float dir[3] = {app->state.gravityX,
-                    app->state.gravityY,
-                    app->state.gravityZ};
-    d3dx::Get().vec3Normalize(dir, dir);
-    const float mag = app->state.gravityMagnitude;
-    float vec[4] = {static_cast<float>(dir[0] * mag * 10.0),
-                    static_cast<float>(dir[1] * mag * 10.0),
-                    static_cast<float>(dir[2] * mag * 10.0), 0.0f};
-    if (PhysicsScene* physicsScene = app->Physics()) {
-        if (btDiscreteDynamicsWorld* world = physicsScene->world)
-            world->setGravity(btVector3(vec[0], vec[1], vec[2]));
-    }
-    SelectTimelineTrack(GlobalTimelineTrack::Gravity);                                     // 0x440AC0
-}
-// VA 0x00460080 - gravity-setting dialog OK ("register"): dirty flag, clear the
-// selection marks of the four global frame tables (camera 0x374 +0x48,
-// light 0x378 +0x24, self-shadow 0x37C +0x14, gravity 0x380 +0x21) and of
-// all 255 accessory tracks (0x384 blobs, +0x18, 0x3C stride), rebuild via
-// 0x412B20 at the current frame, then SelectTimelineTrack(GlobalTimelineTrack::Gravity) + PanelPaint.
-void ApplyGravitySettingDialog(MMDApp* app) {  // VA 0x00460080
-    app->SceneModified() = 1;
-    mdl::CameraKey* camera = app->CameraKeys();
-    mdl::LightKey* light = app->LightKeys();
-    mdl::SelfShadowKey* shadow = app->ShadowKeys();
-    mdl::GravityKey* gravity = app->GravityKeys();
-    for (std::size_t i = 0; i < 10000; ++i) {
-        camera[i].selected = 0;
-        light[i].selected = 0;
-        shadow[i].selected = 0;
-        gravity[i].selected = 0;
-    }
-    for (int slot = 0; slot < 255; ++slot) {
-        mdl::AccessoryKey* acc = app->AccessoryKeys(slot);
-        if (acc == nullptr)
-            continue;
-        for (std::size_t i = 0; i < 10000; ++i)
-            acc[i].selected = 0;
-    }
-    RegisterGravityKeyCurrent(app, app->state.currentFrame);  // 0x412B20
-    SelectTimelineTrack(GlobalTimelineTrack::Gravity);                                       // 0x440AC0
-    PanelPaint(app);                                          // 0x414610
-}
-// VA 0x0041E7B0 - order-array builder: for order = 1..count-1 scan the 100
-// model slots for the model whose order byte (+0x2D7C) equals `order` and
-// store slotIndex+1 into the array at app+0xA0B1C.
-void BuildModelOrderArray(MMDApp* app, int count) {  // VA 0x0041E7B0
-    std::int32_t* order =
-        app->DialogOrders().modelIndices.get();
-    for (int ord = 1; ord < count; ++ord) {
-        // x64: no exact twin pinned for 0x41E7B0, but every slot/order scan
-        // verified on the x64 binary so far runs the full 255-slot array
-        // (family evidence; see app_layout.hpp kModelSlotCount).
-        for (int i = 0; i < kModelSlotCount; ++i) {
-            unsigned char* model = app->ModelSlot(i);
-            if (model != nullptr &&
-                mdl::Mdl(model)->comboSelIndex == ord) {
-                order[ord] = i + 1;
-                break;
-            }
-        }
-    }
-}
-// VA 0x0045EC80 - display-order apply (inverse direction of 0x41E910): for
-// i = 1..count-1 store i into model+0x2D7C.  The original addresses the
-// slot via base 0x77C (= 0x780 - 4), cancelling the +1 stored by 0x41E7B0;
-// the second argument (dialog) is never read.
-void ApplyModelDisplayOrderDialog(MMDApp* app, int count, HWND hDlg) {  // VA 0x0045EC80
-    (void)hDlg;
-    std::int32_t* order =
-        app->DialogOrders().modelIndices.get();
-    for (int i = 1; i < count; ++i) {
-        unsigned char* model = app->ModelSlot(order[i] - 1);
-        mdl::Mdl(model)->comboSelIndex = static_cast<unsigned char>(i);
-    }
-    ApplyModelComboSelection(app);                                       // 0x44D940
-}
-
-// Original data-segment globals dword_545930 / dword_545938 (not in Block).
-int g_calculateOrderDialogCount = 0;  // was g_dword545930, VA 0x00545930 -
-                                      // model calculate-order dialog working
-                                      // count (main combo count - 1)
-int g_displayOrderDialogCount = 0;    // was g_dword545938, VA 0x00545938 -
-                                      // model display-order dialog combo
-                                      // count
-
-}  // namespace (anonymous) - RegisterGravityKeyCurrent is consumed by pump_edit_keys.cpp
-// and stays at mikudancestudio scope.
-// VA 0x00412B20 (x64 twin sub_7FF7CB47DA60, confirmed on the x64 binary;
-// the pre-existing "frame-table rebuild" label was wrong): the gravity
-// keyframe registrar.  Walks the gravity track's next-chain (app+0x380,
-// 36-byte GravityKey records, 10000 slots) to the first record with
-// frame >= target: exact hit overwrites the live gravity cluster
-// (magnitude / direction xyz / noise / noise-mode byte, selected = 1)
-// into that record and returns; otherwise a fresh slot is taken from the
-// frame == 0 holes (records 1..9999; record 1 is checked first) and
-// spliced in - before the found record, or appended after the chain's
-// dead end - with lastRegisteredFrame bumped to max(current, frame).
-// No free slot raises the "You cannot regist over %dpoint." box
-// (limit 10000, EN/JP by englishUI) and returns without registering.
-// 0x460080 (ApplyGravitySettingDialog above) calls this at the current frame.
-void RegisterGravityKeyCurrent(MMDApp* app, std::int32_t frame) {  // VA 0x00412B20
-    // JP overflow strings (0x52B918 / 0x52B908, SJIS byte-exact - the
-    // same pair key_registrars.cpp uses for the model-track registrars)
-    static const char kJpOverflow[] =
-        "\x93\x6f\x98\x5e\x83\x7c\x83\x43\x83\x93\x83\x67\x90\x94\x82\xaa%d"
-        "\x8c\xc2\x82\xf0\x89\x7a\x82\xa6\x82\xdc\x82\xb5\x82\xbd\n"
-        "\x82\xb1\x82\xea\x88\xc8\x8f\xe3\x82\xcc\x93\x6f\x98\x5e\x82\xcd\x8d"
-        "\x73\x82\xa6\x82\xdc\x82\xb5\x82\xf1\n"
-        "\x81\x75\xcc\xda\xb0\xd1\x95\xd2\x8f\x57\x81\x76\x82\xcc\x81\x75\x95"
-        "\x73\x97\x70\xcc\xda\xb0\xd1\x8d\xed\x8f\x9c\x81\x76\x82\xf0\x8e\xc0"
-        "\x8d\x73\x82\xb5\x82\xc4\x89\xba\x82\xb3\x82\xa2";
-    static const char kJpFrameRegTitle[] =  // "フレーム登録"
-        "\xcc\xda\xb0\xd1\x93\x6f\x98\x5e";
-
-    mdl::GravityKey* keys = app->GravityKeys();
-    const std::uint32_t target = static_cast<std::uint32_t>(frame);
-
-    // Walk the chain from record 0 for the first frame >= target; a dead
-    // end leaves `current` on the chain's last record (append there).
-    std::uint32_t current = 0;
-    bool spliceBefore = keys[0].frame >= target;
-    if (!spliceBefore) {
-        std::uint32_t node = 0;
-        for (;;) {
-            const std::uint32_t next = keys[node].next;
-            if (next == 0)
-                break;
-            current = next;
-            node = next;
-            if (keys[current].frame >= target) {
-                spliceBefore = true;
-                break;
-            }
-        }
-    }
-
-    // Exact hit: overwrite the live cluster into the record.
-    if (spliceBefore && keys[current].frame == target) {
-        mdl::GravityKey& key = keys[current];
-        key.acceleration = app->state.gravityMagnitude;
-        key.direction[0] = app->state.gravityX;
-        key.direction[1] = app->state.gravityY;
-        key.direction[2] = app->state.gravityZ;
-        key.noise = app->state.gravityNoise;
-        key.noiseEnabled = app->GravityNoiseEnabled();
-        key.selected = 1;
-        return;
-    }
-
-    // Fresh slot from the frame == 0 holes (record 1 first, then 2..).
-    std::uint32_t freeIndex = 1;
-    if (keys[1].frame != 0) {
-        bool freeFound = false;
-        for (std::uint32_t index = 2; index < mdl::kTimelineKeyCapacity;
-             ++index) {
-            if (keys[index].frame == 0) {
-                freeIndex = index;
-                freeFound = true;
-                break;
-            }
-        }
-        if (!freeFound) {
-            char text[256];
-            if (app->EnglishUI() != 0) {
-                sprintf_s(text, 0x100,
-                          "You cannot regist over %dpoint.\n"
-                          "Please execute 'delete unused frame'",
-                          static_cast<int>(mdl::kTimelineKeyCapacity));
-                MessageBoxA(static_cast<HWND>(app->Hwnd()), text,
-                            "register frame", 0);
-            } else {
-                sprintf_s(text, 0x100, kJpOverflow,
-                          static_cast<int>(mdl::kTimelineKeyCapacity));
-                MessageBoxA(static_cast<HWND>(app->Hwnd()), text,
-                            kJpFrameRegTitle, 0);
-            }
-            return;
-        }
-    }
-
-    mdl::GravityKey& added = keys[freeIndex];
-    if (spliceBefore) {
-        const std::uint32_t previous = keys[current].previous;
-        keys[previous].next = freeIndex;
-        added.previous = previous;
-        keys[current].previous = freeIndex;
-        added.next = current;
-    } else {
-        keys[current].next = freeIndex;
-        added.previous = current;
-        // added.next keeps the zeroed hole's value, as the original does.
-    }
-    added.frame = target;
-    added.acceleration = app->state.gravityMagnitude;
-    added.direction[0] = app->state.gravityX;
-    added.direction[1] = app->state.gravityY;
-    added.direction[2] = app->state.gravityZ;
-    added.noise = app->state.gravityNoise;
-    added.noiseEnabled = app->GravityNoiseEnabled();
-    added.selected = 1;
-    if (target > app->state.lastRegisteredFrame)
-        app->state.lastRegisteredFrame = target;
-}
-
-namespace {  // (resumed)
 
 // ---- JP strings of the dialogs, byte-exact -------------------------------
 // 0x52E628: "ON (X印)" (SJIS 0x88F3 = 印); 0x52E624: "OFF".
 static const char kOnXMarkJp[] = "ON (X\x88\xF3)";
 static const char kOff[] = "OFF";
-// 0x52D370 / 0x52D368 / 0x52D360: JP wide labels "ｶﾒﾗ･照明･ｱｸｾｻﾘ" / "画面" /
-// "なし" (half-width katakana mixed with kanji; sent via SendMessageW).
-static const wchar_t kJpCamLightAcc[] = {
-    0xFF76, 0xFF92, 0xFF97, 0xFF65, 0x7167, 0x660E, 0xFF65, 0xFF71, 0xFF78,
-    0xFF7E, 0xFF7B, 0xFF98, 0x0000};
-static const wchar_t kJpScreen[] = {0x5730, 0x9762, 0x0000};
-static const wchar_t kJpNone[] = {0x306A, 0x3057, 0x0000};
 // "fine shadow mode" notice (x64 0x7FF7CB54D6A0 / 0x7FF7CB54D6B0): JP
 // caption = the Fshadow button's two-kanji label + "モード"; JP text =
 // "この命令は画面右上の「<Fshadow label>」ボタンに取って変わりました"
@@ -878,15 +566,15 @@ INT_PTR CALLBACK EdgeThicknessDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
                 GetWindowLongPtrA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit), GWLP_WNDPROC));
         SetWindowLongPtrA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit), GWLP_WNDPROC,
                        (LONG)(LONG_PTR)EdgeThicknessEditSubclassProc);
-        const float fps = GetEdgeThickness(app);  // 0x41E950
+        const float thickness = GetEdgeThickness(app);  // 0x41E950
         char buf[0x100];
-        sprintf_s(buf, 0x100, "%3.2f", static_cast<double>(fps));
+        sprintf_s(buf, 0x100, "%3.2f", static_cast<double>(thickness));
         PrefillEdit(hDlg, panel::kEdgeThicknessEdit, buf);
         SendMessageA(GetDlgItem(hDlg, panel::kEdgeThicknessSlider), TBM_SETRANGEMIN, 0, 0);
         SendMessageA(GetDlgItem(hDlg, panel::kEdgeThicknessSlider), TBM_SETRANGEMAX, 0, 200);
         SendMessageA(GetDlgItem(hDlg, panel::kEdgeThicknessSlider), TBM_SETTICFREQ, 0x64, 0);
         SendMessageA(GetDlgItem(hDlg, panel::kEdgeThicknessSlider), TBM_SETPOS, 1,
-                     (int)(fps * 100.0));
+                     (int)(thickness * 100.0));
         break;
     }
     case WM_COMMAND:
@@ -930,7 +618,7 @@ INT_PTR CALLBACK EnhanceModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     if (msg == WM_INITDIALOG) {
         MMDApp* app = g_Block;
         MakeDialogTopmostIfRequested(app, hDlg);
-        FillEnhanceModelNameEdits(app, hDlg);  // 0x41E9C0
+        FillToonTextureEdits(app, hDlg);  // 0x41E9C0
         return 0;
     }
     if (msg != WM_COMMAND) {
@@ -952,207 +640,6 @@ INT_PTR CALLBACK EnhanceModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     return 0;
 }
 
-// ===========================================================================
-// 0x42E370 - case 289 model calculate-order dialog (template caption "model
-// calculate order" / モデル計算順設定; 0x32B EN / 0x32A JP), modal.
-// WM_INITDIALOG: top-most gate; g_calculateOrderDialogCount =
-// CB_GETCOUNT(main combo 0x1B4) - 1; sub_41E810 fills listbox 628 from the
-// int array at
-// app+0xA0B1C.  WM_COMMAND ids 630/631 move the selected listbox entry up/
-// down (LB_GETTEXT/DELETESTRING/INSERTSTRING/SETCURSEL) and swap the two
-// adjacent dwords of the app+0xA0B1C array; id 632 (OK) applies via
-// sub_41E910 + EndDialog(1), id 2 -> EndDialog(2); both free the array.
-// Reference: MikuMikuDance.exe sub_42E370.
-// ===========================================================================
-INT_PTR CALLBACK ModelCalculateOrderDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
-                                            LPARAM lParam) {  // VA 0x0042E370
-    (void)lParam;
-    MMDApp* app = g_Block;
-    if (msg == WM_INITDIALOG) {
-        MakeDialogTopmostIfRequested(app, hDlg);
-        g_calculateOrderDialogCount = static_cast<int>(
-            SendMessageA(GetDlgItem(app->state.hwnd, panel::kMainComboModel),
-                         CB_GETCOUNT, 0, 0)) -
-            1;
-        InitModelOrderDialog(g_calculateOrderDialogCount, hDlg);  // 0x41E810
-        return 0;
-    }
-    if (msg != WM_COMMAND) {
-        return 0;
-    }
-    const WORD id = LOWORD(wParam);
-    if (id == 630) {  // move up (0x42E3A6)
-        const int sel = static_cast<int>(
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_GETCURSEL, 0, 0));
-        if (sel >= 1) {
-            char buf[100];
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_GETTEXT, sel,
-                         (LPARAM)buf);
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_DELETESTRING, sel,
-                         0);
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_INSERTSTRING,
-                         sel - 1, (LPARAM)buf);
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_SETCURSEL, sel - 1,
-                         0);
-            std::int32_t* arr =
-                app->DialogOrders().modelIndices.get();
-            const std::int32_t tmp = arr[sel - 1];
-            arr[sel - 1] = arr[sel];
-            arr[sel] = tmp;
-        }
-        return 0;
-    }
-    if (id == 631) {  // move down (0x42E451)
-        const int sel = static_cast<int>(
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_GETCURSEL, 0, 0));
-        if (sel != -1 && sel < g_calculateOrderDialogCount - 1) {
-            char buf[100];
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_GETTEXT, sel,
-                         (LPARAM)buf);
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_DELETESTRING, sel,
-                         0);
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_INSERTSTRING,
-                         sel + 1, (LPARAM)buf);
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_SETCURSEL, sel + 1,
-                         0);
-            std::int32_t* arr =
-                app->DialogOrders().modelIndices.get();
-            const std::int32_t tmp = arr[sel + 1];
-            arr[sel + 1] = arr[sel];
-            arr[sel] = tmp;
-        }
-        return 0;
-    }
-    if (id == 632) {  // OK (0x42E52E)
-        ApplyModelCalculateOrderDialog(app, g_calculateOrderDialogCount, hDlg);  // 0x41E910
-        EndDialog(hDlg, IDOK);
-        if (app->DialogOrders().modelIndices == nullptr) {
-            return 0;
-        }
-        app->DialogOrders().modelIndices.reset();
-        return 0;
-    }
-    if (id == IDCANCEL) {  // Cancel (0x42E57E)
-        EndDialog(hDlg, IDCANCEL);
-        if (app->DialogOrders().modelIndices == nullptr) {
-            return 0;
-        }
-        app->DialogOrders().modelIndices.reset();
-        return 0;
-    }
-    return 0;
-}
-
-// ===========================================================================
-// 0x479E90 - case 266 gravity-setting dialog (template caption "gravity
-// setting" / 重力設定; 0x323 EN / 0x322 JP), modeless
-// at app+0xA0CCC.  WM_INITDIALOG: top-most gate; subclass edits 709..713
-// with sub_466370 (old proc of 709 saved at app+0xA0C50); sub_423160 init.
-// WM_COMMAND: checkbox 731 mirrors app+0xA0CD4 and enables edit 713;
-// EN_UPDATE on 709..713 -> atof + sub_45FD80(idx, f) (710..712 also sync
-// their trackbars 637..639); id 1 -> sub_460080; id 2 -> DestroyWindow,
-// app+0xA0CCC = 0, sub_412330, return 1.  WM_HSCROLL on trackbars
-// 637/638/639 -> TBM_GETPOS/100 -> "%3.2f" into 710/711/712 + sub_45FD80.
-// Reference: MikuMikuDance.exe sub_479E90.
-// ===========================================================================
-INT_PTR CALLBACK GravitySettingDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
-                                       LPARAM lParam) {  // VA 0x00479E90
-    MMDApp* app = g_Block;
-    const HWND hCtrl = reinterpret_cast<HWND>(lParam);
-    if (msg == WM_INITDIALOG) {
-        MakeDialogTopmostIfRequested(app, hDlg);
-        // accessory-frame dialog reuses bone-scratch +28 for the saved
-        // wndproc (original blob-reuse semantics)
-        reinterpret_cast<WNDPROC&>(app->BoneFrameScratch()[28]) =
-            reinterpret_cast<WNDPROC>(
-                GetWindowLongPtrA(GetDlgItem(hDlg, panel::kGravityAccelEdit), GWLP_WNDPROC));
-        for (int i = 709; i <= 713; ++i) {
-            SetWindowLongPtrA(GetDlgItem(hDlg, i), GWLP_WNDPROC,
-                           (LONG)(LONG_PTR)GravitySettingEditSubclassProc);
-        }
-        InitGravityDialog(hDlg);  // 0x423160
-        return 0;
-    }
-    if (msg == WM_COMMAND) {
-        const WORD id = LOWORD(wParam);
-        if (id == 731) {
-            if (IsDlgButtonChecked(hDlg, panel::kGravityNoiseCheckbox) == 1) {
-                app->state.gravityNoiseEnabled = 1;
-                EnableWindow(GetDlgItem(hDlg, panel::kGravityNoiseEdit), TRUE);
-            } else {
-                app->state.gravityNoiseEnabled = 0;
-                EnableWindow(GetDlgItem(hDlg, panel::kGravityNoiseEdit), FALSE);
-            }
-        } else if (HIWORD(wParam) == 768 /*EN_UPDATE*/) {
-            char buf[0x100];
-            if (hCtrl == GetDlgItem(app->GravitySettingDialog(), panel::kGravityAccelEdit)) {
-                GetWindowTextA(hCtrl, buf, 256);
-                SetGravityChannel(app,0, static_cast<float>(atof(buf)));  // 0x45FD80
-            } else if (hCtrl == GetDlgItem(app->GravitySettingDialog(), panel::kGravityDirXEdit)) {
-                GetWindowTextA(hCtrl, buf, 256);
-                const float f = static_cast<float>(atof(buf));
-                SendMessageA(GetDlgItem(app->GravitySettingDialog(), panel::kNumInputPosXEdit),
-                             TBM_SETPOS, 1, (int)(f * 100.0));
-                SetGravityChannel(app,1, f);  // 0x45FD80
-            } else if (hCtrl == GetDlgItem(app->GravitySettingDialog(), panel::kGravityDirYEdit)) {
-                GetWindowTextA(hCtrl, buf, 256);
-                const float f = static_cast<float>(atof(buf));
-                SendMessageA(GetDlgItem(app->GravitySettingDialog(), panel::kNumInputPosYEdit),
-                             TBM_SETPOS, 1, (int)(f * 100.0));
-                SetGravityChannel(app,2, f);  // 0x45FD80
-            } else if (hCtrl == GetDlgItem(app->GravitySettingDialog(), panel::kGravityDirZEdit)) {
-                GetWindowTextA(hCtrl, buf, 256);
-                const float f = static_cast<float>(atof(buf));
-                SendMessageA(GetDlgItem(app->GravitySettingDialog(), panel::kNumInputPosZEdit),
-                             TBM_SETPOS, 1, (int)(f * 100.0));
-                SetGravityChannel(app,3, f);  // 0x45FD80
-            } else if (hCtrl == GetDlgItem(app->GravitySettingDialog(), panel::kGravityNoiseEdit)) {
-                GetWindowTextA(hCtrl, buf, 256);
-                SetGravityChannel(app,4, static_cast<float>(atof(buf)));  // 0x45FD80
-            }
-        } else if (id == IDOK) {
-            ApplyGravitySettingDialog(app);  // 0x460080
-        } else if (id == IDCANCEL) {
-            DestroyWindow(hDlg);
-            app->GravitySettingDialog() = 0;
-            ApplyGravityTrack(app);  // 0x412330
-            return 1;
-        }
-        return 0;
-    }
-    if (msg != WM_HSCROLL) {
-        return 0;
-    }
-    if (hCtrl == GetDlgItem(hDlg, panel::kNumInputPosXEdit)) {
-        const double v =
-            static_cast<double>(
-                SendMessageA(hCtrl, TBM_GETPOS, 0, 0)) /
-            100.0;
-        char buf[0x100];
-        sprintf_s(buf, 0x100, "%3.2f", v);
-        SetWindowTextA(GetDlgItem(hDlg, panel::kGravityDirXEdit), buf);
-        SetGravityChannel(app,1, static_cast<float>(v));  // 0x45FD80
-    } else if (hCtrl == GetDlgItem(hDlg, panel::kNumInputPosYEdit)) {
-        const double v =
-            static_cast<double>(
-                SendMessageA(hCtrl, TBM_GETPOS, 0, 0)) /
-            100.0;
-        char buf[0x100];
-        sprintf_s(buf, 0x100, "%3.2f", v);
-        SetWindowTextA(GetDlgItem(hDlg, panel::kGravityDirYEdit), buf);
-        SetGravityChannel(app,2, static_cast<float>(v));  // 0x45FD80
-    } else if (hCtrl == GetDlgItem(hDlg, panel::kNumInputPosZEdit)) {
-        const double v =
-            static_cast<double>(
-                SendMessageA(hCtrl, TBM_GETPOS, 0, 0)) /
-            100.0;
-        char buf[0x100];
-        sprintf_s(buf, 0x100, "%3.2f", v);
-        SetWindowTextA(GetDlgItem(hDlg, panel::kGravityDirZEdit), buf);
-        SetGravityChannel(app,3, static_cast<float>(v));  // 0x45FD80
-    }
-    return 1;
-}
 
 // ===========================================================================
 // 0x461CE0 - case 275 physics ON/OFF frame dialog (template caption "change
@@ -1284,142 +771,6 @@ INT_PTR CALLBACK BoneNumericInputDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
     return 0;
 }
 
-// ===========================================================================
-// 0x4641F0 - case 288 model display-order dialog (template caption "model
-// disply order" / モデル描画順設定; 0x325 EN / 0x324 JP), modal.
-// WM_INITDIALOG: top-most gate; g_displayOrderDialogCount = CB_GETCOUNT
-// (main combo 0x1B4); allocate the int array app+0xA0B1C; CB_GETLBTEXT(main
-// combo 0x1B4,
-// i) 1..count-1 into listbox 0x274; sub_41E7B0 init.
-// WM_COMMAND ids 630/631: move the listbox 0x274 entry up/down and swap the
-// adjacent dwords of the app+0xA0B1C array.  id 632 (OK): rebuild the main
-// combos 0x1B4/0x1DA/0x1C1 (EN: "camera/light/accessory" / "ground" / "non",
-// JP wide: "ｶﾒﾗ･照明･ｱｸｾｻﾘ" / "画面" / "なし") from the listbox contents
-// (count-1 entries), CB_SETCURSEL(0x1B4, 0), sub_45EC80 apply,
-// EndDialog(1).  id 2: EndDialog(2).  Both free app+0xA0B1C.
-// Reference: MikuMikuDance.exe sub_4641F0 (decompiled by hand from the
-// disassembly; Hex-Rays fails on this routine).
-// ===========================================================================
-INT_PTR CALLBACK ModelDisplayOrderDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
-                                          LPARAM lParam) {  // VA 0x004641F0
-    (void)lParam;
-    MMDApp* app = g_Block;
-    if (msg == WM_INITDIALOG) {
-        MakeDialogTopmostIfRequested(app, hDlg);
-        const int count = static_cast<int>(
-            SendMessageA(GetDlgItem(app->state.hwnd, panel::kMainComboModel),
-                         CB_GETCOUNT, 0, 0));
-        g_displayOrderDialogCount = count;
-        app->DialogOrders().modelIndices.reset(new std::int32_t[count]);
-        char buf[0x100];
-        for (int i = 1; i < count; ++i) {
-            SendMessageA(GetDlgItem(app->state.hwnd, panel::kMainComboModel),
-                         CB_GETLBTEXT, i, (LPARAM)buf);
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_ADDSTRING, 0,
-                         (LPARAM)buf);
-        }
-        BuildModelOrderArray(app, count);  // 0x41E7B0
-        return 0;
-    }
-    if (msg != WM_COMMAND) {
-        return 0;
-    }
-    const WORD id = LOWORD(wParam);
-    if (id == 630) {  // move up (0x464225)
-        const int sel = static_cast<int>(
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_GETCURSEL, 0, 0));
-        if (sel >= 1) {
-            char buf[0x100];
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_GETTEXT, sel,
-                         (LPARAM)buf);
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_DELETESTRING,
-                         sel, 0);
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_INSERTSTRING,
-                         sel - 1, (LPARAM)buf);
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_SETCURSEL,
-                         sel - 1, 0);
-            std::int32_t* arr =
-                app->DialogOrders().modelIndices.get();
-            const std::int32_t tmp = arr[sel + 1];
-            arr[sel + 1] = arr[sel];
-            arr[sel] = tmp;
-        }
-        return 0;
-    }
-    if (id == 631) {  // move down (0x4642DE)
-        const int sel = static_cast<int>(
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_GETCURSEL, 0, 0));
-        if (sel != -1 && sel < g_displayOrderDialogCount - 1) {
-            char buf[0x100];
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_GETTEXT, sel,
-                         (LPARAM)buf);
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_DELETESTRING,
-                         sel, 0);
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_INSERTSTRING,
-                         sel + 1, (LPARAM)buf);
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_SETCURSEL,
-                         sel + 1, 0);
-            std::int32_t* arr =
-                app->DialogOrders().modelIndices.get();
-            const std::int32_t tmp = arr[sel + 2];
-            arr[sel + 2] = arr[sel + 1];
-            arr[sel + 1] = tmp;
-        }
-        return 0;
-    }
-    if (id == 632) {  // OK (0x4643AD)
-        HWND mainWnd = app->state.hwnd;
-        SendMessageA(GetDlgItem(mainWnd, panel::kMainComboModel), CB_RESETCONTENT, 0,
-                     0);
-        SendMessageA(GetDlgItem(mainWnd, panel::kMainComboGround), CB_RESETCONTENT, 0,
-                     0);
-        SendMessageA(GetDlgItem(mainWnd, panel::kMainComboNormal), CB_RESETCONTENT, 0,
-                     0);
-        if (app->state.englishUI != 0) {
-            SendMessageA(GetDlgItem(mainWnd, panel::kMainComboModel), CB_ADDSTRING, 0,
-                         (LPARAM)"camera/light/accessory");
-            SendMessageA(GetDlgItem(mainWnd, panel::kMainComboGround), CB_ADDSTRING, 0,
-                         (LPARAM)"ground");
-            SendMessageA(GetDlgItem(mainWnd, panel::kMainComboNormal), CB_ADDSTRING, 0,
-                         (LPARAM)"non");
-        } else {
-            SendMessageW(GetDlgItem(mainWnd, panel::kMainComboModel), CB_ADDSTRING, 0,
-                         (LPARAM)kJpCamLightAcc);
-            SendMessageW(GetDlgItem(mainWnd, panel::kMainComboGround), CB_ADDSTRING, 0,
-                         (LPARAM)kJpScreen);
-            SendMessageW(GetDlgItem(mainWnd, panel::kMainComboNormal), CB_ADDSTRING, 0,
-                         (LPARAM)kJpNone);
-        }
-        char buf[0x100];
-        for (int i = 0; i < g_displayOrderDialogCount - 1; ++i) {
-            SendMessageA(GetDlgItem(hDlg, panel::kOrderListBox), LB_GETTEXT, i,
-                         (LPARAM)buf);
-            SendMessageA(GetDlgItem(mainWnd, panel::kMainComboModel), CB_ADDSTRING, 0,
-                         (LPARAM)buf);
-            SendMessageA(GetDlgItem(mainWnd, panel::kMainComboGround), CB_ADDSTRING, 0,
-                         (LPARAM)buf);
-            SendMessageA(GetDlgItem(mainWnd, panel::kMainComboNormal), CB_ADDSTRING, 0,
-                         (LPARAM)buf);
-        }
-        SendMessageA(GetDlgItem(mainWnd, panel::kMainComboModel), CB_SETCURSEL, 0, 0);
-        ApplyModelDisplayOrderDialog(app, g_displayOrderDialogCount, hDlg);  // 0x45EC80
-        EndDialog(hDlg, IDOK);
-        if (app->DialogOrders().modelIndices == nullptr) {
-            return 0;
-        }
-        app->DialogOrders().modelIndices.reset();
-        return 0;
-    }
-    if (id == IDCANCEL) {  // Cancel (0x464613)
-        EndDialog(hDlg, IDCANCEL);
-        if (app->DialogOrders().modelIndices == nullptr) {
-            return 0;
-        }
-        app->DialogOrders().modelIndices.reset();
-        return 0;
-    }
-    return 0;
-}
 
 }  // namespace
 

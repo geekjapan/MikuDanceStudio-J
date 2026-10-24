@@ -199,13 +199,13 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
                     auto* record = mikudancestudio::mdl::Mdl(m);
                     record->undoDirty = 1;
                     record->redoDirty = 0;
-                    std::uint32_t& kf = record->undoState[0];
+                    std::uint32_t& kf = record->UndoCursor();
                     kf = kf + 1;
                     if (kf >= 0x1E)
                         kf = 0;
-                    record->undoState[1] = kf;
+                    record->LatestUndoCursor() = kf;
                     auto& undo = record->undoRings[0].slots[kf];
-                    undo.operation = 2;
+                    undo.operation = mdl::UndoOperation::BoneKeys;
                     undo.frame = app->state.currentFrame;
                     auto*& bufSlot = undo.bonePose;
                     if (bufSlot != nullptr) {
@@ -228,7 +228,7 @@ static void SelectionStats(MMDApp* app, int x, int y, HWND hwnd) {
                         out.physicsDisabled = flagMap[i];
                     }
                     // second keyframe cluster + data buffer (0x449BB5-0x449CC2)
-                    undo.dirty = 0;
+                    undo.recordCount = 0;
                     void*& dataSlot = undo.auxiliaryPose;
                     if (dataSlot != nullptr) {
                         ::operator delete(dataSlot);

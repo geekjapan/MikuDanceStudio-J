@@ -1588,16 +1588,16 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
             mdl::Mdl(model)->undoDirty = 1;
             mdl::Mdl(model)->redoDirty = 0;
             std::int32_t idx =
-                static_cast<std::int32_t>(mdl::Mdl(model)->undoState[0]);
+                static_cast<std::int32_t>(mdl::Mdl(model)->UndoCursor());
             ++idx;
             if (idx >= 0x1E) {
                 idx = 0;
             }
-            mdl::Mdl(model)->undoState[0] = static_cast<std::uint32_t>(idx);
-            mdl::Mdl(model)->undoState[1] = static_cast<std::uint32_t>(idx);
+            mdl::Mdl(model)->UndoCursor() = static_cast<std::uint32_t>(idx);
+            mdl::Mdl(model)->LatestUndoCursor() = static_cast<std::uint32_t>(idx);
             mdl::UndoRecord& undo =
                 mdl::Mdl(model)->undoRings[0].slots[idx];
-            undo.operation = 2;
+            undo.operation = mdl::UndoOperation::BoneKeys;
             undo.frame = app->state.currentFrame;
             if (undo.bonePose != nullptr) {
                 ::operator delete(undo.bonePose);
@@ -1628,7 +1628,7 @@ void CmdFileMenu(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify)
                 rec.physicsDisabled = physicsState[i];
             }
             model = ActiveModel(app);
-            undo.dirty = 0;
+            undo.recordCount = 0;
             if (undo.auxiliaryPose != nullptr) {
                 ::operator delete(undo.auxiliaryPose);
                 undo.auxiliaryPose = nullptr;

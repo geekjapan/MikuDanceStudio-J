@@ -340,14 +340,14 @@ bool RegisterKinectPoseCapture(unsigned char* model, unsigned frame) {
 
         // 0x7FF7CB4F2FB2..0x7FF7CB4F2FD8：undo 环游标 +1、30 槽回卷、脏位
         // 置位（word 写 = undoDirty=1 且 redoDirty=0）。
-        if (++mdl::Mdl(model)->undoState[0] >= 30u)
-            mdl::Mdl(model)->undoState[0] = 0;
-        const int cursor = mdl::Mdl(model)->undoState[0];
-        mdl::Mdl(model)->undoState[1] = cursor;
+        if (++mdl::Mdl(model)->UndoCursor() >= 30u)
+            mdl::Mdl(model)->UndoCursor() = 0;
+        const int cursor = mdl::Mdl(model)->UndoCursor();
+        mdl::Mdl(model)->LatestUndoCursor() = cursor;
         mdl::Mdl(model)->undoDirty = 1;
         mdl::Mdl(model)->redoDirty = 0;
         mdl::UndoRecord& undo = mdl::Mdl(model)->undoRings[0].slots[cursor];
-        undo.operation = 2;
+        undo.operation = mdl::UndoOperation::BoneKeys;
         undo.frame = frame;
 
         // 0x7FF7CB4F300A..0x7FF7CB4F318C：姿态快照（boneCount x 36 字节
@@ -374,7 +374,7 @@ bool RegisterKinectPoseCapture(unsigned char* model, unsigned frame) {
 
         // 0x7FF7CB4F319D..0x7FF7CB4F323D：64 字节/条的关键帧快照缓冲
         // （3456 = 54 条 x 64 字节/样本），计数字段清零；keyVisitMap 全清。
-        undo.dirty = 0;
+        undo.recordCount = 0;
         ::operator delete(undo.auxiliaryPose);
         undo.auxiliaryPose = nullptr;
         undo.auxiliaryPose =

@@ -57,7 +57,7 @@ unsigned char* ActiveModel(MMDApp* app) {
 
 mikudancestudio::mdl::UndoRecord& CurrentUndo(unsigned char* model) {
     return mikudancestudio::mdl::Mdl(model)->undoRings[0].slots[
-        mikudancestudio::mdl::Mdl(model)->undoState[0]];
+        mikudancestudio::mdl::Mdl(model)->UndoCursor()];
 }
 
 // Undo slot header (0x43A055..0x43A2D2 / 0x43AC..0x43B0x in both bone
@@ -66,12 +66,12 @@ mikudancestudio::mdl::UndoRecord& CurrentUndo(unsigned char* model) {
 void BeginUndoEdit(unsigned char* model, std::uint32_t frame) {
     mdl::Mdl(model)->undoDirty = 1;
     mdl::Mdl(model)->redoDirty = 0;
-    std::int32_t cursor = mikudancestudio::mdl::Mdl(model)->undoState[0] + 1;
+    std::int32_t cursor = mikudancestudio::mdl::Mdl(model)->UndoCursor() + 1;
     if (cursor >= 0x1E) cursor = 0;
-    mikudancestudio::mdl::Mdl(model)->undoState[0] = cursor;
-    mikudancestudio::mdl::Mdl(model)->undoState[1] = cursor;
+    mikudancestudio::mdl::Mdl(model)->UndoCursor() = cursor;
+    mikudancestudio::mdl::Mdl(model)->LatestUndoCursor() = cursor;
     auto& undo = CurrentUndo(model);
-    undo.operation = 2;
+    undo.operation = mdl::UndoOperation::BoneKeys;
     undo.frame = frame;
 }
 
@@ -106,7 +106,7 @@ void SnapshotPose(unsigned char* model) {
 // (freed then malloc'ed and zeroed; original 0x43A4DE..0x43A555).
 void AllocUndoKeys(unsigned char* model, std::size_t bytes) {
     auto& undo = CurrentUndo(model);
-    undo.dirty = 0;
+    undo.recordCount = 0;
     void*& slot = undo.auxiliaryPose;
     if (slot != nullptr) {
         ::operator delete(slot);

@@ -240,7 +240,7 @@ void PumpModelShortcuts(MMDApp* app, const KeyboardInputContext& input) {
     // 0x44FCDB..0x450186: one gate encloses redo, undo, model register,
     // select-all, select-unregistered and the model-offset dialog.
     if (focusOK() && modelMode() && !playing() && !focusInEdit) {
-        // ---- 'X' (0x472D5C): redo / camera mode ------------------------------
+        // ---- 'X' (0x472D5C): redo / rotate mode ------------------------------
         if (pressed(LetterKey::X)) {
             unsigned char* model = app->SelectedModel();
             if (ctrl() && model != nullptr &&
@@ -252,7 +252,7 @@ void PumpModelShortcuts(MMDApp* app, const KeyboardInputContext& input) {
                 // current frame itself.
                 RedoModelEdit(model, app->CurrentFrame());
                 auto* record = mdl::Mdl(model);
-                if (record->undoState[0] == record->undoState[1]) {
+                if (record->UndoCursor() == record->LatestUndoCursor()) {
                     EnableWindow(GetDlgItem(main, panel::kRedoButton), FALSE);
                     record->redoDirty = 0;
                 }
@@ -260,8 +260,8 @@ void PumpModelShortcuts(MMDApp* app, const KeyboardInputContext& input) {
                 record->undoDirty = 1;
                 PanelPaint(app);                               // 0x414610
                 SelectionReeval(app);                          // 0x430510
-                if (record->undoRings[0].slots[record->undoState[0]].operation
-                        != 1) {
+                if (record->undoRings[0].slots[record->UndoCursor()].operation
+                        != mdl::UndoOperation::BonePose) {
                     SeekModelFrame(*mdl::Mdl(model), static_cast<int>(app->CurrentFrame()),
                               app->PlaybackPhysicsMode());
                 }
@@ -270,11 +270,11 @@ void PumpModelShortcuts(MMDApp* app, const KeyboardInputContext& input) {
                 SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK, 0, 0);
                 SendMessageA(GetDlgItem(main, panel::kBoneMoveRadio), BM_SETCHECK, 0, 0);
                 SendMessageA(GetDlgItem(main, panel::kBoneRotateRadio), BM_SETCHECK, 1, 0);
-                app->EditMode() = ViewportEditMode::Camera;    // 0x914 = 3
+                app->EditMode() = ViewportEditMode::Rotate;    // 0x914 = 3
             }
         }
 
-        // ---- 'Z' (0x472ED7): undo / light mode -------------------------------
+        // ---- 'Z' (0x472ED7): undo / move mode -------------------------------
         if (pressed(LetterKey::Z)) {
             unsigned char* model = app->SelectedModel();
             if (ctrl() && model != nullptr &&
@@ -284,12 +284,12 @@ void PumpModelShortcuts(MMDApp* app, const KeyboardInputContext& input) {
                 // straight at app+0x980.
                 UndoModelEdit(model, app->CurrentFrame());
                 auto* record = mdl::Mdl(model);
-                if (record->undoRings[0].slots[record->undoState[0]].operation
-                        == 0) {
+                if (record->undoRings[0].slots[record->UndoCursor()].operation
+                        == mdl::UndoOperation::Empty) {
                     EnableWindow(GetDlgItem(main, panel::kUndoButton), FALSE);
                     record->undoDirty = 0;
                 }
-                if (record->undoState[0] == record->undoState[1]) {
+                if (record->UndoCursor() == record->LatestUndoCursor()) {
                     EnableWindow(GetDlgItem(main, panel::kUndoButton), FALSE);
                     record->undoDirty = 0;
                 }
@@ -302,7 +302,7 @@ void PumpModelShortcuts(MMDApp* app, const KeyboardInputContext& input) {
                 SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK, 0, 0);
                 SendMessageA(GetDlgItem(main, panel::kBoneRotateRadio), BM_SETCHECK, 0, 0);
                 SendMessageA(GetDlgItem(main, panel::kBoneMoveRadio), BM_SETCHECK, 1, 0);
-                app->EditMode() = ViewportEditMode::Light;     // 0x914 = 4
+                app->EditMode() = ViewportEditMode::Move;     // 0x914 = 4
             }
         }
 

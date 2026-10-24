@@ -68,8 +68,8 @@ enum class ViewportEditMode : std::int32_t {
     Bone = 0,
     BoneBox = 1,
     None = 2,
-    Camera = 3,
-    Light = 4,
+    Rotate = 3,
+    Move = 4,
     ToolDrag = 5,
 };
 
@@ -299,11 +299,11 @@ public:
         return state.frameCopyEditProc;
 #endif
     }
-    WNDPROC& AccessoryFrameEditProc() {
+    WNDPROC& GravitySettingEditProc() {
 #if defined(_M_X64)
-        return m_accessoryFrameEditProc;
+        return m_gravitySettingEditProc;
 #else
-        return state.accessoryFrameEditProc;
+        return state.gravitySettingEditProc;
 #endif
     }
 
@@ -1548,7 +1548,7 @@ private:
     WNDPROC m_englishNameEditProc = nullptr;
     std::int32_t m_englishNameComboCursor[3] = {};
     WNDPROC m_frameCopyEditProc = nullptr;
-    WNDPROC m_accessoryFrameEditProc = nullptr;
+    WNDPROC m_gravitySettingEditProc = nullptr;
     float m_rotationDialogTemp[7] = {};
     unsigned char m_cameraFrameScratch[172] = {};
     void* m_accessoryEditArray = nullptr;

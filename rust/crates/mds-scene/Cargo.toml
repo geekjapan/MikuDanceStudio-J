@@ -1,7 +1,6 @@
 [package]
 name = "mds-scene"
 description = "Bit-exact Rust port of the portable PMM scene evaluator (trace level L1)"
-license-file = "../../../LICENSE"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

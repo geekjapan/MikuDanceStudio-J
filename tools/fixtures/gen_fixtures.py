@@ -9,7 +9,7 @@ bytes.
     python3 -I tools/fixtures/gen_fixtures.py --check [--dir DIR]
 
 --check regenerates in memory and compares bytes with DIR. It prints
-"fixtures: 7 files match" and exits 0, or names each drifted file and exits 1.
+"fixtures: 8 files match" and exits 0, or names each drifted file and exits 1.
 
 Encodings: names are Shift-JIS (cp932) in PMD, VMD, VPD and PMM, and UTF-16LE
 in PMX (encoding byte 0). Layouts follow the portable readers on origin/next
@@ -93,9 +93,11 @@ MORPH_KEYS = {  # morph4 keys (frame, value); frame 0 is the head (value 0.0)
 DISPLAY_KEYS = [(200, 0, (-1, 0)), (300, 1, (1, 1)), (450, 1, (1, 1))]
 
 # The VMD carries all three camera keys. swing600.pmm keeps only the first:
-# mds_scene_cli adds 1 to that key's fov and expects the fov at frame 5 to be
-# exactly settings fov + 1, on every re-save too. Any later camera key would
-# interpolate the fov away from that value.
+# the mds_scene_cli re-save check (no --trace) adds 1 to that key's fov and
+# expects the fov at frame 5 to be exactly settings fov + 1, on every re-save
+# too. Any later camera key would interpolate the fov away from that value.
+# camera3.pmm keeps all three keys, so it loads and traces (--trace) but fails
+# that re-save check (exit 6). It is for camera interpolation coverage only.
 CAMERA_KEYS = [  # (frame, distance, eye, rotation, fov)
     (0, -45.0, (0.0, 10.0, 0.0), (0.0, 0.0, 0.0), 30),
     (200, -30.0, (0.0, 8.0, 0.0), (0.25, 0.5, 0.0), 35),
@@ -106,6 +108,8 @@ LIGHT_KEYS = [  # (frame, color, direction)
     (0, (0.625, 0.625, 0.625), (-0.5, -1.0, 0.5)),
     (300, (0.75, 0.5, 0.25), (0.5, -1.0, -0.5)),
 ]
+# camera3.pmm adds a third light key to the two of swing600.pmm.
+LIGHT3_KEYS = LIGHT_KEYS + [(450, (0.5, 0.75, 1.0), (0.0, -1.0, 1.0))]
 SHADOW_KEYS = [(0, 1, 8875.0), (300, 2, 5000.0)]
 
 PMM_MODELS = [  # slot order of swing600.pmm
@@ -123,6 +127,7 @@ FILE_NAMES = [
     "swing600.vmd",
     "pose.vpd",
     "swing600.pmm",
+    "camera3.pmm",
 ]
 
 # ---------------------------------------------------------------------------
@@ -709,7 +714,7 @@ def model_bytes(slot, model):
     return bytes(o), motion
 
 
-def build_pmm():
+def build_pmm(camera_keys=CAMERA_KEYS[:1], light_keys=LIGHT_KEYS):
     o = bytearray(b"Polygon Movie maker 0002" + b"\0" * 6)
     o += i32(1280, 720, 244) + f32(30.0) + u8(0, 1, 0, 0, 0, 0, 0)
     o += u8(0, len(PMM_MODELS))
@@ -718,16 +723,16 @@ def build_pmm():
         o += data
     # camera
     cam = []
-    for frame, dist, eye, rot, fov in CAMERA_KEYS[:1]:
+    for frame, dist, eye, rot, fov in camera_keys:
         curve = LINEAR if frame == 0 else CAMERA_CURVE
         cam.append(Key(frame, distance=dist, eye=eye, rot=rot, fov=fov,
                        curve=curve))
     o += global_track(cam, pack_camera_key)
     o += f32(0.0, 10.0, 0.0, 0.0, 0.0, -45.0, 0.0, 0.0, 0.0) + u8(1)
     # light
-    light = [Key(f, color=c, direction=d) for f, c, d in LIGHT_KEYS]
+    light = [Key(f, color=c, direction=d) for f, c, d in light_keys]
     o += global_track(light, pack_light_key)
-    o += f32(*LIGHT_KEYS[0][1], *LIGHT_KEYS[0][2])
+    o += f32(*light_keys[0][1], *light_keys[0][2])
     # accessories: none
     o += u8(0) + i32(0) + u8(0)
     # configuration
@@ -845,6 +850,7 @@ def generate():
         "swing600.vmd": build_vmd(),
         "pose.vpd": build_vpd(),
         "swing600.pmm": build_pmm(),
+        "camera3.pmm": build_pmm(CAMERA_KEYS, LIGHT3_KEYS),
     }
     assert list(out) == FILE_NAMES
     return out

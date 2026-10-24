@@ -70,7 +70,7 @@ class Determinism(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(g.main(["--check"]), 0)
-        self.assertEqual(out.getvalue().strip(), "fixtures: 7 files match")
+        self.assertEqual(out.getvalue().strip(), "fixtures: 8 files match")
 
     def test_check_names_a_drifted_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -219,9 +219,9 @@ class Pmm(unittest.TestCase):
         self.assertEqual([len(m["morph_track"][1]) for m in models],
                          [0, 12, 0, 0])
 
-    def parse(self):
+    def parse(self, name="swing600.pmm"):
         """Walk the model sections; return the models and the reader."""
-        r = Reader(g.generate()["swing600.pmm"])
+        r = Reader(g.generate()[name])
         r.take(30 + 23)
         r.u8()
         count = r.u8()
@@ -312,6 +312,32 @@ class Pmm(unittest.TestCase):
         self.assertEqual(b[2], a[0])                 # previous bridges the gap
         self.assertEqual(a[3], b[0])                 # next bridges the gap
         self.assertEqual([r[1] for r in chains[4]], [0, 100, 200, 400, 500, 599])
+
+    def test_camera3_has_three_camera_keys_and_three_light_keys(self):
+        # Same models as swing600.pmm; only the camera and light tracks differ.
+        models, r = self.parse("camera3.pmm")
+        base_models, base = self.parse()
+        self.assertEqual(models, base_models)
+        self.assertEqual(r.o, base.o)
+        self.assertEqual(r.data[:r.o], base.data[:base.o])
+        camera = self.track(r, 1, 78)
+        r.take(36 + 1)
+        light = self.track(r, 1, 37)
+        r.take(24 + 6)
+        r.take(28 + 257 + 272 + 269 + 11 + 31)
+        gravity = self.track(r, 1, 34)
+        r.take(5)
+        shadow = self.track(r, 1, 18)
+        r.take(92)
+        self.assertEqual(r.u8(), 1)
+        for slot in range(len(models)):
+            self.assertEqual((r.u8(), r.i32()), (slot, 0))
+        self.assertEqual(r.o, len(r.data))
+        frames = lambda t: [rec[1] for rec in self.chains(*t)[0]]  # noqa: E731
+        self.assertEqual(frames(camera), [0, 200, 400])
+        self.assertEqual(frames(light), [0, 300, 450])
+        self.assertEqual(frames(gravity), [0])
+        self.assertEqual(frames(shadow), [0, 300])
 
 
 if __name__ == "__main__":

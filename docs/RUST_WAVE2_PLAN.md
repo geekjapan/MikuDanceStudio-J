@@ -28,7 +28,7 @@ Each directory has a README with the build, host, and sha256 of each file. Oracl
 | `physics` | 2b | `mds-physics`. Bullet in the loop through `mds-bullet-sys`, linked to `mds-crtmath`. | All lines of both L2 traces match, `rigid` included. |
 | `passplan` | 2b | A pass-plan dump of the MME runtime in the C++ app, and plans for the ray-mmd corpus. Windows. | Two runs give the same bytes. The plans are committed under `tests/fixtures/rust/mme/`. |
 | `rendergold` | 2b | `mds-render` compared with the golden images. | A per-pixel metric and threshold that the slice proposes and the root accepts in the PR. |
-| `mme` | 2b | `mds-mme`. The SAS interpreter, the pass planner, and material binding from `third_party/mmeffect`. | The pass plans equal the `passplan` oracle. |
+| `mme` | 2b | `mds-mme`. The SAS interpreter, the pass planner, and material binding from `third_party/mmeffect`. | The pass plans equal the `passplan` oracle. The effects come from the ray-mmd corpus (`tools/fixtures/fetch_corpus.sh`), so the test reports SKIP when the corpus is absent. |
 
 UI (egui), media output, and packaging are wave 2c. They get slices once the 2b crates have merged.
 
@@ -38,11 +38,11 @@ The rule in `docs/RUST_MIGRATION_PLAN.md` holds. A slice is `MIT` only if it por
 
 ## How the root runs a slice
 
-1. `tools/orchestrate/new-slice.sh <id>` creates `.claude/worktrees/w2-<id>` on branch `w2-<id>` from `origin/main`. It refuses when a dependency's PR is not merged yet, or when another Windows slice still has a worktree.
+1. Once this plan and `tools/orchestrate/` are on `main`, `tools/orchestrate/new-slice.sh <id>` creates `.claude/worktrees/w2-<id>` on branch `w2-<id>` from `origin/main`. It refuses when a dependency's PR is not merged yet, or when another Windows slice still has a worktree.
 2. The root starts one agent in that worktree with the brief below and the model from the table. Agents of independent slices start in the same message.
 3. The agent commits in its worktree and reports. It does not push, open PRs, or start other writing agents.
 4. `tools/orchestrate/integrate.sh <id>` checks ownership, merges `origin/main` into the slice branch, resolves `rust/Cargo.lock`, and runs `tools/rust/check.sh`. It also runs the clang-format check when the slice changed `src/` or `include/`. Windows slices also need the Windows lane (`tools/windows/`) to pass.
-5. The root pushes `w2-<id>` and opens a PR into `main`. After the gate passes, the PR is merged and the root removes the worktree.
+5. The root pushes `w2-<id>` and opens a PR into `main`. After the gate passes, the PR is merged with a merge commit, never squashed or rebased, because `new-slice.sh` finds merged dependencies by the `Merge pull request ... /w2-<id>` subject. Then the root removes the worktree.
 
 Who merges is the operator's call. Until the operator says otherwise, the root stops at merge-ready and the operator merges. If the operator lets the root merge PRs whose gate passed, the root merges them and reports each one, and the operator can take merging back at any time.
 
@@ -72,7 +72,9 @@ another path, stop and report it.
 License: <MIT: read no upstream C++ under src/, include/, third_party/mmeffect/ |
 pending: leave the license field unset>.
 Gate: <gate from the table>. The gate runs inside `cargo test` (or the
-Windows lane for Windows slices) and must not depend on files outside the repo.
+Windows lane for Windows slices) and must not depend on files outside the
+repo, except the ray-mmd corpus from tools/fixtures/fetch_corpus.sh. A test
+that needs the corpus reports SKIP, not pass, when it is absent.
 
 Before you report, run tools/rust/check.sh and
 tools/orchestrate/check-ownership.sh <id> from the worktree. Both must pass.

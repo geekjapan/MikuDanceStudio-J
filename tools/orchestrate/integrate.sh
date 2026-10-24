@@ -55,4 +55,4 @@ tools/rust/check.sh
 if [ -n "$(git diff --name-only "$fork" "$slice_head" -- src include)" ]; then
   uvx --from clang-format==23.1.0 python3 -I scripts/format_sources.py --check --clang-format clang-format
 fi
-echo "integrated: w2-$id at $(git rev-parse --short HEAD); push it and merge the PR"
+echo "integrated: w2-$id at $(git rev-parse --short HEAD); push it and open the PR"

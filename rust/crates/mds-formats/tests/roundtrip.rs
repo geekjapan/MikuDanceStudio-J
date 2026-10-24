@@ -154,3 +154,122 @@ fn an_edited_field_is_written() {
     let again = Pmm::read(&scene.write().unwrap()).unwrap();
     assert_eq!(again.settings.render_width, 1281);
 }
+
+/// Every string of a PMX model, for re-encoding.
+fn pmx_texts(m: &mut mds_formats::pmx::Pmx) -> Vec<&mut mds_formats::text::PmxText> {
+    let mut out = vec![
+        &mut m.name,
+        &mut m.name_en,
+        &mut m.comment,
+        &mut m.comment_en,
+    ];
+    out.extend(m.textures.iter_mut());
+    for x in &mut m.materials {
+        out.extend([&mut x.name, &mut x.name_en, &mut x.memo]);
+    }
+    for x in &mut m.bones {
+        out.extend([&mut x.name, &mut x.name_en]);
+    }
+    for x in &mut m.morphs {
+        out.extend([&mut x.name, &mut x.name_en]);
+    }
+    for x in &mut m.frames {
+        out.extend([&mut x.name, &mut x.name_en]);
+    }
+    for x in &mut m.rigids {
+        out.extend([&mut x.name, &mut x.name_en]);
+    }
+    for x in m.joints.iter_mut().flatten() {
+        out.extend([&mut x.name, &mut x.name_en]);
+    }
+    out
+}
+
+#[test]
+fn utf8_pmx_reads_and_writes_back() {
+    let Document::Pmx(mut pmx) = Document::read(&fixture("chain8.pmx")).unwrap() else {
+        panic!("chain8.pmx is not a PMX");
+    };
+    pmx.globals[0] = 1;
+    let mut before = Vec::new();
+    for t in pmx_texts(&mut pmx) {
+        t.raw = t.text.as_bytes().to_vec();
+        before.push(t.text.clone());
+    }
+    // "Hair1" is 5 bytes: UTF-8 allows the odd lengths UTF-16 forbids.
+    assert!(before.iter().any(|t| t.len() % 2 == 1));
+    let bytes = pmx.write().unwrap();
+    let Document::Pmx(mut again) = Document::read(&bytes).unwrap() else {
+        panic!("not a PMX");
+    };
+    let after: Vec<String> = pmx_texts(&mut again)
+        .iter()
+        .map(|t| t.text.clone())
+        .collect();
+    assert_eq!(after, before);
+    assert!(again.write().unwrap() == bytes);
+}
+
+#[test]
+fn pmm_accessory_blocks_write_back() {
+    use mds_formats::key_pool::GLOBAL_KEY_CAPACITY;
+    use mds_formats::pmm::{Accessory, AccessoryKey, AccessoryState};
+    use mds_formats::text::FixedSjis;
+    let mut scene = swing();
+    let mut name = [0; 100];
+    name[..5].copy_from_slice(b"stage");
+    let head = AccessoryKey {
+        next: 7,
+        opacity_visible: 1,
+        parent_model: -1,
+        scale: 1.0,
+        ..AccessoryKey::default()
+    };
+    let mut keys = KeyPool::new(GLOBAL_KEY_CAPACITY, vec![head]).unwrap();
+    let key = AccessoryKey {
+        frame: 30,
+        position: [1.0, 2.0, 3.0],
+        scale: 2.0,
+        ..AccessoryKey::default()
+    };
+    keys.insert(7, key).unwrap();
+    let text = |raw| FixedSjis {
+        raw,
+        text: "stage".into(),
+    };
+    let accessory = Accessory {
+        list_name: text(name),
+        slot: 0,
+        name: text(name),
+        path: FixedSjis {
+            raw: [0; 256],
+            text: String::new(),
+        },
+        order: 0,
+        keys,
+        state: AccessoryState {
+            opacity_visible: 1,
+            scale: 1.0,
+            ..AccessoryState::default()
+        },
+    };
+    scene.accessories.push(accessory.clone());
+    scene.accessories.push(Accessory {
+        slot: 3,
+        ..accessory
+    });
+    let bytes = scene.write().unwrap();
+    // Per accessory: a 100-byte list name, then slot, name, path, order,
+    // head key, count, (index, key) and the 39-byte state.
+    let block = 100 + 1 + 100 + 256 + 1 + 51 + 4 + (4 + 51) + 39;
+    assert_eq!(bytes.len(), 9961 + 2 * block);
+    let again = Pmm::read(&bytes).unwrap();
+    assert_eq!(again.accessories[1].slot, 3);
+    let key = again.accessories[0].keys.get(7).unwrap();
+    assert_eq!(key.position, [1.0, 2.0, 3.0]);
+    assert!(again.write().unwrap() == bytes);
+    // Lets the C++ reader check the layout: see the RM-5 report.
+    if let Ok(path) = std::env::var("MDS_FORMATS_DUMP_ACCESSORY_PMM") {
+        std::fs::write(path, &bytes).unwrap();
+    }
+}

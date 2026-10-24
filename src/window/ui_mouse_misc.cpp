@@ -78,7 +78,6 @@ void SyncAccessoryEditPanel(MMDApp* app);                                    // 
 void ApplyAccessoryTrack(MMDApp* app, int idx);                           // VA 0x00413120
 void SnapshotPoseBeforeFrameChange(unsigned char* model, int frame);  // VA 0x004A0080
 void SyncModelEditControls(unsigned char* model);                     // VA 0x004A02C0
-int SeekModelFrame(unsigned char* model, int frame, int physicsMode);  // VA 0x004B4260
 void WaveRestartAt(void* sub, double v);                       // VA 0x004C3530
 void AviBgOverlayRefresh(MMDApp* app);                                    // VA 0x004168D0
 
@@ -153,7 +152,7 @@ void HandleLButtonDblClk(MMDApp* app) {
                 continue;
             // original: sub_4B4260(ecx = model, frame = app+2432,
             //            app+0xA0CC4)
-            SeekModelFrame(model,
+            SeekModelFrame(*mdl::Mdl(model),
                       app->state.currentFrame,
                       app->PlaybackPhysicsMode());
             if (i == static_cast<int>(app->SelectedModelSlot())) {
@@ -163,7 +162,7 @@ void HandleLButtonDblClk(MMDApp* app) {
         }
 
         // ---- 4. mode branch: model row / accessory row / light row --------
-        if (app->state.optflag[0] != 0) {  // 760 (0x2F8)
+        if (app->CameraMode() != 0) {  // 760 (0x2F8)
             ReloadModels(app);                                    // 0x42E640
             RefreshLightPanel(app);                                       // 0x411070
             RefreshSelfShadowPanel(app);                                       // 0x411B90
@@ -308,7 +307,7 @@ void HandleMouseActivate(MMDApp* app) {
     const HWND fg = GetForegroundWindow();
     const HWND cached = app->FloatingWindow();  // 658744 (0xA0D38)
 
-    if (app->state.optflag[0] != 0) {    // 760 (0x2F8)
+    if (app->CameraMode() != 0) {    // 760 (0x2F8)
         // mode row: keep the combo selection in sync with the panel state
         if (fg == cached || app->MouseY() <= rect.bottom - 158) {
             SendMessageA(GetDlgItem(hwnd, panel::kMainComboModel), CB_SETCURSEL,

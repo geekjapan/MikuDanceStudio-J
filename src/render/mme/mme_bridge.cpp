@@ -17,6 +17,7 @@
 // MmeKeyboardHookProc，不受此 IAT hook 影响）。内置版因此不需要、也不应
 // 添加任何 Ctrl+Shift+E 屏蔽——本工程按键轮询键表与原版一致（frame_modes.
 // cpp / model_query_helpers.cpp），亦无 'E' 查询点。
+#include "mikudancestudio/panel_controls.hpp"
 #include "mikudancestudio/mme_bridge.hpp"
 
 #include <Windows.h>
@@ -86,7 +87,7 @@ int ProbeNotEditMode(HWND mainWindow) {
         if (probe == nullptr) {
             // 原版此处顺带写 dword_18006CCB8 = 14208（无消费者的死存储，
             // 不移植）。
-            probe = GetDlgItem(mainWindow, 417);
+            probe = GetDlgItem(mainWindow, panel::kCurrentFrameEdit);
             if (probe != nullptr &&
                 (GetClassNameA(probe, className, 32) == 0 ||
                  _stricmp(className, "EDIT") != 0))

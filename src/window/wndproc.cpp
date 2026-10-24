@@ -29,6 +29,7 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <stdio.h>
 #include <cstdlib>
@@ -125,10 +126,10 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 fwprintf(f, L"%s\n", app->DirBg());
                 fprintf(f, "1\n");
                 HMENU menu = GetMenu(hwnd);
-                fprintf(f, (GetMenuState(menu, 0x119, 0) & 8) ? "1\n" : "0\n");
+                fprintf(f, (GetMenuState(menu, MDS_CMD_TOGGLE_ALWAYS_ON_TOP, 0) & 8) ? "1\n" : "0\n");
                 fprintf(f, "1\n");
                 menu = GetMenu(hwnd);
-                fprintf(f, (GetMenuState(menu, 0x12D, 0) & 8) ? "1\n" : "0\n");
+                fprintf(f, (GetMenuState(menu, MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) ? "1\n" : "0\n");
                 fclose(f);
             }
             PostQuitMessage(0);

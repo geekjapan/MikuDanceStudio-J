@@ -82,7 +82,6 @@ void RefreshSelfShadowPanel(MMDApp* a);              // 0x411B90
 void DragInterpolationControlPoint(MMDApp* a);  // 0x416280
 void ReloadModels(MMDApp* a);              // 0x42E640
 void RelayoutSidebarControls(MMDApp* a);              // 0x442EB0
-int SeekModelFrame(unsigned char* model, int frame, int physicsMode);  // 0x4B4260
 void ApplyAccessoryTrack(MMDApp* a, int idx);     // 0x413120
 
 namespace {
@@ -349,7 +348,7 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                  app->SelectionBoxAnchorX() - 6) /
                 kRowPitch;  // v15 == v257 (magic /13 = truncating)
             app->SceneModified() = 1;
-            if (app->state.optflag[0] == 0) {
+            if (app->CameraMode() == 0) {
                 // ---- bone-edit mode (0x445887..0x446065) ------------------
                 unsigned char* model = CurrentModel(app);
                 mdl::ModelRecord& record = *mdl::Mdl(model);
@@ -382,7 +381,7 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                 PanelPaint(app);  // 0x446044
                 // 0x446065: original __thiscall(this=model, dword0x980,
                 // dword0xA0CC4).
-                SeekModelFrame(model,
+                SeekModelFrame(*mdl::Mdl(model),
                           app->state.currentFrame,
                           app->state.playbackPhysicsMode);
             } else {
@@ -469,7 +468,7 @@ void HandleMouseMove(std::uint32_t lParam, int mouseY) {
                 colEnd += 1;
 
             const unsigned char flag = HoverFlag(app);
-            if (app->state.optflag[0] != 0) {
+            if (app->CameraMode() != 0) {
                 // ---- display-mode hover (0x4461B3) ------------------------
                 if (!app->ShiftModifierActive()) {
                     // clear band visibility flags for all 200 rows

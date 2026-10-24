@@ -1,6 +1,7 @@
 // Keyboard command order follows the MMD 9.32 x64 pump (0x44DEF6..0x450Bxx).
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 
 #include <cstdint>
@@ -55,7 +56,7 @@ void PumpDisplayShortcuts(MMDApp* app, const KeyboardInputContext& input) {
     const auto shift = [&] { return state.shiftModifierState == 3; };
     const auto ctrl = [&] { return state.ctrlModifierState == 3; };
     const auto playing = [&] { return app->PlaybackActive() != 0; };
-    const auto modelMode = [&] { return state.optflag[0] == 0; };
+    const auto modelMode = [&] { return app->CameraMode() == 0; };
 
     // ---- 'B' (0x471EB5): toggle background color black/white ------------
     // Body = command case 282 minus its dialogFlags[4] write: flip
@@ -64,27 +65,27 @@ void PumpDisplayShortcuts(MMDApp* app, const KeyboardInputContext& input) {
         HMENU menu = GetMenu(main);
         if (state.blackBackgroundEnabled != 0) {
             state.blackBackgroundEnabled = 0;
-            CheckMenuItem(menu, 0x11A, MF_UNCHECKED);
+            CheckMenuItem(menu, MDS_CMD_TOGGLE_BLACK_BACKGROUND, MF_UNCHECKED);
         } else {
             state.blackBackgroundEnabled = 1;
-            CheckMenuItem(menu, 0x11A, MF_CHECKED);
+            CheckMenuItem(menu, MDS_CMD_TOGGLE_BLACK_BACKGROUND, MF_CHECKED);
         }
     }
 
     // ---- 'V' (0x471F37): transparent models / outline / paste ------------
     if (focusOK() && !focusInEdit && pressed(kSlotV)) {
         if (ctrl() && !playing()) {
-            SendMenuCommand(app, 0x1A5);                   // case 421 paste
+            SendMenuCommand(app, panel::kPasteButton);                   // case 421 paste
         } else if (shift()) {
             // Body = command case 283 minus dialogFlags[5]: flip the
             // outline-suppression byte and menu 0x11B.
             HMENU menu = GetMenu(main);
             if (state.modelNonDisplayMode != 0) {
                 state.modelNonDisplayMode = 0;
-                CheckMenuItem(menu, 0x11B, MF_UNCHECKED);
+                CheckMenuItem(menu, MDS_CMD_TOGGLE_MODEL_NON_DISPLAY, MF_UNCHECKED);
             } else {
                 state.modelNonDisplayMode = 1;
-                CheckMenuItem(menu, 0x11B, MF_CHECKED);
+                CheckMenuItem(menu, MDS_CMD_TOGGLE_MODEL_NON_DISPLAY, MF_CHECKED);
             }
         } else {
             // Body = command case 0xD6 minus the command bookkeeping: flip
@@ -93,7 +94,7 @@ void PumpDisplayShortcuts(MMDApp* app, const KeyboardInputContext& input) {
             // array, kModelSlotCount wide in both layouts).
             HMENU menu = GetMenu(main);
             state.characterTransparentMode = state.characterTransparentMode != 0 ? 0 : 1;
-            CheckMenuItem(menu, 0xD6,
+            CheckMenuItem(menu, MDS_CMD_TOGGLE_MODEL_TRANSPARENCY,
                           state.characterTransparentMode != 0 ? MF_CHECKED : MF_UNCHECKED);
             for (int slot = 0; slot < kModelSlotCount; ++slot) {
                 unsigned char* model = app->ModelSlot(slot);
@@ -106,7 +107,7 @@ void PumpDisplayShortcuts(MMDApp* app, const KeyboardInputContext& input) {
     // ---- 'C' (0x4720B7): copy frames / bone-select toggle ----------------
     if (focusOK() && !playing() && !focusInEdit && pressed(kSlotC)) {
         if (ctrl()) {
-            SendMenuCommand(app, 0x1A4);                   // case 420 copy
+            SendMenuCommand(app, panel::kCopyFramesButton);                   // case 420 copy
         } else if (modelMode()) {
             SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK, 0, 0);
             SendMessageA(GetDlgItem(main, panel::kBoneMoveRadio), BM_SETCHECK, 0, 0);
@@ -130,12 +131,12 @@ void PumpFrameLineShortcuts(MMDApp* app, const KeyboardInputContext& input) {
     const HWND main = static_cast<HWND>(app->Hwnd());
     const bool focusInEdit = !input.focusNotInPanelEdit;
     const auto playing = [&] { return app->PlaybackActive() != 0; };
-    const auto modelMode = [&] { return state.optflag[0] == 0; };
+    const auto modelMode = [&] { return app->CameraMode() == 0; };
 
     // ---- 'H' (0x472324): register all facials (clear all frames, 0xE5) ---
     if (input.focus == main && modelMode() && !playing() && !focusInEdit &&
         pressed(kSlotH)) {
-        SendMenuCommand(app, 0xE5);                        // case 229
+        SendMenuCommand(app, MDS_CMD_REGISTER_ALL_MORPH_FRAMES);                        // case 229
     }
 
     // ---- 'I' (0x472375): insert bone/camera frame line -------------------
@@ -166,7 +167,7 @@ void PumpViewAndPlaybackShortcuts(MMDApp* app, const KeyboardInputContext& input
     const auto shift = [&] { return state.shiftModifierState == 3; };
     const auto ctrl = [&] { return state.ctrlModifierState == 3; };
     const auto playing = [&] { return app->PlaybackActive() != 0; };
-    const auto modelMode = [&] { return state.optflag[0] == 0; };
+    const auto modelMode = [&] { return app->CameraMode() == 0; };
 
     // ---- 'G' (0x4726B2): seek frame / shadow map / fine shadow -----------
     if (focusOK() && !focusInEdit && pressed(kSlotG)) {
@@ -214,7 +215,7 @@ void PumpViewAndPlaybackShortcuts(MMDApp* app, const KeyboardInputContext& input
 
     // ---- Ctrl+'S' (0x472A65): save + bell (no edit-focus gate) -----------
     if (focusOK() && pressed(kSlotS) && ctrl()) {
-        SendMenuCommand(app, 0xCF);                        // case 0xCF save
+        SendMenuCommand(app, MDS_CMD_SAVE_PROJECT);                        // case 0xCF save
         MessageBeep(0x40);
     }
 
@@ -223,14 +224,14 @@ void PumpViewAndPlaybackShortcuts(MMDApp* app, const KeyboardInputContext& input
         !focusInEdit && pressed(kSlotP)) {
         SendMessageA(GetDlgItem(main, panel::kPlayButton), BM_SETCHECK,
                      playing() ? 0 : 1, 0);
-        SendMenuCommand(app, 0x198);                       // case 408 play
+        SendMenuCommand(app, panel::kPlayButton);                       // case 408 play
         SetFocus(main);
     }
 
     // ---- 'F' (0x472B2A): paste keyframes to another bone (0xFA) ----------
     if (focusOK() && app->FrameStepPlayback() == 0 && !focusInEdit &&
         pressed(kSlotF)) {
-        SendMenuCommand(app, 0xFA);                        // case 250
+        SendMenuCommand(app, MDS_CMD_PASTE_AT_DIFFERENT_FRAME);                        // case 250
     }
 }
 
@@ -244,7 +245,7 @@ void PumpModelShortcuts(MMDApp* app, const KeyboardInputContext& input) {
     const auto focusOK = [&] { return input.focus == main || app->ViewportInputActive() != 0; };
     const auto ctrl = [&] { return state.ctrlModifierState == 3; };
     const auto playing = [&] { return app->PlaybackActive() != 0; };
-    const auto modelMode = [&] { return state.optflag[0] == 0; };
+    const auto modelMode = [&] { return app->CameraMode() == 0; };
 
     // 0x44FCDB..0x450186: one gate encloses redo, undo, model register,
     // select-all, select-unregistered and the model-offset dialog.
@@ -271,7 +272,7 @@ void PumpModelShortcuts(MMDApp* app, const KeyboardInputContext& input) {
                 SelectionReeval(app);                          // 0x430510
                 if (record->undoRings[0].slots[record->undoState[0]].operation
                         != 1) {
-                    SeekModelFrame(model, static_cast<int>(app->CurrentFrame()),
+                    SeekModelFrame(*mdl::Mdl(model), static_cast<int>(app->CurrentFrame()),
                               app->PlaybackPhysicsMode());
                 }
             } else if (!ctrl()) {
@@ -319,15 +320,15 @@ void PumpModelShortcuts(MMDApp* app, const KeyboardInputContext& input) {
 
         // ---- 'A' (0x473092): select all bones (0x1EE) ------------------------
         if (pressed(kSlotA))
-            SendMenuCommand(app, 0x1EE);                       // case 494
+            SendMenuCommand(app, panel::kSelectAllBonesButton);                       // case 494
 
         // ---- plain 'S' (0x4730B1): select unregistered bones (0x1F5) ---------
         if (pressed(kSlotS) && !ctrl())
-            SendMenuCommand(app, 0x1F5);                       // case 501
+            SendMenuCommand(app, panel::kSelectUnregisteredBonesButton);                       // case 501
 
         // ---- 'D' (0x4730D9): model-offset dialog (0xDB) ----------------------
         if (pressed(kSlotD))
-            SendMenuCommand(app, 0xDB);                        // case 219
+            SendMenuCommand(app, MDS_CMD_CENTER_POSITION_BIAS);                        // case 219
     }
 }
 
@@ -339,12 +340,12 @@ void PumpFrameDialogShortcut(MMDApp* app, const KeyboardInputContext& input) {
     const HWND main = static_cast<HWND>(app->Hwnd());
     const bool focusInEdit = !input.focusNotInPanelEdit;
     const auto focusOK = [&] { return input.focus == main || app->ViewportInputActive() != 0; };
-    const auto modelMode = [&] { return state.optflag[0] == 0; };
+    const auto modelMode = [&] { return app->CameraMode() == 0; };
 
     // ---- 'R' (0x473989): frame control dialog (0xFB) ---------------------
     if (focusOK() && modelMode() && app->FrameStepPlayback() == 0 &&
         !focusInEdit && pressed(kSlotR)) {
-        SendMenuCommand(app, 0xFB);                        // case 251
+        SendMenuCommand(app, MDS_CMD_MULTIPLY_BONE_FRAMES);                        // case 251
     }
 }
 

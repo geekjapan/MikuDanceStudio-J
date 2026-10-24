@@ -120,13 +120,13 @@ void HandlePaletteChanged(HDC hdc) {
     const COLORREF colD = app->ThemeColorAt(11);
     const BottomPanelLayout panelLayout = ComputeBottomPanelLayout(app);
     std::int32_t xOff = panelLayout.leading;
-    if (app->state.optflag[0] != 0) {   // 0x2F8
-        if (app->state.optflag[1] != 0) {  // 0x2F9
+    if (app->CameraMode() != 0) {   // 0x2F8
+        if (app->PanelExpanded(UiPanel::Camera) != 0) {  // 0x2F9
             FillPanelBottom(hdc, 0x169, bottom - 157, 0x202, bottom - 3, colC, colD, 1);  // 0x42D123
         } else {
             FillPanelBottom(hdc, 0x169, bottom - 157, 0x17B, bottom - 3, colC, colD, 1);  // 0x42D13B
         }
-    } else if (app->state.optflag[4] != 0) {  // 0x2FC
+    } else if (app->PanelExpanded(UiPanel::Bone) != 0) {  // 0x2FC
         FillPanelBottom(hdc, 0x169, bottom - 157, 0x22E, bottom - 3, colC, colD, 1);  // 0x42D15C
     } else {
         FillPanelBottom(hdc, 0x169, bottom - 157, 0x17B, bottom - 3, colC, colD, 1);  // 0x42D174
@@ -136,15 +136,15 @@ void HandlePaletteChanged(HDC hdc) {
     // subtracted from both edges and optionally grown.
     const COLORREF colE = app->ThemeColorAt(12);
     const COLORREF colF = app->ThemeColorAt(13);
-    if (app->state.optflag[0] != 0) {   // 0x2F8
-        if (app->state.optflag[2] != 0) {  // 0x2FA
+    if (app->CameraMode() != 0) {   // 0x2F8
+        if (app->PanelExpanded(UiPanel::Light) != 0) {  // 0x2FA
             FillPanelBottom(hdc, 0x1F3 - xOff, bottom - 157, 0x2A7 - xOff,
                             bottom - 3, colE, colF, 1);        // 0x42D1C1
         } else {
             FillPanelBottom(hdc, 0x1F3 - xOff, bottom - 157, 0x205 - xOff,
                             bottom - 3, colE, colF, 1);        // 0x42D1D5
         }
-    } else if (app->state.optflag[5] != 0) {  // 0x2FD
+    } else if (app->PanelExpanded(UiPanel::Morph) != 0) {  // 0x2FD
         FillPanelBottom(hdc, 0x254 - xOff, bottom - 157, 0x361 - xOff,
                         bottom - 3, colE, colF, 1);            // 0x42D1FF
     } else {
@@ -155,9 +155,9 @@ void HandlePaletteChanged(HDC hdc) {
 
     // Block C (0x42D21E..0x42D27E): only when 0x2F8 set; note the swapped
     // colour roles - colour 0xA0628, edge 0xA0604 (push ho=0xA0604 first).
-    if (app->state.optflag[0] != 0) {   // 0x2F8
+    if (app->CameraMode() != 0) {   // 0x2F8
         const COLORREF colG = app->ThemeColorAt(20);
-        if (app->state.optflag[6] != 0) {  // 0x2FE
+        if (app->PanelExpanded(UiPanel::SelfShadow) != 0) {  // 0x2FE
             FillPanelBottom(hdc, 0x2AA - xOff, bottom - 157, 0x35B - xOff,
                             bottom - 3, colG, colD, 1);        // 0x42D265
         } else {
@@ -168,10 +168,10 @@ void HandlePaletteChanged(HDC hdc) {
     xOff = panelLayout.afterSelfShadow;
 
     // Block D (0x42D284..0x42D2E0): only when 0x2F8 set; colours 0xA0610/4.
-    if (app->state.optflag[0] != 0) {   // 0x2F8
+    if (app->CameraMode() != 0) {   // 0x2F8
         const COLORREF colH = app->ThemeColorAt(14);
         const COLORREF colI = app->ThemeColorAt(15);
-        if (app->state.optflag[3] != 0) {  // 0x2FB
+        if (app->PanelExpanded(UiPanel::Accessory) != 0) {  // 0x2FB
             FillPanelBottom(hdc, 0x35E - xOff, bottom - 157, 0x422 - xOff,
                             bottom - 3, colH, colI, 1);        // 0x42D2C7
         } else {
@@ -287,7 +287,7 @@ void HandlePaletteChanged2(HDC hdc) {
 
     char buffer[256];  // Buffer @ ebp-104h; sprintf_s count 0x100
 
-    if (app->state.optflag[0] != 0) {   // 0x2F8: camera/light mode
+    if (app->CameraMode() != 0) {   // 0x2F8: camera/light mode
         if (app->EnglishUI() != 0) {                             // 0xA0B4C
             if (playing) {
                 DrawGlyph(app, "Playing", hdc, 20, xBase + 10, hideTop - 22,

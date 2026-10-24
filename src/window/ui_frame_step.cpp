@@ -4,7 +4,7 @@
 //                             back plus the full apply/refresh chain
 //   0x00432FA0  RefreshAfterFrameApply - re-apply the current frame to every
 //                             model/accessory track and refresh the panels
-// (0x0040D070 is ported once, as PostLanguageSweep2 in ui_view_refresh.cpp;
+// (0x0040D070 is ported once, as InvalidateSelectionReadouts in ui_view_refresh.cpp;
 //  the 0x40D070 twin that used to live here was that same function.)
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
@@ -70,7 +70,7 @@ void ApplyFrameToModels(MMDApp* app) {
         unsigned char* model = app->ModelSlot(slot);
         if (model == nullptr)
             continue;
-        SeekModelFrame(model, app->state.currentFrame,
+        SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame,
                   app->PlaybackPhysicsMode());
         if (slot == app->SelectedModelSlot())
             SyncModelEditControls(model);
@@ -79,7 +79,7 @@ void ApplyFrameToModels(MMDApp* app) {
 
 void RefreshFrameContext(MMDApp* app) {
     const HWND hwnd = static_cast<HWND>(app->Hwnd());
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         ReloadModels(app);
         RefreshLightPanel(app);
         RefreshSelfShadowPanel(app);

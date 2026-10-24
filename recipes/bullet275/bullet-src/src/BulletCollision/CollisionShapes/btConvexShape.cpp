@@ -13,6 +13,7 @@ subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 */
 
+#include "LinearMath/btMmdMath.h"
 #include "btConvexShape.h"
 #include "btTriangleShape.h"
 #include "btSphereShape.h"
@@ -39,32 +40,7 @@ static inline vec_float4 vec_dot3( vec_float4 vec0, vec_float4 vec1 )
 static __declspec(noinline) void mmdSupportNormalize(btVector3& v)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	float* p = &v.m_floats[0];
-	__asm
-	{
-		mov eax, p
-		fld dword ptr [eax+4]
-		fmul st, st
-		fld dword ptr [eax+8]
-		fmul st, st
-		faddp st(1), st
-		fld dword ptr [eax]
-		fmul st, st
-		faddp st(1), st
-		fsqrt
-		fld1
-		fdivrp st(1), st
-		fld dword ptr [eax]
-		fmul st, st(1)
-		fstp dword ptr [eax]
-		fld dword ptr [eax+4]
-		fmul st, st(1)
-		fstp dword ptr [eax+4]
-		fld dword ptr [eax+8]
-		fmul st, st(1)
-		fstp dword ptr [eax+8]
-		fstp st(0)
-	}
+	btMmdMath::normalizeSupport(v);
 #else
 	v.normalize();
 #endif
@@ -77,25 +53,7 @@ static __declspec(noinline) void mmdSupportNormalizeLenSqr(btVector3& v,
 														   btScalar lenSqr)
 {
 #if defined(_MSC_VER) && defined(_M_IX86) && !defined(BT_USE_DOUBLE_PRECISION)
-	float* p = &v.m_floats[0];
-	__asm
-	{
-		mov eax, p
-		fld dword ptr [lenSqr]
-		fsqrt
-		fld1
-		fdivrp st(1), st
-		fld dword ptr [eax]
-		fmul st, st(1)
-		fstp dword ptr [eax]
-		fld dword ptr [eax+4]
-		fmul st, st(1)
-		fstp dword ptr [eax+4]
-		fld dword ptr [eax+8]
-		fmul st, st(1)
-		fstp dword ptr [eax+8]
-		fstp st(0)
-	}
+	btMmdMath::normalizeSupportLength(v, lenSqr);
 #else
 	v *= btScalar(1.) / btSqrt(lenSqr);
 #endif

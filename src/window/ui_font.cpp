@@ -27,6 +27,7 @@
 #include <cstring>
 
 #include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/panel_controls.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 namespace mikudancestudio {
 
@@ -57,13 +58,13 @@ void ApplyUiFontToControl(MMDApp* app, HWND control, int id) {
     // Original sends WM_SETFONT immediately after each creation site.  The
     // frame edit and its six navigation buttons retain their class default.
         switch (id) {
-        case 417:
-        case 418:
-        case 419:
-        case 532:
-        case 533:
-        case 558:
-        case 559:
+        case panel::kCurrentFrameEdit:
+        case panel::kPreviousFrameButton:
+        case panel::kNextFrameButton:
+        case panel::kNextKeyframeButton:
+        case panel::kPreviousKeyframeButton:
+        case panel::kFirstFrameButton:
+        case panel::kLastFrameButton:
             return;
         default:
             break;

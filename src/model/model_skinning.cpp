@@ -9,12 +9,15 @@
 // the per-frame PMX vertex/UV morph restore+apply pass that feeds them
 // (x64 RVA 0xC1415..0xC2670), and the SDEF quaternion blend helper
 // (x64 RVA 0xC2D20). Binary identity and address verification are recorded
-// in reports/fix21_source_evidence.md. The PMD arithmetic keeps its x87 __asm bit-parity
+// in reports/fix21_source_evidence.md. The PMD arithmetic keeps its VC9 rounding parity
 // branch; the PMX arithmetic follows the x64 SSE orderings, which is the
 // behavior baseline for this port.
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#if defined(_M_IX86)
+#include "LinearMath/btMmdMath.h"
+#endif
 #include <Windows.h>
 #include <d3d9.h>
 
@@ -143,14 +146,7 @@ void Blend3(float out[3], const float a[3], const float b[3], float wa) {
 
 float EdgeComponent(float position, float normal, float amount) {
 #if defined(_M_IX86)
-    float result = 0.0f;
-    __asm {
-        fld dword ptr [normal]
-        fmul dword ptr [amount]
-        fadd dword ptr [position]
-        fstp dword ptr [result]
-    }
-    return result;
+    return btMmdMath::edgeComponent(position, normal, amount);
 #else
     return position + normal * amount;
 #endif
@@ -188,49 +184,8 @@ float BlendTransformComponent(const float* input, const float* matrix0,
                               const float* matrix1, int component,
                               float weight0, bool position) {
 #if defined(_M_IX86)
-    float result = 0.0f;
-    const int byteOffset = component * 4;
-    const float weight1 = 1.0f - weight0;
-    __asm {
-        mov eax, input
-        mov ecx, matrix0
-        mov edx, matrix1
-        mov ebx, byteOffset
-
-        // Original 0x4A95E0 family: bone 1 is accumulated first, multiplied
-        // by (1-weight), then bone 0 is accumulated and multiplied by
-        // weight.  No transformed component is rounded to float in between.
-        fld dword ptr [eax]
-        fmul dword ptr [edx+ebx]
-        fld dword ptr [eax+4]
-        fmul dword ptr [edx+ebx+16]
-        faddp st(1), st
-        fld dword ptr [eax+8]
-        fmul dword ptr [edx+ebx+32]
-        faddp st(1), st
-        cmp position, 0
-        je no_translation_1
-        fadd dword ptr [edx+ebx+48]
-no_translation_1:
-        fmul dword ptr [weight1]
-
-        fld dword ptr [eax]
-        fmul dword ptr [ecx+ebx]
-        fld dword ptr [eax+4]
-        fmul dword ptr [ecx+ebx+16]
-        faddp st(1), st
-        fld dword ptr [eax+8]
-        fmul dword ptr [ecx+ebx+32]
-        faddp st(1), st
-        cmp position, 0
-        je no_translation_0
-        fadd dword ptr [ecx+ebx+48]
-no_translation_0:
-        fmul dword ptr [weight0]
-        faddp st(1), st
-        fstp dword ptr [result]
-    }
-    return result;
+    return btMmdMath::blendTransformComponent(
+        input, matrix0, matrix1, component, weight0, position);
 #else
     const float weight1 = 1.0f - weight0;
     const float a = input[0] * matrix0[component] +

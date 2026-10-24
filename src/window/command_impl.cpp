@@ -21,6 +21,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <commdlg.h>
 
@@ -57,7 +58,7 @@ bool AnyAllocatedKey(const Key* keys, std::size_t count) {
 // 0x12D 菜单项："记录打开过的文件目录"。勾选（MF_CHECKED=8）时各文件
 // 对话框以 per-type 目录为初始目录，并在确定后回写该目录。
 bool RememberFileDialogDirs(MMDApp* app) {
-    return (GetMenuState(GetMenu(MainHwnd(app)), 0x12D, 0) & 8) != 0;
+    return (GetMenuState(GetMenu(MainHwnd(app)), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0;
 }
 
 // -----------------------------------------------------------------------
@@ -155,7 +156,7 @@ constexpr DWORD kDialogPathLen = 0x100;
 void CmdLoadPose(MMDApp* app) {
     app->state.dialogFlags[12] = 1;             // 0x46BCB5 [app+0x64]
     app->state.enterKeyState = 1;               // 0x46BCBC [app+0xC0]
-    if (app->state.optflag[0] != 0) {           // 0x46BCC6 门：相机/配件模式不弹框
+    if (app->CameraMode() != 0) {           // 0x46BCC6 门：相机/配件模式不弹框
         return;
     }
     SetCurrentDirectoryW(app->ExeDir());        // 0xA16EE
@@ -201,7 +202,7 @@ void CmdLoadPose(MMDApp* app) {
 //   标志写（不置脏）。
 // ---------------------------------------------------------------------------
 void CmdSavePose(MMDApp* app) {
-    if (app->state.optflag[0] != 0) {           // 0x46BAAA 门在最前
+    if (app->CameraMode() != 0) {           // 0x46BAAA 门在最前
         return;
     }
     // 选骨扫描：活动模型（x64 app+0xBE8 槽表、槽号 +0x13E0）的选骨位图
@@ -522,7 +523,7 @@ void CmdSaveMotion(MMDApp* app) {
         return AnyAllocatedKey(keys, count);
     };
     bool any;
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         // 相机/配件模式：只扫三张 app 表（0x46BE76 起），模型表不扫。
         any = anySelectedByte(reinterpret_cast<unsigned char*>(
                                   app->state.cameraKeyTrack), 0x48, 0x54, 10000) ||

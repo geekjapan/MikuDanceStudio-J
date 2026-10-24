@@ -13,7 +13,7 @@
 //     set   -> this+645704 (0x9DA48), clamped to [0, this+645708-2]
 //     clear -> current model (slot ptr this+1920[this+2320]) +12716,
 //              clamped to [0, model+12712-2]
-//   Every path ends with PostLanguageSweep (0x42F1E0) exactly once.
+//   Every path ends with RebuildTimelineTrackPanel (0x42F1E0) exactly once.
 //
 //   control 534 (alpha slider) - TBM_GETPOS (0x400) read; 100-pos stored to
 //   this+672804 (0xA4424) and passed to SetFrameNormalized (0x4C2B80).
@@ -46,7 +46,7 @@ void HandleVScroll(LPARAM lParam, WPARAM wParam) {
     const std::uint32_t code = LOWORD(wParam);                 // a3: SB_ code
 
     if (ctrl == GetDlgItem(hwnd, panel::kTimelineVScroll)) {
-        if (app->state.optflag[0] != 0) {
+        if (app->CameraMode() != 0) {
             // mode 0x2F8 set: operate on the app timeline frame counter
             switch (code) {
             case 0:  // SB_LINEUP
@@ -107,7 +107,7 @@ void HandleVScroll(LPARAM lParam, WPARAM wParam) {
             if (record.boneListPos > record.boneListRows - 2)
                 record.boneListPos = record.boneListRows - 2;
         }
-        PostLanguageSweep(app);                                   // 0x42F1E0
+        RebuildTimelineTrackPanel(app);                                   // 0x42F1E0
         return;
     }
 
@@ -141,7 +141,7 @@ void HandleVScroll(LPARAM lParam, WPARAM wParam) {
 //   camera mode (this+760 set AND this+656432 >= 0) -> this+828 (0x33C)
 //   morph-follow special branch (this+760 == 0 && this+650648 &&
 //       this+816 == 0 && this+656432 == this+2320 && this+656432 >= 0):
-//       this+656849 = 1; this+672812 = 0; PostLanguageSweep2 (0x40D070);
+//       this+656849 = 1; this+672812 = 0; InvalidateSelectionReadouts (0x40D070);
 //       this+672812 = 1; this+656850 = 1; then PostViewRefresh (0x40D130)
 //       and return
 //   otherwise -> this+657628 (0xA08DC)
@@ -152,7 +152,7 @@ void HandleVScroll(LPARAM lParam, WPARAM wParam) {
 //       656356 = 1 and clears the light / self-shadow / gravity flags
 //       656357..656359, the rowSelected byte (x86 +0x4AC / x64 +0x4BC)
 //       of all 255 display-object slots is cleared, and the tail runs
-//       PostLanguageSweep (0x42F1E0) + PostViewRefresh (0x40D130).  The
+//       RebuildTimelineTrackPanel (0x42F1E0) + PostViewRefresh (0x40D130).  The
 //       x64 original never calls RefreshRequest from this handler.
 //
 // Reference: ../translated/MikuMikuDance/fcn_0044bd70.cpp
@@ -178,7 +178,7 @@ void HandleMouseWheel(int delta) {
     }
 
     const std::int32_t axis = app->CameraParentModel();
-    const std::uint8_t mode = app->state.optflag[0];  // 760
+    const std::uint8_t mode = app->CameraMode();  // 760
 
     if ((mode & (axis >= 0 ? 1u : 0u)) != 0) {
         // camera distance: this+828 (float) += wheel * 0.05
@@ -197,7 +197,7 @@ void HandleMouseWheel(int delta) {
                 if (accessory != nullptr)
                     accessory->rowSelected = 0;
             }
-            PostLanguageSweep(app);                             // 0x42F1E0
+            RebuildTimelineTrackPanel(app);                             // 0x42F1E0
         }
     } else {
         const bool morphFollow =
@@ -209,7 +209,7 @@ void HandleMouseWheel(int delta) {
         if (morphFollow) {
             app->state.viewDirty = 1;                       // 656849 (0xA05D1)
             app->WindowLayoutReady() = 0;
-            PostLanguageSweep2(app);                              // 0x40D070
+            InvalidateSelectionReadouts(app);                              // 0x40D070
             app->WindowLayoutReady() = 1;
             app->state.b6568482 = 1;                       // 656850 (0xA05D2)
             PostViewRefresh(app);                                 // 0x40D130
@@ -228,7 +228,7 @@ void HandleMouseWheel(int delta) {
                 if (accessory != nullptr)
                     accessory->rowSelected = 0;
             }
-            PostLanguageSweep(app);                             // 0x42F1E0
+            RebuildTimelineTrackPanel(app);                             // 0x42F1E0
         }
     }
     PostViewRefresh(app);     // 0x40D130 (x64 sub_7FF7CB440DD0)

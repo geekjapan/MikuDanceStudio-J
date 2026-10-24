@@ -33,6 +33,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/panel_controls.hpp"
 #include <Windows.h>
 #include <commctrl.h>
 
@@ -139,7 +140,7 @@ void PostLoadInit(unsigned char* m) {
     HWND main = *reinterpret_cast<HWND*>(m);
 
     // ---- bone combo 443 (from IK chains) ----------------------------------
-    HWND boneCombo = Dlg(m, 443);
+    HWND boneCombo = Dlg(m, panel::kIkChainCombo);
     SendMessage(boneCombo, CB_RESETCONTENT, 0, 0);
     mdl::ModelRecord* model = mdl::Mdl(m);
     mikudancestudio::mdl::BoneRecord* bones = model->boneTable;
@@ -156,26 +157,26 @@ void PostLoadInit(unsigned char* m) {
     }
     if (mdl::IkChains(m) != nullptr) {
         SendMessageA(boneCombo, CB_SETCURSEL, 0, 0);
-        CheckRadioButton(main, 444, 445,
-                         mdl::IkChains(m)[0].enabled != 0 ? 444 : 445);
+        CheckRadioButton(main, panel::kIkOnRadio, panel::kIkOffRadio,
+                         mdl::IkChains(m)[0].enabled != 0 ? panel::kIkOnRadio : panel::kIkOffRadio);
     }
 
     // ---- three checkboxes ---------------------------------------------------
-    SendMessage(Dlg(m, 439), BM_SETCHECK,
+    SendMessage(Dlg(m, panel::kModelVisibleCheckbox), BM_SETCHECK,
                 model->loadComplete != 0 ? 1 : 0, 0);
-    SendMessage(Dlg(m, 441), BM_SETCHECK,
+    SendMessage(Dlg(m, panel::kAddBlendCheckbox), BM_SETCHECK,
                 model->postLoadFlag2 != 0 ? 1 : 0, 0);
-    SendMessage(Dlg(m, 440), BM_SETCHECK,
+    SendMessage(Dlg(m, panel::kShadowCheckbox), BM_SETCHECK,
                 model->toonFlag != 0 ? 1 : 0, 0);
 
     // ---- four morph groups --------------------------------------------------
-    RefreshMorphGroup(m, mdl::MorphPanel::eyebrow, 504, 505, 506, 0);
-    RefreshMorphGroup(m, mdl::MorphPanel::eye, 509, 510, 511, 1);
-    RefreshMorphGroup(m, mdl::MorphPanel::mouth, 514, 515, 516, 2);
-    RefreshMorphGroup(m, mdl::MorphPanel::other, 519, 520, 521, 3);
+    RefreshMorphGroup(m, mdl::MorphPanel::eyebrow, panel::kMorphCombo0, panel::kMorphSlider0, panel::kMorphEdit0, 0);
+    RefreshMorphGroup(m, mdl::MorphPanel::eye, panel::kMorphCombo1, panel::kMorphSlider1, panel::kMorphEdit1, 1);
+    RefreshMorphGroup(m, mdl::MorphPanel::mouth, panel::kMorphCombo2, panel::kMorphSlider2, panel::kMorphEdit2, 2);
+    RefreshMorphGroup(m, mdl::MorphPanel::other, panel::kMorphCombo3, panel::kMorphSlider3, panel::kMorphEdit3, 3);
 
     // ---- frame-registration combo 434 ---------------------------------------
-    HWND frameCombo = Dlg(m, 434);
+    HWND frameCombo = Dlg(m, panel::kRegisterScopeCombo);
     SendMessage(frameCombo, CB_RESETCONTENT, 0, 0);
     char buf[256];
     if (std::memcmp(model->name, kDummyBoneName, 13) == 0) {

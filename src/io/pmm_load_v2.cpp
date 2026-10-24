@@ -92,6 +92,7 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <commdlg.h>
 #include <commctrl.h>
@@ -118,6 +119,7 @@
 // the loader string tables live here (see the header comment for the
 // v1/v2 parameterization points).
 #include "pmm_io_common.hpp"
+#include "pmm_playback_options.hpp"
 
 #pragma comment(lib, "avifil32.lib")
 
@@ -422,7 +424,7 @@ static void LoadSceneV2_DisposeAndHeader(PmmV2LoadContext& ctx, int fd) {
     s->state.followCameraEnabled = 0;               // 0x9ED98
 
     // ---- menu/checkbox reset (0x4500C4..0x45015B) ------------------------
-    CheckMenuItem(GetMenu(main), 0xF7, 0);
+    CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_CAMERA_TRACKING, 0);
     SendMessageA(GetDlgItem(main, panel::kFollowCameraCheckbox), BM_SETCHECK, 0, 0);
 
     s->state.selfShadowMode = 0;                // 0x450161
@@ -468,12 +470,12 @@ static void LoadSceneV2_DisposeAndHeader(PmmV2LoadContext& ctx, int fd) {
     for (int f = 0; f < 7; ++f) {
         unsigned char b = 0;
         Rd(fd, &b, 1);
-        s->state.optflag[f] = (b == 1) ? 1 : 0;      // 0x2F8..2FE
+        s->UiOptionFlag(f) = (b == 1) ? 1 : 0;      // 0x2F8..2FE
     }
 strcpy_s(text, 0x100, "");                                  // 0x450331
 
     // ---- UI clear run (0x450334..0x45044C) -------------------------------
-    for (int id = 478; id <= 484; ++id) {                       // 0x450340
+    for (int id = panel::kAccPosXEdit; id <= panel::kAccScaleEdit; ++id) {                       // 0x450340
         HWND item = GetDlgItem(main, id);
         const int len = GetWindowTextLengthA(item);
         SendMessageA(GetDlgItem(main, id), EM_SETSEL, 0, len);
@@ -483,9 +485,9 @@ strcpy_s(text, 0x100, "");                                  // 0x450331
     SendMessageA(GetDlgItem(main, panel::kShadowCheckbox), BM_SETCHECK, 0, 0);     // 0x4503BF
     SendMessageA(GetDlgItem(main, panel::kAddBlendCheckbox), BM_SETCHECK, 0, 0);     // 0x4503DD
     SendMessageA(GetDlgItem(main, panel::kAccessoryAddBlendCheckbox), BM_SETCHECK, 0, 0);     // 0x4503FB
-    CheckMenuItem(GetMenu(main), 0xFE, 0);                      // 0x450418
-    EnableMenuItem(GetMenu(main), 0x120, 1);                    // 0x450435
-    EnableMenuItem(GetMenu(main), 0x121, 1);                    // 0x45044C
+    CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_GROUND_SHADOW_TRANSPARENCY, 0);                      // 0x450418
+    EnableMenuItem(GetMenu(main), MDS_CMD_MODEL_DRAW_ORDER, 1);                    // 0x450435
+    EnableMenuItem(GetMenu(main), MDS_CMD_MODEL_CALCULATION_ORDER, 1);                    // 0x45044C
 }
 
 
@@ -980,8 +982,8 @@ static void LoadSceneV2_ModelStateLoad(PmmV2LoadContext& ctx, int fd,
                 }
                 LogPmmModelStage(fd, "pose-ik-complete", 0, 0,
                                  mdl::IkChains(model));
-                EnableMenuItem(GetMenu(main), 0x120, 0);        // 0x453F26
-                EnableMenuItem(GetMenu(main), 0x121, 0);        // 0x453F41
+                EnableMenuItem(GetMenu(main), MDS_CMD_MODEL_DRAW_ORDER, 0);        // 0x453F26
+                EnableMenuItem(GetMenu(main), MDS_CMD_MODEL_CALCULATION_ORDER, 0);        // 0x453F41
                 // current pose: per rigid (0x453F47..0x454040)
                 {
                     LogPmmModelStage(fd, "pose-rigid", workspace.rigidBodyCount,
@@ -1034,8 +1036,7 @@ static void LoadSceneV2_ModelStateLoad(PmmV2LoadContext& ctx, int fd,
 // AbortV2Load ran.
 static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
                                    PmmModelLoadWorkspace* workspaces,
-                                   unsigned char modelCount,
-                                   unsigned char modelIdx) {
+                                   unsigned char modelCount, unsigned char modelIdx) {
     auto* const s = ctx.s;
     HWND const main = ctx.main;
     HINSTANCE const hInst = ctx.hInst;
@@ -1046,569 +1047,505 @@ static bool LoadSceneV2_ModelBlock(PmmV2LoadContext& ctx, int fd,
     wchar_t* const widePath = ctx.widePath;
     wchar_t* const ofnFile = ctx.ofnFile;
     wchar_t* const ofnTitle = ctx.ofnTitle;
-            unsigned char slotByte = 0;
-            Rd(fd, &slotByte, 1);                               // 0x4504C2
-            if (slotByte >= kModelSlotCount) {
+    unsigned char slotByte = 0;
+    Rd(fd, &slotByte, 1);  // 0x4504C2
+    if (slotByte >= kModelSlotCount) {
+        AbortV2Load(s, fd, workspaces, modelCount);
+        return false;
+    }
+    unsigned char* nm = static_cast<unsigned char*>(operator new(mdl::kSize));
+    if (nm != nullptr) IdentityCtor(nm);          // 0x4504E9
+    slots[slotByte] = nm;                         // 0x4504F7
+    std::memset(slots[slotByte], 0, mdl::kSize);  // 0x45051D
+    ModelInitDefaults(slots[slotByte]);           // 0x450531
+    PmmModelLoadWorkspace& workspace = workspaces[modelIdx];
+    workspace.modelSlot = slotByte;  // 0x450559
+
+    {  // stored model name (0x45054D..0x450592)
+        unsigned char len = 0;
+        Rd(fd, &len, 1);
+        Rd(fd, text, len);
+        text[len] = 0;
+        strcpy_s(workspace.modelName, 0x100, text);
+    }
+    {  // source model name (0x450597..0x4505D9)
+        unsigned char len = 0;
+        Rd(fd, &len, 1);
+        Rd(fd, text, len);
+        text[len] = 0;
+        strcpy_s(workspace.sourceName, 0x100, text);
+    }
+    Rd(fd, text, 0x100);  // 0x4505EF
+    ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap), text, widePath, 0x100,
+                        paths);
+
+    unsigned char* model = slots[slotByte];
+    LogPmmModelAttempt(text, widePath, wrap, s->Physics(), false);
+    bool loaded = ModelLoadPMD(  // 0x45065F
+        model, main, widePath, wrap,
+        static_cast<int>(reinterpret_cast<std::uintptr_t>(s->state.exeDir)), 0,
+        s->EnglishUI(), s->Physics(), paths);
+    LogPmmModelAttempt(text, widePath, wrap, s->Physics(), loaded);
+    LogPmmModelStage(fd, "model-loaded", 0, 0, model);
+    LogPmmHeapState(fd, "after-model-load");
+
+    bool doSkip = false;
+    bool skipFrom4 = false;  // r==4: counts/names already consumed
+    if (!loaded) {           // 0x45066C
+        if (s->EnglishUI() != 0)
+            sprintf_s(s->state.statusText, 0x100, "Cannot open the model file:%s",
+                      workspace.sourceName);
+        else
+            sprintf_s(s->state.statusText, 0x100, kJpQuoted, workspace.modelName);
+        const INT_PTR r = DialogBoxParamA(
+            hInst, MAKEINTRESOURCEA(s->EnglishUI() != 0 ? 0x32F : 0x32E), main,
+            DialogFuncStub, 0);
+        if (r == 2 || r == 4) {
+            AbortV2Load(s, fd, workspaces, modelCount);
+            return false;
+        }              // 0x45426C
+        if (r == 1) {  // 0x4506FD
+            SetCurrentDirectoryW(reinterpret_cast<const wchar_t*>(s->state.exeDir));
+            swprintf_s(ofnFile, 0x100, L"%s", ofnFile);  // quirk
+            OPENFILENAMEW ofn;
+            std::memset(&ofn, 0, sizeof(ofn));
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = s->state.floatingWindow
+                                ? reinterpret_cast<HWND>(s->state.floatingWindow)
+                                : main;
+            ofn.lpstrFilter = kWFilterModel;
+            ofn.lpstrFile = ofnFile;
+            ofn.nMaxFile = 0x100;
+            ofn.Flags = OFN_FILEMUSTEXIST;
+            ofn.lpstrInitialDir = (GetMenuState(GetMenu(main), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8)
+                                      ? reinterpret_cast<LPCWSTR>(s->state.dirModel)
+                                      : kWUserModel;
+            ofn.lpstrDefExt = L"pmd;pmx";
+            ofn.nMaxFileTitle = 0x100;
+            ofn.lpstrFileTitle = ofnTitle;
+            ofn.lpstrTitle = s->EnglishUI() != 0
+                                 ? L"load model"
+                                 : reinterpret_cast<LPCWSTR>(kWOpenFile);
+            if (!GetOpenFileNameW(&ofn)) {
                 AbortV2Load(s, fd, workspaces, modelCount);
                 return false;
             }
-            unsigned char* nm =
-                static_cast<unsigned char*>(operator new(mdl::kSize));
-            if (nm != nullptr) IdentityCtor(nm);                   // 0x4504E9
-            slots[slotByte] = nm;                               // 0x4504F7
-            std::memset(slots[slotByte], 0, mdl::kSize);        // 0x45051D
-            ModelInitDefaults(slots[slotByte]);                 // 0x450531
-            PmmModelLoadWorkspace& workspace = workspaces[modelIdx];
-            workspace.modelSlot = slotByte;                      // 0x450559
-
-            {  // stored model name (0x45054D..0x450592)
-                unsigned char len = 0;
-                Rd(fd, &len, 1);
-                Rd(fd, text, len);
-                text[len] = 0;
-                strcpy_s(workspace.modelName, 0x100, text);
+            if (GetMenuState(GetMenu(main), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) {
+                wchar_t* d = ExtractDirFromPath(paths.projectDirectory, ofnFile);
+                wcscpy_s(reinterpret_cast<wchar_t*>(s->state.dirModel), 0x3E8, d);
             }
-            {  // source model name (0x450597..0x4505D9)
-                unsigned char len = 0;
-                Rd(fd, &len, 1);
-                Rd(fd, text, len);
-                text[len] = 0;
-                strcpy_s(workspace.sourceName, 0x100, text);
-            }
-            Rd(fd, text, 0x100);                                // 0x4505EF
-            ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap),
-                                text, widePath, 0x100,
-                                paths);
-
-            unsigned char* model = slots[slotByte];
-            LogPmmModelAttempt(text, widePath, wrap,
-                               s->Physics(), false);
-            bool loaded = ModelLoadPMD(                          // 0x45065F
-                model, main, widePath, wrap,
-                static_cast<int>(
-                    reinterpret_cast<std::uintptr_t>(s->state.exeDir)),
-                0, s->EnglishUI(), s->Physics(),
-                paths);
-            LogPmmModelAttempt(text, widePath, wrap,
-                               s->Physics(), loaded);
-            LogPmmModelStage(fd, "model-loaded", 0, 0, model);
-            LogPmmHeapState(fd, "after-model-load");
-
-            bool doSkip = false;
-            bool skipFrom4 = false;  // r==4: counts/names already consumed
-            if (!loaded) {                                      // 0x45066C
+            if (!ModelLoadPMD(
+                    model, main, ofnFile, wrap,
+                    static_cast<int>(reinterpret_cast<std::uintptr_t>(s->state.exeDir)),
+                    0, s->EnglishUI(), s->Physics(),
+                    paths)) {  // 0x45431A
                 if (s->EnglishUI() != 0)
-                    sprintf_s(s->state.statusText,
-                              0x100, "Cannot open the model file:%s",
-                              workspace.sourceName);
+                    MessageBoxA(main, "Cannot open the model file", "open file", 0);
                 else
-                    sprintf_s(s->state.statusText,
-                              0x100, kJpQuoted,
-                              workspace.modelName);
-                const INT_PTR r = DialogBoxParamA(
-                    hInst,
-                    MAKEINTRESOURCEA(s->EnglishUI() != 0 ? 0x32F : 0x32E),
-                    main, DialogFuncStub, 0);
-                if (r == 2 || r == 4) { AbortV2Load(s, fd, workspaces, modelCount); return false; }   // 0x45426C
-                if (r == 1) {                                   // 0x4506FD
-                    SetCurrentDirectoryW(reinterpret_cast<const wchar_t*>(
-                        s->state.exeDir));
-                    swprintf_s(ofnFile, 0x100, L"%s", ofnFile); // quirk
-                    OPENFILENAMEW ofn;
-                    std::memset(&ofn, 0, sizeof(ofn));
-                    ofn.lStructSize = sizeof(ofn);
-                    ofn.hwndOwner =
-                        s->state.floatingWindow
-                            ? reinterpret_cast<HWND>(
-                                  s->state.floatingWindow)
-                            : main;
-                    ofn.lpstrFilter = kWFilterModel;
-                    ofn.lpstrFile = ofnFile;
-                    ofn.nMaxFile = 0x100;
-                    ofn.Flags = OFN_FILEMUSTEXIST;
-                    ofn.lpstrInitialDir =
-                        (GetMenuState(GetMenu(main), 0x12D, 0) & 8)
-                            ? reinterpret_cast<LPCWSTR>(s->state.dirModel)
-                            : kWUserModel;
-                    ofn.lpstrDefExt = L"pmd;pmx";
-                    ofn.nMaxFileTitle = 0x100;
-                    ofn.lpstrFileTitle = ofnTitle;
-                    ofn.lpstrTitle =
-                        s->EnglishUI() != 0
-                            ? L"load model"
-                            : reinterpret_cast<LPCWSTR>(kWOpenFile);
-                    if (!GetOpenFileNameW(&ofn)) { AbortV2Load(s, fd, workspaces, modelCount); return false; }
-                    if (GetMenuState(GetMenu(main), 0x12D, 0) & 8) {
-                        wchar_t* d = ExtractDirFromPath(
-                            paths.projectDirectory,
-                            ofnFile);
-                        wcscpy_s(reinterpret_cast<wchar_t*>(s->state.dirModel),
-                                 0x3E8, d);
-                    }
-                    if (!ModelLoadPMD(
-                            model, main, ofnFile, wrap,
-                            static_cast<int>(reinterpret_cast<
-                                std::uintptr_t>(s->state.exeDir)),
-                            0, s->EnglishUI(),
-                            s->Physics(),
-                            paths)) {                             // 0x45431A
-                        if (s->EnglishUI() != 0)
-                            MessageBoxA(main, "Cannot open the model file",
-                                        "open file", 0);
-                        else
-                            MessageBoxA(main, kJpCannotOpenModel,
-                                        kJpOpenCaption, 0);
-                        AbortV2Load(s, fd, workspaces, modelCount);
-                        return false;
-                    }
-                } else if (r == 3) {
-                    doSkip = true;                              // 0x4508FC
-                }
-                // other results fall through to the success path
+                    MessageBoxA(main, kJpCannotOpenModel, kJpOpenCaption, 0);
+                AbortV2Load(s, fd, workspaces, modelCount);
+                return false;
             }
+        } else if (r == 3) {
+            doSkip = true;  // 0x4508FC
+        }
+        // other results fall through to the success path
+    }
 
-            if (doSkip) {
+    if (doSkip) {
+        if (model != nullptr) {
+            ModelDispose(model);  // 0x450912
+            ::operator delete(model);
+        }
+        slots[slotByte] = nullptr;
+        workspace.skipped = 1;                                 // 0x45093E
+        if (!skipFrom4) Rd(fd, &workspace.boneGroupCount, 1);  // 0x450942
+    } else {
+        Rd(fd, &workspace.boneGroupCount, 1);  // 0x4508C5
+        workspace.boneGroupsMatch =
+            workspace.boneGroupCount == mikudancestudio::mdl::Mdl(model)->groupCount
+                ? 1
+                : 0;  // 0x4508DF
+        LogPmmModelStage(fd, "model-marker", workspace.boneGroupCount,
+                         mikudancestudio::mdl::Mdl(model)->groupCount, model);
+    }
+
+    // ---- reconciliation + state load ------------------------------
+    if (!doSkip) {
+        mdl::ModelRecord* const loadedModel = mdl::Mdl(model);
+        bool firstPass = true;  // counts/names are read only once;
+        bool reloaded = false;  // r==3 re-load switches the status
+                                // text to the "too" variants
+        for (;;) {              // ring retries only re-map
+            if (firstPass) {
+                // disp count + translation array (0x4511F5..0x4514B9)
+                Rd(fd, &workspace.displayCount, 4);
+                LogPmmModelStage(fd, "display-count", workspace.displayCount,
+                                 loadedModel->boneCount, loadedModel->boneTable);
+                workspace.displaysMatch =
+                    workspace.displayCount == loadedModel->boneCount ? 1 : 0;
+                workspace.boneNameMap = static_cast<NameMapping*>(
+                    std::malloc(sizeof(NameMapping) * workspace.displayCount));
+                std::memset(workspace.boneNameMap, 0,
+                            sizeof(NameMapping) * workspace.displayCount);
+                NameMapping* const boneMappings = workspace.boneNameMap;
+                for (std::int32_t i = 0; i < workspace.displayCount; ++i) {
+                    unsigned char len = 0;
+                    Rd(fd, &len, 1);
+                    NameMapping& mapping = boneMappings[i];
+                    Rd(fd, mapping.name, len);
+                    mapping.name[len] = 0;
+                    mapping.mappedIndex = i;
+                    if (workspace.displayCount == loadedModel->boneCount) {
+                        if (strcmp(mapping.name, mdl::Bones(model)[i].name) != 0) {
+                            workspace.displaysMatch = 0;
+                            mapping.mappedIndex = -1;
+                            for (std::int32_t j = 0;
+                                 j < static_cast<std::int32_t>(loadedModel->boneCount);
+                                 ++j)
+                                if (strcmp(mapping.name, mdl::Bones(model)[j].name) ==
+                                    0) {
+                                    mapping.mappedIndex = j;
+                                    break;
+                                }
+                        }
+                    } else {
+                        mapping.mappedIndex = -1;
+                        for (std::int32_t j = 0;
+                             j < static_cast<std::int32_t>(loadedModel->boneCount); ++j)
+                            if (strcmp(mapping.name, mdl::Bones(model)[j].name) == 0) {
+                                mapping.mappedIndex = j;
+                                break;
+                            }
+                    }
+                }
+                // morph count + translation array (0x4514C5..0x451789)
+                Rd(fd, &workspace.morphCount, 4);
+                LogPmmModelStage(fd, "morph-count", workspace.morphCount,
+                                 loadedModel->morphCount, loadedModel->morphs);
+                workspace.morphsMatch =
+                    workspace.morphCount == loadedModel->morphCount ? 1 : 0;
+                workspace.morphNameMap = static_cast<NameMapping*>(
+                    std::malloc(sizeof(NameMapping) * workspace.morphCount));
+                std::memset(workspace.morphNameMap, 0,
+                            sizeof(NameMapping) * workspace.morphCount);
+                NameMapping* const morphMappings = workspace.morphNameMap;
+                for (std::int32_t i = 0; i < workspace.morphCount; ++i) {
+                    unsigned char len = 0;
+                    Rd(fd, &len, 1);
+                    NameMapping& mapping = morphMappings[i];
+                    Rd(fd, mapping.name, len);
+                    mapping.name[len] = 0;
+                    mapping.mappedIndex = i;
+                    if (workspace.morphCount == loadedModel->morphCount) {
+                        if (strcmp(mapping.name, mdl::Morphs(model)[i].name) != 0) {
+                            workspace.morphsMatch = 0;
+                            mapping.mappedIndex = -1;
+                            for (std::int32_t j = 0;
+                                 j < static_cast<std::int32_t>(loadedModel->morphCount);
+                                 ++j)
+                                if (strcmp(mapping.name, mdl::Morphs(model)[j].name) ==
+                                    0) {
+                                    mapping.mappedIndex = j;
+                                    break;
+                                }
+                        }
+                    } else {
+                        mapping.mappedIndex = -1;
+                        for (std::int32_t j = 0;
+                             j < static_cast<std::int32_t>(loadedModel->morphCount);
+                             ++j)
+                            if (strcmp(mapping.name, mdl::Morphs(model)[j].name) == 0) {
+                                mapping.mappedIndex = j;
+                                break;
+                            }
+                    }
+                }
+                // IK remap array (0x451795..0x451886).  x64
+                // 0x7FF7CB49A87A..0x7FF7CB49A8C6: the stored IK number
+                // is a bone index in the SAVED model's numbering - the
+                // original maps it through the bone name translation
+                // array first (movsxd rcx,[r11+rsi+4]; imul rcx,108h;
+                // mov r9d,[rcx+rax+100h]; cmp r9d,[rax]) before
+                // comparing with the loaded IK chain's bone index.
+                Rd(fd, &workspace.ikCount, 4);
+                LogPmmModelStage(fd, "ik-count", workspace.ikCount,
+                                 loadedModel->ikChainCount, loadedModel->ikChains);
+                workspace.ikIndexMap = static_cast<IndexMapping*>(
+                    std::malloc(sizeof(IndexMapping) * workspace.ikCount));
+                IndexMapping* const ikMappings = workspace.ikIndexMap;
+                for (std::int32_t i = 0; i < workspace.ikCount; ++i) {
+                    IndexMapping& mapping = ikMappings[i];
+                    Rd(fd, &mapping.sourceIndex, 4);
+                    mapping.mappedIndex = -1;
+                    for (std::int32_t j = 0;
+                         j < static_cast<std::int32_t>(loadedModel->ikChainCount); ++j)
+                        if (boneMappings[mapping.sourceIndex].mappedIndex ==
+                            mdl::IkChains(model)[j].boneIndex) {
+                            mapping.mappedIndex = j;
+                            break;
+                        }
+                }
+                // rigid remap array, 1-based (0x451892..0x45199E)
+                Rd(fd, &workspace.rigidBodyCount, 4);
+                LogPmmModelStage(fd, "rigid-count", workspace.rigidBodyCount,
+                                 loadedModel->boneOrderCount,
+                                 loadedModel->boneOrderTable);
+                workspace.rigidIndexMap = static_cast<IndexMapping*>(
+                    std::malloc(sizeof(IndexMapping) * workspace.rigidBodyCount));
+                IndexMapping* const rigidMappings = workspace.rigidIndexMap;
+                for (std::int32_t i = 0; i < workspace.rigidBodyCount; ++i) {
+                    IndexMapping& mapping = rigidMappings[i];
+                    Rd(fd, &mapping.sourceIndex, 4);
+                    if (mapping.sourceIndex == -1) {
+                        mapping.mappedIndex = 0;
+                    } else {
+                        mapping.mappedIndex = -1;
+                        if (loadedModel->boneOrderCount > 1) {
+                            for (std::int32_t j = 1;
+                                 j <
+                                 static_cast<std::int32_t>(loadedModel->boneOrderCount);
+                                 ++j)
+                                if (boneMappings[mapping.sourceIndex].mappedIndex ==
+                                    mdl::BoneOrder(model)[j].boneIndex) {
+                                    mapping.mappedIndex = j;
+                                    break;
+                                }
+                        }
+                    }
+                    LogPmmModelStage(fd, "rigid-item", i, mapping.mappedIndex,
+                                     &mapping);
+                }
+                LogPmmModelStage(fd, "mapping-complete", 0, 0, model);
+
+            }  // firstPass guard
+
+            // structure-difference gate (0x4519AF..0x451A44).
+            // x64 0x7FF7CB49A9E4 (first pass): EN prints the plain
+            // structure text against sourceName, JP a bare quoted
+            // name (aS_8 "\"%s\"", x64 0x7FF7CB5508E0) - NOT the
+            // long kJpStructFmt text.  Every re-test after an
+            // r==3 re-load (x64 0x7FF7CB49B265..0x7FF7CB49B294)
+            // switches to the "too" variants: EN "This model
+            // structure is different from pmm too." (0x7FF7CB550910)
+            // / JP kJpStructFmt (0x7FF7CB550948).
+            if (s->EnglishUI() != 0)
+                sprintf_s(s->state.statusText, 0x100,
+                          reloaded ? "This model structure is different "
+                                     "from pmm too. file:%s"
+                                   : "Model structure is different from "
+                                     "pmm. file:%s",
+                          workspace.sourceName);
+            else
+                sprintf_s(s->state.statusText, 0x100,
+                          reloaded ? kJpStructFmt : kJpQuoted, workspace.modelName);
+            if (workspace.morphsMatch != 0 && workspace.displaysMatch != 0) break;
+
+            const INT_PTR r = DialogBoxParamA(
+                hInst, MAKEINTRESOURCEA(s->EnglishUI() != 0 ? 0x331 : 0x330), main,
+                DialogFuncStub, 0);
+            // x64 分派表（0x7FF7CB49AA72..0x7FF7CB49BB78）：
+            //   r==2/r==5 -> 中止装载（0x49AA88 jnz 0x49D73F）
+            //   r==3      -> 丢弃当前模型、弹文件对话框重载（0x49AA8E）
+            //   r==4      -> 跳过该模型（0x49B29D cmp 4）
+            //   其余值    -> 0x49B2A1 jnz 0x49BB78，与双匹配成立时
+            //                （0x49AA2F 的 jz）同一出口：继续状态装载
+            if (r == 2 || r == 5) {
+                AbortV2Load(s, fd, workspaces, modelCount);
+                return false;
+            }
+            if (r == 4) {  // 0x45231C
                 if (model != nullptr) {
-                    ModelDispose(model);                        // 0x450912
+                    ModelDispose(model);
                     ::operator delete(model);
                 }
                 slots[slotByte] = nullptr;
-                workspace.skipped = 1;                                     // 0x45093E
-                if (!skipFrom4) Rd(fd, &workspace.boneGroupCount, 1);         // 0x450942
-            } else {
-                Rd(fd, &workspace.boneGroupCount, 1);                         // 0x4508C5
-                workspace.boneGroupsMatch = workspace.boneGroupCount == mikudancestudio::mdl::Mdl(model)->groupCount ? 1 : 0; // 0x4508DF
-                LogPmmModelStage(fd, "model-marker", workspace.boneGroupCount,
-                                 mikudancestudio::mdl::Mdl(model)->groupCount, model);
+                workspace.skipped = 1;
+                doSkip = true;
+                skipFrom4 = true;
+                firstPass = false;  // r==4: counts/names consumed
+                break;
             }
-
-            // ---- reconciliation + state load ------------------------------
-            if (!doSkip) {
-                mdl::ModelRecord* const loadedModel = mdl::Mdl(model);
-                bool firstPass = true;  // counts/names are read only once;
-                bool reloaded = false;  // r==3 re-load switches the status
-                                        // text to the "too" variants
-                for (;;) {              // ring retries only re-map
-                    if (firstPass) {
-                    // disp count + translation array (0x4511F5..0x4514B9)
-                    Rd(fd, &workspace.displayCount, 4);
-                    LogPmmModelStage(fd, "display-count", workspace.displayCount,
-                                     loadedModel->boneCount,
-                                     loadedModel->boneTable);
-                    workspace.displaysMatch =
-                        workspace.displayCount == loadedModel->boneCount ? 1 : 0;
-                    workspace.boneNameMap = static_cast<NameMapping*>(
-                        std::malloc(sizeof(NameMapping) *
-                                    workspace.displayCount));
-                    std::memset(workspace.boneNameMap, 0,
-                                sizeof(NameMapping) * workspace.displayCount);
-                    NameMapping* const boneMappings =
-                        workspace.boneNameMap;
-                    for (std::int32_t i = 0; i < workspace.displayCount; ++i) {
-                        unsigned char len = 0;
-                        Rd(fd, &len, 1);
-                        NameMapping& mapping = boneMappings[i];
-                        Rd(fd, mapping.name, len);
-                        mapping.name[len] = 0;
-                        mapping.mappedIndex = i;
-                        if (workspace.displayCount == loadedModel->boneCount) {
-                            if (strcmp(mapping.name,
-                                       mdl::Bones(model)[i].name) != 0) {
-                                workspace.displaysMatch = 0;
-                                mapping.mappedIndex = -1;
-                                for (std::int32_t j = 0;
-                                     j < static_cast<std::int32_t>(
-                                             loadedModel->boneCount); ++j)
-                                    if (strcmp(mapping.name,
-                                               mdl::Bones(model)[j].name) == 0) {
-                                        mapping.mappedIndex = j;
-                                        break;
-                                    }
-                            }
-                        } else {
-                            mapping.mappedIndex = -1;
-                            for (std::int32_t j = 0;
-                                 j < static_cast<std::int32_t>(
-                                         loadedModel->boneCount); ++j)
-                                if (strcmp(mapping.name,
-                                           mdl::Bones(model)[j].name) == 0) {
-                                    mapping.mappedIndex = j;
-                                    break;
-                                }
-                        }
-                    }
-                    // morph count + translation array (0x4514C5..0x451789)
-                    Rd(fd, &workspace.morphCount, 4);
-                    LogPmmModelStage(fd, "morph-count", workspace.morphCount,
-                                     loadedModel->morphCount,
-                                     loadedModel->morphs);
-                    workspace.morphsMatch =
-                        workspace.morphCount == loadedModel->morphCount ? 1 : 0;
-                    workspace.morphNameMap = static_cast<NameMapping*>(
-                        std::malloc(sizeof(NameMapping) *
-                                    workspace.morphCount));
-                    std::memset(workspace.morphNameMap, 0,
-                                sizeof(NameMapping) * workspace.morphCount);
-                    NameMapping* const morphMappings =
-                        workspace.morphNameMap;
-                    for (std::int32_t i = 0; i < workspace.morphCount; ++i) {
-                        unsigned char len = 0;
-                        Rd(fd, &len, 1);
-                        NameMapping& mapping = morphMappings[i];
-                        Rd(fd, mapping.name, len);
-                        mapping.name[len] = 0;
-                        mapping.mappedIndex = i;
-                        if (workspace.morphCount == loadedModel->morphCount) {
-                            if (strcmp(mapping.name,
-                                       mdl::Morphs(model)[i].name) != 0) {
-                                workspace.morphsMatch = 0;
-                                mapping.mappedIndex = -1;
-                                for (std::int32_t j = 0;
-                                     j < static_cast<std::int32_t>(
-                                             loadedModel->morphCount); ++j)
-                                    if (strcmp(mapping.name,
-                                            mdl::Morphs(model)[j].name) == 0) {
-                                        mapping.mappedIndex = j;
-                                        break;
-                                    }
-                            }
-                        } else {
-                            mapping.mappedIndex = -1;
-                            for (std::int32_t j = 0;
-                                 j < static_cast<std::int32_t>(
-                                         loadedModel->morphCount); ++j)
-                                if (strcmp(mapping.name,
-                                        mdl::Morphs(model)[j].name) == 0) {
-                                    mapping.mappedIndex = j;
-                                    break;
-                                }
-                        }
-                    }
-                    // IK remap array (0x451795..0x451886).  x64
-                    // 0x7FF7CB49A87A..0x7FF7CB49A8C6: the stored IK number
-                    // is a bone index in the SAVED model's numbering - the
-                    // original maps it through the bone name translation
-                    // array first (movsxd rcx,[r11+rsi+4]; imul rcx,108h;
-                    // mov r9d,[rcx+rax+100h]; cmp r9d,[rax]) before
-                    // comparing with the loaded IK chain's bone index.
-                    Rd(fd, &workspace.ikCount, 4);
-                    LogPmmModelStage(fd, "ik-count", workspace.ikCount,
-                                     loadedModel->ikChainCount,
-                                     loadedModel->ikChains);
-                    workspace.ikIndexMap = static_cast<IndexMapping*>(
-                        std::malloc(sizeof(IndexMapping) * workspace.ikCount));
-                    IndexMapping* const ikMappings =
-                        workspace.ikIndexMap;
-                    for (std::int32_t i = 0; i < workspace.ikCount; ++i) {
-                        IndexMapping& mapping = ikMappings[i];
-                        Rd(fd, &mapping.sourceIndex, 4);
-                        mapping.mappedIndex = -1;
-                        for (std::int32_t j = 0;
-                             j < static_cast<std::int32_t>(
-                                     loadedModel->ikChainCount); ++j)
-                            if (boneMappings[mapping.sourceIndex]
-                                    .mappedIndex ==
-                                mdl::IkChains(model)[j].boneIndex) {
-                                mapping.mappedIndex = j;
-                                break;
-                            }
-                    }
-                    // rigid remap array, 1-based (0x451892..0x45199E)
-                    Rd(fd, &workspace.rigidBodyCount, 4);
-                    LogPmmModelStage(fd, "rigid-count", workspace.rigidBodyCount,
-                                     loadedModel->boneOrderCount,
-                                     loadedModel->boneOrderTable);
-                    workspace.rigidIndexMap = static_cast<IndexMapping*>(
-                        std::malloc(sizeof(IndexMapping) *
-                                    workspace.rigidBodyCount));
-                    IndexMapping* const rigidMappings =
-                        workspace.rigidIndexMap;
-                    for (std::int32_t i = 0; i < workspace.rigidBodyCount; ++i) {
-                        IndexMapping& mapping = rigidMappings[i];
-                        Rd(fd, &mapping.sourceIndex, 4);
-                        if (mapping.sourceIndex == -1) {
-                            mapping.mappedIndex = 0;
-                        } else {
-                            mapping.mappedIndex = -1;
-                            if (loadedModel->boneOrderCount > 1) {
-                                for (std::int32_t j = 1;
-                                     j < static_cast<std::int32_t>(
-                                             loadedModel->boneOrderCount); ++j)
-                                    if (boneMappings[mapping.sourceIndex]
-                                            .mappedIndex ==
-                                        mdl::BoneOrder(model)[j].boneIndex) {
-                                        mapping.mappedIndex = j;
-                                        break;
-                                    }
-                            }
-                        }
-                        LogPmmModelStage(fd, "rigid-item", i,
-                                         mapping.mappedIndex, &mapping);
-                    }
-                    LogPmmModelStage(fd, "mapping-complete", 0, 0, model);
-
-                    }  // firstPass guard
-
-                    // structure-difference gate (0x4519AF..0x451A44).
-                    // x64 0x7FF7CB49A9E4 (first pass): EN prints the plain
-                    // structure text against sourceName, JP a bare quoted
-                    // name (aS_8 "\"%s\"", x64 0x7FF7CB5508E0) - NOT the
-                    // long kJpStructFmt text.  Every re-test after an
-                    // r==3 re-load (x64 0x7FF7CB49B265..0x7FF7CB49B294)
-                    // switches to the "too" variants: EN "This model
-                    // structure is different from pmm too." (0x7FF7CB550910)
-                    // / JP kJpStructFmt (0x7FF7CB550948).
-                    if (s->EnglishUI() != 0)
-                        sprintf_s(s->state.statusText,
-                                  0x100,
-                                  reloaded
-                                      ? "This model structure is different "
-                                        "from pmm too. file:%s"
-                                      : "Model structure is different from "
-                                        "pmm. file:%s",
-                                  workspace.sourceName);
-                    else
-                        sprintf_s(s->state.statusText,
-                                  0x100,
-                                  reloaded ? kJpStructFmt : kJpQuoted,
-                                  workspace.modelName);
-                    if (workspace.morphsMatch != 0 && workspace.displaysMatch != 0) break;
-
-                    const INT_PTR r = DialogBoxParamA(
-                        hInst,
-                        MAKEINTRESOURCEA(s->EnglishUI() != 0 ? 0x331
-                                                           : 0x330),
-                        main, DialogFuncStub, 0);
-                    // x64 分派表（0x7FF7CB49AA72..0x7FF7CB49BB78）：
-                    //   r==2/r==5 -> 中止装载（0x49AA88 jnz 0x49D73F）
-                    //   r==3      -> 丢弃当前模型、弹文件对话框重载（0x49AA8E）
-                    //   r==4      -> 跳过该模型（0x49B29D cmp 4）
-                    //   其余值    -> 0x49B2A1 jnz 0x49BB78，与双匹配成立时
-                    //                （0x49AA2F 的 jz）同一出口：继续状态装载
-                    if (r == 2 || r == 5) { AbortV2Load(s, fd, workspaces, modelCount); return false; }
-                    if (r == 4) {                                // 0x45231C
-                        if (model != nullptr) {
-                            ModelDispose(model);
-                            ::operator delete(model);
-                        }
-                        slots[slotByte] = nullptr;
-                        workspace.skipped = 1;
-                        doSkip = true;
-                        skipFrom4 = true;
-                        firstPass = false;  // r==4: counts/names consumed
-                        break;
-                    }
-                    if (r != 3)
-                        break;  // 非 3 非 4：直接走状态装载，不重载
-                    // r == 3: re-load a different file
-                    if (model != nullptr) {                      // 0x451A5A
-                        ModelDispose(model);
-                        ::operator delete(model);
-                    }
-                    {
-                        unsigned char* nm2 = static_cast<unsigned char*>(
-                            operator new(mdl::kSize));
-                        if (nm2 != nullptr) IdentityCtor(nm2);
-                        slots[slotByte] = nm2;
-                        std::memset(slots[slotByte], 0, mdl::kSize);
-                        ModelInitDefaults(slots[slotByte]);
-                        model = slots[slotByte];
-                    }
-                    SetCurrentDirectoryW(reinterpret_cast<const wchar_t*>(
-                        s->state.exeDir));
-                    swprintf_s(ofnFile, 0x100, L"%s", ofnFile); // quirk
-                    {
-                        OPENFILENAMEW ofn;
-                        std::memset(&ofn, 0, sizeof(ofn));
-                        ofn.lStructSize = sizeof(ofn);
-                        ofn.hwndOwner =
-                            s->state.floatingWindow
-                                ? reinterpret_cast<HWND>(
-                                      s->state.floatingWindow)
-                                : main;
-                        ofn.lpstrFilter = kWFilterModel;
-                        ofn.lpstrFile = ofnFile;
-                        ofn.nMaxFile = 0x100;
-                        ofn.Flags = OFN_FILEMUSTEXIST;
-                        ofn.lpstrInitialDir =
-                            (GetMenuState(GetMenu(main), 0x12D, 0) & 8)
-                                ? reinterpret_cast<LPCWSTR>(
-                                      s->state.dirModel)
-                                : kWUserModel;
-                        ofn.lpstrDefExt = L"pmd;pmx";
-                        ofn.nMaxFileTitle = 0x100;
-                        ofn.lpstrFileTitle = ofnTitle;
-                        ofn.lpstrTitle =
-                            s->EnglishUI() != 0
-                                ? L"load model"
-                                : reinterpret_cast<LPCWSTR>(kWOpenFile);
-                        if (!GetOpenFileNameW(&ofn)) { AbortV2Load(s, fd, workspaces, modelCount); return false; }
-                        if (GetMenuState(GetMenu(main), 0x12D, 0) & 8) {
-                            wchar_t* d = ExtractDirFromPath(
-                            paths.projectDirectory,
-                                ofnFile);
-                            wcscpy_s(
-                                reinterpret_cast<wchar_t*>(s->state.dirModel),
-                                0x3E8, d);
-                        }
-                    }
-                    if (!ModelLoadPMD(
-                            model, main, ofnFile, wrap,
-                            static_cast<int>(reinterpret_cast<
-                                std::uintptr_t>(s->state.exeDir)),
-                            0, s->EnglishUI(),
-                            s->Physics(),
-                            paths)) {                             // 0x4544FD
-                        if (s->EnglishUI() != 0)
-                            MessageBoxA(main, "Cannot open the model file",
-                                        "open file", 0);
-                        else
-                            MessageBoxA(main, kJpCannotOpenModel,
-                                        kJpOpenCaption, 0);
-                        AbortV2Load(s, fd, workspaces, modelCount);
-                        return false;
-                    }
-                    // re-run the mapping against the new model
-                    // (0x451CCB..0x4522DC), then re-test the gate
-                    mdl::ModelRecord* const reloadedModel = mdl::Mdl(model);
-                    workspace.boneGroupsMatch =
-                        workspace.boneGroupCount == reloadedModel->groupCount ? 1 : 0;
-                    workspace.displaysMatch =
-                        workspace.displayCount == reloadedModel->boneCount ? 1 : 0;
-                    NameMapping* const boneMappings =
-                        workspace.boneNameMap;
-                    for (std::int32_t i = 0; i < workspace.displayCount; ++i) {
-                        NameMapping& mapping = boneMappings[i];
-                        mapping.mappedIndex = i;
-                        if (workspace.displayCount == reloadedModel->boneCount) {
-                            if (strcmp(mapping.name,
-                                       mdl::Bones(model)[i].name) != 0) {
-                                workspace.displaysMatch = 0;
-                                mapping.mappedIndex = -1;
-                                for (std::int32_t j = 0;
-                                     j < static_cast<std::int32_t>(
-                                             reloadedModel->boneCount); ++j)
-                                    if (strcmp(mapping.name,
-                                               mdl::Bones(model)[j].name) == 0) {
-                                        mapping.mappedIndex = j;
-                                        break;
-                                    }
-                            }
-                        } else {
-                            mapping.mappedIndex = -1;
-                            for (std::int32_t j = 0;
-                                 j < static_cast<std::int32_t>(
-                                         reloadedModel->boneCount); ++j)
-                                if (strcmp(mapping.name,
-                                           mdl::Bones(model)[j].name) == 0) {
-                                    mapping.mappedIndex = j;
-                                    break;
-                                }
-                        }
-                    }
-                    workspace.morphsMatch =
-                        workspace.morphCount == reloadedModel->morphCount ? 1 : 0;
-                    NameMapping* const morphMappings =
-                        workspace.morphNameMap;
-                    for (std::int32_t i = 0; i < workspace.morphCount; ++i) {
-                        NameMapping& mapping = morphMappings[i];
-                        mapping.mappedIndex = i;
-                        if (workspace.morphCount == reloadedModel->morphCount) {
-                            if (strcmp(mapping.name,
-                                       mdl::Morphs(model)[i].name) != 0) {
-                                workspace.morphsMatch = 0;
-                                mapping.mappedIndex = -1;
-                                for (std::int32_t j = 0;
-                                     j < static_cast<std::int32_t>(
-                                             reloadedModel->morphCount); ++j)
-                                    if (strcmp(mapping.name,
-                                               mdl::Morphs(model)[j].name) == 0) {
-                                        mapping.mappedIndex = j;
-                                        break;
-                                    }
-                            }
-                        } else {
-                            mapping.mappedIndex = -1;
-                            for (std::int32_t j = 0;
-                                 j < static_cast<std::int32_t>(
-                                         reloadedModel->morphCount); ++j)
-                                if (strcmp(mapping.name,
-                                           mdl::Morphs(model)[j].name) == 0) {
-                                    mapping.mappedIndex = j;
-                                    break;
-                                }
-                        }
-                    }
-                    IndexMapping* const ikMappings =
-                        workspace.ikIndexMap;
-                    for (std::int32_t i = 0; i < workspace.ikCount; ++i) {
-                        IndexMapping& mapping = ikMappings[i];
-                        mapping.mappedIndex = -1;
-                        // x64 0x7FF7CB49B186: same boneMappings
-                        // indirection as the first pass above.
-                        for (std::int32_t j = 0;
-                             j < static_cast<std::int32_t>(
-                                     reloadedModel->ikChainCount); ++j)
-                            if (boneMappings[mapping.sourceIndex]
-                                    .mappedIndex ==
-                                mdl::IkChains(model)[j].boneIndex) {
-                                mapping.mappedIndex = j;
-                                break;
-                            }
-                    }
-                    IndexMapping* const rigidMappings =
-                        workspace.rigidIndexMap;
-                    for (std::int32_t i = 0; i < workspace.rigidBodyCount; ++i) {
-                        IndexMapping& mapping = rigidMappings[i];
-                        if (mapping.sourceIndex == -1) {
-                            mapping.mappedIndex = 0;
-                        } else {
-                            mapping.mappedIndex = -1;
-                            if (mdl::BoneOrderCount(model) > 1) {
-                                mdl::BoneOrderEntry* const selectors =
-                                    mdl::BoneOrder(model);
-                                for (std::int32_t j = 1;
-                                     j < static_cast<std::int32_t>(
-                                             mdl::BoneOrderCount(model)); ++j)
-                                    if (boneMappings[mapping.sourceIndex]
-                                            .mappedIndex ==
-                                        selectors[j].boneIndex) {
-                                        mapping.mappedIndex = j;
-                                        break;
-                                    }
-                            }
-                        }
-                    }
-                    firstPass = false;
-                    reloaded = true;  // gate text switches to the "too"
-                                      // variants for every further re-test
+            if (r != 3) break;  // 非 3 非 4：直接走状态装载，不重载
+            // r == 3: re-load a different file
+            if (model != nullptr) {  // 0x451A5A
+                ModelDispose(model);
+                ::operator delete(model);
+            }
+            {
+                unsigned char* nm2 =
+                    static_cast<unsigned char*>(operator new(mdl::kSize));
+                if (nm2 != nullptr) IdentityCtor(nm2);
+                slots[slotByte] = nm2;
+                std::memset(slots[slotByte], 0, mdl::kSize);
+                ModelInitDefaults(slots[slotByte]);
+                model = slots[slotByte];
+            }
+            SetCurrentDirectoryW(reinterpret_cast<const wchar_t*>(s->state.exeDir));
+            swprintf_s(ofnFile, 0x100, L"%s", ofnFile);  // quirk
+            {
+                OPENFILENAMEW ofn;
+                std::memset(&ofn, 0, sizeof(ofn));
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = s->state.floatingWindow
+                                    ? reinterpret_cast<HWND>(s->state.floatingWindow)
+                                    : main;
+                ofn.lpstrFilter = kWFilterModel;
+                ofn.lpstrFile = ofnFile;
+                ofn.nMaxFile = 0x100;
+                ofn.Flags = OFN_FILEMUSTEXIST;
+                ofn.lpstrInitialDir = (GetMenuState(GetMenu(main), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8)
+                                          ? reinterpret_cast<LPCWSTR>(s->state.dirModel)
+                                          : kWUserModel;
+                ofn.lpstrDefExt = L"pmd;pmx";
+                ofn.nMaxFileTitle = 0x100;
+                ofn.lpstrFileTitle = ofnTitle;
+                ofn.lpstrTitle = s->EnglishUI() != 0
+                                     ? L"load model"
+                                     : reinterpret_cast<LPCWSTR>(kWOpenFile);
+                if (!GetOpenFileNameW(&ofn)) {
+                    AbortV2Load(s, fd, workspaces, modelCount);
+                    return false;
+                }
+                if (GetMenuState(GetMenu(main), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) {
+                    wchar_t* d = ExtractDirFromPath(paths.projectDirectory, ofnFile);
+                    wcscpy_s(reinterpret_cast<wchar_t*>(s->state.dirModel), 0x3E8, d);
                 }
             }
-
-            if (doSkip) {
-                LoadSceneV2_SkipRecordConsumption(fd, workspace, text,
-                                                 skipFrom4);
-            } else {
-                LoadSceneV2_ModelStateLoad(ctx, fd, model, workspace,
-                                           modelIdx, modelCount);
+            if (!ModelLoadPMD(
+                    model, main, ofnFile, wrap,
+                    static_cast<int>(reinterpret_cast<std::uintptr_t>(s->state.exeDir)),
+                    0, s->EnglishUI(), s->Physics(),
+                    paths)) {  // 0x4544FD
+                if (s->EnglishUI() != 0)
+                    MessageBoxA(main, "Cannot open the model file", "open file", 0);
+                else
+                    MessageBoxA(main, kJpCannotOpenModel, kJpOpenCaption, 0);
+                AbortV2Load(s, fd, workspaces, modelCount);
+                return false;
             }
+            // re-run the mapping against the new model
+            // (0x451CCB..0x4522DC), then re-test the gate
+            mdl::ModelRecord* const reloadedModel = mdl::Mdl(model);
+            workspace.boneGroupsMatch =
+                workspace.boneGroupCount == reloadedModel->groupCount ? 1 : 0;
+            workspace.displaysMatch =
+                workspace.displayCount == reloadedModel->boneCount ? 1 : 0;
+            NameMapping* const boneMappings = workspace.boneNameMap;
+            for (std::int32_t i = 0; i < workspace.displayCount; ++i) {
+                NameMapping& mapping = boneMappings[i];
+                mapping.mappedIndex = i;
+                if (workspace.displayCount == reloadedModel->boneCount) {
+                    if (strcmp(mapping.name, mdl::Bones(model)[i].name) != 0) {
+                        workspace.displaysMatch = 0;
+                        mapping.mappedIndex = -1;
+                        for (std::int32_t j = 0;
+                             j < static_cast<std::int32_t>(reloadedModel->boneCount);
+                             ++j)
+                            if (strcmp(mapping.name, mdl::Bones(model)[j].name) == 0) {
+                                mapping.mappedIndex = j;
+                                break;
+                            }
+                    }
+                } else {
+                    mapping.mappedIndex = -1;
+                    for (std::int32_t j = 0;
+                         j < static_cast<std::int32_t>(reloadedModel->boneCount); ++j)
+                        if (strcmp(mapping.name, mdl::Bones(model)[j].name) == 0) {
+                            mapping.mappedIndex = j;
+                            break;
+                        }
+                }
+            }
+            workspace.morphsMatch =
+                workspace.morphCount == reloadedModel->morphCount ? 1 : 0;
+            NameMapping* const morphMappings = workspace.morphNameMap;
+            for (std::int32_t i = 0; i < workspace.morphCount; ++i) {
+                NameMapping& mapping = morphMappings[i];
+                mapping.mappedIndex = i;
+                if (workspace.morphCount == reloadedModel->morphCount) {
+                    if (strcmp(mapping.name, mdl::Morphs(model)[i].name) != 0) {
+                        workspace.morphsMatch = 0;
+                        mapping.mappedIndex = -1;
+                        for (std::int32_t j = 0;
+                             j < static_cast<std::int32_t>(reloadedModel->morphCount);
+                             ++j)
+                            if (strcmp(mapping.name, mdl::Morphs(model)[j].name) == 0) {
+                                mapping.mappedIndex = j;
+                                break;
+                            }
+                    }
+                } else {
+                    mapping.mappedIndex = -1;
+                    for (std::int32_t j = 0;
+                         j < static_cast<std::int32_t>(reloadedModel->morphCount); ++j)
+                        if (strcmp(mapping.name, mdl::Morphs(model)[j].name) == 0) {
+                            mapping.mappedIndex = j;
+                            break;
+                        }
+                }
+            }
+            IndexMapping* const ikMappings = workspace.ikIndexMap;
+            for (std::int32_t i = 0; i < workspace.ikCount; ++i) {
+                IndexMapping& mapping = ikMappings[i];
+                mapping.mappedIndex = -1;
+                // x64 0x7FF7CB49B186: same boneMappings
+                // indirection as the first pass above.
+                for (std::int32_t j = 0;
+                     j < static_cast<std::int32_t>(reloadedModel->ikChainCount); ++j)
+                    if (boneMappings[mapping.sourceIndex].mappedIndex ==
+                        mdl::IkChains(model)[j].boneIndex) {
+                        mapping.mappedIndex = j;
+                        break;
+                    }
+            }
+            IndexMapping* const rigidMappings = workspace.rigidIndexMap;
+            for (std::int32_t i = 0; i < workspace.rigidBodyCount; ++i) {
+                IndexMapping& mapping = rigidMappings[i];
+                if (mapping.sourceIndex == -1) {
+                    mapping.mappedIndex = 0;
+                } else {
+                    mapping.mappedIndex = -1;
+                    if (mdl::BoneOrderCount(model) > 1) {
+                        mdl::BoneOrderEntry* const selectors = mdl::BoneOrder(model);
+                        for (std::int32_t j = 1;
+                             j < static_cast<std::int32_t>(mdl::BoneOrderCount(model));
+                             ++j)
+                            if (boneMappings[mapping.sourceIndex].mappedIndex ==
+                                selectors[j].boneIndex) {
+                                mapping.mappedIndex = j;
+                                break;
+                            }
+                    }
+                }
+            }
+            firstPass = false;
+            reloaded = true;  // gate text switches to the "too"
+                              // variants for every further re-test
+        }
+    }
+
+    if (doSkip) {
+        LoadSceneV2_SkipRecordConsumption(fd, workspace, text, skipFrom4);
+    } else {
+        LoadSceneV2_ModelStateLoad(ctx, fd, model, workspace, modelIdx, modelCount);
+    }
 
     return true;
 }
 
-
 // ---- 0x454127..0x454213: post-loop quirk + free/NULL the four tracks
 // and the 255 accessory objects/tracks ---------------------------------
 static void LoadSceneV2_ReleaseTracks(PmmV2LoadContext& ctx, int fd,
-                                    PmmModelLoadWorkspace* workspaces,
-                                    unsigned char modelIdx,
-                                    unsigned char modelCount) {
+                                      PmmModelLoadWorkspace* workspaces,
+                                      unsigned char modelIdx,
+                                      unsigned char modelCount) {
     auto* const s = ctx.s;
     unsigned char** const slots = ctx.slots;
     // ---- post-loop quirk (0x454127) --------------------------------------
     if (slots[s->SelectedModelSlot()] == nullptr &&
-        s->state.optflag[0] == 0)
-        s->state.optflag[0] = 1;
+        s->CameraMode() == 0)
+        s->CameraMode() = 1;
 
     // ---- track free + null (0x45413B..0x454213) ---------------------------
     LogPmmModelStage(fd, "model-loop-complete", modelIdx,
@@ -1622,9 +1559,7 @@ static void LoadSceneV2_ReleaseTracks(PmmV2LoadContext& ctx, int fd,
     LogPmmModelStage(fd, "track-clear-complete", 0, 0, nullptr);
     LogPmmModelStage(fd, "overlay-buffer-after-track-clear", 0, 0,
                      s->OverlayVertices());
-
 }
-
 
 // ---- 0x454230..0x454C8A: UI combo reset run + model re-population by
 // order byte + register list per edit mode ------------------------------
@@ -1680,7 +1615,7 @@ static void LoadSceneV2_ResetCombos(PmmV2LoadContext& ctx) {
                      reinterpret_cast<LPARAM>(name));
     }
     SendMessageA(GetDlgItem(main, panel::kInterpCurveCombo), CB_RESETCONTENT, 0, 0); // 0x4548BB
-    if (s->state.optflag[0] != 0) {
+    if (s->CameraMode() != 0) {
         if (s->EnglishUI() != 0) {
             SendMessageA(GetDlgItem(main, panel::kInterpCurveCombo), CB_ADDSTRING, 0,
                          reinterpret_cast<LPARAM>("x axis move"));
@@ -1881,8 +1816,22 @@ static void LoadSceneV2_LightTrack(PmmV2LoadContext& ctx, int fd) {
     Rd(fd, s->LightDirection() + 1, sizeof(float));
     Rd(fd, s->LightDirection() + 2, sizeof(float));
     {
-        const int sliderIds[] = {455, 456, 457, 458, 459, 460};
-        const int editIds[] = {461, 462, 463, 464, 465, 466};
+        const int sliderIds[] = {
+            panel::kLightColorSliderR,
+            panel::kLightColorSliderG,
+            panel::kLightColorSliderB,
+            panel::kLightDirSliderX,
+            panel::kLightDirSliderY,
+            panel::kLightDirSliderZ
+        };
+        const int editIds[] = {
+            panel::kLightColorEditR,
+            panel::kLightColorEditG,
+            panel::kLightColorEditB,
+            panel::kLightDirEditX,
+            panel::kLightDirEditY,
+            panel::kLightDirEditZ
+        };
         const float values[] = {
             s->LightColor()[0], s->LightColor()[1], s->LightColor()[2],
             s->LightDirection()[0], s->LightDirection()[1],
@@ -1938,7 +1887,7 @@ static bool LoadSceneV2_AccessoryBlock(PmmV2LoadContext& ctx, int fd) {
     SendMessageA(GetDlgItem(main, panel::kAttachBoneCombo), CB_RESETCONTENT, 0, 0);
     unsigned char accCount = 0;
     Rd(fd, &accCount, 1);                                       // 0x455999
-    EnableMenuItem(GetMenu(main), 0xF9, accCount == 0 ? 1 : 0);
+    EnableMenuItem(GetMenu(main), MDS_CMD_ACCESSORY_SETTINGS, accCount == 0 ? 1 : 0);
     LogPmmModelStage(fd, "accessory-count", accCount, 0,
                      s->OverlayVertices());
     for (unsigned char i = 0; i < accCount; ++i) {
@@ -1995,7 +1944,7 @@ static bool LoadSceneV2_AccessoryBlock(PmmV2LoadContext& ctx, int fd) {
             ofn.nMaxFile = 0x100;
             ofn.Flags = OFN_FILEMUSTEXIST;
             ofn.lpstrInitialDir =
-                (GetMenuState(GetMenu(main), 0x12D, 0) & 8)
+                (GetMenuState(GetMenu(main), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8)
                     ? reinterpret_cast<LPCWSTR>(s->state.dirAccs)
                     : kWUserAcc;                     // 0x7FF7CB49F294
             ofn.lpstrDefExt = L"x";
@@ -2011,7 +1960,7 @@ static bool LoadSceneV2_AccessoryBlock(PmmV2LoadContext& ctx, int fd) {
                 HandleWindowSize(s);                            // 0x443300
                 return false;
             }
-            if (GetMenuState(GetMenu(main), 0x12D, 0) & 8) {
+            if (GetMenuState(GetMenu(main), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) {
                 wchar_t* d = ExtractDirFromPath(
                     paths.projectDirectory,
                     ofnFile);
@@ -2099,18 +2048,10 @@ static bool LoadSceneV2_AccessoryBlock(PmmV2LoadContext& ctx, int fd) {
     return true;
 }
 
-
-// ---- 0x456617..0x45776E: config block + label_708 menu/checkbox run
-// (the goto stays inside this function) ---------------------------------
-static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
+static void RestoreSceneTimeline(PmmV2LoadContext& ctx, int fd) {
     auto* const s = ctx.s;
     HWND const main = ctx.main;
-    PathResolutionWorkspace& paths = *ctx.paths;
-    D3DRenderer* const wrap = ctx.wrap;
-    unsigned char** const slots = ctx.slots;
-    mdl::AccessoryRecord** const accs = ctx.accs;
     char* const text = ctx.text;
-    char* const mbPath = ctx.mbPath;
     // ---- config block head (0x456617..0x4566CB) ---------------------------
     Rd(fd, &s->state.currentFrame, 4);
     Rd(fd, &s->state.timelineStartFrame, 4);
@@ -2118,349 +2059,347 @@ static void LoadSceneV2_ConfigBlock(PmmV2LoadContext& ctx, int fd) {
     {
         HWND item = GetDlgItem(main, panel::kCurrentFrameEdit);
         SendMessageA(item, EM_SETSEL, 0, GetWindowTextLengthA(item));
-        sprintf_s(text, 0x100, "%d",
-                  s->state.currentFrame);
-        SendMessageA(item, EM_REPLACESEL, 0,
-                     reinterpret_cast<LPARAM>(text));
+        sprintf_s(text, 0x100, "%d", s->state.currentFrame);
+        SendMessageA(item, EM_REPLACESEL, 0, reinterpret_cast<LPARAM>(text));
     }
-    PostModelReload2(s);                                        // 0x40D940
-    PostLanguageSweep(s);                                       // 0x42F1E0
-    HandleWindowSize(s);                                        // 0x443300
+    PostModelReload2(s);           // 0x40D940
+    RebuildTimelineTrackPanel(s);  // 0x42F1E0
+    HandleWindowSize(s);           // 0x443300
     ApplyModelComboSelection(s);
 
     // register radios (0x4566DA..0x456924)
     std::int32_t savedEditMode = 0;
-    Rd(fd, &savedEditMode, 4);                                  // 0x4566DA
+    Rd(fd, &savedEditMode, 4);  // 0x4566DA
     s->EditMode() = static_cast<ViewportEditMode>(savedEditMode);
     {
         const ViewportEditMode mode = s->EditMode();
         switch (mode) {
             case ViewportEditMode::Bone:
-                SendMessageA(GetDlgItem(main, panel::kBoneSelectRadio), BM_SETCHECK, 1, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK, 0, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoneMoveRadio), BM_SETCHECK, 0, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoneRotateRadio), BM_SETCHECK, 0, 0);
+                SendMessageA(GetDlgItem(main, panel::kBoneSelectRadio), BM_SETCHECK, 1,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK, 0,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoneMoveRadio), BM_SETCHECK, 0,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoneRotateRadio), BM_SETCHECK, 0,
+                             0);
                 break;
             case ViewportEditMode::BoneBox:
-                SendMessageA(GetDlgItem(main, panel::kBoneSelectRadio), BM_SETCHECK, 0, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK, 1, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoneMoveRadio), BM_SETCHECK, 0, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoneRotateRadio), BM_SETCHECK, 0, 0);
+                SendMessageA(GetDlgItem(main, panel::kBoneSelectRadio), BM_SETCHECK, 0,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK, 1,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoneMoveRadio), BM_SETCHECK, 0,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoneRotateRadio), BM_SETCHECK, 0,
+                             0);
                 break;
             case ViewportEditMode::None:
                 // 0x4567C3..0x45682C: case 2 unchecks ALL four radios.
-                SendMessageA(GetDlgItem(main, panel::kBoneSelectRadio), BM_SETCHECK, 0, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK, 0, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoneMoveRadio), BM_SETCHECK, 0, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoneRotateRadio), BM_SETCHECK, 0, 0);
+                SendMessageA(GetDlgItem(main, panel::kBoneSelectRadio), BM_SETCHECK, 0,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK, 0,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoneMoveRadio), BM_SETCHECK, 0,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoneRotateRadio), BM_SETCHECK, 0,
+                             0);
                 break;
             case ViewportEditMode::Camera:
                 // 0x456862..0x45674D: case 3 checks 0x1ED (493) only.
-                SendMessageA(GetDlgItem(main, panel::kBoneSelectRadio), BM_SETCHECK, 0, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK, 0, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoneMoveRadio), BM_SETCHECK, 0, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoneRotateRadio), BM_SETCHECK, 1, 0);
+                SendMessageA(GetDlgItem(main, panel::kBoneSelectRadio), BM_SETCHECK, 0,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK, 0,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoneMoveRadio), BM_SETCHECK, 0,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoneRotateRadio), BM_SETCHECK, 1,
+                             0);
                 break;
             case ViewportEditMode::Light:
-                SendMessageA(GetDlgItem(main, panel::kBoneSelectRadio), BM_SETCHECK, 0, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK, 0, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoneMoveRadio), BM_SETCHECK, 1, 0);
-                SendMessageA(GetDlgItem(main, panel::kBoneRotateRadio), BM_SETCHECK, 0, 0);
+                SendMessageA(GetDlgItem(main, panel::kBoneSelectRadio), BM_SETCHECK, 0,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoxSelectRadio), BM_SETCHECK, 0,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoneMoveRadio), BM_SETCHECK, 1,
+                             0);
+                SendMessageA(GetDlgItem(main, panel::kBoneRotateRadio), BM_SETCHECK, 0,
+                             0);
                 break;
             default:
                 break;  // 0x4568B1: straight to LABEL_668
         }
     }
-    {
-        unsigned char b = 0;
-        Rd(fd, &b, 1);                                          // 0x45692B
-        if (b == 1) {
-            SendMessageA(GetDlgItem(main, panel::kCameraRefModelCheckbox), BM_SETCHECK, 1, 0);
-            SendMessageA(GetDlgItem(main, panel::kCameraRefBoneCheckbox), BM_SETCHECK, 0, 0);
-        } else if (b == 2) {
-            SendMessageA(GetDlgItem(main, panel::kCameraRefModelCheckbox), BM_SETCHECK, 0, 0);
-            SendMessageA(GetDlgItem(main, panel::kCameraRefBoneCheckbox), BM_SETCHECK, 1, 0);
-        } else {
-            SendMessageA(GetDlgItem(main, panel::kCameraRefModelCheckbox), BM_SETCHECK, 0, 0);
-            SendMessageA(GetDlgItem(main, panel::kCameraRefBoneCheckbox), BM_SETCHECK, 0, 0);
-        }
-        Rd(fd, &b, 1);                                          // 0x4569E9
-        s->state.playbackLoopEnabled = b ? 1 : 0;
-        SendMessageA(GetDlgItem(main, 411), BM_SETCHECK, b ? 1 : 0, 0);
-        Rd(fd, &b, 1);                                          // 0x456A41
-        s->state.playbackReturnsToStartFrame = b ? 1 : 0;
-        SendMessageA(GetDlgItem(main, 413), BM_SETCHECK, b ? 1 : 0, 0);
-        Rd(fd, &b, 1);                                          // 0x456A99
-        s->state.playbackStartsAtCurrentFrame = b ? 1 : 0;
-        SendMessageA(GetDlgItem(main, 414), BM_SETCHECK, b ? 1 : 0, 0);
-        std::int32_t playStartFrame = 0, playStopFrame = 0;
-        Rd(fd, &playStartFrame, 4);                                         // 0x456AF4
-        {
-            HWND item = GetDlgItem(main, panel::kPlayStartFrameEdit);
-            SendMessageA(item, EM_SETSEL, 0, GetWindowTextLengthA(item));
-            sprintf_s(text, 0x100, "%d", playStartFrame);
-            SendMessageA(item, EM_REPLACESEL, 0,
-                         reinterpret_cast<LPARAM>(text));
-        }
-        Rd(fd, &playStopFrame, 4);                                         // 0x456B83
-        {
-            HWND item = GetDlgItem(main, panel::kPlayStopFrameEdit);
-            SendMessageA(item, EM_SETSEL, 0, GetWindowTextLengthA(item));
-            sprintf_s(text, 0x100, "%d", playStopFrame);
-            SendMessageA(item, EM_REPLACESEL, 0,
-                         reinterpret_cast<LPARAM>(text));
-        }
-        ClearTimelineAndCurveDCs(s);                                           // 0x456C09
-        Rd(fd, &b, 1);                                          // 0x456C16
-        s->state.waveEnabled = b ? 1 : 0;
-        Rd(fd, mbPath, 0x100);                                  // 0x456C43
-        ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap),
-                            mbPath,
-                            reinterpret_cast<wchar_t*>(s->state.wavPath),
-                            0x100, paths);
-        if (s->state.waveEnabled != 0)
-            LoadWaveFile(s);   // 0x418500 (app-taking; path at +0xD0)
-        std::int32_t w1 = 0, w2 = 0, w3 = 0;
-        Rd(fd, &w1, 4);                                         // 0x456C8C
-        Rd(fd, &w2, 4);
-        Rd(fd, &w3, 4);
-        Rd(fd, mbPath, 0x100);                                  // 0x456CBF
-        ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap),
-                            mbPath,
-                            s->AviBackgroundPath(),
-                            0x100, paths);
-        if (mbPath[0] != 0)
-            LoadAviFile(s);    // 0x433250 (app-taking; path at +0x9E1EC)
-        // AVI block (0x456D0D..0x456E25)
+}
+
+static void RestoreSceneMedia(PmmV2LoadContext& ctx, int fd, unsigned char& b) {
+    auto* const s = ctx.s;
+    HWND const main = ctx.main;
+    PathResolutionWorkspace& paths = *ctx.paths;
+    D3DRenderer* const wrap = ctx.wrap;
+    char* const mbPath = ctx.mbPath;
+    ClearTimelineAndCurveDCs(s);  // 0x456C09
+    Rd(fd, &b, 1);                // 0x456C16
+    s->state.waveEnabled = b ? 1 : 0;
+    Rd(fd, mbPath, 0x100);  // 0x456C43
+    ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap), mbPath,
+                        reinterpret_cast<wchar_t*>(s->state.wavPath), 0x100, paths);
+    if (s->state.waveEnabled != 0)
+        LoadWaveFile(s);  // 0x418500 (app-taking; path at +0xD0)
+    std::int32_t w1 = 0, w2 = 0, w3 = 0;
+    Rd(fd, &w1, 4);  // 0x456C8C
+    Rd(fd, &w2, 4);
+    Rd(fd, &w3, 4);
+    Rd(fd, mbPath, 0x100);  // 0x456CBF
+    ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap), mbPath,
+                        s->AviBackgroundPath(), 0x100, paths);
+    if (mbPath[0] != 0) LoadAviFile(s);  // 0x433250 (app-taking; path at +0x9E1EC)
+    // AVI block (0x456D0D..0x456E25)
+    if (s->AviBackgroundEnabled() == 1) {
+        Rd(fd, &s->AviBackgroundEnabled(), 4);
+        s->AviOffsetX() = w1;
+        s->AviOffsetY() = w2;
+        std::memcpy(&s->AviScale(), &w3, sizeof w3);
         if (s->AviBackgroundEnabled() == 1) {
-            Rd(fd, &s->AviBackgroundEnabled(), 4);
-            s->AviOffsetX() = w1;
-            s->AviOffsetY() = w2;
-            std::memcpy(&s->AviScale(), &w3, sizeof w3);
-            if (s->AviBackgroundEnabled() == 1) {
-                CheckMenuItem(GetMenu(main), 0xD8, 8);
-                AviBgOverlayRefresh(s);
-            } else {
-                CheckMenuItem(GetMenu(main), 0xD8, 0);
-            }
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BACKGROUND_VIDEO, 8);
+            AviBgOverlayRefresh(s);
         } else {
-            Rd(fd, &s->AviBackgroundEnabled(), 4);
-            s->AviBackgroundEnabled() = 0;
-            CheckMenuItem(GetMenu(main), 0xD8, 0);
-            if (s->AviFrameReader() != nullptr) {
-                AVIStreamGetFrameClose(s->AviFrameReader());
-                s->AviFrameReader() = nullptr;
-            }
-            if (s->AviStream() != nullptr) {
-                AVIStreamRelease(s->AviStream());
-                s->AviStream() = nullptr;
-            }
-            if (s->AviFile() != nullptr) {
-                AVIFileRelease(s->AviFile());
-                s->AviFile() = nullptr;
-            }
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BACKGROUND_VIDEO, 0);
         }
-        std::int32_t p1 = 0, p2 = 0, p3 = 0;
-        Rd(fd, &p1, 4);                                         // 0x456E25
-        Rd(fd, &p2, 4);
-        Rd(fd, &p3, 4);
-        Rd(fd, mbPath, 0x100);                                  // 0x456E58
-        ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap),
-                            mbPath,
-                            s->PictureBackgroundPath(),
-                            0x100, paths);
-        s->PictureBackgroundEnabled() = 0;
-        if (mbPath[0] != 0) LoadBackgroundPicture(s);   // 0x4337A0
-        if (s->PictureBackgroundEnabled() != 0) {
-            Rd(fd, &b, 1);                                      // 0x456EAF
-            s->PictureBackgroundEnabled() = b ? 1 : 0;
-            s->PictureOffsetX() = p1;
-            s->PictureOffsetY() = p2;
-            std::memcpy(&s->PictureScale(), &p3, sizeof p3);
-            if (s->PictureBackgroundEnabled() != 0) {
-                CheckMenuItem(GetMenu(main), 0xE9, 8);
-                PicBgOverlayRefresh(s);
-            } else {
-                CheckMenuItem(GetMenu(main), 0xE9, 0);
-            }
-        } else {
-            Rd(fd, &b, 1);                                      // 0x456F29
-            s->PictureBackgroundEnabled() = 0;
-            CheckMenuItem(GetMenu(main), 0xE9, 0);
+    } else {
+        Rd(fd, &s->AviBackgroundEnabled(), 4);
+        s->AviBackgroundEnabled() = 0;
+        CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BACKGROUND_VIDEO, 0);
+        if (s->AviFrameReader() != nullptr) {
+            AVIStreamGetFrameClose(s->AviFrameReader());
+            s->AviFrameReader() = nullptr;
+        }
+        if (s->AviStream() != nullptr) {
+            AVIStreamRelease(s->AviStream());
+            s->AviStream() = nullptr;
+        }
+        if (s->AviFile() != nullptr) {
+            AVIFileRelease(s->AviFile());
+            s->AviFile() = nullptr;
         }
     }
-    {
-        unsigned char b = 0;
-        const HWND owner =
-            s->state.floatingWindow
-                ? reinterpret_cast<HWND>(s->state.floatingWindow)
-                : main;
-        Rd(fd, &b, 1);                                          // 0x456F53
-        if (b != 0) {
-            s->FpsOverlayEnabled() = 1;
-            CheckMenuItem(GetMenu(main), 0xD3, 8);
-            SendMessageA(GetDlgItem(owner, panel::kInfoCheckbox), BM_SETCHECK, 1, 0);
+    std::int32_t p1 = 0, p2 = 0, p3 = 0;
+    Rd(fd, &p1, 4);  // 0x456E25
+    Rd(fd, &p2, 4);
+    Rd(fd, &p3, 4);
+    Rd(fd, mbPath, 0x100);  // 0x456E58
+    ResolveAnsiUserFile(reinterpret_cast<unsigned char*>(wrap), mbPath,
+                        s->PictureBackgroundPath(), 0x100, paths);
+    s->PictureBackgroundEnabled() = 0;
+    if (mbPath[0] != 0) LoadBackgroundPicture(s);  // 0x4337A0
+    if (s->PictureBackgroundEnabled() != 0) {
+        Rd(fd, &b, 1);  // 0x456EAF
+        s->PictureBackgroundEnabled() = b ? 1 : 0;
+        s->PictureOffsetX() = p1;
+        s->PictureOffsetY() = p2;
+        std::memcpy(&s->PictureScale(), &p3, sizeof p3);
+        if (s->PictureBackgroundEnabled() != 0) {
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BACKGROUND_IMAGE, 8);
+            PicBgOverlayRefresh(s);
         } else {
-            s->FpsOverlayEnabled() = 0;
-            CheckMenuItem(GetMenu(main), 0xD3, 0);
-            SendMessageA(GetDlgItem(owner, panel::kInfoCheckbox), BM_SETCHECK, 0, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BACKGROUND_IMAGE, 0);
         }
-        Rd(fd, &b, 1);                                          // 0x456FEC
-        if (b != 0) {
-            s->GroundGridEnabled() = 1;
-            CheckMenuItem(GetMenu(main), 0xD7, 8);
-            SendMessageA(GetDlgItem(owner, panel::kCoordAxisCheckbox), BM_SETCHECK, 1, 0);
-        } else {
-            s->GroundGridEnabled() = 0;
-            CheckMenuItem(GetMenu(main), 0xD7, 0);
-            SendMessageA(GetDlgItem(owner, panel::kCoordAxisCheckbox), BM_SETCHECK, 0, 0);
-        }
-        Rd(fd, &b, 1);                                          // 0x45707D
-        s->state.groundShadowEnabled = b ? 1 : 0;                // 0x918
-        CheckMenuItem(GetMenu(main), 0xDD, b ? 8 : 0);
-        Rd(fd, &s->state.fpsLimit, 4); // 0x4570CF
-        {
-            const float v = s->state.fpsLimit;
-            if (v == 1000.0f) {
-                CheckMenuItem(GetMenu(main), 0xEB, 0);
-                CheckMenuItem(GetMenu(main), 0xEC, 0);
-                CheckMenuItem(GetMenu(main), 0xEA, 8);
-            } else if (v == 30.0f) {
-                CheckMenuItem(GetMenu(main), 0xEA, 0);
-                CheckMenuItem(GetMenu(main), 0xEC, 0);
-                CheckMenuItem(GetMenu(main), 0xEB, 8);
-            } else {
-                CheckMenuItem(GetMenu(main), 0xEB, 0);
-                CheckMenuItem(GetMenu(main), 0xEA, 0);
-                CheckMenuItem(GetMenu(main), 0xEC, 8);
-            }
-        }
-        std::int32_t sm = 0;
-        Rd(fd, &sm, 4);                                         // 0x4571CF
-        // The original reads the four bytes directly into app+0x9EB84.
-        // Keeping the value only in a local makes the menu look correct but
-        // leaves the renderer in mode 0, so accessories using screen.bmp see
-        // a null screen texture instead of the previous-frame capture.
-        s->state.captureMode = static_cast<std::uint32_t>(sm);
-        switch (sm) {
-            case 0:
-                CheckMenuItem(GetMenu(main), 0xF3, 8);
-                CheckMenuItem(GetMenu(main), 0xF4, 0);
-                CheckMenuItem(GetMenu(main), 0xF5, 0);
-                CheckMenuItem(GetMenu(main), 0xF6, 0);
-                break;
-            case 1:
-                CheckMenuItem(GetMenu(main), 0xF3, 0);
-                CheckMenuItem(GetMenu(main), 0xF4, 8);
-                CheckMenuItem(GetMenu(main), 0xF5, 0);
-                CheckMenuItem(GetMenu(main), 0xF6, 0);
-                break;
-            case 2:
-                CheckMenuItem(GetMenu(main), 0xF3, 0);
-                CheckMenuItem(GetMenu(main), 0xF4, 0);
-                CheckMenuItem(GetMenu(main), 0xF5, 8);
-                CheckMenuItem(GetMenu(main), 0xF6, 0);
-                break;
-            default:
-                CheckMenuItem(GetMenu(main), 0xF3, 0);
-                CheckMenuItem(GetMenu(main), 0xF4, 0);
-                CheckMenuItem(GetMenu(main), 0xF5, 0);
-                CheckMenuItem(GetMenu(main), 0xF6, 8);
-                break;
-        }
-        // physics defaults + combos (0x45736C..0x4573FE)
-        s->state.gravityNoiseEnabled = 0;
-        s->state.gravityNoise = 10;
-        s->state.gravityMagnitude = 9.8000002f;
-        s->state.rigidBodyDisplayEnabled = 0;
-        s->state.gravityX = 0.0f;
-        s->state.gravityY = -1.0f;
-        s->state.gravityZ = 0.0f;
-        s->state.modelOutlineColorRed = 0;
-        s->state.modelOutlineColorGreen = 0;
-        s->state.modelOutlineColorBlue = 0;
-        SendMessageA(GetDlgItem(main, panel::kMainComboNormal), CB_SETCURSEL, 0, 0);
-        SendMessageA(GetDlgItem(main, panel::kBoneRegisterCombo), CB_SETCURSEL, 0, 0);
-        // 0xA0B20 + shadow distance copies (0x45740E..0x457443)
-        Rd(fd, &s->state.accessoryRenderSplitOrder, 4);
-        Rd(fd, &s->ProjectedShadowAmbientIntensity(), 4);
-        s->SetProjectedShadowAmbientRgb(s->ProjectedShadowAmbientIntensity());
-        {
-            unsigned char* m = slots[s->SelectedModelSlot()];
-            if (m != nullptr && s->state.optflag[0] == 0 &&
-                mdl::Mdl(m)->postLoadFlag2 != 0)
-                SendMessageA(GetDlgItem(main, panel::kAddBlendCheckbox), BM_SETCHECK, 1, 0);
-        }
-        {
-            const unsigned char cur = s->SelectedAccessorySlot();
-            if (accs[cur] != nullptr &&
-                mdl::Accessory(accs[cur])->additiveBlend != 0)
-                SendMessageA(GetDlgItem(main, panel::kAccessoryAddBlendCheckbox), BM_SETCHECK, 1, 0);
-        }
-        Rd(fd, &b, 1);                                          // 0x4574DF
-        if (b == 1) {
-            s->state.projectedShadowBlendEnabled = 1;
-            CheckMenuItem(GetMenu(main), 0xFE, 8);
-        } else {
-            s->state.projectedShadowBlendEnabled = 0;
-        }
-        unsigned char pmode = 0;
-        Rd(fd, &pmode, 1);                                      // 0x457523
-        // 0x457523 targets app+0xA0CC4 itself.  The upper bytes are already
-        // zero in the original/default state; assign the complete dword here
-        // so a previously loaded scene cannot leak stale physics mode bits.
-        s->PlaybackPhysicsMode() = pmode;
-        switch (pmode) {
-            case 0:
-                CheckMenuItem(GetMenu(main), 0x10D, 0);
-                CheckMenuItem(GetMenu(main), 0x109, 0);
-                CheckMenuItem(GetMenu(main), 0x10E, 0);
-                CheckMenuItem(GetMenu(main), 0x110, 8);
-                break;
-            case 1:
-                CheckMenuItem(GetMenu(main), 0x10D, 0);
-                CheckMenuItem(GetMenu(main), 0x109, 8);
-                CheckMenuItem(GetMenu(main), 0x10E, 0);
-                CheckMenuItem(GetMenu(main), 0x110, 0);
-                break;
-            case 2:
-                CheckMenuItem(GetMenu(main), 0x10D, 8);
-                CheckMenuItem(GetMenu(main), 0x109, 0);
-                CheckMenuItem(GetMenu(main), 0x10E, 0);
-                CheckMenuItem(GetMenu(main), 0x110, 0);
-                break;
-            default:
-                CheckMenuItem(GetMenu(main), 0x10D, 0);
-                CheckMenuItem(GetMenu(main), 0x109, 0);
-                CheckMenuItem(GetMenu(main), 0x10E, 8);
-                CheckMenuItem(GetMenu(main), 0x110, 0);
-                break;
-        }
-        // x64 twin: 255-slot walk (0xFF counter at 0x7FF7CB4A1131).
-        for (int i = 0; i < kModelSlotCount; ++i)               // 0x4576C7
-            if (slots[i] != nullptr) ModelKinematicSync(slots[i]);
-        // physics reads (0x457713..0x45776E)
-        Rd(fd, &s->state.gravityMagnitude, 4);
-        Rd(fd, &s->state.gravityNoise, 4);
-        Rd(fd, &s->state.gravityX, 4);
-        Rd(fd, &s->state.gravityY, 4);
-        Rd(fd, &s->state.gravityZ, 4);
-        Rd(fd, &b, 1);                                          // 0x45775C
-#ifdef MIKUDANCESTUDIO_DIAG
-        if (std::getenv("MIKUDANCESTUDIO_TRACE_NOISE_OFF") != nullptr)
-            std::fprintf(stderr, "noise byte file offset=%ld value=%d\n",
-                         static_cast<long>(_tell(fd)), static_cast<int>(b));
-#endif
-        s->state.gravityNoiseEnabled = (b == 1) ? 1 : 0;
+    } else {
+        Rd(fd, &b, 1);  // 0x456F29
+        s->PictureBackgroundEnabled() = 0;
+        CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BACKGROUND_IMAGE, 0);
     }
 }
 
+static void RestoreSceneDisplay(PmmV2LoadContext& ctx, int fd, unsigned char& b) {
+    auto* const s = ctx.s;
+    HWND const main = ctx.main;
+    const HWND owner = s->state.floatingWindow
+                           ? reinterpret_cast<HWND>(s->state.floatingWindow)
+                           : main;
+    Rd(fd, &b, 1);  // 0x456F53
+    if (b != 0) {
+        s->FpsOverlayEnabled() = 1;
+        CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_INFORMATION, 8);
+        SendMessageA(GetDlgItem(owner, panel::kInfoCheckbox), BM_SETCHECK, 1, 0);
+    } else {
+        s->FpsOverlayEnabled() = 0;
+        CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_INFORMATION, 0);
+        SendMessageA(GetDlgItem(owner, panel::kInfoCheckbox), BM_SETCHECK, 0, 0);
+    }
+    Rd(fd, &b, 1);  // 0x456FEC
+    if (b != 0) {
+        s->GroundGridEnabled() = 1;
+        CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_COORDINATE_AXIS, 8);
+        SendMessageA(GetDlgItem(owner, panel::kCoordAxisCheckbox), BM_SETCHECK, 1, 0);
+    } else {
+        s->GroundGridEnabled() = 0;
+        CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_COORDINATE_AXIS, 0);
+        SendMessageA(GetDlgItem(owner, panel::kCoordAxisCheckbox), BM_SETCHECK, 0, 0);
+    }
+    Rd(fd, &b, 1);                             // 0x45707D
+    s->state.groundShadowEnabled = b ? 1 : 0;  // 0x918
+    CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_GROUND_SHADOW, b ? 8 : 0);
+    Rd(fd, &s->state.fpsLimit, 4);  // 0x4570CF
+    {
+        const float v = s->state.fpsLimit;
+        if (v == 1000.0f) {
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_30, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_60, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_UNLIMITED, 8);
+        } else if (v == 30.0f) {
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_UNLIMITED, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_60, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_30, 8);
+        } else {
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_30, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_UNLIMITED, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_FPS_60, 8);
+        }
+    }
+    std::int32_t sm = 0;
+    Rd(fd, &sm, 4);  // 0x4571CF
+    // The original reads the four bytes directly into app+0x9EB84.
+    // Keeping the value only in a local makes the menu look correct but
+    // leaves the renderer in mode 0, so accessories using screen.bmp see
+    // a null screen texture instead of the previous-frame capture.
+    s->state.captureMode = static_cast<std::uint32_t>(sm);
+    switch (sm) {
+        case 0:
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_OFF, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_1, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_2, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_3, 0);
+            break;
+        case 1:
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_OFF, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_1, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_2, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_3, 0);
+            break;
+        case 2:
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_OFF, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_1, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_2, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_3, 0);
+            break;
+        default:
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_OFF, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_1, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_2, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_SCREEN_CAPTURE_MODE_3, 8);
+            break;
+    }
+}
+
+static void RestoreScenePhysics(PmmV2LoadContext& ctx, int fd, unsigned char& b) {
+    auto* const s = ctx.s;
+    HWND const main = ctx.main;
+    unsigned char** const slots = ctx.slots;
+    mdl::AccessoryRecord** const accs = ctx.accs;
+    // physics defaults + combos (0x45736C..0x4573FE)
+    s->state.gravityNoiseEnabled = 0;
+    s->state.gravityNoise = 10;
+    s->state.gravityMagnitude = 9.8000002f;
+    s->state.rigidBodyDisplayEnabled = 0;
+    s->state.gravityX = 0.0f;
+    s->state.gravityY = -1.0f;
+    s->state.gravityZ = 0.0f;
+    s->state.modelOutlineColorRed = 0;
+    s->state.modelOutlineColorGreen = 0;
+    s->state.modelOutlineColorBlue = 0;
+    SendMessageA(GetDlgItem(main, panel::kMainComboNormal), CB_SETCURSEL, 0, 0);
+    SendMessageA(GetDlgItem(main, panel::kBoneRegisterCombo), CB_SETCURSEL, 0, 0);
+    // 0xA0B20 + shadow distance copies (0x45740E..0x457443)
+    Rd(fd, &s->state.accessoryRenderSplitOrder, 4);
+    Rd(fd, &s->ProjectedShadowAmbientIntensity(), 4);
+    s->SetProjectedShadowAmbientRgb(s->ProjectedShadowAmbientIntensity());
+    {
+        unsigned char* m = slots[s->SelectedModelSlot()];
+        if (m != nullptr && s->CameraMode() == 0 && mdl::Mdl(m)->postLoadFlag2 != 0)
+            SendMessageA(GetDlgItem(main, panel::kAddBlendCheckbox), BM_SETCHECK, 1, 0);
+    }
+    {
+        const unsigned char cur = s->SelectedAccessorySlot();
+        if (accs[cur] != nullptr && mdl::Accessory(accs[cur])->additiveBlend != 0)
+            SendMessageA(GetDlgItem(main, panel::kAccessoryAddBlendCheckbox),
+                         BM_SETCHECK, 1, 0);
+    }
+    Rd(fd, &b, 1);  // 0x4574DF
+    if (b == 1) {
+        s->state.projectedShadowBlendEnabled = 1;
+        CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_GROUND_SHADOW_TRANSPARENCY, 8);
+    } else {
+        s->state.projectedShadowBlendEnabled = 0;
+    }
+    unsigned char pmode = 0;
+    Rd(fd, &pmode, 1);  // 0x457523
+    // 0x457523 targets app+0xA0CC4 itself.  The upper bytes are already
+    // zero in the original/default state; assign the complete dword here
+    // so a previously loaded scene cannot leak stale physics mode bits.
+    s->PlaybackPhysicsMode() = pmode;
+    switch (pmode) {
+        case 0:
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_ON_OFF, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_ALWAYS, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_TRACE, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_DISABLED, 8);
+            break;
+        case 1:
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_ON_OFF, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_ALWAYS, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_TRACE, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_DISABLED, 0);
+            break;
+        case 2:
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_ON_OFF, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_ALWAYS, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_TRACE, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_DISABLED, 0);
+            break;
+        default:
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_ON_OFF, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_ALWAYS, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_TRACE, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_PHYSICS_DISABLED, 0);
+            break;
+    }
+    // x64 twin: 255-slot walk (0xFF counter at 0x7FF7CB4A1131).
+    for (int i = 0; i < kModelSlotCount; ++i)  // 0x4576C7
+        if (slots[i] != nullptr) ModelKinematicSync(slots[i]);
+    // physics reads (0x457713..0x45776E)
+    Rd(fd, &s->state.gravityMagnitude, 4);
+    Rd(fd, &s->state.gravityNoise, 4);
+    Rd(fd, &s->state.gravityX, 4);
+    Rd(fd, &s->state.gravityY, 4);
+    Rd(fd, &s->state.gravityZ, 4);
+    Rd(fd, &b, 1);  // 0x45775C
+#ifdef MIKUDANCESTUDIO_DIAG
+    if (std::getenv("MIKUDANCESTUDIO_TRACE_NOISE_OFF") != nullptr)
+        std::fprintf(stderr, "noise byte file offset=%ld value=%d\n",
+                     static_cast<long>(_tell(fd)), static_cast<int>(b));
+#endif
+    s->state.gravityNoiseEnabled = (b == 1) ? 1 : 0;
+}
+
+// Keep file reads interleaved with UI/media effects: messages may observe
+// state from earlier stages. The two byte temporaries also retain their old
+// values on short reads, exactly as in the original configuration block.
+static void RestoreSceneConfiguration(PmmV2LoadContext& ctx, int fd) {
+    RestoreSceneTimeline(ctx, fd);
+    unsigned char playbackByte = 0;
+    RestorePmmPlaybackOptions(ctx.s, ctx.main, fd, ctx.text, playbackByte);
+    RestoreSceneMedia(ctx, fd, playbackByte);
+    unsigned char displayByte = 0;
+    RestoreSceneDisplay(ctx, fd, displayByte);
+    RestoreScenePhysics(ctx, fd, displayByte);
+}
 
 // ---- 0x45777C..0x458112: selection + self-shadow tracks, model color
 // sweep, camera parent re-register, 16 config dwords, optional per-model
 // 0x4CCF0 block, _close --------------------------------------------------
 static void LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
-                                            unsigned char modelCount) {
+                                              unsigned char modelCount) {
     auto* const s = ctx.s;
     HWND const main = ctx.main;
     unsigned char** const slots = ctx.slots;
@@ -2477,32 +2416,30 @@ static void LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
         // ReadPmmGravityKey (v2-only track).
         ReadPmmGravityKey(fd, gravityKeys[0]);
         std::int32_t cnt = 0;
-        Rd(fd, &cnt, 4);                                        // 0x457861
+        Rd(fd, &cnt, 4);  // 0x457861
         LogPmmModelStage(fd, "selection-count", cnt, 0, gravityKeys);
         for (std::int32_t i = 0; i < cnt; ++i) {
             std::int32_t frame = 0;
             Rd(fd, &frame, 4);
-            LogPmmModelStage(fd, "selection-frame", i, frame,
-                             &gravityKeys[frame]);
+            LogPmmModelStage(fd, "selection-frame", i, frame, &gravityKeys[frame]);
             ReadPmmGravityKey(fd, gravityKeys[frame]);
         }
     }
     {
-        unsigned char b = 0;                                    // 0x4579FA
+        unsigned char b = 0;  // 0x4579FA
         Rd(fd, &b, 1);
         s->state.selfShadowMode = b;
         s->state.selfShadowEnabled = (b != 0) ? 1 : 0;
     }
-    Rd(fd, &s->state.physicsInterval, 4);   // 0x457A22
-    selfShadowKeys[0].mode =
-        static_cast<unsigned char>(s->state.selfShadowMode);
+    Rd(fd, &s->state.physicsInterval, 4);  // 0x457A22
+    selfShadowKeys[0].mode = static_cast<unsigned char>(s->state.selfShadowMode);
     selfShadowKeys[0].distance = s->state.physicsInterval;
     // self-shadow track read (0x457A4F..0x457BDE), 24-byte app+0x37C;
     // record shape lives in pmm_io_common.hpp ReadPmmSelfShadowKey.
     {
         ReadPmmSelfShadowKey(fd, selfShadowKeys[0]);
         std::int32_t cnt = 0;
-        Rd(fd, &cnt, 4);                                        // 0x457AD4
+        Rd(fd, &cnt, 4);  // 0x457AD4
         for (std::int32_t i = 0; i < cnt; ++i) {
             std::int32_t frame = 0;
             Rd(fd, &frame, 4);
@@ -2513,22 +2450,20 @@ static void LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
     Rd(fd, &s->state.modelOutlineColorRed, 4);
     Rd(fd, &s->state.modelOutlineColorGreen, 4);
     Rd(fd, &s->state.modelOutlineColorBlue, 4);
-    if (s->state.modelOutlineColorRed != 0 ||
-        s->state.modelOutlineColorGreen != 0 ||
+    if (s->state.modelOutlineColorRed != 0 || s->state.modelOutlineColorGreen != 0 ||
         s->state.modelOutlineColorBlue != 0) {
         // x64 twin: 255-slot color sweep (0xFF counter at 0x7FF7CB4A1792).
         for (int i = 0; i < kModelSlotCount; ++i)
             if (slots[i] != nullptr)
-                SetModelColor(reinterpret_cast<MMDApp*>(slots[i]),
-                          s->state.modelOutlineColorRed,
-                          s->state.modelOutlineColorGreen,
-                          s->state.modelOutlineColorBlue);
+                SetModelColor(
+                    reinterpret_cast<MMDApp*>(slots[i]), s->state.modelOutlineColorRed,
+                    s->state.modelOutlineColorGreen, s->state.modelOutlineColorBlue);
     }
     {
         unsigned char b = 0;
         Rd(fd, &b, 1);                                          // 0x457C80
         s->state.blackBackgroundEnabled = b ? 1 : 0;
-        CheckMenuItem(GetMenu(main), 0x11A, b ? 8 : 0);
+        CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_BLACK_BACKGROUND, b ? 8 : 0);
     }
     Rd(fd, &s->state.cameraParentModel, 4);        // 0x457CD2
     Rd(fd, &s->state.cameraParentBone, 4);
@@ -2562,11 +2497,11 @@ static void LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
         Rd(fd, &b, 1);                                          // 0x457F6D
         if (b == 1) {
             s->state.followCameraEnabled = 1;       // 0x9ED98
-            CheckMenuItem(GetMenu(main), 0xF7, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_CAMERA_TRACKING, 8);
             SendMessageA(GetDlgItem(main, panel::kFollowCameraCheckbox), BM_SETCHECK, 1, 0);
         } else {
             s->state.followCameraEnabled = 0;
-            CheckMenuItem(GetMenu(main), 0xF7, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_CAMERA_TRACKING, 0);
             SendMessageA(GetDlgItem(main, panel::kFollowCameraCheckbox), BM_SETCHECK, 0, 0);
         }
         Rd(fd, &b, 1);                                          // 0x457FFD
@@ -2574,11 +2509,11 @@ static void LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
         Rd(fd, &b, 1);                                          // 0x458018
         btRigidBody* const groundBody = s->Physics()->groundBody;
         if (b == 1) {
-            CheckMenuItem(GetMenu(main), 0x11D, 8);
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_PHYSICS_FLOOR, 8);
             s->state.floorVisible = 1;
             groundBody->setDeactivationTime(1.0f);
         } else {
-            CheckMenuItem(GetMenu(main), 0x11D, 0);
+            CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_PHYSICS_FLOOR, 0);
             s->state.floorVisible = 0;
             groundBody->setDeactivationTime(-1.0f);
         }
@@ -2599,9 +2534,7 @@ static void LoadSceneV2_PhysicsTracksAndClose(PmmV2LoadContext& ctx, int fd,
         }
     }
     _close(fd);                                                 // 0x458112
-
 }
-
 
 // ---- 0x458120..0x458F53: success tail - shadow-mode gate, light
 // direction to the physics scene, window title, record post-processing
@@ -2627,11 +2560,11 @@ static void LoadSceneV2_SuccessTail(PmmV2LoadContext& ctx,
         s->state.selfShadowEnabled = 0;
         s->state.selfShadowMode = 0;
     }
-    CheckMenuItem(GetMenu(main), 0x117,
+    CheckMenuItem(GetMenu(main), MDS_CMD_TOGGLE_SELF_SHADOW,
                   s->state.selfShadowEnabled != 0 ? 8 : 0);
     {
         unsigned char* m = slots[s->SelectedModelSlot()];
-        if (m != nullptr && s->state.optflag[0] == 0 &&
+        if (m != nullptr && s->CameraMode() == 0 &&
             mdl::Mdl(m)->toonFlag != 0)
             SendMessageA(GetDlgItem(main, panel::kShadowCheckbox), BM_SETCHECK, 1, 0);
     }
@@ -2737,13 +2670,13 @@ static void LoadSceneV2_SuccessTail(PmmV2LoadContext& ctx,
             }
         } else {
             // skipped model: gray menus + reference removal sweep
-            EnableMenuItem(GetMenu(main), 0x120, 1);            // 0x45833E
-            EnableMenuItem(GetMenu(main), 0x121, 1);
+            EnableMenuItem(GetMenu(main), MDS_CMD_MODEL_DRAW_ORDER, 1);            // 0x45833E
+            EnableMenuItem(GetMenu(main), MDS_CMD_MODEL_CALCULATION_ORDER, 1);
             for (int mi = 0; mi < kModelSlotCount; ++mi) {
                 unsigned char* m = slots[mi];
                 if (m == nullptr) continue;
-                EnableMenuItem(GetMenu(main), 0x120, 0);
-                EnableMenuItem(GetMenu(main), 0x121, 0);
+                EnableMenuItem(GetMenu(main), MDS_CMD_MODEL_DRAW_ORDER, 0);
+                EnableMenuItem(GetMenu(main), MDS_CMD_MODEL_CALCULATION_ORDER, 0);
                 mdl::ModelRecord* const modelRecord = mdl::Mdl(m);
                 if (modelRecord->comboSelIndex > workspace.displayOrder)
                     modelRecord->comboSelIndex -= 1;
@@ -2943,7 +2876,7 @@ static void LoadSceneV2_SuccessTail(PmmV2LoadContext& ctx,
                        panel::kGotoFrameEdit),
             text);
     }
-    if (s->state.optflag[0] != 0) {
+    if (s->CameraMode() != 0) {
         RefreshLightPanel(s);                                           // 0x411070
         PanelPaint(s);                                          // 0x414610
     }
@@ -3007,7 +2940,7 @@ void LoadSceneV2(MMDApp* app, int fd) {  // VA 0x00450000
         delete[] workspaces;
         return;
     }
-    LoadSceneV2_ConfigBlock(ctx, fd);                   // 0x456617..0x45776E
+    RestoreSceneConfiguration(ctx, fd);                   // 0x456617..0x45776E
     LoadSceneV2_PhysicsTracksAndClose(ctx, fd, modelCount);  // 0x45777C..0x458112
     LoadSceneV2_SuccessTail(ctx, workspaces, modelCount);    // 0x458120..0x458F53
 }

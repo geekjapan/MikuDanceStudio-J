@@ -488,13 +488,13 @@ void FrameDriver(MMDApp* app) {
     if (requireLineEnabled && LineCaptureSwitchReady() &&
         InterlockedCompareExchange(&lineModeRequested, 1, 0) == 0) {
         const bool alreadyModelMode =
-            app->state.optflag[0] == 0 &&
+            app->CameraMode() == 0 &&
             app->EditMode() == ViewportEditMode::Bone;
         if (!alreadyModelMode) {
             RebuildModelModePanel(app);
-            app->state.optflag[0] = 0;
+            app->CameraMode() = 0;
             app->EditMode() = ViewportEditMode::Bone;
-            PostLanguageSweep(app);
+            RebuildTimelineTrackPanel(app);
             PostModelReload2(app);
             HandleWindowSize(app);
             InvalidateRect(static_cast<HWND>(app->Hwnd()), nullptr, FALSE);

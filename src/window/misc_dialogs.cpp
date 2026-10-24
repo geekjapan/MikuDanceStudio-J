@@ -246,10 +246,10 @@ void ScanCurveTrack(MMDApp* app, const Key* keys, std::size_t capacity,
 // (0x416280 / 0x430510 in ui_selection_reeval.cpp).
 // =========================================================================//
 void CurvePanelRepaint(MMDApp* app) {  // x64 0x7FF7CB482BB0
-    constexpr int kInterpCurveCombo = 433;   // channel selector combo
-    constexpr int kCurveUniformButton = 430; // enabled when curves agree
-    constexpr int kCurvePresetButton = 431;  // also gated on preset-A byte
-    constexpr int kCurveFoundButton = 432;   // enabled when a key exists
+    constexpr int kInterpCurveCombo = panel::kInterpCurveCombo;   // channel selector combo
+    constexpr int kCurveUniformButton = panel::kCurveCopyButton; // enabled when curves agree
+    constexpr int kCurvePresetButton = panel::kCurvePasteButton;  // also gated on preset-A byte
+    constexpr int kCurveFoundButton = panel::kCurveLinearButton;   // enabled when a key exists
     constexpr int kCurveDirtyLeft = 8;
     constexpr int kCurveDirtyRight = 137;
     constexpr int kCurveDirtyTopMargin = 135;
@@ -276,7 +276,7 @@ void CurvePanelRepaint(MMDApp* app) {  // x64 0x7FF7CB482BB0
     Curve baseline{};
     Curve firstChannels[6]{};
 
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         ScanCurveTrack(app, app->CameraKeys(), mdl::kTimelineKeyCapacity,
                        6, channel, baseline, firstChannels, found,
                        perChannelUniform);
@@ -325,12 +325,22 @@ void CurvePanelRepaint(MMDApp* app) {  // x64 0x7FF7CB482BB0
 // leave their group untouched (unlike PostLoadInit's echo).
 // =========================================================================//
 void MorphPanelRefresh(unsigned char* model) {  // x64 0x7FF7CB4ED750
-    constexpr int kModelVisibleCheck = 439;
-    constexpr int kIkChainCombo = 443;
-    constexpr int kIkOnRadio = 444;
-    constexpr int kIkOffRadio = 445;
-    static const int kMorphSlider[4] = {505, 510, 515, 520};
-    static const int kMorphEdit[4] = {506, 511, 516, 521};
+    constexpr int kModelVisibleCheck = panel::kModelVisibleCheckbox;
+    constexpr int kIkChainCombo = panel::kIkChainCombo;
+    constexpr int kIkOnRadio = panel::kIkOnRadio;
+    constexpr int kIkOffRadio = panel::kIkOffRadio;
+    static const int kMorphSlider[4] = {
+        panel::kMorphSlider0,
+        panel::kMorphSlider1,
+        panel::kMorphSlider2,
+        panel::kMorphSlider3
+    };
+    static const int kMorphEdit[4] = {
+        panel::kMorphEdit0,
+        panel::kMorphEdit1,
+        panel::kMorphEdit2,
+        panel::kMorphEdit3
+    };
 
     mdl::ModelRecord* m = mdl::Mdl(model);
     HWND window = static_cast<HWND>(m->hwnd);
@@ -624,7 +634,7 @@ void ApplyBoneFrameScaleAdd(MMDApp* app, HWND hDlg) {  // VA 0x0043E000
     }
     PanelPaint(app);         // 0x414610 (x64 sub_7FF7CB480EA0)
     CurvePanelRepaint(app);  // x64 sub_7FF7CB482BB0
-    SeekModelFrame(modelBytes, app->state.currentFrame,
+    SeekModelFrame(*mdl::Mdl(modelBytes), app->state.currentFrame,
               app->state.playbackPhysicsMode);  // 0x4B4260 (x64 0x4EBD90)
     app->SceneModified() = 1;  // x64 0xA1B31 dirty byte
     PostViewRefresh(app);   // 0x40D130 (x64 sub_7FF7CB440DD0)
@@ -662,7 +672,7 @@ void ApplyMorphScaleAdd(MMDApp* app, HWND hDlg) {  // VA 0x0043E680
     }
     PanelPaint(app);         // 0x414610 (x64 sub_7FF7CB480EA0)
     CurvePanelRepaint(app);  // x64 sub_7FF7CB482BB0
-    SeekModelFrame(modelBytes, app->state.currentFrame,
+    SeekModelFrame(*mdl::Mdl(modelBytes), app->state.currentFrame,
               app->state.playbackPhysicsMode);  // 0x4B4260 (x64 0x4EBD90)
     MorphPanelRefresh(modelBytes);               // x64 sub_7FF7CB4ED750
     app->SceneModified() = 1;
@@ -908,7 +918,7 @@ void ApplyPhysicsOnOff(int on) {  // VA 0x004403C0
         }
     }
     PanelPaint(app);  // 0x414610 (x64 sub_7FF7CB480EA0)
-    SeekModelFrame(modelBytes, app->state.currentFrame,
+    SeekModelFrame(*mdl::Mdl(modelBytes), app->state.currentFrame,
               app->state.playbackPhysicsMode);  // 0x4B4260 (x64 0x4EBD90)
 }
 

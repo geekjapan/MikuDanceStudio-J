@@ -128,6 +128,7 @@
 // Shared PMM IO constants (window-title format; the loader record readers
 // live there too).
 #include "pmm_io_common.hpp"
+#include "pmm_model_save.hpp"
 
 namespace mikudancestudio {
 
@@ -365,7 +366,7 @@ void WritePmmFileHeader(int fd, MMDApp* s, HWND main, char* hdr) {
 
     for (int f = 0; f < 7; ++f) {                              // 0x41B22E..0x41B303
         const unsigned char b =
-            s->state.optflag[f] != 0;               // 0x2F8..0x2FE
+            s->UiOptionFlag(f) != 0;               // 0x2F8..0x2FE
         W(fd, &b, 1);
     }
     W(fd, &s->SelectedModelSlot(), 1);                         // 0x41B31A
@@ -378,9 +379,11 @@ void WritePmmFileHeader(int fd, MMDApp* s, HWND main, char* hdr) {
 }
 
 
+}  // namespace
+
 // 2. per-model block (0x41B355..0x41C981)
-void WritePmmModelBlocks(int fd, const D3DRenderer* renderer, unsigned char** const slots,
-                         char* text) {
+void pmm_io::WritePmmModelBlocks(int fd, const D3DRenderer* renderer,
+                                unsigned char** const slots, char* text) {
     // ---- 2. per-model block (0x41B355..0x41C981) ------------------------
     // Not a file-format cap: the x64 save twin sub_7FF7CB4950A0 writes the
     // slot id byte for every occupied slot of the full array (inc dl /
@@ -468,14 +471,15 @@ void WritePmmModelBlocks(int fd, const D3DRenderer* renderer, unsigned char** co
              mdl::Mdl(model)->selectedMorphs)
             W(fd, &selectedMorph, sizeof(selectedMorph));      // 0x41B75B
 
-        const unsigned char boneCount = record->groupCount;
+        const unsigned char groupCount = record->groupCount;
         W(fd, &record->groupCount, 1);                         // 0x41B790
-        if (boneCount != 0) {
+        if (groupCount != 0) {
             const mdl::DisplayGroup* const groups =
                 mdl::DisplayGroups(model);
-            for (unsigned char i = 0; i < boneCount; ++i) {    // 0x41B7D5
-                const unsigned char b =
-                    groups[i].nameEn[0] != 0;
+            for (unsigned char i = 0; i < groupCount; ++i) {   // 0x41B7D5
+                // x64 RVA 0x75886: compare group+0x64, then setne.
+                // Persist the UI state as a bool, independent of either name.
+                const unsigned char b = groups[i].flags != 0;
                 W(fd, &b, 1);
             }
         }
@@ -611,6 +615,8 @@ void WritePmmModelBlocks(int fd, const D3DRenderer* renderer, unsigned char** co
     }
 }
 
+
+namespace {
 
 // 3. camera track + camera misc (0x41C9AE..0x41CF3E)
 void WritePmmCameraSection(int fd, MMDApp* s) {
@@ -991,7 +997,7 @@ void SaveSceneFile(MMDApp* app) {
     }
 
     WritePmmFileHeader(fd, s, main, hdr);                   // 1. 0x41B1B3..0x41B355
-    WritePmmModelBlocks(fd, s->Renderer(), slots, text);                   // 2. 0x41B355..0x41C981
+    pmm_io::WritePmmModelBlocks(fd, s->Renderer(), slots, text); // 2. 0x41B355..0x41C981
     WritePmmCameraSection(fd, s);                           // 3. 0x41C9AE..0x41CF3E
     WritePmmLightSection(fd, s);                            // 4. 0x41CF51..0x41D28F
     WritePmmAccessoryShadowList(fd, main, text);            // 5. 0x41D2AF..0x41D310

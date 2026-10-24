@@ -1,5 +1,5 @@
 // ===========================================================================
-// VA 0x0040D070 - PostLanguageSweep2  (original: sub_40D070)
+// VA 0x0040D070 - InvalidateSelectionReadouts  (original: sub_40D070)
 // ===========================================================================
 // Second-stage panel refresh after a language/UI sweep: invalidates two
 // regions of the panel window (it does NOT rewrite control labels).  Called
@@ -46,7 +46,7 @@
 
 namespace mikudancestudio {
 
-void PostLanguageSweep2(MMDApp* app) {
+void InvalidateSelectionReadouts(MMDApp* app) {
     // Target window: this+0xA0D38 doubles as an HWND when non-zero.
     HWND hwnd = reinterpret_cast<HWND>(app->state.floatingWindow);
     RECT client;
@@ -87,7 +87,7 @@ void PostLanguageSweep2(MMDApp* app) {
 // controls 0x220..0x226 of the panel with the current values.
 //
 // Target window: same this+0xA0D38 / this+0xA06B8 selection as
-// PostLanguageSweep2.
+// InvalidateSelectionReadouts.
 //
 // Camera/light mode (this+0x2F8 = kByteOptflag0 != 0):
 //   0x220/0x221/0x222: "%1.2f" of this+0x334/0x338/0x33C (kFloatPosx/y/z);
@@ -142,7 +142,7 @@ void PostViewRefresh(MMDApp* app) {
 
     char text[260];  // CHAR String[260] @ ebp-108h; sprintf_s count 0x100
 
-    if (app->state.optflag[0] != 0) {   // this+0x2F8
+    if (app->CameraMode() != 0) {   // this+0x2F8
         // ---- camera / light readout ----------------------------------------
         sprintf_s(text, 0x100, "%1.2f",
                   static_cast<double>(app->CameraPositionX()));
@@ -187,7 +187,7 @@ void PostViewRefresh(MMDApp* app) {
     unsigned char* model = app->SelectedModel();
     const std::int32_t boneIdx = mikudancestudio::mdl::Mdl(model)->selectedBone;
     if (boneIdx < 0) {                                     // 0x40D401 jl
-        for (int id = 0x220; id <= 0x226; ++id)
+        for (int id = panel::kReadoutPosXEdit; id <= panel::kReadoutDistEdit; ++id)
             SetWindowTextA(GetDlgItem(hwnd, id), "-----");
         return;
     }

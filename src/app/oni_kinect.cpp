@@ -52,6 +52,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <d3d9.h>
 #include <fcntl.h>
@@ -64,6 +65,7 @@
 #include "mikudancestudio/globals.hpp"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/model.hpp"
 
 namespace mikudancestudio {
 
@@ -224,10 +226,10 @@ void OpenNiInit(MMDApp* app, const char* sjisPath) {
         return;
     }
 
-    CheckMenuItem(GetMenu(hwnd), 0x123, MF_CHECKED);                // 0x429f61
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_KINECT, MF_CHECKED);                // 0x429f61
     s.state.depthDeviceEnabled = 1;                   // 0x429f85
 
-    if (s.state.optflag[0] == 0) {         // 0x429f8b
+    if (s.CameraMode() == 0) {         // 0x429f8b
         unsigned char* model = s.SelectedModel();
         ModelInitMorphSlots(model);                                 // 0x4a89b0
     }
@@ -247,9 +249,9 @@ void DisableKinect(MMDApp* app) {
     auto& s = *app;
     HWND hwnd = static_cast<HWND>(s.Hwnd());
 
-    CheckMenuItem(GetMenu(hwnd), 0x123, MF_UNCHECKED);              // 0x42a029
-    EnableMenuItem(GetMenu(hwnd), 0x124, 1);                        // 0x42a044
-    CheckMenuItem(GetMenu(hwnd), 0x124, MF_UNCHECKED);              // 0x42a05b
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_KINECT, MF_UNCHECKED);              // 0x42a029
+    EnableMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MOTION_CAPTURE, 1);                        // 0x42a044
+    CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MOTION_CAPTURE, MF_UNCHECKED);              // 0x42a05b
 
     // Unconditional call through the stored OpenNIClean pointer, exactly
     // like the original (reachable only after a successful OpenNiInit).
@@ -262,7 +264,7 @@ void DisableKinect(MMDApp* app) {
 
     unsigned char* model = s.SelectedModel();
     if (model != nullptr)                                           // 0x42a092
-        SeekModelFrame(model, s.state.currentFrame,
+        SeekModelFrame(*mdl::Mdl(model), s.state.currentFrame,
                   s.PlaybackPhysicsMode());
 
     s.state.fpsLimit =                         // 0x42a0ac

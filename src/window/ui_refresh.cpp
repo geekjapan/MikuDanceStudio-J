@@ -31,12 +31,12 @@ constexpr std::size_t kStreamAsyncActive = 0x234;  // async-read active (dword)
 constexpr std::size_t kStreamFileHandle  = 0x244;  // file HANDLE
 constexpr std::size_t kStreamCompletion  = 0x248;  // 0 idle / 1 stop / 2 done
 
-}  // namespace
-
 // ===========================================================================
 // VA 0x00440AC0 - original: sub_440AC0
 // ===========================================================================
-void RefreshRequest(int area) {
+// Original IDs are -1..-4 for global tracks and 0..254 for accessory slots.
+// Keep the original selection and notification sequence behind typed callers.
+void SelectTimelineTrackById(int area) {
     MMDApp* app = g_Block;
 
     // ---- area == -1: activate track 0 ------------------------------------
@@ -44,7 +44,7 @@ void RefreshRequest(int area) {
         if (app->GlobalTrackSelected(GlobalTimelineTrack::Camera) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Camera);
             ClearAccessoryRowSelection(app);
-            PostLanguageSweep(app);         // 0x00440B48 call sub_42F1E0
+            RebuildTimelineTrackPanel(app);         // 0x00440B48 call sub_42F1E0
         }
         return;
     }
@@ -54,7 +54,7 @@ void RefreshRequest(int area) {
         if (app->GlobalTrackSelected(GlobalTimelineTrack::Light) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Light);
             ClearAccessoryRowSelection(app);
-            PostLanguageSweep(app);         // 0x00440BD8 call sub_42F1E0
+            RebuildTimelineTrackPanel(app);         // 0x00440BD8 call sub_42F1E0
         }
         return;
     }
@@ -64,7 +64,7 @@ void RefreshRequest(int area) {
         if (app->GlobalTrackSelected(GlobalTimelineTrack::SelfShadow) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::SelfShadow);
             ClearAccessoryRowSelection(app);
-            PostLanguageSweep(app);         // 0x00440C68 call sub_42F1E0
+            RebuildTimelineTrackPanel(app);         // 0x00440C68 call sub_42F1E0
         }
         return;
     }
@@ -74,7 +74,7 @@ void RefreshRequest(int area) {
         if (app->GlobalTrackSelected(GlobalTimelineTrack::Gravity) == 0) {
             app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Gravity);
             ClearAccessoryRowSelection(app);
-            PostLanguageSweep(app);         // 0x00440CF8 call sub_42F1E0
+            RebuildTimelineTrackPanel(app);         // 0x00440CF8 call sub_42F1E0
         }
         return;
     }
@@ -84,8 +84,18 @@ void RefreshRequest(int area) {
         app->ClearGlobalTimelineTrackSelection();
         ClearAccessoryRowSelection(app);
         app->AccessorySlots()[area]->rowSelected = 1;
-        PostLanguageSweep(app);
+        RebuildTimelineTrackPanel(app);
     }
+}
+
+}  // namespace
+
+void SelectTimelineTrack(GlobalTimelineTrack track) {
+    SelectTimelineTrackById(-1 - static_cast<int>(track));
+}
+
+void SelectAccessoryTimelineTrack(int slot) {
+    SelectTimelineTrackById(slot);
 }
 
 // ===========================================================================

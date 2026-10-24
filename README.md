@@ -2,6 +2,8 @@
 
 Product version: [VERSION](VERSION). Release instructions: [RELEASES.md](docs/RELEASES.md).
 
+Documentation / 文档索引 / ドキュメント: [docs](docs/README.md).
+
 [English](#english) | [中文](#中文) | [日本語](#日本語)
 
 MME is compiled directly into the EXE; see [integration](third_party/mmeffect/README.md).

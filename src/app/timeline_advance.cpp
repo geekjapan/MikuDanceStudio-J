@@ -322,7 +322,7 @@ void PlaybackPoseAdvance(MMDApp* app, int advance) {
             frame = static_cast<double>(static_cast<int>(scaled) + 1) / 1000.0;
     }
 
-    const bool editGate = s.state.optflag[0] != 0 ||
+    const bool editGate = s.CameraMode() != 0 ||
                           s.state.followCameraEnabled != 0;
 
     // ---- 4A. camera track (0x417656..0x417A48) ----------------------------

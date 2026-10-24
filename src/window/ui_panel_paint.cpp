@@ -377,7 +377,7 @@ void PanelPaint(MMDApp* app) {
         InvalidateRect(static_cast<HWND>(app->Hwnd()), &rc, FALSE);
     };
 
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         // --- 6a. display mode: four fixed bands + accessory bands ----------
         const std::int32_t limit = scroll + rows;
         DrawBandList(app, panel, icons,
@@ -395,7 +395,7 @@ void PanelPaint(MMDApp* app) {
         // accessory bands (0x414DC7..0x414F17)
         // state.jointLineMap is the 0x9DA50 array: 0x414DB1
         // `lea eax,[esi+9DA50h]` reads the SAME 200-int array
-        // PostLanguageSweep memsets to -1 before the joint walk - dual use as
+        // RebuildTimelineTrackPanel memsets to -1 before the joint walk - dual use as
         // the accessory band index source.  (An earlier revision read
         // 0x9D9D0, which stays zero, so the idx<0 break never fired and the
         // band loop dereferenced a null accessory slot at startup.)

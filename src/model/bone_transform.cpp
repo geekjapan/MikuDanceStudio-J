@@ -59,6 +59,9 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#if defined(_M_IX86)
+#include "LinearMath/btMmdMath.h"
+#endif
 #include <Windows.h>
 
 #include <cmath>
@@ -309,47 +312,10 @@ void WorldPos(float dst[3], const mdl::BoneRecord& bone) {
     const float* rest = bone.position;
     // 0x494B5D..0x494BD1 and 0x494D3A..0x494E4C use x87 and keep
     // each multiply/add chain in extended precision until the final fstp.
-    // MSVC's SSE expression evaluation rounds after every operation and a
+    // The isolated numeric helper retains that evaluation model; a
     // few ULP here become visible after many CCD iterations.
 #if defined(_M_IX86)
-    __asm {
-        mov eax, mw
-        mov edx, rest
-        mov ecx, dst
-
-        fld dword ptr [eax]
-        fmul dword ptr [edx]
-        fld dword ptr [eax+16]
-        fmul dword ptr [edx+4]
-        faddp st(1), st
-        fld dword ptr [eax+32]
-        fmul dword ptr [edx+8]
-        faddp st(1), st
-        fadd dword ptr [eax+48]
-        fstp dword ptr [ecx]
-
-        fld dword ptr [eax+4]
-        fmul dword ptr [edx]
-        fld dword ptr [eax+20]
-        fmul dword ptr [edx+4]
-        faddp st(1), st
-        fld dword ptr [eax+36]
-        fmul dword ptr [edx+8]
-        faddp st(1), st
-        fadd dword ptr [eax+52]
-        fstp dword ptr [ecx+4]
-
-        fld dword ptr [eax+8]
-        fmul dword ptr [edx]
-        fld dword ptr [eax+24]
-        fmul dword ptr [edx+4]
-        faddp st(1), st
-        fld dword ptr [eax+40]
-        fmul dword ptr [edx+8]
-        faddp st(1), st
-        fadd dword ptr [eax+56]
-        fstp dword ptr [ecx+8]
-    }
+    btMmdMath::transformPoint(dst, rest, mw);
 #else
     // x64 original: same source compiled for SSE2 - every multiply/add
     // rounds to float, which the plain float expression reproduces.
@@ -359,23 +325,9 @@ void WorldPos(float dst[3], const mdl::BoneRecord& bone) {
 #endif
 }
 
-float Dot3X87(const float a[3], const float b[3]) {
+float Dot3(const float a[3], const float b[3]) {
 #if defined(_M_IX86)
-    float result;
-    __asm {
-        mov eax, a
-        mov edx, b
-        fld dword ptr [eax]
-        fmul dword ptr [edx]
-        fld dword ptr [eax+4]
-        fmul dword ptr [edx+4]
-        faddp st(1), st
-        fld dword ptr [eax+8]
-        fmul dword ptr [edx+8]
-        faddp st(1), st
-        fstp dword ptr [result]
-    }
-    return result;
+    return btMmdMath::dot3(a, b);
 #else
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 #endif
@@ -385,26 +337,9 @@ float Dot3X87(const float a[3], const float b[3]) {
 // squares and accumulates in SINGLE precision (subss/mulss/addss, the
 // y term first, then x, then z) and compares against comiss 1e-7f
 // (dword_7FF7CB552C48).
-float SquaredDiff3X87(const float a[3], const float b[3]) {
+float SquaredDistance3(const float a[3], const float b[3]) {
 #if defined(_M_IX86)
-    float result;
-    __asm {
-        mov eax, a
-        mov edx, b
-        fld dword ptr [eax]
-        fsub dword ptr [edx]
-        fmul st, st
-        fld dword ptr [eax+4]
-        fsub dword ptr [edx+4]
-        fmul st, st
-        faddp st(1), st
-        fld dword ptr [eax+8]
-        fsub dword ptr [edx+8]
-        fmul st, st
-        faddp st(1), st
-        fstp dword ptr [result]
-    }
-    return result;
+    return btMmdMath::squaredDistance3(a, b);
 #else
     const float dx = a[0] - b[0];
     const float dy = a[1] - b[1];
@@ -413,34 +348,9 @@ float SquaredDiff3X87(const float a[3], const float b[3]) {
 #endif
 }
 
-void Cross3X87(float dst[3], const float a[3], const float b[3]) {
+void Cross3(float dst[3], const float a[3], const float b[3]) {
 #if defined(_M_IX86)
-    __asm {
-        mov eax, a
-        mov edx, b
-        mov ecx, dst
-
-        fld dword ptr [eax+4]
-        fmul dword ptr [edx+8]
-        fld dword ptr [eax+8]
-        fmul dword ptr [edx+4]
-        fsubp st(1), st
-        fstp dword ptr [ecx]
-
-        fld dword ptr [eax+8]
-        fmul dword ptr [edx]
-        fld dword ptr [eax]
-        fmul dword ptr [edx+8]
-        fsubp st(1), st
-        fstp dword ptr [ecx+4]
-
-        fld dword ptr [eax]
-        fmul dword ptr [edx+4]
-        fld dword ptr [eax+4]
-        fmul dword ptr [edx]
-        fsubp st(1), st
-        fstp dword ptr [ecx+8]
-    }
+    btMmdMath::cross3(dst, a, b);
 #else
     dst[0] = a[1] * b[2] - a[2] * b[1];
     dst[1] = a[2] * b[0] - a[0] * b[2];
@@ -452,9 +362,9 @@ void Cross3X87(float dst[3], const float a[3], const float b[3]) {
 void ProjectAxisOnLocal(float axis[3], const mdl::BoneRecord& bone) {
     const float* r = bone.matWorld;
     float out[3];
-    out[0] = Dot3X87(r, axis);
-    out[1] = Dot3X87(r + 4, axis);
-    out[2] = Dot3X87(r + 8, axis);
+    out[0] = Dot3(r, axis);
+    out[1] = Dot3(r + 4, axis);
+    out[2] = Dot3(r + 8, axis);
     Vec3Norm(axis, out);
 }
 
@@ -780,7 +690,7 @@ void BoneTransform_CcdIk(D3& d3, unsigned char* m,
                                linkPos[2] - eff[2]};
                 Vec3Norm(d1, d1);
                 Vec3Norm(d2, d2);
-                const float diff2 = SquaredDiff3X87(d1, d2);
+                const float diff2 = SquaredDistance3(d1, d2);
 #ifdef MIKUDANCESTUDIO_DIAG
                 WriteIkPrecheck(m, ci, iter, li, d1, d2, diff2, target,
                                 root, link);
@@ -791,7 +701,7 @@ void BoneTransform_CcdIk(D3& d3, unsigned char* m,
                     break;
                 }
                 float axis[3];
-                Cross3X87(axis, d1, d2);
+                Cross3(axis, d1, d2);
                 float align = 1.0f;                    // v331
                 const float* r180 = link.matWorld;
                 if (!pmx2) {                           // 0x4955F7 PMD path
@@ -887,7 +797,7 @@ void BoneTransform_CcdIk(D3& d3, unsigned char* m,
                 // half = acos * 0.5f * align (mulss chain), the limit
                 // ((float)(li+1) * chainAngle) * +-2.0f, and rotq built
                 // from sinf(half)/cosf(half) with per-component mulss.
-                float dot = Dot3X87(d2, d1);
+                float dot = Dot3(d2, d1);
                 if (dot > 1.0f)
                     dot = 1.0f;
                 else if (dot < -1.0f)

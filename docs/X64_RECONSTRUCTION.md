@@ -13,7 +13,7 @@
 
 IDA 导出的 MMD 地址以 `0x7FF7CB420000` 为 image base。重开数据库或受到 ASLR 影响时应记录 image base/RVA，不把一次会话的 VA 当作永久运行时地址。session ID 是工具运行状态，不是长期证据标识。
 
-当前可访问的证据与修复边界见 [对齐记录](ALIGNMENT_WORKLOG.md) 和 [移植状态](PORTING_STATUS.md)。旧 `reports/` 目录不在工作树中，不能把其链接当作当前证据。
+当前实现与验证结果见 [移植状态](PORTING_STATUS.md)，历史修复依据见 [对齐归档](archive/alignment_worklog_2026-09_10.md)。旧 `reports/` 目录不在工作树中，不能把其链接当作当前证据。
 
 ## 如何判定一致
 
@@ -44,6 +44,6 @@ IDA 导出的 MMD 地址以 `0x7FF7CB420000` 为 image base。重开数据库或
 
 ## 构建与验证记录
 
-Conan的基准profile为 `profiles/x64`。可从Windows开发者命令行运行 `conan install . --profile:all profiles/x64 --build=missing -s build_type=Release`，再按该次Conan生成的toolchain/preset配置CMake；输出路径应以实际生成结果为准。
+构建以 `profiles/x64` 为基准，先创建仓库中的 Bullet 配方，再安装应用依赖。完整命令统一维护在 [发布说明](RELEASES.md#reproduce-the-release-build)，避免使用旧的工作站锁文件或上游 Bullet 替代本地修改版。输出路径以实际生成结果为准。
 
 完整构建、CTest和资源验证的最新实际运行结果由当轮修复报告记录。本文件不以一个固定的历史增量构建结果保证全新环境可构建，也不将局部测试通过称为MMD/MME全面等价。

@@ -3,6 +3,9 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#if defined(_M_IX86)
+#include "LinearMath/btMmdMath.h"
+#endif
 #include <Windows.h>
 #include <d3d9.h>
 
@@ -112,19 +115,7 @@ bool ProjectBonePoint(mikudancestudio::mdl::BoneRecord* bone, std::size_t pointO
 __declspec(noinline) float BoneVCoordinate(int numerator, int origin,
                                            float lengthValue, float scale) {
 #if defined(_M_IX86)
-    static const double kEight = 8.0;
-    float result = 0.0f;
-    // 0x49A541..0x49A58E and 0x49A60E..0x49A654 retain every
-    // intermediate on the x87 stack before the final float store.
-    __asm {
-        fild dword ptr numerator
-        fdiv dword ptr lengthValue
-        fmul qword ptr kEight
-        fmul dword ptr scale
-        fiadd dword ptr origin
-        fstp dword ptr result
-    }
-    return result;
+    return btMmdMath::boneVCoordinate(numerator, origin, lengthValue, scale);
 #else
     return static_cast<float>(static_cast<double>(numerator) / lengthValue *
                               8.0 * scale + origin);
@@ -141,32 +132,7 @@ __declspec(noinline) void BoneMarkerBounds(int x, int y, float scale,
     // 0x49AFBD onward keeps the half extent on the x87 stack, stores the
     // leading edge as float, reloads it, then adds the full extent.
 #if defined(_M_IX86)
-    static const double kHalf = 9.5;
-    static const double kSize = 18.0;
-    __asm {
-        fld dword ptr scale
-        fmul qword ptr kHalf
-
-        fild dword ptr x
-        fsub st, st(1)
-        fstp dword ptr l
-        fld dword ptr l
-        fld dword ptr scale
-        fmul qword ptr kSize
-        faddp st(1), st
-        fstp dword ptr r
-
-        fild dword ptr y
-        fsub st, st(1)
-        fstp dword ptr t
-        fld dword ptr t
-        fld dword ptr scale
-        fmul qword ptr kSize
-        faddp st(1), st
-        fstp dword ptr b
-
-        fstp st(0)
-    }
+    btMmdMath::boneMarkerBounds(x, y, scale, &l, &t, &r, &b);
 #else
     l = static_cast<float>(x - scale * 9.5);
     r = static_cast<float>(l + scale * 18.0);
@@ -262,7 +228,7 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
     // 0x499BD0: bone projection plus the bone-line and bone-icon producers.
     // The original runs this after WORLD/VIEW/PROJECTION are installed and
     // appends to the line batch built by 0x4757C3 on the previous frame.
-    if (app->state.optflag[0] == 0 &&
+    if (app->CameraMode() == 0 &&
         app->PlaybackActive() == 0 && sub != nullptr) {
         auto* model = app->SelectedModel();
         auto* device = sub->device;
@@ -640,7 +606,7 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
     // 0x46C297..0x46C6C5: with no selected model, the camera look-at point
     // projects to the exact viewport centre. The original uses asymmetric
     // -9.5/+8.5 extents so texels land on the same pixels.
-    if (app->state.optflag[0] != 0 &&
+    if (app->CameraMode() != 0 &&
         app->PlaybackActive() == 0 &&
         app->CameraParentModel() < 0) {
         const float cx = static_cast<float>((view.left + view.right) / 2);
@@ -672,7 +638,7 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
     // 0x46C6E2..0x46CE84: camera and bone operation rows. Playback takes
     // LABEL_105 and deliberately emits neither rows nor highlights.
     if (!playback) {
-        if (app->state.optflag[0] != 0) {
+        if (app->CameraMode() != 0) {
             append(right - scale * 130.0f, bottom - scale * 80.0f,
                    right - scale * 10.0f, bottom - scale * 50.0f,
                    0.001953f, 0.41210899f, 0.23242199f, 0.46875f);
@@ -725,7 +691,7 @@ void PrepareFrameSpriteOverlay(MMDApp* app) {
         // 0x46D74D..0x46DB2A: operation cursor pictures in bone mode. These
         // use raw projected mouse coordinates returned by 0x499BD0 and are
         // intentionally not multiplied by the viewport scale.
-        if (app->state.optflag[0] == 0) {
+        if (app->CameraMode() == 0) {
             const float x = static_cast<float>(app->ViewportToolCenterX());
             const float y = static_cast<float>(app->ViewportToolCenterY());
             const int cursorKind = static_cast<int>(app->EditMode());

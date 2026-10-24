@@ -79,6 +79,17 @@ enum class GlobalTimelineTrack : std::uint8_t {
     Gravity = 3,
 };
 
+// Panel expansion bytes follow the camera/model mode byte in the original
+// optflag array. These values also pin the order stored in PMM files.
+enum class UiPanel : std::uint8_t {
+    Camera = 1,
+    Light = 2,
+    Accessory = 3,
+    Bone = 4,
+    Morph = 5,
+    SelfShadow = 6,
+};
+
 enum class TimelineSelectionBand : std::uint8_t {
     Camera = 0,
     Light = 1,
@@ -1205,7 +1216,17 @@ public:
     std::uint8_t& UiOptionFlag(int index) {
         return state.optflag[index];
     }
+    std::uint8_t UiOptionFlag(int index) const {
+        return state.optflag[index];
+    }
     std::uint8_t& CameraMode() { return UiOptionFlag(0); }
+    std::uint8_t CameraMode() const { return UiOptionFlag(0); }
+    std::uint8_t& PanelExpanded(UiPanel panel) {
+        return UiOptionFlag(static_cast<int>(panel));
+    }
+    std::uint8_t PanelExpanded(UiPanel panel) const {
+        return UiOptionFlag(static_cast<int>(panel));
+    }
     std::uint32_t& MainModelComboSelection() {
         return state.mainModelComboSelection;
     }

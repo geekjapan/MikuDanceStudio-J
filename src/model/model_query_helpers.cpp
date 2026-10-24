@@ -311,8 +311,8 @@ void SelectDisplayBone(MMDApp* app, int boneIdx) {
         flags[i] = 0;
     flags[boneIdx] = 1;                                         // 0x438D3A
     ScrollDisplayBoneIntoView(app, boneIdx);                    // 0x438D41
-    PostLanguageSweep(app);                                     // 0x438D48
-    PostLanguageSweep2(app);                                    // 0x438D54
+    RebuildTimelineTrackPanel(app);                                     // 0x438D48
+    InvalidateSelectionReadouts(app);                                    // 0x438D54
 }
 
 // ===========================================================================
@@ -516,8 +516,8 @@ inline void SelectDisplayObject(MMDApp* app, int idx) {         // 0x43974F
     SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_SETCURSEL, wp, 0);
     SyncAccessoryEditPanel(app);  //               // 0x43978C
     ScrollModelListIntoView(app, app->SelectedObjectSlot());
-    PostLanguageSweep(app);                                     // 0x4397A2
-    PostLanguageSweep2(app);
+    RebuildTimelineTrackPanel(app);                                     // 0x4397A2
+    InvalidateSelectionReadouts(app);
 }
 
 }  // namespace
@@ -538,29 +538,29 @@ void SelectPrevEditTarget(MMDApp* app) {
     if (app->GlobalTrackSelected(GlobalTimelineTrack::Camera) != 0) {
         ClearAllDisplayObjectFlags(app);
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Camera);
-        PostLanguageSweep(app);                                 // 0x439244
-        PostLanguageSweep2(app);
+        RebuildTimelineTrackPanel(app);                                 // 0x439244
+        InvalidateSelectionReadouts(app);
         return;
     }
     if (app->GlobalTrackSelected(GlobalTimelineTrack::Light) != 0) {
         ClearAllDisplayObjectFlags(app);
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Camera);
-        PostLanguageSweep(app);
-        PostLanguageSweep2(app);
+        RebuildTimelineTrackPanel(app);
+        InvalidateSelectionReadouts(app);
         return;
     }
     if (app->GlobalTrackSelected(GlobalTimelineTrack::SelfShadow) != 0) {
         ClearAllDisplayObjectFlags(app);
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Light);
-        PostLanguageSweep(app);
-        PostLanguageSweep2(app);
+        RebuildTimelineTrackPanel(app);
+        InvalidateSelectionReadouts(app);
         return;
     }
     if (app->GlobalTrackSelected(GlobalTimelineTrack::Gravity) != 0) {
         ClearAllDisplayObjectFlags(app);
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::SelfShadow);
-        PostLanguageSweep(app);
-        PostLanguageSweep2(app);
+        RebuildTimelineTrackPanel(app);
+        InvalidateSelectionReadouts(app);
         return;
     }
 
@@ -572,8 +572,8 @@ void SelectPrevEditTarget(MMDApp* app) {
     if (current == nullptr) {                                   // 0x439425
         app->SelectedObjectSlot() = 0;
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Camera);
-        PostLanguageSweep(app);                                 // 0x43950D
-        PostLanguageSweep2(app);
+        RebuildTimelineTrackPanel(app);                                 // 0x43950D
+        InvalidateSelectionReadouts(app);
         return;
     }
     const unsigned char frame = DisplayOrder(current);          // 0x43942D
@@ -584,8 +584,8 @@ void SelectPrevEditTarget(MMDApp* app) {
                DisplayOrder(DisplayObjectAt(app, i)) != target) { // 0x43945F
             ++i;
             if (i >= 255) {
-                PostLanguageSweep(app);                         // 0x439486
-                PostLanguageSweep2(app);
+                RebuildTimelineTrackPanel(app);                         // 0x439486
+                InvalidateSelectionReadouts(app);
                 return;
             }
         }
@@ -594,8 +594,8 @@ void SelectPrevEditTarget(MMDApp* app) {
     }
     app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Gravity);
     ScrollModelListIntoView(app, curSlot);                                    // 0x439441
-    PostLanguageSweep(app);                                     // 0x439448
-    PostLanguageSweep2(app);
+    RebuildTimelineTrackPanel(app);                                     // 0x439448
+    InvalidateSelectionReadouts(app);
 }
 
 // ===========================================================================
@@ -612,22 +612,22 @@ void SelectNextEditTarget(MMDApp* app) {
     if (app->GlobalTrackSelected(GlobalTimelineTrack::Camera) != 0) {
         ClearAllDisplayObjectFlags(app);
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Light);
-        PostLanguageSweep(app);                                 // 0x4395A3
-        PostLanguageSweep2(app);
+        RebuildTimelineTrackPanel(app);                                 // 0x4395A3
+        InvalidateSelectionReadouts(app);
         return;
     }
     if (app->GlobalTrackSelected(GlobalTimelineTrack::Light) != 0) {
         ClearAllDisplayObjectFlags(app);
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::SelfShadow);
-        PostLanguageSweep(app);                                 // 0x439623
-        PostLanguageSweep2(app);
+        RebuildTimelineTrackPanel(app);                                 // 0x439623
+        InvalidateSelectionReadouts(app);
         return;
     }
     if (app->GlobalTrackSelected(GlobalTimelineTrack::SelfShadow) != 0) {
         ClearAllDisplayObjectFlags(app);
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Gravity);
-        PostLanguageSweep(app);                                 // 0x4396A3
-        PostLanguageSweep2(app);
+        RebuildTimelineTrackPanel(app);                                 // 0x4396A3
+        InvalidateSelectionReadouts(app);
         return;
     }
 
@@ -641,8 +641,8 @@ void SelectNextEditTarget(MMDApp* app) {
             ++i;
             if (i >= 255) {
                 app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Gravity);
-                PostLanguageSweep(app);                         // 0x4396A3
-                PostLanguageSweep2(app);
+                RebuildTimelineTrackPanel(app);                         // 0x4396A3
+                InvalidateSelectionReadouts(app);
                 return;
             }
         }
@@ -658,8 +658,8 @@ void SelectNextEditTarget(MMDApp* app) {
     if (cur == nullptr) {                                       // 0x439822
         app->SelectedObjectSlot() = 0;
         app->SelectGlobalTimelineTrack(GlobalTimelineTrack::Camera);
-        PostLanguageSweep(app);                                 // 0x439891
-        PostLanguageSweep2(app);
+        RebuildTimelineTrackPanel(app);                                 // 0x439891
+        InvalidateSelectionReadouts(app);
         return;
     }
     const unsigned char target = DisplayOrder(cur) + 1;         // 0x43982D
@@ -670,8 +670,8 @@ void SelectNextEditTarget(MMDApp* app) {
         if (i >= 255) {
             DisplayObjectActive(cur) = 1;                        // 0x43985A
             ScrollModelListIntoView(app, curSlot);
-            PostLanguageSweep(app);                             // 0x439872
-            PostLanguageSweep2(app);
+            RebuildTimelineTrackPanel(app);                             // 0x439872
+            InvalidateSelectionReadouts(app);
             return;
         }
     }

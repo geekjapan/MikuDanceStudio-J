@@ -88,8 +88,8 @@
 //                          0x10D/0x109/0x10E; sync loop (no 0x9EDB5)
 //   273 111  0x0048DBFF    gate app+0x2F8; 0x48=1; per-bone selection:
 //                          sel[i] = (frames[i*0x25C+0x1EC] != 0),
-//                          curBone = i when visible; PostLanguageSweep +
-//                          PostLanguageSweep2
+//                          curBone = i when visible; RebuildTimelineTrackPanel +
+//                          InvalidateSelectionReadouts
 //   274 112  0x0048DC96    gate app+0x2F8; 0x30=1; clear frame-selection
 //                          flags of morph (+0x10/0x14), other (+0x14/0x1C)
 //                          and bone (+0x38/0x3C) tables, then mark the
@@ -223,6 +223,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <commctrl.h>
 #include <commdlg.h>
@@ -455,7 +456,7 @@ LRESULT CALLBACK EdgeThicknessEditSubclassProc(  // VA 0x0042E270
 // (Template caption "thickness of edge line" / エッジ太さ設定, scale 0..2 -
 // model+0x31C0 is the per-model edge thickness, not a FPS.)
 float GetEdgeThickness(MMDApp* app) {  // VA 0x0041E950
-    if (app->state.optflag[0] != 0)
+    if (app->CameraMode() != 0)
         return 1.0f;
     unsigned char* model = app->SelectedModel();
     return mdl::Mdl(model)->edgeScale;
@@ -464,7 +465,7 @@ float GetEdgeThickness(MMDApp* app) {  // VA 0x0041E950
 // in-dialog and dirty flags, then stores into the active model's thickness
 // float (+0x31C0).
 void SetEdgeThickness(MMDApp* app, float thickness) {  // VA 0x0041E980
-    if (app->state.optflag[0] != 0)
+    if (app->CameraMode() != 0)
         return;
     app->state.messageSeen = 1;
     app->SceneModified() = 1;
@@ -496,7 +497,7 @@ LRESULT CALLBACK ModelEdgeEditSubclassProc(  // VA 0x0045ECC0
         }
         if (hwnd == GetDlgItem(dlg, panel::kBoneNameEnEdit)) {
             CollectEnglishNameEdit(app, hwnd, 1);
-            PostLanguageSweep(app);                         // 0x42F1E0
+            RebuildTimelineTrackPanel(app);                         // 0x42F1E0
             return 0;
         }
         if (hwnd == GetDlgItem(dlg, panel::kMorphNameEnEdit)) {
@@ -561,7 +562,7 @@ LRESULT CALLBACK GravitySettingEditSubclassProc(  // VA 0x00466370
 // the physics world setGravity (world = *(app+0x9EDB0)->world, vtable
 // slot 0x34/4 = 13).  An all-zero direction gets Y nudged to
 // flt 0x529624 = 0.1f first.  Channel 4 stores (int)value into app+0x9EDC8.
-// Ends with RefreshRequest(-4) on every path.
+// Ends with SelectTimelineTrack(GlobalTimelineTrack::Gravity) on every path.
 void SetGravityChannel(MMDApp* app, int channel, float value) {  // VA 0x0045FD80
     switch (channel) {
     case 0:
@@ -593,7 +594,7 @@ void SetGravityChannel(MMDApp* app, int channel, float value) {  // VA 0x0045FD8
         if (channel == 4)
             app->state.gravityNoise =
                 static_cast<std::int32_t>(value);
-        RefreshRequest(-4);                                 // 0x440AC0
+        SelectTimelineTrack(GlobalTimelineTrack::Gravity);                                 // 0x440AC0
         return;
     }
 
@@ -610,13 +611,13 @@ void SetGravityChannel(MMDApp* app, int channel, float value) {  // VA 0x0045FD8
         if (btDiscreteDynamicsWorld* world = physicsScene->world)
             world->setGravity(btVector3(vec[0], vec[1], vec[2]));
     }
-    RefreshRequest(-4);                                     // 0x440AC0
+    SelectTimelineTrack(GlobalTimelineTrack::Gravity);                                     // 0x440AC0
 }
 // VA 0x00460080 - gravity-setting dialog OK ("register"): dirty flag, clear the
 // selection marks of the four global frame tables (camera 0x374 +0x48,
 // light 0x378 +0x24, self-shadow 0x37C +0x14, gravity 0x380 +0x21) and of
 // all 255 accessory tracks (0x384 blobs, +0x18, 0x3C stride), rebuild via
-// 0x412B20 at the current frame, then RefreshRequest(-4) + PanelPaint.
+// 0x412B20 at the current frame, then SelectTimelineTrack(GlobalTimelineTrack::Gravity) + PanelPaint.
 void ApplyGravitySettingDialog(MMDApp* app) {  // VA 0x00460080
     app->SceneModified() = 1;
     mdl::CameraKey* camera = app->CameraKeys();
@@ -637,7 +638,7 @@ void ApplyGravitySettingDialog(MMDApp* app) {  // VA 0x00460080
             acc[i].selected = 0;
     }
     RegisterGravityKeyCurrent(app, app->state.currentFrame);  // 0x412B20
-    RefreshRequest(-4);                                       // 0x440AC0
+    SelectTimelineTrack(GlobalTimelineTrack::Gravity);                                       // 0x440AC0
     PanelPaint(app);                                          // 0x414610
 }
 // VA 0x0041E7B0 - order-array builder: for order = 1..count-1 scan the 100
@@ -1656,8 +1657,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // Gate: app+0x2F8 must be clear; closes with 2 -> return, else the
     // default handler (no-op for menu ids).
     // ------------------------------------------------------------------
-    case 251: {
-        if (app->state.optflag[0] != 0) {
+    case MDS_CMD_MULTIPLY_BONE_FRAMES: {
+        if (app->CameraMode() != 0) {
             return;
         }
         app->state.enterKeyState = 1;
@@ -1673,8 +1674,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 252 (0x0048A219): facial-multiply dialog 0x295 EN / 0x283 JP
     //                    (sub_44D510).
     // ------------------------------------------------------------------
-    case 252: {
-        if (app->state.optflag[0] != 0) {
+    case MDS_CMD_MULTIPLY_MORPH_FRAMES: {
+        if (app->CameraMode() != 0) {
             return;
         }
         app->state.enterKeyState = 1;
@@ -1690,11 +1691,11 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 253 (0x00489FC8): edge-thickness dialog (0x296 EN / 0x285 JP,
     // sub_44C7F0) as a modeless window stored at app+0xA0B44.
     // ------------------------------------------------------------------
-    case 253: {
+    case MDS_CMD_EDGE_THICKNESS: {
         if (app->state.edgeThicknessDialog != nullptr) {
             break;  // jnz def_47E903 (no-op)
         }
-        if (app->state.optflag[0] != 0) {
+        if (app->CameraMode() != 0) {
             break;
         }
         HWND dlg = CreateDialogParamA(
@@ -1710,13 +1711,13 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 254 (0x0048A26A): toggle physics-display flag app+0x9ED9A and menu
     // item 0xFE (same flag as menu 0xD8 / CmdTogglePhysicsDisplay).
     // ------------------------------------------------------------------
-    case 254: {
+    case MDS_CMD_TOGGLE_GROUND_SHADOW_TRANSPARENCY: {
         if (app->state.projectedShadowBlendEnabled != 0) {
             app->state.projectedShadowBlendEnabled = 0;
-            CheckMenuItem(GetMenu(hwnd), 0xFE, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_GROUND_SHADOW_TRANSPARENCY, MF_UNCHECKED);
         } else {
             app->state.projectedShadowBlendEnabled = 1;
-            CheckMenuItem(GetMenu(hwnd), 0xFE, MF_CHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_GROUND_SHADOW_TRANSPARENCY, MF_CHECKED);
         }
         break;
     }
@@ -1727,19 +1728,19 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // dirty 0xA0B0D = 1.  Table-driven: the four bodies are identical
     // except for the flag index and the frame-line helper called.
     // ------------------------------------------------------------------
-    case 255:
-    case 256:
-    case 257:
-    case 258: {
+    case MDS_CMD_INSERT_BONE_CAMERA_FRAME_LINE:
+    case MDS_CMD_DELETE_BONE_CAMERA_FRAME_LINE:
+    case MDS_CMD_INSERT_MORPH_LIGHT_FRAME_LINE:
+    case MDS_CMD_DELETE_MORPH_LIGHT_FRAME_LINE: {
         static const struct {
             int id;
             int flagIdx;
             void (*frameLineOp)(MMDApp*);
         } kFrameEditDialogs[] = {
-            {255, 9, InsertBoneCameraFrameLine},    // 0x439E40
-            {256, 11, DeleteBoneCameraFrameLine},   // 0x43A650
-            {257, 13, InsertFacialLightFrameLine},  // 0x43B720
-            {258, 14, DeleteFacialLightFrameLine},  // 0x43BB30
+            {MDS_CMD_INSERT_BONE_CAMERA_FRAME_LINE, 9, InsertBoneCameraFrameLine},    // 0x439E40
+            {MDS_CMD_DELETE_BONE_CAMERA_FRAME_LINE, 11, DeleteBoneCameraFrameLine},   // 0x43A650
+            {MDS_CMD_INSERT_MORPH_LIGHT_FRAME_LINE, 13, InsertFacialLightFrameLine},  // 0x43B720
+            {MDS_CMD_DELETE_MORPH_LIGHT_FRAME_LINE, 14, DeleteFacialLightFrameLine},  // 0x43BB30
         };
         for (const auto& entry : kFrameEditDialogs) {
             if (entry.id == id) {
@@ -1756,11 +1757,11 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 259 (0x0048A8E3): model-edge dialog (0x29A EN / 0x299 JP,
     // sub_464BD0) at app+0xA0B50.
     // ------------------------------------------------------------------
-    case 259: {
+    case MDS_CMD_EDIT_ENGLISH_NAMES: {
         if (app->FrameRangeDialog() != nullptr) {
             break;
         }
-        if (app->state.optflag[0] != 0) {
+        if (app->CameraMode() != 0) {
             break;
         }
         HWND dlg = CreateDialogParamA(
@@ -1776,7 +1777,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 260 (0x0048A862): toggle English UI (byte 0xA0B4C), then the
     // language sweep (0x441AD0 LocalizeUI) and UI refresh (0x40B5A0).
     // ------------------------------------------------------------------
-    case 260: {
+    case MDS_CMD_TOGGLE_UI_LANGUAGE: {
         const std::uint8_t cur =
             app->state.englishUI;
         app->state.englishUI = (cur == 0) ? 1 : 0;
@@ -1790,8 +1791,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // sub_43C9A0); on close (result != 2) the save reminder box,
     // then 0xA0B64 = 1.
     // ------------------------------------------------------------------
-    case 261: {
-        if (app->state.optflag[0] != 0) {
+    case MDS_CMD_TOON_TEXTURES: {
+        if (app->CameraMode() != 0) {
             return;
         }
         app->state.enterKeyState = 1;
@@ -1818,11 +1819,11 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 262 (0x0048A9EC): frame-edit dialog (0x2AC EN / 0x2AB JP,
     // sub_465020) at app+0xA0B74.
     // ------------------------------------------------------------------
-    case 262: {
+    case MDS_CMD_PHYSICS_MODEL: {
         if (app->state.frameCopyDialog != nullptr) {
             break;
         }
-        if (app->state.optflag[0] != 0) {
+        if (app->CameraMode() != 0) {
             return;
         }
         app->state.dialogFlags[6] = 1;
@@ -1844,7 +1845,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // checked else "UserFile\Model" (0x52DCBC); on success the menu gate
     // copies the directory into DirModel, then sub_41EC10 saves the file.
     // ------------------------------------------------------------------
-    case 263: {
+    case MDS_CMD_SAVE_ENHANCED_MODEL: {
         app->state.dialogFlags[12] = 1;
         app->state.enterKeyState = 1;
         SetCurrentDirectoryW(app->ExeDir());
@@ -1861,7 +1862,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         ofn.lpstrFile = fileBuf;
         ofn.nMaxFile = 0x100;
         ofn.Flags = (OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY);
-        if ((GetMenuState(GetMenu(hwnd), 0x12D, 0) & 8) != 0) {
+        if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
             ofn.lpstrInitialDir = app->DirModel();
         } else {
             ofn.lpstrInitialDir = L"UserFile\\Model";
@@ -1874,7 +1875,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         if (!GetSaveFileNameW(&ofn)) {
             return;
         }
-        if ((GetMenuState(GetMenu(hwnd), 0x12D, 0) & 8) != 0) {
+        if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
             wchar_t* dir = ExtractDirFromPath(
                 app->PathWorkspace().projectDirectory,
                 fileBuf);
@@ -1887,14 +1888,14 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // ------------------------------------------------------------------
     // 264 (0x0048ABB0): toggle byte app+0xA0CC8 with CheckMenuItem 0x108.
     // ------------------------------------------------------------------
-    case 264: {
+    case MDS_CMD_TOGGLE_PHYSICS_BODIES: {
         app->state.dialogFlags[4] = 1;
         if (app->state.rigidBodyDisplayEnabled != 0) {
             app->state.rigidBodyDisplayEnabled = 0;
-            CheckMenuItem(GetMenu(hwnd), 0x108, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_PHYSICS_BODIES, MF_UNCHECKED);
         } else {
             app->state.rigidBodyDisplayEnabled = 1;
-            CheckMenuItem(GetMenu(hwnd), 0x108, MF_CHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_PHYSICS_BODIES, MF_CHECKED);
         }
         return;
     }
@@ -1906,12 +1907,12 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // then ModelKinematicSync (0x4B2210, thiscall(model, app+0xA0CC4))
     // over the 100 model slots.  Cases 265/269/270 set 0x9EDB5 = 1.
     // ------------------------------------------------------------------
-    case 265: {
+    case MDS_CMD_PHYSICS_ALWAYS: {
         app->PlaybackPhysicsMode() = 1;
-        CheckMenuItem(GetMenu(hwnd), 0x10D, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(hwnd), 0x109, MF_CHECKED);
-        CheckMenuItem(GetMenu(hwnd), 0x10E, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(hwnd), 0x110, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_ON_OFF, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_ALWAYS, MF_CHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_TRACE, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_DISABLED, MF_UNCHECKED);
         // x64 dispatcher sub_7FF7CB45F550 case 265 twin walks all 255 slots
         // (mov r13d, 0FFh ... dec r13 at 0x7FF7CB46F309..0x7FF7CB46F32D).
         for (int i = 0; i < kModelSlotCount; ++i) {
@@ -1924,12 +1925,12 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         return;
     }
 
-    case 269: {
+    case MDS_CMD_PHYSICS_ON_OFF: {
         app->PlaybackPhysicsMode() = 2;
-        CheckMenuItem(GetMenu(hwnd), 0x10D, MF_CHECKED);
-        CheckMenuItem(GetMenu(hwnd), 0x109, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(hwnd), 0x10E, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(hwnd), 0x110, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_ON_OFF, MF_CHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_ALWAYS, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_TRACE, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_DISABLED, MF_UNCHECKED);
         for (int i = 0; i < kModelSlotCount; ++i) {
             unsigned char* model = app->ModelSlot(i);
             if (model != nullptr) {
@@ -1940,12 +1941,12 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         return;
     }
 
-    case 270: {
+    case MDS_CMD_PHYSICS_TRACE: {
         app->PlaybackPhysicsMode() = 3;
-        CheckMenuItem(GetMenu(hwnd), 0x10D, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(hwnd), 0x109, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(hwnd), 0x10E, MF_CHECKED);
-        CheckMenuItem(GetMenu(hwnd), 0x110, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_ON_OFF, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_ALWAYS, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_TRACE, MF_CHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_DISABLED, MF_UNCHECKED);
         for (int i = 0; i < kModelSlotCount; ++i) {
             unsigned char* model = app->ModelSlot(i);
             if (model != nullptr) {
@@ -1956,12 +1957,12 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         return;
     }
 
-    case 272: {
+    case MDS_CMD_PHYSICS_DISABLED: {
         app->PlaybackPhysicsMode() = 0;
-        CheckMenuItem(GetMenu(hwnd), 0x10D, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(hwnd), 0x109, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(hwnd), 0x10E, MF_UNCHECKED);
-        CheckMenuItem(GetMenu(hwnd), 0x110, MF_CHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_ON_OFF, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_ALWAYS, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_TRACE, MF_UNCHECKED);
+        CheckMenuItem(GetMenu(hwnd), MDS_CMD_PHYSICS_DISABLED, MF_CHECKED);
         for (int i = 0; i < kModelSlotCount; ++i) {
             unsigned char* model = app->ModelSlot(i);
             if (model != nullptr) {
@@ -1975,7 +1976,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 266 (0x0048AEE1): gravity-setting dialog (0x323 EN / 0x322 JP,
     // sub_479E90) at app+0xA0CCC.
     // ------------------------------------------------------------------
-    case 266: {
+    case MDS_CMD_GRAVITY_SETTINGS: {
         if (app->GravitySettingDialog() != 0) {
             return;
         }
@@ -1993,7 +1994,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // ------------------------------------------------------------------
     // 267 (0x0048AF57): physical-engine about box.
     // ------------------------------------------------------------------
-    case 267: {
+    case MDS_CMD_ABOUT_PHYSICS: {
         app->state.dialogFlags[5] = 1;
         if (english) {
             MessageBoxA(hwnd,
@@ -2012,7 +2013,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // ------------------------------------------------------------------
     // 268 (0x0048AECE): 0x54 = 1, undo-available byte 0x9EDB5 = 1.
     // ------------------------------------------------------------------
-    case 268:
+    case MDS_CMD_RESET_PHYSICS_BODIES:
         app->state.dialogFlags[9] = 1;
         app->PhysicsResetPending() = 1;
         return;
@@ -2021,13 +2022,13 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 271 (0x0048AE60): toggle menu 0x10F (IK display) from its own
     // GetMenuState bit 8; byte app+0xA066D mirrors the checked state.
     // ------------------------------------------------------------------
-    case 271: {
+    case MDS_CMD_TOGGLE_PLAYBACK_PHYSICS_ON_OFF: {
         app->state.dialogFlags[12] = 1;
-        if ((GetMenuState(GetMenu(hwnd), 0x10F, 0) & 8) == 0) {
-            CheckMenuItem(GetMenu(hwnd), 0x10F, MF_CHECKED);
+        if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PLAYBACK_PHYSICS_ON_OFF, 0) & 8) == 0) {
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_PLAYBACK_PHYSICS_ON_OFF, MF_CHECKED);
             app->state.playbackAlwaysOnOffMode = 1;
         } else {
-            CheckMenuItem(GetMenu(hwnd), 0x10F, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_PLAYBACK_PHYSICS_ON_OFF, MF_UNCHECKED);
             app->state.playbackAlwaysOnOffMode = 0;
         }
         return;
@@ -2038,8 +2039,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // curBone = i for every bone whose frame visibility byte +0x1EC is
     // set, then the language sweeps (0x42F1E0 / 0x40D070).
     // ------------------------------------------------------------------
-    case 273: {
-        if (app->state.optflag[0] != 0) {
+    case MDS_CMD_SELECT_PHYSICS_BONES: {
+        if (app->CameraMode() != 0) {
             return;
         }
         app->state.dialogFlags[6] = 1;
@@ -2058,8 +2059,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
                 }
             }
         }
-        PostLanguageSweep(app);   // 0x42F1E0
-        PostLanguageSweep2(app);  // 0x40D070
+        RebuildTimelineTrackPanel(app);   // 0x42F1E0
+        InvalidateSelectionReadouts(app);  // 0x40D070
         return;
     }
 
@@ -2067,8 +2068,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // Select physics-enabled keys of bones that have rigid bodies.
     // The model helper owns the three key-pool sweeps and linked-key walk.
     // ------------------------------------------------------------------
-    case 274: {
-        if (app->state.optflag[0] != 0) {
+    case MDS_CMD_SELECT_PHYSICS_ON_FRAMES: {
+        if (app->CameraMode() != 0) {
             return;
         }
         app->state.dialogFlags[0] = 1;
@@ -2081,7 +2082,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 275 (0x0048DE30): modal dialog 0x32D EN / 0x32C JP (sub_461CE0);
     // no close handling in the original (always returns).
     // ------------------------------------------------------------------
-    case 275:
+    case MDS_CMD_TOGGLE_FRAME_PHYSICS:
         app->state.dialogFlags[2] = 1;
         app->state.enterKeyState = 1;
         DialogBoxParamA(hInst,
@@ -2101,7 +2102,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // window ("RecWindow" class, title 0x52F1C0) is created at
     // app+0xA0D24 and the refresh tail runs.
     // ------------------------------------------------------------------
-    case 276: {
+    case MDS_CMD_RENDER_IMAGE: {
         app->state.dialogFlags[6] = 1;
         app->state.enterKeyState = 1;
         SetCurrentDirectoryW(app->ExeDir());
@@ -2120,7 +2121,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         ofn.nFilterIndex = 1;
         ofn.nMaxFile = 0x100;
         ofn.Flags = (OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY);
-        if ((GetMenuState(GetMenu(hwnd), 0x12D, 0) & 8) != 0) {
+        if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
             ofn.lpstrInitialDir = app->DirUser();
         } else {
             ofn.lpstrInitialDir = L"UserFile";
@@ -2133,7 +2134,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         if (!GetSaveFileNameW(&ofn)) {
             return;
         }
-        if ((GetMenuState(GetMenu(hwnd), 0x12D, 0) & 8) != 0) {
+        if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
             wchar_t* dir = ExtractDirFromPath(
                 app->PathWorkspace().projectDirectory,
                 fileBuf);
@@ -2194,13 +2195,13 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 8, SetRenderState(0xA1, on/off) (x64 sub_7FF7CB45F550 0x7FF7CB46FAB4:
     // vtable+0x1C8 = 槽 57; x86 +0xE4/4 = 槽 57).
     // ------------------------------------------------------------------
-    case 277: {
+    case MDS_CMD_TOGGLE_ANTIALIASING: {
         app->state.dialogFlags[10] = 1;
-        if ((GetMenuState(GetMenu(hwnd), 0x115, 0) & 8) == 0) {
-            CheckMenuItem(GetMenu(hwnd), 0x115, MF_CHECKED);
+        if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_ANTIALIASING, 0) & 8) == 0) {
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_ANTIALIASING, MF_CHECKED);
             SetMultisampleAntialias(app, 1);
         } else {
-            CheckMenuItem(GetMenu(hwnd), 0x115, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_ANTIALIASING, MF_UNCHECKED);
             SetMultisampleAntialias(app, 0);
         }
         return;
@@ -2210,7 +2211,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 278 (0x0048B401): reload the toon texture set (0x424DC0
     // InitToonTextures), then the locale refresh sub_4076E0.
     // ------------------------------------------------------------------
-    case 278:
+    case MDS_CMD_RESTORE_TEXTURES:
         InitToonTextures(app);  // 0x424DC0
         ReloadTextureCache(app->Renderer());  // 0x4076E0
         return;
@@ -2219,13 +2220,13 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 279 (0x0048B393): self-shadow toggle - menu 0x117, byte
     // app+0xA0188 mirrors.
     // ------------------------------------------------------------------
-    case 279: {
+    case MDS_CMD_TOGGLE_SELF_SHADOW: {
         app->state.dialogFlags[12] = 1;
-        if ((GetMenuState(GetMenu(hwnd), 0x117, 0) & 8) == 0) {
-            CheckMenuItem(GetMenu(hwnd), 0x117, MF_CHECKED);
+        if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_SELF_SHADOW, 0) & 8) == 0) {
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_SELF_SHADOW, MF_CHECKED);
             app->state.selfShadowEnabled = 1;
         } else {
-            CheckMenuItem(GetMenu(hwnd), 0x117, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_SELF_SHADOW, MF_UNCHECKED);
             app->state.selfShadowEnabled = 0;
         }
         return;
@@ -2234,7 +2235,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // ------------------------------------------------------------------
     // 280 (0x0048B416): flag-subsystem save/init keyed on app+0xA0D38.
     // ------------------------------------------------------------------
-    case 280:
+    case MDS_CMD_TOGGLE_SEPARATE_WINDOW:
         if (app->state.floatingWindow != 0) {
             SaveFlagSubsystem(app);  // 0x461FA0
         } else {
@@ -2247,16 +2248,16 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // SetWindowPos of the accessory column (app+0xA0D38) to
     // HWND_TOPMOST / HWND_NOTOPMOST with flags 0x43.
     // ------------------------------------------------------------------
-    case 281: {
+    case MDS_CMD_TOGGLE_ALWAYS_ON_TOP: {
         app->state.dialogFlags[15] = 1;
-        if ((GetMenuState(GetMenu(hwnd), 0x119, 0) & 8) == 0) {
-            CheckMenuItem(GetMenu(hwnd), 0x119, MF_CHECKED);
+        if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_ALWAYS_ON_TOP, 0) & 8) == 0) {
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_ALWAYS_ON_TOP, MF_CHECKED);
             if (app->state.floatingWindow != 0) {
                 SetWindowPos(app->state.floatingWindow,
                              HWND_TOPMOST, 0, 0, 0, 0, 0x43);
             }
         } else {
-            CheckMenuItem(GetMenu(hwnd), 0x119, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_ALWAYS_ON_TOP, MF_UNCHECKED);
             if (app->state.floatingWindow != 0) {
                 SetWindowPos(app->state.floatingWindow,
                              HWND_NOTOPMOST, 0, 0, 0, 0, 0x43);
@@ -2270,43 +2271,43 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // bytes app+0xA0194..0xA0197 mirrored by menu items 0x11A..0x11D.
     // Case 285 additionally stores 1 / -1 into scene->groundBody -> +0xD4.
     // ------------------------------------------------------------------
-    case 282: {
+    case MDS_CMD_TOGGLE_BLACK_BACKGROUND: {
         app->state.dialogFlags[4] = 1;
         if (app->state.blackBackgroundEnabled != 0) {
             app->state.blackBackgroundEnabled = 0;
-            CheckMenuItem(GetMenu(hwnd), 0x11A, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_BLACK_BACKGROUND, MF_UNCHECKED);
         } else {
             app->state.blackBackgroundEnabled = 1;
-            CheckMenuItem(GetMenu(hwnd), 0x11A, MF_CHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_BLACK_BACKGROUND, MF_CHECKED);
         }
         return;
     }
 
-    case 283: {
+    case MDS_CMD_TOGGLE_MODEL_NON_DISPLAY: {
         app->state.dialogFlags[5] = 1;
         if (app->state.modelNonDisplayMode != 0) {
             app->state.modelNonDisplayMode = 0;
-            CheckMenuItem(GetMenu(hwnd), 0x11B, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MODEL_NON_DISPLAY, MF_UNCHECKED);
         } else {
             app->state.modelNonDisplayMode = 1;
-            CheckMenuItem(GetMenu(hwnd), 0x11B, MF_CHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MODEL_NON_DISPLAY, MF_CHECKED);
         }
         return;
     }
 
-    case 284: {
+    case MDS_CMD_TOGGLE_WAVE_ON_FRAME: {
         app->state.dialogFlags[15] = 1;
         if (app->state.wavPlaysOnFrameMove != 0) {
             app->state.wavPlaysOnFrameMove = 0;
-            CheckMenuItem(GetMenu(hwnd), 0x11C, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_WAVE_ON_FRAME, MF_UNCHECKED);
         } else {
             app->state.wavPlaysOnFrameMove = 1;
-            CheckMenuItem(GetMenu(hwnd), 0x11C, MF_CHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_WAVE_ON_FRAME, MF_CHECKED);
         }
         return;
     }
 
-    case 285: {
+    case MDS_CMD_TOGGLE_PHYSICS_FLOOR: {
         app->state.dialogFlags[15] = 1;
         unsigned char* target = reinterpret_cast<unsigned char*>(
             app->Physics()->groundBody);   // scene slot 0x44
@@ -2317,11 +2318,11 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         // land 12 bytes short in the x64 Bullet layout.
         if (app->state.floorVisible != 0) {
             app->state.floorVisible = 0;
-            CheckMenuItem(GetMenu(hwnd), 0x11D, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_PHYSICS_FLOOR, MF_UNCHECKED);
             *reinterpret_cast<std::int32_t*>(target + 0xE0) = -1;
         } else {
             app->state.floorVisible = 1;
-            CheckMenuItem(GetMenu(hwnd), 0x11D, MF_CHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_PHYSICS_FLOOR, MF_CHECKED);
             *reinterpret_cast<std::int32_t*>(target + 0xE0) = 1;
         }
         return;
@@ -2333,7 +2334,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // app+0xA01A4, flags 3; the new color is written back and applied
     // via SetModelColor(model, r, g, b) over the 100 model slots.
     // ------------------------------------------------------------------
-    case 286: {
+    case MDS_CMD_EDGE_COLOR: {
         app->state.dialogFlags[6] = 1;
         app->state.enterKeyState = 1;
         CHOOSECOLORA cc;
@@ -2374,12 +2375,12 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // ------------------------------------------------------------------
     // 287 (0x0048B8CF): toggle byte app+0xA01E4 with CheckMenuItem 0x11F.
     // ------------------------------------------------------------------
-    case 287: {
+    case MDS_CMD_TOGGLE_WIREFRAME: {
         if (app->WireframeRenderingEnabled() != 0) {
-            CheckMenuItem(GetMenu(hwnd), 0x11F, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_WIREFRAME, MF_UNCHECKED);
             app->WireframeRenderingEnabled() = 0;
         } else {
-            CheckMenuItem(GetMenu(hwnd), 0x11F, MF_CHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_WIREFRAME, MF_CHECKED);
             app->WireframeRenderingEnabled() = 1;
         }
         return;
@@ -2389,7 +2390,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 288 (0x0048A08F): modal dialog 0x325 EN / 0x324 JP (sub_4641F0);
     // return when closed.
     // ------------------------------------------------------------------
-    case 288:
+    case MDS_CMD_MODEL_DRAW_ORDER:
         app->state.enterKeyState = 1;
         DialogBoxParamA(hInst,
                         MAKEINTRESOURCEA(english ? 0x325 : 0x324),
@@ -2400,7 +2401,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 289 (0x0048A0DF): modal dialog 0x32B EN / 0x32A JP (sub_42E370);
     // return when closed.
     // ------------------------------------------------------------------
-    case 289:
+    case MDS_CMD_MODEL_CALCULATION_ORDER:
         app->state.dialogFlags[2] = 1;
         app->state.enterKeyState = 1;
         DialogBoxParamA(hInst,
@@ -2412,7 +2413,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 290 (0x0048B926): full scene reload - 0xA0274 = 1,
     // sub_4629D0 (0x4629D0), PostDeviceReset (0x440DB0).
     // ------------------------------------------------------------------
-    case 290:
+    case MDS_CMD_TOGGLE_FULL_SCREEN:
         app->FullscreenMode() = 1;
         ApplyFullscreenWindowState(app);  // 0x4629D0
         PostDeviceReset(app);  // 0x440DB0
@@ -2422,7 +2423,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 291 (0x0048B93E): open-ONI gate - app+0xA03B8 selects between the
     // plugin loader (0x42A020) and the OpenNi init (0x429CB0, arg 0).
     // ------------------------------------------------------------------
-    case 291:
+    case MDS_CMD_TOGGLE_KINECT:
         app->state.dialogFlags[11] = 1;
         if (app->state.depthDeviceEnabled != 0) {
             DisableKinect(app);  // 0x42A020
@@ -2437,10 +2438,10 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // model+0x38FD = app+0xA03EA, 0x9EDB5 = 1; off - KillTimer(0x65),
     // uncheck, dirty + 0x9EDB5 = 1.
     // ------------------------------------------------------------------
-    case 292: {
+    case MDS_CMD_TOGGLE_MOTION_CAPTURE: {
         app->state.dialogFlags[2] = 1;
         if (app->state.autoRepeat == 0) {
-            CheckMenuItem(GetMenu(hwnd), 0x124, MF_CHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MOTION_CAPTURE, MF_CHECKED);
             app->state.autoRepeat = 1;
             SetTimer(hwnd, 0x65, 0x5DC, nullptr);
             app->PhysicsResetPending() = 1;
@@ -2454,7 +2455,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
             }
         } else {
             KillTimer(hwnd, 0x65);
-            CheckMenuItem(GetMenu(hwnd), 0x124, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MOTION_CAPTURE, MF_UNCHECKED);
             app->state.autoRepeat = 0;
             app->SceneModified() = 1;
             app->PhysicsResetPending() = 1;
@@ -2466,36 +2467,36 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 293/294/295 (0x0048BA1E/0x48BA75/0x48BAD3): option toggles - bytes
     // app+0xA03DC/0xA03DD/0xA03DE mirrored by menu items 0x125..0x127.
     // ------------------------------------------------------------------
-    case 293: {
+    case MDS_CMD_TOGGLE_CAPTURE_MIRROR: {
         if (app->state.kinectMirrorEnabled != 0) {
-            CheckMenuItem(GetMenu(hwnd), 0x125, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_CAPTURE_MIRROR, MF_UNCHECKED);
             app->state.kinectMirrorEnabled = 0;
         } else {
-            CheckMenuItem(GetMenu(hwnd), 0x125, MF_CHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_CAPTURE_MIRROR, MF_CHECKED);
             app->state.kinectMirrorEnabled = 1;
         }
         return;
     }
 
-    case 294: {
+    case MDS_CMD_TOGGLE_LOST_BONE_RESET: {
         app->state.dialogFlags[17] = 1;
         if (app->state.kinectInitLostBone != 0) {
-            CheckMenuItem(GetMenu(hwnd), 0x126, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_LOST_BONE_RESET, MF_UNCHECKED);
             app->state.kinectInitLostBone = 0;
         } else {
-            CheckMenuItem(GetMenu(hwnd), 0x126, MF_CHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_LOST_BONE_RESET, MF_CHECKED);
             app->state.kinectInitLostBone = 1;
         }
         return;
     }
 
-    case 295: {
+    case MDS_CMD_TOGGLE_CAPTURE_SKELETON: {
         app->state.dialogFlags[4] = 1;
         if (app->state.depthTextureCompositionEnabled != 0) {
-            CheckMenuItem(GetMenu(hwnd), 0x127, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_CAPTURE_SKELETON, MF_UNCHECKED);
             app->state.depthTextureCompositionEnabled = 0;
         } else {
-            CheckMenuItem(GetMenu(hwnd), 0x127, MF_CHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_CAPTURE_SKELETON, MF_CHECKED);
             app->state.depthTextureCompositionEnabled = 1;
         }
         return;
@@ -2510,8 +2511,8 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // app+0xA03B8, wide->SJIS conversion (0x407910) and OpenNiInit
     // (0x429CB0).
     // ------------------------------------------------------------------
-    case 296: {
-        if (app->state.optflag[0] != 0) {
+    case MDS_CMD_LOAD_ONI: {
+        if (app->CameraMode() != 0) {
             if (english) {
                 MessageBoxA(hwnd, "Please select model!", "open oni data",
                             MB_TOPMOST);
@@ -2556,14 +2557,14 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // ------------------------------------------------------------------
     // 297 (0x0048BC9B): toggle byte app+0xA03E9 with CheckMenuItem 0x129.
     // ------------------------------------------------------------------
-    case 297: {
+    case MDS_CMD_TOGGLE_WAVE_DISABLED: {
         app->state.dialogFlags[4] = 1;
         if (app->state.automaticFrameAdvanceEnabled != 0) {
             app->state.automaticFrameAdvanceEnabled = 0;
-            CheckMenuItem(GetMenu(hwnd), 0x129, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_WAVE_DISABLED, MF_UNCHECKED);
         } else {
             app->state.automaticFrameAdvanceEnabled = 1;
-            CheckMenuItem(GetMenu(hwnd), 0x129, MF_CHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_WAVE_DISABLED, MF_CHECKED);
         }
         return;
     }
@@ -2573,14 +2574,14 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // runtimeToggle (+0x1D570) mirrors, InitRenderStates (0x406E90) on the
     // locale subobject (the ported helper takes the app).
     // ------------------------------------------------------------------
-    case 298: {
+    case MDS_CMD_TOGGLE_MIPMAP: {
         D3DRenderer* locale = app->Renderer();
-        if ((GetMenuState(GetMenu(hwnd), 0x12A, 0) & 8) == 0) {
-            CheckMenuItem(GetMenu(hwnd), 0x12A, MF_CHECKED);
+        if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_MIPMAP, 0) & 8) == 0) {
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MIPMAP, MF_CHECKED);
             locale->runtimeToggle = 1;  // 0x1D570
             InitRenderStates(app);  // 0x406E90 (orig: thiscall(locale))
         } else {
-            CheckMenuItem(GetMenu(hwnd), 0x12A, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_MIPMAP, MF_UNCHECKED);
             locale->runtimeToggle = 0;  // 0x1D570
             InitRenderStates(app);
         }
@@ -2592,16 +2593,16 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // 0x228 of the accessory window (app+0xA0D38 ?: main) via
     // BM_SETCHECK, byte app+0xA4420 mirrors.
     // ------------------------------------------------------------------
-    case 299: {
+    case MDS_CMD_TOGGLE_LOW_POWER: {
         HWND owner = app->state.floatingWindow != 0
                          ? app->state.floatingWindow
                          : hwnd;
-        if ((GetMenuState(GetMenu(hwnd), 0x12B, 0) & 8) == 0) {
-            CheckMenuItem(GetMenu(hwnd), 0x12B, MF_CHECKED);
+        if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_LOW_POWER, 0) & 8) == 0) {
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_LOW_POWER, MF_CHECKED);
             SendMessageA(GetDlgItem(owner, panel::kFrameVolumeCheckbox), BM_SETCHECK, 1, 0);
             app->FrameVolumeControlEnabled() = 1;
         } else {
-            CheckMenuItem(GetMenu(hwnd), 0x12B, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_LOW_POWER, MF_UNCHECKED);
             SendMessageA(GetDlgItem(owner, panel::kFrameVolumeCheckbox), BM_SETCHECK, 0, 0);
             app->FrameVolumeControlEnabled() = 0;
         }
@@ -2619,7 +2620,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // PostViewRefresh).  The 16-float temp block app+0xA0B28..0xA0B40 is
     // shared with the dialog procs in the original.
     // ------------------------------------------------------------------
-    case 300: {
+    case MDS_CMD_NUMERIC_INPUT: {
         const double kD1 = kPiTruncatedDouble;  // pi (truncated)
         const double kD2 = kDegreesScale;  // 180.0
         const double kD3 = kPiWidenedFloat;  // (double)(float)pi
@@ -2627,7 +2628,7 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
         const float kNegPi = kNegativePiFloat;
         const float kThr = kAngleEpsilon;
         app->state.enterKeyState = 1;
-        if (app->state.optflag[0] != 0) {
+        if (app->CameraMode() != 0) {
             // ---- camera path (0x48A2D9..0x48A407) -----------------------
             const float t0 = app->CameraPositionX();
             const float t1 = app->CameraPositionY();
@@ -2739,11 +2740,11 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // ------------------------------------------------------------------
     // 301 (0x0048D700): menu 0x12D (enhanced-mode) toggle only.
     // ------------------------------------------------------------------
-    case 301: {
-        if ((GetMenuState(GetMenu(hwnd), 0x12D, 0) & 8) == 0) {
-            CheckMenuItem(GetMenu(hwnd), 0x12D, MF_CHECKED);
+    case MDS_CMD_TOGGLE_PREVIOUS_FOLDER: {
+        if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) == 0) {
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, MF_CHECKED);
         } else {
-            CheckMenuItem(GetMenu(hwnd), 0x12D, MF_UNCHECKED);
+            CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, MF_UNCHECKED);
         }
         return;
     }
@@ -2754,9 +2755,9 @@ void CmdViewMenu(MMDApp* app, HWND hwnd, std::uint16_t id,
     // PushBoneEditUndo, identity matrix, quaternion writeback via the shared
     // tail (0x48A805), frameFlag[cur] = 1, dirty, PostViewRefresh.
     // ------------------------------------------------------------------
-    case 302: {
+    case MDS_CMD_RESET_BONE_CAMERA_ROTATION: {
         app->state.dialogFlags[1] = 1;
-        if (app->state.optflag[0] != 0) {
+        if (app->CameraMode() != 0) {
             app->CameraPitch() = 0.0f;
             app->CameraYaw() = 0.0f;
             app->CameraRoll() = 0.0f;

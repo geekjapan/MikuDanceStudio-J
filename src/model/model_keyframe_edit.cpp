@@ -714,14 +714,24 @@ void SyncModelEditControls(unsigned char* model) {
         const LRESULT sel =
             SendMessageA(GetDlgItem(hwnd, panel::kIkChainCombo), CB_GETCURSEL, 0, 0);
         const bool enabled = chains[sel].enabled != 0;
-        CheckRadioButton(hwnd, 0x1BC, 0x1BD, enabled ? 0x1BC : 0x1BD);
+        CheckRadioButton(hwnd, panel::kIkOnRadio, panel::kIkOffRadio, enabled ? panel::kIkOnRadio : panel::kIkOffRadio);
     }
 
     mdl::MorphRecord* morphs = mdl::Morphs(model);
     if (morphs == nullptr)
         return;
-    static constexpr int kSliderIds[4] = {0x1F9, 0x1FE, 0x203, 0x208};
-    static constexpr int kEditIds[4] = {0x1FA, 0x1FF, 0x204, 0x209};
+    static constexpr int kSliderIds[4] = {
+        panel::kMorphSlider0,
+        panel::kMorphSlider1,
+        panel::kMorphSlider2,
+        panel::kMorphSlider3
+    };
+    static constexpr int kEditIds[4] = {
+        panel::kMorphEdit0,
+        panel::kMorphEdit1,
+        panel::kMorphEdit2,
+        panel::kMorphEdit3
+    };
     char text[0x100];
     for (int lane = 0; lane < 4; ++lane) {
         const std::int32_t index = mdl::Mdl(model)->selectedMorphs[lane];

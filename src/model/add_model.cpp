@@ -88,15 +88,15 @@ void LoadModelFile(MMDApp* app, const wchar_t* path) {      // 0x460430
         app->SetSelectedModelSlot(static_cast<std::uint8_t>(slot));
         mikudancestudio::mdl::Mdl(model)->displayState = app->state.characterTransparentMode;
 
-        if (app->state.optflag[0] != 0) {
+        if (app->CameraMode() != 0) {
             RebuildModelModePanel(app);                                   // 0x44D610
-            app->state.optflag[0] = 0;
-            PostLanguageSweep(app);                           // 0x42F1E0
+            app->CameraMode() = 0;
+            RebuildTimelineTrackPanel(app);                           // 0x42F1E0
             PostModelReload2(app);                            // 0x40D940
             HandleWindowSize(app);                            // 0x443300
             InvalidateRect(hwnd, nullptr, FALSE);
         } else {
-            PostLanguageSweep(app);                           // 0x42F1E0
+            RebuildTimelineTrackPanel(app);                           // 0x42F1E0
         }
 
         SendMessageA(GetDlgItem(hwnd, panel::kBoxSelectRadio), BM_SETCHECK, 0, 0);
@@ -140,17 +140,17 @@ void LoadModelFile(MMDApp* app, const wchar_t* path) {      // 0x460430
             EnableWindow(GetDlgItem(hwnd, panel::kPasteButton), 1);
             if (app->ClipboardCounts().bones != 0) {
                 EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton), 1);
-                PostLanguageSweep2(app);                      // 0x40D070
+                InvalidateSelectionReadouts(app);                      // 0x40D070
                 return;
             }
         } else if (app->ClipboardCounts().bones != 0) {
             EnableWindow(GetDlgItem(hwnd, panel::kPasteButton), 1);
             EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton), 1);
-            PostLanguageSweep2(app);                          // 0x40D070
+            InvalidateSelectionReadouts(app);                          // 0x40D070
             return;
         }
         EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton), 0);
-        PostLanguageSweep2(app);                          // 0x40D070
+        InvalidateSelectionReadouts(app);                          // 0x40D070
     } else {
         void* oldModel = app->ModelSlot(slot);
         if (oldModel != nullptr) {

@@ -21,6 +21,7 @@
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/panel_controls.hpp"
 #include <Windows.h>
 
 #include <cstdint>
@@ -44,10 +45,10 @@ constexpr int kComboGroupName     = 677;  // 0x2A5
 constexpr int kEditGroupNameEn    = 680;  // 0x2A8
 
 // ---- main-window controls touched while the dialog is up -----------------
-constexpr int kMainComboModel  = 436;  // 0x1B4 model combo (disabled on open)
-constexpr int kMainComboGround = 474;  // 0x1DA
-constexpr int kMainComboNormal = 449;  // 0x1C1
-constexpr int kMainRadioFirst  = 490;  // BM_SETCHECK: 490 on, 491..493 off
+constexpr int kMainComboModel  = panel::kMainComboModel;  // 0x1B4 model combo (disabled on open)
+constexpr int kMainComboGround = panel::kMainComboGround;  // 0x1DA
+constexpr int kMainComboNormal = panel::kMainComboNormal;  // 0x1C1
+constexpr int kMainRadioFirst  = panel::kBoneSelectRadio;  // BM_SETCHECK: 490 on, 491..493 off
 
 // Fixed heads of the three main-window combos rebuilt by the collector
 // (x64 .rdata 0x54B6B8 / 0x54B768 / 0x551074).
@@ -112,7 +113,7 @@ void RefreshNameEdit(HWND edit, const char* text) {
 //      mirror the new name from their target bone.
 //   2: morph English name (combo cursor 1 -> morph index cursor+1), only
 //      when the model has facial frame groups; the facial rows mirror, then
-//      PostLanguageSweep + PostLoadInit refresh the panel.
+//      RebuildTimelineTrackPanel + PostLoadInit refresh the panel.
 //   3: display-group English name (combo cursor 2 -> group slot cursor+3 /
 //      cursor+2), capped at the 50-byte group record.
 // Edit texts are capped at the record widths before the copy (19 chars for
@@ -199,7 +200,7 @@ void CollectEnglishNameEdit(MMDApp* app, HWND hEdit, int idx) {  // VA 0x0043BED
             if (std::strlen(text) >= 0x14)
                 text[19] = '\0';
             strcpy_s(model->morphs[MorphNameSlot(app)].nameEn, 0x14, text);
-            PostLanguageSweep(app);                        // 0x42F1E0
+            RebuildTimelineTrackPanel(app);                        // 0x42F1E0
             MirrorFacialFrameNames(model);
             PostLoadInit(app->SelectedModel());            // 0x49C850
         }
@@ -245,7 +246,7 @@ void InitModelEdgeDialog(HWND hDlg) {  // VA 0x0043C430
     char buf[512];
 
     // model English name
-    strcpy_s(buf, 0x200, model->nameEn);
+    strcpy_s(buf, 512, model->nameEn);
     SendMessageA(GetDlgItem(hDlg, kEditModelNameEn), EM_REPLACESEL, 0,
                  reinterpret_cast<LPARAM>(buf));
 
@@ -275,7 +276,7 @@ void InitModelEdgeDialog(HWND hDlg) {  // VA 0x0043C430
         SendMessageA(boneCombo, CB_ADDSTRING, 0,
                      reinterpret_cast<LPARAM>(bones[j].nameEn));
     SendMessageA(boneCombo, CB_SETCURSEL, 0, 0);
-    strcpy_s(buf, 0x200, bones[0].nameEn);
+    strcpy_s(buf, 512, bones[0].nameEn);
     SendMessageA(GetDlgItem(hDlg, kEditBoneNameEn), EM_REPLACESEL, 0,
                  reinterpret_cast<LPARAM>(buf));
 
@@ -287,7 +288,7 @@ void InitModelEdgeDialog(HWND hDlg) {  // VA 0x0043C430
                      reinterpret_cast<LPARAM>(morphs[k].nameEn));
     SendMessageA(morphCombo, CB_SETCURSEL, 0, 0);
     if (model->facialFrameCount != 0) {
-        strcpy_s(buf, 0x200, morphs[1].nameEn);
+        strcpy_s(buf, 512, morphs[1].nameEn);
         SendMessageA(GetDlgItem(hDlg, kEditMorphNameEn), EM_REPLACESEL, 0,
                      reinterpret_cast<LPARAM>(buf));
     }
@@ -325,7 +326,7 @@ void InitModelEdgeDialog(HWND hDlg) {  // VA 0x0043C430
     selection[0] = 1;
     model->selectedBone = 0;
 
-    PostLanguageSweep(app);                                // 0x42F1E0
+    RebuildTimelineTrackPanel(app);                                // 0x42F1E0
     app->ModelEdgeComboCursor(0) = 0;
     app->ModelEdgeComboCursor(1) = 0;
     app->ModelEdgeComboCursor(2) = 0;
@@ -378,9 +379,9 @@ void ApplyModelEdgeDialog(HWND hDlg) {  // VA 0x0045F240
     MirrorFacialFrameNames(model);
     MirrorBoneFrameNames(model);
 
-    PostLanguageSweep(app);                                // 0x42F1E0
+    RebuildTimelineTrackPanel(app);                                // 0x42F1E0
     PostLoadInit(app->SelectedModel());                    // 0x49C850
-    PostLanguageSweep2(app);                               // 0x40D070
+    InvalidateSelectionReadouts(app);                               // 0x40D070
 }
 
 // ===========================================================================
@@ -415,7 +416,7 @@ void SelectModelEdgeBone(HWND hDlg) {  // VA 0x0045F050
         selection[cursor] = 1;
         model->selectedBone = cursor;
     }
-    PostLanguageSweep(app);                                // 0x42F1E0
+    RebuildTimelineTrackPanel(app);                                // 0x42F1E0
 
     char buf[256];
     strcpy_s(buf, 0x100, model->boneTable[cursor].nameEn);
@@ -440,7 +441,7 @@ void SelectModelEdgeMorph(HWND hDlg) {  // VA 0x0045EF10
 
     app->ModelEdgeComboCursor(1) = static_cast<int>(
         SendMessageA(GetDlgItem(hDlg, kComboMorphName), CB_GETCURSEL, 0, 0));
-    PostLanguageSweep(app);                                // 0x42F1E0
+    RebuildTimelineTrackPanel(app);                                // 0x42F1E0
 
     char buf[256];
     strcpy_s(buf, 0x100, model->morphs[MorphNameSlot(app)].nameEn);
@@ -469,7 +470,7 @@ void SelectModelEdgeGroup(HWND hDlg) {  // VA 0x0045EDC0
 
     app->ModelEdgeComboCursor(2) = static_cast<int>(
         SendMessageA(GetDlgItem(hDlg, kComboGroupName), CB_GETCURSEL, 0, 0));
-    PostLanguageSweep(app);                                // 0x42F1E0
+    RebuildTimelineTrackPanel(app);                                // 0x42F1E0
 
     char buf[256];
     strcpy_s(buf, 0x100, groups[GroupNameSlot(app, model)].nameEn);

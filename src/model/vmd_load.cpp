@@ -181,7 +181,7 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) {  // VA 0x00434B60
     }
     _read(fileHandle, text, nameLen);
 
-    if (s.state.optflag[0] != 0) {
+    if (s.CameraMode() != 0) {
         // ==== camera / light / self-shadow motion =========================
         if (ver == 2 && std::memcmp(text, kCameraLightName, 13) != 0) {
             MessageBoxA(hwnd,
@@ -499,7 +499,7 @@ int LoadVmdMotion(MMDApp* app, const wchar_t* fileName) {  // VA 0x00434B60
     _close(fileHandle);
     PanelPaint(app);                                    // 0x414610
     SelectionReeval(app);                               // 0x430510
-    return SeekModelFrame(model, s.state.currentFrame,
+    return SeekModelFrame(*mdl::Mdl(model), s.state.currentFrame,
                      s.PlaybackPhysicsMode());
 }
 

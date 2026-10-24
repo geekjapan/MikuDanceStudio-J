@@ -38,7 +38,7 @@
 // cameraParentModel >= 0 && !playing(0x330) && followCameraEnabled != 0 (the pump reads
 // the BYTE 0x9ED98, unlike frame_modes.cpp ViewRefreshGate's dword read).
 // Hit: view-dirty viewDirty (0xA05D1) = 1 on hold / 0 on release, then the
-// view-lock windowLayoutReady (0xA442C) 0 -> PostLanguageSweep2 (0x40D070)
+// view-lock windowLayoutReady (0xA442C) 0 -> InvalidateSelectionReadouts (0x40D070)
 // -> 1.
 //
 // Static constants (read from the x64 image; the x86 0x52xxxx slots are
@@ -115,12 +115,12 @@ bool BoneEditPathActive(MMDApp* app) {
            state.followCameraEnabled != 0;                           // byte 0x9ED98
 }
 
-// The view-lock sequence around PostLanguageSweep2 (0x40D070):
+// The view-lock sequence around InvalidateSelectionReadouts (0x40D070):
 // 0xA442C = windowLayoutReady, 0xA05D1 = viewDirty view-dirty.
 void EnterBoneEditRefresh(MMDApp* app, bool hold) {
     app->state.viewDirty = hold ? 1 : 0;                 // 0xA05D1
     app->state.windowLayoutReady = 0;                   // 0xA442C
-    PostLanguageSweep2(app);                            // 0x40D070
+    InvalidateSelectionReadouts(app);                            // 0x40D070
     app->state.windowLayoutReady = 1;
 }
 
@@ -133,7 +133,7 @@ void ApplyNumpadCameraPreset(MMDApp* app, float pitch, float yaw) {
     app->CameraYaw() = yaw;                             // 0x314 / x64 0x34C
     app->CameraRoll() = 0.0f;                           // 0x318 / x64 0x350
     app->CameraDistance() = kNumpadDistance;            // 0xA08DC / 0xA1900
-    RefreshRequest(-1);                                 // 0x440AC0
+    SelectTimelineTrack(GlobalTimelineTrack::Camera);                                 // 0x440AC0
 }
 
 // Model-mode branch shared by NUMPAD 2/4/6/8/5/1 (x64 0x450224..): reset
@@ -235,7 +235,7 @@ void ConsumeArrowKeyNavigation(MMDApp* app, const KeyboardInputContext& input) {
         return;
 
     const bool ctrl = state.ctrlModifierState == 3;             // 0xC0/0xC4
-    const bool cameraPanel = state.optflag[0] != 0;             // 0x2F8/0x328
+    const bool cameraPanel = app->CameraMode() != 0;             // 0x2F8/0x328
     float& repeat = state.keyRepeatTimer;                               // 0x9E650
     constexpr float kRepeatThreshold = 0.4f;  // x64 0x7FF7CB552D0C / 0x52E908
     const auto repeatDue = [&]() {
@@ -324,7 +324,7 @@ void ConsumeArrowKeyNavigation(MMDApp* app, const KeyboardInputContext& input) {
 void ConsumeRightButtonDrag(MMDApp* app) {
     auto& state = app->state;
     const bool inputActive = app->ViewportInputActive() != 0;   // 0x9EDD1
-    const bool modelMode = state.optflag[0] == 0;               // 0x2F8/0x328
+    const bool modelMode = app->CameraMode() == 0;               // 0x2F8/0x328
     const int dx = app->MouseX() - app->PreviousMouseX();       // +8/+4 diff
     const int dy = app->MouseY() - app->PreviousMouseY();
     constexpr float kPanScale = 0.1f;     // x64 0x7FF7CB552B38 / x86 0x52BEA8
@@ -350,7 +350,7 @@ void ConsumeRightButtonDrag(MMDApp* app) {
                 static_cast<float>(dy) * kRotateScale;
         }
         if (!modelMode && state.coordinateSystem != 2)                    // 0x470D3C
-            RefreshRequest(-1);                                 // 0x440AC0
+            SelectTimelineTrack(GlobalTimelineTrack::Camera);                                 // 0x440AC0
         PostViewRefresh(app);                                   // 0x40D130
         return;
     }
@@ -375,7 +375,7 @@ void ConsumeRightButtonDrag(MMDApp* app) {
 void ConsumeMiddleButtonPan(MMDApp* app) {
     auto& state = app->state;
     const bool inputActive = app->ViewportInputActive() != 0;   // 0x9EDD1
-    const bool modelMode = state.optflag[0] == 0;               // 0x2F8/0x328
+    const bool modelMode = app->CameraMode() == 0;               // 0x2F8/0x328
     const int dx = app->MouseX() - app->PreviousMouseX();
     const int dy = app->MouseY() - app->PreviousMouseY();
 
@@ -423,7 +423,7 @@ void ConsumeNumpadViewPresets(MMDApp* app, const KeyboardInputContext& input) {
     if (!gate)                                                  // 0x473145
         return;
 
-    const bool cameraMode = state.optflag[0] != 0;              // 0x2F8/0x328
+    const bool cameraMode = app->CameraMode() != 0;              // 0x2F8/0x328
 
     // ---- NUMPAD2 (x86 0x47314B / x64 0x4501DA): front view --------------
     if (state.numpadKeyState[2] == 1) {                         // 0x98/0x9C

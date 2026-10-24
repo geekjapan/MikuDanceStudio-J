@@ -386,7 +386,7 @@ void ApplyFullscreenWindowState(MMDApp* app) {
                      GetSystemMetrics(SM_CYSCREEN),
                      SWP_SHOWWINDOW);                   // 0x462A73
         SetMenu(main, nullptr);
-        for (int id = 400; id <= 0x213; ++id) {                  // 0x462A9F
+        for (int id = panel::kUndoButton; id <= panel::kCameraRefBoneCheckbox; ++id) {                  // 0x462A9F
             ShowWindow(GetDlgItem(main, id), SW_HIDE);
         }
         ValidateRect(main, nullptr);
@@ -416,7 +416,7 @@ void ApplyFullscreenWindowState(MMDApp* app) {
                            0xFFFFFFFE /*HWND_NOTOPMOST*/)),
                  0, 0, 0, 0, (SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW)); // 0x462B71
     SetMenu(main, s.state.savedMenu);
-    for (int id = 400; id <= 0x213; ++id) {                      // 0x462BA2
+    for (int id = panel::kUndoButton; id <= panel::kCameraRefBoneCheckbox; ++id) {                      // 0x462BA2
         ShowWindow(GetDlgItem(main, id), SW_SHOW);
     }
     PostModelReload2(app);                                       // 0x40D940

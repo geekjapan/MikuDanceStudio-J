@@ -3,6 +3,7 @@
 // ===========================================================================
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 #include <commctrl.h>
 #include <d3d9.h>
@@ -208,46 +209,46 @@ void PostModelReload(MMDApp* app) {  // 0x41A650
 
 void PostModelReload2(MMDApp* app) {  // 0x40D940
     const bool cameraMode =
-        app->state.optflag[0] != 0;
+        app->CameraMode() != 0;
 
     const struct {
         int first;
         int last;
         int collapsed;
-        int flagIndex;
+        UiPanel panel;
     } cameraGroups[] = {
-        {446, 453, 454, 1},
-        {455, 469, 470, 2},
-        {471, 488, 489, 3},
-        {560, 566, 567, 6},
+        {panel::kPerspectiveCheckbox, panel::kCollapseCameraPanelButton, panel::kExpandCameraPanelButton, UiPanel::Camera},
+        {panel::kLightColorSliderR, panel::kCollapseLightPanelButton, panel::kExpandLightPanelButton, UiPanel::Light},
+        {panel::kAccessoryCombo, panel::kCollapseAccessoryPanelButton, panel::kExpandAccessoryPanelButton, UiPanel::Accessory},
+        {panel::kSelfShadowRangeSlider, panel::kCollapseSelfShadowPanelButton, panel::kExpandSelfShadowPanelButton, UiPanel::SelfShadow},
     };
     for (const auto& group : cameraGroups) {
         const bool expanded = cameraMode &&
-            app->state.optflag[group.flagIndex] != 0;
+            app->PanelExpanded(group.panel) != 0;
         ShowControlRange(app, group.first, group.last, expanded);
         ShowWindow(MainControl(app, group.collapsed),
                    cameraMode && !expanded ? SW_SHOWNORMAL : SW_HIDE);
     }
 
     const bool modelSelected =
-        SendMessageA(MainControl(app, 436), CB_GETCURSEL, 0, 0) != 0;
+        SendMessageA(MainControl(app, panel::kMainComboModel), CB_GETCURSEL, 0, 0) != 0;
     if (!modelSelected)
-        SendMessageA(MainControl(app, 443), CB_SETCURSEL, 0, 0);
-    for (int id = 437; id <= 445; ++id)
+        SendMessageA(MainControl(app, panel::kIkChainCombo), CB_SETCURSEL, 0, 0);
+    for (int id = panel::kDeleteModelButton; id <= panel::kIkOffRadio; ++id)
         EnableWindow(MainControl(app, id), modelSelected);
 
     const struct {
         int first;
         int last;
         int collapsed;
-        int flagIndex;
+        UiPanel panel;
     } modelGroups[] = {
-        {490, 502, 503, 4},
-        {504, 528, 529, 5},
+        {panel::kBoneSelectRadio, panel::kCollapseBonePanelButton, panel::kExpandBonePanelButton, UiPanel::Bone},
+        {panel::kMorphCombo0, panel::kCollapseMorphPanelButton, panel::kExpandMorphPanelButton, UiPanel::Morph},
     };
     for (const auto& group : modelGroups) {
         const bool expanded = !cameraMode &&
-            app->state.optflag[group.flagIndex] != 0;
+            app->PanelExpanded(group.panel) != 0;
         ShowControlRange(app, group.first, group.last, expanded);
         ShowWindow(MainControl(app, group.collapsed),
                    !cameraMode && !expanded ? SW_SHOWNORMAL : SW_HIDE);
@@ -257,10 +258,10 @@ void PostModelReload2(MMDApp* app) {  // 0x40D940
     // paste and reverse-paste remain disabled.  A successful copy command
     // enables both controls and stores the record count at 0x9DA24.
     if (!cameraMode &&
-        app->state.optflag[5] != 0 &&
+        app->PanelExpanded(UiPanel::Morph) != 0 &&
         app->state.copiedBoneCount == 0) {
-        EnableWindow(MainControl(app, 497), FALSE);
-        EnableWindow(MainControl(app, 498), FALSE);
+        EnableWindow(MainControl(app, panel::kBonePasteButton), FALSE);
+        EnableWindow(MainControl(app, panel::kBoneReversePasteButton), FALSE);
     }
 
     HWND viewportWindow =
@@ -269,13 +270,13 @@ void PostModelReload2(MMDApp* app) {  // 0x40D940
         viewportWindow = static_cast<HWND>(app->Hwnd());
 
     if (cameraMode) {
-        EnableWindow(MainControl(app, 400), FALSE);
-        EnableWindow(MainControl(app, 401), FALSE);
+        EnableWindow(MainControl(app, panel::kUndoButton), FALSE);
+        EnableWindow(MainControl(app, panel::kRedoButton), FALSE);
         if (app->EnglishUI() != 0) {
-            SetWindowTextA(MainControl(app, 407), "btm");
+            SetWindowTextA(MainControl(app, panel::kViewBottomButton), "btm");
             SetWindowTextA(GetDlgItem(viewportWindow, panel::kModelEditToggle), "To model");
         } else {
-            SetWindowTextW(MainControl(app, 407), L"\x4e0b\x9762");
+            SetWindowTextW(MainControl(app, panel::kViewBottomButton), L"\x4e0b\x9762");
             SetWindowTextW(GetDlgItem(viewportWindow, panel::kModelEditToggle),
                            L"\x30e2\x30c7\x30eb\x7de8");
         }
@@ -287,15 +288,15 @@ void PostModelReload2(MMDApp* app) {  // 0x40D940
     auto* model = app->SelectedModel();
     // undoDirty/redoDirty（x64 model+0x3558/+0x3559，0x7FF7CB447074/86）：
     // 撤消/重做按钮的开门标志。
-    EnableWindow(MainControl(app, 400),
+    EnableWindow(MainControl(app, panel::kUndoButton),
                  mdl::Mdl(model)->undoDirty != 0);
-    EnableWindow(MainControl(app, 401),
+    EnableWindow(MainControl(app, panel::kRedoButton),
                  mdl::Mdl(model)->redoDirty != 0);
     if (app->EnglishUI() != 0) {
-        SetWindowTextA(MainControl(app, 407), "camer");
+        SetWindowTextA(MainControl(app, panel::kViewBottomButton), "camer");
         SetWindowTextA(GetDlgItem(viewportWindow, panel::kModelEditToggle), "To camera");
     } else {
-        SetWindowTextW(MainControl(app, 407), L"\x30ab\x30e1\x30e9");
+        SetWindowTextW(MainControl(app, panel::kViewBottomButton), L"\x30ab\x30e1\x30e9");
         SetWindowTextW(GetDlgItem(viewportWindow, panel::kModelEditToggle),
                        L"\x30ab\x30e1\x30e9\x7de8");
     }
@@ -304,8 +305,8 @@ void PostModelReload2(MMDApp* app) {  // 0x40D940
 }
 
 void RebuildModelModePanel(MMDApp* app) {  // 0x44D610
-    app->state.optflag[0] = 0;
-    HWND combo = MainControl(app, 433);
+    app->CameraMode() = 0;
+    HWND combo = MainControl(app, panel::kInterpCurveCombo);
     SendMessageA(combo, CB_DELETESTRING, 5, 0);
     SendMessageA(combo, CB_DELETESTRING, 4, 0);
     SendMessageA(combo, CB_SETCURSEL, 3, 0);
@@ -362,8 +363,8 @@ void RebuildCameraModePanel(MMDApp* app) {  // 0x44D780
     // Rebuild the camera-mode transform combo exactly as the original does.
     // Item four is the model-mode "all" entry; the three camera entries are
     // appended in its place.
-    app->state.optflag[0] = 1;
-    HWND combo = MainControl(app, 433);
+    app->CameraMode() = 1;
+    HWND combo = MainControl(app, panel::kInterpCurveCombo);
     SendMessageA(combo, CB_DELETESTRING, 4, 0);
     if (app->EnglishUI() != 0) {
         SendMessageA(combo, CB_ADDSTRING, 0,
@@ -409,12 +410,20 @@ void ApplyModelComboSelection(MMDApp* app) {  // 0x44D940
     const int selection = static_cast<int>(
         SendMessageA(GetDlgItem(hwnd, panel::kMainComboModel), CB_GETCURSEL, 0, 0));
     static constexpr int kModeCommands[] = {
-        0xFD, 0xD9, 0xDC, 0xDA, 0xCA, 0xCB, 0xDB, 0xDE,
-        0xFB, 0xFC,
+        MDS_CMD_EDGE_THICKNESS,
+        MDS_CMD_SELECT_ALL_BONE_FRAMES,
+        MDS_CMD_SELECT_ALL_MORPH_FRAMES,
+        MDS_CMD_SELECT_ALL_DISPLAY_FRAMES,
+        MDS_CMD_LOAD_POSE,
+        MDS_CMD_SAVE_POSE,
+        MDS_CMD_CENTER_POSITION_BIAS,
+        MDS_CMD_DELETE_UNUSED_FRAMES,
+        MDS_CMD_MULTIPLY_BONE_FRAMES,
+        MDS_CMD_MULTIPLY_MORPH_FRAMES,
     };
 
     if (selection == 0) {
-        if (app->state.optflag[0] == 0) {
+        if (app->CameraMode() == 0) {
             SendMessageA(GetDlgItem(hwnd, panel::kIkChainCombo), CB_RESETCONTENT, 0, 0);
             HWND frameCombo = GetDlgItem(hwnd, panel::kRegisterScopeCombo);
             SendMessageA(frameCombo, CB_RESETCONTENT, 0, 0);
@@ -450,7 +459,7 @@ void ApplyModelComboSelection(MMDApp* app) {  // 0x44D940
             SendMessageA(frameCombo, CB_SETCURSEL, 0, 0);
             SendMessageA(GetDlgItem(hwnd, panel::kModelVisibleCheckbox), BM_SETCHECK, BST_UNCHECKED, 0);
             RebuildCameraModePanel(app);
-            app->state.optflag[0] = 1;
+            app->CameraMode() = 1;
             PostModelReload2(app);
             HandleWindowSize(app);
             app->EditMode() = ViewportEditMode::None;
@@ -461,15 +470,15 @@ void ApplyModelComboSelection(MMDApp* app) {  // 0x44D940
         EnableMenuCommands(menu, kModeCommands,
                            sizeof(kModeCommands) / sizeof(kModeCommands[0]),
                            MF_GRAYED);
-        EnableMenuItem(menu, 250,
+        EnableMenuItem(menu, MDS_CMD_PASTE_AT_DIFFERENT_FRAME,
                        app->ClipboardCounts().accessories != 0
                            ? MF_ENABLED
                            : MF_GRAYED);
-        for (int id = 224; id <= 231; ++id)
+        for (int id = MDS_CMD_LOAD_LIP_SYNC; id <= MDS_CMD_DELETE_EYEBROW_FRAMES; ++id)
             EnableMenuItem(menu, id, MF_GRAYED);
-        for (int id = 273; id <= 275; ++id)
+        for (int id = MDS_CMD_SELECT_PHYSICS_BONES; id <= MDS_CMD_TOGGLE_FRAME_PHYSICS; ++id)
             EnableMenuItem(menu, id, MF_GRAYED);
-        for (int id = 0xED; id <= 0xF2; ++id)
+        for (int id = MDS_CMD_SELECT_ALL_CAMERA_FRAMES; id <= MDS_CMD_MULTIPLY_CAMERA_FRAMES; ++id)
             EnableMenuItem(menu, id, MF_ENABLED);
 
         EnableWindow(GetDlgItem(hwnd, panel::kExpandShrinkButton), FALSE);
@@ -504,9 +513,9 @@ void ApplyModelComboSelection(MMDApp* app) {  // 0x44D940
             mdl::Mdl(model)->legIkXOffset = 1.0f;
         }
 
-        if (app->state.optflag[0] != 0) {
+        if (app->CameraMode() != 0) {
             RebuildModelModePanel(app);
-            app->state.optflag[0] = 0;
+            app->CameraMode() = 0;
             PostModelReload2(app);
             HandleWindowSize(app);
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -542,15 +551,15 @@ void ApplyModelComboSelection(MMDApp* app) {  // 0x44D940
         EnableMenuCommands(menu, kModeCommands,
                            sizeof(kModeCommands) / sizeof(kModeCommands[0]),
                            MF_ENABLED);
-        EnableMenuItem(menu, 250,
+        EnableMenuItem(menu, MDS_CMD_PASTE_AT_DIFFERENT_FRAME,
                        app->ClipboardCounts().bones != 0
                            ? MF_ENABLED
                            : MF_GRAYED);
-        for (int id = 224; id <= 231; ++id)
+        for (int id = MDS_CMD_LOAD_LIP_SYNC; id <= MDS_CMD_DELETE_EYEBROW_FRAMES; ++id)
             EnableMenuItem(menu, id, MF_ENABLED);
-        for (int id = 273; id <= 275; ++id)
+        for (int id = MDS_CMD_SELECT_PHYSICS_BONES; id <= MDS_CMD_TOGGLE_FRAME_PHYSICS; ++id)
             EnableMenuItem(menu, id, MF_ENABLED);
-        for (int id = 0xED; id <= 0xF2; ++id)
+        for (int id = MDS_CMD_SELECT_ALL_CAMERA_FRAMES; id <= MDS_CMD_MULTIPLY_CAMERA_FRAMES; ++id)
             EnableMenuItem(menu, id, MF_GRAYED);
 
         EnableWindow(GetDlgItem(hwnd, panel::kExpandShrinkButton), TRUE);
@@ -585,7 +594,7 @@ void ApplyModelComboSelection(MMDApp* app) {  // 0x44D940
                       : MFS_ENABLED);
     }
 
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), FALSE);
         EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
     } else {
@@ -597,8 +606,8 @@ void ApplyModelComboSelection(MMDApp* app) {  // 0x44D940
                      model != nullptr &&
                          mdl::Mdl(model)->redoDirty != 0);
     }
-    PostLanguageSweep(app);
-    PostLanguageSweep2(app);
+    RebuildTimelineTrackPanel(app);
+    InvalidateSelectionReadouts(app);
 }
 
 }  // namespace mikudancestudio

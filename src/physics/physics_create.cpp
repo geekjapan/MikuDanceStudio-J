@@ -32,6 +32,9 @@
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#if defined(_M_IX86)
+#include "LinearMath/btMmdMath.h"
+#endif
 #include <Windows.h>
 
 #include <cmath>
@@ -61,132 +64,8 @@ void QuatMultiply(float out[4], const float a[4], const float b[4]) {
 }
 
 #if defined(_M_IX86)
-static const double kSetRotationTwo = 2.0;
-
-// Original 0x401000, btMatrix3x3::setRotation.  The VC9 build deliberately
-// keeps selected intermediates in x87 extended precision and spills others
-// to float.  That exact pattern affects Bullet's initial world transforms.
-__declspec(naked) void __fastcall SetRotationOriginal(
-    float* /*basis*/, const float* /*quaternion*/) {
-    __asm {
-        sub esp, 24h
-        mov eax, edx
-        fld dword ptr [eax+4]
-        fld dword ptr [eax]
-        fld dword ptr [eax+8]
-        fld dword ptr [eax+0Ch]
-        fld st(2)
-        fmulp st(3), st
-        fld st(3)
-        fmulp st(4), st
-        fxch st(2)
-        faddp st(3), st
-        fmul st, st
-        faddp st(2), st
-        fmul st, st
-        faddp st(1), st
-        fstp dword ptr [esp+20h]
-        fld dword ptr [esp+20h]
-        fdivr qword ptr [kSetRotationTwo]
-        fstp dword ptr [esp+20h]
-        fld dword ptr [eax]
-        fld dword ptr [esp+20h]
-        fld st
-        fmulp st(2), st
-        fxch st(1)
-        fstp dword ptr [esp+20h]
-        fld st
-        fmul dword ptr [eax+4]
-        fstp dword ptr [esp+4]
-        fmul dword ptr [eax+8]
-        fstp dword ptr [esp+8]
-        fld dword ptr [esp+20h]
-        fld st
-        fmul dword ptr [eax+0Ch]
-        fstp dword ptr [esp]
-        fld dword ptr [esp+4]
-        fld st
-        fmul dword ptr [eax+0Ch]
-        fstp dword ptr [esp+20h]
-        fld dword ptr [esp+8]
-        fld st
-        fmul dword ptr [eax+0Ch]
-        fstp dword ptr [esp+10h]
-        fld dword ptr [eax]
-        fmulp st(3), st
-        fxch st(2)
-        fstp dword ptr [esp+18h]
-        fld dword ptr [eax]
-        fmul st, st(1)
-        fstp dword ptr [esp+0Ch]
-        fld dword ptr [eax]
-        fmul st, st(2)
-        fstp dword ptr [esp+14h]
-        fmul dword ptr [eax+4]
-        fstp dword ptr [esp+4]
-        fld st
-        fmul dword ptr [eax+4]
-        fstp dword ptr [esp+1Ch]
-        fmul dword ptr [eax+8]
-        fstp dword ptr [esp+8]
-        fld dword ptr [esp+8]
-        fld st
-        fld dword ptr [esp+4]
-        fld st
-        faddp st(2), st
-        fld1
-        fld st
-        fsubrp st(3), st
-        fxch st(2)
-        fstp dword ptr [ecx]
-        fld dword ptr [esp+0Ch]
-        fld st
-        fld dword ptr [esp+10h]
-        fld st
-        fsubp st(2), st
-        fxch st(1)
-        fstp dword ptr [ecx+4]
-        fld dword ptr [esp+14h]
-        fld st
-        fadd dword ptr [esp+20h]
-        fstp dword ptr [ecx+8]
-        fldz
-        fst dword ptr [ecx+0Ch]
-        fxch st(3)
-        faddp st(2), st
-        fxch st(1)
-        fstp dword ptr [ecx+10h]
-        fld dword ptr [esp+18h]
-        fld st
-        faddp st(6), st
-        fld st(4)
-        fsubrp st(6), st
-        fxch st(5)
-        fstp dword ptr [ecx+14h]
-        fld dword ptr [esp+1Ch]
-        fld st
-        fsub dword ptr [esp]
-        fstp dword ptr [ecx+18h]
-        fxch st(2)
-        fst dword ptr [ecx+1Ch]
-        fld dword ptr [esp+20h]
-        fsubp st(2), st
-        fxch st(1)
-        fstp dword ptr [ecx+20h]
-        fld dword ptr [esp]
-        faddp st(2), st
-        fxch st(1)
-        fstp dword ptr [ecx+24h]
-        fxch st(1)
-        faddp st(3), st
-        fxch st(1)
-        fsubrp st(2), st
-        fxch st(1)
-        fstp dword ptr [ecx+28h]
-        fstp dword ptr [ecx+2Ch]
-        add esp, 24h
-        ret
-    }
+void SetRotationOriginal(float* basis, const float* quaternion) {
+    btMmdMath::rotationBasis(basis, quaternion);
 }
 #else
 void SetRotationOriginal(float* basis, const float* quaternion) {
@@ -311,57 +190,12 @@ inline void DumpConstraintCreateState(int, btGeneric6DofSpringConstraint*) {}
 
 }  // namespace
 
-#if defined(_M_IX86)
-// VC9 keeps each point/matrix dot product in x87 extended precision and
-// rounds only at fstp (original PMX path 0x4C1775..0x4C183B).  Modern MSVC's
-// mulss/addss chain rounds after every operation and perturbs the initial
-// Bullet constraint frame by several ULP.
-__declspec(naked) void __fastcall TransformJointPointOriginalFast(
-    float* /*out*/, const float* /*point*/, const float* /*matrix*/) {
-    __asm {
-        mov eax, [esp+4]
 
-        fld dword ptr [edx]
-        fmul dword ptr [eax]
-        fld dword ptr [edx+4]
-        fmul dword ptr [eax+10h]
-        faddp st(1), st
-        fld dword ptr [edx+8]
-        fmul dword ptr [eax+20h]
-        faddp st(1), st
-        fadd dword ptr [eax+30h]
-        fstp dword ptr [ecx]
-
-        fld dword ptr [edx]
-        fmul dword ptr [eax+4]
-        fld dword ptr [edx+4]
-        fmul dword ptr [eax+14h]
-        faddp st(1), st
-        fld dword ptr [edx+8]
-        fmul dword ptr [eax+24h]
-        faddp st(1), st
-        fadd dword ptr [eax+34h]
-        fstp dword ptr [ecx+4]
-
-        fld dword ptr [edx]
-        fmul dword ptr [eax+8]
-        fld dword ptr [edx+4]
-        fmul dword ptr [eax+18h]
-        faddp st(1), st
-        fld dword ptr [edx+8]
-        fmul dword ptr [eax+28h]
-        faddp st(1), st
-        fadd dword ptr [eax+38h]
-        fstp dword ptr [ecx+8]
-        ret 4
-    }
-}
-#endif
 
 void TransformJointPointOriginal(float out[3], const float point[3],
                                  const float matrix[16]) {
 #if defined(_M_IX86)
-    TransformJointPointOriginalFast(out, point, matrix);
+    btMmdMath::transformPoint(out, point, matrix);
 #else
     for (int column = 0; column < 3; ++column) {
         out[column] = point[0] * matrix[column]

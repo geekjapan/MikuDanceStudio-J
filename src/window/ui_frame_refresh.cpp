@@ -155,16 +155,16 @@ void RefreshLightPanel(MMDApp* app) {
     const HWND main = app->state.hwnd;
     char text[0x34];
     for (int lane = 0; lane < 3; ++lane) {
-        SendMessageA(GetDlgItem(main, 455 + lane), TBM_SETPOS, TRUE,
+        SendMessageA(GetDlgItem(main, panel::kLightColorSliderR + lane), TBM_SETPOS, TRUE,
                      static_cast<LPARAM>(static_cast<int>(color[lane] * 256.0f)));
-        SendMessageA(GetDlgItem(main, 458 + lane), TBM_SETPOS, TRUE,
+        SendMessageA(GetDlgItem(main, panel::kLightDirSliderX + lane), TBM_SETPOS, TRUE,
                      static_cast<LPARAM>(static_cast<int>(direction[lane] * 100.0f)));
 
         sprintf_s(text, sizeof(text), "%3d",
                   static_cast<int>(color[lane] * 256.0f));
-        ReplaceEditText(main, 461 + lane, text);
+        ReplaceEditText(main, panel::kLightColorEditR + lane, text);
         FormatLegacyOneDecimal(text, sizeof(text), direction[lane]);
-        ReplaceEditText(main, 464 + lane, text);
+        ReplaceEditText(main, panel::kLightDirEditX + lane, text);
     }
 }
 
@@ -290,18 +290,18 @@ void SyncAccessoryEditPanel(MMDApp* app) {
     for (int lane = 0; lane < 3; ++lane) {
         sprintf_s(text, sizeof(text), "%3.4f",
                   static_cast<double>(accessory->position[lane]));
-        ReplaceEditText(main, 478 + lane, text);
+        ReplaceEditText(main, panel::kAccPosXEdit + lane, text);
         sprintf_s(text, sizeof(text), "%3.4f",
                   static_cast<double>(accessory->rotation[lane]) /
                       3.141592025756836 * 180.0);
-        ReplaceEditText(main, 481 + lane, text);
+        ReplaceEditText(main, panel::kAccRotXEdit + lane, text);
     }
     sprintf_s(text, sizeof(text), "%3.4f",
               static_cast<double>(accessory->scale));
-    ReplaceEditText(main, 484, text);
+    ReplaceEditText(main, panel::kAccScaleEdit, text);
     sprintf_s(text, sizeof(text), "%3.2f",
               static_cast<double>(accessory->opacity));
-    ReplaceEditText(main, 485, text);
+    ReplaceEditText(main, panel::kAccOpacityEdit, text);
 }
 
 // VA 0x00411DF0 - self-shadow track's "register" backend:

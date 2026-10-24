@@ -137,6 +137,7 @@ add_library(mikudancestudio_core STATIC
     src/io/vmd_save.cpp
     src/io/pmm_load_dispatch.cpp
     src/io/pmm_load_v2.cpp
+    src/io/pmm_playback_options.cpp
     src/io/pmm_load_v1.cpp
     src/window/ui_scroll_mouse.cpp
     src/window/ui_panel_paint.cpp
@@ -175,6 +176,8 @@ add_library(mikudancestudio_core STATIC
     src/window/enhance_model_io.cpp
     src/window/misc_dialogs.cpp
     src/window/command_frame_edit.cpp
+    src/window/frame_clipboard.cpp
+    src/model/global_key_registration.cpp
     src/window/command_panel_toggles.cpp
     src/window/command_frame_register.cpp
     src/features/dialog_helpers.cpp
@@ -362,6 +365,31 @@ target_link_options(MikuDanceStudio PRIVATE "${MME_ICON_RES}")
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(model_frame_seek_test tests/model_frame_seek_test.cpp
+        src/model/model_frame_seek.cpp)
+    target_include_directories(model_frame_seek_test PRIVATE include)
+    add_test(NAME model_frame_seek COMMAND model_frame_seek_test)
+    add_executable(global_key_registration_test tests/global_key_registration_test.cpp
+        src/model/global_key_registration.cpp)
+    target_include_directories(global_key_registration_test PRIVATE include)
+    target_link_libraries(global_key_registration_test PRIVATE user32)
+    add_test(NAME global_key_registration COMMAND global_key_registration_test)
+    add_executable(pmm_display_group_save_test tests/pmm_display_group_save_test.cpp)
+    target_include_directories(pmm_display_group_save_test PRIVATE src/io)
+    target_link_libraries(pmm_display_group_save_test PRIVATE
+        mikudancestudio_core MMEffect dsound)
+    add_test(NAME pmm_display_group_save COMMAND pmm_display_group_save_test)
+    add_executable(pmm_playback_options_test tests/pmm_playback_options_test.cpp
+        src/io/pmm_playback_options.cpp)
+    target_include_directories(pmm_playback_options_test PRIVATE include src/io)
+    target_link_libraries(pmm_playback_options_test PRIVATE user32)
+    add_test(NAME pmm_playback_options COMMAND pmm_playback_options_test)
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+        add_executable(mmd_math_test tests/mmd_math_test.cpp
+            tests/mmd_math_x87_reference.cpp)
+        target_link_libraries(mmd_math_test PRIVATE BULLET275::BULLET275)
+        add_test(NAME mmd_math COMMAND mmd_math_test)
+    endif()
     add_executable(wave_data_chunk_test tests/wave_data_chunk_test.cpp
         src/media/wave_data_chunk.cpp)
     target_include_directories(wave_data_chunk_test PRIVATE include)
@@ -404,6 +432,9 @@ if(BUILD_TESTING)
     add_executable(camera_position_test tests/camera_position_test.cpp)
     target_link_libraries(camera_position_test PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME camera_position COMMAND camera_position_test)
+    add_executable(camera_world_transform_test tests/camera_world_transform_test.cpp)
+    target_link_libraries(camera_world_transform_test PRIVATE mikudancestudio_core MMEffect dsound)
+    add_test(NAME camera_world_transform COMMAND camera_world_transform_test)
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
         add_executable(drag_precision_test tests/drag_precision_test.cpp)
         target_link_libraries(drag_precision_test PRIVATE mikudancestudio_core MMEffect dsound)

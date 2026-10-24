@@ -184,7 +184,7 @@ void ClearCameraKeyRecord(mdl::CameraKey& key) {
 void InsertBoneCameraFrameLine(MMDApp* app) {
     const std::uint32_t cur = static_cast<std::uint32_t>(app->CurrentFrame());
 
-    if (app->state.optflag[0] == 0) {
+    if (app->CameraMode() == 0) {
         // ---- bone mode: shift every non-head key at frame >= cur up one
         unsigned char* model = ActiveModel(app);
         const std::int32_t boneCount = mdl::Mdl(model)->boneCount;
@@ -224,7 +224,7 @@ void InsertBoneCameraFrameLine(MMDApp* app) {
             }
         }
 
-        SeekModelFrame(model, static_cast<int>(cur),
+        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(cur),
                   app->PlaybackPhysicsMode());
         PanelPaint(app);
         SelectionReeval(app);
@@ -253,7 +253,7 @@ void InsertBoneCameraFrameLine(MMDApp* app) {
 void DeleteBoneCameraFrameLine(MMDApp* app) {
     const std::uint32_t cur = static_cast<std::uint32_t>(app->CurrentFrame());
 
-    if (app->state.optflag[0] == 0) {
+    if (app->CameraMode() == 0) {
         // ---- bone mode
         unsigned char* model = ActiveModel(app);
         const std::int32_t boneCount = mdl::Mdl(model)->boneCount;
@@ -352,7 +352,7 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
             }
         }
 
-        SeekModelFrame(model, static_cast<int>(cur),
+        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(cur),
                   app->PlaybackPhysicsMode());
         PanelPaint(app);
         SelectionReeval(app);
@@ -402,7 +402,7 @@ void DeleteBoneCameraFrameLine(MMDApp* app) {
 void InsertFacialLightFrameLine(MMDApp* app) {
     const std::uint32_t cur = static_cast<std::uint32_t>(app->CurrentFrame());
 
-    if (app->state.optflag[0] != 0) {
+    if (app->CameraMode() != 0) {
         // ---- light mode: shift every light key at frame >= cur up one
         // (0x43B72D..0x43B878; only the 0x378 table moves; no undo)
         auto* keys = app->LightKeys();
@@ -436,7 +436,7 @@ void InsertFacialLightFrameLine(MMDApp* app) {
                     static_cast<std::int32_t>(f) + 1;
         }
     }
-    SeekModelFrame(model, static_cast<int>(cur),
+    SeekModelFrame(*mdl::Mdl(model), static_cast<int>(cur),
               app->PlaybackPhysicsMode());
     PanelPaint(app);
     SelectionReeval(app);
@@ -447,7 +447,7 @@ void InsertFacialLightFrameLine(MMDApp* app) {
 void DeleteFacialLightFrameLine(MMDApp* app) {
     const std::uint32_t cur = static_cast<std::uint32_t>(app->CurrentFrame());
 
-    if (app->state.optflag[0] == 0) {
+    if (app->CameraMode() == 0) {
         // ---- facial mode: morph keys, 0x14 stride x 20000
         unsigned char* model = ActiveModel(app);
         const std::int32_t morphCount = mdl::Mdl(model)->morphCount;
@@ -490,7 +490,7 @@ void DeleteFacialLightFrameLine(MMDApp* app) {
                 }
             }
         }
-        SeekModelFrame(model, static_cast<int>(cur),
+        SeekModelFrame(*mdl::Mdl(model), static_cast<int>(cur),
                   app->PlaybackPhysicsMode());
         PanelPaint(app);
         SelectionReeval(app);

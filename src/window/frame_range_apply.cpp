@@ -349,7 +349,7 @@ void ApplyFrameRangeScale(HWND hDlg) {
     const std::uint32_t modelMax = mdl::Mdl(model)->maxFrame;
     if (app->LastRegisteredFrame() < modelMax)
         app->LastRegisteredFrame() = modelMax;
-    SeekModelFrame(model, app->CurrentFrame(),
+    SeekModelFrame(*mdl::Mdl(model), app->CurrentFrame(),
               app->PlaybackPhysicsMode());
     PanelPaint(app);
     SelectionReeval(app);

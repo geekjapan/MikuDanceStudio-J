@@ -34,7 +34,7 @@ void SortRecords(MMDApp& app, TimelineSelectionBand band) {
                sizeof(TimelineSelectionRecord), CompareFunction);
 }
 
-template<class Key>
+template <class Key>
 void FillSelectionRecords(MMDApp& app, const Key* keys, TimelineSelectionBand band) {
     if (app.TimelineSelectionCount(band) <= 0)
         return;
@@ -110,4 +110,4 @@ void CollectGlobalTimelineSelection(MMDApp& app) {
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

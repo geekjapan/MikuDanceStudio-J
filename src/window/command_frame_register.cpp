@@ -163,16 +163,16 @@ namespace mikudancestudio {
 
 // ---- helpers ported in other translation units (declared with original
 //      VAs; not yet registered in ported_funcs.hpp) -------------------------
-void PanelPaint(MMDApp* app);                                   // VA 0x00414610
-void SelectionReeval(MMDApp* app);                              // VA 0x00430510 (stubs.cpp)
-void RefreshLightPanel(MMDApp* app);                                    // VA 0x00411070 (ui_frame_refresh.cpp)
-void RefreshSelfShadowPanel(MMDApp* app);                                    // VA 0x00411B90 (ui_frame_refresh.cpp)
-void ApplyGravityTrack(MMDApp* app);                             // VA 0x00412330 (was
-                                                                  //  0x412330; track_apply.cpp)
-void ApplyAccessoryTrack(MMDApp* app, int slot);                  // VA 0x00413120 (was
-                                                                  //  0x413120; accessory_paste.cpp)
-void SyncAccessoryEditPanel(MMDApp* app);                                    // VA 0x004134E0 (ui_frame_refresh.cpp)
-void ReloadModels(MMDApp* app);                    // VA 0x0042E640 (timeline_advance.cpp)
+void PanelPaint(MMDApp* app);                    // VA 0x00414610
+void SelectionReeval(MMDApp* app);               // VA 0x00430510 (stubs.cpp)
+void RefreshLightPanel(MMDApp* app);             // VA 0x00411070 (ui_frame_refresh.cpp)
+void RefreshSelfShadowPanel(MMDApp* app);        // VA 0x00411B90 (ui_frame_refresh.cpp)
+void ApplyGravityTrack(MMDApp* app);             // VA 0x00412330 (was
+                                                 //  0x412330; track_apply.cpp)
+void ApplyAccessoryTrack(MMDApp* app, int slot); // VA 0x00413120 (was
+                                                 //  0x413120; accessory_paste.cpp)
+void SyncAccessoryEditPanel(MMDApp* app);        // VA 0x004134E0 (ui_frame_refresh.cpp)
+void ReloadModels(MMDApp* app);                  // VA 0x0042E640 (timeline_advance.cpp)
 
 // ---- not-yet-ported original call targets: declarations only; the stub
 //      bodies are consolidated in src/app/late_ports.cpp (finishing phase)
@@ -197,10 +197,10 @@ void RegisterSelectedBoneKeys(unsigned char* model, int frame, int mode);
 //                 frame).
 void RegisterMorphKeyCurrent(unsigned char* model, int idx, int frame);
 // VA 0x00432FA0 - frame-apply refresh chain (thiscall, this = app).
-void RefreshAfterFrameApply(MMDApp* app);  //  (ui_frame_step.cpp)
+void RefreshAfterFrameApply(MMDApp* app); //  (ui_frame_step.cpp)
 // VA 0x00411DF0 - frame-scroll apply (thiscall(app, frame 0x980)).
 void RegisterSelfShadowState(MMDApp* app, int frame);
-                                                       // (ui_frame_refresh.cpp)
+// (ui_frame_refresh.cpp)
 
 namespace {
 
@@ -217,18 +217,14 @@ static unsigned char* ActiveModel(MMDApp* app) {
 //   next: cur == count-1 -> CB_SETCURSEL(0), else cur+1
 //   v = selected morph's current value; update the slider and edit text
 //   (dbl_52B8E0 = 100.0); SetWindowTextA(text, "%5.4f").
-void SyncMorphRow(MMDApp* app, HWND hwnd, std::size_t lane, int comboId,
-                  int spinId, int textId, bool next) {
-    const LRESULT count =
-        SendMessageA(GetDlgItem(hwnd, comboId), CB_GETCOUNT, 0, 0);
-    const LRESULT cur =
-        SendMessageA(GetDlgItem(hwnd, comboId), CB_GETCURSEL, 0, 0);
+void SyncMorphRow(MMDApp* app, HWND hwnd, std::size_t lane, int comboId, int spinId, int textId,
+                  bool next) {
+    const LRESULT count = SendMessageA(GetDlgItem(hwnd, comboId), CB_GETCOUNT, 0, 0);
+    const LRESULT cur = SendMessageA(GetDlgItem(hwnd, comboId), CB_GETCURSEL, 0, 0);
     if (!next) {
-        SendMessageA(GetDlgItem(hwnd, comboId), CB_SETCURSEL,
-                     (cur == 0) ? count - 1 : cur - 1, 0);
+        SendMessageA(GetDlgItem(hwnd, comboId), CB_SETCURSEL, (cur == 0) ? count - 1 : cur - 1, 0);
     } else {
-        SendMessageA(GetDlgItem(hwnd, comboId), CB_SETCURSEL,
-                     (cur == count - 1) ? 0 : cur + 1, 0);
+        SendMessageA(GetDlgItem(hwnd, comboId), CB_SETCURSEL, (cur == count - 1) ? 0 : cur + 1, 0);
     }
     const mdl::ModelRecord* model = mdl::Mdl(ActiveModel(app));
     const std::int32_t idx = model->selectedMorphs[lane];
@@ -244,8 +240,8 @@ void SyncMorphRow(MMDApp* app, HWND hwnd, std::size_t lane, int comboId,
 // 0x48C735, next at 0x48C941; the remaining rows repeat the same logic).
 // It wraps at morphCount, skips morphs outside panel 1 and bails after a full
 // circle, matching the original saved-index comparison.
-void MorphStep(MMDApp* app, HWND hwnd, std::size_t lane, int comboId,
-               int spinId, int textId, bool next) {
+void MorphStep(MMDApp* app, HWND hwnd, std::size_t lane, int comboId, int spinId, int textId,
+               bool next) {
     unsigned char* model = ActiveModel(app);
     mdl::ModelRecord* modelRecord = mdl::Mdl(model);
     std::int32_t idx = modelRecord->selectedMorphs[lane];
@@ -259,14 +255,12 @@ void MorphStep(MMDApp* app, HWND hwnd, std::size_t lane, int comboId,
     for (;;) {
         if (next) {
             ++idx;
-            if (idx >= static_cast<std::int32_t>(
-                           mdl::Mdl(ActiveModel(app))->morphCount))
+            if (idx >= static_cast<std::int32_t>(mdl::Mdl(ActiveModel(app))->morphCount))
                 idx = 0;
         } else {
             --idx;
             if (idx < 0)
-                idx = static_cast<std::int32_t>(
-                          mdl::Mdl(ActiveModel(app))->morphCount) - 1;
+                idx = static_cast<std::int32_t>(mdl::Mdl(ActiveModel(app))->morphCount) - 1;
         }
         unsigned char* m = ActiveModel(app);
         mdl::Mdl(m)->selectedMorphs[lane] = idx;
@@ -293,7 +287,7 @@ void BonePosEdit(MMDApp* app, float* vec, std::size_t axis) {
     }
     const std::int32_t sel = mdl::Mdl(ActiveModel(app))->selectedBone;
     if (sel >= 0) {
-        PushBoneEditUndo(app);   // 0x42D6E0 bone-edit keyframe register
+        PushBoneEditUndo(app); // 0x42D6E0 bone-edit keyframe register
         unsigned char* m = ActiveModel(app);
         mikudancestudio::mdl::Bones(m)[sel].trans[axis] = 0.0f;
         m = ActiveModel(app);
@@ -322,34 +316,28 @@ void BoneRotEdit(MMDApp* app, float* vec, int axis) {
         PostViewRefresh(app);
         return;
     }
-    PushBoneEditUndo(app);   // 0x42D6E0 bone-edit keyframe register
+    PushBoneEditUndo(app); // 0x42D6E0 bone-edit keyframe register
     // capture the pre-edit Euler values (the original keeps them on the x87
     // stack across the stores)
-    const float rX = app->BoneRotationEditDegreesX();   // 0xA04C0
-    const float rY = app->BoneRotationEditDegreesY();   // 0xA04C4
-    const float rZ = app->BoneRotationEditDegreesZ();   // 0xA04C8
-    constexpr double kPi = 3.1415926535897931;    // dbl_52B768
-    constexpr double kPiF = 3.1415927410125732;   // dbl_52E678 (float pi)
+    const float rX = app->BoneRotationEditDegreesX(); // 0xA04C0
+    const float rY = app->BoneRotationEditDegreesY(); // 0xA04C4
+    const float rZ = app->BoneRotationEditDegreesZ(); // 0xA04C8
+    constexpr double kPi = 3.1415926535897931;        // dbl_52B768
+    constexpr double kPiF = 3.1415927410125732;       // dbl_52E678 (float pi)
     switch (axis) {
-    case 0:  // 540: edited axis = X
+    case 0: // 540: edited axis = X
         app->BoneRotationEditDegreesX() = 0.0f;
-        app->BoneRotationEditDegreesY() =
-            static_cast<float>(-(double)rY * kPi / 180.0);
-        app->BoneRotationEditDegreesZ() =
-            static_cast<float>(-(double)rZ * kPi / 180.0);
+        app->BoneRotationEditDegreesY() = static_cast<float>(-(double)rY * kPi / 180.0);
+        app->BoneRotationEditDegreesZ() = static_cast<float>(-(double)rZ * kPi / 180.0);
         break;
-    case 1:  // 541: edited axis = Y
-        app->BoneRotationEditDegreesX() =
-            static_cast<float>((double)rX * kPiF / 180.0);
+    case 1: // 541: edited axis = Y
+        app->BoneRotationEditDegreesX() = static_cast<float>((double)rX * kPiF / 180.0);
         app->BoneRotationEditDegreesY() = 0.0f;
-        app->BoneRotationEditDegreesZ() =
-            static_cast<float>(-(double)rZ * kPi / 180.0);
+        app->BoneRotationEditDegreesZ() = static_cast<float>(-(double)rZ * kPi / 180.0);
         break;
-    default:  // 542: edited axis = Z
-        app->BoneRotationEditDegreesX() =
-            static_cast<float>((double)rX * kPiF / 180.0);
-        app->BoneRotationEditDegreesY() =
-            static_cast<float>(-(double)rY * kPi / 180.0);
+    default: // 542: edited axis = Z
+        app->BoneRotationEditDegreesX() = static_cast<float>((double)rX * kPiF / 180.0);
+        app->BoneRotationEditDegreesY() = static_cast<float>(-(double)rY * kPi / 180.0);
         app->BoneRotationEditDegreesZ() = 0.0f;
         break;
     }
@@ -372,15 +360,15 @@ void BoneRotEdit(MMDApp* app, float* vec, int axis) {
 // PostModelReload2 + HandleWindowSize + InvalidateRect chain shared by the
 // option-flag checkboxes (loc_47EA0D / loc_47EA36 / loc_47E989).
 void OptionFlagRefresh(MMDApp* app, HWND hwnd) {
-    PostModelReload2(app);   // VA 0x0040D940
-    HandleWindowSize(app);   // VA 0x00443300
+    PostModelReload2(app); // VA 0x0040D940
+    HandleWindowSize(app); // VA 0x00443300
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
-}  // namespace
+} // namespace
 
 void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify) {
-    (void)notify;  // the original switch never inspects the notify code
+    (void)notify; // the original switch never inspects the notify code
     switch (id) {
 
     // ---- 500: register-frame button 0x1F4 -------------------------------
@@ -396,17 +384,14 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
             break;
         }
         app->SceneModified() = 1;
-        RegisterSelectedBoneKeys(
-            ActiveModel(app),
-            app->state.currentFrame,
-            app->PlaybackPhysicsMode());
+        RegisterSelectedBoneKeys(ActiveModel(app), app->state.currentFrame,
+                                 app->PlaybackPhysicsMode());
         // 0x9E16C = max(0x9E16C, model+0x31B0)
-        const std::int32_t frames =
-            static_cast<std::int32_t>(mdl::Mdl(ActiveModel(app))->maxFrame);
+        const std::int32_t frames = static_cast<std::int32_t>(mdl::Mdl(ActiveModel(app))->maxFrame);
         if (app->state.lastRegisteredFrame < frames)
             app->state.lastRegisteredFrame = frames;
-        PanelPaint(app);              // 0x414610
-        SelectionReeval(app);         // 0x430510
+        PanelPaint(app);      // 0x414610
+        SelectionReeval(app); // 0x430510
         break;
     }
 
@@ -429,17 +414,17 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
             unsigned char* sel = mdl::Mdl(m)->boneSelection;
             sel[i] = (flags[i] != 0) ? 1 : 0;
         }
-        RebuildTimelineTrackPanel(app);       // 0x42F1E0
-        InvalidateSelectionReadouts(app);      // 0x40D070
+        RebuildTimelineTrackPanel(app);   // 0x42F1E0
+        InvalidateSelectionReadouts(app); // 0x40D070
         break;
     }
 
     // ---- 502/503: option-flag checkbox pair 0x1FC (byte 0x2FC) ----------
-    case panel::kCollapseBonePanelButton:  // 0x47EA70
+    case panel::kCollapseBonePanelButton: // 0x47EA70
         app->PanelExpanded(UiPanel::Bone) = 0;
         OptionFlagRefresh(app, hwnd);
         break;
-    case panel::kExpandBonePanelButton:  // 0x47EA79
+    case panel::kExpandBonePanelButton: // 0x47EA79
         app->PanelExpanded(UiPanel::Bone) = 1;
         OptionFlagRefresh(app, hwnd);
         break;
@@ -451,11 +436,13 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     //      emit WM_COMMAND.  Falls through to the no-op default. ---------
 
     // ---- 507/508: bone X combo prev/next (axis 0x2D9C, row 0x1F8) ------
-    case panel::kMorphPreviousButton0:  // 0x48C735
-        MorphStep(app, hwnd, 0, panel::kMorphCombo0, panel::kMorphSlider0, panel::kMorphEdit0, false);
+    case panel::kMorphPreviousButton0: // 0x48C735
+        MorphStep(app, hwnd, 0, panel::kMorphCombo0, panel::kMorphSlider0, panel::kMorphEdit0,
+                  false);
         break;
-    case panel::kMorphNextButton0:  // 0x48C941
-        MorphStep(app, hwnd, 0, panel::kMorphCombo0, panel::kMorphSlider0, panel::kMorphEdit0, true);
+    case panel::kMorphNextButton0: // 0x48C941
+        MorphStep(app, hwnd, 0, panel::kMorphCombo0, panel::kMorphSlider0, panel::kMorphEdit0,
+                  true);
         break;
 
     // ---- 509..511: no jump-table target; 0x1FD rides the dispatcher
@@ -463,11 +450,13 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     //      default. --------------------------------------------------------
 
     // ---- 512/513: bone Y combo prev/next (axis 0x2DA0, row 0x1FD) ------
-    case panel::kMorphPreviousButton1:  // 0x48CB4E
-        MorphStep(app, hwnd, 1, panel::kMorphCombo1, panel::kMorphSlider1, panel::kMorphEdit1, false);
+    case panel::kMorphPreviousButton1: // 0x48CB4E
+        MorphStep(app, hwnd, 1, panel::kMorphCombo1, panel::kMorphSlider1, panel::kMorphEdit1,
+                  false);
         break;
-    case panel::kMorphNextButton1:  // 0x48CD50
-        MorphStep(app, hwnd, 1, panel::kMorphCombo1, panel::kMorphSlider1, panel::kMorphEdit1, true);
+    case panel::kMorphNextButton1: // 0x48CD50
+        MorphStep(app, hwnd, 1, panel::kMorphCombo1, panel::kMorphSlider1, panel::kMorphEdit1,
+                  true);
         break;
 
     // ---- 514..516: no jump-table target; 0x202 rides the dispatcher
@@ -475,11 +464,13 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     //      default. --------------------------------------------------------
 
     // ---- 517/518: bone Z combo prev/next (axis 0x2DA4, row 0x202) ------
-    case panel::kMorphPreviousButton2:  // 0x48CF51
-        MorphStep(app, hwnd, 2, panel::kMorphCombo2, panel::kMorphSlider2, panel::kMorphEdit2, false);
+    case panel::kMorphPreviousButton2: // 0x48CF51
+        MorphStep(app, hwnd, 2, panel::kMorphCombo2, panel::kMorphSlider2, panel::kMorphEdit2,
+                  false);
         break;
-    case panel::kMorphNextButton2:  // 0x48D151
-        MorphStep(app, hwnd, 2, panel::kMorphCombo2, panel::kMorphSlider2, panel::kMorphEdit2, true);
+    case panel::kMorphNextButton2: // 0x48D151
+        MorphStep(app, hwnd, 2, panel::kMorphCombo2, panel::kMorphSlider2, panel::kMorphEdit2,
+                  true);
         break;
 
     // ---- 519..521: no jump-table target; 0x207 rides the dispatcher
@@ -487,11 +478,13 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     //      default. --------------------------------------------------------
 
     // ---- 522/523: bone rot combo prev/next (axis 0x2DA8, row 0x207) ----
-    case panel::kMorphPreviousButton3:  // 0x48D34C
-        MorphStep(app, hwnd, 3, panel::kMorphCombo3, panel::kMorphSlider3, panel::kMorphEdit3, false);
+    case panel::kMorphPreviousButton3: // 0x48D34C
+        MorphStep(app, hwnd, 3, panel::kMorphCombo3, panel::kMorphSlider3, panel::kMorphEdit3,
+                  false);
         break;
-    case panel::kMorphNextButton3:  // 0x48D550
-        MorphStep(app, hwnd, 3, panel::kMorphCombo3, panel::kMorphSlider3, panel::kMorphEdit3, true);
+    case panel::kMorphNextButton3: // 0x48D550
+        MorphStep(app, hwnd, 3, panel::kMorphCombo3, panel::kMorphSlider3, panel::kMorphEdit3,
+                  true);
         break;
 
     // ---- 524..527: frame-register buttons 0x20C..0x20F (per-axis) -------
@@ -500,19 +493,26 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     // and IK (0x26E8, flag +0x14, 0x1C-step over 0x6D60) selection flags,
     // then registers a keyframe via sub_49EEE0(model, axisIdx, frame 0x980),
     // updates 0x9E16C against model+0x31B0 and repaints the panel.
-    case panel::kRegisterMorphButton1:  // 0x4803B1 (axis 0x2DA0)
-    case panel::kRegisterMorphButton0:  // 0x4802CC (axis 0x2D9C)
-    case panel::kRegisterMorphButton3:  // 0x480571 (axis 0x2DA8)
-    case panel::kRegisterMorphButton2:  // 0x480491 (axis 0x2DA4)
+    case panel::kRegisterMorphButton1: // 0x4803B1 (axis 0x2DA0)
+    case panel::kRegisterMorphButton0: // 0x4802CC (axis 0x2D9C)
+    case panel::kRegisterMorphButton3: // 0x480571 (axis 0x2DA8)
+    case panel::kRegisterMorphButton2: // 0x480491 (axis 0x2DA4)
     {
         // lane 0..3 = the per-axis combo rows 0x2D9C/0x2DA0/0x2DA4/0x2DA8;
         // 526 (0x2DA8) is the default chain.
         std::size_t lane = 3;
         switch (id) {
-        case panel::kRegisterMorphButton0: lane = 0; break;
-        case panel::kRegisterMorphButton1: lane = 1; break;
-        case panel::kRegisterMorphButton2: lane = 2; break;
-        default: break;
+        case panel::kRegisterMorphButton0:
+            lane = 0;
+            break;
+        case panel::kRegisterMorphButton1:
+            lane = 1;
+            break;
+        case panel::kRegisterMorphButton2:
+            lane = 2;
+            break;
+        default:
+            break;
         }
         app->SceneModified() = 1;
         {
@@ -534,12 +534,8 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
                 displayKeys[i].allocated = 0;
         }
         unsigned char* m = ActiveModel(app);
-        RegisterMorphKeyCurrent(
-            m,
-            mdl::Mdl(m)->selectedMorphs[lane],
-            app->state.currentFrame);
-        const std::int32_t frames =
-            static_cast<std::int32_t>(mdl::Mdl(ActiveModel(app))->maxFrame);
+        RegisterMorphKeyCurrent(m, mdl::Mdl(m)->selectedMorphs[lane], app->state.currentFrame);
+        const std::int32_t frames = static_cast<std::int32_t>(mdl::Mdl(ActiveModel(app))->maxFrame);
         if (app->state.lastRegisteredFrame < frames)
             app->state.lastRegisteredFrame = frames;
         PanelPaint(app);
@@ -547,11 +543,11 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     }
 
     // ---- 528/529: option-flag checkbox pair 0x210 (byte 0x2FD) ----------
-    case panel::kCollapseMorphPanelButton:  // 0x47EA82
+    case panel::kCollapseMorphPanelButton: // 0x47EA82
         app->PanelExpanded(UiPanel::Morph) = 0;
         OptionFlagRefresh(app, hwnd);
         break;
-    case panel::kExpandMorphPanelButton:  // 0x47EA9A
+    case panel::kExpandMorphPanelButton: // 0x47EA9A
         app->PanelExpanded(UiPanel::Morph) = 1;
         OptionFlagRefresh(app, hwnd);
         break;
@@ -561,14 +557,13 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         break;
 
     // ---- 531: physics checkbox 0x213 -------------------------------------
-    case panel::kCameraRefBoneCheckbox: {  // 0x47FA92
+    case panel::kCameraRefBoneCheckbox: { // 0x47FA92
         // Checked: mode byte 0x340 = 2, uncheck 0x19C, then
         // ApplyCameraReferenceModeChange(app, old mode) unless display mode
         // (0x2F8).
         if (SendMessageA(GetDlgItem(hwnd, panel::kCameraRefBoneCheckbox), BM_GETCHECK, 0, 0) == 1) {
             const int oldMode = static_cast<int>(app->CameraReferenceMode());
-            app->CameraReferenceMode() =
-                CameraAttachmentReference::SelectedBone;
+            app->CameraReferenceMode() = CameraAttachmentReference::SelectedBone;
             SendMessageA(GetDlgItem(hwnd, panel::kCameraRefModelCheckbox), BM_SETCHECK, 0, 0);
             if (app->CameraMode() == 0)
                 ApplyCameraReferenceModeChange(app, oldMode);
@@ -584,11 +579,11 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     }
 
     // ---- 532/533: button pair 0x214/0x215 --------------------------------
-    case panel::kNextKeyframeButton:  // 0x48BC87
-        JumpNextKeyframe(app);   // 0x441070 (not 0x411070)
+    case panel::kNextKeyframeButton: // 0x48BC87
+        JumpNextKeyframe(app);       // 0x441070 (not 0x411070)
         break;
-    case panel::kPreviousKeyframeButton:  // 0x48BC91
-        JumpPrevKeyframe(app);   // 0x4414C0
+    case panel::kPreviousKeyframeButton: // 0x48BC91
+        JumpPrevKeyframe(app);           // 0x4414C0
         break;
 
     // ---- 534: no jump-table target --------------------------------------
@@ -596,7 +591,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         break;
 
     // ---- 535: display-mode checkbox 0x217 (byte 0x9ED98) -----------------
-    case panel::kFollowCameraCheckbox: {  // 0x48BE6A
+    case panel::kFollowCameraCheckbox: { // 0x48BE6A
         if (SendMessageA(GetDlgItem(hwnd, panel::kFollowCameraCheckbox), BM_GETCHECK, 0, 0) == 1) {
             // checked: camera cluster 0x308/0x30C = 0, menu 0xF7 checked,
             // full model/slot refresh chain (0x42E640, 0x411070, 0x411B90,
@@ -606,7 +601,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
             app->ViewOffsetX() = 0.0f;
             app->ViewOffsetY() = 0.0f;
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_CAMERA_TRACKING, MF_CHECKED);
-            ReloadModels(app);   // 0x42E640 model-list reset
+            ReloadModels(app); // 0x42E640 model-list reset
             RefreshLightPanel(app);
             RefreshSelfShadowPanel(app);
             ApplyGravityTrack(app);
@@ -617,7 +612,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
             SyncAccessoryEditPanel(app);
             if (app->CameraMode() == 0) {
                 app->CameraAttachmentTransformSuppressed() = 0;
-                PostModelReload(app);  // 0x41A650 post-reload refresh
+                PostModelReload(app); // 0x41A650 post-reload refresh
             }
             InvalidateSelectionReadouts(app);
         } else {
@@ -627,8 +622,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_CAMERA_TRACKING, MF_UNCHECKED);
             if (app->CameraMode() == 0) {
                 const std::int32_t sel = app->CameraParentModel();
-                if (sel == app->SelectedModelSlot() &&
-                    sel >= 0) {
+                if (sel == app->SelectedModelSlot() && sel >= 0) {
                     app->CameraAttachmentTransformSuppressed() = 0;
                     PostModelReload(app);
                 }
@@ -639,12 +633,11 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     }
 
     // ---- 536: accessory-combo sync 0x218 (combo 0x1B4) ------------------
-    case panel::kModelEditToggle: {  // 0x48BF6F
+    case panel::kModelEditToggle: { // 0x48BF6F
         if (app->CameraMode() != 0) {
             // display mode: selected accessory index 0xA042C; when zero the
             // original re-dispatches WM_COMMAND 0x1B3 on the main window.
-            const std::int32_t sel =
-                app->state.mainModelComboSelection;
+            const std::int32_t sel = app->state.mainModelComboSelection;
             if (sel == 0) {
                 SendMessageA(hwnd, WM_COMMAND, panel::kLoadModelButton, 0);
                 break;
@@ -659,29 +652,29 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     }
 
     // ---- 537..539: bone position edit boxes 0x219..0x21B ----------------
-    case panel::kResetPositionXButton:  // 0x48BFF7 (pos X: app 0x334, record +0x140)
+    case panel::kResetPositionXButton: // 0x48BFF7 (pos X: app 0x334, record +0x140)
         BonePosEdit(app, app->CameraPosition(), 0);
         break;
-    case panel::kResetPositionYButton:  // 0x48C081 (pos Y: app 0x338, record +0x144)
+    case panel::kResetPositionYButton: // 0x48C081 (pos Y: app 0x338, record +0x144)
         BonePosEdit(app, app->CameraPosition(), 1);
         break;
-    case panel::kResetPositionZButton:  // 0x48C10B (pos Z: app 0x33C, record +0x148)
+    case panel::kResetPositionZButton: // 0x48C10B (pos Z: app 0x33C, record +0x148)
         BonePosEdit(app, app->CameraPosition(), 2);
         break;
 
     // ---- 540..542: bone rotation edit boxes 0x21C..0x21E ----------------
-    case panel::kResetRotationXButton:  // 0x48C195 (rot X: app 0x310, edited axis X)
+    case panel::kResetRotationXButton: // 0x48C195 (rot X: app 0x310, edited axis X)
         BoneRotEdit(app, app->CameraRotation(), 0);
         break;
-    case panel::kResetRotationYButton:  // 0x48C2E4 (rot Y: app 0x314, edited axis Y)
+    case panel::kResetRotationYButton: // 0x48C2E4 (rot Y: app 0x314, edited axis Y)
         BoneRotEdit(app, app->CameraRotation(), 1);
         break;
-    case panel::kResetRotationZButton:  // 0x48C435 (rot Z: app 0x318, edited axis Z)
+    case panel::kResetRotationZButton: // 0x48C435 (rot Z: app 0x318, edited axis Z)
         BoneRotEdit(app, app->CameraRotation(), 2);
         break;
 
     // ---- 543: camera-angle edit box 0x21F -------------------------------
-    case panel::kCameraDistanceButton: {  // 0x48C52F
+    case panel::kCameraDistanceButton: { // 0x48C52F
         if (app->CameraMode() != 0) {
             app->CameraDistance() = 0.0f;
             SelectTimelineTrack(GlobalTimelineTrack::Camera);
@@ -701,7 +694,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         break;
 
     // ---- 553: frame edit box 0x22A (EN_CHANGE read-back) ----------------
-    case panel::kGoToFrameButton: {  // 0x48DECB
+    case panel::kGoToFrameButton: { // 0x48DECB
         // atol of the 0x22A text (max 10 chars), clamped to >= 0, applied
         // as the frame 0x980; frame-apply chain + echo back into 0x1A1.
         char buf[0x100];
@@ -710,7 +703,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         if (v < 0)
             v = 0;
         app->state.currentFrame = static_cast<std::int32_t>(v);
-        RefreshAfterFrameApply(app);   // 0x432FA0 frame-apply chain
+        RefreshAfterFrameApply(app); // 0x432FA0 frame-apply chain
         PostViewRefresh(app);
         sprintf_s(buf, 0x100u, "%d", app->state.currentFrame);
         SetWindowTextA(GetDlgItem(hwnd, panel::kCurrentFrameEdit), buf);
@@ -718,7 +711,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     }
 
     // ---- 555: frame edit box 0x22B echo ---------------------------------
-    case panel::kSetGoToFrameButton: {  // 0x48DE84
+    case panel::kSetGoToFrameButton: { // 0x48DE84
         char buf[0x100];
         sprintf_s(buf, 0x100u, "%d", app->state.currentFrame);
         SetWindowTextA(GetDlgItem(hwnd, panel::kGotoFrameEdit), buf);
@@ -726,7 +719,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     }
 
     // ---- 556: checkbox 0x22C (quality / BM_GETCHECK probe control) ------
-    case panel::kSelfShadowCheckbox: {  // 0x48DF5D
+    case panel::kSelfShadowCheckbox: { // 0x48DF5D
         // The checked state of 0x22C is probed by HandleNotify (ui_notify.cpp
         // 0x4398B0) and here drives the locale subsystem (0xA06C4) buffer
         // sizes renderTargetWidth/renderTargetHeight (0x1D558/0x1D55C,
@@ -738,14 +731,14 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
             (SendMessageA(GetDlgItem(hwnd, panel::kSelfShadowCheckbox), BM_GETCHECK, 0, 0) == 1)
                 ? 0x1000
                 : 0x800;
-        locale->renderTargetWidth = size;   // 0x1D558
-        locale->renderTargetHeight = size;  // 0x1D55C
-        IUnknown* objects[] = {locale->hdrTexture,        // 0x1D548
-                               locale->shadowDepthSurface,  // 0x1D554
-                               locale->shadowSurface};      // 0x1D550
+        locale->renderTargetWidth = size;                  // 0x1D558
+        locale->renderTargetHeight = size;                 // 0x1D55C
+        IUnknown* objects[] = {locale->hdrTexture,         // 0x1D548
+                               locale->shadowDepthSurface, // 0x1D554
+                               locale->shadowSurface};     // 0x1D550
         for (IUnknown* obj : objects) {
             if (obj != nullptr) {
-                obj->Release();  // vtable slot +8
+                obj->Release(); // vtable slot +8
             }
         }
         locale->hdrTexture = nullptr;
@@ -755,9 +748,9 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     }
 
     // ---- 558: frame-reset button 0x22E ----------------------------------
-    case panel::kFirstFrameButton: {  // 0x48C679
+    case panel::kFirstFrameButton: { // 0x48C679
         app->state.currentFrame = 0;
-        RefreshAfterFrameApply(app);   // 0x432FA0 frame-apply chain
+        RefreshAfterFrameApply(app); // 0x432FA0 frame-apply chain
         PostViewRefresh(app);
         char buf[0x100];
         sprintf_s(buf, 0x100u, "%d", app->state.currentFrame);
@@ -766,10 +759,9 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     }
 
     // ---- 559: frame-end button 0x22F ------------------------------------
-    case panel::kLastFrameButton: {  // 0x48C6D6
-        app->state.currentFrame =
-            app->state.lastRegisteredFrame;
-        RefreshAfterFrameApply(app);   // 0x432FA0 frame-apply chain
+    case panel::kLastFrameButton: { // 0x48C6D6
+        app->state.currentFrame = app->state.lastRegisteredFrame;
+        RefreshAfterFrameApply(app); // 0x432FA0 frame-apply chain
         PostViewRefresh(app);
         char buf[0x100];
         sprintf_s(buf, 0x100u, "%d", app->state.currentFrame);
@@ -778,7 +770,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     }
 
     // ---- 562..564: coordinate-system radio group 0x232..0x234 -----------
-    case panel::kEditOffCheckbox: {  // 0x48D84F (0xA0D30 = 0)
+    case panel::kEditOffCheckbox: { // 0x48D84F (0xA0D30 = 0)
         SendMessageA(GetDlgItem(hwnd, panel::kEditOffCheckbox), BM_SETCHECK, 1, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kEditMode1Checkbox), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kEditMode2Checkbox), BM_SETCHECK, 0, 0);
@@ -786,7 +778,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         SelectTimelineTrack(GlobalTimelineTrack::SelfShadow);
         break;
     }
-    case panel::kEditMode1Checkbox: {  // 0x48D8C1 (0xA0D30 = 1)
+    case panel::kEditMode1Checkbox: { // 0x48D8C1 (0xA0D30 = 1)
         SendMessageA(GetDlgItem(hwnd, panel::kEditOffCheckbox), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kEditMode1Checkbox), BM_SETCHECK, 1, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kEditMode2Checkbox), BM_SETCHECK, 0, 0);
@@ -794,7 +786,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         SelectTimelineTrack(GlobalTimelineTrack::SelfShadow);
         break;
     }
-    case panel::kEditMode2Checkbox: {  // 0x48D933 (0xA0D30 = 2)
+    case panel::kEditMode2Checkbox: { // 0x48D933 (0xA0D30 = 2)
         SendMessageA(GetDlgItem(hwnd, panel::kEditOffCheckbox), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kEditMode1Checkbox), BM_SETCHECK, 0, 0);
         SendMessageA(GetDlgItem(hwnd, panel::kEditMode2Checkbox), BM_SETCHECK, 1, 0);
@@ -804,8 +796,8 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     }
 
     // ---- 565: physics-interval edit box 0x235 ---------------------------
-    case panel::kRegisterSelfShadowButton: {  // 0x48D9A5
-        // atof of the 0x231 text (max 8 chars); physics interval float
+    case panel::kRegisterSelfShadowButton: { // 0x48D9A5
+        // atof of the 0x231 text (max 8 chars); self-shadow distance float
         // 0xA0D2C = (10000 - v) / 100000 (dbl_52B9F8 / dbl_52BA00); slider
         // 0x230 pos = (int)v; dirty flag; selection-bitmap clear; then the
         // frame-scroll apply sub_411DF0(app, frame), SelectTimelineTrack(GlobalTimelineTrack::SelfShadow) and
@@ -813,8 +805,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         char buf[0x100];
         GetWindowTextA(GetDlgItem(hwnd, panel::kSelfShadowRangeEdit), buf, 8);
         const float v = static_cast<float>(atof(buf));
-        app->state.physicsInterval =
-            static_cast<float>((10000.0 - (double)v) / 100000.0);
+        app->state.selfShadowDistance = static_cast<float>((10000.0 - (double)v) / 100000.0);
         SendMessageA(GetDlgItem(hwnd, panel::kSelfShadowRangeSlider), TBM_SETPOS, 1,
                      static_cast<LPARAM>(static_cast<std::int32_t>(v)));
         app->SceneModified() = 1;
@@ -841,7 +832,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     }
 
     // ---- 551: play checkbox 0x227 (byte 0x31E) --------------------------
-    case panel::kInfoCheckbox: {  // 0x48C5AE
+    case panel::kInfoCheckbox: { // 0x48C5AE
         if (app->state.fpsOverlayEnabled != 0) {
             app->state.fpsOverlayEnabled = 0;
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_INFORMATION, MF_UNCHECKED);
@@ -855,7 +846,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     }
 
     // ---- 552: checkbox 0x228 (menu 0x12B mirror) ------------------------
-    case panel::kFrameVolumeCheckbox: {  // 0x48C612
+    case panel::kFrameVolumeCheckbox: { // 0x48C612
         if (GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_LOW_POWER, 0) & MF_CHECKED) {
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_LOW_POWER, MF_UNCHECKED);
             app->FrameVolumeControlEnabled() = 0;
@@ -871,7 +862,7 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         break;
 
     // ---- 557: morph-display checkbox 0x22D (byte 0x31D) -----------------
-    case panel::kCoordAxisCheckbox: {  // 0x48C557
+    case panel::kCoordAxisCheckbox: { // 0x48C557
         if (app->state.groundGridEnabled != 0) {
             app->state.groundGridEnabled = 0;
             CheckMenuItem(GetMenu(hwnd), MDS_CMD_TOGGLE_COORDINATE_AXIS, MF_UNCHECKED);
@@ -888,11 +879,11 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
         break;
 
     // ---- 566/567: option-flag checkbox pair 0x236 (byte 0x2FE) ----------
-    case panel::kCollapseSelfShadowPanelButton:  // 0x47EAA6
+    case panel::kCollapseSelfShadowPanelButton: // 0x47EAA6
         app->PanelExpanded(UiPanel::SelfShadow) = 0;
         OptionFlagRefresh(app, hwnd);
         break;
-    case panel::kExpandSelfShadowPanelButton:  // 0x47EAAF
+    case panel::kExpandSelfShadowPanelButton: // 0x47EAAF
         app->PanelExpanded(UiPanel::SelfShadow) = 1;
         OptionFlagRefresh(app, hwnd);
         break;
@@ -902,4 +893,4 @@ void HandleFrameRegisterControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::u
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

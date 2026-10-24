@@ -22,4 +22,4 @@ MMDApp::MMDApp() {
     // this+0x9F4F8 subobject (VA 0x004C46F0) constructs nothing.
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

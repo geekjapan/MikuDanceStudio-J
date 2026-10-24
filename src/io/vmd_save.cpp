@@ -59,20 +59,23 @@ unsigned char* ActiveModel(MMDApp* app) {
     return app->SelectedModel();
 }
 
-const char kCameraLightName[] =  // 0x52BCB8 "カメラ・照明" (byte-exact)
+const char kCameraLightName[] = // 0x52BCB8 "カメラ・照明" (byte-exact)
     "\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe";
-const char kJpCannotSave[] =  // 0x52BCE4
+const char kJpCannotSave[] = // 0x52BCE4
     "\x83\x74\x83\x40\x83\x43\x83\x8b\x82\xaa\x95\xdb\x91\xb6\x82\xc5\x82"
     "\xab\x82\xdc\x82\xb9\x82\xf1:%d";
 
-int Wr(int fd, const void* p, unsigned int n) { return _write(fd, p, n); }
+int Wr(int fd, const void* p, unsigned int n) {
+    return _write(fd, p, n);
+}
 
-}  // namespace
+} // namespace
 
 // ---- VA 0x00419370 --------------------------------------------------------
 void SaveVmdFile(const wchar_t* path) {
     MMDApp* app = g_Block;
-    if (app == nullptr) return;
+    if (app == nullptr)
+        return;
     auto& s = *app;
 
     const bool cameraMode = s.CameraMode() != 0;
@@ -89,7 +92,8 @@ void SaveVmdFile(const wchar_t* path) {
             if (keys[i].allocated != 0) {
                 ++boneCnt;
                 const std::uint32_t f = keys[i].frame;
-                if (f < minFrame) minFrame = f;
+                if (f < minFrame)
+                    minFrame = f;
             }
         }
         const mdl::MorphKey* mkeys = mdl::MorphKeys(model);
@@ -97,7 +101,8 @@ void SaveVmdFile(const wchar_t* path) {
             if (mkeys[i].allocated != 0) {
                 ++morphCnt;
                 const std::uint32_t f = mkeys[i].frame;
-                if (f < minFrame) minFrame = f;
+                if (f < minFrame)
+                    minFrame = f;
             }
         }
         const mdl::DisplayKey* ikeys = mdl::DisplayKeys(model);
@@ -105,7 +110,8 @@ void SaveVmdFile(const wchar_t* path) {
             if (ikeys[i].allocated != 0) {
                 ++ikCnt;
                 const std::uint32_t f = ikeys[i].frame;
-                if (f < minFrame) minFrame = f;
+                if (f < minFrame)
+                    minFrame = f;
             }
         }
     } else {
@@ -114,7 +120,8 @@ void SaveVmdFile(const wchar_t* path) {
             if (cam[i].selected != 0) {
                 ++camCnt;
                 const std::uint32_t f = cam[i].frame;
-                if (f < minFrame) minFrame = f;
+                if (f < minFrame)
+                    minFrame = f;
             }
         }
         const mdl::LightKey* light = app->LightKeys();
@@ -122,7 +129,8 @@ void SaveVmdFile(const wchar_t* path) {
             if (light[i].selected != 0) {
                 ++lightCnt;
                 const std::uint32_t f = light[i].frame;
-                if (f < minFrame) minFrame = f;
+                if (f < minFrame)
+                    minFrame = f;
             }
         }
         const mdl::SelfShadowKey* shadow = app->ShadowKeys();
@@ -130,7 +138,8 @@ void SaveVmdFile(const wchar_t* path) {
             if (shadow[i].selected != 0) {
                 ++shadowCnt;
                 const std::uint32_t f = shadow[i].frame;
-                if (f < minFrame) minFrame = f;
+                if (f < minFrame)
+                    minFrame = f;
             }
         }
     }
@@ -150,12 +159,12 @@ void SaveVmdFile(const wchar_t* path) {
 
     char buf[256];
     sprintf_s(buf, 0x100, "%s", "Vocaloid Motion Data 0002");
-    Wr(fd, buf, 30);                                             // 0x41981E
+    Wr(fd, buf, 30); // 0x41981E
     if (!cameraMode) {
-        Wr(fd, mdl::Mdl(model)->name, 20);                       // 0x419875
+        Wr(fd, mdl::Mdl(model)->name, 20); // 0x419875
     } else {
         strcpy_s(buf, 0x100, kCameraLightName);
-        Wr(fd, buf, 20);                                         // 0x41984F
+        Wr(fd, buf, 20); // 0x41984F
     }
 
     // x64 sub_7FF7CB48C450：相机/照明模式（app+808 != 0）下完全不碰 model
@@ -179,16 +188,17 @@ void SaveVmdFile(const wchar_t* path) {
     std::uint32_t outDword;
     // ---- bone keys --------------------------------------------------------
     outDword = cameraMode ? 0 : boneCnt;
-    Wr(fd, &outDword, 4);                                             // 0x419889
+    Wr(fd, &outDword, 4); // 0x419889
     if (!cameraMode) {
         const mdl::BoneKey* keys = mdl::BoneKeys(model);
         for (unsigned int idx = 0; idx < static_cast<unsigned int>(mdl::kBoneKeyCapacity); ++idx) {
             const mdl::BoneKey& rec = keys[idx];
-            if (rec.allocated == 0) continue;
-            unsigned int boneIdx = idx;                          // 0x4198E0
+            if (rec.allocated == 0)
+                continue;
+            unsigned int boneIdx = idx; // 0x4198E0
             while (boneIdx >= static_cast<unsigned int>(boneCount))
                 boneIdx = keys[boneIdx].previous;
-            Wr(fd, bones[boneIdx].name, 15);                    // 0x419904
+            Wr(fd, bones[boneIdx].name, 15); // 0x419904
             outDword = rec.frame - minFrame;
             Wr(fd, &outDword, 4);
             Wr(fd, rec.position, sizeof rec.position);
@@ -197,12 +207,11 @@ void SaveVmdFile(const wchar_t* path) {
             // (+0xC x1 / +0x10 y1 / +0x14 x2 / +0x18 y2, one byte each per
             // channel); ch0 carries the 3939 VMD2 marker as the second u16
             for (int ch = 0; ch < 4; ++ch) {
-                if (ch == 0) {                                   // 0x419AA5..
+                if (ch == 0) { // 0x419AA5..
                     Wr(fd, rec.interpolation, 2);
-                    const unsigned short marker =
-                        rec.physicsDisabled != 0 ? 0x0F63 : 0;
+                    const unsigned short marker = rec.physicsDisabled != 0 ? 0x0F63 : 0;
                     Wr(fd, &marker, 2);
-                } else {                                         // 0x419AE3
+                } else { // 0x419AE3
                     Wr(fd, rec.interpolation + ch, 4);
                 }
                 Wr(fd, rec.interpolation + 4 + ch, 4);
@@ -214,16 +223,17 @@ void SaveVmdFile(const wchar_t* path) {
 
     // ---- morph keys -------------------------------------------------------
     outDword = cameraMode ? 0 : morphCnt;
-    Wr(fd, &outDword, 4);                                             // 0x419B8F
+    Wr(fd, &outDword, 4); // 0x419B8F
     if (!cameraMode) {
         const mdl::MorphKey* mkeys = mdl::MorphKeys(model);
         for (unsigned int idx = 0; idx < 20000; ++idx) {
             const mdl::MorphKey& rec = mkeys[idx];
-            if (rec.allocated == 0) continue;
-            unsigned int morphIdx = idx;                         // 0x419B90..
+            if (rec.allocated == 0)
+                continue;
+            unsigned int morphIdx = idx; // 0x419B90..
             while (morphIdx >= static_cast<unsigned int>(morphCount))
                 morphIdx = mkeys[morphIdx].previous;
-            Wr(fd, morphs[morphIdx].name, 15);                  // 0x419C18
+            Wr(fd, morphs[morphIdx].name, 15); // 0x419C18
             outDword = rec.frame - minFrame;
             Wr(fd, &outDword, 4);
             Wr(fd, &rec.value, sizeof rec.value);
@@ -232,18 +242,19 @@ void SaveVmdFile(const wchar_t* path) {
 
     // ---- camera keys ------------------------------------------------------
     outDword = camCnt;
-    Wr(fd, &outDword, 4);                                             // 0x419E60
+    Wr(fd, &outDword, 4); // 0x419E60
     if (camCnt != 0) {
         const mdl::CameraKey* cam = app->CameraKeys();
         for (unsigned int i = 0; i < 10000; ++i) {
             const mdl::CameraKey& rec = cam[i];
-            if (rec.selected == 0) continue;
+            if (rec.selected == 0)
+                continue;
             outDword = rec.frame - minFrame;
             Wr(fd, &outDword, 4);
             Wr(fd, &rec.distance, sizeof rec.distance);
             Wr(fd, rec.eye, sizeof rec.eye);
             Wr(fd, rec.target, sizeof rec.target);
-            for (int j = 0; j < 6; ++j) {                        // 0x419DAA..
+            for (int j = 0; j < 6; ++j) { // 0x419DAA..
                 // was: inner `i`, shadowing the outer record-index i
                 Wr(fd, &rec.interpolation[0][j], 1);
                 Wr(fd, &rec.interpolation[2][j], 1);
@@ -258,12 +269,13 @@ void SaveVmdFile(const wchar_t* path) {
 
     // ---- light keys -------------------------------------------------------
     outDword = lightCnt;
-    Wr(fd, &outDword, 4);                                             // 0x419F4D
+    Wr(fd, &outDword, 4); // 0x419F4D
     if (lightCnt != 0) {
         const mdl::LightKey* light = app->LightKeys();
         for (unsigned int i = 0; i < 10000; ++i) {
             const mdl::LightKey& rec = light[i];
-            if (rec.selected == 0) continue;
+            if (rec.selected == 0)
+                continue;
             outDword = rec.frame - minFrame;
             Wr(fd, &outDword, 4);
             Wr(fd, rec.color, sizeof rec.color);
@@ -273,12 +285,13 @@ void SaveVmdFile(const wchar_t* path) {
 
     // ---- self-shadow keys -------------------------------------------------
     outDword = shadowCnt;
-    Wr(fd, &outDword, 4);                                             // 0x419FD6
+    Wr(fd, &outDword, 4); // 0x419FD6
     if (shadowCnt != 0) {
         const mdl::SelfShadowKey* shadow = app->ShadowKeys();
         for (unsigned int i = 0; i < 10000; ++i) {
             const mdl::SelfShadowKey& rec = shadow[i];
-            if (rec.selected == 0) continue;
+            if (rec.selected == 0)
+                continue;
             outDword = rec.frame - minFrame;
             Wr(fd, &outDword, 4);
             Wr(fd, &rec.mode, sizeof rec.mode);
@@ -288,19 +301,20 @@ void SaveVmdFile(const wchar_t* path) {
 
     // ---- IK / display master keys ----------------------------------------
     outDword = cameraMode ? 0 : ikCnt;
-    Wr(fd, &outDword, 4);                                             // 0x41A17B..
+    Wr(fd, &outDword, 4); // 0x41A17B..
     if (!cameraMode && outDword != 0) {
         const mdl::DisplayKey* ikeys = mdl::DisplayKeys(model);
         for (unsigned int i = 0; i < 1000; ++i) {
             const mdl::DisplayKey& rec = ikeys[i];
-            if (rec.allocated == 0) continue;
+            if (rec.allocated == 0)
+                continue;
             outDword = rec.frame - minFrame;
             Wr(fd, &outDword, 4);
             const unsigned char visible = rec.visible != 0 ? 1 : 0;
             Wr(fd, &visible, 1);
             outDword = static_cast<std::uint32_t>(ikChainCount);
             Wr(fd, &outDword, 4);
-            for (int j = 0; j < ikChainCount; ++j) {             // 0x41A0F0..
+            for (int j = 0; j < ikChainCount; ++j) { // 0x41A0F0..
                 // was: inner `i`, shadowing the outer record-index i
                 const int boneIdx = ikChains[j].boneIndex;
                 Wr(fd, bones[boneIdx].name, 20);
@@ -311,15 +325,13 @@ void SaveVmdFile(const wchar_t* path) {
                 // bytes.  Reading inline made chains >= 4 read the mark byte
                 // and the padding/pair-pointer bytes instead (allocation
                 // garbage on a fresh load) - toe-IK chains came out 0.
-                const unsigned char on =
-                    mdl::IkStates(rec)[j] != 0
-                        ? 1 : 0;
+                const unsigned char on = mdl::IkStates(rec)[j] != 0 ? 1 : 0;
                 Wr(fd, &on, 1);
             }
         }
     }
 
-    _close(fd);                                                  // 0x41A17B
+    _close(fd); // 0x41A17B
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

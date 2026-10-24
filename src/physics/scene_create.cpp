@@ -37,7 +37,7 @@
 #include <cstring>
 
 #include "btBulletDynamicsCommon.h"
-#include "BulletCollision/BroadphaseCollision/btAxisSweep3.h"  // bt32BitAxisSweep3
+#include "BulletCollision/BroadphaseCollision/btAxisSweep3.h" // bt32BitAxisSweep3
 
 #include "mikudancestudio/d3d_wrapper.hpp"
 #include "mikudancestudio/physics_scene.hpp"
@@ -49,12 +49,10 @@ namespace mikudancestudio {
 namespace {
 
 // One gizmo vertex buffer: create, lock(0, len), copy, unlock.
-bool PutVB(IDirect3DDevice9* dev, IDirect3DVertexBuffer9** slot,
-           unsigned len, const void* data) {
+bool PutVB(IDirect3DDevice9* dev, IDirect3DVertexBuffer9** slot, unsigned len, const void* data) {
     IDirect3DVertexBuffer9* vb = nullptr;
-    if (FAILED(dev->CreateVertexBuffer(
-            len, 0x8 /*D3DUSAGE_WRITEONLY*/, 0x42 /*XYZ|DIFFUSE*/,
-            D3DPOOL_MANAGED /*1*/, &vb, nullptr)))
+    if (FAILED(dev->CreateVertexBuffer(len, 0x8 /*D3DUSAGE_WRITEONLY*/, 0x42 /*XYZ|DIFFUSE*/,
+                                       D3DPOOL_MANAGED /*1*/, &vb, nullptr)))
         return false;
     *slot = vb;
     void* p = nullptr;
@@ -66,12 +64,10 @@ bool PutVB(IDirect3DDevice9* dev, IDirect3DVertexBuffer9** slot,
 }
 
 // One gizmo index buffer.  The original locks with size 0 (= whole buffer).
-bool PutIB(IDirect3DDevice9* dev, IDirect3DIndexBuffer9** slot,
-           unsigned len, const void* data) {
+bool PutIB(IDirect3DDevice9* dev, IDirect3DIndexBuffer9** slot, unsigned len, const void* data) {
     IDirect3DIndexBuffer9* ib = nullptr;
-    if (FAILED(dev->CreateIndexBuffer(
-            len, 0, D3DFMT_INDEX16 /*101*/, D3DPOOL_MANAGED /*1*/, &ib,
-            nullptr)))
+    if (FAILED(dev->CreateIndexBuffer(len, 0, D3DFMT_INDEX16 /*101*/, D3DPOOL_MANAGED /*1*/, &ib,
+                                      nullptr)))
         return false;
     *slot = ib;
     void* p = nullptr;
@@ -82,48 +78,46 @@ bool PutIB(IDirect3DDevice9* dev, IDirect3DIndexBuffer9** slot,
     return true;
 }
 
-}  // namespace
+} // namespace
 
 bool SceneConstruct(PhysicsScene* scene, D3DRenderer* d3dSub) {
-    scene->owner = d3dSub;                                   // 0x4032F3
-    IDirect3DDevice9* dev = d3dSub->device;                  // +120032
+    scene->owner = d3dSub;                  // 0x4032F3
+    IDirect3DDevice9* dev = d3dSub->device; // +120032
 
     // ---- gizmo buffers ----------------------------------------------------
-    if (!PutVB(dev, &scene->gizmoSphereVB, 928, kGizmoSphere58))    // 0x403308
+    if (!PutVB(dev, &scene->gizmoSphereVB, 928, kGizmoSphere58)) // 0x403308
         return false;
-    if (!PutIB(dev, &scene->gizmoSphereIB, 480, kGizmoSphereIdx))   // 0x403BD7
+    if (!PutIB(dev, &scene->gizmoSphereIB, 480, kGizmoSphereIdx)) // 0x403BD7
         return false;
-    if (!PutVB(dev, &scene->gizmoCubeVB, 128, kGizmoCube8))         // 0x4047C0
+    if (!PutVB(dev, &scene->gizmoCubeVB, 128, kGizmoCube8)) // 0x4047C0
         return false;
-    if (!PutIB(dev, &scene->gizmoCubeIB, 48, kGizmoCubeIdx))        // 0x4048E3
+    if (!PutIB(dev, &scene->gizmoCubeIB, 48, kGizmoCubeIdx)) // 0x4048E3
         return false;
-    if (!PutVB(dev, &scene->gizmoSphere33VB, 528, kGizmoSphere33))  // 0x404A22
+    if (!PutVB(dev, &scene->gizmoSphere33VB, 528, kGizmoSphere33)) // 0x404A22
         return false;
-    if (!PutIB(dev, &scene->gizmoSphere33IB, 256, kGizmoSphere33Idx))  // 0x404F0E
+    if (!PutIB(dev, &scene->gizmoSphere33IB, 256, kGizmoSphere33Idx)) // 0x404F0E
         return false;
-    if (!PutVB(dev, &scene->gizmoArrowVB, 256, kGizmoArrow16))      // 0x405A22
+    if (!PutVB(dev, &scene->gizmoArrowVB, 256, kGizmoArrow16)) // 0x405A22
         return false;
-    if (!PutIB(dev, &scene->gizmoIdentityIB, 32, kGizmoIdentityIdx))  // 0x4057DD
+    if (!PutIB(dev, &scene->gizmoIdentityIB, 32, kGizmoIdentityIdx)) // 0x4057DD
         return false;
-    if (!PutVB(dev, &scene->gizmoBoxSelVB, 256, kGizmoBoxSel16))    // 0x405526
+    if (!PutVB(dev, &scene->gizmoBoxSelVB, 256, kGizmoBoxSel16)) // 0x405526
         return false;
-    if (!PutIB(dev, &scene->gizmoBoxSelIB, 144, kGizmoBoxSelIdx))   // 0x405A0D
+    if (!PutIB(dev, &scene->gizmoBoxSelIB, 144, kGizmoBoxSelIdx)) // 0x405A0D
         return false;
 
     // ---- Bullet world stack -------------------------------------------------
-    scene->collisionConfig = new btDefaultCollisionConfiguration();  // 0x405D0B (0x58)
-    scene->dispatcher =
-        new btCollisionDispatcher(scene->collisionConfig);           // 0x405D4F (0x12F0)
-    scene->broadphase = new bt32BitAxisSweep3(                       // 0x405DE3
-        btVector3(-10000.0f, -10000.0f, -10000.0f),
-        btVector3(10000.0f, 10000.0f, 10000.0f), 1500000);
-    scene->solver = new btSequentialImpulseConstraintSolver();       // 0x405E18
-    scene->world = new PhysicsWorld(                                // 0x405E5D (0x110)
-        scene->dispatcher, scene->broadphase, scene->solver,
-        scene->collisionConfig);
+    scene->collisionConfig = new btDefaultCollisionConfiguration();        // 0x405D0B (0x58)
+    scene->dispatcher = new btCollisionDispatcher(scene->collisionConfig); // 0x405D4F (0x12F0)
+    scene->broadphase = new bt32BitAxisSweep3(                             // 0x405DE3
+        btVector3(-10000.0f, -10000.0f, -10000.0f), btVector3(10000.0f, 10000.0f, 10000.0f),
+        1500000);
+    scene->solver = new btSequentialImpulseConstraintSolver(); // 0x405E18
+    scene->world = new PhysicsWorld(                           // 0x405E5D (0x110)
+        scene->dispatcher, scene->broadphase, scene->solver, scene->collisionConfig);
     btDiscreteDynamicsWorld* world = scene->world;
 
-    world->getSolverInfo().m_solverMode &= ~1;             // 0x405E6B
+    world->getSolverInfo().m_solverMode &= ~1; // 0x405E6B
     // m_localTime keeps the constructor's 1/60 (orig ctor 0x4FAC30 stores
     // flt_52EA00 there and nothing zeroes it); the load-pass main step
     // consumes it for exactly one substep (orig maindt probe: first call
@@ -133,28 +127,26 @@ bool SceneConstruct(PhysicsScene* scene, D3DRenderer* d3dSub) {
     // The x86 build's 0x405EAB instead stores C2C3FFFF, one ULP below;
     // this port follows the x64 baseline, which is the behavioral
     // reference for both build flavors here.
-    world->setGravity(btVector3(
-        0.0f, -98.0f, 0.0f));                              // x64 0x7FF7CB4257CF (x86 0x405EAB)
+    world->setGravity(btVector3(0.0f, -98.0f, 0.0f)); // x64 0x7FF7CB4257CF (x86 0x405EAB)
 
     // ---- static ground body -------------------------------------------------
-    auto* plane = new btStaticPlaneShape(                  // 0x405EF8 (0x60)
+    auto* plane = new btStaticPlaneShape( // 0x405EF8 (0x60)
         btVector3(0.0f, 1.0f, 0.0f), 0.0f);
-    btDefaultMotionState* motionState =                    // 0x405F4D (0xE0)
-        new btDefaultMotionState(btTransform::getIdentity(),
-                                 btTransform::getIdentity());
+    btDefaultMotionState* motionState = // 0x405F4D (0xE0)
+        new btDefaultMotionState(btTransform::getIdentity(), btTransform::getIdentity());
     btVector3 zeroInertia(0.0f, 0.0f, 0.0f);
-    btRigidBody::btRigidBodyConstructionInfo ci(           // 0x405F6D
+    btRigidBody::btRigidBodyConstructionInfo ci( // 0x405F6D
         0.0f, motionState, plane, zeroInertia);
 
-    if (scene->groundBody != nullptr) {                    // 0x405F77
+    if (scene->groundBody != nullptr) { // 0x405F77
         delete scene->groundBody;
         scene->groundBody = nullptr;
     }
-    scene->groundBody = new btRigidBody(ci);               // 0x405FB5
-    world->addRigidBody(scene->groundBody,                 // 0x405FDF
+    scene->groundBody = new btRigidBody(ci); // 0x405FB5
+    world->addRigidBody(scene->groundBody,   // 0x405FDF
                         static_cast<short>(0x8000), static_cast<short>(-1));
-    scene->groundBody->setRestitution(0.88f);              // 0x405FEA
+    scene->groundBody->setRestitution(0.88f); // 0x405FEA
     return true;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

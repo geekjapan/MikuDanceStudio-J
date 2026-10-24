@@ -64,4 +64,4 @@ void InitBoneSortOrder(unsigned char* m) {
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

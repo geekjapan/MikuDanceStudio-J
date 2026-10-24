@@ -92,28 +92,24 @@ namespace {
 // One of the four bone-transform sliders (505/510/515/520).  The original
 // repeats the block with different operands; the axis offsets live on the
 // current model (per-axis selected bone index), the echo label differs.
-void HandleMorphSlider(MMDApp* app, HWND hwnd, int sliderId,
-                      std::size_t lane, int echoId) {
+void HandleMorphSlider(MMDApp* app, HWND hwnd, int sliderId, std::size_t lane, int echoId) {
     unsigned char* model = app->SelectedModel();
     const std::int32_t boneIdx = mdl::Mdl(model)->selectedMorphs[lane];
     // Gate (0x44AF11): proceed iff (physics == 2 || boneIdx > 0) &&
     // boneIdx >= 0 - the original ORs the physics byte with a positive
     // index; only a negative index unconditionally skips.
-    if (boneIdx < 0 ||
-        (boneIdx <= 0 && mdl::Mdl(model)->physicsMode != 2)) {
+    if (boneIdx < 0 || (boneIdx <= 0 && mdl::Mdl(model)->physicsMode != 2)) {
         return;
     }
 
-    const LRESULT pos = SendMessageA(GetDlgItem(hwnd, sliderId),
-                                     TBM_GETPOS, 0, 0);
+    const LRESULT pos = SendMessageA(GetDlgItem(hwnd, sliderId), TBM_GETPOS, 0, 0);
     const double scaled = static_cast<double>(pos) / 100.0;
 
     model = app->SelectedModel();
     mdl::MorphRecord* records = mdl::Morphs(model);
     if (records != nullptr) {
         const std::int32_t idx = mdl::Mdl(model)->selectedMorphs[lane];
-        records[static_cast<std::size_t>(idx)].value =
-            static_cast<float>(scaled);
+        records[static_cast<std::size_t>(idx)].value = static_cast<float>(scaled);
     }
 
     char buf[256];
@@ -127,17 +123,14 @@ void HandleMorphSlider(MMDApp* app, HWND hwnd, int sliderId,
 // each message; the handle is deterministic so one fetch suffices.
 void EchoEditText(HWND hwnd, int id, const char* text) {
     HWND edit = GetDlgItem(hwnd, id);
-    SendMessageA(edit, EM_SETSEL, 0,
-                 static_cast<LPARAM>(GetWindowTextLengthA(edit)));
-    SendMessageA(edit, EM_REPLACESEL, 0,
-                 reinterpret_cast<LPARAM>(text));
+    SendMessageA(edit, EM_SETSEL, 0, static_cast<LPARAM>(GetWindowTextLengthA(edit)));
+    SendMessageA(edit, EM_REPLACESEL, 0, reinterpret_cast<LPARAM>(text));
 }
 
 void FormatLegacyOneDecimal(char* text, std::size_t size, float value) {
     // The original VC9 formatter rounds an exact half away from zero;
     // modern UCRT printf follows the active ties-to-even FP rounding mode.
-    const double magnitude = std::floor(std::fabs(
-        static_cast<double>(value)) * 10.0 + 0.5) / 10.0;
+    const double magnitude = std::floor(std::fabs(static_cast<double>(value)) * 10.0 + 0.5) / 10.0;
     const double rounded = std::signbit(value) ? -magnitude : magnitude;
     sprintf_s(text, size, "%+3.1f", rounded);
 }
@@ -147,19 +140,19 @@ void ApplySceneLight(MMDApp* app) {
     app->Renderer()->device->SetLight(0, &app->SceneLight());
 }
 
-}  // namespace
+} // namespace
 
 // Forward declarations for functions ported in this wave whose bodies live
 // in ui_refresh.cpp / ui_panel_paint.cpp / ui_timeline_gfx.cpp (not yet
 // added to ported_funcs.hpp; declared here with their original VAs).
-void PanelPaint(MMDApp* app);         // VA 0x00414610
-void TimelineDrawTicks(int frameOffset, int width);  // VA 0x004C2A00
+void PanelPaint(MMDApp* app);                       // VA 0x00414610
+void TimelineDrawTicks(int frameOffset, int width); // VA 0x004C2A00
 
 void HandleHScroll(LPARAM lParam, WPARAM wParam) {
     MMDApp* app = g_Block;
-    HWND hwnd = static_cast<HWND>(app->Hwnd());               // 657080
-    const HWND ctrl = reinterpret_cast<HWND>(lParam);         // a2
-    const std::uint32_t code = LOWORD(wParam);                // a3 low 16
+    HWND hwnd = static_cast<HWND>(app->Hwnd());       // 657080
+    const HWND ctrl = reinterpret_cast<HWND>(lParam); // a2
+    const std::uint32_t code = LOWORD(wParam);        // a3 low 16
 
     // ---- 505/510/515/520: morph sliders -------------------------
     if (ctrl == GetDlgItem(hwnd, panel::kMorphSlider0)) {
@@ -173,74 +166,62 @@ void HandleHScroll(LPARAM lParam, WPARAM wParam) {
     }
     // ---- 455/456/457: RGB sliders -----------------------------------------
     else if (ctrl == GetDlgItem(hwnd, panel::kLightColorSliderR)) {
-        const LRESULT pos = SendMessageA(GetDlgItem(hwnd, panel::kLightColorSliderR),
-                                         TBM_GETPOS, 0, 0);
-        const float v =
-            static_cast<float>(static_cast<double>(pos) * 0.00390625);
+        const LRESULT pos =
+            SendMessageA(GetDlgItem(hwnd, panel::kLightColorSliderR), TBM_GETPOS, 0, 0);
+        const float v = static_cast<float>(static_cast<double>(pos) * 0.00390625);
         app->LightColor()[0] = v;
         app->SceneLight().Ambient.r = v;
         char buf[256];
         sprintf_s(buf, 0x100, "%3d",
-                  static_cast<int>(static_cast<double>(
-                                       app->LightColor()[0]) *
-                                   256.0));
+                  static_cast<int>(static_cast<double>(app->LightColor()[0]) * 256.0));
         EchoEditText(hwnd, panel::kLightColorEditR, buf);
         SelectTimelineTrack(GlobalTimelineTrack::Light);
     } else if (ctrl == GetDlgItem(hwnd, panel::kLightColorSliderG)) {
-        const LRESULT pos = SendMessageA(GetDlgItem(hwnd, panel::kLightColorSliderG),
-                                         TBM_GETPOS, 0, 0);
-        const float v =
-            static_cast<float>(static_cast<double>(pos) * 0.00390625);
+        const LRESULT pos =
+            SendMessageA(GetDlgItem(hwnd, panel::kLightColorSliderG), TBM_GETPOS, 0, 0);
+        const float v = static_cast<float>(static_cast<double>(pos) * 0.00390625);
         app->LightColor()[1] = v;
         app->SceneLight().Ambient.g = v;
         char buf[256];
         sprintf_s(buf, 0x100, "%3d",
-                  static_cast<int>(static_cast<double>(
-                                       app->LightColor()[1]) *
-                                   256.0));
+                  static_cast<int>(static_cast<double>(app->LightColor()[1]) * 256.0));
         EchoEditText(hwnd, panel::kLightColorEditG, buf);
         SelectTimelineTrack(GlobalTimelineTrack::Light);
     } else if (ctrl == GetDlgItem(hwnd, panel::kLightColorSliderB)) {
-        const LRESULT pos = SendMessageA(GetDlgItem(hwnd, panel::kLightColorSliderB),
-                                         TBM_GETPOS, 0, 0);
-        const float v =
-            static_cast<float>(static_cast<double>(pos) * 0.00390625);
+        const LRESULT pos =
+            SendMessageA(GetDlgItem(hwnd, panel::kLightColorSliderB), TBM_GETPOS, 0, 0);
+        const float v = static_cast<float>(static_cast<double>(pos) * 0.00390625);
         app->LightColor()[2] = v;
         app->SceneLight().Ambient.b = v;
         char buf[256];
         sprintf_s(buf, 0x100, "%3d",
-                  static_cast<int>(static_cast<double>(
-                                       app->LightColor()[2]) *
-                                   256.0));
+                  static_cast<int>(static_cast<double>(app->LightColor()[2]) * 256.0));
         EchoEditText(hwnd, panel::kLightColorEditB, buf);
         SelectTimelineTrack(GlobalTimelineTrack::Light);
     }
     // ---- 458/459/460: light direction sliders ---------------------------
     else if (ctrl == GetDlgItem(hwnd, panel::kLightDirSliderX)) {
-        const LRESULT pos = SendMessageA(GetDlgItem(hwnd, panel::kLightDirSliderX),
-                                         TBM_GETPOS, 0, 0);
-        app->LightDirection()[0] =
-            static_cast<float>(static_cast<double>(pos) / 100.0);
+        const LRESULT pos =
+            SendMessageA(GetDlgItem(hwnd, panel::kLightDirSliderX), TBM_GETPOS, 0, 0);
+        app->LightDirection()[0] = static_cast<float>(static_cast<double>(pos) / 100.0);
         char buf[256];
         FormatLegacyOneDecimal(buf, 0x100, app->LightDirection()[0]);
         EchoEditText(hwnd, panel::kLightDirEditX, buf);
         ApplySceneLight(app);
         SelectTimelineTrack(GlobalTimelineTrack::Light);
     } else if (ctrl == GetDlgItem(hwnd, panel::kLightDirSliderY)) {
-        const LRESULT pos = SendMessageA(GetDlgItem(hwnd, panel::kLightDirSliderY),
-                                         TBM_GETPOS, 0, 0);
-        app->LightDirection()[1] =
-            static_cast<float>(static_cast<double>(pos) / 100.0);
+        const LRESULT pos =
+            SendMessageA(GetDlgItem(hwnd, panel::kLightDirSliderY), TBM_GETPOS, 0, 0);
+        app->LightDirection()[1] = static_cast<float>(static_cast<double>(pos) / 100.0);
         char buf[256];
         FormatLegacyOneDecimal(buf, 0x100, app->LightDirection()[1]);
         EchoEditText(hwnd, panel::kLightDirEditY, buf);
         ApplySceneLight(app);
         SelectTimelineTrack(GlobalTimelineTrack::Light);
     } else if (ctrl == GetDlgItem(hwnd, panel::kLightDirSliderZ)) {
-        const LRESULT pos = SendMessageA(GetDlgItem(hwnd, panel::kLightDirSliderZ),
-                                         TBM_GETPOS, 0, 0);
-        app->LightDirection()[2] =
-            static_cast<float>(static_cast<double>(pos) / 100.0);
+        const LRESULT pos =
+            SendMessageA(GetDlgItem(hwnd, panel::kLightDirSliderZ), TBM_GETPOS, 0, 0);
+        app->LightDirection()[2] = static_cast<float>(static_cast<double>(pos) / 100.0);
         char buf[256];
         FormatLegacyOneDecimal(buf, 0x100, app->LightDirection()[2]);
         EchoEditText(hwnd, panel::kLightDirEditZ, buf);
@@ -249,18 +230,17 @@ void HandleHScroll(LPARAM lParam, WPARAM wParam) {
     }
     // ---- 447: FOV slider ---------------------------------------------------
     else if (ctrl == GetDlgItem(hwnd, panel::kFovSlider)) {
-        const LRESULT pos = SendMessageA(GetDlgItem(hwnd, panel::kFovSlider),
-                                         TBM_GETPOS, 0, 0);
+        const LRESULT pos = SendMessageA(GetDlgItem(hwnd, panel::kFovSlider), TBM_GETPOS, 0, 0);
         app->CameraFov() = static_cast<float>(pos);
         char buf[256];
         sprintf_s(buf, 0x100, "%3d", static_cast<int>(app->CameraFov()));
         EchoEditText(hwnd, panel::kFovEdit, buf);
 
         // fovRad = float(fovDeg * dbl_52BB20), dbl_52BB20 = 0.01745329238474369
-        const float fovRad = static_cast<float>(
-            static_cast<double>(app->CameraFov()) * 0.01745329238474369);
+        const float fovRad =
+            static_cast<float>(static_cast<double>(app->CameraFov()) * 0.01745329238474369);
         D3DRenderer* locale = app->Renderer();
-        const float aspect = locale->aspectRatio;  // 0x1D4EC
+        const float aspect = locale->aspectRatio; // 0x1D4EC
 
         auto* d3dx = &d3dx::Get();
         {
@@ -273,18 +253,17 @@ void HandleHScroll(LPARAM lParam, WPARAM wParam) {
             // &proj)；x86 原版偏移 +0xB0（176 = 4×44，同为槽 44）。裸字节
             // 偏移在 x64 移植构建下会落到槽 22（CreateVolumeTexture），
             // 故用类型化虚调用保证架构无关。
-            locale->device->SetTransform(
-                D3DTS_PROJECTION,
-                reinterpret_cast<const D3DMATRIX*>(&proj));
+            locale->device->SetTransform(D3DTS_PROJECTION,
+                                         reinterpret_cast<const D3DMATRIX*>(&proj));
         }
         SelectTimelineTrack(GlobalTimelineTrack::Camera);
     }
     // ---- 560: physics-interval ratio slider --------------------------------
     else if (ctrl == GetDlgItem(hwnd, panel::kSelfShadowRangeSlider)) {
-        const LRESULT pos = SendMessageA(GetDlgItem(hwnd, panel::kSelfShadowRangeSlider),
-                                         TBM_GETPOS, 0, 0);
-        app->state.physicsInterval = static_cast<float>(
-            static_cast<double>(10000 - static_cast<int>(pos)) / 100000.0);
+        const LRESULT pos =
+            SendMessageA(GetDlgItem(hwnd, panel::kSelfShadowRangeSlider), TBM_GETPOS, 0, 0);
+        app->state.selfShadowDistance =
+            static_cast<float>(static_cast<double>(10000 - static_cast<int>(pos)) / 100000.0);
         char buf[256];
         sprintf_s(buf, 0x100, "%d", static_cast<int>(pos));
         SetWindowTextA(GetDlgItem(hwnd, panel::kSelfShadowRangeEdit), buf);
@@ -295,52 +274,45 @@ void HandleHScroll(LPARAM lParam, WPARAM wParam) {
     else if (ctrl == GetDlgItem(hwnd, panel::kTimelineHScroll)) {
         switch (code) {
         case SB_LINELEFT:
-            if (app->FloatingWindow() != nullptr ||
-                app->MouseX() <=
-                    app->state.hideRight) {
+            if (app->FloatingWindow() != nullptr || app->MouseX() <= app->state.hideRight) {
                 --app->state.timelineStartFrame;
             } else {
-                app->CameraDistance() = static_cast<float>(
-                    static_cast<double>(app->CameraDistance()) + 1.0);
+                app->CameraDistance() =
+                    static_cast<float>(static_cast<double>(app->CameraDistance()) + 1.0);
             }
             break;
         case SB_LINERIGHT:
-            if (app->FloatingWindow() != nullptr ||
-                app->MouseX() <=
-                    app->state.hideRight) {
+            if (app->FloatingWindow() != nullptr || app->MouseX() <= app->state.hideRight) {
                 ++app->state.timelineStartFrame;
             } else {
-                app->CameraDistance() = static_cast<float>(
-                    static_cast<double>(app->CameraDistance()) - 1.0);
+                app->CameraDistance() =
+                    static_cast<float>(static_cast<double>(app->CameraDistance()) - 1.0);
             }
             break;
         case SB_PAGELEFT:
             app->state.timelineStartFrame -=
-                app->state.timelineScrollNPage;  // timeline SCROLLINFO nPage
+                app->state.timelineScrollNPage; // timeline SCROLLINFO nPage
             break;
         case SB_PAGERIGHT:
-            app->state.timelineStartFrame +=
-                app->state.timelineScrollNPage;
+            app->state.timelineStartFrame += app->state.timelineScrollNPage;
             break;
         case SB_THUMBTRACK:
             // x64 0x7FF7CB45EF76：读的是内嵌 SCROLLINFO 的 nPos（app+0x1444）
             // 而非 nMin——按住滑块拖动时按增量 abs 新位置 - 上次位置移动。
             app->state.timelineStartFrame +=
                 static_cast<std::int32_t>(HIWORD(wParam)) -
-                app->state.timelineScrollNPos;  // timeline SCROLLINFO nPos
+                app->state.timelineScrollNPos; // timeline SCROLLINFO nPos
             break;
         default:
             break;
         }
         // unsigned wrap (asm: cmp/jbe against 0xFFFEF920)
-        if (static_cast<std::uint32_t>(app->state.timelineStartFrame) >
-            0xFFFEF920u) {
+        if (static_cast<std::uint32_t>(app->state.timelineStartFrame) > 0xFFFEF920u) {
             app->state.timelineStartFrame = 0;
         }
-        PanelPaint(app);                                        // 0x414610
+        PanelPaint(app); // 0x414610
         if (app->state.waveEnabled != 0) {
-            TimelineDrawTicks(app->state.timelineStartFrame,
-                              app->SidebarWidth());
+            TimelineDrawTicks(app->state.timelineStartFrame, app->SidebarWidth());
             RECT rc;
             rc.left = 6;
             rc.top = 95;
@@ -351,4 +323,4 @@ void HandleHScroll(LPARAM lParam, WPARAM wParam) {
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

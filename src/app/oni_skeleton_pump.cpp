@@ -81,11 +81,11 @@
 namespace mikudancestudio {
 
 // 既有孪生（定义见各自文件）。
-void ModelVertexHistoryPush(unsigned char* model, int samples);   // dialog_helpers.cpp, x86 0x4B75C0
-char ModelStandardPoseSetup(unsigned char* model, bool recordEnable,     // dialog_helpers.cpp, x64 0x4F3A50
-                            unsigned char mirrorLeftRight,
-                            unsigned char skeletonFlag);
-void CurvePanelRepaint(MMDApp* app);                                // misc_dialogs.cpp, x64 0x482BB0
+void ModelVertexHistoryPush(unsigned char* model, int samples); // dialog_helpers.cpp, x86 0x4B75C0
+char ModelStandardPoseSetup(unsigned char* model,
+                            bool recordEnable, // dialog_helpers.cpp, x64 0x4F3A50
+                            unsigned char mirrorLeftRight, unsigned char skeletonFlag);
+void CurvePanelRepaint(MMDApp* app); // misc_dialogs.cpp, x64 0x482BB0
 
 namespace {
 
@@ -96,41 +96,41 @@ unsigned char* PoseTraceBuffer(unsigned char* model) {
 }
 
 // ---- 骨骼名常量（SJIS 字节，.rdata 地址锚点）------------------------------
-const unsigned char kCenter[9] =       // 0x551F68 センター
+const unsigned char kCenter[9] = // 0x551F68 センター
     {0x83, 0x5A, 0x83, 0x93, 0x83, 0x65, 0x81, 0x5B, 0x00};
-const unsigned char kUpperBody[7] =    // 0x5524E8 上半身
+const unsigned char kUpperBody[7] = // 0x5524E8 上半身
     {0x8F, 0xE3, 0x94, 0xBC, 0x90, 0x67, 0x00};
-const unsigned char kNeck[3] =         // 0x5524F0 首
+const unsigned char kNeck[3] = // 0x5524F0 首
     {0x8E, 0xF1, 0x00};
-const unsigned char kArmL[5] =         // 0x54D70C 左腕
+const unsigned char kArmL[5] = // 0x54D70C 左腕
     {0x8D, 0xB6, 0x98, 0x72, 0x00};
-const unsigned char kArmR[5] =         // 0x54D724 右腕
+const unsigned char kArmR[5] = // 0x54D724 右腕
     {0x89, 0x45, 0x98, 0x72, 0x00};
-const unsigned char kElbowL[7] =       // 0x54D714 左ひじ
+const unsigned char kElbowL[7] = // 0x54D714 左ひじ
     {0x8D, 0xB6, 0x82, 0xD0, 0x82, 0xB6, 0x00};
-const unsigned char kElbowR[7] =       // 0x54D72C 右ひじ
+const unsigned char kElbowR[7] = // 0x54D72C 右ひじ
     {0x89, 0x45, 0x82, 0xD0, 0x82, 0xB6, 0x00};
-const unsigned char kLowerBody[7] =    // 0x5524F4 下半身
+const unsigned char kLowerBody[7] = // 0x5524F4 下半身
     {0x89, 0xBA, 0x94, 0xBC, 0x90, 0x67, 0x00};
-const unsigned char kLegL[5] =         // 0x5524FC 左足
+const unsigned char kLegL[5] = // 0x5524FC 左足
     {0x8D, 0xB6, 0x91, 0xAB, 0x00};
-const unsigned char kLegR[5] =         // 0x552504 右足
+const unsigned char kLegR[5] = // 0x552504 右足
     {0x89, 0x45, 0x91, 0xAB, 0x00};
-const unsigned char kLegIkL[9] =       // 0x552510 左足ＩＫ
+const unsigned char kLegIkL[9] = // 0x552510 左足ＩＫ
     {0x8D, 0xB6, 0x91, 0xAB, 0x82, 0x68, 0x82, 0x6A, 0x00};
-const unsigned char kLegIkR[9] =       // 0x552520 右足ＩＫ
+const unsigned char kLegIkR[9] = // 0x552520 右足ＩＫ
     {0x89, 0x45, 0x91, 0xAB, 0x82, 0x68, 0x82, 0x6A, 0x00};
-const unsigned char kKneeL[7] =        // 0x5523CC 左ひざ
+const unsigned char kKneeL[7] = // 0x5523CC 左ひざ
     {0x8D, 0xB6, 0x82, 0xD0, 0x82, 0xB4, 0x00};
-const unsigned char kKneeR[7] =        // 0x5523C4 右ひざ
+const unsigned char kKneeR[7] = // 0x5523C4 右ひざ
     {0x89, 0x45, 0x82, 0xD0, 0x82, 0xB4, 0x00};
-const unsigned char kWristL[7] =       // 0x54D71C 左手首
+const unsigned char kWristL[7] = // 0x54D71C 左手首
     {0x8D, 0xB6, 0x8E, 0xE8, 0x8E, 0xF1, 0x00};
-const unsigned char kWristR[7] =       // 0x54D734 右手首
+const unsigned char kWristR[7] = // 0x54D734 右手首
     {0x89, 0x45, 0x8E, 0xE8, 0x8E, 0xF1, 0x00};
-const unsigned char kShoulderL[5] =    // 0x55252C 左肩
+const unsigned char kShoulderL[5] = // 0x55252C 左肩
     {0x8D, 0xB6, 0x8C, 0xA8, 0x00};
-const unsigned char kShoulderR[5] =    // 0x552534 右肩
+const unsigned char kShoulderR[5] = // 0x552534 右肩
     {0x89, 0x45, 0x8C, 0xA8, 0x00};
 
 // 按名找骨（0x7FF7CB4F3271 式线性扫描，首个命中）。
@@ -163,8 +163,7 @@ void TraceKeyOverflowBox(unsigned char* model) {
                   static_cast<int>(mdl::kBoneKeyCapacity));
         MessageBoxA(*reinterpret_cast<HWND*>(model), text, "register frame", 0);
     } else {
-        sprintf_s(text, sizeof(text), kJpOverflow,
-                  static_cast<int>(mdl::kBoneKeyCapacity));
+        sprintf_s(text, sizeof(text), kJpOverflow, static_cast<int>(mdl::kBoneKeyCapacity));
         MessageBoxA(*reinterpret_cast<HWND*>(model), text, kJpTitle, 0);
     }
 }
@@ -175,15 +174,14 @@ void TraceKeyOverflowBox(unsigned char* model) {
 //   mode 1：仅旋转，位置清零。
 //   mode 2：位置取记录 +0..12，四元数取记录 +16..32。
 // 记录内组基址 = 4*slot 字节（x64 的 i = 4*a3+8，读取窗 i-8..i+16）。
-void FillTraceKey(mdl::BoneKey& record, const unsigned char* traceGroup,
-                  int mode) {
+void FillTraceKey(mdl::BoneKey& record, const unsigned char* traceGroup, int mode) {
     switch (mode) {
     case 0:
         std::memcpy(record.position, traceGroup, sizeof(record.position));
         record.rotation[0] = 0.0f;
         record.rotation[1] = 0.0f;
         record.rotation[2] = 0.0f;
-        record.rotation[3] = 1.0f;                                // 0x3F800000
+        record.rotation[3] = 1.0f; // 0x3F800000
         break;
     case 1:
         record.position[0] = 0.0f;
@@ -191,7 +189,7 @@ void FillTraceKey(mdl::BoneKey& record, const unsigned char* traceGroup,
         record.position[2] = 0.0f;
         std::memcpy(record.rotation, traceGroup, sizeof(record.rotation));
         break;
-    default:  // case 2
+    default: // case 2
         std::memcpy(record.position, traceGroup, sizeof(record.position));
         std::memcpy(record.rotation, traceGroup + 16, sizeof(record.rotation));
         break;
@@ -208,18 +206,17 @@ void FillTraceKey(mdl::BoneKey& record, const unsigned char* traceGroup,
     record.allocated = 1;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // x64 sub_7FF7CB4F23E0 - RegisterTraceBoneKey(model, boneIdx, slot, mode,
 // frame)：把单条骨骼的整段姿态追踪（308 字节/样本，matMisc 个样本）登记成
 // frame 起始的连续骨骼关键帧。返回 false = 满表（报错框已弹）。
 // ---------------------------------------------------------------------------
-bool RegisterTraceBoneKey(unsigned char* model, unsigned boneIdx, int slot,
-                          int mode, unsigned frame) {
+bool RegisterTraceBoneKey(unsigned char* model, unsigned boneIdx, int slot, int mode,
+                          unsigned frame) {
     mdl::BoneKey* const keys = mdl::BoneKeys(model);
-    const std::int32_t boneCount =
-        static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
+    const std::int32_t boneCount = static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
 
     // 0x7FF7CB4F2411..0x7FF7CB4F244F：从链根（记录号 = 骨号）沿 next 走到
     // frame 前驱，与 RegisterBonePoseAtFrame 的游走同型。
@@ -251,17 +248,15 @@ bool RegisterTraceBoneKey(unsigned char* model, unsigned boneIdx, int slot,
     }
 
     unsigned successor = keys[current].next;
-    const unsigned sampleCount =
-        static_cast<unsigned>(mdl::Mdl(model)->matMisc);
+    const unsigned sampleCount = static_cast<unsigned>(mdl::Mdl(model)->matMisc);
     if (sampleCount == 0)
-        return true;                            // 0x7FF7CB4F24C4（无样本）
+        return true; // 0x7FF7CB4F24C4（无样本）
 
     const unsigned char* const trace = PoseTraceBuffer(model);
     unsigned sampleFrame = frame;
-    for (std::size_t group = 4 * static_cast<std::size_t>(slot);;
-         group += 308, ++sampleFrame) {
+    for (std::size_t group = 4 * static_cast<std::size_t>(slot);; group += 308, ++sampleFrame) {
         // 0x7FF7CB4F24D7..0x7FF7CB4F24EC：先快照三个将被触碰的记录。
-        AppendBoneKeyToUndo(model, static_cast<int>(current));      // 0x49D410
+        AppendBoneKeyToUndo(model, static_cast<int>(current)); // 0x49D410
         AppendBoneKeyToUndo(model, static_cast<int>(successor));
         AppendBoneKeyToUndo(model, static_cast<int>(freeSlot));
 
@@ -305,8 +300,8 @@ bool RegisterTraceBoneKey(unsigned char* model, unsigned boneIdx, int slot,
         if (sampleFrame > mdl::Mdl(model)->maxFrame)
             mdl::Mdl(model)->maxFrame = sampleFrame;
         if (successor != 0) {
-            keys[current].next = successor;        // 0x7FF7CB4F2DE4
-            keys[successor].previous = current;    // 0x7FF7CB4F2DF7
+            keys[current].next = successor;     // 0x7FF7CB4F2DE4
+            keys[successor].previous = current; // 0x7FF7CB4F2DF7
         }
         // 0x7FF7CB4F2DFF..0x7FF7CB4F2E15：帧号递增，样本计数满即收工。
         if (sampleFrame + 1 - frame >= sampleCount)
@@ -334,20 +329,20 @@ bool RegisterKinectPoseCapture(unsigned char* model, unsigned frame) {
         mdl::DisplayKeys(model)[i].allocated = 0;
 
     const std::int32_t samples = mdl::Mdl(model)->matMisc;
-    if (samples > 0) {                             // 0x7FF7CB4F2F72 反门
-        EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);    // 400
-        EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);   // 401
+    if (samples > 0) {                                             // 0x7FF7CB4F2F72 反门
+        EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);  // 400
+        EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE); // 401
 
         // 0x7FF7CB4F2FB2..0x7FF7CB4F2FD8：undo 环游标 +1、30 槽回卷、脏位
         // 置位（word 写 = undoDirty=1 且 redoDirty=0）。
-        if (++mdl::Mdl(model)->undoState[0] >= 30u)
-            mdl::Mdl(model)->undoState[0] = 0;
-        const int cursor = mdl::Mdl(model)->undoState[0];
-        mdl::Mdl(model)->undoState[1] = cursor;
+        if (++mdl::Mdl(model)->UndoCursor() >= 30u)
+            mdl::Mdl(model)->UndoCursor() = 0;
+        const int cursor = mdl::Mdl(model)->UndoCursor();
+        mdl::Mdl(model)->LatestUndoCursor() = cursor;
         mdl::Mdl(model)->undoDirty = 1;
         mdl::Mdl(model)->redoDirty = 0;
         mdl::UndoRecord& undo = mdl::Mdl(model)->undoRings[0].slots[cursor];
-        undo.operation = 2;
+        undo.operation = mdl::UndoOperation::BoneKeys;
         undo.frame = frame;
 
         // 0x7FF7CB4F300A..0x7FF7CB4F318C：姿态快照（boneCount x 36 字节
@@ -356,8 +351,7 @@ bool RegisterKinectPoseCapture(unsigned char* model, unsigned frame) {
         // 同族快照（x86 0x43A 段）已核定的 boneSelection 选择字节数组）。
         ::operator delete(undo.bonePose);
         undo.bonePose = nullptr;
-        const std::int32_t boneCount =
-            static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
+        const std::int32_t boneCount = static_cast<std::int32_t>(mdl::Mdl(model)->boneCount);
         undo.bonePose = static_cast<mdl::BonePoseSnapshot*>(
             ::operator new(sizeof(mdl::BonePoseSnapshot) * boneCount));
         std::memset(undo.bonePose, 0, sizeof(mdl::BonePoseSnapshot) * boneCount);
@@ -374,11 +368,10 @@ bool RegisterKinectPoseCapture(unsigned char* model, unsigned frame) {
 
         // 0x7FF7CB4F319D..0x7FF7CB4F323D：64 字节/条的关键帧快照缓冲
         // （3456 = 54 条 x 64 字节/样本），计数字段清零；keyVisitMap 全清。
-        undo.dirty = 0;
+        undo.recordCount = 0;
         ::operator delete(undo.auxiliaryPose);
         undo.auxiliaryPose = nullptr;
-        undo.auxiliaryPose =
-            ::operator new(3456 * static_cast<std::size_t>(samples));
+        undo.auxiliaryPose = ::operator new(3456 * static_cast<std::size_t>(samples));
         std::memset(undo.auxiliaryPose, 0, 3456 * static_cast<std::size_t>(samples));
         std::memset(mdl::Mdl(model)->keyVisitMap, 0, mdl::kBoneKeyCapacity);
 
@@ -388,35 +381,34 @@ bool RegisterKinectPoseCapture(unsigned char* model, unsigned frame) {
         int idx;
         if ((idx = FindBone(model, kCenter, 9)) >= 0 &&
             !RegisterTraceBoneKey(model, idx, 0, 0, frame))
-            return false;                                         // センター
+            return false; // センター
         if ((idx = FindBone(model, kUpperBody, 7)) >= 0 &&
             !RegisterTraceBoneKey(model, idx, 3, 1, frame))
-            return false;                                         // 上半身
-        if (version >= 14 &&
-            (idx = FindBone(model, kNeck, 3)) >= 0 &&
+            return false; // 上半身
+        if (version >= 14 && (idx = FindBone(model, kNeck, 3)) >= 0 &&
             !RegisterTraceBoneKey(model, idx, 7, 1, frame))
-            return false;                                         // 首（1.40+）
+            return false; // 首（1.40+）
         if ((idx = FindBone(model, kArmL, 5)) >= 0 &&
             !RegisterTraceBoneKey(model, idx, 11, 1, frame))
-            return false;                                         // 左腕
+            return false; // 左腕
         if ((idx = FindBone(model, kElbowL, 7)) >= 0 &&
             !RegisterTraceBoneKey(model, idx, 15, 1, frame))
-            return false;                                         // 左ひじ
+            return false; // 左ひじ
         if ((idx = FindBone(model, kArmR, 5)) >= 0 &&
             !RegisterTraceBoneKey(model, idx, 19, 1, frame))
-            return false;                                         // 右腕
+            return false; // 右腕
         if ((idx = FindBone(model, kElbowR, 7)) >= 0 &&
             !RegisterTraceBoneKey(model, idx, 23, 1, frame))
-            return false;                                         // 右ひじ
+            return false; // 右ひじ
         if ((idx = FindBone(model, kLowerBody, 7)) >= 0 &&
             !RegisterTraceBoneKey(model, idx, 27, 1, frame))
-            return false;                                         // 下半身
+            return false; // 下半身
         if ((idx = FindBone(model, kLegL, 5)) >= 0 &&
             !RegisterTraceBoneKey(model, idx, 31, 1, frame))
-            return false;                                         // 左足
+            return false; // 左足
         if ((idx = FindBone(model, kLegR, 5)) >= 0 &&
             !RegisterTraceBoneKey(model, idx, 35, 1, frame))
-            return false;                                         // 右足
+            return false; // 右足
 
         // 0x7FF7CB4F361C..0x7FF7CB4F3856：足ＩＫ二选一——IK 链表里名字为
         // 左足ＩＫ/右足ＩＫ 且 enabled 的链存在 -> 登记足ＩＫ骨（mode 2，
@@ -424,8 +416,7 @@ bool RegisterKinectPoseCapture(unsigned char* model, unsigned frame) {
         bool legIkLeftEnabled = false;
         bool legIkRightEnabled = false;
         mdl::IkChain* const chains = mdl::IkChains(model);
-        const std::int32_t chainCount =
-            static_cast<std::int32_t>(mdl::Mdl(model)->ikChainCount);
+        const std::int32_t chainCount = static_cast<std::int32_t>(mdl::Mdl(model)->ikChainCount);
         for (std::int32_t i = 0; i < chainCount; ++i) {
             if (std::memcmp(bones[chains[i].boneIndex].name, kLegIkL, 9) == 0)
                 legIkLeftEnabled = chains[i].enabled != 0;
@@ -451,23 +442,19 @@ bool RegisterKinectPoseCapture(unsigned char* model, unsigned frame) {
                 return false;
         }
 
-        if (version >= 14 &&
-            (idx = FindBone(model, kWristL, 7)) >= 0 &&
+        if (version >= 14 && (idx = FindBone(model, kWristL, 7)) >= 0 &&
             !RegisterTraceBoneKey(model, idx, 61, 1, frame))
-            return false;                                         // 左手首（1.40+）
-        if (version >= 14 &&
-            (idx = FindBone(model, kWristR, 7)) >= 0 &&
+            return false; // 左手首（1.40+）
+        if (version >= 14 && (idx = FindBone(model, kWristR, 7)) >= 0 &&
             !RegisterTraceBoneKey(model, idx, 65, 1, frame))
-            return false;                                         // 右手首（1.40+）
-        if (version >= 15 &&
-            (idx = FindBone(model, kShoulderL, 5)) >= 0 &&
+            return false; // 右手首（1.40+）
+        if (version >= 15 && (idx = FindBone(model, kShoulderL, 5)) >= 0 &&
             !RegisterTraceBoneKey(model, idx, 69, 1, frame))
-            return false;                                         // 左肩（1.50+）
-        if (version >= 15 &&
-            (idx = FindBone(model, kShoulderR, 5)) >= 0 &&
+            return false; // 左肩（1.50+）
+        if (version >= 15 && (idx = FindBone(model, kShoulderR, 5)) >= 0 &&
             !RegisterTraceBoneKey(model, idx, 73, 1, frame))
-            return false;                                         // 右肩（1.50+）
-    }  // samples > 0；满表路径原样直返、不做下面的清理（原版行为）
+            return false; // 右肩（1.50+）
+    } // samples > 0；满表路径原样直返、不做下面的清理（原版行为）
 
     // 0x7FF7CB4F3A18..0x7FF7CB4F3A31：释放追踪缓冲、采样计数清零。
     ::operator delete(PoseTraceBuffer(model));
@@ -485,62 +472,58 @@ void PumpKinectSkeleton(MMDApp* app, unsigned char selActive) {
     auto& s = *app;
 
     // 0x7FF7CB44C106..0x7FF7CB44C128 三重门。
-    if (selActive == 0 ||
-        s.CameraMode() != 0 ||            // x64 0x328（相机模式）
-        s.state.frameStepPlayback != 0)       // x64 0x9FC98（x86 0x9ED90）
+    if (selActive == 0 || s.CameraMode() != 0 || // x64 0x328（相机模式）
+        s.state.frameStepPlayback != 0)          // x64 0x9FC98（x86 0x9ED90）
         return;
 
-    unsigned char* model = s.SelectedModel();  // 槽号 x64 0x13E0 / 表 0xBE8
+    unsigned char* model = s.SelectedModel(); // 槽号 x64 0x13E0 / 表 0xBE8
 
     // ① 关节抓取（0x7FF7CB44C141..0x7FF7CB44C4E7）：OpenNI 关节号 -> 槽
     // 浮点下标（字节 = 14280 + 12*槽序，与 ModelVertexHistoryPush 的通道表
     // 同源）。前 18 个无条件；1.40 版补 2 个；1.50 版补 5 个。
-    auto getJoint = reinterpret_cast<void (__stdcall*)(int, float*)>(
-        s.OniExportSlot(4));  // x64 [app+0xA1358]
+    auto getJoint =
+        reinterpret_cast<void(__stdcall*)(int, float*)>(s.OniExportSlot(4)); // x64 [app+0xA1358]
     if (model == nullptr || getJoint == nullptr)
         return;
-    mdl::CaptureSkeletonJoints(mdl::Mdl(model)->currentJoints,
-                               s.state.openniVersion, getJoint);
+    mdl::CaptureSkeletonJoints(mdl::Mdl(model)->currentJoints, s.state.openniVersion, getJoint);
 
     // ② 滚动均值平滑（0x7FF7CB44C4EF）：窗口 = framesPerSecond/10。
-    ModelVertexHistoryPush(
-        model, s.state.framesPerSecond / 10);    // [app+0x360]/10
+    ModelVertexHistoryPush(model, s.state.framesPerSecond / 10); // [app+0x360]/10
 
     // ③ SM-Lip 采样满 12600 -> 关掉自动帧记录菜单并复位捕获阶段
     // （0x7FF7CB44C51C..0x7FF7CB44C558）。
     if (static_cast<std::uint32_t>(mdl::Mdl(model)->matMisc) >= 12600) {
         CheckMenuItem(GetMenu(static_cast<HWND>(s.Hwnd())), MDS_CMD_TOGGLE_MOTION_CAPTURE,
                       MF_UNCHECKED);
-        s.state.autoRepeat = 0;                  // x64 0xA1E14 / x86 0xA0D68
+        s.state.autoRepeat = 0; // x64 0xA1E14 / x86 0xA0D68
     }
 
     // ④ 标准姿态装填 + 录制沿检测（0x7FF7CB44C560..0x7FF7CB44C59B）：
     // 返回 0（本帧没有结束一段录制）-> 直接落到 gate B。
-    const char wasRecording = ModelStandardPoseSetup(
-        model,
-        s.state.autoRepeat == 4 ? 1 : 0,         // dl = (阶段==4)
-        s.state.kinectMirrorEnabled,             // r8 = 0xA1370
-        s.state.kinectInitLostBone);             // r9 = 0xA1371
+    const char wasRecording =
+        ModelStandardPoseSetup(model,
+                               s.state.autoRepeat == 4 ? 1 : 0, // dl = (阶段==4)
+                               s.state.kinectMirrorEnabled,     // r8 = 0xA1370
+                               s.state.kinectInitLostBone);     // r9 = 0xA1371
     if (wasRecording == 0)
         return;
 
     // ⑤ 停用 Kinect 并把整段捕获落成关键帧（0x7FF7CB44C5A1..0x7FF7CB44C604）。
-    DisableKinect(app);                                          // 0x42A020
+    DisableKinect(app); // 0x42A020
     if (model != nullptr)
-        RegisterKinectPoseCapture(
-            model, static_cast<unsigned>(s.state.currentFrame));  // [0x1450]
-    CurvePanelRepaint(app);                            // 0x7FF7CB482BB0
+        RegisterKinectPoseCapture(model, static_cast<unsigned>(s.state.currentFrame)); // [0x1450]
+    CurvePanelRepaint(app); // 0x7FF7CB482BB0
     if (model != nullptr)
         SeekModelFrame(*mdl::Mdl(model), s.state.currentFrame,
-                      s.PlaybackPhysicsMode());       // 0x7FF7CB4EBD90
+                       s.PlaybackPhysicsMode()); // 0x7FF7CB4EBD90
 
     // ⑥ 收尾（0x7FF7CB44C609..0x7FF7CB44C656）。
     if (s.state.lastRegisteredFrame < mdl::Mdl(model)->maxFrame)
         s.state.lastRegisteredFrame = mdl::Mdl(model)->maxFrame;
-    s.PhysicsResetPending() = 1;                  // 0x9FCC1（第二置位点）
-    s.state.kinectCaptureActive = 0;              // 0xA1373 / x86 0xA03DF
-    s.state.fpsLimit = s.state.fpsLimitSaved;     // [0xA1904] = [0xA1374]
-    PanelPaint(app);                              // 0x7FF7CB480EA0
+    s.PhysicsResetPending() = 1;              // 0x9FCC1（第二置位点）
+    s.state.kinectCaptureActive = 0;          // 0xA1373 / x86 0xA03DF
+    s.state.fpsLimit = s.state.fpsLimitSaved; // [0xA1904] = [0xA1374]
+    PanelPaint(app);                          // 0x7FF7CB480EA0
 }
 
 // ---------------------------------------------------------------------------
@@ -564,24 +547,23 @@ void ManageKinectRecordGate(MMDApp* app, unsigned char selActive) {
 
     // ① 深度图：闲置（既不在捕获文件驱动下、也不在录制状态机的任一
     // 阶段）时不画。
-    auto drawDepthMap = reinterpret_cast<void (__stdcall*)(unsigned char)>(
-        s.OniExportSlot(2));                      // x64 [app+0xA1348]
+    auto drawDepthMap =
+        reinterpret_cast<void(__stdcall*)(unsigned char)>(s.OniExportSlot(2)); // x64 [app+0xA1348]
     if (drawDepthMap != nullptr)
-        drawDepthMap(
-            (s.state.kinectCaptureActive == 0 &&   // x86 0xA03DF
-             s.state.autoRepeat == 0)              // x86 0xA0D68
-                ? 0
-                : 1);
+        drawDepthMap((s.state.kinectCaptureActive == 0 && // x86 0xA03DF
+                      s.state.autoRepeat == 0)            // x86 0xA0D68
+                         ? 0
+                         : 1);
 
     // ② 菜单 0x124：跟踪中且非相机模式才可用。
     HMENU menu = GetMenu(static_cast<HWND>(s.Hwnd()));
     if (selActive != 0 && s.CameraMode() == 0) {
-        EnableMenuItem(menu, MDS_CMD_TOGGLE_MOTION_CAPTURE, 0);           // MF_ENABLED
+        EnableMenuItem(menu, MDS_CMD_TOGGLE_MOTION_CAPTURE, 0); // MF_ENABLED
         return;
     }
-    EnableMenuItem(menu, MDS_CMD_TOGGLE_MOTION_CAPTURE, 1);               // MF_GRAYED
+    EnableMenuItem(menu, MDS_CMD_TOGGLE_MOTION_CAPTURE, 1); // MF_GRAYED
     CheckMenuItem(menu, MDS_CMD_TOGGLE_MOTION_CAPTURE, MF_UNCHECKED);
-    s.state.autoRepeat = 0;                       // x64 0xA1E14 / x86 0xA0D68
+    s.state.autoRepeat = 0; // x64 0xA1E14 / x86 0xA0D68
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

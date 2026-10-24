@@ -7,4 +7,4 @@ class MMDApp;
 
 void RestorePmmPlaybackOptions(MMDApp* app, HWND main, int fd, char* text,
                                unsigned char& playbackByte);
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

@@ -9,6 +9,10 @@
 | 帧编辑器拆分 | `24d8844` | [frame_clipboard.cpp](../../src/window/frame_clipboard.cpp)、[global_key_registration.cpp](../../src/model/global_key_registration.cpp) |
 | PMM v2 配置恢复拆分 | `24d8844` | [pmm_load_v2.cpp](../../src/io/pmm_load_v2.cpp) |
 | 主窗口控件与菜单 ID 命名 | `471159b` | [panel_controls.hpp](../../include/mikudancestudio/panel_controls.hpp)、[menu_commands.h](../../include/mikudancestudio/menu_commands.h) |
+| 状态命名、帧组接口与对话框资源 ID | `d7b851e` | [keyboard_state.hpp](../../include/mikudancestudio/keyboard_state.hpp)、[frame_edit.hpp](../../include/mikudancestudio/frame_edit.hpp)、[dialog_resources.h](../../include/mikudancestudio/dialog_resources.h) |
+| 面板长分支分批提取 | `d7b851e` | [command_panel_toggles.cpp](../../src/window/command_panel_toggles.cpp) |
+| 反转粘贴核对与英文名称窗口归拢 | `7e944f3` | [bone_pose_clipboard.cpp](../../src/window/bone_pose_clipboard.cpp)、[english_name_dialog.cpp](../../src/window/english_name_dialog.cpp) |
+| 编辑模式、撤销接口、姿态操作与选项窗口 | `af51c17` | [undo_layout.hpp](../../include/mikudancestudio/undo_layout.hpp)、[bone_pose_edit.cpp](../../src/window/bone_pose_edit.cpp)、[model_order_dialog.cpp](../../src/window/model_order_dialog.cpp)、[gravity_setting_dialog.cpp](../../src/window/gravity_setting_dialog.cpp) |
 
 ## 主窗口控件与菜单 ID
 
@@ -28,6 +32,62 @@
 - `CmdControl400/450/500` 更名为 `HandleFrameEditControl`、`HandlePanelControl`、`HandleFrameRegisterControl`。五个视角按钮使用 `ViewPreset`，预设表保留原角度常量和高度/旋转轴选项；同时清理偏移、寄存器和临时变量命名。
 
 61 个文件在还原命名、常量及访问接口后通过 token 对照；另核对了选择主体、两种轨道编号适配、五个视角预设的参数与执行主体，以及新增访问接口与原状态布局的对应关系。x64/x86 Release 构建通过，相关回归分别通过 18/17 项；两份完整 `.res` 及两个菜单、48 个对话框仍逐字节一致。这些检查验证本轮源码整理，没有重新执行完整原版 GUI A/B。
+
+### 状态命名与对话框资源
+
+2026-10-25，继续以 `d7b851e` 为基线整理名称、状态下标和接口：
+
+- `PhysicsInterval()` 与 `physicsInterval` 实际保存自阴影距离，统一使用已有的 `ShadowDistance()`，原始字段改名为 `selfShadowDistance`。默认值仍为 `0.01125f`，PMM 中的四字节读写及字段布局保持不变。
+- `FrameRangeDialog()` 实际指向英文名称编辑窗口，改为 `EnglishNameDialog()`；相关窗口过程、编辑框子类、组合框游标与初始化/应用函数一并更名，实现文件改为 [english_name_dialog.cpp](../../src/window/english_name_dialog.cpp)。真正的边缘线粗细窗口和帧范围窗口继续使用各自接口。
+- 共享的 18 个字母键槽位使用 `LetterKey`，通过返回 `int32_t` 引用的 `LetterKeyState()` 访问。原数组改名为 `letterKeyState`，仍同时承载按键边沿与菜单重入标记，保留原始状态值。两张轮询表分别保留原顺序，包含 H/I 的顺序差异。
+- `SelectFrameGroup()` 使用 `FrameGroup::Bone/Display/Morph`，对应原来的 `0/1/2`。帧线操作使用现有的时间线、表情和显示帧容量常量，明确当前帧、键帧和移位后帧的局部变量名；不改动撤销记录的结构与操作编号。
+- PMM v1 删除未使用的 `M32/M8/MF/MP`，读取尾部按字段和扩展区段命名变量。逐层读取门控、短读后的缓冲值及 UI 更新顺序不变；阴影混合标记与下一扩展标记仍复用同一个字节。
+- 48 个对话框模板使用 `dialog_resources.h` 中的 `MDS_DLG_*_JP/EN`，C++ 与 UTF-16 `.rc` 共用定义。模板 ID 与子控件 ID 分开表达；标准按钮和返回值使用 `IDOK/IDCANCEL`，保留原有取消按钮返回 OK 等特殊行为。
+
+### 面板分支提取批次
+
+第一批将附件删除提取为文件内的 `DeleteSelectedAccessory()`，第二批将普通骨骼粘贴提取为 `PasteCopiedBonePose()`。分发分支仅调用对应函数；前者的两个提前退出与后者的一个提前退出由退出 switch 改为返回辅助函数。槽位检查、释放/分配、撤销记录、名称匹配及面板刷新仍按原顺序执行。
+
+两批分别通过提取主体与其余翻译单元的 token 对照，第一批另完成两架构编译和各 4 项附件/时间线回归。最终将两个辅助函数内联回原位置，再还原命名、常量和访问接口，35 个现有源码/头文件与基线的 token 对照通过；另核对键盘槽位及引用接口、帧组数值与状态布局、48 个模板 ID 展开、CMake 文件更名。最终两架构 Release 编译通过，相关回归分别通过 x64 18 项、x86 17 项。两份完整 `.res` 及 48 个对话框、两个菜单均逐字节一致；本轮未重新执行原版完整 GUI A/B。
+
+第三批以 `7e944f3` 为基线，将控件 498 的反转粘贴提取为 [PasteMirroredBonePose](../../src/window/bone_pose_clipboard.cpp)。分发分支只调用该函数；普通/反转粘贴共用 `BonePoseClipboardRecord`，仍为 48 字节。先确认提取前后主体与分发器其余部分的 token 一致，再用 IDA 核对原版 x64 的名称匹配、坐标反转与撤销写入，修正两处已有移植错误：
+
+| 行为 | 原版 x64 证据（RVA） | 修正 |
+|---|---|---|
+| 左右标记 | `0x44580/0x445D1/0x4464A/0x44693`；字串位于 `0x12D9BC/0x12D9C0` | 使用 Shift-JIS 左 `8D B6` / 右 `89 45`，移除误用的“模型删除”字串 |
+| 右到左的来源 | `0x4456E..0x44578` 保存同名骨骼的记录偏移，`0x4463C..0x44651` 再读取该名称 | 从 `bones[sourceBoneIndex].name` 查找右标记，修正原来的骨骼表起点加复制序号 |
+| 坐标镜像 | `0x447A9..0x447EF`、`0x4486E..0x448FC` | 保留位置 X、四元数 Y/Z 取反，其余分量直接复制 |
+| 撤销与刷新 | `0x44313..0x444B9`、`0x4470E..0x44782`、`0x44821..0x4484C`、`0x44912..0x449AB` | 保留 30 槽游标、操作号 1、旧目标姿势/物理状态快照及每次匹配后的刷新顺序 |
+
+与原版一致，名称匹配先找同名骨骼，再比较侧标记后的后缀；找不到对侧时回退到同名骨骼，无同名骨骼时跳过，跳过记录在撤销缓冲中仍占一个清零槽。没有合并普通粘贴与反转粘贴的控制流程。
+
+[bone_mirror_paste_test.cpp](../../tests/bone_mirror_paste_test.cpp) 直接编译生产反转粘贴和撤销/重做实现，仅隔离 UI 刷新与原本为空的元素构造函数。六组场景覆盖左右互换、侧标记前缀、后缀不匹配、中央骨骼回退、缺失名称、空剪贴板，以及游标回绕、旧目标快照、轴反转和实际撤销/重做。修复前两架构均失败，修复后均通过；第三批另通过两架构完整 Release 编译和各 5 项相关测试。
+
+第四批将 `EnglishNameDlgProc` 与 `EnglishNameEditSubclassProc` 从菜单模块移入英文名称模块，初始化、应用、名称提交和三种组合框选择函数均改为模块内部实现。菜单只保留打开窗口的调用；英文名称编辑和 toon 设置共用的日文保存提醒移入 `enhanced_model_messages.hpp`。移动的两个窗口过程逐语句一致，共用提示文本字节不变，其余菜单/名称编辑代码也通过 token 对照。最终两架构 Release 编译通过，相关测试分别通过 x64 19 项、x86 18 项。本轮核对范围包含上述原版指令与测试场景，未执行完整 GUI/图像 A/B。
+
+## 编辑模式、撤销接口与选项窗口
+
+2026-10-25，以 `af51c17` 为基线，按用途核实后依次整理：
+
+- `ViewportEditMode::Camera/Light` 改为 `Rotate/Move`，仍为 3/4；按钮、快捷键、PMM v1/v2 映射保持原数值。原版 x64 RVA `0x3FB10` 为移动模式写入 4，`0x3FBB4..0x3FBBC` 为旋转模式写入 3。
+- `UndoRecord::dirty` 实际是姿态或辅助关键帧记录数，改为 `recordCount`；`operation` 使用固定 `int32_t` 底层的 `UndoOperation`，保留 0..4。`ModelRecord::UndoCursor()` / `LatestUndoCursor()` 分别访问原 `undoState[0/1]`，原数组、布局及环游标更新顺序不变。
+- 重力窗口使用本窗口的编辑框/滑块 ID；Toon 文件名填充函数和描边粗细变量按实际用途更名，控件 ID 定义值不变。
+- 骨骼重置提取到 `bone_pose_edit.cpp`；复制、普通粘贴及反转粘贴归到 `bone_pose_clipboard.cpp`，复制按钮更名为 `kCopyBonePoseButton`。复制缓冲区仍为 48 字节记录，不包含关键帧时间。
+- 模型计算/绘制顺序窗口及其私有初始化、应用函数归到 `model_order_dialog.cpp`；重力窗口和子类回调归到 `gravity_setting_dialog.cpp`。重力关键帧注册器移入已有的 `global_key_registration.cpp`，菜单模块只保留这三个窗口的打开调用。
+
+迁移前后先进行逐语句比较。IDA 复核另外确认并修正以下已有偏差；不能将旧实现的错误解释为原版特例：
+
+| 路径 | 原版指令证据 | 修正 |
+|---|---|---|
+| 重力编辑框回车 | x64 RVA `0x957A7/0x9583D/0x958E0` 分别取控件 637/638/639 | 通道 1..3 的滑块偏移改为 `channel - 1` |
+| 重力编辑框子类 | x64 RVA `0x95682/0x95AFF` 保存、读取同一个回调槽 `app+0xA1D60`，`0x9569B..0x956AA` 安装完整指针 | 保存及转发统一使用 `GravitySettingEditProc()`，安装使用 `LONG_PTR`，不再写入骨骼帧临时区或截断 x64 回调 |
+| 模型计算顺序 | x64 `0x7FF7CB4A9950` 按 `model+0x3109` 排序，保存直接槽号；`0x7FF7CB478717..0x478763` 从第 0 行写回该字段。x86 `0x41E810/0x41E910` 同样使用 `+0x2D7D` | 与绘制顺序 `+0x3108`、`slot+1` 工作区分开；按模型自身的日/英文名填充计算顺序列表，修改计算顺序不再改写绘制顺序 |
+| 父骨骼姿态重置 | x64 RVA `0x405AA`、x86 `0x47F8B0` 均清零四元数 Z | 补回漏掉的清零，并用具名位置/四元数字段代替跨数组写入 |
+| x64 无父骨骼重置 | x64 RVA `0x40248..0x402FD` 逐步执行 `MULSS/ADDSS/SUBSS` | x64 使用单精度中间值并保留运算顺序；x86 保留原有双精度实现。定值场景 Y/Z 位模式为 `0x3D8F5C2D/0x3DB851EC`，旧双精度结果为 `0x3D8F5C2A/0x3DB851EE` |
+
+[选项窗口回归](../../tests/option_dialog_test.cpp) 使用隐藏的真实 Win32 编辑框、滑块、列表框和组合框驱动生产窗口过程，覆盖日/英文计算顺序、末尾模型槽、上下移动、确认/取消、计算与绘制字段隔离、重力回调转发、回车及滑块映射。[姿态回归](../../tests/bone_mirror_paste_test.cpp) 扩展到复制、普通粘贴、根/父骨骼/无父骨骼重置、撤销/重做及 x64 定值位模式。
+
+恢复旧计算顺序实现、滑块偏移、漏清 Z 和双精度路径时，对应断言均失败；恢复修复后通过。x86/x64 Release 完整构建及各 19 项相关回归通过。验证范围是上述指令、隐藏控件与固定场景，未执行完整原版 GUI/图像 A/B。
 
 ## 数值兼容
 

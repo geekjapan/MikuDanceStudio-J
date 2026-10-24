@@ -61,40 +61,43 @@ unsigned char* ActiveModel(MMDApp* app) {
 }
 
 // ---- byte-exact .rdata strings --------------------------------------------
-const char kHdr[] = "Vocaloid Pose Data file\n\n";               // 0x52BC6C
-const char kModelFmt[] =                                         // 0x52BC50
+const char kHdr[] = "Vocaloid Pose Data file\n\n"; // 0x52BC6C
+const char kModelFmt[] =                           // 0x52BC50
     "%s.osm;\t\t// \x90\x65\x83\x74\x83\x40\x83\x43\x83\x8b\x96\xbc\n";
-const char kCountFmt[] =                                         // 0x52BC30
+const char kCountFmt[] = // 0x52BC30
     "%d;\t\t\t\t// \x91\x8d\x83\x7c\x81\x5b\x83\x59\x83\x7b\x81\x5b\x83"
     "\x93\x90\x94\n\n";
-const char kBoneFmt[] = "Bone%d{%s\n";                           // 0x52BC24
-const char kTransFmt[] =                                         // 0x52BC04
+const char kBoneFmt[] = "Bone%d{%s\n"; // 0x52BC24
+const char kTransFmt[] =               // 0x52BC04
     "  %f,%f,%f;\t\t\t\t// trans x,y,z\n";
-const char kQuatFmt[] =                                          // 0x52BBDC
+const char kQuatFmt[] = // 0x52BBDC
     "  %f,%f,%f,%f;\t\t// Quaternion x,y,z,w\n";
-const char kCloseFmt[] = "}\n\n";                                // 0x52BBD8
-const wchar_t kModeWrite[] = L"wt";                              // 0x52BC88
-const wchar_t kModeRead[] = L"r";                                // 0x52BCB4
-const char kCountScan[] = "%d;";                                 // 0x52BCB0
-const char kBrace[] = "{";                                       // 0x52BCAC
-const char kTransScan[] = "  %f,%f,%f;";                         // 0x52BCA0
-const char kQuatScan[] = "  %f,%f,%f,%f;";                       // 0x52BC90
+const char kCloseFmt[] = "}\n\n";          // 0x52BBD8
+const wchar_t kModeWrite[] = L"wt";        // 0x52BC88
+const wchar_t kModeRead[] = L"r";          // 0x52BCB4
+const char kCountScan[] = "%d;";           // 0x52BCB0
+const char kBrace[] = "{";                 // 0x52BCAC
+const char kTransScan[] = "  %f,%f,%f;";   // 0x52BCA0
+const char kQuatScan[] = "  %f,%f,%f,%f;"; // 0x52BC90
 
-}  // namespace
+} // namespace
 
 // ---- VA 0x00418750 --------------------------------------------------------
 void SaveVpdFile(const wchar_t* path) {
     MMDApp* app = g_Block;
-    if (app == nullptr) return;
+    if (app == nullptr)
+        return;
     unsigned char* const model = ActiveModel(app);
-    if (model == nullptr) return;
+    if (model == nullptr)
+        return;
 
     FILE* fp = nullptr;
     // Original never checks the _wfopen_s result: on failure it runs
     // straight into fprintf(NULL, ...) (x64 0x7FF7CB48B73C open ->
     // 0x7FF7CB48B74E first fprintf) and crashes.  Port hardening: return
     // silently. (documented deviation)
-    if (_wfopen_s(&fp, path, kModeWrite) != 0 || fp == nullptr) return;
+    if (_wfopen_s(&fp, path, kModeWrite) != 0 || fp == nullptr)
+        return;
 
     std::fprintf(fp, "%s", kHdr);
     mdl::ModelRecord& modelRecord = *mdl::Mdl(model);
@@ -104,14 +107,16 @@ void SaveVpdFile(const wchar_t* path) {
     unsigned char* const selBits = modelRecord.boneSelection;
     int selected = 0;
     for (int i = 0; i < boneCnt; ++i)
-        if (selBits[i] != 0) ++selected;
+        if (selBits[i] != 0)
+            ++selected;
     std::fprintf(fp, kCountFmt, selected);
 
     mikudancestudio::mdl::BoneRecord* const bones = mikudancestudio::mdl::Bones(model);
     const int physMode = app->PlaybackPhysicsMode();
     int running = 0;
     for (int i = 0; i < boneCnt; ++i) {
-        if (selBits[i] == 0) continue;
+        if (selBits[i] == 0)
+            continue;
         mikudancestudio::mdl::BoneRecord* const bone = bones + i;
         std::fprintf(fp, kBoneFmt, running, bone->name);
         ++running;
@@ -136,21 +141,24 @@ void SaveVpdFile(const wchar_t* path) {
 // ---- VA 0x00418A10 --------------------------------------------------------
 void LoadVpdFile(const wchar_t* path) {
     MMDApp* app = g_Block;
-    if (app == nullptr) return;
+    if (app == nullptr)
+        return;
     unsigned char* const model = ActiveModel(app);
-    if (model == nullptr) return;
+    if (model == nullptr)
+        return;
 
     FILE* fp = nullptr;
-    if (_wfopen_s(&fp, path, kModeRead) != 0 || fp == nullptr) return;
+    if (_wfopen_s(&fp, path, kModeRead) != 0 || fp == nullptr)
+        return;
 
     char line[256], name[256], tail[256];
-    std::fgets(line, 0x100, fp);   // "Vocaloid Pose Data file"
-    std::fgets(line, 0x100, fp);   // blank
-    std::fgets(line, 0x100, fp);   // "<model>.osm;..."
+    std::fgets(line, 0x100, fp); // "Vocaloid Pose Data file"
+    std::fgets(line, 0x100, fp); // blank
+    std::fgets(line, 0x100, fp); // "<model>.osm;..."
     int count = 0;
     std::fscanf(fp, kCountScan, &count);
-    std::fgets(tail, 0x100, fp);   // count-line comment tail
-    std::fgets(tail, 0x100, fp);   // blank
+    std::fgets(tail, 0x100, fp); // count-line comment tail
+    std::fgets(tail, 0x100, fp); // blank
 
     const HWND hwnd = static_cast<HWND>(app->Hwnd());
     EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), TRUE);
@@ -158,52 +166,54 @@ void LoadVpdFile(const wchar_t* path) {
 
     // ---- undo ring (model+0x31B4 wraps at 30; slots at model+0x26EC) ---
     mdl::ModelRecord& modelRecord = *mdl::Mdl(model);
-    modelRecord.undoDirty = 1;                          // 0x418AE9
-    modelRecord.redoDirty = 0;                          // 0x418AF0
-    int ring = ++mdl::Mdl(model)->undoState[0];
-    if (ring >= 30) mdl::Mdl(model)->undoState[0] = 0;
-    ring = mdl::Mdl(model)->undoState[0];
-    mdl::Mdl(model)->undoState[1] = ring;
+    modelRecord.undoDirty = 1; // 0x418AE9
+    modelRecord.redoDirty = 0; // 0x418AF0
+    int ring = ++mdl::Mdl(model)->UndoCursor();
+    if (ring >= 30)
+        mdl::Mdl(model)->UndoCursor() = 0;
+    ring = mdl::Mdl(model)->UndoCursor();
+    mdl::Mdl(model)->LatestUndoCursor() = ring;
 
     mdl::UndoRecord& undo = mdl::Mdl(model)->undoRings[0].slots[ring];
-    undo.operation = 1;
-    undo.dirty = count;
+    undo.operation = mdl::UndoOperation::BonePose;
+    undo.recordCount = count;
     if (undo.bonePose != nullptr) {
         ::operator delete(undo.bonePose);
         undo.bonePose = nullptr;
     }
     mdl::BonePoseSnapshot* const snap =
-        static_cast<mdl::BonePoseSnapshot*>(
-            operator new(sizeof(mdl::BonePoseSnapshot) * count));
+        static_cast<mdl::BonePoseSnapshot*>(operator new(sizeof(mdl::BonePoseSnapshot) * count));
     undo.bonePose = snap;
     std::memset(snap, 0, sizeof(mdl::BonePoseSnapshot) * count);
-    undo.dirty = count;
+    undo.recordCount = count;
 
     const int boneCnt = modelRecord.boneCount;
     mikudancestudio::mdl::BoneRecord* const bones = mikudancestudio::mdl::Bones(model);
     unsigned char* const selBits = modelRecord.boneSelection;
     unsigned char* const regBits = modelRecord.bonePhysicsState;
-    const bool pmx = modelRecord.physicsMode == 2;              // 0x418FC4
+    const bool pmx = modelRecord.physicsMode == 2; // 0x418FC4
 
     for (int k = 0; k < count; ++k) {
         float trans[3] = {0, 0, 0};
         float quat[4] = {0, 0, 0, 1.0f};
 
-        std::fgets(line, 0x100, fp);                    // "BoneN{name"
+        std::fgets(line, 0x100, fp); // "BoneN{name"
         const char* brace = std::strstr(line, kBrace);
         // Original has no NULL check here: it calls
         // sprintf_s(name, 0x100, v18 + 1) (x64 0x7FF7CB48BDC5) with the
         // format pointer at (char*)1 and crashes when the brace is missing.
         // Port hardening: skip the record. (documented deviation)
-        if (brace == nullptr) continue;
+        if (brace == nullptr)
+            continue;
         sprintf_s(name, 0x100, "%s", brace + 1);
-        if (char* nl = strchr(name, 10)) *nl = 0;  // 0x507670 strchr
+        if (char* nl = strchr(name, 10))
+            *nl = 0; // 0x507670 strchr
 
         std::fscanf(fp, kTransScan, &trans[0], &trans[1], &trans[2]);
-        std::fgets(tail, 0x100, fp);                    // comment tail
+        std::fgets(tail, 0x100, fp); // comment tail
         std::fscanf(fp, kQuatScan, &quat[0], &quat[1], &quat[2], &quat[3]);
-        std::fgets(tail, 0x100, fp);                    // "}\n"
-        std::fgets(tail, 0x100, fp);                    // "\n"
+        std::fgets(tail, 0x100, fp); // "}\n"
+        std::fgets(tail, 0x100, fp); // "\n"
         std::fgets(tail, 0x100, fp);
 
         for (int i = 0; i < boneCnt; ++i) {
@@ -223,8 +233,7 @@ void LoadVpdFile(const wchar_t* path) {
             const mdl::BoneType btype = bone->type;
             if (btype == mdl::BoneType::FixedAxis ||
                 (btype == mdl::BoneType::UnderIk &&
-                 (bone->flags & mdl::kBoneFlagFixedAxis) ==
-                     mdl::kBoneFlagFixedAxis)) {
+                 (bone->flags & mdl::kBoneFlagFixedAxis) == mdl::kBoneFlagFixedAxis)) {
                 float boneAxis[3];
                 if (pmx) {
                     std::memcpy(boneAxis, bone->axis, 12);
@@ -239,26 +248,25 @@ void LoadVpdFile(const wchar_t* path) {
                 if (d3->quatToAxisAngle != nullptr) {
                     float axisOut[3], angle;
                     d3->quatToAxisAngle(quat, axisOut, &angle);
-                    if (!_finite(quat[3])) quat[3] = 1.0f;   // w (0x4190C4)
+                    if (!_finite(quat[3]))
+                        quat[3] = 1.0f; // w (0x4190C4)
                     float sinHalf;
                     const float ww = quat[3] * quat[3];
                     if (ww <= 1.0f) {
-                        sinHalf = sqrtf(1.0f - ww);     // 0x4190FD sqrt
+                        sinHalf = sqrtf(1.0f - ww); // 0x4190FD sqrt
                     } else {
                         quat[3] = 1.0f;
                         sinHalf = 0.0f;
                     }
-                    const float dot = boneAxis[0] * axisOut[0] +
-                                      boneAxis[1] * axisOut[1] +
+                    const float dot = boneAxis[0] * axisOut[0] + boneAxis[1] * axisOut[1] +
                                       boneAxis[2] * axisOut[2];
-                    const float nA = sqrtf(boneAxis[0] * boneAxis[0] +
-                                           boneAxis[1] * boneAxis[1] +
+                    const float nA = sqrtf(boneAxis[0] * boneAxis[0] + boneAxis[1] * boneAxis[1] +
                                            boneAxis[2] * boneAxis[2]);
-                    const float nB = sqrtf(axisOut[0] * axisOut[0] +
-                                           axisOut[1] * axisOut[1] +
+                    const float nB = sqrtf(axisOut[0] * axisOut[0] + axisOut[1] * axisOut[1] +
                                            axisOut[2] * axisOut[2]);
                     const float cosT = dot / (nA * nB);
-                    if (cosT < 0.0f) sinHalf = -sinHalf;    // 0x4191E2
+                    if (cosT < 0.0f)
+                        sinHalf = -sinHalf; // 0x4191E2
                     quat[0] = sinHalf * axisOut[0];
                     quat[1] = sinHalf * axisOut[1];
                     quat[2] = sinHalf * axisOut[2];
@@ -267,9 +275,9 @@ void LoadVpdFile(const wchar_t* path) {
                 }
             }
 
-            selBits[i] = 1;                              // 0x419226
+            selBits[i] = 1; // 0x419226
             regBits[i] = 1;
-            std::memcpy(bone->trans, trans, 12);        // 0x419256
+            std::memcpy(bone->trans, trans, 12); // 0x419256
             std::memcpy(bone->rotQuat, quat, 16);
             // No break: 0x419240's bone loop keeps scanning after a match,
             // so EVERY bone whose name equals the VPD bone gets the pose.
@@ -278,4 +286,4 @@ void LoadVpdFile(const wchar_t* path) {
     std::fclose(fp);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

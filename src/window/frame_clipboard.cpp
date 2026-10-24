@@ -57,11 +57,13 @@ static void TraceModelPaste(const char* format, ...) {
     char directory[MAX_PATH]{};
     const DWORD length =
         GetEnvironmentVariableA("MIKUDANCESTUDIO_STATE_DUMP_DIR", directory, MAX_PATH);
-    if (length == 0 || length >= MAX_PATH) return;
+    if (length == 0 || length >= MAX_PATH)
+        return;
     char path[MAX_PATH]{};
     std::snprintf(path, sizeof(path), "%s\\model_paste_trace.log", directory);
     std::FILE* stream = nullptr;
-    if (fopen_s(&stream, path, "ab") != 0 || stream == nullptr) return;
+    if (fopen_s(&stream, path, "ab") != 0 || stream == nullptr)
+        return;
     va_list args;
     va_start(args, format);
     std::vfprintf(stream, format, args);
@@ -70,7 +72,8 @@ static void TraceModelPaste(const char* format, ...) {
     std::fclose(stream);
 }
 #else
-static inline void TraceModelPaste(const char*, ...) {}
+static inline void TraceModelPaste(const char*, ...) {
+}
 #endif
 
 template <typename Key>
@@ -107,8 +110,7 @@ static std::uint32_t CountSelectedKeys(const Key* keys, std::size_t capacity,
     return count;
 }
 
-template <typename Key>
-static void ClearSelectedKeys(Key* keys, std::size_t capacity) {
+template <typename Key> static void ClearSelectedKeys(Key* keys, std::size_t capacity) {
     for (std::size_t i = 0; i < capacity; ++i) {
         keys[i].selected = 0;
     }
@@ -126,12 +128,11 @@ static void ClearSelectedKeys(Key* keys, std::size_t capacity) {
 // idx >= count.  Tail: nothing (jmp loc_48F2E0).
 // ------------------------------------------------------------------
 void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
-    std::uint32_t minFrame = 0xFFFFFFFFu;  // ebx
+    std::uint32_t minFrame = 0xFFFFFFFFu; // ebx
     if (app->CameraMode() == 0) {
         // ---- model mode (loc_483E7C..) ----
         // free the previous camera records' sub-buffers (loc_483E7C)
-        if (app->DisplayClipboard() != nullptr &&
-            app->ClipboardCounts().displays != 0) {
+        if (app->DisplayClipboard() != nullptr && app->ClipboardCounts().displays != 0) {
             auto* records = app->DisplayClipboard();
             const std::uint32_t camCount = app->ClipboardCounts().displays;
             for (std::uint32_t i = 0; i < camCount; ++i) {
@@ -152,10 +153,9 @@ void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
         // selected-entry counts + min frame
         {
             unsigned char* model = app->SelectedModel();
-            clipboardCounts.bones = CountMarkedModelKeys(
-                mdl::BoneKeys(model), mdl::kBoneKeyCapacity, minFrame);
-            clipboardCounts.morphs =
-                CountMarkedModelKeys(mdl::MorphKeys(model), 20000, minFrame);
+            clipboardCounts.bones =
+                CountMarkedModelKeys(mdl::BoneKeys(model), mdl::kBoneKeyCapacity, minFrame);
+            clipboardCounts.morphs = CountMarkedModelKeys(mdl::MorphKeys(model), 20000, minFrame);
             clipboardCounts.displays =
                 CountMarkedModelKeys(mdl::DisplayKeys(model), 1000, minFrame);
         }
@@ -167,12 +167,11 @@ void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
             EnableWindow(GetDlgItem(hwnd, panel::kPasteButton), FALSE);
             EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton), FALSE);
             EnableMenuItem(GetMenu(hwnd), MDS_CMD_PASTE_AT_DIFFERENT_FRAME, TRUE);
-            return;  // was: break (switch exit)
+            return; // was: break (switch exit)
         }
         EnableWindow(GetDlgItem(hwnd, panel::kPasteButton), TRUE);
         EnableMenuItem(GetMenu(hwnd), MDS_CMD_PASTE_AT_DIFFERENT_FRAME, FALSE);
-        EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton),
-                     boneSel != 0 ? TRUE : FALSE);
+        EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton), boneSel != 0 ? TRUE : FALSE);
         // bone buffer 0x354 (0x54-stride records)
         if (app->BoneClipboard() != nullptr) {
             free(app->BoneClipboard());
@@ -212,8 +211,8 @@ void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
                 auto* records = app->DisplayClipboard();
                 const std::uint32_t cnt = mdl::Mdl(model)->ikChainCount;
                 for (std::uint32_t i = 0; i < camSel; ++i) {
-                    records[i].ikStates = static_cast<IkClipboardState*>(
-                        malloc(cnt * sizeof(IkClipboardState)));
+                    records[i].ikStates =
+                        static_cast<IkClipboardState*>(malloc(cnt * sizeof(IkClipboardState)));
                 }
             }
             if (mdl::Mdl(model)->boneOrderCount > 0 && camSel != 0) {
@@ -234,8 +233,7 @@ void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
             auto* dst = app->BoneClipboard();
             std::uint32_t cnt = 0;
             for (std::uint32_t recordIndex = 0;
-                 recordIndex < static_cast<std::uint32_t>(mdl::kBoneKeyCapacity);
-                 ++recordIndex) {
+                 recordIndex < static_cast<std::uint32_t>(mdl::kBoneKeyCapacity); ++recordIndex) {
                 const mdl::BoneKey& key = boneKeys[recordIndex];
                 if (key.allocated == 0) {
                     continue;
@@ -310,16 +308,16 @@ void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
                     const auto* pose = mdl::IkStates(key);
                     for (std::int32_t i = 0; i < boneIdxCount; ++i) {
                         const std::uint32_t boneIdx = chains[i].boneIndex;
-                        strcpy_s(rec.ikStates[i].boneName,
-                                 sizeof(rec.ikStates[i].boneName), bones[boneIdx].name);
+                        strcpy_s(rec.ikStates[i].boneName, sizeof(rec.ikStates[i].boneName),
+                                 bones[boneIdx].name);
                         rec.ikStates[i].enabled = pose[i];
                     }
                 }
                 // light records at +0x14 (0x1C stride)
                 rec.selectorCount = lightCount;
                 const auto* lightData = mdl::SelectorStates(key);
-                strcpy_s(rec.selectorStates[0].boneName,
-                         sizeof(rec.selectorStates[0].boneName), kLightNameRoot);
+                strcpy_s(rec.selectorStates[0].boneName, sizeof(rec.selectorStates[0].boneName),
+                         kLightNameRoot);
                 rec.selectorStates[0].modelIndex = lightData[0].modelIndex;
                 rec.selectorStates[0].boneIndex = lightData[0].boneIndex;
                 if (lightCount > 1) {
@@ -327,8 +325,7 @@ void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
                     for (std::int32_t i = 1; i < lightCount; ++i) {
                         const std::uint32_t boneIdx = order[i].boneIndex;
                         strcpy_s(rec.selectorStates[i].boneName,
-                                 sizeof(rec.selectorStates[i].boneName),
-                                 bones[boneIdx].name);
+                                 sizeof(rec.selectorStates[i].boneName), bones[boneIdx].name);
                         rec.selectorStates[i].modelIndex = lightData[i].modelIndex;
                         rec.selectorStates[i].boneIndex = lightData[i].boneIndex;
                     }
@@ -347,8 +344,7 @@ void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
         clipboardCounts.cameras = CountSelectedKeys(app->CameraKeys(), 10000, minFrame);
         clipboardCounts.lights = CountSelectedKeys(app->LightKeys(), 10000, minFrame);
         clipboardCounts.shadows = CountSelectedKeys(app->ShadowKeys(), 10000, minFrame);
-        clipboardCounts.gravity =
-            CountSelectedKeys(app->GravityKeys(), 10000, minFrame);
+        clipboardCounts.gravity = CountSelectedKeys(app->GravityKeys(), 10000, minFrame);
         {
             std::uint32_t accessoryCount = 0;
             for (std::size_t keyIndex = 0; keyIndex < 10000; ++keyIndex) {
@@ -370,13 +366,13 @@ void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
         const std::uint32_t shadowCount = clipboardCounts.shadows;
         const std::uint32_t gravityCount = clipboardCounts.gravity;
         const std::uint32_t accessoryCount = clipboardCounts.accessories;
-        if (cameraCount == 0 && lightCount == 0 && shadowCount == 0 &&
-            gravityCount == 0 && accessoryCount == 0) {
+        if (cameraCount == 0 && lightCount == 0 && shadowCount == 0 && gravityCount == 0 &&
+            accessoryCount == 0) {
             // loc_483657..48369C
             EnableWindow(GetDlgItem(hwnd, panel::kPasteButton), FALSE);
             EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton), FALSE);
             EnableMenuItem(GetMenu(hwnd), MDS_CMD_PASTE_AT_DIFFERENT_FRAME, TRUE);
-            return;  // was: break (switch exit)
+            return; // was: break (switch exit)
         }
         EnableWindow(GetDlgItem(hwnd, panel::kPasteButton), TRUE);
         EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton), FALSE);
@@ -403,8 +399,7 @@ void CopySelectedKeyframes(MMDApp* app, HWND hwnd) {
                 std::memcpy(rec.target, key.target, sizeof(rec.target));
                 rec.fov = key.fov;
                 rec.perspective = key.perspective;
-                std::memcpy(rec.interpolation, key.interpolation,
-                            sizeof(rec.interpolation));
+                std::memcpy(rec.interpolation, key.interpolation, sizeof(rec.interpolation));
                 rec.distance = key.distance;
                 rec.parentModel = key.parentModel;
                 rec.parentBone = key.parentBone;
@@ -516,7 +511,7 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
         const std::uint32_t camSel = clipboardCounts.displays;
         TraceModelPaste("enter bone=%u morph=%u display=%u", boneSel, morphSel, camSel);
         if (boneSel == 0 && morphSel == 0 && camSel == 0) {
-            return;  // was: break (switch exit)
+            return; // was: break (switch exit)
         }
         app->SceneModified() = 1;
         const std::int32_t frame = app->state.currentFrame;
@@ -533,12 +528,12 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
             mdl::Mdl(model)->undoDirty = 1;
             mdl::Mdl(model)->redoDirty = 0;
             mdl::ModelRecord& record = *mdl::Mdl(model);
-            const std::int32_t next = record.undoState[0] + 1;
-            record.undoState[0] = next >= 0x1E ? 0 : next;
-            const std::int32_t cur = record.undoState[0];
-            record.undoState[1] = cur;
+            const std::int32_t next = record.UndoCursor() + 1;
+            record.UndoCursor() = next >= 0x1E ? 0 : next;
+            const std::int32_t cur = record.UndoCursor();
+            record.LatestUndoCursor() = cur;
             auto& undo = mikudancestudio::mdl::Mdl(model)->undoRings[0].slots[cur];
-            undo.operation = 2;
+            undo.operation = mdl::UndoOperation::BoneKeys;
             undo.frame = frame;
             // bone-name snapshot buffer (+0x10 of the entry, 0x24-
             // stride records)
@@ -552,8 +547,7 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
                 ::operator new(static_cast<std::uint32_t>(boneCount) *
                                sizeof(mikudancestudio::mdl::BonePoseSnapshot)));
             if (undoBone != nullptr) {
-                ConstructArrayElements(undoBone,
-                                       sizeof(mikudancestudio::mdl::BonePoseSnapshot),
+                ConstructArrayElements(undoBone, sizeof(mikudancestudio::mdl::BonePoseSnapshot),
                                        static_cast<std::uint32_t>(boneCount),
                                        reinterpret_cast<void*>(&IdentityCtor));
             }
@@ -576,7 +570,7 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
             }
             // second undo-history table (0x23F0 base, 0x1C stride):
             // entry cnt+0x164 cleared
-            undo.dirty = 0;
+            undo.recordCount = 0;
             // light snapshot buffer (+0x14 of the entry, 3*0x40 *
             // boneSel bytes)
             p = undo.auxiliaryPose;
@@ -593,8 +587,7 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
             undo.auxiliaryPose = undoLight;
             memset(undoLight, 0, boneSel * 3 * 0x40);
         }
-        std::memset(mdl::Mdl(model)->keyVisitMap, 0,
-                    sizeof(mdl::Mdl(model)->keyVisitMap));
+        std::memset(mdl::Mdl(model)->keyVisitMap, 0, sizeof(mdl::Mdl(model)->keyVisitMap));
         ResetBoneKeyCursor(model);
         TraceModelPaste("undo-ready free=%d", mdl::Mdl(model)->searchCursor);
         // bone paste loop (loc_485130..485174): 0x54-byte record +
@@ -605,8 +598,7 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
             std::uint32_t i = 0;
             do {
                 BoneClipboardRecord rec = src[i];
-                if (RegisterBoneKey(model, reinterpret_cast<unsigned char*>(&rec),
-                                    frame, 0) == 0) {
+                if (RegisterBoneKey(model, reinterpret_cast<unsigned char*>(&rec), frame, 0) == 0) {
                     break;
                 }
                 ++i;
@@ -620,9 +612,8 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
             std::uint32_t i = 0;
             do {
                 const MorphClipboardRecord rec = src[i];
-                if (RegisterMorphKeyFromRecord(
-                        model, reinterpret_cast<const unsigned char*>(&rec), frame) ==
-                    0) {
+                if (RegisterMorphKeyFromRecord(model, reinterpret_cast<const unsigned char*>(&rec),
+                                               frame) == 0) {
                     break;
                 }
                 ++i;
@@ -638,15 +629,14 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
             do {
                 DisplayClipboardRecord& rec = records[i];
                 const std::int32_t lightCount = rec.selectorCount;
-                TraceModelPaste("display[%u] rec=%p rel=%d relptr=%p ik=%d ikptr=%p", i,
-                                &rec, lightCount, rec.selectorStates, rec.ikCount,
-                                rec.ikStates);
+                TraceModelPaste("display[%u] rec=%p rel=%d relptr=%p ik=%d ikptr=%p", i, &rec,
+                                lightCount, rec.selectorStates, rec.ikCount, rec.ikStates);
                 if (lightCount > 0) {
                     for (std::int32_t j = 0; j < lightCount; ++j) {
                         SelectorClipboardState& state = rec.selectorStates[j];
                         const std::int32_t slotIdx = state.modelIndex;
-                        TraceModelPaste("display[%u] relation[%d] slot=%d bone=%d", i,
-                                        j, slotIdx, state.boneIndex);
+                        TraceModelPaste("display[%u] relation[%d] slot=%d bone=%d", i, j, slotIdx,
+                                        state.boneIndex);
                         if (slotIdx < 0) {
                             continue;
                         }
@@ -654,8 +644,7 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
                         if (slotModel == nullptr) {
                             state.modelIndex = -1;
                             state.boneIndex = 0;
-                        } else if (static_cast<std::int32_t>(
-                                       mdl::Mdl(slotModel)->boneCount) <
+                        } else if (static_cast<std::int32_t>(mdl::Mdl(slotModel)->boneCount) <
                                    state.boneIndex) {
                             state.boneIndex = 0;
                         }
@@ -664,10 +653,8 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
                 TraceModelPaste("display[%u] fixup-done", i);
                 if (RegisterDisplayKeyFromRecord(
                         model, rec.frame, rec.visible, rec.ikCount,
-                        reinterpret_cast<unsigned char*>(rec.ikStates),
-                        rec.selectorCount,
-                        reinterpret_cast<unsigned char*>(rec.selectorStates),
-                        frame) == 0) {
+                        reinterpret_cast<unsigned char*>(rec.ikStates), rec.selectorCount,
+                        reinterpret_cast<unsigned char*>(rec.selectorStates), frame) == 0) {
                     break;
                 }
                 TraceModelPaste("display[%u] registrar-done", i);
@@ -684,9 +671,9 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
         const std::uint32_t shadowCount = clipboardCounts.shadows;
         const std::uint32_t gravityCount = clipboardCounts.gravity;
         const std::uint32_t accessoryCount = clipboardCounts.accessories;
-        if (cameraCount == 0 && lightCount == 0 && shadowCount == 0 &&
-            gravityCount == 0 && accessoryCount == 0) {
-            return;  // was: break (switch exit)
+        if (cameraCount == 0 && lightCount == 0 && shadowCount == 0 && gravityCount == 0 &&
+            accessoryCount == 0) {
+            return; // was: break (switch exit)
         }
         app->SceneModified() = 1;
         // clear all camera-mode marks (single sweep over the four
@@ -765,8 +752,7 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
     SelectionReeval(app);
     unsigned char* model = app->SelectedModel();
     if (model != nullptr) {
-        SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame,
-                       app->PlaybackPhysicsMode());
+        SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
     }
     if (app->CameraMode() != 0) {
         ReloadModels(app);
@@ -791,11 +777,11 @@ void PasteSelectedKeyframes(MMDApp* app, HWND hwnd) {
 // ------------------------------------------------------------------
 void PasteMirroredBoneKeyframes(MMDApp* app, HWND hwnd) {
     if (app->CameraMode() != 0) {
-        return;  // was: break (switch exit)
+        return; // was: break (switch exit)
     }
     const std::uint32_t boneSel = app->ClipboardCounts().bones;
     if (boneSel == 0) {
-        return;  // was: break (switch exit)
+        return; // was: break (switch exit)
     }
     app->SceneModified() = 1;
     const std::int32_t frame = app->state.currentFrame;
@@ -810,12 +796,12 @@ void PasteMirroredBoneKeyframes(MMDApp* app, HWND hwnd) {
     mdl::Mdl(model)->undoDirty = 1;
     mdl::Mdl(model)->redoDirty = 0;
     mdl::ModelRecord& record = *mdl::Mdl(model);
-    const std::int32_t next = record.undoState[0] + 1;
-    record.undoState[0] = next >= 0x1E ? 0 : next;
-    const std::int32_t cur = record.undoState[0];
-    record.undoState[1] = cur;
+    const std::int32_t next = record.UndoCursor() + 1;
+    record.UndoCursor() = next >= 0x1E ? 0 : next;
+    const std::int32_t cur = record.UndoCursor();
+    record.LatestUndoCursor() = cur;
     auto& undo = mikudancestudio::mdl::Mdl(model)->undoRings[0].slots[cur];
-    undo.operation = 2;
+    undo.operation = mdl::UndoOperation::BoneKeys;
     undo.frame = frame;
     void* p = undo.bonePose;
     if (p != nullptr) {
@@ -823,9 +809,8 @@ void PasteMirroredBoneKeyframes(MMDApp* app, HWND hwnd) {
         undo.bonePose = nullptr;
     }
     const std::int32_t boneCount = mdl::Mdl(model)->boneCount;
-    auto* undoBone = static_cast<mikudancestudio::mdl::BonePoseSnapshot*>(
-        ::operator new(static_cast<std::uint32_t>(boneCount) *
-                       sizeof(mikudancestudio::mdl::BonePoseSnapshot)));
+    auto* undoBone = static_cast<mikudancestudio::mdl::BonePoseSnapshot*>(::operator new(
+        static_cast<std::uint32_t>(boneCount) * sizeof(mikudancestudio::mdl::BonePoseSnapshot)));
     if (undoBone != nullptr) {
         ConstructArrayElements(undoBone, sizeof(mikudancestudio::mdl::BonePoseSnapshot),
                                static_cast<std::uint32_t>(boneCount),
@@ -833,8 +818,7 @@ void PasteMirroredBoneKeyframes(MMDApp* app, HWND hwnd) {
     }
     undo.bonePose = undoBone;
     memset(undoBone, 0,
-           static_cast<std::uint32_t>(boneCount) *
-               sizeof(mikudancestudio::mdl::BonePoseSnapshot));
+           static_cast<std::uint32_t>(boneCount) * sizeof(mikudancestudio::mdl::BonePoseSnapshot));
     if (boneCount > 0) {
         const mdl::BoneRecord* bones = record.boneTable;
         unsigned char* boneState = record.bonePhysicsState;
@@ -847,14 +831,13 @@ void PasteMirroredBoneKeyframes(MMDApp* app, HWND hwnd) {
             rec.physicsDisabled = boneState[i];
         }
     }
-    undo.dirty = 0;
+    undo.recordCount = 0;
     p = undo.auxiliaryPose;
     if (p != nullptr) {
         ::operator delete(p);
         undo.auxiliaryPose = nullptr;
     }
-    unsigned char* undoLight =
-        static_cast<unsigned char*>(::operator new(boneSel * 3 * 0x40));
+    unsigned char* undoLight = static_cast<unsigned char*>(::operator new(boneSel * 3 * 0x40));
     if (undoLight != nullptr) {
         ConstructArrayElements(undoLight, 0x40, boneSel * 3,
                                reinterpret_cast<void*>(&IdentityCtor));
@@ -869,8 +852,8 @@ void PasteMirroredBoneKeyframes(MMDApp* app, HWND hwnd) {
         std::uint32_t i = 0;
         do {
             BoneClipboardRecord rec = src[i];
-            if (RegisterMirroredBoneKey(model, reinterpret_cast<unsigned char*>(&rec),
-                                        frame) == 0) {
+            if (RegisterMirroredBoneKey(model, reinterpret_cast<unsigned char*>(&rec), frame) ==
+                0) {
                 break;
             }
             ++i;
@@ -883,4 +866,4 @@ void PasteMirroredBoneKeyframes(MMDApp* app, HWND hwnd) {
     app->PhysicsResetPending() = 1;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

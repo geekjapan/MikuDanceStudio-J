@@ -3,6 +3,7 @@
 // Original command ledger: docs/reconstruction/source_refactoring.md.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "mikudancestudio/dialog_resources.h"
 #include "mikudancestudio/menu_commands.h"
 #include <Windows.h>
 
@@ -28,12 +29,12 @@ namespace mikudancestudio {
 using editor::ClearModelKeyMarks;
 
 // Editor dependencies not declared by the shared interface.
-void SnapshotSelectedKeysForUndo(unsigned char* model, int frame);  // VA 0x004A1510
-void ApplyCameraReferenceModeChange(MMDApp* app, int oldMode);      // VA 0x0041ACD0
-void StepFrame(MMDApp* app, bool forward);         // VA 0x00430F20 (fwd) / 0x004312E0
-void DeleteModel(unsigned char* model, int flag);  // VA 0x0040A710 model dispose
+void SnapshotSelectedKeysForUndo(unsigned char* model, int frame); // VA 0x004A1510
+void ApplyCameraReferenceModeChange(MMDApp* app, int oldMode);     // VA 0x0041ACD0
+void StepFrame(MMDApp* app, bool forward);        // VA 0x00430F20 (fwd) / 0x004312E0
+void DeleteModel(unsigned char* model, int flag); // VA 0x0040A710 model dispose
 int MarkKeyTrackRangeByName(unsigned char* model, std::uint32_t from, std::uint32_t to,
-                            const char* name);  // VA 0x004A27F0
+                            const char* name); // VA 0x004A27F0
 
 // ---------------------------------------------------------------------------
 // Helpers shared by the family.
@@ -41,7 +42,9 @@ int MarkKeyTrackRangeByName(unsigned char* model, std::uint32_t from, std::uint3
 
 // Active model = slot array at this+0x780 indexed by byte this+0x910
 // (sub_47E8A0 pattern; the original re-derives it on every use).
-static unsigned char* ActiveModel(MMDApp* app) { return app->SelectedModel(); }
+static unsigned char* ActiveModel(MMDApp* app) {
+    return app->SelectedModel();
+}
 
 static void UnlinkAccessoryKey(mdl::AccessoryKey* keys, std::uint32_t index) {
     mdl::AccessoryKey& key = keys[index];
@@ -52,8 +55,7 @@ static void UnlinkAccessoryKey(mdl::AccessoryKey* keys, std::uint32_t index) {
     key.next = 0;
 }
 
-template <typename Key>
-static void UnlinkGlobalKey(Key* keys, std::uint32_t index) {
+template <typename Key> static void UnlinkGlobalKey(Key* keys, std::uint32_t index) {
     Key& key = keys[index];
     keys[key.previous].next = key.next;
     keys[key.next].previous = key.previous;
@@ -81,7 +83,7 @@ static void ResetLightRecord(mdl::LightKey& key, bool head) {
         key.direction[0] = -0.5f;
         key.direction[1] = -1.0f;
         key.direction[2] = 0.5f;
-        key.color[0] = 0.602f;  // bit-exact: 0x3F1A1CAC, see case 467
+        key.color[0] = 0.602f; // bit-exact: 0x3F1A1CAC, see case 467
         key.color[1] = 0.602f;
         key.color[2] = 0.602f;
     } else {
@@ -91,7 +93,7 @@ static void ResetLightRecord(mdl::LightKey& key, bool head) {
 
 static unsigned char DefaultShadowMode(MMDApp* app) {
     D3DRenderer* locale = app->Renderer();
-    if (locale != nullptr && locale->postProcessEnabled != 0) {  // 0x1D544
+    if (locale != nullptr && locale->postProcessEnabled != 0) { // 0x1D544
         return 1;
     }
     // Fixed-function fallback: keep the PMM self-shadow mode when the
@@ -198,7 +200,8 @@ void DeleteMarkedKeyframes(MMDApp* app) {
         }
     } else {
         unsigned char* model = ActiveModel(app);
-        if (model != nullptr) DeleteMarkedModelKeys(model, app->state.currentFrame);
+        if (model != nullptr)
+            DeleteMarkedModelKeys(model, app->state.currentFrame);
     }
 
     PanelPaint(app);
@@ -217,8 +220,7 @@ void DeleteMarkedKeyframes(MMDApp* app) {
     } else {
         unsigned char* model = ActiveModel(app);
         if (model != nullptr) {
-            SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame,
-                           app->PlaybackPhysicsMode());
+            SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
         }
     }
 }
@@ -241,7 +243,13 @@ void ResetCameraAttachmentBasis(MMDApp* app) {
 
 namespace {
 
-enum class ViewPreset { Front, Back, Top, Left, Right };
+enum class ViewPreset {
+    Front,
+    Back,
+    Top,
+    Left,
+    Right
+};
 
 struct ViewPresetSettings {
     float rotation;
@@ -274,12 +282,12 @@ void ResetViewPreset(MMDApp* app, ViewPreset preset) {
     const std::int32_t parentModelSlot = app->CameraParentModel();
     const std::uint8_t selectedModelSlot = app->SelectedModelSlot();
     const std::uint8_t followCameraEnabled = app->state.followCameraEnabled;
-    const bool hasParentModel = parentModelSlot >= 0;  // setnl cl
+    const bool hasParentModel = parentModelSlot >= 0; // setnl cl
     const bool followingParentModelWhileStopped =
         (selectedModelSlot == parentModelSlot) && app->PlaybackActive() == 0 &&
-        followCameraEnabled != 0;  // setz bl / setz al / and / and
+        followCameraEnabled != 0; // setz bl / setz al / and / and
     if (hasParentModel && followingParentModelWhileStopped) {
-        ViewResetRefresh(app);  // test ecx, ebx; jnz loc_47EFF6
+        ViewResetRefresh(app); // test ecx, ebx; jnz loc_47EFF6
         return;
     }
     if (hasParentModel && followCameraEnabled != 0) {
@@ -303,14 +311,14 @@ void ResetViewPreset(MMDApp* app, ViewPreset preset) {
     ViewResetRefresh(app);
 }
 
-}  // namespace
+} // namespace
 
 // The frame/30 conversion of case 408 (0x487446): fild (int -> double),
 // fadd 4294967296.0 when negative (i.e. unsigned re-interpretation), then
 // fdiv by 30.0 - stored as float.
 float FrameToSeconds(std::int32_t v) {
     const double d = static_cast<double>(static_cast<std::uint32_t>(v));
-    return static_cast<float>(d / 30.0);  // dbl_52BA68
+    return static_cast<float>(d / 30.0); // dbl_52BA68
 }
 
 // First selected frame in the app+0x374 table (0x54 stride, selection byte
@@ -340,8 +348,7 @@ void SelectGlobalFrameRange(Key* keys, std::uint32_t from, std::uint32_t to) {
 // First marked bone key; returns -1 when none is present.
 std::int32_t FirstSelectedBoneKey(unsigned char* model) {
     mdl::BoneKey* keys = mdl::BoneKeys(model);
-    for (std::int32_t i = 0; i < static_cast<std::int32_t>(mdl::kBoneKeyCapacity);
-         ++i) {
+    for (std::int32_t i = 0; i < static_cast<std::int32_t>(mdl::kBoneKeyCapacity); ++i) {
         if (keys[i].allocated != 0) {
             return i;
         }
@@ -349,8 +356,8 @@ std::int32_t FirstSelectedBoneKey(unsigned char* model) {
     return -1;
 }
 
-static void ReadBoneCurveChannel(MMDApp* app, const mdl::BoneKey& key,
-                                 std::size_t channel, std::size_t row) {
+static void ReadBoneCurveChannel(MMDApp* app, const mdl::BoneKey& key, std::size_t channel,
+                                 std::size_t row) {
     app->state.lightA[row] = key.interpolation[channel];
     app->state.lightB[row] = key.interpolation[4 + channel];
     app->state.lightC[row] = key.interpolation[8 + channel];
@@ -372,16 +379,16 @@ static void ResetBoneCurveChannel(mdl::BoneKey& key, std::size_t channel) {
     key.interpolation[12 + channel] = 0x6B;
 }
 
-static void ReadCameraCurveChannel(MMDApp* app, const mdl::CameraKey& key,
-                                   std::size_t channel, std::size_t row) {
+static void ReadCameraCurveChannel(MMDApp* app, const mdl::CameraKey& key, std::size_t channel,
+                                   std::size_t row) {
     app->state.lightA[row] = key.interpolation[0][channel];
     app->state.lightB[row] = key.interpolation[1][channel];
     app->state.lightC[row] = key.interpolation[2][channel];
     app->state.lightD[row] = key.interpolation[3][channel];
 }
 
-static void WriteCameraCurveChannel(MMDApp* app, mdl::CameraKey& key,
-                                    std::size_t channel, std::size_t row) {
+static void WriteCameraCurveChannel(MMDApp* app, mdl::CameraKey& key, std::size_t channel,
+                                    std::size_t row) {
     key.interpolation[0][channel] = app->state.lightA[row];
     key.interpolation[1][channel] = app->state.lightB[row];
     key.interpolation[2][channel] = app->state.lightC[row];
@@ -406,13 +413,12 @@ static bool TextEqN(const char* buf, const char* lit, std::size_t n) {
 // kanji with half-width katakana in the original (0x530BF0 "全ﾌﾚｰﾑ",
 // 0x530BD8 "全表情ﾌﾚｰﾑ", 0x530BBC "全ボーンフﾚｰﾑ", 0x530BA4 "選択ボーン",
 // 0x530B8C "選択表情").
-static const char kJpAllFrame[] = "\x91\x53\xCC\xDA\xB0\xD1";  // 全ﾌﾚｰﾑ
-static const char kJpAllFacial[] =
-    "\x91\x53\x95\x5C\x8F\xEE\xCC\xDA\xB0\xD1";  // 全表情ﾌﾚｰﾑ
+static const char kJpAllFrame[] = "\x91\x53\xCC\xDA\xB0\xD1";                  // 全ﾌﾚｰﾑ
+static const char kJpAllFacial[] = "\x91\x53\x95\x5C\x8F\xEE\xCC\xDA\xB0\xD1"; // 全表情ﾌﾚｰﾑ
 static const char kJpAllBone[] =
-    "\x91\x53\x83\x7B\x81\x5B\x83\x93\xCC\xDA\xB0\xD1";                 // 全ボーンフﾚｰﾑ
-static const char kJpSelBone[] = "\x91\x49\x91\xF0\xCE\xDE\xB0\xDD";    // 選択ボーン
-static const char kJpSelFacial[] = "\x91\x49\x91\xF0\x95\x5C\x8F\xEE";  // 選択表情
+    "\x91\x53\x83\x7B\x81\x5B\x83\x93\xCC\xDA\xB0\xD1";                // 全ボーンフﾚｰﾑ
+static const char kJpSelBone[] = "\x91\x49\x91\xF0\xCE\xDE\xB0\xDD";   // 選択ボーン
+static const char kJpSelFacial[] = "\x91\x49\x91\xF0\x95\x5C\x8F\xEE"; // 選択表情
 // 0x52D354: light-record name "ルート" (root) used by case 420.
 
 template <typename Key>
@@ -431,8 +437,7 @@ static void MarkFrameSelected(Key* keys, std::uint32_t start, std::uint32_t fram
 }
 
 template <typename Key>
-static void MarkModelFrameAllocated(Key* keys, std::uint32_t start,
-                                    std::uint32_t frame) {
+static void MarkModelFrameAllocated(Key* keys, std::uint32_t start, std::uint32_t frame) {
     std::uint32_t index = start;
     while (keys[index].frame < frame) {
         const std::uint32_t next = keys[index].next;
@@ -447,14 +452,12 @@ static void MarkModelFrameAllocated(Key* keys, std::uint32_t start,
 }
 
 template <typename Key>
-static void SelectModelFrameRange(Key* keys, std::size_t capacity,
-                                  std::uint32_t activeHeadCount, std::uint32_t from,
-                                  std::uint32_t to) {
+static void SelectModelFrameRange(Key* keys, std::size_t capacity, std::uint32_t activeHeadCount,
+                                  std::uint32_t from, std::uint32_t to) {
     for (std::size_t i = 0; i < capacity; ++i) {
         Key& key = keys[i];
         key.allocated = 0;
-        if (from <= key.frame && key.frame <= to &&
-            (i < activeHeadCount || key.frame != 0)) {
+        if (from <= key.frame && key.frame <= to && (i < activeHeadCount || key.frame != 0)) {
             key.allocated = 1;
         }
     }
@@ -485,15 +488,13 @@ static const char kMsgDelModelJp[] =
 // 0x530C00: "モデル削除"
 static const char kCaptionDelModelJp[] = "\x83\x82\x83\x66\x83\x8b\x8d\xed\x8f\x9c";
 // 0x530CF0: EN delete-model message.
-static const char kMsgDelModelEn[] =
-    "Trying to delete Model(%s). \n"
-    "All flame data about this model will be deleted too.\n"
-    "(This operation cannot undo!!)\n\nAre you OK?";
+static const char kMsgDelModelEn[] = "Trying to delete Model(%s). \n"
+                                     "All flame data about this model will be deleted too.\n"
+                                     "(This operation cannot undo!!)\n\nAre you OK?";
 
 // Case-435 open-file strings (wide).
 // 0x52DCE0: "All Model files(*.pmd,*.pmx)" (used for both locales)
-static const wchar_t kFilterModel[] =
-    L"All Model files(*.pmd,*.pmx)\x00*.pmd;*.pmx\x00";
+static const wchar_t kFilterModel[] = L"All Model files(*.pmd,*.pmx)\x00*.pmd;*.pmx\x00";
 // 0x52DCBC: "UserFile\\Model"
 static const wchar_t kInitDirModel[] = L"UserFile\\Model";
 // 0x52DCAC: "pmd;pmx" def-ext
@@ -517,19 +518,19 @@ static const wchar_t kTitleOpenFileJp[] = L"\x30D5\x30A1\x30A4\x30EB\x3092\x958B
 // ------------------------------------------------------------------
 static void UndoKeyframeEdit(MMDApp* app, HWND hwnd) {
     if (app->CameraMode() != 0) {
-        return;  // was: break (switch exit)
+        return; // was: break (switch exit)
     }
     app->SceneModified() = 1;
     unsigned char* model = ActiveModel(app);
     mdl::ModelRecord& record = *mdl::Mdl(model);
     UndoModelEdit(model, app->state.currentFrame);
-    const std::int32_t cnt = record.undoState[0];
-    if (record.undoRings[0].slots[cnt].operation == 0) {
+    const std::int32_t cnt = record.UndoCursor();
+    if (record.undoRings[0].slots[cnt].operation == mdl::UndoOperation::Empty) {
         EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), FALSE);
         record.undoDirty = 0;
         SetFocus(hwnd);
     }
-    if (record.undoState[0] == record.undoState[1]) {
+    if (record.UndoCursor() == record.LatestUndoCursor()) {
         EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), FALSE);
         record.undoDirty = 0;
         SetFocus(hwnd);
@@ -550,13 +551,13 @@ static void UndoKeyframeEdit(MMDApp* app, HWND hwnd) {
 // ------------------------------------------------------------------
 static void RedoKeyframeEdit(MMDApp* app, HWND hwnd) {
     if (app->CameraMode() != 0) {
-        return;  // was: break (switch exit)
+        return; // was: break (switch exit)
     }
     app->SceneModified() = 1;
     unsigned char* model = ActiveModel(app);
     mdl::ModelRecord& record = *mdl::Mdl(model);
     RedoModelEdit(model, app->state.currentFrame);
-    if (record.undoState[0] == record.undoState[1]) {
+    if (record.UndoCursor() == record.LatestUndoCursor()) {
         EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
         record.redoDirty = 0;
         SetFocus(hwnd);
@@ -565,12 +566,11 @@ static void RedoKeyframeEdit(MMDApp* app, HWND hwnd) {
     record.undoDirty = 1;
     PanelPaint(app);
     SelectionReeval(app);
-    const std::int32_t cnt = record.undoState[0];
-    if (record.undoRings[0].slots[cnt].operation != 1) {
+    const std::int32_t cnt = record.UndoCursor();
+    if (record.undoRings[0].slots[cnt].operation != mdl::UndoOperation::BonePose) {
         // original: sub_4B4260(ecx = model, frame = app+0x980,
         // app+0xA0CC4)
-        SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame,
-                       app->PlaybackPhysicsMode());
+        SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
     }
     SetFocus(hwnd);
     app->PhysicsResetPending() = 1;
@@ -589,7 +589,7 @@ static void ResetViewAndReloadModels(MMDApp* app) {
         app->CameraRotation()[2] = 0.0f;
         app->CameraDistance() = -45.0f;
         ViewResetRefresh(app);
-        return;  // was: break (switch exit)
+        return; // was: break (switch exit)
     }
     const std::int32_t a0430 = app->CameraParentModel();
     const std::uint8_t slot = app->SelectedModelSlot();
@@ -599,7 +599,7 @@ static void ResetViewAndReloadModels(MMDApp* app) {
         app->CameraAttachmentTransformSuppressed() = 0;
         app->ViewOffsetX() = 0.0f;
         app->ViewOffsetY() = 0.0f;
-        ReloadModels(app);  // 0x42E640
+        ReloadModels(app); // 0x42E640
         PostModelReload(app);
     }
     ViewResetRefresh(app);
@@ -627,13 +627,13 @@ static void ApplyPlaybackRangeEdits(MMDApp* app, HWND hwnd) {
             CloseDataFile(app->Audio());
             WaveStartPlayback(app->Audio());
         }
-        return;  // was: break (switch exit)
+        return; // was: break (switch exit)
     }
     char text[0x100];
     GetWindowTextA(GetDlgItem(hwnd, panel::kPlayStartFrameEdit), text, 8);
-    const std::int32_t start = atol(text);  // ebx
+    const std::int32_t start = atol(text); // ebx
     GetWindowTextA(GetDlgItem(hwnd, panel::kPlayStopFrameEdit), text, 8);
-    std::int32_t end = atol(text);  // eax
+    std::int32_t end = atol(text); // eax
     if (app->PlaybackStartsAtCurrentFrame() != 0) {
         app->PlaybackStartSeconds() = FrameToSeconds(app->state.currentFrame);
         app->PlaybackFrameChanged() = 1;
@@ -666,7 +666,7 @@ static void ApplyPlaybackRangeEdits(MMDApp* app, HWND hwnd) {
     app->state.playbackEnabledSnapshot[6] =
         IsWindowEnabled(GetDlgItem(hwnd, panel::kRedoButton)) ? 1 : 0;
     app->PlaybackActive() = 1;
-    UpdateBoneFrames(app);  // 0x433A40
+    UpdateBoneFrames(app); // 0x433A40
     if (app->WaveEnabled() != 0) {
         if (app->AudioSeekReady() != 0) {
             app->AudioSeekReady() = 0;
@@ -676,8 +676,7 @@ static void ApplyPlaybackRangeEdits(MMDApp* app, HWND hwnd) {
         }
         if (app->AutomaticFrameAdvanceEnabled() == 0) {
             SetFrameNormalized(app->FrameNormalization());
-            WaveSeekAndFeed(app->Audio(),
-                            static_cast<double>(app->PlaybackStartSeconds()));
+            WaveSeekAndFeed(app->Audio(), static_cast<double>(app->PlaybackStartSeconds()));
         }
     }
     app->PlaybackClockAnchorLow() = app->TimeNowLow();
@@ -702,9 +701,9 @@ static void ApplyPlaybackRangeEdits(MMDApp* app, HWND hwnd) {
 static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
     char text[0x100];
     GetWindowTextA(GetDlgItem(hwnd, panel::kRangeStartEdit), text, 8);
-    const std::int32_t from = atol(text);  // ebx
+    const std::int32_t from = atol(text); // ebx
     GetWindowTextA(GetDlgItem(hwnd, panel::kRangeStopEdit), text, 8);
-    const std::int32_t to = atol(text);  // var_A40
+    const std::int32_t to = atol(text); // var_A40
     GetWindowTextA(GetDlgItem(hwnd, panel::kRegisterScopeCombo), text, 20);
     if (app->CameraMode() == 0) {
         // ---- name-compare chain (loc_482CF2..loc_4831CB) ----
@@ -713,8 +712,7 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
             {
                 unsigned char* model = ActiveModel(app);
                 SelectModelFrameRange(mdl::BoneKeys(model), mdl::kBoneKeyCapacity,
-                                      mdl::Mdl(model)->boneCount,
-                                      static_cast<std::uint32_t>(from),
+                                      mdl::Mdl(model)->boneCount, static_cast<std::uint32_t>(from),
                                       static_cast<std::uint32_t>(to));
             }
             // morph sweep (loc_482DE0..482E52, gated on 0x2D80 > 0)
@@ -746,9 +744,9 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
         } else if (TextEqN(text, kJpAllBone, 13) || TextEqN(text, "All bone", 9)) {
             // bone sweep only (loc_482FF2..483064)
             unsigned char* model = ActiveModel(app);
-            SelectModelFrameRange(
-                mdl::BoneKeys(model), mdl::kBoneKeyCapacity, mdl::Mdl(model)->boneCount,
-                static_cast<std::uint32_t>(from), static_cast<std::uint32_t>(to));
+            SelectModelFrameRange(mdl::BoneKeys(model), mdl::kBoneKeyCapacity,
+                                  mdl::Mdl(model)->boneCount, static_cast<std::uint32_t>(from),
+                                  static_cast<std::uint32_t>(to));
         } else if (TextEqN(text, kJpSelBone, 9) || TextEqN(text, "Sel Bone", 9)) {
             // selected-bone sweep (loc_4830D0..48310F): 0x4A27F0 per
             // selected bone (0x2D94 byte array), name at 0x26BC +
@@ -762,8 +760,7 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
                 for (std::int32_t i = 0; i < boneCount; ++i) {
                     if (sel[i] != 0) {
                         MarkKeyTrackRangeByName(model, static_cast<std::uint32_t>(from),
-                                                static_cast<std::uint32_t>(to),
-                                                bones[i].name);
+                                                static_cast<std::uint32_t>(to), bones[i].name);
                     }
                 }
             }
@@ -780,8 +777,7 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
                     mdl::FrameGroup& group = groups[i];
                     if (group.selected != 0) {
                         MarkKeyTrackRangeByName(model, static_cast<std::uint32_t>(from),
-                                                static_cast<std::uint32_t>(to),
-                                                group.name);
+                                                static_cast<std::uint32_t>(to), group.name);
                     }
                 }
             }
@@ -797,8 +793,8 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
     } else {
         // ---- 0x2F8 != 0: CB_GETCURSEL(0x1B2) dispatch ----
         // (loc_482A92..loc_482CED)
-        const LRESULT sel = SendMessageA(GetDlgItem(hwnd, panel::kRegisterScopeCombo),
-                                         CB_GETCURSEL, 0, 0);
+        const LRESULT sel =
+            SendMessageA(GetDlgItem(hwnd, panel::kRegisterScopeCombo), CB_GETCURSEL, 0, 0);
         if (sel == 0) {
             SelectGlobalFrameRange(app->CameraKeys(), static_cast<std::uint32_t>(from),
                                    static_cast<std::uint32_t>(to));
@@ -817,8 +813,8 @@ static void SelectKeyframesInRange(MMDApp* app, HWND hwnd) {
             // timeline is swept.
             for (std::int32_t slot = 0; slot < 0xFF; ++slot) {
                 mdl::AccessoryRecord* acc = app->AccessorySlot(slot);
-                if (acc != nullptr && static_cast<unsigned int>(acc->order) ==
-                                          static_cast<unsigned int>(sel - 4)) {
+                if (acc != nullptr &&
+                    static_cast<unsigned int>(acc->order) == static_cast<unsigned int>(sel - 4)) {
                     auto* keys = app->AccessoryKeys(slot);
                     SelectGlobalFrameRange(keys, static_cast<std::uint32_t>(from),
                                            static_cast<std::uint32_t>(to));
@@ -913,8 +909,7 @@ static void SyncKeyframeSelection(MMDApp* app) {
         auto* shadowKeys = app->ShadowKeys();
         auto* gravityKeys = app->GravityKeys();
 
-        const auto markAccessories = [app](std::uint32_t frame,
-                                           std::int32_t excludedSlot) {
+        const auto markAccessories = [app](std::uint32_t frame, std::int32_t excludedSlot) {
             for (std::int32_t slot = 0; slot < 0xFF; ++slot) {
                 if (slot == excludedSlot || app->AccessorySlot(slot) == nullptr) {
                     continue;
@@ -996,7 +991,7 @@ static void CopyInterpolationCurve(MMDApp* app, HWND hwnd) {
         const std::int32_t idx = FindFirstSelectedCameraKey(app);
         if (idx < 0) {
             SetFocus(hwnd);
-            return;  // was: break (switch exit)
+            return; // was: break (switch exit)
         }
         EnableWindow(GetDlgItem(hwnd, panel::kCurvePasteButton), TRUE);
         auto* keys = app->CameraKeys();
@@ -1010,7 +1005,7 @@ static void CopyInterpolationCurve(MMDApp* app, HWND hwnd) {
         const std::int32_t idx = FirstSelectedBoneKey(model);
         if (idx < 0) {
             SetFocus(hwnd);
-            return;  // was: break (switch exit)
+            return; // was: break (switch exit)
         }
         EnableWindow(GetDlgItem(hwnd, panel::kCurvePasteButton), TRUE);
         mdl::BoneKey* keys = mdl::BoneKeys(model);
@@ -1061,8 +1056,7 @@ static void PasteInterpolationCurve(MMDApp* app, HWND hwnd) {
         // original: 0x4A1510(ecx = model, frame = dword app+0x980)
         SnapshotSelectedKeysForUndo(model, app->state.currentFrame);
         mdl::BoneKey* keys = mdl::BoneKeys(model);
-        for (std::int32_t i = 0; i < static_cast<std::int32_t>(mdl::kBoneKeyCapacity);
-             ++i) {
+        for (std::int32_t i = 0; i < static_cast<std::int32_t>(mdl::kBoneKeyCapacity); ++i) {
             mdl::BoneKey& key = keys[i];
             if (key.allocated == 0) {
                 continue;
@@ -1111,8 +1105,7 @@ static void ResetInterpolationCurves(MMDApp* app, HWND hwnd) {
         // original: 0x4A1510(ecx = model, frame = dword app+0x980)
         SnapshotSelectedKeysForUndo(model, app->state.currentFrame);
         mdl::BoneKey* keys = mdl::BoneKeys(model);
-        for (std::int32_t i = 0; i < static_cast<std::int32_t>(mdl::kBoneKeyCapacity);
-             ++i) {
+        for (std::int32_t i = 0; i < static_cast<std::int32_t>(mdl::kBoneKeyCapacity); ++i) {
             mdl::BoneKey& key = keys[i];
             if (key.allocated == 0) {
                 continue;
@@ -1147,9 +1140,8 @@ static void OpenModelFile(MMDApp* app, HWND hwnd) {
     OPENFILENAMEW ofn;
     memset(&ofn, 0, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = app->state.floatingWindow != 0
-                        ? reinterpret_cast<HWND>(app->state.floatingWindow)
-                        : hwnd;
+    ofn.hwndOwner =
+        app->state.floatingWindow != 0 ? reinterpret_cast<HWND>(app->state.floatingWindow) : hwnd;
     ofn.lpstrFilter = kFilterModel;
     ofn.lpstrFile = fileBuf;
     ofn.nMaxFile = 0x100;
@@ -1163,8 +1155,7 @@ static void OpenModelFile(MMDApp* app, HWND hwnd) {
     ofn.lpstrTitle = app->state.englishUI != 0 ? kTitleLoadModel : kTitleOpenFileJp;
     if (GetOpenFileNameW(&ofn) != 0) {
         if ((GetMenuState(GetMenu(hwnd), MDS_CMD_TOGGLE_PREVIOUS_FOLDER, 0) & 8) != 0) {
-            wchar_t* dir =
-                ExtractDirFromPath(app->PathWorkspace().projectDirectory, fileBuf);
+            wchar_t* dir = ExtractDirFromPath(app->PathWorkspace().projectDirectory, fileBuf);
             CopyDirPathW(app->DirModel(), dir);
         }
         LoadModelFile(app, fileBuf);
@@ -1193,11 +1184,10 @@ static void OpenModelFile(MMDApp* app, HWND hwnd) {
 // blob +0x10/+0x0C); ApplyModelComboSelection.
 // ------------------------------------------------------------------
 static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
-    if (app->FrameRangeDialog() != nullptr) {
-        return;  // was: break (switch exit)
+    if (app->EnglishNameDialog() != nullptr) {
+        return; // was: break (switch exit)
     }
-    const LRESULT sel =
-        SendMessageA(GetDlgItem(hwnd, panel::kMainComboModel), CB_GETCURSEL, 0, 0);
+    const LRESULT sel = SendMessageA(GetDlgItem(hwnd, panel::kMainComboModel), CB_GETCURSEL, 0, 0);
     app->state.enterKeyState = 1;
     std::int32_t found = -1;
     // 槽查找环：x64 0x7FF7CB460A73 mov r13d,0FFh（界 255）
@@ -1209,7 +1199,7 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
         }
     }
     if (found < 0) {
-        return;  // was: break (switch exit)
+        return; // was: break (switch exit)
     }
     app->state.enterKeyState = 1;
     unsigned char* model = app->ModelSlot(found);
@@ -1222,8 +1212,8 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
     }
     const std::uint32_t flags =
         app->state.floatingWindow != 0 ? (MB_OKCANCEL | MB_TOPMOST) : MB_OKCANCEL;
-    if (MessageBoxA(hwnd, text, kCaptionDelModelJp, flags) != 1) {
-        return;  // was: break (switch exit)
+    if (MessageBoxA(hwnd, text, kCaptionDelModelJp, flags) != IDOK) {
+        return; // was: break (switch exit)
     }
     if (app->state.frameCopyDialog != 0) {
         SeekSelectedModelToCurrentFrame(app);
@@ -1243,7 +1233,7 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
     const std::int32_t oldSel = record.comboSelIndex;
     const std::int32_t oldIdx = record.comboSelIndex2;
     if (model != nullptr) {
-        DeleteModel(model, 1);  // model dispose (thiscall)
+        DeleteModel(model, 1); // model dispose (thiscall)
     }
     app->ModelSlot(found) = nullptr;
     app->SceneModified() = 1;
@@ -1267,8 +1257,8 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
         SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_GETCOUNT, 0, 0);
     for (std::int32_t i = 0; i < accCount; ++i) {
         char buf[0x100];
-        SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_GETLBTEXT,
-                     static_cast<WPARAM>(i), reinterpret_cast<LPARAM>(buf));
+        SendMessageA(GetDlgItem(hwnd, panel::kAccessoryCombo), CB_GETLBTEXT, static_cast<WPARAM>(i),
+                     reinterpret_cast<LPARAM>(buf));
         SendMessageA(GetDlgItem(hwnd, panel::kRegisterScopeCombo), CB_ADDSTRING, 0,
                      reinterpret_cast<LPARAM>(buf));
     }
@@ -1308,8 +1298,7 @@ static void DeleteSelectedModel(MMDApp* app, HWND hwnd) {
         app->CameraParentModel() = -1;
         app->CameraParentBone() = 0;
         SendMessageA(GetDlgItem(hwnd, panel::kMainComboNormal), CB_SETCURSEL, 0, 0);
-        SendMessageA(GetDlgItem(hwnd, panel::kBoneRegisterCombo), CB_RESETCONTENT, 0,
-                     0);
+        SendMessageA(GetDlgItem(hwnd, panel::kBoneRegisterCombo), CB_RESETCONTENT, 0, 0);
     }
     // Clear camera key attachment references to the deleted model.
     {
@@ -1358,11 +1347,11 @@ static void EditAccessoryAttachments(MMDApp* app, HWND hwnd) {
     app->state.accessoryEditDialogOpen = 1;
     const std::intptr_t result =
         DialogBoxParamA(static_cast<HINSTANCE>(app->HInstance()),
-                        app->state.englishUI != 0 ? reinterpret_cast<LPCSTR>(0x329)
-                                                  : reinterpret_cast<LPCSTR>(0x328),
+                        app->state.englishUI != 0 ? MAKEINTRESOURCEA(MDS_DLG_OUTSIDE_PARENT_EN)
+                                                  : MAKEINTRESOURCEA(MDS_DLG_OUTSIDE_PARENT_JP),
                         hwnd, &SelectNavDlgProc, 0);
-    if (result == 2) {
-        return;  // was: break (switch exit)
+    if (result == IDCANCEL) {
+        return; // was: break (switch exit)
     }
     app->SceneModified() = 1;
     app->state.accessoryEditDialogOpen = 0;
@@ -1378,350 +1367,342 @@ static void EditAccessoryAttachments(MMDApp* app, HWND hwnd) {
         app->state.selectNavRecords = nullptr;
     }
     if (app->AccessoryApplyGate() == 0) {
-        return;  // was: break (switch exit)
+        return; // was: break (switch exit)
     }
     unsigned char* model = ActiveModel(app);
     // original: sub_4B4260(ecx = model, frame = app+0x980,
     // app+0xA0CC4)
-    SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame,
-                   app->PlaybackPhysicsMode());
+    SeekModelFrame(*mdl::Mdl(model), app->state.currentFrame, app->PlaybackPhysicsMode());
     RebuildTimelineTrackPanel(app);
     SelectionReeval(app);
 }
 
 void HandleFrameEditControl(MMDApp* app, HWND hwnd, std::uint16_t id, std::uint16_t notify) {
     switch (id) {
-        case panel::kUndoButton:  // undo (0x00482766) -> UndoKeyframeEdit
-            UndoKeyframeEdit(app, hwnd);
-            break;
+    case panel::kUndoButton: // undo (0x00482766) -> UndoKeyframeEdit
+        UndoKeyframeEdit(app, hwnd);
+        break;
 
-        case panel::kRedoButton:  // redo (0x004828DF) -> RedoKeyframeEdit
-            RedoKeyframeEdit(app, hwnd);
-            break;
+    case panel::kRedoButton: // redo (0x004828DF) -> RedoKeyframeEdit
+        RedoKeyframeEdit(app, hwnd);
+        break;
 
-        // ------------------------------------------------------------------
-        // 402 (0x0047EEDF): camera/view reset - 0x308..0x318 cleared, angle
-        // -45, 0x30C = 0 (byte 0x340 == 2) or 10, light matrix identity; the
-        // 0x2F8==0 path is gated: skipped when dword[0xA0430] >= 0 AND slot
-        // == dword[0xA0430] AND byte 0x330 == 0 AND byte 0x9ED98 != 0; flag
-        // 0xA0478 set when (0xA0430 >= 0 && 0x9ED98 != 0).  All paths end at
-        // loc_47EFF6 (PostViewRefresh + SelectTimelineTrack(GlobalTimelineTrack::Camera)).
-        // 403 (0x0047F163): same with 0x314 = PI (flt_52B738).
-        // 404 (0x0047F211): 0x310 = -PI/2 (flt_52E8FC), 0x30C = 0 without the
-        // byte-0x340 gate.
-        // 405 (0x0047F00B): 0x314 = +PI/2 (flt_52E900).
-        // 406 (0x0047F0B5): 0x314 = -PI/2 (flt_52E8FC).
-        // ------------------------------------------------------------------
-        case panel::kViewFrontButton:
-            ResetViewPreset(app, ViewPreset::Front);
-            break;
-        case panel::kViewBackButton:
-            ResetViewPreset(app, ViewPreset::Back);
-            break;
-        case panel::kViewTopButton:
-            ResetViewPreset(app, ViewPreset::Top);
-            break;
-        case panel::kViewLeftButton:
-            ResetViewPreset(app, ViewPreset::Left);
-            break;
-        case panel::kViewRightButton:
-            ResetViewPreset(app, ViewPreset::Right);
-            break;
+    // ------------------------------------------------------------------
+    // 402 (0x0047EEDF): camera/view reset - 0x308..0x318 cleared, angle
+    // -45, 0x30C = 0 (byte 0x340 == 2) or 10, light matrix identity; the
+    // 0x2F8==0 path is gated: skipped when dword[0xA0430] >= 0 AND slot
+    // == dword[0xA0430] AND byte 0x330 == 0 AND byte 0x9ED98 != 0; flag
+    // 0xA0478 set when (0xA0430 >= 0 && 0x9ED98 != 0).  All paths end at
+    // loc_47EFF6 (PostViewRefresh + SelectTimelineTrack(GlobalTimelineTrack::Camera)).
+    // 403 (0x0047F163): same with 0x314 = PI (flt_52B738).
+    // 404 (0x0047F211): 0x310 = -PI/2 (flt_52E8FC), 0x30C = 0 without the
+    // byte-0x340 gate.
+    // 405 (0x0047F00B): 0x314 = +PI/2 (flt_52E900).
+    // 406 (0x0047F0B5): 0x314 = -PI/2 (flt_52E8FC).
+    // ------------------------------------------------------------------
+    case panel::kViewFrontButton:
+        ResetViewPreset(app, ViewPreset::Front);
+        break;
+    case panel::kViewBackButton:
+        ResetViewPreset(app, ViewPreset::Back);
+        break;
+    case panel::kViewTopButton:
+        ResetViewPreset(app, ViewPreset::Top);
+        break;
+    case panel::kViewLeftButton:
+        ResetViewPreset(app, ViewPreset::Left);
+        break;
+    case panel::kViewRightButton:
+        ResetViewPreset(app, ViewPreset::Right);
+        break;
 
-        case panel::kViewBottomButton:  // view reset + reload (0x0047F29C) -> ResetViewAndReloadModels
-            ResetViewAndReloadModels(app);
-            break;
+    case panel::kViewBottomButton: // view reset + reload (0x0047F29C) -> ResetViewAndReloadModels
+        ResetViewAndReloadModels(app);
+        break;
 
-        case panel::kPlayButton:  // play-range edits (0x00487446) -> ApplyPlaybackRangeEdits
-            ApplyPlaybackRangeEdits(app, hwnd);
-            break;
+    case panel::kPlayButton: // play-range edits (0x00487446) -> ApplyPlaybackRangeEdits
+        ApplyPlaybackRangeEdits(app, hwnd);
+        break;
 
-        // ------------------------------------------------------------------
-        // 411/413/414 (0x0047FAE5 / 0x0047FAFA / 0x0047FB0F): toggle bytes
-        // 0x341 / 0x342 / 0x9ED99 (setz cl / al / cl; mov [..], cl).
-        // ------------------------------------------------------------------
-        case panel::kPlaybackLoopCheckbox:
-            app->PlaybackLoopEnabled() = app->PlaybackLoopEnabled() == 0 ? 1 : 0;
-            break;
-        case panel::kPlaybackReturnCheckbox:
-            app->state.playbackReturnsToStartFrame =
-                app->state.playbackReturnsToStartFrame == 0 ? 1 : 0;
-            break;
-        case panel::kPlaybackFromCurrentCheckbox:
-            app->PlaybackStartsAtCurrentFrame() =
-                app->PlaybackStartsAtCurrentFrame() == 0 ? 1 : 0;
-            break;
+    // ------------------------------------------------------------------
+    // 411/413/414 (0x0047FAE5 / 0x0047FAFA / 0x0047FB0F): toggle bytes
+    // 0x341 / 0x342 / 0x9ED99 (setz cl / al / cl; mov [..], cl).
+    // ------------------------------------------------------------------
+    case panel::kPlaybackLoopCheckbox:
+        app->PlaybackLoopEnabled() = app->PlaybackLoopEnabled() == 0 ? 1 : 0;
+        break;
+    case panel::kPlaybackReturnCheckbox:
+        app->state.playbackReturnsToStartFrame =
+            app->state.playbackReturnsToStartFrame == 0 ? 1 : 0;
+        break;
+    case panel::kPlaybackFromCurrentCheckbox:
+        app->PlaybackStartsAtCurrentFrame() = app->PlaybackStartsAtCurrentFrame() == 0 ? 1 : 0;
+        break;
 
-        // ------------------------------------------------------------------
-        // 412 (0x0047F9FE): checkbox 0x19C - view-mode byte 0x340 := 1 when
-        // checked (BM_GETCHECK) / 0 when not; 0x213 is unchecked (BM_SETCHECK
-        // 0) in the checked branch; ApplyCameraReferenceModeChange(app, old value) runs only when
-        // byte 0x2F8 == 0.
-        // ------------------------------------------------------------------
-        case panel::kCameraRefModelCheckbox: {
-            const LRESULT checked = SendMessageA(
-                GetDlgItem(hwnd, panel::kCameraRefModelCheckbox), BM_GETCHECK, 0, 0);
-            const int prev = static_cast<int>(app->CameraReferenceMode());
-            if (checked == 1) {
-                app->CameraReferenceMode() = CameraAttachmentReference::ModelRoot;
-                SendMessageA(GetDlgItem(hwnd, panel::kCameraRefBoneCheckbox),
-                             BM_SETCHECK, 0, 0);
-                if (app->CameraMode() != 0) {
-                    break;
-                }
-                ApplyCameraReferenceModeChange(app, prev);
-            } else {
-                app->CameraReferenceMode() = CameraAttachmentReference::None;
-                if (app->CameraMode() != 0) {
-                    break;
-                }
-                ApplyCameraReferenceModeChange(app, prev);
-            }
-            break;
-        }
-
-        // ------------------------------------------------------------------
-        // 418/419 (0x00480734 / 0x0048072A): single refresh helpers.
-        // ------------------------------------------------------------------
-        case panel::kPreviousFrameButton:
-            StepFrame(app, false);
-            break;
-        case panel::kNextFrameButton:
-            StepFrame(app, true);
-            break;
-
-        // ------------------------------------------------------------------
-        // 429 (0x004862E0): frame-scroll gate.  count = (sidebar - 0x54) / 26
-        // (magic 0x4EC4EC4F, sar 3); dword 0x97C = frame(0x980) - count when
-        // positive else 0; PanelPaint; when byte 0xA06CC != 0:
-        // 0x4C2A00(0xCC sub, x = 0x97C, ho = sidebar) + InvalidateRect of
-        // {6, 0x5F, sidebar-3, 0x92}.
-        // ------------------------------------------------------------------
-        case panel::kShowCurrentFrameButton: {
-            const std::int32_t sidebar = app->SidebarWidth();
-            const std::int32_t count = (sidebar - 0x54) / 26;
-            const std::int32_t frame = app->state.currentFrame;
-            if (frame > count) {
-                app->state.timelineStartFrame = frame - count;
-            } else {
-                app->state.timelineStartFrame = 0;
-            }
-            PanelPaint(app);
-            if (app->state.waveEnabled != 0) {
-                TimelineDrawTicks(app->state.timelineStartFrame, sidebar);
-                RECT rc;
-                rc.left = 6;
-                rc.top = 0x5F;
-                rc.right = sidebar - 3;
-                rc.bottom = 0x92;
-                InvalidateRect(hwnd, &rc, FALSE);
-            }
-            break;
-        }
-
-        case panel::kCurveCopyButton:  // curve <- frame (0x00481109) -> CopyInterpolationCurve
-            CopyInterpolationCurve(app, hwnd);
-            break;
-
-        case panel::kCurvePasteButton:  // curve -> frames (0x00481430) -> PasteInterpolationCurve
-            PasteInterpolationCurve(app, hwnd);
-            break;
-
-        case panel::kCurveLinearButton:  // curve reset (0x004816E6) -> ResetInterpolationCurves
-            ResetInterpolationCurves(app, hwnd);
-            break;
-
-        case panel::kLoadModelButton:  // load model (0x0047EB7B) -> OpenModelFile
-            OpenModelFile(app, hwnd);
-            break;
-
-        // ------------------------------------------------------------------
-        // 436 is handled by the original dispatcher's default chain rather
-        // than its command-ID jump table: CBN_SELCHANGE from the model combo
-        // enters ApplyModelComboSelection when the modal/model-load gate at 0xA0B50 is clear.
-        // ------------------------------------------------------------------
-        case panel::kMainComboModel:
-            if (notify == CBN_SELCHANGE && app->FrameRangeDialog() == nullptr) {
-                ApplyModelComboSelection(app);
-                // x86 0x48F2DA / x64 RVA 0x53DE0: return arrow keys to
-                // the editor after changing the selected model/camera.
-                SetFocus(app->MainWindow());
-            }
-            break;
-
-        case panel::kDeleteModelButton:  // delete model (0x0047FCF5) -> DeleteSelectedModel
-            DeleteSelectedModel(app, hwnd);
-            break;
-
-        // ------------------------------------------------------------------
-        // 438 (0x00480651): clear keyframe selection marks: 0x26E0 (0x3C
-        // stride, +0x38), 0x26E4 (0x14 stride, +0x10), 0x26E8 (0x1C stride,
-        // +0x14) of the active model; RegisterDisplayKeyCurrent(model, dword 0x980);
-        // 0x9E16C = max(0x9E16C, model+0x31B0); PanelPaint.  Dirty 0xA0B0D.
-        // ------------------------------------------------------------------
-        case panel::kRegisterModelDisplayButton: {
-            app->SceneModified() = 1;
-            unsigned char* model = ActiveModel(app);
-            ClearModelKeyMarks(mdl::BoneKeys(model), mdl::kBoneKeyCapacity);
-            ClearModelKeyMarks(mdl::MorphKeys(model), 20000);
-            ClearModelKeyMarks(mdl::DisplayKeys(model), 1000);
-            RegisterDisplayKeyCurrent(model, app->state.currentFrame);
-            const std::int32_t v = static_cast<std::int32_t>(mdl::Mdl(model)->maxFrame);
-            if (app->state.lastRegisteredFrame < v) {
-                app->state.lastRegisteredFrame = v;
-            }
-            PanelPaint(app);
-            break;
-        }
-
-        // ------------------------------------------------------------------
-        // 439 (0x0047F3AF): checkbox 0x1B7 -> model byte 0x2D8D (1/0).
-        // ------------------------------------------------------------------
-        case panel::kModelVisibleCheckbox: {
-            mdl::Mdl(ActiveModel(app))->loadComplete =
-                IsDlgButtonChecked(hwnd, panel::kModelVisibleCheckbox) == 1 ? 1 : 0;
-            break;
-        }
-
-        // ------------------------------------------------------------------
-        // 440/441 (0x0048A166 / 0x0048A133): model-flag toggles 0x37C0 /
-        // 0x31BE when the active model exists; the original then jumps into
-        // def_47E903, a no-op for these ids.
-        // ------------------------------------------------------------------
-        case panel::kShadowCheckbox: {
-            unsigned char* model = ActiveModel(app);
-            if (model != nullptr) {
-                mdl::ModelRecord& record = *mdl::Mdl(model);
-                record.toonFlag = record.toonFlag == 0 ? 1 : 0;
-            }
-            break;
-        }
-        case panel::kAddBlendCheckbox: {
-            unsigned char* model = ActiveModel(app);
-            if (model != nullptr) {
-                mdl::ModelRecord& record = *mdl::Mdl(model);
-                record.postLoadFlag2 = record.postLoadFlag2 == 0 ? 1 : 0;
-            }
-            break;
-        }
-
-        // ------------------------------------------------------------------
-        // 444/445 (0x0047F319 / 0x0047F364): combo 0x1BB selection writes the
-        // flag byte +0x12 of the 24-byte-stride table model+0x26C0 (1 / 0).
-        // ------------------------------------------------------------------
-        case panel::kIkOnRadio: {
-            const LRESULT sel = SendMessageA(GetDlgItem(hwnd, panel::kIkChainCombo),
-                                             CB_GETCURSEL, 0, 0);
-            unsigned char* model = ActiveModel(app);
-            mdl::IkChain* chains = mdl::Mdl(model)->ikChains;
-            if (chains != nullptr) {
-                chains[sel].enabled = 1;
-            }
-            break;
-        }
-        case panel::kIkOffRadio: {
-            const LRESULT sel = SendMessageA(GetDlgItem(hwnd, panel::kIkChainCombo),
-                                             CB_GETCURSEL, 0, 0);
-            unsigned char* model = ActiveModel(app);
-            mdl::IkChain* chains = mdl::Mdl(model)->ikChains;
-            if (chains != nullptr) {
-                chains[sel].enabled = 0;
-            }
-            break;
-        }
-
-        // ------------------------------------------------------------------
-        // 446 (0x00486392): perspective FOV toggle.  When byte 0x31C != 0:
-        // clear it and rebuild the projection - D3DXMatrixPerspectiveFovLH(
-        // &m, fov = 0x9E1E8 * pi/180, aspect = locale->aspectRatio (0x1D4EC),
-        // zn = 1, zf = 100000.0), scene (locale->device, 0x1D4E0) vtable slot 0xB0
-        // (obj, 3, &m), SelectTimelineTrack(GlobalTimelineTrack::Camera).  Else: byte 0x31C = 1 +
-        // SelectTimelineTrack(GlobalTimelineTrack::Camera).
-        // ------------------------------------------------------------------
-        case panel::kPerspectiveCheckbox: {
-            if (app->CameraPerspective() != 0) {
-                app->CameraPerspective() = 0;
-                d3dx::D3DXMATRIXF mat{};
-                auto* d3dx = &d3dx::Get();
-                D3DRenderer* locale = app->Renderer();
-                const float fov =
-                    static_cast<float>(static_cast<double>(app->CameraFov()) *
-                                       0.0174532925199433);  // dbl_52BB20 (pi/180)
-                const float aspect = locale->aspectRatio;    // 0x1D4EC
-                {
-                    d3dx->perspectiveFovLH(&mat, fov, aspect, 1.0f, 100000.0f);
-                }
-                IDirect3DDevice9* device = locale->device;
-                device->SetTransform(D3DTS_PROJECTION,
-                                     reinterpret_cast<const D3DMATRIX*>(&mat));
-                SelectTimelineTrack(GlobalTimelineTrack::Camera);
-            } else {
-                app->CameraPerspective() = 1;
-                SelectTimelineTrack(GlobalTimelineTrack::Camera);
-            }
-            break;
-        }
-
-        // ------------------------------------------------------------------
-        // 423 (0x004810F8): DeleteMarkedKeyframes(app) then dirty 0xA0B0D.
-        // ------------------------------------------------------------------
-        case panel::kDeleteFramesButton:
-            DeleteMarkedKeyframes(app);
-            app->SceneModified() = 1;
-            break;
-
-        case panel::kEditExternalParentButton:  // accessory edit dialog (0x0048D759) -> EditAccessoryAttachments
-            EditAccessoryAttachments(app, hwnd);
-            break;
-
-        case panel::kSelectRangeButton:  // frame-range selection (0x004829E4) -> SelectKeyframesInRange
-            SelectKeyframesInRange(app, hwnd);
-            break;
-
-        case panel::kSelectColumnButton:  // selection-mark sync (0x0048073E) -> SyncKeyframeSelection
-            SyncKeyframeSelection(app);
-            break;
-
-        case panel::kCopyFramesButton:  // frame copy (0x004834D2) -> CopySelectedKeyframes
-            CopySelectedKeyframes(app, hwnd);
-            break;
-
-        case panel::kPasteButton:  // frame paste (0x00484973) -> PasteSelectedKeyframes
-            PasteSelectedKeyframes(app, hwnd);
-            break;
-
-        case panel::kReversePasteButton:  // reverse paste (0x00485CF2) -> PasteMirroredBoneKeyframes
-            PasteMirroredBoneKeyframes(app, hwnd);
-            break;
-
-        // ------------------------------------------------------------------
-        // 424 (0x00488300): frame-edit dialog.  0x2F8 == 0 only; dirty
-        // 0xBC, then DialogBoxParamA with the locale-gated template (0x25E
-        // when byte 0xA0B4C == 0 i.e. JP UI, 0x28C otherwise) and the
-        // sub_44C5D0 dialog proc.
-        // ------------------------------------------------------------------
-        case panel::kExpandShrinkButton: {
+    // ------------------------------------------------------------------
+    // 412 (0x0047F9FE): checkbox 0x19C - view-mode byte 0x340 := 1 when
+    // checked (BM_GETCHECK) / 0 when not; 0x213 is unchecked (BM_SETCHECK
+    // 0) in the checked branch; ApplyCameraReferenceModeChange(app, old value) runs only when
+    // byte 0x2F8 == 0.
+    // ------------------------------------------------------------------
+    case panel::kCameraRefModelCheckbox: {
+        const LRESULT checked =
+            SendMessageA(GetDlgItem(hwnd, panel::kCameraRefModelCheckbox), BM_GETCHECK, 0, 0);
+        const int prev = static_cast<int>(app->CameraReferenceMode());
+        if (checked == 1) {
+            app->CameraReferenceMode() = CameraAttachmentReference::ModelRoot;
+            SendMessageA(GetDlgItem(hwnd, panel::kCameraRefBoneCheckbox), BM_SETCHECK, 0, 0);
             if (app->CameraMode() != 0) {
                 break;
             }
-            app->state.enterKeyState = 1;
-            if (app->state.englishUI != 0) {
-                DialogBoxParamA(static_cast<HINSTANCE>(app->HInstance()),
-                                reinterpret_cast<LPCSTR>(0x28C), hwnd,
-                                &FrameRangeDlgProc, 0);
-            } else {
-                DialogBoxParamA(static_cast<HINSTANCE>(app->HInstance()),
-                                reinterpret_cast<LPCSTR>(0x25E), hwnd,
-                                &FrameRangeDlgProc, 0);
+            ApplyCameraReferenceModeChange(app, prev);
+        } else {
+            app->CameraReferenceMode() = CameraAttachmentReference::None;
+            if (app->CameraMode() != 0) {
+                break;
             }
+            ApplyCameraReferenceModeChange(app, prev);
+        }
+        break;
+    }
+
+    // ------------------------------------------------------------------
+    // 418/419 (0x00480734 / 0x0048072A): single refresh helpers.
+    // ------------------------------------------------------------------
+    case panel::kPreviousFrameButton:
+        StepFrame(app, false);
+        break;
+    case panel::kNextFrameButton:
+        StepFrame(app, true);
+        break;
+
+    // ------------------------------------------------------------------
+    // 429 (0x004862E0): frame-scroll gate.  count = (sidebar - 0x54) / 26
+    // (magic 0x4EC4EC4F, sar 3); dword 0x97C = frame(0x980) - count when
+    // positive else 0; PanelPaint; when byte 0xA06CC != 0:
+    // 0x4C2A00(0xCC sub, x = 0x97C, ho = sidebar) + InvalidateRect of
+    // {6, 0x5F, sidebar-3, 0x92}.
+    // ------------------------------------------------------------------
+    case panel::kShowCurrentFrameButton: {
+        const std::int32_t sidebar = app->SidebarWidth();
+        const std::int32_t count = (sidebar - 0x54) / 26;
+        const std::int32_t frame = app->state.currentFrame;
+        if (frame > count) {
+            app->state.timelineStartFrame = frame - count;
+        } else {
+            app->state.timelineStartFrame = 0;
+        }
+        PanelPaint(app);
+        if (app->state.waveEnabled != 0) {
+            TimelineDrawTicks(app->state.timelineStartFrame, sidebar);
+            RECT rc;
+            rc.left = 6;
+            rc.top = 0x5F;
+            rc.right = sidebar - 3;
+            rc.bottom = 0x92;
+            InvalidateRect(hwnd, &rc, FALSE);
+        }
+        break;
+    }
+
+    case panel::kCurveCopyButton: // curve <- frame (0x00481109) -> CopyInterpolationCurve
+        CopyInterpolationCurve(app, hwnd);
+        break;
+
+    case panel::kCurvePasteButton: // curve -> frames (0x00481430) -> PasteInterpolationCurve
+        PasteInterpolationCurve(app, hwnd);
+        break;
+
+    case panel::kCurveLinearButton: // curve reset (0x004816E6) -> ResetInterpolationCurves
+        ResetInterpolationCurves(app, hwnd);
+        break;
+
+    case panel::kLoadModelButton: // load model (0x0047EB7B) -> OpenModelFile
+        OpenModelFile(app, hwnd);
+        break;
+
+    // ------------------------------------------------------------------
+    // 436 is handled by the original dispatcher's default chain rather
+    // than its command-ID jump table: CBN_SELCHANGE from the model combo
+    // enters ApplyModelComboSelection when the modal/model-load gate at 0xA0B50 is clear.
+    // ------------------------------------------------------------------
+    case panel::kMainComboModel:
+        if (notify == CBN_SELCHANGE && app->EnglishNameDialog() == nullptr) {
+            ApplyModelComboSelection(app);
+            // x86 0x48F2DA / x64 RVA 0x53DE0: return arrow keys to
+            // the editor after changing the selected model/camera.
+            SetFocus(app->MainWindow());
+        }
+        break;
+
+    case panel::kDeleteModelButton: // delete model (0x0047FCF5) -> DeleteSelectedModel
+        DeleteSelectedModel(app, hwnd);
+        break;
+
+    // ------------------------------------------------------------------
+    // 438 (0x00480651): clear keyframe selection marks: 0x26E0 (0x3C
+    // stride, +0x38), 0x26E4 (0x14 stride, +0x10), 0x26E8 (0x1C stride,
+    // +0x14) of the active model; RegisterDisplayKeyCurrent(model, dword 0x980);
+    // 0x9E16C = max(0x9E16C, model+0x31B0); PanelPaint.  Dirty 0xA0B0D.
+    // ------------------------------------------------------------------
+    case panel::kRegisterModelDisplayButton: {
+        app->SceneModified() = 1;
+        unsigned char* model = ActiveModel(app);
+        ClearModelKeyMarks(mdl::BoneKeys(model), mdl::kBoneKeyCapacity);
+        ClearModelKeyMarks(mdl::MorphKeys(model), 20000);
+        ClearModelKeyMarks(mdl::DisplayKeys(model), 1000);
+        RegisterDisplayKeyCurrent(model, app->state.currentFrame);
+        const std::int32_t v = static_cast<std::int32_t>(mdl::Mdl(model)->maxFrame);
+        if (app->state.lastRegisteredFrame < v) {
+            app->state.lastRegisteredFrame = v;
+        }
+        PanelPaint(app);
+        break;
+    }
+
+    // ------------------------------------------------------------------
+    // 439 (0x0047F3AF): checkbox 0x1B7 -> model byte 0x2D8D (1/0).
+    // ------------------------------------------------------------------
+    case panel::kModelVisibleCheckbox: {
+        mdl::Mdl(ActiveModel(app))->loadComplete =
+            IsDlgButtonChecked(hwnd, panel::kModelVisibleCheckbox) == 1 ? 1 : 0;
+        break;
+    }
+
+    // ------------------------------------------------------------------
+    // 440/441 (0x0048A166 / 0x0048A133): model-flag toggles 0x37C0 /
+    // 0x31BE when the active model exists; the original then jumps into
+    // def_47E903, a no-op for these ids.
+    // ------------------------------------------------------------------
+    case panel::kShadowCheckbox: {
+        unsigned char* model = ActiveModel(app);
+        if (model != nullptr) {
+            mdl::ModelRecord& record = *mdl::Mdl(model);
+            record.toonFlag = record.toonFlag == 0 ? 1 : 0;
+        }
+        break;
+    }
+    case panel::kAddBlendCheckbox: {
+        unsigned char* model = ActiveModel(app);
+        if (model != nullptr) {
+            mdl::ModelRecord& record = *mdl::Mdl(model);
+            record.postLoadFlag2 = record.postLoadFlag2 == 0 ? 1 : 0;
+        }
+        break;
+    }
+
+    // ------------------------------------------------------------------
+    // 444/445 (0x0047F319 / 0x0047F364): combo 0x1BB selection writes the
+    // flag byte +0x12 of the 24-byte-stride table model+0x26C0 (1 / 0).
+    // ------------------------------------------------------------------
+    case panel::kIkOnRadio: {
+        const LRESULT sel =
+            SendMessageA(GetDlgItem(hwnd, panel::kIkChainCombo), CB_GETCURSEL, 0, 0);
+        unsigned char* model = ActiveModel(app);
+        mdl::IkChain* chains = mdl::Mdl(model)->ikChains;
+        if (chains != nullptr) {
+            chains[sel].enabled = 1;
+        }
+        break;
+    }
+    case panel::kIkOffRadio: {
+        const LRESULT sel =
+            SendMessageA(GetDlgItem(hwnd, panel::kIkChainCombo), CB_GETCURSEL, 0, 0);
+        unsigned char* model = ActiveModel(app);
+        mdl::IkChain* chains = mdl::Mdl(model)->ikChains;
+        if (chains != nullptr) {
+            chains[sel].enabled = 0;
+        }
+        break;
+    }
+
+    // ------------------------------------------------------------------
+    // 446 (0x00486392): perspective FOV toggle.  When byte 0x31C != 0:
+    // clear it and rebuild the projection - D3DXMatrixPerspectiveFovLH(
+    // &m, fov = 0x9E1E8 * pi/180, aspect = locale->aspectRatio (0x1D4EC),
+    // zn = 1, zf = 100000.0), scene (locale->device, 0x1D4E0) vtable slot 0xB0
+    // (obj, 3, &m), SelectTimelineTrack(GlobalTimelineTrack::Camera).  Else: byte 0x31C = 1 +
+    // SelectTimelineTrack(GlobalTimelineTrack::Camera).
+    // ------------------------------------------------------------------
+    case panel::kPerspectiveCheckbox: {
+        if (app->CameraPerspective() != 0) {
+            app->CameraPerspective() = 0;
+            d3dx::D3DXMATRIXF mat{};
+            auto* d3dx = &d3dx::Get();
+            D3DRenderer* locale = app->Renderer();
+            const float fov = static_cast<float>(static_cast<double>(app->CameraFov()) *
+                                                 0.0174532925199433); // dbl_52BB20 (pi/180)
+            const float aspect = locale->aspectRatio;                 // 0x1D4EC
+            { d3dx->perspectiveFovLH(&mat, fov, aspect, 1.0f, 100000.0f); }
+            IDirect3DDevice9* device = locale->device;
+            device->SetTransform(D3DTS_PROJECTION, reinterpret_cast<const D3DMATRIX*>(&mat));
+            SelectTimelineTrack(GlobalTimelineTrack::Camera);
+        } else {
+            app->CameraPerspective() = 1;
+            SelectTimelineTrack(GlobalTimelineTrack::Camera);
+        }
+        break;
+    }
+
+    // ------------------------------------------------------------------
+    // 423 (0x004810F8): DeleteMarkedKeyframes(app) then dirty 0xA0B0D.
+    // ------------------------------------------------------------------
+    case panel::kDeleteFramesButton:
+        DeleteMarkedKeyframes(app);
+        app->SceneModified() = 1;
+        break;
+
+    case panel::
+        kEditExternalParentButton: // accessory edit dialog (0x0048D759) -> EditAccessoryAttachments
+        EditAccessoryAttachments(app, hwnd);
+        break;
+
+    case panel::kSelectRangeButton: // frame-range selection (0x004829E4) -> SelectKeyframesInRange
+        SelectKeyframesInRange(app, hwnd);
+        break;
+
+    case panel::kSelectColumnButton: // selection-mark sync (0x0048073E) -> SyncKeyframeSelection
+        SyncKeyframeSelection(app);
+        break;
+
+    case panel::kCopyFramesButton: // frame copy (0x004834D2) -> CopySelectedKeyframes
+        CopySelectedKeyframes(app, hwnd);
+        break;
+
+    case panel::kPasteButton: // frame paste (0x00484973) -> PasteSelectedKeyframes
+        PasteSelectedKeyframes(app, hwnd);
+        break;
+
+    case panel::kReversePasteButton: // reverse paste (0x00485CF2) -> PasteMirroredBoneKeyframes
+        PasteMirroredBoneKeyframes(app, hwnd);
+        break;
+
+    // ------------------------------------------------------------------
+    // 424 (0x00488300): frame-edit dialog.  0x2F8 == 0 only; dirty
+    // 0xBC, then DialogBoxParamA with the locale-gated template (0x25E
+    // when byte 0xA0B4C == 0 i.e. JP UI, 0x28C otherwise) and the
+    // sub_44C5D0 dialog proc.
+    // ------------------------------------------------------------------
+    case panel::kExpandShrinkButton: {
+        if (app->CameraMode() != 0) {
             break;
         }
+        app->state.enterKeyState = 1;
+        if (app->state.englishUI != 0) {
+            DialogBoxParamA(static_cast<HINSTANCE>(app->HInstance()),
+                            MAKEINTRESOURCEA(MDS_DLG_FRAME_SCALE_EN), hwnd, &FrameRangeDlgProc, 0);
+        } else {
+            DialogBoxParamA(static_cast<HINSTANCE>(app->HInstance()),
+                            MAKEINTRESOURCEA(MDS_DLG_FRAME_SCALE_JP), hwnd, &FrameRangeDlgProc, 0);
+        }
+        break;
+    }
 
-        default:
-            // Remaining controls in this family have no action in the original
-            // default chain.
-            break;
+    default:
+        // Remaining controls in this family have no action in the original
+        // default chain.
+        break;
     }
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

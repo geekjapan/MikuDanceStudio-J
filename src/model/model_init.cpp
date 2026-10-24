@@ -14,9 +14,9 @@
 
 namespace mikudancestudio {
 
-void ModelInitMorphSlots(unsigned char* m);                  // 0x4A89B0
+void ModelInitMorphSlots(unsigned char* m); // 0x4A89B0
 
-void ModelInitDefaults(unsigned char* m) {                   // 0x4A8DC0
+void ModelInitDefaults(unsigned char* m) { // 0x4A8DC0
     mdl::ModelRecord& model = *mdl::Mdl(m);
     model.physicsMode = 0;
     for (auto& text : model.pmxTextBuffers)
@@ -68,11 +68,10 @@ void ModelInitDefaults(unsigned char* m) {                   // 0x4A8DC0
     mdl::MorphKeyIndices(m) = nullptr;
     model.boneListPos = 0;
     model.maxFrame = 0;
-    model.undoState[0] = 0;
-    model.undoState[1] = 0;
+    model.UndoCursor() = 0;
+    model.LatestUndoCursor() = 0;
     model.postLoadFlag2 = 0;
-    std::memset(model.undoRings, 0,
-                sizeof(model.undoRings));
+    std::memset(model.undoRings, 0, sizeof(model.undoRings));
     model.undoDirty = 0;
     model.redoDirty = 0;
     model.physicsFlags = 0;
@@ -98,10 +97,9 @@ void ModelInitDefaults(unsigned char* m) {                   // 0x4A8DC0
 
     auto& pose = model.standardPose;
     float* const quaternions[] = {
-        pose.upperBody, pose.neck, pose.leftArm, pose.leftWrist,
-        pose.leftElbow, pose.rightArm, pose.rightWrist, pose.rightElbow,
-        pose.lowerBody, pose.leftLeg, pose.leftKnee, pose.leftFoot,
-        pose.rightLeg, pose.rightKnee, pose.rightFoot,
+        pose.upperBody,    pose.neck,          pose.leftArm,    pose.leftWrist, pose.leftElbow,
+        pose.rightArm,     pose.rightWrist,    pose.rightElbow, pose.lowerBody, pose.leftLeg,
+        pose.leftKnee,     pose.leftFoot,      pose.rightLeg,   pose.rightKnee, pose.rightFoot,
         pose.leftShoulder, pose.rightShoulder,
     };
     for (auto* quaternion : quaternions) {
@@ -109,7 +107,7 @@ void ModelInitDefaults(unsigned char* m) {                   // 0x4A8DC0
         quaternion[3] = 1.0f;
     }
 
-    ModelInitMorphSlots(m);                                // 0x4A89B0
+    ModelInitMorphSlots(m); // 0x4A89B0
 
     mdl::PoseTraceFlag(m) = 0;
     model.lightDir[0] = -1.0f;
@@ -120,7 +118,7 @@ void ModelInitDefaults(unsigned char* m) {                   // 0x4A8DC0
     model.matMisc = 0;
 }
 
-void ModelInitMorphSlots(unsigned char* m) {               // 0x4A89B0
+void ModelInitMorphSlots(unsigned char* m) { // 0x4A89B0
     // Thirty samples for each of the twenty-three sensor joints.
     // Missing samples use the original y = -999 sentinel.
     for (auto& joint : mdl::Mdl(m)->skeletonHistory.positions) {
@@ -137,4 +135,4 @@ void ModelInitMorphSlots(unsigned char* m) {               // 0x4A89B0
     mdl::Mdl(m)->legIkXOffset = 1.0f;
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

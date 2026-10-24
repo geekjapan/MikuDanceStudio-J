@@ -55,8 +55,7 @@ namespace mikudancestudio {
 namespace {
 
 void QuatFromMatrix(float out[4], const void* m16) {
-    d3dx::Get().quatFromMatrix(
-        out, reinterpret_cast<const d3dx::D3DXMATRIXF*>(m16));
+    d3dx::Get().quatFromMatrix(out, reinterpret_cast<const d3dx::D3DXMATRIXF*>(m16));
 }
 
 void QuatMultiply(float out[4], const float a[4], const float b[4]) {
@@ -70,8 +69,7 @@ void SetRotationOriginal(float* basis, const float* quaternion) {
 #else
 void SetRotationOriginal(float* basis, const float* quaternion) {
     auto* matrix = reinterpret_cast<btMatrix3x3*>(basis);
-    matrix->setRotation(btQuaternion(quaternion[0], quaternion[1],
-                                     quaternion[2], quaternion[3]));
+    matrix->setRotation(btQuaternion(quaternion[0], quaternion[1], quaternion[2], quaternion[3]));
 }
 #endif
 
@@ -79,11 +77,11 @@ void SetRotationOriginal(float* basis, const float* quaternion) {
 // MIKUDANCESTUDIO_DIAG, default OFF); the OFF stubs below keep the call
 // sites valid and inline away to nothing.
 #ifdef MIKUDANCESTUDIO_DIAG
-void DumpRigidCreateState(int shape, int mode, const float* inputMatrix,
-                          const float* quaternion, const btRigidBody* body) {
+void DumpRigidCreateState(int shape, int mode, const float* inputMatrix, const float* quaternion,
+                          const btRigidBody* body) {
     char directory[MAX_PATH]{};
-    const DWORD length = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_STATE_DUMP_DIR", directory, MAX_PATH);
+    const DWORD length =
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_STATE_DUMP_DIR", directory, MAX_PATH);
     if (length == 0 || length >= MAX_PATH || body == nullptr)
         return;
     CreateDirectoryA(directory, nullptr);
@@ -102,8 +100,10 @@ void DumpRigidCreateState(int shape, int mode, const float* inputMatrix,
             std::fprintf(stream, "\"%08X\"", value);
         }
     };
-    std::fprintf(stream, "{\"shape\":%d,\"mode\":%d,"
-                         "\"input_matrix_bits\":[", shape, mode);
+    std::fprintf(stream,
+                 "{\"shape\":%d,\"mode\":%d,"
+                 "\"input_matrix_bits\":[",
+                 shape, mode);
     writeWords(inputMatrix, 16);
     std::fputs("],\"quaternion_bits\":[", stream);
     writeWords(quaternion, 4);
@@ -113,17 +113,15 @@ void DumpRigidCreateState(int shape, int mode, const float* inputMatrix,
     // thresholds.  The following optional motion-state/constraint-array fields
     // contain process pointers and are intentionally excluded.
     std::fputs("],\"solver_bits\":[", stream);
-    writeWords(reinterpret_cast<const unsigned char*>(body) + 0x110,
-               (0x208 - 0x110) / 4);
+    writeWords(reinterpret_cast<const unsigned char*>(body) + 0x110, (0x208 - 0x110) / 4);
     std::fputs("]}\n", stream);
     std::fclose(stream);
 }
 
-void DumpConstraintCreateState(
-        int index, btGeneric6DofSpringConstraint* constraint) {
+void DumpConstraintCreateState(int index, btGeneric6DofSpringConstraint* constraint) {
     char directory[MAX_PATH]{};
-    const DWORD length = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_STATE_DUMP_DIR", directory, MAX_PATH);
+    const DWORD length =
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_STATE_DUMP_DIR", directory, MAX_PATH);
     if (length == 0 || length >= MAX_PATH || constraint == nullptr)
         return;
     CreateDirectoryA(directory, nullptr);
@@ -144,25 +142,21 @@ void DumpConstraintCreateState(
     };
     const auto* base = reinterpret_cast<const unsigned char*>(constraint);
     const auto* linear = constraint->getTranslationalLimitMotor();
-    std::fprintf(stream,
-                 "{\"index\":%d,\"object_size\":%u,"
-                 "\"user_constraint_id\":%d,"
-                 "\"frame_a_offset\":%u,\"frame_b_offset\":%u,"
-                 "\"linear_motor_offset\":%u,"
-                 "\"angular_motor_offset\":%u,\"frame_a_bits\":[",
-                 index, static_cast<unsigned>(sizeof(*constraint)),
-                 constraint->getUserConstraintId(),
-                 static_cast<unsigned>(
-                     reinterpret_cast<const unsigned char*>(
-                         &constraint->getFrameOffsetA()) - base),
-                 static_cast<unsigned>(
-                     reinterpret_cast<const unsigned char*>(
-                         &constraint->getFrameOffsetB()) - base),
-                 static_cast<unsigned>(
-                     reinterpret_cast<const unsigned char*>(linear) - base),
-                 static_cast<unsigned>(
-                     reinterpret_cast<const unsigned char*>(
-                         constraint->getRotationalLimitMotor(0)) - base));
+    std::fprintf(
+        stream,
+        "{\"index\":%d,\"object_size\":%u,"
+        "\"user_constraint_id\":%d,"
+        "\"frame_a_offset\":%u,\"frame_b_offset\":%u,"
+        "\"linear_motor_offset\":%u,"
+        "\"angular_motor_offset\":%u,\"frame_a_bits\":[",
+        index, static_cast<unsigned>(sizeof(*constraint)), constraint->getUserConstraintId(),
+        static_cast<unsigned>(
+            reinterpret_cast<const unsigned char*>(&constraint->getFrameOffsetA()) - base),
+        static_cast<unsigned>(
+            reinterpret_cast<const unsigned char*>(&constraint->getFrameOffsetB()) - base),
+        static_cast<unsigned>(reinterpret_cast<const unsigned char*>(linear) - base),
+        static_cast<unsigned>(
+            reinterpret_cast<const unsigned char*>(constraint->getRotationalLimitMotor(0)) - base));
     writeWords(&constraint->getFrameOffsetA(), 16);
     std::fputs("],\"frame_b_bits\":[", stream);
     writeWords(&constraint->getFrameOffsetB(), 16);
@@ -183,25 +177,21 @@ void DumpConstraintCreateState(
     std::fclose(stream);
 }
 #else
-inline void DumpRigidCreateState(int, int, const float*, const float*,
-                                 const btRigidBody*) {}
-inline void DumpConstraintCreateState(int, btGeneric6DofSpringConstraint*) {}
+inline void DumpRigidCreateState(int, int, const float*, const float*, const btRigidBody*) {
+}
+inline void DumpConstraintCreateState(int, btGeneric6DofSpringConstraint*) {
+}
 #endif
 
-}  // namespace
+} // namespace
 
-
-
-void TransformJointPointOriginal(float out[3], const float point[3],
-                                 const float matrix[16]) {
+void TransformJointPointOriginal(float out[3], const float point[3], const float matrix[16]) {
 #if defined(_M_IX86)
     btMmdMath::transformPoint(out, point, matrix);
 #else
     for (int column = 0; column < 3; ++column) {
-        out[column] = point[0] * matrix[column]
-                    + point[1] * matrix[4 + column]
-                    + point[2] * matrix[8 + column]
-                    + matrix[12 + column];
+        out[column] = point[0] * matrix[column] + point[1] * matrix[4 + column] +
+                      point[2] * matrix[8 + column] + matrix[12 + column];
     }
 #endif
 }
@@ -223,9 +213,8 @@ float JointRadiusBound(const float limits[6], float distA, float distB) {
             upper = lower;
         maxAbs[axis] = upper;
     }
-    return distA + distB + std::sqrt(maxAbs[0] * maxAbs[0] +
-                                     maxAbs[1] * maxAbs[1] +
-                                     maxAbs[2] * maxAbs[2]);
+    return distA + distB +
+           std::sqrt(maxAbs[0] * maxAbs[0] + maxAbs[1] * maxAbs[1] + maxAbs[2] * maxAbs[2]);
 }
 
 // VA 0x004064F0 - build one Bullet rigid body from PMD data.
@@ -234,20 +223,19 @@ float JointRadiusBound(const float limits[6], float distA, float distB) {
 // out[0] receives the body id (m_debugBodyId), out[1] the btRigidBody*.
 // The scene world is built by SceneConstruct (0x4032B0) during UI creation
 // (0x466D20), so it is always live here like in the original.
-void CreateRigidBody(PhysicsScene* scene, void** out, int shape, float sx, float sy,
-                     float sz, const float* mat16, int mode, float mass,
-                     float dampLin, float dampAng, float restitution,
-                     float friction, char grp, std::uint16_t mask) {
+void CreateRigidBody(PhysicsScene* scene, void** out, int shape, float sx, float sy, float sz,
+                     const float* mat16, int mode, float mass, float dampLin, float dampAng,
+                     float restitution, float friction, char grp, std::uint16_t mask) {
     btDiscreteDynamicsWorld* world = scene->world;
     btCollisionShape* colShape = nullptr;
     if (shape == 0) {
-        colShape = new btSphereShape(sx);                      // 0x406531
+        colShape = new btSphereShape(sx); // 0x406531
     } else if (shape == 1) {
-        colShape = new btBoxShape(btVector3(sx, sy, sz));      // 0x40657F
+        colShape = new btBoxShape(btVector3(sx, sy, sz)); // 0x40657F
     } else if (shape == 2) {
-        colShape = new btCapsuleShape(sx, sy);                 // 0x4065CF
+        colShape = new btCapsuleShape(sx, sy); // 0x4065CF
     } else {
-        out[0] = reinterpret_cast<void*>(                       // 0x4068A4
+        out[0] = reinterpret_cast<void*>( // 0x4068A4
             static_cast<std::intptr_t>(-1));
         out[1] = nullptr;
         return;
@@ -269,25 +257,23 @@ void CreateRigidBody(PhysicsScene* scene, void** out, int shape, float sx, float
     btVector3 inertia(0.0f, 0.0f, 0.0f);
     colShape->calculateLocalInertia(useMass, inertia);
 
-    btDefaultMotionState* motionState =
-        new btDefaultMotionState(startTrans);                  // 0x4067B5
-    btRigidBody::btRigidBodyConstructionInfo ci(               // 0x4067EF
+    btDefaultMotionState* motionState = new btDefaultMotionState(startTrans); // 0x4067B5
+    btRigidBody::btRigidBodyConstructionInfo ci(                              // 0x4067EF
         useMass, motionState, colShape, inertia);
-    btRigidBody* body = new btRigidBody(ci);                   // 0x406803
+    btRigidBody* body = new btRigidBody(ci); // 0x406803
 
-    world->addRigidBody(body, 1 << grp, mask);                 // 0x406857
-    body->setDamping(dampLin, dampAng);                        // 0x40686B
-    body->setRestitution(restitution);                         // 0x406875
-    body->setFriction(friction);                               // 0x40687E
+    world->addRigidBody(body, 1 << grp, mask); // 0x406857
+    body->setDamping(dampLin, dampAng);        // 0x40686B
+    body->setRestitution(restitution);         // 0x406875
+    body->setFriction(friction);               // 0x40687E
     if (mode == 0)
-        body->setCollisionFlags(                               // 0x406886
-            body->getCollisionFlags() |
-            btCollisionObject::CF_KINEMATIC_OBJECT);
-    body->setActivationState(DISABLE_DEACTIVATION);           // 0x406891
+        body->setCollisionFlags( // 0x406886
+            body->getCollisionFlags() | btCollisionObject::CF_KINEMATIC_OBJECT);
+    body->setActivationState(DISABLE_DEACTIVATION); // 0x406891
 
     DumpRigidCreateState(shape, mode, mat16, q, body);
 
-    out[0] = reinterpret_cast<void*>(                           // 0x406899
+    out[0] = reinterpret_cast<void*>( // 0x406899
         static_cast<std::intptr_t>(body->m_debugBodyId));
     out[1] = body;
 }
@@ -313,15 +299,12 @@ static std::string WordsHex(const float* values, int count) {
 // VA 0x00406010 - build one 6DOF spring joint between two rigid bodies.
 // Returns the constraint id assigned from the scene counter (scene+56);
 // the btGeneric6DofSpringConstraint pointer is retained by the world.
-int CreatePhysJoint(PhysicsScene* scene, void* rbA, void* rbB,
-                    float ax, float ay, float az, float aq0, float aq1,
-                    float aq2, float aq3, float bx, float by, float bz,
-                    float bq0, float bq1, float bq2, float bq3,
-                    float linUpper0, float linUpper1, float linUpper2,
-                    float linLower0, float linLower1, float linLower2,
-                    float angUpper0, float angUpper1, float angUpper2,
-                    float angLower0, float angLower1, float angLower2,
-                    float spring0, float spring1, float spring2,
+int CreatePhysJoint(PhysicsScene* scene, void* rbA, void* rbB, float ax, float ay, float az,
+                    float aq0, float aq1, float aq2, float aq3, float bx, float by, float bz,
+                    float bq0, float bq1, float bq2, float bq3, float linUpper0, float linUpper1,
+                    float linUpper2, float linLower0, float linLower1, float linLower2,
+                    float angUpper0, float angUpper1, float angUpper2, float angLower0,
+                    float angLower1, float angLower2, float spring0, float spring1, float spring2,
                     float spring3, float spring4, float spring5) {
     btDiscreteDynamicsWorld* world = scene->world;
 #ifdef MIKUDANCESTUDIO_DIAG
@@ -334,15 +317,14 @@ int CreatePhysJoint(PhysicsScene* scene, void* rbA, void* rbB,
     }();
     if (jointArgLog) {
         std::fprintf(jointArgLog,
-            "jnt a=%08X %08X %08X qa=%08X %08X %08X %08X "
-            "b=%08X %08X %08X qb=%08X %08X %08X %08X "
-            "spr=%08X %08X %08X %08X %08X %08X\n",
-            JointBits(ax), JointBits(ay), JointBits(az),
-            JointBits(aq0), JointBits(aq1), JointBits(aq2), JointBits(aq3),
-            JointBits(bx), JointBits(by), JointBits(bz),
-            JointBits(bq0), JointBits(bq1), JointBits(bq2), JointBits(bq3),
-            JointBits(spring0), JointBits(spring1), JointBits(spring2),
-            JointBits(spring3), JointBits(spring4), JointBits(spring5));
+                     "jnt a=%08X %08X %08X qa=%08X %08X %08X %08X "
+                     "b=%08X %08X %08X qb=%08X %08X %08X %08X "
+                     "spr=%08X %08X %08X %08X %08X %08X\n",
+                     JointBits(ax), JointBits(ay), JointBits(az), JointBits(aq0), JointBits(aq1),
+                     JointBits(aq2), JointBits(aq3), JointBits(bx), JointBits(by), JointBits(bz),
+                     JointBits(bq0), JointBits(bq1), JointBits(bq2), JointBits(bq3),
+                     JointBits(spring0), JointBits(spring1), JointBits(spring2), JointBits(spring3),
+                     JointBits(spring4), JointBits(spring5));
         std::fflush(jointArgLog);
     }
 #endif
@@ -358,49 +340,42 @@ int CreatePhysJoint(PhysicsScene* scene, void* rbA, void* rbB,
 #ifdef MIKUDANCESTUDIO_DIAG
     if (jointArgLog) {
         std::fprintf(jointArgLog, "frm A=%s B=%s\n",
-            WordsHex(reinterpret_cast<const float*>(&frameA), 16).c_str(),
-            WordsHex(reinterpret_cast<const float*>(&frameB), 16).c_str());
+                     WordsHex(reinterpret_cast<const float*>(&frameA), 16).c_str(),
+                     WordsHex(reinterpret_cast<const float*>(&frameB), 16).c_str());
         std::fflush(jointArgLog);
     }
 #endif
 
-    auto* con = new btGeneric6DofSpringConstraint(             // 0x406048
-        *static_cast<btRigidBody*>(rbA),
-        *static_cast<btRigidBody*>(rbB), frameA, frameB, true);
+    auto* con = new btGeneric6DofSpringConstraint( // 0x406048
+        *static_cast<btRigidBody*>(rbA), *static_cast<btRigidBody*>(rbB), frameA, frameB, true);
 
-    con->setLinearLowerLimit(                                  // 0x4062xx
+    con->setLinearLowerLimit( // 0x4062xx
         btVector3(linLower0, linLower1, linLower2));
-    con->setLinearUpperLimit(
-        btVector3(linUpper0, linUpper1, linUpper2));
+    con->setLinearUpperLimit(btVector3(linUpper0, linUpper1, linUpper2));
     // VC9's __CIfmod path in sub_401260/sub_4012E0 canonicalizes a signed
     // zero result to +0.  The modern fmodf inline preserves -0, which is
     // visible in the rotational motor limit bits.
-    const auto canonicalZero = [](float value) {
-        return value == 0.0f ? 0.0f : value;
-    };
-    con->setAngularLowerLimit(                                 // sub_401260
-        btVector3(canonicalZero(angLower0), canonicalZero(angLower1),
-                  canonicalZero(angLower2)));
-    con->setAngularUpperLimit(                                 // sub_4012E0
-        btVector3(canonicalZero(angUpper0), canonicalZero(angUpper1),
-                  canonicalZero(angUpper2)));
+    const auto canonicalZero = [](float value) { return value == 0.0f ? 0.0f : value; };
+    con->setAngularLowerLimit( // sub_401260
+        btVector3(canonicalZero(angLower0), canonicalZero(angLower1), canonicalZero(angLower2)));
+    con->setAngularUpperLimit( // sub_4012E0
+        btVector3(canonicalZero(angUpper0), canonicalZero(angUpper1), canonicalZero(angUpper2)));
 
-    world->addConstraint(con, false);                          // 0x4064xx
+    world->addConstraint(con, false); // 0x4064xx
 
-    if (spring0 > 0.0f || spring1 > 0.0f || spring2 > 0.0f ||
-        spring3 > 0.0f || spring4 > 0.0f || spring5 > 0.0f) {
-        const float springs[6] = {spring0, spring1, spring2,
-                                  spring3, spring4, spring5};
+    if (spring0 > 0.0f || spring1 > 0.0f || spring2 > 0.0f || spring3 > 0.0f || spring4 > 0.0f ||
+        spring5 > 0.0f) {
+        const float springs[6] = {spring0, spring1, spring2, spring3, spring4, spring5};
         for (int axis = 0; axis < 6; ++axis) {
             if (springs[axis] > 0.0f) {
-                con->enableSpring(axis, true);                 // sub_5008D0
-                con->setStiffness(axis, springs[axis]);        // sub_500910
+                con->enableSpring(axis, true);          // sub_5008D0
+                con->setStiffness(axis, springs[axis]); // sub_500910
             }
         }
-        con->setEquilibriumPoint();                            // sub_500930
+        con->setEquilibriumPoint(); // sub_500930
     }
 
-    int& counter = scene->constraintId;                         // 0x4064xx
+    int& counter = scene->constraintId; // 0x4064xx
     // The original stores this monotonically increasing value at
     // constraint+0x60: distinct solver UID.  m_userConstraintId at +0x18
     // remains -1 in the original; merging the two fields changes the VC9
@@ -417,8 +392,8 @@ int CreatePhysJoint(PhysicsScene* scene, void* rbA, void* rbB,
 // Physics mode 2 additionally applies the accumulated bone-morph offsets.
 // The transform updater then runs once for every bone layer through
 // ModelRecord::maxBoneLayer.
-void SetPhysicsMode(unsigned char* m, int afterPhysics,
-                    unsigned char* const* modelSlots, int physicsMode) {
+void SetPhysicsMode(unsigned char* m, int afterPhysics, unsigned char* const* modelSlots,
+                    int physicsMode) {
     mdl::ModelRecord& model = *mdl::Mdl(m);
     const int boneCount = model.boneCount;
     mikudancestudio::mdl::BoneRecord* bones = mikudancestudio::mdl::Bones(m);
@@ -426,8 +401,8 @@ void SetPhysicsMode(unsigned char* m, int afterPhysics,
         mikudancestudio::mdl::BoneRecord* bone = &bones[i];
         const unsigned char flag = bone->hasRigidBody;
         if (((physicsMode == 1 || (physicsMode >= 2 && bone->physicsDisabled == 0)) && flag) != 0) {
-            std::memcpy(bone->physicsOffset, bone->ikBackup, 12);           // pos
-            std::memcpy(bone->physicsQuat, bone->ikBackup + 3, 16);           // quat
+            std::memcpy(bone->physicsOffset, bone->ikBackup, 12);   // pos
+            std::memcpy(bone->physicsQuat, bone->ikBackup + 3, 16); // quat
         } else {
             std::memcpy(bone->physicsOffset, bone->trans, 12);
             std::memcpy(bone->physicsQuat, bone->rotQuat, 16);
@@ -444,16 +419,14 @@ void SetPhysicsMode(unsigned char* m, int afterPhysics,
             bone->physicsOffset[1] += record.translation[1];
             bone->physicsOffset[2] += record.translation[2];
             float out[4];
-            QuatMultiply(out,
-                         reinterpret_cast<const float*>(bone->physicsQuat),
-                         record.rotation);
+            QuatMultiply(out, reinterpret_cast<const float*>(bone->physicsQuat), record.rotation);
             std::memcpy(bone->physicsQuat, out, 16);
         }
     }
 
     const int maxLayer = model.maxBoneLayer;
     for (int i = 0; i <= maxLayer; ++i)
-        BoneFrameTransform(m, afterPhysics, i, modelSlots, physicsMode);  // 0x493A60
+        BoneFrameTransform(m, afterPhysics, i, modelSlots, physicsMode); // 0x493A60
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

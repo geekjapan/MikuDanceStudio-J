@@ -40,15 +40,20 @@ inline float RdF32(const unsigned char* p) {
 // to the free record, as the original does, and stops at capacity before
 // reading past the pool.  Returns -1 when the pool is full.
 template <typename Key>
-int AllocateFromCursor(std::int32_t& cursor, const Key* keys, int firstFree,
-                       int capacity) {
-    if (cursor < firstFree) cursor = firstFree;
-    while (cursor < capacity && keys[cursor].frame != 0) ++cursor;
+int AllocateFromCursor(std::int32_t& cursor, const Key* keys, int firstFree, int capacity) {
+    if (cursor < firstFree)
+        cursor = firstFree;
+    while (cursor < capacity && keys[cursor].frame != 0)
+        ++cursor;
     return cursor < capacity ? cursor : -1;
 }
 
-inline void Wr32(unsigned char* p, std::uint32_t v) { std::memcpy(p, &v, 4); }
-inline void WrF32(unsigned char* p, float v) { std::memcpy(p, &v, 4); }
+inline void Wr32(unsigned char* p, std::uint32_t v) {
+    std::memcpy(p, &v, 4);
+}
+inline void WrF32(unsigned char* p, float v) {
+    std::memcpy(p, &v, 4);
+}
 // Per-IK display flags copy (0x4A329F / 0x4A3487 / 0x4A3709 /
 // 0x4B42D9 / 0x4B46E5 / 0x4B43D2): one byte per IK chain.
 inline void CopyIkDisplayFlags(unsigned char* m, const mdl::DisplayKey& rec) {
@@ -71,9 +76,8 @@ inline void CopyIkDisplayFlags(unsigned char* m, const mdl::DisplayKey& rec) {
 // pair (tautology in the exact-hit variant - same record - a real
 // prev-vs-cursor test in the between-keys variant); otherwise sel+8 takes
 // fwdStart's frame.  The terminal variant passes withForward=false.
-inline void RefreshIkSelectors(unsigned char* m, mdl::DisplayKey* keys,
-                               int pairIdx, int backStart, bool withForward,
-                               int fwdStart, int fwdPairIdx) {
+inline void RefreshIkSelectors(unsigned char* m, mdl::DisplayKey* keys, int pairIdx, int backStart,
+                               bool withForward, int fwdStart, int fwdPairIdx) {
     mdl::BoneOrderEntry* const selectors = mdl::BoneOrder(m);
     const int cnt = static_cast<int>(mdl::Mdl(m)->boneOrderCount);
     for (int i = 0; i < cnt; ++i) {
@@ -84,13 +88,12 @@ inline void RefreshIkSelectors(unsigned char* m, mdl::DisplayKey* keys,
         int walk = backStart;
         for (;;) {
             const mdl::DisplayKey& wrec = keys[walk];
-            if (wrec.frame == 0) {  // frame-0 sentinel record
+            if (wrec.frame == 0) { // frame-0 sentinel record
                 selector.windowStart = 0;
                 break;
             }
             const int prev = static_cast<int>(wrec.previous);
-            const mdl::BoneReference& previousPair =
-                mdl::SelectorStates(keys[prev])[i];
+            const mdl::BoneReference& previousPair = mdl::SelectorStates(keys[prev])[i];
             if (selector.linkedBone == previousPair.boneIndex &&
                 selector.linkedModel == previousPair.modelIndex) {
                 walk = prev;
@@ -104,8 +107,7 @@ inline void RefreshIkSelectors(unsigned char* m, mdl::DisplayKey* keys,
             selector.windowEnd = 0;
             continue;
         }
-        const mdl::BoneReference& forwardPair =
-            mdl::SelectorStates(keys[fwdPairIdx])[i];
+        const mdl::BoneReference& forwardPair = mdl::SelectorStates(keys[fwdPairIdx])[i];
         if (selector.linkedBone == forwardPair.boneIndex &&
             selector.linkedModel == forwardPair.modelIndex) {
             int f = fwdStart;
@@ -117,8 +119,7 @@ inline void RefreshIkSelectors(unsigned char* m, mdl::DisplayKey* keys,
                     break;
                 }
                 f = next;
-                const mdl::BoneReference& nextPair =
-                    mdl::SelectorStates(keys[f])[i];
+                const mdl::BoneReference& nextPair = mdl::SelectorStates(keys[f])[i];
                 if (!(selector.linkedBone == nextPair.boneIndex &&
                       selector.linkedModel == nextPair.modelIndex))
                     break;
@@ -132,17 +133,18 @@ inline void RefreshIkSelectors(unsigned char* m, mdl::DisplayKey* keys,
 
 // quaternion + position copy helpers for the bone snap branches
 // (typed on BoneRecord: the offsets regrow per architecture)
-inline void CopyBoneKeyVerbatim(mikudancestudio::mdl::BoneRecord* bone,
-                                const mdl::BoneKey& rec) {
+inline void CopyBoneKeyVerbatim(mikudancestudio::mdl::BoneRecord* bone, const mdl::BoneKey& rec) {
     for (int c = 0; c < 4; ++c)
         bone->rotQuat[c] = rec.rotation[c];
     for (int c = 0; c < 3; ++c)
         bone->trans[c] = rec.position[c];
 }
-inline void WriteBonePrevVerbatim(mikudancestudio::mdl::BoneRecord* bone,
-                                  const float pq[4], const float ppos[3]) {
-    for (int c = 0; c < 4; ++c) bone->rotQuat[c] = pq[c];
-    for (int c = 0; c < 3; ++c) bone->trans[c] = ppos[c];
+inline void WriteBonePrevVerbatim(mikudancestudio::mdl::BoneRecord* bone, const float pq[4],
+                                  const float ppos[3]) {
+    for (int c = 0; c < 4; ++c)
+        bone->rotQuat[c] = pq[c];
+    for (int c = 0; c < 3; ++c)
+        bone->trans[c] = ppos[c];
 }
 
 // Working-copy mirror for the IK-off arming: quat backup ikBackup[3..6] ->
@@ -163,7 +165,7 @@ inline void MirrorBackupsToCurrent(mikudancestudio::mdl::BoneRecord* bone) {
         bone->trans[c] = bone->ikBackup[c];
 }
 
-}  // namespace kfa
-}  // namespace mikudancestudio
+} // namespace kfa
+} // namespace mikudancestudio
 
-#endif  // MIKUDANCESTUDIO_SRC_MODEL_KEYFRAME_COMMON_HPP
+#endif // MIKUDANCESTUDIO_SRC_MODEL_KEYFRAME_COMMON_HPP

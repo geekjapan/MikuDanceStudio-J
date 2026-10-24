@@ -27,15 +27,15 @@ handler:
 
 | Harness command | Real code it replays |
 |---|---|
-| paste bone/morph/display key | `PasteSelectedKeyframes`, `src/window/frame_clipboard.cpp:511-678`: clear marks, `ResetBoneKeyCursor` + `RegisterBoneKey`, `ResetMorphKeyCursor` + `RegisterMorphKeyFromRecord`, `ResetDisplayKeyCursor` + `RegisterDisplayKeyFromRecord`. VMD load (`vmd_load.cpp`) and frame-range apply use the same reset-then-register shape. |
-| register button: boneN | case 500 (`kRegisterFrameButton`), `src/window/command_frame_register.cpp:387` → `RegisterSelectedBoneKeys` → `RegisterBonePoseAtFrame` |
-| register morphN | cases 524-527 (`kRegisterMorphButton0-3`), `command_frame_register.cpp:503-540` → `RegisterMorphKeyCurrent` |
-| register display key | case 438 (`kRegisterModelDisplayButton`), `command_frame_edit.cpp:1562-1568` → `RegisterDisplayKeyCurrent` |
+| paste bone/morph/display key | `PasteSelectedKeyframes`, `src/window/frame_clipboard.cpp:506-769`: clear marks, `ResetBoneKeyCursor` + `RegisterBoneKey`, `ResetMorphKeyCursor` + `RegisterMorphKeyFromRecord`, `ResetDisplayKeyCursor` + `RegisterDisplayKeyFromRecord`. VMD load (`vmd_load.cpp`) and frame-range apply use the same reset-then-register shape. |
+| register button: boneN | case 500 (`kRegisterFrameButton`), `src/window/command_frame_register.cpp:375` → `RegisterSelectedBoneKeys` → `RegisterBonePoseAtFrame` |
+| register morphN | cases 524-527 (`kRegisterMorphButton0-3`), `command_frame_register.cpp:496-543` → `RegisterMorphKeyCurrent` |
+| register display key | case 438 (`kRegisterModelDisplayButton`), `command_frame_edit.cpp:1548-1561` → `RegisterDisplayKeyCurrent` |
 | click boneN key | harness stand-in for a timeline click: clear marks, set `allocated = 1` on that key |
 | delete selected keys | `DeleteMarkedModelKeys` |
 
-The initial state replays `add_model.cpp:58-64` (memset 0, `ModelInitDefaults`,
-so `searchCursor == 0`) and the pool tail of `pmx_load.cpp:1725-1767`.
+The initial state replays `add_model.cpp:57-63` (memset 0, `ModelInitDefaults`,
+so `searchCursor == 0`) and the pool tail of `pmx_load.cpp:1672-1709`.
 
 Two pool-full runs follow the search. Each fills the display pool (1000) or
 the morph pool (20000) with its own-scan registrar, then pastes one key.

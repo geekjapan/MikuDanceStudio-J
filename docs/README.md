@@ -9,6 +9,7 @@
 | [架构](ARCHITECTURE.md) | 子系统、模块边界与有意保留的兼容偏差 |
 | [移植与验证状态](PORTING_STATUS.md) | 最近验证结果和仍未覆盖的行为 |
 | [x64 重建基准](X64_RECONSTRUCTION.md) | 参考二进制身份、证据规则与布局维护方式 |
+| [源码格式](FORMATTING.md) | clang-format、VS Code formatter 和批量格式检查命令 |
 | [源码重构与数值兼容](reconstruction/source_refactoring.md) | 汇编替换、浮点算序、帧定位和编辑器重构的约束与验证 |
 | [D3D9 / D3DX 运行时调查](reconstruction/d3dx_runtime_failure.md) | 历史失败的已知证据、会话环境影响与诊断方法 |
 

@@ -67,7 +67,7 @@
 // VA 0x0042A110 - model-slot count; real body in src/app/late_ports.cpp.
 namespace mikudancestudio {
 int GetPmdNum(MMDApp* app);
-}  // namespace mikudancestudio
+} // namespace mikudancestudio
 
 namespace {
 
@@ -77,7 +77,7 @@ using mikudancestudio::MMDApp;
 // Occupied-slot counter: index counts only non-null slots, matching the
 // original `cmp (%esi); je skip / inc edi; cmp edi, arg` loops.
 
-unsigned char* ModelByIndex(MMDApp* app, int index) {  // 0x780/x64 0xBE8
+unsigned char* ModelByIndex(MMDApp* app, int index) { // 0x780/x64 0xBE8
     int occupied = -1;
     for (int i = 0; i < mikudancestudio::kModelSlotCount; ++i) {
         unsigned char* slot = app->ModelSlot(i);
@@ -123,7 +123,8 @@ struct D3dx {
     void Translation(mikudancestudio::d3dx::D3DXMATRIXF* m, float x, float y, float z) {
         api.translation(m, x, y, z);
     }
-    void Multiply(mikudancestudio::d3dx::D3DXMATRIXF* o, const mikudancestudio::d3dx::D3DXMATRIXF* a,
+    void Multiply(mikudancestudio::d3dx::D3DXMATRIXF* o,
+                  const mikudancestudio::d3dx::D3DXMATRIXF* a,
                   const mikudancestudio::d3dx::D3DXMATRIXF* b) {
         api.multiply(o, a, b);
     }
@@ -141,21 +142,20 @@ struct D3dx {
 // dst = Scaling(Si*10) * Rz * Rx * Ry * T(local xyz) * T(parent xyz) * bone
 // (each step is D3DXMatrixMultiply(dst, dst, step); the original builds the
 // result directly into the caller's buffer, zero-filled first).
-float* AccWorldMatrix(const mikudancestudio::mdl::AccessoryRecord& acc, float* dst16,
-                      float px, float py, float pz,
-                      const float* boneMat16) {
+float* AccWorldMatrix(const mikudancestudio::mdl::AccessoryRecord& acc, float* dst16, float px,
+                      float py, float pz, const float* boneMat16) {
     auto* dst = reinterpret_cast<mikudancestudio::d3dx::D3DXMATRIXF*>(dst16);
     auto* bone = reinterpret_cast<const mikudancestudio::d3dx::D3DXMATRIXF*>(boneMat16);
     mikudancestudio::d3dx::D3DXMATRIXF step;
     D3dx d3;
 
     const float si10 = static_cast<float>(acc.scale * 10.0);
-    d3.Scaling(dst, si10, si10, si10);            // dbl 0x52C170 = 10.0
-    d3.Rot(acc.rotation[2], 2, &step);            // Rz
+    d3.Scaling(dst, si10, si10, si10); // dbl 0x52C170 = 10.0
+    d3.Rot(acc.rotation[2], 2, &step); // Rz
     d3.Multiply(dst, dst, &step);
-    d3.Rot(acc.rotation[0], 0, &step);            // Rx
+    d3.Rot(acc.rotation[0], 0, &step); // Rx
     d3.Multiply(dst, dst, &step);
-    d3.Rot(acc.rotation[1], 1, &step);            // Ry
+    d3.Rot(acc.rotation[1], 1, &step); // Ry
     d3.Multiply(dst, dst, &step);
     d3.Translation(&step, acc.position[0], acc.position[1], acc.position[2]);
     d3.Multiply(dst, dst, &step);
@@ -165,22 +165,25 @@ float* AccWorldMatrix(const mikudancestudio::mdl::AccessoryRecord& acc, float* d
     return dst16;
 }
 
-}  // namespace
+} // namespace
 
 extern "C" {
 
 // --- model (PMD) queries ---------------------------------------------------
 // 0x4C35A0 -> 0x42A110
-__declspec(dllexport) int ExpGetPmdNum() { return mikudancestudio::GetPmdNum(mikudancestudio::g_Block); }
+__declspec(dllexport) int ExpGetPmdNum() {
+    return mikudancestudio::GetPmdNum(mikudancestudio::g_Block);
+}
 
 // 0x4C35B0 -> 0x42A160: wide model path -> SJIS into app+0xA02B7.
 __declspec(dllexport) char* ExpGetPmdFilename(int index) {
     MMDApp* app = mikudancestudio::g_Block;
     unsigned char* model = ModelByIndex(app, index);
     if (model == nullptr)
-        return nullptr;                      // original: xor eax, eax
+        return nullptr; // original: xor eax, eax
     char* out = reinterpret_cast<char*>(app->state.sjisOut);
-    mikudancestudio::WideToSjis(app->Renderer(), out, mikudancestudio::mdl::Mdl(model)->path, 0x100);
+    mikudancestudio::WideToSjis(app->Renderer(), out, mikudancestudio::mdl::Mdl(model)->path,
+                                0x100);
     return out;
 }
 
@@ -223,18 +226,15 @@ __declspec(dllexport) int ExpGetPmdMatNum(int index) {
 // 0x4C3610 -> 0x42A210 -> 0x4A48E0: copy 17 material floats into `out`.
 // Out-of-range zero-fills (0x4A48EE memset path); the original's inclusive
 // `jbe` also admits mat == count - one record past the end - preserved here.
-__declspec(dllexport) float* ExpGetPmdMaterial(float* out, int index,
-                                               int mat) {
+__declspec(dllexport) float* ExpGetPmdMaterial(float* out, int index, int mat) {
     std::memset(out, 0, 0x44);
     unsigned char* model = ModelByIndex(mikudancestudio::g_Block, index);
     if (model == nullptr)
         return out;
-    const std::uint32_t count =
-        mikudancestudio::mdl::Mdl(model)->materialCount;
+    const std::uint32_t count = mikudancestudio::mdl::Mdl(model)->materialCount;
     if (static_cast<std::uint32_t>(mat) <= count) {
         const mikudancestudio::mdl::ModelMaterialRecord& rec =
-            mikudancestudio::mdl::Materials(model)[
-                static_cast<std::size_t>(mat)];
+            mikudancestudio::mdl::Materials(model)[static_cast<std::size_t>(mat)];
         std::memcpy(out, &rec, 0x44);
     }
     return out;
@@ -258,18 +258,15 @@ __declspec(dllexport) char* ExpGetPmdBoneName(int index, int bone) {
 
 // 0x4C3690 -> 0x42A330: out = T(bone position) * bone world matrix;
 // identity on a failed slot lookup.
-__declspec(dllexport) float* ExpGetPmdBoneWorldMat(float* out, int index,
-                                                   int bone) {
+__declspec(dllexport) float* ExpGetPmdBoneWorldMat(float* out, int index, int bone) {
     mikudancestudio::d3dx::D3DXMATRIXF m;
     Identity(&m);
     unsigned char* model = ModelByIndex(mikudancestudio::g_Block, index);
     if (model != nullptr) {
-        mikudancestudio::mdl::BoneRecord& boneRec =
-            mikudancestudio::mdl::Bones(model)[bone];
+        mikudancestudio::mdl::BoneRecord& boneRec = mikudancestudio::mdl::Bones(model)[bone];
         mikudancestudio::d3dx::D3DXMATRIXF t;
         D3dx d3;
-        d3.Translation(&t, boneRec.position[0], boneRec.position[1],
-                       boneRec.position[2]);
+        d3.Translation(&t, boneRec.position[0], boneRec.position[1], boneRec.position[2]);
         d3.Multiply(&m, &m, &t);
         d3.Multiply(&m, &m,
                     reinterpret_cast<const mikudancestudio::d3dx::D3DXMATRIXF*>(boneRec.matInit));
@@ -317,7 +314,9 @@ __declspec(dllexport) void* ExpGetPmdID(int index) {
 
 // --- accessory (ACS/stage) queries -----------------------------------------
 // 0x4C3770 -> 0x42A5F0.
-__declspec(dllexport) int ExpGetAcsNum() { return CountAcs(mikudancestudio::g_Block); }
+__declspec(dllexport) int ExpGetAcsNum() {
+    return CountAcs(mikudancestudio::g_Block);
+}
 
 // 0x4C3780 -> 0x42A640.
 __declspec(dllexport) int ExpGetPreAcsNum() {
@@ -338,8 +337,7 @@ __declspec(dllexport) char* ExpGetAcsFilename(int index) {
 // 内部直取（非导出）：附件原始宽字符路径（acc+0x29C wchar_t[256]）；同
 // MmdModelPathW——原版宽路径直存直用，内置版不经 SJIS 往返。
 const wchar_t* MmdAcsPathW(int index) {
-    mikudancestudio::mdl::AccessoryRecord* acc =
-        AcsByIndex(mikudancestudio::g_Block, index);
+    mikudancestudio::mdl::AccessoryRecord* acc = AcsByIndex(mikudancestudio::g_Block, index);
     return (acc != nullptr) ? acc->sourcePath : nullptr;
 }
 
@@ -415,9 +413,7 @@ __declspec(dllexport) float ExpGetAcsRz(int index) {
 // 0x4C38C0 -> 0x42AAD0 (acc+0x22C scaled by dbl 10.0 @ 0x52C170).
 __declspec(dllexport) float ExpGetAcsSi(int index) {
     const auto* acc = AcsByIndex(mikudancestudio::g_Block, index);
-    return acc != nullptr
-               ? static_cast<float>(acc->scale * 10.0)
-               : 0.0f;
+    return acc != nullptr ? static_cast<float>(acc->scale * 10.0) : 0.0f;
 }
 // 0x4C38E0 -> 0x42AB20 (acc+0x4A0).
 __declspec(dllexport) float ExpGetAcsTr(int index) {
@@ -449,8 +445,7 @@ __declspec(dllexport) int ExpGetAcsMatNum(int index) {
 // 0x4C3960 -> 0x42AC50 -> 0x4C5EE0: copy 17 material floats into `out`
 // (68-byte records at acc+4); out-of-range zero-fills (strict `<`, unlike
 // the model twin's inclusive `jbe`).
-__declspec(dllexport) float* ExpGetAcsMaterial(float* out, int index,
-                                               int mat) {
+__declspec(dllexport) float* ExpGetAcsMaterial(float* out, int index, int mat) {
     std::memset(out, 0, 0x44);
     const auto* acc = AcsByIndex(mikudancestudio::g_Block, index);
     if (acc == nullptr)
@@ -458,8 +453,8 @@ __declspec(dllexport) float* ExpGetAcsMaterial(float* out, int index,
     // 0x4C5EE0: `cmp/jl` - SIGNED `<` (a negative index copies the
     // out-of-bounds record before the table, exactly like the original).
     if (mat < static_cast<std::int32_t>(acc->materialCount)) {
-        const float* rec = static_cast<const float*>(acc->materials) +
-                           17 * static_cast<std::size_t>(mat);
+        const float* rec =
+            static_cast<const float*>(acc->materials) + 17 * static_cast<std::size_t>(mat);
         std::memcpy(out, rec, 0x44);
     }
     return out;
@@ -513,8 +508,7 @@ __declspec(dllexport) int ExpGetCurrentMaterial() {
     for (int i = 0; i < mikudancestudio::kModelSlotCount; ++i) {
         unsigned char* slot = app->ModelSlot(i);
         if (slot == cur)
-            return static_cast<std::int32_t>(
-                mikudancestudio::mdl::Mdl(cur)->toonShared);
+            return static_cast<std::int32_t>(mikudancestudio::mdl::Mdl(cur)->toonShared);
     }
     return -1;
 }
@@ -548,9 +542,7 @@ __declspec(dllexport) float ExpGetFrameTime() {
         return app->state.playbackCursorSeconds;
     const std::int32_t frame = app->state.currentFrame;
     // fild / fadds flt_52B9F0 (2^32) when negative / fdivl dbl_52BA68 (30.0)
-    return static_cast<float>(static_cast<double>(
-                                  static_cast<std::uint32_t>(frame)) /
-                              30.0);
+    return static_cast<float>(static_cast<double>(static_cast<std::uint32_t>(frame)) / 30.0);
 }
 
-}  // extern "C"
+} // extern "C"

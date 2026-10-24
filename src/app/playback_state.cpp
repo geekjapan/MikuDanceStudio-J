@@ -23,9 +23,9 @@
 
 namespace mikudancestudio {
 
-void SyncModelEditControls(unsigned char* model);  // VA 0x004A02C0
-void ApplyAccessoryTrack(MMDApp* app, int index);  // VA 0x00413120
-void ApplyGravityTrack(MMDApp* app);  // VA 0x00412330
+void SyncModelEditControls(unsigned char* model); // VA 0x004A02C0
+void ApplyAccessoryTrack(MMDApp* app, int index); // VA 0x00413120
+void ApplyGravityTrack(MMDApp* app);              // VA 0x00412330
 
 namespace {
 
@@ -57,7 +57,7 @@ void SetPhysicsMenuState(HWND hwnd, UINT state) {
     SetMenuItemInfoA(submenu, 2, TRUE, &item);
 }
 
-}  // namespace
+} // namespace
 
 // Exported at mikudancestudio scope for the fullscreen record restore path
 // (0x4629D0 in src/app/avi_record_start.cpp); the bodies were
@@ -87,21 +87,20 @@ void RestorePlaybackMenus(MMDApp* app) {
     SetMenuRange(menu, MDS_CMD_SCREEN_SIZE, MDS_CMD_LOAD_BACKGROUND_VIDEO, MF_ENABLED);
     SetMenuRange(menu, MDS_CMD_SELECT_ALL_BONE_FRAMES, MDS_CMD_SELECT_ALL_MORPH_FRAMES, MF_ENABLED);
     SetMenuRange(menu, MDS_CMD_DELETE_UNUSED_FRAMES, MDS_CMD_LOAD_BACKGROUND_IMAGE, MF_ENABLED);
-    SetMenuRange(menu, MDS_CMD_SELECT_ALL_CAMERA_FRAMES, MDS_CMD_MULTIPLY_CAMERA_FRAMES, MF_ENABLED);
+    SetMenuRange(menu, MDS_CMD_SELECT_ALL_CAMERA_FRAMES, MDS_CMD_MULTIPLY_CAMERA_FRAMES,
+                 MF_ENABLED);
     EnableMenuItem(menu, MDS_CMD_RENDER_IMAGE, MF_ENABLED);
 
     if (app->CameraMode() != 0) {
-        const int disabled[] = {
-            MDS_CMD_SELECT_ALL_BONE_FRAMES,
-            MDS_CMD_SELECT_ALL_MORPH_FRAMES,
-            MDS_CMD_SELECT_ALL_DISPLAY_FRAMES,
-            MDS_CMD_LOAD_POSE,
-            MDS_CMD_SAVE_POSE,
-            MDS_CMD_CENTER_POSITION_BIAS,
-            MDS_CMD_DELETE_UNUSED_FRAMES,
-            MDS_CMD_MULTIPLY_BONE_FRAMES,
-            MDS_CMD_MULTIPLY_MORPH_FRAMES
-        };
+        const int disabled[] = {MDS_CMD_SELECT_ALL_BONE_FRAMES,
+                                MDS_CMD_SELECT_ALL_MORPH_FRAMES,
+                                MDS_CMD_SELECT_ALL_DISPLAY_FRAMES,
+                                MDS_CMD_LOAD_POSE,
+                                MDS_CMD_SAVE_POSE,
+                                MDS_CMD_CENTER_POSITION_BIAS,
+                                MDS_CMD_DELETE_UNUSED_FRAMES,
+                                MDS_CMD_MULTIPLY_BONE_FRAMES,
+                                MDS_CMD_MULTIPLY_MORPH_FRAMES};
         for (int id : disabled)
             EnableMenuItem(menu, id, MF_GRAYED);
         SetMenuRange(menu, MDS_CMD_LOAD_LIP_SYNC, MDS_CMD_DELETE_EYEBROW_FRAMES, MF_GRAYED);
@@ -109,15 +108,14 @@ void RestorePlaybackMenus(MMDApp* app) {
         EnableWindow(GetDlgItem(hwnd, panel::kExpandShrinkButton), FALSE);
         EnableRange(hwnd, panel::kDeleteModelButton, panel::kIkOffRadio, FALSE);
     } else {
-        SetMenuRange(menu, MDS_CMD_SELECT_ALL_CAMERA_FRAMES, MDS_CMD_MULTIPLY_CAMERA_FRAMES, MF_GRAYED);
-        const int enabled[] = {
-            MDS_CMD_LOAD_POSE,
-            MDS_CMD_SAVE_POSE,
-            MDS_CMD_CENTER_POSITION_BIAS,
-            MDS_CMD_DELETE_UNUSED_FRAMES,
-            MDS_CMD_MULTIPLY_BONE_FRAMES,
-            MDS_CMD_MULTIPLY_MORPH_FRAMES
-        };
+        SetMenuRange(menu, MDS_CMD_SELECT_ALL_CAMERA_FRAMES, MDS_CMD_MULTIPLY_CAMERA_FRAMES,
+                     MF_GRAYED);
+        const int enabled[] = {MDS_CMD_LOAD_POSE,
+                               MDS_CMD_SAVE_POSE,
+                               MDS_CMD_CENTER_POSITION_BIAS,
+                               MDS_CMD_DELETE_UNUSED_FRAMES,
+                               MDS_CMD_MULTIPLY_BONE_FRAMES,
+                               MDS_CMD_MULTIPLY_MORPH_FRAMES};
         for (int id : enabled)
             EnableMenuItem(menu, id, MF_ENABLED);
         SetMenuRange(menu, MDS_CMD_LOAD_LIP_SYNC, MDS_CMD_DELETE_EYEBROW_FRAMES, MF_ENABLED);
@@ -139,13 +137,10 @@ void ApplyProjection(MMDApp* app) {
     D3DRenderer* wrapper = app->Renderer();
     auto& api = d3dx::Get();
     d3dx::D3DXMATRIXF matrix{};
-    const float fov = static_cast<float>(
-        static_cast<double>(app->CameraFov()) * kPiOver180);
-    api.perspectiveFovLH(&matrix, fov, wrapper->aspectRatio,
-                         1.0f, 100000.0f);
-    IDirect3DDevice9* device = wrapper->device;  // +120032
-    device->SetTransform(D3DTS_PROJECTION,
-                         reinterpret_cast<const D3DMATRIX*>(&matrix));
+    const float fov = static_cast<float>(static_cast<double>(app->CameraFov()) * kPiOver180);
+    api.perspectiveFovLH(&matrix, fov, wrapper->aspectRatio, 1.0f, 100000.0f);
+    IDirect3DDevice9* device = wrapper->device; // +120032
+    device->SetTransform(D3DTS_PROJECTION, reinterpret_cast<const D3DMATRIX*>(&matrix));
 }
 
 void CopyCameraTerminal(MMDApp* app, const mdl::CameraKey& key) {
@@ -164,14 +159,12 @@ void CopyLightTerminal(MMDApp* app, const mdl::LightKey& key) {
     std::memcpy(app->LightColor(), key.color, sizeof(key.color));
     app->ApplyTimelineLightState();
     D3DRenderer* wrapper = app->Renderer();
-    IDirect3DDevice9* device = wrapper->device;  // +120032
+    IDirect3DDevice9* device = wrapper->device; // +120032
     device->SetLight(0, &app->SceneLight());
 }
 
 template <typename Key>
-static const Key* SeekTypedTrackEnd(Key* keys, std::uint32_t& cursor,
-                                    float frame,
-                                    bool& ended) {
+static const Key* SeekTypedTrackEnd(Key* keys, std::uint32_t& cursor, float frame, bool& ended) {
     cursor = 0;
     ended = false;
     if (static_cast<double>(keys[0].frame) >= static_cast<double>(frame)) {
@@ -184,8 +177,7 @@ static const Key* SeekTypedTrackEnd(Key* keys, std::uint32_t& cursor,
             return &current;
         }
         cursor = current.next;
-        if (static_cast<double>(keys[cursor].frame) >=
-            static_cast<double>(frame)) {
+        if (static_cast<double>(keys[cursor].frame) >= static_cast<double>(frame)) {
             return &keys[cursor];
         }
     }
@@ -197,41 +189,39 @@ void InitGlobalTracks(MMDApp* app, float frame) {
 
     bool ended = false;
     app->CameraTrackActive() = 1;
-    const mdl::CameraKey* cameraKey = SeekTypedTrackEnd(
-        app->CameraKeys(), app->CameraTrackCursor(), frame, ended);
+    const mdl::CameraKey* cameraKey =
+        SeekTypedTrackEnd(app->CameraKeys(), app->CameraTrackCursor(), frame, ended);
     if (ended) {
         app->CameraTrackActive() = 0;
         CopyCameraTerminal(app, *cameraKey);
     }
 
     app->LightTrackActive() = 1;
-    const mdl::LightKey* lightKey = SeekTypedTrackEnd(
-        app->LightKeys(), app->LightTrackCursor(), frame, ended);
+    const mdl::LightKey* lightKey =
+        SeekTypedTrackEnd(app->LightKeys(), app->LightTrackCursor(), frame, ended);
     if (ended) {
         app->LightTrackActive() = 0;
         CopyLightTerminal(app, *lightKey);
     }
 
     app->ShadowTrackActive() = 1;
-    const mdl::SelfShadowKey* shadowKey = SeekTypedTrackEnd(
-        app->ShadowKeys(), app->ShadowTrackCursor(), frame, ended);
+    const mdl::SelfShadowKey* shadowKey =
+        SeekTypedTrackEnd(app->ShadowKeys(), app->ShadowTrackCursor(), frame, ended);
     if (ended) {
         app->ShadowTrackActive() = 0;
-        app->ShadowMode() =
-            static_cast<std::int8_t>(shadowKey->mode);
+        app->ShadowMode() = static_cast<std::int8_t>(shadowKey->mode);
         app->ShadowDistance() = shadowKey->distance;
     }
 
     app->GravityTrackActive() = 1;
-    const mdl::GravityKey* gravityKey = SeekTypedTrackEnd(
-        app->GravityKeys(), app->GravityTrackCursor(), frame, ended);
+    const mdl::GravityKey* gravityKey =
+        SeekTypedTrackEnd(app->GravityKeys(), app->GravityTrackCursor(), frame, ended);
     if (ended) {
         app->GravityTrackActive() = 0;
         app->GravityNoiseEnabled() = gravityKey->noiseEnabled;
         app->GravityNoise() = gravityKey->noise;
         app->GravityMagnitude() = gravityKey->acceleration;
-        std::memcpy(app->GravityDirection(), gravityKey->direction,
-                    sizeof(gravityKey->direction));
+        std::memcpy(app->GravityDirection(), gravityKey->direction, sizeof(gravityKey->direction));
     }
 }
 
@@ -255,8 +245,7 @@ void InitAccessoryTracks(MMDApp* app, float frame) {
             const int next = static_cast<int>(rec.next);
             if (next != 0) {
                 cursor = static_cast<std::uint32_t>(next);
-                if (static_cast<double>(keys[next].frame) >=
-                    static_cast<double>(frame))
+                if (static_cast<double>(keys[next].frame) >= static_cast<double>(frame))
                     break;
                 continue;
             }
@@ -266,10 +255,8 @@ void InitAccessoryTracks(MMDApp* app, float frame) {
             accessory->shadowEnabled = rec.shadowEnabled;
             accessory->parentModel = rec.parentModel;
             accessory->parentBone = rec.parentBone;
-            std::memcpy(accessory->rotation, rec.rotation,
-                        sizeof accessory->rotation);
-            std::memcpy(accessory->position, rec.position,
-                        sizeof accessory->position);
+            std::memcpy(accessory->rotation, rec.rotation, sizeof accessory->rotation);
+            std::memcpy(accessory->position, rec.position, sizeof accessory->position);
             accessory->scale = rec.scale;
             accessory->opacity = rec.opacity;
             break;
@@ -292,12 +279,12 @@ void SavePlaybackUndoSnapshot(MMDApp* app, unsigned char* model) {
     EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), FALSE);
     state.undoDirty = 1;
     state.redoDirty = 0;
-    std::uint32_t& undoIndex = state.undoState[0];
+    std::uint32_t& undoIndex = state.UndoCursor();
     undoIndex = (undoIndex + 1) % 30;
-    state.undoState[1] = undoIndex;
+    state.LatestUndoCursor() = undoIndex;
     auto& undo = state.undoRings[0].slots[undoIndex];
-    undo.operation = 3;
-    undo.dirty = boneCount;
+    undo.operation = mdl::UndoOperation::BonePoseWithFrame;
+    undo.recordCount = boneCount;
     undo.frame = app->state.currentFrame;
     auto*& buffer = undo.bonePose;
     ::operator delete(buffer);
@@ -317,7 +304,7 @@ void SavePlaybackUndoSnapshot(MMDApp* app, unsigned char* model) {
     }
 }
 
-}  // namespace
+} // namespace
 
 void UpdateBoneFrames(MMDApp* app) {
     const float cursor = app->PlaybackCursorSeconds();
@@ -328,8 +315,7 @@ void UpdateBoneFrames(MMDApp* app) {
     for (int i = 0; i < kModelSlotCount; ++i) {
         unsigned char* model = app->ModelSlot(i);
         if (model != nullptr)
-            InitModelTrackCursors(model, cursor,
-                      app->PlaybackPhysicsMode());
+            InitModelTrackCursors(model, cursor, app->PlaybackPhysicsMode());
     }
 
     if (app->PlaybackFrameChanged() != 0)
@@ -337,10 +323,8 @@ void UpdateBoneFrames(MMDApp* app) {
     else
         app->PhysicsResetPending() = 1;
 
-    const float frame = static_cast<float>(
-        static_cast<double>(cursor) * kFrameRate);
-    if (app->CameraMode() != 0 ||
-        app->state.followCameraEnabled != 0)
+    const float frame = static_cast<float>(static_cast<double>(cursor) * kFrameRate);
+    if (app->CameraMode() != 0 || app->state.followCameraEnabled != 0)
         InitGlobalTracks(app, frame);
     InitAccessoryTracks(app, frame);
 
@@ -352,7 +336,8 @@ void UpdateBoneFrames(MMDApp* app) {
     EnableRange(hwnd, panel::kBoneSelectRadio, panel::kSelectUnregisteredBonesButton, FALSE);
     EnableRange(hwnd, panel::kMorphCombo0, panel::kRegisterMorphButton2, FALSE);
     HWND overlay = app->FloatingWindow();
-    EnableRange(overlay != nullptr ? overlay : hwnd, panel::kModelEditToggle, panel::kReadoutDistEdit, FALSE);
+    EnableRange(overlay != nullptr ? overlay : hwnd, panel::kModelEditToggle,
+                panel::kReadoutDistEdit, FALSE);
     DisablePlaybackMenus(hwnd);
     InvalidateSelectionReadouts(app);
 }
@@ -361,7 +346,10 @@ void StopPlayback(MMDApp* app) {
 #ifdef MIKUDANCESTUDIO_DIAG
     if (getenv("MIKUDANCESTUDIO_TRACE_REC")) {
         FILE* tf = fopen(getenv("MIKUDANCESTUDIO_TRACE_REC"), "a");
-        if (tf) { fputs("StopPlayback stop-playback enter\n", tf); fclose(tf); }
+        if (tf) {
+            fputs("StopPlayback stop-playback enter\n", tf);
+            fclose(tf);
+        }
     }
 #endif
     HWND hwnd = static_cast<HWND>(app->Hwnd());
@@ -372,30 +360,23 @@ void StopPlayback(MMDApp* app) {
     EnableRange(hwnd, panel::kBoneSelectRadio, panel::kSelectUnregisteredBonesButton, TRUE);
     EnableRange(hwnd, panel::kMorphCombo0, panel::kRegisterMorphButton2, TRUE);
     HWND overlay = app->FloatingWindow();
-    EnableRange(overlay != nullptr ? overlay : hwnd, panel::kModelEditToggle, panel::kReadoutDistEdit, TRUE);
+    EnableRange(overlay != nullptr ? overlay : hwnd, panel::kModelEditToggle,
+                panel::kReadoutDistEdit, TRUE);
 
     // snapshot bytes saved at playback start (command_frame_edit.cpp):
     // [0]=497 [1]=498 [2]=421 [3]=422 [4]=431 [5]=400 [6]=401
-    EnableWindow(GetDlgItem(hwnd, panel::kBonePasteButton),
-                 app->state.playbackEnabledSnapshot[0]);
+    EnableWindow(GetDlgItem(hwnd, panel::kBonePasteButton), app->state.playbackEnabledSnapshot[0]);
     EnableWindow(GetDlgItem(hwnd, panel::kBoneReversePasteButton),
                  app->state.playbackEnabledSnapshot[1]);
-    EnableWindow(GetDlgItem(hwnd, panel::kCurvePasteButton),
-                 app->state.playbackEnabledSnapshot[4]);
-    EnableWindow(GetDlgItem(hwnd, panel::kPasteButton),
-                 app->state.playbackEnabledSnapshot[2]);
+    EnableWindow(GetDlgItem(hwnd, panel::kCurvePasteButton), app->state.playbackEnabledSnapshot[4]);
+    EnableWindow(GetDlgItem(hwnd, panel::kPasteButton), app->state.playbackEnabledSnapshot[2]);
     EnableWindow(GetDlgItem(hwnd, panel::kReversePasteButton),
                  app->state.playbackEnabledSnapshot[3]);
-    EnableWindow(GetDlgItem(hwnd, panel::kUndoButton),
-                 app->state.playbackEnabledSnapshot[5]);
-    EnableWindow(GetDlgItem(hwnd, panel::kRedoButton),
-                 app->state.playbackEnabledSnapshot[6]);
+    EnableWindow(GetDlgItem(hwnd, panel::kUndoButton), app->state.playbackEnabledSnapshot[5]);
+    EnableWindow(GetDlgItem(hwnd, panel::kRedoButton), app->state.playbackEnabledSnapshot[6]);
 
-    const bool enable250 =
-        (app->ClipboardCounts().bones == 0 ||
-         app->CameraMode() != 0) &&
-        !(app->ClipboardCounts().accessories != 0 &&
-          app->CameraMode() != 0);
+    const bool enable250 = (app->ClipboardCounts().bones == 0 || app->CameraMode() != 0) &&
+                           !(app->ClipboardCounts().accessories != 0 && app->CameraMode() != 0);
     EnableMenuItem(GetMenu(hwnd), MDS_CMD_PASTE_AT_DIFFERENT_FRAME,
                    enable250 ? MF_ENABLED : MF_GRAYED);
     RestorePlaybackMenus(app);
@@ -406,24 +387,19 @@ void StopPlayback(MMDApp* app) {
     if (app->state.playbackReturnsToStartFrame != 0) {
         if (activeModel != nullptr)
             SavePlaybackUndoSnapshot(app, activeModel);
-        const int frame = static_cast<int>(
-            static_cast<double>(app->PlaybackCursorSeconds()) *
-            kFrameRate);
+        const int frame =
+            static_cast<int>(static_cast<double>(app->PlaybackCursorSeconds()) * kFrameRate);
         app->state.currentFrame = frame;
-        app->state.timelineStartFrame =
-            frame > 6 ? frame - 6 : 0;
+        app->state.timelineStartFrame = frame > 6 ? frame - 6 : 0;
         char text[50];
         sprintf_s(text, "%d", frame);
         HWND edit = GetDlgItem(hwnd, panel::kCurrentFrameEdit);
         SendMessageA(edit, EM_SETSEL, 0, GetWindowTextLengthA(edit));
-        SendMessageA(edit, EM_REPLACESEL, FALSE,
-                     reinterpret_cast<LPARAM>(text));
+        SendMessageA(edit, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(text));
         PanelPaint(app);
         if (app->state.waveEnabled != 0) {
-            TimelineDrawTicks(app->state.timelineStartFrame,
-                              app->SidebarWidth());
-            RECT rect{6, 95,
-                      app->SidebarWidth() - 3, 146};
+            TimelineDrawTicks(app->state.timelineStartFrame, app->SidebarWidth());
+            RECT rect{6, 95, app->SidebarWidth() - 3, 146};
             InvalidateRect(hwnd, &rect, FALSE);
         }
     }
@@ -434,8 +410,7 @@ void StopPlayback(MMDApp* app) {
         if (model != nullptr)
             SeekModelFrame(*mdl::Mdl(model), frame, app->PlaybackPhysicsMode());
     }
-    if (app->CameraMode() == 0 &&
-        activeModel != nullptr)
+    if (app->CameraMode() == 0 && activeModel != nullptr)
         SyncModelEditControls(activeModel);
 
     app->CameraParentModel() = -1;
@@ -451,8 +426,7 @@ void StopPlayback(MMDApp* app) {
     } else if (app->state.followCameraEnabled != 0) {
         if (app->CameraParentModel() >= 0) {
             ModelApplyMorphs(activeModel);
-            SetPhysicsMode(activeModel, 0, app->ModelSlots(),
-                           app->PlaybackPhysicsMode());
+            SetPhysicsMode(activeModel, 0, app->ModelSlots(), app->PlaybackPhysicsMode());
         }
         app->ViewOffsetX() = 0.0f;
         app->ViewOffsetY() = 0.0f;
@@ -476,4 +450,4 @@ void StopPlayback(MMDApp* app) {
     InvalidateSelectionReadouts(app);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

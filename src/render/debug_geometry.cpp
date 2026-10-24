@@ -31,7 +31,7 @@ namespace {
 using Matrix = d3dx::D3DXMATRIXF;
 
 IDirect3DDevice9* DeviceFromScene(PhysicsScene* scene) {
-    D3DRenderer* sub = scene->owner;   // slot 0
+    D3DRenderer* sub = scene->owner; // slot 0
     return sub->device;
 }
 
@@ -43,15 +43,13 @@ void Identity(Matrix* m) {
     m->m[3][3] = 1.0f;
 }
 
-void SetDebugColor(PhysicsScene* scene, std::uint8_t r, std::uint8_t g,
-                   std::uint8_t b) {
+void SetDebugColor(PhysicsScene* scene, std::uint8_t r, std::uint8_t g, std::uint8_t b) {
     const DWORD color = D3DCOLOR_ARGB(255, r, g, b);
     // gizmo vertex buffers (scene slots 4/12/20/28)
-    IDirect3DVertexBuffer9* const vbs[] = {
-        scene->gizmoSphereVB,   // 4
-        scene->gizmoCubeVB,     // 12
-        scene->gizmoSphere33VB, // 20
-        scene->gizmoArrowVB};   // 28
+    IDirect3DVertexBuffer9* const vbs[] = {scene->gizmoSphereVB,   // 4
+                                           scene->gizmoCubeVB,     // 12
+                                           scene->gizmoSphere33VB, // 20
+                                           scene->gizmoArrowVB};   // 28
     const UINT lengths[] = {928, 128, 528, 256};
     for (int n = 0; n < 4; ++n) {
         auto* vb = vbs[n];
@@ -63,9 +61,8 @@ void SetDebugColor(PhysicsScene* scene, std::uint8_t r, std::uint8_t g,
     }
 }
 
-void DrawIndexedLines(PhysicsScene* scene, IDirect3DVertexBuffer9* vb,
-                      IDirect3DIndexBuffer9* ib, UINT vertices,
-                      UINT primitives) {
+void DrawIndexedLines(PhysicsScene* scene, IDirect3DVertexBuffer9* vb, IDirect3DIndexBuffer9* ib,
+                      UINT vertices, UINT primitives) {
     auto* device = DeviceFromScene(scene);
     device->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
     device->SetStreamSource(0, vb, 0, 16);
@@ -74,8 +71,7 @@ void DrawIndexedLines(PhysicsScene* scene, IDirect3DVertexBuffer9* vb,
     // 经 MME 桥：ownerless DIP（无 ActiveRenderObject）→ drawType=0 背景
     // 语义，效果激活时 MME 在此先跑后期链再转发，调试线画在后期合成结果
     // 之上——与原版经包装设备虚表被 MMHack 拦截的行为一致。
-    mme::DrawIndexedPrimitive(device, D3DPT_LINELIST, 0, 0, vertices, 0,
-                              primitives);
+    mme::DrawIndexedPrimitive(device, D3DPT_LINELIST, 0, 0, vertices, 0, primitives);
 }
 
 void DrawSphere(PhysicsScene* scene, float scale, const Matrix& transform) {
@@ -85,48 +81,39 @@ void DrawSphere(PhysicsScene* scene, float scale, const Matrix& transform) {
     Matrix world;
     api.scaling(&world, scale, scale, scale);
     api.multiply(&world, &world, &transform);
-    device->GetTransform(D3DTS_WORLD,
-                         reinterpret_cast<D3DMATRIX*>(&oldWorld));
+    device->GetTransform(D3DTS_WORLD, reinterpret_cast<D3DMATRIX*>(&oldWorld));
     api.multiply(&world, &world, &oldWorld);
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&world));
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&world));
     device->SetTexture(0, nullptr);
-    DrawIndexedLines(scene, scene->gizmoSphereVB,   // 4
+    DrawIndexedLines(scene, scene->gizmoSphereVB,    // 4
                      scene->gizmoSphereIB, 58, 120); // 8
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&oldWorld));
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&oldWorld));
 }
 
-void DrawBox(PhysicsScene* scene, float x, float y, float z,
-             const Matrix& transform) {
+void DrawBox(PhysicsScene* scene, float x, float y, float z, const Matrix& transform) {
     auto& api = d3dx::Get();
     auto* device = DeviceFromScene(scene);
     Matrix oldWorld;
     Matrix world;
     api.scaling(&world, x * 2.0f, y * 2.0f, z * 2.0f);
     api.multiply(&world, &world, &transform);
-    device->GetTransform(D3DTS_WORLD,
-                         reinterpret_cast<D3DMATRIX*>(&oldWorld));
+    device->GetTransform(D3DTS_WORLD, reinterpret_cast<D3DMATRIX*>(&oldWorld));
     api.multiply(&world, &world, &oldWorld);
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&world));
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&world));
     device->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
-    device->SetStreamSource(0, scene->gizmoCubeVB, 0, 16);  // 12
-    device->SetIndices(scene->gizmoCubeIB);                 // 16
+    device->SetStreamSource(0, scene->gizmoCubeVB, 0, 16); // 12
+    device->SetIndices(scene->gizmoCubeIB);                // 16
     // [0x7FF7CB427150] 经 MME 桥转发，ownerless DIP 语义同 DrawIndexedLines。
     mme::DrawIndexedPrimitive(device, D3DPT_LINELIST, 0, 0, 8, 0, 12);
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&oldWorld));
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&oldWorld));
 }
 
-void DrawCapsule(PhysicsScene* scene, float radius, float halfHeight,
-                 const Matrix& transform) {
+void DrawCapsule(PhysicsScene* scene, float radius, float halfHeight, const Matrix& transform) {
     auto& api = d3dx::Get();
     auto* device = DeviceFromScene(scene);
     Matrix oldWorld;
     Matrix base;
-    device->GetTransform(D3DTS_WORLD,
-                         reinterpret_cast<D3DMATRIX*>(&oldWorld));
+    device->GetTransform(D3DTS_WORLD, reinterpret_cast<D3DMATRIX*>(&oldWorld));
     api.multiply(&base, &transform, &oldWorld);
 
     Matrix scale;
@@ -136,35 +123,31 @@ void DrawCapsule(PhysicsScene* scene, float radius, float halfHeight,
     api.translation(&translation, 0.0f, -halfHeight, 0.0f);
     api.multiply(&world, &scale, &translation);
     api.multiply(&world, &world, &base);
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&world));
-    DrawIndexedLines(scene, scene->gizmoSphere33VB,    // 20
-                     scene->gizmoSphere33IB, 33, 64);   // 24
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&world));
+    DrawIndexedLines(scene, scene->gizmoSphere33VB,   // 20
+                     scene->gizmoSphere33IB, 33, 64); // 24
 
     api.scaling(&scale, radius, radius, radius);
     api.translation(&translation, 0.0f, halfHeight, 0.0f);
     api.multiply(&world, &scale, &translation);
     api.multiply(&world, &world, &base);
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&world));
-    DrawIndexedLines(scene, scene->gizmoSphere33VB,    // 20
-                     scene->gizmoSphere33IB, 33, 64);   // 24
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&world));
+    DrawIndexedLines(scene, scene->gizmoSphere33VB,   // 20
+                     scene->gizmoSphere33IB, 33, 64); // 24
 
     api.scaling(&world, radius, halfHeight * 2.0f, radius);
     api.multiply(&world, &world, &base);
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&world));
-    DrawIndexedLines(scene, scene->gizmoArrowVB,       // 28
-                     scene->gizmoIdentityIB, 16, 8);    // 32
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&oldWorld));
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&world));
+    DrawIndexedLines(scene, scene->gizmoArrowVB,     // 28
+                     scene->gizmoIdentityIB, 16, 8); // 32
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&oldWorld));
 }
 
 void DrawSelectionBox(PhysicsScene* scene) {
     auto* device = DeviceFromScene(scene);
     device->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
-    device->SetStreamSource(0, scene->gizmoBoxSelVB, 0, 16);  // 36
-    device->SetIndices(scene->gizmoBoxSelIB);                 // 40
+    device->SetStreamSource(0, scene->gizmoBoxSelVB, 0, 16); // 36
+    device->SetIndices(scene->gizmoBoxSelIB);                // 40
     // [0x7FF7CB42771B] 选中盒（实心三角面）同样经 MME 桥转发，ownerless
     // DIP 语义同 DrawIndexedLines。
     mme::DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0, 0, 72, 0, 24);
@@ -186,7 +169,7 @@ using MeshDrawSubset = HRESULT(WINAPI*)(void*, DWORD);
 
 void ReleaseCom(void* object) {
     if (object != nullptr)
-        reinterpret_cast<IUnknown*>(object)->Release();  // vtable slot 2
+        reinterpret_cast<IUnknown*>(object)->Release(); // vtable slot 2
 }
 
 void DrawAxisMesh(void* axis, MMDApp* app) {
@@ -214,8 +197,7 @@ void BoneWorldPosition(const mdl::BoneRecord& bone, float position[3]) {
     for (int row = 0; row < 3; ++row) {
         position[row] = bone.matInit[row] * bone.position[0] +
                         bone.matInit[4 + row] * bone.position[1] +
-                        bone.matInit[8 + row] * bone.position[2] +
-                        bone.matInit[12 + row];
+                        bone.matInit[8 + row] * bone.position[2] + bone.matInit[12 + row];
     }
 }
 
@@ -225,13 +207,12 @@ void AttachToBone(MMDApp* app, Matrix* world, int boneIndex) {
     auto* bones = mikudancestudio::mdl::Bones(model);
     mikudancestudio::mdl::BoneRecord* bone = &bones[(boneIndex < 0 ? 0 : boneIndex)];
     Matrix translation;
-    api.translation(&translation, bone->position[0], bone->position[1],
-                    bone->position[2]);
+    api.translation(&translation, bone->position[0], bone->position[1], bone->position[2]);
     api.multiply(world, world, &translation);
     api.multiply(world, world, BoneMatrix(bone));
 }
 
-}  // namespace
+} // namespace
 
 void InitAccessoryRecord(void* object) {
     mdl::AccessoryRecord& accessory = *mdl::Accessory(object);
@@ -240,10 +221,8 @@ void InitAccessoryRecord(void* object) {
     accessory.texturePaths = nullptr;
     accessory.textureTypes = nullptr;
     accessory.visible = 1;
-    accessory.position[0] = accessory.position[1] =
-        accessory.position[2] = 0.0f;
-    accessory.rotation[0] = accessory.rotation[1] =
-        accessory.rotation[2] = 0.0f;
+    accessory.position[0] = accessory.position[1] = accessory.position[2] = 0.0f;
+    accessory.rotation[0] = accessory.rotation[1] = accessory.rotation[2] = 0.0f;
     accessory.scale = 1.0f;
     accessory.parentModel = -1;
     accessory.parentBone = 0;
@@ -270,22 +249,20 @@ bool InitAxisMesh(MMDApp* app) {
     ID3DXMesh* mesh = nullptr;
     D3DRenderer* sub = app->Renderer();
     auto* device = sub->device;
-    if (D3DXLoadMeshFromXInMemory(
-            data, size, 544, device, nullptr, &materialBuffer, nullptr,
-            &materialCount, &mesh) != D3D_OK) {
+    if (D3DXLoadMeshFromXInMemory(data, size, 544, device, nullptr, &materialBuffer, nullptr,
+                                  &materialCount, &mesh) != D3D_OK) {
         MessageBoxA(nullptr, "failed load axis.x from memory!", "", MB_OK);
         return false;
     }
 
     gizmo.mesh = mesh;
     gizmo.materialCount = materialCount;
-    auto* materials = static_cast<D3DMATERIAL9*>(
-        ::operator new(sizeof(D3DMATERIAL9) * materialCount));
+    auto* materials =
+        static_cast<D3DMATERIAL9*>(::operator new(sizeof(D3DMATERIAL9) * materialCount));
     gizmo.materials = materials;
     if (materials == nullptr)
         return false;
-    const auto* source = static_cast<const D3DXMATERIAL*>(
-        materialBuffer->GetBufferPointer());
+    const auto* source = static_cast<const D3DXMATERIAL*>(materialBuffer->GetBufferPointer());
     for (DWORD i = 0; i < materialCount; ++i)
         materials[i] = source[i].MatD3D;
     materialBuffer->Release();
@@ -293,7 +270,7 @@ bool InitAxisMesh(MMDApp* app) {
 }
 
 void DrawPhysicsCollisionDebug(PhysicsScene* scene) {
-    auto* world = scene->world;   // slot 64 / 0x40
+    auto* world = scene->world; // slot 64 / 0x40
     SetDebugColor(scene, 255, 0, 0);
     for (int pass = 0; pass < 2; ++pass) {
         if (pass == 1)
@@ -302,8 +279,7 @@ void DrawPhysicsCollisionDebug(PhysicsScene* scene) {
         for (int i = 0; i < count; ++i) {
             btCollisionObject* object = world->getCollisionObjectArray()[i];
             btRigidBody* body = btRigidBody::upcast(object);
-            if (body == nullptr ||
-                ((body->getInvMass() != 0.0f) != (pass == 0)))
+            if (body == nullptr || ((body->getInvMass() != 0.0f) != (pass == 0)))
                 continue;
             btCollisionShape* shape = body->getCollisionShape();
             Matrix transform;
@@ -314,12 +290,10 @@ void DrawPhysicsCollisionDebug(PhysicsScene* scene) {
             } else if (shape->getShapeType() == BOX_SHAPE_PROXYTYPE) {
                 const btVector3 extents =
                     static_cast<btBoxShape*>(shape)->getHalfExtentsWithMargin();
-                DrawBox(scene, extents.x(), extents.y(), extents.z(),
-                        transform);
+                DrawBox(scene, extents.x(), extents.y(), extents.z(), transform);
             } else if (shape->getShapeType() == CAPSULE_SHAPE_PROXYTYPE) {
                 auto* capsule = static_cast<btCapsuleShape*>(shape);
-                DrawCapsule(scene, capsule->getRadius(),
-                            capsule->getHalfHeight(), transform);
+                DrawCapsule(scene, capsule->getRadius(), capsule->getHalfHeight(), transform);
             }
         }
     }
@@ -335,22 +309,17 @@ constexpr int kDebugRecordCapacity = 10000;
 
 void DrawAccessoryDebug(MMDApp* app) {
     auto& api = d3dx::Get();
-    PhysicsScene* scene = app->Physics();   // +650672 (kPtrSub048)
+    PhysicsScene* scene = app->Physics(); // +650672 (kPtrSub048)
     // The physics-model editor's scratch arrays double as the draw source:
     // rigidScratchArray = rigid bodies (mdl::RigidRecord), jointScratchArray =
     // joints (mdl::JointRecord).  While the dialog is open the records'
     // keyData / constraint slots hold the combo index (-1 = deleted slot).
-    auto* bodies =
-        static_cast<mikudancestudio::mdl::RigidRecord*>(
-            app->state.rigidScratchArray);
-    auto* joints =
-        static_cast<mikudancestudio::mdl::JointRecord*>(
-            app->state.jointScratchArray);
+    auto* bodies = static_cast<mikudancestudio::mdl::RigidRecord*>(app->state.rigidScratchArray);
+    auto* joints = static_cast<mikudancestudio::mdl::JointRecord*>(app->state.jointScratchArray);
     const bool dialogSelection = app->state.physicsEditorJointPage != 0;
     for (int index = 0; index < kDebugRecordCapacity; ++index) {
         mikudancestudio::mdl::RigidRecord* record = &bodies[index];
-        const int comboSlot =
-            static_cast<int>(reinterpret_cast<std::intptr_t>(record->keyData));
+        const int comboSlot = static_cast<int>(reinterpret_cast<std::intptr_t>(record->keyData));
         if (comboSlot >= 0) {
             Matrix world;
             Matrix temp;
@@ -359,8 +328,7 @@ void DrawAccessoryDebug(MMDApp* app) {
             api.multiply(&world, &world, &temp);
             api.rotY(&temp, record->rotation[1]);
             api.multiply(&world, &world, &temp);
-            api.translation(&temp, record->position[0],
-                            record->position[1], record->position[2]);
+            api.translation(&temp, record->position[0], record->position[1], record->position[2]);
             api.multiply(&world, &world, &temp);
             AttachToBone(app, &world, record->boneIndex);
 
@@ -368,27 +336,22 @@ void DrawAccessoryDebug(MMDApp* app) {
             if (dialogSelection) {
                 const int linkIndex = app->state.selectedJointIndex;
                 if (linkIndex >= 0) {
-                    const mikudancestudio::mdl::JointRecord* link =
-                        &joints[linkIndex];
-                    selected = index == link->rigidA ||
-                               index == link->rigidB;
+                    const mikudancestudio::mdl::JointRecord* link = &joints[linkIndex];
+                    selected = index == link->rigidA || index == link->rigidB;
                 }
             } else {
                 selected = index == app->state.selectedRigidIndex;
             }
             if (selected)
-                SetDebugColor(scene, 255, dialogSelection ? 75 : 0,
-                              dialogSelection ? 75 : 0);
+                SetDebugColor(scene, 255, dialogSelection ? 75 : 0, dialogSelection ? 75 : 0);
 
             const std::uint8_t type = record->shape;
             if (type == 0)
                 DrawSphere(scene, record->size[0], world);
             else if (type == 1)
-                DrawBox(scene, record->size[0], record->size[1],
-                        record->size[2], world);
+                DrawBox(scene, record->size[0], record->size[1], record->size[2], world);
             else
-                DrawCapsule(scene, record->size[0],
-                            record->size[1] * 0.5f, world);
+                DrawCapsule(scene, record->size[0], record->size[1] * 0.5f, world);
             if (selected)
                 SetDebugColor(scene, 155, 255, 0);
         }
@@ -405,16 +368,13 @@ void DrawAccessoryDebug(MMDApp* app) {
         api.multiply(&world, &temp, &world);
         api.rotY(&temp, link->rotation[1]);
         api.multiply(&world, &world, &temp);
-        api.translation(&temp, link->position[0], link->position[1],
-                        link->position[2]);
+        api.translation(&temp, link->position[0], link->position[1], link->position[2]);
         api.multiply(&world, &world, &temp);
         auto* device = DeviceFromScene(scene);
         Matrix oldWorld;
-        device->GetTransform(D3DTS_WORLD,
-                             reinterpret_cast<D3DMATRIX*>(&oldWorld));
+        device->GetTransform(D3DTS_WORLD, reinterpret_cast<D3DMATRIX*>(&oldWorld));
         api.multiply(&world, &world, &oldWorld);
-        device->SetTransform(D3DTS_WORLD,
-                             reinterpret_cast<const D3DMATRIX*>(&world));
+        device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&world));
         if (dialogSelection && index == app->state.selectedJointIndex) {
             device->SetRenderState(D3DRS_ZENABLE, TRUE);
             device->SetRenderState(D3DRS_LIGHTING, TRUE);
@@ -425,8 +385,7 @@ void DrawAccessoryDebug(MMDApp* app) {
         } else {
             DrawSelectionBox(scene);
         }
-        device->SetTransform(D3DTS_WORLD,
-                             reinterpret_cast<const D3DMATRIX*>(&oldWorld));
+        device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&oldWorld));
     }
 }
 
@@ -444,15 +403,14 @@ void DrawBoneOperationAxis(MMDApp* app, const float frameMatrix[16]) {
         return;
     const int operation = static_cast<int>(app->ViewportToolOperation());
     const int mode = static_cast<int>(app->InteractionDragMode());
-    if (!((operation >= 9 && operation <= 14) ||
-          (mode >= 4 && mode <= 7) || (mode >= 10 && mode <= 12)))
+    if (!((operation >= 9 && operation <= 14) || (mode >= 4 && mode <= 7) ||
+          (mode >= 10 && mode <= 12)))
         return;
 
     auto& api = d3dx::Get();
     Matrix world;
     Matrix translation;
-    api.translation(&translation, bone->position[0], bone->position[1],
-                    bone->position[2]);
+    api.translation(&translation, bone->position[0], bone->position[1], bone->position[2]);
     if (app->state.coordinateSystem == 1) {
         api.multiply(&world, &translation, BoneMatrix(bone));
         const float x = world.m[3][0];
@@ -471,39 +429,29 @@ void DrawBoneOperationAxis(MMDApp* app, const float frameMatrix[16]) {
     const auto* frame = reinterpret_cast<const Matrix*>(frameMatrix);
     api.multiply(&world, &world, frame);
 
-    const float px = bone->matInit[0] * bone->position[0] +
-                     bone->matInit[4] * bone->position[1] +
-                     bone->matInit[8] * bone->position[2] +
-                     bone->matInit[12];
-    const float py = bone->matInit[1] * bone->position[0] +
-                     bone->matInit[5] * bone->position[1] +
-                     bone->matInit[9] * bone->position[2] +
-                     bone->matInit[13];
-    const float pz = bone->matInit[2] * bone->position[0] +
-                     bone->matInit[6] * bone->position[1] +
-                     bone->matInit[10] * bone->position[2] +
-                     bone->matInit[14];
-    const float pw = bone->matInit[3] * bone->position[0] +
-                     bone->matInit[7] * bone->position[1] +
-                     bone->matInit[11] * bone->position[2] +
-                     bone->matInit[15];
-    const float tx = px * frame->m[0][0] + py * frame->m[1][0] +
-                     pz * frame->m[2][0] + pw * frame->m[3][0];
-    const float ty = px * frame->m[0][1] + py * frame->m[1][1] +
-                     pz * frame->m[2][1] + pw * frame->m[3][1];
-    const float tz = px * frame->m[0][2] + py * frame->m[1][2] +
-                     pz * frame->m[2][2] + pw * frame->m[3][2];
+    const float px = bone->matInit[0] * bone->position[0] + bone->matInit[4] * bone->position[1] +
+                     bone->matInit[8] * bone->position[2] + bone->matInit[12];
+    const float py = bone->matInit[1] * bone->position[0] + bone->matInit[5] * bone->position[1] +
+                     bone->matInit[9] * bone->position[2] + bone->matInit[13];
+    const float pz = bone->matInit[2] * bone->position[0] + bone->matInit[6] * bone->position[1] +
+                     bone->matInit[10] * bone->position[2] + bone->matInit[14];
+    const float pw = bone->matInit[3] * bone->position[0] + bone->matInit[7] * bone->position[1] +
+                     bone->matInit[11] * bone->position[2] + bone->matInit[15];
+    const float tx =
+        px * frame->m[0][0] + py * frame->m[1][0] + pz * frame->m[2][0] + pw * frame->m[3][0];
+    const float ty =
+        px * frame->m[0][1] + py * frame->m[1][1] + pz * frame->m[2][1] + pw * frame->m[3][1];
+    const float tz =
+        px * frame->m[0][2] + py * frame->m[1][2] + pz * frame->m[2][2] + pw * frame->m[3][2];
     const float dx = tx - app->ViewOffsetX();
     const float dy = ty - app->ViewOffsetY();
     const float dz = tz - app->CameraDistance();
-    const float scale = std::sqrt(dx * dx + dy * dy + dz * dz) *
-                        (app->CameraFov() * 0.001f);
+    const float scale = std::sqrt(dx * dx + dy * dy + dz * dz) * (app->CameraFov() * 0.001f);
     Matrix scaleMatrix;
     api.scaling(&scaleMatrix, scale, scale, scale);
     api.multiply(&world, &scaleMatrix, &world);
     auto* device = DeviceFromScene(app->Physics());
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&world));
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&world));
     device->Clear(0, nullptr, D3DCLEAR_ZBUFFER, 0x00FFFFFF, 1.0f, 0);
     DrawAxisMesh(app->state.axisMeshObject, app);
 }
@@ -524,10 +472,10 @@ void SetupFrameWorldTransform(MMDApp* app) {
     float focus[3]{};
     const int targetModel = app->CameraParentModel();
     const int targetBone = app->CameraParentBone();
-    const bool cameraView = app->CameraMode() != 0 ||
-        (app->state.followCameraEnabled != 0 &&
-         (app->PlaybackActive() != 0 ||
-          (targetModel >= 0 && app->SelectedModelSlot() == targetModel)));
+    const bool cameraView =
+        app->CameraMode() != 0 || (app->state.followCameraEnabled != 0 &&
+                                   (app->PlaybackActive() != 0 ||
+                                    (targetModel >= 0 && app->SelectedModelSlot() == targetModel)));
     if (cameraView) {
         if (targetModel < 0) {
             focus[0] = app->CameraPositionX();
@@ -558,10 +506,8 @@ void SetupFrameWorldTransform(MMDApp* app) {
     api.rotZ(&rotationZ, app->CameraRoll());
     api.multiply(&rotation, &rotation, &rotationZ);
 
-    if (app->state.followCameraEnabled != 0 ||
-        app->CameraMode() != 0) {
-        if (targetModel >= 0 &&
-            app->CameraAttachmentTransformSuppressed() == 0) {
+    if (app->state.followCameraEnabled != 0 || app->CameraMode() != 0) {
+        if (targetModel >= 0 && app->CameraAttachmentTransformSuppressed() == 0) {
             // x86 0x46B91F / x64 RVA 0x27A80: transpose the bone's
             // rotation only. The saved free-view basis is not overwritten.
             const auto& bone = mdl::Bones(app->ModelSlot(targetModel))[targetBone];
@@ -571,12 +517,10 @@ void SetupFrameWorldTransform(MMDApp* app) {
         } else {
             // x86 0x46BAB1 / x64 RVA 0x27C72 also clears the saved basis,
             // so subsequently disabling Track cannot reuse a stale parent.
-            std::memcpy(&app->CameraAttachmentBasis(), &attachment,
-                        sizeof(attachment));
+            std::memcpy(&app->CameraAttachmentBasis(), &attachment, sizeof(attachment));
         }
     } else {
-        std::memcpy(&attachment, &app->CameraAttachmentBasis(),
-                    sizeof(attachment));
+        std::memcpy(&attachment, &app->CameraAttachmentBasis(), sizeof(attachment));
     }
     api.multiply(&rotation, &attachment, &rotation);
     std::memcpy(&app->ViewRotationTransform(), &rotation, sizeof(rotation));
@@ -598,8 +542,7 @@ void SetupFrameWorldTransform(MMDApp* app) {
     device->SetLight(0, &app->SceneLight());
     Matrix world;
     api.multiply(&world, &translation, &rotation);
-    device->SetTransform(D3DTS_WORLD,
-                         reinterpret_cast<const D3DMATRIX*>(&world));
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&world));
 
     // 0x46BC20..0x46BC9F: the alternate projection used by the orthographic
     // view mode.  The normal perspective projection remains the one written
@@ -607,26 +550,21 @@ void SetupFrameWorldTransform(MMDApp* app) {
     if (app->state.cameraPerspective != 0) {
         Matrix projection{};
         projection.m[0][0] = -2.0f / app->CameraDistance();
-        projection.m[1][1] =
-            sub->aspectRatio *
-            projection.m[0][0];
+        projection.m[1][1] = sub->aspectRatio * projection.m[0][0];
         projection.m[2][2] = 0.0013f;
         projection.m[3][3] = 1.0f;
-        device->SetTransform(D3DTS_PROJECTION,
-            reinterpret_cast<const D3DMATRIX*>(&projection));
+        device->SetTransform(D3DTS_PROJECTION, reinterpret_cast<const D3DMATRIX*>(&projection));
     }
 
     // 0x46BCAA..0x46BD72: MMD keeps camera translation in the world matrix
     // and still installs this fixed +Z look-at view.  Omitting it leaves the
     // D3D identity view active, moving the horizon and clipping the Y axis.
-    const float eye[3] = {
-        app->ViewOffsetX(), app->ViewOffsetY(), app->CameraDistance()};
+    const float eye[3] = {app->ViewOffsetX(), app->ViewOffsetY(), app->CameraDistance()};
     const float at[3] = {eye[0], eye[1], eye[2] + 80.0f};
     const float up[3] = {0.0f, 1.0f, 0.0f};
     Matrix view;
     api.lookAtLH(&view, eye, at, up);
-    device->SetTransform(D3DTS_VIEW,
-                         reinterpret_cast<const D3DMATRIX*>(&view));
+    device->SetTransform(D3DTS_VIEW, reinterpret_cast<const D3DMATRIX*>(&view));
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

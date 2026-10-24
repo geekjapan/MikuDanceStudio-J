@@ -40,8 +40,7 @@ struct ColoredScreenVertex {
     D3DCOLOR color;
 };
 
-constexpr DWORD kTexturedScreenVertexFvf =
-    D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
+constexpr DWORD kTexturedScreenVertexFvf = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
 constexpr DWORD kColoredScreenVertexFvf = D3DFVF_XYZRHW | D3DFVF_DIFFUSE;
 
 static_assert(sizeof(TexturedScreenVertex) == 28);
@@ -59,8 +58,7 @@ void DrawTextOverlay(MMDApp* app, IDirect3DDevice9* device) {
     mme::DrawPrimitive(device, D3DPT_TRIANGLELIST, 0, count);
 }
 
-void DrawLineOverlay(MMDApp* app, D3DRenderer* sub,
-                     IDirect3DDevice9* device) {
+void DrawLineOverlay(MMDApp* app, D3DRenderer* sub, IDirect3DDevice9* device) {
     const UINT count = app->LineOverlayPrimitiveCount();
     // The renderer owns the selection and guide-line vertex buffer.
     auto* vb = sub->lineVertexBuffer;
@@ -89,8 +87,7 @@ void DrawSpriteOverlay(MMDApp* app, IDirect3DDevice9* device) {
     mme::DrawPrimitive(device, D3DPT_TRIANGLELIST, 0, count);
 }
 
-void DrawFullscreenQuad(IDirect3DDevice9* device,
-                        IDirect3DBaseTexture9* texture,
+void DrawFullscreenQuad(IDirect3DDevice9* device, IDirect3DBaseTexture9* texture,
                         IDirect3DVertexBuffer9* vertices) {
     device->SetTexture(0, texture);
     device->SetStreamSource(0, vertices, 0, 28);
@@ -118,8 +115,8 @@ struct DumpBitmapFileHeader {
 // D3D command boundary and can fail on real D3D9 drivers.
 void DumpAccessoryScreenTexture(MMDApp* app, IDirect3DDevice9* device) {
     char directory[MAX_PATH]{};
-    const DWORD length = GetEnvironmentVariableA(
-        "MIKUDANCESTUDIO_SCREEN_TEXTURE_DUMP_DIR", directory, MAX_PATH);
+    const DWORD length =
+        GetEnvironmentVariableA("MIKUDANCESTUDIO_SCREEN_TEXTURE_DUMP_DIR", directory, MAX_PATH);
     if (length == 0 || length >= MAX_PATH)
         return;
 
@@ -128,11 +125,9 @@ void DumpAccessoryScreenTexture(MMDApp* app, IDirect3DDevice9* device) {
                                 sizeof(stableCapture)) == 1 &&
         stableCapture[0] == '1') {
         char gatePath[MAX_PATH]{};
-        std::snprintf(gatePath, sizeof(gatePath), "%s\\vb.capture.ready",
-                      directory);
+        std::snprintf(gatePath, sizeof(gatePath), "%s\\vb.capture.ready", directory);
         const DWORD attributes = GetFileAttributesA(gatePath);
-        if (attributes == INVALID_FILE_ATTRIBUTES ||
-            (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
             return;
     }
 
@@ -151,10 +146,10 @@ void DumpAccessoryScreenTexture(MMDApp* app, IDirect3DDevice9* device) {
     bool isLocked = false;
     if (FAILED(texture->GetLevelDesc(0, &description)) ||
         FAILED(texture->GetSurfaceLevel(0, &source)) || source == nullptr ||
-        FAILED(device->CreateOffscreenPlainSurface(
-            description.Width, description.Height, description.Format,
-            D3DPOOL_SYSTEMMEM, &system, nullptr)) || system == nullptr ||
-        FAILED(device->GetRenderTargetData(source, system)) ||
+        FAILED(device->CreateOffscreenPlainSurface(description.Width, description.Height,
+                                                   description.Format, D3DPOOL_SYSTEMMEM, &system,
+                                                   nullptr)) ||
+        system == nullptr || FAILED(device->GetRenderTargetData(source, system)) ||
         FAILED(system->LockRect(&locked, nullptr, D3DLOCK_READONLY))) {
         if (system != nullptr)
             system->Release();
@@ -168,19 +163,15 @@ void DumpAccessoryScreenTexture(MMDApp* app, IDirect3DDevice9* device) {
     char rawPath[MAX_PATH]{};
     char bitmapPath[MAX_PATH]{};
     char metaPath[MAX_PATH]{};
-    std::snprintf(rawPath, sizeof(rawPath), "%s\\screen_texture.bgra",
-                  directory);
-    std::snprintf(bitmapPath, sizeof(bitmapPath), "%s\\screen_texture.bmp",
-                  directory);
-    std::snprintf(metaPath, sizeof(metaPath), "%s\\screen_texture.meta.json",
-                  directory);
+    std::snprintf(rawPath, sizeof(rawPath), "%s\\screen_texture.bgra", directory);
+    std::snprintf(bitmapPath, sizeof(bitmapPath), "%s\\screen_texture.bmp", directory);
+    std::snprintf(metaPath, sizeof(metaPath), "%s\\screen_texture.meta.json", directory);
 
     const DWORD rowBytes = description.Width * 4;
     FILE* stream = nullptr;
     if (fopen_s(&stream, rawPath, "wb") == 0 && stream != nullptr) {
         for (UINT y = 0; y < description.Height; ++y) {
-            const auto* row = static_cast<const std::uint8_t*>(locked.pBits) +
-                              y * locked.Pitch;
+            const auto* row = static_cast<const std::uint8_t*>(locked.pBits) + y * locked.Pitch;
             std::fwrite(row, 1, rowBytes, stream);
         }
         std::fclose(stream);
@@ -189,10 +180,10 @@ void DumpAccessoryScreenTexture(MMDApp* app, IDirect3DDevice9* device) {
     if (fopen_s(&stream, bitmapPath, "wb") == 0 && stream != nullptr) {
         const DWORD pixelBytes = rowBytes * description.Height;
         DumpBitmapFileHeader fileHeader{
-            0x4D42, static_cast<DWORD>(sizeof(DumpBitmapFileHeader) +
-                                      sizeof(BITMAPINFOHEADER) + pixelBytes),
-            0, 0, static_cast<DWORD>(sizeof(DumpBitmapFileHeader) +
-                                     sizeof(BITMAPINFOHEADER))};
+            0x4D42,
+            static_cast<DWORD>(sizeof(DumpBitmapFileHeader) + sizeof(BITMAPINFOHEADER) +
+                               pixelBytes),
+            0, 0, static_cast<DWORD>(sizeof(DumpBitmapFileHeader) + sizeof(BITMAPINFOHEADER))};
         BITMAPINFOHEADER info{};
         info.biSize = sizeof(info);
         info.biWidth = static_cast<LONG>(description.Width);
@@ -204,8 +195,7 @@ void DumpAccessoryScreenTexture(MMDApp* app, IDirect3DDevice9* device) {
         std::fwrite(&fileHeader, 1, sizeof(fileHeader), stream);
         std::fwrite(&info, 1, sizeof(info), stream);
         for (UINT y = description.Height; y-- > 0;) {
-            const auto* row = static_cast<const std::uint8_t*>(locked.pBits) +
-                              y * locked.Pitch;
+            const auto* row = static_cast<const std::uint8_t*>(locked.pBits) + y * locked.Pitch;
             std::fwrite(row, 1, rowBytes, stream);
         }
         std::fclose(stream);
@@ -214,36 +204,30 @@ void DumpAccessoryScreenTexture(MMDApp* app, IDirect3DDevice9* device) {
     if (fopen_s(&stream, metaPath, "wb") == 0 && stream != nullptr) {
         const int mode = static_cast<int>(app->CaptureMode());
         RECT capture = app->RecordingWindow() != nullptr
-            ? RECT{0, 0, app->RenderWidth(), app->RenderHeight()}
-            : app->ViewportRect();
+                           ? RECT{0, 0, app->RenderWidth(), app->RenderHeight()}
+                           : app->ViewportRect();
         if (mode == 2) {
-            const double width =
-                static_cast<double>(capture.right - capture.left);
-            const double height =
-                static_cast<double>(capture.bottom - capture.top);
+            const double width = static_cast<double>(capture.right - capture.left);
+            const double height = static_cast<double>(capture.bottom - capture.top);
             const double targetWidth = height * 4.0 / 3.0;
             if (targetWidth < width) {
-                const double center =
-                    static_cast<double>(capture.left + capture.right) * 0.5;
+                const double center = static_cast<double>(capture.left + capture.right) * 0.5;
                 capture.left = static_cast<LONG>(center - targetWidth * 0.5);
                 capture.right = static_cast<LONG>(center + targetWidth * 0.5);
             } else {
                 const double targetHeight = width * 3.0 / 4.0;
-                const double center =
-                    static_cast<double>(capture.top + capture.bottom) * 0.5;
-                capture.top =
-                    static_cast<LONG>(center - targetHeight * 0.5);
-                capture.bottom =
-                    static_cast<LONG>(center + targetHeight * 0.5);
+                const double center = static_cast<double>(capture.top + capture.bottom) * 0.5;
+                capture.top = static_cast<LONG>(center - targetHeight * 0.5);
+                capture.bottom = static_cast<LONG>(center + targetHeight * 0.5);
             }
         }
         std::fprintf(stream,
-            "{\"schema\":2,\"width\":%u,\"height\":%u,"
-            "\"format\":%u,\"pitch\":%d,\"mode\":%d,"
-            "\"source_rect\":[%ld,%ld,%ld,%ld]}\n",
-            description.Width, description.Height,
-            static_cast<unsigned>(description.Format), locked.Pitch,
-            mode, capture.left, capture.top, capture.right, capture.bottom);
+                     "{\"schema\":2,\"width\":%u,\"height\":%u,"
+                     "\"format\":%u,\"pitch\":%d,\"mode\":%d,"
+                     "\"source_rect\":[%ld,%ld,%ld,%ld]}\n",
+                     description.Width, description.Height,
+                     static_cast<unsigned>(description.Format), locked.Pitch, mode, capture.left,
+                     capture.top, capture.right, capture.bottom);
         std::fclose(stream);
     }
 
@@ -253,25 +237,22 @@ void DumpAccessoryScreenTexture(MMDApp* app, IDirect3DDevice9* device) {
     source->Release();
 }
 #else
-inline void DumpAccessoryScreenTexture(MMDApp*, IDirect3DDevice9*) {}
+inline void DumpAccessoryScreenTexture(MMDApp*, IDirect3DDevice9*) {
+}
 #endif
 
 void ComposeSelfShadow(MMDApp* app, D3DRenderer* sub,
                        IDirect3DDevice9* device) { // 0x46DE61
-    if (app->SelfShadowCompositionEnabled() == 0 ||
-        app->SelfShadowMode() <= 0)
+    if (app->SelfShadowCompositionEnabled() == 0 || app->SelfShadowMode() <= 0)
         return;
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-    DrawFullscreenQuad(device,
-        sub->hdrTexture,
-        app->LeftViewportVertices());
+    DrawFullscreenQuad(device, sub->hdrTexture, app->LeftViewportVertices());
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
 }
 
 void ComposeCallbackTexture(MMDApp* app,
                             IDirect3DDevice9* device) { // 0x46DF2A
-    if (app->DepthTextureCompositionEnabled() == 0 ||
-        app->DepthDeviceEnabled() == 0 ||
+    if (app->DepthTextureCompositionEnabled() == 0 || app->DepthDeviceEnabled() == 0 ||
         app->FrameStepPlayback() != 0)
         return;
     DepthTextureProvider callback = app->DepthTextureCallback();
@@ -279,8 +260,7 @@ void ComposeCallbackTexture(MMDApp* app,
         return;
     IDirect3DBaseTexture9* texture = nullptr;
     callback(&texture);
-    DrawFullscreenQuad(device, texture,
-        app->RightViewportVertices());
+    DrawFullscreenQuad(device, texture, app->RightViewportVertices());
 }
 
 void CaptureAccessoryScreenTexture(MMDApp* app, D3DRenderer* sub,
@@ -290,12 +270,11 @@ void CaptureAccessoryScreenTexture(MMDApp* app, D3DRenderer* sub,
         return;
     auto*& texture = app->CaptureTexture();
     if (texture == nullptr) {
-        HRESULT result = device->CreateTexture(1024, 1024, 1,
-            D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT,
-            &texture, nullptr);
+        HRESULT result = device->CreateTexture(1024, 1024, 1, D3DUSAGE_RENDERTARGET,
+                                               D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, &texture, nullptr);
         if (result == D3DERR_OUTOFVIDEOMEMORY || result == E_OUTOFMEMORY)
-            device->CreateTexture(512, 512, 1, D3DUSAGE_RENDERTARGET,
-                D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, &texture, nullptr);
+            device->CreateTexture(512, 512, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8,
+                                  D3DPOOL_DEFAULT, &texture, nullptr);
         if (texture == nullptr)
             return;
     }
@@ -317,42 +296,35 @@ void CaptureAccessoryScreenTexture(MMDApp* app, D3DRenderer* sub,
         } else {
             sourceRect = &app->ViewportRect();
         }
-        if (FAILED(device->StretchRect(*backBuffer, sourceRect,
-                                       textureSurface, nullptr,
+        if (FAILED(device->StretchRect(*backBuffer, sourceRect, textureSurface, nullptr,
                                        D3DTEXF_LINEAR)))
-            device->StretchRect(*backBuffer, sourceRect, textureSurface,
-                                nullptr, D3DTEXF_NONE);
-    } else if (mode == 2 && textureSurface != nullptr &&
-               *backBuffer != nullptr) {
+            device->StretchRect(*backBuffer, sourceRect, textureSurface, nullptr, D3DTEXF_NONE);
+    } else if (mode == 2 && textureSurface != nullptr && *backBuffer != nullptr) {
         RECT source = app->RecordingWindow() != nullptr
-            ? RECT{0, 0, app->RenderWidth(), app->RenderHeight()}
-            : app->ViewportRect();
+                          ? RECT{0, 0, app->RenderWidth(), app->RenderHeight()}
+                          : app->ViewportRect();
         const double width = static_cast<double>(source.right - source.left);
         const double height = static_cast<double>(source.bottom - source.top);
         const double targetWidth = height * 4.0 / 3.0;
         if (targetWidth < width) {
-            const double center =
-                static_cast<double>(source.left + source.right) * 0.5;
+            const double center = static_cast<double>(source.left + source.right) * 0.5;
             source.left = static_cast<LONG>(center - targetWidth * 0.5);
             source.right = static_cast<LONG>(center + targetWidth * 0.5);
         } else {
             const double targetHeight = width * 3.0 / 4.0;
-            const double center =
-                static_cast<double>(source.top + source.bottom) * 0.5;
+            const double center = static_cast<double>(source.top + source.bottom) * 0.5;
             source.top = static_cast<LONG>(center - targetHeight * 0.5);
             source.bottom = static_cast<LONG>(center + targetHeight * 0.5);
         }
-        if (FAILED(device->StretchRect(*backBuffer, &source,
-                                       textureSurface, nullptr,
-                                       D3DTEXF_LINEAR)))
-            device->StretchRect(*backBuffer, &source, textureSurface,
-                                nullptr, D3DTEXF_NONE);
+        if (FAILED(
+                device->StretchRect(*backBuffer, &source, textureSurface, nullptr, D3DTEXF_LINEAR)))
+            device->StretchRect(*backBuffer, &source, textureSurface, nullptr, D3DTEXF_NONE);
     }
     if (textureSurface != nullptr)
         textureSurface->Release();
 }
 
-}  // namespace
+} // namespace
 
 void RenderFrameScene(MMDApp* app) {
     D3DRenderer* sub = app->Renderer();
@@ -378,18 +350,16 @@ void RenderFrameScene(MMDApp* app) {
         for (int slot = 0; slot < kModelSlotCount; ++slot) {
             auto* model = app->ModelSlot(slot);
             if (model != nullptr)
-                UpdateModelVertexBuffers(
-                    app, model, reinterpret_cast<const float*>(&frameWorld));
+                UpdateModelVertexBuffers(app, model, reinterpret_cast<const float*>(&frameWorld));
         }
     }
 
     DWORD clearFlags = D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER;
     if (sub->d3dInitialized != 0)
         clearFlags |= D3DCLEAR_STENCIL;
-    const D3DCOLOR clearColor =
-        app->state.blackBackgroundEnabled != 0
-            ? D3DCOLOR_XRGB(0, 0, 0)
-            : D3DCOLOR_XRGB(255, 255, 255);
+    const D3DCOLOR clearColor = app->state.blackBackgroundEnabled != 0
+                                    ? D3DCOLOR_XRGB(0, 0, 0)
+                                    : D3DCOLOR_XRGB(255, 255, 255);
     mme::ClearScene(app, device, clearFlags, clearColor, 1.0f, 0);
 
     app->state.renderPassCount = 1;
@@ -405,8 +375,7 @@ void RenderFrameScene(MMDApp* app) {
     while (app->state.renderPassCount > 0) {
         --app->state.renderPassCount;
         if (effectRenderer)
-            RenderModelsEffect(app,
-                reinterpret_cast<const float*>(&frameWorld));
+            RenderModelsEffect(app, reinterpret_cast<const float*>(&frameWorld));
         else
             RenderModelsFixed(app);
     }
@@ -416,12 +385,10 @@ void RenderFrameScene(MMDApp* app) {
 
     // 0x46DFDE: mirror the full-size capture RT into the secondary-window
     // back buffer.  The original reacquires the back buffer after a reset.
-    if (sub->multisampleAvailable == 0 &&
-        app->RecordingWindow() != nullptr) {
+    if (sub->multisampleAvailable == 0 && app->RecordingWindow() != nullptr) {
         auto** backBufferSlot = &sub->backbufferSurface;
         if (*backBufferSlot == nullptr)
-            device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO,
-                                  backBufferSlot);
+            device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, backBufferSlot);
         DownsampleCaptureSurface(app);
     }
 
@@ -436,8 +403,7 @@ void RenderFrameScene(MMDApp* app) {
     }
 
     // 0x46E214..0x46E554: accessory-dialog or Bullet collision debug pass.
-    if (app->state.rigidBodyDisplayEnabled == 1 ||
-        app->state.frameCopyDialog != 0) {
+    if (app->state.rigidBodyDisplayEnabled == 1 || app->state.frameCopyDialog != 0) {
         device->SetRenderState(D3DRS_LIGHTING, FALSE);
         device->SetTexture(0, nullptr);
         device->SetRenderState(D3DRS_ZENABLE, FALSE);
@@ -450,11 +416,8 @@ void RenderFrameScene(MMDApp* app) {
     }
 
     // 0x46E556..0x46E592: selected-bone local/global operation axis.
-    if (app->CameraMode() == 0 &&
-        app->PlaybackActive() == 0 &&
-        app->state.frameCopyDialog == 0) {
-        DrawBoneOperationAxis(app,
-            reinterpret_cast<const float*>(&frameWorld));
+    if (app->CameraMode() == 0 && app->PlaybackActive() == 0 && app->state.frameCopyDialog == 0) {
+        DrawBoneOperationAxis(app, reinterpret_cast<const float*>(&frameWorld));
     }
 
     device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
@@ -468,4 +431,4 @@ void RenderFrameScene(MMDApp* app) {
     DumpAccessoryScreenTexture(app, device);
 }
 
-}  // namespace mikudancestudio
+} // namespace mikudancestudio

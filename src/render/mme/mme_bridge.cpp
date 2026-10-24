@@ -61,8 +61,7 @@ bool g_recWindowSticky = false;
 // 模态对话框，也不查 IsWindowEnabled/父子/所有者关系。
 BOOL CALLBACK FindRecWindowProc(HWND candidate, LPARAM found) {
     char className[32];
-    if (GetClassNameA(candidate, className, 32) != 0 &&
-        strcmp(className, "RecWindow") == 0) {
+    if (GetClassNameA(candidate, className, 32) != 0 && strcmp(className, "RecWindow") == 0) {
         *reinterpret_cast<bool*>(found) = true;
         return FALSE;
     }
@@ -80,8 +79,7 @@ int ProbeNotEditMode(HWND mainWindow) {
     if (g_editModeControl == nullptr) {
         char className[32];
         HWND probe = GetDlgItem(mainWindow, 317);
-        if (probe == nullptr ||
-            GetClassNameA(probe, className, 32) == 0 ||
+        if (probe == nullptr || GetClassNameA(probe, className, 32) == 0 ||
             _stricmp(className, "EDIT") != 0)
             probe = nullptr;
         if (probe == nullptr) {
@@ -89,8 +87,7 @@ int ProbeNotEditMode(HWND mainWindow) {
             // 不移植）。
             probe = GetDlgItem(mainWindow, panel::kCurrentFrameEdit);
             if (probe != nullptr &&
-                (GetClassNameA(probe, className, 32) == 0 ||
-                 _stricmp(className, "EDIT") != 0))
+                (GetClassNameA(probe, className, 32) == 0 || _stricmp(className, "EDIT") != 0))
                 probe = nullptr;
         }
         g_editModeControl = probe;
@@ -110,7 +107,7 @@ int ProbeNotEditMode(HWND mainWindow) {
     return 0;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // 设备生命周期
@@ -191,8 +188,8 @@ void OnResetDevice(MMDApp* app) {
 // ---------------------------------------------------------------------------
 // 帧级
 // ---------------------------------------------------------------------------
-HRESULT ClearScene(MMDApp* app, IDirect3DDevice9* device, unsigned long flags,
-                   D3DCOLOR color, float z, unsigned long stencil) {
+HRESULT ClearScene(MMDApp* app, IDirect3DDevice9* device, unsigned long flags, D3DCOLOR color,
+                   float z, unsigned long stencil) {
     if (!g_deviceRegistered)
         return device->Clear(0, nullptr, flags, color, z, stencil);
     return MmeHostClear(device, 0, nullptr, flags, color, z, stencil);
@@ -223,18 +220,16 @@ HRESULT EndScene(MMDApp* app, IDirect3DDevice9* device) {
     return MmeHostEndScene(device);
 }
 
-HRESULT Present(MMDApp* app, IDirect3DDevice9* device,
-                const RECT* source, const RECT* destination,
+HRESULT Present(MMDApp* app, IDirect3DDevice9* device, const RECT* source, const RECT* destination,
                 HWND destinationWindow, const RGNDATA* dirtyRegion) {
     if (g_deviceRegistered) {
-        MmeHostSetDrawnWindow(destinationWindow != nullptr
-            ? destinationWindow : static_cast<HWND>(app->Hwnd()));
+        MmeHostSetDrawnWindow(destinationWindow != nullptr ? destinationWindow
+                                                           : static_cast<HWND>(app->Hwnd()));
     }
     return device->Present(source, destination, destinationWindow, dirtyRegion);
 }
 
-void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device,
-                         IDirect3DSurface9* source) {
+void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device, IDirect3DSurface9* source) {
     if (!g_deviceRegistered)
         return;
     MmeHostPreRenderTargetCopy(device, source);
@@ -243,23 +238,21 @@ void PreRenderTargetCopy(MMDApp* app, IDirect3DDevice9* device,
 // ---------------------------------------------------------------------------
 // 绘制转发
 // ---------------------------------------------------------------------------
-HRESULT DrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
-                      unsigned int start_vertex, unsigned int primitive_count) {
+HRESULT DrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type, unsigned int start_vertex,
+                      unsigned int primitive_count) {
     if (!g_deviceRegistered)
         return device->DrawPrimitive(type, start_vertex, primitive_count);
     return MmeHostDrawPrimitive(device, type, start_vertex, primitive_count);
 }
 
-HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type,
-                             int base_vertex_index, unsigned int min_vertex_index,
-                             unsigned int vertex_count, unsigned int start_index,
-                             unsigned int primitive_count) {
+HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type, int base_vertex_index,
+                             unsigned int min_vertex_index, unsigned int vertex_count,
+                             unsigned int start_index, unsigned int primitive_count) {
     if (!g_deviceRegistered)
-        return device->DrawIndexedPrimitive(type, base_vertex_index, min_vertex_index,
-                                            vertex_count, start_index, primitive_count);
-    return MmeHostDrawIndexedPrimitive(device, type, base_vertex_index,
-                                       min_vertex_index, vertex_count, start_index,
-                                       primitive_count);
+        return device->DrawIndexedPrimitive(type, base_vertex_index, min_vertex_index, vertex_count,
+                                            start_index, primitive_count);
+    return MmeHostDrawIndexedPrimitive(device, type, base_vertex_index, min_vertex_index,
+                                       vertex_count, start_index, primitive_count);
 }
 
 bool EffectsActive() {
@@ -299,11 +292,11 @@ HRESULT DrawAccessorySubset(MMDApp* app, void* accessory, unsigned long material
         device->SetStreamSource(0, vb, 0, mesh->GetNumBytesPerVertex());
         device->SetIndices(ib);
         return DrawMeshSubsetPlan(plan, mesh->GetNumFaces(), (mesh->GetOptions() & 1) != 0,
-            [device](const D3DXATTRIBUTERANGE& range) {
-                return DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, 0,
-                    range.VertexStart, range.VertexCount, range.FaceStart * 3,
-                    range.FaceCount);
-            });
+                                  [device](const D3DXATTRIBUTERANGE& range) {
+                                      return DrawIndexedPrimitive(
+                                          device, D3DPT_TRIANGLELIST, 0, range.VertexStart,
+                                          range.VertexCount, range.FaceStart * 3, range.FaceCount);
+                                  });
     });
     vb->Release();
     ib->Release();
@@ -331,5 +324,5 @@ void RecordTexture(const wchar_t* path, IDirect3DBaseTexture9* texture) {
     MmeHostRecordTextureFile(path, texture);
 }
 
-}  // namespace mme
-}  // namespace mikudancestudio
+} // namespace mme
+} // namespace mikudancestudio

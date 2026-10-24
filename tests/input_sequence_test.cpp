@@ -32,7 +32,7 @@ LRESULT CALLBACK CommandSink(HWND window, UINT message, WPARAM w, LPARAM l) {
         commands.push_back({id, editor->EditMode(), editor->PlaybackActive() != 0,
             SendMessageW(GetDlgItem(window, panel::kPlayButton), BM_GETCHECK, 0, 0),
             editor->CurrentFrame(), editor->SelectedModel()
-                ? static_cast<int>(mdl::Mdl(editor->SelectedModel())->undoState[0]) : -1});
+                ? static_cast<int>(mdl::Mdl(editor->SelectedModel())->UndoCursor()) : -1});
         if (id == panel::kPlayButton) {
             editor->PlaybackActive() = !editor->PlaybackActive();
         }
@@ -81,11 +81,11 @@ int main() {
     bool ok = true;
 
     reset();
-    app->state.dialogFlags[0] = 1; // X changes edit mode before Enter registers.
+    app->LetterKeyState(mikudancestudio::LetterKey::X) = 1; // X changes edit mode before Enter registers.
     app->state.enterKeyState = 1;
     ConsumeKeyboardInput(app.get(), input);
     ok &= expect(commands.size() == 1 && commands[0].id == panel::kRegisterFrameButton &&
-        commands[0].mode == ViewportEditMode::Camera,
+        commands[0].mode == ViewportEditMode::Rotate,
         "X + Enter registered before changing the edit mode");
 
     reset();
@@ -95,11 +95,11 @@ int main() {
     app->ModelSlot(0) = reinterpret_cast<unsigned char*>(model.get());
     model->hwnd = window;
     model->undoDirty = 1;
-    model->undoRings[0].slots[0].operation = 2;
+    model->undoRings[0].slots[0].operation = mdl::UndoOperation::BoneKeys;
     model->undoRings[0].slots[0].frame = 47;
     app->CurrentFrame() = 99;
     app->state.ctrlModifierState = 3;
-    app->state.dialogFlags[1] = 1;
+    app->LetterKeyState(mikudancestudio::LetterKey::Z) = 1;
     app->state.enterKeyState = 1;
     ConsumeKeyboardInput(app.get(), input);
     ok &= expect(commands.size() == 1 && commands[0].id == panel::kRegisterFrameButton &&
@@ -110,7 +110,7 @@ int main() {
     ::operator delete(model->undoRings[1].slots[0].auxiliaryPose);
 
     reset();
-    app->state.dialogFlags[12] = 1; // P starts playback; Enter must see it.
+    app->LetterKeyState(mikudancestudio::LetterKey::P) = 1; // P starts playback; Enter must see it.
     app->state.enterKeyState = 1;
     ConsumeKeyboardInput(app.get(), input);
     ok &= expect(commands.size() == 1 && commands[0].id == panel::kPlayButton &&
@@ -119,7 +119,7 @@ int main() {
 
     reset();
     app->PlaybackActive() = 1;
-    app->state.dialogFlags[12] = 1;
+    app->LetterKeyState(mikudancestudio::LetterKey::P) = 1;
     app->state.enterKeyState = 1;
     ConsumeKeyboardInput(app.get(), input);
     ok &= expect(commands.size() == 2 && commands[0].id == panel::kPlayButton &&
@@ -135,7 +135,7 @@ int main() {
         if (!control) return 1;
         reset();
         app->ViewportInputActive() = 1;
-        app->state.dialogFlags[15] = 1;
+        app->LetterKeyState(mikudancestudio::LetterKey::F) = 1;
         app->state.enterKeyState = 1;
         KeyboardInputContext in{control, !PumpPanelFocusChain(app.get(), control)};
         ConsumeKeyboardInput(app.get(), in);
@@ -144,9 +144,9 @@ int main() {
     }
 
     reset();
-    app->state.dialogFlags[3] = 1;
+    app->LetterKeyState(mikudancestudio::LetterKey::V) = 1;
     app->state.ctrlModifierState = 3;
-    app->state.dialogFlags[15] = 1;
+    app->LetterKeyState(mikudancestudio::LetterKey::F) = 1;
     changeFocusOnCommand = true;
     ConsumeKeyboardInput(app.get(), input);
     ok &= expect(commands.size() == 2 && commands[0].id == panel::kPasteButton &&
@@ -154,7 +154,7 @@ int main() {
         "F re-read focus after Ctrl+V instead of retaining the pump snapshot");
 
     reset();
-    app->state.dialogFlags[4] = app->state.dialogFlags[5] = app->state.dialogFlags[8] = 1;
+    app->LetterKeyState(mikudancestudio::LetterKey::D) = app->LetterKeyState(mikudancestudio::LetterKey::A) = app->LetterKeyState(mikudancestudio::LetterKey::S) = 1;
     app->CameraMode() = 1;
     ConsumeKeyboardInput(app.get(), input);
     ok &= expect(commands.empty(), "A/S/D escaped the shared model-edit gate");

@@ -18,6 +18,7 @@
 //! ```
 
 pub mod ast;
+mod discover;
 pub mod entries;
 mod error;
 pub mod lex;
@@ -31,6 +32,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 pub use ast::*;
+pub use discover::{discover, Found};
 pub use entries::{Entry, Wrapper};
 pub use error::FxError;
 pub use preprocess::{decode, Include, Options, Origin, Preprocessed, Via};

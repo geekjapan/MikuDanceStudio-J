@@ -7,7 +7,7 @@ use std::process::ExitCode;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use mds_fx::{Effect, Entry, FxError, Include, Options, Via};
+use mds_fx::{discover, Effect, Entry, FxError, Include, Options, Via};
 
 const USAGE: &str = "\
 usage: mds-fx scan [options] <path>...
@@ -76,88 +76,6 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
     Ok(o)
 }
 
-struct Found {
-    path: PathBuf,
-    label: String,
-}
-
-fn slashed(p: &Path) -> String {
-    p.components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-/// The name a file prints under: relative arguments print as given, absolute ones by the
-/// directory's own name, so `.../mds-corpus/ray-mmd` prints as `ray-mmd/...`.
-fn root_label(root: &Path) -> String {
-    if root.is_absolute() {
-        if let Some(rel) = std::env::current_dir()
-            .ok()
-            .and_then(|cwd| root.strip_prefix(cwd).ok().map(Path::to_path_buf))
-        {
-            if !rel.as_os_str().is_empty() {
-                return slashed(&rel);
-            }
-        }
-        return root
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-    }
-    slashed(root)
-}
-
-fn is_fx(p: &Path) -> bool {
-    p.extension().is_some_and(|e| e.eq_ignore_ascii_case("fx"))
-}
-
-fn walk(dir: &Path, out: &mut Vec<PathBuf>, errors: &mut Vec<FxError>) {
-    let rd = match fs::read_dir(dir) {
-        Ok(rd) => rd,
-        Err(e) => {
-            errors.push(FxError::new(dir, 0, format!("cannot read directory: {e}")));
-            return;
-        }
-    };
-    for entry in rd.flatten() {
-        let path = entry.path();
-        match entry.file_type() {
-            Ok(t) if t.is_dir() => walk(&path, out, errors),
-            Ok(t) if t.is_file() && is_fx(&path) => out.push(path),
-            _ => {}
-        }
-    }
-}
-
-fn collect(paths: &[PathBuf], errors: &mut Vec<FxError>) -> Vec<Found> {
-    let mut found = Vec::new();
-    for root in paths {
-        if root.is_dir() {
-            let mut files = Vec::new();
-            walk(root, &mut files, errors);
-            let base = root_label(root);
-            for f in files {
-                let rel = f.strip_prefix(root).map(slashed).unwrap_or_default();
-                let label = if base.is_empty() {
-                    rel
-                } else {
-                    format!("{base}/{rel}")
-                };
-                found.push(Found { path: f, label });
-            }
-        } else {
-            found.push(Found {
-                path: root.clone(),
-                label: slashed(root),
-            });
-        }
-    }
-    found.sort_by(|a, b| a.label.cmp(&b.label));
-    found.dedup_by(|a, b| a.label == b.label);
-    found
-}
-
 struct Parsed {
     key: u64,
     techniques: usize,
@@ -206,8 +124,7 @@ fn scan_one(path: &Path, opts: &Options) -> Outcome {
 }
 
 fn scan(o: &Opts) -> ExitCode {
-    let mut walk_errors = Vec::new();
-    let found = collect(&o.paths, &mut walk_errors);
+    let (found, walk_errors) = discover(&o.paths);
     let opts = Options {
         mip_filter: o.mip,
         strict_includes: o.strict,

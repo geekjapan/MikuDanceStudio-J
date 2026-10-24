@@ -1,6 +1,9 @@
 // Original d7425a5 output hashes. Rows: RC nearest/down/up/chop, each PC24/53/64.
 // Columns follow the operations in mmd_math_test.cpp. Do not regenerate from
 // the replacement implementation: these constants are the regression oracle.
+// FSIN/FCOS columns (0, 1, 27) document the capture CPU; their runtime oracle
+// is the frozen old implementation in mmd_math_x87_reference.cpp because x87
+// transcendental approximations can differ between processors.
 #pragma once
 #include <cstdint>
 namespace mmd_math_golden {

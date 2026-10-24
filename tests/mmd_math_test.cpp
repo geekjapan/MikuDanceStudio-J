@@ -2,6 +2,8 @@
 // The fixture includes all output bits (including signed zero and NaN payloads).
 #include "LinearMath/btMmdMath.h"
 #include "mmd_math_golden.hpp"
+#include "mmd_math_x87_reference.hpp"
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -9,6 +11,7 @@
 #include <cstring>
 #include <float.h>
 #include <initializer_list>
+#include <intrin.h>
 namespace math = btMmdMath;
 namespace {
 constexpr const char* operations[] = {"sinTimes",
@@ -72,12 +75,20 @@ float value(int domain) {
     return f;
 }
 
-std::array<uint64_t, 32> evaluate() {
+std::array<uint64_t, 32> evaluate(std::array<uint64_t, 32>& expected) {
     std::array<uint64_t, 32> hashes;
     hashes.fill(14695981039346656037ULL);
     auto record = [&](int operation, float value) {
         hashes[operation] ^= bits(value);
         hashes[operation] *= 1099511628211ULL;
+    };
+    // Only the three operations using FSIN/FCOS need a same-CPU historical
+    // oracle. Keep the other 29 operations tied to the original golden hashes.
+    for (int op : {0, 1, 27})
+        expected[op] = 14695981039346656037ULL;
+    auto reference = [&](int operation, float value) {
+        expected[operation] ^= bits(value);
+        expected[operation] *= 1099511628211ULL;
     };
     state = 0x191234;
     for (int domain : {0, 1, 2})
@@ -93,6 +104,8 @@ std::array<uint64_t, 32> evaluate() {
 
             record(0, math::sinTimes(a[0], a[1]));
             record(1, math::cosine(a[0]));
+            reference(0, mmd_math_x87_reference::sinTimes(a[0], a[1]));
+            reference(1, mmd_math_x87_reference::cosine(a[0]));
             record(2, math::dot3(a, b));
             record(3, math::squaredDistance3(a, b));
             math::cross3(o, a, b);
@@ -156,6 +169,9 @@ std::array<uint64_t, 32> evaluate() {
             math::integrateRotation(a, .0166666675f, o, o + 3);
             for (int j = 0; j < 4; j++)
                 record(27, o[j]);
+            mmd_math_x87_reference::integrateRotation(a, .0166666675f, o, o + 3);
+            for (int j = 0; j < 4; j++)
+                reference(27, o[j]);
             math::quaternionAngle(a, o, o + 1);
             for (int j = 0; j < 2; j++)
                 record(28, o[j]);
@@ -180,21 +196,35 @@ std::array<uint64_t, 32> evaluate() {
 }
 } // namespace
 int main() {
+    int cpu[4];
+    char vendor[13] = {};
+    __cpuid(cpu, 0);
+    memcpy(vendor, &cpu[1], 4);
+    memcpy(vendor + 4, &cpu[3], 4);
+    memcpy(vendor + 8, &cpu[2], 4);
+    std::printf("MMD numeric parity CPU: %s\n", vendor);
     unsigned saved;
     _controlfp_s(&saved, 0, 0);
     int mode = 0;
     int failures = 0;
+    int cpuDependentHashes = 0;
     for (unsigned rounding : {_RC_NEAR, _RC_DOWN, _RC_UP, _RC_CHOP}) {
         for (unsigned precision : {_PC_24, _PC_53, _PC_64}) {
             unsigned current;
             _controlfp_s(&current, rounding | precision, _MCW_RC | _MCW_PC);
-            const auto hashes = evaluate();
+            std::array<uint64_t, 32> expected;
+            std::copy(std::begin(mmd_math_golden::hashes[mode]),
+                      std::end(mmd_math_golden::hashes[mode]), expected.begin());
+            const auto hashes = evaluate(expected);
+            for (int op : {0, 1, 27})
+                if (expected[op] != mmd_math_golden::hashes[mode][op])
+                    cpuDependentHashes++;
             for (size_t op = 0; op < hashes.size(); op++)
-                if (hashes[op] != mmd_math_golden::hashes[mode][op]) {
+                if (hashes[op] != expected[op]) {
                     std::fprintf(stderr,
                                  "MMD numeric parity: mode %d %s: %016llx != %016llx\n",
                                  mode, operations[op], hashes[op],
-                                 mmd_math_golden::hashes[mode][op]);
+                                 expected[op]);
                     failures++;
                 }
             mode++;
@@ -202,5 +232,8 @@ int main() {
     }
     unsigned restored;
     _controlfp_s(&restored, saved, _MCW_RC | _MCW_PC);
+    std::printf("MMD numeric parity: %d CPU-dependent historical trig hashes; "
+                "29 fixed and 3 same-CPU reference operations, 12 modes\n",
+                cpuDependentHashes);
     return failures ? 1 : 0;
 }

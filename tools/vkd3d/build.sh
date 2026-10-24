@@ -76,8 +76,25 @@ build_in() {
     cp LICENSE COPYING AUTHORS "$prefix/share/vkd3d/"
     cp include/vkd3d_shader.h include/vkd3d_types.h "$prefix/include/vkd3d/" )
   rm -f "$prefix"/lib/*.la "$prefix"/bin/*.la
+  case "$*" in *mingw32*) copy_mingw_runtime "$prefix/bin" ;; esac
   echo "built $prefix"
   find "$prefix" -name '*vkd3d-shader*' -o -name 'vkd3d-compiler*' | sort
+}
+
+# Copy the mingw runtime DLLs that the built DLL and EXE import (libgcc_s, and libwinpthread
+# for the posix thread model) next to them, so the library loads on a Windows host without
+# MinGW. Asks the same compiler that linked them, then follows the copied DLLs' imports too.
+copy_mingw_runtime() { # bin dir
+  local bin="$1" queue dll f
+  queue=$(ls "$bin"/*.dll "$bin"/*.exe)
+  while [ -n "$queue" ]; do
+    for dll in $(x86_64-w64-mingw32-objdump -p $queue | sed -n 's/^[[:space:]]*DLL Name: //p' | sort -u); do
+      f=$(x86_64-w64-mingw32-gcc -print-file-name="$dll")
+      if [ "$f" != "$dll" ] && [ ! -e "$bin/$dll" ]; then cp "$f" "$bin/"; echo "$bin/$dll"; fi
+    done > "$bin/.copied"
+    queue=$(cat "$bin/.copied")
+  done
+  rm -f "$bin/.copied"
 }
 
 docker_build() { # platform target [configure args...]

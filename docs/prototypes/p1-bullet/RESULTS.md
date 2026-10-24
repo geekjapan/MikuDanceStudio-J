@@ -54,5 +54,7 @@ traces are byte-identical.
 - Linux image `rust@sha256:48b7f435b8fc6378ce43b44f15e3a47fd8919b2825f835c39bd4bd3da50af5b8`
   (`rust:1-bookworm`), rustc 1.99.1, Debian clang.
 
-Paths in the scripts point at `/tmp/proto-bullet` and this checkout. They are
-throwaway prototype scripts, kept as the record of what ran.
+`build_bullet.sh` finds the Bullet sources and the shim relative to its own
+directory. `BULLET_SRC` and `SHIM` override them, and `linux_run.sh` sets
+`BULLET_SRC` for the container. They are throwaway prototype scripts, kept as
+the record of what ran.

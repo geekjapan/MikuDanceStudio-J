@@ -1,0 +1,14 @@
+# Wave 2 slices. Tab-separated. docs/RUST_WAVE2_PLAN.md describes each one.
+# owned: comma-separated paths. A trailing / owns the directory.
+# depends: slices whose PR must be merged into main first, or -.
+# id	wave	depends	host	model	license	owned
+math	2a	-	mac	sonnet	MIT	rust/crates/mds-math/
+crtmath	2a	-	mac	opus	MIT	rust/crates/mds-crtmath/
+render	2a	-	mac	sonnet	MIT	rust/crates/mds-render/
+edit	2a	-	mac	sonnet	pending	rust/crates/mds-edit/,tools/keypool_check/
+golden	2a	-	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/golden/,CMakeLists.txt
+pose	2b	math	mac	opus	pending	rust/crates/mds-pose/
+physics	2b	crtmath,pose	mac	opus	pending	rust/crates/mds-physics/,rust/crates/mds-bullet-sys/
+passplan	2b	golden	windows	sonnet	pending	src/tools/,tools/oracle/,tests/fixtures/rust/mme/,CMakeLists.txt
+rendergold	2b	render,golden	mac	sonnet	MIT	rust/crates/mds-render/
+mme	2b	render,passplan	mac	opus	pending	rust/crates/mds-mme/

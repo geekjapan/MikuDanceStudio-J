@@ -1,6 +1,7 @@
 [package]
 name = "mds-formats"
 description = "Byte-exact readers and writers for PMD, PMX, VMD, VPD and PMM v2"
+license-file = "../../../LICENSE"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

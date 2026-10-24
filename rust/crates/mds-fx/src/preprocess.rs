@@ -123,7 +123,17 @@ pub fn resolve_ci(base: &Path, rel: &str) -> Option<PathBuf> {
     for part in rel.replace('\\', "/").split('/') {
         match part {
             "" | "." => {}
-            ".." => cur.push(".."),
+            ".." => {
+                // step out of a real directory name, so paths read `Shader/x` and not `Shadow/../Shader/x`
+                if matches!(
+                    cur.components().next_back(),
+                    Some(std::path::Component::Normal(_))
+                ) {
+                    cur.pop();
+                } else {
+                    cur.push("..");
+                }
+            }
             p => {
                 let want = p.to_lowercase();
                 let mut folded: Option<std::ffi::OsString> = None;
@@ -1277,6 +1287,15 @@ mod tests {
     }
 
     #[test]
+    fn dot_dot_in_include_paths_is_resolved_in_the_name() {
+        let t = TempTree::new();
+        t.write("sub/deep/a.fx", b"#include \"../../Shader/x.fxsub\"\n");
+        t.write("Shader/x.fxsub", b"float x;\n");
+        let r = preprocess_file(&t.path("sub/deep/a.fx"), &Options::default()).unwrap();
+        assert_eq!(r.includes[0].resolved, t.path("Shader/x.fxsub"));
+    }
+
+    #[test]
     fn include_falls_back_to_including_dir() {
         let t = TempTree::new();
         t.write("main.fx", b"#include \"sub\\\\mid.fxsub\"\n");
@@ -1310,11 +1329,11 @@ mod tests {
 
     #[test]
     fn shift_jis_bytes_decode() {
-        // "float4 a; // \x83\x65" is `テ` in Shift-JIS and invalid UTF-8
-        let bytes = b"string s = \"\x83\x65\";\n";
-        assert!(std::str::from_utf8(bytes).is_err());
+        // \x83\x65 is `テ` in Shift-JIS and invalid UTF-8
+        let bytes = b"string s = \"\x83\x65\";\n".to_vec();
+        assert!(std::str::from_utf8(&bytes).is_err());
         let t = TempTree::new();
-        t.write("a.fx", bytes);
+        t.write("a.fx", &bytes);
         assert!(pp(&t, "a.fx").unwrap().text.contains("\"テ\""));
     }
 }

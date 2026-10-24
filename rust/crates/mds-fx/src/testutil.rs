@@ -1,7 +1,7 @@
 //! Test helper: a temporary directory tree that deletes itself.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -26,10 +26,6 @@ impl TempTree {
 
     pub fn path(&self, rel: &str) -> PathBuf {
         self.root.join(rel)
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
     }
 }
 

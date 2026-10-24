@@ -212,10 +212,8 @@ pub struct World {
     joints: usize,
 }
 
-// The world and its handles are only reached through `&mut World`/`&World`
-// and Bullet keeps no thread-local state, so moving a World is sound. It is
-// not Sync: stepping mutates shared Bullet state.
-unsafe impl Send for World {}
+// World is neither Send nor Sync: Bullet keeps process-wide mutable statics
+// (btRigidBody's id counter, the aligned-allocator counters) that are not atomic.
 
 impl World {
     /// A world with gravity (0, -9.8, 0).

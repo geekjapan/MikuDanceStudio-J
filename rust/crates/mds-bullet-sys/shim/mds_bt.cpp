@@ -39,6 +39,8 @@ struct mds_bt_world {
   std::vector<mds_bt_body *> bodies;
   std::vector<mds_bt_joint *> joints;
 
+  // ponytail: linear scan per handle check; fine at MMD body counts, use an
+  // unordered_set if it shows up in a profile.
   bool owns(const mds_bt_body *b) const {
     return b && std::find(bodies.begin(), bodies.end(), b) != bodies.end();
   }

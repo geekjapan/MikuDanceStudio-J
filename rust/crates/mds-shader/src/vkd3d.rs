@@ -176,7 +176,7 @@ impl Vkd3d {
         // the operator names; the version check below rejects other libraries that happen to
         // export the same symbols.
         unsafe {
-            let lib = Library::new(path).map_err(err)?;
+            let lib = load(path).map_err(err)?;
             let get_version: GetVersionFn = *lib.get(b"vkd3d_shader_get_version\0").map_err(err)?;
             let (mut major, mut minor) = (0, 0);
             let v = get_version(&mut major, &mut minor);
@@ -322,6 +322,27 @@ impl Vkd3d {
             Ok(bytes)
         }
     }
+}
+
+/// On Windows the mingw build imports `libgcc_s_seh-1.dll`, which ships beside it. The default
+/// `LoadLibraryExW` search skips the library's own directory, so ask for it explicitly.
+#[cfg(windows)]
+unsafe fn load(path: &Path) -> Result<Library, libloading::Error> {
+    use libloading::os::windows::{
+        Library as WindowsLibrary, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
+        LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR,
+    };
+    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    WindowsLibrary::load_with_flags(
+        &path,
+        LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
+    )
+    .map(Library::from)
+}
+
+#[cfg(not(windows))]
+unsafe fn load(path: &Path) -> Result<Library, libloading::Error> {
+    Library::new(path)
 }
 
 #[cfg(test)]

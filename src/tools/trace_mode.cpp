@@ -17,6 +17,13 @@
 // (SeekModelFrame, as the timeline does) because in the GUI the user has
 // already sought to the start frame before recording; here nobody did.
 //
+// Message boxes: the MMD-port loaders call MessageBoxA on bad input, and a
+// modal box would block this headless run forever. ArmTraceDialogGuard
+// installs a WH_CBT hook on the WinMain thread (the loaders, the PMM load in
+// InitMainWindowAndD3D, and the frame loop all run on it; the audio feed
+// thread and the DirectShow threads never show a box) that turns the first
+// dialog (class #32770) into exit 1 with the box text on stderr.
+//
 // Not run per pass, compared with FrameDriver: RenderFrameScene, Present,
 // mouse and keyboard input, the Kinect pump, the text and line overlays, the
 // timeline flag handoff (section 7), and the model reload path (section 8).
@@ -30,6 +37,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cwchar>
 #include <filesystem>
 #include <fstream>
 #include <ios>
@@ -131,7 +139,53 @@ void ArmFrameStep(MMDApp* app, std::uint32_t frames) {
 }
 
 void DeleteTemp(const std::wstring& temp) { DeleteFileW(temp.c_str()); }
+
+std::wstring g_guardTemp;
+std::ofstream* g_guardFile = nullptr;  // the open temp file while RunTraceMode writes it
+
+std::string Utf8(const wchar_t* text) {
+    const int size = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
+    if (size <= 1) return std::string();
+    std::string utf8(static_cast<std::size_t>(size), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text, -1, &utf8[0], size, nullptr, nullptr);
+    utf8.pop_back();
+    return utf8;
+}
+
+[[noreturn]] void AbortOnDialog(HWND dialog) {
+    wchar_t caption[256] = L"";
+    wchar_t text[2048] = L"";
+    GetWindowTextW(dialog, caption, 256);
+    GetDlgItemTextW(dialog, -1, text, 2048);  // IDC_STATIC: the message of a MessageBox
+    const std::string line = "mds-trace: dialog: " + Utf8(caption) + ": " + Utf8(text) + "\n";
+    HANDLE error = GetStdHandle(STD_ERROR_HANDLE);
+    DWORD written = 0;
+    if (error != nullptr && error != INVALID_HANDLE_VALUE)
+        WriteFile(error, line.data(), static_cast<DWORD>(line.size()), &written, nullptr);
+    OutputDebugStringA(line.c_str());
+    if (g_guardFile != nullptr) g_guardFile->close();  // DeleteFileW needs it closed
+    DeleteTemp(g_guardTemp);
+    // Not ExitProcess: this runs inside MessageBox with the app half built,
+    // and DLL detach would wait on the audio and DirectShow threads.
+    TerminateProcess(GetCurrentProcess(), 1);
+    for (;;) Sleep(INFINITE);
+}
+
+LRESULT CALLBACK DialogGuardProc(int code, WPARAM wParam, LPARAM lParam) {
+    if (code == HCBT_ACTIVATE) {
+        wchar_t windowClass[8] = L"";
+        const HWND window = reinterpret_cast<HWND>(wParam);
+        if (GetClassNameW(window, windowClass, 8) != 0 && wcscmp(windowClass, L"#32770") == 0)
+            AbortOnDialog(window);
+    }
+    return CallNextHookEx(nullptr, code, wParam, lParam);
+}
 }  // namespace
+
+bool ArmTraceDialogGuard(const TraceRequest& request) {
+    g_guardTemp = request.out + L".tmp";
+    return SetWindowsHookExW(WH_CBT, DialogGuardProc, nullptr, GetCurrentThreadId()) != nullptr;
+}
 
 bool PrepareTraceRequest(TraceRequest* request) {
     const std::wstring pmm = FullPath(request->pmm);
@@ -160,6 +214,7 @@ int RunTraceMode(MMDApp* app, const TraceRequest& request) {
     const std::wstring temp = request.out + L".tmp";
     std::ofstream file(std::filesystem::path(temp), std::ios::binary | std::ios::trunc);  // LF stays LF
     if (!file) return 1;
+    g_guardFile = &file;
 
     ArmFrameStep(app, request.frames);
     l2::WriteHeader(file);
@@ -173,6 +228,7 @@ int RunTraceMode(MMDApp* app, const TraceRequest& request) {
     file.flush();
     ok = ok && file.good();
     file.close();
+    g_guardFile = nullptr;
     if (!ok) {
         DeleteTemp(temp);
         return 1;

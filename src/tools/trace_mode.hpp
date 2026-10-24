@@ -16,6 +16,14 @@ namespace mikudancestudio::tools {
 // PMM itself. WinMain then exits 1 and nothing has been written.
 bool PrepareTraceRequest(TraceRequest* request);
 
+// Called right after PrepareTraceRequest, still before any window exists.
+// Installs a thread-local WH_CBT hook: the first dialog (a MessageBox from an
+// MMD-port loader on a corrupt file, for one) writes its caption and text to
+// stderr, deletes "<out>.tmp", and ends the process with exit code 1 instead
+// of blocking on the modal loop. Returns false if the hook cannot be installed;
+// WinMain then exits 1.
+bool ArmTraceDialogGuard(const TraceRequest& request);
+
 // Runs after InitMainWindowAndD3D loaded the PMM: steps `request.frames`
 // frames without rendering or presenting and writes the L2 trace to
 // "<out>.tmp", renamed to <out> only on success. Returns the process exit

@@ -38,7 +38,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     // RM-3: --mds-trace <pmm> <out> <frames> replaces the message loop below
     // with a headless L2 trace run (src/tools/trace_mode.cpp). Without the
     // flag nothing here changes. A bad line or an unreadable PMM exits 1
-    // before any window exists and writes nothing.
+    // before any window exists and writes nothing; a message box raised later
+    // (a corrupt PMM) exits 1 through ArmTraceDialogGuard.
     // (__wargv is only filled for wmain programs, so the line is split here.)
     tools::TraceRequest trace;
     tools::TraceArgs traceArgs = tools::TraceArgs::NotRequested;
@@ -49,7 +50,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     }
     const bool traceMode = traceArgs == tools::TraceArgs::Ready;
     if (traceArgs == tools::TraceArgs::Malformed ||
-        (traceMode && !tools::PrepareTraceRequest(&trace)))
+        (traceMode && !(tools::PrepareTraceRequest(&trace) && tools::ArmTraceDialogGuard(trace))))
         return 1;
     int traceExit = 0;
 

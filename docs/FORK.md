@@ -36,6 +36,7 @@ git merge upstream/main
 | Serena、CodeGraph、Graphify の設定 | `.serena/`、`graphify-out/`、`AGENTS.md` | `main` |
 | Rust 移行 wave 1 の計画と試作の記録 | [RUST_MIGRATION_PLAN.md](RUST_MIGRATION_PLAN.md)、[prototypes/](prototypes/) | [PR #1](https://github.com/geekjapan/MikuDanceStudio-J/pull/1) |
 | Rust 移行 RM-1 から RM-9 | `rust/`、`tests/fixtures/rust/`、`tools/fixtures/`、`tools/oracle/`、`tools/rust/`、`tools/vkd3d/` | [PR #2](https://github.com/geekjapan/MikuDanceStudio-J/pull/2) から [PR #10](https://github.com/geekjapan/MikuDanceStudio-J/pull/10) |
+| 日本語ロケールの Windows でビルドできるようにする MSVC の `/utf-8` | `CMakeLists.txt` | [PR #15](https://github.com/geekjapan/MikuDanceStudio-J/pull/15) |
 | vkd3d-shader の不具合 2 件 | [#11](https://github.com/geekjapan/MikuDanceStudio-J/issues/11)、[#12](https://github.com/geekjapan/MikuDanceStudio-J/issues/12) | 上流への報告は保留 |
 
 ## ドキュメント

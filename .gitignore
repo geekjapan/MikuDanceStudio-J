@@ -50,3 +50,6 @@ _smoke_*.txt
 # Code intelligence: commit graphify-out graph/report; keep local caches out
 graphify-out/cache/
 graphify-out/.graphify_root
+
+# Rust workspace build output
+rust/target/

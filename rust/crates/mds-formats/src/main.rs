@@ -44,10 +44,16 @@ const FIXTURES: [(&str, &[u8]); 7] = [
     ),
 ];
 
+const USAGE: &str = "usage: mds-formats roundtrip <file> [--out <file>]\n       \
+                     mds-formats flipfuzz --seed <n> --iters <n> [files...]\n       \
+                     mds-formats inspect <file>";
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let result = match args.as_slice() {
+        // An option where a file belongs, such as `--help`, gets the usage.
+        ["roundtrip" | "inspect", file, ..] if file.starts_with('-') => Err(USAGE.into()),
         ["roundtrip", file] => roundtrip(file, None),
         ["roundtrip", file, "--out", out] => roundtrip(file, Some(out)),
         ["flipfuzz", "--seed", seed, "--iters", iters, files @ ..] => {
@@ -57,12 +63,7 @@ fn main() -> ExitCode {
             }
         }
         ["inspect", file] => inspect(file),
-        _ => Err(
-            "usage: mds-formats roundtrip <file> [--out <file>]\n       \
-                  mds-formats flipfuzz --seed <n> --iters <n> [files...]\n       \
-                  mds-formats inspect <file>"
-                .into(),
-        ),
+        _ => Err(USAGE.into()),
     };
     match result {
         Ok(code) => code,

@@ -1,0 +1,8 @@
+[package]
+name = "mds-trace"
+description = "Parser and comparer for MikuDanceStudio trace format 1"
+license = "MIT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true

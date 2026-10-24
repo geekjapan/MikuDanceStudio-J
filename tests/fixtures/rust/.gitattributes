@@ -1,0 +1,2 @@
+# Fixtures are byte-exact; pose.vpd must keep its CRLF line endings.
+* -text

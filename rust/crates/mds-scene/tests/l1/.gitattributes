@@ -1,0 +1,2 @@
+# Reference traces are compared byte for byte; keep their LF line endings.
+* -text

@@ -1,0 +1,25 @@
+{
+ "file_unique": 490,
+ "shader_total": 1483,
+ "spirv_ok": 1321,
+ "psize_stripped": 527,
+ "naga_wgsl_ok": 1321,
+ "naga_metal_ok": 1321,
+ "naga_hlsl_ok": 1321,
+ "inc_root": 2303,
+ "hlsl_fail": 122,
+ "spv_fail": 40,
+ "file_dup": 26,
+ "shader_wrapped": 30,
+ "file_include_missing": 1
+}
+== hlsl->d3dbc
+    90  E5005: No compatible 2 parameter declaration for "…" found.
+    30  E5027: Infinities and NaNs are not allowed by the shader model.
+     2  E9015: Register r32 exceeds limits for shader type 0, version 3.0.
+== d3dbc->spirv
+    40  E9022: Unable to resolve I/O register type 0x1, index 2, swizzle 0x3020100, to a signature element.
+== E5005 fn
+    90  LTC_FetchTexture
+== include
+     1  shader/CameraMotion.fxsub

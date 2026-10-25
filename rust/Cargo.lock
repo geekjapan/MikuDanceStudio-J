@@ -398,6 +398,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-math"
+version = "0.1.0"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "mds-scene"
 version = "0.1.0"
 dependencies = [

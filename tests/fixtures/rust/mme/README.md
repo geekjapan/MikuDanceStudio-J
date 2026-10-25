@@ -20,8 +20,8 @@ file, in ordinal order of the relative path, for `-Corpus` (default
 ray-mmd at `218a91cd1c53f49850b2772ebbcb98bf258e75b1`, the commit that
 `tools/fixtures/fetch_corpus.sh` pins.
 
-Two full runs (520 files, about four minutes each) gave the same bytes for every
-plan: the two `SHA256SUMS` files are identical. The plans total 4.7 MB. All 515 corpus
+Three full runs (520 files, about four minutes each) gave the same bytes for every
+plan: the three `SHA256SUMS` files are identical. The plans total 4.7 MB. All 515 corpus
 effects load; there are no rejected ones and no message boxes. Of the five small
 effects, `reject_script.fx` and `reject_version.fx` are rejected on purpose. The
 corpus has 2,553 techniques (512 each of `object_ss`, `shadow`, `edge`, `zplot`,

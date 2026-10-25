@@ -2,7 +2,7 @@
 //! `MarkRedundantModelKeys`, `src/model/model_key_reduction.cpp` 15-103).
 
 use super::common::*;
-use mds_formats::pmm::{BoneKey, DisplayKey, MorphKey};
+use mds_formats::pmm::{BoneKey, DisplayKey};
 use mds_ops::*;
 
 fn marks_of<K: mds_formats::key_pool::Key>(
@@ -205,6 +205,3 @@ fn camera_mode_and_missing_model_are_refused() {
     p.selected_model_slot = 9;
     assert_eq!(remove_unused_keys(&mut p, &f), Err(Error::NoModel));
 }
-
-#[allow(dead_code)]
-fn _t(_: MorphKey) {}

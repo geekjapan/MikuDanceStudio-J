@@ -14,5 +14,6 @@ mod facial;
 mod frame_line;
 mod multiply;
 mod physics;
+mod range;
 mod select;
 mod unused;

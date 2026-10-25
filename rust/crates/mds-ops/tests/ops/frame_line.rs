@@ -3,8 +3,7 @@
 //! facial/light 435-526).
 
 use super::common::*;
-use mds_formats::key_pool::KeyPool;
-use mds_formats::pmm::{BoneKey, CameraKey};
+use mds_formats::pmm::CameraKey;
 use mds_ops::*;
 
 /// The frames of every track of `old`, shifted the way the C++ does for a
@@ -341,6 +340,3 @@ fn global_commands_do_not_need_a_model() {
     camera_mode(&mut p, false);
     assert_eq!(insert_bone_camera_frame_line(&mut p), Err(Error::NoModel));
 }
-
-#[allow(dead_code)]
-fn _types(_: KeyPool<BoneKey>) {}

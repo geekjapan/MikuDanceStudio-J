@@ -1,0 +1,787 @@
+// ===========================================================================
+// --mds-script <script.txt> <out-dir>  (wave 3 slice script, Windows)
+// ===========================================================================
+// Runs a script of editing commands (script_parse.hpp) through the app's own
+// window handlers and writes every saved file into <out-dir>, plus
+// <out-dir>\manifest.tsv. It is the oracle that the Rust document and UI are
+// compared with byte for byte; tests/fixtures/rust/script/README.md is the
+// command reference and says which handler each command drives.
+//
+// A command is what a user does with the mouse or keyboard, sent to the real
+// window: WM_COMMAND with the menu or control id to the main window (with the
+// control HWND and its notification code, as a click or a combo selection
+// sends it), a numeric edit set with WM_SETTEXT and committed with the
+// VK_RETURN the edit subclass (ui_edit_commit.cpp) waits for, or a combo set
+// with CB_SETCURSEL and CBN_SELCHANGE. A menu item that is grayed out, or a
+// control that is disabled, fails the step, because a user could not click
+// it. Bone selection is the one exception: a user picks a bone by clicking
+// its row in the timeline, which needs layout-dependent mouse coordinates,
+// so `select bone` calls SelectDisplayBone, the function the Up and Down keys
+// and the display-list picks end in (model_query_helpers.cpp).
+//
+// The dialogs a handler opens are replaced in process by patching the
+// executable's import table (script mode only; the normal path never patches):
+//   GetOpenFileNameW / GetSaveFileNameW  return the path of the current step.
+//     Load paths are passed as written in the script; the handlers call
+//     SetCurrentDirectoryW(exe dir) first, so a relative path names a file
+//     next to the exe, where the lane stages the fixtures. A real dialog
+//     returns an absolute path; a relative one keeps the saved PMM free of
+//     the checkout's location. Save paths are <out-dir>\<name>. A dialog that
+//     the step did not expect, or an expected dialog that never opened, fails
+//     the step.
+//   MessageBoxA / MessageBoxW  an OK/Cancel question is answered OK when the
+//     step's command asks one in the GUI (new, load pmm, load model, paste
+//     different); any other box fails the step and prints its text.
+// Any other dialog (class #32770) fails the step through a WH_CBT hook,
+// except the gravity dialog, which `gravity open` creates (it is modeless).
+//
+// Between steps the runner drains the message queue and runs FrameDriver
+// (frame_driver.cpp) kSettleFrames times, as the app's own loop does between
+// two user actions, so state that the frame loop consumes (the physics reset
+// after a VMD or VPD load, the Enter-key poll) settles the same way. The
+// VK_RETURN of an edit is a message, so GetKeyState never sees Enter down
+// and the frame loop's Enter-to-register path (pump_edit_keys.cpp) does not
+// fire: an edit command commits the value only, and keys are registered by
+// the register commands alone. The
+// frame delta is fixed at 1/30 s instead of the wall clock, so physics steps
+// the same in every run. The main window stays hidden, so no stray mouse or
+// keyboard input reaches it.
+// =========================================================================//
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+#include <bcrypt.h>
+#include <commctrl.h>
+#include <commdlg.h>
+
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <cwchar>
+#include <fstream>
+#include <iterator>
+#include <map>
+#include <set>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include "mikudancestudio/menu_commands.h"
+#include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/model.hpp"
+#include "mikudancestudio/panel_controls.hpp"
+#include "mikudancestudio/ported_funcs.hpp"
+
+#include "script_mode.hpp"
+
+namespace mikudancestudio {
+void SelectDisplayBone(MMDApp* app, int boneIdx); // model_query_helpers.cpp (no header)
+} // namespace mikudancestudio
+
+namespace mikudancestudio::tools {
+namespace {
+
+constexpr int kSettleFrames = 2;
+constexpr std::size_t kDialogPathLength = 0x100; // the handlers' path buffers
+
+// ---- text ---------------------------------------------------------------
+
+std::wstring FromCodePage(const std::string& text, UINT codePage) {
+    if (text.empty())
+        return std::wstring();
+    const int size =
+        MultiByteToWideChar(codePage, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    std::wstring wide(static_cast<std::size_t>(size), L'\0');
+    MultiByteToWideChar(codePage, 0, text.data(), static_cast<int>(text.size()), &wide[0], size);
+    return wide;
+}
+
+std::string ToCodePage(const std::wstring& text, UINT codePage) {
+    if (text.empty())
+        return std::string();
+    const int size = WideCharToMultiByte(codePage, 0, text.data(), static_cast<int>(text.size()),
+                                         nullptr, 0, nullptr, nullptr);
+    std::string narrow(static_cast<std::size_t>(size), '\0');
+    WideCharToMultiByte(codePage, 0, text.data(), static_cast<int>(text.size()), &narrow[0], size,
+                        nullptr, nullptr);
+    return narrow;
+}
+
+std::wstring Wide(const std::string& utf8) {
+    return FromCodePage(utf8, CP_UTF8);
+}
+
+std::string Utf8(const std::wstring& wide) {
+    return ToCodePage(wide, CP_UTF8);
+}
+
+// The UI controls and model names are Shift-JIS (code page 932), as in the
+// original; the script is UTF-8.
+std::string Sjis(const std::string& utf8) {
+    return ToCodePage(Wide(utf8), 932);
+}
+
+std::string SjisToUtf8(const char* text) {
+    return Utf8(FromCodePage(text, 932));
+}
+
+void WriteError(const std::string& line) {
+    HANDLE error = GetStdHandle(STD_ERROR_HANDLE);
+    DWORD written = 0;
+    if (error != nullptr && error != INVALID_HANDLE_VALUE)
+        WriteFile(error, line.data(), static_cast<DWORD>(line.size()), &written, nullptr);
+    OutputDebugStringA(line.c_str());
+}
+
+std::wstring FullPath(const std::wstring& path) {
+    wchar_t buffer[MAX_PATH * 4];
+    const DWORD length = GetFullPathNameW(path.c_str(), MAX_PATH * 4, buffer, nullptr);
+    if (length == 0 || length >= MAX_PATH * 4)
+        return std::wstring();
+    return std::wstring(buffer, length);
+}
+
+bool IsFile(const std::wstring& path) {
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+// ---- the step state the hooks read ---------------------------------------
+
+struct StepState {
+    const ScriptCommand* command = nullptr;
+    std::wstring dialogPath;        // the path the next file dialog returns, empty: none expected
+    bool dialogUsed = false;        // a file dialog returned dialogPath
+    bool answerOkCancel = false;    // an OK/Cancel question is answered OK
+    bool allowDialogWindow = false; // a #32770 window may open (the gravity dialog)
+};
+
+StepState g_step;
+std::set<HWND> g_allowedDialogs;
+
+std::string StepName() {
+    if (g_step.command == nullptr)
+        return "mds-script: before the first step: ";
+    return "mds-script: line " + std::to_string(g_step.command->line) + " (" +
+           g_step.command->name + "): ";
+}
+
+// Inside a hook the app is mid-handler; leave without unwinding it (as
+// trace_mode.cpp's dialog guard does).
+[[noreturn]] void AbortStep(const std::string& reason) {
+    WriteError(StepName() + reason + "\n");
+    TerminateProcess(GetCurrentProcess(), 1);
+    for (;;)
+        Sleep(INFINITE);
+}
+
+// ---- import table hooks ---------------------------------------------------
+
+using GetFileNameFn = BOOL(WINAPI*)(LPOPENFILENAMEW);
+using MessageBoxAFn = int(WINAPI*)(HWND, LPCSTR, LPCSTR, UINT);
+using MessageBoxWFn = int(WINAPI*)(HWND, LPCWSTR, LPCWSTR, UINT);
+
+BOOL AnswerFileDialog(LPOPENFILENAMEW ofn, const char* kind) {
+    if (g_step.dialogPath.empty() || g_step.dialogUsed)
+        AbortStep(std::string("unexpected ") + kind + " dialog");
+    const std::wstring& path = g_step.dialogPath;
+    if (ofn == nullptr || ofn->lpstrFile == nullptr || path.size() >= ofn->nMaxFile)
+        AbortStep(std::string(kind) + " dialog: the path does not fit the handler's buffer");
+    wcscpy_s(ofn->lpstrFile, ofn->nMaxFile, path.c_str());
+    const std::size_t slash = path.find_last_of(L"\\/");
+    const std::size_t nameStart = slash == std::wstring::npos ? 0 : slash + 1;
+    const std::size_t dot = path.find_last_of(L'.');
+    ofn->nFileOffset = static_cast<WORD>(nameStart);
+    ofn->nFileExtension =
+        static_cast<WORD>(dot == std::wstring::npos || dot < nameStart ? path.size() : dot + 1);
+    if (ofn->lpstrFileTitle != nullptr && ofn->nMaxFileTitle > 0)
+        wcsncpy_s(ofn->lpstrFileTitle, ofn->nMaxFileTitle, path.c_str() + nameStart, _TRUNCATE);
+    g_step.dialogUsed = true;
+    return TRUE;
+}
+
+BOOL WINAPI ScriptGetOpenFileNameW(LPOPENFILENAMEW ofn) {
+    return AnswerFileDialog(ofn, "open file");
+}
+
+BOOL WINAPI ScriptGetSaveFileNameW(LPOPENFILENAMEW ofn) {
+    return AnswerFileDialog(ofn, "save file");
+}
+
+int AnswerMessageBox(const std::string& caption, const std::string& text, UINT type) {
+    if ((type & MB_TYPEMASK) == MB_OKCANCEL && g_step.answerOkCancel)
+        return IDOK;
+    AbortStep("message box: " + caption + ": " + text);
+}
+
+int WINAPI ScriptMessageBoxA(HWND, LPCSTR text, LPCSTR caption, UINT type) {
+    return AnswerMessageBox(SjisToUtf8(caption != nullptr ? caption : ""),
+                            SjisToUtf8(text != nullptr ? text : ""), type);
+}
+
+int WINAPI ScriptMessageBoxW(HWND, LPCWSTR text, LPCWSTR caption, UINT type) {
+    return AnswerMessageBox(Utf8(caption != nullptr ? caption : L""),
+                            Utf8(text != nullptr ? text : L""), type);
+}
+
+// Replaces the import `function` of `dll` in the executable's import table.
+// False when the executable does not import it.
+bool PatchImport(const char* dll, const char* function, const void* replacement) {
+    auto* base = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    const IMAGE_DATA_DIRECTORY& directory =
+        nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (directory.VirtualAddress == 0)
+        return false;
+    for (auto* import =
+             reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(base + directory.VirtualAddress);
+         import->Name != 0; ++import) {
+        if (_stricmp(reinterpret_cast<const char*>(base + import->Name), dll) != 0 ||
+            import->OriginalFirstThunk == 0)
+            continue;
+        auto* names = reinterpret_cast<const IMAGE_THUNK_DATA*>(base + import->OriginalFirstThunk);
+        auto* slots = reinterpret_cast<IMAGE_THUNK_DATA*>(base + import->FirstThunk);
+        for (; names->u1.AddressOfData != 0; ++names, ++slots) {
+            if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal))
+                continue;
+            const auto* byName =
+                reinterpret_cast<const IMAGE_IMPORT_BY_NAME*>(base + names->u1.AddressOfData);
+            if (std::strcmp(reinterpret_cast<const char*>(byName->Name), function) != 0)
+                continue;
+            DWORD protection = 0;
+            if (!VirtualProtect(&slots->u1.Function, sizeof(slots->u1.Function), PAGE_READWRITE,
+                                &protection))
+                return false;
+            slots->u1.Function = reinterpret_cast<ULONG_PTR>(replacement);
+            VirtualProtect(&slots->u1.Function, sizeof(slots->u1.Function), protection,
+                           &protection);
+            return true;
+        }
+    }
+    return false;
+}
+
+LRESULT CALLBACK DialogGuardProc(int code, WPARAM wParam, LPARAM lParam) {
+    if (code == HCBT_ACTIVATE) {
+        const HWND window = reinterpret_cast<HWND>(wParam);
+        wchar_t windowClass[8] = L"";
+        if (GetClassNameW(window, windowClass, 8) != 0 && wcscmp(windowClass, L"#32770") == 0 &&
+            g_allowedDialogs.count(window) == 0) {
+            if (!g_step.allowDialogWindow) {
+                wchar_t caption[256] = L"";
+                GetWindowTextW(window, caption, 256);
+                AbortStep("dialog: " + Utf8(caption));
+            }
+            g_allowedDialogs.insert(window);
+        }
+    }
+    return CallNextHookEx(nullptr, code, wParam, lParam);
+}
+
+// ---- driving the window ---------------------------------------------------
+
+struct Runner {
+    MMDApp* app;
+    const ScriptRequest& request;
+    std::vector<std::string> manifest;
+    std::map<std::string, std::string> hashes; // file name -> sha256 at its last manifest line
+    std::string error;                         // set by a failed step
+
+    HWND Main() const { return static_cast<HWND>(app->Hwnd()); }
+
+    bool Fail(const std::string& reason) {
+        error = reason;
+        return false;
+    }
+
+    // A panel control: on the main window, or on the floating window that
+    // takes over ids 536..557 when the separate-window option is on.
+    HWND Control(int id) const {
+        HWND control = GetDlgItem(Main(), id);
+        if (control == nullptr && app->FloatingWindow() != nullptr)
+            control = GetDlgItem(app->FloatingWindow(), id);
+        return control;
+    }
+
+    bool Menu(int id) {
+        const UINT state = GetMenuState(GetMenu(Main()), static_cast<UINT>(id), MF_BYCOMMAND);
+        if (state == static_cast<UINT>(-1))
+            return Fail("menu item " + std::to_string(id) + " does not exist");
+        if ((state & (MF_GRAYED | MF_DISABLED)) != 0)
+            return Fail("menu item " + std::to_string(id) + " is disabled");
+        SendMessageA(Main(), WM_COMMAND, MAKEWPARAM(id, 0), 0);
+        return true;
+    }
+
+    HWND EnabledControl(int id) {
+        const HWND control = Control(id);
+        if (control == nullptr) {
+            Fail("control " + std::to_string(id) + " does not exist");
+            return nullptr;
+        }
+        if (!IsWindowEnabled(control)) {
+            Fail("control " + std::to_string(id) + " is disabled");
+            return nullptr;
+        }
+        return control;
+    }
+
+    // A button click: BN_CLICKED with the button's HWND.
+    bool Click(int id) {
+        const HWND control = EnabledControl(id);
+        if (control == nullptr)
+            return false;
+        SendMessageA(Main(), WM_COMMAND, MAKEWPARAM(id, BN_CLICKED),
+                     reinterpret_cast<LPARAM>(control));
+        return true;
+    }
+
+    // Types `text` into a numeric edit and presses Enter.
+    bool Edit(int id, const std::string& text) {
+        const HWND control = EnabledControl(id);
+        if (control == nullptr)
+            return false;
+        SetWindowTextA(control, text.c_str());
+        SendMessageA(control, WM_KEYDOWN, VK_RETURN, 0);
+        return true;
+    }
+
+    // Picks the combo item `item` (CB_ERR: the item whose text is `text`).
+    bool Combo(int id, const std::string& text, LRESULT item = CB_ERR) {
+        const HWND control = EnabledControl(id);
+        if (control == nullptr)
+            return false;
+        if (item == CB_ERR) {
+            const std::string sjis = Sjis(text);
+            item = SendMessageA(control, CB_FINDSTRINGEXACT, static_cast<WPARAM>(-1),
+                                reinterpret_cast<LPARAM>(sjis.c_str()));
+            if (item == CB_ERR)
+                return Fail("combo " + std::to_string(id) + " has no item \"" + text + "\"");
+        }
+        SendMessageA(control, CB_SETCURSEL, static_cast<WPARAM>(item), 0);
+        SendMessageA(Main(), WM_COMMAND, MAKEWPARAM(id, CBN_SELCHANGE),
+                     reinterpret_cast<LPARAM>(control));
+        return true;
+    }
+
+    bool Edits(const int (&ids)[3], const std::vector<std::string>& values) {
+        for (int axis = 0; axis < 3; ++axis)
+            if (!Edit(ids[axis], values[static_cast<std::size_t>(axis)]))
+                return false;
+        return true;
+    }
+
+    // The app's message loop between two user actions (winmain.cpp), with
+    // a fixed frame delta.
+    void Settle() {
+        for (int frame = 0; frame < kSettleFrames; ++frame) {
+            MSG msg;
+            while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
+                if (msg.message == WM_QUIT)
+                    continue;
+                TranslateMessage(&msg);
+                DispatchMessageA(&msg);
+            }
+            app->DeltaTime() = 1.0f / 30.0f;
+            app->TimeNowLow() += 33;
+            FrameDriver(app);
+        }
+    }
+
+    HWND GravityDialog() {
+        const HWND dialog = app->GravitySettingDialog();
+        if (dialog == nullptr)
+            Fail("the gravity dialog is not open (gravity open)");
+        return dialog;
+    }
+
+    // Writes `text` into a gravity dialog edit: one EN_UPDATE with the whole text.
+    bool GravityEdit(int id, const std::string& text) {
+        const HWND dialog = GravityDialog();
+        if (dialog == nullptr)
+            return false;
+        SetWindowTextA(GetDlgItem(dialog, id), text.c_str());
+        return true;
+    }
+
+    // A file dialog step: arms the path, runs `action`, and checks that the
+    // handler asked for a file.
+    template <class Action> bool WithDialog(const std::wstring& path, Action action) {
+        g_step.dialogPath = path;
+        g_step.dialogUsed = false;
+        const bool ok = action();
+        const bool used = g_step.dialogUsed;
+        g_step.dialogPath.clear();
+        if (ok && !used)
+            return Fail("the handler did not open a file dialog");
+        return ok;
+    }
+
+    // "out/<name>" names a file that an earlier step saved into <out-dir>;
+    // any other relative path names a file next to the exe.
+    bool Load(const std::string& path, int id, bool isMenu) {
+        const bool fromOut = path.compare(0, 4, "out/") == 0;
+        const std::wstring wide = fromOut ? request.out + L"\\" + Wide(path.substr(4)) : Wide(path);
+        const bool absolute = wide.size() > 1 && (wide[1] == L':' || wide[0] == L'\\');
+        std::wstring exeDir = app->ExeDir();
+        if (!exeDir.empty() && exeDir.back() != L'\\')
+            exeDir += L'\\';
+        const std::wstring resolved = absolute ? wide : exeDir + wide;
+        if (!IsFile(resolved))
+            return Fail("input file not found: " + Utf8(resolved));
+        if (wide.size() >= kDialogPathLength)
+            return Fail("the path is longer than the handler's buffer");
+        return WithDialog(wide, [&] { return isMenu ? Menu(id) : Click(id); });
+    }
+
+    bool Save(const std::string& name, int menu) {
+        const std::wstring path = request.out + L"\\" + Wide(name);
+        if (path.size() >= kDialogPathLength)
+            return Fail("the output path is longer than the handler's buffer");
+        DeleteFileW(path.c_str());
+        if (!WithDialog(path, [&] { return Menu(menu); }))
+            return false;
+        Settle();
+        if (!IsFile(path))
+            return Fail("the handler wrote no file " + Utf8(path));
+        return RecordOutputs(name);
+    }
+
+    // Adds every file of <out-dir> that is new or changed since the last
+    // save to the manifest: the target first, then the files the save wrote
+    // beside it (the PMM save writes <name>.emm, the MME effect map), by name.
+    bool RecordOutputs(const std::string& target) {
+        std::vector<std::string> names{target};
+        WIN32_FIND_DATAW found;
+        const HANDLE find = FindFirstFileW((request.out + L"\\*").c_str(), &found);
+        if (find != INVALID_HANDLE_VALUE) {
+            std::set<std::string> others;
+            do {
+                const std::string name = Utf8(found.cFileName);
+                if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 &&
+                    name != "manifest.tsv" && name != target)
+                    others.insert(name);
+            } while (FindNextFileW(find, &found));
+            FindClose(find);
+            names.insert(names.end(), others.begin(), others.end());
+        }
+        for (const std::string& name : names) {
+            std::string hash;
+            if (!Sha256(request.out + L"\\" + Wide(name), &hash))
+                return Fail("cannot read " + name);
+            std::string& known = hashes[name];
+            if (known == hash)
+                continue;
+            known = hash;
+            manifest.push_back(std::to_string(g_step.command->line) + "\t" + name + "\t" + hash);
+        }
+        return true;
+    }
+
+    static bool Sha256(const std::wstring& path, std::string* hex) {
+        std::ifstream file(path.c_str(), std::ios::binary);
+        if (!file)
+            return false;
+        const std::string bytes((std::istreambuf_iterator<char>(file)),
+                                std::istreambuf_iterator<char>());
+        unsigned char digest[32];
+        if (!BCRYPT_SUCCESS(BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0,
+                                       reinterpret_cast<PUCHAR>(const_cast<char*>(bytes.data())),
+                                       static_cast<ULONG>(bytes.size()), digest, sizeof digest)))
+            return false;
+        char text[65];
+        for (int i = 0; i < 32; ++i)
+            std::snprintf(text + 2 * i, 3, "%02x", digest[i]);
+        *hex = text;
+        return true;
+    }
+
+    unsigned char* Model() {
+        unsigned char* model = app->SelectedModel();
+        if (model == nullptr || app->CameraMode() != 0) {
+            Fail("no model is selected (select model)");
+            return nullptr;
+        }
+        return model;
+    }
+
+    bool SelectBone(const std::string& name) {
+        unsigned char* model = Model();
+        if (model == nullptr)
+            return false;
+        const std::string sjis = Sjis(name);
+        const mdl::ModelRecord* record = mdl::Mdl(model);
+        for (std::uint32_t i = 0; i < record->boneCount; ++i) {
+            const mdl::BoneRecord& bone = record->boneTable[i];
+            if (sjis == bone.name || sjis == bone.nameEn) {
+                SelectDisplayBone(app, static_cast<int>(i));
+                return true;
+            }
+        }
+        return Fail("the selected model has no bone \"" + name + "\"");
+    }
+
+    static int MorphLane(const std::string& lane) { return lane[0] - '0'; }
+
+    bool Run(const ScriptCommand& c) {
+        const std::vector<std::string>& a = c.args;
+        static const int kReadoutPosition[3] = {panel::kReadoutPosXEdit, panel::kReadoutPosYEdit,
+                                                panel::kReadoutPosZEdit};
+        static const int kReadoutRotation[3] = {panel::kReadoutRotXEdit, panel::kReadoutRotYEdit,
+                                                panel::kReadoutRotZEdit};
+        static const int kMorphEdits[4] = {panel::kMorphEdit0, panel::kMorphEdit1,
+                                           panel::kMorphEdit2, panel::kMorphEdit3};
+        static const int kMorphCombos[4] = {panel::kMorphCombo0, panel::kMorphCombo1,
+                                            panel::kMorphCombo2, panel::kMorphCombo3};
+        static const int kMorphRegister[4] = {
+            panel::kRegisterMorphButton0, panel::kRegisterMorphButton1,
+            panel::kRegisterMorphButton2, panel::kRegisterMorphButton3};
+        static const int kLightColor[3] = {panel::kLightColorEditR, panel::kLightColorEditG,
+                                           panel::kLightColorEditB};
+        static const int kLightDirection[3] = {panel::kLightDirEditX, panel::kLightDirEditY,
+                                               panel::kLightDirEditZ};
+        static const int kAccPosition[3] = {panel::kAccPosXEdit, panel::kAccPosYEdit,
+                                            panel::kAccPosZEdit};
+        static const int kAccRotation[3] = {panel::kAccRotXEdit, panel::kAccRotYEdit,
+                                            panel::kAccRotZEdit};
+        static const int kShadowModes[3] = {panel::kEditOffCheckbox, panel::kEditMode1Checkbox,
+                                            panel::kEditMode2Checkbox};
+        switch (c.op) {
+        case ScriptOp::New:
+            return Menu(MDS_CMD_NEW_PROJECT);
+        case ScriptOp::LoadPmm:
+            return Load(a[0], MDS_CMD_OPEN_PROJECT, true);
+        case ScriptOp::LoadModel:
+            return Load(a[0], panel::kLoadModelButton, false);
+        case ScriptOp::LoadVmd:
+            return Load(a[0], MDS_CMD_LOAD_MOTION, true);
+        case ScriptOp::LoadVpd:
+            return Load(a[0], MDS_CMD_LOAD_POSE, true);
+        case ScriptOp::LoadAccessory:
+            return Load(a[0], panel::kLoadAccessoryButton, false);
+        case ScriptOp::LoadWav:
+            return Load(a[0], MDS_CMD_LOAD_WAVE, true);
+        case ScriptOp::SavePmm:
+            return Save(a[0], MDS_CMD_SAVE_PROJECT_AS);
+        case ScriptOp::SaveVmd:
+            return Save(a[0], MDS_CMD_SAVE_MOTION);
+        case ScriptOp::SaveVpd:
+            return Save(a[0], MDS_CMD_SAVE_POSE);
+        case ScriptOp::SavePmd:
+            return Save(a[0], MDS_CMD_SAVE_ENHANCED_MODEL);
+        case ScriptOp::SelectCamera:
+            return Combo(panel::kMainComboModel, std::string(), 0);
+        case ScriptOp::SelectModel:
+            return Combo(panel::kMainComboModel, a[0]);
+        case ScriptOp::SelectBone:
+            return SelectBone(a[0]);
+        case ScriptOp::SelectMorph:
+            return Model() != nullptr && Combo(kMorphCombos[MorphLane(a[0])], a[1]);
+        case ScriptOp::SelectAccessory:
+            return Combo(panel::kAccessoryCombo, a[0]);
+        case ScriptOp::Frame:
+            return Edit(panel::kCurrentFrameEdit, a[0]);
+        case ScriptOp::BonePosition:
+            return Model() != nullptr && Edits(kReadoutPosition, a);
+        case ScriptOp::BoneRotation:
+            return Model() != nullptr && Edits(kReadoutRotation, a);
+        case ScriptOp::MorphWeight:
+            return Model() != nullptr && Edit(kMorphEdits[MorphLane(a[0])], a[1]);
+        case ScriptOp::CameraPosition:
+            return Edits(kReadoutPosition, a);
+        case ScriptOp::CameraRotation:
+            return Edits(kReadoutRotation, a);
+        case ScriptOp::CameraDistance:
+            return Edit(panel::kReadoutDistEdit, a[0]);
+        case ScriptOp::CameraFov:
+            return Edit(panel::kFovEdit, a[0]);
+        case ScriptOp::LightColor:
+            return Edits(kLightColor, a);
+        case ScriptOp::LightDirection:
+            return Edits(kLightDirection, a);
+        case ScriptOp::ShadowMode:
+            if (a[0].size() != 1 || a[0][0] > '2')
+                return Fail("the self-shadow mode is 0, 1, or 2");
+            return Click(kShadowModes[a[0][0] - '0']);
+        case ScriptOp::ShadowRange:
+            return Edit(panel::kSelfShadowRangeEdit, a[0]);
+        case ScriptOp::GravityOpen:
+            return Menu(MDS_CMD_GRAVITY_SETTINGS) && (GravityDialog() != nullptr);
+        case ScriptOp::GravityMagnitude:
+            return GravityEdit(panel::kGravityAccelEdit, a[0]);
+        case ScriptOp::GravityDirection:
+            return GravityEdit(panel::kGravityDirXEdit, a[0]) &&
+                   GravityEdit(panel::kGravityDirYEdit, a[1]) &&
+                   GravityEdit(panel::kGravityDirZEdit, a[2]);
+        case ScriptOp::GravityClose:
+        case ScriptOp::RegisterGravity: {
+            const HWND dialog = GravityDialog();
+            if (dialog == nullptr)
+                return false;
+            const int id = c.op == ScriptOp::RegisterGravity ? IDOK : IDCANCEL;
+            SendMessageA(dialog, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED),
+                         reinterpret_cast<LPARAM>(GetDlgItem(dialog, id)));
+            return true;
+        }
+        case ScriptOp::AccessoryPosition:
+            return Edits(kAccPosition, a);
+        case ScriptOp::AccessoryRotation:
+            return Edits(kAccRotation, a);
+        case ScriptOp::AccessoryScale:
+            return Edit(panel::kAccScaleEdit, a[0]);
+        case ScriptOp::AccessoryOpacity:
+            return Edit(panel::kAccOpacityEdit, a[0]);
+        case ScriptOp::AccessoryParent:
+            // "ground" is the first item of the parent-model combo (index 0).
+            return (a[0] == "ground" ? Combo(panel::kMainComboGround, std::string(), 0)
+                                     : Combo(panel::kMainComboGround, a[0])) &&
+                   (a[1] == "-" || Combo(panel::kAttachBoneCombo, a[1]));
+        case ScriptOp::RegisterBone:
+            return Click(panel::kRegisterFrameButton);
+        case ScriptOp::RegisterMorph:
+            return Model() != nullptr && Click(kMorphRegister[MorphLane(a[0])]);
+        case ScriptOp::RegisterDisplay:
+            return Model() != nullptr && Click(panel::kRegisterModelDisplayButton);
+        case ScriptOp::RegisterCamera:
+            return Click(panel::kRegisterCameraButton);
+        case ScriptOp::RegisterLight:
+            return Click(panel::kRegisterLightButton);
+        case ScriptOp::RegisterShadow:
+            return Click(panel::kRegisterSelfShadowButton);
+        case ScriptOp::RegisterAccessory:
+            return Click(panel::kRegisterAccessoryButton);
+        case ScriptOp::Copy:
+            return Click(panel::kCopyFramesButton);
+        case ScriptOp::Paste:
+            return Click(panel::kPasteButton);
+        case ScriptOp::PasteReverse:
+            return Click(panel::kReversePasteButton);
+        case ScriptOp::PasteDifferent:
+            return Menu(MDS_CMD_PASTE_AT_DIFFERENT_FRAME);
+        case ScriptOp::Delete:
+            return Click(panel::kDeleteFramesButton);
+        case ScriptOp::InsertBoneLine:
+            return Menu(MDS_CMD_INSERT_BONE_CAMERA_FRAME_LINE);
+        case ScriptOp::DeleteBoneLine:
+            return Menu(MDS_CMD_DELETE_BONE_CAMERA_FRAME_LINE);
+        case ScriptOp::InsertMorphLine:
+            return Menu(MDS_CMD_INSERT_MORPH_LIGHT_FRAME_LINE);
+        case ScriptOp::DeleteMorphLine:
+            return Menu(MDS_CMD_DELETE_MORPH_LIGHT_FRAME_LINE);
+        case ScriptOp::SelectAllBone:
+            return Menu(MDS_CMD_SELECT_ALL_BONE_FRAMES);
+        case ScriptOp::SelectAllDisplay:
+            return Menu(MDS_CMD_SELECT_ALL_DISPLAY_FRAMES);
+        case ScriptOp::SelectAllMorph:
+            return Menu(MDS_CMD_SELECT_ALL_MORPH_FRAMES);
+        case ScriptOp::SelectAllCamera:
+            return Menu(MDS_CMD_SELECT_ALL_CAMERA_FRAMES);
+        case ScriptOp::SelectAllLight:
+            return Menu(MDS_CMD_SELECT_ALL_LIGHT_FRAMES);
+        case ScriptOp::SelectAllShadow:
+            return Menu(MDS_CMD_SELECT_ALL_SELF_SHADOW_FRAMES);
+        case ScriptOp::SelectAllGravity:
+            return Menu(MDS_CMD_SELECT_ALL_GRAVITY_FRAMES);
+        case ScriptOp::SelectAllAccessory:
+            return Menu(MDS_CMD_SELECT_ALL_ACCESSORY_FRAMES);
+        case ScriptOp::Undo:
+            return Click(panel::kUndoButton);
+        case ScriptOp::Redo:
+            return Click(panel::kRedoButton);
+        }
+        return Fail("unhandled command");
+    }
+};
+
+bool AnswersOkCancel(ScriptOp op) {
+    return op == ScriptOp::New || op == ScriptOp::LoadPmm || op == ScriptOp::LoadModel ||
+           op == ScriptOp::PasteDifferent;
+}
+
+} // namespace
+
+ScriptArgs ParseScriptArgs(int argc, const wchar_t* const* argv, ScriptRequest* request) {
+    if (argv == nullptr || argc < 2 || argv[1] == nullptr ||
+        std::wcscmp(argv[1], L"--mds-script") != 0)
+        return ScriptArgs::NotRequested;
+    if (argc != 4 || argv[2][0] == L'\0' || argv[3][0] == L'\0')
+        return ScriptArgs::Malformed;
+    request->script = argv[2];
+    request->out = argv[3];
+    return ScriptArgs::Ready;
+}
+
+bool PrepareScriptRequest(ScriptRequest* request) {
+    request->script = FullPath(request->script);
+    request->out = FullPath(request->out);
+    while (!request->out.empty() && (request->out.back() == L'\\' || request->out.back() == L'/'))
+        request->out.pop_back();
+    const DWORD outAttributes = GetFileAttributesW(request->out.c_str());
+    if (request->script.empty() || !IsFile(request->script) ||
+        outAttributes == INVALID_FILE_ATTRIBUTES ||
+        (outAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        WriteError("mds-script: the script must be a file and <out-dir> an existing directory\n");
+        return false;
+    }
+    std::ifstream file(request->script.c_str(), std::ios::binary);
+    std::ostringstream text;
+    text << file.rdbuf();
+    std::string error;
+    if (!file || !ParseScript(text.str(), &request->commands, &error)) {
+        WriteError("mds-script: " +
+                   (error.empty() ? std::string("cannot read the script") : error) + "\n");
+        return false;
+    }
+    if (!PatchImport("comdlg32.dll", "GetOpenFileNameW",
+                     reinterpret_cast<const void*>(&ScriptGetOpenFileNameW)) ||
+        !PatchImport("comdlg32.dll", "GetSaveFileNameW",
+                     reinterpret_cast<const void*>(&ScriptGetSaveFileNameW)) ||
+        !PatchImport("user32.dll", "MessageBoxA",
+                     reinterpret_cast<const void*>(&ScriptMessageBoxA))) {
+        WriteError("mds-script: cannot hook the file dialogs and message boxes\n");
+        return false;
+    }
+    // Not every build imports MessageBoxW; the dialog guard covers it then.
+    PatchImport("user32.dll", "MessageBoxW", reinterpret_cast<const void*>(&ScriptMessageBoxW));
+    if (SetWindowsHookExW(WH_CBT, DialogGuardProc, nullptr, GetCurrentThreadId()) == nullptr) {
+        WriteError("mds-script: cannot install the dialog guard\n");
+        return false;
+    }
+    return true;
+}
+
+int RunScriptMode(MMDApp* app, const ScriptRequest& request) {
+    ShowWindow(static_cast<HWND>(app->Hwnd()), SW_HIDE);
+    Runner runner{app, request, {}, {}, {}};
+    runner.Settle();
+    for (const ScriptCommand& command : request.commands) {
+        g_step = StepState{};
+        g_step.command = &command;
+        g_step.answerOkCancel = AnswersOkCancel(command.op);
+        g_step.allowDialogWindow = command.op == ScriptOp::GravityOpen;
+        WriteError(StepName() + "start\n"); // the last line names the step of a crash
+        const bool ok = runner.Run(command);
+        g_step.answerOkCancel = false;
+        g_step.allowDialogWindow = false;
+        if (!ok) {
+            WriteError(StepName() + runner.error + "\n");
+            return 1;
+        }
+        runner.Settle();
+    }
+    g_step = StepState{};
+    std::string text = "step\tfile\tsha256\n";
+    for (const std::string& line : runner.manifest)
+        text += line + "\n";
+    std::ofstream manifest((request.out + L"\\manifest.tsv").c_str(),
+                           std::ios::binary | std::ios::trunc);
+    manifest << text;
+    manifest.close();
+    if (!manifest) {
+        WriteError("mds-script: cannot write manifest.tsv\n");
+        return 1;
+    }
+    return 0;
+}
+} // namespace mikudancestudio::tools

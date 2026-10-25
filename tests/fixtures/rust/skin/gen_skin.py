@@ -8,6 +8,9 @@ every matrix entry is a rational number rounded once to float32.
     python3 -I tests/fixtures/rust/skin/gen_skin.py --write
     python3 -I tests/fixtures/rust/skin/gen_skin.py --check
 
+skin_dup.pmx and skin_uv4.pmx reuse its vertices and bones: bone morphs that
+name a bone twice, and four additional UVs with a morph of every UV kind.
+
 skin.pmx (PMX 2.0, two additional UVs) has BDEF1, BDEF2, BDEF4 and SDEF
 vertices, bone references of -1, three materials whose edge sizes decide the
 material of shared vertices, and vertex, UV, additional UV, material
@@ -162,12 +165,13 @@ def pmx_index(value):
     return struct.pack("<b", value)
 
 
-def build_skin_pmx():
+def build_pmx(name, morphs, add_uv_count=2, vertices=None):
+    vertices = PMX_VERTICES if vertices is None else vertices
     o = bytearray(b"PMX " + f32(2.0))
-    o += u8(8, 0, 2, 1, 1, 1, 1, 1, 1)
-    o += utf16("skin") + utf16("skin") + utf16("mds-skin fixture") + utf16("mds-skin fixture")
-    o += u32(len(PMX_VERTICES))
-    for pos, normal, uv, add_uv, weight, edge in PMX_VERTICES:
+    o += u8(8, 0, add_uv_count, 1, 1, 1, 1, 1, 1)
+    o += utf16(name) + utf16(name) + utf16("mds-skin fixture") + utf16("mds-skin fixture")
+    o += u32(len(vertices))
+    for pos, normal, uv, add_uv, weight, edge in vertices:
         o += f32(*pos, *normal, *uv)
         for extra in add_uv:
             o += f32(*extra)
@@ -192,8 +196,8 @@ def build_skin_pmx():
         o += utf16(name) + utf16(name) + f32(*pos) + pmx_index(parent) + i32(0)
         flags = 0x0002 | 0x0008 | 0x0010 | (0x0004 if i == 1 else 0)
         o += u16(flags) + f32(1.0, 0.0, 0.0)
-    o += u32(len(PMX_MORPHS))
-    for name, panel, kind, offsets in PMX_MORPHS:
+    o += u32(len(morphs))
+    for name, panel, kind, offsets in morphs:
         o += utf16(name) + utf16(name) + u8(panel, kind) + i32(len(offsets))
         for entry in offsets:
             if kind == 0:
@@ -207,7 +211,7 @@ def build_skin_pmx():
             else:
                 o += u8(entry[0]) + f32(*entry[1])
     frames = [("Root", 1, [(0, 0)]),
-              ("表情", 1, [(1, k) for k in range(len(PMX_MORPHS))]),
+              ("表情", 1, [(1, k) for k in range(len(morphs))]),
               ("body", 0, [(0, 1), (0, 2), (0, 3)])]
     o += u32(len(frames))
     for name, special, entries in frames:
@@ -216,6 +220,56 @@ def build_skin_pmx():
             o += u8(kind) + pmx_index(index)
     o += u32(0)  # rigid bodies
     return bytes(o)
+
+
+def build_skin_pmx():
+    return build_pmx("skin", PMX_MORPHS)
+
+
+# skin_dup.pmx: the bone morph table of the C++ loader skips a bone only when
+# an earlier morph moves it, so a bone named twice in one morph gets a second,
+# unused record. Same bones, vertices and materials as skin.pmx.
+DUP_MORPHS = [
+    ("dupself", 4, 2, [(2, (0.125, 0.0, 0.0), (0.0, 0.0, 0.38268343, 0.9238795)),
+                       (2, (0.0, 0.25, 0.0), (0.0, 0.6, 0.0, 0.8)),
+                       (3, (0.0, 0.0, -0.125), (0.0, 0.0, 0.0, 1.0))]),
+    ("dupother", 4, 2, [(3, (0.25, 0.0, 0.0), (0.38268343, 0.0, 0.0, 0.9238795)),
+                        (1, (0.0, 0.5, 0.0), (0.0, 0.0, 0.0, 1.0))]),
+    ("dupboth", 4, 2, [(1, (0.0, 0.0, 0.5), (0.0, 0.0, 0.6, 0.8)),
+                       (1, (0.5, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+                       (0, (0.0, 0.125, 0.0), (0.0, 0.38268343, 0.0, 0.9238795)),
+                       (0, (0.0, 0.0, 0.25), (0.6, 0.0, 0.0, 0.8))]),
+    ("group", 4, 0, [(0, 0.5), (2, -1.5)]),
+]
+
+
+def build_dup_pmx():
+    return build_pmx("skin_dup", DUP_MORPHS)
+
+
+# skin_uv4.pmx: four additional UVs and a morph of each UV kind 3..7 (kind 7 is
+# additional UV 4), the last one named by a group morph and by two morphs on a
+# shared vertex.
+def four_uvs(vertex):
+    pos, normal, uv, extra, weight, edge = vertex
+    return (pos, normal, uv, extra + (extra[0][::-1], extra[1][::-1]), weight, edge)
+
+
+UV4_VERTICES = [four_uvs(v) for v in PMX_VERTICES]
+UV4_MORPHS = [
+    ("uv", 4, 3, [(1, (0.13, 0.27, 0.0, 0.0))]),
+    ("adduv1", 4, 4, [(3, (0.1, 0.2, 0.3, 0.4))]),
+    ("adduv2", 4, 5, [(5, (0.51, -0.47, 0.53, -0.49))]),
+    ("adduv3", 4, 6, [(2, (0.25, 0.5, -0.25, -0.5)), (7, (1.0, 0.0, 0.0, 1.0))]),
+    ("adduv4", 4, 7, [(2, (0.125, -0.25, 0.5, 0.75)), (4, (-0.5, 0.0, 0.25, 0.0)),
+                      (11, (0.03, 0.07, 0.11, 0.13))]),
+    ("adduv4b", 4, 7, [(4, (0.25, 0.25, -0.125, 0.5)), (6, (0.0, -1.0, 0.0, 1.0))]),
+    ("group", 4, 0, [(4, 0.5), (5, -0.75), (3, 1.25)]),
+]
+
+
+def build_uv4_pmx():
+    return build_pmx("skin_uv4", UV4_MORPHS, 4, UV4_VERTICES)
 
 
 # ---------------------------------------------------------------------------
@@ -383,11 +437,26 @@ def cases():
                 bones=[(0, skin_matrix(PMD_BIND[0], (0, 0, 1, 1), (1.01, 0, 0))),
                        (2, skin_matrix(PMD_BIND[2], (1, 1, 0, 3), scale=0.77))])
     out += case("negzero", bones=[(i, NEG_ZERO) for i in range(3)])
+    out.append("model skin/skin_dup.pmx")
+    out += case("rest")
+    out += case("self", morphs=[(0, 0.73)])
+    out += case("across", morphs=[(0, 1.0), (1, 0.53), (2, -0.47)],
+                bones=[(1, skin_matrix(PMX_BIND[1], (0, 0, 1, 3), (0, 0.13, 0)))])
+    out += case("group", morphs=[(3, 0.87), (1, 0.29)])
+    out += case("all", morphs=[(0, 1.0), (1, 1.0), (2, 1.0), (3, 1.0)])
+    out.append("model skin/skin_uv4.pmx")
+    out += case("rest")
+    out += case("uv4", morphs=[(4, 0.73)])
+    out += case("shared", camera=(1.1, 1.3, -5.7), fov=60, shadow=1,
+                morphs=[(0, 0.3), (1, 0.5), (2, 0.7), (3, 0.9), (4, 1.0), (5, -0.53)],
+                bones=[(1, skin_matrix(PMX_BIND[1], (2, 0, 0, 5)))])
+    out += case("group", morphs=[(6, 0.71), (5, 0.37)])
     return ("\n".join(out) + "\n").encode()
 
 
 def generate():
     return {"skin.pmx": build_skin_pmx(), "skin.pmd": build_skin_pmd(),
+            "skin_dup.pmx": build_dup_pmx(), "skin_uv4.pmx": build_uv4_pmx(),
             "cases.txt": cases()}
 
 

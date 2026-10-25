@@ -1,0 +1,63 @@
+# Bone and display keys of chain8.pmx: register, copy, the three pastes,
+# delete, frame lines, undo and redo, and the VMD, VPD, PMD, and PMM saves.
+load model chain8.pmx
+frame 10
+select bone センター
+bone position 1 2 3
+bone rotation 10 20 30
+register bone
+frame 20
+select bone 上半身
+bone rotation 0 45 0
+register bone
+frame 15
+register display
+save pmm registered.pmm
+select all bone
+save vmd registered.vmd
+
+# Copy every bone key, paste at 40 and mirrored at 60.
+select all bone
+copy
+frame 40
+paste
+frame 60
+paste reverse
+save pmm pasted.pmm
+
+# Paste the clipboard onto another bone (首) at frame 80.
+select bone 首
+frame 80
+paste different
+save pmm pasted-different.pmm
+
+# Frame lines: insert at 30 shifts the keys after it, delete at 5 pulls them back.
+frame 30
+line insert bone
+save pmm line-inserted.pmm
+frame 5
+line delete bone
+save pmm line-deleted.pmm
+
+# Undo the line deletion and redo it.
+undo
+save pmm undone.pmm
+redo
+save pmm redone.pmm
+
+# Delete the selected keys at the current frame.
+select all bone
+frame 41
+delete
+select all bone
+save vmd deleted.vmd
+
+# The pose of the selected bone, the whole scene, and last the PMD writer
+# (menu 263 writes the PMD layout, so it gets the PMD model; it also makes the
+# saved path, which is in <out-dir>, the model's path for later PMM saves).
+frame 10
+select bone センター
+save vpd center.vpd
+load model chain8.pmd
+save pmm bones.pmm
+save pmd chain8-saved.pmd

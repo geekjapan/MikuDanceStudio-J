@@ -1,0 +1,2 @@
+# The empty scene that the app starts with.
+save pmm empty.pmm

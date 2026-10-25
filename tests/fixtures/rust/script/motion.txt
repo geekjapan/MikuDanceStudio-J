@@ -1,0 +1,23 @@
+# Motion and pose files onto a model: swing600.vmd and pose.vpd on chain8.pmx,
+# a second model, model selection, and the saves.
+load model chain8.pmx
+load vmd swing600.vmd
+save pmm vmd-loaded.pmm
+frame 0
+load vpd pose.vpd
+select bone センター
+register bone
+select bone 首
+register bone
+select bone 髪3
+register bone
+save pmm vpd-loaded.pmm
+load model morph4.pmx
+select model chain8
+frame 150
+select bone 頭
+bone rotation 0 0 15
+register bone
+select all bone
+save vmd chain8.vmd
+save pmm motion.pmm

@@ -1,0 +1,29 @@
+# An accessory (inputs/tri.x) and a WAV (inputs/tone.wav): accessory values,
+# parent, keys, copy and paste, and the PMM save.
+load model chain8.pmx
+load accessory .\tri.x
+load wav tone.wav
+select camera
+select accessory tri.x
+frame 0
+accessory position 1 2 3
+accessory rotation 10 20 30
+accessory scale 2
+accessory opacity 0.5
+register accessory
+frame 20
+accessory parent chain8 頭
+accessory position 0 1 0
+register accessory
+save pmm registered.pmm
+
+select all accessory
+copy
+frame 40
+paste
+save pmm pasted.pmm
+
+select all accessory
+frame 41
+delete
+save pmm accessory.pmm

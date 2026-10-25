@@ -1,0 +1,57 @@
+# Camera, light, self-shadow, and gravity keys on camera3.pmm, their copy,
+# paste, delete, and frame lines, a camera VMD save and reload, and new scene.
+load pmm camera3.pmm
+select camera
+frame 30
+camera position 1 2 3
+camera rotation 10 -20 5
+camera distance 25
+camera fov 40
+register camera
+frame 45
+light color 200 100 50
+light direction 0.5 -1 0.25
+register light
+frame 50
+shadow mode 2
+shadow range 8000
+register shadow
+frame 60
+gravity open
+gravity magnitude 5
+gravity direction 1 -1 0
+register gravity
+gravity close
+save pmm registered.pmm
+
+select all camera
+select all light
+select all shadow
+select all gravity
+save vmd camera.vmd
+
+select all camera
+copy
+frame 100
+paste
+save pmm pasted.pmm
+
+frame 10
+line insert bone
+line insert morph
+save pmm line-inserted.pmm
+frame 5
+line delete bone
+line delete morph
+save pmm line-deleted.pmm
+
+select all camera
+frame 101
+delete
+save pmm deleted.pmm
+
+new
+save pmm new.pmm
+select camera
+load vmd out/camera.vmd
+save pmm camera-reloaded.pmm

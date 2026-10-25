@@ -16,4 +16,6 @@ wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl
 pollster = "1"
 
 [dev-dependencies]
+# Tests only: the library (MIT) does not depend on the physics crate.
+mds-physics = { path = "../mds-physics" }
 png = "0.18"

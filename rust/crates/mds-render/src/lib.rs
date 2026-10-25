@@ -175,6 +175,13 @@ fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     )
 }
 
+/// How far the edge pass pushes a back face along its normal per unit of the material's edge size,
+/// in the model's own units. Fitted to the golden images: the whole picture of frames 150, 300 and
+/// 599 is closest for 0.019 to 0.0205 (the error is flat there), and a width in screen pixels
+/// (tried from 0.25 to 3 px) fits worse. The golden scene is orthographic, so how the C++ app
+/// scales the edge with distance under a perspective camera is not known.
+const EDGE_WORLD: f32 = 0.02;
+
 /// What [`render_frame`] draws.
 pub struct Frame<'a> {
     pub width: u32,
@@ -406,7 +413,7 @@ pub fn render_frame(gpu: &Gpu, frame: &Frame) -> Result<Vec<u8>, String> {
                             m.specular_power,
                         ],
                         m.edge_color.as_slice(),
-                        &[m.edge_size, 0.0, 0.0, 0.0],
+                        &[m.edge_size * EDGE_WORLD, 0.0, 0.0, 0.0],
                     ]
                     .concat();
                     let buf = buffer(gpu, wgpu::BufferUsages::UNIFORM, &bytes(&u));

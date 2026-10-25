@@ -483,6 +483,7 @@ name = "mds-render"
 version = "0.1.0"
 dependencies = [
  "mds-formats",
+ "mds-physics",
  "mds-pose",
  "mds-scene",
  "png",

@@ -40,9 +40,13 @@ pub fn pose_of(model: &mds_pose::model::Model) -> Pose {
 
 /// Whether the self-shadow track is in mode 2 at `frame`. In the golden images the toon ramp darkens
 /// the faces turned from the light (down to 0.8) from the frame where this becomes true (frame 300
-/// of the fixture) and not while the track is in mode 1. The light key changes at the same frame,
-/// so one scene cannot say whether the mode or the light switches the ramp: the render takes the
-/// mode as the switch (`Frame::toon`) until a second scene says otherwise.
+/// of the fixture) and not while the track is in mode 1. The render takes the mode as the switch
+/// (`Frame::toon`); the four golden frames, which all match with it, cannot rule out a switch on
+/// the light instead. The light of the fixture does not step at frame 300: it fades from its key
+/// at 0 to its key at 300 and stays (frame 150 has the half-way light, still without the darker
+/// ramp), so a light-driven switch would have to be a threshold on that fade that happens to fall
+/// between frames 150 and 300. Only a scene whose light and self-shadow keys sit at different
+/// frames can tell.
 pub fn self_shadow_mode_2_at(pmm: &Pmm, frame: u32) -> bool {
     evaluate_self_shadow(&pmm.self_shadow, f64::from(frame)).is_some_and(|(mode, _)| mode == 2)
 }

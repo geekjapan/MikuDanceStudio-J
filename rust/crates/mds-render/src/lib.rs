@@ -13,21 +13,30 @@
 //!   a texture of the caller's with hardware multisampling, with no read back, for a window.
 //!   [`Gpu`] holds a `Renderer` on a device of its own for the two functions above.
 //!
+//! The `_with` variants ([`render_frame_with`], [`Renderer::render_frame_with`],
+//! [`Renderer::render_into_with`]) also take a [`Stage`]: the PMM settings beyond the models
+//! (self-shadow and the projected ground shadow); [`scene::stage_at`] reads it from a PMM.
+//!
 //! Shading follows MMD's standard pipeline as the golden images show it: the color is
 //! `saturate(ambient + diffuse * light)` times the texture, the sphere map (multiply or add) and the
-//! toon ramp looked up by the angle to the light, plus a Blinn-Phong highlight
-//! `specular * light * (N.H)^power` that uses the eye position (a local viewer, also under the
-//! orthographic projection). Materials with the edge flag get an inverted-hull edge. Diffuse alpha
-//! blends.
+//! toon, plus a Blinn-Phong highlight `specular * light * (N.H)^power` that uses the eye position
+//! (a local viewer, also under the orthographic projection). With self-shadow off the toon is the
+//! toon texture looked up by the angle to the light, with the interpolated normal not
+//! renormalized; with self-shadow on it is a blend toward the toon's shadow color by the angle to
+//! the light (see [`SelfShadow::shades`]). Materials with the edge flag get an inverted-hull edge.
+//! Diffuse alpha blends. The ground shadow is the model flattened along the light onto the ground,
+//! blended once per pixel.
 //!
 //! The vertex buffers and material values of every frame are `mds-skin`'s: BDEF, SDEF and QDEF
 //! skinning, vertex, UV and material morphs, and the edge hull and color the C++ computes. The edge
 //! pass draws its edge buffer as it is.
 //!
-//! Not in this crate yet: texture decoding. Every texture slot (texture, sphere, toon) is bound
-//! to a default (white, white, a built-in toon ramp).
+//! Not in this crate yet: texture decoding, the self-shadow map, accessories and the background
+//! picture. Every texture slot (texture, sphere, toon) is bound to a default (white, white, a
+//! built-in toon texture).
 
 mod mesh;
+pub mod picture;
 mod png;
 mod renderer;
 pub mod scene;
@@ -45,7 +54,9 @@ pub const HEIGHT: u32 = 512;
 pub const CLEAR: [u8; 4] = [209, 219, 230, 255];
 
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// The ground shadow needs a stencil. On Apple GPUs this is a 32-bit float depth, as before the
+/// stencil was added.
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 
 /// Encodes RGBA8 pixels (top row first) as a PNG.
 pub use png::encode as encode_png;
@@ -119,7 +130,9 @@ pub struct Frame<'a> {
     pub light: Light,
     /// Color the target is cleared to (RGBA8).
     pub background: [u8; 4],
-    /// Whether the toon ramp darkens the faces turned from the light.
+    /// Whether the toon applies (MMD draws every model with one). Which toon follows the
+    /// [`Stage`]'s self-shadow; the entry points without a stage take it as self-shadow mode 2
+    /// ([`Stage::legacy`]).
     pub toon: bool,
     /// Models in draw order, each with its pose (`None` draws the bind pose).
     pub models: &'a [(&'a Mesh, Option<&'a Pose>)],
@@ -129,6 +142,59 @@ pub struct Frame<'a> {
     /// Shifts the whole picture by this many pixels (x right, y down); [`PIXEL_OFFSET_D3D9`] for
     /// the picture the C++ app writes.
     pub pixel_offset: [f32; 2],
+}
+
+/// What a PMM frame draws besides the models' own passes. `Stage::default()` draws none of it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Stage {
+    /// The projected ground shadow (the PMM view flag `ground_shadow`), or `None`.
+    pub ground_shadow: Option<GroundShadow>,
+    /// Self-shadow (modes 1 and 2), or `None` (mode 0).
+    pub self_shadow: Option<SelfShadow>,
+}
+
+impl Stage {
+    /// What [`render_frame`], [`Renderer::render_frame`] and [`Renderer::render_into`] draw, the
+    /// shading from before there was a stage: `frame.toon` is self-shadow mode 2, no ground shadow.
+    pub fn legacy(frame: &Frame) -> Stage {
+        Stage {
+            ground_shadow: None,
+            self_shadow: frame.toon.then_some(SelfShadow {
+                mode: 2,
+                distance: 0.0,
+            }),
+        }
+    }
+}
+
+/// The self-shadow track of a PMM at one frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SelfShadow {
+    /// 1 or 2.
+    pub mode: u8,
+    /// The key's distance value (the app's default is 0.01125).
+    pub distance: f32,
+}
+
+impl SelfShadow {
+    /// Whether the self-shadow shading applies. In mode 1 the shadow range is
+    /// `10000 - 100000 * distance` (the app's default 0.01125 is range 8875). The golden scene of
+    /// `tests/fixtures/rust/golden`, in mode 1 at the raw distance 8875 (a negative range), shows
+    /// no toon at all, not even the toon texture of self-shadow off; golden2 `selfshadow-0` (mode 1
+    /// at 0.01125) has the self-shadow shading. Mode 2 at 5000 (golden frames 300 and 599) has it
+    /// too, so the range gates mode 1 only.
+    pub fn shades(&self) -> bool {
+        self.mode == 2 || (self.mode == 1 && self.distance < 0.1)
+    }
+}
+
+/// The ground shadow settings of a PMM (`Physics::projected_shadow_*`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GroundShadow {
+    /// `projected_shadow_ambient`: the shadow's brightness.
+    pub ambient: f32,
+    /// `projected_shadow_blend`: the shadow is blended over the ground instead of opaque.
+    pub translucent: bool,
 }
 
 /// The golden images sit half a pixel right and down of where the viewport transform of Direct3D 11
@@ -177,6 +243,11 @@ pub fn render(gpu: &Gpu, pmx: &Pmx) -> Result<Vec<u8>, String> {
 /// and the buffers of the models are kept in `gpu` for the next call; see [`Renderer::render_frame`].
 pub fn render_frame(gpu: &Gpu, frame: &Frame) -> Result<Vec<u8>, String> {
     gpu.renderer().render_frame(frame)
+}
+
+/// [`render_frame`] with the passes of `stage`.
+pub fn render_frame_with(gpu: &Gpu, frame: &Frame, stage: &Stage) -> Result<Vec<u8>, String> {
+    gpu.renderer().render_frame_with(frame, stage)
 }
 
 fn srgb_to_linear_table() -> [f32; 256] {

@@ -1,0 +1,15 @@
+; written by hand: an owner section and comments
+[Info]
+Version = 2
+
+[Object]
+Pmd0 = ..\Model\a.pmx   # relative to the EMM
+
+[Effect]
+Default = C:\MMD\Effects\default.fx
+Pmd0 = C:\MMD\Effects\main.fx
+
+[Effect@a(1)]
+Owner = Pmd0[1]@a
+Pmd0[1] = C:\MMD\Effects\hair.fx
+Pmd0[1].show = false

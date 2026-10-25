@@ -1,9 +1,13 @@
 //! `--frame-dump <pmm> <out-dir> <frame>...`: the Rust twin of the C++ `--mds-frame-dump`
 //! (`src/tools/trace_mode.cpp`, `RunFrameDump`; arguments as `ParseTraceArgs` in
-//! `src/tools/trace_args.hpp`). Steps the frames as the window does and writes
-//! `<out-dir>/<pmm stem>-<frame>.png` at the C++ output size, 640x360, with the 8x sample pattern.
+//! `src/tools/trace_args.hpp`). Loads the PMM as a document, moves the physics the way the C++
+//! `RunFrameDump` moves it (the PMM load, then one frame-step pass, `PlaybackCatchup` +
+//! `PhysicsFrame` at 30 fps, per frame: [`PhysicsScene::new`] and [`PhysicsScene::step`]), and
+//! writes `<out-dir>/<pmm stem>-<frame>.png` at the C++ output size, 640x360, with the 8x sample
+//! pattern.
 
-use crate::viewer::Viewer;
+use crate::{file, scene};
+use mds_physics::PhysicsScene;
 use mds_render::{encode_png, Gpu, SAMPLES_8X};
 use std::path::{Path, PathBuf};
 
@@ -52,17 +56,36 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
 }
 
 pub fn run(gpu: &Gpu, request: &Request) -> Result<(), String> {
-    let mut viewer = Viewer::open(&request.pmm)?;
+    let doc = file::read(&request.pmm)?;
+    let dir = request.pmm.parent().unwrap_or(Path::new("."));
+    let meshes = scene::meshes(&doc)?;
+    let mut physics = PhysicsScene::new(&doc.pmm, |p| scene::read_model(dir, p))?;
     let stem = request
         .pmm
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or("PMM file name")?;
     std::fs::create_dir_all(&request.out).map_err(|e| format!("{}: {e}", request.out.display()))?;
+    let mut at = 0;
     for &frame in &request.frames {
-        viewer.seek(frame)?;
-        let camera = viewer.track_camera()?;
-        let px = viewer.render(gpu, WIDTH, HEIGHT, &camera, &SAMPLES_8X)?;
+        while at < frame {
+            physics
+                .step()
+                .map_err(|e| format!("frame {}: {e}", at + 1))?;
+            at += 1;
+        }
+        let camera = scene::track_camera(&doc, frame)?;
+        let size = [WIDTH, HEIGHT];
+        let px = scene::with_frame(
+            &doc,
+            &meshes,
+            &physics,
+            frame,
+            &camera,
+            size,
+            &SAMPLES_8X,
+            |f| mds_render::render_frame(gpu, f),
+        )??;
         let path = Path::new(&request.out).join(format!("{stem}-{frame}.png"));
         std::fs::write(&path, encode_png(WIDTH, HEIGHT, &px))
             .map_err(|e| format!("{}: {e}", path.display()))?;

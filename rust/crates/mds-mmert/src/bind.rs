@@ -136,6 +136,8 @@ pub struct Scene {
     pub light_specular: [f32; 3],
     pub time: f32,
     pub elapsed: f32,
+    /// `GetCurrentFrameTime`: the raw frame clock in seconds, which drives animated textures.
+    pub frame_time: f32,
     /// The BeginScene viewport, which `VIEWPORTPIXELSIZE` reports.
     pub viewport: (u32, u32),
     /// The host clear color (ARGB), the start value of `ClearSetColor`.
@@ -167,6 +169,7 @@ impl Scene {
             light_specular: [154.0 / 255.0; 3],
             time: 0.0,
             elapsed: 0.0,
+            frame_time: 0.0,
             viewport: (width, height),
             background: 0xFFFF_FFFF,
         }

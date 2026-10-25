@@ -1,0 +1,5 @@
+mds-mesh-dump 1
+file "compressed_bzip.x"
+raw hr 0x88760390
+frames hr 0x88760390
+record failed

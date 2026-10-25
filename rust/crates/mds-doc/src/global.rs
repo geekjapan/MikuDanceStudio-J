@@ -383,7 +383,7 @@ pub struct GlobalClipboard {
 }
 
 impl GlobalClipboard {
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.cameras.is_empty()
             && self.lights.is_empty()
             && self.shadows.is_empty()

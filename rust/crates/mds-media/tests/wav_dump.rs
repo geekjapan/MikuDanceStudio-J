@@ -122,8 +122,8 @@ fn wav_matches_cpp_dump() {
             nums([wave.waveform_max.len()]),
             "{name}: columns"
         );
-        assert_eq!(want["max"], nums(&wave.waveform_max), "{name}: max");
-        assert_eq!(want["min"], nums(&wave.waveform_min), "{name}: min");
+        assert_eq!(want["max"], nums(wave.waveform_max.iter()), "{name}: max");
+        assert_eq!(want["min"], nums(wave.waveform_min.iter()), "{name}: min");
         // The dump holds `seek <frame> <offset>` per frame; the map keeps the last
         // line only, so read them from the raw text.
         let seeks = frame_seeks(&text, name);
@@ -178,4 +178,41 @@ fn pcm_is_cut_to_the_file() {
     };
     let wave = Wave::from_bytes(bytes).unwrap();
     assert_eq!((wave.data.size, wave.pcm().len()), (4000, 2000));
+}
+
+/// 44-byte PCM header, then `data` with the declared size and no bytes.
+fn header_only(avg: u32, block: u16, declared: u32) -> Vec<u8> {
+    let mut b = b"RIFF".to_vec();
+    b.extend([0; 16]);
+    b.extend(1u16.to_le_bytes());
+    b.extend(1u16.to_le_bytes());
+    b.extend(8000u32.to_le_bytes());
+    b.extend(avg.to_le_bytes());
+    b.extend(block.to_le_bytes());
+    b.extend(8u16.to_le_bytes());
+    b.extend(b"data");
+    b.extend(declared.to_le_bytes());
+    b
+}
+
+#[test]
+fn declared_size_does_not_size_the_allocation() {
+    // C++: dataSize 0x7FFFFFF0 is positive, so it accepts and mallocs
+    // dataSize / 1 + 1 bytes per array; here only the present bytes are stored.
+    let mut bytes = header_only(400, 1, 0x7FFF_FFF0);
+    bytes.extend([0x90; 8]);
+    assert!(bytes.len() < 100);
+    let wave = Wave::from_bytes(bytes).unwrap();
+    assert_eq!(wave.waveform_max.len(), 0x7FFF_FFF0 + 1);
+    assert_eq!(wave.waveform_min.len(), 0x7FFF_FFF0 + 1);
+    assert!(wave.waveform_max.stored().len() <= 9);
+    assert!(wave.waveform_min.stored().len() <= 9);
+    assert_eq!(wave.waveform_max.get(0x7FFF_FFF0), 0);
+    assert_eq!(wave.pcm().len(), 8);
+}
+
+#[test]
+fn negative_declared_size_is_rejected() {
+    let r = Wave::from_bytes(header_only(400, 1, 0xFFFF_FFF0));
+    assert!(matches!(r, Err(Reject::NoDataChunk)));
 }

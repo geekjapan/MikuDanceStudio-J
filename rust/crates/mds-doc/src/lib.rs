@@ -106,6 +106,7 @@ pub mod global;
 pub mod history;
 pub mod model;
 pub mod new_scene;
+pub mod panel;
 pub mod pose_file;
 mod readout;
 mod refresh;
@@ -115,6 +116,7 @@ pub mod vmd_save;
 
 pub use global::{GlobalClipboard, GlobalTrack};
 pub use model::ModelClipboard;
+pub use panel::{ModelFlag, ViewOption};
 
 use mds_formats::pmd::Pmd;
 use mds_formats::pmm::Pmm;
@@ -407,6 +409,121 @@ pub enum Command {
     /// Button 424 (`ApplyFrameRangeScale`, `frame_range_apply.cpp`
     /// 297-340, [`mds_ops::scale_frame_range`]), then the seek.
     ScaleFrames(mds_ops::RangeScale),
+    /// A click on the frame strip of the timeline ([`Document::click_frame`]):
+    /// unlike [`Command::SetFrame`] (the frame edit and the step buttons,
+    /// which clear the bone selection), it clears the edited marks and keeps
+    /// the selection.
+    ClickFrame(u32),
+    /// The edit-mode radios 490..493 and keys C, X, Z
+    /// (`command_panel_toggles.cpp` 612-650, `key_ladder.cpp` 99, 259, 290):
+    /// `timeline.edit_mode`, 0 bone, 1 box selection, 2 none, 3 rotate,
+    /// 4 move.
+    SetEditMode(i32),
+    /// Button 494 and key A ([`Document::select_all_bones`]).
+    SelectAllBones,
+    /// Button 501 and key S ([`Document::select_unregistered_bones`]).
+    SelectUnregisteredBones,
+    /// Button 495 ([`Document::reset_bone_pose`]).
+    ResetBonePose,
+    /// Button 496 ([`Document::copy_bone_pose`]).
+    CopyBonePose,
+    /// Buttons 497 and 498 ([`Document::paste_bone_pose`]).
+    PasteBonePose {
+        mirror: bool,
+    },
+    /// Combo 449 ([`Document::set_camera_parent_model`]): a model slot, or
+    /// `None` for no parent.
+    SetCameraParentModel(Option<u8>),
+    /// Combo 450 ([`Document::set_camera_parent_bone`]).
+    SetCameraParentBone(u32),
+    /// Check boxes 439..441 (`command_frame_edit.cpp` 1566-1592) on the
+    /// selected model.
+    SetModelFlag {
+        flag: ModelFlag,
+        on: bool,
+    },
+    /// Buttons 444 and 445 (`command_frame_edit.cpp` 1598-1617): the IK
+    /// switch of chain `chain` of the selected model (`ik_pose`); no key.
+    SetIkEnabled {
+        chain: u32,
+        on: bool,
+    },
+    /// The expand and collapse buttons of the panels (`OptionFlagRefresh`,
+    /// `command_frame_register.cpp` 422-430, `ui_model_reload.cpp` 205-245):
+    /// `settings.options[panel]`, 1 camera, 2 light, 3 accessory, 4 bone,
+    /// 5 morph, 6 self shadow.
+    SetPanelExpanded {
+        panel: u8,
+        expanded: bool,
+    },
+    /// The play panel (411, 413, 414 and edits 409, 410;
+    /// `command_frame_edit.cpp` 1431-1439): loop, return to the start frame,
+    /// play from the current frame, and the start and stop frames.
+    SetPlayback {
+        looped: bool,
+        return_to_start: bool,
+        from_current: bool,
+        start_frame: i32,
+        stop_frame: i32,
+    },
+    /// The view switches of menus 211, 215, 221, 254 and 279.
+    SetViewOption {
+        option: ViewOption,
+        on: bool,
+    },
+    /// Menus 234, 235, 236 (`command_file_menu.cpp` 1913-1932):
+    /// `view.fps_limit` 1000, 30 or 60.
+    SetFpsLimit(f32),
+    /// Menu 212 (`ScreenSizeDlgProc`, `command_file_menu.cpp` 436-468, and
+    /// 1008-1029): refused above [`EditState::max_texture_size`].
+    SetRenderSize {
+        width: i32,
+        height: i32,
+    },
+    /// Menu 247 ([`Document::set_follow_camera`]).
+    SetFollowCamera(bool),
+    /// The edge thickness dialog of menu 253 (`SetEdgeThickness`,
+    /// `command_view_menu.cpp` 434-441): `edge_scale` of the selected model.
+    SetEdgeScale(f32),
+    /// Menu 286 (`command_view_menu.cpp` 1464-1495): the model outline
+    /// colour, red, green, blue.
+    SetOutlineColor([u8; 3]),
+    /// Copy curve ([`Document::copy_curve`]) of the curve combo's channel.
+    CopyInterpolationCurve {
+        channel: u8,
+    },
+    /// Paste curve ([`Document::write_curve`]).
+    PasteInterpolationCurve {
+        channel: u8,
+    },
+    /// Reset curve ([`Document::write_curve`]).
+    ResetInterpolationCurves {
+        channel: u8,
+    },
+    /// A drag in the curve editor ([`Document::set_curve_point`]): the start
+    /// point (`end == false`) or the end point, in curve units.
+    SetKeyInterpolation {
+        channel: u8,
+        end: bool,
+        point: [i32; 2],
+    },
+    /// A click in the margin column of a display group row
+    /// ([`Document::toggle_display_group`]).
+    ToggleDisplayGroup(u8),
+    /// A plain click on an unmarked key: [`Command::SelectKeys`] after the
+    /// marks of the mode are cleared.
+    ReplaceKeySelection {
+        track: Track,
+        from: u32,
+        to: u32,
+    },
+    /// The timeline scroll bar (428, `ui_hscroll.cpp` 274-313):
+    /// `timeline.start_frame`.
+    SetTimelineStart(i32),
+    /// The bone list scroll bar (`HandleVScroll`, `ui_scroll_mouse.cpp`
+    /// 42-105): the selected model's `bone_list_pos` in model mode, else
+    /// `display_list_scroll`.
+    SetTrackListScroll(i32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -444,6 +561,14 @@ pub struct EditState {
     /// The number the last command's info box showed (menus 222 and 227),
     /// `None` after any other command.
     pub reported: Option<u32>,
+    /// Buttons 496..498.
+    pub bone_pose_clipboard: panel::BonePoseClipboard,
+    /// The curve copy, paste and reset buttons.
+    pub curve_clipboard: panel::CurveClipboard,
+    /// The device's `maxTextureWidth` and `maxTextureHeight`, which bound
+    /// the render size (menu 212); the application sets it from its device.
+    /// `None` checks nothing.
+    pub max_texture_size: Option<[i32; 2]>,
 }
 
 #[derive(Clone, Debug)]
@@ -682,6 +807,16 @@ impl Document {
                 m.bone_pose.iter_mut().for_each(|p| p.flags[2] = 0);
             }
         }
+        self.seek_frame();
+    }
+
+    /// The tail every frame change shares: the timeline scroll, every model
+    /// at the frame, and in camera mode the camera-mode tracks.
+    fn seek_frame(&mut self) {
+        // `CameraAttachmentTransformSuppressed() = 0` (`ui_frame_step.cpp`
+        // 188, `ui_editor_click.cpp` 805).
+        self.pmm.appearance.suppress_camera_transform = 0;
+        let frame = self.frame();
         // The timeline shows `(SidebarWidth - 84) / 26` frames before the
         // current one.
         let visible = ((self.pmm.settings.panel_width - 84) / 26) as u32;
@@ -722,7 +857,10 @@ impl Document {
         let model_mode = self.pmm.settings.options[0] == 0;
         let clip = &self.edit.model_clipboard;
         let settles = match &cmd {
-            Command::SetFrame(_) | Command::LoadMotion(_) => true,
+            Command::SetFrame(_) | Command::ClickFrame(_) | Command::LoadMotion(_) => true,
+            Command::PasteBonePose { .. } => {
+                model_mode && !self.edit.bone_pose_clipboard.is_empty()
+            }
             Command::LoadPose(_) | Command::Undo | Command::Redo => {
                 model_mode && self.active().is_some()
             }
@@ -1370,6 +1508,100 @@ impl Document {
                 self.seek(i);
                 r?;
             }
+            Command::ClickFrame(f) => self.click_frame(f),
+            Command::SetEditMode(mode) => self.pmm.timeline.edit_mode = mode,
+            Command::SelectAllBones => self.select_all_bones()?,
+            Command::SelectUnregisteredBones => self.select_unregistered_bones()?,
+            Command::ResetBonePose => self.reset_bone_pose()?,
+            Command::CopyBonePose => self.copy_bone_pose()?,
+            Command::PasteBonePose { mirror } => self.paste_bone_pose(mirror)?,
+            Command::SetCameraParentModel(slot) => self.set_camera_parent_model(slot),
+            Command::SetCameraParentBone(bone) => self.set_camera_parent_bone(bone)?,
+            Command::SetModelFlag { flag, on } => {
+                let i = self.active_model()?;
+                let m = &mut self.pmm.models[i];
+                let field = match flag {
+                    ModelFlag::Visible => &mut m.selection.load_complete,
+                    ModelFlag::Shadow => &mut m.toon,
+                    ModelFlag::AddBlend => &mut m.post_load,
+                };
+                *field = u8::from(on);
+            }
+            Command::SetIkEnabled { chain, on } => {
+                let i = self.active_model()?;
+                *self.pmm.models[i]
+                    .ik_pose
+                    .get_mut(chain as usize)
+                    .ok_or(not("no such IK chain"))? = u8::from(on);
+            }
+            Command::SetPanelExpanded { panel, expanded } => {
+                if !(1..=6).contains(&panel) {
+                    return Err(not("no such panel"));
+                }
+                self.pmm.settings.options[usize::from(panel)] = u8::from(expanded);
+            }
+            Command::SetPlayback {
+                looped,
+                return_to_start,
+                from_current,
+                start_frame,
+                stop_frame,
+            } => {
+                let t = &mut self.pmm.timeline;
+                t.playback_loop = u8::from(looped);
+                t.return_to_start = u8::from(return_to_start);
+                t.start_at_current = u8::from(from_current);
+                t.play_start_frame = start_frame;
+                t.play_stop_frame = stop_frame;
+            }
+            Command::SetViewOption { option, on } => {
+                let p = &mut self.pmm;
+                *match option {
+                    ViewOption::Information => &mut p.view.fps_overlay,
+                    ViewOption::CoordinateAxis => &mut p.view.ground_grid,
+                    ViewOption::GroundShadow => &mut p.view.ground_shadow,
+                    ViewOption::GroundShadowTransparency => &mut p.physics.projected_shadow_blend,
+                    ViewOption::SelfShadow => &mut p.self_shadow_mode,
+                } = u8::from(on);
+            }
+            Command::SetFpsLimit(fps) => self.pmm.view.fps_limit = fps,
+            Command::SetRenderSize { width, height } => {
+                let [w, h] = self.edit.max_texture_size.unwrap_or([i32::MAX; 2]);
+                if width > w || height > h {
+                    return Err(not("too big for your PC! (a message box)"));
+                }
+                self.pmm.settings.render_width = width;
+                self.pmm.settings.render_height = height;
+            }
+            Command::SetFollowCamera(on) => self.set_follow_camera(on),
+            Command::SetEdgeScale(v) => {
+                if self.camera_mode() {
+                    return Err(not("the edge thickness is a model-mode setting"));
+                }
+                let i = self.active_model()?;
+                self.pmm.models[i].edge_scale = v;
+            }
+            Command::SetOutlineColor(c) => {
+                self.pmm.appearance.outline_color = c.map(i32::from);
+            }
+            Command::CopyInterpolationCurve { channel } => self.copy_curve(channel)?,
+            Command::PasteInterpolationCurve { channel } => self.write_curve(channel, false)?,
+            Command::ResetInterpolationCurves { channel } => self.write_curve(channel, true)?,
+            Command::SetKeyInterpolation {
+                channel,
+                end,
+                point,
+            } => self.set_curve_point(channel, end, point)?,
+            Command::ToggleDisplayGroup(g) => self.toggle_display_group(g)?,
+            Command::ReplaceKeySelection { track, from, to } => {
+                self.clear_mode_marks(track)?;
+                return self.apply_inner(Command::SelectKeys { track, from, to });
+            }
+            Command::SetTimelineStart(f) => self.pmm.timeline.start_frame = f,
+            Command::SetTrackListScroll(v) => match self.active().filter(|_| !self.camera_mode()) {
+                Some(i) => self.pmm.models[i].selection.bone_list_pos = v,
+                None => self.pmm.display_list_scroll = v,
+            },
             Command::NewScene => {
                 self.pmm = new_scene::reset(&self.pmm);
                 self.models.clear();

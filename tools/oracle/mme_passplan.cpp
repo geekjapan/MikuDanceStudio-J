@@ -424,6 +424,7 @@ void DumpResources(const mme::SasEffect *sas) {
                      r.textureValueElements));
         }
         // What the runtime created for it (device dependent: format fallbacks).
+        // A depth target keeps a 1x1 placeholder texture next to its surface.
         if (r.texture) {
             D3DSURFACE_DESC sd{};
             const D3DRESOURCETYPE type = r.texture->GetType();
@@ -441,13 +442,15 @@ void DumpResources(const mme::SasEffect *sas) {
             } else {
                 Line(Fmt("  created type=%d", static_cast<int>(type)));
             }
-        } else if (r.surface) {
+        }
+        if (r.surface && r.semanticId == 0x27) {
             D3DSURFACE_DESC sd{};
             if (SUCCEEDED(r.surface->GetDesc(&sd))) {
                 Line(Fmt("  created depthsurface %ux%u format=%s", sd.Width, sd.Height,
                          FormatName(sd.Format)));
             }
-        } else {
+        }
+        if (!r.texture && !r.surface) {
             Line("  created none");
         }
         if (r.semanticId == 0x2e) {

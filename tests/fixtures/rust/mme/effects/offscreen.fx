@@ -38,7 +38,7 @@ float4 PS(VS_OUT i) : COLOR0 { return DifColor * Morph; }
 technique Main < string MmdPass = "object"; > {
     pass P0 { VertexShader = compile vs_3_0 VS(); PixelShader = compile ps_3_0 PS(); }
 }
-technique Used < string MmdPass = "object"; string Script = "RenderColorTarget0=CubeRT[2]; Clear=Color; RenderColorTarget0=; Pass=P0;"; > {
+technique Used < string MmdPass = "object"; string Script = "RenderColorTarget0=CubeRT[2]; Clear=Color; Pass=P0; RenderColorTarget0=;"; > {
     pass P0 { VertexShader = compile vs_3_0 VS(); PixelShader = compile ps_3_0 PS(); }
 }
 technique Other < string MmdPass = "edge"; > {

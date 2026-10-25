@@ -291,10 +291,11 @@ ACCESSORY_DIR = ".\\"
 
 
 def build_pmm(models, camera_keys, light_keys, shadow_keys, perspective=1,
-              ground_shadow=(0, 0.0, 1), accessories=(), picture=None):
+              ground_shadow=(0, 1.0, 1), accessories=(), picture=None):
     """camera_keys: (frame, distance, target, rotation, fov). light_keys:
     (frame, color, direction). shadow_keys: (frame, mode, distance).
-    ground_shadow: (on, ambient, translucent). picture: (file name, scale) or
+    ground_shadow: (on, ambient, translucent); the ambient also dims
+    accessories under self-shadow, and 1.0 is the app's start-up value. picture: (file name, scale) or
     None."""
     o = bytearray(b"Polygon Movie maker 0002" + b"\0" * 6)
     o += i32(1280, 720, 244) + f32(30.0) + u8(0, 1, 0, 0, 0, 0, 0)

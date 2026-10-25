@@ -116,6 +116,63 @@ impl Target {
         }
         Ok(out)
     }
+
+    /// The frame-head clear of an offscreen turn (`pass_planner.cpp:MmeApplyPassRecord`): Z
+    /// always, to `depth`; the color only with a `ClearColor`; the stencil only with a
+    /// `ClearDepth`.
+    pub fn clear_turn(&self, gpu: &Gpu, color: Option<u32>, depth: f32, stencil: bool) {
+        let (color_view, depth_view) = (
+            self.color.create_view(&Default::default()),
+            self.depth.create_view(&Default::default()),
+        );
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("offscreen turn clear"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &color_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: color.map_or(wgpu::LoadOp::Load, |c| wgpu::LoadOp::Clear(d3d_color(c))),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(depth.clamp(0.0, 1.0)),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: self
+                    .depth
+                    .format()
+                    .has_stencil_aspect()
+                    .then_some(wgpu::Operations {
+                        load: if stencil {
+                            wgpu::LoadOp::Clear(0)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: wgpu::StoreOp::Store,
+                    }),
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        gpu.queue.submit([enc.finish()]);
+    }
+}
+
+/// A D3D9 ARGB color.
+fn d3d_color(color: u32) -> wgpu::Color {
+    let c = |shift: u32| f64::from((color >> shift) & 0xFF) / 255.0;
+    wgpu::Color {
+        r: c(16),
+        g: c(8),
+        b: c(0),
+        a: c(24),
+    }
 }
 
 /// The two shaders of a pass and what the pipeline needs from them.
@@ -1018,13 +1075,7 @@ impl Device {
     /// (`D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL`).
     fn clear(&mut self, flags: i32, color: u32, depth: f32) {
         if flags & 1 != 0 {
-            let c = |shift: u32| f64::from((color >> shift) & 0xFF) / 255.0;
-            let value = wgpu::Color {
-                r: c(16),
-                g: c(8),
-                b: c(0),
-                a: c(24),
-            };
+            let value = d3d_color(color);
             for s in self.rt.into_iter().flatten() {
                 let view = self.surfaces[s].view.clone();
                 self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

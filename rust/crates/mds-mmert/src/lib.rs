@@ -26,13 +26,16 @@
 //! - [`emm`]: EMM and EMD files (`emm_manager.cpp`): load, apply to the scene's objects, save.
 //! - [`control`]: `CONTROLOBJECT` values from the [`control::Controls`] the application fills.
 //! - [`anime`]: animated GIF and APNG textures (`anime_texture.cpp`), ticked every frame.
-//! - [`scene`]: what each object draws in an offscreen turn, from the `DefaultEffect` rows.
+//! - [`scene`]: what each object draws in an offscreen turn, from the `DefaultEffect` rows;
+//!   [`Effect::begin_offscreen`] binds and clears the turn's target, and [`Effect::draw`]
+//!   draws one object's effect into it.
 //!
 //! # Not ported
 //!
-//! - Rendering the offscreen turns and the scene at `ScriptExternal`: [`scene`] resolves which
-//!   effect draws each object, but drawing the scene is the renderer's (`mds-render`), and the
-//!   walk at `ScriptExternal` suspends and resumes with nothing drawn in between.
+//! - The host's own draws: a `none` row of an offscreen turn and the scene at `ScriptExternal`
+//!   are the renderer's (`mds-render`); the walk at `ScriptExternal` suspends and resumes with
+//!   nothing drawn in between. The turn order (`MmeSnapshotMainTargets`, one turn per target
+//!   before the base scene) is the caller's.
 //! - Texture shaders (`Function`/`Target`; `mds-mme` does not model them), the effect cache and
 //!   context (`effect_engine.cpp`, `mme_context.cpp`), multisampled targets (`AntiAlias`),
 //!   automatic mip generation of `Miplevels=0` targets.
@@ -76,6 +79,45 @@ impl Effect {
     /// Runs every non-empty technique in scan order on one device, with `SasCreateRunState`,
     /// the step walk to `ScriptExternal`, and the resumed walk, then submits the frame.
     pub fn frame(&mut self, gpu: &Gpu, target: &Target, input: &DrawInput) -> FrameReport {
+        self.run_frame(gpu, target, input, true)
+    }
+
+    /// [`Effect::frame`] without the host's clear: the draw of one object into a target other
+    /// effects share, such as an offscreen turn's.
+    pub fn draw(&mut self, gpu: &Gpu, target: &Target, input: &DrawInput) -> FrameReport {
+        self.run_frame(gpu, target, input, false)
+    }
+
+    /// The `OFFSCREENRENDERTARGET` resource `r` and its depth stencil as the target of its
+    /// turn, cleared as `pass_planner.cpp:MmeApplyPassRecord` does; `None` for another resource.
+    /// Each object then draws into it as [`scene::turn_draw`] says.
+    pub fn begin_offscreen(&self, gpu: &Gpu, r: usize) -> Option<Target> {
+        let res = self.sas.resources.get(r)?;
+        if res.semantic != mds_mme::sas::SEM_OFFSCREEN {
+            return None;
+        }
+        let c = self.created[r].as_ref()?;
+        let target = Target {
+            color: c.texture.clone()?,
+            depth: c.depth.clone()?,
+        };
+        // Without a ClearDepth the Z clear reads 0, the original's uninitialised field.
+        target.clear_turn(
+            gpu,
+            res.has_clear_color.then_some(res.clear_color),
+            res.clear_depth,
+            res.has_clear_depth,
+        );
+        Some(target)
+    }
+
+    fn run_frame(
+        &mut self,
+        gpu: &Gpu,
+        target: &Target,
+        input: &DrawInput,
+        clear: bool,
+    ) -> FrameReport {
         if let Some(c) = input.controls {
             control::resolve(
                 &self.sas,
@@ -87,8 +129,10 @@ impl Effect {
         }
         self.tick_animes(gpu, input.scene.frame_time);
         let mut dev = Device::new(gpu, self, target);
-        // The host's BeginScene clear of the back buffer and its depth stencil.
-        dev.clear_main(input.scene.background);
+        if clear {
+            // The host's BeginScene clear of the back buffer and its depth stencil.
+            dev.clear_main(input.scene.background);
+        }
         let mut report = FrameReport {
             runs: String::from("runs\n"),
             draws: 0,

@@ -48,3 +48,4 @@ uitimeline	3c	app	mac	sonnet	pending	rust/crates/mds-app/src/ui/timeline.rs,rust
 uiedit	3c	app	mac	sonnet	pending	rust/crates/mds-app/src/ui/edit.rs,rust/crates/mds-app/tests/ui_edit/
 uiview	3c	app	mac	sonnet	pending	rust/crates/mds-app/src/ui/view.rs,rust/crates/mds-app/src/ui/help.rs,rust/crates/mds-app/src/ui/expression.rs,rust/crates/mds-app/tests/ui_view/
 shaderwire	3c	shaderfix	mac	sonnet	pending	tools/vkd3d/,rust/crates/mds-shader/,rust/crates/mds-mmert/src/shader.rs
+script2	3c	script	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/script2/,tests/fixtures/rust/physscen/,CMakeLists.txt

@@ -24,3 +24,5 @@ ops	3a	-	mac	sonnet	pending	rust/crates/mds-ops/
 mmert	3a	-	mac	opus	pending	rust/crates/mds-mmert/
 shell	3b	-	mac	opus	pending	rust/crates/mds-app/
 wavcap	3b	media	mac	haiku	pending	rust/crates/mds-media/
+skinfix	3b	skin	mac	sonnet	pending	tools/skin_check/,tests/fixtures/rust/skin/,rust/crates/mds-pose/,rust/crates/mds-skin/
+renderskin	3b	skin	mac	sonnet	MIT	rust/crates/mds-render/

@@ -18,8 +18,7 @@ struct Material {
     ambient: vec4<f32>,
     // rgb specular color, w specular power.
     specular: vec4<f32>,
-    edge_color: vec4<f32>,
-    // x edge distance along the normal (world units), y sphere mode (0 none, 1 multiply, 2 add), z unused, w unused.
+    // y sphere mode (0 none, 1 multiply, 2 add); the rest unused.
     params: vec4<f32>,
 }
 
@@ -34,7 +33,16 @@ struct VsIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
-    @location(3) edge_scale: f32,
+}
+
+struct EdgeIn {
+    @location(0) position: vec3<f32>,
+    @location(1) color: vec4<f32>,
+}
+
+struct EdgeOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) color: vec4<f32>,
 }
 
 struct VsOut {
@@ -92,20 +100,16 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
     return vec4<f32>(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), mat.diffuse.a);
 }
 
-// Edge: the back faces pushed out along the normal, in the model's own units (params.x is the
-// distance), so the width follows the projection like the model does.
+// Edge: the back faces of the hull that mds-skin pushed out along the normals, colored per vertex.
 @vertex
-fn vs_edge(v: VsIn) -> VsOut {
-    var o: VsOut;
-    let pushed = v.position + normalize(v.normal) * mat.params.x * v.edge_scale;
-    o.clip = shifted(scene.view_proj * vec4<f32>(pushed, 1.0));
-    o.world = v.position;
-    o.normal = v.normal;
-    o.uv = v.uv;
+fn vs_edge(v: EdgeIn) -> EdgeOut {
+    var o: EdgeOut;
+    o.clip = shifted(scene.view_proj * vec4<f32>(v.position, 1.0));
+    o.color = v.color;
     return o;
 }
 
 @fragment
-fn fs_edge(i: VsOut) -> @location(0) vec4<f32> {
-    return mat.edge_color;
+fn fs_edge(i: EdgeOut) -> @location(0) vec4<f32> {
+    return i.color;
 }

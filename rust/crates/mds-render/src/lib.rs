@@ -16,6 +16,10 @@
 //! orthographic projection). Materials with the edge flag get an inverted-hull edge. Diffuse alpha
 //! blends.
 //!
+//! The vertex buffers and material values of every frame are `mds-skin`'s: BDEF, SDEF and QDEF
+//! skinning, vertex, UV and material morphs, and the edge hull and color the C++ computes. The edge
+//! pass draws its edge buffer as it is.
+//!
 //! Not in this crate yet: texture decoding. Every texture slot (texture, sphere, toon) is bound
 //! to a default (white, white, a built-in toon ramp).
 
@@ -25,8 +29,8 @@ pub mod scene;
 mod view;
 
 use mds_formats::pmx::Pmx;
+use mesh::{EdgeView, FLAG_DOUBLE_SIDED, FLAG_EDGE};
 pub use mesh::{Mesh, Pose};
-use mesh::{FLAG_DOUBLE_SIDED, FLAG_EDGE};
 pub use view::{Camera, Light, View};
 
 pub const WIDTH: u32 = 512;
@@ -175,12 +179,10 @@ fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     )
 }
 
-/// How far the edge pass pushes a back face along its normal per unit of the material's edge size,
-/// in the model's own units. Fitted to the golden images: the whole picture of frames 150, 300 and
-/// 599 is closest for 0.019 to 0.0205 (the error is flat there), and a width in screen pixels
-/// (tried from 0.25 to 3 px) fits worse. The golden scene is orthographic, so how the C++ app
-/// scales the edge with distance under a perspective camera is not known.
-const EDGE_WORLD: f32 = 0.02;
+/// Bytes per vertex of the body buffer (position, normal, uv) and of the edge buffer (position,
+/// `A8R8G8B8` color).
+const BODY_STRIDE: u64 = 32;
+const EDGE_STRIDE: u64 = 16;
 
 /// What [`render_frame`] draws.
 pub struct Frame<'a> {
@@ -293,56 +295,72 @@ pub fn render_frame(gpu: &Gpu, frame: &Frame) -> Result<Vec<u8>, String> {
             immediate_size: 0,
         });
 
-    let attrs =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32];
-    let pipeline =
-        |vs: &str, fs: &str, cull: Option<wgpu::Face>, blend: Option<wgpu::BlendState>| {
-            gpu.device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(vs),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some(vs),
-                        compilation_options: Default::default(),
-                        buffers: &[Some(wgpu::VertexBufferLayout {
-                            array_stride: 36,
-                            step_mode: wgpu::VertexStepMode::Vertex,
-                            attributes: &attrs,
-                        })],
-                    },
-                    // PMX front faces are clockwise.
-                    primitive: wgpu::PrimitiveState {
-                        front_face: wgpu::FrontFace::Cw,
-                        cull_mode: cull,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: DEPTH_FORMAT,
-                        depth_write_enabled: Some(true),
-                        depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                        stencil: Default::default(),
-                        bias: Default::default(),
-                    }),
-                    multisample: Default::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some(fs),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: COLOR_FORMAT,
-                            blend,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                })
-        };
+    let body_attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
+    let edge_attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Unorm8x4Bgra];
+    let pipeline = |vs: &str,
+                    fs: &str,
+                    (stride, attrs): (u64, &[wgpu::VertexAttribute]),
+                    cull: Option<wgpu::Face>,
+                    blend: Option<wgpu::BlendState>| {
+        gpu.device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(vs),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some(vs),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: stride,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: attrs,
+                    })],
+                },
+                // PMX front faces are clockwise.
+                primitive: wgpu::PrimitiveState {
+                    front_face: wgpu::FrontFace::Cw,
+                    cull_mode: cull,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fs),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: COLOR_FORMAT,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+    };
     let alpha = Some(wgpu::BlendState::ALPHA_BLENDING);
-    let body = pipeline("vs_main", "fs_main", Some(wgpu::Face::Back), alpha);
-    let body_two_sided = pipeline("vs_main", "fs_main", None, alpha);
-    let edge = pipeline("vs_edge", "fs_edge", Some(wgpu::Face::Front), alpha);
+    let body_layout = (BODY_STRIDE, &body_attrs[..]);
+    let body = pipeline(
+        "vs_main",
+        "fs_main",
+        body_layout,
+        Some(wgpu::Face::Back),
+        alpha,
+    );
+    let body_two_sided = pipeline("vs_main", "fs_main", body_layout, None, alpha);
+    let edge = pipeline(
+        "vs_edge",
+        "fs_edge",
+        (EDGE_STRIDE, &edge_attrs[..]),
+        Some(wgpu::Face::Front),
+        alpha,
+    );
 
     let light = view::normalize(frame.light.direction);
     let scene_data = |shift: [f32; 2]| {
@@ -390,21 +408,56 @@ pub fn render_frame(gpu: &Gpu, frame: &Frame) -> Result<Vec<u8>, String> {
     struct Resident<'a> {
         mesh: &'a Mesh,
         vertices: wgpu::Buffer,
+        edge_vertices: wgpu::Buffer,
         indices: wgpu::Buffer,
+        /// Whether each material draws its edge: the flag, and for PMX a visible edge color.
+        edge_drawn: Vec<bool>,
         /// The material's uniform buffer is kept alive by its bind group.
         groups: Vec<wgpu::BindGroup>,
+        /// The diffuse alpha of each material after the material morphs.
+        alpha: Vec<f32>,
     }
+    let edge_view = EdgeView {
+        camera_position: frame.view.eye,
+        fov: frame.view.edge_fov,
+        self_shadow: frame.toon,
+    };
     let residents: Vec<Resident> = frame
         .models
         .iter()
         .map(|&(mesh, pose)| {
+            let skin = mesh.skinned(pose, &edge_view);
             let index_data: Vec<u8> = mesh.indices.iter().flat_map(|i| i.to_ne_bytes()).collect();
-            let groups = mesh
+            let stride = skin.stride();
+            let body: Vec<f32> = skin
+                .main
+                .chunks(stride)
+                .flat_map(|v| v[..8].iter().copied())
+                .collect();
+            let edge_data: Vec<u8> = skin
+                .edge
+                .iter()
+                .flat_map(|e| {
+                    let color = e.diffuse.to_le_bytes();
+                    let p = e.position.map(f32::to_ne_bytes);
+                    [p[0], p[1], p[2], color].concat()
+                })
+                .collect();
+            // The morphed rgb is in diffuse_mirror, the morphed alpha in diffuse.
+            let diffuse = |m: &mds_skin::Material| {
+                [
+                    m.diffuse_mirror[0],
+                    m.diffuse_mirror[1],
+                    m.diffuse_mirror[2],
+                    m.diffuse[3],
+                ]
+            };
+            let groups = skin
                 .materials
                 .iter()
                 .map(|m| {
                     let u = [
-                        m.diffuse.as_slice(),
+                        diffuse(m).as_slice(),
                         &[m.ambient[0], m.ambient[1], m.ambient[2], 1.0],
                         &[
                             m.specular[0],
@@ -412,8 +465,7 @@ pub fn render_frame(gpu: &Gpu, frame: &Frame) -> Result<Vec<u8>, String> {
                             m.specular[2],
                             m.specular_power,
                         ],
-                        m.edge_color.as_slice(),
-                        &[m.edge_size * EDGE_WORLD, 0.0, 0.0, 0.0],
+                        &[0.0; 4],
                     ]
                     .concat();
                     let buf = buffer(gpu, wgpu::BufferUsages::UNIFORM, &bytes(&u));
@@ -430,15 +482,22 @@ pub fn render_frame(gpu: &Gpu, frame: &Frame) -> Result<Vec<u8>, String> {
                     })
                 })
                 .collect();
+            let edge_drawn = mesh
+                .materials
+                .iter()
+                .zip(&skin.materials)
+                .map(|(m, sm)| {
+                    m.flags & FLAG_EDGE != 0 && (!skin.is_pmx() || sm.edge_color[3] > 0.0)
+                })
+                .collect();
             Resident {
                 mesh,
-                vertices: buffer(
-                    gpu,
-                    wgpu::BufferUsages::VERTEX,
-                    &bytes(&mesh.vertex_data(pose)),
-                ),
+                vertices: buffer(gpu, wgpu::BufferUsages::VERTEX, &bytes(&body)),
+                edge_vertices: buffer(gpu, wgpu::BufferUsages::VERTEX, &edge_data),
                 indices: buffer(gpu, wgpu::BufferUsages::INDEX, &index_data),
+                edge_drawn,
                 groups,
+                alpha: skin.materials.iter().map(|m| diffuse(m)[3]).collect(),
             }
         })
         .collect();
@@ -515,18 +574,19 @@ pub fn render_frame(gpu: &Gpu, frame: &Frame) -> Result<Vec<u8>, String> {
             });
             pass.set_bind_group(0, &scene_group, &[]);
             for res in &residents {
-                pass.set_vertex_buffer(0, res.vertices.slice(..));
                 pass.set_index_buffer(res.indices.slice(..), wgpu::IndexFormat::Uint32);
                 let drawn = || {
                     res.mesh
                         .materials
                         .iter()
                         .zip(&res.groups)
-                        .filter(|(m, _)| m.count > 0)
+                        .zip(res.alpha.iter().zip(&res.edge_drawn))
+                        .filter(|((m, _), _)| m.count > 0)
                 };
                 // Materials in file order, then the edges of the materials that have one.
-                for (m, group) in drawn() {
-                    if m.diffuse[3] <= 0.0 {
+                pass.set_vertex_buffer(0, res.vertices.slice(..));
+                for ((m, group), (&alpha, _)) in drawn() {
+                    if alpha <= 0.0 {
                         continue;
                     }
                     pass.set_pipeline(if m.flags & FLAG_DOUBLE_SIDED != 0 {
@@ -538,12 +598,12 @@ pub fn render_frame(gpu: &Gpu, frame: &Frame) -> Result<Vec<u8>, String> {
                     pass.draw_indexed(m.start..m.start + m.count, 0, 0..1);
                 }
                 pass.set_pipeline(&edge);
-                for (m, group) in drawn() {
-                    if m.flags & FLAG_EDGE == 0 || m.edge_color[3] <= 0.0 {
-                        continue;
+                pass.set_vertex_buffer(0, res.edge_vertices.slice(..));
+                for ((m, group), (_, &has_edge)) in drawn() {
+                    if has_edge {
+                        pass.set_bind_group(1, group, &[]);
+                        pass.draw_indexed(m.start..m.start + m.count, 0, 0..1);
                     }
-                    pass.set_bind_group(1, group, &[]);
-                    pass.draw_indexed(m.start..m.start + m.count, 0, 0..1);
                 }
             }
         }

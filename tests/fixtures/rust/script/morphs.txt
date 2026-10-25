@@ -1,0 +1,44 @@
+# Morph keys of morph4.pmx (lane 1 eye, lane 2 lip): select, set the weight,
+# register, copy and paste, morph frame lines, and the VMD and PMM saves.
+# morph4.pmx has no eyebrow (lane 0) or other (lane 3) morph, so the register
+# buttons of those lanes only clear the key selection.
+load model morph4.pmx
+select morph 1 まばたき
+select morph 2 あ
+frame 0
+morph 1 0.25
+register morph 1
+frame 12
+morph 1 1
+register morph 1
+morph 2 0.5
+register morph 2
+frame 24
+morph 2 0
+register morph 2
+register morph 0
+register morph 3
+save pmm registered.pmm
+select all morph
+save vmd registered.vmd
+
+select all morph
+copy
+frame 50
+paste
+save pmm pasted.pmm
+
+frame 6
+line insert morph
+save pmm line-inserted.pmm
+frame 1
+line delete morph
+save pmm line-deleted.pmm
+
+select all morph
+frame 51
+delete
+select all morph
+select all display
+save vmd morphs.vmd
+save pmm morphs.pmm

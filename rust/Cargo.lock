@@ -412,6 +412,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-render"
+version = "0.1.0"
+dependencies = [
+ "mds-formats",
+ "pollster",
+ "wgpu",
+]
+
+[[package]]
 name = "mds-scene"
 version = "0.1.0"
 dependencies = [

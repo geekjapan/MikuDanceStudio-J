@@ -77,21 +77,16 @@ pub struct View {
     pub(crate) view: Mat,
     pub(crate) view_proj: Mat,
     pub(crate) eye: [f32; 3],
-    /// The `camera_fov` the edge thickness of `mds-skin` scales with.
+    /// What the edge thickness of `mds-skin` reads: the frame world matrix (`mds_skin::View::world`),
+    /// the point the distance is measured to (`camera_position`) and `camera_fov`.
+    pub(crate) edge_world: Mat,
+    pub(crate) edge_origin: [f32; 3],
     pub(crate) edge_fov: f32,
 }
 
 /// The ortho view is `ORTHO_WIDTH_PER_DISTANCE * |distance|` world units wide (measured on the
 /// golden images: 8 and 12 units between model roots are 113.8 and 170.7 px of 640 at distance 45).
 const ORTHO_WIDTH_PER_DISTANCE: f32 = 1.0;
-/// The `camera_fov` that gives the C++ edge of the golden images under the orthographic camera.
-/// `mds-skin` scales the edge by `distance * 4.5e-5 * (camera_fov * 0.6 + 1)`; the camera at
-/// distance 45 with its view angle of 30 would make the edge 0.0385 thick, but the golden images fit
-/// 0.019 to 0.0205 (0.0187 to 0.0195 at the models' own distances). The frames meet the golden rule
-/// for `camera_fov` from 13.25 to 13.5 (and, with a bigger error, 13 to 14.5), and this is the
-/// middle. What the app puts in `camera_fov` under an orthographic camera is not known, nor which
-/// part of the formula differs; a perspective camera passes its view angle in degrees unverified.
-const ORTHO_EDGE_FOV: f32 = 13.4;
 const NEAR: f32 = 0.5;
 const FAR: f32 = 5000.0;
 
@@ -100,7 +95,7 @@ const FAR: f32 = 5000.0;
 pub struct Camera {
     /// The point looked at (the key's position).
     pub target: [f32; 3],
-    /// Pitch, yaw, roll in radians. Only yaw is checked against a golden image.
+    /// Pitch, yaw, roll in radians. Roll is not checked against a golden image.
     pub rotation: [f32; 3],
     /// Signed distance along the camera's z axis (MMD stores a negative number: the camera sits
     /// behind the target).
@@ -110,24 +105,46 @@ pub struct Camera {
     pub orthographic: bool,
 }
 
-/// D3DX `RotationYawPitchRoll` applied to a row vector: roll about z, then pitch about x, then
-/// yaw about y.
-fn rotate(v: [f32; 3], [pitch, yaw, roll]: [f32; 3]) -> [f32; 3] {
-    let (s, c) = roll.sin_cos();
-    let v = [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]];
-    let (s, c) = pitch.sin_cos();
-    let v = [v[0], v[1] * c - v[2] * s, v[1] * s + v[2] * c];
-    let (s, c) = yaw.sin_cos();
-    [v[0] * c + v[2] * s, v[1], -v[0] * s + v[2] * c]
+/// The rows of `Ry(yaw) * Rx(pitch) * Rz(roll)` (D3DX row-vector matrices): the rotation part of
+/// the frame world matrix. The edge probe (`tests/fixtures/rust/golden2/*.edge.txt`) shows the
+/// yaw-pitch product; where roll goes is a guess, no fixture has one.
+fn rotation_rows([pitch, yaw, roll]: [f32; 3]) -> [[f32; 3]; 3] {
+    let (sp, cp) = pitch.sin_cos();
+    let (sy, cy) = yaw.sin_cos();
+    let (sr, cr) = roll.sin_cos();
+    let ry = [[cy, 0.0, -sy], [0.0, 1.0, 0.0], [sy, 0.0, cy]];
+    let rx = [[1.0, 0.0, 0.0], [0.0, cp, sp], [0.0, -sp, cp]];
+    let rz = [[cr, sr, 0.0], [-sr, cr, 0.0], [0.0, 0.0, 1.0]];
+    let m3 = |a: [[f32; 3]; 3], b: [[f32; 3]; 3]| -> [[f32; 3]; 3] {
+        std::array::from_fn(|r| std::array::from_fn(|c| (0..3).map(|k| a[r][k] * b[k][c]).sum()))
+    };
+    m3(m3(ry, rx), rz)
 }
 
 impl Camera {
+    /// The frame world matrix of the C++ app: the target moved to the origin, then the camera
+    /// rotation. A point of the scene ends up in a space where the camera sits at
+    /// `(0, 0, distance)` and looks along +z.
+    pub(crate) fn world(&self) -> Mat {
+        let r = rotation_rows(self.rotation);
+        let t = self.target;
+        let mut m = IDENTITY;
+        for i in 0..3 {
+            m[i][..3].copy_from_slice(&r[i]);
+            m[3][i] = -(0..3).map(|k| t[k] * r[k][i]).sum::<f32>();
+        }
+        m
+    }
+
     pub fn view(&self, width: u32, height: u32) -> View {
         let aspect = width as f32 / height as f32;
-        let offset = rotate([0.0, 0.0, self.distance], self.rotation);
-        let eye = [0, 1, 2].map(|i| self.target[i] + offset[i]);
-        let up = rotate([0.0, 1.0, 0.0], self.rotation);
-        let view = look_at_lh(eye, self.target, up);
+        let world = self.world();
+        let r = rotation_rows(self.rotation);
+        // The eye is (0, 0, distance) of the camera space taken back to the scene: through R^T.
+        let eye = std::array::from_fn(|i| self.target[i] + self.distance * r[i][2]);
+        let mut back = IDENTITY;
+        back[3][2] = -self.distance;
+        let view = mul(&back, &world);
         let proj = if self.orthographic {
             let w = ORTHO_WIDTH_PER_DISTANCE * self.distance.abs();
             // The depth range is wide: every model is near the target plane.
@@ -139,14 +156,19 @@ impl Camera {
             view,
             view_proj: mul(&proj, &view),
             eye,
-            edge_fov: if self.orthographic {
-                ORTHO_EDGE_FOV
-            } else {
-                self.fov_deg
-            },
+            edge_world: world,
+            edge_origin: self.target,
+            edge_fov: self.fov_deg,
         }
     }
 }
+
+pub(crate) const IDENTITY: Mat = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+];
 
 /// The light at one frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -184,6 +206,81 @@ pub(crate) fn bounding_box_view(min: [f32; 3], max: [f32; 3], front: f32, aspect
         view,
         view_proj: mul(&proj, &view),
         eye,
+        edge_world: IDENTITY,
+        edge_origin: eye,
         edge_fov: DEFAULT_FOV_DEG,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every `*.edge.txt` probe of `tests/fixtures/rust/golden2`: the camera line gives the
+    /// frame world matrix of the `world` line, and each `edge` line's result follows from its
+    /// model point with the inputs `Camera::view` hands to `mds-skin` (whose formula, checked
+    /// against the C++ in `mds-skin`, is restated here because it is private there).
+    #[test]
+    fn edge_probes_match_the_view() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../tests/fixtures/rust/golden2");
+        let mut probes = 0;
+        let mut edges = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if !path.to_string_lossy().ends_with(".edge.txt") {
+                continue;
+            }
+            probes += 1;
+            let text = std::fs::read_to_string(&path).unwrap();
+            let mut view = None;
+            for line in text.lines().skip(1) {
+                let mut words = line.split(' ');
+                let _frame = words.next();
+                let kind = words.next().unwrap();
+                let v: Vec<f32> = words.map(|w| w.parse().unwrap()).collect();
+                let at = |what: &str| format!("{}: {line} ({what})", path.display());
+                match kind {
+                    "camera" => {
+                        let camera = Camera {
+                            orthographic: v[0] == 1.0,
+                            fov_deg: v[1],
+                            target: [v[2], v[3], v[4]],
+                            distance: v[5],
+                            rotation: [v[6], v[7], v[8]],
+                        };
+                        view = Some(camera.view(640, 360));
+                    }
+                    "world" => {
+                        let world = view.unwrap().edge_world;
+                        for (k, (&got, &want)) in world.iter().flatten().zip(&v).enumerate() {
+                            assert!((got - want).abs() <= 1e-6, "{} [{k}] {got}", at("world"));
+                        }
+                    }
+                    "edge" => {
+                        edges += 1;
+                        let view = view.unwrap();
+                        let w = &view.edge_world;
+                        let p: [f32; 3] = std::array::from_fn(|c| {
+                            v[2] * w[0][c] + v[3] * w[1][c] + v[4] * w[2][c] + w[3][c]
+                        });
+                        for c in 0..3 {
+                            assert!((p[c] - v[5 + c]).abs() <= 1e-5, "{}", at("world point"));
+                        }
+                        let d = len(sub(p, view.edge_origin));
+                        assert!((d - v[8]).abs() <= 1e-5 * v[8], "{} {d}", at("distance"));
+                        let edge = d * 4.5e-5 * (view.edge_fov * 0.6 + 1.0) * v[9];
+                        assert!(
+                            (edge - v[10]).abs() <= 1e-6 * v[10],
+                            "{} {edge}",
+                            at("edge")
+                        );
+                    }
+                    "picture" => {}
+                    other => panic!("{}: unknown line {other}", path.display()),
+                }
+            }
+        }
+        assert_eq!((probes, edges), (7, 35));
     }
 }

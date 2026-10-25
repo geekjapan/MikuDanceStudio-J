@@ -100,7 +100,15 @@ fn physics_poses(pmm: &Pmm, frame: u32) -> Vec<Pose> {
 // ---- rendering and the metric ----
 
 fn render_at(gpu: &Gpu, pmm: &Pmm, posed: &[Pose], frame: u32) -> Vec<u8> {
-    let meshes: Vec<Mesh> = pmm.models.iter().map(|m| mesh_of(&m.path.text)).collect();
+    let meshes: Vec<Mesh> = pmm
+        .models
+        .iter()
+        .map(|m| {
+            let mut mesh = mesh_of(&m.path.text);
+            mesh.set_edge_scale(m.edge_scale);
+            mesh
+        })
+        .collect();
     let models: Vec<_> = meshes
         .iter()
         .zip(posed)

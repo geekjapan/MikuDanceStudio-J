@@ -288,7 +288,8 @@ impl Renderer {
     fn upload(&mut self, frame: &Frame) {
         let keys = Self::keys(frame);
         let edge_view = EdgeView {
-            camera_position: frame.view.eye,
+            world: frame.view.edge_world.concat().try_into().expect("4 x 4"),
+            camera_position: frame.view.edge_origin,
             fov: frame.view.edge_fov,
             self_shadow: frame.toon,
         };

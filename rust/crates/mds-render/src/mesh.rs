@@ -33,10 +33,12 @@ pub struct Mesh {
     skin: Skin,
     pub(crate) indices: Vec<u32>,
     pub(crate) materials: Vec<Material>,
+    edge_scale: f32,
 }
 
-/// The scene values the edge of `mds-skin` reads.
+/// The scene values the edge of `mds-skin` reads, except the model's edge scale.
 pub(crate) struct EdgeView {
+    pub world: [f32; 16],
     pub camera_position: [f32; 3],
     /// The `camera_fov` that `mds_skin::View` takes.
     pub fov: f32,
@@ -68,6 +70,7 @@ fn finish(
         skin,
         indices,
         materials,
+        edge_scale: 1.0,
     })
 }
 
@@ -125,6 +128,11 @@ impl Mesh {
         finish(bind, Skin::from_pmd(pmd)?, indices, materials)
     }
 
+    /// The model's edge thickness, `edge_scale` of its PMM model record (1 when a mesh is made).
+    pub fn set_edge_scale(&mut self, scale: f32) {
+        self.edge_scale = scale;
+    }
+
     pub(crate) fn vertex_count(&self) -> usize {
         self.bind.len()
     }
@@ -171,10 +179,10 @@ impl Mesh {
             &weights,
             &bones,
             &mds_skin::View {
-                world: Mat4::IDENTITY,
+                world: Mat4(view.world),
                 camera_position: view.camera_position,
                 camera_fov: view.fov,
-                edge_scale: 1.0,
+                edge_scale: self.edge_scale,
                 self_shadow: view.self_shadow,
             },
         );
@@ -187,6 +195,7 @@ mod tests {
     use super::*;
 
     const VIEW: EdgeView = EdgeView {
+        world: Mat4::IDENTITY.0,
         camera_position: [0.0; 3],
         fov: 30.0,
         self_shadow: false,

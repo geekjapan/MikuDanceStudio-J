@@ -3,7 +3,7 @@ name = "mds-bullet-sys"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
-description = "Vendored Bullet 2.75 behind a C shim, built with deterministic float math"
+description = "Vendored Bullet 2.75 behind a C shim, built with the float math of the MSVC x64 build"
 license = "MIT"
 publish = false
 links = "mds_bullet"
@@ -12,6 +12,10 @@ build = "build.rs"
 [features]
 # Also builds shim/bench_main.cpp into <target>/<profile>/chain8_bench.
 bench = []
+
+[dependencies]
+# The C++ side calls its mds_crt_* functions (shim/det_math.h).
+mds-crtmath = { path = "../mds-crtmath" }
 
 [build-dependencies]
 cc = { version = "1", features = ["parallel"] }

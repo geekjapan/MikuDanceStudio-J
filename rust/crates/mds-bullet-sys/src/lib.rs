@@ -1,6 +1,9 @@
 //! Raw bindings to `shim/mds_bt.h`. Use the `mds-bullet` crate instead.
 #![allow(non_camel_case_types)]
 
+// Links the mds_crt_* functions that the vendored Bullet calls.
+extern crate mds_crtmath;
+
 use std::os::raw::c_int;
 
 #[repr(C)]
@@ -98,5 +101,70 @@ extern "C" {
         world: *mut mds_bt_world,
         desc: *const mds_bt_joint_desc,
         out_joint: *mut *mut mds_bt_joint,
+    ) -> c_int;
+}
+
+/// `shim/mds_mmd.h`: the world, bodies and joints of the C++ app.
+#[repr(C)]
+pub struct mds_mmd_world {
+    _private: [u8; 0],
+}
+#[repr(C)]
+pub struct mds_mmd_body {
+    _private: [u8; 0],
+}
+
+extern "C" {
+    pub fn mds_mmd_world_create() -> *mut mds_mmd_world;
+    pub fn mds_mmd_world_destroy(world: *mut mds_mmd_world);
+    pub fn mds_mmd_world_set_gravity(world: *mut mds_mmd_world, x: f32, y: f32, z: f32) -> c_int;
+    pub fn mds_mmd_world_step(
+        world: *mut mds_mmd_world,
+        dt: f32,
+        max_sub_steps: i32,
+        fixed_step: f32,
+    ) -> c_int;
+    pub fn mds_mmd_body_create(
+        world: *mut mds_mmd_world,
+        shape: i32,
+        sx: f32,
+        sy: f32,
+        sz: f32,
+        origin: *const f32,
+        rotation: *const f32,
+        mode: i32,
+        mass: f32,
+        linear_damping: f32,
+        angular_damping: f32,
+        restitution: f32,
+        friction: f32,
+        group: i16,
+        mask: i16,
+        out_body: *mut *mut mds_mmd_body,
+    ) -> c_int;
+    pub fn mds_mmd_joint_create(
+        world: *mut mds_mmd_world,
+        a: *mut mds_mmd_body,
+        b: *mut mds_mmd_body,
+        a_origin: *const f32,
+        a_rotation: *const f32,
+        b_origin: *const f32,
+        b_rotation: *const f32,
+        linear_lower: *const f32,
+        linear_upper: *const f32,
+        angular_lower: *const f32,
+        angular_upper: *const f32,
+        springs: *const f32,
+        uid: i32,
+    ) -> c_int;
+    pub fn mds_mmd_body_set_kinematic(body: *mut mds_mmd_body, kinematic: i32) -> c_int;
+    pub fn mds_mmd_body_set_motion_state(body: *mut mds_mmd_body, matrix: *const f32) -> c_int;
+    pub fn mds_mmd_body_reseat(body: *mut mds_mmd_body, matrix: *const f32) -> c_int;
+    pub fn mds_mmd_body_stop_at(body: *mut mds_mmd_body, origin: *const f32) -> c_int;
+    pub fn mds_mmd_body_matrix(body: *const mds_mmd_body, out_matrix: *mut f32) -> c_int;
+    pub fn mds_mmd_body_pose(
+        body: *const mds_mmd_body,
+        out_origin: *mut f32,
+        out_rotation: *mut f32,
     ) -> c_int;
 }

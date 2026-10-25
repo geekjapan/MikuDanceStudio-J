@@ -2,8 +2,10 @@
 //! capsules hanging from it on 6DOF spring joints, and a static plane.
 //! `shim/bench_main.cpp` in mds-bullet-sys is the C++ twin; keep them in step.
 //!
-//! Prints `final <hash>` and `mean_step_us <microseconds>`. With deterministic
-//! float math the hash is `b7be367fb1ece153` on every supported CPU.
+//! Prints `final <hash>` and `mean_step_us <microseconds>`. Bullet's float
+//! math comes from mds-crtmath, which matches the MSVC x64 UCRT, so the hash
+//! is `69c5ce49dd0962b5` on every supported CPU. The P1 prototype hash
+//! `b7be367fb1ece153` came from the earlier `det_math.h` approximation.
 
 // tests/world.rs includes this file as a module and never calls `main`.
 #![allow(dead_code)]
@@ -14,7 +16,7 @@ use mds_bullet::{BodyDesc, BodyId, JointDesc, Shape, Transform, World};
 
 pub const LINKS: usize = 8;
 pub const FRAMES: i32 = 600;
-pub const REFERENCE_HASH: u64 = 0xb7be367fb1ece153;
+pub const REFERENCE_HASH: u64 = 0x69c5ce49dd0962b5;
 
 pub struct Chain8 {
     pub world: World,

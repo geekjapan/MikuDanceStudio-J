@@ -1,0 +1,19 @@
+# The D3DX and CRT math of the C++ check: mds-math, mds-kinect::d3dx and
+# mds-crtmath behind a C ABI, so the C++ under test computes with the same
+# functions as the Rust crate.
+[package]
+name = "kinect-check-ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+path = "lib.rs"
+
+[dependencies]
+mds-crtmath = { path = "../../../../mds-crtmath" }
+mds-math = { path = "../../../../mds-math" }
+mds-kinect = { path = "../../.." }
+
+[workspace]

@@ -59,8 +59,9 @@
 //         selfShadowEnabled selfShadowMode selfShadowDistance LF
 //   frame "world" m00 m01 .. m33 LF       (the frame world matrix, row by row)
 //   frame "picture" offX offY scale width height viewScale viewport.ltrb
-//         renderWidth renderHeight quad.ltrb LF   (only with a background
-//         picture shown: its placement inputs and the overlay quad drawn)
+//         renderWidth renderHeight quad.ltrb rhw0..rhw5 LF   (only with a
+//         background picture shown: its placement inputs, the overlay quad
+//         drawn, and the rhw of its six vertices)
 //   frame "edge" slot bone point.xyz world.xyz target_distance edgeScale edge LF
 //         (per loaded model in slot order: the bone PmdEdgeDistance uses, its
 //         bind position moved by matInit, that point moved by the world
@@ -308,6 +309,7 @@ bool WriteEdgeProbe(std::ostream& out, MMDApp* app, std::uint32_t frame) {
         // The overlay quad as PicBgOverlayRefresh (src/render/bg_overlay.cpp)
         // wrote it: left, top, right, bottom in render-target pixels.
         float quad[4]{};
+        float rhw[6]{};
         void* locked = nullptr;
         IDirect3DVertexBuffer9* vb = app->PictureOverlayVertices();
         if (vb == nullptr || FAILED(vb->Lock(0, 0xA8, &locked, D3DLOCK_READONLY)))
@@ -317,15 +319,18 @@ bool WriteEdgeProbe(std::ostream& out, MMDApp* app, std::uint32_t frame) {
         quad[1] = v[0x3C / 4];
         quad[2] = v[0x00 / 4];
         quad[3] = v[0x20 / 4];
+        for (int i = 0; i < 6; ++i)
+            rhw[i] = v[i * 7 + 3]; // 28-byte vertices: x y z rhw color u v
         vb->Unlock();
         const RECT& view = app->ViewportRect();
-        std::snprintf(
-            line, sizeof line,
-            "%u picture %d %d %.9g %d %d %.9g %ld %ld %ld %ld %d %d %.9g %.9g %.9g %.9g\n", frame,
-            app->PictureOffsetX(), app->PictureOffsetY(), app->PictureScale(), app->PictureWidth(),
-            app->PictureHeight(), app->Renderer()->viewScale, view.left, view.top, view.right,
-            view.bottom, app->RenderWidth(), app->RenderHeight(), quad[0], quad[1], quad[2],
-            quad[3]);
+        std::snprintf(line, sizeof line,
+                      "%u picture %d %d %.9g %d %d %.9g %ld %ld %ld %ld %d %d %.9g %.9g %.9g %.9g "
+                      "%.9g %.9g %.9g %.9g %.9g %.9g\n",
+                      frame, app->PictureOffsetX(), app->PictureOffsetY(), app->PictureScale(),
+                      app->PictureWidth(), app->PictureHeight(), app->Renderer()->viewScale,
+                      view.left, view.top, view.right, view.bottom, app->RenderWidth(),
+                      app->RenderHeight(), quad[0], quad[1], quad[2], quad[3], rhw[0], rhw[1],
+                      rhw[2], rhw[3], rhw[4], rhw[5]);
         out << line;
     }
     for (int slot = 0; slot < kModelSlotCount; ++slot) {

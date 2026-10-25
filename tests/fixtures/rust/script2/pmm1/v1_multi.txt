@@ -1,3 +1,6 @@
 # Loads the PMM 0001 file tests/fixtures/rust/pmm1/v1_multi.pmm and saves it as 0002.
+# The loader cannot open the accessory cube.x by the relative path the file
+# names, shows two boxes, and asks for the file.
+answer file .\cube.x
 load pmm v1_multi.pmm
 save pmm v1_multi.pmm

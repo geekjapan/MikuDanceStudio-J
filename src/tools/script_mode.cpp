@@ -28,7 +28,9 @@
 //     returns an absolute path; a relative one keeps the saved PMM free of
 //     the checkout's location. Save paths are <out-dir>\<name>. A dialog that
 //     the step did not expect, or an expected dialog that never opened, fails
-//     the step.
+//     the step. `answer file <path>` queues the answer of one more dialog of
+//     the next step (the PMM 0001 loader asks for an accessory it cannot
+//     open); the next step must use every queued answer.
 //   MessageBoxA / MessageBoxW  an OK/Cancel question is answered OK when the
 //     step's command asks one in the GUI (new, load pmm, load model, load vmd
 //     onto a model of another name, paste different, delete lip, eye, and
@@ -193,7 +195,8 @@ struct StepState {
 
 StepState g_step;
 std::set<HWND> g_allowedDialogs;
-std::vector<std::string> g_messages; // messages.tsv lines
+std::vector<std::string> g_messages;     // messages.tsv lines
+std::vector<std::wstring> g_fileAnswers; // `answer file` paths, oldest first
 
 std::string StepName() {
     if (g_step.command == nullptr)
@@ -218,9 +221,15 @@ using MessageBoxAFn = int(WINAPI*)(HWND, LPCSTR, LPCSTR, UINT);
 using MessageBoxWFn = int(WINAPI*)(HWND, LPCWSTR, LPCWSTR, UINT);
 
 BOOL AnswerFileDialog(LPOPENFILENAMEW ofn, const char* kind) {
-    if (g_step.dialogPath.empty() || g_step.dialogUsed)
+    std::wstring path;
+    if (!g_step.dialogPath.empty() && !g_step.dialogUsed) {
+        path = g_step.dialogPath;
+    } else if (!g_fileAnswers.empty()) {
+        path = g_fileAnswers.front();
+        g_fileAnswers.erase(g_fileAnswers.begin());
+    } else {
         AbortStep(std::string("unexpected ") + kind + " dialog");
-    const std::wstring& path = g_step.dialogPath;
+    }
     if (ofn == nullptr || ofn->lpstrFile == nullptr || path.size() >= ofn->nMaxFile)
         AbortStep(std::string(kind) + " dialog: the path does not fit the handler's buffer");
     wcscpy_s(ofn->lpstrFile, ofn->nMaxFile, path.c_str());
@@ -232,7 +241,8 @@ BOOL AnswerFileDialog(LPOPENFILENAMEW ofn, const char* kind) {
         static_cast<WORD>(dot == std::wstring::npos || dot < nameStart ? path.size() : dot + 1);
     if (ofn->lpstrFileTitle != nullptr && ofn->nMaxFileTitle > 0)
         wcsncpy_s(ofn->lpstrFileTitle, ofn->nMaxFileTitle, path.c_str() + nameStart, _TRUNCATE);
-    g_step.dialogUsed = true;
+    if (path == g_step.dialogPath)
+        g_step.dialogUsed = true;
     return TRUE;
 }
 
@@ -615,19 +625,27 @@ struct Runner {
     }
 
     // "out/<name>" names a file that an earlier step saved into <out-dir>;
-    // any other relative path names a file next to the exe.
-    bool Load(const std::string& path, int id, bool isMenu) {
+    // any other relative path names a file next to the exe. Sets *wide to
+    // the path the file dialog returns.
+    bool InputPath(const std::string& path, std::wstring* wide) {
         const bool fromOut = path.compare(0, 4, "out/") == 0;
-        const std::wstring wide = fromOut ? request.out + L"\\" + Wide(path.substr(4)) : Wide(path);
-        const bool absolute = wide.size() > 1 && (wide[1] == L':' || wide[0] == L'\\');
+        *wide = fromOut ? request.out + L"\\" + Wide(path.substr(4)) : Wide(path);
+        const bool absolute = wide->size() > 1 && ((*wide)[1] == L':' || (*wide)[0] == L'\\');
         std::wstring exeDir = app->ExeDir();
         if (!exeDir.empty() && exeDir.back() != L'\\')
             exeDir += L'\\';
-        const std::wstring resolved = absolute ? wide : exeDir + wide;
+        const std::wstring resolved = absolute ? *wide : exeDir + *wide;
         if (!IsFile(resolved))
             return Fail("input file not found: " + Utf8(resolved));
-        if (wide.size() >= kDialogPathLength)
+        if (wide->size() >= kDialogPathLength)
             return Fail("the path is longer than the handler's buffer");
+        return true;
+    }
+
+    bool Load(const std::string& path, int id, bool isMenu) {
+        std::wstring wide;
+        if (!InputPath(path, &wide))
+            return false;
         return WithDialog(wide, [&] { return isMenu ? Menu(id) : Click(id); });
     }
 
@@ -970,6 +988,13 @@ struct Runner {
             return Menu(MDS_CMD_TOGGLE_PLAYBACK_PHYSICS_ON_OFF);
         case ScriptOp::Trace:
             return StartTrace(a[0]);
+        case ScriptOp::AnswerFile: {
+            std::wstring wide;
+            if (!InputPath(a[0], &wide))
+                return false;
+            g_fileAnswers.push_back(wide);
+            return true;
+        }
         }
         return Fail("unhandled command");
     }
@@ -1050,15 +1075,21 @@ int RunScriptMode(MMDApp* app, const ScriptRequest& request) {
         g_step = StepState{};
         g_step.command = &command;
         g_step.answerOkCancel = AnswersOkCancel(command.op);
-        g_step.answerInfo =
-            command.op == ScriptOp::DeleteUnused || command.op == ScriptOp::RegisterBlink;
+        // The boxes that come with a queued file answer (the 0001 loader's
+        // "cannot open" notes) are answered too.
+        const bool queuing = command.op == ScriptOp::AnswerFile;
+        g_step.answerInfo = command.op == ScriptOp::DeleteUnused ||
+                            command.op == ScriptOp::RegisterBlink ||
+                            (!queuing && !g_fileAnswers.empty());
         g_step.allowDialogWindow = OpensDialogWindow(command.op);
         WriteError(StepName() + "start\n"); // the last line names the step of a crash
         const bool ok = runner.Run(command);
         g_step.answerOkCancel = false;
         g_step.answerInfo = false;
         g_step.allowDialogWindow = false;
-        if (!ok) {
+        if (ok && !queuing && !g_fileAnswers.empty())
+            runner.error = std::to_string(g_fileAnswers.size()) + " queued file answer(s) unused";
+        if (!ok || !runner.error.empty()) {
             WriteError(StepName() + runner.error + "\n");
             return 1;
         }

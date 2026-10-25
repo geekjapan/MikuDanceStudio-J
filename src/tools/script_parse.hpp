@@ -112,6 +112,7 @@ enum class ScriptOp {
     PhysicsMode,
     PhysicsPlaybackToggle,
     Trace,
+    AnswerFile,
 };
 
 struct ScriptCommandSpec {
@@ -215,6 +216,7 @@ inline constexpr ScriptCommandSpec kScriptCommands[] = {
     {"physics mode", ScriptOp::PhysicsMode, "l"},
     {"physics playback toggle", ScriptOp::PhysicsPlaybackToggle, ""},
     {"trace", ScriptOp::Trace, "t"},
+    {"answer file", ScriptOp::AnswerFile, "t"},
 };
 // clang-format on
 

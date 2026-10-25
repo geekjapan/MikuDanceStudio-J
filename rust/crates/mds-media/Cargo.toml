@@ -1,7 +1,11 @@
 [package]
 name = "mds-media"
-description = "WAV loading and the timeline waveform (port of the C++ media code) and an AVI writer for recording"
+description = "WAV loading and the timeline waveform, the background movie and picture loaders (port of the C++ media code), and an AVI writer for recording"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+
+[dependencies]
+png = "0.18"
+zune-jpeg = "0.5"

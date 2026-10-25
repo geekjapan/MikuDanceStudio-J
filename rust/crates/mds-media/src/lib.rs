@@ -1,4 +1,5 @@
-//! WAV loading with the timeline waveform, and an AVI writer for recording.
+//! WAV loading with the timeline waveform, the background movie and picture,
+//! and an AVI writer for recording.
 //!
 //! [`wav`] ports the loading side of `src/media/wave_audio.cpp`
 //! (`WaveLoadFile`, `WaveStreamRead`, and the seek arithmetic of
@@ -11,6 +12,17 @@
 //! [`avi`] has no C++ twin (the C++ records through DirectShow). It writes
 //! AVI 1.0 files by the format specification; `tests/avi_ffmpeg.rs` checks
 //! them with `ffprobe` and `ffmpeg`.
+//!
+//! [`movie`], [`picture`] and [`background`] port the background menu of
+//! `src/media/media_load.cpp` (`LoadAviFile`, `LoadBackgroundPicture`,
+//! `MediaAspect`) and the frame choice of `src/render/bg_overlay.cpp`
+//! (`AviBgOverlayRefresh`). The movie is read and decoded in Rust
+//! (uncompressed and Motion JPEG AVI); `tests/bgmovie.rs` compares the frames
+//! with `ffmpeg -f framemd5` of the same files.
 
 pub mod avi;
+pub mod background;
+mod dib;
+pub mod movie;
+pub mod picture;
 pub mod wav;

@@ -19,3 +19,6 @@ doc	3a	-	mac	opus	pending	rust/crates/mds-doc/
 media	3a	-	mac	sonnet	pending	rust/crates/mds-media/,tools/wave_check/,tests/fixtures/rust/media/
 vsq	3a	-	mac	sonnet	pending	rust/crates/mds-vsq/,tools/vsq_check/,tests/fixtures/rust/vsq/
 accessory	3a	-	mac	sonnet	pending	rust/crates/mds-accessory/,tests/fixtures/rust/accessory/
+skin	3a	-	mac	opus	pending	rust/crates/mds-skin/,tools/skin_check/,tests/fixtures/rust/skin/
+ops	3a	-	mac	sonnet	pending	rust/crates/mds-ops/
+mmert	3a	-	mac	opus	pending	rust/crates/mds-mmert/

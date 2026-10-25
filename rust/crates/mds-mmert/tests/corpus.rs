@@ -6,6 +6,7 @@
 //! An effect is skipped (with the reason) when the plan rejects it or a pass cannot compile
 //! (a known `mds-shader` gap); its other passes still run. `extra/` always runs; `ray-mmd/`
 //! needs the corpus of `tools/fixtures/fetch_corpus.sh` and prints SKIP without it.
+//! `MDS_MMERT_ONLY=<substring>` runs only the plans whose path contains it.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -170,7 +171,10 @@ fn check(
         (Ok(e), false) => e,
     };
     if let Some(err) = errors.first() {
-        return Outcome::Failed(format!("wgpu: {}", err.lines().next().unwrap_or(err)));
+        return Outcome::Failed(format!(
+            "wgpu: {}",
+            err.split_whitespace().collect::<Vec<_>>().join(" ")
+        ));
     }
     let got: Vec<(String, String)> = e
         .sas
@@ -180,7 +184,7 @@ fn check(
         .flat_map(|(r, c)| {
             let q = mds_mme::plan::q(&r.name);
             c.as_ref()
-                .map_or(Vec::new(), |c| c.plan_lines(r))
+                .map_or_else(|| vec!["created none".to_string()], |c| c.plan_lines(r))
                 .into_iter()
                 .map(move |l| (q.clone(), l))
         })
@@ -218,8 +222,7 @@ fn reason(why: &str) -> String {
         Some(code) => format!("vkd3d {}", code.trim_end_matches(':')),
         None => why
             .split(':')
-            .skip(1)
-            .next()
+            .nth(1)
             .unwrap_or(why)
             .trim()
             .chars()
@@ -237,6 +240,9 @@ fn run_group(
 ) -> usize {
     let mut list = Vec::new();
     plans(&fixtures().join("mme").join(group), &mut list);
+    if let Ok(only) = std::env::var("MDS_MMERT_ONLY") {
+        list.retain(|p| p.to_string_lossy().contains(&only));
+    }
     let rel_of = |plan: &Path| {
         plan.strip_prefix(fixtures().join("mme").join(group))
             .unwrap()

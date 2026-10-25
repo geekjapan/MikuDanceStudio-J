@@ -624,6 +624,15 @@ pub fn compile(vk: &Vkd3d, fx: &Effect, entry: &Entry, stage: Stage) -> Result<S
     let wgsl =
         naga::back::wgsl::write_string(&module, &info, naga::back::wgsl::WriterFlags::empty())
             .map_err(|e| format!("rebound module wgsl-out: {e}"))?;
+    // The WGSL writer renames reserved names such as the wrapper's `__mme_entry`.
+    let attribute = match stage {
+        Stage::Vertex => "@vertex",
+        Stage::Fragment => "@fragment",
+    };
+    let entry_name = wgsl
+        .split_once(attribute)
+        .and_then(|(_, rest)| rest.split_once("fn ")?.1.split_once('('))
+        .map_or(entry_name, |(name, _)| name.trim().to_string());
     Ok(Shader {
         stage,
         wgsl,

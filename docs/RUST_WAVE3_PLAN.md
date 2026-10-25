@@ -2,7 +2,7 @@
 
 Wave 3 replaces the remaining C++ with Rust and ends with a Rust application that does everything the C++ application does. Waves 1 and 2 built the headless core: file formats, scene evaluation, pose, physics, editing of the key pools, rendering with standard MMD shading, and the MME parser and pass planner. Wave 3 builds the document, the media, the remaining rendering, the MME runtime, the application shell, and the UI. It then removes the C++.
 
-The slice mechanics of `docs/RUST_WAVE2_PLAN.md` hold unchanged: `tools/orchestrate/`, the agent brief, ownership, `integrate.sh`, merge commits, one Windows slice at a time. Wave 3 slices keep the `w2-<id>` branch and worktree prefix of those scripts.
+The slice mechanics of `docs/RUST_WAVE2_PLAN.md` hold unchanged, except that the operator delegated merging to the root for wave 3 on 2026-10-25. The root merges a PR once its gate passes and reports each merge. The rest of the mechanics are: `tools/orchestrate/`, the agent brief, ownership, `integrate.sh`, merge commits, one Windows slice at a time. Wave 3 slices keep the `w2-<id>` branch and worktree prefix of those scripts.
 
 ## End state
 
@@ -66,12 +66,12 @@ Each slice gates on a committed oracle that runs without the Windows host, as in
 
 ## Product decisions
 
-These functions depend on hardware or APIs that a cross-platform Rust application cannot carry as they are. Each has a default that the root applies unless the operator decides otherwise.
+These functions depend on hardware or APIs that a cross-platform Rust application cannot carry as they are. The operator decided the first two on 2026-10-25. The root applies the other defaults unless the operator decides otherwise.
 
 | Function | C++ dependency | Default |
 |---|---|---|
-| Kinect capture | `DxOpenNI.dll`, Windows, a Kinect | Port behind a Windows-only feature that loads the same DLL. Unverified, because no device is available. |
-| NVIDIA 3D Vision recording | NVAPI | Drop. NVIDIA ended 3D Vision in 2019. |
+| Kinect capture | `DxOpenNI.dll`, Windows, a Kinect | Decided: port behind a Windows-only feature that loads the same DLL. Unverified, because no device is available. |
+| NVIDIA 3D Vision recording | NVAPI | Decided: drop. NVIDIA ended 3D Vision in 2019. |
 | AVI recording with system codecs | DirectShow, VFW, `MMDxShow.dll` | Built-in AVI writer (uncompressed) and PNG sequences, with no codec picker. |
 | Background movie | VFW | Uncompressed and Motion JPEG AVI decoded in Rust. Other codecs are reported as unsupported. |
 | `Exp*` functions for MME DLLs | PE exports | Drop. The Rust MME runtime runs in process. |

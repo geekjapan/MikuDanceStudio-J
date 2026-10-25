@@ -22,10 +22,10 @@ fn validate(module: &naga::Module, caps: Capabilities) -> Result<ModuleInfo, Str
         .map_err(|e| format!("naga validation: {}", e.emit_to_string("")))
 }
 
-/// Reads SPIR-V with naga. naga-cli flips the Y of `Position` by default, and so does this.
-pub fn parse_spirv(words: &[u32]) -> Result<naga::Module, String> {
+/// Reads SPIR-V with naga. `flip_y` flips the Y of `Position`, as naga-cli does by default.
+pub fn parse_spirv(words: &[u32], flip_y: bool) -> Result<naga::Module, String> {
     let opts = naga::front::spv::Options {
-        adjust_coordinate_space: true,
+        adjust_coordinate_space: flip_y,
         strict_capabilities: false,
         block_ctx_dump_prefix: None,
     };

@@ -144,7 +144,7 @@ fn check(
 ) -> Outcome {
     let rejected = plan.lines().any(|l| l == "load rejected");
     let ((result, report), errors) = gpu.scoped(|| {
-        let mut e = match Effect::load(gpu, vk, effect, root) {
+        let mut e = match Effect::load(gpu, vk, effect, root, BACKBUFFER) {
             Ok(e) => e,
             Err(err) => return (Err(err), None),
         };
@@ -157,6 +157,9 @@ fn check(
             scene: &scene,
             geometry: Some((model, 0)),
             draw_type: mds_mmert::bind::DRAW_OBJECT,
+            controls: None,
+            owner: None,
+            offscreen_owner: None,
         };
         let report = e.frame(gpu, &target, &input);
         let _ = gpu.wait();

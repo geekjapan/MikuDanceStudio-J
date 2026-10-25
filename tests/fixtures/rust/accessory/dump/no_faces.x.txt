@@ -1,0 +1,5 @@
+mds-mesh-dump 1
+file "no_faces.x"
+raw hr 0x80004005
+frame 0 - 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1
+record failed

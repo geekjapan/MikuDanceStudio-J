@@ -1,0 +1,5 @@
+mds-mesh-dump 1
+file "bad_header.x"
+raw hr 0x8876038d
+frames hr 0x8876038d
+record failed

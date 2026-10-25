@@ -1200,6 +1200,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "egui",
+ "mds-doc",
  "mds-formats",
  "mds-math",
  "mds-physics",
@@ -1233,9 +1234,14 @@ version = "0.1.0"
 name = "mds-doc"
 version = "0.1.0"
 dependencies = [
+ "encoding_rs",
+ "mds-accessory",
  "mds-edit",
  "mds-formats",
+ "mds-math",
+ "mds-ops",
  "mds-pose",
+ "mds-scene",
 ]
 
 [[package]]
@@ -1284,6 +1290,7 @@ dependencies = [
 name = "mds-mmert"
 version = "0.1.0"
 dependencies = [
+ "encoding_rs",
  "mds-formats",
  "mds-fx",
  "mds-math",
@@ -1292,6 +1299,7 @@ dependencies = [
  "naga",
  "png",
  "pollster 1.0.1",
+ "weezl",
  "wgpu",
 ]
 

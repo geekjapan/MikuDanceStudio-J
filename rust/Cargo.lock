@@ -380,6 +380,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-edit"
+version = "0.1.0"
+dependencies = [
+ "mds-formats",
+]
+
+[[package]]
 name = "mds-formats"
 version = "0.1.0"
 dependencies = [

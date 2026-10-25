@@ -40,3 +40,4 @@ render2	3b	golden2	mac	opus	MIT	rust/crates/mds-render/
 docgold2	3b	docgold,mdsedit	mac	opus	pending	rust/crates/mds-doc/,rust/crates/mds-ops/
 accgold	3b	accessory	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/accessory/,rust/crates/mds-accessory/,CMakeLists.txt,src/render/bg_overlay.cpp,tests/fixtures/rust/golden2/
 kinect	3c	-	mac	sonnet	pending	rust/crates/mds-kinect/
+bgmovie	3c	-	mac	sonnet	pending	rust/crates/mds-media/

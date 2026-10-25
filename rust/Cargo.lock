@@ -410,6 +410,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-app"
+version = "0.1.0"
+dependencies = [
+ "mds-formats",
+ "mds-math",
+ "mds-physics",
+ "mds-render",
+ "mds-scene",
+ "png",
+]
+
+[[package]]
 name = "mds-bullet"
 version = "0.1.0"
 dependencies = [

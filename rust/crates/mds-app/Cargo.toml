@@ -1,0 +1,18 @@
+[package]
+name = "mds-app"
+description = "The MikuDanceStudio application: a window that plays a PMM with physics, and the headless frame dump"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mds-formats = { path = "../mds-formats" }
+mds-math = { path = "../mds-math" }
+mds-physics = { path = "../mds-physics" }
+mds-render = { path = "../mds-render" }
+mds-scene = { path = "../mds-scene" }
+
+[dev-dependencies]
+mds-render = { path = "../mds-render" }
+png = "0.18"

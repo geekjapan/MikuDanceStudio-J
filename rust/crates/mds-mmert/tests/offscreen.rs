@@ -184,3 +184,46 @@ fn a_turn_draws_its_objects_into_the_offscreen_target() {
     let main = main_pixels.len() / 4;
     assert!((0..main).any(|i| px(&main_pixels, i) == centre));
 }
+
+#[test]
+fn the_scene_draws_into_the_targets_bound_at_script_external() {
+    let Some(gpu) = Gpu::new().unwrap() else {
+        eprintln!("SKIP: no wgpu adapter (a skip is not a pass)");
+        return;
+    };
+    let Some(vk) = vkd3d() else { return };
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/rust");
+    let pmx =
+        mds_formats::pmx::Pmx::read(&std::fs::read(fixtures.join("chain8.pmx")).unwrap()).unwrap();
+    let model = Model::from_pmx(&gpu.device, &pmx).unwrap();
+    let effects = fixtures.join("mme/effects");
+    let ((with, without, sizes), errors) = gpu.scoped(|| {
+        let mut post = Effect::load(&gpu, &vk, &effects.join("post.fx"), &effects, MAIN).unwrap();
+        let mut drawer = Effect::load(&gpu, &vk, &data().join("draw.fx"), &data(), MAIN).unwrap();
+        let mut scene = Scene::default_view(MAIN.0, MAIN.1);
+        scene.view = look_at_lh([0.0, 4.0, 20.0], [0.0, 4.0, 0.0], [0.0, 1.0, 0.0]);
+        let input = DrawInput {
+            scene: &scene,
+            geometry: Some((&model, 0)),
+            draw_type: DRAW_OBJECT,
+            controls: None,
+            owner: None,
+            offscreen_owner: None,
+        };
+        let main = Target::new(&gpu, MAIN);
+        let mut sizes = Vec::new();
+        post.frame_with_scene(&gpu, &main, &input, &mut |gpu, t| {
+            sizes.push((t.color.width(), t.color.height(), t.depth.width()));
+            drawer.draw(gpu, t, &input);
+        });
+        let with = main.read(&gpu).unwrap();
+        post.frame(&gpu, &main, &input);
+        (with, main.read(&gpu).unwrap(), sizes)
+    });
+    assert!(errors.is_empty(), "wgpu errors {errors:?}");
+    // `Work` and `WorkDepth` are bound at the suspension, half the back buffer each.
+    assert_eq!(sizes, [(500, 300, 500)]);
+    let red = |p: &[u8]| p.chunks(4).any(|c| c == [255, 0, 0, 255]);
+    assert!(red(&with), "the Final pass shows the scene drawn into Work");
+    assert!(!red(&without));
+}

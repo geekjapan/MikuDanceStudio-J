@@ -34,8 +34,9 @@
 //!
 //! - The host's own draws: a `none` row of an offscreen turn and the scene at `ScriptExternal`
 //!   are the renderer's (`mds-render`); the walk at `ScriptExternal` suspends and resumes with
-//!   nothing drawn in between. The turn order (`MmeSnapshotMainTargets`, one turn per target
-//!   before the base scene) is the caller's.
+//!   only [`Effect::frame_with_scene`]'s callback in between. The turn order (one turn per
+//!   target before the base scene) is the caller's; the post-effect turn snapshot
+//!   (`pass_planner.cpp:MmeSnapshotMainTargets`) is not ported.
 //! - Texture shaders (`Function`/`Target`; `mds-mme` does not model them), the effect cache and
 //!   context (`effect_engine.cpp`, `mme_context.cpp`), multisampled targets (`AntiAlias`),
 //!   automatic mip generation of `Miplevels=0` targets.
@@ -64,6 +65,9 @@ pub use model::Model;
 /// The oracle's back buffer: the size `mds-mme` resolves `ViewportRatio` against.
 pub const BACKBUFFER: (u32, u32) = (1000, 600);
 
+/// The host's scene draw at `ScriptExternal`, into the targets bound there.
+pub type SceneDraw<'a> = dyn FnMut(&Gpu, &Target) + 'a;
+
 /// What [`Effect::frame`] did.
 pub struct FrameReport {
     /// The `runs` section lines without `log` lines, as the plan writes them.
@@ -79,13 +83,25 @@ impl Effect {
     /// Runs every non-empty technique in scan order on one device, with `SasCreateRunState`,
     /// the step walk to `ScriptExternal`, and the resumed walk, then submits the frame.
     pub fn frame(&mut self, gpu: &Gpu, target: &Target, input: &DrawInput) -> FrameReport {
-        self.run_frame(gpu, target, input, true)
+        self.run_frame(gpu, target, input, true, None)
+    }
+
+    /// [`Effect::frame`] that calls `scene` where a technique suspends at `ScriptExternal`, with
+    /// the targets the script bound there, so the host draws the scene into them.
+    pub fn frame_with_scene(
+        &mut self,
+        gpu: &Gpu,
+        target: &Target,
+        input: &DrawInput,
+        scene: &mut SceneDraw,
+    ) -> FrameReport {
+        self.run_frame(gpu, target, input, true, Some(scene))
     }
 
     /// [`Effect::frame`] without the host's clear: the draw of one object into a target other
     /// effects share, such as an offscreen turn's.
     pub fn draw(&mut self, gpu: &Gpu, target: &Target, input: &DrawInput) -> FrameReport {
-        self.run_frame(gpu, target, input, false)
+        self.run_frame(gpu, target, input, false, None)
     }
 
     /// The `OFFSCREENRENDERTARGET` resource `r` and its depth stencil as the target of its
@@ -117,6 +133,7 @@ impl Effect {
         target: &Target,
         input: &DrawInput,
         clear: bool,
+        mut scene: Option<&mut SceneDraw>,
     ) -> FrameReport {
         if let Some(c) = input.controls {
             control::resolve(
@@ -165,6 +182,12 @@ impl Effect {
             if suspended {
                 let b = run.dev.bindings();
                 run.out.push_str(&format!("    suspend {b}\n"));
+                if let Some(scene) = scene.as_mut() {
+                    match run.dev.external_target(gpu) {
+                        Ok(t) => scene(gpu, &t),
+                        Err(e) => run.skipped.push(e),
+                    }
+                }
             }
             let hr = if run.effect.sas.run_failed {
                 mds_mme::run::E_FAIL

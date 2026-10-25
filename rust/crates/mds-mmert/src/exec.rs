@@ -830,6 +830,8 @@ pub struct Surface {
     format: wgpu::TextureFormat,
     /// The resource whose texture this is, for the sample-while-bound check.
     resource: Option<usize>,
+    texture: wgpu::Texture,
+    layer: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -880,6 +882,8 @@ impl Device {
             view: single_view(t, layer),
             format: t.format(),
             resource,
+            texture: t.clone(),
+            layer,
         };
         let scratch = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("scratch"),
@@ -955,6 +959,28 @@ impl Device {
             scratch_depth: HashMap::new(),
             encoder: gpu.device.create_command_encoder(&Default::default()),
         }
+    }
+
+    /// The bound color 0 and depth stencil as a [`Target`] the host's scene draws into at
+    /// `ScriptExternal`, after the commands recorded so far are submitted; why not, otherwise.
+    pub fn external_target(&mut self, gpu: &Gpu) -> Result<Target, String> {
+        let enc = std::mem::replace(
+            &mut self.encoder,
+            gpu.device.create_command_encoder(&Default::default()),
+        );
+        gpu.queue.submit([enc.finish()]);
+        let (Some(rt), Some(ds)) = (self.rt[0], self.ds) else {
+            return Err("ScriptExternal: no depth stencil bound".into());
+        };
+        let (rt, ds) = (&self.surfaces[rt], &self.surfaces[ds]);
+        // ponytail: a Target is a whole texture; a cube face needs a layer in Target.
+        if rt.layer != 0 || rt.texture.depth_or_array_layers() != 1 {
+            return Err(format!("ScriptExternal: {} is a cube face", rt.name));
+        }
+        Ok(Target {
+            color: rt.texture.clone(),
+            depth: ds.texture.clone(),
+        })
     }
 
     /// `rt0=.. rt1=.. rt2=.. rt3=.. ds=.. viewport=WxH+X+Y`.

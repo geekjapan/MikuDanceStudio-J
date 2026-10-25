@@ -6,6 +6,7 @@ use mds_skin::{Mat4, Skin};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) const FLAG_DOUBLE_SIDED: u8 = 0x01;
+pub(crate) const FLAG_GROUND_SHADOW: u8 = 0x02;
 pub(crate) const FLAG_EDGE: u8 = 0x10;
 
 /// Where a material's faces sit in the index list, and how they are drawn. The colors come from
@@ -33,10 +34,12 @@ pub struct Mesh {
     skin: Skin,
     pub(crate) indices: Vec<u32>,
     pub(crate) materials: Vec<Material>,
+    edge_scale: f32,
 }
 
-/// The scene values the edge of `mds-skin` reads.
+/// The scene values the edge of `mds-skin` reads, except the model's edge scale.
 pub(crate) struct EdgeView {
+    pub world: [f32; 16],
     pub camera_position: [f32; 3],
     /// The `camera_fov` that `mds_skin::View` takes.
     pub fov: f32,
@@ -68,6 +71,7 @@ fn finish(
         skin,
         indices,
         materials,
+        edge_scale: 1.0,
     })
 }
 
@@ -98,7 +102,8 @@ impl Mesh {
         finish(bind, Skin::from_pmx(pmx)?, indices, materials)
     }
 
-    /// A PMD model. Materials with an alpha below 1 are drawn double sided.
+    /// A PMD model. Materials with an alpha below 1 are drawn double sided, and every material
+    /// casts the ground shadow.
     pub fn from_pmd(pmd: &Pmd) -> Result<Mesh, String> {
         let indices = pmd.indices.iter().map(|&i| u32::from(i)).collect();
         let mut start = 0u32;
@@ -109,7 +114,8 @@ impl Mesh {
                     FLAG_DOUBLE_SIDED
                 } else {
                     0
-                }) | if m.edge != 0 { FLAG_EDGE } else { 0 },
+                }) | if m.edge != 0 { FLAG_EDGE } else { 0 }
+                    | FLAG_GROUND_SHADOW,
                 start,
                 count: m.face_vertex_count,
             });
@@ -123,6 +129,11 @@ impl Mesh {
             .map(|v| (v.position, v.normal))
             .collect();
         finish(bind, Skin::from_pmd(pmd)?, indices, materials)
+    }
+
+    /// The model's edge thickness, `edge_scale` of its PMM model record (1 when a mesh is made).
+    pub fn set_edge_scale(&mut self, scale: f32) {
+        self.edge_scale = scale;
     }
 
     pub(crate) fn vertex_count(&self) -> usize {
@@ -171,10 +182,10 @@ impl Mesh {
             &weights,
             &bones,
             &mds_skin::View {
-                world: Mat4::IDENTITY,
+                world: Mat4(view.world),
                 camera_position: view.camera_position,
                 camera_fov: view.fov,
-                edge_scale: 1.0,
+                edge_scale: self.edge_scale,
                 self_shadow: view.self_shadow,
             },
         );
@@ -187,6 +198,7 @@ mod tests {
     use super::*;
 
     const VIEW: EdgeView = EdgeView {
+        world: Mat4::IDENTITY.0,
         camera_position: [0.0; 3],
         fov: 30.0,
         self_shadow: false,

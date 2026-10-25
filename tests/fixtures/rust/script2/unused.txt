@@ -1,0 +1,37 @@
+# Menu 222 (delete unused frames) on chain8_ik.pmx and morph4.pmx with swing600.vmd. Three equal keys of 首
+# (chain8) and of い (morph4) make the middle one redundant; the info box
+# with the deleted count goes to messages.tsv.
+load model chain8_ik.pmx
+load vmd swing600.vmd
+select bone 首
+frame 10
+bone rotation 0 0 10
+register bone
+frame 20
+bone rotation 0 0 10
+register bone
+frame 30
+bone rotation 0 0 10
+register bone
+save pmm keys-chain8.pmm
+delete unused
+save pmm unused-chain8.pmm
+select all bone
+save vmd unused-chain8.vmd
+load model morph4.pmx
+load vmd swing600.vmd
+select morph 2 い
+frame 520
+morph 2 0.5
+register morph 2
+frame 540
+morph 2 0.5
+register morph 2
+frame 560
+morph 2 0.5
+register morph 2
+save pmm keys-morph4.pmm
+delete unused
+save pmm unused-morph4.pmm
+select all morph
+save vmd unused-morph4.vmd

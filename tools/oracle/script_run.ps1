@@ -1,22 +1,28 @@
-# Script lane (wave 3 slice script): runs every tests\fixtures\rust\script\*.txt
-# with --mds-script twice, into <Out>\run1\<name> and <Out>\run2\<name>, and
+# Script lane (wave 3 slices script and script2): runs every
+# tests\fixtures\rust\<Dir>\*.txt (Dir: script by default, script2, physscen,
+# script2\pmm1) with --mds-script twice, into <Out>\run1\<name> and <Out>\run2\<name>, and
 # compares the two runs file by file. Stages the fixtures next to the exe
 # first (the scripts name their inputs relative to the exe directory).
 # Needs build.ps1 first, and the console session for the D3D9 device:
 #   runtask.ps1 -Script <checkout>\tools\oracle\script_run.ps1 -Log <x.log>
 #               -ScriptArgs '-Root <checkout> -Out <empty dir>'
-# -Filter runs only the scripts whose name contains the text.
-param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Out, [string]$Filter = '')
+# -Filter runs only the scripts whose name contains the text. Staged next to the
+# exe: tests\fixtures\rust\*, script\inputs\*, <Dir>\inputs\*, and for
+# script2\pmm1 also tests\fixtures\rust\pmm1\*.
+param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Out, [string]$Filter = '',
+      [string]$Dir = 'script')
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = 'Continue'
 $exeDir = "$Root\out\ci\build\Release"
 $fixtures = "$Root\tests\fixtures\rust"
-foreach ($f in Get-ChildItem -File $fixtures, "$fixtures\script\inputs" -ErrorAction SilentlyContinue) {
+$stage = @($fixtures, "$fixtures\script\inputs", "$fixtures\$Dir\inputs")
+if ($Dir -eq 'script2\pmm1') { $stage += "$fixtures\pmm1" }
+foreach ($f in Get-ChildItem -File $stage -ErrorAction SilentlyContinue) {
     if ($f.Extension -in '.pmd', '.pmx', '.pmm', '.vmd', '.vpd', '.x', '.wav', '.png', '.bmp') {
         Copy-Item $f.FullName "$exeDir\$($f.Name)" -Force
     }
 }
-$scripts = Get-ChildItem -File "$fixtures\script\*.txt" | Where-Object { $_.Name.Contains($Filter) } | Sort-Object Name
+$scripts = Get-ChildItem -File "$fixtures\$Dir\*.txt" | Where-Object { $_.Name.Contains($Filter) } | Sort-Object Name
 $failed = 0
 foreach ($run in 'run1', 'run2') {
     foreach ($s in $scripts) {

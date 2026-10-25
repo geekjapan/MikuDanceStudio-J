@@ -1,0 +1,20 @@
+[Info]
+Version = 3
+
+[Object]
+Pmd0 = C:\mds\w2-script2\repo\out\ci\build\Release\chain8_ik.pmx
+Pmd1 = C:\mds\w2-script2\repo\out\ci\build\Release\morph4.pmx
+Pmd2 = C:\mds\w2-script2\repo\out\ci\build\Release\chain8.pmx
+Pmd3 = C:\mds\w2-script2\repo\out\ci\build\Release\chain8.pmd
+
+[Effect]
+Default = none
+Pmd0 = none
+Pmd0.show = true
+Pmd1 = none
+Pmd1.show = true
+Pmd2 = none
+Pmd2.show = true
+Pmd3 = none
+Pmd3.show = true
+

@@ -2,8 +2,8 @@
 //!
 //! vkd3d-shader names its resources by D3D register (`cb0_0`, `s3`, `t3`) and puts every one
 //! in group 0, and it numbers SM 3.0 varyings by output and input register, which D3D9 links
-//! by semantic instead. This module reads the semantics from the `D3dAsm` listing of the same
-//! compile (`dcl_texcoord1 o2`) and rewrites the naga module:
+//! by semantic instead. This module reads the semantics from [`Vkd3d::scan_hlsl`] on the source
+//! of the same compile (`TEXCOORD1` at `o2`) and rewrites the naga module:
 //!
 //! - group 0 holds the vertex shader's resources and group 1 the pixel shader's; constant
 //!   buffer `cbN` binds at N, sampler `sN` at `4 + 2N`, texture `tN` at `5 + 2N`;
@@ -20,7 +20,8 @@ use std::collections::BTreeMap;
 
 use mds_fx::{Effect, Entry};
 use mds_shader::ctab::Constant;
-use mds_shader::vkd3d::{Target, Vkd3d};
+use mds_shader::vkd3d::{self, Scan, Vkd3d};
+use mds_shader::Options;
 use naga::{Binding, Handle, ScalarKind, Type, TypeInner};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -104,49 +105,28 @@ pub fn varying_location(usage: &str, index: u32) -> Option<u32> {
     }
 }
 
-/// `dcl_<usage><index> <reg>` lines of a `D3dAsm` listing: register letter and number to usage
-/// and index. `dcl_2d s0` gives the sampler dimensions.
-#[derive(Default, Debug)]
-pub struct Decls {
-    pub semantics: BTreeMap<(char, u32), (String, u32)>,
-    pub samplers: BTreeMap<u32, wgpu::TextureViewDimension>,
-}
-
-pub fn parse_decls(asm: &str) -> Decls {
-    let mut d = Decls::default();
-    for line in asm.lines() {
-        let mut it = line.split_whitespace();
-        let (Some(op), Some(reg)) = (it.next(), it.next()) else {
-            continue;
-        };
-        let Some(rest) = op.strip_prefix("dcl") else {
-            continue;
-        };
-        let reg = reg.split('.').next().unwrap_or(reg);
-        let Some(letter) = reg.chars().next() else {
-            continue;
-        };
-        let Ok(num) = reg[1..].parse::<u32>() else {
-            continue;
-        };
-        let usage = rest.trim_start_matches('_');
-        if letter == 's' {
-            let dim = match usage {
-                "cube" => wgpu::TextureViewDimension::Cube,
-                "volume" => wgpu::TextureViewDimension::D3,
-                _ => wgpu::TextureViewDimension::D2,
-            };
-            d.samplers.insert(num, dim);
+/// The semantic of each register the rewrite looks up, from [`Vkd3d::scan_hlsl`]: register
+/// letter and number to usage and index. Vertex inputs (`v`) always; for SM 3.0 also vertex
+/// outputs (`o`) and pixel inputs (`v`). The sm3 `VPOS` and `VFACE` pixel inputs are not
+/// varyings and stay out.
+fn scan_semantics(scan: &Scan, profile: &str) -> BTreeMap<(char, u32), (String, u32)> {
+    let vs = profile.starts_with("vs_");
+    let sm3 = profile.get(3..4) == Some("3");
+    let mut map = BTreeMap::new();
+    for (letter, list) in [('v', &scan.inputs), ('o', &scan.outputs)] {
+        if !((vs && letter == 'v') || (sm3 && (vs == (letter == 'o')))) {
             continue;
         }
-        let name: String = usage
-            .chars()
-            .take_while(|c| c.is_ascii_alphabetic())
-            .collect();
-        let index = usage[name.len()..].parse().unwrap_or(0);
-        d.semantics.insert((letter, num), (name, index));
+        for e in list {
+            if !vs && [vkd3d::SV_POSITION, vkd3d::SV_IS_FRONT_FACE].contains(&e.sysval) {
+                continue;
+            }
+            let name = e.semantic.to_ascii_lowercase();
+            let name = name.strip_prefix("sv_").unwrap_or(&name).to_string();
+            map.insert((letter, e.register), (name, e.index));
+        }
     }
-    d
+    map
 }
 
 fn numeric(module: &naga::Module, ty: Handle<Type>) -> Option<(ScalarKind, u32)> {
@@ -442,26 +422,18 @@ fn view_dim(dim: naga::ImageDimension, arrayed: bool) -> wgpu::TextureViewDimens
 /// Compiles `entry` of `fx` for `stage` and rewrites it as the module doc says.
 pub fn compile(vk: &Vkd3d, fx: &Effect, entry: &Entry, stage: Stage) -> Result<Shader, String> {
     let name = format!("{}_{}", entry.profile, entry.function);
-    let compiled = mds_shader::compile(vk, fx, entry, &name);
-    let source = compiled.source.clone();
-    let ep = compiled.entry_point.clone();
+    // vkd3d writes D3D clip space, which wgpu shares; the default options flip Y like naga-cli.
+    let compiled = mds_shader::compile_with(vk, fx, entry, &name, &Options { flip_y: false });
     if compiled.status != mds_shader::Status::Ok {
         return Err(compiled.error.unwrap_or_else(|| "no WGSL".into()));
     }
-    let words = compiled.spirv.ok_or("no SPIR-V")?;
-    // vkd3d writes D3D clip space, which wgpu shares; mds-shader's naga-cli setting flips Y.
-    let opts = naga::front::spv::Options {
-        adjust_coordinate_space: false,
-        strict_capabilities: false,
-        block_ctx_dump_prefix: None,
-    };
-    let mut module = naga::front::spv::Frontend::new(words.iter().copied(), &opts)
-        .parse()
-        .map_err(|e| format!("naga spv-in: {e}"))?;
-    let asm = vk
-        .compile_hlsl(&source, &name, &entry.profile, &ep, Target::D3dAsm)
-        .map_err(|e| format!("asm: {}", e.summary()))?;
-    let decls = parse_decls(&String::from_utf8_lossy(&asm));
+    let source = compiled.source;
+    let ep = compiled.entry_point;
+    let mut module = compiled.outputs.ok_or("no naga module")?.module;
+    let scan = vk
+        .scan_hlsl(&source, &name, &entry.profile, &ep)
+        .map_err(|e| format!("scan: {}", e.summary()))?;
+    let semantics = scan_semantics(&scan, &entry.profile);
     let reflection = mds_shader::reflect::reflect(vk, &fx.ast, &source, &name, &entry.profile, &ep)
         .map_err(|e| format!("reflect: {e}"))?;
     let sm3 = entry.profile.get(3..4) == Some("3");
@@ -520,10 +492,9 @@ pub fn compile(vk: &Vkd3d, fx: &Effect, entry: &Entry, stage: Stage) -> Result<S
         .iter()
         .position(|e| e.stage == naga_stage)
         .ok_or("no entry point for the stage")?;
-    let entry_name = module.entry_points[epi].name.clone();
 
     // Locations are register numbers in vkd3d's SPIR-V.
-    let semantic = |letter: char, reg: u32| decls.semantics.get(&(letter, reg)).cloned();
+    let semantic = |letter: char, reg: u32| semantics.get(&(letter, reg)).cloned();
     let move_by_semantic = |letter: char| {
         move |reg: u32| -> Result<Option<u32>, String> {
             if !sm3 {
@@ -624,19 +595,10 @@ pub fn compile(vk: &Vkd3d, fx: &Effect, entry: &Entry, stage: Stage) -> Result<S
     let wgsl =
         naga::back::wgsl::write_string(&module, &info, naga::back::wgsl::WriterFlags::empty())
             .map_err(|e| format!("rebound module wgsl-out: {e}"))?;
-    // The WGSL writer renames reserved names such as the wrapper's `__mme_entry`.
-    let attribute = match stage {
-        Stage::Vertex => "@vertex",
-        Stage::Fragment => "@fragment",
-    };
-    let entry_name = wgsl
-        .split_once(attribute)
-        .and_then(|(_, rest)| rest.split_once("fn ")?.1.split_once('('))
-        .map_or(entry_name, |(name, _)| name.trim().to_string());
     Ok(Shader {
         stage,
         wgsl,
-        entry: entry_name,
+        entry: ep,
         constants: reflection.constants,
         slots,
         inputs,
@@ -650,15 +612,39 @@ pub fn compile(vk: &Vkd3d, fx: &Effect, entry: &Entry, stage: Stage) -> Result<S
 mod tests {
     use super::*;
 
+    fn element(semantic: &str, index: u32, register: u32, sysval: u32) -> vkd3d::Element {
+        vkd3d::Element {
+            semantic: semantic.into(),
+            index,
+            register,
+            sysval,
+            mask: 0xf,
+        }
+    }
+
     #[test]
-    fn decls_of_an_sm3_listing() {
-        let d = parse_decls(
-            "vs_3_0\ndcl_position0 v0\ndcl_texcoord1 v1.xy\ndcl_position0 o0\ndcl_texcoord0 o1\ndcl_cube s2\ndcl t0\n",
-        );
-        assert_eq!(d.semantics[&('v', 1)], ("texcoord".to_string(), 1));
-        assert_eq!(d.semantics[&('o', 0)], ("position".to_string(), 0));
-        assert_eq!(d.semantics[&('t', 0)], (String::new(), 0));
-        assert_eq!(d.samplers[&2], wgpu::TextureViewDimension::Cube);
+    fn semantics_of_an_sm3_scan() {
+        let scan = Scan {
+            inputs: vec![element("POSITION", 0, 0, 0), element("TEXCOORD", 1, 1, 0)],
+            outputs: vec![element("SV_Position", 0, 0, vkd3d::SV_POSITION)],
+            ..Scan::default()
+        };
+        let d = scan_semantics(&scan, "vs_3_0");
+        assert_eq!(d[&('v', 1)], ("texcoord".to_string(), 1));
+        assert_eq!(d[&('o', 0)], ("position".to_string(), 0));
+
+        let ps = Scan {
+            inputs: vec![
+                element("TEXCOORD", 0, 0, 0),
+                element("VPOS", 0, 0, vkd3d::SV_POSITION),
+            ],
+            ..Scan::default()
+        };
+        let d = scan_semantics(&ps, "ps_3_0");
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[&('v', 0)], ("texcoord".to_string(), 0));
+        assert!(scan_semantics(&ps, "ps_2_0").is_empty());
+
         assert_eq!(varying_location("texcoord", 1), Some(1));
         assert_eq!(varying_location("color", 1), Some(11));
         assert_eq!(register_of("cb0_0"), Some(('c', 0)));

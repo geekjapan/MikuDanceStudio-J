@@ -611,6 +611,8 @@ if(BUILD_TESTING)
     add_executable(trace_format_test tests/trace_format_test.cpp)
     target_include_directories(trace_format_test PRIVATE src/tools)
     add_test(NAME trace_format COMMAND trace_format_test)
+    add_executable(frame_dump_args_test src/tools/frame_dump_args_test.cpp)
+    add_test(NAME frame_dump_args COMMAND frame_dump_args_test)
     # RM-3 oracle tools for the Windows host (runbook in tools/oracle/math_vectors.cpp).
     add_executable(math_vectors tools/oracle/math_vectors.cpp)
     target_include_directories(math_vectors PRIVATE include tools/oracle)

@@ -1233,9 +1233,14 @@ version = "0.1.0"
 name = "mds-doc"
 version = "0.1.0"
 dependencies = [
+ "encoding_rs",
+ "mds-accessory",
  "mds-edit",
  "mds-formats",
+ "mds-math",
+ "mds-ops",
  "mds-pose",
+ "mds-scene",
 ]
 
 [[package]]
@@ -1243,6 +1248,7 @@ name = "mds-edit"
 version = "0.1.0"
 dependencies = [
  "mds-formats",
+ "mds-math",
 ]
 
 [[package]]

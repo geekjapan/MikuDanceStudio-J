@@ -14,16 +14,22 @@
 //! checked once). On a pool that does not, an operation returns
 //! [`Error::Corrupt`] or stops, instead of indexing out of bounds or looping.
 //!
-//! Not ported: undo and redo bookkeeping, the overflow message boxes (the
-//! operations return [`Error::Full`]), mirrored paste, `useSelected` bone
-//! keys, and the paths that need another subsystem (see [`Error::Unsupported`]).
+//! The fixed-axis twist correction calls the D3DX quaternion functions
+//! through `mds-math`. The operations that take an [`Extra`] (the `*_with`
+//! ones and [`Tracks::paste_bones`]) get the bone fields and UI state beyond
+//! [`Rig`] that the twist correction and the pose of a bone with a rigid
+//! body read. The operations without it return [`Error::Unsupported`] on
+//! those two paths.
+//!
+//! Not ported: undo and redo bookkeeping and the overflow message boxes (the
+//! operations return [`Error::Full`]).
 
 mod delete;
 mod link;
 mod register;
 
 pub use link::Link;
-pub use register::{BoneClip, DisplayClip, MorphClip};
+pub use register::{BoneClip, BoneTarget, DisplayClip, MorphClip};
 
 use mds_formats::key_pool::{KeyPool, BONE_KEY_CAPACITY, DISPLAY_KEY_CAPACITY, MORPH_KEY_CAPACITY};
 use mds_formats::pmm::{BoneKey, DisplayKey, MorphKey};
@@ -50,7 +56,7 @@ pub struct BoneInfo {
     /// Bone types 0, 1 and 2 (rotate+move, move, IK) store a position.
     pub writes_position: bool,
     /// Fixed-axis bones (type 8, or type 4 with the 0x400 flag) get a twist
-    /// correction on paste that needs the D3DX quaternion functions.
+    /// correction on paste, which needs [`BoneExtra::axis`].
     pub twist: bool,
     pub rigid_body: bool,
     /// Current pose, which "register" stores.
@@ -91,7 +97,8 @@ pub struct Selector {
     pub linked_bone: i32,
 }
 
-/// The model as the editor reads it. The editor never changes it.
+/// The model as the editor reads it. Only the physics pose of
+/// [`Tracks::register_bone_pose_with`] changes it.
 #[derive(Clone, Debug)]
 pub struct Rig {
     pub bones: Vec<BoneInfo>,
@@ -102,8 +109,37 @@ pub struct Rig {
     pub pmx: bool,
     /// `loadComplete`, which "register display key" stores as the visible flag.
     pub load_complete: u8,
-    /// The "auto interpolation" checkbox. Not ported.
+    /// The "auto interpolation" checkbox (`kPhysicsFrameCheckbox`, 530):
+    /// register and delete rebuild the position curves around a bone key.
     pub auto_interpolation: bool,
+}
+
+/// What the bone registrars read of a bone beyond [`BoneInfo`], and what the
+/// register button changes.
+#[derive(Clone, Debug, Default)]
+pub struct BoneExtra {
+    /// The twist axis of a fixed-axis bone: `BoneRecord::axis` for PMX, or
+    /// the tail bone's position minus the bone's for PMD, which the
+    /// registrar normalizes.
+    pub axis: [f32; 3],
+    /// `ikBackup`: the pose the physics step left, which "register" stores
+    /// for a bone with a rigid body while physics drives it.
+    pub physics_rotation: [f32; 4],
+    pub physics_translation: [f32; 3],
+    /// `BoneRecord::physicsDisabled`: physics does not drive the bone.
+    pub physics_disabled: u8,
+}
+
+/// The state beyond [`Rig`] that the `*_with` operations read and change.
+#[derive(Clone, Debug, Default)]
+pub struct Extra {
+    /// One per bone of the rig.
+    pub bones: Vec<BoneExtra>,
+    /// The physics checkbox (`kPhysicsCheckbox`, 499). "Register" sets the
+    /// `physics_disabled` of a bone with a rigid body to its negation.
+    pub physics_checkbox: bool,
+    /// `PlaybackPhysicsMode`, which the register button passes as `mode`.
+    pub physics_mode: i32,
 }
 
 /// The key pools of one model with the two fields next to them that the

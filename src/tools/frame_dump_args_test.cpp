@@ -52,6 +52,13 @@ int main() {
         CHECK(untouched.dumpFrames.empty() && untouched.pmm.empty());
     }
 
+    CHECK(Parse({L"app", L"--mds-edge-probe", L"a.pmm", L"probe.txt", L"0", L"30"}, &request) ==
+          TraceArgs::Ready);
+    CHECK(request.mode == TraceRequest::Mode::EdgeProbe && request.out == L"probe.txt" &&
+          request.frames == 31 && (request.dumpFrames == std::vector<std::uint32_t>{0, 30}));
+    CHECK(Parse({L"app", L"--mds-edge-probe", L"a.pmm", L"probe.txt", L"3", L"3"}, &request) ==
+          TraceArgs::Malformed);
+
     // --mds-trace still parses as a trace.
     CHECK(Parse({L"app", L"--mds-trace", L"a.pmm", L"o.trace", L"600"}, &request) ==
           TraceArgs::Ready);

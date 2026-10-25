@@ -170,7 +170,7 @@ impl Renderer {
         frame: &Frame,
         sample_count: u32,
     ) -> Result<(), String> {
-        self.render_into_with(target, frame, &Stage::default(), sample_count)
+        self.render_into_with(target, frame, &Stage::legacy(frame), sample_count)
     }
 
     /// [`render_into`](Renderer::render_into) with the passes of `stage`.
@@ -195,7 +195,7 @@ impl Renderer {
     /// Draws `frame` and returns `width * height * 4` RGBA8 bytes, top row first: one render per
     /// entry of `frame.samples` (no multisampling), averaged in linear light.
     pub fn render_frame(&mut self, frame: &Frame) -> Result<Vec<u8>, String> {
-        self.render_frame_with(frame, &Stage::default())
+        self.render_frame_with(frame, &Stage::legacy(frame))
     }
 
     /// [`render_frame`](Renderer::render_frame) with the passes of `stage`.

@@ -131,7 +131,8 @@ pub struct Frame<'a> {
     /// Color the target is cleared to (RGBA8).
     pub background: [u8; 4],
     /// Whether the toon applies (MMD draws every model with one). Which toon follows the
-    /// [`Stage`]'s self-shadow.
+    /// [`Stage`]'s self-shadow; the entry points without a stage take it as self-shadow mode 2
+    /// ([`Stage::legacy`]).
     pub toon: bool,
     /// Models in draw order, each with its pose (`None` draws the bind pose).
     pub models: &'a [(&'a Mesh, Option<&'a Pose>)],
@@ -143,14 +144,27 @@ pub struct Frame<'a> {
     pub pixel_offset: [f32; 2],
 }
 
-/// What a PMM frame draws besides the models' own passes. `Stage::default()` draws none of it;
-/// [`render_frame`] and [`Renderer::render_into`] draw that.
+/// What a PMM frame draws besides the models' own passes. `Stage::default()` draws none of it.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Stage {
     /// The projected ground shadow (the PMM view flag `ground_shadow`), or `None`.
     pub ground_shadow: Option<GroundShadow>,
     /// Self-shadow (modes 1 and 2), or `None` (mode 0).
     pub self_shadow: Option<SelfShadow>,
+}
+
+impl Stage {
+    /// What [`render_frame`], [`Renderer::render_frame`] and [`Renderer::render_into`] draw, the
+    /// shading from before there was a stage: `frame.toon` is self-shadow mode 2, no ground shadow.
+    pub fn legacy(frame: &Frame) -> Stage {
+        Stage {
+            ground_shadow: None,
+            self_shadow: frame.toon.then_some(SelfShadow {
+                mode: 2,
+                distance: 0.0,
+            }),
+        }
+    }
 }
 
 /// The self-shadow track of a PMM at one frame.

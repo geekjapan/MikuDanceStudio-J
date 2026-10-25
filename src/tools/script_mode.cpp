@@ -32,8 +32,17 @@
 //   MessageBoxA / MessageBoxW  an OK/Cancel question is answered OK when the
 //     step's command asks one in the GUI (new, load pmm, load model, paste
 //     different); any other box fails the step and prints its text.
+//     The info boxes of `delete unused` and `register blink` (MB_OK, the
+//     deleted and registered counts) are answered OK too and their text is
+//     written to <out-dir>\messages.tsv.
 // Any other dialog (class #32770) fails the step through a WH_CBT hook,
-// except the gravity dialog, which `gravity open` creates (it is modeless).
+// except the gravity dialog, which `gravity open` creates (it is modeless),
+// and the modal dialog of a bulk operation (bias, shift lip, register blink,
+// the three multiply dialogs, physics frames, scale range). The handler
+// blocks in DialogBoxParamA, so a WH_CALLWNDPROCRET hook fills that
+// dialog's controls when its WM_INITDIALOG returns (WM_SETTEXT, BM_SETCHECK,
+// or CB_SETCURSEL with CBN_SELCHANGE) and posts the OK button's BN_CLICKED,
+// which the dialog's modal loop delivers as a click.
 //
 // Between steps the runner drains the message queue and runs FrameDriver
 // (frame_driver.cpp) kSettleFrames times, as the app's own loop does between
@@ -44,8 +53,13 @@
 // fire: an edit command commits the value only, and keys are registered by
 // the register commands alone. The
 // frame delta is fixed at 1/30 s instead of the wall clock, so physics steps
-// the same in every run. The main window stays hidden, so no stray mouse or
-// keyboard input reaches it.
+// the same in every run. `settle <n>` changes the number of those frames for
+// the steps that follow (physics scenarios use 0, so only `pump` runs
+// frames). `pump <n> <ms>` runs n passes of the loop body of winmain.cpp with
+// a clock that advances ms milliseconds per pass, and `trace <name>` makes
+// every pump pass append the rigid-body lines of the L2 trace format
+// (trace_l2.hpp) to <out-dir>\<name>. The main window stays hidden, so no
+// stray mouse or keyboard input reaches it.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -66,6 +80,8 @@
 #include <string>
 #include <vector>
 
+#include "btBulletDynamicsCommon.h"
+
 #include "mikudancestudio/menu_commands.h"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
@@ -73,6 +89,7 @@
 #include "mikudancestudio/ported_funcs.hpp"
 
 #include "script_mode.hpp"
+#include "trace_l2.hpp"
 
 namespace mikudancestudio {
 void SelectDisplayBone(MMDApp* app, int boneIdx); // model_query_helpers.cpp (no header)
@@ -83,6 +100,9 @@ namespace {
 
 constexpr int kSettleFrames = 2;
 constexpr std::size_t kDialogPathLength = 0x100; // the handlers' path buffers
+// ApplyFrameRangeScale reads its edits with GetWindowTextA(.., 8); the other
+// dialogs read 19 characters. One limit for all keeps a value from being cut.
+constexpr std::size_t kDialogTextLength = 7;
 
 // ---- text ---------------------------------------------------------------
 
@@ -148,16 +168,31 @@ bool IsFile(const std::wstring& path) {
 
 // ---- the step state the hooks read ---------------------------------------
 
+// One control of a modal dialog, as a user sets it before clicking OK.
+struct DialogInput {
+    enum Kind {
+        Text,
+        Check,
+        ComboItem
+    } kind;
+    int id;
+    std::string text; // Text: the edit's text; Check: "1" or "0"; ComboItem: the item index
+};
+
 struct StepState {
     const ScriptCommand* command = nullptr;
     std::wstring dialogPath;        // the path the next file dialog returns, empty: none expected
     bool dialogUsed = false;        // a file dialog returned dialogPath
     bool answerOkCancel = false;    // an OK/Cancel question is answered OK
-    bool allowDialogWindow = false; // a #32770 window may open (the gravity dialog)
+    bool answerInfo = false;        // an MB_OK box is answered OK and recorded
+    bool allowDialogWindow = false; // a #32770 window may open (gravity, a bulk operation)
+    const std::vector<DialogInput>* dialogInputs = nullptr; // the next modal dialog's controls
+    bool dialogFilled = false;                              // a modal dialog got them
 };
 
 StepState g_step;
 std::set<HWND> g_allowedDialogs;
+std::vector<std::string> g_messages; // messages.tsv lines
 
 std::string StepName() {
     if (g_step.command == nullptr)
@@ -211,6 +246,14 @@ BOOL WINAPI ScriptGetSaveFileNameW(LPOPENFILENAMEW ofn) {
 int AnswerMessageBox(const std::string& caption, const std::string& text, UINT type) {
     if ((type & MB_TYPEMASK) == MB_OKCANCEL && g_step.answerOkCancel)
         return IDOK;
+    if ((type & MB_TYPEMASK) == MB_OK && g_step.answerInfo) {
+        std::string oneLine;
+        for (const char c : text)
+            oneLine += c == '\n' ? std::string("\\n") : std::string(1, c);
+        g_messages.push_back(std::to_string(g_step.command->line) + "\t" + caption + "\t" +
+                             oneLine);
+        return IDOK;
+    }
     AbortStep("message box: " + caption + ": " + text);
 }
 
@@ -265,9 +308,7 @@ bool PatchImport(const char* dll, const char* function, const void* replacement)
 LRESULT CALLBACK DialogGuardProc(int code, WPARAM wParam, LPARAM lParam) {
     if (code == HCBT_ACTIVATE) {
         const HWND window = reinterpret_cast<HWND>(wParam);
-        wchar_t windowClass[8] = L"";
-        if (GetClassNameW(window, windowClass, 8) != 0 && wcscmp(windowClass, L"#32770") == 0 &&
-            g_allowedDialogs.count(window) == 0) {
+        if (IsDialogWindow(window) && g_allowedDialogs.count(window) == 0) {
             if (!g_step.allowDialogWindow) {
                 wchar_t caption[256] = L"";
                 GetWindowTextW(window, caption, 256);
@@ -275,6 +316,40 @@ LRESULT CALLBACK DialogGuardProc(int code, WPARAM wParam, LPARAM lParam) {
             }
             g_allowedDialogs.insert(window);
         }
+    }
+    return CallNextHookEx(nullptr, code, wParam, lParam);
+}
+
+bool IsDialogWindow(HWND window) {
+    wchar_t windowClass[8] = L"";
+    return GetClassNameW(window, windowClass, 8) != 0 && wcscmp(windowClass, L"#32770") == 0;
+}
+
+// Fills the modal dialog of the step when its WM_INITDIALOG has returned (the
+// dialog proc's prefills are in place) and clicks OK.
+LRESULT CALLBACK DialogFillProc(int code, WPARAM wParam, LPARAM lParam) {
+    const auto* message = reinterpret_cast<const CWPRETSTRUCT*>(lParam);
+    if (code == HC_ACTION && message->message == WM_INITDIALOG && g_step.dialogInputs != nullptr &&
+        !g_step.dialogFilled && IsDialogWindow(message->hwnd)) {
+        const HWND dialog = message->hwnd;
+        g_step.dialogFilled = true;
+        for (const DialogInput& input : *g_step.dialogInputs) {
+            const HWND control = GetDlgItem(dialog, input.id);
+            if (control == nullptr)
+                AbortStep("the dialog has no control " + std::to_string(input.id));
+            if (input.kind == DialogInput::Text) {
+                SetWindowTextA(control, input.text.c_str());
+            } else if (input.kind == DialogInput::Check) {
+                SendMessageA(control, BM_SETCHECK, input.text == "1" ? BST_CHECKED : BST_UNCHECKED,
+                             0);
+            } else {
+                SendMessageA(control, CB_SETCURSEL, std::stoul(input.text), 0);
+                SendMessageA(dialog, WM_COMMAND, MAKEWPARAM(input.id, CBN_SELCHANGE),
+                             reinterpret_cast<LPARAM>(control));
+            }
+        }
+        PostMessageA(dialog, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED),
+                     reinterpret_cast<LPARAM>(GetDlgItem(dialog, IDOK)));
     }
     return CallNextHookEx(nullptr, code, wParam, lParam);
 }
@@ -287,6 +362,11 @@ struct Runner {
     std::vector<std::string> manifest;
     std::map<std::string, std::string> hashes; // file name -> sha256 at its last manifest line
     std::string error;                         // set by a failed step
+    int settleFrames = kSettleFrames;
+    std::ofstream trace;   // the open `trace` file
+    std::string traceName; // its file name, empty: no trace
+    int traceLine = 0;     // the line of the `trace` command
+    std::uint32_t tracePass = 0;
 
     HWND Main() const { return static_cast<HWND>(app->Hwnd()); }
 
@@ -374,19 +454,134 @@ struct Runner {
 
     // The app's message loop between two user actions (winmain.cpp), with
     // a fixed frame delta.
+    static void DrainMessages() {
+        MSG msg;
+        while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT)
+                continue;
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+        }
+    }
+
     void Settle() {
-        for (int frame = 0; frame < kSettleFrames; ++frame) {
-            MSG msg;
-            while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
-                if (msg.message == WM_QUIT)
-                    continue;
-                TranslateMessage(&msg);
-                DispatchMessageA(&msg);
-            }
+        for (int frame = 0; frame < settleFrames; ++frame) {
+            DrainMessages();
             app->DeltaTime() = 1.0f / 30.0f;
             app->TimeNowLow() += 33;
             FrameDriver(app);
         }
+    }
+
+    // `passes` passes of the winmain.cpp loop body, with the timeGetTime
+    // reading advanced by `ms` per pass and DeltaTime derived from it the way
+    // that loop derives it. The frame-rate limit's Sleep is not modelled:
+    // DeltaTime is what the clock says.
+    bool Pump(std::uint32_t passes, std::uint32_t ms) {
+        for (std::uint32_t pass = 0; pass < passes; ++pass) {
+            DrainMessages();
+            std::uint64_t now =
+                (static_cast<std::uint64_t>(app->TimeNowHigh()) << 32) | app->TimeNowLow();
+            now += ms;
+            app->DeltaTime() = static_cast<float>(static_cast<std::int64_t>(ms)) * 0.001f;
+            app->TimeNowLow() = static_cast<std::uint32_t>(now);
+            app->TimeNowHigh() = static_cast<std::uint32_t>(now >> 32);
+            FrameDriver(app);
+            if (!traceName.empty() && !WriteRigidBlock(++tracePass))
+                return false;
+        }
+        return true;
+    }
+
+    bool StartTrace(const std::string& name) {
+        if (!traceName.empty())
+            return Fail("a trace is already open (one trace per script)");
+        trace.open((request.out + L"\\" + Wide(name)).c_str(), std::ios::binary | std::ios::trunc);
+        if (!trace)
+            return Fail("cannot create " + name);
+        traceName = name;
+        traceLine = g_step.command->line;
+        l2::WriteHeader(trace);
+        return WriteRigidBlock(0);
+    }
+
+    // The "rigid" lines of one trace block: every rigid body of every loaded
+    // model, by slot, then by the model's rigid body order.
+    bool WriteRigidBlock(std::uint32_t block) {
+        for (int slot = 0; slot < kModelSlotCount; ++slot) {
+            unsigned char* model = app->ModelSlot(slot);
+            if (model == nullptr)
+                continue;
+            const mdl::ModelRecord* record = mdl::Mdl(model);
+            const mdl::RigidRecord* rigids = mdl::Rigids(model);
+            for (std::uint32_t i = 0; i < record->rigidCount; ++i) {
+                const auto* body = static_cast<const btRigidBody*>(rigids[i].body);
+                if (body == nullptr)
+                    return Fail("model slot " + std::to_string(slot) + " rigid body " +
+                                std::to_string(i) + " has no Bullet body");
+                const btTransform& transform = body->getWorldTransform();
+                const btVector3& origin = transform.getOrigin();
+                const btQuaternion rotation = transform.getRotation();
+                const float position[3] = {origin.x(), origin.y(), origin.z()};
+                const float quaternion[4] = {rotation.x(), rotation.y(), rotation.z(),
+                                             rotation.w()};
+                if (!l2::WriteRigidLine(trace, block, static_cast<unsigned>(slot), i, position,
+                                        quaternion))
+                    return Fail("a rigid body transform is not finite");
+            }
+        }
+        if (!trace)
+            return Fail("cannot write " + traceName);
+        return true;
+    }
+
+    // Closes the trace and adds its manifest line (step: the `trace` line).
+    bool FinishTrace() {
+        if (traceName.empty())
+            return true;
+        trace.close();
+        std::string hash;
+        if (!trace || !Sha256(request.out + L"\\" + Wide(traceName), &hash))
+            return Fail("cannot write " + traceName);
+        manifest.push_back(std::to_string(traceLine) + "\t" + traceName + "\t" + hash);
+        return true;
+    }
+
+    // A modal dialog step: `open` makes the handler open it, the hook fills
+    // `inputs` and clicks OK.
+    template <class Open> bool WithModalDialog(const std::vector<DialogInput>& inputs, Open open) {
+        for (const DialogInput& input : inputs)
+            if (input.text.size() > kDialogTextLength)
+                return Fail("\"" + input.text + "\" is longer than " +
+                            std::to_string(kDialogTextLength) + " characters");
+        g_step.dialogInputs = &inputs;
+        g_step.dialogFilled = false;
+        const bool ok = open();
+        const bool filled = g_step.dialogFilled;
+        g_step.dialogInputs = nullptr;
+        if (ok && !filled)
+            return Fail("the handler did not open its dialog");
+        return ok;
+    }
+
+    // Edits `first`, `first + 1`, ... set to `values`.
+    static std::vector<DialogInput> TextInputs(int first, const std::vector<std::string>& values) {
+        std::vector<DialogInput> inputs;
+        for (std::size_t i = 0; i < values.size(); ++i)
+            inputs.push_back({DialogInput::Text, first + static_cast<int>(i), values[i]});
+        return inputs;
+    }
+
+    // A checkbox click when its state differs from `on`: the check mark and
+    // the BN_CLICKED a click sends.
+    bool SetCheckbox(int id, bool on, bool current) {
+        if (on == current)
+            return true;
+        const HWND control = EnabledControl(id);
+        if (control == nullptr)
+            return false;
+        SendMessageA(control, BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
+        return Click(id);
     }
 
     HWND GravityDialog() {
@@ -460,7 +655,7 @@ struct Runner {
             do {
                 const std::string name = Utf8(found.cFileName);
                 if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 &&
-                    name != "manifest.tsv" && name != target)
+                    name != "manifest.tsv" && name != target && name != traceName)
                     others.insert(name);
             } while (FindNextFileW(find, &found));
             FindClose(find);
@@ -689,6 +884,91 @@ struct Runner {
             return Click(panel::kUndoButton);
         case ScriptOp::Redo:
             return Click(panel::kRedoButton);
+        case ScriptOp::CenterBias:
+            return WithModalDialog(TextInputs(panel::kBiasXEdit, a),
+                                   [&] { return Menu(MDS_CMD_CENTER_POSITION_BIAS); });
+        case ScriptOp::DeleteUnused:
+            return Menu(MDS_CMD_DELETE_UNUSED_FRAMES);
+        case ScriptOp::ShiftLip:
+            return WithModalDialog(TextInputs(panel::kShiftFramesEdit, a),
+                                   [&] { return Menu(MDS_CMD_SHIFT_MOUTH_FRAMES); });
+        case ScriptOp::DeleteLip:
+            return Menu(MDS_CMD_DELETE_MOUTH_FRAMES);
+        case ScriptOp::RegisterBlink:
+            return WithModalDialog(TextInputs(panel::kBlinkStartEdit, a),
+                                   [&] { return Menu(MDS_CMD_REGISTER_BLINKING); });
+        case ScriptOp::DeleteEye:
+            return Menu(MDS_CMD_DELETE_EYE_FRAMES);
+        case ScriptOp::RegisterAllMorph:
+            return Menu(MDS_CMD_REGISTER_ALL_MORPH_FRAMES);
+        case ScriptOp::ResetMorphs:
+            return Menu(MDS_CMD_RESET_MORPHS);
+        case ScriptOp::DeleteEyebrow:
+            return Menu(MDS_CMD_DELETE_EYEBROW_FRAMES);
+        // The multiply dialogs: (scale, add) edit pairs from id 686 on.
+        case ScriptOp::MultiplyCamera:
+            return WithModalDialog(TextInputs(panel::kCamMulPosXScaleEdit, a),
+                                   [&] { return Menu(MDS_CMD_MULTIPLY_CAMERA_FRAMES); });
+        case ScriptOp::MultiplyBone:
+            return WithModalDialog(TextInputs(panel::kBoneMulPosXScaleEdit, a),
+                                   [&] { return Menu(MDS_CMD_MULTIPLY_BONE_FRAMES); });
+        case ScriptOp::MultiplyMorph:
+            return WithModalDialog(TextInputs(panel::kMorphMulScaleEdit, a),
+                                   [&] { return Menu(MDS_CMD_MULTIPLY_MORPH_FRAMES); });
+        case ScriptOp::PhysicsFrames: // combo item 0 is "ON (X)", item 1 "OFF"
+            return WithModalDialog(
+                {{DialogInput::ComboItem, panel::kBoneNameCombo, a[0] == "on" ? "0" : "1"}},
+                [&] { return Menu(MDS_CMD_TOGGLE_FRAME_PHYSICS); });
+        case ScriptOp::ScaleRange: {
+            std::vector<DialogInput> inputs = {{DialogInput::Text, panel::kScaleFromEdit, a[0]},
+                                               {DialogInput::Text, panel::kScaleToEdit, a[1]},
+                                               {DialogInput::Text, panel::kScaleRateEdit, a[2]}};
+            const int checks[3] = {panel::kScaleBoneCheckbox, panel::kScaleMorphCheckbox,
+                                   panel::kScaleDispIkCheckbox};
+            for (int i = 0; i < 3; ++i)
+                inputs.push_back({DialogInput::Check, checks[i], a[3 + i] == "on" ? "1" : "0"});
+            return WithModalDialog(inputs, [&] { return Click(panel::kExpandShrinkButton); });
+        }
+        case ScriptOp::Settle:
+            settleFrames = std::stoi(a[0]);
+            return true;
+        case ScriptOp::Pump:
+            return Pump(static_cast<std::uint32_t>(std::stoul(a[0])),
+                        static_cast<std::uint32_t>(std::stoul(a[1])));
+        case ScriptOp::Play: {
+            if (app->PlaybackActive() != 0)
+                return Fail("playback is already running (stop)");
+            const HWND start = EnabledControl(panel::kPlayStartFrameEdit);
+            const HWND stop =
+                start != nullptr ? EnabledControl(panel::kPlayStopFrameEdit) : nullptr;
+            if (stop == nullptr)
+                return false;
+            SetWindowTextA(start, a[0].c_str());
+            SetWindowTextA(stop, a[1].c_str());
+            return Click(panel::kPlayButton);
+        }
+        case ScriptOp::Stop:
+            if (app->PlaybackActive() == 0)
+                return Fail("playback is not running (play)");
+            return Click(panel::kPlayButton);
+        case ScriptOp::Loop:
+            return SetCheckbox(panel::kPlaybackLoopCheckbox, a[0] == "on",
+                               app->PlaybackLoopEnabled() != 0);
+        case ScriptOp::StepForward:
+            return Click(panel::kNextFrameButton);
+        case ScriptOp::StepBack:
+            return Click(panel::kPreviousFrameButton);
+        case ScriptOp::PhysicsReset:
+            return Menu(MDS_CMD_RESET_PHYSICS_BODIES);
+        case ScriptOp::PhysicsMode: {
+            static const int kModes[4] = {MDS_CMD_PHYSICS_DISABLED, MDS_CMD_PHYSICS_ALWAYS,
+                                          MDS_CMD_PHYSICS_ON_OFF, MDS_CMD_PHYSICS_TRACE};
+            return Menu(kModes[a[0][0] - '0']);
+        }
+        case ScriptOp::PhysicsPlaybackToggle:
+            return Menu(MDS_CMD_TOGGLE_PLAYBACK_PHYSICS_ON_OFF);
+        case ScriptOp::Trace:
+            return StartTrace(a[0]);
         }
         return Fail("unhandled command");
     }
@@ -696,7 +976,15 @@ struct Runner {
 
 bool AnswersOkCancel(ScriptOp op) {
     return op == ScriptOp::New || op == ScriptOp::LoadPmm || op == ScriptOp::LoadModel ||
-           op == ScriptOp::PasteDifferent;
+           op == ScriptOp::PasteDifferent || op == ScriptOp::DeleteLip ||
+           op == ScriptOp::DeleteEye || op == ScriptOp::DeleteEyebrow;
+}
+
+bool OpensDialogWindow(ScriptOp op) {
+    return op == ScriptOp::GravityOpen || op == ScriptOp::CenterBias || op == ScriptOp::ShiftLip ||
+           op == ScriptOp::RegisterBlink || op == ScriptOp::MultiplyCamera ||
+           op == ScriptOp::MultiplyBone || op == ScriptOp::MultiplyMorph ||
+           op == ScriptOp::PhysicsFrames || op == ScriptOp::ScaleRange;
 }
 
 } // namespace
@@ -744,8 +1032,10 @@ bool PrepareScriptRequest(ScriptRequest* request) {
     }
     // Not every build imports MessageBoxW; the dialog guard covers it then.
     PatchImport("user32.dll", "MessageBoxW", reinterpret_cast<const void*>(&ScriptMessageBoxW));
-    if (SetWindowsHookExW(WH_CBT, DialogGuardProc, nullptr, GetCurrentThreadId()) == nullptr) {
-        WriteError("mds-script: cannot install the dialog guard\n");
+    if (SetWindowsHookExW(WH_CBT, DialogGuardProc, nullptr, GetCurrentThreadId()) == nullptr ||
+        SetWindowsHookExW(WH_CALLWNDPROCRET, DialogFillProc, nullptr, GetCurrentThreadId()) ==
+            nullptr) {
+        WriteError("mds-script: cannot install the dialog hooks\n");
         return false;
     }
     return true;
@@ -759,10 +1049,13 @@ int RunScriptMode(MMDApp* app, const ScriptRequest& request) {
         g_step = StepState{};
         g_step.command = &command;
         g_step.answerOkCancel = AnswersOkCancel(command.op);
-        g_step.allowDialogWindow = command.op == ScriptOp::GravityOpen;
+        g_step.answerInfo =
+            command.op == ScriptOp::DeleteUnused || command.op == ScriptOp::RegisterBlink;
+        g_step.allowDialogWindow = OpensDialogWindow(command.op);
         WriteError(StepName() + "start\n"); // the last line names the step of a crash
         const bool ok = runner.Run(command);
         g_step.answerOkCancel = false;
+        g_step.answerInfo = false;
         g_step.allowDialogWindow = false;
         if (!ok) {
             WriteError(StepName() + runner.error + "\n");
@@ -771,6 +1064,23 @@ int RunScriptMode(MMDApp* app, const ScriptRequest& request) {
         runner.Settle();
     }
     g_step = StepState{};
+    if (!runner.FinishTrace()) {
+        WriteError("mds-script: " + runner.error + "\n");
+        return 1;
+    }
+    if (!g_messages.empty()) {
+        std::string lines = "step\tcaption\ttext\n";
+        for (const std::string& line : g_messages)
+            lines += line + "\n";
+        std::ofstream messages((request.out + L"\\messages.tsv").c_str(),
+                               std::ios::binary | std::ios::trunc);
+        messages << lines;
+        messages.close();
+        if (!messages) {
+            WriteError("mds-script: cannot write messages.tsv\n");
+            return 1;
+        }
+    }
     std::string text = "step\tfile\tsha256\n";
     for (const std::string& line : runner.manifest)
         text += line + "\n";

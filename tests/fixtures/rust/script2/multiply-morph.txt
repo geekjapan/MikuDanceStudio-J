@@ -1,0 +1,9 @@
+# Menu 252 (morph scale and add) on every morph key of morph4 in
+# swing600.pmm: weight * 0.5 + 0.25.
+load pmm swing600.pmm
+select model morph4
+select all morph
+multiply morph 0.5 0.25
+save pmm multiplied.pmm
+select all morph
+save vmd multiplied.vmd

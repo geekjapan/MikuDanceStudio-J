@@ -1,0 +1,10 @@
+# A negative main-step budget: 25 ms passes during playback alternate one
+# and two 1/60 s catch-up substeps, and a two-substep pass leaves
+# 0.025 - 2/60 s for the main step.
+settle 0
+load pmm swing600.pmm
+trace budget.trace
+play 0 120
+pump 20 25
+stop
+save pmm budget.pmm

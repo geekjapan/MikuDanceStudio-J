@@ -1,0 +1,15 @@
+# Button 424 (frame-range scale): frames 0..300 of chain8 in swing600.pmm by
+# 1.5 with all three key kinds, then frames 0..600 of morph4 by 0.5 with
+# morph keys only.
+load pmm swing600.pmm
+select model chain8
+scale range 0 300 1.5 on on on
+save pmm scaled-chain8.pmm
+select all bone
+select all display
+save vmd scaled-chain8.vmd
+select model morph4
+scale range 0 600 0.5 off on off
+save pmm scaled-morph4.pmm
+select all morph
+save vmd scaled-morph4.vmd

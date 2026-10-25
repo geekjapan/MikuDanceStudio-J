@@ -1,0 +1,50 @@
+# Menus 226, 228 and 231 (delete all lip, eye, and eyebrow frames) on
+# inputs/face4.pmx, which has one morph per lane. Each lane gets keys at
+# frames 10, 20, 30 first.
+load model face4.pmx
+select morph 0 真面目
+select morph 1 まばたき
+select morph 2 あ
+select morph 3 照れ
+frame 10
+morph 0 0.25
+morph 1 0.25
+morph 2 0.25
+morph 3 0.25
+register morph 0
+register morph 1
+register morph 2
+register morph 3
+frame 20
+morph 0 1
+morph 1 1
+morph 2 1
+morph 3 1
+register morph 0
+register morph 1
+register morph 2
+register morph 3
+frame 30
+morph 0 0.5
+morph 1 0.5
+morph 2 0.5
+morph 3 0.5
+register morph 0
+register morph 1
+register morph 2
+register morph 3
+save pmm registered.pmm
+select all morph
+save vmd registered.vmd
+delete lip
+save pmm lip-deleted.pmm
+select all morph
+save vmd lip-deleted.vmd
+delete eye
+save pmm eye-deleted.pmm
+select all morph
+save vmd eye-deleted.vmd
+delete eyebrow
+save pmm eyebrow-deleted.pmm
+select all morph
+save vmd eyebrow-deleted.vmd

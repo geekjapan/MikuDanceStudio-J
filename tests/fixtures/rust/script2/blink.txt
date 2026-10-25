@@ -1,0 +1,13 @@
+# Menu 227 (randomly register blinking) on morph4 of swing600.pmm, twice: the
+# CRT rand() state and the blink phase carry over from the first run to the
+# second. The info boxes with the counts go to messages.tsv.
+load pmm swing600.pmm
+select model morph4
+register blink 0 300
+save pmm blink1.pmm
+select all morph
+save vmd blink1.vmd
+register blink 300 600
+save pmm blink2.pmm
+select all morph
+save vmd blink2.vmd

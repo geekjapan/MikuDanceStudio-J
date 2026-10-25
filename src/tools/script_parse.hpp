@@ -85,12 +85,41 @@ enum class ScriptOp {
     SelectAllAccessory,
     Undo,
     Redo,
+    // the bulk key operations (script2)
+    CenterBias,
+    DeleteUnused,
+    ShiftLip,
+    DeleteLip,
+    RegisterBlink,
+    DeleteEye,
+    RegisterAllMorph,
+    ResetMorphs,
+    DeleteEyebrow,
+    MultiplyCamera,
+    MultiplyBone,
+    MultiplyMorph,
+    PhysicsFrames,
+    ScaleRange,
+    // playback and physics (script2, physscen)
+    Settle,
+    Pump,
+    Play,
+    Stop,
+    Loop,
+    StepForward,
+    StepBack,
+    PhysicsReset,
+    PhysicsMode,
+    PhysicsPlaybackToggle,
+    Trace,
 };
 
 struct ScriptCommandSpec {
     const char* words; // the fixed words, space separated
     ScriptOp op;
-    const char* args; // one letter per argument: t text, n number, f frame, l lane
+    // One letter per argument: t text, n number, f frame (an integer below
+    // kMaxScriptFrame), l lane (0..3), o on or off.
+    const char* args;
 };
 
 constexpr std::uint32_t kMaxScriptFrame = 100000;
@@ -161,6 +190,31 @@ inline constexpr ScriptCommandSpec kScriptCommands[] = {
     {"select all accessory", ScriptOp::SelectAllAccessory, ""},
     {"undo", ScriptOp::Undo, ""},
     {"redo", ScriptOp::Redo, ""},
+    {"bias", ScriptOp::CenterBias, "nnn"},
+    {"delete unused", ScriptOp::DeleteUnused, ""},
+    {"shift lip", ScriptOp::ShiftLip, "n"},
+    {"delete lip", ScriptOp::DeleteLip, ""},
+    {"register blink", ScriptOp::RegisterBlink, "ff"},
+    {"delete eye", ScriptOp::DeleteEye, ""},
+    {"register all morph", ScriptOp::RegisterAllMorph, ""},
+    {"reset morphs", ScriptOp::ResetMorphs, ""},
+    {"delete eyebrow", ScriptOp::DeleteEyebrow, ""},
+    {"multiply camera", ScriptOp::MultiplyCamera, "nnnnnnnnnnnnnnnn"},
+    {"multiply bone", ScriptOp::MultiplyBone, "nnnnnnnnnnnn"},
+    {"multiply morph", ScriptOp::MultiplyMorph, "nn"},
+    {"physics frames", ScriptOp::PhysicsFrames, "o"},
+    {"scale range", ScriptOp::ScaleRange, "ffnooo"},
+    {"settle", ScriptOp::Settle, "f"},
+    {"pump", ScriptOp::Pump, "ff"},
+    {"play", ScriptOp::Play, "ff"},
+    {"stop", ScriptOp::Stop, ""},
+    {"loop", ScriptOp::Loop, "o"},
+    {"step forward", ScriptOp::StepForward, ""},
+    {"step back", ScriptOp::StepBack, ""},
+    {"physics reset", ScriptOp::PhysicsReset, ""},
+    {"physics mode", ScriptOp::PhysicsMode, "l"},
+    {"physics playback toggle", ScriptOp::PhysicsPlaybackToggle, ""},
+    {"trace", ScriptOp::Trace, "t"},
 };
 // clang-format on
 
@@ -286,19 +340,24 @@ inline bool ParseScript(const std::string& text, std::vector<ScriptCommand>* com
             const bool ok = kind == 't'   ? !arg.empty()
                             : kind == 'n' ? IsScriptNumber(arg)
                             : kind == 'f' ? IsScriptFrame(arg)
+                            : kind == 'o' ? arg == "on" || arg == "off"
                                           : arg.size() == 1 && arg[0] >= '0' && arg[0] <= '3';
             if (!ok) {
                 *error = where + command.name + ": bad argument \"" + arg + "\"";
                 return false;
             }
         }
+        // A trace file is written into <out-dir> like a save target.
         const bool isSave = command.op == ScriptOp::SavePmm || command.op == ScriptOp::SaveVmd ||
-                            command.op == ScriptOp::SaveVpd || command.op == ScriptOp::SavePmd;
+                            command.op == ScriptOp::SaveVpd || command.op == ScriptOp::SavePmd ||
+                            command.op == ScriptOp::Trace;
         if (isSave) {
             const std::string& file = command.args[0];
             if (file.find_first_of("\\/:") != std::string::npos || file == "." || file == ".." ||
-                file == "manifest.tsv") {
-                *error = where + "a save target is a plain file name other than manifest.tsv";
+                file == "manifest.tsv" || file == "messages.tsv") {
+                *error =
+                    where +
+                    "a save target is a plain file name other than manifest.tsv and messages.tsv";
                 return false;
             }
             if (!saved.insert(file).second) {

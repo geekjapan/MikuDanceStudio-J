@@ -65,7 +65,7 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 /// 0x8D 0xB6) maps to the first bone with 右 (0x89 0x45) and the same text
 /// after it; only a name without 左 tries 右 to 左. Otherwise the bone of the
 /// same name.
-fn mirrored_bone(rig: &Rig, name: &[u8]) -> Option<usize> {
+pub fn mirrored_bone(rig: &Rig, name: &[u8]) -> Option<usize> {
     const RIGHT: &[u8] = b"\x89\x45";
     const LEFT: &[u8] = b"\x8D\xB6";
     let name = cstr(name);
@@ -121,7 +121,7 @@ fn twist_parts(q: &mut [f32; 4]) -> ([f32; 3], f32) {
 
 /// The twist correction of `RegisterBoneKey`: the sine takes the sign of the
 /// angle between the bone axis and the quaternion's axis, which it scales.
-fn twist(bone_axis: [f32; 3], mut q: [f32; 4]) -> [f32; 4] {
+pub fn twist(bone_axis: [f32; 3], mut q: [f32; 4]) -> [f32; 4] {
     let (axis, mut sin_half) = twist_parts(&mut q);
     if dot(bone_axis, axis) / (norm(axis) * norm(bone_axis)) < 0.0 {
         sin_half = -sin_half;

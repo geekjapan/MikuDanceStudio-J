@@ -1,0 +1,7 @@
+# Loads the PMM 0001 file tests/fixtures/rust/pmm1/v1_scene.pmm and saves it as 0002.
+# The loader cannot open the accessories cube.x and sphere.x by the relative
+# paths the file names, shows two boxes each, and asks for the files.
+answer file .\cube.x
+answer file .\sphere.x
+load pmm v1_scene.pmm
+save pmm v1_scene.pmm

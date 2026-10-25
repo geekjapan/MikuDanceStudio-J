@@ -1,0 +1,3 @@
+# Loads the PMM 0001 file tests/fixtures/rust/pmm1/v1_noparent.pmm and saves it as 0002.
+load pmm v1_noparent.pmm
+save pmm v1_noparent.pmm

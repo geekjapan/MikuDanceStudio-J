@@ -11,7 +11,10 @@
 //! morph 3 (mouth)  30 (4), 500 (15)
 //! ```
 //!
-//! with the `morph_type` bytes [2, 3, 3, 3].
+//! The menus compare `MorphRecord::type`, the PMX morph kind, which is 1
+//! (vertex) for all four morphs of `morph4.pmx`. So that each menu finds a
+//! track, the scene gives them the kinds [2, 3, 3, 3] (a bone morph and three
+//! UV morphs); `tests/fixtures/rust/script2/` covers the real kinds.
 
 use super::common::*;
 use mds_formats::pmm::Pmm;
@@ -20,7 +23,8 @@ use mds_ops::*;
 fn scene() -> (Pmm, ModelFacts) {
     let mut p = swing600();
     select(&mut p, 1);
-    let f = facts(&p, 1);
+    let mut f = facts(&p, 1);
+    f.morph_type = vec![2, 3, 3, 3];
     (p, f)
 }
 

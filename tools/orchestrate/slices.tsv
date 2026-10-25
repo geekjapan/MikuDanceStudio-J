@@ -40,3 +40,15 @@ render2	3b	golden2	mac	opus	MIT	rust/crates/mds-render/
 docgold2	3b	docgold,mdsedit	mac	opus	pending	rust/crates/mds-doc/,rust/crates/mds-ops/
 accgold	3b	accessory	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/accessory/,rust/crates/mds-accessory/,CMakeLists.txt,src/render/bg_overlay.cpp,tests/fixtures/rust/golden2/
 kinect	3c	-	mac	sonnet	pending	rust/crates/mds-kinect/
+bgmovie	3c	-	mac	sonnet	pending	rust/crates/mds-media/
+uiglobal	3c	app	mac	sonnet	pending	rust/crates/mds-app/src/ui/camera_panel.rs,rust/crates/mds-app/src/ui/light_panel.rs,rust/crates/mds-app/src/ui/shadow_panel.rs,rust/crates/mds-app/tests/ui_global/
+uimodel	3c	app	mac	sonnet	pending	rust/crates/mds-app/src/ui/model_panel.rs,rust/crates/mds-app/src/ui/bone_panel.rs,rust/crates/mds-app/src/ui/morph_panel.rs,rust/crates/mds-app/tests/ui_model/
+uiacc	3c	app	mac	sonnet	pending	rust/crates/mds-app/src/ui/accessory_panel.rs,rust/crates/mds-app/tests/ui_acc/
+uitimeline	3c	app	mac	sonnet	pending	rust/crates/mds-app/src/ui/timeline.rs,rust/crates/mds-app/tests/ui_timeline/
+uiedit	3c	app	mac	sonnet	pending	rust/crates/mds-app/src/ui/edit.rs,rust/crates/mds-app/tests/ui_edit/
+uiview	3c	app	mac	sonnet	pending	rust/crates/mds-app/src/ui/view.rs,rust/crates/mds-app/src/ui/help.rs,rust/crates/mds-app/src/ui/expression.rs,rust/crates/mds-app/tests/ui_view/
+shaderwire	3c	shaderfix	mac	sonnet	pending	tools/vkd3d/,rust/crates/mds-shader/,rust/crates/mds-mmert/src/shader.rs
+script2	3c	script	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/script2/,tests/fixtures/rust/physscen/,CMakeLists.txt
+render3	3c	render2	mac	opus	MIT	rust/crates/mds-render/
+mmegold	3c	mmert2	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/mmegold/,CMakeLists.txt
+doccmds	3c	docgold2	mac	opus	pending	rust/crates/mds-doc/,rust/crates/mds-edit/,rust/crates/mds-ops/

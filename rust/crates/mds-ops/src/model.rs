@@ -2,7 +2,7 @@
 //! it that a PMM file does not hold.
 
 use crate::{Error, Result};
-use mds_edit::{BoneInfo, IkChain, MorphInfo, Rig, Selector, Tracks};
+use mds_edit::{BoneExtra, BoneInfo, Extra, IkChain, MorphInfo, Rig, Selector, Tracks};
 use mds_formats::pmm::{Model, Pmm};
 
 /// What the model file says about one bone and the PMM does not.
@@ -18,6 +18,10 @@ pub struct BoneFacts {
     pub flags: u16,
     /// `BoneRecord::hasRigidBody`.
     pub rigid_body: bool,
+    /// The twist axis the registrars read for a fixed-axis bone:
+    /// `BoneRecord::axis` of a PMX, the tail bone's position minus the
+    /// bone's for a PMD ([`mds_edit::BoneExtra::axis`]).
+    pub axis: [f32; 3],
 }
 
 /// The model-file side of the active model, one entry per bone and morph
@@ -26,15 +30,10 @@ pub struct BoneFacts {
 pub struct ModelFacts {
     pub bones: Vec<BoneFacts>,
     /// `MorphRecord::type` of each morph: the byte that menus 225, 226, 228
-    /// and 231 compare with 3 (lip), 2 (eye) and 1 (eyebrow).
-    ///
-    /// The C++ reads the field at offset 89, which the PMX loader fills with
-    /// the morph kind (0 group, 1 vertex, 2 bone, 3 to 7 UV, 8 material) and
-    /// the PMD loader leaves 0. Its comments name offset 0x58 = 88, the
-    /// `panel` byte (1 eyebrow, 2 eye, 3 mouth, 4 other), which is what the
-    /// menu texts promise. This crate compares whatever bytes it is given;
-    /// pass the `type` bytes for the behavior of this C++ port and the `panel`
-    /// bytes for the behavior the menus describe.
+    /// and 231 compare with 3 (lip), 2 (eye) and 1 (eyebrow). The PMX loader
+    /// fills it with the PMX morph kind (0 group, 1 vertex, 2 bone, 3 to 7 UV,
+    /// 8 material) and the PMD loader leaves 0, although the menu texts mean
+    /// the `panel` byte; the C++ reads the kind (`script2/README.md`).
     pub morph_type: Vec<u8>,
     /// PMX model (`physicsMode == 2`).
     pub pmx: bool,
@@ -141,6 +140,24 @@ pub(crate) fn open(m: &Model, facts: &ModelFacts) -> Result<(Tracks, Rig)> {
         max_frame: m.selection.max_frame,
     };
     Ok((tracks, rig))
+}
+
+/// The bone axes for the `*_with` registrars; the physics fields are not
+/// read by the paths these operations take.
+pub(crate) fn extra(facts: &ModelFacts) -> Extra {
+    Extra {
+        bones: facts
+            .bones
+            .iter()
+            .map(|b| BoneExtra {
+                axis: b.axis,
+                physics_rotation: [0.0, 0.0, 0.0, 1.0],
+                physics_translation: [0.0; 3],
+                physics_disabled: 0,
+            })
+            .collect(),
+        ..Extra::default()
+    }
 }
 
 /// Writes the pools, the timeline end and the morph weights back.

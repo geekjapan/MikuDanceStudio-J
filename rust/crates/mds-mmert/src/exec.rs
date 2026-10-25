@@ -20,7 +20,9 @@ use std::collections::HashMap;
 use mds_mme::run::S_OK;
 use mds_mme::sas::*;
 
+use crate::anime::Anime;
 use crate::bind::{self, Draw};
+use crate::control::Controls;
 use crate::gpu::Gpu;
 use crate::model::{self, Model};
 use crate::resource::{self, Created};
@@ -114,6 +116,63 @@ impl Target {
         }
         Ok(out)
     }
+
+    /// The frame-head clear of an offscreen turn (`pass_planner.cpp:MmeApplyPassRecord`): Z
+    /// always, to `depth`; the color only with a `ClearColor`; the stencil only with a
+    /// `ClearDepth`.
+    pub fn clear_turn(&self, gpu: &Gpu, color: Option<u32>, depth: f32, stencil: bool) {
+        let (color_view, depth_view) = (
+            self.color.create_view(&Default::default()),
+            self.depth.create_view(&Default::default()),
+        );
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("offscreen turn clear"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &color_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: color.map_or(wgpu::LoadOp::Load, |c| wgpu::LoadOp::Clear(d3d_color(c))),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(depth.clamp(0.0, 1.0)),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: self
+                    .depth
+                    .format()
+                    .has_stencil_aspect()
+                    .then_some(wgpu::Operations {
+                        load: if stencil {
+                            wgpu::LoadOp::Clear(0)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: wgpu::StoreOp::Store,
+                    }),
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        gpu.queue.submit([enc.finish()]);
+    }
+}
+
+/// A D3D9 ARGB color.
+fn d3d_color(color: u32) -> wgpu::Color {
+    let c = |shift: u32| f64::from((color >> shift) & 0xFF) / 255.0;
+    wgpu::Color {
+        r: c(16),
+        g: c(8),
+        b: c(0),
+        a: c(24),
+    }
 }
 
 /// The two shaders of a pass and what the pipeline needs from them.
@@ -139,6 +198,8 @@ pub struct Effect {
     pub programs: Vec<Vec<Result<Program, String>>>,
     pub values: Vec<Vec<f32>>,
     row_major: Vec<bool>,
+    /// The animated textures (`ANIMATEDTEXTURE`) that decoded.
+    pub animes: Vec<AnimeTexture>,
     pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
     samplers: HashMap<(usize, bool), wgpu::Sampler>,
     placeholders: HashMap<wgpu::TextureViewDimension, wgpu::TextureView>,
@@ -177,14 +238,99 @@ impl std::fmt::Display for LoadError {
 
 type ShaderCache = HashMap<(mds_fx::Entry, Stage), Result<std::sync::Arc<Shader>, String>>;
 
+/// One `ANIMATEDTEXTURE` (`MmeAnimeRegisterParsed`): the decoded file and its texture.
+pub struct AnimeTexture {
+    pub param: usize,
+    /// The `SeekVariable` parameter, or `None` for the host frame clock.
+    pub seek: Option<usize>,
+    pub offset: f64,
+    pub speed: f64,
+    pub anime: Anime,
+    pub texture: wgpu::Texture,
+    /// The frame the texture holds.
+    pub shown: Option<usize>,
+}
+
+impl Effect {
+    /// The `sub_18000F3A0` case 45 constructors: a file that does not decode logs the
+    /// constructor's message and binds nothing.
+    fn load_animes(&mut self, gpu: &Gpu) {
+        for r in &self.sas.resources {
+            let (SEM_ANIMATED, Some(file)) = (r.semantic, &r.resource_file) else {
+                continue;
+            };
+            let anime = match Anime::open(file) {
+                Ok(a) => a,
+                Err(e) => {
+                    self.sas.log.push_str(&e);
+                    continue;
+                }
+            };
+            let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(&r.name),
+                size: wgpu::Extent3d {
+                    width: anime.width,
+                    height: anime.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            self.animes.push(AnimeTexture {
+                param: r.param,
+                seek: self.sas.fx.param_by_name(&r.seek_variable),
+                offset: f64::from(r.offset),
+                speed: f64::from(r.speed),
+                anime,
+                texture,
+                shown: None,
+            });
+        }
+    }
+
+    /// `MmeAnimeTick`: each animated texture shows the frame of its `SeekVariable` or of the
+    /// host frame clock `frame_time`.
+    pub fn tick_animes(&mut self, gpu: &Gpu, frame_time: f32) {
+        for a in &mut self.animes {
+            let time = a
+                .seek
+                .and_then(|p| self.values[p].first())
+                .copied()
+                .unwrap_or(frame_time);
+            let frame = a.anime.timeline.frame(f64::from(time), a.offset, a.speed);
+            if a.shown == Some(frame) {
+                continue;
+            }
+            a.shown = Some(frame);
+            let (w, h) = (a.anime.width, a.anime.height);
+            gpu.queue.write_texture(
+                a.texture.as_image_copy(),
+                a.anime.pixels(frame),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(w * 4),
+                    rows_per_image: Some(h),
+                },
+                a.texture.size(),
+            );
+        }
+    }
+}
+
 impl Effect {
     /// `MmeEngineLoadEffectFile` for `path`, with paths resolved below `root` as
-    /// [`mds_mme::plan`] does, then the resources and pass programs on `gpu`.
+    /// [`mds_mme::plan`] does, then the resources and pass programs on `gpu`. `ViewportRatio`
+    /// targets are sized against `backbuffer` (width, height).
     pub fn load(
         gpu: &Gpu,
         vk: &mds_shader::vkd3d::Vkd3d,
         path: &std::path::Path,
         root: &std::path::Path,
+        backbuffer: (u32, u32),
     ) -> Result<Effect, LoadError> {
         let rel = path
             .strip_prefix(root)
@@ -193,7 +339,11 @@ impl Effect {
             .replace('\\', "/");
         let dir = rel.rsplit_once('/').map_or("", |(d, _)| d).to_string();
         let fx = mds_fx::Effect::parse_file(path).map_err(|e| LoadError::Parse(e.to_string()))?;
-        let loc = Location { root, dir };
+        let loc = Location {
+            root,
+            dir,
+            backbuffer: (backbuffer.0 as i32, backbuffer.1 as i32),
+        };
         let sas = parse(mds_mme::fx::Fx::new(&fx), &format!("<root>/{rel}"), &loc)
             .map_err(LoadError::Rejected)?;
         let created = sas
@@ -217,10 +367,12 @@ impl Effect {
             programs: Vec::new(),
             values,
             row_major,
+            animes: Vec::new(),
             pipelines: HashMap::new(),
             samplers: HashMap::new(),
             placeholders: HashMap::new(),
         };
+        e.load_animes(gpu);
         let mut cache = ShaderCache::new();
         for t in 0..e.sas.techniques.len() {
             let passes = (0..e.sas.techniques[t].passes.len())
@@ -612,10 +764,15 @@ impl Effect {
                 Slot::Texture { reg, dim, .. } => {
                     let p = self.programs[program.0][program.1].as_ref().unwrap();
                     let s = if stage == Stage::Vertex { &p.vs } else { &p.ps };
-                    let view = self
+                    let param = self
                         .sampler_param(s, *reg)
                         .and_then(|g| state::sampler(self.sampler_state(g), false, false).0)
-                        .and_then(|name| self.sas.fx.param_by_name(&name))
+                        .and_then(|name| self.sas.fx.param_by_name(&name));
+                    let animated = param
+                        .and_then(|param| self.animes.iter().find(|a| a.param == param))
+                        .filter(|_| *dim == wgpu::TextureViewDimension::D2)
+                        .map(|a| a.texture.create_view(&Default::default()));
+                    let view = param
                         .and_then(|param| self.sas.bound[param])
                         .filter(|r| !attached.contains(r))
                         .and_then(|r| {
@@ -635,7 +792,7 @@ impl Effect {
                                 })
                             })
                         });
-                    Res::View(match view {
+                    Res::View(match view.or(animated) {
                         Some(v) => v,
                         None => self.placeholder(gpu, *dim),
                     })
@@ -673,6 +830,8 @@ pub struct Surface {
     format: wgpu::TextureFormat,
     /// The resource whose texture this is, for the sample-while-bound check.
     resource: Option<usize>,
+    texture: wgpu::Texture,
+    layer: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -723,6 +882,8 @@ impl Device {
             view: single_view(t, layer),
             format: t.format(),
             resource,
+            texture: t.clone(),
+            layer,
         };
         let scratch = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("scratch"),
@@ -798,6 +959,28 @@ impl Device {
             scratch_depth: HashMap::new(),
             encoder: gpu.device.create_command_encoder(&Default::default()),
         }
+    }
+
+    /// The bound color 0 and depth stencil as a [`Target`] the host's scene draws into at
+    /// `ScriptExternal`, after the commands recorded so far are submitted; why not, otherwise.
+    pub fn external_target(&mut self, gpu: &Gpu) -> Result<Target, String> {
+        let enc = std::mem::replace(
+            &mut self.encoder,
+            gpu.device.create_command_encoder(&Default::default()),
+        );
+        gpu.queue.submit([enc.finish()]);
+        let (Some(rt), Some(ds)) = (self.rt[0], self.ds) else {
+            return Err("ScriptExternal: no depth stencil bound".into());
+        };
+        let (rt, ds) = (&self.surfaces[rt], &self.surfaces[ds]);
+        // ponytail: a Target is a whole texture; a cube face needs a layer in Target.
+        if rt.layer != 0 || rt.texture.depth_or_array_layers() != 1 {
+            return Err(format!("ScriptExternal: {} is a cube face", rt.name));
+        }
+        Ok(Target {
+            color: rt.texture.clone(),
+            depth: ds.texture.clone(),
+        })
     }
 
     /// `rt0=.. rt1=.. rt2=.. rt3=.. ds=.. viewport=WxH+X+Y`.
@@ -918,13 +1101,7 @@ impl Device {
     /// (`D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL`).
     fn clear(&mut self, flags: i32, color: u32, depth: f32) {
         if flags & 1 != 0 {
-            let c = |shift: u32| f64::from((color >> shift) & 0xFF) / 255.0;
-            let value = wgpu::Color {
-                r: c(16),
-                g: c(8),
-                b: c(0),
-                a: c(24),
-            };
+            let value = d3d_color(color);
             for s in self.rt.into_iter().flatten() {
                 let view = self.surfaces[s].view.clone();
                 self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1007,6 +1184,13 @@ pub struct DrawInput<'a> {
     /// The model and the material subset `Draw=Geometry` draws.
     pub geometry: Option<(&'a Model, usize)>,
     pub draw_type: u8,
+    /// The scene's objects for `CONTROLOBJECT`. `None` leaves those parameters as they are, as
+    /// the plan oracle does.
+    pub controls: Option<&'a Controls>,
+    /// The object the effect is assigned to, an index into `controls`.
+    pub owner: Option<usize>,
+    /// Inside an offscreen turn, the object that carries the offscreen target.
+    pub offscreen_owner: Option<usize>,
 }
 
 /// One technique run: the effect, the device, and the lines the draws write.

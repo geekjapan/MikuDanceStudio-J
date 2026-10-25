@@ -1,0 +1,11 @@
+[Info]
+Version = 3
+
+[Object]
+Pmd0 = C:\mds\w2-script2\repo\out\ci\build\Release\face4.pmx
+
+[Effect]
+Default = none
+Pmd0 = none
+Pmd0.show = true
+

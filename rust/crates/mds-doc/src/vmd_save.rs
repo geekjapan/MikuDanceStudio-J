@@ -7,7 +7,7 @@ use mds_formats::key_pool::{Key, KeyPool};
 use mds_formats::pmm::{self, Pmm};
 
 /// `カメラ・照明`, the model name of a camera-mode motion.
-const CAMERA_LIGHT: &[u8] = b"\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe";
+pub(crate) const CAMERA_LIGHT: &[u8] = b"\x83\x4a\x83\x81\x83\x89\x81\x45\x8f\xc6\x96\xbe";
 
 /// Every record of a pool, heads first, by index.
 fn all<K: Key>(pool: &KeyPool<K>) -> impl Iterator<Item = (u32, &K)> {

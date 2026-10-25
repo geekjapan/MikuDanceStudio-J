@@ -10,7 +10,8 @@
 # Output: ${TMPDIR:-/tmp}/mds-vkd3d/<target>/
 #   lib/   libvkd3d-shader.1.dylib, libvkd3d-shader.so.1, or bin/libvkd3d-shader-1.dll
 #   bin/   vkd3d-compiler (used by the reflection lane to print d3d-asm listings)
-#   share/ the vkd3d LICENSE and COPYING files, which ship with the library (LGPL-2.1)
+#   share/ the vkd3d LICENSE and COPYING files, which ship with the library (LGPL-2.1), the
+#          patches of tools/vkd3d/patches/ applied to it (patches/)
 # Point mds-shader at the library with MDS_VKD3D_LIB=<path to the library file>.
 set -euo pipefail
 
@@ -51,6 +52,11 @@ build_in() {
   mkdir -p "$work/spv"
   tar -xzf "$dl/spirv-headers.tar.gz" -C "$work/spv" --strip-components=1
   local src="$work/vkd3d-2.1"
+  # Our fixes (LGPL-2.1, like vkd3d), applied in name order for every target.
+  for p in "$here"/patches/*.patch; do
+    [ -e "$p" ] || continue
+    patch -p1 -s -d "$src" -i "$p" || { echo "build.sh: $(basename "$p") does not apply" >&2; exit 1; }
+  done
   # The tarball ships headers generated from the .idl files. Keep make from regenerating them
   # with widl, which these hosts lack.
   touch "$src"/include/*.h
@@ -74,6 +80,8 @@ build_in() {
       "bin_PROGRAMS=vkd3d-compiler$exe" >>"$work/make.log" 2>&1 || { tail -40 "$work/make.log"; exit 1; }
     mkdir -p "$prefix/share/vkd3d" "$prefix/include/vkd3d"
     cp LICENSE COPYING AUTHORS "$prefix/share/vkd3d/"
+    mkdir -p "$prefix/share/vkd3d/patches"
+    cp "$here"/patches/*.patch "$prefix/share/vkd3d/patches/"
     cp include/vkd3d_shader.h include/vkd3d_types.h "$prefix/include/vkd3d/" )
   rm -f "$prefix"/lib/*.la "$prefix"/bin/*.la
   case "$*" in *mingw32*) copy_mingw_runtime "$prefix/bin" ;; esac

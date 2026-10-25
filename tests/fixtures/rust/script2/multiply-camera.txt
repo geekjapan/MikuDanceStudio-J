@@ -1,0 +1,10 @@
+# Menu 242 (camera scale and add) on every camera key of camera3.pmm. The
+# 16 values are the dialog's (scale, add) pairs in edit-id order 686..701:
+# eye x, y, z, target x, y, z (add in degrees), distance, fov.
+load pmm camera3.pmm
+select camera
+select all camera
+multiply camera 2 1 1 0 0.5 -2 1 10 1 0 1 -5 0.5 0 1 5
+save pmm multiplied.pmm
+select all camera
+save vmd multiplied.vmd

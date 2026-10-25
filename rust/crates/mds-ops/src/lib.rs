@@ -12,10 +12,10 @@
 //!
 //! # Operations
 //!
-//! "Oracle" is the `--mds-script` oracle of the script slice, which covers
-//! the selection commands and the frame-line commands. Every other operation
-//! needs a later script2 slice to be compared with the C++ binary; until
-//! then the tests here (hand-derived from the C++) are its only check.
+//! "Oracle" names the `--mds-script` outputs each operation is compared with:
+//! `tests/fixtures/rust/script/` (slice script) and `script2/` (the bulk
+//! operations), both replayed through `mds-doc` (`mds-doc/tests/script.rs`).
+//! The tests here are hand-derived from the C++.
 //!
 //! | Menu | Operation | Function | Oracle |
 //! |------|-----------|----------|--------|
@@ -87,16 +87,18 @@
 //! The facial menus 225, 226, 228 and 231 select morphs with
 //! `MorphRecord::type` where the morph's panel (the model editor's eyebrow,
 //! eye, lip category) is clearly meant, and `PurgeMorphFrames` compares the
-//! same byte. The port keeps the C++ field choice; [`ModelFacts::morph_type`]
-//! carries whichever byte the caller reads from the model file, so the
-//! discrepancy is one parameter to change.
+//! same byte. The PMX loader stores the PMX morph kind there and the PMD
+//! loader 0, so 231 takes the vertex morphs, 228 the bone morphs, 225 and
+//! 226 the UV morphs, and on a PMD model none (`script2/README.md`). The port
+//! keeps the C++ field choice: pass the kinds as [`ModelFacts::morph_type`],
+//! as `mds-doc` does.
 //!
 //! # Not ported
 //!
 //! Undo and redo bookkeeping (the document slice wraps these functions in
 //! commands); the dialogs and message boxes themselves; automatic
-//! interpolation after a bone edit and the fixed-axis (twist) bone paths,
-//! which `mds-edit` reports as [`mds_edit::Error::Unsupported`]; the physics
+//! interpolation after a deletion (menu 222 in `mds-doc` deletes through the
+//! delete button's path instead); the physics
 //! reset flag set after a physics conversion; and the `FrameRangeStartFrame`
 //! state the dialog keeps between uses.
 
@@ -119,7 +121,7 @@ pub use facial::{
 };
 pub use frame_line::{
     delete_bone_camera_frame_line, delete_morph_light_frame_line, insert_bone_camera_frame_line,
-    insert_morph_light_frame_line,
+    insert_morph_light_frame_line, BoneUndo,
 };
 pub use model::{active_model, BoneFacts, ModelFacts};
 pub use multiply::{
@@ -131,7 +133,7 @@ pub use select::{
     select_all_display_frames, select_all_gravity_frames, select_all_light_frames,
     select_all_morph_frames, select_all_self_shadow_frames,
 };
-pub use unused::remove_unused_keys;
+pub use unused::{mark_unused_keys, remove_unused_keys};
 
 /// Why an operation did not run, or did not finish.
 #[derive(Clone, Debug, PartialEq, Eq)]

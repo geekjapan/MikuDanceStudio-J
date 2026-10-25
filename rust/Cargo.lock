@@ -1230,6 +1230,15 @@ name = "mds-crtmath"
 version = "0.1.0"
 
 [[package]]
+name = "mds-doc"
+version = "0.1.0"
+dependencies = [
+ "mds-edit",
+ "mds-formats",
+ "mds-pose",
+]
+
+[[package]]
 name = "mds-edit"
 version = "0.1.0"
 dependencies = [
@@ -1271,6 +1280,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-ops"
+version = "0.1.0"
+dependencies = [
+ "mds-crtmath",
+ "mds-edit",
+ "mds-formats",
+ "mds-math",
+]
+
+[[package]]
 name = "mds-physics"
 version = "0.1.0"
 dependencies = [
@@ -1300,6 +1319,7 @@ dependencies = [
  "mds-physics",
  "mds-pose",
  "mds-scene",
+ "mds-skin",
  "png",
  "pollster 1.0.1",
  "wgpu",
@@ -1323,6 +1343,15 @@ dependencies = [
  "pollster 1.0.1",
  "rspirv",
  "wgpu",
+]
+
+[[package]]
+name = "mds-skin"
+version = "0.1.0"
+dependencies = [
+ "mds-formats",
+ "mds-math",
+ "mds-pose",
 ]
 
 [[package]]

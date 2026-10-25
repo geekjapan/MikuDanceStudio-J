@@ -1,0 +1,17 @@
+# The D3DX and CRT math of tools/skin_check: mds-math and mds-crtmath behind
+# a C ABI, so the C++ under test computes with the same functions as Rust.
+[package]
+name = "skin-check-ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+path = "lib.rs"
+
+[dependencies]
+mds-crtmath = { path = "../../../rust/crates/mds-crtmath" }
+mds-math = { path = "../../../rust/crates/mds-math" }
+
+[workspace]

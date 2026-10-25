@@ -11,6 +11,7 @@ publish = false
 mds-formats = { path = "../mds-formats" }
 mds-pose = { path = "../mds-pose" }
 mds-scene = { path = "../mds-scene" }
+mds-skin = { path = "../mds-skin" }
 # The same wgpu release and feature set as mds-shader, so Cargo.lock keeps one wgpu and one naga.
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "metal", "vulkan", "dx12"] }
 pollster = "1"

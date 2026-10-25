@@ -77,11 +77,21 @@ pub struct View {
     pub(crate) view: Mat,
     pub(crate) view_proj: Mat,
     pub(crate) eye: [f32; 3],
+    /// The `camera_fov` the edge thickness of `mds-skin` scales with.
+    pub(crate) edge_fov: f32,
 }
 
 /// The ortho view is `ORTHO_WIDTH_PER_DISTANCE * |distance|` world units wide (measured on the
 /// golden images: 8 and 12 units between model roots are 113.8 and 170.7 px of 640 at distance 45).
 const ORTHO_WIDTH_PER_DISTANCE: f32 = 1.0;
+/// The `camera_fov` that gives the C++ edge of the golden images under the orthographic camera.
+/// `mds-skin` scales the edge by `distance * 4.5e-5 * (camera_fov * 0.6 + 1)`; the camera at
+/// distance 45 with its view angle of 30 would make the edge 0.0385 thick, but the golden images fit
+/// 0.019 to 0.0205 (0.0187 to 0.0195 at the models' own distances). The frames meet the golden rule
+/// for `camera_fov` from 13.25 to 13.5 (and, with a bigger error, 13 to 14.5), and this is the
+/// middle. What the app puts in `camera_fov` under an orthographic camera is not known, nor which
+/// part of the formula differs; a perspective camera passes its view angle in degrees unverified.
+const ORTHO_EDGE_FOV: f32 = 13.4;
 const NEAR: f32 = 0.5;
 const FAR: f32 = 5000.0;
 
@@ -129,6 +139,11 @@ impl Camera {
             view,
             view_proj: mul(&proj, &view),
             eye,
+            edge_fov: if self.orthographic {
+                ORTHO_EDGE_FOV
+            } else {
+                self.fov_deg
+            },
         }
     }
 }
@@ -169,5 +184,6 @@ pub(crate) fn bounding_box_view(min: [f32; 3], max: [f32; 3], front: f32, aspect
         view,
         view_proj: mul(&proj, &view),
         eye,
+        edge_fov: DEFAULT_FOV_DEG,
     }
 }

@@ -458,6 +458,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-media"
+version = "0.1.0"
+
+[[package]]
 name = "mds-mme"
 version = "0.1.0"
 dependencies = [
@@ -522,6 +526,10 @@ dependencies = [
 
 [[package]]
 name = "mds-trace"
+version = "0.1.0"
+
+[[package]]
+name = "mds-vsq"
 version = "0.1.0"
 
 [[package]]

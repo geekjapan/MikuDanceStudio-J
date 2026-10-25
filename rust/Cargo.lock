@@ -412,6 +412,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-pose"
+version = "0.1.0"
+dependencies = [
+ "mds-crtmath",
+ "mds-formats",
+ "mds-math",
+ "mds-trace",
+]
+
+[[package]]
 name = "mds-render"
 version = "0.1.0"
 dependencies = [

@@ -114,6 +114,9 @@ fn main() {
     if system_math {
         build.define("MDS_BT_SYSTEM_MATH", None);
     }
+    // Bullet's profiler keeps one process-wide tree, so worlds stepping on two
+    // threads at once corrupt it. It never changes a simulated value.
+    build.define("BT_NO_PROFILE", Some("1"));
     build.compile("mds_bullet_sys");
 
     if env::var_os("CARGO_FEATURE_BENCH").is_some() {

@@ -259,7 +259,8 @@ def build_pmm(models, camera_keys, light_keys, shadow_keys, perspective=1,
               ground_shadow=(0, 0.0, 1), accessories=(), picture=None):
     """camera_keys: (frame, distance, target, rotation, fov). light_keys:
     (frame, color, direction). shadow_keys: (frame, mode, distance).
-    ground_shadow: (on, ambient, translucent). picture: file name or None."""
+    ground_shadow: (on, ambient, translucent). picture: (file name, scale) or
+    None."""
     o = bytearray(b"Polygon Movie maker 0002" + b"\0" * 6)
     o += i32(1280, 720, 244) + f32(30.0) + u8(0, 1, 0, 0, 0, 0, 0)
     o += u8(0, len(models))
@@ -284,8 +285,8 @@ def build_pmm(models, camera_keys, light_keys, shadow_keys, perspective=1,
     o += i32(0, 0, LAST_FRAME, 0) + u8(0, 0, 0, 0) + i32(0, LAST_FRAME)
     o += u8(0) + b"\0" * 256                                  # wave
     o += i32(0, 0) + f32(1.0) + b"\0" * 256 + u32(0)          # avi
-    o += i32(0, 0) + f32(1.0)                                 # picture
-    o += sjis(ACCESSORY_DIR + picture if picture else "", 256) + u8(1 if picture else 0)
+    o += i32(0, 0) + f32(picture[1] if picture else 1.0)      # picture
+    o += sjis(ACCESSORY_DIR + picture[0] if picture else "", 256) + u8(1 if picture else 0)
     o += u8(0, 1, ground_shadow[0]) + f32(30.0) + i32(0)      # view
     o += i32(0) + f32(ground_shadow[1]) + u8(ground_shadow[2])
     o += u8(0) + f32(9.8000002) + i32(10)                     # physics mode 0
@@ -338,11 +339,14 @@ SHADOW_DEFAULT = 0.01125  # the app's default self-shadow distance (range 8875)
 SHADOW_OFF = [(0, 0, SHADOW_DEFAULT)]
 
 SCENES = {
-    # Self-shadow mode 1 at frame 0 and mode 2 with a shorter distance at 30.
+    # Self-shadow mode 1 at frame 0 and mode 2 with a shorter distance at 30,
+    # on two curled models and the floor quad.
     "selfshadow": dict(
         models=[SceneModel(CHAIN, curled(-3.0)), SceneModel(CHAIN_PMD, curled(3.0))],
         camera_keys=ortho_camera(-16.0, (0.0, 3.0, 0.0)), light_keys=LIGHT,
         shadow_keys=[(0, 1, SHADOW_DEFAULT), (30, 2, 0.005)],
+        # A floor quad (normals_uv.x at 10 times 0.8) that receives the shadow.
+        accessories=[Accessory("normals_uv.x", (-4.0, 0.02, 4.0), (-PI / 2, 0.0, 0.0), 0.8)],
         frames=[0, 30]),
     # The projected ground shadow, opaque at frame 0 brightness; the light
     # turns by frame 30. Translucent shadow with ambient 0.5.
@@ -360,7 +364,7 @@ SCENES = {
         # The app scales an accessory by 10 times its scale value: cube.x
         # (2 units) becomes 1 unit, the unit quad 4 units, laid flat.
         accessories=[Accessory("cube.x", (0.0, 0.75, 0.0), (0.0, 0.5, 0.0), 0.05, (0, 4)),
-                     Accessory("normals_uv.x", (-5.0, 0.05, -2.0), (PI / 2, 0.0, 0.0), 0.4)],
+                     Accessory("normals_uv.x", (-5.0, 0.05, 2.0), (-PI / 2, 0.0, 0.0), 0.4)],
         frames=[0, 30]),
     # skin_tex.pmx with SDEF bones turned and vertex, UV and material morphs;
     # other weights and a bone morph at frame 30.
@@ -379,11 +383,13 @@ SCENES = {
         }, edge_scale=2.0)],
         camera_keys=[(0, -6.0, (1.0, 1.0, 0.0), (-0.25, PI, 0.0), 30)],
         light_keys=LIGHT, shadow_keys=SHADOW_OFF, perspective=0, frames=[0, 30]),
-    # The background picture behind one model.
+    # The background picture behind one model. The frame dump draws it where
+    # the main window's viewport put it (README.md); a quarter scale keeps it
+    # whole in the 640x360 image.
     "background": dict(
         models=[SceneModel(CHAIN, at(0.0))],
         camera_keys=ortho_camera(), light_keys=LIGHT, shadow_keys=SHADOW_OFF,
-        picture="background.png", frames=[0]),
+        picture=("background.png", 0.25), frames=[0]),
     # A perspective camera over models at three depths; the camera moves in by
     # frame 30 and widens its view angle.
     "perspective": dict(

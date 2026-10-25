@@ -579,23 +579,21 @@ impl Model {
                     }
                 }
                 Offsets::Bone(entries) => {
+                    // pmx_load.cpp, "unique-bone table": an entry gets a record unless an
+                    // EARLIER morph moves its bone (`j < i`). A bone named twice in one
+                    // morph therefore gets a second, unused record; entries use the first.
+                    let earlier = model.bone_morph_offsets.len();
                     for &(bone, translation, rotation) in entries {
                         let bone = index(bone.max(0))?;
-                        let slot = match model
-                            .bone_morph_offsets
-                            .iter()
-                            .position(|r| r.bone_index == bone)
-                        {
-                            Some(p) => p,
-                            None => {
-                                model.bone_morph_offsets.push(BoneMorphOffset {
-                                    bone_index: bone,
-                                    translation: [0.0; 3],
-                                    rotation: [0.0; 4],
-                                });
-                                model.bone_morph_offsets.len() - 1
-                            }
-                        };
+                        let table = &mut model.bone_morph_offsets;
+                        if !table[..earlier].iter().any(|r| r.bone_index == bone) {
+                            table.push(BoneMorphOffset {
+                                bone_index: bone,
+                                translation: [0.0; 3],
+                                rotation: [0.0; 4],
+                            });
+                        }
+                        let slot = table.iter().position(|r| r.bone_index == bone).unwrap_or(0);
                         morph.bone_entries.push((slot, translation, rotation));
                     }
                 }

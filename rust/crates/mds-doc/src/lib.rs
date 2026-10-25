@@ -92,6 +92,12 @@
 //!   than 0, and the model-name fallbacks of the loaders (unmappable
 //!   characters, the `Null_NN` names of textures and materials).
 //! * Range scaling (`ChainedBoneKeys` undo entries).
+//! * The outside-parent dialog of button 442 (`EditAccessoryAttachments`,
+//!   `command_frame_edit.cpp` 1344-1378, with `ApplyBoneAttach` and
+//!   `ResetModelSelection` of `dialog_select_ops.cpp` 334-460).
+//! * Bone matrices are those of the saved pose without physics wherever the
+//!   C++ reads the frame loop's `matInit` ([`Command::SetCameraReference`],
+//!   [`Command::SetCameraParentModel`]).
 //!
 //! The script replay of `tests/fixtures/rust/script/` and `script2/` is
 //! [`script::Runner`]; `tests/script.rs` compares every save with the C++

@@ -1,0 +1,12 @@
+[package]
+name = "mds-accessory"
+description = "MMD accessories: DirectX .x meshes, materials, texture names and the accessory transform (port of src/render/accessory.cpp)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mds-formats = { path = "../mds-formats" }
+mds-math = { path = "../mds-math" }
+libm = "0.2"

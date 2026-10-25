@@ -17,9 +17,10 @@
 //! * [`Document::edit`] is the edit state the C++ keeps outside the file:
 //!   the per-model `searchCursor` and undo rings, the clipboard, the
 //!   self-shadow mode radio, and the "auto interpolation" checkbox (530).
-//! * Pose, physics and render state are never stored. The PMM's saved pose
-//!   block is the pose the user edits and "register" stores; commands
-//!   change it, nothing evaluates into it.
+//! * Physics and render state are never stored. The PMM's saved pose block
+//!   is the pose the user edits and "register" stores; a frame change, a
+//!   paste, a delete and a motion load re-evaluate it from the keys
+//!   (`SeekModelFrame`, through `mds-pose`), as the C++ handlers do.
 //!
 //! # Commands
 //!
@@ -83,12 +84,23 @@
 //!
 //! # Not ported
 //!
-//! The load-side normalization of `pmm_load_v2.cpp` (flags read as
-//! `b == 1`, `RefreshSelfShadowPanel` after load), the pose re-evaluation of
-//! `SeekModelFrame` on a frame change, range scaling (`ChainedBoneKeys`
-//! undo entries), and the `mds-edit` paths it reports as
-//! [`mds_edit::Error::Unsupported`] (the pose of a bone with a rigid body,
-//! fixed-axis twist, automatic interpolation).
+//! * Paths that depend on `mds-edit` gaps: display-key registration on a
+//!   model with the root selector (every PMX here), so the model-mode VMD
+//!   load and the paste of display keys stop with `Corrupt`; mirrored paste
+//!   ("paste reverse"); the pose of a bone with a rigid body; fixed-axis
+//!   twist. Automatic interpolation (checkbox 530, on at start-up) is
+//!   applied here after `mds-edit` registers or deletes with it off
+//!   (`auto_interp`).
+//! * VPD load and save, the PMD writer, "paste at a different frame", and
+//!   the undo entry of a model-mode frame-line edit.
+//! * Leaving camera mode with a camera parent or a reference mode other
+//!   than 0, and the model-name fallbacks of the loaders (unmappable
+//!   characters, the `Null_NN` names of textures and materials).
+//! * Range scaling (`ChainedBoneKeys` undo entries).
+//!
+//! The script replay of `tests/fixtures/rust/script/` is
+//! [`script::Runner`]; `tests/script.rs` compares every save with the C++
+//! output.
 
 mod accessory;
 mod add_model;
@@ -284,7 +296,8 @@ pub enum Command {
     NewScene,
     /// "Load motion" (menu 209), `LoadVmdMotion` (`src/model/vmd_load.cpp`,
     /// VA 0x00434B60) with the file bytes: in camera mode onto the camera,
-    /// light and self-shadow tracks, then their refresh.
+    /// light and self-shadow tracks, then their refresh; in model mode onto
+    /// the selected model ([`model::load_vmd`]), then `SeekModelFrame`.
     LoadMotion(Vec<u8>),
     /// "Add model" (button 435), `LoadModelFile` (`src/model/add_model.cpp`,
     /// VA 0x00460430) with the path as given and the file bytes: the model
@@ -957,7 +970,23 @@ impl Document {
                 let vmd =
                     mds_formats::vmd::Vmd::read(&data).map_err(|e| Error::Format(e.to_string()))?;
                 if !self.camera_mode() {
-                    return Err(not("a model motion (not ported)"));
+                    let (i, s) = self.keyed()?;
+                    let m = &self.pmm.models[i];
+                    let name = |raw: &[u8]| raw.split(|&b| b == 0).next().unwrap_or(&[]).to_vec();
+                    if name(&vmd.model_name.raw) != name(&m.name.raw) {
+                        return Err(not("the motion is for another model (a message box)"));
+                    }
+                    let r = model::load_vmd(
+                        &mut self.pmm.models[i],
+                        &s,
+                        &mut self.edit.models[i],
+                        &vmd,
+                        frame,
+                    );
+                    self.bump_last_registered(i);
+                    let mode = self.pmm.physics.playback_mode;
+                    refresh::seek_model(&mut self.pmm.models[i], &self.models[i], frame, mode);
+                    return r;
                 }
                 let r = global::load_vmd(&mut self.pmm, &vmd);
                 refresh::camera(&mut self.pmm);

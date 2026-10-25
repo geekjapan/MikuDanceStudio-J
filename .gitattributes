@@ -6,3 +6,4 @@ include/mikudancestudio/*.hpp text eol=lf
 src/**/*.cpp text eol=lf
 src/**/*.hpp text eol=lf
 src/**/*.inc text eol=lf
+tools/ui_inventory/* text eol=lf

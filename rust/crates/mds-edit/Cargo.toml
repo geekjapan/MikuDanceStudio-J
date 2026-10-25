@@ -8,3 +8,4 @@ publish.workspace = true
 
 [dependencies]
 mds-formats = { path = "../mds-formats" }
+mds-math = { path = "../mds-math" }

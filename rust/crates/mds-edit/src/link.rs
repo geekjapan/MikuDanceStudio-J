@@ -76,11 +76,79 @@ pub(crate) fn bone_head() -> BoneKey {
 /// `ResetBoneInterpolation` for the four lanes.
 pub(crate) fn reset_interpolation(k: &mut BoneKey) {
     for lane in 0..4 {
-        k.interpolation[lane] = 20;
-        k.interpolation[lane + 4] = 20;
-        k.interpolation[lane + 8] = 107;
-        k.interpolation[lane + 12] = 107;
+        reset_lane(k, lane);
     }
+}
+
+/// `ResetBoneInterpolation`: the default curve of one lane.
+fn reset_lane(k: &mut BoneKey, lane: usize) {
+    set_in(k, lane, 20, 20);
+    set_out(k, lane, 107, 107);
+}
+
+/// The control point at the start of the curve (x, y).
+fn set_in(k: &mut BoneKey, lane: usize, x: u8, y: u8) {
+    k.interpolation[lane] = x;
+    k.interpolation[lane + 4] = y;
+}
+
+/// The control point at the end of the curve.
+fn set_out(k: &mut BoneKey, lane: usize, x: u8, y: u8) {
+    k.interpolation[lane + 8] = x;
+    k.interpolation[lane + 12] = y;
+}
+
+/// `RebuildBoneInterpolation` (VA 0x49D4D0): the automatic curve of one
+/// lane at the key `index`, and the ends it shares with its neighbours.
+/// Lanes 0 to 2 follow the position; lane 3 (rotation) and the track heads
+/// get the default curve.
+pub(crate) fn rebuild_interpolation(
+    pool: &mut KeyPool<BoneKey>,
+    rig: &Rig,
+    index: u32,
+    lane: usize,
+) -> Result<()> {
+    let heads = rig.bones.len() as u32;
+    if lane >= 3 || index < heads {
+        reset_lane(slot(pool, rig, index)?, lane);
+        return Ok(());
+    }
+    let value = |pool: &KeyPool<BoneKey>, i: u32| -> Result<f32> {
+        links(pool, i)?;
+        Ok(pool.get(i).map_or(0.0, |k| k.position[lane]))
+    };
+    let (_, previous, next) = links(pool, index)?;
+    let current = value(pool, index)?;
+    let before = value(pool, previous)?;
+    if before == current {
+        reset_lane(slot(pool, rig, index)?, lane);
+        return Ok(());
+    }
+    if previous < heads {
+        set_in(slot(pool, rig, index)?, lane, 64, 0);
+    } else {
+        let earlier = value(pool, links(pool, previous)?.1)?;
+        let (out, inn) = if (before - earlier) * (current - before) > 0.0 {
+            ((87, 87), (40, 40))
+        } else {
+            ((64, 127), (64, 0))
+        };
+        set_out(slot(pool, rig, previous)?, lane, out.0, out.1);
+        set_in(slot(pool, rig, index)?, lane, inn.0, inn.1);
+    }
+    if next == 0 {
+        set_out(slot(pool, rig, index)?, lane, 64, 127);
+        return Ok(());
+    }
+    let after = value(pool, next)?;
+    let (out, inn) = if (after - current) * (current - before) <= 0.0 {
+        ((64, 127), (64, 0))
+    } else {
+        ((87, 87), (40, 40))
+    };
+    set_out(slot(pool, rig, index)?, lane, out.0, out.1);
+    set_in(slot(pool, rig, next)?, lane, inn.0, inn.1);
+    Ok(())
 }
 
 /// The record at `index`, made from `blank` first if the pool never held

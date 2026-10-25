@@ -456,7 +456,9 @@ fn undo_and_redo_of_a_register() {
             Command::RegisterBoneKeys,
         ],
     );
-    let after = d.save().unwrap();
+    // The frame change seeks the saved pose, so only the records are
+    // compared after the redo.
+    let after = format!("{:?}", bone_records(&d));
     run(&mut d, [Command::SetFrame(5), Command::Undo]);
     assert_eq!(d.pmm.timeline.current_frame, 150);
     let undone = bone_records(&d);
@@ -473,7 +475,7 @@ fn undo_and_redo_of_a_register() {
         Err(Error::NotApplicable("nothing to undo"))
     );
     run(&mut d, [Command::Redo]);
-    assert_eq!(d.save().unwrap(), after);
+    assert_eq!(format!("{:?}", bone_records(&d)), after);
     assert!(!d.edit.models[0].history.redo_dirty);
 }
 
@@ -607,7 +609,9 @@ fn model_copy_and_paste() {
 #[test]
 fn pose_edits_and_frame_changes_are_undoable() {
     // PushBoneEditUndo snapshots the selected bones; SnapshotPoseBeforeFrameChange
-    // all bones and the frame left, once a bone is edited.
+    // all bones, once a bone is edited, before the seek. The frame edit (417)
+    // sets the frame first, so the entry holds the new frame
+    // (`RefreshAfterFrameApply`).
     let mut d = doc();
     run(
         &mut d,
@@ -628,10 +632,16 @@ fn pose_edits_and_frame_changes_are_undoable() {
         "no entry before the edit"
     );
     run(&mut d, [Command::Undo]);
-    assert_eq!(d.pmm.timeline.current_frame, 10);
+    assert_eq!(d.pmm.timeline.current_frame, 40);
     assert_eq!(d.pmm.models[0].bone_pose[3].rotation, [0.0, 1.0, 0.0, 0.0]);
+    // The pose before the edit is the one the seek to frame 10 left.
+    let mut seeked = doc();
+    run(&mut seeked, [Command::SetFrame(10)]);
     run(&mut d, [Command::Undo]);
-    assert_eq!(d.pmm.models[0].bone_pose[3].rotation, [0.0, 0.0, 0.0, 1.0]);
+    assert_eq!(
+        d.pmm.models[0].bone_pose[3].rotation,
+        seeked.pmm.models[0].bone_pose[3].rotation
+    );
     assert_eq!(d.pmm.models[0].bone_pose[3].flags[1], 0);
     run(&mut d, [Command::Redo]);
     assert_eq!(d.pmm.models[0].bone_pose[3].rotation, [0.0, 1.0, 0.0, 0.0]);
@@ -680,7 +690,9 @@ fn new_scene_is_the_reset_state() {
     let p = &d.pmm;
     assert!(p.models.is_empty() && d.models.is_empty());
     assert_eq!(p.settings.options, [1; 7]);
-    assert_eq!(p.settings.camera_fov, 45.0);
+    // 45, then the refresh tail's `ReloadModels` copies the head key's 30
+    // (the script oracle's camera/new.pmm).
+    assert_eq!(p.settings.camera_fov, 30.0);
     let cam = &p.camera.heads()[0];
     assert_eq!(
         (cam.distance, cam.eye, cam.fov, cam.parent_model),

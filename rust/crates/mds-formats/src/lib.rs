@@ -1,5 +1,6 @@
 //! Byte-exact readers and writers for the MikuMikuDance file formats: PMD
-//! and PMX models, VMD motions, VPD poses, and PMM v2 scenes.
+//! and PMX models, VMD motions, VPD poses, and PMM v2 scenes. PMM v1 scenes
+//! read into the v2 struct ([`pmm_v1`]) and are saved as v2, as the C++ does.
 //!
 //! # Data shape
 //!
@@ -35,6 +36,7 @@ mod io;
 pub mod key_pool;
 pub mod pmd;
 pub mod pmm;
+pub mod pmm_v1;
 pub mod pmx;
 pub mod text;
 pub mod vmd;

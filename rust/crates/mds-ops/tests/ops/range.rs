@@ -230,28 +230,20 @@ fn display_keys_keep_their_flags_and_selectors() {
 }
 
 #[test]
-fn a_selector_that_names_every_bone_cannot_be_registered() {
-    // The first selector's bone is -1, which mds-edit cannot look up; a free
-    // bone stands in for it. With every bone named there is none.
+fn the_root_selector_matches_no_display_entry() {
+    // The first selector's bone is -1 (bone_sort.cpp). The C++ compares its
+    // name with the bytes before the bone table; mds-edit matches nothing.
     let mut p = swing600();
     let f = facts(&p, 0);
     p.models[0].selector_bones = vec![-1, 0, 1, 2, 3, 4, 5, 6, 7, 8];
     p.models[0].selector_pose = vec![[0, 0, -1, 0]; 10];
-    let before = shape(&p.models[0].display_keys);
     let s = RangeScale {
         display: true,
         morphs: false,
         ..morphs(250, 400, 0.5)
     };
-    assert_eq!(
-        scale_frame_range(&mut p, &f, &s),
-        Err(Error::Edit(mds_edit::Error::Corrupt))
-    );
-    assert_eq!(
-        shape(&p.models[0].display_keys),
-        before,
-        "nothing is applied"
-    );
+    assert_eq!(scale_frame_range(&mut p, &f, &s), Ok(()));
+    assert_valid(&p);
 }
 
 #[test]

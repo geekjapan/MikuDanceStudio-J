@@ -28,10 +28,14 @@ skinfix	3b	skin	mac	sonnet	pending	tools/skin_check/,tests/fixtures/rust/skin/,r
 renderskin	3b	skin	mac	sonnet	MIT	rust/crates/mds-render/
 docgold	3b	doc,script	mac	opus	pending	rust/crates/mds-doc/
 golden2	3b	-	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/golden2/,CMakeLists.txt
-mdsedit	3b	-	mac	opus	pending	rust/crates/mds-edit/,tools/keypool_check/
+mdsedit	3b	-	mac	opus	pending	rust/crates/mds-edit/,tools/keypool_check/,rust/crates/mds-ops/src/model.rs,rust/crates/mds-ops/tests/ops/range.rs,.claude/skills/verify-keyframe-pool/SKILL.md
 pmm1	3b	-	mac	sonnet	pending	rust/crates/mds-formats/,tools/pmm1_check/,tests/fixtures/rust/pmm1/
 renderapi	3b	-	mac	sonnet	MIT	rust/crates/mds-render/
 physapi	3b	-	mac	opus	pending	rust/crates/mds-physics/
 uiinv	3b	-	mac	sonnet	pending	tools/ui_inventory/
 shaderfix	3b	-	mac	opus	pending	rust/crates/mds-shader/,rust/crates/mds-fx/
 mmert2	3b	mmert	mac	opus	pending	rust/crates/mds-mmert/,rust/crates/mds-mme/
+app	3c	physapi,renderapi	mac	opus	pending	rust/crates/mds-app/
+render2	3b	golden2	mac	opus	MIT	rust/crates/mds-render/
+docgold2	3b	docgold,mdsedit	mac	opus	pending	rust/crates/mds-doc/,rust/crates/mds-ops/
+accgold	3b	accessory	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/accessory/,rust/crates/mds-accessory/,CMakeLists.txt,src/render/bg_overlay.cpp,tests/fixtures/rust/golden2/

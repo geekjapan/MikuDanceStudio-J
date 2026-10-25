@@ -1,0 +1,400 @@
+id	kind	label_ja	label_en	cpp_handler	area	rust
+menu:204	menu	新規(&N)	new(&N)	src/window/command_dispatch.cpp:455	file	
+menu:205	menu	開く(&O)	open(&O)	src/window/command_dispatch.cpp:458	file	
+menu:207	menu	上書き保存(&S)	save(&S)	src/window/command_dispatch.cpp:464	file	
+menu:208	menu	名前を付けて保存(&A)	save as(&A)	src/window/command_dispatch.cpp:478	file	
+menu:223	menu	AVIファイルに出力(&V)	render to AVI file(&V)	src/window/command_file_menu.cpp:1183	file	
+menu:276	menu	画像ファイルに出力(&B)	render to picture file(&B)	src/window/command_view_menu.cpp:1243	file	
+menu:202	menu	ポーズデータ読込(&P)	load pose data(&P)	src/window/command_dispatch.cpp:449	file	
+menu:203	menu	ポーズデータ保存(&Q)	save pose data(&Q)	src/window/command_dispatch.cpp:452	file	
+menu:209	menu	モーションデータ読込(&M)	load motion data(&M)	src/window/command_dispatch.cpp:481	file	
+menu:210	menu	モーションデータ保存(&L)	save motion data(&L)	src/window/command_dispatch.cpp:484	file	
+menu:206	menu	WAVファイル読込(&W)	load WAV file(&W)	src/window/command_dispatch.cpp:461	file	
+menu:284	menu	ﾌﾚｰﾑ移動時WAVを鳴らす(&F)	play WAV with frame(&F)	src/window/command_view_menu.cpp:1425	file	
+menu:297	menu	WAVファイルを鳴らさない(&D)	not play WAV file(&D)	src/window/command_view_menu.cpp:1679	file	
+menu:301	menu	ﾃﾞﾌｫﾙﾄﾌｫﾙﾀﾞを前回位置とする(&E)	set default folder to previous(&E)	src/window/command_view_menu.cpp:1849	file	
+menu:200	menu	終了(&X)	Exit(&X)	src/window/command_dispatch.cpp:413	file	
+menu:300	menu	ボーン・カメラ数値入力(&O)	bone camera numeric input(&O)	src/window/command_view_menu.cpp:1740	edit	
+menu:302	menu	ボーン・カメラ角度0化(&Z)	bone camera angle initialize(&Z)	src/window/command_view_menu.cpp:1864	edit	
+menu:222	menu	不要ﾌﾚｰﾑ削除(&D)	delete unused frame(&D)	src/window/command_file_menu.cpp:1118	edit	
+menu:237	menu	ｶﾒﾗﾌﾚｰﾑすべて選択(&C)	select all camera frame(&C)	src/window/command_file_menu.cpp:1964	edit	
+menu:238	menu	照明ﾌﾚｰﾑすべて選択(&L)	select all light frame(&L)	src/window/command_file_menu.cpp:1981	edit	
+menu:239	menu	ｾﾙﾌ影ﾌﾚｰﾑすべて選択(&S)	select all self shadow frame(&S)	src/window/command_file_menu.cpp:1997	edit	
+menu:240	menu	重力ﾌﾚｰﾑすべて選択(&V)	select all gravity frame(&V)	src/window/command_file_menu.cpp:2013	edit	
+menu:241	menu	ｱｸｾｻﾘﾌﾚｰﾑすべて選択(&A)	select all accessory frame(&A)	src/window/command_file_menu.cpp:2029	edit	
+menu:242	menu	ｶﾒﾗﾌﾚｰﾑ位置角度補正(&G)	multiply of camera frame position-angle(&G)	src/window/command_file_menu.cpp:1940	edit	
+menu:217	menu	ﾎﾞｰﾝﾌﾚｰﾑすべて選択(&N)	select all bone frame(&N)	src/window/command_dispatch.cpp:554	edit	
+menu:220	menu	表情ﾌﾚｰﾑすべて選択(&E)	select all facial frame(&E)	src/window/command_dispatch.cpp:560	edit	
+menu:218	menu	表示･IK･外親ﾌﾚｰﾑすべて選択(&M)	select all disp/IK/OP frame(&M)	src/window/command_dispatch.cpp:557	edit	
+menu:250	menu	別ﾌﾚｰﾑへﾍﾟｰｽﾄ(Fｷｰ)	paste to different flame(F_key)	src/window/command_file_menu.cpp:1471	edit	
+menu:255	menu	空ﾌﾚｰﾑ挿入(ﾎﾞｰﾝorｶﾒﾗ)(Iｷｰ)	insert frame line(bone or camera)(I_key)	src/window/command_view_menu.cpp:870	edit	
+menu:256	menu	列ﾌﾚｰﾑ削除(ﾎﾞｰﾝorｶﾒﾗ)(Kｷｰ)	delete frame line(bone or camera)(K_key)	src/window/command_view_menu.cpp:871	edit	
+menu:257	menu	空ﾌﾚｰﾑ挿入(表情or照明)(Uｷｰ)	insert frame line(facial or light)(U_key)	src/window/command_view_menu.cpp:872	edit	
+menu:258	menu	列ﾌﾚｰﾑ削除(表情or照明)(Jｷｰ)	delete frame line(facial or light)(J_key)	src/window/command_view_menu.cpp:873	edit	
+menu:251	menu	ﾎﾞｰﾝﾌﾚｰﾑ位置角度補正(Rｷｰ)	multiply of bone frame position-angle(R_key)	src/window/command_view_menu.cpp:796	edit	
+menu:252	menu	表情大きさ補正(&T)	multiply of facial expression(&T)	src/window/command_view_menu.cpp:814	edit	
+menu:219	menu	ｾﾝﾀｰ位置ﾊﾞｲｱｽ付加(&B)	apply center position bias(&B)	src/window/command_file_menu.cpp:1042	edit	
+menu:212	menu	出力サイズ(&O)	screen size(&O)	src/window/command_file_menu.cpp:1008	view	
+menu:280	menu	別窓(&W)	separate window(&W)	src/window/command_view_menu.cpp:1367	view	
+menu:281	menu	別窓最前列表示(&F)	to the fore(&F)	src/window/command_view_menu.cpp:1380	view	
+menu:247	menu	ﾓﾃﾞﾙ編集時ｶﾒﾗ･照明追従(&C)	camera & lighting tracking(&C)	src/window/command_file_menu.cpp:1769	view	
+menu:211	menu	情報表示(&D)	information display(&D)	src/window/command_dispatch.cpp:487	view	
+menu:215	menu	座標軸表示(&G)	display coordinate axis(&G)	src/window/command_dispatch.cpp:528	view	
+menu:221	menu	地面影表示(&S)	display ground shadow(&S)	src/window/command_file_menu.cpp:1095	view	
+menu:248	menu	地面影色設定(&X)	ground shadow color(&X)	src/window/command_file_menu.cpp:2097	view	
+menu:254	menu	地面影色透明化(&T)	transparent ground shadow(&T)	src/window/command_view_menu.cpp:853	view	
+menu:214	menu	半透明化(Vｷｰ)	character transparent mode(V_key)	src/window/command_dispatch.cpp:514	view	
+menu:283	menu	モデル非表示(&A)	character Non-display mode(&A)	src/window/command_view_menu.cpp:1413	view	
+menu:253	menu	エッジ太さ(&E)	thickness of edge line(&E)	src/window/command_view_menu.cpp:832	view	
+menu:286	menu	エッジ色(&B)	edge line color(&B)	src/window/command_view_menu.cpp:1464	view	
+menu:277	menu	アンチエイリアス(&H)	anti-aliasing(&H)	src/window/command_view_menu.cpp:1327	view	
+menu:298	menu	ミップマップ(異方性フィルタ)(&M)	mipmap(anisotropic)(&M)	src/window/command_view_menu.cpp:1696	view	
+menu:279	menu	セルフシャドウ表示(&P)	self-shadow(&P)	src/window/command_view_menu.cpp:1352	view	
+menu:287	menu	ワイヤーフレーム表示(&R)	wire frame(&R)	src/window/command_view_menu.cpp:1500	view	
+menu:290	menu	フルスクリーン表示(Alt+Enter)	full screen(Alt+Enter)	src/window/command_view_menu.cpp:1540	view	
+menu:234	menu	fps無制限	fps no limit	src/window/command_file_menu.cpp:1913	view	
+menu:235	menu	30fps制限	max fps restricted to 30fps	src/window/command_file_menu.cpp:1920	view	
+menu:236	menu	60fps制限	max fps restricted to 60fps	src/window/command_file_menu.cpp:1927	view	
+menu:299	menu	省エネモード	save CPU power	src/window/command_view_menu.cpp:1715	view	
+menu:249	menu	アクセサリ編集(&S)	accessories edit(&A)	src/window/command_file_menu.cpp:2117	background	
+menu:288	menu	モデル描画順(&O)	model draw order(&O)	src/window/command_view_menu.cpp:1515	background	
+menu:289	menu	モデル計算順(&C)	model calculate order(&C)	src/window/command_view_menu.cpp:1527	background	
+menu:282	menu	背景黒化(&D)	black background(&D)	src/window/command_view_menu.cpp:1401	background	
+menu:213	menu	背景AVIファイル読込(&L)	load background AVI file(&L)	src/window/command_dispatch.cpp:511	background	
+menu:232	menu	背景画像ファイル読込(&R)	load background picture file(&R)	src/window/command_file_menu.cpp:1829	background	
+menu:216	menu	背景AVI表示(&A)	show background AVI file(&A)	src/window/command_dispatch.cpp:541	background	
+menu:233	menu	背景画像表示(&P)	show background picture file(&P)	src/window/command_file_menu.cpp:1893	background	
+menu:243	menu	ｽｸﾘｰﾝ用ｷｬﾌﾟﾁｬOFF(&V)	screen capture mode OFF(&V)	src/window/command_file_menu.cpp:2053	background	
+menu:244	menu	ON･モード１(全画面) (&M)	ON.mode01(&M)	src/window/command_file_menu.cpp:2063	background	
+menu:245	menu	ON･モード２(4:3比率) (&N)	ON.mode02(&N)	src/window/command_file_menu.cpp:2072	background	
+menu:246	menu	ON･モード３(背景AVI) (&B)	ON.mode03(&B)	src/window/command_file_menu.cpp:2081	background	
+menu:226	menu	リップフレーム全て削除	delete all mouse frame	src/window/command_file_menu.cpp:1323	expression	
+menu:224	menu	vsqによるリップシンク	lip-sync with .VSQ file	src/window/command_file_menu.cpp:1147	expression	
+menu:225	menu	リップフレーム時間シフト	time shifting mouse frame	src/window/command_file_menu.cpp:1242	expression	
+menu:228	menu	目フレーム全て削除	delete all eye frame	src/window/command_file_menu.cpp:1440	expression	
+menu:227	menu	まばたきランダム登録	randomly register blinking	src/window/command_file_menu.cpp:1352	expression	
+menu:231	menu	まゆフレーム全て削除	delete all eyebrow frame	src/window/command_file_menu.cpp:1737	expression	
+menu:230	menu	全ての表情リセット	reset all facial value	src/window/command_file_menu.cpp:1709	expression	
+menu:229	menu	全ての表情フレーム登録(Hｷｰ)	regist all facial frame(H_key)	src/window/command_file_menu.cpp:1654	expression	
+menu:269	menu	オン/オフモード(&O)	on/off mode(&O)	src/window/command_view_menu.cpp:1066	physics	
+menu:265	menu	常に演算(&E)	anytime(&E)	src/window/command_view_menu.cpp:1048	physics	
+menu:270	menu	トレースモード(&T)	trace mode(&T)	src/window/command_view_menu.cpp:1082	physics	
+menu:272	menu	演算しない(&N)	no calculation(&N)	src/window/command_view_menu.cpp:1098	physics	
+menu:271	menu	再生時は常にオン/オフモードにする(&P)	playtime use on/off mode(&P)	src/window/command_view_menu.cpp:1163	physics	
+menu:264	menu	剛体表示(&D)	display bodies(&D)	src/window/command_view_menu.cpp:1029	physics	
+menu:266	menu	重力設定(&G)	gravity setting(&G)	src/window/command_view_menu.cpp:1117	physics	
+menu:268	menu	剛体位置初期化(&I)	initialize bodies position(&I)	src/window/command_view_menu.cpp:1154	physics	
+menu:285	menu	床(&F)	floor(&F)	src/window/command_view_menu.cpp:1437	physics	
+menu:273	menu	物理影響ボーン選択(&B)	select physical bone(&B)	src/window/command_view_menu.cpp:1180	physics	
+menu:274	menu	全ての物理ONフレーム(X印)選択(&X)	select physics ON frame(X mark)(&X)	src/window/command_view_menu.cpp:1208	physics	
+menu:275	menu	物理ON/OFFフレーム変換(&C)	change physics ON/OFF frame(&C)	src/window/command_view_menu.cpp:1222	physics	
+menu:267	menu	物理エンジンについて(&A)	about physical engine(&A)	src/window/command_view_menu.cpp:1135	physics	
+menu:291	menu	Kinect(&K)	Kinect(&K)	src/window/command_view_menu.cpp:1550	mocap	
+menu:292	menu	ｷｬﾌﾟﾁｬ(&C)	capture(&C)	src/window/command_view_menu.cpp:1565	mocap	
+menu:293	menu	左右反転(&R)	L-R reversing(&R)	src/window/command_view_menu.cpp:1594	mocap	
+menu:294	menu	ﾛｽﾄﾎﾞｰﾝ初期化(&L)	initialize lost bone(&L)	src/window/command_view_menu.cpp:1605	mocap	
+menu:295	menu	赤人表示(&D)	display red man(&D)	src/window/command_view_menu.cpp:1617	mocap	
+menu:296	menu	oniﾌｧｲﾙ読込(&O)	load oni-file(&O)	src/window/command_view_menu.cpp:1638	mocap	
+menu:260	menu	English Mode(&E)	Japanese Mode(&J)	src/window/command_view_menu.cpp:923	help	
+menu:259	menu	英語名編集(&E)	edit English name(&E)	src/window/command_view_menu.cpp:903	help	
+menu:261	menu	ﾄｩｰﾝﾃｸｽﾁｬ変更(&T)	toon texture(&T)	src/window/command_view_menu.cpp:936	help	
+menu:262	menu	物理演算編集(&B)	physics model(&B)	src/window/command_view_menu.cpp:963	help	
+menu:263	menu	拡張モデル保存(&P)	save enhanced model(&P)	src/window/command_view_menu.cpp:989	help	
+menu:278	menu	ﾃｸｽﾁｬ読直し(&R)	restore texture(&R)	src/window/command_view_menu.cpp:1343	help	
+menu:201	menu	ﾊﾞｰｼﾞｮﾝ情報(&I)	About(&A)	src/window/command_dispatch.cpp:418	help	
+ctl:400	button	元に戻す	undo	src/window/command_frame_edit.cpp:1382	timeline	
+ctl:401	button	やり直し	redo	src/window/command_frame_edit.cpp:1386	timeline	
+ctl:402	button	正面	front	src/window/command_frame_edit.cpp:1403	viewport	
+ctl:403	button	背面	back	src/window/command_frame_edit.cpp:1406	viewport	
+ctl:404	button	上面	top	src/window/command_frame_edit.cpp:1409	viewport	
+ctl:405	button	左面	left	src/window/command_frame_edit.cpp:1412	viewport	
+ctl:406	button	右面	right	src/window/command_frame_edit.cpp:1415	viewport	
+ctl:407	button	下面	btm	src/window/command_frame_edit.cpp:1419	viewport	
+ctl:408	toggle	再　生	play	src/window/command_frame_edit.cpp:1423	play	
+ctl:409	edit	<kPlayStartFrameEdit>	<kPlayStartFrameEdit>	~src/window/ui_edit_commit.cpp:272	play	
+ctl:410	edit	<kPlayStopFrameEdit>	<kPlayStopFrameEdit>	~src/window/ui_edit_commit.cpp:272	play	
+ctl:411	checkbox	<kPlaybackLoopCheckbox>	<kPlaybackLoopCheckbox>	src/window/command_frame_edit.cpp:1431	play	
+ctl:412	checkbox	<kCameraRefModelCheckbox>	<kCameraRefModelCheckbox>	src/window/command_frame_edit.cpp:1448	camera-panel	
+ctl:413	checkbox	<kPlaybackReturnCheckbox>	<kPlaybackReturnCheckbox>	src/window/command_frame_edit.cpp:1434	play	
+ctl:414	checkbox	<kPlaybackFromCurrentCheckbox>	<kPlaybackFromCurrentCheckbox>	src/window/command_frame_edit.cpp:1438	play	
+ctl:415	button	範囲選択	range-sel	src/window/command_frame_edit.cpp:1660	timeline	
+ctl:416	button	縦選択	v-sel	src/window/command_frame_edit.cpp:1664	timeline	
+ctl:417	edit	<kCurrentFrameEdit>	<kCurrentFrameEdit>	~src/window/ui_edit_commit.cpp:277	timeline	
+ctl:418	button	＜	<	src/window/command_frame_edit.cpp:1472	timeline	
+ctl:419	button	＞	>	src/window/command_frame_edit.cpp:1475	timeline	
+ctl:420	button	コピー	copy	src/window/command_frame_edit.cpp:1668	timeline	
+ctl:421	button	ﾍﾟｰｽﾄ	paste	src/window/command_frame_edit.cpp:1672	timeline	
+ctl:422	button	反転P	revers	src/window/command_frame_edit.cpp:1676	timeline	
+ctl:423	button	削　除	delete	src/window/command_frame_edit.cpp:1650	timeline	
+ctl:424	button	拡大縮小	expand	src/window/command_frame_edit.cpp:1686	timeline	
+ctl:425	edit	<kRangeStartEdit>	<kRangeStartEdit>	~src/window/ui_edit_commit.cpp:272	timeline	
+ctl:426	edit	<kRangeStopEdit>	<kRangeStopEdit>	~src/window/ui_edit_commit.cpp:272	timeline	
+ctl:427	scrollbar	<kTimelineVScroll>	<kTimelineVScroll>	~src/window/ui_scroll_mouse.cpp:48	timeline	
+ctl:428	scrollbar	<kTimelineHScroll>	<kTimelineHScroll>	~src/window/ui_hscroll.cpp:274	timeline	
+ctl:429	button	現フレーム	current	src/window/command_frame_edit.cpp:1486	timeline	
+ctl:430	button	コピー	copy	src/window/command_frame_edit.cpp:1508	timeline	
+ctl:431	button	ペースト	paste	src/window/command_frame_edit.cpp:1512	timeline	
+ctl:432	button	線形補間	liner	src/window/command_frame_edit.cpp:1516	timeline	
+ctl:433	combo	<kInterpCurveCombo>	<kInterpCurveCombo>	~src/window/command_dispatch.cpp:380	timeline	
+ctl:434	combo	<kRegisterScopeCombo>	<kRegisterScopeCombo>	~src/window/command_dispatch.cpp:389	timeline	
+ctl:435	button	読　込	load	src/window/command_frame_edit.cpp:1520	model-panel	
+ctl:436	combo	<kMainComboModel>	<kMainComboModel>	src/window/command_frame_edit.cpp:1529	model-panel	
+ctl:437	button	削　除	delete	src/window/command_frame_edit.cpp:1538	model-panel	
+ctl:438	button	登　録	register	src/window/command_frame_edit.cpp:1548	model-panel	
+ctl:439	checkbox	<kModelVisibleCheckbox>	<kModelVisibleCheckbox>	src/window/command_frame_edit.cpp:1566	model-panel	
+ctl:440	toggle	影	shadow	src/window/command_frame_edit.cpp:1577	model-panel	
+ctl:441	toggle	加算	Add-syn	src/window/command_frame_edit.cpp:1585	model-panel	
+ctl:442	button	外	OP	src/window/command_frame_edit.cpp:1655	model-panel	
+ctl:443	combo	<kIkChainCombo>	<kIkChainCombo>	~src/window/command_dispatch.cpp:153	model-panel	
+ctl:444	radio	<kIkOnRadio>	<kIkOnRadio>	src/window/command_frame_edit.cpp:1598	model-panel	
+ctl:445	radio	<kIkOffRadio>	<kIkOffRadio>	src/window/command_frame_edit.cpp:1608	model-panel	
+ctl:446	toggle	パース	perspect	src/window/command_frame_edit.cpp:1627	camera-panel	
+ctl:447	slider	<kFovSlider>	<kFovSlider>	~src/window/ui_hscroll.cpp:232	camera-panel	
+ctl:448	edit	<kFovEdit>	<kFovEdit>	~src/window/ui_edit_commit.cpp:324	camera-panel	
+ctl:449	combo	<kMainComboNormal>	<kMainComboNormal>	~src/window/command_dispatch.cpp:210	bone-panel	
+ctl:450	combo	<kBoneRegisterCombo>	<kBoneRegisterCombo>	~src/window/command_dispatch.cpp:213	bone-panel	
+ctl:451	button	初期化	reset	src/window/command_panel_toggles.cpp:331	camera-panel	
+ctl:452	button	登　録	register	src/window/command_panel_toggles.cpp:391	camera-panel	
+ctl:453	button	－	-	src/window/command_panel_toggles.cpp:357	camera-panel	
+ctl:454	button	＋	+	src/window/command_panel_toggles.cpp:358	camera-panel	
+ctl:455	slider	<kLightColorSliderR>	<kLightColorSliderR>	~src/window/ui_hscroll.cpp:168	light-panel	
+ctl:456	slider	<kLightColorSliderG>	<kLightColorSliderG>	~src/window/ui_hscroll.cpp:179	light-panel	
+ctl:457	slider	<kLightColorSliderB>	<kLightColorSliderB>	~src/window/ui_hscroll.cpp:190	light-panel	
+ctl:458	slider	<kLightDirSliderX>	<kLightDirSliderX>	~src/window/ui_hscroll.cpp:203	light-panel	
+ctl:459	slider	<kLightDirSliderY>	<kLightDirSliderY>	~src/window/ui_hscroll.cpp:212	light-panel	
+ctl:460	slider	<kLightDirSliderZ>	<kLightDirSliderZ>	~src/window/ui_hscroll.cpp:221	light-panel	
+ctl:461	edit	<kLightColorEditR>	<kLightColorEditR>	~src/window/ui_edit_commit.cpp:291	light-panel	
+ctl:462	edit	<kLightColorEditG>	<kLightColorEditG>	~src/window/ui_edit_commit.cpp:292	light-panel	
+ctl:463	edit	<kLightColorEditB>	<kLightColorEditB>	~src/window/ui_edit_commit.cpp:293	light-panel	
+ctl:464	edit	<kLightDirEditX>	<kLightDirEditX>	~src/window/ui_edit_commit.cpp:308	light-panel	
+ctl:465	edit	<kLightDirEditY>	<kLightDirEditY>	~src/window/ui_edit_commit.cpp:309	light-panel	
+ctl:466	edit	<kLightDirEditZ>	<kLightDirEditZ>	~src/window/ui_edit_commit.cpp:310	light-panel	
+ctl:467	button	初期化	reset	src/window/command_panel_toggles.cpp:405	light-panel	
+ctl:468	button	登　 録	register	src/window/command_panel_toggles.cpp:459	light-panel	
+ctl:469	button	－	-	src/window/command_panel_toggles.cpp:359	light-panel	
+ctl:470	button	＋	+	src/window/command_panel_toggles.cpp:360	light-panel	
+ctl:471	combo	<kAccessoryCombo>	<kAccessoryCombo>	~src/window/command_dispatch.cpp:170	accessory-panel	
+ctl:472	button	読　込	load	src/window/command_panel_toggles.cpp:473	accessory-panel	
+ctl:473	button	削　除	delete	src/window/command_panel_toggles.cpp:523	accessory-panel	
+ctl:474	combo	<kMainComboGround>	<kMainComboGround>	~src/window/command_dispatch.cpp:300	accessory-panel	
+ctl:475	combo	<kAttachBoneCombo>	<kAttachBoneCombo>	~src/window/command_dispatch.cpp:307	accessory-panel	
+ctl:476	checkbox	<kAccessoryVisibleCheckbox>	<kAccessoryVisibleCheckbox>	src/window/command_panel_toggles.cpp:532	accessory-panel	
+ctl:477	toggle	加 算	Add-syn	src/window/command_panel_toggles.cpp:554	accessory-panel	
+ctl:478	edit	<kAccPosXEdit>	<kAccPosXEdit>	~src/window/ui_edit_commit.cpp:346	accessory-panel	
+ctl:479	edit	<kAccPosYEdit>	<kAccPosYEdit>	~src/window/ui_edit_commit.cpp:348	accessory-panel	
+ctl:480	edit	<kAccPosZEdit>	<kAccPosZEdit>	~src/window/ui_edit_commit.cpp:350	accessory-panel	
+ctl:481	edit	<kAccRotXEdit>	<kAccRotXEdit>	~src/window/ui_edit_commit.cpp:352	accessory-panel	
+ctl:482	edit	<kAccRotYEdit>	<kAccRotYEdit>	~src/window/ui_edit_commit.cpp:354	accessory-panel	
+ctl:483	edit	<kAccRotZEdit>	<kAccRotZEdit>	~src/window/ui_edit_commit.cpp:356	accessory-panel	
+ctl:484	edit	<kAccScaleEdit>	<kAccScaleEdit>	~src/window/ui_edit_commit.cpp:358	accessory-panel	
+ctl:485	edit	<kAccOpacityEdit>	<kAccOpacityEdit>	~src/window/ui_edit_commit.cpp:360	accessory-panel	
+ctl:486	checkbox	<kAccessoryShadowCheckbox>	<kAccessoryShadowCheckbox>	src/window/command_panel_toggles.cpp:568	accessory-panel	
+ctl:487	button	登　 録	register	src/window/command_panel_toggles.cpp:590	accessory-panel	
+ctl:488	button	－	-	src/window/command_panel_toggles.cpp:361	accessory-panel	
+ctl:489	button	＋	+	src/window/command_panel_toggles.cpp:362	accessory-panel	
+ctl:490	radio	選　択	select	src/window/command_panel_toggles.cpp:612	bone-panel	
+ctl:491	radio	BOX選択	BOX-sel	src/window/command_panel_toggles.cpp:622	bone-panel	
+ctl:492	radio	移　動	move	src/window/command_panel_toggles.cpp:632	bone-panel	
+ctl:493	radio	回　転	rotate	src/window/command_panel_toggles.cpp:642	bone-panel	
+ctl:494	button	<kSelectAllBonesButton>	select all	src/window/command_panel_toggles.cpp:658	bone-panel	
+ctl:495	button	初期化	reset	src/window/command_panel_toggles.cpp:696	bone-panel	
+ctl:496	button	コピー	copy	src/window/command_panel_toggles.cpp:707	bone-panel	
+ctl:497	button	ペースト	paste	src/window/command_panel_toggles.cpp:720	bone-panel	
+ctl:498	button	反転ﾍﾟｰｽﾄ	revers	src/window/command_panel_toggles.cpp:730	bone-panel	
+ctl:499	toggle	物 理	physics	~src/model/model_keyframe_edit.cpp:277	physics	
+ctl:500	button	登　録	register	src/window/command_frame_register.cpp:375	bone-panel	
+ctl:501	button	<kSelectUnregisteredBonesButton>	unregisted	src/window/command_frame_register.cpp:399	bone-panel	
+ctl:502	button	－	-	src/window/command_frame_register.cpp:423	bone-panel	
+ctl:503	button	＋	+	src/window/command_frame_register.cpp:427	bone-panel	
+ctl:504	combo	<kMorphCombo0>	<kMorphCombo0>	~src/window/command_dispatch.cpp:356	morph-panel	
+ctl:505	slider	<kMorphSlider0>	<kMorphSlider0>	~src/window/ui_hscroll.cpp:158	morph-panel	
+ctl:506	edit	<kMorphEdit0>	<kMorphEdit0>	~src/window/ui_edit_commit.cpp:415	morph-panel	
+ctl:507	button	<<	<<	src/window/command_frame_register.cpp:439	morph-panel	
+ctl:508	button	>>	>>	src/window/command_frame_register.cpp:443	morph-panel	
+ctl:509	combo	<kMorphCombo1>	<kMorphCombo1>	~src/window/command_dispatch.cpp:361	morph-panel	
+ctl:510	slider	<kMorphSlider1>	<kMorphSlider1>	~src/window/ui_hscroll.cpp:160	morph-panel	
+ctl:511	edit	<kMorphEdit1>	<kMorphEdit1>	~src/window/ui_edit_commit.cpp:417	morph-panel	
+ctl:512	button	<<	<<	src/window/command_frame_register.cpp:453	morph-panel	
+ctl:513	button	>>	>>	src/window/command_frame_register.cpp:457	morph-panel	
+ctl:514	combo	<kMorphCombo2>	<kMorphCombo2>	~src/window/command_dispatch.cpp:366	morph-panel	
+ctl:515	slider	<kMorphSlider2>	<kMorphSlider2>	~src/window/ui_hscroll.cpp:162	morph-panel	
+ctl:516	edit	<kMorphEdit2>	<kMorphEdit2>	~src/window/ui_edit_commit.cpp:419	morph-panel	
+ctl:517	button	<<	<<	src/window/command_frame_register.cpp:467	morph-panel	
+ctl:518	button	>>	>>	src/window/command_frame_register.cpp:471	morph-panel	
+ctl:519	combo	<kMorphCombo3>	<kMorphCombo3>	~src/window/command_dispatch.cpp:371	morph-panel	
+ctl:520	slider	<kMorphSlider3>	<kMorphSlider3>	~src/window/ui_hscroll.cpp:164	morph-panel	
+ctl:521	edit	<kMorphEdit3>	<kMorphEdit3>	~src/window/ui_edit_commit.cpp:421	morph-panel	
+ctl:522	button	<<	<<	src/window/command_frame_register.cpp:481	morph-panel	
+ctl:523	button	>>	>>	src/window/command_frame_register.cpp:485	morph-panel	
+ctl:524	button	登録	register	src/window/command_frame_register.cpp:496	morph-panel	
+ctl:525	button	登録	register	src/window/command_frame_register.cpp:497	morph-panel	
+ctl:526	button	登録	register	src/window/command_frame_register.cpp:498	morph-panel	
+ctl:527	button	登録	register	src/window/command_frame_register.cpp:499	morph-panel	
+ctl:528	button	－	-	src/window/command_frame_register.cpp:546	morph-panel	
+ctl:529	button	＋	+	src/window/command_frame_register.cpp:550	morph-panel	
+ctl:530	checkbox	<kPhysicsFrameCheckbox>	<kPhysicsFrameCheckbox>	src/window/command_frame_register.cpp:556	physics	
+ctl:531	checkbox	<kCameraRefBoneCheckbox>	<kCameraRefBoneCheckbox>	src/window/command_frame_register.cpp:560	camera-panel	
+ctl:532	button	>.	>.	src/window/command_frame_register.cpp:582	timeline	
+ctl:533	button	.<	.<	src/window/command_frame_register.cpp:585	timeline	
+ctl:534	slider	<kFrameVolumeSlider>	<kFrameVolumeSlider>	src/window/command_frame_register.cpp:590	view	
+ctl:535	toggle	追従	track	src/window/command_frame_register.cpp:594	camera-panel	
+ctl:536	button	モデル編	To model|camera	src/window/command_frame_register.cpp:636	model-panel	
+ctl:537	button	X	X	src/window/command_frame_register.cpp:655	camera-panel	
+ctl:538	button	Y	Y	src/window/command_frame_register.cpp:658	camera-panel	
+ctl:539	button	Z	Z	src/window/command_frame_register.cpp:661	camera-panel	
+ctl:540	button	X	X	src/window/command_frame_register.cpp:666	camera-panel	
+ctl:541	button	Y	Y	src/window/command_frame_register.cpp:669	camera-panel	
+ctl:542	button	Z	Z	src/window/command_frame_register.cpp:672	camera-panel	
+ctl:543	button	距離	dist	src/window/command_frame_register.cpp:677	camera-panel	
+ctl:544	edit	<kReadoutPosXEdit>	<kReadoutPosXEdit>	src/window/command_frame_register.cpp:687	camera-panel	
+ctl:545	edit	<kReadoutPosYEdit>	<kReadoutPosYEdit>	src/window/command_frame_register.cpp:688	camera-panel	
+ctl:546	edit	<kReadoutPosZEdit>	<kReadoutPosZEdit>	src/window/command_frame_register.cpp:689	camera-panel	
+ctl:547	edit	<kReadoutRotXEdit>	<kReadoutRotXEdit>	src/window/command_frame_register.cpp:690	camera-panel	
+ctl:548	edit	<kReadoutRotYEdit>	<kReadoutRotYEdit>	src/window/command_frame_register.cpp:691	camera-panel	
+ctl:549	edit	<kReadoutRotZEdit>	<kReadoutRotZEdit>	src/window/command_frame_register.cpp:692	camera-panel	
+ctl:550	edit	<kReadoutDistEdit>	<kReadoutDistEdit>	src/window/command_frame_register.cpp:693	camera-panel	
+ctl:551	toggle	情　報	info	src/window/command_frame_register.cpp:835	view	
+ctl:552	toggle	省エネ	low pow	src/window/command_frame_register.cpp:849	view	
+ctl:553	button	Go	Go	src/window/command_frame_register.cpp:697	timeline	
+ctl:554	edit	<kGotoFrameEdit>	<kGotoFrameEdit>	src/window/command_frame_register.cpp:861	timeline	
+ctl:555	button	ｾｯﾄ	set	src/window/command_frame_register.cpp:714	timeline	
+ctl:556	toggle	美　影	Fshadow	src/window/command_frame_register.cpp:722	shadow-panel	
+ctl:557	toggle	座標軸	axis	src/window/command_frame_register.cpp:865	view	
+ctl:558	button	|<	|<	src/window/command_frame_register.cpp:751	timeline	
+ctl:559	button	>|	>|	src/window/command_frame_register.cpp:762	timeline	
+ctl:560	slider	<kSelfShadowRangeSlider>	<kSelfShadowRangeSlider>	src/window/command_frame_register.cpp:877	shadow-panel	
+ctl:561	edit	<kSelfShadowRangeEdit>	<kSelfShadowRangeEdit>	src/window/command_frame_register.cpp:878	shadow-panel	
+ctl:562	toggle	q_j0W0	off	src/window/command_frame_register.cpp:773	shadow-panel	
+ctl:563	toggle	モード1	mode1	src/window/command_frame_register.cpp:781	shadow-panel	
+ctl:564	toggle	モード2	mode2	src/window/command_frame_register.cpp:789	shadow-panel	
+ctl:565	button	登　録	register	src/window/command_frame_register.cpp:799	shadow-panel	
+ctl:566	button	－	-	src/window/command_frame_register.cpp:882	shadow-panel	
+ctl:567	button	＋	+	src/window/command_frame_register.cpp:886	shadow-panel	
+dlg:IDD_CENTER_POSITION_BIAS	dialog	バイアス付加	apply center position bias	src/window/command_file_menu.cpp:1051	dialog	
+dlg:IDD_FRAME_SCALE	dialog	時間拡大(縮小)率	expand/shrink	src/window/command_frame_edit.cpp:1696	dialog	
+dlg:IDD_SCREEN_SIZE	dialog	出力画面サイズ変更	screen size	src/window/command_file_menu.cpp:1013	dialog	
+dlg:IDD_AVI_OUTPUT	dialog	AVI出力設定	AVI-out	src/window/command_file_menu.cpp:1220	dialog	
+dlg:IDD_FRAME_SHIFT	dialog	シフトするﾌﾚｰﾑ数	frame number to shift	src/window/command_file_menu.cpp:1250	dialog	
+dlg:IDD_REGISTER_BLINKING	dialog	まばたき登録	register blinking	src/window/command_file_menu.cpp:1383	dialog	
+dlg:IDD_CAMERA_FRAME_MULTIPLY	dialog	ｶﾒﾗﾌﾚｰﾑ位置角度補正	multiply of camera frame position-angle	src/window/command_file_menu.cpp:1948	dialog	
+dlg:IDD_GROUND_SHADOW_COLOR	dialog	地面影色設定	ground shadow color	src/window/command_file_menu.cpp:2105	dialog	
+dlg:IDD_ACCESSORY_ORDER	dialog	アクセサリ設定	accessory	src/window/command_file_menu.cpp:2123	dialog	
+dlg:IDD_BONE_FRAME_MULTIPLY	dialog	ﾎﾞｰﾝﾌﾚｰﾑ位置角度補正	multiply of bone position-angle	src/window/command_view_menu.cpp:803	dialog	
+dlg:IDD_MORPH_MULTIPLY	dialog	表情大きさ補正	multiply of facial expression 	src/window/command_view_menu.cpp:821	dialog	
+dlg:IDD_EDGE_THICKNESS	dialog	エッジ太さ設定	thickness of edge line	src/window/command_view_menu.cpp:841	dialog	
+dlg:IDD_BONE_NUMERIC_INPUT	dialog	数値入力(ボーン)	numeric input(bone)	src/window/command_view_menu.cpp:1818	dialog	
+dlg:IDD_CAMERA_NUMERIC_INPUT	dialog	数値入力(カメラ)	numeric input(camera)	src/window/command_view_menu.cpp:1760	dialog	
+dlg:IDD_ENGLISH_NAMES	dialog	英語名編集(半角英数字で入力、Enterキーで決定)	If name is writen by Japanese Font,Rename it to English Font.	src/window/command_view_menu.cpp:911	dialog	
+dlg:IDD_TOON_TEXTURE	dialog	トゥーンテクスチャ	toon texture	src/window/command_view_menu.cpp:942	dialog	
+dlg:IDD_PHYSICS_MODEL	dialog	物理演算モデル	physics model	src/window/command_view_menu.cpp:973	dialog	
+dlg:IDD_GRAVITY	dialog	重力設定	gravity setting	src/window/command_view_menu.cpp:1124	dialog	
+dlg:IDD_MODEL_DRAW_ORDER	dialog	モデル描画順設定	model disply order	src/window/command_view_menu.cpp:1519	dialog	
+dlg:IDD_OUTSIDE_PARENT	dialog	外部親設定	outside parent(OP) setting	src/window/command_frame_edit.cpp:1351	dialog	
+dlg:IDD_MODEL_CALCULATE_ORDER	dialog	モデル計算順設定	model calculate order	src/window/command_view_menu.cpp:1532	dialog	
+dlg:IDD_PHYSICS_FRAME_CONVERSION	dialog	物理ON/OFFフレーム変換	change physics ON/OFF frame	src/window/command_view_menu.cpp:1227	dialog	
+dlg:IDD_PMM_MISSING_MODEL	dialog	pmm ver.2.0 ロード	pmm ver.2.0 load	src/io/pmm_load_v2.cpp:1056	dialog	
+dlg:IDD_PMM_MODEL_MISMATCH	dialog	pmm ver.2.0 ロード	pmm ver.2.0 load	src/io/pmm_load_v2.cpp:1289	dialog	
+key:B	key	背景黒化(&D)	Toggle black/white background	src/app/key_ladder.cpp:49	background	
+key:V	key	半透明化(Vｷｰ)	Toggle transparent models	src/app/key_ladder.cpp:79	view	
+key:Ctrl+V	key	ﾍﾟｰｽﾄ	Paste frames (not while playing)	src/app/key_ladder.cpp:66	timeline	
+key:Shift+V	key	モデル非表示(&A)	Toggle model non-display	src/app/key_ladder.cpp:68	view	
+key:C	key	選　択	Toggle bone-select mode (model mode)	src/app/key_ladder.cpp:99	bone-panel	
+key:Ctrl+C	key	コピー	Copy frames	src/app/key_ladder.cpp:98	timeline	
+key:H	key	全ての表情フレーム登録(Hｷｰ)	Register all facial frames (model mode)	src/app/key_ladder.cpp:122	expression	
+key:I	key	空ﾌﾚｰﾑ挿入(ﾎﾞｰﾝorｶﾒﾗ)(Iｷｰ)	Insert bone/camera frame line	src/app/key_ladder.cpp:127	edit	
+key:K	key	列ﾌﾚｰﾑ削除(ﾎﾞｰﾝorｶﾒﾗ)(Kｷｰ)	Delete bone/camera frame line	src/app/key_ladder.cpp:131	edit	
+key:U	key	空ﾌﾚｰﾑ挿入(表情or照明)(Uｷｰ)	Insert facial/light frame line	src/app/key_ladder.cpp:135	edit	
+key:J	key	列ﾌﾚｰﾑ削除(表情or照明)(Jｷｰ)	Delete facial/light frame line	src/app/key_ladder.cpp:139	edit	
+key:G	key	Go	Go to the frame typed in the go-to-frame edit	src/app/key_ladder.cpp:166	timeline	
+key:Shift+G	key		Toggle the self-shadow map display	src/app/key_ladder.cpp:158	shadow-panel	
+key:Ctrl+G	key		Notice that fine-shadow mode moved to the Fshadow button	src/app/key_ladder.cpp:164	shadow-panel	
+key:L	key		Cycle the transform-channel selector (camera/light/accessory target)	src/app/key_ladder.cpp:183	viewport	
+key:Right	key	＞	Next frame; hold repeats after 0.4 s	src/app/pump_navigation.cpp:238	timeline	
+key:Ctrl+Right	key	>.	Next keyframe	src/app/pump_navigation.cpp:241	timeline	
+key:Left	key	＜	Previous frame; hold repeats after 0.4 s	src/app/pump_navigation.cpp:256	timeline	
+key:Ctrl+Left	key	.<	Previous keyframe	src/app/pump_navigation.cpp:259	timeline	
+key:Up	key		Previous edit target (camera mode) or display bone (model mode); hold repeats	src/app/pump_navigation.cpp:270	timeline	
+key:Down	key		Next edit target (camera mode) or display bone (model mode); hold repeats	src/app/pump_navigation.cpp:287	timeline	
+key:Ctrl+S	key	上書き保存(&S)	Save project (plus bell)	src/app/key_ladder.cpp:198	file	
+key:P	key	再　生	Play / stop	src/app/key_ladder.cpp:204	play	
+key:F	key	別ﾌﾚｰﾑへﾍﾟｰｽﾄ(Fｷｰ)	Paste frames at a different frame	src/app/key_ladder.cpp:211	edit	
+key:X	key	回　転	Rotate bone mode (model mode)	src/app/key_ladder.cpp:259	bone-panel	
+key:Ctrl+X	key	やり直し	Redo (model mode)	src/app/key_ladder.cpp:239	timeline	
+key:Z	key	移　動	Move bone mode (model mode)	src/app/key_ladder.cpp:290	bone-panel	
+key:Ctrl+Z	key	元に戻す	Undo (model mode)	src/app/key_ladder.cpp:270	timeline	
+key:A	key	<kSelectAllBonesButton>	Select all bones (model mode)	src/app/key_ladder.cpp:296	bone-panel	
+key:S	key	<kSelectUnregisteredBonesButton>	Select unregistered bones (model mode)	src/app/key_ladder.cpp:300	bone-panel	
+key:D	key	ｾﾝﾀｰ位置ﾊﾞｲｱｽ付加(&B)	Center position bias dialog (model mode)	src/app/key_ladder.cpp:304	edit	
+key:R	key	ﾎﾞｰﾝﾌﾚｰﾑ位置角度補正(Rｷｰ)	Bone frame multiply dialog (model mode)	src/app/key_ladder.cpp:318	edit	
+key:Enter@model-mode	key	登　録	Register keyframe for the selected bones	src/app/pump_edit_keys.cpp:358	bone-panel	
+key:Enter@camera-mode	key		Register camera, light, self-shadow, gravity and accessory keys at the current frame	src/app/pump_edit_keys.cpp:324	timeline	
+key:Alt+Enter	key	フルスクリーン表示(Alt+Enter)	Toggle full screen	src/app/pump_edit_keys.cpp:305	view	
+key:Esc@fullscreen	key		Leave full screen	src/app/pump_edit_keys.cpp:311	view	
+key:Esc@recording	key		Stop frame-step AVI recording	src/app/pump_edit_keys.cpp:368	file	
+key:]	key	<kPhysicsFrameCheckbox>	Toggle the physics on/off frame checkbox	src/app/pump_edit_keys.cpp:222	physics	
+key:Delete	key		Delete the marked keyframes (rebuild model edit)	src/app/pump_edit_keys.cpp:241	timeline	
+key:Tab	key	<kMainComboModel>	Next model in the model selector	src/app/pump_edit_keys.cpp:266	model-panel	
+key:Shift+Tab	key	<kMainComboModel>	Previous model in the model selector	src/app/pump_edit_keys.cpp:274	model-panel	
+key:VK226	key	<kMainComboModel>	Same cycle as Tab (the extra key left of Z on 102-key layouts)	src/app/pump_edit_keys.cpp:287	model-panel	
+key:Tab@panel-edits	key		Move between panel edit boxes (Shift reverses) and commit the opacity edit	src/app/pump_edit_keys.cpp:40	timeline	
+key:Numpad0	key		Reset the view (camera mode) or reload models and reset transforms	src/app/pump_navigation.cpp:468	viewport	
+key:Numpad1	key		Near-ground view	src/app/pump_navigation.cpp:482	viewport	
+key:Numpad2	key		Front view	src/app/pump_navigation.cpp:418	viewport	
+key:Numpad4	key		Yaw +90 degrees	src/app/pump_navigation.cpp:428	viewport	
+key:Numpad5	key		Top view	src/app/pump_navigation.cpp:458	viewport	
+key:Numpad6	key		Yaw -90 degrees	src/app/pump_navigation.cpp:438	viewport	
+key:Numpad8	key		Yaw 180 degrees	src/app/pump_navigation.cpp:448	viewport	
+mouse:bone-pick	mouse		Click a bone marker to select it; Shift toggles; repeated clicks cycle overlapping markers	src/app/frame_modes.cpp:289	viewport	
+mouse:bone-box-select	mouse		Drag a box to select bones (BOX select mode); Shift adds	src/app/frame_modes.cpp:298	viewport	
+mouse:bone-drag	mouse		Left drag on a gizmo handle edits the selected bones; Shift coarse (x5), Ctrl fine (x0.1); all selected root bones follow	src/app/frame_modes_bone.cpp:373	viewport	
+mouse:record-drag	mouse		While an accessory or light record is edited the same gizmo drags edit its fields instead of a bone	src/app/frame_modes_bone.cpp:158	viewport	
+mouse:rmb-drag	mouse		Right drag: orbit the camera (yaw/pitch)	src/app/pump_navigation.cpp:339	viewport	
+mouse:shift-rmb-drag	mouse		Shift + right drag: pan the view offsets (model mode)	src/app/pump_navigation.cpp:330	viewport	
+mouse:ctrl-rmb-drag	mouse		Ctrl + right drag: dolly the camera distance	src/app/pump_navigation.cpp:335	viewport	
+mouse:mmb-drag	mouse		Middle drag: pan the view offsets (model mode) or the camera target; Shift fast, Ctrl fine	src/app/pump_navigation.cpp:367	viewport	
+mouse:wheel	mouse		Wheel: dolly the camera distance or the camera target; over the timeline strip while playing it scrolls the strip	src/window/ui_scroll_mouse.cpp:154	viewport	
+mouse:timeline-margin-click	mouse		Click the margin column of a row to toggle its display flag	src/window/ui_editor_click.cpp:439	timeline	
+mouse:timeline-name-click	mouse		Click a bone/morph row name to select the row and insert a key	src/window/ui_editor_click.cpp:461	timeline	
+mouse:timeline-cell-click	mouse		Click timeline cells to select keys or ranges	src/window/ui_editor_click.cpp:685	timeline	
+mouse:timeline-frame-strip-click	mouse		Click the frame strip to set the current frame	src/window/ui_editor_click.cpp:801	timeline	
+mouse:timeline-name-rect-click	mouse		Click the bone/morph name rectangles to insert a key and mark the row	src/window/ui_editor_click.cpp:934	timeline	
+mouse:timeline-dblclick	mouse		Double click the frame strip to jump to that frame and reload the models	src/window/ui_mouse_misc.cpp:91	timeline	
+mouse:timeline-key-drag	mouse		Drag selected keys sideways to move them to other frames	src/window/ui_mousemove.cpp:340	timeline	
+mouse:timeline-hover	mouse		Hover highlight of timeline rows and cells	src/window/ui_mousemove.cpp:406	timeline	
+mouse:curve-point-drag	mouse		Drag the interpolation curve control points	src/window/ui_mousemove.cpp:626	timeline	
+mouse:sidebar-resize	mouse		Drag the sidebar edge to resize it	src/window/ui_mousemove.cpp:297	view	
+mouse:rmb-dblclick	mouse		Right double click: switch the panel mode and park the cursor on the viewport tools	src/window/ui_mouse_misc.cpp:284	viewport	
+mouse:tool-view-dolly	mouse		Top-right view tool 1: left drag dollies the camera distance	src/app/frame_modes.cpp:527	viewport	
+mouse:tool-view-pan	mouse		Top-right view tool 2: left drag pans the view offsets (model mode) or the camera target	src/app/frame_modes.cpp:530	viewport	
+mouse:tool-rotate-gizmo-x	mouse		Rotate mode, horizontal gizmo handle: rotate the selected bones around the camera X axis	src/app/frame_modes.cpp:688	viewport	
+mouse:tool-rotate-gizmo-y	mouse		Rotate mode, vertical gizmo handle: rotate the selected bones around the camera Y axis	src/app/frame_modes.cpp:688	viewport	
+mouse:tool-rotate-gizmo-ring	mouse		Rotate mode, gizmo ring: rotate the selected bones in the view plane	src/app/frame_modes.cpp:688	viewport	
+mouse:tool-move-gizmo-horizontal	mouse		Move mode, right gizmo handle: move the selected root bones horizontally	src/app/frame_modes.cpp:700	viewport	
+mouse:tool-move-gizmo-vertical	mouse		Move mode, upper gizmo handle: move the selected bones vertically	src/app/frame_modes.cpp:706	viewport	
+mouse:tool-move-gizmo-plane	mouse		Move mode, center gizmo handle: move the selected bones in the screen plane	src/app/frame_modes.cpp:706	viewport	
+mouse:tool-model-local-rotate-x	mouse		Model mode, upper tool row X: rotate the selected bones around their local X axis	src/app/frame_modes.cpp:694	viewport	
+mouse:tool-model-local-rotate-y	mouse		Model mode, upper tool row Y: rotate the selected bones around their local Y axis	src/app/frame_modes.cpp:694	viewport	
+mouse:tool-model-local-rotate-z	mouse		Model mode, upper tool row Z: rotate the selected bones around their local Z axis	src/app/frame_modes.cpp:694	viewport	
+mouse:tool-model-local-translate-x	mouse		Model mode, lower tool row X: translate along the local X axis or edit the physics-body record	src/app/frame_modes.cpp:712	viewport	
+mouse:tool-model-local-translate-y	mouse		Model mode, lower tool row Y: translate along the local Y axis or edit the physics-body record	src/app/frame_modes.cpp:712	viewport	
+mouse:tool-model-local-translate-z	mouse		Model mode, lower tool row Z: translate along the local Z axis or edit the physics-body record	src/app/frame_modes.cpp:712	viewport	
+mouse:tool-camera-move-x	mouse		Camera mode, lower tool row X: move the camera (or the selected accessory) along X	src/app/frame_modes.cpp:601	viewport	
+mouse:tool-camera-move-y	mouse		Camera mode, lower tool row Y: move the camera (or the selected accessory) along Y	src/app/frame_modes.cpp:601	viewport	
+mouse:tool-camera-move-z	mouse		Camera mode, lower tool row Z: move the camera (or the selected accessory) along Z	src/app/frame_modes.cpp:601	viewport	
+mouse:tool-camera-rotate-x	mouse		Camera mode, upper tool row X: rotate the camera (or the selected accessory) around X	src/app/frame_modes.cpp:651	viewport	
+mouse:tool-camera-rotate-y	mouse		Camera mode, upper tool row Y: rotate the camera (or the selected accessory) around Y	src/app/frame_modes.cpp:651	viewport	
+mouse:tool-camera-rotate-z	mouse		Camera mode, upper tool row Z: rotate the camera (or the selected accessory) around Z	src/app/frame_modes.cpp:651	viewport	
+mouse:tool-coordinate-cycle	mouse		Click the coordinate-system tool to cycle the transform target (camera, light, accessory)	src/app/frame_modes.cpp:363	viewport	
+drop:pmm	drop		Drop a .pmm file on the window to load it	src/window/ui_dropfiles.cpp:144	file	
+drop:pmd	drop		Drop a .pmd file on the window to load it	src/window/ui_dropfiles.cpp:166	file	
+drop:pmx	drop		Drop a .pmx file on the window to load it	src/window/ui_dropfiles.cpp:167	file	
+drop:vpd	drop		Drop a .vpd file on the window to load it	src/window/ui_dropfiles.cpp:176	file	
+drop:vmd	drop		Drop a .vmd file on the window to load it	src/window/ui_dropfiles.cpp:192	file	
+drop:x	drop		Drop a .x file on the window to load it	src/window/ui_dropfiles.cpp:202	file	
+drop:vac	drop		Drop a .vac file on the window to load it	src/window/ui_dropfiles.cpp:211	file	
+drop:avi	drop		Drop a .avi file on the window to load it	src/window/ui_dropfiles.cpp:220	file	
+drop:bmp	drop		Drop a .bmp file on the window to load it	src/window/ui_dropfiles.cpp:233	file	
+drop:jpg	drop		Drop a .jpg file on the window to load it	src/window/ui_dropfiles.cpp:238	file	
+drop:wav	drop		Drop a .wav file on the window to load it	src/window/ui_dropfiles.cpp:240	file	
+drop:vsq	drop		Drop a .vsq file on the window to load it	src/window/ui_dropfiles.cpp:251	file	
+drop:oni	drop		Drop a .oni file on the window to load it	src/window/ui_dropfiles.cpp:265	file	

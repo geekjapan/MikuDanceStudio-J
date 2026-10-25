@@ -11,7 +11,7 @@ use crate::key_pool::{
 use crate::text::{FixedSjis, Sjis};
 
 /// Cap on name tables and track heads, as in `pmm_scene_document.cpp`.
-const MAX_RECORDS: usize = 100_000;
+pub(crate) const MAX_RECORDS: usize = 100_000;
 
 #[derive(Clone, Debug)]
 pub struct Pmm {
@@ -332,7 +332,7 @@ impl_key!(
     AccessoryKey
 );
 
-fn links(r: &mut Reader) -> Result<[u32; 3]> {
+pub(crate) fn links(r: &mut Reader) -> Result<[u32; 3]> {
     Ok([r.u32()?, r.u32()?, r.u32()?])
 }
 fn write_links(w: &mut Writer, frame: u32, previous: u32, next: u32) {
@@ -344,6 +344,10 @@ fn write_links(w: &mut Writer, frame: u32, previous: u32, next: u32) {
 impl BoneKey {
     const SIZE: usize = 58;
     fn read(r: &mut Reader) -> Result<Self> {
+        Self::read_dialect(r, true)
+    }
+    /// `physics`: version 2 appends the physics-disabled byte.
+    pub(crate) fn read_dialect(r: &mut Reader, physics: bool) -> Result<Self> {
         let [frame, previous, next] = links(r)?;
         let file = r.array::<16>()?;
         let mut interpolation = [0; 16];
@@ -360,7 +364,7 @@ impl BoneKey {
             position: r.f32s()?,
             rotation: r.f32s()?,
             allocated: r.u8()?,
-            physics_disabled: r.u8()?,
+            physics_disabled: if physics { r.u8()? } else { 0 },
         })
     }
     fn write(&self, w: &mut Writer) {
@@ -378,8 +382,8 @@ impl BoneKey {
 }
 
 impl MorphKey {
-    const SIZE: usize = 17;
-    fn read(r: &mut Reader) -> Result<Self> {
+    pub(crate) const SIZE: usize = 17;
+    pub(crate) fn read(r: &mut Reader) -> Result<Self> {
         let [frame, previous, next] = links(r)?;
         Ok(MorphKey {
             frame,
@@ -431,12 +435,20 @@ impl DisplayKey {
 impl CameraKey {
     const SIZE: usize = 78;
     fn read(r: &mut Reader) -> Result<Self> {
+        Self::read_dialect(r, true)
+    }
+    /// `parents`: version 2 has the parent model and bone between the
+    /// target and the curve table.
+    pub(crate) fn read_dialect(r: &mut Reader, parents: bool) -> Result<Self> {
         let [frame, previous, next] = links(r)?;
         let distance = r.f32()?;
         let eye = r.f32s()?;
         let target = r.f32s()?;
-        let parent_model = r.i32()?;
-        let parent_bone = r.i32()?;
+        let (parent_model, parent_bone) = if parents {
+            (r.i32()?, r.i32()?)
+        } else {
+            (-1, 0)
+        };
         let file = r.array::<24>()?;
         let mut interpolation = [[0; 6]; 4];
         for channel in 0..6 {
@@ -478,8 +490,8 @@ impl CameraKey {
 }
 
 impl LightKey {
-    const SIZE: usize = 37;
-    fn read(r: &mut Reader) -> Result<Self> {
+    pub(crate) const SIZE: usize = 37;
+    pub(crate) fn read(r: &mut Reader) -> Result<Self> {
         let [frame, previous, next] = links(r)?;
         Ok(LightKey {
             frame,
@@ -524,8 +536,8 @@ impl GravityKey {
 }
 
 impl SelfShadowKey {
-    const SIZE: usize = 18;
-    fn read(r: &mut Reader) -> Result<Self> {
+    pub(crate) const SIZE: usize = 18;
+    pub(crate) fn read(r: &mut Reader) -> Result<Self> {
         let [frame, previous, next] = links(r)?;
         Ok(SelfShadowKey {
             frame,
@@ -545,8 +557,8 @@ impl SelfShadowKey {
 }
 
 impl AccessoryKey {
-    const SIZE: usize = 51;
-    fn read(r: &mut Reader) -> Result<Self> {
+    pub(crate) const SIZE: usize = 51;
+    pub(crate) fn read(r: &mut Reader) -> Result<Self> {
         let [frame, previous, next] = links(r)?;
         Ok(AccessoryKey {
             frame,
@@ -578,14 +590,22 @@ impl AccessoryKey {
 // ---- sections -------------------------------------------------------------
 
 /// A table count: i32, not negative, at most `MAX_RECORDS`.
-fn count(r: &mut Reader) -> Result<usize> {
+pub(crate) fn count(r: &mut Reader) -> Result<usize> {
     let n = usize::try_from(r.i32()?).map_err(|_| r.invalid("negative count"))?;
     r.limit(n, MAX_RECORDS, "count over 100000")
 }
 
+/// The version a header names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Version {
+    V1,
+    V2,
+}
+
 /// The header check of `ParsePmmHeader`: the signature may start anywhere
-/// in the first 30 bytes, with "0002" and a NUL 0x14 bytes after it.
-fn check_header(r: &Reader, h: &[u8; 30]) -> Result<()> {
+/// in the first 30 bytes, with "0001" or "0002" and a NUL 0x14 bytes after
+/// it.
+pub(crate) fn header_version(r: &Reader, h: &[u8; 30]) -> Result<Version> {
     const SIG: &[u8] = b"Polygon Movie maker";
     for offset in 0..=h.len() - SIG.len() {
         if h[offset] == 0 {
@@ -595,8 +615,8 @@ fn check_header(r: &Reader, h: &[u8; 30]) -> Result<()> {
             continue;
         }
         return match h.get(offset + 0x14..offset + 0x19) {
-            Some(b"0002\0") => Ok(()),
-            Some(b"0001\0") => Err(r.invalid("PMM version 1 is not supported")),
+            Some(b"0002\0") => Ok(Version::V2),
+            Some(b"0001\0") => Ok(Version::V1),
             _ => Err(r.invalid("unsupported PMM version")),
         };
     }
@@ -755,7 +775,7 @@ impl Model {
 }
 
 impl Background {
-    fn read(r: &mut Reader, wide_flag: bool) -> Result<Self> {
+    pub(crate) fn read(r: &mut Reader, wide_flag: bool) -> Result<Self> {
         Ok(Background {
             offset: [r.i32()?, r.i32()?],
             scale: r.f32()?,
@@ -798,10 +818,14 @@ fn write_global<K: Key>(
 }
 
 impl Pmm {
+    /// Reads a version 2 scene. A version 1 scene takes the model files it
+    /// names: use [`Pmm::read_with`].
     pub fn read(data: &[u8]) -> Result<Self> {
         let r = &mut Reader::new(data);
         let header = r.array::<30>()?;
-        check_header(r, &header)?;
+        if header_version(r, &header)? == Version::V1 {
+            return Err(r.invalid("PMM version 1 needs its model files (Pmm::read_with)"));
+        }
         let settings = SceneSettings {
             render_width: r.i32()?,
             render_height: r.i32()?,
@@ -951,6 +975,22 @@ impl Pmm {
             appearance,
             tail,
         })
+    }
+
+    /// Reads a version 1 or 2 scene. A version 1 scene does not carry the
+    /// bone, morph and IK tables of its models: `model_file` returns the PMD
+    /// that the file names for `(slot, 20-byte name, path)`, or `None` when
+    /// it cannot be opened. See [`crate::pmm_v1`].
+    pub fn read_with(
+        data: &[u8],
+        model_file: impl FnMut(u8, &[u8; 20], &FixedSjis<256>) -> Option<crate::pmd::Pmd>,
+    ) -> Result<Self> {
+        let r = &mut Reader::new(data);
+        let header = r.array::<30>()?;
+        match header_version(r, &header)? {
+            Version::V2 => Self::read(data),
+            Version::V1 => crate::pmm_v1::read(r, model_file),
+        }
     }
 
     pub fn write(&self) -> Result<Vec<u8>> {

@@ -1,0 +1,11 @@
+[package]
+name = "mds-math"
+description = "Bit-exact Rust equivalents of the D3DX matrix, quaternion, and vector functions MikuDanceStudio calls"
+license = "MIT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+libm = "0.2"

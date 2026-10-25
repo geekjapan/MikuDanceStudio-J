@@ -84,8 +84,7 @@
 //!
 //! # Not ported
 //!
-//! * `PostModelReload` modes 1 and 2, and "paste at a different frame" of
-//!   an accessory in camera mode.
+//! * `PostModelReload` modes 1 and 2.
 //! * The physics of the frame loop ([`frame::FrameLoop`]) rebuilds the world
 //!   when the model set changes, where the C++ adds the new bodies to the
 //!   world it has; a failing motion load requests no settle.
@@ -119,6 +118,7 @@ pub mod script;
 mod timeline;
 pub mod vmd_save;
 
+pub use accessory::vac_mesh_name;
 pub use global::{GlobalClipboard, GlobalTrack};
 pub use model::ModelClipboard;
 pub use panel::{ModelFlag, ViewOption};
@@ -300,9 +300,12 @@ pub enum Command {
     /// frame ([`model::paste_bones`]). Nothing in camera mode.
     PasteMirrored,
     /// "Paste to another bone" (menu 250, `MDS_CMD_PASTE_AT_DIFFERENT_FRAME`,
-    /// `command_file_menu.cpp`), model mode: the copied bone keys on the
-    /// selected bone at the current frame. The accessory path of camera mode
-    /// is not ported.
+    /// `command_file_menu.cpp` 1471-1638) after its OK/Cancel question: in
+    /// model mode the copied bone keys on the selected bone at the current
+    /// frame; in camera mode the copied accessory keys on the selected
+    /// accessory, then the camera-mode refresh. The menu is enabled when the
+    /// clipboard holds bone keys (model mode) or accessory keys (camera
+    /// mode); an empty one changes nothing.
     PasteToSelectedBone,
     /// The delete button (423) and the Delete key (`DeleteMarkedKeyframes`).
     DeleteSelectedKeys,
@@ -328,6 +331,16 @@ pub enum Command {
     LoadAccessory {
         path: String,
         data: Vec<u8>,
+    },
+    /// "Load accessory" of a `.vac` file (a path holding `.vac`): the
+    /// `.vac` text, and the mesh it names ([`vac_mesh_name`]) as the caller
+    /// resolved it (the C++ looks next to the `.vac`, then in the
+    /// `UserFile` folders) with its bytes.
+    LoadVac {
+        path: String,
+        vac: Vec<u8>,
+        mesh_path: String,
+        mesh: Vec<u8>,
     },
     /// "Load WAVE" (menu 206, `LoadWaveFile`, `src/media/wave_audio.cpp`).
     LoadWave {
@@ -590,6 +603,72 @@ pub enum Command {
     },
 }
 
+impl Command {
+    /// Whether the C++ handler sets `SceneModified` (the unsaved-changes
+    /// flag of the close and open questions) once it gets past its gates;
+    /// the caller sets its flag when [`Document::apply`] succeeds. The
+    /// handlers that leave it alone include every selection, view, panel
+    /// and pose edit, and the PMD edits, which set `EnhancedModelDirty`
+    /// instead. [`Command::NewScene`] and "open project" clear it. Two
+    /// gates are not seen here: a paste with an empty clipboard and the
+    /// Delete key (`PumpDeleteRebuild`) leave the flag, where this says
+    /// `true`. [`Document::lip_sync`] sets it (menu 224 and the drop).
+    pub fn marks_modified(&self) -> bool {
+        use Command as C;
+        matches!(
+            self,
+            // command_frame_register.cpp 386, 517; command_frame_edit.cpp
+            // 1549; command_panel_toggles.cpp 139; frame_register 811;
+            // gravity_setting_dialog.cpp 149.
+            C::RegisterBoneKeys
+                | C::RegisterMorphKey(_)
+                | C::RegisterDisplayKey
+                | C::RegisterGlobalKeys(_)
+                // frame_clipboard.cpp 516, 678, 786; command_file_menu.cpp
+                // 1501, 1603; command_frame_edit.cpp 1652, 523, 556.
+                | C::Paste
+                | C::PasteMirrored
+                | C::PasteToSelectedBone
+                | C::DeleteSelectedKeys
+                | C::Undo
+                | C::Redo
+                // command_impl.cpp 441, 363; add_model.cpp 70;
+                // render/accessory.cpp 615.
+                | C::LoadMotion(_)
+                | C::LoadModel { .. }
+                | C::LoadAccessory { .. }
+                | C::LoadVac { .. }
+                | C::LoadWave { .. }
+                // command_view_menu.cpp 892; command_file_menu.cpp 1086,
+                // 1136, 363 (FramePurgeTail), 1433, 1658, 1018;
+                // misc_dialogs.cpp 401, 589, 627; frame_range_apply.cpp 338.
+                | C::FrameLine { .. }
+                | C::CenterPositionBias(_)
+                | C::RemoveUnusedKeys
+                | C::ShiftLipFrames(_)
+                | C::DeleteLipFrames
+                | C::DeleteEyeFrames
+                | C::DeleteEyebrowFrames
+                | C::RegisterBlinks { .. }
+                | C::RegisterAllMorphFrames
+                | C::MultiplyCamera(_)
+                | C::MultiplyBone(_)
+                | C::MultiplyMorph { .. }
+                | C::ScaleFrames(_)
+                | C::SetRenderSize { .. }
+                // command_view_menu.cpp 438; command_frame_edit.cpp 1034,
+                // 1083, 1239; command_panel_toggles.cpp 265; ui_mousemove.cpp
+                // 334.
+                | C::SetEdgeScale(_)
+                | C::PasteInterpolationCurve { .. }
+                | C::ResetInterpolationCurves { .. }
+                | C::DeleteModel(_)
+                | C::DeleteAccessory(_)
+                | C::MoveSelectedKeys(_)
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectAll {
     Bone,
@@ -635,6 +714,19 @@ pub struct EditState {
     pub max_texture_size: Option<[i32; 2]>,
 }
 
+impl EditState {
+    /// The check boxes as the application starts: "auto interpolation"
+    /// (530, `checkPhysicsFrame` in `window_init.cpp` without a config) and
+    /// physics (499, which `ui_init.cpp` checks).
+    pub fn startup() -> EditState {
+        EditState {
+            auto_interpolation: true,
+            physics_checkbox: true,
+            ..EditState::default()
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Document {
     pub pmm: Pmm,
@@ -651,9 +743,11 @@ pub(crate) fn not(what: &'static str) -> Error {
 }
 
 impl Document {
-    /// Loads a PMM and the model files it names. `read` maps a model path as
-    /// stored in the PMM to the file bytes; a path it cannot read gives
-    /// [`ModelFile::Missing`].
+    /// Loads a PMM and the model files it names, with the edit state of a
+    /// start-up ([`EditState::startup`]). `read` maps a model path as stored
+    /// in the PMM to the file bytes; a path it cannot read gives
+    /// [`ModelFile::Missing`]. [`Document::load_scene`] is "open project",
+    /// which keeps the check boxes of the document it replaces.
     pub fn load(
         data: &[u8],
         mut read: impl FnMut(&str) -> Option<Vec<u8>>,
@@ -675,7 +769,7 @@ impl Document {
         let edit = EditState {
             models: vec![ModelEdit::default(); pmm.models.len()],
             self_shadow_mode: shadow_mode_at(&pmm),
-            ..EditState::default()
+            ..EditState::startup()
         };
         Ok(Document {
             pmm,
@@ -691,11 +785,7 @@ impl Document {
         Document {
             edit: EditState {
                 self_shadow_mode: shadow_mode_at(&pmm),
-                // `checkPhysicsFrame` (`window_init.cpp`) without a config.
-                auto_interpolation: true,
-                // `ui_init.cpp` checks it.
-                physics_checkbox: true,
-                ..EditState::default()
+                ..EditState::startup()
             },
             pmm,
             models: Vec::new(),
@@ -982,6 +1072,14 @@ impl Document {
             }
             Command::LoadAccessory { path, data } => {
                 accessory::load(&mut self.pmm, &path, &data)?;
+            }
+            Command::LoadVac {
+                path,
+                vac,
+                mesh_path,
+                mesh,
+            } => {
+                accessory::load_vac(&mut self.pmm, &path, &vac, &mesh_path, &mesh)?;
             }
             Command::LoadWave { path, data } => accessory::load_wave(&mut self.pmm, &path, &data),
             Command::SelectAccessory(slot) => {
@@ -1296,12 +1394,17 @@ impl Document {
             Command::PasteMirrored | Command::PasteToSelectedBone => {
                 let mirrored = cmd == Command::PasteMirrored;
                 if self.camera_mode() {
-                    if mirrored {
+                    if mirrored || self.edit.global_clipboard.accessories.is_empty() {
                         return Ok(());
                     }
-                    return Err(not(
-                        "pasting accessory keys to another accessory (not ported)",
-                    ));
+                    let r = global::paste_onto_selected_accessory(
+                        &mut self.pmm,
+                        &self.edit.global_clipboard,
+                    );
+                    if !matches!(r, Err(Error::NotApplicable(_))) {
+                        self.refresh_context();
+                    }
+                    return r;
                 }
                 if self.edit.model_clipboard.bones.is_empty() {
                     return Ok(());

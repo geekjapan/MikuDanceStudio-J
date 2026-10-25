@@ -131,7 +131,10 @@ fn camera_register_on_a_key_keeps_its_curve_unless_reset() {
     d.pmm.camera.heads_mut()[0].interpolation[0][0] = 77;
     run(
         &mut d,
-        [Command::RegisterGlobalKeys(vec![GlobalTrack::Camera])],
+        [
+            Command::SetAutoInterpolation(false),
+            Command::RegisterGlobalKeys(vec![GlobalTrack::Camera]),
+        ],
     );
     let head = &d.pmm.camera.heads()[0];
     assert_eq!(head.interpolation[0][0], 77);
@@ -487,7 +490,6 @@ fn a_rigid_body_bone_registers_the_zeroed_physics_pose_before_any_physics_step()
     // physicsDisabled = !checkbox (499, checked at start-up).
     let mut d = doc();
     d.pmm.physics.playback_mode = 1;
-    d.edit.physics_checkbox = true;
     run(
         &mut d,
         [

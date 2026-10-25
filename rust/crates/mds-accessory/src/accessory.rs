@@ -1,6 +1,6 @@
 //! `LoadAccessoryObject` after the D3DX call, and the defaults of the accessory record.
 
-use crate::mesh::{self, Vertex, XMesh};
+use crate::mesh::{self, AttributeRange, Vertex, XMesh};
 use crate::Error;
 use mds_formats::text::Sjis;
 use mds_math::Vec3;
@@ -137,6 +137,8 @@ pub struct Accessory {
     pub indices: Vec<u32>,
     /// The material of each face, grouped by material within one source mesh.
     pub face_material: Vec<u32>,
+    /// The mesh's attribute table, which `DrawSubset` follows; `CloneMeshFVF` keeps it.
+    pub attribute_table: Vec<AttributeRange>,
     pub materials: Vec<AccessoryMaterial>,
     /// The loaded mesh lacked normals or texture coordinates (or had vertex colors),
     /// so `D3DXComputeNormals` replaced every normal.
@@ -186,6 +188,7 @@ pub(crate) fn from_mesh(x: XMesh) -> Result<Accessory, Error> {
         vertices,
         indices: x.indices,
         face_material: x.face_material,
+        attribute_table: x.attribute_table,
         materials,
         normals_computed,
         state: AccessoryState::default(),
@@ -194,20 +197,17 @@ pub(crate) fn from_mesh(x: XMesh) -> Result<Accessory, Error> {
 
 /// `D3DXComputeNormals(mesh, NULL)`: no adjacency, so vertices at one position are
 /// not welded. Each face adds its unit normal to its three vertices, weighted by
-/// the face's angle at that vertex (the `D3DXTANGENT_WEIGHT_BY_ANGLE` default).
+/// the face's angle at that vertex (the `D3DXTANGENT_WEIGHT_BY_ANGLE` default): the
+/// `acos`, in `f64`, of the dot product of the two unit edges. Every unit vector is
+/// `D3DXVec3Normalize`. The Windows dump fixes this order of operations.
 pub fn compute_normals(vertices: &mut [Vertex], indices: &[u32]) {
     let mut sum = vec![[0.0f32; 3]; vertices.len()];
     let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
     let dot = |a: [f32; 3], b: [f32; 3]| (a[0] * b[0] + a[1] * b[1]) + a[2] * b[2];
-    let len = |a: [f32; 3]| dot(a, a).sqrt();
+    let unit = |a: [f32; 3]| Vec3(a).normalize().0;
     let angle = |a: [f32; 3], b: [f32; 3]| {
-        let d = len(a) * len(b);
-        if d == 0.0 {
-            0.0
-        } else {
-            // Rounding can push the ratio just past 1, where acos gives NaN.
-            libm::acos(f64::from((dot(a, b) / d).clamp(-1.0, 1.0))) as f32
-        }
+        // Rounding can push the dot product of two unit edges past 1 (`degenerate_face.x`).
+        libm::acos(f64::from(dot(unit(a), unit(b)).clamp(-1.0, 1.0))) as f32
     };
     for f in indices.chunks_exact(3) {
         let [i0, i1, i2] = [f[0] as usize, f[1] as usize, f[2] as usize];

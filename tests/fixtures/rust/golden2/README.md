@@ -12,6 +12,12 @@ console session (`tools/windows/runtask.ps1`), and the two runs gave the same
 bytes for every file. On the same build, `tools/oracle/frame_dump.ps1` still
 gave the four hashes of `../golden/README.md`.
 
+`background-0.png` and `background.edge.txt` were rendered again by the app
+built at `673ea35` (slice `accgold`), after `WriteOverlayQuad` began to write
+rhw for vertex 0 of the picture quad. On that build the two runs again gave the
+same bytes, every other file here kept its hash, and `frame_dump.ps1` still gave
+the four hashes of `../golden/README.md`.
+
 ## Regenerating
 
 The inputs (the scene PMMs, `skin_tex.pmx`, the textures, the two floor
@@ -90,11 +96,10 @@ What it shows:
   is (258, 93)-(544.625, 254.664) in output pixels. The `picture` line of
   `background.edge.txt` records the inputs and the quad. The placement depends
   on the host's window geometry.
-- The picture is drawn with a fan-shaped distortion toward its top-right
-  corner. `WriteOverlayQuad` (`src/render/bg_overlay.cpp`) writes rhw for five
-  of the six vertices and never for vertex 0, which stays 0 (the probe's six
-  rhw values are 0 1 1 1 1 1). This looks like a port bug outside this slice.
-  If it is fixed in the C++, regenerate `background-0.png`.
+- `WriteOverlayQuad` (`src/render/bg_overlay.cpp`) once left rhw 0 on vertex 0
+  of the picture quad, which drew the picture as a fan toward its top-right
+  corner. It writes rhw 1 on all six vertices now (the probe's six rhw values
+  are `1 1 1 1 1 1`), and `background-0.png` shows the plain rectangle.
 - The app loads a background picture at 1024x1024 through D3DX
   (`src/media/media_load.cpp`), so the picture is resampled before it is
   drawn.
@@ -122,8 +127,8 @@ What it shows:
 | `accessory-30.png` | `8add3276c3099c4e84a9ef677f581ee126181c348e31ea3718b02083a56d0926` |
 | `accessory.edge.txt` | `e43816734fec167cdebd7ab8b941837bcba8254a8741b5c90267bf98ccaf8f3a` |
 | `accessory.pmm` | `1999aa8468326af880725c55507aae3e842f2cb56526197533e4f70c685fd18d` |
-| `background-0.png` | `022d2cfbb217525a155fa1c7b9dc76b64a2e9a418ed2956c9648e1e9e5f55fbd` |
-| `background.edge.txt` | `ae18d92c9cbe592be2debaa0700b0c7a06b08277539bdb19d6de15d954cfb703` |
+| `background-0.png` | `33939a7b20d3b8d786ba1e09fe20b90dc266a71496be9b538a72d78cc22d8672` |
+| `background.edge.txt` | `8ea6ae813e1c69a257ece80a14c12f650dae1821f0386ff5757859792e309266` |
 | `background.pmm` | `39ccdf20fe5f3a1539d7f4db58371ed2e34589bc1c095373e9a0a25c52b7e02b` |
 | `background.png` | `5229108100e3f23c484371e339a2b4753bfb20163d9c1b255ed88d977d4f6086` |
 | `cube.bmp` | `03d4440c5187c34b96419855ae59c95e680a3e6ee64e7a9eb459a6a7f72adb5e` |

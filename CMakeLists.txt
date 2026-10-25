@@ -254,6 +254,7 @@ add_executable(MikuDanceStudio WIN32
     "${CMAKE_CURRENT_BINARY_DIR}/generated/version.rc"
     src/main/winmain.cpp
     src/tools/trace_mode.cpp
+    src/tools/mesh_dump.cpp
     src/tools/script_mode.cpp
     res/MMD.rc
     ${MIKUDANCESTUDIO_GEN_RES}

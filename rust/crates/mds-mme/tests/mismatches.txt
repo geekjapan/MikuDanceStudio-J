@@ -1,0 +1,3 @@
+# Plans under tests/fixtures/rust/mme/ that do not match the oracle yet, one per line,
+# relative to that directory (for example `ray-mmd/ray.fx.plan.txt`). tests/plans.rs fails
+# when this list is not exact. All 520 plans match, so the list is empty.

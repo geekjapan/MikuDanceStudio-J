@@ -136,8 +136,11 @@ def build_skin_tex():
     return bytes(out)
 
 
+# The loader takes a model's texture directory from its path up to the last
+# backslash (pmd_load.cpp); a bare file name leaves its first letter instead,
+# and the texture does not load.
 SKIN_SPEC = dict(
-    file="skin_tex.pmx", name="skin", name_en="skin",
+    file=".\\skin_tex.pmx", name="skin", name_en="skin",
     bones=[dict(jp=name, movable=(i == 1), ik=False)
            for i, (name, _, _) in enumerate(gen_skin.PMX_BONES)],
     morphs=[(m[0],) for m in gen_skin.PMX_MORPHS],
@@ -338,14 +341,14 @@ SCENES = {
     # Self-shadow mode 1 at frame 0 and mode 2 with a shorter distance at 30.
     "selfshadow": dict(
         models=[SceneModel(CHAIN, curled(-3.0)), SceneModel(CHAIN_PMD, curled(3.0))],
-        camera_keys=ortho_camera(), light_keys=LIGHT,
+        camera_keys=ortho_camera(-16.0, (0.0, 3.0, 0.0)), light_keys=LIGHT,
         shadow_keys=[(0, 1, SHADOW_DEFAULT), (30, 2, 0.005)],
         frames=[0, 30]),
     # The projected ground shadow, opaque at frame 0 brightness; the light
     # turns by frame 30. Translucent shadow with ambient 0.5.
     "groundshadow": dict(
         models=[SceneModel(CHAIN, curled(-3.0)), SceneModel(MORPH4, at(3.0))],
-        camera_keys=ortho_camera(), shadow_keys=SHADOW_OFF,
+        camera_keys=ortho_camera(-16.0, (0.0, 3.0, 0.0)), shadow_keys=SHADOW_OFF,
         light_keys=LIGHT + [(30, (0.625, 0.625, 0.625), (0.5, -1.0, 0.25))],
         ground_shadow=(1, 0.5, 1), frames=[0, 30]),
     # cube.x on bone 頭 of chain8 (which moves by frame 30) and a quad on the
@@ -354,8 +357,10 @@ SCENES = {
         models=[SceneModel(CHAIN, {0: [(0, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]),
                                         (30, [3.0, 0.0, 0.0], turn(1, 0.25))]})],
         camera_keys=ortho_camera(), light_keys=LIGHT, shadow_keys=SHADOW_OFF,
-        accessories=[Accessory("cube.x", (0.0, 0.5, 0.0), (0.0, 0.5, 0.0), 0.5, (0, 4)),
-                     Accessory("normals_uv.x", (-4.0, 0.0, 2.0), (0.25, 0.0, 0.0), 2.0)],
+        # The app scales an accessory by 10 times its scale value: cube.x
+        # (2 units) becomes 1 unit, the unit quad 4 units, laid flat.
+        accessories=[Accessory("cube.x", (0.0, 0.75, 0.0), (0.0, 0.5, 0.0), 0.05, (0, 4)),
+                     Accessory("normals_uv.x", (-5.0, 0.05, -2.0), (PI / 2, 0.0, 0.0), 0.4)],
         frames=[0, 30]),
     # skin_tex.pmx with SDEF bones turned and vertex, UV and material morphs;
     # other weights and a bone morph at frame 30.

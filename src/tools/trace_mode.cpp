@@ -48,9 +48,9 @@
 // never creates, so the run fails instead.
 //
 // --mds-edge-probe <pmm> <out> <frame>...  (golden2, wave 3)
-// Steps the same passes as --mds-frame-dump and, at each requested frame,
-// writes the inputs and the result of the edge thickness that
-// UpdateModelVertexBuffers would compute for that frame's render
+// Runs the setup and the passes of --mds-frame-dump, and at each requested
+// frame writes, instead of the image, the inputs and the result of the edge
+// thickness that UpdateModelVertexBuffers computes for that frame's render
 // (PmdEdgeDistance in src/model/model_skinning.cpp). RenderFrameScene reads
 // the frame world matrix right after SetupFrameWorldTransform, so the probe
 // calls that and reads the same matrix; it draws nothing. Format:
@@ -58,6 +58,9 @@
 //   frame "camera" perspective fov target.xyz distance pitch yaw roll
 //         selfShadowEnabled selfShadowMode selfShadowDistance LF
 //   frame "world" m00 m01 .. m33 LF       (the frame world matrix, row by row)
+//   frame "picture" offX offY scale width height viewScale viewport.ltrb
+//         renderWidth renderHeight quad.ltrb LF   (only with a background
+//         picture shown: its placement inputs and the overlay quad drawn)
 //   frame "edge" slot bone point.xyz world.xyz target_distance edgeScale edge LF
 //         (per loaded model in slot order: the bone PmdEdgeDistance uses, its
 //         bind position moved by matInit, that point moved by the world
@@ -301,6 +304,30 @@ bool WriteEdgeProbe(std::ostream& out, MMDApp* app, std::uint32_t frame) {
     for (int i = 0; i < 16; ++i)
         at += std::snprintf(line + at, sizeof line - at, " %.9g", m[i]);
     out << line << '\n';
+    if (app->PictureBackgroundEnabled() != 0) {
+        // The overlay quad as PicBgOverlayRefresh (src/render/bg_overlay.cpp)
+        // wrote it: left, top, right, bottom in render-target pixels.
+        float quad[4]{};
+        void* locked = nullptr;
+        IDirect3DVertexBuffer9* vb = app->PictureOverlayVertices();
+        if (vb == nullptr || FAILED(vb->Lock(0, 0xA8, &locked, D3DLOCK_READONLY)))
+            return false;
+        const float* v = static_cast<const float*>(locked);
+        quad[0] = v[0x38 / 4];
+        quad[1] = v[0x3C / 4];
+        quad[2] = v[0x00 / 4];
+        quad[3] = v[0x20 / 4];
+        vb->Unlock();
+        const RECT& view = app->ViewportRect();
+        std::snprintf(
+            line, sizeof line,
+            "%u picture %d %d %.9g %d %d %.9g %ld %ld %ld %ld %d %d %.9g %.9g %.9g %.9g\n", frame,
+            app->PictureOffsetX(), app->PictureOffsetY(), app->PictureScale(), app->PictureWidth(),
+            app->PictureHeight(), app->Renderer()->viewScale, view.left, view.top, view.right,
+            view.bottom, app->RenderWidth(), app->RenderHeight(), quad[0], quad[1], quad[2],
+            quad[3]);
+        out << line;
+    }
     for (int slot = 0; slot < kModelSlotCount; ++slot) {
         unsigned char* model = app->ModelSlot(slot);
         if (model == nullptr)
@@ -336,42 +363,9 @@ bool WriteEdgeProbe(std::ostream& out, MMDApp* app, std::uint32_t frame) {
     return out.good();
 }
 
-int RunEdgeProbe(MMDApp* app, const TraceRequest& request) {
-    if (app->Renderer() == nullptr || app->Renderer()->device == nullptr)
-        return 1;
-    const std::wstring temp = request.out + L".tmp";
-    std::ofstream file(std::filesystem::path(temp), std::ios::binary | std::ios::trunc);
-    if (!file)
-        return 1;
-    g_guardFile = &file;
-    file << "mds-edge-probe 1\n";
-    ArmFrameStep(app, request.frames);
-    bool ok = true;
-    std::size_t next = 0;
-    for (std::uint32_t frame = 0; ok && frame < request.frames; ++frame) {
-        if (frame > 0) {
-            app->state.messageSeen = 2; // as RunTraceMode
-            PlaybackCatchup(app, 0);
-            PhysicsFrame(app, 0);
-        }
-        if (frame == request.dumpFrames[next]) {
-            ok = WriteEdgeProbe(file, app, frame);
-            ++next;
-        }
-    }
-    file.flush();
-    ok = ok && file.good();
-    file.close();
-    g_guardFile = nullptr;
-    if (!ok || !MoveFileExW(temp.c_str(), request.out.c_str(),
-                            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        DeleteTemp(temp);
-        return 1;
-    }
-    return 0;
-}
-
-int RunFrameDump(MMDApp* app, const TraceRequest& request) {
+// With `probe` set (--mds-edge-probe) the requested frames are probed instead
+// of rendered, after the same setup.
+int RunFrameDump(MMDApp* app, const TraceRequest& request, std::ostream* probe) {
     D3DRenderer* r = app->Renderer();
     if (r == nullptr || r->device == nullptr)
         return 1;
@@ -413,7 +407,8 @@ int RunFrameDump(MMDApp* app, const TraceRequest& request) {
             PhysicsFrame(app, 0);
         }
         if (frame == request.dumpFrames[next]) {
-            ok = DumpFrame(app, prefix + std::to_wstring(frame) + L".png");
+            ok = probe != nullptr ? WriteEdgeProbe(*probe, app, frame)
+                                  : DumpFrame(app, prefix + std::to_wstring(frame) + L".png");
             ++next;
         }
     }
@@ -465,9 +460,7 @@ int RunTraceMode(MMDApp* app, const TraceRequest& request) {
         return 1;
     }
     if (request.mode == TraceRequest::Mode::FrameDump)
-        return RunFrameDump(app, request);
-    if (request.mode == TraceRequest::Mode::EdgeProbe)
-        return RunEdgeProbe(app, request);
+        return RunFrameDump(app, request, nullptr);
 
     const std::wstring temp = request.out + L".tmp";
     std::ofstream file(std::filesystem::path(temp),
@@ -476,14 +469,20 @@ int RunTraceMode(MMDApp* app, const TraceRequest& request) {
         return 1;
     g_guardFile = &file;
 
-    ArmFrameStep(app, request.frames);
-    l2::WriteHeader(file);
-    bool ok = WriteFrame(file, app, 0);
-    for (std::uint32_t frame = 1; ok && frame < request.frames; ++frame) {
-        app->state.messageSeen = 2; // the render gate of AdvanceFrameRenderGate, playing
-        PlaybackCatchup(app, 0);
-        PhysicsFrame(app, 0);
-        ok = WriteFrame(file, app, frame);
+    bool ok = true;
+    if (request.mode == TraceRequest::Mode::EdgeProbe) {
+        file << "mds-edge-probe 1\n";
+        ok = RunFrameDump(app, request, &file) == 0;
+    } else {
+        ArmFrameStep(app, request.frames);
+        l2::WriteHeader(file);
+        ok = WriteFrame(file, app, 0);
+        for (std::uint32_t frame = 1; ok && frame < request.frames; ++frame) {
+            app->state.messageSeen = 2; // the render gate of AdvanceFrameRenderGate, playing
+            PlaybackCatchup(app, 0);
+            PhysicsFrame(app, 0);
+            ok = WriteFrame(file, app, frame);
+        }
     }
     file.flush();
     ok = ok && file.good();

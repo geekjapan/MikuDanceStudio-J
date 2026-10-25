@@ -84,31 +84,30 @@
 //!
 //! # Not ported
 //!
-//! * Paths that depend on `mds-edit` gaps: display-key registration on a
-//!   model with the root selector (every PMX here), so the model-mode VMD
-//!   load and the paste of display keys stop with `Corrupt`; mirrored paste
-//!   ("paste reverse"); the pose of a bone with a rigid body; fixed-axis
-//!   twist. Automatic interpolation (checkbox 530, on at start-up) is
-//!   applied here after `mds-edit` registers or deletes with it off
-//!   (`auto_interp`).
-//! * VPD load and save, the PMD writer, "paste at a different frame", and
-//!   the undo entry of a model-mode frame-line edit.
+//! * `PostModelReload` modes 1 and 2, and "paste at a different frame" of
+//!   an accessory in camera mode.
+//! * The physics of the frame loop ([`frame::FrameLoop`]) rebuilds the world
+//!   when the model set changes, where the C++ adds the new bodies to the
+//!   world it has; a failing motion load requests no settle.
 //! * Leaving camera mode with a camera parent or a reference mode other
 //!   than 0, and the model-name fallbacks of the loaders (unmappable
 //!   characters, the `Null_NN` names of textures and materials).
 //! * Range scaling (`ChainedBoneKeys` undo entries).
 //!
-//! The script replay of `tests/fixtures/rust/script/` is
+//! The script replay of `tests/fixtures/rust/script/` and `script2/` is
 //! [`script::Runner`]; `tests/script.rs` compares every save with the C++
 //! output.
 
 mod accessory;
 mod add_model;
-mod auto_interp;
+mod bulk;
+pub mod frame;
 pub mod global;
 pub mod history;
 pub mod model;
 pub mod new_scene;
+pub mod panel;
+pub mod pose_file;
 mod readout;
 mod refresh;
 pub mod save;
@@ -117,6 +116,7 @@ pub mod vmd_save;
 
 pub use global::{GlobalClipboard, GlobalTrack};
 pub use model::ModelClipboard;
+pub use panel::{ModelFlag, ViewOption};
 
 use mds_formats::pmd::Pmd;
 use mds_formats::pmm::Pmm;
@@ -289,6 +289,15 @@ pub enum Command {
     Copy,
     /// Frame paste (421), by mode, at the current frame.
     Paste,
+    /// Reverse paste (button 422, `PasteMirroredBoneKeyframes`): the copied
+    /// bone keys on their left/right counterparts, mirrored, at the current
+    /// frame ([`model::paste_bones`]). Nothing in camera mode.
+    PasteMirrored,
+    /// "Paste to another bone" (menu 250, `MDS_CMD_PASTE_AT_DIFFERENT_FRAME`,
+    /// `command_file_menu.cpp`), model mode: the copied bone keys on the
+    /// selected bone at the current frame. The accessory path of camera mode
+    /// is not ported.
+    PasteToSelectedBone,
     /// The delete button (423) and the Delete key (`DeleteMarkedKeyframes`).
     DeleteSelectedKeys,
     Undo,
@@ -334,6 +343,10 @@ pub enum Command {
     SetAccessoryParentModel(Option<u8>),
     /// The accessory parent bone combo (475): a bone of the parent model.
     SetAccessoryParentBone(u32),
+    /// "Load pose" (menu 202, `CmdLoadPose`, `command_impl.cpp`) with the
+    /// VPD bytes, onto the selected model ([`pose_file::load_vpd`]). Nothing
+    /// in camera mode.
+    LoadPose(Vec<u8>),
     /// The select-all menus 217, 218, 220 (model) and 237..241 (camera
     /// mode), `mds_ops::select`.
     SelectAll(SelectAll),
@@ -344,6 +357,187 @@ pub enum Command {
         morph: bool,
         insert: bool,
     },
+    /// Menu 219, center position bias (`command_file_menu.cpp` 1042-1093,
+    /// [`mds_ops::center_position_bias`]): the offset added to every marked
+    /// key of a root bone, after a `SnapshotSelectedKeysForUndo` entry; the
+    /// model seeks and physics settles.
+    CenterPositionBias([f32; 3]),
+    /// Menu 222, delete unused frames (`command_file_menu.cpp` 1118-1145):
+    /// [`mds_ops::mark_unused_keys`], then the delete button's
+    /// `DeleteMarkedKeyframes`. The count of the info box is
+    /// [`EditState::reported`].
+    RemoveUnusedKeys,
+    /// Menu 225 (`command_file_menu.cpp` 1242-1316,
+    /// [`mds_ops::shift_lip_frames`]), then `FramePurgeTail`.
+    ShiftLipFrames(i32),
+    /// Menu 226, `PurgeMorphFrames(app, 3)` (`command_file_menu.cpp`
+    /// 1323-1347), then `FramePurgeTail`. The confirmation is the caller's.
+    DeleteLipFrames,
+    /// Menu 228, `PurgeMorphFrames(app, 2)` (`command_file_menu.cpp` 1446).
+    DeleteEyeFrames,
+    /// Menu 231, `PurgeMorphFrames(app, 1)` (`command_file_menu.cpp` 1737).
+    DeleteEyebrowFrames,
+    /// Menu 227, random blinks (`command_file_menu.cpp` 1352-1438,
+    /// [`mds_ops::random_blinks`]) with the document's `rand()` state and
+    /// blink phase. The count of the info box is [`EditState::reported`].
+    RegisterBlinks {
+        start: i32,
+        end: i32,
+    },
+    /// Menu 230 (`command_file_menu.cpp` 1709-1735): every morph weight 0.
+    ResetMorphs,
+    /// Menu 229 and key H (`command_file_menu.cpp` 1654-1695,
+    /// [`mds_ops::register_all_morph_frames`]), then the seek.
+    RegisterAllMorphFrames,
+    /// Menu 242 (`ApplyCameraFrameScaleAdd`, `misc_dialogs.cpp` 361-402),
+    /// camera mode only.
+    MultiplyCamera(mds_ops::CameraScale),
+    /// Menu 251 (`ApplyBoneFrameScaleAdd`, `misc_dialogs.cpp` 530-591): a
+    /// `RegisterBoneUndoSnapshot` entry, the pairs, then the seek.
+    MultiplyBone(mds_ops::BoneScale),
+    /// Menu 252 (`ApplyMorphScaleAdd`, `misc_dialogs.cpp` 604-628).
+    MultiplyMorph {
+        scale: f32,
+        add: f32,
+    },
+    /// Menu 275 (`ApplyPhysicsOnOff`, `misc_dialogs.cpp` 652-768): the
+    /// `physicsDisabled` byte of every marked key of a rigid-body bone;
+    /// combo item 0 ("ON") is `false`.
+    SetKeyPhysics {
+        disabled: bool,
+    },
+    /// Button 424 (`ApplyFrameRangeScale`, `frame_range_apply.cpp`
+    /// 297-340, [`mds_ops::scale_frame_range`]), then the seek.
+    ScaleFrames(mds_ops::RangeScale),
+    /// A click on the frame strip of the timeline ([`Document::click_frame`]):
+    /// unlike [`Command::SetFrame`] (the frame edit and the step buttons,
+    /// which clear the bone selection), it clears the edited marks and keeps
+    /// the selection.
+    ClickFrame(u32),
+    /// The edit-mode radios 490..493 and keys C, X, Z
+    /// (`command_panel_toggles.cpp` 612-650, `key_ladder.cpp` 99, 259, 290):
+    /// `timeline.edit_mode`, 0 bone, 1 box selection, 2 none, 3 rotate,
+    /// 4 move.
+    SetEditMode(i32),
+    /// Button 494 and key A ([`Document::select_all_bones`]).
+    SelectAllBones,
+    /// Button 501 and key S ([`Document::select_unregistered_bones`]).
+    SelectUnregisteredBones,
+    /// Button 495 ([`Document::reset_bone_pose`]).
+    ResetBonePose,
+    /// Button 496 ([`Document::copy_bone_pose`]).
+    CopyBonePose,
+    /// Buttons 497 and 498 ([`Document::paste_bone_pose`]).
+    PasteBonePose {
+        mirror: bool,
+    },
+    /// Combo 449 ([`Document::set_camera_parent_model`]): a model slot, or
+    /// `None` for no parent.
+    SetCameraParentModel(Option<u8>),
+    /// Combo 450 ([`Document::set_camera_parent_bone`]).
+    SetCameraParentBone(u32),
+    /// Check boxes 439..441 (`command_frame_edit.cpp` 1566-1592) on the
+    /// selected model.
+    SetModelFlag {
+        flag: ModelFlag,
+        on: bool,
+    },
+    /// Buttons 444 and 445 (`command_frame_edit.cpp` 1598-1617): the IK
+    /// switch of chain `chain` of the selected model (`ik_pose`); no key.
+    SetIkEnabled {
+        chain: u32,
+        on: bool,
+    },
+    /// The expand and collapse buttons of the panels (`OptionFlagRefresh`,
+    /// `command_frame_register.cpp` 422-430, `ui_model_reload.cpp` 205-245):
+    /// `settings.options[panel]`, 1 camera, 2 light, 3 accessory, 4 bone,
+    /// 5 morph, 6 self shadow.
+    SetPanelExpanded {
+        panel: u8,
+        expanded: bool,
+    },
+    /// The play panel (411, 413, 414 and edits 409, 410;
+    /// `command_frame_edit.cpp` 1431-1439): loop, return to the start frame,
+    /// play from the current frame, and the start and stop frames.
+    SetPlayback {
+        looped: bool,
+        return_to_start: bool,
+        from_current: bool,
+        start_frame: i32,
+        stop_frame: i32,
+    },
+    /// The view switches of menus 211, 215, 221, 254 and 279.
+    SetViewOption {
+        option: ViewOption,
+        on: bool,
+    },
+    /// Menus 234, 235, 236 (`command_file_menu.cpp` 1913-1932):
+    /// `view.fps_limit` 1000, 30 or 60.
+    SetFpsLimit(f32),
+    /// Menu 212 (`ScreenSizeDlgProc`, `command_file_menu.cpp` 436-468, and
+    /// 1008-1029): refused above [`EditState::max_texture_size`].
+    SetRenderSize {
+        width: i32,
+        height: i32,
+    },
+    /// Menu 247 ([`Document::set_follow_camera`]).
+    SetFollowCamera(bool),
+    /// The edge thickness dialog of menu 253 (`SetEdgeThickness`,
+    /// `command_view_menu.cpp` 434-441): `edge_scale` of the selected model.
+    SetEdgeScale(f32),
+    /// Menu 286 (`command_view_menu.cpp` 1464-1495): the model outline
+    /// colour, red, green, blue.
+    SetOutlineColor([u8; 3]),
+    /// Copy curve ([`Document::copy_curve`]) of the curve combo's channel.
+    CopyInterpolationCurve {
+        channel: u8,
+    },
+    /// Paste curve ([`Document::write_curve`]).
+    PasteInterpolationCurve {
+        channel: u8,
+    },
+    /// Reset curve ([`Document::write_curve`]).
+    ResetInterpolationCurves {
+        channel: u8,
+    },
+    /// A drag in the curve editor ([`Document::set_curve_point`]): the start
+    /// point (`end == false`) or the end point, in curve units.
+    SetKeyInterpolation {
+        channel: u8,
+        end: bool,
+        point: [i32; 2],
+    },
+    /// A click in the margin column of a display group row
+    /// ([`Document::toggle_display_group`]).
+    ToggleDisplayGroup(u8),
+    /// A plain click on an unmarked key: [`Command::SelectKeys`] after the
+    /// marks of the mode are cleared.
+    ReplaceKeySelection {
+        track: Track,
+        from: u32,
+        to: u32,
+    },
+    /// The timeline scroll bar (428, `ui_hscroll.cpp` 274-313):
+    /// `timeline.start_frame`.
+    SetTimelineStart(i32),
+    /// The bone list scroll bar (`HandleVScroll`, `ui_scroll_mouse.cpp`
+    /// 42-105): the selected model's `bone_list_pos` in model mode, else
+    /// `display_list_scroll`.
+    SetTrackListScroll(i32),
+    /// The bone rotation edit boxes 540..542 committed in model mode
+    /// ([`Document::zero_bone_rotation_axis`]): `degrees` is what the three
+    /// boxes held, `axis` the edited one (0 X, 1 Y, 2 Z).
+    ZeroBoneRotationAxis {
+        axis: u8,
+        degrees: [f32; 3],
+    },
+    /// The delete button of the accessory panel (`DeleteSelectedAccessory`,
+    /// `command_panel_toggles.cpp` 220-321) on the accessory in `slot`,
+    /// after the confirmation box.
+    DeleteAccessory(u8),
+    /// Checkbox 477 (`command_panel_toggles.cpp` 554-562): the additive
+    /// blend of the selected accessory. The C++ toggles; this sets.
+    SetAccessoryAdditive(bool),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -368,6 +562,27 @@ pub struct EditState {
     /// `SelfShadowMode`, the 0/1/2 radio.
     pub self_shadow_mode: u8,
     pub auto_interpolation: bool,
+    /// The physics checkbox (499), which "register" stores negated as the
+    /// `physicsDisabled` of a rigid-body bone.
+    pub physics_checkbox: bool,
+    /// `PhysicsResetPending`: the commands whose C++ handler requests a
+    /// physics settle set it; the frame loop ([`frame::FrameLoop`]) takes it.
+    pub physics_reset_pending: bool,
+    /// The CRT `rand()` state, one per process (menu 227).
+    pub rand: mds_ops::MsvcRand,
+    /// `blinkPhase` (`app+0x9EB7F`), which menu 227 carries between runs.
+    pub blink_phase: u8,
+    /// The number the last command's info box showed (menus 222 and 227),
+    /// `None` after any other command.
+    pub reported: Option<u32>,
+    /// Buttons 496..498.
+    pub bone_pose_clipboard: panel::BonePoseClipboard,
+    /// The curve copy, paste and reset buttons.
+    pub curve_clipboard: panel::CurveClipboard,
+    /// The device's `maxTextureWidth` and `maxTextureHeight`, which bound
+    /// the render size (menu 212); the application sets it from its device.
+    /// `None` checks nothing.
+    pub max_texture_size: Option<[i32; 2]>,
 }
 
 #[derive(Clone, Debug)]
@@ -379,11 +594,9 @@ pub struct Document {
     skeletons: Vec<Option<Skeleton>>,
 }
 
-fn ops(e: mds_ops::Error) -> Error {
-    Error::Format(format!("{e:?}"))
-}
+use bulk::ops;
 
-fn not(what: &'static str) -> Error {
+pub(crate) fn not(what: &'static str) -> Error {
     Error::NotApplicable(what)
 }
 
@@ -430,6 +643,8 @@ impl Document {
                 self_shadow_mode: shadow_mode_at(&pmm),
                 // `checkPhysicsFrame` (`window_init.cpp`) without a config.
                 auto_interpolation: true,
+                // `ui_init.cpp` checks it.
+                physics_checkbox: true,
                 ..EditState::default()
             },
             pmm,
@@ -477,6 +692,9 @@ impl Document {
             (p.picture.offset, p.picture.scale) = (old.picture.offset, old.picture.scale);
         }
         d.edit.auto_interpolation = self.edit.auto_interpolation;
+        d.edit.physics_checkbox = self.edit.physics_checkbox;
+        d.edit.rand = self.edit.rand;
+        d.edit.blink_phase = self.edit.blink_phase;
         // `LoadSceneV2_ReleaseTracks`: no model in the selected slot means
         // camera mode.
         if d.active().is_none() {
@@ -491,6 +709,7 @@ impl Document {
             d.apply(Command::SelectCameraMode)?;
             d.pmm.timeline.edit_mode = edit_mode;
         }
+        d.edit.physics_reset_pending = true;
         *self = d;
         Ok(())
     }
@@ -500,6 +719,56 @@ impl Document {
         save::normalize(&self.pmm)
             .write()
             .map_err(|e| Error::Format(e.to_string()))
+    }
+
+    /// "Save pose" (menu 203, `CmdSavePose`, `command_impl.cpp`): the VPD
+    /// bytes of the selected bones of the selected model.
+    pub fn save_pose(&mut self) -> Result<Vec<u8>, Error> {
+        if self.camera_mode() {
+            return Err(not("saving a pose in camera mode"));
+        }
+        let (i, s) = self.keyed()?;
+        let mode = self.pmm.physics.playback_mode;
+        pose_file::save_vpd(&self.pmm.models[i], &s, &self.edit.models[i], mode)
+    }
+
+    /// "Save enhanced model" (menu 263, `SaveEnhancedModel`) of the selected
+    /// PMD model to `path`, which becomes the model's path. The C++ writer
+    /// reads PMD-only data and ends the process on a PMX model, so a PMX
+    /// model is refused.
+    pub fn save_pmd(&mut self, path: &str) -> Result<Vec<u8>, Error> {
+        let i = self.active_model()?;
+        let ModelFile::Pmd(pmd) = &mut self.models[i] else {
+            return Err(not("the PMD writer on a model that is not a PMD"));
+        };
+        let bytes = pose_file::save_pmd(pmd)?;
+        let raw = add_model::sjis(path, 256).raw;
+        let p = &mut self.pmm.models[i].path;
+        p.raw.fill(0);
+        p.raw[..raw.len()].copy_from_slice(&raw);
+        p.text = path.to_string();
+        Ok(bytes)
+    }
+
+    /// The model-mode name check of `LoadVmdMotion` (`src/model/vmd_load.cpp`
+    /// 318-338) on the VMD's model name: `Err` for camera and light data,
+    /// which the C++ refuses; `Ok(true)` when the name differs from the
+    /// selected model's, where the C++ asks an OK/Cancel question before
+    /// loading. [`Command::LoadMotion`] is the OK path; the question is the
+    /// caller's.
+    pub fn motion_needs_confirmation(&self, vmd_model_name: &[u8]) -> Result<bool, Error> {
+        Self::motion_model_name(vmd_model_name)?;
+        let name = |raw: &[u8]| raw.split(|&b| b == 0).next().unwrap_or(&[]).to_vec();
+        let m = self.selected_model().ok_or(not("no model selected"))?;
+        Ok(name(vmd_model_name) != name(&m.name.raw))
+    }
+
+    fn motion_model_name(raw: &[u8]) -> Result<(), Error> {
+        let cl = vmd_save::CAMERA_LIGHT;
+        if raw.len() > cl.len() && raw[..cl.len()] == *cl && raw[cl.len()] == 0 {
+            return Err(not("the motion is camera and light data (a message box)"));
+        }
+        Ok(())
     }
 
     fn camera_mode(&self) -> bool {
@@ -552,6 +821,16 @@ impl Document {
                 m.bone_pose.iter_mut().for_each(|p| p.flags[2] = 0);
             }
         }
+        self.seek_frame();
+    }
+
+    /// The tail every frame change shares: the timeline scroll, every model
+    /// at the frame, and in camera mode the camera-mode tracks.
+    fn seek_frame(&mut self) {
+        // `CameraAttachmentTransformSuppressed() = 0` (`ui_frame_step.cpp`
+        // 188, `ui_editor_click.cpp` 805).
+        self.pmm.appearance.suppress_camera_transform = 0;
+        let frame = self.frame();
         // The timeline shows `(SidebarWidth - 84) / 26` frames before the
         // current one.
         let visible = ((self.pmm.settings.panel_width - 84) / 26) as u32;
@@ -585,7 +864,41 @@ impl Document {
     }
 
     pub fn apply(&mut self, cmd: Command) -> Result<(), Error> {
+        // The handlers that set `PhysicsResetPending` once they get past
+        // their gates: RefreshAfterFrameApply, CmdLoadMotion, CmdLoadPose,
+        // the three paste handlers, and the undo and redo buttons. A command
+        // that fails is one the user could not run.
+        let model_mode = self.pmm.settings.options[0] == 0;
+        let clip = &self.edit.model_clipboard;
+        let settles = match &cmd {
+            Command::SetFrame(_) | Command::ClickFrame(_) | Command::LoadMotion(_) => true,
+            Command::PasteBonePose { .. } => {
+                model_mode && !self.edit.bone_pose_clipboard.is_empty()
+            }
+            Command::LoadPose(_) | Command::Undo | Command::Redo => {
+                model_mode && self.active().is_some()
+            }
+            Command::Paste if model_mode => {
+                !(clip.bones.is_empty() && clip.morphs.is_empty() && clip.displays.is_empty())
+            }
+            Command::Paste => !self.edit.global_clipboard.is_empty(),
+            Command::PasteMirrored | Command::PasteToSelectedBone => {
+                model_mode && !clip.bones.is_empty()
+            }
+            _ => false,
+        };
+        let settles = settles || matches!(cmd, Command::CenterPositionBias(_)) && model_mode;
+        self.edit.reported = None;
+        let r = self.apply_inner(cmd);
+        if r.is_ok() && settles {
+            self.edit.physics_reset_pending = true;
+        }
+        r
+    }
+
+    fn apply_inner(&mut self, cmd: Command) -> Result<(), Error> {
         let frame = self.frame();
+
         match cmd {
             Command::SelectModel(slot) => {
                 if !self.pmm.models.iter().any(|m| m.slot == slot) {
@@ -839,11 +1152,16 @@ impl Document {
             Command::RegisterBoneKeys => {
                 let (i, s) = self.keyed()?;
                 let auto = self.edit.auto_interpolation;
+                let physics = model::Physics {
+                    checkbox: self.edit.physics_checkbox,
+                    mode: self.pmm.physics.playback_mode,
+                };
                 let r = model::register_bones(
                     &mut self.pmm.models[i],
                     &s,
                     &mut self.edit.models[i],
                     auto,
+                    physics,
                     frame,
                 );
                 self.bump_last_registered(i);
@@ -928,6 +1246,38 @@ impl Document {
                 }
                 self.refresh_context();
             }
+            Command::PasteMirrored | Command::PasteToSelectedBone => {
+                let mirrored = cmd == Command::PasteMirrored;
+                if self.camera_mode() {
+                    if mirrored {
+                        return Ok(());
+                    }
+                    return Err(not(
+                        "pasting accessory keys to another accessory (not ported)",
+                    ));
+                }
+                if self.edit.model_clipboard.bones.is_empty() {
+                    return Ok(());
+                }
+                let (i, s) = self.keyed()?;
+                let target = if mirrored {
+                    mds_edit::BoneTarget::Mirrored
+                } else {
+                    match self.pmm.models[i].selection.selected_bone {
+                        -1 => return Err(not("no bone is selected (a message box)")),
+                        b => mds_edit::BoneTarget::Selected(b),
+                    }
+                };
+                model::paste_bones(
+                    &mut self.pmm.models[i],
+                    &s,
+                    &mut self.edit.models[i],
+                    &self.edit.model_clipboard,
+                    frame as i32,
+                    target,
+                )?;
+                self.refresh_context();
+            }
             Command::DeleteSelectedKeys => {
                 if self.camera_mode() {
                     global::delete_selected(&mut self.pmm)?;
@@ -965,22 +1315,27 @@ impl Document {
                 if let Some(f) = to {
                     self.pmm.timeline.current_frame = f as i32;
                 }
+                // `RedoKeyframeEdit` seeks unless the entry it redid is a pose.
+                let h = &self.edit.models[i].history;
+                if cmd == Command::Redo && !matches!(h.undo[h.cursor], history::Entry::BonePose(_))
+                {
+                    self.refresh_context();
+                }
             }
             Command::LoadMotion(data) => {
                 let vmd =
                     mds_formats::vmd::Vmd::read(&data).map_err(|e| Error::Format(e.to_string()))?;
                 if !self.camera_mode() {
                     let (i, s) = self.keyed()?;
-                    let m = &self.pmm.models[i];
-                    let name = |raw: &[u8]| raw.split(|&b| b == 0).next().unwrap_or(&[]).to_vec();
-                    if name(&vmd.model_name.raw) != name(&m.name.raw) {
-                        return Err(not("the motion is for another model (a message box)"));
+                    if Self::motion_model_name(&vmd.model_name.raw).is_err() {
+                        return Err(not("the motion is camera and light data (a message box)"));
                     }
                     let r = model::load_vmd(
                         &mut self.pmm.models[i],
                         &s,
                         &mut self.edit.models[i],
                         &vmd,
+                        &data,
                         frame,
                     );
                     self.bump_last_registered(i);
@@ -994,6 +1349,14 @@ impl Document {
                 refresh::self_shadow(&mut self.pmm, &mut self.edit.self_shadow_mode);
                 refresh::gravity(&mut self.pmm);
                 r?;
+            }
+            Command::LoadPose(data) => {
+                if self.camera_mode() {
+                    return Ok(());
+                }
+                let (i, s) = self.keyed()?;
+                let h = &mut self.edit.models[i].history;
+                pose_file::load_vpd(&mut self.pmm.models[i], &s, h, &data)?;
             }
             Command::SelectAll(what) => {
                 use mds_ops as s;
@@ -1011,15 +1374,42 @@ impl Document {
             }
             Command::FrameLine { morph, insert } => {
                 use mds_ops as f;
+                let bones = !morph && !self.camera_mode();
+                let mut pose = Vec::new();
+                let mut rig = None;
+                if bones {
+                    let m = &self.pmm.models[self.active_model()?];
+                    // The rebuild needs the bone count of the file; a delete
+                    // that rebuilds nothing runs without it.
+                    if !insert
+                        && self.edit.auto_interpolation
+                        && model::line_delete_rebuilds(m, frame)
+                    {
+                        let (i, s) = self.keyed()?;
+                        rig = Some(model::rig(&self.pmm.models[i], &s, true));
+                    }
+                    let m = &self.pmm.models[self.active_model()?];
+                    pose = model::selection_snapshot(m);
+                }
                 let p = &mut self.pmm;
-                match (morph, insert) {
+                let undo = match (morph, insert) {
                     (false, true) => f::insert_bone_camera_frame_line(p),
-                    (false, false) => f::delete_bone_camera_frame_line(p),
-                    (true, true) => f::insert_morph_light_frame_line(p),
-                    (true, false) => f::delete_morph_light_frame_line(p),
+                    (false, false) => f::delete_bone_camera_frame_line(p, rig.as_ref()),
+                    (true, true) => f::insert_morph_light_frame_line(p).map(|()| None),
+                    (true, false) => f::delete_morph_light_frame_line(p).map(|()| None),
                 }
                 .map_err(ops)?;
-                if !self.camera_mode() {
+                if bones {
+                    // No key moved: the C++ returns before the undo entry and the seek.
+                    let Some(keys) = undo else { return Ok(()) };
+                    let i = self.active_model()?;
+                    self.edit.models[i].history.push(history::Entry::BoneKeys {
+                        frame,
+                        pose,
+                        keys,
+                    });
+                    self.refresh_context();
+                } else if !self.camera_mode() {
                     self.refresh_context();
                 } else if morph {
                     refresh::light(&mut self.pmm);
@@ -1051,6 +1441,191 @@ impl Document {
                 }
                 self.pmm.timeline.edit_mode = 0;
             }
+            Command::CenterPositionBias(offset) => {
+                let (i, f) = self.ops_model()?;
+                self.push_marked_undo(i);
+                mds_ops::center_position_bias(&mut self.pmm, &f, offset).map_err(ops)?;
+                self.seek(i);
+            }
+            Command::RemoveUnusedKeys => {
+                let n = self.remove_unused()?;
+                self.edit.reported = Some(n);
+            }
+            Command::ShiftLipFrames(shift) => {
+                let (i, f) = self.ops_model()?;
+                mds_ops::shift_lip_frames(&mut self.pmm, &f, shift).map_err(ops)?;
+                self.seek(i);
+            }
+            Command::DeleteLipFrames | Command::DeleteEyeFrames | Command::DeleteEyebrowFrames => {
+                let (i, f) = self.ops_model()?;
+                let p = &mut self.pmm;
+                match cmd {
+                    Command::DeleteLipFrames => mds_ops::delete_lip_frames(p, &f),
+                    Command::DeleteEyeFrames => mds_ops::delete_eye_frames(p, &f),
+                    _ => mds_ops::delete_eyebrow_frames(p, &f),
+                }
+                .map_err(ops)?;
+                self.seek(i);
+            }
+            Command::RegisterBlinks { start, end } => {
+                let (_, f) = self.ops_model()?;
+                let e = &mut self.edit;
+                let n = mds_ops::random_blinks(
+                    &mut self.pmm,
+                    &f,
+                    start,
+                    end,
+                    &mut e.rand,
+                    &mut e.blink_phase,
+                )
+                .map_err(ops)?;
+                e.reported = Some(n);
+            }
+            Command::ResetMorphs => {
+                if self.camera_mode() {
+                    return Err(not("the menu is grayed out in camera mode"));
+                }
+                mds_ops::reset_morphs(&mut self.pmm).map_err(ops)?;
+            }
+            Command::RegisterAllMorphFrames => {
+                let (i, f) = self.ops_model()?;
+                let r = mds_ops::register_all_morph_frames(&mut self.pmm, &f).map_err(ops);
+                self.seek(i);
+                r?;
+            }
+            Command::MultiplyCamera(p) => {
+                mds_ops::multiply_camera_frames(&mut self.pmm, &p).map_err(ops)?;
+                // `ReloadModels` (`timeline_advance.cpp` 178): the camera
+                // follows its keys.
+                refresh::camera(&mut self.pmm);
+            }
+            Command::MultiplyBone(p) => {
+                let (i, _) = self.ops_model()?;
+                self.push_marked_undo(i);
+                mds_ops::multiply_bone_frames(&mut self.pmm, &p).map_err(ops)?;
+                self.seek(i);
+            }
+            Command::MultiplyMorph { scale, add } => {
+                let (i, _) = self.ops_model()?;
+                mds_ops::multiply_morph_frames(&mut self.pmm, scale, add).map_err(ops)?;
+                self.seek(i);
+            }
+            Command::SetKeyPhysics { disabled } => {
+                let (i, f) = self.ops_model()?;
+                self.push_physics_undo(i, &f);
+                mds_ops::set_physics_on_off(&mut self.pmm, &f, disabled).map_err(ops)?;
+                self.seek(i);
+            }
+            Command::ScaleFrames(p) => {
+                let (i, f) = self.ops_model()?;
+                let r = mds_ops::scale_frame_range(&mut self.pmm, &f, &p).map_err(ops);
+                self.seek(i);
+                r?;
+            }
+            Command::ClickFrame(f) => self.click_frame(f),
+            Command::SetEditMode(mode) => self.pmm.timeline.edit_mode = mode,
+            Command::SelectAllBones => self.select_all_bones()?,
+            Command::SelectUnregisteredBones => self.select_unregistered_bones()?,
+            Command::ResetBonePose => self.reset_bone_pose()?,
+            Command::CopyBonePose => self.copy_bone_pose()?,
+            Command::PasteBonePose { mirror } => self.paste_bone_pose(mirror)?,
+            Command::SetCameraParentModel(slot) => self.set_camera_parent_model(slot),
+            Command::SetCameraParentBone(bone) => self.set_camera_parent_bone(bone)?,
+            Command::SetModelFlag { flag, on } => {
+                let i = self.active_model()?;
+                let m = &mut self.pmm.models[i];
+                let field = match flag {
+                    ModelFlag::Visible => &mut m.selection.load_complete,
+                    ModelFlag::Shadow => &mut m.toon,
+                    ModelFlag::AddBlend => &mut m.post_load,
+                };
+                *field = u8::from(on);
+            }
+            Command::SetIkEnabled { chain, on } => {
+                let i = self.active_model()?;
+                *self.pmm.models[i]
+                    .ik_pose
+                    .get_mut(chain as usize)
+                    .ok_or(not("no such IK chain"))? = u8::from(on);
+            }
+            Command::SetPanelExpanded { panel, expanded } => {
+                if !(1..=6).contains(&panel) {
+                    return Err(not("no such panel"));
+                }
+                self.pmm.settings.options[usize::from(panel)] = u8::from(expanded);
+            }
+            Command::SetPlayback {
+                looped,
+                return_to_start,
+                from_current,
+                start_frame,
+                stop_frame,
+            } => {
+                let t = &mut self.pmm.timeline;
+                t.playback_loop = u8::from(looped);
+                t.return_to_start = u8::from(return_to_start);
+                t.start_at_current = u8::from(from_current);
+                t.play_start_frame = start_frame;
+                t.play_stop_frame = stop_frame;
+            }
+            Command::SetViewOption { option, on } => {
+                let p = &mut self.pmm;
+                *match option {
+                    ViewOption::Information => &mut p.view.fps_overlay,
+                    ViewOption::CoordinateAxis => &mut p.view.ground_grid,
+                    ViewOption::GroundShadow => &mut p.view.ground_shadow,
+                    ViewOption::GroundShadowTransparency => &mut p.physics.projected_shadow_blend,
+                    ViewOption::SelfShadow => &mut p.self_shadow_mode,
+                } = u8::from(on);
+            }
+            Command::SetFpsLimit(fps) => self.pmm.view.fps_limit = fps,
+            Command::SetRenderSize { width, height } => {
+                let [w, h] = self.edit.max_texture_size.unwrap_or([i32::MAX; 2]);
+                if width > w || height > h {
+                    return Err(not("too big for your PC! (a message box)"));
+                }
+                self.pmm.settings.render_width = width;
+                self.pmm.settings.render_height = height;
+            }
+            Command::SetFollowCamera(on) => self.set_follow_camera(on),
+            Command::SetEdgeScale(v) => {
+                if self.camera_mode() {
+                    return Err(not("the edge thickness is a model-mode setting"));
+                }
+                let i = self.active_model()?;
+                self.pmm.models[i].edge_scale = v;
+            }
+            Command::SetOutlineColor(c) => {
+                self.pmm.appearance.outline_color = c.map(i32::from);
+            }
+            Command::CopyInterpolationCurve { channel } => self.copy_curve(channel)?,
+            Command::PasteInterpolationCurve { channel } => self.write_curve(channel, false)?,
+            Command::ResetInterpolationCurves { channel } => self.write_curve(channel, true)?,
+            Command::SetKeyInterpolation {
+                channel,
+                end,
+                point,
+            } => self.set_curve_point(channel, end, point)?,
+            Command::ToggleDisplayGroup(g) => self.toggle_display_group(g)?,
+            Command::ReplaceKeySelection { track, from, to } => {
+                self.clear_mode_marks(track)?;
+                return self.apply_inner(Command::SelectKeys { track, from, to });
+            }
+            Command::SetTimelineStart(f) => self.pmm.timeline.start_frame = f,
+            Command::SetTrackListScroll(v) => match self.active().filter(|_| !self.camera_mode()) {
+                Some(i) => self.pmm.models[i].selection.bone_list_pos = v,
+                None => self.pmm.display_list_scroll = v,
+            },
+            Command::ZeroBoneRotationAxis { axis, degrees } => {
+                self.zero_bone_rotation_axis(axis, degrees)?
+            }
+            Command::DeleteAccessory(slot) => self.delete_accessory(slot)?,
+            Command::SetAccessoryAdditive(on) => {
+                let slot = self.pmm.selected_accessory_slot;
+                if let Ok(a) = global::accessory(&mut self.pmm, slot) {
+                    a.state.additive = u8::from(on);
+                }
+            }
             Command::NewScene => {
                 self.pmm = new_scene::reset(&self.pmm);
                 self.models.clear();
@@ -1058,6 +1633,9 @@ impl Document {
                 self.edit = EditState {
                     self_shadow_mode: shadow_mode_at(&self.pmm),
                     auto_interpolation: self.edit.auto_interpolation,
+                    physics_checkbox: self.edit.physics_checkbox,
+                    rand: self.edit.rand,
+                    blink_phase: self.edit.blink_phase,
                     ..EditState::default()
                 };
                 // The refresh tail of `ResetAppState`.

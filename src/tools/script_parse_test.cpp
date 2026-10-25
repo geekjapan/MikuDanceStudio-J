@@ -69,12 +69,23 @@ int main() {
     CHECK(Error("save pmm a.pmm\nsave pmm a.pmm") == "line 2: a.pmm is saved twice");
     CHECK(Error("paste 3").find("takes 0") != std::string::npos);
     CHECK(Error("").empty());
+    CHECK(Error("save pmm messages.tsv").find("plain file name") != std::string::npos);
+    CHECK(Error("trace a.trace\nsave pmm a.trace") == "line 2: a.trace is saved twice");
+    CHECK(Error("loop 1").find("bad argument") != std::string::npos);
+    CHECK(Error("physics mode 4").find("bad argument") != std::string::npos);
+    CHECK(Error("scale range 0 30 2 on off maybe").find("bad argument") != std::string::npos);
+    CHECK(Error("pump 3 -1").find("bad argument") != std::string::npos);
+    CHECK(
+        ParseScript("delete unused\ndelete\nregister all morph\nshift lip -5", &commands, &error) &&
+        commands.size() == 4 && commands[0].op == ScriptOp::DeleteUnused &&
+        commands[1].op == ScriptOp::Delete && commands[2].op == ScriptOp::RegisterAllMorph &&
+        commands[3].op == ScriptOp::ShiftLip && commands[3].args[0] == "-5");
 
     // Every command spec is reachable by its own words.
     for (const ScriptCommandSpec& spec : kScriptCommands) {
         std::string line = spec.words;
         for (const char* kind = spec.args; *kind != '\0'; ++kind)
-            line += *kind == 't' ? " x.pmm" : " 1";
+            line += *kind == 't' ? " x.pmm" : *kind == 'o' ? " on" : " 1";
         CHECK(ParseScript(line, &commands, &error) && commands.size() == 1 &&
               commands[0].op == spec.op);
     }

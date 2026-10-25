@@ -1,0 +1,13 @@
+# Menu 275 (physics ON/OFF frame conversion) on the selected bone keys of
+# chain8_ik.pmx with swing600.vmd: OFF, then ON again.
+load model chain8_ik.pmx
+load vmd swing600.vmd
+select all bone
+physics frames off
+save pmm physics-off.pmm
+select all bone
+save vmd physics-off.vmd
+physics frames on
+save pmm physics-on.pmm
+select all bone
+save vmd physics-on.vmd

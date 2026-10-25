@@ -1,0 +1,9 @@
+# Menu 219 (center position bias) on chain8_ik.pmx with swing600.vmd: the dialog adds
+# the offset to every selected key of a root bone (全ての親).
+load model chain8_ik.pmx
+load vmd swing600.vmd
+select all bone
+bias 1.5 -2 0.25
+save pmm bias.pmm
+select all bone
+save vmd bias.vmd

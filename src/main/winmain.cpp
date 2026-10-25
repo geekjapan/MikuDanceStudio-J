@@ -27,6 +27,7 @@
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 #include "mme_host_api.h"
+#include "../tools/script_mode.hpp"
 #include "../tools/trace_mode.hpp"
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
@@ -40,17 +41,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // those frames to PNG files. Without either flag nothing here changes. A bad line or an unreadable PMM exits 1
     // before any window exists and writes nothing; a message box raised later
     // (a corrupt PMM) exits 1 through ArmTraceDialogGuard.
+    // --mds-script <script> <out-dir> (src/tools/script_mode.cpp) starts with
+    // an empty scene and replaces the loop with the script's commands.
     // (__wargv is only filled for wmain programs, so the line is split here.)
     tools::TraceRequest trace;
     tools::TraceArgs traceArgs = tools::TraceArgs::NotRequested;
+    tools::ScriptRequest script;
+    tools::ScriptArgs scriptArgs = tools::ScriptArgs::NotRequested;
     int argumentCount = 0;
     if (wchar_t** arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount)) {
         traceArgs = tools::ParseTraceArgs(argumentCount, arguments, &trace);
+        scriptArgs = tools::ParseScriptArgs(argumentCount, arguments, &script);
         LocalFree(arguments);
     }
-    const bool traceMode = traceArgs == tools::TraceArgs::Ready;
-    if (traceArgs == tools::TraceArgs::Malformed ||
-        (traceMode && !(tools::PrepareTraceRequest(&trace) && tools::ArmTraceDialogGuard(trace))))
+    const bool scriptMode = scriptArgs == tools::ScriptArgs::Ready;
+    const bool traceMode = traceArgs == tools::TraceArgs::Ready || scriptMode;
+    if (traceArgs == tools::TraceArgs::Malformed || scriptArgs == tools::ScriptArgs::Malformed ||
+        (scriptMode && !tools::PrepareScriptRequest(&script)) ||
+        (traceMode && !scriptMode &&
+         !(tools::PrepareTraceRequest(&trace) && tools::ArmTraceDialogGuard(trace))))
         return 1;
     int traceExit = 0;
 
@@ -68,9 +77,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     app->state = MMDAppState{}; // original: memset(p, 0, 0xA4530)
     app->InitDefaults();        // 0x40A730
 
-    if (traceMode) {
+    if (traceMode && !scriptMode) {
         wcscpy_s(app->EnvFileName(), 0x100, trace.pmm.c_str()); // loaded by InitMainWindowAndD3D
-    } else if (*lpCmdLine != '\0') {
+    } else if (!scriptMode && *lpCmdLine != '\0') {
         wchar_t converted[256];            // `Source` local in the original (ebp-0x204)
         ConvertAnsiToWide(app->Renderer(), // [Block+0xA06C4]
                           lpCmdLine, converted, 0x100); // 0x407A70
@@ -108,7 +117,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     double statsSleepMs = 0.0, statsPumpMs = 0.0;
 #endif
     if (traceMode)
-        traceExit = tools::RunTraceMode(app, trace);
+        traceExit =
+            scriptMode ? tools::RunScriptMode(app, script) : tools::RunTraceMode(app, trace);
     while (!traceMode && msg.message != WM_QUIT) { // 18
         if (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
             TranslateMessage(&msg);

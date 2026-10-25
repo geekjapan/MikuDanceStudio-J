@@ -254,6 +254,7 @@ add_executable(MikuDanceStudio WIN32
     "${CMAKE_CURRENT_BINARY_DIR}/generated/version.rc"
     src/main/winmain.cpp
     src/tools/trace_mode.cpp
+    src/tools/script_mode.cpp
     res/MMD.rc
     ${MIKUDANCESTUDIO_GEN_RES}
     ${CMAKE_CURRENT_SOURCE_DIR}/exports/MikuMikuDance.def
@@ -264,6 +265,7 @@ target_link_libraries(MikuDanceStudio PRIVATE
     winmm      # timeGetTime - main loop timing
     dsound     # original timeline/audio subsystem initialization (0x4C2470)
     user32
+    bcrypt     # SHA-256 of the --mds-script manifest (src/tools/script_mode.cpp)
 )
 
 # gen_resources.res re-embeds the original .rsrc byte-exact; link.exe accepts
@@ -613,6 +615,8 @@ if(BUILD_TESTING)
     add_test(NAME trace_format COMMAND trace_format_test)
     add_executable(frame_dump_args_test src/tools/frame_dump_args_test.cpp)
     add_test(NAME frame_dump_args COMMAND frame_dump_args_test)
+    add_executable(script_parse_test src/tools/script_parse_test.cpp)
+    add_test(NAME script_parse COMMAND script_parse_test)
     # RM-3 oracle tools for the Windows host (runbook in tools/oracle/math_vectors.cpp).
     add_executable(math_vectors tools/oracle/math_vectors.cpp)
     target_include_directories(math_vectors PRIVATE include tools/oracle)

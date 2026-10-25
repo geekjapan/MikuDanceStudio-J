@@ -1276,6 +1276,10 @@ dependencies = [
 [[package]]
 name = "mds-media"
 version = "0.1.0"
+dependencies = [
+ "png",
+ "zune-jpeg",
+]
 
 [[package]]
 name = "mds-mme"

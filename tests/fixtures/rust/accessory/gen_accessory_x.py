@@ -160,6 +160,19 @@ def frames():
     return s
 
 
+def frames_normals():
+    # Scale 2 and a translation, then a turn and a translation inside: whether D3DX moves
+    # a normal as a point or a direction, and whether it normalizes it, shows in the
+    # merged normals. Normals and UVs keep FVF 274, so D3DXComputeNormals never runs.
+    outer = [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 10, 0, 0, 1]
+    inner = [0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0, 3, 0, 1]
+    normal = lambda n: " MeshNormals {\n  1;\n  %s;;\n  1;\n  4;0,0,0,0;;\n }\n" % f(*n).rstrip(";")
+    s = "Frame Outer {\n" + ftm(outer) + quad(normal((0, 0, 1)) + quad_uv(), "QuadA")
+    s += "Frame Inner {\n" + ftm(inner) + quad(normal((0.6, 0, 0.8)) + quad_uv(), "QuadB")
+    s += "}\n}\n" + quad(normal((0, 0, 2)) + quad_uv(), "QuadC")
+    return s
+
+
 # --- no normals, no UVs, no material list --------------------------------------------
 QUAD_V = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
 
@@ -222,6 +235,7 @@ def main():
     write("cube_bin64.x", cube_bin("0064"))
     write("multi_material.x", header(version="0302") + multi_material().encode("ascii"))
     write("frames.x", header(version="0302", floats="0064") + frames().encode("ascii"))
+    write("frames_normals.x", header() + frames_normals().encode("ascii"))
     write("no_normals_uvs.x", header() + quad().encode("ascii"))
     write("normals_no_uv.x", header() + quad(quad_normals()).encode("ascii"))
     write("normals_uv.x", header() + quad(quad_normals() + quad_uv()).encode("ascii"))

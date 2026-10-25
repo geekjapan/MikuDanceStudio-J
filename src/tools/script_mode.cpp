@@ -659,7 +659,22 @@ struct Runner {
         Settle();
         if (!IsFile(path))
             return Fail("the handler wrote no file " + Utf8(path));
+        if (menu == MDS_CMD_SAVE_MOTION && !ZeroVmdSignatureTail(path))
+            return Fail("cannot rewrite " + Utf8(path));
         return RecordOutputs(name);
+    }
+
+    // The VMD writer (vmd_save.cpp) writes the 30-byte signature field from
+    // a 256-byte stack buffer that sprintf_s filled with the 25 characters
+    // and a NUL only, so bytes 26..29 are whatever the stack held and differ
+    // between runs. The runner sets them to 0, the value a zero-filled
+    // buffer gives.
+    static bool ZeroVmdSignatureTail(const std::wstring& path) {
+        std::fstream file(path.c_str(), std::ios::binary | std::ios::in | std::ios::out);
+        const char zeros[4] = {};
+        file.seekp(26);
+        file.write(zeros, sizeof zeros);
+        return static_cast<bool>(file);
     }
 
     // Adds every file of <out-dir> that is new or changed since the last

@@ -244,12 +244,12 @@ fn escape() -> egui::Event {
 #[test]
 fn the_pass_leaves_full_screen_on_escape() {
     let mut rig = Rig::new();
-    rig.frame(vec![escape()], |ui, ctx| view::pass(ui, ctx));
+    rig.frame(vec![escape()], view::pass);
     assert!(!rig.options().fullscreen);
     rig.run("menu:290").unwrap();
-    rig.frame(vec![], |ui, ctx| view::pass(ui, ctx));
+    rig.frame(vec![], view::pass);
     assert!(rig.options().fullscreen, "no key, no change");
-    rig.frame(vec![escape()], |ui, ctx| view::pass(ui, ctx));
+    rig.frame(vec![escape()], view::pass);
     assert!(!rig.options().fullscreen);
 }
 

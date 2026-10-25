@@ -22,32 +22,11 @@ use mds_render::{
 };
 use std::path::PathBuf;
 
+mod common;
+use common::{fixtures, gpu_or_skip, pixel_diff, read_png, Score, LIMITS};
+
 const W: usize = 640;
 const H: usize = 360;
-
-/// What the whole picture of every frame must reach. A pixel is close when no channel is further
-/// than `tolerance` from the golden image.
-struct Limits {
-    tolerance: u8,
-    min_close: f64,
-    max_diff: u8,
-}
-
-/// 4 levels, 99.99% of the pixels (at most 22 may be further), none beyond 48. Measured (see
-/// `gate`): frame 0 differs by at most 1 level everywhere; frames 150, 300 and 599 have 1, 5 and
-/// 10 pixels beyond 4 and a largest difference of 12, 46 and 25. Those pixels are hairline
-/// slivers of the swinging strand of slot 3, where one of the
-/// eight samples falls on the other side of the edge: a single sample of a dark sliver on white is
-/// worth up to about 45 levels.
-const LIMITS: Limits = Limits {
-    tolerance: 4,
-    min_close: 0.9999,
-    max_diff: 48,
-};
-
-fn fixtures() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/rust")
-}
 
 fn model_bytes(path: &str) -> Result<Vec<u8>, String> {
     let name = path.rsplit(['\\', '/']).next().unwrap();
@@ -71,15 +50,9 @@ fn golden_pmm() -> Pmm {
 }
 
 fn golden(frame: u32) -> Vec<u8> {
-    let path = fixtures().join(format!("golden/swing600-golden-{frame}.png"));
-    let mut reader = png::Decoder::new(std::io::Cursor::new(std::fs::read(path).unwrap()))
-        .read_info()
-        .unwrap();
-    let mut buf = vec![0; reader.output_buffer_size().unwrap()];
-    let info = reader.next_frame(&mut buf).unwrap();
-    assert_eq!((info.width as usize, info.height as usize), (W, H));
-    assert_eq!(info.color_type, png::ColorType::Rgba);
-    buf
+    let (w, h, px) = read_png(&fixtures().join(format!("golden/swing600-golden-{frame}.png")));
+    assert_eq!((w, h), (W, H));
+    px
 }
 
 /// The poses of every model after `mds-physics` stepped the PMM to `frame`, in PMM order.
@@ -123,7 +96,7 @@ fn render_at(gpu: &Gpu, pmm: &Pmm, posed: &[Pose], frame: u32) -> Vec<u8> {
             view: camera.view(W as u32, H as u32),
             light: scene::light_at(pmm, frame).unwrap(),
             background: [255; 4],
-            toon: scene::self_shadow_mode_2_at(pmm, frame),
+            toon: scene::toon_at(pmm, frame),
             models: &models,
             samples: &SAMPLES_8X,
             pixel_offset: PIXEL_OFFSET_D3D9,
@@ -139,22 +112,6 @@ fn render_at(gpu: &Gpu, pmm: &Pmm, posed: &[Pose], frame: u32) -> Vec<u8> {
 /// the app's own drawing rules, and the golden images show them only as one line each.
 fn overlay(x: usize, y: usize) -> bool {
     (320..=321).contains(&y) || (x == 320 && y <= 273)
-}
-
-#[derive(Debug)]
-struct Score {
-    pixels: usize,
-    /// Fraction of the pixels within the tolerance.
-    close: f64,
-    max: u8,
-    mean: f64,
-}
-
-fn pixel_diff(a: &[u8], b: &[u8], i: usize) -> u8 {
-    (0..3)
-        .map(|c| a[i * 4 + c].abs_diff(b[i * 4 + c]))
-        .max()
-        .unwrap()
 }
 
 /// Compares `px` with the golden image of `frame` outside the overlay. With `dir`, writes the
@@ -192,14 +149,6 @@ fn score(px: &[u8], frame: u32, dir: Option<&std::path::Path>) -> Score {
         max,
         mean: sum as f64 / n as f64,
     }
-}
-
-fn gpu_or_skip() -> Option<Gpu> {
-    let gpu = Gpu::new().expect("device");
-    if gpu.is_none() {
-        eprintln!("SKIP: no wgpu adapter on this host (not a pass)");
-    }
-    gpu
 }
 
 /// Renders `frame` of the golden scene with the `mds-physics` pose and checks it against

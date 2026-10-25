@@ -50,3 +50,10 @@ pub fn pose_of(model: &mds_pose::model::Model) -> Pose {
 pub fn self_shadow_mode_2_at(pmm: &Pmm, frame: u32) -> bool {
     evaluate_self_shadow(&pmm.self_shadow, f64::from(frame)).is_some_and(|(mode, _)| mode == 2)
 }
+
+/// Whether the toon ramp darkens the faces turned from the light at `frame` (`Frame::toon`): with
+/// self-shadow off (mode 0, the golden2 scenes) and in mode 2, not in mode 1. Supersedes
+/// [`self_shadow_mode_2_at`], which is wrong for mode 0.
+pub fn toon_at(pmm: &Pmm, frame: u32) -> bool {
+    evaluate_self_shadow(&pmm.self_shadow, f64::from(frame)).is_none_or(|(mode, _)| mode != 1)
+}

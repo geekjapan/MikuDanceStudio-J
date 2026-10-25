@@ -84,6 +84,15 @@ pub struct View {
     pub(crate) edge_fov: f32,
 }
 
+impl View {
+    /// The clip-space position `(x, y, z, w)` of a scene point: x and y over w run from -1 to 1
+    /// across the picture (y up), z over w from 0 to 1 in depth.
+    pub fn clip(&self, p: [f32; 3]) -> [f32; 4] {
+        let m = &self.view_proj;
+        std::array::from_fn(|c| p[0] * m[0][c] + p[1] * m[1][c] + p[2] * m[2][c] + m[3][c])
+    }
+}
+
 /// The ortho view is `ORTHO_WIDTH_PER_DISTANCE * |distance|` world units wide (measured on the
 /// golden images: 8 and 12 units between model roots are 113.8 and 170.7 px of 640 at distance 45).
 const ORTHO_WIDTH_PER_DISTANCE: f32 = 1.0;

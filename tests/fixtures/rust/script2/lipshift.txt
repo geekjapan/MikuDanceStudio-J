@@ -1,6 +1,7 @@
-# Menu 225 (shift lip frames) on morph4.pmx with swing600.vmd: -100 drops the lip
-# keys that end at frame 0 or before (あ 50, う 30), then +25.
-load model morph4.pmx
+# Menu 225 (shift lip frames) on inputs/face4.pmx with swing600.vmd, whose
+# keys of あ (frames 50, 150, 300, 450) land on face4's UV morph あ, the one
+# morph of kind 3: -100 drops the key at 50, then +25 shifts the rest.
+load model face4.pmx
 load vmd swing600.vmd
 shift lip -100
 save pmm shift-back.pmm

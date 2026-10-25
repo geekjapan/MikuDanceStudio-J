@@ -1,6 +1,8 @@
 # Menus 226, 228 and 231 (delete all lip, eye, and eyebrow frames) on
 # inputs/face4.pmx, which has one morph per lane. Each lane gets keys at
-# frames 10, 20, 30 first.
+# frames 10, 20, 30 first. The menus pick morphs by kind, not by lane
+# (inputs/gen_face4.py): 226 deletes あ (UV), 228 照れ (bone), 231 真面目 and
+# まばたき (vertex).
 load model face4.pmx
 select morph 0 真面目
 select morph 1 まばたき

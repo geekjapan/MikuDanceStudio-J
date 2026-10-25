@@ -47,7 +47,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
-#include <d3dx9.h>
+#include <d3dx9.h> // the mirror of third_party/mmeffect/include
 
 #include <cstdarg>
 #include <cstdint>
@@ -155,7 +155,7 @@ bool AddMesh(std::string& out, const char* section, ID3DXMesh* mesh) {
     const DWORD options = mesh->GetOptions();
     Add(out, "%s fvf %lu options %lu vertices %lu faces %lu stride %lu\n", section, mesh->GetFVF(),
         options, vertices, faces, stride);
-    D3DVERTEXELEMENT9 decl[MAX_FVF_DECL_SIZE] = {};
+    D3DVERTEXELEMENT9 decl[65] = {}; // MAX_FVF_DECL_SIZE
     if (FAILED(mesh->GetDeclaration(decl)))
         return false;
     std::vector<D3DVERTEXELEMENT9> elements;
@@ -199,7 +199,7 @@ bool AddMesh(std::string& out, const char* section, ID3DXMesh* mesh) {
         mesh->UnlockIndexBuffer();
         return false;
     }
-    const bool wide = (options & D3DXMESH_32BIT) != 0;
+    const bool wide = (options & 1) != 0; // D3DXMESH_32BIT
     for (DWORD f = 0; f < faces; ++f) {
         std::uint32_t index[3];
         for (int k = 0; k < 3; ++k)
@@ -249,9 +249,48 @@ bool AddRaw(std::string& out, IDirect3DDevice9* device, const std::wstring& path
     return ok;
 }
 
+// The d3dx9anim.h types of the June 2010 SDK. The mirror header
+// (third_party/mmeffect/include/d3dx9.h) has none of them, and the import
+// library has neither function, so both come from the loaded d3dx9_43.dll.
+struct MeshContainer;
+struct Frame {
+    char* name;
+    D3DMATRIX matrix;
+    MeshContainer* containers;
+    Frame* sibling;
+    Frame* firstChild;
+};
+struct MeshData {
+    DWORD type; // D3DXMESHTYPE_MESH = 1
+    ID3DXMesh* mesh;
+};
+struct MeshContainer {
+    char* name;
+    MeshData data;
+    D3DXMATERIAL* materials;
+    void* effects;
+    DWORD materialCount;
+    DWORD* adjacency;
+    IUnknown* skinInfo;
+    MeshContainer* next;
+};
+struct AllocateHierarchy {
+    virtual HRESULT __stdcall CreateFrame(const char* name, Frame** frame) = 0;
+    virtual HRESULT __stdcall CreateMeshContainer(const char* name, const MeshData* data,
+                                                  const D3DXMATERIAL* materials,
+                                                  const void* effects, DWORD materialCount,
+                                                  const DWORD* adjacency, IUnknown* skinInfo,
+                                                  MeshContainer** container) = 0;
+    virtual HRESULT __stdcall DestroyFrame(Frame* frame) = 0;
+    virtual HRESULT __stdcall DestroyMeshContainer(MeshContainer* container) = 0;
+};
+using LoadMeshHierarchyFromXW = HRESULT(WINAPI*)(LPCWSTR, DWORD, IDirect3DDevice9*,
+                                                 AllocateHierarchy*, void*, Frame**, IUnknown**);
+using FrameDestroy = HRESULT(WINAPI*)(Frame*, AllocateHierarchy*);
+
 // Keeps what the dump prints; D3DX fills the rest.
-struct Hierarchy final : ID3DXAllocateHierarchy {
-    static char* Copy(LPCSTR name) {
+struct Hierarchy final : AllocateHierarchy {
+    static char* Copy(const char* name) {
         if (name == nullptr)
             return nullptr;
         const std::size_t size = std::strlen(name) + 1;
@@ -259,65 +298,74 @@ struct Hierarchy final : ID3DXAllocateHierarchy {
         std::memcpy(copy, name, size);
         return copy;
     }
-    STDMETHOD(CreateFrame)(LPCSTR name, LPD3DXFRAME* frame) override {
-        auto* created = new D3DXFRAME{};
-        created->Name = Copy(name);
+    HRESULT __stdcall CreateFrame(const char* name, Frame** frame) override {
+        auto* created = new Frame{};
+        created->name = Copy(name);
         *frame = created;
         return S_OK;
     }
-    STDMETHOD(CreateMeshContainer)(LPCSTR name, CONST D3DXMESHDATA* data, CONST D3DXMATERIAL*,
-                                   CONST D3DXEFFECTINSTANCE*, DWORD materials, CONST DWORD*,
-                                   LPD3DXSKININFO, LPD3DXMESHCONTAINER* container) override {
-        auto* created = new D3DXMESHCONTAINER{};
-        created->Name = Copy(name);
-        created->MeshData = *data;
-        if (data->pMesh != nullptr)
-            data->pMesh->AddRef();
-        created->NumMaterials = materials;
+    HRESULT __stdcall CreateMeshContainer(const char* name, const MeshData* data,
+                                          const D3DXMATERIAL*, const void*, DWORD materialCount,
+                                          const DWORD*, IUnknown*,
+                                          MeshContainer** container) override {
+        auto* created = new MeshContainer{};
+        created->name = Copy(name);
+        created->data = *data;
+        if (data->mesh != nullptr)
+            data->mesh->AddRef();
+        created->materialCount = materialCount;
         *container = created;
         return S_OK;
     }
-    STDMETHOD(DestroyFrame)(LPD3DXFRAME frame) override {
-        delete[] frame->Name;
+    HRESULT __stdcall DestroyFrame(Frame* frame) override {
+        delete[] frame->name;
         delete frame;
         return S_OK;
     }
-    STDMETHOD(DestroyMeshContainer)(LPD3DXMESHCONTAINER container) override {
-        delete[] container->Name;
-        if (container->MeshData.pMesh != nullptr)
-            container->MeshData.pMesh->Release();
+    HRESULT __stdcall DestroyMeshContainer(MeshContainer* container) override {
+        delete[] container->name;
+        if (container->data.mesh != nullptr)
+            container->data.mesh->Release();
         delete container;
         return S_OK;
     }
 };
 
-void AddFrames(std::string& out, const D3DXFRAME* frame, int depth) {
-    for (; frame != nullptr; frame = frame->pFrameSibling) {
+void AddFrames(std::string& out, const Frame* frame, int depth) {
+    for (; frame != nullptr; frame = frame->sibling) {
         Add(out, "frame %d", depth);
-        AddQuoted(out, frame->Name);
-        AddFloats(out, &frame->TransformationMatrix.m[0][0], 16);
+        AddQuoted(out, frame->name);
+        AddFloats(out, &frame->matrix.m[0][0], 16);
         out += '\n';
-        for (const D3DXMESHCONTAINER* c = frame->pMeshContainer; c != nullptr;
-             c = c->pNextMeshContainer) {
+        for (const MeshContainer* c = frame->containers; c != nullptr; c = c->next) {
             out += "container";
-            AddQuoted(out, c->Name);
-            const ID3DXMesh* mesh =
-                c->MeshData.Type == D3DXMESHTYPE_MESH ? c->MeshData.pMesh : nullptr;
+            AddQuoted(out, c->name);
+            ID3DXMesh* mesh = c->data.type == 1 ? c->data.mesh : nullptr;
             Add(out, " vertices %lu faces %lu materials %lu\n",
-                mesh != nullptr ? const_cast<ID3DXMesh*>(mesh)->GetNumVertices() : 0ul,
-                mesh != nullptr ? const_cast<ID3DXMesh*>(mesh)->GetNumFaces() : 0ul,
-                c->NumMaterials);
+                mesh != nullptr ? mesh->GetNumVertices() : 0ul,
+                mesh != nullptr ? mesh->GetNumFaces() : 0ul, c->materialCount);
         }
-        AddFrames(out, frame->pFrameFirstChild, depth + 1);
+        AddFrames(out, frame->firstChild, depth + 1);
     }
 }
 
 void AddHierarchy(std::string& out, IDirect3DDevice9* device, const std::wstring& path) {
+    const HMODULE d3dx = GetModuleHandleW(L"d3dx9_43.dll");
+    const auto load = d3dx == nullptr ? nullptr
+                                      : reinterpret_cast<LoadMeshHierarchyFromXW>(
+                                            GetProcAddress(d3dx, "D3DXLoadMeshHierarchyFromXW"));
+    const auto destroy =
+        d3dx == nullptr ? nullptr
+                        : reinterpret_cast<FrameDestroy>(GetProcAddress(d3dx, "D3DXFrameDestroy"));
+    if (load == nullptr || destroy == nullptr) {
+        out += "frames unavailable\n";
+        return;
+    }
     Hierarchy allocator;
-    D3DXFRAME* root = nullptr;
-    ID3DXAnimationController* animation = nullptr;
-    const HRESULT hr = D3DXLoadMeshHierarchyFromXW(path.c_str(), kAccessoryMeshOptions, device,
-                                                   &allocator, nullptr, &root, &animation);
+    Frame* root = nullptr;
+    IUnknown* animation = nullptr;
+    const HRESULT hr =
+        load(path.c_str(), kAccessoryMeshOptions, device, &allocator, nullptr, &root, &animation);
     if (FAILED(hr)) {
         Add(out, "frames hr 0x%08lx\n", static_cast<unsigned long>(hr));
         return;
@@ -325,7 +373,7 @@ void AddHierarchy(std::string& out, IDirect3DDevice9* device, const std::wstring
     AddFrames(out, root, 0);
     if (animation != nullptr)
         animation->Release();
-    D3DXFrameDestroy(root, &allocator);
+    destroy(root, &allocator);
 }
 
 // The texture path LoadOneTexture stored, after the record's directory.

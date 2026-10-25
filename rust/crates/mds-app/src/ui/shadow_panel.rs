@@ -6,9 +6,12 @@
 //! collapse and expand buttons 566 and 567 are the section header of the side panel the shell
 //! draws.
 //!
-//! Not yet: the Fshadow check box 556 (the shadow map's size, 0x800 or 0x1000) and Shift+G (the
-//! shadow map shown over the viewport). Both are renderer state; `mds-render` has no
-//! self-shadow map to size or show.
+//! The Fshadow check box 556 (`command_frame_register.cpp:722`) sets the shadow map's size, 0x800
+//! or 0x1000: renderer state, so it lives in the window ([`map_size`]) until `mds-render` has a
+//! self-shadow map to size.
+//!
+//! Not yet: Shift+G, the shadow map shown over the viewport (`key_ladder.cpp:158`); `mds-render`
+//! has no self-shadow map to show.
 
 use super::camera_panel::{atof, camera_mode_only, edit_box, in_camera_mode, toggle, window_text};
 use super::{button, Ctx};
@@ -16,6 +19,7 @@ use crate::actions::Action;
 use mds_doc::{Command, GlobalTrack};
 
 const ACTIONS: &[Action] = &[
+    Action::run("ctl:556", fine_shadow, false),
     Action::inline("ctl:560"),
     Action::inline("ctl:561"),
     Action::run("ctl:562", mode_off, false),
@@ -29,6 +33,27 @@ const ACTIONS: &[Action] = &[
 
 pub fn actions() -> &'static [Action] {
     ACTIONS
+}
+
+fn fine_id() -> egui::Id {
+    egui::Id::unique("shadow-panel-fine")
+}
+
+/// The side of the square shadow map: 0x1000 with Fshadow checked, else 0x800.
+pub fn map_size(egui: &egui::Context) -> u32 {
+    match egui.data(|d| d.get_temp::<bool>(fine_id())) {
+        Some(true) => 0x1000,
+        _ => 0x800,
+    }
+}
+
+/// Check box 556: flips the size. Without a window there is no renderer to tell.
+fn fine_shadow(ctx: &mut Ctx) -> Result<(), String> {
+    if let Some(egui) = &ctx.egui {
+        let fine = map_size(egui) == 0x800;
+        egui.data_mut(|d| d.insert_temp(fine_id(), fine));
+    }
+    Ok(())
 }
 
 fn mode(ctx: &Ctx) -> u8 {
@@ -101,6 +126,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
         return;
     }
     let current = mode(ctx);
+    let fine = map_size(ui.ctx()) == 0x1000;
+    toggle(ui, ctx, "ctl:556", "Fshadow", fine);
     ui.horizontal(|ui| {
         toggle(ui, ctx, "ctl:562", "off", current == 0);
         toggle(ui, ctx, "ctl:563", "mode1", current == 1);

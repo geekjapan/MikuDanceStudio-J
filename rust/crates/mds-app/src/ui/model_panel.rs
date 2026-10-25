@@ -7,21 +7,28 @@
 //! Every action here goes through `Editor::apply`, which seeks the physics world, so the table
 //! refuses them while playing, as the Tab handler does (`!playing()`).
 //!
-//! Not here, for lack of a [`mds_doc::Command`]: 437 (delete model), 439 (visible), 440 (shadow),
-//! 441 (add blend), 442 (outside parent dialog), 444 and 445 (IK on and off). The panel shows the
-//! document's value of 439, 440, 441, 444 and 445 and cannot change it.
+//! The check boxes 439 to 441 (`command_frame_edit.cpp:1566` to `:1592`) and the IK radios 444 and
+//! 445 (`:1598` to `:1617`, on the chain the combo 443 has selected).
+//!
+//! Not here, for lack of a [`mds_doc::Command`]: 437 (delete model, `DeleteSelectedModel`) and 442
+//! (the outside parent dialog, `EditAccessoryAttachments`).
 
 use super::{button, Ctx};
 use crate::actions::Action;
 use crate::editor::Editor;
-use mds_doc::{Command, Document};
+use mds_doc::{Command, Document, ModelFlag};
 use rfd::FileDialog;
 
 const ACTIONS: &[Action] = &[
     Action::run("ctl:435", load_dialog, true),
     Action::inline("ctl:436"),
     Action::run("ctl:438", register_display, true),
+    Action::run("ctl:439", |c| flip(c, ModelFlag::Visible), true),
+    Action::run("ctl:440", |c| flip(c, ModelFlag::Shadow), true),
+    Action::run("ctl:441", |c| flip(c, ModelFlag::AddBlend), true),
     Action::inline("ctl:443"),
+    Action::run("ctl:444", |c| ik(c, true), true),
+    Action::run("ctl:445", |c| ik(c, false), true),
     Action::run("ctl:536", mode_toggle, true),
     Action::run("key:Tab", |c| cycle(c, true), true),
     Action::run("key:Shift+Tab", |c| cycle(c, false), true),
@@ -108,6 +115,45 @@ fn mode_toggle(ctx: &mut Ctx) -> Result<(), String> {
     }
 }
 
+fn flag_of(m: &mds_formats::pmm::Model, flag: ModelFlag) -> bool {
+    let v = match flag {
+        ModelFlag::Visible => m.selection.load_complete,
+        ModelFlag::Shadow => m.toon,
+        ModelFlag::AddBlend => m.post_load,
+    };
+    v != 0
+}
+
+/// Check boxes 439 to 441 on the selected model.
+fn flip(ctx: &mut Ctx, flag: ModelFlag) -> Result<(), String> {
+    let i = selected_index(&ctx.editor.doc).ok_or("no model selected")?;
+    let on = !flag_of(&ctx.editor.doc.pmm.models[i], flag);
+    ctx.editor.apply(Command::SetModelFlag { flag, on })
+}
+
+fn ik_chain_id() -> egui::Id {
+    egui::Id::unique("model-panel-ik")
+}
+
+/// The chain the combo 443 has selected: the window keeps the cursor, a test has chain 0.
+pub fn ik_chain(ctx: &Ctx) -> usize {
+    ctx.egui
+        .as_ref()
+        .and_then(|e| e.data(|d| d.get_temp(ik_chain_id())))
+        .unwrap_or(0)
+}
+
+/// Radios 444 (on) and 445 (off): the switch of the selected chain.
+fn ik(ctx: &mut Ctx, on: bool) -> Result<(), String> {
+    let chain = ik_chain(ctx) as u32;
+    set_ik(ctx, chain, on)
+}
+
+pub fn set_ik(ctx: &mut Ctx, chain: u32, on: bool) -> Result<(), String> {
+    selected_index(&ctx.editor.doc).ok_or("no model selected")?;
+    ctx.editor.apply(Command::SetIkEnabled { chain, on })
+}
+
 fn register_display(ctx: &mut Ctx) -> Result<(), String> {
     if selected_index(&ctx.editor.doc).is_none() {
         return Err("no model selected".into());
@@ -183,17 +229,25 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
     };
     button(ui, ctx, "ctl:438", "register");
     let m = &ctx.editor.doc.pmm.models[i];
-    // 439, 440 and 441 are the document's flags; no command sets them yet.
-    ui.add_enabled_ui(false, |ui| {
-        ui.checkbox(&mut (m.selection.load_complete != 0), "visible");
-        ui.checkbox(&mut (m.toon != 0), "shadow");
-        ui.checkbox(&mut (m.post_load != 0), "add blend");
-    });
+    let flags = [
+        ("ctl:439", "visible", flag_of(m, ModelFlag::Visible)),
+        ("ctl:440", "shadow", flag_of(m, ModelFlag::Shadow)),
+        ("ctl:441", "add blend", flag_of(m, ModelFlag::AddBlend)),
+    ];
+    for (id, label, on) in flags {
+        let enabled = ctx.enabled(id);
+        if ui
+            .add_enabled(enabled, egui::Checkbox::new(&mut { on }, label))
+            .clicked()
+        {
+            ctx.run(id);
+        }
+    }
+    let m = &ctx.editor.doc.pmm.models[i];
     if m.ik_bones.is_empty() {
         return;
     }
-    let id = egui::Id::unique("model-panel-ik");
-    let mut chain: usize = ui.data(|d| d.get_temp(id)).unwrap_or(0);
+    let mut chain: usize = ik_chain(ctx);
     chain = chain.min(m.ik_bones.len() - 1);
     let name = |c: usize| {
         usize::try_from(m.ik_bones[c])
@@ -208,14 +262,18 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
                 ui.selectable_value(&mut chain, c, name(c));
             }
         });
-    ui.data_mut(|d| d.insert_temp(id, chain));
-    // 444 and 445 show the chain's switch (`ik_pose`); no command sets it yet.
     let on = m.ik_pose.get(chain).is_some_and(|&b| b != 0);
-    ui.add_enabled_ui(false, |ui| {
-        ui.horizontal(|ui| {
-            let _ = ui.radio(on, "IK on");
-            let _ = ui.radio(!on, "IK off");
-        });
+    ui.data_mut(|d| d.insert_temp(ik_chain_id(), chain));
+    ui.horizontal(|ui| {
+        for (id, label, shown) in [("ctl:444", "IK on", on), ("ctl:445", "IK off", !on)] {
+            let enabled = ctx.enabled(id);
+            if ui
+                .add_enabled(enabled, egui::RadioButton::new(shown, label))
+                .clicked()
+            {
+                ctx.run(id);
+            }
+        }
     });
 }
 

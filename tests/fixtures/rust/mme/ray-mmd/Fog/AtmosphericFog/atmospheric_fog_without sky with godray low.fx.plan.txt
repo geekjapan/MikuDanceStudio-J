@@ -1,0 +1,199 @@
+passplan 1
+file "<root>/Fog/AtmosphericFog/atmospheric_fog_without sky with godray low.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=0 scriptorder=0 posteffect=0 drawsgeometry=0 errors=0
+parameters 70
+param "time" "TIME" scalar float 1x1
+param "elapsed" "ELAPSEDTIME" scalar float 1x1
+param "MousePosition" "MOUSEPOSITION" vector float 1x2
+param "matWorld" "WORLD" matrix_rows float 4x4
+param "matWorldInverse" "WORLDINVERSE" matrix_rows float 4x4
+param "matWorldView" "WORLDVIEW" matrix_rows float 4x4
+param "matWorldViewProject" "WORLDVIEWPROJECTION" matrix_rows float 4x4
+param "matView" "VIEW" matrix_rows float 4x4
+param "matViewInverse" "VIEWINVERSE" matrix_rows float 4x4
+param "matProject" "PROJECTION" matrix_rows float 4x4
+param "matProjectInverse" "PROJECTIONINVERSE" matrix_rows float 4x4
+param "matViewProject" "VIEWPROJECTION" matrix_rows float 4x4
+param "matViewProjectInverse" "VIEWPROJECTIONINVERSE" matrix_rows float 4x4
+param "CameraPosition" "POSITION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "CameraDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "SunColor" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Light"
+param "SunDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Light"
+param "MaterialDiffuse" "DIFFUSE" vector float 1x4
+  ann "Object" string0 = "Geometry"
+param "MaterialAmbient" "AMBIENT" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialSpecular" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialToon" "TOONCOLOR" vector float 1x3
+param "MaterialPower" "SPECULARPOWER" scalar float 1x1
+  ann "Object" string0 = "Geometry"
+param "ViewportSize" "VIEWPORTPIXELSIZE" vector float 1x2
+param "AcsPosition" "CONTROLOBJECT" vector float 1x3
+  ann "name" string0 = "(self)"
+param "use_texture" "" scalar bool 1x1
+param "use_subtexture" "" scalar bool 1x1
+param "use_spheremap" "" scalar bool 1x1
+param "use_toon" "" scalar bool 1x1
+param "opadd" "" scalar bool 1x1
+param "MaterialMap" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+param "Gbuffer2RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer3RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer4RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer5RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer6RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer7RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer8RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "LightSpecMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "LightAlphaMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "mFogMieHP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieH+"
+param "mFogMieSP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieS+"
+param "mFogMieVP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieV+"
+param "mFogMieVM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieV-"
+param "mFogMiePhaseP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MiePhase+"
+param "mFogMiePhaseM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MiePhase-"
+param "mFogMieTurbidityP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieTurbidity+"
+param "mFogMieTurbidityM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieTurbidity-"
+param "mFogRayleightHP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighH+"
+param "mFogRayleightSP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighS+"
+param "mFogRayleightVP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighV+"
+param "mFogRayleightVM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighV-"
+param "mFogRangeP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Range+"
+param "mFogRangeM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Range-"
+param "mFogDensityP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Density+"
+param "mFogDensityM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Density-"
+param "mFogIntensityP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Intensity+"
+param "mFogIntensityM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Intensity-"
+param "FogMap" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 0.5,0.5
+  ann "Format" string0 = "A16B16G16R16F"
+param "FogBlurMap" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 0.5,0.5
+  ann "Format" string0 = "A16B16G16R16F"
+resources 2
+resource "FogMap" semantic=RenderColorTarget texture=5
+  request 500x300x1 mips=1 rawsize=500x300 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 500x300 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "FogBlurMap" semantic=RenderColorTarget texture=5
+  request 500x300x1 mips=1 rawsize=500x300 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 500x300 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+controls 19
+control "AcsPosition" name="(self)" item=""
+control "mFogMieHP" name="(self)" item="MieH+"
+control "mFogMieSP" name="(self)" item="MieS+"
+control "mFogMieVP" name="(self)" item="MieV+"
+control "mFogMieVM" name="(self)" item="MieV-"
+control "mFogMiePhaseP" name="(self)" item="MiePhase+"
+control "mFogMiePhaseM" name="(self)" item="MiePhase-"
+control "mFogMieTurbidityP" name="(self)" item="MieTurbidity+"
+control "mFogMieTurbidityM" name="(self)" item="MieTurbidity-"
+control "mFogRayleightHP" name="(self)" item="RayleighH+"
+control "mFogRayleightSP" name="(self)" item="RayleighS+"
+control "mFogRayleightVP" name="(self)" item="RayleighV+"
+control "mFogRayleightVM" name="(self)" item="RayleighV-"
+control "mFogRangeP" name="(self)" item="Range+"
+control "mFogRangeM" name="(self)" item="Range-"
+control "mFogDensityP" name="(self)" item="Density+"
+control "mFogDensityM" name="(self)" item="Density-"
+control "mFogIntensityP" name="(self)" item="Intensity+"
+control "mFogIntensityM" name="(self)" item="Intensity-"
+technique_order "MainTec0" "MainTecBS0" "EdgeTec" "ShadowTech" "ZplotTec"
+techniques 5
+technique "MainTec0" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=0 passes=3
+  script "ClearSetColor=BackColor;RenderColorTarget=FogMap;Clear=Color;Pass=DrawFog;RenderColorTarget=FogBlurMap;Clear=Color;Pass=DrawLightShaft;RenderColorTarget=;Pass=DrawGodRay;"
+  cmd 0 ClearSetColor param="BackColor" value=0 text="BackColor"
+  cmd 1 RenderColorTarget0 param="FogMap" value=-1 text="FogMap"
+  cmd 2 Clear param="-" value=1 text="Color"
+  cmd 3 Pass pass="DrawFog" index=0 text="DrawFog"
+  cmd 4 RenderColorTarget0 param="FogBlurMap" value=-1 text="FogBlurMap"
+  cmd 5 Clear param="-" value=1 text="Color"
+  cmd 6 Pass pass="DrawLightShaft" index=1 text="DrawLightShaft"
+  cmd 7 RenderColorTarget0 param="-" value=0 text=""
+  cmd 8 Pass pass="DrawGodRay" index=2 text="DrawGodRay"
+  pass 0 "DrawFog" script=0 custom=1 psize15=0 shadermix=1
+  pass 1 "DrawLightShaft" script=0 custom=1 psize15=0 shadermix=1
+  pass 2 "DrawGodRay" script=0 custom=1 psize15=0 shadermix=1
+technique "MainTecBS0" mmdpass=object_ss usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=0 passes=3
+  script "ClearSetColor=BackColor;RenderColorTarget=FogMap;Clear=Color;Pass=DrawFog;RenderColorTarget=FogBlurMap;Clear=Color;Pass=DrawLightShaft;RenderColorTarget=;Pass=DrawGodRay;"
+  cmd 0 ClearSetColor param="BackColor" value=0 text="BackColor"
+  cmd 1 RenderColorTarget0 param="FogMap" value=-1 text="FogMap"
+  cmd 2 Clear param="-" value=1 text="Color"
+  cmd 3 Pass pass="DrawFog" index=0 text="DrawFog"
+  cmd 4 RenderColorTarget0 param="FogBlurMap" value=-1 text="FogBlurMap"
+  cmd 5 Clear param="-" value=1 text="Color"
+  cmd 6 Pass pass="DrawLightShaft" index=1 text="DrawLightShaft"
+  cmd 7 RenderColorTarget0 param="-" value=0 text=""
+  cmd 8 Pass pass="DrawGodRay" index=2 text="DrawGodRay"
+  pass 0 "DrawFog" script=0 custom=1 psize15=0 shadermix=1
+  pass 1 "DrawLightShaft" script=0 custom=1 psize15=0 shadermix=1
+  pass 2 "DrawGodRay" script=0 custom=1 psize15=0 shadermix=1
+technique "EdgeTec" mmdpass=edge usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ShadowTech" mmdpass=shadow usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ZplotTec" mmdpass=zplot usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+selection subsets=2 clamped=0
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-1 "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0"
+  select object_ss 0-1 "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0"
+  select shadow 0-1 "ShadowTech"
+  select edge 0-1 "EdgeTec"
+  select zplot 0-1 "ZplotTec"
+runs
+  run "MainTec0"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "DrawFog" rt0=FogMap rt1=none rt2=none rt3=none ds=main.depth viewport=500x300+0+0
+    draw geometry pass=1 "DrawLightShaft" rt0=FogBlurMap rt1=none rt2=none rt3=none ds=main.depth viewport=500x300+0+0
+    draw geometry pass=2 "DrawGodRay" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=3 hr=0x00000000 runfailed=0
+  run "MainTecBS0"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "DrawFog" rt0=FogMap rt1=none rt2=none rt3=none ds=main.depth viewport=500x300+0+0
+    draw geometry pass=1 "DrawLightShaft" rt0=FogBlurMap rt1=none rt2=none rt3=none ds=main.depth viewport=500x300+0+0
+    draw geometry pass=2 "DrawGodRay" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=3 hr=0x00000000 runfailed=0
+enginelog "Loading effect file: <root>/Fog/AtmosphericFog/atmospheric_fog_without sky with godray low.fx"
+end

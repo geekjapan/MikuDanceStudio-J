@@ -1,0 +1,7 @@
+passplan 1
+file "<root>/reject_version.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load rejected
+  error "Error: SAS version '0.9' is not supported. (parameter: 'Script')"
+enginelog "Loading effect file: <root>/reject_version.fx"
+end

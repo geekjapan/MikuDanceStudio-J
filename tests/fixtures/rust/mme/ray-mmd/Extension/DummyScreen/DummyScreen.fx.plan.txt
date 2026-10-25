@@ -1,0 +1,46 @@
+passplan 1
+file "<root>/Extension/DummyScreen/DummyScreen.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=1 scriptorder=0 posteffect=0 drawsgeometry=0 errors=0
+parameters 5
+param "ViewportSize" "VIEWPORTPIXELSIZE" vector float 1x2
+param "DummyScreenTex" "RenderColorTarget" object texture2d 0x0 literal
+  ann "ViewportRatio" float2 = 1,1
+  ann "Miplevels" int1 = 0
+  ann "Format" string0 = "A2B10G10R10"
+param "ScreenMap" "MATERIALTEXTURE" object texture 0x0
+param "Script" "STANDARDSGLOBAL" scalar float 1x1
+  ann "ScriptOutput" string0 = "color"
+  ann "ScriptClass" string0 = "scene"
+  ann "ScriptOrder" string0 = "standard"
+resources 1
+resource "DummyScreenTex" semantic=RenderColorTarget texture=7
+  request 1000x600x1 mips=0 rawsize=1000x600 rawmips=0 format=A2B10G10R10 defaultpool=1
+  created texture 1000x600 levels=1 format=A2B10G10R10 pool=0 usage=0x401
+controls 0
+technique_order "MainTec0"
+techniques 1
+technique "MainTec0" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=0 passes=1
+  script "RenderColorTarget=DummyScreenTex;Pass=CopyDummyScreenTex;"
+  cmd 0 RenderColorTarget0 param="DummyScreenTex" value=-1 text="DummyScreenTex"
+  cmd 1 Pass pass="CopyDummyScreenTex" index=0 text="CopyDummyScreenTex"
+  pass 0 "CopyDummyScreenTex" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+selection subsets=1 clamped=1
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-0 "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0"
+  select object_ss 0-0 - - - - - - - -
+  select shadow 0-0 -
+  select edge 0-0 -
+  select zplot 0-0 -
+runs
+  run "MainTec0"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw buffer pass=0 "CopyDummyScreenTex" rt0=DummyScreenTex rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+enginelog "Loading effect file: <root>/Extension/DummyScreen/DummyScreen.fx"
+end

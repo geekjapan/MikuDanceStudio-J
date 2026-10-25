@@ -1,0 +1,195 @@
+passplan 1
+file "<root>/Extension/Debug/DebugController.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=1 scriptorder=2 posteffect=1 drawsgeometry=0 errors=0
+parameters 84
+param "time" "TIME" scalar float 1x1
+param "elapsed" "ELAPSEDTIME" scalar float 1x1
+param "MousePosition" "MOUSEPOSITION" vector float 1x2
+param "matWorld" "WORLD" matrix_rows float 4x4
+param "matWorldInverse" "WORLDINVERSE" matrix_rows float 4x4
+param "matWorldView" "WORLDVIEW" matrix_rows float 4x4
+param "matWorldViewProject" "WORLDVIEWPROJECTION" matrix_rows float 4x4
+param "matView" "VIEW" matrix_rows float 4x4
+param "matViewInverse" "VIEWINVERSE" matrix_rows float 4x4
+param "matProject" "PROJECTION" matrix_rows float 4x4
+param "matProjectInverse" "PROJECTIONINVERSE" matrix_rows float 4x4
+param "matViewProject" "VIEWPROJECTION" matrix_rows float 4x4
+param "matViewProjectInverse" "VIEWPROJECTIONINVERSE" matrix_rows float 4x4
+param "CameraPosition" "POSITION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "CameraDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "SunColor" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Light"
+param "SunDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Light"
+param "MaterialDiffuse" "DIFFUSE" vector float 1x4
+  ann "Object" string0 = "Geometry"
+param "MaterialAmbient" "AMBIENT" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialSpecular" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialToon" "TOONCOLOR" vector float 1x3
+param "MaterialPower" "SPECULARPOWER" scalar float 1x1
+  ann "Object" string0 = "Geometry"
+param "ViewportSize" "VIEWPORTPIXELSIZE" vector float 1x2
+param "AcsPosition" "CONTROLOBJECT" vector float 1x3
+  ann "name" string0 = "(self)"
+param "use_texture" "" scalar bool 1x1
+param "use_subtexture" "" scalar bool 1x1
+param "use_spheremap" "" scalar bool 1x1
+param "use_toon" "" scalar bool 1x1
+param "opadd" "" scalar bool 1x1
+param "MaterialMap" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+param "Gbuffer2RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer3RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer4RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer5RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer6RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer7RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer8RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "LightSpecMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "LightAlphaMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "showAlbedo" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Albedo"
+param "showNormal" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Normal"
+param "showSpecular" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Specular"
+param "showSmoothness" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Smoothness"
+param "showVisibility" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Visibility"
+param "showCustomID" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "CustomID"
+param "showCustomDataA" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "CustomDataA"
+param "showCustomDataB" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "CustomDataB"
+param "showDepth" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Depth"
+param "showAlpha" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Alpha"
+param "showAlbedoAlpha" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "AlbedoAlpha"
+param "showNormalAlpha" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "NormalAlpha"
+param "showSpecularAlpha" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SpecularAlpha"
+param "showSmoothnessAlpha" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SmoothnessAlpha"
+param "showVisibilityAlpha" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "VisibilityAlpha"
+param "showCustomIDAlpha" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "CustomIDAlpha"
+param "showCustomDataAlphaA" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "CustomDataAlphaA"
+param "showCustomDataAlphaB" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "CustomDataAlphaB"
+param "showDepthAlpha" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "DepthAlpha"
+param "showSSAO" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SSAO"
+param "showSSDO" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SSDO"
+param "showSSR" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SSR"
+param "showPSSM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "PSSM"
+param "showOutline" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Outline"
+param "ScnMap" "RENDERCOLORTARGET" object texture2d 0x0
+  ann "ViewPortRatio" float2 = 1,1
+  ann "AntiAlias" bool1 = 0
+  ann "Format" string0 = "X8R8G8B8"
+param "SSDOMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "PSSM1" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+param "PSSM2" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+param "PSSM3" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+param "PSSM4" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+param "Script" "STANDARDSGLOBAL" scalar float 1x1
+  ann "ScriptOutput" string0 = "color"
+  ann "ScriptClass" string0 = "scene"
+  ann "ScriptOrder" string0 = "postprocess"
+resources 1
+resource "ScnMap" semantic=RenderColorTarget texture=7
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=X8R8G8B8 defaultpool=1
+  created texture 1000x600 levels=1 format=X8R8G8B8 pool=0 usage=0x1
+controls 25
+control "AcsPosition" name="(self)" item=""
+control "showAlbedo" name="(self)" item="Albedo"
+control "showNormal" name="(self)" item="Normal"
+control "showSpecular" name="(self)" item="Specular"
+control "showSmoothness" name="(self)" item="Smoothness"
+control "showVisibility" name="(self)" item="Visibility"
+control "showCustomID" name="(self)" item="CustomID"
+control "showCustomDataA" name="(self)" item="CustomDataA"
+control "showCustomDataB" name="(self)" item="CustomDataB"
+control "showDepth" name="(self)" item="Depth"
+control "showAlpha" name="(self)" item="Alpha"
+control "showAlbedoAlpha" name="(self)" item="AlbedoAlpha"
+control "showNormalAlpha" name="(self)" item="NormalAlpha"
+control "showSpecularAlpha" name="(self)" item="SpecularAlpha"
+control "showSmoothnessAlpha" name="(self)" item="SmoothnessAlpha"
+control "showVisibilityAlpha" name="(self)" item="VisibilityAlpha"
+control "showCustomIDAlpha" name="(self)" item="CustomIDAlpha"
+control "showCustomDataAlphaA" name="(self)" item="CustomDataAlphaA"
+control "showCustomDataAlphaB" name="(self)" item="CustomDataAlphaB"
+control "showDepthAlpha" name="(self)" item="DepthAlpha"
+control "showSSAO" name="(self)" item="SSAO"
+control "showSSDO" name="(self)" item="SSDO"
+control "showSSR" name="(self)" item="SSR"
+control "showPSSM" name="(self)" item="PSSM"
+control "showOutline" name="(self)" item="Outline"
+technique_order "DebugController"
+techniques 1
+technique "DebugController" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=0 passes=1
+  script "RenderColorTarget=ScnMap;RenderDepthStencilTarget=;ScriptExternal=Color;RenderColorTarget=;RenderDepthStencilTarget=;Pass=DebugController;"
+  cmd 0 RenderColorTarget0 param="ScnMap" value=-1 text="ScnMap"
+  cmd 1 RenderDepthStencilTarget param="-" value=0 text=""
+  cmd 2 ScriptExternal param="-" value=0 text="Color"
+  cmd 3 RenderColorTarget0 param="-" value=0 text=""
+  cmd 4 RenderDepthStencilTarget param="-" value=0 text=""
+  cmd 5 Pass pass="DebugController" index=0 text="DebugController"
+  pass 0 "DebugController" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+selection subsets=1 clamped=1
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-0 "DebugController" "DebugController" "DebugController" "DebugController" "DebugController" "DebugController" "DebugController" "DebugController"
+runs
+  run "DebugController"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    suspend rt0=ScnMap rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw buffer pass=0 "DebugController" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=1 draws=1 hr=0x00000000 runfailed=0
+enginelog "Loading effect file: <root>/Extension/Debug/DebugController.fx"
+end

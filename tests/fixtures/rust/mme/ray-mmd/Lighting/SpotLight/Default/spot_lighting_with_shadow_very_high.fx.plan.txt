@@ -1,0 +1,185 @@
+passplan 1
+file "<root>/Lighting/SpotLight/Default/spot_lighting_with_shadow_very_high.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=0 scriptorder=0 posteffect=0 drawsgeometry=0 errors=0
+parameters 66
+param "time" "TIME" scalar float 1x1
+param "elapsed" "ELAPSEDTIME" scalar float 1x1
+param "MousePosition" "MOUSEPOSITION" vector float 1x2
+param "matWorld" "WORLD" matrix_rows float 4x4
+param "matWorldInverse" "WORLDINVERSE" matrix_rows float 4x4
+param "matWorldView" "WORLDVIEW" matrix_rows float 4x4
+param "matWorldViewProject" "WORLDVIEWPROJECTION" matrix_rows float 4x4
+param "matView" "VIEW" matrix_rows float 4x4
+param "matViewInverse" "VIEWINVERSE" matrix_rows float 4x4
+param "matProject" "PROJECTION" matrix_rows float 4x4
+param "matProjectInverse" "PROJECTIONINVERSE" matrix_rows float 4x4
+param "matViewProject" "VIEWPROJECTION" matrix_rows float 4x4
+param "matViewProjectInverse" "VIEWPROJECTIONINVERSE" matrix_rows float 4x4
+param "CameraPosition" "POSITION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "CameraDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "SunColor" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Light"
+param "SunDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Light"
+param "MaterialDiffuse" "DIFFUSE" vector float 1x4
+  ann "Object" string0 = "Geometry"
+param "MaterialAmbient" "AMBIENT" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialSpecular" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialToon" "TOONCOLOR" vector float 1x3
+param "MaterialPower" "SPECULARPOWER" scalar float 1x1
+  ann "Object" string0 = "Geometry"
+param "ViewportSize" "VIEWPORTPIXELSIZE" vector float 1x2
+param "AcsPosition" "CONTROLOBJECT" vector float 1x3
+  ann "name" string0 = "(self)"
+param "use_texture" "" scalar bool 1x1
+param "use_subtexture" "" scalar bool 1x1
+param "use_spheremap" "" scalar bool 1x1
+param "use_toon" "" scalar bool 1x1
+param "opadd" "" scalar bool 1x1
+param "MaterialMap" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+param "Gbuffer2RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer3RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer4RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer5RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer6RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer7RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer8RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "LightSpecMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "LightAlphaMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "mR" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "R+"
+param "mG" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "G+"
+param "mB" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "B+"
+param "mBlink" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Blink"
+param "mRangeP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Range+"
+param "mRangeM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Range-"
+param "mAngleP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Angle+"
+param "mAngleM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Angle-"
+param "mHardnessP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Hardness"
+param "mIntensityP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Intensity+"
+param "mIntensityM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Intensity-"
+param "mAttenuationBulbP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "AttenuationBulb+"
+param "mAttenuationBulbM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "AttenuationBulb-"
+param "mMultiLightP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "MultiLight+"
+param "mMultiLightM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "MultiLight-"
+param "mPosition" "CONTROLOBJECT" vector float 1x3
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Position"
+param "mDirection" "CONTROLOBJECT" vector float 1x3
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Direction"
+param "ShadowMap" "OFFSCREENRENDERTARGET" object texture 0x0
+  ann "Description" string0 = "Shadow Rendering for SpotLight"
+  ann "Format" string0 = "G32R32F"
+  ann "Dimensions" int2 = 2048,2048
+  ann "ClearColor" float4 = 0,0,0,0
+  ann "ClearDepth" float1 = 1
+  ann "DefaultEffect" string0 = "self = hide;*fog.pmx=hide;*controller*.pmx=hide;*editor*.pmx=hide;*.pmx = ../spot_shadow.fx;*.pmd = ../spot_shadow.fx;* = hide"
+resources 1
+resource "ShadowMap" semantic=OffScreenRenderTarget texture=5
+  request 2048x2048x1 mips=1 rawsize=2048x2048 rawmips=1 format=G32R32F defaultpool=1
+  clear color=0x00000000 depth=1 antialias=0
+  defaulteffect_row "self" "hide"
+  defaulteffect_row "*fog.pmx" "hide"
+  defaulteffect_row "*controller*.pmx" "hide"
+  defaulteffect_row "*editor*.pmx" "hide"
+  defaulteffect_row "*.pmx" "<root>/Lighting/SpotLight/spot_shadow.fx"
+  defaulteffect_row "*.pmd" "<root>/Lighting/SpotLight/spot_shadow.fx"
+  defaulteffect_row "*" "hide"
+  created texture 2048x2048 levels=1 format=G32R32F pool=0 usage=0x1
+  offscreendepth 2048x2048 format=D24S8
+controls 18
+control "AcsPosition" name="(self)" item=""
+control "mR" name="(self)" item="R+"
+control "mG" name="(self)" item="G+"
+control "mB" name="(self)" item="B+"
+control "mBlink" name="(self)" item="Blink"
+control "mRangeP" name="(self)" item="Range+"
+control "mRangeM" name="(self)" item="Range-"
+control "mAngleP" name="(self)" item="Angle+"
+control "mAngleM" name="(self)" item="Angle-"
+control "mHardnessP" name="(self)" item="Hardness"
+control "mIntensityP" name="(self)" item="Intensity+"
+control "mIntensityM" name="(self)" item="Intensity-"
+control "mAttenuationBulbP" name="(self)" item="AttenuationBulb+"
+control "mAttenuationBulbM" name="(self)" item="AttenuationBulb-"
+control "mMultiLightP" name="ray_controller.pmx" item="MultiLight+"
+control "mMultiLightM" name="ray_controller.pmx" item="MultiLight-"
+control "mPosition" name="(self)" item="Position"
+control "mDirection" name="(self)" item="Direction"
+technique_order "MainTech0" "MainTecBS0" "EdgeTec" "ShadowTech" "ZplotTec"
+techniques 5
+technique "MainTech0" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=0 passes=1
+  script "RenderColorTarget0=;RenderColorTarget1=LightSpecMap;RenderColorTarget2=LightAlphaMap;Pass=DrawObject;"
+  cmd 0 RenderColorTarget0 param="-" value=0 text=""
+  cmd 1 RenderColorTarget1 param="LightSpecMap" value=-1 text="LightSpecMap"
+  cmd 2 RenderColorTarget2 param="LightAlphaMap" value=-1 text="LightAlphaMap"
+  cmd 3 Pass pass="DrawObject" index=0 text="DrawObject"
+  pass 0 "DrawObject" script=0 custom=1 psize15=0 shadermix=1
+technique "MainTecBS0" mmdpass=object_ss usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=0 passes=1
+  script "RenderColorTarget0=;RenderColorTarget1=LightSpecMap;RenderColorTarget2=LightAlphaMap;Pass=DrawObject;"
+  cmd 0 RenderColorTarget0 param="-" value=0 text=""
+  cmd 1 RenderColorTarget1 param="LightSpecMap" value=-1 text="LightSpecMap"
+  cmd 2 RenderColorTarget2 param="LightAlphaMap" value=-1 text="LightAlphaMap"
+  cmd 3 Pass pass="DrawObject" index=0 text="DrawObject"
+  pass 0 "DrawObject" script=0 custom=1 psize15=0 shadermix=1
+technique "EdgeTec" mmdpass=edge usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ShadowTech" mmdpass=shadow usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ZplotTec" mmdpass=zplot usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+selection subsets=2 clamped=0
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-1 "MainTech0" "MainTech0" "MainTech0" "MainTech0" "MainTech0" "MainTech0" "MainTech0" "MainTech0"
+  select object_ss 0-1 "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0"
+  select shadow 0-1 "ShadowTech"
+  select edge 0-1 "EdgeTec"
+  select zplot 0-1 "ZplotTec"
+runs
+  run "MainTech0"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "DrawObject" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+  run "MainTecBS0"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "DrawObject" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+enginelog "Loading effect file: <root>/Lighting/SpotLight/Default/spot_lighting_with_shadow_very_high.fx"
+enginelog "Info: new OffScreen RenderTarget: ShadowMap"
+end

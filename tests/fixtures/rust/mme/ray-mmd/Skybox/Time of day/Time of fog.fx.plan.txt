@@ -1,0 +1,231 @@
+passplan 1
+file "<root>/Skybox/Time of day/Time of fog.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=0 scriptorder=0 posteffect=0 drawsgeometry=0 errors=0
+parameters 84
+param "time" "TIME" scalar float 1x1
+param "elapsed" "ELAPSEDTIME" scalar float 1x1
+param "MousePosition" "MOUSEPOSITION" vector float 1x2
+param "matWorld" "WORLD" matrix_rows float 4x4
+param "matWorldInverse" "WORLDINVERSE" matrix_rows float 4x4
+param "matWorldView" "WORLDVIEW" matrix_rows float 4x4
+param "matWorldViewProject" "WORLDVIEWPROJECTION" matrix_rows float 4x4
+param "matView" "VIEW" matrix_rows float 4x4
+param "matViewInverse" "VIEWINVERSE" matrix_rows float 4x4
+param "matProject" "PROJECTION" matrix_rows float 4x4
+param "matProjectInverse" "PROJECTIONINVERSE" matrix_rows float 4x4
+param "matViewProject" "VIEWPROJECTION" matrix_rows float 4x4
+param "matViewProjectInverse" "VIEWPROJECTIONINVERSE" matrix_rows float 4x4
+param "CameraPosition" "POSITION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "CameraDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "SunColor" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Light"
+param "SunDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Light"
+param "MaterialDiffuse" "DIFFUSE" vector float 1x4
+  ann "Object" string0 = "Geometry"
+param "MaterialAmbient" "AMBIENT" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialSpecular" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialToon" "TOONCOLOR" vector float 1x3
+param "MaterialPower" "SPECULARPOWER" scalar float 1x1
+  ann "Object" string0 = "Geometry"
+param "ViewportSize" "VIEWPORTPIXELSIZE" vector float 1x2
+param "AcsPosition" "CONTROLOBJECT" vector float 1x3
+  ann "name" string0 = "(self)"
+param "use_texture" "" scalar bool 1x1
+param "use_subtexture" "" scalar bool 1x1
+param "use_spheremap" "" scalar bool 1x1
+param "use_toon" "" scalar bool 1x1
+param "opadd" "" scalar bool 1x1
+param "MaterialMap" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+param "Gbuffer2RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer3RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer4RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer5RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer6RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer7RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer8RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "LightSpecMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "LightAlphaMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "mSunRadiusP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SunRadius+"
+param "mSunRadiusM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SunRadius-"
+param "mSunRadianceP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SunRadiance+"
+param "mSunRadianceM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SunRadiance-"
+param "mSunPhaseP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SunPhase+"
+param "mSunPhaseM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SunPhase-"
+param "mSunTurbidityP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SunTurbidity+"
+param "mSunTurbidityM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SunTurbidity-"
+param "mMiePhaseP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MiePhase+"
+param "mMiePhaseM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MiePhase-"
+param "mMieHeightP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieHeight+"
+param "mMieHeightM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieHeight-"
+param "mMieTurbidityP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieTurbidity+"
+param "mMieTurbidityM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieTurbidity-"
+param "mOzoneMassP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "OzoneMass+"
+param "mOzoneMassM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "OzoneMass-"
+param "mCloudP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Cloud+"
+param "mCloudM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Cloud-"
+param "mCloudSpeedP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "CloudSpeed+"
+param "mCloudSpeedM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "CloudSpeed-"
+param "mCloudTurbidityP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "CloudTurbidity+"
+param "mCloudTurbidityM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "CloudTurbidity-"
+param "mRayleighColorHP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighColorH+"
+param "mRayleighColorSP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighColorS+"
+param "mRayleighColorVP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighColorV+"
+param "mRayleighColorVM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighColorV-"
+param "mRayleighHeightP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighHeight+"
+param "mRayleighHeightM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighHeight-"
+param "mFogRangeP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "FogRange+"
+param "mFogRangeM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "FogRange-"
+param "mFogIntensityP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "FogIntensity+"
+param "mFogIntensityM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "FogIntensity-"
+param "mFogDensityP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "FogDensity+"
+param "mFogDensityM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "FogDensity-"
+param "mFogDensityFarP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "FogDensityFar+"
+param "mFogDensityFarM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "FogDensityFar-"
+resources 0
+controls 37
+control "AcsPosition" name="(self)" item=""
+control "mSunRadiusP" name="(self)" item="SunRadius+"
+control "mSunRadiusM" name="(self)" item="SunRadius-"
+control "mSunRadianceP" name="(self)" item="SunRadiance+"
+control "mSunRadianceM" name="(self)" item="SunRadiance-"
+control "mSunPhaseP" name="(self)" item="SunPhase+"
+control "mSunPhaseM" name="(self)" item="SunPhase-"
+control "mSunTurbidityP" name="(self)" item="SunTurbidity+"
+control "mSunTurbidityM" name="(self)" item="SunTurbidity-"
+control "mMiePhaseP" name="(self)" item="MiePhase+"
+control "mMiePhaseM" name="(self)" item="MiePhase-"
+control "mMieHeightP" name="(self)" item="MieHeight+"
+control "mMieHeightM" name="(self)" item="MieHeight-"
+control "mMieTurbidityP" name="(self)" item="MieTurbidity+"
+control "mMieTurbidityM" name="(self)" item="MieTurbidity-"
+control "mOzoneMassP" name="(self)" item="OzoneMass+"
+control "mOzoneMassM" name="(self)" item="OzoneMass-"
+control "mCloudP" name="(self)" item="Cloud+"
+control "mCloudM" name="(self)" item="Cloud-"
+control "mCloudSpeedP" name="(self)" item="CloudSpeed+"
+control "mCloudSpeedM" name="(self)" item="CloudSpeed-"
+control "mCloudTurbidityP" name="(self)" item="CloudTurbidity+"
+control "mCloudTurbidityM" name="(self)" item="CloudTurbidity-"
+control "mRayleighColorHP" name="(self)" item="RayleighColorH+"
+control "mRayleighColorSP" name="(self)" item="RayleighColorS+"
+control "mRayleighColorVP" name="(self)" item="RayleighColorV+"
+control "mRayleighColorVM" name="(self)" item="RayleighColorV-"
+control "mRayleighHeightP" name="(self)" item="RayleighHeight+"
+control "mRayleighHeightM" name="(self)" item="RayleighHeight-"
+control "mFogRangeP" name="(self)" item="FogRange+"
+control "mFogRangeM" name="(self)" item="FogRange-"
+control "mFogIntensityP" name="(self)" item="FogIntensity+"
+control "mFogIntensityM" name="(self)" item="FogIntensity-"
+control "mFogDensityP" name="(self)" item="FogDensity+"
+control "mFogDensityM" name="(self)" item="FogDensity-"
+control "mFogDensityFarP" name="(self)" item="FogDensityFar+"
+control "mFogDensityFarM" name="(self)" item="FogDensityFar-"
+technique_order "FogTec0" "FogTecBS0" "EdgeTec" "ShadowTech" "ZplotTec"
+techniques 5
+technique "FogTec0" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=0 passes=1
+  pass 0 "DrawObject" script=0 custom=1 psize15=0 shadermix=1
+technique "FogTecBS0" mmdpass=object_ss usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=0 passes=1
+  pass 0 "DrawObject" script=0 custom=1 psize15=0 shadermix=1
+technique "EdgeTec" mmdpass=edge usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ShadowTech" mmdpass=shadow usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ZplotTec" mmdpass=zplot usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+selection subsets=2 clamped=0
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-1 "FogTec0" "FogTec0" "FogTec0" "FogTec0" "FogTec0" "FogTec0" "FogTec0" "FogTec0"
+  select object_ss 0-1 "FogTecBS0" "FogTecBS0" "FogTecBS0" "FogTecBS0" "FogTecBS0" "FogTecBS0" "FogTecBS0" "FogTecBS0"
+  select shadow 0-1 "ShadowTech"
+  select edge 0-1 "EdgeTec"
+  select zplot 0-1 "ZplotTec"
+runs
+  run "FogTec0"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "DrawObject" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+  run "FogTecBS0"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "DrawObject" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+enginelog "Loading effect file: <root>/Skybox/Time of day/Time of fog.fx"
+end

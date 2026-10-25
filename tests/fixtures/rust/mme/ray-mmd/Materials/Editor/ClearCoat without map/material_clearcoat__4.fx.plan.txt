@@ -1,0 +1,221 @@
+passplan 1
+file "<root>/Materials/Editor/ClearCoat without map/material_clearcoat__4.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=0 scriptorder=0 posteffect=0 drawsgeometry=0 errors=0
+parameters 61
+param "mAlbedoH" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "AlbedoH"
+param "mAlbedoS" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "AlbedoS"
+param "mAlbedoV" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "AlbedoV"
+param "mAlbedoLoopsP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "AlbedoLoops"
+param "mSpecularH" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "SpecularH"
+param "mSpecularS" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "SpecularS"
+param "mSpecularVP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "SpecularV+"
+param "mSpecularVM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "SpecularV-"
+param "mSpecularLoopsP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "SpecularLoops"
+param "mEmissiveR" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "EmissiveR"
+param "mEmissiveG" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "EmissiveG"
+param "mEmissiveB" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "EmissiveB"
+param "mEmissiveBlinkP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "EmissiveBlink"
+param "mEmissiveIntensityP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "EmissiveIntensity"
+param "mEmissiveLoopsP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "EmissiveLoops"
+param "mNormalScaleP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "NormalScale+"
+param "mNormalScaleM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "NormalScale-"
+param "mNormalLoopsP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "NormalLoops"
+param "mNormalSubScaleP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "NormalSubScale+"
+param "mNormalSubScaleM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "NormalSubScale-"
+param "mNormalSubLoopsP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "NormalSubLoops"
+param "mSmoothness" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "Smoothness"
+param "mSmoothnessLoopsP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "SmoothnessLoops"
+param "mMetalness" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "Metalness"
+param "mMetalnessLoopsP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "MetalnessLoops"
+param "mMelanin" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "Melanin"
+param "mMelaninLoopsP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "MelaninLoops"
+param "mCustomA" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "CustomA"
+param "mCustomALoopsP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "CustomALoops"
+param "mCustom2R" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "Custom2R"
+param "mCustom2G" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "Custom2G"
+param "mCustom2B" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "Custom2B"
+param "mCustomBLoopsP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "material_clearcoat_4.pmx"
+  ann "item" string0 = "CustomBLoops"
+param "matView" "VIEW" matrix_rows float 4x4
+param "matWorld" "WORLD" matrix_rows float 4x4
+param "matWorldView" "WORLDVIEW" matrix_rows float 4x4
+param "matWorldViewProject" "WORLDVIEWPROJECTION" matrix_rows float 4x4
+param "MaterialDiffuse" "DIFFUSE" vector float 1x4
+  ann "Object" string0 = "Geometry"
+param "MaterialAmbient" "EMISSIVE" vector float 1x4
+  ann "Object" string0 = "Geometry"
+param "MaterialSpecular" "SPECULAR" vector float 1x4
+  ann "Object" string0 = "Geometry"
+param "MaterialPower" "SPECULARPOWER" scalar float 1x1
+  ann "Object" string0 = "Geometry"
+param "time" "TIME" scalar float 1x1
+param "use_texture" "" scalar bool 1x1
+param "use_subtexture" "" scalar bool 1x1
+param "use_spheremap" "" scalar bool 1x1
+param "use_toon" "" scalar bool 1x1
+param "Gbuffer2RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer3RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer4RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer5RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer6RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer7RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer8RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "DiffuseMap" "MATERIALTEXTURE" object texture 0x0
+resources 0
+controls 33
+control "mAlbedoH" name="material_clearcoat_4.pmx" item="AlbedoH"
+control "mAlbedoS" name="material_clearcoat_4.pmx" item="AlbedoS"
+control "mAlbedoV" name="material_clearcoat_4.pmx" item="AlbedoV"
+control "mAlbedoLoopsP" name="material_clearcoat_4.pmx" item="AlbedoLoops"
+control "mSpecularH" name="material_clearcoat_4.pmx" item="SpecularH"
+control "mSpecularS" name="material_clearcoat_4.pmx" item="SpecularS"
+control "mSpecularVP" name="material_clearcoat_4.pmx" item="SpecularV+"
+control "mSpecularVM" name="material_clearcoat_4.pmx" item="SpecularV-"
+control "mSpecularLoopsP" name="material_clearcoat_4.pmx" item="SpecularLoops"
+control "mEmissiveR" name="material_clearcoat_4.pmx" item="EmissiveR"
+control "mEmissiveG" name="material_clearcoat_4.pmx" item="EmissiveG"
+control "mEmissiveB" name="material_clearcoat_4.pmx" item="EmissiveB"
+control "mEmissiveBlinkP" name="material_clearcoat_4.pmx" item="EmissiveBlink"
+control "mEmissiveIntensityP" name="material_clearcoat_4.pmx" item="EmissiveIntensity"
+control "mEmissiveLoopsP" name="material_clearcoat_4.pmx" item="EmissiveLoops"
+control "mNormalScaleP" name="material_clearcoat_4.pmx" item="NormalScale+"
+control "mNormalScaleM" name="material_clearcoat_4.pmx" item="NormalScale-"
+control "mNormalLoopsP" name="material_clearcoat_4.pmx" item="NormalLoops"
+control "mNormalSubScaleP" name="material_clearcoat_4.pmx" item="NormalSubScale+"
+control "mNormalSubScaleM" name="material_clearcoat_4.pmx" item="NormalSubScale-"
+control "mNormalSubLoopsP" name="material_clearcoat_4.pmx" item="NormalSubLoops"
+control "mSmoothness" name="material_clearcoat_4.pmx" item="Smoothness"
+control "mSmoothnessLoopsP" name="material_clearcoat_4.pmx" item="SmoothnessLoops"
+control "mMetalness" name="material_clearcoat_4.pmx" item="Metalness"
+control "mMetalnessLoopsP" name="material_clearcoat_4.pmx" item="MetalnessLoops"
+control "mMelanin" name="material_clearcoat_4.pmx" item="Melanin"
+control "mMelaninLoopsP" name="material_clearcoat_4.pmx" item="MelaninLoops"
+control "mCustomA" name="material_clearcoat_4.pmx" item="CustomA"
+control "mCustomALoopsP" name="material_clearcoat_4.pmx" item="CustomALoops"
+control "mCustom2R" name="material_clearcoat_4.pmx" item="Custom2R"
+control "mCustom2G" name="material_clearcoat_4.pmx" item="Custom2G"
+control "mCustom2B" name="material_clearcoat_4.pmx" item="Custom2B"
+control "mCustomBLoopsP" name="material_clearcoat_4.pmx" item="CustomBLoops"
+technique_order "MainTec0" "MainTecBS0" "EdgeTec" "ShadowTech" "ZplotTec"
+techniques 5
+technique "MainTec0" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=0 passes=2
+  script "RenderColorTarget0=;RenderColorTarget1=Gbuffer2RT;RenderColorTarget2=Gbuffer3RT;RenderColorTarget3=Gbuffer4RT;Pass=DrawObject;RenderColorTarget0=Gbuffer5RT;RenderColorTarget1=Gbuffer6RT;RenderColorTarget2=Gbuffer7RT;RenderColorTarget3=Gbuffer8RT;Pass=DrawAlphaObject;"
+  cmd 0 RenderColorTarget0 param="-" value=0 text=""
+  cmd 1 RenderColorTarget1 param="Gbuffer2RT" value=-1 text="Gbuffer2RT"
+  cmd 2 RenderColorTarget2 param="Gbuffer3RT" value=-1 text="Gbuffer3RT"
+  cmd 3 RenderColorTarget3 param="Gbuffer4RT" value=-1 text="Gbuffer4RT"
+  cmd 4 Pass pass="DrawObject" index=0 text="DrawObject"
+  cmd 5 RenderColorTarget0 param="Gbuffer5RT" value=-1 text="Gbuffer5RT"
+  cmd 6 RenderColorTarget1 param="Gbuffer6RT" value=-1 text="Gbuffer6RT"
+  cmd 7 RenderColorTarget2 param="Gbuffer7RT" value=-1 text="Gbuffer7RT"
+  cmd 8 RenderColorTarget3 param="Gbuffer8RT" value=-1 text="Gbuffer8RT"
+  cmd 9 Pass pass="DrawAlphaObject" index=1 text="DrawAlphaObject"
+  pass 0 "DrawObject" script=0 custom=1 psize15=0 shadermix=1
+  pass 1 "DrawAlphaObject" script=0 custom=1 psize15=0 shadermix=1
+technique "MainTecBS0" mmdpass=object_ss usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=0 passes=2
+  script "RenderColorTarget0=;RenderColorTarget1=Gbuffer2RT;RenderColorTarget2=Gbuffer3RT;RenderColorTarget3=Gbuffer4RT;Pass=DrawObject;RenderColorTarget0=Gbuffer5RT;RenderColorTarget1=Gbuffer6RT;RenderColorTarget2=Gbuffer7RT;RenderColorTarget3=Gbuffer8RT;Pass=DrawAlphaObject;"
+  cmd 0 RenderColorTarget0 param="-" value=0 text=""
+  cmd 1 RenderColorTarget1 param="Gbuffer2RT" value=-1 text="Gbuffer2RT"
+  cmd 2 RenderColorTarget2 param="Gbuffer3RT" value=-1 text="Gbuffer3RT"
+  cmd 3 RenderColorTarget3 param="Gbuffer4RT" value=-1 text="Gbuffer4RT"
+  cmd 4 Pass pass="DrawObject" index=0 text="DrawObject"
+  cmd 5 RenderColorTarget0 param="Gbuffer5RT" value=-1 text="Gbuffer5RT"
+  cmd 6 RenderColorTarget1 param="Gbuffer6RT" value=-1 text="Gbuffer6RT"
+  cmd 7 RenderColorTarget2 param="Gbuffer7RT" value=-1 text="Gbuffer7RT"
+  cmd 8 RenderColorTarget3 param="Gbuffer8RT" value=-1 text="Gbuffer8RT"
+  cmd 9 Pass pass="DrawAlphaObject" index=1 text="DrawAlphaObject"
+  pass 0 "DrawObject" script=0 custom=1 psize15=0 shadermix=1
+  pass 1 "DrawAlphaObject" script=0 custom=1 psize15=0 shadermix=1
+technique "EdgeTec" mmdpass=edge usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ShadowTech" mmdpass=shadow usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ZplotTec" mmdpass=zplot usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+selection subsets=2 clamped=0
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-1 "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0"
+  select object_ss 0-1 "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0"
+  select shadow 0-1 "ShadowTech"
+  select edge 0-1 "EdgeTec"
+  select zplot 0-1 "ZplotTec"
+runs
+  run "MainTec0"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "DrawObject" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=1 "DrawAlphaObject" rt0=scratch rt1=none rt2=none rt3=none ds=main.depth viewport=16x16+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=2 hr=0x00000000 runfailed=0
+  run "MainTecBS0"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "DrawObject" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=1 "DrawAlphaObject" rt0=scratch rt1=none rt2=none rt3=none ds=main.depth viewport=16x16+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=2 hr=0x00000000 runfailed=0
+enginelog "Loading effect file: <root>/Materials/Editor/ClearCoat without map/material_clearcoat__4.fx"
+end

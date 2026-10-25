@@ -22,8 +22,10 @@ const LIB_NAMES: &[&str] = &["libvkd3d-shader.so.1", "libvkd3d-shader.so"];
 
 // enum vkd3d_shader_structure_type
 const STRUCTURE_TYPE_COMPILE_INFO: c_uint = 0;
+const STRUCTURE_TYPE_SCAN_DESCRIPTOR_INFO: c_uint = 2;
 const STRUCTURE_TYPE_SPIRV_TARGET_INFO: c_uint = 4;
 const STRUCTURE_TYPE_HLSL_SOURCE_INFO: c_uint = 6;
+const STRUCTURE_TYPE_SCAN_SIGNATURE_INFO: c_uint = 9;
 // enum vkd3d_shader_source_type
 const SOURCE_HLSL: c_uint = 2;
 // enum vkd3d_shader_compile_option_name
@@ -92,7 +94,101 @@ struct SpirvTargetInfo {
     output_swizzle_count: c_uint,
 }
 
+#[repr(C)]
+struct SignatureElement {
+    semantic_name: *const c_char,
+    semantic_index: c_uint,
+    stream_index: c_uint,
+    sysval_semantic: c_uint,
+    component_type: c_uint,
+    register_index: c_uint,
+    mask: c_uint,
+    used_mask: c_uint,
+    min_precision: c_uint,
+}
+
+#[repr(C)]
+struct Signature {
+    elements: *mut SignatureElement,
+    element_count: c_uint,
+}
+
+#[repr(C)]
+struct ScanSignatureInfo {
+    ty: c_uint,
+    next: *const c_void,
+    input: Signature,
+    output: Signature,
+    patch_constant: Signature,
+}
+
+#[repr(C)]
+struct DescriptorInfo {
+    ty: c_uint,
+    register_space: c_uint,
+    register_index: c_uint,
+    resource_type: c_uint,
+    resource_data_type: c_uint,
+    flags: c_uint,
+    count: c_uint,
+}
+
+#[repr(C)]
+struct ScanDescriptorInfo {
+    ty: c_uint,
+    next: *const c_void,
+    descriptors: *mut DescriptorInfo,
+    descriptor_count: c_uint,
+}
+
+/// One element of an input or output signature (`vkd3d_shader_signature_element`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Element {
+    /// The HLSL semantic, such as `TEXCOORD`, in the case the source used.
+    pub semantic: String,
+    pub index: u32,
+    /// `v#` or `o#`; for the sm3 `VPOS` and `VFACE` inputs, the `MISCTYPE` register (0 or 1).
+    pub register: u32,
+    /// `enum vkd3d_shader_sysval_semantic`: [`SV_POSITION`], [`SV_IS_FRONT_FACE`], ...
+    pub sysval: u32,
+    pub mask: u32,
+}
+
+pub const SV_POSITION: u32 = 0x01;
+pub const SV_IS_FRONT_FACE: u32 = 0x09;
+
+/// One descriptor the shader uses (`vkd3d_shader_descriptor_info`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Descriptor {
+    /// `enum vkd3d_shader_descriptor_type`: [`DESCRIPTOR_SRV`], [`DESCRIPTOR_SAMPLER`], ...
+    pub kind: u32,
+    pub register: u32,
+    /// `enum vkd3d_shader_resource_type`: [`RESOURCE_TEXTURE_2D`], ...
+    pub resource: u32,
+}
+
+pub const DESCRIPTOR_SRV: u32 = 0;
+pub const DESCRIPTOR_CBV: u32 = 2;
+pub const DESCRIPTOR_SAMPLER: u32 = 3;
+pub const RESOURCE_TEXTURE_1D: u32 = 2;
+pub const RESOURCE_TEXTURE_2D: u32 = 3;
+pub const RESOURCE_TEXTURE_3D: u32 = 5;
+pub const RESOURCE_TEXTURE_CUBE: u32 = 6;
+
+/// What [`Vkd3d::scan_hlsl`] reports: the program that the SPIR-V target writes, before the
+/// D3D bytecode writer, so it holds for shaders that `vkd3d_shader_compile` to D3D bytecode or
+/// assembly rejects for their temp count (E9015).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Scan {
+    pub inputs: Vec<Element>,
+    pub outputs: Vec<Element>,
+    pub descriptors: Vec<Descriptor>,
+}
+
 type CompileFn = unsafe extern "C" fn(*const CompileInfo, *mut Code, *mut *mut c_char) -> c_int;
+type ScanFn = unsafe extern "C" fn(*const CompileInfo, *mut *mut c_char) -> c_int;
+type FreeSignatureFn = unsafe extern "C" fn(*mut ScanSignatureInfo);
+type FreeDescriptorsFn = unsafe extern "C" fn(*mut ScanDescriptorInfo);
 type FreeCodeFn = unsafe extern "C" fn(*mut Code);
 type FreeMessagesFn = unsafe extern "C" fn(*mut c_char);
 type GetVersionFn = unsafe extern "C" fn(*mut c_uint, *mut c_uint) -> *const c_char;
@@ -136,6 +232,9 @@ impl CompileError {
 /// The loaded library.
 pub struct Vkd3d {
     compile: CompileFn,
+    scan: ScanFn,
+    free_signature: FreeSignatureFn,
+    free_descriptors: FreeDescriptorsFn,
     free_code: FreeCodeFn,
     free_messages: FreeMessagesFn,
     path: PathBuf,
@@ -193,6 +292,13 @@ impl Vkd3d {
             }
             Ok(Vkd3d {
                 compile: *lib.get(b"vkd3d_shader_compile\0").map_err(err)?,
+                scan: *lib.get(b"vkd3d_shader_scan\0").map_err(err)?,
+                free_signature: *lib
+                    .get(b"vkd3d_shader_free_scan_signature_info\0")
+                    .map_err(err)?,
+                free_descriptors: *lib
+                    .get(b"vkd3d_shader_free_scan_descriptor_info\0")
+                    .map_err(err)?,
                 free_code: *lib.get(b"vkd3d_shader_free_shader_code\0").map_err(err)?,
                 free_messages: *lib.get(b"vkd3d_shader_free_messages\0").map_err(err)?,
                 path: path.to_path_buf(),
@@ -320,6 +426,131 @@ impl Vkd3d {
             };
             (self.free_code)(&mut out);
             Ok(bytes)
+        }
+    }
+
+    /// The input and output signatures and the descriptors of HLSL `source`, from
+    /// `vkd3d_shader_scan`.
+    pub fn scan_hlsl(
+        &self,
+        source: &str,
+        source_name: &str,
+        profile: &str,
+        entry: &str,
+    ) -> Result<Scan, CompileError> {
+        let cstr = |s: &str| {
+            CString::new(s).map_err(|_| CompileError {
+                code: -1,
+                messages: format!("{s:?} contains a NUL byte"),
+            })
+        };
+        let (name, profile, entry) = (cstr(source_name)?, cstr(profile)?, cstr(entry)?);
+        let empty = || Signature {
+            elements: std::ptr::null_mut(),
+            element_count: 0,
+        };
+        let mut descriptors = ScanDescriptorInfo {
+            ty: STRUCTURE_TYPE_SCAN_DESCRIPTOR_INFO,
+            next: std::ptr::null(),
+            descriptors: std::ptr::null_mut(),
+            descriptor_count: 0,
+        };
+        let mut signatures = ScanSignatureInfo {
+            ty: STRUCTURE_TYPE_SCAN_SIGNATURE_INFO,
+            next: std::ptr::addr_of_mut!(descriptors).cast_const().cast(),
+            input: empty(),
+            output: empty(),
+            patch_constant: empty(),
+        };
+        let hlsl = HlslSourceInfo {
+            ty: STRUCTURE_TYPE_HLSL_SOURCE_INFO,
+            next: std::ptr::addr_of_mut!(signatures).cast_const().cast(),
+            entry_point: entry.as_ptr(),
+            secondary_code: Code {
+                code: std::ptr::null(),
+                size: 0,
+            },
+            profile: profile.as_ptr(),
+        };
+        let options = [CompileOption {
+            name: OPTION_API_VERSION,
+            value: API_VERSION_2_1,
+        }];
+        let info = CompileInfo {
+            ty: STRUCTURE_TYPE_COMPILE_INFO,
+            next: (&hlsl as *const HlslSourceInfo).cast(),
+            source: Code {
+                code: source.as_ptr().cast(),
+                size: source.len(),
+            },
+            source_type: SOURCE_HLSL,
+            target_type: Target::SpirvBinary as c_uint,
+            options: options.as_ptr(),
+            option_count: options.len() as c_uint,
+            log_level: LOG_ERROR,
+            source_name: name.as_ptr(),
+        };
+        let mut messages: *mut c_char = std::ptr::null_mut();
+        // SAFETY: as in `compile_hlsl`. vkd3d fills `signatures` and `descriptors` through the
+        // `next` chain; both are copied, then freed with vkd3d's own functions.
+        unsafe {
+            let ret = (self.scan)(&info, &mut messages);
+            let text = if messages.is_null() {
+                String::new()
+            } else {
+                let s = CStr::from_ptr(messages).to_string_lossy().into_owned();
+                (self.free_messages)(messages);
+                s
+            };
+            let elements = |s: &Signature| -> Vec<Element> {
+                if s.elements.is_null() {
+                    return Vec::new();
+                }
+                std::slice::from_raw_parts(s.elements, s.element_count as usize)
+                    .iter()
+                    .map(|e| Element {
+                        semantic: if e.semantic_name.is_null() {
+                            String::new()
+                        } else {
+                            CStr::from_ptr(e.semantic_name)
+                                .to_string_lossy()
+                                .into_owned()
+                        },
+                        index: e.semantic_index,
+                        register: e.register_index,
+                        sysval: e.sysval_semantic,
+                        mask: e.mask,
+                    })
+                    .collect()
+            };
+            let scan = Scan {
+                inputs: elements(&signatures.input),
+                outputs: elements(&signatures.output),
+                descriptors: if descriptors.descriptors.is_null() {
+                    Vec::new()
+                } else {
+                    std::slice::from_raw_parts(
+                        descriptors.descriptors,
+                        descriptors.descriptor_count as usize,
+                    )
+                    .iter()
+                    .map(|d| Descriptor {
+                        kind: d.ty,
+                        register: d.register_index,
+                        resource: d.resource_type,
+                    })
+                    .collect()
+                },
+            };
+            (self.free_signature)(&mut signatures);
+            (self.free_descriptors)(&mut descriptors);
+            if ret < 0 {
+                return Err(CompileError {
+                    code: ret,
+                    messages: text,
+                });
+            }
+            Ok(scan)
         }
     }
 }

@@ -250,17 +250,17 @@ technique T2 { pass { PixelShader = compile ps_3_0 PS(0.5); } };
         let fx = parse(SRC);
         let e = fx.entries();
         let w = fx.wrapper(&e[0]).unwrap();
-        assert_eq!(w.entry_point, "__mme_entry");
+        assert_eq!(w.entry_point, "mme_entry");
         assert!(w.source.starts_with(fx.shader_source()));
         assert!(
-            w.source.ends_with("\nfloat4 __mme_entry(float4 p : POSITION) : POSITION { return VS(p, 2.0, float2 ( 1 , 0 )); }\n"),
+            w.source.ends_with("\nfloat4 mme_entry(float4 p : POSITION) : POSITION { return VS(p, 2.0, float2 ( 1 , 0 )); }\n"),
             "{}",
             w.source
         );
         let w = fx.wrapper(&e[1]).unwrap();
         assert!(w
             .source
-            .ends_with("float4 __mme_entry(float4 c : COLOR0) : COLOR { return PS(c, 0.5); }\n"));
+            .ends_with("float4 mme_entry(float4 c : COLOR0) : COLOR { return PS(c, 0.5); }\n"));
         let w = fx.wrapper(&e[2]).unwrap();
         assert_eq!(
             (w.entry_point.as_str(), w.source.as_str()),

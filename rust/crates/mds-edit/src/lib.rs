@@ -15,10 +15,11 @@
 //! [`Error::Corrupt`] or stops, instead of indexing out of bounds or looping.
 //!
 //! The fixed-axis twist correction calls the D3DX quaternion functions
-//! through `mds-math`. The `*_with` operations take an [`Extra`]: the bone
-//! fields and UI state beyond [`Rig`] that the twist correction and the pose
-//! of a bone with a rigid body read. The operations without it return
-//! [`Error::Unsupported`] on those two paths.
+//! through `mds-math`. The operations that take an [`Extra`] (the `*_with`
+//! ones and [`Tracks::paste_bones`]) get the bone fields and UI state beyond
+//! [`Rig`] that the twist correction and the pose of a bone with a rigid
+//! body read. The operations without it return [`Error::Unsupported`] on
+//! those two paths.
 //!
 //! Not ported: undo and redo bookkeeping and the overflow message boxes (the
 //! operations return [`Error::Full`]).
@@ -96,7 +97,8 @@ pub struct Selector {
     pub linked_bone: i32,
 }
 
-/// The model as the editor reads it. The editor never changes it.
+/// The model as the editor reads it. Only the physics pose of
+/// [`Tracks::register_bone_pose_with`] changes it.
 #[derive(Clone, Debug)]
 pub struct Rig {
     pub bones: Vec<BoneInfo>,

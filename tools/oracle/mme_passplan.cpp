@@ -12,7 +12,7 @@
 //
 // Rules for the output:
 //   - no pointers, handles, or host paths: paths under --root are written as
-//     "<corpus>/relative/path" with forward slashes;
+//     "<root>/relative/path" with forward slashes;
 //   - bytes >= 0x80 and control characters inside strings are written as \xNN
 //     (effect files carry Shift-JIS text);
 //   - the plan is written with fopen("wb"), LF line ends, never to stdout.
@@ -65,7 +65,7 @@ std::string Lower(std::string s) {
     return s;
 }
 
-// Replace every occurrence of the corpus root by "<corpus>/" and use forward
+// Replace every occurrence of the corpus root by "<root>/" and use forward
 // slashes. Text that does not mention the root is returned unchanged.
 std::string Norm(const std::string &s) {
     if (g_root.empty()) {
@@ -86,7 +86,7 @@ std::string Norm(const std::string &s) {
     size_t cursor = 0;
     while (pos != std::string::npos) {
         out.append(slashed, cursor, pos - cursor);
-        out += "<corpus>/";
+        out += "<root>/";
         cursor = pos + g_root.size();
         pos = lower.find(g_root, cursor);
     }

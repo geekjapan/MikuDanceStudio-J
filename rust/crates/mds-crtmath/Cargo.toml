@@ -1,0 +1,8 @@
+[package]
+name = "mds-crtmath"
+description = "Float math functions that match the MSVC x64 UCRT bit for bit"
+license = "MIT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true

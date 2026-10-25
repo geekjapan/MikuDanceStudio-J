@@ -52,3 +52,12 @@ script2	3c	script	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/r
 render3	3c	render2	mac	opus	MIT	rust/crates/mds-render/
 mmegold	3c	mmert2	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/mmegold/,CMakeLists.txt
 doccmds	3c	docgold2	mac	opus	pending	rust/crates/mds-doc/,rust/crates/mds-edit/,rust/crates/mds-ops/
+appcore	3c	doccmds	mac	opus	pending	rust/crates/mds-app/src/actions.rs,rust/crates/mds-app/src/dump.rs,rust/crates/mds-app/src/editor.rs,rust/crates/mds-app/src/file.rs,rust/crates/mds-app/src/lib.rs,rust/crates/mds-app/src/main.rs,rust/crates/mds-app/src/navigation.rs,rust/crates/mds-app/src/playback.rs,rust/crates/mds-app/src/scene.rs,rust/crates/mds-app/src/viewport.rs,rust/crates/mds-app/src/window.rs,rust/crates/mds-app/src/ui/file.rs,rust/crates/mds-app/Cargo.toml,rust/crates/mds-app/tests/editor.rs,rust/crates/mds-app/tests/frame_dump.rs,rust/crates/mds-app/tests/viewport.rs,rust/crates/mds-app/tests/app_core/
+uipanels2	3c	doccmds	mac	sonnet	pending	rust/crates/mds-app/src/ui/bone_panel.rs,rust/crates/mds-app/src/ui/model_panel.rs,rust/crates/mds-app/src/ui/camera_panel.rs,rust/crates/mds-app/src/ui/accessory_panel.rs,rust/crates/mds-app/src/ui/shadow_panel.rs,rust/crates/mds-app/tests/ui_model/,rust/crates/mds-app/tests/ui_global/,rust/crates/mds-app/tests/ui_acc/
+uimenus2	3c	doccmds	mac	sonnet	pending	rust/crates/mds-app/src/ui/edit.rs,rust/crates/mds-app/src/ui/expression.rs,rust/crates/mds-app/src/ui/view.rs,rust/crates/mds-app/src/ui/help.rs,rust/crates/mds-app/tests/ui_edit/,rust/crates/mds-app/tests/ui_view/
+uidialog	3c	doccmds	mac	sonnet	pending	rust/crates/mds-app/src/ui/dialog.rs,rust/crates/mds-app/tests/ui_dialog/
+uitimeline2	3c	doccmds	mac	sonnet	pending	rust/crates/mds-app/src/ui/timeline.rs,rust/crates/mds-app/tests/ui_timeline/
+uiviewport	3c	doccmds	mac	opus	pending	rust/crates/mds-app/src/ui/viewport.rs,rust/crates/mds-app/tests/ui_viewport/
+doccmds2	3c	doccmds	mac	opus	pending	rust/crates/mds-doc/,rust/crates/mds-edit/,rust/crates/mds-ops/,rust/crates/mds-formats/,rust/crates/mds-vsq/
+mmertgold	3c	mmegold	mac	opus	pending	rust/crates/mds-mmert/
+winprobe	3c	mmegold	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/golden2/,tests/fixtures/rust/mmegold/,third_party/mmeffect/,CMakeLists.txt

@@ -150,7 +150,7 @@ pub const AREAS: [Area; 19] = [
 ];
 
 /// Areas whose every inventory row has an action.
-pub const COMPLETE: &[&str] = &["play"];
+pub const COMPLETE: &[&str] = &["light-panel", "morph-panel", "play"];
 
 /// The inventory name of a key with its modifiers (`Ctrl+S`, `Numpad2`, `Enter`, `]`), or
 /// `None` for keys the inventory does not name and for the arrows.

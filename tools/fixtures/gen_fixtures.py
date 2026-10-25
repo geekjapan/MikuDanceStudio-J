@@ -9,7 +9,7 @@ bytes.
     python3 -I tools/fixtures/gen_fixtures.py --check [--dir DIR]
 
 --check regenerates in memory and compares bytes with DIR. It prints
-"fixtures: 8 files match" and exits 0, or names each drifted file and exits 1.
+"fixtures: 10 files match" and exits 0, or names each drifted file and exits 1.
 
 Encodings: names are Shift-JIS (cp932) in PMD, VMD, VPD and PMM, and UTF-16LE
 in PMX (encoding byte 0). Layouts follow the portable readers on origin/next
@@ -17,6 +17,7 @@ in PMX (encoding byte 0). Layouts follow the portable readers on origin/next
 port writes (src/io/pmm_save.cpp, vmd_save.cpp, vpd_file.cpp).
 """
 import argparse
+import math
 import struct
 import sys
 from pathlib import Path
@@ -103,6 +104,9 @@ CAMERA_KEYS = [  # (frame, distance, eye, rotation, fov)
     (200, -30.0, (0.0, 8.0, 0.0), (0.25, 0.5, 0.0), 35),
     (400, -45.0, (0.0, 10.0, 0.0), (0.0, -0.5, 0.0), 30),
 ]
+# swing600-golden.pmm is swing600.pmm for golden images. The camera turns
+# half a turn to face the fronts of the strips, and the models blend normally.
+GOLDEN_CAMERA_KEYS = [(0, -45.0, (0.0, 10.0, 0.0), (0.0, math.pi, 0.0), 30)]
 CAMERA_CURVE = (40, 20, 90, 110)  # x1, y1, x2, y2 of the sparse camera keys
 LIGHT_KEYS = [  # (frame, color, direction)
     (0, (0.625, 0.625, 0.625), (-0.5, -1.0, 0.5)),
@@ -129,6 +133,7 @@ FILE_NAMES = [
     "swing600.pmm",
     "camera3.pmm",
     "swing600-nophys.pmm",
+    "swing600-golden.pmm",
 ]
 
 # ---------------------------------------------------------------------------
@@ -679,7 +684,7 @@ def global_track(keys, pack):
     return track_bytes([head], pool, pack)
 
 
-def model_bytes(slot, model):
+def model_bytes(slot, model, post_load=1):
     motion = build_model_motion(model, slot)
     bones, morphs = model["bones"], model["morphs"]
     iks, sels = ik_sources(model), selector_sources(model)
@@ -711,16 +716,18 @@ def model_bytes(slot, model):
     o += u8(*[1] * len(iks))
     for _ in sels:  # window start, window end, linked model, linked bone
         o += i32(0, 0, -1, 0)
-    o += u8(1) + f32(1.0) + u8(1, 0)  # post load, edge scale, toon, display order
+    # post load 1 is additive blending in the app, 0 is normal blending.
+    o += u8(post_load) + f32(1.0) + u8(1, 0)  # post load, edge scale, toon, display order
     return bytes(o), motion
 
 
-def build_pmm(camera_keys=CAMERA_KEYS[:1], light_keys=LIGHT_KEYS, physics_mode=2):
+def build_pmm(camera_keys=CAMERA_KEYS[:1], light_keys=LIGHT_KEYS, physics_mode=2,
+              post_load=1):
     o = bytearray(b"Polygon Movie maker 0002" + b"\0" * 6)
     o += i32(1280, 720, 244) + f32(30.0) + u8(0, 1, 0, 0, 0, 0, 0)
     o += u8(0, len(PMM_MODELS))
     for slot, file in enumerate(PMM_MODELS):
-        data, _ = model_bytes(slot, MODELS[file])
+        data, _ = model_bytes(slot, MODELS[file], post_load)
         o += data
     # camera
     cam = []
@@ -856,6 +863,7 @@ def generate():
         "swing600.pmm": build_pmm(),
         "camera3.pmm": build_pmm(CAMERA_KEYS, LIGHT3_KEYS),
         "swing600-nophys.pmm": build_pmm(physics_mode=0),
+        "swing600-golden.pmm": build_pmm(GOLDEN_CAMERA_KEYS, post_load=0),
     }
     assert list(out) == FILE_NAMES
     return out

@@ -35,10 +35,10 @@ struct VS_OUT { float4 Pos : POSITION; };
 VS_OUT VS(float4 Pos : POSITION) { VS_OUT o; o.Pos = mul(Pos, WorldViewProjMatrix); return o; }
 float4 PS(VS_OUT i) : COLOR0 { return DifColor * Morph; }
 
-technique Main < string MmdPass = "object"; string Script = "RenderColorTarget0=CubeRT[2]; Clear=Color; RenderColorTarget0=; Pass=P0;"; > {
+technique Main < string MmdPass = "object"; > {
     pass P0 { VertexShader = compile vs_3_0 VS(); PixelShader = compile ps_3_0 PS(); }
 }
-technique Used < string MmdPass = "object"; > {
+technique Used < string MmdPass = "object"; string Script = "RenderColorTarget0=CubeRT[2]; Clear=Color; RenderColorTarget0=; Pass=P0;"; > {
     pass P0 { VertexShader = compile vs_3_0 VS(); PixelShader = compile ps_3_0 PS(); }
 }
 technique Other < string MmdPass = "edge"; > {

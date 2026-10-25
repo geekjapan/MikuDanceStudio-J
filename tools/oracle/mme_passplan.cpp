@@ -38,7 +38,7 @@
 namespace {
 
 std::string g_out;
-std::string g_root; // lower case, forward slashes, trailing '/'
+std::string g_root; // lower case, forward slashes, no trailing '/'
 std::string g_boxes;
 volatile LONG g_stopWatchdog = 0;
 
@@ -65,7 +65,7 @@ std::string Lower(std::string s) {
     return s;
 }
 
-// Replace every occurrence of the corpus root by "<root>/" and use forward
+// Replace every occurrence of the root directory by "<root>" and use forward
 // slashes. Text that does not mention the root is returned unchanged.
 std::string Norm(const std::string &s) {
     if (g_root.empty()) {
@@ -78,17 +78,24 @@ std::string Norm(const std::string &s) {
         }
     }
     const std::string lower = Lower(slashed);
-    size_t pos = lower.find(g_root);
-    if (pos == std::string::npos) {
-        return s;
-    }
     std::string out;
     size_t cursor = 0;
-    while (pos != std::string::npos) {
+    bool found = false;
+    for (size_t pos = lower.find(g_root); pos != std::string::npos; pos = lower.find(g_root, cursor)) {
+        const size_t end = pos + g_root.size();
+        if (end < lower.size() && lower[end] != '/' && lower[end] != '"' && lower[end] != ' ' &&
+            lower[end] != '(' && lower[end] != ':' && lower[end] != '\'') {
+            out.append(slashed, cursor, end - cursor); // longer directory name: keep it
+            cursor = end;
+            continue;
+        }
         out.append(slashed, cursor, pos - cursor);
-        out += "<root>/";
-        cursor = pos + g_root.size();
-        pos = lower.find(g_root, cursor);
+        out += "<root>";
+        cursor = end;
+        found = true;
+    }
+    if (!found) {
+        return s;
     }
     out.append(slashed, cursor, std::string::npos);
     return out;
@@ -826,8 +833,8 @@ int main(int argc, char **argv) {
             c = '/';
         }
     }
-    if (g_root.back() != '/') {
-        g_root += '/';
+    while (g_root.size() > 1 && g_root.back() == '/') {
+        g_root.pop_back();
     }
     const std::string rel = Norm(path);
 

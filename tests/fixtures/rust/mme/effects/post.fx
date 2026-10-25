@@ -33,7 +33,6 @@ texture2D Full : RENDERCOLORTARGET <
 texture2D Third : RENDERCOLORTARGET <
     float2 ViewportRatio = { 0.3333, 0.3333 };
 >;
-texture Plain < string ResourceName = ""; >;
 
 struct VS_OUT {
     float4 Pos : POSITION;

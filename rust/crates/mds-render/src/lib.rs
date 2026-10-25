@@ -36,6 +36,7 @@
 //! built-in toon texture).
 
 mod mesh;
+pub mod picture;
 mod png;
 mod renderer;
 pub mod scene;

@@ -46,12 +46,30 @@
 // multisampled back buffer path is supported; without multisampling the
 // recording path renders into a capture surface that the picture command
 // never creates, so the run fails instead.
+//
+// --mds-edge-probe <pmm> <out> <frame>...  (golden2, wave 3)
+// Steps the same passes as --mds-frame-dump and, at each requested frame,
+// writes the inputs and the result of the edge thickness that
+// UpdateModelVertexBuffers would compute for that frame's render
+// (PmdEdgeDistance in src/model/model_skinning.cpp). RenderFrameScene reads
+// the frame world matrix right after SetupFrameWorldTransform, so the probe
+// calls that and reads the same matrix; it draws nothing. Format:
+//   "mds-edge-probe 1" LF, then per requested frame:
+//   frame "camera" perspective fov target.xyz distance pitch yaw roll
+//         selfShadowEnabled selfShadowMode selfShadowDistance LF
+//   frame "world" m00 m01 .. m33 LF       (the frame world matrix, row by row)
+//   frame "edge" slot bone point.xyz world.xyz target_distance edgeScale edge LF
+//         (per loaded model in slot order: the bone PmdEdgeDistance uses, its
+//         bind position moved by matInit, that point moved by the world
+//         matrix, its distance to CameraPosition, and the result)
+// Floats are printf "%.9g", which reads back to the same float.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
 #include <d3d9.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cwchar>
@@ -262,6 +280,97 @@ bool DumpFrame(MMDApp* app, const std::wstring& path) {
     return true;
 }
 
+// PmdEdgeDistance (src/model/model_skinning.cpp) with its inputs; the same
+// float operations in the same order.
+bool WriteEdgeProbe(std::ostream& out, MMDApp* app, std::uint32_t frame) {
+    SetupFrameWorldTransform(app);
+    D3DMATRIX world{};
+    if (FAILED(app->Renderer()->device->GetTransform(D3DTS_WORLD, &world)))
+        return false;
+    const float* m = &world.m[0][0];
+    const float* target = app->CameraPosition();
+    char line[512];
+    std::snprintf(line, sizeof line,
+                  "%u camera %d %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %d %d %.9g\n", frame,
+                  static_cast<int>(app->CameraPerspective()), app->CameraFov(), target[0],
+                  target[1], target[2], app->CameraDistance(), app->CameraPitch(), app->CameraYaw(),
+                  app->CameraRoll(), static_cast<int>(app->state.selfShadowEnabled),
+                  static_cast<int>(app->SelfShadowMode()), app->ShadowDistance());
+    out << line;
+    int at = std::snprintf(line, sizeof line, "%u world", frame);
+    for (int i = 0; i < 16; ++i)
+        at += std::snprintf(line + at, sizeof line - at, " %.9g", m[i]);
+    out << line << '\n';
+    for (int slot = 0; slot < kModelSlotCount; ++slot) {
+        unsigned char* model = app->ModelSlot(slot);
+        if (model == nullptr)
+            continue;
+        const mdl::ModelRecord& record = *mdl::Mdl(model);
+        const mdl::BoneRecord* bones = mdl::Bones(model);
+        const int boneCount = static_cast<int>(record.boneCount);
+        const int bone = boneCount > 1 ? 1 : 0;
+        float point[3]{};
+        if (bones != nullptr && boneCount > 0) {
+            const float* p = bones[bone].position;
+            const float* b = bones[bone].matInit;
+            point[0] = p[0] * b[0] + p[1] * b[4] + p[2] * b[8] + b[12];
+            point[1] = p[0] * b[1] + p[1] * b[5] + p[2] * b[9] + b[13];
+            point[2] = p[0] * b[2] + p[1] * b[6] + p[2] * b[10] + b[14];
+        }
+        float moved[3];
+        moved[0] = point[0] * m[0] + point[1] * m[4] + point[2] * m[8] + m[12];
+        moved[1] = point[0] * m[1] + point[1] * m[5] + point[2] * m[9] + m[13];
+        moved[2] = point[0] * m[2] + point[1] * m[6] + point[2] * m[10] + m[14];
+        const float dx = moved[0] - target[0];
+        const float dy = moved[1] - target[1];
+        const float dz = moved[2] - target[2];
+        const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const float edge = distance * 0.00004500000068219379f *
+                           (app->CameraFov() * 0.6000000238418579f + 1.0f) * record.edgeScale;
+        std::snprintf(line, sizeof line,
+                      "%u edge %d %d %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g\n", frame, slot,
+                      bone, point[0], point[1], point[2], moved[0], moved[1], moved[2], distance,
+                      record.edgeScale, edge);
+        out << line;
+    }
+    return out.good();
+}
+
+int RunEdgeProbe(MMDApp* app, const TraceRequest& request) {
+    if (app->Renderer() == nullptr || app->Renderer()->device == nullptr)
+        return 1;
+    const std::wstring temp = request.out + L".tmp";
+    std::ofstream file(std::filesystem::path(temp), std::ios::binary | std::ios::trunc);
+    if (!file)
+        return 1;
+    g_guardFile = &file;
+    file << "mds-edge-probe 1\n";
+    ArmFrameStep(app, request.frames);
+    bool ok = true;
+    std::size_t next = 0;
+    for (std::uint32_t frame = 0; ok && frame < request.frames; ++frame) {
+        if (frame > 0) {
+            app->state.messageSeen = 2; // as RunTraceMode
+            PlaybackCatchup(app, 0);
+            PhysicsFrame(app, 0);
+        }
+        if (frame == request.dumpFrames[next]) {
+            ok = WriteEdgeProbe(file, app, frame);
+            ++next;
+        }
+    }
+    file.flush();
+    ok = ok && file.good();
+    file.close();
+    g_guardFile = nullptr;
+    if (!ok || !MoveFileExW(temp.c_str(), request.out.c_str(),
+                            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteTemp(temp);
+        return 1;
+    }
+    return 0;
+}
+
 int RunFrameDump(MMDApp* app, const TraceRequest& request) {
     D3DRenderer* r = app->Renderer();
     if (r == nullptr || r->device == nullptr)
@@ -357,6 +466,8 @@ int RunTraceMode(MMDApp* app, const TraceRequest& request) {
     }
     if (request.mode == TraceRequest::Mode::FrameDump)
         return RunFrameDump(app, request);
+    if (request.mode == TraceRequest::Mode::EdgeProbe)
+        return RunEdgeProbe(app, request);
 
     const std::wstring temp = request.out + L".tmp";
     std::ofstream file(std::filesystem::path(temp),

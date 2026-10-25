@@ -5,7 +5,7 @@
 #include <vector>
 
 namespace mikudancestudio::tools {
-// Command lines of the two headless modes. The flag must be the first
+// Command lines of the three headless modes. The flag must be the first
 // argument, and <pmm> must end in ".pmm" (any case).
 //   MikuDanceStudio.exe --mds-trace <pmm> <out> <frames>
 //     Exactly these four arguments. <frames> is a decimal number in
@@ -13,16 +13,19 @@ namespace mikudancestudio::tools {
 //   MikuDanceStudio.exe --mds-frame-dump <pmm> <out-dir> <frame>...
 //     One or more decimal frame numbers in 0..kMaxTraceFrames-1, strictly
 //     ascending.
+//   MikuDanceStudio.exe --mds-edge-probe <pmm> <out> <frame>...
+//     The frames as for --mds-frame-dump; <out> is the probe text file.
 struct TraceRequest {
     enum class Mode {
         Trace,
-        FrameDump
+        FrameDump,
+        EdgeProbe
     };
     Mode mode = Mode::Trace;
     std::wstring pmm;
-    std::wstring out;                      // the trace file, or the frame dump directory
+    std::wstring out;                      // the trace or probe file, or the frame dump directory
     std::uint32_t frames = 0;              // passes: the trace length, or the last dump frame + 1
-    std::vector<std::uint32_t> dumpFrames; // FrameDump only
+    std::vector<std::uint32_t> dumpFrames; // FrameDump and EdgeProbe
 };
 
 enum class TraceArgs {
@@ -74,7 +77,7 @@ inline TraceArgs ParseTraceArgs(int argc, const wchar_t* const* argv, TraceReque
         if (argc != 5 || !ParseDecimal(argv[4], &parsed.frames) || parsed.frames < 1 ||
             parsed.frames > kMaxTraceFrames)
             return TraceArgs::Malformed;
-    } else if (flag == L"--mds-frame-dump") {
+    } else if (flag == L"--mds-frame-dump" || flag == L"--mds-edge-probe") {
         if (argc < 5)
             return TraceArgs::Malformed;
         for (int i = 4; i < argc; ++i) {
@@ -84,7 +87,8 @@ inline TraceArgs ParseTraceArgs(int argc, const wchar_t* const* argv, TraceReque
                 return TraceArgs::Malformed;
             parsed.dumpFrames.push_back(frame);
         }
-        parsed.mode = TraceRequest::Mode::FrameDump;
+        parsed.mode = flag == L"--mds-frame-dump" ? TraceRequest::Mode::FrameDump
+                                                  : TraceRequest::Mode::EdgeProbe;
         parsed.frames = parsed.dumpFrames.back() + 1;
     } else {
         return TraceArgs::NotRequested;

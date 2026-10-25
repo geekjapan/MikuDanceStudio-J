@@ -1,5 +1,5 @@
-//! `mds-app [<pmm>]` opens the window; `mds-app --frame-dump <pmm> <out-dir> <frame>...` writes
-//! the frames as PNG without one.
+//! `mds-app [<pmm>]` opens the window (on the empty startup scene without a PMM);
+//! `mds-app --frame-dump <pmm> <out-dir> <frame>...` writes the frames as PNG without one.
 
 mod window;
 

@@ -93,6 +93,7 @@ void WriteOverlayQuad(void* locked, double left, double top, double right, doubl
     v[0x5C / 4] = 0.0f;
     v[0x78 / 4] = 0.0f;
     v[0x94 / 4] = 0.0f;
+    v[0x0C / 4] = 1.0f;
     v[0x28 / 4] = 1.0f;
     v[0x44 / 4] = 1.0f;
     v[0x60 / 4] = 1.0f;

@@ -67,6 +67,8 @@
 //         bind position moved by matInit, that point moved by the world
 //         matrix, its distance to CameraPosition, and the result)
 // Floats are printf "%.9g", which reads back to the same float.
+//
+// --mds-mesh-dump <pmm> <out-dir> <x-file>...  (accgold, wave 3): mesh_dump.cpp.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -446,10 +448,23 @@ bool PrepareTraceRequest(TraceRequest* request) {
     if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
         return false;
     const DWORD outAttributes = GetFileAttributesW(out.c_str());
-    if (request->mode == TraceRequest::Mode::FrameDump &&
-        (outAttributes == INVALID_FILE_ATTRIBUTES ||
-         (outAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0))
+    const bool toDirectory = request->mode == TraceRequest::Mode::FrameDump ||
+                             request->mode == TraceRequest::Mode::MeshDump;
+    if (toDirectory && (outAttributes == INVALID_FILE_ATTRIBUTES ||
+                        (outAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0))
         return false;
+    // LoadAccessoryObject changes the current directory, and a missing file
+    // would raise its "Cannot find xfile" box. Its path buffers hold 256 wchars.
+    for (std::wstring& file : request->meshFiles) {
+        file = FullPath(file);
+        const DWORD fileAttributes = GetFileAttributesW(file.c_str());
+        if (file.empty() || file.size() >= kEnvFileNameLength ||
+            out.size() + std::filesystem::path(file).filename().wstring().size() + 10 >=
+                MAX_PATH * 4 ||
+            fileAttributes == INVALID_FILE_ATTRIBUTES ||
+            (fileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+            return false;
+    }
     request->pmm = pmm;
     request->out = out;
     return true;
@@ -457,6 +472,8 @@ bool PrepareTraceRequest(TraceRequest* request) {
 
 int RunTraceMode(MMDApp* app, const TraceRequest& request) {
     ShowWindow(static_cast<HWND>(app->Hwnd()), SW_HIDE);
+    if (request.mode == TraceRequest::Mode::MeshDump)
+        return RunMeshDump(app, request);
     bool anyModel = false;
     for (int slot = 0; slot < kModelSlotCount; ++slot)
         anyModel = anyModel || app->ModelSlot(slot) != nullptr;

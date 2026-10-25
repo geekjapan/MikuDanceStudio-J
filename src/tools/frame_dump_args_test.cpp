@@ -59,6 +59,14 @@ int main() {
     CHECK(Parse({L"app", L"--mds-edge-probe", L"a.pmm", L"probe.txt", L"3", L"3"}, &request) ==
           TraceArgs::Malformed);
 
+    CHECK(Parse({L"app", L"--mds-mesh-dump", L"a.pmm", L"dir", L"cube.x", L"p.vac"}, &request) ==
+          TraceArgs::Ready);
+    CHECK(request.mode == TraceRequest::Mode::MeshDump && request.out == L"dir" &&
+          (request.meshFiles == std::vector<std::wstring>{L"cube.x", L"p.vac"}));
+    CHECK(Parse({L"app", L"--mds-mesh-dump", L"a.pmm", L"dir"}, &request) == TraceArgs::Malformed);
+    CHECK(Parse({L"app", L"--mds-mesh-dump", L"a.pmm", L"dir", L""}, &request) ==
+          TraceArgs::Malformed);
+
     // --mds-trace still parses as a trace.
     CHECK(Parse({L"app", L"--mds-trace", L"a.pmm", L"o.trace", L"600"}, &request) ==
           TraceArgs::Ready);

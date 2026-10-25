@@ -14,6 +14,12 @@ gave the same bytes.
 |---|---|---|
 | `swing600-600.trace` | `../swing600.pmm`, physics mode 2 | `9546bb7fab08847a0952319d36d8d5f52dbe709e6f4801052fd8d13bf6198189` |
 | `swing600-nophys-600.trace` | `../swing600-nophys.pmm`, physics mode 0 | `43f154ebcc6aecdb9ccc4f7b96ac7246f3c885fa9fcfff8eeea8370320acc221` |
+| `swing600-golden-600.trace` | `../swing600-golden.pmm`, physics mode 2 | `568667dd2122e8844c32844709df08a1a3fcbea21ae57b4ce557dc664d82cb38` |
 
 The physics-off trace gates the pose pipeline (hierarchy, IK, append, morphs)
 without Bullet. The physics-on trace adds the rigid bodies.
+
+`swing600-golden-600.trace` came later, from the app built at `298c041` (the
+build that wrote `../golden/`), run twice through `tools/windows/runtask.ps1`
+in the console session with the same command; both runs gave the same bytes.
+Its models stand apart and never touch, unlike those of `swing600.pmm`.

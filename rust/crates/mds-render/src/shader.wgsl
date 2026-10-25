@@ -6,11 +6,16 @@ struct Scene {
     view_proj: mat4x4<f32>,
     view: mat4x4<f32>,
     eye: vec4<f32>,
-    // Direction the light travels, world space; w is 1 when the toon ramp applies, else 0.
+    // Direction the light travels, world space; w is the toon: 0 none, 1 the toon texture looked
+    // up by the angle to the light, 2 the self-shadow blend toward the toon's shadow color.
     light_dir: vec4<f32>,
     light_color: vec4<f32>,
     // Render target width and height in pixels, then a clip-space shift (x right, y up).
     screen: vec4<f32>,
+    // The ground shadow color and alpha.
+    ground_shadow: vec4<f32>,
+    // x: the height of the plane the ground shadow lies on; the rest unused.
+    ground_shadow_plane: vec4<f32>,
 }
 
 struct Material {
@@ -68,7 +73,11 @@ fn vs_main(v: VsIn) -> VsOut {
 
 @fragment
 fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    var n = normalize(i.normal);
+    // Without self-shadow (toon 1) the normal is used as interpolated, not renormalized.
+    var n = i.normal;
+    if scene.light_dir.w != 1.0 {
+        n = normalize(n);
+    }
     if !front {
         n = -n;
     }
@@ -77,7 +86,7 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
     var color = clamp(mat.ambient.rgb + mat.diffuse.rgb * lc, vec3<f32>(0.0), vec3<f32>(1.0));
     color = color * textureSampleLevel(tex, samp, i.uv, 0.0).rgb;
 
-    let view_n = (scene.view * vec4<f32>(n, 0.0)).xy;
+    let view_n = (scene.view * vec4<f32>(normalize(n), 0.0)).xy;
     let sphere_uv = vec2<f32>(view_n.x * 0.5 + 0.5, 0.5 - view_n.y * 0.5);
     let s = textureSampleLevel(sphere, samp, sphere_uv, 0.0).rgb;
     if mat.params.y == 1.0 {
@@ -86,10 +95,16 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
         color = color + s;
     }
 
-    // The toon ramp has the lit end at v = 0.
+    // The toon texture has the lit end at v = 0 and the shadow color at v = 1. Under self-shadow
+    // the color blends toward the shadow color as N.L falls from 0.34 to 0.03 (fitted to the
+    // golden scene, frames 300 and 599).
     let ndl = dot(n, to_light);
-    let ramp = textureSampleLevel(toon, samp, vec2<f32>(0.5, 0.5 - 0.5 * ndl), 0.0).rgb;
-    color = color * mix(vec3<f32>(1.0), ramp, scene.light_dir.w);
+    if scene.light_dir.w == 1.0 {
+        color = color * textureSampleLevel(toon, samp, vec2<f32>(0.5, 0.5 - 0.5 * ndl), 0.0).rgb;
+    } else if scene.light_dir.w == 2.0 {
+        let shade = textureSampleLevel(toon, samp, vec2<f32>(0.5, 1.0), 0.0).rgb;
+        color = mix(color * shade, color, clamp(3.2 * ndl - 0.1, 0.0, 1.0));
+    }
 
     let power = mat.specular.w;
     if power > 0.0 {
@@ -112,4 +127,17 @@ fn vs_edge(v: EdgeIn) -> EdgeOut {
 @fragment
 fn fs_edge(i: EdgeOut) -> @location(0) vec4<f32> {
     return i.color;
+}
+
+// Ground shadow: the model flattened onto y = 0 along the light, in one color.
+@vertex
+fn vs_ground_shadow(v: VsIn) -> @builtin(position) vec4<f32> {
+    let d = normalize(scene.light_dir.xyz);
+    let p = v.position - d * ((v.position.y - scene.ground_shadow_plane.x) / d.y);
+    return shifted(scene.view_proj * vec4<f32>(p, 1.0));
+}
+
+@fragment
+fn fs_ground_shadow() -> @location(0) vec4<f32> {
+    return scene.ground_shadow;
 }

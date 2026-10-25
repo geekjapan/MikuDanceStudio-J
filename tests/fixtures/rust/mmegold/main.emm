@@ -1,0 +1,9 @@
+[Info]
+Version = 3
+
+[Object]
+Pmd0 = chain8.pmx
+
+[Effect]
+Default = none
+Pmd0 = $(corpus)\Main\main.fx

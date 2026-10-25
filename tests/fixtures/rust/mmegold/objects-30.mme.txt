@@ -1,0 +1,17 @@
+mds-mme-probe 1
+frame 30 1
+object chain8.pmx effect effects/objects.fx class 0 render 0 shown 1
+effect effects/objects.fx class 0 order 0 errors 0
+param Script STANDARDSGLOBAL 0 3 1x1x0 0.800000012
+param WorldViewProjMatrix WORLDVIEWPROJECTION 2 3 4x4x0 -2.09927797 0 8.74236434e-08 8.74227695e-08 0 3.73205018 0 0 -1.83524719e-07 0 -1.00000989 -0.99999994 0 -14.9282007 19.0001888 19.9999981
+param WorldMatrix WORLD 2 3 4x4x0 0.99999994 0 0 0 0 0.99999994 0 0 0 0 0.99999994 0 0 0 0 0.99999994
+param MaterialDiffuse DIFFUSE 1 3 1x4x0 0 0 0 1
+param LightDirection DIRECTION 1 3 1x4x0 -0.408248246 -0.816496491 0.408248246 0
+param CameraPosition POSITION 1 3 1x3x0 -1.74845547e-06 4 19.9999981
+param ViewportSize VIEWPORTPIXELSIZE 1 3 1x2x0 640 360
+param Time TIME 0 3 1x1x0 1
+param EdgeColor EDGECOLOR 1 3 1x4x0 0 0 0 1
+param use_texture - 0 1 1x1x0 0
+param use_toon - 0 1 1x1x0 0
+param Count - 0 2 1x1x0 2
+param Idx - 0 2 1x1x0 0

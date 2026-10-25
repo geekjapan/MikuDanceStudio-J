@@ -1,0 +1,70 @@
+mds-mme-probe 1
+frame 0 0
+object chain8.pmx effect ray-mmd/Skybox/Time of day/Time of day.fx class 0 render 0 shown 1
+effect ray-mmd/Skybox/Time of day/Time of day.fx class 0 order 0 errors 0
+param time TIME 0 3 1x1x0 0
+param elapsed ELAPSEDTIME 0 3 1x1x0 0
+param MousePosition MOUSEPOSITION 1 3 1x2x0 3.7750001 -3.51666689
+param matWorld WORLD 2 3 4x4x0 0.99999994 0 0 0 0 0.99999994 0 0 0 0 0.99999994 0 0 0 0 0.99999994
+param matWorldInverse WORLDINVERSE 2 3 4x4x0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1
+param matWorldView WORLDVIEW 2 3 4x4x0 -0.999999881 0 8.74227695e-08 0 0 0.999999881 0 0 -8.74227624e-08 0 -0.99999994 0 0 -3.99999952 19.9999981 0.99999994
+param matWorldViewProject WORLDVIEWPROJECTION 2 3 4x4x0 -2.09927797 0 8.74236434e-08 8.74227695e-08 0 3.73205018 0 0 -1.83524719e-07 0 -1.00000989 -0.99999994 0 -14.9282007 19.0001888 19.9999981
+param matView VIEW 2 3 4x4x0 -0.99999994 0 8.74227766e-08 0 0 0.99999994 0 0 -8.74227695e-08 0 -1 0 0 -3.99999976 20 1
+param matViewInverse VIEWINVERSE 2 3 4x4x0 -1 0 -8.74227766e-08 0 0 1 0 0 8.74227695e-08 0 -1 0 -1.74845547e-06 4 19.9999981 1
+param matProject PROJECTION 2 3 4x4x0 2.09927845 0 0 0 0 3.73205066 0 0 0 0 1.00001001 1 0 0 -1.00001001 0
+param matProjectInverse PROJECTIONINVERSE 2 3 4x4x0 0.476354122 0 0 0 0 0.267949194 0 0 0 0 0 -0.999989927 0 0 0.99999994 0.99999994
+param matViewProject VIEWPROJECTION 2 3 4x4x0 -2.09927821 0 8.74236505e-08 8.74227766e-08 0 3.73205042 0 0 -1.83524733e-07 0 -1.00001001 -1 0 -14.9282017 19.0001907 20
+param matViewProjectInverse VIEWPROJECTIONINVERSE 2 3 4x4x0 -0.476354182 0 -4.16442134e-08 0 0 0.267948985 0 0 1.74843865e-06 -3.99996138 -19.9998074 -0.999990344 -1.66103337e-06 4.00000143 19.0000057 1.00000036
+param CameraPosition POSITION 1 3 1x3x0 -1.74845547e-06 4 19.9999981
+param CameraDirection DIRECTION 1 3 1x3x0 8.74227624e-08 0 -0.99999994
+param SunColor SPECULAR 1 3 1x3x0 0.625 0.625 0.625
+param SunDirection DIRECTION 1 3 1x3x0 -0.408248246 -0.816496491 0.408248246
+param MaterialDiffuse DIFFUSE 1 3 1x4x0 0 0 0 1
+param MaterialAmbient AMBIENT 1 3 1x3x0 0 0 0
+param MaterialSpecular SPECULAR 1 3 1x3x0 0 0 0
+param MaterialToon TOONCOLOR 1 3 1x3x0 1 1 1
+param MaterialPower SPECULARPOWER 0 3 1x1x0 0.100000001
+param ViewportSize VIEWPORTPIXELSIZE 1 3 1x2x0 640 360
+param AcsPosition CONTROLOBJECT 1 3 1x3x0 0 0 0
+param use_texture - 0 1 1x1x0 0
+param use_subtexture - 0 1 1x1x0 0
+param use_spheremap - 0 1 1x1x0 0
+param use_toon - 0 1 1x1x0 0
+param opadd - 0 1 1x1x0 0
+param mSunRadiusP CONTROLOBJECT 0 3 1x1x0 0
+param mSunRadiusM CONTROLOBJECT 0 3 1x1x0 0
+param mSunRadianceP CONTROLOBJECT 0 3 1x1x0 0
+param mSunRadianceM CONTROLOBJECT 0 3 1x1x0 0
+param mSunPhaseP CONTROLOBJECT 0 3 1x1x0 0
+param mSunPhaseM CONTROLOBJECT 0 3 1x1x0 0
+param mSunTurbidityP CONTROLOBJECT 0 3 1x1x0 0
+param mSunTurbidityM CONTROLOBJECT 0 3 1x1x0 0
+param mMiePhaseP CONTROLOBJECT 0 3 1x1x0 0
+param mMiePhaseM CONTROLOBJECT 0 3 1x1x0 0
+param mMieHeightP CONTROLOBJECT 0 3 1x1x0 0
+param mMieHeightM CONTROLOBJECT 0 3 1x1x0 0
+param mMieTurbidityP CONTROLOBJECT 0 3 1x1x0 0
+param mMieTurbidityM CONTROLOBJECT 0 3 1x1x0 0
+param mOzoneMassP CONTROLOBJECT 0 3 1x1x0 0
+param mOzoneMassM CONTROLOBJECT 0 3 1x1x0 0
+param mCloudP CONTROLOBJECT 0 3 1x1x0 0
+param mCloudM CONTROLOBJECT 0 3 1x1x0 0
+param mCloudSpeedP CONTROLOBJECT 0 3 1x1x0 0
+param mCloudSpeedM CONTROLOBJECT 0 3 1x1x0 0
+param mCloudTurbidityP CONTROLOBJECT 0 3 1x1x0 0
+param mCloudTurbidityM CONTROLOBJECT 0 3 1x1x0 0
+param mRayleighColorHP CONTROLOBJECT 0 3 1x1x0 0
+param mRayleighColorSP CONTROLOBJECT 0 3 1x1x0 0
+param mRayleighColorVP CONTROLOBJECT 0 3 1x1x0 0
+param mRayleighColorVM CONTROLOBJECT 0 3 1x1x0 0
+param mRayleighHeightP CONTROLOBJECT 0 3 1x1x0 0
+param mRayleighHeightM CONTROLOBJECT 0 3 1x1x0 0
+param mFogRangeP CONTROLOBJECT 0 3 1x1x0 0
+param mFogRangeM CONTROLOBJECT 0 3 1x1x0 0
+param mFogIntensityP CONTROLOBJECT 0 3 1x1x0 0
+param mFogIntensityM CONTROLOBJECT 0 3 1x1x0 0
+param mFogDensityP CONTROLOBJECT 0 3 1x1x0 0
+param mFogDensityM CONTROLOBJECT 0 3 1x1x0 0
+param mFogDensityFarP CONTROLOBJECT 0 3 1x1x0 0
+param mFogDensityFarM CONTROLOBJECT 0 3 1x1x0 0
+param BackColor - 1 3 1x4x0 0 0 0 0

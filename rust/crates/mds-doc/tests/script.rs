@@ -78,9 +78,13 @@ fn replay(name: &str) -> Result<usize, String> {
     let mut first = None;
     for (n, line) in script.lines().enumerate() {
         let step = n as u32 + 1;
-        let saved: Vec<Saved> = runner
-            .run_line(line, &mut |p| read_input(p))
-            .map_err(|e| format!("{name}.txt line {step} ({line}): {e}"))?;
+        let saved: Vec<Saved> = match runner.run_line(line, &mut |p| read_input(p)) {
+            Ok(s) => s,
+            Err(e) => {
+                let stop = format!("{name}.txt line {step} ({line}): {e}");
+                return Err(first.map_or(stop.clone(), |f| format!("{f}; then {stop}")));
+            }
+        };
         let saved: Vec<Saved> = saved
             .into_iter()
             .filter(|s| !s.name.ends_with(".emm"))

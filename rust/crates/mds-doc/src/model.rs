@@ -4,6 +4,7 @@
 //! `frame_clipboard.cpp`): mark clearing, undo entries with the records each
 //! step touches (`AppendBoneKeyToUndo`), and the frame bookkeeping.
 
+use crate::auto_interp;
 use crate::global::walk;
 use crate::history::{snapshot, Entry, History};
 use crate::{Error, ModelFile};
@@ -222,13 +223,10 @@ pub fn register_bones(
     auto_interpolation: bool,
     frame: u32,
 ) -> Result<(), Error> {
-    let rig = rig(m, s, auto_interpolation);
+    let rig = rig(m, s, false);
     let selected: Vec<usize> = (0..rig.bones.len())
         .filter(|&i| m.bone_pose[i].flags[2] != 0)
         .collect();
-    if auto_interpolation {
-        return Err(mds_edit::Error::Unsupported("automatic interpolation").into());
-    }
     if selected.iter().any(|&i| rig.bones[i].rigid_body) {
         return Err(mds_edit::Error::Unsupported("pose of a bone with a rigid body").into());
     }
@@ -249,6 +247,15 @@ pub fn register_bones(
     })?;
     for &b in &selected {
         m.bone_pose[b].flags[1] = 0;
+    }
+    if auto_interpolation {
+        let live = m.bone_keys.clone();
+        for &b in &selected {
+            let i = walk(&live, b as u32, frame)?;
+            if live.get(i).is_some_and(|k| k.frame == frame) {
+                auto_interp::rebuild(&mut m.bone_keys, &auto_interp::Live(&live), i);
+            }
+        }
     }
     fill_keys(&mut e.history, touched);
     first
@@ -468,10 +475,8 @@ pub fn delete(
     auto_interpolation: bool,
     frame: u32,
 ) -> Result<(), Error> {
-    let rig = rig(m, s, auto_interpolation);
-    if auto_interpolation {
-        return Err(mds_edit::Error::Unsupported("automatic interpolation").into());
-    }
+    let rig = rig(m, s, false);
+    let before = auto_interpolation.then(|| m.bone_keys.clone());
     let pool = &m.bone_keys;
     let marked: Vec<u32> = marked(pool).iter().map(|k| k.0).collect();
     if !marked.is_empty() {
@@ -506,6 +511,9 @@ pub fn delete(
         });
     }
     with_tracks(m, &mut e.search_cursor, |t| t.delete_marked(&rig))?;
+    if let Some(before) = before {
+        auto_interp::after_delete(&before, &mut m.bone_keys);
+    }
     Ok(())
 }
 

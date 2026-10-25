@@ -91,10 +91,12 @@
 //! fixed-axis twist, automatic interpolation).
 
 mod add_model;
+mod auto_interp;
 pub mod global;
 pub mod history;
 pub mod model;
 pub mod new_scene;
+mod readout;
 mod refresh;
 pub mod save;
 pub mod script;
@@ -187,6 +189,14 @@ pub enum Command {
     SetMorph {
         morph: u32,
         value: f32,
+    },
+    /// A bone readout edit in model mode (544..549, `CommitEditControlTail`,
+    /// `src/window/ui_edit_commit.cpp`, VA 0x0044BEF0) on the selected bone:
+    /// axes 0..2 set the translation, 3..5 the X, Y or Z degrees, composed
+    /// with the other two readout angles (`ComposeEulerToBone`).
+    BoneReadoutEdit {
+        axis: u8,
+        value: f64,
     },
     /// A morph lane combo (504, 509, 514, 519; `MorphRowSelect`,
     /// `src/window/command_dispatch.cpp`): `selectedMorphs[lane]`.
@@ -374,6 +384,8 @@ impl Document {
         Document {
             edit: EditState {
                 self_shadow_mode: shadow_mode_at(&pmm),
+                // `checkPhysicsFrame` (`window_init.cpp`) without a config.
+                auto_interpolation: true,
                 ..EditState::default()
             },
             pmm,
@@ -420,6 +432,7 @@ impl Document {
         if p.picture.enabled == 0 {
             (p.picture.offset, p.picture.scale) = (old.picture.offset, old.picture.scale);
         }
+        d.edit.auto_interpolation = self.edit.auto_interpolation;
         *self = d;
         Ok(())
     }
@@ -575,6 +588,31 @@ impl Document {
                 *m.morph_pose
                     .get_mut(morph as usize)
                     .ok_or(not("no such morph"))? = value;
+            }
+            Command::BoneReadoutEdit { axis, value } => {
+                let (i, s) = self.keyed()?;
+                let m = &mut self.pmm.models[i];
+                let Ok(b) = usize::try_from(m.selection.selected_bone) else {
+                    return Ok(());
+                };
+                if b >= m.bone_pose.len() || axis > 5 {
+                    return Err(not("no such bone or axis"));
+                }
+                if self.pmm.physics.playback_mode == 3 && s.bones[b].2 {
+                    return Err(not(
+                        "the readout of a rigid-body bone in physics mode 3 (not ported)",
+                    ));
+                }
+                model::push_pose_edit(m, &mut self.edit.models[i].history);
+                let p = &mut m.bone_pose[b];
+                let axis = usize::from(axis);
+                if axis < 3 {
+                    p.translation[axis] = value as f32;
+                } else {
+                    let deg = readout::euler_degrees(p.rotation);
+                    p.rotation = readout::rotation_edit(deg, axis - 3, value);
+                }
+                p.flags[1] = 1;
             }
             Command::SelectMorphLane { lane, morph } => {
                 let i = self.active_model()?;

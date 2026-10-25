@@ -260,6 +260,29 @@ impl Runner {
                 path: p.to_string(),
                 data: load(p)?,
             },
+            ["select", "bone", name] => {
+                // `SelectDisplayBone`: that bone only.
+                let m = self.doc.selected_model().ok_or("no model selected")?;
+                let b = m
+                    .bone_names
+                    .iter()
+                    .position(|n| n.text == *name)
+                    .ok_or_else(|| format!("the selected model has no bone {name}"))?;
+                Command::SelectBones(vec![b as u32])
+            }
+            ["bone", what @ ("position" | "rotation"), x, y, z] => {
+                let base = if *what == "position" { 0 } else { 3 };
+                for (i, v) in [x, y, z].into_iter().enumerate() {
+                    let cmd = Command::BoneReadoutEdit {
+                        axis: base + i as u8,
+                        value: atof(v, 100),
+                    };
+                    self.doc.apply(cmd).map_err(e)?;
+                }
+                return Ok(Vec::new());
+            }
+            ["register", "bone"] => Command::RegisterBoneKeys,
+            ["register", "display"] => Command::RegisterDisplayKey,
             ["select", "morph", lane, name] => {
                 let lane = lane_of(lane)?;
                 Command::SelectMorphLane {

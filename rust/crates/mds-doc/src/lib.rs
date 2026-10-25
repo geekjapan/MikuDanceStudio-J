@@ -288,6 +288,15 @@ pub enum Command {
     Copy,
     /// Frame paste (421), by mode, at the current frame.
     Paste,
+    /// Reverse paste (button 422, `PasteMirroredBoneKeyframes`): the copied
+    /// bone keys on their left/right counterparts, mirrored, at the current
+    /// frame ([`model::paste_bones`]). Nothing in camera mode.
+    PasteMirrored,
+    /// "Paste to another bone" (menu 250, `MDS_CMD_PASTE_AT_DIFFERENT_FRAME`,
+    /// `command_file_menu.cpp`), model mode: the copied bone keys on the
+    /// selected bone at the current frame. The accessory path of camera mode
+    /// is not ported.
+    PasteToSelectedBone,
     /// The delete button (423) and the Delete key (`DeleteMarkedKeyframes`).
     DeleteSelectedKeys,
     Undo,
@@ -938,6 +947,36 @@ impl Document {
                 }
                 self.refresh_context();
             }
+            Command::PasteMirrored | Command::PasteToSelectedBone => {
+                let mirrored = cmd == Command::PasteMirrored;
+                if self.camera_mode() {
+                    if mirrored {
+                        return Ok(());
+                    }
+                    return Err(not("pasting accessory keys to another accessory (not ported)"));
+                }
+                if self.edit.model_clipboard.bones.is_empty() {
+                    return Ok(());
+                }
+                let (i, s) = self.keyed()?;
+                let target = if mirrored {
+                    mds_edit::BoneTarget::Mirrored
+                } else {
+                    match self.pmm.models[i].selection.selected_bone {
+                        -1 => return Err(not("no bone is selected (a message box)")),
+                        b => mds_edit::BoneTarget::Selected(b),
+                    }
+                };
+                model::paste_bones(
+                    &mut self.pmm.models[i],
+                    &s,
+                    &mut self.edit.models[i],
+                    &self.edit.model_clipboard,
+                    frame as i32,
+                    target,
+                )?;
+                self.refresh_context();
+            }
             Command::DeleteSelectedKeys => {
                 if self.camera_mode() {
                     global::delete_selected(&mut self.pmm)?;
@@ -974,6 +1013,11 @@ impl Document {
                 };
                 if let Some(f) = to {
                     self.pmm.timeline.current_frame = f as i32;
+                }
+                // `RedoKeyframeEdit` seeks unless the entry it redid is a pose.
+                let h = &self.edit.models[i].history;
+                if cmd == Command::Redo && !matches!(h.undo[h.cursor], history::Entry::BonePose(_)) {
+                    self.refresh_context();
                 }
             }
             Command::LoadMotion(data) => {
@@ -1022,15 +1066,33 @@ impl Document {
             }
             Command::FrameLine { morph, insert } => {
                 use mds_ops as f;
+                let bones = !morph && !self.camera_mode();
+                let mut pose = Vec::new();
+                if bones {
+                    let m = &self.pmm.models[self.active_model()?];
+                    if !insert && self.edit.auto_interpolation && model::line_delete_rebuilds(m, frame)
+                    {
+                        return Err(Error::Edit(mds_edit::Error::Unsupported(
+                            "the curve rebuild of a frame-line delete",
+                        )));
+                    }
+                    pose = model::selection_snapshot(m);
+                }
                 let p = &mut self.pmm;
-                match (morph, insert) {
+                let undo = match (morph, insert) {
                     (false, true) => f::insert_bone_camera_frame_line(p),
                     (false, false) => f::delete_bone_camera_frame_line(p),
-                    (true, true) => f::insert_morph_light_frame_line(p),
-                    (true, false) => f::delete_morph_light_frame_line(p),
+                    (true, true) => f::insert_morph_light_frame_line(p).map(|()| None),
+                    (true, false) => f::delete_morph_light_frame_line(p).map(|()| None),
                 }
                 .map_err(ops)?;
-                if !self.camera_mode() {
+                if bones {
+                    // No key moved: the C++ returns before the undo entry and the seek.
+                    let Some(keys) = undo else { return Ok(()) };
+                    let i = self.active_model()?;
+                    self.edit.models[i].history.push(history::Entry::BoneKeys { frame, pose, keys });
+                    self.refresh_context();
+                } else if !self.camera_mode() {
                     self.refresh_context();
                 } else if morph {
                     refresh::light(&mut self.pmm);

@@ -380,6 +380,8 @@ impl Runner {
             ["load", "vmd", p] => Command::LoadMotion(load(p)?),
             ["copy"] => Command::Copy,
             ["paste"] => Command::Paste,
+            ["paste", "reverse"] => Command::PasteMirrored,
+            ["paste", "different"] => Command::PasteToSelectedBone,
             ["delete"] => Command::DeleteSelectedKeys,
             ["line", op, track] => Command::FrameLine {
                 morph: match *track {

@@ -5,7 +5,7 @@
 //! step touches (`AppendBoneKeyToUndo`), and the frame bookkeeping.
 
 use crate::global::walk;
-use crate::history::{snapshot, Entry, History};
+use crate::history::{snapshot, Entry, History, PoseSnapshot};
 use crate::{Error, ModelFile};
 use mds_edit::{
     BoneClip, BoneExtra, BoneInfo, BoneTarget, DisplayClip, Extra, IkChain, MorphClip, MorphInfo,
@@ -519,6 +519,78 @@ pub fn paste(
     first
 }
 
+/// `strstr` on C strings.
+fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// `FindMirroredBone` (`key_registrars.cpp`), as `mds-edit` resolves it, for
+/// the undo records: a name with 左 maps to the first bone with 右 and the
+/// same text after it, else 右 to 左, else the bone of the same name.
+fn mirrored_bone(rig: &Rig, name: &[u8]) -> Option<usize> {
+    const RIGHT: &[u8] = b"\x89\x45";
+    const LEFT: &[u8] = b"\x8D\xB6";
+    let name = cstr(name);
+    let opposite = |marker: &[u8], other: &[u8]| -> Option<usize> {
+        let suffix = &name[find(name, marker)? + 2..];
+        rig.bones.iter().position(|b| {
+            let b = cstr(&b.name);
+            find(b, other).is_some_and(|at| &b[at + 2..] == suffix)
+        })
+    };
+    opposite(LEFT, RIGHT)
+        .or_else(|| opposite(RIGHT, LEFT))
+        .or_else(|| rig.bones.iter().position(|b| cstr(&b.name) == name))
+}
+
+/// The bone loops of reverse paste (button 422, `PasteMirroredBoneKeyframes`,
+/// `frame_clipboard.cpp`) and of "paste to the selected bone"
+/// (`MDS_CMD_PASTE_AT_DIFFERENT_FRAME`, `command_file_menu.cpp`) at `frame`:
+/// with any copied bone key, every mark cleared, an undo entry of every
+/// bone's pose and the records the registers touch, then the bone keys on
+/// `target` until one fails. Morph and display keys are not pasted.
+pub fn paste_bones(
+    m: &mut pmm::Model,
+    s: &Skeleton,
+    e: &mut ModelEdit,
+    clip: &ModelClipboard,
+    frame: i32,
+    target: BoneTarget,
+) -> Result<(), Error> {
+    if clip.bones.is_empty() {
+        return Ok(());
+    }
+    let rig = rig(m, s, false);
+    let extra = extra(m, s, e, Physics { checkbox: true, mode: 0 });
+    e.history.push(Entry::BoneKeys {
+        frame: frame as u32,
+        pose: snapshot(m, 0..rig.bones.len()),
+        keys: Vec::new(),
+    });
+    let mut touched = Touched::default();
+    let r = with_tracks(m, &mut e.search_cursor, |t| {
+        t.clear_marks();
+        t.reset_bone_cursor(&rig);
+        for c in &clip.bones {
+            let bone = match target {
+                BoneTarget::Named => {
+                    let want = cstr(&c.name);
+                    rig.bones.iter().position(|b| cstr(&b.name) == want)
+                }
+                BoneTarget::Selected(b) => usize::try_from(b).ok(),
+                BoneTarget::Mirrored => mirrored_bone(&rig, &c.name),
+            };
+            if let Some(b) = bone {
+                touched.register(t, b as u32, (frame as u32).wrapping_add(c.frame))?;
+            }
+            t.register_bone_key_with(&rig, &extra, c, frame, target)?;
+        }
+        Ok::<_, Error>(())
+    });
+    fill_keys(&mut e.history, touched);
+    r
+}
+
 fn cstr(s: &[u8]) -> &[u8] {
     &s[..s.iter().position(|&b| b == 0).unwrap_or(s.len())]
 }
@@ -731,6 +803,26 @@ pub fn delete(
     }
     with_tracks(m, &mut e.search_cursor, |t| t.delete_marked(&rig))?;
     Ok(())
+}
+
+/// `SnapshotPose` of the bone frame-line commands (`frame_line_edit.cpp`):
+/// every bone's pose, with the selection byte where the other snapshots
+/// keep the edited mark.
+pub fn selection_snapshot(m: &pmm::Model) -> Vec<PoseSnapshot> {
+    let mut pose = snapshot(m, 0..m.bone_pose.len());
+    for (s, p) in pose.iter_mut().zip(&m.bone_pose) {
+        s.edited = p.flags[2];
+    }
+    pose
+}
+
+/// Whether `DeleteBoneCameraFrameLine` at `frame` reaches its curve rebuild:
+/// a bone key at `frame` is removed, or one shifts onto frame 0.
+pub fn line_delete_rebuilds(m: &pmm::Model, frame: u32) -> bool {
+    m.bone_keys
+        .records()
+        .iter()
+        .any(|(_, k)| k.frame != 0 && (k.frame == frame || (frame < k.frame && k.frame == 1)))
 }
 
 /// `PushBoneEditUndo` (VA 0x0042D6E0) before a pose edit: the selected

@@ -5,14 +5,32 @@
 //!
 //! The bone and facial variants edit the active model, the camera and light
 //! variants the global track, by the edit mode (`settings.options[0]`). The
-//! automatic-interpolation checkbox is taken as clear (see [`mds_edit`]), so
-//! the interpolation rebuild of the bone delete does not run.
+//! bone variants return the records their undo entry holds ([`BoneUndo`]).
+//! The automatic-interpolation checkbox is taken as clear, so the
+//! interpolation rebuild of the bone delete does not run; the caller refuses
+//! a delete that would reach it (`mds-edit` keeps `RebuildBoneInterpolation`
+//! private).
 
 use crate::model::active_model;
 use crate::pool::{atomic, indices, links, read, record_indices, slot, unlink, Rec};
 use crate::Result;
 use mds_formats::key_pool::KeyPool;
 use mds_formats::pmm::{BoneKey, CameraKey, LightKey, MorphKey, Pmm};
+use std::collections::BTreeMap;
+
+/// The bone records `AppendBoneKeyToUndo` captured, by index, each as it was
+/// at its first capture (`None`: never used). `None` instead of a list: no
+/// key moved, and the C++ returns before the undo entry and the seek.
+pub type BoneUndo = Option<Vec<(u32, Option<BoneKey>)>>;
+
+/// `AppendBoneKeyToUndo`: the first capture of an index wins.
+type Touch<'a, K> = &'a mut dyn FnMut(&KeyPool<K>, u32);
+
+fn capture(map: &mut BTreeMap<u32, Option<BoneKey>>) -> impl FnMut(&KeyPool<BoneKey>, u32) + '_ {
+    |pool, i| {
+        map.entry(i).or_insert_with(|| pool.get(i).cloned());
+    }
+}
 
 fn camera_mode(pmm: &Pmm) -> bool {
     pmm.settings.options[0] != 0
@@ -29,11 +47,13 @@ fn insert_line<K: Rec>(
     pool: &mut KeyPool<K>,
     which: Vec<u32>,
     frame: u32,
+    touch: Touch<K>,
     mut bump: impl FnMut(u32),
 ) -> Result<()> {
     for i in which {
         let key_frame = links(pool, i)?.0;
         if key_frame != 0 && key_frame >= frame {
+            touch(pool, i);
             slot(pool, i)?.set_frame(key_frame.wrapping_add(1));
             bump(key_frame.wrapping_add(1));
         }
@@ -55,16 +75,21 @@ fn delete_line<K: Rec>(
     pool: &mut KeyPool<K>,
     which: Vec<u32>,
     frame: u32,
+    touch: Touch<K>,
     d: &Delete<K>,
 ) -> Result<()> {
     for i in which {
         let (key_frame, prev, next) = links(pool, i)?;
         if key_frame != 0 && key_frame == frame {
+            for j in [prev, i, next] {
+                touch(pool, j);
+            }
             unlink(pool, prev, next)?;
             (d.clear)(slot(pool, i)?);
             continue;
         }
         if key_frame != 0 && frame < key_frame {
+            touch(pool, i);
             let shifted = key_frame - 1;
             slot(pool, i)?.set_frame(shifted);
             if shifted == 0 {
@@ -92,35 +117,37 @@ fn clear_bone(k: &mut BoneKey) {
 /// Menu 255, `InsertBoneCameraFrameLine` (`src/window/frame_line_edit.cpp`
 /// 184-249). Bone mode shifts the non-head bone keys (`i >= boneCount`) and
 /// raises the model's `max_frame` to the largest new frame; camera mode
-/// shifts the camera track and raises `last_registered_frame`.
-pub fn insert_bone_camera_frame_line(pmm: &mut Pmm) -> Result<()> {
+/// shifts the camera track and raises `last_registered_frame` (and has no
+/// undo: `Ok(None)`).
+pub fn insert_bone_camera_frame_line(pmm: &mut Pmm) -> Result<BoneUndo> {
     let frame = current(pmm);
     if !camera_mode(pmm) {
         let m = active_model(pmm)?;
         let model = &mut pmm.models[m];
         let mut max = model.selection.max_frame;
         let which = record_indices(&model.bone_keys, |_| true);
+        let mut undo = BTreeMap::new();
         atomic(&mut model.bone_keys, |p| {
-            insert_line(p, which, frame, |new| {
+            insert_line(p, which, frame, &mut capture(&mut undo), |new| {
                 if (max as i32) < new as i32 {
                     max = new;
                 }
             })
         })?;
         model.selection.max_frame = max;
-        return Ok(());
+        return Ok((!undo.is_empty()).then(|| undo.into_iter().collect()));
     }
     let mut last = pmm.timeline.last_registered_frame;
     let which = indices(&pmm.camera, |_, _| true);
     atomic(&mut pmm.camera, |p| {
-        insert_line(p, which, frame, |new| {
+        insert_line(p, which, frame, &mut |_, _| {}, |new| {
             if last < new as i32 {
                 last = new as i32;
             }
         })
     })?;
     pmm.timeline.last_registered_frame = last;
-    Ok(())
+    Ok(None)
 }
 
 /// Menu 257, `InsertFacialLightFrameLine` (`frame_line_edit.cpp` 392-432).
@@ -132,7 +159,7 @@ pub fn insert_morph_light_frame_line(pmm: &mut Pmm) -> Result<()> {
         let mut last = pmm.timeline.last_registered_frame;
         let which = indices(&pmm.light, |_, _| true);
         atomic(&mut pmm.light, |p| {
-            insert_line(p, which, frame, |new| {
+            insert_line(p, which, frame, &mut |_, _| {}, |new| {
                 if last < new as i32 {
                     last = new as i32;
                 }
@@ -146,7 +173,7 @@ pub fn insert_morph_light_frame_line(pmm: &mut Pmm) -> Result<()> {
     let mut max = model.selection.max_frame;
     let which = record_indices(&model.morph_keys, |_| true);
     atomic(&mut model.morph_keys, |p| {
-        insert_line(p, which, frame, |new| {
+        insert_line(p, which, frame, &mut |_, _| {}, |new| {
             if (max as i32) < new as i32 {
                 max = new;
             }
@@ -165,18 +192,20 @@ pub fn insert_morph_light_frame_line(pmm: &mut Pmm) -> Result<()> {
 /// the x and y of eye and target, the first four bytes of each curve row,
 /// and its mark; its eye z, target z and parent stay. A camera key shifted
 /// onto frame 0 gives the head its distance, eye, target, curves,
-/// perspective and fov.
-pub fn delete_bone_camera_frame_line(pmm: &mut Pmm) -> Result<()> {
+/// perspective and fov. The camera variant has no undo (`Ok(None)`).
+pub fn delete_bone_camera_frame_line(pmm: &mut Pmm) -> Result<BoneUndo> {
     let frame = current(pmm);
     if !camera_mode(pmm) {
         let m = active_model(pmm)?;
         let pool = &mut pmm.models[m].bone_keys;
         let which = record_indices(pool, |_| true);
-        return atomic(pool, |p| {
+        let mut undo = BTreeMap::new();
+        atomic(pool, |p| {
             delete_line(
                 p,
                 which,
                 frame,
+                &mut capture(&mut undo),
                 &Delete {
                     clear: |k: &mut BoneKey| {
                         clear_bone(k);
@@ -192,7 +221,8 @@ pub fn delete_bone_camera_frame_line(pmm: &mut Pmm) -> Result<()> {
                     },
                 },
             )
-        });
+        })?;
+        return Ok((!undo.is_empty()).then(|| undo.into_iter().collect()));
     }
     let which = indices(&pmm.camera, |_, _| true);
     atomic(&mut pmm.camera, |p| {
@@ -200,6 +230,7 @@ pub fn delete_bone_camera_frame_line(pmm: &mut Pmm) -> Result<()> {
             p,
             which,
             frame,
+            &mut |_, _| {},
             &Delete {
                 clear: |k: &mut CameraKey| {
                     k.next = 0;
@@ -226,7 +257,8 @@ pub fn delete_bone_camera_frame_line(pmm: &mut Pmm) -> Result<()> {
                 },
             },
         )
-    })
+    })?;
+    Ok(None)
 }
 
 /// Menu 258, `DeleteFacialLightFrameLine` (`frame_line_edit.cpp` 435-526).
@@ -245,6 +277,7 @@ pub fn delete_morph_light_frame_line(pmm: &mut Pmm) -> Result<()> {
                 p,
                 which,
                 frame,
+                &mut |_, _| {},
                 &Delete {
                     clear: |k: &mut LightKey| {
                         k.next = 0;
@@ -269,6 +302,7 @@ pub fn delete_morph_light_frame_line(pmm: &mut Pmm) -> Result<()> {
             p,
             which,
             frame,
+            &mut |_, _| {},
             &Delete {
                 clear: |k: &mut MorphKey| {
                     k.frame = 0;

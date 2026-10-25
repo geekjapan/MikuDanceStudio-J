@@ -118,7 +118,7 @@ pub use facial::{
     reset_morphs, shift_lip_frames,
 };
 pub use frame_line::{
-    delete_bone_camera_frame_line, delete_morph_light_frame_line, insert_bone_camera_frame_line,
+    delete_bone_camera_frame_line, BoneUndo, delete_morph_light_frame_line, insert_bone_camera_frame_line,
     insert_morph_light_frame_line,
 };
 pub use model::{active_model, BoneFacts, ModelFacts};

@@ -325,7 +325,7 @@ fn a_broken_chain_is_reported_and_leaves_the_pool_alone() {
     // Record 14 links to a record past the pool.
     p.models[0].bone_keys.get_mut(14).unwrap().next = 700_000;
     let before = shape(&p.models[0].bone_keys);
-    assert_eq!(delete_bone_camera_frame_line(&mut p), Err(Error::Corrupt));
+    assert_eq!(delete_bone_camera_frame_line(&mut p).err(), Some(Error::Corrupt));
     assert_eq!(shape(&p.models[0].bone_keys), before);
 }
 
@@ -338,5 +338,5 @@ fn global_commands_do_not_need_a_model() {
     insert_bone_camera_frame_line(&mut p).unwrap();
     delete_morph_light_frame_line(&mut p).unwrap();
     camera_mode(&mut p, false);
-    assert_eq!(insert_bone_camera_frame_line(&mut p), Err(Error::NoModel));
+    assert_eq!(insert_bone_camera_frame_line(&mut p).err(), Some(Error::NoModel));
 }

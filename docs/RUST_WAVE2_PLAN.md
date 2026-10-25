@@ -24,6 +24,7 @@ Each directory has a README with the build, host, and sha256 of each file. Oracl
 | `render` | 2a | `mds-render` core. wgpu offscreen rendering of a PMX model in bind pose with standard MMD shading. | Image hashes of the fixture models, recorded by the slice itself, with a fixed adapter and size. A run without a GPU adapter reports SKIP, not pass. |
 | `edit` | 2a | `mds-edit`. Keyframe register, paste, and delete over the `mds-formats` key pools. | The Rust operations replay the operation sequences of `tools/keypool_check` to depth 4 and give the same pool states as the C++ harness, which gets a state dump mode in this slice. A property test checks the pool invariants in `.claude/skills/verify-keyframe-pool/SKILL.md`. |
 | `golden` | 2a | `--mds-frame-dump <pmm> <dir> <frames>` in the C++ app, and golden images of the fixture models. Windows. | Two runs give the same bytes. The images are committed under `tests/fixtures/rust/golden/` with a README. |
+| `rcptable` | 2b | The `rcpss` and `rsqrtss` results of the Windows host's CPU for every f32 input, recorded by a new oracle tool, and `mds-math` switched from its modelled estimate tables to the recorded ones. Windows. | `mds-math` reproduces both instructions for all 2^32 inputs, checked against committed block digests the same way as `crtmath`. The 428 D3DX vectors still match. |
 | `pose` | 2b | `mds-pose`. Bone hierarchy, IK, append transforms, and morphs, from the L1 evaluation of `mds-scene`. | The `bone`, `bonew`, and `morph` lines of `l2/swing600-nophys-600.trace` match. |
 | `physics` | 2b | `mds-physics`. Bullet in the loop through `mds-bullet-sys`, linked to `mds-crtmath`. | All lines of both L2 traces match, `rigid` included. |
 | `passplan` | 2b | A pass-plan dump of the MME runtime in the C++ app, and plans for the ray-mmd corpus. Windows. | Two runs give the same bytes. The plans are committed under `tests/fixtures/rust/mme/`. |
@@ -34,7 +35,7 @@ UI (egui), media output, and packaging are wave 2c. They get slices once the 2b 
 
 ## Licensing
 
-The rule in `docs/RUST_MIGRATION_PLAN.md` holds. A slice is `MIT` only if it ports no upstream code. `math`, `crtmath`, `render`, and `rendergold` are `MIT`, so their agents read no upstream C++ under `src/`, `include/`, or `third_party/mmeffect/`. They work from the oracles, the fixtures, public format documents, and the wave 1 crates they depend on. The other slices port upstream code and leave the `license` field unset.
+The rule in `docs/RUST_MIGRATION_PLAN.md` holds. A slice is `MIT` only if it ports no upstream code. `math`, `rcptable`, `crtmath`, `render`, and `rendergold` are `MIT`, so their agents read no upstream C++ under `src/`, `include/`, or `third_party/mmeffect/`. `crtmath` is `MIT AND BSD-3-Clause`, because it translates AMD AOCL-LibM, and its README keeps AMD's notice. They work from the oracles, the fixtures, public format documents, and the wave 1 crates they depend on. The other slices port upstream code and leave the `license` field unset.
 
 ## How the root runs a slice
 

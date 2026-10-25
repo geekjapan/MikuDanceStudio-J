@@ -12,3 +12,4 @@ physics	2b	crtmath,pose	mac	opus	pending	rust/crates/mds-physics/,rust/crates/md
 passplan	2b	golden	windows	sonnet	pending	src/tools/,tools/oracle/,tests/fixtures/rust/mme/,CMakeLists.txt
 rendergold	2b	render,golden	mac	sonnet	MIT	rust/crates/mds-render/
 mme	2b	render,passplan	mac	opus	pending	rust/crates/mds-mme/
+rcptable	2b	math	windows	opus	MIT	tools/oracle/,tests/fixtures/rust/math/rcp/,rust/crates/mds-math/

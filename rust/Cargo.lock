@@ -1268,6 +1268,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-kinect"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+ "libloading 0.9.0",
+ "libm",
+ "mds-crtmath",
+ "mds-math",
+]
+
+[[package]]
 name = "mds-math"
 version = "0.1.0"
 dependencies = [

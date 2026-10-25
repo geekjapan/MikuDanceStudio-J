@@ -165,7 +165,7 @@ fn skin_matches_the_cpp_harness() {
     let expected = std::fs::read_to_string(dir.join("skin.dump")).unwrap();
     let actual = run(&cases);
     let cases_run = expected.lines().filter(|l| l.starts_with("case ")).count();
-    assert_eq!(cases_run, 17);
+    assert_eq!(cases_run, 26);
     for (n, (a, e)) in actual.lines().zip(expected.lines()).enumerate() {
         assert_eq!(a, e, "first mismatch at dump line {}", n + 1);
     }

@@ -9,26 +9,28 @@ writes the same text from Rust and requires it to be byte-identical.
 
 | File | sha256 |
 |---|---|
-| `skin.dump` | `0c828bb84034d260ee8737800580fd420d9870bca98ba330554bc7cae0efc6ce` |
-| `cases.txt` | `8a26af0905801e49a49151bf004fc92e31cd6da5957a6f575cbfb20fddafb985` |
+| `skin.dump` | `b5aa5f1204078a1650279c417b1bb3f6135c1916167f1269c7de6087e21c6309` |
+| `cases.txt` | `9a1da11806023ad9eee6bee8c326aebf3bb55f6cf8270cc57c1f0079d5d63cd6` |
 | `skin.pmx` | `c717df6ee5ee9072085cf51b155c163d30405616cb0b2aaf824914481d0bcd45` |
 | `skin.pmd` | `133c53b04d7c3cdcb09d7c61009ee27d7ab527875cf437606cbfb839e50f6470` |
+| `skin_dup.pmx` | `4bcd391e3c9ce0bcae283b9eb3c15bbb84ea62adc0cd79949b5e9559c43be431` |
+| `skin_uv4.pmx` | `2f80eeafdb75f07c240151df2baa1bdf76e82d58a8e638c47459c705b76a4bed` |
 
 ## Regenerate
 
 From the repository root, on macOS with Apple clang and cargo:
 
 ```sh
-python3 -I tests/fixtures/rust/skin/gen_skin.py --write   # skin.pmx, skin.pmd, cases.txt
+python3 -I tests/fixtures/rust/skin/gen_skin.py --write   # the models and cases.txt
 tools/skin_check/run.sh tests/fixtures/rust/skin/skin.dump
 shasum -a 256 tests/fixtures/rust/skin/*.dump tests/fixtures/rust/skin/cases.txt
 ```
 
-`gen_skin.py --check` compares the three generated files with the committed
+`gen_skin.py --check` compares the generated files with the committed
 ones without writing anything.
 
 The cases cover `chain8.pmx`, `chain8.pmd` and `morph4.pmx` (in
-`tests/fixtures/rust`) plus the two models here, 17 cases in total.
+`tests/fixtures/rust`) plus the four models here, 26 cases in total.
 `skin.pmx` has:
 
 - BDEF1, BDEF2, BDEF4 and SDEF vertices, and bone references of -1.
@@ -47,6 +49,14 @@ C++ loader accepts only PMX 2.0, which has no QDEF. `skin.pmd` has:
 - Vertices with the edge off.
 
 Both models also have a case with `-0.0` matrix entries.
+
+`skin_dup.pmx` has the vertices, bones and materials of `skin.pmx` and four
+bone morphs: three that name bones twice in one morph and across morphs, and a
+group over them. The C++ loader skips a bone for the bone morph table only
+when an earlier morph moves it (`pmx_load.cpp`, the `j < i` scans), so a bone
+named twice in one morph gets a second, unused `b` record. `skin_uv4.pmx` has
+four additional UVs and a morph of every UV kind from 3 to 7, two of them
+(kind 7) sharing a vertex, and a group morph.
 
 ## How the harness computes
 

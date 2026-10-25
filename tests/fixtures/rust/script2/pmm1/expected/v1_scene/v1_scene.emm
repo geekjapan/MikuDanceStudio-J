@@ -1,0 +1,17 @@
+[Info]
+Version = 3
+
+[Object]
+Pmd0 = C:\mds\w2-script2\repo\out\ci\build\Release\chain8.pmd
+Acs0 = C:\mds\w2-script2\repo\out\ci\build\Release\sphere.x
+Acs1 = C:\mds\w2-script2\repo\out\ci\build\Release\cube.x
+
+[Effect]
+Default = none
+Pmd0 = none
+Pmd0.show = true
+Acs0 = none
+Acs0.show = true
+Acs1 = none
+Acs1.show = true
+

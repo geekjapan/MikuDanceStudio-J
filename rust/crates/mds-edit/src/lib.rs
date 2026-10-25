@@ -28,8 +28,8 @@ mod delete;
 mod link;
 mod register;
 
-pub use link::Link;
-pub use register::{BoneClip, BoneTarget, DisplayClip, MorphClip};
+pub use link::{rebuild_interpolation, Link};
+pub use register::{mirrored_bone, twist, BoneClip, BoneTarget, DisplayClip, MorphClip};
 
 use mds_formats::key_pool::{KeyPool, BONE_KEY_CAPACITY, DISPLAY_KEY_CAPACITY, MORPH_KEY_CAPACITY};
 use mds_formats::pmm::{BoneKey, DisplayKey, MorphKey};

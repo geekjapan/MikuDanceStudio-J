@@ -1,0 +1,20 @@
+[Info]
+Version = 3
+
+[Object]
+Pmd0 = C:\mds\w2-script2\repo\out\ci\build\Release\chain8.pmd
+Acs0 = C:\mds\w2-script2\repo\out\ci\build\Release\cube.x
+Pmd1 = C:\mds\w2-script2\repo\out\ci\build\Release\rig3.pmd
+Pmd2 = C:\mds\w2-script2\repo\out\ci\build\Release\rig3.pmd
+
+[Effect]
+Default = none
+Pmd0 = none
+Pmd0.show = true
+Acs0 = none
+Acs0.show = true
+Pmd1 = none
+Pmd1.show = true
+Pmd2 = none
+Pmd2.show = true
+

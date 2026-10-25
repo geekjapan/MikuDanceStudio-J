@@ -7,7 +7,7 @@
 //! - E9015: the D3D assembly listing of each compiled entry (before; `mds-mmert` reads its
 //!   `dcl` lines) and [`Vkd3d::scan_hlsl`] (after). Where the listing exists, the scan gives the
 //!   same declarations.
-//! - E9022 and the rest: no workaround here; `vkd3d-patches/` fixes E9022 in the library.
+//! - E9022 and the rest: no workaround here; `tools/vkd3d/patches/` fixes E9022 in the library.
 //!
 //! It also checks that the WGSL entry point of every compiled entry is `entry_point`.
 //! It prints SKIP when the corpus is missing: a skip is not a pass.

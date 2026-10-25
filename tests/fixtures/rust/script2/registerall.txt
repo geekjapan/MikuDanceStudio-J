@@ -1,0 +1,11 @@
+# Menu 229 (register all facial frames) on morph4.pmx with swing600.vmd at frame
+# 100, with い set to 0.75 first.
+load model morph4.pmx
+load vmd swing600.vmd
+frame 100
+select morph 2 い
+morph 2 0.75
+register all morph
+save pmm registered-all.pmm
+select all morph
+save vmd registered-all.vmd

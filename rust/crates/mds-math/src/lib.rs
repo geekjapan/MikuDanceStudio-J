@@ -2,9 +2,10 @@
 //!
 //! The target is bit equality with `d3dx9_43.dll` on x64 Intel, as recorded in
 //! `tests/fixtures/rust/math/d3dx-vectors.txt`. The orders of float operations
-//! and the reciprocal and reciprocal-square-root approximations below were
-//! worked out from that data alone. Everything is plain `f32` arithmetic (Rust
-//! never fuses multiply and add), so results do not depend on the host CPU.
+//! below were worked out from that data alone; the reciprocal and
+//! reciprocal-square-root estimates come from tables recorded on the same CPU.
+//! Everything is plain `f32` arithmetic (Rust never fuses multiply and add), so
+//! results do not depend on the host CPU.
 //!
 //! Matrices are row-major like `D3DXMATRIX`. Quaternions are `[x, y, z, w]`.
 
@@ -16,51 +17,50 @@ pub struct Quat(pub [f32; 4]);
 pub struct Mat4(pub [f32; 16]);
 
 // ---------------------------------------------------------------------------
-// Hardware approximations. D3DX takes a 12-bit reciprocal or reciprocal square
-// root estimate and refines it with one Newton step; the estimate comes from the
-// table of the Intel CPU that wrote the vectors. The table is modelled as: bucket
-// the mantissa, take the bucket centre, and round the exact result to 13 bits.
-// Only normal, non-zero inputs are modelled; other inputs are not covered by
-// the vectors.
+// Hardware approximations. D3DX takes the 12-bit `rcpss` or `rsqrtss` estimate
+// and refines it with one Newton step. The estimates below reproduce those of
+// the i9-12900K that wrote the vectors for all 2^32 inputs, from the tables in
+// `tests/fixtures/rust/math/rcp/` and the rules of `tools/oracle/rcp_table.cpp`.
 // ---------------------------------------------------------------------------
 
-fn pow2(k: i32) -> f64 {
-    f64::from_bits(((k + 1023) as u64) << 52)
+mod estimate_table;
+use estimate_table::{RCP, RSQRT};
+
+/// `rcpss` under the default MXCSR, bit for bit, NaN payloads included.
+pub fn rcp_estimate(x: f32) -> f32 {
+    let b = x.to_bits();
+    let sign = b & 0x8000_0000;
+    let exp = (b >> 23) & 0xff;
+    f32::from_bits(match exp {
+        0 => sign | 0x7f80_0000,
+        255 if b & 0x7f_ffff != 0 => b | 0x40_0000,
+        // Infinities, and results below the normal range, give zero.
+        253..=255 => sign,
+        _ => sign | (253 - exp) << 23 | RCP[(b >> 12 & 0x7ff) as usize] & 0x7f_ffff,
+    })
 }
 
-/// Estimate of `1 / x`: 2048 buckets over the mantissa.
-fn rcp_estimate(x: f32) -> f32 {
-    let bits = x.to_bits();
-    let exp = ((bits >> 23) & 0xff) as i32;
-    if exp == 0 {
-        return f32::INFINITY.copysign(x);
-    }
-    if exp == 255 {
-        return if x.is_nan() { x } else { 0.0f32.copysign(x) };
-    }
-    let centre = 1.0 + (f64::from((bits & 0x7f_ffff) >> 12) + 0.5) / 2048.0;
-    let q = (8192.0 / centre).round_ties_even();
-    ((q / 8192.0 * pow2(127 - exp)) as f32).copysign(x)
-}
-
-/// Estimate of `1 / sqrt(x)` for `x > 0`: 1024 buckets for each exponent parity.
-fn rsqrt_estimate(x: f32) -> f32 {
-    let bits = x.to_bits();
-    let exp = ((bits >> 23) & 0xff) as i32;
-    if exp == 0 {
-        return f32::INFINITY;
-    }
-    if exp == 255 || x < 0.0 {
-        return if x == f32::INFINITY { 0.0 } else { f32::NAN };
-    }
-    let mut e = exp - 127;
-    let mut centre = 1.0 + (f64::from((bits & 0x7f_ffff) >> 13) + 0.5) / 1024.0;
-    if e & 1 != 0 {
-        centre *= 2.0;
-        e -= 1;
-    }
-    let q = (8192.0 / centre.sqrt()).round_ties_even();
-    (q / 8192.0 * pow2(-e / 2)) as f32
+/// `rsqrtss` under the default MXCSR, bit for bit, NaN payloads included.
+pub fn rsqrt_estimate(x: f32) -> f32 {
+    let b = x.to_bits();
+    let exp = (b >> 23) & 0xff;
+    f32::from_bits(if b & 0x7fff_ffff > 0x7f80_0000 {
+        b | 0x40_0000
+    } else if b >> 31 != 0 {
+        if exp == 0 {
+            0xff80_0000
+        } else {
+            0xffc0_0000
+        }
+    } else if exp == 0 {
+        0x7f80_0000
+    } else if exp == 255 {
+        0
+    } else {
+        // Index bit 10 is the exponent parity; the table covers exponents 126 and 127.
+        let shift = (exp as i32 - 126 - (exp & 1) as i32) / 2;
+        (RSQRT[(b >> 13 & 0x7ff) as usize] as i32 - (shift << 23)) as u32
+    })
 }
 
 /// `1 / x` as D3DX computes it: estimate, then `r + r - x * r * r`.

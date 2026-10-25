@@ -1,8 +1,8 @@
 vkd3d-shader 2.1: sm3 pixel shader vPos and vFace reads with other inputs.
 
 This is a modification of vkd3d-shader 2.1 (libs/vkd3d-shader/ir.c) and is under the
-vkd3d-shader license, LGPL-2.1 or later. tools/vkd3d/build.sh does not apply it yet;
-apply it in the vkd3d-2.1 source directory with `patch -p1`.
+vkd3d-shader license, LGPL-2.1 or later. tools/vkd3d/build.sh applies it in the vkd3d-2.1
+source directory with `patch -p1`.
 
 vsir_program_normalise_io_registers() has two faults for a ps_3_0 shader that reads vPos
 or vFace:

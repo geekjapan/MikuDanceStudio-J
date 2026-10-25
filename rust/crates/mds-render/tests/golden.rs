@@ -1,10 +1,10 @@
 //! The rendered swing600-golden scene against the golden images of the C++ app
 //! (`tests/fixtures/rust/golden/`: frames 0, 150, 300 and 599, 640x360, 8x MSAA, D3D9).
 //!
-//! The metric, per pixel: the largest difference over R, G and B (alpha is 255 on both sides). Over
-//! the pixels of a part of the picture the part passes when at least `min_close` of them differ by
-//! at most `tolerance` and none differs by more than `max_diff` (the [`Limits`] below). The only
-//! pixels left out are what the C++ app draws apart from the models (see [`overlay`]).
+//! The metric, per pixel: the largest difference over R, G and B (alpha is 255 on both sides). The
+//! whole picture passes when at least [`LIMITS`]`.min_close` of the pixels differ by at most
+//! `tolerance` and none differs by more than `max_diff`. The only pixels left out are what the C++
+//! app draws apart from the models (see [`overlay`]).
 //!
 //! `MDS_RENDER_PNG_DIR=<dir>` writes `render-<frame>.png` and `diff-<frame>.png` (4 times the
 //! difference; masked pixels magenta) for a human to look at.
@@ -25,30 +25,24 @@ use std::path::PathBuf;
 const W: usize = 640;
 const H: usize = 360;
 
-/// What a part of the picture must reach. A pixel is close when no channel is further than
-/// `tolerance` from the golden image.
-#[derive(Clone, Copy)]
+/// What the whole picture of every frame must reach. A pixel is close when no channel is further
+/// than `tolerance` from the golden image.
 struct Limits {
     tolerance: u8,
     min_close: f64,
     max_diff: u8,
 }
 
-/// Frame 0 and everything right of slot 3's columns in the later frames: 2 levels, 99.99% of the
-/// pixels, none beyond 4. They measure 100% and at most 1 at frames 0 and 150, 99.997% and at most
-/// 3 at frames 300 and 599 (at most 5 pixels beyond 2, near the top of slot 0's strand).
-const EXACT: Limits = Limits {
-    tolerance: 2,
+/// 4 levels, 99.99% of the pixels (at most 22 may be further), none beyond 48. Measured (see
+/// `gate`): frame 0 differs by at most 1 level everywhere; frames 150, 300 and 599 have 1, 5 and
+/// 10 pixels beyond 4 and a largest difference of 12, 46 and 25. Those pixels are hairline
+/// slivers of the swinging strand of slot 3, where one of the
+/// eight samples falls on the other side of the edge: a single sample of a dark sliver on white is
+/// worth up to about 45 levels.
+const LIMITS: Limits = Limits {
+    tolerance: 4,
     min_close: 0.9999,
-    max_diff: 4,
-};
-/// The whole picture of a later frame: 8 levels, 99.9% of the pixels (at most 229 may differ
-/// more). The measured counts of pixels beyond 8 are 62, 44 and 116, all in slot 3's columns, and
-/// the difference there has no useful bound (see `REST`).
-const LATER: Limits = Limits {
-    tolerance: 8,
-    min_close: 0.999,
-    max_diff: 255,
+    max_diff: 48,
 };
 
 fn fixtures() -> PathBuf {
@@ -139,20 +133,10 @@ fn overlay(x: usize, y: usize) -> bool {
     (320..=321).contains(&y) || (x == 320 && y <= 273)
 }
 
-/// The columns right of slot 3's: slot 3, 2, 0 and 1 stand from left to right in the images, slot 3
-/// in columns 0 to 190. Slot 3 has the thin, nearly edge-on strand that the physics flings about,
-/// and it is the only place where the later frames differ by more than 3 levels.
-const REST: std::ops::Range<usize> = 190..W;
-
-struct Part {
-    cols: std::ops::Range<usize>,
-    limits: Limits,
-}
-
 #[derive(Debug)]
 struct Score {
     pixels: usize,
-    /// Fraction of the pixels within the part's tolerance.
+    /// Fraction of the pixels within the tolerance.
     close: f64,
     max: u8,
     mean: f64,
@@ -165,36 +149,21 @@ fn pixel_diff(a: &[u8], b: &[u8], i: usize) -> u8 {
         .unwrap()
 }
 
-/// Compares `px` with the golden image of `frame` over `parts`, outside the overlay; one score per
-/// part. With `dir`, writes the render and the difference image there (4 times the difference;
-/// pixels that are not compared are magenta).
-fn score(px: &[u8], frame: u32, parts: &[Part], dir: Option<&std::path::Path>) -> Vec<Score> {
+/// Compares `px` with the golden image of `frame` outside the overlay. With `dir`, writes the
+/// render and the difference image there (4 times the difference; the overlay is magenta).
+fn score(px: &[u8], frame: u32, dir: Option<&std::path::Path>) -> Score {
     let gold = golden(frame);
     let mut diff: Vec<u8> = [255, 0, 255, 255].repeat(W * H);
+    let (mut n, mut close, mut max, mut sum) = (0, 0, 0u8, 0u64);
     for i in (0..W * H).filter(|&i| !overlay(i % W, i / W)) {
-        let v = 255 - pixel_diff(px, &gold, i).saturating_mul(4);
+        let d = pixel_diff(px, &gold, i);
+        let v = 255 - d.saturating_mul(4);
         diff[i * 4..i * 4 + 3].copy_from_slice(&[v, v, v]);
+        n += 1;
+        close += usize::from(d <= LIMITS.tolerance);
+        max = max.max(d);
+        sum += u64::from(d);
     }
-    let scores = parts
-        .iter()
-        .map(|part| {
-            let (mut n, mut close, mut max, mut sum) = (0, 0, 0u8, 0u64);
-            for i in (0..W * H).filter(|&i| part.cols.contains(&(i % W)) && !overlay(i % W, i / W))
-            {
-                let d = pixel_diff(px, &gold, i);
-                n += 1;
-                close += usize::from(d <= part.limits.tolerance);
-                max = max.max(d);
-                sum += u64::from(d);
-            }
-            Score {
-                pixels: n,
-                close: close as f64 / n as f64,
-                max,
-                mean: sum as f64 / n as f64,
-            }
-        })
-        .collect();
     if let Some(dir) = dir {
         std::fs::create_dir_all(dir).unwrap();
         let (w, h) = (W as u32, H as u32);
@@ -209,7 +178,12 @@ fn score(px: &[u8], frame: u32, parts: &[Part], dir: Option<&std::path::Path>) -
         )
         .unwrap();
     }
-    scores
+    Score {
+        pixels: n,
+        close: close as f64 / n as f64,
+        max,
+        mean: sum as f64 / n as f64,
+    }
 }
 
 fn gpu_or_skip() -> Option<Gpu> {
@@ -220,53 +194,38 @@ fn gpu_or_skip() -> Option<Gpu> {
     gpu
 }
 
-/// Renders `frame` of the golden scene with the `mds-physics` pose and checks `parts`.
-fn gate(frame: u32, parts: &[Part]) {
+/// Renders `frame` of the golden scene with the `mds-physics` pose and checks it against
+/// [`LIMITS`].
+fn gate(frame: u32) {
     let Some(gpu) = gpu_or_skip() else { return };
     let pmm = golden_pmm();
     let px = render_at(&gpu, &pmm, &physics_poses(&pmm, frame), frame);
     let dir = std::env::var_os("MDS_RENDER_PNG_DIR").map(PathBuf::from);
-    let scores = score(&px, frame, parts, dir.as_deref());
-    for (part, s) in parts.iter().zip(&scores) {
-        let l = part.limits;
-        eprintln!(
-            "frame {frame} columns {:?}: {} px, within {} {:.5}, max {}, mean {:.4}",
-            part.cols, s.pixels, l.tolerance, s.close, s.max, s.mean
-        );
-    }
-    for (part, s) in parts.iter().zip(&scores) {
-        let l = part.limits;
-        assert!(
-            s.close >= l.min_close,
-            "frame {frame} {:?}: {s:?}",
-            part.cols
-        );
-        assert!(s.max <= l.max_diff, "frame {frame} {:?}: {s:?}", part.cols);
-    }
-}
-
-fn part(cols: std::ops::Range<usize>, limits: Limits) -> Part {
-    Part { cols, limits }
+    let s = score(&px, frame, dir.as_deref());
+    eprintln!(
+        "frame {frame}: {} px, within {} {:.5}, max {}, mean {:.4}",
+        s.pixels, LIMITS.tolerance, s.close, s.max, s.mean
+    );
+    assert!(s.close >= LIMITS.min_close, "frame {frame}: {s:?}");
+    assert!(s.max <= LIMITS.max_diff, "frame {frame}: {s:?}");
 }
 
 #[test]
 fn frame_0() {
-    gate(0, &[part(0..W, EXACT)]);
+    gate(0);
 }
 
-/// Frames 150, 300 and 599: the whole picture within [`LATER`], and everything right of slot 3
-/// within [`EXACT`].
 #[test]
 fn frame_150() {
-    gate(150, &[part(0..W, LATER), part(REST, EXACT)]);
+    gate(150);
 }
 
 #[test]
 fn frame_300() {
-    gate(300, &[part(0..W, LATER), part(REST, EXACT)]);
+    gate(300);
 }
 
 #[test]
 fn frame_599() {
-    gate(599, &[part(0..W, LATER), part(REST, EXACT)]);
+    gate(599);
 }

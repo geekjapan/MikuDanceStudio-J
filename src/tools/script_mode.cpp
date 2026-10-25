@@ -305,6 +305,11 @@ bool PatchImport(const char* dll, const char* function, const void* replacement)
     return false;
 }
 
+bool IsDialogWindow(HWND window) {
+    wchar_t windowClass[8] = L"";
+    return GetClassNameW(window, windowClass, 8) != 0 && wcscmp(windowClass, L"#32770") == 0;
+}
+
 LRESULT CALLBACK DialogGuardProc(int code, WPARAM wParam, LPARAM lParam) {
     if (code == HCBT_ACTIVATE) {
         const HWND window = reinterpret_cast<HWND>(wParam);
@@ -318,11 +323,6 @@ LRESULT CALLBACK DialogGuardProc(int code, WPARAM wParam, LPARAM lParam) {
         }
     }
     return CallNextHookEx(nullptr, code, wParam, lParam);
-}
-
-bool IsDialogWindow(HWND window) {
-    wchar_t windowClass[8] = L"";
-    return GetClassNameW(window, windowClass, 8) != 0 && wcscmp(windowClass, L"#32770") == 0;
 }
 
 // Fills the modal dialog of the step when its WM_INITDIALOG has returned (the

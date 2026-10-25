@@ -1,10 +1,12 @@
-# A negative main-step budget: 25 ms passes during playback alternate one
-# and two 1/60 s catch-up substeps, and a two-substep pass leaves
-# 0.025 - 2/60 s for the main step.
+# A negative main-step budget: during playback the main physics step gets
+# DeltaTime minus 1/60 s per catch-up substep (g_CatchupDtBudget). With 50 ms
+# passes the float cursor sum lands just below the target from pass 11 on,
+# so those passes run three substeps and leave about -3.7e-9 s
+# (budget.py prints the passes).
 settle 0
 load pmm swing600.pmm
 trace budget.trace
 play 0 120
-pump 20 25
+pump 20 50
 stop
 save pmm budget.pmm

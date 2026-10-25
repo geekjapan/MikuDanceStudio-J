@@ -4,9 +4,16 @@
 //! `RunFrameDump` moves it (the PMM load, then one frame-step pass, `PlaybackCatchup` +
 //! `PhysicsFrame` at 30 fps, per frame: [`PhysicsScene::new`] and [`PhysicsScene::step`]), and
 //! writes `<out-dir>/<pmm stem>-<frame>.png` at the C++ output size, 640x360, with the 8x sample
-//! pattern.
+//! pattern: the models with their textures, the accessories, the self-shadow and ground shadow
+//! of the PMM and its background picture ([`scene::with_stage`]).
+//!
+//! The C++ places the background picture in its main window's viewport and draws that quad into
+//! the output unchanged (README of `tests/fixtures/rust/golden2`), so its picture depends on the
+//! host's window. With no window, the dump places it in the output; `MDS_FRAME_DUMP_PICTURE_VIEWPORT
+//! =<left>,<top>,<right>,<bottom>` names the viewport instead ([`Request::picture_viewport`]).
 
-use crate::{file, scene};
+use crate::file;
+use crate::scene::{self, Assets, Shot};
 use mds_physics::PhysicsScene;
 use mds_render::{encode_png, Gpu, SAMPLES_8X};
 use std::path::{Path, PathBuf};
@@ -21,6 +28,19 @@ pub struct Request {
     pub out: PathBuf,
     /// Strictly ascending.
     pub frames: Vec<u32>,
+    /// Where the background picture is placed (see the module doc); `None` is the output.
+    pub picture_viewport: Option<[f32; 4]>,
+}
+
+/// `<left>,<top>,<right>,<bottom>`.
+pub fn parse_viewport(text: &str) -> Result<[f32; 4], String> {
+    let v: Vec<f32> = text
+        .split(',')
+        .map(|n| n.trim().parse::<f32>())
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("picture viewport {text:?}: {e}"))?;
+    v.try_into()
+        .map_err(|_| format!("picture viewport {text:?}: four numbers"))
 }
 
 /// `ParseDecimal`: up to six decimal digits.
@@ -52,13 +72,14 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         pmm: pmm.into(),
         out: out.into(),
         frames,
+        picture_viewport: None,
     })
 }
 
 pub fn run(gpu: &Gpu, request: &Request) -> Result<(), String> {
     let doc = file::read(&request.pmm)?;
     let dir = request.pmm.parent().unwrap_or(Path::new("."));
-    let meshes = scene::meshes(&doc)?;
+    let assets = Assets::load(&doc, dir)?;
     let mut physics = PhysicsScene::new(&doc.pmm, |p| scene::read_model(dir, p))?;
     let stem = request
         .pmm
@@ -75,17 +96,17 @@ pub fn run(gpu: &Gpu, request: &Request) -> Result<(), String> {
             at += 1;
         }
         let camera = scene::track_camera(&doc, frame)?;
-        let size = [WIDTH, HEIGHT];
-        let px = scene::with_frame(
-            &doc,
-            &meshes,
-            &physics,
+        let shot = Shot {
+            physics: &physics,
             frame,
-            &camera,
-            size,
-            &SAMPLES_8X,
-            |f| mds_render::render_frame(gpu, f),
-        )??;
+            camera: &camera,
+            size: [WIDTH, HEIGHT],
+            samples: &SAMPLES_8X,
+            picture_viewport: request.picture_viewport,
+        };
+        let px = scene::with_stage(&doc, &assets, &shot, |f, s| {
+            mds_render::render_frame_with(gpu, f, s)
+        })??;
         let path = Path::new(&request.out).join(format!("{stem}-{frame}.png"));
         std::fs::write(&path, encode_png(WIDTH, HEIGHT, &px))
             .map_err(|e| format!("{}: {e}", path.display()))?;
@@ -95,7 +116,7 @@ pub fn run(gpu: &Gpu, request: &Request) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
+    use super::{parse, parse_viewport};
 
     fn args(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()
@@ -115,5 +136,10 @@ mod tests {
         ] {
             assert!(parse(&args(bad)).is_err(), "{bad:?}");
         }
+        assert_eq!(
+            parse_viewport("259, 94,2544,1378"),
+            Ok([259.0, 94.0, 2544.0, 1378.0])
+        );
+        assert!(parse_viewport("1,2,3").is_err() && parse_viewport("1,2,3,x").is_err());
     }
 }

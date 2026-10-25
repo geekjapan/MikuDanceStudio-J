@@ -4,7 +4,7 @@
 //! per single sample. The texture is read back here only.
 
 use mds_app::editor::Editor;
-use mds_app::scene;
+use mds_app::scene::{self, Assets, Shot};
 use mds_app::viewport::Viewport;
 use mds_physics::PhysicsScene;
 use mds_render::Gpu;
@@ -75,7 +75,7 @@ fn the_window_draws_the_pixels_of_the_dump() {
         let (texture, _, _) = viewport.draw(&editor, SIZE, 1).unwrap();
         let window = read(&gpu, texture);
         let dump = editor
-            .with_frame(SIZE, &ONE, |f| mds_render::render_frame(&gpu, f))
+            .with_stage(SIZE, &ONE, |f, s| mds_render::render_frame_with(&gpu, f, s))
             .unwrap()
             .unwrap();
         assert!(
@@ -96,7 +96,7 @@ fn without_physics_the_window_shows_the_dumped_frame() {
     let mut viewport = Viewport::new(gpu.device(), gpu.queue()).unwrap();
     let mut editor = Editor::open(&path).unwrap();
     let doc = mds_app::file::read(&path).unwrap();
-    let meshes = scene::meshes(&doc).unwrap();
+    let assets = Assets::load(&doc, &dir()).unwrap();
     let mut physics = PhysicsScene::new(&doc.pmm, |p| scene::read_model(&dir(), p)).unwrap();
     let mut at = 0;
     for frame in [0, 150, 300] {
@@ -109,8 +109,16 @@ fn without_physics_the_window_shows_the_dumped_frame() {
         let (texture, _, _) = viewport.draw(&editor, SIZE, 1).unwrap();
         let window = read(&gpu, texture);
         let camera = scene::track_camera(&doc, frame).unwrap();
-        let dump = scene::with_frame(&doc, &meshes, &physics, frame, &camera, SIZE, &ONE, |f| {
-            mds_render::render_frame(&gpu, f)
+        let shot = Shot {
+            physics: &physics,
+            frame,
+            camera: &camera,
+            size: SIZE,
+            samples: &ONE,
+            picture_viewport: None,
+        };
+        let dump = scene::with_stage(&doc, &assets, &shot, |f, s| {
+            mds_render::render_frame_with(&gpu, f, s)
         })
         .unwrap()
         .unwrap();

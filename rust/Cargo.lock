@@ -1202,10 +1202,13 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "egui",
+ "mds-accessory",
  "mds-doc",
  "mds-formats",
  "mds-math",
+ "mds-ops",
  "mds-physics",
+ "mds-pose",
  "mds-render",
  "mds-scene",
  "png",

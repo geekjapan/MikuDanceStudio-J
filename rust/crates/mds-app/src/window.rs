@@ -1,5 +1,6 @@
 //! The window shell on eframe: each pass runs every area's `pass`, the key chords, one
-//! [`Editor::pump`], then draws the areas where [`ui::AREAS`] places them.
+//! [`Editor::pump`], then draws the areas where [`ui::AREAS`] places them. The labels are
+//! Japanese, so the window installs one CJK font of the system ([`CJK_FONTS`]) at start.
 
 use eframe::egui;
 use mds_app::editor::Editor;
@@ -24,8 +25,11 @@ pub fn run(pmm: Option<PathBuf>) -> Result<(), String> {
         "MikuDanceStudio",
         options,
         Box::new(move |cc| {
+            install_cjk_font(&cc.egui_ctx);
             let state = cc.wgpu_render_state.as_ref().ok_or("no wgpu renderer")?;
+            let max = state.adapter.limits().max_texture_dimension_2d as i32;
             Ok(Box::new(App {
+                max_texture_size: [max; 2],
                 viewport: WindowViewport::new(state)?,
                 status: pmm.map_or_else(String::new, |p| p.display().to_string()),
                 editor,
@@ -37,8 +41,48 @@ pub fn run(pmm: Option<PathBuf>) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// System fonts with the Japanese glyphs, by platform, first found wins: file and face index.
+const CJK_FONTS: &[(&str, u32)] = &[
+    ("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", 0),
+    ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
+    ("/Library/Fonts/Arial Unicode.ttf", 0),
+    ("C:\\Windows\\Fonts\\meiryo.ttc", 0),
+    ("C:\\Windows\\Fonts\\YuGothM.ttc", 0),
+    ("C:\\Windows\\Fonts\\msgothic.ttc", 0),
+    ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),
+    ("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 0),
+    (
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+        0,
+    ),
+    ("/usr/share/fonts/truetype/fonts-japanese-gothic.ttf", 0),
+];
+
+/// The first of [`CJK_FONTS`] as the fallback of egui's own fonts, which keep the Latin text;
+/// with none, egui's fonts alone and a warning.
+fn install_cjk_font(ctx: &egui::Context) {
+    use egui::epaint::text::{FontInsert, FontPriority, InsertFontFamily};
+    let Some((path, data, index)) = CJK_FONTS
+        .iter()
+        .find_map(|&(p, i)| Some((p, std::fs::read(p).ok()?, i)))
+    else {
+        eprintln!("mds-app: no CJK font found; Japanese labels will not show");
+        return;
+    };
+    let families = [egui::FontFamily::Proportional, egui::FontFamily::Monospace]
+        .map(|family| InsertFontFamily {
+            family,
+            priority: FontPriority::Lowest,
+        })
+        .to_vec();
+    let data = egui::FontData::from_blob(std::sync::Arc::new(data), index);
+    ctx.add_font(FontInsert::new(path, data, families));
+}
+
 struct App {
     editor: Editor,
+    /// The device's largest texture, which bounds the render size (menu 212).
+    max_texture_size: [i32; 2],
     viewport: WindowViewport,
     clock: Instant,
     status: String,
@@ -101,6 +145,8 @@ impl Screenshot {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Set every pass: opening a scene builds a new document.
+        self.editor.doc.edit.max_texture_size = Some(self.max_texture_size);
         let mut ctx = Ctx {
             editor: &mut self.editor,
             now_ms: self.clock.elapsed().as_millis() as u64,
@@ -144,9 +190,13 @@ impl eframe::App for App {
             .collect();
         if !side.is_empty() {
             egui::Panel::right("side").show(ui, |ui| {
-                for area in side {
-                    ui.collapsing(area.name, |ui| (area.show)(ui, &mut ctx));
-                }
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for area in side {
+                        egui::CollapsingHeader::new(area.name)
+                            .default_open(true)
+                            .show(ui, |ui| (area.show)(ui, &mut ctx));
+                    }
+                });
             });
         }
         egui::CentralPanel::default().show(ui, |ui| {

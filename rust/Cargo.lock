@@ -1289,6 +1289,7 @@ dependencies = [
 name = "mds-mmert"
 version = "0.1.0"
 dependencies = [
+ "encoding_rs",
  "mds-formats",
  "mds-fx",
  "mds-math",
@@ -1297,6 +1298,7 @@ dependencies = [
  "naga",
  "png",
  "pollster 1.0.1",
+ "weezl",
  "wgpu",
 ]
 

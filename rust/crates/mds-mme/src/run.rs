@@ -53,9 +53,10 @@ impl Device {
             render_target,
             depth,
         };
+        let back = (sas.backbuffer.0 as u32, sas.backbuffer.1 as u32);
         let mut surfaces = vec![
-            s("main", (1000, 600), true, false),
-            s("main.depth", (1000, 600), false, true),
+            s("main", back, true, false),
+            s("main.depth", back, false, true),
             s("scratch", (16, 16), true, false),
         ];
         let mut tex_surfaces = Vec::new();
@@ -101,8 +102,8 @@ impl Device {
             vp: Viewport {
                 x: 0,
                 y: 0,
-                width: 1000,
-                height: 600,
+                width: back.0,
+                height: back.1,
             },
             tex_surfaces,
             depth_of,

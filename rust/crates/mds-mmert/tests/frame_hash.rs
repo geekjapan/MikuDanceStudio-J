@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use mds_mmert::control::{Controls, Object};
 use mds_mmert::{DrawInput, Effect, Gpu, Model, Scene, Target, BACKBUFFER};
 
 /// `(label, root, effect below the root)`; `corpus` roots need the ray-mmd corpus.
@@ -89,6 +90,13 @@ fn frames_match_the_recorded_hashes() {
     let pmx =
         mds_formats::pmx::Pmx::read(&std::fs::read(fixtures.join("chain8.pmx")).unwrap()).unwrap();
     let model = Model::from_pmx(&gpu.device, &pmx).unwrap();
+    // The drawn chain8.pmx owns the effects; ctrl.pmx is the object offscreen.fx reads its
+    // `Morph` from.
+    let mut ctrl = Object::model("ctrl.pmx", 2);
+    ctrl.morphs.push(("Morph".into(), 0.5));
+    let controls = Controls {
+        objects: vec![Object::model("chain8.pmx", 1), ctrl],
+    };
     let record = std::env::var_os("MDS_MMERT_RECORD").is_some();
     let png_dir = std::env::var_os("MDS_MMERT_PNG_DIR").map(PathBuf::from);
     let mut table = read_table();
@@ -103,7 +111,7 @@ fn frames_match_the_recorded_hashes() {
             continue;
         }
         let ((pixels, report_), errors) = gpu.scoped(|| {
-            let mut e = Effect::load(&gpu, &vk, &dir.join(rel), &dir)
+            let mut e = Effect::load(&gpu, &vk, &dir.join(rel), &dir, BACKBUFFER)
                 .unwrap_or_else(|e| panic!("{rel}: {e}"));
             let target = Target::new(&gpu, BACKBUFFER);
             let mut scene = Scene::default_view(BACKBUFFER.0, BACKBUFFER.1);
@@ -114,6 +122,9 @@ fn frames_match_the_recorded_hashes() {
                 scene: &scene,
                 geometry: Some((&model, 0)),
                 draw_type: mds_mmert::bind::DRAW_OBJECT,
+                controls: Some(&controls),
+                owner: Some(0),
+                offscreen_owner: None,
             };
             let r = e.frame(&gpu, &target, &input);
             (target.read(&gpu).unwrap(), r)

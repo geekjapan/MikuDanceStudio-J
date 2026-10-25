@@ -3,6 +3,7 @@
 
 use mds_formats::{pmd::Pmd, pmx::Pmx};
 use mds_skin::{Mat4, Skin};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) const FLAG_DOUBLE_SIDED: u8 = 0x01;
 pub(crate) const FLAG_EDGE: u8 = 0x10;
@@ -25,6 +26,8 @@ pub struct Pose {
 }
 
 pub struct Mesh {
+    /// Names the mesh to `Renderer`, which keeps the buffers of a model between frames.
+    pub(crate) id: u64,
     /// Position and normal of every vertex in the file, for the bind-pose camera.
     bind: Vec<([f32; 3], [f32; 3])>,
     skin: Skin,
@@ -58,7 +61,9 @@ fn finish(
     {
         return Err("a material reaches past the index list".into());
     }
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
     Ok(Mesh {
+        id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         bind,
         skin,
         indices,
@@ -118,6 +123,10 @@ impl Mesh {
             .map(|v| (v.position, v.normal))
             .collect();
         finish(bind, Skin::from_pmd(pmd)?, indices, materials)
+    }
+
+    pub(crate) fn vertex_count(&self) -> usize {
+        self.bind.len()
     }
 
     /// Bounding box of the bind pose.

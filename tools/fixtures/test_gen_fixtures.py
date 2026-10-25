@@ -70,7 +70,7 @@ class Determinism(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(g.main(["--check"]), 0)
-        self.assertEqual(out.getvalue().strip(), "fixtures: 8 files match")
+        self.assertEqual(out.getvalue().strip(), "fixtures: 9 files match")
 
     def test_check_names_a_drifted_file(self):
         with tempfile.TemporaryDirectory() as tmp:

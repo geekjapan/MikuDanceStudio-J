@@ -55,3 +55,6 @@ graphify-out/.graphify_root
 
 # Rust workspace build output
 rust/target/
+
+# Agent worktrees (tools/orchestrate/new-slice.sh)
+.claude/worktrees/

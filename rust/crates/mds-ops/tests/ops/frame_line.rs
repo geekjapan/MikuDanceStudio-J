@@ -112,7 +112,7 @@ fn delete_bone_removes_keys_at_the_frame_and_shifts_later_keys() {
     let mut p = swing600();
     p.timeline.current_frame = 100;
     let before = all_frames(&p.models[0].bone_keys);
-    delete_bone_camera_frame_line(&mut p).unwrap();
+    delete_bone_camera_frame_line(&mut p, None).unwrap();
     let pool = &p.models[0].bone_keys;
     assert_eq!(all_frames(pool), deleted(&before, 100));
     // Bone 1's track was 14 (100) -> 24 (200); 14 is unlinked.
@@ -133,7 +133,7 @@ fn delete_of_a_last_key_writes_previous_of_record_zero() {
     // previous is 38) decides.
     let mut p = swing600();
     p.timeline.current_frame = 599;
-    delete_bone_camera_frame_line(&mut p).unwrap();
+    delete_bone_camera_frame_line(&mut p, None).unwrap();
     let pool = &p.models[0].bone_keys;
     assert_eq!(pool.heads()[0].previous, 38);
     assert_eq!(pool.heads()[0].next, 0, "bone 0's only key was removed");
@@ -162,7 +162,7 @@ fn delete_bone_moves_a_key_that_lands_on_frame_zero_into_the_head() {
     bones.insert(11, b);
     p.models[0].bone_keys = bones;
     p.timeline.current_frame = 0;
-    delete_bone_camera_frame_line(&mut p).unwrap();
+    delete_bone_camera_frame_line(&mut p, None).unwrap();
     let pool = &p.models[0].bone_keys;
     let head = &pool.heads()[5];
     assert_eq!(head.next, 11);
@@ -196,7 +196,7 @@ fn delete_camera_clears_the_record_the_way_the_c_code_lists() {
         k.interpolation = [[7; 6]; 4];
         k.selected = 1;
     }
-    delete_bone_camera_frame_line(&mut p).unwrap();
+    delete_bone_camera_frame_line(&mut p, None).unwrap();
     assert_eq!(frames(&p.camera, 0), [399]);
     assert_eq!(p.camera.heads()[0].next, 2);
     assert_eq!(p.camera.get(2).unwrap().previous, 0);
@@ -230,7 +230,7 @@ fn delete_camera_moves_a_key_that_lands_on_frame_zero_into_the_head() {
     p.camera = pool(10_000, 1, &[&[(1, 1), (2, 3)]], camera_key);
     p.camera.insert(1, k1);
     p.timeline.current_frame = 0;
-    delete_bone_camera_frame_line(&mut p).unwrap();
+    delete_bone_camera_frame_line(&mut p, None).unwrap();
     let h = &p.camera.heads()[0];
     assert_eq!(h.next, 2);
     assert_eq!(
@@ -325,7 +325,10 @@ fn a_broken_chain_is_reported_and_leaves_the_pool_alone() {
     // Record 14 links to a record past the pool.
     p.models[0].bone_keys.get_mut(14).unwrap().next = 700_000;
     let before = shape(&p.models[0].bone_keys);
-    assert_eq!(delete_bone_camera_frame_line(&mut p), Err(Error::Corrupt));
+    assert_eq!(
+        delete_bone_camera_frame_line(&mut p, None).err(),
+        Some(Error::Corrupt)
+    );
     assert_eq!(shape(&p.models[0].bone_keys), before);
 }
 
@@ -338,5 +341,55 @@ fn global_commands_do_not_need_a_model() {
     insert_bone_camera_frame_line(&mut p).unwrap();
     delete_morph_light_frame_line(&mut p).unwrap();
     camera_mode(&mut p, false);
-    assert_eq!(insert_bone_camera_frame_line(&mut p), Err(Error::NoModel));
+    assert_eq!(
+        insert_bone_camera_frame_line(&mut p).err(),
+        Some(Error::NoModel)
+    );
+}
+
+#[test]
+fn delete_bone_with_automatic_interpolation_rebuilds_the_next_key() {
+    // 288-312: checkbox 530 on -> RebuildBoneKeyInterpolation on the removed
+    // key's `next` (its `previous` when it was last), lanes 0..3. Bone 1:
+    // a (x 0) at 10, b (x 1) at 20, c (x 3) at 30; deleting frame 20 leaves
+    // a -> c. Lane 0 of c: `previous` a is not a head and a's `previous` is
+    // the head (x 0), so (0 - 0) * (3 - 0) is not positive: a gets the out
+    // point (64, 127), c the in point (64, 0), and c, now last, the out
+    // point (64, 127). Lanes 1..3 (no change, or rotation) reset to
+    // (20, 20, 107, 107).
+    let mut p = swing600();
+    let tracks: Vec<&[(u32, u32)]> = vec![&[], &[(20, 10), (21, 20), (22, 30)]];
+    let mut keys = pool(600_000, 9, &tracks, bone_key);
+    keys.get_mut(21).unwrap().position[0] = 1.0;
+    keys.get_mut(22).unwrap().position[0] = 3.0;
+    p.models[0].bone_keys = keys;
+    p.timeline.current_frame = 20;
+    let bone = |i: u32| mds_edit::BoneInfo {
+        name: vec![b'a' + i as u8],
+        writes_position: true,
+        twist: false,
+        rigid_body: false,
+        rotation: [0.0, 0.0, 0.0, 1.0],
+        translation: [0.0; 3],
+    };
+    let rig = mds_edit::Rig {
+        bones: (0..9).map(bone).collect(),
+        morphs: Vec::new(),
+        ik_chains: Vec::new(),
+        selectors: Vec::new(),
+        pmx: true,
+        load_complete: 1,
+        auto_interpolation: true,
+    };
+    delete_bone_camera_frame_line(&mut p, Some(&rig)).unwrap();
+    let pool = &p.models[0].bone_keys;
+    assert_eq!(frames(pool, 1), [10, 29]);
+    let c = pool.get(22).unwrap().interpolation;
+    assert_eq!(
+        c,
+        [64, 20, 20, 20, 0, 20, 20, 20, 64, 107, 107, 107, 127, 107, 107, 107]
+    );
+    let a = pool.get(20).unwrap().interpolation;
+    assert_eq!((a[8], a[12]), (64, 127));
+    assert_eq!(a[0], 0, "a's in point is not rebuilt");
 }

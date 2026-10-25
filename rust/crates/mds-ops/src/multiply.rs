@@ -43,7 +43,7 @@ pub(crate) fn truncate(v: f32) -> i32 {
 }
 
 /// The eight (scale, add) pairs of the camera dialog, in edit-box order.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CameraScale {
     /// Eye x, y, z; target x, y, z; distance; field of view.
     pub scale: [f32; 8],
@@ -97,7 +97,7 @@ pub fn multiply_camera_frames(pmm: &mut Pmm, p: &CameraScale) -> Result<()> {
 }
 
 /// The six (scale, add) pairs of the bone dialog.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoneScale {
     /// Position x, y, z; rotation about x, y, z.
     pub scale: [f32; 6],

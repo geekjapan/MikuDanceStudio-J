@@ -1,0 +1,14 @@
+# Menu 230 (reset all morphs) on morph4.pmx with swing600.vmd: it zeroes the morph
+# weights only; registering あ afterwards shows the weight it left.
+load model morph4.pmx
+load vmd swing600.vmd
+frame 120
+select morph 2 あ
+morph 2 0.5
+save pmm weighted.pmm
+reset morphs
+save pmm reset.pmm
+register morph 2
+save pmm registered.pmm
+select all morph
+save vmd registered.vmd

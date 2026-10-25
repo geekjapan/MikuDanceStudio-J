@@ -1240,6 +1240,7 @@ dependencies = [
  "mds-formats",
  "mds-math",
  "mds-ops",
+ "mds-physics",
  "mds-pose",
  "mds-scene",
 ]
@@ -1277,6 +1278,10 @@ dependencies = [
 [[package]]
 name = "mds-media"
 version = "0.1.0"
+dependencies = [
+ "png",
+ "zune-jpeg",
+]
 
 [[package]]
 name = "mds-mme"

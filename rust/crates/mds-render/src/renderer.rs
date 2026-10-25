@@ -1,8 +1,10 @@
 //! [`Renderer`]: the pipelines, the default textures and the per-model buffers, kept between frames
 //! on a device the caller owns.
 
-use crate::mesh::{EdgeView, FLAG_DOUBLE_SIDED, FLAG_EDGE};
-use crate::{linear_to_srgb, srgb_to_linear_table, view, Frame, Mesh, COLOR_FORMAT, DEPTH_FORMAT};
+use crate::mesh::{EdgeView, FLAG_DOUBLE_SIDED, FLAG_EDGE, FLAG_GROUND_SHADOW};
+use crate::{
+    linear_to_srgb, srgb_to_linear_table, view, Frame, Mesh, Stage, COLOR_FORMAT, DEPTH_FORMAT,
+};
 use std::collections::HashMap;
 
 /// Bytes per vertex of the body buffer (position, normal, uv) and of the edge buffer (position,
@@ -20,6 +22,20 @@ struct Pipelines {
     body: wgpu::RenderPipeline,
     body_two_sided: wgpu::RenderPipeline,
     edge: wgpu::RenderPipeline,
+    ground_shadow: wgpu::RenderPipeline,
+}
+
+/// Render pipelines in one [`Pipelines`] set.
+const PIPELINES_PER_SET: usize = 4;
+
+fn depth_state(write: bool, stencil: wgpu::StencilState) -> wgpu::DepthStencilState {
+    wgpu::DepthStencilState {
+        format: DEPTH_FORMAT,
+        depth_write_enabled: Some(write),
+        depth_compare: Some(wgpu::CompareFunction::LessEqual),
+        stencil,
+        bias: Default::default(),
+    }
 }
 
 /// The GPU side of one model. The index buffer is written once; the vertex buffers and material
@@ -154,13 +170,24 @@ impl Renderer {
         frame: &Frame,
         sample_count: u32,
     ) -> Result<(), String> {
+        self.render_into_with(target, frame, &Stage::legacy(frame), sample_count)
+    }
+
+    /// [`render_into`](Renderer::render_into) with the passes of `stage`.
+    pub fn render_into_with(
+        &mut self,
+        target: &wgpu::TextureView,
+        frame: &Frame,
+        stage: &Stage,
+        sample_count: u32,
+    ) -> Result<(), String> {
         check(frame)?;
         if !matches!(sample_count, 1 | 2 | 4 | 8) {
             return Err(format!("unsupported sample count {sample_count}"));
         }
         let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        self.upload(frame);
-        let encoder = self.encode(target, frame, frame.pixel_offset, sample_count);
+        self.upload(frame, stage);
+        let encoder = self.encode(target, frame, stage, frame.pixel_offset, sample_count);
         self.queue.submit([encoder.finish()]);
         finish(error_scope)
     }
@@ -168,13 +195,18 @@ impl Renderer {
     /// Draws `frame` and returns `width * height * 4` RGBA8 bytes, top row first: one render per
     /// entry of `frame.samples` (no multisampling), averaged in linear light.
     pub fn render_frame(&mut self, frame: &Frame) -> Result<Vec<u8>, String> {
+        self.render_frame_with(frame, &Stage::legacy(frame))
+    }
+
+    /// [`render_frame`](Renderer::render_frame) with the passes of `stage`.
+    pub fn render_frame_with(&mut self, frame: &Frame, stage: &Stage) -> Result<Vec<u8>, String> {
         check(frame)?;
         if frame.samples.is_empty() {
             return Err("empty frame".into());
         }
         let (width, height) = (frame.width, frame.height);
         let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        self.upload(frame);
+        self.upload(frame, stage);
 
         let size = wgpu::Extent3d {
             width,
@@ -208,7 +240,7 @@ impl Renderer {
                 frame.pixel_offset[0] - sample[0],
                 frame.pixel_offset[1] - sample[1],
             ];
-            let mut encoder = self.encode(&target_view, frame, shift, 1);
+            let mut encoder = self.encode(&target_view, frame, stage, shift, 1);
             encoder.copy_texture_to_buffer(
                 target.as_image_copy(),
                 wgpu::TexelCopyBufferInfo {
@@ -285,12 +317,13 @@ impl Renderer {
 
     /// Creates the buffers of the models that are new, writes this frame's vertices and material
     /// values into all of them, and drops the models the frame does not list.
-    fn upload(&mut self, frame: &Frame) {
+    fn upload(&mut self, frame: &Frame, stage: &Stage) {
         let keys = Self::keys(frame);
         let edge_view = EdgeView {
-            camera_position: frame.view.eye,
+            world: frame.view.edge_world.concat().try_into().expect("4 x 4"),
+            camera_position: frame.view.edge_origin,
             fov: frame.view.edge_fov,
-            self_shadow: frame.toon,
+            self_shadow: stage.self_shadow.is_some_and(|s| s.shades()),
         };
         for (&(mesh, pose), key) in frame.models.iter().zip(&keys) {
             let skin = mesh.skinned(pose, &edge_view);
@@ -393,7 +426,7 @@ impl Renderer {
         if !self.pipelines.contains_key(&samples) {
             let pipelines = self.build_pipelines(samples);
             self.pipelines.insert(samples, pipelines);
-            self.pipelines_created += 3;
+            self.pipelines_created += PIPELINES_PER_SET;
         }
         if self
             .targets
@@ -444,7 +477,8 @@ impl Renderer {
                         fs: &str,
                         (stride, attrs): (u64, &[wgpu::VertexAttribute]),
                         cull: Option<wgpu::Face>,
-                        blend: Option<wgpu::BlendState>| {
+                        blend: Option<wgpu::BlendState>,
+                        depth: wgpu::DepthStencilState| {
             self.device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some(vs),
@@ -465,13 +499,7 @@ impl Renderer {
                         cull_mode: cull,
                         ..Default::default()
                     },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: DEPTH_FORMAT,
-                        depth_write_enabled: Some(true),
-                        depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                        stencil: Default::default(),
-                        bias: Default::default(),
-                    }),
+                    depth_stencil: Some(depth),
                     multisample: wgpu::MultisampleState {
                         count: samples,
                         ..Default::default()
@@ -492,6 +520,21 @@ impl Renderer {
         };
         let alpha = Some(wgpu::BlendState::ALPHA_BLENDING);
         let body_layout = (BODY_STRIDE, &body_attrs[..]);
+        let opaque = || depth_state(true, Default::default());
+        // A ground shadow pixel is blended once however many triangles cover it: the first
+        // marks the stencil and the rest fail the test.
+        let once = wgpu::StencilFaceState {
+            compare: wgpu::CompareFunction::Equal,
+            fail_op: wgpu::StencilOperation::Keep,
+            depth_fail_op: wgpu::StencilOperation::Keep,
+            pass_op: wgpu::StencilOperation::IncrementClamp,
+        };
+        let shadow_stencil = wgpu::StencilState {
+            front: once,
+            back: once,
+            read_mask: 0xff,
+            write_mask: 0xff,
+        };
         Pipelines {
             body: pipeline(
                 "vs_main",
@@ -499,14 +542,24 @@ impl Renderer {
                 body_layout,
                 Some(wgpu::Face::Back),
                 alpha,
+                opaque(),
             ),
-            body_two_sided: pipeline("vs_main", "fs_main", body_layout, None, alpha),
+            body_two_sided: pipeline("vs_main", "fs_main", body_layout, None, alpha, opaque()),
             edge: pipeline(
                 "vs_edge",
                 "fs_edge",
                 (EDGE_STRIDE, &edge_attrs[..]),
                 Some(wgpu::Face::Front),
                 alpha,
+                opaque(),
+            ),
+            ground_shadow: pipeline(
+                "vs_ground_shadow",
+                "fs_ground_shadow",
+                body_layout,
+                None,
+                alpha,
+                depth_state(false, shadow_stencil),
             ),
         }
     }
@@ -517,13 +570,14 @@ impl Renderer {
         &mut self,
         target: &wgpu::TextureView,
         frame: &Frame,
+        stage: &Stage,
         shift: [f32; 2],
         samples: u32,
     ) -> wgpu::CommandEncoder {
         let (width, height) = (frame.width, frame.height);
         self.ensure((width, height), samples);
         self.queue
-            .write_buffer(&self.scene_buf, 0, &scene_data(frame, shift));
+            .write_buffer(&self.scene_buf, 0, &scene_data(frame, stage, shift));
         let pipelines = &self.pipelines[&samples];
         let targets = self.targets.as_ref().expect("ensured above");
         let [r, g, b, a] = frame.background.map(|c| f64::from(c) / 255.0);
@@ -550,13 +604,34 @@ impl Renderer {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Discard,
                     }),
-                    stencil_ops: None,
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &self.scene_group, &[]);
+            // The ground shadow first: the models then cover it where they stand in front.
+            if stage.ground_shadow.is_some() && casts_ground_shadow(frame) {
+                pass.set_pipeline(&pipelines.ground_shadow);
+                pass.set_stencil_reference(0);
+                for (&(mesh, _), key) in frame.models.iter().zip(Self::keys(frame)) {
+                    let res = &self.models[&key];
+                    pass.set_index_buffer(res.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.set_vertex_buffer(0, res.vertices.slice(..));
+                    for ((m, (_, group)), &alpha) in
+                        mesh.materials.iter().zip(&res.materials).zip(&res.alpha)
+                    {
+                        if m.count > 0 && alpha > 0.0 && m.flags & FLAG_GROUND_SHADOW != 0 {
+                            pass.set_bind_group(1, group, &[]);
+                            pass.draw_indexed(m.start..m.start + m.count, 0, 0..1);
+                        }
+                    }
+                }
+            }
             for (&(mesh, _), key) in frame.models.iter().zip(Self::keys(frame)) {
                 let res = &self.models[&key];
                 pass.set_index_buffer(res.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -609,10 +684,27 @@ fn finish(error_scope: wgpu::ErrorScopeGuard) -> Result<(), String> {
     }
 }
 
-/// Bytes of the scene uniform: two matrices and six vectors.
-const SCENE_BYTES: u64 = 2 * 64 + 6 * 16;
+/// Bytes of the scene uniform: two matrices and eight vectors.
+const SCENE_BYTES: u64 = 2 * 64 + 8 * 16;
 
-fn scene_data(frame: &Frame, shift: [f32; 2]) -> Vec<u8> {
+/// The ground shadow projects along the light onto y = 0, so a light that does not go down casts
+/// none.
+fn casts_ground_shadow(frame: &Frame) -> bool {
+    view::normalize(frame.light.direction)[1] < -1e-6
+}
+
+/// The color of the ground shadow over white in `groundshadow-*.png` of
+/// `tests/fixtures/rust/golden2` is 141 with a shadow ambient of 0.5, translucent. The alpha is
+/// the 0.7 of the accessory shadow material (`mds_accessory::transform::projected_shadow_material`);
+/// the color is `ambient * SHADOW_LIGHT` with this factor fitted to that one image, so another
+/// ambient, or an opaque shadow, is extrapolated.
+const SHADOW_LIGHT: f32 = 0.7227;
+/// The ground shadow lies about 0.1 above y = 0, where the app's grid lines are too (the golden2
+/// orthographic scenes show both 3.7 px above the models' feet).
+const GROUND_SHADOW_HEIGHT: f32 = 0.1;
+const SHADOW_ALPHA: f32 = 0.7;
+
+fn scene_data(frame: &Frame, stage: &Stage, shift: [f32; 2]) -> Vec<u8> {
     let view = &frame.view;
     let light = view::normalize(frame.light.direction);
     let mut scene = Vec::new();
@@ -623,7 +715,12 @@ fn scene_data(frame: &Frame, shift: [f32; 2]) -> Vec<u8> {
         light[0],
         light[1],
         light[2],
-        f32::from(u8::from(frame.toon)),
+        match (frame.toon, stage.self_shadow.map(|s| s.shades())) {
+            (true, None) => 1.0,
+            (true, Some(true)) => 2.0,
+            // Self-shadow on with a shadow range of zero or less draws no toon at all.
+            (false, _) | (true, Some(false)) => 0.0,
+        },
     ]);
     scene.extend([
         frame.light.color[0],
@@ -638,6 +735,12 @@ fn scene_data(frame: &Frame, shift: [f32; 2]) -> Vec<u8> {
         2.0 * shift[0] / frame.width as f32,
         -2.0 * shift[1] / frame.height as f32,
     ]);
+    let shadow = stage.ground_shadow.map_or([0.0; 4], |g| {
+        let c = g.ambient * SHADOW_LIGHT;
+        [c, c, c, if g.translucent { SHADOW_ALPHA } else { 1.0 }]
+    });
+    scene.extend(shadow);
+    scene.extend([GROUND_SHADOW_HEIGHT, 0.0, 0.0, 0.0]);
     bytes(&scene)
 }
 
@@ -689,13 +792,14 @@ fn empty_buffer(device: &wgpu::Device, usage: wgpu::BufferUsages, size: u64) -> 
     })
 }
 
-/// The built-in toon ramp, lit end first (v = 0.5 - 0.5 * N.L), 32 texels: full light for texels 0
-/// to 10, a linear fall over 11 to 14, then 0.8 (204) from texel 15 on. With the sampler's linear
-/// filter that is a ramp from v = 0.33 to 0.49, which is what the golden images show.
+/// The built-in toon texture, lit end first (v = 0.5 - 0.5 * N.L), 32 texels: full light for texels 0
+/// to 15 and 0.8 (204) from texel 16 on, so the step falls where N.L crosses 0. Fitted to the
+/// curled model of golden2 `groundshadow-0.png` (self-shadow off); its bottom texel is the shadow
+/// color of the self-shadow blend.
 fn toon_ramp() -> Vec<u8> {
     (0..32)
         .flat_map(|y| {
-            let b = (255.0 - (y as f32 - 10.0).clamp(0.0, 5.0) * 10.2).round() as u8;
+            let b = if y < 16 { 255 } else { 204 };
             [b, b, b, 255]
         })
         .collect()

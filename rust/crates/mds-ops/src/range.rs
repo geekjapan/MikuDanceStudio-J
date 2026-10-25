@@ -1,16 +1,16 @@
 //! Frame-range scale (menu 424, the 拡大縮小 button of the timeline).
 
-use crate::model::{active_model, commit, open, soft};
+use crate::model::{active_model, commit, extra, open, soft};
 use crate::multiply::truncate;
 use crate::pool::{indices, links, read, set_marks, walk_limit, Rec};
 use crate::{Error, ModelFacts, Result};
-use mds_edit::{BoneClip, DisplayClip, MorphClip, Rig, Tracks};
+use mds_edit::{BoneClip, BoneTarget, DisplayClip, Extra, MorphClip, Rig, Tracks};
 use mds_formats::key_pool::KeyPool;
 use mds_formats::pmm::Pmm;
 
 /// The fields of the frame-range dialog (`FrameRangeDlgProc`,
 /// `src/window/dialog_procs.cpp` 62-108).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RangeScale {
     /// The first frame of the range, from the edit box (`atol`).
     pub start: i32,
@@ -74,6 +74,7 @@ enum Family {
 fn run(
     t: &mut Tracks,
     rig: &Rig,
+    extra: &Extra,
     p: &RangeScale,
     first: &mut Result<()>,
     family: Family,
@@ -108,7 +109,7 @@ fn run(
             t.delete_marked(rig)?;
             t.reset_bone_cursor(rig);
             for clip in &clips {
-                if let Err(e) = t.register_bone_key(rig, clip, at) {
+                if let Err(e) = t.register_bone_key_with(rig, extra, clip, at, BoneTarget::Named) {
                     return soft(first, e);
                 }
             }
@@ -216,8 +217,8 @@ fn run(
 /// skipped. A full pool ends that family only and the first such error is
 /// returned at the end; any other error leaves the scene unchanged.
 ///
-/// Bones the registrar twists (fixed-axis bones) end the operation with
-/// [`mds_edit::Error::Unsupported`], as in `mds-edit`.
+/// A fixed-axis bone gets the registrar's twist correction about
+/// [`BoneFacts::axis`](crate::BoneFacts::axis).
 pub fn scale_frame_range(pmm: &mut Pmm, facts: &ModelFacts, p: &RangeScale) -> Result<()> {
     let m = active_model(pmm)?;
     if p.end.wrapping_sub(p.start) <= 0 {
@@ -227,6 +228,7 @@ pub fn scale_frame_range(pmm: &mut Pmm, facts: &ModelFacts, p: &RangeScale) -> R
         return Err(Error::ScaleOutOfRange);
     }
     let (mut tracks, rig) = open(&pmm.models[m], facts)?;
+    let extra = extra(facts);
     let mut first = Ok(());
     for (on, family) in [
         (p.bones, Family::Bone),
@@ -234,7 +236,7 @@ pub fn scale_frame_range(pmm: &mut Pmm, facts: &ModelFacts, p: &RangeScale) -> R
         (p.display, Family::Display),
     ] {
         if on {
-            run(&mut tracks, &rig, p, &mut first, family)?;
+            run(&mut tracks, &rig, &extra, p, &mut first, family)?;
         }
     }
     let max = tracks.max_frame;

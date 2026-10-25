@@ -457,6 +457,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-mmert"
+version = "0.1.0"
+dependencies = [
+ "mds-formats",
+ "mds-fx",
+ "mds-math",
+ "mds-mme",
+ "mds-shader",
+ "naga",
+ "png",
+ "pollster",
+ "wgpu",
+]
+
+[[package]]
 name = "mds-physics"
 version = "0.1.0"
 dependencies = [

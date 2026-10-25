@@ -30,8 +30,9 @@
 //     the step did not expect, or an expected dialog that never opened, fails
 //     the step.
 //   MessageBoxA / MessageBoxW  an OK/Cancel question is answered OK when the
-//     step's command asks one in the GUI (new, load pmm, load model, paste
-//     different); any other box fails the step and prints its text.
+//     step's command asks one in the GUI (new, load pmm, load model, load vmd
+//     onto a model of another name, paste different, delete lip, eye, and
+//     eyebrow); any other box fails the step and prints its text.
 //     The info boxes of `delete unused` and `register blink` (MB_OK, the
 //     deleted and registered counts) are answered OK too and their text is
 //     written to <out-dir>\messages.tsv.
@@ -976,7 +977,7 @@ struct Runner {
 
 bool AnswersOkCancel(ScriptOp op) {
     return op == ScriptOp::New || op == ScriptOp::LoadPmm || op == ScriptOp::LoadModel ||
-           op == ScriptOp::PasteDifferent || op == ScriptOp::DeleteLip ||
+           op == ScriptOp::LoadVmd || op == ScriptOp::PasteDifferent || op == ScriptOp::DeleteLip ||
            op == ScriptOp::DeleteEye || op == ScriptOp::DeleteEyebrow;
 }
 

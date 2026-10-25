@@ -1280,6 +1280,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-mmert"
+version = "0.1.0"
+dependencies = [
+ "mds-formats",
+ "mds-fx",
+ "mds-math",
+ "mds-mme",
+ "mds-shader",
+ "naga",
+ "png",
+ "pollster 1.0.1",
+ "wgpu",
+]
+
+[[package]]
 name = "mds-ops"
 version = "0.1.0"
 dependencies = [

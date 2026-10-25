@@ -409,6 +409,17 @@ name = "mds-math"
 version = "0.1.0"
 dependencies = [
  "libm",
+ "mds-crtmath",
+]
+
+[[package]]
+name = "mds-pose"
+version = "0.1.0"
+dependencies = [
+ "mds-crtmath",
+ "mds-formats",
+ "mds-math",
+ "mds-trace",
 ]
 
 [[package]]

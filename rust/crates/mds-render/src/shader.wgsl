@@ -1,14 +1,15 @@
-// MMD-style shading: material colors, a toon ramp lookup, an optional sphere map
-// (multiply or add), a Blinn-Phong highlight, and an inverted-hull edge.
+// MMD-style shading: saturate(ambient + diffuse * light), times the texture, an optional sphere
+// map (multiply or add) and a toon ramp lookup by the angle to the light, plus a Blinn-Phong
+// highlight, and an inverted-hull edge.
 
 struct Scene {
     view_proj: mat4x4<f32>,
     view: mat4x4<f32>,
     eye: vec4<f32>,
-    // Direction the light travels, world space.
+    // Direction the light travels, world space; w is 1 when the toon ramp applies, else 0.
     light_dir: vec4<f32>,
     light_color: vec4<f32>,
-    // Render target width and height in pixels.
+    // Render target width and height in pixels, then a clip-space shift (x right, y up).
     screen: vec4<f32>,
 }
 
@@ -43,10 +44,14 @@ struct VsOut {
     @location(2) uv: vec2<f32>,
 }
 
+fn shifted(clip: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(clip.x + scene.screen.z * clip.w, clip.y + scene.screen.w * clip.w, clip.z, clip.w);
+}
+
 @vertex
 fn vs_main(v: VsIn) -> VsOut {
     var o: VsOut;
-    o.clip = scene.view_proj * vec4<f32>(v.position, 1.0);
+    o.clip = shifted(scene.view_proj * vec4<f32>(v.position, 1.0));
     o.world = v.position;
     o.normal = v.normal;
     o.uv = v.uv;
@@ -61,7 +66,7 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
     }
     let to_light = -normalize(scene.light_dir.xyz);
     let lc = scene.light_color.rgb;
-    var color = clamp(mat.diffuse.rgb * lc + mat.ambient.rgb * lc, vec3<f32>(0.0), vec3<f32>(1.0));
+    var color = clamp(mat.ambient.rgb + mat.diffuse.rgb * lc, vec3<f32>(0.0), vec3<f32>(1.0));
     color = color * textureSampleLevel(tex, samp, i.uv, 0.0).rgb;
 
     let view_n = (scene.view * vec4<f32>(n, 0.0)).xy;
@@ -75,7 +80,8 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
 
     // The toon ramp has the lit end at v = 0.
     let ndl = dot(n, to_light);
-    color = color * textureSampleLevel(toon, samp, vec2<f32>(0.5, 0.5 - 0.5 * ndl), 0.0).rgb;
+    let ramp = textureSampleLevel(toon, samp, vec2<f32>(0.5, 0.5 - 0.5 * ndl), 0.0).rgb;
+    color = color * mix(vec3<f32>(1.0), ramp, scene.light_dir.w);
 
     let power = mat.specular.w;
     if power > 0.0 {
@@ -97,7 +103,7 @@ fn vs_edge(v: VsIn) -> VsOut {
         let px = mat.params.x * v.edge_scale;
         clip = vec4<f32>(clip.xy + n / len * px * 2.0 / scene.screen.xy * clip.w, clip.zw);
     }
-    o.clip = clip;
+    o.clip = shifted(clip);
     o.world = v.position;
     o.normal = v.normal;
     o.uv = v.uv;

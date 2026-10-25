@@ -1,6 +1,7 @@
 //! Gate: every line of the x64 app's L2 traces of the swing600 scene,
 //! `rigid` included, bit for bit: physics mode 2 (`swing600.pmm`) and
-//! physics off (`swing600-nophys.pmm`), 600 frames each.
+//! physics off (`swing600-nophys.pmm`), and the golden scene
+//! (`swing600-golden.pmm`, physics mode 2), 600 frames each.
 
 use mds_formats::pmm::Pmm;
 use mds_physics::PhysicsScene;
@@ -26,6 +27,11 @@ fn gate(pmm: &str, trace: &str) {
 #[test]
 fn swing600_matches_the_l2_trace() {
     gate("swing600.pmm", "swing600-600.trace");
+}
+
+#[test]
+fn swing600_golden_matches_the_l2_trace() {
+    gate("swing600-golden.pmm", "swing600-golden-600.trace");
 }
 
 #[test]

@@ -474,3 +474,67 @@ fn interpolation_curve_copy_paste_reset_and_drag() {
     let k = d.pmm.camera.get(0).unwrap();
     assert_eq!((k.interpolation[0][2], k.interpolation[1][2]), (5, 6));
 }
+
+#[test]
+fn a_bone_rotation_box_zeroes_its_axis_and_keeps_the_signs() {
+    // BoneRotEdit (command_frame_register.cpp 307-358): the edited axis
+    // becomes 0, X keeps its sign, Y and Z are negated; Rz * Rx * Ry.
+    let mut d = doc();
+    run(&mut d, [Command::SelectBones(vec![3])]);
+    let cases = [
+        (
+            0,
+            [10.0, 90.0, 0.0],
+            [0.0, -0.5f64.sqrt(), 0.0, 0.5f64.sqrt()],
+        ),
+        (2, [60.0, 0.0, 25.0], [0.5, 0.0, 0.0, 0.75f64.sqrt()]),
+        (1, [0.0, 5.0, 60.0], [0.0, 0.0, -0.5, 0.75f64.sqrt()]),
+    ];
+    for (axis, degrees, want) in cases {
+        run(&mut d, [Command::ZeroBoneRotationAxis { axis, degrees }]);
+        let p = &d.pmm.models[0].bone_pose[3];
+        for (g, w) in p.rotation.iter().zip(want) {
+            assert!((f64::from(*g) - w).abs() < 1e-6, "{axis}: {:?}", p.rotation);
+        }
+        assert_eq!(p.flags[1], 1);
+    }
+    let h = &d.edit.models[0].history;
+    assert!(matches!(&h.undo[h.cursor], Entry::BonePose(s) if s[0].bone == 3));
+}
+
+#[test]
+fn deleting_an_accessory_closes_up_the_orders() {
+    // DeleteSelectedAccessory (command_panel_toggles.cpp 220-321).
+    let mut d = doc();
+    let x = std::fs::read(dir().join("accessory/cube.x")).unwrap();
+    for n in ["a", "b", "c"] {
+        run(
+            &mut d,
+            [Command::LoadAccessory {
+                path: format!("C:\\acc\\{n}.x"),
+                data: x.clone(),
+            }],
+        );
+    }
+    let render = d.pmm.physics.accessory_render_order;
+    let slots: Vec<u8> = d.pmm.accessories.iter().map(|a| a.slot).collect();
+    run(
+        &mut d,
+        [
+            Command::SelectAccessory(slots[1]),
+            Command::SetAccessoryAdditive(true),
+            Command::DeleteAccessory(slots[0]),
+        ],
+    );
+    let p = &d.pmm;
+    let left: Vec<(u8, u8, u8)> = p
+        .accessories
+        .iter()
+        .map(|a| (a.slot, a.order, a.state.additive))
+        .collect();
+    assert_eq!(left, [(slots[1], 0, 1), (slots[2], 1, 0)]);
+    assert_eq!(p.selected_accessory_slot, slots[1]);
+    assert_eq!(p.physics.accessory_render_order, render);
+    assert!(d.apply(Command::DeleteAccessory(slots[0])).is_err());
+    reloaded(&d);
+}

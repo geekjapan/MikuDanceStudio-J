@@ -178,6 +178,81 @@ impl Document {
         Ok(())
     }
 
+    /// `BoneRotEdit` (`command_frame_register.cpp` 307-358), the model-mode
+    /// path: `PushBoneEditUndo`, then the edited axis is zeroed and the
+    /// other two boxes go from degrees to radians, X with float pi and Y, Z
+    /// negated with double pi; the selected bone takes the quaternion of
+    /// Rz * Rx * Ry and is marked edited. The typed value itself is dropped,
+    /// as in the C++. Nothing without a selected bone.
+    pub(crate) fn zero_bone_rotation_axis(
+        &mut self,
+        axis: u8,
+        degrees: [f32; 3],
+    ) -> Result<(), Error> {
+        const PI: f64 = std::f64::consts::PI; // dbl_52B768
+        const PI_F: f64 = 3.1415927410125732;
+        let i = self.active_model()?;
+        if self.camera_mode() {
+            return Err(not(
+                "the bone rotation boxes edit the camera in camera mode",
+            ));
+        }
+        let m = &mut self.pmm.models[i];
+        let Ok(sel) = usize::try_from(m.selection.selected_bone) else {
+            return Ok(());
+        };
+        if sel >= m.bone_pose.len() {
+            return Ok(());
+        }
+        crate::model::push_pose_edit(m, &mut self.edit.models[i].history);
+        let [x, y, z] = degrees.map(f64::from);
+        let x = if axis == 0 {
+            0.0
+        } else {
+            (x * PI_F / 180.0) as f32
+        };
+        let y = if axis == 1 {
+            0.0
+        } else {
+            (-y * PI / 180.0) as f32
+        };
+        let z = if axis >= 2 {
+            0.0
+        } else {
+            (-z * PI / 180.0) as f32
+        };
+        let r = Mat4::multiply(&Mat4::rotation_z(z), &Mat4::rotation_x(x));
+        let r = Mat4::multiply(&r, &Mat4::rotation_y(y));
+        m.bone_pose[sel].rotation = Quat::from_matrix(&r).0;
+        m.bone_pose[sel].flags[1] = 1;
+        Ok(())
+    }
+
+    /// `DeleteSelectedAccessory` (`command_panel_toggles.cpp` 220-321): the
+    /// record and its keys go, the orders above close up, and the accessory
+    /// of order 0 (else slot 0) becomes the selected one.
+    /// `accessory_render_order` and the edit mode stay.
+    pub(crate) fn delete_accessory(&mut self, slot: u8) -> Result<(), Error> {
+        let p = &mut self.pmm;
+        let at = p
+            .accessories
+            .iter()
+            .position(|a| a.slot == slot)
+            .ok_or(not("no accessory in that slot"))?;
+        let old = p.accessories.remove(at).order;
+        for a in &mut p.accessories {
+            if a.order > old {
+                a.order -= 1;
+            }
+        }
+        p.selected_accessory_slot = p
+            .accessories
+            .iter()
+            .find(|a| a.order == 0)
+            .map_or(0, |a| a.slot);
+        Ok(())
+    }
+
     /// Button 496, `CopySelectedBonePose` (`bone_pose_clipboard.cpp` 34-86):
     /// the saved pose of the selected bones. Nothing selected leaves the
     /// clipboard as it was.

@@ -524,6 +524,20 @@ pub enum Command {
     /// 42-105): the selected model's `bone_list_pos` in model mode, else
     /// `display_list_scroll`.
     SetTrackListScroll(i32),
+    /// The bone rotation edit boxes 540..542 committed in model mode
+    /// ([`Document::zero_bone_rotation_axis`]): `degrees` is what the three
+    /// boxes held, `axis` the edited one (0 X, 1 Y, 2 Z).
+    ZeroBoneRotationAxis {
+        axis: u8,
+        degrees: [f32; 3],
+    },
+    /// The delete button of the accessory panel (`DeleteSelectedAccessory`,
+    /// `command_panel_toggles.cpp` 220-321) on the accessory in `slot`,
+    /// after the confirmation box.
+    DeleteAccessory(u8),
+    /// Checkbox 477 (`command_panel_toggles.cpp` 554-562): the additive
+    /// blend of the selected accessory. The C++ toggles; this sets.
+    SetAccessoryAdditive(bool),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1602,6 +1616,16 @@ impl Document {
                 Some(i) => self.pmm.models[i].selection.bone_list_pos = v,
                 None => self.pmm.display_list_scroll = v,
             },
+            Command::ZeroBoneRotationAxis { axis, degrees } => {
+                self.zero_bone_rotation_axis(axis, degrees)?
+            }
+            Command::DeleteAccessory(slot) => self.delete_accessory(slot)?,
+            Command::SetAccessoryAdditive(on) => {
+                let slot = self.pmm.selected_accessory_slot;
+                if let Ok(a) = global::accessory(&mut self.pmm, slot) {
+                    a.state.additive = u8::from(on);
+                }
+            }
             Command::NewScene => {
                 self.pmm = new_scene::reset(&self.pmm);
                 self.models.clear();

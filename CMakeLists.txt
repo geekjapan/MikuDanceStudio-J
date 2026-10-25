@@ -256,6 +256,7 @@ add_executable(MikuDanceStudio WIN32
     src/tools/trace_mode.cpp
     src/tools/mesh_dump.cpp
     src/tools/script_mode.cpp
+    src/tools/mme_probe.cpp
     res/MMD.rc
     ${MIKUDANCESTUDIO_GEN_RES}
     ${CMAKE_CURRENT_SOURCE_DIR}/exports/MikuMikuDance.def
@@ -358,6 +359,9 @@ target_link_libraries(MMEffect PRIVATE
     advapi32
 )
 target_link_libraries(MikuDanceStudio PRIVATE MMEffect)
+# The --mds-mme-dump probe reads the effect engine's headers (read only).
+set_source_files_properties(src/tools/mme_probe.cpp PROPERTIES INCLUDE_DIRECTORIES
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mmeffect/src/mmeffect)
 
 # Resource IDs are distinct from the host. Icon child IDs are explicit too.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)

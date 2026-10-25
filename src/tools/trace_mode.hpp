@@ -6,7 +6,7 @@ class MMDApp;
 }
 
 namespace mikudancestudio::tools {
-// --mds-trace, --mds-frame-dump, --mds-edge-probe, and --mds-mesh-dump support for the x64 app (Windows only; the
+// --mds-trace, --mds-frame-dump, --mds-edge-probe, --mds-mesh-dump, and --mds-mme-dump support for the x64 app (Windows only; the
 // portable parts are trace_args.hpp and trace_l2.hpp).
 //
 // PrepareTraceRequest runs first in WinMain, before any window or D3D object
@@ -39,4 +39,13 @@ int RunTraceMode(MMDApp* app, const TraceRequest& request);
 // Writes "<out-dir>\<file name>.txt" per accessory file (format: mesh_dump.cpp).
 // Returns 0, or 1 when a file cannot be written.
 int RunMeshDump(MMDApp* app, const TraceRequest& request);
+
+// Writes the MME probe of one frame to `path` through "<path>.tmp" (format:
+// trace_mode.cpp, --mds-mme-dump), effect paths relative to `base`. Returns
+// the number of effects listed, or -1 when the file cannot be written.
+int WriteMmeProbe(const std::wstring& path, std::uint32_t frame, float frameTime,
+                  const std::wstring& base);
+
+// Writes the MME log of the run (the text of the MME log dialog) to stderr.
+void WriteMmeLog();
 } // namespace mikudancestudio::tools

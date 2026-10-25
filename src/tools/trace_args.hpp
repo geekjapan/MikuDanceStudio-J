@@ -5,7 +5,7 @@
 #include <vector>
 
 namespace mikudancestudio::tools {
-// Command lines of the four headless modes. The flag must be the first
+// Command lines of the five headless modes. The flag must be the first
 // argument, and <pmm> must end in ".pmm" (any case).
 //   MikuDanceStudio.exe --mds-trace <pmm> <out> <frames>
 //     Exactly these four arguments. <frames> is a decimal number in
@@ -15,6 +15,9 @@ namespace mikudancestudio::tools {
 //     ascending.
 //   MikuDanceStudio.exe --mds-edge-probe <pmm> <out> <frame>...
 //     The frames as for --mds-frame-dump; <out> is the probe text file.
+//   MikuDanceStudio.exe --mds-mme-dump <pmm> <out-dir> <frame>...
+//     The frames as for --mds-frame-dump; writes an image and an MME probe
+//     per frame.
 //   MikuDanceStudio.exe --mds-mesh-dump <pmm> <out-dir> <x-file>...
 //     One or more accessory files (.x or .vac). The PMM only hosts the device.
 struct TraceRequest {
@@ -22,13 +25,14 @@ struct TraceRequest {
         Trace,
         FrameDump,
         EdgeProbe,
-        MeshDump
+        MeshDump,
+        MmeDump
     };
     Mode mode = Mode::Trace;
     std::wstring pmm;
     std::wstring out;                      // the trace or probe file, or the frame dump directory
     std::uint32_t frames = 0;              // passes: the trace length, or the last dump frame + 1
-    std::vector<std::uint32_t> dumpFrames; // FrameDump and EdgeProbe
+    std::vector<std::uint32_t> dumpFrames; // FrameDump, EdgeProbe, and MmeDump
     std::vector<std::wstring> meshFiles;   // MeshDump
 };
 
@@ -81,7 +85,8 @@ inline TraceArgs ParseTraceArgs(int argc, const wchar_t* const* argv, TraceReque
         if (argc != 5 || !ParseDecimal(argv[4], &parsed.frames) || parsed.frames < 1 ||
             parsed.frames > kMaxTraceFrames)
             return TraceArgs::Malformed;
-    } else if (flag == L"--mds-frame-dump" || flag == L"--mds-edge-probe") {
+    } else if (flag == L"--mds-frame-dump" || flag == L"--mds-edge-probe" ||
+               flag == L"--mds-mme-dump") {
         if (argc < 5)
             return TraceArgs::Malformed;
         for (int i = 4; i < argc; ++i) {
@@ -91,8 +96,9 @@ inline TraceArgs ParseTraceArgs(int argc, const wchar_t* const* argv, TraceReque
                 return TraceArgs::Malformed;
             parsed.dumpFrames.push_back(frame);
         }
-        parsed.mode = flag == L"--mds-frame-dump" ? TraceRequest::Mode::FrameDump
-                                                  : TraceRequest::Mode::EdgeProbe;
+        parsed.mode = flag == L"--mds-frame-dump"   ? TraceRequest::Mode::FrameDump
+                      : flag == L"--mds-edge-probe" ? TraceRequest::Mode::EdgeProbe
+                                                    : TraceRequest::Mode::MmeDump;
         parsed.frames = parsed.dumpFrames.back() + 1;
     } else if (flag == L"--mds-mesh-dump") {
         if (argc < 5)

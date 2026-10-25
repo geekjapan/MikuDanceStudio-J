@@ -2,7 +2,6 @@
 //! `rigid` included, bit for bit: physics mode 2 (`swing600.pmm`) and
 //! physics off (`swing600-nophys.pmm`), 600 frames each.
 
-
 use mds_formats::pmm::Pmm;
 use mds_physics::PhysicsScene;
 use std::path::PathBuf;

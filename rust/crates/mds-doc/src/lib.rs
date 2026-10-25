@@ -376,13 +376,31 @@ impl Document {
     /// it keeps what the loader leaves from the scene before: the sidebar
     /// width, which `HandleWindowSize` sets back from the window (the file's
     /// value only lasts until the relayout), and the offset and scale of an
-    /// AVI or picture background that is not enabled.
+    /// AVI or picture background that is not enabled. The display groups of
+    /// each model are those of its file (`ModelLoadPMD`).
     pub fn load_scene(
         &mut self,
         data: &[u8],
         read: impl FnMut(&str) -> Option<Vec<u8>>,
     ) -> Result<(), Error> {
         let mut d = Document::load(data, read)?;
+        // The display groups come from the model file; the saved flags are
+        // kept (as `b == 1`) only when the counts agree.
+        for (m, f) in d.pmm.models.iter_mut().zip(&d.models) {
+            let Some(g) = model::group_count(f) else {
+                continue;
+            };
+            let s = &mut m.selection;
+            if g == m.group_count {
+                s.group_flags
+                    .iter_mut()
+                    .for_each(|b| *b = u8::from(*b == 1));
+            } else {
+                s.group_flags = vec![0; usize::from(g)];
+            }
+            m.group_count = g;
+            s.group_count_repeat = g;
+        }
         let (old, p) = (&self.pmm, &mut d.pmm);
         p.settings.panel_width = old.settings.panel_width;
         if p.avi.enabled != 1 {

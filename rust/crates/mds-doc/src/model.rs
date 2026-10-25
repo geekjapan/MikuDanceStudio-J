@@ -51,6 +51,30 @@ impl Skeleton {
     }
 }
 
+/// The display group count the loaders give a model (`groupCount`): the
+/// PMX display frames (`src/model/pmx_load.cpp`), or the PMD bone groups
+/// plus the root and "Disp/IK/OP" groups (`pmd_load.cpp`), plus the facial
+/// group when any morph is displayed. Counts are bytes, as in the C++.
+pub fn group_count(file: &ModelFile) -> Option<u8> {
+    match file {
+        ModelFile::Pmx(p) => {
+            let morphs = p
+                .frames
+                .iter()
+                .flat_map(|f| &f.entries)
+                .filter(|e| e.0 != 0)
+                .count() as u8;
+            Some((p.frames.len() as u8).wrapping_add(u8::from(morphs != 0)))
+        }
+        ModelFile::Pmd(p) => Some(
+            (p.bone_groups.len() as u8)
+                .wrapping_add(2)
+                .wrapping_add(u8::from(p.morph_display.len() as u8 != 0)),
+        ),
+        ModelFile::Missing => None,
+    }
+}
+
 /// The editor's view of a model: names and the saved pose from the PMM,
 /// bone flags from the file.
 pub fn rig(m: &pmm::Model, s: &Skeleton, auto_interpolation: bool) -> Rig {

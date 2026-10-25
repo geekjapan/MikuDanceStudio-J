@@ -71,7 +71,14 @@ pub fn save(p: &Pmm, model: Option<&pmm::Model>) -> Vec<u8> {
     fixed(&mut out, b"Vocaloid Motion Data 0002", 30);
     match model {
         Some(m) => fixed(&mut out, &m.name.raw, 20),
-        None => fixed(&mut out, CAMERA_LIGHT, 20),
+        None => {
+            // `strcpy_s` into the buffer that still holds the header text.
+            let mut buf = [0; 20];
+            buf.copy_from_slice(&out[..20]);
+            buf[..CAMERA_LIGHT.len()].copy_from_slice(CAMERA_LIGHT);
+            buf[CAMERA_LIGHT.len()] = 0;
+            out.extend_from_slice(&buf);
+        }
     }
     let count = |out: &mut Vec<u8>, n: usize| out.extend_from_slice(&(n as u32).to_le_bytes());
 

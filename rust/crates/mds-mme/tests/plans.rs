@@ -9,7 +9,17 @@
 //! listed plan matches (update the list) or an unlisted one does not (a regression).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+/// The commit `tools/fixtures/fetch_corpus.sh` pins.
+const CORPUS_COMMIT: &str = "218a91cd1c53f49850b2772ebbcb98bf258e75b1";
+
+/// Writes to stderr directly: libtest captures `println!` of passing tests, and the counts and
+/// a SKIP must show in a plain `cargo test`.
+fn report(text: &str) {
+    let _ = writeln!(std::io::stderr(), "{text}");
+}
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/rust/mme")
@@ -83,13 +93,15 @@ fn compare(group: &str, effects: &Path) -> BTreeSet<String> {
             bad.insert(name);
         }
     }
-    println!(
+    report(&format!(
         "{group}: {} of {} plans match",
         list.len() - bad.len(),
         list.len()
-    );
+    ));
     for (k, (n, example)) in &causes {
-        println!("  first mismatch at {k:?}: {n} plans, e.g. {example}");
+        report(&format!(
+            "  first mismatch at {k:?}: {n} plans, e.g. {example}"
+        ));
     }
     bad
 }
@@ -126,11 +138,19 @@ fn extra_plans_match() {
 fn ray_mmd_plans_match() {
     let corpus = corpus_dir();
     if !corpus.is_dir() {
-        println!(
+        report(&format!(
             "SKIP: corpus not found at {}; run tools/fixtures/fetch_corpus.sh (a skip is not a pass)",
             corpus.display()
-        );
+        ));
         return;
+    }
+    if let Ok(head) = std::fs::read_to_string(corpus.join(".git/HEAD")) {
+        assert_eq!(
+            head.trim(),
+            CORPUS_COMMIT,
+            "the corpus at {} is not at the pinned commit",
+            corpus.display()
+        );
     }
     check("ray-mmd", &corpus);
 }

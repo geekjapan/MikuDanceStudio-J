@@ -12,7 +12,13 @@ mds-math = { path = "../mds-math" }
 mds-physics = { path = "../mds-physics" }
 mds-render = { path = "../mds-render" }
 mds-scene = { path = "../mds-scene" }
+# The window: eframe on wgpu without its default backends (no GL, no WebGPU), so Cargo.lock keeps
+# the one wgpu 30.0.1 and feature set of mds-render.
+eframe = { version = "=0.37.0", default-features = false, features = ["wgpu_no_default_features", "default_fonts", "x11", "wayland"] }
+egui = "=0.37.0"
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "metal", "vulkan", "dx12"] }
+# File > Open.
+rfd = "=0.17.2"
 
 [dev-dependencies]
-mds-render = { path = "../mds-render" }
 png = "0.18"

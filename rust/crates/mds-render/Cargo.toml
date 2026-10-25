@@ -3,12 +3,17 @@ name = "mds-render"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
-description = "Offscreen wgpu rendering of a PMX model in bind pose with MMD-style shading"
+description = "Offscreen wgpu rendering of PMX and PMD models, bind pose or posed, with MMD-style shading"
 license = "MIT"
 publish = false
 
 [dependencies]
 mds-formats = { path = "../mds-formats" }
+mds-pose = { path = "../mds-pose" }
+mds-scene = { path = "../mds-scene" }
 # The same wgpu release and feature set as mds-shader, so Cargo.lock keeps one wgpu and one naga.
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "metal", "vulkan", "dx12"] }
 pollster = "1"
+
+[dev-dependencies]
+png = "0.18"

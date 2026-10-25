@@ -1,6 +1,6 @@
 //! Offscreen wgpu rendering of PMX and PMD models with MMD-style shading.
 //!
-//! Two entry points:
+//! Three entry points:
 //!
 //! * [`render`] draws one PMX in bind pose from a camera that its bounding box fixes, at
 //!   [`WIDTH`] x [`HEIGHT`], with no multisampling. The image-hash test records it.
@@ -8,6 +8,10 @@
 //!   PMM [`Camera`] and [`Light`] of a frame ([`scene`] reads them from a PMM), averaging
 //!   several sub-pixel shifted renders the way an 8x multisample resolve averages its samples, in
 //!   linear light (the golden images' resolve is gamma correct).
+//! * [`Renderer`] is what both run on: it is built on the caller's wgpu device and keeps its
+//!   pipelines and the buffers of the models between frames. [`Renderer::render_into`] draws into
+//!   a texture of the caller's with hardware multisampling, with no read back, for a window.
+//!   [`Gpu`] holds a `Renderer` on a device of its own for the two functions above.
 //!
 //! Shading follows MMD's standard pipeline as the golden images show it: the color is
 //! `saturate(ambient + diffuse * light)` times the texture, the sphere map (multiply or add) and the
@@ -25,12 +29,14 @@
 
 mod mesh;
 mod png;
+mod renderer;
 pub mod scene;
 mod view;
 
 use mds_formats::pmx::Pmx;
-use mesh::{EdgeView, FLAG_DOUBLE_SIDED, FLAG_EDGE};
 pub use mesh::{Mesh, Pose};
+pub use renderer::Renderer;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 pub use view::{Camera, Light, View};
 
 pub const WIDTH: u32 = 512;
@@ -46,10 +52,11 @@ pub use png::encode as encode_png;
 
 // ---- gpu ----
 
-/// A wgpu device with no window.
+/// A wgpu device with no window, and the [`Renderer`] that [`render`] and [`render_frame`] share.
 pub struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    renderer: Mutex<Renderer>,
     /// `name|backend`, the key the hash regression test records hashes under.
     pub adapter: String,
 }
@@ -79,110 +86,30 @@ impl Gpu {
         }))
         .map_err(|e| format!("cannot create a device on {}: {e}", info.name))?;
         Ok(Some(Gpu {
+            renderer: Mutex::new(Renderer::new(&device, &queue)?),
             device,
             queue,
             adapter: format!("{}|{:?}", info.name, info.backend),
         }))
     }
-}
 
-fn bytes(f: &[f32]) -> Vec<u8> {
-    f.iter().flat_map(|x| x.to_ne_bytes()).collect()
-}
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
 
-fn texture(gpu: &Gpu, w: u32, h: u32, rgba: &[u8]) -> wgpu::TextureView {
-    let size = wgpu::Extent3d {
-        width: w,
-        height: h,
-        depth_or_array_layers: 1,
-    };
-    let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("default texture"),
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: COLOR_FORMAT,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    gpu.queue.write_texture(
-        tex.as_image_copy(),
-        rgba,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(w * 4),
-            rows_per_image: Some(h),
-        },
-        size,
-    );
-    tex.create_view(&Default::default())
-}
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
 
-fn buffer(gpu: &Gpu, usage: wgpu::BufferUsages, data: &[u8]) -> wgpu::Buffer {
-    let b = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: (data.len() as u64).next_multiple_of(4).max(4),
-        usage: usage | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    gpu.queue.write_buffer(&b, 0, data);
-    b
-}
+    /// Pipelines the shared renderer has built so far; see [`Renderer::pipelines_created`].
+    pub fn pipelines_created(&self) -> usize {
+        self.renderer().pipelines_created()
+    }
 
-/// The built-in toon ramp, lit end first (v = 0.5 - 0.5 * N.L), 32 texels: full light for texels 0
-/// to 10, a linear fall over 11 to 14, then 0.8 (204) from texel 15 on. With the sampler's linear
-/// filter that is a ramp from v = 0.33 to 0.49, which is what the golden images show.
-fn toon_ramp() -> Vec<u8> {
-    (0..32)
-        .flat_map(|y| {
-            let b = (255.0 - (y as f32 - 10.0).clamp(0.0, 5.0) * 10.2).round() as u8;
-            [b, b, b, 255]
-        })
-        .collect()
-}
-
-fn entry(
-    binding: u32,
-    ty: wgpu::BindingType,
-    visibility: wgpu::ShaderStages,
-) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility,
-        ty,
-        count: None,
+    fn renderer(&self) -> MutexGuard<'_, Renderer> {
+        self.renderer.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
-
-fn uniform_entry(binding: u32, visibility: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
-    entry(
-        binding,
-        wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        visibility,
-    )
-}
-
-fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    entry(
-        binding,
-        wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        },
-        wgpu::ShaderStages::FRAGMENT,
-    )
-}
-
-/// Bytes per vertex of the body buffer (position, normal, uv) and of the edge buffer (position,
-/// `A8R8G8B8` color).
-const BODY_STRIDE: u64 = 32;
-const EDGE_STRIDE: u64 = 16;
 
 /// What [`render_frame`] draws.
 pub struct Frame<'a> {
@@ -223,10 +150,6 @@ pub const SAMPLES_8X: [[f32; 2]; 8] = [
     [7.0 / 16.0, -7.0 / 16.0],
 ];
 
-fn bind_entry(binding: u32, resource: wgpu::BindingResource) -> wgpu::BindGroupEntry {
-    wgpu::BindGroupEntry { binding, resource }
-}
-
 /// Renders `pmx` in bind pose and returns `WIDTH * HEIGHT * 4` RGBA8 bytes, top row first.
 ///
 /// Texture slots are not decoded yet: texture and sphere are white, toon is the built-in ramp
@@ -250,423 +173,10 @@ pub fn render(gpu: &Gpu, pmx: &Pmx) -> Result<Vec<u8>, String> {
     )
 }
 
-/// Renders a posed scene and returns `width * height * 4` RGBA8 bytes, top row first.
+/// Renders a posed scene and returns `width * height * 4` RGBA8 bytes, top row first. The pipelines
+/// and the buffers of the models are kept in `gpu` for the next call; see [`Renderer::render_frame`].
 pub fn render_frame(gpu: &Gpu, frame: &Frame) -> Result<Vec<u8>, String> {
-    let (width, height) = (frame.width, frame.height);
-    if width == 0 || height == 0 || frame.samples.is_empty() {
-        return Err("empty frame".into());
-    }
-    let both = wgpu::ShaderStages::VERTEX_FRAGMENT;
-    let error_scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
-
-    let shader = gpu
-        .device
-        .create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mds-render"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-        });
-    let scene_layout = gpu
-        .device
-        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[uniform_entry(0, both)],
-        });
-    let material_layout = gpu
-        .device
-        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[
-                uniform_entry(0, both),
-                texture_entry(1),
-                texture_entry(2),
-                texture_entry(3),
-                entry(
-                    4,
-                    wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    wgpu::ShaderStages::FRAGMENT,
-                ),
-            ],
-        });
-    let layout = gpu
-        .device
-        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[Some(&scene_layout), Some(&material_layout)],
-            immediate_size: 0,
-        });
-
-    let body_attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
-    let edge_attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Unorm8x4Bgra];
-    let pipeline = |vs: &str,
-                    fs: &str,
-                    (stride, attrs): (u64, &[wgpu::VertexAttribute]),
-                    cull: Option<wgpu::Face>,
-                    blend: Option<wgpu::BlendState>| {
-        gpu.device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(vs),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some(vs),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: stride,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: attrs,
-                    })],
-                },
-                // PMX front faces are clockwise.
-                primitive: wgpu::PrimitiveState {
-                    front_face: wgpu::FrontFace::Cw,
-                    cull_mode: cull,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(fs),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: COLOR_FORMAT,
-                        blend,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
-    };
-    let alpha = Some(wgpu::BlendState::ALPHA_BLENDING);
-    let body_layout = (BODY_STRIDE, &body_attrs[..]);
-    let body = pipeline(
-        "vs_main",
-        "fs_main",
-        body_layout,
-        Some(wgpu::Face::Back),
-        alpha,
-    );
-    let body_two_sided = pipeline("vs_main", "fs_main", body_layout, None, alpha);
-    let edge = pipeline(
-        "vs_edge",
-        "fs_edge",
-        (EDGE_STRIDE, &edge_attrs[..]),
-        Some(wgpu::Face::Front),
-        alpha,
-    );
-
-    let light = view::normalize(frame.light.direction);
-    let scene_data = |shift: [f32; 2]| {
-        let view = &frame.view;
-        let mut scene = Vec::new();
-        scene.extend(view.view_proj.iter().flatten());
-        scene.extend(view.view.iter().flatten());
-        scene.extend([view.eye[0], view.eye[1], view.eye[2], 1.0]);
-        scene.extend([
-            light[0],
-            light[1],
-            light[2],
-            f32::from(u8::from(frame.toon)),
-        ]);
-        scene.extend([
-            frame.light.color[0],
-            frame.light.color[1],
-            frame.light.color[2],
-            1.0,
-        ]);
-        // The shift in clip space: x right, y up.
-        scene.extend([
-            width as f32,
-            height as f32,
-            2.0 * shift[0] / width as f32,
-            -2.0 * shift[1] / height as f32,
-        ]);
-        bytes(&scene)
-    };
-    let scene_buf = buffer(gpu, wgpu::BufferUsages::UNIFORM, &scene_data([0.0; 2]));
-    let scene_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &scene_layout,
-        entries: &[bind_entry(0, scene_buf.as_entire_binding())],
-    });
-
-    let white = texture(gpu, 1, 1, &[255; 4]);
-    let toon = texture(gpu, 1, 32, &toon_ramp());
-    let sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        ..Default::default()
-    });
-
-    struct Resident<'a> {
-        mesh: &'a Mesh,
-        vertices: wgpu::Buffer,
-        edge_vertices: wgpu::Buffer,
-        indices: wgpu::Buffer,
-        /// Whether each material draws its edge: the flag, and for PMX a visible edge color.
-        edge_drawn: Vec<bool>,
-        /// The material's uniform buffer is kept alive by its bind group.
-        groups: Vec<wgpu::BindGroup>,
-        /// The diffuse alpha of each material after the material morphs.
-        alpha: Vec<f32>,
-    }
-    let edge_view = EdgeView {
-        camera_position: frame.view.eye,
-        fov: frame.view.edge_fov,
-        self_shadow: frame.toon,
-    };
-    let residents: Vec<Resident> = frame
-        .models
-        .iter()
-        .map(|&(mesh, pose)| {
-            let skin = mesh.skinned(pose, &edge_view);
-            let index_data: Vec<u8> = mesh.indices.iter().flat_map(|i| i.to_ne_bytes()).collect();
-            let stride = skin.stride();
-            let body: Vec<f32> = skin
-                .main
-                .chunks(stride)
-                .flat_map(|v| v[..8].iter().copied())
-                .collect();
-            let edge_data: Vec<u8> = skin
-                .edge
-                .iter()
-                .flat_map(|e| {
-                    let color = e.diffuse.to_le_bytes();
-                    let p = e.position.map(f32::to_ne_bytes);
-                    [p[0], p[1], p[2], color].concat()
-                })
-                .collect();
-            // The morphed rgb is in diffuse_mirror, the morphed alpha in diffuse.
-            let diffuse = |m: &mds_skin::Material| {
-                [
-                    m.diffuse_mirror[0],
-                    m.diffuse_mirror[1],
-                    m.diffuse_mirror[2],
-                    m.diffuse[3],
-                ]
-            };
-            let groups = skin
-                .materials
-                .iter()
-                .map(|m| {
-                    let u = [
-                        diffuse(m).as_slice(),
-                        &[m.ambient[0], m.ambient[1], m.ambient[2], 1.0],
-                        &[
-                            m.specular[0],
-                            m.specular[1],
-                            m.specular[2],
-                            m.specular_power,
-                        ],
-                        &[0.0; 4],
-                    ]
-                    .concat();
-                    let buf = buffer(gpu, wgpu::BufferUsages::UNIFORM, &bytes(&u));
-                    gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: None,
-                        layout: &material_layout,
-                        entries: &[
-                            bind_entry(0, buf.as_entire_binding()),
-                            bind_entry(1, wgpu::BindingResource::TextureView(&white)),
-                            bind_entry(2, wgpu::BindingResource::TextureView(&white)),
-                            bind_entry(3, wgpu::BindingResource::TextureView(&toon)),
-                            bind_entry(4, wgpu::BindingResource::Sampler(&sampler)),
-                        ],
-                    })
-                })
-                .collect();
-            let edge_drawn = mesh
-                .materials
-                .iter()
-                .zip(&skin.materials)
-                .map(|(m, sm)| {
-                    m.flags & FLAG_EDGE != 0 && (!skin.is_pmx() || sm.edge_color[3] > 0.0)
-                })
-                .collect();
-            Resident {
-                mesh,
-                vertices: buffer(gpu, wgpu::BufferUsages::VERTEX, &bytes(&body)),
-                edge_vertices: buffer(gpu, wgpu::BufferUsages::VERTEX, &edge_data),
-                indices: buffer(gpu, wgpu::BufferUsages::INDEX, &index_data),
-                edge_drawn,
-                groups,
-                alpha: skin.materials.iter().map(|m| diffuse(m)[3]).collect(),
-            }
-        })
-        .collect();
-
-    let size = wgpu::Extent3d {
-        width,
-        height,
-        depth_or_array_layers: 1,
-    };
-    let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("target"),
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: COLOR_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-        view_formats: &[],
-    });
-    let depth = gpu.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("depth"),
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
-    let row_bytes = width * 4;
-    let padded_row = row_bytes.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-    let read_buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("readback"),
-        size: u64::from(padded_row * height),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let target_view = target.create_view(&Default::default());
-    let depth_view = depth.create_view(&Default::default());
-    let [r, g, b, a] = frame.background.map(|c| f64::from(c) / 255.0);
-
-    let to_linear = srgb_to_linear_table();
-    let mut sum = vec![0f32; (width * height * 4) as usize];
-    for sample in frame.samples {
-        let shift = [
-            frame.pixel_offset[0] - sample[0],
-            frame.pixel_offset[1] - sample[1],
-        ];
-        gpu.queue.write_buffer(&scene_buf, 0, &scene_data(shift));
-        let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("mds-render"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &target_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_bind_group(0, &scene_group, &[]);
-            for res in &residents {
-                pass.set_index_buffer(res.indices.slice(..), wgpu::IndexFormat::Uint32);
-                let drawn = || {
-                    res.mesh
-                        .materials
-                        .iter()
-                        .zip(&res.groups)
-                        .zip(res.alpha.iter().zip(&res.edge_drawn))
-                        .filter(|((m, _), _)| m.count > 0)
-                };
-                // Materials in file order, then the edges of the materials that have one.
-                pass.set_vertex_buffer(0, res.vertices.slice(..));
-                for ((m, group), (&alpha, _)) in drawn() {
-                    if alpha <= 0.0 {
-                        continue;
-                    }
-                    pass.set_pipeline(if m.flags & FLAG_DOUBLE_SIDED != 0 {
-                        &body_two_sided
-                    } else {
-                        &body
-                    });
-                    pass.set_bind_group(1, group, &[]);
-                    pass.draw_indexed(m.start..m.start + m.count, 0, 0..1);
-                }
-                pass.set_pipeline(&edge);
-                pass.set_vertex_buffer(0, res.edge_vertices.slice(..));
-                for ((m, group), (_, &has_edge)) in drawn() {
-                    if has_edge {
-                        pass.set_bind_group(1, group, &[]);
-                        pass.draw_indexed(m.start..m.start + m.count, 0, 0..1);
-                    }
-                }
-            }
-        }
-        encoder.copy_texture_to_buffer(
-            target.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &read_buf,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded_row),
-                    rows_per_image: Some(height),
-                },
-            },
-            size,
-        );
-        gpu.queue.submit([encoder.finish()]);
-
-        let slice = read_buf.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        gpu.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|e| format!("poll: {e}"))?;
-        rx.recv()
-            .map_err(|e| e.to_string())?
-            .map_err(|e| format!("map readback buffer: {e}"))?;
-        {
-            let mapped = slice
-                .get_mapped_range()
-                .map_err(|e| format!("read readback buffer: {e}"))?;
-            for (y, row) in mapped
-                .chunks(padded_row as usize)
-                .take(height as usize)
-                .enumerate()
-            {
-                let out = &mut sum[y * row_bytes as usize..][..row_bytes as usize];
-                for (k, (s, &p)) in out.iter_mut().zip(row).enumerate() {
-                    // Alpha is averaged as it is; the colors in linear light.
-                    *s += if k % 4 == 3 {
-                        f32::from(p) / 255.0
-                    } else {
-                        to_linear[usize::from(p)]
-                    };
-                }
-            }
-        }
-        read_buf.unmap();
-    }
-    if let Some(e) = pollster::block_on(error_scope.pop()) {
-        return Err(format!("wgpu: {e}"));
-    }
-    let n = frame.samples.len() as f32;
-    Ok(sum
-        .iter()
-        .enumerate()
-        .map(|(k, &s)| {
-            let v = s / n;
-            let v = if k % 4 == 3 { v } else { linear_to_srgb(v) };
-            (v * 255.0).round().clamp(0.0, 255.0) as u8
-        })
-        .collect())
+    gpu.renderer().render_frame(frame)
 }
 
 fn srgb_to_linear_table() -> [f32; 256] {

@@ -25,7 +25,7 @@ pub fn loop_start_seconds(frame: i32) -> f32 {
 pub struct Options {
     /// 411, `PlaybackLoopEnabled`.
     pub looped: bool,
-    /// 413. The C++ calls the byte `playbackReturnsToStartFrame`, but when it is set the stop
+    /// Check box 413. The C++ calls the byte `playbackReturnsToStartFrame`, but when it is set the stop
     /// moves the current frame to the playhead, and when it is clear the current frame stays
     /// where play started (`StopPlayback`).
     pub stop_at_playhead: bool,
@@ -109,7 +109,7 @@ impl Playback {
         let target = self.target(now_ms);
         self.cursor = target;
         // `!(end < target)`: a NaN target plays on (x86 0x46F2A9 jp).
-        if !(self.end < target) {
+        if self.end.partial_cmp(&target) != Some(std::cmp::Ordering::Less) {
             return Pass::Playing;
         }
         if !options.looped {

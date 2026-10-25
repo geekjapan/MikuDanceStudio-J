@@ -71,18 +71,6 @@ fn bone_index(i: i32, bones: usize) -> Result<u32> {
         .ok_or(Error::Corrupt)
 }
 
-/// The bone to hand `mds-edit` for a selector whose bone is -1, which is
-/// selector 0 of every model the C++ makes. The C++ looks up `bones[-1]`,
-/// reads whatever lies before the array, and matches it against nothing in
-/// practice; `mds-edit` needs a real bone, so this is the first bone no
-/// selector names, whose name no registrar entry can carry. With none free
-/// the index is out of range and the registrar reports [`Error::Corrupt`].
-fn stand_in(selectors: &[i32], bones: usize) -> u32 {
-    (0..bones as u32)
-        .find(|&b| !selectors.contains(&(b as i32)))
-        .unwrap_or(u32::MAX)
-}
-
 /// The pools and the rig of one model, for the `mds-edit` operations. The
 /// search cursor starts at 0, as every operation resets it before use.
 pub(crate) fn open(m: &Model, facts: &ModelFacts) -> Result<(Tracks, Rig)> {
@@ -129,8 +117,10 @@ pub(crate) fn open(m: &Model, facts: &ModelFacts) -> Result<(Tracks, Rig)> {
             .zip(&m.selector_pose)
             .map(|(&b, p)| {
                 Ok(Selector {
+                    // The root selector (-1) has no bone; mds-edit matches
+                    // it against no entry, as the C++ does in practice.
                     bone: if b < 0 {
-                        stand_in(&m.selector_bones, bones)
+                        u32::MAX
                     } else {
                         bone_index(b, bones)?
                     },

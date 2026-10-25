@@ -5,7 +5,7 @@
 #include <vector>
 
 namespace mikudancestudio::tools {
-// Command lines of the three headless modes. The flag must be the first
+// Command lines of the four headless modes. The flag must be the first
 // argument, and <pmm> must end in ".pmm" (any case).
 //   MikuDanceStudio.exe --mds-trace <pmm> <out> <frames>
 //     Exactly these four arguments. <frames> is a decimal number in
@@ -15,17 +15,21 @@ namespace mikudancestudio::tools {
 //     ascending.
 //   MikuDanceStudio.exe --mds-edge-probe <pmm> <out> <frame>...
 //     The frames as for --mds-frame-dump; <out> is the probe text file.
+//   MikuDanceStudio.exe --mds-mesh-dump <pmm> <out-dir> <x-file>...
+//     One or more accessory files (.x or .vac). The PMM only hosts the device.
 struct TraceRequest {
     enum class Mode {
         Trace,
         FrameDump,
-        EdgeProbe
+        EdgeProbe,
+        MeshDump
     };
     Mode mode = Mode::Trace;
     std::wstring pmm;
     std::wstring out;                      // the trace or probe file, or the frame dump directory
     std::uint32_t frames = 0;              // passes: the trace length, or the last dump frame + 1
     std::vector<std::uint32_t> dumpFrames; // FrameDump and EdgeProbe
+    std::vector<std::wstring> meshFiles;   // MeshDump
 };
 
 enum class TraceArgs {
@@ -90,6 +94,15 @@ inline TraceArgs ParseTraceArgs(int argc, const wchar_t* const* argv, TraceReque
         parsed.mode = flag == L"--mds-frame-dump" ? TraceRequest::Mode::FrameDump
                                                   : TraceRequest::Mode::EdgeProbe;
         parsed.frames = parsed.dumpFrames.back() + 1;
+    } else if (flag == L"--mds-mesh-dump") {
+        if (argc < 5)
+            return TraceArgs::Malformed;
+        for (int i = 4; i < argc; ++i) {
+            if (argv[i] == nullptr || argv[i][0] == L'\0')
+                return TraceArgs::Malformed;
+            parsed.meshFiles.push_back(argv[i]);
+        }
+        parsed.mode = TraceRequest::Mode::MeshDump;
     } else {
         return TraceArgs::NotRequested;
     }

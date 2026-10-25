@@ -17,11 +17,13 @@ writing:
 | `cube.x` | `1afa5c387b22797c997bfde9484462803184ab09ce80fd38570feed261c47995` |
 | `cube_bin.x` | `6c53c41c7810bc17d4308eab72c5ee8a852f65a07383a64cf44577145f57f0c2` |
 | `cube_bin64.x` | `154e4dcfb7b6c5c2adf17bc45e7ec06bb131b4d8637a657aa09ac092192f5e50` |
+| `degenerate_face.x` | `7ea179b33b4d6845b6ca0fdf111105ea82a4095770c5c46c9395fe1abcc54edc` |
 | `empty_mesh.x` | `c56bdd910de4124ed60b8009e6d7695dc4658a0921ffb045bfb55a788038ace6` |
 | `face_index_range.x` | `ce1e37887d913ca27c4ad794f8be6ffdb0172fff91f2da25cc3dc420e931e122` |
 | `face_two_vertices.x` | `07640f549cd891e1c3a28d8a3bd9863c17e910ac4eeff2e7d6fba1c88a5546dc` |
 | `frame_matrix_short.x` | `de4bdbea17c8a580ea1d59afb5633cb23fef78ade560f436d276fd6e8106bfdf` |
 | `frames.x` | `62cdc9640033586532c3bf546381a1d67c54c603cff040b64b89a36d33faef84` |
+| `frames_normals.x` | `4adfcf2274fdfe93de4a0e55708ca96ec8a85a675ae55bce5e2af70f8dd29c62` |
 | `material_count.x` | `fd950df60c95878104ea0b54f13150bd3c3a9928e27d8427fdf65d12e42657f5` |
 | `material_index_range.x` | `93f6d86add276e8c45c5c9d9aae6ec28e268e5d93428f2d9b3493eef3515344e` |
 | `multi_material.x` | `de6159219b141b10197ac5aff6c3cbe58c761ae2cd65d9608049a704446792c7` |
@@ -48,6 +50,8 @@ writing:
 | `cube_bin.x`, `cube_bin64.x` | The same cube in the binary format (`0303bin 0032` and `0303bin 0064`, with a template to skip). | `cube_binary_matches_text`: equal to the text result. |
 | `multi_material.x` | `0302txt`. Three materials, one of them a `{ Shared }` reference to a top-level `Material`, faces interleaved over the materials, a quad, normals and UVs. | Faces grouped by material, subset ranges, texture types 0, 1 and 5. |
 | `frames.x` | `0302txt 0064`. Nested frames: a translation, a rotation inside it, a second translation after a mesh, and a top-level mesh. | Vertex positions after the merge, the new default material, computed normals. |
+| `frames_normals.x` | Nested frames (scale 2 and a translation; a turn and a translation inside) over two quads with normals and UVs, and a top-level quad with a normal of length 2. | Normals under a frame transform (`mesh_dump.rs`). |
+| `degenerate_face.x` | A face whose three corners are on one line, and one ordinary face, no normals. | The `acos` clamp of `D3DXComputeNormals` (`mesh_dump.rs`). |
 | `no_normals_uvs.x` | One quad, no normals, no UVs, no material list. | Default material, computed normals, zero UVs. |
 | `normals_no_uv.x` | One quad with a wrong normal (+Y) and no UVs. | The normal is replaced (`accessory.cpp:547`). |
 | `normals_uv.x` | The same with UVs. | The normal stays. |
@@ -59,37 +63,124 @@ writing:
 
 * `.x` layout and counts: the DirectX `.x` templates.
 * Loader behavior (vertex splitting by normal, fan triangles, grouping faces by
-  material, the default material, frame order): `D3DXLoadMeshFromXInMemory`
-  as implemented in Wine `dlls/d3dx9_36/mesh.c`, not the native `d3dx9_43.dll`.
-  Nothing here has run on Windows.
+  material, the default material, frame order, the float operations): the
+  native `d3dx9_43.dll`, through the Windows dump in `dump/`. The crate first
+  followed Wine's `dlls/d3dx9_36/mesh.c`; the dump corrected it where the two
+  differ.
 * Everything after the load: `src/render/accessory.cpp`, with line numbers in the tests.
 
-## accgold
+## The Windows dump (`dump/`)
 
-The slice `accgold` will compare this crate with a Windows D3DX mesh dump: the
-real `D3DXLoadMeshFromXW` result of these same files (vertex buffer, index
-buffer, attribute buffer, `D3DXMATERIAL` array, `GetFVF`) after the code path of
-`LoadAccessoryObject`. These points decide which Wine assumption is wrong:
+`dump/<file>.txt` is what `--mds-mesh-dump` (`src/tools/mesh_dump.cpp`, which
+also describes the format) wrote for each `.x` and `.vac` file here: the native
+`D3DXLoadMeshFromXW` result (`raw`), the frame tree of
+`D3DXLoadMeshHierarchyFromXW` (`frame`, `container`), and the accessory record
+after the C++ `LoadAccessoryObject` (`record`). A `.vac` has the record only.
+`rust/crates/mds-accessory/tests/mesh_dump.rs` compares every file with the
+crate: the load result or its failure, every vertex, index, attribute,
+attribute range, material, texture type and name, and the placement. Floats
+are compared bit for bit, with no tolerance.
 
-1. **Face order inside a material.** The crate keeps file order within one
-   material (a stable sort). `OptimizeInplace(ATTRSORT)` may order differently.
-2. **Frame matrix order.** The crate multiplies `parent * child`, as Wine's
-   `parse_frame` does (`frames.x`: B at `(0,11,0)`). The usual scene-graph order,
-   `child * parent`, gives `(10,1,0)`.
-3. **Normals under a frame transform.** Wine moves the normal with
-   `D3DXVec3TransformCoord`, translation included, and does not normalize it
-   again. A native `d3dx9_43.dll` may use `TransformNormal`.
-4. **`D3DXComputeNormals` weights.** Angle at each corner, no vertex welding
-   (adjacency NULL), `acos` of the ratio clamped to `[-1, 1]` and evaluated
-   in `f64`. The clamp is not in Wine.
-5. **Default material alpha.** Wine gives the mesh without a material list
-   diffuse alpha 0 (so `drawn_alpha` is 0); native may give 1.
-6. **Specular and emissive alpha.** Both 1 for a loaded `Material`, as in Wine.
-7. **Text number parsing.** `str::parse::<f32>`; D3DX has its own text parser.
-8. **Vertex limit.** More than 65535 vertices is an error (16-bit indices, option
-   544); the exact limit of `D3DXCreateMeshFVF` is unchecked.
-9. **Strings.** A `TextureFilename` is kept byte for byte, backslash escapes
-   included.
+Written on the Windows host `nanoha-lan` (i9-12900K, RTX 3090, VS 2022 Build
+Tools, x64 Release) by the app built at `673ea35` with
+`tools/windows/build.ps1`. `tools/oracle/accgold.ps1` ran the dump twice in the
+console session, and the two runs gave the same bytes. A second session after
+`degenerate_face.x` was added gave the same bytes again for the other 29 files.
+To regenerate, from a checkout at `<checkout>`:
+
+1. `tools\windows\build.ps1 -Root <checkout> -Testing OFF -Targets MikuDanceStudio`
+2. `tools\windows\runtask.ps1 -Script <checkout>\tools\oracle\accgold.ps1
+   -Log <x.log> -ScriptArgs '-Root <checkout> -Out <empty dir>'`
+3. Copy `<Out>\run1\*` to `dump/`.
+
+The command line is `--mds-mesh-dump <pmm> <out-dir> <x-file>...`. WinMain loads
+the PMM before any headless mode runs, so the mode needs one to host the
+device; the lane uses the empty scene `../script/expected/empty/empty.pmm`.
+
+D3DX takes the `rcpss` and `rsqrtss` estimates of the CPU, which differ between
+CPU vendors. The crate reproduces those of the i9-12900K (`mds-math`), so the
+dump holds for that CPU family.
+
+### What the dump settled
+
+The six points the Wine version left open:
+
+1. **Face order inside a material.** File order, as the crate had
+   (`multi_material.x`).
+2. **Frame matrix order.** A frame's own matrix applies before its parent's
+   (`new * transform` with row vectors), not Wine's order: `frames.x` mesh B
+   is at `(10,1,0)`, not `(0,11,0)`. Each `FrameTransformMatrix` applies to
+   the meshes after it in the frame, so `MeshA` in `frames.x` has the first
+   matrix of `Outer` and `MeshC` both. The hierarchy loader keeps only the
+   last matrix of a frame.
+3. **Normals under a frame transform.** `D3DXVec3TransformNormal`, without the
+   translation, then `D3DXVec3Normalize`. That runs for every mesh, a top-level
+   one with the identity, so a file normal of `(0,0,2)` becomes
+   `(0,0,1-2^-24)`. The file's normals are not normalized before; the vertex
+   split compares them as written (`frames_normals.x`).
+4. **`D3DXComputeNormals` weights.** The angle at a corner is the `acos`, in
+   `f64`, of the dot product of the two edges after `D3DXVec3Normalize`, not
+   the dot product over the product of the lengths. The face normal and the
+   final vertex normal are `D3DXVec3Normalize`. At vertex 0 of
+   `degenerate_face.x` that dot product is 1.0000001 and the native result is
+   not NaN, so the clamp to `[-1, 1]` (or a guard with the same result) is
+   real; without it the crate gives NaN there.
+5. **Default material alpha.** 0, as in Wine: diffuse and specular
+   `(0.5,0.5,0.5,0)`, ambient and emissive 0, power 0.
+6. **Specular and emissive alpha.** 1 for a loaded `Material`, as in Wine.
+
+Beyond those:
+
+* Every position goes through `D3DXVec3TransformCoord`, also without a frame,
+  and D3DX multiplies by its reciprocal estimate of `w` instead of dividing:
+  `w = 1` scales by `1 - 2^-24`, so `cube.x`'s `-1` loads as `-0.99999994`. The
+  binary files give the same, so it is not the text number parser.
+* The attribute table has one range per attribute (vertex span from the lowest
+  to the highest index) when the file holds one mesh, and no range when D3DX
+  merged several (`frames.x`, `frames_normals.x`). What `DrawSubset` draws on
+  a mesh without ranges is not checked here.
+* D3DX rejects the 17 malformed files that the crate rejects (the dump has the
+  `HRESULT`). The crate's error names are its own.
+* The texture names that `LoadAccessoryObject` stores (after
+  `ConvertMaterialName`) equal the crate's decoded names, the Shift-JIS ones of
+  `sphere_map.x` included. No texture file exists next to the fixtures.
+
+Still open: the text number parser beyond the `%.6f` numbers of these files
+(all of them match), the vertex limit of `D3DXCreateMeshFVF`, and backslash
+escapes in strings (no fixture has one).
+
+| Dump | sha256 |
+|---|---|
+| `bad_header.x.txt` | `ae0f7814e3ba60ebd8be901c105cfd9e7b8d1594591c9ca0aa2e3c100f061cfd` |
+| `compressed_bzip.x.txt` | `7a2b14f6412ca83388580711893fff2bbbd226d5070cd15da8d12529bb3bd69e` |
+| `compressed_tzip.x.txt` | `5e81a4751d2e2fdfa36006e2bb3d2849da7886306b51b9de53343a6f0bbb71de` |
+| `cube.x.txt` | `98657f0f3bf2b2f36768e1976c9540e861d9a17e6f6fd9745f728998d8690c07` |
+| `cube_bin.x.txt` | `baaa363fea4d6cfaef5c2c3b9f085e1980fa80dce53f547ee8495aca50eda3ac` |
+| `cube_bin64.x.txt` | `84965225fa356053d9a9b892f0a8956c5d0eca8ca9b328336f4af7da4531a3ff` |
+| `degenerate_face.x.txt` | `dffb5fb94eb01857c903cfb6cb291df75c4043803132d9acdbdc9836eb9c6b1a` |
+| `empty_mesh.x.txt` | `a772046edd6f269ec97c757e724d01d13d8fc0b3c1aadaac4e3dfbee1b0b5b92` |
+| `face_index_range.x.txt` | `6a8448028fede8aabd03bee7685f72d159ce921892266b53b7a71acb4451dad5` |
+| `face_two_vertices.x.txt` | `f96044c7a50ecf5010ee11af116732da58485b7831259258ef245548610d8f17` |
+| `frame_matrix_short.x.txt` | `df86cfc415ca66183b7327de5217e950d0a8bf93c121ce23e83012739c0c95eb` |
+| `frames.x.txt` | `c3b2d200619c37f344244645f84444cbde5bbfcff41c5fd552033de676a17e1c` |
+| `frames_normals.x.txt` | `e02a95eede10772465d0620aba5bf639a6c1f43a353ceae38f4bf3d4ff0a49b9` |
+| `material_count.x.txt` | `a661c70561d2521e88fac4b5955b9af49e3ffe176ee00b0a797d13de6cb7b473` |
+| `material_index_range.x.txt` | `08adac4f406fa80b99860055b72a6d2a953e545af5fdb5fd09a31a61af2fc9e2` |
+| `multi_material.x.txt` | `c935bd4a1546b4361c1802557d1fd889db948ad0187bb26decc91a7afefaefe9` |
+| `no_faces.x.txt` | `7010ddce957a85dd9890b094e420fec1b42e118b367a735ed565e7719e0d6986` |
+| `no_mesh.x.txt` | `5951e55e0fa1e00bd883fc6703453b6a9801ec3dd7b6777cd909e366733c6ca7` |
+| `no_normals_uvs.x.txt` | `30a5e346835ac379474b330ae087d308646a473ef819c4576648d9a595bd6f53` |
+| `normals_count.x.txt` | `a3b6e1f0c3b09c894aa037c1d6d634b89bcdb5e552e08a4df02124dc9b2a162e` |
+| `normals_no_uv.x.txt` | `ffaad245b3329d36dc7b07d7be6296356215deb72e4c55f17223812459b74b74` |
+| `normals_uv.x.txt` | `ba731c41f8243031e55ee1958a0eab8d934a1ca9632f79a9695103b387503aca` |
+| `not_x.x.txt` | `145308bda0992f548935f687b669b030689a33d0272b097ea51a51424adc42b6` |
+| `placed.vac.txt` | `fbafa06b1ce7e4a12b6c96b834c63158921e34695ac23a5c9a94ca5fded555ea` |
+| `placed_default.vac.txt` | `fa55bb9ee7ef911ce00643899e8b644cc83ad259ef854abce65d88862a555d18` |
+| `sphere_map.x.txt` | `6058cc5ea4500cd78d8d41d8e6e6e8ab3dfe847bfdba07511a0a2ecc28f1b663` |
+| `stray_brace.x.txt` | `d3de26bfc1455d69e59470c7f36f5eb8f73a1b52b1d794995c13f79b0d6a2c58` |
+| `texcoord_count.x.txt` | `7ed17c05f331cc59648c0f5f9e647e7b54710be83b45fb41bce69bef464b97bb` |
+| `truncated_mesh.x.txt` | `2c40d539c0c3cd3fb8ff31fe9b2f42850d8e56393ae61c6b41e78f1f85e47488` |
+| `unterminated.x.txt` | `dc09dc375c56a96bfb9e2249a7465acfd9dc65044bb0d24007ba2490de5badb7` |
 
 ## Not covered
 

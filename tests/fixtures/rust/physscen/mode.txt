@@ -1,0 +1,25 @@
+# Physics modes (menus 265 always, 269 on/off, 272 off), the playback ON/OFF
+# override (menu 271) across two playbacks, and physics reset (menu 268).
+settle 0
+load pmm swing600.pmm
+trace mode.trace
+physics mode 1
+pump 3 33
+play 0 60
+pump 10 33
+stop
+pump 1 33
+physics playback toggle
+play 0 60
+pump 10 33
+stop
+pump 1 33
+physics playback toggle
+physics mode 2
+pump 3 33
+physics mode 0
+pump 3 33
+physics mode 2
+physics reset
+pump 3 33
+save pmm mode.pmm

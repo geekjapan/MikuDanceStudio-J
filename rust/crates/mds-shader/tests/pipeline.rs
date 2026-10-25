@@ -1,38 +1,14 @@
 //! Tests through the real vkd3d-shader 2.1 library and the two standard effects. They fail
 //! when the library is missing: a skipped check is not a pass.
 
-use std::path::{Path, PathBuf};
+mod common;
 
+use std::path::Path;
+
+use common::vkd3d;
 use mds_fx::Effect;
-use mds_shader::vkd3d::{Target, Vkd3d};
+use mds_shader::vkd3d::Target;
 use mds_shader::{backend, ctab, entry_source, reflect, spirv_fix};
-
-/// `$MDS_VKD3D_LIB`, or the library that `tools/vkd3d/build.sh` builds for this host.
-fn vkd3d() -> Vkd3d {
-    let path = match std::env::var_os("MDS_VKD3D_LIB") {
-        Some(p) => PathBuf::from(p),
-        None => {
-            let (target, file) = if cfg!(target_os = "macos") {
-                ("macos".to_string(), "libvkd3d-shader.1.dylib")
-            } else {
-                let arch = if cfg!(target_arch = "x86_64") {
-                    "amd64"
-                } else {
-                    "arm64"
-                };
-                (format!("linux-{arch}"), "libvkd3d-shader.so.1")
-            };
-            std::env::temp_dir()
-                .join("mds-vkd3d")
-                .join(target)
-                .join("lib")
-                .join(file)
-        }
-    };
-    Vkd3d::open(&path).unwrap_or_else(|e| {
-        panic!("vkd3d-shader 2.1 not loaded: {e}\nBuild it with tools/vkd3d/build.sh, or set MDS_VKD3D_LIB to the library file.")
-    })
-}
 
 fn effect(name: &str) -> Effect {
     let p = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -68,12 +44,12 @@ fn point_size_removal_leaves_a_module_naga_validates() {
     let raw = spirv_fix::words(&bytes).unwrap();
     assert!(has_point_size(&raw), "vkd3d no longer adds PointSize");
     // Without the fix naga's WGSL and HLSL writers reject the module.
-    let out = backend::translate(backend::parse_spirv(&raw).unwrap());
+    let out = backend::translate(backend::parse_spirv(&raw, true).unwrap());
     assert!(out.wgsl.is_err() && out.hlsl.is_err());
 
     let (fixed, removed) = spirv_fix::strip_point_size(&raw).unwrap();
     assert!(removed && !has_point_size(&fixed));
-    let out = backend::translate(backend::parse_spirv(&fixed).unwrap());
+    let out = backend::translate(backend::parse_spirv(&fixed, true).unwrap());
     let wgsl = out.wgsl.unwrap();
     out.msl.unwrap();
     out.hlsl.unwrap();

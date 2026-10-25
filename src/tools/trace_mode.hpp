@@ -6,7 +6,7 @@ class MMDApp;
 }
 
 namespace mikudancestudio::tools {
-// --mds-trace, --mds-frame-dump, and --mds-edge-probe support for the x64 app (Windows only; the
+// --mds-trace, --mds-frame-dump, --mds-edge-probe, and --mds-mesh-dump support for the x64 app (Windows only; the
 // portable parts are trace_args.hpp and trace_l2.hpp).
 //
 // PrepareTraceRequest runs first in WinMain, before any window or D3D object
@@ -33,5 +33,10 @@ bool ArmTraceDialogGuard(const TraceRequest& request);
 // "<out>.tmp", renamed to <out> on success (format: trace_mode.cpp).
 // Returns the process exit code: 0 on success, 1 on any failure (the temp
 // file is deleted; the PNGs already written stay).
+// A mesh dump goes to RunMeshDump (mesh_dump.cpp) and needs no model.
 int RunTraceMode(MMDApp* app, const TraceRequest& request);
+
+// Writes "<out-dir>\<file name>.txt" per accessory file (format: mesh_dump.cpp).
+// Returns 0, or 1 when a file cannot be written.
+int RunMeshDump(MMDApp* app, const TraceRequest& request);
 } // namespace mikudancestudio::tools

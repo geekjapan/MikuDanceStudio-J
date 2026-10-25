@@ -1,7 +1,7 @@
 //! The pieces of a PMM scene that drawing needs: the camera and light of a frame, and the pose
 //! of a model from `mds-pose`.
 
-use crate::{Camera, Light, Pose};
+use crate::{Camera, GroundShadow, Light, Pose, SelfShadow, Stage};
 use mds_formats::pmm::Pmm;
 use mds_scene::track::{
     evaluate_camera, evaluate_light, evaluate_self_shadow, CameraMode, LightMode,
@@ -38,15 +38,21 @@ pub fn pose_of(model: &mds_pose::model::Model) -> Pose {
     }
 }
 
-/// Whether the self-shadow track is in mode 2 at `frame`. In the golden images the toon ramp darkens
-/// the faces turned from the light (down to 0.8) from the frame where this becomes true (frame 300
-/// of the fixture) and not while the track is in mode 1. The render takes the mode as the switch
-/// (`Frame::toon`); the four golden frames, which all match with it, cannot rule out a switch on
-/// the light instead. The light of the fixture does not step at frame 300: it fades from its key
-/// at 0 to its key at 300 and stays (frame 150 has the half-way light, still without the darker
-/// ramp), so a light-driven switch would have to be a threshold on that fade that happens to fall
-/// between frames 150 and 300. Only a scene whose light and self-shadow keys sit at different
-/// frames can tell.
+/// Whether the self-shadow track is in mode 2 at `frame`. Superseded: draw with `Frame::toon` set
+/// and the self-shadow of [`stage_at`], which picks the toon as the golden images show it.
 pub fn self_shadow_mode_2_at(pmm: &Pmm, frame: u32) -> bool {
     evaluate_self_shadow(&pmm.self_shadow, f64::from(frame)).is_some_and(|(mode, _)| mode == 2)
+}
+
+/// The [`Stage`] of the PMM at `frame`.
+pub fn stage_at(pmm: &Pmm, frame: u32) -> Stage {
+    Stage {
+        self_shadow: evaluate_self_shadow(&pmm.self_shadow, f64::from(frame))
+            .filter(|&(mode, _)| mode != 0)
+            .map(|(mode, distance)| SelfShadow { mode, distance }),
+        ground_shadow: (pmm.view.ground_shadow != 0).then_some(GroundShadow {
+            ambient: pmm.physics.projected_shadow_ambient,
+            translucent: pmm.physics.projected_shadow_blend != 0,
+        }),
+    }
 }

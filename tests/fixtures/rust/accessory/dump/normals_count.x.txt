@@ -1,0 +1,5 @@
+mds-mesh-dump 1
+file "normals_count.x"
+raw hr 0x80004005
+frames hr 0x80004005
+record failed

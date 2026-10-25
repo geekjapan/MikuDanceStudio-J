@@ -4,8 +4,9 @@ use std::collections::HashSet;
 
 use crate::ast::{EffectAst, Function};
 
-/// Name of the generated wrapper function.
-pub const WRAPPER_ENTRY: &str = "__mme_entry";
+/// Name of the generated wrapper function. WGSL reserves names that start with `__`, so naga's
+/// WGSL writer would rename such an entry point.
+pub const WRAPPER_ENTRY: &str = "mme_entry";
 
 /// One shader entry, unique by profile, function, and argument text.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -51,7 +52,7 @@ fn last_word_before_bracket_or_colon(param: &str) -> Option<&str> {
 /// Builds the source to compile for `entry`.
 ///
 /// Without arguments, the entry function is compiled as it is. With arguments, a wrapper
-/// `__mme_entry` takes every non-`uniform` parameter of the function and passes the
+/// `mme_entry` takes every non-`uniform` parameter of the function and passes the
 /// arguments to its `uniform` parameters, in order.
 pub fn wrapper(ast: &EffectAst, shader_source: &str, entry: &Entry) -> Result<Wrapper, String> {
     let func: &Function = ast

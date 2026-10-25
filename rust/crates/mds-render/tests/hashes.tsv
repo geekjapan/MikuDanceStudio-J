@@ -1,5 +1,5 @@
 # model<TAB>adapter (name|backend)<TAB>FNV-1a 64 of the RGBA8 pixels
 chain8.pmx	Apple M4 Pro|Metal	57056b96dcf5f3ba
 chain8_ik.pmx	Apple M4 Pro|Metal	57056b96dcf5f3ba
-cube-synthetic	Apple M4 Pro|Metal	5536840333b8d174
+cube-synthetic	Apple M4 Pro|Metal	dd2a5660e3494525
 morph4.pmx	Apple M4 Pro|Metal	97f104fd253a03f7

@@ -182,6 +182,49 @@ fn global_register_clears_the_selection_once() {
 }
 
 #[test]
+fn light_and_gravity_register_take_the_panel_state() {
+    // RegisterLightState copies lightState (color, direction);
+    // RegisterGravityState the gravity dialog values into the key.
+    let mut d = doc();
+    run(
+        &mut d,
+        [
+            Command::SetFrame(700),
+            Command::SetLight {
+                color: [0.1, 0.2, 0.3],
+                direction: [1.0, 0.0, -1.0],
+            },
+            Command::SetGravity {
+                acceleration: 4.5,
+                noise: 3,
+                direction: [0.0, 0.0, 1.0],
+                noise_enabled: true,
+            },
+            Command::RegisterGlobalKeys(vec![GlobalTrack::Light, GlobalTrack::Gravity]),
+        ],
+    );
+    assert_eq!(d.pmm.light_state, [0.1, 0.2, 0.3, 1.0, 0.0, -1.0]);
+    let (i, frame) = *track(&d.pmm.light, 0).last().unwrap();
+    let l = d.pmm.light.get(i).unwrap();
+    assert_eq!(
+        (frame, l.color, l.direction, l.selected),
+        (700, [0.1, 0.2, 0.3], [1.0, 0.0, -1.0], 1)
+    );
+    let g = d.pmm.gravity.get(1).unwrap();
+    assert_eq!(
+        (
+            g.frame,
+            g.acceleration,
+            g.noise,
+            g.direction,
+            g.noise_enabled
+        ),
+        (700, 4.5, 3, [0.0, 0.0, 1.0], 1)
+    );
+    validate(&d);
+}
+
+#[test]
 fn self_shadow_register_takes_the_radio_and_the_distance() {
     // RegisterSelfShadowState: mode from SelfShadowMode, distance from
     // selfShadowDistance; insert before the frame-300 key.

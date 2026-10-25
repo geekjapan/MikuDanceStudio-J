@@ -44,7 +44,7 @@ fn command(r: &mut Rng, d: &Document) -> Option<Command> {
         .find(|m| m.slot == d.pmm.selected_model_slot);
     let bones = active.map_or(1, |m| m.bone_names.len().max(1));
     let morphs = active.map_or(1, |m| m.morph_names.len().max(1));
-    Some(match r.below(22) {
+    Some(match r.below(24) {
         0 => {
             let m = &d.pmm.models[r.below(d.pmm.models.len())];
             Command::SelectModel(m.slot)
@@ -73,6 +73,16 @@ fn command(r: &mut Rng, d: &Document) -> Option<Command> {
             distance: 0.01,
         },
         9 => Command::ClearKeySelection,
+        22 => Command::SetLight {
+            color: [r.f() / 10.0, 0.5, 0.5],
+            direction: r.v3(),
+        },
+        23 => Command::SetGravity {
+            acceleration: r.f(),
+            noise: r.below(20) as i32,
+            direction: r.v3(),
+            noise_enabled: r.below(2) == 0,
+        },
         10 | 11 => {
             let track = match r.below(4) {
                 0 => Track::Bone(r.below(bones) as u32),

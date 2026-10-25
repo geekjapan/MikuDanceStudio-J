@@ -53,6 +53,8 @@ Each slice gates on a committed oracle that runs without the Windows host, as in
 | `skin` | 3a | `mds-skin`. CPU skinning and morphs as the C++ computes them: BDEF, SDEF, QDEF, the edge scale, the PMD edge, and vertex, UV, material, bone, and group morphs. | `tools/skin_check` links the real `src/model/model_skinning.cpp` and `morph_apply.cpp` and gives the same vertex buffers and material values, bit for bit, on the fixtures. |
 | `ops` | 3a | `mds-ops`. The bulk key operations: unused-key removal, frame-line insert and delete, the multiply and bias dialogs, lip shift, random blinks, the delete-all and register-all morph menus, physics ON/OFF conversion, select-all, and the frame-range scale. | Unit tests derived from the C++ now, and the `script` outputs in `docgold`. |
 | `mmert` | 3a | `mds-mmert`. The MME runtime on wgpu: render targets, pass execution, material binding, EMM files, animated textures, and controller objects. | Every `passplan` plan of the ray-mmd corpus executes with no wgpu validation error and creates the planned resources. `mmegold` adds the pixel comparison. |
+| `shell` | 3b | The first `mds-app`: the window, the viewport through `mds-render`, playback with physics, play, stop, loop, frame step, and camera navigation (`src/app/pump_navigation.cpp`). It opens a PMM read-only; editing comes with `doc`. | A headless frame-dump run of the binary equals `mds-render` output for the same poses, and the navigation math has unit tests derived from the C++. |
+| `accgold` | 3b | A Windows D3DX mesh dump of the accessory fixtures, and `mds-accessory` aligned with it. | Every fixture mesh equals the dump. |
 | `docgold` | 3b | `mds-doc` against the `script` outputs. | Every script replays in Rust to the same saved bytes. |
 | `pmm1` | 3b | PMM 0001 loading in `mds-formats`. | Generated 0001 fixtures, loaded by the C++ application and saved as 0002 by `script`, equal the Rust load and save. |
 | `golden2` | 3b | Golden images of shadows, accessories, SDEF, morphs, and the background (Windows). | Two runs give the same bytes. |
@@ -66,12 +68,12 @@ Each slice gates on a committed oracle that runs without the Windows host, as in
 
 ## Product decisions
 
-These functions depend on hardware or APIs that a cross-platform Rust application cannot carry as they are. The operator decided the first two on 2026-10-25. The root applies the other defaults unless the operator decides otherwise.
+These functions depend on hardware or APIs that a cross-platform Rust application cannot carry as they are. The operator decided all five on 2026-10-25: Kinect is ported, 3D Vision is dropped, and the other three take the defaults below.
 
 | Function | C++ dependency | Default |
 |---|---|---|
 | Kinect capture | `DxOpenNI.dll`, Windows, a Kinect | Decided: port behind a Windows-only feature that loads the same DLL. Unverified, because no device is available. |
 | NVIDIA 3D Vision recording | NVAPI | Decided: drop. NVIDIA ended 3D Vision in 2019. |
-| AVI recording with system codecs | DirectShow, VFW, `MMDxShow.dll` | Built-in AVI writer (uncompressed) and PNG sequences, with no codec picker. |
-| Background movie | VFW | Uncompressed and Motion JPEG AVI decoded in Rust. Other codecs are reported as unsupported. |
-| `Exp*` functions for MME DLLs | PE exports | Drop. The Rust MME runtime runs in process. |
+| AVI recording with system codecs | DirectShow, VFW, `MMDxShow.dll` | Decided: Built-in AVI writer (uncompressed) and PNG sequences, with no codec picker. |
+| Background movie | VFW | Decided: Uncompressed and Motion JPEG AVI decoded in Rust. Other codecs are reported as unsupported. |
+| `Exp*` functions for MME DLLs | PE exports | Decided: Drop. The Rust MME runtime runs in process. |

@@ -22,3 +22,5 @@ accessory	3a	-	mac	sonnet	pending	rust/crates/mds-accessory/,tests/fixtures/rust
 skin	3a	-	mac	opus	pending	rust/crates/mds-skin/,tools/skin_check/,tests/fixtures/rust/skin/
 ops	3a	-	mac	sonnet	pending	rust/crates/mds-ops/
 mmert	3a	-	mac	opus	pending	rust/crates/mds-mmert/
+shell	3b	-	mac	opus	pending	rust/crates/mds-app/
+wavcap	3b	media	mac	haiku	pending	rust/crates/mds-media/

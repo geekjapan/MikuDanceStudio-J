@@ -119,7 +119,7 @@ pub use facial::{
 };
 pub use frame_line::{
     delete_bone_camera_frame_line, delete_morph_light_frame_line, insert_bone_camera_frame_line,
-    insert_morph_light_frame_line,
+    insert_morph_light_frame_line, BoneUndo,
 };
 pub use model::{active_model, BoneFacts, ModelFacts};
 pub use multiply::{

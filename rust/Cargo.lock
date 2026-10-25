@@ -518,6 +518,7 @@ dependencies = [
  "mds-physics",
  "mds-pose",
  "mds-scene",
+ "mds-skin",
  "png",
  "pollster",
  "wgpu",

@@ -50,6 +50,10 @@
 //! * The C++ ignores a failed read inside the tail; this reader accepts the
 //!   end of the stream only at a section gate and fails closed on a partial
 //!   section or on bytes after the end, as the portable reader does.
+//! * A stream that ends right after the shadow-blend byte (the gate of the
+//!   per-model edge scales is missing) is accepted here, as a zero-byte
+//!   `_read` leaves it in the C++. The portable reader on `next` fails
+//!   there; at every later gate it accepts the end of the stream too.
 //! * The camera-parent section reads its key list only when the first key's
 //!   parent is in range (`pmm_load_v1.cpp`, read-gate 9). The portable
 //!   reader on `next` reads it always; this reader follows the C++ here.

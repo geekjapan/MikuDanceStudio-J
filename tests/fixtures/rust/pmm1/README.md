@@ -61,5 +61,13 @@ the commit it reads is the one in `PMM1_NEXT` (default `9ef4817`).
   fresh-application defaults, `RefreshSelfShadowPanel` with `FindKeyAtOrAfter`). A
   wrong rule there would agree with the same wrong rule in the Rust reader;
   the rules were read from `pmm_load_v1.cpp` and `pmm_io_common.hpp`.
+- `relink` (the chain check of the load tail) is the identity on every oracle
+  fixture, whose chains are consistent. Only
+  `a_broken_bone_chain_ends_at_the_last_consistent_key` runs it, against
+  the reading of the C++.
+- `dump.cpp` rebuilds the accessory opacity byte from the portable reader's
+  float with `lround(opacity * 100)`. It round-trips for the bytes the
+  fixtures use; a fixture byte that does not survive that conversion would
+  show as a mismatch that is not a reader bug.
 - The bytes of the 0002 file the C++ saves from a loaded 0001 are compared
   later on Windows (load a 0001, save), not here.

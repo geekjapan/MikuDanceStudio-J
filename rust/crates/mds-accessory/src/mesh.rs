@@ -2,11 +2,10 @@
 //! 16-bit indices): the `.x` objects become one triangle mesh, its attribute
 //! per face and its `D3DXMATERIAL` list.
 //!
-//! The rules follow the D3DX9 behavior that Wine's `d3dx9_36/mesh.c`
-//! reimplements (`D3DXLoadMeshFromXInMemory`, `D3DXLoadSkinMeshFromXof`,
-//! `parse_mesh` and the `parse_*` helpers). None of it is checked against the
-//! native `d3dx9_43.dll` yet; `README.md` lists the places where the slice
-//! `accgold` has to decide.
+//! The rules started from Wine's `d3dx9_36/mesh.c` (`D3DXLoadMeshFromXInMemory`,
+//! `D3DXLoadSkinMeshFromXof`, `parse_mesh` and the `parse_*` helpers) and are
+//! checked against the native `d3dx9_43.dll` by the Windows mesh dump of every
+//! fixture (`tests/mesh_dump.rs`, `tests/fixtures/rust/accessory/README.md`).
 
 use crate::xfile::{self, Child, Node, Value};
 use crate::Error;
@@ -442,7 +441,7 @@ fn container(node: &Node, transform: Mat4, names: &Names) -> Result<Option<Conta
     }
 
     // `OptimizeInplace(ATTRSORT | IGNOREVERTS | DONOTSPLIT)` groups faces by attribute.
-    // Stable order inside a group is an assumption.
+    // Stable inside a group, as the Windows dump of `multi_material.x` shows.
     if face_material.is_some() {
         let mut order: Vec<usize> = (0..attr.len()).collect();
         order.sort_by_key(|&i| attr[i]);

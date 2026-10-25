@@ -2,9 +2,9 @@
 //! (`gen_accessory_x.py`) puts in it.
 //!
 //! "Spec" below means the DirectX `.x` templates (counts and layout), "D3DX" the
-//! loader rules of `D3DXLoadMeshFromXInMemory` as Wine implements them (vertex
-//! duplication order, fan triangulation, attribute sort, default material, frame
-//! order), and "C++" the lines of `src/render/accessory.cpp` named in each test.
+//! loader rules of the native `D3DXLoadMeshFromXW` (vertex duplication order, fan
+//! triangulation, attribute sort, default material, frame order) as the Windows dump
+//! shows them (`mesh_dump.rs` compares every value), and "C++" the lines of `src/render/accessory.cpp` named in each test.
 //! No expected value comes from running this crate.
 
 use mds_accessory::mesh::XMesh;

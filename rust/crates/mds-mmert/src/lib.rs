@@ -17,23 +17,25 @@
 //! - [`Effect::load`]: parse, SAS-parse, create the resources ([`resource`]), and compile every
 //!   pass ([`shader`]) of one `.fx`. A pass that cannot compile keeps its error in
 //!   [`Effect::programs`]; its draws are recorded and skipped.
-//! - [`Target`]: the back buffer and depth stencil (1000x600, the oracle's device).
+//! - [`Target`]: the back buffer and depth stencil, of the size the effect was loaded for
+//!   ([`BACKBUFFER`], the oracle's 1000x600, by default).
 //! - [`Model`]: the vertex and index buffers and material subsets `Draw=Geometry` draws.
 //! - [`Scene`]: the camera, light, clocks, and viewport the parameters bind to.
 //! - [`Effect::frame`]: one frame that runs every technique in scan order, as the plan's
 //!   `runs` section does, on one device, and returns those lines.
+//! - [`emm`]: EMM and EMD files (`emm_manager.cpp`): load, apply to the scene's objects, save.
+//! - [`control`]: `CONTROLOBJECT` values from the [`control::Controls`] the application fills.
+//! - [`anime`]: animated GIF and APNG textures (`anime_texture.cpp`), ticked every frame.
+//! - [`scene`]: what each object draws in an offscreen turn, from the `DefaultEffect` rows.
 //!
 //! # Not ported
 //!
-//! - EMM and EMD files (`emm_manager.cpp`) and the `DefaultEffect` assignment of offscreen
-//!   targets: an offscreen target is created and can be bound, but nothing renders into it
-//!   with another effect.
-//! - Animated textures (`anime_texture.cpp`), texture shaders (`Function`/`Target`),
-//!   `CONTROLOBJECT` lookups (the parameters keep their initial values), the effect cache and
+//! - Rendering the offscreen turns and the scene at `ScriptExternal`: [`scene`] resolves which
+//!   effect draws each object, but drawing the scene is the renderer's (`mds-render`), and the
+//!   walk at `ScriptExternal` suspends and resumes with nothing drawn in between.
+//! - Texture shaders (`Function`/`Target`; `mds-mme` does not model them), the effect cache and
 //!   context (`effect_engine.cpp`, `mme_context.cpp`), multisampled targets (`AntiAlias`),
 //!   automatic mip generation of `Miplevels=0` targets.
-//! - The scene render at `ScriptExternal`: the walk suspends and resumes, and draws nothing
-//!   in between.
 //! - Skinned and morphed geometry: `Model::from_pmx` is the bind pose. `mds-render` keeps its
 //!   GPU device, mesh buffers, and skinning crate-private; this crate builds its own until
 //!   `mds-render` exposes them.
@@ -47,6 +49,7 @@ mod exec;
 mod gpu;
 pub mod model;
 pub mod resource;
+pub mod scene;
 pub mod shader;
 mod state;
 

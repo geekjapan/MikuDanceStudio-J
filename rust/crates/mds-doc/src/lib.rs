@@ -90,6 +90,7 @@
 //! [`mds_edit::Error::Unsupported`] (the pose of a bone with a rigid body,
 //! fixed-axis twist, automatic interpolation).
 
+mod add_model;
 pub mod global;
 pub mod history;
 pub mod model;
@@ -187,6 +188,12 @@ pub enum Command {
         morph: u32,
         value: f32,
     },
+    /// A morph lane combo (504, 509, 514, 519; `MorphRowSelect`,
+    /// `src/window/command_dispatch.cpp`): `selectedMorphs[lane]`.
+    SelectMorphLane {
+        lane: u8,
+        morph: u32,
+    },
     /// The camera panel: position, rotation (pitch, yaw, roll), distance,
     /// view angle and perspective.
     SetCamera {
@@ -265,6 +272,14 @@ pub enum Command {
     /// VA 0x00434B60) with the file bytes: in camera mode onto the camera,
     /// light and self-shadow tracks, then their refresh.
     LoadMotion(Vec<u8>),
+    /// "Add model" (button 435), `LoadModelFile` (`src/model/add_model.cpp`,
+    /// VA 0x00460430) with the path as given and the file bytes: the model
+    /// takes the first free slot, is selected, leaves camera mode, and the
+    /// viewport edit mode becomes bone (0).
+    LoadModel {
+        path: String,
+        data: Vec<u8>,
+    },
     /// The select-all menus 217, 218, 220 (model) and 237..241 (camera
     /// mode), `mds_ops::select`.
     SelectAll(SelectAll),
@@ -330,13 +345,9 @@ impl Document {
         let mut models = Vec::with_capacity(pmm.models.len());
         for m in &pmm.models {
             let path = m.path.text.as_str();
-            let format = |e: mds_formats::Error| Error::Format(format!("{path}: {e}"));
             models.push(match read(path) {
                 None => ModelFile::Missing,
-                Some(b) if path.to_ascii_lowercase().ends_with(".pmd") => {
-                    ModelFile::Pmd(Box::new(Pmd::read(&b).map_err(format)?))
-                }
-                Some(b) => ModelFile::Pmx(Box::new(Pmx::read(&b).map_err(format)?)),
+                Some(b) => parse_model(path, &b)?,
             });
         }
         let skeletons = models
@@ -564,6 +575,14 @@ impl Document {
                 *m.morph_pose
                     .get_mut(morph as usize)
                     .ok_or(not("no such morph"))? = value;
+            }
+            Command::SelectMorphLane { lane, morph } => {
+                let i = self.active_model()?;
+                let m = &mut self.pmm.models[i];
+                if morph as usize >= m.morph_names.len() || lane > 3 {
+                    return Err(not("no such morph"));
+                }
+                m.selection.selected_morphs[usize::from(lane)] = morph as i32;
             }
             Command::SetCamera {
                 position,
@@ -821,6 +840,30 @@ impl Document {
                     refresh::camera(&mut self.pmm);
                 }
             }
+            Command::LoadModel { path, data } => {
+                let file = parse_model(&path, &data)?;
+                if self.camera_mode() && !refresh::model_mode_supported(&self.pmm) {
+                    return Err(not(
+                        "leaving camera mode with a camera parent or reference (not ported)",
+                    ));
+                }
+                let slot = (0..=254u8)
+                    .find(|s| self.pmm.models.iter().all(|m| m.slot != *s))
+                    .ok_or(not("every model slot is taken"))?;
+                // `CB_ADDSTRING` after the camera entry and the models before.
+                let combo = self.pmm.models.len() as u8 + 1;
+                let m = add_model::record(slot, &path, &file, combo)?;
+                let at = self.pmm.models.partition_point(|m| m.slot < slot);
+                self.skeletons.insert(at, model::Skeleton::new(&file, &m));
+                self.pmm.models.insert(at, m);
+                self.models.insert(at, file);
+                self.edit.models.insert(at, ModelEdit::default());
+                self.pmm.selected_model_slot = slot;
+                if self.camera_mode() {
+                    refresh::rebuild_model_mode(&mut self.pmm, &mut self.edit.self_shadow_mode);
+                }
+                self.pmm.timeline.edit_mode = 0;
+            }
             Command::NewScene => {
                 self.pmm = new_scene::reset(&self.pmm);
                 self.models.clear();
@@ -839,6 +882,16 @@ impl Document {
         }
         Ok(())
     }
+}
+
+/// A PMD by its extension, else a PMX.
+fn parse_model(path: &str, data: &[u8]) -> Result<ModelFile, Error> {
+    let format = |e: mds_formats::Error| Error::Format(format!("{path}: {e}"));
+    Ok(if path.to_ascii_lowercase().ends_with(".pmd") {
+        ModelFile::Pmd(Box::new(Pmd::read(data).map_err(format)?))
+    } else {
+        ModelFile::Pmx(Box::new(Pmx::read(data).map_err(format)?))
+    })
 }
 
 /// `RefreshSelfShadowPanel` (VA 0x00411B90): the mode of the self-shadow

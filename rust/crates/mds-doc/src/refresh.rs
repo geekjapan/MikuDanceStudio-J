@@ -228,3 +228,45 @@ pub(crate) fn accessory(a: &mut pmm::Accessory, frame: u32) {
     let (po, ro) = (opacity(prev.opacity_visible), opacity(rec.opacity_visible));
     push(s, &prev, Some(po + t * (ro - po)));
 }
+
+/// `RebuildModelModePanel` (`src/window/ui_model_reload.cpp`, VA
+/// 0x0044D610) with its `PostModelReload` (VA 0x0041A650): camera mode off,
+/// the camera-mode states refreshed when the camera follows, the view
+/// re-anchored on the camera position, and without a following camera the
+/// light direction reset. Only a camera without a parent and reference mode
+/// 0 are ported; the caller checks [`model_mode_supported`] first.
+pub(crate) fn rebuild_model_mode(p: &mut Pmm, shadow_mode: &mut u8) {
+    p.settings.options[0] = 0;
+    if p.appearance.follow_camera != 0 {
+        p.camera_state[3] = 0.0;
+        p.camera_state[4] = 0.0;
+        camera(p);
+        light(p);
+        self_shadow(p, shadow_mode);
+        gravity(p);
+        let frame = p.timeline.current_frame as u32;
+        for a in &mut p.accessories {
+            accessory(a, frame);
+        }
+    }
+    use mds_math::Mat4;
+    let s = &p.camera_state;
+    let r = Mat4::multiply(&Mat4::rotation_y(s[7]), &Mat4::rotation_x(s[6]));
+    let r = Mat4::multiply(&r, &Mat4::rotation_z(s[8]));
+    let t = Mat4::multiply(&Mat4::translation(-s[0], -s[1], -s[2]), &r);
+    // The reference point is the origin in mode 0.
+    let o = Mat4::multiply(&Mat4::translation(0.0, 0.0, 0.0), &r);
+    let s = &mut p.camera_state;
+    s[3] -= t.0[12] - o.0[12];
+    s[4] -= t.0[13] - o.0[13];
+    s[5] -= t.0[14] - o.0[14];
+    if p.appearance.follow_camera == 0 {
+        p.light_state[3..].copy_from_slice(&[-0.5, -1.0, 0.5]);
+    }
+}
+
+/// Whether [`rebuild_model_mode`] covers the camera: no parent model and
+/// reference mode 0.
+pub(crate) fn model_mode_supported(p: &Pmm) -> bool {
+    p.appearance.camera_parent_model < 0 && p.timeline.camera_reference_mode == 0
+}

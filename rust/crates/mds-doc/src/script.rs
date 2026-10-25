@@ -80,6 +80,14 @@ fn atol(s: &str, max: usize) -> i64 {
         .unwrap_or(0)
 }
 
+/// A morph-panel lane: 0 eyebrow, 1 eye, 2 lip, 3 other.
+fn lane_of(s: &str) -> Result<u8, String> {
+    s.parse()
+        .ok()
+        .filter(|&l| l < 4)
+        .ok_or_else(|| format!("bad lane {s}"))
+}
+
 fn e(e: Error) -> String {
     e.to_string()
 }
@@ -248,6 +256,36 @@ impl Runner {
                 let bytes = crate::vmd_save::save(&self.doc.pmm, model);
                 return Ok(self.saved(name, bytes));
             }
+            ["load", "model", p] => Command::LoadModel {
+                path: p.to_string(),
+                data: load(p)?,
+            },
+            ["select", "morph", lane, name] => {
+                let lane = lane_of(lane)?;
+                Command::SelectMorphLane {
+                    lane,
+                    morph: self.lane_morph(lane, name)?,
+                }
+            }
+            ["morph", lane, v] => {
+                // Edits 506/511/516/521 (`CommitEditControl`): the lane's
+                // selected morph, if any.
+                let lane = lane_of(lane)?;
+                let m = self.doc.selected_model().ok_or("no model selected")?;
+                let morph = m.selection.selected_morphs[usize::from(lane)];
+                if morph < 0 {
+                    return Ok(Vec::new());
+                }
+                Command::SetMorph {
+                    morph: morph as u32,
+                    value: atof(v, 8) as f32,
+                }
+            }
+            ["register", "morph", lane] => {
+                let lane = lane_of(lane)?;
+                let m = self.doc.selected_model().ok_or("no model selected")?;
+                Command::RegisterMorphKey(m.selection.selected_morphs[usize::from(lane)])
+            }
             ["load", "vmd", p] => Command::LoadMotion(load(p)?),
             ["copy"] => Command::Copy,
             ["paste"] => Command::Paste,
@@ -270,6 +308,26 @@ impl Runner {
         };
         self.doc.apply(cmd).map_err(e)?;
         Ok(Vec::new())
+    }
+
+    /// The morph that `CB_FINDSTRINGEXACT` picks in a lane's combo (the
+    /// morphs of panel `lane + 1`, case-insensitive), then the first morph
+    /// of that name, as `MorphRowSelect` matches it.
+    fn lane_morph(&self, lane: u8, name: &str) -> Result<u32, String> {
+        let i = self.doc.active().ok_or("no model selected")?;
+        let names = &self.doc.pmm.models[i].morph_names;
+        let panels: Vec<u8> = match &self.doc.models[i] {
+            crate::ModelFile::Pmx(p) => p.morphs.iter().map(|m| m.panel).collect(),
+            crate::ModelFile::Pmd(p) => p.morphs.iter().map(|m| m.panel).collect(),
+            crate::ModelFile::Missing => return Err("the model file is missing".into()),
+        };
+        let item = names
+            .iter()
+            .zip(&panels)
+            .find(|(n, &p)| p == lane + 1 && n.text.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("no morph {name} in lane {lane}"))?;
+        let first = names.iter().position(|n| n.raw == item.0.raw).unwrap_or(0);
+        Ok(first as u32)
     }
 
     fn gravity_dialog(&self) -> Result<(), String> {

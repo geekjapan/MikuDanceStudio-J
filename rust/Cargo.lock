@@ -432,8 +432,10 @@ version = "0.1.0"
 name = "mds-doc"
 version = "0.1.0"
 dependencies = [
+ "encoding_rs",
  "mds-edit",
  "mds-formats",
+ "mds-math",
  "mds-ops",
  "mds-pose",
  "mds-scene",

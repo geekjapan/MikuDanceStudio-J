@@ -7,8 +7,10 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+encoding_rs = "0.8"
 mds-edit = { path = "../mds-edit" }
 mds-formats = { path = "../mds-formats" }
+mds-math = { path = "../mds-math" }
 mds-ops = { path = "../mds-ops" }
 mds-pose = { path = "../mds-pose" }
 mds-scene = { path = "../mds-scene" }

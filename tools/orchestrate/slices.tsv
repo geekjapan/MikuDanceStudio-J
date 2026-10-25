@@ -35,3 +35,4 @@ physapi	3b	-	mac	opus	pending	rust/crates/mds-physics/
 uiinv	3b	-	mac	sonnet	pending	tools/ui_inventory/
 shaderfix	3b	-	mac	opus	pending	rust/crates/mds-shader/,rust/crates/mds-fx/
 mmert2	3b	mmert	mac	opus	pending	rust/crates/mds-mmert/,rust/crates/mds-mme/
+app	3c	physapi,renderapi	mac	opus	pending	rust/crates/mds-app/

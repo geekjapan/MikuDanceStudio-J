@@ -4,12 +4,12 @@
 //! `frame_clipboard.cpp`): mark clearing, undo entries with the records each
 //! step touches (`AppendBoneKeyToUndo`), and the frame bookkeeping.
 
-use crate::auto_interp;
 use crate::global::walk;
 use crate::history::{snapshot, Entry, History};
 use crate::{Error, ModelFile};
 use mds_edit::{
-    BoneClip, BoneInfo, DisplayClip, IkChain, MorphClip, MorphInfo, Rig, Selector, Tracks,
+    BoneClip, BoneExtra, BoneInfo, BoneTarget, DisplayClip, Extra, IkChain, MorphClip, MorphInfo,
+    Rig, Selector, Tracks,
 };
 use mds_formats::key_pool::{Key, KeyPool};
 use mds_formats::pmm::{self, BoneKey};
@@ -22,6 +22,9 @@ pub struct Skeleton {
     pub pmx: bool,
     /// `(writes_position, twist, rigid_body)` per bone.
     pub bones: Vec<(bool, bool, bool)>,
+    /// The twist axis the registrars read per bone: `BoneRecord::axis` for
+    /// PMX, the tail bone's rest position minus the bone's for PMD.
+    pub axes: Vec<[f32; 3]>,
 }
 
 impl Skeleton {
@@ -34,8 +37,16 @@ impl Skeleton {
             ModelFile::Pmd(p) => PoseModel::from_pmd(pmm_model.slot, p).ok()?,
             ModelFile::Missing => return None,
         };
+        let axis = |b: &mds_pose::model::Bone| {
+            if m.pmx {
+                return b.axis;
+            }
+            let tail = usize::try_from(b.tail_bone).ok().and_then(|t| m.bones.get(t));
+            tail.map_or([0.0; 3], |t| std::array::from_fn(|c| t.position[c] - b.position[c]))
+        };
         (m.bones.len() == pmm_model.bone_names.len()).then(|| Skeleton {
             pmx: m.pmx,
+            axes: m.bones.iter().map(axis).collect(),
             bones: m
                 .bones
                 .iter()
@@ -209,27 +220,76 @@ fn first_err(first: &mut Result<(), Error>, r: Result<(), mds_edit::Error>) -> b
 pub struct ModelEdit {
     pub search_cursor: u32,
     pub history: History,
+    /// `BoneRecord::ikBackup` per bone, `(rotation, translation)`: the pose
+    /// the last physics step left, which the frame loop (not the document)
+    /// computes. `None` until a frame loop reports one; a register that
+    /// needs it is refused then.
+    pub physics_pose: Option<Vec<([f32; 4], [f32; 3])>>,
+}
+
+/// The physics controls the bone registrars read.
+#[derive(Clone, Copy, Debug)]
+pub struct Physics {
+    /// The physics checkbox (499), checked at start-up (`ui_init.cpp`).
+    pub checkbox: bool,
+    /// `PlaybackPhysicsMode` (`pmm.physics.playback_mode`).
+    pub mode: u8,
+}
+
+/// The [`Extra`] of a model: twist axes from the file, `physicsDisabled`
+/// from the saved pose flag 0, the physics pose of `e`.
+pub fn extra(m: &pmm::Model, s: &Skeleton, e: &ModelEdit, physics: Physics) -> Extra {
+    let pose = |i: usize| {
+        e.physics_pose
+            .as_ref()
+            .and_then(|v| v.get(i).copied())
+            .unwrap_or(([0.0, 0.0, 0.0, 1.0], [0.0; 3]))
+    };
+    Extra {
+        bones: m
+            .bone_pose
+            .iter()
+            .zip(&s.axes)
+            .enumerate()
+            .map(|(i, (p, &axis))| BoneExtra {
+                axis,
+                physics_rotation: pose(i).0,
+                physics_translation: pose(i).1,
+                physics_disabled: p.flags[0],
+            })
+            .collect(),
+        physics_checkbox: physics.checkbox,
+        physics_mode: i32::from(physics.mode),
+    }
+}
+
+/// Whether `RegisterBonePoseAtFrame` stores the physics pose of `bone`.
+fn takes_physics_pose(m: &pmm::Model, s: &Skeleton, physics: Physics, bone: usize) -> bool {
+    s.bones[bone].2 && (physics.mode == 1 || (physics.mode >= 2 && m.bone_pose[bone].flags[0] == 0))
 }
 
 /// `RegisterSelectedBoneKeys` (VA 0x004C2080), the register button (500):
 /// an undo entry for every bone's pose, every mark cleared, then the pose
 /// of each selected bone at `frame` (`RegisterBonePoseAtFrame` VA
 /// 0x004B38A0), clearing its edited mark. A full pool skips that bone, as
-/// the C++ loop ignores the result.
+/// the C++ loop ignores the result. A selected bone that takes the physics
+/// pose without a [`ModelEdit::physics_pose`] refuses the command first.
 pub fn register_bones(
     m: &mut pmm::Model,
     s: &Skeleton,
     e: &mut ModelEdit,
     auto_interpolation: bool,
+    physics: Physics,
     frame: u32,
 ) -> Result<(), Error> {
-    let rig = rig(m, s, false);
+    let mut rig = rig(m, s, auto_interpolation);
     let selected: Vec<usize> = (0..rig.bones.len())
         .filter(|&i| m.bone_pose[i].flags[2] != 0)
         .collect();
-    if selected.iter().any(|&i| rig.bones[i].rigid_body) {
+    if e.physics_pose.is_none() && selected.iter().any(|&b| takes_physics_pose(m, s, physics, b)) {
         return Err(mds_edit::Error::Unsupported("pose of a bone with a rigid body").into());
     }
+    let mut extra = extra(m, s, e, physics);
     e.history.push(Entry::BoneKeys {
         frame,
         pose: snapshot(m, 0..rig.bones.len()),
@@ -241,21 +301,20 @@ pub fn register_bones(
         t.clear_marks();
         for &b in &selected {
             touched.register(t, b as u32, frame)?;
-            first_err(&mut first, t.register_bone_pose(&rig, b, frame));
+            first_err(
+                &mut first,
+                t.register_bone_pose_with(&mut rig, &mut extra, b, frame),
+            );
         }
         Ok::<_, Error>(())
     })?;
+    for ((p, b), x) in m.bone_pose.iter_mut().zip(&rig.bones).zip(&extra.bones) {
+        p.rotation = b.rotation;
+        p.translation = b.translation;
+        p.flags[0] = x.physics_disabled;
+    }
     for &b in &selected {
         m.bone_pose[b].flags[1] = 0;
-    }
-    if auto_interpolation {
-        let live = m.bone_keys.clone();
-        for &b in &selected {
-            let i = walk(&live, b as u32, frame)?;
-            if live.get(i).is_some_and(|k| k.frame == frame) {
-                auto_interp::rebuild(&mut m.bone_keys, &auto_interp::Live(&live), i);
-            }
-        }
     }
     fill_keys(&mut e.history, touched);
     first
@@ -406,6 +465,7 @@ pub fn paste(
         return Ok(());
     }
     let rig = rig(m, s, false);
+    let extra = extra(m, s, e, Physics { checkbox: true, mode: 0 });
     let pose = snapshot(m, 0..rig.bones.len());
     let mut touched = Touched::default();
     let mut first = Ok(());
@@ -422,12 +482,10 @@ pub fn paste(
         for c in &clip.bones {
             let want = cstr(&c.name);
             if let Some(b) = rig.bones.iter().position(|b| cstr(&b.name) == want) {
-                if !rig.bones[b].twist {
-                    let at = (frame as u32).wrapping_add(c.frame);
-                    touched.register(t, b as u32, at)?;
-                }
+                touched.register(t, b as u32, (frame as u32).wrapping_add(c.frame))?;
             }
-            if first_err(&mut first, t.register_bone_key(&rig, c, frame)) {
+            let r = t.register_bone_key_with(&rig, &extra, c, frame, BoneTarget::Named);
+            if first_err(&mut first, r) {
                 break;
             }
         }
@@ -470,15 +528,18 @@ fn cstr(s: &[u8]) -> &[u8] {
 /// cleared, an undo entry of the bone keys, then each bone key
 /// (`RegisterBoneKey`), morph key (`RegisterMorphKeyFromRecord`) and IK key
 /// (`RegisterDisplayKeyFromRecord`) of the file offset by `frame`, each list
-/// stopping at its first failure. The caller checks the model name.
+/// stopping at its first failure. The caller checks the model name. `data`
+/// is the file `vmd` was read from, for the IK section ([`load_vmd_ik`]).
 pub fn load_vmd(
     m: &mut pmm::Model,
     s: &Skeleton,
     e: &mut ModelEdit,
     vmd: &mds_formats::vmd::Vmd,
+    data: &[u8],
     frame: u32,
 ) -> Result<(), Error> {
     let rig = rig(m, s, false);
+    let extra = extra(m, s, e, Physics { checkbox: true, mode: 0 });
     // The name is cut at a newline (`strchr(text, 10)`).
     let name = |raw: &[u8]| -> Vec<u8> {
         let n = cstr(raw);
@@ -514,11 +575,10 @@ pub fn load_vmd(
             };
             let want = cstr(&clip.name);
             if let Some(b) = rig.bones.iter().position(|b| cstr(&b.name) == want) {
-                if !rig.bones[b].twist {
-                    touched.register(t, b as u32, frame.wrapping_add(clip.frame))?;
-                }
+                touched.register(t, b as u32, frame.wrapping_add(clip.frame))?;
             }
-            if first_err(&mut first, t.register_bone_key(&rig, &clip, frame as i32)) {
+            let r = t.register_bone_key_with(&rig, &extra, &clip, frame as i32, BoneTarget::Named);
+            if first_err(&mut first, r) {
                 break;
             }
         }
@@ -533,34 +593,96 @@ pub fn load_vmd(
                 break;
             }
         }
-        if let Some(ik) = vmd.ik.as_ref().filter(|k| !k.is_empty()) {
-            t.reset_display_cursor();
-            for k in ik {
-                if k.entries.len() > 10000 {
-                    break;
-                }
-                let clip = DisplayClip {
-                    frame: k.frame as i32,
-                    visible: u8::from(k.visible != 0),
-                    ik: k
-                        .entries
-                        .iter()
-                        .map(|x| (cstr(&x.name.raw).to_vec(), u8::from(x.enabled != 0)))
-                        .collect(),
-                    selectors: Vec::new(),
-                };
-                if first_err(
-                    &mut first,
-                    t.register_display_key(&rig, &clip, frame as i32),
-                ) {
-                    break;
-                }
-            }
-        }
+        load_vmd_ik(t, &rig, &mut first, vmd, data, frame as i32);
         Ok::<_, Error>(())
     })?;
     fill_keys(&mut e.history, touched);
     first
+}
+
+/// `_read` on the file: copies what is left, returns the count.
+struct Stream<'a>(&'a [u8]);
+
+impl Stream<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> usize {
+        let n = buf.len().min(self.0.len());
+        buf[..n].copy_from_slice(&self.0[..n]);
+        self.0 = &self.0[n..];
+        n
+    }
+}
+
+/// The IK section of the model branch of `LoadVmdMotion`, on the bytes as
+/// the C++ reads them: it reads the camera, light and self-shadow counts as
+/// three dwords without skipping their records, so a file with camera keys
+/// takes the IK count from inside the first camera record and parses the
+/// records after it from there. Short reads keep the bytes of the buffer;
+/// the visible and IK flags are tested on a 16-bit `word` whose high byte
+/// the last bone key's physics marker left.
+fn load_vmd_ik(
+    t: &mut Tracks,
+    rig: &Rig,
+    first: &mut Result<(), Error>,
+    vmd: &mds_formats::vmd::Vmd,
+    data: &[u8],
+    frame_offset: i32,
+) {
+    let name_len = if vmd.is_v2() { 20 } else { 10 };
+    let start = 30 + name_len + 4 + vmd.bones.len() * 111 + 4 + vmd.morphs.len() * 23;
+    let mut s = Stream(data.get(start..).unwrap_or(&[]));
+    // The last `_read(&word, 2)` of the bone loop: bytes 49..51 of the record.
+    let mut word = data
+        .get(start.saturating_sub(4 + vmd.morphs.len() * 23 + 62)..)
+        .filter(|_| !vmd.bones.is_empty())
+        .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]));
+    let mut count = [0u8; 4];
+    for _ in 0..3 {
+        s.read(&mut count);
+    }
+    if s.read(&mut count) == 0 {
+        return;
+    }
+    t.reset_display_cursor();
+    // ponytail: the record buffer starts zeroed (the C++ holds the last
+    // morph name there) and short entry reads see zeros (uninitialized heap
+    // in the C++); both only matter for a file that ends inside a record.
+    let mut rec = [0u8; 12];
+    let mut byte = [0u8; 1];
+    let mut idle = false;
+    for _ in 0..u32::from_le_bytes(count) {
+        // At the end of the file every pass repeats the last one.
+        if s.0.is_empty() && std::mem::replace(&mut idle, true) {
+            break;
+        }
+        s.read(&mut rec[0..4]);
+        if s.read(&mut byte) == 1 {
+            word = (word & 0xFF00) | u16::from(byte[0]);
+        }
+        let visible = u8::from(word != 0);
+        s.read(&mut rec[8..12]);
+        let n = u32::from_le_bytes(rec[8..12].try_into().unwrap());
+        if n > 0x2710 {
+            break;
+        }
+        let mut ik = Vec::new();
+        for _ in 0..n {
+            let mut entry = [0u8; 20];
+            s.read(&mut entry);
+            if s.read(&mut byte) == 1 {
+                word = (word & 0xFF00) | u16::from(byte[0]);
+            }
+            ik.push((cstr(&entry).to_vec(), u8::from(word != 0)));
+        }
+        let clip = DisplayClip {
+            frame: i32::from_le_bytes(rec[0..4].try_into().unwrap()),
+            visible,
+            ik,
+            selectors: Vec::new(),
+        };
+        if first.is_ok() {
+            first_err(first, t.register_display_key(rig, &clip, frame_offset));
+        }
+    }
 }
 
 /// `DeleteMarkedModelKeys` (VA 0x004A09E0): with any bone key marked, an
@@ -573,8 +695,7 @@ pub fn delete(
     auto_interpolation: bool,
     frame: u32,
 ) -> Result<(), Error> {
-    let rig = rig(m, s, false);
-    let before = auto_interpolation.then(|| m.bone_keys.clone());
+    let rig = rig(m, s, auto_interpolation);
     let pool = &m.bone_keys;
     let marked: Vec<u32> = marked(pool).iter().map(|k| k.0).collect();
     if !marked.is_empty() {
@@ -609,9 +730,6 @@ pub fn delete(
         });
     }
     with_tracks(m, &mut e.search_cursor, |t| t.delete_marked(&rig))?;
-    if let Some(before) = before {
-        auto_interp::after_delete(&before, &mut m.bone_keys);
-    }
     Ok(())
 }
 

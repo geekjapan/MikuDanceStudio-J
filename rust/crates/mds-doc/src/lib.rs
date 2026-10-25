@@ -104,7 +104,6 @@
 
 mod accessory;
 mod add_model;
-mod auto_interp;
 pub mod global;
 pub mod history;
 pub mod model;
@@ -368,6 +367,9 @@ pub struct EditState {
     /// `SelfShadowMode`, the 0/1/2 radio.
     pub self_shadow_mode: u8,
     pub auto_interpolation: bool,
+    /// The physics checkbox (499), which "register" stores negated as the
+    /// `physicsDisabled` of a rigid-body bone.
+    pub physics_checkbox: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -430,6 +432,8 @@ impl Document {
                 self_shadow_mode: shadow_mode_at(&pmm),
                 // `checkPhysicsFrame` (`window_init.cpp`) without a config.
                 auto_interpolation: true,
+                // `ui_init.cpp` checks it.
+                physics_checkbox: true,
                 ..EditState::default()
             },
             pmm,
@@ -477,6 +481,7 @@ impl Document {
             (p.picture.offset, p.picture.scale) = (old.picture.offset, old.picture.scale);
         }
         d.edit.auto_interpolation = self.edit.auto_interpolation;
+        d.edit.physics_checkbox = self.edit.physics_checkbox;
         // `LoadSceneV2_ReleaseTracks`: no model in the selected slot means
         // camera mode.
         if d.active().is_none() {
@@ -839,11 +844,16 @@ impl Document {
             Command::RegisterBoneKeys => {
                 let (i, s) = self.keyed()?;
                 let auto = self.edit.auto_interpolation;
+                let physics = model::Physics {
+                    checkbox: self.edit.physics_checkbox,
+                    mode: self.pmm.physics.playback_mode,
+                };
                 let r = model::register_bones(
                     &mut self.pmm.models[i],
                     &s,
                     &mut self.edit.models[i],
                     auto,
+                    physics,
                     frame,
                 );
                 self.bump_last_registered(i);
@@ -981,6 +991,7 @@ impl Document {
                         &s,
                         &mut self.edit.models[i],
                         &vmd,
+                        &data,
                         frame,
                     );
                     self.bump_last_registered(i);
@@ -1058,6 +1069,7 @@ impl Document {
                 self.edit = EditState {
                     self_shadow_mode: shadow_mode_at(&self.pmm),
                     auto_interpolation: self.edit.auto_interpolation,
+                    physics_checkbox: self.edit.physics_checkbox,
                     ..EditState::default()
                 };
                 // The refresh tail of `ResetAppState`.

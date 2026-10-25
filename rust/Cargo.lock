@@ -420,6 +420,15 @@ name = "mds-crtmath"
 version = "0.1.0"
 
 [[package]]
+name = "mds-doc"
+version = "0.1.0"
+dependencies = [
+ "mds-edit",
+ "mds-formats",
+ "mds-pose",
+]
+
+[[package]]
 name = "mds-edit"
 version = "0.1.0"
 dependencies = [

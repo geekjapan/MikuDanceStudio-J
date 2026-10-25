@@ -6,13 +6,18 @@
 //! (render size, panel width, the selected slots, the media paths, the
 //! follow-camera and floor flags, the self-shadow enabled byte) keep their
 //! value from before, so they are taken from the current scene. The
-//! `BM_CLICK`s it sends to checkboxes run their handlers in the C++; their
-//! effects are not ported. The head self-shadow key mode assumes a device
-//! with post-processing.
+//! `BM_CLICK`s it sends run their handlers, which toggle the value the reset
+//! just wrote ([`reset`] lists them). The head self-shadow key mode assumes
+//! a device with post-processing. The refresh tail (`ReloadModels`,
+//! `RefreshLightPanel`, ...) runs in `Document::apply`.
 
 use crate::global::DEFAULT_CAMERA_CURVE;
 use mds_formats::key_pool::{KeyPool, GLOBAL_KEY_CAPACITY};
-use mds_formats::pmm::{CameraKey, GravityKey, LightKey, Pmm, SelfShadowKey, Tail};
+use mds_formats::pmm::{
+    Appearance, Background, CameraKey, GravityKey, LightKey, Physics, Pmm, SceneSettings,
+    SelfShadowKey, Tail, Timeline, View, Wave,
+};
+use mds_formats::text::FixedSjis;
 
 fn pool<K: mds_formats::key_pool::Key>(head: K) -> KeyPool<K> {
     KeyPool::new(GLOBAL_KEY_CAPACITY, vec![head]).expect("one head fits")
@@ -49,10 +54,18 @@ pub fn reset(old: &Pmm) -> Pmm {
     t.current_frame = 0;
     t.start_frame = 0;
     t.last_registered_frame = 0;
-    t.edit_mode = 0;
-    t.camera_reference_mode = 0;
-    t.playback_loop = 0;
-    t.return_to_start = 0;
+    // `EditMode = None`, then the clicks on the bone select, box select,
+    // move and rotate radios (`command_panel_toggles.cpp`): the last one
+    // leaves `ViewportEditMode::Rotate`.
+    t.edit_mode = 3;
+    // The model-reference click checks its box (mode 1, the bone box
+    // unchecked); the bone-reference click then checks the bone box
+    // (`CameraAttachmentReference::SelectedBone`), whatever the boxes were.
+    t.camera_reference_mode = 2;
+    // Set to 0, then toggled by the loop and return checkbox clicks
+    // (`command_frame_edit.cpp`).
+    t.playback_loop = 1;
+    t.return_to_start = 1;
     // The play range edits are set to "%", which atol reads as 0.
     t.play_start_frame = 0;
     t.play_stop_frame = 0;
@@ -61,8 +74,10 @@ pub fn reset(old: &Pmm) -> Pmm {
     p.avi.path.raw = [0; 256];
     p.avi.path.text.clear();
     p.picture.enabled = 0;
-    p.view.fps_overlay = 0;
-    p.view.ground_grid = 1;
+    // Set to 0 and 1, then toggled by the info and coordinate-axis checkbox
+    // clicks (`command_frame_register.cpp`).
+    p.view.fps_overlay = 1;
+    p.view.ground_grid = 0;
     p.view.ground_shadow = 1;
     p.view.fps_limit = 60.0;
     p.view.capture_mode = 0;
@@ -99,5 +114,83 @@ pub fn reset(old: &Pmm) -> Pmm {
     // The goto-frame edit is set to "0".
     a.max_frame = 0;
     p.tail = Tail::Registrations(Vec::new());
+    p
+}
+
+fn no_path() -> FixedSjis<256> {
+    FixedSjis {
+        raw: [0; 256],
+        text: String::new(),
+    }
+}
+
+/// The scene a save right after start-up writes: `MMDApp::InitDefaults`
+/// (`src/app/app_defaults.cpp`, VA 0x0040A730) over the zeroed object,
+/// the global tracks that start-up creates with the heads [`reset`] also
+/// builds, and the window layout of a start with no `Data\mmconfig.ini`
+/// (a 640 x 360 render area, a 250-pixel panel).
+pub fn startup() -> Pmm {
+    let background = Background {
+        offset: [0; 2],
+        scale: 0.0,
+        path: no_path(),
+        enabled: 0,
+    };
+    let zero = Pmm {
+        header: [0; 30],
+        settings: SceneSettings {
+            render_width: 640,
+            render_height: 360,
+            panel_width: 250,
+            ..SceneSettings::default()
+        },
+        selected_model_slot: 0,
+        models: Vec::new(),
+        camera: pool(CameraKey::default()),
+        camera_state: [0.0; 9],
+        camera_perspective: 0,
+        light: pool(LightKey::default()),
+        light_state: [0.0; 6],
+        selected_accessory_slot: 0,
+        display_list_scroll: 0,
+        accessories: Vec::new(),
+        timeline: Timeline::default(),
+        wave: Wave {
+            enabled: 0,
+            path: no_path(),
+        },
+        avi: background.clone(),
+        picture: background,
+        view: View::default(),
+        physics: Physics {
+            // `projectedShadowAmbient`, set by the window setup.
+            projected_shadow_ambient: 1.0,
+            ..Physics::default()
+        },
+        gravity: pool(GravityKey::default()),
+        // `selfShadowEnabled`.
+        self_shadow_mode: 1,
+        physics_interval: 0.0,
+        self_shadow: pool(SelfShadowKey::default()),
+        appearance: Appearance {
+            floor_visible: 1,
+            ..Appearance::default()
+        },
+        tail: Tail::Registrations(Vec::new()),
+    };
+    let mut p = reset(&zero);
+    // InitDefaults sets no light color and leaves `CameraFov` at the 30 of
+    // the track heads, and no checkbox is clicked: `EditMode` is
+    // `ViewportEditMode::None`, the loop, return, info and reference flags
+    // are 0, the grid is on.
+    p.light_state[..3].fill(0.0);
+    p.settings.camera_fov = 30.0;
+    let t = &mut p.timeline;
+    t.edit_mode = 2;
+    t.camera_reference_mode = 0;
+    t.playback_loop = 0;
+    t.return_to_start = 0;
+    p.view.fps_overlay = 0;
+    p.view.ground_grid = 1;
     p
 }

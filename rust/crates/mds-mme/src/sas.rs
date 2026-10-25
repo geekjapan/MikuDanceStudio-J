@@ -254,6 +254,8 @@ pub struct Resource {
     pub has_clear_color: bool,
     pub has_clear_depth: bool,
     pub default_effect: Vec<(String, String)>,
+    /// The file of each `default_effect` row whose value is an effect path.
+    pub default_effect_files: Vec<Option<std::path::PathBuf>>,
     pub resource_name: String,
     /// The file `resource_name` names, for the texture load.
     pub resource_file: Option<std::path::PathBuf>,
@@ -292,6 +294,7 @@ impl Resource {
             has_clear_color: false,
             has_clear_depth: false,
             default_effect: Vec::new(),
+            default_effect_files: Vec::new(),
             resource_name: String::new(),
             resource_file: None,
             offset: 0.0,
@@ -400,6 +403,8 @@ pub struct Sas {
     pub techniques: Vec<TechRec>,
     pub resources: Vec<Resource>,
     pub controls: Vec<Control>,
+    /// The back buffer the parse sized the targets against ([`Location::backbuffer`]).
+    pub backbuffer: (i32, i32),
     /// The texture bound to each parameter (`SetTexture`), an index into `resources`.
     pub bound: Vec<Option<usize>>,
 }
@@ -410,6 +415,9 @@ pub struct Location<'a> {
     pub root: &'a Path,
     /// The effect's directory below the root, `/`-separated, empty for the root itself.
     pub dir: String,
+    /// The device's back buffer, which `ViewportRatio` sizes are relative to ([`BACKBUFFER`] in
+    /// the oracle).
+    pub backbuffer: (i32, i32),
 }
 
 impl Location<'_> {
@@ -432,7 +440,7 @@ impl Location<'_> {
     }
 }
 
-/// D3D sizes of the fixed device.
+/// The back buffer of the oracle's device.
 pub const BACKBUFFER: (i32, i32) = (1000, 600);
 
 /// The result of `MmeEngineLoadEffectFile`: the parsed model, or the error text.
@@ -452,6 +460,7 @@ pub fn parse(fx: Fx, path: &str, loc: &Location) -> Result<Sas, String> {
         techniques: Vec::new(),
         resources: Vec::new(),
         controls: Vec::new(),
+        backbuffer: loc.backbuffer,
     };
     if sas.standards_global().is_err() {
         return Err(sas.log);
@@ -790,6 +799,7 @@ impl Sas {
                 res.seek_variable = seek;
             }
             res.resource_name = resolved;
+            res.resource_file = found;
             self.resources.push(res);
             return 0;
         }
@@ -922,7 +932,7 @@ impl Sas {
                 ratio = [1.0, 1.0];
             }
         }
-        let (sw, sh) = BACKBUFFER;
+        let (sw, sh) = loc.backbuffer;
         if has_ratio {
             res.req_width = (sw as f32 * ratio[0]) as i32;
             res.req_height = (sh as f32 * ratio[1]) as i32;
@@ -1030,10 +1040,10 @@ impl Sas {
                         ));
                     };
                     let value = trim_ws(&token[eq + 1..]);
-                    let value = match value.to_ascii_lowercase().as_str() {
-                        "" | "none" => "none".to_string(),
-                        "hide" => "hide".to_string(),
-                        "main_default" => "main_default".to_string(),
+                    let (value, file) = match value.to_ascii_lowercase().as_str() {
+                        "" | "none" => ("none".to_string(), None),
+                        "hide" => ("hide".to_string(), None),
+                        "main_default" => ("main_default".to_string(), None),
                         _ => {
                             let (text, found) = loc.fullpath(value);
                             if found.is_none() {
@@ -1041,10 +1051,11 @@ impl Sas {
                                     "Error: failed to open file: {value} (parameter: {name})\n"
                                 ));
                             }
-                            text
+                            (text, found)
                         }
                     };
                     res.default_effect.push((key.to_string(), value));
+                    res.default_effect_files.push(file);
                 }
             }
             self.logf(format!("Info: new OffScreen RenderTarget: {name}\n"));

@@ -230,7 +230,12 @@ pub fn write(path: &str, loaded: Result<Sas, String>) -> String {
     let mut o = Out(String::new());
     o.line("passplan 1");
     o.line(format!("file {}", q(path)));
-    o.line("device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1");
+    let (bw, bh) = loaded
+        .as_ref()
+        .map_or(crate::sas::BACKBUFFER, |s| s.backbuffer);
+    o.line(format!(
+        "device HAL backbuffer={bw}x{bh} format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1"
+    ));
     let mut engine_log = format!("Loading effect file: {path}\n");
     match loaded {
         Err(error) => {

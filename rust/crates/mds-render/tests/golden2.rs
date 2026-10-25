@@ -7,9 +7,8 @@
 //! Left out of the comparison, as in `golden.rs`, is what the app draws apart from the scene:
 //! the ground grid and its axes ([`grid_mask`]), which `mds-render` does not draw.
 //!
-//! The background scene has no gate: its golden image shows a C++ bug (README of golden2), and
-//! the root deferred it until a fixed C++ regenerates the image. Scenes whose passes are missing
-//! are `#[ignore]`d with the reason; `--include-ignored` runs them.
+//! Scenes that do not meet the rule yet are `#[ignore]`d with their score; `--include-ignored` runs
+//! them.
 //!
 //! `MDS_RENDER_PNG_DIR=<dir>` writes `<scene>-<frame>.png` and `<scene>-<frame>-diff.png`
 //! (4 times the difference; masked pixels magenta).
@@ -17,11 +16,13 @@
 use mds_formats::pmm::Pmm;
 use mds_formats::{pmd::Pmd, pmx::Pmx};
 use mds_physics::PhysicsScene;
+use mds_render::picture::PictureQuad;
 use mds_render::{
-    encode_png, render_frame_with, scene, AccessoryDraw, AccessoryMesh, Frame, Gpu, Mesh, Pose,
-    Stage, View, PIXEL_OFFSET_D3D9, SAMPLES_8X,
+    encode_png, render_frame_with, scene, AccessoryDraw, AccessoryMesh, Frame, Gpu, Image, Mesh,
+    Picture, Pose, Stage, View, PIXEL_OFFSET_D3D9, SAMPLES_8X,
 };
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 mod common;
 use common::{fixtures, gpu_or_skip, pixel_diff, read_png, Score, LIMITS};
@@ -128,8 +129,18 @@ fn render_at(gpu: &Gpu, pmm: &Pmm, frame: u32) -> (Vec<u8>, View) {
             world: *world,
         })
         .collect();
+    let image = (pmm.picture.enabled != 0).then(|| {
+        let data = scene_file(&pmm.picture.path.text).unwrap();
+        let img = Image::decode(&data).unwrap();
+        let rect = picture_rect(pmm, &img);
+        (Arc::new(img), rect)
+    });
+    let picture = image
+        .as_ref()
+        .map(|(image, rect)| Picture { image, rect: *rect });
     let stage = Stage {
         accessories: &draws,
+        picture,
         ..scene::stage_at(pmm, frame)
     };
     let models: Vec<_> = meshes
@@ -157,6 +168,32 @@ fn render_at(gpu: &Gpu, pmm: &Pmm, frame: u32) -> (Vec<u8>, View) {
     )
     .unwrap();
     (px, view)
+}
+
+/// Where the app put the picture quad: placed in the pixels of its main window's viewport, which
+/// the `picture` line of the scene's edge probe records (offset, scale, picture size, an unused
+/// value, the viewport, the output size, the quad), and drawn into the output unchanged (README
+/// of golden2).
+fn picture_rect(pmm: &Pmm, image: &Image) -> [f32; 4] {
+    let probe = std::fs::read_to_string(golden2().join("background.edge.txt")).unwrap();
+    let line = probe
+        .lines()
+        .find(|l| l.split(' ').nth(1) == Some("picture"))
+        .unwrap();
+    let v: Vec<f32> = line
+        .split(' ')
+        .skip(2)
+        .map(|w| w.parse().unwrap())
+        .collect();
+    PictureQuad::in_viewport(
+        image.width,
+        image.height,
+        pmm.picture.scale,
+        pmm.picture.offset,
+        [v[6], v[7], v[8], v[9]],
+        pmm.settings.render_width as u32,
+    )
+    .rect
 }
 
 /// The grid lines are 5 units apart from -50 to 50 along x and z (`perspective-0.png`: the
@@ -334,6 +371,12 @@ fn skin_0() {
 #[ignore = "within 4 is 0.996: the translucent faces and their edges"]
 fn skin_30() {
     gate("skin", 30);
+}
+
+#[test]
+#[ignore = "within 4 is 0.988: the checker edges of the picture (the app resamples it first)"]
+fn background_0() {
+    gate("background", 0);
 }
 
 #[test]

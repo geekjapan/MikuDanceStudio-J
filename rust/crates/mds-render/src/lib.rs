@@ -38,7 +38,9 @@
 //! Accessories ([`AccessoryMesh`], from `mds-accessory`) are lit as Direct3D 9's fixed-function
 //! pipeline lights them, with the accessory light ten times as bright.
 //!
-//! Not in this crate yet: the self-shadow map and the background picture.
+//! [`Stage::picture`] draws a background picture as a quad in output pixels.
+//!
+//! Not in this crate yet: the self-shadow map.
 
 mod accessory;
 mod mesh;
@@ -162,6 +164,17 @@ pub struct Stage<'a> {
     pub self_shadow: Option<SelfShadow>,
     /// The accessories, in draw order; [`scene::accessory_at`] places one.
     pub accessories: &'a [AccessoryDraw<'a>],
+    /// The background picture, drawn behind everything.
+    pub picture: Option<Picture<'a>>,
+}
+
+/// A background picture and where it goes: `rect` is left, top, right, bottom in the pixels of
+/// the output with Direct3D 9's pixel centers on integer coordinates, as the C++ app's
+/// pre-transformed quad has them ([`picture::PictureQuad::in_viewport`]).
+#[derive(Clone, Copy)]
+pub struct Picture<'a> {
+    pub image: &'a std::sync::Arc<Image>,
+    pub rect: [f32; 4],
 }
 
 impl Stage<'_> {
@@ -175,6 +188,7 @@ impl Stage<'_> {
                 distance: 0.0,
             }),
             accessories: &[],
+            picture: None,
         }
     }
 }

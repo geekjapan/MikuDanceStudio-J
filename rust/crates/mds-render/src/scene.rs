@@ -51,6 +51,7 @@ pub fn self_shadow_mode_2_at(pmm: &Pmm, frame: u32) -> bool {
 pub fn stage_at(pmm: &Pmm, frame: u32) -> Stage<'static> {
     Stage {
         accessories: &[],
+        picture: None,
         self_shadow: evaluate_self_shadow(&pmm.self_shadow, f64::from(frame))
             .filter(|&(mode, _)| mode != 0)
             .map(|(mode, distance)| SelfShadow { mode, distance }),

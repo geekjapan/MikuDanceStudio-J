@@ -160,6 +160,31 @@ fn fs_accessory(i: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), mat.diffuse.a);
 }
 
+// The background picture: a quad in output pixels (`mat.diffuse` is left, top, right, bottom),
+// textured with the picture.
+struct PictureOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_picture(@builtin(vertex_index) k: u32) -> PictureOut {
+    // Two triangles: corners 0 1 2 and 2 1 3, bit 0 right, bit 1 down.
+    let c = array<u32, 6>(0u, 1u, 2u, 2u, 1u, 3u)[k];
+    let corner = vec2<f32>(f32(c & 1u), f32((c >> 1u) & 1u));
+    let r = mat.diffuse;
+    let p = mix(r.xy, r.zw, corner);
+    var o: PictureOut;
+    o.clip = shifted(vec4<f32>(2.0 * p.x / scene.screen.x - 1.0, 1.0 - 2.0 * p.y / scene.screen.y, 0.0, 1.0));
+    o.uv = corner;
+    return o;
+}
+
+@fragment
+fn fs_picture(i: PictureOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(textureSample(tex, samp, center_uv(i.uv)).rgb, 1.0);
+}
+
 // Edge: the back faces of the hull that mds-skin pushed out along the normals, colored per vertex.
 @vertex
 fn vs_edge(v: EdgeIn) -> EdgeOut {

@@ -128,7 +128,7 @@ fn render_into_equals_render_frame_and_keeps_its_pipelines() {
     let frame_a = frame(&models_a);
     let a1 = render_into(&gpu, &mut renderer, &frame_a, 1);
     let built = renderer.pipelines_created();
-    assert_eq!(built, 5);
+    assert_eq!(built, 6);
     assert!(covered(&a1) > 100, "the model should cover some pixels");
     assert_eq!(a1, gpu_frame(&gpu, &frame_a), "render_into vs render_frame");
 
@@ -162,7 +162,7 @@ fn render_frame_on_gpu_reuses_pipelines() {
     let f = frame(&models);
     let first = gpu_frame(&gpu, &f);
     let built = gpu.pipelines_created();
-    assert_eq!(built, 5);
+    assert_eq!(built, 6);
     assert_eq!(gpu_frame(&gpu, &f), first);
     assert_eq!(gpu.pipelines_created(), built);
 }
@@ -191,11 +191,11 @@ fn multisampled_render_resolves_into_the_target() {
     let mut renderer = Renderer::new(gpu.device(), gpu.queue()).unwrap();
     let px = render_into(&gpu, &mut renderer, &f, 4);
     assert!(covered(&px) > 100);
-    assert_eq!(renderer.pipelines_created(), 5);
+    assert_eq!(renderer.pipelines_created(), 6);
     render_into(&gpu, &mut renderer, &f, 1);
-    assert_eq!(renderer.pipelines_created(), 10, "one set per sample count");
+    assert_eq!(renderer.pipelines_created(), 12, "one set per sample count");
     render_into(&gpu, &mut renderer, &f, 4);
-    assert_eq!(renderer.pipelines_created(), 10);
+    assert_eq!(renderer.pipelines_created(), 12);
     assert!(renderer
         .render_into(
             &target(gpu.device()).create_view(&Default::default()),

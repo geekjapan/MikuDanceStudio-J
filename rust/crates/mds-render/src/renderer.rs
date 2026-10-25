@@ -27,10 +27,11 @@ struct Pipelines {
     edge: wgpu::RenderPipeline,
     ground_shadow: wgpu::RenderPipeline,
     accessory: wgpu::RenderPipeline,
+    picture: wgpu::RenderPipeline,
 }
 
 /// Render pipelines in one [`Pipelines`] set.
-const PIPELINES_PER_SET: usize = 5;
+const PIPELINES_PER_SET: usize = 6;
 
 fn depth_state(write: bool, stencil: wgpu::StencilState) -> wgpu::DepthStencilState {
     wgpu::DepthStencilState {
@@ -93,6 +94,8 @@ pub struct Renderer {
     pipelines: HashMap<u32, Pipelines>,
     pipelines_created: usize,
     models: HashMap<Key, Prepared>,
+    /// The last background picture: the image it was made from, its uniform and bind group.
+    picture: Option<(Arc<Image>, wgpu::Buffer, wgpu::BindGroup)>,
     targets: Option<Targets>,
 }
 
@@ -166,6 +169,7 @@ impl Renderer {
             pipelines: HashMap::new(),
             pipelines_created: 0,
             models: HashMap::new(),
+            picture: None,
             targets: None,
         };
         match pollster::block_on(error_scope.pop()) {
@@ -416,6 +420,24 @@ impl Renderer {
                 })
                 .collect();
             p.alpha = skin.materials.iter().map(|m| diffuse(m)[3]).collect();
+        }
+        if let Some(pic) = &stage.picture {
+            if !self
+                .picture
+                .as_ref()
+                .is_some_and(|(img, _, _)| Arc::ptr_eq(img, pic.image))
+            {
+                let view = self.view_of(&mut HashMap::new(), &Some(pic.image.clone()), &self.white);
+                let (buf, group) = self
+                    .material_groups(vec![[view, self.white.clone(), self.toon.clone()]])
+                    .pop()
+                    .expect("one group");
+                self.picture = Some((pic.image.clone(), buf, group));
+            }
+            let (_, buf, _) = self.picture.as_ref().expect("set above");
+            let mut u = pic.rect.to_vec();
+            u.resize((MATERIAL_BYTES / 4) as usize, 0.0);
+            self.queue.write_buffer(buf, 0, &bytes(&u));
         }
         let accessory_keys = Self::accessory_keys(stage);
         for (a, key) in stage.accessories.iter().zip(&accessory_keys) {
@@ -687,11 +709,12 @@ impl Renderer {
                         module: &self.shader,
                         entry_point: Some(vs),
                         compilation_options: Default::default(),
-                        buffers: &[Some(wgpu::VertexBufferLayout {
+                        // A stride of 0: no vertex buffer (the picture quad).
+                        buffers: &[(stride > 0).then_some(wgpu::VertexBufferLayout {
                             array_stride: stride,
                             step_mode: wgpu::VertexStepMode::Vertex,
                             attributes: attrs,
-                        })],
+                        })][..usize::from(stride > 0)],
                     },
                     // PMX front faces are clockwise.
                     primitive: wgpu::PrimitiveState {
@@ -769,6 +792,14 @@ impl Renderer {
                 alpha,
                 opaque(),
             ),
+            picture: pipeline(
+                "vs_picture",
+                "fs_picture",
+                (0, &[]),
+                None,
+                None,
+                depth_state(false, Default::default()),
+            ),
         }
     }
 
@@ -822,6 +853,11 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &self.scene_group, &[]);
+            if let (Some(_), Some((_, _, group))) = (&stage.picture, &self.picture) {
+                pass.set_pipeline(&pipelines.picture);
+                pass.set_bind_group(1, group, &[]);
+                pass.draw(0..6, 0..1);
+            }
             // The ground shadow first: the models then cover it where they stand in front.
             if stage.ground_shadow.is_some() && casts_ground_shadow(frame) {
                 pass.set_pipeline(&pipelines.ground_shadow);

@@ -4,8 +4,10 @@
 //! render width, at PMM load (golden2 README, "Notes for render2"); its frame dump then draws that
 //! quad into the 640x360 output unchanged, so the golden image depends on the host's window.
 //! [`PictureQuad::in_viewport`] is that placement, checked against the `picture` line of
-//! `tests/fixtures/rust/golden2/background.edge.txt`; [`PictureQuad::to_output`] maps it from the
-//! viewport onto an output picture of any size, which is where `mds-render` draws it.
+//! `tests/fixtures/rust/golden2/background.edge.txt`; golden2 `background-0.png` shows the picture
+//! at exactly that rectangle of output pixels, and [`crate::Stage::picture`] draws it there.
+//! [`PictureQuad::to_output`] maps it from the viewport onto an output picture of any size, for a
+//! caller that wants the picture to follow the view instead.
 
 /// A picture quad: left, top, right, bottom in pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]

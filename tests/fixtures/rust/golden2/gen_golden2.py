@@ -92,12 +92,15 @@ def background(x, y):
     return (base, 96, 192) if (x // 80 + y // 80) % 2 else (base, 192, 96)
 
 
-# floor.x: a 2x2 quad on y = 0 facing up, with one untextured material. The
-# app lights accessories ten times as bright as models (SetAccessoryLight), so
-# a dark diffuse keeps the floor off white.
+# A 2x2 quad on y = 0 facing up, with one untextured material.
 # (normals_uv.x of the accessory fixtures has no material list, and the app
-# draws an accessory per material, so it draws nothing.)
-FLOOR_X = """xof 0302txt 0032
+# draws an accessory per material, so it draws nothing.) The app lights
+# accessories ten times as bright as models (SetAccessoryLight), so floor.x
+# has a dark diffuse to stay off white. Under self-shadow the accessory
+# effect takes the diffuse times the light's ambient and the shadow darkens
+# that part only, so shadow_floor.x has a bright diffuse and little emissive.
+def floor_x(diffuse, emissive):
+    return ("""xof 0302txt 0032
 Mesh Floor {
  4;
  -1.000000;0.000000;-1.000000;,
@@ -108,7 +111,7 @@ Mesh Floor {
  4;0,1,2,3;;
  MeshNormals {
   1;
-  0.000000;-1.000000;0.000000;;
+  0.000000;1.000000;0.000000;;
   1;
   4;0,0,0,0;;
  }
@@ -117,14 +120,15 @@ Mesh Floor {
   1;
   0;;
   Material {
-   0.080000;0.060000;0.020000;1.000000;;
+   %s;1.000000;;
    5.000000;
    0.000000;0.000000;0.000000;;
-   0.400000;0.400000;0.400000;;
+   %s;;
   }
  }
 }
-""".replace("\n", "\r\n").encode("ascii")
+""" % (";".join("%.6f" % c for c in diffuse), ";".join("%.6f" % c for c in emissive))
+    ).replace("\n", "\r\n").encode("ascii")
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +386,7 @@ SCENES = {
         camera_keys=ortho_camera(-16.0, (0.0, 3.0, 0.0)), light_keys=LIGHT,
         shadow_keys=[(0, 1, SHADOW_DEFAULT), (30, 2, 0.005)],
         # The floor (8 units wide) receives the shadow.
-        accessories=[Accessory("floor.x", (0.0, 0.02, 0.0), scale=0.4)],
+        accessories=[Accessory("shadow_floor.x", (0.0, 0.02, 0.0), scale=0.4)],
         frames=[0, 30]),
     # The projected ground shadow, opaque at frame 0 brightness; the light
     # turns by frame 30. Translucent shadow with ambient 0.5.
@@ -445,7 +449,8 @@ def generate():
     out["skin_tex.pmx"] = build_skin_tex()
     out[SKIN_TEXTURE] = bmp24(16, 16, skin_texture)
     out["cube.bmp"] = bmp24(8, 8, cube_texture)
-    out["floor.x"] = FLOOR_X
+    out["floor.x"] = floor_x((0.08, 0.06, 0.02), (0.4, 0.4, 0.4))
+    out["shadow_floor.x"] = floor_x((0.8, 0.8, 0.8), (0.1, 0.1, 0.1))
     out["background.png"] = png_rgb(640, 360, background)
     return out
 

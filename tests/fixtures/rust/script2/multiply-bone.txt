@@ -1,8 +1,8 @@
-# Menu 251 (bone scale and add) on every bone key of chain8 in swing600.pmm.
+# Menu 251 (bone scale and add) on every bone key of chain8_ik.pmx with swing600.vmd.
 # The 12 values are the dialog's (scale, add) pairs in edit-id order
 # 686..697: position x, y, z, rotation x, y, z (add in degrees).
-load pmm swing600.pmm
-select model chain8
+load model chain8_ik.pmx
+load vmd swing600.vmd
 select all bone
 multiply bone 2 0.5 1 0 1 -1 0.5 10 1 0 1 -15
 save pmm multiplied.pmm

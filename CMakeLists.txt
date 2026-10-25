@@ -619,6 +619,11 @@ if(BUILD_TESTING)
     target_link_libraries(math_vectors PRIVATE D3DXRuntime)
     add_executable(fx_reflect tools/oracle/fx_reflect.cpp)
     target_link_libraries(fx_reflect PRIVATE D3DXRuntime d3d9 user32)
+    # MME pass-plan dump (wave 2 slice passplan): runs the engine's effect loader
+    # and SAS parser on a HAL device, no test registered (needs the console session).
+    add_executable(mme_passplan tools/oracle/mme_passplan.cpp)
+    target_include_directories(mme_passplan PRIVATE third_party/mmeffect/src/mmeffect)
+    target_link_libraries(mme_passplan PRIVATE mikudancestudio_core MMEffect dsound)
     add_test(NAME d3dx_pe_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_d3dx_imports.py
         $<TARGET_FILE:MikuDanceStudio>)

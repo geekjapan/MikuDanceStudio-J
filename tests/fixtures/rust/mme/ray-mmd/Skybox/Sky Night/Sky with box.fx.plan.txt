@@ -1,0 +1,152 @@
+passplan 1
+file "<root>/Skybox/Sky Night/Sky with box.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=0 scriptorder=0 posteffect=0 drawsgeometry=0 errors=0
+parameters 48
+param "time" "TIME" scalar float 1x1
+param "elapsed" "ELAPSEDTIME" scalar float 1x1
+param "MousePosition" "MOUSEPOSITION" vector float 1x2
+param "matWorld" "WORLD" matrix_rows float 4x4
+param "matWorldInverse" "WORLDINVERSE" matrix_rows float 4x4
+param "matWorldView" "WORLDVIEW" matrix_rows float 4x4
+param "matWorldViewProject" "WORLDVIEWPROJECTION" matrix_rows float 4x4
+param "matView" "VIEW" matrix_rows float 4x4
+param "matViewInverse" "VIEWINVERSE" matrix_rows float 4x4
+param "matProject" "PROJECTION" matrix_rows float 4x4
+param "matProjectInverse" "PROJECTIONINVERSE" matrix_rows float 4x4
+param "matViewProject" "VIEWPROJECTION" matrix_rows float 4x4
+param "matViewProjectInverse" "VIEWPROJECTIONINVERSE" matrix_rows float 4x4
+param "CameraPosition" "POSITION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "CameraDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "SunColor" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Light"
+param "SunDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Light"
+param "MaterialDiffuse" "DIFFUSE" vector float 1x4
+  ann "Object" string0 = "Geometry"
+param "MaterialAmbient" "AMBIENT" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialSpecular" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialToon" "TOONCOLOR" vector float 1x3
+param "MaterialPower" "SPECULARPOWER" scalar float 1x1
+  ann "Object" string0 = "Geometry"
+param "ViewportSize" "VIEWPORTPIXELSIZE" vector float 1x2
+param "AcsPosition" "CONTROLOBJECT" vector float 1x3
+  ann "name" string0 = "(self)"
+param "use_texture" "" scalar bool 1x1
+param "use_subtexture" "" scalar bool 1x1
+param "use_spheremap" "" scalar bool 1x1
+param "use_toon" "" scalar bool 1x1
+param "opadd" "" scalar bool 1x1
+param "mEnvRotateX" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "EnvRotateX"
+param "mEnvRotateY" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "EnvRotateY"
+param "mEnvRotateZ" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "EnvRotateZ"
+param "mTopColorHP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "TopH+"
+param "mTopColorSP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "TopS+"
+param "mTopColorVP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "TopV+"
+param "mTopExponentP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "TopExponent+"
+param "mTopExponentM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "TopExponent-"
+param "mBottomColorHP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "BottomH+"
+param "mBottomColorSP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "BottomS+"
+param "mBottomColorVP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "BottomV+"
+param "mBottomExponentP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "BottomExponent+"
+param "mBottomExponentM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "BottomExponent-"
+param "mMediumColorHP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MediumH+"
+param "mMediumColorSP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MediumS+"
+param "mMediumColorVP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MediumV+"
+param "MoonMap" "" object texture 0x0
+  ann "ResourceName" string0 = "Textures/moon.jpg"
+resources 1
+resource "MoonMap" semantic=Texture texture=5
+  request 1000x600x1 mips=1 rawsize=-1x-1 rawmips=-1 format=A8R8G8B8 defaultpool=0
+  resourcename "<root>/Skybox/Sky Night/Textures/moon.jpg"
+  created texture 1024x512 levels=11 format=X8R8G8B8 pool=1 usage=0x0
+controls 17
+control "AcsPosition" name="(self)" item=""
+control "mEnvRotateX" name="(self)" item="EnvRotateX"
+control "mEnvRotateY" name="(self)" item="EnvRotateY"
+control "mEnvRotateZ" name="(self)" item="EnvRotateZ"
+control "mTopColorHP" name="(self)" item="TopH+"
+control "mTopColorSP" name="(self)" item="TopS+"
+control "mTopColorVP" name="(self)" item="TopV+"
+control "mTopExponentP" name="(self)" item="TopExponent+"
+control "mTopExponentM" name="(self)" item="TopExponent-"
+control "mBottomColorHP" name="(self)" item="BottomH+"
+control "mBottomColorSP" name="(self)" item="BottomS+"
+control "mBottomColorVP" name="(self)" item="BottomV+"
+control "mBottomExponentP" name="(self)" item="BottomExponent+"
+control "mBottomExponentM" name="(self)" item="BottomExponent-"
+control "mMediumColorHP" name="(self)" item="MediumH+"
+control "mMediumColorSP" name="(self)" item="MediumS+"
+control "mMediumColorVP" name="(self)" item="MediumV+"
+technique_order "MainTec0" "MainTec1" "EdgeTec" "ShadowTec" "ZplotTec"
+techniques 5
+technique "MainTec0" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=0 passes=2
+  pass 0 "DrawObject" script=0 custom=1 psize15=0 shadermix=1
+  pass 1 "DrawMoon" script=0 custom=1 psize15=0 shadermix=1
+technique "MainTec1" mmdpass=object_ss usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=0 passes=2
+  pass 0 "DrawObject" script=0 custom=1 psize15=0 shadermix=1
+  pass 1 "DrawMoon" script=0 custom=1 psize15=0 shadermix=1
+technique "EdgeTec" mmdpass=edge usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ShadowTec" mmdpass=shadow usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ZplotTec" mmdpass=zplot usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+selection subsets=2 clamped=0
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-1 "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0"
+  select object_ss 0-1 "MainTec1" "MainTec1" "MainTec1" "MainTec1" "MainTec1" "MainTec1" "MainTec1" "MainTec1"
+  select shadow 0-1 "ShadowTec"
+  select edge 0-1 "EdgeTec"
+  select zplot 0-1 "ZplotTec"
+runs
+  run "MainTec0"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "DrawObject" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=1 "DrawMoon" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=2 hr=0x00000000 runfailed=0
+  run "MainTec1"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "DrawObject" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=1 "DrawMoon" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=2 hr=0x00000000 runfailed=0
+enginelog "Loading effect file: <root>/Skybox/Sky Night/Sky with box.fx"
+enginelog "Loading texture file: <root>/Skybox/Sky Night/Textures/moon.jpg"
+end

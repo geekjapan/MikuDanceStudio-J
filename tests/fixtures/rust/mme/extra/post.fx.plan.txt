@@ -1,0 +1,84 @@
+passplan 1
+file "<root>/post.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=1 scriptorder=2 posteffect=1 drawsgeometry=0 errors=0
+parameters 10
+param "Script" "STANDARDSGLOBAL" scalar float 1x1
+  ann "ScriptOutput" string0 = "color"
+  ann "ScriptClass" string0 = "scene"
+  ann "ScriptOrder" string0 = "postprocess"
+param "ViewportSize" "VIEWPORTPIXELSIZE" vector float 1x2
+param "Work" "RENDERCOLORTARGET" object texture2d 0x0
+  ann "ViewportRatio" float2 = 0.5,0.5
+  ann "Format" string0 = "A16B16G16R16F"
+  ann "Miplevels" int1 = 1
+param "WorkDepth" "RENDERDEPTHSTENCILTARGET" object texture2d 0x0
+  ann "ViewportRatio" float2 = 0.5,0.5
+  ann "Format" string0 = "D24S8"
+param "Small" "RENDERCOLORTARGET" object texture2d 0x0
+  ann "Width" int1 = 64
+  ann "Height" int1 = 32
+  ann "Miplevels" int1 = 0
+  ann "Format" string0 = "R32F"
+param "Full" "RENDERCOLORTARGET" object texture2d 0x0
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A8R8G8B8"
+param "Third" "RENDERCOLORTARGET" object texture2d 0x0
+  ann "ViewportRatio" float2 = 0.333299994,0.333299994
+resources 5
+resource "Work" semantic=RenderColorTarget texture=7
+  request 500x300x1 mips=1 rawsize=500x300 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 500x300 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "WorkDepth" semantic=RenderDepthStencilTarget texture=7
+  request 500x300x1 mips=1 rawsize=500x300 rawmips=1 format=D24S8 defaultpool=1
+  created texture 1x1 levels=1 format=A8R8G8B8 pool=1 usage=0x0
+  created depthsurface 500x300 format=D24S8
+resource "Small" semantic=RenderColorTarget texture=7
+  request 64x32x1 mips=0 rawsize=64x32 rawmips=0 format=R32F defaultpool=1
+  created texture 64x32 levels=1 format=R32F pool=0 usage=0x401
+resource "Full" semantic=RenderColorTarget texture=7
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A8R8G8B8 defaultpool=1
+  created texture 1000x600 levels=1 format=A8R8G8B8 pool=0 usage=0x1
+resource "Third" semantic=RenderColorTarget texture=7
+  request 333x199x1 mips=1 rawsize=333x199 rawmips=1 format=A8R8G8B8 defaultpool=1
+  created texture 333x199 levels=1 format=A8R8G8B8 pool=0 usage=0x1
+controls 0
+technique_order "Post"
+techniques 1
+technique "Post" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=0 passes=2
+  script "RenderColorTarget0=Work;RenderDepthStencilTarget=WorkDepth;ClearSetColor=ClearColor; ClearSetDepth=ClearDepth;Clear=Color; Clear=Depth;ScriptExternal=Color;RenderColorTarget0=Small;Pass=Down;RenderColorTarget0=; RenderDepthStencilTarget=;RenderColorTarget1=Full;Pass=Final;RenderColorTarget1=;"
+  cmd 0 RenderColorTarget0 param="Work" value=-1 text="Work"
+  cmd 1 RenderDepthStencilTarget param="WorkDepth" value=-1 text="WorkDepth"
+  cmd 2 ClearSetColor param="ClearColor" value=0 text="ClearColor"
+  cmd 3 ClearSetDepth param="ClearDepth" value=0 text="ClearDepth"
+  cmd 4 Clear param="-" value=1 text="Color"
+  cmd 5 Clear param="-" value=6 text="Depth"
+  cmd 6 ScriptExternal param="-" value=0 text="Color"
+  cmd 7 RenderColorTarget0 param="Small" value=-1 text="Small"
+  cmd 8 Pass pass="Down" index=0 text="Down"
+  cmd 9 RenderColorTarget0 param="-" value=0 text=""
+  cmd 10 RenderDepthStencilTarget param="-" value=0 text=""
+  cmd 11 RenderColorTarget1 param="Full" value=-1 text="Full"
+  cmd 12 Pass pass="Final" index=1 text="Final"
+  cmd 13 RenderColorTarget1 param="-" value=0 text=""
+  pass 0 "Down" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 1 "Final" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+selection subsets=1 clamped=1
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-0 "Post" "Post" "Post" "Post" "Post" "Post" "Post" "Post"
+runs
+  run "Post"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    suspend rt0=Work rt1=none rt2=none rt3=none ds=WorkDepth viewport=500x300+0+0
+    draw buffer pass=0 "Down" rt0=Small rt1=none rt2=none rt3=none ds=WorkDepth viewport=64x32+0+0
+    draw buffer pass=1 "Final" rt0=main rt1=Full rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=1 draws=2 hr=0x00000000 runfailed=0
+enginelog "Loading effect file: <root>/post.fx"
+end

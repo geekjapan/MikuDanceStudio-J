@@ -1,0 +1,49 @@
+passplan 1
+file "<root>/Skybox/skylighting_none.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=0 scriptorder=0 posteffect=0 drawsgeometry=0 errors=0
+parameters 5
+param "LightSpecMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "LightAlphaMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "EnvLightAlphaMap" "RENDERCOLORTARGET" object texture 0x0 literal
+resources 0
+controls 0
+technique_order "MainTec0" "MainTecBS0" "EdgeTec" "ShadowTech" "ZplotTec"
+techniques 5
+technique "MainTec0" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=1 passes=0
+  script "ClearSetColor=BackColor;RenderColorTarget0=LightAlphaMap; Clear=Color;RenderColorTarget0=LightSpecMap;  Clear=Color;RenderColorTarget0=; RenderColorTarget1=EnvLightAlphaMap; ClearSetColor=IBLColor; Clear=Color;"
+  cmd 0 ClearSetColor param="BackColor" value=0 text="BackColor"
+  cmd 1 RenderColorTarget0 param="LightAlphaMap" value=-1 text="LightAlphaMap"
+  cmd 2 Clear param="-" value=1 text="Color"
+  cmd 3 RenderColorTarget0 param="LightSpecMap" value=-1 text="LightSpecMap"
+  cmd 4 Clear param="-" value=1 text="Color"
+  cmd 5 RenderColorTarget0 param="-" value=0 text=""
+  cmd 6 RenderColorTarget1 param="EnvLightAlphaMap" value=-1 text="EnvLightAlphaMap"
+  cmd 7 ClearSetColor param="IBLColor" value=0 text="IBLColor"
+  cmd 8 Clear param="-" value=1 text="Color"
+technique "MainTecBS0" mmdpass=object_ss usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=1 passes=0
+  script "ClearSetColor=BackColor;RenderColorTarget0=LightAlphaMap; Clear=Color;RenderColorTarget0=LightSpecMap;  Clear=Color;RenderColorTarget0=; RenderColorTarget1=EnvLightAlphaMap; ClearSetColor=IBLColor; Clear=Color;"
+  cmd 0 ClearSetColor param="BackColor" value=0 text="BackColor"
+  cmd 1 RenderColorTarget0 param="LightAlphaMap" value=-1 text="LightAlphaMap"
+  cmd 2 Clear param="-" value=1 text="Color"
+  cmd 3 RenderColorTarget0 param="LightSpecMap" value=-1 text="LightSpecMap"
+  cmd 4 Clear param="-" value=1 text="Color"
+  cmd 5 RenderColorTarget0 param="-" value=0 text=""
+  cmd 6 RenderColorTarget1 param="EnvLightAlphaMap" value=-1 text="EnvLightAlphaMap"
+  cmd 7 ClearSetColor param="IBLColor" value=0 text="IBLColor"
+  cmd 8 Clear param="-" value=1 text="Color"
+technique "EdgeTec" mmdpass=edge usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ShadowTech" mmdpass=shadow usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ZplotTec" mmdpass=zplot usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+selection subsets=2 clamped=0
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-1 "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0"
+  select object_ss 0-1 "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0"
+  select shadow 0-1 "ShadowTech"
+  select edge 0-1 "EdgeTec"
+  select zplot 0-1 "ZplotTec"
+runs
+enginelog "Loading effect file: <root>/Skybox/skylighting_none.fx"
+end

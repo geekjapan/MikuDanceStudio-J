@@ -1,0 +1,7 @@
+passplan 1
+file "<root>/reject_script.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load rejected
+  error "Error: unknown pass name: Nope  (technique: T)"
+enginelog "Loading effect file: <root>/reject_script.fx"
+end

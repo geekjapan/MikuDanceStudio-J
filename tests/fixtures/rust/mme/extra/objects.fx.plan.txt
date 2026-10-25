@@ -1,0 +1,107 @@
+passplan 1
+file "<root>/objects.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=0 scriptorder=0 posteffect=0 drawsgeometry=1 errors=0
+parameters 13
+param "Script" "STANDARDSGLOBAL" scalar float 1x1
+  ann "ScriptOutput" string0 = "color"
+  ann "ScriptClass" string0 = "object"
+  ann "ScriptOrder" string0 = "standard"
+param "WorldViewProjMatrix" "WORLDVIEWPROJECTION" matrix_rows float 4x4
+param "WorldMatrix" "WORLD" matrix_rows float 4x4
+param "MaterialDiffuse" "DIFFUSE" vector float 1x4
+  ann "Object" string0 = "Geometry"
+param "LightDirection" "DIRECTION" vector float 1x4
+  ann "Object" string0 = "Light"
+param "CameraPosition" "POSITION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "ViewportSize" "VIEWPORTPIXELSIZE" vector float 1x2
+param "Time" "TIME" scalar float 1x1
+param "EdgeColor" "EDGECOLOR" vector float 1x4
+param "use_texture" "" scalar bool 1x1
+param "use_toon" "" scalar bool 1x1
+resources 0
+controls 0
+technique_order "TexOnly" "NoTex" "AnyObject" "SelfShadow" "Outline" "Shadow" "ZPlot" "Empty"
+techniques 8
+technique "TexOnly" mmdpass=object usetexture=1 usespheremap=any usetoon=0 subset=0-1,3-3 hardware=1 shadercaps=1 shadermix=1 script=0 empty=0 passes=1
+  pass 0 "P0" script=0 custom=1 psize15=0 shadermix=1
+technique "NoTex" mmdpass=object usetexture=0 usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=0 passes=1
+  pass 0 "P0" script=0 custom=1 psize15=0 shadermix=1
+technique "AnyObject" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=0 passes=1
+  pass 0 "P0" script=0 custom=1 psize15=0 shadermix=1
+technique "SelfShadow" mmdpass=object_ss usetexture=any usespheremap=0 usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=0 passes=2
+  script "LoopByCount=Count; LoopGetIndex=Idx; Pass=P0; Pass=P1; LoopEnd=;"
+  cmd 0 LoopByCount param="Count" value=0 text="Count"
+  cmd 1 LoopGetIndex param="Idx" value=0 text="Idx"
+  cmd 2 Pass pass="P0" index=0 text="P0"
+  cmd 3 Pass pass="P1" index=1 text="P1"
+  cmd 4 LoopEnd param="-" value=0 text=""
+  pass 0 "P0" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Geometry;"
+    cmd 0 DrawGeometry param="-" value=0 text="Geometry"
+  pass 1 "P1" script=0 custom=1 psize15=0 shadermix=1
+technique "Outline" mmdpass=edge usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=0 passes=1
+  pass 0 "P0" script=0 custom=1 psize15=0 shadermix=1
+technique "Shadow" mmdpass=shadow usetexture=any usespheremap=any usetoon=any subset=2-2 hardware=1 shadercaps=1 shadermix=1 script=0 empty=0 passes=1
+  pass 0 "P0" script=0 custom=1 psize15=0 shadermix=1
+technique "ZPlot" mmdpass=zplot usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=0 passes=1
+  pass 0 "P0" script=0 custom=1 psize15=0 shadermix=1
+technique "Empty" mmdpass=shadow usetexture=any usespheremap=any usetoon=any subset=9-9 hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+selection subsets=11 clamped=0
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-1 "NoTex" "TexOnly" "NoTex" "TexOnly" "NoTex" "AnyObject" "NoTex" "AnyObject"
+  select object 2-2 "NoTex" "AnyObject" "NoTex" "AnyObject" "NoTex" "AnyObject" "NoTex" "AnyObject"
+  select object 3-3 "NoTex" "TexOnly" "NoTex" "TexOnly" "NoTex" "AnyObject" "NoTex" "AnyObject"
+  select object 4-10 "NoTex" "AnyObject" "NoTex" "AnyObject" "NoTex" "AnyObject" "NoTex" "AnyObject"
+  select object_ss 0-10 "SelfShadow" "SelfShadow" - - "SelfShadow" "SelfShadow" - -
+  select shadow 0-1 -
+  select shadow 2-2 "Shadow"
+  select shadow 3-8 -
+  select shadow 9-9 "Empty"
+  select shadow 10-10 -
+  select edge 0-10 "Outline"
+  select zplot 0-10 "ZPlot"
+runs
+  run "TexOnly"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "P0" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+  run "NoTex"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "P0" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+  run "AnyObject"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "P0" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+  run "SelfShadow"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "P0" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=1 "P1" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "P0" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=1 "P1" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=4 hr=0x00000000 runfailed=0
+  run "Outline"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "P0" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+  run "Shadow"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "P0" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+  run "ZPlot"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "P0" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+enginelog "Loading effect file: <root>/objects.fx"
+end

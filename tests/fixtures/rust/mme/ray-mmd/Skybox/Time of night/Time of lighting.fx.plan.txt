@@ -1,0 +1,307 @@
+passplan 1
+file "<root>/Skybox/Time of night/Time of lighting.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=0 scriptorder=0 posteffect=0 drawsgeometry=0 errors=0
+parameters 97
+param "time" "TIME" scalar float 1x1
+param "elapsed" "ELAPSEDTIME" scalar float 1x1
+param "MousePosition" "MOUSEPOSITION" vector float 1x2
+param "matWorld" "WORLD" matrix_rows float 4x4
+param "matWorldInverse" "WORLDINVERSE" matrix_rows float 4x4
+param "matWorldView" "WORLDVIEW" matrix_rows float 4x4
+param "matWorldViewProject" "WORLDVIEWPROJECTION" matrix_rows float 4x4
+param "matView" "VIEW" matrix_rows float 4x4
+param "matViewInverse" "VIEWINVERSE" matrix_rows float 4x4
+param "matProject" "PROJECTION" matrix_rows float 4x4
+param "matProjectInverse" "PROJECTIONINVERSE" matrix_rows float 4x4
+param "matViewProject" "VIEWPROJECTION" matrix_rows float 4x4
+param "matViewProjectInverse" "VIEWPROJECTIONINVERSE" matrix_rows float 4x4
+param "CameraPosition" "POSITION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "CameraDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "SunColor" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Light"
+param "SunDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Light"
+param "MaterialDiffuse" "DIFFUSE" vector float 1x4
+  ann "Object" string0 = "Geometry"
+param "MaterialAmbient" "AMBIENT" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialSpecular" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialToon" "TOONCOLOR" vector float 1x3
+param "MaterialPower" "SPECULARPOWER" scalar float 1x1
+  ann "Object" string0 = "Geometry"
+param "ViewportSize" "VIEWPORTPIXELSIZE" vector float 1x2
+param "AcsPosition" "CONTROLOBJECT" vector float 1x3
+  ann "name" string0 = "(self)"
+param "use_texture" "" scalar bool 1x1
+param "use_subtexture" "" scalar bool 1x1
+param "use_spheremap" "" scalar bool 1x1
+param "use_toon" "" scalar bool 1x1
+param "opadd" "" scalar bool 1x1
+param "MaterialMap" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+param "Gbuffer2RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer3RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer4RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer5RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer6RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer7RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer8RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "LightSpecMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "LightAlphaMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "mSunRadiusP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SunRadius+"
+param "mSunRadiusM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SunRadius-"
+param "mSunRadianceP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SunRadiance+"
+param "mSunRadianceM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "SunRadiance-"
+param "mMiePhaseP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MiePhase+"
+param "mMiePhaseM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MiePhase-"
+param "mMieHeightP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieHeight+"
+param "mMieHeightM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieHeight-"
+param "mMieTurbidityP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieTurbidity+"
+param "mMieTurbidityM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieTurbidity-"
+param "mRayleighHeightP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighHeight+"
+param "mRayleighHeightM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighHeight-"
+param "mRayleighColorHP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighColorH+"
+param "mRayleighColorSP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighColorS+"
+param "mRayleighColorVP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighColorV+"
+param "mRayleighColorVM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "RayleighColorV-"
+param "mStarSaturationP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "StarSaturation+"
+param "mStarSaturationM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "StarSaturation-"
+param "mStarBrightnessP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "StarBrightness+"
+param "mStarBrightnessM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "StarBrightness-"
+param "mMeteorP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Meteor+"
+param "mMeteorM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Meteor-"
+param "mFogRangeP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "FogRange+"
+param "mFogRangeM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "FogRange-"
+param "mFogDensityP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "FogDensity+"
+param "mFogDensityM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "FogDensity-"
+param "mCloudP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Cloud+"
+param "mCloudM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Cloud-"
+param "mCloudSpeedP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "CloudSpeed+"
+param "mCloudSpeedM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "CloudSpeed-"
+param "mCloudBiasP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "CloudBias+"
+param "mCloudBiasM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "CloudBias-"
+param "mEnvDiffLightP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "EnvDiffLight+"
+param "mEnvDiffLightM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "EnvDiffLight-"
+param "mEnvSpecLightP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "EnvSpecLight+"
+param "mEnvSpecLightM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "EnvSpecLight-"
+param "mEnvSSSLightP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "EnvSSSLight+"
+param "mEnvSSSLightM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "EnvSSSLight-"
+param "DiffuseMap" "" object texture 0x0
+  ann "ResourceName" string0 = "Shader/Textures/skydiff_hdr.dds"
+param "SpecularMap" "" object texture 0x0
+  ann "ResourceName" string0 = "Shader/Textures/skyspec_hdr.dds"
+param "SkySpecularMap" "RENDERCOLORTARGET" object texture 0x0
+  ann "Dimensions" int2 = 512,256
+  ann "Miplevels" int1 = 0
+param "SkyDiffuseMap" "RENDERCOLORTARGET" object texture 0x0
+  ann "Dimensions" int2 = 512,256
+param "EnvLightAlphaMap" "RENDERCOLORTARGET" object texture 0x0 literal
+resources 4
+resource "DiffuseMap" semantic=Texture texture=5
+  request 1000x600x1 mips=1 rawsize=-1x-1 rawmips=-1 format=A8R8G8B8 defaultpool=0
+  resourcename "<root>/Skybox/Time of night/Shader/Textures/skydiff_hdr.dds"
+  created texture 512x256 levels=10 format=A8R8G8B8 pool=1 usage=0x0
+resource "SpecularMap" semantic=Texture texture=5
+  request 1000x600x1 mips=1 rawsize=-1x-1 rawmips=-1 format=A8R8G8B8 defaultpool=0
+  resourcename "<root>/Skybox/Time of night/Shader/Textures/skyspec_hdr.dds"
+  created texture 1024x512 levels=11 format=A8R8G8B8 pool=1 usage=0x0
+resource "SkySpecularMap" semantic=RenderColorTarget texture=5
+  request 512x256x1 mips=0 rawsize=512x256 rawmips=0 format=A8R8G8B8 defaultpool=1
+  created texture 512x256 levels=1 format=A8R8G8B8 pool=0 usage=0x401
+resource "SkyDiffuseMap" semantic=RenderColorTarget texture=5
+  request 512x256x1 mips=1 rawsize=512x256 rawmips=1 format=A8R8G8B8 defaultpool=1
+  created texture 512x256 levels=1 format=A8R8G8B8 pool=0 usage=0x1
+controls 39
+control "AcsPosition" name="(self)" item=""
+control "mSunRadiusP" name="(self)" item="SunRadius+"
+control "mSunRadiusM" name="(self)" item="SunRadius-"
+control "mSunRadianceP" name="(self)" item="SunRadiance+"
+control "mSunRadianceM" name="(self)" item="SunRadiance-"
+control "mMiePhaseP" name="(self)" item="MiePhase+"
+control "mMiePhaseM" name="(self)" item="MiePhase-"
+control "mMieHeightP" name="(self)" item="MieHeight+"
+control "mMieHeightM" name="(self)" item="MieHeight-"
+control "mMieTurbidityP" name="(self)" item="MieTurbidity+"
+control "mMieTurbidityM" name="(self)" item="MieTurbidity-"
+control "mRayleighHeightP" name="(self)" item="RayleighHeight+"
+control "mRayleighHeightM" name="(self)" item="RayleighHeight-"
+control "mRayleighColorHP" name="(self)" item="RayleighColorH+"
+control "mRayleighColorSP" name="(self)" item="RayleighColorS+"
+control "mRayleighColorVP" name="(self)" item="RayleighColorV+"
+control "mRayleighColorVM" name="(self)" item="RayleighColorV-"
+control "mStarSaturationP" name="(self)" item="StarSaturation+"
+control "mStarSaturationM" name="(self)" item="StarSaturation-"
+control "mStarBrightnessP" name="(self)" item="StarBrightness+"
+control "mStarBrightnessM" name="(self)" item="StarBrightness-"
+control "mMeteorP" name="(self)" item="Meteor+"
+control "mMeteorM" name="(self)" item="Meteor-"
+control "mFogRangeP" name="(self)" item="FogRange+"
+control "mFogRangeM" name="(self)" item="FogRange-"
+control "mFogDensityP" name="(self)" item="FogDensity+"
+control "mFogDensityM" name="(self)" item="FogDensity-"
+control "mCloudP" name="(self)" item="Cloud+"
+control "mCloudM" name="(self)" item="Cloud-"
+control "mCloudSpeedP" name="(self)" item="CloudSpeed+"
+control "mCloudSpeedM" name="(self)" item="CloudSpeed-"
+control "mCloudBiasP" name="(self)" item="CloudBias+"
+control "mCloudBiasM" name="(self)" item="CloudBias-"
+control "mEnvDiffLightP" name="(self)" item="EnvDiffLight+"
+control "mEnvDiffLightM" name="(self)" item="EnvDiffLight-"
+control "mEnvSpecLightP" name="(self)" item="EnvSpecLight+"
+control "mEnvSpecLightM" name="(self)" item="EnvSpecLight-"
+control "mEnvSSSLightP" name="(self)" item="EnvSSSLight+"
+control "mEnvSSSLightM" name="(self)" item="EnvSSSLight-"
+technique_order "MainTec0" "MainTecBS0" "EdgeTec" "ShadowTech" "ZplotTec"
+techniques 5
+technique "MainTec0" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=0 passes=3
+  script "ClearSetColor=BackColor;RenderColorTarget=LightAlphaMap;Clear=Color;RenderColorTarget=LightSpecMap;Clear=Color;RenderColorTarget=SkySpecularMap;Clear=Color;Pass=GenSpecularMap;RenderColorTarget=SkyDiffuseMap;Clear=Color;Pass=GenDiffuseMap;RenderColorTarget=;RenderColorTarget1=EnvLightAlphaMap;ClearSetColor=IBLColor;Clear=Color;Pass=ImageBasedLighting;"
+  cmd 0 ClearSetColor param="BackColor" value=0 text="BackColor"
+  cmd 1 RenderColorTarget0 param="LightAlphaMap" value=-1 text="LightAlphaMap"
+  cmd 2 Clear param="-" value=1 text="Color"
+  cmd 3 RenderColorTarget0 param="LightSpecMap" value=-1 text="LightSpecMap"
+  cmd 4 Clear param="-" value=1 text="Color"
+  cmd 5 RenderColorTarget0 param="SkySpecularMap" value=-1 text="SkySpecularMap"
+  cmd 6 Clear param="-" value=1 text="Color"
+  cmd 7 Pass pass="GenSpecularMap" index=0 text="GenSpecularMap"
+  cmd 8 RenderColorTarget0 param="SkyDiffuseMap" value=-1 text="SkyDiffuseMap"
+  cmd 9 Clear param="-" value=1 text="Color"
+  cmd 10 Pass pass="GenDiffuseMap" index=1 text="GenDiffuseMap"
+  cmd 11 RenderColorTarget0 param="-" value=0 text=""
+  cmd 12 RenderColorTarget1 param="EnvLightAlphaMap" value=-1 text="EnvLightAlphaMap"
+  cmd 13 ClearSetColor param="IBLColor" value=0 text="IBLColor"
+  cmd 14 Clear param="-" value=1 text="Color"
+  cmd 15 Pass pass="ImageBasedLighting" index=2 text="ImageBasedLighting"
+  pass 0 "GenSpecularMap" script=0 custom=1 psize15=0 shadermix=1
+  pass 1 "GenDiffuseMap" script=0 custom=1 psize15=0 shadermix=1
+  pass 2 "ImageBasedLighting" script=0 custom=1 psize15=0 shadermix=1
+technique "MainTecBS0" mmdpass=object_ss usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=0 passes=3
+  script "ClearSetColor=BackColor;RenderColorTarget=LightAlphaMap;Clear=Color;RenderColorTarget=LightSpecMap;Clear=Color;RenderColorTarget=SkySpecularMap;Clear=Color;Pass=GenSpecularMap;RenderColorTarget=SkyDiffuseMap;Clear=Color;Pass=GenDiffuseMap;RenderColorTarget=;RenderColorTarget1=EnvLightAlphaMap;ClearSetColor=IBLColor;Clear=Color;Pass=ImageBasedLighting;"
+  cmd 0 ClearSetColor param="BackColor" value=0 text="BackColor"
+  cmd 1 RenderColorTarget0 param="LightAlphaMap" value=-1 text="LightAlphaMap"
+  cmd 2 Clear param="-" value=1 text="Color"
+  cmd 3 RenderColorTarget0 param="LightSpecMap" value=-1 text="LightSpecMap"
+  cmd 4 Clear param="-" value=1 text="Color"
+  cmd 5 RenderColorTarget0 param="SkySpecularMap" value=-1 text="SkySpecularMap"
+  cmd 6 Clear param="-" value=1 text="Color"
+  cmd 7 Pass pass="GenSpecularMap" index=0 text="GenSpecularMap"
+  cmd 8 RenderColorTarget0 param="SkyDiffuseMap" value=-1 text="SkyDiffuseMap"
+  cmd 9 Clear param="-" value=1 text="Color"
+  cmd 10 Pass pass="GenDiffuseMap" index=1 text="GenDiffuseMap"
+  cmd 11 RenderColorTarget0 param="-" value=0 text=""
+  cmd 12 RenderColorTarget1 param="EnvLightAlphaMap" value=-1 text="EnvLightAlphaMap"
+  cmd 13 ClearSetColor param="IBLColor" value=0 text="IBLColor"
+  cmd 14 Clear param="-" value=1 text="Color"
+  cmd 15 Pass pass="ImageBasedLighting" index=2 text="ImageBasedLighting"
+  pass 0 "GenSpecularMap" script=0 custom=1 psize15=0 shadermix=1
+  pass 1 "GenDiffuseMap" script=0 custom=1 psize15=0 shadermix=1
+  pass 2 "ImageBasedLighting" script=0 custom=1 psize15=0 shadermix=1
+technique "EdgeTec" mmdpass=edge usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ShadowTech" mmdpass=shadow usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ZplotTec" mmdpass=zplot usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+selection subsets=2 clamped=0
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-1 "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0"
+  select object_ss 0-1 "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0" "MainTecBS0"
+  select shadow 0-1 "ShadowTech"
+  select edge 0-1 "EdgeTec"
+  select zplot 0-1 "ZplotTec"
+runs
+  run "MainTec0"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "GenSpecularMap" rt0=SkySpecularMap rt1=none rt2=none rt3=none ds=main.depth viewport=512x256+0+0
+    draw geometry pass=1 "GenDiffuseMap" rt0=SkyDiffuseMap rt1=none rt2=none rt3=none ds=main.depth viewport=512x256+0+0
+    draw geometry pass=2 "ImageBasedLighting" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=3 hr=0x00000000 runfailed=0
+  run "MainTecBS0"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "GenSpecularMap" rt0=SkySpecularMap rt1=none rt2=none rt3=none ds=main.depth viewport=512x256+0+0
+    draw geometry pass=1 "GenDiffuseMap" rt0=SkyDiffuseMap rt1=none rt2=none rt3=none ds=main.depth viewport=512x256+0+0
+    draw geometry pass=2 "ImageBasedLighting" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=3 hr=0x00000000 runfailed=0
+enginelog "Loading effect file: <root>/Skybox/Time of night/Time of lighting.fx"
+enginelog "Loading texture file: <root>/Skybox/Time of night/Shader/Textures/skydiff_hdr.dds"
+enginelog "Loading texture file: <root>/Skybox/Time of night/Shader/Textures/skyspec_hdr.dds"
+end

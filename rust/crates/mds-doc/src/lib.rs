@@ -94,7 +94,10 @@ pub mod global;
 pub mod history;
 pub mod model;
 pub mod new_scene;
+mod refresh;
 pub mod save;
+pub mod script;
+pub mod vmd_save;
 
 pub use global::{GlobalClipboard, GlobalTrack};
 pub use model::ModelClipboard;
@@ -163,8 +166,12 @@ pub enum Command {
     SelectModel(u8),
     /// The combo's "camera/light/accessory" entry.
     SelectCameraMode,
-    /// Moves the current frame. In model mode with a bone edited and not
-    /// registered, `SnapshotPoseBeforeFrameChange` pushes an undo entry.
+    /// The current-frame edit (417, `CommitEditControl`) and its
+    /// `RefreshAfterFrameApply` (VA 0x00432FA0): every model with a selected
+    /// bone pushes `SnapshotPoseBeforeFrameChange` at the new frame (when a
+    /// bone is edited) and loses its bone selection, the timeline scrolls,
+    /// every model seeks to the frame, and in camera mode the camera,
+    /// light, self-shadow, gravity and accessory states follow their keys.
     SetFrame(u32),
     /// The selected model's bone selection (`boneSelection`); the first bone
     /// becomes `selectedBone`.
@@ -199,6 +206,13 @@ pub enum Command {
         mode: u8,
         distance: f32,
     },
+    /// An `EN_UPDATE` of the gravity dialog (`SetGravityChannel`, VA
+    /// 0x0045FD80): 0 magnitude, 1..3 direction X..Z, 4 noise. An all-zero
+    /// direction gets Y = 0.1.
+    SetGravityChannel(u8, f32),
+    /// The gravity dialog's cancel: `DestroyWindow`, then
+    /// `ApplyGravityTrack` (VA 0x00412330).
+    CloseGravityDialog,
     SetGravity {
         acceleration: f32,
         noise: i32,
@@ -247,6 +261,32 @@ pub enum Command {
     Undo,
     Redo,
     NewScene,
+    /// "Load motion" (menu 209), `LoadVmdMotion` (`src/model/vmd_load.cpp`,
+    /// VA 0x00434B60) with the file bytes: in camera mode onto the camera,
+    /// light and self-shadow tracks, then their refresh.
+    LoadMotion(Vec<u8>),
+    /// The select-all menus 217, 218, 220 (model) and 237..241 (camera
+    /// mode), `mds_ops::select`.
+    SelectAll(SelectAll),
+    /// Menus 255..258 (`mds_ops::frame_line`): the bone or camera line
+    /// (`morph == false`), the morph or light line, inserted or deleted at
+    /// the current frame.
+    FrameLine {
+        morph: bool,
+        insert: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectAll {
+    Bone,
+    Display,
+    Morph,
+    Camera,
+    Light,
+    SelfShadow,
+    Gravity,
+    Accessory,
 }
 
 /// Edit state the C++ keeps outside the file.
@@ -268,6 +308,10 @@ pub struct Document {
     pub models: Vec<ModelFile>,
     pub edit: EditState,
     skeletons: Vec<Option<Skeleton>>,
+}
+
+fn ops(e: mds_ops::Error) -> Error {
+    Error::Format(format!("{e:?}"))
 }
 
 fn not(what: &'static str) -> Error {
@@ -313,6 +357,44 @@ impl Document {
         })
     }
 
+    /// The scene the application starts with ([`new_scene::startup`]).
+    pub fn startup() -> Document {
+        let pmm = new_scene::startup();
+        Document {
+            edit: EditState {
+                self_shadow_mode: shadow_mode_at(&pmm),
+                ..EditState::default()
+            },
+            pmm,
+            models: Vec::new(),
+            skeletons: Vec::new(),
+        }
+    }
+
+    /// "Open project" (menu 205): `LoadSceneFile` (`src/io/pmm_load_v2.cpp`,
+    /// VA 0x00450000) replacing this document. Against [`Document::load`],
+    /// it keeps what the loader leaves from the scene before: the sidebar
+    /// width, which `HandleWindowSize` sets back from the window (the file's
+    /// value only lasts until the relayout), and the offset and scale of an
+    /// AVI or picture background that is not enabled.
+    pub fn load_scene(
+        &mut self,
+        data: &[u8],
+        read: impl FnMut(&str) -> Option<Vec<u8>>,
+    ) -> Result<(), Error> {
+        let mut d = Document::load(data, read)?;
+        let (old, p) = (&self.pmm, &mut d.pmm);
+        p.settings.panel_width = old.settings.panel_width;
+        if p.avi.enabled != 1 {
+            (p.avi.offset, p.avi.scale) = (old.avi.offset, old.avi.scale);
+        }
+        if p.picture.enabled == 0 {
+            (p.picture.offset, p.picture.scale) = (old.picture.offset, old.picture.scale);
+        }
+        *self = d;
+        Ok(())
+    }
+
     /// The bytes `SaveSceneFile` writes for this scene.
     pub fn save(&self) -> Result<Vec<u8>, Error> {
         save::normalize(&self.pmm)
@@ -326,6 +408,12 @@ impl Document {
 
     fn frame(&self) -> u32 {
         self.pmm.timeline.current_frame as u32
+    }
+
+    /// The selected model in model mode.
+    pub fn selected_model(&self) -> Option<&mds_formats::pmm::Model> {
+        let i = self.active().filter(|_| !self.camera_mode())?;
+        self.pmm.models.get(i)
     }
 
     /// The selected model's index in `pmm.models`.
@@ -354,6 +442,48 @@ impl Document {
         *last = (*last).max(max);
     }
 
+    /// `RefreshAfterFrameApply` (`src/window/ui_frame_step.cpp`) after the
+    /// current frame changed.
+    fn apply_frame(&mut self) {
+        let frame = self.frame();
+        for (m, e) in self.pmm.models.iter_mut().zip(&mut self.edit.models) {
+            if m.bone_pose.iter().any(|p| p.flags[2] != 0) {
+                model::push_frame_change(m, &mut e.history, frame);
+                m.bone_pose.iter_mut().for_each(|p| p.flags[2] = 0);
+            }
+        }
+        // The timeline shows `(SidebarWidth - 84) / 26` frames before the
+        // current one.
+        let visible = ((self.pmm.settings.panel_width - 84) / 26) as u32;
+        self.pmm.timeline.start_frame = frame.saturating_sub(visible) as i32;
+        let mode = self.pmm.physics.playback_mode;
+        for (m, f) in self.pmm.models.iter_mut().zip(&self.models) {
+            refresh::seek_model(m, f, frame, mode);
+        }
+        if self.camera_mode() {
+            self.refresh_context();
+        }
+    }
+
+    /// The refresh tail of the delete and paste handlers: in camera mode the
+    /// camera, light, self-shadow, gravity and accessory states follow their
+    /// keys; in model mode the selected model seeks to the current frame.
+    fn refresh_context(&mut self) {
+        let frame = self.frame();
+        if self.camera_mode() {
+            refresh::camera(&mut self.pmm);
+            refresh::light(&mut self.pmm);
+            refresh::self_shadow(&mut self.pmm, &mut self.edit.self_shadow_mode);
+            refresh::gravity(&mut self.pmm);
+            for a in &mut self.pmm.accessories {
+                refresh::accessory(a, frame);
+            }
+        } else if let Some(i) = self.active() {
+            let mode = self.pmm.physics.playback_mode;
+            refresh::seek_model(&mut self.pmm.models[i], &self.models[i], frame, mode);
+        }
+    }
+
     pub fn apply(&mut self, cmd: Command) -> Result<(), Error> {
         let frame = self.frame();
         match cmd {
@@ -366,12 +496,23 @@ impl Document {
             }
             Command::SelectCameraMode => self.pmm.settings.options[0] = 1,
             Command::SetFrame(f) => {
-                if let (false, Some(i)) = (self.camera_mode(), self.active()) {
-                    let m = &self.pmm.models[i];
-                    model::push_frame_change(m, &mut self.edit.models[i].history, frame);
-                }
                 self.pmm.timeline.current_frame = f as i32;
+                self.apply_frame();
             }
+            Command::SetGravityChannel(ch, v) => {
+                let p = &mut self.pmm.physics;
+                let d = &mut p.gravity_direction;
+                match ch {
+                    0 => p.gravity_magnitude = v,
+                    1..=3 => d[ch as usize - 1] = v,
+                    4 => p.gravity_noise = v as i32,
+                    _ => return Err(not("no such gravity channel")),
+                }
+                if ch < 4 && *d == [0.0; 3] {
+                    d[1] = 0.1;
+                }
+            }
+            Command::CloseGravityDialog => refresh::gravity(&mut self.pmm),
             Command::SelectBones(bones) => {
                 let i = self.active_model()?;
                 let m = &mut self.pmm.models[i];
@@ -576,6 +717,7 @@ impl Document {
                         count,
                     )?;
                 }
+                self.refresh_context();
             }
             Command::DeleteSelectedKeys => {
                 if self.camera_mode() {
@@ -591,6 +733,7 @@ impl Document {
                         frame,
                     )?;
                 }
+                self.refresh_context();
             }
             Command::Undo | Command::Redo => {
                 if self.camera_mode() {
@@ -614,6 +757,52 @@ impl Document {
                     self.pmm.timeline.current_frame = f as i32;
                 }
             }
+            Command::LoadMotion(data) => {
+                let vmd =
+                    mds_formats::vmd::Vmd::read(&data).map_err(|e| Error::Format(e.to_string()))?;
+                if !self.camera_mode() {
+                    return Err(not("a model motion (not ported)"));
+                }
+                let r = global::load_vmd(&mut self.pmm, &vmd);
+                refresh::camera(&mut self.pmm);
+                refresh::light(&mut self.pmm);
+                refresh::self_shadow(&mut self.pmm, &mut self.edit.self_shadow_mode);
+                refresh::gravity(&mut self.pmm);
+                r?;
+            }
+            Command::SelectAll(what) => {
+                use mds_ops as s;
+                let p = &mut self.pmm;
+                let r = match what {
+                    SelectAll::Bone => s::select_all_bone_frames(p),
+                    SelectAll::Display => s::select_all_display_frames(p),
+                    SelectAll::Morph => s::select_all_morph_frames(p),
+                    SelectAll::Camera => Ok(s::select_all_camera_frames(p)),
+                    SelectAll::Light => Ok(s::select_all_light_frames(p)),
+                    SelectAll::SelfShadow => Ok(s::select_all_self_shadow_frames(p)),
+                    SelectAll::Gravity => Ok(s::select_all_gravity_frames(p)),
+                    SelectAll::Accessory => Ok(s::select_all_accessory_frames(p)),
+                };
+                r.map_err(ops)?;
+            }
+            Command::FrameLine { morph, insert } => {
+                use mds_ops as f;
+                let p = &mut self.pmm;
+                match (morph, insert) {
+                    (false, true) => f::insert_bone_camera_frame_line(p),
+                    (false, false) => f::delete_bone_camera_frame_line(p),
+                    (true, true) => f::insert_morph_light_frame_line(p),
+                    (true, false) => f::delete_morph_light_frame_line(p),
+                }
+                .map_err(ops)?;
+                if !self.camera_mode() {
+                    self.refresh_context();
+                } else if morph {
+                    refresh::light(&mut self.pmm);
+                } else {
+                    refresh::camera(&mut self.pmm);
+                }
+            }
             Command::NewScene => {
                 self.pmm = new_scene::reset(&self.pmm);
                 self.models.clear();
@@ -623,6 +812,11 @@ impl Document {
                     auto_interpolation: self.edit.auto_interpolation,
                     ..EditState::default()
                 };
+                // The refresh tail of `ResetAppState`.
+                refresh::camera(&mut self.pmm);
+                refresh::light(&mut self.pmm);
+                refresh::self_shadow(&mut self.pmm, &mut self.edit.self_shadow_mode);
+                refresh::gravity(&mut self.pmm);
             }
         }
         Ok(())

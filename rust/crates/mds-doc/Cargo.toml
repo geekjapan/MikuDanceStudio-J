@@ -9,4 +9,6 @@ publish.workspace = true
 [dependencies]
 mds-edit = { path = "../mds-edit" }
 mds-formats = { path = "../mds-formats" }
+mds-ops = { path = "../mds-ops" }
 mds-pose = { path = "../mds-pose" }
+mds-scene = { path = "../mds-scene" }

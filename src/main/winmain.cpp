@@ -35,8 +35,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     (void)hPrevInstance;
 
     // RM-3: --mds-trace <pmm> <out> <frames> replaces the message loop below
-    // with a headless L2 trace run (src/tools/trace_mode.cpp). Without the
-    // flag nothing here changes. A bad line or an unreadable PMM exits 1
+    // with a headless L2 trace run (src/tools/trace_mode.cpp), and
+    // --mds-frame-dump <pmm> <out-dir> <frame>... with a run that renders
+    // those frames to PNG files. Without either flag nothing here changes. A bad line or an unreadable PMM exits 1
     // before any window exists and writes nothing; a message box raised later
     // (a corrupt PMM) exits 1 through ArmTraceDialogGuard.
     // (__wargv is only filled for wmain programs, so the line is split here.)

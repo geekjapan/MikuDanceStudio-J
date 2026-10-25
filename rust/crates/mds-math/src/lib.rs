@@ -144,12 +144,12 @@ impl Quat {
                 k = i;
             }
         }
-        // The vectors do not tell the grouping of the radicand apart; any of
-        // `(1 + a) - (b + c)`, `1 + (a - (b + c))`, `(1 - b) - (c - a)` fits.
-        let radicand = |a: f32, b: f32, c: f32| (1.0 + a) - (b + c);
+        // The radicands of d3dx9_43.dll, from 200000 random matrices on the
+        // reference host: `((a - b) - c) + 1` for x and y, `(c - (a + b)) + 1`
+        // for z (the `(1 + a) - (b + c)` used before missed 3% of them).
         match k {
             0 => {
-                let s = radicand(g(0, 0), g(1, 1), g(2, 2)).sqrt();
+                let s = (((g(0, 0) - g(1, 1)) - g(2, 2)) + 1.0).sqrt();
                 let r = 0.5 / s;
                 Quat([
                     s * 0.5,
@@ -159,7 +159,7 @@ impl Quat {
                 ])
             }
             1 => {
-                let s = radicand(g(1, 1), g(0, 0), g(2, 2)).sqrt();
+                let s = (((g(1, 1) - g(0, 0)) - g(2, 2)) + 1.0).sqrt();
                 let r = 0.5 / s;
                 Quat([
                     (g(0, 1) + g(1, 0)) * r,
@@ -169,7 +169,7 @@ impl Quat {
                 ])
             }
             _ => {
-                let s = radicand(g(2, 2), g(0, 0), g(1, 1)).sqrt();
+                let s = ((g(2, 2) - (g(0, 0) + g(1, 1))) + 1.0).sqrt();
                 let r = 0.5 / s;
                 Quat([
                     (g(0, 2) + g(2, 0)) * r,

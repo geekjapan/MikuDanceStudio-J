@@ -1,9 +1,9 @@
 //! Builds the vendored Bullet 2.75 and the C shim into one static library.
 //!
 //! Environment variables:
-//! - `MDS_BT_SYSTEM_MATH=1` drops `shim/det_math.h`, so Bullet calls the
-//!   platform libm. The result then differs between platforms; this exists to
-//!   measure that difference (RM-7 lane 6).
+//! - `MDS_BT_SYSTEM_MATH=1` keeps the platform libm instead of the UCRT ports
+//!   of `mds-crtmath` (see `shim/det_math.h`). The result then differs between
+//!   platforms; this exists to measure that difference (RM-7 lane 6).
 //! - `MDS_BT_ASAN=1` builds the C++ side with `-fsanitize=address` (clang).
 //!   A dependent binary must then link the ASan runtime, which a build script
 //!   cannot request for its dependents. On macOS rustc links with
@@ -60,9 +60,12 @@ fn main() {
     }
     files.sort();
     files.push(shim.join("mds_bt.cpp"));
+    files.push(shim.join("mds_mmd.cpp"));
 
     let system_math = flag_set("MDS_BT_SYSTEM_MATH");
     let asan = flag_set("MDS_BT_ASAN");
+    // Always force-included: the solver's SSE path and, unless
+    // MDS_BT_SYSTEM_MATH, the UCRT float functions.
     let det_math = shim.join("det_math.h");
 
     let mut build = cc::Build::new();
@@ -77,21 +80,24 @@ fn main() {
 
     let tool = build.get_compiler();
     if tool.is_like_msvc() {
-        build.flag("/fp:precise").flag("/EHsc").flag("/W0");
-        if !system_math {
-            build.flag(format!("/FI{}", det_math.display()));
-        }
-    } else if tool.is_like_clang() {
         build
+            .flag("/fp:precise")
+            .flag("/EHsc")
+            .flag("/W0")
+            .flag(format!("/FI{}", det_math.display()));
+    } else if tool.is_like_clang() {
+        // The scalar __m128 of shim/sse_emu replaces the system one on every
+        // target: clang's __m128 is a vector type with built-in operators,
+        // which makes btSimdScalar's unary minus ambiguous, while MSVC's is
+        // a plain union, as in the emulation.
+        build
+            .include(shim.join("sse_emu"))
             .flag("-ffp-contract=off")
             .flag("-fno-fast-math")
             .flag("-fdeclspec")
-            .flag("-w");
-        if !system_math {
-            build
-                .flag("-include")
-                .flag(det_math.to_str().expect("utf-8 path"));
-        }
+            .flag("-w")
+            .flag("-include")
+            .flag(det_math.to_str().expect("utf-8 path"));
         if asan {
             build
                 .flag("-fsanitize=address")
@@ -105,6 +111,9 @@ fn main() {
         );
     }
 
+    if system_math {
+        build.define("MDS_BT_SYSTEM_MATH", None);
+    }
     build.compile("mds_bullet_sys");
 
     if env::var_os("CARGO_FEATURE_BENCH").is_some() {
@@ -126,9 +135,14 @@ fn build_bench(build: &cc::Build, shim: &Path) {
     }
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let exe = out_dir.join("chain8_bench");
+    // The library calls the mds_crt_* functions of the Rust crate
+    // mds-crtmath, which a C++-only binary cannot link. The bench takes the
+    // double-rounded stand-ins of bench_crt.cpp, so its hash is not the Rust
+    // example's; it measures time.
     let status = tool
         .to_command()
         .arg(shim.join("bench_main.cpp"))
+        .arg(shim.join("bench_crt.cpp"))
         .arg(out_dir.join("libmds_bullet_sys.a"))
         .arg("-o")
         .arg(&exe)

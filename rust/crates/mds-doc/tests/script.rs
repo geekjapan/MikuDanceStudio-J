@@ -161,13 +161,11 @@ fn accessory() {
 }
 
 #[test]
-#[ignore = "motion.txt line 4 (load vmd): mds-edit register_display_key returns Corrupt on the root selector (slice mdsedit, gap 1)"]
 fn motion() {
     check("motion");
 }
 
 #[test]
-#[ignore = "bones.txt line 23 (paste): mds-edit register_display_key returns Corrupt on the root selector (slice mdsedit, gap 1)"]
 fn bones() {
     check("bones");
 }

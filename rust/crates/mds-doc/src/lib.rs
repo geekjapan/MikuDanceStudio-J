@@ -84,15 +84,15 @@
 //!
 //! # Not ported
 //!
-//! * Paths that depend on `mds-edit` gaps: display-key registration on a
-//!   model with the root selector (every PMX here), so the model-mode VMD
-//!   load and the paste of display keys stop with `Corrupt`; mirrored paste
-//!   ("paste reverse"); the pose of a bone with a rigid body; fixed-axis
-//!   twist. Automatic interpolation (checkbox 530, on at start-up) is
-//!   applied here after `mds-edit` registers or deletes with it off
-//!   (`auto_interp`).
-//! * VPD load and save, the PMD writer, "paste at a different frame", and
-//!   the undo entry of a model-mode frame-line edit.
+//! * Paths that `mds-edit` keeps private: a frame-line delete with
+//!   automatic interpolation on that has to rebuild a neighbour's curve
+//!   (`rebuild_interpolation`), and a VPD pose onto a fixed-axis (twist)
+//!   bone. Both stop with `Unsupported`.
+//! * `PostModelReload` modes 1 and 2, and "paste at a different frame" of
+//!   an accessory in camera mode.
+//! * The physics of the frame loop ([`frame::FrameLoop`]) rebuilds the world
+//!   when the model set changes, where the C++ adds the new bodies to the
+//!   world it has; a failing motion load requests no settle.
 //! * Leaving camera mode with a camera parent or a reference mode other
 //!   than 0, and the model-name fallbacks of the loaders (unmappable
 //!   characters, the `Null_NN` names of textures and materials).
@@ -104,6 +104,7 @@
 
 mod accessory;
 mod add_model;
+pub mod frame;
 pub mod global;
 pub mod history;
 pub mod model;
@@ -384,6 +385,9 @@ pub struct EditState {
     /// The physics checkbox (499), which "register" stores negated as the
     /// `physicsDisabled` of a rigid-body bone.
     pub physics_checkbox: bool,
+    /// `PhysicsResetPending`: the commands whose C++ handler requests a
+    /// physics settle set it; the frame loop ([`frame::FrameLoop`]) takes it.
+    pub physics_reset_pending: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -510,6 +514,7 @@ impl Document {
             d.apply(Command::SelectCameraMode)?;
             d.pmm.timeline.edit_mode = edit_mode;
         }
+        d.edit.physics_reset_pending = true;
         *self = d;
         Ok(())
     }
@@ -633,7 +638,36 @@ impl Document {
     }
 
     pub fn apply(&mut self, cmd: Command) -> Result<(), Error> {
+        // The handlers that set `PhysicsResetPending` once they get past
+        // their gates: RefreshAfterFrameApply, CmdLoadMotion, CmdLoadPose,
+        // the three paste handlers, and the undo and redo buttons. A command
+        // that fails is one the user could not run.
+        let model_mode = self.pmm.settings.options[0] == 0;
+        let clip = &self.edit.model_clipboard;
+        let settles = match &cmd {
+            Command::SetFrame(_) | Command::LoadMotion(_) => true,
+            Command::LoadPose(_) | Command::Undo | Command::Redo => {
+                model_mode && self.active().is_some()
+            }
+            Command::Paste if model_mode => {
+                !(clip.bones.is_empty() && clip.morphs.is_empty() && clip.displays.is_empty())
+            }
+            Command::Paste => !self.edit.global_clipboard.is_empty(),
+            Command::PasteMirrored | Command::PasteToSelectedBone => {
+                model_mode && !clip.bones.is_empty()
+            }
+            _ => false,
+        };
+        let r = self.apply_inner(cmd);
+        if r.is_ok() && settles {
+            self.edit.physics_reset_pending = true;
+        }
+        r
+    }
+
+    fn apply_inner(&mut self, cmd: Command) -> Result<(), Error> {
         let frame = self.frame();
+
         match cmd {
             Command::SelectModel(slot) => {
                 if !self.pmm.models.iter().any(|m| m.slot == slot) {

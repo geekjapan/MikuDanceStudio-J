@@ -3,6 +3,7 @@
 //! [`Command`]s. `tests/fixtures/rust/script/README.md` says which handler
 //! each line drives; the [`Command`] it maps to ports that handler.
 
+use crate::frame::FrameLoop;
 use crate::{Command, Document, Error, GlobalTrack, SelectAll};
 use std::collections::BTreeMap;
 
@@ -20,6 +21,7 @@ pub struct Runner {
     /// The self-shadow range edit (561), once a script typed into it.
     shadow_range: Option<String>,
     gravity_open: bool,
+    frames: FrameLoop,
 }
 
 impl Default for Runner {
@@ -99,12 +101,30 @@ impl Runner {
             out: BTreeMap::new(),
             shadow_range: None,
             gravity_open: false,
+            frames: FrameLoop::default(),
         }
     }
 
-    /// Runs one script line. `read` maps a load path as written to the file
-    /// bytes. Returns the files a save wrote.
+    /// Runs one script line, then the two `FrameDriver` pumps of 1/30 s
+    /// the C++ runner runs after every step ([`FrameLoop`]). `read` maps a
+    /// load path as written to the file bytes. Returns the files a save
+    /// wrote.
     pub fn run_line(
+        &mut self,
+        line: &str,
+        read: &mut dyn FnMut(&str) -> Option<Vec<u8>>,
+    ) -> Result<Vec<Saved>, String> {
+        let saved = self.step(line, read)?;
+        if !words(line)?.first().is_none_or(|w| w.starts_with('#')) {
+            for _ in 0..2 {
+                let read = |p: &str| read(p).ok_or_else(|| format!("model file not found: {p}"));
+                self.frames.pump(&mut self.doc, 1.0 / 30.0, read)?;
+            }
+        }
+        Ok(saved)
+    }
+
+    fn step(
         &mut self,
         line: &str,
         read: &mut dyn FnMut(&str) -> Option<Vec<u8>>,

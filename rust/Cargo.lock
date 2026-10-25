@@ -1239,6 +1239,7 @@ dependencies = [
  "mds-formats",
  "mds-math",
  "mds-ops",
+ "mds-physics",
  "mds-pose",
  "mds-scene",
 ]

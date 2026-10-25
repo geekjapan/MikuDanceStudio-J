@@ -1079,18 +1079,18 @@ fn grid(ui: &mut egui::Ui, ctx: &Ctx, p: &mut Panel, events: &mut Vec<Event>) {
         let shift = ui.input(|i| i.modifiers.shift);
 
         painter.rect_filled(view, 0.0, Colors::BACK);
-        for r in r0..r1 {
+        for (r, row) in rows.iter().enumerate().take(r1).skip(r0) {
             let y = y_of(r);
             let line = Rect::from_min_size(Pos2::new(view.min.x, y), Vec2::new(view.width(), ROW));
-            let picked = row_selected(doc, p, &rows[r].kind);
-            let fill = match (&rows[r].kind, picked) {
+            let picked = row_selected(doc, p, &row.kind);
+            let fill = match (&row.kind, picked) {
                 (RowKind::Header(_), _) => Colors::HEADER,
                 (_, true) => Colors::PICKED,
                 _ if r % 2 == 1 => Colors::ALT,
                 _ => Colors::BACK,
             };
             painter.rect_filled(line, 0.0, fill);
-            if let Some(track) = rows[r].track() {
+            if let Some(track) = row.track() {
                 for (f, marked) in keys_of(doc, track) {
                     if f < f0 || f > f0 + columns {
                         continue;
@@ -1142,19 +1142,19 @@ fn grid(ui: &mut egui::Ui, ctx: &Ctx, p: &mut Panel, events: &mut Vec<Event>) {
         let names = Rect::from_min_size(view.min, Vec2::new(NAME, view.height()));
         painter.rect_filled(names, 0.0, Colors::BACK);
         let font = FontId::proportional(11.0);
-        for r in r0..r1 {
+        for (r, row) in rows.iter().enumerate().take(r1).skip(r0) {
             let y = y_of(r);
             let line = Rect::from_min_size(Pos2::new(view.min.x, y), Vec2::new(NAME, ROW));
-            let picked = row_selected(doc, p, &rows[r].kind);
-            let header = matches!(rows[r].kind, RowKind::Header(_));
+            let picked = row_selected(doc, p, &row.kind);
+            let header = matches!(row.kind, RowKind::Header(_));
             let fill = match (header, picked) {
                 (true, _) => Colors::HEADER,
                 (_, true) => Colors::PICKED,
                 _ => Colors::BACK,
             };
             painter.rect_filled(line, 0.0, fill);
-            let mut text = rows[r].label.clone();
-            if let RowKind::Header(g) = rows[r].kind {
+            let mut text = row.label.clone();
+            if let RowKind::Header(g) = row.kind {
                 let folded = p.folded.contains(&(doc.pmm.selected_model_slot, g));
                 text = format!("{} {}", if folded { "▶" } else { "▼" }, text);
             } else {

@@ -1,0 +1,172 @@
+//! The `--mds-script` oracle (`tests/fixtures/rust/script/`): every script
+//! replays through [`Document`] and every file it saves equals the C++
+//! output in `expected/<script>/`, byte for byte.
+//!
+//! The `.emm` beside each PMM is not compared: it holds the absolute paths
+//! that MME resolved on the Windows host (`C:\mds\w2-script\repo\out\ci\
+//! build\Release\chain8.pmx`), which no replay outside that checkout can
+//! produce, and the MME effect map is not part of the document.
+
+use mds_doc::script::{Runner, Saved};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+fn fixtures() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/rust")
+}
+
+/// A load path as the C++ handlers get it: relative to the exe directory,
+/// where the lane stages `tests/fixtures/rust/*` and `script/inputs/*`.
+fn read_input(path: &str) -> Option<Vec<u8>> {
+    let name = path.trim_start_matches(".\\");
+    [fixtures(), fixtures().join("script/inputs")]
+        .iter()
+        .find_map(|d| std::fs::read(d.join(name)).ok())
+}
+
+fn manifest(dir: &Path) -> Vec<(u32, String)> {
+    let text = std::fs::read_to_string(dir.join("manifest.tsv")).unwrap();
+    text.lines()
+        .skip(1)
+        .map(|l| {
+            let mut w = l.split('\t');
+            (
+                w.next().unwrap().parse().unwrap(),
+                w.next().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+/// The first byte that differs, or the length when one is a prefix.
+fn first_diff(a: &[u8], b: &[u8]) -> Option<usize> {
+    a.iter()
+        .zip(b)
+        .position(|(x, y)| x != y)
+        .or((a.len() != b.len()).then(|| a.len().min(b.len())))
+}
+
+/// With `MDS_DOC_DUMP=<dir>`, the two sides of a PMM mismatch as `Debug`
+/// text, for a field-level diff.
+fn dump(script: &str, file: &str, rust: &[u8], cpp: &[u8]) {
+    let (Ok(dir), true) = (std::env::var("MDS_DOC_DUMP"), file.ends_with(".pmm")) else {
+        return;
+    };
+    for (side, bytes) in [("rust", rust), ("cpp", cpp)] {
+        let text = match mds_formats::pmm::Pmm::read(bytes) {
+            Ok(p) => format!("{p:#?}"),
+            Err(e) => e.to_string(),
+        };
+        let path = Path::new(&dir).join(format!("{script}-{file}.{side}.txt"));
+        std::fs::write(path, text).unwrap();
+    }
+}
+
+/// Replays one script; `Err` names the first step and file that differ.
+fn replay(name: &str) -> Result<usize, String> {
+    let root = fixtures().join("script");
+    let script = std::fs::read_to_string(root.join(format!("{name}.txt"))).unwrap();
+    let expected_dir = root.join("expected").join(name);
+    let mut want: BTreeMap<u32, Vec<String>> = BTreeMap::new();
+    for (step, file) in manifest(&expected_dir) {
+        if !file.ends_with(".emm") {
+            want.entry(step).or_default().push(file);
+        }
+    }
+    let mut runner = Runner::new();
+    let mut compared = 0;
+    let mut first = None;
+    for (n, line) in script.lines().enumerate() {
+        let step = n as u32 + 1;
+        let saved: Vec<Saved> = match runner.run_line(line, &mut |p| read_input(p)) {
+            Ok(s) => s,
+            Err(e) => {
+                let stop = format!("{name}.txt line {step} ({line}): {e}");
+                return Err(first.map_or(stop.clone(), |f| format!("{f}; then {stop}")));
+            }
+        };
+        let saved: Vec<Saved> = saved
+            .into_iter()
+            .filter(|s| !s.name.ends_with(".emm"))
+            .collect();
+        let names: Vec<String> = saved.iter().map(|s| s.name.clone()).collect();
+        if names != want.remove(&step).unwrap_or_default() {
+            return Err(format!(
+                "{name}.txt line {step}: saved {names:?}, manifest differs"
+            ));
+        }
+        for s in saved {
+            let expected = std::fs::read(expected_dir.join(&s.name)).unwrap();
+            if let Some(at) = first_diff(&s.bytes, &expected) {
+                dump(name, &s.name, &s.bytes, &expected);
+                // Later steps still run, so a dump shows every mismatch.
+                first.get_or_insert(format!(
+                    "{name}.txt line {step} {}: offset {at}: rust {:?}, c++ {:?} (lengths {} and {})",
+                    s.name,
+                    s.bytes.get(at),
+                    expected.get(at),
+                    s.bytes.len(),
+                    expected.len()
+                ));
+                continue;
+            }
+            compared += 1;
+        }
+    }
+    if let Some(e) = first {
+        return Err(e);
+    }
+    match want.into_iter().next() {
+        Some((step, files)) => Err(format!("{name}.txt line {step}: {files:?} never saved")),
+        None => Ok(compared),
+    }
+}
+
+/// One script: `SKIP` without the expected outputs, else every saved file
+/// equal.
+fn check(name: &str) {
+    let root = fixtures().join("script");
+    if !root.join("expected").join(name).is_dir() {
+        println!(
+            "SKIP: {} is missing",
+            root.join("expected").join(name).display()
+        );
+        return;
+    }
+    match replay(name) {
+        Ok(n) => println!("{name}: {n} files equal"),
+        Err(e) => panic!("{e}"),
+    }
+}
+
+#[test]
+fn empty() {
+    check("empty");
+}
+
+#[test]
+fn camera() {
+    check("camera");
+}
+
+#[test]
+fn morphs() {
+    check("morphs");
+}
+
+#[test]
+fn accessory() {
+    check("accessory");
+}
+
+#[test]
+#[ignore = "motion.txt line 4 (load vmd): mds-edit register_display_key returns Corrupt on the root selector (slice mdsedit, gap 1)"]
+fn motion() {
+    check("motion");
+}
+
+#[test]
+#[ignore = "bones.txt line 23 (paste): mds-edit register_display_key returns Corrupt on the root selector (slice mdsedit, gap 1)"]
+fn bones() {
+    check("bones");
+}

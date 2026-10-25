@@ -644,3 +644,61 @@ pub(crate) fn delete_selected(pmm: &mut Pmm) -> Result<(), Error> {
     }
     Ok(())
 }
+
+/// The camera branch of `LoadVmdMotion` (`src/model/vmd_load.cpp`, VA
+/// 0x00434B60): the camera keys (`RegisterCameraKey`, parent -1), the light
+/// keys and the self-shadow keys, each list stopping at its first full
+/// pool. A version 1 file's shared curve byte fills its row, with fov 45.
+pub(crate) fn load_vmd(pmm: &mut Pmm, vmd: &mds_formats::vmd::Vmd) -> Result<(), Error> {
+    let v1 = vmd.header.starts_with(b"Vocaloid Motion Data file\0");
+    let mut first = Ok(());
+    for k in vmd.cameras.iter().flatten() {
+        let mut interpolation = [[0; 6]; 4];
+        for (n, row) in [0, 2, 1, 3].into_iter().enumerate() {
+            for (c, v) in interpolation[row].iter_mut().enumerate() {
+                *v = k.interpolation[if v1 { 0 } else { 4 * c } + n];
+            }
+        }
+        let clip = CameraClip {
+            frame: 0,
+            distance: k.distance,
+            eye: k.eye,
+            target: k.target,
+            parent_model: -1,
+            parent_bone: 0,
+            interpolation,
+            perspective: if v1 { 0 } else { u8::from(k.perspective != 0) },
+            fov: if v1 { 45 } else { k.fov as i32 },
+        };
+        if let Err(e) = paste_camera(pmm, &clip, k.frame) {
+            first = first.and(Err(e));
+            break;
+        }
+    }
+    for k in vmd.lights.iter().flatten() {
+        let clip = LightClip {
+            frame: 0,
+            color: k.color,
+            direction: k.direction,
+        };
+        if let Err(e) = paste_light(pmm, &clip, k.frame) {
+            first = first.and(Err(e));
+            break;
+        }
+    }
+    for k in vmd.shadows.iter().flatten() {
+        let r = insert(&mut pmm.self_shadow, k.frame, true, |s| {
+            s.mode = k.mode;
+            s.distance = k.distance;
+            s.selected = 1;
+        });
+        match r {
+            Ok(p) => bump(pmm, p, k.frame),
+            Err(e) => {
+                first = first.and(Err(e));
+                break;
+            }
+        }
+    }
+    first
+}

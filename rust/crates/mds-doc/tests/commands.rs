@@ -709,3 +709,45 @@ fn new_scene_is_the_reset_state() {
     let again = Document::load(&saved, |_| None).unwrap();
     assert_eq!(again.save().unwrap(), saved);
 }
+
+#[test]
+fn a_vpd_pose_on_a_fixed_axis_bone_gets_the_twist_correction() {
+    // LoadVpdFile (vpd_file.cpp 231-274): the VPD quaternion keeps its own
+    // axis and takes the sign of its angle with the bone axis, then is
+    // normalized. A quarter turn about -X, (-√½, 0, 0, √½), on a bone with
+    // axis +X: sin(θ/2) = √(1 - ½) = √½ is negated (the axes oppose), x
+    // becomes -√½ · -√½ = ½, and (½, 0, 0, √½) normalized is
+    // (1/√3, 0, 0, √(2/3)).
+    use mds_formats::text::Sjis;
+    use mds_formats::vpd::{Bone, Vpd};
+    let mut d = doc();
+    let m = &mut d.pmm.models[0];
+    let n = m.bone_names.len();
+    let mut axes = vec![[0.0; 3]; n];
+    axes[3] = [1.0, 0.0, 0.0];
+    let mut bones = vec![(true, false, false); n];
+    bones[3].1 = true;
+    let s = mds_doc::model::Skeleton {
+        pmx: true,
+        bones,
+        axes,
+    };
+    let h = 0.5f32.sqrt();
+    let vpd = Vpd {
+        model_name: Sjis::from_raw(m.name.raw.clone()),
+        bones: vec![Bone {
+            name: Sjis::from_raw(m.bone_names[3].raw.clone()),
+            translation: [0.0; 3],
+            rotation: [-h, 0.0, 0.0, h],
+        }],
+        crlf: true,
+    }
+    .write();
+    let mut history = mds_doc::history::History::default();
+    mds_doc::pose_file::load_vpd(m, &s, &mut history, &vpd).unwrap();
+    let q = m.bone_pose[3].rotation;
+    let want = [1.0 / 3f32.sqrt(), 0.0, 0.0, (2.0f32 / 3.0).sqrt()];
+    for (a, b) in q.iter().zip(want) {
+        assert!((a - b).abs() < 1e-6, "{q:?}");
+    }
+}

@@ -102,7 +102,7 @@ fn set_out(k: &mut BoneKey, lane: usize, x: u8, y: u8) {
 /// lane at the key `index`, and the ends it shares with its neighbours.
 /// Lanes 0 to 2 follow the position; lane 3 (rotation) and the track heads
 /// get the default curve.
-pub(crate) fn rebuild_interpolation(
+pub fn rebuild_interpolation(
     pool: &mut KeyPool<BoneKey>,
     rig: &Rig,
     index: u32,

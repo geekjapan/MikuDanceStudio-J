@@ -24,7 +24,8 @@ pub fn camera3() -> Pmm {
 /// `chain8` is a chain of seven bones under a root and an IK root (parents
 /// of `chain8.pmx`, the IK bone a root), all with rigid bodies but the IK
 /// bone; `morph4` has two bones and four morphs whose `morph_type` bytes
-/// are the PMX panels of `morph4.pmx` (eye, mouth, mouth, mouth).
+/// are the PMX morph kinds of `morph4.pmx` (four vertex morphs), the byte
+/// the C++ `MorphRecord::type` holds.
 pub fn facts(pmm: &Pmm, model: usize) -> ModelFacts {
     let m = &pmm.models[model];
     let bone = |parent: i32, kind: u8, rigid_body: bool| BoneFacts {
@@ -32,6 +33,7 @@ pub fn facts(pmm: &Pmm, model: usize) -> ModelFacts {
         kind,
         flags: 0,
         rigid_body,
+        axis: [0.0; 3],
     };
     let bones = if m.bone_names.len() == 9 {
         let mut b: Vec<_> = (0..8)
@@ -49,7 +51,7 @@ pub fn facts(pmm: &Pmm, model: usize) -> ModelFacts {
     ModelFacts {
         bones,
         morph_type: if m.morph_names.len() == 4 {
-            vec![2, 3, 3, 3]
+            vec![1, 1, 1, 1]
         } else {
             vec![0; m.morph_names.len()]
         },

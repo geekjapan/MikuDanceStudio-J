@@ -535,30 +535,6 @@ pub fn paste(
     first
 }
 
-/// `strstr` on C strings.
-fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
-    hay.windows(needle.len()).position(|w| w == needle)
-}
-
-/// `FindMirroredBone` (`key_registrars.cpp`), as `mds-edit` resolves it, for
-/// the undo records: a name with 左 maps to the first bone with 右 and the
-/// same text after it, else 右 to 左, else the bone of the same name.
-fn mirrored_bone(rig: &Rig, name: &[u8]) -> Option<usize> {
-    const RIGHT: &[u8] = b"\x89\x45";
-    const LEFT: &[u8] = b"\x8D\xB6";
-    let name = cstr(name);
-    let opposite = |marker: &[u8], other: &[u8]| -> Option<usize> {
-        let suffix = &name[find(name, marker)? + 2..];
-        rig.bones.iter().position(|b| {
-            let b = cstr(&b.name);
-            find(b, other).is_some_and(|at| &b[at + 2..] == suffix)
-        })
-    };
-    opposite(LEFT, RIGHT)
-        .or_else(|| opposite(RIGHT, LEFT))
-        .or_else(|| rig.bones.iter().position(|b| cstr(&b.name) == name))
-}
-
 /// The bone loops of reverse paste (button 422, `PasteMirroredBoneKeyframes`,
 /// `frame_clipboard.cpp`) and of "paste to the selected bone"
 /// (`MDS_CMD_PASTE_AT_DIFFERENT_FRAME`, `command_file_menu.cpp`) at `frame`:
@@ -602,7 +578,7 @@ pub fn paste_bones(
                     rig.bones.iter().position(|b| cstr(&b.name) == want)
                 }
                 BoneTarget::Selected(b) => usize::try_from(b).ok(),
-                BoneTarget::Mirrored => mirrored_bone(&rig, &c.name),
+                BoneTarget::Mirrored => mds_edit::mirrored_bone(&rig, &c.name),
             };
             if let Some(b) = bone {
                 touched.register(t, b as u32, (frame as u32).wrapping_add(c.frame))?;

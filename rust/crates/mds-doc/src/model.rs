@@ -41,8 +41,12 @@ impl Skeleton {
             if m.pmx {
                 return b.axis;
             }
-            let tail = usize::try_from(b.tail_bone).ok().and_then(|t| m.bones.get(t));
-            tail.map_or([0.0; 3], |t| std::array::from_fn(|c| t.position[c] - b.position[c]))
+            let tail = usize::try_from(b.tail_bone)
+                .ok()
+                .and_then(|t| m.bones.get(t));
+            tail.map_or([0.0; 3], |t| {
+                std::array::from_fn(|c| t.position[c] - b.position[c])
+            })
         };
         (m.bones.len() == pmm_model.bone_names.len()).then(|| Skeleton {
             pmx: m.pmx,
@@ -286,7 +290,11 @@ pub fn register_bones(
     let selected: Vec<usize> = (0..rig.bones.len())
         .filter(|&i| m.bone_pose[i].flags[2] != 0)
         .collect();
-    if e.physics_pose.is_none() && selected.iter().any(|&b| takes_physics_pose(m, s, physics, b)) {
+    if e.physics_pose.is_none()
+        && selected
+            .iter()
+            .any(|&b| takes_physics_pose(m, s, physics, b))
+    {
         return Err(mds_edit::Error::Unsupported("pose of a bone with a rigid body").into());
     }
     let mut extra = extra(m, s, e, physics);
@@ -465,7 +473,15 @@ pub fn paste(
         return Ok(());
     }
     let rig = rig(m, s, false);
-    let extra = extra(m, s, e, Physics { checkbox: true, mode: 0 });
+    let extra = extra(
+        m,
+        s,
+        e,
+        Physics {
+            checkbox: true,
+            mode: 0,
+        },
+    );
     let pose = snapshot(m, 0..rig.bones.len());
     let mut touched = Touched::default();
     let mut first = Ok(());
@@ -561,7 +577,15 @@ pub fn paste_bones(
         return Ok(());
     }
     let rig = rig(m, s, false);
-    let extra = extra(m, s, e, Physics { checkbox: true, mode: 0 });
+    let extra = extra(
+        m,
+        s,
+        e,
+        Physics {
+            checkbox: true,
+            mode: 0,
+        },
+    );
     e.history.push(Entry::BoneKeys {
         frame: frame as u32,
         pose: snapshot(m, 0..rig.bones.len()),
@@ -611,7 +635,15 @@ pub fn load_vmd(
     frame: u32,
 ) -> Result<(), Error> {
     let rig = rig(m, s, false);
-    let extra = extra(m, s, e, Physics { checkbox: true, mode: 0 });
+    let extra = extra(
+        m,
+        s,
+        e,
+        Physics {
+            checkbox: true,
+            mode: 0,
+        },
+    );
     // The name is cut at a newline (`strchr(text, 10)`).
     let name = |raw: &[u8]| -> Vec<u8> {
         let n = cstr(raw);

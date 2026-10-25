@@ -62,7 +62,7 @@ fn dump(script: &str, file: &str, rust: &[u8], cpp: &[u8]) {
     }
 }
 
-/// Replays one script; `Err` names the first step and file that differ.
+/// Replays one script; `Err` names every step and file that differ.
 fn replay(name: &str) -> Result<usize, String> {
     let root = fixtures().join("script");
     let script = std::fs::read_to_string(root.join(format!("{name}.txt"))).unwrap();
@@ -75,14 +75,15 @@ fn replay(name: &str) -> Result<usize, String> {
     }
     let mut runner = Runner::new();
     let mut compared = 0;
-    let mut first = None;
+    let mut differ: Vec<String> = Vec::new();
     for (n, line) in script.lines().enumerate() {
         let step = n as u32 + 1;
         let saved: Vec<Saved> = match runner.run_line(line, &mut |p| read_input(p)) {
             Ok(s) => s,
             Err(e) => {
                 let stop = format!("{name}.txt line {step} ({line}): {e}");
-                return Err(first.map_or(stop.clone(), |f| format!("{f}; then {stop}")));
+                differ.push(stop);
+                return Err(differ.join("; then "));
             }
         };
         let saved: Vec<Saved> = saved
@@ -100,7 +101,7 @@ fn replay(name: &str) -> Result<usize, String> {
             if let Some(at) = first_diff(&s.bytes, &expected) {
                 dump(name, &s.name, &s.bytes, &expected);
                 // Later steps still run, so a dump shows every mismatch.
-                first.get_or_insert(format!(
+                differ.push(format!(
                     "{name}.txt line {step} {}: offset {at}: rust {:?}, c++ {:?} (lengths {} and {})",
                     s.name,
                     s.bytes.get(at),
@@ -113,8 +114,8 @@ fn replay(name: &str) -> Result<usize, String> {
             compared += 1;
         }
     }
-    if let Some(e) = first {
-        return Err(e);
+    if !differ.is_empty() {
+        return Err(differ.join("; "));
     }
     match want.into_iter().next() {
         Some((step, files)) => Err(format!("{name}.txt line {step}: {files:?} never saved")),

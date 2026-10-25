@@ -255,6 +255,27 @@ impl Runner {
                 let bytes = crate::vmd_save::save(&self.doc.pmm, model);
                 return Ok(self.saved(name, bytes));
             }
+            ["save", "vpd", name] => {
+                let bytes = self.doc.save_pose().map_err(e)?;
+                return Ok(self.saved(name, bytes));
+            }
+            ["save", "pmd", name] => {
+                // ponytail: the C++ records the dialog's absolute path in
+                // <out-dir>; the replay records the name.
+                let bytes = self.doc.save_pmd(name).map_err(e)?;
+                return Ok(self.saved(name, bytes));
+            }
+            ["load", "vpd", p] => Command::LoadPose(load(p)?),
+            ["select", "model", name] => {
+                let m = self
+                    .doc
+                    .pmm
+                    .models
+                    .iter()
+                    .find(|m| m.name.text.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| format!("no model {name}"))?;
+                Command::SelectModel(m.slot)
+            }
             ["load", "model", p] => Command::LoadModel {
                 path: p.to_string(),
                 data: load(p)?,

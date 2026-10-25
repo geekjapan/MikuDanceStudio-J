@@ -108,6 +108,7 @@ pub mod global;
 pub mod history;
 pub mod model;
 pub mod new_scene;
+pub mod pose_file;
 mod readout;
 mod refresh;
 pub mod save;
@@ -342,6 +343,10 @@ pub enum Command {
     SetAccessoryParentModel(Option<u8>),
     /// The accessory parent bone combo (475): a bone of the parent model.
     SetAccessoryParentBone(u32),
+    /// "Load pose" (menu 202, `CmdLoadPose`, `command_impl.cpp`) with the
+    /// VPD bytes, onto the selected model ([`pose_file::load_vpd`]). Nothing
+    /// in camera mode.
+    LoadPose(Vec<u8>),
     /// The select-all menus 217, 218, 220 (model) and 237..241 (camera
     /// mode), `mds_ops::select`.
     SelectAll(SelectAll),
@@ -514,6 +519,35 @@ impl Document {
         save::normalize(&self.pmm)
             .write()
             .map_err(|e| Error::Format(e.to_string()))
+    }
+
+    /// "Save pose" (menu 203, `CmdSavePose`, `command_impl.cpp`): the VPD
+    /// bytes of the selected bones of the selected model.
+    pub fn save_pose(&mut self) -> Result<Vec<u8>, Error> {
+        if self.camera_mode() {
+            return Err(not("saving a pose in camera mode"));
+        }
+        let (i, s) = self.keyed()?;
+        let mode = self.pmm.physics.playback_mode;
+        pose_file::save_vpd(&self.pmm.models[i], &s, &self.edit.models[i], mode)
+    }
+
+    /// "Save enhanced model" (menu 263, `SaveEnhancedModel`) of the selected
+    /// PMD model to `path`, which becomes the model's path. The C++ writer
+    /// reads PMD-only data and ends the process on a PMX model, so a PMX
+    /// model is refused.
+    pub fn save_pmd(&mut self, path: &str) -> Result<Vec<u8>, Error> {
+        let i = self.active_model()?;
+        let ModelFile::Pmd(pmd) = &mut self.models[i] else {
+            return Err(not("the PMD writer on a model that is not a PMD"));
+        };
+        let bytes = pose_file::save_pmd(pmd)?;
+        let raw = add_model::sjis(path, 256).raw;
+        let p = &mut self.pmm.models[i].path;
+        p.raw.fill(0);
+        p.raw[..raw.len()].copy_from_slice(&raw);
+        p.text = path.to_string();
+        Ok(bytes)
     }
 
     fn camera_mode(&self) -> bool {
@@ -953,7 +987,9 @@ impl Document {
                     if mirrored {
                         return Ok(());
                     }
-                    return Err(not("pasting accessory keys to another accessory (not ported)"));
+                    return Err(not(
+                        "pasting accessory keys to another accessory (not ported)",
+                    ));
                 }
                 if self.edit.model_clipboard.bones.is_empty() {
                     return Ok(());
@@ -1016,7 +1052,8 @@ impl Document {
                 }
                 // `RedoKeyframeEdit` seeks unless the entry it redid is a pose.
                 let h = &self.edit.models[i].history;
-                if cmd == Command::Redo && !matches!(h.undo[h.cursor], history::Entry::BonePose(_)) {
+                if cmd == Command::Redo && !matches!(h.undo[h.cursor], history::Entry::BonePose(_))
+                {
                     self.refresh_context();
                 }
             }
@@ -1050,6 +1087,14 @@ impl Document {
                 refresh::gravity(&mut self.pmm);
                 r?;
             }
+            Command::LoadPose(data) => {
+                if self.camera_mode() {
+                    return Ok(());
+                }
+                let (i, s) = self.keyed()?;
+                let h = &mut self.edit.models[i].history;
+                pose_file::load_vpd(&mut self.pmm.models[i], &s, h, &data)?;
+            }
             Command::SelectAll(what) => {
                 use mds_ops as s;
                 let p = &mut self.pmm;
@@ -1070,7 +1115,9 @@ impl Document {
                 let mut pose = Vec::new();
                 if bones {
                     let m = &self.pmm.models[self.active_model()?];
-                    if !insert && self.edit.auto_interpolation && model::line_delete_rebuilds(m, frame)
+                    if !insert
+                        && self.edit.auto_interpolation
+                        && model::line_delete_rebuilds(m, frame)
                     {
                         return Err(Error::Edit(mds_edit::Error::Unsupported(
                             "the curve rebuild of a frame-line delete",
@@ -1090,7 +1137,11 @@ impl Document {
                     // No key moved: the C++ returns before the undo entry and the seek.
                     let Some(keys) = undo else { return Ok(()) };
                     let i = self.active_model()?;
-                    self.edit.models[i].history.push(history::Entry::BoneKeys { frame, pose, keys });
+                    self.edit.models[i].history.push(history::Entry::BoneKeys {
+                        frame,
+                        pose,
+                        keys,
+                    });
                     self.refresh_context();
                 } else if !self.camera_mode() {
                     self.refresh_context();

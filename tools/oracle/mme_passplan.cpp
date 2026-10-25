@@ -43,12 +43,17 @@ std::string g_boxes;
 volatile LONG g_stopWatchdog = 0;
 
 std::string Fmt(const char* fmt, ...) {
-    char buffer[2048];
     va_list args;
     va_start(args, fmt);
-    std::vsnprintf(buffer, sizeof buffer, fmt, args);
+    va_list copy;
+    va_copy(copy, args);
+    const int size = std::vsnprintf(nullptr, 0, fmt, copy);
+    va_end(copy);
+    std::string out(static_cast<size_t>(size > 0 ? size : 0) + 1, '\0');
+    std::vsnprintf(&out[0], out.size(), fmt, args);
     va_end(args);
-    return buffer;
+    out.resize(static_cast<size_t>(size > 0 ? size : 0));
+    return out;
 }
 
 void Line(const std::string& text) {
@@ -142,8 +147,9 @@ const char* FormatName(D3DFORMAT f) {
 #define F(x)                                                                                       \
     case D3DFMT_##x:                                                                               \
         return #x;
-    F(UNKNOWN)
-    F(R8G8B8) F(A8R8G8B8) F(X8R8G8B8) F(R5G6B5) F(X1R5G5B5) F(A1R5G5B5) F(A4R4G4B4) F(R3G3B2) F(A8)
+        F(UNKNOWN)
+    F(R8G8B8)
+    F(A8R8G8B8) F(X8R8G8B8) F(R5G6B5) F(X1R5G5B5) F(A1R5G5B5) F(A4R4G4B4) F(R3G3B2) F(A8)
         F(A8R3G3B2) F(X4R4G4B4) F(A2B10G10R10) F(A8B8G8R8) F(X8B8G8R8) F(G16R16) F(A2R10G10B10)
             F(A16B16G16R16) F(L8) F(A8L8) F(V8U8) F(Q8W8V8U8) F(V16U16) F(D16_LOCKABLE) F(D32)
                 F(D15S1) F(D24S8) F(D24X8) F(D24X4S4) F(D16) F(D32F_LOCKABLE) F(D24FS8) F(L16)
@@ -390,9 +396,11 @@ void DumpParameters(ID3DXEffect* fx, const D3DXEFFECT_DESC& ed) {
         if (!semantic[0] && !IsTextureType(d.Type) && !IsNameTableName(d.Name) && !read) {
             continue; // inert: the runtime never looks at it
         }
-        Line(Fmt("param %s semantic=%s class=%s type=%s rows=%u columns=%u elements=%u literal=%d",
-                 Q(d.Name).c_str(), Q(semantic).c_str(), ClassName(d.Class), TypeName(d.Type),
-                 d.Rows, d.Columns, d.Elements, (d.Flags & 1) ? 1 : 0));
+        // param NAME SEMANTIC CLASS TYPE ROWSxCOLUMNS[ [ELEMENTS] ][ literal]
+        Line(Fmt("param %s %s %s %s %ux%u%s%s", Q(d.Name).c_str(), Q(semantic).c_str(),
+                 ClassName(d.Class), TypeName(d.Type), d.Rows, d.Columns,
+                 d.Elements ? Fmt("[%u]", d.Elements).c_str() : "",
+                 (d.Flags & 1) ? " literal" : ""));
         for (UINT a = 0; a < d.Annotations; ++a) {
             D3DXHANDLE ah = fx->GetAnnotation(h, a);
             D3DXPARAMETER_DESC ad{};
@@ -417,12 +425,10 @@ void DumpResources(const mme::SasEffect* sas) {
                  r.reqWidth, r.reqHeight, r.reqDepth, r.mipLevels, r.texWidth, r.texHeight,
                  r.texMips, FormatName(r.format), r.defaultPool ? 1 : 0));
         if (r.semanticId == 0x2e) {
-            Line(Fmt("  clearcolor=%s clearcolor_argb=0x%08lx cleardepth=%s cleardepth_value=%.9g "
-                     "antialias=%d",
-                     r.hasClearColor ? "1" : "0", r.clearColorArgb, r.hasClearDepth ? "1" : "0",
-                     r.clearDepth, r.antiAlias ? 1 : 0));
-            Line("  description " + Q(r.description));
-            Line("  defaulteffect " + Q(r.defaultEffect));
+            Line("  clear color=" +
+                 (r.hasClearColor ? Fmt("0x%08lx", r.clearColorArgb) : std::string("-")) +
+                 " depth=" + (r.hasClearDepth ? Fmt("%.9g", r.clearDepth) : std::string("-")) +
+                 Fmt(" antialias=%d", r.antiAlias ? 1 : 0));
             for (const auto& row : r.defaultEffectMap) {
                 Line("  defaulteffect_row " + Q(row.first) + " " + Q(row.second));
             }
@@ -917,7 +923,6 @@ int main(int argc, char** argv) {
                 Fmt("effect scriptclass=%d scriptorder=%d posteffect=%d drawsgeometry=%d errors=%d",
                     sas->scriptClass, sas->scriptOrder, sas->postEffect ? 1 : 0,
                     sas->drawsGeometry ? 1 : 0, sas->hasErrors ? 1 : 0));
-            TextLines("saslog", "  ", mme::SasGetLog(sas));
             DumpParameters(loaded->effect, ed);
             DumpResources(sas);
             DumpTechniques(sas);

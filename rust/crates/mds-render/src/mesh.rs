@@ -6,6 +6,7 @@ use mds_skin::{Mat4, Skin};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) const FLAG_DOUBLE_SIDED: u8 = 0x01;
+pub(crate) const FLAG_GROUND_SHADOW: u8 = 0x02;
 pub(crate) const FLAG_EDGE: u8 = 0x10;
 
 /// Where a material's faces sit in the index list, and how they are drawn. The colors come from
@@ -101,7 +102,8 @@ impl Mesh {
         finish(bind, Skin::from_pmx(pmx)?, indices, materials)
     }
 
-    /// A PMD model. Materials with an alpha below 1 are drawn double sided.
+    /// A PMD model. Materials with an alpha below 1 are drawn double sided, and every material
+    /// casts the ground shadow.
     pub fn from_pmd(pmd: &Pmd) -> Result<Mesh, String> {
         let indices = pmd.indices.iter().map(|&i| u32::from(i)).collect();
         let mut start = 0u32;
@@ -112,7 +114,8 @@ impl Mesh {
                     FLAG_DOUBLE_SIDED
                 } else {
                     0
-                }) | if m.edge != 0 { FLAG_EDGE } else { 0 },
+                }) | if m.edge != 0 { FLAG_EDGE } else { 0 }
+                    | FLAG_GROUND_SHADOW,
                 start,
                 count: m.face_vertex_count,
             });

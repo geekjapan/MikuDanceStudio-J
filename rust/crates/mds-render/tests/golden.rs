@@ -18,7 +18,7 @@ use mds_formats::pmm::Pmm;
 use mds_formats::{pmd::Pmd, pmx::Pmx};
 use mds_physics::PhysicsScene;
 use mds_render::{
-    encode_png, render_frame, scene, Frame, Gpu, Mesh, Pose, PIXEL_OFFSET_D3D9, SAMPLES_8X,
+    encode_png, render_frame_with, scene, Frame, Gpu, Mesh, Pose, PIXEL_OFFSET_D3D9, SAMPLES_8X,
 };
 use std::path::PathBuf;
 
@@ -88,7 +88,7 @@ fn render_at(gpu: &Gpu, pmm: &Pmm, posed: &[Pose], frame: u32) -> Vec<u8> {
         .map(|(m, p)| (m, Some(p)))
         .collect();
     let camera = scene::camera_at(pmm, frame).unwrap();
-    render_frame(
+    render_frame_with(
         gpu,
         &Frame {
             width: W as u32,
@@ -96,11 +96,12 @@ fn render_at(gpu: &Gpu, pmm: &Pmm, posed: &[Pose], frame: u32) -> Vec<u8> {
             view: camera.view(W as u32, H as u32),
             light: scene::light_at(pmm, frame).unwrap(),
             background: [255; 4],
-            toon: scene::toon_at(pmm, frame),
+            toon: true,
             models: &models,
             samples: &SAMPLES_8X,
             pixel_offset: PIXEL_OFFSET_D3D9,
         },
+        &scene::stage_at(pmm, frame),
     )
     .unwrap()
 }

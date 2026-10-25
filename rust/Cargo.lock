@@ -1243,6 +1243,7 @@ name = "mds-edit"
 version = "0.1.0"
 dependencies = [
  "mds-formats",
+ "mds-math",
 ]
 
 [[package]]

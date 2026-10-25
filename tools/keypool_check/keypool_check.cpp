@@ -13,6 +13,8 @@
 // replays the call order of the real UI handler named in its comment.
 // The explorer does a breadth-first search over all command sequences up to
 // kDepth, deduplicating states, so every reported trace is a shortest one.
+// It runs once per UI configuration in kConfigs (the checkboxes and the
+// physics mode the bone registrars read).
 //
 // Usage: keypool_check [depth] [--dump FILE]
 // --dump also writes the explored sequences and the pool states they reach
@@ -30,6 +32,7 @@
 #include <vector>
 
 #include "mikudancestudio/model.hpp"
+#include "mikudancestudio/panel_controls.hpp"
 
 namespace mikudancestudio {
 void ModelInitDefaults(unsigned char* m);
@@ -38,6 +41,7 @@ int ResetMorphKeyCursor(unsigned char* model);
 void ResetDisplayKeyCursor(unsigned char* model);
 bool RegisterBoneKey(unsigned char* model, unsigned char* rec, int frameOffset,
                      unsigned char useSelected);
+bool RegisterMirroredBoneKey(unsigned char* model, unsigned char* rec, int frameOffset);
 bool RegisterMorphKeyFromRecord(unsigned char* model, const unsigned char* rec,
                                 int frameOffset);
 void RegisterMorphKeyCurrent(unsigned char* model, int morph, int frame);
@@ -49,7 +53,7 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg,
 void RegisterDisplayKeyCurrent(unsigned char* model, int frame);
 void RegisterSelectedBoneKeys(unsigned char* model, int frame, int mode);
 void DeleteMarkedModelKeys(unsigned char* model, int frame);
-// Only reached for bones with a rigid body; the check model has none.
+// Hands a rigid body to or from the physics engine; no key pool state.
 void NotifyBonePhysicsMode(unsigned char*, int, unsigned char) {}
 }  // namespace mikudancestudio
 
@@ -62,8 +66,24 @@ namespace {
 constexpr int kBones = 2;
 constexpr int kMorphs = 2;
 constexpr int kFrames = 3;   // frames 0..2; 0 is the head frame
+constexpr int kIkChains = 1;
+constexpr int kSelectors = 2;
 int kDepth = 4;              // commands per sequence; argv[1] overrides
 constexpr int kWindow = 24;  // pool prefix the explorer tracks per pool
+
+// The UI state the bone registrars read: the auto-interpolation checkbox
+// (kPhysicsFrameCheckbox, RegisterBonePoseAtFrame and DeleteMarkedModelKeys),
+// the physics checkbox (kPhysicsCheckbox) and PlaybackPhysicsMode, which
+// case 500 passes as `mode`. A bone with a rigid body stores the physics pose
+// in mode 1, and in modes 2 and 3 while its physicsDisabled is clear; the
+// first register with the physics checkbox clear sets it. Mode 0 never
+// stores the physics pose.
+struct Config { bool autoInterpolation; bool physicsCheckbox; int mode; };
+constexpr Config kConfigs[] = {{false, false, 2}, {true, true, 2}, {true, false, 1}, {false, true, 0}};
+Config g_config = kConfigs[0];
+
+// Shift-JIS 右 / 左: reverse paste maps "右b" and "左b" onto each other.
+const char* const kBoneNames[] = {"\x89\x45" "b", "\x8D\xB6" "b"};
 
 unsigned char* g_model = nullptr;
 std::string g_asan;
@@ -82,7 +102,17 @@ void OnAsanReport(const char* report) {
 mdl::ModelRecord& M() { return *mdl::Mdl(g_model); }
 
 // add_model.cpp:57-63 then the pool tail of pmx_load.cpp:1672-1709.
-void BuildModel() {
+//
+// bone0 is a movable bone with a rigid body, bone1 the IK bone and a
+// fixed-axis (twist) bone. The selectors are bone_sort.cpp's root entry
+// (bone -1) and one for bone0.
+//
+// The loaders allocate exactly boneCount bone records, so the selector loop
+// of RegisterDisplayKeyFromRecord reads bones[-1] for the root entry
+// (FindingRun reports it). Unless `exactBoneTable`, one zeroed record sits in
+// front of the table: it models those heap bytes as a name that matches
+// nothing, and keeps that read from masking the pool checks.
+void BuildModel(bool exactBoneTable = false) {
     g_model = static_cast<unsigned char*>(operator new(mdl::kSize));
     std::memset(g_model, 0, mdl::kSize);
     ModelInitDefaults(g_model);
@@ -90,12 +120,25 @@ void BuildModel() {
     m.physicsMode = 2;  // PMX
     m.boneCount = kBones;
     m.morphCount = kMorphs;
-    m.boneTable = new mdl::BoneRecord[kBones]();
+    const int pad = exactBoneTable ? 0 : 1;
+    auto* bones = static_cast<mdl::BoneRecord*>(operator new(sizeof(mdl::BoneRecord) * (kBones + pad)));
+    std::memset(static_cast<void*>(bones), 0, sizeof(mdl::BoneRecord) * (kBones + pad));
+    m.boneTable = bones + pad;
     for (int b = 0; b < kBones; ++b) {
-        std::snprintf(m.boneTable[b].name, 20, "bone%d", b);
-        m.boneTable[b].type = mdl::BoneType::RotateMove;
+        std::snprintf(m.boneTable[b].name, 20, "%s", kBoneNames[b]);
         m.boneTable[b].rotQuat[3] = 1.0f;
     }
+    mdl::BoneRecord& rigid = m.boneTable[0];
+    rigid.type = mdl::BoneType::Move;
+    rigid.hasRigidBody = 1;
+    mdl::BoneRecord& twist = m.boneTable[1];
+    twist.type = mdl::BoneType::FixedAxis;
+    twist.flags = mdl::kBoneFlagFixedAxis;
+    twist.axis[0] = 0.48f;
+    twist.axis[1] = 0.6f;
+    twist.axis[2] = 0.64f;
+    twist.trans[0] = 1.0f;
+    twist.trans[1] = 0.25f;
     m.boneSelection = new unsigned char[kBones]();
     m.bonePhysicsState = new unsigned char[kBones]();
     m.morphs = new mdl::MorphRecord[kMorphs]();
@@ -105,9 +148,13 @@ void BuildModel() {
     m.ikChains = new mdl::IkChain[1]();
     m.ikChains[0].boneIndex = 1;
     m.ikChains[0].enabled = 1;
-    m.boneOrderCount = 1;
-    mdl::BoneOrder(g_model) = new mdl::BoneOrderEntry[1]();
+    m.boneOrderCount = kSelectors;
+    mdl::BoneOrder(g_model) = new mdl::BoneOrderEntry[kSelectors]();
+    mdl::BoneOrder(g_model)[0].boneIndex = -1;
     mdl::BoneOrder(g_model)[0].linkedModel = -1;
+    mdl::BoneOrder(g_model)[1].boneIndex = 0;
+    mdl::BoneOrder(g_model)[1].linkedModel = 2;
+    mdl::BoneOrder(g_model)[1].linkedBone = 1;
 
     m.boneKeys = static_cast<mdl::BoneKey*>(
         operator new(sizeof(mdl::BoneKey) * mdl::kBoneKeyCapacity));
@@ -123,7 +170,7 @@ void BuildModel() {
         mdl::DisplayKey& k = m.displayKeys[i];
         mdl::IkStates(k) = new std::uint8_t[1]{1};
         k.visible = 1;
-        mdl::SelectorStates(k) = new mdl::BoneReference[1]{{-1, 0}};
+        mdl::SelectorStates(k) = new mdl::BoneReference[kSelectors]{{-1, 0}, {-1, 0}};
     }
     for (int b = 0; b < kBones; ++b) {
         mdl::BoneKey& k = m.boneKeys[b];
@@ -161,7 +208,8 @@ void OpenBoneUndo(int boneRecords) {
 }
 
 enum Kind { kPasteBone, kPasteMorph, kPasteDisplay, kRegisterBone,
-            kRegisterMorph, kRegisterDisplay, kSelectBone, kDelete };
+            kRegisterMorph, kRegisterDisplay, kSelectBone, kDelete,
+            kPasteMirrored, kPasteToSelected };
 struct Command { Kind kind; int target; int frame; };
 
 std::string Describe(const Command& c) {
@@ -175,34 +223,84 @@ std::string Describe(const Command& c) {
     case kRegisterDisplay: std::snprintf(s, sizeof s, "register display key at frame %d", c.frame); break;
     case kSelectBone: std::snprintf(s, sizeof s, "click bone%d key at frame %d", c.target, c.frame); break;
     case kDelete: std::snprintf(s, sizeof s, "delete selected keys"); break;
+    case kPasteMirrored: std::snprintf(s, sizeof s, "reverse paste bone%d key at frame %d", c.target, c.frame); break;
+    case kPasteToSelected: std::snprintf(s, sizeof s, "paste a bone key to selected bone%d at frame %d", c.target, c.frame); break;
     }
     return s;
+}
+
+// One copied bone key (the 0x54-byte BoneClipboardRecord) named `name`. The
+// payload depends on the frame so that overwrites change it, positions
+// differ between keys (auto interpolation) and the twist dot product takes
+// both signs.
+void BoneClip(unsigned char (&rec)[0x54], const char* name, int frame) {
+    std::memset(rec, 0, sizeof rec);
+    std::snprintf(reinterpret_cast<char*>(rec), 20, "%s", name);
+    const float even[4] = {0.1f, 0.2f, 0.3f, 0.9273618f};
+    const float odd[4] = {-0.3f, 0.1f, -0.2f, 0.9273618f};
+    std::memcpy(rec + 36, frame % 2 ? odd : even, 16);
+    const float position[3] = {1.5f * static_cast<float>(frame), 0.5f, -0.25f};
+    std::memcpy(rec + 52, position, 12);
+    rec[64] = static_cast<unsigned char>(frame & 1);
+    for (int j = 0; j < 16; ++j) rec[65 + j] = static_cast<unsigned char>(7 * j + frame);
 }
 
 // PasteSelectedKeyframes (frame_clipboard.cpp:506-769): clear marks, then
 // ResetBone + bone loop, ResetMorph + morph loop, ResetDisplay + display
 // loop. Each paste here carries one key; the resets run unconditionally.
+// The display key is what CopySelectedKeyframes makes of a key of this model
+// (frame_clipboard.cpp:298-335): the IK bone's flag, selector 0 under the
+// root name, selector 1 under bone0's name, pairs that need no slot fixup.
 void Paste(Kind kind, int target, int frame) {
     ClearAllMarks();
     if (kind == kPasteBone) OpenBoneUndo(1);
     std::memset(M().keyVisitMap, 0, sizeof M().keyVisitMap);
     ResetBoneKeyCursor(g_model);
     if (kind == kPasteBone) {
-        unsigned char rec[0x54] = {};
-        std::snprintf(reinterpret_cast<char*>(rec), 30, "bone%d", target);
-        const float w = 1.0f;
-        std::memcpy(rec + 48, &w, 4);
+        unsigned char rec[0x54];
+        BoneClip(rec, kBoneNames[target], frame);
         RegisterBoneKey(g_model, rec, frame, 0);
     }
     ResetMorphKeyCursor(g_model);
     if (kind == kPasteMorph) {
         unsigned char rec[0x28] = {};
         std::snprintf(reinterpret_cast<char*>(rec), 30, "morph%d", target);
+        const float value = 0.25f * static_cast<float>(frame + 1);
+        std::memcpy(rec + 36, &value, 4);
         RegisterMorphKeyFromRecord(g_model, rec, frame);
     }
     ResetDisplayKeyCursor(g_model);
-    if (kind == kPasteDisplay)
-        RegisterDisplayKeyFromRecord(g_model, 0, 1, 0, nullptr, 0, nullptr, frame);
+    if (kind == kPasteDisplay) {
+        unsigned char ik[21] = {};
+        std::snprintf(reinterpret_cast<char*>(ik), 20, "%s", kBoneNames[1]);
+        ik[20] = static_cast<unsigned char>(frame & 1);
+        unsigned char sel[2][28] = {{0x83, 0x8B, 0x81, 0x5B, 0x83, 0x67}, {}};  // ルート
+        std::snprintf(reinterpret_cast<char*>(sel[1]), 20, "%s", kBoneNames[0]);
+        for (auto& e : sel) {
+            const std::int32_t pair[2] = {-2, frame};  // ground: no fixup
+            std::memcpy(e + 20, pair, 8);
+        }
+        RegisterDisplayKeyFromRecord(g_model, 0, frame == 1 ? 0 : 1, 1, ik, kSelectors, sel[0], frame);
+    }
+}
+
+// PasteMirroredBoneKeyframes (command 422, frame_clipboard.cpp:782-862) and
+// the bone branch of MDS_CMD_PASTE_AT_DIFFERENT_FRAME
+// (command_file_menu.cpp:1494-1593): clear marks, an undo slot, ResetBone,
+// then the bone loop only. The selected-bone paste ignores the clip's name.
+void PasteBonesOnly(Kind kind, int target, int frame) {
+    ClearAllMarks();
+    OpenBoneUndo(1);
+    ResetBoneKeyCursor(g_model);
+    unsigned char rec[0x54];
+    if (kind == kPasteMirrored) {
+        BoneClip(rec, kBoneNames[target], frame);
+        RegisterMirroredBoneKey(g_model, rec, frame);
+    } else {
+        M().selectedBone = target;
+        BoneClip(rec, kBoneNames[1 - target], frame);
+        RegisterBoneKey(g_model, rec, frame, 1);
+    }
 }
 
 void Apply(const Command& c) {
@@ -210,11 +308,21 @@ void Apply(const Command& c) {
     case kPasteBone: case kPasteMorph: case kPasteDisplay:
         Paste(c.kind, c.target, c.frame);
         break;
-    case kRegisterBone:  // HandleFrameRegisterControl case 500, command_frame_register.cpp:375
+    case kPasteMirrored: case kPasteToSelected:
+        PasteBonesOnly(c.kind, c.target, c.frame);
+        break;
+    case kRegisterBone: {  // HandleFrameRegisterControl case 500, command_frame_register.cpp:375
+        // The pose the physics step left at this frame (ikBackup: position,
+        // quaternion), which differs from the pose an earlier register
+        // copied into bone0.
+        const float physicsPose[7] = {0.5f + static_cast<float>(c.frame), 1.5f, -2.0f,
+                                      0.0f, 0.6f, 0.0f, 0.8f};
+        std::memcpy(M().boneTable[0].ikBackup, physicsPose, sizeof physicsPose);
         std::memset(M().boneSelection, 0, kBones);
         M().boneSelection[c.target] = 1;
-        RegisterSelectedBoneKeys(g_model, c.frame, 0);
+        RegisterSelectedBoneKeys(g_model, c.frame, g_config.mode);
         break;
+    }
     case kRegisterMorph:  // cases 524-527, command_frame_register.cpp:496-543
         ClearAllMarks();
         RegisterMorphKeyCurrent(g_model, c.target, c.frame);
@@ -248,6 +356,8 @@ std::vector<Command> Alphabet() {
             out.push_back({kPasteBone, t, f});
             out.push_back({kRegisterBone, t, f});
             out.push_back({kSelectBone, t, f});
+            out.push_back({kPasteMirrored, t, f});
+            out.push_back({kPasteToSelected, t, f});
         }
         for (int t = 0; t < kMorphs; ++t) {
             out.push_back({kPasteMorph, t, f});
@@ -291,8 +401,6 @@ void Restore(const std::string& s) {
 // timeline end, i.e. the part of the model the commands can change. In dump
 // mode the explorer restores it whole, so a state's payload is the one its
 // shortest trace produces from a freshly loaded model.
-constexpr int kIkChains = 1;       // BuildModel: ikChainCount
-constexpr int kSelectors = 1;      // BuildModel: boneOrderCount
 struct Window {
     mdl::BoneKey bone[kWindow];
     mdl::MorphKey morph[kWindow];
@@ -301,6 +409,12 @@ struct Window {
         std::uint8_t ik[kIkChains];
         mdl::BoneReference selectors[kSelectors];
     } display[kWindow];
+    // The bone fields the registrars change: the physics-pose path copies
+    // ikBackup into the pose, the physics checkbox sets physicsDisabled.
+    struct Bone {
+        float trans[3], rotQuat[4];
+        std::uint8_t physicsDisabled;
+    } bones[kBones];
     std::int32_t cursor;
     std::uint32_t maxFrame;
 };
@@ -314,6 +428,12 @@ void Capture(Window& w) {
         std::memcpy(w.display[i].ik, mdl::IkStates(k), kIkChains);
         std::memcpy(w.display[i].selectors, mdl::SelectorStates(k), sizeof w.display[i].selectors);
     }
+    for (int b = 0; b < kBones; ++b) {
+        const mdl::BoneRecord& r = M().boneTable[b];
+        std::memcpy(w.bones[b].trans, r.trans, sizeof r.trans);
+        std::memcpy(w.bones[b].rotQuat, r.rotQuat, sizeof r.rotQuat);
+        w.bones[b].physicsDisabled = r.physicsDisabled;
+    }
     w.cursor = M().searchCursor;
     w.maxFrame = M().maxFrame;
 }
@@ -325,6 +445,12 @@ void RestoreWindow(const Window& w) {
         k = w.display[i].key;  // the array pointers are unchanged
         std::memcpy(mdl::IkStates(k), w.display[i].ik, kIkChains);
         std::memcpy(mdl::SelectorStates(k), w.display[i].selectors, sizeof w.display[i].selectors);
+    }
+    for (int b = 0; b < kBones; ++b) {
+        mdl::BoneRecord& r = M().boneTable[b];
+        std::memcpy(r.trans, w.bones[b].trans, sizeof r.trans);
+        std::memcpy(r.rotQuat, w.bones[b].rotQuat, sizeof r.rotQuat);
+        r.physicsDisabled = w.bones[b].physicsDisabled;
     }
     M().searchCursor = w.cursor;
     M().maxFrame = w.maxFrame;
@@ -338,7 +464,8 @@ std::string Hex(float f) {
     return s;
 }
 
-// One text line per record, in a fixed order: b0..b23, m0..m23, d0..d23, g.
+// One text line per record, in a fixed order: b0..b23, m0..m23, d0..d23,
+// r0..r1 (the bone records), g.
 // Integers are decimal, floats are their bits in hex, a byte array is hex.
 std::vector<std::string> StateLines(const Window& w) {
     std::vector<std::string> out;
@@ -371,6 +498,14 @@ std::vector<std::string> StateLines(const Window& w) {
                                d.selectors[j].boneIndex);
         out.push_back(s);
     }
+    for (int b = 0; b < kBones; ++b) {
+        const Window::Bone& r = w.bones[b];
+        std::snprintf(s, sizeof s, "r%d d%u x%s.%s.%s q%s.%s.%s.%s", b, r.physicsDisabled,
+                      Hex(r.trans[0]).c_str(), Hex(r.trans[1]).c_str(), Hex(r.trans[2]).c_str(),
+                      Hex(r.rotQuat[0]).c_str(), Hex(r.rotQuat[1]).c_str(),
+                      Hex(r.rotQuat[2]).c_str(), Hex(r.rotQuat[3]).c_str());
+        out.push_back(s);
+    }
     std::snprintf(s, sizeof s, "g c%d x%u", w.cursor, w.maxFrame);
     out.push_back(s);
     return out;
@@ -379,7 +514,8 @@ std::vector<std::string> StateLines(const Window& w) {
 const char* KindName(Kind k) {
     static const char* const names[] = {"paste-bone", "paste-morph", "paste-display",
                                         "register-bone", "register-morph", "register-display",
-                                        "select-bone", "delete"};
+                                        "select-bone", "delete", "paste-mirrored",
+                                        "paste-to-selected"};
     return names[k];
 }
 
@@ -392,9 +528,11 @@ struct DumpData {
 DumpData g_dump;
 
 // Format (text, one record per line):
-//   keypool-dump 1
+//   keypool-dump 2
 //   depth D / bones B morphs M frames F window W
 //   C <command> <kind> <target> <frame>          the command alphabet
+// then one section per configuration:
+//   config <auto interpolation> <physics checkbox> <mode>
 //   S <id> <parent> <command>                    state <id> = <parent> after <command>
 //    <record line>...                            the records that differ from the parent
 //                                                (all of them for state 0)
@@ -403,12 +541,16 @@ DumpData g_dump;
 //                                                states shallower than the depth
 // State ids are in breadth-first discovery order, so a state's shortest trace is its
 // parent chain. A state's payload is what that trace gives from a freshly loaded model.
-void WriteDump(std::FILE* f, const std::vector<Command>& alphabet) {
-    std::fprintf(f, "keypool-dump 1\ndepth %d\nbones %d morphs %d frames %d window %d\n", kDepth,
+void WriteDumpHeader(std::FILE* f, const std::vector<Command>& alphabet) {
+    std::fprintf(f, "keypool-dump 2\ndepth %d\nbones %d morphs %d frames %d window %d\n", kDepth,
                  kBones, kMorphs, kFrames, kWindow);
     for (std::size_t c = 0; c < alphabet.size(); ++c)
         std::fprintf(f, "C %zu %s %d %d\n", c, KindName(alphabet[c].kind), alphabet[c].target,
                      alphabet[c].frame);
+}
+void WriteDumpSection(std::FILE* f) {
+    std::fprintf(f, "config %d %d %d\n", g_config.autoInterpolation, g_config.physicsCheckbox,
+                 g_config.mode);
     std::vector<std::string> before;
     for (std::size_t id = 0; id < g_dump.windows.size(); ++id) {
         const std::vector<std::string> now = StateLines(g_dump.windows[id]);
@@ -496,8 +638,15 @@ std::string CheckAll() {
 
 bool IsBound(const std::string& e) { return e.find("(bound") != std::string::npos; }
 
-int Explore(const char* dumpPath) {
+// One breadth-first search under g_config from a freshly loaded model.
+// Appends the dump section to `dump` when it is not null.
+int Explore(std::FILE* dump) {
+    const bool dumping = dump != nullptr;
     const std::vector<Command> alphabet = Alphabet();
+    BuildModel();
+    g_checked[panel::kPhysicsFrameCheckbox] = g_config.autoInterpolation;
+    g_checked[panel::kPhysicsCheckbox] = g_config.physicsCheckbox;
+    g_dump = DumpData();
     struct Node { std::string state; std::vector<int> trace; int id; };
     std::unordered_map<std::string, int> ids;  // snapshot -> state id, dump mode only
     std::unordered_set<std::string> seen;
@@ -513,7 +662,7 @@ int Explore(const char* dumpPath) {
     }
     queue.push_back({Snapshot(), {}, 0});
     seen.insert(queue.back().state);
-    if (dumpPath != nullptr) {
+    if (dumping) {
         g_dump.windows.resize(1);
         Capture(g_dump.windows[0]);
         g_dump.parent.push_back(-1);
@@ -525,9 +674,9 @@ int Explore(const char* dumpPath) {
         Node node = std::move(queue.front());
         queue.pop_front();
         if (static_cast<int>(node.trace.size()) >= kDepth) continue;
-        if (dumpPath != nullptr) g_dump.next[node.id].assign(alphabet.size(), -1);
+        if (dumping) g_dump.next[node.id].assign(alphabet.size(), -1);
         for (int c = 0; c < static_cast<int>(alphabet.size()); ++c) {
-            if (dumpPath != nullptr) RestoreWindow(g_dump.windows[node.id]);
+            if (dumping) RestoreWindow(g_dump.windows[node.id]);
             else Restore(node.state);
             g_asan.clear();
             Apply(alphabet[c]);
@@ -542,7 +691,7 @@ int Explore(const char* dumpPath) {
                 continue;  // do not explore from a broken state
             }
             std::string s = Snapshot();
-            if (dumpPath != nullptr) {
+            if (dumping) {
                 auto [it, fresh] = ids.emplace(s, static_cast<int>(g_dump.windows.size()));
                 g_dump.next[node.id][c] = it->second;
                 if (fresh) {
@@ -554,12 +703,14 @@ int Explore(const char* dumpPath) {
                 }
             }
             if (seen.insert(s).second) {
-                const int id = dumpPath != nullptr ? ids[s] : 0;
+                const int id = dumping ? ids[s] : 0;
                 queue.push_back({std::move(s), std::move(trace), id});
             }
         }
     }
-    std::printf("explored %zu states, %ld transitions (depth %d, %d bones, %d morphs, frames 0..%d)\n",
+    std::printf("config auto interpolation %d, physics checkbox %d, mode %d:\n"
+                "explored %zu states, %ld transitions (depth %d, %d bones, %d morphs, frames 0..%d)\n",
+                g_config.autoInterpolation, g_config.physicsCheckbox, g_config.mode,
                 seen.size(), transitions, kDepth, kBones, kMorphs, kFrames - 1);
     if (bounded) std::printf("cut at tracked-window bound: %ld transitions\n", bounded);
     for (const auto& [kind, trace] : violations) {
@@ -568,16 +719,11 @@ int Explore(const char* dumpPath) {
         for (std::size_t i = 0; i < trace.size(); ++i)
             std::printf("    %zu. %s\n", i + 1, Describe(alphabet[trace[i]]).c_str());
     }
-    if (dumpPath != nullptr && violations.empty()) {
-        std::FILE* f = std::fopen(dumpPath, "w");
-        if (f == nullptr) {
-            std::fprintf(stderr, "cannot write %s\n", dumpPath);
-            return 1;
-        }
-        WriteDump(f, alphabet);
-        std::fclose(f);
-        std::printf("state dump: %zu states written to %s\n", g_dump.windows.size(), dumpPath);
+    if (dumping && violations.empty()) {
+        WriteDumpSection(dump);
+        std::printf("state dump: %zu states written\n", g_dump.windows.size());
     }
+    std::printf("\n");
     return violations.empty() ? 0 : 1;
 }
 
@@ -596,6 +742,7 @@ int OverflowRuns() {
                  RegisterMorphKeyCurrent(g_model, 0, f);
          }, kPasteMorph},
     };
+    g_config = kConfigs[0];
     for (const Run& run : runs) {
         BuildModel();
         g_asan.clear();
@@ -609,6 +756,26 @@ int OverflowRuns() {
     return failures;
 }
 
+// A known C++ finding, kept out of the search by BuildModel's pad record:
+// with the bone table sized as the loaders size it, pasting one display key
+// reads bones[-1] (RegisterDisplayKeyFromRecord, the selector loop, for the
+// root selector whose bone index is -1). Returns 1 when the read is seen.
+int FindingRun() {
+    g_config = kConfigs[0];
+    BuildModel(true);
+    g_asan.clear();
+    Paste(kPasteDisplay, 0, 1);
+    if (g_asan.empty()) {
+        std::printf("\nroot selector of a pasted display key: ok\n");
+        return 0;
+    }
+    std::printf("\nKNOWN C++ FINDING: %s\n"
+                "  RegisterDisplayKeyFromRecord reads bones[-1] for the root selector\n"
+                "  shortest trace from a freshly loaded model:\n    1. %s\n",
+                g_asan.c_str(), Describe({kPasteDisplay, 0, 1}).c_str());
+    return 1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -618,9 +785,33 @@ int main(int argc, char** argv) {
         else kDepth = std::atoi(argv[i]);
     }
     __asan_set_error_report_callback(OnAsanReport);
-    BuildModel();
-    int status = Explore(dumpPath);
+    // The dump is written to a temporary file and renamed only on a pass.
+    const std::string tmpPath = dumpPath != nullptr ? std::string(dumpPath) + ".tmp" : "";
+    std::FILE* dump = nullptr;
+    if (dumpPath != nullptr) {
+        dump = std::fopen(tmpPath.c_str(), "w");
+        if (dump == nullptr) {
+            std::fprintf(stderr, "cannot write %s\n", tmpPath.c_str());
+            return 1;
+        }
+        WriteDumpHeader(dump, Alphabet());
+    }
+    int status = 0;
+    for (const Config& c : kConfigs) {
+        g_config = c;
+        if (Explore(dump) != 0) status = 1;
+    }
+    if (dump != nullptr) {
+        std::fclose(dump);
+        if (status == 0 && std::rename(tmpPath.c_str(), dumpPath) == 0)
+            std::printf("state dump written to %s\n", dumpPath);
+        else
+            std::remove(tmpPath.c_str());
+    }
     if (OverflowRuns() != 0) status = 1;
-    std::printf("\nresult: %s\n", status == 0 ? "PASS" : "FAIL");
+    const int findings = FindingRun();
+    if (status != 0) std::printf("\nresult: FAIL\n");
+    else if (findings != 0) std::printf("\nresult: PASS, with %d known C++ finding (above)\n", findings);
+    else std::printf("\nresult: PASS\n");
     return status;
 }

@@ -27,34 +27,52 @@ handler:
 
 | Harness command | Real code it replays |
 |---|---|
-| paste bone/morph/display key | `PasteSelectedKeyframes`, `src/window/frame_clipboard.cpp:506-769`: clear marks, `ResetBoneKeyCursor` + `RegisterBoneKey`, `ResetMorphKeyCursor` + `RegisterMorphKeyFromRecord`, `ResetDisplayKeyCursor` + `RegisterDisplayKeyFromRecord`. VMD load (`vmd_load.cpp`) and frame-range apply use the same reset-then-register shape. |
-| register button: boneN | case 500 (`kRegisterFrameButton`), `src/window/command_frame_register.cpp:375` → `RegisterSelectedBoneKeys` → `RegisterBonePoseAtFrame` |
+| paste bone/morph/display key | `PasteSelectedKeyframes`, `src/window/frame_clipboard.cpp:506-769`: clear marks, `ResetBoneKeyCursor` + `RegisterBoneKey`, `ResetMorphKeyCursor` + `RegisterMorphKeyFromRecord`, `ResetDisplayKeyCursor` + `RegisterDisplayKeyFromRecord`. VMD load (`vmd_load.cpp`) and frame-range apply use the same reset-then-register shape. The display key is what the copy step builds: the IK bone's flag, selector 0 under the root name ルート, and selector 1 under bone0's name, with pairs that need no slot fixup. |
+| reverse paste boneN | command 422, `PasteMirroredBoneKeyframes`, `frame_clipboard.cpp:782-862`: clear marks, open an undo slot, `ResetBoneKeyCursor`, `RegisterMirroredBoneKey` |
+| paste a bone key to selected boneN | `MDS_CMD_PASTE_AT_DIFFERENT_FRAME`, `command_file_menu.cpp:1494-1593`: clear marks, open an undo slot, `ResetBoneKeyCursor`, `RegisterBoneKey(..., 1)` with `selectedBone = N` |
+| register button: boneN | case 500 (`kRegisterFrameButton`), `src/window/command_frame_register.cpp:375` → `RegisterSelectedBoneKeys(model, frame, mode = PlaybackPhysicsMode)` → `RegisterBonePoseAtFrame`. Before it, the physics step leaves a frame-dependent `ikBackup` on bone0. |
 | register morphN | cases 524-527 (`kRegisterMorphButton0-3`), `command_frame_register.cpp:496-543` → `RegisterMorphKeyCurrent` |
 | register display key | case 438 (`kRegisterModelDisplayButton`), `command_frame_edit.cpp:1548-1561` → `RegisterDisplayKeyCurrent` |
 | click boneN key | harness stand-in for a timeline click: clear marks, set `allocated = 1` on that key |
 | delete selected keys | `DeleteMarkedModelKeys` |
 
 The initial state replays `add_model.cpp:57-63` (memset 0, `ModelInitDefaults`,
-so `searchCursor == 0`) and the pool tail of `pmx_load.cpp:1672-1709`.
+so `searchCursor == 0`) and the pool tail of `pmx_load.cpp:1672-1709`. bone0
+(右b) is a Move bone with a rigid body. bone1 (左b) is the IK bone and a
+FixedAxis bone with axis (0.48, 0.6, 0.64) and `trans` (1, 0.25, 0). The two
+names make reverse paste map each bone onto the other. There are two
+selectors: the root (bone -1) and one for bone0, with link (2, 1). One zeroed
+bone record sits in front of the bone table, because the display paste reads
+`bones[-1]` (see the baseline). The pad is a name that matches nothing, so
+that read does not mask the pool checks.
+
+The search runs once per configuration of (auto-interpolation checkbox 530,
+physics checkbox 499, mode): {0,0,2}, {1,1,2}, {1,0,1}, {0,1,0}. Together they
+reach every arm of the physics-pose test in `RegisterBonePoseAtFrame`. The
+shim reads checkboxes from `g_checked`. The D3DX stand-in uses mds-math's
+arithmetic and the RSQRT table that `run.sh` extracts from
+`rust/crates/mds-math/src/estimate_table.rs`. The build uses
+`-ffp-contract=off`, because Apple clang fuses `a*b+c` and MSVC x64 does not.
 
 Two pool-full runs follow the search. Each fills the display pool (1000) or
 the morph pool (20000) with its own-scan registrar, then pastes one key.
 
 ## Scope and bounds
 
-- Verified: 2 bones, 2 morphs, 1 IK chain, 1 bone-order entry, frames 0..2,
-  every command sequence up to depth 4 (10989 states, 83509 transitions;
-  depth 5: 43703 states).
+- Verified: 2 bones, 2 morphs, 1 IK chain, 2 selectors, frames 0..2, 49
+  commands, every command sequence up to depth 4 in each of the 4
+  configurations (12319 states and 121814 transitions per configuration, 0
+  cut; depth 5: 50023 states and 603631 transitions per configuration).
   Each pool is tracked over its first 24 records. A state whose cursor or
   links leave that window is cut and counted ("bound, not a finding").
 - Layout: x64 only (`-D_M_X64 -D_WIN64 -fshort-wchar` on clang). The x86
   layout (`kBoneKeyCapacity` 300000) is not built.
 - Not covered: undo/redo record restore (`UndoModelEdit`/`RedoModelEdit`),
-  `RegisterMirroredBoneKey`, `RegisterBoneKey` with `useSelected = 1`, the
-  fixed-axis twist branch (needs D3DX), bones with rigid bodies, auto
-  interpolation (the shim reads every checkbox as unchecked),
   `MarkRedundantModelKeys`, the VMD byte parser itself, the bone pool at
-  capacity, and multi-key pastes.
+  capacity, multi-key pastes, the PMD twist-axis normalize (the harness model
+  is PMX), the effects of `NotifyBonePhysicsMode` on the physics engine (a
+  stub here), mode 3 (it takes mode 2's branch), and the paste slot fixup for
+  `modelIndex >= 0`.
 - Not modeled as commands, though they call the covered registrars:
   `vsq_load.cpp`, `command_file_menu.cpp`, `dialog_select_ops.cpp`,
   `oni_skeleton_pump.cpp`, `audio_pose_helpers.cpp`, `frame_line_edit.cpp`,
@@ -64,12 +82,14 @@ the morph pool (20000) with its own-scan registrar, then pastes one key.
 ## Run
 
 ```sh
-tools/keypool_check/run.sh        # depth 4, about 20 s on an M-series Mac
-tools/keypool_check/run.sh 5      # deeper, about 75 s
+tools/keypool_check/run.sh        # depth 4, about 2.5 min on an M-series Mac
+tools/keypool_check/run.sh 5      # deeper, about 15-20 min
 ```
 
 Needs `clang++` with AddressSanitizer. Confirmed with Apple clang 21.0.0.
 Exit 0 means PASS; exit 1 prints each violation once with its shortest trace.
+A known C++ finding prints above the result line and keeps exit 0
+(`result: PASS, with 1 known C++ finding`).
 Full ASan reports go to `${TMPDIR:-/tmp}/keypool_check/asan.log`.
 
 `run.sh 4 --dump FILE` also writes every explored state with its operation
@@ -85,6 +105,16 @@ tools/keypool_check/run.sh 4 --dump rust/crates/mds-edit/tests/data/keypool-dept
 
 At the sync commit the check PASSES: no violation at depth 4 or 5, and both
 pool-full runs print `ok`. Any violation is a new problem.
+
+One known C++ finding is reported and not fixed: pasting a display key reads
+`bones[-1]` in `RegisterDisplayKeyFromRecord`, in the selector loop, for the
+root selector (`key_registrars.cpp:738`, the strcmp). The loaders allocate
+exactly `boneCount` bone records (`pmx_load.cpp:736`), and `bone_sort.cpp:46`
+gives selector 0 the bone index -1. Shortest trace: "1. paste display key at
+frame 1". `run.sh` sets ASan `redzone=1024` so the read lands in a redzone,
+and a separate finding run allocates the bone table as the loaders do.
+`mds-edit` matches the root selector against no entry, which is what the C++
+does in practice.
 
 These earlier findings are fixed. If one comes back, a change undid its fix:
 
@@ -108,7 +138,12 @@ Run the check if the diff touches any of these:
   `RegisterDisplayKeyFromRecord`, `RegisterDisplayKeyCurrent`.
 - `src/model/model_keyframe_edit.cpp`: `AppendBoneKeyToUndo`,
   `RegisterBonePoseAtFrame`, `RegisterSelectedBoneKeys`,
-  `DeleteMarkedModelKeys`, `ResetDisplayKeyCursor`.
+  `DeleteMarkedModelKeys`, `ResetDisplayKeyCursor`, `RegisterMirroredBoneKey`,
+  `FindMirroredBone`, `RebuildBoneInterpolation`.
+- `src/window/command_file_menu.cpp` (paste to selected bone),
+  `src/model/bone_sort.cpp` (selector bones),
+  `include/mikudancestudio/bone_layout.hpp`, and
+  `include/mikudancestudio/panel_controls.hpp` (checkbox ids).
 - `src/model/model_init.cpp`: `ModelInitDefaults`.
 - `include/mikudancestudio/model.hpp` (`BoneKey`, `MorphKey`, `DisplayKey`,
   capacities) and `include/mikudancestudio/model_layout.hpp` (`searchCursor`).
@@ -122,7 +157,7 @@ Run the check if the diff touches any of these:
 List what changed in the covered files since the sync commit:
 
 ```sh
-git diff --stat 9367de3 -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp include/mikudancestudio/ported_funcs.hpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp src/model/pmd_load.cpp
+git diff --stat 7b847da -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp include/mikudancestudio/ported_funcs.hpp include/mikudancestudio/bone_layout.hpp include/mikudancestudio/panel_controls.hpp src/window/command_file_menu.cpp src/model/bone_sort.cpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp src/model/pmd_load.cpp
 ```
 
 Use the sync commit from the coverage record below as the base.
@@ -159,7 +194,7 @@ here together.
 
 ## Coverage record
 
-Sync commit: `9367de3`. The verification was last confirmed to describe the
+Sync commit: `7b847da`. The verification was last confirmed to describe the
 files and functions listed under "Does my change touch the verified code?" at
 this commit.
 

@@ -10,12 +10,24 @@
 //! load (settle requested, no time passed) and `ArmFrameStep`: trace
 //! frame 0. [`PhysicsScene::step`] is one frame-step pass at 30 fps.
 //!
+//! The interactive application keeps one world alive instead:
+//! [`PhysicsScene::open`] is the load alone, and each pump of the window
+//! (`FrameDriver`, `src/app/frame_driver.cpp`) is one [`PhysicsScene::tick`]
+//! while stopped or one [`PhysicsScene::catch_up`] while playing. Seeks,
+//! frame steps, play, stop, loop and the physics reset only change the
+//! state the next pump reads: the key pose, the settle request
+//! (`PhysicsResetPending`) and the playback cursor.
+//!
 //! Sources: `src/physics/physics_frame.cpp`, `src/app/playback_catchup.cpp`,
-//! `src/physics/physics_create.cpp`, `src/io/pmm_load_v2.cpp`.
+//! `src/physics/physics_create.cpp`, `src/io/pmm_load_v2.cpp`,
+//! `src/app/playback_state.cpp`, `src/window/ui_frame_step.cpp`,
+//! `src/window/ui_editor_click.cpp`, `src/window/command_frame_edit.cpp`,
+//! `src/window/command_view_menu.cpp`.
 
 use mds_bullet_sys as sys;
 use mds_formats::pmm::Pmm;
 use mds_math::{Mat4, Quat, Vec3};
+use mds_pose::keys;
 use mds_pose::model::{flag, kind, Model, Rigid};
 use mds_pose::Scene;
 use std::fmt::Write as _;
@@ -43,6 +55,25 @@ impl Drop for World {
     }
 }
 
+/// A world or pose operation, recorded by the unit tests.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Op {
+    Gravity,
+    /// The key application at the cursor (`AdvanceModelKeyframes`).
+    Keys,
+    /// `OrderedMorphPhysicsPass` or a pose pass of `PhysicsFrame`: after
+    /// physics, physics mode.
+    Pose(u8, i32),
+    /// `ModelKinematicSync` of every model.
+    Sync,
+    Step(f32),
+    /// `ModelDynamicReseat` of every model.
+    Reseat,
+    /// `ModelPhysicsReadback` of every model.
+    Readback,
+}
+
 /// MSVC `rand()` with the CRT's default seed 1 (the app never calls `srand`).
 struct MsvcRand(u32);
 
@@ -65,6 +96,12 @@ pub struct PhysicsScene {
     moved: bool,
     /// `PlaybackActive`.
     playing: bool,
+    /// `SavedPlaybackPhysicsMode`: the mode that stop and loop restore.
+    saved_mode: i32,
+    /// `playbackAlwaysOnOffMode`, the menu toggle
+    /// `MDS_CMD_TOGGLE_PLAYBACK_PHYSICS_ON_OFF` (`command_view_menu.cpp`):
+    /// playback runs in physics mode 2.
+    pub always_on_off: bool,
     /// `DeltaTime`.
     delta_time: f32,
     /// `g_CatchupDtBudget`: what the main step of `PhysicsFrame` steps.
@@ -75,11 +112,32 @@ pub struct PhysicsScene {
     gravity_noise_enabled: bool,
     gravity_noise_timer: f32,
     rand: MsvcRand,
+    #[cfg(test)]
+    log: std::cell::RefCell<Vec<Op>>,
 }
 
 impl PhysicsScene {
     /// Loads the PMM's models through `read` and sets up trace frame 0.
     pub fn new(
+        pmm: &Pmm,
+        read: impl FnMut(&str) -> Result<Vec<u8>, String>,
+    ) -> Result<PhysicsScene, String> {
+        let mut this = PhysicsScene::open(pmm, read)?;
+        // The first paint after the load runs PhysicsFrame with no time
+        // passed and playback stopped.
+        this.tick(0.0)?;
+        // ArmFrameStep (UpdateBoneFrames clears the frame-changed flag
+        // instead of requesting another settle).
+        this.playing = true;
+        this.delta_time = 1.0 / FPS;
+        this.scene.arm_frame_step();
+        Ok(this)
+    }
+
+    /// The PMM load of the application, stopped, with a settle requested
+    /// (`pmm_load_v2.cpp`, 0x458F43). The first [`tick`](Self::tick) is the
+    /// paint after the load (`wm_paint.cpp`, `FrameDriver`).
+    pub fn open(
         pmm: &Pmm,
         read: impl FnMut(&str) -> Result<Vec<u8>, String>,
     ) -> Result<PhysicsScene, String> {
@@ -92,6 +150,8 @@ impl PhysicsScene {
         let p = &pmm.physics;
         let mut this = PhysicsScene {
             bodies: vec![Vec::new(); scene.models.len()],
+            saved_mode: scene.physics_mode,
+            always_on_off: false,
             scene,
             world,
             settle: false,
@@ -105,6 +165,8 @@ impl PhysicsScene {
             gravity_noise_enabled: p.gravity_noise_enabled == 1,
             gravity_noise_timer: 0.0,
             rand: MsvcRand(1),
+            #[cfg(test)]
+            log: Default::default(),
         };
         // The loaders build bodies and joints model by model in PMM order.
         let mut uid = 0;
@@ -124,18 +186,10 @@ impl PhysicsScene {
         let mag = this.gravity_magnitude;
         this.set_gravity(n.map(|n| (n * mag) * 10.0))?;
         // RestoreScenePhysics.
-        for m in 0..this.bodies.len() {
-            this.kinematic_sync(m)?;
-        }
-        // The PMM load tail requests a settle; the first paint after it runs
-        // PhysicsFrame with no time passed and playback stopped.
+        this.sync_all()?;
         this.settle = true;
-        this.physics_frame()?;
-        // ArmFrameStep (UpdateBoneFrames clears the frame-changed flag
-        // instead of requesting another settle).
-        this.playing = true;
-        this.delta_time = 1.0 / FPS;
-        this.scene.arm_frame_step();
+        #[cfg(test)]
+        this.log.borrow_mut().clear();
         Ok(this)
     }
 
@@ -226,7 +280,13 @@ impl PhysicsScene {
         Ok(())
     }
 
+    fn note(&self, _op: Op) {
+        #[cfg(test)]
+        self.log.borrow_mut().push(_op);
+    }
+
     fn set_gravity(&self, g: [f32; 3]) -> Result<(), String> {
+        self.note(Op::Gravity);
         self.push_kinematic_flags()?;
         // SAFETY: the world is live.
         check(
@@ -236,6 +296,7 @@ impl PhysicsScene {
     }
 
     fn world_step(&self, dt: f32) -> Result<(), String> {
+        self.note(Op::Step(dt));
         self.push_kinematic_flags()?;
         // SAFETY: the world is live.
         check(
@@ -284,27 +345,182 @@ impl PhysicsScene {
         Ok(())
     }
 
+    fn sync_all(&self) -> Result<(), String> {
+        self.note(Op::Sync);
+        (0..self.bodies.len()).try_for_each(|m| self.kinematic_sync(m))
+    }
+
+    fn reseat_all(&self) -> Result<(), String> {
+        self.note(Op::Reseat);
+        (0..self.bodies.len()).try_for_each(|m| self.dynamic_reseat(m))
+    }
+
+    fn readback_all(&mut self) -> Result<(), String> {
+        self.note(Op::Readback);
+        for (model, bodies) in self.scene.models.iter_mut().zip(&self.bodies) {
+            readback(model, bodies)?;
+        }
+        Ok(())
+    }
+
+    fn pose(&mut self, after: u8, physics_mode: i32) {
+        self.note(Op::Pose(after, physics_mode));
+        self.scene.ordered_pass(after, physics_mode);
+    }
+
+    fn advance_keys(&mut self) {
+        self.note(Op::Keys);
+        self.scene.advance_keys();
+    }
+
+    /// `SeekModelFrame` of every model at `frame`.
+    fn seek_models(&mut self, frame: u32) {
+        let mode = self.scene.physics_mode;
+        for model in &mut self.scene.models {
+            keys::seek_model_frame(model, frame, mode);
+        }
+    }
+
+    /// `UpdateBoneFrames` (`playback_state.cpp`): the track cursors at the
+    /// playback cursor, and a settle unless the frame did not change.
+    fn update_bone_frames(&mut self, frame_changed: bool) {
+        self.saved_mode = self.scene.physics_mode;
+        if self.always_on_off {
+            self.scene.physics_mode = 2;
+        }
+        let (cursor, mode) = (self.scene.cursor, self.scene.physics_mode);
+        for model in &mut self.scene.models {
+            keys::init_track_cursors(model, cursor, mode);
+        }
+        if !frame_changed {
+            self.settle = true;
+        }
+    }
+
     /// One frame-step pass at 30 fps: `PlaybackCatchup` then `PhysicsFrame`.
     pub fn step(&mut self) -> Result<(), String> {
-        let count = self.scene.physics_mode;
         self.budget = 1.0 / FPS;
         let target = self.scene.next_target();
+        self.catch_up_to(target)
+    }
+
+    /// BLOCK 1 or 2 of `PlaybackCatchup` with no model skipped (the skip
+    /// needs a Kinect selection): 1/60 s substeps while the cursor is behind
+    /// `target`, each paid from the budget, then the keys at `target` and
+    /// `PhysicsFrame`.
+    fn catch_up_to(&mut self, target: f32) -> Result<(), String> {
+        let count = self.scene.physics_mode;
         if count >= 1 {
             self.scene.cursor += SUBSTEP;
             while self.scene.cursor < target {
-                self.scene.advance_keys();
-                self.scene.ordered_pass(0, count);
-                for m in 0..self.bodies.len() {
-                    self.kinematic_sync(m)?;
-                }
+                self.advance_keys();
+                self.pose(0, count);
+                self.sync_all()?;
                 self.world_step(SUBSTEP)?;
                 self.budget -= SUBSTEP;
                 self.scene.cursor += SUBSTEP;
             }
         }
         self.scene.cursor = target;
-        self.scene.advance_keys();
+        self.advance_keys();
         self.physics_frame()
+    }
+
+    /// One pump while stopped: `PlaybackCatchup` leaves the budget at the
+    /// pump's `delta_time` (`playback_catchup.cpp`, 0x46EFDE) and returns,
+    /// then `PhysicsFrame`. The caller skips the pump while the message
+    /// counter of `PhysicsFrame` gate A is 0.
+    pub fn tick(&mut self, delta_time: f32) -> Result<(), String> {
+        if self.playing {
+            return Err("tick while playing".into());
+        }
+        self.delta_time = delta_time;
+        self.budget = delta_time;
+        self.physics_frame()
+    }
+
+    /// One pump while playing with `target` (start plus wall clock) not past
+    /// the end: BLOCK 2 of `PlaybackCatchup` (0x46F3D6), then
+    /// `PhysicsFrame`.
+    pub fn catch_up(&mut self, target: f32, delta_time: f32) -> Result<(), String> {
+        if !self.playing {
+            return Err("catch_up while stopped".into());
+        }
+        self.delta_time = delta_time;
+        self.budget = delta_time;
+        self.catch_up_to(target)
+    }
+
+    /// One pump while playing whose target passed the end with loop on:
+    /// `PlayingBeyondEnd` restarts at `start` seconds (the mode saved at play
+    /// start, `UpdateBoneFrames`, the keys at the start), then `PhysicsFrame`.
+    /// No substeps run in this pump.
+    pub fn loop_restart(&mut self, start: f32, delta_time: f32) -> Result<(), String> {
+        if !self.playing {
+            return Err("loop_restart while stopped".into());
+        }
+        self.delta_time = delta_time;
+        self.budget = delta_time;
+        self.scene.physics_mode = self.saved_mode;
+        self.scene.cursor = start;
+        self.update_bone_frames(false);
+        self.advance_keys();
+        self.physics_frame()
+    }
+
+    /// The play button 408 (`ApplyPlaybackRangeEdits`): the cursor at
+    /// `start` seconds, then `UpdateBoneFrames`. `frame_changed` is the
+    /// C++ `PlaybackFrameChanged`: play starts at the current frame, from
+    /// the current frame or from a start edit equal to it, and then no
+    /// settle is requested.
+    pub fn start_playback(&mut self, start: f32, frame_changed: bool) {
+        self.playing = true;
+        self.scene.cursor = start;
+        self.update_bone_frames(frame_changed);
+    }
+
+    /// `StopPlayback` (`playback_state.cpp`), from the play button or past
+    /// the end with loop off: the saved physics mode back, every model at
+    /// `frame` (the current frame after the stop) and a settle. The same
+    /// pump's `PhysicsFrame` is the caller's next [`tick`](Self::tick).
+    pub fn stop_playback(&mut self, frame: u32) {
+        self.playing = false;
+        self.scene.physics_mode = self.saved_mode;
+        self.seek_models(frame);
+        self.settle = true;
+    }
+
+    /// A jump to `frame` while stopped: the frame strip click
+    /// (`ui_editor_click.cpp`, `HandleLButtonDown_FrameStripHit`) and
+    /// `RefreshAfterFrameApply` (`ui_frame_step.cpp`) seek every model and
+    /// request a settle.
+    pub fn seek(&mut self, frame: u32) {
+        self.seek_models(frame);
+        self.settle = true;
+    }
+
+    /// `StepFrame` (`ui_frame_step.cpp`, commands 418 and 419) to `frame`:
+    /// every model seeks, and the settle request follows `RefreshTimeline`.
+    /// Forward sets it to physics mode 3, clearing a pending settle in the
+    /// other modes; back requests one in mode 3 and leaves it otherwise.
+    pub fn step_frame(&mut self, frame: u32, forward: bool) {
+        self.seek_models(frame);
+        let mode3 = self.scene.physics_mode == 3;
+        if forward {
+            self.settle = mode3;
+        } else if mode3 {
+            self.settle = true;
+        }
+    }
+
+    /// The physics reset menu 268 (`MDS_CMD_RESET_PHYSICS_BODIES`,
+    /// `command_view_menu.cpp`): the next pump settles.
+    pub fn reset(&mut self) {
+        self.settle = true;
+    }
+
+    pub fn playing(&self) -> bool {
+        self.playing
     }
 
     /// `PhysicsFrame` with no model selected.
@@ -334,13 +550,11 @@ impl PhysicsScene {
             }
         }
         let pose_mode = if self.settle { 0 } else { count };
-        self.scene.ordered_pass(0, pose_mode);
+        self.pose(0, pose_mode);
         let run =
             count == 1 || count == 2 || (count == 3 && (self.moved || self.settle || self.playing));
         if run {
-            for m in 0..self.bodies.len() {
-                self.kinematic_sync(m)?;
-            }
+            self.sync_all()?;
             let extra = self.moved && count == 3;
             self.world_step(if extra { SUBSTEP } else { self.budget })?;
             if extra {
@@ -348,19 +562,15 @@ impl PhysicsScene {
             }
             if self.settle {
                 for _ in 0..3 {
-                    for m in 0..self.bodies.len() {
-                        self.dynamic_reseat(m)?;
-                    }
+                    self.reseat_all()?;
                     self.world_step(SUBSTEP)?;
                 }
                 self.settle = false;
             }
-            for m in 0..self.bodies.len() {
-                readback(&mut self.scene.models[m], &self.bodies[m])?;
-            }
+            self.readback_all()?;
             self.moved = false;
         }
-        self.scene.ordered_pass(1, count);
+        self.pose(1, count);
         Ok(())
     }
 
@@ -567,7 +777,263 @@ fn readback(model: &mut Model, bodies: &[*mut sys::mds_mmd_body]) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
-    use super::MsvcRand;
+    use super::Op::{self, *};
+    use super::{MsvcRand, PhysicsScene, SUBSTEP};
+    use mds_formats::pmm::Pmm;
+    use std::path::PathBuf;
+
+    /// swing600.pmm in physics `mode`, gravity noise off.
+    fn open(mode: u8) -> PhysicsScene {
+        open_with(mode, 0)
+    }
+
+    fn open_with(mode: u8, noise: u8) -> PhysicsScene {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/rust");
+        let mut pmm = Pmm::read(&std::fs::read(dir.join("swing600.pmm")).unwrap()).unwrap();
+        pmm.physics.playback_mode = mode;
+        pmm.physics.gravity_noise_enabled = noise;
+        PhysicsScene::open(&pmm, |p| {
+            std::fs::read(dir.join(p)).map_err(|e| format!("{p}: {e}"))
+        })
+        .unwrap()
+    }
+
+    fn ops(s: &PhysicsScene) -> Vec<Op> {
+        s.log.take()
+    }
+
+    /// `PhysicsFrame` with the world pass: gravity (0x46F7D9), the pose pass
+    /// (0x46FCB1, mode 0 while a settle is pending), the kinematic sync
+    /// (0x46FD4D), the main step of the budget, with a settle three reseats
+    /// each followed by a 1/60 step (0x46FDF7, 0x46FE0C), the readback
+    /// (0x46FE49) and the second pose pass (0x46FE93).
+    fn world_pass(mode: i32, budget: f32, settle: bool) -> Vec<Op> {
+        let mut v = vec![
+            Gravity,
+            Pose(0, if settle { 0 } else { mode }),
+            Sync,
+            Step(budget),
+        ];
+        if settle {
+            for _ in 0..3 {
+                v.extend([Reseat, Step(SUBSTEP)]);
+            }
+        }
+        v.extend([Readback, Pose(1, mode)]);
+        v
+    }
+
+    /// One substep of BLOCK 2 (`playback_catchup.cpp`, 0x46F416..0x46F55C).
+    fn substep(mode: i32) -> [Op; 4] {
+        [Keys, Pose(0, mode), Sync, Step(SUBSTEP)]
+    }
+
+    #[test]
+    fn stopped_pumps_step_the_world_by_the_pump_time() {
+        // `PhysicsFrame` gate `count == 1 || count == 2`; the budget is the
+        // pump's `deltaTime` (`PlaybackCatchup`, 0x46EFDE, returning at
+        // `PlaybackActive() == 0`).
+        for mode in [1, 2] {
+            let mut s = open(mode as u8);
+            s.tick(0.0).unwrap();
+            assert_eq!(ops(&s), world_pass(mode, 0.0, true), "mode {mode}");
+            s.tick(0.02).unwrap();
+            assert_eq!(ops(&s), world_pass(mode, 0.02, false), "mode {mode}");
+        }
+    }
+
+    #[test]
+    fn the_wind_timer_runs_on_the_pump_time() {
+        // The noise block (0x46F582): the timer adds `DeltaTime` and a new
+        // gravity fires when it is strictly above 0.5, replacing the normal
+        // per-pass gravity.
+        let mut s = open_with(2, 1);
+        s.tick(0.0).unwrap();
+        ops(&s);
+        s.tick(0.25).unwrap();
+        s.tick(0.25).unwrap();
+        assert!(!ops(&s).contains(&Gravity));
+        s.tick(0.01).unwrap();
+        assert_eq!(ops(&s), world_pass(2, 0.01, false));
+        assert_eq!(s.gravity_noise_timer, 0.0);
+    }
+
+    #[test]
+    fn mode_3_steps_while_stopped_only_to_settle() {
+        // `count == 3 && (moved || settle || frameAdv)`.
+        let mut s = open(3);
+        s.tick(0.0).unwrap();
+        assert_eq!(ops(&s), world_pass(3, 0.0, true));
+        s.tick(0.02).unwrap();
+        assert_eq!(ops(&s), [Gravity, Pose(0, 3), Pose(1, 3)]);
+    }
+
+    #[test]
+    fn physics_off_only_poses_and_keeps_the_settle_request() {
+        // `count > 0` gates gravity; the request clears only inside the
+        // world pass (0x46FE2D).
+        let mut s = open(0);
+        s.tick(0.02).unwrap();
+        assert_eq!(ops(&s), [Pose(0, 0), Pose(1, 0)]);
+        assert!(s.settle);
+    }
+
+    #[test]
+    fn a_seek_settles_on_the_next_pump_only() {
+        // HandleLButtonDown_FrameStripHit and RefreshAfterFrameApply end
+        // with `PhysicsResetPending() = 1`.
+        let mut s = open(2);
+        s.tick(0.0).unwrap();
+        ops(&s);
+        s.seek(10);
+        s.tick(0.02).unwrap();
+        assert_eq!(ops(&s), world_pass(2, 0.02, true));
+        s.tick(0.02).unwrap();
+        assert_eq!(ops(&s), world_pass(2, 0.02, false));
+    }
+
+    #[test]
+    fn frame_steps_settle_by_the_rule_of_refresh_timeline() {
+        // ui_frame_step.cpp RefreshTimeline: forward assigns `mode == 3`,
+        // back sets the request in mode 3 only.
+        let mut s = open(2);
+        s.seek(5);
+        s.step_frame(6, true);
+        assert!(!s.settle, "forward clears a pending settle in mode 2");
+        s.step_frame(5, false);
+        assert!(!s.settle);
+        s.seek(5);
+        s.step_frame(4, false);
+        assert!(s.settle, "back keeps a pending settle");
+
+        let mut s = open(3);
+        s.tick(0.0).unwrap();
+        s.step_frame(1, true);
+        assert!(s.settle);
+        s.tick(0.0).unwrap();
+        s.step_frame(0, false);
+        assert!(s.settle);
+    }
+
+    #[test]
+    fn playback_substeps_are_paid_from_the_pump_time() {
+        // BLOCK 2: cursor += 1/60, then a substep while cursor < target,
+        // each `g_CatchupDtBudget -= 1/60` (x64 0x7FF7CB44BE57); the main
+        // step takes what is left, negative here as in the C++.
+        let mut s = open(2);
+        s.tick(0.0).unwrap();
+        s.start_playback(0.0, true);
+        ops(&s);
+        let (target, dt) = (3.5 * SUBSTEP, 0.03);
+        s.catch_up(target, dt).unwrap();
+        let mut budget = dt;
+        let mut expected = Vec::new();
+        for _ in 0..3 {
+            expected.extend(substep(2));
+            budget -= SUBSTEP;
+        }
+        assert!(budget < 0.0);
+        expected.push(Keys);
+        expected.extend(world_pass(2, budget, false));
+        assert_eq!(ops(&s), expected);
+        assert_eq!(s.scene.cursor, target);
+    }
+
+    #[test]
+    fn mode_3_playback_steps_every_pump() {
+        // `frameAdv` (`PlaybackActive`) opens the mode 3 world pass.
+        let mut s = open(3);
+        s.tick(0.0).unwrap();
+        s.start_playback(0.0, true);
+        ops(&s);
+        s.catch_up(SUBSTEP, 0.02).unwrap();
+        let mut expected = vec![Keys];
+        expected.extend(world_pass(3, 0.02, false));
+        assert_eq!(ops(&s), expected);
+    }
+
+    #[test]
+    fn physics_off_playback_has_no_substeps() {
+        // BLOCK 2 is gated on `count >= 1`.
+        let mut s = open(0);
+        s.start_playback(0.0, true);
+        s.catch_up(0.1, 0.1).unwrap();
+        assert_eq!(ops(&s), [Keys, Pose(0, 0), Pose(1, 0)]);
+        assert_eq!(s.scene.cursor, 0.1);
+    }
+
+    #[test]
+    fn play_start_settles_unless_the_frame_is_unchanged() {
+        // UpdateBoneFrames: `PlaybackFrameChanged` clears instead of
+        // requesting a settle (playback_state.cpp, 0x433A40).
+        let mut s = open(2);
+        s.tick(0.0).unwrap();
+        s.start_playback(1.0, false);
+        assert!(s.settle && s.playing());
+        assert_eq!(s.scene.cursor, 1.0);
+        let mut s = open(2);
+        s.tick(0.0).unwrap();
+        s.start_playback(1.0, true);
+        assert!(!s.settle);
+    }
+
+    #[test]
+    fn always_on_off_plays_in_mode_2() {
+        // UpdateBoneFrames saves the mode and switches to 2; StopPlayback and
+        // the loop restart put the saved mode back first.
+        let mut s = open(3);
+        s.always_on_off = true;
+        s.start_playback(0.0, true);
+        assert_eq!(s.scene.physics_mode, 2);
+        s.loop_restart(0.0, 0.02).unwrap();
+        assert_eq!(s.scene.physics_mode, 2);
+        s.stop_playback(0);
+        assert_eq!(s.scene.physics_mode, 3);
+    }
+
+    #[test]
+    fn a_loop_restart_settles_with_no_substeps() {
+        // PlayingBeyondEnd: cursor = start, UpdateBoneFrames (the flag was
+        // consumed at play start), PlaybackPoseAdvance(0), no BLOCK 2.
+        let mut s = open(2);
+        s.tick(0.0).unwrap();
+        s.start_playback(0.0, true);
+        s.catch_up(0.5, 0.5).unwrap();
+        ops(&s);
+        s.loop_restart(0.0, 0.02).unwrap();
+        let mut expected = vec![Keys];
+        expected.extend(world_pass(2, 0.02, true));
+        assert_eq!(ops(&s), expected);
+        assert_eq!(s.scene.cursor, 0.0);
+    }
+
+    #[test]
+    fn a_stop_settles_on_the_next_stopped_pump() {
+        // StopPlayback ends with `PhysicsResetPending() = 1`; the pump of a
+        // stop past the end runs PhysicsFrame with PlaybackActive cleared.
+        let mut s = open(2);
+        s.tick(0.0).unwrap();
+        assert!(s.catch_up(0.1, 0.1).is_err());
+        s.start_playback(0.0, true);
+        assert!(s.tick(0.02).is_err());
+        s.catch_up(0.1, 0.1).unwrap();
+        s.stop_playback(3);
+        assert!(!s.playing());
+        ops(&s);
+        s.tick(0.02).unwrap();
+        assert_eq!(ops(&s), world_pass(2, 0.02, true));
+    }
+
+    #[test]
+    fn the_reset_menu_settles() {
+        // Menu 268: `PhysicsResetPending() = 1`.
+        let mut s = open(2);
+        s.tick(0.0).unwrap();
+        s.reset();
+        ops(&s);
+        s.tick(0.02).unwrap();
+        assert_eq!(ops(&s), world_pass(2, 0.02, true));
+    }
 
     #[test]
     fn rand_is_the_msvc_sequence() {

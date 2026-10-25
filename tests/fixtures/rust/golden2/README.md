@@ -173,7 +173,7 @@ a `D3DMATERIAL9`). The format is in `src/tools/trace_mode.cpp`.
 | `gen_golden2.py` | `29f23d6b5b56e292c206afcc4092931e972d7f44abacbbd6cf9f5f50d2e72656` |
 | `groundshadow-0.png` | `52f289d606cbd3c05127639c0606b3b2fe5f2c82d8e43202e45a5237ee7bb19f` |
 | `groundshadow-30.png` | `a552bf547f309d8b447b7ebfa3c4d174bca1938aa2b9ee412ec16f9ecf05d445` |
-| `groundshadow.edge.txt` | `9c8fe50342eda0e56bd9a7f088c3ca0246b25a378d086f08003f15486b914bee` |
+| `groundshadow.edge.txt` | `5dd99952328fbf8f1eddd7552435c2ce4d4b04f13b8bc3245ae7d8a8f0cf5f29` |
 | `groundshadow.pmm` | `081ad947aa478ffec077e224b9eca7aed981467a3a1cb9a935619111c0f94ae3` |
 | `perspective-0.png` | `f9650fcb5e7a4a0e6641630c48171aa738a05d882e632007f286b6e35854f1ec` |
 | `perspective-30.png` | `f95b4a111d6e47a4551d869fb03c680c98bfe7022edf8a332fd48648f93f19ea` |
@@ -181,7 +181,7 @@ a `D3DMATERIAL9`). The format is in `src/tools/trace_mode.cpp`.
 | `perspective.pmm` | `c249e5532a165269f416c711ffbed22377cff42f25a6e8ff3f2172fc8c58e847` |
 | `selfshadow-0.png` | `f7cea8df42668486c6f20a7741c8d0fbb196b186841342145fa39e18e7a345f3` |
 | `selfshadow-30.png` | `b3138bb595359253f9d76db0f256eb5a478f4a4c4d65b34dd448f6613127fb2e` |
-| `selfshadow.edge.txt` | `daaf94eabe55367568b92a67d6cb37933a5043b3eb6164aba412d7555b25e0d2` |
+| `selfshadow.edge.txt` | `8afc7b645da82fae58846b4006f578f3567fdae0baf3d53118089d08f8272494` |
 | `selfshadow.pmm` | `98b2adab073ddf3057b3cebf8c8450f1594aac241bf733b444710d18efcdc83e` |
 | `shadow_floor.x` | `adfd3e6fb4b552f6c38eb9b94bc8b75061270e7d24a4933694c73df02e58122c` |
 | `skin-0.png` | `b2a5c0da74e192d85433a74504950636b6826970f06f37a97c04b92d7ab257c4` |
@@ -190,4 +190,4 @@ a `D3DMATERIAL9`). The format is in `src/tools/trace_mode.cpp`.
 | `skin.pmm` | `bd58864a8dcf6aac20b65a62b8cba5c0c7e245a133e1b675d2ed3ee177599c66` |
 | `skin_tex.bmp` | `708f3534771b0d9c5b190205ccc6b6dac70ead99618dbc86c253761274f24260` |
 | `skin_tex.pmx` | `4fc6322df25582ce85d9926915d87d90de6323a5d71ca81991e88f6c51f5a488` |
-| `swing600-golden.edge.txt` | `57b50a40ae64ab7b97b6f0d946fdc7253215a91322e973b9f91c100f3dfa40e4` |
+| `swing600-golden.edge.txt` | `a35d957d642f4f63bbc353614d523f6e95bf23b7f082ae26a3f1b8b78951c9a9` |

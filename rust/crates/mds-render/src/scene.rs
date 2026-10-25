@@ -38,10 +38,11 @@ pub fn pose_of(model: &mds_pose::model::Model) -> Pose {
     }
 }
 
-/// Whether the toon ramp applies at `frame`. The golden images show it darkening the faces turned
-/// from the light only from the frame where the self-shadow key turns to mode 2 (frame 300 of the
-/// fixture) and not before, under mode 1. The light key changes at the same frame, so one scene
-/// cannot say which of the two switches it; this follows the self-shadow mode.
-pub fn toon_at(pmm: &Pmm, frame: u32) -> bool {
+/// Whether the self-shadow track is in mode 2 at `frame`. In the golden images the toon ramp darkens
+/// the faces turned from the light (down to 0.8) from the frame where this becomes true (frame 300
+/// of the fixture) and not while the track is in mode 1. The light key changes at the same frame,
+/// so one scene cannot say whether the mode or the light switches the ramp: the render takes the
+/// mode as the switch (`Frame::toon`) until a second scene says otherwise.
+pub fn self_shadow_mode_2_at(pmm: &Pmm, frame: u32) -> bool {
     evaluate_self_shadow(&pmm.self_shadow, f64::from(frame)).is_some_and(|(mode, _)| mode == 2)
 }

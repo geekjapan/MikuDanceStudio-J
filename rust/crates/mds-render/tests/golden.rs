@@ -211,7 +211,7 @@ fn render_at(gpu: &Gpu, pmm: &Pmm, posed: &[Pose], frame: u32) -> Vec<u8> {
             view: camera.view(W as u32, H as u32),
             light: scene::light_at(pmm, frame).unwrap(),
             background: [255; 4],
-            toon: scene::toon_at(pmm, frame),
+            toon: scene::self_shadow_mode_2_at(pmm, frame),
             models: &models,
             samples: &SAMPLES_8X,
             pixel_offset: PIXEL_OFFSET_D3D9,
@@ -298,7 +298,7 @@ fn score(
     dir: Option<(&std::path::Path, &str)>,
 ) -> Vec<Score> {
     let gold = golden(frame);
-    let mut diff = vec![255u8; W * H * 4];
+    let mut diff: Vec<u8> = [255, 0, 255, 255].repeat(W * H);
     let mut scores = Vec::new();
     for part in parts {
         let (mut n, mut close, mut max, mut sum) = (0, 0, 0u8, 0u64);
@@ -402,14 +402,16 @@ fn later_frames_with_the_recorded_pose() {
     let Some(gpu) = gpu_or_skip() else { return };
     let pmm = golden_pmm(2);
     let trace = std::fs::read_to_string(fixtures().join("l2/swing600-600.trace")).unwrap();
-    // Slot 1 has no rigid body: its pose is exact, so it compares strictly. Slot 2 and, until
-    // frame 300, slot 0 move like the golden ones apart from sub-pixel and few-pixel offsets of
-    // the swinging tips, so their interiors compare. Slot 3 is left out, and slot 0 from frame 300.
+    // Slot 1 has no rigid body: its pose is exact, so it compares strictly. So does slot 0 at
+    // frame 150, which the recorded pose reproduces to a rounding step. Slot 2 moves like the
+    // golden one apart from a pixel or two at the swinging tip, so its interior compares. Slot 3
+    // is left out, and slot 0 from frame 300 (the golden PMM has no outside parent link there).
     for (frame, parts) in [
         (
             150,
             vec![
-                part(SLOT_2.start..SLOT_0.end, Form::Interior, TIGHT),
+                part(SLOT_2, Form::Interior, TIGHT),
+                part(SLOT_0, Form::Strict, TIGHT),
                 part(SLOT_1, Form::Strict, TIGHT),
             ],
         ),

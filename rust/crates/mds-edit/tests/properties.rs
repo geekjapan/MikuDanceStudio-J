@@ -3,7 +3,8 @@
 //! A small deterministic generator, so a failure names its seed.
 
 use mds_edit::{
-    BoneClip, BoneInfo, DisplayClip, Error, IkChain, MorphClip, MorphInfo, Rig, Selector, Tracks,
+    BoneClip, BoneInfo, BoneTarget, DisplayClip, Error, Extra, IkChain, MorphClip, MorphInfo, Rig,
+    Selector, Tracks,
 };
 use mds_formats::key_pool::{Key, KeyPool, DISPLAY_KEY_CAPACITY, MORPH_KEY_CAPACITY};
 use mds_formats::pmm::MorphKey;
@@ -403,4 +404,33 @@ fn display_names_pick_the_ik_flag_and_selector_pair() {
     // selector 0 is bone0 (no entry: default), selector 1 is bone2
     assert_eq!(k.selectors, [[-1, 0], [3, 4]]);
     assert_eq!(t.max_frame, 3);
+}
+
+#[test]
+fn reverse_paste_of_an_unsided_name_reflects_onto_the_same_bone() {
+    let rig = rig();
+    let mut t = Tracks::new(&rig);
+    let clip = BoneClip {
+        name: b"bone2".to_vec(),
+        frame: 0,
+        rotation: [0.0, 0.6, 0.0, 0.8],
+        position: [1.0, 2.0, 3.0],
+        physics_disabled: 0,
+        interpolation: [0; 16],
+    };
+    let extra = Extra::default();
+    let none = BoneTarget::Selected(-1);
+    t.paste_bones(&rig, &extra, std::slice::from_ref(&clip), 5, none)
+        .unwrap();
+    assert_eq!(
+        t.bone.records().len(),
+        0,
+        "no selected bone: nothing pasted"
+    );
+    t.paste_bones(&rig, &extra, &[clip], 5, BoneTarget::Mirrored)
+        .unwrap();
+    assert_eq!(frames(&t.bone, 2), [5]);
+    let k = &t.bone.records()[0].1;
+    assert_eq!(k.rotation, [0.0, -0.6, 0.0, 0.8]);
+    assert_eq!(k.position, [-1.0, 2.0, 3.0]);
 }

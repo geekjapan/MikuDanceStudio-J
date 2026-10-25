@@ -68,6 +68,15 @@ Needs `clang++` with AddressSanitizer. Confirmed with Apple clang 21.0.0.
 Exit 0 means PASS; exit 1 prints each violation once with its shortest trace.
 Full ASan reports go to `${TMPDIR:-/tmp}/keypool_check/asan.log`.
 
+`run.sh 4 --dump FILE` also writes every explored state with its operation
+trace. `mds-edit` replays that dump in `cargo test`, so after a change to the
+pools or the commands, regenerate it and rerun the Rust test:
+
+```sh
+tools/keypool_check/run.sh 4 --dump rust/crates/mds-edit/tests/data/keypool-depth4.txt
+(cd rust && cargo test -p mds-edit)
+```
+
 ## Baseline at the sync commit
 
 At the sync commit the check PASSES: no violation at depth 4 or 5, and both

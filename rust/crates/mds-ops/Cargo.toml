@@ -1,0 +1,13 @@
+[package]
+name = "mds-ops"
+description = "Bulk key operations of the MikuDanceStudio menus and dialogs over the PMM key pools (port of the C++ editor commands)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mds-crtmath = { path = "../mds-crtmath" }
+mds-edit = { path = "../mds-edit" }
+mds-formats = { path = "../mds-formats" }
+mds-math = { path = "../mds-math" }

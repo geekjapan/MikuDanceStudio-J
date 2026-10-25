@@ -401,6 +401,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "mds-accessory"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "mds-formats",
+ "mds-math",
+]
+
+[[package]]
 name = "mds-bullet"
 version = "0.1.0"
 dependencies = [
@@ -418,6 +427,15 @@ dependencies = [
 [[package]]
 name = "mds-crtmath"
 version = "0.1.0"
+
+[[package]]
+name = "mds-doc"
+version = "0.1.0"
+dependencies = [
+ "mds-edit",
+ "mds-formats",
+ "mds-pose",
+]
 
 [[package]]
 name = "mds-edit"
@@ -449,11 +467,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-media"
+version = "0.1.0"
+
+[[package]]
 name = "mds-mme"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
  "mds-fx",
+]
+
+[[package]]
+name = "mds-ops"
+version = "0.1.0"
+dependencies = [
+ "mds-crtmath",
+ "mds-edit",
+ "mds-formats",
+ "mds-math",
 ]
 
 [[package]]
@@ -512,7 +544,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-skin"
+version = "0.1.0"
+dependencies = [
+ "mds-formats",
+ "mds-math",
+ "mds-pose",
+]
+
+[[package]]
 name = "mds-trace"
+version = "0.1.0"
+
+[[package]]
+name = "mds-vsq"
 version = "0.1.0"
 
 [[package]]

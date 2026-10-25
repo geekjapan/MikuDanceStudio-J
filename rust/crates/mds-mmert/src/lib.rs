@@ -40,6 +40,7 @@
 //! - Pixel-center alignment: wgpu samples at pixel centers where D3D9 is half a pixel off.
 
 pub mod bind;
+pub mod control;
 pub mod emm;
 mod exec;
 mod gpu;
@@ -71,6 +72,15 @@ impl Effect {
     /// Runs every non-empty technique in scan order on one device, with `SasCreateRunState`,
     /// the step walk to `ScriptExternal`, and the resumed walk, then submits the frame.
     pub fn frame(&mut self, gpu: &Gpu, target: &Target, input: &DrawInput) -> FrameReport {
+        if let Some(c) = input.controls {
+            control::resolve(
+                &self.sas,
+                &mut self.values,
+                c,
+                input.owner,
+                input.offscreen_owner,
+            );
+        }
         let mut dev = Device::new(gpu, self, target);
         // The host's BeginScene clear of the back buffer and its depth stencil.
         dev.clear_main(input.scene.background);

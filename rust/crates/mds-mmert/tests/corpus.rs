@@ -157,6 +157,9 @@ fn check(
             scene: &scene,
             geometry: Some((model, 0)),
             draw_type: mds_mmert::bind::DRAW_OBJECT,
+            controls: None,
+            owner: None,
+            offscreen_owner: None,
         };
         let report = e.frame(gpu, &target, &input);
         let _ = gpu.wait();

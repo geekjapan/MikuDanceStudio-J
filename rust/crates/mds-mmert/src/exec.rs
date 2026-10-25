@@ -21,6 +21,7 @@ use mds_mme::run::S_OK;
 use mds_mme::sas::*;
 
 use crate::bind::{self, Draw};
+use crate::control::Controls;
 use crate::gpu::Gpu;
 use crate::model::{self, Model};
 use crate::resource::{self, Created};
@@ -1013,6 +1014,13 @@ pub struct DrawInput<'a> {
     /// The model and the material subset `Draw=Geometry` draws.
     pub geometry: Option<(&'a Model, usize)>,
     pub draw_type: u8,
+    /// The scene's objects for `CONTROLOBJECT`. `None` leaves those parameters as they are, as
+    /// the plan oracle does.
+    pub controls: Option<&'a Controls>,
+    /// The object the effect is assigned to, an index into `controls`.
+    pub owner: Option<usize>,
+    /// Inside an offscreen turn, the object that carries the offscreen target.
+    pub offscreen_owner: Option<usize>,
 }
 
 /// One technique run: the effect, the device, and the lines the draws write.

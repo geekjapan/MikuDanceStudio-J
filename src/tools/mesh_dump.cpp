@@ -28,10 +28,12 @@
 //                                         type as its 32-bit words in hex)
 //   "f" i i0 i1 i2 attribute             (the index and attribute buffers)
 //   "table" n, then "t" id faceStart faceCount vertexStart vertexCount
-//   "materials" n, then "m" i diffuse.rgba ambient.rgba specular.rgba
+//   "materials" n ["none"], then        ("none": D3DX returned no material buffer)
+//                         "m" i diffuse.rgba ambient.rgba specular.rgba
 //                         emissive.rgba power texture   (D3DXMATERIAL; texture
 //                         is "-" for a null pTextureFilename)
 //   "frames hr" 0x........               (on failure)
+//   "frames unavailable"                 (d3dx9_43.dll lacks the two functions)
 //   "frame" depth name m00 m01 .. m33    (depth first; the matrix row by row)
 //   "container" name "vertices" n "faces" n "materials" n
 //   "record failed" | "record fvf" fvf "options" o "vertices" ... as raw,

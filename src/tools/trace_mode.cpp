@@ -69,6 +69,35 @@
 // Floats are printf "%.9g", which reads back to the same float.
 //
 // --mds-mesh-dump <pmm> <out-dir> <x-file>...  (accgold, wave 3): mesh_dump.cpp.
+//
+// --mds-mme-dump <pmm> <out-dir> <frame>...  (mmegold, wave 3)
+// --mds-frame-dump through the app's MME path: the PMM load notifies the
+// embedded MMEffect (mme::NotifyPmmLoaded), whose first frame autoloads
+// "<pmm dir>\<pmm stem>.emm" and assigns the effects as the MME dialog's EMM
+// load does; models also get a same-name .fx beside them. Unlike
+// --mds-frame-dump every pass is rendered, as AVI recording renders every
+// frame, so ELAPSEDTIME, animated textures, and render targets that carry over
+// see the frames the app would. UpdateBoneFrames (ArmFrameStep) disables the
+// current-frame edit as playback does, so MME runs in its non-edit mode from
+// the first frame and TIME is the timeline time, not the wall clock. Frame 0
+// is rendered once more before the passes so that its ELAPSEDTIME does not
+// come from the wall clock either (RunFrameDump). Each
+// requested frame writes "<out-dir>\<pmm stem>-<frame>.png" and the probe
+// "<out-dir>\<pmm stem>-<frame>.mme.txt" (mme_probe.cpp):
+//   "mds-mme-probe 1" LF, "frame" frame seconds LF, then per object MME
+//   registered (registration order):
+//   "object" file "effect" path|- "class" scriptClass "render" renderClass
+//         "shown" 0|1 LF
+//   then per loaded effect (sorted by path; a source effect and each assigned
+//   instance of it), its parameters following:
+//   "effect" path "class" scriptClass "order" scriptOrder "errors" 0|1 LF
+//         (paths relative to the PMM directory, '/' separators)
+//   "param" name semantic|- class type RxCxElements values... LF
+//         (every top-level bool, int, and float parameter in declaration
+//         order; matrices row by row, ints and bools as integers)
+// The values are what the effect holds after the frame, which for a
+// per-object parameter is the last draw's. The run fails when a requested
+// frame loaded no effect.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -371,7 +400,7 @@ bool WriteEdgeProbe(std::ostream& out, MMDApp* app, std::uint32_t frame) {
 }
 
 // With `probe` set (--mds-edge-probe) the requested frames are probed instead
-// of rendered, after the same setup.
+// of rendered, after the same setup. An MME dump renders every pass.
 int RunFrameDump(MMDApp* app, const TraceRequest& request, std::ostream* probe) {
     D3DRenderer* r = app->Renderer();
     if (r == nullptr || r->device == nullptr)
@@ -404,7 +433,16 @@ int RunFrameDump(MMDApp* app, const TraceRequest& request, std::ostream* probe) 
 
     const std::wstring prefix =
         request.out + L"\\" + std::filesystem::path(request.pmm).stem().wstring() + L"-";
+    const bool mme = request.mode == TraceRequest::Mode::MmeDump;
     ArmFrameStep(app, request.frames);
+    if (mme) {
+        // MmeUpdateFrameTime takes the first non-edit frame's ELAPSEDTIME from
+        // the wall clock when the frame before it was in edit mode (the app
+        // drew one while loading). This render takes that frame, so frame 0
+        // sees 0 and every later frame 1/30.
+        app->state.messageSeen = 2;
+        RenderFrameScene(app);
+    }
     bool ok = true;
     std::size_t next = 0;
     for (std::uint32_t frame = 0; ok && frame < request.frames; ++frame) {
@@ -413,12 +451,31 @@ int RunFrameDump(MMDApp* app, const TraceRequest& request, std::ostream* probe) 
             PlaybackCatchup(app, 0);
             PhysicsFrame(app, 0);
         }
-        if (frame == request.dumpFrames[next]) {
-            ok = probe != nullptr ? WriteEdgeProbe(*probe, app, frame)
-                                  : DumpFrame(app, prefix + std::to_wstring(frame) + L".png");
-            ++next;
+        if (frame != request.dumpFrames[next]) {
+            if (mme) {
+                app->state.messageSeen = 2;
+                RenderFrameScene(app);
+            }
+            continue;
+        }
+        ++next;
+        if (probe != nullptr) {
+            ok = WriteEdgeProbe(*probe, app, frame);
+            continue;
+        }
+        ok = DumpFrame(app, prefix + std::to_wstring(frame) + L".png");
+        if (ok && mme) {
+            const int effects = WriteMmeProbe(
+                prefix + std::to_wstring(frame) + L".mme.txt", frame, app->PlaybackCursorSeconds(),
+                std::filesystem::path(request.pmm).parent_path().wstring());
+            ok = effects > 0;
+            if (effects == 0)
+                WriteError("mds-mme-dump: frame " + std::to_string(frame) +
+                           ": no MME effect loaded\n");
         }
     }
+    if (mme)
+        WriteMmeLog();
     // ShutdownCleanup tears down a recording graph when a recording window is set.
     app->RecordingWindow() = nullptr;
     DestroyWindow(window);
@@ -438,9 +495,11 @@ bool PrepareTraceRequest(TraceRequest* request) {
     const std::wstring out = FullPath(request->out);
     if (pmm.empty() || out.empty() || pmm.size() >= kEnvFileNameLength)
         return false;
-    // A dump file name adds "\<stem>-<frame>.png.tmp", at most the PMM name plus 20.
-    if (out.size() + 4 + (request->mode == TraceRequest::Mode::FrameDump ? pmm.size() + 20 : 0) >=
-        MAX_PATH * 4)
+    // A dump file name adds "\<stem>-<frame>.png.tmp" (or ".mme.txt.tmp"), at
+    // most the PMM name plus 20.
+    const bool images = request->mode == TraceRequest::Mode::FrameDump ||
+                        request->mode == TraceRequest::Mode::MmeDump;
+    if (out.size() + 4 + (images ? pmm.size() + 20 : 0) >= MAX_PATH * 4)
         return false;
     if (_wcsicmp(pmm.c_str(), out.c_str()) == 0)
         return false;
@@ -449,7 +508,8 @@ bool PrepareTraceRequest(TraceRequest* request) {
         return false;
     const DWORD outAttributes = GetFileAttributesW(out.c_str());
     const bool toDirectory = request->mode == TraceRequest::Mode::FrameDump ||
-                             request->mode == TraceRequest::Mode::MeshDump;
+                             request->mode == TraceRequest::Mode::MeshDump ||
+                             request->mode == TraceRequest::Mode::MmeDump;
     if (toDirectory && (outAttributes == INVALID_FILE_ATTRIBUTES ||
                         (outAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0))
         return false;
@@ -481,7 +541,8 @@ int RunTraceMode(MMDApp* app, const TraceRequest& request) {
         OutputDebugStringA("mds-trace: the PMM loaded no model\n");
         return 1;
     }
-    if (request.mode == TraceRequest::Mode::FrameDump)
+    if (request.mode == TraceRequest::Mode::FrameDump ||
+        request.mode == TraceRequest::Mode::MmeDump)
         return RunFrameDump(app, request, nullptr);
 
     const std::wstring temp = request.out + L".tmp";

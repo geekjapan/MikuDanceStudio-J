@@ -1,0 +1,10 @@
+[Info]
+Version = 3
+
+[Object]
+Pmd0 = chain8.pmx
+Pmd1 = morph4.pmx
+
+[Effect]
+Default = none
+Pmd0 = $(mmegold)\control.fx

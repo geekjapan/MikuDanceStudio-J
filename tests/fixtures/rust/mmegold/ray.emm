@@ -1,0 +1,11 @@
+[Info]
+Version = 3
+
+[Object]
+Pmd0 = chain8.pmx
+Acs0 = ray.x
+
+[Effect]
+Default = none
+Pmd0 = $(corpus)\Main\main.fx
+Acs0 = $(corpus)\ray.fx

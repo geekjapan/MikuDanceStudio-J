@@ -1,0 +1,15 @@
+mds-mme-probe 1
+frame 15 0.5
+object chain8.pmx effect mmegold/control.fx class 0 render 0 shown 1
+object morph4.pmx effect - class 0 render 0 shown 1
+effect mmegold/control.fx class 0 order 0 errors 0
+param Script STANDARDSGLOBAL 0 3 1x1x0 0.800000012
+param WorldViewProjMatrix WORLDVIEWPROJECTION 2 3 4x4x0 -2.09927797 0 8.74236434e-08 8.74227695e-08 0 3.73205018 0 0 -1.83524719e-07 0 -1.00000989 -0.99999994 0 -14.9282007 19.0001888 19.9999981
+param MorphA CONTROLOBJECT 0 3 1x1x0 0.5
+param BodyPos CONTROLOBJECT 1 3 1x3x0 5 1 0
+param Center CONTROLOBJECT 2 3 4x4x0 1 0 0 0 0 1 0 0 0 0 1 0 5 0 0 1
+param ModelPos CONTROLOBJECT 1 3 1x3x0 0 0 0
+param ModelWorld CONTROLOBJECT 2 3 4x4x0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1
+param Visible CONTROLOBJECT 0 1 1x1x0 1
+param Size CONTROLOBJECT 0 3 1x1x0 1
+param Missing CONTROLOBJECT 0 3 1x1x0 0

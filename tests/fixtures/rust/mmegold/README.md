@@ -86,9 +86,11 @@ value. An effect that the planner loads for an offscreen target
 
 `chain8.pmx` stands at the origin in every scene, seen by a perspective camera
 at (0, 4, 20) looking at (0, 4, 0) with a 30 degree view angle (yaw pi, so +x
-is on the left of the image), which is the view of the frame hashes in
-`rust/crates/mds-mmert/tests/frame_hash.rs`. Physics mode 0, no self-shadow,
-light (-0.5, -1, 0.5).
+is on the left of the image): the eye and target of the frame hashes in
+`rust/crates/mds-mmert/tests/frame_hash.rs`. The projection is the app's, near
+1 and far about 100000 (`PROJECTION` in the probes), where
+`Scene::default_view` of mds-mmert has far 10000. Physics mode 0, no
+self-shadow, light (-0.5, -1, 0.5).
 
 | Scene | Frames | Effects (EMM rows) | What it checks |
 |---|---|---|---|

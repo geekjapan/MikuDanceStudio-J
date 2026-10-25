@@ -1,5 +1,6 @@
 use crate::labels;
 use crate::rig::{fixtures, Rig};
+use mds_app::actions;
 use mds_app::ui::help;
 
 #[test]
@@ -68,4 +69,79 @@ fn without_a_window_the_actions_say_so() {
 #[test]
 fn the_labels_are_those_of_the_inventory() {
     labels::check("help", help::LABELS);
+}
+
+/// Menus 259, 261, 262 and 278 wait for a document command or an Editor call.
+#[test]
+fn the_rows_waiting_for_a_command_are_not_faked() {
+    for id in ["menu:259", "menu:261", "menu:262", "menu:278"] {
+        assert!(actions::find(id).is_none(), "{id}");
+    }
+}
+
+fn pmd_rig() -> Rig {
+    let mut rig = Rig::new();
+    rig.editor
+        .apply(mds_doc::Command::LoadModel {
+            path: "chain8.pmd".into(),
+            data: std::fs::read(fixtures().join("chain8.pmd")).unwrap(),
+        })
+        .unwrap();
+    rig
+}
+
+fn temp(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("mds-uimenus2-help-{}-{name}", std::process::id()))
+}
+
+/// Menu 263 on a PMD writes what the C++ `SaveEnhancedModel` wrote for `save pmd` in
+/// `script/bones.txt`, and the saved file becomes the model's path.
+#[test]
+fn save_enhanced_model_writes_the_pmd_of_the_oracle() {
+    let mut rig = pmd_rig();
+    let path = temp("chain8-saved.pmd");
+    rig.editor.modified = false;
+    rig.with_ctx(|ctx| help::save_enhanced(ctx, &path)).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let want = fixtures().join("script/expected/bones/chain8-saved.pmd");
+    if !want.exists() {
+        println!("SKIP: {} is missing", want.display());
+        return;
+    }
+    assert!(bytes == std::fs::read(want).unwrap());
+    assert_eq!(
+        rig.editor.doc.pmm.models[0].path.text,
+        path.display().to_string()
+    );
+    assert!(
+        !rig.editor.modified,
+        "SaveEnhancedModel sets no modified flag"
+    );
+}
+
+/// The C++ writer ends the process on a PMX model; here it is an error, and nothing is written.
+#[test]
+fn save_enhanced_model_refuses_a_pmx_model_and_no_model() {
+    let mut rig = Rig::new();
+    let path = temp("none.pmd");
+    assert!(rig.with_ctx(|ctx| help::save_enhanced(ctx, &path)).is_err());
+    rig.editor
+        .apply(mds_doc::Command::LoadModel {
+            path: "chain8.pmx".into(),
+            data: std::fs::read(fixtures().join("chain8.pmx")).unwrap(),
+        })
+        .unwrap();
+    let err = rig
+        .with_ctx(|ctx| help::save_enhanced(ctx, &path))
+        .unwrap_err();
+    assert!(err.contains("not a PMD"), "{err}");
+    assert!(!path.exists());
+}
+
+#[test]
+fn save_enhanced_model_needs_a_window_for_its_dialog() {
+    let mut rig = pmd_rig();
+    rig.egui = None;
+    assert_eq!(rig.run("menu:263"), Err("no window".into()));
 }

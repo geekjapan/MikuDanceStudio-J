@@ -2,10 +2,11 @@
 //! the model tools (`src/window/command_dispatch.cpp:417`, `command_view_menu.cpp:903` to `:1022`
 //! and `:1343`).
 //!
-//! Here: About (201) and the language switch (260). The language is the UI's: [`english`] and
-//! [`pick`] choose between `label_ja`, the default, and `label_en` for every area. Not here, for
-//! lack of a document command or an Editor call: 259, 261, 262, 263 and 278 (see the report of
-//! the slice).
+//! Here: About (201), the language switch (260) and save enhanced model (263). The language is the
+//! UI's: [`english`] and [`pick`] choose between `label_ja`, the default, and `label_en` for every
+//! area. Not here, for lack of a document command or an Editor call: 259 (English names), 261
+//! (toon textures), 262 (physics model) and 278 (restore textures); see the report of the slice.
+//! Their items are drawn greyed out.
 //!
 //! The default egui fonts have no Japanese, so the first pass loads a system font that has it,
 //! when there is one.
@@ -13,10 +14,13 @@
 use super::{button, Ctx};
 use crate::actions::Action;
 use egui::Id;
+use rfd::FileDialog;
+use std::path::Path;
 
 const ACTIONS: &[Action] = &[
     Action::run("menu:260", toggle_language, false),
     Action::run("menu:201", about, false),
+    Action::run("menu:263", save_enhanced_model, false),
 ];
 
 pub fn actions() -> &'static [Action] {
@@ -54,6 +58,41 @@ fn toggle_language(ctx: &mut Ctx) -> Result<(), String> {
 /// Menu 201: the banner of `command_dispatch.cpp:436` in a window.
 fn about(ctx: &mut Ctx) -> Result<(), String> {
     window(ctx)?.data_mut(|d| d.insert_temp(Id::unique("help-about"), true));
+    Ok(())
+}
+
+/// Menu 263 (`command_view_menu.cpp:989`): the save dialog for `.pmd` files, then
+/// [`save_enhanced`]. Not gated by mode or playback in the C++ (it saves `SelectedModel`).
+fn save_enhanced_model(ctx: &mut Ctx) -> Result<(), String> {
+    window(ctx)?;
+    let Some(mut path) = FileDialog::new()
+        .set_title(pick(&window(ctx)?, "拡張モデル保存", "save enhanced model"))
+        .add_filter("Polygon Model files(*.pmd)", &["pmd"])
+        .save_file()
+    else {
+        return Ok(());
+    };
+    // `lpstrDefExt = L"pmd"`.
+    if path.extension().is_none() {
+        path.set_extension("pmd");
+    }
+    save_enhanced(ctx, &path)
+}
+
+/// `SaveEnhancedModel` (`src/window/enhance_model_io.cpp:133`) of the selected model to `path`,
+/// by the PMD writer of `mds-doc`, whose output the script oracle pins (`save pmd`). The file
+/// becomes the model's path. The C++ writer reads PMD-only data and ends the process on a PMX
+/// model, so a PMX model is refused with a message instead. The scene's modified flag stays, as
+/// in the C++.
+pub fn save_enhanced(ctx: &mut Ctx, path: &Path) -> Result<(), String> {
+    let bytes = ctx
+        .editor
+        .doc
+        .save_pmd(&path.display().to_string())
+        .map_err(|e| e.to_string())?;
+    std::fs::write(path, bytes)
+        .map_err(|e| format!("Cannot save file: {}: {e}", path.display()))?;
+    *ctx.status = format!("saved {}", path.display());
     Ok(())
 }
 

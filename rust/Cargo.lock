@@ -401,6 +401,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "mds-accessory"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "mds-formats",
+ "mds-math",
+]
+
+[[package]]
 name = "mds-bullet"
 version = "0.1.0"
 dependencies = [
@@ -447,6 +456,10 @@ dependencies = [
  "libm",
  "mds-crtmath",
 ]
+
+[[package]]
+name = "mds-media"
+version = "0.1.0"
 
 [[package]]
 name = "mds-mme"
@@ -522,6 +535,10 @@ dependencies = [
 
 [[package]]
 name = "mds-trace"
+version = "0.1.0"
+
+[[package]]
+name = "mds-vsq"
 version = "0.1.0"
 
 [[package]]

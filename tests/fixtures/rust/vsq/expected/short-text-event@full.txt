@@ -1,0 +1,9 @@
+[number of Track:2]
+[UnitTime:480]
+
+[Track0]
+ƒL[(’²) ”(ó)‚Ì”:0 ’·’²
+[ChangeTempo time=0,tempo=500000]
+[End of Track0]
+
+[Track1]

@@ -55,6 +55,10 @@ the morph pool (20000) with its own-scan registrar, then pastes one key.
   interpolation (the shim reads every checkbox as unchecked),
   `MarkRedundantModelKeys`, the VMD byte parser itself, the bone pool at
   capacity, and multi-key pastes.
+- Not modeled as commands, though they call the covered registrars:
+  `vsq_load.cpp`, `command_file_menu.cpp`, `dialog_select_ops.cpp`,
+  `oni_skeleton_pump.cpp`, `audio_pose_helpers.cpp`, `frame_line_edit.cpp`,
+  and `ui_editor_click.cpp`. Their call orders are not replayed.
 - A pass covers this bounded model of the commands, not the whole app.
 
 ## Run
@@ -118,8 +122,10 @@ Run the check if the diff touches any of these:
 List what changed in the covered files since the sync commit:
 
 ```sh
-git diff --stat 699ce59 -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp
+git diff --stat 9367de3 -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp include/mikudancestudio/ported_funcs.hpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp src/model/pmd_load.cpp
 ```
+
+Use the sync commit from the coverage record below as the base.
 
 ## Real bug or modeling error?
 
@@ -153,7 +159,7 @@ here together.
 
 ## Coverage record
 
-Sync commit: `16a642f`. The verification was last confirmed to describe the
+Sync commit: `9367de3`. The verification was last confirmed to describe the
 files and functions listed under "Does my change touch the verified code?" at
 this commit.
 

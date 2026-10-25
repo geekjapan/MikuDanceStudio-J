@@ -13,3 +13,14 @@ passplan	2b	golden	windows	sonnet	pending	src/tools/,tools/oracle/,tests/fixture
 rendergold	2b	render,golden	mac	sonnet	MIT	rust/crates/mds-render/
 mme	2b	render,passplan	mac	opus	pending	rust/crates/mds-mme/
 rcptable	2b	math	windows	opus	MIT	tools/oracle/,tests/fixtures/rust/math/rcp/,rust/crates/mds-math/
+# Wave 3 slices. docs/RUST_WAVE3_PLAN.md describes each one.
+script	3a	-	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/script/,CMakeLists.txt,src/main/winmain.cpp
+doc	3a	-	mac	opus	pending	rust/crates/mds-doc/
+media	3a	-	mac	sonnet	pending	rust/crates/mds-media/,tools/wave_check/,tests/fixtures/rust/media/
+vsq	3a	-	mac	sonnet	pending	rust/crates/mds-vsq/,tools/vsq_check/,tests/fixtures/rust/vsq/
+accessory	3a	-	mac	sonnet	pending	rust/crates/mds-accessory/,tests/fixtures/rust/accessory/
+skin	3a	-	mac	opus	pending	rust/crates/mds-skin/,tools/skin_check/,tests/fixtures/rust/skin/
+ops	3a	-	mac	sonnet	pending	rust/crates/mds-ops/
+mmert	3a	-	mac	opus	pending	rust/crates/mds-mmert/
+shell	3b	-	mac	opus	pending	rust/crates/mds-app/
+wavcap	3b	media	mac	haiku	pending	rust/crates/mds-media/

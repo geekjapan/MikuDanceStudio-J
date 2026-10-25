@@ -50,8 +50,7 @@ fn words(line: &str) -> Result<Vec<String>, String> {
     }
 }
 
-/// The float pi of the edit handlers (`kPiLit`, 3.141592025756836).
-const PI_LIT: f64 = 3.141592025756836;
+use crate::PI_LIT;
 
 /// The first `max - 1` characters of an edit (`GetWindowTextA(edit, buf,
 /// max)`).
@@ -283,6 +282,75 @@ impl Runner {
             }
             ["register", "bone"] => Command::RegisterBoneKeys,
             ["register", "display"] => Command::RegisterDisplayKey,
+            ["load", "accessory", p] => Command::LoadAccessory {
+                path: p.to_string(),
+                data: load(p)?,
+            },
+            ["load", "wav", p] => Command::LoadWave {
+                path: p.to_string(),
+                data: load(p)?,
+            },
+            ["select", "accessory", name] => {
+                let a = self
+                    .doc
+                    .pmm
+                    .accessories
+                    .iter()
+                    .find(|a| a.list_name.text.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| format!("no accessory {name}"))?;
+                Command::SelectAccessory(a.slot)
+            }
+            ["accessory", what @ ("position" | "rotation"), x, y, z] => {
+                let base = if *what == "position" { 0 } else { 3 };
+                for (i, v) in [x, y, z].into_iter().enumerate() {
+                    let cmd = Command::AccessoryEdit {
+                        field: base + i as u8,
+                        value: atof(v, 8),
+                    };
+                    self.doc.apply(cmd).map_err(e)?;
+                }
+                return Ok(Vec::new());
+            }
+            ["accessory", "scale", v] => Command::AccessoryEdit {
+                field: 6,
+                value: atof(v, 8),
+            },
+            ["accessory", "opacity", v] => Command::AccessoryEdit {
+                field: 7,
+                value: atof(v, 8),
+            },
+            ["accessory", "parent", model, bone] => {
+                let slot = if *model == "ground" {
+                    None
+                } else {
+                    let m = self
+                        .doc
+                        .pmm
+                        .models
+                        .iter()
+                        .find(|m| m.name.text.eq_ignore_ascii_case(model))
+                        .ok_or_else(|| format!("no model {model}"))?;
+                    Some(m.slot)
+                };
+                self.doc
+                    .apply(Command::SetAccessoryParentModel(slot))
+                    .map_err(e)?;
+                if *bone == "-" {
+                    return Ok(Vec::new());
+                }
+                let m = slot
+                    .and_then(|s| self.doc.pmm.models.iter().find(|m| m.slot == s))
+                    .ok_or("a parent bone without a parent model")?;
+                let b = m
+                    .bone_names
+                    .iter()
+                    .position(|n| n.text == *bone)
+                    .ok_or_else(|| format!("no bone {bone}"))?;
+                Command::SetAccessoryParentBone(b as u32)
+            }
+            ["register", "accessory"] => Command::RegisterGlobalKeys(vec![GlobalTrack::Accessory(
+                self.doc.pmm.selected_accessory_slot,
+            )]),
             ["select", "morph", lane, name] => {
                 let lane = lane_of(lane)?;
                 Command::SelectMorphLane {

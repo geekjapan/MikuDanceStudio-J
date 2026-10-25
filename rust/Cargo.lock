@@ -433,6 +433,7 @@ name = "mds-doc"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
+ "mds-accessory",
  "mds-edit",
  "mds-formats",
  "mds-math",

@@ -90,6 +90,7 @@
 //! [`mds_edit::Error::Unsupported`] (the pose of a bone with a rigid body,
 //! fixed-axis twist, automatic interpolation).
 
+mod accessory;
 mod add_model;
 mod auto_interp;
 pub mod global;
@@ -114,6 +115,9 @@ use std::fmt;
 /// The self-shadow key mode the C++ resets to on a device with
 /// post-processing (`postProcessEnabled`), which this port assumes.
 pub(crate) const POST_PROCESS_SHADOW_MODE: u8 = 1;
+
+/// `kPiLit` of the edit handlers (3.141592025756836, the float pi).
+pub(crate) const PI_LIT: f64 = 3.141592025756836;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -290,6 +294,33 @@ pub enum Command {
         path: String,
         data: Vec<u8>,
     },
+    /// "Load accessory" (button 472, `LoadAccessoryFile`,
+    /// `src/render/accessory.cpp`, VA 0x00460B30) with the path as given
+    /// (the name is what follows its last backslash) and the `.x` bytes.
+    LoadAccessory {
+        path: String,
+        data: Vec<u8>,
+    },
+    /// "Load WAVE" (menu 206, `LoadWaveFile`, `src/media/wave_audio.cpp`).
+    LoadWave {
+        path: String,
+        data: Vec<u8>,
+    },
+    /// The accessory combo (471, `command_dispatch.cpp`).
+    SelectAccessory(u8),
+    /// The accessory edits 478..485 (`CommitEditControl`,
+    /// `src/window/ui_edit_commit.cpp`) on the selected accessory: 0..2
+    /// position, 3..5 rotation in degrees, 6 scale, 7 opacity (clamped to
+    /// 0..1).
+    AccessoryEdit {
+        field: u8,
+        value: f64,
+    },
+    /// The accessory parent model combo (474, `command_dispatch.cpp`):
+    /// a model slot, or `None` for the ground entry.
+    SetAccessoryParentModel(Option<u8>),
+    /// The accessory parent bone combo (475): a bone of the parent model.
+    SetAccessoryParentBone(u32),
     /// The select-all menus 217, 218, 220 (model) and 237..241 (camera
     /// mode), `mds_ops::select`.
     SelectAll(SelectAll),
@@ -433,6 +464,20 @@ impl Document {
             (p.picture.offset, p.picture.scale) = (old.picture.offset, old.picture.scale);
         }
         d.edit.auto_interpolation = self.edit.auto_interpolation;
+        // `LoadSceneV2_ReleaseTracks`: no model in the selected slot means
+        // camera mode.
+        if d.active().is_none() {
+            d.pmm.settings.options[0] = 1;
+        }
+        // The load ends in `ApplyModelComboSelection` on the selected
+        // model's combo entry; an entry of 0 is the camera entry. The edit
+        // mode read after it stays.
+        let combo = d.selected_model().map(|m| m.selection.combo_index);
+        if combo == Some(0) {
+            let edit_mode = d.pmm.timeline.edit_mode;
+            d.apply(Command::SelectCameraMode)?;
+            d.pmm.timeline.edit_mode = edit_mode;
+        }
         *self = d;
         Ok(())
     }
@@ -533,10 +578,86 @@ impl Document {
                 if !self.pmm.models.iter().any(|m| m.slot == slot) {
                     return Err(not("no model in that slot"));
                 }
+                let follow = self.pmm.appearance.camera_parent_model >= 0
+                    && self.pmm.appearance.follow_camera != 0;
+                if self.camera_mode() && !refresh::model_mode_supported(&self.pmm)
+                    || !self.camera_mode() && follow
+                {
+                    return Err(not("a model selection with a camera parent (not ported)"));
+                }
                 self.pmm.selected_model_slot = slot;
-                self.pmm.settings.options[0] = 0;
+                if self.camera_mode() {
+                    refresh::rebuild_model_mode(&mut self.pmm, &mut self.edit.self_shadow_mode);
+                }
+                self.pmm.timeline.edit_mode = 0;
             }
-            Command::SelectCameraMode => self.pmm.settings.options[0] = 1,
+            Command::SelectCameraMode => {
+                if !self.camera_mode() {
+                    // `RebuildCameraModePanel` (VA 0x0044D780).
+                    self.pmm.camera_state[3] = 0.0;
+                    self.pmm.camera_state[4] = 0.0;
+                    self.pmm.settings.options[0] = 1;
+                    self.refresh_context();
+                    let mut basis = [0.0; 16];
+                    for i in [0, 5, 10, 15] {
+                        basis[i] = 1.0;
+                    }
+                    self.pmm.appearance.camera_attachment_basis = basis;
+                    self.pmm.timeline.edit_mode = 2;
+                }
+                self.pmm.settings.options[0] = 1;
+            }
+            Command::LoadAccessory { path, data } => {
+                accessory::load(&mut self.pmm, &path, &data)?;
+            }
+            Command::LoadWave { path, data } => accessory::load_wave(&mut self.pmm, &path, &data),
+            Command::SelectAccessory(slot) => {
+                global::accessory(&mut self.pmm, slot)?;
+                self.pmm.selected_accessory_slot = slot;
+            }
+            Command::AccessoryEdit { field, value } => {
+                let slot = self.pmm.selected_accessory_slot;
+                let Ok(a) = global::accessory(&mut self.pmm, slot) else {
+                    return Ok(());
+                };
+                let s = &mut a.state;
+                let f = usize::from(field);
+                match f {
+                    0..=2 => s.position[f] = value as f32,
+                    3..=5 => s.rotation[f - 3] = (value / 180.0 * PI_LIT) as f32,
+                    6 => s.scale = value as f32,
+                    7 => {
+                        let visible = s.opacity_visible & 1;
+                        s.opacity_visible =
+                            save::opacity_visible(value.clamp(0.0, 1.0) as f32, visible);
+                    }
+                    _ => return Err(not("no such accessory field")),
+                }
+            }
+            Command::SetAccessoryParentModel(model) => {
+                let slot = self.pmm.selected_accessory_slot;
+                let found = model.filter(|m| self.pmm.models.iter().any(|x| x.slot == *m));
+                let Ok(a) = global::accessory(&mut self.pmm, slot) else {
+                    return Ok(());
+                };
+                match (model, found) {
+                    (None, _) => a.state.parent_model = -1,
+                    (Some(_), Some(m)) => {
+                        a.state.parent_model = i32::from(m);
+                        a.state.parent_bone = 0;
+                    }
+                    (Some(_), None) => {}
+                }
+            }
+            Command::SetAccessoryParentBone(bone) => {
+                let slot = self.pmm.selected_accessory_slot;
+                let Ok(a) = global::accessory(&mut self.pmm, slot) else {
+                    return Ok(());
+                };
+                if a.state.parent_model >= 0 {
+                    a.state.parent_bone = bone as i32;
+                }
+            }
             Command::SetFrame(f) => {
                 self.pmm.timeline.current_frame = f as i32;
                 self.apply_frame();

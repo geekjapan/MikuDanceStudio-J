@@ -14,7 +14,7 @@ use mds_pose::model::Model as PoseModel;
 /// `width - 1` bytes (`strncpy_s` with `_TRUNCATE`).
 // ponytail: an unmappable character becomes '?'; the C++ falls back to its
 // locale chain instead. Port that chain when a model needs it.
-fn sjis(text: &str, width: usize) -> Sjis {
+pub(crate) fn sjis(text: &str, width: usize) -> Sjis {
     let mut raw = Vec::new();
     let mut buf = [0u8; 4];
     for c in text.chars() {

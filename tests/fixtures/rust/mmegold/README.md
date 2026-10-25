@@ -117,11 +117,22 @@ self-shadow, light (-0.5, -1, 0.5).
   session will see other values; take them from the probe.
 - `offscreen-*.png` and `timeofday-*.png` are the same image: the owner draws
   nothing visible. `main` shows the owner white.
-- `ray-*.png` is black with broken grid lines, and frames 0 and 30 are the
-  same image. Whether the C++ path or the scene (no sky, no `ray_controller.pmx`)
-  causes that is not known; compare the probe before the pixels. The run logs
-  `Warning: unsupported script command: ClearSetStencil=ClearStencil
-  (technique: DeferredLighting)`.
+- `ray-*.png` is black because of the scene, not the C++ path (slice
+  `winprobe`, on the staged corpus copy). The light (-0.5, -1, 0.5) comes from
+  behind the faces the camera sees, and with no sky effect ray-mmd has no image
+  based light, so those faces get no light; the background is `BackColor`,
+  black. The same PMM with the light at (-0.5, -1, -0.5) shows the model gray.
+  Writing a constant into `ShadingOpacityPS` showed a non-zero albedo, sun
+  color, and normal, and a working composite. `SUN_SHADOW_QUALITY`,
+  `SSDO_QUALITY`, `SSSS_QUALITY`, `FOG_ENABLE`, `HDR_BLOOM_MODE`,
+  `MULTI_LIGHT_ENABLE`, and `POST_DISPERSION_MODE` at 0 each leave the image
+  as it is. The grid lines are broken by ray-mmd's anti-aliasing
+  (`AA_QUALITY` 0 draws them whole). Frames 0 and 30 are the same image
+  because nothing in the scene moves; only `TIME` and `ELAPSEDTIME` differ in
+  the probes. The run logs `Warning: unsupported script command:
+  ClearSetStencil=ClearStencil (technique: DeferredLighting)`, as MMEffect's
+  own script compiler does: it has no `ClearSetStencil` command
+  (`third_party/mmeffect/src/mmeffect/sas_exec.cpp`).
 - `anime-0` and `anime-3` are the same image, and so are `anime-9` and
   `anime-30`.
 

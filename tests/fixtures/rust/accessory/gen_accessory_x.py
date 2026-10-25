@@ -173,6 +173,15 @@ def frames_normals():
     return s
 
 
+def degenerate_face():
+    # Face 0 is a line. After the load scales positions by 1 - 2^-24, its two edges at
+    # vertex 0 normalize to a dot product just above 1, where acos is NaN unless the
+    # ratio is clamped. No normals, so D3DXComputeNormals runs.
+    v = [(0, 0, 0), (1, 0.609375, 0), (2, 1.21875, 0), (0, 0, 1)]
+    return ("Mesh Line {\n 4;\n" + ",\n".join(" " + f(*p) for p in v).rstrip(";") + ";;\n"
+            " 2;\n 3;0,1,2;,\n 3;0,3,1;;\n}\n")
+
+
 # --- no normals, no UVs, no material list --------------------------------------------
 QUAD_V = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
 
@@ -235,6 +244,7 @@ def main():
     write("cube_bin64.x", cube_bin("0064"))
     write("multi_material.x", header(version="0302") + multi_material().encode("ascii"))
     write("frames.x", header(version="0302", floats="0064") + frames().encode("ascii"))
+    write("degenerate_face.x", header() + degenerate_face().encode("ascii"))
     write("frames_normals.x", header() + frames_normals().encode("ascii"))
     write("no_normals_uvs.x", header() + quad().encode("ascii"))
     write("normals_no_uv.x", header() + quad(quad_normals()).encode("ascii"))

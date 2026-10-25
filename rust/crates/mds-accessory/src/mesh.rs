@@ -10,7 +10,7 @@
 
 use crate::xfile::{self, Child, Node, Value};
 use crate::Error;
-use mds_math::{Mat4, Vec3};
+use mds_math::{rcp_estimate, Mat4, Vec3};
 use std::collections::HashMap;
 
 /// 16-bit indices: `D3DXMESH_32BIT` (0x1) is not in option word 544.
@@ -35,6 +35,16 @@ pub struct XMaterial {
     pub texture: Option<Vec<u8>>,
 }
 
+/// A `D3DXATTRIBUTERANGE`: the faces and the vertex span `DrawSubset(id)` draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AttributeRange {
+    pub id: u32,
+    pub face_start: u32,
+    pub face_count: u32,
+    pub vertex_start: u32,
+    pub vertex_count: u32,
+}
+
 /// The mesh D3DX returns, before `LoadAccessoryObject` converts it to FVF 274.
 #[derive(Clone, Debug, PartialEq)]
 pub struct XMesh {
@@ -48,6 +58,10 @@ pub struct XMesh {
     pub has_normals: bool,
     pub has_texcoords: bool,
     pub has_colors: bool,
+    /// One range per attribute in use, from the lowest to the highest vertex its
+    /// faces use. Empty when the file holds more than one mesh: D3DX merges them
+    /// without one (the Windows dump of `frames.x`).
+    pub attribute_table: Vec<AttributeRange>,
 }
 
 struct Values<'a> {
@@ -185,8 +199,9 @@ fn frame<'a>(
                 for x in &mut m {
                     *x = v.f32()?;
                 }
-                // `parse_frame`: transform = transform * new; the parent applies first.
-                transform = Mat4::multiply(&transform, &Mat4(m));
+                // transform = new * transform: a frame's own matrix applies before its
+                // parent's (the Windows dump of `frames.x`).
+                transform = Mat4::multiply(&Mat4(m), &transform);
             }
             "Frame" => {
                 if !matches!(c, Child::Node(_)) {
@@ -278,7 +293,7 @@ fn container(node: &Node, transform: Mat4, names: &Names) -> Result<Option<Conta
                 let nn = v.count(3)?;
                 let mut list = Vec::with_capacity(nn);
                 for _ in 0..nn {
-                    list.push(Vec3(v.f3()?).normalize().0);
+                    list.push(v.f3()?);
                 }
                 if v.u32()? as usize != nf {
                     return Err(Error::Invalid("face normal count differs from face count"));
@@ -450,7 +465,8 @@ fn container(node: &Node, transform: Mat4, names: &Names) -> Result<Option<Conta
     }))
 }
 
-/// `D3DXVec3TransformCoord`.
+/// `D3DXVec3TransformCoord`. D3DX multiplies by its reciprocal of `w` (estimate and
+/// one Newton step) instead of dividing, so `w = 1` scales by `1 - 2^-24`.
 fn transform_coord(p: [f32; 3], m: &Mat4) -> [f32; 3] {
     let [x, y, z] = p;
     let m = &m.0;
@@ -458,11 +474,26 @@ fn transform_coord(p: [f32; 3], m: &Mat4) -> [f32; 3] {
     if w == 0.0 {
         return [0.0; 3];
     }
+    let e = rcp_estimate(w);
+    let r = (e + e) - w * (e * e);
     [
-        (((x * m[0] + y * m[4]) + z * m[8]) + m[12]) / w,
-        (((x * m[1] + y * m[5]) + z * m[9]) + m[13]) / w,
-        (((x * m[2] + y * m[6]) + z * m[10]) + m[14]) / w,
+        (((x * m[0] + y * m[4]) + z * m[8]) + m[12]) * r,
+        (((x * m[1] + y * m[5]) + z * m[9]) + m[13]) * r,
+        (((x * m[2] + y * m[6]) + z * m[10]) + m[14]) * r,
     ]
+}
+
+/// `D3DXVec3TransformNormal`, then `D3DXVec3Normalize`.
+fn transform_normal(n: [f32; 3], m: &Mat4) -> [f32; 3] {
+    let [x, y, z] = n;
+    let m = &m.0;
+    Vec3([
+        (x * m[0] + y * m[4]) + z * m[8],
+        (x * m[1] + y * m[5]) + z * m[9],
+        (x * m[2] + y * m[6]) + z * m[10],
+    ])
+    .normalize()
+    .0
 }
 
 fn merge(containers: Vec<Container>) -> Result<XMesh, Error> {
@@ -474,7 +505,9 @@ fn merge(containers: Vec<Container>) -> Result<XMesh, Error> {
         has_normals: false,
         has_texcoords: false,
         has_colors: false,
+        attribute_table: Vec::new(),
     };
+    let single = containers.len() == 1;
     for c in &containers {
         mesh.has_normals |= c.has_normals;
         mesh.has_texcoords |= c.has_texcoords;
@@ -484,12 +517,10 @@ fn merge(containers: Vec<Container>) -> Result<XMesh, Error> {
         let base = mesh.vertices.len() as u32;
         let offset = mesh.materials.len() as u32;
         for v in &c.vertices {
-            // D3DX transforms the normal as a coordinate too, translation included,
-            // and does not normalize it again.
             mesh.vertices.push(Vertex {
                 position: transform_coord(v.position, &c.transform),
                 normal: if c.has_normals {
-                    transform_coord(v.normal, &c.transform)
+                    transform_normal(v.normal, &c.transform)
                 } else {
                     [0.0; 3]
                 },
@@ -515,5 +546,33 @@ fn merge(containers: Vec<Container>) -> Result<XMesh, Error> {
             texture: None,
         });
     }
+    if single {
+        mesh.attribute_table = attribute_table(&mesh.indices, &mesh.face_material);
+    }
     Ok(mesh)
+}
+
+/// `face_material` is sorted, so each attribute's faces are one run.
+fn attribute_table(indices: &[u32], face_material: &[u32]) -> Vec<AttributeRange> {
+    let mut table = Vec::new();
+    let mut start = 0;
+    while start < face_material.len() {
+        let id = face_material[start];
+        let end = start
+            + face_material[start..]
+                .iter()
+                .take_while(|&&m| m == id)
+                .count();
+        let used = &indices[start * 3..end * 3];
+        let (lo, hi) = (used.iter().min().unwrap(), used.iter().max().unwrap());
+        table.push(AttributeRange {
+            id,
+            face_start: start as u32,
+            face_count: (end - start) as u32,
+            vertex_start: *lo,
+            vertex_count: hi - lo + 1,
+        });
+        start = end;
+    }
+    table
 }

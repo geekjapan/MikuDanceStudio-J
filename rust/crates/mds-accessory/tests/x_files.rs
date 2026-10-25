@@ -29,6 +29,12 @@ fn close(got: [f32; 3], want: [f32; 3], tol: f32) {
     );
 }
 
+/// D3DX: `D3DXVec3TransformCoord` multiplies by its reciprocal estimate of `w`, so even
+/// the identity scales a position by `1 - 2^-24` (the Windows dump, `accgold`).
+fn loaded(p: [f32; 3]) -> [f32; 3] {
+    p.map(|x| x * f32::from_bits(0x3F7F_FFFF))
+}
+
 fn tri(a: &Accessory, face: usize) -> [[f32; 3]; 3] {
     std::array::from_fn(|k| a.vertices[a.indices[face * 3 + k] as usize].position)
 }
@@ -85,7 +91,8 @@ fn check_cube(a: &Accessory) {
             for (c, &corner) in fan.iter().enumerate() {
                 let v = &a.vertices[a.indices[face * 3 + c] as usize];
                 assert_eq!(
-                    v.position, CUBE_V[quad[corner]],
+                    v.position,
+                    loaded(CUBE_V[quad[corner]]),
                     "quad {q} face {k} corner {c}"
                 );
                 // The file's normals pass through D3DXVec3Normalize, whose reciprocal
@@ -99,7 +106,7 @@ fn check_cube(a: &Accessory) {
     // Face 0 (-Z) and 1 (+Z) own the first 8; face 2 (-X) appends 8..=11 for
     // corners 0, 4, 7, 3.
     let near = |v: usize, pos: [f32; 3], n: [f32; 3]| {
-        assert_eq!(a.vertices[v].position, pos, "vertex {v}");
+        assert_eq!(a.vertices[v].position, loaded(pos), "vertex {v}");
         close(a.vertices[v].normal, n, 1e-6);
     };
     near(0, CUBE_V[0], CUBE_N[0]);
@@ -177,17 +184,26 @@ fn nested_frames_apply_their_transforms_in_order() {
     assert_eq!(a.indices, (0..12).collect::<Vec<u32>>());
     // Meshes come in traversal order: A (in Outer), B (in Inner), C (after Outer's
     // second matrix), Top.
+    let want = |t: [[f32; 3]; 3]| t.map(loaded);
     // A: translation (10,0,0).
-    assert_eq!(tri(&a, 0), [[11., 0., 0.], [10., 1., 0.], [10., 0., 1.]]);
-    // B: Inner's transform is Outer's times its own (D3DX parse_frame multiplies
-    // parent * new), so a point is translated first and then rotated 90 degrees about
-    // Z: (x, y) -> (-y, x). (1,0,0) -> (11,0,0) -> (0,11,0). The other order would give
-    // (10,1,0); that is the question for accgold.
-    assert_eq!(tri(&a, 1), [[0., 11., 0.], [-1., 10., 0.], [0., 10., 1.]]);
+    assert_eq!(
+        tri(&a, 0),
+        want([[11., 0., 0.], [10., 1., 0.], [10., 0., 1.]])
+    );
+    // B: Inner's own matrix applies first, then Outer's: a point is rotated 90 degrees
+    // about Z, (x, y) -> (-y, x), and then translated. (1,0,0) -> (0,1,0) -> (10,1,0).
+    // Wine's order would give (0,11,0); the Windows dump says (10,1,0).
+    assert_eq!(
+        tri(&a, 1),
+        want([[10., 1., 0.], [9., 0., 0.], [10., 0., 1.]])
+    );
     // C: Outer's matrix, then the second matrix of the same frame: (10,5,0).
-    assert_eq!(tri(&a, 2), [[11., 5., 0.], [10., 6., 0.], [10., 5., 1.]]);
+    assert_eq!(
+        tri(&a, 2),
+        want([[11., 5., 0.], [10., 6., 0.], [10., 5., 1.]])
+    );
     // Top-level mesh: identity.
-    assert_eq!(tri(&a, 3), [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]);
+    assert_eq!(tri(&a, 3), want([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]));
     // One default material for a file without any (D3DX); C++ 513-519 on it.
     assert_eq!(a.materials.len(), 1);
     assert_eq!(a.face_material, vec![0; 4]);

@@ -92,6 +92,39 @@ def background(x, y):
     return (base, 96, 192) if (x // 80 + y // 80) % 2 else (base, 192, 96)
 
 
+# floor.x: a 2x2 quad on y = 0 facing up, with one untextured material.
+# (normals_uv.x of the accessory fixtures has no material list, and the app
+# draws an accessory per material, so it draws nothing.)
+FLOOR_X = """xof 0302txt 0032
+Mesh Floor {
+ 4;
+ -1.000000;0.000000;-1.000000;,
+ -1.000000;0.000000;1.000000;,
+ 1.000000;0.000000;1.000000;,
+ 1.000000;0.000000;-1.000000;;
+ 1;
+ 4;0,1,2,3;;
+ MeshNormals {
+  1;
+  0.000000;1.000000;0.000000;;
+  1;
+  4;0,0,0,0;;
+ }
+ MeshMaterialList {
+  1;
+  1;
+  0;;
+  Material {
+   0.800000;0.800000;0.800000;1.000000;;
+   5.000000;
+   0.000000;0.000000;0.000000;;
+   0.300000;0.300000;0.300000;;
+  }
+ }
+}
+""".replace("\n", "\r\n").encode("ascii")
+
+
 # ---------------------------------------------------------------------------
 # skin_tex.pmx: skin.pmx with one texture on every material, so that its UV
 # morph moves the texture on screen. Everything else is gen_skin's bytes.
@@ -345,8 +378,8 @@ SCENES = {
         models=[SceneModel(CHAIN, curled(-3.0)), SceneModel(CHAIN_PMD, curled(3.0))],
         camera_keys=ortho_camera(-16.0, (0.0, 3.0, 0.0)), light_keys=LIGHT,
         shadow_keys=[(0, 1, SHADOW_DEFAULT), (30, 2, 0.005)],
-        # A floor quad (normals_uv.x at 10 times 0.8) that receives the shadow.
-        accessories=[Accessory("normals_uv.x", (-4.0, 0.02, 4.0), (-PI / 2, 0.0, 0.0), 0.8)],
+        # The floor (8 units wide) receives the shadow.
+        accessories=[Accessory("floor.x", (0.0, 0.02, 0.0), scale=0.4)],
         frames=[0, 30]),
     # The projected ground shadow, opaque at frame 0 brightness; the light
     # turns by frame 30. Translucent shadow with ambient 0.5.
@@ -362,9 +395,9 @@ SCENES = {
                                         (30, [3.0, 0.0, 0.0], turn(1, 0.25))]})],
         camera_keys=ortho_camera(), light_keys=LIGHT, shadow_keys=SHADOW_OFF,
         # The app scales an accessory by 10 times its scale value: cube.x
-        # (2 units) becomes 1 unit, the unit quad 4 units, laid flat.
+        # (2 units) becomes 1 unit, the floor 3 units.
         accessories=[Accessory("cube.x", (0.0, 0.75, 0.0), (0.0, 0.5, 0.0), 0.05, (0, 4)),
-                     Accessory("normals_uv.x", (-5.0, 0.05, 2.0), (-PI / 2, 0.0, 0.0), 0.4)],
+                     Accessory("floor.x", (-3.0, 0.02, 0.0), scale=0.15)],
         frames=[0, 30]),
     # skin_tex.pmx with SDEF bones turned and vertex, UV and material morphs;
     # other weights and a bone morph at frame 30.
@@ -409,6 +442,7 @@ def generate():
     out["skin_tex.pmx"] = build_skin_tex()
     out[SKIN_TEXTURE] = bmp24(16, 16, skin_texture)
     out["cube.bmp"] = bmp24(8, 8, cube_texture)
+    out["floor.x"] = FLOOR_X
     out["background.png"] = png_rgb(640, 360, background)
     return out
 

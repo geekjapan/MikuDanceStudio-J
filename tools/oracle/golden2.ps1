@@ -16,8 +16,8 @@ $golden2 = "$fixtures\golden2"
 
 # The app resolves model, accessory, and picture paths from the exe directory.
 $stage = @('chain8.pmd', 'chain8.pmx', 'chain8_ik.pmx', 'morph4.pmx' | % { "$fixtures\$_" }) +
-         @('skin_tex.pmx', 'skin_tex.bmp', 'cube.bmp', 'background.png' | % { "$golden2\$_" }) +
-         @('cube.x', 'normals_uv.x' | % { "$fixtures\accessory\$_" })
+         @('skin_tex.pmx', 'skin_tex.bmp', 'cube.bmp', 'floor.x', 'background.png' | % { "$golden2\$_" }) +
+         @("$fixtures\accessory\cube.x")
 foreach ($f in $stage) { Copy-Item $f $exeDir -Force }
 
 # Keep in step with SCENES in gen_golden2.py (gen_golden2.py --frames).

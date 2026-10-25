@@ -92,7 +92,9 @@ def background(x, y):
     return (base, 96, 192) if (x // 80 + y // 80) % 2 else (base, 192, 96)
 
 
-# floor.x: a 2x2 quad on y = 0 facing up, with one untextured material.
+# floor.x: a 2x2 quad on y = 0 facing up, with one untextured material. The
+# app lights accessories ten times as bright as models (SetAccessoryLight), so
+# a dark diffuse keeps the floor off white.
 # (normals_uv.x of the accessory fixtures has no material list, and the app
 # draws an accessory per material, so it draws nothing.)
 FLOOR_X = """xof 0302txt 0032
@@ -115,10 +117,10 @@ Mesh Floor {
   1;
   0;;
   Material {
-   0.800000;0.800000;0.800000;1.000000;;
+   0.080000;0.060000;0.020000;1.000000;;
    5.000000;
    0.000000;0.000000;0.000000;;
-   0.300000;0.300000;0.300000;;
+   0.400000;0.400000;0.400000;;
   }
  }
 }

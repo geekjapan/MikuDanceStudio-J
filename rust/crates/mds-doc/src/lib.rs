@@ -84,10 +84,6 @@
 //!
 //! # Not ported
 //!
-//! * Paths that `mds-edit` keeps private: a frame-line delete with
-//!   automatic interpolation on that has to rebuild a neighbour's curve
-//!   (`rebuild_interpolation`), and a VPD pose onto a fixed-axis (twist)
-//!   bone. Both stop with `Unsupported`.
 //! * `PostModelReload` modes 1 and 2, and "paste at a different frame" of
 //!   an accessory in camera mode.
 //! * The physics of the frame loop ([`frame::FrameLoop`]) rebuilds the world
@@ -1228,22 +1224,25 @@ impl Document {
                 use mds_ops as f;
                 let bones = !morph && !self.camera_mode();
                 let mut pose = Vec::new();
+                let mut rig = None;
                 if bones {
                     let m = &self.pmm.models[self.active_model()?];
+                    // The rebuild needs the bone count of the file; a delete
+                    // that rebuilds nothing runs without it.
                     if !insert
                         && self.edit.auto_interpolation
                         && model::line_delete_rebuilds(m, frame)
                     {
-                        return Err(Error::Edit(mds_edit::Error::Unsupported(
-                            "the curve rebuild of a frame-line delete",
-                        )));
+                        let (i, s) = self.keyed()?;
+                        rig = Some(model::rig(&self.pmm.models[i], &s, true));
                     }
+                    let m = &self.pmm.models[self.active_model()?];
                     pose = model::selection_snapshot(m);
                 }
                 let p = &mut self.pmm;
                 let undo = match (morph, insert) {
                     (false, true) => f::insert_bone_camera_frame_line(p),
-                    (false, false) => f::delete_bone_camera_frame_line(p),
+                    (false, false) => f::delete_bone_camera_frame_line(p, rig.as_ref()),
                     (true, true) => f::insert_morph_light_frame_line(p).map(|()| None),
                     (true, false) => f::delete_morph_light_frame_line(p).map(|()| None),
                 }

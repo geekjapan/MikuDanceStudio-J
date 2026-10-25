@@ -71,12 +71,17 @@ struct Delete<K> {
     copy: fn(dst: &mut K, src: &K),
 }
 
+/// The automatic curve rebuild of a key's neighbour, `next` when there is
+/// one, else `previous` (the bone variant with checkbox 530 on).
+type Rebuild<'a, K> = &'a mut dyn FnMut(&mut KeyPool<K>, u32) -> Result<()>;
+
 fn delete_line<K: Rec>(
     pool: &mut KeyPool<K>,
     which: Vec<u32>,
     frame: u32,
     touch: Touch<K>,
     d: &Delete<K>,
+    rebuild: Rebuild<K>,
 ) -> Result<()> {
     for i in which {
         let (key_frame, prev, next) = links(pool, i)?;
@@ -86,6 +91,7 @@ fn delete_line<K: Rec>(
             }
             unlink(pool, prev, next)?;
             (d.clear)(slot(pool, i)?);
+            rebuild(pool, if next != 0 { next } else { prev })?;
             continue;
         }
         if key_frame != 0 && frame < key_frame {
@@ -100,6 +106,7 @@ fn delete_line<K: Rec>(
                 if src.next() != 0 {
                     slot(pool, src.next())?.set_previous(prev);
                 }
+                rebuild(pool, if src.next() != 0 { src.next() } else { prev })?;
                 (d.merged)(slot(pool, i)?);
             }
         }
@@ -193,7 +200,15 @@ pub fn insert_morph_light_frame_line(pmm: &mut Pmm) -> Result<()> {
 /// and its mark; its eye z, target z and parent stay. A camera key shifted
 /// onto frame 0 gives the head its distance, eye, target, curves,
 /// perspective and fov. The camera variant has no undo (`Ok(None)`).
-pub fn delete_bone_camera_frame_line(pmm: &mut Pmm) -> Result<BoneUndo> {
+///
+/// With `auto_interpolation` (checkbox 530, `frame_line_edit.cpp` 288-290)
+/// the curves of the neighbour of each removed or merged bone key are rebuilt
+/// with `RebuildBoneInterpolation` ([`mds_edit::rebuild_interpolation`]),
+/// all four lanes, as the key is processed; the rig names the model's bones.
+pub fn delete_bone_camera_frame_line(
+    pmm: &mut Pmm,
+    auto_interpolation: Option<&mds_edit::Rig>,
+) -> Result<BoneUndo> {
     let frame = current(pmm);
     if !camera_mode(pmm) {
         let m = active_model(pmm)?;
@@ -219,6 +234,14 @@ pub fn delete_bone_camera_frame_line(pmm: &mut Pmm) -> Result<BoneUndo> {
                         dst.rotation = src.rotation;
                         dst.allocated = src.allocated;
                     },
+                },
+                &mut |p, at| {
+                    if let Some(rig) = auto_interpolation {
+                        for lane in 0..4 {
+                            mds_edit::rebuild_interpolation(p, rig, at, lane)?;
+                        }
+                    }
+                    Ok(())
                 },
             )
         })?;
@@ -256,6 +279,7 @@ pub fn delete_bone_camera_frame_line(pmm: &mut Pmm) -> Result<BoneUndo> {
                     dst.fov = src.fov;
                 },
             },
+            &mut |_, _| Ok(()),
         )
     })?;
     Ok(None)
@@ -291,6 +315,7 @@ pub fn delete_morph_light_frame_line(pmm: &mut Pmm) -> Result<()> {
                         dst.color = src.color;
                     },
                 },
+                &mut |_, _| Ok(()),
             )
         });
     }
@@ -317,6 +342,7 @@ pub fn delete_morph_light_frame_line(pmm: &mut Pmm) -> Result<()> {
                     dst.value = src.value;
                 },
             },
+            &mut |_, _| Ok(()),
         )
     })
 }

@@ -17,7 +17,8 @@ fn cstr(s: &[u8]) -> &[u8] {
 /// `LoadVpdFile` onto `m`: an undo entry with one pose snapshot per VPD
 /// bone (zeros when no bone has its name; the last bone of that name
 /// otherwise), then every bone of that name takes the pose and is selected
-/// and marked edited. No seek follows. The file is read with
+/// and marked edited; a fixed-axis bone gets the registrar's twist
+/// correction. No seek follows. The file is read with
 /// `mds_formats::vpd` (`ReadVpd`), not the `fgets`/`fscanf` sequence of the
 /// C++, which agree on well-formed files.
 pub fn load_vpd(
@@ -33,14 +34,6 @@ pub fn load_vpd(
             .filter(|&i| cstr(&m.bone_names[i].raw) == want)
             .collect()
     };
-    if vpd
-        .bones
-        .iter()
-        .flat_map(matches)
-        .any(|i| s.bones.get(i).is_some_and(|b| b.1))
-    {
-        return Err(mds_edit::Error::Unsupported("the twist correction of a VPD pose").into());
-    }
     let mut snaps = vec![
         PoseSnapshot {
             bone: 0,
@@ -51,7 +44,20 @@ pub fn load_vpd(
         vpd.bones.len()
     ];
     for (snap, b) in snaps.iter_mut().zip(&vpd.bones) {
+        // The C++ corrects the one quaternion it read in place, so a second
+        // bone of the same name gets the corrected value.
+        let mut rotation = b.rotation;
         for i in matches(b) {
+            if s.bones.get(i).is_some_and(|b| b.1) {
+                // `vpd_file.cpp` 231-274: the registrar's twist correction.
+                let axis = s.axes[i];
+                let axis = if s.pmx {
+                    axis
+                } else {
+                    mds_math::Vec3(axis).normalize().0
+                };
+                rotation = mds_edit::twist(axis, rotation);
+            }
             let p = &mut m.bone_pose[i];
             *snap = PoseSnapshot {
                 bone: i as u32,
@@ -62,7 +68,7 @@ pub fn load_vpd(
             p.flags[2] = 1;
             p.flags[1] = 1;
             p.translation = b.translation;
-            p.rotation = b.rotation;
+            p.rotation = rotation;
         }
     }
     h.push(Entry::BonePose(snaps));

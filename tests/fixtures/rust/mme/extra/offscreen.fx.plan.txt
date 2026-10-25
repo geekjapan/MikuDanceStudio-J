@@ -1,0 +1,82 @@
+passplan 1
+file "<root>/offscreen.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=2 scriptorder=0 posteffect=0 drawsgeometry=0 errors=0
+parameters 10
+param "Script" "STANDARDSGLOBAL" scalar float 1x1
+  ann "ScriptOutput" string0 = "color"
+  ann "ScriptClass" string0 = "sceneorobject"
+  ann "ScriptOrder" string0 = "standard"
+  ann "Script" string0 = "Technique=Main?Used:Missing:Other;"
+param "matWorld" "" matrix_rows float 4x4
+param "DifColor" "" vector float 1x4
+param "transp" "" scalar bool 1x1
+param "SubsetCount" "" scalar int 1x1
+param "Morph" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ctrl.pmx"
+  ann "item" string0 = "Morph"
+param "Bone" "CONTROLOBJECT" matrix_rows float 4x4
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Root"
+param "WorldViewProjMatrix" "WORLDVIEWPROJECTION" matrix_rows float 4x4
+param "MirrorRT" "OFFSCREENRENDERTARGET" object texture 0x0
+  ann "Description" string0 = "Mirror"
+  ann "ViewportRatio" float2 = 1,1
+  ann "ClearColor" float4 = 1,0.5,0,1
+  ann "ClearDepth" float1 = 1
+  ann "AntiAlias" bool1 = 0
+  ann "DefaultEffect" string0 = "self=hide; *=none; "
+param "CubeRT" "RENDERCOLORTARGET" object texture 0x0
+  ann "Width" int1 = 128
+  ann "Height" int1 = 128
+  ann "ResourceType" string0 = "Cube"
+  ann "Format" string0 = "A8R8G8B8"
+resources 2
+resource "MirrorRT" semantic=OffScreenRenderTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A8R8G8B8 defaultpool=1
+  clear color=0xffff7f00 depth=1 antialias=0
+  defaulteffect_row "self" "hide"
+  defaulteffect_row "*" "none"
+  created texture 1000x600 levels=1 format=A8R8G8B8 pool=0 usage=0x1
+  offscreendepth 1000x600 format=D24S8
+resource "CubeRT" semantic=RenderColorTarget texture=9
+  request 128x128x1 mips=1 rawsize=128x128 rawmips=1 format=A8R8G8B8 defaultpool=1
+  created cube 128x128 levels=1 format=A8R8G8B8 pool=0 usage=0x1
+controls 2
+control "Morph" name="ctrl.pmx" item="Morph"
+control "Bone" name="(self)" item="Root"
+technique_order "Used" "Other"
+techniques 2
+technique "Used" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=0 passes=1
+  script "RenderColorTarget0=CubeRT[2]; Clear=Color; Pass=P0; RenderColorTarget0=;"
+  cmd 0 RenderColorTarget0 param="CubeRT" value=2 text="CubeRT[2]"
+  cmd 1 Clear param="-" value=1 text="Color"
+  cmd 2 Pass pass="P0" index=0 text="P0"
+  cmd 3 RenderColorTarget0 param="-" value=0 text=""
+  pass 0 "P0" script=0 custom=1 psize15=0 shadermix=1
+technique "Other" mmdpass=edge usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=0 passes=1
+  pass 0 "P0" script=0 custom=1 psize15=0 shadermix=1
+selection subsets=2 clamped=0
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-1 "Used" "Used" "Used" "Used" "Used" "Used" "Used" "Used"
+  select object_ss 0-1 - - - - - - - -
+  select shadow 0-1 -
+  select edge 0-1 "Other"
+  select zplot 0-1 -
+runs
+  run "Used"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "P0" rt0=CubeRT[2] rt1=none rt2=none rt3=none ds=main.depth viewport=128x128+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+  run "Other"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "P0" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+enginelog "Loading effect file: <root>/offscreen.fx"
+enginelog "Warning: unknown technique name: Missing  (parameter: Script)"
+enginelog "Info: new OffScreen RenderTarget: MirrorRT"
+end

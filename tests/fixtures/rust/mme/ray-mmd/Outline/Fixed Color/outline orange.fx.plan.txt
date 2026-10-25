@@ -1,0 +1,42 @@
+passplan 1
+file "<root>/Outline/Fixed Color/outline orange.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=0 scriptorder=0 posteffect=0 drawsgeometry=0 errors=0
+parameters 4
+param "matView" "VIEW" matrix_rows float 4x4
+param "matWorld" "WORLD" matrix_rows float 4x4
+param "matWorldView" "WORLDVIEW" matrix_rows float 4x4
+param "matWorldViewProject" "WORLDVIEWPROJECTION" matrix_rows float 4x4
+resources 0
+controls 0
+technique_order "EdgeTec" "MainTecSS" "MainTec0" "ZplotTec" "ShadowTech"
+techniques 5
+technique "EdgeTec" mmdpass=edge usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=0 passes=1
+  pass 0 "DrawEdgeLine" script=0 custom=1 psize15=0 shadermix=1
+technique "MainTecSS" mmdpass=object_ss usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=0 passes=1
+  pass 0 "DrawObject" script=0 custom=1 psize15=0 shadermix=1
+technique "MainTec0" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ZplotTec" mmdpass=zplot usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ShadowTech" mmdpass=shadow usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+selection subsets=2 clamped=0
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-1 "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0" "MainTec0"
+  select object_ss 0-1 "MainTecSS" "MainTecSS" "MainTecSS" "MainTecSS" "MainTecSS" "MainTecSS" "MainTecSS" "MainTecSS"
+  select shadow 0-1 "ShadowTech"
+  select edge 0-1 "EdgeTec"
+  select zplot 0-1 "ZplotTec"
+runs
+  run "EdgeTec"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "DrawEdgeLine" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+  run "MainTecSS"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "DrawObject" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+enginelog "Loading effect file: <root>/Outline/Fixed Color/outline orange.fx"
+end

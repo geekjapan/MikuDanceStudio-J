@@ -1,0 +1,153 @@
+passplan 1
+file "<root>/Lighting/SpotLight/Default Ambient/spot_fog.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=0 scriptorder=0 posteffect=0 drawsgeometry=0 errors=0
+parameters 65
+param "time" "TIME" scalar float 1x1
+param "elapsed" "ELAPSEDTIME" scalar float 1x1
+param "MousePosition" "MOUSEPOSITION" vector float 1x2
+param "matWorld" "WORLD" matrix_rows float 4x4
+param "matWorldInverse" "WORLDINVERSE" matrix_rows float 4x4
+param "matWorldView" "WORLDVIEW" matrix_rows float 4x4
+param "matWorldViewProject" "WORLDVIEWPROJECTION" matrix_rows float 4x4
+param "matView" "VIEW" matrix_rows float 4x4
+param "matViewInverse" "VIEWINVERSE" matrix_rows float 4x4
+param "matProject" "PROJECTION" matrix_rows float 4x4
+param "matProjectInverse" "PROJECTIONINVERSE" matrix_rows float 4x4
+param "matViewProject" "VIEWPROJECTION" matrix_rows float 4x4
+param "matViewProjectInverse" "VIEWPROJECTIONINVERSE" matrix_rows float 4x4
+param "CameraPosition" "POSITION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "CameraDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "SunColor" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Light"
+param "SunDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Light"
+param "MaterialDiffuse" "DIFFUSE" vector float 1x4
+  ann "Object" string0 = "Geometry"
+param "MaterialAmbient" "AMBIENT" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialSpecular" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialToon" "TOONCOLOR" vector float 1x3
+param "MaterialPower" "SPECULARPOWER" scalar float 1x1
+  ann "Object" string0 = "Geometry"
+param "ViewportSize" "VIEWPORTPIXELSIZE" vector float 1x2
+param "AcsPosition" "CONTROLOBJECT" vector float 1x3
+  ann "name" string0 = "(self)"
+param "use_texture" "" scalar bool 1x1
+param "use_subtexture" "" scalar bool 1x1
+param "use_spheremap" "" scalar bool 1x1
+param "use_toon" "" scalar bool 1x1
+param "opadd" "" scalar bool 1x1
+param "MaterialMap" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+param "Gbuffer2RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer3RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer4RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer5RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer6RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer7RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "Gbuffer8RT" "RENDERCOLORTARGET" object texture 0x0 literal
+param "LightSpecMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "LightAlphaMap" "RENDERCOLORTARGET" object texture 0x0 literal
+param "mR" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "R+"
+param "mG" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "G+"
+param "mB" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "B+"
+param "mRangeP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Range+"
+param "mRangeM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Range-"
+param "mIntensityP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Intensity+"
+param "mIntensityM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Intensity-"
+param "mAngleP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Angle+"
+param "mAngleM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Angle-"
+param "mBlink" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Blink"
+param "mAttenuationBulbP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "AttenuationBulb+"
+param "mAttenuationBulbM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "AttenuationBulb-"
+param "mMiePhaseP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MiePhase+"
+param "mMiePhaseM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MiePhase-"
+param "mMieDensityP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieDensity+"
+param "mMieDensityM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "MieDensity-"
+param "mPosition" "CONTROLOBJECT" vector float 1x3
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Position"
+param "mDirection" "CONTROLOBJECT" vector float 1x3
+  ann "name" string0 = "(self)"
+  ann "item" string0 = "Direction"
+resources 0
+controls 19
+control "AcsPosition" name="(self)" item=""
+control "mR" name="(self)" item="R+"
+control "mG" name="(self)" item="G+"
+control "mB" name="(self)" item="B+"
+control "mRangeP" name="(self)" item="Range+"
+control "mRangeM" name="(self)" item="Range-"
+control "mIntensityP" name="(self)" item="Intensity+"
+control "mIntensityM" name="(self)" item="Intensity-"
+control "mAngleP" name="(self)" item="Angle+"
+control "mAngleM" name="(self)" item="Angle-"
+control "mBlink" name="(self)" item="Blink"
+control "mAttenuationBulbP" name="(self)" item="AttenuationBulb+"
+control "mAttenuationBulbM" name="(self)" item="AttenuationBulb-"
+control "mMiePhaseP" name="(self)" item="MiePhase+"
+control "mMiePhaseM" name="(self)" item="MiePhase-"
+control "mMieDensityP" name="(self)" item="MieDensity+"
+control "mMieDensityM" name="(self)" item="MieDensity-"
+control "mPosition" name="(self)" item="Position"
+control "mDirection" name="(self)" item="Direction"
+technique_order "MainTechBS0" "DepthTech" "EdgeTec" "ShadowTech" "ZplotTec"
+techniques 5
+technique "MainTechBS0" mmdpass=object_ss usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=0 passes=1
+  pass 0 "DrawObject" script=0 custom=1 psize15=0 shadermix=1
+technique "DepthTech" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "EdgeTec" mmdpass=edge usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ShadowTech" mmdpass=shadow usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+technique "ZplotTec" mmdpass=zplot usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=0 empty=1 passes=0
+selection subsets=2 clamped=0
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-1 "DepthTech" "DepthTech" "DepthTech" "DepthTech" "DepthTech" "DepthTech" "DepthTech" "DepthTech"
+  select object_ss 0-1 "MainTechBS0" "MainTechBS0" "MainTechBS0" "MainTechBS0" "MainTechBS0" "MainTechBS0" "MainTechBS0" "MainTechBS0"
+  select shadow 0-1 "ShadowTech"
+  select edge 0-1 "EdgeTec"
+  select zplot 0-1 "ZplotTec"
+runs
+  run "MainTechBS0"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    draw geometry pass=0 "DrawObject" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=0 draws=1 hr=0x00000000 runfailed=0
+enginelog "Loading effect file: <root>/Lighting/SpotLight/Default Ambient/spot_fog.fx"
+end

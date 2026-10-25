@@ -1,0 +1,842 @@
+passplan 1
+file "<root>/ray.fx"
+device HAL backbuffer=1000x600 format=A8R8G8B8 depthstencil=D24S8 vs=3.0 ps=3.0 mipfilter=1
+load ok
+effect scriptclass=1 scriptorder=2 posteffect=1 drawsgeometry=0 errors=0
+parameters 164
+param "mSunLightP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "SunLight+"
+param "mSunLightM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "SunLight-"
+param "mSunShadowRP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "SunShadowR+"
+param "mSunShadowGP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "SunShadowG+"
+param "mSunShadowBP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "SunShadowB+"
+param "mSunShadowVM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "SunShadowV-"
+param "mSSAOP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "SSAO+"
+param "mSSAOM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "SSAO-"
+param "mSSAORadiusP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "SSAORadius+"
+param "mSSAORadiusM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "SSAORadius-"
+param "mSSDOP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "SSDO+"
+param "mSSDOM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "SSDO-"
+param "mSSSSP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "SSSS+"
+param "mSSSSM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "SSSS-"
+param "mExposureP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "Exposure+"
+param "mExposureM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "Exposure-"
+param "mFstopP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "Fstop+"
+param "mFstopM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "Fstop-"
+param "mFocalLengthP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "FocalLength+"
+param "mFocalLengthM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "FocalLength-"
+param "mFocalDistanceP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "FocalDistance+"
+param "mFocalDistanceM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "FocalDistance-"
+param "mFocalRegionP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "FocalRegion+"
+param "mFocalRegionM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "FocalRegion-"
+param "mMeasureMode" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "MeasureMode"
+param "mTestMode" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "TestMode"
+param "mVignette" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "Vignette"
+param "mDispersion" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "Dispersion"
+param "mDispersionRadius" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "DispersionRadius"
+param "mBloomThresholdP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "BloomThreshold"
+param "mBloomRadiusP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "BloomRadius+"
+param "mBloomRadiusM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "BloomRadius-"
+param "mBloomColorAllHP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "BloomColorAllH+"
+param "mBloomColorAllSP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "BloomColorAllS+"
+param "mBloomColorAllVP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "BloomColorAllV+"
+param "mBloomColorAllVM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "BloomColorAllV-"
+param "mBloomStarFade" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "BloomStarFade"
+param "mContrastP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "Contrast+"
+param "mContrastM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "Contrast-"
+param "mSaturationP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "Saturation+"
+param "mSaturationM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "Saturation-"
+param "mGammaP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "Gamma+"
+param "mGammaM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "Gamma-"
+param "mColBalanceRP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "BalanceR+"
+param "mColBalanceGP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "BalanceG+"
+param "mColBalanceBP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "BalanceB+"
+param "mColBalanceRM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "BalanceR-"
+param "mColBalanceGM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "BalanceG-"
+param "mColBalanceBM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "BalanceB-"
+param "mTemperatureP" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "Temperature+"
+param "mTemperatureM" "CONTROLOBJECT" scalar float 1x1
+  ann "name" string0 = "ray_controller.pmx"
+  ann "item" string0 = "Temperature-"
+param "time" "TIME" scalar float 1x1
+param "elapsed" "ELAPSEDTIME" scalar float 1x1
+param "MousePosition" "MOUSEPOSITION" vector float 1x2
+param "matWorld" "WORLD" matrix_rows float 4x4
+param "matWorldInverse" "WORLDINVERSE" matrix_rows float 4x4
+param "matWorldView" "WORLDVIEW" matrix_rows float 4x4
+param "matWorldViewProject" "WORLDVIEWPROJECTION" matrix_rows float 4x4
+param "matView" "VIEW" matrix_rows float 4x4
+param "matViewInverse" "VIEWINVERSE" matrix_rows float 4x4
+param "matProject" "PROJECTION" matrix_rows float 4x4
+param "matProjectInverse" "PROJECTIONINVERSE" matrix_rows float 4x4
+param "matViewProject" "VIEWPROJECTION" matrix_rows float 4x4
+param "matViewProjectInverse" "VIEWPROJECTIONINVERSE" matrix_rows float 4x4
+param "CameraPosition" "POSITION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "CameraDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Camera"
+param "SunColor" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Light"
+param "SunDirection" "DIRECTION" vector float 1x3
+  ann "Object" string0 = "Light"
+param "MaterialDiffuse" "DIFFUSE" vector float 1x4
+  ann "Object" string0 = "Geometry"
+param "MaterialAmbient" "AMBIENT" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialSpecular" "SPECULAR" vector float 1x3
+  ann "Object" string0 = "Geometry"
+param "MaterialToon" "TOONCOLOR" vector float 1x3
+param "MaterialPower" "SPECULARPOWER" scalar float 1x1
+  ann "Object" string0 = "Geometry"
+param "ViewportSize" "VIEWPORTPIXELSIZE" vector float 1x2
+param "AcsPosition" "CONTROLOBJECT" vector float 1x3
+  ann "name" string0 = "(self)"
+param "use_texture" "" scalar bool 1x1
+param "use_subtexture" "" scalar bool 1x1
+param "use_spheremap" "" scalar bool 1x1
+param "use_toon" "" scalar bool 1x1
+param "opadd" "" scalar bool 1x1
+param "DepthBuffer" "RENDERDEPTHSTENCILTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "D24S8"
+param "ScnMap" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A16B16G16R16F"
+param "FogMap" "OFFSCREENRENDERTARGET" object texture 0x0
+  ann "Description" string0 = "Multi volumetirc fog map for ray"
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A16B16G16R16F"
+  ann "ClearColor" float4 = 0,0,0,0
+  ann "ClearDepth" float1 = 1
+  ann "DefaultEffect" string0 = "GroundFog*.*= ./Fog/GroundFog/ground_fog.fx;AtmosphericFog*.*= ./Fog/AtmosphericFog/atmospheric_fog.fx;VolumetricCube.pmx =./Fog/VolumetricCube/volumetric_cube.fx;VolumetricSphere.pmx =./Fog/VolumetricSphere/volumetric_sphere.fx;* = hide;"
+param "LightMap" "OFFSCREENRENDERTARGET" object texture 0x0
+  ann "Description" string0 = "Multi light source map for ray"
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A16B16G16R16F"
+  ann "ClearColor" float4 = 0,0,0,0
+  ann "ClearDepth" float1 = 1
+  ann "DefaultEffect" string0 = "DirectionalLight.pmx =./Lighting/DirectionalLight/Default/directional_lighting.fx;PointLight.pmx =./Lighting/PointLight/Default/point_lighting.fx;PointLightIES.pmx =./Lighting/PointLightIES/Default/IES_lighting.fx;SpotLight.pmx =./Lighting/SpotLight/Default/spot_lighting.fx;SpotLightIES.pmx =./Lighting/SpotLightIES/Default/IES_lighting.fx;DiskLight.pmx =./Lighting/DiskLight/Default/disk_lighting.fx;SphereLight.pmx =./Lighting/SphereLight/Default/sphere_lighting.fx;TubeLight.pmx =./Lighting/TubeLight/Default/tube_lighting.fx;LED.pmx =./Lighting/RectangleLight/Default LED/rectangle_lighting.fx;RectangleLight.pmx =./Lighting/RectangleLight/Default/rectangle_lighting.fx;* = hide;"
+param "LightSpecMap" "RENDERCOLORTARGET" object texture 0x0 literal
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A16B16G16R16F"
+param "LightAlphaMap" "RENDERCOLORTARGET" object texture 0x0 literal
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A16B16G16R16F"
+param "EnvLightMap" "OFFSCREENRENDERTARGET" object texture 0x0
+  ann "Description" string0 = "Image-based-lighting map for ray"
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A16B16G16R16F"
+  ann "ClearColor" float4 = 0,0.498039216,0,0.498039216
+  ann "ClearDepth" float1 = 1
+  ann "DefaultEffect" string0 = "sky*box*.* =./Skybox/skylighting_none.fx;*= hide;"
+param "EnvLightAlphaMap" "RENDERCOLORTARGET" object texture 0x0 literal
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A16B16G16R16F"
+param "MaterialMap" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+  ann "Description" string0 = "Material cache map for ray"
+  ann "ViewportRatio" float2 = 1,1
+  ann "ClearColor" float4 = 0,0,0,0
+  ann "ClearDepth" float1 = 1
+  ann "Format" string0 = "A8R8G8B8"
+  ann "DefaultEffect" string0 = "self = hide;*fog.pmx=hide;*controller*.pmx=hide;*editor*.pmx=hide;Volumetric*.pmx=hide;sky*box*.* = ./materials/material_skybox.fx;LED*.pmx =./materials/Video/material_screen_led.fx;*Light*.pmx =./materials/Emissive/material_lighting.fx;*.pmd = ./materials/material_2.0.fx;*.pmx = ./materials/material_2.0.fx;*.x = hide;* = hide;"
+param "SSAOMap" "OFFSCREENRENDERTARGET" object texture 0x0
+  ann "Description" string0 = "SSAO visibility for ray"
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A8"
+  ann "ClearColor" float4 = 1,1,1,1
+  ann "ClearDepth" float1 = 1
+  ann "DefaultEffect" string0 = "self = hide;*fog.pmx=hide;*controller*.pmx=hide;*editor*.pmx=hide;Volumetric*.pmx=hide;*.*=shadow/SSAO visibility 1.0.fx;"
+param "PSSM1" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+  ann "Description" string0 = "Cascade shadow map for ray"
+  ann "Dimensions" int2 = 2048,2048
+  ann "Format" string0 = "R32F"
+  ann "ClearColor" float4 = 0,0,0,0
+  ann "ClearDepth" float1 = 1
+  ann "DefaultEffect" string0 = "self = hide;*fog.pmx=hide;*controller*.pmx=hide;*editor*.pmx=hide;Volumetric*.pmx=hide;*.pmx=shadow/PSSM1.fx;*.pmd=shadow/PSSM1.fx;*.x=hide;"
+param "PSSM2" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+  ann "Description" string0 = "Cascade shadow map for ray"
+  ann "Dimensions" int2 = 2048,2048
+  ann "Format" string0 = "R32F"
+  ann "ClearColor" float4 = 0,0,0,0
+  ann "ClearDepth" float1 = 1
+  ann "DefaultEffect" string0 = "self = hide;*fog.pmx=hide;*controller*.pmx=hide;*editor*.pmx=hide;Volumetric*.pmx=hide;*.pmx=shadow/PSSM2.fx;*.pmd=shadow/PSSM2.fx;*.x=hide;"
+param "PSSM3" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+  ann "Description" string0 = "Cascade shadow map for ray"
+  ann "Dimensions" int2 = 2048,2048
+  ann "Format" string0 = "R32F"
+  ann "ClearColor" float4 = 0,0,0,0
+  ann "ClearDepth" float1 = 1
+  ann "DefaultEffect" string0 = "self = hide;*fog.pmx=hide;*controller*.pmx=hide;*editor*.pmx=hide;Volumetric*.pmx=hide;*.pmx=shadow/PSSM3.fx;*.pmd=shadow/PSSM3.fx;*.x=hide;"
+param "PSSM4" "OFFSCREENRENDERTARGET" object texture 0x0 literal
+  ann "Description" string0 = "Cascade shadow map for ray"
+  ann "Dimensions" int2 = 2048,2048
+  ann "Format" string0 = "R32F"
+  ann "ClearColor" float4 = 0,0,0,0
+  ann "ClearDepth" float1 = 1
+  ann "DefaultEffect" string0 = "self = hide;*fog.pmx=hide;*controller*.pmx=hide;*editor*.pmx=hide;Volumetric*.pmx=hide;*.pmx=shadow/PSSM4.fx;*.pmd=shadow/PSSM4.fx;*.x=hide;"
+param "ShadowMap" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "L8"
+param "ShadowMapTemp" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "L8"
+param "Gbuffer2RT" "RENDERCOLORTARGET" object texture 0x0 literal
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A8R8G8B8"
+param "Gbuffer3RT" "RENDERCOLORTARGET" object texture 0x0 literal
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A8R8G8B8"
+param "Gbuffer4RT" "RENDERCOLORTARGET" object texture 0x0 literal
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A16B16G16R16F"
+param "Gbuffer5RT" "RENDERCOLORTARGET" object texture 0x0 literal
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A8R8G8B8"
+param "Gbuffer6RT" "RENDERCOLORTARGET" object texture 0x0 literal
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A8R8G8B8"
+param "Gbuffer7RT" "RENDERCOLORTARGET" object texture 0x0 literal
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A8R8G8B8"
+param "Gbuffer8RT" "RENDERCOLORTARGET" object texture 0x0 literal
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A16B16G16R16F"
+param "ShadingMap" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A16B16G16R16F"
+param "ShadingMapTemp" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A16B16G16R16F"
+param "ShadingMapTempSpecular" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 1,1
+  ann "Format" string0 = "A16B16G16R16F"
+param "SSDOMap" "RENDERCOLORTARGET" object texture 0x0 literal
+  ann "ViewportRatio" float2 = 1,1
+  ann "AntiAlias" bool1 = 0
+  ann "Format" string0 = "A8R8G8B8"
+param "SSDOMapTemp" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 1,1
+  ann "AntiAlias" bool1 = 0
+  ann "Format" string0 = "A8R8G8B8"
+param "DownsampleMap1st" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 0.5,0.5
+  ann "Format" string0 = "A16B16G16R16F"
+param "BloomMap1st" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 0.5,0.5
+  ann "Format" string0 = "A16B16G16R16F"
+param "BloomMap2nd" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 0.25,0.25
+  ann "Format" string0 = "A16B16G16R16F"
+param "BloomMap3rd" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 0.125,0.125
+  ann "Format" string0 = "A16B16G16R16F"
+param "BloomMap4th" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 0.0625,0.0625
+  ann "Format" string0 = "A16B16G16R16F"
+param "BloomMap5th" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 0.03125,0.03125
+  ann "Format" string0 = "A16B16G16R16F"
+param "BloomMap1stTemp" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 0.5,0.5
+  ann "Format" string0 = "A16B16G16R16F"
+param "BloomMap2ndTemp" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 0.25,0.25
+  ann "Format" string0 = "A16B16G16R16F"
+param "BloomMap3rdTemp" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 0.125,0.125
+  ann "Format" string0 = "A16B16G16R16F"
+param "BloomMap4thTemp" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 0.0625,0.0625
+  ann "Format" string0 = "A16B16G16R16F"
+param "BloomMap5thTemp" "RENDERCOLORTARGET" object texture 0x0
+  ann "ViewportRatio" float2 = 0.03125,0.03125
+  ann "Format" string0 = "A16B16G16R16F"
+param "Script" "STANDARDSGLOBAL" scalar float 1x1
+  ann "ScriptOutput" string0 = "color"
+  ann "ScriptClass" string0 = "scene"
+  ann "ScriptOrder" string0 = "postprocess"
+resources 39
+resource "DepthBuffer" semantic=RenderDepthStencilTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=D24S8 defaultpool=1
+  created texture 1x1 levels=1 format=A8R8G8B8 pool=1 usage=0x0
+  created depthsurface 1000x600 format=D24S8
+resource "ScnMap" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 1000x600 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "FogMap" semantic=OffScreenRenderTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A16B16G16R16F defaultpool=1
+  clear color=0x00000000 depth=1 antialias=0
+  defaulteffect_row "GroundFog*.*" "<root>/Fog/GroundFog/ground_fog.fx"
+  defaulteffect_row "AtmosphericFog*.*" "<root>/Fog/AtmosphericFog/atmospheric_fog.fx"
+  defaulteffect_row "VolumetricCube.pmx" "<root>/Fog/VolumetricCube/volumetric_cube.fx"
+  defaulteffect_row "VolumetricSphere.pmx" "<root>/Fog/VolumetricSphere/volumetric_sphere.fx"
+  defaulteffect_row "*" "hide"
+  created texture 1000x600 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+  offscreendepth 1000x600 format=D24S8
+resource "LightMap" semantic=OffScreenRenderTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A16B16G16R16F defaultpool=1
+  clear color=0x00000000 depth=1 antialias=0
+  defaulteffect_row "DirectionalLight.pmx" "<root>/Lighting/DirectionalLight/Default/directional_lighting.fx"
+  defaulteffect_row "PointLight.pmx" "<root>/Lighting/PointLight/Default/point_lighting.fx"
+  defaulteffect_row "PointLightIES.pmx" "<root>/Lighting/PointLightIES/Default/IES_lighting.fx"
+  defaulteffect_row "SpotLight.pmx" "<root>/Lighting/SpotLight/Default/spot_lighting.fx"
+  defaulteffect_row "SpotLightIES.pmx" "<root>/Lighting/SpotLightIES/Default/IES_lighting.fx"
+  defaulteffect_row "DiskLight.pmx" "<root>/Lighting/DiskLight/Default/disk_lighting.fx"
+  defaulteffect_row "SphereLight.pmx" "<root>/Lighting/SphereLight/Default/sphere_lighting.fx"
+  defaulteffect_row "TubeLight.pmx" "<root>/Lighting/TubeLight/Default/tube_lighting.fx"
+  defaulteffect_row "LED.pmx" "<root>/Lighting/RectangleLight/Default LED/rectangle_lighting.fx"
+  defaulteffect_row "RectangleLight.pmx" "<root>/Lighting/RectangleLight/Default/rectangle_lighting.fx"
+  defaulteffect_row "*" "hide"
+  created texture 1000x600 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+  offscreendepth 1000x600 format=D24S8
+resource "LightSpecMap" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 1000x600 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "LightAlphaMap" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 1000x600 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "EnvLightMap" semantic=OffScreenRenderTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A16B16G16R16F defaultpool=1
+  clear color=0x7f007f00 depth=1 antialias=0
+  defaulteffect_row "sky*box*.*" "<root>/Skybox/skylighting_none.fx"
+  defaulteffect_row "*" "hide"
+  created texture 1000x600 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+  offscreendepth 1000x600 format=D24S8
+resource "EnvLightAlphaMap" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 1000x600 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "MaterialMap" semantic=OffScreenRenderTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A8R8G8B8 defaultpool=1
+  clear color=0x00000000 depth=1 antialias=0
+  defaulteffect_row "self" "hide"
+  defaulteffect_row "*fog.pmx" "hide"
+  defaulteffect_row "*controller*.pmx" "hide"
+  defaulteffect_row "*editor*.pmx" "hide"
+  defaulteffect_row "Volumetric*.pmx" "hide"
+  defaulteffect_row "sky*box*.*" "<root>/materials/material_skybox.fx"
+  defaulteffect_row "LED*.pmx" "<root>/materials/Video/material_screen_led.fx"
+  defaulteffect_row "*Light*.pmx" "<root>/materials/Emissive/material_lighting.fx"
+  defaulteffect_row "*.pmd" "<root>/materials/material_2.0.fx"
+  defaulteffect_row "*.pmx" "<root>/materials/material_2.0.fx"
+  defaulteffect_row "*.x" "hide"
+  defaulteffect_row "*" "hide"
+  created texture 1000x600 levels=1 format=A8R8G8B8 pool=0 usage=0x1
+  offscreendepth 1000x600 format=D24S8
+resource "SSAOMap" semantic=OffScreenRenderTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A8 defaultpool=1
+  clear color=0xffffffff depth=1 antialias=0
+  defaulteffect_row "self" "hide"
+  defaulteffect_row "*fog.pmx" "hide"
+  defaulteffect_row "*controller*.pmx" "hide"
+  defaulteffect_row "*editor*.pmx" "hide"
+  defaulteffect_row "Volumetric*.pmx" "hide"
+  defaulteffect_row "*.*" "<root>/shadow/SSAO visibility 1.0.fx"
+  created texture 1000x600 levels=1 format=A8 pool=0 usage=0x1
+  offscreendepth 1000x600 format=D24S8
+resource "PSSM1" semantic=OffScreenRenderTarget texture=5
+  request 2048x2048x1 mips=1 rawsize=2048x2048 rawmips=1 format=R32F defaultpool=1
+  clear color=0x00000000 depth=1 antialias=0
+  defaulteffect_row "self" "hide"
+  defaulteffect_row "*fog.pmx" "hide"
+  defaulteffect_row "*controller*.pmx" "hide"
+  defaulteffect_row "*editor*.pmx" "hide"
+  defaulteffect_row "Volumetric*.pmx" "hide"
+  defaulteffect_row "*.pmx" "<root>/shadow/PSSM1.fx"
+  defaulteffect_row "*.pmd" "<root>/shadow/PSSM1.fx"
+  defaulteffect_row "*.x" "hide"
+  created texture 2048x2048 levels=1 format=R32F pool=0 usage=0x1
+  offscreendepth 2048x2048 format=D24S8
+resource "PSSM2" semantic=OffScreenRenderTarget texture=5
+  request 2048x2048x1 mips=1 rawsize=2048x2048 rawmips=1 format=R32F defaultpool=1
+  clear color=0x00000000 depth=1 antialias=0
+  defaulteffect_row "self" "hide"
+  defaulteffect_row "*fog.pmx" "hide"
+  defaulteffect_row "*controller*.pmx" "hide"
+  defaulteffect_row "*editor*.pmx" "hide"
+  defaulteffect_row "Volumetric*.pmx" "hide"
+  defaulteffect_row "*.pmx" "<root>/shadow/PSSM2.fx"
+  defaulteffect_row "*.pmd" "<root>/shadow/PSSM2.fx"
+  defaulteffect_row "*.x" "hide"
+  created texture 2048x2048 levels=1 format=R32F pool=0 usage=0x1
+  offscreendepth 2048x2048 format=D24S8
+resource "PSSM3" semantic=OffScreenRenderTarget texture=5
+  request 2048x2048x1 mips=1 rawsize=2048x2048 rawmips=1 format=R32F defaultpool=1
+  clear color=0x00000000 depth=1 antialias=0
+  defaulteffect_row "self" "hide"
+  defaulteffect_row "*fog.pmx" "hide"
+  defaulteffect_row "*controller*.pmx" "hide"
+  defaulteffect_row "*editor*.pmx" "hide"
+  defaulteffect_row "Volumetric*.pmx" "hide"
+  defaulteffect_row "*.pmx" "<root>/shadow/PSSM3.fx"
+  defaulteffect_row "*.pmd" "<root>/shadow/PSSM3.fx"
+  defaulteffect_row "*.x" "hide"
+  created texture 2048x2048 levels=1 format=R32F pool=0 usage=0x1
+  offscreendepth 2048x2048 format=D24S8
+resource "PSSM4" semantic=OffScreenRenderTarget texture=5
+  request 2048x2048x1 mips=1 rawsize=2048x2048 rawmips=1 format=R32F defaultpool=1
+  clear color=0x00000000 depth=1 antialias=0
+  defaulteffect_row "self" "hide"
+  defaulteffect_row "*fog.pmx" "hide"
+  defaulteffect_row "*controller*.pmx" "hide"
+  defaulteffect_row "*editor*.pmx" "hide"
+  defaulteffect_row "Volumetric*.pmx" "hide"
+  defaulteffect_row "*.pmx" "<root>/shadow/PSSM4.fx"
+  defaulteffect_row "*.pmd" "<root>/shadow/PSSM4.fx"
+  defaulteffect_row "*.x" "hide"
+  created texture 2048x2048 levels=1 format=R32F pool=0 usage=0x1
+  offscreendepth 2048x2048 format=D24S8
+resource "ShadowMap" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=L8 defaultpool=1
+  created texture 1000x600 levels=1 format=L8 pool=0 usage=0x1
+resource "ShadowMapTemp" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=L8 defaultpool=1
+  created texture 1000x600 levels=1 format=L8 pool=0 usage=0x1
+resource "Gbuffer2RT" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A8R8G8B8 defaultpool=1
+  created texture 1000x600 levels=1 format=A8R8G8B8 pool=0 usage=0x1
+resource "Gbuffer3RT" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A8R8G8B8 defaultpool=1
+  created texture 1000x600 levels=1 format=A8R8G8B8 pool=0 usage=0x1
+resource "Gbuffer4RT" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 1000x600 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "Gbuffer5RT" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A8R8G8B8 defaultpool=1
+  created texture 1000x600 levels=1 format=A8R8G8B8 pool=0 usage=0x1
+resource "Gbuffer6RT" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A8R8G8B8 defaultpool=1
+  created texture 1000x600 levels=1 format=A8R8G8B8 pool=0 usage=0x1
+resource "Gbuffer7RT" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A8R8G8B8 defaultpool=1
+  created texture 1000x600 levels=1 format=A8R8G8B8 pool=0 usage=0x1
+resource "Gbuffer8RT" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 1000x600 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "ShadingMap" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 1000x600 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "ShadingMapTemp" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 1000x600 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "ShadingMapTempSpecular" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 1000x600 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "SSDOMap" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A8R8G8B8 defaultpool=1
+  created texture 1000x600 levels=1 format=A8R8G8B8 pool=0 usage=0x1
+resource "SSDOMapTemp" semantic=RenderColorTarget texture=5
+  request 1000x600x1 mips=1 rawsize=1000x600 rawmips=1 format=A8R8G8B8 defaultpool=1
+  created texture 1000x600 levels=1 format=A8R8G8B8 pool=0 usage=0x1
+resource "DownsampleMap1st" semantic=RenderColorTarget texture=5
+  request 500x300x1 mips=1 rawsize=500x300 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 500x300 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "BloomMap1st" semantic=RenderColorTarget texture=5
+  request 500x300x1 mips=1 rawsize=500x300 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 500x300 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "BloomMap2nd" semantic=RenderColorTarget texture=5
+  request 250x150x1 mips=1 rawsize=250x150 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 250x150 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "BloomMap3rd" semantic=RenderColorTarget texture=5
+  request 125x75x1 mips=1 rawsize=125x75 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 125x75 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "BloomMap4th" semantic=RenderColorTarget texture=5
+  request 62x37x1 mips=1 rawsize=62x37 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 62x37 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "BloomMap5th" semantic=RenderColorTarget texture=5
+  request 31x18x1 mips=1 rawsize=31x18 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 31x18 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "BloomMap1stTemp" semantic=RenderColorTarget texture=5
+  request 500x300x1 mips=1 rawsize=500x300 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 500x300 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "BloomMap2ndTemp" semantic=RenderColorTarget texture=5
+  request 250x150x1 mips=1 rawsize=250x150 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 250x150 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "BloomMap3rdTemp" semantic=RenderColorTarget texture=5
+  request 125x75x1 mips=1 rawsize=125x75 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 125x75 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "BloomMap4thTemp" semantic=RenderColorTarget texture=5
+  request 62x37x1 mips=1 rawsize=62x37 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 62x37 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+resource "BloomMap5thTemp" semantic=RenderColorTarget texture=5
+  request 31x18x1 mips=1 rawsize=31x18 rawmips=1 format=A16B16G16R16F defaultpool=1
+  created texture 31x18 levels=1 format=A16B16G16R16F pool=0 usage=0x1
+controls 52
+control "mSunLightP" name="ray_controller.pmx" item="SunLight+"
+control "mSunLightM" name="ray_controller.pmx" item="SunLight-"
+control "mSunShadowRP" name="ray_controller.pmx" item="SunShadowR+"
+control "mSunShadowGP" name="ray_controller.pmx" item="SunShadowG+"
+control "mSunShadowBP" name="ray_controller.pmx" item="SunShadowB+"
+control "mSunShadowVM" name="ray_controller.pmx" item="SunShadowV-"
+control "mSSAOP" name="ray_controller.pmx" item="SSAO+"
+control "mSSAOM" name="ray_controller.pmx" item="SSAO-"
+control "mSSAORadiusP" name="ray_controller.pmx" item="SSAORadius+"
+control "mSSAORadiusM" name="ray_controller.pmx" item="SSAORadius-"
+control "mSSDOP" name="ray_controller.pmx" item="SSDO+"
+control "mSSDOM" name="ray_controller.pmx" item="SSDO-"
+control "mSSSSP" name="ray_controller.pmx" item="SSSS+"
+control "mSSSSM" name="ray_controller.pmx" item="SSSS-"
+control "mExposureP" name="ray_controller.pmx" item="Exposure+"
+control "mExposureM" name="ray_controller.pmx" item="Exposure-"
+control "mFstopP" name="ray_controller.pmx" item="Fstop+"
+control "mFstopM" name="ray_controller.pmx" item="Fstop-"
+control "mFocalLengthP" name="ray_controller.pmx" item="FocalLength+"
+control "mFocalLengthM" name="ray_controller.pmx" item="FocalLength-"
+control "mFocalDistanceP" name="ray_controller.pmx" item="FocalDistance+"
+control "mFocalDistanceM" name="ray_controller.pmx" item="FocalDistance-"
+control "mFocalRegionP" name="ray_controller.pmx" item="FocalRegion+"
+control "mFocalRegionM" name="ray_controller.pmx" item="FocalRegion-"
+control "mMeasureMode" name="ray_controller.pmx" item="MeasureMode"
+control "mTestMode" name="ray_controller.pmx" item="TestMode"
+control "mVignette" name="ray_controller.pmx" item="Vignette"
+control "mDispersion" name="ray_controller.pmx" item="Dispersion"
+control "mDispersionRadius" name="ray_controller.pmx" item="DispersionRadius"
+control "mBloomThresholdP" name="ray_controller.pmx" item="BloomThreshold"
+control "mBloomRadiusP" name="ray_controller.pmx" item="BloomRadius+"
+control "mBloomRadiusM" name="ray_controller.pmx" item="BloomRadius-"
+control "mBloomColorAllHP" name="ray_controller.pmx" item="BloomColorAllH+"
+control "mBloomColorAllSP" name="ray_controller.pmx" item="BloomColorAllS+"
+control "mBloomColorAllVP" name="ray_controller.pmx" item="BloomColorAllV+"
+control "mBloomColorAllVM" name="ray_controller.pmx" item="BloomColorAllV-"
+control "mBloomStarFade" name="ray_controller.pmx" item="BloomStarFade"
+control "mContrastP" name="ray_controller.pmx" item="Contrast+"
+control "mContrastM" name="ray_controller.pmx" item="Contrast-"
+control "mSaturationP" name="ray_controller.pmx" item="Saturation+"
+control "mSaturationM" name="ray_controller.pmx" item="Saturation-"
+control "mGammaP" name="ray_controller.pmx" item="Gamma+"
+control "mGammaM" name="ray_controller.pmx" item="Gamma-"
+control "mColBalanceRP" name="ray_controller.pmx" item="BalanceR+"
+control "mColBalanceGP" name="ray_controller.pmx" item="BalanceG+"
+control "mColBalanceBP" name="ray_controller.pmx" item="BalanceB+"
+control "mColBalanceRM" name="ray_controller.pmx" item="BalanceR-"
+control "mColBalanceGM" name="ray_controller.pmx" item="BalanceG-"
+control "mColBalanceBM" name="ray_controller.pmx" item="BalanceB-"
+control "mTemperatureP" name="ray_controller.pmx" item="Temperature+"
+control "mTemperatureM" name="ray_controller.pmx" item="Temperature-"
+control "AcsPosition" name="(self)" item=""
+technique_order "DeferredLighting"
+techniques 1
+technique "DeferredLighting" mmdpass=object usetexture=any usespheremap=any usetoon=any subset=all hardware=1 shadercaps=1 shadermix=1 script=1 empty=0 passes=31
+  script "RenderColorTarget=ScnMap;RenderDepthStencilTarget=DepthBuffer;ClearSetColor=BackColor;ClearSetDepth=ClearDepth;ClearSetStencil=ClearStencil;Clear=Color;Clear=Depth;ScriptExternal=Color;RenderColorTarget=ShadowMap;ClearSetColor=WhiteColor;Clear=Color;Pass=ShadowMapGen;ClearSetColor=BackColor;RenderColorTarget=ShadowMapTemp; Pass=ShadowBlurX;RenderColorTarget=ShadowMap;\x09  Pass=ShadowBlurY;RenderColorTarget=SSDOMap; Pass=SSDO;RenderColorTarget=SSDOMapTemp; Pass=SSDOBlurX;RenderColorTarget=SSDOMap;\x09    Pass=SSDOBlurY;RenderColorTarget0=ShadingMapTemp;RenderColorTarget1=ShadingMapTempSpecular;Pass=ShadingOpacity;RenderColorTarget1=;RenderDepthStencilTarget=DepthBuffer;RenderColorTarget=;Clear=Depth;Pass=SSSSStencilTest;RenderColorTarget=ShadingMap; Clear=Color; Pass=SSSSBlurX;RenderColorTarget=ShadingMapTemp;\x09Pass=SSSSBlurY;RenderColorTarget=ShadingMapTemp;\x09Pass=ShadingOpacityAlbedo;RenderColorTarget=ShadingMapTemp;\x09Pass=ShadingOpacitySpecular;RenderColorTarget=ShadingMap;\x09\x09Pass=ShadingTransparent;RenderColorTarget=DownsampleMap1st; Pass=GlareDetection;RenderColorTarget=BloomMap1stTemp;  Pass=BloomBlurX1;RenderColorTarget=BloomMap1st;\x09\x09 Pass=BloomBlurY1;RenderColorTarget=BloomMap2nd;\x09\x09 Pass=BloomDownsampleX2;RenderColorTarget=BloomMap2ndTemp;  Pass=BloomBlurX2;RenderColorTarget=BloomMap2nd;\x09\x09 Pass=BloomBlurY2;RenderColorTarget=BloomMap3rd;\x09\x09 Pass=BloomDownsampleX3;RenderColorTarget=BloomMap3rdTemp;  Pass=BloomBlurX3;RenderColorTarget=BloomMap3rd;\x09\x09 Pass=BloomBlurY3;RenderColorTarget=BloomMap4th;\x09\x09 Pass=BloomDownsampleX4;RenderColorTarget=BloomMap4thTemp;  Pass=BloomBlurX4;RenderColorTarget=BloomMap4th;\x09\x09 Pass=BloomBlurY4;RenderColorTarget=BloomMap5th;\x09\x09 Pass=BloomDownsampleX5;RenderColorTarget=BloomMap5thTemp;  Pass=BloomBlurX5;RenderColorTarget=BloomMap5th;\x09\x09 Pass=BloomBlurY5;RenderColorTarget=BloomMap1st;\x09\x09Pass=GlareLightComp;RenderColorTarget=ShadingMapTemp;Pass=HDRTonemapping;RenderColorTarget=;RenderDepthStencilTarget=;Pass=FXAA;"
+  cmd 0 RenderColorTarget0 param="ScnMap" value=-1 text="ScnMap"
+  cmd 1 RenderDepthStencilTarget param="DepthBuffer" value=-1 text="DepthBuffer"
+  cmd 2 ClearSetColor param="BackColor" value=0 text="BackColor"
+  cmd 3 ClearSetDepth param="ClearDepth" value=0 text="ClearDepth"
+  cmd 4 Clear param="-" value=1 text="Color"
+  cmd 5 Clear param="-" value=6 text="Depth"
+  cmd 6 ScriptExternal param="-" value=0 text="Color"
+  cmd 7 RenderColorTarget0 param="ShadowMap" value=-1 text="ShadowMap"
+  cmd 8 ClearSetColor param="WhiteColor" value=0 text="WhiteColor"
+  cmd 9 Clear param="-" value=1 text="Color"
+  cmd 10 Pass pass="ShadowMapGen" index=0 text="ShadowMapGen"
+  cmd 11 ClearSetColor param="BackColor" value=0 text="BackColor"
+  cmd 12 RenderColorTarget0 param="ShadowMapTemp" value=-1 text="ShadowMapTemp"
+  cmd 13 Pass pass="ShadowBlurX" index=1 text="ShadowBlurX"
+  cmd 14 RenderColorTarget0 param="ShadowMap" value=-1 text="ShadowMap"
+  cmd 15 Pass pass="ShadowBlurY" index=2 text="ShadowBlurY"
+  cmd 16 RenderColorTarget0 param="SSDOMap" value=-1 text="SSDOMap"
+  cmd 17 Pass pass="SSDO" index=3 text="SSDO"
+  cmd 18 RenderColorTarget0 param="SSDOMapTemp" value=-1 text="SSDOMapTemp"
+  cmd 19 Pass pass="SSDOBlurX" index=4 text="SSDOBlurX"
+  cmd 20 RenderColorTarget0 param="SSDOMap" value=-1 text="SSDOMap"
+  cmd 21 Pass pass="SSDOBlurY" index=5 text="SSDOBlurY"
+  cmd 22 RenderColorTarget0 param="ShadingMapTemp" value=-1 text="ShadingMapTemp"
+  cmd 23 RenderColorTarget1 param="ShadingMapTempSpecular" value=-1 text="ShadingMapTempSpecular"
+  cmd 24 Pass pass="ShadingOpacity" index=6 text="ShadingOpacity"
+  cmd 25 RenderColorTarget1 param="-" value=0 text=""
+  cmd 26 RenderDepthStencilTarget param="DepthBuffer" value=-1 text="DepthBuffer"
+  cmd 27 RenderColorTarget0 param="-" value=0 text=""
+  cmd 28 Clear param="-" value=6 text="Depth"
+  cmd 29 Pass pass="SSSSStencilTest" index=8 text="SSSSStencilTest"
+  cmd 30 RenderColorTarget0 param="ShadingMap" value=-1 text="ShadingMap"
+  cmd 31 Clear param="-" value=1 text="Color"
+  cmd 32 Pass pass="SSSSBlurX" index=9 text="SSSSBlurX"
+  cmd 33 RenderColorTarget0 param="ShadingMapTemp" value=-1 text="ShadingMapTemp"
+  cmd 34 Pass pass="SSSSBlurY" index=10 text="SSSSBlurY"
+  cmd 35 RenderColorTarget0 param="ShadingMapTemp" value=-1 text="ShadingMapTemp"
+  cmd 36 Pass pass="ShadingOpacityAlbedo" index=11 text="ShadingOpacityAlbedo"
+  cmd 37 RenderColorTarget0 param="ShadingMapTemp" value=-1 text="ShadingMapTemp"
+  cmd 38 Pass pass="ShadingOpacitySpecular" index=12 text="ShadingOpacitySpecular"
+  cmd 39 RenderColorTarget0 param="ShadingMap" value=-1 text="ShadingMap"
+  cmd 40 Pass pass="ShadingTransparent" index=7 text="ShadingTransparent"
+  cmd 41 RenderColorTarget0 param="DownsampleMap1st" value=-1 text="DownsampleMap1st"
+  cmd 42 Pass pass="GlareDetection" index=13 text="GlareDetection"
+  cmd 43 RenderColorTarget0 param="BloomMap1stTemp" value=-1 text="BloomMap1stTemp"
+  cmd 44 Pass pass="BloomBlurX1" index=14 text="BloomBlurX1"
+  cmd 45 RenderColorTarget0 param="BloomMap1st" value=-1 text="BloomMap1st"
+  cmd 46 Pass pass="BloomBlurY1" index=15 text="BloomBlurY1"
+  cmd 47 RenderColorTarget0 param="BloomMap2nd" value=-1 text="BloomMap2nd"
+  cmd 48 Pass pass="BloomDownsampleX2" index=16 text="BloomDownsampleX2"
+  cmd 49 RenderColorTarget0 param="BloomMap2ndTemp" value=-1 text="BloomMap2ndTemp"
+  cmd 50 Pass pass="BloomBlurX2" index=17 text="BloomBlurX2"
+  cmd 51 RenderColorTarget0 param="BloomMap2nd" value=-1 text="BloomMap2nd"
+  cmd 52 Pass pass="BloomBlurY2" index=18 text="BloomBlurY2"
+  cmd 53 RenderColorTarget0 param="BloomMap3rd" value=-1 text="BloomMap3rd"
+  cmd 54 Pass pass="BloomDownsampleX3" index=19 text="BloomDownsampleX3"
+  cmd 55 RenderColorTarget0 param="BloomMap3rdTemp" value=-1 text="BloomMap3rdTemp"
+  cmd 56 Pass pass="BloomBlurX3" index=20 text="BloomBlurX3"
+  cmd 57 RenderColorTarget0 param="BloomMap3rd" value=-1 text="BloomMap3rd"
+  cmd 58 Pass pass="BloomBlurY3" index=21 text="BloomBlurY3"
+  cmd 59 RenderColorTarget0 param="BloomMap4th" value=-1 text="BloomMap4th"
+  cmd 60 Pass pass="BloomDownsampleX4" index=22 text="BloomDownsampleX4"
+  cmd 61 RenderColorTarget0 param="BloomMap4thTemp" value=-1 text="BloomMap4thTemp"
+  cmd 62 Pass pass="BloomBlurX4" index=23 text="BloomBlurX4"
+  cmd 63 RenderColorTarget0 param="BloomMap4th" value=-1 text="BloomMap4th"
+  cmd 64 Pass pass="BloomBlurY4" index=24 text="BloomBlurY4"
+  cmd 65 RenderColorTarget0 param="BloomMap5th" value=-1 text="BloomMap5th"
+  cmd 66 Pass pass="BloomDownsampleX5" index=25 text="BloomDownsampleX5"
+  cmd 67 RenderColorTarget0 param="BloomMap5thTemp" value=-1 text="BloomMap5thTemp"
+  cmd 68 Pass pass="BloomBlurX5" index=26 text="BloomBlurX5"
+  cmd 69 RenderColorTarget0 param="BloomMap5th" value=-1 text="BloomMap5th"
+  cmd 70 Pass pass="BloomBlurY5" index=27 text="BloomBlurY5"
+  cmd 71 RenderColorTarget0 param="BloomMap1st" value=-1 text="BloomMap1st"
+  cmd 72 Pass pass="GlareLightComp" index=28 text="GlareLightComp"
+  cmd 73 RenderColorTarget0 param="ShadingMapTemp" value=-1 text="ShadingMapTemp"
+  cmd 74 Pass pass="HDRTonemapping" index=29 text="HDRTonemapping"
+  cmd 75 RenderColorTarget0 param="-" value=0 text=""
+  cmd 76 RenderDepthStencilTarget param="-" value=0 text=""
+  cmd 77 Pass pass="FXAA" index=30 text="FXAA"
+  pass 0 "ShadowMapGen" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 1 "ShadowBlurX" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 2 "ShadowBlurY" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 3 "SSDO" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 4 "SSDOBlurX" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 5 "SSDOBlurY" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 6 "ShadingOpacity" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 7 "ShadingTransparent" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 8 "SSSSStencilTest" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 9 "SSSSBlurX" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 10 "SSSSBlurY" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 11 "ShadingOpacityAlbedo" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 12 "ShadingOpacitySpecular" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 13 "GlareDetection" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 14 "BloomBlurX1" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 15 "BloomBlurY1" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 16 "BloomDownsampleX2" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 17 "BloomBlurX2" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 18 "BloomBlurY2" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 19 "BloomDownsampleX3" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 20 "BloomBlurX3" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 21 "BloomBlurY3" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 22 "BloomDownsampleX4" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 23 "BloomBlurX4" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 24 "BloomBlurY4" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 25 "BloomDownsampleX5" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 26 "BloomBlurX5" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 27 "BloomBlurY5" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 28 "GlareLightComp" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 29 "HDRTonemapping" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+  pass 30 "FXAA" script=1 custom=1 psize15=0 shadermix=1
+    script "Draw=Buffer;"
+    cmd 0 DrawBuffer param="-" value=0 text="Buffer"
+selection subsets=1 clamped=1
+  # name! = the technique matched but is invalid (fallback); - = no technique
+  # modes 0 and 1 list the eight Use* states: index = usetexture | usespheremap<<1 | usetoon<<2
+  select object 0-0 "DeferredLighting" "DeferredLighting" "DeferredLighting" "DeferredLighting" "DeferredLighting" "DeferredLighting" "DeferredLighting" "DeferredLighting"
+runs
+  run "DeferredLighting"
+    start rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    suspend rt0=ScnMap rt1=none rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=0 "ShadowMapGen" rt0=ShadowMap rt1=none rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=1 "ShadowBlurX" rt0=ShadowMapTemp rt1=none rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=2 "ShadowBlurY" rt0=ShadowMap rt1=none rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=3 "SSDO" rt0=SSDOMap rt1=none rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=4 "SSDOBlurX" rt0=SSDOMapTemp rt1=none rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=5 "SSDOBlurY" rt0=SSDOMap rt1=none rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=6 "ShadingOpacity" rt0=ShadingMapTemp rt1=ShadingMapTempSpecular rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=8 "SSSSStencilTest" rt0=main rt1=none rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=9 "SSSSBlurX" rt0=ShadingMap rt1=none rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=10 "SSSSBlurY" rt0=ShadingMapTemp rt1=none rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=11 "ShadingOpacityAlbedo" rt0=ShadingMapTemp rt1=none rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=12 "ShadingOpacitySpecular" rt0=ShadingMapTemp rt1=none rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=7 "ShadingTransparent" rt0=ShadingMap rt1=none rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=13 "GlareDetection" rt0=DownsampleMap1st rt1=none rt2=none rt3=none ds=DepthBuffer viewport=500x300+0+0
+    draw buffer pass=14 "BloomBlurX1" rt0=BloomMap1stTemp rt1=none rt2=none rt3=none ds=DepthBuffer viewport=500x300+0+0
+    draw buffer pass=15 "BloomBlurY1" rt0=BloomMap1st rt1=none rt2=none rt3=none ds=DepthBuffer viewport=500x300+0+0
+    draw buffer pass=16 "BloomDownsampleX2" rt0=BloomMap2nd rt1=none rt2=none rt3=none ds=DepthBuffer viewport=250x150+0+0
+    draw buffer pass=17 "BloomBlurX2" rt0=BloomMap2ndTemp rt1=none rt2=none rt3=none ds=DepthBuffer viewport=250x150+0+0
+    draw buffer pass=18 "BloomBlurY2" rt0=BloomMap2nd rt1=none rt2=none rt3=none ds=DepthBuffer viewport=250x150+0+0
+    draw buffer pass=19 "BloomDownsampleX3" rt0=BloomMap3rd rt1=none rt2=none rt3=none ds=DepthBuffer viewport=125x75+0+0
+    draw buffer pass=20 "BloomBlurX3" rt0=BloomMap3rdTemp rt1=none rt2=none rt3=none ds=DepthBuffer viewport=125x75+0+0
+    draw buffer pass=21 "BloomBlurY3" rt0=BloomMap3rd rt1=none rt2=none rt3=none ds=DepthBuffer viewport=125x75+0+0
+    draw buffer pass=22 "BloomDownsampleX4" rt0=BloomMap4th rt1=none rt2=none rt3=none ds=DepthBuffer viewport=62x37+0+0
+    draw buffer pass=23 "BloomBlurX4" rt0=BloomMap4thTemp rt1=none rt2=none rt3=none ds=DepthBuffer viewport=62x37+0+0
+    draw buffer pass=24 "BloomBlurY4" rt0=BloomMap4th rt1=none rt2=none rt3=none ds=DepthBuffer viewport=62x37+0+0
+    draw buffer pass=25 "BloomDownsampleX5" rt0=BloomMap5th rt1=none rt2=none rt3=none ds=DepthBuffer viewport=31x18+0+0
+    draw buffer pass=26 "BloomBlurX5" rt0=BloomMap5thTemp rt1=none rt2=none rt3=none ds=DepthBuffer viewport=31x18+0+0
+    draw buffer pass=27 "BloomBlurY5" rt0=BloomMap5th rt1=none rt2=none rt3=none ds=DepthBuffer viewport=31x18+0+0
+    draw buffer pass=28 "GlareLightComp" rt0=BloomMap1st rt1=none rt2=none rt3=none ds=DepthBuffer viewport=500x300+0+0
+    draw buffer pass=29 "HDRTonemapping" rt0=ShadingMapTemp rt1=none rt2=none rt3=none ds=DepthBuffer viewport=1000x600+0+0
+    draw buffer pass=30 "FXAA" rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    end rt0=main rt1=none rt2=none rt3=none ds=main.depth viewport=1000x600+0+0
+    result suspended=1 draws=31 hr=0x00000000 runfailed=0
+enginelog "Loading effect file: <root>/ray.fx"
+enginelog "Info: new OffScreen RenderTarget: FogMap"
+enginelog "Info: new OffScreen RenderTarget: LightMap"
+enginelog "Info: new OffScreen RenderTarget: EnvLightMap"
+enginelog "Info: new OffScreen RenderTarget: MaterialMap"
+enginelog "Info: new OffScreen RenderTarget: SSAOMap"
+enginelog "Info: new OffScreen RenderTarget: PSSM1"
+enginelog "Info: new OffScreen RenderTarget: PSSM2"
+enginelog "Info: new OffScreen RenderTarget: PSSM3"
+enginelog "Info: new OffScreen RenderTarget: PSSM4"
+enginelog "Warning: unsupported script command: ClearSetStencil=ClearStencil  (technique: DeferredLighting)"
+end

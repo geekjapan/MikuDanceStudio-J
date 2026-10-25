@@ -2,10 +2,10 @@
 //! `rigid` included, bit for bit: physics mode 2 (`swing600.pmm`) and
 //! physics off (`swing600-nophys.pmm`), 600 frames each.
 //!
-//! Open: the mode-2 trace first differs at frame 1 (`bonew 0/5 m02`, by
-//! 4 ulp) in slot 0, the IK chain with keyed kinematic bones, and grows
-//! there. Frame 0 and slots 1 and 3 match; slot 2 has 1-ulp rigid blips
-//! at frames 1 and 9 that heal. The cause is not found yet.
+//! Open: the mode-2 trace first differs at frame 80 (`bonew 0/5 m01`), from
+//! the readback's quaternion of bone 7: `mds_math::Quat::from_matrix` takes
+//! another radicand grouping than d3dx9_43.dll in its non-trace branches.
+//! With the D3DX grouping both traces match.
 
 use mds_formats::pmm::Pmm;
 use mds_physics::PhysicsScene;

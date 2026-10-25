@@ -117,6 +117,12 @@ impl PhysicsScene {
                 .ok_or("model slot lost")?;
             this.bodies[m] = this.create_bodies(m, &mut uid)?;
         }
+        // The load's success tail (pmm_load_v2.cpp, pmm_load_v1.cpp) hands the
+        // PMM gravity to the world: no zero-direction nudge here, and the D3DX
+        // normalization rounds (0, -1, 0) to a y of 0x3F7FFFFF.
+        let n = Vec3(this.gravity_direction).normalize().0;
+        let mag = this.gravity_magnitude;
+        this.set_gravity(n.map(|n| (n * mag) * 10.0))?;
         // RestoreScenePhysics.
         for m in 0..this.bodies.len() {
             this.kinematic_sync(m)?;

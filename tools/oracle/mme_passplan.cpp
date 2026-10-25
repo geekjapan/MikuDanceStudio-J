@@ -25,6 +25,7 @@
 #include "mme_context.h"
 #include "mme_globals.h"
 #include "mme_log.h"
+#include "mme_ui.h"
 #include "pass_planner.h"
 #include "sas_exec.h"
 
@@ -148,12 +149,13 @@ const char* FormatName(D3DFORMAT f) {
     case D3DFMT_##x:                                                                               \
         return #x;
         F(UNKNOWN)
-    F(R8G8B8)
-    F(A8R8G8B8) F(X8R8G8B8) F(R5G6B5) F(X1R5G5B5) F(A1R5G5B5) F(A4R4G4B4) F(R3G3B2) F(A8)
-        F(A8R3G3B2) F(X4R4G4B4) F(A2B10G10R10) F(A8B8G8R8) F(X8B8G8R8) F(G16R16) F(A2R10G10B10)
-            F(A16B16G16R16) F(L8) F(A8L8) F(V8U8) F(Q8W8V8U8) F(V16U16) F(D16_LOCKABLE) F(D32)
-                F(D15S1) F(D24S8) F(D24X8) F(D24X4S4) F(D16) F(D32F_LOCKABLE) F(D24FS8) F(L16)
-                    F(R16F) F(G16R16F) F(A16B16G16R16F) F(R32F) F(G32R32F) F(A32B32G32R32F)
+        F(R8G8B8)
+    F(A8R8G8B8)
+    F(X8R8G8B8) F(R5G6B5) F(X1R5G5B5) F(A1R5G5B5) F(A4R4G4B4) F(R3G3B2) F(A8) F(A8R3G3B2)
+        F(X4R4G4B4) F(A2B10G10R10) F(A8B8G8R8) F(X8B8G8R8) F(G16R16) F(A2R10G10B10) F(A16B16G16R16)
+            F(L8) F(A8L8) F(V8U8) F(Q8W8V8U8) F(V16U16) F(D16_LOCKABLE) F(D32) F(D15S1) F(D24S8)
+                F(D24X8) F(D24X4S4) F(D16) F(D32F_LOCKABLE) F(D24FS8) F(L16) F(R16F) F(G16R16F)
+                    F(A16B16G16R16F) F(R32F) F(G32R32F) F(A32B32G32R32F)
 #undef F
                         case D3DFMT_DXT1:
         return "DXT1";
@@ -894,6 +896,7 @@ int main(int argc, char** argv) {
     HANDLE watchdog = CreateThread(nullptr, 0, Watchdog, nullptr, 0, nullptr);
 
     int exitCode = 0;
+    mme::MmeUiInitializeRuntime(GetModuleHandleW(nullptr)); // GDI+ for animated GIF/PNG textures
     {
         Runtime runtime(device);
         IDirect3DSurface9 *mainRt = nullptr, *mainDs = nullptr;
@@ -944,6 +947,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    mme::MmeUiShutdownRuntime();
     device->Release();
     d3d->Release();
     DestroyWindow(window);

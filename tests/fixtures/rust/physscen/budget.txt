@@ -1,8 +1,8 @@
 # A negative main-step budget: during playback the main physics step gets
 # DeltaTime minus 1/60 s per catch-up substep (g_CatchupDtBudget). With 50 ms
-# passes the float cursor sum lands just below the target from pass 11 on,
-# so those passes run three substeps and leave about -3.7e-9 s
-# (budget.py prints the passes).
+# passes the float cursor sum lands just below the target in eight of passes
+# 11 to 20, which run three substeps and leave about -3.7e-9 s (budget.py
+# prints the passes).
 settle 0
 load pmm swing600.pmm
 trace budget.trace

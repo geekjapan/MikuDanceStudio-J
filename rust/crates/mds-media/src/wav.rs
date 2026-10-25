@@ -6,6 +6,15 @@
 //! for the letters `data`. A `fmt ` chunk that is not first, or the letters
 //! `data` inside a `LIST` text, therefore give the answer the C++ gives, not
 //! the one a chunk parser would.
+//!
+//! One intended difference: the C++ `malloc`s the two waveform arrays with
+//! `dataSize / colBytes + 1` bytes each, taking `dataSize` from the file
+//! header, so a 50-byte file declaring a data size of `0x7FFFFFF0` allocates
+//! gigabytes. [`Waveform`] keeps the same logical length but stores only the
+//! columns the loop reaches, which the bytes present in the input bound (the
+//! loop stops at the first short read); every other column reads as 0, the
+//! C++ initial fill. The per-column scratch buffer stays at `colBytes`, at
+//! most about `u32::MAX / 390` bytes.
 
 use std::io;
 use std::path::Path;
@@ -109,6 +118,39 @@ fn u32_at(bytes: &[u8], at: usize) -> u32 {
         .map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
 
+/// One timeline waveform array. `len()` is the C++ column count; only the
+/// columns that were computed are stored, and the rest read as 0.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Waveform {
+    len: usize,
+    stored: Vec<u8>,
+}
+
+impl Waveform {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Column `i`; 0 past the stored columns. Panics when `i >= len()`.
+    pub fn get(&self, i: usize) -> u8 {
+        assert!(i < self.len, "column {i} of {}", self.len);
+        self.stored.get(i).copied().unwrap_or(0)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = u8> + '_ {
+        (0..self.len).map(|i| self.get(i))
+    }
+
+    /// The columns that hold storage; the rest are 0.
+    pub fn stored(&self) -> &[u8] {
+        &self.stored
+    }
+}
+
 /// A loaded WAV file: the format, the data chunk, the timeline waveform, and
 /// the file bytes behind them.
 #[derive(Debug, Clone)]
@@ -118,9 +160,9 @@ pub struct Wave {
     /// Per timeline column (390 per second of audio), `(max * 25 >> shift) + 25`
     /// of the loudest sample, as the timeline strip draws it. Columns after a
     /// short read stay 0.
-    pub waveform_max: Vec<u8>,
+    pub waveform_max: Waveform,
     /// The same for the lowest sample.
-    pub waveform_min: Vec<u8>,
+    pub waveform_min: Waveform,
     /// Short reads while building the waveform (the last column nearly always
     /// reads past the end, so 1 is normal).
     pub read_failures: i32,
@@ -155,12 +197,19 @@ impl Wave {
         if col_bytes <= 0 {
             return Err(Reject::Unusable);
         }
-        let columns = data.size / col_bytes + 1;
+        // The C++ overflows here for size 0x7FFFFFFF with one byte per column.
+        let columns = (data.size / col_bytes)
+            .checked_add(1)
+            .ok_or(Reject::Unusable)? as usize;
+        let empty = || Waveform {
+            len: columns,
+            stored: Vec::new(),
+        };
         let mut wave = Wave {
             format,
             data,
-            waveform_max: vec![0; columns as usize],
-            waveform_min: vec![0; columns as usize],
+            waveform_max: empty(),
+            waveform_min: empty(),
             read_failures: 0,
             file,
         };
@@ -205,6 +254,7 @@ impl Wave {
         let block = i32::from(block_align);
         let avg = avg_bytes_per_sec as f32;
         let columns = self.waveform_max.len() as i32;
+        let (mut maxes, mut mins) = (Vec::new(), Vec::new());
         let mut reader = StreamReader {
             file: &self.file,
             start: self.data.offset as usize,
@@ -258,12 +308,14 @@ impl Wave {
                 max = max.max(l).max(r);
                 min = min.min(l).min(r);
             }
-            self.waveform_max[i as usize] = (((max * 25) >> shift) + 25) as u8;
-            self.waveform_min[i as usize] = (((min * 25) >> shift) + 25) as u8;
+            maxes.push((((max * 25) >> shift) + 25) as u8);
+            mins.push((((min * 25) >> shift) + 25) as u8);
             if !ok {
                 break;
             }
         }
+        self.waveform_max.stored = maxes;
+        self.waveform_min.stored = mins;
     }
 }
 

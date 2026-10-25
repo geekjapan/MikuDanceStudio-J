@@ -20,6 +20,9 @@ fn scenes_step_on_parallel_threads() {
     let alone = trace(600);
     let threads: Vec<_> = (0..16).map(|_| std::thread::spawn(|| trace(600))).collect();
     for t in threads {
-        assert!(t.join().unwrap() == alone, "a parallel scene gave another trace");
+        assert!(
+            t.join().unwrap() == alone,
+            "a parallel scene gave another trace"
+        );
     }
 }

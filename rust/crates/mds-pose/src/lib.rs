@@ -5,8 +5,11 @@
 //! The scene is a PMM plus its model files. [`Scene::new`] does what the
 //! PMM load and `ArmFrameStep` leave behind (trace frame 0);
 //! [`Scene::step`] runs one frame-step pass (`PlaybackCatchup` then
-//! `PhysicsFrame`, timeline time `+1/30 s`). Only physics mode 0 (no
-//! calculation) is supported: the rigid bodies belong to `mds-physics`.
+//! `PhysicsFrame`, timeline time `+1/30 s`). `new` and `step` are the
+//! physics-off driver (physics mode 0). The physics modes step a Bullet
+//! world between the pose passes; `mds-physics` drives them from
+//! [`Scene::load`], [`Scene::arm_frame_step`], [`Scene::ordered_pass`] and
+//! [`Scene::advance_keys`].
 //!
 //! * [`model`]: the bone, IK, selector and morph tables of the loaders.
 //! * [`keys`]: `SeekModelFrame`, `InitModelTrackCursors`, `AdvanceModelKeyframes`.
@@ -29,21 +32,43 @@ const SLOT_COUNT: usize = 255;
 pub struct Scene {
     /// Loaded models in slot order.
     pub models: Vec<Model>,
-    physics_mode: i32,
+    /// `PlaybackPhysicsMode`: 0 off, 1 always on, 2 on/off by bone key,
+    /// 3 the on/off mode with blends out of physics.
+    pub physics_mode: i32,
     /// `recordedFrameCount`, the frame-step pass counter.
-    passes: i32,
+    pub passes: i32,
+    /// `PlaybackCursorSeconds`.
+    pub cursor: f32,
 }
 
 impl Scene {
     /// Loads the PMM's models through `read` (the model path as stored in
-    /// the PMM, to the file bytes) and sets up trace frame 0.
+    /// the PMM, to the file bytes) and sets up trace frame 0. Physics mode 0
+    /// only.
     pub fn new(
+        pmm: &Pmm,
+        read: impl FnMut(&str) -> Result<Vec<u8>, String>,
+    ) -> Result<Scene, String> {
+        let mut scene = Scene::load(pmm, read)?;
+        if scene.physics_mode != 0 {
+            return Err(format!(
+                "physics mode {} needs mds-physics",
+                scene.physics_mode
+            ));
+        }
+        scene.arm_frame_step();
+        Ok(scene)
+    }
+
+    /// The PMM load: the models with their key tracks and saved pose, in
+    /// slot order.
+    pub fn load(
         pmm: &Pmm,
         mut read: impl FnMut(&str) -> Result<Vec<u8>, String>,
     ) -> Result<Scene, String> {
         let physics_mode = i32::from(pmm.physics.playback_mode);
-        if physics_mode != 0 {
-            return Err(format!("physics mode {physics_mode} is not supported"));
+        if !(0..=3).contains(&physics_mode) {
+            return Err(format!("bad physics mode {physics_mode}"));
         }
         let mut models = Vec::with_capacity(pmm.models.len());
         for source in &pmm.models {
@@ -70,25 +95,38 @@ impl Scene {
         {
             return Err("bad model slots".into());
         }
-        let mut scene = Scene {
+        Ok(Scene {
             models,
             physics_mode,
             passes: 0,
-        };
-        // ArmFrameStep: seek to frame 0, UpdateBoneFrames, one pose pass.
-        for model in &mut scene.models {
-            keys::seek_model_frame(model, 0);
+            cursor: 0.0,
+        })
+    }
+
+    /// `ArmFrameStep` of the trace mode: seek every model to frame 0,
+    /// `UpdateBoneFrames` (the track cursors at cursor 0) and one pose pass.
+    pub fn arm_frame_step(&mut self) {
+        self.cursor = 0.0;
+        for model in &mut self.models {
+            keys::seek_model_frame(model, 0, self.physics_mode);
         }
-        for model in &mut scene.models {
-            keys::init_track_cursors(model, 0.0);
+        for model in &mut self.models {
+            keys::init_track_cursors(model, self.cursor, self.physics_mode);
         }
-        scene.ordered_pass(0);
-        Ok(scene)
+        self.passes = 0;
+        self.ordered_pass(0, self.physics_mode);
+    }
+
+    /// The model part of `PlaybackPoseAdvance`: the keys at the cursor.
+    pub fn advance_keys(&mut self) {
+        for model in &mut self.models {
+            keys::advance_model_keyframes(model, self.cursor, self.physics_mode);
+        }
     }
 
     /// The per-model morph and pose pass in calculation order
     /// (`OrderedMorphPhysicsPass`, the two passes of `PhysicsFrame`).
-    fn ordered_pass(&mut self, after: u8) {
+    pub fn ordered_pass(&mut self, after: u8, physics_mode: i32) {
         for order in 0..SLOT_COUNT {
             for i in 0..self.models.len() {
                 if usize::from(self.models[i].order) != order {
@@ -100,21 +138,26 @@ impl Scene {
                 let others = Others {
                     models: [before, after_models],
                 };
-                pose::set_physics_mode(model, after, &others, self.physics_mode);
+                pose::set_physics_mode(model, after, &others, physics_mode);
             }
         }
     }
 
-    /// One frame-step pass at 30 fps: `PlaybackCatchup` (key application
-    /// at the new cursor) then `PhysicsFrame` (two pose passes).
-    pub fn step(&mut self) {
+    /// The frame-step target of the next pass at 30 fps: the pass count
+    /// goes up and the cursor time is returned.
+    pub fn next_target(&mut self) -> f32 {
         self.passes += 1;
         let term = (self.passes as f32 * 30.0) / 30.0 + 0.0;
-        let cursor = term / 30.0;
-        for model in &mut self.models {
-            keys::advance_model_keyframes(model, cursor);
-        }
-        self.ordered_pass(0);
-        self.ordered_pass(1);
+        term / 30.0
+    }
+
+    /// One frame-step pass at 30 fps with physics off: `PlaybackCatchup`
+    /// (key application at the new cursor) then `PhysicsFrame` (two pose
+    /// passes).
+    pub fn step(&mut self) {
+        self.cursor = self.next_target();
+        self.advance_keys();
+        self.ordered_pass(0, 0);
+        self.ordered_pass(1, 0);
     }
 }

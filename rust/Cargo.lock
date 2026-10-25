@@ -377,6 +377,7 @@ name = "mds-bullet-sys"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "mds-crtmath",
 ]
 
 [[package]]
@@ -418,6 +419,18 @@ version = "0.1.0"
 dependencies = [
  "encoding_rs",
  "mds-fx",
+]
+
+[[package]]
+name = "mds-physics"
+version = "0.1.0"
+dependencies = [
+ "mds-bullet-sys",
+ "mds-crtmath",
+ "mds-formats",
+ "mds-math",
+ "mds-pose",
+ "mds-trace",
 ]
 
 [[package]]

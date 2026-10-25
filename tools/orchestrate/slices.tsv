@@ -8,7 +8,7 @@ render	2a	-	mac	sonnet	MIT	rust/crates/mds-render/
 edit	2a	-	mac	sonnet	pending	rust/crates/mds-edit/,tools/keypool_check/
 golden	2a	-	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/golden/,CMakeLists.txt,src/main/winmain.cpp,tools/fixtures/gen_fixtures.py,tools/fixtures/test_gen_fixtures.py,tests/fixtures/rust/swing600-golden.pmm
 pose	2b	math	mac	opus	pending	rust/crates/mds-pose/
-physics	2b	crtmath,pose	mac	opus	pending	rust/crates/mds-physics/,rust/crates/mds-bullet-sys/,rust/crates/mds-pose/
+physics	2b	crtmath,pose	mac	opus	pending	rust/crates/mds-physics/,rust/crates/mds-bullet-sys/,rust/crates/mds-pose/,rust/crates/mds-math/,rust/crates/mds-bullet/
 passplan	2b	golden	windows	sonnet	pending	src/tools/,tools/oracle/,tests/fixtures/rust/mme/,CMakeLists.txt
 rendergold	2b	render,golden	mac	sonnet	MIT	rust/crates/mds-render/
 mme	2b	render,passplan	mac	opus	pending	rust/crates/mds-mme/

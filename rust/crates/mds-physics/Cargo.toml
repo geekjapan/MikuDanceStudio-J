@@ -1,0 +1,17 @@
+[package]
+name = "mds-physics"
+description = "Port of the per-frame physics of the C++ app: Bullet 2.75 in the pose loop (trace level L2)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mds-bullet-sys = { path = "../mds-bullet-sys" }
+mds-crtmath = { path = "../mds-crtmath" }
+mds-formats = { path = "../mds-formats" }
+mds-math = { path = "../mds-math" }
+mds-pose = { path = "../mds-pose" }
+
+[dev-dependencies]
+mds-trace = { path = "../mds-trace" }

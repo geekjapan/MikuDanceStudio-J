@@ -1,0 +1,20 @@
+[package]
+name = "mds-mmert"
+description = "MME runtime on wgpu: render targets, technique and pass execution, and parameter binding for the plans of mds-mme"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mds-formats = { path = "../mds-formats" }
+mds-math = { path = "../mds-math" }
+mds-fx = { path = "../mds-fx" }
+mds-mme = { path = "../mds-mme" }
+mds-shader = { path = "../mds-shader" }
+# The same releases and wgpu features as mds-shader and mds-render: one wgpu and one naga in Cargo.lock.
+naga = { version = "=30.0.1", features = ["spv-in", "wgsl-out"] }
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "metal", "vulkan", "dx12"] }
+pollster = "1"
+png = "0.18"
+

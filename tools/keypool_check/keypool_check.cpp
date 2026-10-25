@@ -13,6 +13,10 @@
 // replays the call order of the real UI handler named in its comment.
 // The explorer does a breadth-first search over all command sequences up to
 // kDepth, deduplicating states, so every reported trace is a shortest one.
+//
+// Usage: keypool_check [depth] [--dump FILE]
+// --dump also writes the explored sequences and the pool states they reach
+// as text (format at WriteDump below); the report on stdout is unchanged.
 #include <Windows.h>
 
 #include <cstdio>
@@ -21,6 +25,7 @@
 #include <deque>
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -281,6 +286,153 @@ void Restore(const std::string& s) {
     std::memcpy(&M().searchCursor, slot, 4);
 }
 
+// ---- state dump (--dump) ----------------------------------------------------
+// A Window is every field of the tracked pool prefix plus the cursor and the
+// timeline end, i.e. the part of the model the commands can change. In dump
+// mode the explorer restores it whole, so a state's payload is the one its
+// shortest trace produces from a freshly loaded model.
+constexpr int kIkChains = 1;       // BuildModel: ikChainCount
+constexpr int kSelectors = 1;      // BuildModel: boneOrderCount
+struct Window {
+    mdl::BoneKey bone[kWindow];
+    mdl::MorphKey morph[kWindow];
+    struct Display {
+        mdl::DisplayKey key;
+        std::uint8_t ik[kIkChains];
+        mdl::BoneReference selectors[kSelectors];
+    } display[kWindow];
+    std::int32_t cursor;
+    std::uint32_t maxFrame;
+};
+
+void Capture(Window& w) {
+    std::memcpy(w.bone, M().boneKeys, sizeof w.bone);
+    std::memcpy(w.morph, M().morphKeys, sizeof w.morph);
+    for (int i = 0; i < kWindow; ++i) {
+        mdl::DisplayKey& k = M().displayKeys[i];
+        w.display[i].key = k;
+        std::memcpy(w.display[i].ik, mdl::IkStates(k), kIkChains);
+        std::memcpy(w.display[i].selectors, mdl::SelectorStates(k), sizeof w.display[i].selectors);
+    }
+    w.cursor = M().searchCursor;
+    w.maxFrame = M().maxFrame;
+}
+void RestoreWindow(const Window& w) {
+    std::memcpy(M().boneKeys, w.bone, sizeof w.bone);
+    std::memcpy(M().morphKeys, w.morph, sizeof w.morph);
+    for (int i = 0; i < kWindow; ++i) {
+        mdl::DisplayKey& k = M().displayKeys[i];
+        k = w.display[i].key;  // the array pointers are unchanged
+        std::memcpy(mdl::IkStates(k), w.display[i].ik, kIkChains);
+        std::memcpy(mdl::SelectorStates(k), w.display[i].selectors, sizeof w.display[i].selectors);
+    }
+    M().searchCursor = w.cursor;
+    M().maxFrame = w.maxFrame;
+}
+
+std::string Hex(float f) {
+    std::uint32_t u;
+    std::memcpy(&u, &f, 4);
+    char s[16];
+    std::snprintf(s, sizeof s, "%x", u);
+    return s;
+}
+
+// One text line per record, in a fixed order: b0..b23, m0..m23, d0..d23, g.
+// Integers are decimal, floats are their bits in hex, a byte array is hex.
+std::vector<std::string> StateLines(const Window& w) {
+    std::vector<std::string> out;
+    char s[256];
+    for (int i = 0; i < kWindow; ++i) {
+        const mdl::BoneKey& k = w.bone[i];
+        int n = std::snprintf(s, sizeof s, "b%d f%u p%u n%u a%u d%u i", i, k.frame, k.previous,
+                              k.next, k.allocated, k.physicsDisabled);
+        for (int j = 0; j < 16; ++j) n += std::snprintf(s + n, sizeof s - n, "%02x", k.interpolation[j]);
+        std::snprintf(s + n, sizeof s - n, " x%s.%s.%s q%s.%s.%s.%s", Hex(k.position[0]).c_str(),
+                      Hex(k.position[1]).c_str(), Hex(k.position[2]).c_str(),
+                      Hex(k.rotation[0]).c_str(), Hex(k.rotation[1]).c_str(),
+                      Hex(k.rotation[2]).c_str(), Hex(k.rotation[3]).c_str());
+        out.push_back(s);
+    }
+    for (int i = 0; i < kWindow; ++i) {
+        const mdl::MorphKey& k = w.morph[i];
+        std::snprintf(s, sizeof s, "m%d f%u p%u n%u a%u v%s", i, k.frame, k.previous, k.next,
+                      k.allocated, Hex(k.value).c_str());
+        out.push_back(s);
+    }
+    for (int i = 0; i < kWindow; ++i) {
+        const Window::Display& d = w.display[i];
+        int n = std::snprintf(s, sizeof s, "d%d f%u p%u n%u a%u v%u k", i, d.key.frame,
+                              d.key.previous, d.key.next, d.key.allocated, d.key.visible);
+        for (int j = 0; j < kIkChains; ++j) n += std::snprintf(s + n, sizeof s - n, "%s%u", j ? "." : "", d.ik[j]);
+        n += std::snprintf(s + n, sizeof s - n, " s");
+        for (int j = 0; j < kSelectors; ++j)
+            n += std::snprintf(s + n, sizeof s - n, "%s%d:%d", j ? "." : "", d.selectors[j].modelIndex,
+                               d.selectors[j].boneIndex);
+        out.push_back(s);
+    }
+    std::snprintf(s, sizeof s, "g c%d x%u", w.cursor, w.maxFrame);
+    out.push_back(s);
+    return out;
+}
+
+const char* KindName(Kind k) {
+    static const char* const names[] = {"paste-bone", "paste-morph", "paste-display",
+                                        "register-bone", "register-morph", "register-display",
+                                        "select-bone", "delete"};
+    return names[k];
+}
+
+// What Explore records when --dump is set: the BFS tree and every transition.
+struct DumpData {
+    std::vector<Window> windows;       // by state id
+    std::vector<int> parent, command;  // by state id; the root has -1, -1
+    std::vector<std::vector<int>> next;  // by state id; successor id or -1 (cut), empty if not expanded
+};
+DumpData g_dump;
+
+// Format (text, one record per line):
+//   keypool-dump 1
+//   depth D / bones B morphs M frames F window W
+//   C <command> <kind> <target> <frame>          the command alphabet
+//   S <id> <parent> <command>                    state <id> = <parent> after <command>
+//    <record line>...                            the records that differ from the parent
+//                                                (all of them for state 0)
+//   T <id> <successor of command 0> ...          the successor state id of every command
+//                                                ("-": cut at the window bound); only for
+//                                                states shallower than the depth
+// State ids are in breadth-first discovery order, so a state's shortest trace is its
+// parent chain. A state's payload is what that trace gives from a freshly loaded model.
+void WriteDump(std::FILE* f, const std::vector<Command>& alphabet) {
+    std::fprintf(f, "keypool-dump 1\ndepth %d\nbones %d morphs %d frames %d window %d\n", kDepth,
+                 kBones, kMorphs, kFrames, kWindow);
+    for (std::size_t c = 0; c < alphabet.size(); ++c)
+        std::fprintf(f, "C %zu %s %d %d\n", c, KindName(alphabet[c].kind), alphabet[c].target,
+                     alphabet[c].frame);
+    std::vector<std::string> before;
+    for (std::size_t id = 0; id < g_dump.windows.size(); ++id) {
+        const std::vector<std::string> now = StateLines(g_dump.windows[id]);
+        const int parent = g_dump.parent[id];
+        if (parent < 0) {
+            std::fprintf(f, "S %zu - -\n", id);
+        } else {
+            std::fprintf(f, "S %zu %d %d\n", id, parent, g_dump.command[id]);
+            before = StateLines(g_dump.windows[parent]);
+        }
+        for (std::size_t i = 0; i < now.size(); ++i)
+            if (parent < 0 || now[i] != before[i]) std::fprintf(f, " %s\n", now[i].c_str());
+    }
+    for (std::size_t id = 0; id < g_dump.next.size(); ++id) {
+        if (g_dump.next[id].empty()) continue;
+        std::fprintf(f, "T %zu", id);
+        for (int to : g_dump.next[id]) {
+            if (to < 0) std::fprintf(f, " -");
+            else std::fprintf(f, " %d", to);
+        }
+        std::fprintf(f, "\n");
+    }
+}
+
 // ---- the property ----------------------------------------------------------
 template <class Key>
 std::string CheckPool(const char* pool, Key* keys, int heads) {
@@ -344,9 +496,10 @@ std::string CheckAll() {
 
 bool IsBound(const std::string& e) { return e.find("(bound") != std::string::npos; }
 
-int Explore() {
+int Explore(const char* dumpPath) {
     const std::vector<Command> alphabet = Alphabet();
-    struct Node { std::string state; std::vector<int> trace; };
+    struct Node { std::string state; std::vector<int> trace; int id; };
+    std::unordered_map<std::string, int> ids;  // snapshot -> state id, dump mode only
     std::unordered_set<std::string> seen;
     std::deque<Node> queue;
     std::map<std::string, std::vector<int>> violations;  // kind -> shortest trace
@@ -358,14 +511,24 @@ int Explore() {
         std::printf("initial state violates the property: %s\n", initial.c_str());
         return 1;
     }
-    queue.push_back({Snapshot(), {}});
+    queue.push_back({Snapshot(), {}, 0});
     seen.insert(queue.back().state);
+    if (dumpPath != nullptr) {
+        g_dump.windows.resize(1);
+        Capture(g_dump.windows[0]);
+        g_dump.parent.push_back(-1);
+        g_dump.command.push_back(-1);
+        g_dump.next.emplace_back();
+        ids[queue.back().state] = 0;
+    }
     while (!queue.empty()) {
         Node node = std::move(queue.front());
         queue.pop_front();
         if (static_cast<int>(node.trace.size()) >= kDepth) continue;
+        if (dumpPath != nullptr) g_dump.next[node.id].assign(alphabet.size(), -1);
         for (int c = 0; c < static_cast<int>(alphabet.size()); ++c) {
-            Restore(node.state);
+            if (dumpPath != nullptr) RestoreWindow(g_dump.windows[node.id]);
+            else Restore(node.state);
             g_asan.clear();
             Apply(alphabet[c]);
             ++transitions;
@@ -379,7 +542,21 @@ int Explore() {
                 continue;  // do not explore from a broken state
             }
             std::string s = Snapshot();
-            if (seen.insert(s).second) queue.push_back({std::move(s), std::move(trace)});
+            if (dumpPath != nullptr) {
+                auto [it, fresh] = ids.emplace(s, static_cast<int>(g_dump.windows.size()));
+                g_dump.next[node.id][c] = it->second;
+                if (fresh) {
+                    g_dump.windows.emplace_back();
+                    Capture(g_dump.windows.back());
+                    g_dump.parent.push_back(node.id);
+                    g_dump.command.push_back(c);
+                    g_dump.next.emplace_back();
+                }
+            }
+            if (seen.insert(s).second) {
+                const int id = dumpPath != nullptr ? ids[s] : 0;
+                queue.push_back({std::move(s), std::move(trace), id});
+            }
         }
     }
     std::printf("explored %zu states, %ld transitions (depth %d, %d bones, %d morphs, frames 0..%d)\n",
@@ -390,6 +567,16 @@ int Explore() {
                     hits[kind], kind.c_str());
         for (std::size_t i = 0; i < trace.size(); ++i)
             std::printf("    %zu. %s\n", i + 1, Describe(alphabet[trace[i]]).c_str());
+    }
+    if (dumpPath != nullptr && violations.empty()) {
+        std::FILE* f = std::fopen(dumpPath, "w");
+        if (f == nullptr) {
+            std::fprintf(stderr, "cannot write %s\n", dumpPath);
+            return 1;
+        }
+        WriteDump(f, alphabet);
+        std::fclose(f);
+        std::printf("state dump: %zu states written to %s\n", g_dump.windows.size(), dumpPath);
     }
     return violations.empty() ? 0 : 1;
 }
@@ -425,10 +612,14 @@ int OverflowRuns() {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc > 1) kDepth = std::atoi(argv[1]);
+    const char* dumpPath = nullptr;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dumpPath = argv[++i];
+        else kDepth = std::atoi(argv[i]);
+    }
     __asan_set_error_report_callback(OnAsanReport);
     BuildModel();
-    int status = Explore();
+    int status = Explore(dumpPath);
     if (OverflowRuns() != 0) status = 1;
     std::printf("\nresult: %s\n", status == 0 ? "PASS" : "FAIL");
     return status;

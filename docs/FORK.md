@@ -77,10 +77,10 @@ git merge upstream/main
 
 | 範囲 | ライセンス |
 |---|---|
-| 下の行に挙げたもの以外のすべて。上流から受け継いだコード、それを変更したコード、上流の C++ を移植した `rust/crates/mds-formats` と `rust/crates/mds-scene` を含みます | ライセンス保留 |
-| `rust/`（上の 2 crate を除く）、`tools/fixtures/`、`tools/oracle/`、`tools/rust/`、`tools/vkd3d/`、`tests/fixtures/rust/`、`docs/FORK.md`、`docs/RUST_MIGRATION_PLAN.md`、`docs/prototypes/` | [MIT](../LICENSE-MIT) |
+| 下の行に挙げたもの以外のすべて。上流から受け継いだコード、それを変更したコード、上流の C++ を移植した `rust/crates/mds-formats`、`mds-scene`、`mds-edit`、`mds-pose` を含みます | ライセンス保留 |
+| `rust/`（上の 4 crate と `mds-crtmath` を除く）、`tools/fixtures/`、`tools/oracle/`、`tools/orchestrate/`、`tools/rust/`、`tools/vkd3d/`、`tools/windows/`、`tests/fixtures/rust/`、`docs/FORK.md`、`docs/RUST_MIGRATION_PLAN.md`、`docs/RUST_WAVE2_PLAN.md`、`docs/prototypes/` | [MIT](../LICENSE-MIT) |
+| `rust/crates/mds-crtmath`。AMD AOCL-LibM（BSD-3-Clause）の翻訳を含み、AMD の表示は crate の README にあります | MIT AND BSD-3-Clause |
 
-2 行目の多くは PR #1 から #10 にあり、まだ `main` に入っていません。
 [LICENSE](../LICENSE) は上流のファイルを、文面を変えずにそのまま残しています。
 MIT の crate は、それぞれの `Cargo.toml` にもライセンスを書いてあります。ライセンス保留の crate は `license` 欄を空けています。
 `mds-bullet-sys` はビルドのときに `recipes/bullet275/bullet-src` の Bullet 2.75 を使います。Bullet 自体は zlib ライセンスです。
@@ -98,7 +98,14 @@ MIT の範囲には、上流のコードを写したものも移植したもの�
 上流の LICENSE は、MikuMikuDance の readme と同じ条項だと書いています。
 しかし確認できた MikuMikuDance の readme（v2.02 日本語版と v9.32 x64 英語版）には、販売の禁止や改変版の再配布の禁止にあたる記述がありません。
 両方の readme にあるのは、作った画像や動画の公開に許可は要らないことと、免責です。v2.02 にはさらに、権利者から申し立てがあればツールの公開をやめる場合がある、とあります。
-問題となる条文については、上流の作者に [jstzwj/MikuDanceStudio#1](https://github.com/jstzwj/MikuDanceStudio/issues/1) で問い合わせています。
+問題となる条文については、上流の作者に [jstzwj/MikuDanceStudio#1](https://github.com/jstzwj/MikuDanceStudio/issues/1) で問い合わせ、2026-10-25 に作者の jstzwj さんから回答を得ました。
+
+- 第 4 条は公開フォークを妨げない。改変したソースの無償公開と、自前のビルドの配布を認める。
+- 条項は元の MikuMikuDance のライセンスを、そのまま写したもの。
+- 樋口優氏の考えは知らない。jstzwj さんが書いたコードと、それを移植した Rust コードの改変と配布には異存がない。
+- コミュニティがオープンソースとして開発と配布を続けることに異存はない。LICENSE は後日更新して明確にする。
+
+このため、このフォークの公開と配布は続けます。ただし具体的なライセンスはまだ示されていないので、上流の LICENSE が更新されるまで、上流から受け継いだ部分と移植した部分は「ライセンス保留」のままにします。
 上流の部分の権利が明確になれば、上流の部分も含めて OSS として公開することを目指しています。
 
 MIT ライセンスは、MikuMikuDance 本体の権利や、モデル、モーションなどのデータの権利を与えるものではありません。

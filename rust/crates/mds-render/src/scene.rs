@@ -2,9 +2,12 @@
 //! of a model from `mds-pose`.
 
 use crate::{Camera, GroundShadow, Light, Pose, SelfShadow, Stage};
+use mds_accessory::transform::{parent_bone_index, parent_model_slot, world_matrix, ParentBone};
+use mds_accessory::AccessoryState;
 use mds_formats::pmm::Pmm;
 use mds_scene::track::{
-    evaluate_camera, evaluate_light, evaluate_self_shadow, CameraMode, LightMode,
+    evaluate_accessory, evaluate_camera, evaluate_light, evaluate_self_shadow, CameraMode,
+    LightMode,
 };
 
 /// The camera at `frame`, from the PMM camera track. The flag the PMM stores as "perspective"
@@ -45,8 +48,10 @@ pub fn self_shadow_mode_2_at(pmm: &Pmm, frame: u32) -> bool {
 }
 
 /// The [`Stage`] of the PMM at `frame`.
-pub fn stage_at(pmm: &Pmm, frame: u32) -> Stage {
+pub fn stage_at(pmm: &Pmm, frame: u32) -> Stage<'static> {
     Stage {
+        accessories: &[],
+        picture: None,
         self_shadow: evaluate_self_shadow(&pmm.self_shadow, f64::from(frame))
             .filter(|&(mode, _)| mode != 0)
             .map(|(mode, distance)| SelfShadow { mode, distance }),
@@ -55,4 +60,35 @@ pub fn stage_at(pmm: &Pmm, frame: u32) -> Stage {
             translucent: pmm.physics.projected_shadow_blend != 0,
         }),
     }
+}
+
+/// The state of a PMM accessory at `frame` and its world matrix (row vectors, row-major), from the
+/// accessory track and the bone it follows in `models` (posed, any order: found by slot). The
+/// additive flag is the accessory record's. `None` when the track cannot be evaluated.
+pub fn accessory_at(
+    accessory: &mds_formats::pmm::Accessory,
+    frame: u32,
+    models: &[mds_pose::model::Model],
+) -> Option<(AccessoryState, [f32; 16])> {
+    let a = evaluate_accessory(&accessory.keys, accessory.slot, f64::from(frame))?;
+    let state = AccessoryState {
+        visible: a.visible != 0,
+        position: a.position,
+        rotation: a.rotation,
+        scale: a.scale,
+        parent_model: a.parent_model,
+        parent_bone: a.parent_bone,
+        shadow_enabled: a.shadow_enabled != 0,
+        additive_blend: accessory.state.additive != 0,
+        opacity: a.opacity,
+    };
+    let parent = parent_model_slot(state.parent_model)
+        .and_then(|slot| models.iter().find(|m| usize::from(m.slot) == slot))
+        .and_then(|m| m.bones.get(parent_bone_index(state.parent_bone)))
+        .map(|b| ParentBone {
+            position: b.position,
+            matrix: b.mat_init,
+        });
+    let world = world_matrix(&state, parent.as_ref()).0;
+    Some((state, world))
 }

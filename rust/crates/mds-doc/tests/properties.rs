@@ -140,9 +140,10 @@ fn validate(d: &Document, what: &str) {
     }
 }
 
-/// Undo then redo of the latest entry, on a copy. Redo of a key edit does
-/// not put the pose back (the C++ re-seeks the frame instead), and redo of a
-/// frame change does not move the frame; those two are taken from before.
+/// Undo then redo of the latest entry, on a copy. Redo of a key edit or a
+/// frame change re-seeks the entry's frame (`RedoKeyframeEdit` seeks unless
+/// the entry is a pose), which re-evaluates every model pose and does not
+/// put the frame back; the poses and the frame are taken from before.
 fn undo_redo(d: &Document, what: &str) -> bool {
     if d.pmm.settings.options[0] != 0 {
         return false;
@@ -168,15 +169,16 @@ fn undo_redo(d: &Document, what: &str) -> bool {
     c.apply(Command::Undo).unwrap();
     c.apply(Command::Redo)
         .unwrap_or_else(|e| panic!("{what}: redo {e}"));
-    match entry {
-        Entry::BoneKeys { .. } => {
-            c.pmm.models[i].bone_pose = d.pmm.models[i].bone_pose.clone();
-            c.pmm.timeline.current_frame = d.pmm.timeline.current_frame;
-        }
-        Entry::BonePoseWithFrame { .. } => {
-            c.pmm.timeline.current_frame = d.pmm.timeline.current_frame;
-        }
-        _ => {}
+    if matches!(
+        entry,
+        Entry::BoneKeys { .. } | Entry::BonePoseWithFrame { .. }
+    ) {
+        let (cm, dm) = (&mut c.pmm.models[i], &d.pmm.models[i]);
+        cm.bone_pose = dm.bone_pose.clone();
+        cm.morph_pose = dm.morph_pose.clone();
+        cm.ik_pose = dm.ik_pose.clone();
+        cm.selector_pose = dm.selector_pose.clone();
+        c.pmm.timeline.current_frame = d.pmm.timeline.current_frame;
     }
     assert!(
         c.save().unwrap() == before,

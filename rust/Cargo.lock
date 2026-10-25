@@ -984,6 +984,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -1240,6 +1242,7 @@ dependencies = [
  "mds-formats",
  "mds-math",
  "mds-ops",
+ "mds-physics",
  "mds-pose",
  "mds-scene",
 ]
@@ -1267,6 +1270,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mds-kinect"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+ "libloading 0.9.0",
+ "libm",
+ "mds-crtmath",
+ "mds-math",
+]
+
+[[package]]
 name = "mds-math"
 version = "0.1.0"
 dependencies = [
@@ -1277,6 +1291,10 @@ dependencies = [
 [[package]]
 name = "mds-media"
 version = "0.1.0"
+dependencies = [
+ "png",
+ "zune-jpeg",
+]
 
 [[package]]
 name = "mds-mme"
@@ -1339,6 +1357,8 @@ dependencies = [
 name = "mds-render"
 version = "0.1.0"
 dependencies = [
+ "image",
+ "mds-accessory",
  "mds-formats",
  "mds-physics",
  "mds-pose",

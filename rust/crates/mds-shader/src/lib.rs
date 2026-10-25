@@ -16,8 +16,8 @@
 //! - E9022: an sm3 pixel shader that reads `VPOS` (or `SV_Position`) and other inputs fails, or,
 //!   when `VPOS` is its first input, reads `VPOS` where it reads `v0`. The I/O normaliser looks
 //!   up its own `vPos` read by element index as a register, and `v#` reads match the `MISCTYPE`
-//!   elements. `vkd3d-patches/0001-vpos-vface-io.patch` fixes both; `tools/vkd3d/build.sh` has
-//!   to apply it.
+//!   elements. `tools/vkd3d/patches/0001-vpos-vface-io.patch` (LGPL-2.1, like vkd3d) fixes both;
+//!   `tools/vkd3d/build.sh` applies it to every target.
 //! - E9015: the D3D bytecode writer, which the D3D bytecode and assembly targets go through,
 //!   rejects more than 32 temps, and vkd3d's allocator uses more than fxc's for some shaders.
 //!   SPIR-V is unaffected; [`vkd3d::Vkd3d::scan_hlsl`] gives the I/O declarations that the

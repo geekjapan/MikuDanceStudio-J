@@ -7,9 +7,8 @@
 //! Left out of the comparison, as in `golden.rs`, is what the app draws apart from the scene:
 //! the ground grid and its axes ([`grid_mask`]), which `mds-render` does not draw.
 //!
-//! The background scene has no gate: its golden image shows a C++ bug (README of golden2), and
-//! the root deferred it until a fixed C++ regenerates the image. Scenes whose passes are missing
-//! are `#[ignore]`d with the reason; `--include-ignored` runs them.
+//! Scenes that do not meet the rule yet are `#[ignore]`d with their score; `--include-ignored` runs
+//! them.
 //!
 //! `MDS_RENDER_PNG_DIR=<dir>` writes `<scene>-<frame>.png` and `<scene>-<frame>-diff.png`
 //! (4 times the difference; masked pixels magenta).
@@ -17,11 +16,13 @@
 use mds_formats::pmm::Pmm;
 use mds_formats::{pmd::Pmd, pmx::Pmx};
 use mds_physics::PhysicsScene;
+use mds_render::picture::PictureQuad;
 use mds_render::{
-    encode_png, render_frame_with, scene, Frame, Gpu, Mesh, Pose, View, PIXEL_OFFSET_D3D9,
-    SAMPLES_8X,
+    encode_png, render_frame_with, scene, AccessoryDraw, AccessoryMesh, Frame, Gpu, Image, Mesh,
+    Picture, Pose, Stage, View, PIXEL_OFFSET_D3D9, SAMPLES_8X,
 };
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 mod common;
 use common::{fixtures, gpu_or_skip, pixel_diff, read_png, Score, LIMITS};
@@ -34,42 +35,69 @@ fn golden2() -> PathBuf {
 }
 
 /// A file a scene names, by its last path component: the golden2 folder first (its own models,
-/// textures and accessories), then the shared fixtures.
+/// textures and accessories), then the shared fixtures, then the accessory fixtures (`cube.x`).
+/// The oracle staged all of them next to the exe.
 fn scene_file(path: &str) -> Result<Vec<u8>, String> {
     let name = path.rsplit(['\\', '/']).next().unwrap_or(path);
-    let here = golden2().join(name);
-    let file = if here.is_file() {
-        here
-    } else {
-        fixtures().join(name)
-    };
+    let file = [golden2(), fixtures(), fixtures().join("accessory")]
+        .into_iter()
+        .map(|d| d.join(name))
+        .find(|f| f.is_file())
+        .unwrap_or_else(|| golden2().join(name));
     std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))
 }
 
+/// The model a scene names, with its textures. The app takes a model's texture folder from its
+/// path up to the last backslash, so a bare file name (the chain models) loads no texture (README
+/// of golden2).
 fn mesh_of(path: &str) -> Mesh {
     let data = scene_file(path).unwrap();
-    if path.to_ascii_lowercase().ends_with(".pmd") {
+    let mut mesh = if path.to_ascii_lowercase().ends_with(".pmd") {
         Mesh::from_pmd(&Pmd::read(&data).unwrap()).unwrap()
     } else {
         Mesh::from_pmx(&Pmx::read(&data).unwrap()).unwrap()
+    };
+    if path.contains('\\') {
+        let errors = mesh.load_textures(|name| scene_file(name).ok());
+        assert!(errors.is_empty(), "{errors:?}");
     }
+    mesh
 }
 
 fn pmm(name: &str) -> Pmm {
     Pmm::read(&std::fs::read(golden2().join(format!("{name}.pmm"))).unwrap()).unwrap()
 }
 
-/// The poses of every model at `frame`, in PMM order.
-fn poses(pmm: &Pmm, frame: u32) -> Vec<Pose> {
+/// The scene stepped to `frame`.
+fn stepped(pmm: &Pmm, frame: u32) -> PhysicsScene {
     let mut physics = PhysicsScene::new(pmm, scene_file).unwrap();
     for _ in 0..frame {
         physics.step().unwrap();
     }
+    physics
+}
+
+/// The poses of every model in `physics`, in PMM order.
+fn poses(pmm: &Pmm, physics: &PhysicsScene) -> Vec<Pose> {
     pmm.models
         .iter()
         .map(|m| {
             let model = physics.scene.models.iter().find(|s| s.slot == m.slot);
             scene::pose_of(model.unwrap())
+        })
+        .collect()
+}
+
+/// The accessories a scene names, with their textures.
+fn accessories_of(pmm: &Pmm) -> Vec<AccessoryMesh> {
+    pmm.accessories
+        .iter()
+        .map(|a| {
+            let acc = mds_accessory::load_x(&scene_file(&a.path.text).unwrap()).unwrap();
+            let mut mesh = AccessoryMesh::new(acc);
+            let errors = mesh.load_textures(|name| scene_file(name).ok());
+            assert!(errors.is_empty(), "{errors:?}");
+            mesh
         })
         .collect()
 }
@@ -84,7 +112,37 @@ fn render_at(gpu: &Gpu, pmm: &Pmm, frame: u32) -> (Vec<u8>, View) {
             mesh
         })
         .collect();
-    let posed = poses(pmm, frame);
+    let physics = stepped(pmm, frame);
+    let posed = poses(pmm, &physics);
+    let accessories = accessories_of(pmm);
+    let states: Vec<_> = pmm
+        .accessories
+        .iter()
+        .map(|a| scene::accessory_at(a, frame, &physics.scene.models).unwrap())
+        .collect();
+    let draws: Vec<AccessoryDraw> = accessories
+        .iter()
+        .zip(&states)
+        .map(|(mesh, (state, world))| AccessoryDraw {
+            mesh,
+            state,
+            world: *world,
+        })
+        .collect();
+    let image = (pmm.picture.enabled != 0).then(|| {
+        let data = scene_file(&pmm.picture.path.text).unwrap();
+        let img = Image::decode(&data).unwrap();
+        let rect = picture_rect(pmm, &img);
+        (Arc::new(img), rect)
+    });
+    let picture = image
+        .as_ref()
+        .map(|(image, rect)| Picture { image, rect: *rect });
+    let stage = Stage {
+        accessories: &draws,
+        picture,
+        ..scene::stage_at(pmm, frame)
+    };
     let models: Vec<_> = meshes
         .iter()
         .zip(&posed)
@@ -106,10 +164,36 @@ fn render_at(gpu: &Gpu, pmm: &Pmm, frame: u32) -> (Vec<u8>, View) {
             samples: &SAMPLES_8X,
             pixel_offset: PIXEL_OFFSET_D3D9,
         },
-        &scene::stage_at(pmm, frame),
+        &stage,
     )
     .unwrap();
     (px, view)
+}
+
+/// Where the app put the picture quad: placed in the pixels of its main window's viewport, which
+/// the `picture` line of the scene's edge probe records (offset, scale, picture size, an unused
+/// value, the viewport, the output size, the quad), and drawn into the output unchanged (README
+/// of golden2).
+fn picture_rect(pmm: &Pmm, image: &Image) -> [f32; 4] {
+    let probe = std::fs::read_to_string(golden2().join("background.edge.txt")).unwrap();
+    let line = probe
+        .lines()
+        .find(|l| l.split(' ').nth(1) == Some("picture"))
+        .unwrap();
+    let v: Vec<f32> = line
+        .split(' ')
+        .skip(2)
+        .map(|w| w.parse().unwrap())
+        .collect();
+    PictureQuad::in_viewport(
+        image.width,
+        image.height,
+        pmm.picture.scale,
+        pmm.picture.offset,
+        [v[6], v[7], v[8], v[9]],
+        pmm.settings.render_width as u32,
+    )
+    .rect
 }
 
 /// The grid lines are 5 units apart from -50 to 50 along x and z (`perspective-0.png`: the
@@ -254,39 +338,45 @@ fn groundshadow_30() {
 }
 
 #[test]
-#[ignore = "needs the accessory pass (shadow_floor.x) and the self-shadow map"]
+#[ignore = "within 4 is 0.839: needs the self-shadow map and the effect path of shadow_floor.x"]
 fn selfshadow_0() {
     gate("selfshadow", 0);
 }
 
 #[test]
-#[ignore = "needs the accessory pass (shadow_floor.x) and the self-shadow map"]
+#[ignore = "within 4 is 0.839: needs the self-shadow map and the effect path of shadow_floor.x"]
 fn selfshadow_30() {
     gate("selfshadow", 30);
 }
 
 #[test]
-#[ignore = "needs the accessory pass"]
+#[ignore = "within 4 is 0.99984 (33 px over, 20 allowed): the cube's top edge and texel edges"]
 fn accessory_0() {
     gate("accessory", 0);
 }
 
 #[test]
-#[ignore = "needs the accessory pass"]
+#[ignore = "within 4 is 0.99982 (37 px over, 20 allowed): the cube face seen edge on"]
 fn accessory_30() {
     gate("accessory", 30);
 }
 
 #[test]
-#[ignore = "needs texture decoding"]
+#[ignore = "within 4 is 0.962: the specular of the large faces (see the slice report)"]
 fn skin_0() {
     gate("skin", 0);
 }
 
 #[test]
-#[ignore = "needs texture decoding"]
+#[ignore = "within 4 is 0.996: the translucent faces and their edges"]
 fn skin_30() {
     gate("skin", 30);
+}
+
+#[test]
+#[ignore = "within 4 is 0.988: the checker edges of the picture (the app resamples it first)"]
+fn background_0() {
+    gate("background", 0);
 }
 
 #[test]

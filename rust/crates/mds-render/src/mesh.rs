@@ -1,9 +1,12 @@
 //! Model geometry for drawing: the index list and material ranges of a PMX or a PMD, and the
 //! per-frame vertex buffers and material values that `mds-skin` computes for a pose.
 
+use crate::texture::{self, Image, Names, SphereMode};
 use mds_formats::{pmd::Pmd, pmx::Pmx};
 use mds_skin::{Mat4, Skin};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 pub(crate) const FLAG_DOUBLE_SIDED: u8 = 0x01;
 pub(crate) const FLAG_GROUND_SHADOW: u8 = 0x02;
@@ -16,6 +19,17 @@ pub(crate) struct Material {
     /// First index and index count of the material's faces.
     pub start: u32,
     pub count: u32,
+    /// The files the material names, and those of them that [`Mesh::load_textures`] decoded.
+    pub names: Names,
+    pub textures: Textures,
+}
+
+/// The decoded images of one material; `None` draws the slot's default.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Textures {
+    pub texture: Option<Arc<Image>>,
+    pub sphere: Option<(Arc<Image>, SphereMode)>,
+    pub toon: Option<Arc<Image>>,
 }
 
 /// What a pose changes: the skin matrix of every bone (row-major, row-vector convention, as the
@@ -46,12 +60,22 @@ pub(crate) struct EdgeView {
     pub self_shadow: bool,
 }
 
+/// A number no other [`Mesh`] or accessory has: `Renderer` keeps their buffers under it.
+pub(crate) fn next_id() -> u64 {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+    NEXT_ID.fetch_add(1, Ordering::Relaxed)
+}
+
 fn finish(
     bind: Vec<([f32; 3], [f32; 3])>,
     skin: Skin,
     indices: Vec<u32>,
-    materials: Vec<Material>,
+    mut materials: Vec<Material>,
+    names: Vec<Names>,
 ) -> Result<Mesh, String> {
+    for (m, n) in materials.iter_mut().zip(names) {
+        m.names = n;
+    }
     if bind.is_empty() {
         return Err("model has no vertices".into());
     }
@@ -64,9 +88,8 @@ fn finish(
     {
         return Err("a material reaches past the index list".into());
     }
-    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
     Ok(Mesh {
-        id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+        id: next_id(),
         bind,
         skin,
         indices,
@@ -76,7 +99,8 @@ fn finish(
 }
 
 impl Mesh {
-    /// A PMX model.
+    /// A PMX model. Materials with an alpha below 1 are drawn double sided, as for a PMD (golden2
+    /// `skin-0.png`: material `mat2`, alpha 0.5, shows from behind).
     pub fn from_pmx(pmx: &Pmx) -> Result<Mesh, String> {
         let indices = pmx
             .indices
@@ -88,9 +112,16 @@ impl Mesh {
         for m in &pmx.materials {
             let count = u32::try_from(m.face_vertex_count).map_err(|_| "negative face count")?;
             materials.push(Material {
-                flags: m.flags,
+                flags: m.flags
+                    | if m.diffuse[3] < 1.0 {
+                        FLAG_DOUBLE_SIDED
+                    } else {
+                        0
+                    },
                 start,
                 count,
+                names: Names::default(),
+                textures: Textures::default(),
             });
             start = start.checked_add(count).ok_or("face count overflows")?;
         }
@@ -99,7 +130,13 @@ impl Mesh {
             .iter()
             .map(|v| (v.position, v.normal))
             .collect();
-        finish(bind, Skin::from_pmx(pmx)?, indices, materials)
+        finish(
+            bind,
+            Skin::from_pmx(pmx)?,
+            indices,
+            materials,
+            texture::pmx_names(pmx),
+        )
     }
 
     /// A PMD model. Materials with an alpha below 1 are drawn double sided, and every material
@@ -118,6 +155,8 @@ impl Mesh {
                     | FLAG_GROUND_SHADOW,
                 start,
                 count: m.face_vertex_count,
+                names: Names::default(),
+                textures: Textures::default(),
             });
             start = start
                 .checked_add(m.face_vertex_count)
@@ -128,7 +167,50 @@ impl Mesh {
             .iter()
             .map(|v| (v.position, v.normal))
             .collect();
-        finish(bind, Skin::from_pmd(pmd)?, indices, materials)
+        finish(
+            bind,
+            Skin::from_pmd(pmd)?,
+            indices,
+            materials,
+            texture::pmd_names(pmd),
+        )
+    }
+
+    /// Decodes the texture, sphere and toon files the materials name. `read` returns the bytes of
+    /// a file by the name the model stores (relative to the model's folder), or `None` when it
+    /// does not exist; each name is read once. Returns the names that were found but did not
+    /// decode. A mesh that never loads its textures draws every slot with its default.
+    pub fn load_textures(
+        &mut self,
+        mut read: impl FnMut(&str) -> Option<Vec<u8>>,
+    ) -> Vec<(String, String)> {
+        let mut cache: HashMap<String, Option<Arc<Image>>> = HashMap::new();
+        let mut errors = Vec::new();
+        let mut load = |name: &Option<String>| {
+            let name = name.as_ref()?;
+            cache
+                .entry(name.clone())
+                .or_insert_with(|| {
+                    let data = read(name)?;
+                    Image::decode(&data)
+                        .map_err(|e| errors.push((name.clone(), e)))
+                        .ok()
+                        .map(Arc::new)
+                })
+                .clone()
+        };
+        for m in &mut self.materials {
+            m.textures = Textures {
+                texture: load(&m.names.texture),
+                sphere: m
+                    .names
+                    .sphere
+                    .as_ref()
+                    .and_then(|(n, mode)| Some((load(&Some(n.clone()))?, *mode))),
+                toon: load(&m.names.toon),
+            };
+        }
+        errors
     }
 
     /// The model's edge thickness, `edge_scale` of its PMM model record (1 when a mesh is made).

@@ -94,7 +94,7 @@
 //!   characters, the `Null_NN` names of textures and materials).
 //! * Range scaling (`ChainedBoneKeys` undo entries).
 //!
-//! The script replay of `tests/fixtures/rust/script/` is
+//! The script replay of `tests/fixtures/rust/script/` and `script2/` is
 //! [`script::Runner`]; `tests/script.rs` compares every save with the C++
 //! output.
 

@@ -490,7 +490,12 @@ fn a_bone_rotation_box_zeroes_its_axis_and_keeps_the_signs() {
         (2, [60.0, 0.0, 25.0], [0.5, 0.0, 0.0, 0.75f64.sqrt()]),
         (1, [0.0, 5.0, 60.0], [0.0, 0.0, -0.5, 0.75f64.sqrt()]),
     ];
-    for (axis, degrees, want) in cases {
+    // Two angles left pin the order: Rz(-60) then Ry(-30) for row vectors
+    // is the Hamilton product qy * qz = (sy sz, sy cz, cy sz, cy cz).
+    let (sy, cy) = (-15f64).to_radians().sin_cos();
+    let (sz, cz) = (-30f64).to_radians().sin_cos();
+    let two = (0, [40.0, 30.0, 60.0], [sy * sz, sy * cz, cy * sz, cy * cz]);
+    for (axis, degrees, want) in cases.into_iter().chain([two]) {
         run(&mut d, [Command::ZeroBoneRotationAxis { axis, degrees }]);
         let p = &d.pmm.models[0].bone_pose[3];
         for (g, w) in p.rotation.iter().zip(want) {

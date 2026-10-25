@@ -1,6 +1,6 @@
 [package]
 name = "mds-formats"
-description = "Byte-exact readers and writers for PMD, PMX, VMD, VPD and PMM v2"
+description = "Byte-exact readers and writers for PMD, PMX, VMD, VPD and PMM v2, and a PMM v1 reader"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

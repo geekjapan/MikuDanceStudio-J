@@ -6,8 +6,9 @@
 #   2. Cargo.lock: on a conflict take the base's lock and let cargo add the
 #      slice's packages back. Fail if a package the slice added to the lock
 #      now resolves to another version than the one the slice tested.
-#   3. tools/rust/check.sh, and scripts/format_sources.py --check when the
-#      slice changed src/ or include/.
+#   3. tools/rust/check.sh, scripts/format_sources.py --check when the
+#      slice changed src/ or include/, and tools/ui_inventory/generate.py
+#      --check when it changed src/, include/, res/, or tools/ui_inventory/.
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 [ $# -eq 1 ] || die "usage: integrate.sh <id>"
@@ -54,5 +55,8 @@ fi
 tools/rust/check.sh
 if [ -n "$(git diff --name-only "$fork" "$slice_head" -- src include)" ]; then
   uvx --from clang-format==23.1.0 python3 -I scripts/format_sources.py --check --clang-format clang-format
+fi
+if [ -n "$(git diff --name-only "$fork" "$slice_head" -- src include res tools/ui_inventory)" ]; then
+  python3 -I tools/ui_inventory/generate.py --check
 fi
 echo "integrated: w2-$id at $(git rev-parse --short HEAD); push it and open the PR"

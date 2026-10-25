@@ -4,6 +4,7 @@
 //! `frame_clipboard.cpp`): mark clearing, undo entries with the records each
 //! step touches (`AppendBoneKeyToUndo`), and the frame bookkeeping.
 
+use crate::auto_interp;
 use crate::global::walk;
 use crate::history::{snapshot, Entry, History};
 use crate::{Error, ModelFile};
@@ -48,6 +49,30 @@ impl Skeleton {
                 })
                 .collect(),
         })
+    }
+}
+
+/// The display group count the loaders give a model (`groupCount`): the
+/// PMX display frames (`src/model/pmx_load.cpp`), or the PMD bone groups
+/// plus the root and "Disp/IK/OP" groups (`pmd_load.cpp`), plus the facial
+/// group when any morph is displayed. Counts are bytes, as in the C++.
+pub fn group_count(file: &ModelFile) -> Option<u8> {
+    match file {
+        ModelFile::Pmx(p) => {
+            let morphs = p
+                .frames
+                .iter()
+                .flat_map(|f| &f.entries)
+                .filter(|e| e.0 != 0)
+                .count() as u8;
+            Some((p.frames.len() as u8).wrapping_add(u8::from(morphs != 0)))
+        }
+        ModelFile::Pmd(p) => Some(
+            (p.bone_groups.len() as u8)
+                .wrapping_add(2)
+                .wrapping_add(u8::from(p.morph_display.len() as u8 != 0)),
+        ),
+        ModelFile::Missing => None,
     }
 }
 
@@ -198,13 +223,10 @@ pub fn register_bones(
     auto_interpolation: bool,
     frame: u32,
 ) -> Result<(), Error> {
-    let rig = rig(m, s, auto_interpolation);
+    let rig = rig(m, s, false);
     let selected: Vec<usize> = (0..rig.bones.len())
         .filter(|&i| m.bone_pose[i].flags[2] != 0)
         .collect();
-    if auto_interpolation {
-        return Err(mds_edit::Error::Unsupported("automatic interpolation").into());
-    }
     if selected.iter().any(|&i| rig.bones[i].rigid_body) {
         return Err(mds_edit::Error::Unsupported("pose of a bone with a rigid body").into());
     }
@@ -225,6 +247,15 @@ pub fn register_bones(
     })?;
     for &b in &selected {
         m.bone_pose[b].flags[1] = 0;
+    }
+    if auto_interpolation {
+        let live = m.bone_keys.clone();
+        for &b in &selected {
+            let i = walk(&live, b as u32, frame)?;
+            if live.get(i).is_some_and(|k| k.frame == frame) {
+                auto_interp::rebuild(&mut m.bone_keys, &auto_interp::Live(&live), i);
+            }
+        }
     }
     fill_keys(&mut e.history, touched);
     first
@@ -434,6 +465,104 @@ fn cstr(s: &[u8]) -> &[u8] {
     &s[..s.iter().position(|&b| b == 0).unwrap_or(s.len())]
 }
 
+/// "Load motion" onto a model (`LoadVmdMotion`, model branch,
+/// `src/model/vmd_load.cpp`, VA 0x00434B60), at `frame`: every mark
+/// cleared, an undo entry of the bone keys, then each bone key
+/// (`RegisterBoneKey`), morph key (`RegisterMorphKeyFromRecord`) and IK key
+/// (`RegisterDisplayKeyFromRecord`) of the file offset by `frame`, each list
+/// stopping at its first failure. The caller checks the model name.
+pub fn load_vmd(
+    m: &mut pmm::Model,
+    s: &Skeleton,
+    e: &mut ModelEdit,
+    vmd: &mds_formats::vmd::Vmd,
+    frame: u32,
+) -> Result<(), Error> {
+    let rig = rig(m, s, false);
+    // The name is cut at a newline (`strchr(text, 10)`).
+    let name = |raw: &[u8]| -> Vec<u8> {
+        let n = cstr(raw);
+        n[..n.iter().position(|&b| b == b'\n').unwrap_or(n.len())].to_vec()
+    };
+    e.history.push(Entry::BoneKeys {
+        frame,
+        pose: snapshot(m, 0..rig.bones.len()),
+        keys: Vec::new(),
+    });
+    let mut touched = Touched::default();
+    let mut first = Ok(());
+    with_tracks(m, &mut e.search_cursor, |t| {
+        t.clear_marks();
+        t.reset_bone_cursor(&rig);
+        for k in &vmd.bones {
+            let c = &k.interpolation;
+            // Byte 0 of each 4-byte cell; channel 0 holds the physics marker
+            // in bytes 2..4.
+            let mut interpolation = [0; 16];
+            for ch in 0..4 {
+                for row in 0..4 {
+                    interpolation[ch + 4 * row] = c[16 * ch + 4 * row];
+                }
+            }
+            let clip = BoneClip {
+                name: name(&k.name.raw),
+                frame: k.frame,
+                rotation: k.rotation,
+                position: k.position,
+                physics_disabled: u8::from(u16::from_le_bytes([c[2], c[3]]) == 3939),
+                interpolation,
+            };
+            let want = cstr(&clip.name);
+            if let Some(b) = rig.bones.iter().position(|b| cstr(&b.name) == want) {
+                if !rig.bones[b].twist {
+                    touched.register(t, b as u32, frame.wrapping_add(clip.frame))?;
+                }
+            }
+            if first_err(&mut first, t.register_bone_key(&rig, &clip, frame as i32)) {
+                break;
+            }
+        }
+        t.reset_morph_cursor(&rig);
+        for k in &vmd.morphs {
+            let clip = MorphClip {
+                name: name(&k.name.raw),
+                frame: k.frame,
+                value: if k.value.is_finite() { k.value } else { 0.0 },
+            };
+            if first_err(&mut first, t.register_morph_key(&rig, &clip, frame as i32)) {
+                break;
+            }
+        }
+        if let Some(ik) = vmd.ik.as_ref().filter(|k| !k.is_empty()) {
+            t.reset_display_cursor();
+            for k in ik {
+                if k.entries.len() > 10000 {
+                    break;
+                }
+                let clip = DisplayClip {
+                    frame: k.frame as i32,
+                    visible: u8::from(k.visible != 0),
+                    ik: k
+                        .entries
+                        .iter()
+                        .map(|x| (cstr(&x.name.raw).to_vec(), u8::from(x.enabled != 0)))
+                        .collect(),
+                    selectors: Vec::new(),
+                };
+                if first_err(
+                    &mut first,
+                    t.register_display_key(&rig, &clip, frame as i32),
+                ) {
+                    break;
+                }
+            }
+        }
+        Ok::<_, Error>(())
+    })?;
+    fill_keys(&mut e.history, touched);
+    first
+}
+
 /// `DeleteMarkedModelKeys` (VA 0x004A09E0): with any bone key marked, an
 /// undo entry whose records are `{i, previous, next}` of each marked bone
 /// key in index order, read through the links as the unlinks leave them.
@@ -444,10 +573,8 @@ pub fn delete(
     auto_interpolation: bool,
     frame: u32,
 ) -> Result<(), Error> {
-    let rig = rig(m, s, auto_interpolation);
-    if auto_interpolation {
-        return Err(mds_edit::Error::Unsupported("automatic interpolation").into());
-    }
+    let rig = rig(m, s, false);
+    let before = auto_interpolation.then(|| m.bone_keys.clone());
     let pool = &m.bone_keys;
     let marked: Vec<u32> = marked(pool).iter().map(|k| k.0).collect();
     if !marked.is_empty() {
@@ -482,6 +609,9 @@ pub fn delete(
         });
     }
     with_tracks(m, &mut e.search_cursor, |t| t.delete_marked(&rig))?;
+    if let Some(before) = before {
+        auto_interp::after_delete(&before, &mut m.bone_keys);
+    }
     Ok(())
 }
 

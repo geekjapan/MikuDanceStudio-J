@@ -1,0 +1,10 @@
+[Info]
+Version = 3
+
+[Effect]
+Obj = C:\MMD\Effects\main.fx
+Obj.show = true
+Obj[0] = none
+Obj[1] = C:\MMD\Effects\skin.fx
+Obj[1].show = false
+

@@ -6,7 +6,7 @@ class MMDApp;
 }
 
 namespace mikudancestudio::tools {
-// --mds-trace and --mds-frame-dump support for the x64 app (Windows only; the
+// --mds-trace, --mds-frame-dump, and --mds-edge-probe support for the x64 app (Windows only; the
 // portable parts are trace_args.hpp and trace_l2.hpp).
 //
 // PrepareTraceRequest runs first in WinMain, before any window or D3D object
@@ -28,7 +28,9 @@ bool ArmTraceDialogGuard(const TraceRequest& request);
 // Runs after InitMainWindowAndD3D loaded the PMM: steps `request.frames`
 // frames without presenting. A trace writes the L2 trace to "<out>.tmp",
 // renamed to <out> only on success. A frame dump renders each requested frame
-// at 640x360 and writes "<out-dir>\<pmm stem>-<frame>.png" the same way.
+// at 640x360 and writes "<out-dir>\<pmm stem>-<frame>.png" the same way. An
+// edge probe writes the edge thickness inputs of each requested frame to
+// "<out>.tmp", renamed to <out> on success (format: trace_mode.cpp).
 // Returns the process exit code: 0 on success, 1 on any failure (the temp
 // file is deleted; the PNGs already written stay).
 int RunTraceMode(MMDApp* app, const TraceRequest& request);

@@ -1,0 +1,21 @@
+[Info]
+Version = 3
+
+[Object]
+Pmd0 = C:\MMD\UserFile\Model\èââπÉ~ÉN.pmx
+Acs0 = C:\MMD\UserFile\Accessory\É\Éâ.x
+Pmd1 = C:\MMD\UserFile\Model\chain8.pmx
+
+[Effect]
+Default = none
+Pmd0 = C:\MMD\Effects\main.fx
+Pmd0.show = true
+Pmd0[0] = none
+Pmd0[2] = C:\MMD\Effects\skin.fx
+Pmd0[2].show = false
+Acs0 = none
+Acs0.show = true
+Pmd1 = none
+Pmd1.show = false
+Pmd1[1].show = true
+

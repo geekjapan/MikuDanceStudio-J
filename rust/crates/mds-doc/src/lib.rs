@@ -17,9 +17,10 @@
 //! * [`Document::edit`] is the edit state the C++ keeps outside the file:
 //!   the per-model `searchCursor` and undo rings, the clipboard, the
 //!   self-shadow mode radio, and the "auto interpolation" checkbox (530).
-//! * Pose, physics and render state are never stored. The PMM's saved pose
-//!   block is the pose the user edits and "register" stores; commands
-//!   change it, nothing evaluates into it.
+//! * Physics and render state are never stored. The PMM's saved pose block
+//!   is the pose the user edits and "register" stores; a frame change, a
+//!   paste, a delete and a motion load re-evaluate it from the keys
+//!   (`SeekModelFrame`, through `mds-pose`), as the C++ handlers do.
 //!
 //! # Commands
 //!
@@ -83,18 +84,36 @@
 //!
 //! # Not ported
 //!
-//! The load-side normalization of `pmm_load_v2.cpp` (flags read as
-//! `b == 1`, `RefreshSelfShadowPanel` after load), the pose re-evaluation of
-//! `SeekModelFrame` on a frame change, range scaling (`ChainedBoneKeys`
-//! undo entries), and the `mds-edit` paths it reports as
-//! [`mds_edit::Error::Unsupported`] (the pose of a bone with a rigid body,
-//! fixed-axis twist, automatic interpolation).
+//! * Paths that depend on `mds-edit` gaps: display-key registration on a
+//!   model with the root selector (every PMX here), so the model-mode VMD
+//!   load and the paste of display keys stop with `Corrupt`; mirrored paste
+//!   ("paste reverse"); the pose of a bone with a rigid body; fixed-axis
+//!   twist. Automatic interpolation (checkbox 530, on at start-up) is
+//!   applied here after `mds-edit` registers or deletes with it off
+//!   (`auto_interp`).
+//! * VPD load and save, the PMD writer, "paste at a different frame", and
+//!   the undo entry of a model-mode frame-line edit.
+//! * Leaving camera mode with a camera parent or a reference mode other
+//!   than 0, and the model-name fallbacks of the loaders (unmappable
+//!   characters, the `Null_NN` names of textures and materials).
+//! * Range scaling (`ChainedBoneKeys` undo entries).
+//!
+//! The script replay of `tests/fixtures/rust/script/` is
+//! [`script::Runner`]; `tests/script.rs` compares every save with the C++
+//! output.
 
+mod accessory;
+mod add_model;
+mod auto_interp;
 pub mod global;
 pub mod history;
 pub mod model;
 pub mod new_scene;
+mod readout;
+mod refresh;
 pub mod save;
+pub mod script;
+pub mod vmd_save;
 
 pub use global::{GlobalClipboard, GlobalTrack};
 pub use model::ModelClipboard;
@@ -108,6 +127,9 @@ use std::fmt;
 /// The self-shadow key mode the C++ resets to on a device with
 /// post-processing (`postProcessEnabled`), which this port assumes.
 pub(crate) const POST_PROCESS_SHADOW_MODE: u8 = 1;
+
+/// `kPiLit` of the edit handlers (3.141592025756836, the float pi).
+pub(crate) const PI_LIT: f64 = 3.141592025756836;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -163,8 +185,12 @@ pub enum Command {
     SelectModel(u8),
     /// The combo's "camera/light/accessory" entry.
     SelectCameraMode,
-    /// Moves the current frame. In model mode with a bone edited and not
-    /// registered, `SnapshotPoseBeforeFrameChange` pushes an undo entry.
+    /// The current-frame edit (417, `CommitEditControl`) and its
+    /// `RefreshAfterFrameApply` (VA 0x00432FA0): every model with a selected
+    /// bone pushes `SnapshotPoseBeforeFrameChange` at the new frame (when a
+    /// bone is edited) and loses its bone selection, the timeline scrolls,
+    /// every model seeks to the frame, and in camera mode the camera,
+    /// light, self-shadow, gravity and accessory states follow their keys.
     SetFrame(u32),
     /// The selected model's bone selection (`boneSelection`); the first bone
     /// becomes `selectedBone`.
@@ -179,6 +205,20 @@ pub enum Command {
     SetMorph {
         morph: u32,
         value: f32,
+    },
+    /// A bone readout edit in model mode (544..549, `CommitEditControlTail`,
+    /// `src/window/ui_edit_commit.cpp`, VA 0x0044BEF0) on the selected bone:
+    /// axes 0..2 set the translation, 3..5 the X, Y or Z degrees, composed
+    /// with the other two readout angles (`ComposeEulerToBone`).
+    BoneReadoutEdit {
+        axis: u8,
+        value: f64,
+    },
+    /// A morph lane combo (504, 509, 514, 519; `MorphRowSelect`,
+    /// `src/window/command_dispatch.cpp`): `selectedMorphs[lane]`.
+    SelectMorphLane {
+        lane: u8,
+        morph: u32,
     },
     /// The camera panel: position, rotation (pitch, yaw, roll), distance,
     /// view angle and perspective.
@@ -199,6 +239,13 @@ pub enum Command {
         mode: u8,
         distance: f32,
     },
+    /// An `EN_UPDATE` of the gravity dialog (`SetGravityChannel`, VA
+    /// 0x0045FD80): 0 magnitude, 1..3 direction X..Z, 4 noise. An all-zero
+    /// direction gets Y = 0.1.
+    SetGravityChannel(u8, f32),
+    /// The gravity dialog's cancel: `DestroyWindow`, then
+    /// `ApplyGravityTrack` (VA 0x00412330).
+    CloseGravityDialog,
     SetGravity {
         acceleration: f32,
         noise: i32,
@@ -247,6 +294,68 @@ pub enum Command {
     Undo,
     Redo,
     NewScene,
+    /// "Load motion" (menu 209), `LoadVmdMotion` (`src/model/vmd_load.cpp`,
+    /// VA 0x00434B60) with the file bytes: in camera mode onto the camera,
+    /// light and self-shadow tracks, then their refresh; in model mode onto
+    /// the selected model ([`model::load_vmd`]), then `SeekModelFrame`.
+    LoadMotion(Vec<u8>),
+    /// "Add model" (button 435), `LoadModelFile` (`src/model/add_model.cpp`,
+    /// VA 0x00460430) with the path as given and the file bytes: the model
+    /// takes the first free slot, is selected, leaves camera mode, and the
+    /// viewport edit mode becomes bone (0).
+    LoadModel {
+        path: String,
+        data: Vec<u8>,
+    },
+    /// "Load accessory" (button 472, `LoadAccessoryFile`,
+    /// `src/render/accessory.cpp`, VA 0x00460B30) with the path as given
+    /// (the name is what follows its last backslash) and the `.x` bytes.
+    LoadAccessory {
+        path: String,
+        data: Vec<u8>,
+    },
+    /// "Load WAVE" (menu 206, `LoadWaveFile`, `src/media/wave_audio.cpp`).
+    LoadWave {
+        path: String,
+        data: Vec<u8>,
+    },
+    /// The accessory combo (471, `command_dispatch.cpp`).
+    SelectAccessory(u8),
+    /// The accessory edits 478..485 (`CommitEditControl`,
+    /// `src/window/ui_edit_commit.cpp`) on the selected accessory: 0..2
+    /// position, 3..5 rotation in degrees, 6 scale, 7 opacity (clamped to
+    /// 0..1).
+    AccessoryEdit {
+        field: u8,
+        value: f64,
+    },
+    /// The accessory parent model combo (474, `command_dispatch.cpp`):
+    /// a model slot, or `None` for the ground entry.
+    SetAccessoryParentModel(Option<u8>),
+    /// The accessory parent bone combo (475): a bone of the parent model.
+    SetAccessoryParentBone(u32),
+    /// The select-all menus 217, 218, 220 (model) and 237..241 (camera
+    /// mode), `mds_ops::select`.
+    SelectAll(SelectAll),
+    /// Menus 255..258 (`mds_ops::frame_line`): the bone or camera line
+    /// (`morph == false`), the morph or light line, inserted or deleted at
+    /// the current frame.
+    FrameLine {
+        morph: bool,
+        insert: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectAll {
+    Bone,
+    Display,
+    Morph,
+    Camera,
+    Light,
+    SelfShadow,
+    Gravity,
+    Accessory,
 }
 
 /// Edit state the C++ keeps outside the file.
@@ -270,6 +379,10 @@ pub struct Document {
     skeletons: Vec<Option<Skeleton>>,
 }
 
+fn ops(e: mds_ops::Error) -> Error {
+    Error::Format(format!("{e:?}"))
+}
+
 fn not(what: &'static str) -> Error {
     Error::NotApplicable(what)
 }
@@ -286,13 +399,9 @@ impl Document {
         let mut models = Vec::with_capacity(pmm.models.len());
         for m in &pmm.models {
             let path = m.path.text.as_str();
-            let format = |e: mds_formats::Error| Error::Format(format!("{path}: {e}"));
             models.push(match read(path) {
                 None => ModelFile::Missing,
-                Some(b) if path.to_ascii_lowercase().ends_with(".pmd") => {
-                    ModelFile::Pmd(Box::new(Pmd::read(&b).map_err(format)?))
-                }
-                Some(b) => ModelFile::Pmx(Box::new(Pmx::read(&b).map_err(format)?)),
+                Some(b) => parse_model(path, &b)?,
             });
         }
         let skeletons = models
@@ -313,6 +422,79 @@ impl Document {
         })
     }
 
+    /// The scene the application starts with ([`new_scene::startup`]).
+    pub fn startup() -> Document {
+        let pmm = new_scene::startup();
+        Document {
+            edit: EditState {
+                self_shadow_mode: shadow_mode_at(&pmm),
+                // `checkPhysicsFrame` (`window_init.cpp`) without a config.
+                auto_interpolation: true,
+                ..EditState::default()
+            },
+            pmm,
+            models: Vec::new(),
+            skeletons: Vec::new(),
+        }
+    }
+
+    /// "Open project" (menu 205): `LoadSceneFile` (`src/io/pmm_load_v2.cpp`,
+    /// VA 0x00450000) replacing this document. Against [`Document::load`],
+    /// it keeps what the loader leaves from the scene before: the sidebar
+    /// width, which `HandleWindowSize` sets back from the window (the file's
+    /// value only lasts until the relayout), and the offset and scale of an
+    /// AVI or picture background that is not enabled. The display groups of
+    /// each model are those of its file (`ModelLoadPMD`).
+    pub fn load_scene(
+        &mut self,
+        data: &[u8],
+        read: impl FnMut(&str) -> Option<Vec<u8>>,
+    ) -> Result<(), Error> {
+        let mut d = Document::load(data, read)?;
+        // The display groups come from the model file; the saved flags are
+        // kept (as `b == 1`) only when the counts agree.
+        for (m, f) in d.pmm.models.iter_mut().zip(&d.models) {
+            let Some(g) = model::group_count(f) else {
+                continue;
+            };
+            let s = &mut m.selection;
+            if g == m.group_count {
+                s.group_flags
+                    .iter_mut()
+                    .for_each(|b| *b = u8::from(*b == 1));
+            } else {
+                s.group_flags = vec![0; usize::from(g)];
+            }
+            m.group_count = g;
+            s.group_count_repeat = g;
+        }
+        let (old, p) = (&self.pmm, &mut d.pmm);
+        p.settings.panel_width = old.settings.panel_width;
+        if p.avi.enabled != 1 {
+            (p.avi.offset, p.avi.scale) = (old.avi.offset, old.avi.scale);
+        }
+        if p.picture.enabled == 0 {
+            (p.picture.offset, p.picture.scale) = (old.picture.offset, old.picture.scale);
+        }
+        d.edit.auto_interpolation = self.edit.auto_interpolation;
+        // `LoadSceneV2_ReleaseTracks`: no model in the selected slot means
+        // camera mode.
+        if d.active().is_none() {
+            d.pmm.settings.options[0] = 1;
+        }
+        // The load ends in `ApplyModelComboSelection` on the selected
+        // model's combo entry; an entry of 0 is the camera entry. The edit
+        // mode read after it stays.
+        let combo = d.selected_model().map(|m| m.selection.combo_index);
+        if combo == Some(0) {
+            let edit_mode = d.pmm.timeline.edit_mode;
+            d.apply(Command::SelectCameraMode)?;
+            d.pmm.timeline.edit_mode = edit_mode;
+        }
+        *self = d;
+        Ok(())
+    }
+
     /// The bytes `SaveSceneFile` writes for this scene.
     pub fn save(&self) -> Result<Vec<u8>, Error> {
         save::normalize(&self.pmm)
@@ -326,6 +508,12 @@ impl Document {
 
     fn frame(&self) -> u32 {
         self.pmm.timeline.current_frame as u32
+    }
+
+    /// The selected model in model mode.
+    pub fn selected_model(&self) -> Option<&mds_formats::pmm::Model> {
+        let i = self.active().filter(|_| !self.camera_mode())?;
+        self.pmm.models.get(i)
     }
 
     /// The selected model's index in `pmm.models`.
@@ -354,6 +542,48 @@ impl Document {
         *last = (*last).max(max);
     }
 
+    /// `RefreshAfterFrameApply` (`src/window/ui_frame_step.cpp`) after the
+    /// current frame changed.
+    fn apply_frame(&mut self) {
+        let frame = self.frame();
+        for (m, e) in self.pmm.models.iter_mut().zip(&mut self.edit.models) {
+            if m.bone_pose.iter().any(|p| p.flags[2] != 0) {
+                model::push_frame_change(m, &mut e.history, frame);
+                m.bone_pose.iter_mut().for_each(|p| p.flags[2] = 0);
+            }
+        }
+        // The timeline shows `(SidebarWidth - 84) / 26` frames before the
+        // current one.
+        let visible = ((self.pmm.settings.panel_width - 84) / 26) as u32;
+        self.pmm.timeline.start_frame = frame.saturating_sub(visible) as i32;
+        let mode = self.pmm.physics.playback_mode;
+        for (m, f) in self.pmm.models.iter_mut().zip(&self.models) {
+            refresh::seek_model(m, f, frame, mode);
+        }
+        if self.camera_mode() {
+            self.refresh_context();
+        }
+    }
+
+    /// The refresh tail of the delete and paste handlers: in camera mode the
+    /// camera, light, self-shadow, gravity and accessory states follow their
+    /// keys; in model mode the selected model seeks to the current frame.
+    fn refresh_context(&mut self) {
+        let frame = self.frame();
+        if self.camera_mode() {
+            refresh::camera(&mut self.pmm);
+            refresh::light(&mut self.pmm);
+            refresh::self_shadow(&mut self.pmm, &mut self.edit.self_shadow_mode);
+            refresh::gravity(&mut self.pmm);
+            for a in &mut self.pmm.accessories {
+                refresh::accessory(a, frame);
+            }
+        } else if let Some(i) = self.active() {
+            let mode = self.pmm.physics.playback_mode;
+            refresh::seek_model(&mut self.pmm.models[i], &self.models[i], frame, mode);
+        }
+    }
+
     pub fn apply(&mut self, cmd: Command) -> Result<(), Error> {
         let frame = self.frame();
         match cmd {
@@ -361,17 +591,104 @@ impl Document {
                 if !self.pmm.models.iter().any(|m| m.slot == slot) {
                     return Err(not("no model in that slot"));
                 }
-                self.pmm.selected_model_slot = slot;
-                self.pmm.settings.options[0] = 0;
-            }
-            Command::SelectCameraMode => self.pmm.settings.options[0] = 1,
-            Command::SetFrame(f) => {
-                if let (false, Some(i)) = (self.camera_mode(), self.active()) {
-                    let m = &self.pmm.models[i];
-                    model::push_frame_change(m, &mut self.edit.models[i].history, frame);
+                let follow = self.pmm.appearance.camera_parent_model >= 0
+                    && self.pmm.appearance.follow_camera != 0;
+                if self.camera_mode() && !refresh::model_mode_supported(&self.pmm)
+                    || !self.camera_mode() && follow
+                {
+                    return Err(not("a model selection with a camera parent (not ported)"));
                 }
-                self.pmm.timeline.current_frame = f as i32;
+                self.pmm.selected_model_slot = slot;
+                if self.camera_mode() {
+                    refresh::rebuild_model_mode(&mut self.pmm, &mut self.edit.self_shadow_mode);
+                }
+                self.pmm.timeline.edit_mode = 0;
             }
+            Command::SelectCameraMode => {
+                if !self.camera_mode() {
+                    // `RebuildCameraModePanel` (VA 0x0044D780).
+                    self.pmm.camera_state[3] = 0.0;
+                    self.pmm.camera_state[4] = 0.0;
+                    self.pmm.settings.options[0] = 1;
+                    self.refresh_context();
+                    let mut basis = [0.0; 16];
+                    for i in [0, 5, 10, 15] {
+                        basis[i] = 1.0;
+                    }
+                    self.pmm.appearance.camera_attachment_basis = basis;
+                    self.pmm.timeline.edit_mode = 2;
+                }
+                self.pmm.settings.options[0] = 1;
+            }
+            Command::LoadAccessory { path, data } => {
+                accessory::load(&mut self.pmm, &path, &data)?;
+            }
+            Command::LoadWave { path, data } => accessory::load_wave(&mut self.pmm, &path, &data),
+            Command::SelectAccessory(slot) => {
+                global::accessory(&mut self.pmm, slot)?;
+                self.pmm.selected_accessory_slot = slot;
+            }
+            Command::AccessoryEdit { field, value } => {
+                let slot = self.pmm.selected_accessory_slot;
+                let Ok(a) = global::accessory(&mut self.pmm, slot) else {
+                    return Ok(());
+                };
+                let s = &mut a.state;
+                let f = usize::from(field);
+                match f {
+                    0..=2 => s.position[f] = value as f32,
+                    3..=5 => s.rotation[f - 3] = (value / 180.0 * PI_LIT) as f32,
+                    6 => s.scale = value as f32,
+                    7 => {
+                        let visible = s.opacity_visible & 1;
+                        s.opacity_visible =
+                            save::opacity_visible(value.clamp(0.0, 1.0) as f32, visible);
+                    }
+                    _ => return Err(not("no such accessory field")),
+                }
+            }
+            Command::SetAccessoryParentModel(model) => {
+                let slot = self.pmm.selected_accessory_slot;
+                let found = model.filter(|m| self.pmm.models.iter().any(|x| x.slot == *m));
+                let Ok(a) = global::accessory(&mut self.pmm, slot) else {
+                    return Ok(());
+                };
+                match (model, found) {
+                    (None, _) => a.state.parent_model = -1,
+                    (Some(_), Some(m)) => {
+                        a.state.parent_model = i32::from(m);
+                        a.state.parent_bone = 0;
+                    }
+                    (Some(_), None) => {}
+                }
+            }
+            Command::SetAccessoryParentBone(bone) => {
+                let slot = self.pmm.selected_accessory_slot;
+                let Ok(a) = global::accessory(&mut self.pmm, slot) else {
+                    return Ok(());
+                };
+                if a.state.parent_model >= 0 {
+                    a.state.parent_bone = bone as i32;
+                }
+            }
+            Command::SetFrame(f) => {
+                self.pmm.timeline.current_frame = f as i32;
+                self.apply_frame();
+            }
+            Command::SetGravityChannel(ch, v) => {
+                let p = &mut self.pmm.physics;
+                let d = &mut p.gravity_direction;
+                match ch {
+                    0 => p.gravity_magnitude = v,
+                    1..=3 => d[ch as usize - 1] = v,
+                    4 => p.gravity_noise = v as i32,
+                    _ => return Err(not("no such gravity channel")),
+                }
+                if ch < 4 && *d == [0.0; 3] {
+                    d[1] = 0.1;
+                }
+            }
+            Command::CloseGravityDialog => refresh::gravity(&mut self.pmm),
             Command::SelectBones(bones) => {
                 let i = self.active_model()?;
                 let m = &mut self.pmm.models[i];
@@ -405,6 +722,39 @@ impl Document {
                 *m.morph_pose
                     .get_mut(morph as usize)
                     .ok_or(not("no such morph"))? = value;
+            }
+            Command::BoneReadoutEdit { axis, value } => {
+                let (i, s) = self.keyed()?;
+                let m = &mut self.pmm.models[i];
+                let Ok(b) = usize::try_from(m.selection.selected_bone) else {
+                    return Ok(());
+                };
+                if b >= m.bone_pose.len() || axis > 5 {
+                    return Err(not("no such bone or axis"));
+                }
+                if self.pmm.physics.playback_mode == 3 && s.bones[b].2 {
+                    return Err(not(
+                        "the readout of a rigid-body bone in physics mode 3 (not ported)",
+                    ));
+                }
+                model::push_pose_edit(m, &mut self.edit.models[i].history);
+                let p = &mut m.bone_pose[b];
+                let axis = usize::from(axis);
+                if axis < 3 {
+                    p.translation[axis] = value as f32;
+                } else {
+                    let deg = readout::euler_degrees(p.rotation);
+                    p.rotation = readout::rotation_edit(deg, axis - 3, value);
+                }
+                p.flags[1] = 1;
+            }
+            Command::SelectMorphLane { lane, morph } => {
+                let i = self.active_model()?;
+                let m = &mut self.pmm.models[i];
+                if morph as usize >= m.morph_names.len() || lane > 3 {
+                    return Err(not("no such morph"));
+                }
+                m.selection.selected_morphs[usize::from(lane)] = morph as i32;
             }
             Command::SetCamera {
                 position,
@@ -576,6 +926,7 @@ impl Document {
                         count,
                     )?;
                 }
+                self.refresh_context();
             }
             Command::DeleteSelectedKeys => {
                 if self.camera_mode() {
@@ -591,6 +942,7 @@ impl Document {
                         frame,
                     )?;
                 }
+                self.refresh_context();
             }
             Command::Undo | Command::Redo => {
                 if self.camera_mode() {
@@ -614,6 +966,91 @@ impl Document {
                     self.pmm.timeline.current_frame = f as i32;
                 }
             }
+            Command::LoadMotion(data) => {
+                let vmd =
+                    mds_formats::vmd::Vmd::read(&data).map_err(|e| Error::Format(e.to_string()))?;
+                if !self.camera_mode() {
+                    let (i, s) = self.keyed()?;
+                    let m = &self.pmm.models[i];
+                    let name = |raw: &[u8]| raw.split(|&b| b == 0).next().unwrap_or(&[]).to_vec();
+                    if name(&vmd.model_name.raw) != name(&m.name.raw) {
+                        return Err(not("the motion is for another model (a message box)"));
+                    }
+                    let r = model::load_vmd(
+                        &mut self.pmm.models[i],
+                        &s,
+                        &mut self.edit.models[i],
+                        &vmd,
+                        frame,
+                    );
+                    self.bump_last_registered(i);
+                    let mode = self.pmm.physics.playback_mode;
+                    refresh::seek_model(&mut self.pmm.models[i], &self.models[i], frame, mode);
+                    return r;
+                }
+                let r = global::load_vmd(&mut self.pmm, &vmd);
+                refresh::camera(&mut self.pmm);
+                refresh::light(&mut self.pmm);
+                refresh::self_shadow(&mut self.pmm, &mut self.edit.self_shadow_mode);
+                refresh::gravity(&mut self.pmm);
+                r?;
+            }
+            Command::SelectAll(what) => {
+                use mds_ops as s;
+                let p = &mut self.pmm;
+                match what {
+                    SelectAll::Bone => s::select_all_bone_frames(p).map_err(ops)?,
+                    SelectAll::Display => s::select_all_display_frames(p).map_err(ops)?,
+                    SelectAll::Morph => s::select_all_morph_frames(p).map_err(ops)?,
+                    SelectAll::Camera => s::select_all_camera_frames(p),
+                    SelectAll::Light => s::select_all_light_frames(p),
+                    SelectAll::SelfShadow => s::select_all_self_shadow_frames(p),
+                    SelectAll::Gravity => s::select_all_gravity_frames(p),
+                    SelectAll::Accessory => s::select_all_accessory_frames(p),
+                }
+            }
+            Command::FrameLine { morph, insert } => {
+                use mds_ops as f;
+                let p = &mut self.pmm;
+                match (morph, insert) {
+                    (false, true) => f::insert_bone_camera_frame_line(p),
+                    (false, false) => f::delete_bone_camera_frame_line(p),
+                    (true, true) => f::insert_morph_light_frame_line(p),
+                    (true, false) => f::delete_morph_light_frame_line(p),
+                }
+                .map_err(ops)?;
+                if !self.camera_mode() {
+                    self.refresh_context();
+                } else if morph {
+                    refresh::light(&mut self.pmm);
+                } else {
+                    refresh::camera(&mut self.pmm);
+                }
+            }
+            Command::LoadModel { path, data } => {
+                let file = parse_model(&path, &data)?;
+                if self.camera_mode() && !refresh::model_mode_supported(&self.pmm) {
+                    return Err(not(
+                        "leaving camera mode with a camera parent or reference (not ported)",
+                    ));
+                }
+                let slot = (0..=254u8)
+                    .find(|s| self.pmm.models.iter().all(|m| m.slot != *s))
+                    .ok_or(not("every model slot is taken"))?;
+                // `CB_ADDSTRING` after the camera entry and the models before.
+                let combo = self.pmm.models.len() as u8 + 1;
+                let m = add_model::record(slot, &path, &file, combo)?;
+                let at = self.pmm.models.partition_point(|m| m.slot < slot);
+                self.skeletons.insert(at, model::Skeleton::new(&file, &m));
+                self.pmm.models.insert(at, m);
+                self.models.insert(at, file);
+                self.edit.models.insert(at, ModelEdit::default());
+                self.pmm.selected_model_slot = slot;
+                if self.camera_mode() {
+                    refresh::rebuild_model_mode(&mut self.pmm, &mut self.edit.self_shadow_mode);
+                }
+                self.pmm.timeline.edit_mode = 0;
+            }
             Command::NewScene => {
                 self.pmm = new_scene::reset(&self.pmm);
                 self.models.clear();
@@ -623,10 +1060,25 @@ impl Document {
                     auto_interpolation: self.edit.auto_interpolation,
                     ..EditState::default()
                 };
+                // The refresh tail of `ResetAppState`.
+                refresh::camera(&mut self.pmm);
+                refresh::light(&mut self.pmm);
+                refresh::self_shadow(&mut self.pmm, &mut self.edit.self_shadow_mode);
+                refresh::gravity(&mut self.pmm);
             }
         }
         Ok(())
     }
+}
+
+/// A PMD by its extension, else a PMX.
+fn parse_model(path: &str, data: &[u8]) -> Result<ModelFile, Error> {
+    let format = |e: mds_formats::Error| Error::Format(format!("{path}: {e}"));
+    Ok(if path.to_ascii_lowercase().ends_with(".pmd") {
+        ModelFile::Pmd(Box::new(Pmd::read(data).map_err(format)?))
+    } else {
+        ModelFile::Pmx(Box::new(Pmx::read(data).map_err(format)?))
+    })
 }
 
 /// `RefreshSelfShadowPanel` (VA 0x00411B90): the mode of the self-shadow

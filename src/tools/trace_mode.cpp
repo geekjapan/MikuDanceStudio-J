@@ -46,12 +46,34 @@
 // multisampled back buffer path is supported; without multisampling the
 // recording path renders into a capture surface that the picture command
 // never creates, so the run fails instead.
+//
+// --mds-edge-probe <pmm> <out> <frame>...  (golden2, wave 3)
+// Runs the setup and the passes of --mds-frame-dump, and at each requested
+// frame writes, instead of the image, the inputs and the result of the edge
+// thickness that UpdateModelVertexBuffers computes for that frame's render
+// (PmdEdgeDistance in src/model/model_skinning.cpp). RenderFrameScene reads
+// the frame world matrix right after SetupFrameWorldTransform, so the probe
+// calls that and reads the same matrix; it draws nothing. Format:
+//   "mds-edge-probe 1" LF, then per requested frame:
+//   frame "camera" perspective fov target.xyz distance pitch yaw roll
+//         selfShadowEnabled selfShadowMode selfShadowDistance LF
+//   frame "world" m00 m01 .. m33 LF       (the frame world matrix, row by row)
+//   frame "picture" offX offY scale width height viewScale viewport.ltrb
+//         renderWidth renderHeight quad.ltrb rhw0..rhw5 LF   (only with a
+//         background picture shown: its placement inputs, the overlay quad
+//         drawn, and the rhw of its six vertices)
+//   frame "edge" slot bone point.xyz world.xyz target_distance edgeScale edge LF
+//         (per loaded model in slot order: the bone PmdEdgeDistance uses, its
+//         bind position moved by matInit, that point moved by the world
+//         matrix, its distance to CameraPosition, and the result)
+// Floats are printf "%.9g", which reads back to the same float.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
 #include <d3d9.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cwchar>
@@ -262,7 +284,93 @@ bool DumpFrame(MMDApp* app, const std::wstring& path) {
     return true;
 }
 
-int RunFrameDump(MMDApp* app, const TraceRequest& request) {
+// PmdEdgeDistance (src/model/model_skinning.cpp) with its inputs; the same
+// float operations in the same order.
+bool WriteEdgeProbe(std::ostream& out, MMDApp* app, std::uint32_t frame) {
+    SetupFrameWorldTransform(app);
+    D3DMATRIX world{};
+    if (FAILED(app->Renderer()->device->GetTransform(D3DTS_WORLD, &world)))
+        return false;
+    const float* m = &world.m[0][0];
+    const float* target = app->CameraPosition();
+    char line[512];
+    std::snprintf(line, sizeof line,
+                  "%u camera %d %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %d %d %.9g\n", frame,
+                  static_cast<int>(app->CameraPerspective()), app->CameraFov(), target[0],
+                  target[1], target[2], app->CameraDistance(), app->CameraPitch(), app->CameraYaw(),
+                  app->CameraRoll(), static_cast<int>(app->state.selfShadowEnabled),
+                  static_cast<int>(app->SelfShadowMode()), app->ShadowDistance());
+    out << line;
+    int at = std::snprintf(line, sizeof line, "%u world", frame);
+    for (int i = 0; i < 16; ++i)
+        at += std::snprintf(line + at, sizeof line - at, " %.9g", m[i]);
+    out << line << '\n';
+    if (app->PictureBackgroundEnabled() != 0) {
+        // The overlay quad as PicBgOverlayRefresh (src/render/bg_overlay.cpp)
+        // wrote it: left, top, right, bottom in render-target pixels.
+        float quad[4]{};
+        float rhw[6]{};
+        void* locked = nullptr;
+        IDirect3DVertexBuffer9* vb = app->PictureOverlayVertices();
+        if (vb == nullptr || FAILED(vb->Lock(0, 0xA8, &locked, D3DLOCK_READONLY)))
+            return false;
+        const float* v = static_cast<const float*>(locked);
+        quad[0] = v[0x38 / 4];
+        quad[1] = v[0x3C / 4];
+        quad[2] = v[0x00 / 4];
+        quad[3] = v[0x20 / 4];
+        for (int i = 0; i < 6; ++i)
+            rhw[i] = v[i * 7 + 3]; // 28-byte vertices: x y z rhw color u v
+        vb->Unlock();
+        const RECT& view = app->ViewportRect();
+        std::snprintf(line, sizeof line,
+                      "%u picture %d %d %.9g %d %d %.9g %ld %ld %ld %ld %d %d %.9g %.9g %.9g %.9g "
+                      "%.9g %.9g %.9g %.9g %.9g %.9g\n",
+                      frame, app->PictureOffsetX(), app->PictureOffsetY(), app->PictureScale(),
+                      app->PictureWidth(), app->PictureHeight(), app->Renderer()->viewScale,
+                      view.left, view.top, view.right, view.bottom, app->RenderWidth(),
+                      app->RenderHeight(), quad[0], quad[1], quad[2], quad[3], rhw[0], rhw[1],
+                      rhw[2], rhw[3], rhw[4], rhw[5]);
+        out << line;
+    }
+    for (int slot = 0; slot < kModelSlotCount; ++slot) {
+        unsigned char* model = app->ModelSlot(slot);
+        if (model == nullptr)
+            continue;
+        const mdl::ModelRecord& record = *mdl::Mdl(model);
+        const mdl::BoneRecord* bones = mdl::Bones(model);
+        const int boneCount = static_cast<int>(record.boneCount);
+        const int bone = boneCount > 1 ? 1 : 0;
+        float point[3]{};
+        if (bones != nullptr && boneCount > 0) {
+            const float* p = bones[bone].position;
+            const float* b = bones[bone].matInit;
+            point[0] = p[0] * b[0] + p[1] * b[4] + p[2] * b[8] + b[12];
+            point[1] = p[0] * b[1] + p[1] * b[5] + p[2] * b[9] + b[13];
+            point[2] = p[0] * b[2] + p[1] * b[6] + p[2] * b[10] + b[14];
+        }
+        float moved[3];
+        moved[0] = point[0] * m[0] + point[1] * m[4] + point[2] * m[8] + m[12];
+        moved[1] = point[0] * m[1] + point[1] * m[5] + point[2] * m[9] + m[13];
+        moved[2] = point[0] * m[2] + point[1] * m[6] + point[2] * m[10] + m[14];
+        const float dx = moved[0] - target[0];
+        const float dy = moved[1] - target[1];
+        const float dz = moved[2] - target[2];
+        const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const float edge = distance * 0.00004500000068219379f *
+                           (app->CameraFov() * 0.6000000238418579f + 1.0f) * record.edgeScale;
+        std::snprintf(line, sizeof line,
+                      "%u edge %d %d %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g\n", frame, slot,
+                      bone, point[0], point[1], point[2], moved[0], moved[1], moved[2], distance,
+                      record.edgeScale, edge);
+        out << line;
+    }
+    return out.good();
+}
+
+// With `probe` set (--mds-edge-probe) the requested frames are probed instead
+// of rendered, after the same setup.
+int RunFrameDump(MMDApp* app, const TraceRequest& request, std::ostream* probe) {
     D3DRenderer* r = app->Renderer();
     if (r == nullptr || r->device == nullptr)
         return 1;
@@ -304,7 +412,8 @@ int RunFrameDump(MMDApp* app, const TraceRequest& request) {
             PhysicsFrame(app, 0);
         }
         if (frame == request.dumpFrames[next]) {
-            ok = DumpFrame(app, prefix + std::to_wstring(frame) + L".png");
+            ok = probe != nullptr ? WriteEdgeProbe(*probe, app, frame)
+                                  : DumpFrame(app, prefix + std::to_wstring(frame) + L".png");
             ++next;
         }
     }
@@ -356,7 +465,7 @@ int RunTraceMode(MMDApp* app, const TraceRequest& request) {
         return 1;
     }
     if (request.mode == TraceRequest::Mode::FrameDump)
-        return RunFrameDump(app, request);
+        return RunFrameDump(app, request, nullptr);
 
     const std::wstring temp = request.out + L".tmp";
     std::ofstream file(std::filesystem::path(temp),
@@ -365,14 +474,20 @@ int RunTraceMode(MMDApp* app, const TraceRequest& request) {
         return 1;
     g_guardFile = &file;
 
-    ArmFrameStep(app, request.frames);
-    l2::WriteHeader(file);
-    bool ok = WriteFrame(file, app, 0);
-    for (std::uint32_t frame = 1; ok && frame < request.frames; ++frame) {
-        app->state.messageSeen = 2; // the render gate of AdvanceFrameRenderGate, playing
-        PlaybackCatchup(app, 0);
-        PhysicsFrame(app, 0);
-        ok = WriteFrame(file, app, frame);
+    bool ok = true;
+    if (request.mode == TraceRequest::Mode::EdgeProbe) {
+        file << "mds-edge-probe 1\n";
+        ok = RunFrameDump(app, request, &file) == 0;
+    } else {
+        ArmFrameStep(app, request.frames);
+        l2::WriteHeader(file);
+        ok = WriteFrame(file, app, 0);
+        for (std::uint32_t frame = 1; ok && frame < request.frames; ++frame) {
+            app->state.messageSeen = 2; // the render gate of AdvanceFrameRenderGate, playing
+            PlaybackCatchup(app, 0);
+            PhysicsFrame(app, 0);
+            ok = WriteFrame(file, app, frame);
+        }
     }
     file.flush();
     ok = ok && file.good();

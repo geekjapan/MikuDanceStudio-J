@@ -1,7 +1,8 @@
 use crate::support::{camera_mode, run, with_ctx};
 use mds_app::actions;
 use mds_app::editor::Editor;
-use mds_app::ui::shadow_panel::{commit_range, set_range};
+use mds_app::ui::shadow_panel::{self, commit_range, set_range};
+use mds_app::ui::Ctx;
 
 fn distance(e: &Editor) -> f32 {
     e.doc.pmm.physics_interval
@@ -134,15 +135,46 @@ const SJIS: &[(u16, char)] = &[
     (0x82BD, 'た'),
 ];
 
+/// Shift+G shows the shadow map over the viewport (`key_ladder.cpp:158`), which `mds-render` has
+/// no map to do.
 #[test]
-fn the_shadow_map_keys_are_not_implemented() {
+fn the_shadow_map_display_key_is_not_implemented() {
     let mut e = camera_mode();
     assert_eq!(
         run(&mut e, "key:Shift+G"),
         Err("key:Shift+G: not implemented".into())
     );
+}
+
+/// Check box 556 sets the size of the shadow map, 0x1000 when checked and 0x800 when not
+/// (`command_frame_register.cpp:722` to `:747`); it is window state and no part of the scene.
+#[test]
+fn fshadow_sets_the_map_size_in_the_window() {
+    let mut e = camera_mode();
+    let saved = e.doc.save().unwrap();
+    let egui = egui::Context::default();
+    assert_eq!(shadow_panel::map_size(&egui), 0x800);
+    for want in [0x1000, 0x800, 0x1000] {
+        let mut status = String::new();
+        mds_app::actions::run(
+            &mut Ctx {
+                editor: &mut e,
+                now_ms: 0,
+                egui: Some(egui.clone()),
+                viewport: None,
+                status: &mut status,
+            },
+            "ctl:556",
+        )
+        .unwrap();
+        assert_eq!(shadow_panel::map_size(&egui), want);
+    }
+    assert_eq!(e.doc.save().unwrap(), saved);
+    assert!(!e.modified);
+    run(&mut e, "ctl:556").unwrap();
     assert_eq!(
-        run(&mut e, "ctl:556"),
-        Err("ctl:556: not implemented".into())
+        shadow_panel::map_size(&egui),
+        0x1000,
+        "no window, no change"
     );
 }

@@ -12,8 +12,11 @@
 //! fonts have no Japanese glyphs, so `label_ja` would draw as boxes until the shell loads a CJK
 //! font.
 //!
-//! Not yet: the camera reference check boxes 412 and 531 and the follow check box 535 (`mds-doc`
-//! has no command that sets `camera_reference_mode` or `follow_camera`).
+//! The follow check box 535 (`command_frame_register.cpp:594`) is drawn in both modes.
+//!
+//! Not yet: the camera reference check boxes 412 and 531 (`command_frame_edit.cpp:1448`,
+//! `command_frame_register.cpp:560`): `mds-doc` has no command that sets `camera_reference_mode`
+//! (see the report of the slice).
 
 use super::{button, Ctx};
 use crate::actions::Action;
@@ -42,6 +45,7 @@ const ACTIONS: &[Action] = &[
     Action::inline("ctl:548"),
     Action::inline("ctl:549"),
     Action::inline("ctl:550"),
+    Action::run("ctl:535", toggle_follow, false),
 ];
 
 pub fn actions() -> &'static [Action] {
@@ -187,6 +191,16 @@ fn parented(ctx: &Ctx) -> bool {
 fn toggle_perspective(ctx: &mut Ctx) -> Result<(), String> {
     camera_mode_only(ctx)?;
     edit_camera(ctx, |c| c.perspective = !c.perspective)
+}
+
+/// Check box 535: camera and lighting tracking, as menu 247 flips it. The C++ sets no
+/// `SceneModified` for either. Playback does not grey it (`StartPlayback` greys 536 and on).
+fn toggle_follow(ctx: &mut Ctx) -> Result<(), String> {
+    let on = ctx.editor.doc.pmm.appearance.follow_camera == 0;
+    let modified = ctx.editor.modified;
+    ctx.editor.apply(Command::SetFollowCamera(on))?;
+    ctx.editor.modified = modified;
+    Ok(())
 }
 
 /// The view angle, from slider 447 (`src/window/ui_hscroll.cpp:232`) or edit 448 (`atol`,
@@ -353,6 +367,8 @@ fn readout_edit(ui: &mut egui::Ui, ctx: &mut Ctx, field: usize) {
 
 pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
     let playing = ctx.editor.playing();
+    let follow = ctx.editor.doc.pmm.appearance.follow_camera != 0;
+    toggle(ui, ctx, "ctl:535", "track", follow);
     if in_camera_mode(ctx) {
         let on = ctx.editor.doc.pmm.camera_perspective != 0;
         ui.horizontal(|ui| {

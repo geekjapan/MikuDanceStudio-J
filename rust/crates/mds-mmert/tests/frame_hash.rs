@@ -103,7 +103,7 @@ fn frames_match_the_recorded_hashes() {
             continue;
         }
         let ((pixels, report_), errors) = gpu.scoped(|| {
-            let mut e = Effect::load(&gpu, &vk, &dir.join(rel), &dir)
+            let mut e = Effect::load(&gpu, &vk, &dir.join(rel), &dir, BACKBUFFER)
                 .unwrap_or_else(|e| panic!("{rel}: {e}"));
             let target = Target::new(&gpu, BACKBUFFER);
             let mut scene = Scene::default_view(BACKBUFFER.0, BACKBUFFER.1);

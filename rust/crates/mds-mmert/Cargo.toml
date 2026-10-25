@@ -17,4 +17,5 @@ naga = { version = "=30.0.1", features = ["spv-in", "wgsl-out"] }
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "metal", "vulkan", "dx12"] }
 pollster = "1"
 png = "0.18"
+encoding_rs = "0.8"
 

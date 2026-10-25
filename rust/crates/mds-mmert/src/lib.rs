@@ -40,6 +40,7 @@
 //! - Pixel-center alignment: wgpu samples at pixel centers where D3D9 is half a pixel off.
 
 pub mod bind;
+pub mod emm;
 mod exec;
 mod gpu;
 pub mod model;

@@ -1283,6 +1283,7 @@ dependencies = [
 name = "mds-mmert"
 version = "0.1.0"
 dependencies = [
+ "encoding_rs",
  "mds-formats",
  "mds-fx",
  "mds-math",

@@ -144,7 +144,7 @@ fn check(
 ) -> Outcome {
     let rejected = plan.lines().any(|l| l == "load rejected");
     let ((result, report), errors) = gpu.scoped(|| {
-        let mut e = match Effect::load(gpu, vk, effect, root) {
+        let mut e = match Effect::load(gpu, vk, effect, root, BACKBUFFER) {
             Ok(e) => e,
             Err(err) => return (Err(err), None),
         };

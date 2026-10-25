@@ -179,12 +179,14 @@ type ShaderCache = HashMap<(mds_fx::Entry, Stage), Result<std::sync::Arc<Shader>
 
 impl Effect {
     /// `MmeEngineLoadEffectFile` for `path`, with paths resolved below `root` as
-    /// [`mds_mme::plan`] does, then the resources and pass programs on `gpu`.
+    /// [`mds_mme::plan`] does, then the resources and pass programs on `gpu`. `ViewportRatio`
+    /// targets are sized against `backbuffer` (width, height).
     pub fn load(
         gpu: &Gpu,
         vk: &mds_shader::vkd3d::Vkd3d,
         path: &std::path::Path,
         root: &std::path::Path,
+        backbuffer: (u32, u32),
     ) -> Result<Effect, LoadError> {
         let rel = path
             .strip_prefix(root)
@@ -193,7 +195,11 @@ impl Effect {
             .replace('\\', "/");
         let dir = rel.rsplit_once('/').map_or("", |(d, _)| d).to_string();
         let fx = mds_fx::Effect::parse_file(path).map_err(|e| LoadError::Parse(e.to_string()))?;
-        let loc = Location { root, dir };
+        let loc = Location {
+            root,
+            dir,
+            backbuffer: (backbuffer.0 as i32, backbuffer.1 as i32),
+        };
         let sas = parse(mds_mme::fx::Fx::new(&fx), &format!("<root>/{rel}"), &loc)
             .map_err(LoadError::Rejected)?;
         let created = sas

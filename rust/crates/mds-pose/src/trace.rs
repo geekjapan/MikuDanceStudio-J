@@ -2,6 +2,7 @@
 //! per model in slot order, every `bone`, then every `bonew`, then every
 //! `morph`. The `rigid` lines belong to `mds-physics`.
 
+use crate::model::Model;
 use crate::Scene;
 use std::fmt::Write as _;
 
@@ -41,10 +42,33 @@ pub fn hex_float(value: f32) -> Option<String> {
     ))
 }
 
-fn floats(line: &mut String, values: &[f32]) -> Result<(), String> {
+/// Appends `values` as hex floats, each after a space.
+pub fn floats(line: &mut String, values: &[f32]) -> Result<(), String> {
     for &v in values {
         line.push(' ');
         line.push_str(&hex_float(v).ok_or("non-finite value")?);
+    }
+    Ok(())
+}
+
+/// Appends the `bone`, `bonew` and `morph` lines of one model.
+pub fn write_model(out: &mut String, frame: u32, model: &Model) -> Result<(), String> {
+    let slot = model.slot;
+    for (i, bone) in model.bones.iter().enumerate() {
+        write!(out, "{frame} bone {slot} {i}").unwrap();
+        floats(out, &bone.trans)?;
+        floats(out, &bone.rot_quat)?;
+        out.push('\n');
+    }
+    for (i, bone) in model.bones.iter().enumerate() {
+        write!(out, "{frame} bonew {slot} {i}").unwrap();
+        floats(out, &bone.mat_init.0)?;
+        out.push('\n');
+    }
+    for (i, morph) in model.morphs.iter().enumerate() {
+        write!(out, "{frame} morph {slot} {i}").unwrap();
+        floats(out, &[morph.value])?;
+        out.push('\n');
     }
     Ok(())
 }
@@ -53,23 +77,7 @@ impl Scene {
     /// Appends the pose lines of `frame` to `out`.
     pub fn write_frame(&self, out: &mut String, frame: u32) -> Result<(), String> {
         for model in &self.models {
-            let slot = model.slot;
-            for (i, bone) in model.bones.iter().enumerate() {
-                write!(out, "{frame} bone {slot} {i}").unwrap();
-                floats(out, &bone.trans)?;
-                floats(out, &bone.rot_quat)?;
-                out.push('\n');
-            }
-            for (i, bone) in model.bones.iter().enumerate() {
-                write!(out, "{frame} bonew {slot} {i}").unwrap();
-                floats(out, &bone.mat_init.0)?;
-                out.push('\n');
-            }
-            for (i, morph) in model.morphs.iter().enumerate() {
-                write!(out, "{frame} morph {slot} {i}").unwrap();
-                floats(out, &[morph.value])?;
-                out.push('\n');
-            }
+            write_model(out, frame, model)?;
         }
         Ok(())
     }

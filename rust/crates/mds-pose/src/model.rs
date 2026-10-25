@@ -5,7 +5,7 @@
 
 use mds_formats::pmm;
 use mds_formats::{pmd::Pmd, pmx::Offsets, pmx::Pmx};
-use mds_math::{Mat4, Vec3};
+use mds_math::{Mat4, Quat, Vec3};
 
 /// `BoneType`, the type byte of `BoneRecord` (`bone_layout.hpp`).
 pub mod kind {
@@ -49,8 +49,14 @@ pub struct Bone {
     pub rot_quat2: [f32; 4],
     pub physics_offset: [f32; 3],
     pub physics_quat: [f32; 4],
-    /// Position then quaternion, written by the physics readback.
+    /// Position then quaternion, written by the physics readback: the
+    /// physics pose backup.
     pub ik_backup: [f32; 7],
+    /// The armed start pose of a blend out of physics (from `ik_backup`).
+    pub ik_working_pos: [f32; 3],
+    pub ik_working_quat: [f32; 4],
+    /// The frame that blend starts at (`BoneRecord::rigidIdx`).
+    pub rigid_idx: i32,
     pub tail_bone: i32,
     pub kind: u8,
     pub tail_idx: i32,
@@ -83,6 +89,9 @@ impl Bone {
             physics_offset: [0.0; 3],
             physics_quat: [0.0; 4],
             ik_backup: [0.0; 7],
+            ik_working_pos: [0.0; 3],
+            ik_working_quat: [0.0; 4],
+            rigid_idx: 0,
             tail_bone: 0,
             kind: 0,
             tail_idx: 0,
@@ -144,6 +153,115 @@ pub struct BoneMorphOffset {
     pub rotation: [f32; 4],
 }
 
+/// `RigidRecord`: a rigid body as the loaders leave it.
+#[derive(Clone, Debug)]
+pub struct Rigid {
+    pub bone: i32,
+    pub group: u8,
+    pub mask: u16,
+    /// 0 sphere, 1 box, 2 capsule; other values get no Bullet body.
+    pub shape: u8,
+    pub size: [f32; 3],
+    /// Relative to the bone (the PMX loader subtracts the bone position).
+    pub position: [f32; 3],
+    pub rotation: [f32; 3],
+    pub mass: f32,
+    pub linear_damping: f32,
+    pub angular_damping: f32,
+    pub restitution: f32,
+    pub friction: f32,
+    /// 0 follows the bone, 1 physics, 2 physics with the bone position.
+    /// [`Model::notify_bone_physics_mode`] rewrites it.
+    pub mode: u8,
+    /// The file mode is 2.
+    pub kinematic_flag: u8,
+    /// The file mode is 0: the body never changes mode.
+    pub static_flag: u8,
+    /// The creation transform: origin and `D3DXQuaternionRotationMatrix`
+    /// of the bind-pose matrix.
+    pub start_origin: [f32; 3],
+    pub start_rotation: [f32; 4],
+    /// Bone space to body space (`RigidRecord::invTransform`).
+    pub inv_transform: Mat4,
+    /// `CF_KINEMATIC_OBJECT` of the Bullet body. The physics pushes it to
+    /// the body before each world step, the first point Bullet reads it.
+    pub kinematic: bool,
+}
+
+/// `JointRecord` and the arguments of `CreatePhysJoint`.
+#[derive(Clone, Debug)]
+pub struct Joint {
+    pub rigid_a: usize,
+    pub rigid_b: usize,
+    /// The joint frame in each body: origin and quaternion.
+    pub frame_a: ([f32; 3], [f32; 4]),
+    pub frame_b: ([f32; 3], [f32; 4]),
+    pub linear_lower: [f32; 3],
+    pub linear_upper: [f32; 3],
+    pub angular_lower: [f32; 3],
+    pub angular_upper: [f32; 3],
+    /// Translation then rotation stiffness.
+    pub springs: [f32; 6],
+    /// The over-stretch limit of the readback (`JointRadiusBound`).
+    pub radius_bound: f32,
+}
+
+/// The file fields of a rigid body, shared by PMD and PMX.
+struct RigidSource {
+    bone: i32,
+    group: u8,
+    mask: u16,
+    shape: u8,
+    size: [f32; 3],
+    position: [f32; 3],
+    rotation: [f32; 3],
+    mass: f32,
+    linear_damping: f32,
+    angular_damping: f32,
+    restitution: f32,
+    friction: f32,
+    mode: u8,
+}
+
+/// The file fields of a joint, shared by PMD and PMX.
+struct JointSource {
+    rigid_a: i64,
+    rigid_b: i64,
+    position: [f32; 3],
+    rotation: [f32; 3],
+    translation_min: [f32; 3],
+    translation_max: [f32; 3],
+    rotation_min: [f32; 3],
+    rotation_max: [f32; 3],
+    springs: [f32; 6],
+}
+
+fn euler_zxy(r: [f32; 3]) -> Mat4 {
+    let m = Mat4::multiply(&Mat4::rotation_z(r[2]), &Mat4::rotation_x(r[0]));
+    Mat4::multiply(&m, &Mat4::rotation_y(r[1]))
+}
+
+/// `TransformJointPointOriginal`, x64.
+fn transform_point(p: [f32; 3], m: &Mat4) -> [f32; 3] {
+    let m = &m.0;
+    std::array::from_fn(|c| p[0] * m[c] + p[1] * m[4 + c] + p[2] * m[8 + c] + m[12 + c])
+}
+
+fn spring6(translation: [f32; 3], rotation: [f32; 3]) -> [f32; 6] {
+    [
+        translation[0],
+        translation[1],
+        translation[2],
+        rotation[0],
+        rotation[1],
+        rotation[2],
+    ]
+}
+
+fn length(v: [f32; 3]) -> f32 {
+    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
+}
+
 /// Playback cursors of one track.
 #[derive(Clone, Debug, Default)]
 pub struct Cursors {
@@ -173,6 +291,11 @@ pub struct Model {
     pub display_active: bool,
     pub morph_cursors: Cursors,
     pub bone_cursors: Cursors,
+    pub rigids: Vec<Rigid>,
+    pub joints: Vec<Joint>,
+    /// 操作中心, else センター, else 0: the bone that unlinked rigid bodies
+    /// are reseated to.
+    pub center_bone: usize,
 }
 
 fn name20(raw: &[u8]) -> [u8; 20] {
@@ -201,6 +324,137 @@ impl Model {
             display_active: false,
             morph_cursors: Cursors::default(),
             bone_cursors: Cursors::default(),
+            rigids: Vec::new(),
+            joints: Vec::new(),
+            center_bone: 0,
+        }
+    }
+
+    /// The rigid body loop of both loaders. `rebase` is the PMX step that
+    /// makes the file position relative to the bone.
+    fn load_rigids(&mut self, sources: &[RigidSource], rebase: bool) -> Result<(), String> {
+        if sources.is_empty() {
+            return Ok(());
+        }
+        if self.bones.is_empty() {
+            return Err("rigid bodies without bones".into());
+        }
+        for src in sources {
+            let linked = usize::try_from(src.bone).unwrap_or(0);
+            let bp = self
+                .bones
+                .get(linked)
+                .ok_or_else(|| format!("rigid body bone {} out of range", src.bone))?
+                .position;
+            let mut position = src.position;
+            if rebase {
+                for (p, b) in position.iter_mut().zip(bp) {
+                    *p -= b;
+                }
+            }
+            let mut mat = euler_zxy(src.rotation);
+            mat = Mat4::multiply(
+                &mat,
+                &Mat4::translation(position[0], position[1], position[2]),
+            );
+            mat = Mat4::multiply(&mat, &Mat4::translation(bp[0], bp[1], bp[2]));
+            if src.mode > 0 && src.bone >= 0 {
+                self.bones[linked].has_rigid_body = 1;
+            }
+            let [px, py, pz] = position;
+            let [rx, ry, rz] = src.rotation;
+            let mut inv = Mat4::multiply(
+                &Mat4::translation(-bp[0], -bp[1], -bp[2]),
+                &Mat4::translation(-px, -py, -pz),
+            );
+            inv = Mat4::multiply(&inv, &Mat4::rotation_y(-ry));
+            inv = Mat4::multiply(&inv, &Mat4::rotation_x(-rx));
+            inv = Mat4::multiply(&inv, &Mat4::rotation_z(-rz));
+            self.rigids.push(Rigid {
+                bone: src.bone,
+                group: src.group,
+                mask: src.mask,
+                shape: src.shape,
+                size: src.size,
+                position,
+                rotation: src.rotation,
+                mass: src.mass,
+                linear_damping: src.linear_damping,
+                angular_damping: src.angular_damping,
+                restitution: src.restitution,
+                friction: src.friction,
+                mode: src.mode,
+                kinematic_flag: u8::from(src.mode == 2),
+                static_flag: u8::from(src.mode == 0),
+                start_origin: [mat.0[12], mat.0[13], mat.0[14]],
+                start_rotation: Quat::from_matrix(&mat).0,
+                inv_transform: inv,
+                kinematic: src.mode == 0,
+            });
+        }
+        Ok(())
+    }
+
+    /// The joint loop of both loaders.
+    fn load_joints(&mut self, sources: &[JointSource]) -> Result<(), String> {
+        for src in sources {
+            let rigid = |i: i64| {
+                usize::try_from(i)
+                    .ok()
+                    .filter(|&i| i < self.rigids.len())
+                    .ok_or_else(|| format!("joint rigid body {i} out of range"))
+            };
+            let (a, b) = (rigid(src.rigid_a)?, rigid(src.rigid_b)?);
+            let (ra, rb) = (&self.rigids[a], &self.rigids[b]);
+            let pivot_a = transform_point(src.position, &ra.inv_transform);
+            let pivot_b = transform_point(src.position, &rb.inv_transform);
+            let max_abs: [f32; 3] = std::array::from_fn(|k| {
+                let upper = src.translation_max[k].abs();
+                let lower = src.translation_min[k].abs();
+                if lower > upper {
+                    lower
+                } else {
+                    upper
+                }
+            });
+            let radius_bound = length(pivot_a) + length(pivot_b) + length(max_abs);
+            let frame_quat = |r: [f32; 3]| {
+                let mut m = euler_zxy(src.rotation);
+                m = Mat4::multiply(&m, &Mat4::rotation_y(-r[1]));
+                m = Mat4::multiply(&m, &Mat4::rotation_x(-r[0]));
+                m = Mat4::multiply(&m, &Mat4::rotation_z(-r[2]));
+                Quat::from_matrix(&m).0
+            };
+            self.joints.push(Joint {
+                rigid_a: a,
+                rigid_b: b,
+                frame_a: (pivot_a, frame_quat(ra.rotation)),
+                frame_b: (pivot_b, frame_quat(rb.rotation)),
+                linear_lower: src.translation_min,
+                linear_upper: src.translation_max,
+                angular_lower: src.rotation_min,
+                angular_upper: src.rotation_max,
+                springs: src.springs,
+                radius_bound,
+            });
+        }
+        Ok(())
+    }
+
+    /// `NotifyBonePhysicsMode`: mode 1 turns the bone's rigid bodies into
+    /// bone followers, mode 0 back into physics bodies.
+    pub fn notify_bone_physics_mode(rigids: &mut [Rigid], bone: usize, mode: u8) {
+        for r in rigids {
+            if r.static_flag != 0 || usize::try_from(r.bone) != Ok(bone) || r.shape > 2 {
+                continue;
+            }
+            if mode != 0 {
+                r.kinematic = true;
+                r.mode = 0;
+            } else {
+                r.kinematic = false;
+                r.mode = if r.kinematic_flag != 0 { 2 } else { 1 };
+            }
         }
     }
 
@@ -349,13 +603,48 @@ impl Model {
             }
             model.morphs.push(morph);
         }
-        for rigid in &pmx.rigids {
-            if rigid.mode > 0 && rigid.bone >= 0 {
-                model.bones[index(rigid.bone)?].has_rigid_body = 1;
-            }
-        }
+        // 操作中心 first, else the first センター.
+        let named = |n: &str| pmx.bones.iter().position(|b| b.name.text == n);
+        model.center_bone = named("操作中心").or_else(|| named("センター")).unwrap_or(0);
         if !pmx.rigids.is_empty() {
             model.load_pose_passes();
+            let rigids: Vec<RigidSource> = pmx
+                .rigids
+                .iter()
+                .map(|r| RigidSource {
+                    bone: r.bone,
+                    group: r.group,
+                    mask: r.mask,
+                    shape: r.shape,
+                    size: r.size,
+                    position: r.position,
+                    rotation: r.rotation,
+                    mass: r.mass,
+                    linear_damping: r.linear_damping,
+                    angular_damping: r.angular_damping,
+                    restitution: r.restitution,
+                    friction: r.friction,
+                    mode: r.mode,
+                })
+                .collect();
+            model.load_rigids(&rigids, true)?;
+            let joints: Vec<JointSource> = pmx
+                .joints
+                .iter()
+                .flatten()
+                .map(|j| JointSource {
+                    rigid_a: i64::from(j.rigid_a),
+                    rigid_b: i64::from(j.rigid_b),
+                    position: j.position,
+                    rotation: j.rotation,
+                    translation_min: j.translation_min,
+                    translation_max: j.translation_max,
+                    rotation_min: j.rotation_min,
+                    rotation_max: j.rotation_max,
+                    springs: spring6(j.spring_translation, j.spring_rotation),
+                })
+                .collect();
+            model.load_joints(&joints)?;
         }
         Ok(model)
     }
@@ -409,13 +698,50 @@ impl Model {
                 group_entries: Vec::new(),
             })
             .collect();
+        // SJIS 操作中心 and センター with their NUL, as the loader compares.
+        const CENTER2: &[u8; 9] = b"\x91\x80\x8d\xec\x92\x86\x90\x53\0";
+        const CENTER: &[u8; 9] = b"\x83\x5a\x83\x93\x83\x5e\x81\x5b\0";
+        let named = |n: &[u8; 9]| model.bones.iter().position(|b| b.name[..9] == n[..]);
+        model.center_bone = named(CENTER2).or_else(|| named(CENTER)).unwrap_or(0);
         if let Some(physics) = pmd.extension.as_ref().and_then(|e| e.physics.as_ref()) {
-            for rigid in &physics.rigids {
-                if rigid.mode > 0 && rigid.bone >= 0 {
-                    model.bones[index(i32::from(rigid.bone))?].has_rigid_body = 1;
-                }
-            }
             model.load_pose_passes();
+            let rigids: Vec<RigidSource> = physics
+                .rigids
+                .iter()
+                .map(|r| RigidSource {
+                    bone: i32::from(r.bone),
+                    group: r.group,
+                    mask: r.mask,
+                    shape: r.shape,
+                    size: r.size,
+                    position: r.position,
+                    rotation: r.rotation,
+                    mass: r.mass,
+                    linear_damping: r.linear_damping,
+                    angular_damping: r.angular_damping,
+                    restitution: r.restitution,
+                    friction: r.friction,
+                    mode: r.mode,
+                })
+                .collect();
+            model.load_rigids(&rigids, false)?;
+            let joints: Vec<JointSource> = physics
+                .joints
+                .iter()
+                .flatten()
+                .map(|j| JointSource {
+                    rigid_a: i64::from(j.rigid_a),
+                    rigid_b: i64::from(j.rigid_b),
+                    position: j.position,
+                    rotation: j.rotation,
+                    translation_min: j.translation_min,
+                    translation_max: j.translation_max,
+                    rotation_min: j.rotation_min,
+                    rotation_max: j.rotation_max,
+                    springs: spring6(j.spring_translation, j.spring_rotation),
+                })
+                .collect();
+            model.load_joints(&joints)?;
         }
         Ok(model)
     }

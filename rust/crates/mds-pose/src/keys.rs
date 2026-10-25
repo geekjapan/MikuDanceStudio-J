@@ -4,10 +4,12 @@
 //! shared selector refresh of `src/model/keyframe_common.hpp`.
 //!
 //! The transcendentals are the UCRT `acosf` and `sinf` (`mds_crtmath`); the
-//! arithmetic is single precision, as in the x64 build. Physics modes 2 and
-//! 3 (the rigid-body arming branches) are not ported; `Scene` rejects them.
+//! arithmetic is single precision, as in the x64 build. With physics mode 2
+//! or 3 the bone keys also switch rigid bodies between physics and bone
+//! following ([`Model::notify_bone_physics_mode`]), and a key that turns
+//! physics off blends from the physics pose backup (`ik_backup`).
 
-use crate::model::{kind, Bone, Model, Selector};
+use crate::model::{kind, Bone, Model, Rigid, Selector};
 use mds_crtmath::{acosf, sinf};
 use mds_formats::key_pool::KeyPool;
 use mds_formats::pmm::{BoneKey, DisplayKey};
@@ -134,6 +136,63 @@ fn copy_key(bone: &mut Bone, rec: &BoneKey) {
     bone.trans = rec.position;
 }
 
+/// `MirrorBackupsToWorking`.
+fn arm_working(bone: &mut Bone) {
+    bone.ik_working_quat.copy_from_slice(&bone.ik_backup[3..]);
+    bone.ik_working_pos.copy_from_slice(&bone.ik_backup[..3]);
+}
+
+/// The arm of an exact hit on a physics-on key whose next key is
+/// physics-off: physics off now, the blend starts here from the backup.
+fn arm_exact(bone: &mut Bone, rigids: &mut [Rigid], b: usize, frame: u32) {
+    if bone.physics_disabled == 0 {
+        Model::notify_bone_physics_mode(rigids, b, 1);
+    }
+    bone.physics_disabled = 1;
+    bone.rigid_idx = frame as i32;
+    arm_working(bone);
+    bone.rot_quat.copy_from_slice(&bone.ik_backup[3..]);
+    bone.trans.copy_from_slice(&bone.ik_backup[..3]);
+}
+
+/// Inside a segment from a physics-on key to a physics-off key: re-arm
+/// when the armed frame is outside `[prev_frame, cur_frame)`, then blend
+/// from the working copies. Returns the blend start.
+fn arm_segment(
+    bone: &mut Bone,
+    rigids: &mut [Rigid],
+    b: usize,
+    prev_frame: u32,
+    cur_frame: u32,
+) -> ([f32; 4], [f32; 3], u32) {
+    let start = bone.rigid_idx as u32;
+    if start < prev_frame || start >= cur_frame {
+        if bone.physics_disabled == 0 {
+            Model::notify_bone_physics_mode(rigids, b, 1);
+        }
+        bone.physics_disabled = 1;
+        bone.rigid_idx = prev_frame as i32;
+        arm_working(bone);
+    }
+    if bone.physics_disabled == 0 {
+        Model::notify_bone_physics_mode(rigids, b, 1);
+    }
+    bone.physics_disabled = 1;
+    (
+        bone.ik_working_quat,
+        bone.ik_working_pos,
+        bone.rigid_idx as u32,
+    )
+}
+
+/// Follow the key's physics flag, notifying on a change.
+fn follow_flag(bone: &mut Bone, rigids: &mut [Rigid], b: usize, mode: u8) {
+    if bone.physics_disabled != mode {
+        Model::notify_bone_physics_mode(rigids, b, mode);
+    }
+    bone.physics_disabled = mode;
+}
+
 /// The seek slerp (`InterpolateSeekRotation`, x64): weights `sin / s`.
 fn seek_slerp(pq: [f32; 4], cq: [f32; 4], t: f32) -> [f32; 4] {
     let dot = pq[0] * cq[0] + pq[1] * cq[1] + pq[2] * cq[2] + pq[3] * cq[3];
@@ -195,7 +254,7 @@ fn keyed_type(bone: &Bone) -> bool {
 }
 
 /// `SeekModelFrame` at integer `frame`.
-pub fn seek_model_frame(model: &mut Model, frame: u32) {
+pub fn seek_model_frame(model: &mut Model, frame: u32, physics_mode: i32) {
     // SeekDisplayTrack
     let keys = &model.display_keys;
     let mut found = 0u32;
@@ -260,6 +319,7 @@ pub fn seek_model_frame(model: &mut Model, frame: u32) {
 
     // SeekBoneFrame per keyed bone
     let keys = &model.bone_keys;
+    let rigids = &mut model.rigids;
     for (b, bone) in model.bones.iter_mut().enumerate() {
         if !keyed_type(bone) {
             continue;
@@ -281,6 +341,13 @@ pub fn seek_model_frame(model: &mut Model, frame: u32) {
             if !resolved {
                 let rec = key(keys, found);
                 copy_key(bone, rec);
+                if bone.has_rigid_body != 0
+                    && bone.physics_disabled != rec.physics_disabled
+                    && physics_mode >= 2
+                {
+                    Model::notify_bone_physics_mode(rigids, b, rec.physics_disabled);
+                    bone.physics_disabled = rec.physics_disabled;
+                }
                 if let Ok(s) = usize::try_from(bone.slot_index) {
                     let start = model.selectors[s].window_start;
                     if rec.frame < start && start <= frame {
@@ -295,10 +362,40 @@ pub fn seek_model_frame(model: &mut Model, frame: u32) {
         let cur_frame = rec.frame;
         if cur_frame == frame {
             copy_key(bone, rec);
+            if bone.has_rigid_body != 0 {
+                let mode = rec.physics_disabled;
+                if physics_mode != 3 {
+                    if bone.physics_disabled != mode && physics_mode == 2 {
+                        Model::notify_bone_physics_mode(rigids, b, mode);
+                        bone.physics_disabled = mode;
+                    }
+                } else if rec.next as i32 <= 0
+                    || key(keys, rec.next).physics_disabled != 1
+                    || mode != 0
+                {
+                    follow_flag(bone, rigids, b, mode);
+                } else {
+                    arm_exact(bone, rigids, b, cur_frame);
+                }
+            }
             continue;
         }
         let prev = key(keys, rec.previous);
-        let prev_frame = prev.frame;
+        let mut prev_frame = prev.frame;
+        let mut ppos = prev.position;
+        let mut pq = prev.rotation;
+        if bone.has_rigid_body != 0 {
+            if physics_mode == 3 {
+                if rec.physics_disabled == 1 && prev.physics_disabled == 0 {
+                    (pq, ppos, prev_frame) = arm_segment(bone, rigids, b, prev_frame, cur_frame);
+                } else {
+                    follow_flag(bone, rigids, b, prev.physics_disabled);
+                }
+            } else if bone.physics_disabled != prev.physics_disabled && physics_mode == 2 {
+                Model::notify_bone_physics_mode(rigids, b, prev.physics_disabled);
+                bone.physics_disabled = prev.physics_disabled;
+            }
+        }
         if let Ok(s) = usize::try_from(bone.slot_index) {
             let w = &model.selectors[s];
             let snap = if w.window_start < cur_frame && prev_frame < w.window_start {
@@ -309,25 +406,31 @@ pub fn seek_model_frame(model: &mut Model, frame: u32) {
                 None
             };
             if let Some(at) = snap {
-                copy_key(bone, if frame >= at { rec } else { prev });
+                if frame >= at {
+                    copy_key(bone, rec);
+                } else {
+                    bone.rot_quat = pq;
+                    bone.trans = ppos;
+                }
                 continue;
             }
         }
-        let t = (frame - prev_frame) as f32 / (cur_frame as i32 - prev_frame as i32) as f32;
-        bone.rot_quat = seek_slerp(prev.rotation, rec.rotation, bone_ease(rec, 3, t));
-        for axis in 0..3 {
-            let delta = rec.position[axis] - prev.position[axis];
+        let t = frame.wrapping_sub(prev_frame) as f32
+            / (cur_frame as i32).wrapping_sub(prev_frame as i32) as f32;
+        bone.rot_quat = seek_slerp(pq, rec.rotation, bone_ease(rec, 3, t));
+        for (axis, &p) in ppos.iter().enumerate() {
+            let delta = rec.position[axis] - p;
             bone.trans[axis] = if delta == 0.0 {
-                prev.position[axis]
+                p
             } else {
-                bone_ease(rec, axis, t) * delta + prev.position[axis]
+                bone_ease(rec, axis, t) * delta + p
             };
         }
     }
 }
 
 /// `InitModelTrackCursors` at `cursor` seconds.
-pub fn init_track_cursors(model: &mut Model, cursor: f32) {
+pub fn init_track_cursors(model: &mut Model, cursor: f32, physics_mode: i32) {
     let frame = f64::from(cursor) * 30.0;
     model.display_active = true;
     model.display_cursor = 0;
@@ -390,7 +493,11 @@ pub fn init_track_cursors(model: &mut Model, cursor: f32) {
             break;
         }
         if bone.has_rigid_body != 0 {
-            bone.physics_disabled = key(keys, c.index[b]).physics_disabled;
+            let mode = key(keys, c.index[b]).physics_disabled;
+            if physics_mode >= 2 {
+                Model::notify_bone_physics_mode(&mut model.rigids, b, mode);
+            }
+            bone.physics_disabled = mode;
         }
     }
 }
@@ -407,8 +514,8 @@ pub fn cursor_frame(cursor: f32) -> f64 {
     }
 }
 
-/// `AdvanceModelKeyframes` at `cursor` seconds, physics mode 0 or 1.
-pub fn advance_model_keyframes(model: &mut Model, cursor: f32) {
+/// `AdvanceModelKeyframes` at `cursor` seconds.
+pub fn advance_model_keyframes(model: &mut Model, cursor: f32, physics_mode: i32) {
     let frame = cursor_frame(cursor);
     let frame_f = frame as f32;
 
@@ -469,6 +576,7 @@ pub fn advance_model_keyframes(model: &mut Model, cursor: f32) {
 
     // Section 3: bone tracks.
     let keys = &model.bone_keys;
+    let rigids = &mut model.rigids;
     let c = &mut model.bone_cursors;
     for (b, bone) in model.bones.iter_mut().enumerate() {
         if !c.active[b] {
@@ -483,6 +591,13 @@ pub fn advance_model_keyframes(model: &mut Model, cursor: f32) {
             // Terminal key.
             c.active[b] = false;
             copy_key(bone, rec);
+            if bone.has_rigid_body != 0
+                && bone.physics_disabled != rec.physics_disabled
+                && physics_mode >= 2
+            {
+                Model::notify_bone_physics_mode(rigids, b, rec.physics_disabled);
+                bone.physics_disabled = rec.physics_disabled;
+            }
             if let Ok(s) = usize::try_from(bone.slot_index) {
                 let w = &model.selectors[s];
                 if rec.frame < w.window_start && f64::from(w.window_start) <= frame {
@@ -503,44 +618,56 @@ pub fn advance_model_keyframes(model: &mut Model, cursor: f32) {
         let cur_frame = rec.frame;
         if frame == f64::from(cur_frame) {
             copy_key(bone, rec);
+            if physics_mode >= 2 && bone.has_rigid_body != 0 {
+                let mode = rec.physics_disabled;
+                if rec.next as i32 <= 0 || key(keys, rec.next).physics_disabled != 1 || mode != 0 {
+                    follow_flag(bone, rigids, b, mode);
+                } else {
+                    arm_exact(bone, rigids, b, cur_frame);
+                }
+            }
             continue;
         }
         let prev = key(keys, rec.previous);
-        let prev_frame = prev.frame;
+        let mut prev_frame = prev.frame;
+        let mut ppos = prev.position;
+        let mut pq = prev.rotation;
+        if physics_mode >= 2 && bone.has_rigid_body != 0 {
+            if rec.physics_disabled == 1 && prev.physics_disabled == 0 {
+                (pq, ppos, prev_frame) = arm_segment(bone, rigids, b, prev_frame, cur_frame);
+            } else {
+                follow_flag(bone, rigids, b, prev.physics_disabled);
+            }
+        }
         if let Ok(s) = usize::try_from(bone.slot_index) {
             let w = &model.selectors[s];
-            if w.window_start < cur_frame && prev_frame < w.window_start {
-                copy_key(
-                    bone,
-                    if f64::from(w.window_start) <= frame {
-                        rec
-                    } else {
-                        prev
-                    },
-                );
-                continue;
-            }
-            if !(cur_frame < w.window_end || prev_frame >= w.window_end) {
-                copy_key(
-                    bone,
-                    if f64::from(w.window_end) <= frame {
-                        rec
-                    } else {
-                        prev
-                    },
-                );
+            let snap = if w.window_start < cur_frame && prev_frame < w.window_start {
+                Some(w.window_start)
+            } else if !(cur_frame < w.window_end || prev_frame >= w.window_end) {
+                Some(w.window_end)
+            } else {
+                None
+            };
+            if let Some(at) = snap {
+                if f64::from(at) <= frame {
+                    copy_key(bone, rec);
+                } else {
+                    bone.rot_quat = pq;
+                    bone.trans = ppos;
+                }
                 continue;
             }
         }
-        let t = (frame_f - prev_frame as f32) / (cur_frame as i32 - prev_frame as i32) as f32;
-        bone.rot_quat = advance_slerp(prev.rotation, rec.rotation, bone_ease(rec, 3, t));
+        let t = (frame_f - prev_frame as f32)
+            / (cur_frame as i32).wrapping_sub(prev_frame as i32) as f32;
+        bone.rot_quat = advance_slerp(pq, rec.rotation, bone_ease(rec, 3, t));
         if keyed_type(bone) {
-            for axis in 0..3 {
-                let delta = rec.position[axis] - prev.position[axis];
+            for (axis, &p) in ppos.iter().enumerate() {
+                let delta = rec.position[axis] - p;
                 bone.trans[axis] = if delta == 0.0 {
-                    prev.position[axis]
+                    p
                 } else {
-                    bone_ease(rec, axis, t) * delta + prev.position[axis]
+                    bone_ease(rec, axis, t) * delta + p
                 };
             }
         }

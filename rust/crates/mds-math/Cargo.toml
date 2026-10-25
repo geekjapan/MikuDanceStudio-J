@@ -9,3 +9,6 @@ publish.workspace = true
 
 [dependencies]
 libm = "0.2"
+
+[dev-dependencies]
+mds-crtmath = { path = "../mds-crtmath" }

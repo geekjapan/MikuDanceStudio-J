@@ -23,4 +23,37 @@ exponent, and mantissa bits 22..13. The digests replace every NaN output by
 payloads. The `table` sweep does check them.
 
 `rust/crates/mds-math/src/estimate_table.rs` holds the two tables as Rust
-constants. A test in `mds-math` checks that the constants equal this file.
+constants. The `table_matches_fixture` test in `mds-math` checks that they
+equal `rcp-table.txt`. To write the file again, run this from the repository
+root:
+
+```sh
+awk '!/^#/ { t[$1] = t[$1] sprintf("%s0x%s,", n[$1]++ % 8 ? " " : "\n    ", $3) }
+END {
+  print "//! Generated from `tests/fixtures/rust/math/rcp/rcp-table.txt`; the `table_matches_fixture`"
+  print "//! test checks it. Entry `i` is the output bits of `rcpss(0x3F800000 | i << 12)` and of"
+  print "//! `rsqrtss(0x3F000000 + (i << 13))` on the i9-12900K.\n"
+  printf "pub(crate) const RCP: [u32; 2048] = [%s\n];\n", t["rcpss"]
+  printf "pub(crate) const RSQRT: [u32; 2048] = [%s\n];\n", t["rsqrtss"]
+}' tests/fixtures/rust/math/rcp/rcp-table.txt > rust/crates/mds-math/src/estimate_table.rs
+```
+
+## Difference from the earlier model
+
+Before this table, `mds-math` modelled the estimates from the D3DX vectors:
+the bucket centre of the mantissa, with the exact result rounded to 13 bits.
+That model gives the recorded value in all 2048 `rcpss` buckets and all 2048
+`rsqrtss` buckets. It differed only at the edges:
+
+| Instruction | Range | Earlier model | CPU | Inputs | Digest blocks |
+|---|---|---|---|---|---|
+| `rcpss` | 2^126 <= \|x\| < 2^128 | denormal | signed zero | 33,554,432 | 32 (`0x7E8`..`0x7F7`, `0xFE8`..`0xFF7`) |
+| `rcpss` | signalling NaN | input unchanged | input with the quiet bit set | 8,388,606 | none, NaNs are canonicalised |
+| `rsqrtss` | -0 and negative denormals | +inf | -inf | 8,388,608 | 8 (`0x800`..`0x807`) |
+| `rsqrtss` | other negatives, -inf | `0x7FC00000` | `0xFFC00000` | 2,130,706,433 | none |
+| `rsqrtss` | NaN | `0x7FC00000` | input with the quiet bit set | 16,777,213 | none |
+
+None of the 428 D3DX vectors reaches these inputs, but real calls can. For
+example, `Mat4::inverse` of a matrix whose determinant is at least 2^126 now
+returns zeros, as the CPU's zero estimate does. The earlier model returned
+denormals.

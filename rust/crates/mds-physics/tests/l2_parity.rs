@@ -1,11 +1,7 @@
 //! Gate: every line of the x64 app's L2 traces of the swing600 scene,
 //! `rigid` included, bit for bit: physics mode 2 (`swing600.pmm`) and
 //! physics off (`swing600-nophys.pmm`), 600 frames each.
-//!
-//! Open: the mode-2 trace first differs at frame 80 (`bonew 0/5 m01`), from
-//! the readback's quaternion of bone 7: `mds_math::Quat::from_matrix` takes
-//! another radicand grouping than d3dx9_43.dll in its non-trace branches.
-//! With the D3DX grouping both traces match.
+
 
 use mds_formats::pmm::Pmm;
 use mds_physics::PhysicsScene;

@@ -79,7 +79,11 @@ fn the_weight_edit_and_slider_follow_the_cpp_parsing() {
     commit(&mut e, 0, "0.5");
     slide(&mut e, 0, 50);
     assert!(e.modified);
-    assert_eq!(e.doc.selected_model().unwrap().morph_pose, vec![0.0, 0.0, 1.0, 0.0], "lane 0 has no morph selected");
+    assert_eq!(
+        e.doc.selected_model().unwrap().morph_pose,
+        vec![0.0, 0.0, 1.0, 0.0],
+        "lane 0 has no morph selected"
+    );
 }
 
 /// A model whose morphs sit in the panels `panels`, loaded from a temporary folder.
@@ -89,12 +93,21 @@ fn model_with_panels(panels: [u8; 4]) -> (Editor, std::path::PathBuf) {
     for (m, p) in pmx.morphs.iter_mut().zip(panels) {
         m.panel = p;
     }
-    let dir = std::env::temp_dir().join(format!("mds-ui-model-{}-{}", std::process::id(), panels.iter().map(|p| p.to_string()).collect::<String>()));
+    let dir = std::env::temp_dir().join(format!(
+        "mds-ui-model-{}-{}",
+        std::process::id(),
+        panels.iter().map(|p| p.to_string()).collect::<String>()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("steps.pmx"), pmx.write().unwrap()).unwrap();
     let mut e = editor_in(dir.clone());
     let mut status = String::new();
-    mds_app::ui::model_panel::load(&mut ctx(&mut e, &mut status), "steps.pmx", pmx.write().unwrap()).unwrap();
+    mds_app::ui::model_panel::load(
+        &mut ctx(&mut e, &mut status),
+        "steps.pmx",
+        pmx.write().unwrap(),
+    )
+    .unwrap();
     (e, dir)
 }
 
@@ -126,7 +139,11 @@ fn previous_and_next_step_over_the_eyebrow_morphs() {
     assert_eq!(selected(&e, 1), 3, "lane 1 steps to an eyebrow morph too");
     run(&mut e, "ctl:512").unwrap();
     assert_eq!(selected(&e, 1), 0);
-    assert_eq!((selected(&e, 2), selected(&e, 3)), (lane2, lane3), "other lanes keep their selection");
+    assert_eq!(
+        (selected(&e, 2), selected(&e, 3)),
+        (lane2, lane3),
+        "other lanes keep their selection"
+    );
     std::fs::remove_dir_all(dir).unwrap();
 
     // Only morph 3 is eyebrow: the walk comes back to it and nothing changes.
@@ -145,9 +162,14 @@ fn morph_actions_refuse_while_playing_and_in_camera_mode() {
     load_model(&mut e, "morph4.pmx");
     pick(&mut e, 1, "まばたき");
     run(&mut e, "ctl:408").unwrap();
-    for id in ["ctl:507", "ctl:508", "ctl:524", "ctl:525", "ctl:526", "ctl:527"] {
+    for id in [
+        "ctl:507", "ctl:508", "ctl:524", "ctl:525", "ctl:526", "ctl:527",
+    ] {
         assert_eq!(run(&mut e, id), Err(format!("{id}: not while playing")));
     }
     let mut status = String::new();
-    assert!(!mds_app::actions::enabled(&ctx(&mut e, &mut status), "ctl:524"));
+    assert!(!mds_app::actions::enabled(
+        &ctx(&mut e, &mut status),
+        "ctl:524"
+    ));
 }

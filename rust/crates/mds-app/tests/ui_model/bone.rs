@@ -11,14 +11,23 @@ fn bone_keys_register_like_the_script() {
     load_model(&mut e, "chain8.pmx");
     frame(&mut e, 10);
     select_bone(&mut e, "センター");
-    for (axis, v) in [(0, 1.0), (1, 2.0), (2, 3.0), (3, 10.0), (4, 20.0), (5, 30.0)] {
-        e.apply(Command::BoneReadoutEdit { axis, value: v }).unwrap();
+    for (axis, v) in [
+        (0, 1.0),
+        (1, 2.0),
+        (2, 3.0),
+        (3, 10.0),
+        (4, 20.0),
+        (5, 30.0),
+    ] {
+        e.apply(Command::BoneReadoutEdit { axis, value: v })
+            .unwrap();
     }
     run(&mut e, "ctl:500").unwrap();
     frame(&mut e, 20);
     select_bone(&mut e, "上半身");
     for (axis, v) in [(3, 0.0), (4, 45.0), (5, 0.0)] {
-        e.apply(Command::BoneReadoutEdit { axis, value: v }).unwrap();
+        e.apply(Command::BoneReadoutEdit { axis, value: v })
+            .unwrap();
     }
     run(&mut e, "key:Enter@model-mode").unwrap();
     frame(&mut e, 15);
@@ -49,7 +58,9 @@ fn register_does_nothing_without_a_model_and_not_while_playing() {
 /// The rows that wait for a document command stay unregistered, so the table never claims them.
 #[test]
 fn rows_without_a_command_are_not_registered() {
-    for id in ["ctl:490", "ctl:494", "ctl:495", "ctl:501", "key:A", "key:C", "ctl:449"] {
+    for id in [
+        "ctl:490", "ctl:494", "ctl:495", "ctl:501", "key:A", "key:C", "ctl:449",
+    ] {
         assert!(actions::find(id).is_none(), "{id}");
     }
 }

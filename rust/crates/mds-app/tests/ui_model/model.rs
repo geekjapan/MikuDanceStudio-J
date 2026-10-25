@@ -20,12 +20,23 @@ fn tab_cycles_the_model_combo() {
         )
     };
     assert_eq!(model_panel::combo_len(&e.doc), 3);
-    assert_eq!(model_panel::combo_text(&e.doc, 0), "camera / light / accessory");
+    assert_eq!(
+        model_panel::combo_text(&e.doc, 0),
+        "camera / light / accessory"
+    );
     assert_eq!(model_panel::combo_text(&e.doc, 1), "chain8");
-    assert_eq!(doc(&e), (2, 1, 0, 0), "the second model is selected after two loads");
+    assert_eq!(
+        doc(&e),
+        (2, 1, 0, 0),
+        "the second model is selected after two loads"
+    );
 
     run(&mut e, "key:Tab").unwrap();
-    assert_eq!(doc(&e), (0, 1, 1, 2), "Tab past the last entry wraps to the camera entry");
+    assert_eq!(
+        doc(&e),
+        (0, 1, 1, 2),
+        "Tab past the last entry wraps to the camera entry"
+    );
     run(&mut e, "key:Tab").unwrap();
     assert_eq!(doc(&e), (1, 0, 0, 0), "and on to the first model");
     run(&mut e, "key:Shift+Tab").unwrap();
@@ -47,11 +58,20 @@ fn the_mode_toggle_and_the_combo() {
     assert_eq!(e.doc.pmm.settings.options[0], 1);
     run(&mut e, "ctl:536").unwrap();
     assert_eq!(e.doc.pmm.settings.options[0], 0);
-    assert_eq!(e.doc.pmm.selected_model_slot, 1, "back on the model that was selected");
+    assert_eq!(
+        e.doc.pmm.selected_model_slot, 1,
+        "back on the model that was selected"
+    );
 
     let mut status = String::new();
     model_panel::select_combo(&mut ctx(&mut e, &mut status), 1).unwrap();
-    assert_eq!((model_panel::combo_cursor(&e.doc), e.doc.pmm.selected_model_slot), (1, 0));
+    assert_eq!(
+        (
+            model_panel::combo_cursor(&e.doc),
+            e.doc.pmm.selected_model_slot
+        ),
+        (1, 0)
+    );
     assert!(model_panel::select_combo(&mut ctx(&mut e, &mut status), 9).is_err());
     let modified = e.modified;
     run(&mut e, "key:Tab").unwrap();
@@ -63,7 +83,13 @@ fn the_mode_toggle_and_the_combo() {
 #[test]
 fn an_empty_scene_has_the_camera_entry_only() {
     let mut e = editor();
-    assert_eq!((model_panel::combo_len(&e.doc), model_panel::combo_cursor(&e.doc)), (1, 0));
+    assert_eq!(
+        (
+            model_panel::combo_len(&e.doc),
+            model_panel::combo_cursor(&e.doc)
+        ),
+        (1, 0)
+    );
     run(&mut e, "key:Tab").unwrap();
     assert_eq!(e.doc.pmm.settings.options[0], 1);
     assert!(!e.modified);
@@ -79,12 +105,19 @@ fn load_selects_the_new_model_and_keeps_the_play_panel() {
     let opens = e.physics_opens;
     load_model(&mut e, "chain8.pmx");
     let p = &e.doc.pmm;
-    assert_eq!((p.models.len(), p.selected_model_slot, p.settings.options[0]), (1, 0, 0));
+    assert_eq!(
+        (p.models.len(), p.selected_model_slot, p.settings.options[0]),
+        (1, 0, 0)
+    );
     assert_eq!(p.models[0].path.text, "chain8.pmx");
     assert!(e.modified);
-    assert!(e.options.looped && e.options.start_frame == 7, "the play panel survives");
+    assert!(
+        e.options.looped && e.options.start_frame == 7,
+        "the play panel survives"
+    );
     assert_eq!(e.physics_opens, opens + 1);
-    e.with_frame([64, 64], &[[0.0, 0.0]], |_| ()).expect("the new model draws");
+    e.with_frame([64, 64], &[[0.0, 0.0]], |_| ())
+        .expect("the new model draws");
 }
 
 #[test]
@@ -103,7 +136,13 @@ fn model_actions_refuse_while_playing() {
     let mut e = editor();
     load_model(&mut e, "chain8.pmx");
     run(&mut e, "ctl:408").unwrap();
-    for id in ["ctl:435", "ctl:536", "key:Tab", "key:Shift+Tab", "key:VK226"] {
+    for id in [
+        "ctl:435",
+        "ctl:536",
+        "key:Tab",
+        "key:Shift+Tab",
+        "key:VK226",
+    ] {
         assert_eq!(run(&mut e, id), Err(format!("{id}: not while playing")));
     }
 }

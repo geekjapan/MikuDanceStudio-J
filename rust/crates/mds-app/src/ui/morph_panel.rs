@@ -54,10 +54,18 @@ pub fn actions() -> &'static [Action] {
 
 /// The control ids of each lane: combo, slider, edit, previous, next, register.
 const LANES: [[&str; 6]; 4] = [
-    ["ctl:504", "ctl:505", "ctl:506", "ctl:507", "ctl:508", "ctl:525"],
-    ["ctl:509", "ctl:510", "ctl:511", "ctl:512", "ctl:513", "ctl:524"],
-    ["ctl:514", "ctl:515", "ctl:516", "ctl:517", "ctl:518", "ctl:527"],
-    ["ctl:519", "ctl:520", "ctl:521", "ctl:522", "ctl:523", "ctl:526"],
+    [
+        "ctl:504", "ctl:505", "ctl:506", "ctl:507", "ctl:508", "ctl:525",
+    ],
+    [
+        "ctl:509", "ctl:510", "ctl:511", "ctl:512", "ctl:513", "ctl:524",
+    ],
+    [
+        "ctl:514", "ctl:515", "ctl:516", "ctl:517", "ctl:518", "ctl:527",
+    ],
+    [
+        "ctl:519", "ctl:520", "ctl:521", "ctl:522", "ctl:523", "ctl:526",
+    ],
 ];
 const LANE_NAMES: [&str; 4] = ["eyebrow", "eye", "lip", "other"];
 
@@ -137,7 +145,10 @@ pub fn commit(ctx: &mut Ctx, lane: u8, text: &str) -> Result<(), String> {
 
 /// `atof` of `GetWindowTextA(edit, buf, max)`: the longest leading decimal number, else 0.
 fn atof(text: &str, max: usize) -> f64 {
-    let end = text.char_indices().nth(max - 1).map_or(text.len(), |(i, _)| i);
+    let end = text
+        .char_indices()
+        .nth(max - 1)
+        .map_or(text.len(), |(i, _)| i);
     let s = text[..end].trim_start();
     (1..=s.len())
         .rev()
@@ -175,7 +186,8 @@ fn step(ctx: &mut Ctx, lane: u8, next: bool) -> Result<(), String> {
             break at;
         }
     };
-    ctx.editor.apply(Command::SelectMorphLane { lane, morph: found })
+    ctx.editor
+        .apply(Command::SelectMorphLane { lane, morph: found })
 }
 
 /// `mdl::MorphPanel::eyebrow`.

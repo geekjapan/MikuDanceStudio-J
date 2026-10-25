@@ -152,7 +152,12 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
     ui.horizontal(|ui| {
         button(ui, ctx, "ctl:435", "load");
         let camera = ctx.editor.doc.pmm.settings.options[0] != 0;
-        button(ui, ctx, "ctl:536", if camera { "to model" } else { "to camera" });
+        button(
+            ui,
+            ctx,
+            "ctl:536",
+            if camera { "to model" } else { "to camera" },
+        );
     });
     let (cursor, len) = (combo_cursor(&ctx.editor.doc), combo_len(&ctx.editor.doc));
     let mut picked = None;

@@ -55,7 +55,11 @@ fn the_key_left_of_z_steps_the_combo() {
         }]
     };
     pass(&mut e, key(false), model_panel::pass);
-    assert_eq!(model_panel::combo_cursor(&e.doc), 0, "forward from the last model wraps to camera");
+    assert_eq!(
+        model_panel::combo_cursor(&e.doc),
+        0,
+        "forward from the last model wraps to camera"
+    );
     pass(&mut e, key(true), model_panel::pass);
     assert_eq!(model_panel::combo_cursor(&e.doc), 2, "Shift steps back");
 }

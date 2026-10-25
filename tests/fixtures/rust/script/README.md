@@ -7,7 +7,7 @@ window handlers and writes every file the script saves:
 MikuDanceStudio.exe --mds-script <script.txt> <out-dir>
 ```
 
-The scripts in this directory and their outputs under `out/` are the oracle
+The scripts in this directory and their outputs under `expected/` are the oracle
 for the Rust document (`mds-doc`, slices `doc` and `docgold`) and the Rust UI.
 A Rust replay of a script must save the same bytes.
 
@@ -18,7 +18,7 @@ src/tools/script_parse_test.cpp`).
 
 ## Outputs
 
-`out/<script>/` holds the files that `<script>.txt` saved and `manifest.tsv`:
+`expected/<script>/` holds the files that `<script>.txt` saved and `manifest.tsv`:
 
 ```
 step	file	sha256
@@ -51,14 +51,14 @@ On the Windows host, from a checkout at `C:\mds\w2-script\repo`:
 and `tests/fixtures/rust/script/inputs/*`), runs every `*.txt` here twice into
 `<Out>\run1` and `<Out>\run2`, compares the two runs file by file, and prints
 each manifest. It exits 1 when a script fails or a file differs. Copy
-`<Out>\run1\<script>\` to `out/<script>/`.
+`<Out>\run1\<script>\` to `expected/<script>/`.
 
 The run needs the console session (`runtask.ps1`), because it creates the
 D3D9 device. No `Data\mmconfig.ini` is next to the exe, so the application
 starts with its defaults, among them the Japanese UI: message boxes, combo
 items, and model and bone names are Japanese.
 
-Current outputs: build of commit `BUILD_COMMIT` on `nanoha-lan` (Windows,
+Current outputs: build of commit `1806993` (180699366cd73c3d979f806855dd3fe56b9c9e5c) on `nanoha-lan` (Windows,
 x64 Release, VS 2022), run 2026-10-25. Two runs gave identical bytes for every
 file.
 

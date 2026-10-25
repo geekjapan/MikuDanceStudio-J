@@ -94,9 +94,8 @@ pub fn save_vpd(
     {
         let (translation, rotation) =
             if s.bones.get(i).is_some_and(|b| b.2) && p.flags[0] == 0 && physics_mode >= 2 {
-                let pose = e.physics_pose.as_ref().and_then(|v| v.get(i)).ok_or(
-                    mds_edit::Error::Unsupported("the physics pose of a rigid-body bone"),
-                )?;
+                let pose = e.physics_pose.as_ref().and_then(|v| v.get(i));
+                let pose = pose.unwrap_or(&crate::model::NO_PHYSICS_POSE);
                 (pose.1, pose.0)
             } else {
                 (p.translation, p.rotation)

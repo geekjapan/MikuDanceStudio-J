@@ -480,17 +480,32 @@ fn undo_and_redo_of_a_register() {
 }
 
 #[test]
-fn rigid_body_bones_are_refused_before_anything_changes() {
-    // RegisterBonePoseAtFrame takes the physics pose of a rigid-body bone,
-    // which mds-edit does not port.
+fn a_rigid_body_bone_registers_the_zeroed_physics_pose_before_any_physics_step() {
+    // RegisterBonePoseAtFrame (model_keyframe_edit.cpp 262-275) stores
+    // ikBackup for a bone that physics drives; the loaders zero the bone
+    // records, so before the first physics step that is all zeros. Then
+    // physicsDisabled = !checkbox (499, checked at start-up).
     let mut d = doc();
-    run(&mut d, [Command::SelectBones(vec![5])]);
-    let before = d.save().unwrap();
-    assert!(matches!(
-        d.apply(Command::RegisterBoneKeys),
-        Err(Error::Edit(mds_edit::Error::Unsupported(_)))
-    ));
-    assert_eq!(d.save().unwrap(), before);
+    d.pmm.physics.playback_mode = 1;
+    d.edit.physics_checkbox = true;
+    run(
+        &mut d,
+        [
+            Command::SetFrame(7),
+            Command::SelectBones(vec![5]),
+            Command::RegisterBoneKeys,
+        ],
+    );
+    let m = &d.pmm.models[0];
+    let k = bone_records(&d)
+        .into_iter()
+        .map(|(_, k)| k)
+        .find(|k| k.frame == 7 && k.allocated != 0)
+        .expect("the key at frame 7");
+    assert_eq!((k.rotation, k.position), ([0.0; 4], [0.0; 3]));
+    assert_eq!(k.physics_disabled, 0);
+    assert_eq!(m.bone_pose[5].rotation, [0.0; 4]);
+    assert_eq!(m.bone_pose[5].flags[0], 0);
 }
 
 #[test]

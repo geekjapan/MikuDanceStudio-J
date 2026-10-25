@@ -101,22 +101,28 @@
 mod accessory;
 mod add_model;
 mod bulk;
+mod camera_reference;
+mod delete_model;
 pub mod frame;
 pub mod global;
 pub mod history;
+mod lip_sync;
 pub mod model;
 pub mod new_scene;
 pub mod panel;
+pub mod pmd_edit;
 pub mod pose_file;
 mod readout;
 mod refresh;
 pub mod save;
 pub mod script;
+mod timeline;
 pub mod vmd_save;
 
 pub use global::{GlobalClipboard, GlobalTrack};
 pub use model::ModelClipboard;
 pub use panel::{ModelFlag, ViewOption};
+pub use pmd_edit::EnglishName;
 
 use mds_formats::pmd::Pmd;
 use mds_formats::pmm::Pmm;
@@ -538,6 +544,50 @@ pub enum Command {
     /// Checkbox 477 (`command_panel_toggles.cpp` 554-562): the additive
     /// blend of the selected accessory. The C++ toggles; this sets.
     SetAccessoryAdditive(bool),
+    /// A drag of the marked keys by `delta` frames, the mouse row offset
+    /// of `HandleMouseMove` (`ui_mousemove.cpp` 330-404) over 13 pixels per
+    /// frame ([`timeline`]). The keys stay between their unmarked
+    /// neighbours; head keys do not move. Model mode: the undo entry of the
+    /// mouse-down, the display, morph and bone keys, the max frames, the
+    /// seek. Camera mode: the camera, light, self-shadow, gravity and
+    /// accessory keys, then their refresh.
+    MoveSelectedKeys(i32),
+    /// The delete button of the model panel (437, `DeleteSelectedModel`,
+    /// `command_frame_edit.cpp` 1186-1335) on the model in `slot`, after
+    /// the confirmation box: the combo and display orders above it move
+    /// down, every link to the slot (outside parents of poses and display
+    /// keys, the camera parent and camera keys, accessory parents and
+    /// keys) is cut, and the scene enters camera mode.
+    DeleteModel(u8),
+    /// The camera reference check boxes 412 and 531: 0 none, 1 the model
+    /// (center bone), 2 the selected bone. In model mode the view offset
+    /// and distance are re-anchored ([`camera_reference`]).
+    SetCameraReference(u8),
+    /// The English name dialog (menu 262) on the selected model
+    /// ([`pmd_edit::EnglishName`]).
+    SetEnglishName {
+        name: EnglishName,
+        text: String,
+    },
+    /// The toon texture names of "enhance model" (menu 261,
+    /// `CollectToonFileNames`, `enhance_model_io.cpp` 57-95) on the
+    /// selected PMD: ten names, of which one equal to `toonNN.bmp` keeps the
+    /// stored name. The C++ stores a name only when the texture loads from
+    /// the model directory; that check is the caller's.
+    SetToonFileNames(Vec<String>),
+    /// The OK of the physics model dialog (menu 264, `CommitPhysicsEdits`,
+    /// `physics_model_dialog.cpp` 1129-1295) on the selected PMD: the rigid
+    /// bodies and joints as the dialog left them, in file form.
+    SetPhysicsModel {
+        rigids: Vec<mds_formats::pmd::Rigid>,
+        joints: Vec<mds_formats::pmd::Joint>,
+    },
+    /// The model path the PMM saves (`model.path`), which "save enhanced
+    /// model" sets to the saved file.
+    SetModelPath {
+        slot: u8,
+        path: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -742,11 +792,8 @@ impl Document {
             return Err(not("the PMD writer on a model that is not a PMD"));
         };
         let bytes = pose_file::save_pmd(pmd)?;
-        let raw = add_model::sjis(path, 256).raw;
-        let p = &mut self.pmm.models[i].path;
-        p.raw.fill(0);
-        p.raw[..raw.len()].copy_from_slice(&raw);
-        p.text = path.to_string();
+        let slot = self.pmm.models[i].slot;
+        self.set_model_path(slot, path)?;
         Ok(bytes)
     }
 
@@ -1620,6 +1667,21 @@ impl Document {
                 self.zero_bone_rotation_axis(axis, degrees)?
             }
             Command::DeleteAccessory(slot) => self.delete_accessory(slot)?,
+            Command::MoveSelectedKeys(delta) => self.move_selected_keys(delta)?,
+            Command::DeleteModel(slot) => self.delete_model(slot)?,
+            Command::SetCameraReference(mode) => self.set_camera_reference(mode)?,
+            Command::SetEnglishName { name, text } => self.set_english_name(name, &text)?,
+            Command::SetToonFileNames(names) => {
+                let names: &[String; 10] = names
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| not("not ten toon names"))?;
+                self.set_toon_file_names(names)?
+            }
+            Command::SetPhysicsModel { rigids, joints } => {
+                self.set_physics_model(rigids, joints)?
+            }
+            Command::SetModelPath { slot, path } => self.set_model_path(slot, &path)?,
             Command::SetAccessoryAdditive(on) => {
                 let slot = self.pmm.selected_accessory_slot;
                 if let Ok(a) = global::accessory(&mut self.pmm, slot) {

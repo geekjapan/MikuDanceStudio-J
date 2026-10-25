@@ -1,0 +1,7 @@
+status: fault
+fault: sprintf_s overflow
+keys: 0
+current_frame: unchanged
+timeline_start: unchanged
+last_registered: 0
+seek: none

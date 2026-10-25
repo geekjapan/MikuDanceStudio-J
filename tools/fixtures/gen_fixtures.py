@@ -106,8 +106,9 @@ CAMERA_KEYS = [  # (frame, distance, eye, rotation, fov)
 ]
 # swing600-golden.pmm is swing600.pmm for golden images. The camera turns
 # half a turn to face the fronts of the strips, and the models blend normally.
-# The models stand side by side, so no two share a plane: the root bone
-# keys of slots 1 to 3 move along x, clear of the swing of slot 0.
+# No two models may touch, because coplanar faces would leave pixels to depth
+# ties: the root bone keys of slots 1 to 3 move along x, clear of the swing
+# of slot 0, and slot 0 has no outside-parent link to slot 1.
 GOLDEN_CAMERA_KEYS = [(0, -45.0, (0.0, 10.0, 0.0), (0.0, math.pi, 0.0), 30)]
 GOLDEN_ROOT_X = (0.0, -8.0, 8.0, 12.0)
 CAMERA_CURVE = (40, 20, 90, 110)  # x1, y1, x2, y2 of the sparse camera keys
@@ -580,7 +581,7 @@ def track_bytes(heads_keys, pool, pack):
     return bytes(o)
 
 
-def build_model_motion(model, slot, root_x=0.0):
+def build_model_motion(model, slot, golden=False):
     """Bone, morph and display tracks of one PMM model slot."""
     bones = model["bones"]
     bone_n = len(bones)
@@ -592,8 +593,8 @@ def build_model_motion(model, slot, root_x=0.0):
         keys = []
         for f in frames:
             pos, quat = swing_pose(i, f)
-            if i == 0 and root_x:
-                pos[0] += root_x
+            if i == 0 and golden and GOLDEN_ROOT_X[slot]:
+                pos[0] += GOLDEN_ROOT_X[slot]
             table = CURVED if (curved and f) else bytes(linear_lanes(*LINEAR))
             off = (b["jp"], f) == PHYSICS_OFF
             keys.append(Key(f, pos=pos, quat=quat, table=table, off=off))
@@ -621,7 +622,8 @@ def build_model_motion(model, slot, root_x=0.0):
     if is_swing:
         for f, ik, link in DISPLAY_KEYS:
             pairs = [(-1, 0)] * sel_n
-            pairs[2] = link
+            if not golden:
+                pairs[2] = link
             disp_keys.append(Key(f, ik=[ik] * ik_n, pairs=pairs))
     disp_chains, disp_pool = link_tracks(1, [disp_keys])
     apply_links(disp_chains, [disp_head], disp_pool)
@@ -689,8 +691,8 @@ def global_track(keys, pack):
     return track_bytes([head], pool, pack)
 
 
-def model_bytes(slot, model, post_load=1, root_x=0.0):
-    motion = build_model_motion(model, slot, root_x)
+def model_bytes(slot, model, golden=False):
+    motion = build_model_motion(model, slot, golden)
     bones, morphs = model["bones"], model["morphs"]
     iks, sels = ik_sources(model), selector_sources(model)
     is_pmd = model["file"].endswith(".pmd")
@@ -722,17 +724,17 @@ def model_bytes(slot, model, post_load=1, root_x=0.0):
     for _ in sels:  # window start, window end, linked model, linked bone
         o += i32(0, 0, -1, 0)
     # post load 1 is additive blending in the app, 0 is normal blending.
-    o += u8(post_load) + f32(1.0) + u8(1, 0)  # post load, edge scale, toon, display order
+    o += u8(0 if golden else 1) + f32(1.0) + u8(1, 0)  # post load, edge scale, toon, display order
     return bytes(o), motion
 
 
 def build_pmm(camera_keys=CAMERA_KEYS[:1], light_keys=LIGHT_KEYS, physics_mode=2,
-              post_load=1, root_x=(0.0, 0.0, 0.0, 0.0)):
+              golden=False):
     o = bytearray(b"Polygon Movie maker 0002" + b"\0" * 6)
     o += i32(1280, 720, 244) + f32(30.0) + u8(0, 1, 0, 0, 0, 0, 0)
     o += u8(0, len(PMM_MODELS))
     for slot, file in enumerate(PMM_MODELS):
-        data, _ = model_bytes(slot, MODELS[file], post_load, root_x[slot])
+        data, _ = model_bytes(slot, MODELS[file], golden)
         o += data
     # camera
     cam = []
@@ -868,8 +870,7 @@ def generate():
         "swing600.pmm": build_pmm(),
         "camera3.pmm": build_pmm(CAMERA_KEYS, LIGHT3_KEYS),
         "swing600-nophys.pmm": build_pmm(physics_mode=0),
-        "swing600-golden.pmm": build_pmm(GOLDEN_CAMERA_KEYS, post_load=0,
-                                         root_x=GOLDEN_ROOT_X),
+        "swing600-golden.pmm": build_pmm(GOLDEN_CAMERA_KEYS, golden=True),
     }
     assert list(out) == FILE_NAMES
     return out

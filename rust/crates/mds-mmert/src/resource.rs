@@ -218,7 +218,14 @@ fn u32le(b: &[u8], i: usize) -> Option<u32> {
 }
 
 fn decode_png(b: &[u8]) -> Option<Texels> {
+    let (w, h, rgba) = decode_png_rgba(b, false)?;
+    Some(Texels::Rgba8(w, h, rgba))
+}
+
+/// A PNG as width, height, and RGBA8; `ignore_crc` skips the chunk checksums.
+pub(crate) fn decode_png_rgba(b: &[u8], ignore_crc: bool) -> Option<(u32, u32, Vec<u8>)> {
     let mut dec = png::Decoder::new(std::io::Cursor::new(b));
+    dec.ignore_checksums(ignore_crc);
     dec.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = dec.read_info().ok()?;
     let mut buf = vec![0; reader.output_buffer_size()?];
@@ -234,7 +241,7 @@ fn decode_png(b: &[u8]) -> Option<Texels> {
         png::ColorType::Grayscale => px.iter().flat_map(|&g| [g, g, g, 255]).collect(),
         png::ColorType::Indexed => return None,
     };
-    Some(Texels::Rgba8(info.width, info.height, rgba))
+    Some((info.width, info.height, rgba))
 }
 
 /// Bottom-up rows of `bpp`-byte BGR(A) pixels to top-down RGBA.

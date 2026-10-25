@@ -39,6 +39,7 @@
 //!   `mds-render` exposes them.
 //! - Pixel-center alignment: wgpu samples at pixel centers where D3D9 is half a pixel off.
 
+pub mod anime;
 pub mod bind;
 pub mod control;
 pub mod emm;
@@ -81,6 +82,7 @@ impl Effect {
                 input.offscreen_owner,
             );
         }
+        self.tick_animes(gpu, input.scene.frame_time);
         let mut dev = Device::new(gpu, self, target);
         // The host's BeginScene clear of the back buffer and its depth stencil.
         dev.clear_main(input.scene.background);

@@ -18,4 +18,5 @@ wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl
 pollster = "1"
 png = "0.18"
 encoding_rs = "0.8"
+weezl = "0.1"
 

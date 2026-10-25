@@ -1292,6 +1292,7 @@ dependencies = [
  "naga",
  "png",
  "pollster 1.0.1",
+ "weezl",
  "wgpu",
 ]
 

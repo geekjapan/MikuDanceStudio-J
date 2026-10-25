@@ -15,7 +15,8 @@
 //!
 //! The `_with` variants ([`render_frame_with`], [`Renderer::render_frame_with`],
 //! [`Renderer::render_into_with`]) also take a [`Stage`]: the PMM settings beyond the models
-//! (self-shadow and the projected ground shadow); [`scene::stage_at`] reads it from a PMM.
+//! (self-shadow, the projected ground shadow and the accessories); [`scene::stage_at`] reads it
+//! from a PMM and [`scene::accessory_at`] places an [`AccessoryMesh`].
 //!
 //! Shading follows MMD's standard pipeline as the golden images show it: the color is
 //! `saturate(ambient + diffuse * light)` times the texture, the sphere map (multiply or add) and the
@@ -23,7 +24,8 @@
 //! (a local viewer, also under the orthographic projection). With self-shadow off the toon is the
 //! toon texture looked up by the angle to the light, with the interpolated normal not
 //! renormalized; with self-shadow on it is a blend toward the toon's shadow color by the angle to
-//! the light (see [`SelfShadow::shades`]). Materials with the edge flag get an inverted-hull edge.
+//! the light (see [`SelfShadow::shades`]). A back face is lit with its normal as it is, not
+//! flipped. Materials with the edge flag get an inverted-hull edge.
 //! Diffuse alpha blends. The ground shadow is the model flattened along the light onto the ground,
 //! blended once per pixel.
 //!
@@ -31,21 +33,28 @@
 //! skinning, vertex, UV and material morphs, and the edge hull and color the C++ computes. The edge
 //! pass draws its edge buffer as it is.
 //!
-//! Not in this crate yet: texture decoding, the self-shadow map, accessories and the background
-//! picture. Every texture slot (texture, sphere, toon) is bound to a default (white, white, a
-//! built-in toon texture).
+//! [`Mesh::load_textures`] decodes the texture, sphere and toon files a model names ([`Image`]);
+//! a slot without one is drawn with its default (white, none, a built-in toon texture).
+//! Accessories ([`AccessoryMesh`], from `mds-accessory`) are lit as Direct3D 9's fixed-function
+//! pipeline lights them, with the accessory light ten times as bright.
+//!
+//! Not in this crate yet: the self-shadow map and the background picture.
 
+mod accessory;
 mod mesh;
 pub mod picture;
 mod png;
 mod renderer;
 pub mod scene;
+mod texture;
 mod view;
 
+pub use accessory::{AccessoryDraw, AccessoryMesh};
 use mds_formats::pmx::Pmx;
 pub use mesh::{Mesh, Pose};
 pub use renderer::Renderer;
 use std::sync::{Mutex, MutexGuard, PoisonError};
+pub use texture::Image;
 pub use view::{Camera, Light, View};
 
 pub const WIDTH: u32 = 512;
@@ -145,24 +154,27 @@ pub struct Frame<'a> {
 }
 
 /// What a PMM frame draws besides the models' own passes. `Stage::default()` draws none of it.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Stage {
+#[derive(Clone, Copy, Default)]
+pub struct Stage<'a> {
     /// The projected ground shadow (the PMM view flag `ground_shadow`), or `None`.
     pub ground_shadow: Option<GroundShadow>,
     /// Self-shadow (modes 1 and 2), or `None` (mode 0).
     pub self_shadow: Option<SelfShadow>,
+    /// The accessories, in draw order; [`scene::accessory_at`] places one.
+    pub accessories: &'a [AccessoryDraw<'a>],
 }
 
-impl Stage {
+impl Stage<'_> {
     /// What [`render_frame`], [`Renderer::render_frame`] and [`Renderer::render_into`] draw, the
     /// shading from before there was a stage: `frame.toon` is self-shadow mode 2, no ground shadow.
-    pub fn legacy(frame: &Frame) -> Stage {
+    pub fn legacy(frame: &Frame) -> Stage<'static> {
         Stage {
             ground_shadow: None,
             self_shadow: frame.toon.then_some(SelfShadow {
                 mode: 2,
                 distance: 0.0,
             }),
+            accessories: &[],
         }
     }
 }

@@ -984,6 +984,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -1339,6 +1341,8 @@ dependencies = [
 name = "mds-render"
 version = "0.1.0"
 dependencies = [
+ "image",
+ "mds-accessory",
  "mds-formats",
  "mds-physics",
  "mds-pose",

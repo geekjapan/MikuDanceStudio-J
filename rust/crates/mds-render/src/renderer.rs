@@ -2,17 +2,20 @@
 //! on a device the caller owns.
 
 use crate::mesh::{EdgeView, FLAG_DOUBLE_SIDED, FLAG_EDGE, FLAG_GROUND_SHADOW};
+use crate::Image;
 use crate::{
     linear_to_srgb, srgb_to_linear_table, view, Frame, Mesh, Stage, COLOR_FORMAT, DEPTH_FORMAT,
 };
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Bytes per vertex of the body buffer (position, normal, uv) and of the edge buffer (position,
 /// `A8R8G8B8` color).
 const BODY_STRIDE: u64 = 32;
 const EDGE_STRIDE: u64 = 16;
-/// Bytes of a material's uniform block: diffuse, ambient, specular and a parameter vector.
-const MATERIAL_BYTES: u64 = 64;
+/// Bytes of a material's uniform block: diffuse, ambient, specular, a parameter vector, and the
+/// emissive color of an accessory.
+const MATERIAL_BYTES: u64 = 80;
 
 /// A model of a frame: the mesh and how many models of the same mesh came before it in the frame
 /// (one mesh can be drawn twice with two poses).
@@ -23,10 +26,11 @@ struct Pipelines {
     body_two_sided: wgpu::RenderPipeline,
     edge: wgpu::RenderPipeline,
     ground_shadow: wgpu::RenderPipeline,
+    accessory: wgpu::RenderPipeline,
 }
 
 /// Render pipelines in one [`Pipelines`] set.
-const PIPELINES_PER_SET: usize = 4;
+const PIPELINES_PER_SET: usize = 5;
 
 fn depth_state(write: bool, stencil: wgpu::StencilState) -> wgpu::DepthStencilState {
     wgpu::DepthStencilState {
@@ -50,6 +54,8 @@ struct Prepared {
     edge_drawn: Vec<bool>,
     /// The diffuse alpha of each material after the material morphs.
     alpha: Vec<f32>,
+    /// Accessories: the first index and index count of each material's faces.
+    ranges: Vec<(u32, u32)>,
 }
 
 /// Depth, and the multisampled color when `samples > 1`, for one target size.
@@ -78,6 +84,11 @@ pub struct Renderer {
     scene_group: wgpu::BindGroup,
     white: wgpu::TextureView,
     toon: wgpu::TextureView,
+    /// Bilinear; the texture slot repeats (Direct3D's default wrap address mode) and blends its
+    /// mip levels, the sphere and toon slots clamp and read level 0. The mip blend is chosen by
+    /// golden2 `accessory-30.png`, whose cube shows one face edge on: 37 pixels beyond the
+    /// tolerance with it, 50 without.
+    repeat: wgpu::Sampler,
     sampler: wgpu::Sampler,
     pipelines: HashMap<u32, Pipelines>,
     pipelines_created: usize,
@@ -111,6 +122,11 @@ impl Renderer {
                     wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     wgpu::ShaderStages::FRAGMENT,
                 ),
+                entry(
+                    5,
+                    wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    wgpu::ShaderStages::FRAGMENT,
+                ),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -125,11 +141,19 @@ impl Renderer {
             entries: &[bind_entry(0, scene_buf.as_entire_binding())],
         });
         let renderer = Renderer {
-            white: texture(device, queue, 1, 1, &[255; 4]),
-            toon: texture(device, queue, 1, 32, &toon_ramp()),
+            white: texture(device, queue, &[Image::new(1, 1, vec![255; 4])]),
+            toon: texture(device, queue, &[Image::new(1, 32, toon_ramp())]),
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            }),
+            repeat: device.create_sampler(&wgpu::SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Linear,
                 ..Default::default()
             }),
             device: device.clone(),
@@ -352,13 +376,22 @@ impl Renderer {
                 ]
             };
             if !self.models.contains_key(key) {
-                let prepared = self.prepare(mesh, skin.materials.len());
+                let prepared = self.prepare(mesh);
                 self.models.insert(*key, prepared);
             }
             let p = self.models.get_mut(key).expect("inserted above");
             self.queue.write_buffer(&p.vertices, 0, &bytes(&body));
             self.queue.write_buffer(&p.edge_vertices, 0, &edge_data);
-            for (m, (buf, _)) in skin.materials.iter().zip(&p.materials) {
+            for (k, (m, (buf, _))) in skin.materials.iter().zip(&p.materials).enumerate() {
+                let t = &mesh.materials[k].textures;
+                let params = [
+                    f32::from(u8::from(t.texture.is_some())),
+                    t.sphere
+                        .as_ref()
+                        .map_or(0.0, |(_, mode)| *mode as u8 as f32),
+                    0.0,
+                    0.0,
+                ];
                 let u = [
                     diffuse(m).as_slice(),
                     &[m.ambient[0], m.ambient[1], m.ambient[2], 1.0],
@@ -368,6 +401,7 @@ impl Renderer {
                         m.specular[2],
                         m.specular_power,
                     ],
+                    &params,
                     &[0.0; 4],
                 ]
                 .concat();
@@ -383,40 +417,206 @@ impl Renderer {
                 .collect();
             p.alpha = skin.materials.iter().map(|m| diffuse(m)[3]).collect();
         }
-        self.models.retain(|k, _| keys.contains(k));
+        let accessory_keys = Self::accessory_keys(stage);
+        for (a, key) in stage.accessories.iter().zip(&accessory_keys) {
+            if !self.models.contains_key(key) {
+                let prepared = self.prepare_accessory(a.mesh);
+                self.models.insert(*key, prepared);
+            }
+            let w = a.world;
+            let body: Vec<f32> = a
+                .mesh
+                .accessory
+                .vertices
+                .iter()
+                .flat_map(|v| {
+                    let [x, y, z] = v.position;
+                    let p: [f32; 3] =
+                        std::array::from_fn(|c| x * w[c] + y * w[4 + c] + z * w[8 + c] + w[12 + c]);
+                    let [x, y, z] = v.normal;
+                    let n = view::normalize(std::array::from_fn(|c| {
+                        x * w[c] + y * w[4 + c] + z * w[8 + c]
+                    }));
+                    [
+                        p[0],
+                        p[1],
+                        p[2],
+                        n[0],
+                        n[1],
+                        n[2],
+                        v.texcoord[0],
+                        v.texcoord[1],
+                    ]
+                })
+                .collect();
+            let p = self.models.get_mut(key).expect("inserted above");
+            self.queue.write_buffer(&p.vertices, 0, &bytes(&body));
+            p.alpha.clear();
+            for ((m, (buf, _)), t) in a
+                .mesh
+                .accessory
+                .materials
+                .iter()
+                .zip(&p.materials)
+                .zip(&a.mesh.textures)
+            {
+                let alpha = mds_accessory::transform::drawn_alpha(m, a.state.opacity);
+                p.alpha.push(alpha);
+                let params = [
+                    f32::from(u8::from(t.texture.is_some())),
+                    t.sphere
+                        .as_ref()
+                        .map_or(0.0, |(_, mode)| *mode as u8 as f32),
+                    0.0,
+                    0.0,
+                ];
+                let [dr, dg, db, _] = m.diffuse;
+                let [sr, sg, sb, _] = m.specular;
+                let u = [
+                    [dr, dg, db, alpha],
+                    m.ambient,
+                    [sr, sg, sb, m.power],
+                    params,
+                    m.emissive,
+                ]
+                .concat();
+                self.queue.write_buffer(buf, 0, &bytes(&u));
+            }
+        }
+        self.models
+            .retain(|k, _| keys.contains(k) || accessory_keys.contains(k));
+    }
+
+    /// The keys of the accessories of `stage`, in order.
+    fn accessory_keys(stage: &Stage) -> Vec<Key> {
+        let mut seen: HashMap<u64, u32> = HashMap::new();
+        stage
+            .accessories
+            .iter()
+            .map(|a| {
+                let n = seen.entry(a.mesh.id).or_default();
+                *n += 1;
+                (a.mesh.id, *n - 1)
+            })
+            .collect()
+    }
+
+    /// Buffers for an accessory: its faces ordered by material, as `DrawSubset` draws them.
+    fn prepare_accessory(&self, mesh: &crate::AccessoryMesh) -> Prepared {
+        let device = &self.device;
+        let acc = &mesh.accessory;
+        let mut indices = Vec::with_capacity(acc.indices.len());
+        let ranges = (0..acc.materials.len())
+            .map(|k| {
+                let start = indices.len() as u32;
+                for f in acc.subset_faces(k) {
+                    indices.extend_from_slice(&acc.indices[3 * f..3 * f + 3]);
+                }
+                (start, indices.len() as u32 - start)
+            })
+            .collect();
+        let index_data: Vec<u8> = indices.iter().flat_map(|i| i.to_ne_bytes()).collect();
+        let index_buf = empty_buffer(device, wgpu::BufferUsages::INDEX, index_data.len() as u64);
+        self.queue.write_buffer(&index_buf, 0, &index_data);
+        let mut uploaded = HashMap::new();
+        let views = mesh
+            .textures
+            .iter()
+            .map(|t| {
+                let sphere = t.sphere.as_ref().map(|(img, _)| img.clone());
+                [
+                    self.view_of(&mut uploaded, &t.texture, &self.white),
+                    self.view_of(&mut uploaded, &sphere, &self.white),
+                    self.toon.clone(),
+                ]
+            })
+            .collect();
+        Prepared {
+            vertices: empty_buffer(
+                device,
+                wgpu::BufferUsages::VERTEX,
+                acc.vertices.len() as u64 * BODY_STRIDE,
+            ),
+            edge_vertices: empty_buffer(device, wgpu::BufferUsages::VERTEX, 4),
+            indices: index_buf,
+            materials: self.material_groups(views),
+            edge_drawn: Vec::new(),
+            alpha: Vec::new(),
+            ranges,
+        }
+    }
+
+    /// The GPU texture of `img` (made once per image), or `default`.
+    fn view_of(
+        &self,
+        uploaded: &mut HashMap<*const Image, wgpu::TextureView>,
+        img: &Option<Arc<Image>>,
+        default: &wgpu::TextureView,
+    ) -> wgpu::TextureView {
+        img.as_ref().map_or(default.clone(), |img| {
+            uploaded
+                .entry(Arc::as_ptr(img))
+                .or_insert_with(|| texture(&self.device, &self.queue, &img.mip_chain()))
+                .clone()
+        })
+    }
+
+    /// A uniform buffer and a bind group per material, over its texture, sphere and toon views.
+    fn material_groups(
+        &self,
+        views: Vec<[wgpu::TextureView; 3]>,
+    ) -> Vec<(wgpu::Buffer, wgpu::BindGroup)> {
+        views
+            .iter()
+            .map(|[tex, sphere, toon]| {
+                let buf = empty_buffer(&self.device, wgpu::BufferUsages::UNIFORM, MATERIAL_BYTES);
+                let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout: &self.material_layout,
+                    entries: &[
+                        bind_entry(0, buf.as_entire_binding()),
+                        bind_entry(1, wgpu::BindingResource::TextureView(tex)),
+                        bind_entry(2, wgpu::BindingResource::TextureView(sphere)),
+                        bind_entry(3, wgpu::BindingResource::TextureView(toon)),
+                        bind_entry(4, wgpu::BindingResource::Sampler(&self.repeat)),
+                        bind_entry(5, wgpu::BindingResource::Sampler(&self.sampler)),
+                    ],
+                });
+                (buf, group)
+            })
+            .collect()
     }
 
     /// Buffers for `mesh`, with the sizes its vertex count and material count fix; the contents
     /// come with the first upload.
-    fn prepare(&self, mesh: &Mesh, materials: usize) -> Prepared {
+    fn prepare(&self, mesh: &Mesh) -> Prepared {
         let device = &self.device;
         let index_data: Vec<u8> = mesh.indices.iter().flat_map(|i| i.to_ne_bytes()).collect();
         let indices = empty_buffer(device, wgpu::BufferUsages::INDEX, index_data.len() as u64);
         self.queue.write_buffer(&indices, 0, &index_data);
         let vertices = mesh.vertex_count() as u64;
+        let mut uploaded = HashMap::new();
+        let views = mesh
+            .materials
+            .iter()
+            .map(|m| {
+                let t = &m.textures;
+                let sphere = t.sphere.as_ref().map(|(img, _)| img.clone());
+                [
+                    self.view_of(&mut uploaded, &t.texture, &self.white),
+                    self.view_of(&mut uploaded, &sphere, &self.white),
+                    self.view_of(&mut uploaded, &t.toon, &self.toon),
+                ]
+            })
+            .collect();
         Prepared {
             vertices: empty_buffer(device, wgpu::BufferUsages::VERTEX, vertices * BODY_STRIDE),
             edge_vertices: empty_buffer(device, wgpu::BufferUsages::VERTEX, vertices * EDGE_STRIDE),
             indices,
-            materials: (0..materials)
-                .map(|_| {
-                    let buf = empty_buffer(device, wgpu::BufferUsages::UNIFORM, MATERIAL_BYTES);
-                    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: None,
-                        layout: &self.material_layout,
-                        entries: &[
-                            bind_entry(0, buf.as_entire_binding()),
-                            bind_entry(1, wgpu::BindingResource::TextureView(&self.white)),
-                            bind_entry(2, wgpu::BindingResource::TextureView(&self.white)),
-                            bind_entry(3, wgpu::BindingResource::TextureView(&self.toon)),
-                            bind_entry(4, wgpu::BindingResource::Sampler(&self.sampler)),
-                        ],
-                    });
-                    (buf, group)
-                })
-                .collect(),
+            materials: self.material_groups(views),
             edge_drawn: Vec::new(),
             alpha: Vec::new(),
+            ranges: Vec::new(),
         }
     }
 
@@ -561,6 +761,14 @@ impl Renderer {
                 alpha,
                 depth_state(false, shadow_stencil),
             ),
+            accessory: pipeline(
+                "vs_main",
+                "fs_accessory",
+                body_layout,
+                Some(wgpu::Face::Back),
+                alpha,
+                opaque(),
+            ),
         }
     }
 
@@ -665,6 +873,23 @@ impl Renderer {
                     }
                 }
             }
+            pass.set_pipeline(&pipelines.accessory);
+            for (a, key) in stage.accessories.iter().zip(Self::accessory_keys(stage)) {
+                if !a.state.visible {
+                    continue;
+                }
+                let res = &self.models[&key];
+                pass.set_index_buffer(res.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.set_vertex_buffer(0, res.vertices.slice(..));
+                for ((&(start, count), (_, group)), &alpha) in
+                    res.ranges.iter().zip(&res.materials).zip(&res.alpha)
+                {
+                    if count > 0 && alpha > 0.0 {
+                        pass.set_bind_group(1, group, &[]);
+                        pass.draw_indexed(start..start + count, 0, 0..1);
+                    }
+                }
+            }
         }
         encoder
     }
@@ -740,7 +965,12 @@ fn scene_data(frame: &Frame, stage: &Stage, shift: [f32; 2]) -> Vec<u8> {
         [c, c, c, if g.translucent { SHADOW_ALPHA } else { 1.0 }]
     });
     scene.extend(shadow);
-    scene.extend([GROUND_SHADOW_HEIGHT, 0.0, 0.0, 0.0]);
+    // The sample this render stands for, in pixels from the pixel center (y down).
+    let sample = [
+        frame.pixel_offset[0] - shift[0],
+        frame.pixel_offset[1] - shift[1],
+    ];
+    scene.extend([GROUND_SHADOW_HEIGHT, sample[0], sample[1], 0.0]);
     bytes(&scene)
 }
 
@@ -748,38 +978,38 @@ fn bytes(f: &[f32]) -> Vec<u8> {
     f.iter().flat_map(|x| x.to_ne_bytes()).collect()
 }
 
-fn texture(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    w: u32,
-    h: u32,
-    rgba: &[u8],
-) -> wgpu::TextureView {
-    let size = wgpu::Extent3d {
-        width: w,
-        height: h,
+/// A texture of `levels`: the picture, then its mip levels, each half the size of the last.
+fn texture(device: &wgpu::Device, queue: &wgpu::Queue, levels: &[Image]) -> wgpu::TextureView {
+    let size = |l: &Image| wgpu::Extent3d {
+        width: l.width,
+        height: l.height,
         depth_or_array_layers: 1,
     };
     let tex = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("default texture"),
-        size,
-        mip_level_count: 1,
+        label: Some("texture"),
+        size: size(&levels[0]),
+        mip_level_count: levels.len() as u32,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: COLOR_FORMAT,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    queue.write_texture(
-        tex.as_image_copy(),
-        rgba,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(w * 4),
-            rows_per_image: Some(h),
-        },
-        size,
-    );
+    for (k, l) in levels.iter().enumerate() {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                mip_level: k as u32,
+                ..tex.as_image_copy()
+            },
+            &l.rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(l.width * 4),
+                rows_per_image: Some(l.height),
+            },
+            size(l),
+        );
+    }
     tex.create_view(&Default::default())
 }
 

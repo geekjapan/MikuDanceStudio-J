@@ -848,17 +848,16 @@ impl Document {
             Command::SelectAll(what) => {
                 use mds_ops as s;
                 let p = &mut self.pmm;
-                let r = match what {
-                    SelectAll::Bone => s::select_all_bone_frames(p),
-                    SelectAll::Display => s::select_all_display_frames(p),
-                    SelectAll::Morph => s::select_all_morph_frames(p),
-                    SelectAll::Camera => Ok(s::select_all_camera_frames(p)),
-                    SelectAll::Light => Ok(s::select_all_light_frames(p)),
-                    SelectAll::SelfShadow => Ok(s::select_all_self_shadow_frames(p)),
-                    SelectAll::Gravity => Ok(s::select_all_gravity_frames(p)),
-                    SelectAll::Accessory => Ok(s::select_all_accessory_frames(p)),
-                };
-                r.map_err(ops)?;
+                match what {
+                    SelectAll::Bone => s::select_all_bone_frames(p).map_err(ops)?,
+                    SelectAll::Display => s::select_all_display_frames(p).map_err(ops)?,
+                    SelectAll::Morph => s::select_all_morph_frames(p).map_err(ops)?,
+                    SelectAll::Camera => s::select_all_camera_frames(p),
+                    SelectAll::Light => s::select_all_light_frames(p),
+                    SelectAll::SelfShadow => s::select_all_self_shadow_frames(p),
+                    SelectAll::Gravity => s::select_all_gravity_frames(p),
+                    SelectAll::Accessory => s::select_all_accessory_frames(p),
+                }
             }
             Command::FrameLine { morph, insert } => {
                 use mds_ops as f;

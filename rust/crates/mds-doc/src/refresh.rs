@@ -27,7 +27,7 @@ fn seek<K: Key>(pool: &KeyPool<K>, frame: u32) -> (u32, bool) {
             return (i, true);
         }
         i = next;
-        if key(pool, i).map_or(true, |k| k.frame() >= frame) {
+        if key(pool, i).is_none_or(|k| k.frame() >= frame) {
             return (i, false);
         }
     }

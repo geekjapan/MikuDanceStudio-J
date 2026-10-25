@@ -7,8 +7,10 @@ use mds_math::{Mat4, Quat};
 
 /// `kPiLit` of the edit handlers.
 const PI_LIT: f64 = 3.141592025756836;
-/// `(double)3.141592f` of the readout.
-const PI_F: f64 = 3.141592_f32 as f64;
+/// `3.141592f` (0x40490FD8) of the readout.
+fn pi_f() -> f32 {
+    f32::from_bits(0x4049_0fd8)
+}
 
 /// The readout degrees `(x, y, z)` of a bone rotation (`0xA04C0..C8`).
 pub(crate) fn euler_degrees(q: [f32; 4]) -> [f32; 3] {
@@ -20,7 +22,7 @@ pub(crate) fn euler_degrees(q: [f32; 4]) -> [f32; 3] {
     let mut ry = d(m31).atan2(d(m33)) as f32;
     let c = d(rx).cos() as f32;
     if d(c).abs() < d(1e-6f32) {
-        let pi = d(3.141592f32);
+        let pi = d(pi_f());
         rz = (d(rz) + if m12 > 0.0 { pi } else { -pi }) as f32;
         ry = (d(ry) + if m31 > 0.0 { pi } else { -pi }) as f32;
     }
@@ -30,9 +32,9 @@ pub(crate) fn euler_degrees(q: [f32; 4]) -> [f32; 3] {
         }
     }
     [
-        (d(rx) / PI_F * 180.0) as f32,
-        (-d(ry) / PI_F * 180.0) as f32,
-        (180.0 * (-d(rz) / PI_F)) as f32,
+        (d(rx) / d(pi_f()) * 180.0) as f32,
+        (-d(ry) / d(pi_f()) * 180.0) as f32,
+        (180.0 * (-d(rz) / d(pi_f()))) as f32,
     ]
 }
 

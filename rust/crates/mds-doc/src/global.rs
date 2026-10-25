@@ -654,10 +654,9 @@ pub(crate) fn load_vmd(pmm: &mut Pmm, vmd: &mds_formats::vmd::Vmd) -> Result<(),
     let mut first = Ok(());
     for k in vmd.cameras.iter().flatten() {
         let mut interpolation = [[0; 6]; 4];
-        for c in 0..6 {
-            let at = if v1 { 0 } else { 4 * c };
-            for (n, row) in [0, 2, 1, 3].into_iter().enumerate() {
-                interpolation[row][c] = k.interpolation[at + n];
+        for (n, row) in [0, 2, 1, 3].into_iter().enumerate() {
+            for (c, v) in interpolation[row].iter_mut().enumerate() {
+                *v = k.interpolation[if v1 { 0 } else { 4 * c } + n];
             }
         }
         let clip = CameraClip {

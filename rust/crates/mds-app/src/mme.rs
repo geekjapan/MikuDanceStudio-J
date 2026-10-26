@@ -212,6 +212,25 @@ impl Mme {
         &self.dir
     }
 
+    /// `DlgDisassembleFlow` (`mme_dlg.cpp:1459`): the effect `stored` (as an assignment stores
+    /// it) in shader assembly, with `\r\n` line breaks (`DlgDisassembleNormalizeLineEnds`,
+    /// `:1406`); empty when it does not load, as the C++ shows an empty window.
+    pub fn disassemble(&self, stored: &str) -> String {
+        let vk = match &self.vkd3d {
+            Some(p) => Vkd3d::open(p),
+            None => Vkd3d::load(),
+        };
+        let text =
+            vk.and_then(|vk| mds_shader::disassemble_file(&vk, &effect_file(&self.dir, stored)));
+        match text {
+            Ok(t) => crlf(&t),
+            Err(e) => {
+                self.log.borrow_mut().push(e);
+                String::new()
+            }
+        }
+    }
+
     /// How many effects are loaded (assigned ones and those of the offscreen turns).
     pub fn loaded(&self) -> usize {
         self.runtime
@@ -387,6 +406,33 @@ impl Mme {
             shared: device.is_some(),
         })
     }
+}
+
+/// `DlgDisassembleNormalizeLineEnds`: every `\n`, `\r` or `\r\n` ends a line with `\r\n`, NULs
+/// drop, and a last line without a break gets one.
+fn crlf(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + text.len() / 16);
+    let mut chars = text.chars().peekable();
+    let mut line = String::new();
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' | '\r' => {
+                out.push_str(&line);
+                out.push_str("\r\n");
+                line.clear();
+                if c == '\r' && chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+            }
+            '\0' => {}
+            c => line.push(c),
+        }
+    }
+    if !line.is_empty() {
+        out.push_str(&line);
+        out.push_str("\r\n");
+    }
+    out
 }
 
 fn key(l: &Live) -> (bool, i32, String) {

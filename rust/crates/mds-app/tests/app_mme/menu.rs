@@ -294,3 +294,36 @@ fn reload_all_loads_the_effects_again() {
     assert_eq!(draw(&editor), px);
     assert_eq!(editor.mme.loaded(), 1);
 }
+
+#[test]
+fn disassemble_lists_the_selected_rows_effect() {
+    let lib = vkd3d_lib();
+    if let Err(e) = mds_shader::vkd3d::Vkd3d::open(&lib) {
+        eprintln!("SKIP: vkd3d-shader not loaded: {e} (not a pass)");
+        return;
+    }
+    let (mut editor, _) = control("disassemble");
+    editor.mme.vkd3d = Some(lib);
+    run(&mut editor, "menu:mme-40005");
+    // `DlgSelectedEffectPath` (mme_dlg.cpp:652): the (default) row and an object without an
+    // effect have none, and the window opens empty (`DlgDisassembleFlow`, :1459).
+    for row in [Row::Default, Row::Object(1)] {
+        select(&[row]);
+        run(&mut editor, "menu:mme-dialog-40014");
+        assert_eq!(dialog::disassembly().as_deref(), Some(""));
+    }
+    // chain8.pmx with control.fx: every pass in shader assembly, CRLF line ends (:1406).
+    select(&[Row::Object(0)]);
+    run(&mut editor, "menu:mme-dialog-40014");
+    let text = dialog::disassembly().unwrap();
+    assert!(text.starts_with("technique "), "{text}");
+    assert!(text.contains("\r\n  pass ") && text.contains(" = compile vs_"));
+    assert!(text
+        .lines()
+        .any(|l| l.trim() == "ps_3_0" || l.trim() == "ps_2_0"));
+    assert_eq!(text.matches('\n').count(), text.matches("\r\n").count());
+    assert!(
+        text.ends_with("\r\n") && !text.contains("// error"),
+        "{text}"
+    );
+}

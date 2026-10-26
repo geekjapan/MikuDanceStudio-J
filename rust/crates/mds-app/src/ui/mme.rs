@@ -52,6 +52,8 @@ struct State {
     default_snapshot: String,
     /// The answers of the file dialogs without a window, in order; `None` is a cancel.
     answers: VecDeque<Option<PathBuf>>,
+    /// The text of the open Disassemble Effect window (40014).
+    disassembly: Option<String>,
 }
 
 thread_local! {
@@ -261,6 +263,7 @@ pub mod dialog {
         Action::run("menu:mme-dialog-40013", hide_show, false),
         Action::run("menu:mme-dialog-40008", reset_default, false),
         Action::run("menu:mme-dialog-40006", subset_extract, false),
+        Action::run("menu:mme-dialog-40014", disassemble, false),
         Action::run("ctl:mme-dialog-1", close, false),
         Action::run("ctl:mme-dialog-2", cancel, false),
         Action::run("ctl:mme-dialog-1005", apply, false),
@@ -516,6 +519,35 @@ pub mod dialog {
         Ok(())
     }
 
+    /// `DlgSelectedEffectPath` (`mme_dlg.cpp:652`): the effect of the first selected row in
+    /// list order, the object's own for a subset row; `""` for the `(default)` row or none.
+    pub fn selected_effect(ctx: &Ctx) -> String {
+        let selected = state(|s| s.selected.clone());
+        match rows(ctx).into_iter().find(|r| selected.contains(r)) {
+            Some(Row::Object(o) | Row::Subset(o, _)) => {
+                ctx.editor.mme.assignments[o].effect.clone()
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// 40014 (`DlgDisassembleFlow`, `mme_dlg.cpp:1459`): the selected row's effect in shader
+    /// assembly, in the Disassemble Effect window; the window opens empty when there is none.
+    fn disassemble(ctx: &mut Ctx) -> Result<(), String> {
+        let path = selected_effect(ctx);
+        let text = match path.is_empty() {
+            true => String::new(),
+            false => ctx.editor.mme.disassemble(&path),
+        };
+        state(|s| s.disassembly = Some(text));
+        Ok(())
+    }
+
+    /// The text of the Disassemble Effect window, when it is open.
+    pub fn disassembly() -> Option<String> {
+        state(|s| s.disassembly.clone())
+    }
+
     /// The dialog's `WM_DROPFILES`: one `.emm` loads, one `.fx`, `.fxm` or `.fxsub` goes to the
     /// selection; anything else is refused.
     pub fn drop_files(ctx: &mut Ctx, paths: &[PathBuf]) -> Result<(), String> {
@@ -632,6 +664,12 @@ pub mod dialog {
                         let e = t("子集展开(&E)", "Subset-Extract(&E)");
                         b(ui, ctx, "menu:mme-dialog-40006", e);
                     });
+                    ui.menu_button(t("工具(&T)", "Tool(&T)"), |ui| {
+                        // Enabled only when the first selected row has an effect (mme_dlg.cpp:1088).
+                        let d = t("反编译特效文件(&D)", "Disassemble Effect(&D)");
+                        let has = !selected_effect(ctx).is_empty();
+                        ui.add_enabled_ui(has, |ui| b(ui, ctx, "menu:mme-dialog-40014", d));
+                    });
                 });
                 ui.label("Main RenderTarget");
                 egui::ScrollArea::vertical()
@@ -688,6 +726,24 @@ pub mod dialog {
             });
         if !open {
             state(|s| s.dialog = false);
+        }
+        if let Some(mut text) = disassembly() {
+            let (mut open, mut close) = (true, false);
+            egui::Window::new("Disassemble Effect")
+                .open(&mut open)
+                .show(ui.ctx(), |ui| {
+                    egui::ScrollArea::both().max_height(400.0).show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut text)
+                                .code_editor()
+                                .interactive(false),
+                        )
+                    });
+                    close = ui.button("Close").clicked();
+                });
+            if !open || close {
+                state(|s| s.disassembly = None);
+            }
         }
     }
 

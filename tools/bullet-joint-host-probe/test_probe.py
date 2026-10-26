@@ -3,6 +3,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import tempfile
 import json
 import os
+import re
 import subprocess
 import sys
 from unittest import mock
@@ -17,6 +18,8 @@ class ProbeTests(unittest.TestCase):
     def test_adapter_keeps_properties_and_only_removes_bit_comparison(self):
         original = probe.JOINT.read_text()
         adapted = probe.joint_adapter(original, Path('/tmp/native.tsv'))
+        self.assertEqual(adapted.count('include_str!("/tmp/native.tsv")'), 2)
+        self.assertNotIn('native-x86_64.tsv', adapted)
         self.assertNotIn('assert_eq!(a, b, "case {id} word', adapted)
         self.assertIn('assert_eq!(actual.len(), expected.len()', adapted)
         self.assertEqual(original.count('assert'), adapted.count('assert') + 1)
@@ -24,7 +27,7 @@ class ProbeTests(unittest.TestCase):
         loop = '''        for (index, (a, b)) in actual.iter().zip(&expected).enumerate() {
             assert_eq!(a, b, "case {id} word {index}: Rust {a:08x}, native {b:08x}");
         }'''
-        for anchor in ['include_str!("../solver_data/native.tsv")', loop]:
+        for anchor in ['include_str!("../solver_data/native.tsv")', 'include_str!("../solver_data/native-x86_64.tsv")', loop]:
             for changed in [original.replace(anchor, ''), original + '\n' + anchor]:
                 with self.assertRaises(ValueError):
                     probe.joint_adapter(changed, Path('/tmp/native.tsv'))
@@ -34,7 +37,7 @@ class ProbeTests(unittest.TestCase):
     def test_frozen_failures_are_observed_and_no_record_is_added(self):
         source = probe.check_adapter(probe.CHECK.read_text(), Path('/tmp/harness.rs'))
         self.assertNotIn("raise SystemExit('Native", source)
-        self.assertEqual(source.count('FAIL diagnostic frozen comparison:'), 2)
+        self.assertEqual(source.count('FAIL diagnostic frozen comparison:'), 1)
         self.assertNotIn('Native fixture and pure Rust agree', source)
         self.assertEqual(source.count('capture_output('), 2)
         anchor = 'subprocess.check_output([executable], env=environment)'
@@ -153,9 +156,9 @@ class ProbeTests(unittest.TestCase):
             fields[1] = '3d000001'
             native.write_text('\t'.join(fields) + '\n')
             adapter = probe.joint_adapter(probe.JOINT.read_text(), native)
-            include = next(line.strip() for line in adapter.splitlines() if 'for line in include_str!' in line)
+            include = next(line.strip() for line in adapter.splitlines() if 'const NATIVE_PROFILE:' in line)
             source = out / 'input.rs'
-            source.write_text('fn main() {\n' + include + '\n'
+            source.write_text('fn main() {\n' + include + '\nfor line in NATIVE_PROFILE.lines() {\n'
                               'let fields: Vec<_> = line.split(\'\\t\').collect();\n'
                               'assert_eq!(fields[1], "3d000001");\n'
                               'print!("{}", fields[1]); break; } }\n')
@@ -185,7 +188,7 @@ class ProbeTests(unittest.TestCase):
                         '    Path(' + repr(str(out / 'native.tsv')) + ').write_text(source)\n'
                         '    lines = source.splitlines()\n'
                         '    fields = lines[0].split("\\t")\n'
-                        '    fields[1] = "3d000001"\n'
+                        '    fields[5] = "3d000001"\n'
                         '    lines[0] = "\\t".join(fields)\n'
                         '    Path(' + repr(str(out / 'rust.tsv')) + ').write_text("\\n".join(lines) + "\\n")\n')
             original = probe.capture_command
@@ -217,6 +220,100 @@ class ProbeTests(unittest.TestCase):
             self.assertFalse(result['input_equal'])
             self.assertNotEqual(result['left_inputs']['sha256'], result['right_inputs']['sha256'])
             self.assertEqual(result['attribution'], 'input inequality; output attribution unavailable')
+
+    def assert_capture_mutations(self, capture):
+        originals = {name: (capture / name).read_text() for name in
+                     ['native.tsv', 'rust.tsv', 'oracle.tsv', 'resolve.log']}
+        log = originals['resolve.log'].splitlines(True)
+        post = next(i for i, line in enumerate(log) if '"kind":"postnc"' in line)
+        applied = re.search(r'"applied":"([0-9A-Fa-f]{8})"', log[post])[1]
+        changed_payload = log[post].replace('"applied":"' + applied, '"applied":"' + f'{int(applied, 16) ^ 1:08X}')
+        def tsv_change(text, field, value):
+            lines = text.splitlines()
+            fields = lines[0].split('\t')
+            fields[field] = value
+            lines[0] = '\t'.join(fields)
+            return '\n'.join(lines) + '\n'
+        def renumber(lines):
+            import re
+            return ''.join(re.sub(r'^\{"n":\d+', '{"n":' + str(i + 1), line)
+                           for i, line in enumerate(lines))
+        mutations = {
+            'missing-event': ('resolve.log', ''.join(log[:post] + log[post + 1:])),
+            'duplicate-event': ('resolve.log', ''.join(log[:post] + [log[post]] + log[post:])),
+            'balanced-delete-duplicate': ('resolve.log', renumber(log[:post] + [log[post - 1]] + log[post + 1:])),
+            'reordered-events': ('resolve.log', renumber(log[:post - 1] + [log[post], log[post - 1]] + log[post + 1:])),
+            'extra-event': ('resolve.log', ''.join(log + [log[-1]])),
+            'nonhex-payload': ('resolve.log', ''.join(log[:post] + [log[post].replace('"applied":"', '"applied":"z', 1)] + log[post + 1:])),
+            'changed-payload': ('resolve.log', ''.join(log[:post] + [changed_payload] + log[post + 1:])),
+            'extra-field': ('resolve.log', log[0].replace('{', '{"extra":0,', 1) + ''.join(log[1:])),
+            'duplicate-field': ('resolve.log', log[0].replace('{', '{"n":1,', 1) + ''.join(log[1:])),
+            'wrong-iteration': ('resolve.log', log[0].replace('"iter":0', '"iter":10') + ''.join(log[1:])),
+            'bad-vector-shape': ('resolve.log', log[0].replace('[', '["00000000",', 1) + ''.join(log[1:])),
+            'wrong-sequence': ('resolve.log', log[0].replace('"n":1', '"n":0', 1) + ''.join(log[1:])),
+            'nonhex-input': ('native.tsv', tsv_change(originals['native.tsv'], 5, 'gggggggg')),
+            'nonhex-output': ('native.tsv', tsv_change(originals['native.tsv'], 303, 'gggggggg')),
+            'duplicate-case': ('native.tsv', tsv_change(originals['native.tsv'], 0, '1')),
+            'bad-mode': ('native.tsv', tsv_change(originals['native.tsv'], 2, '00000000')),
+            'bad-body-count': ('native.tsv', tsv_change(originals['native.tsv'], 3, '00000002')),
+            'bad-joint-count': ('native.tsv', tsv_change(originals['native.tsv'], 4, '00000003')),
+            'bad-connectivity': ('native.tsv', tsv_change(originals['native.tsv'], 92, '00000002')),
+            'bad-row-count': ('native.tsv', tsv_change(originals['native.tsv'], 302, '0000000d')),
+            'extra-word': ('native.tsv', originals['native.tsv'].replace('\n', '\t00000000\n', 1)),
+            'rust-output': ('rust.tsv', tsv_change(originals['rust.tsv'], 303, '12345678')),
+            'rust-input': ('rust.tsv', tsv_change(originals['rust.tsv'], 5, '12345678')),
+            'missing-case': ('native.tsv', originals['native.tsv'].split('\n', 1)[1]),
+            'oracle-prefix': ('oracle.tsv', tsv_change(originals['oracle.tsv'], 5, '12345678')),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            for name, data in originals.items():
+                (out / name).write_text(data)
+            probe.validate_capture(out)
+            for label, (name, changed) in mutations.items():
+                with self.subTest(mutation=label):
+                    (out / name).write_text(changed)
+                    if name == 'native.tsv':
+                        (out / 'rust.tsv').write_text(changed)
+                    with self.assertRaises(ValueError):
+                        probe.validate_capture(out)
+                    (out / name).write_text(originals[name])
+                    (out / 'rust.tsv').write_text(originals['rust.tsv'])
+        return list(mutations)
+
+    def test_structural_capture_and_resolve_mutations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            native, oracle, log = [], [], []
+            for case_id, original in enumerate(probe.FIXTURE.read_text().splitlines()):
+                fields = original.split('\t')[:302]
+                rows = 1 if case_id == 0 else 0
+                prefix = fields + [f'{rows:08x}'] + ['00000000'] * (18 + 24 * rows)
+                oracle.append('\t'.join(prefix))
+                events = 10 * rows if int(fields[2], 16) == 260 else 0
+                native.append('\t'.join(prefix + ['00000000'] * (13 * events)))
+                if int(fields[2], 16) != 260:
+                    continue
+                for iteration in range(10):
+                    for kind, index in ([(kind, row) for row in range(rows) for kind in ['noncontact', 'postnc']]
+                                        + [('joint', joint) for joint in range(2)]):
+                        record = dict(n=len(log) + 1, kind=kind, iter=iteration, j=index, id_a=index, id_b=index + 1)
+                        for key in ['a_dlin', 'a_dang', 'b_dlin', 'b_dang']:
+                            record[key] = ['00000000'] * 3
+                        if kind == 'joint':
+                            for key in ['a_vel', 'a_avel', 'b_vel', 'b_avel']:
+                                record[key] = ['00000000'] * 3
+                            log.append(json.dumps(record, separators=(',', ':')))
+                        else:
+                            record.update(frictionIndex=0, cidA=0, cidB=1)
+                            for key in ['push', 'applied', 'friction', 'jac', 'rhs', 'cfm', 'lower', 'upper']:
+                                record[key] = '00000000'
+                            log.append(json.dumps(record, separators=(',', ':'))[:-1] + ',,' +
+                                       ','.join(json.dumps(['00000000'] * 3) for _ in range(5)))
+            for name, lines in [('native.tsv', native), ('rust.tsv', native), ('oracle.tsv', oracle), ('resolve.log', log)]:
+                (out / name).write_text('\n'.join(lines) + '\n')
+            self.assertEqual(probe.validate_capture(out)['simd_events'], 10)
+            self.assert_capture_mutations(out)
 
     def test_capture_completeness(self):
         self.assertEqual(probe.counts(probe.FIXTURE), {'cases': 518, 'simd_events': 20580})

@@ -31,8 +31,9 @@ def save_adapter(original, adapted, destination):
 
 
 def joint_adapter(source, native):
-    source = replace_once(source, 'include_str!("../solver_data/native.tsv")',
-                          f'include_str!({json.dumps(native.as_posix())})')
+    for fixture in ['native.tsv', 'native-x86_64.tsv']:
+        source = replace_once(source, f'include_str!("../solver_data/{fixture}")',
+                              f'include_str!({json.dumps(native.as_posix())})')
     old = '''        for (index, (a, b)) in actual.iter().zip(&expected).enumerate() {
             assert_eq!(a, b, "case {id} word {index}: Rust {a:08x}, native {b:08x}");
         }'''
@@ -51,8 +52,9 @@ def joint_adapter(source, native):
 
 
 def check_adapter(source, harness):
-    for message in ['Native factor operations differ from checked-in fixture',
-                    'Native joint output differs from checked-in fixture']:
+    source = replace_once(source, 'compare_capture(captured, fixture)',
+                          "print('Diagnostic frozen joint comparison:', captured == fixture.read_bytes())")
+    for message in ['Native factor operations differ from checked-in fixture']:
         source = replace_once(source, f"raise SystemExit('{message}')",
                               f"print('FAIL diagnostic frozen comparison: {message}')")
     for old, new in [
@@ -127,22 +129,131 @@ def compare(left, right, output, joint=False):
     return result
 
 
-def counts(path):
+def capture_cases(path):
     lines = path.read_text().splitlines()
-    events = 0
-    for line in lines:
+    if len(lines) != 518:
+        raise ValueError(f'{path}: expected 518 cases, got {len(lines)}')
+    cases = []
+    for case_id, line in enumerate(lines):
         fields = line.split('\t')
-        if len(fields) < 303:
-            raise ValueError(f'{path}: truncated input/header')
-        rows = int(fields[302], 16)
-        event_count = rows * 10 if int(fields[2], 16) == 260 else 0
-        expected = 1 + 301 + 1 + rows * 23 + 18 + rows + event_count * 13
+        if fields[0] != str(case_id) or len(fields) < 303:
+            raise ValueError(f'{path}: invalid case ID or truncated header at {case_id}')
+        if any(re.fullmatch(r'[0-9a-fA-F]{8}', word) is None for word in fields[1:]):
+            raise ValueError(f'{path}: case {case_id} requires 8hex words')
+        words = [int(word, 16) for word in fields[1:]]
+        if words[0] != 0x3c888889 or words[1] not in (4, 260) or words[2:4] != [3, 2]:
+            raise ValueError(f'{path}: case {case_id} invalid solver header')
+        for body in range(3):
+            if words[4 + body * 29 + 28] not in (0, 1):
+                raise ValueError(f'{path}: case {case_id} invalid body flag')
+        for joint in range(2):
+            offset = 91 + joint * 105
+            if words[offset:offset + 2] != [joint, joint + 1]:
+                raise ValueError(f'{path}: case {case_id} invalid joint connectivity')
+        rows = words[301]
+        if not 0 <= rows <= 12:
+            raise ValueError(f'{path}: case {case_id} invalid row count {rows}')
+        events = rows * 10 if words[1] == 260 else 0
+        expected = 321 + 24 * rows + 13 * events
         if len(fields) != expected:
-            raise ValueError(f'{path}: case {fields[0]} has {len(fields)} fields, expected {expected}')
-        events += event_count
-    if (len(lines), events) != (518, 20580):
-        raise ValueError(f'{path}: incomplete capture {(len(lines), events)}')
-    return {'cases': len(lines), 'simd_events': events}
+            raise ValueError(f'{path}: case {case_id} has {len(fields)} fields, expected {expected}')
+        cases.append((fields, rows, events))
+    return cases
+
+
+def counts(path):
+    cases = capture_cases(path)
+    return {'cases': len(cases), 'simd_events': sum(events for _, _, events in cases)}
+
+
+def resolve_record(line):
+    # Native resolve records append five unnamed vectors after a doubled comma.
+    named, separator, tail = line.partition(',,')
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f'duplicate resolve field {key}')
+            result[key] = value
+        return result
+    try:
+        record = json.loads(named + '}' if separator else named, object_pairs_hook=unique)
+        extra = json.loads('[' + tail + ']') if separator else []
+    except (json.JSONDecodeError, TypeError) as error:
+        raise ValueError('malformed resolve record') from error
+    if not isinstance(record, dict):
+        raise ValueError('resolve object required')
+    integers = ['n', 'iter', 'j', 'id_a', 'id_b']
+    vectors = ['a_dlin', 'a_dang', 'b_dlin', 'b_dang']
+    scalars = []
+    if record.get('kind') == 'joint':
+        vectors += ['a_vel', 'a_avel', 'b_vel', 'b_avel']
+        if separator:
+            raise ValueError('unexpected joint vectors')
+    elif record.get('kind') in ('noncontact', 'postnc'):
+        integers += ['frictionIndex', 'cidA', 'cidB']
+        scalars = ['push', 'applied', 'friction', 'jac', 'rhs', 'cfm', 'lower', 'upper']
+        if not separator or len(extra) != 5:
+            raise ValueError('expected five unnamed resolve vectors')
+    else:
+        raise ValueError('unexpected resolve kind')
+    if set(record) != set(integers + vectors + scalars + ['kind']):
+        raise ValueError('unexpected resolve fields')
+    if any(type(record[key]) is not int for key in integers):
+        raise ValueError('resolve integer required')
+    for vector in [record[key] for key in vectors] + extra:
+        if not isinstance(vector, list) or len(vector) != 3:
+            raise ValueError('resolve vector requires three words')
+        if any(not isinstance(word, str) or re.fullmatch(r'[0-9a-fA-F]{8}', word) is None for word in vector):
+            raise ValueError('resolve vector requires 8hex words')
+    if any(not isinstance(record[key], str) or re.fullmatch(r'[0-9a-fA-F]{8}', record[key]) is None for key in scalars):
+        raise ValueError('resolve scalar requires 8hex word')
+    return record
+
+
+def validate_capture(directory):
+    cases = capture_cases(directory / 'native.tsv')
+    counts(directory / 'rust.tsv')
+    if input_fingerprint(directory / 'native.tsv') != input_fingerprint(directory / 'rust.tsv'):
+        raise ValueError('same-host input invariant failed')
+    if (directory / 'native.tsv').read_bytes() != (directory / 'rust.tsv').read_bytes():
+        raise ValueError('same-host raw bytes differ')
+    oracle = (directory / 'oracle.tsv').read_text().splitlines()
+    if len(oracle) != len(cases):
+        raise ValueError('oracle case count differs')
+    sequence = 0
+    with (directory / 'resolve.log').open() as log:
+        for case_id, (fields, rows, events) in enumerate(cases):
+            prefix = 321 + 24 * rows
+            if oracle[case_id] != '\t'.join(fields[:prefix]):
+                raise ValueError(f'case {case_id} oracle prefix differs')
+            cursor = prefix
+            if int(fields[2], 16) != 260:
+                continue
+            for iteration in range(10):
+                expected = [(kind, row) for row in range(rows) for kind in ['noncontact', 'postnc']]
+                expected += [('joint', joint) for joint in range(2)]
+                for kind, index in expected:
+                    sequence += 1
+                    line = next(log, None)
+                    if line is None:
+                        raise ValueError('missing resolve event')
+                    record = resolve_record(line)
+                    if (record['n'], record['kind'], record['iter'], record['j']) != (sequence, kind, iteration, index):
+                        raise ValueError(f'resolve event order differs at {sequence}')
+                    if kind == 'joint' and (record['id_a'], record['id_b']) != (index, index + 1):
+                        raise ValueError('resolve joint connectivity differs')
+                    if kind == 'postnc':
+                        payload = [record['applied']] + [word for key in ['a_dlin', 'a_dang', 'b_dlin', 'b_dang'] for word in record[key]]
+                        if [word.lower() for word in payload] != fields[cursor:cursor + 13]:
+                            raise ValueError(f'case {case_id} resolve payload differs at {sequence}')
+                        cursor += 13
+            if cursor != prefix + events * 13:
+                raise ValueError('resolve trace dimension differs')
+        if next(log, None) is not None:
+            raise ValueError('extra resolve event')
+    return {'cases': len(cases), 'rows': sum(rows for _, rows, _ in cases),
+            'simd_events': sum(events for _, _, events in cases), 'resolve_records': sequence}
 
 
 def msvc_command(command, profile, out, native_libs):
@@ -197,6 +308,7 @@ def main():
     status = {'execution': 'FAIL', 'phase': 'setup'}
     env = os.environ.copy()
     argv = sys.argv[:]
+    import_path = sys.path[:]
     try:
         joint = out / 'joint_solver.rs'
         save_adapter(JOINT.read_text(), joint_adapter(JOINT.read_text(), out / 'native.tsv'), joint)
@@ -278,6 +390,7 @@ def main():
 
         os.environ['MDS_JOINT_ACTUAL'] = str(out / 'rust.tsv')
         namespace = {'__name__': 'probe_adapter', '__file__': str(CHECK)}
+        sys.path.insert(0, str(CHECK.parent))
         exec(compile(adapted, str(out / 'check.py'), 'exec'), namespace)
         namespace['run'] = run
         namespace['capture_output'] = capture_output
@@ -290,6 +403,7 @@ def main():
         comparison = compare(out / 'rust.tsv', out / 'native.tsv', out / 'rust-vs-native.diff.tsv', joint=True)
         if not comparison['input_equal']:
             raise ValueError('same-host input invariant failed')
+        status['structure'] = validate_capture(out)
         if comparison['status'] != 'PASS':
             raise SystemExit('same-host exact bit comparison failed; see diagnostic artifacts')
         status['execution'] = 'PASS'
@@ -299,6 +413,7 @@ def main():
         raise
     finally:
         sys.argv = argv
+        sys.path[:] = import_path
         os.environ.clear()
         os.environ.update(env)
         for name in ['native', 'rust']:

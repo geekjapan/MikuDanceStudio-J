@@ -1,7 +1,6 @@
 # Joint solver host output probe
 
-This standalone diagnostic captures all 518 joint cases, including 20,580 SIMD
-row events, from native Bullet and pure Rust on the same host. It does not edit
+This standalone diagnostic captures all 518 joint cases and their SIMD row events, from native Bullet and pure Rust on the same host. It does not edit
 production arithmetic, strict checks, native source, or frozen fixtures.
 
 Run from a checkout with Rust 1.95.0 and Clippy installed. All Rust commands run
@@ -24,10 +23,11 @@ adapter. It is not a full application build or an independently proven app
 oracle. Neither Windows output is presumed to match Linux or the ARM fixture.
 
 The probe executes an asserted temporary copy of the existing solver check. Its
-two frozen-fixture early exits become explicit `FAIL diagnostic` observations.
+factor frozen-fixture exit becomes an explicit `FAIL diagnostic` observation.
+The joint frozen comparison becomes an observation without changing its comparator.
 The native oracle, source list, trace parser, and Rust build machinery remain the
 existing ones. The copied Rust test reads the fresh same-host `native.tsv` at
-compile time and replaces its per-word equality loop with actual TSV emission.
+compile time for both supported architecture include paths and replaces its per-word equality loop with actual TSV emission.
 This uses the native oracle's serialized inputs even when C++ argument evaluation
 order differs between compilers. It preserves the length check, all property assertions,
 repeated-state handling, and links directly to unchanged production modules.
@@ -49,6 +49,22 @@ arithmetic alone. Separate frozen comparisons remain visible even
 when same-host Rust/native bits agree. The workflow fails on a same-host exact
 mismatch or an incomplete capture; frozen-only differences are diagnostic FAIL
 records and do not prevent collecting Rust output.
+
+Capture completeness follows the native schema rather than a global event total.
+Each TSV requires IDs `0..517`, 301 input words, valid eight-digit hexadecimal
+words, solver mode 4 or 260, three bodies, two joints with connections `(0,1)`
+and `(1,2)`, and a row count `R` in `0..12`. Its field count is
+`321 + 24R + 13E`, where `E = 10R` for SIMD and zero for scalar mode.
+`oracle.tsv` must equal the native prefix before the trace. Windows currently
+has 20,640 SIMD events and Linux has 20,580 because generated inputs differ.
+
+The probe independently parses the native resolve format, including its five
+unnamed vectors. It requires continuous event numbers and, for every SIMD case,
+iterations `0..9` with each row's `noncontact`, `postnc` pair followed by joints
+0 and 1. Every scalar and vector has a checked shape and hexadecimal words.
+Each 13-word postnc payload must match the native trace. Missing, duplicate,
+reordered, malformed, and extra records fail even when total counts balance.
+Same-host fingerprints and raw bytes must still match exactly.
 
 Failure finalization starts immediately after accepting the empty output
 directory, including adapter setup and compiler, Rust, and Git metadata checks.

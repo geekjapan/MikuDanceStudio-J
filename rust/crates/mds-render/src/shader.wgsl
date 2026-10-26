@@ -66,6 +66,8 @@ struct VsOut {
     @location(0) world: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
+    // Self-shadow off: the highlight, lit per vertex.
+    @location(3) specular: vec3<f32>,
 }
 
 fn shifted(clip: vec4<f32>) -> vec4<f32> {
@@ -79,7 +81,24 @@ fn vs_main(v: VsIn) -> VsOut {
     o.world = v.position;
     o.normal = v.normal;
     o.uv = v.uv;
+    o.specular = vertex_specular(v.position, v.normal);
     return o;
+}
+
+// The highlight of Direct3D 9's fixed-function lighting, per vertex: a local viewer, none where the
+// vertex faces away from the light, saturated. The skinned normal is used as it is, not
+// renormalized (it is shorter than 1 where BDEF2 blends two bone rotations). Fitted to golden2
+// `groundshadow-*.png` and `skin-*.png`: the renormalized normal leaves the curled chain up to 8
+// levels too bright, a per-pixel highlight up to 6 too dark there and 20 on the skin faces.
+fn vertex_specular(p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    let power = mat.specular.w;
+    let to_light = -normalize(scene.light_dir.xyz);
+    if power <= 0.0 || dot(n, to_light) <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let h = normalize(to_light + normalize(scene.eye.xyz - p));
+    let s = mat.specular.rgb * scene.light_color.rgb * pow(max(dot(n, h), 0.0), power);
+    return clamp(s, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 // The texture coordinate at the pixel center. A multisampled target shades a pixel once, at its
@@ -131,6 +150,12 @@ fn lit_fraction(world: vec3<f32>) -> f32 {
     return 1.0 - clamp(max(p.z - depth, 0.0) * k - 0.3, 0.0, 1.0);
 }
 
+// A varying at the pixel center, as `center_uv` takes the texture coordinate there.
+fn center_value(v: vec3<f32>) -> vec3<f32> {
+    let o = scene.ground_shadow_plane.yz;
+    return v - dpdx(v) * o.x - dpdy(v) * o.y;
+}
+
 // The scene point at the pixel center, as `center_uv` takes the texture coordinate there.
 fn center_world(world: vec3<f32>) -> vec3<f32> {
     let o = scene.ground_shadow_plane.yz;
@@ -166,7 +191,11 @@ fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
 
     var specular = vec3<f32>(0.0);
     let power = mat.specular.w;
-    if power > 0.0 {
+    // Self-shadow off draws the fixed-function highlight, lit per vertex; self-shadow on lights it
+    // per pixel.
+    if scene.light_dir.w == 1.0 {
+        specular = center_value(i.specular);
+    } else if power > 0.0 {
         let to_eye = normalize(scene.eye.xyz - i.world);
         let h = normalize(to_light + to_eye);
         specular = mat.specular.rgb * lc * pow(max(dot(n, h), 0.0), power);
@@ -306,12 +335,23 @@ fn vs_shadow(v: VsIn) -> @builtin(position) vec4<f32> {
 
 // Ground shadow: the model flattened onto y = 0 along the light, then lifted to the plane height,
 // in one color (the plane matrix of the `ground` probe line).
-@vertex
-fn vs_ground_shadow(v: VsIn) -> @builtin(position) vec4<f32> {
+fn ground_shadow_clip(position: vec3<f32>) -> vec4<f32> {
     let d = normalize(scene.light_dir.xyz);
-    var p = v.position - d * (v.position.y / d.y);
+    var p = position - d * (position.y / d.y);
     p.y = scene.ground_shadow_plane.x;
     return shifted(scene.view_proj * vec4<f32>(p, 1.0));
+}
+
+@vertex
+fn vs_ground_shadow(v: VsIn) -> @builtin(position) vec4<f32> {
+    return ground_shadow_clip(v.position);
+}
+
+// The edge hull casts a ground shadow too (golden2 `groundshadow-*.png`: the shadow's edges reach
+// as far as the hull's shadow does, one multisample past the body's).
+@vertex
+fn vs_ground_shadow_edge(v: EdgeIn) -> @builtin(position) vec4<f32> {
+    return ground_shadow_clip(v.position);
 }
 
 @fragment

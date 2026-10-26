@@ -21,13 +21,15 @@
 //! Shading follows MMD's standard pipeline as the golden images show it: the color is
 //! `saturate(ambient + diffuse * light)` times the texture, the sphere map (multiply or add) and the
 //! toon, plus a Blinn-Phong highlight `specular * light * (N.H)^power` that uses the eye position
-//! (a local viewer, also under the orthographic projection). With self-shadow off the toon is the
+//! (a local viewer, also under the orthographic projection). With self-shadow off the highlight is
+//! lit per vertex, as Direct3D 9's fixed-function pipeline lights it, with the skinned normal not
+//! renormalized; with self-shadow on it is lit per pixel. With self-shadow off the toon is the
 //! toon texture looked up by the angle to the light, with the interpolated normal not
 //! renormalized; with self-shadow on it is a blend toward the toon's shadow color by the angle to
 //! the light (see [`SelfShadow::shades`]). A back face is lit with its normal as it is, not
 //! flipped. Materials with the edge flag get an inverted-hull edge.
-//! Diffuse alpha blends. The ground shadow is the model flattened along the light onto the ground,
-//! blended once per pixel.
+//! Diffuse alpha blends. The ground shadow is the model and its edge hull flattened along the light
+//! onto the ground, blended once per pixel.
 //!
 //! The vertex buffers and material values of every frame are `mds-skin`'s: BDEF, SDEF and QDEF
 //! skinning, vertex, UV and material morphs, and the edge hull and color the C++ computes. The edge

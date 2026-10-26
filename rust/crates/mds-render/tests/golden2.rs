@@ -327,13 +327,13 @@ fn gate(scene: &str, frame: u32) {
 }
 
 #[test]
-#[ignore = "within 4 is 0.9972: the curled model's shading and its shadow's edge pixels"]
+#[ignore = "within 4 is 0.99977 (51 px over, 21 allowed): single pixels on slanted ground-shadow edges"]
 fn groundshadow_0() {
     gate("groundshadow", 0);
 }
 
 #[test]
-#[ignore = "within 4 is 0.9945: the curled model's shading and its shadow's edge pixels"]
+#[ignore = "within 4 is 0.99977 (50 px over, 21 allowed): single pixels on slanted ground-shadow edges"]
 fn groundshadow_30() {
     gate("groundshadow", 30);
 }
@@ -381,13 +381,13 @@ fn accessory_30() {
 }
 
 #[test]
-#[ignore = "within 4 is 0.962: the specular of the large faces (see the slice report)"]
+#[ignore = "within 4 is 0.99927, max 107: a 23 px sliver and the translucent faces' edges"]
 fn skin_0() {
     gate("skin", 0);
 }
 
 #[test]
-#[ignore = "within 4 is 0.996: the translucent faces and their edges"]
+#[ignore = "within 4 is 0.99889: the translucent faces and their edges"]
 fn skin_30() {
     gate("skin", 30);
 }

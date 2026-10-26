@@ -81,6 +81,89 @@ def validate_aabb(data):
     return inputs
 
 
+
+def validate_native(data, inputs):
+    rows = data.decode('ascii').splitlines()
+    operations = inputs.decode('ascii').splitlines()
+    if len(rows) != len(operations):
+        raise ValueError('incomplete native operation capture')
+    # oracle.cpp emits state|recursive topology|preorder address ranks|events.
+    node = re.compile(r'(B|[0-9]+)((?:,[0-9]+){6})')
+    for row, operation in zip(rows, operations):
+        fields = row.split('|')
+        if len(fields) != 4:
+            raise ValueError('malformed native field count')
+        state, topology, ranks, events = fields
+        if not re.fullmatch(r'[0-9]+,-?[0-9]+,[0-9]+,[01]', state):
+            raise ValueError('malformed native state')
+        leaves, lookahead, opath, free = map(int, state.split(','))
+        if not (leaves <= 128 and -(2**31) <= lookahead < 2**31 and opath < 2**32):
+            raise ValueError('native state outside schema')
+        keys, nodes = [], []
+
+        def tree(pos):
+            match = node.match(topology, pos)
+            if not match:
+                raise ValueError('malformed native topology')
+            kind, words = match.groups()
+            if any(int(word) > 0xffffffff for word in words[1:].split(',')):
+                raise ValueError('native volume outside u32')
+            nodes.append(kind)
+            if len(nodes) > 255:
+                raise ValueError('native topology exceeds oracle capacity')
+            pos = match.end()
+            if kind != 'B':
+                key = int(kind)
+                if key >= 128 or key in keys:
+                    raise ValueError('malformed native leaf ID')
+                keys.append(key)
+                return pos
+            for separator in ('(', ';'):
+                if topology[pos:pos + 1] != separator:
+                    raise ValueError('malformed native branch')
+                pos = tree(pos + 1)
+            if topology[pos:pos + 1] != ')':
+                raise ValueError('malformed native branch end')
+            return pos + 1
+
+        if topology != '_' and tree(0) != len(topology):
+            raise ValueError('trailing native topology')
+        if not re.fullmatch(r'(?:[0-9]+,)*', ranks) or len(ranks.split(',')[:-1]) != len(nodes) + free:
+            raise ValueError('malformed native address ranks')
+        op = operation.split()[0]
+        if op == 'p':
+            if not re.fullmatch(r'[01](?:,[0-9]+){6}', events) or any(int(word) > 0xffffffff for word in events.split(',')[1:]):
+                raise ValueError('malformed native predicted-update event')
+        elif op in ('v', 'q', 's', 'x'):
+            pattern = r'(?:[0-9]+,)*' if op in ('v', 'q') else r'(?:[0-9]+:[0-9]+,)*'
+            if not re.fullmatch(pattern, events) or any(int(key) >= 128 for key in re.findall(r'[0-9]+', events)):
+                raise ValueError('malformed native query event')
+        elif events:
+            raise ValueError('unexpected native event')
+
+
+def comparison_result(tests):
+    text = tests.stdout.decode('utf-8', errors='strict')
+    summaries = re.findall(r'^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored; \d+ measured; (\d+) filtered out;', text, re.M)
+    outcomes = re.findall(r'^test ([\w:]+) \.\.\. (ok|FAILED)$', text, re.M)
+    required = {'dbvt::tests::native_controlled_address_parity', 'dbvt::tests::ordinary_native_and_production_allocator_query_sets'}
+    if len(summaries) != 1 or not required <= {name for name, _ in outcomes}:
+        raise ValueError('Rust comparison did not complete its test run')
+    status, passed, failed, ignored, filtered = summaries[0]
+    failed_names = [name for name, outcome in outcomes if outcome == 'FAILED']
+    if int(ignored) or int(filtered) or int(passed) + int(failed) != len(outcomes) or int(failed) != len(failed_names):
+        raise ValueError('incomplete Rust comparison results')
+    if tests.returncode == 0 and status == 'ok' and not failed_names:
+        return True
+    panics = re.findall(r"^thread '[^']+'(?: \([0-9]+\))? panicked at [^\n]+:\n([^\n]+)", text, re.M)
+    marker = 'assertion `left == right` failed: DBVT_COMPATIBILITY_MISMATCH '
+    if (tests.returncode == 101 and status == 'FAILED' and failed_names
+            and set(failed_names) <= required and len(panics) == len(failed_names)
+            and all(line.startswith(marker) for line in panics)):
+        return False
+    raise ValueError('Rust failure is not an identified compatibility comparison')
+
+
 def run(argv, out, name, *, check=True, **kwargs):
     argv = list(map(str, argv))
     (out / (name + '-command.json')).write_text(json.dumps(argv, indent=2) + '\n')
@@ -134,8 +217,7 @@ def main():
         (out / 'select-inputs.tsv').write_bytes(directed)
         native_select = run([exe, 'oracle'], out, 'native-select', input=directed).stdout
         (out / 'original-select-stdout.log').write_bytes(native_select)
-        if len(native_select.splitlines()) != 4:
-            raise ValueError('incomplete directed Select capture')
+        validate_native(native_select, directed)
         rust_select = run([exe, 'select'], out, 'rust-select').stdout
         expected = b'2,3,1,' if inline[0]['Select'] == 'generic' else b'3,2,1,'
         if native_select.splitlines()[-1].split(b'|')[-1] != expected:
@@ -152,16 +234,14 @@ def main():
         (out / 'inputs.tsv').write_bytes(inputs)
         for order in range(4):
             native = run([exe, 'oracle', str(order)], out, f'native-{order}', input=inputs).stdout
-            if len(native.splitlines()) != 2326:
-                raise ValueError('incomplete native operation capture')
+            validate_native(native, inputs)
             (out / f'native-{order}.tsv').write_bytes(native)
         tests = run(['rustup', 'run', '1.95.0', 'cargo', 'test', '--locked', '--release', '--manifest-path', OLD / 'Cargo.toml'], out, 'rust-tests', check=False, env=dict(os.environ, DBVT_FIXTURES=str(out)))
-        if not re.search(rb'test result: (ok|FAILED)\.', tests.stdout):
-            raise ValueError('Rust comparison did not complete its test run')
+        corpus_matches = comparison_result(tests)
         report['observation'] = 'complete'
         report['comparisons'] = dict(select=rust_select.strip() == expected,
                                      aabb=native_aabb.splitlines() == rust_aabb.splitlines(),
-                                     corpus=tests.returncode == 0)
+                                     corpus=corpus_matches)
         report['compatibility'] = 'PASS' if all(report['comparisons'].values()) else 'FAIL'
         report['classification'] = 'compatible' if report['compatibility'] == 'PASS' else 'compatibility-mismatch'
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:

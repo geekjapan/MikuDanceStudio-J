@@ -229,44 +229,135 @@ pub(crate) fn accessory(a: &mut pmm::Accessory, frame: u32) {
     push(s, &prev, Some(po + t * (ro - po)));
 }
 
-/// `RebuildModelModePanel` (`src/window/ui_model_reload.cpp`, VA
-/// 0x0044D610) with its `PostModelReload` (VA 0x0041A650): camera mode off,
-/// the camera-mode states refreshed when the camera follows, the view
-/// re-anchored on the camera position, and without a following camera the
-/// light direction reset. Only a camera without a parent and reference mode
-/// 0 are ported; the caller checks [`model_mode_supported`] first.
-pub(crate) fn rebuild_model_mode(p: &mut Pmm, shadow_mode: &mut u8) {
-    p.settings.options[0] = 0;
-    if p.appearance.follow_camera != 0 {
-        p.camera_state[3] = 0.0;
-        p.camera_state[4] = 0.0;
+impl crate::Document {
+    fn refresh_global_tracks(&mut self) {
+        let p = &mut self.pmm;
         camera(p);
         light(p);
-        self_shadow(p, shadow_mode);
+        self_shadow(p, &mut self.edit.self_shadow_mode);
         gravity(p);
         let frame = p.timeline.current_frame as u32;
         for a in &mut p.accessories {
             accessory(a, frame);
         }
     }
-    use mds_math::Mat4;
-    let s = &p.camera_state;
-    let r = Mat4::multiply(&Mat4::rotation_y(s[7]), &Mat4::rotation_x(s[6]));
-    let r = Mat4::multiply(&r, &Mat4::rotation_z(s[8]));
-    let t = Mat4::multiply(&Mat4::translation(-s[0], -s[1], -s[2]), &r);
-    // The reference point is the origin in mode 0.
-    let o = Mat4::multiply(&Mat4::translation(0.0, 0.0, 0.0), &r);
-    let s = &mut p.camera_state;
-    s[3] -= t.0[12] - o.0[12];
-    s[4] -= t.0[13] - o.0[13];
-    s[5] -= t.0[14] - o.0[14];
-    if p.appearance.follow_camera == 0 {
-        p.light_state[3..].copy_from_slice(&[-0.5, -1.0, 0.5]);
-    }
-}
 
-/// Whether [`rebuild_model_mode`] covers the camera: no parent model and
-/// reference mode 0.
-pub(crate) fn model_mode_supported(p: &Pmm) -> bool {
-    p.appearance.camera_parent_model < 0 && p.timeline.camera_reference_mode == 0
+    /// `PostModelReload` (`src/window/ui_model_reload.cpp`, VA 0x0041A650).
+    fn post_model_reload(&mut self) {
+        use mds_math::Mat4;
+        let poses = crate::panel::posed_scene(self);
+        let pose = |slot: i32| {
+            let i = self
+                .pmm
+                .models
+                .iter()
+                .position(|m| i32::from(m.slot) == slot)?;
+            poses[i].as_ref()
+        };
+        let point = |b: &mds_pose::model::Bone| {
+            let (m, p) = (&b.mat_init.0, b.position);
+            std::array::from_fn::<_, 3, _>(|c| {
+                m[c] * p[0] + m[4 + c] * p[1] + m[8 + c] * p[2] + m[12 + c]
+            })
+        };
+        let s = &self.pmm.camera_state;
+        let mut r = Mat4::multiply(&Mat4::rotation_y(s[7]), &Mat4::rotation_x(s[6]));
+        r = Mat4::multiply(&r, &Mat4::rotation_z(s[8]));
+        let parent = pose(self.pmm.appearance.camera_parent_model)
+            .and_then(|p| p.bones.get(self.pmm.appearance.camera_parent_bone as usize));
+        let mut basis = Mat4::IDENTITY;
+        let target = if let Some(b) = parent {
+            for row in 0..3 {
+                for col in 0..3 {
+                    basis.0[row * 4 + col] = b.mat_init.0[col * 4 + row];
+                }
+            }
+            r = Mat4::multiply(&basis, &r);
+            point(b)
+        } else {
+            [-s[0], -s[1], -s[2]]
+        };
+        let selected = self.active().map(|i| &self.pmm.models[i]);
+        let reference = selected
+            .and_then(|m| {
+                let p = pose(i32::from(m.slot))?;
+                match self.pmm.timeline.camera_reference_mode {
+                    1 => {
+                        let b = p.bones.get(p.center_bone)?;
+                        Some([b.mat_init.0[12], b.mat_init.0[13], b.mat_init.0[14]])
+                    }
+                    2 => {
+                        let selected = m.selection.selected_bone;
+                        if parent.is_none() && selected < 0 {
+                            return None;
+                        }
+                        Some(point(p.bones.get(selected.max(0) as usize)?))
+                    }
+                    _ => None,
+                }
+            })
+            .unwrap_or([0.0; 3]);
+        let reference = if parent.is_some() {
+            reference
+        } else {
+            reference.map(|v| -v)
+        };
+        let t = Mat4::multiply(&Mat4::translation(target[0], target[1], target[2]), &r);
+        let o = Mat4::multiply(
+            &Mat4::translation(reference[0], reference[1], reference[2]),
+            &r,
+        );
+        let attached = parent.is_some();
+        let s = &mut self.pmm.camera_state;
+        for c in 0..3 {
+            if attached {
+                s[3 + c] = t.0[12 + c] - o.0[12 + c] + s[c];
+            } else {
+                s[3 + c] -= t.0[12 + c] - o.0[12 + c];
+            }
+        }
+        if attached {
+            self.pmm.appearance.camera_attachment_basis = basis.0;
+        }
+    }
+
+    /// `RebuildModelModePanel` (VA 0x0044D610).
+    pub(crate) fn rebuild_model_mode(&mut self) {
+        self.pmm.settings.options[0] = 0;
+        if self.pmm.appearance.follow_camera != 0 {
+            self.pmm.camera_state[3..5].fill(0.0);
+            self.refresh_global_tracks();
+        }
+        self.pmm.appearance.suppress_camera_transform = 0;
+        self.post_model_reload();
+        if self.pmm.appearance.follow_camera == 0 {
+            self.pmm.light_state[3..].copy_from_slice(&[-0.5, -1.0, 0.5]);
+        }
+    }
+
+    /// The parent-follow branch of `ApplyModelComboSelection`.
+    pub(crate) fn refresh_model_selection(&mut self, old: u8) {
+        let a = &self.pmm.appearance;
+        if a.camera_parent_model >= 0
+            && a.follow_camera != 0
+            && (a.camera_parent_model == i32::from(old)
+                || a.camera_parent_model == i32::from(self.pmm.selected_model_slot))
+        {
+            self.pmm.camera_state[3..5].fill(0.0);
+            self.pmm.appearance.suppress_camera_transform = 0;
+            camera(&mut self.pmm);
+            self.post_model_reload();
+        }
+    }
+
+    /// `RefreshFrameContext` (`src/window/ui_frame_step.cpp`).
+    pub(crate) fn refresh_frame_context(&mut self) {
+        if self.camera_mode() {
+            self.refresh_global_tracks();
+        } else if self.pmm.appearance.follow_camera != 0 {
+            self.pmm.camera_state[3..5].fill(0.0);
+            self.refresh_global_tracks();
+            self.post_model_reload();
+        }
+    }
 }

@@ -230,7 +230,8 @@ fn the_model_tool_rows_turn_and_move_on_local_axes() {
 #[test]
 fn the_camera_tool_rows_move_and_turn_the_camera() {
     let mut r = Rig::new(startup());
-    r.e.camera.rotation = [0.0, std::f32::consts::FRAC_PI_2, 0.0];
+    r.e.edit_camera(|c| c.rotation = [0.0, std::f32::consts::FRAC_PI_2, 0.0])
+        .unwrap();
     let start = r.e.camera.target;
     r.left_drag([690.0, 575.0], &[[690.0, 585.0]], false);
     let t = r.e.camera.target;
@@ -558,4 +559,121 @@ fn without_the_dialog_the_rows_drag_the_bones() {
     let pose = r.pose(2);
     r.left_drag([690.0, 535.0], &[[690.0, 525.0]], false);
     assert_ne!(r.pose(2), pose);
+}
+
+#[test]
+fn orbit_with_a_rotated_parent_edits_raw_angles_and_draws_the_composed_view() {
+    use mds_math::Mat4;
+    let mut r = Rig::new(chain());
+    r.apply(Command::SetPhysicsMode(0));
+    r.apply(Command::SetBonePose {
+        bone: 0,
+        translation: [3.0, -2.0, 5.0],
+        rotation: [0.0, 0.0, 0.6, 0.8],
+    });
+    r.e.load_model(&fixtures().join("chain8.pmx")).unwrap();
+    r.apply(Command::SetFollowCamera(true));
+    r.apply(Command::SetCameraParentModel(Some(0)));
+    r.apply(Command::SetCameraParentBone(2));
+    r.apply(Command::SetCameraReference(0));
+    assert_eq!(r.e.doc.pmm.appearance.camera_parent_model, 0);
+    r.apply(Command::SetCamera {
+        position: [11.0, 13.0, -37.0],
+        rotation: [0.2, -0.4, 0.3],
+        distance: -29.0,
+        fov: 45.0,
+        perspective: false,
+    });
+    r.pass(viewport::Input {
+        right: KeyState::Held,
+        pixels: [10, 0],
+        ..input(Some([300.0, 300.0]), KeyState::Idle, false)
+    });
+    close(
+        &r.e.doc.pmm.camera_state[6..],
+        &[0.2, -0.5, 0.3],
+        "raw orbit",
+    );
+    let parent = &r.e.physics.scene.models[0].bones[2];
+    let basis = Mat4(std::array::from_fn(|i| {
+        if i / 4 < 3 && i % 4 < 3 {
+            parent.mat_init.0[(i % 4) * 4 + i / 4]
+        } else {
+            Mat4::IDENTITY.0[i]
+        }
+    }));
+    let check = |r: &Rig| {
+        let s = &r.e.doc.pmm.camera_state;
+        let rot = Mat4::multiply(&Mat4::rotation_y(s[7]), &Mat4::rotation_x(s[6]));
+        let rot = Mat4::multiply(&basis, &Mat4::multiply(&rot, &Mat4::rotation_z(s[8])));
+        let point = [4.0, 7.0, -2.0];
+        let view: [f32; 3] = std::array::from_fn(|c| {
+            (0..3).map(|j| point[j] * rot.0[j * 4 + c]).sum::<f32>() - s[3 + c]
+        });
+        let clip =
+            r.e.with_frame([640, 480], &[[0.0; 2]], |f| f.view.clip(point))
+                .unwrap();
+        let f = 1.0 / (45.0_f32.to_radians() / 2.0).tan();
+        close(
+            &[clip[0], clip[1], clip[3]],
+            &[view[0] * f / (640.0 / 480.0), view[1] * f, view[2]],
+            "native rotated view",
+        );
+    };
+    check(&r);
+    r.pass(viewport::Input {
+        middle: KeyState::Held,
+        pixels: [10, -4],
+        ..input(Some([300.0, 300.0]), KeyState::Idle, false)
+    });
+    check(&r);
+    r.pass(viewport::Input {
+        wheel: 120.0,
+        ..input(Some([300.0, 300.0]), KeyState::Idle, false)
+    });
+    check(&r);
+    r.run("ctl:402");
+    check(&r);
+}
+
+#[test]
+fn a_parented_camera_wheel_edits_raw_z_and_the_displayed_distance() {
+    let mut r = Rig::new(chain());
+    r.apply(Command::SetBonePose {
+        bone: 0,
+        translation: [3.0, -2.0, 5.0],
+        rotation: [0.0, 0.0, 0.6, 0.8],
+    });
+    r.apply(Command::SelectCameraMode);
+    r.apply(Command::SetCameraParentModel(Some(0)));
+    r.apply(Command::SetCameraParentBone(2));
+    r.apply(Command::SetCamera {
+        position: [11.0, 13.0, -37.0],
+        rotation: [0.2, -0.4, 0.3],
+        distance: -29.0,
+        fov: 45.0,
+        perspective: false,
+    });
+    let clip = |r: &Rig| {
+        r.e.with_frame([640, 480], &[[0.0; 2]], |f| f.view.clip([4.0, 7.0, -2.0]))
+            .unwrap()
+    };
+    let before = clip(&r);
+    let angles = r.e.camera.rotation;
+    r.pass(viewport::Input {
+        wheel: 120.0,
+        ..input(Some([300.0, 300.0]), KeyState::Idle, false)
+    });
+    assert_eq!(r.e.doc.pmm.camera_state[2], -31.0);
+    let after = clip(&r);
+    close(
+        &[after[0], after[1], after[3]],
+        &[before[0], before[1], before[3] - 6.0],
+        "parent camera wheel",
+    );
+    close(
+        &r.e.camera.rotation,
+        &angles,
+        "wheel preserves composed rotation",
+    );
 }

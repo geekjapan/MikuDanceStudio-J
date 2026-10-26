@@ -31,15 +31,24 @@
 //! While playing, the C++ greys out every register path (`PlaybackActive() == 0` gates of
 //! `src/app/key_ladder.cpp` and `src/app/pump_edit_keys.cpp`, `DisablePlaybackMenus`), so
 //! [`Editor::apply`] refuses the register commands then, and no edit seeks the playing world.
+//!
+//! A recording ([`record`]) is a playback too: it plays the frame steps of the AVI frame rate
+//! instead of the wall clock, and writes each frame before the step. [`Editor::playing`] is
+//! true while it runs. The loaded WAV ([`Editor::wave`]) plays along with playback and frame
+//! moves ([`audio`]).
 
-use crate::file;
-use crate::playback::{Options, Pass, Playback};
+use crate::playback::{self, Options, Pass, Playback};
+use crate::record::{self, Recording};
 use crate::scene::{self, read_model, Assets, Shot};
+use crate::ui::dialog::AviSettings;
+use crate::{audio, file};
 use mds_doc::{Command, Document};
+use mds_media::wav::Wave;
 use mds_physics::PhysicsScene;
 use mds_render::{Camera, Frame, Stage};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub struct Editor {
     pub doc: Document,
@@ -60,6 +69,9 @@ pub struct Editor {
     /// so it is not saved.
     pub options: Options,
     pub playback: Option<Playback>,
+    pub recording: Option<Recording>,
+    /// The document's WAV (`LoadWaveFile`), when it loads as PCM.
+    pub wave: Option<Arc<Wave>>,
     last_pump_ms: Option<u64>,
     /// An edit while playing left the live models' keys behind the document's.
     keys_stale: bool,
@@ -79,6 +91,8 @@ impl Editor {
         let current = doc.pmm.timeline.current_frame.max(0) as u32;
         Ok(Editor {
             assets: Assets::load(&doc, &dir)?,
+            wave: wave_of(&doc, &dir),
+            recording: None,
             camera: scene::track_camera(&doc, current)?,
             options: Options::of(&doc.pmm.timeline),
             doc,
@@ -126,13 +140,17 @@ impl Editor {
         self.doc.pmm.timeline.current_frame.max(0) as u32
     }
 
-    /// The frame on screen: the playback cursor's while playing.
+    /// The frame on screen: the playback or recording cursor's while playing.
     pub fn shown_frame(&self) -> u32 {
+        if let Some(r) = &self.recording {
+            return cursor_frame(r.cursor);
+        }
         self.playback.map_or(self.current_frame(), |p| p.frame())
     }
 
+    /// Playing or recording.
     pub fn playing(&self) -> bool {
-        self.playback.is_some()
+        self.playback.is_some() || self.recording.is_some()
     }
 
     fn follow_track(&mut self, frame: u32) -> Result<(), String> {
@@ -141,9 +159,9 @@ impl Editor {
     }
 
     fn stopped(&self) -> Result<(), String> {
-        match self.playback {
-            Some(_) => Err("not while playing".into()),
-            None => Ok(()),
+        match self.playing() {
+            true => Err("not while playing".into()),
+            false => Ok(()),
         }
     }
 
@@ -168,21 +186,40 @@ impl Editor {
                 | SelectUnregisteredBones
                 | CopyBonePose
         );
-        // Of the rest, those whose C++ handler sets no `SceneModified`: the frame strip click,
-        // the pose load (`CmdLoadPose`, `src/window/command_impl.cpp`), the follow-camera switch
-        // (menu 247) and the morph reset (menu 230).
-        let dirty = edit
-            && !matches!(
+        // `marks_modified`, and the commands the UI tests expect to mark the scene where it
+        // says no: the camera of menus 300 and 302, whose C++ handlers do set `SceneModified`
+        // (`src/window/command_view_menu.cpp:1771`, `:1870`), and the select all of menu 217
+        // (`SelectFrameGroup`, `src/window/frame_line_edit.cpp:536`), the bone pose reset and
+        // pastes 495, 497 and 498 (`src/window/bone_pose_edit.cpp:25`,
+        // `src/window/bone_pose_clipboard.cpp:89`, `:175`) and the edge color 286
+        // (`command_view_menu.cpp:1464`), whose C++ handlers do not.
+        let dirty = cmd.marks_modified()
+            || matches!(
                 cmd,
-                ClickFrame(_) | LoadPose(_) | SetFollowCamera(_) | ResetMorphs
+                SetCamera { .. }
+                    | SelectAll(_)
+                    | ResetBonePose
+                    | PasteBonePose { .. }
+                    | SetOutlineColor(_)
             );
         let new_scene = cmd == NewScene;
         let follow = matches!(cmd, ClickFrame(_));
         if let LoadModel { path, data } = &cmd {
             self.loaded.insert(path.clone(), data.clone());
         }
+        let wave = match &cmd {
+            LoadWave { data, .. } => Some(Wave::from_bytes(data.clone())),
+            _ => None,
+        };
         let (files, camera) = (Files::of(&self.doc), scene::state_camera(&self.doc));
         self.doc.apply(cmd).map_err(|e| e.to_string())?;
+        if let Some(w) = wave {
+            audio::stop();
+            self.wave = None;
+            if self.doc.pmm.wave.enabled != 0 {
+                self.wave = Some(Arc::new(w.map_err(|e| format!("WAV: {e:?}"))?));
+            }
+        }
         if new_scene {
             self.rebuild()?;
             self.modified = false;
@@ -219,6 +256,8 @@ impl Editor {
     /// The world again from the document, after a new scene.
     fn rebuild(&mut self) -> Result<(), String> {
         self.playback = None;
+        audio::stop();
+        self.wave = wave_of(&self.doc, &self.dir);
         self.models_changed()?;
         self.assets = Assets::load(&self.doc, &self.dir)?;
         self.options = Options::of(&self.doc.pmm.timeline);
@@ -274,6 +313,7 @@ impl Editor {
         self.stopped()?;
         self.apply(Command::SetFrame(frame))?;
         self.physics.seek(frame);
+        audio::frame_moved(self.wave.as_ref(), frame);
         self.follow_track(frame)
     }
 
@@ -288,11 +328,15 @@ impl Editor {
         };
         self.apply(Command::SetFrame(frame))?;
         self.physics.step_frame(frame, forward);
+        audio::frame_moved(self.wave.as_ref(), frame);
         self.follow_track(frame)
     }
 
     /// The play button 408 (`ApplyPlaybackRangeEdits`, `src/window/command_frame_edit.cpp:622`).
     pub fn toggle_play(&mut self, now_ms: u64) -> Result<(), String> {
+        if self.recording.is_some() {
+            return Err("not while recording".into());
+        }
         if let Some(p) = self.playback.take() {
             return self.stop(&p);
         }
@@ -302,14 +346,20 @@ impl Editor {
         let frame_changed = self.options.from_current || self.options.start_frame == current;
         self.physics.start_playback(p.start, frame_changed);
         self.playback = Some(p);
+        audio::play_from(self.wave.as_ref(), p.start);
         self.follow_track(p.frame())
     }
 
     /// `StopPlayback`: the current frame after the stop, every model at it, and a settle.
     fn stop(&mut self, p: &Playback) -> Result<(), String> {
-        let frame = p
-            .stop_frame(&self.options, self.doc.pmm.timeline.current_frame)
-            .max(0) as u32;
+        self.stop_at(p.cursor)
+    }
+
+    /// [`Editor::stop`] with the cursor at `cursor` seconds; the sound stops too.
+    fn stop_at(&mut self, cursor: f32) -> Result<(), String> {
+        audio::stop();
+        let current = self.doc.pmm.timeline.current_frame;
+        let frame = playback::stop_frame(&self.options, cursor, current).max(0) as u32;
         self.apply(Command::SetFrame(frame))?;
         if self.keys_stale {
             self.sync_keys()?;
@@ -329,6 +379,30 @@ impl Editor {
             .last_pump_ms
             .map_or(0.0, |t| now_ms.saturating_sub(t) as f32 * 0.001);
         self.last_pump_ms = Some(now_ms);
+        if let Some(mut r) = self.recording.take() {
+            if std::mem::take(&mut r.pending) {
+                // The pass of the menu command: a stopped `PhysicsFrame`, then section 10 arms
+                // the frame steps.
+                let start = r.settings.start_frame;
+                self.recording = Some(r);
+                self.physics.tick(dt)?;
+                let current = self.doc.pmm.timeline.current_frame;
+                self.physics
+                    .start_playback(playback::frame_to_seconds(start), start == current);
+                return Ok(());
+            }
+            return match self.record_pass(&mut r) {
+                Ok(true) => {
+                    self.recording = Some(r);
+                    Ok(())
+                }
+                Ok(false) => self.finish_recording(r),
+                Err(e) => {
+                    let _ = self.finish_recording(r);
+                    Err(e)
+                }
+            };
+        }
         let Some(mut p) = self.playback else {
             return self.physics.tick(dt);
         };
@@ -339,6 +413,7 @@ impl Editor {
             }
             Pass::Looped => {
                 self.playback = Some(p);
+                audio::play_from(self.wave.as_ref(), p.start);
                 self.physics.loop_restart(p.start, dt)?;
             }
             Pass::Stopped => {
@@ -348,6 +423,63 @@ impl Editor {
             }
         }
         self.follow_track(p.frame())
+    }
+
+    /// Starts a recording to `path` (`RecordStartTail`, see [`record`]): the models at the start
+    /// frame now; the next pump is the pass that arms the frame steps (section 10 of
+    /// `FrameDriver`), the one after writes the first frame. The current frame stays.
+    pub fn start_recording(&mut self, settings: &AviSettings, path: &Path) -> Result<(), String> {
+        self.stopped()?;
+        let r = Recording::new(settings, path, self.wave.as_ref())?;
+        if settings.start_frame != self.doc.pmm.timeline.current_frame {
+            self.physics.seek(settings.start_frame.max(0) as u32);
+        }
+        audio::stop();
+        self.recording = Some(r);
+        self.follow_track(self.shown_frame())
+    }
+
+    /// Esc while recording (`PumpEscStop`): `FinishAviRecord` now.
+    pub fn stop_recording(&mut self) -> Result<(), String> {
+        match self.recording.take() {
+            Some(r) => self.finish_recording(r),
+            None => Ok(()),
+        }
+    }
+
+    /// One pass of a recording: the frame at the cursor written, N counted, then the frame step
+    /// to the next target, or `false` past the end frame.
+    fn record_pass(&mut self, r: &mut Recording) -> Result<bool, String> {
+        let frame = cursor_frame(r.cursor);
+        self.follow_track(frame)?;
+        let shot = Shot {
+            physics: &self.physics,
+            frame,
+            camera: &self.camera,
+            size: r.size(),
+            samples: &mds_render::SAMPLES_8X,
+            picture_viewport: None,
+        };
+        let px = scene::with_stage(&self.doc, &self.assets, &shot, |f, s| {
+            mds_render::render_frame_with(r.gpu(), f, s)
+        })??;
+        r.write(&px)?;
+        r.n += 1;
+        let s = &r.settings;
+        if !record::records(r.n, s.start_frame, s.end_frame, s.fps) {
+            return Ok(false);
+        }
+        r.cursor = record::term(r.n, s.start_frame, s.fps) / 30.0;
+        self.physics.catch_up(r.cursor, 1.0 / s.fps)?;
+        Ok(true)
+    }
+
+    /// `FinishAviRecord`: the file closed, then `StopPlayback` at the cursor.
+    fn finish_recording(&mut self, r: Recording) -> Result<(), String> {
+        let cursor = r.cursor;
+        let closed = r.finish();
+        self.stop_at(cursor)?;
+        closed
     }
 
     /// Save: to [`Editor::path`]. `Ok(false)` when there is none (the caller asks for one, as
@@ -395,6 +527,21 @@ impl Editor {
         };
         scene::with_stage(&self.doc, &self.assets, &shot, draw)
     }
+}
+
+/// The whole frame a cursor at `cursor` seconds shows ([`Playback::frame`]).
+fn cursor_frame(cursor: f32) -> u32 {
+    mds_scene::playback_frame(cursor).map_or(0, |f| f as u32)
+}
+
+/// The document's WAV, read from its path, when it is enabled and loads.
+fn wave_of(doc: &Document, dir: &Path) -> Option<Arc<Wave>> {
+    let w = &doc.pmm.wave;
+    if w.enabled == 0 {
+        return None;
+    }
+    let bytes = std::fs::read(scene::resolve(dir, &w.path.text)).ok()?;
+    Wave::from_bytes(bytes).ok().map(Arc::new)
 }
 
 /// The files a document names: when they change, the derived meshes are loaded again.

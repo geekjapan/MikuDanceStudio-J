@@ -1,6 +1,7 @@
 //! The window shell on eframe: each pass runs every area's `pass`, the key chords, one
 //! [`Editor::pump`], then draws the areas where [`ui::AREAS`] places them. The labels are
-//! Japanese, so the window installs one CJK font of the system ([`CJK_FONTS`]) at start.
+//! Japanese, so the window installs one CJK font of the system ([`CJK_FONTS`]) at start, and it
+//! opens the sound output there (`mds_app::audio::open_device`).
 
 use eframe::egui;
 use mds_app::editor::Editor;
@@ -26,6 +27,11 @@ pub fn run(pmm: Option<PathBuf>) -> Result<(), String> {
         options,
         Box::new(move |cc| {
             install_cjk_font(&cc.egui_ctx);
+            // The passes run on this thread, which owns the sound (`mds_app::audio`).
+            #[cfg(feature = "audio")]
+            if let Err(e) = mds_app::audio::open_device() {
+                eprintln!("mds-app: no sound: {e}");
+            }
             let state = cc.wgpu_render_state.as_ref().ok_or("no wgpu renderer")?;
             let max = state.adapter.limits().max_texture_dimension_2d as i32;
             Ok(Box::new(App {

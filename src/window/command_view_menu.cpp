@@ -557,7 +557,7 @@ INT_PTR CALLBACK EdgeThicknessDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         app->EdgeThicknessEditProc() = reinterpret_cast<WNDPROC>(
             GetWindowLongPtrA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit), GWLP_WNDPROC));
         SetWindowLongPtrA(GetDlgItem(hDlg, panel::kEdgeThicknessEdit), GWLP_WNDPROC,
-                          (LONG)(LONG_PTR)EdgeThicknessEditSubclassProc);
+                          reinterpret_cast<LONG_PTR>(EdgeThicknessEditSubclassProc));
         const float thickness = GetEdgeThickness(app); // 0x41E950
         char buf[0x100];
         sprintf_s(buf, 0x100, "%3.2f", static_cast<double>(thickness));

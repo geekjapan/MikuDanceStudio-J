@@ -131,7 +131,7 @@ first, so a crash names its step.
 | `save pmm <name>` | menu 208 (save as) | `SaveSceneFile`. Also writes `<name>.emm`. |
 | `save vmd <name>` | menu 210 | Saves the selected keys of the selected model, or of camera, light, and self-shadow in camera mode. Without selected keys the handler shows a box, which fails the step. |
 | `save vpd <name>` | menu 203 | The selected bones' pose. Needs a selected bone. |
-| `save pmd <name>` | menu 263 | `SaveEnhancedModel`, the PMD writer. Only for a PMD model: on a PMX model it ends the process (0xC0000409). The saved path becomes the model's path, so later PMM saves record a path in `<out-dir>`. |
+| `save pmd <name>` | menu 263 | `SaveEnhancedModel`, the PMD writer. Only for a PMD model: on a PMX model it ends the process (0xC0000409). The saved path (`.\<name>`) becomes the model's path, so later PMM saves record that relative path. |
 | `select camera` | combo 436, item 0 | Camera, light, and accessory mode (`ApplyModelComboSelection`). |
 | `select model <name>` | combo 436 | The model's name as the combo shows it. |
 | `select bone <name>` | `SelectDisplayBone` | Japanese or English bone name of the selected model. A user picks a bone by clicking its timeline row, which needs layout-dependent mouse coordinates; `SelectDisplayBone` is where the Up and Down keys and display-list picks end. It selects that bone only. |

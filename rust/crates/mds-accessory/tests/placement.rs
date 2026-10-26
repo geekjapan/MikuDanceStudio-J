@@ -203,3 +203,23 @@ fn shadow_decisions() {
     acc.materials[0].diffuse[3] = 0.5;
     assert_eq!(drawn_alpha(&acc.materials[0], 0.5), 0.25);
 }
+
+#[test]
+fn vac_resolves_windows_mesh_names_without_changing_placement() {
+    let dir = std::env::temp_dir().join(format!("mds-vac-case-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("Sub")).unwrap();
+    std::fs::copy(fixture("cube.x"), dir.join("Sub/mesh.x")).unwrap();
+    let original = std::fs::read(fixture("placed.vac")).unwrap();
+    let text = String::from_utf8(original)
+        .unwrap()
+        .replace("cube.x", "Sub\\Mesh.X");
+    let path = dir.join("placed.vac");
+    std::fs::write(&path, text.as_bytes()).unwrap();
+    let acc = vac::load_vac(&path).unwrap();
+    assert_eq!(vac::parse(text.as_bytes()).mesh, "Sub\\Mesh.X");
+    assert_eq!(acc.vertices.len(), 24);
+    assert_eq!(acc.state.scale, 2.5);
+    assert_eq!(acc.state.position, [1.0, 2.0, 3.0]);
+    assert!(!acc.state.shadow_enabled);
+    std::fs::remove_dir_all(dir).unwrap();
+}

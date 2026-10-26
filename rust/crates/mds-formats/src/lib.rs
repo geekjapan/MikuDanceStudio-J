@@ -34,6 +34,7 @@
 
 mod io;
 pub mod key_pool;
+pub mod path;
 pub mod pmd;
 pub mod pmm;
 pub mod pmm_v1;

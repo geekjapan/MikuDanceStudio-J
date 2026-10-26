@@ -121,6 +121,12 @@ pub fn load_vac(path: &Path) -> Result<Accessory, Error> {
     let text = std::fs::read(path).map_err(|e| io(path, e))?;
     let vac = parse(&text);
     let mesh_path = path.with_file_name(&vac.mesh);
+    let mesh_path = if mesh_path.is_file() {
+        mesh_path
+    } else {
+        let native = path.with_file_name(vac.mesh.replace('\\', "/"));
+        mds_formats::path::resolve_path_ci(&native).unwrap_or(native)
+    };
     let mut acc = load_x(&std::fs::read(&mesh_path).map_err(|e| io(&mesh_path, e))?)?;
     acc.state.scale = vac.scale;
     acc.state.position = vac.position;

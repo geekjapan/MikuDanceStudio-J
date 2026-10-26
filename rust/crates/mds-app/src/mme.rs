@@ -129,9 +129,7 @@ pub fn effect_file(dir: &Path, stored: &str) -> PathBuf {
         true => PathBuf::from(native),
         false => dir.join(native),
     };
-    let root = path.ancestors().last().unwrap_or(Path::new("."));
-    let relative = path.strip_prefix(root).unwrap().to_string_lossy();
-    mds_fx::preprocess::resolve_ci(root, &relative).unwrap_or(path)
+    mds_formats::path::resolve_path_ci(&path).unwrap_or(path)
 }
 
 /// The `.emm` beside a PMM (`MmeBuildEmmPathForPmm`).
@@ -164,7 +162,13 @@ impl Mme {
         let dir = pmm.and_then(Path::parent).unwrap_or(Path::new("."));
         let mut mme = Mme::none(dir);
         mme.assign_beside(doc);
-        if let Some(path) = pmm.map(emm_path).filter(|p| p.is_file()) {
+        if let Some(path) = pmm.map(emm_path).and_then(|p| {
+            if p.is_file() {
+                Some(p)
+            } else {
+                mds_formats::path::resolve_path_ci(&p)
+            }
+        }) {
             if let Err(e) = mme.load_emm(doc, &path) {
                 mme.log.borrow_mut().push(e);
             }
@@ -486,6 +490,15 @@ fn beside(file: &Path) -> impl FnMut(&str) -> Option<Vec<u8>> + '_ {
     move |name| std::fs::read(effect_file(folder, name)).ok()
 }
 
+/// Shared toon files are application data, independently of the object's folder.
+fn shared_toon(name: &str) -> Option<Vec<u8>> {
+    std::fs::read(mds_formats::path::resolve_ci(
+        Path::new("."),
+        &format!("data/{name}"),
+    )?)
+    .ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,6 +552,30 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]
+    fn shared_toon_reads_actual_data_case_in_an_isolated_process() {
+        const CHILD: &str = "MDS_TEST_SHARED_TOON_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            assert_eq!(shared_toon("toon01.bmp"), Some(b"shared toon".to_vec()));
+            assert_eq!(shared_toon("missing.bmp"), None);
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("mds-shared-toon-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Data")).unwrap();
+        std::fs::write(dir.join("Data/Toon01.BMP"), b"shared toon").unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "mme::tests::shared_toon_reads_actual_data_case_in_an_isolated_process",
+            ])
+            .env(CHILD, "1")
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+        assert!(status.success());
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn effect_paths_prefer_exact_case_then_deterministic_fallback() {
@@ -551,9 +588,4 @@ mod tests {
         assert_eq!(effect_file(&dir, "EFFECT.FX"), dir.join("Effect.fx"));
         std::fs::remove_dir_all(dir).unwrap();
     }
-}
-
-/// Shared toon files are application data, independently of the object's folder.
-fn shared_toon(name: &str) -> Option<Vec<u8>> {
-    std::fs::read(Path::new("data").join(name)).ok()
 }

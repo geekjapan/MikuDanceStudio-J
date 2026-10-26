@@ -263,6 +263,36 @@ fn budget() {
     gate("budget", 1 + 20);
 }
 
+#[test]
+fn negstep() {
+    gate("negstep", 1 + 20);
+}
+
+#[test]
+fn seeksettle() {
+    gate("seeksettle", 1 + 6);
+}
+
+#[test]
+fn playsettle() {
+    gate("playsettle", 1 + 17);
+}
+
+#[test]
+fn mode3() {
+    gate("mode3", 1 + 17);
+}
+
+#[test]
+fn toggle() {
+    gate("toggle", 1 + 68);
+}
+
+#[test]
+fn reset() {
+    gate("reset", 1 + 6);
+}
+
 /// A fresh world spends its first 1/60 s on the first step after the load;
 /// the script runner's world spent it on the empty scene.
 #[test]

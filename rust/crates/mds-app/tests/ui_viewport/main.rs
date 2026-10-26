@@ -8,6 +8,7 @@
 
 mod math;
 mod mouse;
+mod replay;
 
 use mds_app::editor::Editor;
 use mds_app::navigation::KeyState;

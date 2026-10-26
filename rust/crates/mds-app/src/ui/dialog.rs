@@ -1492,14 +1492,6 @@ fn shadow_color(ctx: &mut Ctx) -> Result<(), String> {
     actions::run(ctx, "menu:248")
 }
 
-// ---- the document commands as the C++ handlers leave SceneModified --------------------------
-
-/// `Editor::apply`, which marks the scene as `Document::marks_modified` says. Kept for the
-/// background area's three calls; it goes once they call `Editor::apply`.
-pub fn apply_cpp(ctx: &mut Ctx, cmd: Command) -> Result<(), String> {
-    ctx.editor.apply(cmd)
-}
-
 /// `EnglishUI()`.
 fn en_ui(ctx: &Ctx) -> bool {
     ctx.egui.as_ref().is_some_and(help::english)

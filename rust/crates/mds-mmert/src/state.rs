@@ -135,9 +135,11 @@ fn compare(v: &StateValue) -> Option<wgpu::CompareFunction> {
 pub struct PassStates {
     pub z_enable: bool,
     pub z_write: bool,
-    pub z_func: wgpu::CompareFunction,
-    /// D3DCULL: 1 none, 2 clockwise, 3 counter-clockwise.
-    pub cull: u32,
+    /// `None` keeps the host's: `LESSEQUAL`, or `LESS` in the edge pass.
+    pub z_func: Option<wgpu::CompareFunction>,
+    /// D3DCULL: 1 none, 2 clockwise, 3 counter-clockwise. `None` keeps the host's: CCW, or CW
+    /// in the edge pass.
+    pub cull: Option<u32>,
     pub blend: Option<wgpu::BlendState>,
     pub write_mask: [wgpu::ColorWrites; 4],
 }
@@ -147,8 +149,8 @@ impl PassStates {
         let mut s = PassStates {
             z_enable: true,
             z_write: true,
-            z_func: wgpu::CompareFunction::LessEqual,
-            cull: 3,
+            z_func: None,
+            cull: None,
             blend: None,
             write_mask: [wgpu::ColorWrites::ALL; 4],
         };
@@ -165,14 +167,14 @@ impl PassStates {
             match st.name.to_ascii_lowercase().as_str() {
                 "zenable" => s.z_enable = number(v).is_none_or(|n| n != 0),
                 "zwriteenable" => s.z_write = number(v).is_none_or(|n| n != 0),
-                "zfunc" => s.z_func = compare(v).unwrap_or(s.z_func),
+                "zfunc" => s.z_func = compare(v).or(s.z_func),
                 "cullmode" => {
-                    s.cull = match ident(v).as_deref() {
+                    s.cull = Some(match ident(v).as_deref() {
                         Some("NONE") => 1,
                         Some("CW") => 2,
                         Some("CCW") => 3,
                         _ => number(v).unwrap_or(3),
-                    }
+                    })
                 }
                 "alphablendenable" => blend_on = number(v).is_none_or(|n| n != 0),
                 "separatealphablendenable" => separate = number(v).is_some_and(|n| n != 0),

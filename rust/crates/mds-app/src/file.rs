@@ -7,11 +7,6 @@ use crate::scene::read_model;
 use mds_doc::Document;
 use std::path::Path;
 
-/// The scene the C++ application starts with, as its `--mds-script` saves it
-/// (`tests/fixtures/rust/script/empty.txt`).
-const EMPTY_SCENE: &[u8] =
-    include_bytes!("../../../../tests/fixtures/rust/script/expected/empty/empty.pmm");
-
 /// A PMM and the model files it names; model paths resolve against `dir` as
 /// [`read_model`] does. Rejects a negative current frame, as `SceneSession::Load` does.
 pub fn load(data: &[u8], dir: &Path) -> Result<Document, String> {
@@ -26,10 +21,6 @@ pub fn read(path: &Path) -> Result<Document, String> {
     let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     load(&data, path.parent().unwrap_or(Path::new(".")))
         .map_err(|e| format!("{}: {e}", path.display()))
-}
-
-pub fn empty() -> Document {
-    load(EMPTY_SCENE, Path::new(".")).expect("the startup scene loads")
 }
 
 /// `SaveSceneFile` (`src/io/pmm_save.cpp`) without the `.emm` beside it.
@@ -65,6 +56,27 @@ impl Prompt {
             Prompt::Open | Prompt::Quit => None,
         }
     }
+
+    /// [`Prompt::text`] in the interface language: Japanese unless `english`
+    /// (`kCaptionNewJp`, `kMsgNewJp`, `kMsgOpenDirtyJp` of `command_impl.cpp`,
+    /// `kMsgQuitModifiedJp` of `wndproc.cpp`).
+    pub fn text_in(self, modified: bool, english: bool) -> Option<(&'static str, &'static str)> {
+        let en = self.text(modified)?;
+        if english {
+            return Some(en);
+        }
+        Some(match self {
+            Prompt::New => ("新規作成", "現在の状態は破棄されます\n\nよろしいですか？"),
+            Prompt::Open => (
+                "ファイルを開く",
+                "保存していない変更点があります\n\nこのままロードしてよろしいですか？",
+            ),
+            Prompt::Quit => (
+                "終了",
+                "保存していない変更点があります\n\n終了してよろしいですか？",
+            ),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -79,8 +91,9 @@ mod tests {
     }
 
     #[test]
-    fn the_startup_scene_has_no_models() {
-        let doc = empty();
-        assert!(doc.pmm.models.is_empty() && doc.pmm.accessories.is_empty());
+    fn prompts_speak_japanese_by_default() {
+        assert_eq!(Prompt::New.text_in(false, false).unwrap().0, "新規作成");
+        assert_eq!(Prompt::New.text_in(false, true), Prompt::New.text(false));
+        assert!(Prompt::Quit.text_in(false, false).is_none());
     }
 }

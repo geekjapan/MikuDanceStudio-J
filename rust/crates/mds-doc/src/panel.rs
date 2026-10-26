@@ -55,9 +55,9 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
-/// The world position of a model's bone in the saved pose, as the frame loop
-/// leaves `BoneRecord::matInit` without physics.
-fn bone_world(file: &crate::ModelFile, m: &pmm::Model, bone: usize, mode: u8) -> Option<[f64; 3]> {
+/// A model in its saved pose, with the bone matrices the frame loop leaves
+/// in `BoneRecord::matInit` without physics.
+pub(crate) fn posed(file: &crate::ModelFile, m: &pmm::Model, mode: u8) -> Option<PoseModel> {
     let mut pose = match file {
         crate::ModelFile::Pmx(p) => PoseModel::from_pmx(m.slot, p).ok()?,
         crate::ModelFile::Pmd(p) => PoseModel::from_pmd(m.slot, p).ok()?,
@@ -66,6 +66,12 @@ fn bone_world(file: &crate::ModelFile, m: &pmm::Model, bone: usize, mode: u8) ->
     pose.apply_pmm(m).ok()?;
     mds_pose::pose::apply_morphs(&mut pose);
     mds_pose::pose::set_physics_mode(&mut pose, 0, &mds_pose::pose::Others::NONE, i32::from(mode));
+    Some(pose)
+}
+
+/// The world position of a model's bone in the saved pose ([`posed`]).
+fn bone_world(file: &crate::ModelFile, m: &pmm::Model, bone: usize, mode: u8) -> Option<[f64; 3]> {
+    let pose = posed(file, m, mode)?;
     let b = pose.bones.get(bone)?;
     let (p, t) = (b.position.map(f64::from), b.mat_init.0.map(f64::from));
     Some(std::array::from_fn(|c| {

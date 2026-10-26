@@ -25,7 +25,8 @@
 //!   `runs` section does, on one device, and returns those lines.
 //! - [`emm`]: EMM and EMD files (`emm_manager.cpp`): load, apply to the scene's objects, save.
 //! - [`control`]: `CONTROLOBJECT` values from the [`control::Controls`] the application fills.
-//! - [`anime`]: animated GIF and APNG textures (`anime_texture.cpp`), ticked every frame.
+//! - [`anime`]: animated GIF and APNG textures (`anime_texture.cpp`), ticked by
+//!   [`Effect::tick_animes`] at the end of each frame.
 //! - [`scene`]: what each object draws in an offscreen turn, from the `DefaultEffect` rows;
 //!   [`Effect::begin_offscreen`] binds and clears the turn's target, and [`Effect::draw`]
 //!   draws one object's effect into it.
@@ -83,7 +84,7 @@ impl Effect {
     /// Runs every non-empty technique in scan order on one device, with `SasCreateRunState`,
     /// the step walk to `ScriptExternal`, and the resumed walk, then submits the frame.
     pub fn frame(&mut self, gpu: &Gpu, target: &Target, input: &DrawInput) -> FrameReport {
-        self.run_frame(gpu, target, input, true, None)
+        self.run_frame(gpu, target, input, true, None, None)
     }
 
     /// [`Effect::frame`] that calls `scene` where a technique suspends at `ScriptExternal`, with
@@ -95,13 +96,37 @@ impl Effect {
         input: &DrawInput,
         scene: &mut SceneDraw,
     ) -> FrameReport {
-        self.run_frame(gpu, target, input, true, Some(scene))
+        self.run_frame(gpu, target, input, true, Some(scene), None)
     }
 
     /// [`Effect::frame`] without the host's clear: the draw of one object into a target other
     /// effects share, such as an offscreen turn's.
     pub fn draw(&mut self, gpu: &Gpu, target: &Target, input: &DrawInput) -> FrameReport {
-        self.run_frame(gpu, target, input, false, None)
+        self.run_frame(gpu, target, input, false, None, None)
+    }
+
+    /// [`Effect::draw`] of technique `tech` alone: the host's draw of one material subset with
+    /// the technique `mds_mme::plan::select` picked for its draw mode (`SasExecuteTechnique`).
+    pub fn draw_technique(
+        &mut self,
+        gpu: &Gpu,
+        target: &Target,
+        input: &DrawInput,
+        tech: usize,
+    ) -> FrameReport {
+        self.run_frame(gpu, target, input, false, None, Some(tech))
+    }
+
+    /// `MmeBindStandardParameters` of a host draw that no technique of the effect takes: the
+    /// parameters still take the draw's values, as the C++ binds them from every draw snapshot.
+    pub fn bind(&mut self, input: &DrawInput) {
+        let draw = bind::Draw {
+            scene: input.scene,
+            material: input.geometry.and_then(|(m, s)| m.materials.get(s)),
+            draw_type: input.draw_type,
+            subsets: input.geometry.map_or(0, |(m, _)| m.materials.len()),
+        };
+        bind::bind_semantics(&self.sas.fx.params, &mut self.values, &draw);
     }
 
     /// The `OFFSCREENRENDERTARGET` resource `r` and its depth stencil as the target of its
@@ -134,6 +159,7 @@ impl Effect {
         input: &DrawInput,
         clear: bool,
         mut scene: Option<&mut SceneDraw>,
+        only: Option<usize>,
     ) -> FrameReport {
         if let Some(c) = input.controls {
             control::resolve(
@@ -144,7 +170,6 @@ impl Effect {
                 input.offscreen_owner,
             );
         }
-        self.tick_animes(gpu, input.scene.frame_time);
         let mut dev = Device::new(gpu, self, target);
         if clear {
             // The host's BeginScene clear of the back buffer and its depth stencil.
@@ -157,7 +182,7 @@ impl Effect {
             skipped: Vec::new(),
         };
         for tech in 0..self.sas.techniques.len() {
-            if self.sas.techniques[tech].empty {
+            if self.sas.techniques[tech].empty || only.is_some_and(|t| t != tech) {
                 continue;
             }
             self.sas.run_failed = false;

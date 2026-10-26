@@ -120,7 +120,7 @@ pub struct Physics {
     pub joints: Option<Vec<Joint>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Rigid {
     pub name: FixedSjis<20>,
     pub bone: i16,
@@ -138,7 +138,7 @@ pub struct Rigid {
     pub mode: u8,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Joint {
     pub name: FixedSjis<20>,
     pub rigid_a: u32,

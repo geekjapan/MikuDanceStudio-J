@@ -1202,10 +1202,13 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "egui",
+ "mds-accessory",
  "mds-doc",
  "mds-formats",
  "mds-math",
+ "mds-ops",
  "mds-physics",
+ "mds-pose",
  "mds-render",
  "mds-scene",
  "png",
@@ -1245,6 +1248,7 @@ dependencies = [
  "mds-physics",
  "mds-pose",
  "mds-scene",
+ "mds-vsq",
 ]
 
 [[package]]
@@ -1309,10 +1313,15 @@ name = "mds-mmert"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
+ "mds-accessory",
  "mds-formats",
  "mds-fx",
  "mds-math",
  "mds-mme",
+ "mds-physics",
+ "mds-pose",
+ "mds-render",
+ "mds-scene",
  "mds-shader",
  "naga",
  "png",

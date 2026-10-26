@@ -331,13 +331,9 @@ pub fn readout_text(ctx: &Ctx, field: usize) -> String {
             _ => format!("{:.2}", zero(-f64::from(c.distance))),
         };
     }
-    let bone = doc.selected_model().and_then(|m| {
-        let b = usize::try_from(m.selection.selected_bone).ok()?;
-        m.bone_pose.get(b)
-    });
-    match (bone, field) {
-        (Some(b), 0..=2) => format!("{:.2}", b.translation[field]),
-        (Some(b), 3..=5) => format!("{:.1}", euler_degrees(b.rotation)[field - 3]),
+    match (doc.selected_bone_readout(), field) {
+        (Some((_, translation)), 0..=2) => format!("{:.2}", translation[field]),
+        (Some((rotation, _)), 3..=5) => format!("{:.1}", euler_degrees(rotation)[field - 3]),
         _ => "-----".into(),
     }
 }

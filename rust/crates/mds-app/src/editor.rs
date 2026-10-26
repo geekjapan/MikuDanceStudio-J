@@ -410,6 +410,7 @@ impl Editor {
         self.physics = PhysicsScene::open_running(&self.doc.pmm, read)?;
         self.physics_opens += 1;
         self.reapply_physics_menus(always_on_off)?;
+        self.sync_physics_pose();
         self.mme.objects_changed(&self.doc);
         Ok(())
     }
@@ -582,8 +583,34 @@ impl Editor {
         self.message_seen != 0
     }
 
+    fn sync_physics_pose(&mut self) {
+        for (m, e) in self.doc.pmm.models.iter().zip(&mut self.doc.edit.models) {
+            e.physics_pose = self
+                .physics
+                .scene
+                .models
+                .iter()
+                .find(|p| p.slot == m.slot)
+                .map(|p| {
+                    p.bones
+                        .iter()
+                        .map(|b| {
+                            let k = b.ik_backup;
+                            ([k[3], k[4], k[5], k[6]], [k[0], k[1], k[2]])
+                        })
+                        .collect()
+                });
+        }
+    }
+
     /// One window pass at wall-clock `now_ms`; see the module doc.
     pub fn pump(&mut self, now_ms: u64) -> Result<(), String> {
+        let result = self.pump_inner(now_ms);
+        self.sync_physics_pose();
+        result
+    }
+
+    fn pump_inner(&mut self, now_ms: u64) -> Result<(), String> {
         let dt = self
             .last_pump_ms
             .map_or(0.0, |t| now_ms.saturating_sub(t) as f32 * 0.001);

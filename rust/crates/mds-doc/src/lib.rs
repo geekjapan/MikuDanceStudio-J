@@ -1142,6 +1142,26 @@ impl Document {
         self.pmm.models.get(i)
     }
 
+    /// The selected bone's `(rotation, translation)` shown by `PostViewRefresh`.
+    pub fn selected_bone_readout(&self) -> Option<([f32; 4], [f32; 3])> {
+        let i = self.active()?;
+        let m = &self.pmm.models[i];
+        let b = usize::try_from(m.selection.selected_bone).ok()?;
+        let p = m.bone_pose.get(b)?;
+        let rigid = self.skeletons[i].as_ref().is_some_and(|s| s.bones[b].2);
+        if self.pmm.physics.playback_mode == 3 && rigid {
+            Some(
+                self.edit.models[i]
+                    .physics_pose
+                    .as_ref()
+                    .and_then(|v| v.get(b).copied())
+                    .unwrap_or(model::NO_PHYSICS_POSE),
+            )
+        } else {
+            Some((p.rotation, p.translation))
+        }
+    }
+
     /// The selected model's index in `pmm.models`.
     fn active(&self) -> Option<usize> {
         let slot = self.pmm.selected_model_slot;
@@ -1428,26 +1448,22 @@ impl Document {
                     .ok_or(not("no such morph"))? = value;
             }
             Command::BoneReadoutEdit { axis, value } => {
-                let (i, s) = self.keyed()?;
-                let m = &mut self.pmm.models[i];
+                let (i, _) = self.keyed()?;
+                let m = &self.pmm.models[i];
                 let Ok(b) = usize::try_from(m.selection.selected_bone) else {
                     return Ok(());
                 };
                 if b >= m.bone_pose.len() || axis > 5 {
                     return Err(not("no such bone or axis"));
                 }
-                if self.pmm.physics.playback_mode == 3 && s.bones[b].2 {
-                    return Err(not(
-                        "the readout of a rigid-body bone in physics mode 3 (not ported)",
-                    ));
-                }
+                let (rotation, _) = self.selected_bone_readout().unwrap();
                 model::push_pose_edit(m, &mut self.edit.models[i].history);
-                let p = &mut m.bone_pose[b];
+                let p = &mut self.pmm.models[i].bone_pose[b];
                 let axis = usize::from(axis);
                 if axis < 3 {
                     p.translation[axis] = value as f32;
                 } else {
-                    let deg = readout::euler_degrees(p.rotation);
+                    let deg = readout::euler_degrees(rotation);
                     p.rotation = readout::rotation_edit(deg, axis - 3, value);
                 }
                 p.flags[1] = 1;

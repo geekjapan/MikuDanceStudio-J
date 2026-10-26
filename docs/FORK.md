@@ -73,12 +73,13 @@ git merge upstream/main
 
 ## ライセンス
 
-このフォーク独自の部分は MIT ライセンスです。それ以外の部分は、上流の権利が明確になるまで「ライセンス保留」です。
+このフォーク独自の部分は MIT ライセンスです。下表で別のライセンスを明記した部分を除き、それ以外の部分は、上流の権利が明確になるまで「ライセンス保留」です。
 
 | 範囲 | ライセンス |
 |---|---|
 | 下の行に挙げたもの以外のすべて。上流から受け継いだコード、それを変更したコード、上流の C++ を移植した `rust/crates/mds-formats`、`mds-scene`、`mds-edit`、`mds-pose` を含みます | ライセンス保留 |
-| `rust/`（上の 4 crate と `mds-crtmath` を除く）、`tools/fixtures/`、`tools/oracle/`、`tools/orchestrate/`、`tools/rust/`、`tools/vkd3d/`、`tools/windows/`、`tests/fixtures/rust/`、`docs/FORK.md`、`docs/RUST_MIGRATION_PLAN.md`、`docs/RUST_WAVE2_PLAN.md`、`docs/prototypes/` | [MIT](../LICENSE-MIT) |
+| `rust/`（上の 4 crate、`mds-crtmath`、`mds-vkd3d` を除く）、`tools/fixtures/`、`tools/oracle/`、`tools/orchestrate/`、`tools/rust/`、`tools/vkd3d/`、`tools/windows/`、`tests/fixtures/rust/`、`docs/FORK.md`、`docs/RUST_MIGRATION_PLAN.md`、`docs/RUST_WAVE2_PLAN.md`、`docs/prototypes/` | [MIT](../LICENSE-MIT) |
+| `rust/crates/mds-vkd3d`、`tools/vkd3d-rust-checksum/`、`tests/fixtures/vkd3d-rust-checksum/`。vkd3d 2.1 の checksum 実装の翻訳と検証です。著作権表示と全文は crate 内にあります | [LGPL-2.1-or-later](../rust/crates/mds-vkd3d/LICENSE) |
 | `rust/crates/mds-crtmath`。AMD AOCL-LibM（BSD-3-Clause）の翻訳を含み、AMD の表示は crate の README にあります | MIT AND BSD-3-Clause |
 
 [LICENSE](../LICENSE) は上流のファイルを、文面を変えずにそのまま残しています。

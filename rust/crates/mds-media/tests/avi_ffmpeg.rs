@@ -13,6 +13,210 @@ use std::process::Command;
 mod common;
 use common::md5;
 
+#[derive(Clone, Copy)]
+enum Fault {
+    Operation(usize),
+    FirstVideoIndex,
+}
+
+struct FailingOutput {
+    bytes: Cursor<Vec<u8>>,
+    calls: usize,
+    fault: Option<Fault>,
+    partial: bool,
+    pending_error: bool,
+}
+
+impl FailingOutput {
+    fn new(fault: Option<Fault>, partial: bool) -> Self {
+        Self {
+            bytes: Cursor::new(Vec::new()),
+            calls: 0,
+            fault,
+            partial,
+            pending_error: false,
+        }
+    }
+
+    fn fails(&mut self, video_index: bool) -> bool {
+        self.calls += 1;
+        let fail = self.pending_error
+            || match self.fault {
+                Some(Fault::Operation(n)) => self.calls == n,
+                Some(Fault::FirstVideoIndex) => video_index,
+                None => false,
+            };
+        if fail {
+            self.fault = None;
+            self.pending_error = false;
+        }
+        fail
+    }
+}
+
+impl Write for FailingOutput {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let pending = self.pending_error;
+        if self.fails(bytes.starts_with(b"ix00")) {
+            if self.partial && !pending && bytes.len() > 1 {
+                self.pending_error = true;
+                return self.bytes.write(&bytes[..1]);
+            }
+            return Err(io::Error::other("injected write failure"));
+        }
+        self.bytes.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if self.fails(false) {
+            return Err(io::Error::other("injected flush failure"));
+        }
+        Ok(())
+    }
+}
+
+impl Seek for FailingOutput {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        if self.fails(false) {
+            if self.partial {
+                self.bytes.seek(pos)?;
+            }
+            return Err(io::Error::other("injected seek failure"));
+        }
+        self.bytes.seek(pos)
+    }
+}
+
+fn fault_config(audio: bool) -> Config {
+    Config {
+        width: 32,
+        height: 24,
+        fps_num: 30,
+        fps_den: 1,
+        audio: audio.then_some(AudioFormat {
+            channels: 1,
+            sample_rate: 24000,
+            bits: 8,
+        }),
+    }
+}
+
+#[test]
+fn a_one_shot_rollover_index_failure_prevents_finalization() {
+    let mut out = FailingOutput::new(Some(Fault::FirstVideoIndex), false);
+    let mut avi = AviWriter::with_riff_limit(&mut out, fault_config(false), 24 * 1024).unwrap();
+    for _ in 0..3 {
+        avi.write_frame(&[0; 32 * 24 * 3]).unwrap();
+    }
+    assert!(matches!(
+        avi.write_frame(&[0; 32 * 24 * 3]),
+        Err(Error::Io(_))
+    ));
+    assert!(matches!(avi.finish(), Err(Error::Io(_))));
+    assert!(out.fault.is_none(), "the sink rejected ix00 exactly once");
+}
+
+#[test]
+fn every_output_failure_returns_error_even_after_partial_progress() {
+    for audio in [false, true] {
+        let cfg = fault_config(audio);
+        let limit = if audio { 40 * 1024 } else { 24 * 1024 };
+        let mut normal = FailingOutput::new(None, false);
+        let mut avi = AviWriter::with_riff_limit(&mut normal, cfg, limit).unwrap();
+        for _ in 0..8 {
+            avi.write_frame(&[0; 32 * 24 * 3]).unwrap();
+            if audio {
+                avi.write_audio(&[0; 801]).unwrap();
+            }
+        }
+        avi.finish().unwrap();
+        let layout = check_layout(normal.bytes.get_ref(), limit, audio.then_some(1));
+        assert!(layout.riffs > 1);
+        assert_eq!(layout.data[0].len(), 8);
+        assert_eq!(layout.data[1].len(), if audio { 8 } else { 0 });
+
+        // Visit every write, seek and flush, including the header and RIFF tails.
+        for partial in [false, true] {
+            for operation in 1..=normal.calls {
+                let mut out = FailingOutput::new(Some(Fault::Operation(operation)), partial);
+                let mut avi = match AviWriter::with_riff_limit(&mut out, cfg, limit) {
+                    Ok(avi) => avi,
+                    Err(Error::Io(_)) => continue,
+                    Err(e) => panic!("unexpected creation error: {e}"),
+                };
+                let mut failed = false;
+                for _ in 0..8 {
+                    let result = avi.write_frame(&[0; 32 * 24 * 3]).and_then(|()| {
+                        if audio {
+                            avi.write_audio(&[0; 801])
+                        } else {
+                            Ok(())
+                        }
+                    });
+                    match result {
+                        Ok(()) => (),
+                        Err(Error::Io(_)) => {
+                            failed = true;
+                            break;
+                        }
+                        Err(e) => panic!("unexpected write error: {e}"),
+                    }
+                }
+                if failed {
+                    assert!(matches!(
+                        avi.write_frame(&[0; 32 * 24 * 3]),
+                        Err(Error::Io(_))
+                    ));
+                    assert!(matches!(avi.write_audio(&[0; 801]), Err(Error::Io(_))));
+                }
+                assert!(
+                    matches!(avi.finish(), Err(Error::Io(_))),
+                    "operation {operation}, partial {partial}, audio {audio}"
+                );
+                assert!(out.fault.is_none(), "fault was reached");
+                assert!(
+                    out.calls <= operation + usize::from(partial),
+                    "failed output must not be retried"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn parameter_and_capacity_errors_remain_finalizable() {
+    let cfg = fault_config(true);
+    let limit = 40 * 1024;
+    let mut avi = AviWriter::with_riff_limit(Cursor::new(Vec::new()), cfg, limit).unwrap();
+    avi.write_frame(&[0; 32 * 24 * 3]).unwrap();
+    avi.write_audio(&[0; 801]).unwrap();
+    assert!(matches!(avi.write_frame(&[0]), Err(Error::Param(_))));
+    assert!(matches!(
+        avi.write_audio(&vec![0; limit as usize]),
+        Err(Error::Param(_))
+    ));
+    let out = avi.finish().unwrap().into_inner();
+    let layout = check_layout(&out, limit, Some(1));
+    assert_eq!(layout.data[0].len(), 1);
+    assert_eq!(layout.data[1].len(), 1);
+
+    let limit = 24 * 1024;
+    let mut avi =
+        AviWriter::with_riff_limit(Cursor::new(Vec::new()), fault_config(false), limit).unwrap();
+    let mut frames = 0;
+    loop {
+        match avi.write_frame(&[0; 32 * 24 * 3]) {
+            Ok(()) => frames += 1,
+            Err(Error::TooLarge) => break,
+            Err(e) => panic!("unexpected capacity error: {e}"),
+        }
+    }
+    let out = avi.finish().unwrap().into_inner();
+    let layout = check_layout(&out, limit, None);
+    assert_eq!(layout.riffs, SUPER_ENTRIES);
+    assert_eq!(layout.data[0].len(), frames);
+}
+
 struct Lcg(u32);
 impl Lcg {
     fn bytes(&mut self, n: usize) -> Vec<u8> {

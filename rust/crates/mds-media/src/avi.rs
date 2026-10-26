@@ -123,8 +123,11 @@ struct Named {
     duration: u32,
 }
 
+/// After an output I/O error, further writes and finalization return an error.
+/// Parameter and capacity errors leave the writer available for finalization.
 pub struct AviWriter<W: Write + Seek> {
     out: W,
+    failed: bool,
     cfg: Config,
     /// Bytes of one stored frame (padded rows).
     frame_bytes: u32,
@@ -243,6 +246,7 @@ impl<W: Write + Seek> AviWriter<W> {
         }
         let mut w = AviWriter {
             out,
+            failed: false,
             cfg,
             frame_bytes: frame_bytes as u32,
             riff_limit,
@@ -277,6 +281,7 @@ impl<W: Write + Seek> AviWriter<W> {
 
     /// Appends one frame: `width * height * 3` bytes, top-down BGR.
     pub fn write_frame(&mut self, bgr: &[u8]) -> Result<(), Error> {
+        self.check_failed()?;
         let (w, h) = (self.cfg.width as usize, self.cfg.height as usize);
         if bgr.len() != w * h * 3 {
             return Err(Error::Param("frame length is not width * height * 3"));
@@ -298,6 +303,7 @@ impl<W: Write + Seek> AviWriter<W> {
 
     /// Appends PCM bytes (a whole number of blocks) to the audio stream.
     pub fn write_audio(&mut self, pcm: &[u8]) -> Result<(), Error> {
+        self.check_failed()?;
         let Some(a) = self.cfg.audio else {
             return Err(Error::Param("the file has no audio stream"));
         };
@@ -316,6 +322,7 @@ impl<W: Write + Seek> AviWriter<W> {
 
     /// Closes the last RIFF, patches the header, and returns the output.
     pub fn finish(mut self) -> Result<W, Error> {
+        self.check_failed()?;
         self.close_riff()?;
         let hdrl = self.hdrl();
         self.out.seek(SeekFrom::Start(12))?;
@@ -325,7 +332,21 @@ impl<W: Write + Seek> AviWriter<W> {
         Ok(self.out)
     }
 
+    fn check_failed(&self) -> Result<(), Error> {
+        if self.failed {
+            return Err(Error::Io(io::Error::other("AVI output previously failed")));
+        }
+        Ok(())
+    }
+
     fn write_chunk(&mut self, stream: usize, payload: &[u8]) -> Result<(), Error> {
+        let result = self.write_chunk_inner(stream, payload);
+        // An I/O error may leave partial chunks or patches that cannot be retried.
+        self.failed |= matches!(&result, Err(Error::Io(_)));
+        result
+    }
+
+    fn write_chunk_inner(&mut self, stream: usize, payload: &[u8]) -> Result<(), Error> {
         let len = payload.len() as u64;
         let total = 8 + len + (len & 1);
         if !self.fits(stream, total) {
@@ -595,5 +616,6 @@ mod tests {
         assert!(matches!(avi.write_audio(&[0; 4]), Err(Error::Param(_))));
         assert_eq!(avi.audio_bytes, u64::from(u32::MAX) * 4);
         assert_eq!(avi.out.get_ref(), &before);
+        avi.finish().unwrap();
     }
 }

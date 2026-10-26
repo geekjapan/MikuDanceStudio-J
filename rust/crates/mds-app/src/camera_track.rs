@@ -18,7 +18,14 @@ impl CameraTrackCursor {
     ) -> Result<Option<Camera>, String> {
         self.index = 0;
         self.active = true;
-        self.advance(pool, cursor)
+        let frame = mds_scene::playback_frame(cursor).ok_or("invalid playback camera cursor")?;
+        if self.seek_end(pool, frame)? {
+            evaluate_camera(pool, frame, CameraMode::Playback)
+                .map(Some)
+                .ok_or("invalid playback camera track".into())
+        } else {
+            Ok(None)
+        }
     }
     pub(crate) fn advance(
         &mut self,
@@ -31,14 +38,22 @@ impl CameraTrackCursor {
         let frame = mds_scene::playback_frame(cursor).ok_or("invalid playback camera cursor")?;
         let sample = evaluate_camera(pool, frame, CameraMode::Playback)
             .ok_or("invalid playback camera track")?;
+        self.seek_end(pool, frame)?;
+        Ok(Some(sample))
+    }
+    fn seek_end(&mut self, pool: &KeyPool<CameraKey>, frame: f64) -> Result<bool, String> {
         for _ in 0..pool.capacity() {
             let key = pool.get(self.index).ok_or("invalid camera track index")?;
             if f64::from(key.frame) >= frame {
-                return Ok(Some(sample));
+                return Ok(false);
             }
             if key.next == 0 {
                 self.active = false;
-                return Ok(Some(sample));
+                return Ok(true);
+            }
+            let next = pool.get(key.next).ok_or("invalid camera track index")?;
+            if next.previous != self.index || next.frame <= key.frame {
+                return Err("invalid camera track links".into());
             }
             self.index = key.next;
         }
@@ -70,7 +85,7 @@ mod tests {
     fn terminal_equality_remains_active_and_postterminal_copies_once() {
         let doc = track();
         let mut cursor = CameraTrackCursor::default();
-        assert!(cursor.start(&doc.pmm.camera, 1.0).unwrap().is_some());
+        assert!(cursor.start(&doc.pmm.camera, 1.0).unwrap().is_none());
         assert!(cursor.active);
         assert!(cursor.advance(&doc.pmm.camera, 1.001).unwrap().is_some());
         assert!(!cursor.active);
@@ -82,7 +97,8 @@ mod tests {
     fn fractional_cursor_uses_existing_playback_evaluator_and_loop_restarts() {
         let doc = track();
         let mut cursor = CameraTrackCursor::default();
-        let sample = cursor.start(&doc.pmm.camera, 0.5123).unwrap().unwrap();
+        assert!(cursor.start(&doc.pmm.camera, 0.5123).unwrap().is_none());
+        let sample = cursor.advance(&doc.pmm.camera, 0.5123).unwrap().unwrap();
         let at = mds_scene::playback_frame(0.5123).unwrap();
         assert_ne!(at, at.floor());
         assert_eq!(
@@ -90,7 +106,7 @@ mod tests {
             evaluate_camera(&doc.pmm.camera, at, CameraMode::Playback).unwrap()
         );
         assert!(cursor.advance(&doc.pmm.camera, 2.0).unwrap().is_some());
-        assert!(cursor.start(&doc.pmm.camera, 0.0).unwrap().is_some());
+        assert!(cursor.start(&doc.pmm.camera, 0.0).unwrap().is_none());
         assert!(cursor.active);
         assert_eq!(cursor.index, 0);
     }

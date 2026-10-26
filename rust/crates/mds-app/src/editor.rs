@@ -285,6 +285,7 @@ impl Editor {
             return Ok(());
         }
         let sample = if start {
+            self.doc.pmm.camera_state[3..5].fill(0.0);
             self.camera_track.start(&self.doc.pmm.camera, cursor)?
         } else {
             self.camera_track.advance(&self.doc.pmm.camera, cursor)?
@@ -728,8 +729,10 @@ impl Editor {
             Pass::Looped => {
                 self.playback = Some(p);
                 audio::play_from(self.wave.as_ref(), p.start);
-                let camera =
-                    self.advance_camera_track(CameraPass::Playing { cursor: p.start }, true);
+                let pass = CameraPass::Playing { cursor: p.start };
+                let camera = self
+                    .advance_camera_track(pass, true)
+                    .and_then(|_| self.advance_camera_track(pass, false));
                 self.physics.loop_restart(p.start, dt)?;
                 camera?;
             }
@@ -771,7 +774,9 @@ impl Editor {
     /// to the next target, or `false` past the end frame.
     fn record_pass(&mut self, r: &mut Recording) -> Result<bool, String> {
         let frame = cursor_frame(r.cursor);
-        self.refresh_camera_while(CameraPass::Playing { cursor: r.cursor });
+        let pass = CameraPass::Playing { cursor: r.cursor };
+        self.advance_camera_track(pass, false)?;
+        self.refresh_camera_while(pass);
         let shot = Shot {
             physics: &self.physics,
             frame,

@@ -292,3 +292,23 @@ fn stop_clears_parent_for_both_playhead_settings_and_keeps_free_raw_state() {
         assert_eq!(e.doc.pmm.camera_state, before);
     }
 }
+
+#[test]
+fn nonterminal_start_initializes_cursor_without_overwriting_manual_raw_controls() {
+    let mut e = live_yaw();
+    e.toggle_play(1000).unwrap();
+    e.seek(0).unwrap();
+    e.edit_camera_controls(|c| c.rotation[1] = 0.42).unwrap();
+    e.toggle_play(2000).unwrap();
+    assert_eq!(
+        e.doc.camera_controls().rotation[1],
+        0.42,
+        "InitGlobalTracks does not copy an active sample"
+    );
+    e.pump(2000).unwrap();
+    assert_eq!(
+        e.doc.camera_controls().rotation[1],
+        0.0,
+        "PlaybackPoseAdvance copies the first active sample"
+    );
+}

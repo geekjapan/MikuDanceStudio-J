@@ -106,22 +106,33 @@ self-shadow, light (-0.5, -1, 0.5).
 ## Notes for mmert
 
 - Every PMM sets the draw order of its models 1-based, as the app writes it,
-  and the camera mode flag. `../golden2/` writes draw order 0, which is the
-  "camera/light/accessory" entry of the model combo; `ExpGetCurrentObject`
-  reports such a model as no object when no accessory is loaded, and MMEffect
-  then never applies the model's effect. With 1-based order and the model
-  selected the app is in model mode and does not play the camera keys, hence
-  the camera mode flag.
+  and the camera mode flag (`build_pmm` of `../golden2/gen_golden2.py`). Draw
+  order 0 is the "camera/light/accessory" entry of the model combo;
+  `ExpGetCurrentObject` reports such a model as no object when no accessory is
+  loaded, and MMEffect then never applies the model's effect. With 1-based
+  order and the model selected the app is in model mode and does not play the
+  camera keys, hence the camera mode flag.
 - `MOUSEPOSITION` (in `main`, `timeofday`, and `ray`) depends on the host's
   cursor and window positions. The two runs agreed, but another host or
   session will see other values; take them from the probe.
 - `offscreen-*.png` and `timeofday-*.png` are the same image: the owner draws
   nothing visible. `main` shows the owner white.
-- `ray-*.png` is black with broken grid lines, and frames 0 and 30 are the
-  same image. Whether the C++ path or the scene (no sky, no `ray_controller.pmx`)
-  causes that is not known; compare the probe before the pixels. The run logs
-  `Warning: unsupported script command: ClearSetStencil=ClearStencil
-  (technique: DeferredLighting)`.
+- `ray-*.png` is black because of the scene, not the C++ path (slice
+  `winprobe`, on the staged corpus copy). The light (-0.5, -1, 0.5) comes from
+  behind the faces the camera sees, and with no sky effect ray-mmd has no image
+  based light, so those faces get no light; the background is `BackColor`,
+  black. The same PMM with the light at (-0.5, -1, -0.5) shows the model gray.
+  Writing a constant into `ShadingOpacityPS` showed a non-zero albedo, sun
+  color, and normal, and a working composite. `SUN_SHADOW_QUALITY`,
+  `SSDO_QUALITY`, `SSSS_QUALITY`, `FOG_ENABLE`, `HDR_BLOOM_MODE`,
+  `MULTI_LIGHT_ENABLE`, and `POST_DISPERSION_MODE` at 0 each leave the image
+  as it is. The grid lines are broken by ray-mmd's anti-aliasing
+  (`AA_QUALITY` 0 draws them whole). Frames 0 and 30 are the same image
+  because nothing in the scene moves; only `TIME` and `ELAPSEDTIME` differ in
+  the probes. The run logs `Warning: unsupported script command:
+  ClearSetStencil=ClearStencil (technique: DeferredLighting)`, as MMEffect's
+  own script compiler does: it has no `ClearSetStencil` command
+  (`third_party/mmeffect/src/mmeffect/sas_exec.cpp`).
 - `anime-0` and `anime-3` are the same image, and so are `anime-9` and
   `anime-30`.
 
@@ -151,7 +162,7 @@ self-shadow, light (-0.5, -1, 0.5).
 | `control.emm` | `2b1d1c5263ef290c67fb7de29fb4bee9d9f35267988a4e4ac316eab37e00aa2a` |
 | `control.fx` | `6b628586d7bc068f3394a9c6d008ee1e7bcdc7f6deb34c76f389f39e6dbaf66c` |
 | `control.pmm` | `ed1ded354446c1ec6d0a4e423dcb74f371bddf131f7f071d13118bb2c8363490` |
-| `gen_mmegold.py` | `39a5e4e29aca6d3df12b1e1efac83eefdf2819544ea68137b99493061815ef94` |
+| `gen_mmegold.py` | `15552863eb6c99302fbda02cffd0344a2f193b2a6fe55fcc1fbf66000d29cb8f` |
 | `main-0.mme.txt` | `d080348490c87431a4566e3aa4b01012b1274e27bcddb24db43a2755b08181fd` |
 | `main-0.png` | `f6348db3948462b4d1fcc514513ca4aeb5258a0a5b20462fa71640dc77337293` |
 | `main-30.mme.txt` | `984855ecc7f2d036169f2fa29cef12a0a70adcec09dde9899b99ebcb5513db0e` |

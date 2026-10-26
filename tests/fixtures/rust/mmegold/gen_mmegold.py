@@ -22,25 +22,6 @@ sys.path.insert(0, str(HERE.parent / "golden2"))
 import gen_golden2 as g2  # noqa: E402
 
 
-def model_bytes(slot, m):
-    """golden2's model record with the draw order 1-based, as the app writes
-    it: index 0 of the model combo is "camera/light/accessory", and
-    ExpGetCurrentObject reports a model of draw order 0 with no accessory as
-    no object, so MME would never apply its effect."""
-    spec = m.spec
-    at = (1 + len(g2.sjis_str(spec["name"])) + len(g2.sjis_str(spec["name_en"])) + 256 + 1
-          + 4 + sum(len(g2.sjis_str(b["jp"])) for b in spec["bones"])
-          + 4 + sum(len(g2.sjis_str(n[0])) for n in spec["morphs"])
-          + 4 + 4 * len(g2.g.ik_sources(spec)) + 4 + 4 * len(g2.g.selector_sources(spec)))
-    out = bytearray(GOLDEN2_MODEL_BYTES(slot, m))
-    assert out[at:at + 2] == bytes((slot, 1))  # draw order, load complete
-    out[at] = slot + 1
-    return bytes(out)
-
-
-GOLDEN2_MODEL_BYTES = g2.model_bytes
-g2.model_bytes = model_bytes
-
 # Seen from the front of the models by a perspective camera at (0, 4, 20).
 CAMERA = [(0, -20.0, (0.0, 4.0, 0.0), (0.0, g2.PI, 0.0), 30)]
 IDENTITY = [0.0, 0.0, 0.0, 1.0]
@@ -130,23 +111,13 @@ def emm(models, accessories, rows):
             % ("\n".join(objects), "\n".join(effects))).encode("ascii")
 
 
-def pmm(models, accessories):
-    out = bytearray(g2.build_pmm(models, CAMERA, g2.LIGHT, g2.SHADOW_OFF, perspective=0,
-                                 accessories=accessories))
-    # Camera mode (the first of the seven flags after the view angle), so the
-    # camera keys play as in golden2, whose draw order 0 selected the
-    # "camera/light/accessory" entry of the model combo.
-    assert out[46:48] == b"\0\1"
-    out[46] = 1
-    return bytes(out)
-
-
 def generate():
     out = {"control.fx": CONTROL_FX, "anime.fx": ANIME_FX}
     for name, scene in SCENES.items():
         models = scene.get("models", [CHAIN])
         accessories = scene.get("accessories", [])
-        out[name + ".pmm"] = pmm(models, accessories)
+        out[name + ".pmm"] = g2.build_pmm(models, CAMERA, g2.LIGHT, g2.SHADOW_OFF,
+                                          perspective=0, accessories=accessories)
         out[name + ".emm"] = emm(models, accessories, scene["rows"])
     return out
 

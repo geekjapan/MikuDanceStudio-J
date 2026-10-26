@@ -34,3 +34,8 @@ The trace excludes nonlive next slots because native removal leaves stale links.
 `core/pair_cache.rs` is an altered Rust translation of this repository's locally
 modified Bullet 2.75 distribution. The zlib source notice is preserved. Upstream
 ancestry of existing local changes remains outside this unit's audit.
+
+The combined strict suite registers this fixture through `super::core::pair_cache`.
+The dedicated CI runs all 14 frozen-fixture tests on four supported hosts and
+recaptures this native operation stream on Linux x64. Other native host captures
+remain unverified until run separately.

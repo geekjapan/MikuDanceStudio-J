@@ -16,4 +16,4 @@ The 5,232 snapshots comprise 144 shape, mass, basis and damping traces of 32 ope
 
 No world, solver, sleep, activation, motion-state pointer, registration, reset or shim post-registration parity is claimed. The existing `FreeBody` implementation is byte-identical. This is an altered translation of vendored Bullet with local patches whose ancestry remains pending audit. The retained Bullet zlib notice is in `core/mod.rs`.
 
-The existing strict standalone pilot registers `tests/pure_bullet/body_kernel.rs` as a module in `tests/pure_bullet.rs`. The new standalone `tests/body_kernel.rs` also runs under Cargo. The whole integration gate, hosted target checks and GPU checks remain with the root coordinator.
+The existing strict standalone pilot registers `tests/pure_bullet/body_kernel.rs` as a module in `tests/pure_bullet.rs`. The combined suite also runs under Cargo. The native helper compiles that same strict suite and runs only the body-kernel case. The whole integration gate, hosted target checks and GPU checks remain with the root coordinator.

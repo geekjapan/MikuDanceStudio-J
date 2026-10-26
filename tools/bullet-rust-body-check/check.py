@@ -50,7 +50,9 @@ def main():
     else:
         command += ['-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections', '-ldl', '-lpthread', '-lm']
     run(command, env=environment)
+    (output / 'native-command.txt').write_text(' '.join(map(str, command)) + '\n')
     inputs = subprocess.check_output([sys.executable, HERE / 'cases.py'])
+    (output / 'inputs.tsv').write_bytes(inputs)
     captured = subprocess.check_output([executable], input=inputs, env=environment)
     (output / 'native.tsv').write_bytes(captured)
     fixture = ROOT / 'rust/crates/mds-bullet/tests/body_data/native.tsv'
@@ -61,7 +63,7 @@ def main():
     run(['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--crate-name', 'mds_crtmath', '--crate-type', 'rlib',
          '-O', crt, '-o', output / 'libmds_crtmath.rlib'], env=environment)
     run(['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--test', '-D', 'warnings', '-O',
-         HERE / 'harness.rs', '--extern',
+         ROOT / 'rust/crates/mds-bullet/tests/pure_bullet.rs', '--extern',
          f'mds_crtmath={output / "libmds_crtmath.rlib"}', '-o', output / 'rust-bodies'], env=environment)
     environment['MDS_BODY_FIXTURE'] = str(output / 'native.tsv')
     run([output / 'rust-bodies', 'real_bullet_body_operations_match_every_float_bit'], env=environment)

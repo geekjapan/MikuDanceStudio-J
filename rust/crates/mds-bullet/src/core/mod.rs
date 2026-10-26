@@ -30,6 +30,7 @@ pub mod contact;
 pub mod joint_coordinates;
 pub mod joint_rows;
 pub mod math;
+pub mod pair_cache;
 pub mod shape;
 pub mod time;
 

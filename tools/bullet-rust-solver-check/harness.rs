@@ -10,6 +10,8 @@ pub mod contact;
 pub mod shape;
 #[path = "../../rust/crates/mds-bullet/src/core/solver.rs"]
 pub mod solver;
+#[path = "../../rust/crates/mds-bullet/src/core/contact_solver.rs"]
+pub mod contact_solver;
 pub mod core {
     pub use crate::{body, joint_rows, math, shape, solver};
 }

@@ -1,7 +1,7 @@
 use super::core::body::{BodyInit, RigidBody};
 use super::core::joint_rows::*;
 use super::core::math::{Basis, Transform, Vec3};
-use super::core::solver::{Joint, JointSolver, SolverMode};
+use super::core::solver::{GroupSolver, Joint, Phase, RowKind, SolveEvent, SolverMode};
 #[cfg(target_arch = "aarch64")]
 const NATIVE_PROFILE: &str = include_str!("../solver_data/native.tsv");
 #[cfg(target_arch = "x86_64")]
@@ -122,7 +122,7 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
             bodies = prior_bodies;
             joints = prior_joints;
         }
-        let mut solver = JointSolver::setup(&bodies, &mut joints, dt, mode);
+        let mut solver = GroupSolver::setup(&bodies, &mut joints, &mut [], dt, mode);
         for joint in &joints {
             for i in 0..6 {
                 let spring = joint.state.springs[i];
@@ -137,8 +137,8 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
             }
         }
         if (512..516).contains(&cases) {
-            assert_eq!(solver.rows.len(), 2);
-            for row in &solver.rows {
+            assert_eq!(solver.joint_rows.len(), 2);
+            for row in &solver.joint_rows {
                 assert_eq!(row.diagonal_inverse, f32::INFINITY);
                 assert!(row.rhs.is_nan());
                 assert_eq!(row.joint_row.lower_impulse, -2.0);
@@ -147,19 +147,19 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
         }
         if cases >= 516 {
             negative_motor_cases[usize::from(mode == SolverMode::Scalar)] += 1;
-            assert_eq!(solver.rows.len(), 2);
-            for row in &solver.rows {
+            assert_eq!(solver.joint_rows.len(), 2);
+            for row in &solver.joint_rows {
                 assert!(row.diagonal_inverse.is_finite());
                 assert_eq!(row.rhs, 0.0);
                 assert_eq!(row.joint_row.lower_impulse, 2.0);
                 assert_eq!(row.joint_row.upper_impulse, -2.0);
             }
         }
-        setup_rows += solver.rows.len();
+        setup_rows += solver.joint_rows.len();
         let original_worlds: Vec<_> = bodies.iter().map(|body| body.snapshot().world).collect();
         let expected: Vec<_> = w.0.copied().collect();
-        let mut actual = vec![solver.rows.len() as u32];
-        for r in &solver.rows {
+        let mut actual = vec![solver.joint_rows.len() as u32];
+        for r in &solver.joint_rows {
             actual.extend(r.bodies.map(|i| i as u32));
             for v in [
                 r.joint_row.j1_linear,
@@ -183,26 +183,36 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
             );
         }
         let mut trace = Vec::new();
-        zero_rows += usize::from(solver.rows.is_empty());
+        zero_rows += usize::from(solver.joint_rows.is_empty());
         if mode == SolverMode::Simd {
-            solver.iterate_with_observer(|solver, _iteration, index| {
+            solver.iterate(&bodies, &joints, |solver, event| {
+                let SolveEvent::Row {
+                    kind: RowKind::Joint,
+                    phase: Phase::After,
+                    index,
+                    ..
+                } = event
+                else {
+                    return;
+                };
                 row_events += 1;
-                let r = solver.rows[index];
+                let r = solver.joint_rows[index];
                 trace.push(r.applied_impulse.to_bits());
                 for i in r.bodies {
-                    let b = solver.bodies[i];
+                    let b = solver.bodies.entries[i];
                     vector(&mut trace, b.delta_linear);
                     vector(&mut trace, b.delta_angular);
                 }
             });
         } else {
-            solver.iterate();
+            solver.iterate(&bodies, &joints, |_, _| {});
         }
-        solver.writeback(&mut bodies);
+        let final_rows = solver.joint_rows.clone();
+        solver.writeback(&mut bodies, &mut []);
         if (512..516).contains(&cases) {
             let simd = mode == SolverMode::Simd;
             zero_inertia_cases[usize::from(!simd)] += 1;
-            for row in &solver.rows {
+            for row in &final_rows {
                 if simd {
                     assert_eq!(row.applied_impulse, row.joint_row.upper_impulse);
                 } else {
@@ -227,7 +237,7 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
             vector(&mut actual, s.linear_velocity);
             vector(&mut actual, s.angular_velocity);
         }
-        actual.extend(solver.rows.iter().map(|r| r.applied_impulse.to_bits()));
+        actual.extend(final_rows.iter().map(|r| r.applied_impulse.to_bits()));
         actual.extend(trace);
         assert_eq!(actual.len(), expected.len(), "case {id} words");
         for (index, (a, b)) in actual.iter().zip(&expected).enumerate() {

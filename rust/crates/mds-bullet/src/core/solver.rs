@@ -1,4 +1,4 @@
-//! Altered Rust translation of Bullet 2.75 joint solving and shared impulse rows.
+//! Altered Rust translation of Bullet 2.75 shared joint/contact solve groups.
 //! Contact row setup lives in contact_solver; world scheduling remains external.
 /*
 Bullet Continuous Collision Detection and Physics Library
@@ -16,6 +16,7 @@ subject to the following restrictions:
 */
 
 use super::body::RigidBody;
+use super::contact_solver::{build_rows, ContactManifold, FrictionRow, NormalRow};
 use super::joint_coordinates::calculate_coordinates;
 use super::joint_rows::{generate_rows, JointBodySnapshot, JointRow, JointState, JointStep};
 use super::math::{Transform, Vec3};
@@ -53,35 +54,127 @@ pub struct SolverRow {
     pub applied_impulse: f32,
 }
 
-pub struct JointSolver {
-    pub bodies: Vec<SolverBody>,
-    pub rows: Vec<SolverRow>,
-    mode: SolverMode,
-    callback_bodies: Vec<SolverBody>,
+pub struct SolverBodies {
+    pub entries: Vec<SolverBody>,
+    pub companions: Vec<Option<usize>>,
+}
+
+impl SolverBodies {
+    fn new(count: usize, active: bool) -> Self {
+        Self {
+            entries: if active {
+                vec![SolverBody::FIXED]
+            } else {
+                Vec::new()
+            },
+            companions: vec![None; count],
+        }
+    }
+
+    pub(crate) fn get_or_init(&mut self, bodies: &[RigidBody], original: usize) -> usize {
+        if let Some(id) = self.companions[original] {
+            return id;
+        }
+        let state = bodies[original].snapshot();
+        if state.inverse_mass == 0.0 {
+            return 0;
+        }
+        let id = self.entries.len();
+        self.entries.push(SolverBody {
+            original: Some(original),
+            inverse_mass: bodies[original].linear_factor().scale(state.inverse_mass),
+            angular_factor: bodies[original].angular_factor(),
+            ..SolverBody::FIXED
+        });
+        self.companions[original] = Some(id);
+        id
+    }
+}
+
+impl SolverBody {
+    const FIXED: Self = Self {
+        original: None,
+        inverse_mass: Vec3::ZERO,
+        angular_factor: Vec3([1.0; 3]),
+        delta_linear: Vec3::ZERO,
+        delta_angular: Vec3::ZERO,
+    };
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowKind {
+    Joint,
+    Normal,
+    Friction,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    Before,
+    After,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SolveEvent {
+    Row {
+        kind: RowKind,
+        phase: Phase,
+        iteration: usize,
+        index: usize,
+    },
+    Obsolete {
+        phase: Phase,
+        iteration: usize,
+        joint: usize,
+        bodies: [Option<usize>; 2],
+    },
+    FrictionSkipped {
+        iteration: usize,
+        index: usize,
+    },
+}
+
+pub struct GroupSolver {
+    pub bodies: SolverBodies,
+    pub joint_rows: Vec<SolverRow>,
+    pub normals: Vec<NormalRow>,
+    pub frictions: Vec<FrictionRow>,
+    pub mode: SolverMode,
+}
+
+/// Default native mode 260, ten iterations, no transform integration.
+pub fn solve_group(
+    bodies: &mut [RigidBody],
+    joints: &mut [Joint],
+    manifolds: &mut [ContactManifold<'_>],
+    dt: f32,
+) {
+    let mut solver = GroupSolver::setup(bodies, joints, manifolds, dt, SolverMode::Simd);
+    solver.iterate(bodies, joints, |_, _| {});
+    solver.writeback(bodies, manifolds);
 }
 
 pub(crate) fn product(a: Vec3, b: Vec3) -> Vec3 {
     Vec3(std::array::from_fn(|i| a.0[i] * b.0[i]))
 }
 
-impl JointSolver {
+impl GroupSolver {
     /// Requires valid body indices, finite joint inputs and positive timestep.
     /// Every solve starts fresh: no joint warmstarting or retained companion IDs.
-    pub fn setup(bodies: &[RigidBody], joints: &mut [Joint], dt: f32, mode: SolverMode) -> Self {
-        let fixed = SolverBody {
-            original: None,
-            inverse_mass: Vec3::ZERO,
-            angular_factor: Vec3([1.0; 3]),
-            delta_linear: Vec3::ZERO,
-            delta_angular: Vec3::ZERO,
-        };
+    pub fn setup(
+        bodies: &[RigidBody],
+        joints: &mut [Joint],
+        manifolds: &mut [ContactManifold<'_>],
+        dt: f32,
+        mode: SolverMode,
+    ) -> Self {
         let mut solver = Self {
-            bodies: vec![fixed],
-            rows: Vec::new(),
+            bodies: SolverBodies::new(bodies.len(), !joints.is_empty() || !manifolds.is_empty()),
+            joint_rows: Vec::new(),
+            normals: Vec::new(),
+            frictions: Vec::new(),
             mode,
-            callback_bodies: Vec::new(),
         };
-        let mut slots = vec![None; bodies.len()];
         for joint in joints.iter_mut() {
             let [a, b] = joint.bodies.map(|i| bodies[i].snapshot());
             let coordinates =
@@ -103,23 +196,7 @@ impl JointSolver {
             if rows.as_slice().is_empty() {
                 continue;
             }
-            let ids = joint.bodies.map(|i| {
-                if bodies[i].snapshot().inverse_mass == 0.0 {
-                    return 0;
-                }
-                *slots[i].get_or_insert_with(|| {
-                    let slot = solver.bodies.len();
-                    solver.bodies.push(SolverBody {
-                        original: Some(i),
-                        inverse_mass: bodies[i]
-                            .linear_factor()
-                            .scale(bodies[i].snapshot().inverse_mass),
-                        angular_factor: bodies[i].angular_factor(),
-                        ..fixed
-                    });
-                    slot
-                })
-            });
+            let ids = joint.bodies.map(|i| solver.bodies.get_or_init(bodies, i));
             for &row in rows.as_slice() {
                 let n = row.j1_linear;
                 let ia = a.inverse_inertia_world.apply(row.j1_angular);
@@ -132,7 +209,7 @@ impl JointSolver {
                 let velocity_a = n.dot(a.linear_velocity) + row.j1_angular.dot(a.angular_velocity);
                 let velocity_b = -n.dot(b.linear_velocity) + row.j2_angular.dot(b.angular_velocity);
                 let velocity_error = 0.0 - (velocity_a + velocity_b);
-                solver.rows.push(SolverRow {
+                solver.joint_rows.push(SolverRow {
                     bodies: ids,
                     joint_row: row,
                     angular_components: [
@@ -145,29 +222,20 @@ impl JointSolver {
                 });
             }
         }
-        // Obsolete callbacks are no-ops, but native allocates their bodies even
-        // for zero-row joints after the first iteration.
-        for joint in joints {
-            for i in joint.bodies {
-                if bodies[i].snapshot().inverse_mass != 0.0 && slots[i].is_none() {
-                    slots[i] = Some(solver.bodies.len() + solver.callback_bodies.len());
-                    solver.callback_bodies.push(SolverBody {
-                        original: Some(i),
-                        inverse_mass: bodies[i]
-                            .linear_factor()
-                            .scale(bodies[i].snapshot().inverse_mass),
-                        angular_factor: bodies[i].angular_factor(),
-                        ..fixed
-                    });
-                }
-            }
-        }
+        build_rows(
+            bodies,
+            manifolds,
+            dt,
+            &mut solver.bodies,
+            &mut solver.normals,
+            &mut solver.frictions,
+        );
         solver
     }
 
     /// Resolve one row in native input order. Exposed for exact event comparison.
-    pub fn resolve_row(&mut self, index: usize) {
-        let row = &mut self.rows[index];
+    pub fn resolve_joint_row(&mut self, index: usize) {
+        let row = &mut self.joint_rows[index];
         let mut numeric = ImpulseRow {
             bodies: row.bodies,
             normal: row.joint_row.j1_linear,
@@ -180,27 +248,134 @@ impl JointSolver {
             upper_impulse: row.joint_row.upper_impulse,
             applied_impulse: row.applied_impulse,
         };
-        resolve(&mut self.bodies, &mut numeric, self.mode, false);
+        resolve(&mut self.bodies.entries, &mut numeric, self.mode, false);
         row.applied_impulse = numeric.applied_impulse;
     }
 
-    pub fn iterate(&mut self) {
-        self.iterate_with_observer(|_, _, _| {});
-    }
-
-    /// Observe completed row events without changing the fixed iteration count.
-    pub fn iterate_with_observer(&mut self, mut observe: impl FnMut(&Self, usize, usize)) {
+    pub fn iterate(
+        &mut self,
+        bodies: &[RigidBody],
+        joints: &[Joint],
+        mut observe: impl FnMut(&Self, SolveEvent),
+    ) {
         for iteration in 0..10 {
-            for index in 0..self.rows.len() {
-                self.resolve_row(index);
-                observe(self, iteration, index);
+            for index in 0..self.joint_rows.len() {
+                observe(
+                    self,
+                    SolveEvent::Row {
+                        kind: RowKind::Joint,
+                        phase: Phase::Before,
+                        iteration,
+                        index,
+                    },
+                );
+                self.resolve_joint_row(index);
+                observe(
+                    self,
+                    SolveEvent::Row {
+                        kind: RowKind::Joint,
+                        phase: Phase::After,
+                        iteration,
+                        index,
+                    },
+                );
             }
-            self.bodies.append(&mut self.callback_bodies);
+            for (joint, constraint) in joints.iter().enumerate() {
+                let ids = constraint.bodies.map(|i| {
+                    self.bodies.companions[i]
+                        .or_else(|| (bodies[i].snapshot().inverse_mass == 0.0).then_some(0))
+                });
+                observe(
+                    self,
+                    SolveEvent::Obsolete {
+                        phase: Phase::Before,
+                        iteration,
+                        joint,
+                        bodies: ids,
+                    },
+                );
+                let ids = constraint
+                    .bodies
+                    .map(|i| Some(self.bodies.get_or_init(bodies, i)));
+                observe(
+                    self,
+                    SolveEvent::Obsolete {
+                        phase: Phase::After,
+                        iteration,
+                        joint,
+                        bodies: ids,
+                    },
+                );
+            }
+            for index in 0..self.normals.len() {
+                observe(
+                    self,
+                    SolveEvent::Row {
+                        kind: RowKind::Normal,
+                        phase: Phase::Before,
+                        iteration,
+                        index,
+                    },
+                );
+                resolve(
+                    &mut self.bodies.entries,
+                    &mut self.normals[index].numeric,
+                    self.mode,
+                    true,
+                );
+                observe(
+                    self,
+                    SolveEvent::Row {
+                        kind: RowKind::Normal,
+                        phase: Phase::After,
+                        iteration,
+                        index,
+                    },
+                );
+            }
+            for index in 0..self.frictions.len() {
+                let normal = self.normals[self.frictions[index].normal_index];
+                if normal.numeric.applied_impulse > 0.0 {
+                    let limit = normal.friction * normal.numeric.applied_impulse;
+                    self.frictions[index].numeric.lower_impulse = -limit;
+                    self.frictions[index].numeric.upper_impulse = limit;
+                    observe(
+                        self,
+                        SolveEvent::Row {
+                            kind: RowKind::Friction,
+                            phase: Phase::Before,
+                            iteration,
+                            index,
+                        },
+                    );
+                    resolve(
+                        &mut self.bodies.entries,
+                        &mut self.frictions[index].numeric,
+                        self.mode,
+                        false,
+                    );
+                    observe(
+                        self,
+                        SolveEvent::Row {
+                            kind: RowKind::Friction,
+                            phase: Phase::After,
+                            iteration,
+                            index,
+                        },
+                    );
+                } else {
+                    observe(self, SolveEvent::FrictionSkipped { iteration, index });
+                }
+            }
         }
     }
 
-    pub fn writeback(&self, bodies: &mut [RigidBody]) {
-        for solver_body in &self.bodies {
+    pub fn writeback(self, bodies: &mut [RigidBody], manifolds: &mut [ContactManifold<'_>]) {
+        for row in &self.normals {
+            let [mi, pi] = row.point;
+            manifolds[mi].points[pi].applied_impulse = row.numeric.applied_impulse;
+        }
+        for solver_body in &self.bodies.entries {
             if let Some(i) = solver_body.original {
                 let state = bodies[i].snapshot();
                 bodies[i].set_linear_velocity(state.linear_velocity.add(solver_body.delta_linear));

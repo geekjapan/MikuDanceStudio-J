@@ -77,3 +77,20 @@ production address comparison or simulates the native deletion algorithm.
 `native-lifecycle.tsv` and `rust-lifecycle.tsv` record scenario, explicit-clear
 flag, allocation count, pre-teardown release count, and the complete release
 sequence of allocation ordinals, including the final cached node.
+
+Destructive optimization detaches the root before fetching and freeing internal
+nodes. An unwind during rebuilding therefore cannot make Drop traverse the old
+links. Test-only fault injection after fetch exercises both public optimization
+entry points in child processes and catches the original panic through Drop.
+This guarantees safe destruction on that unwind, not transactional rollback or
+reuse of a partially rebuilt tree.
+
+Finite AABB endpoints do not imply a finite size heuristic. Three identical
+boxes from zero to `1e20` overflow the native `f32` size computation. When no
+candidate satisfies the existing strict comparison, Rust uses the first pair.
+All selected finite-native comparisons and their order remain unchanged. Native
+Bullet leaves pair indices at `-1` in this case and then indexes them, so this
+fallback is a deliberate safety repair with no native parity claim. The large
+finite regression checks both optimization entry points in child processes,
+exact leaf-bound bits, live links, leaf count, volume queries and self-tree pairs.
+Before the repair both children aborted from a second panic in Drop.

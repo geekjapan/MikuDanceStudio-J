@@ -343,7 +343,8 @@ impl Dbvt {
     fn bottom_up(&mut self, mut leaves: Vec<NodeId>) -> NodeId {
         while leaves.len() > 1 {
             let mut best = f32::MAX;
-            let mut pair = None;
+            // Native leaves its pair invalid when every size overflows.
+            let mut pair = (0, 1);
             for i in 0..leaves.len() {
                 for j in i + 1..leaves.len() {
                     let size = self
@@ -353,11 +354,11 @@ impl Dbvt {
                         .size();
                     if size < best {
                         best = size;
-                        pair = Some((i, j));
+                        pair = (i, j);
                     }
                 }
             }
-            let (i, j) = pair.expect("finite Bullet optimization bounds required");
+            let (i, j) = pair;
             let a = leaves[i];
             let b = leaves[j];
             let p = self.create(
@@ -432,16 +433,20 @@ impl Dbvt {
         p
     }
     pub fn optimize_bottom_up(&mut self) {
-        if let Some(root) = self.root {
+        if let Some(root) = self.root.take() {
             let mut leaves = Vec::new();
             self.fetch(root, &mut leaves);
+            #[cfg(test)]
+            tests::after_destructive_fetch(self);
             self.root = Some(self.bottom_up(leaves));
         }
     }
     pub fn optimize_top_down(&mut self, threshold: usize) {
-        if let Some(root) = self.root {
+        if let Some(root) = self.root.take() {
             let mut leaves = Vec::new();
             self.fetch(root, &mut leaves);
+            #[cfg(test)]
+            tests::after_destructive_fetch(self);
             self.root = Some(self.top_down(leaves, threshold));
         }
     }

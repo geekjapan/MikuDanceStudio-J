@@ -400,3 +400,132 @@ fn one_free_box_is_reused_and_dead_slots_stay_bounded() {
         invariant(&tree);
     }
 }
+
+#[test]
+fn large_finite_optimization_subprocess() {
+    const CHILD: &str = "DBVT_LARGE_OPTIMIZATION_CHILD";
+    if let Ok(mode) = std::env::var(CHILD) {
+        let volume = Aabb {
+            min: Vec3([0.0; 3]),
+            max: Vec3([1e20; 3]),
+        };
+        assert!(volume
+            .min
+            .0
+            .into_iter()
+            .chain(volume.max.0)
+            .all(f32::is_finite));
+        assert!(volume.size().is_infinite());
+        let mut tree = Dbvt::new();
+        for key in 0..3 {
+            tree.insert(ProxyKey(key), volume);
+        }
+        if mode == "bottom" {
+            tree.optimize_bottom_up();
+        } else {
+            tree.optimize_top_down(3);
+        }
+        invariant(&tree);
+        assert_eq!(tree.leaf_count(), 3);
+        for key in 0..3 {
+            let actual = tree.volume(ProxyKey(key));
+            assert_eq!(
+                actual.min.0.map(f32::to_bits),
+                volume.min.0.map(f32::to_bits)
+            );
+            assert_eq!(
+                actual.max.0.map(f32::to_bits),
+                volume.max.0.map(f32::to_bits)
+            );
+        }
+        let mut keys = Vec::new();
+        tree.collide_volume(volume, |key| keys.push(key.0));
+        keys.sort_unstable();
+        assert_eq!(keys, [0, 1, 2]);
+        let mut pairs = Vec::new();
+        tree.collide_tree(&tree, |a, b| pairs.push((a.0.min(b.0), a.0.max(b.0))));
+        pairs.sort_unstable();
+        assert_eq!(pairs, [(0, 1), (0, 2), (1, 2)]);
+        return;
+    }
+    for mode in ["bottom", "top"] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "dbvt::tests::large_finite_optimization_subprocess",
+                "--nocapture",
+            ])
+            .env(CHILD, mode)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{mode}: {:?}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+thread_local! {
+    static PANIC_AFTER_FETCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(super) fn after_destructive_fetch(tree: &Dbvt) {
+    if PANIC_AFTER_FETCH.with(|flag| flag.replace(false)) {
+        assert!(
+            tree.root.is_none(),
+            "destructive fetch must relinquish root ownership"
+        );
+        panic!("injected failure after destructive fetch");
+    }
+}
+
+#[test]
+fn optimization_unwind_subprocess() {
+    const CHILD: &str = "DBVT_OPTIMIZATION_UNWIND_CHILD";
+    if let Ok(mode) = std::env::var(CHILD) {
+        let result = std::panic::catch_unwind(|| {
+            let mut tree = Dbvt::new();
+            for key in 0..3 {
+                tree.insert(
+                    ProxyKey(key),
+                    Aabb {
+                        min: Vec3([0.0; 3]),
+                        max: Vec3([1.0; 3]),
+                    },
+                );
+            }
+            PANIC_AFTER_FETCH.with(|flag| flag.set(true));
+            if mode == "bottom" {
+                tree.optimize_bottom_up();
+            } else {
+                tree.optimize_top_down(3);
+            }
+        });
+        let payload = result.expect_err("the injected panic must actually unwind through Drop");
+        assert_eq!(
+            payload.downcast_ref::<&str>(),
+            Some(&"injected failure after destructive fetch")
+        );
+        assert!(!PANIC_AFTER_FETCH.with(|flag| flag.get()));
+        return;
+    }
+    for mode in ["bottom", "top"] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "dbvt::tests::optimization_unwind_subprocess",
+                "--nocapture",
+            ])
+            .env(CHILD, mode)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{mode}: {:?}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}

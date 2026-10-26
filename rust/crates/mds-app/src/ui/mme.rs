@@ -270,6 +270,12 @@ pub mod dialog {
         Action::inline("ctl:mme-dialog-1003"),
         Action::inline("mouse:mme-dialog-dblclick"),
         Action::inline("drop:mme-dialog"),
+        // `DlgToggleSkipValidation` (mme_dlg.cpp:1992) flips the engine's SkipValidation, read
+        // when an effect loads; wgpu validates every pipeline and has no switch to skip it.
+        Action::dropped(
+            "menu:mme-dialog-40028",
+            "wgpu has no switch to skip device validation (default reported to the operator 2026-10-26)",
+        ),
     ];
 
     pub fn actions() -> &'static [Action] {

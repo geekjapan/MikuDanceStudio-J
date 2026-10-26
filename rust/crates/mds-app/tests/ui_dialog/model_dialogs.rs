@@ -677,6 +677,48 @@ fn the_physics_dialog_tells_the_viewport_which_record_it_has_selected() {
     assert_eq!(record_target(&rig), None);
 }
 
+/// A record drag echoes the dragged value into its box only (`EchoRecord`,
+/// `frame_modes_bone.cpp:161-224`): what was typed in another box and not entered stays. The
+/// rotation is the widened value over the double truncated pi, as a float (`:176`): the record
+/// 0.104807 rad shows 6.00 where the float division would show 6.01.
+#[test]
+fn a_record_drag_echoes_only_the_dragged_box() {
+    let mut rig = lips();
+    rig.run("dlg:IDD_PHYSICS_MODEL").unwrap();
+    rig.with(|c| dialog::physics_text(c, 718, "9.99")).unwrap();
+    rig.with(|c| dialog::physics_text(c, 712, "7.77")).unwrap();
+    let scratch = rig.editor.doc.edit.physics_scratch.as_mut().unwrap();
+    scratch.0[0].rotation[0] = f32::from_bits(0x3dc2_2a2c);
+    let drag = |rig: &mut Rig, field, axis, dy| {
+        rig.editor
+            .apply(mds_doc::Command::EditPhysicsRecord {
+                joint: false,
+                index: 0,
+                field,
+                axis,
+                dy,
+            })
+            .unwrap();
+        rig.draw(vec![]);
+    };
+    drag(&mut rig, mds_doc::PhysicsField::Rotation, 0, -1);
+    assert_eq!(rig.field(7), "6.00");
+    assert_eq!(
+        (rig.field(10), rig.field(4)),
+        ("9.99".into(), "7.77".into())
+    );
+    let y = rig.editor.doc.edit.physics_scratch.as_ref().unwrap().0[0].position[1];
+    drag(&mut rig, mds_doc::PhysicsField::Position, 1, 2);
+    assert_eq!(
+        rig.field(5),
+        format!("{:3.2}", (f64::from(y) - 0.1f32 as f64) as f32)
+    );
+    assert_eq!(
+        (rig.field(10), rig.field(4)),
+        ("9.99".into(), "7.77".into())
+    );
+}
+
 /// The name boxes 705 and 740 are ANSI edit boxes: `CollectBodyEdits` and `CollectJointEdits`
 /// copy their Shift-JIS bytes into the 20-byte names (`physics_model_dialog.cpp:1129` on). A
 /// character cp932 has no code for reads back as `?`.

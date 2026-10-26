@@ -2969,20 +2969,53 @@ fn physics_enter(ctx: &mut Ctx, f: &mut Form, i: usize) -> Result<(), String> {
 }
 
 /// A drag in the viewport (`Command::EditPhysicsRecord`) changed the record behind the boxes:
-/// they show it (the C++ echoes the value into the box).
+/// `EditModeRecord` (`frame_modes_bone.cpp:161-224`) echoes the dragged value into its box only,
+/// so text typed but not entered in another box stays. The record the boxes were not filled from
+/// yet is shown whole.
 fn physics_pull(ctx: &mut Ctx, f: &mut Form) {
     let Ok((rigids, joints)) = scratch(ctx) else {
         return;
     };
     if let Some(r) = f.ph.body.and_then(|i| rigids.get(i)) {
-        if f.ph.shown.0.as_ref() != Some(r) {
-            show_body(f, r);
+        match f.ph.shown.0.take() {
+            Some(old) => {
+                for a in 0..3 {
+                    echo(f, B_SIZE + a, old.size[a], r.size[a], 3, 2);
+                    echo(f, B_POS + a, old.position[a], r.position[a], 3, 2);
+                    echo_degrees(f, B_ROT + a, old.rotation[a], r.rotation[a]);
+                }
+                f.ph.shown.0 = Some(r.clone());
+            }
+            None => show_body(f, r),
         }
     }
     if let Some(j) = f.ph.joint.and_then(|i| joints.get(i)) {
-        if f.ph.shown.1.as_ref() != Some(j) {
-            show_joint(f, j);
+        match f.ph.shown.1.take() {
+            Some(old) => {
+                for a in 0..3 {
+                    echo(f, J_POS + a, old.position[a], j.position[a], 5, 4);
+                    echo_degrees(f, J_ROT + a, old.rotation[a], j.rotation[a]);
+                }
+                f.ph.shown.1 = Some(j.clone());
+            }
+            None => show_joint(f, j),
         }
+    }
+}
+
+/// `EchoRecord` of a value the drag changed.
+fn echo(f: &mut Form, i: usize, old: f32, new: f32, width: usize, precision: usize) {
+    if old.to_bits() != new.to_bits() {
+        f.t[i] = fmt(new, width, precision);
+    }
+}
+
+/// The rotation echo divides the widened value by the double `g_AnglePiTruncated` (the float
+/// truncated pi, `frame_modes.cpp:556`) and passes the float of the result (`:176`, `:187`).
+fn echo_degrees(f: &mut Form, i: usize, old: f32, new: f32) {
+    if old.to_bits() != new.to_bits() {
+        let degrees = f64::from(new) / f64::from(PI_SHORT) * 180.0;
+        f.t[i] = fmt(degrees as f32, 3, 2);
     }
 }
 

@@ -254,4 +254,20 @@ fn the_model_view_keeps_its_view_offsets() {
     e.seek(20).unwrap();
     e.step_frame(true).unwrap();
     assert_eq!(e.camera, panned);
+
+    // Playback films the camera track only with tracking on (`cameraView`,
+    // `debug_geometry.cpp:476`; `InitGlobalTracks`, `playback_state.cpp:327`).
+    e.toggle_play(0).unwrap();
+    for t in 1..10 {
+        e.pump(t * 33).unwrap();
+    }
+    assert_eq!(e.camera, panned, "the model view while playing");
+    e.toggle_play(330).unwrap();
+    e.apply(Command::SetFollowCamera(true)).unwrap();
+    e.toggle_play(400).unwrap();
+    e.pump(433).unwrap();
+    assert_eq!(
+        e.camera,
+        scene::track_camera(&e.doc, e.doc.pmm.timeline.current_frame as u32).unwrap()
+    );
 }

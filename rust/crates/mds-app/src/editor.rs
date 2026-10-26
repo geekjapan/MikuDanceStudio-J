@@ -316,6 +316,7 @@ impl Editor {
             SelectModel(_)
                 | SelectCameraMode
                 | SetFrame(_)
+                | FinishPlayback { .. }
                 | SelectBones(_)
                 | ClearBoneMarks
                 | ClearKeySelection

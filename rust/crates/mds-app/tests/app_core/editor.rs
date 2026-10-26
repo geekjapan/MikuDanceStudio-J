@@ -271,3 +271,51 @@ fn the_model_view_keeps_its_view_offsets() {
         scene::track_camera(&e.doc, e.doc.pmm.timeline.current_frame as u32).unwrap()
     );
 }
+
+/// The mean color of the pixels the models cover, and their count.
+fn model_pixels(e: &Editor, gpu: &mds_render::Gpu) -> (usize, [f32; 3]) {
+    let px = e
+        .with_stage([640, 360], &[[0.0, 0.0]], |f, s| {
+            mds_render::render_frame_with(gpu, f, s)
+        })
+        .unwrap()
+        .unwrap();
+    let covered: Vec<&[u8]> = px.chunks(4).filter(|p| *p != scene::BACKGROUND).collect();
+    let mut mean = [0.0; 3];
+    for p in &covered {
+        for c in 0..3 {
+            mean[c] += f32::from(p[c]) / covered.len() as f32;
+        }
+    }
+    (covered.len(), mean)
+}
+
+/// The model view of `swing600-golden.pmm` plays at the camera state it saved, yaw 0: the front
+/// view (`ResetViewPreset(Front)`, `command_frame_edit.cpp:1403`), which looks at the backs of the
+/// strips (its camera key is turned half a turn to face their fronts, `golden/README.md`). An
+/// opaque PMD material culls its back faces (`model_renderers.cpp:869-882`) and the edge pass
+/// draws the back faces of the hull (`D3DCULL_CW`, `:1312`), so the strips show their black edge
+/// color only. The back view faces their fronts, which are lit.
+#[test]
+fn the_front_view_of_the_golden_strips_shows_their_edge_color() {
+    let Some(gpu) = mds_render::Gpu::new().expect("device") else {
+        eprintln!("SKIP: no wgpu adapter on this host (not a pass)");
+        return;
+    };
+    let mut e = open("swing600-golden.pmm");
+    e.toggle_play(0).unwrap();
+    e.pump(33).unwrap();
+    assert_eq!(
+        e.camera.rotation, [0.0; 3],
+        "the saved model view while playing"
+    );
+    let (n, front) = model_pixels(&e, &gpu);
+    assert!(n > 1000 && front == [0.0; 3], "front: {n} px of {front:?}");
+    e.toggle_play(66).unwrap();
+    run(&mut e, "ctl:403").unwrap();
+    let (n, back) = model_pixels(&e, &gpu);
+    assert!(
+        n > 1000 && back.iter().all(|&c| c > 100.0),
+        "back: {n} px of {back:?}"
+    );
+}

@@ -10,7 +10,11 @@ publish.workspace = true
 mds-accessory = { path = "../mds-accessory" }
 mds-doc = { path = "../mds-doc" }
 mds-formats = { path = "../mds-formats" }
+# The Kinect / OpenNI capture of the MoCap menu.
+mds-kinect = { path = "../mds-kinect" }
 mds-math = { path = "../mds-math" }
+# The WAV the timeline plays and the AVI writer of the recording.
+mds-media = { path = "../mds-media" }
 # The types mds-doc commands carry (`Command::ScaleFrames` takes `mds_ops::RangeScale`).
 mds-ops = { path = "../mds-ops" }
 mds-physics = { path = "../mds-physics" }
@@ -24,6 +28,14 @@ egui = "=0.37.0"
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "metal", "vulkan", "dx12"] }
 # File dialogs and the unsaved-changes prompts.
 rfd = "=0.17.2"
+# The WAV's sound (`audio`): the system output on Windows (WASAPI), macOS (Core Audio) and Linux (ALSA).
+cpal = { version = "0.18.2", optional = true }
+
+[features]
+default = ["audio"]
+audio = ["dep:cpal"]
+# Loads Data\DxOpenNI.dll for the Kinect capture (Windows only).
+dxopenni = ["mds-kinect/dxopenni"]
 
 [dev-dependencies]
 png = "0.18"

@@ -114,7 +114,6 @@ pub(crate) fn posed_scene(doc: &Document) -> Vec<Option<PoseModel>> {
 /// the camera parent detach computes it (`command_dispatch.cpp` 243-263): in
 /// double, the Y term first, rounded once. `ApplyCameraReferenceModeChange`
 /// sums X first in float (`camera_reference.rs`); each matches its own C++.
-
 impl Document {
     /// The frame-strip click (`HandleLButtonDown_FrameStripHit`,
     /// `ui_editor_click.cpp` 791-923): every model with an edited bone

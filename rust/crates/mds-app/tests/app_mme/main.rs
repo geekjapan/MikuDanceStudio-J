@@ -13,10 +13,11 @@
 //! `MDS_APP_MME_DIR=<dir>` keeps the staged scenes and the dumped PNGs there.
 //!
 //! [`menu`] has the tests of the MMEffect menu and the mapping dialog, [`editor`] those of two
-//! editor calls beside them.
+//! editor calls beside them, [`window`] the frame drawn into a window's texture.
 
 mod editor;
 mod menu;
+mod window;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

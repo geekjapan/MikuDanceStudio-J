@@ -6,7 +6,8 @@
 //! editor for the dialog lines and back.
 
 use super::{fixtures, Rig};
-use mds_app::ui::dialog;
+use mds_app::navigation::KeyState;
+use mds_app::ui::{dialog, viewport};
 use mds_doc::script::Runner;
 
 fn read_input(path: &str) -> Option<Vec<u8>> {
@@ -119,6 +120,10 @@ fn drive(rig: &mut Rig, line: &str) -> Option<Result<(), String>> {
             rig.with(|c| dialog::physics_pick(c, id.parse().unwrap(), n.parse().unwrap()))
         }
         ["dialog", "click", id] => rig.with(|c| dialog::physics_press(c, id.parse().unwrap())),
+        ["physics", "drag", what, axis, modifier, dy] => {
+            record_drag(rig, what, axis, *modifier == "shift", dy.parse().unwrap());
+            Ok(())
+        }
         ["dialog", "ok"] => rig.ok(),
         ["dialog", "cancel"] => {
             rig.cancel();
@@ -126,6 +131,41 @@ fn drive(rig: &mut Rig, line: &str) -> Option<Result<(), String>> {
         }
         _ => return None,
     })
+}
+
+/// A left drag on a model tool row of an 800 x 600 viewport (`ViewportToolAtPoint`,
+/// `frame_modes.cpp:115`: the upper row rotates, the lower one moves, the columns are X, Y and Z),
+/// moved down by `dy` rows: the record drag of the physics model dialog
+/// (`EditModeRecord`, `frame_modes_bone.cpp:158`).
+fn record_drag(rig: &mut Rig, what: &str, axis: &str, shift: bool, dy: f32) {
+    let x = match axis {
+        "x" => 690.0,
+        "y" => 730.0,
+        _ => 770.0,
+    };
+    let y = if what == "rotate" { 535.0 } else { 575.0 };
+    let pass = |pos: [f32; 2], left| viewport::Input {
+        pos: Some(pos),
+        size: [800.0, 600.0],
+        left,
+        right: KeyState::Idle,
+        middle: KeyState::Idle,
+        right_double_click: false,
+        pixels: [0, 0],
+        wheel: 0.0,
+        shift,
+        ctrl: false,
+    };
+    for i in [
+        pass([x, y], KeyState::Pressed),
+        pass([x, y + dy], KeyState::Held),
+        pass([x, y + dy], KeyState::Released),
+    ] {
+        rig.with(|c| viewport::input(c, &i));
+    }
+    // The window draws the dialog after the viewport in the same pass, which echoes the drag into
+    // its boxes (`EchoRecord`) before OK can read them.
+    rig.draw(Vec::new());
 }
 
 struct Outcome {
@@ -282,6 +322,22 @@ fn pmdedit_script() {
     let out = check("script3", "pmdedit", 10, 3);
     let tsv =
         std::fs::read_to_string(fixtures().join("script3/expected/pmdedit/messages.tsv")).unwrap();
+    let want: Vec<&str> = tsv
+        .lines()
+        .skip(1)
+        .map(|l| l.split('\t').nth(2).unwrap())
+        .collect();
+    assert_eq!(out.messages, want);
+}
+
+/// `script4/jointdrag.txt`: on the joint page (801) the record drag edits the selected joint, and
+/// the dialog opened again drags a body (`physicsEditorJointPage`, `frame_modes_bone.cpp:158`);
+/// the three OK boxes say what `messages.tsv` recorded.
+#[test]
+fn jointdrag_script() {
+    let out = check("script4", "jointdrag", 15, 5);
+    let tsv =
+        std::fs::read_to_string(fixtures().join("script4/expected/jointdrag/messages.tsv")).unwrap();
     let want: Vec<&str> = tsv
         .lines()
         .skip(1)

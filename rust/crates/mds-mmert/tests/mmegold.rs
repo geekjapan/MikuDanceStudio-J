@@ -338,6 +338,7 @@ impl Staged {
             elapsed,
             size: (W, H),
             assignments: &self.assignments,
+            offscreen: &Default::default(),
             resolve: &resolve,
         };
         let mut log = Vec::new();

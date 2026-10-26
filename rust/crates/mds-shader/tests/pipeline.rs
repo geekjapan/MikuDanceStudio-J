@@ -132,3 +132,24 @@ fn compile_reports_vkd3d_errors() {
     assert!(e.code < 0);
     assert!(e.summary().starts_with('E'), "{}", e.summary());
 }
+
+#[test]
+fn disassemble_lists_every_pass_in_d3d_assembly() {
+    let vk = vkd3d();
+    let fx = effect("skin_effect_sm3.fx");
+    let text = mds_shader::disassemble(&vk, &fx, "sm3");
+    let passes: usize = fx.ast.techniques.iter().map(|t| t.passes.len()).sum();
+    let count = |prefix: &str| text.lines().filter(|l| l.starts_with(prefix)).count();
+    assert_eq!(count("  pass "), passes);
+    assert_eq!(count("technique "), fx.ast.techniques.len());
+    // Each shader state is followed by its program: the version token, then instructions.
+    let states = text.lines().filter(|l| l.contains(" = compile ")).count();
+    assert!(states >= 2 * passes, "{states} shader states");
+    let versions = text
+        .lines()
+        .filter(|l| matches!(l.trim(), "vs_3_0" | "ps_3_0"))
+        .count();
+    assert_eq!(versions, states, "{text}");
+    assert!(!text.contains("// error"), "{text}");
+    assert!(text.contains("mov "), "{text}");
+}

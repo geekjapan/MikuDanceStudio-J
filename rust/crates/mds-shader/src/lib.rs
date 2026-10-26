@@ -9,7 +9,8 @@
 //! 4. [`spirv_fix::strip_point_size`] removes the `PointSize` output.
 //! 5. naga validates the module and writes WGSL, MSL, and HLSL ([`backend`]).
 //!
-//! [`reflect`] maps each parameter to its constant register.
+//! [`reflect`] maps each parameter to its constant register. [`disassemble`] lists an effect's
+//! passes in Direct3D shader assembly.
 //!
 //! Known vkd3d-shader 2.1 limits, measured over the ray-mmd corpus by `tests/corpus.rs`:
 //!
@@ -317,6 +318,67 @@ pub fn compile_with(
         vkd3d_time,
         error,
         first_error,
+    }
+}
+
+/// A listing of `fx` in Direct3D shader assembly: per technique and pass, each shader state
+/// followed by the vkd3d-shader assembly of its entry ([`Target::D3dAsm`]), or by the compile
+/// error. Each entry compiles once; `name` labels the source in vkd3d messages.
+pub fn disassemble(vk: &Vkd3d, fx: &Effect, name: &str) -> String {
+    let mut listings: std::collections::HashMap<Entry, String> = Default::default();
+    let mut out = String::new();
+    for t in &fx.ast.techniques {
+        out.push_str(&format!("technique {}\n", t.name.as_deref().unwrap_or("")));
+        for p in &t.passes {
+            out.push_str(&format!("  pass {}\n", p.name.as_deref().unwrap_or("")));
+            for s in &p.states {
+                let mds_fx::StateValue::Compile(c) = &s.value else {
+                    continue;
+                };
+                out.push_str(&format!(
+                    "    {} = compile {} {}({})\n",
+                    s.name, c.profile, c.function, c.args_text
+                ));
+                let entry = Entry {
+                    profile: c.profile.clone(),
+                    function: c.function.clone(),
+                    args: c.args.clone(),
+                    args_text: c.args_text.clone(),
+                };
+                let text = listings
+                    .entry(entry)
+                    .or_insert_with_key(|e| assembly(vk, fx, e, name));
+                for line in text.lines() {
+                    out.push_str("      ");
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        }
+    }
+    out
+}
+
+/// [`disassemble`] of the effect file at `path`.
+pub fn disassemble_file(vk: &Vkd3d, path: &std::path::Path) -> Result<String, String> {
+    let fx = Effect::parse_file(path).map_err(|e| e.to_string())?;
+    Ok(disassemble(vk, &fx, &path.to_string_lossy()))
+}
+
+/// The assembly of one entry, retried with [`guard_pow`] on E5027 as [`compile`] does.
+fn assembly(vk: &Vkd3d, fx: &Effect, entry: &Entry, name: &str) -> String {
+    let (source, ep) = match entry_source(fx, entry) {
+        Ok(s) => s,
+        Err(e) => return format!("// error: {e}"),
+    };
+    let asm = |src: &str| vk.compile_hlsl(src, name, &entry.profile, &ep, Target::D3dAsm);
+    let r = match asm(&source) {
+        Err(e) if is_e5027(&e) => asm(&guard_pow(&source)),
+        r => r,
+    };
+    match r {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(e) => format!("// error: {}", e.summary()),
     }
 }
 

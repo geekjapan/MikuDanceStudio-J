@@ -183,21 +183,16 @@ fn record_target(ctx: &Ctx) -> Option<RecordTarget> {
         .flatten()
 }
 
-/// Applies a command whose C++ handler does not set `SceneModified` (a bone edit is not a scene
-/// edit, `Command::marks_modified`); the editor marks every edit. An error goes to the status
-/// line and is `false`.
-fn quiet(ctx: &mut Ctx, cmd: Command) -> bool {
-    let modified = ctx.editor.modified;
-    let done = ctx.editor.apply(cmd);
-    ctx.editor.modified = modified;
-    done.map_err(|e| *ctx.status = e).is_ok()
+/// Applies a command; an error goes to the status line and is `false`.
+fn apply_or_report(ctx: &mut Ctx, cmd: Command) -> bool {
+    ctx.editor.apply(cmd).map_err(|e| *ctx.status = e).is_ok()
 }
 
 /// The model-mode view offset moved by `(dx, dy)` (`ViewOffsetX` and `ViewOffsetY`, the pans of
 /// `pump_navigation.cpp:330`, `:376` and `frame_modes.cpp:530`).
 fn pan(ctx: &mut Ctx, dx: f32, dy: f32) {
     let s = &ctx.editor.doc.pmm.camera_state;
-    quiet(ctx, Command::SetViewOffset([s[3] + dx, s[4] + dy]));
+    apply_or_report(ctx, Command::SetViewOffset([s[3] + dx, s[4] + dy]));
     pan_view_offset(&mut ctx.editor.camera, dx, dy);
 }
 
@@ -1010,7 +1005,7 @@ fn select(ctx: &mut Ctx, marks: &[bool], first: i32) {
 
 fn set_poses(ctx: &mut Ctx, poses: Vec<Pose>) {
     for (bone, translation, rotation) in poses {
-        let moved = quiet(
+        let moved = apply_or_report(
             ctx,
             Command::DragBonePose {
                 bone,
@@ -1087,7 +1082,7 @@ pub fn input(ctx: &mut Ctx, i: &Input) {
                     s.origin = hit.center.unwrap_or(cur);
                 }
                 if op <= 14 && o.rig.is_some() {
-                    quiet(ctx, Command::BeginBoneEdit);
+                    apply_or_report(ctx, Command::BeginBoneEdit);
                 }
             }
             21 => s.coordinate = next_coordinate(s.coordinate, camera_mode),
@@ -1230,7 +1225,7 @@ fn record_drag(ctx: &mut Ctx, mode: u8, p: &Pointer) {
         PhysicsField::Position if p.shift && !joint => PhysicsField::Size,
         f => f,
     };
-    quiet(
+    apply_or_report(
         ctx,
         Command::EditPhysicsRecord {
             joint,

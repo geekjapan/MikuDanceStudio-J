@@ -21,8 +21,9 @@
 //!
 //! Entry points that other areas have to wire: the English names, toon texture and physics model
 //! dialogs belong to menu 259, 261 and 262 (`help.rs`, which lists them as missing: run
-//! `dlg:IDD_ENGLISH_NAMES`, `dlg:IDD_TOON_TEXTURE`, `dlg:IDD_PHYSICS_MODEL`), and the frame scale
-//! dialog to the timeline's button 424 (`dlg:IDD_FRAME_SCALE`).
+//! `dlg:IDD_ENGLISH_NAMES`, `dlg:IDD_TOON_TEXTURE`, `dlg:IDD_PHYSICS_MODEL`); the timeline's
+//! button 424 runs `dlg:IDD_FRAME_SCALE`. The physics model dialog tells the viewport which
+//! record it has selected ([`viewport::set_record_target`]), so the record drag edits it.
 //!
 //! # Where this differs from the C++
 //!
@@ -39,7 +40,8 @@
 //! * A command that fails keeps its dialog open with the error on the status line (the C++ closes
 //!   it and the handler returns with nothing changed).
 //! * [`apply_cpp`] puts the modified flag back after a command whose C++ handler sets no
-//!   `SceneModified` (`Editor::apply` marks every edit but a selection).
+//!   `SceneModified` where the document's rule (`Document::marks_modified`, which knows an empty
+//!   clipboard) differs from the `Editor`'s.
 //! * The outside parent dialog shows the readout of the result on a copy of the document; the PMM
 //!   holds the Japanese bone names only, so the English names are not shown.
 //! * The physics model dialog edits a dense scratch list (`EditState::physics_scratch`): after a
@@ -53,6 +55,7 @@
 //! `MDS_APP_DIALOG=<name>` opens a dialog when the window starts, for screenshots.
 
 use super::camera_panel::{atof, atol, in_camera_mode, window_text};
+use super::viewport::{self, RecordTarget};
 use super::{help, model_panel, timeline, Ctx};
 use crate::actions::{self, Action};
 use egui::{Align2, Context, Id, Key};
@@ -219,6 +222,9 @@ pub fn current(egui: &Context) -> Option<&'static str> {
 }
 
 fn close(egui: &Context, name: &str) {
+    if name == PHYSICS_MODEL {
+        viewport::set_record_target(egui, None);
+    }
     egui.data_mut(|d| {
         d.remove::<&'static str>(slot());
         d.remove::<Form>(form_id(name));
@@ -594,7 +600,10 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
 /// What the dialog does with `done`; a failing OK keeps it open.
 fn settle(ctx: &mut Ctx, egui: &Context, spec: &Spec, form: Form, done: Done) {
     match done {
-        Done::Open => store(egui, spec.name, form),
+        Done::Open => {
+            publish_record(egui, spec.name, &form);
+            store(egui, spec.name, form);
+        }
         Done::Cancel => {
             (spec.cancel)(ctx, &form);
             close(egui, spec.name);
@@ -603,6 +612,7 @@ fn settle(ctx: &mut Ctx, egui: &Context, spec: &Spec, form: Form, done: Done) {
             Ok(()) => close(egui, spec.name),
             Err(e) => {
                 *ctx.status = e;
+                publish_record(egui, spec.name, &form);
                 store(egui, spec.name, form);
             }
         },
@@ -1126,7 +1136,7 @@ fn open_toon(ctx: &mut Ctx) -> Result<(), String> {
 
 /// Menu 262.
 fn open_physics_model(ctx: &mut Ctx) -> Result<(), String> {
-    let open = ctx.egui.as_ref().and_then(current) == Some("IDD_PHYSICS_MODEL");
+    let open = ctx.egui.as_ref().and_then(current) == Some(PHYSICS_MODEL);
     // `InitPhysicsModelDialog` copies the model's records for the dialog and the viewport; the
     // copy is made only once the dialog really opens.
     let copy = if open {
@@ -1134,11 +1144,35 @@ fn open_physics_model(ctx: &mut Ctx) -> Result<(), String> {
     } else {
         Some(physics_source(ctx)?)
     };
-    open_for_model(ctx, "IDD_PHYSICS_MODEL")?;
+    open_for_model(ctx, PHYSICS_MODEL)?;
     if copy.is_some() {
         ctx.editor.doc.edit.physics_scratch = copy;
     }
+    if let Ok((egui, _, form)) = open_form(ctx) {
+        publish_record(&egui, PHYSICS_MODEL, &form);
+    }
     Ok(())
+}
+
+const PHYSICS_MODEL: &str = "IDD_PHYSICS_MODEL";
+
+/// The record the physics dialog has selected, for the viewport's record drag
+/// (`EditModeRecord`, `frame_modes_bone.cpp:158`, edits `selectedRigidIndex` or
+/// `selectedJointIndex` by the page): published on open, after every change of the form, and
+/// cleared in [`close`].
+fn publish_record(egui: &Context, name: &str, f: &Form) {
+    if name != PHYSICS_MODEL {
+        return;
+    }
+    let (joint, index) = match f.ph.joint_page {
+        true => (true, f.ph.joint),
+        false => (false, f.ph.body),
+    };
+    let target = index.map(|i| RecordTarget {
+        joint,
+        index: i as u32,
+    });
+    viewport::set_record_target(egui, target);
 }
 
 /// Ctl 442: the outside parent dialog of the selected model.
@@ -1299,7 +1333,8 @@ fn camera_numeric_body(ui: &mut egui::Ui, _: &mut Ctx, f: &mut Form, en: bool) -
 }
 
 /// Position, pitch (shown negated), yaw, roll and distance (shown negated) of the camera, in the
-/// units of the camera panel's readout; one `SetCamera`.
+/// units of the camera panel's readout; one `SetCameraFromMenu` (`SceneModified`,
+/// `command_view_menu.cpp:1771`).
 fn ok_camera_numeric(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
     let p = &ctx.editor.doc.pmm;
     let s = p.camera_state;
@@ -1307,7 +1342,7 @@ fn ok_camera_numeric(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
         edited(f, i).map_or(current, |d| (sign * d * PI_LIT / 180.0) as f32)
     };
     let at = |i: usize, current: f32| edited(f, i).map_or(current, |v| v as f32);
-    let cmd = Command::SetCamera {
+    let cmd = Command::SetCameraFromMenu {
         position: [at(0, s[0]), at(1, s[1]), at(2, s[2])],
         rotation: [
             radians(3, -1.0, s[6]),
@@ -1315,8 +1350,6 @@ fn ok_camera_numeric(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
             radians(5, 1.0, s[8]),
         ],
         distance: edited(f, 6).map_or(s[5], |v| (-v) as f32),
-        fov: p.settings.camera_fov,
-        perspective: p.camera_perspective != 0,
     };
     ctx.editor.apply(cmd)
 }
@@ -1450,8 +1483,8 @@ fn shadow_color(ctx: &mut Ctx) -> Result<(), String> {
 // ---- the document commands as the C++ handlers leave SceneModified --------------------------
 
 /// `Editor::apply`, then the modified flag as the C++ handler leaves it. `Editor` marks the
-/// document modified for every edit; a command whose handler sets no `SceneModified`
-/// (`Document::marks_modified` is false) puts the flag back.
+/// document by `Command::marks_modified`, which does not know that a paste with an empty
+/// clipboard changes nothing; where `Document::marks_modified` is false the flag is put back.
 pub fn apply_cpp(ctx: &mut Ctx, cmd: Command) -> Result<(), String> {
     let marks = ctx.editor.doc.marks_modified(&cmd);
     let modified = ctx.editor.modified;
@@ -1491,6 +1524,7 @@ fn with_form<R>(
         return Err(format!("{name} is not open"));
     }
     let r = f(ctx, &mut form);
+    publish_record(&egui, spec.name, &form);
     store(&egui, spec.name, form);
     Ok(r)
 }

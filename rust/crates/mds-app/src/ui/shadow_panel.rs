@@ -85,7 +85,14 @@ fn mode_2(ctx: &mut Ctx) -> Result<(), String> {
     set_mode(ctx, 2)
 }
 
-/// The range `value` from slider 560 or edit 561: the distance is `(10000 - value) / 100000`.
+/// The slider 560 at `position` (`ui_hscroll.cpp:262`): the distance is `(10000 - position) /
+/// 100000`, the mode stays, and the scene is modified.
+pub fn set_slider(ctx: &mut Ctx, position: i32) -> Result<(), String> {
+    camera_mode_only(ctx)?;
+    ctx.editor.apply(Command::SetSelfShadowSlider(position))
+}
+
+/// The range `value` from edit 561: the distance is `(10000 - value) / 100000`.
 pub fn set_range(ctx: &mut Ctx, value: f64) -> Result<(), String> {
     camera_mode_only(ctx)?;
     let mode = mode(ctx);
@@ -140,7 +147,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
             .add(egui::Slider::new(&mut pos, 0..=9999).show_value(false))
             .changed()
         {
-            if let Err(e) = set_range(ctx, pos.into()) {
+            if let Err(e) = set_slider(ctx, pos) {
                 *ctx.status = e;
             }
         }

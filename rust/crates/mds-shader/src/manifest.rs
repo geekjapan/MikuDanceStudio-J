@@ -33,8 +33,9 @@ pub(super) fn write(
     jobs: &[Job<'_>],
     done: &[Option<Done>],
 ) -> Result<(), String> {
-    let mut text = String::from("mds-shader-contracts-v1\n");
+    let mut text = String::from("mds-shader-contracts-v2\n");
     writeln!(text, "compiler\t{}", cell(version)).unwrap();
+    text.push_str("includes\tproduction-active-only\n");
     text.push_str("file\tprofile\tentry\targs\tsource_hash\tspirv\twgsl\tmsl\thlsl\tscan\treflection\tcoverage\tprobe\treparse\treflection_origin\terror\n");
     for (j, d) in jobs.iter().zip(done) {
         let d = d.as_ref().ok_or("missing shader result")?;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate or compare v1 per-entry shader contracts without aggregate thresholds."""
+"""Validate or compare v2 per-entry shader contracts without aggregate thresholds."""
 import csv
 import json
 import sys
@@ -23,11 +23,13 @@ def validate_contracts(row):
 
 def read(path):
     with Path(path).open(encoding='utf-8', newline='') as stream:
-        if stream.readline().rstrip('\r\n') != 'mds-shader-contracts-v1':
+        if stream.readline().rstrip('\r\n') != 'mds-shader-contracts-v2':
             raise ValueError(f'{path}: unsupported manifest schema')
         compiler = stream.readline().rstrip('\r\n').split('\t')
         if len(compiler) != 2 or compiler[0] != 'compiler' or not compiler[1]:
             raise ValueError(f'{path}: missing compiler provenance')
+        if stream.readline().rstrip('\r\n') != 'includes\tproduction-active-only':
+            raise ValueError(f'{path}: capture must use production active-only includes')
         reader = csv.DictReader(stream, delimiter='\t', quoting=csv.QUOTE_NONE)
         if reader.fieldnames != COLUMNS:
             raise ValueError(f'{path}: invalid columns')

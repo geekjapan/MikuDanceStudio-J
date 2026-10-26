@@ -159,6 +159,14 @@ fn percentile(sorted: &[Duration], p: f64) -> f64 {
     sorted[rank.min(sorted.len()) - 1].as_secs_f64() * 1000.0
 }
 
+fn effect_options(manifest: bool) -> Options {
+    Options {
+        // Preserve the legacy eager include scan outside production-contract capture.
+        strict_includes: !manifest,
+        ..Options::default()
+    }
+}
+
 fn run(o: &Opts) -> Result<bool, String> {
     let vk = Vkd3d::load()?;
     eprintln!("loaded {} from {}", vk.version(), vk.path().display());
@@ -185,11 +193,7 @@ fn run(o: &Opts) -> Result<bool, String> {
     for e in &walk_errors {
         eprintln!("error: {e}");
     }
-    // Resolve every #include, as `mds-fx scan` does by default and as the P2 prototype did.
-    let opts = Options {
-        strict_includes: true,
-        ..Options::default()
-    };
+    let opts = effect_options(o.manifest.is_some());
     let parsed: Vec<Option<Result<Effect, FxError>>> = par_map(found.len(), o.jobs, |i| {
         Effect::parse_file_with(&found[i].path, &opts)
     });
@@ -519,5 +523,32 @@ fn main() -> ExitCode {
             eprint!("{USAGE}");
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn manifest_uses_production_includes_and_legacy_corpus_stays_strict() {
+        let source = b"#define AA_QUALITY 3\n#if AA_QUALITY == 6\n#include \"shader/CameraMotion.fxsub\"\n#endif\n\
+            float4 PS() : COLOR { return 1; }\n\
+            technique Main { pass P { PixelShader = compile ps_3_0 PS(); } }\n";
+        let path = Path::new("/mds-missing-include-fixture/Main.fx");
+        let captured = Effect::parse_bytes_with(path, source, &effect_options(true)).unwrap();
+        assert_eq!(captured.entries().len(), 1);
+        assert!(!effect_options(true).strict_includes);
+        assert_eq!(
+            effect_options(true).strict_includes,
+            Options::default().strict_includes
+        );
+        assert!(Effect::parse_bytes_with(path, source, &effect_options(false)).is_err());
+        let reachable = String::from_utf8_lossy(source).replace("AA_QUALITY 3", "AA_QUALITY 6");
+        let error = Effect::parse_bytes_with(path, reachable.as_bytes(), &effect_options(true))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("CameraMotion.fxsub"), "{error}");
     }
 }

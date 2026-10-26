@@ -2,8 +2,11 @@
 
 `mds-shader corpus --manifest <file> <corpus-directory>` captures one row per
 unique preprocessed effect and entry, using the existing compiler, scanner,
-reflection probe, and SPIR-V coverage check. It requires complete discovery and
-parsing. It needs no GPU. The production compiler backend is unchanged.
+reflection probe, and SPIR-V coverage check. Capture uses production include
+semantics from `mds_fx::Options::default()`: only active preprocessor branches
+resolve includes. Missing reachable includes remain errors. Legacy `corpus`
+invocations without `--manifest` retain their strict, eager include scan. Capture
+requires complete discovery and parsing. It needs no GPU. The production compiler backend is unchanged.
 
 Each identity contains the file relative to the corpus root, profile, function,
 compile arguments, and an FNV-1a 64-bit fingerprint of `Effect::shader_source()`.
@@ -11,8 +14,11 @@ The hash includes the expanded includes and is independent of compiler output an
 checkout location. FNV-1a is a deterministic content fingerprint, not a security
 checksum. Use the pinned corpus commit as the source provenance.
 
-The versioned TSV starts with the format and compiler version, then a column
-header. Cells percent-escape `%`, tab, CR, and LF. Each contract is `OK <value>`,
+The v2 TSV starts with the format, compiler version, and the required
+`includes` provenance value `production-active-only`, then a column header.
+The reader rejects v1 captures and any other include mode, so manifests captured
+with incompatible preprocessing semantics cannot be compared silently. Cells
+percent-escape `%`, tab, CR, and LF. Each contract is `OK <value>`,
 `ERR <diagnostic>`, or `UNAVAILABLE`. SPIR-V, WGSL, MSL, HLSL, coverage,
 and reparse success must be exactly `OK ` with no payload. Only scan, reflection,
 and probe carry success metadata. Reading a malformed unit-result success fails

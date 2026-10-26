@@ -69,7 +69,7 @@ class Contracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             baseline = Path(directory) / 'baseline.tsv'
             candidate = Path(directory) / 'candidate.tsv'
-            header = 'mds-shader-contracts-v1\ncompiler\tvkd3d 2.1\n' + '\t'.join(COLUMNS) + '\n'
+            header = 'mds-shader-contracts-v2\ncompiler\tvkd3d 2.1\nincludes\tproduction-active-only\n' + '\t'.join(COLUMNS) + '\n'
             row = dict(self.row, coverage='ERR missing c4')
             baseline.write_text(header + '\t'.join(row[name] for name in COLUMNS) + '\n')
             for changed, expected in (('ERR missing c9', 1), ('UNAVAILABLE', 1),
@@ -96,7 +96,7 @@ class Contracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             baseline = Path(directory) / 'baseline.tsv'
             candidate = Path(directory) / 'candidate.tsv'
-            header = 'mds-shader-contracts-v1\ncompiler\tvkd3d 2.1\n' + '\t'.join(COLUMNS) + '\n'
+            header = 'mds-shader-contracts-v2\ncompiler\tvkd3d 2.1\nincludes\tproduction-active-only\n' + '\t'.join(COLUMNS) + '\n'
             before = dict(self.row, wgsl='ERR A', msl='ERR B', error='A')
             baseline.write_text(header + '\t'.join(before[name] for name in COLUMNS) + '\n')
             after = dict(before, wgsl='OK ', error='B')
@@ -115,7 +115,7 @@ class Contracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             baseline = Path(directory) / 'baseline.tsv'
             candidate = Path(directory) / 'candidate.tsv'
-            header = 'mds-shader-contracts-v1\ncompiler\tvkd3d 2.1\n' + '\t'.join(COLUMNS) + '\n'
+            header = 'mds-shader-contracts-v2\ncompiler\tvkd3d 2.1\nincludes\tproduction-active-only\n' + '\t'.join(COLUMNS) + '\n'
             before = dict(self.row, wgsl='ERR A', error='A')
             baseline.write_text(header + '\t'.join(before[name] for name in COLUMNS) + '\n')
             for contract in UNIT_CONTRACTS:
@@ -140,12 +140,14 @@ class Contracts(unittest.TestCase):
     def test_reader_decodes_cells_and_rejects_empty_or_duplicate_captures(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'capture.tsv'
-            header = 'mds-shader-contracts-v1\ncompiler\tvkd3d 2.1\n' + '\t'.join(COLUMNS) + '\n'
+            header = 'mds-shader-contracts-v2\ncompiler\tvkd3d 2.1\nincludes\tproduction-active-only\n' + '\t'.join(COLUMNS) + '\n'
             row = dict(self.row, error='line%09one%0Atwo%25')
             text = '\t'.join(row[name] for name in COLUMNS) + '\n'
             path.write_text(header + text)
             self.assertEqual(read(path)[self.key]['error'], 'line\tone\ntwo%')
-            for bad in (header, header + text + text):
+            for bad in (header, header + text + text,
+                        (header + text).replace('production-active-only', 'legacy-strict'),
+                        (header + text).replace('contracts-v2', 'contracts-v1')):
                 path.write_text(bad)
                 with self.assertRaises(ValueError):
                     read(path)

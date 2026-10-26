@@ -55,5 +55,11 @@ def cases():
     for ka,kb,v in kernel_cases():
         if ka==kb or any(not math.isfinite(x) for x in v): continue
         yield ka,kb,1,v[:30]+[1e18,.5,.7,.2,.3]
+    # Keep the original 5,075 scenarios as a byte-identical prefix.
+    for line in Path(__file__).with_name('fallback-cases.tsv').read_text().splitlines():
+        a,b,*words=line.split()
+        values=[struct.unpack('<f',struct.pack('<I',int(w,16)))[0] for w in words]
+        assert len(values)==35
+        yield int(a),int(b),1,values
 if __name__=='__main__':
     for i,(a,b,new,v) in enumerate(cases()): print(i,a,b,new,*map(word,v),sep='\t')

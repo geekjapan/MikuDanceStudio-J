@@ -5,6 +5,26 @@ import json
 from pathlib import Path
 import subprocess
 
+PAIRS = {(8, 0): 'sphere-box', (0, 8): 'box-sphere',
+         (8, 10): 'sphere-capsule', (10, 8): 'capsule-sphere',
+         (0, 10): 'box-capsule', (10, 0): 'capsule-box'}
+
+
+def require_fallback_coverage(events):
+    pairs = {name: Counter() for name in PAIRS.values()}
+    for line in events:
+        fields = line.split()
+        if len(fields) == 3 and fields[0].startswith('outer-'):
+            pair = PAIRS.get(tuple(map(int, fields[1:])))
+            if pair:
+                pairs[pair][fields[0].removeprefix('outer-')] += 1
+    for pair, counts in pairs.items():
+        assert counts['distance-fallback'] > 0, f'{pair} has no observed fallback replacement'
+        assert counts['penetration-adapter'] >= counts['distance-fallback'], pair
+        assert counts['emitted'] >= counts['distance-fallback'], pair
+    return {pair: dict(counts) for pair, counts in pairs.items()}
+
+
 def observe(src, command, executable, inputs, output, environment):
     replacements={}
     paths=['BulletCollision/NarrowPhaseCollision/btGjkPairDetector.cpp','BulletCollision/CollisionDispatch/btConvexConvexAlgorithm.cpp','BulletCollision/CollisionDispatch/btManifoldResult.cpp']
@@ -31,11 +51,11 @@ def observe(src, command, executable, inputs, output, environment):
         if source.stem=='btGjkPairDetector':
             for label,needle in labels.items():
                 assert changed.count(needle)==1,(label,needle)
-                changed=changed.replace(needle,needle+f' std::fprintf(stderr,"outer-{label}\\n");')
+                changed=changed.replace(needle,needle+f' std::fprintf(stderr,"outer-{label} %d %d\\n",m_shapeTypeA,m_shapeTypeB);')
             needle='if (m_curIter++ > gGjkMaxIter)\n\t\t\t\t  {'
             assert needle in changed
-            changed=changed.replace(needle,needle+' std::fprintf(stderr,"outer-iteration-limit\\n");')
-            changed=changed.replace('m_simplexSolver->backup_closest(m_cachedSeparatingAxis);\n\t\t\t\t\tbreak;', 'std::fprintf(stderr,"outer-full-simplex\\n"); m_simplexSolver->backup_closest(m_cachedSeparatingAxis);\n\t\t\t\t\tbreak;')
+            changed=changed.replace(needle,needle+' std::fprintf(stderr,"outer-iteration-limit %d %d\\n",m_shapeTypeA,m_shapeTypeB);')
+            changed=changed.replace('m_simplexSolver->backup_closest(m_cachedSeparatingAxis);\n\t\t\t\t\tbreak;', 'std::fprintf(stderr,"outer-full-simplex %d %d\\n",m_shapeTypeA,m_shapeTypeB); m_simplexSolver->backup_closest(m_cachedSeparatingAxis);\n\t\t\t\t\tbreak;')
         elif source.stem=='btConvexConvexAlgorithm':
             needle='resultOut->refreshContactPoints();';assert needle in changed
             changed=changed.replace(needle,'std::fprintf(stderr,"manifold-refresh\\n"); '+needle)
@@ -53,8 +73,10 @@ def observe(src, command, executable, inputs, output, environment):
         result=subprocess.check_output([observed],input=inputs,stderr=log,env=environment)
     (output/'observed.tsv').write_bytes(result)
     assert result==(output/'native.tsv').read_bytes(),'Observer changed output'
-    counts=Counter((output/'coverage.log').read_text().splitlines())
-    (output/'coverage.json').write_text(json.dumps({'counts':dict(counts),'unobserved':[label for label in [*labels,'full-simplex','iteration-limit'] if not counts['outer-'+label]],'original-observed-stdout-identical':True},indent=2)+'\n')
+    events=(output/'coverage.log').read_text().splitlines()
+    counts=Counter(line.split()[0] if line.startswith('outer-') else line for line in events)
+    pair_counts=require_fallback_coverage(events)
+    (output/'coverage.json').write_text(json.dumps({'counts':dict(counts),'ordered-pair-counts':dict(pair_counts),'unobserved':[label for label in [*labels,'full-simplex','iteration-limit'] if not counts['outer-'+label]],'original-observed-stdout-identical':True},indent=2)+'\n')
     for label in ['max-distance','duplicate','near-origin','penetration-adapter','penetration-replaced','distance-fallback','tail','emitted']:
         assert counts['outer-'+label],label
     assert counts['manifold-depth 0'] and counts['manifold-depth 1'] and counts['manifold-refresh']

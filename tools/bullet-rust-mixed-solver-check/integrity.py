@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 
 
-def producer_paths(root):
+def producer_paths(root, read_source=None):
     from check import SOURCES
     here = root / 'tools/bullet-rust-mixed-solver-check'
     src = root / 'recipes/bullet275/bullet-src/src'
@@ -14,8 +14,9 @@ def producer_paths(root):
              *shim.rglob('*.h'), * (root / 'rust/crates/mds-crtmath/src').glob('*.rs'),
              here / 'cases.py', here / 'oracle.cpp', here / 'runner.rs',
              root / 'tools/bullet-rust-contact-solver-check/support.rs'}
+    read_source = read_source or (lambda path: path.read_text())
     for source in [here / 'runner.rs', root / 'tools/bullet-rust-contact-solver-check/support.rs']:
-        paths.update((source.parent / relative).resolve() for relative in re.findall(r'#\[path = "([^"]+)"\]', source.read_text()))
+        paths.update((source.parent / relative).resolve() for relative in re.findall(r'#\[path = "([^"]+)"\]', read_source(source)))
     return sorted(paths)
 
 

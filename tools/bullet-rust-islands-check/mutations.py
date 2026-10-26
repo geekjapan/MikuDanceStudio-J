@@ -49,8 +49,8 @@ def main():
         'minmax-island-key':('if objects[a].island_tag >= 0 { objects[a].island_tag } else { objects[b].island_tag }', 'objects[a].island_tag.min(objects[b].island_tag)'),
         'unsorted-manifolds':('quick_sort(&mut self.ordered_manifolds, |a, b| { island_key(objects, manifolds[a].bodies) < island_key(objects, manifolds[b].bodies) });',''),
         'unsorted-constraints':('quick_sort(&mut sorted, |a, b| { island_key(objects, constraints[a].bodies) < island_key(objects, constraints[b].bodies) });',''),
-        'prepare-after-all-solved':('callback(SolverEvent::Prepare { num_bodies: objects.len(), num_manifolds: manifolds.len() });',''),
-        'all-solved-before-build':('self.build_and_process(objects, manifolds, split, |island| {','callback(SolverEvent::AllSolved);\n        self.build_and_process(objects, manifolds, split, |island| {'),
+        'prepare-after-all-solved':('callback(objects, SolverEvent::Prepare { num_bodies: objects.len(), num_manifolds: manifolds.len() });',''),
+        'all-solved-before-build':('self.build_and_process(objects, manifolds, split, |objects, island| {','callback(objects, SolverEvent::AllSolved);\n        self.build_and_process(objects, manifolds, split, |objects, island| {'),
     }
     results={}
     environment={k:v for k,v in os.environ.items() if not k.startswith('MDS_ISLANDS_')}
@@ -59,7 +59,7 @@ def main():
         if name in mutations:
             old,new=mutations[name]; changed=change(source,old,new)
             if name=='all-inactive-skip': changed=change(changed,'if !objects[body].activation.is_active() { sleeping = true; }','sleeping &= !objects[body].activation.is_active();')
-            if name=='prepare-after-all-solved': changed=change(changed,'callback(SolverEvent::AllSolved);','callback(SolverEvent::AllSolved);\n        callback(SolverEvent::Prepare { num_bodies: objects.len(), num_manifolds: manifolds.len() });')
+            if name=='prepare-after-all-solved': changed=change(changed,'callback(objects, SolverEvent::AllSolved);','callback(objects, SolverEvent::AllSolved);\n        callback(objects, SolverEvent::Prepare { num_bodies: objects.len(), num_manifolds: manifolds.len() });')
         elif name == 'manifold-only-union':
             tests=change(tests,'let mut s=SimulationIslands::default();','let pairs: Vec<_> = manifolds.iter().map(|m|m.bodies).collect(); let mut s=SimulationIslands::default();')
         elif name in ('drop-empty','far-threshold'):
@@ -69,10 +69,10 @@ def main():
             new='let p=input.n(); let d=input.f(); (IslandManifold{bodies},p,d)}).filter(|&(_,p,d)| { let _ = (p,d); '+predicate+' }).map(|(m,_,_)|m).collect();'
             tests=change(tests,old,new)
         else:
-            changed=change(changed,'        self.build_and_process(objects, manifolds, split, |island| {','        let mut bb=Vec::new(); let mut mm=Vec::new(); let mut cc=Vec::new();\n        self.build_and_process(objects, manifolds, split, |island| {')
-            old='callback(SolverEvent::SolveGroup { island, constraints: &sorted[start..start + count] });'
-            new='bb.extend_from_slice(island.bodies); mm.extend_from_slice(island.manifolds); cc.extend_from_slice(&sorted[start..start+count]);\n                if mm.len()+cc.len() >= 128 { callback(SolverEvent::SolveGroup { island: IslandCallback { island_id: -1, bodies: &bb, manifolds: &mm }, constraints: &cc }); bb.clear(); mm.clear(); cc.clear(); }'
-            changed=change(changed,old,new).replace('        callback(SolverEvent::AllSolved);','        if !mm.is_empty() || !cc.is_empty() { callback(SolverEvent::SolveGroup { island: IslandCallback { island_id: -1, bodies: &bb, manifolds: &mm }, constraints: &cc }); }\n        callback(SolverEvent::AllSolved);')
+            changed=change(changed,'        self.build_and_process(objects, manifolds, split, |objects, island| {','        let mut bb=Vec::new(); let mut mm=Vec::new(); let mut cc=Vec::new();\n        self.build_and_process(objects, manifolds, split, |objects, island| {')
+            old='callback(objects, SolverEvent::SolveGroup { island, constraints: &sorted[start..start + count] });'
+            new='bb.extend_from_slice(island.bodies); mm.extend_from_slice(island.manifolds); cc.extend_from_slice(&sorted[start..start+count]);\n                if mm.len()+cc.len() >= 128 { callback(objects, SolverEvent::SolveGroup { island: IslandCallback { island_id: -1, bodies: &bb, manifolds: &mm }, constraints: &cc }); bb.clear(); mm.clear(); cc.clear(); }'
+            changed=change(changed,old,new).replace('        callback(objects, SolverEvent::AllSolved);','        if !mm.is_empty() || !cc.is_empty() { callback(objects, SolverEvent::SolveGroup { island: IslandCallback { island_id: -1, bodies: &bb, manifolds: &mm }, constraints: &cc }); }\n        callback(objects, SolverEvent::AllSolved);')
         directory=a.out_dir/name; directory.mkdir(exist_ok=True); kernel=directory/'islands.rs';kernel.write_text(changed)
         # Keep include_str paths relative to the original test while isolating its compiled source.
         tests=tests.replace('"../islands_data/', '"'+str(ROOT/'rust/crates/mds-bullet/tests/islands_data')+'/')

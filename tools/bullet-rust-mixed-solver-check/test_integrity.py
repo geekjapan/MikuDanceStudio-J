@@ -12,11 +12,19 @@ from mutations import check_capture_syntax, relocate_runner, rust_path, run_muta
 class IntegrityTests(unittest.TestCase):
     def test_compiled_closure_includes_support_core_crt_and_sse(self):
         paths = {p.relative_to(check.ROOT).as_posix() for p in producer_paths(check.ROOT)}
-        for name in ['body', 'math', 'joint_rows', 'joint_coordinates', 'time', 'shape', 'gjk_epa', 'gjk_pair', 'simplex', 'box_box', 'contact', 'contact_solver', 'solver']:
+        for name in ['activation', 'islands', 'body', 'math', 'joint_rows', 'joint_coordinates', 'time', 'shape', 'gjk_epa', 'gjk_pair', 'simplex', 'box_box', 'contact', 'contact_solver', 'solver']:
             self.assertIn('rust/crates/mds-bullet/src/core/' + name + '.rs', paths)
         self.assertIn('tools/bullet-rust-contact-solver-check/support.rs', paths)
         self.assertIn('rust/crates/mds-bullet-sys/shim/sse_emu/emmintrin.h', paths)
         self.assertIn('rust/crates/mds-crtmath/src/trig.rs', paths)
+
+    def test_historical_closure_uses_pinned_module_source(self):
+        def pinned(path):
+            return subprocess.check_output(['git', '-C', str(check.ROOT), 'show',
+                'bead7792eff1c9442cdbd3fa3aceaaf87fefe5ad:' + path.relative_to(check.ROOT).as_posix()]).decode()
+        paths = {p.relative_to(check.ROOT).as_posix() for p in producer_paths(check.ROOT, pinned)}
+        self.assertNotIn('rust/crates/mds-bullet/src/core/islands.rs', paths)
+        self.assertIn('rust/crates/mds-bullet/src/core/solver.rs', paths)
 
     def test_every_exception_checks_integrity_and_records_failure(self):
         for change in [False, True]:

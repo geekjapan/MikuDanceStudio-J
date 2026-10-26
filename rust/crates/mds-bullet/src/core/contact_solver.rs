@@ -39,16 +39,19 @@ pub struct FrictionRow {
 pub(crate) fn build_rows(
     bodies: &[RigidBody],
     manifolds: &mut [ContactManifold<'_>],
+    selection: &[usize],
     dt: f32,
     pool: &mut SolverBodies,
     normals: &mut Vec<NormalRow>,
     frictions: &mut Vec<FrictionRow>,
-) {
-    for (mi, manifold) in manifolds.iter_mut().enumerate() {
+) -> Result<(), super::solver::UninitializedSolverSlot> {
+    for &mi in selection {
+        let manifold = &mut manifolds[mi];
         if manifold.points.is_empty() {
             continue;
         }
-        let ids = manifold.bodies.map(|i| pool.get_or_init(bodies, i));
+        let [a_id, b_id] = manifold.bodies.map(|i| pool.get_or_init(bodies, i));
+        let ids = [a_id?, b_id?];
         if ids == [0, 0] {
             continue;
         }
@@ -109,7 +112,7 @@ pub(crate) fn build_rows(
                 } else {
                     normal.angular_components[side].negate()
                 };
-                let target = &mut pool.entries[id];
+                let target = pool.slot_mut(id);
                 target.delta_linear = target.delta_linear.add(linear.scale(impulse));
                 target.delta_angular = target
                     .delta_angular
@@ -150,6 +153,7 @@ pub(crate) fn build_rows(
             });
         }
     }
+    Ok(())
 }
 
 fn make_row(

@@ -1,7 +1,9 @@
 use super::core::body::{BodyInit, RigidBody};
 use super::core::joint_rows::*;
 use super::core::math::{Basis, Transform, Vec3};
-use super::core::solver::{GroupSolver, Joint, Phase, RowKind, SolveEvent, SolverMode};
+use super::core::solver::{
+    GroupSelection, GroupSolver, Joint, Phase, RowKind, SolveEvent, SolverMode, SolverWorkspace,
+};
 #[cfg(target_arch = "aarch64")]
 const NATIVE_PROFILE: &str = include_str!("../solver_data/native.tsv");
 #[cfg(target_arch = "x86_64")]
@@ -122,7 +124,36 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
             bodies = prior_bodies;
             joints = prior_joints;
         }
-        let mut solver = GroupSolver::setup(&bodies, &mut joints, &mut [], dt, mode);
+        let mut workspace = SolverWorkspace::default();
+        let mut objects: Vec<_> = (0..bodies.len())
+            .map(|_| crate::core::islands::IslandObject {
+                activation: crate::core::activation::BodyActivation::default(),
+                classification: crate::core::activation::CollisionClassification::Dynamic,
+                contact_response: true,
+                island_tag: -1,
+                companion_id: -1,
+                hit_fraction: 1.0,
+            })
+            .collect();
+        let body_indices: Vec<_> = (0..bodies.len()).collect();
+        let joint_indices: Vec<_> = (0..joints.len()).collect();
+        let manifold_indices: Vec<_> = (0..0).collect();
+        let selection = GroupSelection {
+            bodies: &body_indices,
+            joints: &joint_indices,
+            manifolds: &manifold_indices,
+        };
+        let mut solver = GroupSolver::setup(
+            &mut workspace,
+            &mut objects,
+            &bodies,
+            &mut joints,
+            &mut [],
+            selection,
+            dt,
+            mode,
+        )
+        .unwrap();
         for joint in &joints {
             for i in 0..6 {
                 let spring = joint.state.springs[i];
@@ -185,27 +216,29 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
         let mut trace = Vec::new();
         zero_rows += usize::from(solver.joint_rows.is_empty());
         if mode == SolverMode::Simd {
-            solver.iterate(&bodies, &joints, |solver, event| {
-                let SolveEvent::Row {
-                    kind: RowKind::Joint,
-                    phase: Phase::After,
-                    index,
-                    ..
-                } = event
-                else {
-                    return;
-                };
-                row_events += 1;
-                let r = solver.joint_rows[index];
-                trace.push(r.applied_impulse.to_bits());
-                for i in r.bodies {
-                    let b = solver.bodies.entries[i];
-                    vector(&mut trace, b.delta_linear);
-                    vector(&mut trace, b.delta_angular);
-                }
-            });
+            solver
+                .iterate(&bodies, &joints, |solver, event| {
+                    let SolveEvent::Row {
+                        kind: RowKind::Joint,
+                        phase: Phase::After,
+                        index,
+                        ..
+                    } = event
+                    else {
+                        return;
+                    };
+                    row_events += 1;
+                    let r = solver.joint_rows[index];
+                    trace.push(r.applied_impulse.to_bits());
+                    for i in r.bodies {
+                        let b = *solver.bodies.slot(i).unwrap();
+                        vector(&mut trace, b.delta_linear);
+                        vector(&mut trace, b.delta_angular);
+                    }
+                })
+                .unwrap();
         } else {
-            solver.iterate(&bodies, &joints, |_, _| {});
+            solver.iterate(&bodies, &joints, |_, _| {}).unwrap();
         }
         let final_rows = solver.joint_rows.clone();
         solver.writeback(&mut bodies, &mut []);

@@ -179,7 +179,7 @@ fn replay(inputs: &str) -> String {
             let mut events = String::new();
             let mut count = 0;
             if mode != 0 {
-                s.solve_constraints(&mut objects, &manifolds, &constraints, split, |event| {
+                s.solve_constraints(&mut objects, &manifolds, &constraints, split, |_, event| {
                     count += 1;
                     match event {
                         SolverEvent::Prepare {
@@ -198,7 +198,7 @@ fn replay(inputs: &str) -> String {
                     }
                 });
             } else {
-                s.build_and_process(&mut objects, &manifolds, split, |i| {
+                s.build_and_process(&mut objects, &manifolds, split, |_, i| {
                     count += 1;
                     write!(events, " C {}", i.island_id).unwrap();
                     island(&mut events, i);

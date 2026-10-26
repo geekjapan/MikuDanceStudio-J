@@ -17,6 +17,7 @@ subject to the following restrictions:
 
 use super::body::RigidBody;
 use super::contact_solver::{build_rows, ContactManifold, FrictionRow, NormalRow};
+use super::islands::IslandObject;
 use super::joint_coordinates::calculate_coordinates;
 use super::joint_rows::{generate_rows, JointBodySnapshot, JointRow, JointState, JointStep};
 use super::math::{Transform, Vec3};
@@ -54,40 +55,109 @@ pub struct SolverRow {
     pub applied_impulse: f32,
 }
 
-pub struct SolverBodies {
-    pub entries: Vec<SolverBody>,
-    pub companions: Vec<Option<usize>>,
+/// Initialized backing slots outlive each group's native live prefix.
+#[derive(Default, Debug)]
+pub struct SolverWorkspace {
+    slots: Vec<SolverBody>,
+    live_len: usize,
+    native_capacity: usize,
 }
 
-impl SolverBodies {
-    fn new(count: usize, active: bool) -> Self {
-        Self {
-            entries: if active {
-                vec![SolverBody::FIXED]
-            } else {
-                Vec::new()
-            },
-            companions: vec![None; count],
-        }
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UninitializedSolverSlot(pub usize);
 
-    pub(crate) fn get_or_init(&mut self, bodies: &[RigidBody], original: usize) -> usize {
-        if let Some(id) = self.companions[original] {
-            return id;
+impl SolverWorkspace {
+    pub fn live_entries(&self) -> &[SolverBody] {
+        &self.slots[..self.live_len]
+    }
+    pub fn live_len(&self) -> usize {
+        self.live_len
+    }
+    pub fn native_capacity(&self) -> usize {
+        self.native_capacity
+    }
+    pub fn slot(&self, index: usize) -> Result<&SolverBody, UninitializedSolverSlot> {
+        self.slots.get(index).ok_or(UninitializedSolverSlot(index))
+    }
+    fn append(&mut self, body: SolverBody) -> usize {
+        let index = self.live_len;
+        if index == self.native_capacity {
+            self.slots.truncate(self.live_len);
+            self.native_capacity = if index == 0 { 1 } else { 2 * index };
+        }
+        if index < self.slots.len() {
+            self.slots[index] = body;
+        } else {
+            self.slots.push(body);
+        }
+        self.live_len += 1;
+        index
+    }
+}
+
+/// Ordered global registry indices, borrowed directly from island scheduling.
+#[derive(Clone, Copy, Debug)]
+pub struct GroupSelection<'a> {
+    pub bodies: &'a [usize],
+    pub joints: &'a [usize],
+    pub manifolds: &'a [usize],
+}
+
+pub struct SolverBodies<'a> {
+    workspace: &'a mut SolverWorkspace,
+    objects: &'a mut [IslandObject],
+}
+
+impl SolverBodies<'_> {
+    pub fn live_entries(&self) -> &[SolverBody] {
+        self.workspace.live_entries()
+    }
+    pub fn live_len(&self) -> usize {
+        self.workspace.live_len()
+    }
+    pub fn native_capacity(&self) -> usize {
+        self.workspace.native_capacity()
+    }
+    pub fn slot(&self, index: usize) -> Result<&SolverBody, UninitializedSolverSlot> {
+        self.workspace.slot(index)
+    }
+    pub fn companion_id(&self, original: usize) -> Option<usize> {
+        usize::try_from(self.objects[original].companion_id).ok()
+    }
+    pub(crate) fn slot_mut(&mut self, index: usize) -> &mut SolverBody {
+        self.workspace
+            .slots
+            .get_mut(index)
+            .expect("unsupported uninitialized solver slot")
+    }
+    pub(crate) fn get_or_init(
+        &mut self,
+        bodies: &[RigidBody],
+        original: usize,
+    ) -> Result<usize, UninitializedSolverSlot> {
+        if let Some(id) = self.companion_id(original) {
+            self.workspace.slot(id)?;
+            return Ok(id);
         }
         let state = bodies[original].snapshot();
         if state.inverse_mass == 0.0 {
-            return 0;
+            return Ok(0);
         }
-        let id = self.entries.len();
-        self.entries.push(SolverBody {
+        let id = self.workspace.append(SolverBody {
             original: Some(original),
             inverse_mass: bodies[original].linear_factor().scale(state.inverse_mass),
             angular_factor: bodies[original].angular_factor(),
             ..SolverBody::FIXED
         });
-        self.companions[original] = Some(id);
-        id
+        self.objects[original].companion_id =
+            i32::try_from(id).expect("solver slot exceeds native int");
+        Ok(id)
+    }
+}
+
+impl Drop for SolverBodies<'_> {
+    fn drop(&mut self) {
+        self.workspace.live_len = 0;
     }
 }
 
@@ -134,8 +204,9 @@ pub enum SolveEvent {
     },
 }
 
-pub struct GroupSolver {
-    pub bodies: SolverBodies,
+pub struct GroupSolver<'a, 's> {
+    pub bodies: SolverBodies<'a>,
+    selection: GroupSelection<'s>,
     pub joint_rows: Vec<SolverRow>,
     pub normals: Vec<NormalRow>,
     pub frictions: Vec<FrictionRow>,
@@ -144,38 +215,61 @@ pub struct GroupSolver {
 
 /// Default native mode 260, ten iterations, no transform integration.
 pub fn solve_group(
+    workspace: &mut SolverWorkspace,
+    objects: &mut [IslandObject],
     bodies: &mut [RigidBody],
     joints: &mut [Joint],
     manifolds: &mut [ContactManifold<'_>],
+    selection: GroupSelection<'_>,
     dt: f32,
-) {
-    let mut solver = GroupSolver::setup(bodies, joints, manifolds, dt, SolverMode::Simd);
-    solver.iterate(bodies, joints, |_, _| {});
+) -> Result<(), UninitializedSolverSlot> {
+    let mut solver = GroupSolver::setup(
+        workspace,
+        objects,
+        bodies,
+        joints,
+        manifolds,
+        selection,
+        dt,
+        SolverMode::Simd,
+    )?;
+    solver.iterate(bodies, joints, |_, _| {})?;
     solver.writeback(bodies, manifolds);
+    Ok(())
 }
 
 pub(crate) fn product(a: Vec3, b: Vec3) -> Vec3 {
     Vec3(std::array::from_fn(|i| a.0[i] * b.0[i]))
 }
 
-impl GroupSolver {
+impl<'a, 's> GroupSolver<'a, 's> {
     /// Requires valid body indices, finite joint inputs and positive timestep.
-    /// Every solve starts fresh: no joint warmstarting or retained companion IDs.
+    /// Companion reset belongs to the native island step boundary, never a group.
+    #[allow(clippy::too_many_arguments)]
     pub fn setup(
+        workspace: &'a mut SolverWorkspace,
+        objects: &'a mut [IslandObject],
         bodies: &[RigidBody],
         joints: &mut [Joint],
         manifolds: &mut [ContactManifold<'_>],
+        selection: GroupSelection<'s>,
         dt: f32,
         mode: SolverMode,
-    ) -> Self {
+    ) -> Result<Self, UninitializedSolverSlot> {
+        assert_eq!(workspace.live_len, 0, "unfinished solver group");
+        if !selection.joints.is_empty() || !selection.manifolds.is_empty() {
+            workspace.append(SolverBody::FIXED);
+        }
         let mut solver = Self {
-            bodies: SolverBodies::new(bodies.len(), !joints.is_empty() || !manifolds.is_empty()),
+            bodies: SolverBodies { workspace, objects },
+            selection,
             joint_rows: Vec::new(),
             normals: Vec::new(),
             frictions: Vec::new(),
             mode,
         };
-        for joint in joints.iter_mut() {
+        for &index in selection.joints {
+            let joint = &mut joints[index];
             let [a, b] = joint.bodies.map(|i| bodies[i].snapshot());
             let coordinates =
                 calculate_coordinates(a.world, b.world, joint.frames[0], joint.frames[1]);
@@ -196,7 +290,8 @@ impl GroupSolver {
             if rows.as_slice().is_empty() {
                 continue;
             }
-            let ids = joint.bodies.map(|i| solver.bodies.get_or_init(bodies, i));
+            let [a_id, b_id] = joint.bodies.map(|i| solver.bodies.get_or_init(bodies, i));
+            let ids = [a_id?, b_id?];
             for &row in rows.as_slice() {
                 let n = row.j1_linear;
                 let ia = a.inverse_inertia_world.apply(row.j1_angular);
@@ -225,12 +320,13 @@ impl GroupSolver {
         build_rows(
             bodies,
             manifolds,
+            selection.manifolds,
             dt,
             &mut solver.bodies,
             &mut solver.normals,
             &mut solver.frictions,
-        );
-        solver
+        )?;
+        Ok(solver)
     }
 
     /// Resolve one row in native input order. Exposed for exact event comparison.
@@ -248,7 +344,12 @@ impl GroupSolver {
             upper_impulse: row.joint_row.upper_impulse,
             applied_impulse: row.applied_impulse,
         };
-        resolve(&mut self.bodies.entries, &mut numeric, self.mode, false);
+        resolve(
+            &mut self.bodies.workspace.slots,
+            &mut numeric,
+            self.mode,
+            false,
+        );
         row.applied_impulse = numeric.applied_impulse;
     }
 
@@ -257,7 +358,7 @@ impl GroupSolver {
         bodies: &[RigidBody],
         joints: &[Joint],
         mut observe: impl FnMut(&Self, SolveEvent),
-    ) {
+    ) -> Result<(), UninitializedSolverSlot> {
         for iteration in 0..10 {
             for index in 0..self.joint_rows.len() {
                 observe(
@@ -280,9 +381,11 @@ impl GroupSolver {
                     },
                 );
             }
-            for (joint, constraint) in joints.iter().enumerate() {
+            for &joint in self.selection.joints {
+                let constraint = &joints[joint];
                 let ids = constraint.bodies.map(|i| {
-                    self.bodies.companions[i]
+                    self.bodies
+                        .companion_id(i)
                         .or_else(|| (bodies[i].snapshot().inverse_mass == 0.0).then_some(0))
                 });
                 observe(
@@ -294,9 +397,10 @@ impl GroupSolver {
                         bodies: ids,
                     },
                 );
-                let ids = constraint
+                let [a_id, b_id] = constraint
                     .bodies
-                    .map(|i| Some(self.bodies.get_or_init(bodies, i)));
+                    .map(|i| self.bodies.get_or_init(bodies, i));
+                let ids = [Some(a_id?), Some(b_id?)];
                 observe(
                     self,
                     SolveEvent::Obsolete {
@@ -318,7 +422,7 @@ impl GroupSolver {
                     },
                 );
                 resolve(
-                    &mut self.bodies.entries,
+                    &mut self.bodies.workspace.slots,
                     &mut self.normals[index].numeric,
                     self.mode,
                     true,
@@ -349,7 +453,7 @@ impl GroupSolver {
                         },
                     );
                     resolve(
-                        &mut self.bodies.entries,
+                        &mut self.bodies.workspace.slots,
                         &mut self.frictions[index].numeric,
                         self.mode,
                         false,
@@ -368,6 +472,7 @@ impl GroupSolver {
                 }
             }
         }
+        Ok(())
     }
 
     pub fn writeback(self, bodies: &mut [RigidBody], manifolds: &mut [ContactManifold<'_>]) {
@@ -375,7 +480,7 @@ impl GroupSolver {
             let [mi, pi] = row.point;
             manifolds[mi].points[pi].applied_impulse = row.numeric.applied_impulse;
         }
-        for solver_body in &self.bodies.entries {
+        for solver_body in self.bodies.live_entries() {
             if let Some(i) = solver_body.original {
                 let state = bodies[i].snapshot();
                 bodies[i].set_linear_velocity(state.linear_velocity.add(solver_body.delta_linear));

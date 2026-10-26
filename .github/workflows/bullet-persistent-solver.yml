@@ -1,0 +1,57 @@
+name: Bullet persistent solver workspace
+
+on:
+  push:
+    branches: [w3-bullet-persistent-solver-workspace]
+  pull_request:
+    paths:
+      - 'rust/crates/mds-bullet/src/core/**'
+      - 'rust/crates/mds-crtmath/**'
+      - 'rust/crates/mds-bullet-sys/shim/**'
+      - 'tools/bullet-rust-contact-solver-check/support.rs'
+      - 'tools/bullet-rust-persistent-solver-check/**'
+      - 'recipes/bullet275/bullet-src/src/**'
+      - '.github/workflows/bullet-persistent-solver.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  same-host:
+    name: Native and Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15, ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal --component clippy
+      - name: Compare persistent native World scheduling and reject workspace mutations
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          CXX: clang++
+        run: python3 tools/bullet-rust-persistent-solver-check/check.py --out-dir "$RUNNER_TEMP/bullet-persistent"
+      - name: Compare MSVC persistent native World scheduling and workspace mutations
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          @echo on
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+          set CXX=cl
+          python tools\bullet-rust-persistent-solver-check\check.py --out-dir "%RUNNER_TEMP%\bullet-persistent"
+      - name: Retain native inputs, observer diff, complete traces and mutation differences
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bullet-persistent-${{ matrix.os }}
+          path: ${{ runner.temp }}/bullet-persistent
+          if-no-files-found: error

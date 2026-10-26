@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    uses: ./.github/workflows/windows-build.yml
+
+  rust-build:
+    name: Rust build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            extension: .exe
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            extension: ''
+          - os: macos-15
+            target: aarch64-apple-darwin
+            extension: ''
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            extension: ''
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            extension: ''
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang pkg-config libasound2-dev libudev-dev
+          echo 'CXX=clang++' >> "$GITHUB_ENV"
+      - name: Install the repository Rust toolchain and target
+        working-directory: rust
+        run: |
+          rustup show active-toolchain
+          rustup target add ${{ matrix.target }}
+      - name: Build the Rust workspace
+        working-directory: rust
+        run: cargo build --locked --release --workspace --target ${{ matrix.target }}
+      - name: Archive application binary
+        run: >-
+          tar -czf mds-app-${{ matrix.target }}.tar.gz
+          -C rust/target/${{ matrix.target }}/release mds-app${{ matrix.extension }}
+      - name: Preserve application binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mds-app-${{ matrix.target }}
+          path: mds-app-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  rust:
+    name: Rust (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CXX: clang++
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      RUST_TEST_NOCAPTURE: '1'
+      TMPDIR: /tmp
+      XDG_RUNTIME_DIR: /tmp/mds-xdg-runtime
+      MDS_CORPUS: /tmp/mds-corpus
+      MDS_VKD3D_LIB: /tmp/mds-vkd3d/linux-amd64/lib/libvkd3d-shader.so.1
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang pkg-config libasound2-dev libudev-dev libvulkan1 mesa-vulkan-drivers ffmpeg
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+      - name: Install the repository Rust toolchain
+        working-directory: rust
+        run: rustup show active-toolchain
+      - name: Fetch pinned effect corpus
+        run: bash tools/fixtures/fetch_corpus.sh
+      - name: Build pinned shader compiler
+        run: bash tools/vkd3d/build.sh linux-amd64
+      - name: Check formatting, lint, and test
+        run: |
+          set -o pipefail
+          bash tools/rust/check.sh 2>&1 | tee "$RUNNER_TEMP/rust-check.log"
+          if grep -q 'SKIP: no wgpu adapter' "$RUNNER_TEMP/rust-check.log"; then
+            echo '::error::GPU tests did not run; check the software Vulkan driver.'
+            exit 1
+          fi
+      - name: Preserve Rust log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-linux-log
+          path: ${{ runner.temp }}/rust-check.log
+          if-no-files-found: warn

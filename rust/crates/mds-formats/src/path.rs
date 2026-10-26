@@ -47,8 +47,12 @@ pub fn resolve_ci(base: &Path, rel: &str) -> Option<PathBuf> {
     cur.is_file().then_some(cur)
 }
 
-/// Resolves a complete host path through [`resolve_ci`], retaining its root or drive prefix.
+/// Keeps an existing host path intact, otherwise uses [`resolve_ci`] with its root or drive prefix.
 pub fn resolve_path_ci(path: &Path) -> Option<PathBuf> {
+    // Let the OS resolve symlinks and parent components before attempting case-folded lookup.
+    if path.is_file() {
+        return Some(path.to_path_buf());
+    }
     let root = path.ancestors().last().unwrap_or(Path::new("."));
     let relative = path.strip_prefix(root).ok()?.to_string_lossy();
     resolve_ci(root, &relative)
@@ -71,12 +75,33 @@ mod tests {
             resolve_ci(&dir.join("Sub/Deep"), "..\\MESH.x"),
             Some(dir.join("Sub/Mesh.X"))
         );
-        assert_eq!(
-            resolve_path_ci(&dir.join("sub/mesh.x")),
-            Some(dir.join("Sub/Mesh.X"))
-        );
+        let candidate = dir.join("sub/mesh.x");
+        let expected = if candidate.is_file() {
+            candidate.clone()
+        } else {
+            dir.join("Sub/Mesh.X")
+        };
+        assert_eq!(resolve_path_ci(&candidate), Some(expected));
         assert_eq!(resolve_ci(&dir, "sub"), None);
         assert_eq!(resolve_ci(&dir, "missing.x"), None);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exact_host_path_keeps_symlink_parent_semantics() {
+        let dir = std::env::temp_dir().join(format!("mds-formats-symlink-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("models")).unwrap();
+        fs::create_dir_all(dir.join("assets/sub")).unwrap();
+        std::os::unix::fs::symlink(dir.join("assets/sub"), dir.join("models/link")).unwrap();
+        fs::write(dir.join("assets/toon.bmp"), b"target image").unwrap();
+        fs::write(dir.join("models/toon.bmp"), b"wrong image").unwrap();
+        let candidate = dir.join("models/link/../toon.bmp");
+        assert_eq!(fs::read(&candidate).unwrap(), b"target image");
+        let resolved = resolve_path_ci(&candidate).unwrap();
+        assert_eq!(fs::read(&resolved).unwrap(), b"target image");
+        assert_eq!(resolved, candidate);
         fs::remove_dir_all(dir).unwrap();
     }
 

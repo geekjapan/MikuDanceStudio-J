@@ -227,3 +227,54 @@ fn scene_exact_direct_candidates_win_before_case_folded_candidates() {
     );
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn material_paths_keep_symlink_parent_semantics() {
+    let dir = scratch("symlink-parent");
+    std::fs::create_dir_all(dir.join("models")).unwrap();
+    std::fs::create_dir_all(dir.join("assets/sub")).unwrap();
+    std::os::unix::fs::symlink(dir.join("assets/sub"), dir.join("models/link")).unwrap();
+    let image = std::fs::read(fixtures().join("golden2/background.png")).unwrap();
+    std::fs::write(dir.join("assets/toon.png"), &image).unwrap();
+    std::fs::write(dir.join("models/toon.png"), b"wrong image").unwrap();
+    let mut pmx =
+        mds_formats::pmx::Pmx::read(&std::fs::read(fixtures().join("chain8.pmx")).unwrap())
+            .unwrap();
+    let absolute = dir
+        .join("models/link/../toon.png")
+        .to_string_lossy()
+        .into_owned();
+    pmx.textures = ["link\\..\\toon.png", absolute.as_str()]
+        .into_iter()
+        .map(|text| mds_formats::text::PmxText {
+            raw: text.as_bytes().to_vec(),
+            text: text.into(),
+        })
+        .collect();
+    for material in &mut pmx.materials {
+        material.texture = 0;
+        material.sphere = 1;
+        material.sphere_mode = 1;
+        material.shared_toon = 0;
+        material.toon = 0;
+    }
+    let mut doc = Document::startup();
+    doc.apply(Command::LoadModel {
+        path: dir.join("models/chain8.pmx").to_string_lossy().into_owned(),
+        data: std::fs::read(fixtures().join("chain8.pmx")).unwrap(),
+    })
+    .unwrap();
+    doc.models[0] = ModelFile::Pmx(Box::new(pmx));
+    std::fs::write(dir.join("models/chain8.pmx"), b"model").unwrap();
+    let mut assets = scene::Assets::load(&doc, &dir).unwrap();
+    assert!(assets.reload_textures(&doc, &dir).is_empty());
+    std::fs::write(dir.join("assets/toon.png"), b"invalid target image").unwrap();
+    let errors = assets.reload_textures(&doc, &dir);
+    assert!(
+        errors.iter().any(|(name, _)| name == "link\\..\\toon.png"),
+        "{errors:?}"
+    );
+    assert!(errors.iter().any(|(name, _)| name == &absolute));
+    std::fs::remove_dir_all(dir).unwrap();
+}

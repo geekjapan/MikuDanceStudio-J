@@ -146,3 +146,78 @@ fn model_actions_refuse_while_playing() {
         assert_eq!(run(&mut e, id), Err(format!("{id}: not while playing")));
     }
 }
+
+/// Check boxes 439 to 441 write `loadComplete`, `toonFlag` and `postLoadFlag2` of the selected
+/// model (`command_frame_edit.cpp:1566` to `:1592`: the first from the box, the others toggled)
+/// and leave every other field.
+#[test]
+fn the_check_boxes_write_their_flag() {
+    let mut e = editor();
+    load_model(&mut e, "chain8.pmx");
+    let flags = |e: &mds_app::editor::Editor| {
+        let m = e.doc.selected_model().unwrap();
+        [m.selection.load_complete, m.toon, m.post_load]
+    };
+    let start = flags(&e);
+    let saved = e.doc.save().unwrap();
+    for (n, id) in ["ctl:439", "ctl:440", "ctl:441"].into_iter().enumerate() {
+        run(&mut e, id).unwrap();
+        let mut want = start;
+        want[n] = u8::from(start[n] == 0);
+        assert_eq!(flags(&e), want, "{id}");
+        assert_ne!(e.doc.save().unwrap(), saved, "{id}: the PMM keeps it");
+        run(&mut e, id).unwrap();
+        assert_eq!(flags(&e), start, "{id} again");
+        assert_eq!(e.doc.save().unwrap(), saved);
+    }
+}
+
+/// 444 and 445 write the switch of the chain the combo has selected (`ikChains[sel].enabled`,
+/// `command_frame_edit.cpp:1598` to `:1617`); without a window that is chain 0, and a chain the
+/// model lacks is refused.
+#[test]
+fn the_ik_radios_switch_a_chain() {
+    let mut e = editor();
+    load_model(&mut e, "chain8_ik.pmx");
+    let chains = e.doc.selected_model().unwrap().ik_pose.len();
+    assert!(chains > 0);
+    let ik = |e: &mds_app::editor::Editor| e.doc.selected_model().unwrap().ik_pose.clone();
+    run(&mut e, "ctl:445").unwrap();
+    assert_eq!(ik(&e)[0], 0);
+    let off = e.doc.save().unwrap();
+    run(&mut e, "ctl:444").unwrap();
+    assert_eq!(ik(&e)[0], 1);
+    run(&mut e, "ctl:445").unwrap();
+    assert_eq!(e.doc.save().unwrap(), off, "off again is the same file");
+
+    let mut status = String::new();
+    assert!(model_panel::set_ik(&mut ctx(&mut e, &mut status), chains as u32, true).is_err());
+    model_panel::set_ik(&mut ctx(&mut e, &mut status), (chains - 1) as u32, true).unwrap();
+    assert_eq!(ik(&e)[chains - 1], 1);
+}
+
+#[test]
+fn the_selected_chain_comes_from_the_window() {
+    let mut e = editor();
+    load_model(&mut e, "chain8_ik.pmx");
+    let egui = egui::Context::default();
+    egui.data_mut(|d| d.insert_temp(egui::Id::unique("model-panel-ik"), 3usize));
+    let mut status = String::new();
+    let mut c = ctx(&mut e, &mut status);
+    assert_eq!(model_panel::ik_chain(&c), 0);
+    c.egui = Some(egui);
+    assert_eq!(model_panel::ik_chain(&c), 3);
+}
+
+#[test]
+fn the_model_flags_need_a_model_and_a_stopped_scene() {
+    let mut e = editor();
+    for id in ["ctl:439", "ctl:440", "ctl:441", "ctl:444", "ctl:445"] {
+        assert_eq!(run(&mut e, id), Err("no model selected".into()), "{id}");
+    }
+    load_model(&mut e, "chain8_ik.pmx");
+    run(&mut e, "ctl:408").unwrap();
+    for id in ["ctl:439", "ctl:440", "ctl:441", "ctl:444", "ctl:445"] {
+        assert_eq!(run(&mut e, id), Err(format!("{id}: not while playing")));
+    }
+}

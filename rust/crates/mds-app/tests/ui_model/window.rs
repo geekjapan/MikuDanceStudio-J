@@ -33,6 +33,8 @@ fn the_panels_draw_in_camera_mode_and_with_models() {
     draw_all(&mut e);
     load_model(&mut e, "chain8_ik.pmx");
     draw_all(&mut e);
+    e.apply(mds_doc::Command::SelectCameraMode).unwrap();
+    draw_all(&mut e);
     run(&mut e, "ctl:408").unwrap();
     draw_all(&mut e);
 }

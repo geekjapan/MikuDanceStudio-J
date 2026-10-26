@@ -6,16 +6,26 @@
 //! The display options live in egui's memory as a [`ViewOptions`] (see [`options`]). Nothing
 //! draws from them yet: `mds-render` has no grid, axes, info overlay, wire frame or edge switch,
 //! and the window shell shows one window. The ones the PMM stores are seeded from it whenever a
-//! document is opened, but no `mds-doc` command writes them back, so a save does not keep them.
+//! document is opened; the menus here do not write them back (`Command::SetViewOption` and
+//! `SetFpsLimit` exist), so a save does not keep them.
 //!
-//! Not here, for lack of a document command (see the report of the slice): 212 (screen size),
-//! 247 (camera and lighting tracking), 253 (edge thickness) and 286 (edge color).
+//! Through document commands: the output size dialog (212, `ScreenSizeDlgProc`,
+//! `command_file_menu.cpp:436`; a [`super::edit::Form`] that stays open while the size is refused),
+//! camera and lighting tracking (247, `command_file_menu.cpp:1769`, a check item on the PMM's
+//! `follow_camera`), the modeless edge thickness dialog (253, `EdgeThicknessDlgProc`,
+//! `command_view_menu.cpp:550`: the slider 0 to 200 sets the selected model's edge scale as it
+//! moves) and the edge color (286, `command_view_menu.cpp:1464`: the color picker in a window).
+//!
+//! The size limit of 212 is `EditState::max_texture_size`, which the shell has to set from its
+//! device; it is `None`, so nothing is refused, until it does.
 
+use super::edit::{self, Form};
 use super::help;
 use super::Ctx;
 use crate::actions::Action;
 use crate::editor::Editor;
 use egui::{Id, ViewportCommand, WindowLevel};
+use mds_doc::Command;
 
 /// The View menu's switches.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -36,6 +46,10 @@ pub struct ViewOptions {
     pub ground_shadow_gray: f32,
     /// The ground shadow color dialog is open.
     pub shadow_color_dialog: bool,
+    /// The edge thickness dialog (menu 253) is open.
+    pub edge_dialog: bool,
+    /// The edge color picker (menu 286) is open, with the color it shows.
+    pub outline_dialog: Option<[u8; 3]>,
     /// `characterTransparentMode` (menu 214, V).
     pub transparent_models: bool,
     /// `modelNonDisplayMode` (menu 283, Shift+V).
@@ -133,6 +147,10 @@ const ACTIONS: &[Action] = &[
     Action::run("menu:254", flip!(ground_shadow_transparent), false),
     Action::run("menu:279", flip!(self_shadow), false),
     Action::run("menu:248", open_shadow_color, false),
+    Action::run("menu:212", screen_size, true),
+    Action::run("menu:247", toggle_follow_camera, true),
+    Action::run("menu:253", open_edge_thickness, true),
+    Action::run("menu:286", open_outline_color, true),
     Action::run("menu:214", flip!(transparent_models), false),
     Action::run("key:V", flip!(transparent_models), false),
     Action::run("menu:283", flip!(hide_models), false),
@@ -160,6 +178,56 @@ pub fn actions() -> &'static [Action] {
 
 fn open_shadow_color(ctx: &mut Ctx) -> Result<(), String> {
     update(ctx, |o| o.shadow_color_dialog = true)
+}
+
+/// Menu 212: the width and height boxes hold the render size (`"%3d"`); OK refuses a size above
+/// the device's limit and leaves the dialog open.
+fn screen_size(ctx: &mut Ctx) -> Result<(), String> {
+    let s = &ctx.editor.doc.pmm.settings;
+    let form = Form::new(("出力画面サイズ変更", "screen size"), |ctx, f| {
+        ctx.editor.apply(Command::SetRenderSize {
+            width: f[0].integer(),
+            height: f[1].integer(),
+        })
+    })
+    .field(("幅", "width"), format!("{:3}", s.render_width))
+    .field(("高さ", "height"), format!("{:3}", s.render_height))
+    .sticky();
+    edit::open(ctx, form)
+}
+
+/// Menu 247 flips `followCameraEnabled`; the item shows it.
+fn toggle_follow_camera(ctx: &mut Ctx) -> Result<(), String> {
+    let on = ctx.editor.doc.pmm.appearance.follow_camera != 0;
+    ctx.editor.apply(Command::SetFollowCamera(!on))
+}
+
+/// Menu 253: the dialog opens in model mode only, and once.
+fn open_edge_thickness(ctx: &mut Ctx) -> Result<(), String> {
+    edit::gated(ctx, edit::Mode::Model, "menu:253")?;
+    update(ctx, |o| o.edge_dialog = true)
+}
+
+/// The slider of the edge thickness dialog at `position` (`WM_HSCROLL`: `TBM_GETPOS / 100.0`
+/// into `SetEdgeThickness`, `command_view_menu.cpp:593`).
+pub fn set_edge_thickness(ctx: &mut Ctx, position: u32) -> Result<(), String> {
+    if ctx.editor.playing() {
+        return Err("not while playing".into());
+    }
+    let v = f64::from(position.min(200)) / 100.0;
+    ctx.editor.apply(Command::SetEdgeScale(v as f32))
+}
+
+/// Menu 286 opens the picker on the current color (`ChooseColorA` with `CC_RGBINIT`).
+fn open_outline_color(ctx: &mut Ctx) -> Result<(), String> {
+    let c = ctx.editor.doc.pmm.appearance.outline_color;
+    let rgb = c.map(|v| v.clamp(0, 255) as u8);
+    update(ctx, |o| o.outline_dialog = Some(rgb))
+}
+
+/// OK of the picker: the model outline color of every model (`SetModelColor`).
+pub fn set_outline_color(ctx: &mut Ctx, rgb: [u8; 3]) -> Result<(), String> {
+    ctx.editor.apply(Command::SetOutlineColor(rgb))
 }
 
 /// Menu 281 sets `HWND_TOPMOST` on the separate window, which the shell lacks: it applies to the
@@ -274,7 +342,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
     item(ui, ctx, "menu:280", Some(o.separate_window));
     item(ui, ctx, "menu:281", Some(o.on_top));
     ui.separator();
-    item(ui, ctx, "menu:247", None);
+    let follow = ctx.editor.doc.pmm.appearance.follow_camera != 0;
+    item(ui, ctx, "menu:247", Some(follow));
     ui.separator();
     item(ui, ctx, "menu:211", Some(o.info));
     item(ui, ctx, "menu:215", Some(o.axes));
@@ -286,7 +355,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
     item(ui, ctx, "menu:214", Some(o.transparent_models));
     item(ui, ctx, "menu:283", Some(o.hide_models));
     ui.separator();
-    item(ui, ctx, "menu:253", None);
+    let camera = ctx.editor.doc.pmm.settings.options[0] != 0;
+    ui.add_enabled_ui(!camera, |ui| item(ui, ctx, "menu:253", None));
     item(ui, ctx, "menu:286", None);
     ui.separator();
     item(ui, ctx, "menu:277", Some(o.antialias));
@@ -342,4 +412,58 @@ pub fn pass(ui: &mut egui::Ui, ctx: &mut Ctx) {
             s.shadow_color_dialog = open;
         });
     }
+    if o.edge_dialog {
+        edge_dialog(&egui, ctx);
+    }
+    if let Some(rgb) = o.outline_dialog {
+        outline_dialog(&egui, ctx, rgb);
+    }
+}
+
+/// Window of menu 253: the slider 0 to 200 and the value as `"%3.2f"`. It closes when the
+/// selected model goes (camera mode, `DestroyWindow` of the C++ is the close button).
+fn edge_dialog(egui: &egui::Context, ctx: &mut Ctx) {
+    let Some(edge) = ctx.editor.doc.selected_model().map(|m| m.edge_scale) else {
+        with(egui, ctx.editor, |o| o.edge_dialog = false);
+        return;
+    };
+    let mut position = ((f64::from(edge) * 100.0) as i64).clamp(0, 200) as u32;
+    let mut open = true;
+    let title = help::pick(egui, "エッジ太さ設定", "thickness of edge line");
+    egui::Window::new(title).open(&mut open).show(egui, |ui| {
+        if ui
+            .add(egui::Slider::new(&mut position, 0..=200).show_value(false))
+            .changed()
+        {
+            if let Err(e) = set_edge_thickness(ctx, position) {
+                *ctx.status = e;
+            }
+        }
+        ui.label(format!("{:3.2}", f64::from(position) / 100.0));
+    });
+    with(egui, ctx.editor, |o| o.edge_dialog = open);
+}
+
+/// Window of menu 286: the picker with OK and cancel.
+fn outline_dialog(egui: &egui::Context, ctx: &mut Ctx, mut rgb: [u8; 3]) {
+    let (mut ok, mut cancel) = (false, false);
+    let title = help::pick(egui, "エッジ色", "edge line color");
+    egui::Window::new(title)
+        .collapsible(false)
+        .resizable(false)
+        .show(egui, |ui| {
+            ui.color_edit_button_srgb(&mut rgb);
+            ui.horizontal(|ui| {
+                ok = ui.button("OK").clicked();
+                cancel = ui.button(help::pick(egui, "ｷｬﾝｾﾙ", "cancel")).clicked();
+            });
+        });
+    if ok {
+        if let Err(e) = set_outline_color(ctx, rgb) {
+            *ctx.status = e;
+        }
+    }
+    with(egui, ctx.editor, |o| {
+        o.outline_dialog = (!ok && !cancel).then_some(rgb)
+    });
 }

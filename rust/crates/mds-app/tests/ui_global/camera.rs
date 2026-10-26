@@ -279,3 +279,38 @@ fn the_buttons_are_refused_while_playing_and_the_camera_ones_outside_camera_mode
         assert_eq!(run(&mut e, id), Err("camera mode only".into()), "{id}");
     }
 }
+
+/// Check box 535 flips `followCameraEnabled` as menu 247 does (`command_frame_register.cpp:594`
+/// to `:629`): on zeroes the view offset (camera_state 3 and 4); the scene stays unmodified.
+#[test]
+fn the_follow_box_flips_camera_tracking() {
+    let mut e = model_mode();
+    e.apply(Command::SetCamera {
+        position: [0.0; 3],
+        rotation: [0.0; 3],
+        distance: -45.0,
+        fov: 30.0,
+        perspective: true,
+    })
+    .unwrap();
+    e.doc.pmm.camera_state[3] = 5.0;
+    e.doc.pmm.camera_state[4] = 6.0;
+    e.modified = false;
+    let follow = |e: &Editor| e.doc.pmm.appearance.follow_camera;
+    assert_eq!(follow(&e), 0);
+    run(&mut e, "ctl:535").unwrap();
+    assert_eq!(follow(&e), 1);
+    assert_eq!(state(&e)[3..5], [0.0, 0.0]);
+    assert!(!e.modified);
+    run(&mut e, "ctl:535").unwrap();
+    assert_eq!(follow(&e), 0);
+    let bytes = saved(&e);
+    assert_eq!(
+        mds_doc::Document::load(&bytes, |_| None)
+            .unwrap()
+            .pmm
+            .appearance
+            .follow_camera,
+        0
+    );
+}

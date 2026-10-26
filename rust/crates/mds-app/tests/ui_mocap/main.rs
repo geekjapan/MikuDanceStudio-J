@@ -51,7 +51,8 @@ impl Rig {
         mocap::state(&self.egui)
     }
 
-    /// The pump has seen a performer: what `OpenNIIsTracking` sets each frame.
+    /// The pump has seen a performer: what `OpenNIIsTracking` sets each frame. Without a session
+    /// the next pass clears it again; this stands in for the probe in the tests of 292 alone.
     fn track(&mut self, tracking: bool) {
         mocap::update(&self.egui, |s| s.tracking = tracking);
     }

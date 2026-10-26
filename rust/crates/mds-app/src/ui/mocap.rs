@@ -426,7 +426,7 @@ pub fn pass(ui: &mut egui::Ui, ctx: &mut Ctx) {
 
     let dev = device(&egui);
     let st = state(&egui);
-    let bones = standard_bones(ctx);
+    let bones = st.kinect.then(|| standard_bones(ctx)).flatten();
     let frame = ctx.editor.current_frame();
     let (finished, joints) = dev.with(|d| {
         let Some(live) = d else {

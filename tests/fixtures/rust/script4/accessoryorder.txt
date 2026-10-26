@@ -1,0 +1,21 @@
+# The accessory order dialog of menu 249 (AccessorySettingsDlgProc): tri2.x
+# moved up (630), renamed (629, 633), and the render split count (635)
+# set, then OK (632); a second open moved down and cancelled.
+load accessory .\tri.x
+load accessory .\tri2.x
+save pmm before.pmm
+accessory order open
+dialog select 628 1
+dialog click 630
+dialog text 629 renamed.x
+dialog click 633
+dialog text 635 1
+dialog click 632
+save pmm ordered.pmm
+
+accessory order open
+dialog select 628 0
+dialog click 631
+dialog text 635 5
+dialog cancel
+save pmm cancelled.pmm

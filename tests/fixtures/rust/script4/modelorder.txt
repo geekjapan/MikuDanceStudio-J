@@ -1,0 +1,25 @@
+# The model draw order (menu 288, ModelDisplayOrderDlgProc) and calculate
+# order (menu 289, ModelCalculateOrderDlgProc) dialogs: list 628, up 630,
+# down 631, OK 632. The draw order's OK ends in camera mode.
+load model chain8.pmx
+load model .\lips.pmd
+load model morph4.pmx
+save pmm before.pmm
+model draw order open
+dialog select 628 2
+dialog click 630
+dialog click 630
+dialog click 632
+save pmm draw.pmm
+
+model calc order open
+dialog select 628 0
+dialog click 631
+dialog click 632
+save pmm calc.pmm
+
+model calc order open
+dialog select 628 2
+dialog click 630
+dialog cancel
+save pmm calc-cancelled.pmm

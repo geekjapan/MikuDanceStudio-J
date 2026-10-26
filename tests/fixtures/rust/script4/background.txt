@@ -1,0 +1,16 @@
+# The background menus: an AVI (213) and a picture (232), their display
+# toggles (216, 233), and the black background (282). The toggles of
+# 216 and 233 do nothing before the media is loaded.
+toggle background movie
+toggle background picture
+toggle black background
+save pmm none.pmm
+load background movie .\raw24_bottomup.avi
+load background picture .\toonx.bmp
+save pmm loaded.pmm
+toggle background movie
+toggle background picture
+toggle black background
+save pmm hidden.pmm
+toggle background movie
+save pmm shown.pmm

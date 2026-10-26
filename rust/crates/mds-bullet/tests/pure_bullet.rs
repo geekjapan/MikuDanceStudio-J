@@ -1,5 +1,7 @@
 //! Can also run with rustc --test and only the pure mds-crtmath rlib.
 
+#[path = "pure_bullet/body_kernel.rs"]
+mod body_kernel;
 #[path = "../src/core/mod.rs"]
 mod core;
 #[path = "pure_bullet/joint_coordinates.rs"]

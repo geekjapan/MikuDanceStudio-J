@@ -54,9 +54,22 @@ Linux x64, and Linux ARM64. It saves `native.tsv`, `observed.tsv`, `rust.tsv`,
 compiler commands, source manifests, hashes, and host provenance. Windows uses
 MSVC with the reviewed joint host probe's CMake flags and native static libraries.
 The helper runs the full same-host Rust replay before checking a frozen profile.
-Unknown host profiles fail after their captures are saved. Windows and Linux ARM64
-profiles require actual captures and review before promotion. No host is inferred
-from another host's CPU architecture.
+Unknown host profiles fail after their captures are saved. All four supported
+support profiles now have actual reviewed captures from run 40405648070 at
+`6ba8f9ac9930536362d2c70db38cbd59050e3fb1`. The manifest records each job, artifact,
+ZIP hash, compiler, and the shared 410-blob source manifest hash. Full native,
+observed, and Rust outputs were byte-identical on each host for all 3,377 rows.
+Linux ARM64 independently matches the accepted ARM profile. Windows x64 has the
+same nine numeric words as Linux x64 in every case, with CRLF transport.
+No host is inferred from another host's CPU architecture.
+
+Windows has separate exact full and 1,600-row raw CRLF hashes. The helper requires
+exactly 3,377 CRLF endings in the full capture and 1,600 in its compact prefix,
+with no standalone LF, extra CR, or missing final terminator. Only after validating
+the raw hash and ending counts does this known transport boundary map CRLF to LF
+for comparison with the immutable LF fixture. Other profiles require strict LF.
+Native, observed, and Rust full outputs must still agree byte for byte before
+profile validation. No float, NaN, or generic whitespace normalization is allowed.
 
 Run the capture and comparator negative controls with:
 
@@ -70,3 +83,21 @@ The Linux profile comes from artifact 12689482840 of run 40399749981, capture co
 `6c87687fc80cd1480afa6ba8f0a2a8d7421586be`. The ARM baseline is the accepted
 3,377-row capture, not the older 3,188-row capture. Captured native agreement
 between hosts does not establish same-host Rust replay until that replay runs.
+
+Replay the audited ZIPs, including capture mutations, without rebuilding:
+
+```sh
+python3 tools/bullet-rust-support-check/replay_host_captures.py /path/to/audited-zips
+```
+
+Name the downloaded archives `windows-x64.zip`, `linux-arm64.zip`,
+`macos-arm64.zip`, and `linux-x64.zip`. The replay checks their published ZIP hashes,
+source commit and source manifest, then passes their raw captures through the
+same helper. Unit checks also reject malformed newline transport with recomputed
+hashes so a permissive transport validator cannot hide behind hash rejection.
+
+The audited Windows and Linux ARM64 jobs stopped at the previously unreviewed
+profile gate after full same-host agreement. Their compact Rust replay and eight
+product mutation gates still need a fresh four-host CI run after this promotion.
+The prior macOS ARM64 and Linux x64 jobs completed those gates. This support
+promotion does not approve GJK Windows or Linux ARM64 profiles.

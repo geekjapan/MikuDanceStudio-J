@@ -49,15 +49,12 @@
 //!
 //! # Button 424
 //!
-//! Range scaling opens the window `IDD_FRAME_SCALE` ([`Scale`], `FrameRangeDlgProc`,
-//! `src/window/dialog_procs.cpp:62`), drawn here until the dialog area has an entry for it:
-//! the range edits 425 and 426 fill the first two boxes, the rate starts at 1.0 and the three check
-//! boxes are on. OK is [`Command::ScaleFrames`] (`ApplyFrameRangeScale`,
-//! `frame_range_apply.cpp:297`), model mode only (`command_frame_edit.cpp:1686`).
+//! Range scaling opens the dialog area's `IDD_FRAME_SCALE` (`FrameRangeDlgProc`,
+//! `src/window/dialog_procs.cpp:62`), which starts from the range edits 425 and 426. Model mode
+//! only (`command_frame_edit.cpp:1686`).
 
-use super::camera_panel::{atof, atol, window_text};
-use super::{help, Ctx};
-use crate::actions::{Action, Mode};
+use super::Ctx;
+use crate::actions::{self, Action, Mode};
 use crate::navigation::{KeyState, Repeat};
 use egui::{Align2, Color32, FontId, Id, Key, Pos2, Rect, Sense, Stroke, Vec2};
 use mds_doc::{Command, Document, GlobalTrack, ModelFile, Track};
@@ -157,18 +154,8 @@ pub struct Panel {
     /// The control point of the curve box under the pointer: `false` the start, `true` the end
     /// (`PendingTimelineSelectionRow` 1 and 2).
     pub curve_drag: Option<bool>,
-    /// The open range-scale window (`IDD_FRAME_SCALE`).
-    pub scale: Option<Scale>,
     /// A drag of the marked keys: the column it began on and the column the pointer is over.
     pub key_drag: Option<[i32; 2]>,
-}
-
-/// The controls of `IDD_FRAME_SCALE`: the boxes 686 (first frame), 687 (last frame) and 605 (the
-/// rate), and the check boxes 688 (bones), 689 (facial) and 690 (display, IK and outside parent).
-#[derive(Clone, Debug, PartialEq)]
-pub struct Scale {
-    pub text: [String; 3],
-    pub checks: [bool; 3],
 }
 
 impl Default for Panel {
@@ -189,7 +176,6 @@ impl Default for Panel {
             columns: 40,
             drag: None,
             curve_drag: None,
-            scale: None,
             key_drag: None,
         }
     }
@@ -725,40 +711,9 @@ fn delete(ctx: &mut Ctx) -> Result<(), String> {
     ctx.editor.apply(Command::DeleteSelectedKeys)
 }
 
-/// 424 (`command_frame_edit.cpp:1686`): the window opens with the range edits as the first two
-/// boxes (`FrameRangeDlgProc` copies them as `%d`), the rate 1.0 and the three check boxes on.
+/// 424 (`command_frame_edit.cpp:1686`): the dialog area's frame scale.
 fn open_scale(ctx: &mut Ctx) -> Result<(), String> {
-    ctx.egui.as_ref().ok_or("no window")?;
-    let [from, to] = panel(ctx).range;
-    let text = [from.to_string(), to.to_string(), "1.0".to_string()];
-    update(ctx, |p| {
-        p.scale = Some(Scale {
-            text,
-            checks: [true; 3],
-        })
-    });
-    Ok(())
-}
-
-/// OK of the range-scale window: the window closes and the boxes are read as `atol` and `atof`
-/// of at most seven characters (`GetWindowTextA(.., text, 8)`). A range that is not past its
-/// start and a rate below 0.00001 or equal to 1 change nothing, as the C++ returns there; the
-/// error goes to the status line.
-pub fn scale_submit(ctx: &mut Ctx) -> Result<(), String> {
-    let s = panel(ctx).scale.ok_or("no dialog is open")?;
-    update(ctx, |p| p.scale = None);
-    if ctx.editor.playing() {
-        return Err("not while playing".into());
-    }
-    let box_text = |i: usize| window_text(&s.text[i], 8);
-    ctx.editor.apply(Command::ScaleFrames(mds_ops::RangeScale {
-        start: atol(box_text(0)) as i32,
-        end: atol(box_text(1)) as i32,
-        scale: atof(box_text(2)),
-        bones: s.checks[0],
-        morphs: s.checks[1],
-        display: s.checks[2],
-    }))
+    actions::run(ctx, "dlg:IDD_FRAME_SCALE")
 }
 
 /// The end of a key drag (`mouse:timeline-key-drag`): the marked keys move by `frames`.
@@ -1023,15 +978,7 @@ pub fn click_strip(ctx: &mut Ctx, frame: u32) -> Result<(), String> {
     if ctx.editor.playing() {
         return Err("not while playing".into());
     }
-    quietly(ctx, Command::ClickFrame(frame))
-}
-
-/// Applies a command that the C++ does not count as a scene edit (`SceneModified` stays).
-fn quietly(ctx: &mut Ctx, cmd: Command) -> Result<(), String> {
-    let modified = ctx.editor.modified;
-    let done = ctx.editor.apply(cmd);
-    ctx.editor.modified = modified;
-    done
+    ctx.editor.apply(Command::ClickFrame(frame))
 }
 
 /// A click on a cell (`HandleLButtonDown_TimelineAreaHit`, `ui_editor_click.cpp:685`;
@@ -1158,7 +1105,7 @@ pub fn click_margin(ctx: &mut Ctx, row: &Row) -> Result<(), String> {
         return Ok(());
     };
     match group_flag(&ctx.editor.doc, g) {
-        Some(n) => quietly(ctx, Command::ToggleDisplayGroup(n)),
+        Some(n) => ctx.editor.apply(Command::ToggleDisplayGroup(n)),
         None => Ok(()),
     }
 }
@@ -1761,64 +1708,4 @@ pub fn pass(ui: &mut egui::Ui, ctx: &mut Ctx) {
         }
     }
     ui.data_mut(|d| d.insert_temp(id, s));
-    // `MDS_APP_DIALOG=IDD_FRAME_SCALE` opens the range-scale window at start, for screenshots (as
-    // the dialog area does for its own).
-    static START: std::sync::Once = std::sync::Once::new();
-    START.call_once(|| {
-        if std::env::var("MDS_APP_DIALOG").is_ok_and(|d| d == "IDD_FRAME_SCALE") {
-            let _ = open_scale(ctx);
-        }
-    });
-    scale_window(ui, ctx);
-}
-
-/// `IDD_FRAME_SCALE` (`MDS_DLG_FRAME_SCALE_JP` / `_EN`, `res/templates/dialog/dialogs.rc`): Enter
-/// is OK and Escape cancel, as the default and cancel buttons are.
-fn scale_window(ui: &mut egui::Ui, ctx: &mut Ctx) {
-    let Some(mut s) = panel(ctx).scale else {
-        return;
-    };
-    let egui = ui.ctx().clone();
-    let pick = |ja, en| help::pick(&egui, ja, en);
-    let (mut ok, mut cancel) = (false, false);
-    egui::Window::new(pick("時間拡大(縮小)率", "expand/shrink"))
-        .collapsible(false)
-        .resizable(false)
-        .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-        .show(&egui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(pick("フレーム", "frame"));
-                for (i, t) in s.text.iter_mut().take(2).enumerate() {
-                    if i == 1 {
-                        ui.label("-");
-                    }
-                    ui.add(egui::TextEdit::singleline(t).desired_width(40.0));
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label(pick("　　倍率", "magnification"));
-                ui.add(egui::TextEdit::singleline(&mut s.text[2]).desired_width(40.0));
-            });
-            ui.horizontal(|ui| {
-                let names = [
-                    pick("ボーン", "Bone"),
-                    pick("表情", "Facial"),
-                    pick("表示･IK･外親", "Disp/IK/OP"),
-                ];
-                for (on, name) in s.checks.iter_mut().zip(names) {
-                    ui.checkbox(on, name);
-                }
-            });
-            ui.horizontal(|ui| {
-                ok = ui.button("OK").clicked() || ui.input(|i| i.key_pressed(Key::Enter));
-                cancel = ui.button(pick("ｷｬﾝｾﾙ", "cancel")).clicked()
-                    || ui.input(|i| i.key_pressed(Key::Escape));
-            });
-        });
-    update(ctx, |p| p.scale = (!cancel).then_some(s));
-    if ok {
-        if let Err(e) = scale_submit(ctx) {
-            *ctx.status = e;
-        }
-    }
 }

@@ -523,6 +523,22 @@ impl PhysicsScene {
         self.sync_all()
     }
 
+    /// The floor menu 285 (`command_view_menu.cpp` 1437-1455): the ground's
+    /// collision flags become 1 (`CF_STATIC_OBJECT`, as the world starts) or
+    /// -1. The `CF_NO_CONTACT_RESPONSE` bit of -1 makes
+    /// `btCollisionDispatcher::needsResponse` false, so `buildIslands` hands
+    /// no ground manifold to the solver and bodies fall through; the other
+    /// bits change nothing for a sleeping static body. Loading a PMM does not
+    /// call this: its floor byte only sets the ground's deactivation time,
+    /// which Bullet reads for non-static bodies alone.
+    pub fn set_floor_visible(&mut self, on: bool) -> Result<(), String> {
+        // SAFETY: the world is live.
+        check(
+            unsafe { sys::mds_mmd_world_set_floor(self.world.0, i32::from(on)) },
+            "floor",
+        )
+    }
+
     /// The physics reset menu 268 (`MDS_CMD_RESET_PHYSICS_BODIES`,
     /// `command_view_menu.cpp`): the next pump settles.
     pub fn reset(&mut self) {
@@ -810,7 +826,7 @@ fn readback(model: &mut Model, bodies: &[*mut sys::mds_mmd_body]) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::Op::{self, *};
-    use super::{MsvcRand, PhysicsScene, SUBSTEP};
+    use super::{ptr, sys, MsvcRand, PhysicsScene, SUBSTEP};
     use mds_formats::pmm::Pmm;
     use std::path::PathBuf;
 
@@ -1086,6 +1102,63 @@ mod tests {
         assert!(!s.settle, "the settle request is the document's");
         s.tick(0.02).unwrap();
         assert_eq!(ops(&s), [Sync, Pose(0, 0), Pose(1, 0)]);
+    }
+
+    /// Drops a unit box (half extent 1) from y = 20, away from the model and
+    /// colliding with the ground alone, for two seconds; its final pose.
+    fn drop_box(s: &PhysicsScene) -> ([f32; 3], [f32; 4]) {
+        let mut body = ptr::null_mut();
+        // SAFETY: the world is live; the arrays outlive the calls.
+        unsafe {
+            let code = sys::mds_mmd_body_create(
+                s.world.0,
+                1,
+                1.0,
+                1.0,
+                1.0,
+                [500.0, 20.0, 500.0].as_ptr(),
+                [0.0, 0.0, 0.0, 1.0].as_ptr(),
+                1,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.5,
+                0x4000,
+                i16::MIN,
+                &mut body,
+            );
+            assert_eq!(code, sys::MDS_BT_OK);
+        }
+        for _ in 0..120 {
+            s.world_step(SUBSTEP).unwrap();
+        }
+        let (mut origin, mut rotation) = ([0.0; 3], [0.0; 4]);
+        // SAFETY: a live body of this world.
+        let code =
+            unsafe { sys::mds_mmd_body_pose(body, origin.as_mut_ptr(), rotation.as_mut_ptr()) };
+        assert_eq!(code, sys::MDS_BT_OK);
+        (origin, rotation)
+    }
+
+    #[test]
+    fn the_floor_menu_switches_the_ground_contact() {
+        let rest = drop_box(&open(1));
+        assert!(
+            (rest.0[1] - 1.0).abs() < 0.05,
+            "rests on the floor: {rest:?}"
+        );
+
+        let mut s = open(1);
+        s.set_floor_visible(false).unwrap();
+        let fallen = drop_box(&s).0[1];
+        // Free fall from 20 under -98 for 2 s ends near -176.
+        assert!(fallen < -150.0, "falls through: {fallen}");
+
+        let mut s = open(1);
+        s.set_floor_visible(false).unwrap();
+        s.set_floor_visible(true).unwrap();
+        assert_eq!(drop_box(&s), rest, "1 is the startup flag value");
     }
 
     #[test]

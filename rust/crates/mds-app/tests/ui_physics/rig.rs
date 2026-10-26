@@ -19,6 +19,16 @@ impl Rig {
         Rig::with(Editor::empty())
     }
 
+    /// `chain8.pmd` loaded into an empty scene: a PMD model with rigid bodies, in model mode.
+    pub fn pmd() -> Rig {
+        let startup = mds_doc::Document::startup();
+        let mut r = Rig::with(Editor::new(startup, Some(fixtures().join("scratch.pmm"))).unwrap());
+        let data = std::fs::read(fixtures().join("chain8.pmd")).unwrap();
+        mds_app::ui::model_panel::load(&mut r.ctx(), "chain8.pmd", data).unwrap();
+        r.editor.pump(0).unwrap();
+        r
+    }
+
     pub fn open(name: &str) -> Rig {
         Rig::with(Editor::open(&fixtures().join(name)).unwrap_or_else(|e| panic!("{name}: {e}")))
     }

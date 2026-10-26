@@ -6,7 +6,7 @@
 use eframe::egui;
 use mds_app::editor::Editor;
 use mds_app::ui::{self, Ctx, Place, AREAS};
-use mds_app::viewport::WindowViewport;
+use mds_app::viewport::{media_viewport, WindowViewport};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -37,6 +37,7 @@ pub fn run(pmm: Option<PathBuf>) -> Result<(), String> {
             Ok(Box::new(App {
                 max_texture_size: [max; 2],
                 viewport: WindowViewport::new(state)?,
+                view_rect: None,
                 status: pmm.map_or_else(String::new, |p| p.display().to_string()),
                 editor,
                 clock: Instant::now(),
@@ -90,6 +91,8 @@ struct App {
     /// The device's largest texture, which bounds the render size (menu 212).
     max_texture_size: [i32; 2],
     viewport: WindowViewport,
+    /// The central panel of the last pass in window pixels, `[left, top, right, bottom]`.
+    view_rect: Option<[i32; 4]>,
     clock: Instant,
     status: String,
     screenshot: Option<Screenshot>,
@@ -153,6 +156,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // Set every pass: opening a scene builds a new document.
         self.editor.doc.edit.max_texture_size = Some(self.max_texture_size);
+        self.editor.doc.edit.viewport = self.view_rect.map(media_viewport);
         let mut ctx = Ctx {
             editor: &mut self.editor,
             now_ms: self.clock.elapsed().as_millis() as u64,
@@ -205,13 +209,15 @@ impl eframe::App for App {
                 });
             });
         }
-        egui::CentralPanel::default().show(ui, |ui| {
+        let central = egui::CentralPanel::default().show(ui, |ui| {
             for place in [Place::Viewport, Place::Dialog] {
                 for area in AREAS.iter().filter(|a| a.place == place) {
                     (area.show)(ui, &mut ctx);
                 }
             }
         });
+        let (r, ppp) = (central.response.rect, ui.ctx().pixels_per_point());
+        self.view_rect = Some([r.min.x, r.min.y, r.max.x, r.max.y].map(|v| (v * ppp) as i32));
         // The C++ frame loop runs every pass: physics settles and plays without input.
         ui.ctx().request_repaint();
     }

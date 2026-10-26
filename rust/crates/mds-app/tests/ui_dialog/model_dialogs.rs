@@ -7,6 +7,8 @@ use super::{fixtures, Rig};
 use mds_app::editor::Editor;
 use mds_app::ui::dialog::{self, OpCombo};
 use mds_app::ui::model_panel;
+use mds_app::ui::viewport::RecordTarget;
+use mds_app::ui::Ctx;
 use mds_doc::{Command, Document, ModelFile, OutsideParent};
 use mds_formats::pmm::Pmm;
 
@@ -573,4 +575,65 @@ fn the_physics_dialog_reads_the_boxes_as_the_cpp_does() {
     assert_eq!(p.rigids[0].size[0], 0.1);
     let upper_y = p.joints.as_ref().unwrap()[0].rotation_max[1];
     assert!((upper_y - 80.0_f32.to_radians()).abs() < 1e-5, "{upper_y}");
+}
+
+fn record_target(rig: &Rig) -> Option<RecordTarget> {
+    let id = egui::Id::unique("viewport-record-target");
+    rig.egui
+        .data(|d| d.get_temp::<Option<RecordTarget>>(id))
+        .flatten()
+}
+
+/// The viewport's record drag edits the record the dialog has selected (`EditModeRecord`,
+/// `frame_modes_bone.cpp:158`, by `selectedRigidIndex`, `selectedJointIndex` and the page): the
+/// dialog publishes it on open, on a new selection or page, and withdraws it on close.
+#[test]
+fn the_physics_dialog_tells_the_viewport_which_record_it_has_selected() {
+    let at = |joint, index| Some(RecordTarget { joint, index });
+    let mut rig = lips();
+    assert_eq!(record_target(&rig), None);
+    rig.run("dlg:IDD_PHYSICS_MODEL").unwrap();
+    assert_eq!(record_target(&rig), at(false, 0));
+    rig.with(|c| dialog::physics_pick(c, 704, 1)).unwrap();
+    assert_eq!(record_target(&rig), at(false, 1));
+    rig.with(|c| dialog::physics_press(c, 801)).unwrap();
+    assert_eq!(record_target(&rig), at(true, 0));
+    rig.with(|c| dialog::physics_pick(c, 736, 1)).unwrap();
+    assert_eq!(record_target(&rig), at(true, 1));
+    rig.with(|c| dialog::physics_press(c, 800)).unwrap();
+    assert_eq!(record_target(&rig), at(false, 1));
+    // A drawn pass keeps it, and Esc withdraws it.
+    let pass = |rig: &mut Rig, events: Vec<egui::Event>| {
+        let egui = rig.egui.clone();
+        let mut ctx = Ctx {
+            editor: &mut rig.editor,
+            now_ms: 0,
+            egui: Some(egui.clone()),
+            viewport: None,
+            status: &mut rig.status,
+        };
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        egui.run_ui(input, |ui| dialog::show(ui, &mut ctx))
+            .drop_without_applying_deltas();
+    };
+    pass(&mut rig, vec![]);
+    assert_eq!(record_target(&rig), at(false, 1));
+    let esc = egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    pass(&mut rig, vec![esc]);
+    assert_eq!(rig.shown(), None);
+    assert_eq!(record_target(&rig), None);
+
+    rig.run("dlg:IDD_PHYSICS_MODEL").unwrap();
+    assert_eq!(record_target(&rig), at(false, 0));
+    rig.ok().unwrap();
+    assert_eq!(record_target(&rig), None);
 }

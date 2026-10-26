@@ -11,22 +11,22 @@
 //! conversion dialog (275), the about box (267) and the automatic interpolation check box (530,
 //! `Command::SetAutoInterpolation`; `]` flips it).
 //!
-//! Missing, for lack of a document command (the items are drawn greyed out, showing the state):
+//! The mode radios 265, 269, 270 and 272 are [`Command::SetPhysicsMode`] (`PlaybackPhysicsMode`,
+//! `command_view_menu.cpp:1048` to `:1110`) and then [`mds_physics::PhysicsScene::set_physics_mode`]
+//! (`ModelKinematicSync` of every model); modes 1 to 3 request a settle, which the document
+//! sets. Item 270 is greyed while playing (`DisablePlaybackMenus`, `src/app/playback_state.cpp:77`),
+//! in camera mode (`ui_model_reload.cpp:474`) and for a PMX model (`ui_model_reload.cpp:553`);
+//! the other three are never greyed. Menu 285 is [`Command::SetFloorVisible`]
+//! (`command_view_menu.cpp:1437`); the C++ also stores -1 or 1 into the ground body's
+//! `m_collisionFlags`, which `mds-physics` cannot do until its floor shim lands, so the floor
+//! flag changes and the live ground body does not. Check box 499 is
+//! [`Command::SetPhysicsCheckbox`] (`EditState::physics_checkbox`, which "register" stores
+//! negated as `physicsDisabled`, `src/model/model_keyframe_edit.cpp:277`).
 //!
-//! * 265, 269, 270, 272: `Command::SetPhysicsMode(u8)` writing `pmm.physics.playback_mode`
-//!   (1 anytime, 2 on/off, 3 trace, 0 none), with `Editor` carrying it to
-//!   `physics.scene.physics_mode` and `saved_mode` (`ModelKinematicSync` of every model) and
-//!   `physics_reset_pending` for 1, 2 and 3 (not 0). Item 270 is greyed while playing and for a
-//!   PMX model (`SetPhysicsMenuState`, `src/app/playback_state.cpp:46`).
-//! * 285: `Command::SetFloorVisible(bool)` writing `pmm.appearance.floor_visible`, and an `Editor`
-//!   call that stores -1 (hidden) or 1 into the ground body's `btCollisionObject` int at `+0xE0`
-//!   of the x64 build (`m_activationState1`, `+0xD4` of the x86) through `mds-bullet-sys`.
-//! * ctl:499: `Command::SetPhysicsCheckbox(bool)` writing `EditState::physics_checkbox`, which
-//!   "register" stores negated as `physicsDisabled` (`src/model/model_keyframe_edit.cpp:277`).
-//!
-//! The bodies are drawn at the pose Bullet has for them ([`world_poses`]); [`body_matrix`], the
-//! `BuildFollowMatrix` of the bone's `mat_init`, is the same for the bone followers and the
-//! fallback when the trace cannot be written.
+//! The bodies are drawn at the pose Bullet has for them ([`world_poses`], from
+//! [`mds_physics::PhysicsScene::body_poses`]); [`body_matrix`], the `BuildFollowMatrix` of the
+//! bone's `mat_init`, is the same for the bone followers and the fallback for a body that has no
+//! Bullet body.
 
 use super::{help, viewport, Ctx};
 use crate::actions::{self, Action, Mode};
@@ -38,6 +38,12 @@ use mds_pose::model::{Model, Rigid};
 use std::collections::HashMap;
 
 const ACTIONS: &[Action] = &[
+    Action::run("menu:265", |c| set_mode(c, 1), false),
+    Action::run("menu:269", |c| set_mode(c, 2), false),
+    Action::run("menu:270", trace_mode, true).in_mode(Mode::Model),
+    Action::run("menu:272", |c| set_mode(c, 0), false),
+    Action::run("menu:285", toggle_floor, false),
+    Action::run("ctl:499", toggle_checkbox, false),
     Action::run("menu:264", toggle_bodies, false),
     Action::run("menu:266", gravity, true),
     Action::run("menu:267", about, false),
@@ -198,48 +204,23 @@ fn transform(m: &Mat4, p: [f32; 3]) -> [f32; 3] {
     std::array::from_fn(|c| p[0] * m.0[c] + p[1] * m.0[4 + c] + p[2] * m.0[8 + c] + m.0[12 + c])
 }
 
-/// `FormatHexFloat`'s `[-]0x1.hhhhhhp[+-]d` (`mds_pose::trace::hex_float`) back to a float.
-fn parse_hex_float(text: &str) -> Option<f32> {
-    let (negative, text) = match text.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, text),
-    };
-    let (mantissa, exponent) = text.strip_prefix("0x")?.split_once('p')?;
-    let (lead, fraction) = mantissa.split_once('.')?;
-    let value = f64::from(lead.parse::<u8>().ok()?)
-        + f64::from(u32::from_str_radix(fraction, 16).ok()?) / f64::from(1u32 << 24);
-    let value = value * 2f64.powi(exponent.parse().ok()?);
-    Some((if negative { -value } else { value }) as f32)
-}
-
-/// The pose of every Bullet body, by model slot and rigid index: the `rigid` lines of the trace
-/// ([`mds_physics::PhysicsScene::write_frame`]), origin and rotation. Empty when the trace cannot
-/// be written (a rigid body of a shape that has no Bullet body).
-// ponytail: mds-physics has no body pose getter, so the trace text is parsed; a getter replaces it.
+/// The pose of every Bullet body, by model slot and rigid index (`PhysicsScene::body_poses`):
+/// origin and rotation. A body of a shape the loaders build no Bullet body for has none.
 pub fn world_poses(editor: &Editor) -> HashMap<(u8, usize), Mat4> {
-    let mut trace = String::new();
-    if editor.physics.write_frame(&mut trace, 0).is_err() {
+    let Ok(poses) = editor.physics.body_poses() else {
         return HashMap::new();
+    };
+    let mut out = HashMap::new();
+    for (model, bodies) in editor.physics.scene.models.iter().zip(poses) {
+        for (i, pose) in bodies.into_iter().enumerate() {
+            if let Some((o, q)) = pose {
+                let mut m = Mat4::rotation_quaternion(Quat(q));
+                m.0[12..15].copy_from_slice(&o);
+                out.insert((model.slot, i), m);
+            }
+        }
     }
-    trace
-        .lines()
-        .filter_map(|line| {
-            let f: Vec<_> = line.split(' ').collect();
-            let [_, "rigid", slot, index, v @ ..] = &f[..] else {
-                return None;
-            };
-            let v: Vec<f32> = v
-                .iter()
-                .map(|x| parse_hex_float(x))
-                .collect::<Option<_>>()?;
-            let &[ox, oy, oz, qx, qy, qz, qw] = &v[..] else {
-                return None;
-            };
-            let mut m = Mat4::rotation_quaternion(Quat([qx, qy, qz, qw]));
-            m.0[12..15].copy_from_slice(&[ox, oy, oz]);
-            Some(((slot.parse().ok()?, index.parse().ok()?), m))
-        })
-        .collect()
+    out
 }
 
 /// The wire frames of every rigid body of the world, projected into a picture `size` points wide
@@ -348,6 +329,46 @@ fn about(ctx: &mut Ctx) -> Result<(), String> {
 fn reset(ctx: &mut Ctx) -> Result<(), String> {
     ctx.editor.reset_physics();
     Ok(())
+}
+
+/// Menus 265, 269 and 272 (`command_view_menu.cpp:1048`, `:1066`, `:1098`): the playback physics
+/// mode, then every model's `ModelKinematicSync`.
+fn set_mode(ctx: &mut Ctx, mode: u8) -> Result<(), String> {
+    ctx.editor.apply(Command::SetPhysicsMode(mode))?;
+    ctx.editor.physics.set_physics_mode(mode)
+}
+
+/// Whether the selected model is a PMX (`ModelRecord::physicsMode == 2`).
+fn selected_pmx(editor: &Editor) -> bool {
+    let Some(m) = editor.doc.selected_model() else {
+        return false;
+    };
+    editor
+        .physics
+        .scene
+        .models
+        .iter()
+        .any(|x| x.slot == m.slot && x.pmx)
+}
+
+/// Menu 270 (`command_view_menu.cpp:1082`), greyed for a PMX model.
+fn trace_mode(ctx: &mut Ctx) -> Result<(), String> {
+    if selected_pmx(ctx.editor) {
+        return Err("menu:270: not for a PMX model".into());
+    }
+    set_mode(ctx, 3)
+}
+
+/// Menu 285 (`command_view_menu.cpp:1437`): the floor flag flips.
+fn toggle_floor(ctx: &mut Ctx) -> Result<(), String> {
+    let on = ctx.editor.doc.pmm.appearance.floor_visible != 0;
+    ctx.editor.apply(Command::SetFloorVisible(!on))
+}
+
+/// Check box 499 (`ui_notify.cpp:152` reads it, `model_keyframe_edit.cpp:277` stores it).
+fn toggle_checkbox(ctx: &mut Ctx) -> Result<(), String> {
+    let on = ctx.editor.doc.edit.physics_checkbox;
+    ctx.editor.apply(Command::SetPhysicsCheckbox(!on))
 }
 
 /// Menu 271 (`command_view_menu.cpp:1163`): `playbackAlwaysOnOffMode` flips; the next play runs
@@ -466,7 +487,11 @@ fn label(egui: &egui::Context, id: &str) -> &'static str {
 /// A menu item for `id` that shows `checked`, greyed out when the action cannot run.
 fn item(ui: &mut egui::Ui, ctx: &mut Ctx, id: &str, checked: Option<bool>) {
     let button = egui::Button::new(label(ui.ctx(), id)).selected(checked.unwrap_or(false));
-    if ui.add_enabled(ctx.enabled(id), button).clicked() {
+    let pmx_trace = id == "menu:270" && selected_pmx(ctx.editor);
+    if ui
+        .add_enabled(ctx.enabled(id) && !pmx_trace, button)
+        .clicked()
+    {
         ctx.run(id);
     }
 }
@@ -501,7 +526,9 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
     ui.separator();
     let mut physics = ctx.editor.doc.edit.physics_checkbox;
     let text = label(ui.ctx(), "ctl:499");
-    ui.add_enabled(false, egui::Checkbox::new(&mut physics, text));
+    if ui.checkbox(&mut physics, text).changed() {
+        ctx.run("ctl:499");
+    }
     let mut auto = ctx.editor.doc.edit.auto_interpolation;
     let text = label(ui.ctx(), "ctl:530");
     if ui.checkbox(&mut auto, text).changed() {

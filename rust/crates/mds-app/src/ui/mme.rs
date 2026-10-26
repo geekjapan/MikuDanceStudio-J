@@ -945,8 +945,28 @@ pub mod dialog {
         }
     }
 
+    /// `MDS_APP_MME_TAB=<target>` opens the dialog when the window starts and selects the tab
+    /// of the offscreen target of that name once its effect loads, for screenshots.
+    fn startup(ctx: &Ctx) {
+        thread_local!(static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+        if DONE.get() {
+            return;
+        }
+        let Ok(want) = std::env::var("MDS_APP_MME_TAB") else {
+            DONE.set(true);
+            return;
+        };
+        state(|s| s.dialog = true);
+        let targets = ctx.editor.mme.offscreen_targets();
+        if let Some(t) = targets.iter().find(|t| t.name == want) {
+            select_tab(Some(key(t)));
+            DONE.set(true);
+        }
+    }
+
     /// Files dropped while the dialog is open go to it.
     pub fn pass(ui: &mut egui::Ui, ctx: &mut Ctx) {
+        startup(ctx);
         if !state(|s| s.dialog) {
             return;
         }

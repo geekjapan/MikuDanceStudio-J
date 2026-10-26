@@ -178,12 +178,17 @@ pub const DRAW_OBJECT: u8 = 2;
 pub const DRAW_SHADOW: u8 = 3;
 pub const DRAW_EDGE: u8 = 4;
 
-/// The `D3DMATERIAL9` a model material record holds: diffuse, ambient = diffuse (the record's
-/// mirror copy), specular, emissive = the PMX ambient, power (`ModelMaterialRecord`).
+/// The `D3DMATERIAL9` a model material record holds: diffuse, ambient = the record's mirror of
+/// the diffuse, specular, emissive = the PMX ambient, power (`ModelMaterialRecord`); an
+/// accessory's own (`ExpGetAcsMaterial`), whose diffuse color `MmeBindMaterialParameter` scales
+/// by 10 (`material_bind.cpp`, semantic 0x18 on a kind 0 object).
 fn material9(m: &Material) -> [[f32; 4]; 4] {
+    if let Some([d, a, s, e]) = m.accessory {
+        return [[d[0] * 10.0, d[1] * 10.0, d[2] * 10.0, d[3]], a, s, e];
+    }
     [
         m.diffuse,
-        m.diffuse,
+        m.mirror,
         [m.specular[0], m.specular[1], m.specular[2], 0.0],
         [m.ambient[0], m.ambient[1], m.ambient[2], 0.0],
     ]

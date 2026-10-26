@@ -59,6 +59,20 @@ impl Gpu {
         }))
     }
 
+    /// The runtime on a device the caller owns, such as a window's, so that the MME frame is
+    /// drawn where the window samples it. The runtime takes the optional features the device
+    /// has; it installs no uncaptured-error handler (the device's owner keeps its own), so
+    /// [`Gpu::scoped`] reports only what its scopes catch.
+    pub fn from_device(device: &wgpu::Device, queue: &wgpu::Queue, adapter: &str) -> Gpu {
+        Gpu {
+            device: device.clone(),
+            queue: queue.clone(),
+            adapter: adapter.to_string(),
+            errors: Arc::new(Mutex::new(Vec::new())),
+            features: device.features() & WANTED,
+        }
+    }
+
     /// Runs `f` inside validation and internal error scopes and returns its value with every
     /// error it raised (including uncaptured ones from earlier submissions).
     pub fn scoped<T>(&self, f: impl FnOnce() -> T) -> (T, Vec<String>) {

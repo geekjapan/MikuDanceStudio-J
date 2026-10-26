@@ -3,7 +3,9 @@
 //! With no adapter, every test reports SKIP, which is not a pass.
 
 use mds_formats::pmx::Pmx;
-use mds_render::{Camera, Frame, Gpu, Light, Mesh, Pose, Renderer, PIXEL_OFFSET_D3D9};
+use mds_render::{
+    Camera, Frame, Gpu, Light, Mesh, Pose, Renderer, SelfShadow, Stage, PIXEL_OFFSET_D3D9,
+};
 
 const W: u32 = 128;
 const H: u32 = 96;
@@ -128,7 +130,7 @@ fn render_into_equals_render_frame_and_keeps_its_pipelines() {
     let frame_a = frame(&models_a);
     let a1 = render_into(&gpu, &mut renderer, &frame_a, 1);
     let built = renderer.pipelines_created();
-    assert_eq!(built, 8);
+    assert_eq!(built, 9);
     assert!(covered(&a1) > 100, "the model should cover some pixels");
     assert_eq!(a1, gpu_frame(&gpu, &frame_a), "render_into vs render_frame");
 
@@ -162,7 +164,7 @@ fn render_frame_on_gpu_reuses_pipelines() {
     let f = frame(&models);
     let first = gpu_frame(&gpu, &f);
     let built = gpu.pipelines_created();
-    assert_eq!(built, 8);
+    assert_eq!(built, 9);
     assert_eq!(gpu_frame(&gpu, &f), first);
     assert_eq!(gpu.pipelines_created(), built);
 }
@@ -203,4 +205,41 @@ fn multisampled_render_resolves_into_the_target() {
             3
         )
         .is_err());
+}
+
+/// The window path with the grid, the self-shadow map and its display, multisampled: the grid
+/// changes the picture, and the display's rectangle is gray.
+#[test]
+fn render_into_draws_the_grid_and_the_shadow_map_display() {
+    let Some(gpu) = gpu_or_skip() else { return };
+    let mesh = morph4();
+    let models = [(&mesh, None)];
+    let f = frame(&models);
+    let mut renderer = Renderer::new(gpu.device(), gpu.queue()).unwrap();
+    let mut draw = |stage: &Stage| {
+        let texture = target(gpu.device());
+        let view = texture.create_view(&Default::default());
+        renderer.render_into_with(&view, &f, stage, 4).unwrap();
+        read(&gpu, &texture)
+    };
+    let shadow = Stage {
+        self_shadow: Some(SelfShadow {
+            mode: 1,
+            distance: 0.01125,
+        }),
+        ..Stage::default()
+    };
+    let plain = draw(&shadow);
+    let shown = draw(&Stage {
+        grid: true,
+        shadow_map_display: Some([0.0, 0.0, 32.0, 32.0]),
+        ..shadow
+    });
+    assert_ne!(plain, shown);
+    for y in 1..31 {
+        for x in 1..31 {
+            let p = &shown[((y * W + x) * 4) as usize..][..3];
+            assert!(p[0] == p[1] && p[1] == p[2], "({x}, {y}): {p:?}");
+        }
+    }
 }

@@ -11,12 +11,13 @@
 //! [`State::tracking`]) answer [`UNAVAILABLE`] on the status line, and `show` greys them. The
 //! options 293 to 295 are plain toggles, as in the C++, and stay enabled.
 //!
-//! Not here, for the same reason: the per-frame pump (`PumpKinectSkeleton`), registering a
-//! finished recording, and drawing the red man over the viewport.
+//! Not here, for the same reason: the per-frame pump (`PumpKinectSkeleton`) and drawing the red
+//! man over the viewport. What the pump hands over when a recording ends is [`register_capture`].
 
 use super::{help, Ctx};
 use crate::actions::{Action, Mode};
 use egui::Id;
+use mds_doc::Command;
 
 /// What the status line says for every function that needs a sensor.
 pub const UNAVAILABLE: &str = "Kinect is not available on this system";
@@ -103,6 +104,26 @@ fn record(ctx: &mut Ctx) -> Result<(), String> {
     }
     ctx.editor.reset_physics();
     Ok(())
+}
+
+/// The end of a recording (`PumpKinectSkeleton`, `oni_skeleton_pump.cpp:510` to `:524`):
+/// `DisableKinect` drops the capture stage, then `Command::RegisterKinectCapture` writes the keys
+/// of the `samples` frames of the trace from `frame` on ([`mds_kinect::register`] makes them).
+/// The pump (slice uimocap2) calls it with the frames it recorded.
+pub fn register_capture(
+    ctx: &mut Ctx,
+    frame: u32,
+    samples: u32,
+    keys: Vec<mds_kinect::KeyRegistration>,
+) -> Result<(), String> {
+    if let Some(egui) = &ctx.egui {
+        update(egui, |s| s.stage = 0);
+    }
+    ctx.editor.apply(Command::RegisterKinectCapture {
+        frame,
+        samples,
+        keys,
+    })
 }
 
 fn toggle(ctx: &mut Ctx, flag: fn(&mut State) -> &mut bool) -> Result<(), String> {

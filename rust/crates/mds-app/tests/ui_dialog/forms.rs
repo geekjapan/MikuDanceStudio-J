@@ -106,7 +106,10 @@ fn camera_numeric_input() {
         "dlg:IDD_CAMERA_NUMERIC_INPUT",
         &["1", "2", "3", "10", "-20", "5", "25"],
     );
+    assert!(!rig.editor.modified);
     rig.ok().unwrap();
+    // `SceneModified = 1` (`command_view_menu.cpp:1771`).
+    assert!(rig.editor.modified);
     let pi = 3.141592025756836f64;
     let s = rig.editor.doc.pmm.camera_state;
     assert_eq!(&s[..3], &[1.0, 2.0, 3.0]);
@@ -133,6 +136,7 @@ fn camera_numeric_input_left_alone_keeps_the_camera() {
     rig.run("dlg:IDD_CAMERA_NUMERIC_INPUT").unwrap();
     rig.ok().unwrap();
     assert!(rig.saved() == before);
+    assert!(rig.editor.modified, "OK sets SceneModified all the same");
 }
 
 fn bone_rig() -> Rig {
@@ -248,23 +252,5 @@ fn editing_dialogs_do_not_open_while_playing() {
     for id in ["dlg:IDD_AVI_OUTPUT", "dlg:IDD_PMM_MISSING_MODEL"] {
         rig.run(id).unwrap();
         rig.cancel();
-    }
-}
-
-#[test]
-fn rows_without_a_command_are_not_runnable() {
-    let mut rig = Rig::open("swing600.pmm");
-    for id in [
-        "IDD_FRAME_SCALE",
-        "IDD_ACCESSORY_ORDER",
-        "IDD_MODEL_DRAW_ORDER",
-        "IDD_MODEL_CALCULATE_ORDER",
-        "IDD_OUTSIDE_PARENT",
-        "IDD_ENGLISH_NAMES",
-        "IDD_TOON_TEXTURE",
-        "IDD_PHYSICS_MODEL",
-    ] {
-        let id = format!("dlg:{id}");
-        assert_eq!(rig.run(&id), Err(format!("{id}: not implemented")));
     }
 }

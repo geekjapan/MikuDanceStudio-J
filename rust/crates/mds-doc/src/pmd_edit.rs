@@ -45,7 +45,7 @@ fn cut(text: &str, max: usize) -> Vec<u8> {
 }
 
 impl Document {
-    fn selected_pmd(&mut self) -> Result<(usize, &mut Pmd), Error> {
+    pub(crate) fn selected_pmd(&mut self) -> Result<(usize, &mut Pmd), Error> {
         let i = self.active_model()?;
         match &mut self.models[i] {
             ModelFile::Pmd(p) => Ok((i, p)),

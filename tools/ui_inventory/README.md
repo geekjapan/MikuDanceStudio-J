@@ -22,7 +22,7 @@ python3 tools/ui_inventory/test_generate.py       # self-check of --check
 `--check` ignores the `rust` column, so slices fill it by hand and regeneration keeps it (matched by
 `id`). A C++ change that moves a handler, renames a label or adds a menu item makes `--check` fail
 until the TSV is regenerated; the diff then shows what changed for the UI slices. The script uses
-only the standard library and reads `res/`, `include/` and `src/`; it never writes outside this
+only the standard library and reads `res/`, `include/`, `src/` and `third_party/mmeffect/`; it never writes outside this
 directory.
 
 ## Columns
@@ -33,7 +33,7 @@ directory.
   `mouse:<name>`, `drop:<extension>`. A chord carries a mode after `@` when the same key does two
   jobs (`key:Enter@model-mode`, `key:Enter@camera-mode`).
 - `kind`: `menu`, `button`, `toggle` (push-like check box), `checkbox`, `radio`, `edit`, `combo`,
-  `slider`, `scrollbar`, `dialog`, `key`, `mouse`, `drop`.
+  `slider`, `scrollbar`, `tab`, `list`, `dialog`, `key`, `mouse`, `drop`.
 - Labels are the text the C++ application shows, mnemonics included (`&F`). A control with no
   caption shows `<kName>`, the constant in `panel_controls.hpp`. A key row takes its Japanese label
   from the command it triggers; its English label describes the action. Mouse and drop rows have no
@@ -44,7 +44,8 @@ directory.
   mentions it. Treat `~` rows as a starting point, not as proof of the whole behavior.
 - `area` is one of `file edit view background expression physics mocap help timeline play
   model-panel camera-panel light-panel accessory-panel bone-panel morph-panel shadow-panel viewport
-  dialog`.
+  dialog mme mme-dialog`. `mme` is the MMEffect menu and its log window; `mme-dialog` is the effect
+  mapping dialog with its menu and controls.
 
 ## Where the rows come from
 
@@ -56,6 +57,8 @@ directory.
 | key | `KEYS` in `generate.py`, hand-read from `key_ladder.cpp`, `pump_edit_keys.cpp`, `pump_navigation.cpp`. Each row names anchor strings that are searched in the C++ file to get the line; the run fails when an anchor disappears or when `key_ladder.cpp` tests a letter that `KEYS` does not list. |
 | mouse | `MOUSE` in `generate.py` (same anchor rule) plus `TOOLS`, one row for each of the 21 `ViewportToolAction` hot zones of `mmd_app.hpp` (the view tools, the rotate and move gizmo handles, the bottom-right tool rows). The run fails when the enum gains a value that `TOOLS` lacks. A tool row's handler is the `Mode*` function that `frame_driver.cpp` dispatches the drag to; the bone ones continue in `BoneEditModes` (`frame_modes_bone.cpp`). The enum's own names ("CameraGizmo", "LightGizmo") do not match what the zones do, so the ids use the slugs in `TOOLS`. |
 | drop | the extensions that `HandleDropFiles` dispatches in `ui_dropfiles.cpp`. |
+| mme | `third_party/mmeffect/res/MMEffect.rc` (UTF-8): the MMEffect menu (`IDR_MME_MENU_JP`, `IDR_MME_MENU_EN`, paired by position) as `menu:mme-<id>`, its Ctrl+Shift+E hook, and the log dialog; handler = `case` in `mme_ui.cpp`. The English Enable Effect is 40020, which the C++ dispatch ignores, so the row takes the Japanese 40006. |
+| mme-dialog | the effect mapping dialog `IDD_MME_MAPPING`: its menu (`IDR_MME_MAPPING_MENU_JP`/`_EN`) as `menu:mme-dialog-<id>`, the controls of `MME_DLG_CONTROLS` in `generate.py` as `ctl:mme-dialog-<id>` (the 1004 caption and the 1006 group box are labels, not rows), the list double click and the file drop; handler = `case` in `mme_dlg.cpp`, English captions from its `SetWindowTextA` block. |
 
 ## Counts
 
@@ -65,20 +68,22 @@ The block is rewritten by `generate.py` and verified by `--check`.
 
 | kind | rows |
 |---|---|
-| button | 78 |
+| button | 84 |
 | checkbox | 9 |
 | combo | 13 |
-| dialog | 24 |
-| drop | 13 |
+| dialog | 26 |
+| drop | 14 |
 | edit | 33 |
-| key | 50 |
-| menu | 103 |
-| mouse | 41 |
+| key | 51 |
+| list | 1 |
+| menu | 122 |
+| mouse | 42 |
 | radio | 6 |
 | scrollbar | 2 |
 | slider | 13 |
+| tab | 1 |
 | toggle | 14 |
-| **total** | **399** |
+| **total** | **431** |
 
 | area | rows |
 |---|---|
@@ -101,6 +106,8 @@ The block is rewritten by `generate.py` and verified by `--check`.
 | shadow-panel | 11 |
 | viewport | 45 |
 | dialog | 24 |
+| mme | 9 |
+| mme-dialog | 23 |
 
 <!-- counts:end -->
 

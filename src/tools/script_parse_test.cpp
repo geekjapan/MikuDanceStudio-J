@@ -89,11 +89,35 @@ int main() {
           commands[3].op == ScriptOp::CameraReference);
     CHECK(Error("drag -1 3").find("bad argument") != std::string::npos);
 
+    CHECK(ParseScript("view drag right shift -12 30\nphysics drag move y shift 5\n"
+                      "save pmd refused a.pmd\nsave pmd b.pmd",
+                      &commands, &error) &&
+          commands.size() == 4 && commands[0].op == ScriptOp::ViewDrag &&
+          commands[0].args[2] == "-12" && commands[1].op == ScriptOp::PhysicsDrag &&
+          commands[2].op == ScriptOp::SavePmdRefused && commands[2].args[0] == "a.pmd" &&
+          commands[3].op == ScriptOp::SavePmd);
+    CHECK(Error("save pmd refused a.pmd\nsave pmd a.pmd") == "line 2: a.pmd is saved twice");
+    CHECK(Error("view drag left none 1 1").find("bad argument") != std::string::npos);
+    CHECK(Error("view drag right alt 1 1").find("bad argument") != std::string::npos);
+    CHECK(Error("view drag right none 1.5 1").find("bad argument") != std::string::npos);
+    CHECK(Error("physics drag scale x none 1").find("bad argument") != std::string::npos);
+    CHECK(Error("physics drag move w none 1").find("bad argument") != std::string::npos);
+    CHECK(Error("save pmd refused out\\a.pmd").find("plain file name") != std::string::npos);
+    CHECK(IsModalDialogOpener(ScriptOp::OutsideParentOpen) &&
+          !IsModalDialogOpener(ScriptOp::PhysicsModelOpen) &&
+          IsDialogCommand(ScriptOp::DialogSelect) && !IsDialogCommand(ScriptOp::Toon));
+
     // Every command spec is reachable by its own words.
     for (const ScriptCommandSpec& spec : kScriptCommands) {
         std::string line = spec.words;
         for (const char* kind = spec.args; *kind != '\0'; ++kind)
-            line += *kind == 't' ? " x.pmm" : *kind == 'o' ? " on" : " 1";
+            line += *kind == 't'   ? " x.pmm"
+                    : *kind == 'o' ? " on"
+                    : *kind == 'b' ? " right"
+                    : *kind == 'm' ? " none"
+                    : *kind == 'r' ? " move"
+                    : *kind == 'a' ? " x"
+                                   : " 1";
         CHECK(ParseScript(line, &commands, &error) && commands.size() == 1 &&
               commands[0].op == spec.op);
     }

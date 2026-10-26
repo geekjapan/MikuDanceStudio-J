@@ -73,6 +73,16 @@
 // `physics model open` open the modeless dialogs of menus 259 and 262, and
 // the `dialog` commands set their controls and close them. The text file
 // that a VSQ lip sync writes next to the VSQ is copied into <out-dir>.
+//
+// Slice script4 adds the modal dialogs a user steps through (outside parent,
+// the three order dialogs): the `dialog` lines after the opening command run
+// inside the dialog's modal loop, from a timer the dialog's WM_INITDIALOG
+// arms, and the last of them must close it. `view drag` and `physics drag`
+// press mouse buttons in the viewport, which the frame loop reads with
+// GetKeyState and only while GetForegroundWindow is the main window: the
+// step sets the thread's key state (SetKeyboardState), answers
+// GetForegroundWindow with the main window, and runs the frames of the drag
+// itself.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -82,6 +92,7 @@
 #include <commdlg.h>
 #include <shlobj.h> // DROPFILES
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -96,6 +107,7 @@
 
 #include "btBulletDynamicsCommon.h"
 
+#include "mikudancestudio/d3d_wrapper.hpp"
 #include "mikudancestudio/menu_commands.h"
 #include "mikudancestudio/mmd_app.hpp"
 #include "mikudancestudio/model.hpp"
@@ -216,6 +228,7 @@ struct StepState {
     const std::vector<DialogInput>* dialogInputs = nullptr; // the next modal dialog's controls
     bool dialogFilled = false;                              // a modal dialog got them
     int okCancelAnswered = 0;                               // OK/Cancel questions answered
+    bool foreground = false; // GetForegroundWindow answers the main window (a viewport drag)
 };
 
 StepState g_step;
@@ -312,6 +325,14 @@ int WINAPI ScriptMessageBoxW(HWND owner, LPCWSTR text, LPCWSTR caption, UINT typ
                             Utf8(text != nullptr ? text : L""), type);
 }
 
+using GetForegroundWindowFn = HWND(WINAPI*)();
+GetForegroundWindowFn g_getForegroundWindow = nullptr; // user32's, the hook calls it
+HWND g_mainWindow = nullptr;
+
+HWND WINAPI ScriptGetForegroundWindow() {
+    return g_step.foreground ? g_mainWindow : g_getForegroundWindow();
+}
+
 // Replaces the import `function` of `dll` in the executable's import table.
 // False when the executable does not import it.
 bool PatchImport(const char* dll, const char* function, const void* replacement) {
@@ -372,8 +393,24 @@ LRESULT CALLBACK DialogGuardProc(int code, WPARAM wParam, LPARAM lParam) {
 
 // Fills the modal dialog of the step when its WM_INITDIALOG has returned (the
 // dialog proc's prefills are in place) and clicks OK.
+// A modal dialog whose controls the `dialog` lines after its opening command
+// set (script4). Its WM_INITDIALOG arms a timer; the dialog's modal loop
+// calls ModalTimerProc, which runs those lines.
+struct ModalBlock {
+    bool armed = false; // the next dialog is this block's
+    HWND dialog = nullptr;
+};
+ModalBlock g_modal;
+void CALLBACK ModalTimerProc(HWND window, UINT, UINT_PTR id, DWORD);
+
 LRESULT CALLBACK DialogFillProc(int code, WPARAM wParam, LPARAM lParam) {
     const auto* message = reinterpret_cast<const CWPRETSTRUCT*>(lParam);
+    if (code == HC_ACTION && message->message == WM_INITDIALOG && g_modal.armed &&
+        g_modal.dialog == nullptr && IsDialogWindow(message->hwnd)) {
+        g_modal.dialog = message->hwnd;
+        g_allowedDialogs.insert(message->hwnd);
+        SetTimer(message->hwnd, 1, 0, ModalTimerProc);
+    }
     if (code == HC_ACTION && message->message == WM_INITDIALOG && g_step.dialogInputs != nullptr &&
         !g_step.dialogFilled && IsDialogWindow(message->hwnd)) {
         const HWND dialog = message->hwnd;
@@ -412,6 +449,10 @@ struct Runner {
     std::string traceName; // its file name, empty: no trace
     int traceLine = 0;     // the line of the `trace` command
     std::uint32_t tracePass = 0;
+    std::size_t index = 0;    // the running command, in request.commands
+    std::size_t skip = 0;     // the commands after it that its step ran (a modal block)
+    std::size_t blockEnd = 0; // one past the last command of the modal block
+    UINT_PTR hangGuard = 0;   // the timer that ends a modal dialog left open
 
     HWND Main() const { return static_cast<HWND>(app->Hwnd()); }
 
@@ -509,13 +550,16 @@ struct Runner {
         }
     }
 
+    void Frame() {
+        DrainMessages();
+        app->DeltaTime() = 1.0f / 30.0f;
+        app->TimeNowLow() += 33;
+        FrameDriver(app);
+    }
+
     void Settle() {
-        for (int frame = 0; frame < settleFrames; ++frame) {
-            DrainMessages();
-            app->DeltaTime() = 1.0f / 30.0f;
-            app->TimeNowLow() += 33;
-            FrameDriver(app);
-        }
+        for (int frame = 0; frame < settleFrames; ++frame)
+            Frame();
     }
 
     // `passes` passes of the winmain.cpp loop body, with the timeGetTime
@@ -988,8 +1032,16 @@ struct Runner {
         return !vsq || KeepLipSyncText(full);
     }
 
-    // The open modeless dialog of `english open` or `physics model open`.
+    // The open modal dialog of a script4 block, else the open modeless
+    // dialog of `english open` or `physics model open`.
     HWND ModelessDialog() {
+        if (g_modal.dialog != nullptr) {
+            if (!ModalOpen()) {
+                Fail("the dialog is closed");
+                return nullptr;
+            }
+            return g_modal.dialog;
+        }
         const HWND english = app->EnglishNameDialog();
         const HWND physics = app->state.frameCopyDialog;
         if ((english != nullptr) == (physics != nullptr)) {
@@ -1028,6 +1080,10 @@ struct Runner {
                          0);
         else if (_stricmp(windowClass, "Button") == 0 && type == BS_AUTORADIOBUTTON)
             SendMessageA(control, BM_SETCHECK, BST_CHECKED, 0);
+        // A click focuses the button; the accessory order dialog's rename
+        // (633) reads the focus.
+        if (g_modal.dialog != nullptr)
+            SetFocus(control);
         SendMessageA(dialog, WM_COMMAND, MAKEWPARAM(std::stoi(idText), BN_CLICKED),
                      reinterpret_cast<LPARAM>(control));
         return true;
@@ -1038,6 +1094,17 @@ struct Runner {
         const HWND control = dialog != nullptr ? DialogControl(dialog, idText) : nullptr;
         if (control == nullptr)
             return false;
+        char windowClass[16] = "";
+        GetClassNameA(control, windowClass, sizeof windowClass);
+        if (_stricmp(windowClass, "ListBox") == 0) {
+            // A click on a list item notifies the dialog only with LBS_NOTIFY.
+            if (SendMessageA(control, LB_SETCURSEL, std::stoul(item), 0) == LB_ERR)
+                return Fail("list " + idText + " has no item " + item);
+            if ((GetWindowLongPtrA(control, GWL_STYLE) & LBS_NOTIFY) != 0)
+                SendMessageA(dialog, WM_COMMAND, MAKEWPARAM(std::stoi(idText), LBN_SELCHANGE),
+                             reinterpret_cast<LPARAM>(control));
+            return true;
+        }
         if (SendMessageA(control, CB_SETCURSEL, std::stoul(item), 0) == CB_ERR)
             return Fail("combo " + idText + " has no item " + item);
         SendMessageA(dialog, WM_COMMAND, MAKEWPARAM(std::stoi(idText), CBN_SELCHANGE),
@@ -1051,8 +1118,199 @@ struct Runner {
             return false;
         SendMessageA(dialog, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED),
                      reinterpret_cast<LPARAM>(GetDlgItem(dialog, id)));
-        if (app->EnglishNameDialog() != nullptr || app->state.frameCopyDialog != nullptr)
+        if (g_modal.dialog != nullptr
+                ? ModalOpen()
+                : app->EnglishNameDialog() != nullptr || app->state.frameCopyDialog != nullptr)
             return Fail("the dialog is still open");
+        return true;
+    }
+
+    // ---- script4 ------------------------------------------------------------
+
+    // EndDialog enables the owner, the main window, again.
+    bool ModalOpen() const {
+        return g_modal.dialog != nullptr && IsWindow(g_modal.dialog) && !IsWindowEnabled(Main());
+    }
+
+    // `open` makes the handler open a modal dialog; the `dialog` lines after
+    // the command run inside it (RunModalBlock) and the step skips them.
+    template <class Open> bool WithModalBlock(Open open) {
+        blockEnd = index + 1;
+        while (blockEnd < request.commands.size() && IsDialogCommand(request.commands[blockEnd].op))
+            ++blockEnd;
+        g_modal = ModalBlock{};
+        g_modal.armed = true;
+        const bool ok = open();
+        const HWND dialog = g_modal.dialog;
+        g_modal = ModalBlock{};
+        if (hangGuard != 0)
+            KillTimer(nullptr, hangGuard);
+        hangGuard = 0;
+        if (!ok)
+            return false;
+        if (dialog == nullptr)
+            return Fail("the handler did not open its dialog");
+        skip = blockEnd - index - 1;
+        return true;
+    }
+
+    // Inside the dialog's modal loop: a failed line cannot unwind the
+    // handler, so it ends the process (AbortStep).
+    void RunModalBlock() {
+        const StepState opener = g_step;
+        for (std::size_t i = index + 1; i < blockEnd; ++i) {
+            const ScriptCommand& command = request.commands[i];
+            g_step = StepState{};
+            g_step.command = &command;
+            WriteError(StepName() + "start\n");
+            if (!Run(command) || !error.empty())
+                AbortStep(error);
+        }
+        if (ModalOpen())
+            AbortStep("the dialog is still open after its last dialog line");
+        g_step = opener;
+        hangGuard = SetTimer(nullptr, 0, 10000, [](HWND, UINT, UINT_PTR, DWORD) {
+            AbortStep("the dialog did not end after its last dialog line");
+        });
+    }
+
+    // The thread's key state that GetKeyState reads: `a` and `b` down.
+    static void HoldKeys(int a = 0, int b = 0) {
+        BYTE keys[256] = {};
+        if (a != 0)
+            keys[a] = 0x80;
+        if (b != 0)
+            keys[b] = 0x80;
+        SetKeyboardState(keys);
+    }
+
+    static int ModifierKey(const std::string& modifier) {
+        return modifier == "shift" ? VK_SHIFT : modifier == "ctrl" ? VK_CONTROL : 0;
+    }
+
+    static WPARAM ModifierFlags(int key) {
+        return key == VK_SHIFT ? MK_SHIFT : key == VK_CONTROL ? MK_CONTROL : 0;
+    }
+
+    std::string ViewportText() const {
+        const RECT view = app->ViewportRect();
+        return " (viewport " + std::to_string(view.left) + "," + std::to_string(view.top) + "-" +
+               std::to_string(view.right) + "," + std::to_string(view.bottom) + ")";
+    }
+
+    // A right or middle drag from the viewport centre by (dx, dy) with the
+    // modifier held: press, one frame, move, one frame (the drag acts on
+    // the held button), release, one frame.
+    bool ViewDrag(const std::vector<std::string>& a) {
+        const bool right = a[0] == "right";
+        const int modifier = ModifierKey(a[1]);
+        const int dx = std::stoi(a[2]);
+        const int dy = std::stoi(a[3]);
+        const RECT view = app->ViewportRect();
+        const int x = (view.left + view.right) / 2;
+        const int y = (view.top + view.bottom) / 2;
+        const WPARAM button = right ? MK_RBUTTON : MK_MBUTTON;
+        const WPARAM flags = ModifierFlags(modifier);
+        const std::int32_t& cell =
+            right ? app->state.rightMouseButtonState : app->state.middleMouseButtonState;
+        g_step.foreground = true;
+        Mouse(WM_MOUSEMOVE, flags, x, y);
+        HoldKeys(modifier, right ? VK_RBUTTON : VK_MBUTTON);
+        Mouse(right ? WM_RBUTTONDOWN : WM_MBUTTONDOWN, flags | button, x, y);
+        Frame();
+        const int pressed = cell;
+        Mouse(WM_MOUSEMOVE, flags | button, x + dx, y + dy);
+        Frame();
+        const int held = cell;
+        const bool active = app->ViewportInputActive() != 0;
+        HoldKeys(modifier);
+        Mouse(right ? WM_RBUTTONUP : WM_MBUTTONUP, flags, x + dx, y + dy);
+        Frame();
+        HoldKeys();
+        g_step.foreground = false;
+        if (pressed != 1 || held != 3 || !active)
+            return Fail("the button state went " + std::to_string(pressed) + ", " +
+                        std::to_string(held) + " (1, 3 expected), viewport input " +
+                        (active ? "on" : "off") + ViewportText());
+        return true;
+    }
+
+    // A left drag of a physics record by `dy` pixels on the viewport tool
+    // (the rotate row or the move row, the x, y, or z cell) while the
+    // physics model dialog is open (EditModeRecord, frame_modes_bone.cpp).
+    bool PhysicsDrag(const std::vector<std::string>& a) {
+        if (app->state.frameCopyDialog == nullptr)
+            return Fail("the physics model dialog is not open (physics model open)");
+        if (Model() == nullptr)
+            return false;
+        const bool rotate = a[0] == "rotate";
+        const int column = a[1][0] - 'x';
+        const int modifier = ModifierKey(a[2]);
+        const int dy = std::stoi(a[3]);
+        float scale = app->Renderer() != nullptr ? app->Renderer()->viewScale : 1.0f;
+        if (!(scale > 0.0f))
+            scale = 1.0f;
+        // The cell centres RestoreViewportToolCursor (frame_modes.cpp) uses.
+        static constexpr float kCellX[3] = {110.0f, 70.0f, 30.0f};
+        const RECT view = app->ViewportRect();
+        const int x = view.right - static_cast<int>(kCellX[column] * scale);
+        const int y = view.bottom - static_cast<int>((rotate ? 65.0f : 25.0f) * scale);
+        // HandleMouseMove (ui_mousemove.cpp) ignores the moves of a tool drag
+        // right of view.right - 200 * scale until one lands left of it, so
+        // the drag runs left of that line (the window is small when hidden).
+        const int cx = std::min((view.left + view.right) / 2,
+                                view.right - static_cast<int>(scale * 200.0) - 1);
+        const int cy = (view.top + view.bottom) / 2;
+        const WPARAM flags = ModifierFlags(modifier);
+        g_step.foreground = true;
+        Mouse(WM_MOUSEMOVE, flags, x, y);
+        HoldKeys(modifier, VK_LBUTTON);
+        Mouse(WM_LBUTTONDOWN, flags | MK_LBUTTON, x, y);
+        Frame();
+        const int mode = static_cast<int>(app->InteractionDragMode());
+        // BeginCenteredDrag moved the cursor to the viewport centre and set
+        // separateWindowMouseSeen, so HandleMouseMove takes the first move
+        // after it as the jump and counts no distance: a one-pixel move,
+        // then the drag of dy.
+        Mouse(WM_MOUSEMOVE, flags | MK_LBUTTON, cx, cy);
+        Mouse(WM_MOUSEMOVE, flags | MK_LBUTTON, cx, cy + 1);
+        const bool moving = app->state.a06B5 == 0 && app->state.separateWindowMouseSeen == 0;
+        Mouse(WM_MOUSEMOVE, flags | MK_LBUTTON, cx, cy + 1 + dy);
+        Frame();
+        HoldKeys(modifier);
+        Mouse(WM_LBUTTONUP, flags, cx, cy + 1 + dy);
+        Frame();
+        HoldKeys();
+        g_step.foreground = false;
+        const int expected = (rotate ? 4 : 10) + column;
+        if (mode != expected)
+            return Fail("the press at (" + std::to_string(x) + ", " + std::to_string(y) +
+                        ") started drag mode " + std::to_string(mode) + ", not " +
+                        std::to_string(expected) + ViewportText());
+        if (!moving)
+            return Fail("the moves to (" + std::to_string(cx) + ", " + std::to_string(cy) +
+                        ") left the tool's move gates set" + ViewportText());
+        return true;
+    }
+
+    // Menu 263 on a model the PMD writer refuses: its box is answered and
+    // recorded, and no file is written.
+    bool SaveRefused(const std::string& name) {
+        std::wstring exeDir = app->ExeDir();
+        if (!exeDir.empty() && exeDir.back() != L'\\')
+            exeDir += L'\\';
+        const std::wstring written = exeDir + Wide(name);
+        if (IsFile(written))
+            return Fail(Utf8(written) + " exists (an input or a leftover); use another name");
+        const std::size_t boxes = g_messages.size();
+        if (!WithDialog(L".\\" + Wide(name), [&] { return Menu(MDS_CMD_SAVE_ENHANCED_MODEL); }))
+            return false;
+        if (IsFile(written)) {
+            DeleteFileW(written.c_str());
+            return Fail("the handler wrote " + Utf8(written));
+        }
+        if (g_messages.size() == boxes)
+            return Fail("the handler showed no box");
         return true;
     }
 
@@ -1348,6 +1606,17 @@ struct Runner {
             SetWindowTextA(control, Sjis(a[1]).c_str());
             return true;
         }
+        case ScriptOp::DialogEdit: {
+            // Typed and committed with Enter, which the physics model
+            // dialog's edit subclass (PhysicsEditSubclassProc) applies.
+            const HWND dialog = ModelessDialog();
+            const HWND control = dialog != nullptr ? DialogControl(dialog, a[0]) : nullptr;
+            if (control == nullptr)
+                return false;
+            SetWindowTextA(control, Sjis(a[1]).c_str());
+            SendMessageA(control, WM_KEYDOWN, VK_RETURN, 0);
+            return true;
+        }
         case ScriptOp::DialogClick:
             return DialogClick(a[0]);
         case ScriptOp::DialogSelect:
@@ -1365,10 +1634,41 @@ struct Runner {
                 {{DialogInput::Text, 708 + slot, Sjis(a[1])}},
                 [&] { return Menu(MDS_CMD_TOON_TEXTURES); }, kToonNameLength);
         }
+        case ScriptOp::SavePmdRefused:
+            return SaveRefused(a[0]);
+        case ScriptOp::OutsideParentOpen:
+            return WithModalBlock([&] { return Click(panel::kEditExternalParentButton); });
+        case ScriptOp::AccessoryOrderOpen:
+            return WithModalBlock([&] { return Menu(MDS_CMD_ACCESSORY_SETTINGS); });
+        case ScriptOp::ModelDrawOrderOpen:
+            return WithModalBlock([&] { return Menu(MDS_CMD_MODEL_DRAW_ORDER); });
+        case ScriptOp::ModelCalcOrderOpen:
+            return WithModalBlock([&] { return Menu(MDS_CMD_MODEL_CALCULATION_ORDER); });
+        case ScriptOp::ViewDrag:
+            return ViewDrag(a);
+        case ScriptOp::PhysicsDrag:
+            return PhysicsDrag(a);
+        case ScriptOp::LoadBackgroundMovie:
+            return Load(a[0], MDS_CMD_LOAD_BACKGROUND_VIDEO, true);
+        case ScriptOp::LoadBackgroundPicture:
+            return Load(a[0], MDS_CMD_LOAD_BACKGROUND_IMAGE, true);
+        case ScriptOp::ToggleBackgroundMovie:
+            return Menu(MDS_CMD_TOGGLE_BACKGROUND_VIDEO);
+        case ScriptOp::ToggleBackgroundPicture:
+            return Menu(MDS_CMD_TOGGLE_BACKGROUND_IMAGE);
+        case ScriptOp::ToggleBlackBackground:
+            return Menu(MDS_CMD_TOGGLE_BLACK_BACKGROUND);
         }
         return Fail("unhandled command");
     }
 };
+
+Runner* g_runner = nullptr; // for ModalTimerProc
+
+void CALLBACK ModalTimerProc(HWND window, UINT, UINT_PTR id, DWORD) {
+    KillTimer(window, id);
+    g_runner->RunModalBlock();
+}
 
 bool AnswersOkCancel(ScriptOp op) {
     return op == ScriptOp::New || op == ScriptOp::LoadPmm || op == ScriptOp::LoadModel ||
@@ -1382,7 +1682,8 @@ bool OpensDialogWindow(ScriptOp op) {
            op == ScriptOp::RegisterBlink || op == ScriptOp::MultiplyCamera ||
            op == ScriptOp::MultiplyBone || op == ScriptOp::MultiplyMorph ||
            op == ScriptOp::PhysicsFrames || op == ScriptOp::ScaleRange ||
-           op == ScriptOp::EnglishOpen || op == ScriptOp::PhysicsModelOpen || op == ScriptOp::Toon;
+           op == ScriptOp::EnglishOpen || op == ScriptOp::PhysicsModelOpen ||
+           op == ScriptOp::Toon || IsModalDialogOpener(op);
 }
 
 } // namespace
@@ -1430,6 +1731,14 @@ bool PrepareScriptRequest(ScriptRequest* request) {
     }
     // Not every build imports MessageBoxW; the dialog guard covers it then.
     PatchImport("user32.dll", "MessageBoxW", reinterpret_cast<const void*>(&ScriptMessageBoxW));
+    g_getForegroundWindow = reinterpret_cast<GetForegroundWindowFn>(
+        GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetForegroundWindow"));
+    if (g_getForegroundWindow == nullptr ||
+        !PatchImport("user32.dll", "GetForegroundWindow",
+                     reinterpret_cast<const void*>(&ScriptGetForegroundWindow))) {
+        WriteError("mds-script: cannot hook GetForegroundWindow\n");
+        return false;
+    }
     if (SetWindowsHookExW(WH_CBT, DialogGuardProc, nullptr, GetCurrentThreadId()) == nullptr ||
         SetWindowsHookExW(WH_CALLWNDPROCRET, DialogFillProc, nullptr, GetCurrentThreadId()) ==
             nullptr) {
@@ -1442,8 +1751,13 @@ bool PrepareScriptRequest(ScriptRequest* request) {
 int RunScriptMode(MMDApp* app, const ScriptRequest& request) {
     ShowWindow(static_cast<HWND>(app->Hwnd()), SW_HIDE);
     Runner runner{app, request, {}, {}, {}};
+    g_runner = &runner;
+    g_mainWindow = runner.Main();
     runner.Settle();
-    for (const ScriptCommand& command : request.commands) {
+    for (std::size_t i = 0; i < request.commands.size(); ++i) {
+        const ScriptCommand& command = request.commands[i];
+        runner.index = i;
+        runner.skip = 0;
         g_step = StepState{};
         g_step.command = &command;
         g_step.answerOkCancel = AnswersOkCancel(command.op);
@@ -1452,10 +1766,11 @@ int RunScriptMode(MMDApp* app, const ScriptRequest& request) {
         const bool queuing = command.op == ScriptOp::AnswerFile;
         // The "save enhanced model" reminder after the OK of the PMD edit
         // dialogs, and the drop refusal in camera mode, are answered too.
-        g_step.answerInfo = command.op == ScriptOp::DeleteUnused ||
-                            command.op == ScriptOp::RegisterBlink ||
-                            command.op == ScriptOp::DialogOk || command.op == ScriptOp::Toon ||
-                            command.op == ScriptOp::Drop || (!queuing && !g_fileAnswers.empty());
+        g_step.answerInfo =
+            command.op == ScriptOp::DeleteUnused || command.op == ScriptOp::RegisterBlink ||
+            command.op == ScriptOp::DialogOk || command.op == ScriptOp::Toon ||
+            command.op == ScriptOp::Drop || command.op == ScriptOp::SavePmdRefused ||
+            (!queuing && !g_fileAnswers.empty());
         g_step.allowDialogWindow = OpensDialogWindow(command.op);
         WriteError(StepName() + "start\n"); // the last line names the step of a crash
         const bool ok = runner.Run(command);
@@ -1468,6 +1783,7 @@ int RunScriptMode(MMDApp* app, const ScriptRequest& request) {
             WriteError(StepName() + runner.error + "\n");
             return 1;
         }
+        i += runner.skip;
         runner.Settle();
     }
     g_step = StepState{};

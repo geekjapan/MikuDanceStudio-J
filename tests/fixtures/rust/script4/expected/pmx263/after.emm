@@ -1,0 +1,14 @@
+[Info]
+Version = 3
+
+[Object]
+Pmd0 = C:\mds\w2-script4\repo\out\ci\build\Release\chain8.pmx
+Pmd1 = C:\mds\w2-script4\repo\out\ci\build\Release\saved.pmd
+
+[Effect]
+Default = none
+Pmd0 = none
+Pmd0.show = true
+Pmd1 = none
+Pmd1.show = true
+

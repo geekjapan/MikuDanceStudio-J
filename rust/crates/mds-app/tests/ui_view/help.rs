@@ -1,7 +1,7 @@
 use crate::labels;
 use crate::rig::{fixtures, Rig};
-use mds_app::actions;
-use mds_app::ui::help;
+use mds_app::actions::{self, Handler};
+use mds_app::ui::{dialog, help};
 
 #[test]
 fn the_language_switch_flips_every_label() {
@@ -71,11 +71,57 @@ fn the_labels_are_those_of_the_inventory() {
     labels::check("help", help::LABELS);
 }
 
-/// Menus 259, 261, 262 and 278 wait for a document command or an Editor call.
+/// Menu 278 waits for an `Editor` call that loads the textures again.
 #[test]
-fn the_rows_waiting_for_a_command_are_not_faked() {
-    for id in ["menu:259", "menu:261", "menu:262", "menu:278"] {
-        assert!(actions::find(id).is_none(), "{id}");
+fn restore_textures_is_not_faked() {
+    assert!(actions::find("menu:278").is_none());
+}
+
+/// Menus 259, 261 and 262 open their dialogs through the action of the dialog area, in model mode
+/// only (`command_view_menu.cpp:911`, `:938`, `:968`). Until the dialog area registers an action
+/// for a dialog the menu reports that, and the test says SKIP.
+#[test]
+fn the_model_dialogs_open_through_the_dialog_area() {
+    for (menu, dialog) in [
+        ("menu:259", "IDD_ENGLISH_NAMES"),
+        ("menu:261", "IDD_TOON_TEXTURE"),
+        ("menu:262", "IDD_PHYSICS_MODEL"),
+    ] {
+        let action = format!("dlg:{dialog}");
+        let mut rig = pmd_rig();
+        assert!(matches!(
+            actions::find(menu).map(|a| a.handler),
+            Some(Handler::Run(_))
+        ));
+        if actions::find(&action).is_none() {
+            println!("SKIP: {menu} opens {action}, which the dialog area does not register yet");
+            assert_eq!(rig.run(menu), Err(format!("{action}: not implemented")));
+            continue;
+        }
+        rig.run(menu).unwrap();
+        assert_eq!(dialog::current(rig.egui.as_ref().unwrap()), Some(dialog));
+    }
+}
+
+/// The three handlers return in camera mode, which also greys the items.
+#[test]
+fn the_model_dialogs_keep_to_the_model_mode() {
+    let mut rig = pmd_rig();
+    rig.editor
+        .apply(mds_doc::Command::SelectCameraMode)
+        .unwrap();
+    for id in ["menu:259", "menu:261", "menu:262"] {
+        assert_eq!(rig.run(id), Err(format!("{id}: model mode only")), "{id}");
+        assert!(!rig.with_ctx(|c| c.enabled(id)), "{id}");
+    }
+    assert_eq!(dialog::current(rig.egui.as_ref().unwrap()), None);
+}
+
+/// They are not among the menus `DisablePlaybackMenus` greys (`playback_state.cpp:67`).
+#[test]
+fn the_model_dialogs_are_not_playback_menus() {
+    for id in ["menu:259", "menu:261", "menu:262"] {
+        assert!(!actions::find(id).unwrap().needs_document, "{id}");
     }
 }
 

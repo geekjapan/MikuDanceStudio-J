@@ -33,10 +33,11 @@
 //! `RotationDialogTemp(i)`, but the C++ port keeps its own copies in locals `t0` to `t5` and writes
 //! those back, so the dialog neither shows the pose nor changes it, and its roll conversions
 //! (`kD2 / (kD3 * t5)`) are not the inverse of the display ones. Here the dialog is the readout
-//! boxes 544 to 550 in a window (the text [`camera_panel::readout_text`] shows) and OK commits each
-//! box that was edited through [`camera_panel::set_readout`], the path of the edit boxes
-//! themselves, so the stored values are those the readout shows. In bone mode that is one undo
-//! entry per edited box.
+//! boxes 544 to 550 in a window (the text [`camera_panel::readout_text`] shows). In camera mode OK
+//! is one [`Command::SetCameraFromMenu`] with the conversions of the readout edits (a box left
+//! alone keeps the camera's exact value), and the scene is modified whatever was typed
+//! (`command_view_menu.cpp:1771`). In bone mode OK commits each box that was edited through
+//! [`camera_panel::set_readout`], one undo entry per edited box.
 
 use super::camera_panel::{atof, atol, readout_text, set_readout, window_text};
 use super::{button, help, Ctx};
@@ -354,12 +355,10 @@ fn reset_rotation(ctx: &mut Ctx) -> Result<(), String> {
     let pmm = &ctx.editor.doc.pmm;
     if camera_mode(ctx) {
         let s = pmm.camera_state;
-        return ctx.editor.apply(Command::SetCamera {
+        return ctx.editor.apply(Command::SetCameraFromMenu {
             position: [s[0], s[1], s[2]],
             rotation: [0.0; 3],
             distance: s[5],
-            fov: pmm.settings.camera_fov,
-            perspective: pmm.camera_perspective != 0,
         });
     }
     let model = pmm
@@ -419,7 +418,32 @@ fn numeric_input(ctx: &mut Ctx) -> Result<(), String> {
     open(ctx, form)
 }
 
+/// `kPiLit`, the float pi of the camera edit handlers.
+const PI_LIT: f64 = 3.141592025756836;
+
 fn commit_numeric_input(ctx: &mut Ctx, fields: &[Field]) -> Result<(), String> {
+    if camera_mode(ctx) {
+        let s = ctx.editor.doc.pmm.camera_state;
+        let flip = ctx.editor.doc.pmm.appearance.camera_parent_model >= 0;
+        let pick = |i: usize, current: f32, convert: &dyn Fn(f64) -> f32| match fields.get(i) {
+            Some(f) if f.edited() => convert(f.number()),
+            _ => current,
+        };
+        let z = |v: f64| if flip { -v } else { v } as f32;
+        return ctx.editor.apply(Command::SetCameraFromMenu {
+            position: [
+                pick(0, s[0], &|v| v as f32),
+                pick(1, s[1], &|v| v as f32),
+                pick(2, s[2], &z),
+            ],
+            rotation: [
+                pick(3, s[6], &|v| (-v * PI_LIT / 180.0) as f32),
+                pick(4, s[7], &|v| (v * PI_LIT / 180.0) as f32),
+                pick(5, s[8], &|v| (v * PI_LIT / 180.0) as f32),
+            ],
+            distance: pick(6, s[5], &|v| (-v) as f32),
+        });
+    }
     for (i, f) in fields.iter().enumerate().filter(|(_, f)| f.edited()) {
         set_readout(ctx, i, f.number())?;
     }

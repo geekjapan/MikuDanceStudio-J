@@ -44,6 +44,7 @@ pub mod expression;
 pub mod file;
 pub mod help;
 pub mod light_panel;
+pub mod mme;
 pub mod mocap;
 pub mod model_panel;
 pub mod morph_panel;
@@ -53,6 +54,8 @@ pub mod shadow_panel;
 pub mod timeline;
 pub mod view;
 pub mod viewport;
+// The mapping dialog lives in `mme.rs`, the one area file of the `mme` slice.
+pub use mme::dialog as mme_dialog;
 
 /// What an area's code gets each call.
 pub struct Ctx<'a> {
@@ -127,7 +130,7 @@ macro_rules! area {
 }
 
 /// Every area, in menu-bar and panel order.
-pub const AREAS: [Area; 19] = [
+pub const AREAS: [Area; 21] = [
     area!("file", file, Place::Menu("File")),
     area!("edit", edit, Place::Menu("Edit")),
     area!("view", view, Place::Menu("View")),
@@ -136,6 +139,7 @@ pub const AREAS: [Area; 19] = [
     area!("physics", physics, Place::Menu("Physics")),
     area!("mocap", mocap, Place::Menu("MoCap")),
     area!("help", help, Place::Menu("Help")),
+    area!("mme", mme, Place::Menu("MMEffect")),
     area!("play", play, Place::Bottom),
     area!("timeline", timeline, Place::Bottom),
     area!("model-panel", model_panel, Place::Side),
@@ -147,17 +151,28 @@ pub const AREAS: [Area; 19] = [
     area!("shadow-panel", shadow_panel, Place::Side),
     area!("viewport", viewport, Place::Viewport),
     area!("dialog", dialog, Place::Dialog),
+    area!("mme-dialog", mme_dialog, Place::Dialog),
 ];
 
 /// Areas whose every inventory row has an action.
 pub const COMPLETE: &[&str] = &[
     "accessory-panel",
+    "background",
     "bone-panel",
+    "camera-panel",
+    "dialog",
     "edit",
+    "expression",
     "light-panel",
+    "mme",
+    "mocap",
+    "model-panel",
     "morph-panel",
+    "physics",
     "play",
+    "timeline",
     "view",
+    "viewport",
 ];
 
 /// The inventory name of a key with its modifiers (`Ctrl+S`, `Numpad2`, `Enter`, `]`), or

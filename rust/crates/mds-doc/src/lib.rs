@@ -100,7 +100,7 @@
 //! * The runtime state of the background media (size, frame range, decoded
 //!   frames): [`background`] keeps what the PMM saves.
 //!
-//! The script replay of `tests/fixtures/rust/script/` and `script2/` is
+//! The script replay of `tests/fixtures/rust/script/` to `script4/` is
 //! [`script::Runner`]; `tests/script.rs` compares every save with the C++
 //! output.
 
@@ -712,6 +712,48 @@ pub enum Command {
     /// The Delete key (`PumpDeleteRebuild`, `pump_edit_keys.cpp` 241-254):
     /// [`Command::DeleteSelectedKeys`], without the button's `SceneModified`.
     DeleteKey,
+    /// The physics menus 265 (1, anytime), 269 (2, on/off), 270 (3, trace)
+    /// and 272 (0, none) (`command_view_menu.cpp` 1048-1110):
+    /// `pmm.physics.playback_mode`; modes 1 to 3 request a settle. The live
+    /// world takes the mode through `mds_physics::PhysicsScene::set_physics_mode`.
+    SetPhysicsMode(u8),
+    /// Menu 285 (`command_view_menu.cpp` 1437-1452):
+    /// `pmm.appearance.floor_visible`. The C++ toggles, and stores 1 (shown)
+    /// or -1 into the ground body's `m_collisionFlags` (x64 `+0xE0`, x86
+    /// `+0xD4`), which no `mds-physics` call does yet. This sets.
+    SetFloorVisible(bool),
+    /// The physics check box (499): [`EditState::physics_checkbox`].
+    SetPhysicsCheckbox(bool),
+    /// The camera-mode paths of menu 300 (the numeric input dialog's OK,
+    /// `command_view_menu.cpp` 1748-1773) and menu 302 (reset rotation,
+    /// 1864-1872): position, pitch, yaw, roll and distance, which
+    /// [`Command::SetCamera`] also writes; unlike the camera panel, both set
+    /// `SceneModified`. Camera mode only.
+    SetCameraFromMenu {
+        position: [f32; 3],
+        rotation: [f32; 3],
+        distance: f32,
+    },
+    /// The self-shadow range slider 560 at `position` (`ui_hscroll.cpp`
+    /// 261-272): the distance `(10000 - position) / 100000`, the mode
+    /// unchanged; unlike [`Command::SetSelfShadow`], it sets `SceneModified`.
+    SetSelfShadowSlider(i32),
+    /// The end of a Kinect recording (`PumpKinectSkeleton`,
+    /// `oni_skeleton_pump.cpp` 510-524) on the selected model in model
+    /// mode: `RegisterKinectPoseCapture` at `frame` of a trace of `samples`
+    /// samples, whose keys are [`mds_kinect::register`]'s
+    /// ([`model::register_capture`]); then the model seeks, the last
+    /// registered frame rises to the model's max frame, and a settle is
+    /// requested.
+    RegisterKinectCapture {
+        frame: u32,
+        samples: u32,
+        keys: Vec<mds_kinect::KeyRegistration>,
+    },
+    /// The screen capture radios 243..246 (`command_file_menu.cpp`
+    /// 2053-2090): `view.capture_mode`, 0 off, 1 full frame, 2 the 4:3
+    /// crop, 3 background refresh.
+    SetCaptureMode(i32),
 }
 
 /// A parent of the outside-parent dialog (`BoneOrderEntry::linkedModel`
@@ -798,13 +840,16 @@ impl Command {
                 | C::DeleteAccessory(_)
                 | C::MoveSelectedKeys(_)
                 // dialog_select_ops.cpp 335, 437; command_frame_edit.cpp
-                // 1357; command_impl.cpp 570, command_file_menu.cpp 1889 (set
+                // 1356; command_impl.cpp 570, command_file_menu.cpp 1889 (set
                 // even when the load fails).
                 | C::ApplyOutsideParent { .. }
                 | C::RegisterOutsideParents(_)
                 | C::CloseOutsideParentDialog
                 | C::LoadBackgroundMovie { .. }
                 | C::LoadBackgroundPicture { .. }
+                // command_view_menu.cpp 1771, 1870; ui_hscroll.cpp 270.
+                | C::SetCameraFromMenu { .. }
+                | C::SetSelfShadowSlider(_)
         )
     }
 }
@@ -1186,6 +1231,8 @@ impl Document {
                 model_mode && self.active().is_some()
             }
             Command::CenterPositionBias(_) => model_mode,
+            Command::SetPhysicsMode(m) => (1..=3).contains(m),
+            Command::RegisterKinectCapture { .. } => model_mode && self.active().is_some(),
             Command::PasteToSelectedBone if !model_mode => false,
             c => self.paste_runs(c).unwrap_or(false),
         };
@@ -2043,6 +2090,60 @@ impl Document {
                 }
             }
             Command::DeleteKey => return self.apply_inner(Command::DeleteSelectedKeys),
+            Command::SetPhysicsMode(m) => {
+                if m > 3 {
+                    return Err(not("no such physics mode"));
+                }
+                self.pmm.physics.playback_mode = m;
+            }
+            Command::SetCaptureMode(mode) => {
+                if !(0..=3).contains(&mode) {
+                    return Err(not("no such capture mode"));
+                }
+                self.pmm.view.capture_mode = mode;
+            }
+            Command::SetFloorVisible(on) => self.pmm.appearance.floor_visible = u8::from(on),
+            Command::SetPhysicsCheckbox(on) => self.edit.physics_checkbox = on,
+            Command::SetCameraFromMenu {
+                position,
+                rotation,
+                distance,
+            } => {
+                if !self.camera_mode() {
+                    return Err(not(
+                        "the camera path of menus 300 and 302 is camera mode only",
+                    ));
+                }
+                let s = &mut self.pmm.camera_state;
+                s[..3].copy_from_slice(&position);
+                s[5] = distance;
+                s[6..].copy_from_slice(&rotation);
+            }
+            Command::SetSelfShadowSlider(position) => {
+                self.pmm.physics_interval = (f64::from(10000 - position) / 100000.0) as f32;
+            }
+            Command::RegisterKinectCapture {
+                frame,
+                samples,
+                keys,
+            } => {
+                if self.camera_mode() {
+                    return Err(not("the Kinect pump is model mode only"));
+                }
+                let i = self.active_model()?;
+                let r = model::register_capture(
+                    &mut self.pmm.models[i],
+                    &mut self.edit.models[i],
+                    frame,
+                    samples,
+                    &keys,
+                );
+                if !matches!(r, Err(Error::NotApplicable(_))) {
+                    self.seek(i);
+                    self.bump_last_registered(i);
+                }
+                r?;
+            }
             Command::SetAccessoryAdditive(on) => {
                 let slot = self.pmm.selected_accessory_slot;
                 if let Ok(a) = global::accessory(&mut self.pmm, slot) {

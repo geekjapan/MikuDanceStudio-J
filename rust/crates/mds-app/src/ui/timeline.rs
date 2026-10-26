@@ -40,17 +40,21 @@
 //! curve box beside them is the C++ curve panel, whose two control points drag with
 //! `DragInterpolationControlPoint` (`ui_selection_reeval.cpp:115`).
 //!
-//! # Not ported
+//! # The key drag
 //!
-//! * `mouse:timeline-key-drag` (moving the marked keys sideways) needs a document command that
-//!   `mds-doc` lacks (`MoveSelectedKeys`).
-//! * 424 (range scaling) has its command, `Command::ScaleFrames`, but its argument type is
-//!   `mds_ops::RangeScale`, and `mds-app` depends on neither `mds-ops` nor a re-export of it.
+//! Pressing a marked key (without Shift) and dragging moves the marked keys (`HandleMouseMove`,
+//! `ui_mousemove.cpp:331`). The grid shows where the keys would land and the release applies one
+//! [`Command::MoveSelectedKeys`] with the whole move in frames, so a drag is one undo entry (the
+//! C++ pushes its entry at the mouse-down). A drag that ends where it began applies nothing.
 //!
-//! Both are left out of the action table; the buttons stay greyed.
+//! # Button 424
+//!
+//! Range scaling opens the dialog area's `IDD_FRAME_SCALE` (`FrameRangeDlgProc`,
+//! `src/window/dialog_procs.cpp:62`), which starts from the range edits 425 and 426. Model mode
+//! only (`command_frame_edit.cpp:1686`).
 
 use super::Ctx;
-use crate::actions::Action;
+use crate::actions::{self, Action, Mode};
 use crate::navigation::{KeyState, Repeat};
 use egui::{Align2, Color32, FontId, Id, Key, Pos2, Rect, Sense, Stroke, Vec2};
 use mds_doc::{Command, Document, GlobalTrack, ModelFile, Track};
@@ -70,6 +74,7 @@ const ACTIONS: &[Action] = &[
     Action::run("ctl:421", paste, true),
     Action::run("ctl:422", paste_mirrored, true),
     Action::run("ctl:423", delete, true),
+    Action::run("ctl:424", open_scale, true).in_mode(Mode::Model),
     Action::inline("ctl:425"),
     Action::inline("ctl:426"),
     Action::inline("ctl:427"),
@@ -106,6 +111,7 @@ const ACTIONS: &[Action] = &[
     Action::inline("mouse:timeline-frame-strip-click"),
     Action::inline("mouse:timeline-dblclick"),
     Action::inline("mouse:timeline-hover"),
+    Action::inline("mouse:timeline-key-drag"),
     Action::inline("mouse:curve-point-drag"),
 ];
 
@@ -148,6 +154,8 @@ pub struct Panel {
     /// The control point of the curve box under the pointer: `false` the start, `true` the end
     /// (`PendingTimelineSelectionRow` 1 and 2).
     pub curve_drag: Option<bool>,
+    /// A drag of the marked keys: the column it began on and the column the pointer is over.
+    pub key_drag: Option<[i32; 2]>,
 }
 
 impl Default for Panel {
@@ -168,6 +176,7 @@ impl Default for Panel {
             columns: 40,
             drag: None,
             curve_drag: None,
+            key_drag: None,
         }
     }
 }
@@ -702,6 +711,25 @@ fn delete(ctx: &mut Ctx) -> Result<(), String> {
     ctx.editor.apply(Command::DeleteSelectedKeys)
 }
 
+/// 424 (`command_frame_edit.cpp:1686`): the dialog area's frame scale.
+fn open_scale(ctx: &mut Ctx) -> Result<(), String> {
+    actions::run(ctx, "dlg:IDD_FRAME_SCALE")
+}
+
+/// The end of a key drag (`mouse:timeline-key-drag`): the marked keys move by `frames`.
+pub fn move_keys(ctx: &mut Ctx, frames: i32) -> Result<(), String> {
+    if ctx.editor.playing() {
+        return Err("not while playing".into());
+    }
+    ctx.editor.apply(Command::MoveSelectedKeys(frames))
+}
+
+/// Whether a press on `frame` of `track` takes the marked keys along (`ToggleModelKeyAllocated`
+/// and `ToggleTimelineCell` leave a marked key marked and flag the selection as changed).
+pub fn grabs_marked_key(doc: &Document, track: Track, frame: u32) -> bool {
+    keys_of(doc, track).contains(&(frame, true))
+}
+
 /// 422.
 fn paste_mirrored(ctx: &mut Ctx) -> Result<(), String> {
     ctx.editor.apply(Command::PasteMirrored)
@@ -950,15 +978,7 @@ pub fn click_strip(ctx: &mut Ctx, frame: u32) -> Result<(), String> {
     if ctx.editor.playing() {
         return Err("not while playing".into());
     }
-    quietly(ctx, Command::ClickFrame(frame))
-}
-
-/// Applies a command that the C++ does not count as a scene edit (`SceneModified` stays).
-fn quietly(ctx: &mut Ctx, cmd: Command) -> Result<(), String> {
-    let modified = ctx.editor.modified;
-    let done = ctx.editor.apply(cmd);
-    ctx.editor.modified = modified;
-    done
+    ctx.editor.apply(Command::ClickFrame(frame))
 }
 
 /// A click on a cell (`HandleLButtonDown_TimelineAreaHit`, `ui_editor_click.cpp:685`;
@@ -1085,7 +1105,7 @@ pub fn click_margin(ctx: &mut Ctx, row: &Row) -> Result<(), String> {
         return Ok(());
     };
     match group_flag(&ctx.editor.doc, g) {
-        Some(n) => quietly(ctx, Command::ToggleDisplayGroup(n)),
+        Some(n) => ctx.editor.apply(Command::ToggleDisplayGroup(n)),
         None => Ok(()),
     }
 }
@@ -1146,6 +1166,8 @@ enum Event {
     Box(Vec<Track>, u32, u32, bool),
     /// A control point of the curve box moved: `(end, [x, y])`.
     Curve(bool, [i32; 2]),
+    /// The marked keys dragged by this many frames.
+    Move(i32),
 }
 
 fn run_event(ctx: &mut Ctx, e: Event) -> Result<(), String> {
@@ -1157,6 +1179,7 @@ fn run_event(ctx: &mut Ctx, e: Event) -> Result<(), String> {
         Event::Name(row, shift) => click_name(ctx, &row, shift),
         Event::Plus(row) => click_plus(ctx, &row),
         Event::Box(tracks, from, to, shift) => box_select(ctx, &tracks, from, to, shift),
+        Event::Move(frames) => move_keys(ctx, frames),
     }
 }
 
@@ -1237,6 +1260,18 @@ fn grid(ui: &mut egui::Ui, ctx: &Ctx, p: &mut Panel, events: &mut Vec<Event>) {
                     let c = Pos2::new(x_of(f) + CELL / 2.0, y + ROW / 2.0);
                     let color = if marked { Colors::MARKED } else { Colors::KEY };
                     painter.circle_filled(c, CELL / 2.0 - 2.0, color);
+                    if let (true, Some([a, b])) = (marked, p.key_drag) {
+                        // Where the drag would put the key (the move is applied on release).
+                        let to = f as i32 + b - a;
+                        if to >= 0 {
+                            let ghost = Pos2::new(x_of(to as u32) + CELL / 2.0, y + ROW / 2.0);
+                            painter.circle_stroke(
+                                ghost,
+                                CELL / 2.0 - 2.0,
+                                Stroke::new(1.5, Colors::MARKED),
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1369,8 +1404,21 @@ fn grid(ui: &mut egui::Ui, ctx: &Ctx, p: &mut Panel, events: &mut Vec<Event>) {
         }
         if resp.drag_started() {
             if let Some(Hit::Cell { row, frame }) = resp.interact_pointer_pos().map(at) {
-                p.drag = Some([(row, frame); 2]);
+                let grabbed = !shift
+                    && !ctx.editor.playing()
+                    && rows[row]
+                        .track()
+                        .is_some_and(|t| grabs_marked_key(doc, t, frame));
+                if grabbed {
+                    p.key_drag = Some([frame as i32; 2]);
+                } else {
+                    p.drag = Some([(row, frame); 2]);
+                }
             }
+        }
+        if let (Some([a, _]), Some(pos)) = (p.key_drag, resp.interact_pointer_pos()) {
+            let column = ((pos.x - view.min.x - NAME + scroll.x) / CELL).floor() as i32;
+            p.key_drag = Some([a, column]);
         }
         if let (Some([a, _]), Some(pos)) = (p.drag, resp.interact_pointer_pos()) {
             if let Hit::Cell { row, frame } = at(pos) {
@@ -1378,6 +1426,9 @@ fn grid(ui: &mut egui::Ui, ctx: &Ctx, p: &mut Panel, events: &mut Vec<Event>) {
             }
         }
         if resp.drag_stopped() {
+            if let Some([a, b]) = p.key_drag.take().filter(|[a, b]| a != b) {
+                events.push(Event::Move(b - a));
+            }
             if let Some([a, b]) = p.drag.take() {
                 let tracks = (a.0.min(b.0)..=a.0.max(b.0))
                     .filter_map(|r| rows[r].track())

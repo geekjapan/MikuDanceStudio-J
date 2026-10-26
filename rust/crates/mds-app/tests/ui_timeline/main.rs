@@ -2,7 +2,9 @@
 //! saved PMM compared to the C++ output of `tests/fixtures/rust/script/` where a script covers the
 //! operation, and expected values read off the C++ handlers where none does.
 
+mod drag;
 mod rig;
+mod scale;
 
 use egui::{Key, Modifiers, Vec2};
 use mds_app::actions::{self, Handler};
@@ -10,10 +12,6 @@ use mds_app::ui::timeline::{self, Hit, RowKind};
 use mds_app::ui::{chord, Ctx};
 use mds_doc::{GlobalTrack, Track};
 use rig::{assert_bytes, expected, global, Rig};
-
-/// The inventory rows of the area that have no action: 424 needs `mds_ops::RangeScale`, which
-/// `mds-app` cannot name, and the key drag needs a command that `mds-doc` lacks.
-const MISSING: [&str; 2] = ["ctl:424", "mouse:timeline-key-drag"];
 
 fn inventory_ids() -> Vec<String> {
     let path = rig::fixtures().join("../../../tools/ui_inventory/inventory.tsv");
@@ -28,19 +26,14 @@ fn inventory_ids() -> Vec<String> {
 }
 
 #[test]
-fn every_row_has_an_action_or_is_listed_as_missing() {
+fn every_row_has_an_action() {
     let ids = inventory_ids();
     assert_eq!(ids.len(), 52);
     let missing: Vec<_> = ids
         .iter()
         .filter(|id| !timeline::actions().iter().any(|a| a.id == id.as_str()))
-        .map(String::as_str)
         .collect();
-    let mut want = MISSING.to_vec();
-    want.sort();
-    let mut missing = missing;
-    missing.sort();
-    assert_eq!(missing, want);
+    assert!(missing.is_empty(), "{missing:?}");
     for a in timeline::actions() {
         assert!(
             ids.iter().any(|i| i == a.id),

@@ -805,6 +805,151 @@ pub fn delete(
     Ok(())
 }
 
+/// The registration of a finished Kinect recording
+/// (`RegisterKinectPoseCapture`, `src/app/oni_skeleton_pump.cpp` 318-487):
+/// every mark of the three key tables cleared; with `samples` above 0, one
+/// bone-key undo entry with the selection snapshot, then each run of
+/// `samples` keys (one bone, frames `frame..frame + samples`, as
+/// [`mds_kinect::register`] returns them) through `RegisterTraceBoneKey`
+/// ([`register_trace_run`]). A full pool stops the registration where it
+/// is, as the C++ does.
+pub fn register_capture(
+    m: &mut pmm::Model,
+    e: &mut ModelEdit,
+    frame: u32,
+    samples: u32,
+    keys: &[mds_kinect::KeyRegistration],
+) -> Result<(), Error> {
+    let bones = m.bone_pose.len();
+    let runs: Vec<&[mds_kinect::KeyRegistration]> = match samples {
+        0 => Vec::new(),
+        n => keys.chunks(n as usize).collect(),
+    };
+    let well_formed = (samples > 0 || keys.is_empty())
+        && runs.iter().all(|run| {
+            run.len() == samples as usize
+                && run
+                    .iter()
+                    .zip(frame..)
+                    .all(|(k, f)| k.bone == run[0].bone && k.bone < bones && k.frame == f)
+        });
+    if !well_formed {
+        return Err(Error::NotApplicable(
+            "the keys are not runs of `samples` frames of one bone from `frame`",
+        ));
+    }
+    with_tracks(m, &mut e.search_cursor, |t| t.clear_marks());
+    if samples == 0 {
+        return Ok(());
+    }
+    e.history.push(Entry::BoneKeys {
+        frame,
+        pose: selection_snapshot(m),
+        keys: Vec::new(),
+    });
+    let mut touched = Touched::default();
+    let max = &mut m.selection.max_frame;
+    let r = runs
+        .iter()
+        .try_for_each(|run| register_trace_run(&mut m.bone_keys, &mut touched, max, frame, run));
+    fill_keys(&mut e.history, touched);
+    r
+}
+
+/// `RegisterTraceBoneKey` (`oni_skeleton_pump.cpp` 214-310) for one bone:
+/// from the record before `frame` on the bone's track, each sample
+/// overwrites the record at its frame or takes the next free record, which
+/// the scan looks for from the first non-head record on (not from the
+/// search cursor). `maxFrame` follows each sample. A full pool returns at
+/// once, the track cut after the last record written.
+fn register_trace_run(
+    pool: &mut KeyPool<BoneKey>,
+    touched: &mut Touched,
+    max_frame: &mut u32,
+    frame: u32,
+    run: &[mds_kinect::KeyRegistration],
+) -> Result<(), Error> {
+    let full = |pool: &KeyPool<BoneKey>| {
+        Error::Edit(mds_edit::Error::Full {
+            pool: "bone",
+            limit: pool.capacity(),
+        })
+    };
+    let frame_of = |pool: &KeyPool<BoneKey>, i: u32| pool.get(i).map_or(0, |k| k.frame);
+    let next_of = |pool: &KeyPool<BoneKey>, i: u32| pool.get(i).map_or(0, |k| k.next);
+    fn rec(pool: &mut KeyPool<BoneKey>, i: u32) -> Result<&mut BoneKey, Error> {
+        if pool.get(i).is_none() {
+            pool.insert(i, BoneKey::default());
+        }
+        pool.get_mut(i).ok_or(Error::Edit(mds_edit::Error::Corrupt))
+    }
+    let fill = |k: &mut BoneKey, key: &mds_kinect::KeyRegistration| {
+        k.position = key.position;
+        k.rotation = key.rotation;
+        k.interpolation = mds_kinect::register::INTERPOLATION;
+        k.allocated = 1;
+    };
+    let mut current = run[0].bone as u32;
+    if frame_of(pool, current) < frame {
+        loop {
+            let next = next_of(pool, current);
+            if next == 0 || frame_of(pool, next) >= frame {
+                break;
+            }
+            current = next;
+        }
+    }
+    let mut free = pool.heads().len() as u32;
+    while frame_of(pool, free) != 0 {
+        free += 1;
+        if free >= pool.capacity() {
+            return Err(full(pool));
+        }
+    }
+    let mut successor = next_of(pool, current);
+    for (key, sample_frame) in run.iter().zip(frame..) {
+        for i in [current, successor, free] {
+            touched.add(pool, i);
+        }
+        if frame_of(pool, current) == sample_frame {
+            let k = rec(pool, current)?;
+            k.next = 0;
+            fill(k, key);
+        } else if frame_of(pool, successor) == sample_frame {
+            rec(pool, current)?.next = successor;
+            let k = rec(pool, successor)?;
+            k.previous = current;
+            fill(k, key);
+            current = successor;
+            successor = next_of(pool, current);
+        } else {
+            if free >= pool.capacity() {
+                return Err(full(pool));
+            }
+            rec(pool, current)?.next = free;
+            let k = rec(pool, free)?;
+            k.previous = current;
+            k.frame = sample_frame;
+            k.next = 0;
+            fill(k, key);
+            current = free;
+            free += 1;
+            while frame_of(pool, free) != 0 {
+                free += 1;
+                if free >= pool.capacity() {
+                    return Err(full(pool));
+                }
+            }
+        }
+        *max_frame = (*max_frame).max(sample_frame);
+        if successor != 0 {
+            rec(pool, current)?.next = successor;
+            rec(pool, successor)?.previous = current;
+        }
+    }
+    Ok(())
+}
+
 /// `SnapshotPose` of the bone frame-line commands (`frame_line_edit.cpp`):
 /// every bone's pose, with the selection byte where the other snapshots
 /// keep the edited mark.

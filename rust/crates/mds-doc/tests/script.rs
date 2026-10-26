@@ -8,8 +8,23 @@
 //! produce, and the MME effect map is not part of the document.
 
 use mds_doc::script::{Runner, Saved};
+use mds_media::background::Viewport;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// The viewport of the hidden main window on the oracle host, as
+/// `MediaAspect` reads it, with `viewScale` `width * 1.2 / 1280`
+/// (`ui_viewport_refresh.cpp` 224). `script4/expected/background/loaded.pmm`
+/// places the AVI (32 by 24) at Y -214 and the picture (2 by 2) at -500;
+/// widths 2280 to 2291 with half heights 640 to 645 give both, and
+/// 2280 by 1280 is taken.
+const HOST_VIEWPORT: Viewport = Viewport {
+    hide_left: 2280,
+    hide_right: 0,
+    hide_top: 0,
+    hide_bottom: 1280,
+    view_scale: (2280.0 * 1.2 / 1280.0) as f32,
+};
 
 fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/rust")
@@ -25,6 +40,7 @@ fn read_input(path: &str) -> Option<Vec<u8>> {
         fixtures().join("script2/inputs"),
         fixtures().join("script3/inputs"),
         fixtures().join("vsq"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../mds-media/tests/fixtures/bgmovie"),
     ]
     .iter()
     .find_map(|d| std::fs::read(d.join(name)).ok())
@@ -102,6 +118,7 @@ fn replay(set: &str, name: &str) -> Result<usize, String> {
     }
     let mut boxes = messages(&expected_dir);
     let mut runner = Runner::new();
+    runner.doc.edit.viewport = Some(HOST_VIEWPORT);
     let mut compared = 0;
     let mut differ: Vec<String> = Vec::new();
     for (n, line) in script.lines().enumerate() {
@@ -277,8 +294,8 @@ mod script2 {
 
 /// The document commands of `tests/fixtures/rust/script3/` (slice
 /// `winoracle3`): the key drag, model delete, the camera reference, lip
-/// sync, `.vac` accessories and menu 250 in camera mode. `pmdedit` needs
-/// the physics dialog's edit boxes, which the runner does not have.
+/// sync, `.vac` accessories, menu 250 in camera mode, and the toon and
+/// physics model edits of `pmdedit`, and the English name dialog.
 mod script3 {
     use super::check_in;
 
@@ -315,5 +332,58 @@ mod script3 {
     #[test]
     fn vac() {
         check_in("script3", "vac");
+    }
+
+    #[test]
+    fn pmdedit() {
+        check_in("script3", "pmdedit");
+    }
+
+    #[test]
+    fn english() {
+        check_in("script3", "english");
+    }
+}
+
+/// The document commands of `tests/fixtures/rust/script4/` (slice
+/// `script4`): the outside-parent and order dialogs, the view drags, the
+/// physics record drag and edit boxes, the background media, and menu 263
+/// on a PMX model.
+mod script4 {
+    use super::check_in;
+
+    #[test]
+    fn outsideparent() {
+        check_in("script4", "outsideparent");
+    }
+
+    #[test]
+    fn accessoryorder() {
+        check_in("script4", "accessoryorder");
+    }
+
+    #[test]
+    fn modelorder() {
+        check_in("script4", "modelorder");
+    }
+
+    #[test]
+    fn viewoffset() {
+        check_in("script4", "viewoffset");
+    }
+
+    #[test]
+    fn physicsdrag() {
+        check_in("script4", "physicsdrag");
+    }
+
+    #[test]
+    fn background() {
+        check_in("script4", "background");
+    }
+
+    #[test]
+    fn pmx263() {
+        check_in("script4", "pmx263");
     }
 }

@@ -4,12 +4,6 @@ use mds_app::actions::{self, Handler};
 use mds_app::ui::{dialog, physics};
 use mds_doc::{Command, GlobalTrack, SelectAll};
 
-/// The rows of the physics area of the inventory that have no document command or `Editor` call
-/// yet (see the module doc of `ui/physics.rs`).
-const MISSING: &[&str] = &[
-    "ctl:499", "menu:265", "menu:269", "menu:270", "menu:272", "menu:285",
-];
-
 fn area_rows() -> Vec<String> {
     labels::inventory()
         .into_iter()
@@ -19,17 +13,15 @@ fn area_rows() -> Vec<String> {
 }
 
 #[test]
-fn every_row_has_an_action_or_is_listed_as_missing() {
+fn every_row_has_an_action() {
     let registered: Vec<&str> = physics::actions().iter().map(|a| a.id).collect();
     let rows = area_rows();
     assert_eq!(rows.len(), 16);
-    let mut missing: Vec<_> = rows
+    let missing: Vec<_> = rows
         .iter()
         .filter(|r| !registered.contains(&r.as_str()))
-        .map(String::as_str)
         .collect();
-    missing.sort();
-    assert_eq!(missing, MISSING);
+    assert!(missing.is_empty(), "{missing:?}");
     assert!(physics::actions()
         .iter()
         .all(|a| matches!(a.handler, Handler::Run(_))));
@@ -164,7 +156,9 @@ fn select_physics_on_frames_marks_the_on_keys_of_the_bodies() {
     // Keys at 10 with the physics check box on, at 20 and 35 with it off (`record.physicsDisabled`
     // is the negated box, model_keyframe_edit.cpp:277), then at 40 with it on again.
     for (frame, on) in [(10, true), (20, false), (35, false), (40, true)] {
-        r.editor.doc.edit.physics_checkbox = on;
+        if r.editor.doc.edit.physics_checkbox != on {
+            r.run("ctl:499").unwrap();
+        }
         r.editor.apply(Command::SetFrame(frame)).unwrap();
         r.run("menu:273").unwrap();
         r.editor.apply(Command::RegisterBoneKeys).unwrap();
@@ -286,13 +280,4 @@ fn display_bodies_flips_and_a_new_scene_clears_it() {
     // `rigidBodyDisplayEnabled = 0` in the scene load (pmm_load_v2.cpp:2164, reset_app_state.cpp:83).
     r.editor.apply(Command::NewScene).unwrap();
     assert!(!physics::bodies_shown(&r.egui, &r.editor));
-}
-
-#[test]
-fn the_missing_rows_are_greyed_out_not_silent() {
-    let mut r = Rig::new();
-    for id in MISSING {
-        assert!(!r.with_enabled(id), "{id}");
-        assert_eq!(r.run(id), Err(format!("{id}: not implemented")));
-    }
 }

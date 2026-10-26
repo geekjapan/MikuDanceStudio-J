@@ -10,24 +10,31 @@
 //! The check boxes 439 to 441 (`command_frame_edit.cpp:1566` to `:1592`) and the IK radios 444 and
 //! 445 (`:1598` to `:1617`, on the chain the combo 443 has selected).
 //!
-//! Not here, for lack of a [`mds_doc::Command`]: 437 (delete model, `DeleteSelectedModel`) and 442
-//! (the outside parent dialog, `EditAccessoryAttachments`).
+//! Delete model 437 (`DeleteSelectedModel`, `command_frame_edit.cpp:1186`) asks its OK/Cancel
+//! question first, then runs `Command::DeleteModel` on the model the combo shows. The C++ closes
+//! an open physics model dialog first; the dialog area closes itself when its model is gone.
+//! Button 442 (`EditAccessoryAttachments`, `:1344`) opens the outside parent dialog of the
+//! dialog area.
+//! Both are model mode only: `RestorePlaybackMenus` greys 437 to 445 in camera mode
+//! (`src/app/playback_state.cpp:122`).
 
 use super::{button, Ctx};
-use crate::actions::Action;
+use crate::actions::{self, Action, Mode};
 use crate::editor::Editor;
 use mds_doc::{Command, Document, ModelFlag};
-use rfd::FileDialog;
+use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult};
 
 const ACTIONS: &[Action] = &[
     Action::run("ctl:435", load_dialog, true),
     Action::inline("ctl:436"),
+    Action::run("ctl:437", delete_model, true).in_mode(Mode::Model),
     Action::run("ctl:438", register_display, true),
     Action::run("ctl:439", |c| flip(c, ModelFlag::Visible), true),
     Action::run("ctl:440", |c| flip(c, ModelFlag::Shadow), true),
     Action::run("ctl:441", |c| flip(c, ModelFlag::AddBlend), true),
     Action::inline("ctl:443"),
     Action::run("ctl:444", |c| ik(c, true), true),
+    Action::run("ctl:442", open_outside_parent, false).in_mode(Mode::Model),
     Action::run("ctl:445", |c| ik(c, false), true),
     Action::run("ctl:536", mode_toggle, true),
     Action::run("key:Tab", |c| cycle(c, true), true),
@@ -154,6 +161,47 @@ pub fn set_ik(ctx: &mut Ctx, chain: u32, on: bool) -> Result<(), String> {
     ctx.editor.apply(Command::SetIkEnabled { chain, on })
 }
 
+/// The question of `DeleteSelectedModel`, with the model's name (`kMsgDelModelJp`,
+/// `kMsgDelModelEn`) and the caption `kCaptionDelModelJp` for both languages.
+pub fn delete_question(name: &str, english: bool) -> (&'static str, String) {
+    let text = match english {
+        true => format!(
+            "Trying to delete Model({name}). \nAll flame data about this model will be deleted too.\n(This operation cannot undo!!)\n\nAre you OK?"
+        ),
+        false => format!(
+            "モデル：{name}を削除します\nモデルのフレームデータも全て削除されます\nまたアクセサリでこのモデルに追従しるものは地面に追従しるように変更されます\n(この操作は元に戻す事はできません)\n\n削除してもよろしいですか？"
+        ),
+    };
+    ("モデル削除", text)
+}
+
+/// Button 437. The model is the one the combo shows, which is the selected one in model mode.
+/// Without a window the question is answered OK, as the script runner answers it.
+fn delete_model(ctx: &mut Ctx) -> Result<(), String> {
+    let i = selected_index(&ctx.editor.doc).ok_or("no model selected")?;
+    let m = &ctx.editor.doc.pmm.models[i];
+    let slot = m.slot;
+    if let Some(egui) = &ctx.egui {
+        let en = super::help::english(egui);
+        let name = if en { &m.name_en } else { &m.name };
+        let (caption, text) = delete_question(&name.text, en);
+        let answer = MessageDialog::new()
+            .set_title(caption)
+            .set_description(text)
+            .set_buttons(MessageButtons::OkCancel)
+            .show();
+        if answer != MessageDialogResult::Ok {
+            return Ok(());
+        }
+    }
+    ctx.editor.apply(Command::DeleteModel(slot))
+}
+
+/// Button 442: the outside parent dialog (`DialogBoxParamA` of `IDD_OUTSIDE_PARENT`).
+fn open_outside_parent(ctx: &mut Ctx) -> Result<(), String> {
+    actions::run(ctx, "dlg:IDD_OUTSIDE_PARENT")
+}
+
 fn register_display(ctx: &mut Ctx) -> Result<(), String> {
     if selected_index(&ctx.editor.doc).is_none() {
         return Err("no model selected".into());
@@ -227,7 +275,11 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
     let Some(i) = selected_index(&ctx.editor.doc) else {
         return;
     };
-    button(ui, ctx, "ctl:438", "register");
+    ui.horizontal(|ui| {
+        button(ui, ctx, "ctl:438", "register");
+        button(ui, ctx, "ctl:437", "delete");
+        button(ui, ctx, "ctl:442", "OP");
+    });
     let m = &ctx.editor.doc.pmm.models[i];
     let flags = [
         ("ctl:439", "visible", flag_of(m, ModelFlag::Visible)),

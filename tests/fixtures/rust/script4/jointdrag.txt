@@ -1,0 +1,30 @@
+# The record drag on the physics model dialog's joint page (801): it edits the
+# selected joint, not the selected body (EditModeRecord reads
+# state.physicsEditorJointPage, which FlipPhysicsDialogPage writes). nodrag.pmd
+# is the model after the dialog with the joint page opened and no drag;
+# joints.pmd drags joint 2 (move y, shift move x, rotate z) and joint 4
+# (rotate x), so the two differ in those joints only. The dialog opened again
+# starts on the body page, so a drag there moves a body (body.pmd).
+load model .\lips.pmd
+save pmd before.pmd
+physics model open
+dialog click 801
+dialog ok
+save pmd nodrag.pmd
+
+physics model open
+dialog click 801
+dialog select 736 2
+physics drag move y none 10
+physics drag move x shift -4
+physics drag rotate z none 25
+dialog select 736 4
+physics drag rotate x none -15
+dialog ok
+save pmd joints.pmd
+save pmm joints.pmm
+
+physics model open
+physics drag move y none 5
+dialog ok
+save pmd body.pmd

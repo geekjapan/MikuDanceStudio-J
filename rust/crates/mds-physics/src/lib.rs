@@ -11,7 +11,8 @@
 //! frame 0. [`PhysicsScene::step`] is one frame-step pass at 30 fps.
 //!
 //! The interactive application keeps one world alive instead:
-//! [`PhysicsScene::open`] is the load alone, and each pump of the window
+//! [`PhysicsScene::open`] is the load alone ([`PhysicsScene::open_running`]
+//! after the app has pumped), and each pump of the window
 //! (`FrameDriver`, `src/app/frame_driver.cpp`) is one [`PhysicsScene::tick`]
 //! while stopped or one [`PhysicsScene::catch_up`] while playing. Seeks,
 //! frame steps, play, stop, loop and the physics reset only change the
@@ -141,11 +142,42 @@ impl PhysicsScene {
         pmm: &Pmm,
         read: impl FnMut(&str) -> Result<Vec<u8>, String>,
     ) -> Result<PhysicsScene, String> {
+        PhysicsScene::load(pmm, read, false)
+    }
+
+    /// [`open`](Self::open) in an application that has pumped since
+    /// `SceneConstruct` built its world: the File menu or a drop. The C++
+    /// world outlives the loads, and `btDiscreteDynamicsWorld` starts its
+    /// substep clock at 1/60 s, which the first `PhysicsFrame` on the empty
+    /// world spends (the startup paint, `window_init.cpp` `UpdateWindow`).
+    /// Pumps of whole 1/60 s steps, as the script runner's settle frames,
+    /// keep the clock at 0; the remainder that wall-clock pumps leave is not
+    /// carried into this new world. A PMM named on the command line loads
+    /// before that paint, as [`open`](Self::open) does.
+    pub fn open_running(
+        pmm: &Pmm,
+        read: impl FnMut(&str) -> Result<Vec<u8>, String>,
+    ) -> Result<PhysicsScene, String> {
+        PhysicsScene::load(pmm, read, true)
+    }
+
+    fn load(
+        pmm: &Pmm,
+        read: impl FnMut(&str) -> Result<Vec<u8>, String>,
+        pumped: bool,
+    ) -> Result<PhysicsScene, String> {
         let scene = Scene::load(pmm, read)?;
         // SAFETY: no arguments; null on failure.
         let world = World(unsafe { sys::mds_mmd_world_create() });
         if world.0.is_null() {
             return Err("Bullet world creation failed".into());
+        }
+        if pumped {
+            // SAFETY: the world is live; only the ground is in it.
+            check(
+                unsafe { sys::mds_mmd_world_step(world.0, 0.0, 10, SUBSTEP) },
+                "startup step",
+            )?;
         }
         let p = &pmm.physics;
         let mut this = PhysicsScene {
@@ -513,6 +545,32 @@ impl PhysicsScene {
         }
     }
 
+    /// The physics menus 265, 269, 270 and 272 (`command_view_menu.cpp`
+    /// 1048-1110): `PlaybackPhysicsMode`, which stop and loop also restore,
+    /// then `ModelKinematicSync` of every model. The settle request of modes
+    /// 1 to 3 is the document's (`physics_reset_pending`, [`reset`](Self::reset)).
+    pub fn set_physics_mode(&mut self, mode: u8) -> Result<(), String> {
+        self.scene.physics_mode = i32::from(mode);
+        self.saved_mode = self.scene.physics_mode;
+        self.sync_all()
+    }
+
+    /// The floor menu 285 (`command_view_menu.cpp` 1437-1455): the ground's
+    /// collision flags become 1 (`CF_STATIC_OBJECT`, as the world starts) or
+    /// -1. The `CF_NO_CONTACT_RESPONSE` bit of -1 makes
+    /// `btCollisionDispatcher::needsResponse` false, so `buildIslands` hands
+    /// no ground manifold to the solver and bodies fall through; the other
+    /// bits change nothing for a sleeping static body. Loading a PMM does not
+    /// call this: its floor byte only sets the ground's deactivation time,
+    /// which Bullet reads for non-static bodies alone.
+    pub fn set_floor_visible(&mut self, on: bool) -> Result<(), String> {
+        // SAFETY: the world is live.
+        check(
+            unsafe { sys::mds_mmd_world_set_floor(self.world.0, i32::from(on)) },
+            "floor",
+        )
+    }
+
     /// The physics reset menu 268 (`MDS_CMD_RESET_PHYSICS_BODIES`,
     /// `command_view_menu.cpp`): the next pump settles.
     pub fn reset(&mut self) {
@@ -574,6 +632,22 @@ impl PhysicsScene {
         Ok(())
     }
 
+    /// The world origin and rotation (x, y, z, w) of every rigid body, per
+    /// model in `scene.models` order: what the `rigid` lines of
+    /// [`write_frame`](Self::write_frame) print. `None` for a shape the
+    /// loaders build no body for.
+    pub fn body_poses(&self) -> Result<Vec<Vec<Option<BodyPose>>>, String> {
+        self.bodies
+            .iter()
+            .map(|bodies| {
+                bodies
+                    .iter()
+                    .map(|&b| (!b.is_null()).then(|| body_pose(b)).transpose())
+                    .collect()
+            })
+            .collect()
+    }
+
     /// Appends the lines of `frame`: per model the pose lines, then a
     /// `rigid` line per body (world origin and rotation).
     pub fn write_frame(&self, out: &mut String, frame: u32) -> Result<(), String> {
@@ -583,14 +657,7 @@ impl PhysicsScene {
                 if body.is_null() {
                     return Err(format!("model {} rigid body {i} has no body", model.slot));
                 }
-                let (mut origin, mut rotation) = ([0.0f32; 3], [0.0f32; 4]);
-                // SAFETY: a live body; 3 and 4 floats.
-                check(
-                    unsafe {
-                        sys::mds_mmd_body_pose(body, origin.as_mut_ptr(), rotation.as_mut_ptr())
-                    },
-                    "body pose",
-                )?;
+                let (origin, rotation) = body_pose(body)?;
                 write!(out, "{frame} rigid {} {i}", model.slot).unwrap();
                 mds_pose::trace::floats(out, &origin)?;
                 mds_pose::trace::floats(out, &rotation)?;
@@ -612,6 +679,19 @@ impl PhysicsScene {
         }
         Ok(out)
     }
+}
+
+/// A body's world origin and rotation quaternion, x y z w.
+pub type BodyPose = ([f32; 3], [f32; 4]);
+
+fn body_pose(body: *mut sys::mds_mmd_body) -> Result<BodyPose, String> {
+    let (mut origin, mut rotation) = ([0.0f32; 3], [0.0f32; 4]);
+    // SAFETY: a live body; 3 and 4 floats.
+    check(
+        unsafe { sys::mds_mmd_body_pose(body, origin.as_mut_ptr(), rotation.as_mut_ptr()) },
+        "body pose",
+    )?;
+    Ok((origin, rotation))
 }
 
 /// `BuildFollowMatrix`: `Rz * Rx * Ry * T(rigid)`, then
@@ -778,7 +858,7 @@ fn readback(model: &mut Model, bodies: &[*mut sys::mds_mmd_body]) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::Op::{self, *};
-    use super::{MsvcRand, PhysicsScene, SUBSTEP};
+    use super::{ptr, sys, MsvcRand, PhysicsScene, SUBSTEP};
     use mds_formats::pmm::Pmm;
     use std::path::PathBuf;
 
@@ -1033,6 +1113,84 @@ mod tests {
         ops(&s);
         s.tick(0.02).unwrap();
         assert_eq!(ops(&s), world_pass(2, 0.02, true));
+    }
+
+    #[test]
+    fn the_physics_menus_set_the_mode_and_sync() {
+        // command_view_menu.cpp 1048-1110: `PlaybackPhysicsMode() = n`, then
+        // ModelKinematicSync over the model slots; stop restores the new mode.
+        let mut s = open(2);
+        s.tick(0.0).unwrap();
+        ops(&s);
+        s.set_physics_mode(3).unwrap();
+        assert_eq!(ops(&s), [Sync]);
+        assert_eq!((s.scene.physics_mode, s.saved_mode), (3, 3));
+        s.start_playback(0.0, true);
+        s.stop_playback(0);
+        assert_eq!(s.scene.physics_mode, 3);
+        s.tick(0.02).unwrap();
+        ops(&s);
+        s.set_physics_mode(0).unwrap();
+        assert!(!s.settle, "the settle request is the document's");
+        s.tick(0.02).unwrap();
+        assert_eq!(ops(&s), [Sync, Pose(0, 0), Pose(1, 0)]);
+    }
+
+    /// Drops a unit box (half extent 1) from y = 20, away from the model and
+    /// colliding with the ground alone, for two seconds; its final pose.
+    fn drop_box(s: &PhysicsScene) -> ([f32; 3], [f32; 4]) {
+        let mut body = ptr::null_mut();
+        // SAFETY: the world is live; the arrays outlive the calls.
+        unsafe {
+            let code = sys::mds_mmd_body_create(
+                s.world.0,
+                1,
+                1.0,
+                1.0,
+                1.0,
+                [500.0, 20.0, 500.0].as_ptr(),
+                [0.0, 0.0, 0.0, 1.0].as_ptr(),
+                1,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.5,
+                0x4000,
+                i16::MIN,
+                &mut body,
+            );
+            assert_eq!(code, sys::MDS_BT_OK);
+        }
+        for _ in 0..120 {
+            s.world_step(SUBSTEP).unwrap();
+        }
+        let (mut origin, mut rotation) = ([0.0; 3], [0.0; 4]);
+        // SAFETY: a live body of this world.
+        let code =
+            unsafe { sys::mds_mmd_body_pose(body, origin.as_mut_ptr(), rotation.as_mut_ptr()) };
+        assert_eq!(code, sys::MDS_BT_OK);
+        (origin, rotation)
+    }
+
+    #[test]
+    fn the_floor_menu_switches_the_ground_contact() {
+        let rest = drop_box(&open(1));
+        assert!(
+            (rest.0[1] - 1.0).abs() < 0.05,
+            "rests on the floor: {rest:?}"
+        );
+
+        let mut s = open(1);
+        s.set_floor_visible(false).unwrap();
+        let fallen = drop_box(&s).0[1];
+        // Free fall from 20 under -98 for 2 s ends near -176.
+        assert!(fallen < -150.0, "falls through: {fallen}");
+
+        let mut s = open(1);
+        s.set_floor_visible(false).unwrap();
+        s.set_floor_visible(true).unwrap();
+        assert_eq!(drop_box(&s), rest, "1 is the startup flag value");
     }
 
     #[test]

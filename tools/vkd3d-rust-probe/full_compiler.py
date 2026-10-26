@@ -25,6 +25,14 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def generated_parser(working):
+    matches = list((working / 'src').rglob('hlsl_tab.rs'))
+    if (len(matches) != 1 or not matches[0].is_file()
+            or not matches[0].resolve().is_relative_to(working.resolve())):
+        raise ValueError('missing, ambiguous, or outside-owned generated parser: hlsl_tab.rs')
+    return matches[0]
+
+
 def patch_parser(path):
     text = path.read_text()
     # Whitespace normalization is only used for exact matching; all other bytes survive.
@@ -90,7 +98,7 @@ int main(void) {
     if observed != expected:
         raise ValueError('native offsetof differs from wrapping size_t arithmetic')
     # Use actual translated type definitions, not a guessed pointer substitute.
-    text = (working / 'src/hlsl_tab.rs').read_text()
+    text = generated_parser(working).read_text()
     names = ('list', 'hlsl_block', 'hlsl_src', 'hlsl_attribute', 'vkd3d_shader_location')
     definitions = []
     for name in names:
@@ -130,7 +138,7 @@ def collect(result, args, source, output, entries, artifacts, run, checkpoint):
     working = artifacts / 'rust-working'
     shutil.copytree(output, working)
     try:
-        patch_record = patch_parser(working / 'src/hlsl_tab.rs')
+        patch_record = patch_parser(generated_parser(working))
         result['parser_patch'] = patch_record
         (artifacts / 'parser-patch.json').write_text(json.dumps(patch_record, indent=2) + '\n')
         result['offset_check'] = offset_check(source, working, entries[0], artifacts, args.rust_toolchain, run)

@@ -1,0 +1,22 @@
+[workspace]
+members = [
+]
+[package]
+license = "LGPL-2.1-or-later"
+name = "rust"
+authors = ["C2Rust"]
+version = "0.0.0"
+publish = false
+edition = "2024"
+autobins = false
+
+[lib]
+name = "rust"
+path = "lib.rs"
+crate-type = ["staticlib", "rlib"]
+[dependencies]
+c2rust-bitfields = "0.22.1"
+memoffset = "0.5"
+libc = "0.2"
+
+

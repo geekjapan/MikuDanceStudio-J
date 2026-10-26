@@ -35,6 +35,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/bullet-pure"
           { git rev-parse HEAD; uname -a; rustup run 1.95.0 rustc -Vv; python3 --version; } 2>&1 | tee "$RUNNER_TEMP/bullet-pure/provenance.log"
+          git ls-files --stage recipes/bullet275/bullet-src/src rust/crates/mds-bullet rust/crates/mds-bullet-sys/shim rust/crates/mds-crtmath 'tools/bullet-rust-*' > "$RUNNER_TEMP/bullet-pure/source-manifest.txt"
       - name: Check all frozen fixtures without native code
         run: |
           set -o pipefail
@@ -50,7 +51,7 @@ jobs:
   native:
     name: Native recapture (Linux x64)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         shell: bash
@@ -70,6 +71,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/bullet-native"
           { git rev-parse HEAD; uname -a; clang++ --version; rustup run 1.95.0 rustc -Vv; python3 --version; } 2>&1 | tee "$RUNNER_TEMP/bullet-native/provenance.log"
+          git ls-files --stage recipes/bullet275/bullet-src/src rust/crates/mds-bullet rust/crates/mds-bullet-sys/shim rust/crates/mds-crtmath 'tools/bullet-rust-*' > "$RUNNER_TEMP/bullet-native/source-manifest.txt"
       - name: Recapture math and compare every frozen bit
         if: ${{ !cancelled() }}
         run: |
@@ -100,6 +102,18 @@ jobs:
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/bullet-native/coordinates"
           python3 tools/bullet-rust-coordinate-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/coordinates" 2>&1 | tee "$RUNNER_TEMP/bullet-native/coordinates/check.log"
+      - name: Recapture body kernels and compare every frozen bit
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/bullet-native/bodies"
+          python3 tools/bullet-rust-body-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/bodies" 2>&1 | tee "$RUNNER_TEMP/bullet-native/bodies/check.log"
+      - name: Recapture pair cache and compare every frozen operation
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/bullet-native/pair-cache"
+          python3 tools/bullet-rust-pair-cache-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/pair-cache" 2>&1 | tee "$RUNNER_TEMP/bullet-native/pair-cache/check.log"
       - name: Save native recaptures and evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

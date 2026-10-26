@@ -6,7 +6,7 @@ Run the focused native and native-free gate on macOS or Linux with Clang, Python
 python3 tools/bullet-rust-math-check/check.py
 ```
 
-The script compiles only `mds-crtmath` and the C++ header oracle. It compares the native output with `rust/crates/mds-bullet/tests/data/math-native-bits.tsv`, then runs the combined standalone Rust math, shape, free-body, contact, joint-row, and joint-coordinate tests. It does not build `mds-bullet-sys`, the application, or the workspace. Compiler outputs use an isolated temporary directory. Pass `--work-dir PATH` to place that temporary directory under an assigned evidence store. Pass `--out-dir PATH` to retain compiler outputs, the test executable, and the native capture instead. These directory options are mutually exclusive.
+The script compiles only `mds-crtmath` and the C++ header oracle. It compares the native output with `rust/crates/mds-bullet/tests/data/math-native-bits.tsv`, then runs the combined standalone Rust math, shape, free-body, contact, joint-row, joint-coordinate, body-kernel, and pair-cache tests. It does not build `mds-bullet-sys`, the application, or the workspace. Compiler outputs use an isolated temporary directory. Pass `--work-dir PATH` to place that temporary directory under an assigned evidence store. Pass `--out-dir PATH` to retain compiler outputs, the test executable, and the native capture instead. These directory options are mutually exclusive.
 
 To run only the frozen-fixture Rust checks on any supported host, including
 Windows x64, use `python3 tools/bullet-rust-math-check/check.py --rust-only`.
@@ -39,8 +39,8 @@ Recorded and checked on Apple Silicon macOS 27.0.1 with Apple Clang 21.0.0 and r
 
 ## Dedicated cross-host gate
 
-`.github/workflows/bullet-primitives.yml` runs the combined native-free fixture tests on Windows x64, Apple Silicon macOS, Linux x64, and Linux ARM64. Its Linux x64 native job separately recaptures math, shapes, joint rows, contacts, and joint coordinates with the vendored C++ implementation. Each capture must match the frozen fixture exactly. No tolerance or host-specific fixture selection applies.
+`.github/workflows/bullet-primitives.yml` runs the combined native-free fixture tests on Windows x64, Apple Silicon macOS, Linux x64, and Linux ARM64. Its Linux x64 native job separately recaptures math, shapes, joint rows, contacts, joint coordinates, body kernels, and pair cache with the vendored C++ implementation. Each capture must match the frozen fixture exactly. No tolerance or host-specific fixture selection applies.
 
-Every job uploads its command logs, host and compiler provenance, and retained output directory even after a check fails. Native helpers retain their TSV captures and compiled executables. The coordinate log also reports native `long double` precision. Linux x64 extended precision is a required check, because the coordinate fixture was captured on Apple Silicon where `long double` has double precision. A mismatching Linux capture fails the gate and retains its exact inputs and output words.
+Every job uploads its command logs, host and compiler provenance, a Git blob manifest for oracle and Rust sources, and retained output directory even after a check fails. Native helpers retain their TSV captures and compiled executables. The coordinate log also reports native `long double` precision. Linux x64 extended precision is a required check, because the coordinate fixture was captured on Apple Silicon where `long double` has double precision. A mismatching Linux capture fails the gate and retains its exact inputs and output words.
 
-The original six math, shape, and free-body tests remain in the combined executable. The additional units do not connect to the production backend. Full workspace and GPU acceptance remain separate gates.
+All 12 earlier tests remain in the combined executable. The body-kernel and pair-cache tests bring the total to 14. The additional units do not connect to the production backend. Full workspace and GPU acceptance remain separate gates.

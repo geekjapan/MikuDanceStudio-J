@@ -1,0 +1,406 @@
+diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/AstExporter.cpp
+index ef9d929..8ca6c2c 100644
+--- a/c2rust-ast-exporter/src/AstExporter.cpp
++++ b/c2rust-ast-exporter/src/AstExporter.cpp
+@@ -12,6 +12,7 @@
+ 
+ #include "llvm/Support/CommandLine.h"
+ #include "llvm/Support/Debug.h"
++#include "llvm/Support/ErrorHandling.h"
+ #include "llvm/Support/Path.h"
+ #include "llvm/Support/raw_ostream.h"
+ // Declares clang::SyntaxOnlyAction.
+@@ -223,6 +224,8 @@ private:
+ 
+   public:
+     uintptr_t encodeQualType(QualType t) {
++        while (const auto *macro = dyn_cast<MacroQualifiedType>(t.getTypePtr()))
++            t = macro->getUnderlyingType().withCVRQualifiers(t.getCVRQualifiers());
+         auto s = t.split();
+ 
+         auto desugared = sugared->find((void *)s.Ty);
+@@ -259,6 +262,10 @@ private:
+ 
+     void VisitQualType(const QualType &QT) {
+         if (!QT.isNull()) {
++            if (const auto *macro = dyn_cast<MacroQualifiedType>(QT.getTypePtr())) {
++                VisitQualType(macro->getUnderlyingType());
++                return;
++            }
+             auto s = QT.split();
+ 
+             auto desugared = sugared->find((void *)s.Ty);
+@@ -271,7 +278,7 @@ private:
+     }
+ 
+     void VisitAttributedType(const AttributedType *T) {
+-        auto t = T->getModifiedType();
++        auto t = T->isCallingConv() ? T->getEquivalentType() : T->getModifiedType();
+         auto qt = encodeQualType(t);
+         auto k = T->getAttrKind();
+ 
+@@ -585,6 +592,15 @@ private:
+     // handled as `FunctionNoPrototype` instances. Note: we could handle both
+     // cases by overriding `VisitFunctionType` instead of the current
+     // two-function solution.
++    static const char *callingConvention(const FunctionType *T) {
++        switch (T->getCallConv()) {
++        case CC_C: return "C";
++        case CC_Win64: return "win64";
++        case CC_X86_64SysV: return "sysv64";
++        default: llvm::report_fatal_error("unsupported C2Rust calling convention");
++        }
++    }
++
+     void VisitFunctionProtoType(const FunctionProtoType *T) {
+         LLVM_DEBUG(dbgs() << "Visit ");
+         LLVM_DEBUG(T->dump());
+@@ -608,6 +624,7 @@ private:
+             cbor_encode_boolean(local, T->getExtProtoInfo().Variadic);
+             cbor_encode_boolean(local, T->getNoReturnAttr());
+             cbor_encode_boolean(local, true); // has arguments
++            cbor_encode_text_stringz(local, callingConvention(T));
+         });
+ 
+         VisitQualType(T->getReturnType());
+@@ -631,6 +648,7 @@ private:
+             cbor_encode_boolean(local, false); // Variable argument function
+             cbor_encode_boolean(local, T->getNoReturnAttr());
+             cbor_encode_boolean(local, false); // has arguments
++            cbor_encode_text_stringz(local, callingConvention(T));
+         });
+ 
+         VisitQualType(T->getReturnType());
+diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_ast/conversion.rs
+index de549e2..aac1017 100644
+--- a/c2rust-transpile/src/c_ast/conversion.rs
++++ b/c2rust-transpile/src/c_ast/conversion.rs
+@@ -826,8 +826,16 @@ fn visit_node(
+                         .expect("NoReturn of function type not found");
+                     let has_proto = from_value(ty_node.extras[3].clone())
+                         .expect("HasProto of function type not found");
++                    let abi_name: String = from_value(ty_node.extras[4].clone())
++                        .expect("Calling convention of function type not found");
++                    let abi = match abi_name.as_str() {
++                        "C" => CCallingConvention::C,
++                        "win64" => CCallingConvention::Win64,
++                        "sysv64" => CCallingConvention::SysV64,
++                        _ => panic!("unsupported calling convention: {}", abi_name),
++                    };
+                     let function_ty =
+-                        CTypeKind::Function(ret, arguments, is_variadic, is_noreturn, has_proto);
++                        CTypeKind::Function(ret, arguments, is_variadic, is_noreturn, has_proto, abi);
+                     self.add_type(new_id, not_located(function_ty));
+                     self.processed_nodes.insert(new_id, FUNC_TYPE);
+ 
+diff --git a/c2rust-transpile/src/c_ast/iterators.rs b/c2rust-transpile/src/c_ast/iterators.rs
+index 123c377..75a3074 100644
+--- a/c2rust-transpile/src/c_ast/iterators.rs
++++ b/c2rust-transpile/src/c_ast/iterators.rs
+@@ -320,7 +320,7 @@ fn immediate_type_children(kind: &CTypeKind) -> Vec<SomeId> {
+             }
+             res
+         }
+-        Function(ret, ref params, _, _, _) => {
++        Function(ret, ref params, _, _, _, _) => {
+             let mut res = intos![ret.ctype];
+             for p in params {
+                 res.push(p.ctype.into())
+diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.rs
+index 0cbfdca..b8ea7f2 100644
+--- a/c2rust-transpile/src/c_ast/mod.rs
++++ b/c2rust-transpile/src/c_ast/mod.rs
+@@ -1020,6 +1020,7 @@ pub(crate) fn type_kinds_eq(
+                     is_variable_argument1,
+                     is_noreturn1,
+                     has_prototype1,
++                    abi1,
+                 ),
+                 Function(
+                     result_type_id2,
+@@ -1027,6 +1028,7 @@ pub(crate) fn type_kinds_eq(
+                     is_variable_argument2,
+                     is_noreturn2,
+                     has_prototype2,
++                    abi2,
+                 ),
+             ) => {
+                 self.qual_types_eq(*result_type_id1, *result_type_id2, resolver)
+@@ -1040,6 +1042,7 @@ pub(crate) fn type_kinds_eq(
+                     && is_variable_argument1 == is_variable_argument2
+                     && is_noreturn1 == is_noreturn2
+                     && has_prototype1 == has_prototype2
++                    && abi1 == abi2
+             }
+ 
+             (Attributed(type_id1, ref attribute1), Attributed(type_id2, ref attribute2)) => {
+@@ -1095,8 +1098,8 @@ pub fn fn_decl_ty_with_declared_args(&self, func_decl: &CDeclKind) -> CTypeKind
+             let typ = self.resolve_type_id(*typ);
+             let decl_arg_tys = self.tys_of_params(parameters).unwrap();
+             let typ_kind = &self[typ].kind;
+-            if let &CTypeKind::Function(ret, ref _arg_tys, a, b, c) = typ_kind {
+-                return CTypeKind::Function(ret, decl_arg_tys, a, b, c);
++            if let &CTypeKind::Function(ret, ref _arg_tys, a, b, c, abi) = typ_kind {
++                return CTypeKind::Function(ret, decl_arg_tys, a, b, c, abi);
+             }
+             panic!("expected {typ:?} to be CTypeKind::Function, but it was {typ_kind:?}")
+         }
+@@ -1179,7 +1182,7 @@ pub fn expr_diverges(&self, expr_id: CExprId) -> bool {
+         };
+ 
+         match self.index(pointed_id).kind {
+-            CTypeKind::Function(_, _, _, no_return, _) => no_return,
++            CTypeKind::Function(_, _, _, no_return, _, _) => no_return,
+             _ => false,
+         }
+     }
+@@ -2830,9 +2833,25 @@ pub(crate) fn not_volatile(self) -> Self {
+ //  * UnaryTransformType <http://clang.llvm.org/doxygen/classclang_1_1UnaryTransformType.html>
+ //  * AdjustedType <http://clang.llvm.org/doxygen/classclang_1_1AdjustedType.html>
+ 
+-/// Represents a type in C (6.2.5 Types)
+-///
+-/// Reflects the types in <http://clang.llvm.org/doxygen/classclang_1_1Type.html>
++/// Calling conventions supported by the exporter and Rust backend.
++#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
++pub enum CCallingConvention {
++    C,
++    Win64,
++    SysV64,
++}
++
++impl CCallingConvention {
++    pub fn as_str(self) -> &'static str {
++        match self {
++            Self::C => "C",
++            Self::Win64 => "win64",
++            Self::SysV64 => "sysv64",
++        }
++    }
++}
++
++/// Represents a type in C (6.2.5 Types).
+ #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+ pub enum CTypeKind {
+     Void,
+@@ -2894,7 +2913,7 @@ pub enum CTypeKind {
+     // Note a function taking no arguments should have one `void` argument. Functions without any
+     // arguments are in K&R format.
+     // Flags: is_variable_argument, is_noreturn, has prototype
+-    Function(CQualTypeId, Vec<CQualTypeId>, bool, bool, bool),
++    Function(CQualTypeId, Vec<CQualTypeId>, bool, bool, bool, CCallingConvention),
+ 
+     // Type definition type (6.7.7)
+     Typedef(CTypedefId),
+diff --git a/c2rust-transpile/src/convert_type.rs b/c2rust-transpile/src/convert_type.rs
+index a699cb7..a5f2382 100644
+--- a/c2rust-transpile/src/convert_type.rs
++++ b/c2rust-transpile/src/convert_type.rs
+@@ -128,6 +128,7 @@ pub fn convert_function(
+         ret: Option<CQualTypeId>,
+         params: &[CQualTypeId],
+         is_variadic: bool,
++        abi: CCallingConvention,
+     ) -> TranslationResult<Box<Type>> {
+         let barefn_inputs = params
+             .iter()
+@@ -149,7 +150,7 @@ pub fn convert_function(
+             variadic,
+             ReturnType::Type(Default::default(), output),
+         );
+-        Ok(mk().unsafe_().extern_("C").barefn_ty(fn_ty))
++        Ok(mk().unsafe_().extern_(abi.as_str()).barefn_ty(fn_ty))
+     }
+ 
+     /// Converts the qualified type of a pointer.
+@@ -305,16 +306,16 @@ pub fn convert(
+             CTypeKind::Atomic(ty) => self.convert(ctxt, ty.ctype),
+ 
+             // ANSI/ISO C-style function
+-            CTypeKind::Function(ret, ref params, is_var, is_noreturn, true) => {
++            CTypeKind::Function(ret, ref params, is_var, is_noreturn, true, abi) => {
+                 let opt_ret = if is_noreturn { None } else { Some(ret) };
+-                let fn_ty = self.convert_function(ctxt, opt_ret, params, is_var)?;
++                let fn_ty = self.convert_function(ctxt, opt_ret, params, is_var, abi)?;
+                 Ok(fn_ty)
+             }
+ 
+             // K&R-style function
+-            CTypeKind::Function(ret, _, is_var, is_noreturn, false) => {
++            CTypeKind::Function(ret, _, is_var, is_noreturn, false, abi) => {
+                 let opt_ret = if is_noreturn { None } else { Some(ret) };
+-                let fn_ty = self.convert_function(ctxt, opt_ret, &[], is_var)?;
++                let fn_ty = self.convert_function(ctxt, opt_ret, &[], is_var, abi)?;
+                 Ok(fn_ty)
+             }
+ 
+@@ -351,10 +352,10 @@ pub fn knr_function_type_with_parameters(
+     ) -> TranslationResult<Option<Box<Type>>> {
+         match ctxt.index(ctype).kind {
+             // ANSI/ISO C-style function
+-            CTypeKind::Function(.., true) => Ok(None),
++            CTypeKind::Function(_, _, _, _, true, _) => Ok(None),
+ 
+             // K&R-style function
+-            CTypeKind::Function(ret, ref _params, is_var, is_noreturn, false) => {
++            CTypeKind::Function(ret, ref _params, is_var, is_noreturn, false, abi) => {
+                 // _params is empty here -> get params from function definition instead
+                 let params = params
+                     .iter()
+@@ -368,7 +369,7 @@ pub fn knr_function_type_with_parameters(
+                     .collect::<Vec<_>>();
+ 
+                 let opt_ret = if is_noreturn { None } else { Some(ret) };
+-                let fn_ty = self.convert_function(ctxt, opt_ret, &params, is_var)?;
++                let fn_ty = self.convert_function(ctxt, opt_ret, &params, is_var, abi)?;
+                 Ok(Some(fn_ty))
+             }
+ 
+diff --git a/c2rust-transpile/src/translator/functions.rs b/c2rust-transpile/src/translator/functions.rs
+index e423e49..30566ea 100644
+--- a/c2rust-transpile/src/translator/functions.rs
++++ b/c2rust-transpile/src/translator/functions.rs
+@@ -30,10 +30,10 @@ pub fn convert_function(
+             return Ok(ConvertedDecl::NoItem);
+         }
+ 
+-        let (ret, is_variadic): (Option<CQualTypeId>, bool) =
++        let (ret, is_variadic, abi): (Option<CQualTypeId>, bool, CCallingConvention) =
+             match self.ast_context.resolve_type(typ).kind {
+-                CTypeKind::Function(ret, _, is_var, is_noreturn, _) => {
+-                    (if is_noreturn { None } else { Some(ret) }, is_var)
++                CTypeKind::Function(ret, _, is_var, is_noreturn, _, abi) => {
++                    (if is_noreturn { None } else { Some(ret) }, is_var, abi)
+                 }
+                 ref k => {
+                     return Err(format_err!(
+@@ -67,6 +67,7 @@ pub fn convert_function(
+             is_inline,
+             is_main,
+             is_variadic,
++            abi,
+             is_extern,
+             new_name,
+             name,
+@@ -84,6 +85,7 @@ pub fn convert_function(
+                 false,
+                 is_main,
+                 is_variadic,
++                abi,
+                 is_extern,
+                 new_name,
+                 name,
+@@ -104,6 +106,7 @@ fn convert_function_inner(
+         is_inline: bool,
+         is_main: bool,
+         is_variadic: bool,
++        abi: CCallingConvention,
+         is_extern: bool,
+         new_name: &str,
+         name: &str,
+@@ -263,12 +266,12 @@ fn convert_function_inner(
+                     self.mk_cross_check(mk(), vec!["entry(djb2=\"main\")", "exit(djb2=\"main\")"])
+                 } else if (is_global && !is_inline) || is_extern_inline {
+                     mk_linkage(false, new_name, name, self.tcfg.edition)
+-                        .extern_("C")
++                        .extern_(abi.as_str())
+                         .pub_()
+                 } else if self.cur_file.get().is_some() {
+-                    mk().extern_("C").pub_()
++                    mk().extern_(abi.as_str()).pub_()
+                 } else {
+-                    mk().extern_("C")
++                    mk().extern_(abi.as_str())
+                 };
+ 
+                 // In Edition2024, `unsafe_op_in_unsafe_fn` is deny-by-default so we emit an allow pragma
+@@ -334,7 +337,14 @@ fn convert_function_inner(
+                 let mk_ = mk_.unsafety(extern_block_unsafety(self.tcfg.edition));
+                 let function_decl = mk_.fn_foreign_item(decl);
+ 
+-                Ok(ConvertedDecl::ForeignItem(function_decl))
++                if abi == CCallingConvention::C {
++                    Ok(ConvertedDecl::ForeignItem(function_decl))
++                } else {
++                    Ok(ConvertedDecl::Item(
++                        mk().unsafety(extern_block_unsafety(self.tcfg.edition))
++                            .extern_(abi.as_str()).foreign_items(vec![*function_decl]),
++                    ))
++                }
+             }
+         })
+     }
+@@ -373,7 +383,7 @@ pub fn convert_function_call(
+             )
+             .map(|ty| &self.ast_context.resolve_type(ty.ctype).kind);
+         let is_variadic = match fn_ty {
+-            Some(CTypeKind::Function(_, _, is_variadic, _, _)) => *is_variadic,
++            Some(CTypeKind::Function(_, _, is_variadic, _, _, _)) => *is_variadic,
+             _ => false,
+         };
+ 
+@@ -403,7 +413,7 @@ pub fn convert_function_call(
+             // Function pointer call
+             _ => {
+                 let callee = self.convert_expr(ctx.used(), func, None)?;
+-                let make_fn_ty = |ret_ty: Box<Type>| {
++                let make_fn_ty = |ret_ty: Box<Type>, abi: CCallingConvention| {
+                     let ret_ty = match *ret_ty {
+                         Type::Tuple(TypeTuple { elems: ref v, .. }) if v.is_empty() => ReturnType::Default,
+                         _ => ReturnType::Type(Default::default(), ret_ty),
+@@ -413,13 +423,13 @@ pub fn convert_function_call(
+                         None::<BareVariadic>,
+                         ret_ty
+                     );
+-                    mk().barefn_ty(bare_ty)
++                    mk().unsafe_().extern_(abi.as_str()).barefn_ty(bare_ty)
+                 };
+                 match fn_ty {
+-                    Some(CTypeKind::Function(ret_ty, _, _, _, false)) => {
++                    Some(CTypeKind::Function(ret_ty, _, _, _, false, abi)) => {
+                         // K&R function pointer without arguments
+                         let ret_ty = self.convert_type(ret_ty.ctype)?;
+-                        let target_ty = make_fn_ty(ret_ty);
++                        let target_ty = make_fn_ty(ret_ty, *abi);
+                         callee.map(|fn_ptr| {
+                             let fn_ptr = unwrap_function_pointer(fn_ptr);
+                             transmute_expr(mk().infer_ty(), target_ty, fn_ptr)
+@@ -428,7 +438,7 @@ pub fn convert_function_call(
+                     None => {
+                         // We have to infer the return type from our expression type
+                         let ret_ty = self.convert_type(call_expr_ty.ctype)?;
+-                        let target_ty = make_fn_ty(ret_ty);
++                        let target_ty = make_fn_ty(ret_ty, CCallingConvention::C);
+                         callee.map(|fn_ptr| {
+                             transmute_expr(mk().infer_ty(), target_ty, fn_ptr)
+                         }).set_unsafe()
+@@ -535,7 +545,7 @@ pub fn convert_main(&self, main_id: CDeclId) -> TranslationResult<Box<Item>> {
+         } = self.ast_context.index(main_id).kind
+         {
+             let ret: CTypeKind = match self.ast_context.resolve_type(typ).kind {
+-                CTypeKind::Function(ret, _, _, _, _) => {
++                CTypeKind::Function(ret, _, _, _, _, _) => {
+                     self.ast_context.resolve_type(ret.ctype).kind.clone()
+                 }
+                 ref k => {
+diff --git a/c2rust-transpile/src/translator/variadic.rs b/c2rust-transpile/src/translator/variadic.rs
+index 8416eaf..7851312 100644
+--- a/c2rust-transpile/src/translator/variadic.rs
++++ b/c2rust-transpile/src/translator/variadic.rs
+@@ -204,7 +204,7 @@ enum VaArgCastKind {
+                 // The current implementation of the C-variadics feature doesn't allow us to
+                 // return `Option<fn(...) -> _>` from `VaList::arg`, so we detect function pointers
+                 // and construct the corresponding unsafe type `* mut fn(...) -> _`.
+-                if let CTypeKind::Function(ret, ref params, is_variadic, is_noreturn, _) =
++                if let CTypeKind::Function(ret, ref params, is_variadic, is_noreturn, _, abi) =
+                     resolved_ctype.kind
+                 {
+                     // ty is a function pointer type -> build Rust unsafe function pointer type
+@@ -215,6 +215,7 @@ enum VaArgCastKind {
+                         opt_ret,
+                         params,
+                         is_variadic,
++                        abi,
+                     )?;
+ 
+                     cast_kind = Some(VaArgCastKind::Transmute(self.convert_type(ty.ctype)?));

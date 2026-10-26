@@ -3,11 +3,13 @@ name: vkd3d Rust translation probe
 on:
   workflow_dispatch:
   push:
-    branches: [w3-shader-full-compiler-probe]
+    branches: [w3-shader-full-compiler-probe, w3-c2rust-win64-abi]
     paths:
       - .github/workflows/vkd3d-rust-probe.yml
       - tools/vkd3d-rust-probe/*.py
       - tools/vkd3d-rust-probe/*.rs
+      - tools/vkd3d-rust-probe/patches/**
+      - tools/vkd3d-rust-probe/abi-fixtures/**
       - tools/vkd3d/build.sh
 
 permissions:
@@ -79,11 +81,14 @@ jobs:
           git -C "$RUNNER_TEMP/c2rust-src" fetch --depth 1 origin "$C2RUST_REV"
           git -C "$RUNNER_TEMP/c2rust-src" checkout --detach FETCH_HEAD
           test "$(git -C "$RUNNER_TEMP/c2rust-src" rev-parse HEAD)" = "$C2RUST_REV"
+          python3 tools/vkd3d-rust-probe/apply_c2rust_patch.py \
+            --source "$RUNNER_TEMP/c2rust-src" --artifacts "$RUNNER_TEMP/vkd3d-probe/logs"
           cargo +1.95.0 install --locked --path "$RUNNER_TEMP/c2rust-src/c2rust" --root "$RUNNER_TEMP/vkd3d-probe/tool"
           cp "$RUNNER_TEMP/c2rust-src/Cargo.lock" "$RUNNER_TEMP/vkd3d-probe/logs/c2rust-Cargo.lock"
           cp "$RUNNER_TEMP/c2rust-src/LICENSE" "$RUNNER_TEMP/vkd3d-probe/tool/LICENSE"
           "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" --version
           ldd "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust-transpile"
+          sha256sum "$RUNNER_TEMP/vkd3d-probe/tool/bin/"* > "$RUNNER_TEMP/vkd3d-probe/logs/c2rust-binaries-sha256.txt"
       - name: Bundle prepared input and tool executables
         id: bundle
         timeout-minutes: 2
@@ -155,6 +160,35 @@ jobs:
           path: ${{ runner.temp }}/vkd3d-probe
       - name: Extract prepared source and tool
         run: tar -xzf "$RUNNER_TEMP/vkd3d-probe/prepared.tar.gz" -C "$RUNNER_TEMP/vkd3d-probe"
+      - name: Prove C and translated Rust Win64 ABI in both directions
+        timeout-minutes: 4
+        run: |
+          python3 tools/vkd3d-rust-probe/abi_smoke.py \
+            --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
+            --artifacts "$RUNNER_TEMP/vkd3d-probe/evidence/abi-smoke"
+      - name: Translate the real blob failure point before the all-unit probe
+        timeout-minutes: 4
+        run: |
+          python3 tools/vkd3d-rust-probe/probe.py \
+            --source "$RUNNER_TEMP/vkd3d-probe/prepared/work-linux-native/vkd3d-2.1" \
+            --artifacts "$RUNNER_TEMP/vkd3d-probe/evidence/blob" \
+            --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
+            --clang /usr/bin/clang-18 --rust-toolchain 1.95.0 \
+            --filter '/vkd3d-common/blob\.c$' --timeout 60 --translation-only
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'vkd3d-probe/evidence/blob'
+          result = json.loads((root / 'result.json').read_text())
+          assert result['transpile']['exit_code'] == 0, result
+          assert result['complete_translation'], result
+          assert result['translation_units'] == 1, result
+          entry = json.loads((root / 'compile_commands.json').read_text())[0]
+          command = entry['arguments'][:-2] + ['-Xclang', '-ast-dump-all', '-fsyntax-only', entry['file']]
+          with (root / 'clang18-blob-ast.log').open('w') as output:
+              subprocess.run(command, cwd=entry['directory'], stdout=output, stderr=subprocess.STDOUT, check=True, timeout=60)
+          assert result.get('invalid_output_markers', []) == [], result
+          PY
       - name: Translate all 24 units, build, link, and compare
         timeout-minutes: 55
         run: |

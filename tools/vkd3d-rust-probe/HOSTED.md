@@ -18,7 +18,7 @@ commit before any hosted attempt.
 | Builds | Raw stable, patched stable, then bootstrap and experimental flags if necessary. Each build/link gets 300 seconds. Native syntax checks remain capped at 120 seconds per unit. |
 | Numeric proof | Native C against actual configured `hlsl.h`, then stable Rust against complete translated layout declarations; each compiler 60 seconds, run 30 seconds. |
 | Runtime | Four shader shapes, VS/PS, shader models 2/3, SPIR-V/D3D assembly/D3D9 bytecode: 48 cases, 30 seconds per process. The 55-minute step and 70-minute job cap aggregate work. |
-| Trigger | Manual dispatch or executable-path push on `w3-shader-full-compiler-probe` only. No PR trigger. |
+| Trigger | Manual dispatch or executable-path push on `w3-shader-full-compiler-probe` or `w3-c2rust-win64-abi`. No PR trigger. |
 | Authority | `contents: read`, checkout credentials disabled, no secrets, publication, deployment, larger runner, or paid service. Root alone pushes/dispatches. |
 | Artifacts | Pinned configured input, installed native baseline, and tool bundle for 1 day; setup and all experiment evidence for 7 days. Cargo targets excluded. |
 
@@ -99,3 +99,43 @@ Linux ARM64, and full Apple Silicon compiler acceptance. The unavailable
 Local checks are Python unit tests, actionlint, rustfmt, shell syntax, diff
 whitespace, and the tiny saved-parser native C/Rust numeric check. Configuration
 and those checks do not establish hosted translation, linkage, or semantics.
+
+## Pinned C2Rust Win64 repair
+
+The official source revision remains `ac687698b6c13491dfec45c6a9ad9e8b4da35227`.
+`apply_c2rust_patch.py` refuses another revision or dirty source, checks the patch
+with `git apply --check`, then records its SHA256, applied diff, original revision,
+and modified source hashes. The setup artifact also records executable hashes and
+retains the official LICENSE and Cargo.lock. Only the local patch is committed.
+
+The exporter unwraps `MacroQualifiedType` for both type IDs and traversal, and
+uses the equivalent type for calling-convention attributes. Function prototype
+and no-prototype CBOR records carry a calling convention into a Rust enum.
+Definitions, foreign declarations, function pointers, K&R pointer calls, type
+comparison, declared-argument reconstruction, and variadic pointer extraction
+preserve it. `C`, `win64`, and `sysv64` are supported. Other conventions stop
+export rather than silently becoming C. This patch targets the pinned LLVM 18
+hosted tool build; compatibility with other Clang versions is unverified.
+
+Translation is gated by a test-only native x86_64 C/Rust executable. A macro
+attributed Win64 function and vtable pointer receive eight alternating integer
+and floating arguments, including stack arguments. A C caller checks translated
+Rust direct and vtable calls against 204, a no-prototype vtable call against 17,
+and an ordinary C function against 86. Translated Rust calls a native Win64
+callback and the C caller checks 120. Every compile/link/run must succeed and
+runtime output must exactly match. This C fixture never enters the production
+compiler driver. LLVM 18 AST output is retained for the fixture and real blob.
+
+Only after this executable passes does real `blob.c` receive a 60-second
+`--fail-on-error` translation gate. `--translation-only` stops this targeted probe
+before redundant compiler builds and labels the result `translation_only_success`.
+It does not count as compilation, link, or runtime acceptance. Then the unchanged
+24-unit experiment includes all five common and 19 shader units. Remaining
+variadic and foreign-type stable-Rust failures stay visible. The parser offsetof
+patch, raw/working hashes, runtime comparison, and status classification are
+otherwise unchanged. Extern inventory includes every emitted ABI and preserves
+the aggregate declared/defined/unresolved sets alongside per-ABI sets.
+
+No hosted tool build, smoke executable, or 24-unit result for this patch has been
+observed during implementation. Passing local script tests and workflow lint do
+not establish translator compilation or ABI correctness.

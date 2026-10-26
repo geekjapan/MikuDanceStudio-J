@@ -195,7 +195,6 @@ fn apply_or_report(ctx: &mut Ctx, cmd: Command) -> bool {
 fn pan(ctx: &mut Ctx, dx: f32, dy: f32) {
     let s = &ctx.editor.doc.pmm.camera_state;
     apply_or_report(ctx, Command::SetViewOffset([s[3] + dx, s[4] + dy]));
-    pan_view_offset(&mut ctx.editor.camera, dx, dy);
 }
 
 /// The model-mode right drag without Shift (`pump_navigation.cpp:335` to `:342`): Ctrl moves
@@ -948,19 +947,6 @@ fn drag_scale(m: Modifiers) -> f32 {
     }
 }
 
-/// The model-mode view offsets (`ViewOffsetX/Y`, the eye of the fixed look-at view,
-/// `src/render/debug_geometry.cpp:560`) moved by `(dx, dy)`: the target moves along the camera's
-/// right and up axes, which draws the same picture. [`pan`] also writes the offsets to the
-/// document.
-pub fn pan_view_offset(camera: &mut Camera, dx: f32, dy: f32) {
-    let [pitch, yaw, roll] = camera.rotation;
-    let r = Mat4::multiply(&Mat4::rotation_y(yaw), &Mat4::rotation_x(pitch));
-    let r = Mat4::multiply(&r, &Mat4::rotation_z(roll)).0;
-    for j in 0..3 {
-        camera.target[j] += dx * r[j * 4] + dy * r[j * 4 + 1];
-    }
-}
-
 /// `BoneEditPathActive` (`pump_navigation.cpp:110`): the camera follows the selected model, so a
 /// model-mode right or middle drag only refreshes the readouts.
 fn bone_edit_path(editor: &Editor) -> bool {
@@ -1002,7 +988,7 @@ struct Overlay {
 fn overlay(editor: &Editor, size: [i32; 2]) -> Overlay {
     let rig = rig(editor).filter(|_| size[0] > 0 && size[1] > 0);
     let screen = rig.as_ref().map_or_else(Vec::new, |r| {
-        let view = editor.camera.view(size[0] as u32, size[1] as u32);
+        let view = crate::scene::view(&editor.doc, &editor.camera, size.map(|v| v as u32));
         screen(r, &view, size)
     });
     let center = rig

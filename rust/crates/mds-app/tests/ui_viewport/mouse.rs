@@ -85,7 +85,7 @@ fn repeated_clicks_cycle_through_overlapping_bones() {
     let size = [100.0, 80.0];
     let at = {
         let rig = viewport::rig(&r.e).unwrap();
-        let view = r.e.camera.view(100, 80);
+        let view = mds_app::scene::view(&r.e.doc, &r.e.camera, [100, 80]);
         let s = viewport::screen(&rig, &view, [100, 80]);
         let ([x, y], _) = s[2].unwrap();
         [x as f32, y as f32]

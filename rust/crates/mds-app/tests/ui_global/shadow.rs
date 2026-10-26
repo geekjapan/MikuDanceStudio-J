@@ -1,8 +1,7 @@
 use crate::support::{camera_mode, run, with_ctx};
 use mds_app::actions;
 use mds_app::editor::Editor;
-use mds_app::ui::shadow_panel::{self, commit_range, set_range};
-use mds_app::ui::Ctx;
+use mds_app::ui::shadow_panel::{commit_range, set_range};
 
 fn distance(e: &Editor) -> f32 {
     e.doc.pmm.physics_interval
@@ -135,46 +134,27 @@ const SJIS: &[(u16, char)] = &[
     (0x82BD, 'た'),
 ];
 
-/// Shift+G shows the shadow map over the viewport (`key_ladder.cpp:158`), which `mds-render` has
-/// no map to do.
 #[test]
-fn the_shadow_map_display_key_is_not_implemented() {
-    let mut e = camera_mode();
-    assert_eq!(
-        run(&mut e, "key:Shift+G"),
-        Err("key:Shift+G: not implemented".into())
-    );
-}
-
-/// Check box 556 sets the size of the shadow map, 0x1000 when checked and 0x800 when not
-/// (`command_frame_register.cpp:722` to `:747`); it is window state and no part of the scene.
-#[test]
-fn fshadow_sets_the_map_size_in_the_window() {
-    let mut e = camera_mode();
+fn the_shadow_controls_reach_the_stage_without_changing_the_document() {
+    use mds_render::ShadowMapSize::{Texels2048, Texels4096};
+    let mut e = Editor::empty();
+    e.apply(mds_doc::Command::SelectCameraMode).unwrap();
     let saved = e.doc.save().unwrap();
-    let egui = egui::Context::default();
-    assert_eq!(shadow_panel::map_size(&egui), 0x800);
-    for want in [0x1000, 0x800, 0x1000] {
-        let mut status = String::new();
-        mds_app::actions::run(
-            &mut Ctx {
-                editor: &mut e,
-                now_ms: 0,
-                egui: Some(egui.clone()),
-                viewport: None,
-                status: &mut status,
-            },
-            "ctl:556",
-        )
+    for (size, display) in [(Texels2048, false), (Texels4096, true), (Texels2048, false)] {
+        e.with_stage([640, 360], &[[0.0; 2]], |_, stage| {
+            assert_eq!(stage.shadow_map, size);
+            assert_eq!(
+                stage.shadow_map_display,
+                display.then_some([0.0, 0.0, 640.0, 360.0])
+            );
+        })
         .unwrap();
-        assert_eq!(shadow_panel::map_size(&egui), want);
+        run(&mut e, "ctl:556").unwrap();
+        run(&mut e, "key:Shift+G").unwrap();
     }
     assert_eq!(e.doc.save().unwrap(), saved);
     assert!(!e.modified);
-    run(&mut e, "ctl:556").unwrap();
-    assert_eq!(
-        shadow_panel::map_size(&egui),
-        0x1000,
-        "no window, no change"
-    );
+    e.adopt(Editor::empty()).unwrap();
+    assert_eq!(e.shadow_map, Texels4096);
+    assert!(e.shadow_map_display);
 }

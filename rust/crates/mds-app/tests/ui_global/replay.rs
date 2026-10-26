@@ -70,13 +70,6 @@ fn camera_txt_saves_the_bytes_of_the_cpp_application() {
     );
 }
 
-/// The rows of these three areas that have no action, with what each needs. A row that gains an
-/// action must leave this list, and a row that loses one must join it.
-const MISSING: &[(&str, &str)] = &[(
-    "key:Shift+G",
-    "renderer state: the self-shadow map shown over the viewport (mds-render has none)",
-)];
-
 #[test]
 fn the_rows_without_an_action_are_the_listed_ones() {
     let text =
@@ -95,13 +88,7 @@ fn the_rows_without_an_action_are_the_listed_ones() {
         }
     }
     assert_eq!(rows, 51);
-    assert_eq!(
-        missing,
-        MISSING
-            .iter()
-            .map(|(id, _)| id.to_string())
-            .collect::<Vec<_>>()
-    );
+    assert_eq!(missing, Vec::<String>::new());
 }
 
 fn read_input(path: &str) -> Option<Vec<u8>> {

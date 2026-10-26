@@ -1,7 +1,7 @@
 use super::close;
 use mds_app::ui::viewport::{
-    self, drag_mode, local_axes, next_coordinate, pan_view_offset, pick, project, selection_list,
-    tool_at, BoneState, Hit, Pointer,
+    self, drag_mode, local_axes, next_coordinate, pick, project, selection_list, tool_at,
+    BoneState, Hit, Pointer,
 };
 use mds_math::Mat4;
 use mds_render::Camera;
@@ -242,32 +242,6 @@ fn selection_lists_lead_with_the_selected_bone() {
     assert_eq!(selection_list(&[false; 3], 1), Vec::<u32>::new());
 }
 
-/// The view offsets are the eye of the look-at view (`debug_geometry.cpp:560..566`): view =
-/// `T(-target) * R * T(-offsetX, -offsetY, -distance)`. Moving the target by the offsets along the
-/// camera's right and up axes gives the same view of every point.
-#[test]
-fn panning_the_target_equals_the_view_offset() {
-    let c = camera();
-    let (ox, oy) = (1.5, -0.75);
-    let mut panned = c;
-    pan_view_offset(&mut panned, ox, oy);
-    let [pitch, yaw, roll] = c.rotation;
-    let r = Mat4::multiply(&Mat4::rotation_y(yaw), &Mat4::rotation_x(pitch));
-    let r = Mat4::multiply(&r, &Mat4::rotation_z(roll));
-    let [x, y, z] = c.target;
-    let world = Mat4::multiply(&Mat4::translation(-x, -y, -z), &r);
-    let cpp = Mat4::multiply(&world, &Mat4::translation(-ox, -oy, -c.distance)).0;
-    let view = |p: [f32; 3], m: &[f32; 16]| -> [f32; 3] {
-        std::array::from_fn(|j| p[0] * m[j] + p[1] * m[4 + j] + p[2] * m[8 + j] + m[12 + j])
-    };
-    let [x, y, z] = panned.target;
-    let world = Mat4::multiply(&Mat4::translation(-x, -y, -z), &r);
-    let ours = Mat4::multiply(&world, &Mat4::translation(0.0, 0.0, -c.distance)).0;
-    for p in [[0.0, 0.0, 0.0], [3.0, -1.0, 7.0], [-5.0, 12.0, 2.0]] {
-        close(&view(p, &ours), &view(p, &cpp), "view-space point");
-    }
-}
-
 /// `ModeCameraAdjust`'s Shift and Ctrl scales (`frame_modes.cpp:574..576`).
 #[test]
 fn camera_moves_scale_with_shift_and_ctrl() {
@@ -289,5 +263,25 @@ fn camera_moves_scale_with_shift_and_ctrl() {
         };
         viewport::camera_move(&mut c, 1, &p, true);
         close(&c.target, &[1.0, 10.0 + 10.0 * step, -2.0], "global Y");
+    }
+}
+
+#[test]
+fn model_view_projection_keeps_the_reference_and_camera_mode_ignores_offsets() {
+    let mut doc = mds_doc::Document::startup();
+    let c = camera();
+    doc.pmm.camera_state[3] = 1.5;
+    doc.pmm.camera_state[4] = -0.75;
+    for (mode, follow, offset) in [(0, 0, [1.5, -0.75]), (1, 0, [0.0; 2]), (0, 1, [0.0; 2])] {
+        doc.pmm.settings.options[0] = mode;
+        doc.pmm.appearance.follow_camera = follow;
+        for reference in 0..=2 {
+            doc.pmm.timeline.camera_reference_mode = reference;
+            let view = mds_app::scene::view(&doc, &c, [640, 360]);
+            let expected = c.view_with_offset(offset, 640, 360);
+            for point in [c.target, [0.0; 3], [3.0, 5.0, 7.0]] {
+                assert_eq!(view.clip(point), expected.clip(point));
+            }
+        }
     }
 }

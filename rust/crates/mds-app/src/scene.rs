@@ -226,7 +226,7 @@ pub fn with_stage_lit<R>(
     let frame = Frame {
         width,
         height,
-        view: shot.camera.view(width, height),
+        view: view(doc, shot.camera, shot.size),
         light,
         background: BACKGROUND,
         toon: true,
@@ -255,4 +255,15 @@ pub fn state_camera(doc: &Document) -> Camera {
         fov_deg: p.settings.camera_fov,
         orthographic: p.camera_perspective != 0,
     }
+}
+
+/// The view offsets belong to the model view, separate from its reference point.
+pub fn view(doc: &Document, camera: &Camera, [width, height]: [u32; 2]) -> mds_render::View {
+    let p = &doc.pmm;
+    let offset = if p.settings.options[0] == 0 && p.appearance.follow_camera == 0 {
+        [p.camera_state[3], p.camera_state[4]]
+    } else {
+        [0.0; 2]
+    };
+    camera.view_with_offset(offset, width, height)
 }

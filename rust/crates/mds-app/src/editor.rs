@@ -71,12 +71,11 @@ use crate::playback::{self, Options, Pass, Playback};
 use crate::record::{self, Recording};
 use crate::scene::{self, read_model, Assets, Shot};
 use crate::ui::dialog::AviSettings;
-use crate::ui::viewport::pan_view_offset;
 use crate::{audio, file};
 use mds_doc::{Command, Document, ModelFile};
 use mds_media::wav::Wave;
 use mds_physics::PhysicsScene;
-use mds_render::{Camera, Frame, Light, Stage};
+use mds_render::{Camera, Frame, Light, ShadowMapSize, Stage};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -96,6 +95,9 @@ pub struct Editor {
     pub physics_opens: usize,
     /// The camera the viewport draws from (the camera-mode view state).
     pub camera: Camera,
+    /// Window-only self-shadow controls, kept across scene loads.
+    pub shadow_map: ShadowMapSize,
+    pub shadow_map_display: bool,
     /// The play panel. The PMM stores it in `timeline`, but the document has no command for it yet,
     /// so it is not saved.
     pub options: Options,
@@ -153,6 +155,8 @@ impl Editor {
                 Some(c) => c,
                 None => scene::track_camera(&doc, current)?,
             },
+            shadow_map: ShadowMapSize::default(),
+            shadow_map_display: false,
             options: Options::of(&doc.pmm.timeline),
             doc,
             path,
@@ -209,6 +213,8 @@ impl Editor {
         fresh.low_power = self.low_power;
         fresh.message_seen = self.message_seen;
         fresh.floor = self.floor;
+        fresh.shadow_map = self.shadow_map;
+        fresh.shadow_map_display = self.shadow_map_display;
         fresh.reapply_physics_menus(self.physics.always_on_off)?;
         fresh.physics_opens += self.physics_opens;
         let (old, new) = (&mut self.mme, &mut fresh.mme);
@@ -254,7 +260,7 @@ impl Editor {
     /// camera mode, and with camera tracking on while playing or with the camera's parent model
     /// selected (`cameraView`, `src/render/debug_geometry.cpp:476`). The model view keeps its
     /// camera over seeks and playback (`RefreshAfterFrameApply` moves the camera state in camera
-    /// mode only), and with it the view offsets the pans moved it by.
+    /// mode only). The model view offsets stay in the document.
     fn follow_track(&mut self, frame: u32) -> Result<(), String> {
         let p = &self.doc.pmm;
         let a = &p.appearance;
@@ -800,17 +806,24 @@ impl Editor {
             picture_viewport: None,
         };
         let light = self.light(shot.frame)?;
-        scene::with_stage_lit(&self.doc, &self.assets, &shot, light, draw)
+        scene::with_stage_lit(&self.doc, &self.assets, &shot, light, |frame, stage| {
+            let stage = Stage {
+                shadow_map: self.shadow_map,
+                shadow_map_display: self.shadow_map_display.then_some([
+                    0.0,
+                    0.0,
+                    size[0] as f32,
+                    size[1] as f32,
+                ]),
+                ..*stage
+            };
+            draw(frame, &stage)
+        })
     }
 }
 
-/// The camera of the C++ model view (`src/render/debug_geometry.cpp:472` to `:566`) when the
-/// document opens in it: the camera state's rotation about the reference point, the origin for
-/// reference mode 0 without a camera parent, with the eye moved by the view offsets
-/// `camera_state[3..5]` (`ViewOffsetX`, `ViewOffsetY`), which the target moved along the camera's
-/// right and up axes draws the same ([`pan_view_offset`]). `None` in camera mode, with camera
-/// tracking on, and for the reference modes 1 and 2 (the center bone or the selected bone), which
-/// need the posed bones.
+/// The model view's rotation and distance about the reference point (the origin in mode 0).
+/// Other reference modes need the posed bones. View offsets are applied when projecting.
 fn model_view(doc: &Document) -> Option<Camera> {
     let p = &doc.pmm;
     let model_view = p.settings.options[0] == 0
@@ -820,13 +833,10 @@ fn model_view(doc: &Document) -> Option<Camera> {
     if !model_view {
         return None;
     }
-    let s = &p.camera_state;
-    let mut camera = Camera {
+    Some(Camera {
         target: [0.0; 3],
         ..scene::state_camera(doc)
-    };
-    pan_view_offset(&mut camera, s[3], s[4]);
-    Some(camera)
+    })
 }
 
 /// The whole frame a cursor at `cursor` seconds shows ([`Playback::frame`]).

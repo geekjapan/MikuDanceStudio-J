@@ -234,27 +234,37 @@ fn the_model_view_keeps_its_view_offsets() {
     assert_eq!(e.doc.pmm.settings.options[0], 0, "model mode");
     e.doc.pmm.camera_state[3] = 2.0;
     e.doc.pmm.camera_state[4] = 5.0;
-    let s = e.doc.pmm.camera_state;
     let reopened = Editor::new(e.doc.clone(), e.path.clone()).unwrap();
-    let mut want = Camera {
+    let want = Camera {
         target: [0.0; 3],
         ..scene::state_camera(&e.doc)
     };
-    mds_app::ui::viewport::pan_view_offset(&mut want, s[3], s[4]);
     assert_eq!(reopened.camera, want);
-    assert_eq!(
-        want.target,
-        [2.0, 5.0, 0.0],
-        "no rotation: the offsets are x and y"
-    );
+    reopened
+        .with_stage([640, 360], &[[0.0; 2]], |f, _| {
+            assert_eq!(
+                f.view.clip([1.0, 2.0, 3.0]),
+                want.view_with_offset([2.0, 5.0], 640, 360)
+                    .clip([1.0, 2.0, 3.0])
+            );
+        })
+        .unwrap();
 
     let mut e = reopened;
     e.apply(Command::SetViewOffset([3.0, 4.0])).unwrap();
-    mds_app::ui::viewport::pan_view_offset(&mut e.camera, 1.0, -1.0);
     let panned = e.camera;
     e.seek(20).unwrap();
     e.step_frame(true).unwrap();
     assert_eq!(e.camera, panned);
+    e.with_stage([640, 360], &[[0.0; 2]], |f, _| {
+        assert_eq!(
+            f.view.clip([1.0, 2.0, 3.0]),
+            panned
+                .view_with_offset([3.0, 4.0], 640, 360)
+                .clip([1.0, 2.0, 3.0])
+        );
+    })
+    .unwrap();
 
     // Playback films the camera track only with tracking on (`cameraView`,
     // `debug_geometry.cpp:476`; `InitGlobalTracks`, `playback_state.cpp:327`).
@@ -304,6 +314,8 @@ fn the_front_view_of_the_golden_strips_shows_their_edge_color() {
         return;
     };
     let mut e = open("swing600-golden.pmm");
+    // The material measurement excludes the colored grid and axes.
+    e.doc.pmm.view.ground_grid = 0;
     e.toggle_play(0).unwrap();
     e.pump(33).unwrap();
     assert_eq!(

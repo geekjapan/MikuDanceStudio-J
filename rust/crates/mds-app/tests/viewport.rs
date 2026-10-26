@@ -69,7 +69,28 @@ fn the_window_draws_the_pixels_of_the_dump() {
     let Some(gpu) = gpu_or_skip() else { return };
     let mut viewport = Viewport::new(gpu.device(), gpu.queue()).unwrap();
     let mut editor = Editor::open(&dir().join("swing600-golden.pmm")).unwrap();
+    editor
+        .apply(mds_doc::Command::SetViewOffset([1.5, -0.75]))
+        .unwrap();
+    editor.camera.rotation = [0.1, 0.2, 0.05];
+    editor
+        .apply(mds_doc::Command::SetSelfShadow {
+            mode: 2,
+            distance: 0.01,
+        })
+        .unwrap();
+    editor
+        .apply(mds_doc::Command::RegisterGlobalKeys(vec![
+            mds_doc::GlobalTrack::SelfShadow,
+        ]))
+        .unwrap();
     for (frame, now) in [(150, 100), (40, 200), (599, 300)] {
+        editor.shadow_map = if frame == 40 {
+            mds_render::ShadowMapSize::Texels4096
+        } else {
+            mds_render::ShadowMapSize::Texels2048
+        };
+        editor.shadow_map_display = frame == 40;
         editor.seek(frame).unwrap();
         editor.pump(now).unwrap();
         let (texture, _, _) = viewport.draw(&editor, SIZE, 1).unwrap();
@@ -83,6 +104,16 @@ fn the_window_draws_the_pixels_of_the_dump() {
             "frame {frame}: the models are drawn"
         );
         assert!(window == dump, "frame {frame}: window and dump differ");
+        if editor.shadow_map_display {
+            assert!(
+                window.chunks_exact(4).all(|p| p[0] == p[1] && p[1] == p[2]),
+                "the displayed depth map is grayscale"
+            );
+            assert!(
+                window.chunks_exact(4).any(|p| p[0] < 255),
+                "the displayed map contains model depth"
+            );
+        }
         eprintln!("frame {frame}: {} px covered, identical", covered(&window));
     }
 }

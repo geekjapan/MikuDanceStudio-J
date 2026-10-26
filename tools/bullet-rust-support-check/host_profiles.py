@@ -128,8 +128,11 @@ def validate_capture(output, kind='support'):
     (output / 'host-profile.json').write_text(json.dumps(report, indent=2) + '\n')
     if profile is None:
         raise ValueError(f'Unreviewed host profile {host()}; capture archived for review')
-    if 'raw' in profile and b''.join(native.splitlines(keepends=True)[-9:]) != (base / profile['raw']).read_bytes():
-        raise ValueError('Native raw output differs from exact host profile')
+    if 'raw' in profile:
+        raw = b''.join(native.splitlines(keepends=True)[-9:])
+        raw_hash = profile.get('raw_sha256', manifest['sha256'][profile['raw']])
+        if capture_text(raw, profile, 9, raw_hash) != (base / profile['raw']).read_bytes():
+            raise ValueError('Native raw output differs from exact host profile')
     capture_text(native, profile, manifest['full_rows'], profile['full_sha256'])
     prefix = b''.join(native.splitlines(keepends=True)[:manifest['compact_rows']])
     expected = (base / profile['compact']).read_bytes()

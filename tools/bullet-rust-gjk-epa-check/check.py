@@ -112,8 +112,6 @@ def main():
     manifest = load('gjk-epa')[0]
     raw_native = fixture.with_name(manifest['profiles'][host()]['raw'])
     environment = {k:v for k,v in environment.items() if not k.startswith('MDS_GJK_EPA_')}
-    environment['MDS_GJK_EPA_NATIVE'] = str(fixture)
-    environment['MDS_GJK_EPA_RAW_NATIVE'] = str(raw_native)
     run([output / 'rust-gjk-epa'], env=environment)
     run([sys.executable, HERE / 'mutations.py', '--out-dir', output / 'mutations', '--crt-rlib', output / 'libmds_crtmath.rlib'], env={k:v for k,v in environment.items() if not k.startswith('MDS_GJK_EPA_')})
     files = [ROOT / 'tools/bullet-rust-support-check/host_profiles.py', *HERE.glob('*.json'), *HERE.glob('*.py'), *HERE.glob('*.rs'), *crt.parent.rglob('*.rs'), *src.rglob('*.h'), *shim.rglob('*.h'), *native_sources, *observed_sources, HERE / 'oracle.cpp', HERE / 'cases.py', HERE / 'observe.py', fixture, frozen_inputs, raw_inputs, raw_native,

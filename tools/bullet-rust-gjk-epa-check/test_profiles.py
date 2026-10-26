@@ -73,7 +73,7 @@ class GjkProfiles(unittest.TestCase):
                 changed = native[:-2] + b'1\n'
                 for name in ['native.tsv', 'observed.tsv', 'rust.tsv']:
                     (output / name).write_bytes(changed)
-                with self.assertRaisesRegex(ValueError, 'raw'):
+                with self.assertRaisesRegex(ValueError, 'hash|raw'):
                     profiles.validate_capture(output, 'gjk-epa')
 
 

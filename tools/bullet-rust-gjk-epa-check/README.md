@@ -19,7 +19,7 @@ reviewed MSVC CMake compile flags from the joint host probe. Unknown profiles
 fail after the complete same-host replay and evidence capture. A captured profile
 requires review before promotion.
 
-The checker writes unmodified and observed stdout, source-copy observation patches, branch counts, compiler commands, compiler and host provenance, and source hashes. Observation must leave stdout identical. The nine required mutations compile in isolation and must fail compact replay. They remove penetration, remove Distance fallback, reject non-Valid EPA results, change face ties, remove margins, change EPA accuracy, introduce double support normalization, rotate local normals, or change simplex reduction.
+The checker writes unmodified and observed stdout, source-copy observation patches, branch counts, compiler commands, compiler and host provenance, and source hashes. Observation must leave stdout identical. The checker first runs unmodified compact and raw tests with their default host selectors under a clean mutation environment. The mutation runner separately requires its unmodified compact baseline to pass before compiling nine required mutations in isolation. Only the marked native query comparison assertion counts as a rejected mutation. Configuration panics, unsupported profiles, compilation failures, timeouts, signals, and other test failures reject the verification run. The mutation receipt records case, schema field, actual word, and expected word, including fields added or removed by query success changes. They remove penetration, remove Distance fallback, reject non-Valid EPA results, change face ties, remove margins, change EPA accuracy, introduce double support normalization, rotate local normals, or change simplex reduction.
 
 Observed native returns include EPA AccuracyReached, InvalidHull, and FallBack. Internal face stock exhaustion, nonconvex faces, degenerate faces, face ties, all GJK projection ranks, reduction, EncloseOrigin ranks 2 through 4, successful Distance fallback, and untouched adapter outputs are observed. The 6,810-case capture records 97 NonConvex and 302 Degenerated status assignment hits in their respective native branches. The JSON counts are authoritative for each capture.
 
@@ -61,6 +61,12 @@ Run the profile and capture negative controls with:
 python3 -m unittest discover -s tools/bullet-rust-gjk-epa-check -v
 ```
 
-Windows x64 and Linux ARM64 native profiles remain unreviewed until their real
-captures run. A configured workflow or cross-host native agreement does not
-establish their same-host Rust replay.
+Run 40406384110 at `e7ef6ecfe5660b85309dfa1e862addf78133ee0c` measured all four supported hosts. The manifest records each ZIP digest, 427-entry source manifest digest, compiler runtime, native command, and full, compact, and raw capture hashes. Linux ARM64 matches the frozen macOS ARM64 words. Windows x64 matches the Linux x64 words after its exact CRLF transport is verified. Windows requires 6,810, 1,801, and nine CRLF records for the full, compact, and raw captures. Native, observed, and Rust output must remain byte-identical on each host before transport conversion. Unknown hosts still fail closed.
+
+Replay the actual downloaded ZIPs, named `macos-arm64.zip`, `linux-x64.zip`, `linux-arm64.zip`, and `windows-x64.zip`, with:
+
+```sh
+python3 tools/bullet-rust-gjk-epa-check/replay_profiles.py --artifacts-dir /path/to/artifacts --receipt /path/to/replay-receipt.json
+```
+
+The replay checks every recorded source blob against the captured commit, all 6,810 schemas and words, the compact and raw difference inventories, and altered capture controls. It verifies strict line endings and hashes separately for all three capture sizes. The old run measured full same-host Rust equality on Windows and Linux ARM64, but stopped at the previously unknown profile before running their mutations. Fresh four-host compact, raw, and mutation workflow results, plus full integration CI, remain required after promotion.

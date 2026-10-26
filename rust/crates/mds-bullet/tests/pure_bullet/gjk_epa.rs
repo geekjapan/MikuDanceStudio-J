@@ -40,13 +40,19 @@ fn status(s: Status) -> u8 {
     }
 }
 fn host_native(raw: bool) -> &'static str {
-    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    if cfg!(all(
+        any(target_os = "macos", target_os = "linux"),
+        target_arch = "aarch64"
+    )) {
         if raw {
             include_str!("../gjk_epa_data/raw-native.tsv")
         } else {
             include_str!("../gjk_epa_data/native.tsv")
         }
-    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+    } else if cfg!(all(
+        any(target_os = "linux", target_os = "windows"),
+        target_arch = "x86_64"
+    )) {
         if raw {
             include_str!("../gjk_epa_data/raw-native-linux-x64.tsv")
         } else {
@@ -161,6 +167,10 @@ fn replay(inputs: &str, native: &str, output_variable: &str) {
         };
         std::fs::write(path, capture).unwrap();
     }
-    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    assert!(
+        mismatches.is_empty(),
+        "MDS_GJK_EPA_NATIVE_MISMATCH_BEGIN\n{}\nMDS_GJK_EPA_NATIVE_MISMATCH_END",
+        mismatches.join("\n")
+    );
     assert!(!inputs.is_empty());
 }

@@ -10,7 +10,8 @@ repo="$(cd "$(dirname "$0")/../.." && pwd)"
 tmp="${TMPDIR:-/tmp}"
 bin="${MDS_VKD3D_OUT:-${tmp%/}/mds-vkd3d}/windows/bin"
 image="$(sed -n 's/^IMAGE="\([^"]*\)".*/\1/p' "$repo/tools/vkd3d/build.sh")"
-dlls="$(cd "$bin" && ls *.dll | grep -v '^libvkd3d-shader')"
+dlls=""
+for f in "$bin"/*.dll; do case "${f##*/}" in libvkd3d-shader*) ;; *) dlls="$dlls ${f##*/}" ;; esac; done
 [ -n "$dlls" ] || { echo "mingw-copyright.sh: no runtime DLL in $bin" >&2; exit 1; }
 out="$repo/licenses/mingw-runtime"
 rm -rf "$out"; mkdir -p "$out"

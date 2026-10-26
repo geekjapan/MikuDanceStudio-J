@@ -336,8 +336,8 @@ fn pmdedit_script() {
 #[test]
 fn jointdrag_script() {
     let out = check("script4", "jointdrag", 15, 5);
-    let tsv =
-        std::fs::read_to_string(fixtures().join("script4/expected/jointdrag/messages.tsv")).unwrap();
+    let tsv = std::fs::read_to_string(fixtures().join("script4/expected/jointdrag/messages.tsv"))
+        .unwrap();
     let want: Vec<&str> = tsv
         .lines()
         .skip(1)

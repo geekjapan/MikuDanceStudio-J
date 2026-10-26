@@ -17,7 +17,11 @@ fn read_input(path: &str) -> Option<Vec<u8>> {
 
 /// One held pass of `button` that moved the cursor by `d`.
 fn drag(button: &str, modifier: &str, d: [i32; 2]) -> viewport::Input {
-    let mut i = input(Some([SIZE[0] / 2.0, SIZE[1] / 2.0]), KeyState::Idle, modifier == "shift");
+    let mut i = input(
+        Some([SIZE[0] / 2.0, SIZE[1] / 2.0]),
+        KeyState::Idle,
+        modifier == "shift",
+    );
     i.ctrl = modifier == "ctrl";
     i.pixels = d;
     match button {
@@ -55,7 +59,11 @@ fn viewoffset_txt_saves_the_bytes_of_the_cpp_application() {
         for s in saved.into_iter().filter(|s| !s.name.ends_with(".emm")) {
             let want = std::fs::read(expected.join(&s.name)).unwrap();
             let first = s.bytes.iter().zip(&want).position(|(a, b)| a != b);
-            assert!(s.bytes == want, "{at} {}: first difference at {first:?}", s.name);
+            assert!(
+                s.bytes == want,
+                "{at} {}: first difference at {first:?}",
+                s.name
+            );
             files += 1;
         }
     }

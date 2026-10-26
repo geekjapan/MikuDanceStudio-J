@@ -342,7 +342,10 @@ fn low_power_stops_the_idle_physics_two_pumps_after_the_last_message() {
         now += 33;
         on.pump(now).unwrap();
         off.pump(now).unwrap();
-        (on.physics.body_poses().unwrap(), off.physics.body_poses().unwrap())
+        (
+            on.physics.body_poses().unwrap(),
+            off.physics.body_poses().unwrap(),
+        )
     };
     let mut last = pump(&mut on, &mut off);
     assert!(last.0 == last.1);
@@ -392,7 +395,8 @@ fn the_command_line_load_gets_the_fresh_world() {
 fn the_light_track_plays_only_behind_the_camera_gate() {
     let mut e = open("swing600.pmm");
     if e.doc.pmm.settings.options[0] != 0 {
-        e.apply(Command::SelectModel(e.doc.pmm.models[0].slot)).unwrap();
+        e.apply(Command::SelectModel(e.doc.pmm.models[0].slot))
+            .unwrap();
     }
     e.doc.pmm.appearance.follow_camera = 0;
     let state = mds_render::Light {

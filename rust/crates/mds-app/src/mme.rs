@@ -659,11 +659,11 @@ impl State {
                 let Some(turn) = self.effects[c].effect.begin_offscreen(gpu, r) else {
                     continue;
                 };
-                for o in 0..n_models {
+                for (o, name) in names.iter().enumerate().take(n_models) {
                     let render_class =
                         i32::from(assigned.iter().any(|&(oo, e)| oo == o && post(self, e)));
                     let obj = TurnObject {
-                        name: &names[o],
+                        name,
                         owner: owner == o,
                         render_class,
                         main: &mme.assignments[o],

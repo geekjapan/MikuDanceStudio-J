@@ -18,8 +18,9 @@ def profile(selected, win32='0', sse='0', template='0'):
 
 class HelperTests(unittest.TestCase):
     def test_msvc_profiles_do_not_share_win32_definition(self):
+        output = Path('out') / 'oracle.exe'
         for diagnostic in (False, True):
-            command = check.native_command('cl', ['oracle.cpp'], Path('out/oracle.exe'),
+            command = check.native_command('cl', ['oracle.cpp'], output,
                                            msvc=True, ffi_default=diagnostic)
             self.assertIn('/fp:precise', command)
             self.assertIn('/MD', command)
@@ -27,7 +28,7 @@ class HelperTests(unittest.TestCase):
             self.assertIn('/O2', command)
             self.assertEqual('/DWIN32' in command, not diagnostic)
             self.assertEqual(any(str(x).startswith('/FI') for x in command), diagnostic)
-            self.assertEqual(command[-1], '/Feout/oracle.exe')
+            self.assertEqual(command[-1], f'/Fe{output}')
             self.assertFalse(any('BT_HAS_ALIGNED_ALLOCATOR' in str(x) for x in command))
 
     def test_generic_command_keeps_compiler_argument_paths(self):

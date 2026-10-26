@@ -10,8 +10,8 @@ use mds_doc::{Document, ModelFile};
 use mds_physics::PhysicsScene;
 use mds_render::picture::PictureQuad;
 use mds_render::{
-    scene, AccessoryDraw, AccessoryMesh, Camera, Frame, Image, Light, Mesh, Picture, Stage,
-    PIXEL_OFFSET_D3D9,
+    scene, AccessoryDraw, AccessoryMesh, Camera, CameraFrame, Frame, Image, Light, Mesh, Picture,
+    Stage, PIXEL_OFFSET_D3D9,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -139,7 +139,8 @@ pub struct Shot<'a> {
     pub physics: &'a PhysicsScene,
     /// The timeline frame (the light, self-shadow and accessory tracks are read at it).
     pub frame: u32,
-    pub camera: &'a Camera,
+    pub camera: &'a CameraFrame,
+    pub view_offset: [f32; 2],
     pub size: [u32; 2],
     /// As [`Frame::samples`].
     pub samples: &'a [[f32; 2]],
@@ -226,7 +227,9 @@ pub fn with_stage_lit<R>(
     let frame = Frame {
         width,
         height,
-        view: shot.camera.view(width, height),
+        view: shot
+            .camera
+            .view_with_offset(shot.view_offset, width, height),
         light,
         background: BACKGROUND,
         toon: true,
@@ -254,5 +257,15 @@ pub fn state_camera(doc: &Document) -> Camera {
         distance: s[5],
         fov_deg: p.settings.camera_fov,
         orthographic: p.camera_perspective != 0,
+    }
+}
+
+pub(crate) fn camera_frame(frame: mds_doc::CameraFrame) -> CameraFrame {
+    CameraFrame {
+        target: frame.target,
+        rotation: frame.rotation,
+        distance: frame.distance,
+        fov_deg: frame.fov_deg,
+        orthographic: frame.orthographic,
     }
 }

@@ -43,7 +43,7 @@
 //! view a seek, a frame step and the playback put the track's camera there, and an edit that
 //! moves the state (the camera panel, a paste or delete of camera keys) shows it before any key is
 //! registered. The model view turns about its reference point with the view offsets in the eye
-//! ([`model_view`]) and keeps its camera over seeks and playback.
+//! (`Document::prepare_camera_frame`) and keeps its camera over seeks and playback.
 //! The light is the light state (`light_state`, which the light panel edits and a camera-mode seek
 //! moves to the track, `RefreshAfterFrameApply`) except in camera mode and while playing with
 //! camera tracking on: `PlaybackPoseAdvance` plays the light track only behind the same gate as
@@ -71,15 +71,20 @@ use crate::playback::{self, Options, Pass, Playback};
 use crate::record::{self, Recording};
 use crate::scene::{self, read_model, Assets, Shot};
 use crate::ui::dialog::AviSettings;
-use crate::ui::viewport::pan_view_offset;
 use crate::{audio, file};
 use mds_doc::{Command, Document, ModelFile};
 use mds_media::wav::Wave;
 use mds_physics::PhysicsScene;
-use mds_render::{Camera, Frame, Light, Stage};
+use mds_render::{CameraFrame, Frame, Light, ShadowMapSize, Stage};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+#[derive(Clone, Copy)]
+enum CameraPass {
+    Stopped,
+    Playing { cursor: f32 },
+}
 
 pub struct Editor {
     pub doc: Document,
@@ -95,7 +100,12 @@ pub struct Editor {
     /// How many times the physics world was built for this editor.
     pub physics_opens: usize,
     /// The camera the viewport draws from (the camera-mode view state).
-    pub camera: Camera,
+    camera: CameraFrame,
+    camera_offset: [f32; 2],
+    camera_track: crate::camera_track::CameraTrackCursor,
+    /// Window-only self-shadow controls, kept across scene loads.
+    pub shadow_map: ShadowMapSize,
+    pub shadow_map_display: bool,
     /// The play panel. The PMM stores it in `timeline`, but the document has no command for it yet,
     /// so it is not saved.
     pub options: Options,
@@ -142,17 +152,20 @@ impl Editor {
             true => PhysicsScene::open_running(&doc.pmm, read)?,
             false => PhysicsScene::open(&doc.pmm, read)?,
         };
-        let current = doc.pmm.timeline.current_frame.max(0) as u32;
+        let mut doc = doc;
+        let frame =
+            doc.prepare_camera_frame(mds_doc::camera_anchors(&doc, &physics.scene.models), false);
         Ok(Editor {
             mme: Mme::autoload(&doc, path.as_deref()),
             last_reload_ms: 0,
             assets: Assets::load(&doc, &dir)?,
             wave: wave_of(&doc, &dir),
             recording: None,
-            camera: match model_view(&doc) {
-                Some(c) => c,
-                None => scene::track_camera(&doc, current)?,
-            },
+            camera: scene::camera_frame(frame),
+            camera_offset: frame.offset,
+            camera_track: Default::default(),
+            shadow_map: ShadowMapSize::default(),
+            shadow_map_display: false,
             options: Options::of(&doc.pmm.timeline),
             doc,
             path,
@@ -209,6 +222,8 @@ impl Editor {
         fresh.low_power = self.low_power;
         fresh.message_seen = self.message_seen;
         fresh.floor = self.floor;
+        fresh.shadow_map = self.shadow_map;
+        fresh.shadow_map_display = self.shadow_map_display;
         fresh.reapply_physics_menus(self.physics.always_on_off)?;
         fresh.physics_opens += self.physics_opens;
         let (old, new) = (&mut self.mme, &mut fresh.mme);
@@ -250,20 +265,33 @@ impl Editor {
         self.playback.is_some() || self.recording.is_some()
     }
 
-    /// The view camera at `frame` of the camera track, where the C++ draws from the camera: in
-    /// camera mode, and with camera tracking on while playing or with the camera's parent model
-    /// selected (`cameraView`, `src/render/debug_geometry.cpp:476`). The model view keeps its
-    /// camera over seeks and playback (`RefreshAfterFrameApply` moves the camera state in camera
-    /// mode only), and with it the view offsets the pans moved it by.
-    fn follow_track(&mut self, frame: u32) -> Result<(), String> {
-        let p = &self.doc.pmm;
-        let a = &p.appearance;
-        let parent_selected =
-            a.camera_parent_model >= 0 && a.camera_parent_model == i32::from(p.selected_model_slot);
-        let camera_view = p.settings.options[0] != 0
-            || a.follow_camera != 0 && (self.playing() || parent_selected);
-        if camera_view {
-            self.camera = scene::track_camera(&self.doc, frame)?;
+    fn camera_pass(&self) -> CameraPass {
+        match self
+            .recording
+            .as_ref()
+            .map(|r| r.cursor)
+            .or_else(|| self.playback.map(|p| p.cursor))
+        {
+            Some(cursor) => CameraPass::Playing { cursor },
+            None => CameraPass::Stopped,
+        }
+    }
+
+    fn advance_camera_track(&mut self, pass: CameraPass, start: bool) -> Result<(), String> {
+        let CameraPass::Playing { cursor } = pass else {
+            return Ok(());
+        };
+        if self.doc.pmm.settings.options[0] == 0 && self.doc.pmm.appearance.follow_camera == 0 {
+            return Ok(());
+        }
+        let sample = if start {
+            self.doc.pmm.camera_state[3..5].fill(0.0);
+            self.camera_track.start(&self.doc.pmm.camera, cursor)?
+        } else {
+            self.camera_track.advance(&self.doc.pmm.camera, cursor)?
+        };
+        if let Some(sample) = sample {
+            self.doc.commit_camera_sample(&sample);
         }
         Ok(())
     }
@@ -277,6 +305,10 @@ impl Editor {
 
     /// Applies a document command and brings the derived state up to date with it.
     pub fn apply(&mut self, cmd: Command) -> Result<(), String> {
+        self.apply_command(cmd, true)
+    }
+
+    fn apply_command(&mut self, cmd: Command, prepare: bool) -> Result<(), String> {
         use Command::*;
         // Commands that change no key and no pose the live models read.
         let edit = !matches!(
@@ -284,6 +316,7 @@ impl Editor {
             SelectModel(_)
                 | SelectCameraMode
                 | SetFrame(_)
+                | FinishPlayback { .. }
                 | SelectBones(_)
                 | ClearBoneMarks
                 | ClearKeySelection
@@ -314,13 +347,13 @@ impl Editor {
             LoadWave { data, .. } => Some(Wave::from_bytes(data.clone())),
             _ => None,
         };
-        let (files, camera) = (Files::of(&self.doc), scene::state_camera(&self.doc));
-        let camera_mode = self.doc.pmm.settings.options[0];
-        self.doc.apply(cmd).map_err(|e| e.to_string())?;
-        if self.doc.pmm.settings.options[0] != camera_mode && !self.playing() {
-            // The other view: the camera state, or the model view about its reference point.
-            self.camera = model_view(&self.doc).unwrap_or_else(|| scene::state_camera(&self.doc));
-        }
+        let files = Files::of(&self.doc);
+        let physics = &mut self.physics;
+        self.doc
+            .apply_with_camera_pose(cmd, &mut |doc, request| {
+                live_camera_anchors(doc, &mut physics.scene, request)
+            })
+            .map_err(|e| e.to_string())?;
         if let Some(m) = physics_mode {
             // `ModelKinematicSync` of every model (`command_view_menu.cpp:1048` to `:1110`).
             self.physics.set_physics_mode(m)?;
@@ -367,29 +400,62 @@ impl Editor {
             self.modified |= dirty;
             self.assets.set_edge_scales(&self.doc);
             self.sync_keys()?;
-            let moved = scene::state_camera(&self.doc);
-            if self.playing() {
-                return Ok(());
-            }
-            if follow {
+            if follow && !self.playing() {
                 self.physics.seek(self.current_frame());
-                self.follow_track(self.current_frame())?;
-            } else if moved != camera {
-                self.camera = moved;
             }
         }
+        if prepare {
+            self.refresh_camera();
+        }
         Ok(())
+    }
+
+    pub fn edit_camera_controls(
+        &mut self,
+        edit: impl FnOnce(&mut mds_doc::CameraControls),
+    ) -> Result<(), String> {
+        let mut controls = self.doc.camera_controls();
+        edit(&mut controls);
+        self.apply(controls.into())
+    }
+
+    fn refresh_camera(&mut self) {
+        self.refresh_camera_while(self.camera_pass());
+    }
+
+    fn refresh_camera_while(&mut self, pass: CameraPass) {
+        let anchors = mds_doc::camera_anchors(&self.doc, &self.physics.scene.models);
+        let frame = self
+            .doc
+            .prepare_camera_frame(anchors, matches!(pass, CameraPass::Playing { .. }));
+        self.camera = scene::camera_frame(frame);
+        self.camera_offset = frame.offset;
+    }
+
+    pub fn camera_view(&self, [width, height]: [u32; 2]) -> mds_render::View {
+        self.camera
+            .view_with_offset(self.camera_offset, width, height)
+    }
+
+    pub fn camera_offset(&self) -> [f32; 2] {
+        self.camera_offset
+    }
+
+    pub fn camera_frame(&self) -> &CameraFrame {
+        &self.camera
     }
 
     /// The world again from the document, after a new scene.
     fn rebuild(&mut self) -> Result<(), String> {
         self.playback = None;
+        self.camera_track = Default::default();
         audio::stop();
         self.wave = wave_of(&self.doc, &self.dir);
         self.models_changed()?;
         self.assets = Assets::load(&self.doc, &self.dir)?;
         self.options = Options::of(&self.doc.pmm.timeline);
-        self.follow_track(self.current_frame())
+        self.refresh_camera();
+        Ok(())
     }
 
     /// The meshes and the physics world again, after the set of models changed.
@@ -457,7 +523,7 @@ impl Editor {
         self.apply(Command::SetFrame(frame))?;
         self.physics.seek(frame);
         audio::frame_moved(self.wave.as_ref(), frame);
-        self.follow_track(frame)
+        Ok(())
     }
 
     /// `StepFrame` (`src/window/ui_frame_step.cpp`), buttons 418 and 419 and the arrow keys.
@@ -472,7 +538,7 @@ impl Editor {
         self.apply(Command::SetFrame(frame))?;
         self.physics.step_frame(frame, forward);
         audio::frame_moved(self.wave.as_ref(), frame);
-        self.follow_track(frame)
+        Ok(())
     }
 
     /// The play button 408 (`ApplyPlaybackRangeEdits`, `src/window/command_frame_edit.cpp:622`).
@@ -487,15 +553,19 @@ impl Editor {
         let (current, last) = (t.current_frame, t.last_registered_frame);
         let p = Playback::start(&self.options, current, last, now_ms);
         let frame_changed = self.options.from_current || self.options.start_frame == current;
+        self.advance_camera_track(CameraPass::Playing { cursor: p.start }, true)?;
         self.physics.start_playback(p.start, frame_changed);
         self.playback = Some(p);
         audio::play_from(self.wave.as_ref(), p.start);
-        self.follow_track(p.frame())
+        self.refresh_camera();
+        Ok(())
     }
 
     /// `StopPlayback`: the current frame after the stop, every model at it, and a settle.
     fn stop(&mut self, p: &Playback) -> Result<(), String> {
-        self.stop_at(p.cursor)
+        self.stop_at(p.cursor)?;
+        self.refresh_camera();
+        Ok(())
     }
 
     /// [`Editor::stop`] with the cursor at `cursor` seconds; the sound stops too.
@@ -503,12 +573,12 @@ impl Editor {
         audio::stop();
         let current = self.doc.pmm.timeline.current_frame;
         let frame = playback::stop_frame(&self.options, cursor, current).max(0) as u32;
-        self.apply(Command::SetFrame(frame))?;
+        self.apply_command(Command::FinishPlayback { frame: Some(frame) }, false)?;
         if self.keys_stale {
             self.sync_keys()?;
         }
         self.physics.stop_playback(frame);
-        self.follow_track(frame)
+        Ok(())
     }
 
     /// `LoadVsqFile` of the `.vsq` at `path` onto the selected model (menu 224, a dropped file
@@ -532,7 +602,7 @@ impl Editor {
         self.sync_keys()?;
         let frame = self.current_frame();
         self.physics.seek(frame);
-        self.follow_track(frame)?;
+        self.refresh_camera();
         let run = run.map_err(|e| e.to_string())?;
         let name = path.to_string_lossy();
         let txt = mds_vsq::txt_path(&name).ok_or("a VSQ path without .vsq")?;
@@ -601,6 +671,9 @@ impl Editor {
     pub fn pump(&mut self, now_ms: u64) -> Result<(), String> {
         let result = self.pump_inner(now_ms);
         self.sync_physics_pose();
+        if result.is_ok() {
+            self.refresh_camera();
+        }
         result
     }
 
@@ -619,8 +692,10 @@ impl Editor {
                 // The pass of the menu command: a stopped `PhysicsFrame`, then section 10 arms
                 // the frame steps.
                 let start = r.settings.start_frame;
+                let pass = CameraPass::Playing { cursor: r.cursor };
                 self.recording = Some(r);
                 self.physics.tick(dt)?;
+                self.advance_camera_track(pass, true)?;
                 let current = self.doc.pmm.timeline.current_frame;
                 self.physics
                     .start_playback(playback::frame_to_seconds(start), start == current);
@@ -647,20 +722,28 @@ impl Editor {
         match p.pass(&self.options, now_ms) {
             Pass::Playing => {
                 self.playback = Some(p);
+                let camera =
+                    self.advance_camera_track(CameraPass::Playing { cursor: p.cursor }, false);
                 self.physics.catch_up(p.cursor, dt)?;
+                camera?;
             }
             Pass::Looped => {
                 self.playback = Some(p);
                 audio::play_from(self.wave.as_ref(), p.start);
+                let pass = CameraPass::Playing { cursor: p.start };
+                let camera = self
+                    .advance_camera_track(pass, true)
+                    .and_then(|_| self.advance_camera_track(pass, false));
                 self.physics.loop_restart(p.start, dt)?;
+                camera?;
             }
             Pass::Stopped => {
                 self.playback = None;
-                self.stop(&p)?;
+                self.stop_at(p.cursor)?;
                 return self.physics.tick(dt);
             }
         }
-        self.follow_track(p.frame())
+        Ok(())
     }
 
     /// Starts a recording to `path` (`RecordStartTail`, see [`record`]): the models at the start
@@ -674,26 +757,32 @@ impl Editor {
         }
         audio::stop();
         self.recording = Some(r);
-        self.follow_track(self.shown_frame())
+        self.refresh_camera();
+        Ok(())
     }
 
     /// Esc while recording (`PumpEscStop`): `FinishAviRecord` now.
     pub fn stop_recording(&mut self) -> Result<(), String> {
-        match self.recording.take() {
+        let result = match self.recording.take() {
             Some(r) => self.finish_recording(r),
             None => Ok(()),
-        }
+        };
+        self.refresh_camera();
+        result
     }
 
     /// One pass of a recording: the frame at the cursor written, N counted, then the frame step
     /// to the next target, or `false` past the end frame.
     fn record_pass(&mut self, r: &mut Recording) -> Result<bool, String> {
         let frame = cursor_frame(r.cursor);
-        self.follow_track(frame)?;
+        let pass = CameraPass::Playing { cursor: r.cursor };
+        self.advance_camera_track(pass, false)?;
+        self.refresh_camera_while(pass);
         let shot = Shot {
             physics: &self.physics,
             frame,
             camera: &self.camera,
+            view_offset: self.camera_offset,
             size: r.size(),
             samples: &mds_render::SAMPLES_8X,
             picture_viewport: None,
@@ -707,7 +796,7 @@ impl Editor {
             false => {
                 let light = self.light_while(frame, true)?;
                 scene::with_stage_lit(&self.doc, &self.assets, &shot, light, |f, s| {
-                    mds_render::render_frame_with(r.gpu(), f, s)
+                    mds_render::render_frame_with(r.gpu(), f, &self.render_stage(s, r.size()))
                 })??
             }
         };
@@ -718,7 +807,9 @@ impl Editor {
             return Ok(false);
         }
         r.cursor = record::term(r.n, s.start_frame, s.fps) / 30.0;
+        let camera = self.advance_camera_track(CameraPass::Playing { cursor: r.cursor }, false);
         self.physics.catch_up(r.cursor, 1.0 / s.fps)?;
+        camera?;
         Ok(true)
     }
 
@@ -793,6 +884,9 @@ impl Editor {
         let ([r, g, b], [x, y, z]) = (l.color, l.direction);
         Ok(View {
             camera: &self.camera,
+            view_offset: self.camera_offset,
+            shadow_map: self.shadow_map,
+            shadow_map_display: self.shadow_map_display,
             light: [r, g, b, x, y, z],
             frame,
             elapsed,
@@ -822,38 +916,29 @@ impl Editor {
             physics: &self.physics,
             frame: self.shown_frame(),
             camera: &self.camera,
+            view_offset: self.camera_offset,
             size,
             samples,
             picture_viewport: None,
         };
         let light = self.light(shot.frame)?;
-        scene::with_stage_lit(&self.doc, &self.assets, &shot, light, draw)
+        scene::with_stage_lit(&self.doc, &self.assets, &shot, light, |frame, stage| {
+            draw(frame, &self.render_stage(stage, size))
+        })
     }
-}
 
-/// The camera of the C++ model view (`src/render/debug_geometry.cpp:472` to `:566`) when the
-/// document opens in it: the camera state's rotation about the reference point, the origin for
-/// reference mode 0 without a camera parent, with the eye moved by the view offsets
-/// `camera_state[3..5]` (`ViewOffsetX`, `ViewOffsetY`), which the target moved along the camera's
-/// right and up axes draws the same ([`pan_view_offset`]). `None` in camera mode, with camera
-/// tracking on, and for the reference modes 1 and 2 (the center bone or the selected bone), which
-/// need the posed bones.
-fn model_view(doc: &Document) -> Option<Camera> {
-    let p = &doc.pmm;
-    let model_view = p.settings.options[0] == 0
-        && p.appearance.follow_camera == 0
-        && p.appearance.camera_parent_model < 0
-        && p.timeline.camera_reference_mode == 0;
-    if !model_view {
-        return None;
+    fn render_stage<'a>(&self, stage: &Stage<'a>, [width, height]: [u32; 2]) -> Stage<'a> {
+        Stage {
+            shadow_map: self.shadow_map,
+            shadow_map_display: self.shadow_map_display.then_some([
+                0.0,
+                0.0,
+                width as f32,
+                height as f32,
+            ]),
+            ..*stage
+        }
     }
-    let s = &p.camera_state;
-    let mut camera = Camera {
-        target: [0.0; 3],
-        ..scene::state_camera(doc)
-    };
-    pan_view_offset(&mut camera, s[3], s[4]);
-    Some(camera)
 }
 
 /// The whole frame a cursor at `cursor` seconds shows ([`Playback::frame`]).
@@ -895,5 +980,150 @@ impl Files {
                 .collect(),
             picture: (p.picture.enabled, p.picture.path.text.clone()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recording_stage_uses_the_controls_at_the_output_size() {
+        let mut editor = Editor::empty();
+        editor.shadow_map = ShadowMapSize::Texels4096;
+        editor.shadow_map_display = true;
+        let stage = Stage {
+            grid: true,
+            ..Stage::default()
+        };
+        let recording = editor.render_stage(&stage, [1920, 1080]);
+        assert_eq!(recording.shadow_map, ShadowMapSize::Texels4096);
+        assert_eq!(
+            recording.shadow_map_display,
+            Some([0.0, 0.0, 1920.0, 1080.0])
+        );
+        assert!(recording.grid);
+        assert!(!editor.modified);
+    }
+}
+
+fn live_camera_anchors(
+    doc: &Document,
+    scene: &mut mds_pose::Scene,
+    request: mds_doc::CameraPoseRequest,
+) -> Result<mds_doc::CameraAnchors, mds_doc::Error> {
+    use mds_doc::CameraPoseRequest;
+    if matches!(request, CameraPoseRequest::AfterFrameSeek) {
+        if let Some(i) = scene
+            .models
+            .iter()
+            .position(|m| i32::from(m.slot) == doc.pmm.appearance.camera_parent_model)
+        {
+            let (before, rest) = scene.models.split_at_mut(i);
+            let (parent, after) = rest.split_first_mut().unwrap();
+            if let Some(source) = doc.pmm.models.iter().find(|m| m.slot == parent.slot) {
+                parent.apply_pmm(source).map_err(mds_doc::Error::Format)?;
+            }
+            mds_pose::pose::apply_morphs(parent);
+            mds_pose::pose::set_physics_mode(
+                parent,
+                0,
+                &mds_pose::pose::Others {
+                    models: [before, after],
+                },
+                i32::from(doc.pmm.physics.playback_mode),
+            );
+        }
+    }
+    let mut anchors = mds_doc::camera_anchors(doc, &scene.models);
+    if let CameraPoseRequest::AfterModelLoad { slot } = request {
+        let i = doc
+            .pmm
+            .models
+            .iter()
+            .position(|m| m.slot == slot)
+            .ok_or(mds_doc::Error::NotApplicable("new camera model missing"))?;
+        let mut model = match &doc.models[i] {
+            ModelFile::Pmx(p) => mds_pose::model::Model::from_pmx(slot, p),
+            ModelFile::Pmd(p) => mds_pose::model::Model::from_pmd(slot, p),
+            ModelFile::Missing => {
+                return Err(mds_doc::Error::NotApplicable(
+                    "new camera model file missing",
+                ))
+            }
+        }
+        .map_err(mds_doc::Error::Format)?;
+        model
+            .apply_pmm(&doc.pmm.models[i])
+            .map_err(mds_doc::Error::Format)?;
+        mds_pose::pose::apply_morphs(&mut model);
+        mds_pose::pose::set_physics_mode(
+            &mut model,
+            0,
+            &mds_pose::pose::Others {
+                models: [&scene.models, &[]],
+            },
+            i32::from(doc.pmm.physics.playback_mode),
+        );
+        let initial = mds_doc::camera_anchors(doc, &[model]);
+        if slot == doc.pmm.selected_model_slot {
+            anchors.selected_root = initial.selected_root;
+            anchors.selected_bone = initial.selected_bone;
+            anchors.selected_bone_negative = initial.selected_bone_negative;
+        }
+        if i32::from(slot) == doc.pmm.appearance.camera_parent_model {
+            anchors.parent = initial.parent;
+        }
+    }
+    Ok(anchors)
+}
+
+#[cfg(test)]
+mod camera_pass_tests {
+    use super::*;
+    #[test]
+    fn explicit_recording_pass_keeps_follow_camera_while_recording_is_taken_out() {
+        let mut e = Editor::empty();
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../tests/fixtures/rust/chain8.pmx");
+        for _ in 0..2 {
+            e.load_model(&path).unwrap();
+        }
+        e.apply(Command::SelectCameraMode).unwrap();
+        e.apply(Command::SetCameraParentModel(Some(0))).unwrap();
+        e.apply(Command::SetCameraParentBone(2)).unwrap();
+        e.edit_camera_controls(|c| {
+            c.target = [11.0, 13.0, -37.0];
+            c.rotation = [0.2, -0.4, 0.3];
+        })
+        .unwrap();
+        e.apply(Command::RegisterGlobalKeys(vec![
+            mds_doc::GlobalTrack::Camera,
+        ]))
+        .unwrap();
+        e.apply(Command::SelectModel(1)).unwrap();
+        e.apply(Command::SetFollowCamera(true)).unwrap();
+        assert!(!e.playing());
+        let pass = CameraPass::Playing { cursor: 0.0 };
+        e.advance_camera_track(pass, true).unwrap();
+        e.refresh_camera_while(pass);
+        assert_eq!(e.camera_offset, [11.0, 13.0]);
+        assert_eq!(e.camera.distance, -37.0);
+        assert_ne!(e.camera.target, [0.0; 3]);
+        let frame = e.camera;
+        let raw = e.doc.pmm.camera_state;
+        e.camera_view([640, 480]);
+        e.with_frame([640, 480], &[[0.0; 2]], |_| ()).unwrap();
+        assert_eq!(e.camera, frame);
+        assert_eq!(
+            e.doc.pmm.camera_state, raw,
+            "immutable consumers cannot reanchor"
+        );
+        e.advance_camera_track(CameraPass::Playing { cursor: 0.01 }, false)
+            .unwrap();
+        e.edit_camera_controls(|c| c.rotation[1] = 0.9).unwrap();
+        e.advance_camera_track(CameraPass::Playing { cursor: 0.02 }, false)
+            .unwrap();
+        assert_eq!(e.doc.camera_controls().rotation[1], 0.9);
     }
 }

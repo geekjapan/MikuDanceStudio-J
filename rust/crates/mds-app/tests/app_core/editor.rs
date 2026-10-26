@@ -21,7 +21,7 @@ fn a_camera_edit_shows_before_it_is_registered() {
     e.apply(Command::SelectCameraMode).unwrap();
     e.seek(10).unwrap();
     let track = scene::track_camera(&e.doc, 10).unwrap();
-    assert_eq!(e.camera, track);
+    assert_eq!(*e.camera_frame(), track.into());
     let edited = Camera {
         target: [1.0, 2.0, 3.0],
         rotation: [0.25, 0.5, 0.0],
@@ -37,7 +37,11 @@ fn a_camera_edit_shows_before_it_is_registered() {
         perspective: false,
     })
     .unwrap();
-    assert_eq!(e.camera, edited, "the view draws the edited state");
+    assert_eq!(
+        *e.camera_frame(),
+        edited.into(),
+        "the view draws the edited state"
+    );
     assert_eq!(
         scene::track_camera(&e.doc, 10).unwrap(),
         track,
@@ -48,12 +52,19 @@ fn a_camera_edit_shows_before_it_is_registered() {
         direction: [0.0, -1.0, 0.0],
     })
     .unwrap();
-    assert_eq!(e.camera, edited, "another edit keeps the edited view");
+    assert_eq!(
+        *e.camera_frame(),
+        edited.into(),
+        "another edit keeps the edited view"
+    );
     e.apply(Command::RegisterGlobalKeys(vec![GlobalTrack::Camera]))
         .unwrap();
     assert_eq!(scene::track_camera(&e.doc, 10).unwrap(), edited);
     e.seek(0).unwrap();
-    assert_eq!(e.camera, scene::track_camera(&e.doc, 0).unwrap());
+    assert_eq!(
+        *e.camera_frame(),
+        scene::track_camera(&e.doc, 0).unwrap().into()
+    );
 }
 
 /// Plays `name` for `passes` window passes after `edit_at`, with `edit` applied there, and
@@ -109,12 +120,12 @@ fn selections_leave_the_scene_unmodified() {
         .unwrap();
     e.apply(Command::SelectMorphLane { lane: 2, morph: 0 })
         .unwrap();
-    let camera = e.camera;
+    let camera = *e.camera_frame();
     e.apply(Command::ClickFrame(7)).unwrap();
     assert_eq!(e.doc.pmm.timeline.current_frame, 7, "a click seeks");
     // The model view does not follow the camera track (`cameraView`,
     // `src/render/debug_geometry.cpp:476`).
-    assert_eq!(e.camera, camera);
+    assert_eq!(*e.camera_frame(), camera);
     let grouped = e
         .doc
         .pmm
@@ -226,7 +237,7 @@ fn an_unregistered_pose_edit_stays_on_screen() {
 /// The model view (`src/render/debug_geometry.cpp:472` to `:566`): the camera state's rotation
 /// and distance about the reference point (the origin in mode 0), the eye moved by the view
 /// offsets `camera_state[3..5]`. A document that opens in it shows its offsets, and the pans
-/// (`SetViewOffset` and the moved view) survive a seek and a frame step, which move the camera
+/// (`SetViewOffset` and its derived view) survive a seek and a frame step, which move the camera
 /// state in camera mode only.
 #[test]
 fn the_model_view_keeps_its_view_offsets() {
@@ -234,27 +245,37 @@ fn the_model_view_keeps_its_view_offsets() {
     assert_eq!(e.doc.pmm.settings.options[0], 0, "model mode");
     e.doc.pmm.camera_state[3] = 2.0;
     e.doc.pmm.camera_state[4] = 5.0;
-    let s = e.doc.pmm.camera_state;
     let reopened = Editor::new(e.doc.clone(), e.path.clone()).unwrap();
-    let mut want = Camera {
+    let want = Camera {
         target: [0.0; 3],
         ..scene::state_camera(&e.doc)
     };
-    mds_app::ui::viewport::pan_view_offset(&mut want, s[3], s[4]);
-    assert_eq!(reopened.camera, want);
-    assert_eq!(
-        want.target,
-        [2.0, 5.0, 0.0],
-        "no rotation: the offsets are x and y"
-    );
+    assert_eq!(*reopened.camera_frame(), want.into());
+    reopened
+        .with_stage([640, 360], &[[0.0; 2]], |f, _| {
+            assert_eq!(
+                f.view.clip([1.0, 2.0, 3.0]),
+                want.view_with_offset([2.0, 5.0], 640, 360)
+                    .clip([1.0, 2.0, 3.0])
+            );
+        })
+        .unwrap();
 
     let mut e = reopened;
     e.apply(Command::SetViewOffset([3.0, 4.0])).unwrap();
-    mds_app::ui::viewport::pan_view_offset(&mut e.camera, 1.0, -1.0);
-    let panned = e.camera;
+    let panned = *e.camera_frame();
     e.seek(20).unwrap();
     e.step_frame(true).unwrap();
-    assert_eq!(e.camera, panned);
+    assert_eq!(*e.camera_frame(), panned);
+    e.with_stage([640, 360], &[[0.0; 2]], |f, _| {
+        assert_eq!(
+            f.view.clip([1.0, 2.0, 3.0]),
+            panned
+                .view_with_offset([3.0, 4.0], 640, 360)
+                .clip([1.0, 2.0, 3.0])
+        );
+    })
+    .unwrap();
 
     // Playback films the camera track only with tracking on (`cameraView`,
     // `debug_geometry.cpp:476`; `InitGlobalTracks`, `playback_state.cpp:327`).
@@ -262,15 +283,12 @@ fn the_model_view_keeps_its_view_offsets() {
     for t in 1..10 {
         e.pump(t * 33).unwrap();
     }
-    assert_eq!(e.camera, panned, "the model view while playing");
+    assert_eq!(*e.camera_frame(), panned, "the model view while playing");
     e.toggle_play(330).unwrap();
     e.apply(Command::SetFollowCamera(true)).unwrap();
     e.toggle_play(400).unwrap();
     e.pump(433).unwrap();
-    assert_eq!(
-        e.camera,
-        scene::track_camera(&e.doc, e.doc.pmm.timeline.current_frame as u32).unwrap()
-    );
+    assert_eq!(*e.camera_frame(), scene::state_camera(&e.doc).into());
 }
 
 /// The mean color of the pixels the models cover, and their count.
@@ -304,11 +322,13 @@ fn the_front_view_of_the_golden_strips_shows_their_edge_color() {
         return;
     };
     let mut e = open("swing600-golden.pmm");
+    // The material measurement excludes the colored grid and axes.
     e.doc.pmm.view.ground_grid = 0;
     e.toggle_play(0).unwrap();
     e.pump(33).unwrap();
     assert_eq!(
-        e.camera.rotation, [0.0; 3],
+        e.doc.camera_controls().rotation,
+        [0.0; 3],
         "the saved model view while playing"
     );
     let (n, front) = model_pixels(&e, &gpu);
@@ -391,7 +411,8 @@ fn the_command_line_load_gets_the_fresh_world() {
 /// because `PlaybackPoseAdvance` plays the light track only behind the camera's gate
 /// (`timeline_advance.cpp:389-394`, `CameraMode() || followCameraEnabled`) and `UpdateBoneFrames`
 /// starts the global tracks only there (`playback_state.cpp:327`); with tracking on the playback
-/// plays the track, and camera mode shows the track at the frame.
+/// plays the track. StopPlayback refreshes the light state through RefreshFrameContext
+/// (`playback_state.cpp:420-445`), and camera mode shows the track at the frame.
 #[test]
 fn the_light_track_plays_only_behind_the_camera_gate() {
     let mut e = open("swing600.pmm");
@@ -419,7 +440,369 @@ fn the_light_track_plays_only_behind_the_camera_gate() {
     e.doc.pmm.appearance.follow_camera = 1;
     assert_eq!(drawn(&e), track(&e), "tracking on, playing");
     e.toggle_play(500).unwrap();
-    assert_eq!(drawn(&e), state, "tracking on, stopped");
+    assert_eq!(
+        drawn(&e),
+        track(&e),
+        "StopPlayback refreshes the light state with tracking on"
+    );
     e.apply(Command::SelectCameraMode).unwrap();
     assert_eq!(drawn(&e), track(&e), "camera mode");
+}
+
+#[test]
+fn parent_camera_selection_load_and_frame_commands_reach_the_document() {
+    let mut e = Editor::empty();
+    e.load_model(&fixtures().join("chain8.pmx")).unwrap();
+    e.load_model(&fixtures().join("morph4.pmx")).unwrap();
+    for reference in 0..=2 {
+        e.apply(Command::SelectCameraMode).unwrap();
+        let k = &mut e.doc.pmm.camera.heads_mut()[0];
+        k.parent_model = 0;
+        k.parent_bone = 2;
+        k.eye = [11.0, 13.0, 17.0];
+        e.doc.pmm.appearance.camera_parent_model = 0;
+        e.doc.pmm.appearance.camera_parent_bone = 2;
+        e.doc.pmm.appearance.follow_camera = 1;
+        e.apply(Command::SetCameraReference(reference)).unwrap();
+        e.apply(Command::SelectModel(1)).unwrap();
+        e.apply(Command::SelectModel(0)).unwrap();
+        e.doc.pmm.light_state.fill(77.0);
+        e.seek(0).unwrap();
+        assert_ne!(e.doc.pmm.light_state, [77.0; 6]);
+        assert!(e.doc.pmm.camera_state.iter().all(|v| v.is_finite()));
+        e.apply(Command::SelectCameraMode).unwrap();
+        e.load_model(&fixtures().join("chain8.pmx")).unwrap();
+        assert_eq!(e.doc.pmm.settings.options[0], 0);
+        assert_eq!(e.doc.pmm.timeline.camera_reference_mode, reference);
+    }
+}
+
+#[test]
+fn parent_selection_updates_the_displayed_view_in_both_directions() {
+    use mds_math::Mat4;
+    for (parent_rotation, camera_rotation) in [
+        ([0.0, 0.0, 0.6, 0.8], [0.2, -0.4, 0.3]),
+        (
+            [
+                std::f32::consts::FRAC_1_SQRT_2,
+                0.0,
+                0.0,
+                std::f32::consts::FRAC_1_SQRT_2,
+            ],
+            [0.0; 3],
+        ),
+        (
+            [
+                std::f32::consts::FRAC_1_SQRT_2,
+                0.0,
+                0.0,
+                std::f32::consts::FRAC_1_SQRT_2,
+            ],
+            [0.0005, 0.0, 0.0],
+        ),
+    ] {
+        for reference in 0..=2 {
+            let mut e = Editor::empty();
+            for _ in 0..2 {
+                e.load_model(&fixtures().join("chain8.pmx")).unwrap();
+            }
+            for (i, m) in e.doc.pmm.models.iter_mut().enumerate() {
+                m.bone_pose[0].translation = [3.0 + 7.0 * i as f32, -2.0, 5.0];
+                m.bone_pose[0].rotation = parent_rotation;
+                m.selection.selected_bone = 2;
+            }
+            e.apply(Command::SelectCameraMode).unwrap();
+            let k = &mut e.doc.pmm.camera.heads_mut()[0];
+            k.parent_model = 0;
+            k.parent_bone = 2;
+            k.eye = [11.0, 13.0, -37.0];
+            k.target = camera_rotation;
+            e.doc.pmm.appearance.camera_parent_model = 0;
+            e.doc.pmm.appearance.camera_parent_bone = 2;
+            e.doc.pmm.appearance.follow_camera = 1;
+            e.apply(Command::SetCameraReference(reference)).unwrap();
+            for m in &mut e.physics.scene.models {
+                mds_pose::pose::apply_morphs(m);
+                mds_pose::pose::set_physics_mode(
+                    m,
+                    0,
+                    &mds_pose::pose::Others { models: [&[], &[]] },
+                    0,
+                );
+            }
+            for slot in [1, 0, 1, 0] {
+                e.apply(Command::SelectModel(slot)).unwrap();
+                let p = &e.doc.pmm;
+                let s = &p.camera_state;
+                let parent = &e.physics.scene.models[0].bones[2];
+                let point = |b: &mds_pose::model::Bone| {
+                    std::array::from_fn::<_, 3, _>(|c| {
+                        b.mat_init.0[12 + c]
+                            + (0..3)
+                                .map(|a| b.position[a] * b.mat_init.0[a * 4 + c])
+                                .sum::<f32>()
+                    })
+                };
+                let model = &e.physics.scene.models[slot as usize];
+                let focus = if slot == 0 {
+                    point(parent)
+                } else {
+                    match reference {
+                        1 => model.bones[model.center_bone].mat_init.0[12..15]
+                            .try_into()
+                            .unwrap(),
+                        2 => point(&model.bones[2]),
+                        _ => [0.0; 3],
+                    }
+                };
+                let basis = Mat4(std::array::from_fn(|i| {
+                    if i / 4 < 3 && i % 4 < 3 {
+                        parent.mat_init.0[(i % 4) * 4 + i / 4]
+                    } else {
+                        Mat4::IDENTITY.0[i]
+                    }
+                }));
+                let r = Mat4::multiply(&Mat4::rotation_y(s[7]), &Mat4::rotation_x(s[6]));
+                let r = Mat4::multiply(&basis, &Mat4::multiply(&r, &Mat4::rotation_z(s[8])));
+                let offset = if slot == 0 {
+                    [s[0], s[1], s[2]]
+                } else {
+                    [s[3], s[4], s[5]]
+                };
+                assert!(basis != Mat4::IDENTITY);
+                for point in [[0.0; 3], [4.0, 7.0, -2.0], [-3.0, 1.0, 9.0]] {
+                    let view: [f32; 3] = std::array::from_fn(|c| {
+                        (0..3)
+                            .map(|a| (point[a] - focus[a]) * r.0[a * 4 + c])
+                            .sum::<f32>()
+                            - offset[c]
+                    });
+                    let clip = e
+                        .with_frame([640, 480], &[[0.0; 2]], |f| f.view.clip(point))
+                        .unwrap();
+                    let f = 1.0 / (p.settings.camera_fov.to_radians() / 2.0).tan();
+                    let want = [view[0] * f / (640.0 / 480.0), view[1] * f, view[2]];
+                    for (got, want) in [clip[0], clip[1], clip[3]].into_iter().zip(want) {
+                        assert!(
+                            (got - want).abs() < 0.0002,
+                            "reference {reference}, selected {slot}: {got} != {want}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn assert_live_camera(e: &Editor, raw: mds_render::Camera, parent: [i32; 2], camera_view: bool) {
+    use mds_math::Mat4;
+    let p = &e.doc.pmm;
+    let a = &p.appearance;
+    let bone = e
+        .physics
+        .scene
+        .models
+        .iter()
+        .find(|m| i32::from(m.slot) == parent[0])
+        .and_then(|m| m.bones.get(parent[1] as usize));
+    let point = |b: &mds_pose::model::Bone| {
+        std::array::from_fn::<_, 3, _>(|c| {
+            b.mat_init.0[12 + c]
+                + (0..3)
+                    .map(|j| b.position[j] * b.mat_init.0[j * 4 + c])
+                    .sum::<f32>()
+        })
+    };
+    let focus = if camera_view {
+        bone.map_or(raw.target, point)
+    } else {
+        e.physics
+            .scene
+            .models
+            .iter()
+            .find(|m| m.slot == p.selected_model_slot)
+            .and_then(|m| match p.timeline.camera_reference_mode {
+                1 => Some(
+                    m.bones[m.center_bone].mat_init.0[12..15]
+                        .try_into()
+                        .unwrap(),
+                ),
+                2 => p
+                    .models
+                    .iter()
+                    .find(|s| s.slot == m.slot)
+                    .and_then(|s| m.bones.get(s.selection.selected_bone as usize))
+                    .map(point),
+                _ => None,
+            })
+            .unwrap_or([0.0; 3])
+    };
+    let mut basis = Mat4::IDENTITY;
+    if a.follow_camera != 0 || p.settings.options[0] != 0 {
+        if let Some(b) = bone.filter(|_| a.suppress_camera_transform == 0) {
+            for row in 0..3 {
+                for col in 0..3 {
+                    basis.0[row * 4 + col] = b.mat_init.0[col * 4 + row];
+                }
+            }
+        }
+    } else {
+        basis = Mat4(a.camera_attachment_basis);
+    }
+    let [pitch, yaw, roll] = raw.rotation;
+    let r = Mat4::multiply(&Mat4::rotation_y(yaw), &Mat4::rotation_x(pitch));
+    let r = Mat4::multiply(&basis, &Mat4::multiply(&r, &Mat4::rotation_z(roll)));
+    let offset = if camera_view && bone.is_some() {
+        raw.target
+    } else {
+        [
+            if camera_view { 0.0 } else { p.camera_state[3] },
+            if camera_view { 0.0 } else { p.camera_state[4] },
+            raw.distance,
+        ]
+    };
+    for point in [[0.0; 3], [4.0, 7.0, -2.0], [-3.0, 1.0, 9.0]] {
+        let view: [f32; 3] = std::array::from_fn(|c| {
+            (0..3)
+                .map(|j| (point[j] - focus[j]) * r.0[j * 4 + c])
+                .sum::<f32>()
+                - offset[c]
+        });
+        let clip = e
+            .with_frame([640, 480], &[[0.0; 2]], |f| f.view.clip(point))
+            .unwrap();
+        let f = 1.0 / (raw.fov_deg.to_radians() / 2.0).tan();
+        for (got, want) in [clip[0], clip[1], clip[3]].into_iter().zip([
+            view[0] * f / (640.0 / 480.0),
+            view[1] * f,
+            view[2],
+        ]) {
+            assert!(
+                (got - want).abs() < 0.0003,
+                "display {got} != native arithmetic {want}, parent {parent:?}"
+            );
+        }
+    }
+}
+
+fn parent_editor() -> Editor {
+    let mut e = Editor::empty();
+    for _ in 0..2 {
+        e.load_model(&fixtures().join("chain8.pmx")).unwrap();
+    }
+    e.apply(Command::SetPhysicsMode(0)).unwrap();
+    e.apply(Command::SelectModel(0)).unwrap();
+    e.apply(Command::SetBonePose {
+        bone: 0,
+        translation: [3.0, -2.0, 5.0],
+        rotation: [0.0, 0.0, 0.6, 0.8],
+    })
+    .unwrap();
+    e.apply(Command::RegisterBoneKeys).unwrap();
+    e.pump(0).unwrap();
+    e.apply(Command::SetFollowCamera(true)).unwrap();
+    e.apply(Command::SelectCameraMode).unwrap();
+    e.apply(Command::SetCameraParentModel(Some(0))).unwrap();
+    e.apply(Command::SetCameraParentBone(2)).unwrap();
+    e.apply(Command::SetCamera {
+        position: [11.0, 13.0, -37.0],
+        rotation: [0.2, -0.4, 0.3],
+        distance: -29.0,
+        fov: 45.0,
+        perspective: false,
+    })
+    .unwrap();
+    e.apply(Command::RegisterGlobalKeys(vec![
+        mds_doc::GlobalTrack::Camera,
+    ]))
+    .unwrap();
+    e
+}
+
+#[test]
+fn parent_bone_model_and_selected_bone_refresh_the_display() {
+    let mut e = parent_editor();
+    for cmd in [
+        Command::SetCameraParentBone(3),
+        Command::SetCameraParentModel(Some(1)),
+        Command::SetCameraParentBone(4),
+    ] {
+        e.apply(cmd).unwrap();
+        let a = &e.doc.pmm.appearance;
+        assert_live_camera(
+            &e,
+            scene::state_camera(&e.doc),
+            [a.camera_parent_model, a.camera_parent_bone],
+            true,
+        );
+    }
+    e.apply(Command::SelectModel(1)).unwrap();
+    e.apply(Command::SetCameraParentModel(Some(0))).unwrap();
+    e.apply(Command::SetCameraParentBone(2)).unwrap();
+    e.apply(Command::SetCameraReference(2)).unwrap();
+    for bone in [1, 3, 2] {
+        e.apply(Command::SelectBones(vec![bone])).unwrap();
+        assert_live_camera(&e, scene::state_camera(&e.doc), [0, 2], false);
+    }
+}
+
+#[test]
+fn the_parent_view_refreshes_after_live_pose_seek_and_stopped_pump() {
+    let mut e = parent_editor();
+    e.apply(Command::SelectModel(0)).unwrap();
+    assert_eq!(e.doc.pmm.appearance.camera_parent_model, 0);
+    let before = e.physics.scene.models[0].bones[2].mat_init;
+    e.apply(Command::SetBonePose {
+        bone: 0,
+        translation: [14.0, 6.0, -3.0],
+        rotation: [0.0, 0.0, -0.6, 0.8],
+    })
+    .unwrap();
+    e.pump(33).unwrap();
+    assert_ne!(
+        e.physics.scene.models[0].bones[2].mat_init, before,
+        "the parent actually moved"
+    );
+    let parent = [
+        e.doc.pmm.appearance.camera_parent_model,
+        e.doc.pmm.appearance.camera_parent_bone,
+    ];
+    assert_live_camera(&e, scene::state_camera(&e.doc), parent, true);
+    e.seek(0).unwrap();
+    e.pump(66).unwrap();
+    assert_eq!(
+        e.physics.scene.models[0].bones[2].mat_init, before,
+        "seek restored the registered parent pose"
+    );
+    assert_live_camera(&e, scene::state_camera(&e.doc), parent, true);
+}
+
+#[test]
+fn playback_carries_parent_changes_and_detachment_to_the_display() {
+    let mut e = parent_editor();
+    for (frame, parent) in [(0, Some(0)), (10, Some(1)), (20, None)] {
+        e.seek(frame).unwrap();
+        e.apply(Command::SetCameraParentModel(parent)).unwrap();
+        e.apply(Command::SetCameraParentBone(2)).unwrap();
+        e.apply(Command::RegisterGlobalKeys(vec![
+            mds_doc::GlobalTrack::Camera,
+        ]))
+        .unwrap();
+    }
+    e.seek(0).unwrap();
+    e.options.stop_frame = 30;
+    e.options.from_current = true;
+    e.toggle_play(0).unwrap();
+    for (ms, expected_parent) in [(400, 1), (734, -1)] {
+        e.pump(ms).unwrap();
+        let c = mds_scene::track::evaluate_camera(
+            &e.doc.pmm.camera,
+            f64::from(e.shown_frame()),
+            mds_scene::track::CameraMode::Seek,
+        )
+        .unwrap();
+        assert_eq!(c.parent_model, expected_parent);
+        let raw = scene::track_camera(&e.doc, e.shown_frame()).unwrap();
+        assert_live_camera(&e, raw, [c.parent_model, c.parent_bone], true);
+    }
 }

@@ -66,6 +66,10 @@ class FullCompilerTests(unittest.TestCase):
             parser.unlink()
         elif invalid == 'ambiguous':
             shutil.copy2(parser, output / 'src/hlsl_tab.rs')
+        elif invalid in ('outside', 'inside'):
+            target = root / 'hlsl_tab.rs' if invalid == 'outside' else output / 'src/parser-target.rs'
+            parser.rename(target)
+            parser.symlink_to(target)
         before = {p.relative_to(output): full.digest(p) for p in output.rglob('*') if p.is_file()}
         calls = []
 
@@ -109,6 +113,27 @@ class FullCompilerTests(unittest.TestCase):
                 self.assertEqual(calls, ['cargo-stable'])
                 self.assertNotIn('parser_patch', result)
                 self.assertFalse((artifacts / 'parser-patch.json').exists())
+
+    def test_collect_rejects_outside_parser_before_copy_proof_and_patched_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result, calls, artifacts = self.collect_fixture(root, 'outside')
+            self.assertIn('outside-owned generated parser', result['patch_failure'])
+            self.assertEqual(calls, ['cargo-stable'])
+            self.assertNotIn('parser_patch', result)
+            self.assertFalse((artifacts / 'parser-patch.json').exists())
+            self.assertFalse((artifacts / 'rust-working').exists())
+            parser = artifacts / 'rust/src/vkd3d_shader/hlsl_tab.rs'
+            self.assertTrue(parser.is_symlink())
+            fixture = Path(__file__).parent / 'full-compiler-fixtures/generated/src/vkd3d_shader/hlsl_tab.rs'
+            self.assertEqual((root / 'hlsl_tab.rs').read_bytes(), fixture.read_bytes())
+
+    def test_collect_accepts_parser_symlink_inside_owned_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, calls, _ = self.collect_fixture(Path(directory), 'inside')
+            self.assertNotIn('patch_failure', result)
+            self.assertTrue(result['offset_check']['success'])
+            self.assertIn('cargo-patched-stable', calls)
 
     def test_outside_generated_parser_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

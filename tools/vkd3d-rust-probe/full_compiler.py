@@ -136,8 +136,9 @@ def collect(result, args, source, output, entries, artifacts, run, checkpoint):
     result['stable_build'] = run(command, artifacts / 'cargo-stable.log', env=env, timeout=args.build_timeout)
     checkpoint()
     working = artifacts / 'rust-working'
-    shutil.copytree(output, working)
     try:
+        generated_parser(output)
+        shutil.copytree(output, working)
         patch_record = patch_parser(generated_parser(working))
         result['parser_patch'] = patch_record
         (artifacts / 'parser-patch.json').write_text(json.dumps(patch_record, indent=2) + '\n')

@@ -1241,6 +1241,7 @@ dependencies = [
  "mds-edit",
  "mds-formats",
  "mds-math",
+ "mds-media",
  "mds-ops",
  "mds-physics",
  "mds-pose",

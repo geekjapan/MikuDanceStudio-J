@@ -52,6 +52,8 @@ impl Document {
                     Mat4::translation(-t[12], -t[13], -t[14])
                 }),
                 2 => bone((*selected).max(0) as usize).map_or(Mat4::IDENTITY, |b| {
+                    // `frame_modes.cpp` 764-775 in float, X first; not
+                    // `panel::bone_world`, whose C++ sums in double.
                     let (m, p) = (&b.mat_init.0, b.position);
                     let row =
                         |c: usize| m[c] * p[0] + m[4 + c] * p[1] + m[8 + c] * p[2] + m[12 + c];

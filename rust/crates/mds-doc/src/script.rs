@@ -117,12 +117,19 @@ impl Runner {
         self.doc.edit.reported = None;
         let saved = self.step(line, read)?;
         if !words(line)?.first().is_none_or(|w| w.starts_with('#')) {
-            for _ in 0..2 {
-                let read = |p: &str| read(p).ok_or_else(|| format!("model file not found: {p}"));
-                self.frames.pump(&mut self.doc, 1.0 / 30.0, read)?;
-            }
+            self.pump(read)?;
         }
         Ok(saved)
+    }
+
+    /// The two `FrameDriver` pumps of 1/30 s that follow every step, for a
+    /// caller that edited [`Runner::doc`] itself.
+    pub fn pump(&mut self, read: &mut dyn FnMut(&str) -> Option<Vec<u8>>) -> Result<(), String> {
+        for _ in 0..2 {
+            let read = |p: &str| read(p).ok_or_else(|| format!("model file not found: {p}"));
+            self.frames.pump(&mut self.doc, 1.0 / 30.0, read)?;
+        }
+        Ok(())
     }
 
     fn step(

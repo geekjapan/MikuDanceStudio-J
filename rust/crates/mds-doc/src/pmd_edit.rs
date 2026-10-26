@@ -3,7 +3,7 @@
 //! English names, the toon file names and the physics model of a PMD.
 
 use crate::add_model::sjis;
-use crate::{not, Document, Error, ModelFile};
+use crate::{not, Document, Error, ModelFile, PhysicsField};
 use mds_formats::pmd::{Joint, Pmd, Rigid};
 use mds_formats::text::{decode_sjis, FixedSjis};
 
@@ -133,6 +133,51 @@ impl Document {
             joints: Some(joints),
         });
         self.skeletons[i] = crate::model::Skeleton::new(&self.models[i], &self.pmm.models[i]);
+        Ok(())
+    }
+
+    /// [`crate::Command::EditPhysicsRecord`], `EditModeRecord`
+    /// (`frame_modes_bone.cpp` 158-224): `v - dy * step` in double, stored
+    /// as a float; the size floor is the float 0.1. The C++ echoes the value
+    /// into the dialog's edit box; that box is the caller's.
+    pub(crate) fn edit_physics_record(
+        &mut self,
+        joint: bool,
+        index: u32,
+        field: PhysicsField,
+        axis: u8,
+        dy: i32,
+    ) -> Result<(), Error> {
+        let (rigids, joints) = self
+            .edit
+            .physics_scratch
+            .as_mut()
+            .ok_or(not("the physics model dialog is closed"))?;
+        let (a, i) = (usize::from(axis), index as usize);
+        if a > 2 {
+            return Err(not("no such axis"));
+        }
+        // `kAccDrag` (62) and `kStep`, the float 0.05 widened (195).
+        let step = |v: f32, s: f64| (f64::from(v) - f64::from(dy) * s) as f32;
+        let (rotation, position) = (0.01, f64::from(0.05f32));
+        if joint {
+            let j = joints.get_mut(i).ok_or(not("no such joint"))?;
+            match field {
+                PhysicsField::Rotation => j.rotation[a] = step(j.rotation[a], rotation),
+                PhysicsField::Position => j.position[a] = step(j.position[a], position),
+                PhysicsField::Size => return Err(not("a joint has no size")),
+            }
+        } else {
+            let r = rigids.get_mut(i).ok_or(not("no such rigid body"))?;
+            match field {
+                PhysicsField::Rotation => r.rotation[a] = step(r.rotation[a], rotation),
+                PhysicsField::Position => r.position[a] = step(r.position[a], position),
+                PhysicsField::Size => {
+                    let v = step(r.size[a], position);
+                    r.size[a] = if v < 0.1 { 0.1 } else { v };
+                }
+            }
+        }
         Ok(())
     }
 

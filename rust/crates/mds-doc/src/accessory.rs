@@ -7,7 +7,7 @@ use mds_formats::key_pool::{KeyPool, GLOBAL_KEY_CAPACITY};
 use mds_formats::pmm::{self, AccessoryKey, AccessoryState, Pmm};
 use mds_formats::text::FixedSjis;
 
-fn fixed<const N: usize>(text: &str) -> FixedSjis<N> {
+pub(crate) fn fixed<const N: usize>(text: &str) -> FixedSjis<N> {
     let mut raw = [0; N];
     let s = crate::add_model::sjis(text, N).raw;
     raw[..s.len()].copy_from_slice(&s);
@@ -113,8 +113,7 @@ fn place(
             .ok_or(Error::NotApplicable("accessory keys"))?,
         state,
     };
-    let at = p.accessories.partition_point(|a| a.slot < slot);
-    p.accessories.insert(at, a);
+    p.accessories.push(a);
     let r = &mut p.physics.accessory_render_order;
     *r = (*r).max(i32::from(order) + 1);
     p.selected_accessory_slot = slot;

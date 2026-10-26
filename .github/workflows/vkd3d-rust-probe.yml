@@ -3,10 +3,11 @@ name: vkd3d Rust translation probe
 on:
   workflow_dispatch:
   push:
-    branches: [w2-shader-c2rust-prototype]
+    branches: [w3-shader-full-compiler-probe]
     paths:
       - .github/workflows/vkd3d-rust-probe.yml
       - tools/vkd3d-rust-probe/*.py
+      - tools/vkd3d-rust-probe/*.rs
       - tools/vkd3d/build.sh
 
 permissions:
@@ -38,14 +39,14 @@ jobs:
           persist-credentials: false
       - name: Install Ubuntu LLVM 18 and source preparation dependencies
         id: packages
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
           mkdir -p "$RUNNER_TEMP/vkd3d-probe/logs"
           exec > >(tee "$RUNNER_TEMP/vkd3d-probe/logs/packages.log") 2>&1
           echo "MDS_VKD3D_OUT=$RUNNER_TEMP/vkd3d-probe/prepared" >> "$GITHUB_ENV"
           echo "CARGO_TARGET_DIR=$RUNNER_TEMP/c2rust-target" >> "$GITHUB_ENV"
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev cmake libssl-dev pkg-config bison flex libjson-perl xz-utils
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends build-essential clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev cmake libssl-dev pkg-config bison flex libjson-perl xz-utils
           dpkg-query -W clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev
           clang-18 --version
           llvm-config-18 --version
@@ -89,7 +90,7 @@ jobs:
         run: |
           tar --exclude='*.o' --exclude='*.lo' --exclude='.libs' --exclude='.deps' \
             -czf "$RUNNER_TEMP/vkd3d-probe/prepared.tar.gz" \
-            -C "$RUNNER_TEMP/vkd3d-probe" prepared/work-linux-native tool
+            -C "$RUNNER_TEMP/vkd3d-probe" prepared/work-linux-native prepared/linux-native tool
           sha256sum "$RUNNER_TEMP/vkd3d-probe/prepared.tar.gz" > "$RUNNER_TEMP/vkd3d-probe/logs/bundle-sha256.txt"
       - name: Record setup status
         if: always()
@@ -131,23 +132,18 @@ jobs:
   translate:
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        unit: [hlsl.c, hlsl.tab.c, hlsl.yy.c, d3d_asm.c]
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install matching LLVM runtime and pinned Rust
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
           mkdir -p "$RUNNER_TEMP/vkd3d-probe/evidence"
           exec > >(tee "$RUNNER_TEMP/vkd3d-probe/evidence/unit-setup.log") 2>&1
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev
           rustup toolchain install 1.95.0 --profile minimal
           clang-18 --version
           dpkg-query -W clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev
@@ -159,34 +155,32 @@ jobs:
           path: ${{ runner.temp }}/vkd3d-probe
       - name: Extract prepared source and tool
         run: tar -xzf "$RUNNER_TEMP/vkd3d-probe/prepared.tar.gz" -C "$RUNNER_TEMP/vkd3d-probe"
-      - name: Translate one complete unit with a 30 minute tool limit
-        timeout-minutes: 40
-        env:
-          PROBE_UNIT: ${{ matrix.unit }}
+      - name: Translate all 24 units, build, link, and compare
+        timeout-minutes: 55
         run: |
           exec > >(tee "$RUNNER_TEMP/vkd3d-probe/evidence/probe.log") 2>&1
-          filter="$(python3 -c 'import os,re; print(re.escape(os.environ["PROBE_UNIT"]) + "$" )')"
           python3 tools/vkd3d-rust-probe/probe.py \
             --source "$RUNNER_TEMP/vkd3d-probe/prepared/work-linux-native/vkd3d-2.1" \
             --artifacts "$RUNNER_TEMP/vkd3d-probe/evidence/result" \
             --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
             --clang /usr/bin/clang-18 --rust-toolchain 1.95.0 \
-            --filter "$filter" --timeout 1800 --build-timeout 120
+            --all-unit-prototype --timeout 1800 --build-timeout 300 \
+            --native-library "$RUNNER_TEMP/vkd3d-probe/prepared/linux-native/lib/libvkd3d-shader.so.1"
       - name: Validate and summarize actual output
         if: always()
-        env:
-          PROBE_UNIT: ${{ matrix.unit }}
         run: |
           python3 tools/vkd3d-rust-probe/validate.py \
             "$RUNNER_TEMP/vkd3d-probe/evidence/result/result.json" \
-            --expected-unit "$PROBE_UNIT" >> "$GITHUB_STEP_SUMMARY"
+            --all-units >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve all generated source, logs, hashes, and extern inventory
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: vkd3d-probe-${{ matrix.unit }}
+          name: vkd3d-probe-all-units
           path: |
             ${{ runner.temp }}/vkd3d-probe/evidence/
             !${{ runner.temp }}/vkd3d-probe/evidence/result/rust-target/
+            !${{ runner.temp }}/vkd3d-probe/evidence/result/raw-target/
+            !${{ runner.temp }}/vkd3d-probe/evidence/result/working-target/
           retention-days: 7
           if-no-files-found: warn

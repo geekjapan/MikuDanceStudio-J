@@ -1,0 +1,13 @@
+[package]
+name = "bullet-rust-dbvt-check"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+mds-crtmath = { path = "../../rust/crates/mds-crtmath" }
+
+[[test]]
+name = "dbvt"
+path = "test.rs"

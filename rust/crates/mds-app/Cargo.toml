@@ -10,6 +10,8 @@ publish.workspace = true
 mds-accessory = { path = "../mds-accessory" }
 mds-doc = { path = "../mds-doc" }
 mds-formats = { path = "../mds-formats" }
+# The Kinect / OpenNI capture of the MoCap menu.
+mds-kinect = { path = "../mds-kinect" }
 mds-math = { path = "../mds-math" }
 # The WAV the timeline plays and the AVI writer of the recording.
 mds-media = { path = "../mds-media" }
@@ -32,6 +34,8 @@ cpal = { version = "0.18.2", optional = true }
 [features]
 default = ["audio"]
 audio = ["dep:cpal"]
+# Loads Data\DxOpenNI.dll for the Kinect capture (Windows only).
+dxopenni = ["mds-kinect/dxopenni"]
 
 [dev-dependencies]
 png = "0.18"

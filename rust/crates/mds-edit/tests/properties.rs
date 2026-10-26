@@ -168,7 +168,8 @@ fn run(seed: u64, ops: usize) {
                     morphs.len(),
                     displays.len()
                 );
-                t.paste(&rig, &bones, &morphs, &displays, offset).unwrap();
+                t.paste_with(&rig, &Extra::default(), &bones, &morphs, &displays, offset)
+                    .unwrap();
                 check(&t, &what);
                 for c in &bones {
                     let b = c.name[4] as usize - b'0' as usize;
@@ -198,8 +199,13 @@ fn run(seed: u64, ops: usize) {
                 let selected: Vec<bool> = (0..3).map(|_| r.below(2) == 1).collect();
                 let frame = r.below(12) as u32;
                 what = format!("register bones {selected:?} at {frame}");
-                t.register_selected_bone_keys(&rig, &selected, frame)
-                    .unwrap();
+                t.register_selected_bone_keys_with(
+                    &mut rig.clone(),
+                    &mut Extra::default(),
+                    &selected,
+                    frame,
+                )
+                .unwrap();
                 check(&t, &what);
                 for (b, _) in selected.iter().enumerate().filter(|(_, s)| **s) {
                     assert!(
@@ -312,7 +318,9 @@ fn full_pools_return_errors_and_leave_the_cursor_at_capacity() {
         frame: 0,
         value: 1.0,
     };
-    let e = t.paste(&rig, &[], &[clip], &[], 5).unwrap_err();
+    let e = t
+        .paste_with(&rig, &Extra::default(), &[], &[clip], &[], 5)
+        .unwrap_err();
     assert_eq!(
         e,
         Error::Full {
@@ -342,7 +350,9 @@ fn full_pools_return_errors_and_leave_the_cursor_at_capacity() {
         ik: vec![],
         selectors: vec![],
     };
-    let e = t.paste(&rig, &[], &[], &[clip], 5000).unwrap_err();
+    let e = t
+        .paste_with(&rig, &Extra::default(), &[], &[], &[clip], 5000)
+        .unwrap_err();
     assert_eq!(
         e,
         Error::Full {
@@ -365,12 +375,15 @@ fn bone_key_bumps_max_frame_with_the_raw_offset_unless_it_appends() {
         physics_disabled: 0,
         interpolation: [0; 16],
     };
-    t.register_bone_key(&rig, &clip(0), 10).unwrap();
+    t.register_bone_key_with(&rig, &Extra::default(), &clip(0), 10, BoneTarget::Named)
+        .unwrap();
     assert_eq!(t.max_frame, 10); // append: the summed frame
     t.max_frame = 0;
-    t.register_bone_key(&rig, &clip(4), 3).unwrap(); // frame 7 goes before 10
+    t.register_bone_key_with(&rig, &Extra::default(), &clip(4), 3, BoneTarget::Named)
+        .unwrap(); // frame 7 goes before 10
     assert_eq!(t.max_frame, 3); // insert: the raw offset (an original quirk)
-    t.register_bone_key(&rig, &clip(7), 3).unwrap(); // exact: frame 10
+    t.register_bone_key_with(&rig, &Extra::default(), &clip(7), 3, BoneTarget::Named)
+        .unwrap(); // exact: frame 10
     assert_eq!(t.max_frame, 3);
     assert_eq!(frames(&t.bone, 1), [7, 10]);
 }

@@ -171,7 +171,7 @@ fn local(path: &str, stage: &Path, corpus: &Path) -> PathBuf {
         "ray-mmd" => corpus.to_path_buf(),
         _ => panic!("unknown effect root in {path}"),
     };
-    root.join(rest)
+    mds_fx::preprocess::resolve_ci(&root, rest).unwrap_or_else(|| root.join(rest))
 }
 
 /// The probe's spelling of an EMM effect row (`$(fixtures)\objects.fx` is `effects/objects.fx`).
@@ -706,4 +706,28 @@ fn missing_inputs_skip_instead_of_panicking() {
     let nowhere = std::env::temp_dir().join("mds-mmertgold-nowhere");
     assert!(common::vkd3d_at(&nowhere.join("libvkd3d-shader.dylib")).is_none());
     assert!(common::corpus_at(&nowhere).is_none());
+}
+
+#[test]
+fn local_effect_paths_match_windows_case() {
+    let dir = std::env::temp_dir().join(format!("mds-mmegold-paths-{}", std::process::id()));
+    let materials = dir.join("Materials");
+    let shadow = dir.join("Shadow");
+    std::fs::create_dir_all(&materials).unwrap();
+    std::fs::create_dir_all(&shadow).unwrap();
+    std::fs::write(materials.join("material_2.0.fx"), b"material").unwrap();
+    std::fs::write(shadow.join("PSSM1.fx"), b"shadow").unwrap();
+    assert_eq!(
+        local("ray-mmd/materials/material_2.0.fx", &dir, &dir),
+        materials.join("material_2.0.fx")
+    );
+    assert_eq!(
+        local("mmegold\\shadow\\pssm1.FX", &dir, &dir),
+        shadow.join("PSSM1.fx")
+    );
+    assert_eq!(
+        local("ray-mmd/missing.fx", &dir, &dir),
+        dir.join("missing.fx")
+    );
+    std::fs::remove_dir_all(dir).unwrap();
 }

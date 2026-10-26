@@ -430,3 +430,26 @@ fn the_offscreen_tab_edits_the_targets_overrides() {
     assert!(editor.mme.offscreen.is_empty());
     select_tab(None);
 }
+
+#[test]
+fn resetting_keeps_the_mixed_case_adjacent_effect_loaded_at_open() {
+    let (mut editor, dir) = control("mixed-case-reset");
+    let materials = dir.join("Materials");
+    std::fs::create_dir_all(&materials).unwrap();
+    let model = materials.join("material_2.0.pmx");
+    std::fs::copy(fixtures().join("chain8.pmx"), &model).unwrap();
+    let effect = materials.join("Material_2.0.fx");
+    std::fs::write(&effect, b"effect").unwrap();
+    editor.doc.pmm.models[0].path.text = model.to_string_lossy().into_owned();
+    editor.mme = mds_app::mme::Mme::autoload(&editor.doc, None);
+    assert!(editor.mme.default.is_empty());
+    let loaded = editor.mme.assignments[0].effect.clone();
+    assert!(!loaded.is_empty());
+    assert_eq!(mds_app::mme::effect_file(&dir, &loaded), effect);
+
+    run(&mut editor, "menu:mme-40005");
+    select(&[Row::Object(0)]);
+    run(&mut editor, "menu:mme-dialog-40008");
+    assert_eq!(editor.mme.assignments[0].effect, loaded);
+    std::fs::remove_dir_all(dir).unwrap();
+}

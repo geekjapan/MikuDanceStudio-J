@@ -1285,6 +1285,7 @@ dependencies = [
  "mds-accessory",
  "mds-doc",
  "mds-formats",
+ "mds-fx",
  "mds-kinect",
  "mds-math",
  "mds-media",

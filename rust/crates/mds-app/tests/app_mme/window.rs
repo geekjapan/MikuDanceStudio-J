@@ -95,6 +95,7 @@ fn the_window_texture_gets_the_frame_without_a_read_back() {
             .to_string_lossy()
             .into_owned();
     }
+    editor.mme.unload();
     let mut baseline = None;
     for (offset, display, size) in [
         ([0.0; 2], false, mds_render::ShadowMapSize::Texels2048),
@@ -114,6 +115,7 @@ fn the_window_texture_gets_the_frame_without_a_read_back() {
             .mme
             .render(&editor.doc, &editor.physics, &view)
             .unwrap();
+        assert_eq!(editor.mme.loaded(), 1, "the assigned effect loaded");
         editor
             .mme
             .render_into(device, queue, &editor.doc, &editor.physics, &view, &texture)

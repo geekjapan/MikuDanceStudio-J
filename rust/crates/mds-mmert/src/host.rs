@@ -930,6 +930,7 @@ impl Host {
             accessories: &accessories,
             shadow_map: f.shadow_map,
             shadow_map_display: display.then_some([0.0, 0.0, w as f32, h as f32]),
+            grid: false,
             ..mds_render::scene::stage_at(f.pmm, f.frame)
         };
         let standard = match &mut self.standard {

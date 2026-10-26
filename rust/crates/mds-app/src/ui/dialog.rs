@@ -45,8 +45,7 @@
 //!   delete and an add the new body is `BODY_<count>`, where the C++ reuses a free slot. The
 //!   committed model rebuilds the live physics world, and the rigid body and joint names are
 //!   written in Shift-JIS.
-//! * The English names dialog does not select the bone it shows, and keeps no
-//!   `FrameRangeStartFrame` for the frame scale dialog.
+//! * The English names dialog keeps no `FrameRangeStartFrame` for the frame scale dialog.
 //! * The window is not modal. Playback still greys out the actions that edit the document.
 //!
 //! `MDS_APP_DIALOG=<name>` opens a dialog when the window starts, for screenshots.
@@ -1123,8 +1122,23 @@ fn open_bone_numeric(ctx: &mut Ctx) -> Result<(), String> {
 
 /// Menu 259 (`command_view_menu.cpp:903`): a second call while the dialog is open does nothing,
 /// and camera mode returns. A model has to be selected for the dialog to have anything to edit.
+/// Opening it sets edit mode 0 and selects bone 0 alone (`english_name_dialog.cpp:291-304`).
 fn open_english_names(ctx: &mut Ctx) -> Result<(), String> {
-    open_for_model(ctx, "IDD_ENGLISH_NAMES")
+    let open = ctx.egui.as_ref().and_then(current) == Some("IDD_ENGLISH_NAMES");
+    open_for_model(ctx, "IDD_ENGLISH_NAMES")?;
+    if open {
+        return Ok(());
+    }
+    ctx.editor.apply(Command::SetEditMode(0))?;
+    let bones = ctx
+        .editor
+        .doc
+        .selected_model()
+        .map_or(0, |m| m.bone_pose.len());
+    if bones > 0 {
+        ctx.editor.apply(Command::SelectBones(vec![0]))?;
+    }
+    Ok(())
 }
 
 /// Menu 261.
@@ -2355,7 +2369,9 @@ fn cancel_names(ctx: &mut Ctx, f: &Form) {
 }
 
 /// A combo of the dialog moved to entry `to` (`SelectEnglishNameBone`, `Morph`, `Group`): the
-/// box of the old entry is committed first, then the box shows the new name.
+/// box of the old entry is committed first, then the box shows the new name. The bone combo
+/// also selects that bone alone, or no bone for an effector, inert tip or co-rotate bone
+/// (kinds 6, 7 and 9, `english_name_dialog.cpp:383-391`).
 fn names_pick(ctx: &mut Ctx, f: &mut Form, combo: usize, to: usize) {
     let lists = names_lists(ctx);
     if to >= lists[combo].len() {
@@ -2364,6 +2380,21 @@ fn names_pick(ctx: &mut Ctx, f: &mut Form, combo: usize, to: usize) {
     names_commit(ctx, f, 2 + combo);
     f.cursors[combo] = to;
     f.t[2 + combo] = names_lists(ctx)[combo][to].clone();
+    if combo == 0 {
+        let kind = model_panel::selected_index(&ctx.editor.doc).and_then(|i| {
+            match ctx.editor.doc.models.get(i)? {
+                ModelFile::Pmd(p) => p.bones.get(to).map(|b| b.kind),
+                _ => None,
+            }
+        });
+        let bones = match kind {
+            Some(6 | 7 | 9) => Vec::new(),
+            _ => vec![to as u32],
+        };
+        if let Err(e) = ctx.editor.apply(Command::SelectBones(bones)) {
+            *ctx.status = e;
+        }
+    }
 }
 
 /// Buttons "<" and ">" of a combo, wrapping around.

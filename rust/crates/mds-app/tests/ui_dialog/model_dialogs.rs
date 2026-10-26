@@ -395,6 +395,45 @@ fn the_english_names_dialog_edits_the_names_of_the_model() {
     assert_eq!(rig.editor.doc.pmm.models[0].name_en.text, "Lips");
 }
 
+/// Opening the dialog sets edit mode 0 and selects bone 0 (`english_name_dialog.cpp:291-304`);
+/// the bone combo selects its bone alone, or none for kinds 6, 7 and 9
+/// (`SelectEnglishNameBone`, `:383-391`). Neither is an edit of the scene.
+#[test]
+fn the_english_bone_combo_selects_the_bone() {
+    let mut rig = lips();
+    rig.editor
+        .apply(mds_doc::Command::SelectBones(vec![1, 2]))
+        .unwrap();
+    rig.editor.apply(mds_doc::Command::SetEditMode(1)).unwrap();
+    rig.editor.modified = false;
+    rig.run("dlg:IDD_ENGLISH_NAMES").unwrap();
+    let selection = |rig: &Rig| {
+        let m = rig.editor.doc.selected_model().unwrap();
+        let marked: Vec<usize> = (0..m.bone_pose.len())
+            .filter(|&b| m.bone_pose[b].flags[2] != 0)
+            .collect();
+        (m.selection.selected_bone, marked)
+    };
+    assert_eq!(rig.editor.doc.pmm.timeline.edit_mode, 0);
+    assert_eq!(selection(&rig), (0, vec![0]));
+    assert!(pmd(&rig).bones[..2]
+        .iter()
+        .all(|b| ![6, 7, 9].contains(&b.kind)));
+    rig.with(|c| dialog::names_select(c, 0, 1)).unwrap();
+    assert_eq!(selection(&rig), (1, vec![1]));
+    // lips.pmd has no tip bone: bone 2 becomes one of each kind.
+    for kind in [6, 7, 9] {
+        let ModelFile::Pmd(p) = &mut rig.editor.doc.models[0] else {
+            panic!("not a PMD")
+        };
+        p.bones[2].kind = kind;
+        rig.with(|c| dialog::names_select(c, 0, 2)).unwrap();
+        assert_eq!(selection(&rig), (-1, vec![]), "kind {kind}");
+        rig.with(|c| dialog::names_select(c, 0, 1)).unwrap();
+    }
+    assert!(!rig.editor.modified);
+}
+
 #[test]
 fn the_english_names_dialog_applies_on_cancel_too() {
     let mut rig = lips();

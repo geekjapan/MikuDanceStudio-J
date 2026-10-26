@@ -18,6 +18,8 @@
 //! * [`dump`]: `--frame-dump`, the twin of the C++ `--mds-frame-dump`.
 //! * [`record`]: recording to an uncompressed AVI or a PNG sequence (menu 223), the frame-step
 //!   loop of `src/app/avi_record_start.cpp` and `src/app/playback_catchup.cpp`.
+//! * [`mme`]: the effects of the embedded MMEffect: the `.emm` beside the PMM and the frame drawn
+//!   through `mds-mmert`.
 //! * [`audio`]: the WAV played along with playback and frame moves (`src/media/wave_audio.cpp`,
 //!   `src/app/subsystem_init.cpp`), out through cpal with the `audio` feature.
 
@@ -26,6 +28,7 @@ pub mod audio;
 pub mod dump;
 pub mod editor;
 pub mod file;
+pub mod mme;
 pub mod navigation;
 pub mod playback;
 pub mod record;

@@ -124,6 +124,7 @@ extern "C" {
         max_sub_steps: i32,
         fixed_step: f32,
     ) -> c_int;
+    pub fn mds_mmd_world_set_floor(world: *mut mds_mmd_world, on: i32) -> c_int;
     pub fn mds_mmd_body_create(
         world: *mut mds_mmd_world,
         shape: i32,

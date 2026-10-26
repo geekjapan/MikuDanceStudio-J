@@ -23,6 +23,11 @@ mds_mmd_world *mds_mmd_world_create(void);
 void mds_mmd_world_destroy(mds_mmd_world *world);
 int mds_mmd_world_set_gravity(mds_mmd_world *world, float x, float y, float z);
 int mds_mmd_world_step(mds_mmd_world *world, float dt, int32_t max_sub_steps, float fixed_step);
+/* The floor menu 285 (src/window/command_view_menu.cpp 1437-1455): the
+ * ground's m_collisionFlags (x64 +0xE0, x86 +0xD4) becomes 1 when `on`,
+ * the startup CF_STATIC_OBJECT, else -1, whose CF_NO_CONTACT_RESPONSE
+ * lets bodies fall through. No other Bullet call, as in the C++. */
+int mds_mmd_world_set_floor(mds_mmd_world *world, int32_t on);
 
 /* CreateRigidBody. shape 0 sphere (sx), 1 box (sx, sy, sz), 2 capsule
  * (sx radius, sy height); `rotation` is the quaternion that setRotation

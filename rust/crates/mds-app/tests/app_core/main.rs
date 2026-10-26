@@ -1,5 +1,6 @@
 //! The application core: the frame dump of the golden2 scenes ([`golden2`]), the editor
-//! ([`editor`]), the action modes ([`modes`]) and the file area ([`file`]).
+//! ([`editor`]), the action modes ([`modes`]), the file area ([`file`]) and the physscen traces
+//! through the editor ([`physscen`]).
 
 use mds_app::editor::Editor;
 use mds_app::ui::Ctx;
@@ -9,6 +10,7 @@ mod editor;
 mod file;
 mod golden2;
 mod modes;
+mod physscen;
 
 pub fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/rust")

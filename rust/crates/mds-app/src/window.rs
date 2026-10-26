@@ -3,7 +3,7 @@
 //! Japanese, so the window installs one CJK font of the system ([`CJK_FONTS`]) at start, and it
 //! opens the sound output there (`mds_app::audio::open_device`).
 
-use eframe::egui;
+use eframe::{egui, egui_wgpu};
 use mds_app::editor::Editor;
 use mds_app::ui::{self, Ctx, Place, AREAS};
 use mds_app::viewport::{media_viewport, WindowViewport};
@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub fn run(pmm: Option<PathBuf>) -> Result<(), String> {
     let editor = match &pmm {
-        Some(path) => Editor::open(path)?,
+        Some(path) => Editor::startup(path)?,
         None => Editor::empty(),
     };
     let options = eframe::NativeOptions {
@@ -20,6 +20,10 @@ pub fn run(pmm: Option<PathBuf>) -> Result<(), String> {
             .with_title("MikuDanceStudio")
             .with_position([0.0, 0.0])
             .with_inner_size([1280.0, 720.0]),
+        wgpu_options: egui_wgpu::WgpuConfiguration {
+            wgpu_setup: egui_wgpu::WgpuSetup::CreateNew(mme_device()),
+            ..Default::default()
+        },
         ..Default::default()
     };
     eframe::run_native(
@@ -46,6 +50,25 @@ pub fn run(pmm: Option<PathBuf>) -> Result<(), String> {
         }),
     )
     .map_err(|e| e.to_string())
+}
+
+/// The features `mds-mmert` uses when the device has them (`mds_mmert::Gpu`), so the effects
+/// draw on the window's device as on their own.
+const MME_FEATURES: wgpu::Features = wgpu::Features::FLOAT32_FILTERABLE
+    .union(wgpu::Features::TEXTURE_COMPRESSION_BC)
+    .union(wgpu::Features::TEXTURE_FORMAT_16BIT_NORM)
+    .union(wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER);
+
+/// eframe's device, with the [`MME_FEATURES`] the adapter has.
+fn mme_device() -> egui_wgpu::WgpuSetupCreateNew {
+    let mut setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+    let base = setup.device_descriptor.clone();
+    setup.device_descriptor = std::sync::Arc::new(move |adapter| {
+        let mut d = base(adapter);
+        d.required_features |= adapter.features() & MME_FEATURES;
+        d
+    });
+    setup
 }
 
 /// System fonts with the Japanese glyphs, by platform, first found wins: file and face index.
@@ -175,6 +198,12 @@ impl eframe::App for App {
             (area.pass)(ui, &mut ctx);
         }
         ui::keys(ui, &mut ctx);
+        // Gate A of the physics (`Editor::low_power`): any input is a window message.
+        let english = ui::dialog::current(ui.ctx()) == Some("IDD_ENGLISH_NAMES");
+        ctx.editor.low_power = ui::view::options(ui.ctx(), ctx.editor).low_power && !english;
+        if ui.input(|i| !i.events.is_empty()) {
+            ctx.editor.message();
+        }
         if let Err(e) = ctx.editor.pump(ctx.now_ms) {
             *ctx.status = e;
         }

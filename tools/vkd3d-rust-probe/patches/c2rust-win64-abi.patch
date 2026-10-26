@@ -193,7 +193,7 @@ index 0cbfdca..b8ea7f2 100644
      // Type definition type (6.7.7)
      Typedef(CTypedefId),
 diff --git a/c2rust-transpile/src/convert_type.rs b/c2rust-transpile/src/convert_type.rs
-index a699cb7..a5f2382 100644
+index a699cb7..11e8117 100644
 --- a/c2rust-transpile/src/convert_type.rs
 +++ b/c2rust-transpile/src/convert_type.rs
 @@ -128,6 +128,7 @@ pub fn convert_function(
@@ -247,7 +247,7 @@ index a699cb7..a5f2382 100644
                  // _params is empty here -> get params from function definition instead
                  let params = params
                      .iter()
-@@ -368,7 +369,7 @@ pub fn knr_function_type_with_parameters(
+@@ -368,10 +369,13 @@ pub fn knr_function_type_with_parameters(
                      .collect::<Vec<_>>();
  
                  let opt_ret = if is_noreturn { None } else { Some(ret) };
@@ -256,6 +256,12 @@ index a699cb7..a5f2382 100644
                  Ok(Some(fn_ty))
              }
  
++            CTypeKind::Attributed(ty, _) => {
++                self.knr_function_type_with_parameters(ctxt, ty.ctype, params)
++            }
+             CTypeKind::Elaborated(ref ctype) => {
+                 self.knr_function_type_with_parameters(ctxt, *ctype, params)
+             }
 diff --git a/c2rust-transpile/src/translator/functions.rs b/c2rust-transpile/src/translator/functions.rs
 index e423e49..30566ea 100644
 --- a/c2rust-transpile/src/translator/functions.rs

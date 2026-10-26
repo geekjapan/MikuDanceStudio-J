@@ -113,9 +113,23 @@ uses the equivalent type for calling-convention attributes. Function prototype
 and no-prototype CBOR records carry a calling convention into a Rust enum.
 Definitions, foreign declarations, function pointers, K&R pointer calls, type
 comparison, declared-argument reconstruction, and variadic pointer extraction
-preserve it. `C`, `win64`, and `sysv64` are supported. Other conventions stop
+preserve it. K&R reconstruction also unwraps attributed types, including nested
+wrappers, before reading the function ABI. `C`, `win64`, and `sysv64` are supported. Other conventions stop
 export rather than silently becoming C. This patch targets the pinned LLVM 18
 hosted tool build; compatibility with other Clang versions is unverified.
+
+For a focused check without rebuilding LLVM, run the actual patched K&R method
+with minimal AST and output shims using the pinned Rust compiler.
+
+```sh
+python3 tools/vkd3d-rust-probe/check_c2rust_knr.py \
+  --source /path/to/patched/c2rust --artifacts /path/to/knr-check
+```
+
+The check covers attributed and nested transparent wrappers, prototype and
+no-prototype functions, eight alternating parameter types, all three supported
+ABIs, variadic flags, and noreturn results. It checks the method's forwarding
+contract. The native smoke below remains required to verify export and ABI execution.
 
 Translation is gated by a test-only native x86_64 C/Rust executable. A macro
 attributed Win64 function and vtable pointer receive eight alternating integer

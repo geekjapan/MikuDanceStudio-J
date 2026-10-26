@@ -326,25 +326,24 @@ fn gate(scene: &str, frame: u32) {
 }
 
 #[test]
-#[ignore = "within 4 is 0.995: the shadow of the curled model sits about 1 px off"]
+#[ignore = "within 4 is 0.9972: the curled model's shading and its shadow's edge pixels"]
 fn groundshadow_0() {
     gate("groundshadow", 0);
 }
 
 #[test]
-#[ignore = "within 4 is 0.992: the shadow of the curled model sits about 1 px off"]
+#[ignore = "within 4 is 0.9945: the curled model's shading and its shadow's edge pixels"]
 fn groundshadow_30() {
     gate("groundshadow", 30);
 }
 
 #[test]
-#[ignore = "within 4 is 0.839: needs the self-shadow map and the effect path of shadow_floor.x"]
 fn selfshadow_0() {
     gate("selfshadow", 0);
 }
 
 #[test]
-#[ignore = "within 4 is 0.839: needs the self-shadow map and the effect path of shadow_floor.x"]
+#[ignore = "within 4 is 0.99998, but max 56: 3 pixels where a shadow map texel edge falls 1 px off"]
 fn selfshadow_30() {
     gate("selfshadow", 30);
 }
@@ -356,7 +355,6 @@ fn accessory_0() {
 }
 
 #[test]
-#[ignore = "within 4 is 0.99982 (37 px over, 20 allowed): the cube face seen edge on"]
 fn accessory_30() {
     gate("accessory", 30);
 }

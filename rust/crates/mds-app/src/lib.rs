@@ -16,13 +16,19 @@
 //! * [`navigation`]: the camera-mode viewport input of `src/app/pump_navigation.cpp`, the
 //!   wheel (`src/window/ui_scroll_mouse.cpp`) and the view buttons 402 to 407.
 //! * [`dump`]: `--frame-dump`, the twin of the C++ `--mds-frame-dump`.
+//! * [`record`]: recording to an uncompressed AVI or a PNG sequence (menu 223), the frame-step
+//!   loop of `src/app/avi_record_start.cpp` and `src/app/playback_catchup.cpp`.
+//! * [`audio`]: the WAV played along with playback and frame moves (`src/media/wave_audio.cpp`,
+//!   `src/app/subsystem_init.cpp`), out through cpal with the `audio` feature.
 
 pub mod actions;
+pub mod audio;
 pub mod dump;
 pub mod editor;
 pub mod file;
 pub mod navigation;
 pub mod playback;
+pub mod record;
 pub mod scene;
 pub mod ui;
 pub mod viewport;

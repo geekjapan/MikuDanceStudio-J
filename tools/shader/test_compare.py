@@ -80,6 +80,37 @@ class Contracts(unittest.TestCase):
                                          str(baseline), str(candidate)], capture_output=True, text=True)
                 self.assertEqual(result.returncode, expected, result.stderr)
 
+    def test_early_pipeline_diagnostic_remains_protected(self):
+        before = dict(self.row, spirv='UNAVAILABLE', wgsl='UNAVAILABLE',
+                      msl='UNAVAILABLE', hlsl='UNAVAILABLE', error='vkd3d failure A')
+        baseline = {self.key: before}
+        for error in ('vkd3d failure B', ''):
+            candidate = {self.key: dict(before, error=error)}
+            self.assertEqual(compare(baseline, candidate)[0]['contract'], 'error')
+        candidate = {self.key: dict(before, spirv='OK ', wgsl='ERR B', msl='OK ',
+                                    hlsl='OK ', error='B')}
+        self.assertEqual(compare(baseline, candidate)[0]['contract'], 'error')
+        self.assertEqual(compare(baseline, self.baseline), [])
+
+    def test_cli_allows_producer_consistent_partial_backend_improvement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            baseline = Path(directory) / 'baseline.tsv'
+            candidate = Path(directory) / 'candidate.tsv'
+            header = 'mds-shader-contracts-v1\ncompiler\tvkd3d 2.1\n' + '\t'.join(COLUMNS) + '\n'
+            before = dict(self.row, wgsl='ERR A', msl='ERR B', error='A')
+            baseline.write_text(header + '\t'.join(before[name] for name in COLUMNS) + '\n')
+            after = dict(before, wgsl='OK ', error='B')
+            cases = [(after, 0), (dict(after, error='arbitrary summary'), 1),
+                     (dict(after, error=''), 1),
+                     (dict(after, msl='ERR C', error='C'), 1),
+                     (dict(after, hlsl='UNAVAILABLE'), 1)]
+            for row, expected in cases:
+                with self.subTest(row=row):
+                    candidate.write_text(header + '\t'.join(row[name] for name in COLUMNS) + '\n')
+                    result = subprocess.run([sys.executable, str(Path(__file__).with_name('compare.py')),
+                                             str(baseline), str(candidate)], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, expected, result.stderr)
+
     def test_reader_decodes_cells_and_rejects_empty_or_duplicate_captures(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'capture.tsv'

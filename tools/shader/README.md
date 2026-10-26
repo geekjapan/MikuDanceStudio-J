@@ -37,7 +37,10 @@ identity. Missing entries, changed sources, lost outputs, changed scans, and
 changed reflection registers fail, even if aggregate success counts improve.
 Existing failure diagnostics must remain identical or improve to success. A changed
 failure or lost measurement fails. A final compile error can clear only when all
-compile outputs succeed. Additional identities are allowed.
+compile outputs succeed. When all backend results are measured, its summary may
+change to the next unchanged backend failure after an earlier backend improves.
+Both summaries must match the first backend failure in WGSL, MSL, HLSL order.
+Earlier pipeline errors with unavailable backend results must remain identical. Additional identities are allowed.
 Generated backend text is retained through `--emit`; comparison protects backend
 acceptance rather than byte-for-byte generated text.
 

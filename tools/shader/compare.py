@@ -57,7 +57,13 @@ def compare(baseline, candidate):
                                  'expected': before[name], 'actual': after[name]})
         error_cleared = bool(before['error']) and not after['error'] and all(
             after[name] == 'OK ' for name in ('spirv', 'wgsl', 'msl', 'hlsl'))
-        if before['error'] != after['error'] and not error_cleared:
+        backend_errors_match = all(
+            row['spirv'] == 'OK ' and
+            all(row[name].startswith(('OK ', 'ERR ')) for name in ('wgsl', 'msl', 'hlsl')) and
+            row['error'] == next((row[name][4:] for name in ('wgsl', 'msl', 'hlsl')
+                                  if row[name].startswith('ERR ')), '')
+            for row in (before, after))
+        if before['error'] != after['error'] and not (error_cleared or backend_errors_match):
             failures.append({'identity': key, 'contract': 'error',
                              'expected': before['error'], 'actual': after['error']})
     return failures

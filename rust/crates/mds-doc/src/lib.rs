@@ -109,7 +109,8 @@ mod bulk;
 mod camera;
 mod camera_reference;
 pub use camera::{
-    camera_anchors, CameraAnchors, CameraBone, CameraPoseProvider, CameraPoseRequest,
+    camera_anchors, CameraAnchors, CameraBone, CameraControls, CameraFrame, CameraPoseProvider,
+    CameraPoseRequest,
 };
 mod delete_model;
 pub mod frame;

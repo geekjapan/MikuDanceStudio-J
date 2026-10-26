@@ -21,7 +21,7 @@ fn a_camera_edit_shows_before_it_is_registered() {
     e.apply(Command::SelectCameraMode).unwrap();
     e.seek(10).unwrap();
     let track = scene::track_camera(&e.doc, 10).unwrap();
-    assert_eq!(e.camera, track);
+    assert_eq!(*e.camera_frame(), track.into());
     let edited = Camera {
         target: [1.0, 2.0, 3.0],
         rotation: [0.25, 0.5, 0.0],
@@ -37,7 +37,7 @@ fn a_camera_edit_shows_before_it_is_registered() {
         perspective: false,
     })
     .unwrap();
-    assert_eq!(e.camera, edited, "the view draws the edited state");
+    assert_eq!(*e.camera_frame(), edited.into(), "the view draws the edited state");
     assert_eq!(
         scene::track_camera(&e.doc, 10).unwrap(),
         track,
@@ -48,12 +48,12 @@ fn a_camera_edit_shows_before_it_is_registered() {
         direction: [0.0, -1.0, 0.0],
     })
     .unwrap();
-    assert_eq!(e.camera, edited, "another edit keeps the edited view");
+    assert_eq!(*e.camera_frame(), edited.into(), "another edit keeps the edited view");
     e.apply(Command::RegisterGlobalKeys(vec![GlobalTrack::Camera]))
         .unwrap();
     assert_eq!(scene::track_camera(&e.doc, 10).unwrap(), edited);
     e.seek(0).unwrap();
-    assert_eq!(e.camera, scene::track_camera(&e.doc, 0).unwrap());
+    assert_eq!(*e.camera_frame(), scene::track_camera(&e.doc, 0).unwrap().into());
 }
 
 /// Plays `name` for `passes` window passes after `edit_at`, with `edit` applied there, and
@@ -109,12 +109,12 @@ fn selections_leave_the_scene_unmodified() {
         .unwrap();
     e.apply(Command::SelectMorphLane { lane: 2, morph: 0 })
         .unwrap();
-    let camera = e.camera;
+    let camera = *e.camera_frame();
     e.apply(Command::ClickFrame(7)).unwrap();
     assert_eq!(e.doc.pmm.timeline.current_frame, 7, "a click seeks");
     // The model view does not follow the camera track (`cameraView`,
     // `src/render/debug_geometry.cpp:476`).
-    assert_eq!(e.camera, camera);
+    assert_eq!(*e.camera_frame(), camera);
     let grouped = e
         .doc
         .pmm
@@ -239,7 +239,7 @@ fn the_model_view_keeps_its_view_offsets() {
         target: [0.0; 3],
         ..scene::state_camera(&e.doc)
     };
-    assert_eq!(reopened.camera, want);
+    assert_eq!(*reopened.camera_frame(), want.into());
     reopened
         .with_stage([640, 360], &[[0.0; 2]], |f, _| {
             assert_eq!(
@@ -252,10 +252,10 @@ fn the_model_view_keeps_its_view_offsets() {
 
     let mut e = reopened;
     e.apply(Command::SetViewOffset([3.0, 4.0])).unwrap();
-    let panned = e.camera;
+    let panned = *e.camera_frame();
     e.seek(20).unwrap();
     e.step_frame(true).unwrap();
-    assert_eq!(e.camera, panned);
+    assert_eq!(*e.camera_frame(), panned);
     e.with_stage([640, 360], &[[0.0; 2]], |f, _| {
         assert_eq!(
             f.view.clip([1.0, 2.0, 3.0]),
@@ -272,14 +272,14 @@ fn the_model_view_keeps_its_view_offsets() {
     for t in 1..10 {
         e.pump(t * 33).unwrap();
     }
-    assert_eq!(e.camera, panned, "the model view while playing");
+    assert_eq!(*e.camera_frame(), panned, "the model view while playing");
     e.toggle_play(330).unwrap();
     e.apply(Command::SetFollowCamera(true)).unwrap();
     e.toggle_play(400).unwrap();
     e.pump(433).unwrap();
     assert_eq!(
-        e.camera,
-        scene::track_camera(&e.doc, e.doc.pmm.timeline.current_frame as u32).unwrap()
+        *e.camera_frame(),
+        scene::state_camera(&e.doc).into()
     );
 }
 
@@ -319,7 +319,7 @@ fn the_front_view_of_the_golden_strips_shows_their_edge_color() {
     e.toggle_play(0).unwrap();
     e.pump(33).unwrap();
     assert_eq!(
-        e.camera.rotation, [0.0; 3],
+        e.doc.camera_controls().rotation, [0.0; 3],
         "the saved model view while playing"
     );
     let (n, front) = model_pixels(&e, &gpu);

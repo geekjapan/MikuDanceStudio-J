@@ -10,8 +10,8 @@
 //! Only the camera-mode branches: the model-mode view offsets and the camera parented to a model
 //! come with the input modes of slice `app`.
 
+use mds_doc::CameraControls as Camera;
 use mds_math::Mat4;
-use mds_render::Camera;
 
 /// The numpad angles as the image stores them (`kNumpadHalfPi` 0x3FC90FF9, `kNumpadPi`
 /// 0x40490FD8), a few ulps off the rounded constants that the view buttons use.

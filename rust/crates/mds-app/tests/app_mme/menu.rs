@@ -251,11 +251,12 @@ fn the_mapping_dialog_edits_the_assignment() {
 #[test]
 fn a_runtime_that_cannot_start_leaves_the_scene_without_effects() {
     let (editor, dir) = control("nostart");
+    let camera = *editor.camera_frame();
     let mut mme = editor.mme;
     mme.vkd3d = Some(dir.join("no-such-vkd3d.dylib"));
     assert!(mme.active());
     let view = View {
-        camera: &editor.camera,
+        camera: &camera,
         view_offset: [0.0; 2],
         shadow_map: Default::default(),
         shadow_map_display: false,

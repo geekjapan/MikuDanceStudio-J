@@ -234,7 +234,7 @@ pub fn segments(editor: &Editor, size: [i32; 2]) -> Vec<Segment> {
     if size[0] <= 0 || size[1] <= 0 {
         return Vec::new();
     }
-    let view = crate::scene::view(&editor.doc, &editor.camera, size.map(|v| v as u32));
+    let view = editor.camera_view(size.map(|v| v as u32));
     let poses = world_poses(editor);
     let mut out = Vec::new();
     for model in &editor.physics.scene.models {

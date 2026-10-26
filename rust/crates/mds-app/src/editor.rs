@@ -75,7 +75,7 @@ use crate::{audio, file};
 use mds_doc::{Command, Document, ModelFile};
 use mds_media::wav::Wave;
 use mds_physics::PhysicsScene;
-use mds_render::{Camera, Frame, Light, ShadowMapSize, Stage};
+use mds_render::{CameraFrame, Frame, Light, ShadowMapSize, Stage};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -94,7 +94,8 @@ pub struct Editor {
     /// How many times the physics world was built for this editor.
     pub physics_opens: usize,
     /// The camera the viewport draws from (the camera-mode view state).
-    pub camera: Camera,
+    camera: CameraFrame,
+    camera_offset: [f32; 2],
     /// Window-only self-shadow controls, kept across scene loads.
     pub shadow_map: ShadowMapSize,
     pub shadow_map_display: bool,
@@ -144,25 +145,17 @@ impl Editor {
             true => PhysicsScene::open_running(&doc.pmm, read)?,
             false => PhysicsScene::open(&doc.pmm, read)?,
         };
-        let current = doc.pmm.timeline.current_frame.max(0) as u32;
+        let mut doc = doc;
+        let frame =
+            doc.prepare_camera_frame(mds_doc::camera_anchors(&doc, &physics.scene.models), false);
         Ok(Editor {
             mme: Mme::autoload(&doc, path.as_deref()),
             last_reload_ms: 0,
             assets: Assets::load(&doc, &dir)?,
             wave: wave_of(&doc, &dir),
             recording: None,
-            camera: match model_view(&doc, &physics.scene.models) {
-                Some(c) => c,
-                None => {
-                    let (state, parent) = mds_render::scene::camera_with_parent_at(
-                        &doc.pmm,
-                        current,
-                        mds_scene::track::CameraMode::Seek,
-                    )
-                    .ok_or_else(|| format!("camera track at frame {current}"))?;
-                    view_camera(&doc, &physics.scene.models, true, state, parent)
-                }
-            },
+            camera: render_camera(frame),
+            camera_offset: frame.offset,
             shadow_map: ShadowMapSize::default(),
             shadow_map_display: false,
             options: Options::of(&doc.pmm.timeline),
@@ -269,26 +262,8 @@ impl Editor {
     /// selected (`cameraView`, `src/render/debug_geometry.cpp:476`). The model view keeps its
     /// camera over seeks and playback (`RefreshAfterFrameApply` moves the camera state in camera
     /// mode only). The model view offsets stay in the document.
-    fn follow_track(&mut self, frame: u32) -> Result<(), String> {
-        let p = &self.doc.pmm;
-        let a = &p.appearance;
-        let parent_selected =
-            a.camera_parent_model >= 0 && a.camera_parent_model == i32::from(p.selected_model_slot);
-        let camera_view = p.settings.options[0] != 0
-            || a.follow_camera != 0 && (self.playing() || parent_selected);
-        if camera_view {
-            let mode = if self.playing() {
-                mds_scene::track::CameraMode::Playback
-            } else {
-                mds_scene::track::CameraMode::Seek
-            };
-            let (state, parent) =
-                mds_render::scene::camera_with_parent_at(&self.doc.pmm, frame, mode)
-                    .ok_or_else(|| format!("camera track at frame {frame}"))?;
-            self.camera = view_camera(&self.doc, &self.physics.scene.models, true, state, parent);
-        } else {
-            self.camera = model_view(&self.doc, &self.physics.scene.models).unwrap_or(self.camera);
-        }
+    fn follow_track(&mut self, _frame: u32) -> Result<(), String> {
+        self.refresh_camera();
         Ok(())
     }
 
@@ -392,6 +367,7 @@ impl Editor {
             self.assets.set_edge_scales(&self.doc);
             self.sync_keys()?;
             if self.playing() {
+                self.refresh_camera();
                 return Ok(());
             }
             if follow {
@@ -399,44 +375,37 @@ impl Editor {
                 self.follow_track(self.current_frame())?;
             }
         }
-        if !self.playing() {
-            self.refresh_camera();
-        }
+        self.refresh_camera();
         Ok(())
     }
 
-    /// Edit native controls before composing them with the live attachment and reference pivot.
-    pub fn edit_camera(&mut self, edit: impl FnOnce(&mut Camera)) -> Result<(), String> {
-        let mut camera = scene::state_camera(&self.doc);
-        edit(&mut camera);
-        self.apply(Command::SetCamera {
-            position: camera.target,
-            rotation: camera.rotation,
-            distance: camera.distance,
-            fov: camera.fov_deg,
-            perspective: camera.orthographic,
-        })?;
-        if self.playing() {
-            self.refresh_camera();
-        }
-        Ok(())
+    pub fn edit_camera_controls(
+        &mut self,
+        edit: impl FnOnce(&mut mds_doc::CameraControls),
+    ) -> Result<(), String> {
+        let mut controls = self.doc.camera_controls();
+        edit(&mut controls);
+        self.apply(controls.into())
     }
 
     fn refresh_camera(&mut self) {
-        let p = &self.doc.pmm;
-        let a = &p.appearance;
-        let camera_view = p.settings.options[0] != 0
-            || a.follow_camera != 0
-                && (self.playing()
-                    || a.camera_parent_model >= 0
-                        && a.camera_parent_model == i32::from(p.selected_model_slot));
-        self.camera = view_camera(
-            &self.doc,
-            &self.physics.scene.models,
-            camera_view,
-            scene::state_camera(&self.doc),
-            [a.camera_parent_model, a.camera_parent_bone],
-        );
+        self.refresh_camera_while(self.playing());
+    }
+
+    fn refresh_camera_while(&mut self, playing: bool) {
+        let anchors = mds_doc::camera_anchors(&self.doc, &self.physics.scene.models);
+        let frame = self.doc.prepare_camera_frame(anchors, playing);
+        self.camera = render_camera(frame);
+        self.camera_offset = frame.offset;
+    }
+
+    pub fn camera_view(&self, [width, height]: [u32; 2]) -> mds_render::View {
+        self.camera
+            .view_with_offset(self.camera_offset, width, height)
+    }
+
+    pub fn camera_frame(&self) -> &CameraFrame {
+        &self.camera
     }
 
     /// The world again from the document, after a new scene.
@@ -755,7 +724,7 @@ impl Editor {
             physics: &self.physics,
             frame,
             camera: &self.camera,
-            view_offset: scene::view_offset(&self.doc),
+            view_offset: self.camera_offset,
             size: r.size(),
             samples: &mds_render::SAMPLES_8X,
             picture_viewport: None,
@@ -855,7 +824,7 @@ impl Editor {
         let ([r, g, b], [x, y, z]) = (l.color, l.direction);
         Ok(View {
             camera: &self.camera,
-            view_offset: scene::view_offset(&self.doc),
+            view_offset: self.camera_offset,
             shadow_map: self.shadow_map,
             shadow_map_display: self.shadow_map_display,
             light: [r, g, b, x, y, z],
@@ -887,7 +856,7 @@ impl Editor {
             physics: &self.physics,
             frame: self.shown_frame(),
             camera: &self.camera,
-            view_offset: scene::view_offset(&self.doc),
+            view_offset: self.camera_offset,
             size,
             samples,
             picture_viewport: None,
@@ -912,106 +881,14 @@ impl Editor {
     }
 }
 
-/// The stopped model view, including its reference pivot and saved attachment basis.
-fn model_view(doc: &Document, models: &[mds_pose::model::Model]) -> Option<Camera> {
-    let p = &doc.pmm;
-    if p.settings.options[0] != 0 {
-        return None;
+fn render_camera(frame: mds_doc::CameraFrame) -> CameraFrame {
+    CameraFrame {
+        target: frame.target,
+        rotation: frame.rotation,
+        distance: frame.distance,
+        fov_deg: frame.fov_deg,
+        orthographic: frame.orthographic,
     }
-    let camera_view = p.appearance.follow_camera != 0
-        && p.appearance.camera_parent_model >= 0
-        && p.appearance.camera_parent_model == i32::from(p.selected_model_slot);
-    Some(view_camera(
-        doc,
-        models,
-        camera_view,
-        scene::state_camera(doc),
-        [
-            p.appearance.camera_parent_model,
-            p.appearance.camera_parent_bone,
-        ],
-    ))
-}
-
-/// `debug_geometry.cpp:476-566`: focus, attachment rotation and fixed-view eye offsets.
-fn view_camera(
-    doc: &Document,
-    models: &[mds_pose::model::Model],
-    camera_view: bool,
-    mut camera: Camera,
-    attachment: [i32; 2],
-) -> Camera {
-    use mds_math::Mat4;
-    let p = &doc.pmm;
-    let a = &p.appearance;
-    let parent = models
-        .iter()
-        .find(|m| i32::from(m.slot) == attachment[0])
-        .and_then(|m| m.bones.get(attachment[1] as usize));
-    let point = |b: &mds_pose::model::Bone| {
-        std::array::from_fn(|c| {
-            b.mat_init.0[c] * b.position[0]
-                + b.mat_init.0[4 + c] * b.position[1]
-                + b.mat_init.0[8 + c] * b.position[2]
-                + b.mat_init.0[12 + c]
-        })
-    };
-    let mut offsets = [p.camera_state[3], p.camera_state[4]];
-    camera.target = if camera_view {
-        if let Some(b) = parent {
-            offsets = [camera.target[0], camera.target[1]];
-            camera.distance = camera.target[2];
-            point(b)
-        } else {
-            offsets = [0.0; 2];
-            camera.target
-        }
-    } else {
-        models
-            .iter()
-            .find(|m| m.slot == p.selected_model_slot)
-            .and_then(|m| match p.timeline.camera_reference_mode {
-                1 => m
-                    .bones
-                    .get(m.center_bone)
-                    .map(|b| b.mat_init.0[12..15].try_into().unwrap()),
-                2 => p
-                    .models
-                    .iter()
-                    .find(|s| s.slot == m.slot)
-                    .and_then(|s| m.bones.get(s.selection.selected_bone as usize))
-                    .map(point),
-                _ => None,
-            })
-            .unwrap_or([0.0; 3])
-    };
-    let mut basis = Mat4::IDENTITY;
-    if a.follow_camera != 0 || p.settings.options[0] != 0 {
-        if let Some(b) = parent.filter(|_| a.suppress_camera_transform == 0) {
-            for row in 0..3 {
-                for col in 0..3 {
-                    basis.0[row * 4 + col] = b.mat_init.0[col * 4 + row];
-                }
-            }
-        }
-    } else {
-        basis = Mat4(a.camera_attachment_basis);
-    }
-    if basis != Mat4::IDENTITY {
-        let [pitch, yaw, roll] = camera.rotation;
-        let r = Mat4::multiply(&Mat4::rotation_y(yaw), &Mat4::rotation_x(pitch));
-        let r = Mat4::multiply(&basis, &Mat4::multiply(&r, &Mat4::rotation_z(roll))).0;
-        let cosine = r[2].hypot(r[10]);
-        let pitch = r[6].atan2(cosine);
-        // At the pole yaw and roll share one axis, so retain their combined angle as yaw.
-        camera.rotation = if cosine > 0.000001 {
-            [pitch, (-r[2]).atan2(r[10]), (-r[4]).atan2(r[5])]
-        } else {
-            [pitch, r[8].atan2(r[0]), 0.0]
-        };
-    }
-    pan_view_offset(&mut camera, offsets[0], offsets[1]);
-    camera
 }
 
 /// The whole frame a cursor at `cursor` seconds shows ([`Playback::frame`]).

@@ -72,7 +72,7 @@ fn the_window_draws_the_pixels_of_the_dump() {
     editor
         .apply(mds_doc::Command::SetViewOffset([1.5, -0.75]))
         .unwrap();
-    editor.camera.rotation = [0.1, 0.2, 0.05];
+    editor.edit_camera_controls(|c| c.rotation = [0.1, 0.2, 0.05]).unwrap();
     editor.seek(0).unwrap();
     editor
         .apply(mds_doc::Command::SetSelfShadow {
@@ -143,7 +143,7 @@ fn without_physics_the_window_shows_the_dumped_frame() {
         let shot = Shot {
             physics: &physics,
             frame,
-            camera: &editor.camera,
+            camera: editor.camera_frame(),
             view_offset: [0.0; 2],
             size: SIZE,
             samples: &ONE,
@@ -202,13 +202,13 @@ fn standalone_dump_ignores_model_pan_while_the_editor_draws_it() {
             assert_eq!(
                 frame.view.clip(point),
                 editor
-                    .camera
+                    .camera_frame()
                     .view_with_offset([2.0, -1.0], SIZE[0], SIZE[1])
                     .clip(point)
             );
             assert_ne!(
                 frame.view.clip(point),
-                editor.camera.view(SIZE[0], SIZE[1]).clip(point)
+                editor.camera_frame().view(SIZE[0], SIZE[1]).clip(point)
             );
         })
         .unwrap();

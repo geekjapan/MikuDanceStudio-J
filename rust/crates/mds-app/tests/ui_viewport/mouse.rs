@@ -85,7 +85,7 @@ fn repeated_clicks_cycle_through_overlapping_bones() {
     let size = [100.0, 80.0];
     let at = {
         let rig = viewport::rig(&r.e).unwrap();
-        let view = mds_app::scene::view(&r.e.doc, &r.e.camera, [100, 80]);
+        let view = mds_app::scene::view(&r.e.doc, r.e.camera_frame(), [100, 80]);
         let s = viewport::screen(&rig, &view, [100, 80]);
         let ([x, y], _) = s[2].unwrap();
         [x as f32, y as f32]
@@ -230,11 +230,11 @@ fn the_model_tool_rows_turn_and_move_on_local_axes() {
 #[test]
 fn the_camera_tool_rows_move_and_turn_the_camera() {
     let mut r = Rig::new(startup());
-    r.e.edit_camera(|c| c.rotation = [0.0, std::f32::consts::FRAC_PI_2, 0.0])
+    r.e.edit_camera_controls(|c| c.rotation = [0.0, std::f32::consts::FRAC_PI_2, 0.0])
         .unwrap();
-    let start = r.e.camera.target;
+    let start = r.e.camera_frame().target;
     r.left_drag([690.0, 575.0], &[[690.0, 585.0]], false);
-    let t = r.e.camera.target;
+    let t = r.e.camera_frame().target;
     close(
         &t,
         &[start[0], start[1], start[2] + 0.5],
@@ -242,10 +242,10 @@ fn the_camera_tool_rows_move_and_turn_the_camera() {
     );
     r.run("key:L");
     r.left_drag([690.0, 575.0], &[[690.0, 585.0]], false);
-    close(&r.e.camera.target, &[t[0] + 0.5, t[1], t[2]], "global X");
+    close(&r.e.camera_frame().target, &[t[0] + 0.5, t[1], t[2]], "global X");
     r.left_drag([730.0, 535.0], &[[730.0, 545.0]], false);
     close(
-        &r.e.camera.rotation,
+        &r.e.doc.camera_controls().rotation,
         &[0.0, std::f32::consts::FRAC_PI_2 + 0.2, 0.0],
         "yaw",
     );
@@ -264,7 +264,7 @@ fn the_camera_tool_rows_edit_the_accessory_on_target_2() {
     });
     let slot = r.e.doc.pmm.accessories[0].slot;
     r.apply(Command::SelectAccessory(slot));
-    let camera = r.e.camera;
+    let camera = *r.e.camera_frame();
     r.run("key:L");
     r.run("key:L");
     r.left_drag([730.0, 575.0], &[[730.0, 585.0]], false);
@@ -272,7 +272,7 @@ fn the_camera_tool_rows_edit_the_accessory_on_target_2() {
     let a = &r.e.doc.pmm.accessories[0].state;
     close(&a.position, &[0.0, -0.5, 0.0], "position Y");
     close(&a.rotation, &[0.0, 0.0, 0.2], "rotation Z");
-    assert_eq!(r.e.camera.target, camera.target, "the camera stays");
+    assert_eq!(r.e.camera_frame().target, camera.target, "the camera stays");
 }
 
 /// The view tools (`frame_modes.cpp:131..136`, here in the top 25 points; `:525..538`): tool 1
@@ -281,11 +281,11 @@ fn the_camera_tool_rows_edit_the_accessory_on_target_2() {
 fn the_view_tools_dolly_and_pan() {
     let mut r = Rig::new(startup());
     r.left_drag([750.0, 12.0], &[[750.0, 22.0]], false);
-    assert_eq!(r.e.camera.distance, -46.0);
-    let mut want = r.e.camera;
+    assert_eq!(r.e.camera_frame().distance, -46.0);
+    let mut want = r.e.doc.camera_controls();
     mds_app::navigation::middle_drag(&mut want, 4, -2, mds_app::navigation::Modifiers::default());
     r.left_drag([780.0, 12.0], &[[784.0, 10.0]], false);
-    assert_eq!(r.e.camera.target, want.target);
+    assert_eq!(r.e.camera_frame().target, want.target);
 }
 
 /// `ConsumeRightButtonDrag` in model mode with Shift (`pump_navigation.cpp:330..334`):
@@ -294,7 +294,7 @@ fn the_view_tools_dolly_and_pan() {
 #[test]
 fn shift_right_drag_pans_the_view_in_model_mode() {
     let mut r = Rig::new(chain());
-    let start = r.e.camera;
+    let start = *r.e.camera_frame();
     let (offset, modified) = (r.offset(), r.e.modified);
     r.pass(viewport::Input {
         right: KeyState::Held,
@@ -302,16 +302,16 @@ fn shift_right_drag_pans_the_view_in_model_mode() {
         ..input(Some([300.0, 300.0]), KeyState::Idle, true)
     });
     close(&r.offset(), &[offset[0] - 1.0, offset[1] - 0.4], "offsets");
-    assert_eq!(r.e.camera.target, start.target, "the reference point stays");
+    assert_eq!(r.e.camera_frame().target, start.target, "the reference point stays");
     let point = [1.0, 2.0, 3.0];
-    let view = mds_app::scene::view(&r.e.doc, &r.e.camera, SIZE.map(|v| v as u32));
+    let view = mds_app::scene::view(&r.e.doc, r.e.camera_frame(), SIZE.map(|v| v as u32));
     assert_eq!(
         view.clip(point),
         start
             .view_with_offset(r.offset(), SIZE[0] as u32, SIZE[1] as u32)
             .clip(point)
     );
-    assert_eq!(r.e.camera.rotation, start.rotation, "no orbit");
+    assert_eq!(r.e.camera_frame().rotation, start.rotation, "no orbit");
     assert_eq!(r.e.modified, modified, "a view change is not a scene edit");
 }
 
@@ -659,7 +659,7 @@ fn a_parented_camera_wheel_edits_raw_z_and_the_displayed_distance() {
             .unwrap()
     };
     let before = clip(&r);
-    let angles = r.e.camera.rotation;
+    let angles = r.e.doc.camera_controls().rotation;
     r.pass(viewport::Input {
         wheel: 120.0,
         ..input(Some([300.0, 300.0]), KeyState::Idle, false)
@@ -672,7 +672,7 @@ fn a_parented_camera_wheel_edits_raw_z_and_the_displayed_distance() {
         "parent camera wheel",
     );
     close(
-        &r.e.camera.rotation,
+        &r.e.doc.camera_controls().rotation,
         &angles,
         "wheel preserves composed rotation",
     );

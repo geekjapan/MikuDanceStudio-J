@@ -398,3 +398,36 @@ fn stop_clears_parent_before_shared_refresh_without_dirtying() {
     .unwrap();
     assert_eq!(calls, 1);
 }
+
+#[test]
+fn draw_composes_live_matrix_once_and_keeps_saved_basis_lifetime() {
+    use mds_doc::{CameraAnchors, CameraBone};
+    let mut d = doc();
+    configure(&mut d, true, 2, false);
+    let parent = CameraBone { mat_init: Mat4::rotation_z(0.7), position: [2.0, 3.0, 4.0] };
+    let anchors = CameraAnchors { parent: Some(parent), ..Default::default() };
+    let saved = Mat4::rotation_y(0.8).0;
+    d.pmm.appearance.camera_attachment_basis = saved;
+    d.pmm.appearance.suppress_camera_transform = 0;
+    for pitch in [0.2, std::f32::consts::FRAC_PI_2 - 0.000001] {
+        d.pmm.camera_state[6..].copy_from_slice(&[pitch, -0.4, 0.3]);
+        let frame = d.prepare_camera_frame(anchors, false);
+        let mut basis = Mat4::IDENTITY;
+        for i in 0..3 { for j in 0..3 { basis.0[i*4+j] = parent.mat_init.0[j*4+i]; } }
+        let expected = Mat4::multiply(&basis, &Mat4::multiply(&Mat4::multiply(&Mat4::rotation_y(-0.4), &Mat4::rotation_x(pitch)), &Mat4::rotation_z(0.3)));
+        assert_eq!(frame.rotation, std::array::from_fn::<_, 3, _>(|i| std::array::from_fn(|j| expected.0[i*4+j])));
+        assert_eq!(frame.target, parent.point());
+        assert_eq!(frame.offset, [11.0, 13.0]);
+        assert_eq!(frame.distance, 17.0);
+        assert_eq!(d.pmm.appearance.camera_attachment_basis, saved);
+    }
+    d.pmm.appearance.suppress_camera_transform = 1;
+    d.prepare_camera_frame(anchors, true);
+    assert_eq!(d.pmm.appearance.camera_attachment_basis, Mat4::IDENTITY.0);
+    d.pmm.settings.options[0] = 0;
+    d.pmm.appearance.follow_camera = 0;
+    d.pmm.appearance.camera_attachment_basis = saved;
+    let frame = d.prepare_camera_frame(Default::default(), false);
+    assert_eq!(d.pmm.appearance.camera_attachment_basis, saved);
+    assert_ne!(frame.rotation, [[1.0,0.0,0.0],[0.0,1.0,0.0],[0.0,0.0,1.0]]);
+}

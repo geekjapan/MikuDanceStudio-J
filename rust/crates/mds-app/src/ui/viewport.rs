@@ -34,9 +34,10 @@ use crate::actions::Action;
 use crate::editor::Editor;
 use crate::navigation::{self, KeyState, Modifiers, ViewButton, WHEEL_DELTA};
 use egui::{Color32, Event, MouseWheelUnit, PointerButton, Rect, Sense, Stroke, Vec2};
+use mds_doc::CameraControls as Camera;
 use mds_doc::{Command, ModelFile, PhysicsField};
 use mds_math::{Mat4, Quat, Vec3};
-use mds_render::{Camera, View};
+use mds_render::View;
 
 const ACTIONS: &[Action] = &[
     Action::run("ctl:402", |c| view(c, ViewButton::Front), false),
@@ -91,13 +92,13 @@ pub fn actions() -> &'static [Action] {
 }
 
 fn view(ctx: &mut Ctx, b: ViewButton) -> Result<(), String> {
-    ctx.editor.edit_camera(|camera| b.apply(camera))
+    ctx.editor.edit_camera_controls(|camera| b.apply(camera))
 }
 
 /// `ConsumeNumpadViewPresets` runs in the stopped branch of the pump only.
 fn numpad(ctx: &mut Ctx, digit: u8) -> Result<(), String> {
     if !ctx.editor.playing() {
-        ctx.editor.edit_camera(|camera| {
+        ctx.editor.edit_camera_controls(|camera| {
             navigation::numpad(camera, digit);
         })?;
     }
@@ -192,7 +193,7 @@ fn apply_or_report(ctx: &mut Ctx, cmd: Command) -> bool {
 }
 
 fn edit_camera(ctx: &mut Ctx, edit: impl FnOnce(&mut Camera)) {
-    if let Err(e) = ctx.editor.edit_camera(edit) {
+    if let Err(e) = ctx.editor.edit_camera_controls(edit) {
         *ctx.status = e;
     }
 }
@@ -982,7 +983,7 @@ struct Overlay {
 fn overlay(editor: &Editor, size: [i32; 2]) -> Overlay {
     let rig = rig(editor).filter(|_| size[0] > 0 && size[1] > 0);
     let screen = rig.as_ref().map_or_else(Vec::new, |r| {
-        let view = crate::scene::view(&editor.doc, &editor.camera, size.map(|v| v as u32));
+        let view = editor.camera_view(size.map(|v| v as u32));
         screen(r, &view, size)
     });
     let center = rig
@@ -1204,7 +1205,7 @@ fn drag(ctx: &mut Ctx, o: &Overlay, s: State, p: &Pointer, size: [i32; 2]) {
     let Some(rig) = &o.rig else {
         return;
     };
-    let c = &ctx.editor.camera;
+    let c = crate::scene::state_camera(&ctx.editor.doc);
     let poses = match mode {
         1..=6 => rotate(rig, mode, p, c.rotation),
         7..=9 => {

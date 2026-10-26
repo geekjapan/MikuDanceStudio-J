@@ -10,8 +10,8 @@ use mds_doc::{Document, ModelFile};
 use mds_physics::PhysicsScene;
 use mds_render::picture::PictureQuad;
 use mds_render::{
-    scene, AccessoryDraw, AccessoryMesh, Camera, Frame, Image, Light, Mesh, Picture, Stage,
-    PIXEL_OFFSET_D3D9,
+    scene, AccessoryDraw, AccessoryMesh, Camera, CameraFrame, Frame, Image, Light, Mesh, Picture,
+    Stage, PIXEL_OFFSET_D3D9,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -139,7 +139,7 @@ pub struct Shot<'a> {
     pub physics: &'a PhysicsScene,
     /// The timeline frame (the light, self-shadow and accessory tracks are read at it).
     pub frame: u32,
-    pub camera: &'a Camera,
+    pub camera: &'a CameraFrame,
     pub view_offset: [f32; 2],
     pub size: [u32; 2],
     /// As [`Frame::samples`].
@@ -261,7 +261,7 @@ pub fn state_camera(doc: &Document) -> Camera {
 }
 
 /// The view offsets belong to the model view, separate from its reference point.
-pub fn view(doc: &Document, camera: &Camera, [width, height]: [u32; 2]) -> mds_render::View {
+pub fn view(doc: &Document, camera: &CameraFrame, [width, height]: [u32; 2]) -> mds_render::View {
     camera.view_with_offset(view_offset(doc), width, height)
 }
 

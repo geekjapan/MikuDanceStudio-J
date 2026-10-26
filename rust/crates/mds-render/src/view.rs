@@ -134,12 +134,44 @@ fn rotation_rows([pitch, yaw, roll]: [f32; 3]) -> [[f32; 3]; 3] {
     m3(m3(ry, rx), rz)
 }
 
+/// Render input with the already composed D3DX rotation rows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CameraFrame {
+    pub target: [f32; 3],
+    pub rotation: [[f32; 3]; 3],
+    pub distance: f32,
+    pub fov_deg: f32,
+    pub orthographic: bool,
+}
+impl From<Camera> for CameraFrame {
+    fn from(c: Camera) -> Self {
+        Self {
+            target: c.target,
+            rotation: rotation_rows(c.rotation),
+            distance: c.distance,
+            fov_deg: c.fov_deg,
+            orthographic: c.orthographic,
+        }
+    }
+}
 impl Camera {
+    #[cfg(test)]
+    pub(crate) fn world(&self) -> Mat {
+        CameraFrame::from(*self).world()
+    }
+    pub fn view(&self, width: u32, height: u32) -> View {
+        CameraFrame::from(*self).view(width, height)
+    }
+    pub fn view_with_offset(&self, offset: [f32; 2], width: u32, height: u32) -> View {
+        CameraFrame::from(*self).view_with_offset(offset, width, height)
+    }
+}
+impl CameraFrame {
     /// The frame world matrix of the C++ app: the target moved to the origin, then the camera
     /// rotation. A point of the scene ends up in a space where the camera sits at
     /// `(0, 0, distance)` and looks along +z.
-    pub(crate) fn world(&self) -> Mat {
-        let r = rotation_rows(self.rotation);
+    pub fn world(&self) -> Mat {
+        let r = self.rotation;
         let t = self.target;
         let mut m = IDENTITY;
         for i in 0..3 {
@@ -162,7 +194,7 @@ impl Camera {
     pub fn view_with_offset(&self, offset: [f32; 2], width: u32, height: u32) -> View {
         let aspect = width as f32 / height as f32;
         let world = self.world();
-        let r = rotation_rows(self.rotation);
+        let r = self.rotation;
         let local = [offset[0], offset[1], self.distance];
         // The eye in the camera space taken back to the scene: through R^T.
         let eye = std::array::from_fn(|i| {
@@ -468,5 +500,23 @@ mod tests {
             }
         }
         assert_eq!(lines, 6);
+    }
+}
+
+#[cfg(test)]
+mod matrix_frame_tests {
+    use super::*;
+    #[test]
+    fn composed_matrix_offsets_preserve_edges_and_light() {
+        let mut c = CameraFrame::from(Camera { target: [2.0, 4.0, -3.0], rotation: [1.570795, -0.4, 0.7], distance: -37.0, fov_deg: 42.0, orthographic: false });
+        let a = rotation_rows([0.3, -0.8, 0.2]);
+        c.rotation = std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| a[i][k]*c.rotation[k][j]).sum()));
+        let base = c.view(640, 480);
+        let moved = c.view_with_offset([3.0, -2.0], 640, 480);
+        assert_eq!(base.edge_world, moved.edge_world);
+        assert_eq!(base.edge_origin, moved.edge_origin);
+        assert_eq!(base.self_shadow_view_proj(&Light { direction: [0.2,-1.0,0.5], color: [0.6; 3] }, 2, 0.03), moved.self_shadow_view_proj(&Light { direction: [0.2,-1.0,0.5], color: [0.6; 3] }, 2, 0.03));
+        assert_ne!(base.clip([4.0,7.0,-2.0]), moved.clip([4.0,7.0,-2.0]));
+        assert_eq!(base.edge_world, c.world());
     }
 }

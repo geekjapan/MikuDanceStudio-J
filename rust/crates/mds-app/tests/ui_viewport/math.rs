@@ -4,7 +4,7 @@ use mds_app::ui::viewport::{
     BoneState, Hit, Pointer,
 };
 use mds_math::Mat4;
-use mds_render::Camera;
+use mds_doc::CameraControls as Camera;
 
 fn camera() -> Camera {
     Camera {
@@ -21,7 +21,7 @@ fn camera() -> Camera {
 #[test]
 fn projection_follows_project_bone_point() {
     let c = camera();
-    let view = c.view(801, 601);
+    let view = render(c).view(801, 601);
     let (p, w) = project(&view, [801, 601], c.target).unwrap();
     assert_eq!(p, [400, 300]);
     assert!((w - 45.0).abs() < 1e-3, "clip w is the depth: {w}");
@@ -29,7 +29,7 @@ fn projection_follows_project_bone_point() {
         rotation: [0.0; 3],
         ..c
     };
-    let view = up.view(800, 600);
+    let view = render(up).view(800, 600);
     let ([_, y], _) = project(&view, [800, 600], [1.0, 11.0, -2.0]).unwrap();
     assert!(y < 300, "{y}");
     assert!(project(&view, [800, 600], [1.0, 10.0, -100.0]).is_none());
@@ -277,11 +277,13 @@ fn model_view_projection_keeps_the_reference_and_camera_mode_ignores_offsets() {
         doc.pmm.appearance.follow_camera = follow;
         for reference in 0..=2 {
             doc.pmm.timeline.camera_reference_mode = reference;
-            let view = mds_app::scene::view(&doc, &c, [640, 360]);
-            let expected = c.view_with_offset(offset, 640, 360);
+            let view = mds_app::scene::view(&doc, &render(c), [640, 360]);
+            let expected = render(c).view_with_offset(offset, 640, 360);
             for point in [c.target, [0.0; 3], [3.0, 5.0, 7.0]] {
                 assert_eq!(view.clip(point), expected.clip(point));
             }
         }
     }
 }
+
+fn render(c: Camera) -> mds_render::CameraFrame { mds_render::Camera { target: c.target, rotation: c.rotation, distance: c.distance, fov_deg: c.fov_deg, orthographic: c.orthographic }.into() }

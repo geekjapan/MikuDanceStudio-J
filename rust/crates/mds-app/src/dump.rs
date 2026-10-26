@@ -124,7 +124,7 @@ pub fn run(gpu: &Gpu, request: &Request) -> Result<(), String> {
                 .map_err(|e| format!("frame {}: {e}", at + 1))?;
             at += 1;
         }
-        let camera = scene::track_camera(&doc, frame)?;
+        let camera = scene::track_camera(&doc, frame)?.into();
         let shot = Shot {
             physics: &physics,
             frame,
@@ -156,13 +156,13 @@ fn run_mme(
         let at = f64::from(frame);
         let c = evaluate_camera(&pmm.camera, at, CameraMode::Playback)
             .ok_or_else(|| format!("camera track at frame {frame}"))?;
-        let camera = Camera {
+        let camera = mds_render::CameraFrame::from(Camera {
             target: c.position,
             rotation: c.rotation,
             distance: c.distance,
             fov_deg: c.fov,
             orthographic: c.perspective == 1,
-        };
+        });
         let light = evaluate_light(&pmm.light, at, LightMode::Playback)
             .ok_or_else(|| format!("light track at frame {frame}"))?;
         let view = View {

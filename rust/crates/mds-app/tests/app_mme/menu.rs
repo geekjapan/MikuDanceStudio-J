@@ -332,6 +332,29 @@ fn disassemble_lists_the_selected_rows_effect() {
     );
 }
 
+#[test]
+fn disassemble_failure_opens_empty_text_and_logs_the_error() {
+    let lib = vkd3d_lib();
+    mds_shader::vkd3d::Vkd3d::open(&lib).expect("real shader compiler");
+    let (mut editor, _) = control("disassemble-failure");
+    editor.mme.vkd3d = Some(lib);
+    let path = PathBuf::from(&editor.mme.assignments[0].effect);
+    run(&mut editor, "menu:mme-40005");
+    select(&[Row::Object(0)]);
+    for (source, expected_error) in [
+        ("float4 main() : COLOR { return nope; } technique T { pass P { PixelShader = compile ps_3_0 main(); } }", "E5005"),
+        ("technique T { pass P {", ""),
+    ] {
+        std::fs::write(&path, source).unwrap();
+        editor.mme.log.borrow_mut().clear();
+        run(&mut editor, "menu:mme-dialog-40014");
+        assert_eq!(dialog::disassembly().as_deref(), Some(""));
+        let log = editor.mme.log.borrow();
+        assert_eq!(log.len(), 1, "{log:?}");
+        assert!(!log[0].is_empty() && log[0].contains(expected_error), "{log:?}");
+    }
+}
+
 /// The offscreen tab (1002, `mme_dlg.cpp:1746`) on the mmegold `offscreen` scene: `chain8.pmx`
 /// with `offscreen.fx`, whose `MirrorRT` rows are `self=hide; *=none;`. The tab's edits are the
 /// target's overrides (`DlgUpsertOffscreenRow` :357, `DlgApplyShown` :741,

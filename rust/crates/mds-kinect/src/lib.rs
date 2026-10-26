@@ -13,6 +13,8 @@
 //!   list for the document layer.
 //! * [`session`]: start and stop of a capture, the per-frame pump, and the
 //!   constants the application wires to its menus and timers.
+//! * [`sensor`]: what a running capture reads each frame, as a trait the
+//!   DLL and a [`sensor::Fake`] (for tests without a device) implement.
 //! * [`error`]: the load failures with their English and Japanese texts.
 //! * `dll` (feature `dxopenni`, Windows only): `Data\DxOpenNI.dll` through
 //!   `libloading`. Unverified on hardware: no sensor was available.
@@ -30,9 +32,11 @@ pub mod joints;
 pub mod names;
 pub mod pose;
 pub mod register;
+pub mod sensor;
 pub mod session;
 
 pub use capture::{Bone, Capture, IkChain, SetupOptions, TraceSample};
 pub use error::Error;
 pub use register::KeyRegistration;
+pub use sensor::{Fake, FakeHandle, Sensor};
 pub use session::{Pump, PumpInput, Session, Version};

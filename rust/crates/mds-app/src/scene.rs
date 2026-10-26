@@ -10,7 +10,7 @@ use mds_doc::{Document, ModelFile};
 use mds_physics::PhysicsScene;
 use mds_render::picture::PictureQuad;
 use mds_render::{
-    scene, AccessoryDraw, AccessoryMesh, Camera, Frame, Image, Mesh, Picture, Stage,
+    scene, AccessoryDraw, AccessoryMesh, Camera, Frame, Image, Light, Mesh, Picture, Stage,
     PIXEL_OFFSET_D3D9,
 };
 use std::path::{Path, PathBuf};
@@ -149,11 +149,24 @@ pub struct Shot<'a> {
 }
 
 /// Calls `draw` with the frame and the stage of `shot`: the models in `physics`' pose, the PMM's
-/// self-shadow and ground shadow at the frame, its accessories and its background picture.
+/// light, self-shadow and ground shadow at the frame, its accessories and its background picture.
 pub fn with_stage<R>(
     doc: &Document,
     assets: &Assets,
     shot: &Shot,
+    draw: impl FnOnce(&Frame, &Stage) -> R,
+) -> Result<R, String> {
+    let light = scene::light_at(&doc.pmm, shot.frame)
+        .ok_or_else(|| format!("light track at frame {}", shot.frame))?;
+    with_stage_lit(doc, assets, shot, light, draw)
+}
+
+/// [`with_stage`] in `light`.
+pub fn with_stage_lit<R>(
+    doc: &Document,
+    assets: &Assets,
+    shot: &Shot,
+    light: Light,
     draw: impl FnOnce(&Frame, &Stage) -> R,
 ) -> Result<R, String> {
     let pmm = &doc.pmm;
@@ -210,8 +223,6 @@ pub fn with_stage<R>(
         picture,
         ..scene::stage_at(pmm, shot.frame)
     };
-    let light = scene::light_at(pmm, shot.frame)
-        .ok_or_else(|| format!("light track at frame {}", shot.frame))?;
     let frame = Frame {
         width,
         height,

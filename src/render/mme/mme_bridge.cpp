@@ -26,6 +26,7 @@
 #include "mikudancestudio/accessory_layout.hpp"
 #include "mikudancestudio/d3d_wrapper.hpp"
 #include "mikudancestudio/mmd_app.hpp"
+#include "draw_observer.hpp"
 #include "mme_host_api.h"
 #include "mesh_subset.hpp"
 
@@ -41,6 +42,7 @@ namespace {
 
 // 设备已登记到内置效果引擎。标准效果是否齐备由惰性 Initialize 判断。
 bool g_deviceRegistered = false;
+DrawObserver g_drawObserver = nullptr;
 // 已注册给 MME 的主窗口（帧级刷新用；初始化期间 WM_CREATE 的句柄可能
 // 尚未写回 app->Hwnd()）。
 HWND g_registeredWindow = nullptr;
@@ -248,11 +250,17 @@ HRESULT DrawPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type, unsigned 
 HRESULT DrawIndexedPrimitive(IDirect3DDevice9* device, D3DPRIMITIVETYPE type, int base_vertex_index,
                              unsigned int min_vertex_index, unsigned int vertex_count,
                              unsigned int start_index, unsigned int primitive_count) {
+    if (g_drawObserver != nullptr)
+        g_drawObserver(device, start_index, primitive_count);
     if (!g_deviceRegistered)
         return device->DrawIndexedPrimitive(type, base_vertex_index, min_vertex_index, vertex_count,
                                             start_index, primitive_count);
     return MmeHostDrawIndexedPrimitive(device, type, base_vertex_index, min_vertex_index,
                                        vertex_count, start_index, primitive_count);
+}
+
+void SetDrawObserver(DrawObserver observer) {
+    g_drawObserver = observer;
 }
 
 bool EffectsActive() {

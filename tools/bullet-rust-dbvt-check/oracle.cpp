@@ -7,6 +7,9 @@
 #include <cstring>
 #include <cstdlib>
 #include <cstdint>
+#ifdef _WIN32
+#include <malloc.h>
+#endif
 
 static unsigned char* arena;
 static size_t cursor;
@@ -33,15 +36,20 @@ static void node(std::ostream& out,const btDbvtNode* n,std::ostream& ranks) {
 }
 struct Policy : btDbvt::ICollide {
     std::ostringstream events;
-    void Process(const btDbvtNode* n) override { events<<reinterpret_cast<intptr_t>(n->data)<<','; }
-    void Process(const btDbvtNode* a,const btDbvtNode* b) override { events<<reinterpret_cast<intptr_t>(a->data)<<':'<<reinterpret_cast<intptr_t>(b->data)<<','; }
+    void Process(const btDbvtNode* n) { events<<reinterpret_cast<intptr_t>(n->data)<<','; }
+    void Process(const btDbvtNode* a,const btDbvtNode* b) { events<<reinterpret_cast<intptr_t>(a->data)<<':'<<reinterpret_cast<intptr_t>(b->data)<<','; }
 };
 static btVector3 vector(std::istream& in) { float x,y,z; in>>x>>y>>z; return btVector3(x,y,z); }
 static btDbvtVolume box(std::istream& in) { auto a=vector(in); auto b=vector(in); return btDbvtVolume::FromMM(a,b); }
 int main(int argc,char** argv) {
     std::cout.setf(std::ios::unitbuf);
     order=argc>1?std::atoi(argv[1]):0;
+#ifdef _WIN32
+    arena=static_cast<unsigned char*>(_aligned_malloc(slots*stride,16));
+#else
     arena=static_cast<unsigned char*>(std::aligned_alloc(16,slots*stride));
+#endif
+    if(!arena) { std::cerr<<"arena allocation failed"<<std::endl; return 1; }
     if(order!=3) {
         btAlignedAllocSetCustomAligned(allocate,release);
         btAlignedAllocSetCustom(allocate_raw,release);
@@ -75,5 +83,9 @@ int main(int argc,char** argv) {
             std::cout<<'|'<<policy.events.str()<<'\n';
         }
     }
+#ifdef _WIN32
+    _aligned_free(arena);
+#else
     std::free(arena);
+#endif
 }

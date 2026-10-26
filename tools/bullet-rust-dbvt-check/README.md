@@ -1,7 +1,8 @@
 # Verify the DBVT tree kernel
 
 Run `python3 tools/bullet-rust-dbvt-check/check.py --out-dir /tmp/bullet-dbvt`.
-The check requires Clang C++, Python 3, and Rust 1.95.0. It compiles unmodified
+The check requires Clang C++ (or activated MSVC x64 on Windows), Python 3,
+and Rust 1.95.0. It compiles unmodified
 vendored `btDbvt.cpp` and runs a native-free Rust harness. No World or GPU runs.
 
 The stream covers 2,326 operations per native allocation history, including 12
@@ -56,11 +57,52 @@ The standalone harness compiles unmodified `core/math.rs` as a path dependency.
 unchanged dependency. Without `--no-deps`, existing `Vec3::add` and `Vec3::sub`
 trigger `should_implement_trait`. No lint allowance is added to production code.
 
-Current native evidence is Apple Silicon macOS with the generic DBVT profile.
-The source selects Windows DBVT SSE proximity association and unordered comparison
-semantics separately from generic math. Windows x64 native recapture, Windows Rust
-branch execution, and Linux x64/ARM64 native recaptures remain pending. A generic
-macOS topology fixture is not evidence for the Windows SSE profile.
+Existing native evidence is Apple Silicon macOS with the generic DBVT profile.
+The dedicated `bullet-dbvt-hosted.yml` runs the complete check on ubuntu-24.04,
+ubuntu-24.04-arm, macos-15, and windows-2022 with Rust 1.95.0. It triggers on
+pushes to `w3-bullet-dbvt-hosted` and manual dispatch. Hosted execution remains
+pending until an actual run succeeds. A generic macOS fixture does not prove
+Windows SSE parity.
+
+The gate asserts actual CPU architecture and the profile observed from
+`btDbvt.h`. Windows uses `/DWIN32`, `/O2`, `/MD`, `/EHsc`, and `/fp:precise`,
+matching the original CMake MSVC x64 SSE selection. Other hosts require generic
+DBVT. Each host retains all 10 existing Rust tests, 6,978 strict snapshots,
+2,326 ordinary allocator comparisons, and 10 native/Rust lifecycle cases. An
+additional directed Select test compares native and Rust callback order for
+point boxes whose float association distinguishes generic from SSE. Its native
+inputs and output are separate from the original corpus.
+
+Windows also compiles a diagnostic oracle with `det_math.h` force-included and
+without adding `WIN32`. Source inspection of `build.rs` and locked `cc` 1.10.0
+predicts generic DBVT despite `BT_USE_SSE`. This remains an inference until the
+hosted run records actual macros. The diagnostic requires generic selection and
+saves four native address-history traces plus the directed case. These traces
+are never compared with the Windows Rust SSE kernel. Ambient `CL`, `_CL_`, and
+`CXXFLAGS` values are recorded. Unexpected profiles fail. This probe does not
+claim to build or execute the full FFI library.
+
+The vendored header undefines its DBVT configuration at the footer. The
+profile-only probe includes an output-directory copy with observation constants
+inserted before cleanup. The copy is marked as altered and its hash is saved.
+Oracle and lifecycle programs include the original unmodified header and
+algorithms. `BT_HAS_ALIGNED_ALLOCATOR` must remain undefined, retaining Bullet's
+raw allocation hooks and hidden alignment header. Only oracle arena storage
+uses matched `_aligned_malloc` and `_aligned_free` on Windows. Lifecycle raw
+`malloc` and `free` observation remains unchanged. CRLF and LF are normalized
+only when comparing lifecycle event records.
+
+Artifacts include compiler commands as JSON argument arrays, tool versions,
+runner image, commit, source SHA-256 hashes, stdout and stderr logs, inputs,
+profiles, lifecycle events, and native captures. Failed commands preserve logs.
+Profile or architecture mismatches fail without weakening comparisons. No
+intentionally crashing native top-down or overflow input runs. Existing Rust
+repair regressions still run.
+
+Run cheap helper checks with
+`python3 -m unittest discover -s tools/bullet-rust-dbvt-check -p test_check.py -v`.
+Add `--expected-profile generic --expected-arch arm64` to `check.py` on Apple
+Silicon, or `--expected-profile sse --expected-arch x64` in an activated MSVC shell.
 
 The two native comparison tests require `DBVT_FIXTURES` to name the capture
 output directory. `check.py` sets it. Shared-suite registration must preserve

@@ -440,3 +440,42 @@ fn the_readout_backup_survives_seeks_and_refreshes_after_world_rebuilds() {
     e.pump(231).unwrap();
     check(&e);
 }
+
+#[test]
+fn a_failed_camera_follow_still_publishes_the_advanced_physics_backup() {
+    let mut e = model_mode();
+    e.apply(Command::SelectBones(vec![5])).unwrap();
+    e.apply(Command::SetPhysicsMode(3)).unwrap();
+    e.pump(0).unwrap();
+    e.doc.pmm.camera.heads_mut()[0].next = 9999;
+    let loaded = mds_doc::Document::load(&saved(&e), |_| None).unwrap();
+    e.doc.pmm.camera = loaded.pmm.camera;
+    e.options.start_frame = 0;
+    e.options.from_current = true;
+    e.doc.pmm.appearance.follow_camera = 1;
+    e.toggle_play(0).unwrap();
+    let slot = e.doc.pmm.models[0].slot;
+    let live_backup = |e: &Editor| {
+        let model = e
+            .physics
+            .scene
+            .models
+            .iter()
+            .find(|m| m.slot == slot)
+            .unwrap();
+        let k = model.bones[5].ik_backup;
+        ([k[3], k[4], k[5], k[6]], [k[0], k[1], k[2]])
+    };
+    let before = live_backup(&e);
+    let error = e.pump(66).unwrap_err();
+    assert_eq!(error, "camera track at frame 1");
+    let after = live_backup(&e);
+    assert_ne!(
+        after, before,
+        "the failed pump must actually advance physics"
+    );
+    assert_eq!(
+        e.doc.edit.models[0].physics_pose.as_ref().unwrap()[5],
+        after
+    );
+}

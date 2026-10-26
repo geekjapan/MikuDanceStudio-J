@@ -599,9 +599,9 @@ impl Editor {
 
     /// One window pass at wall-clock `now_ms`; see the module doc.
     pub fn pump(&mut self, now_ms: u64) -> Result<(), String> {
-        self.pump_inner(now_ms)?;
+        let result = self.pump_inner(now_ms);
         self.sync_physics_pose();
-        Ok(())
+        result
     }
 
     fn pump_inner(&mut self, now_ms: u64) -> Result<(), String> {

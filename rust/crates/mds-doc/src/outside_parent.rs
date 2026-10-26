@@ -8,7 +8,7 @@
 //! the close seeks.
 //!
 //! The bone matrices are those of the saved pose without physics
-//! ([`crate::panel::posed`]), where the C++ reads the frame loop's.
+//! ([`crate::panel::posed_scene`]), where the C++ reads the frame loop's.
 
 use crate::{model, not, panel, Document, Error, OutsideParent};
 use mds_math::{Mat4, Quat};
@@ -61,7 +61,8 @@ impl Document {
             .filter(|&b| b < m.bone_pose.len())
             .ok_or(not("no such selector bone"))?;
         let missing = || not("the model file is missing or does not match the PMM");
-        let pose = panel::posed(&self.models[i], m, mode).ok_or_else(missing)?;
+        let mut scene = panel::posed_scene(self);
+        let pose = scene[i].take().ok_or_else(missing)?;
         let bone = pose.bones.get(b).ok_or_else(missing)?;
         let p = bone.position;
         let x = match parent {
@@ -80,13 +81,9 @@ impl Document {
                     .iter()
                     .position(|m| m.slot == model)
                     .ok_or(not("no model in that slot"))?;
-                let other;
-                let tpose = if j == i {
-                    &pose
-                } else {
-                    let mj = &self.pmm.models[j];
-                    other = panel::posed(&self.models[j], mj, mode).ok_or_else(missing)?;
-                    &other
+                let tpose = match j == i {
+                    true => &pose,
+                    false => scene[j].as_ref().ok_or_else(missing)?,
                 };
                 let target = tpose.bones.get(t as usize).ok_or(not("no such bone"))?;
                 let q = target.position;

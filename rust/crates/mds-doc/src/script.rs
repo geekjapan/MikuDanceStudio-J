@@ -3,10 +3,12 @@
 //! [`Command`]s. `tests/fixtures/rust/script/README.md` says which handler
 //! each line drives; the [`Command`] it maps to ports that handler.
 
+mod dialogs;
 mod physics_dialog;
 
 use crate::frame::FrameLoop;
-use crate::{Command, Document, Error, GlobalTrack, SelectAll};
+use crate::{Command, Document, Error, GlobalTrack, PhysicsField, SelectAll, ViewOption};
+use dialogs::{AccessoryOrderDialog, EnglishDialog, ModelOrderDialog, OutsideParentDialog};
 use physics_dialog::PhysicsDialog;
 use std::collections::BTreeMap;
 
@@ -24,9 +26,33 @@ pub struct Runner {
     /// The self-shadow range edit (561), once a script typed into it.
     shadow_range: Option<String>,
     gravity_open: bool,
-    /// The physics model dialog of menu 262, while it is open.
-    physics_dialog: Option<PhysicsDialog>,
+    /// The dialog the `dialog` lines drive, while it is open.
+    dialog: Option<Dialog>,
     frames: FrameLoop,
+}
+
+/// The dialogs of the `... open` commands.
+enum Dialog {
+    /// Menu 262, modeless.
+    Physics(PhysicsDialog),
+    /// Menu 259, modeless.
+    English(EnglishDialog),
+    /// Menus 288 and 289, modal.
+    ModelOrder(ModelOrderDialog),
+    /// Menu 249, modal.
+    AccessoryOrder(AccessoryOrderDialog),
+    /// Button 442, modal.
+    OutsideParent(OutsideParentDialog),
+}
+
+impl Dialog {
+    /// The frame loop does not run while a modal dialog is up.
+    fn modal(&self) -> bool {
+        matches!(
+            self,
+            Dialog::ModelOrder(_) | Dialog::AccessoryOrder(_) | Dialog::OutsideParent(_)
+        )
+    }
 }
 
 impl Default for Runner {
@@ -106,7 +132,7 @@ impl Runner {
             out: BTreeMap::new(),
             shadow_range: None,
             gravity_open: false,
-            physics_dialog: None,
+            dialog: None,
             frames: FrameLoop::default(),
         }
     }
@@ -122,7 +148,8 @@ impl Runner {
     ) -> Result<Vec<Saved>, String> {
         self.doc.edit.reported = None;
         let saved = self.step(line, read)?;
-        if !words(line)?.first().is_none_or(|w| w.starts_with('#')) {
+        let modal = self.dialog.as_ref().is_some_and(Dialog::modal);
+        if !modal && !words(line)?.first().is_none_or(|w| w.starts_with('#')) {
             self.pump(read)?;
         }
         Ok(saved)
@@ -535,18 +562,86 @@ impl Runner {
             ["undo"] => Command::Undo,
             ["redo"] => Command::Redo,
             ["physics", "model", "open"] => {
-                if self.physics_dialog.is_some() {
-                    return Err("the physics model dialog is open".into());
-                }
-                self.physics_dialog = Some(PhysicsDialog::open(&mut self.doc)?);
-                return Ok(Vec::new());
+                return self.open(|doc| Ok(Dialog::Physics(PhysicsDialog::open(doc)?)));
+            }
+            ["english", "open"] => {
+                return self.open(|doc| Ok(Dialog::English(EnglishDialog::open(doc)?)));
+            }
+            ["model", which @ ("draw" | "calc"), "order", "open"] => {
+                let calc = *which == "calc";
+                return self.open(|doc| Ok(Dialog::ModelOrder(ModelOrderDialog::open(doc, calc))));
+            }
+            ["accessory", "order", "open"] => {
+                return self
+                    .open(|doc| Ok(Dialog::AccessoryOrder(AccessoryOrderDialog::open(doc))));
+            }
+            ["outside", "parent", "open"] => {
+                return self.open(|doc| Ok(Dialog::OutsideParent(OutsideParentDialog::open(doc)?)));
             }
             ["dialog", rest @ ..] => {
-                let d = self.physics_dialog.as_mut().ok_or("no dialog is open")?;
-                if d.run(&mut self.doc, rest)? {
-                    self.physics_dialog = None;
+                let doc = &mut self.doc;
+                let closed = match self.dialog.as_mut().ok_or("no dialog is open")? {
+                    Dialog::Physics(d) => d.run(doc, rest)?,
+                    Dialog::English(d) => d.run(doc, rest)?,
+                    Dialog::ModelOrder(d) => d.run(doc, rest)?,
+                    Dialog::AccessoryOrder(d) => d.run(doc, rest)?,
+                    Dialog::OutsideParent(d) => d.run(doc, rest)?,
+                };
+                if closed {
+                    self.dialog = None;
                 }
                 return Ok(Vec::new());
+            }
+            ["view", "drag", button, modifier, dx, dy] => {
+                let d = [dx, dy].map(|v| atol(v, 20) as f32);
+                self.view_drag(button, modifier, d)?;
+                return Ok(Vec::new());
+            }
+            ["physics", "drag", what, axis, modifier, dy] => {
+                let Some(Dialog::Physics(d)) = self.dialog.as_mut() else {
+                    return Err("the physics model dialog is not open".into());
+                };
+                if self.doc.camera_mode() {
+                    return Err("the record drag is a model-mode drag".into());
+                }
+                let axis = match *axis {
+                    "x" => 0,
+                    "y" => 1,
+                    "z" => 2,
+                    _ => return Err(format!("bad axis {axis}")),
+                };
+                let field = match (*what, *modifier) {
+                    ("rotate", _) => PhysicsField::Rotation,
+                    ("move", "shift") => PhysicsField::Size,
+                    ("move", _) => PhysicsField::Position,
+                    _ => return Err(format!("bad drag {what}")),
+                };
+                d.drag(&mut self.doc, field, axis, atol(dy, 20) as i32)?;
+                return Ok(Vec::new());
+            }
+            ["load", "background", what @ ("movie" | "picture"), p] => {
+                let (path, data) = (p.to_string(), load(p)?);
+                match *what {
+                    "movie" => Command::LoadBackgroundMovie { path, data },
+                    _ => Command::LoadBackgroundPicture { path, data },
+                }
+            }
+            ["toggle", "background", "movie"] => {
+                Command::ShowBackgroundMovie(self.doc.pmm.avi.enabled == 0)
+            }
+            ["toggle", "background", "picture"] => {
+                Command::ShowBackgroundPicture(self.doc.pmm.picture.enabled == 0)
+            }
+            ["toggle", "black", "background"] => Command::SetViewOption {
+                option: ViewOption::BlackBackground,
+                on: self.doc.pmm.appearance.black_background == 0,
+            },
+            // The refusal is a box; no file is written.
+            ["save", "pmd", "refused", name] => {
+                return match self.doc.save_pmd(&format!(".\\{name}")) {
+                    Err(_) => Ok(Vec::new()),
+                    Ok(_) => Err(format!("{name} was saved, not refused")),
+                };
             }
             // Menu 261: the dialog's edit `708 + slot` set, then OK
             // (`CollectToonFileNames`, `enhance_model_io.cpp` 57-95). The
@@ -583,6 +678,54 @@ impl Runner {
         };
         self.doc.apply(cmd).map_err(e)?;
         Ok(Vec::new())
+    }
+
+    fn open(
+        &mut self,
+        open: impl FnOnce(&mut Document) -> Result<Dialog, String>,
+    ) -> Result<Vec<Saved>, String> {
+        if self.dialog.is_some() {
+            return Err("a dialog is open".into());
+        }
+        self.dialog = Some(open(&mut self.doc)?);
+        Ok(Vec::new())
+    }
+
+    /// The model-mode branches of `ConsumeRightButtonDrag` and
+    /// `ConsumeMiddleButtonPan` (`src/app/pump_navigation.cpp` 316-390) for
+    /// one held frame that moved by `d`: shift + right and the middle button
+    /// pan the view offset, ctrl + right changes the distance, the plain
+    /// right drag orbits.
+    fn view_drag(&mut self, button: &str, modifier: &str, d: [f32; 2]) -> Result<(), String> {
+        if self.doc.camera_mode() {
+            return Err("not ported: the camera-mode view drags".into());
+        }
+        let p = &self.doc.pmm;
+        let selected = self.doc.selected_model().map(|m| i32::from(m.slot));
+        // `BoneEditPathActive`: the hold only refreshes the bone edit.
+        let cam = p.appearance.camera_parent_model;
+        if button == "right" && cam >= 0 && selected == Some(cam) && p.appearance.follow_camera != 0
+        {
+            return Ok(());
+        }
+        let [dx, dy] = d;
+        let [x, y] = [p.camera_state[3], p.camera_state[4]];
+        let pan = |scale: f32| Command::SetViewOffset([x - dx * scale, y + dy * scale]);
+        let cmd = match (button, modifier) {
+            ("right", "shift") => pan(0.1),
+            ("right", "ctrl") => return self.camera(|s| s[5] -= dy * 0.1),
+            ("right", "none") => {
+                return self.camera(|s| {
+                    s[7] -= dx * 0.01;
+                    s[6] -= dy * 0.01;
+                })
+            }
+            ("middle", "shift") => pan(0.5),
+            ("middle", "ctrl") => pan(0.005),
+            ("middle", "none") => pan(0.05),
+            _ => return Err(format!("bad view drag {button} {modifier}")),
+        };
+        self.doc.apply(cmd).map_err(e)
     }
 
     /// The morph that `CB_FINDSTRINGEXACT` picks in a lane's combo (the

@@ -120,7 +120,7 @@ hosted tool build; compatibility with other Clang versions is unverified.
 Translation is gated by a test-only native x86_64 C/Rust executable. A macro
 attributed Win64 function and vtable pointer receive eight alternating integer
 and floating arguments, including stack arguments. A C caller checks translated
-Rust direct and vtable calls against 204, a no-prototype vtable call against 17,
+Rust direct and vtable calls against 204, a no-prototype vtable call against 204,
 and an ordinary C function against 86. Translated Rust calls a native Win64
 callback and the C caller checks 120. Every compile/link/run must succeed and
 runtime output must exactly match. The native caller also populates a mixed and

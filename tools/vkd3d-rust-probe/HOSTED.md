@@ -12,7 +12,7 @@ commit before any hosted attempt.
 | --- | --- |
 | Runner | Existing included standard `ubuntu-24.04`, Linux x64 only. |
 | Preparation | 35-minute job; package step 10 minutes, Rust 3, pinned native source/baseline 8, official C2Rust build 12, bundle 2. Job limit caps their aggregate. |
-| Packages | Explicit clang-18, llvm-18-dev, libclang-18-dev, libclang-cpp18-dev retained. apt acquisition uses 3 retries and 30-second HTTP/HTTPS timeouts. |
+| Packages | Preparation retains explicit clang-18, llvm-18-dev, libclang-18-dev, libclang-cpp18-dev. apt acquisition uses 3 retries and 30-second HTTP/HTTPS timeouts. |
 | Tool | Official C2Rust `ac687698b6c13491dfec45c6a9ad9e8b4da35227`; Rust 1.95.0. No refactorer, guessed reorganization option, or extra toolchain. |
 | Translation | One call, no filter, `--fail-on-error --edition 2024`, 1,800 seconds. Exact shader/common source paths are checked against `full_compiler.UNITS`, not just a count. |
 | Builds | Raw stable, patched stable, then bootstrap and experimental flags if necessary. Each build/link gets 300 seconds. Native syntax checks remain capped at 120 seconds per unit. |
@@ -180,3 +180,27 @@ the aggregate declared/defined/unresolved sets alongside per-ABI sets.
 No hosted tool build, smoke executable, or 24-unit result for this patch has been
 observed during implementation. Passing local script tests and workflow lint do
 not establish translator compilation or ABI correctness.
+
+## Prepared tool runtime setup
+
+Run 40398350686 prepared the pinned patched tool successfully on Ubuntu image
+20261023.334.3. Both translate attempts stopped downloading `libclang-18-dev`
+before the ABI or all-unit gates ran. Their logs confirm that clang-18 and
+llvm-18-dev 18.1.3 were already installed.
+
+The prepared `c2rust-transpile` links `libclang-cpp.so.18.1` and
+`libLLVM.so.18.1`, plus system shared libraries. The pinned exporter's
+`build.rs` uses development headers for bindgen and CMake during tool build;
+the prepared executable needs the versioned runtime libraries, not those
+build headers or the development link symlinks.
+
+`check_runtime.py --record` records compiler and runtime package versions in
+`tool/runtime.json` before bundling. Translate uses the Ubuntu image's existing
+runtime without apt downloads. It requires exactly matching recorded versions,
+Clang/LLVM 18, Rust 1.95.0, successful `ldd` resolution and executable version
+checks for both C2Rust binaries. Missing libraries or a changed runner runtime
+fail setup before the unchanged ABI, blob and all-24-unit gates. The ldd output
+is retained in setup and translation evidence. This check is a setup gate;
+it does not prove ABI or translation acceptance.
+
+Focused local check: `python3 -m unittest discover -s tools/vkd3d-rust-probe -p 'test_check_runtime.py'`.

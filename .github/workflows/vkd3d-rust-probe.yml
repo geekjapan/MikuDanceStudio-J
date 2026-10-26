@@ -89,7 +89,8 @@ jobs:
           cp "$RUNNER_TEMP/c2rust-src/Cargo.lock" "$RUNNER_TEMP/vkd3d-probe/logs/c2rust-Cargo.lock"
           cp "$RUNNER_TEMP/c2rust-src/LICENSE" "$RUNNER_TEMP/vkd3d-probe/tool/LICENSE"
           "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" --version
-          ldd "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust-transpile"
+          python3 tools/vkd3d-rust-probe/check_runtime.py \
+            --tool "$RUNNER_TEMP/vkd3d-probe/tool" --record
           sha256sum "$RUNNER_TEMP/vkd3d-probe/tool/bin/"* > "$RUNNER_TEMP/vkd3d-probe/logs/c2rust-binaries-sha256.txt"
       - name: Bundle prepared input and tool executables
         id: bundle
@@ -144,16 +145,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install matching LLVM runtime and pinned Rust
+      - name: Install pinned Rust and record the existing host
         timeout-minutes: 10
         run: |
           mkdir -p "$RUNNER_TEMP/vkd3d-probe/evidence"
           exec > >(tee "$RUNNER_TEMP/vkd3d-probe/evidence/unit-setup.log") 2>&1
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev
           rustup toolchain install 1.95.0 --profile minimal
           clang-18 --version
-          dpkg-query -W clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev
           uname -a
           free -b
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -162,6 +160,12 @@ jobs:
           path: ${{ runner.temp }}/vkd3d-probe
       - name: Extract prepared source and tool
         run: tar -xzf "$RUNNER_TEMP/vkd3d-probe/prepared.tar.gz" -C "$RUNNER_TEMP/vkd3d-probe"
+      - name: Require the matching prepared LLVM runtime
+        timeout-minutes: 1
+        run: |
+          python3 tools/vkd3d-rust-probe/check_runtime.py \
+            --tool "$RUNNER_TEMP/vkd3d-probe/tool" \
+            2>&1 | tee "$RUNNER_TEMP/vkd3d-probe/evidence/runtime-check.log"
       - name: Prove C and translated Rust Win64 ABI in both directions
         timeout-minutes: 4
         run: |

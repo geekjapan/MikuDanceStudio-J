@@ -153,3 +153,31 @@ fn disassemble_lists_every_pass_in_d3d_assembly() {
     assert!(!text.contains("// error"), "{text}");
     assert!(text.contains("mov "), "{text}");
 }
+
+#[test]
+fn disassemble_file_rejects_entry_compile_errors() {
+    let vk = vkd3d();
+    let path =
+        std::env::temp_dir().join(format!("mds-disassemble-invalid-{}.fx", std::process::id()));
+    std::fs::write(&path, "float4 main() : COLOR { return nope; } technique T { pass P { PixelShader = compile ps_3_0 main(); } }").unwrap();
+    assert!(Effect::parse_file(&path).is_ok());
+    let result = mds_shader::disassemble_file(&vk, &path);
+    std::fs::remove_file(&path).unwrap();
+    assert!(
+        result.is_err(),
+        "compiler failure returned a listing: {result:?}"
+    );
+    let error = result.unwrap_err();
+    assert!(error.contains("E5005"), "{error}");
+}
+
+#[test]
+fn disassemble_file_rejects_parse_errors() {
+    let vk = vkd3d();
+    let path =
+        std::env::temp_dir().join(format!("mds-disassemble-parse-{}.fx", std::process::id()));
+    std::fs::write(&path, "technique T { pass P {").unwrap();
+    let result = mds_shader::disassemble_file(&vk, &path);
+    std::fs::remove_file(&path).unwrap();
+    assert!(result.is_err(), "{result:?}");
+}

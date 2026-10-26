@@ -21,9 +21,28 @@ def host():
 
 
 def fields(kind, words):
-    if kind != 'support':
+    if kind == 'support':
+        names = [f'{entry}.{axis}' for entry in ['without-margin', 'with-margin', 'virtual'] for axis in 'xyz']
+    elif kind == 'gjk-epa':
+        names = []
+        position = 1
+        for entry in ['distance', 'penetration', 'penetration-margin']:
+            if len(words) < position + 2:
+                raise ValueError('Incomplete query schema')
+            yes, status = words[position:position + 2]
+            if yes not in ['0', '1'] or status not in ['0', '1', '2', '3']:
+                raise ValueError('Invalid query schema')
+            names += [entry + '.success', entry + '.status']
+            position += 2
+            if yes == '1':
+                names += [f'{entry}.{part}.{axis}' for part in ['witness0', 'witness1', 'normal'] for axis in 'xyz']
+                names += [entry + '.distance']
+                position += 10
+        if len(words) <= position or words[position] not in ['0', '1']:
+            raise ValueError('Invalid adapter schema')
+        names += ['adapter.success'] + [f'adapter.{part}.{axis}' for part in ['witness0', 'witness1', 'normal'] for axis in 'xyz']
+    else:
         raise ValueError(f'Unknown profile kind {kind}')
-    names = [f'{entry}.{axis}' for entry in ['without-margin', 'with-margin', 'virtual'] for axis in 'xyz']
     if len(words) != len(names) + 1:
         raise ValueError('Invalid row width')
     for name, value in zip(names, words[1:]):
@@ -54,7 +73,8 @@ def differences(left, right, kind, count, start=0):
 
 
 def load(kind='support'):
-    manifest = json.loads((HERE / f'{kind}-profiles.json').read_text())
+    directory = HERE if kind == 'support' else ROOT / f'tools/bullet-rust-{kind}-check'
+    manifest = json.loads((directory / f'{kind}-profiles.json').read_text())
     base = ROOT / manifest['directory']
     baseline = (base / 'native.tsv').read_bytes()
     for filename, expected in manifest['sha256'].items():
@@ -67,6 +87,10 @@ def load(kind='support'):
             raise ValueError('Host profile difference inventory changed')
         if any(item[2:] != ['7fc00000', 'ffc00000'] for item in diff):
             raise ValueError('Unreviewed host difference')
+        if 'raw' in profile:
+            diff = differences((base / 'raw-native.tsv').read_bytes(), (base / profile['raw']).read_bytes(), kind, 9, 6801)
+            if diff != profile['raw_differences'] or any(item[2:] != ['7fc00000', 'ffc00000'] for item in diff):
+                raise ValueError('Raw host profile difference inventory changed')
     return manifest, base
 
 
@@ -91,6 +115,8 @@ def validate_capture(output, kind='support'):
     prefix = b''.join(native.splitlines(keepends=True)[:manifest['compact_rows']])
     if prefix != (base / profile['compact']).read_bytes():
         raise ValueError('Native compact output differs from exact host profile')
+    if 'raw' in profile and b''.join(native.splitlines(keepends=True)[-9:]) != (base / profile['raw']).read_bytes():
+        raise ValueError('Native raw output differs from exact host profile')
     if hashlib.sha256(native).hexdigest() != profile['full_sha256']:
         raise ValueError('Full native capture hash differs from reviewed host profile')
     return base / profile['compact']

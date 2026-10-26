@@ -1,4 +1,6 @@
 import copy
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,6 +35,50 @@ class Contracts(unittest.TestCase):
         baseline = copy.deepcopy(self.baseline)
         baseline[self.key]['coverage'] = 'ERR missing c4'
         self.assertEqual(compare(baseline, self.baseline), [])
+
+    def test_known_failure_must_remain_identical_or_improve_to_success(self):
+        for contract in CONTRACTS:
+            baseline = copy.deepcopy(self.baseline)
+            baseline[self.key][contract] = 'ERR missing c4'
+            self.assertEqual(compare(baseline, baseline), [])
+            self.assertEqual(compare(baseline, self.baseline), [])
+            for changed in ('ERR missing c9', 'UNAVAILABLE'):
+                with self.subTest(contract=contract, changed=changed):
+                    candidate = copy.deepcopy(baseline)
+                    candidate[self.key][contract] = changed
+                    self.assertEqual(compare(baseline, candidate)[0]['contract'], contract)
+
+    def test_final_error_requires_same_diagnostic_or_complete_compile_success(self):
+        baseline = copy.deepcopy(self.baseline)
+        baseline[self.key].update(wgsl='ERR backend failed', error='backend failed')
+        self.assertEqual(compare(baseline, baseline), [])
+        self.assertEqual(compare(baseline, self.baseline), [])
+        for changed in ('different failure', ''):
+            candidate = copy.deepcopy(baseline)
+            candidate[self.key]['error'] = changed
+            self.assertEqual(compare(baseline, candidate)[0]['contract'], 'error')
+        candidate = copy.deepcopy(baseline)
+        candidate[self.key]['wgsl'] = 'OK '
+        candidate[self.key]['error'] = 'different failure'
+        self.assertEqual(compare(baseline, candidate)[0]['contract'], 'error')
+        candidate = copy.deepcopy(self.baseline)
+        candidate[self.key]['error'] = 'unexpected failure'
+        self.assertEqual(compare(self.baseline, candidate)[0]['contract'], 'error')
+
+    def test_cli_returns_failure_for_changed_gap_or_lost_measurement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            baseline = Path(directory) / 'baseline.tsv'
+            candidate = Path(directory) / 'candidate.tsv'
+            header = 'mds-shader-contracts-v1\ncompiler\tvkd3d 2.1\n' + '\t'.join(COLUMNS) + '\n'
+            row = dict(self.row, coverage='ERR missing c4')
+            baseline.write_text(header + '\t'.join(row[name] for name in COLUMNS) + '\n')
+            for changed, expected in (('ERR missing c9', 1), ('UNAVAILABLE', 1),
+                                      ('ERR missing c4', 0), ('OK ', 0)):
+                row['coverage'] = changed
+                candidate.write_text(header + '\t'.join(row[name] for name in COLUMNS) + '\n')
+                result = subprocess.run([sys.executable, str(Path(__file__).with_name('compare.py')),
+                                         str(baseline), str(candidate)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, expected, result.stderr)
 
     def test_reader_decodes_cells_and_rejects_empty_or_duplicate_captures(self):
         with tempfile.TemporaryDirectory() as directory:

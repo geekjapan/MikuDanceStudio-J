@@ -50,9 +50,16 @@ def compare(baseline, candidate):
             failures.append({'identity': key, 'contract': 'missing entry or changed source'})
             continue
         for name in CONTRACTS:
-            if before[name].startswith('OK ') and after[name] != before[name]:
+            changed = after[name] != before[name]
+            improved = before[name].startswith('ERR ') and after[name].startswith('OK ')
+            if changed and before[name] != 'UNAVAILABLE' and not improved:
                 failures.append({'identity': key, 'contract': name,
                                  'expected': before[name], 'actual': after[name]})
+        error_cleared = bool(before['error']) and not after['error'] and all(
+            after[name] == 'OK ' for name in ('spirv', 'wgsl', 'msl', 'hlsl'))
+        if before['error'] != after['error'] and not error_cleared:
+            failures.append({'identity': key, 'contract': 'error',
+                             'expected': before['error'], 'actual': after['error']})
     return failures
 
 

@@ -35,7 +35,9 @@ manifest still records those failures. A missing or malformed manifest fails
 validation. Comparison preserves every successful native contract on the same
 identity. Missing entries, changed sources, lost outputs, changed scans, and
 changed reflection registers fail, even if aggregate success counts improve.
-Previously failed contracts may improve. Additional identities are allowed.
+Existing failure diagnostics must remain identical or improve to success. A changed
+failure or lost measurement fails. A final compile error can clear only when all
+compile outputs succeed. Additional identities are allowed.
 Generated backend text is retained through `--emit`; comparison protects backend
 acceptance rather than byte-for-byte generated text.
 

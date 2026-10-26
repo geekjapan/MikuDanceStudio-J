@@ -436,7 +436,10 @@ fn check_layout(b: &[u8], limit: u64, block: Option<u32>) -> Layout {
     let parts = kids(b, hdrl.1 + 12, hdrl.1 + 8 + hdrl.2);
     let total = data[0].len() as u32;
     let avih = parts.iter().find(|c| &c.0 == b"avih").unwrap();
-    assert_eq!(u32_at(b, avih.1 + 8 + 16), total);
+    assert_eq!(
+        u32_at(b, avih.1 + 8 + 16) as usize,
+        in_first.iter().filter(|c| &c.0 == b"00db").count()
+    );
     let odml = parts
         .iter()
         .find(|c| &c.0 == b"LIST" && &b[c.1 + 8..c.1 + 12] == b"odml")
@@ -603,12 +606,6 @@ fn a_file_over_one_gibibyte_reads_back() {
     avi.finish().unwrap();
     let size = std::fs::metadata(&path).unwrap().len();
     assert!(size > 1 << 30, "{size} bytes");
-    let video: Vec<Vec<u8>> = Vec::new();
-    let written = Written {
-        file: Vec::new(),
-        video,
-        pcm,
-    };
     let mut f = std::fs::File::open(&path).unwrap();
     let (mut at, mut forms) = (0u64, Vec::new());
     while at < size {
@@ -632,7 +629,7 @@ fn a_file_over_one_gibibyte_reads_back() {
     let digests: Vec<String> = distinct.iter().map(|f| md5(f)).collect();
     let want: Vec<String> = (0..frames).map(|n| digests[n % 8].clone()).collect();
     assert_eq!(frame_md5s(&path), want);
-    assert_eq!(decoded_audio(&path), written.pcm.concat());
+    assert_eq!(decoded_audio(&path), pcm.concat());
     eprintln!(
         "{size} bytes, {frames} frames, {} s of audio",
         samples as f64 / 24000.0

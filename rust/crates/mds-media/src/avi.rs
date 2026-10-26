@@ -20,8 +20,9 @@
 //! opens the next `AVIX`. The super index (`indx`) in each `strl` has room for
 //! [`SUPER_ENTRIES`] standard indexes, so a file holds up to that many RIFFs;
 //! past it [`Error::TooLarge`]. The `idx1` of the first RIFF lets AVI 1.0
-//! readers play the first gibibyte. The frame counts in `avih`, `strh` and
-//! `dmlh` are the totals of the file.
+//! readers play the first gibibyte. As in libavformat's muxer, `avih` counts the
+//! frames of the first RIFF (what `idx1` indexes), while `strh` and `dmlh`
+//! carry the totals of the file.
 //!
 //! The super index is reserved in the header from the start (the header is
 //! rewritten in place at the end, so its size cannot grow), so even a short
@@ -131,6 +132,9 @@ pub struct AviWriter<W: Write + Seek> {
     /// File position of the next chunk.
     pos: u64,
     frames: u32,
+    /// Frames in the first RIFF: what `avih` counts, as the AVI 1.0 reader of
+    /// that RIFF sees it. The file total is `frames`.
+    first_frames: u32,
     audio_bytes: u64,
     riff: Riff,
     /// RIFFs started, the open one included.
@@ -244,6 +248,7 @@ impl<W: Write + Seek> AviWriter<W> {
             riff_limit,
             pos: 0,
             frames: 0,
+            first_frames: 0,
             audio_bytes: 0,
             riff: Riff {
                 start: 0,
@@ -405,6 +410,7 @@ impl<W: Write + Seek> AviWriter<W> {
         let movi_size = (self.pos - base - 8) as u32;
 
         if self.riff.start == 0 {
+            self.first_frames = self.frames;
             // Offsets are relative to the `movi` tag, behind its `LIST` header.
             let mut idx = Vec::with_capacity(self.riff.entries.len() * 16);
             for e in &self.riff.entries {
@@ -444,7 +450,7 @@ impl<W: Write + Seek> AviWriter<W> {
             (video_rate as u32).saturating_add(audio_rate),
             0,
             0x10 | if audio.is_some() { 0x100 } else { 0 }, // HASINDEX, ISINTERLEAVED
-            self.frames,
+            self.first_frames,
             0,
             1 + u32::from(audio.is_some()),
             self.frame_bytes,

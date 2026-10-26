@@ -1308,6 +1308,7 @@ name = "mds-bullet"
 version = "0.1.0"
 dependencies = [
  "mds-bullet-sys",
+ "mds-crtmath",
 ]
 
 [[package]]

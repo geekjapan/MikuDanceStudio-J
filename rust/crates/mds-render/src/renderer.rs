@@ -37,11 +37,8 @@ struct Pipelines {
 }
 
 /// Render pipelines in one [`Pipelines`] set.
-const PIPELINES_PER_SET: usize = 7;
+const PIPELINES_PER_SET: usize = 8;
 
-/// The self-shadow map: its size (the render target of the `shadow` lines of the golden2 probes,
-/// the app's default) and its format.
-const SHADOW_MAP_SIZE: u32 = 2048;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 fn depth_state(write: bool, stencil: wgpu::StencilState) -> wgpu::DepthStencilState {
@@ -93,11 +90,15 @@ pub struct Renderer {
     material_layout: wgpu::BindGroupLayout,
     layout: wgpu::PipelineLayout,
     scene_buf: wgpu::Buffer,
+    scene_layout: wgpu::BindGroupLayout,
+    /// Over the scene uniform and `shadow_map`.
     scene_group: wgpu::BindGroup,
     /// The scene uniform alone, for the pass that draws the shadow map.
     light_layout: wgpu::PipelineLayout,
     light_group: wgpu::BindGroup,
     shadow_map: wgpu::TextureView,
+    /// The size `shadow_map` was made at.
+    shadow_map_size: crate::ShadowMapSize,
     white: wgpu::TextureView,
     toon: wgpu::TextureView,
     /// Bilinear; the texture slot repeats (Direct3D's default wrap address mode) and blends its
@@ -172,31 +173,9 @@ impl Renderer {
             immediate_size: 0,
         });
         let scene_buf = empty_buffer(device, wgpu::BufferUsages::UNIFORM, SCENE_BYTES);
-        let shadow_map = device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("self-shadow map"),
-                size: wgpu::Extent3d {
-                    width: SHADOW_MAP_SIZE,
-                    height: SHADOW_MAP_SIZE,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: SHADOW_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-            .create_view(&Default::default());
-        let scene_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &scene_layout,
-            entries: &[
-                bind_entry(0, scene_buf.as_entire_binding()),
-                bind_entry(1, wgpu::BindingResource::TextureView(&shadow_map)),
-            ],
-        });
+        let shadow_map_size = crate::ShadowMapSize::default();
+        let (shadow_map, scene_group) =
+            shadow_map(device, &scene_layout, &scene_buf, shadow_map_size);
         let light_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &light_scene_layout,
@@ -234,10 +213,12 @@ impl Renderer {
             material_layout,
             layout,
             scene_buf,
+            scene_layout,
             scene_group,
             light_layout,
             light_group,
             shadow_map,
+            shadow_map_size,
             pipelines: HashMap::new(),
             pipelines_created: 0,
             models: HashMap::new(),
@@ -927,6 +908,15 @@ impl Renderer {
     ) -> wgpu::CommandEncoder {
         let (width, height) = (frame.width, frame.height);
         self.ensure((width, height), samples);
+        if stage.shadow_map != self.shadow_map_size {
+            (self.shadow_map, self.scene_group) = shadow_map(
+                &self.device,
+                &self.scene_layout,
+                &self.scene_buf,
+                stage.shadow_map,
+            );
+            self.shadow_map_size = stage.shadow_map;
+        }
         self.queue
             .write_buffer(&self.scene_buf, 0, &scene_data(frame, stage, shift));
         let pipelines = &self.pipelines[&samples];
@@ -1168,16 +1158,17 @@ fn scene_data(frame: &Frame, stage: &Stage, shift: [f32; 2]) -> Vec<u8> {
         frame.pixel_offset[1] - shift[1],
     ];
     scene.extend([GROUND_SHADOW_HEIGHT, sample[0], sample[1], 0.0]);
+    let map_size = stage.shadow_map.texels() as f32;
     match self_shadow_map(stage) {
         Some(s) => {
             let m = view.self_shadow_view_proj(&frame.light, s.mode, s.distance);
             scene.extend(m.iter().flatten());
             let (k, by_v) = shadow_factor(s.mode);
-            scene.extend([1.0, k, f32::from(u8::from(by_v)), SHADOW_MAP_SIZE as f32]);
+            scene.extend([1.0, k, f32::from(u8::from(by_v)), map_size]);
         }
         None => {
             scene.extend(view::IDENTITY.iter().flatten());
-            scene.extend([0.0, 0.0, 0.0, SHADOW_MAP_SIZE as f32]);
+            scene.extend([0.0, 0.0, 0.0, map_size]);
         }
     }
     bytes(&scene)
@@ -1220,6 +1211,40 @@ fn texture(device: &wgpu::Device, queue: &wgpu::Queue, levels: &[Image]) -> wgpu
         );
     }
     tex.create_view(&Default::default())
+}
+
+/// The self-shadow map at `size`, and the scene bind group over `scene_buf` and the map.
+fn shadow_map(
+    device: &wgpu::Device,
+    scene_layout: &wgpu::BindGroupLayout,
+    scene_buf: &wgpu::Buffer,
+    size: crate::ShadowMapSize,
+) -> (wgpu::TextureView, wgpu::BindGroup) {
+    let map = device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("self-shadow map"),
+            size: wgpu::Extent3d {
+                width: size.texels(),
+                height: size.texels(),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: SHADOW_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+        .create_view(&Default::default());
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: scene_layout,
+        entries: &[
+            bind_entry(0, scene_buf.as_entire_binding()),
+            bind_entry(1, wgpu::BindingResource::TextureView(&map)),
+        ],
+    });
+    (map, group)
 }
 
 fn empty_buffer(device: &wgpu::Device, usage: wgpu::BufferUsages, size: u64) -> wgpu::Buffer {

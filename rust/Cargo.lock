@@ -1455,6 +1455,7 @@ dependencies = [
  "mds-pose",
  "mds-scene",
  "mds-skin",
+ "naga",
  "png",
  "pollster 1.0.1",
  "wgpu",

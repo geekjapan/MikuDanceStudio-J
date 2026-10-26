@@ -10,6 +10,8 @@ mod core;
 mod joint_coordinates;
 #[path = "pure_bullet/joint_rows.rs"]
 mod joint_rows;
+#[path = "pure_bullet/joint_solver.rs"]
+mod joint_solver;
 #[path = "pure_bullet/math_vectors.rs"]
 mod math_vectors;
 #[path = "pure_bullet/pair_cache.rs"]

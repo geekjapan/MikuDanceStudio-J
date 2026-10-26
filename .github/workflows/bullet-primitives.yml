@@ -120,6 +120,12 @@ jobs:
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/bullet-native/axis-sweep"
           python3 tools/bullet-rust-axis-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/axis-sweep" 2>&1 | tee "$RUNNER_TEMP/bullet-native/axis-sweep/check.log"
+      - name: Recapture joint solver and compare every frozen bit
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/bullet-native/solver"
+          python3 tools/bullet-rust-solver-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/solver" 2>&1 | tee "$RUNNER_TEMP/bullet-native/solver/check.log"
       - name: Save native recaptures and evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

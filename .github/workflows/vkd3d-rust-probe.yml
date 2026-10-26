@@ -144,8 +144,8 @@ jobs:
       - name: Install matching LLVM runtime and pinned Rust
         timeout-minutes: 5
         run: |
-          mkdir -p "$RUNNER_TEMP/vkd3d-probe"
-          exec > >(tee "$RUNNER_TEMP/vkd3d-probe/unit-setup.log") 2>&1
+          mkdir -p "$RUNNER_TEMP/vkd3d-probe/evidence"
+          exec > >(tee "$RUNNER_TEMP/vkd3d-probe/evidence/unit-setup.log") 2>&1
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev
           rustup toolchain install 1.95.0 --profile minimal
@@ -164,11 +164,11 @@ jobs:
         env:
           PROBE_UNIT: ${{ matrix.unit }}
         run: |
-          exec > >(tee "$RUNNER_TEMP/vkd3d-probe/probe.log") 2>&1
+          exec > >(tee "$RUNNER_TEMP/vkd3d-probe/evidence/probe.log") 2>&1
           filter="$(python3 -c 'import os,re; print(re.escape(os.environ["PROBE_UNIT"]) + "$" )')"
           python3 tools/vkd3d-rust-probe/probe.py \
             --source "$RUNNER_TEMP/vkd3d-probe/prepared/work-linux-native/vkd3d-2.1" \
-            --artifacts "$RUNNER_TEMP/vkd3d-probe/result" \
+            --artifacts "$RUNNER_TEMP/vkd3d-probe/evidence/result" \
             --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
             --clang /usr/bin/clang-18 --rust-toolchain 1.95.0 \
             --filter "$filter" --timeout 1800 --build-timeout 120
@@ -178,7 +178,7 @@ jobs:
           PROBE_UNIT: ${{ matrix.unit }}
         run: |
           python3 tools/vkd3d-rust-probe/validate.py \
-            "$RUNNER_TEMP/vkd3d-probe/result/result.json" \
+            "$RUNNER_TEMP/vkd3d-probe/evidence/result/result.json" \
             --expected-unit "$PROBE_UNIT" >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve all generated source, logs, hashes, and extern inventory
         if: always()
@@ -186,8 +186,7 @@ jobs:
         with:
           name: vkd3d-probe-${{ matrix.unit }}
           path: |
-            ${{ runner.temp }}/vkd3d-probe/result/
-            !${{ runner.temp }}/vkd3d-probe/result/rust-target/
-            ${{ runner.temp }}/vkd3d-probe/*.log
+            ${{ runner.temp }}/vkd3d-probe/evidence/
+            !${{ runner.temp }}/vkd3d-probe/evidence/result/rust-target/
           retention-days: 7
           if-no-files-found: warn

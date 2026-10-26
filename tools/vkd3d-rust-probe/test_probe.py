@@ -3,6 +3,7 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -71,6 +72,105 @@ class ProbeTests(unittest.TestCase):
             self.assertTrue(result["timed_out"])
             time.sleep(0.8)
             self.assertFalse(sentinel.exists())
+
+    def test_interruption_and_exception_kill_and_reap_owned_child(self):
+        spawn = subprocess.Popen
+        for exception in (KeyboardInterrupt, RuntimeError):
+            with self.subTest(exception=exception.__name__), tempfile.TemporaryDirectory() as directory:
+                children = []
+                def record_child(*args, **kwargs):
+                    child = spawn(*args, **kwargs)
+                    children.append(child)
+                    return child
+                try:
+                    with patch.object(probe.subprocess, "Popen", side_effect=record_child):
+                        with patch.object(probe.time, "sleep", side_effect=exception):
+                            with self.assertRaises(exception):
+                                probe.run([sys.executable, "-c", "import time; time.sleep(60)"],
+                                          Path(directory) / "interrupted.log", timeout=5)
+                    self.assertEqual(len(children), 1)
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(children[0].pid, 0)
+                    with self.assertRaises(ChildProcessError):
+                        os.waitpid(children[0].pid, os.WNOHANG)
+                finally:
+                    for child in children:
+                        if child.poll() is None:
+                            os.killpg(child.pid, signal.SIGKILL)
+                            child.wait()
+
+    def test_cli_signals_leave_checkpoint_and_no_child(self):
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signal=signum), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = self.source_fixture(root)
+                pid_file = root / "child.pid"
+                compiler = root / "clang"
+                compiler.write_text(f"#!{sys.executable}\nimport os,time\nfrom pathlib import Path\nPath({str(pid_file)!r}).write_text(str(os.getpid()))\ntime.sleep(60)\n")
+                compiler.chmod(0o755)
+                artifacts = root / "result"
+                process = subprocess.Popen([sys.executable, probe.__file__, "--source", str(source),
+                                            "--artifacts", str(artifacts), "--clang", str(compiler),
+                                            "--c2rust", str(root / "c2rust"), "--filter", r'hlsl[.]c$'],
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                try:
+                    deadline = time.monotonic() + 5
+                    while not pid_file.exists() and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    self.assertTrue(pid_file.exists(), "fixture compiler did not start")
+                    os.kill(process.pid, signum)
+                    _, stderr = process.communicate(timeout=3)
+                    self.assertNotEqual(process.returncode, 0, stderr.decode())
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(int(pid_file.read_text()), 0)
+                    self.assertEqual(json.loads((artifacts / "result.json").read_text())["status"], "incomplete")
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.communicate()
+                    if pid_file.exists():
+                        try:
+                            os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+
+    def source_fixture(self, root):
+        source = root / "source"
+        for subdirectory in ("libs/vkd3d-shader", "libs/vkd3d-common", "include"):
+            (source / subdirectory).mkdir(parents=True)
+        for name in ("hlsl.c", "hlsl.tab.c", "hlsl.yy.c", "vkd3d_shader_main.c"):
+            (source / "libs/vkd3d-shader" / name).write_text("/* Copyright fixture. GNU Lesser General Public License. */\nvoid fixture(void) {}\n")
+        (source / "libs/vkd3d-common/debug.c").touch()
+        (source / "include/config.h").write_text("#define HAVE_CONFIG_H 1\n")
+        (source / "LICENSE").write_text("LGPL-2.1-or-later fixture\n")
+        return source
+
+    def test_existing_artifact_root_rejects_stale_success_before_tools(self):
+        for stale_output in (False, True):
+            with self.subTest(stale_output=stale_output), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = self.source_fixture(root)
+                artifacts = root / "result"
+                artifacts.mkdir()
+                stale = artifacts / "rust/src/hlsl.rs"
+                if stale_output:
+                    stale.parent.mkdir(parents=True)
+                    stale.write_text('pub unsafe extern "C" fn stale() {}\n')
+                    (artifacts / "rust/Cargo.toml").write_text('[package]\nname="stale"\nversion="0.0.0"\n')
+                def no_output(command, log, **kwargs):
+                    log.write_text("fake tool returned zero without output\n")
+                    return {"command": command, "exit_code": 0, "log": str(log)}
+                arguments = ["probe.py", "--source", str(source), "--artifacts", str(artifacts),
+                             "--c2rust", str(root / "bin/c2rust"), "--clang", "/usr/bin/clang", "--filter", r'hlsl[.]c$']
+                with patch.object(sys, "argv", arguments), patch.object(probe, "run", side_effect=no_output) as tool:
+                    with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+                        with self.assertRaises(SystemExit) as error:
+                            probe.main()
+                    self.assertEqual(error.exception.code, 2)
+                    tool.assert_not_called()
+                self.assertFalse((artifacts / "result.json").exists())
+                if stale_output:
+                    self.assertEqual(stale.read_text(), 'pub unsafe extern "C" fn stale() {}\n')
 
     def test_hosted_validation_requires_stable_complete_expected_unit(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -39,7 +39,11 @@ before download or cleanup. Existing build targets keep their behavior.
 UTC start and end timestamps, elapsed time, user and system CPU time, peak RSS
 in bytes, exit code, and timeout for each command. Resource values come from
 POSIX `wait4`; they describe the command and its waited children, not total
-runner memory. A time limit kills the command's entire process group.
+runner memory. A timeout, exception, or interruption kills the owned command's
+process group and reaps the child. The CLI turns SIGINT and SIGTERM into that
+cleanup path. The artifact directory must be new, including when an existing
+directory is empty. The workflow creates only its parent evidence directory
+and always uploads that parent, preserving logs if result creation is rejected.
 
 `validate.py` checks that the expected C unit was selected and reports:
 

@@ -26,21 +26,24 @@ def run(command, log, **kwargs):
     with log.open("w") as output:
         process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT,
                                    start_new_session=True, **kwargs)
-        while True:
-            pid, status, usage = os.wait4(process.pid, os.WNOHANG)
-            if pid:
-                process.returncode = os.waitstatus_to_exitcode(status)
-                break
-            if timeout is not None and time.monotonic() - start >= timeout:
-                timed_out = True
+        try:
+            while True:
+                pid, status, usage = os.wait4(process.pid, os.WNOHANG)
+                if pid:
+                    process.returncode = os.waitstatus_to_exitcode(status)
+                    break
+                if timeout is not None and time.monotonic() - start >= timeout:
+                    timed_out = True
+                    break
+                time.sleep(0.05)
+        finally:
+            if process.returncode is None:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
                 _, status, usage = os.wait4(process.pid, 0)
                 process.returncode = os.waitstatus_to_exitcode(status)
-                break
-            time.sleep(0.05)
     return {"command": command, "exit_code": 124 if timed_out else process.returncode,
             "process_exit_code": process.returncode, "log": str(log), "timed_out": timed_out,
             "started_utc": started, "ended_utc": datetime.now(timezone.utc).isoformat(),
@@ -87,7 +90,10 @@ def main():
     artifacts = args.artifacts.resolve()
     if artifacts == original or original in artifacts.parents:
         parser.error("artifacts must be outside the source tree")
-    artifacts.mkdir(parents=True, exist_ok=True)
+    try:
+        args.artifacts.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        parser.error("artifacts directory must be new; refusing to reuse existing output")
     source = artifacts / "source"
     # Refuse reuse so old Rust files cannot make a failed translation look complete.
     shutil.copytree(original, source)
@@ -217,4 +223,8 @@ fn main() {''' + "".join(checks) + 'println!("6 MD5 vectors passed");}\n')
 
 
 if __name__ == "__main__":
+    def interrupted(signum, frame):
+        raise KeyboardInterrupt(f"Interrupted by signal {signum}")
+    signal.signal(signal.SIGINT, interrupted)
+    signal.signal(signal.SIGTERM, interrupted)
     main()

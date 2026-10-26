@@ -339,7 +339,12 @@ impl Editor {
             _ => None,
         };
         let files = Files::of(&self.doc);
-        self.doc.apply(cmd).map_err(|e| e.to_string())?;
+        let physics = &mut self.physics;
+        self.doc
+            .apply_with_camera_pose(cmd, &mut |doc, request| {
+                live_camera_anchors(doc, &mut physics.scene, request)
+            })
+            .map_err(|e| e.to_string())?;
         if let Some(m) = physics_mode {
             // `ModelKinematicSync` of every model (`command_view_menu.cpp:1048` to `:1110`).
             self.physics.set_physics_mode(m)?;
@@ -1073,4 +1078,75 @@ mod tests {
         assert!(recording.grid);
         assert!(!editor.modified);
     }
+}
+
+fn live_camera_anchors(
+    doc: &Document,
+    scene: &mut mds_pose::Scene,
+    request: mds_doc::CameraPoseRequest,
+) -> Result<mds_doc::CameraAnchors, mds_doc::Error> {
+    use mds_doc::CameraPoseRequest;
+    if matches!(request, CameraPoseRequest::AfterFrameSeek) {
+        if let Some(i) = scene
+            .models
+            .iter()
+            .position(|m| i32::from(m.slot) == doc.pmm.appearance.camera_parent_model)
+        {
+            let (before, rest) = scene.models.split_at_mut(i);
+            let (parent, after) = rest.split_first_mut().unwrap();
+            if let Some(source) = doc.pmm.models.iter().find(|m| m.slot == parent.slot) {
+                parent.apply_pmm(source).map_err(mds_doc::Error::Format)?;
+            }
+            mds_pose::pose::apply_morphs(parent);
+            mds_pose::pose::set_physics_mode(
+                parent,
+                0,
+                &mds_pose::pose::Others {
+                    models: [before, after],
+                },
+                i32::from(doc.pmm.physics.playback_mode),
+            );
+        }
+    }
+    let mut anchors = mds_doc::camera_anchors(doc, &scene.models);
+    if let CameraPoseRequest::AfterModelLoad { slot } = request {
+        let i = doc
+            .pmm
+            .models
+            .iter()
+            .position(|m| m.slot == slot)
+            .ok_or(mds_doc::Error::NotApplicable("new camera model missing"))?;
+        let mut model = match &doc.models[i] {
+            ModelFile::Pmx(p) => mds_pose::model::Model::from_pmx(slot, p),
+            ModelFile::Pmd(p) => mds_pose::model::Model::from_pmd(slot, p),
+            ModelFile::Missing => {
+                return Err(mds_doc::Error::NotApplicable(
+                    "new camera model file missing",
+                ))
+            }
+        }
+        .map_err(mds_doc::Error::Format)?;
+        model
+            .apply_pmm(&doc.pmm.models[i])
+            .map_err(mds_doc::Error::Format)?;
+        mds_pose::pose::apply_morphs(&mut model);
+        mds_pose::pose::set_physics_mode(
+            &mut model,
+            0,
+            &mds_pose::pose::Others {
+                models: [&scene.models, &[]],
+            },
+            i32::from(doc.pmm.physics.playback_mode),
+        );
+        let initial = mds_doc::camera_anchors(doc, &[model]);
+        if slot == doc.pmm.selected_model_slot {
+            anchors.selected_root = initial.selected_root;
+            anchors.selected_bone = initial.selected_bone;
+            anchors.selected_bone_negative = initial.selected_bone_negative;
+        }
+        if i32::from(slot) == doc.pmm.appearance.camera_parent_model {
+            anchors.parent = initial.parent;
+        }
+    }
+    Ok(anchors)
 }

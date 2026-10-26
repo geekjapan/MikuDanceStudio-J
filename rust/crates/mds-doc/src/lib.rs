@@ -106,7 +106,11 @@ mod accessory;
 mod add_model;
 pub mod background;
 mod bulk;
+mod camera;
 mod camera_reference;
+pub use camera::{
+    camera_anchors, CameraAnchors, CameraBone, CameraPoseProvider, CameraPoseRequest,
+};
 mod delete_model;
 pub mod frame;
 pub mod global;
@@ -207,6 +211,10 @@ pub enum Command {
     /// follow the camera, light, self-shadow, gravity and accessories follow
     /// their keys.
     SetFrame(u32),
+    /// Native stop tail, distinct from an ordinary seek.
+    FinishPlayback {
+        frame: Option<u32>,
+    },
     /// The selected model's bone selection (`boneSelection`); the first bone
     /// becomes `selectedBone`.
     SelectBones(Vec<u32>),
@@ -1189,7 +1197,7 @@ impl Document {
 
     /// `RefreshAfterFrameApply` (`src/window/ui_frame_step.cpp`) after the
     /// current frame changed.
-    fn apply_frame(&mut self) {
+    fn apply_frame(&mut self, pose: &mut CameraPoseProvider<'_>) -> Result<(), Error> {
         let frame = self.frame();
         for (m, e) in self.pmm.models.iter_mut().zip(&mut self.edit.models) {
             if m.bone_pose.iter().any(|p| p.flags[2] != 0) {
@@ -1197,12 +1205,12 @@ impl Document {
                 m.bone_pose.iter_mut().for_each(|p| p.flags[2] = 0);
             }
         }
-        self.seek_frame();
+        self.seek_frame(pose)
     }
 
     /// The tail every frame change shares: the timeline scroll, every model
     /// at the frame, and the global tracks in camera mode or with camera follow.
-    fn seek_frame(&mut self) {
+    fn seek_frame(&mut self, pose: &mut CameraPoseProvider<'_>) -> Result<(), Error> {
         // `CameraAttachmentTransformSuppressed() = 0` (`ui_frame_step.cpp`
         // 188, `ui_editor_click.cpp` 805).
         self.pmm.appearance.suppress_camera_transform = 0;
@@ -1215,7 +1223,7 @@ impl Document {
         for (m, f) in self.pmm.models.iter_mut().zip(&self.models) {
             refresh::seek_model(m, f, frame, mode);
         }
-        self.refresh_frame_context();
+        self.refresh_frame_context(pose)
     }
 
     /// The refresh tail of the delete and paste handlers: in camera mode the
@@ -1238,6 +1246,14 @@ impl Document {
     }
 
     pub fn apply(&mut self, cmd: Command) -> Result<(), Error> {
+        self.apply_with_camera_pose(cmd, &mut camera::saved_camera_anchors)
+    }
+
+    pub fn apply_with_camera_pose(
+        &mut self,
+        cmd: Command,
+        pose: &mut CameraPoseProvider<'_>,
+    ) -> Result<(), Error> {
         // The handlers that set `PhysicsResetPending` once they get past
         // their gates: RefreshAfterFrameApply, CmdLoadMotion, CmdLoadPose,
         // the three paste handlers, and the undo and redo buttons. A command
@@ -1258,7 +1274,7 @@ impl Document {
             c => self.paste_runs(c).unwrap_or(false),
         };
         self.edit.reported = None;
-        let r = self.apply_inner(cmd);
+        let r = self.apply_inner(cmd, pose);
         if r.is_ok() && settles {
             self.edit.physics_reset_pending = true;
         }
@@ -1290,7 +1306,11 @@ impl Document {
         cmd.marks_modified() && self.paste_runs(cmd).unwrap_or(true)
     }
 
-    fn apply_inner(&mut self, cmd: Command) -> Result<(), Error> {
+    fn apply_inner(
+        &mut self,
+        cmd: Command,
+        pose: &mut CameraPoseProvider<'_>,
+    ) -> Result<(), Error> {
         let frame = self.frame();
 
         match cmd {
@@ -1301,9 +1321,9 @@ impl Document {
                 let old = self.pmm.selected_model_slot;
                 self.pmm.selected_model_slot = slot;
                 if self.camera_mode() {
-                    self.rebuild_model_mode();
+                    self.rebuild_model_mode(pose, CameraPoseRequest::Current)?;
                 } else {
-                    self.refresh_model_selection(old);
+                    self.refresh_model_selection(old, pose)?;
                 }
                 self.pmm.timeline.edit_mode = 0;
             }
@@ -1382,9 +1402,31 @@ impl Document {
                     a.state.parent_bone = bone as i32;
                 }
             }
+            Command::FinishPlayback { frame } => {
+                if let Some(frame) = frame {
+                    self.pmm.timeline.current_frame = frame as i32;
+                }
+                let frame = self.frame();
+                for (m, file) in self.pmm.models.iter_mut().zip(&self.models) {
+                    refresh::seek_model(m, file, frame, self.pmm.physics.playback_mode);
+                }
+                self.pmm.appearance.camera_parent_model = -1;
+                if self.camera_mode() || self.pmm.appearance.follow_camera != 0 {
+                    self.pmm.camera_state[3..5].fill(0.0);
+                    self.refresh_global_tracks();
+                    if !self.camera_mode() {
+                        self.pmm.appearance.suppress_camera_transform = 0;
+                        self.post_model_reload(pose(self, CameraPoseRequest::Current)?);
+                    }
+                }
+                for a in &mut self.pmm.accessories {
+                    refresh::accessory(a, frame);
+                }
+                self.edit.physics_reset_pending = true;
+            }
             Command::SetFrame(f) => {
                 self.pmm.timeline.current_frame = f as i32;
-                self.apply_frame();
+                self.apply_frame(pose)?;
             }
             Command::SetGravityChannel(ch, v) => {
                 let p = &mut self.pmm.physics;
@@ -1426,12 +1468,15 @@ impl Document {
                 if bone as usize >= self.pmm.models[i].bone_pose.len() {
                     return Err(not("no such bone"));
                 }
-                self.apply_inner(Command::BeginBoneEdit)?;
-                self.apply_inner(Command::DragBonePose {
-                    bone,
-                    translation,
-                    rotation,
-                })?;
+                self.apply_inner(Command::BeginBoneEdit, pose)?;
+                self.apply_inner(
+                    Command::DragBonePose {
+                        bone,
+                        translation,
+                        rotation,
+                    },
+                    pose,
+                )?;
             }
             Command::SetMorph { morph, value } => {
                 let i = self.active_model()?;
@@ -1837,7 +1882,7 @@ impl Document {
                 self.edit.models.insert(at, ModelEdit::default());
                 self.pmm.selected_model_slot = slot;
                 if self.camera_mode() {
-                    self.rebuild_model_mode();
+                    self.rebuild_model_mode(pose, CameraPoseRequest::AfterModelLoad { slot })?;
                 }
                 self.pmm.timeline.edit_mode = 0;
             }
@@ -1922,14 +1967,14 @@ impl Document {
                 self.seek(i);
                 r?;
             }
-            Command::ClickFrame(f) => self.click_frame(f),
+            Command::ClickFrame(f) => self.click_frame(f, pose)?,
             Command::SetEditMode(mode) => self.pmm.timeline.edit_mode = mode,
             Command::SelectAllBones => self.select_all_bones()?,
             Command::SelectUnregisteredBones => self.select_unregistered_bones()?,
             Command::ResetBonePose => self.reset_bone_pose()?,
             Command::CopyBonePose => self.copy_bone_pose()?,
             Command::PasteBonePose { mirror } => self.paste_bone_pose(mirror)?,
-            Command::SetCameraParentModel(slot) => self.set_camera_parent_model(slot),
+            Command::SetCameraParentModel(slot) => self.set_camera_parent_model(slot, pose)?,
             Command::SetCameraParentBone(bone) => self.set_camera_parent_bone(bone)?,
             Command::SetModelFlag { flag, on } => {
                 let i = self.active_model()?;
@@ -1988,7 +2033,7 @@ impl Document {
                 self.pmm.settings.render_width = width;
                 self.pmm.settings.render_height = height;
             }
-            Command::SetFollowCamera(on) => self.set_follow_camera(on),
+            Command::SetFollowCamera(on) => self.set_follow_camera(on, pose)?,
             Command::SetEdgeScale(v) => {
                 if self.camera_mode() {
                     return Err(not("the edge thickness is a model-mode setting"));
@@ -2010,7 +2055,7 @@ impl Document {
             Command::ToggleDisplayGroup(g) => self.toggle_display_group(g)?,
             Command::ReplaceKeySelection { track, from, to } => {
                 self.clear_mode_marks(track)?;
-                return self.apply_inner(Command::SelectKeys { track, from, to });
+                return self.apply_inner(Command::SelectKeys { track, from, to }, pose);
             }
             Command::SetTimelineStart(f) => self.pmm.timeline.start_frame = f,
             Command::SetTrackListScroll(v) => match self.active().filter(|_| !self.camera_mode()) {
@@ -2023,7 +2068,7 @@ impl Document {
             Command::DeleteAccessory(slot) => self.delete_accessory(slot)?,
             Command::MoveSelectedKeys(delta) => self.move_selected_keys(delta)?,
             Command::DeleteModel(slot) => self.delete_model(slot)?,
-            Command::SetCameraReference(mode) => self.set_camera_reference(mode)?,
+            Command::SetCameraReference(mode) => self.set_camera_reference(mode, pose)?,
             Command::SetEnglishName { name, text } => self.set_english_name(name, &text)?,
             Command::SetToonFileNames(names) => {
                 let names: &[String; 10] = names
@@ -2047,7 +2092,7 @@ impl Document {
             }
             Command::SetModelDrawOrder(slots) => {
                 self.set_model_draw_order(&slots)?;
-                self.apply_inner(Command::SelectCameraMode)?;
+                self.apply_inner(Command::SelectCameraMode, pose)?;
             }
             Command::SetModelCalcOrder(slots) => self.set_model_calc_order(&slots)?,
             Command::SetAccessoryOrder(slots) => self.set_accessory_order(&slots)?,
@@ -2103,7 +2148,7 @@ impl Document {
                     p.enabled = u32::from(on);
                 }
             }
-            Command::DeleteKey => return self.apply_inner(Command::DeleteSelectedKeys),
+            Command::DeleteKey => return self.apply_inner(Command::DeleteSelectedKeys, pose),
             Command::SetPhysicsMode(m) => {
                 if m > 3 {
                     return Err(not("no such physics mode"));

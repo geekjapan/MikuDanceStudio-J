@@ -342,3 +342,59 @@ fn negative_selected_bone_uses_zero_only_with_a_parent() {
         assert!(close(&d.pmm.camera_state[3..6], &want));
     }
 }
+
+#[test]
+fn live_provider_runs_after_selection_once_and_uses_live_matrix() {
+    use mds_doc::{CameraAnchors, CameraBone, CameraPoseRequest};
+    let mut d = doc();
+    configure(&mut d, true, 0, false);
+    let live = CameraBone {
+        mat_init: Mat4::translation(123.0, 456.0, 789.0),
+        position: [0.0; 3],
+    };
+    let mut calls = 0;
+    d.apply_with_camera_pose(Command::SelectModel(1), &mut |doc, request| {
+        calls += 1;
+        assert_eq!(doc.pmm.selected_model_slot, 1);
+        assert!(matches!(request, CameraPoseRequest::Current));
+        Ok(CameraAnchors {
+            parent: Some(live),
+            ..Default::default()
+        })
+    })
+    .unwrap();
+    assert_eq!(calls, 1);
+    let r = Mat4::multiply(
+        &Mat4::multiply(&Mat4::rotation_y(-0.4), &Mat4::rotation_x(0.2)),
+        &Mat4::rotation_z(0.3),
+    );
+    let t = Mat4::multiply(&live.mat_init, &r);
+    assert!(close(
+        &d.pmm.camera_state[3..6],
+        &[t.0[12] + 11.0, t.0[13] + 13.0, t.0[14] + 17.0]
+    ));
+    d.apply_with_camera_pose(Command::SetFollowCamera(false), &mut |_, _| {
+        panic!("unmatched Follow-off must retain state")
+    })
+    .unwrap();
+}
+
+#[test]
+fn stop_clears_parent_before_shared_refresh_without_dirtying() {
+    let mut d = doc();
+    d.pmm.settings.options[0] = 0;
+    d.pmm.appearance.follow_camera = 1;
+    d.pmm.appearance.camera_parent_model = 1;
+    d.pmm.camera.heads_mut()[0].parent_model = -1;
+    let command = Command::FinishPlayback { frame: Some(0) };
+    assert!(!command.marks_modified());
+    let mut calls = 0;
+    d.apply_with_camera_pose(command, &mut |doc, request| {
+        calls += 1;
+        assert_eq!(doc.pmm.appearance.camera_parent_model, -1);
+        assert!(matches!(request, mds_doc::CameraPoseRequest::Current));
+        Ok(Default::default())
+    })
+    .unwrap();
+    assert_eq!(calls, 1);
+}

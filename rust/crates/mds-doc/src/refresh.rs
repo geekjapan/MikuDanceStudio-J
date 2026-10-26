@@ -230,7 +230,7 @@ pub(crate) fn accessory(a: &mut pmm::Accessory, frame: u32) {
 }
 
 impl crate::Document {
-    fn refresh_global_tracks(&mut self) {
+    pub(crate) fn refresh_global_tracks(&mut self) {
         let p = &mut self.pmm;
         camera(p);
         light(p);
@@ -243,28 +243,12 @@ impl crate::Document {
     }
 
     /// `PostModelReload` (`src/window/ui_model_reload.cpp`, VA 0x0041A650).
-    fn post_model_reload(&mut self) {
+    pub(crate) fn post_model_reload(&mut self, anchors: crate::CameraAnchors) {
         use mds_math::Mat4;
-        let poses = crate::panel::posed_scene(self);
-        let pose = |slot: i32| {
-            let i = self
-                .pmm
-                .models
-                .iter()
-                .position(|m| i32::from(m.slot) == slot)?;
-            poses[i].as_ref()
-        };
-        let point = |b: &mds_pose::model::Bone| {
-            let (m, p) = (&b.mat_init.0, b.position);
-            std::array::from_fn::<_, 3, _>(|c| {
-                m[c] * p[0] + m[4 + c] * p[1] + m[8 + c] * p[2] + m[12 + c]
-            })
-        };
         let s = &self.pmm.camera_state;
         let mut r = Mat4::multiply(&Mat4::rotation_y(s[7]), &Mat4::rotation_x(s[6]));
         r = Mat4::multiply(&r, &Mat4::rotation_z(s[8]));
-        let parent = pose(self.pmm.appearance.camera_parent_model)
-            .and_then(|p| p.bones.get(self.pmm.appearance.camera_parent_bone as usize));
+        let parent = anchors.parent;
         let mut basis = Mat4::IDENTITY;
         let target = if let Some(b) = parent {
             for row in 0..3 {
@@ -273,30 +257,18 @@ impl crate::Document {
                 }
             }
             r = Mat4::multiply(&basis, &r);
-            point(b)
+            b.point()
         } else {
             [-s[0], -s[1], -s[2]]
         };
-        let selected = self.active().map(|i| &self.pmm.models[i]);
-        let reference = selected
-            .and_then(|m| {
-                let p = pose(i32::from(m.slot))?;
-                match self.pmm.timeline.camera_reference_mode {
-                    1 => {
-                        let b = p.bones.get(p.center_bone)?;
-                        Some([b.mat_init.0[12], b.mat_init.0[13], b.mat_init.0[14]])
-                    }
-                    2 => {
-                        let selected = m.selection.selected_bone;
-                        if parent.is_none() && selected < 0 {
-                            return None;
-                        }
-                        Some(point(p.bones.get(selected.max(0) as usize)?))
-                    }
-                    _ => None,
-                }
-            })
-            .unwrap_or([0.0; 3]);
+        let reference = match self.pmm.timeline.camera_reference_mode {
+            1 => anchors.selected_root,
+            2 if parent.is_some() || !anchors.selected_bone_negative => {
+                anchors.selected_bone.map(|b| b.point())
+            }
+            _ => None,
+        }
+        .unwrap_or([0.0; 3]);
         let reference = if parent.is_some() {
             reference
         } else {
@@ -322,21 +294,30 @@ impl crate::Document {
     }
 
     /// `RebuildModelModePanel` (VA 0x0044D610).
-    pub(crate) fn rebuild_model_mode(&mut self) {
+    pub(crate) fn rebuild_model_mode(
+        &mut self,
+        pose: &mut crate::CameraPoseProvider<'_>,
+        request: crate::CameraPoseRequest,
+    ) -> Result<(), crate::Error> {
         self.pmm.settings.options[0] = 0;
         if self.pmm.appearance.follow_camera != 0 {
             self.pmm.camera_state[3..5].fill(0.0);
             self.refresh_global_tracks();
         }
         self.pmm.appearance.suppress_camera_transform = 0;
-        self.post_model_reload();
+        self.post_model_reload(pose(self, request)?);
         if self.pmm.appearance.follow_camera == 0 {
             self.pmm.light_state[3..].copy_from_slice(&[-0.5, -1.0, 0.5]);
         }
+        Ok(())
     }
 
     /// The parent-follow branch of `ApplyModelComboSelection`.
-    pub(crate) fn refresh_model_selection(&mut self, old: u8) {
+    pub(crate) fn refresh_model_selection(
+        &mut self,
+        old: u8,
+        pose: &mut crate::CameraPoseProvider<'_>,
+    ) -> Result<(), crate::Error> {
         let a = &self.pmm.appearance;
         if a.camera_parent_model >= 0
             && a.follow_camera != 0
@@ -346,18 +327,23 @@ impl crate::Document {
             self.pmm.camera_state[3..5].fill(0.0);
             self.pmm.appearance.suppress_camera_transform = 0;
             camera(&mut self.pmm);
-            self.post_model_reload();
+            self.post_model_reload(pose(self, crate::CameraPoseRequest::Current)?);
         }
+        Ok(())
     }
 
     /// `RefreshFrameContext` (`src/window/ui_frame_step.cpp`).
-    pub(crate) fn refresh_frame_context(&mut self) {
+    pub(crate) fn refresh_frame_context(
+        &mut self,
+        pose: &mut crate::CameraPoseProvider<'_>,
+    ) -> Result<(), crate::Error> {
         if self.camera_mode() {
             self.refresh_global_tracks();
         } else if self.pmm.appearance.follow_camera != 0 {
             self.pmm.camera_state[3..5].fill(0.0);
             self.refresh_global_tracks();
-            self.post_model_reload();
+            self.post_model_reload(pose(self, crate::CameraPoseRequest::AfterFrameSeek)?);
         }
+        Ok(())
     }
 }

@@ -212,6 +212,88 @@ fn dropped_files_load_by_extension() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A dropped `.vac` (`ui_dropfiles.cpp:211`) is `LoadAccessoryFile` of it with the mesh beside it,
+/// as the script runner's `load accessory` of the same path (`script3/vac.txt`) does it.
+#[test]
+fn a_dropped_vac_loads_the_mesh_beside_it() {
+    let dir = scratch("drop-vac");
+    let inputs = fixtures().join("script3/inputs");
+    for name in ["tri2.vac", "tri2.x"] {
+        std::fs::copy(inputs.join(name), dir.join(name)).unwrap();
+    }
+    let vac = dir.join("tri2.vac");
+    let mut e = Editor::empty();
+    let mut status = String::new();
+    drop_files(&mut ctx(&mut e, &mut status), std::slice::from_ref(&vac));
+    assert!(status.is_empty(), "{status}");
+    assert!(e.modified, "render/accessory.cpp:615");
+
+    let stored = vac.to_string_lossy().replace('/', "\\");
+    let mut runner = Runner::new();
+    runner
+        .run_line(&format!("load accessory {stored}"), &mut |p: &str| {
+            let name = p.rsplit('\\').next().unwrap();
+            std::fs::read(dir.join(name)).ok()
+        })
+        .unwrap();
+    assert!(e.doc.save().unwrap() == runner.doc.save().unwrap());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The other drops of `HandleDropFiles`: `.bmp` and `.jpg` load the background picture and `.avi`
+/// the movie, each setting `SceneModified` whatever the loader did (`ui_dropfiles.cpp:220` to
+/// `:289`); `.oni` is the MoCap load, which says why it cannot run (`:265`). The MMEffect files
+/// go to the effects: an `.emm` loads and an `.fx` is the selected model's effect.
+#[test]
+fn the_media_and_effect_drops_reach_their_loads() {
+    let dir = scratch("drop-media");
+    stage_golden2(&dir);
+    std::fs::write(dir.join("bad.avi"), b"RIFF").unwrap();
+    std::fs::write(dir.join("bad.jpg"), b"not a jpeg").unwrap();
+    let mut e = Editor::open(&dir.join("accessory.pmm")).unwrap();
+    e.doc.edit.viewport = Some(mds_app::viewport::media_viewport([0, 0, 640, 480]));
+    let mut status = String::new();
+
+    e.modified = false;
+    drop_files(&mut ctx(&mut e, &mut status), &[dir.join("cube.bmp")]);
+    assert!(status.is_empty(), "{status}");
+    assert!(e.doc.pmm.picture.path.text.ends_with("cube.bmp"));
+    assert!(e.modified);
+    for bad in ["bad.avi", "bad.jpg"] {
+        e.modified = false;
+        status.clear();
+        drop_files(&mut ctx(&mut e, &mut status), &[dir.join(bad)]);
+        assert!(
+            !status.contains("file type is not supported"),
+            "{bad}: {status}"
+        );
+        assert!(e.modified, "{bad}");
+    }
+
+    // The scene is in camera mode: the box of `ui_dropfiles.cpp:271`.
+    status.clear();
+    drop_files(&mut ctx(&mut e, &mut status), &[dir.join("x.oni")]);
+    assert_eq!(status, "カメラ・照明モードではoniデータは読めません");
+    e.apply(Command::SelectModel(e.doc.pmm.models[0].slot))
+        .unwrap();
+    status.clear();
+    drop_files(&mut ctx(&mut e, &mut status), &[dir.join("x.oni")]);
+    assert_eq!(status, mds_app::ui::mocap::UNAVAILABLE);
+
+    let fx = fixtures().join("mmegold/control.fx");
+    status.clear();
+    drop_files(&mut ctx(&mut e, &mut status), std::slice::from_ref(&fx));
+    assert!(status.is_empty(), "{status}");
+    assert_eq!(e.mme.assignments[0].effect, fx.to_string_lossy());
+    status.clear();
+    drop_files(
+        &mut ctx(&mut e, &mut status),
+        &[fixtures().join("mmegold/objects.emm")],
+    );
+    assert!(status.is_empty(), "{status}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Menu 301 toggles; with it on, each dialog kind starts in the folder last used.
 #[test]
 fn previous_folder_toggles() {

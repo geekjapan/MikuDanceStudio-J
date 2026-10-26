@@ -20,7 +20,6 @@
 
 use super::{button, Ctx};
 use crate::actions::{self, Action, Mode};
-use crate::editor::Editor;
 use mds_doc::{Command, Document, ModelFlag};
 use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult};
 
@@ -221,24 +220,12 @@ fn load_dialog(ctx: &mut Ctx) -> Result<(), String> {
     load(ctx, &path.to_string_lossy(), data)
 }
 
-/// `LoadModelFile` with the path as the dialog returns it (the PMM stores it as given). The
-/// editor is built again from the new document, because `Editor::apply` only rebuilds the meshes
-/// and the physics world for a new scene; the view camera and the play panel carry over.
+/// `LoadModelFile` with the path as the dialog returns it (the PMM stores it as given).
 pub fn load(ctx: &mut Ctx, path: &str, data: Vec<u8>) -> Result<(), String> {
-    let old = &mut *ctx.editor;
-    let mut doc = old.doc.clone();
-    doc.apply(Command::LoadModel {
+    ctx.editor.apply(Command::LoadModel {
         path: path.into(),
         data,
     })
-    .map_err(|e| e.to_string())?;
-    let mut fresh = Editor::new(doc, old.path.clone())?;
-    fresh.modified = true;
-    fresh.camera = old.camera;
-    fresh.options = old.options;
-    fresh.physics_opens += old.physics_opens;
-    *old = fresh;
-    Ok(())
 }
 
 pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {

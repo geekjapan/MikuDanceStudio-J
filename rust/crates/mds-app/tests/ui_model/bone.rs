@@ -192,6 +192,7 @@ fn reset_clears_the_selected_poses() {
         .unwrap();
     }
     e.apply(Command::SelectBones(vec![0, 3])).unwrap();
+    e.modified = false;
     run(&mut e, "ctl:495").unwrap();
     let b = &e.doc.selected_model().unwrap().bone_pose;
     assert_eq!(b[0].translation, [1.0, 0.0, 3.0]);
@@ -201,9 +202,8 @@ fn reset_clears_the_selected_poses() {
         ([0.0; 3], [0.0, 0.0, 0.0, 1.0])
     );
     assert_eq!(b[3].flags[1], 1);
-    // The reset handler (`bone_pose_edit.cpp:25` to `:143`) sets no `SceneModified`; `Editor`
-    // still marks it (editor.rs, slice appfix2), so the rule is read from the document.
-    assert!(!Command::ResetBonePose.marks_modified());
+    // The reset handler (`bone_pose_edit.cpp:25` to `:143`) sets no `SceneModified`.
+    assert!(!e.modified);
     e.apply(Command::Undo).unwrap();
     let b = &e.doc.selected_model().unwrap().bone_pose;
     assert_eq!(
@@ -236,6 +236,7 @@ fn copy_paste_and_reverse_paste() {
     })
     .unwrap();
     e.apply(Command::SelectBones(vec![5])).unwrap();
+    e.modified = false;
     run(&mut e, "ctl:497").unwrap();
     let m = e.doc.selected_model().unwrap();
     assert_eq!(
@@ -248,10 +249,8 @@ fn copy_paste_and_reverse_paste() {
     let p = &e.doc.selected_model().unwrap().bone_pose[2];
     assert_eq!(p.translation, [-1.0, 2.0, 3.0]);
     assert_eq!(p.rotation, [0.1, -0.2, -0.3, 0.927_361_8]);
-    // Neither paste sets `SceneModified` (`bone_pose_clipboard.cpp:89` to `:292`); see the reset.
-    for mirror in [false, true] {
-        assert!(!Command::PasteBonePose { mirror }.marks_modified());
-    }
+    // Neither paste sets `SceneModified` (`bone_pose_clipboard.cpp:89` to `:292`).
+    assert!(!e.modified);
 }
 
 /// With nothing copied, paste does nothing (`bone_pose_clipboard.cpp:90`).

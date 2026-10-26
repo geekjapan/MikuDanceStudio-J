@@ -39,17 +39,13 @@
 //!   and rejects a frame rate of 0 or less, which the C++ does not check.
 //! * A command that fails keeps its dialog open with the error on the status line (the C++ closes
 //!   it and the handler returns with nothing changed).
-//! * [`apply_cpp`] puts the modified flag back after a command whose C++ handler sets no
-//!   `SceneModified` where the document's rule (`Document::marks_modified`, which knows an empty
-//!   clipboard) differs from the `Editor`'s.
 //! * The outside parent dialog shows the readout of the result on a copy of the document; the PMM
 //!   holds the Japanese bone names only, so the English names are not shown.
 //! * The physics model dialog edits a dense scratch list (`EditState::physics_scratch`): after a
 //!   delete and an add the new body is `BODY_<count>`, where the C++ reuses a free slot. The
-//!   committed model does not rebuild the live physics world (an `Editor` limitation), and a
-//!   changed rigid body or joint name has to be ASCII (there is no Shift-JIS encoder here).
-//! * The English names dialog does not select the bone it shows, and keeps no
-//!   `FrameRangeStartFrame` for the frame scale dialog.
+//!   committed model rebuilds the live physics world, and the rigid body and joint names are
+//!   written in Shift-JIS.
+//! * The English names dialog keeps no `FrameRangeStartFrame` for the frame scale dialog.
 //! * The window is not modal. Playback still greys out the actions that edit the document.
 //!
 //! `MDS_APP_DIALOG=<name>` opens a dialog when the window starts, for screenshots.
@@ -142,7 +138,8 @@ const ACTIONS: &[Action] = &[
         Gate::Camera,
         true
     ),
-    opens!("dlg:IDD_GRAVITY", "IDD_GRAVITY", Gate::Any, true),
+    // Menu 266 runs while playing (`DisablePlaybackMenus` leaves it, `playback_state.cpp:67`).
+    opens!("dlg:IDD_GRAVITY", "IDD_GRAVITY", Gate::Any, false),
     opens!(
         "dlg:IDD_PHYSICS_FRAME_CONVERSION",
         "IDD_PHYSICS_FRAME_CONVERSION",
@@ -1125,8 +1122,23 @@ fn open_bone_numeric(ctx: &mut Ctx) -> Result<(), String> {
 
 /// Menu 259 (`command_view_menu.cpp:903`): a second call while the dialog is open does nothing,
 /// and camera mode returns. A model has to be selected for the dialog to have anything to edit.
+/// Opening it sets edit mode 0 and selects bone 0 alone (`english_name_dialog.cpp:291-304`).
 fn open_english_names(ctx: &mut Ctx) -> Result<(), String> {
-    open_for_model(ctx, "IDD_ENGLISH_NAMES")
+    let open = ctx.egui.as_ref().and_then(current) == Some("IDD_ENGLISH_NAMES");
+    open_for_model(ctx, "IDD_ENGLISH_NAMES")?;
+    if open {
+        return Ok(());
+    }
+    ctx.editor.apply(Command::SetEditMode(0))?;
+    let bones = ctx
+        .editor
+        .doc
+        .selected_model()
+        .map_or(0, |m| m.bone_pose.len());
+    if bones > 0 {
+        ctx.editor.apply(Command::SelectBones(vec![0]))?;
+    }
+    Ok(())
 }
 
 /// Menu 261.
@@ -1482,17 +1494,10 @@ fn shadow_color(ctx: &mut Ctx) -> Result<(), String> {
 
 // ---- the document commands as the C++ handlers leave SceneModified --------------------------
 
-/// `Editor::apply`, then the modified flag as the C++ handler leaves it. `Editor` marks the
-/// document by `Command::marks_modified`, which does not know that a paste with an empty
-/// clipboard changes nothing; where `Document::marks_modified` is false the flag is put back.
+/// `Editor::apply`, which marks the scene as `Document::marks_modified` says. Kept for the
+/// background area's three calls; it goes once they call `Editor::apply`.
 pub fn apply_cpp(ctx: &mut Ctx, cmd: Command) -> Result<(), String> {
-    let marks = ctx.editor.doc.marks_modified(&cmd);
-    let modified = ctx.editor.modified;
-    ctx.editor.apply(cmd)?;
-    if !marks {
-        ctx.editor.modified = modified;
-    }
-    Ok(())
+    ctx.editor.apply(cmd)
 }
 
 /// `EnglishUI()`.
@@ -1607,7 +1612,7 @@ fn ok_scale(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
         morphs: f.c[1],
         display: f.c[2],
     };
-    apply_cpp(ctx, Command::ScaleFrames(p))
+    ctx.editor.apply(Command::ScaleFrames(p))
 }
 
 // ---- 288, 289: model draw and calculation order ---------------------------------------------
@@ -1705,12 +1710,12 @@ fn row_slots(f: &Form) -> Vec<u8> {
 /// `ApplyModelDisplayOrderDialog` (`model_order_dialog.cpp:85`): row `i` takes combo index
 /// `i + 1`, and the camera entry is selected.
 fn ok_draw_order(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
-    apply_cpp(ctx, Command::SetModelDrawOrder(row_slots(f)))
+    ctx.editor.apply(Command::SetModelDrawOrder(row_slots(f)))
 }
 
 /// `ApplyModelCalculateOrderDialog` (`model_order_dialog.cpp:54`): row `i` takes order `i`.
 fn ok_calc_order(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
-    apply_cpp(ctx, Command::SetModelCalcOrder(row_slots(f)))
+    ctx.editor.apply(Command::SetModelCalcOrder(row_slots(f)))
 }
 
 /// Selects row `i` of the open order or accessory dialog.
@@ -1848,11 +1853,12 @@ fn ok_accessory(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
                 slot: *slot,
                 name: text.clone(),
             };
-            apply_cpp(ctx, cmd)?;
+            ctx.editor.apply(cmd)?;
         }
     }
-    apply_cpp(ctx, Command::SetAccessoryOrder(row_slots(f)))?;
-    apply_cpp(ctx, Command::SetAccessoryRenderSplit(field_int(f, 1)))
+    ctx.editor.apply(Command::SetAccessoryOrder(row_slots(f)))?;
+    ctx.editor
+        .apply(Command::SetAccessoryRenderSplit(field_int(f, 1)))
 }
 
 /// The name box of the open accessory dialog and Enter in it (button 633).
@@ -2191,24 +2197,22 @@ fn op_body(ui: &mut egui::Ui, ctx: &mut Ctx, f: &mut Form, en: bool) -> Done {
 fn op_apply(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
     let s = f.op.selector;
     let parent = *f.op.links.get(s).ok_or("no such selector")?;
-    apply_cpp(
-        ctx,
-        Command::ApplyOutsideParent {
-            selector: s as u32,
-            parent,
-        },
-    )
+    ctx.editor.apply(Command::ApplyOutsideParent {
+        selector: s as u32,
+        parent,
+    })
 }
 
 /// Button 632, `ResetModelSelection`: the records become a display key.
 fn op_register(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
-    apply_cpp(ctx, Command::RegisterOutsideParents(f.op.links.clone()))
+    ctx.editor
+        .apply(Command::RegisterOutsideParents(f.op.links.clone()))
 }
 
 /// The dialog ends with Cancel, Esc and the close button alike (`EndDialog(IDOK)`,
 /// `dialog_procs.cpp:116`), and the caller marks the scene modified and seeks if 630 or 632 ran.
 fn op_close(ctx: &mut Ctx, _: &Form) {
-    if let Err(e) = apply_cpp(ctx, Command::CloseOutsideParentDialog) {
+    if let Err(e) = ctx.editor.apply(Command::CloseOutsideParentDialog) {
         *ctx.status = e;
     }
 }
@@ -2329,7 +2333,7 @@ fn names_commit(ctx: &mut Ctx, f: &Form, which: usize) {
         name,
         text: f.t[which].clone(),
     };
-    if let Err(e) = apply_cpp(ctx, cmd) {
+    if let Err(e) = ctx.editor.apply(cmd) {
         *ctx.status = e;
     }
 }
@@ -2365,7 +2369,9 @@ fn cancel_names(ctx: &mut Ctx, f: &Form) {
 }
 
 /// A combo of the dialog moved to entry `to` (`SelectEnglishNameBone`, `Morph`, `Group`): the
-/// box of the old entry is committed first, then the box shows the new name.
+/// box of the old entry is committed first, then the box shows the new name. The bone combo
+/// also selects that bone alone, or no bone for an effector, inert tip or co-rotate bone
+/// (kinds 6, 7 and 9, `english_name_dialog.cpp:383-391`).
 fn names_pick(ctx: &mut Ctx, f: &mut Form, combo: usize, to: usize) {
     let lists = names_lists(ctx);
     if to >= lists[combo].len() {
@@ -2374,6 +2380,21 @@ fn names_pick(ctx: &mut Ctx, f: &mut Form, combo: usize, to: usize) {
     names_commit(ctx, f, 2 + combo);
     f.cursors[combo] = to;
     f.t[2 + combo] = names_lists(ctx)[combo][to].clone();
+    if combo == 0 {
+        let kind = model_panel::selected_index(&ctx.editor.doc).and_then(|i| {
+            match ctx.editor.doc.models.get(i)? {
+                ModelFile::Pmd(p) => p.bones.get(to).map(|b| b.kind),
+                _ => None,
+            }
+        });
+        let bones = match kind {
+            Some(6 | 7 | 9) => Vec::new(),
+            _ => vec![to as u32],
+        };
+        if let Err(e) = ctx.editor.apply(Command::SelectBones(bones)) {
+            *ctx.status = e;
+        }
+    }
 }
 
 /// Buttons "<" and ">" of a combo, wrapping around.
@@ -2565,7 +2586,7 @@ fn ok_toon(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
             missing.push(name);
         }
     }
-    apply_cpp(ctx, Command::SetToonFileNames(names))?;
+    ctx.editor.apply(Command::SetToonFileNames(names))?;
     *ctx.status = match missing.last() {
         None => preserve_notice(ctx).into(),
         Some(name) if en => format!(
@@ -2781,23 +2802,34 @@ fn read_y_limit(text: &mut String, size: usize, en: bool) -> (f32, Option<&'stat
 }
 
 /// A name box into a `FixedSjis`: `sprintf_s` / `strcpy_s` of the typed text, cut to the buffer
-/// (the rest of the buffer keeps its bytes). There is no Shift-JIS encoder in this crate, so a
-/// changed name has to be ASCII.
+/// (the rest of the buffer keeps its bytes). The ANSI edit box holds the text in Shift-JIS (cp932);
+/// a character it has no code for reads back as `?`.
 fn set_name<const N: usize>(name: &mut FixedSjis<N>, typed: &str) -> Result<(), String> {
     let typed = window_text(typed, 100);
     if name.text == typed {
         return Ok(());
     }
-    if !typed.is_ascii() {
-        return Err(
-            "a name that is not ASCII needs a Shift-JIS encoder (not available here)".into(),
-        );
-    }
-    let bytes = &typed.as_bytes()[..typed.len().min(N - 1)];
+    let sjis = shift_jis(typed);
+    let bytes = &sjis[..sjis.len().min(N - 1)];
     name.raw[..bytes.len()].copy_from_slice(bytes);
     name.raw[bytes.len()] = 0;
     name.text = decode_sjis(&name.raw);
     Ok(())
+}
+
+/// `text` in Shift-JIS, `?` for a character cp932 has no code for (`WideCharToMultiByte`'s
+/// default character).
+fn shift_jis(text: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    for c in text.chars() {
+        let mut buf = [0; 4];
+        let (bytes, _, unmapped) = encoding_rs::SHIFT_JIS.encode(c.encode_utf8(&mut buf));
+        match unmapped {
+            true => out.push(b'?'),
+            false => out.extend_from_slice(&bytes),
+        }
+    }
+    out
 }
 
 /// One body box read into the record, as `CollectBodyEdits` (all of them, in order) and the
@@ -2937,20 +2969,53 @@ fn physics_enter(ctx: &mut Ctx, f: &mut Form, i: usize) -> Result<(), String> {
 }
 
 /// A drag in the viewport (`Command::EditPhysicsRecord`) changed the record behind the boxes:
-/// they show it (the C++ echoes the value into the box).
+/// `EditModeRecord` (`frame_modes_bone.cpp:161-224`) echoes the dragged value into its box only,
+/// so text typed but not entered in another box stays. The record the boxes were not filled from
+/// yet is shown whole.
 fn physics_pull(ctx: &mut Ctx, f: &mut Form) {
     let Ok((rigids, joints)) = scratch(ctx) else {
         return;
     };
     if let Some(r) = f.ph.body.and_then(|i| rigids.get(i)) {
-        if f.ph.shown.0.as_ref() != Some(r) {
-            show_body(f, r);
+        match f.ph.shown.0.take() {
+            Some(old) => {
+                for a in 0..3 {
+                    echo(f, B_SIZE + a, old.size[a], r.size[a], 3, 2);
+                    echo(f, B_POS + a, old.position[a], r.position[a], 3, 2);
+                    echo_degrees(f, B_ROT + a, old.rotation[a], r.rotation[a]);
+                }
+                f.ph.shown.0 = Some(r.clone());
+            }
+            None => show_body(f, r),
         }
     }
     if let Some(j) = f.ph.joint.and_then(|i| joints.get(i)) {
-        if f.ph.shown.1.as_ref() != Some(j) {
-            show_joint(f, j);
+        match f.ph.shown.1.take() {
+            Some(old) => {
+                for a in 0..3 {
+                    echo(f, J_POS + a, old.position[a], j.position[a], 5, 4);
+                    echo_degrees(f, J_ROT + a, old.rotation[a], j.rotation[a]);
+                }
+                f.ph.shown.1 = Some(j.clone());
+            }
+            None => show_joint(f, j),
         }
+    }
+}
+
+/// `EchoRecord` of a value the drag changed.
+fn echo(f: &mut Form, i: usize, old: f32, new: f32, width: usize, precision: usize) {
+    if old.to_bits() != new.to_bits() {
+        f.t[i] = fmt(new, width, precision);
+    }
+}
+
+/// The rotation echo divides the widened value by the double `g_AnglePiTruncated` (the float
+/// truncated pi, `frame_modes.cpp:556`) and passes the float of the result (`:176`, `:187`).
+fn echo_degrees(f: &mut Form, i: usize, old: f32, new: f32) {
+    if old.to_bits() != new.to_bits() {
+        let degrees = f64::from(new) / f64::from(PI_SHORT) * 180.0;
+        f.t[i] = fmt(degrees as f32, 3, 2);
     }
 }
 
@@ -3304,7 +3369,8 @@ fn ok_physics_model(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
     physics_collect_body(ctx, &mut f)?;
     physics_collect_joint(ctx, &mut f)?;
     let (rigids, joints) = scratch(ctx)?.clone();
-    apply_cpp(ctx, Command::SetPhysicsModel { rigids, joints })?;
+    ctx.editor
+        .apply(Command::SetPhysicsModel { rigids, joints })?;
     ctx.editor.doc.edit.physics_scratch = None;
     *ctx.status = preserve_notice(ctx).into();
     Ok(())

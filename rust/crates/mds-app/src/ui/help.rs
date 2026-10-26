@@ -9,9 +9,8 @@
 //! language is the UI's: [`english`] and [`pick`] choose between `label_ja`, the default, and
 //! `label_en` for every area.
 //!
-//! Not here: 278 (restore textures, `InitToonTextures` and `ReloadTextureCache`), for lack of an
-//! `Editor` call that loads the textures of the meshes again; the slice report names it. Its item
-//! is drawn greyed out.
+//! Restore texture (278, `InitToonTextures` and `ReloadTextureCache`) reads the texture files of
+//! the scene again ([`crate::editor::Editor::reload_textures`]).
 //!
 //! The default egui fonts have no Japanese, so the first pass loads a system font that has it,
 //! when there is one.
@@ -25,6 +24,8 @@ use std::path::Path;
 const ACTIONS: &[Action] = &[
     Action::run("menu:260", toggle_language, false),
     Action::run("menu:201", about, false),
+    // No gate in the handler (`command_view_menu.cpp:1343`), and playback greys nothing of it.
+    Action::run("menu:278", reload_textures, false),
     Action::run("menu:263", save_enhanced_model, false),
     Action::run(
         "menu:259",
@@ -67,6 +68,16 @@ pub fn pick(egui: &egui::Context, ja: &'static str, en: &'static str) -> &'stati
 
 fn window(ctx: &Ctx) -> Result<egui::Context, String> {
     ctx.egui.clone().ok_or_else(|| "no window".to_string())
+}
+
+/// Menu 278. A file that does not decode leaves its slot empty, as in the C++; the status line
+/// names it.
+fn reload_textures(ctx: &mut Ctx) -> Result<(), String> {
+    let errors = ctx.editor.reload_textures();
+    match errors.first() {
+        None => Ok(()),
+        Some((name, e)) => Err(format!("{name}: {e}")),
+    }
 }
 
 /// Menu 260: `englishUI` flips, then `LocalizeUI` and `RefreshMenuLanguage` (the labels read

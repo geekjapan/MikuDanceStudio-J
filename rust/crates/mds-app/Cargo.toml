@@ -25,6 +25,10 @@ mds-physics = { path = "../mds-physics" }
 mds-pose = { path = "../mds-pose" }
 mds-render = { path = "../mds-render" }
 mds-scene = { path = "../mds-scene" }
+# The VSQ lip sync's outcome: the message box of a rejected file.
+mds-vsq = { path = "../mds-vsq" }
+# Shift-JIS for the names the physics model dialog writes.
+encoding_rs = "0.8"
 # The window: eframe on wgpu without its default backends (no GL, no WebGPU), so Cargo.lock keeps
 # the one wgpu 30.0.1 and feature set of mds-render.
 eframe = { version = "=0.37.0", default-features = false, features = ["wgpu_no_default_features", "default_fonts", "x11", "wayland"] }

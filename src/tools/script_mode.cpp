@@ -687,16 +687,29 @@ struct Runner {
         return WithDialog(wide, [&] { return isMenu ? Menu(id) : Click(id); });
     }
 
+    // A PMD is saved as .\<name>, next to the exe, and then moved into
+    // <out-dir>: the saved path becomes the model's path, which later PMM
+    // saves record, and a relative one keeps them free of <out-dir>.
     bool Save(const std::string& name, int menu) {
         const std::wstring path = request.out + L"\\" + Wide(name);
         if (path.size() >= kDialogPathLength)
             return Fail("the output path is longer than the handler's buffer");
         DeleteFileW(path.c_str());
-        if (!WithDialog(path, [&] { return Menu(menu); }))
+        const bool besideExe = menu == MDS_CMD_SAVE_ENHANCED_MODEL;
+        std::wstring exeDir = app->ExeDir();
+        if (!exeDir.empty() && exeDir.back() != L'\\')
+            exeDir += L'\\';
+        const std::wstring written = besideExe ? exeDir + Wide(name) : path;
+        if (besideExe && IsFile(written))
+            return Fail(Utf8(written) +
+                        " exists (an input or a leftover); save under another name");
+        if (!WithDialog(besideExe ? L".\\" + Wide(name) : path, [&] { return Menu(menu); }))
             return false;
         Settle();
-        if (!IsFile(path))
-            return Fail("the handler wrote no file " + Utf8(path));
+        if (!IsFile(written))
+            return Fail("the handler wrote no file " + Utf8(written));
+        if (besideExe && !MoveFileExW(written.c_str(), path.c_str(), MOVEFILE_COPY_ALLOWED))
+            return Fail("cannot move " + Utf8(written) + " into <out-dir>");
         if (menu == MDS_CMD_SAVE_MOTION && !ZeroVmdSignatureTail(path))
             return Fail("cannot rewrite " + Utf8(path));
         return RecordOutputs(name);
@@ -804,6 +817,10 @@ struct Runner {
             auto record = [](std::int32_t v) { return v == -10 ? 0 : v > 0 ? v : -1; };
             for (int row = 0; row < 200; ++row) {
                 const int cell = row + 200 * column;
+                // A folded group row holds -1 where one of its keys is
+                // marked; a press there starts the drag too (StageRangeRow).
+                if (st.rowHitMorph[cell] == -1 || st.rowHitBone[cell] == -1)
+                    return kTimelineTop + kRowHeight * row;
                 const int display = record(st.rowHitIk[cell]);
                 const int morph = record(st.rowHitMorph[cell]);
                 const int bone = record(st.rowHitBone[cell]);

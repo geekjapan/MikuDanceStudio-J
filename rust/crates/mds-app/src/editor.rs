@@ -236,6 +236,7 @@ impl Editor {
                 | SelectCameraMode
                 | SetFrame(_)
                 | SelectBones(_)
+                | ClearBoneMarks
                 | ClearKeySelection
                 | SelectKeys { .. }
                 | Copy

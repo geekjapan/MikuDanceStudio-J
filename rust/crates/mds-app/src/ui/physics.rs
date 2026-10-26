@@ -383,9 +383,7 @@ fn toggle_playback_on_off(ctx: &mut Ctx) -> Result<(), String> {
 
 /// Menu 273 (`command_view_menu.cpp:1180` to `:1196`): the bones with a rigid body are selected
 /// and the last of them is the selected bone; the others are not selected. With no rigid-body bone
-/// the C++ only clears the marks and keeps `selectedBone`: when nothing is marked that is no
-/// change, so no command runs; otherwise `Command::SelectBones` clears `selectedBone` too, which
-/// no command can avoid yet.
+/// the marks are cleared and `selectedBone` stays ([`Command::ClearBoneMarks`]).
 fn select_physics_bones(ctx: &mut Ctx) -> Result<(), String> {
     let Some(rig) = viewport::rig(ctx.editor) else {
         return Ok(());
@@ -394,17 +392,11 @@ fn select_physics_bones(ctx: &mut Ctx) -> Result<(), String> {
         return Ok(());
     }
     let marks: Vec<bool> = rig.bones.iter().map(|b| b.rigid).collect();
-    let last = marks.iter().rposition(|&m| m).map_or(-1, |i| i as i32);
-    let marked = ctx
-        .editor
-        .doc
-        .selected_model()
-        .is_some_and(|m| m.bone_pose.iter().any(|p| p.flags[2] != 0));
-    if last < 0 && !marked {
-        return Ok(());
-    }
-    ctx.editor
-        .apply(Command::SelectBones(viewport::selection_list(&marks, last)))
+    let cmd = match marks.iter().rposition(|&m| m) {
+        Some(last) => Command::SelectBones(viewport::selection_list(&marks, last as i32)),
+        None => Command::ClearBoneMarks,
+    };
+    ctx.editor.apply(cmd)
 }
 
 /// Menu 274 (`SelectPhysicsOnBoneKeys`, `model_keyframe_edit.cpp:730`): every mark of the model's

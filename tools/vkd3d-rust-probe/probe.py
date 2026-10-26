@@ -5,22 +5,71 @@ Translated sources retain vkd3d's LGPL-2.1-or-later terms; this script does
 not grant a different license to them. Build artifacts belong outside Git.
 """
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
+import sys
+import time
 
 
 def run(command, log, **kwargs):
+    timeout = kwargs.pop("timeout", None)
+    started = datetime.now(timezone.utc).isoformat()
+    start = time.monotonic()
+    timed_out = False
     with log.open("w") as output:
-        try:
-            result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT, **kwargs)
-        except subprocess.TimeoutExpired:
-            return {"command": command, "exit_code": 124, "log": str(log), "timed_out": True}
-    return {"command": command, "exit_code": result.returncode, "log": str(log)}
+        process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT,
+                                   start_new_session=True, **kwargs)
+        while True:
+            pid, status, usage = os.wait4(process.pid, os.WNOHANG)
+            if pid:
+                process.returncode = os.waitstatus_to_exitcode(status)
+                break
+            if timeout is not None and time.monotonic() - start >= timeout:
+                timed_out = True
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                _, status, usage = os.wait4(process.pid, 0)
+                process.returncode = os.waitstatus_to_exitcode(status)
+                break
+            time.sleep(0.05)
+    return {"command": command, "exit_code": 124 if timed_out else process.returncode,
+            "process_exit_code": process.returncode, "log": str(log), "timed_out": timed_out,
+            "started_utc": started, "ended_utc": datetime.now(timezone.utc).isoformat(),
+            "wall_seconds": time.monotonic() - start, "user_cpu_seconds": usage.ru_utime,
+            "system_cpu_seconds": usage.ru_stime,
+            "max_rss_bytes": usage.ru_maxrss * (1024 if sys.platform.startswith("linux") else 1)}
+
+
+def outcome(result):
+    if any(step.get("timed_out") or step["exit_code"] < 0 for step in result.get("syntax", [])):
+        return "incomplete"
+    if any(step["exit_code"] for step in result.get("syntax", [])):
+        return "syntax_failure"
+    translation = result.get("transpile")
+    if not translation or translation.get("timed_out") or translation["exit_code"] < 0:
+        return "incomplete"
+    if translation["exit_code"]:
+        return "translation_failure"
+    if result.get("invalid_output_markers"):
+        return "translation_failure"
+    if not result.get("complete_translation"):
+        return "incomplete"
+    for mode in ("stable", "bootstrap", "prototype"):
+        build = result.get(mode + "_build")
+        if build and build["exit_code"] == 0:
+            return "success" if mode == "stable" else "prototype_success"
+    if any(result.get(mode + "_build", {}).get("timed_out") for mode in ("stable", "bootstrap", "prototype")):
+        return "incomplete"
+    return "compiler_failure"
 
 
 def main():
@@ -31,6 +80,8 @@ def main():
     parser.add_argument("--clang", type=Path, required=True)
     parser.add_argument("--filter", help="Regular expression selecting C translation units")
     parser.add_argument("--timeout", type=int, default=300, help="Seconds per tool invocation")
+    parser.add_argument("--build-timeout", type=int, default=120, help="Seconds per Rust build")
+    parser.add_argument("--rust-toolchain", default="stable")
     args = parser.parse_args()
     original = args.source.resolve()
     artifacts = args.artifacts.resolve()
@@ -59,18 +110,31 @@ def main():
                         "arguments": [str(args.clang.resolve()), *flags, "-c", str(path)]})
     database = artifacts / "compile_commands.json"
     database.write_text(json.dumps(entries, indent=2) + "\n")
-    result = {"source": str(original), "translation_units": len(sources),
+    result = {"status": "incomplete", "source": str(original), "translation_units": len(sources),
+              "rust_toolchain": args.rust_toolchain,
               "input_sha256": {str(p.relative_to(source)): hashlib.sha256(p.read_bytes()).hexdigest()
                                for p in sources}}
+    for directory in [source / "include", source / "libs", original.parent / "hdr/include", original.parent / "spv/include"]:
+        result.setdefault("header_sha256", {}).update({str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+                                                       for p in sorted(directory.rglob("*.h"))})
+    def checkpoint():
+        (artifacts / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+    checkpoint()
     result["syntax"] = []
     for index, entry in enumerate(entries):
         command = entry["arguments"][:-2] + ["-fsyntax-only", entry["file"]]
-        result["syntax"].append(run(command, artifacts / f"syntax-{index:02}.log", cwd=source, timeout=args.timeout))
+        result["syntax"].append(run(command, artifacts / f"syntax-{index:02}.log", cwd=source, timeout=min(args.timeout, 120)))
+        checkpoint()
+    if any(step["exit_code"] for step in result["syntax"]):
+        result["status"] = outcome(result)
+        checkpoint()
+        return
     output = artifacts / "rust"
     transpiler = args.c2rust.resolve().with_name("c2rust-transpile")
     result["transpile"] = run([str(transpiler), "--fail-on-error", "--disable-rustfmt", "--edition", "2024",
                                "--emit-build-files", "--output-dir", str(output), str(database)],
                               artifacts / "transpile.log", cwd=source, timeout=args.timeout)
+    checkpoint()
     shutil.copy2(source / "LICENSE", artifacts / "VKD3D-LICENSE")
     result["translated_sources"] = []
     for path in sources:
@@ -83,7 +147,10 @@ def main():
             assert notices, f"No license notice found in {path}"
             translated.write_text("\n".join(notices) + "\n" + translated.read_text())
             result["translated_sources"].append(str(path.relative_to(source)))
+    result["invalid_output_markers"] = [str(p) for p in output.rglob("*.rs")
+                                        if re.search(r'\b(compile_error|unimplemented|todo)\s*!', p.read_text())]
     result["complete_translation"] = (result["transpile"]["exit_code"] == 0
+                                      and not result["invalid_output_markers"]
                                       and len(result["translated_sources"]) == len(sources))
     checksum = list(output.rglob("checksum.rs"))
     if len(checksum) == 1:
@@ -91,7 +158,7 @@ def main():
         module += '#[path = ' + json.dumps(str(checksum[0])) + '] pub mod checksum;\n'
         no_std = artifacts / "checksum_no_std.rs"
         no_std.write_text("#![no_std]\n" + module)
-        result["checksum_no_std"] = run(["rustc", "+stable", "--edition", "2024", "--crate-type", "rlib",
+        result["checksum_no_std"] = run(["rustc", "+" + args.rust_toolchain, "--edition", "2024", "--crate-type", "rlib",
                                         str(no_std), "-o", str(artifacts / "checksum_no_std.rlib")],
                                        artifacts / "checksum-no-std.log", timeout=args.timeout)
         checks = []
@@ -108,7 +175,7 @@ fn check(data: &[u8], expected: &[u8]) {
 }
 fn main() {''' + "".join(checks) + 'println!("6 MD5 vectors passed");}\n')
         binary = artifacts / "checksum_check"
-        result["checksum_check_build"] = run(["rustc", "+stable", "--edition", "2024", str(harness), "-o", str(binary)],
+        result["checksum_check_build"] = run(["rustc", "+" + args.rust_toolchain, "--edition", "2024", str(harness), "-o", str(binary)],
                                               artifacts / "checksum-check-build.log", timeout=args.timeout)
         if result["checksum_check_build"]["exit_code"] == 0:
             result["checksum_check_run"] = run([str(binary)], artifacts / "checksum-check-run.log", timeout=args.timeout)
@@ -123,24 +190,29 @@ fn main() {''' + "".join(checks) + 'println!("6 MD5 vectors passed");}\n')
     inventory = {"declared": sorted(declared), "defined": sorted(defined),
                  "unresolved_declared": sorted(declared - defined)}
     (artifacts / "externs.json").write_text(json.dumps(inventory, indent=2) + "\n")
-    if (output / "Cargo.toml").exists():
+    if result["complete_translation"] and (output / "Cargo.toml").exists():
         shutil.copy2(source / "LICENSE", output / "LICENSE")
         manifest = output / "Cargo.toml"
         manifest.write_text(manifest.read_text().replace("[package]", '[package]\nlicense = "LGPL-2.1-or-later"'))
         env = dict(os.environ, CARGO_TARGET_DIR=str(artifacts / "rust-target"))
-        result["stable_build"] = run(["cargo", "+stable", "build", "--manifest-path", str(output / "Cargo.toml")],
-                                      artifacts / "cargo-stable.log", env=env, timeout=args.timeout)
+        env.pop("RUSTC_BOOTSTRAP", None)
+        env.pop("RUSTFLAGS", None)
+        result["stable_build"] = run(["cargo", "+" + args.rust_toolchain, "build", "--manifest-path", str(output / "Cargo.toml")],
+                                      artifacts / "cargo-stable.log", env=env, timeout=args.build_timeout)
+        checkpoint()
         if result["stable_build"]["exit_code"]:
             # Toolchain experiment only; never recommend bootstrap for production.
             env["RUSTC_BOOTSTRAP"] = "1"
-            result["bootstrap_build"] = run(["cargo", "+stable", "build", "--manifest-path", str(output / "Cargo.toml")],
-                                             artifacts / "cargo-bootstrap.log", env=env, timeout=args.timeout)
+            result["bootstrap_build"] = run(["cargo", "+" + args.rust_toolchain, "build", "--manifest-path", str(output / "Cargo.toml")],
+                                             artifacts / "cargo-bootstrap.log", env=env, timeout=args.build_timeout)
+            checkpoint()
             if result["bootstrap_build"]["exit_code"]:
                 result["prototype_flags"] = "-Zcrate-attr=feature(stmt_expr_attributes) -Astatic_mut_refs"
                 env["RUSTFLAGS"] = result["prototype_flags"]
-                result["prototype_build"] = run(["cargo", "+stable", "build", "--manifest-path", str(manifest)],
-                                                 artifacts / "cargo-prototype.log", env=env, timeout=args.timeout)
-    (artifacts / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+                result["prototype_build"] = run(["cargo", "+" + args.rust_toolchain, "build", "--manifest-path", str(manifest)],
+                                                 artifacts / "cargo-prototype.log", env=env, timeout=args.build_timeout)
+    result["status"] = outcome(result)
+    checkpoint()
     print(json.dumps({k: v for k, v in result.items() if k not in ("input_sha256", "syntax")}, indent=2))
 
 

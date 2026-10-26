@@ -1,6 +1,8 @@
 # vkd3d C2Rust feasibility probe
 
 This is an isolated migration experiment, not a production shader backend.
+The [hosted continuation](HOSTED.md) describes the bounded GitHub Actions
+attempt for large units, its status rules, and its unexecuted acceptance gates.
 The generated Rust is derived from vkd3d and remains LGPL-2.1-or-later;
 the script restores copyright/license comments and copies `LICENSE`.
 Generated parser skeleton notices and exceptions must also be retained.
@@ -41,7 +43,8 @@ python3 tools/vkd3d-rust-probe/probe.py \
 Omit `--filter` for all 24 shader/common translation units. Use separate fresh
 artifact directories with filters `hlsl[.]tab[.]c$`, `hlsl[.]yy[.]c$`, or
 `hlsl[.]c$` to bound expensive units independently. Default timeout is 300
-seconds per invocation. `result.json` distinguishes a completed translation,
+seconds for translation. Syntax checks are capped at 120 seconds and Rust
+builds default to 120 seconds each. `result.json` distinguishes a completed translation,
 compiler failures, and timeout. Inspect logs even when the script exits zero:
 the script is an evidence collector, and its exit status is not acceptance.
 

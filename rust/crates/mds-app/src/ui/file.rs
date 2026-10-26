@@ -2,8 +2,15 @@
 //! The scene side is [`crate::file`]; this file has the handlers of `src/window/command_impl.cpp`
 //! (`CmdResetState`, `CmdOpenScene`, `CmdSaveScene`, `CmdLoadPose`, `CmdSavePose`,
 //! `CmdLoadMotion`, `CmdSaveMotion`, `CmdOpenWave`), the dispatch of
-//! `src/window/command_dispatch.cpp`, menu 276 and 301 (`src/window/command_view_menu.cpp`),
-//! `HandleDropFiles` (`src/window/ui_dropfiles.cpp`) and `WM_CLOSE` (`src/window/wndproc.cpp`).
+//! `src/window/command_dispatch.cpp`, menu 276, 284, 297 and 301
+//! (`src/window/command_view_menu.cpp`), menu 223 (`src/window/command_file_menu.cpp:1183`) and
+//! its Esc (`PumpEscStop`, `src/app/pump_edit_keys.cpp:368`), `HandleDropFiles`
+//! (`src/window/ui_dropfiles.cpp`) and `WM_CLOSE` (`src/window/wndproc.cpp`).
+//!
+//! Menu 223 asks for the file, then opens the AVI dialog (`dialog`, `IDD_AVI_OUTPUT`); the
+//! recording ([`crate::record`]) starts in [`pass`] once the dialog's OK left its settings
+//! ([`super::dialog::take_avi_request`]), and the status line shows the recording window's
+//! title while it runs. Menus 284 and 297 are the WAV switches of [`crate::audio`].
 //!
 //! Dialogs are native (`rfd`). A run without a window (`Ctx::egui` is `None`) opens none, as the
 //! C++ `--mds-script` runner replaces them: a file dialog takes the next path of [`answer`] (or
@@ -12,9 +19,9 @@
 //! The area's state (the folders of menu 301 and the scripted answers) is kept per thread
 //! ([`STATE`]), because the functions run without a window too.
 //!
-//! Missing (no API yet): AVI output (223) and its Esc, the WAV playback switches (284, 297),
-//! and the drops of `.vac`, `.avi`, `.bmp`, `.jpg`, `.vsq` and `.oni`.
+//! Missing (no API yet): the drops of `.vac`, `.avi`, `.bmp`, `.jpg`, `.vsq` and `.oni`.
 
+use super::dialog::AviSettings;
 use super::{button, Ctx};
 use crate::actions::{Action, Mode};
 use crate::editor::Editor;
@@ -36,7 +43,11 @@ const ACTIONS: &[Action] = &[
     Action::run("menu:209", load_motion, true),
     Action::run("menu:210", save_motion, true),
     Action::run("menu:206", load_wave, true),
+    Action::run("menu:223", record, true),
     Action::run("menu:276", render_picture, true),
+    Action::run("menu:284", toggle_wave_on_frame, false),
+    Action::run("menu:297", toggle_wave_muted, false),
+    Action::run("key:Esc@recording", stop_recording, false),
     Action::run("menu:301", toggle_previous_folder, false),
     Action::run("menu:200", exit, false),
     Action::run("key:Ctrl+S", save, true),
@@ -79,18 +90,50 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
     ] {
         button(ui, ctx, id, label);
     }
+    for (id, on, label) in [
+        (
+            "menu:284",
+            crate::audio::on_frame_move(),
+            "ﾌﾚｰﾑ移動時WAVを鳴らす",
+        ),
+        ("menu:297", crate::audio::muted(), "WAVファイルを鳴らさない"),
+    ] {
+        button(ui, ctx, id, &checked(on, label));
+    }
     ui.separator();
-    let remember = remembers();
-    let label = format!(
-        "{}ﾃﾞﾌｫﾙﾄﾌｫﾙﾀﾞを前回位置とする",
-        if remember { "✔ " } else { "" }
+    button(
+        ui,
+        ctx,
+        "menu:301",
+        &checked(remembers(), "ﾃﾞﾌｫﾙﾄﾌｫﾙﾀﾞを前回位置とする"),
     );
-    button(ui, ctx, "menu:301", &label);
     ui.separator();
     button(ui, ctx, "menu:200", "終了");
 }
 
+fn checked(on: bool, label: &str) -> String {
+    format!("{}{label}", if on { "✔ " } else { "" })
+}
+
 pub fn pass(ui: &mut egui::Ui, ctx: &mut Ctx) {
+    if let Some(settings) = super::dialog::take_avi_request(ui.ctx()) {
+        let path = STATE
+            .with_borrow_mut(|s| s.avi_path.take())
+            .or_else(|| pick(ctx, &SAVE_AVI));
+        if let Some(path) = path {
+            if let Err(e) = record_path(ctx, &path, &settings) {
+                *ctx.status = e;
+            }
+        }
+    }
+    if let Some(r) = &ctx.editor.recording {
+        *ctx.status = crate::record::title(r.n, &r.settings, english(ctx));
+        let esc = !ui.ctx().egui_wants_keyboard_input()
+            && ui.input(|i| i.key_pressed(egui::Key::Escape) && i.modifiers.is_none());
+        if esc {
+            ctx.run("key:Esc@recording");
+        }
+    }
     if ui.input(|i| i.viewport().close_requested()) && !confirm(ctx, Prompt::Quit) {
         ui.ctx()
             .send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -117,6 +160,10 @@ struct State {
     folders: HashMap<&'static str, PathBuf>,
     /// The paths the next file dialogs of a run without a window return; `None` cancels.
     answers: VecDeque<Option<PathBuf>>,
+    /// The settings the next AVI dialog of a run without a window returns; none cancels.
+    avi_answers: VecDeque<AviSettings>,
+    /// `AviOutputPath`: the file menu 223 chose, until the AVI dialog's OK.
+    avi_path: Option<PathBuf>,
 }
 
 thread_local! {
@@ -126,6 +173,11 @@ thread_local! {
 /// Queues the path the next file dialog of a run without a window returns (`None`: cancel).
 pub fn answer(path: Option<PathBuf>) {
     STATE.with_borrow_mut(|s| s.answers.push_back(path));
+}
+
+/// Queues the settings the next AVI dialog of a run without a window returns (its OK).
+pub fn answer_avi(settings: AviSettings) {
+    STATE.with_borrow_mut(|s| s.avi_answers.push_back(settings));
 }
 
 /// Whether menu 301 is checked.
@@ -193,6 +245,15 @@ const LOAD_WAV: Dialog = Dialog {
     ext: &["wav"],
     folder: "wave",
     save: false,
+};
+/// Menu 223's dialog. A PNG sequence goes beside the chosen file ([`crate::record::png_path`]).
+const SAVE_AVI: Dialog = Dialog {
+    title: "AVI出力",
+    title_en: "output AVI file",
+    filter: "AVI files(*.avi)",
+    ext: &["avi"],
+    folder: "user",
+    save: true,
 };
 /// The C++ writes any D3DX picture format; this port writes PNG.
 const SAVE_PICTURE: Dialog = Dialog {
@@ -488,7 +549,7 @@ fn load_wave(ctx: &mut Ctx) -> Result<(), String> {
     }
 }
 
-/// `LoadWaveFile`, then `SceneModified`. Nothing plays it yet (no audio output in this port).
+/// `LoadWaveFile`, then `SceneModified`; the editor plays it from then on ([`crate::audio`]).
 pub fn load_wave_path(ctx: &mut Ctx, path: &Path) -> Result<(), String> {
     ctx.editor.apply(Command::LoadWave {
         path: path.to_string_lossy().into_owned(),
@@ -518,6 +579,47 @@ pub fn render_picture_path(ctx: &mut Ctx, path: &Path) -> Result<(), String> {
             mds_render::render_frame_with(&gpu, f, st)
         })??;
     write(path, &mds_render::encode_png(size[0], size[1], &px))
+}
+
+// ---- recording, WAV switches ----
+
+/// Menu 223: the file, then the AVI dialog; without a window its queued answer
+/// ([`answer_avi`]) starts the recording at once.
+fn record(ctx: &mut Ctx) -> Result<(), String> {
+    let Some(path) = pick(ctx, &SAVE_AVI) else {
+        return Ok(());
+    };
+    if ctx.egui.is_some() {
+        STATE.with_borrow_mut(|s| s.avi_path = Some(path));
+        return crate::actions::run(ctx, "dlg:IDD_AVI_OUTPUT");
+    }
+    match STATE.with_borrow_mut(|s| s.avi_answers.pop_front()) {
+        Some(settings) => record_path(ctx, &path, &settings),
+        None => Ok(()),
+    }
+}
+
+/// `StartAviRecordWindow` to `path` with the dialog's `settings`: the recording runs in the
+/// editor's pumps from the next one on.
+pub fn record_path(ctx: &mut Ctx, path: &Path, settings: &AviSettings) -> Result<(), String> {
+    ctx.editor.start_recording(settings, path)
+}
+
+/// Esc while recording (`PumpEscStop`): the recording ends now.
+fn stop_recording(ctx: &mut Ctx) -> Result<(), String> {
+    ctx.editor.stop_recording()
+}
+
+/// Menu 284 (`MDS_CMD_TOGGLE_WAVE_ON_FRAME`).
+fn toggle_wave_on_frame(_: &mut Ctx) -> Result<(), String> {
+    crate::audio::set_on_frame_move(!crate::audio::on_frame_move());
+    Ok(())
+}
+
+/// Menu 297 (`MDS_CMD_TOGGLE_WAVE_DISABLED`).
+fn toggle_wave_muted(_: &mut Ctx) -> Result<(), String> {
+    crate::audio::set_muted(!crate::audio::muted());
+    Ok(())
 }
 
 fn toggle_previous_folder(_: &mut Ctx) -> Result<(), String> {

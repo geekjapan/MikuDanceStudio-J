@@ -20,6 +20,16 @@ pub fn loop_start_seconds(frame: i32) -> f32 {
     (frame as u32) as f32 / 30.0
 }
 
+/// [`Playback::stop_frame`] for a cursor at `cursor` seconds; the end of a recording too
+/// (`FinishAviRecord` runs `StopPlayback`, `src/app/late_ports.cpp:63`).
+pub fn stop_frame(options: &Options, cursor: f32, current_frame: i32) -> i32 {
+    if options.stop_at_playhead {
+        (f64::from(cursor) * 30.0) as i32
+    } else {
+        current_frame
+    }
+}
+
 /// The check boxes and edits of the play panel, as the PMM stores them (`Timeline`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Options {
@@ -124,11 +134,7 @@ impl Playback {
     /// The current frame after the stop (`StopPlayback`, x86 0x434383): the playhead
     /// `(int)(cursor * 30.0)` with 413 set, else the frame play started from, unchanged.
     pub fn stop_frame(&self, options: &Options, current_frame: i32) -> i32 {
-        if options.stop_at_playhead {
-            (f64::from(self.cursor) * 30.0) as i32
-        } else {
-            current_frame
-        }
+        stop_frame(options, self.cursor, current_frame)
     }
 
     /// The whole frame the cursor reached: the frame rounding of `PlaybackPoseAdvance`

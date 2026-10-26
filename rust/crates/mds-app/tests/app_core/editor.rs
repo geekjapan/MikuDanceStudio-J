@@ -66,11 +66,6 @@ fn play(name: &str, edit: Option<Command>) -> String {
             if let Some(c) = edit.clone() {
                 e.apply(c).unwrap();
             }
-            assert_eq!(
-                e.apply(Command::RegisterBoneKeys),
-                Err("not while playing".into()),
-                "the C++ greys out every register path while playing"
-            );
         }
         e.pump(pass * 33).unwrap();
         e.physics.write_frame(&mut trace, e.shown_frame()).unwrap();

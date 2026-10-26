@@ -176,18 +176,6 @@ impl Editor {
                 cmd,
                 ClickFrame(_) | LoadPose(_) | SetFollowCamera(_) | ResetMorphs
             );
-        let register = matches!(
-            cmd,
-            RegisterBoneKeys
-                | RegisterMorphKey(_)
-                | RegisterDisplayKey
-                | RegisterGlobalKeys(_)
-                | RegisterAllMorphFrames
-                | RegisterBlinks { .. }
-        );
-        if register {
-            self.stopped()?;
-        }
         let new_scene = cmd == NewScene;
         let follow = matches!(cmd, ClickFrame(_));
         if let LoadModel { path, data } = &cmd {

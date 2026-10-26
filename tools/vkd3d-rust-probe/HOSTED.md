@@ -204,3 +204,29 @@ is retained in setup and translation evidence. This check is a setup gate;
 it does not prove ABI or translation acceptance.
 
 Focused local check: `python3 -m unittest discover -s tools/vkd3d-rust-probe -p 'test_check_runtime.py'`.
+
+The variable `offsetof` regression runs after the ABI smoke and before the full
+24-unit translation. `check_variable_offsetof.py` copies the required declarations
+and ten affected expressions from the prepared source, then compiles their C
+oracle and actual translated Rust separately. The native caller checks 200
+numeric comparisons, including signed and unsigned indices, size wrapping,
+compound index arithmetic, fixed and flexible arrays, typedefs, reserved names,
+packed/aligned structs, nested immediate array/struct element layout, and index
+side effects with used and discarded results. The reserved-name cases preserve
+the upstream `variable_offsetof.c` regression shapes. Negative and huge indices
+exercise Clang's byte-offset extension, without forming references or allocating
+objects.
+
+The translator supports the exporter's existing two-component field/array AST
+contract. A matrix row's full immediate element size is supported. Arbitrary
+runtime paths such as `outer.items[i].member` and `matrix[i][j]` are not supported
+by this change. Arithmetic uses the original C `size_t` type before any requested
+result cast. `WithStmts` preserves index effects and inserts the index once.
+Constant offsets and the existing ABI lowering remain unchanged.
+
+Local expression checks compile the patch's actual emitted expression template
+with Rust 1.95.0. They do not rebuild or execute the whole translator. Only a new
+hosted LLVM 18 tool rebuild, the numeric probe, the ABI receipts, and regeneration
+of all 24 units establish integration evidence. Any subsequent raw or working
+Cargo errors remain failures. `validate.py --all-units` continues to reject the
+prototype as production acceptance.

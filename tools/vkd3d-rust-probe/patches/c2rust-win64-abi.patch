@@ -1,5 +1,5 @@
 diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/AstExporter.cpp
-index ef9d929..8ca6c2c 100644
+index ef9d929..4234ed4 100644
 --- a/c2rust-ast-exporter/src/AstExporter.cpp
 +++ b/c2rust-ast-exporter/src/AstExporter.cpp
 @@ -12,6 +12,7 @@
@@ -390,9 +390,18 @@ index e423e49..30566ea 100644
                  }
                  ref k => {
 diff --git a/c2rust-transpile/src/translator/mod.rs b/c2rust-transpile/src/translator/mod.rs
-index 8fb6f5b..653c9b4 100644
+index 8fb6f5b..4be39b3 100644
 --- a/c2rust-transpile/src/translator/mod.rs
 +++ b/c2rust-transpile/src/translator/mod.rs
+@@ -14,7 +14,7 @@
+ use indexmap::{IndexMap, IndexSet};
+ use itertools::Itertools;
+ use log::{error, trace, warn};
+-use proc_macro2::{Punct, Spacing::*, Span, TokenStream, TokenTree};
++use proc_macro2::{Span, TokenStream, TokenTree};
+ use serde_derive::Serialize;
+ use syn::spanned::Spanned as _;
+ use syn::{
 @@ -612,13 +612,15 @@ pub fn emit_c_decl_map(
                  path_to_c_source_range.insert(ident, (decl, source_range));
              }
@@ -509,6 +518,91 @@ index 8fb6f5b..653c9b4 100644
          let ident_name = match foreign_item_ident_vis(foreign_item) {
              Some((ident, _vis)) => ident.to_string(),
              None => continue,
+@@ -3574,62 +3649,36 @@ pub(crate) fn convert_expr(
+                     false,
+                 )?)),
+                 OffsetOfKind::Variable(qty, field_id, expr_id) => {
+-                    self.use_crate(ExternCrate::Memoffset);
+-
+-                    // Struct Type
+-                    let decl_id = {
+-                        let kind = match self.ast_context[qty.ctype].kind {
+-                            CTypeKind::Elaborated(ty_id) => &self.ast_context[ty_id].kind,
+-                            ref kind => kind,
+-                        };
+-
+-                        kind.as_decl_or_typedef()
+-                            .expect("Did not find decl_id for offsetof struct")
+-                    };
+-                    let name = self.resolve_decl_inner_name(decl_id);
+-                    let ty_ident = mk().ident(name);
+-
+-                    // Field name
++                    let struct_ty = self.convert_type(qty.ctype)?;
+                     let field_name = self
+                         .type_converter
+                         .borrow()
+                         .resolve_field_name(None, *field_id)
+                         .expect("Did not find name for offsetof struct field");
+                     let field_ident = mk().ident(field_name);
+-
+-                    // Index Expr
+-                    let expr = self
+-                        .convert_expr(ctx, *expr_id, None)?
+-                        .to_pure_expr()
+-                        .ok_or_else(|| {
+-                            format_err!("Expected Variable offsetof to be a side-effect free")
+-                        })?;
+-                    let expr = mk().cast_expr(expr, mk().ident_ty("usize"));
+-                    use syn::__private::ToTokens;
+-                    let index_expr = expr.to_token_stream();
+-
+-                    // offset_of!(Struct, field[expr as usize]) as ty
+-                    let macro_body = vec![
+-                        TokenTree::Ident(ty_ident),
+-                        TokenTree::Punct(Punct::new(',', Alone)),
+-                        TokenTree::Ident(field_ident),
+-                        TokenTree::Group(proc_macro2::Group::new(
+-                            proc_macro2::Delimiter::Bracket,
+-                            index_expr,
+-                        )),
+-                    ];
+-                    let path = mk().path("offset_of");
+-                    let mac = mk().mac_expr(mk().mac(
+-                        path,
+-                        macro_body,
+-                        MacroDelimiter::Paren(Default::default()),
+-                    ));
+-
+-                    // Cast type
++                    let field_ty = match self.ast_context[*field_id].kind {
++                        CDeclKind::Field { typ, .. } => typ,
++                        _ => unreachable!("Expected offsetof field declaration"),
++                    };
++                    let element = match self.ast_context.resolve_type(field_ty.ctype).kind {
++                        CTypeKind::ConstantArray(element, _)
++                        | CTypeKind::IncompleteArray(element) => element,
++                        _ => {
++                            return Err(format_err!("Expected Variable offsetof array field").into())
++                        }
++                    };
++                    let element_ty = self.convert_type(element)?;
++                    let size_ty = self.convert_type(ty.ctype)?;
+                     let cast_ty = self.convert_type(override_ty.unwrap_or(ty).ctype)?;
+-                    let cast_expr = mk().cast_expr(mac, cast_ty);
+ 
+-                    Ok(WithStmts::new_val(cast_expr))
++                    // Clang computes the byte offset modulo the original C size_t width.
++                    Ok(self.convert_expr(ctx, *expr_id, None)?.map(|index| {
++                        syn::parse_quote! {
++                            ((::core::mem::offset_of!(#struct_ty, #field_ident) as #size_ty)
++                                .wrapping_add(((#index) as #size_ty).wrapping_mul(
++                                    ::core::mem::size_of::<#element_ty>() as #size_ty))) as #cast_ty
++                        }
++                    }))
+                 }
+             },
+ 
 diff --git a/c2rust-transpile/src/translator/variadic.rs b/c2rust-transpile/src/translator/variadic.rs
 index 8416eaf..7851312 100644
 --- a/c2rust-transpile/src/translator/variadic.rs
@@ -530,3 +624,73 @@ index 8416eaf..7851312 100644
                      )?;
  
                      cast_kind = Some(VaArgCastKind::Transmute(self.convert_type(ty.ctype)?));
+diff --git a/tests/unit/structs/src/test_variable_offsetof.rs b/tests/unit/structs/src/test_variable_offsetof.rs
+index 97f83ad..012e2f3 100644
+--- a/tests/unit/structs/src/test_variable_offsetof.rs
++++ b/tests/unit/structs/src/test_variable_offsetof.rs
+@@ -1,5 +1,3 @@
+-//! extern_crate_memoffset
+-
+ use crate::variable_offsetof::{rust_get_offset, rust_get_offset2, size_t};
+ 
+ #[link(name = "test")]
+@@ -22,3 +20,20 @@ pub fn test_get_offset() {
+         assert_eq!(rust_ret2, c_ret2);
+     }
+ }
++
++#[link(name = "test")]
++extern "C" {
++    fn offset_case(which: u32, idx: i64) -> size_t;
++}
++
++#[test]
++fn test_layout_wrapping_and_effects() {
++    for which in 0..13 {
++        for idx in [0, 1, 3, -1, -5, u32::MAX as i64, i64::MAX, 1i64 << 62] {
++            unsafe {
++                assert_eq!(crate::variable_offsetof::rust_offset_case(which, idx), offset_case(which, idx),
++                           "case {} index {}", which, idx);
++            }
++        }
++    }
++}
+diff --git a/tests/unit/structs/src/variable_offsetof.c b/tests/unit/structs/src/variable_offsetof.c
+index 4c0ffb2..35cd0fa 100644
+--- a/tests/unit/structs/src/variable_offsetof.c
++++ b/tests/unit/structs/src/variable_offsetof.c
+@@ -17,3 +17,34 @@ struct yield {
+ size_t get_offset2(size_t idx) {
+     return offsetof(struct yield, mod[idx]);
+ }
++
++typedef unsigned short row[3];
++struct matrix { char head; row mod[4]; };
++struct packed { char head; int mod[4]; } __attribute__((packed));
++struct aligned { char head; int mod[4]; } __attribute__((aligned(32)));
++struct flexible { unsigned long long head[2]; int mod[]; };
++struct element { unsigned long long wide; char tail; };
++struct elements { char head; struct element mod[4]; };
++typedef struct flexible alias;
++static unsigned int counter;
++static unsigned int next_index(void) { return counter++; }
++
++size_t offset_case(unsigned int which, long long idx) {
++    counter = 3;
++    switch (which) {
++        case 0: return offsetof(struct matrix, mod[idx]);
++        case 1: return offsetof(struct packed, mod[idx]);
++        case 2: return offsetof(struct aligned, mod[idx]);
++        case 3: return offsetof(struct flexible, mod[idx]);
++        case 4: return offsetof(alias, mod[(unsigned int)idx]);
++        case 5: return offsetof(alias, mod[(size_t)idx]);
++        case 6: return offsetof(struct elements, mod[idx]);
++        case 7: { size_t result = offsetof(alias, mod[counter++]); return result + counter; }
++        case 8: { size_t result = offsetof(alias, mod[next_index()]); return result + counter; }
++        case 9: (void)offsetof(alias, mod[counter++]); return counter;
++        case 10: (void)offsetof(alias, mod[next_index()]); return counter;
++        case 11: return (unsigned char)offsetof(alias, mod[idx]);
++        case 12: return offsetof(alias, mod[(unsigned int)idx * 8u]);
++    }
++    return 0;
++}

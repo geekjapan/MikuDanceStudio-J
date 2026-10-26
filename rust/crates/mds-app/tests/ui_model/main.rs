@@ -3,6 +3,7 @@
 
 mod bone;
 mod common;
+mod delete;
 mod model;
 mod morph;
 mod window;

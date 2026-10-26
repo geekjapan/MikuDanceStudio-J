@@ -40,17 +40,24 @@
 //! curve box beside them is the C++ curve panel, whose two control points drag with
 //! `DragInterpolationControlPoint` (`ui_selection_reeval.cpp:115`).
 //!
-//! # Not ported
+//! # The key drag
 //!
-//! * `mouse:timeline-key-drag` (moving the marked keys sideways) needs a document command that
-//!   `mds-doc` lacks (`MoveSelectedKeys`).
-//! * 424 (range scaling) has its command, `Command::ScaleFrames`, but its argument type is
-//!   `mds_ops::RangeScale`, and `mds-app` depends on neither `mds-ops` nor a re-export of it.
+//! Pressing a marked key (without Shift) and dragging moves the marked keys (`HandleMouseMove`,
+//! `ui_mousemove.cpp:331`). The grid shows where the keys would land and the release applies one
+//! [`Command::MoveSelectedKeys`] with the whole move in frames, so a drag is one undo entry (the
+//! C++ pushes its entry at the mouse-down). A drag that ends where it began applies nothing.
 //!
-//! Both are left out of the action table; the buttons stay greyed.
+//! # Button 424
+//!
+//! Range scaling opens the window `IDD_FRAME_SCALE` ([`Scale`], `FrameRangeDlgProc`,
+//! `src/window/dialog_procs.cpp:62`), drawn here until the dialog area has an entry for it:
+//! the range edits 425 and 426 fill the first two boxes, the rate starts at 1.0 and the three check
+//! boxes are on. OK is [`Command::ScaleFrames`] (`ApplyFrameRangeScale`,
+//! `frame_range_apply.cpp:297`), model mode only (`command_frame_edit.cpp:1686`).
 
-use super::Ctx;
-use crate::actions::Action;
+use super::camera_panel::{atof, atol, window_text};
+use super::{help, Ctx};
+use crate::actions::{Action, Mode};
 use crate::navigation::{KeyState, Repeat};
 use egui::{Align2, Color32, FontId, Id, Key, Pos2, Rect, Sense, Stroke, Vec2};
 use mds_doc::{Command, Document, GlobalTrack, ModelFile, Track};
@@ -70,6 +77,7 @@ const ACTIONS: &[Action] = &[
     Action::run("ctl:421", paste, true),
     Action::run("ctl:422", paste_mirrored, true),
     Action::run("ctl:423", delete, true),
+    Action::run("ctl:424", open_scale, true).in_mode(Mode::Model),
     Action::inline("ctl:425"),
     Action::inline("ctl:426"),
     Action::inline("ctl:427"),
@@ -106,6 +114,7 @@ const ACTIONS: &[Action] = &[
     Action::inline("mouse:timeline-frame-strip-click"),
     Action::inline("mouse:timeline-dblclick"),
     Action::inline("mouse:timeline-hover"),
+    Action::inline("mouse:timeline-key-drag"),
     Action::inline("mouse:curve-point-drag"),
 ];
 
@@ -148,6 +157,18 @@ pub struct Panel {
     /// The control point of the curve box under the pointer: `false` the start, `true` the end
     /// (`PendingTimelineSelectionRow` 1 and 2).
     pub curve_drag: Option<bool>,
+    /// The open range-scale window (`IDD_FRAME_SCALE`).
+    pub scale: Option<Scale>,
+    /// A drag of the marked keys: the column it began on and the column the pointer is over.
+    pub key_drag: Option<[i32; 2]>,
+}
+
+/// The controls of `IDD_FRAME_SCALE`: the boxes 686 (first frame), 687 (last frame) and 605 (the
+/// rate), and the check boxes 688 (bones), 689 (facial) and 690 (display, IK and outside parent).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Scale {
+    pub text: [String; 3],
+    pub checks: [bool; 3],
 }
 
 impl Default for Panel {
@@ -168,6 +189,8 @@ impl Default for Panel {
             columns: 40,
             drag: None,
             curve_drag: None,
+            scale: None,
+            key_drag: None,
         }
     }
 }
@@ -702,6 +725,56 @@ fn delete(ctx: &mut Ctx) -> Result<(), String> {
     ctx.editor.apply(Command::DeleteSelectedKeys)
 }
 
+/// 424 (`command_frame_edit.cpp:1686`): the window opens with the range edits as the first two
+/// boxes (`FrameRangeDlgProc` copies them as `%d`), the rate 1.0 and the three check boxes on.
+fn open_scale(ctx: &mut Ctx) -> Result<(), String> {
+    ctx.egui.as_ref().ok_or("no window")?;
+    let [from, to] = panel(ctx).range;
+    let text = [from.to_string(), to.to_string(), "1.0".to_string()];
+    update(ctx, |p| {
+        p.scale = Some(Scale {
+            text,
+            checks: [true; 3],
+        })
+    });
+    Ok(())
+}
+
+/// OK of the range-scale window: the window closes and the boxes are read as `atol` and `atof`
+/// of at most seven characters (`GetWindowTextA(.., text, 8)`). A range that is not past its
+/// start and a rate below 0.00001 or equal to 1 change nothing, as the C++ returns there; the
+/// error goes to the status line.
+pub fn scale_submit(ctx: &mut Ctx) -> Result<(), String> {
+    let s = panel(ctx).scale.ok_or("no dialog is open")?;
+    update(ctx, |p| p.scale = None);
+    if ctx.editor.playing() {
+        return Err("not while playing".into());
+    }
+    let box_text = |i: usize| window_text(&s.text[i], 8);
+    ctx.editor.apply(Command::ScaleFrames(mds_ops::RangeScale {
+        start: atol(box_text(0)) as i32,
+        end: atol(box_text(1)) as i32,
+        scale: atof(box_text(2)),
+        bones: s.checks[0],
+        morphs: s.checks[1],
+        display: s.checks[2],
+    }))
+}
+
+/// The end of a key drag (`mouse:timeline-key-drag`): the marked keys move by `frames`.
+pub fn move_keys(ctx: &mut Ctx, frames: i32) -> Result<(), String> {
+    if ctx.editor.playing() {
+        return Err("not while playing".into());
+    }
+    ctx.editor.apply(Command::MoveSelectedKeys(frames))
+}
+
+/// Whether a press on `frame` of `track` takes the marked keys along (`ToggleModelKeyAllocated`
+/// and `ToggleTimelineCell` leave a marked key marked and flag the selection as changed).
+pub fn grabs_marked_key(doc: &Document, track: Track, frame: u32) -> bool {
+    keys_of(doc, track).contains(&(frame, true))
+}
+
 /// 422.
 fn paste_mirrored(ctx: &mut Ctx) -> Result<(), String> {
     ctx.editor.apply(Command::PasteMirrored)
@@ -1146,6 +1219,8 @@ enum Event {
     Box(Vec<Track>, u32, u32, bool),
     /// A control point of the curve box moved: `(end, [x, y])`.
     Curve(bool, [i32; 2]),
+    /// The marked keys dragged by this many frames.
+    Move(i32),
 }
 
 fn run_event(ctx: &mut Ctx, e: Event) -> Result<(), String> {
@@ -1157,6 +1232,7 @@ fn run_event(ctx: &mut Ctx, e: Event) -> Result<(), String> {
         Event::Name(row, shift) => click_name(ctx, &row, shift),
         Event::Plus(row) => click_plus(ctx, &row),
         Event::Box(tracks, from, to, shift) => box_select(ctx, &tracks, from, to, shift),
+        Event::Move(frames) => move_keys(ctx, frames),
     }
 }
 
@@ -1237,6 +1313,18 @@ fn grid(ui: &mut egui::Ui, ctx: &Ctx, p: &mut Panel, events: &mut Vec<Event>) {
                     let c = Pos2::new(x_of(f) + CELL / 2.0, y + ROW / 2.0);
                     let color = if marked { Colors::MARKED } else { Colors::KEY };
                     painter.circle_filled(c, CELL / 2.0 - 2.0, color);
+                    if let (true, Some([a, b])) = (marked, p.key_drag) {
+                        // Where the drag would put the key (the move is applied on release).
+                        let to = f as i32 + b - a;
+                        if to >= 0 {
+                            let ghost = Pos2::new(x_of(to as u32) + CELL / 2.0, y + ROW / 2.0);
+                            painter.circle_stroke(
+                                ghost,
+                                CELL / 2.0 - 2.0,
+                                Stroke::new(1.5, Colors::MARKED),
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1369,8 +1457,21 @@ fn grid(ui: &mut egui::Ui, ctx: &Ctx, p: &mut Panel, events: &mut Vec<Event>) {
         }
         if resp.drag_started() {
             if let Some(Hit::Cell { row, frame }) = resp.interact_pointer_pos().map(at) {
-                p.drag = Some([(row, frame); 2]);
+                let grabbed = !shift
+                    && !ctx.editor.playing()
+                    && rows[row]
+                        .track()
+                        .is_some_and(|t| grabs_marked_key(doc, t, frame));
+                if grabbed {
+                    p.key_drag = Some([frame as i32; 2]);
+                } else {
+                    p.drag = Some([(row, frame); 2]);
+                }
             }
+        }
+        if let (Some([a, _]), Some(pos)) = (p.key_drag, resp.interact_pointer_pos()) {
+            let column = ((pos.x - view.min.x - NAME + scroll.x) / CELL).floor() as i32;
+            p.key_drag = Some([a, column]);
         }
         if let (Some([a, _]), Some(pos)) = (p.drag, resp.interact_pointer_pos()) {
             if let Hit::Cell { row, frame } = at(pos) {
@@ -1378,6 +1479,9 @@ fn grid(ui: &mut egui::Ui, ctx: &Ctx, p: &mut Panel, events: &mut Vec<Event>) {
             }
         }
         if resp.drag_stopped() {
+            if let Some([a, b]) = p.key_drag.take().filter(|[a, b]| a != b) {
+                events.push(Event::Move(b - a));
+            }
             if let Some([a, b]) = p.drag.take() {
                 let tracks = (a.0.min(b.0)..=a.0.max(b.0))
                     .filter_map(|r| rows[r].track())
@@ -1657,4 +1761,64 @@ pub fn pass(ui: &mut egui::Ui, ctx: &mut Ctx) {
         }
     }
     ui.data_mut(|d| d.insert_temp(id, s));
+    // `MDS_APP_DIALOG=IDD_FRAME_SCALE` opens the range-scale window at start, for screenshots (as
+    // the dialog area does for its own).
+    static START: std::sync::Once = std::sync::Once::new();
+    START.call_once(|| {
+        if std::env::var("MDS_APP_DIALOG").is_ok_and(|d| d == "IDD_FRAME_SCALE") {
+            let _ = open_scale(ctx);
+        }
+    });
+    scale_window(ui, ctx);
+}
+
+/// `IDD_FRAME_SCALE` (`MDS_DLG_FRAME_SCALE_JP` / `_EN`, `res/templates/dialog/dialogs.rc`): Enter
+/// is OK and Escape cancel, as the default and cancel buttons are.
+fn scale_window(ui: &mut egui::Ui, ctx: &mut Ctx) {
+    let Some(mut s) = panel(ctx).scale else {
+        return;
+    };
+    let egui = ui.ctx().clone();
+    let pick = |ja, en| help::pick(&egui, ja, en);
+    let (mut ok, mut cancel) = (false, false);
+    egui::Window::new(pick("時間拡大(縮小)率", "expand/shrink"))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(&egui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(pick("フレーム", "frame"));
+                for (i, t) in s.text.iter_mut().take(2).enumerate() {
+                    if i == 1 {
+                        ui.label("-");
+                    }
+                    ui.add(egui::TextEdit::singleline(t).desired_width(40.0));
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(pick("　　倍率", "magnification"));
+                ui.add(egui::TextEdit::singleline(&mut s.text[2]).desired_width(40.0));
+            });
+            ui.horizontal(|ui| {
+                let names = [
+                    pick("ボーン", "Bone"),
+                    pick("表情", "Facial"),
+                    pick("表示･IK･外親", "Disp/IK/OP"),
+                ];
+                for (on, name) in s.checks.iter_mut().zip(names) {
+                    ui.checkbox(on, name);
+                }
+            });
+            ui.horizontal(|ui| {
+                ok = ui.button("OK").clicked() || ui.input(|i| i.key_pressed(Key::Enter));
+                cancel = ui.button(pick("ｷｬﾝｾﾙ", "cancel")).clicked()
+                    || ui.input(|i| i.key_pressed(Key::Escape));
+            });
+        });
+    update(ctx, |p| p.scale = (!cancel).then_some(s));
+    if ok {
+        if let Err(e) = scale_submit(ctx) {
+            *ctx.status = e;
+        }
+    }
 }

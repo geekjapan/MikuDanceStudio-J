@@ -10,6 +10,9 @@ use std::sync::Arc;
 
 pub(crate) const FLAG_DOUBLE_SIDED: u8 = 0x01;
 pub(crate) const FLAG_GROUND_SHADOW: u8 = 0x02;
+/// PMX: the material is drawn into the self-shadow map, and receives the self-shadow.
+pub(crate) const FLAG_SHADOW_CAST: u8 = 0x04;
+pub(crate) const FLAG_SHADOW_RECEIVE: u8 = 0x08;
 pub(crate) const FLAG_EDGE: u8 = 0x10;
 
 /// Where a material's faces sit in the index list, and how they are drawn. The colors come from
@@ -140,7 +143,7 @@ impl Mesh {
     }
 
     /// A PMD model. Materials with an alpha below 1 are drawn double sided, and every material
-    /// casts the ground shadow.
+    /// casts the ground shadow and casts and receives the self-shadow.
     pub fn from_pmd(pmd: &Pmd) -> Result<Mesh, String> {
         let indices = pmd.indices.iter().map(|&i| u32::from(i)).collect();
         let mut start = 0u32;
@@ -152,7 +155,9 @@ impl Mesh {
                 } else {
                     0
                 }) | if m.edge != 0 { FLAG_EDGE } else { 0 }
-                    | FLAG_GROUND_SHADOW,
+                    | FLAG_GROUND_SHADOW
+                    | FLAG_SHADOW_CAST
+                    | FLAG_SHADOW_RECEIVE,
                 start,
                 count: m.face_vertex_count,
                 names: Names::default(),

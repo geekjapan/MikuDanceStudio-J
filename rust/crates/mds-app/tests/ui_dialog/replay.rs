@@ -15,6 +15,7 @@ fn read_input(path: &str) -> Option<Vec<u8>> {
         fixtures(),
         fixtures().join("script/inputs"),
         fixtures().join("script2/inputs"),
+        fixtures().join("script3/inputs"),
     ]
     .iter()
     .find_map(|d| std::fs::read(d.join(name)).ok())
@@ -62,6 +63,35 @@ fn drive(rig: &mut Rig, line: &str) -> Option<Result<(), String>> {
             rig.cancel();
             Ok(())
         }
+        ["scale", "range", a, b, rate, bone, morph, display] => {
+            rig.run("dlg:IDD_FRAME_SCALE").and_then(|()| {
+                for (i, v) in [a, b, rate].into_iter().enumerate() {
+                    rig.type_into(i, v);
+                }
+                for (i, on) in [bone, morph, display].into_iter().enumerate() {
+                    rig.with(|c| dialog::set_check(c, i, *on == "on"));
+                }
+                rig.ok()
+            })
+        }
+        // Menu 261: the edit `708 + slot`, then OK.
+        ["toon", slot, name] => rig.run("dlg:IDD_TOON_TEXTURE").and_then(|()| {
+            rig.type_into(slot.parse::<usize>().unwrap() - 1, name);
+            rig.ok()
+        }),
+        ["physics", "model", "open"] => rig.run("dlg:IDD_PHYSICS_MODEL"),
+        ["dialog", "text", id, text] => {
+            rig.with(|c| dialog::physics_text(c, id.parse().unwrap(), text))
+        }
+        ["dialog", "select", id, n] => {
+            rig.with(|c| dialog::physics_pick(c, id.parse().unwrap(), n.parse().unwrap()))
+        }
+        ["dialog", "click", id] => rig.with(|c| dialog::physics_press(c, id.parse().unwrap())),
+        ["dialog", "ok"] => rig.ok(),
+        ["dialog", "cancel"] => {
+            rig.cancel();
+            Ok(())
+        }
         _ => return None,
     })
 }
@@ -78,6 +108,8 @@ fn replay(dir: &str, name: &str) -> Outcome {
     let script = std::fs::read_to_string(root.join(format!("{name}.txt"))).unwrap();
     let mut runner = Runner::new();
     let mut rig = Rig::new(mds_app::editor::Editor::empty());
+    // The toon dialog looks for a file beside the model: `.\lips.pmd` is in script3/inputs.
+    rig.editor.path = Some(fixtures().join("script3/inputs/scene.pmm"));
     let mut out = Outcome {
         files: 0,
         dialog_lines: 0,
@@ -88,7 +120,8 @@ fn replay(dir: &str, name: &str) -> Outcome {
         std::mem::swap(&mut rig.editor.doc, &mut runner.doc);
         let driven = drive(&mut rig, line);
         std::mem::swap(&mut rig.editor.doc, &mut runner.doc);
-        let saved = match driven {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let saved: Vec<(String, Vec<u8>)> = match driven {
             Some(r) => {
                 r.unwrap_or_else(|e| panic!("{at}: {e}"));
                 // The runner pumps the frame loop twice after each step it runs, and the poses
@@ -102,19 +135,33 @@ fn replay(dir: &str, name: &str) -> Outcome {
                 }
                 Vec::new()
             }
+            // The path of a "save enhanced model" is the dialog's `.\<name>`, which a later PMM
+            // records; the runner records the bare name.
+            None if matches!(words.as_slice(), ["save", "pmd", _]) => {
+                let name = words[2];
+                let bytes = runner
+                    .doc
+                    .save_pmd(&format!(".\\{name}"))
+                    .unwrap_or_else(|e| panic!("{at}: {e}"));
+                vec![(name.to_string(), bytes)]
+            }
             None => runner
                 .run_line(line, &mut |p| read_input(p))
-                .unwrap_or_else(|e| panic!("{at}: {e}")),
+                .unwrap_or_else(|e| panic!("{at}: {e}"))
+                .into_iter()
+                .map(|s| (s.name, s.bytes))
+                .collect(),
         };
-        for s in saved.into_iter().filter(|s| !s.name.ends_with(".emm")) {
-            let want = std::fs::read(expected_dir.join(&s.name)).unwrap();
+        for (name, bytes) in saved.into_iter().filter(|s| !s.0.ends_with(".emm")) {
+            let want = std::fs::read(expected_dir.join(&name)).unwrap();
             assert!(
-                s.bytes == want,
-                "{at} {}: differs from the C++ output ({} and {} bytes)",
-                s.name,
-                s.bytes.len(),
-                want.len()
+                bytes == want,
+                "{at} {name}: differs from the C++ output ({} and {} bytes, first difference at {:?})",
+                bytes.len(),
+                want.len(),
+                bytes.iter().zip(&want).position(|(a, b)| a != b)
             );
+
             out.files += 1;
         }
     }
@@ -175,4 +222,26 @@ fn physics_frames_script() {
 #[test]
 fn gravity_lines_of_the_camera_script() {
     check("script", "camera", 5, 8);
+}
+
+/// Button 424 (`script2/scalerange.txt`): the frame scale dialog on a model with keys.
+#[test]
+fn scale_range_script() {
+    check("script2", "scalerange", 2, 4);
+}
+
+/// Menu 261 and 262 (`script3/pmdedit.txt`): a toon name, then the physics model dialog with the
+/// mass of body 0, the position and box shape of body 3, and OK; the saved PMD is the C++ one,
+/// and Cancel drops what was typed. The two reminder boxes say what `messages.tsv` recorded.
+#[test]
+fn pmdedit_script() {
+    let out = check("script3", "pmdedit", 10, 3);
+    let tsv =
+        std::fs::read_to_string(fixtures().join("script3/expected/pmdedit/messages.tsv")).unwrap();
+    let want: Vec<&str> = tsv
+        .lines()
+        .skip(1)
+        .map(|l| l.split('\t').nth(2).unwrap())
+        .collect();
+    assert_eq!(out.messages, want);
 }

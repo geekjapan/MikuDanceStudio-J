@@ -12,31 +12,51 @@ pub fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/rust")
 }
 
-/// A load path as the C++ handlers get it (`script/inputs` holds the accessory and WAVE files).
+/// A load path as the C++ handlers get it: the lane stages the fixtures and the inputs of the
+/// script directories next to the exe.
 fn read_input(path: &str) -> Option<Vec<u8>> {
     let name = path.trim_start_matches(".\\");
-    [fixtures(), fixtures().join("script/inputs")]
-        .iter()
-        .find_map(|d| std::fs::read(d.join(name)).ok())
+    [
+        fixtures(),
+        fixtures().join("script/inputs"),
+        fixtures().join("script2/inputs"),
+        fixtures().join("script3/inputs"),
+        fixtures().join("vsq"),
+    ]
+    .iter()
+    .find_map(|d| std::fs::read(d.join(name)).ok())
 }
 
-/// The runner after lines `1..=upto` of `<name>.txt`.
-pub fn runner(name: &str, upto: usize) -> Runner {
-    let text =
-        std::fs::read_to_string(fixtures().join("script").join(format!("{name}.txt"))).unwrap();
+/// The runner after lines `1..=upto` of `<dir>/<name>.txt`.
+pub fn runner_in(dir: &str, name: &str, upto: usize) -> Runner {
+    let text = std::fs::read_to_string(fixtures().join(dir).join(format!("{name}.txt"))).unwrap();
     let mut runner = Runner::new();
     for (n, line) in text.lines().take(upto).enumerate() {
         runner
             .run_line(line, &mut |p| read_input(p))
-            .unwrap_or_else(|e| panic!("{name}.txt line {}: {e}", n + 1));
+            .unwrap_or_else(|e| panic!("{dir}/{name}.txt line {}: {e}", n + 1));
     }
     runner
 }
 
+/// The runner after lines `1..=upto` of `script/<name>.txt`.
+pub fn runner(name: &str, upto: usize) -> Runner {
+    runner_in("script", name, upto)
+}
+
+/// What the C++ saved at some step of a script in `dir`.
+pub fn expected_in(dir: &str, script: &str, file: &str) -> Vec<u8> {
+    let path = fixtures()
+        .join(dir)
+        .join("expected")
+        .join(script)
+        .join(file);
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
 /// What the C++ saved at some step of a script.
 pub fn expected(script: &str, file: &str) -> Vec<u8> {
-    let path = fixtures().join("script/expected").join(script).join(file);
-    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    expected_in("script", script, file)
 }
 
 /// The first byte that differs, or the shorter length.
@@ -85,6 +105,11 @@ impl Rig {
     /// The document after lines `1..=upto` of a script.
     pub fn replay(name: &str, upto: usize) -> Rig {
         Rig::of(runner(name, upto).doc)
+    }
+
+    /// The document after lines `1..=upto` of `<dir>/<name>.txt`.
+    pub fn replay_in(dir: &str, name: &str, upto: usize) -> Rig {
+        Rig::of(runner_in(dir, name, upto).doc)
     }
 
     pub fn ctx(&mut self) -> Ctx<'_> {

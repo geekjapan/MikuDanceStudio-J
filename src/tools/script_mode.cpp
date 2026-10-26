@@ -855,6 +855,22 @@ struct Runner {
         return -1;
     }
 
+    // The non-empty hit map cells of a column, for a failed `drag`:
+    // " row:display/morph/bone" in model mode, " row:key" in camera mode.
+    std::string ColumnCells(int column) const {
+        const auto& st = app->state;
+        std::string cells;
+        for (int row = 0; row < 200; ++row) {
+            const int cell = row + 200 * column;
+            if (app->CameraMode() == 0 &&
+                (st.rowHitIk[cell] != 0 || st.rowHitMorph[cell] != 0 || st.rowHitBone[cell] != 0))
+                cells += " " + std::to_string(row) + ":" + std::to_string(st.rowHitIk[cell]) + "/" +
+                         std::to_string(st.rowHitMorph[cell]) + "/" +
+                         std::to_string(st.rowHitBone[cell]);
+        }
+        return cells.empty() ? " (the column is empty)" : " (cells" + cells + ")";
+    }
+
     void Mouse(UINT message, WPARAM buttons, int x, int y) {
         SendMessageA(Main(), message, buttons,
                      MAKELPARAM(static_cast<WORD>(x & 0xFFFF), static_cast<WORD>(y & 0xFFFF)));
@@ -876,7 +892,8 @@ struct Runner {
                         std::to_string(app->state.timelineStartFrame));
         const int top = SelectedKeyRow(column);
         if (top < 0)
-            return Fail("no selected key at frame " + frameText + " in the timeline");
+            return Fail("no selected key at frame " + frameText + " in the timeline" +
+                        ColumnCells(column));
         const int x = kTimelineLeft + kColumnWidth * column + kColumnWidth / 2;
         const int y = top + kRowHeight / 2;
         RECT client;

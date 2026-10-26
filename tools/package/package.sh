@@ -20,7 +20,14 @@ out="${MDS_PACKAGE_OUT:-${tmp%/}/mds-package}"
 export MDS_VKD3D_OUT="${MDS_VKD3D_OUT:-$out/vkd3d}"
 mkdir -p "$out"
 
+# The macOS library and binary target macOS 11, the default of aarch64-apple-darwin; vkd3d's
+# configure would otherwise take the SDK's version.
+export MACOSX_DEPLOYMENT_TARGET=11.0
 [ -f "$MDS_VKD3D_OUT/$target/lib/$lib" ] || "$repo/tools/vkd3d/build.sh" "$target"
+if [ "$target" = macos ] && ! otool -l "$MDS_VKD3D_OUT/macos/lib/$lib" | grep -q 'minos 11.0'; then
+  echo "package.sh: $MDS_VKD3D_OUT/macos/lib/$lib does not target macOS 11; delete it and run again" >&2
+  exit 1
+fi
 python3 -I "$repo/tools/package/licenses.py"
 if [ -n "$(git -C "$repo" status --porcelain -- licenses)" ]; then
   echo "package.sh: licenses/ differs from what licenses.py writes; commit it first" >&2
@@ -37,12 +44,12 @@ case "$target" in
     arch="${target#linux-}"
     toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$repo/rust/rust-toolchain.toml")"
     mkdir -p "$target_dir" "$out/cargo-$arch"
-    # Bullet needs clang (mds-bullet-sys/build.rs); cpal links ALSA.
+    # Bullet needs clang (mds-bullet-sys/build.rs); cpal links ALSA, wayland-sys libwayland-client.
     docker run --rm --platform "linux/$arch" -v "$repo:/src:ro" -v "$target_dir:/target" \
       -v "$out/cargo-$arch:/usr/local/cargo/registry" -e CARGO_TARGET_DIR=/target \
       -e TOOLCHAIN="$toolchain" -e CC=clang -e CXX=clang++ -w /src/rust "$IMAGE" bash -euc '
         apt-get update -qq >/dev/null
-        apt-get install -y -qq --no-install-recommends clang pkg-config libasound2-dev >/dev/null 2>&1
+        apt-get install -y -qq --no-install-recommends clang pkg-config libasound2-dev libwayland-dev >/dev/null 2>&1
         rustup toolchain install "$TOOLCHAIN" --profile minimal >/dev/null 2>&1
         cargo build --release --locked -p mds-app
         echo "built on $(uname -m), $(ldd --version | head -1)"' ;;

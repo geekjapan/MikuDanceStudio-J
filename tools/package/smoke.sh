@@ -61,7 +61,7 @@ grep -q '^Pmd0 = anime.fx' "$dir/mme/anime.emm"
       cp "$0" "$dir/run.sh"
       docker run --rm --platform "linux/${target#linux-}" -v "$dir:/smoke" "$IMAGE" bash -euc '
         apt-get update -qq >/dev/null
-        apt-get install -y -qq --no-install-recommends libasound2 libvulkan1 mesa-vulkan-drivers \
+        apt-get install -y -qq --no-install-recommends libasound2 libvulkan1 libwayland-client0 mesa-vulkan-drivers \
           vulkan-tools >/dev/null 2>&1
         echo "container: $(uname -m), $(ldd --version | head -1)"
         bash /smoke/run.sh --inside /smoke Vulkan "vulkaninfo --summary 2>/dev/null | grep -E \"deviceName|driverName|driverInfo|deviceType\""' ;;

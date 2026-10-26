@@ -37,6 +37,9 @@ pub enum ViewOption {
     /// 279, `selfShadowEnabled`, the byte `pmm.self_shadow_mode` (not the
     /// 0/1/2 radio of the self-shadow panel).
     SelfShadow,
+    /// 282 and key B (`command_view_menu.cpp` 1401-1411),
+    /// `blackBackgroundEnabled`.
+    BlackBackground,
 }
 
 /// The bone-pose clipboard of buttons 496..498 (`BoneCopyRecords`): name,
@@ -64,12 +67,23 @@ pub(crate) fn posed(file: &crate::ModelFile, m: &pmm::Model, mode: u8) -> Option
         crate::ModelFile::Missing => return None,
     };
     pose.apply_pmm(m).ok()?;
+    // ponytail: no other model is posed here, so an outside parent in
+    // another model counts as none (`Others::NONE` would panic on it); pose
+    // the scene in calculation order when a caller needs those bones.
+    for s in &mut pose.selectors {
+        if s.linked_model >= 0 && s.linked_model != i32::from(m.slot) {
+            s.linked_model = -1;
+        }
+    }
     mds_pose::pose::apply_morphs(&mut pose);
     mds_pose::pose::set_physics_mode(&mut pose, 0, &mds_pose::pose::Others::NONE, i32::from(mode));
     Some(pose)
 }
 
-/// The world position of a model's bone in the saved pose ([`posed`]).
+/// The world position of a model's bone in the saved pose ([`posed`]), as
+/// the camera parent detach computes it (`command_dispatch.cpp` 243-263): in
+/// double, the Y term first, rounded once. `ApplyCameraReferenceModeChange`
+/// sums X first in float (`camera_reference.rs`); each matches its own C++.
 fn bone_world(file: &crate::ModelFile, m: &pmm::Model, bone: usize, mode: u8) -> Option<[f64; 3]> {
     let pose = posed(file, m, mode)?;
     let b = pose.bones.get(bone)?;

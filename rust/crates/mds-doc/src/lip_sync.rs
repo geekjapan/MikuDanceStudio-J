@@ -8,9 +8,13 @@ use crate::{model, not, Document, Error};
 
 impl Document {
     /// Lip sync from the VSQ bytes `vsq` onto the model in the selected
-    /// slot. Menu 224 has no camera-mode gate (the C++ uses the selected
-    /// slot's model); a dropped file (`dropped`) is refused in camera mode,
-    /// with the box "Not selected model!".
+    /// slot. Menu 224's handler has no camera-mode gate, but camera mode
+    /// grays the menu out (`ApplyModelComboSelection`, `ui_model_reload.cpp`
+    /// 453), so the caller offers it in model mode only; a dropped file
+    /// (`dropped`) is refused in camera mode, with the box "Not selected
+    /// model!". A note at 0 s gives the key frame -2, stored as the unsigned
+    /// 4294967294, and `lastRegisteredFrame` follows it to -2 (`vsq_load.cpp`
+    /// 817-860; `script3/expected/lipsync/drop.pmm`).
     ///
     /// The document changes only when [`mds_vsq::Run::outcome`] is `Ok`: the
     /// marks of the three pools cleared, each key registered through

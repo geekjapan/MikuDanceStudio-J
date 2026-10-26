@@ -150,11 +150,6 @@ pub fn normalize(src: &Pmm) -> Pmm {
         a.list_name = fixed(raw);
     }
     for a in &mut p.accessories {
-        // `strcpy_s` into the accessory record on load.
-        let mut raw = [0; 100];
-        let s = cstr(&a.name.raw);
-        raw[..s.len()].copy_from_slice(s);
-        a.name = fixed(raw);
         a.path = fixed(text.path(&a.path.raw));
         let key = |k: &mut mds_formats::pmm::AccessoryKey| {
             k.opacity_visible = opacity_byte(k.opacity_visible);

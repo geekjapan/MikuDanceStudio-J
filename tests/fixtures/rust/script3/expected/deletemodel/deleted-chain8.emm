@@ -1,0 +1,14 @@
+[Info]
+Version = 3
+
+[Object]
+Pmd0 = C:\mds\w2-winoracle3\repo\out\ci\build\Release\morph4.pmx
+Acs0 = C:\mds\w2-winoracle3\repo\out\ci\build\Release\tri.x
+
+[Effect]
+Default = none
+Pmd0 = none
+Pmd0.show = true
+Acs0 = none
+Acs0.show = true
+

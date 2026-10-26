@@ -82,6 +82,9 @@ pub struct View {
     pub(crate) edge_world: Mat,
     pub(crate) edge_origin: [f32; 3],
     pub(crate) edge_fov: f32,
+    /// The camera's signed distance: the camera sits at `(0, 0, distance)` of the space the frame
+    /// world matrix maps to. 0 for a view not made from a [`Camera`].
+    pub(crate) distance: f32,
 }
 
 impl View {
@@ -168,7 +171,54 @@ impl Camera {
             edge_world: world,
             edge_origin: self.target,
             edge_fov: self.fov_deg,
+            distance: self.distance,
         }
+    }
+}
+
+/// The self-shadow light view and light view projection of a frame, from the frame world matrix
+/// `world`, the camera distance, the light direction `light` (PMM light direction times the
+/// rotation of `world`, not normalized: `SceneLight().Direction`), the mode and the distance value.
+/// The projection maps a scene point (not a frame world point) to the shadow map's clip space.
+///
+/// Read off the `shadow` lines of `tests/fixtures/rust/golden2/selfshadow.edge.txt` and
+/// `swing600-golden.edge.txt` (both orthographic cameras; `light_view_matches_the_probes` checks
+/// all six): the light looks from `50 * light` before the camera position `(0, 0, distance)` with
+/// up +z (so the map's y follows the camera's view direction), and in that view's coordinates
+/// `(x, y, z)` the projection is
+/// `(s x, s y - 1, z_scale z + a s y / 2, a s y + 1)` with `s` the x/y scale (2 or 3 times the
+/// distance in mode 1 or 2), `z_scale` 0.15 times the distance, and `a` 0.5 or 1 in mode 1 or 2.
+pub(crate) fn self_shadow_matrices(
+    world: &Mat,
+    distance: f32,
+    light: [f32; 3],
+    mode: u8,
+    range: f32,
+) -> (Mat, Mat) {
+    let target = [0.0, 0.0, distance];
+    let eye = std::array::from_fn(|i| target[i] - 50.0 * light[i]);
+    let light_view = look_at_lh(eye, target, [0.0, 0.0, 1.0]);
+    let (s, a) = if mode == 2 {
+        (3.0 * range, 1.0)
+    } else {
+        (2.0 * range, 0.5)
+    };
+    let proj = [
+        [s, 0.0, 0.0, 0.0],
+        [0.0, s, a * s / 2.0, a * s],
+        [0.0, 0.0, 0.15 * range, 0.0],
+        [0.0, -1.0, 0.0, 1.0],
+    ];
+    (light_view, mul(&proj, &mul(&light_view, world)))
+}
+
+impl View {
+    /// [`self_shadow_matrices`] for this view's camera and `light`.
+    pub(crate) fn self_shadow_view_proj(&self, light: &Light, mode: u8, range: f32) -> Mat {
+        let w = &self.edge_world;
+        let [x, y, z] = light.direction;
+        let rotated = std::array::from_fn(|c| x * w[0][c] + y * w[1][c] + z * w[2][c]);
+        self_shadow_matrices(w, self.distance, rotated, mode, range).1
     }
 }
 
@@ -218,6 +268,7 @@ pub(crate) fn bounding_box_view(min: [f32; 3], max: [f32; 3], front: f32, aspect
         edge_world: IDENTITY,
         edge_origin: eye,
         edge_fov: DEFAULT_FOV_DEG,
+        distance: 0.0,
     }
 }
 
@@ -291,5 +342,56 @@ mod tests {
             }
         }
         assert_eq!((probes, edges), (7, 35));
+    }
+
+    /// Every `shadow` line of the golden2 probes: the light view and light view projection that
+    /// `self_shadow_matrices` makes from the line's light direction, mode and distance, and the
+    /// camera line's world matrix and distance, equal the recorded ones to float precision.
+    #[test]
+    fn light_view_matches_the_probes() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../tests/fixtures/rust/golden2");
+        let mut lines = 0;
+        for name in ["selfshadow.edge.txt", "swing600-golden.edge.txt"] {
+            let text = std::fs::read_to_string(dir.join(name)).unwrap();
+            let mut camera = None;
+            for line in text.lines().skip(1) {
+                let words: Vec<&str> = line.split(' ').collect();
+                let v: Vec<f32> = words[2..].iter().map(|w| w.parse().unwrap()).collect();
+                match words[1] {
+                    "camera" => {
+                        camera = Some(Camera {
+                            orthographic: v[0] == 1.0,
+                            fov_deg: v[1],
+                            target: [v[2], v[3], v[4]],
+                            distance: v[5],
+                            rotation: [v[6], v[7], v[8]],
+                        })
+                    }
+                    "shadow" => {
+                        lines += 1;
+                        let c = camera.unwrap();
+                        let (lv, lvp) = self_shadow_matrices(
+                            &c.world(),
+                            c.distance,
+                            [v[4], v[5], v[6]],
+                            v[2] as u8,
+                            v[3],
+                        );
+                        let close = |got: &Mat, want: &[f32]| {
+                            let scale = want.iter().fold(0f32, |m, x| m.max(x.abs()));
+                            got.iter()
+                                .flatten()
+                                .zip(want)
+                                .all(|(g, w)| (g - w).abs() <= 1e-6 * scale.max(1.0))
+                        };
+                        assert!(close(&lv, &v[19..35]), "{name}: {line}: view {lv:?}");
+                        assert!(close(&lvp, &v[35..51]), "{name}: {line}: proj {lvp:?}");
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(lines, 6);
     }
 }

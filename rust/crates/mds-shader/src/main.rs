@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+mod manifest;
+
 use mds_fx::{discover, Effect, Entry, FxError, Options};
 use mds_shader::vkd3d::Vkd3d;
 use mds_shader::{backend, gpu, reflect, Compiled, Stage, Status};
@@ -29,6 +31,7 @@ options:
                   its SPIR-V reads
   --reparse-wgsl  parse and validate each WGSL output again with naga
   --wgpu-check    create a wgpu device, then a shader module and a render pipeline per WGSL
+  --manifest <file>  capture per-entry compiler, scan, reflection, and coverage contracts
   --emit <dir>    write the vkd3d input, WGSL, MSL, and HLSL of each shader to <dir>
   -j <n>          worker threads (default: all CPUs, at most 8)
 
@@ -45,6 +48,7 @@ struct Opts {
     reparse: bool,
     wgpu: bool,
     emit: Option<PathBuf>,
+    manifest: Option<PathBuf>,
     jobs: usize,
     paths: Vec<PathBuf>,
 }
@@ -59,6 +63,7 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
         reparse: false,
         wgpu: false,
         emit: None,
+        manifest: None,
         jobs: std::thread::available_parallelism()
             .map_or(1, |n| n.get())
             .min(8),
@@ -74,6 +79,12 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
             "--reflect-verify" => o.verify = true,
             "--reparse-wgsl" => o.reparse = true,
             "--wgpu-check" => o.wgpu = true,
+            "--manifest" => {
+                o.manifest = Some(PathBuf::from(it.next().ok_or("--manifest needs a file")?));
+                o.reflect = true;
+                o.verify = true;
+                o.reparse = true;
+            }
             "--emit" => o.emit = Some(PathBuf::from(it.next().ok_or("--emit needs a directory")?)),
             "-j" => {
                 let n = it.next().ok_or("-j needs a number")?;
@@ -89,6 +100,9 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
     }
     if o.paths.is_empty() {
         return Err("no path given".into());
+    }
+    if o.manifest.is_some() && (o.paths.len() != 1 || !o.paths[0].is_dir()) {
+        return Err("--manifest requires exactly one corpus directory".into());
     }
     Ok(o)
 }
@@ -133,6 +147,7 @@ struct Done {
     probe: Option<Result<Vec<mds_shader::ctab::Constant>, String>>,
     coverage: Option<Result<(), String>>,
     reparsed: Option<Result<naga::Module, String>>,
+    scan: Option<Result<mds_shader::vkd3d::Scan, String>>,
 }
 
 fn percentile(sorted: &[Duration], p: f64) -> f64 {
@@ -153,7 +168,17 @@ fn run(o: &Opts) -> Result<bool, String> {
         .iter()
         .cloned()
         .partition(|p| p.is_dir() || p.is_file());
-    let (found, walk_errors) = discover(&paths);
+    let (mut found, walk_errors) = discover(&paths);
+    if o.manifest.is_some() {
+        for file in &mut found {
+            file.label = file
+                .path
+                .strip_prefix(&paths[0])
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .replace('\\', "/");
+        }
+    }
     for p in &missing {
         eprintln!("error: {}: no such file or directory", p.display());
     }
@@ -238,7 +263,17 @@ fn run(o: &Opts) -> Result<bool, String> {
             .then(|| compiled.outputs.as_ref().and_then(|x| x.wgsl.as_ref().ok()))
             .flatten()
             .map(|w| backend::reparse_wgsl(w));
+        let scan = o.manifest.as_ref().map(|_| {
+            vk.scan_hlsl(
+                &compiled.source,
+                j.label,
+                &j.entry.profile,
+                &compiled.entry_point,
+            )
+            .map_err(|e| e.summary())
+        });
         Done {
+            scan,
             compiled,
             time,
             reflection,
@@ -247,6 +282,20 @@ fn run(o: &Opts) -> Result<bool, String> {
             reparsed,
         }
     });
+
+    if let Some(path) = &o.manifest {
+        if !missing.is_empty()
+            || !walk_errors.is_empty()
+            || parse_failed != 0
+            || jobs.is_empty()
+            || done.iter().any(Option::is_none)
+        {
+            return Err(
+                "manifest capture requires complete discovery, parsing, and execution".into(),
+            );
+        }
+        manifest::write(path, vk.version(), &jobs, &done)?;
+    }
 
     if let Some(dir) = &o.emit {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;

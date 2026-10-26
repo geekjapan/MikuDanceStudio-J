@@ -87,3 +87,4 @@ render6	3c	render5	mac	opus	MIT	rust/crates/mds-render/
 winprobe2	3c	physscen2	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/golden2/,src/render/,CMakeLists.txt
 uimocap2	3c	appfix2	mac	opus	pending	rust/crates/mds-app/src/ui/mocap.rs,rust/crates/mds-app/tests/ui_mocap/,rust/crates/mds-kinect/
 mmehost3	3c	mmehost2	mac	opus	pending	rust/crates/mds-mmert/,rust/crates/mds-shader/,rust/crates/mds-app/src/mme.rs,rust/crates/mds-app/src/ui/mme.rs,rust/crates/mds-app/tests/app_mme/
+package	3c	winprobe2	windows	opus	pending	tools/package/,docs/PACKAGING.md,licenses/,rust/Cargo.toml

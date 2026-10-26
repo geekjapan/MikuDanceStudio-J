@@ -44,7 +44,14 @@ Eight isolated Rust mutations must fail against the compact prefix. They replace
 the nonvirtual entry with the virtual entry, add the sphere radius without margin,
 remove capsule margin subtraction, admit equal cap dots, admit capsule threshold
 equality, change either length association, or combine capsule radius and margin.
-Mutation source copies and failing test logs remain under the output directory.
+The runner first requires an unmodified compact baseline to pass with the same
+environment and compiler flags; support fixture overrides are removed for both.
+Only the native-output comparison assertion counts as rejection. Configuration
+errors, other panics, compilation failures, signals, and timeouts fail the gate.
+Mutation source copies and test logs remain under the output directory;
+`evidence.json` records the baseline and each differing case, field, actual word,
+and expected word. Focused classifier and transport checks run with
+`python3 -m unittest discover -s tools/bullet-rust-support-check -p 'test_*.py'`.
 
 This is a prerequisite for generic convex collision. It does not implement GJK,
 EPA, mixed-pair dispatch, world integration, or nonidentity shape scaling.

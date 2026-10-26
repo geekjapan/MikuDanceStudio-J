@@ -16,7 +16,7 @@ The corpus covers six ordered mixed pairs and three same-shape pairs. It include
 
 The checker writes unmodified and observed stdout, source-copy observation patches, branch counts, compiler commands, compiler and host provenance, and source hashes. Observation must leave stdout identical. The nine required mutations compile in isolation and must fail compact replay. They remove penetration, remove Distance fallback, reject non-Valid EPA results, change face ties, remove margins, change EPA accuracy, introduce double support normalization, rotate local normals, or change simplex reduction.
 
-Observed native returns include EPA AccuracyReached, InvalidHull, and FallBack. Internal face stock exhaustion, nonconvex faces, degenerate faces, face ties, all GJK projection ranks, reduction, EncloseOrigin ranks 2 through 4, successful Distance fallback, and untouched adapter outputs are observed. The JSON counts are authoritative for each capture.
+Observed native returns include EPA AccuracyReached, InvalidHull, and FallBack. Internal face stock exhaustion, nonconvex faces, degenerate faces, face ties, all GJK projection ranks, reduction, EncloseOrigin ranks 2 through 4, successful Distance fallback, and untouched adapter outputs are observed. The 6,810-case capture records 97 NonConvex and 302 Degenerated status assignment hits in their respective native branches. The JSON counts are authoritative for each capture.
 
 The following branches remain explicit coverage gaps.
 

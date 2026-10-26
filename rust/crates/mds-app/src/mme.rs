@@ -21,7 +21,7 @@
 //! carry post effects) and PMD models, skinning and morphs (`Model::from_pmx` is the bind pose),
 //! and the orthographic camera.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -92,6 +92,9 @@ pub struct Mme {
     pub log: RefCell<Vec<String>>,
     /// The device, the compiler and the loaded effects, built at the first MME frame.
     runtime: RefCell<Option<Runtime>>,
+    /// The runtime could not start (no adapter or no vkd3d-shader): the scene draws without
+    /// effects until [`Mme::unload`], as the C++ draws when MMEffect does not initialize.
+    failed: Cell<bool>,
     /// The back buffer `ViewportRatio` targets are sized against; `None` is the frame's size.
     pub backbuffer: Option<(u32, u32)>,
     /// The vkd3d-shader library; `None` is [`Vkd3d::load`]'s (`MDS_VKD3D_LIB`, else beside the
@@ -174,6 +177,7 @@ impl Mme {
             dir: dir.to_path_buf(),
             log: RefCell::new(Vec::new()),
             runtime: RefCell::new(None),
+            failed: Cell::new(false),
             backbuffer: None,
             vkd3d: None,
         }
@@ -256,6 +260,7 @@ impl Mme {
     /// Whether a frame draws through MME: effects on and an object with an effect.
     pub fn active(&self) -> bool {
         self.switches.enabled
+            && !self.failed.get()
             && self
                 .assignments
                 .iter()
@@ -280,6 +285,7 @@ impl Mme {
     /// Every effect and mesh again at the next frame (Reload All, 40004).
     pub fn unload(&self) {
         *self.runtime.borrow_mut() = None;
+        self.failed.set(false);
     }
 
     /// The effects whose file changed on disk since they loaded (Auto Reload, 40001): those load
@@ -302,7 +308,11 @@ impl Mme {
     ) -> Result<Vec<u8>, String> {
         let mut slot = self.runtime.borrow_mut();
         if slot.is_none() {
-            *slot = Some(self.start(doc, view.size)?);
+            let started = self.start(doc, view.size).inspect_err(|e| {
+                self.failed.set(true);
+                self.log.borrow_mut().push(e.clone());
+            });
+            *slot = Some(started?);
         }
         let Runtime { gpu, vk, state } = slot.as_mut().expect("runtime built above");
         let size = (view.size[0], view.size[1]);

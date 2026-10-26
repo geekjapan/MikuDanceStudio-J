@@ -533,9 +533,12 @@ impl Editor {
     pub fn save_as(&mut self, path: &Path) -> Result<(), String> {
         file::write(&self.doc, path)?;
         if self.mme.switches.auto_save {
+            // `MmeAutoSaveEmmForPmm` saves on its own, after the PMM: a failure is only logged.
             let emm = mme::emm_path(path);
-            std::fs::write(&emm, self.mme.save_emm(&self.doc))
-                .map_err(|e| format!("{}: {e}", emm.display()))?;
+            if let Err(e) = std::fs::write(&emm, self.mme.save_emm(&self.doc)) {
+                let line = format!("{}: {e}", emm.display());
+                self.mme.log.borrow_mut().push(line);
+            }
         }
         self.path = Some(path.to_path_buf());
         self.modified = false;

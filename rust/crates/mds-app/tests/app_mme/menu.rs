@@ -249,6 +249,26 @@ fn the_mapping_dialog_edits_the_assignment() {
 }
 
 #[test]
+fn a_runtime_that_cannot_start_leaves_the_scene_without_effects() {
+    let (editor, dir) = control("nostart");
+    let mut mme = editor.mme;
+    mme.vkd3d = Some(dir.join("no-such-vkd3d.dylib"));
+    assert!(mme.active());
+    let view = View {
+        camera: &editor.camera,
+        light: [0.6, 0.6, 0.6, -0.5, -1.0, 0.5],
+        frame: 0,
+        elapsed: 0.0,
+        size: [64, 36],
+    };
+    assert!(mme.render(&editor.doc, &editor.physics, &view).is_err());
+    assert!(!mme.active(), "one failed start, not one per frame");
+    // Reload All tries again.
+    mme.unload();
+    assert!(mme.active());
+}
+
+#[test]
 fn reload_all_loads_the_effects_again() {
     if mds_render::Gpu::new().expect("device").is_none() {
         eprintln!("SKIP: no wgpu adapter on this host (not a pass)");

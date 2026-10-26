@@ -33,13 +33,17 @@ struct Pipelines {
     ground_shadow_edge: wgpu::RenderPipeline,
     accessory: wgpu::RenderPipeline,
     picture: wgpu::RenderPipeline,
+    /// The ground grid and the axes.
+    line: wgpu::RenderPipeline,
+    /// The self-shadow map display.
+    display: wgpu::RenderPipeline,
     /// Depth from the light, both sides of every face (golden2 `selfshadow-*.png`: 0.9977 and
     /// 0.9973 within 4, against 0.994 culling back faces and 0.984 culling front faces).
     shadow: wgpu::RenderPipeline,
 }
 
 /// Render pipelines in one [`Pipelines`] set.
-const PIPELINES_PER_SET: usize = 8;
+const PIPELINES_PER_SET: usize = 10;
 
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -112,6 +116,8 @@ pub struct Renderer {
     repeat: wgpu::Sampler,
     picture_sampler: wgpu::Sampler,
     sampler: wgpu::Sampler,
+    /// The segments of the ground grid and the axes ([`grid_vertices`]).
+    grid: wgpu::Buffer,
     pipelines: HashMap<u32, Pipelines>,
     pipelines_created: usize,
     models: HashMap<Key, Prepared>,
@@ -209,6 +215,12 @@ impl Renderer {
                 ..repeat.clone()
             }),
             picture_sampler: device.create_sampler(&repeat),
+            grid: {
+                let data = bytes(&grid_vertices());
+                let buf = empty_buffer(device, wgpu::BufferUsages::VERTEX, data.len() as u64);
+                queue.write_buffer(&buf, 0, &data);
+                buf
+            },
             device: device.clone(),
             queue: queue.clone(),
             shader,
@@ -759,16 +771,17 @@ impl Renderer {
     fn build_pipelines(&self, samples: u32) -> Pipelines {
         let body_attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
         let edge_attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Unorm8x4Bgra];
-        let pipeline = |vs: &str,
-                        fs: &str,
-                        (stride, attrs): (u64, &[wgpu::VertexAttribute]),
-                        cull: Option<wgpu::Face>,
-                        blend: Option<wgpu::BlendState>,
-                        depth: wgpu::DepthStencilState| {
+        let pipeline_in = |layout: &wgpu::PipelineLayout,
+                           vs: &str,
+                           fs: &str,
+                           (stride, attrs): (u64, &[wgpu::VertexAttribute]),
+                           cull: Option<wgpu::Face>,
+                           blend: Option<wgpu::BlendState>,
+                           depth: wgpu::DepthStencilState| {
             self.device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some(vs),
-                    layout: Some(&self.layout),
+                    layout: Some(layout),
                     vertex: wgpu::VertexState {
                         module: &self.shader,
                         entry_point: Some(vs),
@@ -805,6 +818,22 @@ impl Renderer {
                     cache: None,
                 })
         };
+        let pipeline = |vs: &str,
+                        fs: &str,
+                        vertices: (u64, &[wgpu::VertexAttribute]),
+                        cull: Option<wgpu::Face>,
+                        blend: Option<wgpu::BlendState>,
+                        depth: wgpu::DepthStencilState| {
+            pipeline_in(&self.layout, vs, fs, vertices, cull, blend, depth)
+        };
+        // The grid and the display read the scene group only.
+        let scene_only = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[Some(&self.scene_layout)],
+                immediate_size: 0,
+            });
         let alpha = Some(wgpu::BlendState::ALPHA_BLENDING);
         let body_layout = (BODY_STRIDE, &body_attrs[..]);
         let opaque = || depth_state(true, Default::default());
@@ -852,8 +881,27 @@ impl Renderer {
                 multiview_mask: None,
                 cache: None,
             });
+        let line_attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Float32x2];
         Pipelines {
             shadow,
+            line: pipeline_in(
+                &scene_only,
+                "vs_line",
+                "fs_edge",
+                (LINE_STRIDE, &line_attrs[..]),
+                None,
+                None,
+                opaque(),
+            ),
+            display: pipeline_in(
+                &scene_only,
+                "vs_display",
+                "fs_display",
+                (0, &[]),
+                None,
+                None,
+                depth_state(false, Default::default()),
+            ),
             body: pipeline(
                 "vs_main",
                 "fs_main",
@@ -1001,6 +1049,11 @@ impl Renderer {
                 pass.set_bind_group(1, group, &[]);
                 pass.draw(0..6, 0..1);
             }
+            if stage.grid {
+                pass.set_pipeline(&pipelines.line);
+                pass.set_vertex_buffer(0, self.grid.slice(..));
+                pass.draw(0..grid_vertex_count(), 0..1);
+            }
             // The ground shadow first: the models then cover it where they stand in front of it.
             if stage.ground_shadow.is_some() && casts_ground_shadow(frame) {
                 pass.set_stencil_reference(0);
@@ -1082,6 +1135,10 @@ impl Renderer {
                     }
                 }
             }
+            if stage.shadow_map_display.is_some() && self_shadow_map(stage).is_some() {
+                pass.set_pipeline(&pipelines.display);
+                pass.draw(0..6, 0..1);
+            }
         }
         encoder
     }
@@ -1105,8 +1162,71 @@ fn finish(error_scope: wgpu::ErrorScopeGuard) -> Result<(), String> {
 /// for render2"); `background-0.png` shows the picture filtered from that texture.
 const PICTURE_TEXTURE: (u32, u32) = (1024, 1024);
 
-/// Bytes of the scene uniform: three matrices and nine vectors.
-const SCENE_BYTES: u64 = 3 * 64 + 9 * 16;
+/// Bytes of the scene uniform: three matrices and ten vectors.
+const SCENE_BYTES: u64 = 3 * 64 + 10 * 16;
+
+/// Bytes per vertex of the grid: the segment's two ends, the color and the corner.
+const LINE_STRIDE: u64 = 48;
+
+/// The ground grid: lines 5 units apart from -50 to 50 along x and z (golden2 `perspective-0.png`:
+/// the farthest line is z = -50), drawn 0.1 above the ground (the lines of the orthographic
+/// scenes sit 3.7 px above y = 0, at the models' feet), in gray 180 (the full-coverage pixels of
+/// the golden2 images). The axes run from the origin along +x, +y and -z, past the grid, in red,
+/// green and blue, 65 units long (the z axis ends at z = -65 in `perspective-30.png` and
+/// `skin-*.png`; the other two leave the picture).
+const GRID_STEP: f32 = 5.0;
+const GRID_HALF: f32 = 50.0;
+const GRID_Y: f32 = 0.1;
+const AXIS: f32 = 65.0;
+const GRID_GRAY: f32 = 180.0 / 255.0;
+
+fn grid_segments() -> Vec<([f32; 3], [f32; 3], [f32; 4])> {
+    let gray = [GRID_GRAY, GRID_GRAY, GRID_GRAY, 1.0];
+    let lines = (2.0 * GRID_HALF / GRID_STEP) as i32;
+    let mut segments = Vec::new();
+    for k in 0..=lines {
+        let c = -GRID_HALF + k as f32 * GRID_STEP;
+        // The lines through the origin stop there, where the +x and -z axes take over: a sample
+        // of the gray line beside the axis would show (golden2 `perspective-0.png`: the x axis
+        // is red over white).
+        let (z0, x1) = if k == lines / 2 {
+            (0.0, 0.0)
+        } else {
+            (-GRID_HALF, GRID_HALF)
+        };
+        segments.push(([c, GRID_Y, z0], [c, GRID_Y, GRID_HALF], gray));
+        segments.push(([-GRID_HALF, GRID_Y, c], [x1, GRID_Y, c], gray));
+    }
+    let o = [0.0, GRID_Y, 0.0];
+    segments.push((o, [AXIS, GRID_Y, 0.0], [1.0, 0.0, 0.0, 1.0]));
+    segments.push((o, [0.0, AXIS, 0.0], [0.0, 1.0, 0.0, 1.0]));
+    segments.push((o, [0.0, GRID_Y, -AXIS], [0.0, 0.0, 1.0, 1.0]));
+    segments
+}
+
+fn grid_vertex_count() -> u32 {
+    grid_segments().len() as u32 * 6
+}
+
+/// Six vertices (two triangles) per segment of [`grid_segments`], for `vs_line`.
+fn grid_vertices() -> Vec<f32> {
+    let corners = [
+        [0.0, -1.0],
+        [1.0, -1.0],
+        [0.0, 1.0],
+        [0.0, 1.0],
+        [1.0, -1.0],
+        [1.0, 1.0],
+    ];
+    grid_segments()
+        .iter()
+        .flat_map(|(a, b, color)| {
+            corners
+                .iter()
+                .flat_map(move |c| [a.as_slice(), b, color, c].concat())
+        })
+        .collect()
+}
 
 /// The self-shadow that draws a map: mode 1 or 2 with the shading on and a distance above 0
 /// ([`Stage::legacy`] has distance 0 and draws none).
@@ -1194,6 +1314,7 @@ fn scene_data(frame: &Frame, stage: &Stage, shift: [f32; 2]) -> Vec<u8> {
             scene.extend([0.0, 0.0, 0.0, map_size]);
         }
     }
+    scene.extend(stage.shadow_map_display.unwrap_or_default());
     bytes(&scene)
 }
 

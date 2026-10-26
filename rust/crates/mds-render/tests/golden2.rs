@@ -103,6 +103,16 @@ fn accessories_of(pmm: &Pmm) -> Vec<AccessoryMesh> {
 }
 
 fn render_at(gpu: &Gpu, pmm: &Pmm, frame: u32, shadow_map: ShadowMapSize) -> (Vec<u8>, View) {
+    render_with_display(gpu, pmm, frame, shadow_map, None)
+}
+
+fn render_with_display(
+    gpu: &Gpu,
+    pmm: &Pmm,
+    frame: u32,
+    shadow_map: ShadowMapSize,
+    shadow_map_display: Option<[f32; 4]>,
+) -> (Vec<u8>, View) {
     let meshes: Vec<Mesh> = pmm
         .models
         .iter()
@@ -142,6 +152,7 @@ fn render_at(gpu: &Gpu, pmm: &Pmm, frame: u32, shadow_map: ShadowMapSize) -> (Ve
         accessories: &draws,
         picture,
         shadow_map,
+        shadow_map_display,
         ..scene::stage_at(pmm, frame)
     };
     let models: Vec<_> = meshes
@@ -326,6 +337,58 @@ fn gate(scene: &str, frame: u32) {
     assert!(s.passes(), "{name}: {s:?}");
 }
 
+/// Every golden2 image and frame.
+const IMAGES: [(&str, u32); 11] = [
+    ("selfshadow", 0),
+    ("selfshadow", 30),
+    ("groundshadow", 0),
+    ("groundshadow", 30),
+    ("accessory", 0),
+    ("accessory", 30),
+    ("skin", 0),
+    ("skin", 30),
+    ("background", 0),
+    ("perspective", 0),
+    ("perspective", 30),
+];
+
+/// One multisample of the gray grid line over white is 8 to 11 levels.
+const ONE_SAMPLE: u8 = 11;
+
+/// The grid and the axes against every golden2 image, on the pixels [`grid_mask`] leaves out of
+/// [`gate`]: each pixel within [`ONE_SAMPLE`] of the golden one, but for [`GRID_MAX_OFF`] pixels
+/// per image (the y axis meets the flat chain models in their own plane, and which wins there is
+/// a matter of rounding, as is where the translucent faces of `skin_tex.pmx` end).
+#[test]
+fn grid_lines() {
+    let Some(gpu) = gpu_or_skip() else { return };
+    let mut failed = Vec::new();
+    for (scene, frame) in IMAGES {
+        let pmm = pmm(scene);
+        let (px, view) = render_at(&gpu, &pmm, frame, ShadowMapSize::default());
+        let name = format!("{scene}-{frame}");
+        let (_, _, gold) = read_png(&golden2().join(format!("{name}.png")));
+        let mask = grid_mask(&view);
+        let lines: Vec<usize> = (0..W * H).filter(|&i| mask[i]).collect();
+        let diffs: Vec<u8> = lines.iter().map(|&i| pixel_diff(&px, &gold, i)).collect();
+        let close = diffs.iter().filter(|&&d| d <= LIMITS.tolerance).count();
+        let off = diffs.iter().filter(|&&d| d > ONE_SAMPLE).count();
+        eprintln!(
+            "{name} grid: {} px, within {} {:.5}, beyond one sample {off}, max {}",
+            lines.len(),
+            LIMITS.tolerance,
+            close as f64 / lines.len() as f64,
+            diffs.iter().max().unwrap()
+        );
+        if off > GRID_MAX_OFF {
+            failed.push(name);
+        }
+    }
+    assert!(failed.is_empty(), "{failed:?}");
+}
+
+const GRID_MAX_OFF: usize = 1000;
+
 #[test]
 #[ignore = "within 4 is 0.99977 (51 px over, 21 allowed): single pixels on slanted ground-shadow edges"]
 fn groundshadow_0() {
@@ -356,6 +419,42 @@ fn selfshadow_0_map_4096() {
     );
     assert_ne!(big, base);
     assert!(close > 0.99, "{close}");
+}
+
+/// The self-shadow map display has no golden image: inside its rectangle the picture is the
+/// map's depth in gray, with the models' depth darker than the white of the empty map; outside
+/// it the picture is the one without the display. A frame without self-shadow draws no display.
+#[test]
+fn shadow_map_display_draws_the_map_in_gray() {
+    let Some(gpu) = gpu_or_skip() else { return };
+    let rect = [10.0, 20.0, 330.0, 340.0];
+    let inside = |i: usize| {
+        let (x, y) = ((i % W) as f32, (i / W) as f32);
+        x >= rect[0] + 1.0 && x <= rect[2] - 2.0 && y >= rect[1] + 1.0 && y <= rect[3] - 2.0
+    };
+    let near_rect = |i: usize| {
+        let (x, y) = ((i % W) as f32, (i / W) as f32);
+        x >= rect[0] - 2.0 && x <= rect[2] + 1.0 && y >= rect[1] - 2.0 && y <= rect[3] + 1.0
+    };
+    let scene = pmm("selfshadow");
+    let (plain, _) = render_at(&gpu, &scene, 0, ShadowMapSize::default());
+    let (shown, _) = render_with_display(&gpu, &scene, 0, ShadowMapSize::default(), Some(rect));
+    let mut dark = 0;
+    for i in 0..W * H {
+        let p = &shown[i * 4..i * 4 + 3];
+        if inside(i) {
+            assert!(p[0] == p[1] && p[1] == p[2], "pixel {i}: {p:?}");
+            dark += usize::from(p[0] < 250);
+        } else if !near_rect(i) {
+            assert_eq!(p, &plain[i * 4..i * 4 + 3], "pixel {i}");
+        }
+    }
+    assert!(dark > 100, "{dark} dark pixels");
+    // Self-shadow is off in the ground shadow scene.
+    let off = pmm("groundshadow");
+    let (a, _) = render_at(&gpu, &off, 0, ShadowMapSize::default());
+    let (b, _) = render_with_display(&gpu, &off, 0, ShadowMapSize::default(), Some(rect));
+    assert_eq!(a, b);
 }
 
 #[test]

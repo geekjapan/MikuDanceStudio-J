@@ -25,7 +25,7 @@ float4 VolumePS(V i) : COLOR0 { return tex3D(VolumeS, float3(i.uv,0)); }
 technique Geometry < string MmdPass = "object"; > {
     pass P { CullMode = NONE; ZEnable = FALSE; AlphaBlendEnable = FALSE; VertexShader = compile vs_3_0 GeometryVS(); PixelShader = compile ps_3_0 PS(); }
 }
-technique Buffer < string MmdPass = "edge"; > {
+technique BufferTechnique < string MmdPass = "edge"; > {
     pass P < string Script = "Draw=Buffer;"; > { CullMode = NONE; ZEnable = FALSE; AlphaBlendEnable = FALSE; VertexShader = compile vs_3_0 BufferVS(); PixelShader = compile ps_3_0 PS(); }
 }
 technique Cube {

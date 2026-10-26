@@ -128,3 +128,6 @@ mod activation;
 
 #[path = "pure_bullet/gjk_pair.rs"]
 mod gjk_pair;
+
+#[path = "pure_bullet/islands.rs"]
+mod islands;

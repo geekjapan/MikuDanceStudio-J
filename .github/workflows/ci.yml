@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'branch' }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -28,9 +28,6 @@ jobs:
           - os: windows-2022
             target: x86_64-pc-windows-msvc
             extension: .exe
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            extension: ''
           - os: macos-15
             target: aarch64-apple-darwin
             extension: ''
@@ -54,7 +51,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang pkg-config libasound2-dev libudev-dev
+          sudo apt-get install -y clang pkg-config libasound2-dev libudev-dev libwayland-dev
           echo 'CXX=clang++' >> "$GITHUB_ENV"
       - name: Install the repository Rust toolchain and target
         working-directory: rust
@@ -98,7 +95,7 @@ jobs:
       - name: Install native dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang pkg-config libasound2-dev libudev-dev libvulkan1 mesa-vulkan-drivers ffmpeg
+          sudo apt-get install -y clang pkg-config libasound2-dev libudev-dev libwayland-dev libvulkan1 mesa-vulkan-drivers ffmpeg
           mkdir -p "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
       - name: Install the repository Rust toolchain

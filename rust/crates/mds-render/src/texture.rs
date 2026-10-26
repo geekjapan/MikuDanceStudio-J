@@ -51,6 +51,37 @@ impl Image {
         chain
     }
 
+    /// The image stretched to `width` x `height`, each output texel a linear blend of the two
+    /// nearest source texels along each axis (texel centers aligned, the edges clamped).
+    pub(crate) fn resized(&self, width: u32, height: u32) -> Image {
+        // Per output index: the two source indices and the weight of the second.
+        let taps = |n: u32, m: u32| -> Vec<(usize, usize, f32)> {
+            (0..n)
+                .map(|i| {
+                    let x =
+                        ((i as f32 + 0.5) * m as f32 / n as f32 - 0.5).clamp(0.0, (m - 1) as f32);
+                    let j = x.floor() as usize;
+                    (j, (j + 1).min(m as usize - 1), x - j as f32)
+                })
+                .collect()
+        };
+        let (xs, ys) = (taps(width, self.width), taps(height, self.height));
+        let px = |x: usize, y: usize, c: usize| {
+            f32::from(self.rgba[(y * self.width as usize + x) * 4 + c])
+        };
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        for &(y0, y1, fy) in &ys {
+            for &(x0, x1, fx) in &xs {
+                for c in 0..4 {
+                    let top = px(x0, y0, c) * (1.0 - fx) + px(x1, y0, c) * fx;
+                    let bottom = px(x0, y1, c) * (1.0 - fx) + px(x1, y1, c) * fx;
+                    rgba.push((top * (1.0 - fy) + bottom * fy).round() as u8);
+                }
+            }
+        }
+        Image::new(width, height, rgba)
+    }
+
     /// BMP, PNG, TGA, JPEG and DDS (DXT1, 3 and 5), as far as the `image` crate decodes them.
     pub fn decode(data: &[u8]) -> Result<Image, String> {
         let img = image::load_from_memory(data).map_err(|e| e.to_string())?;

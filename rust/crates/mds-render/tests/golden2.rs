@@ -372,7 +372,6 @@ fn skin_30() {
 }
 
 #[test]
-#[ignore = "within 4 is 0.988: the checker edges of the picture (the app resamples it first)"]
 fn background_0() {
     gate("background", 0);
 }

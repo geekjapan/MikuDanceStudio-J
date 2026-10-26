@@ -105,7 +105,7 @@ pub struct Renderer {
     /// golden2 `accessory-30.png`, whose cube shows one face edge on: 37 pixels beyond the
     /// tolerance with it, 50 without. Anisotropic filtering (a clamp of 4, 8 or 16 gives the same
     /// image, 2 does not) passes that image. The background picture keeps `picture_sampler`, the
-    /// same without anisotropy (`background-0.png`: 0.98805 within 4, 0.98692 with it).
+    /// same without anisotropy: `fs_picture` filters anisotropically itself.
     repeat: wgpu::Sampler,
     picture_sampler: wgpu::Sampler,
     sampler: wgpu::Sampler,
@@ -499,7 +499,12 @@ impl Renderer {
                 .as_ref()
                 .is_some_and(|(img, _, _)| Arc::ptr_eq(img, pic.image))
             {
-                let view = self.view_of(&mut HashMap::new(), &Some(pic.image.clone()), &self.white);
+                let (w, h) = PICTURE_TEXTURE;
+                let view = texture(
+                    &self.device,
+                    &self.queue,
+                    &pic.image.resized(w, h).mip_chain(),
+                );
                 let (buf, group) = self
                     .material_groups(
                         vec![[view, self.white.clone(), self.toon.clone()]],
@@ -1082,6 +1087,10 @@ fn finish(error_scope: wgpu::ErrorScopeGuard) -> Result<(), String> {
         None => Ok(()),
     }
 }
+
+/// The app stretches a background picture to this size when it loads it (golden2 README, "Notes
+/// for render2"); `background-0.png` shows the picture filtered from that texture.
+const PICTURE_TEXTURE: (u32, u32) = (1024, 1024);
 
 /// Bytes of the scene uniform: three matrices and nine vectors.
 const SCENE_BYTES: u64 = 3 * 64 + 9 * 16;

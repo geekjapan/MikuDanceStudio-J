@@ -229,3 +229,59 @@ fn losing_the_sensor_drops_the_stage() {
 fn the_labels_are_those_of_the_inventory() {
     labels::check("mocap", mocap::LABELS);
 }
+
+/// The end of a recording (`oni_skeleton_pump.cpp:510` to `:524`): `DisableKinect` drops the
+/// stage, and the samples become keys of the bone from the current frame on, with the
+/// interpolation 20/20/107/107 of `RegisterTraceBoneKey` (`:313`), as one undo entry.
+#[test]
+fn registering_a_capture_writes_the_keys_and_ends_the_stage() {
+    let mut rig = Rig::model_mode();
+    rig.track(true);
+    rig.run("menu:292").unwrap();
+    for now in [0, 1500, 3000, 4500] {
+        rig.pass(now);
+    }
+    assert_eq!(rig.state().stage, STAGE_RECORDING);
+
+    let keys: Vec<_> = (0..3)
+        .map(|k| mds_kinect::KeyRegistration {
+            bone: 1,
+            frame: 5 + k,
+            position: [k as f32, 2.0, 3.0],
+            rotation: [0.0, 0.0, 0.5, 0.5],
+        })
+        .collect();
+    let frames = |rig: &Rig| {
+        let pool = &rig.editor.doc.selected_model().unwrap().bone_keys;
+        let (mut i, mut out) = (1u32, Vec::new());
+        loop {
+            let k = pool.get(i).unwrap();
+            out.push((k.frame, k.position, k.interpolation, k.allocated));
+            if k.next == 0 {
+                return out;
+            }
+            i = k.next;
+        }
+    };
+    let before = frames(&rig);
+    mocap::register_capture(&mut rig.ctx(5000), 5, 3, keys).unwrap();
+    assert_eq!(rig.state().stage, 0);
+
+    let after = frames(&rig);
+    assert_eq!(after.len(), before.len() + 3);
+    for (k, key) in after[before.len()..].iter().enumerate() {
+        assert_eq!(key.0, 5 + k as u32);
+        assert_eq!(key.1, [k as f32, 2.0, 3.0]);
+        assert_eq!(key.2, mds_kinect::register::INTERPOLATION);
+        assert_eq!(key.3, 1);
+    }
+    rig.editor.apply(Command::Undo).unwrap();
+    assert_eq!(frames(&rig), before);
+}
+
+/// Model mode only: the C++ pump never runs in camera mode (`oni_skeleton_pump.cpp:472`).
+#[test]
+fn registering_a_capture_needs_model_mode() {
+    let mut rig = Rig::new();
+    assert!(mocap::register_capture(&mut rig.ctx(0), 0, 0, vec![]).is_err());
+}

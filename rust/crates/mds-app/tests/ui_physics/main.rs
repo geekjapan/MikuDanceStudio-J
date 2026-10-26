@@ -4,5 +4,6 @@
 
 mod bodies;
 mod labels;
+mod modes;
 mod rig;
 mod rows;

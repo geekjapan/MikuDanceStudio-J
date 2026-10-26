@@ -88,7 +88,7 @@ fn registered() -> Vec<(&'static str, &'static Action)> {
 #[test]
 fn the_action_table_covers_the_inventory() {
     let rows = inventory();
-    assert_eq!(rows.len(), 399);
+    assert_eq!(rows.len(), 431);
     let counts = check(&rows, &registered(), COMPLETE).unwrap_or_else(|e| panic!("{e:#?}"));
     let (mut done, mut dropped, mut missing) = (0, 0, 0);
     for (area, c) in &counts {

@@ -37,7 +37,7 @@ impl Document {
             let mode = self.pmm.physics.playback_mode;
             let m = &self.pmm.models[i];
             Some((
-                crate::panel::posed(&self.models[i], m, mode)?,
+                crate::panel::posed(&self.models[i], m, mode, &[])?,
                 m.selection.selected_bone,
             ))
         });

@@ -398,3 +398,35 @@ drop:jpg	drop		Drop a .jpg file on the window to load it	src/window/ui_dropfiles
 drop:wav	drop		Drop a .wav file on the window to load it	src/window/ui_dropfiles.cpp:240	file	
 drop:vsq	drop		Drop a .vsq file on the window to load it	src/window/ui_dropfiles.cpp:251	file	
 drop:oni	drop		Drop a .oni file on the window to load it	src/window/ui_dropfiles.cpp:265	file	
+menu:mme-40005	menu	特效配置(&M)	Effect Mapping(&M)	third_party/mmeffect/src/mmeffect/mme_ui.cpp:364	mme	
+menu:mme-40006	menu	使用特效(&E) Ctrl+Shift+E	Enable Effect(&E) Ctrl+Shift+E	third_party/mmeffect/src/mmeffect/mme_ui.cpp:367	mme	
+menu:mme-40001	menu	自动更新(&O)	Auto Reload(&O)	third_party/mmeffect/src/mmeffect/mme_ui.cpp:331	mme	
+menu:mme-40022	menu	自动保存配置文件(&S)	Auto Save Mapping File(&S)	third_party/mmeffect/src/mmeffect/mme_ui.cpp:383	mme	
+menu:mme-40004	menu	全部更新(&R)	Reload All(&R)	third_party/mmeffect/src/mmeffect/mme_ui.cpp:361	mme	
+menu:mme-40002	menu	日志窗口(&L)	Log Window(&L)	third_party/mmeffect/src/mmeffect/mme_ui.cpp:339	mme	
+menu:mme-40003	menu	MMEffect版本信息(&A)	About MMEffect(&A)	third_party/mmeffect/src/mmeffect/mme_ui.cpp:342	mme	
+key:Ctrl+Shift+E	key	使用特效(&E) Ctrl+Shift+E	Toggle the effects (posts menu 40006)	third_party/mmeffect/src/mmeffect/mme_ui.cpp:237	mme	
+dlg:IDD_MME_LOG	dialog	MMEffect Log	MMEffect Log	third_party/mmeffect/src/mmeffect/mme_ui.cpp:593	mme	
+dlg:IDD_MME_MAPPING	dialog	エフェクトファイル割り当て	Map Effect File	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:2089	mme-dialog	
+menu:mme-dialog-40009	menu	导入设定(&O)	Open(&O)	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1877	mme-dialog	
+menu:mme-dialog-40010	menu	保存设定(&S)	Save(&S)	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1891	mme-dialog	
+menu:mme-dialog-40016	menu	模型为单位导入设定(&M)	Open by Model(&M)	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1903	mme-dialog	
+menu:mme-dialog-40017	menu	模型为单位保存设定(&N)	Save by Model(&N)	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1945	mme-dialog	
+menu:mme-dialog-40011	menu	关闭(&C)	Close(&C)	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1974	mme-dialog	
+menu:mme-dialog-40007	menu	文件选择(&F)	Set Effect File(&F)	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1862	mme-dialog	
+menu:mme-dialog-40012	menu	解除(&N)	Remove Effect(&N)	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1866	mme-dialog	
+menu:mme-dialog-40013	menu	不显示/显示(&H)	Hide/Show(&H)	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1870	mme-dialog	
+menu:mme-dialog-40008	menu	重置为默认设定(&R)	Reset with default(&R)	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1874	mme-dialog	
+menu:mme-dialog-40006	menu	子集展开(&E)	Subset-Extract(&E)	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1861	mme-dialog	
+menu:mme-dialog-40014	menu	反编译特效文件(&D)	Disassemble Effect(&D)	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1989	mme-dialog	
+menu:mme-dialog-40028	menu	跳过设备验证(&S)	Skip Device Validation(&S)	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1992	mme-dialog	
+ctl:mme-dialog-1	button	确定	OK	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1983	mme-dialog	
+ctl:mme-dialog-2	button	取消	Cancel	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1975	mme-dialog	
+ctl:mme-dialog-1002	tab	<tab 1002>	<tab 1002>	~third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1746	mme-dialog	
+ctl:mme-dialog-1003	list	<list 1003>	<list 1003>	~third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1758	mme-dialog	
+ctl:mme-dialog-1005	button	更新	Apply	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1995	mme-dialog	
+ctl:mme-dialog-1007	button	文件选择	Set Effect	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1863	mme-dialog	
+ctl:mme-dialog-1008	button	解除	Remove Effect	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1867	mme-dialog	
+ctl:mme-dialog-1011	button	不显示/显示	Hide/Show	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1871	mme-dialog	
+mouse:mme-dialog-dblclick	mouse		Double click a row of the mapping list to set its effect file	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:1790	mme-dialog	
+drop:mme-dialog	drop		Drop one .emm on the mapping dialog to load it, or one .fx/.fxm/.fxsub to assign it to the selection	third_party/mmeffect/src/mmeffect/mme_dlg.cpp:2012	mme-dialog	

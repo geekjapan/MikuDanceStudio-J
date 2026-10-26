@@ -100,7 +100,7 @@
 //! * The runtime state of the background media (size, frame range, decoded
 //!   frames): [`background`] keeps what the PMM saves.
 //!
-//! The script replay of `tests/fixtures/rust/script/` and `script2/` is
+//! The script replay of `tests/fixtures/rust/script/` to `script4/` is
 //! [`script::Runner`]; `tests/script.rs` compares every save with the C++
 //! output.
 

@@ -2,17 +2,22 @@
 //! the model tools (`src/window/command_dispatch.cpp:417`, `command_view_menu.cpp:903` to `:1022`
 //! and `:1343`).
 //!
-//! Here: About (201), the language switch (260) and save enhanced model (263). The language is the
-//! UI's: [`english`] and [`pick`] choose between `label_ja`, the default, and `label_en` for every
-//! area. Not here, for lack of a document command or an Editor call: 259 (English names), 261
-//! (toon textures), 262 (physics model) and 278 (restore textures); see the report of the slice.
-//! Their items are drawn greyed out.
+//! Here: About (201), the language switch (260), English names (259), toon textures (261), the
+//! physics model (262) and save enhanced model (263). Menus 259, 261 and 262 open the window
+//! of the dialog area (`IDD_ENGLISH_NAMES`, `IDD_TOON_TEXTURE`, `IDD_PHYSICS_MODEL`) by running
+//! its `dlg:*` action, in model mode only (`command_view_menu.cpp:911`, `:938`, `:968`). The
+//! language is the UI's: [`english`] and [`pick`] choose between `label_ja`, the default, and
+//! `label_en` for every area.
+//!
+//! Not here: 278 (restore textures, `InitToonTextures` and `ReloadTextureCache`), for lack of an
+//! `Editor` call that loads the textures of the meshes again; the slice report names it. Its item
+//! is drawn greyed out.
 //!
 //! The default egui fonts have no Japanese, so the first pass loads a system font that has it,
 //! when there is one.
 
 use super::{button, Ctx};
-use crate::actions::Action;
+use crate::actions::{self, Action, Mode};
 use egui::Id;
 use rfd::FileDialog;
 use std::path::Path;
@@ -21,6 +26,24 @@ const ACTIONS: &[Action] = &[
     Action::run("menu:260", toggle_language, false),
     Action::run("menu:201", about, false),
     Action::run("menu:263", save_enhanced_model, false),
+    Action::run(
+        "menu:259",
+        |c| open_dialog(c, "dlg:IDD_ENGLISH_NAMES"),
+        false,
+    )
+    .in_mode(Mode::Model),
+    Action::run(
+        "menu:261",
+        |c| open_dialog(c, "dlg:IDD_TOON_TEXTURE"),
+        false,
+    )
+    .in_mode(Mode::Model),
+    Action::run(
+        "menu:262",
+        |c| open_dialog(c, "dlg:IDD_PHYSICS_MODEL"),
+        false,
+    )
+    .in_mode(Mode::Model),
 ];
 
 pub fn actions() -> &'static [Action] {
@@ -59,6 +82,12 @@ fn toggle_language(ctx: &mut Ctx) -> Result<(), String> {
 fn about(ctx: &mut Ctx) -> Result<(), String> {
     window(ctx)?.data_mut(|d| d.insert_temp(Id::unique("help-about"), true));
     Ok(())
+}
+
+/// Menus 259, 261 and 262: the dialog opens as the dialog area's action opens it. The menus are in
+/// none of the ranges `DisablePlaybackMenus` greys (`playback_state.cpp:67`).
+fn open_dialog(ctx: &mut Ctx, dialog: &str) -> Result<(), String> {
+    actions::run(ctx, dialog)
 }
 
 /// Menu 263 (`command_view_menu.cpp:989`): the save dialog for `.pmd` files, then

@@ -14,17 +14,25 @@
 //!
 //! The drag math is in pure functions on a [`Rig`], a copy of the selected model's posed bones
 //! (`mds-pose` matrices of the live model) and its saved pose and selection (the document).
-//! Bone edits go through [`Command::SetBonePose`] and [`Command::SelectBones`]; camera tools edit
-//! the view camera as the other navigation does, accessory targets go through
-//! [`Command::AccessoryEdit`]. Missing: `mouse:record-drag` (the rigid-body and joint records of
-//! the physics editor dialog, which the app does not have).
+//! A bone drag is one undo entry: the press on a gizmo or a model tool row pushes it
+//! ([`Command::BeginBoneEdit`], `PushBoneEditUndo`, `frame_modes.cpp:351`) and each move sets the
+//! poses ([`Command::DragBonePose`]); the box and the pick go through [`Command::SelectBones`].
+//! Camera tools edit the view camera as the other navigation does, accessory targets go through
+//! [`Command::AccessoryEdit`]. The model-mode pans (the pan tool, the middle button and Shift with
+//! the right button) write the view offsets ([`Command::SetViewOffset`], `camera_state[3..5]`)
+//! and move the view camera's target along with them, because the view camera has no offsets.
+//!
+//! While the physics model dialog is open (`physics_scratch` of the document), the rotate and
+//! move rows of the model tools drag the selected rigid body or joint of that dialog instead of
+//! the bones (`BoneEditModes`, `frame_modes_bone.cpp:373`): [`Command::EditPhysicsRecord`] on the
+//! [`RecordTarget`] the dialog area keeps with [`set_record_target`].
 
 use super::{button, Ctx};
 use crate::actions::Action;
 use crate::editor::Editor;
 use crate::navigation::{self, KeyState, Modifiers, ViewButton, WHEEL_DELTA};
 use egui::{Color32, Event, MouseWheelUnit, PointerButton, Rect, Sense, Stroke, Vec2};
-use mds_doc::{Command, ModelFile};
+use mds_doc::{Command, ModelFile, PhysicsField};
 use mds_math::{Mat4, Quat, Vec3};
 use mds_render::{Camera, View};
 
@@ -46,6 +54,7 @@ const ACTIONS: &[Action] = &[
     Action::inline("mouse:bone-pick"),
     Action::inline("mouse:bone-box-select"),
     Action::inline("mouse:bone-drag"),
+    Action::inline("mouse:record-drag"),
     Action::inline("mouse:rmb-drag"),
     Action::inline("mouse:shift-rmb-drag"),
     Action::inline("mouse:ctrl-rmb-drag"),
@@ -149,6 +158,47 @@ fn put(ctx: &Ctx, s: State) {
     if let Some(e) = &ctx.egui {
         e.data_mut(|d| d.insert_temp(state_id(), s));
     }
+}
+
+/// The record the physics model dialog has selected (`selectedRigidIndex`, `selectedJointIndex`
+/// and the page `physicsEditorJointPage`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordTarget {
+    pub joint: bool,
+    pub index: u32,
+}
+
+fn target_id() -> egui::Id {
+    egui::Id::unique("viewport-record-target")
+}
+
+/// Sets, or with `None` clears, the record the model tool rows drag while the dialog is open.
+pub fn set_record_target(egui: &egui::Context, target: Option<RecordTarget>) {
+    egui.data_mut(|d| d.insert_temp(target_id(), target));
+}
+
+fn record_target(ctx: &Ctx) -> Option<RecordTarget> {
+    let egui = ctx.egui.as_ref()?;
+    egui.data(|d| d.get_temp::<Option<RecordTarget>>(target_id()))
+        .flatten()
+}
+
+/// Applies a command whose C++ handler does not set `SceneModified` (a bone edit is not a scene
+/// edit, `Command::marks_modified`); the editor marks every edit. An error goes to the status
+/// line and is `false`.
+fn quiet(ctx: &mut Ctx, cmd: Command) -> bool {
+    let modified = ctx.editor.modified;
+    let done = ctx.editor.apply(cmd);
+    ctx.editor.modified = modified;
+    done.map_err(|e| *ctx.status = e).is_ok()
+}
+
+/// The model-mode view offset moved by `(dx, dy)` (`ViewOffsetX` and `ViewOffsetY`, the pans of
+/// `pump_navigation.cpp:330`, `:376` and `frame_modes.cpp:530`).
+fn pan(ctx: &mut Ctx, dx: f32, dy: f32) {
+    let s = &ctx.editor.doc.pmm.camera_state;
+    quiet(ctx, Command::SetViewOffset([s[3] + dx, s[4] + dy]));
+    pan_view_offset(&mut ctx.editor.camera, dx, dy);
 }
 
 // ---- the selected model ----------------------------------------------------------------------
@@ -883,9 +933,8 @@ fn drag_scale(m: Modifiers) -> f32 {
 
 /// The model-mode view offsets (`ViewOffsetX/Y`, the eye of the fixed look-at view,
 /// `src/render/debug_geometry.cpp:560`) moved by `(dx, dy)`: the target moves along the camera's
-/// right and up axes, which draws the same picture.
-// ponytail: the offsets are not kept or saved (pmm.camera_state[3..5]); a view-offset field on
-// the view camera and a document command would keep them.
+/// right and up axes, which draws the same picture. [`pan`] also writes the offsets to the
+/// document.
 pub fn pan_view_offset(camera: &mut Camera, dx: f32, dy: f32) {
     let [pitch, yaw, roll] = camera.rotation;
     let r = Mat4::multiply(&Mat4::rotation_y(yaw), &Mat4::rotation_x(pitch));
@@ -961,12 +1010,15 @@ fn select(ctx: &mut Ctx, marks: &[bool], first: i32) {
 
 fn set_poses(ctx: &mut Ctx, poses: Vec<Pose>) {
     for (bone, translation, rotation) in poses {
-        if let Err(e) = ctx.editor.apply(Command::SetBonePose {
-            bone,
-            translation,
-            rotation,
-        }) {
-            *ctx.status = e;
+        let moved = quiet(
+            ctx,
+            Command::DragBonePose {
+                bone,
+                translation,
+                rotation,
+            },
+        );
+        if !moved {
             return;
         }
     }
@@ -1034,6 +1086,9 @@ pub fn input(ctx: &mut Ctx, i: &Input) {
                 if op == 5 {
                     s.origin = hit.center.unwrap_or(cur);
                 }
+                if op <= 14 && o.rig.is_some() {
+                    quiet(ctx, Command::BeginBoneEdit);
+                }
             }
             21 => s.coordinate = next_coordinate(s.coordinate, camera_mode),
             _ if !playing && inside => match (hit.edit_mode, &o.rig) {
@@ -1063,15 +1118,10 @@ pub fn input(ctx: &mut Ctx, i: &Input) {
                 select(ctx, &marks, rig.selected_bone);
             }
         }
-        let camera = &mut ctx.editor.camera;
         match s.view_tool {
-            1 => camera.distance -= dy as f32 * 0.1,
-            2 if camera_mode => navigation::middle_drag(camera, dx, dy, m),
-            2 => pan_view_offset(
-                camera,
-                -(dx as f32) * drag_scale(m),
-                dy as f32 * drag_scale(m),
-            ),
+            1 => ctx.editor.camera.distance -= dy as f32 * 0.1,
+            2 if camera_mode => navigation::middle_drag(&mut ctx.editor.camera, dx, dy, m),
+            2 => pan(ctx, -(dx as f32) * drag_scale(m), dy as f32 * drag_scale(m)),
             _ => {}
         }
     }
@@ -1079,24 +1129,23 @@ pub fn input(ctx: &mut Ctx, i: &Input) {
     // ConsumeRightButtonDrag, ConsumeMiddleButtonPan and the wheel.
     let [px, py] = i.pixels;
     let model_path = !camera_mode && bone_edit_path(ctx.editor);
-    let camera = &mut ctx.editor.camera;
     if i.right == KeyState::Held && !model_path {
         if !camera_mode && i.shift {
-            pan_view_offset(camera, -(px as f32) * 0.1, py as f32 * 0.1);
+            pan(ctx, -(px as f32) * 0.1, py as f32 * 0.1);
         } else {
-            navigation::right_drag(camera, px, py, m);
+            navigation::right_drag(&mut ctx.editor.camera, px, py, m);
         }
     }
     if i.middle == KeyState::Held {
         if camera_mode {
-            navigation::middle_drag(camera, px, py, m);
+            navigation::middle_drag(&mut ctx.editor.camera, px, py, m);
         } else {
             let k = drag_scale(m);
-            pan_view_offset(camera, -(px as f32) * k, py as f32 * k);
+            pan(ctx, -(px as f32) * k, py as f32 * k);
         }
     }
     if i.wheel != 0.0 {
-        navigation::wheel(camera, i.wheel.round() as i16);
+        navigation::wheel(&mut ctx.editor.camera, i.wheel.round() as i16);
     }
 
     if held && s.drag != 0 {
@@ -1139,6 +1188,10 @@ fn drag(ctx: &mut Ctx, o: &Overlay, s: State, p: &Pointer, size: [i32; 2]) {
         }
         return;
     }
+    if (mode <= 6 || mode >= 10) && ctx.editor.doc.edit.physics_scratch.is_some() {
+        record_drag(ctx, mode, p);
+        return;
+    }
     let Some(rig) = &o.rig else {
         return;
     };
@@ -1158,6 +1211,35 @@ fn drag(ctx: &mut Ctx, o: &Overlay, s: State, p: &Pointer, size: [i32; 2]) {
         _ => move_local(rig, mode, p, s.coordinate),
     };
     set_poses(ctx, poses);
+}
+
+/// `EditModeRecord` (`frame_modes_bone.cpp:158`): modes 4 to 6 turn the selected record about
+/// X, Y or Z and modes 10 to 12 move it, or with Shift resize a rigid body (a joint has no size).
+/// Modes 1 to 3 do nothing while the dialog is open, and nothing is edited without a selected
+/// record. The pointer row delta is `dy`.
+fn record_drag(ctx: &mut Ctx, mode: u8, p: &Pointer) {
+    let (field, axis) = match mode {
+        4..=6 => (PhysicsField::Rotation, mode - 4),
+        10..=12 => (PhysicsField::Position, mode - 10),
+        _ => return,
+    };
+    let Some(RecordTarget { joint, index }) = record_target(ctx) else {
+        return;
+    };
+    let field = match field {
+        PhysicsField::Position if p.shift && !joint => PhysicsField::Size,
+        f => f,
+    };
+    quiet(
+        ctx,
+        Command::EditPhysicsRecord {
+            joint,
+            index,
+            field,
+            axis,
+            dy: p.cur[1] - p.prev[1],
+        },
+    );
 }
 
 /// The right double click over the viewport (`HandleMouseActivate`, `ui_mouse_misc.cpp:284`):

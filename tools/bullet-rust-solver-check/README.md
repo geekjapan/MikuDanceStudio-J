@@ -10,7 +10,41 @@ The check compiles the vendored `btSequentialImpulseConstraintSolver.cpp`, captu
 native output, checks the committed fixtures, and runs Rust tests and focused
 Clippy with Rust 1.95.0. Native floating-point contraction and fast math are off.
 `det_math.h` selects the same SSE path used by supported application targets.
-Use `--record` only when deliberately updating the native fixtures.
+The joint fixture is selected explicitly by architecture: `aarch64` uses the
+unchanged `tests/solver_data/native.tsv`; `x86_64` uses
+`tests/solver_data/native-x86_64.tsv`. Other architectures fail explicitly.
+No NaN normalization or floating-point class comparison is performed. Every
+output word remains a strict `u32` comparison, including NaN signs.
+
+The x86_64 file is the complete Linux native Bullet capture from commit
+`c95636fd0c82377fe7b4007b9baceea7b2e9511d`, captured with Ubuntu Clang 18.1.3
+and Rust 1.95.0's unchanged deterministic math library. It was copied from native
+output, not generated from Rust. Its 4,790,286 bytes have SHA-256
+`d0a64453bce494764fcfb8a43bdb284ad4634666aac141ad9ede3a635fa568f5`.
+`native-x86_64.provenance.json` records the exact native command, compiler,
+preprocessor profile, source hashes, and capture commands. Independent Windows
+MSVC FFI and CMake diagnostic captures confirmed the final six special-case
+inputs and complete output records match Linux. Their first 512 generated
+inputs differ because the C++ generator uses unspecified argument evaluation
+order, so those Windows captures are a separate diagnostic, not this fixed corpus.
+
+Both profiles preserve all 518 cases and 20,580 ordered SIMD row events. All 301
+input words per case are identical, and the first 512 records are byte-identical.
+Exactly 48 output words in cases 512–515 change from ARM `7fc00000` to x86_64
+`ffc00000`. This is native profile drift, not a solver arithmetic correction.
+The original ARM SHA-256 remains
+`156498fd111eb89fa3d60c75edbaf5068a89acecd9cde7a48b573e7e53ef65d8`.
+
+Run the frozen-profile integrity and strict mutation checks with:
+
+```sh
+python3 -m unittest discover -s tools/bullet-rust-solver-check -v
+```
+
+The native recapture helper checks both profile hashes before compiling and then
+compares captured bytes to the selected profile. Use `--record` only for a
+reviewed profile update; update its pinned hash and provenance in the same change.
+A Windows generator run is not a recapture of this fixed serialized corpus.
 
 The first 512 solves cover 256 SIMD and 256 scalar solves. Each pair reuses the bodies
 and joint state from its preceding solve. The native setup and iteration functions

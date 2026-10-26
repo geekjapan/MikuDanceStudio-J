@@ -1,6 +1,10 @@
 """Cheap checks for command construction and profile acceptance boundaries."""
 import tempfile
 import unittest
+import contextlib
+import io
+import json
+import sys
 from pathlib import Path
 import check
 
@@ -62,6 +66,26 @@ class HelperTests(unittest.TestCase):
                 check.run([sys.executable, '-c', 'print("diagnostic"); raise SystemExit(7)'], out, 'failure', capture=True)
             self.assertIn(b'diagnostic', (out / 'failure-stdout.log').read_bytes())
             self.assertTrue((out / 'failure-command.json').is_file())
+
+    def test_process_cwd_and_output_capture(self):
+        command = [sys.executable, '-c',
+                   'import os, sys; print(os.getcwd()); print("diagnostic", file=sys.stderr)']
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory).resolve()
+            for cwd in (check.ROOT, out):
+                for capture in (False, True):
+                    with self.subTest(cwd=cwd, capture=capture):
+                        stdout, stderr = io.StringIO(), io.StringIO()
+                        kwargs = {} if cwd == check.ROOT else {'cwd': cwd}
+                        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                            data = check.run(command, out, 'cwd', capture=capture, **kwargs)
+                        self.assertEqual(data.decode().strip(), str(cwd))
+                        self.assertEqual((out / 'cwd-stdout.log').read_bytes(), data)
+                        self.assertEqual((out / 'cwd-stderr.log').read_bytes().strip(), b'diagnostic')
+                        self.assertEqual(json.loads((out / 'cwd-command.json').read_text()), command)
+                        self.assertEqual(stdout.getvalue(), check.subprocess.list2cmdline(command) + '\n'
+                                         + ('' if capture else data.decode() + '\n'))
+                        self.assertEqual(stderr.getvalue(), (out / 'cwd-stderr.log').read_bytes().decode() + '\n')
 
 
 if __name__ == '__main__':

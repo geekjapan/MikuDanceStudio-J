@@ -28,13 +28,13 @@ def native_command(compiler, source, output, *, msvc, ffi_default=False):
             '-fno-fast-math', '-DBT_NO_PROFILE=1', '-I', SRC, *source, '-o', output]
 
 
-def run(command, out, name, *, capture=False, **kwargs):
+def run(command, out, name, *, capture=False, cwd=ROOT, **kwargs):
     command = list(map(str, command))
     (out / f'{name}-command.json').write_text(json.dumps(command, indent=2) + '\n')
     print(subprocess.list2cmdline(command), flush=True)
     with (out / f'{name}-stdout.log').open('wb') as stdout, \
             (out / f'{name}-stderr.log').open('wb') as stderr:
-        result = subprocess.run(command, cwd=ROOT, stdout=stdout, stderr=stderr, timeout=300, **kwargs)
+        result = subprocess.run(command, cwd=cwd, stdout=stdout, stderr=stderr, timeout=300, **kwargs)
     errors = (out / f'{name}-stderr.log').read_bytes()
     if errors:
         print(errors.decode(errors='replace'), file=sys.stderr, flush=True)
@@ -101,7 +101,7 @@ def main():
     suffix = '.exe' if msvc else ''
     run([compiler, '/?'] if msvc else [compiler, '--version'], out, 'compiler-version')
     run(['rustup', 'run', '1.95.0', 'rustc', '-Vv'], out, 'rust-version')
-    run(['rustup', 'run', '1.95.0', 'cargo', '-V'], out, 'cargo-version')
+    run(['rustup', 'run', '1.95.0', 'cargo', '-V'], out, 'cargo-version', cwd=ROOT / 'rust')
     header = (SRC / 'BulletCollision/BroadphaseCollision/btDbvt.h').read_text()
     marker = '#undef DBVT_USE_MEMMOVE'
     keys = ('DBVT_SELECT_IMPL', 'DBVT_MERGE_IMPL', 'DBVT_INT0_IMPL',
@@ -145,7 +145,7 @@ def main():
     (out / 'native-lifecycle.tsv').write_bytes(native_lifecycle)
     rust_lifecycle = run(['rustup', 'run', '1.95.0', 'cargo', 'run', '--locked', '--manifest-path',
                           HERE / 'Cargo.toml', '--release', '--bin', 'dbvt-lifecycle'],
-                         out, 'rust-lifecycle', capture=True)
+                         out, 'rust-lifecycle', capture=True, cwd=ROOT / 'rust')
     (out / 'rust-lifecycle.tsv').write_bytes(rust_lifecycle)
     # Windows iostream emits CRLF while Rust writes LF. Compare the same event records.
     assert rust_lifecycle.splitlines() == native_lifecycle.splitlines(), 'actual allocator release order differs from native'
@@ -163,7 +163,7 @@ def main():
             assert len(captured.splitlines()) == 2326, (order, 'incomplete diagnostic capture')
     env = dict(os.environ, DBVT_FIXTURES=str(out))
     run(['rustup', 'run', '1.95.0', 'cargo', 'test', '--locked', '--manifest-path',
-         HERE / 'Cargo.toml', '--release'], out, 'rust-tests', env=env)
+         HERE / 'Cargo.toml', '--release'], out, 'rust-tests', env=env, cwd=ROOT / 'rust')
     print('6,978 strict snapshots, 2,326 ordinary allocator comparisons and 10 lifecycle cases compared.')
 
 

@@ -9,15 +9,12 @@ fn the_labels_are_those_of_the_inventory() {
     labels::check("expression", expression::LABELS);
 }
 
-/// Every row has an action but the VSQ lip sync (224), for which `mds-doc` has no command.
+/// Every row has an action.
 #[test]
-fn every_row_but_the_vsq_lip_sync_has_an_action() {
+fn every_row_has_an_action() {
     for (id, _, _) in expression::LABELS {
         let found = actions::find(id).map(|a| a.handler);
-        match *id {
-            "menu:224" => assert!(found.is_none(), "{id}"),
-            _ => assert!(matches!(found, Some(Handler::Run(_))), "{id}"),
-        }
+        assert!(matches!(found, Some(Handler::Run(_))), "{id}");
     }
     assert!(matches!(
         actions::find("key:H").map(|a| a.handler),
@@ -122,4 +119,73 @@ fn the_menu_draws_in_both_languages() {
     rig.frame(vec![], expression::show);
     rig.run("menu:260").unwrap();
     rig.frame(vec![], expression::show);
+}
+
+/// `script3/lipsync.txt` line 3, `load model lips.pmd`, in an editor.
+fn lips() -> Rig {
+    Rig::replay("script3", "lipsync", 3)
+}
+
+fn vsq(name: &str) -> Vec<u8> {
+    std::fs::read(fixtures().join("vsq").join(name)).unwrap()
+}
+
+/// `script3/lipsync.txt` lines 3 to 5: `load lip sync basic.vsq` (menu 224) on `lips.pmd` saves
+/// `menu.pmm`; the dialog's file read and the load are `expression::lip_sync`.
+#[test]
+fn the_lip_sync_saves_what_the_cpp_saved() {
+    let mut rig = lips();
+    rig.editor.modified = false;
+    rig.with_ctx(|ctx| expression::lip_sync(ctx, &vsq("basic.vsq")))
+        .unwrap();
+    let want = fixtures().join("script3/expected/lipsync/menu.pmm");
+    assert!(rig.editor.doc.save().unwrap() == std::fs::read(want).unwrap());
+    assert!(rig.editor.modified, "command_file_menu.cpp:1169");
+}
+
+/// `lipsync.txt` lines 9 and 10 reach the same document by the drop, so the live models must hold
+/// the keys the load registered: the pose at the frame the load moved to has the lip morph set.
+#[test]
+fn the_live_models_see_the_lip_sync() {
+    let mut rig = lips();
+    rig.with_ctx(|ctx| expression::lip_sync(ctx, &vsq("basic.vsq")))
+        .unwrap();
+    let keys = rig.editor.doc.pmm.models[0].morph_keys.records().len();
+    assert!(keys > 4, "the load registered morph keys");
+    let live = &rig.editor.physics.scene.models[0];
+    assert_eq!(live.morph_keys.records().len(), keys);
+}
+
+/// A rejected file (the model has no あ morph) changes nothing but the modified flag; the reason
+/// is the error.
+#[test]
+fn a_rejected_vsq_is_reported() {
+    let mut rig = scene("morph4.pmx");
+    let before = rig.editor.doc.save().unwrap();
+    let err = rig
+        .with_ctx(|ctx| expression::lip_sync(ctx, &vsq("basic.vsq")))
+        .unwrap_err();
+    assert!(
+        err.starts_with("lip sync stopped: Rejected(NoFace("),
+        "{err}"
+    );
+    assert!(rig.editor.doc.save().unwrap() == before);
+}
+
+/// Menu 224 is a model-mode menu (`ApplyModelComboSelection` greys it in camera mode), and it
+/// needs its window for the file dialog.
+#[test]
+fn the_lip_sync_menu_keeps_to_the_model_mode() {
+    let mut rig = lips();
+    rig.egui = None;
+    assert_eq!(rig.run("menu:224"), Err("no window".into()));
+    rig.egui = Some(egui::Context::default());
+    rig.editor.apply(Command::SelectCameraMode).unwrap();
+    assert_eq!(
+        rig.run("menu:224"),
+        Err("menu:224: not in this mode".into())
+    );
+    assert!(rig
+        .with_ctx(|ctx| expression::lip_sync(ctx, &vsq("basic.vsq")))
+        .is_err());
 }

@@ -1,15 +1,16 @@
 use super::*;
 use mds_app::actions::{self, Handler};
+use mds_app::ui::viewport::RecordTarget;
 
-/// Every viewport row has an action except the physics-editor record drag, which waits for that
-/// dialog.
+/// Every viewport row has an action.
 #[test]
-fn every_row_but_the_record_drag_has_an_action() {
+fn every_row_has_an_action() {
     for id in [
         "key:L",
         "mouse:bone-pick",
         "mouse:bone-box-select",
         "mouse:bone-drag",
+        "mouse:record-drag",
         "mouse:shift-rmb-drag",
         "mouse:rmb-dblclick",
         "mouse:tool-view-dolly",
@@ -22,7 +23,6 @@ fn every_row_but_the_record_drag_has_an_action() {
             "{id}"
         );
     }
-    assert!(actions::find("mouse:record-drag").is_none());
 }
 
 /// Key L (`key_ladder.cpp:183..190`): `++coordinateSystem`, wrapping at 2 in model mode and at 3
@@ -288,17 +288,20 @@ fn the_view_tools_dolly_and_pan() {
 }
 
 /// `ConsumeRightButtonDrag` in model mode with Shift (`pump_navigation.cpp:330..334`):
-/// `ViewOffsetY += dy * 0.1`, `ViewOffsetX -= dx * 0.1`. The view offsets move the eye in the
-/// camera plane; here the target moves by the same amount along the camera's right and up axes.
+/// `ViewOffsetY += dy * 0.1`, `ViewOffsetX -= dx * 0.1`, saved in `camera_state[3..5]`. The view
+/// camera has no offsets; its target moves by the same amount along the camera's right and up
+/// axes, which draws the same picture.
 #[test]
 fn shift_right_drag_pans_the_view_in_model_mode() {
     let mut r = Rig::new(chain());
     let start = r.e.camera;
+    let (offset, modified) = (r.offset(), r.e.modified);
     r.pass(viewport::Input {
         right: KeyState::Held,
         pixels: [10, -4],
         ..input(Some([300.0, 300.0]), KeyState::Idle, true)
     });
+    close(&r.offset(), &[offset[0] - 1.0, offset[1] - 0.4], "offsets");
     close(
         &r.e.camera.target,
         &[
@@ -309,6 +312,47 @@ fn shift_right_drag_pans_the_view_in_model_mode() {
         "pan",
     );
     assert_eq!(r.e.camera.rotation, start.rotation, "no orbit");
+    assert_eq!(r.e.modified, modified, "a view change is not a scene edit");
+}
+
+/// The middle button in model mode (`ConsumeMiddleButtonPan`, `pump_navigation.cpp:376..380`):
+/// `ViewOffsetY += dy * scale`, `ViewOffsetX -= dx * scale`, the scale 0.05, 0.5 with Shift and
+/// 0.005 with Ctrl; and the pan tool (`frame_modes.cpp:530..537`, `DragScale`) the same.
+#[test]
+fn the_middle_button_and_the_pan_tool_write_the_view_offsets() {
+    let mut r = Rig::new(chain());
+    let (offset, modified) = (r.offset(), r.e.modified);
+    let middle = |shift, ctrl| viewport::Input {
+        middle: KeyState::Held,
+        pixels: [10, -4],
+        ctrl,
+        ..input(Some([300.0, 300.0]), KeyState::Idle, shift)
+    };
+    r.pass(middle(false, false));
+    close(&r.offset(), &[offset[0] - 0.5, offset[1] - 0.2], "plain");
+    r.pass(middle(true, false));
+    close(&r.offset(), &[offset[0] - 5.5, offset[1] - 2.2], "Shift");
+    r.pass(middle(false, true));
+    close(&r.offset(), &[offset[0] - 5.55, offset[1] - 2.22], "Ctrl");
+
+    let mut r = Rig::new(chain());
+    let offset = r.offset();
+    r.left_drag([780.0, 12.0], &[[784.0, 10.0]], false);
+    close(&r.offset(), &[offset[0] - 0.2, offset[1] - 0.1], "pan tool");
+    assert_eq!(r.e.modified, modified);
+}
+
+/// In camera mode the same drags move the camera, and the saved offsets stay.
+#[test]
+fn the_camera_mode_pans_leave_the_view_offsets() {
+    let mut r = Rig::new(startup());
+    let offset = r.offset();
+    r.pass(viewport::Input {
+        middle: KeyState::Held,
+        pixels: [10, -4],
+        ..input(Some([300.0, 300.0]), KeyState::Idle, false)
+    });
+    assert_eq!(r.offset(), offset);
 }
 
 /// `HandleMouseActivate` (`ui_mouse_misc.cpp:284..355`): over the viewport in model mode, edit
@@ -343,4 +387,176 @@ fn nothing_but_the_view_tools_while_playing() {
     r.left_drag([c[0] + 20.0, c[1]], &[[c[0] + 10.0, c[1]]], false);
     assert_eq!(r.pose(2), before);
     assert_eq!(r.selection(), (vec![2], 2));
+}
+
+/// `BeginOrEndViewportToolDrag` (`frame_modes.cpp:349..357`) pushes `PushBoneEditUndo` at the
+/// press of a gizmo or a model tool row, not at each move: a drag of any length is one undo
+/// entry, and one undo gives the pose back. A pose edit does not set `SceneModified`.
+#[test]
+fn a_bone_drag_is_one_undo_entry() {
+    let cursor = |r: &Rig| r.e.doc.edit.models[0].history.cursor;
+    let slots = mds_doc::history::SLOTS;
+    for (name, drag) in [
+        ("gizmo", [(0.0, 20.0), (-5.0, 20.0), (-10.0, 20.0)]),
+        ("tool row", [(0.0, 0.0), (0.0, -4.0), (0.0, -10.0)]),
+    ] {
+        let mut r = Rig::new(chain());
+        let (start, path): ([f32; 2], Vec<[f32; 2]>) = if name == "gizmo" {
+            r.apply(Command::SetEditMode(3));
+            r.select(&[2]);
+            let c = r.bone_at(2);
+            (
+                [c[0] + 20.0, c[1]],
+                drag.iter().map(|d| [c[0] + 20.0 + d.0, c[1]]).collect(),
+            )
+        } else {
+            r.select(&[2]);
+            (
+                [690.0, 535.0],
+                drag.iter().map(|d| [690.0 + d.0, 535.0 + d.1]).collect(),
+            )
+        };
+        let (pose, entries, modified) = (r.pose(2), cursor(&r), r.e.modified);
+        r.left_drag(start, &path, false);
+        assert_ne!(r.pose(2), pose, "{name}: the bone turned");
+        assert_eq!(cursor(&r), (entries + 1) % slots, "{name}: one entry");
+        assert_eq!(r.e.modified, modified, "{name}");
+        r.apply(Command::Undo);
+        assert_eq!(r.pose(2), pose, "{name}: one undo undoes the drag");
+    }
+}
+
+/// Two drags are two entries; a press that only picks a bone pushes none.
+#[test]
+fn each_drag_pushes_its_own_entry_and_a_pick_none() {
+    let cursor = |r: &Rig| r.e.doc.edit.models[0].history.cursor;
+    let mut r = Rig::new(chain());
+    r.select(&[1]);
+    let before = cursor(&r);
+    r.left_drag([690.0, 575.0], &[[690.0, 565.0]], false);
+    r.left_drag([690.0, 575.0], &[[690.0, 565.0]], false);
+    assert_eq!(cursor(&r), before + 2);
+    let c = r.bone_at(3);
+    r.click(c, false);
+    assert_eq!(cursor(&r), before + 2);
+}
+
+/// The record drag (`BoneEditModes`, `frame_modes_bone.cpp:373..378`) while the physics model
+/// dialog is open (`physics_scratch`): the upper model row turns the selected record
+/// (`EditModeRecord` `:158..177`, `value - dy * 0.01`), the lower one moves it
+/// (`:194..222`, `value - dy * 0.05f`), with Shift a rigid body is resized and floored at 0.1,
+/// and a joint has no size. The bones stay.
+#[test]
+fn the_model_rows_drag_the_selected_physics_record() {
+    let mut r = Rig::new(chain_pmd());
+    r.select(&[2]);
+    let mds_doc::ModelFile::Pmd(pmd) = &r.e.doc.models[0] else {
+        panic!("a PMD")
+    };
+    let phys = pmd.extension.as_ref().unwrap().physics.as_ref().unwrap();
+    let (rigids, joints) = (phys.rigids.clone(), phys.joints.clone().unwrap());
+    r.e.doc.edit.physics_scratch = Some((rigids.clone(), joints.clone()));
+    let (pose, modified) = (r.pose(2), r.e.modified);
+    let step = |v: f32, dy: i32, s: f64| (f64::from(v) - f64::from(dy) * s) as f32;
+    let five = f64::from(0.05f32);
+    let scratch = |r: &Rig| r.e.doc.edit.physics_scratch.clone().unwrap();
+
+    r.with(|c| {
+        viewport::set_record_target(
+            c.egui.as_ref().unwrap(),
+            Some(RecordTarget {
+                joint: false,
+                index: 1,
+            }),
+        )
+    });
+    // Upper row, Y (operation 10, mode 5): axis 1, dy = -10.
+    r.left_drag([730.0, 535.0], &[[730.0, 525.0]], false);
+    let (rs, _) = scratch(&r);
+    assert_eq!(rs[1].rotation[1], step(rigids[1].rotation[1], -10, 0.01));
+    // Lower row, Z (operation 14, mode 12): axis 2, dy = 4.
+    r.left_drag([770.0, 575.0], &[[770.0, 579.0]], false);
+    let (rs, _) = scratch(&r);
+    assert_eq!(rs[1].position[2], step(rigids[1].position[2], 4, five));
+    // With Shift the lower row resizes: X (mode 10), dy = 6, floored at 0.1 by a long drag.
+    r.left_drag([690.0, 575.0], &[[690.0, 581.0]], true);
+    let (rs, _) = scratch(&r);
+    assert_eq!(rs[1].size[0], step(rigids[1].size[0], 6, five).max(0.1));
+    r.left_drag([690.0, 575.0], &[[690.0, 1175.0]], true);
+    assert_eq!(scratch(&r).0[1].size[0], 0.1);
+    assert_eq!(scratch(&r).0[0], rigids[0], "only the selected body");
+    assert_eq!(r.pose(2), pose, "the bones stay");
+    assert_eq!(r.e.modified, modified);
+
+    // The joint page: rotation and position, no size even with Shift.
+    r.with(|c| {
+        viewport::set_record_target(
+            c.egui.as_ref().unwrap(),
+            Some(RecordTarget {
+                joint: true,
+                index: 0,
+            }),
+        )
+    });
+    r.left_drag([690.0, 535.0], &[[690.0, 540.0]], false);
+    r.left_drag([690.0, 575.0], &[[690.0, 580.0]], true);
+    let (_, js) = scratch(&r);
+    assert_eq!(js[0].rotation[0], step(joints[0].rotation[0], 5, 0.01));
+    assert_eq!(js[0].position[0], step(joints[0].position[0], 5, five));
+}
+
+/// The rotate gizmo (modes 1 to 3) edits nothing while the dialog is open and the bones stay,
+/// with no selected record nothing changes either, and the move gizmo (modes 7 to 9) still moves
+/// the bones (`BoneEditModes` `:373..388`).
+#[test]
+fn the_gizmos_and_an_unselected_record() {
+    let mut r = Rig::new(chain_pmd());
+    r.apply(Command::SetEditMode(3));
+    r.select(&[2]);
+    let mds_doc::ModelFile::Pmd(pmd) = &r.e.doc.models[0] else {
+        panic!("a PMD")
+    };
+    let phys = pmd.extension.as_ref().unwrap().physics.as_ref().unwrap();
+    let both = (phys.rigids.clone(), phys.joints.clone().unwrap());
+    r.e.doc.edit.physics_scratch = Some(both.clone());
+    r.with(|c| {
+        viewport::set_record_target(
+            c.egui.as_ref().unwrap(),
+            Some(RecordTarget {
+                joint: false,
+                index: 0,
+            }),
+        )
+    });
+    let pose = r.pose(2);
+    let c = r.bone_at(2);
+    r.left_drag([c[0] + 20.0, c[1]], &[[c[0] + 10.0, c[1]]], false);
+    assert_eq!(r.pose(2), pose, "mode 1 turns nothing");
+    assert!(r.e.doc.edit.physics_scratch.clone().unwrap() == both);
+
+    r.with(|c| viewport::set_record_target(c.egui.as_ref().unwrap(), None));
+    r.apply(Command::SetEditMode(1));
+    r.left_drag([690.0, 535.0], &[[690.0, 525.0]], false);
+    assert!(
+        r.e.doc.edit.physics_scratch.clone().unwrap() == both,
+        "no record"
+    );
+    assert_eq!(r.pose(2), pose, "and no bone");
+
+    r.apply(Command::SetEditMode(4));
+    r.select(&[1]);
+    let moved = r.pose(1);
+    let c = r.bone_at(1);
+    r.left_drag([c[0], c[1] - 50.0], &[[c[0], c[1] - 60.0]], false);
+    assert_ne!(r.pose(1).0, moved.0, "the move gizmo moves the bone");
+}
+
+/// Closing the dialog (`physics_scratch` gone) gives the bones their drags back.
+#[test]
+fn without_the_dialog_the_rows_drag_the_bones() {
+    let mut r = Rig::new(chain_pmd());
+    r.select(&[2]);
+    let pose = r.pose(2);
+    r.left_drag([690.0, 535.0], &[[690.0, 525.0]], false);
+    assert_ne!(r.pose(2), pose);
 }

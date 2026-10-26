@@ -1,7 +1,13 @@
 fn host_native() -> &'static str {
-    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    if cfg!(all(
+        any(target_os = "macos", target_os = "linux"),
+        target_arch = "aarch64"
+    )) {
         include_str!("../support_data/native.tsv")
-    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+    } else if cfg!(all(
+        any(target_os = "linux", target_os = "windows"),
+        target_arch = "x86_64"
+    )) {
         include_str!("../support_data/native-linux-x64.tsv")
     } else {
         panic!("unreviewed support host profile; run the native capture workflow")
@@ -81,7 +87,11 @@ fn nonvirtual_support_matches_native_words() {
         };
         std::fs::write(path, capture).unwrap();
     }
-    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    assert!(
+        mismatches.is_empty(),
+        "MDS_SUPPORT_NATIVE_MISMATCH_BEGIN\n{}\nMDS_SUPPORT_NATIVE_MISMATCH_END",
+        mismatches.join("\n")
+    );
     if full_inputs.is_none() {
         assert_eq!(inputs.lines().count(), 1600);
     }

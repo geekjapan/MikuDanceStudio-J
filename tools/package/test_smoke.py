@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -15,10 +16,13 @@ HERE = Path(__file__).resolve().parent
 class SmokeGate(unittest.TestCase):
     def test_comparator_status_and_log(self):
         for script in ("smoke.sh", "package-windows.sh"):
-            for status, message in ((0, "golden rule: pass"),
-                                    (1, "golden rule: FAIL"),
-                                    (2, "comparison interrupted")):
-                with self.subTest(script=script, status=status), tempfile.TemporaryDirectory() as tmp:
+            cases = [(0, "golden rule: pass", False),
+                     (1, "golden rule: FAIL", False),
+                     (2, "comparison interrupted", False)]
+            if script == "package-windows.sh":
+                cases.append((0, "golden rule: pass", True))
+            for status, message, task_failure in cases:
+                with self.subTest(script=script, status=status, task_failure=task_failure), tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
                     package = root / "tools/package"
                     package.mkdir(parents=True)
@@ -60,7 +64,15 @@ case "$*" in
   *"--short HEAD") echo abcdef ;;
 esac
 ''')
-                    self.executable(mocks / "ssh", "#!/bin/sh\nexit 0\n")
+                    self.executable(mocks / "ssh", '''#!/bin/sh
+case "$*" in
+  *runtask.ps1*)
+    if [ "$TASK_FAILURE" = 1 ]; then
+      exec "$REAL_PYTHON" -I "$TASK_TEST" --stand-in nonzero
+    fi ;;
+esac
+exit 0
+''')
                     self.executable(mocks / "scp", '''#!/usr/bin/env bash
 dest="${@: -1}"
 case "$dest" in
@@ -71,12 +83,19 @@ esac
 ''')
                     env = dict(os.environ, PATH=f"{mocks}:{os.environ['PATH']}",
                                MDS_PACKAGE_OUT=str(out), MDS_VKD3D_OUT=str(out / "vkd3d"),
-                               COMPARE_STATUS=str(status), COMPARE_MESSAGE=message)
+                               COMPARE_STATUS=str(status), COMPARE_MESSAGE=message,
+                               TASK_FAILURE=str(int(task_failure)), REAL_PYTHON=sys.executable,
+                               TASK_TEST=str(HERE.parent / "windows/test_runtask.py"))
                     args = ["bash", str(package / script)]
                     if script == "smoke.sh":
                         args.append(str(archive))
                     run = subprocess.run(args, env=env, capture_output=True, text=True, timeout=10)
                     log = out / ("smoke-macos.log" if script == "smoke.sh" else "smoke-windows.log")
+                    if task_failure:
+                        self.assertNotEqual(run.returncode, 0, run.stdout + run.stderr)
+                        self.assertIn("task exit code: 7", run.stdout)
+                        self.assertFalse(log.exists(), "failed smoke must stop before golden comparison")
+                        continue
                     self.assertTrue(log.is_file(), run.stdout + run.stderr)
                     self.assertIn(message, log.read_text())
                     self.assertEqual(run.returncode == 0, status == 0, run.stdout + run.stderr)

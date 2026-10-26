@@ -91,6 +91,19 @@ fn execute(tree: &mut Dbvt, line: &str) -> String {
         "c" => tree.clear(),
         "v" => tree.collide_volume(aabb(&mut w), |k| write!(events, "{},", k.0).unwrap()),
         "s" => tree.collide_tree(tree, |a, b| write!(events, "{}:{},", a.0, b.0).unwrap()),
+        "x" => {
+            let mut other = Dbvt::new();
+            for i in 0..4 {
+                other.insert(
+                    ProxyKey(100 + i),
+                    Aabb {
+                        min: Vec3([i as f32 - 2.0, -1.0, -1.0]),
+                        max: Vec3([i as f32 + 1.0, 2.0, 2.0]),
+                    },
+                );
+            }
+            tree.collide_tree(&other, |a, b| write!(events, "{}:{},", a.0, b.0).unwrap());
+        }
         "q" => {
             let from = vec3(&mut w);
             let inv = vec3(&mut w);
@@ -292,7 +305,7 @@ fn ordinary_native_and_production_allocator_query_sets() {
             leaf_records(fields[1]),
             "operation {i} {input}"
         );
-        if matches!(input.as_bytes()[0], b'v' | b's' | b'q') {
+        if matches!(input.as_bytes()[0], b'v' | b's' | b'q' | b'x') {
             assert_eq!(
                 query_set(&events),
                 query_set(fields[3]),
@@ -364,4 +377,26 @@ fn zero_center_split_falls_back_without_changing_leaves() {
     );
     keys.sort_unstable();
     assert_eq!(keys, [1, 2]);
+}
+
+#[test]
+fn one_free_box_is_reused_and_dead_slots_stay_bounded() {
+    let mut tree = Dbvt::new();
+    let volume = Aabb {
+        min: Vec3([0.0; 3]),
+        max: Vec3([1.0; 3]),
+    };
+    tree.insert(ProxyKey(1), volume);
+    tree.insert(ProxyKey(2), volume);
+    for _ in 0..100 {
+        let leaf = tree.find(ProxyKey(2));
+        let address = tree.address(leaf);
+        tree.remove(ProxyKey(2));
+        assert_eq!(tree.free, Some(leaf));
+        assert_eq!(tree.nodes.iter().filter(|n| n.is_some()).count(), 2);
+        tree.insert(ProxyKey(2), volume);
+        assert_eq!(tree.address(tree.find(ProxyKey(2))), address);
+        assert_eq!(tree.nodes.len(), 3);
+        invariant(&tree);
+    }
 }

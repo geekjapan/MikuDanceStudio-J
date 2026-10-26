@@ -6,7 +6,7 @@ edition = "2021"
 [workspace]
 
 [dependencies]
-mds-crtmath = { path = "../../rust/crates/mds-crtmath" }
+dbvt-math = { path = "math-dependency" }
 
 [[test]]
 name = "dbvt"

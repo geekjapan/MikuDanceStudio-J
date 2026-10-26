@@ -23,6 +23,7 @@ for seed in range(12):
         live.append(key)
     print('v -10 -10 -10 10 10 10')
     print('s')
+    print('x')
     print('q -10 0 0 1 1e30 1e30 20 0 0 0 0 0 0')
     for step in range(64):
         key=r.choice(live)

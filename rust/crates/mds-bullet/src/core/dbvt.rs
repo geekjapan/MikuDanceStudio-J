@@ -139,6 +139,9 @@ impl Dbvt {
         if let Some(id) = self.free.take() {
             *self.node_mut(id) = node;
             id
+        } else if let Some(index) = self.nodes.iter().position(Option::is_none) {
+            self.nodes[index] = Some(Box::new(node));
+            NodeId(index)
         } else {
             let id = NodeId(self.nodes.len());
             self.nodes.push(Some(Box::new(node)));
@@ -180,13 +183,16 @@ impl Dbvt {
         };
         let volume = self.node(leaf).volume;
         while let Some(c) = self.children(root) {
-            root = c[if volume.proximity(self.node(c[0]).volume)
-                < volume.proximity(self.node(c[1]).volume)
-            {
+            let a = volume.proximity(self.node(c[0]).volume);
+            let b = volume.proximity(self.node(c[1]).volume);
+            let side = if cfg!(target_os = "windows") {
+                usize::from(b <= a)
+            } else if a < b {
                 0
             } else {
                 1
-            }];
+            };
+            root = c[side];
         }
         let mut prev = self.node(root).parent;
         let mut node = self.create(

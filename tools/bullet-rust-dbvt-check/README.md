@@ -4,8 +4,8 @@ Run `python3 tools/bullet-rust-dbvt-check/check.py --out-dir /tmp/bullet-dbvt`.
 The check requires Clang C++, Python 3, and Rust 1.95.0. It compiles unmodified
 vendored `btDbvt.cpp` and runs a native-free Rust harness. No World or GPU runs.
 
-The stream covers 2,314 operations per native allocation history, including 12
-seeded mutation histories, ordered TV and self TT callbacks, internal ray queries,
+The stream covers 2,326 operations per native allocation history, including 12
+seeded mutation histories, ordered TV, self TT, and cross-tree TT callbacks, internal ray queries,
 margin and velocity update, lookahead, clear, bottom-up, top-down, and incremental
 optimization. AABB values compare exact float bits; metadata and ordered children
 compare exactly. Native compiler commands, inputs, and complete traces remain in
@@ -49,3 +49,19 @@ query sets with production Rust addresses. Its optimization topology and callbac
 order are intentionally conditional on each allocator's addresses. A direct Rust
 sort test checks that the actual larger parent address triggers a rotation and
 that Box addresses remain stable.
+
+The standalone harness compiles unmodified `core/math.rs` as a path dependency.
+`cargo clippy --manifest-path tools/bullet-rust-dbvt-check/Cargo.toml --all-targets
+--no-deps -- -D warnings` lints the changed DBVT and harness without linting that
+unchanged dependency. Without `--no-deps`, existing `Vec3::add` and `Vec3::sub`
+trigger `should_implement_trait`. No lint allowance is added to production code.
+
+Current native evidence is Apple Silicon macOS with the generic DBVT profile.
+The source selects Windows DBVT SSE proximity association and unordered comparison
+semantics separately from generic math. Windows x64 native recapture, Windows Rust
+branch execution, and Linux x64/ARM64 native recaptures remain pending. A generic
+macOS topology fixture is not evidence for the Windows SSE profile.
+
+The two native comparison tests require `DBVT_FIXTURES` to name the capture
+output directory. `check.py` sets it. Shared-suite registration must preserve
+this capture step or move these tests behind the standalone harness.

@@ -6,6 +6,13 @@ version = 4
 name = "bullet-rust-dbvt-check"
 version = "0.0.0"
 dependencies = [
+ "dbvt-math",
+]
+
+[[package]]
+name = "dbvt-math"
+version = "0.0.0"
+dependencies = [
  "mds-crtmath",
 ]
 

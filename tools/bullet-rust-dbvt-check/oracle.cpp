@@ -61,6 +61,11 @@ int main(int argc,char** argv) {
             if(op=='b') tree.optimizeBottomUp();
             if(op=='v') { auto v=box(in); tree.collideTV(tree.m_root,v,policy); }
             if(op=='s') tree.collideTT(tree.m_root,tree.m_root,policy);
+            if(op=='x') {
+                btDbvt other;
+                for(int i=0;i<4;++i) { auto v=btDbvtVolume::FromMM(btVector3(i-2,-1,-1),btVector3(i+1,2,2)); other.insert(v,reinterpret_cast<void*>(static_cast<intptr_t>(100+i))); }
+                tree.collideTT(tree.m_root,other.m_root,policy);
+            }
             if(op=='q') { auto from=vector(in); auto inv=vector(in); unsigned signs[3]={unsigned(inv.x()<0),unsigned(inv.y()<0),unsigned(inv.z()<0)}; float lambda; in>>lambda; auto aabb=box(in); tree.rayTestInternal(tree.m_root,from,from,inv,signs,lambda,aabb.Mins(),aabb.Maxs(),policy); }
             if(op=='c') { tree.clear(); for(auto& n:leaves) n=nullptr; }
             std::ostringstream ranks;

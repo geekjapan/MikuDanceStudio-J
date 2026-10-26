@@ -2,6 +2,8 @@
 
 #[path = "../src/core/mod.rs"]
 mod core;
+#[path = "pure_bullet/math_vectors.rs"]
+mod math_vectors;
 #[path = "support/pilot_cases.rs"]
 mod pilot_cases;
 

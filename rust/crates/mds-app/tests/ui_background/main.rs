@@ -190,3 +190,36 @@ fn a_load_without_a_viewport_changes_nothing() {
     assert!(e.doc.save().unwrap() == before);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// With a viewport the picture load marks the scene through the command when it places the file,
+/// and by hand when the decoder refuses it (`command_file_menu.cpp:1888` sets `SceneModified`
+/// after `LoadBackgroundPicture`, whatever it did); the refused file clears the path
+/// (`media_load.cpp:331-361`).
+#[test]
+fn a_picture_load_marks_the_scene_whether_or_not_it_decodes() {
+    let dir = std::env::temp_dir().join(format!("mds-bg-marks-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let bad = dir.join("bad.bmp");
+    std::fs::write(&bad, b"BM").unwrap();
+    let good = fixtures().join("script3/inputs/toonx.bmp");
+    let mut e = swing();
+    e.doc.edit.viewport = Some(mds_app::viewport::media_viewport([0, 0, 1280, 720]));
+    let mut status = String::new();
+    let mut ctx = Ctx {
+        editor: &mut e,
+        now_ms: 0,
+        egui: None,
+        viewport: None,
+        status: &mut status,
+    };
+    ctx.editor.modified = false;
+    background::load_picture_path(&mut ctx, &good).unwrap();
+    assert!(ctx.editor.modified, "a placed picture");
+    assert_eq!(ctx.editor.doc.pmm.picture.enabled, 1);
+    assert!(ctx.editor.doc.pmm.picture.path.text.ends_with("toonx.bmp"));
+    ctx.editor.modified = false;
+    assert!(background::load_picture_path(&mut ctx, &bad).is_err());
+    assert!(ctx.editor.modified, "a refused picture");
+    assert_eq!(ctx.editor.doc.pmm.picture.path.text, "");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -16,7 +16,7 @@ use std::collections::HashMap;
 /// `kPiF` (0x40490FDB) of `ReadEditDegrees`.
 const PI_F: f32 = std::f32::consts::PI;
 /// `kPiShort` (0x40490FD8) of the displays and the Y angle limits.
-const PI_SHORT: f32 = 3.141592;
+const PI_SHORT: f32 = f32::from_bits(0x4049_0FD8);
 
 const SIZE: u16 = 709;
 const POSITION: u16 = 712;
@@ -73,9 +73,11 @@ impl PhysicsDialog {
             p.translation = [0.0; 3];
             p.rotation = [0.0, 0.0, 0.0, 1.0];
         }
-        let mut d = PhysicsDialog::default();
-        d.body = (!rigids.is_empty()).then_some(0);
-        d.joint = (!joints.is_empty()).then_some(0);
+        let mut d = PhysicsDialog {
+            body: (!rigids.is_empty()).then_some(0),
+            joint: (!joints.is_empty()).then_some(0),
+            ..PhysicsDialog::default()
+        };
         d.show_body(&rigids);
         d.show_joint(&joints);
         doc.edit.physics_scratch = Some((rigids, joints));

@@ -230,7 +230,7 @@ fn commit_blinks(ctx: &mut Ctx, f: &[Field]) -> Result<(), String> {
     Ok(())
 }
 
-/// Menu 230 (`:1709`): every morph weight 0. The C++ sets no modified flag; the editor does.
+/// Menu 230 (`:1709`): every morph weight 0. The C++ sets no modified flag.
 fn reset_morphs(ctx: &mut Ctx) -> Result<(), String> {
     gated(ctx, Mode::Model, "menu:230")?;
     ctx.editor.apply(Command::ResetMorphs)

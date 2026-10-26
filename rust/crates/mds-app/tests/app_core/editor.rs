@@ -108,12 +108,12 @@ fn selections_leave_the_scene_unmodified() {
         .unwrap();
     e.apply(Command::SelectMorphLane { lane: 2, morph: 0 })
         .unwrap();
+    let camera = e.camera;
     e.apply(Command::ClickFrame(7)).unwrap();
-    assert_eq!(
-        e.camera,
-        scene::track_camera(&e.doc, 7).unwrap(),
-        "a click seeks"
-    );
+    assert_eq!(e.doc.pmm.timeline.current_frame, 7, "a click seeks");
+    // The model view does not follow the camera track (`cameraView`,
+    // `src/render/debug_geometry.cpp:476`).
+    assert_eq!(e.camera, camera);
     let grouped = e
         .doc
         .pmm
@@ -220,4 +220,38 @@ fn an_unregistered_pose_edit_stays_on_screen() {
         [0.0, 0.0, 0.0, 1.0],
         "the keys' pose at another frame"
     );
+}
+
+/// The model view (`src/render/debug_geometry.cpp:472` to `:566`): the camera state's rotation
+/// and distance about the reference point (the origin in mode 0), the eye moved by the view
+/// offsets `camera_state[3..5]`. A document that opens in it shows its offsets, and the pans
+/// (`SetViewOffset` and the moved view) survive a seek and a frame step, which move the camera
+/// state in camera mode only.
+#[test]
+fn the_model_view_keeps_its_view_offsets() {
+    let mut e = open("swing600.pmm");
+    assert_eq!(e.doc.pmm.settings.options[0], 0, "model mode");
+    e.doc.pmm.camera_state[3] = 2.0;
+    e.doc.pmm.camera_state[4] = 5.0;
+    let s = e.doc.pmm.camera_state;
+    let reopened = Editor::new(e.doc.clone(), e.path.clone()).unwrap();
+    let mut want = Camera {
+        target: [0.0; 3],
+        ..scene::state_camera(&e.doc)
+    };
+    mds_app::ui::viewport::pan_view_offset(&mut want, s[3], s[4]);
+    assert_eq!(reopened.camera, want);
+    assert_eq!(
+        want.target,
+        [2.0, 5.0, 0.0],
+        "no rotation: the offsets are x and y"
+    );
+
+    let mut e = reopened;
+    e.apply(Command::SetViewOffset([3.0, 4.0])).unwrap();
+    mds_app::ui::viewport::pan_view_offset(&mut e.camera, 1.0, -1.0);
+    let panned = e.camera;
+    e.seek(20).unwrap();
+    e.step_frame(true).unwrap();
+    assert_eq!(e.camera, panned);
 }

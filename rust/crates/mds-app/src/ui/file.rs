@@ -364,17 +364,12 @@ fn open(ctx: &mut Ctx) -> Result<(), String> {
     }
 }
 
-/// `LoadSceneFile` of `path`; the auto-interpolation and physics check boxes carry over, as
-/// `Document::load_scene` keeps them. A scene whose model files do not all load is refused (the
+/// `LoadSceneFile` of `path`; what the C++ keeps across the load carries over ([`Editor::adopt`]). A scene whose model files do not all load is refused (the
 /// cancel of `IDD_PMM_MISSING_MODEL`, `src/io/pmm_load_v2.cpp:1056`): the editor cannot draw
 /// or simulate a model without its file, and the document has no call that replaces or drops a
 /// model record, which the dialog's locate and skip need.
 pub fn open_path(ctx: &mut Ctx, path: &Path) -> Result<(), String> {
-    let mut fresh = Editor::open(path)?;
-    let (old, new) = (&ctx.editor.doc.edit, &mut fresh.doc.edit);
-    new.auto_interpolation = old.auto_interpolation;
-    new.physics_checkbox = old.physics_checkbox;
-    *ctx.editor = fresh;
+    ctx.editor.adopt(Editor::open(path)?)?;
     *ctx.status = path.display().to_string();
     Ok(())
 }

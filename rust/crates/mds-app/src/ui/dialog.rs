@@ -39,9 +39,6 @@
 //!   and rejects a frame rate of 0 or less, which the C++ does not check.
 //! * A command that fails keeps its dialog open with the error on the status line (the C++ closes
 //!   it and the handler returns with nothing changed).
-//! * [`apply_cpp`] puts the modified flag back after a command whose C++ handler sets no
-//!   `SceneModified` where the document's rule (`Document::marks_modified`, which knows an empty
-//!   clipboard) differs from the `Editor`'s.
 //! * The outside parent dialog shows the readout of the result on a copy of the document; the PMM
 //!   holds the Japanese bone names only, so the English names are not shown.
 //! * The physics model dialog edits a dense scratch list (`EditState::physics_scratch`): after a
@@ -142,7 +139,8 @@ const ACTIONS: &[Action] = &[
         Gate::Camera,
         true
     ),
-    opens!("dlg:IDD_GRAVITY", "IDD_GRAVITY", Gate::Any, true),
+    // Menu 266 runs while playing (`DisablePlaybackMenus` leaves it, `playback_state.cpp:67`).
+    opens!("dlg:IDD_GRAVITY", "IDD_GRAVITY", Gate::Any, false),
     opens!(
         "dlg:IDD_PHYSICS_FRAME_CONVERSION",
         "IDD_PHYSICS_FRAME_CONVERSION",
@@ -1482,17 +1480,10 @@ fn shadow_color(ctx: &mut Ctx) -> Result<(), String> {
 
 // ---- the document commands as the C++ handlers leave SceneModified --------------------------
 
-/// `Editor::apply`, then the modified flag as the C++ handler leaves it. `Editor` marks the
-/// document by `Command::marks_modified`, which does not know that a paste with an empty
-/// clipboard changes nothing; where `Document::marks_modified` is false the flag is put back.
+/// `Editor::apply`, which marks the scene as `Document::marks_modified` says. Kept for the
+/// background area's three calls; it goes once they call `Editor::apply`.
 pub fn apply_cpp(ctx: &mut Ctx, cmd: Command) -> Result<(), String> {
-    let marks = ctx.editor.doc.marks_modified(&cmd);
-    let modified = ctx.editor.modified;
-    ctx.editor.apply(cmd)?;
-    if !marks {
-        ctx.editor.modified = modified;
-    }
-    Ok(())
+    ctx.editor.apply(cmd)
 }
 
 /// `EnglishUI()`.
@@ -1607,7 +1598,7 @@ fn ok_scale(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
         morphs: f.c[1],
         display: f.c[2],
     };
-    apply_cpp(ctx, Command::ScaleFrames(p))
+    ctx.editor.apply(Command::ScaleFrames(p))
 }
 
 // ---- 288, 289: model draw and calculation order ---------------------------------------------
@@ -1705,12 +1696,12 @@ fn row_slots(f: &Form) -> Vec<u8> {
 /// `ApplyModelDisplayOrderDialog` (`model_order_dialog.cpp:85`): row `i` takes combo index
 /// `i + 1`, and the camera entry is selected.
 fn ok_draw_order(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
-    apply_cpp(ctx, Command::SetModelDrawOrder(row_slots(f)))
+    ctx.editor.apply(Command::SetModelDrawOrder(row_slots(f)))
 }
 
 /// `ApplyModelCalculateOrderDialog` (`model_order_dialog.cpp:54`): row `i` takes order `i`.
 fn ok_calc_order(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
-    apply_cpp(ctx, Command::SetModelCalcOrder(row_slots(f)))
+    ctx.editor.apply(Command::SetModelCalcOrder(row_slots(f)))
 }
 
 /// Selects row `i` of the open order or accessory dialog.
@@ -1848,11 +1839,12 @@ fn ok_accessory(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
                 slot: *slot,
                 name: text.clone(),
             };
-            apply_cpp(ctx, cmd)?;
+            ctx.editor.apply(cmd)?;
         }
     }
-    apply_cpp(ctx, Command::SetAccessoryOrder(row_slots(f)))?;
-    apply_cpp(ctx, Command::SetAccessoryRenderSplit(field_int(f, 1)))
+    ctx.editor.apply(Command::SetAccessoryOrder(row_slots(f)))?;
+    ctx.editor
+        .apply(Command::SetAccessoryRenderSplit(field_int(f, 1)))
 }
 
 /// The name box of the open accessory dialog and Enter in it (button 633).
@@ -2191,24 +2183,22 @@ fn op_body(ui: &mut egui::Ui, ctx: &mut Ctx, f: &mut Form, en: bool) -> Done {
 fn op_apply(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
     let s = f.op.selector;
     let parent = *f.op.links.get(s).ok_or("no such selector")?;
-    apply_cpp(
-        ctx,
-        Command::ApplyOutsideParent {
-            selector: s as u32,
-            parent,
-        },
-    )
+    ctx.editor.apply(Command::ApplyOutsideParent {
+        selector: s as u32,
+        parent,
+    })
 }
 
 /// Button 632, `ResetModelSelection`: the records become a display key.
 fn op_register(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
-    apply_cpp(ctx, Command::RegisterOutsideParents(f.op.links.clone()))
+    ctx.editor
+        .apply(Command::RegisterOutsideParents(f.op.links.clone()))
 }
 
 /// The dialog ends with Cancel, Esc and the close button alike (`EndDialog(IDOK)`,
 /// `dialog_procs.cpp:116`), and the caller marks the scene modified and seeks if 630 or 632 ran.
 fn op_close(ctx: &mut Ctx, _: &Form) {
-    if let Err(e) = apply_cpp(ctx, Command::CloseOutsideParentDialog) {
+    if let Err(e) = ctx.editor.apply(Command::CloseOutsideParentDialog) {
         *ctx.status = e;
     }
 }
@@ -2329,7 +2319,7 @@ fn names_commit(ctx: &mut Ctx, f: &Form, which: usize) {
         name,
         text: f.t[which].clone(),
     };
-    if let Err(e) = apply_cpp(ctx, cmd) {
+    if let Err(e) = ctx.editor.apply(cmd) {
         *ctx.status = e;
     }
 }
@@ -2565,7 +2555,7 @@ fn ok_toon(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
             missing.push(name);
         }
     }
-    apply_cpp(ctx, Command::SetToonFileNames(names))?;
+    ctx.editor.apply(Command::SetToonFileNames(names))?;
     *ctx.status = match missing.last() {
         None => preserve_notice(ctx).into(),
         Some(name) if en => format!(
@@ -3304,7 +3294,8 @@ fn ok_physics_model(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
     physics_collect_body(ctx, &mut f)?;
     physics_collect_joint(ctx, &mut f)?;
     let (rigids, joints) = scratch(ctx)?.clone();
-    apply_cpp(ctx, Command::SetPhysicsModel { rigids, joints })?;
+    ctx.editor
+        .apply(Command::SetPhysicsModel { rigids, joints })?;
     ctx.editor.doc.edit.physics_scratch = None;
     *ctx.status = preserve_notice(ctx).into();
     Ok(())

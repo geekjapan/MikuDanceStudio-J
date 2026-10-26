@@ -16,7 +16,7 @@
 //! The keys do nothing in camera mode, as the C++ gates them on `modelMode()`.
 //!
 //! The edit mode, the selection and the copy are no scene edit in the C++ (none sets
-//! `SceneModified`), so [`view_command`] keeps [`Editor::modified`] as it was.
+//! `SceneModified`), and the editor leaves [`Editor::modified`] as it was.
 
 use super::camera_panel::camera_mode_only;
 use super::model_panel::{combo_len, combo_text, selected_index};
@@ -78,18 +78,10 @@ fn model_key(ctx: &mut Ctx, run: fn(&mut Ctx) -> Result<(), String>) -> Result<(
     }
 }
 
-/// `cmd` for a view or selection function: the scene stays unmodified.
-fn view_command(ctx: &mut Ctx, cmd: Command) -> Result<(), String> {
-    let modified = ctx.editor.modified;
-    ctx.editor.apply(cmd)?;
-    ctx.editor.modified = modified;
-    Ok(())
-}
-
 /// The radios 490 to 493 and the keys X and Z: `timeline.edit_mode`.
 fn edit_mode(ctx: &mut Ctx, mode: i32) -> Result<(), String> {
     model_mode_only(ctx)?;
-    view_command(ctx, Command::SetEditMode(mode))
+    ctx.editor.apply(Command::SetEditMode(mode))
 }
 
 /// Key C: the bone mode radio, off when it was on.
@@ -101,13 +93,13 @@ fn toggle_bone_mode(ctx: &mut Ctx) -> Result<(), String> {
 /// Button 494 and key A, which also checks the bone mode radio.
 fn select_all(ctx: &mut Ctx) -> Result<(), String> {
     model_mode_only(ctx)?;
-    view_command(ctx, Command::SelectAllBones)
+    ctx.editor.apply(Command::SelectAllBones)
 }
 
 /// Button 501 and key S.
 fn select_unregistered(ctx: &mut Ctx) -> Result<(), String> {
     model_mode_only(ctx)?;
-    view_command(ctx, Command::SelectUnregisteredBones)
+    ctx.editor.apply(Command::SelectUnregisteredBones)
 }
 
 fn reset(ctx: &mut Ctx) -> Result<(), String> {
@@ -117,7 +109,7 @@ fn reset(ctx: &mut Ctx) -> Result<(), String> {
 
 fn copy(ctx: &mut Ctx) -> Result<(), String> {
     model_mode_only(ctx)?;
-    view_command(ctx, Command::CopyBonePose)
+    ctx.editor.apply(Command::CopyBonePose)
 }
 
 /// Button 497, or 498 with `mirror`.

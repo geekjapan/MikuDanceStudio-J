@@ -373,12 +373,12 @@ fn the_edge_color_picker_stores_the_chosen_color() {
     rig.frame(vec![], view::pass);
     assert!(rig.options().outline_dialog.is_some());
 
+    rig.editor.modified = false;
     rig.with_ctx(|ctx| view::set_outline_color(ctx, [10, 20, 30]))
         .unwrap();
     assert_eq!(rig.editor.doc.pmm.appearance.outline_color, [10, 20, 30]);
-    // The picker (`command_view_menu.cpp:1464` on) sets no `SceneModified`; `Editor` still marks
-    // it (editor.rs, slice appfix2), so the rule is read from the document.
-    assert!(!Command::SetOutlineColor([10, 20, 30]).marks_modified());
+    // The picker (`command_view_menu.cpp:1464` on) sets no `SceneModified`.
+    assert!(!rig.editor.modified);
 }
 
 #[test]

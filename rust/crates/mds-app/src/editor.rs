@@ -460,6 +460,48 @@ impl Editor {
         self.follow_track(frame)
     }
 
+    /// `LoadVsqFile` of the `.vsq` at `path` onto the selected model (menu 224, a dropped file
+    /// when `dropped`; [`Document::lip_sync`]), then the frame the load moved to in the live
+    /// models, as a seek. Both callers set `SceneModified` after the load, whatever it did
+    /// (`command_file_menu.cpp:1169`, `ui_dropfiles.cpp:261`). The `.txt` it writes beside the VSQ
+    /// ([`mds_vsq::txt_path`]) is a text-mode file, with CRLF lines on Windows. The inner `Err` is
+    /// a load that stopped, whose message box is the caller's.
+    pub fn lip_sync(
+        &mut self,
+        path: &Path,
+        dropped: bool,
+    ) -> Result<Result<(), mds_vsq::Stop>, String> {
+        self.stopped()?;
+        let vsq = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let run = self.doc.lip_sync(&vsq, dropped);
+        if run.is_ok() || !dropped {
+            self.modified = true;
+        }
+        // The keys, the frame and the timeline start change even when a key fails to register.
+        self.sync_keys()?;
+        let frame = self.current_frame();
+        self.physics.seek(frame);
+        self.follow_track(frame)?;
+        let run = run.map_err(|e| e.to_string())?;
+        let name = path.to_string_lossy();
+        let txt = mds_vsq::txt_path(&name).ok_or("a VSQ path without .vsq")?;
+        let mut text = Vec::with_capacity(run.txt.len());
+        for &b in &run.txt {
+            if cfg!(windows) && b == b'\n' {
+                text.push(b'\r');
+            }
+            text.push(b);
+        }
+        std::fs::write(&txt, text).map_err(|e| format!("{txt}: {e}"))?;
+        Ok(run.outcome.map(|_| ()))
+    }
+
+    /// Menu 278, restore texture (`command_view_menu.cpp:1343`): every texture file read again
+    /// ([`Assets::reload_textures`]); returns the files found that did not decode.
+    pub fn reload_textures(&mut self) -> Vec<(String, String)> {
+        self.assets.reload_textures(&self.doc, &self.dir)
+    }
+
     /// The physics reset, menu 268 (`MDS_CMD_RESET_PHYSICS_BODIES`).
     pub fn reset_physics(&mut self) {
         self.physics.reset();

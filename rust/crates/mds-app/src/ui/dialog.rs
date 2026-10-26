@@ -43,8 +43,8 @@
 //!   holds the Japanese bone names only, so the English names are not shown.
 //! * The physics model dialog edits a dense scratch list (`EditState::physics_scratch`): after a
 //!   delete and an add the new body is `BODY_<count>`, where the C++ reuses a free slot. The
-//!   committed model does not rebuild the live physics world (an `Editor` limitation), and a
-//!   changed rigid body or joint name has to be ASCII (there is no Shift-JIS encoder here).
+//!   committed model rebuilds the live physics world, and the rigid body and joint names are
+//!   written in Shift-JIS.
 //! * The English names dialog does not select the bone it shows, and keeps no
 //!   `FrameRangeStartFrame` for the frame scale dialog.
 //! * The window is not modal. Playback still greys out the actions that edit the document.
@@ -2771,23 +2771,34 @@ fn read_y_limit(text: &mut String, size: usize, en: bool) -> (f32, Option<&'stat
 }
 
 /// A name box into a `FixedSjis`: `sprintf_s` / `strcpy_s` of the typed text, cut to the buffer
-/// (the rest of the buffer keeps its bytes). There is no Shift-JIS encoder in this crate, so a
-/// changed name has to be ASCII.
+/// (the rest of the buffer keeps its bytes). The ANSI edit box holds the text in Shift-JIS (cp932);
+/// a character it has no code for reads back as `?`.
 fn set_name<const N: usize>(name: &mut FixedSjis<N>, typed: &str) -> Result<(), String> {
     let typed = window_text(typed, 100);
     if name.text == typed {
         return Ok(());
     }
-    if !typed.is_ascii() {
-        return Err(
-            "a name that is not ASCII needs a Shift-JIS encoder (not available here)".into(),
-        );
-    }
-    let bytes = &typed.as_bytes()[..typed.len().min(N - 1)];
+    let sjis = shift_jis(typed);
+    let bytes = &sjis[..sjis.len().min(N - 1)];
     name.raw[..bytes.len()].copy_from_slice(bytes);
     name.raw[bytes.len()] = 0;
     name.text = decode_sjis(&name.raw);
     Ok(())
+}
+
+/// `text` in Shift-JIS, `?` for a character cp932 has no code for (`WideCharToMultiByte`'s
+/// default character).
+fn shift_jis(text: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    for c in text.chars() {
+        let mut buf = [0; 4];
+        let (bytes, _, unmapped) = encoding_rs::SHIFT_JIS.encode(c.encode_utf8(&mut buf));
+        match unmapped {
+            true => out.push(b'?'),
+            false => out.extend_from_slice(&bytes),
+        }
+    }
+    out
 }
 
 /// One body box read into the record, as `CollectBodyEdits` (all of them, in order) and the

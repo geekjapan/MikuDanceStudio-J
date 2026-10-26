@@ -637,3 +637,28 @@ fn the_physics_dialog_tells_the_viewport_which_record_it_has_selected() {
     rig.ok().unwrap();
     assert_eq!(record_target(&rig), None);
 }
+
+/// The name boxes 705 and 740 are ANSI edit boxes: `CollectBodyEdits` and `CollectJointEdits`
+/// copy their Shift-JIS bytes into the 20-byte names (`physics_model_dialog.cpp:1129` on). A
+/// character cp932 has no code for reads back as `?`.
+#[test]
+fn the_physics_dialog_writes_the_names_in_shift_jis() {
+    let mut rig = lips();
+    rig.run("dlg:IDD_PHYSICS_MODEL").unwrap();
+    rig.with(|c| dialog::physics_text(c, 705, "剛体")).unwrap();
+    rig.with(|c| dialog::physics_text(c, 740, "関節😀"))
+        .unwrap();
+    rig.ok().unwrap();
+    let p = pmd(&rig)
+        .extension
+        .as_ref()
+        .unwrap()
+        .physics
+        .as_ref()
+        .unwrap();
+    let body = &p.rigids[0].name;
+    assert_eq!(body.raw[..5], [0x8d, 0x84, 0x91, 0xcc, 0]);
+    assert_eq!(body.text, "剛体");
+    let joint = &p.joints.as_ref().unwrap()[0].name;
+    assert_eq!(joint.raw[..6], [0x8a, 0xd6, 0x90, 0xdf, b'?', 0]);
+}

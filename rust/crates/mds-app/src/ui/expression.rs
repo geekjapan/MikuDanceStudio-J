@@ -8,13 +8,10 @@
 //! question boxes are [`super::edit::Form`]s.
 //!
 //! The VSQ lip sync (224, `LoadVsqFile`) asks for a `.vsq` file and runs
-//! [`mds_doc::Document::lip_sync`] on it, in model mode only (`ApplyModelComboSelection` greys
-//! the item in camera mode, `src/window/ui_model_reload.cpp:453`). It is a document method, not a
-//! [`Command`], so the editor does not see it: [`lip_sync`] brings the live models up to date
-//! with a no-op edit and sets the modified flag, which the menu handler does after the load
-//! (`:1169`). The text dump that `LoadVsqFile` writes beside the VSQ is not written, and the
-//! message box of a rejected file (`mds_vsq::Reject::message`) shows as the stop reason on the
-//! status line, because `mds-app` has no dependency on `mds-vsq` to name the type.
+//! [`crate::editor::Editor::lip_sync`] on it, in model mode only (`ApplyModelComboSelection` greys
+//! the item in camera mode, `src/window/ui_model_reload.cpp:453`): the keys, the live models at
+//! the frame the load moved to, the modified flag (`:1169`) and the text dump beside the VSQ.
+//! The message box of a rejected file is the error on the status line.
 //!
 //! The menus pick morphs by their kind (`MorphRecord::type`), not by their lane, so on a PMD the
 //! three deletes and the shift find nothing (`tests/fixtures/rust/script2/README.md`).
@@ -23,7 +20,9 @@ use super::edit::{gated, localized, open, say, Field, Form, Mode, Text};
 use super::{button, help, Ctx};
 use crate::actions::Action;
 use mds_doc::Command;
+use mds_formats::text::decode_sjis;
 use rfd::FileDialog;
+use std::path::Path;
 
 const ACTIONS: &[Action] = &[
     Action::run("menu:226", delete_lip, true),
@@ -104,31 +103,26 @@ fn load_vsq(ctx: &mut Ctx) -> Result<(), String> {
     else {
         return Ok(());
     };
-    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    lip_sync(ctx, &bytes)
+    lip_sync(ctx, &path, false)
 }
 
-/// `LoadVsqFile` on the bytes of a VSQ ([`mds_doc::Document::lip_sync`]) and `SceneModified`.
-pub fn lip_sync(ctx: &mut Ctx, vsq: &[u8]) -> Result<(), String> {
-    gated(ctx, Mode::Model, "menu:224")?;
-    let run = ctx.editor.doc.lip_sync(vsq, false);
-    // The keys, the frame and the timeline start changed even when a key failed to register.
-    resync(ctx)?;
-    let run = run.map_err(|e| e.to_string())?;
-    ctx.editor.modified = true;
-    match run.outcome {
-        Ok(_) => Ok(()),
-        Err(stop) => Err(format!("lip sync stopped: {stop:?}")),
+/// `LoadVsqFile` of the `.vsq` at `path` ([`crate::editor::Editor::lip_sync`]; `dropped` for a
+/// dropped file). A rejected file's message box (`mds_vsq::Reject::message`) is the error, as
+/// `caption: text`, on the status line like the other info boxes of the area.
+pub fn lip_sync(ctx: &mut Ctx, path: &Path, dropped: bool) -> Result<(), String> {
+    if !dropped {
+        gated(ctx, Mode::Model, "menu:224")?;
     }
-}
-
-/// An edit that changes nothing in the document, which makes the editor copy the keys into the
-/// live models and settle the physics world at the frame the load moved to.
-fn resync(ctx: &mut Ctx) -> Result<(), String> {
-    let start = ctx.editor.doc.pmm.timeline.start_frame;
-    ctx.editor.apply(Command::SetTimelineStart(start))?;
-    ctx.editor.physics.seek(ctx.editor.current_frame());
-    Ok(())
+    let stop = match ctx.editor.lip_sync(path, dropped)? {
+        Ok(()) => return Ok(()),
+        Err(stop) => stop,
+    };
+    let mds_vsq::Stop::Rejected(reject) = stop else {
+        return Err(format!("lip sync stopped: {stop:?}"));
+    };
+    let english = ctx.egui.as_ref().is_some_and(help::english);
+    let (text, caption) = reject.message(english);
+    Err(format!("{}: {}", decode_sjis(caption), decode_sjis(text)))
 }
 
 /// Menu 226 (`command_file_menu.cpp:1323`): `PurgeMorphFrames(app, 3)`.

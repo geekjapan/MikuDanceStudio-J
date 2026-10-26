@@ -13,6 +13,10 @@ mds-formats = { path = "../mds-formats" }
 # The Kinect / OpenNI capture of the MoCap menu.
 mds-kinect = { path = "../mds-kinect" }
 mds-math = { path = "../mds-math" }
+# MME: the plans, the runtime on wgpu, and the vkd3d-shader compiler it loads.
+mds-mme = { path = "../mds-mme" }
+mds-mmert = { path = "../mds-mmert" }
+mds-shader = { path = "../mds-shader" }
 # The WAV the timeline plays and the AVI writer of the recording.
 mds-media = { path = "../mds-media" }
 # The types mds-doc commands carry (`Command::ScaleFrames` takes `mds_ops::RangeScale`).

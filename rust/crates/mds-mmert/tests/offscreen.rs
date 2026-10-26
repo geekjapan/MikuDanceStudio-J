@@ -11,6 +11,9 @@ use mds_mmert::emm::Assignment;
 use mds_mmert::scene::{turn_draw, TurnDraw, TurnObject};
 use mds_mmert::{DrawInput, Effect, Gpu, Model, Scene, Target, BACKBUFFER as MAIN};
 
+mod common;
+use common::vkd3d;
+
 fn data() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data")
 }
@@ -96,26 +99,6 @@ fn default_effect_rows_pick_the_turn_draw() {
         turn_draw(r, &object("chain8.pmx", &plain), None),
         TurnDraw::Host
     );
-}
-
-fn vkd3d() -> Option<mds_shader::vkd3d::Vkd3d> {
-    let lib = match std::env::var_os("MDS_VKD3D_LIB") {
-        Some(p) => PathBuf::from(p),
-        None if cfg!(target_os = "macos") => {
-            std::env::temp_dir().join("mds-vkd3d/macos/lib/libvkd3d-shader.1.dylib")
-        }
-        None => {
-            let arch = if cfg!(target_arch = "x86_64") {
-                "amd64"
-            } else {
-                "arm64"
-            };
-            std::env::temp_dir().join(format!("mds-vkd3d/linux-{arch}/lib/libvkd3d-shader.so.1"))
-        }
-    };
-    mds_shader::vkd3d::Vkd3d::open(&lib)
-        .map_err(|e| eprintln!("SKIP: vkd3d-shader not loaded: {e} (a skip is not a pass)"))
-        .ok()
 }
 
 #[test]

@@ -9,6 +9,7 @@ use super::shape::Shape;
 pub enum PairKind {
     SphereSphere,
     BoxBox,
+    CapsuleCapsule,
     /// Manifold body A is the convex input and body B is the plane input.
     ConvexPlane {
         swapped: bool,
@@ -71,6 +72,7 @@ impl PairManifold {
         let kind = match (shape0, shape1) {
             (Sphere { .. }, Sphere { .. }) => PairKind::SphereSphere,
             (Box { .. }, Box { .. }) => PairKind::BoxBox,
+            (CapsuleY { .. }, CapsuleY { .. }) => PairKind::CapsuleCapsule,
             (Sphere { .. } | Box { .. } | CapsuleY { .. }, StaticPlane { .. }) => {
                 PairKind::ConvexPlane { swapped: false }
             }
@@ -131,6 +133,20 @@ impl PairManifold {
                         length - (a + b),
                         bodies,
                     );
+                }
+                self.refresh(body0.world, body1.world);
+            }
+            PairKind::CapsuleCapsule => {
+                if let Some((normal, point, distance)) = capsule_capsule_contact(
+                    self.shapes[0],
+                    body0.world,
+                    self.shapes[1],
+                    body1.world,
+                    self.threshold,
+                ) {
+                    if distance < self.threshold {
+                        self.add_contact(normal, point, distance, bodies);
+                    }
                 }
                 self.refresh(body0.world, body1.world);
             }
@@ -363,3 +379,75 @@ mod tests;
 #[cfg(test)]
 #[path = "../../tests/pure_bullet/box_box.rs"]
 mod box_box_tests;
+
+fn capsule_capsule_contact(
+    shape_a: Shape,
+    a: Transform,
+    shape_b: Shape,
+    b: Transform,
+    threshold: f32,
+) -> Option<(Vec3, Vec3, f32)> {
+    let Shape::CapsuleY {
+        radius: ra,
+        half_height: ha,
+    } = shape_a
+    else {
+        unreachable!()
+    };
+    let Shape::CapsuleY {
+        radius: rb,
+        half_height: hb,
+    } = shape_b
+    else {
+        unreachable!()
+    };
+    let da = Vec3(std::array::from_fn(|i| a.basis.0[i][1]));
+    let db = Vec3(std::array::from_fn(|i| b.basis.0[i][1]));
+    let tr = b.origin.sub(a.origin);
+    let [x, y, z] = da.0;
+    let dot = (db.0[2] * z + db.0[0] * x) + db.0[1] * y;
+    let at = (tr.0[2] * z + tr.0[0] * x) + tr.0[1] * y;
+    let bt = (tr.0[2] * db.0[2] + tr.0[1] * db.0[1]) + tr.0[0] * db.0[0];
+    let denom = 1.0 - dot * dot;
+    let mut ta = if denom == 0.0 {
+        0.0
+    } else {
+        ((at - bt * dot) / denom).clamp(-ha, ha)
+    };
+    let mut tb = ta * dot - bt;
+    if tb < -hb {
+        tb = -hb;
+        ta = (tb * dot + at).clamp(-ha, ha);
+    } else if tb > hb {
+        tb = hb;
+        ta = (tb * dot + at).clamp(-ha, ha);
+    }
+    let offset_b = db.scale(tb);
+    let pts = tr.sub(da.scale(ta)).add(offset_b);
+    let [px, py, pz] = pts.0;
+    let len2 = (pz * pz + py * py) + px * px;
+    let distance = (len2.sqrt() - ra) - rb;
+    if distance > threshold {
+        return None;
+    }
+    let normal = if len2 <= f32::EPSILON * f32::EPSILON {
+        if z.abs() > 0.70710677 {
+            let inv = 1.0 / (z * z + y * y).sqrt();
+            Vec3([0.0, -(z * inv), inv * y])
+        } else {
+            let inv = 1.0 / (x * x + y * y).sqrt();
+            Vec3([-(y * inv), x * inv, 0.0])
+        }
+    } else {
+        pts.scale(-(1.0 / len2.sqrt()))
+    };
+    Some((
+        normal,
+        b.origin.add(offset_b).add(normal.scale(rb)),
+        distance,
+    ))
+}
+
+#[cfg(test)]
+#[path = "../../tests/pure_bullet/capsule_capsule.rs"]
+mod capsule_capsule_tests;

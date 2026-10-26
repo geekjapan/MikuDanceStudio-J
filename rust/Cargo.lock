@@ -1504,6 +1504,10 @@ name = "mds-trace"
 version = "0.1.0"
 
 [[package]]
+name = "mds-vkd3d"
+version = "0.1.0"
+
+[[package]]
 name = "mds-vsq"
 version = "0.1.0"
 

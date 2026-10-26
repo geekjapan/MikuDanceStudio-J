@@ -1,0 +1,11 @@
+[Info]
+Version = 3
+
+[Object]
+Acs0 = C:\mds\w2-winoracle3\repo\out\ci\build\Release\tri2.vac
+
+[Effect]
+Default = none
+Acs0 = none
+Acs0.show = true
+

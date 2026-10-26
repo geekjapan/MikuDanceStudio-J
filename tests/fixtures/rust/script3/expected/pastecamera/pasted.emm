@@ -1,0 +1,14 @@
+[Info]
+Version = 3
+
+[Object]
+Acs0 = C:\mds\w2-winoracle3\repo\out\ci\build\Release\tri.x
+Acs1 = C:\mds\w2-winoracle3\repo\out\ci\build\Release\tri2.x
+
+[Effect]
+Default = none
+Acs0 = none
+Acs0.show = true
+Acs1 = none
+Acs1.show = true
+

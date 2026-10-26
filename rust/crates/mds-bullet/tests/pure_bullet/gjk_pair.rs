@@ -37,6 +37,7 @@ fn outer_and_persistent_mixed_pairs_match_native_words() {
         native
             .as_deref()
             .unwrap_or(include_str!("../gjk_pair_data/native.tsv")),
+        std::env::var("MDS_GJK_PAIR_ACTUAL").ok().as_deref(),
     );
 }
 #[test]
@@ -64,16 +65,18 @@ fn fallback_replacements_in_every_mixed_order_match_native_words() {
         .into_iter()
         .collect()
     );
-    replay(inputs, native);
+    replay(inputs, native, None);
 }
 
-fn replay(inputs: &str, native: &str) {
+fn replay(inputs: &str, native: &str, capture: Option<&str>) {
     assert_eq!(inputs.lines().count(), native.lines().count());
     let mut simplex = VoronoiSimplexSolver::default();
     simplex.add_vertex(Vec3([1., 2., 3.]), Vec3([4., 5., 6.]), Vec3([3., 3., 3.]));
     let mut seed = Vec3::ZERO;
     assert!(simplex.closest(&mut seed));
     let mut manifold = None;
+    let mut captured = String::new();
+    let mut mismatches = String::new();
     for (input, expected) in inputs.lines().zip(native.lines()) {
         let c: Vec<_> = input.split_whitespace().collect();
         let v: Vec<_> = c[4..]
@@ -158,8 +161,22 @@ fn replay(inputs: &str, native: &str) {
             p.applied_impulse = 3.25 + i as f32;
             p.lateral_impulses = [0.75, -0.5];
         }
-        assert_eq!(actual, expected, "input {input}");
+        writeln!(captured, "{actual}").unwrap();
+        if actual != expected {
+            writeln!(
+                mismatches,
+                "input {input} actual {actual} expected {expected}"
+            )
+            .unwrap();
+        }
     }
+    if let Some(path) = capture {
+        std::fs::write(path, captured).unwrap();
+    }
+    assert!(
+        mismatches.is_empty(),
+        "MDS_GJK_PAIR_NATIVE_MISMATCH_BEGIN\n{mismatches}MDS_GJK_PAIR_NATIVE_MISMATCH_END"
+    );
 }
 
 #[test]

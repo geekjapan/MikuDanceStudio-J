@@ -6,7 +6,12 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 ROOT=Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tools/bullet-rust-support-check'))
+from host_profiles import fields
+
+TEST = 'gjk_pair_tests::outer_and_persistent_mixed_pairs_match_native_words'
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -32,22 +37,90 @@ def main():
         'strict-manifold-threshold':('contact',contact.replace('if distance > self.threshold {','if distance >= self.threshold {')),
         'float-threshold-sum':('contact',contact.replace('let sum = self.shapes[1].margin() as f64','let sum = self.shapes[1].margin()').replace('(self.threshold as f64 + self.shapes[0].margin() as f64)','(self.threshold + self.shapes[0].margin())')),
     }
-    results={};env=os.environ.copy();env['MDS_GJK_PAIR_INPUTS']=str(args.inputs.resolve());env['MDS_GJK_PAIR_NATIVE']=str(args.native.resolve())
+    results = {}
+    clean = {k: v for k, v in os.environ.items() if not k.startswith('MDS_GJK_PAIR_')}
+    env = dict(clean, MDS_GJK_PAIR_INPUTS=str(args.inputs.resolve()), MDS_GJK_PAIR_NATIVE=str(args.native.resolve()))
+    (output / 'results.json').write_text('{}\n')
+    for name, environment in [('baseline-default', clean), ('baseline-full-same-host', env)]:
+        results[name] = run_harness(None, None, output / name, args.crt_rlib, environment)
+        (output / 'evidence.json').write_text(json.dumps(results, indent=2)+'\n')
+        if results[name]['status'] != 'passed':
+            raise SystemExit(f'Mandatory {name} failed; mutations not run')
     for name,(module,changed) in mutations.items():
         assert changed!=(core/(module+'.rs')).read_text(),name
-        directory=output/name;directory.mkdir(exist_ok=True)
-        # The copied contact module's existing private tests still use their original paths.
-        changed=re.sub(r'#\[path = "(../../tests/[^\"]+)"\]',lambda m:'#[path = "'+str((core/m[1]).resolve())+'"]',changed)
-        source=directory/(module+'.rs');source.write_text(changed)
-        harness=(ROOT/'tools/bullet-rust-gjk-pair-check/harness.rs').read_text()
-        harness=re.sub(r'#\[path = "([^\"]+)"\]',lambda m:'#[path = "'+str((ROOT/'tools/bullet-rust-gjk-pair-check'/m[1]).resolve())+'"]',harness)
-        harness=harness.replace(str(core/(module+'.rs')),str(source)).replace('#![allow(dead_code)]','#![allow(dead_code,unused_variables)]')
-        test=directory/'harness.rs';test.write_text(harness);binary=directory/'test'
-        subprocess.run(['rustup','run','1.95.0','rustc','--edition=2021','--test','-O',test,'--extern',f'mds_crtmath={args.crt_rlib.resolve()}','-o',binary],check=True,cwd=ROOT/'rust',env=env)
-        result=subprocess.run([binary,'outer_and_persistent'],capture_output=True,text=True,cwd=ROOT/'rust',env=env)
-        (directory/'test.log').write_text(result.stdout+result.stderr)
-        results[name]='rejected' if result.returncode else 'SURVIVED'
-        print(name,results[name],flush=True)
-    (output/'results.json').write_text(json.dumps(results,indent=2)+'\n')
-    if 'SURVIVED' in results.values():raise SystemExit('A semantic mutation survived')
+        results[name] = run_harness(module, changed, output / name, args.crt_rlib, env)
+        print(name, results[name]['status'], flush=True)
+        (output / 'evidence.json').write_text(json.dumps(results, indent=2)+'\n')
+    statuses = {name: result['status'] for name, result in results.items() if not name.startswith('baseline-')}
+    (output / 'results.json').write_text(json.dumps(statuses, indent=2)+'\n')
+    if len(statuses) != 13 or any(status != 'rejected' for status in statuses.values()):
+        raise SystemExit('A semantic mutation survived or has a validation gap')
+
+
+def classify(result):
+    log = result.stdout + result.stderr
+    gap = {'status': 'validation-gap', 'returncode': result.returncode}
+    if result.returncode == 0:
+        return {'status': 'passed' if re.search(r'test result: ok\. 1 passed; 0 failed;', log) else 'validation-gap', 'returncode': 0}
+    if result.returncode != 101 or log.count('panicked at ') != 1:
+        return gap
+    if not re.search(r"thread '" + TEST + r"'(?: \(\d+\))? panicked at [^\n]*gjk_pair\.rs:\d+:\d+:\n", log):
+        return gap
+    if not re.search(r'test result: FAILED\. 0 passed; 1 failed; 0 ignored;', log):
+        return gap
+    blocks = re.findall(r'MDS_GJK_PAIR_NATIVE_MISMATCH_BEGIN\n(.*?)\nMDS_GJK_PAIR_NATIVE_MISMATCH_END', log, re.S)
+    if len(blocks) != 1:
+        return gap
+    differences, cases = [], set()
+    for line in blocks[0].splitlines():
+        match = re.fullmatch(r'input (.*?) actual (.*?) expected (.*)', line)
+        if match is None:
+            return gap
+        inputs, actual, expected = [part.split() for part in match.groups()]
+        if len(inputs) != 39 or not inputs[0].isdigit() or not 0 <= int(inputs[0]) < 5081:
+            return gap
+        case = int(inputs[0])
+        if case in cases or inputs[1] not in ['0', '1', '2'] or inputs[2] not in ['0', '1', '2'] or inputs[3] not in ['0', '1']:
+            return gap
+        if any(re.fullmatch('[0-9a-f]{8}', value) is None for value in inputs[4:]):
+            return gap
+        if not actual or not expected or actual[0] != str(case) or expected[0] != str(case) or actual == expected:
+            return gap
+        try:
+            a = dict(zip(fields('gjk-pair', actual), actual[1:]))
+            e = dict(zip(fields('gjk-pair', expected), expected[1:]))
+        except ValueError:
+            return gap
+        cases.add(case)
+        differences.extend([case, field, a.get(field), e.get(field)] for field in dict.fromkeys([*a, *e]) if a.get(field) != e.get(field))
+    return {'status': 'rejected', 'returncode': result.returncode, 'differences': differences} if differences else gap
+
+
+def run_harness(module, changed, directory, crt_rlib, environment):
+    directory.mkdir(parents=True, exist_ok=True)
+    core = ROOT / 'rust/crates/mds-bullet/src/core'
+    harness = (ROOT / 'tools/bullet-rust-gjk-pair-check/harness.rs').read_text()
+    harness = re.sub(r'#\[path = "([^\"]+)"\]', lambda m: '#[path = ' + json.dumps(str((ROOT / 'tools/bullet-rust-gjk-pair-check' / m[1]).resolve())) + ']', harness)
+    if module is not None:
+        changed = re.sub(r'#\[path = "(../../tests/[^\"]+)"\]', lambda m: '#[path = ' + json.dumps(str((core / m[1]).resolve())) + ']', changed)
+        source = directory / (module + '.rs')
+        source.write_text(changed)
+        harness = harness.replace(json.dumps(str(core / (module + '.rs'))), json.dumps(str(source)))
+    harness = harness.replace('#![allow(dead_code)]', '#![allow(dead_code,unused_variables)]')
+    test = directory / 'harness.rs'
+    test.write_text(harness)
+    binary = directory / ('test.exe' if os.name == 'nt' else 'test')
+    command = ['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--test', '-O', str(test), '--extern', f'mds_crtmath={crt_rlib.resolve()}', '-o', str(binary)]
+    try:
+        compiled = subprocess.run(command, capture_output=True, text=True, cwd=ROOT / 'rust', env=environment, timeout=120)
+        (directory / 'compile.log').write_text(compiled.stdout + compiled.stderr)
+        if compiled.returncode:
+            return {'status': 'validation-gap', 'reason': 'compile-failure', 'returncode': compiled.returncode}
+        result = subprocess.run([binary, '--exact', TEST], capture_output=True, text=True, cwd=ROOT / 'rust', env=environment, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {'status': 'validation-gap', 'reason': str(error)}
+    (directory / 'test.log').write_text(result.stdout + result.stderr)
+    return classify(result)
+
+
 if __name__=='__main__':main()

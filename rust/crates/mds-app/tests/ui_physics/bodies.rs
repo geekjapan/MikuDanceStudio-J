@@ -85,6 +85,7 @@ fn pass_paints_the_bodies_over_the_picture_the_viewport_area_allocated() {
     let mut r = Rig::open("swing600.pmm");
     r.run("menu:264").unwrap();
     let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
+    let (red, green) = (Color32::from_rgb(255, 0, 0), Color32::from_rgb(155, 255, 0));
     let mut painted = Vec::new();
     for _ in 0..3 {
         let mut picture = egui::Rect::NOTHING;
@@ -101,6 +102,10 @@ fn pass_paints_the_bodies_over_the_picture_the_viewport_area_allocated() {
                 status: &mut r.status,
             };
             physics::pass(ui, &mut ctx);
+            // The timeline's strip: larger than the picture, and it runs off the window.
+            egui::Panel::bottom("strip").show(ui, |ui| {
+                ui.allocate_exact_size(egui::vec2(9000.0, 150.0), egui::Sense::click_and_drag());
+            });
             egui::CentralPanel::default().show(ui, |ui| {
                 picture = ui
                     .allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag())
@@ -112,7 +117,9 @@ fn pass_paints_the_bodies_over_the_picture_the_viewport_area_allocated() {
             .shapes
             .iter()
             .filter_map(|s| match &s.shape {
-                Shape::LineSegment { points, stroke } => Some((points[0], stroke.color)),
+                Shape::LineSegment { points, stroke } if [red, green].contains(&stroke.color) => {
+                    Some((points[0], stroke.color))
+                }
                 _ => None,
             })
             .collect();
@@ -122,8 +129,6 @@ fn pass_paints_the_bodies_over_the_picture_the_viewport_area_allocated() {
             let first = expected[0];
             let at = picture.min + egui::vec2(first.from[0] as f32, first.from[1] as f32);
             assert!(painted.iter().any(|&(p, _)| p == at));
-            let red = Color32::from_rgb(255, 0, 0);
-            let green = Color32::from_rgb(155, 255, 0);
             assert!(painted.iter().any(|p| p.1 == red) && painted.iter().any(|p| p.1 == green));
             return;
         }

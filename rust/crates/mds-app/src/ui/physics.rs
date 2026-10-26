@@ -281,10 +281,12 @@ pub fn segments(editor: &Editor, size: [i32; 2]) -> Vec<Segment> {
 }
 
 /// The picture the viewport area allocated last pass: the largest widget of the background layer
-/// that senses click and drag.
+/// inside the window that senses click and drag (the timeline's strip is larger but runs off the
+/// window).
 // ponytail: the viewport area publishes no rect, so it is found among the previous pass's widgets;
 // an overlay hook in the viewport area replaces this.
 fn picture_rect(egui: &egui::Context) -> Option<Rect> {
+    let window = egui.content_rect().expand(1.0);
     egui.viewport(|v| {
         v.prev_pass
             .widgets
@@ -293,6 +295,7 @@ fn picture_rect(egui: &egui::Context) -> Option<Rect> {
             .flat_map(|(_, w)| w.iter())
             .filter(|w| w.sense.senses_click() && w.sense.senses_drag())
             .map(|w| w.rect)
+            .filter(|r| window.contains_rect(*r))
             .max_by(|a, b| a.area().total_cmp(&b.area()))
     })
 }

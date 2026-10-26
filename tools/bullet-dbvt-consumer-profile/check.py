@@ -130,6 +130,8 @@ def validate_native(data, inputs):
             raise ValueError('trailing native topology')
         if not re.fullmatch(r'(?:[0-9]+,)*', ranks) or len(ranks.split(',')[:-1]) != len(nodes) + free:
             raise ValueError('malformed native address ranks')
+        if any(int(rank) > 0xffffffffffffffff for rank in ranks.split(',')[:-1]):
+            raise ValueError('native address rank outside u64')
         op = operation.split()[0]
         if op == 'p':
             if not re.fullmatch(r'[01](?:,[0-9]+){6}', events) or any(int(word) > 0xffffffff for word in events.split(',')[1:]):

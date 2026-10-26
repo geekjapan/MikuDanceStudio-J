@@ -54,16 +54,25 @@ static btDbvtVolume bounds(const Array& a) { char locals[sizeof(btDbvtVolume)]; 
         row = self.native_row()
         check.validate_native((row + '\n').encode(), b'i 1 0 0 0 1 1 1\n')
         check.validate_native((row.replace('|0,|', '|4503599627370495,|') + '\n').encode(), b'i 1 0 0 0 1 1 1\n')
+        maximum_rank = row.replace('|0,|', '|18446744073709551615,|')
+        check.validate_native((maximum_rank + '\n').encode(), b'i 1 0 0 0 1 1 1\n')
         check.validate_native(b'1,-1,0,0|_||\n', b'c\n')
         for bad in ('malformed', row + '|extra',
                     row.replace('1,0,0,0,1,1,1', '128,0,0,0,1,1,1'),
                     row.replace(',1,1,1', ',4294967296,1,1'),
                     row.replace('|0,|', '|bad,|'), row.replace('|0,|', '||'),
+                    row.replace('|0,|', '|18446744073709551616,|'),
                     row + '1,', row.replace('1,-1', '1,2147483648')):
             with self.subTest(row=bad), self.assertRaises(ValueError):
                 check.validate_native((bad + '\n').encode(), b'i 1 0 0 0 1 1 1\n')
         with self.assertRaises(ValueError):
             check.validate_native((row + '\n').encode(), b'i\ni\n')
+        malformed_rank = '2,-1,0,0|1,1065353216,0,0,1073741824,1065353216,1065353216|18446744073709551616,|'
+        state_mismatch = self.comparison('assertion `left == right` failed: DBVT_COMPATIBILITY_MISMATCH order 0 operation 0: i 1')
+        self.assertFalse(check.comparison_result(state_mismatch))
+        with self.assertRaises(ValueError):
+            check.validate_native((malformed_rank + '\n').encode(), b'i 1 0 0 0 1 1 1\n')
+            check.comparison_result(state_mismatch)
         with self.assertRaises(ValueError):
             check.validate_native(b'malformed\n' * 2326, b'i\n' * 2326)
 

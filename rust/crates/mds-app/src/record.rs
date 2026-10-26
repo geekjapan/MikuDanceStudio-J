@@ -12,6 +12,10 @@
 //! ([`records`]); then `FinishAviRecord` (`src/app/late_ports.cpp:63`) stops as `StopPlayback`.
 //! Esc stops it early (`PumpEscStop`, `src/app/pump_edit_keys.cpp:368`).
 //!
+//! The frame dump's `ArmFrameStep` (`src/tools/trace_mode.cpp:214`) arms the same loop but poses
+//! every model once more (`PoseAllModels`, `:234`); the application does not, so frame 0 of a
+//! scene with physics differs from the dump in the last bits of the physics bones.
+//!
 //! [`crate::editor::Editor`] runs that loop in its pump; this file has the arithmetic and the
 //! output. Each frame is the frame dump's image ([`crate::dump`]: the 8x sample pattern, the
 //! track camera at the frame), at the size the AVI dialog shows (the render size of menu 212).

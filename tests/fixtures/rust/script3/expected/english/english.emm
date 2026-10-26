@@ -1,0 +1,11 @@
+[Info]
+Version = 3
+
+[Object]
+Pmd0 = C:\mds\w2-cppfix\repo\out\ci\build\Release\english.pmd
+
+[Effect]
+Default = none
+Pmd0 = none
+Pmd0.show = true
+

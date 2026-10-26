@@ -19,7 +19,7 @@ language, and the regenerating steps are those of `../script/README.md`, with
 | `load lip sync <path>` | menu 224 | `LoadVsqFile` (`src/io/vsq_load.cpp`) | The VSQ text the handler writes beside the VSQ (`<stem>.txt`) goes into `<out-dir>`. Below. |
 | `drop <path>` | `WM_DROPFILES` with an HDROP of the absolute path | `HandleDropFiles` (`src/window/ui_dropfiles.cpp`) | Any file a user can drop. A `.vsq` is refused in camera mode with an info box, which is answered OK and written to `messages.tsv`. |
 | `toon <slot> <name>` | menu 261; the modal dialog's edit `708 + <slot>` set to `<name>`, then OK | `EnhanceModelDlgProc`, `CollectToonFileNames` (`src/window/enhance_model_io.cpp`) | Slot 1..10. The reminder box after OK is answered and recorded; the "cannot find" box (owned by the dialog) fails the step. |
-| `english open` | menu 259 | `EnglishNameDlgProc` (`src/window/english_name_dialog.cpp`), modeless | Not in a script, see "Not reached". |
+| `english open` | menu 259 | `EnglishNameDlgProc` (`src/window/english_name_dialog.cpp`), modeless | `english.txt`. |
 | `physics model open` | menu 262 | `PhysicsModelDlgProc` (`src/window/physics_model_dialog.cpp`), modeless | |
 | `dialog text <id> <text>` | `SetWindowTextA` on control `<id>` of the open modeless dialog | | Sets the text only; the dialog reads it on OK or when its combo changes. |
 | `dialog click <id>` | `WM_COMMAND` `BN_CLICKED` of control `<id>` to the dialog | | An auto check box toggles and an auto radio button checks itself first, as a click does. |
@@ -67,6 +67,7 @@ with `L"wt"`, so its lines end in CRLF.
 
 | Script | Inputs | Covers |
 |---|---|---|
+| `english.txt` | `inputs/lips.pmd` | `english open`, the English model name and comment, a bone (combo 669 item 1), a morph (673 item 1), and a group (677 item 0), `dialog ok`; `save pmd` and the PMM; the dialog again with a changed model name and `dialog cancel`; `save pmd`. |
 | `drag.txt` | `chain8.pmx` | `drag` in model mode: the bone keys of センター at 10, 20, 30 dragged by -15 stop at 1, 5, 15 (the head key at 0 holds the first one), then the bone and display keys dragged by +40 (41, 45, 55 and the display key 15 to 55). |
 | `dragcamera.txt` | `../script/inputs/tri.x` | `drag` in camera mode: camera keys 10 and 20, the light key 12, and the accessory key 25 dragged by +7, then by -30 (each stops one frame after its previous key). |
 | `deletemodel.txt` | `chain8.pmx`, `inputs/lips.pmd`, `morph4.pmx`, `tri.x` | `delete model` of the middle model, whose bone 首 parents the accessory and its key at 10, then of the first model. |
@@ -110,6 +111,17 @@ Every saved PMM, VMD, and PMD reads and writes back byte for byte through
 - **`delete model` cuts the accessory parent to model -1 and keeps the bone
   index** (3) in the accessory state and in its key at 10
   (`deletemodel/deleted-lips.pmm`).
+- **The English name dialog opens on x64.** `EnglishNameDlgProc` and
+  `EdgeThicknessDlgProc` cut the address of their edit subclass procedure to 32
+  bits (`(LONG)(LONG_PTR)`) before `SetWindowLongPtrA(.., GWLP_WNDPROC, ..)`, so
+  opening menu 259 ended the process with 0xC000041D (`english.txt` found it);
+  slice `cppfix` casts to `LONG_PTR`, as the other install sites do.
+- **Cancel applies the English name edits too.** `IDCANCEL` and `IDOK` both run
+  `ApplyEnglishNameDialog`; `english/cancelled.pmd` carries "Cancelled Name",
+  and differs from `english/english.pmd` in the model name only. Only OK shows
+  the reminder box (`english/messages.tsv`). The dialog reads an edit
+  when OK or Cancel applies it, or when its own combo changes, not when the
+  text is set.
 - **Cancel drops the physics edit typed before it**: the mass 9 of body 0 is
   not applied, and `pmdedit/cancelled.pmd` equals `edited.pmd`.
 - **The bones of chain8 are on folded group rows**; `drag` presses those
@@ -117,17 +129,6 @@ Every saved PMM, VMD, and PMD reads and writes back byte for byte through
 
 ## Not reached
 
-- **The English name dialog (menu 259).** Opening it ends the process with
-  status 0xC000041D (an exception in a window callback):
-  `EnglishNameDlgProc` subclasses edits 667, 672, 676, and 680 with
-  `SetWindowLongPtrA(.., GWLP_WNDPROC, (LONG)(LONG_PTR)EnglishNameEditSubclassProc)`
-  (`src/window/english_name_dialog.cpp` 510-516), which cuts the procedure's
-  address to 32 bits in the x64 build. With the four casts removed, the
-  commands `english open`, `dialog text 667/668/672/676/680`, `dialog select
-  669/673/677`, `dialog ok`, and `dialog cancel` ran and saved the edited
-  names (checked on a local build; not committed, because `src/window` is
-  outside this slice). `command_view_menu.cpp` 560 has the same cast for the
-  edge thickness edit.
 - **Links that `delete model` cuts beyond the accessory parent**: the camera
   parent and the outside parents of the display keys are set in the
   outside-parent dialog (button 442), which no command opens.
@@ -143,6 +144,12 @@ texts. A PMM saved from a loaded model or accessory also writes `<name>.emm`,
 which holds absolute paths on the host
 (`C:\mds\w2-winoracle3\repo\out\ci\build\Release\...`); nothing else depends
 on the checkout.
+
+`english/` comes from branch `w2-cppfix` on `nanoha-lan`, built at `1502f1e` plus
+the two casts (x64 Release, as below), run 2026-10-26: two runs gave identical
+bytes for every file. Its `english.emm` holds `C:\mds\w2-cppfix\repo\...`. The
+same build reran the other scripts of this directory: every PMM, PMD, VMD, and
+text matches the files below, and the `.emm` files differ by the checkout path.
 
 Build: commit `93301af` of branch `w2-winoracle3` on `nanoha-lan` (Windows,
 x64 Release, VS 2022, `tools/windows/build.ps1 -Testing OFF -Targets
@@ -165,6 +172,7 @@ byte (the `.emm` files differ by the checkout path).
 | `deletemodel.txt` | `68f5155f92316f2f6043bdc60225bddaaaa284384235d76f432d478f4c63a3fa` |
 | `drag.txt` | `4aade940c539178edb85a6ac42c1d91f723b73c9a7a6c3eb89a9534866433a81` |
 | `dragcamera.txt` | `5ed2fbaff7aaf7b6f19c9bdb0e3a732d730165aa4e85ede980acfd24349479f5` |
+| `english.txt` | `e856473bedb786dc99fdaba52acc390ce9cb27e2c597b2b54067ae3656c31a49` |
 | `expected/camref/camera-mode.emm` | `a925c0061c2e50c477b9ae92005e677d2d5f6174a5666969f7096adf64bc231d` |
 | `expected/camref/camera-mode.pmm` | `ce4e43589c06151b1afdb8ef554ee4f4fba8f01a5c4f0dc1be9c7ac105d1f507` |
 | `expected/camref/manifest.tsv` | `737e136e4a7e6d8b618d8ed630a76e08c260a9d9e82feb937d3c48b47026b0a3` |
@@ -197,6 +205,12 @@ byte (the `.emm` files differ by the checkout path).
 | `expected/dragcamera/manifest.tsv` | `6c8a2249cda4ef08fdc23b500c2909639c04f1ae3cc5fae54da93d97d3254941` |
 | `expected/dragcamera/registered.emm` | `bcf3c7e0a814711b475f222541a1ab857787edf8b1d72c7a760ede8f89e62a88` |
 | `expected/dragcamera/registered.pmm` | `a9d811909a97bc6f2ce25a24b73c1eda01b97b32835570723d1577bb95c99c94` |
+| `expected/english/cancelled.pmd` | `95106c5ea394422e217cacdf883b3ce0e89e8861bedc2514acc83e031c52fe2a` |
+| `expected/english/english.emm` | `9d3897f98d746a28d5728bef4713211c04b8852cc5e98b01be529cb22efe995d` |
+| `expected/english/english.pmd` | `368d70f19e1129f7b17ec959cf0c8af9ecb81033627aba3a1191c3f5df40e380` |
+| `expected/english/english.pmm` | `7a2843cadc98913715dcac1d842dad8e95eb5dd687134ec8232abb0b6976d3b8` |
+| `expected/english/manifest.tsv` | `58eb7075d88437fbaa8687753d303822074e50f13c5d7e825d5d77895fe32e3b` |
+| `expected/english/messages.tsv` | `49fdf0a81f5a4acbeb47f25245a337148105172a88620d51e54f4f51696e9669` |
 | `expected/lipsync/basic.txt` | `b90611f4fcb6c72d4417907647fe2705debbf2737c134bb32baf55686f11e817` |
 | `expected/lipsync/drop.emm` | `b15d0c0e7ab50e60b7ba9fced9b46928227b5b82ef81aff7be17e5c75552e146` |
 | `expected/lipsync/drop.pmm` | `68c2c9794df82a1fa10f8d9f40a77405c087c295eadeeabb72690650beff7cba` |

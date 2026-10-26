@@ -507,13 +507,13 @@ INT_PTR CALLBACK EnglishNameDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
         app->EnglishNameEditProc() = reinterpret_cast<WNDPROC>(
             GetWindowLongPtrA(GetDlgItem(hDlg, panel::kModelNameEnEdit), GWLP_WNDPROC));
         SetWindowLongPtrA(GetDlgItem(hDlg, panel::kModelNameEnEdit), GWLP_WNDPROC,
-                          (LONG)(LONG_PTR)EnglishNameEditSubclassProc);
+                          reinterpret_cast<LONG_PTR>(EnglishNameEditSubclassProc));
         SetWindowLongPtrA(GetDlgItem(hDlg, panel::kBoneNameEnEdit), GWLP_WNDPROC,
-                          (LONG)(LONG_PTR)EnglishNameEditSubclassProc);
+                          reinterpret_cast<LONG_PTR>(EnglishNameEditSubclassProc));
         SetWindowLongPtrA(GetDlgItem(hDlg, panel::kMorphNameEnEdit), GWLP_WNDPROC,
-                          (LONG)(LONG_PTR)EnglishNameEditSubclassProc);
+                          reinterpret_cast<LONG_PTR>(EnglishNameEditSubclassProc));
         SetWindowLongPtrA(GetDlgItem(hDlg, panel::kGroupNameEnEdit), GWLP_WNDPROC,
-                          (LONG)(LONG_PTR)EnglishNameEditSubclassProc);
+                          reinterpret_cast<LONG_PTR>(EnglishNameEditSubclassProc));
         InitEnglishNameDialog(hDlg); // 0x43C430
         return 0;
     }

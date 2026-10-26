@@ -1,6 +1,5 @@
 use super::core::math;
-#[path = "../../src/core/joint_rows.rs"]
-mod joint_rows;
+use super::core::joint_rows;
 
 use joint_rows::*;
 use math::{Basis, Vec3};

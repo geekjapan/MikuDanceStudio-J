@@ -2,6 +2,10 @@
 
 #[path = "../src/core/mod.rs"]
 mod core;
+#[path = "pure_bullet/joint_coordinates.rs"]
+mod joint_coordinates;
+#[path = "pure_bullet/joint_rows.rs"]
+mod joint_rows;
 #[path = "pure_bullet/math_vectors.rs"]
 mod math_vectors;
 #[path = "support/pilot_cases.rs"]

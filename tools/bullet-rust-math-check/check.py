@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regenerate/check the native primitive oracle without building mds-bullet-sys."""
 import argparse
+from contextlib import nullcontext
 import os
 from pathlib import Path
 import platform
@@ -11,15 +12,22 @@ import tempfile
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--record", action="store_true", help="replace the committed native bit fixture")
+    parser.add_argument("--out-dir", type=Path, help="retain compiler outputs and native capture in this directory")
     parser.add_argument("--work-dir", type=Path, help="parent for isolated compiler outputs")
     parser.add_argument("--rust-only", action="store_true", help="test frozen fixtures without a C++ compiler")
     args = parser.parse_args()
+    if args.out_dir and args.work_dir:
+        parser.error("use either --out-dir or --work-dir")
     if args.rust_only and args.record:
         parser.error("--record requires the native oracle")
     root = Path(__file__).resolve().parents[2]
     if args.work_dir:
         args.work_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="mds-bullet-math-", dir=args.work_dir) as directory:
+    if args.out_dir:
+        args.out_dir = args.out_dir.resolve()
+        args.out_dir.mkdir(parents=True, exist_ok=True)
+    context = nullcontext(args.out_dir) if args.out_dir else tempfile.TemporaryDirectory(prefix="mds-bullet-math-", dir=args.work_dir)
+    with context as directory:
         work = Path(directory)
         env = dict(os.environ, TMPDIR=str(work), TMP=str(work), TEMP=str(work))
         rust = root / "rust"
@@ -40,6 +48,7 @@ def main():
                  root / "tools/bullet-rust-math-check/oracle.cpp", work / "libmds_crtmath.a",
                  "-o", executable, *native_libraries])
             actual = subprocess.check_output([str(executable)], env=env)
+            (work / "native.tsv").write_bytes(actual)
             fixture = root / "rust/crates/mds-bullet/tests/data/math-native-bits.tsv"
             if args.record:
                 fixture.write_bytes(actual)

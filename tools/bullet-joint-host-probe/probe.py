@@ -149,6 +149,8 @@ def msvc_command(command, profile, out, native_libs):
     src = ROOT / 'recipes/bullet275/bullet-src/src'
     shim = ROOT / 'rust/crates/mds-bullet-sys/shim'
     sources = [x for x in command if x.endswith('.cpp')]
+    # MSVC retains btContactConstraint's default constructor and its manifold dependency.
+    sources.append(str(src / 'BulletCollision/NarrowPhaseCollision/btPersistentManifold.cpp'))
     command = ['cl', '/nologo', '/std:c++17', '/O2', '/fp:precise', '/EHsc', '/W0', '/MD',
                '/DBT_NO_PROFILE=1', f'/I{src}', f'/I{shim}', f'/FI{shim / "det_math.h"}',
                *(['/DWIN32'] if profile == 'msvc-cmake-win32' else []),

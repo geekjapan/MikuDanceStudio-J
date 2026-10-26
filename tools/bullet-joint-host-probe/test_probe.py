@@ -1,5 +1,5 @@
 import importlib.util
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import tempfile
 import json
 import os
@@ -67,6 +67,20 @@ class ProbeTests(unittest.TestCase):
             self.assertIn('kernel32.lib', command)
             self.assertNotIn('/shim/sse_emu', command)
             self.assertTrue(any(arg.startswith('/FI') and arg.endswith('det_math.h') for arg in command))
+
+    def test_msvc_contact_constructor_link_dependency(self):
+        for path_type, root in [(PurePosixPath, '/repo'), (PureWindowsPath, 'C:/repo')]:
+            root = path_type(root)
+            src = root / 'recipes/bullet275/bullet-src/src'
+            sources = [str(root / 'tools/bullet-rust-solver-check/oracle.cpp'),
+                       str(src / 'BulletDynamics/ConstraintSolver/btContactConstraint.cpp')]
+            manifold = str(src / 'BulletCollision/NarrowPhaseCollision/btPersistentManifold.cpp')
+            for profile in ['msvc-ffi-default', 'msvc-cmake-win32']:
+                with self.subTest(path_type=path_type.__name__, profile=profile), \
+                        mock.patch.object(probe, 'ROOT', root):
+                    command = probe.msvc_command(['clang++', *sources], profile, root / 'out', [])
+                    self.assertEqual([arg for arg in command if arg.endswith('.cpp')],
+                                     [*sources, manifold])
 
     def test_compiler_failure_finalizes_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -285,7 +285,7 @@ mod tests {
                             at("edge")
                         );
                     }
-                    "picture" => {}
+                    "picture" | "shadow" | "ground" => {}
                     other => panic!("{}: unknown line {other}", path.display()),
                 }
             }

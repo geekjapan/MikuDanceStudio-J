@@ -9,6 +9,16 @@ from urllib.parse import unquote
 COLUMNS = 'file profile entry args source_hash spirv wgsl msl hlsl scan reflection coverage probe reparse reflection_origin error'.split()
 IDENTITY = COLUMNS[:5]
 CONTRACTS = COLUMNS[5:-2]
+UNIT_CONTRACTS = ('spirv', 'wgsl', 'msl', 'hlsl', 'coverage', 'reparse')
+
+
+def validate_contracts(row):
+    for name in CONTRACTS:
+        value = row[name]
+        if not (value.startswith(('OK ', 'ERR ')) or value == 'UNAVAILABLE'):
+            raise ValueError(f'invalid {name} result')
+        if name in UNIT_CONTRACTS and value.startswith('OK ') and value != 'OK ':
+            raise ValueError(f'{name} success must be exactly OK followed by one space')
 
 
 def read(path):
@@ -31,9 +41,7 @@ def read(path):
                 raise ValueError(f'{path}: incomplete identity')
             if key in rows:
                 raise ValueError(f'{path}: duplicate identity {key}')
-            for name in CONTRACTS:
-                if not (row[name].startswith(('OK ', 'ERR ')) or row[name] == 'UNAVAILABLE'):
-                    raise ValueError(f'{path}: invalid {name} result')
+            validate_contracts(row)
             if row['spirv'] != 'OK ' and not row['error']:
                 raise ValueError(f'{path}: rejected entry lacks an error')
             rows[key] = row
@@ -43,6 +51,9 @@ def read(path):
 
 
 def compare(baseline, candidate):
+    for rows in (baseline, candidate):
+        for row in rows.values():
+            validate_contracts(row)
     failures = []
     for key, before in baseline.items():
         after = candidate.get(key)
@@ -58,7 +69,7 @@ def compare(baseline, candidate):
         error_cleared = bool(before['error']) and not after['error'] and all(
             after[name] == 'OK ' for name in ('spirv', 'wgsl', 'msl', 'hlsl'))
         backend_errors_match = all(
-            row['spirv'] == 'OK ' and
+            bool(row['error']) and row['spirv'] == 'OK ' and
             all(row[name].startswith(('OK ', 'ERR ')) for name in ('wgsl', 'msl', 'hlsl')) and
             row['error'] == next((row[name][4:] for name in ('wgsl', 'msl', 'hlsl')
                                   if row[name].startswith('ERR ')), '')

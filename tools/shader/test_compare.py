@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from compare import COLUMNS, CONTRACTS, compare, read
+from compare import COLUMNS, CONTRACTS, UNIT_CONTRACTS, compare, read
 
 
 class Contracts(unittest.TestCase):
@@ -28,7 +28,7 @@ class Contracts(unittest.TestCase):
     def test_scan_and_register_changes_fail_independently(self):
         for contract in ('scan', 'reflection', 'coverage', 'probe', 'reparse'):
             candidate = copy.deepcopy(self.baseline)
-            candidate[self.key][contract] = 'OK changed'
+            candidate[self.key][contract] = 'ERR changed' if contract in UNIT_CONTRACTS else 'OK changed'
             self.assertEqual(compare(self.baseline, candidate)[0]['contract'], contract)
 
     def test_known_gap_can_improve_without_weakening_other_contracts(self):
@@ -110,6 +110,32 @@ class Contracts(unittest.TestCase):
                     result = subprocess.run([sys.executable, str(Path(__file__).with_name('compare.py')),
                                              str(baseline), str(candidate)], capture_output=True, text=True)
                     self.assertEqual(result.returncode, expected, result.stderr)
+
+    def test_unit_success_payloads_are_rejected_by_reader_cli_and_direct_compare(self):
+        with tempfile.TemporaryDirectory() as directory:
+            baseline = Path(directory) / 'baseline.tsv'
+            candidate = Path(directory) / 'candidate.tsv'
+            header = 'mds-shader-contracts-v1\ncompiler\tvkd3d 2.1\n' + '\t'.join(COLUMNS) + '\n'
+            before = dict(self.row, wgsl='ERR A', error='A')
+            baseline.write_text(header + '\t'.join(before[name] for name in COLUMNS) + '\n')
+            for contract in UNIT_CONTRACTS:
+                row = dict(self.row)
+                row[contract] = 'OK fake'
+                with self.subTest(contract=contract):
+                    candidate.write_text(header + '\t'.join(row[name] for name in COLUMNS) + '\n')
+                    with self.assertRaises(ValueError):
+                        read(candidate)
+                    with self.assertRaises(ValueError):
+                        compare({self.key: before}, {self.key: row})
+                    result = subprocess.run([sys.executable, str(Path(__file__).with_name('compare.py')),
+                                             str(baseline), str(candidate)], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 2, result.stdout)
+                    self.assertIn(contract, result.stderr)
+            row = dict(self.row, scan='OK sampler metadata', reflection='OK World=c0+4',
+                       probe='OK World=c0+4')
+            candidate.write_text(header + '\t'.join(row[name] for name in COLUMNS) + '\n')
+            self.assertEqual(read(candidate)[self.key], row)
+            self.assertEqual(compare({self.key: row}, {self.key: row}), [])
 
     def test_reader_decodes_cells_and_rejects_empty_or_duplicate_captures(self):
         with tempfile.TemporaryDirectory() as directory:

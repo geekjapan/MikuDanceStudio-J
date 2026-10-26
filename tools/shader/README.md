@@ -13,7 +13,10 @@ checksum. Use the pinned corpus commit as the source provenance.
 
 The versioned TSV starts with the format and compiler version, then a column
 header. Cells percent-escape `%`, tab, CR, and LF. Each contract is `OK <value>`,
-`ERR <diagnostic>`, or `UNAVAILABLE`. The final error column records rejected
+`ERR <diagnostic>`, or `UNAVAILABLE`. SPIR-V, WGSL, MSL, HLSL, coverage,
+and reparse success must be exactly `OK ` with no payload. Only scan, reflection,
+and probe carry success metadata. Reading a malformed unit-result success fails
+with exit 2, and direct in-memory comparison raises `ValueError`. The final error column records rejected
 compiles. Scan values include sorted input/output semantics and descriptors.
 Reflection values include constant names, register classes, indices, and counts.
 Reflection origin records CTAB or probe. Coverage and probe failures remain tied

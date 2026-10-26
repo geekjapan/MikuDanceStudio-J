@@ -3,10 +3,26 @@ use mds_app::editor::Editor;
 use mds_app::ui::edit;
 use mds_app::ui::view::{self, ViewOptions};
 use mds_app::ui::Ctx;
+use mds_doc::script::Runner;
 use std::path::PathBuf;
 
 pub fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/rust")
+}
+
+/// A load path as the C++ handlers get it: the lane stages the fixtures and the inputs of the
+/// script directories next to the exe.
+fn read_input(path: &str) -> Option<Vec<u8>> {
+    let name = path.trim_start_matches(".\\");
+    [
+        fixtures(),
+        fixtures().join("script/inputs"),
+        fixtures().join("script2/inputs"),
+        fixtures().join("script3/inputs"),
+        fixtures().join("vsq"),
+    ]
+    .iter()
+    .find_map(|d| std::fs::read(d.join(name)).ok())
 }
 
 /// An editor and the egui context a window would give the areas.
@@ -23,6 +39,22 @@ impl Rig {
 
     pub fn open(name: &str) -> Rig {
         Rig::with(Editor::open(&fixtures().join(name)).unwrap_or_else(|e| panic!("{name}: {e}")))
+    }
+
+    /// The document after lines `1..=upto` of `tests/fixtures/rust/<dir>/<name>.txt`, with the
+    /// models of `<dir>/inputs`.
+    pub fn replay(dir: &str, name: &str, upto: usize) -> Rig {
+        let text =
+            std::fs::read_to_string(fixtures().join(dir).join(format!("{name}.txt"))).unwrap();
+        let mut runner = Runner::new();
+        for (n, line) in text.lines().take(upto).enumerate() {
+            runner
+                .run_line(line, &mut |p| read_input(p))
+                .unwrap_or_else(|e| panic!("{dir}/{name}.txt line {}: {e}", n + 1));
+        }
+        // The scene's folder is where the model paths of the script resolve.
+        let path = fixtures().join(dir).join("inputs/ui_view.pmm");
+        Rig::with(Editor::new(runner.doc, Some(path)).unwrap())
     }
 
     fn with(editor: Editor) -> Rig {

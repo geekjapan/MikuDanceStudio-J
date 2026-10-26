@@ -38,6 +38,17 @@ pub fn chain() -> Editor {
     e
 }
 
+/// `chain8.pmd` loaded (model mode), posed: the same chain with the rigid bodies and joints the
+/// physics model dialog edits.
+pub fn chain_pmd() -> Editor {
+    let mut e = startup();
+    let data = std::fs::read(fixtures().join("chain8.pmd")).unwrap();
+    let mut status = String::new();
+    model_panel::load(&mut ctx(&mut e, None, &mut status), "chain8.pmd", data).unwrap();
+    e.pump(0).unwrap();
+    e
+}
+
 pub fn ctx<'a>(e: &'a mut Editor, egui: Option<egui::Context>, status: &'a mut String) -> Ctx<'a> {
     Ctx {
         editor: e,
@@ -103,6 +114,12 @@ impl Rig {
 
     pub fn state(&mut self) -> viewport::State {
         self.with(|c| viewport::state(c))
+    }
+
+    /// The saved view offsets `camera_state[3..5]`.
+    pub fn offset(&self) -> [f32; 2] {
+        let s = &self.e.doc.pmm.camera_state;
+        [s[3], s[4]]
     }
 
     /// The selected model's marked bones and `selectedBone`.

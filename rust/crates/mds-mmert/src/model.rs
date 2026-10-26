@@ -158,14 +158,7 @@ impl Model {
             if (start + count) as usize > indices.len() {
                 return Err("a material reaches past the index list".into());
             }
-            let field = m.texture.text.as_str();
-            let has = |n: &str, ext: &str| n.contains(ext) || n.contains(&ext.to_uppercase());
-            let (texture, sphere, mode) = match field.split_once('*') {
-                Some((t, s)) => (nonempty(t), nonempty(s), if has(s, ".sph") { 1 } else { 2 }),
-                None if has(field, ".sph") => (None, nonempty(field), 1),
-                None if has(field, ".spa") => (None, nonempty(field), 2),
-                None => (nonempty(field), None, 0),
-            };
+            let (texture, sphere, mode) = pmd_texture(&m.texture.text);
             materials.push(Material {
                 diffuse: m.diffuse,
                 mirror: m.diffuse,
@@ -288,6 +281,17 @@ impl Model {
     }
 }
 
+/// A PMD texture field as [`Model::from_pmd`] reads it: texture, sphere, sphere mode.
+fn pmd_texture(field: &str) -> (Option<String>, Option<String>, u8) {
+    let has = |n: &str, ext: &str| n.contains(ext) || n.contains(&ext.to_uppercase());
+    match field.split_once('*') {
+        Some((t, s)) => (nonempty(t), nonempty(s), if has(s, ".sph") { 1 } else { 2 }),
+        None if has(field, ".sph") => (None, nonempty(field), 1),
+        None if has(field, ".spa") => (None, nonempty(field), 2),
+        None => (nonempty(field), None, 0),
+    }
+}
+
 fn nonempty(s: &str) -> Option<String> {
     (!s.is_empty()).then(|| s.to_string())
 }
@@ -343,4 +347,37 @@ pub fn quad(w: u32, h: u32) -> Vec<u8> {
         out.extend(floats(&vtx));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `pmd_load.cpp:296-316` and `model_renderers.cpp:517-560`.
+    #[test]
+    fn pmd_texture_fields_split_as_the_cpp_does() {
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(pmd_texture("a.bmp"), (s("a.bmp"), None, 0));
+        assert_eq!(pmd_texture("a.bmp*b.sph"), (s("a.bmp"), s("b.sph"), 1));
+        assert_eq!(pmd_texture("a.bmp*b.SPH"), (s("a.bmp"), s("b.SPH"), 1));
+        assert_eq!(pmd_texture("a.bmp*b.spa"), (s("a.bmp"), s("b.spa"), 2));
+        assert_eq!(pmd_texture("a.bmp*b.png"), (s("a.bmp"), s("b.png"), 2));
+        assert_eq!(pmd_texture("b.sph"), (None, s("b.sph"), 1));
+        assert_eq!(pmd_texture("b.SPA"), (None, s("b.SPA"), 2));
+        assert_eq!(pmd_texture("screen.bmp"), (s("screen.bmp"), None, 0));
+        assert_eq!(pmd_texture(""), (None, None, 0));
+    }
+
+    /// `accessory.cpp:520-540`; `screen.bmp` binds the capture texture (`:162`), none outside
+    /// screen capture (`frame_scene.cpp:271`).
+    #[test]
+    fn accessory_slots_use_their_texture_and_sphere() {
+        let t = |name: &str| texture_use(&TextureSlot::parse(Some(name.as_bytes())));
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(t("a.bmp"), (s("a.bmp"), None, 0));
+        assert_eq!(t("b.sph"), (None, s("b.sph"), 1));
+        assert_eq!(t("b.spa"), (None, s("b.spa"), 2));
+        assert_eq!(t("a.bmp*b.spa"), (s("a.bmp"), s("b.spa"), 2));
+        assert_eq!(t("screen.bmp"), (None, None, 0));
+    }
 }

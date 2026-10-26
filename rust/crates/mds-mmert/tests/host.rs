@@ -161,3 +161,219 @@ fn a_pmd_model_and_an_accessory_draw_through_their_effect() {
         covered(&acc_px)
     );
 }
+
+/// One frame of `objects.pmm`'s camera and light over `host`'s objects: its pixels.
+fn draw_scene(
+    gpu: &mds_mmert::Gpu,
+    vk: &mds_shader::vkd3d::Vkd3d,
+    host: &mut Host,
+    pmm: &Pmm,
+    poses: &[mds_pose::model::Model],
+    assignments: &[Assignment],
+) -> Vec<u8> {
+    let effects = common::fixtures().join("mme/effects");
+    let resolve = |p: &str| effects.join(p);
+    let c = evaluate_camera(&pmm.camera, 0.0, CameraMode::Playback).unwrap();
+    let camera = Camera {
+        target: c.position,
+        rotation: c.rotation,
+        distance: c.distance,
+        fov_deg: c.fov,
+        orthographic: false,
+    };
+    let f = Frame {
+        pmm,
+        poses,
+        camera: &camera,
+        light: evaluate_light(&pmm.light, 0.0, LightMode::Playback).unwrap(),
+        frame: 0,
+        elapsed: 0.0,
+        size: (W, H),
+        assignments,
+        offscreen: &Default::default(),
+        resolve: &resolve,
+    };
+    let mut log = Vec::new();
+    let skipped = host.render(gpu, vk, &f, &mut log);
+    assert!(skipped.is_empty(), "{skipped:?} {log:?}");
+    host.target().unwrap().read(gpu).unwrap()
+}
+
+fn effect(path: &str) -> Assignment {
+    Assignment {
+        effect: path.into(),
+        ..Assignment::default()
+    }
+}
+
+/// The pixels covered in `px` whose four neighbours are covered too: away from the
+/// antialiased silhouette.
+fn interior(px: &[u8]) -> Vec<usize> {
+    let bg = &px[..3];
+    let on = |x: i64, y: i64| {
+        let i = (y * i64::from(W) + x) as usize * 4;
+        (0..i64::from(W)).contains(&x) && (0..i64::from(H)).contains(&y) && &px[i..i + 3] != bg
+    };
+    (0..(W * H) as i64)
+        .filter(|&i| {
+            let (x, y) = (i % i64::from(W), i / i64::from(W));
+            on(x, y) && on(x - 1, y) && on(x + 1, y) && on(x, y - 1) && on(x, y + 1)
+        })
+        .map(|i| i as usize)
+        .collect()
+}
+
+/// Item 1 of the host: a model the host draws hides an effect model behind it, through the
+/// depth it writes with MME's matrices (MMEffect draws both into one depth buffer). `chain8.pmx`
+/// twice: A at the origin with no effect, B with `objects.fx` moved 10 units away from the
+/// camera and 1 to the side, so it shows beside A and is covered where they overlap.
+#[test]
+fn a_host_drawn_model_hides_an_effect_model_behind_it() {
+    let Some(gpu) = common::gpu() else { return };
+    let Some(vk) = common::vkd3d() else { return };
+    let fixtures = common::fixtures();
+    let mut pmm = Pmm::read(&std::fs::read(fixtures.join("mmegold/objects.pmm")).unwrap()).unwrap();
+    let pmx = Pmx::read(&std::fs::read(fixtures.join("chain8.pmx")).unwrap()).unwrap();
+    let mut b = pmm.models[0].clone();
+    b.slot = pmm.models[0].slot + 1;
+    pmm.models.push(b);
+    let pose = |slot: u8, m: Mat4| {
+        let mut p = mds_pose::model::Model::from_pmx(slot, &pmx).unwrap();
+        for b in &mut p.bones {
+            b.mat_init = m;
+        }
+        p
+    };
+    let (sa, sb) = (pmm.models[0].slot, pmm.models[1].slot);
+    let mut host = Host::new((W, H));
+    for name in ["a.pmx", "b.pmx"] {
+        host.add(&gpu, name, Source::Pmx(&pmx), 0.0, |_| None)
+            .unwrap();
+    }
+    // The camera's distance axis: B moved along it shrinks when it moves away.
+    let none = Assignment::default();
+    let mut only_b = |z: f32| {
+        let poses = [
+            pose(sa, Mat4::translation(0.0, -1000.0, 0.0)),
+            pose(sb, Mat4::translation(1.0, 0.0, z)),
+        ];
+        draw_scene(
+            &gpu,
+            &vk,
+            &mut host,
+            &pmm,
+            &poses,
+            &[none.clone(), effect("objects.fx")],
+        )
+    };
+    let (near, far) = (covered(&only_b(-10.0)), covered(&only_b(10.0)));
+    let away = if near < far { -10.0 } else { 10.0 };
+    let b_alone = only_b(away);
+    let a_pose = pose(sa, Mat4::IDENTITY);
+    let a_alone = draw_scene(
+        &gpu,
+        &vk,
+        &mut host,
+        &pmm,
+        &[
+            a_pose.clone(),
+            pose(sb, Mat4::translation(0.0, -1000.0, 0.0)),
+        ],
+        &[none.clone(), effect("objects.fx")],
+    );
+    let both = draw_scene(
+        &gpu,
+        &vk,
+        &mut host,
+        &pmm,
+        &[a_pose, pose(sb, Mat4::translation(1.0, 0.0, away))],
+        &[none.clone(), effect("objects.fx")],
+    );
+    let a = interior(&a_alone);
+    let bg = &b_alone[..3];
+    let overlap: Vec<usize> = a
+        .iter()
+        .copied()
+        .filter(|&i| &b_alone[i * 4..i * 4 + 3] != bg)
+        .collect();
+    assert!(
+        overlap.len() > 200,
+        "B behind A over {} pixels",
+        overlap.len()
+    );
+    let differ = a
+        .iter()
+        .filter(|&&i| both[i * 4..i * 4 + 3] != a_alone[i * 4..i * 4 + 3])
+        .count();
+    assert_eq!(
+        differ,
+        0,
+        "B shows through A at {differ} of {} pixels",
+        a.len()
+    );
+    // B still draws where A does not cover it.
+    let beside = (0..(W * H) as usize)
+        .filter(|&i| {
+            &a_alone[i * 4..i * 4 + 3] == &a_alone[..3] && &b_alone[i * 4..i * 4 + 3] != bg
+        })
+        .filter(|&i| both[i * 4..i * 4 + 3] == b_alone[i * 4..i * 4 + 3])
+        .count();
+    assert!(beside > 200, "B beside A at {beside} pixels");
+}
+
+/// Item 2 of the host: an object whose effect is assigned to some subsets draws the others with
+/// the standard shading, as the C++ forwards the raw draw of a subset with no binding
+/// (`callbacks.cpp:236`). `chain8.pmx` split into two subsets, with `objects.fx` on subset 0
+/// only, shows pixels of the all-effect picture and of the all-host one; with subset 0 hidden the
+/// host draws the other alone.
+#[test]
+fn subsets_without_an_effect_draw_with_the_standard_shading() {
+    let Some(gpu) = common::gpu() else { return };
+    let Some(vk) = common::vkd3d() else { return };
+    let fixtures = common::fixtures();
+    let pmm = Pmm::read(&std::fs::read(fixtures.join("mmegold/objects.pmm")).unwrap()).unwrap();
+    let mut pmx = Pmx::read(&std::fs::read(fixtures.join("chain8.pmx")).unwrap()).unwrap();
+    // Its one material split in two halves of its faces.
+    let mut second = pmx.materials[0].clone();
+    let n = pmx.materials[0].face_vertex_count;
+    pmx.materials[0].face_vertex_count = n / 6 * 3;
+    second.face_vertex_count = n - n / 6 * 3;
+    pmx.materials.push(second);
+    let mut posed = mds_pose::model::Model::from_pmx(pmm.models[0].slot, &pmx).unwrap();
+    for b in &mut posed.bones {
+        b.mat_init = Mat4::IDENTITY;
+    }
+    let mut host = Host::new((W, H));
+    host.add(&gpu, "chain8.pmx", Source::Pmx(&pmx), 0.0, |_| None)
+        .unwrap();
+    let poses = std::slice::from_ref(&posed);
+    let mut draw = |a: Assignment| draw_scene(&gpu, &vk, &mut host, &pmm, poses, &[a]);
+    let host_px = draw(Assignment::default());
+    let effect_px = draw(effect("objects.fx"));
+    let mut partial = Assignment::default();
+    partial.subsets.insert(0, "objects.fx".into());
+    let partial_px = draw(partial);
+    let px = |p: &[u8], i: usize| p[i * 4..i * 4 + 3].to_vec();
+    let (mut as_effect, mut as_host) = (0, 0);
+    for i in interior(&partial_px) {
+        let (p, h, e) = (px(&partial_px, i), px(&host_px, i), px(&effect_px, i));
+        if h == e {
+            continue;
+        }
+        as_effect += usize::from(p == e);
+        as_host += usize::from(p == h);
+    }
+    assert!(
+        as_effect > 100 && as_host > 100,
+        "effect {as_effect}, host {as_host}"
+    );
+    // A hidden subset is not drawn by the host either (`callbacks.cpp:159`).
+    let mut hidden = Assignment::default();
+    hidden.subset_shows.insert(0, false);
+    let hidden_px = draw(hidden);
+    let (all, rest) = (covered(&host_px), covered(&hidden_px));
+    assert!(
+        rest > 100 && rest + 100 < all,
+        "{rest} of {all} pixels without subset 0"
+    );
+}

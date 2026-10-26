@@ -196,7 +196,7 @@ static const char kMsgEnhanceModelJp[] =
     "\x82\xb5\x82\xa2\x83\x82\x83\x66\x83\x8b\x82\xc6\x82\xb5\x82"
     "\xc4\x95\xdb\x91\xb6\x82\xb5\x82\xc4\x89\xba\x82\xb3\x82\xa2";
 // x64 0x7FF7CB54F290 / x86 0x52E764: "モデル拡張"
-static const char kCaptionEnhanceModelJp[] = "\x83\x82\x83\x66\x83\x8b\x8a\x87\x92\xa3";
+static const char kCaptionEnhanceModelJp[] = "\x83\x82\x83\x66\x83\x8b\x8a\x67\x92\xa3";
 // x64 0x7FF7CB551198: "Joint角度制限"
 static const char kCaptionAngleLimitJp[] = "Joint\x8a\x70\x93\x78\x90\xa7\x8c\xc0";
 // x64 0x7FF7CB5511A8:
@@ -257,9 +257,6 @@ void SetBodyComboIndex(Rigid& rb, int index) {
 // it is private to this dialog either way.
 Rigid s_bodyCopyScratch;
 Joint s_jointCopyScratch;
-// "joint page visible" flag (x64 app+654528, written by the page flip and
-// the init; nothing else in the ported window reads it).
-unsigned char s_jointPageVisible = 0;
 
 // ---- physics-world removal helpers ----------------------------------------
 // Mirrors the ModelDispose teardown (src/model/model_dispose.cpp): the
@@ -594,7 +591,7 @@ void InitPhysicsModelDialog(HWND hDlg) { // VA 0x0045F670
     for (int id = kJointPageFirst; id <= kJointPageLast; ++id)
         ShowWindow(GetDlgItem(hDlg, id), SW_HIDE);
     CheckRadioButton(hDlg, kBodyPageRadio, kJointPageRadio, kBodyPageRadio);
-    s_jointPageVisible = 0;
+    app->state.physicsEditorJointPage = 0;
 
     SendMessageA(GetDlgItem(hDlg, kBodyListCombo), CB_RESETCONTENT, 0, 0);
     for (std::uint32_t i = 0; i < model->rigidCount; ++i) {
@@ -949,13 +946,13 @@ void FlipPhysicsDialogPage(HWND hDlg, int bodyPage) { // VA 0x00421C20
             ShowWindow(GetDlgItem(hDlg, id), SW_HIDE);
         for (int id = kBodyPageFirst; id <= kBodyPageLast; ++id)
             ShowWindow(GetDlgItem(hDlg, id), SW_SHOW);
-        s_jointPageVisible = 0;
+        g_Block->state.physicsEditorJointPage = 0;
     } else {
         for (int id = kBodyPageFirst; id <= kBodyPageLast; ++id)
             ShowWindow(GetDlgItem(hDlg, id), SW_HIDE);
         for (int id = kJointPageFirst; id <= kJointPageLast; ++id)
             ShowWindow(GetDlgItem(hDlg, id), SW_SHOW);
-        s_jointPageVisible = 1;
+        g_Block->state.physicsEditorJointPage = 1;
     }
 }
 
@@ -1528,6 +1525,7 @@ INT_PTR CALLBACK PhysicsModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             }
             DestroyWindow(hDlg);
             app->state.frameCopyDialog = nullptr;
+            app->state.physicsEditorJointPage = 0;
             EnableWindow(GetDlgItem(app->state.hwnd, panel::kMainComboModel), TRUE);
             EnableWindow(GetDlgItem(app->state.hwnd, panel::kPlayButton), TRUE);
             if (app->state.englishUI != 0) {
@@ -1554,6 +1552,7 @@ INT_PTR CALLBACK PhysicsModelDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
             }
             DestroyWindow(hDlg);
             app->state.frameCopyDialog = nullptr;
+            app->state.physicsEditorJointPage = 0;
             EnableWindow(GetDlgItem(app->state.hwnd, panel::kMainComboModel), TRUE);
             EnableWindow(GetDlgItem(app->state.hwnd, panel::kPlayButton), TRUE);
             return 0;

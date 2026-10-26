@@ -117,6 +117,26 @@ fn select_physical_bones_marks_the_bones_with_bodies() {
     );
 }
 
+/// With marks and no rigid-body bone menu 273 clears the marks and keeps `selectedBone`
+/// (`command_view_menu.cpp:1186-1196`: the loop writes `sel[i] = 0` and never `selectedBone`).
+#[test]
+fn select_physical_bones_without_bodies_clears_the_marks() {
+    let mut r = Rig::pmd();
+    r.editor
+        .apply(Command::SetPhysicsModel {
+            rigids: Vec::new(),
+            joints: Vec::new(),
+        })
+        .unwrap();
+    r.editor.apply(Command::SelectBones(vec![2, 1])).unwrap();
+    r.editor.modified = false;
+    r.run("menu:273").unwrap();
+    assert!(selected_marks(&r).iter().all(|&m| !m));
+    let m = r.editor.doc.selected_model().unwrap();
+    assert_eq!(m.selection.selected_bone, 2);
+    assert!(!r.editor.modified);
+}
+
 #[test]
 fn the_physics_selections_are_model_mode_only() {
     let mut r = Rig::open("swing600.pmm");

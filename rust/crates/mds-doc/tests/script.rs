@@ -347,8 +347,8 @@ mod script3 {
 
 /// The document commands of `tests/fixtures/rust/script4/` (slice
 /// `script4`): the outside-parent and order dialogs, the view drags, the
-/// physics record drag and edit boxes, the background media, and menu 263
-/// on a PMX model.
+/// physics record drag and edit boxes, the background media, menu 263 on a
+/// PMX model, and the record drag on the joint page.
 mod script4 {
     use super::check_in;
 
@@ -385,5 +385,13 @@ mod script4 {
     #[test]
     fn pmx263() {
         check_in("script4", "pmx263");
+    }
+
+    /// The record drag on the joint page edits the selected joint
+    /// (`EditModeRecord` reads `physicsEditorJointPage`,
+    /// `frame_modes_bone.cpp:158`).
+    #[test]
+    fn jointdrag() {
+        check_in("script4", "jointdrag");
     }
 }

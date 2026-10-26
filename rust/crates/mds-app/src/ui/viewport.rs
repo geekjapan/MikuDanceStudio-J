@@ -21,6 +21,8 @@
 //! [`Command::AccessoryEdit`]. The model-mode pans (the pan tool, the middle button and Shift with
 //! the right button) write the view offsets ([`Command::SetViewOffset`], `camera_state[3..5]`)
 //! and move the view camera's target along with them, because the view camera has no offsets.
+//! The model-mode orbit and Ctrl distance of the right button write the camera state they move
+//! (`camera_state[5..8]`, [`Command::SetCamera`]), which the PMM saves too.
 //!
 //! While the physics model dialog is open (`physics_scratch` of the document), the rotate and
 //! move rows of the model tools drag the selected rigid body or joint of that dialog instead of
@@ -194,6 +196,26 @@ fn pan(ctx: &mut Ctx, dx: f32, dy: f32) {
     let s = &ctx.editor.doc.pmm.camera_state;
     apply_or_report(ctx, Command::SetViewOffset([s[3] + dx, s[4] + dy]));
     pan_view_offset(&mut ctx.editor.camera, dx, dy);
+}
+
+/// The model-mode right drag without Shift (`pump_navigation.cpp:335` to `:342`): Ctrl moves
+/// `CameraDistance`, else the drag turns `CameraYaw` and `CameraPitch`. The view camera turns
+/// with the state and keeps its target.
+fn orbit(ctx: &mut Ctx, dx: i32, dy: i32, m: Modifiers) {
+    let mut view = ctx.editor.camera;
+    navigation::right_drag(&mut view, dx, dy, m);
+    let p = &ctx.editor.doc.pmm;
+    let mut state = crate::scene::state_camera(&ctx.editor.doc);
+    navigation::right_drag(&mut state, dx, dy, m);
+    let cmd = Command::SetCamera {
+        position: state.target,
+        rotation: state.rotation,
+        distance: state.distance,
+        fov: p.settings.camera_fov,
+        perspective: p.camera_perspective != 0,
+    };
+    apply_or_report(ctx, cmd);
+    ctx.editor.camera = view;
 }
 
 // ---- the selected model ----------------------------------------------------------------------
@@ -1125,10 +1147,12 @@ pub fn input(ctx: &mut Ctx, i: &Input) {
     let [px, py] = i.pixels;
     let model_path = !camera_mode && bone_edit_path(ctx.editor);
     if i.right == KeyState::Held && !model_path {
-        if !camera_mode && i.shift {
+        if camera_mode {
+            navigation::right_drag(&mut ctx.editor.camera, px, py, m);
+        } else if i.shift {
             pan(ctx, -(px as f32) * 0.1, py as f32 * 0.1);
         } else {
-            navigation::right_drag(&mut ctx.editor.camera, px, py, m);
+            orbit(ctx, px, py, m);
         }
     }
     if i.middle == KeyState::Held {

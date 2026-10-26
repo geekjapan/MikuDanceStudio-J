@@ -395,6 +395,45 @@ fn the_english_names_dialog_edits_the_names_of_the_model() {
     assert_eq!(rig.editor.doc.pmm.models[0].name_en.text, "Lips");
 }
 
+/// Opening the dialog sets edit mode 0 and selects bone 0 (`english_name_dialog.cpp:291-304`);
+/// the bone combo selects its bone alone, or none for kinds 6, 7 and 9
+/// (`SelectEnglishNameBone`, `:383-391`). Neither is an edit of the scene.
+#[test]
+fn the_english_bone_combo_selects_the_bone() {
+    let mut rig = lips();
+    rig.editor
+        .apply(mds_doc::Command::SelectBones(vec![1, 2]))
+        .unwrap();
+    rig.editor.apply(mds_doc::Command::SetEditMode(1)).unwrap();
+    rig.editor.modified = false;
+    rig.run("dlg:IDD_ENGLISH_NAMES").unwrap();
+    let selection = |rig: &Rig| {
+        let m = rig.editor.doc.selected_model().unwrap();
+        let marked: Vec<usize> = (0..m.bone_pose.len())
+            .filter(|&b| m.bone_pose[b].flags[2] != 0)
+            .collect();
+        (m.selection.selected_bone, marked)
+    };
+    assert_eq!(rig.editor.doc.pmm.timeline.edit_mode, 0);
+    assert_eq!(selection(&rig), (0, vec![0]));
+    assert!(pmd(&rig).bones[..2]
+        .iter()
+        .all(|b| ![6, 7, 9].contains(&b.kind)));
+    rig.with(|c| dialog::names_select(c, 0, 1)).unwrap();
+    assert_eq!(selection(&rig), (1, vec![1]));
+    // lips.pmd has no tip bone: bone 2 becomes one of each kind.
+    for kind in [6, 7, 9] {
+        let ModelFile::Pmd(p) = &mut rig.editor.doc.models[0] else {
+            panic!("not a PMD")
+        };
+        p.bones[2].kind = kind;
+        rig.with(|c| dialog::names_select(c, 0, 2)).unwrap();
+        assert_eq!(selection(&rig), (-1, vec![]), "kind {kind}");
+        rig.with(|c| dialog::names_select(c, 0, 1)).unwrap();
+    }
+    assert!(!rig.editor.modified);
+}
+
 #[test]
 fn the_english_names_dialog_applies_on_cancel_too() {
     let mut rig = lips();
@@ -636,4 +675,71 @@ fn the_physics_dialog_tells_the_viewport_which_record_it_has_selected() {
     assert_eq!(record_target(&rig), at(false, 0));
     rig.ok().unwrap();
     assert_eq!(record_target(&rig), None);
+}
+
+/// A record drag echoes the dragged value into its box only (`EchoRecord`,
+/// `frame_modes_bone.cpp:161-224`): what was typed in another box and not entered stays. The
+/// rotation is the widened value over the double truncated pi, as a float (`:176`): the record
+/// 0.104807 rad shows 6.00 where the float division would show 6.01.
+#[test]
+fn a_record_drag_echoes_only_the_dragged_box() {
+    let mut rig = lips();
+    rig.run("dlg:IDD_PHYSICS_MODEL").unwrap();
+    rig.with(|c| dialog::physics_text(c, 718, "9.99")).unwrap();
+    rig.with(|c| dialog::physics_text(c, 712, "7.77")).unwrap();
+    let scratch = rig.editor.doc.edit.physics_scratch.as_mut().unwrap();
+    scratch.0[0].rotation[0] = f32::from_bits(0x3dc2_2a2c);
+    let drag = |rig: &mut Rig, field, axis, dy| {
+        rig.editor
+            .apply(mds_doc::Command::EditPhysicsRecord {
+                joint: false,
+                index: 0,
+                field,
+                axis,
+                dy,
+            })
+            .unwrap();
+        rig.draw(vec![]);
+    };
+    drag(&mut rig, mds_doc::PhysicsField::Rotation, 0, -1);
+    assert_eq!(rig.field(7), "6.00");
+    assert_eq!(
+        (rig.field(10), rig.field(4)),
+        ("9.99".into(), "7.77".into())
+    );
+    let y = rig.editor.doc.edit.physics_scratch.as_ref().unwrap().0[0].position[1];
+    drag(&mut rig, mds_doc::PhysicsField::Position, 1, 2);
+    assert_eq!(
+        rig.field(5),
+        format!("{:3.2}", (f64::from(y) - 0.1f32 as f64) as f32)
+    );
+    assert_eq!(
+        (rig.field(10), rig.field(4)),
+        ("9.99".into(), "7.77".into())
+    );
+}
+
+/// The name boxes 705 and 740 are ANSI edit boxes: `CollectBodyEdits` and `CollectJointEdits`
+/// copy their Shift-JIS bytes into the 20-byte names (`physics_model_dialog.cpp:1129` on). A
+/// character cp932 has no code for reads back as `?`.
+#[test]
+fn the_physics_dialog_writes_the_names_in_shift_jis() {
+    let mut rig = lips();
+    rig.run("dlg:IDD_PHYSICS_MODEL").unwrap();
+    rig.with(|c| dialog::physics_text(c, 705, "剛体")).unwrap();
+    rig.with(|c| dialog::physics_text(c, 740, "関節😀"))
+        .unwrap();
+    rig.ok().unwrap();
+    let p = pmd(&rig)
+        .extension
+        .as_ref()
+        .unwrap()
+        .physics
+        .as_ref()
+        .unwrap();
+    let body = &p.rigids[0].name;
+    assert_eq!(body.raw[..5], [0x8d, 0x84, 0x91, 0xcc, 0]);
+    assert_eq!(body.text, "剛体");
+    let joint = &p.joints.as_ref().unwrap()[0].name;
+    assert_eq!(joint.raw[..6], [0x8a, 0xd6, 0x90, 0xdf, b'?', 0]);
 }

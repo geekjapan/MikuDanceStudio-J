@@ -29,10 +29,42 @@ fn fill(rig: &mut Rig, id: &str, values: &[&str]) -> Result<(), String> {
     rig.ok()
 }
 
+/// The words of a script line; a quoted word keeps its spaces (`mds_doc::script`'s `words`).
+fn words(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = line.trim_start();
+    while !rest.is_empty() {
+        let (word, tail) = match rest.strip_prefix('"') {
+            Some(q) => q.split_once('"').expect("a closed quote"),
+            None => rest.split_once(char::is_whitespace).unwrap_or((rest, "")),
+        };
+        out.push(word);
+        rest = tail.trim_start();
+    }
+    out
+}
+
+/// The boxes and combos of the English names dialog (`english_name_dialog.cpp`): edits 667 the
+/// model name, 668 the comment, 672, 676 and 680 the bone, morph and group of combos 669, 673
+/// and 677.
+const NAME_BOXES: [&str; 5] = ["667", "668", "672", "676", "680"];
+const NAME_COMBOS: [&str; 3] = ["669", "673", "677"];
+
 /// What the dialog does for a script line, or `None` if the line is not of this area.
 fn drive(rig: &mut Rig, line: &str) -> Option<Result<(), String>> {
-    let w: Vec<&str> = line.split_whitespace().collect();
+    let w = words(line);
+    let names = rig.shown() == Some("IDD_ENGLISH_NAMES");
     Some(match w.as_slice() {
+        ["english", "open"] => rig.run("dlg:IDD_ENGLISH_NAMES"),
+        ["dialog", "text", id, text] if names => {
+            let i = NAME_BOXES.iter().position(|b| b == id).expect("a name box");
+            rig.type_into(i, text);
+            Ok(())
+        }
+        ["dialog", "select", id, n] if names => {
+            let combo = NAME_COMBOS.iter().position(|c| c == id).expect("a combo");
+            rig.with(|c| dialog::names_select(c, combo, n.parse().unwrap()))
+        }
         ["bias", v @ ..] => fill(rig, "dlg:IDD_CENTER_POSITION_BIAS", v),
         ["shift", "lip", n] => fill(rig, "dlg:IDD_FRAME_SHIFT", &[n]),
         ["register", "blink", a, b] => fill(rig, "dlg:IDD_REGISTER_BLINKING", &[a, b]),
@@ -233,6 +265,18 @@ fn scale_range_script() {
 /// Menu 261 and 262 (`script3/pmdedit.txt`): a toon name, then the physics model dialog with the
 /// mass of body 0, the position and box shape of body 3, and OK; the saved PMD is the C++ one,
 /// and Cancel drops what was typed. The two reminder boxes say what `messages.tsv` recorded.
+/// Menu 259 (`script3/english.txt`): the five boxes and three combos, OK, then Cancel. The PMM
+/// saved after OK holds the selection of the bone combo (`SelectEnglishNameBone`) and edit mode 0
+/// from the opening of the dialog.
+#[test]
+fn english_script() {
+    let out = check("script3", "english", 13, 3);
+    assert_eq!(
+        out.messages,
+        ["編集結果は'拡張モデル保存'で新しいモデルとして保存して下さい"]
+    );
+}
+
 #[test]
 fn pmdedit_script() {
     let out = check("script3", "pmdedit", 10, 3);

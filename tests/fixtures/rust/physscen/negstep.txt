@@ -1,0 +1,12 @@
+# A negative main step on a whole substep clock: the load leaves Bullet's
+# substep remainder at 0, and from frame 15 with 50 ms passes the first pass
+# runs three catch-up substeps and leaves -0x1p-28 s for the main step
+# (budget.py 50 1 15). The remainder goes below 0, so the first settle step of
+# that pass runs no substep.
+settle 0
+load pmm swing600.pmm
+trace negstep.trace
+play 15 120
+pump 20 50
+stop
+save pmm negstep.pmm

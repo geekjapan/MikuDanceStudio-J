@@ -1,8 +1,9 @@
 """Prints the catch-up substeps and the main-step budget of each pump pass of
 budget.txt, from PlaybackCatchup (src/app/playback_catchup.cpp, BLOCK 2) in
-float32: play from frame 0, a clock that advances `ms` per pass.
+float32: play from `start` (frame 0 by default; 15 for negstep.txt), a clock
+that advances `ms` per pass.
 
-    python3 -I tests/fixtures/rust/physscen/budget.py [ms] [passes]
+    python3 -I tests/fixtures/rust/physscen/budget.py [ms] [passes] [start]
 """
 import struct
 import sys
@@ -34,7 +35,8 @@ def passes(ms, count, start=0.0):
 if __name__ == "__main__":
     ms = int(sys.argv[1]) if len(sys.argv) > 1 else 50
     count = int(sys.argv[2]) if len(sys.argv) > 2 else 20
-    rows = list(passes(ms, count))
-    assert ms != 50 or count < 11 or rows[10][2] < 0, "pass 11 of 50 ms is negative"
+    start = f32(int(sys.argv[3]) / 30.0) if len(sys.argv) > 3 else 0.0
+    rows = list(passes(ms, count, start))
+    assert start or ms != 50 or count < 11 or rows[10][2] < 0, "pass 11 of 50 ms is negative"
     for k, substeps, budget in rows:
         print(k, substeps, budget.hex())

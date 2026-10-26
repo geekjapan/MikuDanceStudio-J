@@ -62,7 +62,10 @@ fn settings(end_frame: i32, format: AviFormat) -> AviSettings {
     }
 }
 
-/// The scene opened as the window opens it, at the dump's size.
+/// The scene opened as the window opens it, at the dump's size. The dump films the camera track;
+/// a scene saved in model mode plays it only with camera tracking on (`cameraView`,
+/// `debug_geometry.cpp:476`; `InitGlobalTracks`, `playback_state.cpp:327`), so check box 535 is
+/// set for it.
 fn open(pmm: &Path) -> Editor {
     let mut e = Editor::open(pmm).unwrap();
     e.apply(Command::SetRenderSize {
@@ -70,6 +73,9 @@ fn open(pmm: &Path) -> Editor {
         height: dump::HEIGHT as i32,
     })
     .unwrap();
+    if e.doc.pmm.settings.options[0] == 0 {
+        e.apply(Command::SetFollowCamera(true)).unwrap();
+    }
     e
 }
 

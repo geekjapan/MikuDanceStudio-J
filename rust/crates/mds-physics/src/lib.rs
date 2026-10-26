@@ -11,7 +11,8 @@
 //! frame 0. [`PhysicsScene::step`] is one frame-step pass at 30 fps.
 //!
 //! The interactive application keeps one world alive instead:
-//! [`PhysicsScene::open`] is the load alone, and each pump of the window
+//! [`PhysicsScene::open`] is the load alone ([`PhysicsScene::open_running`]
+//! after the app has pumped), and each pump of the window
 //! (`FrameDriver`, `src/app/frame_driver.cpp`) is one [`PhysicsScene::tick`]
 //! while stopped or one [`PhysicsScene::catch_up`] while playing. Seeks,
 //! frame steps, play, stop, loop and the physics reset only change the
@@ -141,11 +142,42 @@ impl PhysicsScene {
         pmm: &Pmm,
         read: impl FnMut(&str) -> Result<Vec<u8>, String>,
     ) -> Result<PhysicsScene, String> {
+        PhysicsScene::load(pmm, read, false)
+    }
+
+    /// [`open`](Self::open) in an application that has pumped since
+    /// `SceneConstruct` built its world: the File menu or a drop. The C++
+    /// world outlives the loads, and `btDiscreteDynamicsWorld` starts its
+    /// substep clock at 1/60 s, which the first `PhysicsFrame` on the empty
+    /// world spends (the startup paint, `window_init.cpp` `UpdateWindow`).
+    /// Pumps of whole 1/60 s steps, as the script runner's settle frames,
+    /// keep the clock at 0; the remainder that wall-clock pumps leave is not
+    /// carried into this new world. A PMM named on the command line loads
+    /// before that paint, as [`open`](Self::open) does.
+    pub fn open_running(
+        pmm: &Pmm,
+        read: impl FnMut(&str) -> Result<Vec<u8>, String>,
+    ) -> Result<PhysicsScene, String> {
+        PhysicsScene::load(pmm, read, true)
+    }
+
+    fn load(
+        pmm: &Pmm,
+        read: impl FnMut(&str) -> Result<Vec<u8>, String>,
+        pumped: bool,
+    ) -> Result<PhysicsScene, String> {
         let scene = Scene::load(pmm, read)?;
         // SAFETY: no arguments; null on failure.
         let world = World(unsafe { sys::mds_mmd_world_create() });
         if world.0.is_null() {
             return Err("Bullet world creation failed".into());
+        }
+        if pumped {
+            // SAFETY: the world is live; only the ground is in it.
+            check(
+                unsafe { sys::mds_mmd_world_step(world.0, 0.0, 10, SUBSTEP) },
+                "startup step",
+            )?;
         }
         let p = &pmm.physics;
         let mut this = PhysicsScene {

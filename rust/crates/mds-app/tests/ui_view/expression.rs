@@ -1,8 +1,9 @@
 use crate::labels;
 use crate::rig::{fixtures, Rig};
 use mds_app::actions::{self, Handler};
-use mds_app::ui::{edit, expression};
+use mds_app::ui::{edit, expression, file};
 use mds_doc::Command;
+use std::path::{Path, PathBuf};
 
 #[test]
 fn the_labels_are_those_of_the_inventory() {
@@ -126,29 +127,55 @@ fn lips() -> Rig {
     Rig::replay("script3", "lipsync", 3)
 }
 
-fn vsq(name: &str) -> Vec<u8> {
-    std::fs::read(fixtures().join("vsq").join(name)).unwrap()
+/// `tests/fixtures/rust/vsq/<name>` copied into a folder of its own: the load writes its `.txt`
+/// beside it.
+fn vsq(test: &str, name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("mds-appfix2-{test}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    std::fs::copy(fixtures().join("vsq").join(name), &path).unwrap();
+    path
+}
+
+fn expected(name: &str) -> Vec<u8> {
+    std::fs::read(fixtures().join("script3/expected/lipsync").join(name)).unwrap()
+}
+
+/// The `.txt` beside `vsq`, with the CRLF lines the C++ text-mode write gives on Windows.
+fn dump(vsq: &Path) -> Vec<u8> {
+    let bytes = std::fs::read(vsq.with_extension("txt")).unwrap();
+    let mut out = Vec::new();
+    for b in bytes {
+        if b == b'\n' && !cfg!(windows) {
+            out.push(b'\r');
+        }
+        out.push(b);
+    }
+    out
 }
 
 /// `script3/lipsync.txt` lines 3 to 5: `load lip sync basic.vsq` (menu 224) on `lips.pmd` saves
-/// `menu.pmm`; the dialog's file read and the load are `expression::lip_sync`.
+/// `menu.pmm` and writes `basic.txt` beside the VSQ (`vsq_load.cpp`, the step 4 file of
+/// `manifest.tsv`); the menu handler sets `SceneModified` (`command_file_menu.cpp:1169`).
 #[test]
 fn the_lip_sync_saves_what_the_cpp_saved() {
     let mut rig = lips();
     rig.editor.modified = false;
-    rig.with_ctx(|ctx| expression::lip_sync(ctx, &vsq("basic.vsq")))
+    let path = vsq("menu", "basic.vsq");
+    rig.with_ctx(|ctx| expression::lip_sync(ctx, &path, false))
         .unwrap();
-    let want = fixtures().join("script3/expected/lipsync/menu.pmm");
-    assert!(rig.editor.doc.save().unwrap() == std::fs::read(want).unwrap());
-    assert!(rig.editor.modified, "command_file_menu.cpp:1169");
+    assert!(rig.editor.doc.save().unwrap() == expected("menu.pmm"));
+    assert!(dump(&path) == expected("basic.txt"));
+    assert!(rig.editor.modified);
 }
 
-/// `lipsync.txt` lines 9 and 10 reach the same document by the drop, so the live models must hold
-/// the keys the load registered: the pose at the frame the load moved to has the lip morph set.
+/// The live models hold the keys the load registered, and the physics world is at the frame the
+/// load moved to.
 #[test]
 fn the_live_models_see_the_lip_sync() {
     let mut rig = lips();
-    rig.with_ctx(|ctx| expression::lip_sync(ctx, &vsq("basic.vsq")))
+    let path = vsq("live", "basic.vsq");
+    rig.with_ctx(|ctx| expression::lip_sync(ctx, &path, false))
         .unwrap();
     let keys = rig.editor.doc.pmm.models[0].morph_keys.records().len();
     assert!(keys > 4, "the load registered morph keys");
@@ -156,20 +183,54 @@ fn the_live_models_see_the_lip_sync() {
     assert_eq!(live.morph_keys.records().len(), keys);
 }
 
-/// A rejected file (the model has no あ morph) changes nothing but the modified flag; the reason
-/// is the error.
+/// `lipsync.txt` lines 9 to 11: `drop vowels.vsq` at frame 0 saves `drop.pmm` and writes
+/// `vowels.txt` (`ui_dropfiles.cpp:251` to `:262`).
+#[test]
+fn a_dropped_vsq_saves_what_the_cpp_saved() {
+    let mut rig = Rig::replay("script3", "lipsync", 9);
+    rig.egui = None;
+    rig.editor.modified = false;
+    let path = vsq("drop", "vowels.vsq");
+    rig.with_ctx(|ctx| file::drop_files(ctx, std::slice::from_ref(&path)));
+    assert_eq!(rig.status, "");
+    assert!(rig.editor.doc.save().unwrap() == expected("drop.pmm"));
+    assert!(dump(&path) == expected("vowels.txt"));
+    assert!(rig.editor.modified, "ui_dropfiles.cpp:261");
+}
+
+/// `lipsync.txt` lines 13 to 15: in camera mode the drop shows its box (`messages.tsv` step 14)
+/// and changes nothing (`refused.pmm`).
+#[test]
+fn a_dropped_vsq_is_refused_in_camera_mode() {
+    let mut rig = Rig::replay("script3", "lipsync", 13);
+    rig.egui = None;
+    rig.editor.modified = false;
+    let path = vsq("refused", "rests.vsq");
+    rig.with_ctx(|ctx| file::drop_files(ctx, std::slice::from_ref(&path)));
+    assert_eq!(
+        rig.status,
+        "vsq: カメラ・照明モードではvsqデータは読めません"
+    );
+    assert!(rig.editor.doc.save().unwrap() == expected("refused.pmm"));
+    assert!(!path.with_extension("txt").exists());
+    assert!(!rig.editor.modified);
+}
+
+/// A rejected file (the model has no あ morph) changes nothing in the document; its message box
+/// (`vsq_load.cpp`, `mds_vsq::Reject::message`) is the error, and the menu still sets
+/// `SceneModified`.
 #[test]
 fn a_rejected_vsq_is_reported() {
     let mut rig = scene("morph4.pmx");
+    rig.editor.modified = false;
     let before = rig.editor.doc.save().unwrap();
+    let path = vsq("rejected", "basic.vsq");
     let err = rig
-        .with_ctx(|ctx| expression::lip_sync(ctx, &vsq("basic.vsq")))
+        .with_ctx(|ctx| expression::lip_sync(ctx, &path, false))
         .unwrap_err();
-    assert!(
-        err.starts_with("lip sync stopped: Rejected(NoFace("),
-        "{err}"
-    );
+    assert!(err.ends_with("自動リップシンクはできません"), "{err}");
     assert!(rig.editor.doc.save().unwrap() == before);
+    assert!(rig.editor.modified);
 }
 
 /// Menu 224 is a model-mode menu (`ApplyModelComboSelection` greys it in camera mode), and it
@@ -185,7 +246,8 @@ fn the_lip_sync_menu_keeps_to_the_model_mode() {
         rig.run("menu:224"),
         Err("menu:224: not in this mode".into())
     );
+    let path = vsq("gate", "basic.vsq");
     assert!(rig
-        .with_ctx(|ctx| expression::lip_sync(ctx, &vsq("basic.vsq")))
+        .with_ctx(|ctx| expression::lip_sync(ctx, &path, false))
         .is_err());
 }

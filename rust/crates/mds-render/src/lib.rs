@@ -21,13 +21,15 @@
 //! Shading follows MMD's standard pipeline as the golden images show it: the color is
 //! `saturate(ambient + diffuse * light)` times the texture, the sphere map (multiply or add) and the
 //! toon, plus a Blinn-Phong highlight `specular * light * (N.H)^power` that uses the eye position
-//! (a local viewer, also under the orthographic projection). With self-shadow off the toon is the
+//! (a local viewer, also under the orthographic projection). With self-shadow off the highlight is
+//! lit per vertex, as Direct3D 9's fixed-function pipeline lights it, with the skinned normal not
+//! renormalized; with self-shadow on it is lit per pixel. With self-shadow off the toon is the
 //! toon texture looked up by the angle to the light, with the interpolated normal not
 //! renormalized; with self-shadow on it is a blend toward the toon's shadow color by the angle to
 //! the light (see [`SelfShadow::shades`]). A back face is lit with its normal as it is, not
 //! flipped. Materials with the edge flag get an inverted-hull edge.
-//! Diffuse alpha blends. The ground shadow is the model flattened along the light onto the ground,
-//! blended once per pixel.
+//! Diffuse alpha blends. The ground shadow is the model and its edge hull flattened along the light
+//! onto the ground, blended once per pixel.
 //!
 //! The vertex buffers and material values of every frame are `mds-skin`'s: BDEF, SDEF and QDEF
 //! skinning, vertex, UV and material morphs, and the edge hull and color the C++ computes. The edge
@@ -40,8 +42,9 @@
 //!
 //! [`Stage::picture`] draws a background picture as a quad in output pixels.
 //!
-//! Under self-shadow (modes 1 and 2) the models draw depth into a 2048 x 2048 map from the light,
-//! and every material that receives the self-shadow compares against it.
+//! Under self-shadow (modes 1 and 2) the models draw depth into a map from the light, 2048 x 2048
+//! or 4096 x 4096 ([`Stage::shadow_map`]), and every material that receives the self-shadow
+//! compares against it.
 
 mod accessory;
 mod mesh;
@@ -167,6 +170,28 @@ pub struct Stage<'a> {
     pub accessories: &'a [AccessoryDraw<'a>],
     /// The background picture, drawn behind everything.
     pub picture: Option<Picture<'a>>,
+    /// The self-shadow map's size.
+    pub shadow_map: ShadowMapSize,
+}
+
+/// The size of the self-shadow map, square. The app's default is 2048 (the render target of the
+/// `shadow` lines of the golden2 probes); its shadow panel also offers 4096, which no golden image
+/// covers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ShadowMapSize {
+    #[default]
+    Texels2048,
+    Texels4096,
+}
+
+impl ShadowMapSize {
+    /// Texels along each side.
+    pub fn texels(self) -> u32 {
+        match self {
+            ShadowMapSize::Texels2048 => 2048,
+            ShadowMapSize::Texels4096 => 4096,
+        }
+    }
 }
 
 /// A background picture and where it goes: `rect` is left, top, right, bottom in the pixels of
@@ -190,6 +215,7 @@ impl Stage<'_> {
             }),
             accessories: &[],
             picture: None,
+            shadow_map: ShadowMapSize::default(),
         }
     }
 }
@@ -298,6 +324,17 @@ fn linear_to_srgb(l: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shader_validates() {
+        let module = naga::front::wgsl::parse_str(include_str!("shader.wgsl")).unwrap();
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .unwrap();
+    }
+
     #[test]
     fn srgb_round_trip_keeps_every_8_bit_value() {
         let table = super::srgb_to_linear_table();

@@ -230,7 +230,7 @@ byte (the `.emm` files differ by the checkout path).
 | `expected/pmdedit/edited.pmd` | `a705bbefcdd889d6ba41ac46bd2ff68de47d0b7addf16c211c16f5978dfa3dc1` |
 | `expected/pmdedit/edited.pmm` | `847f9c508f7113a45afb82d86b9e3b7881eae30c1c9721992bd65c8081b2404d` |
 | `expected/pmdedit/manifest.tsv` | `03ecebd57097153ae9f9114300fa094985c6a1cc6f9a41fec5eee7f0a7d9f74c` |
-| `expected/pmdedit/messages.tsv` | `0128573e0b9101a6d4368f9e94b7e202486ee69840460f93d1f0d85ae7ad0cda` |
+| `expected/pmdedit/messages.tsv` | `23706d3fdc8974f9fb12c95c0560a48792c6a20c7b34b63596178012a72ce97c` |
 | `expected/vac/manifest.tsv` | `c76f0630df8b939a85da5bb1e5453c8ee137c1db622e57ac43166fd416b5bcd0` |
 | `expected/vac/vac.emm` | `9b90116c9b596de28146023ad1b1a060016c67cf11ba9f19894fabafae30b76b` |
 | `expected/vac/vac.pmm` | `e08118c5b835bd07ba8ac1fba697d39462f5566d5407b20c5140ab825056ffea` |

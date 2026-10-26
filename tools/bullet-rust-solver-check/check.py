@@ -6,6 +6,8 @@ from pathlib import Path
 import platform
 import subprocess
 
+from profiles import compare_capture, fixture_path, verify_profiles
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 
@@ -19,6 +21,8 @@ def main():
     parser.add_argument('--out-dir', type=Path, required=True)
     parser.add_argument('--record', action='store_true', help='replace the checked-in native fixture')
     args = parser.parse_args()
+    fixture = fixture_path()
+    verify_profiles()
     output = args.out_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     environment = os.environ.copy()
@@ -88,11 +92,9 @@ def main():
     assert cursor == len(events)
     captured = ('\n'.join(lines) + '\n').encode()
     (output / 'native.tsv').write_bytes(captured)
-    fixture = ROOT / 'rust/crates/mds-bullet/tests/solver_data/native.tsv'
     if args.record:
         fixture.write_bytes(captured)
-    if fixture.read_bytes() != captured:
-        raise SystemExit('Native joint output differs from checked-in fixture')
+    compare_capture(captured, fixture)
     run(['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--crate-name', 'mds_crtmath', '--crate-type', 'rlib',
          '-O', crt, '-o', output / 'libmds_crtmath.rlib'], env=environment)
     run(['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--crate-name', 'bullet_core_support', '--crate-type', 'rlib',

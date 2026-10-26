@@ -64,3 +64,6 @@ winprobe	3c	mmegold	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures
 render4	3c	winprobe	mac	opus	MIT	rust/crates/mds-render/
 winoracle3	3c	winprobe	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/script3/,tests/fixtures/rust/mmegold/,third_party/mmeffect/,CMakeLists.txt
 doccmds3	3c	doccmds2	mac	opus	pending	rust/crates/mds-doc/,rust/crates/mds-edit/,rust/crates/mds-ops/,rust/crates/mds-formats/,rust/crates/mds-vsq/,rust/crates/mds-media/
+appmedia	3c	appcore	mac	opus	pending	rust/crates/mds-app/src/editor.rs,rust/crates/mds-app/src/playback.rs,rust/crates/mds-app/src/window.rs,rust/crates/mds-app/src/record.rs,rust/crates/mds-app/src/audio.rs,rust/crates/mds-app/src/lib.rs,rust/crates/mds-app/src/ui/file.rs,rust/crates/mds-app/Cargo.toml,rust/crates/mds-app/tests/app_media/
+uiphysics	3c	appcore	mac	sonnet	pending	rust/crates/mds-app/src/ui/physics.rs,rust/crates/mds-app/tests/ui_physics/
+uimocap	3c	appcore	mac	sonnet	pending	rust/crates/mds-app/src/ui/mocap.rs,rust/crates/mds-app/tests/ui_mocap/

@@ -617,3 +617,15 @@ fn the_script_runner_pumps_on_request() {
         b.doc.pmm.models[0].bone_pose[5].rotation
     );
 }
+
+#[test]
+fn a_vac_names_its_mesh_without_the_cr() {
+    // `_wfopen_s(.., L"r")` (accessory.cpp 464) reads CRLF as LF, and the
+    // second `fgets` line loses its `\n` (466-469).
+    assert_eq!(
+        mds_doc::vac_mesh_name(b"Vac\r\ntri2.x\r\n1.5\r\n"),
+        b"tri2.x"
+    );
+    assert_eq!(mds_doc::vac_mesh_name(b"Vac\ntri2.x\n"), b"tri2.x");
+    assert_eq!(mds_doc::vac_mesh_name(b"Vac\na\rb\n"), b"a\rb");
+}

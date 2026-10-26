@@ -44,6 +44,12 @@
 //! moves the state (the camera panel, a paste or delete of camera keys) shows it before any key is
 //! registered. The model view turns about its reference point with the view offsets in the eye
 //! ([`model_view`]) and keeps its camera over seeks and playback.
+//! The light is the light state (`light_state`, which the light panel edits and a camera-mode seek
+//! moves to the track, `RefreshAfterFrameApply`) except in camera mode and while playing with
+//! camera tracking on: `PlaybackPoseAdvance` plays the light track only behind the same gate as
+//! the camera's (`src/app/timeline_advance.cpp:389-394`), and `UpdateBoneFrames` starts it only
+//! there (`InitGlobalTracks`, `src/app/playback_state.cpp:327`). In camera mode the track at the
+//! frame on screen stands for the state a seek put there ([`Editor::light`]).
 //! While playing, the C++ greys out every register path (`PlaybackActive() == 0` gates of
 //! `src/app/key_ladder.cpp` and `src/app/pump_edit_keys.cpp`, `DisablePlaybackMenus`), so
 //! [`Editor::apply`] refuses the register commands then, and no edit seeks the playing world.
@@ -70,7 +76,7 @@ use crate::{audio, file};
 use mds_doc::{Command, Document, ModelFile};
 use mds_media::wav::Wave;
 use mds_physics::PhysicsScene;
-use mds_render::{Camera, Frame, Stage};
+use mds_render::{Camera, Frame, Light, Stage};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -671,9 +677,12 @@ impl Editor {
                 &self.physics,
                 &self.view(frame, r.size(), 1.0 / r.settings.fps)?,
             )?,
-            false => scene::with_stage(&self.doc, &self.assets, &shot, |f, s| {
-                mds_render::render_frame_with(r.gpu(), f, s)
-            })??,
+            false => {
+                let light = self.light(frame)?;
+                scene::with_stage_lit(&self.doc, &self.assets, &shot, light, |f, s| {
+                    mds_render::render_frame_with(r.gpu(), f, s)
+                })??
+            }
         };
         r.write(&px)?;
         r.n += 1;
@@ -719,11 +728,24 @@ impl Editor {
         Ok(())
     }
 
+    /// The light of `frame` on screen; see the module doc.
+    pub fn light(&self, frame: u32) -> Result<Light, String> {
+        let p = &self.doc.pmm;
+        let track = p.settings.options[0] != 0 || p.appearance.follow_camera != 0 && self.playing();
+        if !track {
+            let s = p.light_state;
+            return Ok(Light {
+                color: [s[0], s[1], s[2]],
+                direction: [s[3], s[4], s[5]],
+            });
+        }
+        mds_render::scene::light_at(p, frame).ok_or_else(|| format!("light track at frame {frame}"))
+    }
+
     /// The MME view of the frame on screen from the view camera: `frame` at `size`, `elapsed`
     /// seconds after the last.
     pub fn view(&self, frame: u32, size: [u32; 2], elapsed: f32) -> Result<View<'_>, String> {
-        let l = mds_render::scene::light_at(&self.doc.pmm, frame)
-            .ok_or_else(|| format!("light track at frame {frame}"))?;
+        let l = self.light(frame)?;
         let ([r, g, b], [x, y, z]) = (l.color, l.direction);
         Ok(View {
             camera: &self.camera,
@@ -760,7 +782,8 @@ impl Editor {
             samples,
             picture_viewport: None,
         };
-        scene::with_stage(&self.doc, &self.assets, &shot, draw)
+        let light = self.light(shot.frame)?;
+        scene::with_stage_lit(&self.doc, &self.assets, &shot, light, draw)
     }
 }
 

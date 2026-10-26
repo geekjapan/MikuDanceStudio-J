@@ -382,3 +382,39 @@ fn the_command_line_load_gets_the_fresh_world() {
     assert!(poses(&startup) == fresh.body_poses().unwrap());
     assert!(poses(&startup) != poses(&opened));
 }
+
+/// The light drawn: in model mode the light state stays during playback with camera tracking off,
+/// because `PlaybackPoseAdvance` plays the light track only behind the camera's gate
+/// (`timeline_advance.cpp:389-394`, `CameraMode() || followCameraEnabled`) and `UpdateBoneFrames`
+/// starts the global tracks only there (`playback_state.cpp:327`); with tracking on the playback
+/// plays the track, and camera mode shows the track at the frame.
+#[test]
+fn the_light_track_plays_only_behind_the_camera_gate() {
+    let mut e = open("swing600.pmm");
+    if e.doc.pmm.settings.options[0] != 0 {
+        e.apply(Command::SelectModel(e.doc.pmm.models[0].slot)).unwrap();
+    }
+    e.doc.pmm.appearance.follow_camera = 0;
+    let state = mds_render::Light {
+        color: [0.25, 0.5, 0.75],
+        direction: [1.0, -0.5, 0.0],
+    };
+    e.apply(Command::SetLight {
+        color: state.color,
+        direction: state.direction,
+    })
+    .unwrap();
+    let track = |e: &Editor| mds_render::scene::light_at(&e.doc.pmm, e.shown_frame()).unwrap();
+    let drawn = |e: &Editor| e.with_frame([8, 8], &[[0.0, 0.0]], |f| f.light).unwrap();
+    assert!(track(&e) != state, "the state is not the track's");
+    assert_eq!(drawn(&e), state, "model mode, stopped");
+    e.toggle_play(0).unwrap();
+    e.pump(500).unwrap();
+    assert_eq!(drawn(&e), state, "model mode, playing, tracking off");
+    e.doc.pmm.appearance.follow_camera = 1;
+    assert_eq!(drawn(&e), track(&e), "tracking on, playing");
+    e.toggle_play(500).unwrap();
+    assert_eq!(drawn(&e), state, "tracking on, stopped");
+    e.apply(Command::SelectCameraMode).unwrap();
+    assert_eq!(drawn(&e), track(&e), "camera mode");
+}

@@ -39,6 +39,34 @@ fn outer_and_persistent_mixed_pairs_match_native_words() {
             .unwrap_or(include_str!("../gjk_pair_data/native.tsv")),
     );
 }
+#[test]
+fn fallback_replacements_in_every_mixed_order_match_native_words() {
+    let inputs = include_str!("../gjk_pair_data/fallback-inputs.tsv");
+    let native = include_str!("../gjk_pair_data/fallback-native.tsv");
+    let mut pairs = std::collections::BTreeSet::new();
+    for (input, expected) in inputs.lines().zip(native.lines()) {
+        let input: Vec<_> = input.split_whitespace().collect();
+        let expected: Vec<_> = expected.split_whitespace().collect();
+        assert_eq!(expected[1], "1");
+        assert_eq!(expected[2], "6");
+        pairs.insert((input[1], input[2]));
+    }
+    assert_eq!(
+        pairs,
+        [
+            ("0", "1"),
+            ("1", "0"),
+            ("0", "2"),
+            ("2", "0"),
+            ("1", "2"),
+            ("2", "1")
+        ]
+        .into_iter()
+        .collect()
+    );
+    replay(inputs, native);
+}
+
 fn replay(inputs: &str, native: &str) {
     assert_eq!(inputs.lines().count(), native.lines().count());
     let mut simplex = VoronoiSimplexSolver::default();

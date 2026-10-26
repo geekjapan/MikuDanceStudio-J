@@ -123,5 +123,8 @@ mod support;
 #[path = "pure_bullet/gjk_epa.rs"]
 mod gjk_epa;
 
+#[path = "pure_bullet/activation.rs"]
+mod activation;
+
 #[path = "pure_bullet/gjk_pair.rs"]
 mod gjk_pair;

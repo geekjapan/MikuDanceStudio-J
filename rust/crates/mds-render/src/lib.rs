@@ -28,7 +28,7 @@
 //! renormalized; with self-shadow on it is a blend toward the toon's shadow color by the angle to
 //! the light (see [`SelfShadow::shades`]). A back face is lit with its normal as it is, not
 //! flipped. Materials with the edge flag get an inverted-hull edge.
-//! Diffuse alpha blends. The ground shadow is the model and its edge hull flattened along the light
+//! Diffuse alpha blends. The ground shadow is the edge hull alone flattened along the light
 //! onto the ground, blended once per pixel.
 //!
 //! The vertex buffers and material values of every frame are `mds-skin`'s: BDEF, SDEF and QDEF
@@ -44,7 +44,11 @@
 //!
 //! Under self-shadow (modes 1 and 2) the models draw depth into a map from the light, 2048 x 2048
 //! or 4096 x 4096 ([`Stage::shadow_map`]), and every material that receives the self-shadow
-//! compares against it.
+//! compares against it. [`Stage::shadow_map_display`] draws that map in gray over the picture.
+//!
+//! [`Stage::grid`] draws the ground grid and the axes as lines one pixel wide, depth tested.
+//!
+//! [`Camera::view_with_offset`] draws the model view's offsets.
 
 mod accessory;
 mod mesh;
@@ -172,6 +176,14 @@ pub struct Stage<'a> {
     pub picture: Option<Picture<'a>>,
     /// The self-shadow map's size.
     pub shadow_map: ShadowMapSize,
+    /// The ground grid and the axes (the PMM view flag `ground_grid`): gray lines 5 units apart
+    /// over -50 to 50 along x and z, and the +x, +y and -z axes in red, green and blue to 70.
+    pub grid: bool,
+    /// The self-shadow map display (key Shift+G): the map drawn in gray, its depth from black
+    /// (near the light) to white (far, or nothing drawn), into this rectangle (left, top, right,
+    /// bottom in output pixels, as [`Picture::rect`]), over everything. Nothing is drawn when the
+    /// frame draws no map. No golden image shows the display, so its look is not the C++ app's.
+    pub shadow_map_display: Option<[f32; 4]>,
 }
 
 /// The size of the self-shadow map, square. The app's default is 2048 (the render target of the
@@ -216,6 +228,8 @@ impl Stage<'_> {
             accessories: &[],
             picture: None,
             shadow_map: ShadowMapSize::default(),
+            grid: false,
+            shadow_map_display: None,
         }
     }
 }

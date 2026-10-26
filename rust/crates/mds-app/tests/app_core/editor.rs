@@ -304,6 +304,7 @@ fn the_front_view_of_the_golden_strips_shows_their_edge_color() {
         return;
     };
     let mut e = open("swing600-golden.pmm");
+    e.doc.pmm.view.ground_grid = 0;
     e.toggle_play(0).unwrap();
     e.pump(33).unwrap();
     assert_eq!(

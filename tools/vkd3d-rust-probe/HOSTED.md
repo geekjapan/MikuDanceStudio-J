@@ -165,7 +165,7 @@ It does not count as compilation, link, or runtime acceptance. Then the unchange
 24-unit experiment includes all five common and 19 shader units. Remaining
 variadic and foreign-type stable-Rust failures stay visible. The numeric
 `offsetof` probe compares actual translated expressions against Clang 18, and
-the configured C working copy is checked byte-identical to its source. Extern
+the generated Rust working copy is checked byte-identical to its source. Extern
 inventory includes every emitted ABI and preserves
 the aggregate declared/defined/unresolved sets alongside per-ABI sets.
 

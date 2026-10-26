@@ -11,17 +11,9 @@ use mds_app::ui::{chord, Ctx};
 use mds_doc::{GlobalTrack, Track};
 use rig::{assert_bytes, expected, global, Rig};
 
-/// The inventory rows of the area that have no action, because `mds-doc` has no command for them.
-const MISSING: [&str; 8] = [
-    "ctl:422",
-    "ctl:424",
-    "ctl:430",
-    "ctl:431",
-    "ctl:432",
-    "mouse:curve-point-drag",
-    "mouse:timeline-key-drag",
-    "mouse:timeline-margin-click",
-];
+/// The inventory rows of the area that have no action: 424 needs `mds_ops::RangeScale`, which
+/// `mds-app` cannot name, and the key drag needs a command that `mds-doc` lacks.
+const MISSING: [&str; 2] = ["ctl:424", "mouse:timeline-key-drag"];
 
 fn inventory_ids() -> Vec<String> {
     let path = rig::fixtures().join("../../../tools/ui_inventory/inventory.tsv");
@@ -399,6 +391,212 @@ fn the_frame_strip_sets_the_current_frame() {
     timeline::click_strip(&mut rig.ctx(), 7).unwrap();
     assert_eq!(rig.editor.current_frame(), 7);
     assert_eq!(rig.editor.physics_opens, 1);
+}
+
+#[test]
+fn the_frame_strip_keeps_the_bone_selection_and_the_frame_edit_clears_it() {
+    // ClickFrame keeps `selectedBone` (HandleLButtonDown_FrameStripHit, ui_editor_click.cpp:801);
+    // the frame edit 417 goes through SetFrame, which clears it.
+    let mut rig = Rig::replay("bones", 12);
+    let c = rig.bone("センター");
+    let row = rig.row(Track::Bone(c));
+    timeline::click_name(&mut rig.ctx(), &row, false).unwrap();
+    timeline::click_strip(&mut rig.ctx(), 7).unwrap();
+    assert_eq!(rig.editor.current_frame(), 7);
+    assert_eq!(selected(&rig), vec![c]);
+    assert!(!rig.editor.modified, "a strip click is no scene edit");
+    rig.editor.seek(8).unwrap();
+    assert_eq!(selected(&rig), Vec::<u32>::new());
+}
+
+#[test]
+fn the_frame_strip_stops_during_playback() {
+    let mut rig = Rig::open("swing600.pmm");
+    rig.run("ctl:408").unwrap();
+    assert_eq!(
+        timeline::click_strip(&mut rig.ctx(), 7),
+        Err("not while playing".into())
+    );
+}
+
+#[test]
+fn reverse_paste_makes_the_key_pools_the_script_makes() {
+    // bones.txt lines 20 to 25: select all bone, copy, frame 40, paste, frame 60, `paste reverse`.
+    // The script runner pumps the frame loop after each line, which moves the saved pose, so the
+    // key pools are compared and not the PMM bytes.
+    let pools = |rig: &Rig| format!("{:?}", rig.editor.doc.pmm.models[0].bone_keys);
+    let mut rig = Rig::replay("bones", 24);
+    let before = pools(&rig);
+    rig.run("ctl:422").unwrap();
+    assert_ne!(pools(&rig), before);
+    assert!(
+        pools(&rig) == pools(&Rig::replay("bones", 25)),
+        "key pools differ"
+    );
+}
+
+#[test]
+fn the_margin_toggles_the_group_flag_the_pmm_saves() {
+    // ToggleDisplayGroup flips DisplayGroups[type].flags (ui_editor_click.cpp:451), type being
+    // the PMX frame index, plus one when the model has the facial group (pmx_load.cpp:1417 and
+    // :1432). morph4.pmx has morphs and so the facial group at 2; its frames from 2 on are
+    // groups 3 and up.
+    let mut rig = Rig::replay("morphs", 5);
+    let before = rig.save();
+    let flags = |rig: &Rig| rig.editor.doc.pmm.models[0].selection.group_flags.clone();
+    let start = flags(&rig);
+    let rows = timeline::rows(&rig.editor.doc, &[]);
+    let morphs = rows
+        .iter()
+        .find(|r| r.kind == RowKind::Header(timeline::MORPHS))
+        .unwrap()
+        .clone();
+    assert_eq!(
+        timeline::group_flag(&rig.editor.doc, timeline::MORPHS),
+        Some(2)
+    );
+    timeline::click_plus(&mut rig.ctx(), &morphs).unwrap();
+    let mut want = start.clone();
+    want[2] = u8::from(start[2] == 0);
+    assert_eq!(flags(&rig), want);
+    assert!(!rig.editor.modified);
+    assert_ne!(rig.save(), before, "the PMM saves the flag");
+    timeline::click_margin(&mut rig.ctx(), &morphs).unwrap();
+    assert_bytes("toggled twice", &rig.save(), &before);
+}
+
+#[test]
+fn a_bone_group_flag_follows_the_frame_index() {
+    let rig = Rig::replay("bones", 12);
+    let doc = &rig.editor.doc;
+    let groups = flags_of_headers(doc);
+    // The root frame lists its bones under a header too, but it is no flag group.
+    let mds_doc::ModelFile::Pmx(pmx) = &doc.models[0] else {
+        panic!("chain8.pmx")
+    };
+    let facial = pmx
+        .frames
+        .iter()
+        .any(|f| f.entries.iter().any(|e| e.0 == 1));
+    let bone_frames: Vec<usize> = pmx
+        .frames
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.entries.iter().any(|e| e.0 == 0))
+        .map(|(n, _)| n)
+        .collect();
+    assert!(bone_frames.len() > 1);
+    assert_eq!(
+        groups,
+        bone_frames
+            .iter()
+            .map(|&n| (n >= 2).then(|| (n + usize::from(facial)) as u8))
+            .collect::<Vec<_>>()
+    );
+}
+
+fn flags_of_headers(doc: &mds_doc::Document) -> Vec<Option<u8>> {
+    timeline::rows(doc, &[])
+        .iter()
+        .filter_map(|r| match r.kind {
+            RowKind::Header(g) if g != timeline::MORPHS => Some(timeline::group_flag(doc, g)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_margin_of_a_row_without_a_flag_does_nothing() {
+    let mut rig = Rig::replay("bones", 12);
+    let before = rig.save();
+    let row = rig.row(Track::Display);
+    timeline::click_margin(&mut rig.ctx(), &row).unwrap();
+    assert_bytes("display row", &rig.save(), &before);
+}
+
+#[test]
+fn curve_buttons_copy_paste_and_reset_the_channel_of_the_combo() {
+    // CopyInterpolationCurve, PasteInterpolationCurve and ResetInterpolationCurves
+    // (command_frame_edit.cpp:987, :1033, :1082): a bone channel is the bytes [ch], [4+ch],
+    // [8+ch], [12+ch] of the key; copy reads the first marked key, paste writes every marked key,
+    // reset writes 20, 20, 107, 107. The combo starts on rotation (3).
+    let mut rig = Rig::replay("bones", 12);
+    let (c, u) = (rig.bone("センター"), rig.bone("上半身"));
+    assert_eq!(rig.panel().curve, 3);
+    let bytes = |rig: &Rig, bone: u32, frame: u32, ch: usize| {
+        let pool = &rig.editor.doc.pmm.models[0].bone_keys;
+        let mut i = pool.heads()[bone as usize].next;
+        while pool.get(i).unwrap().frame != frame {
+            i = pool.get(i).unwrap().next;
+        }
+        let k = pool.get(i).unwrap().interpolation;
+        [k[ch], k[4 + ch], k[8 + ch], k[12 + ch]]
+    };
+    let key = |rig: &Rig, bone: u32, frame: u32| {
+        let pool = &rig.editor.doc.pmm.models[0].bone_keys;
+        let mut i = pool.heads()[bone as usize].next;
+        while pool.get(i).unwrap().frame != frame {
+            i = pool.get(i).unwrap().next;
+        }
+        i
+    };
+    let at = key(&rig, c, 10);
+    let k = rig.editor.doc.pmm.models[0].bone_keys.get_mut(at).unwrap();
+    k.interpolation[3] = 1;
+    k.interpolation[7] = 2;
+    k.interpolation[11] = 3;
+    k.interpolation[15] = 4;
+    timeline::click_cell(&mut rig.ctx(), Track::Bone(c), 10, false).unwrap();
+    rig.run("ctl:430").unwrap();
+    timeline::click_cell(&mut rig.ctx(), Track::Bone(u), 20, false).unwrap();
+    let other = bytes(&rig, u, 20, 0);
+    rig.run("ctl:431").unwrap();
+    assert_eq!(bytes(&rig, u, 20, 3), [1, 2, 3, 4]);
+    assert_eq!(bytes(&rig, u, 20, 0), other, "only the combo's channel");
+    rig.run("ctl:432").unwrap();
+    assert_eq!(bytes(&rig, u, 20, 3), [20, 20, 107, 107]);
+    assert_eq!(bytes(&rig, c, 10, 3), [1, 2, 3, 4], "unmarked keys stay");
+    // The "all" entry resets the four channels.
+    rig.update(|p| p.curve = 6);
+    rig.run("ctl:432").unwrap();
+    for ch in 0..4 {
+        assert_eq!(bytes(&rig, u, 20, ch), [20, 20, 107, 107]);
+    }
+}
+
+#[test]
+fn the_curve_box_shows_and_drags_the_first_marked_key() {
+    // DragInterpolationControlPoint (ui_selection_reeval.cpp:115): the start point is
+    // interpolation[0 and 1][ch] of a camera key, the end point [2 and 3][ch]; the point is
+    // clamped to 0..127 and 'all' (6 and up) shows channel 0.
+    let mut rig = Rig::replay("camera", 10);
+    let camera = global(GlobalTrack::Camera);
+    rig.editor
+        .apply(mds_doc::Command::ClearKeySelection)
+        .unwrap();
+    assert_eq!(timeline::curve_points(&rig.editor.doc, 2), None);
+    timeline::click_cell(&mut rig.ctx(), camera, 30, false).unwrap();
+    rig.update(|p| p.curve = 2);
+    timeline::drag_curve_point(&mut rig.ctx(), false, [5, 6]).unwrap();
+    timeline::drag_curve_point(&mut rig.ctx(), true, [-3, 300]).unwrap();
+    let key = (rig.editor.doc.pmm.camera.records().iter())
+        .find(|(_, k)| k.frame == 30)
+        .unwrap()
+        .1
+        .clone();
+    assert_eq!([key.interpolation[0][2], key.interpolation[1][2]], [5, 6]);
+    assert_eq!([key.interpolation[2][2], key.interpolation[3][2]], [0, 127]);
+    assert_eq!(
+        timeline::curve_points(&rig.editor.doc, 2),
+        Some([[5, 6], [0, 127]])
+    );
+    assert_eq!(
+        timeline::curve_points(&rig.editor.doc, 6),
+        Some([
+            [key.interpolation[0][0], key.interpolation[1][0]],
+            [key.interpolation[2][0], key.interpolation[3][0]]
+        ])
+    );
 }
 
 #[test]

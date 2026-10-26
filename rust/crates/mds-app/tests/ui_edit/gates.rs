@@ -1,27 +1,10 @@
-//! Mode gates, playback, rotation reset (menu 302) and the rows without a Command.
+//! Mode gates, playback and the rotation reset (menu 302).
 
 use super::{open, run};
-use mds_app::actions;
 use mds_doc::Command;
 
 /// A quarter turn about Y.
 const TURNED: [f32; 4] = [0.0, 0.6, 0.0, 0.8];
-
-const MISSING: [&str; 10] = [
-    "menu:222", "menu:219", "menu:242", "menu:250", "menu:251", "menu:252", "menu:300", "key:D",
-    "key:F", "key:R",
-];
-
-#[test]
-fn rows_without_a_command_are_not_runnable() {
-    let mut e = open("swing600.pmm");
-    let before = e.doc.save().unwrap();
-    for id in MISSING {
-        assert!(actions::find(id).is_none(), "{id} has an action");
-        assert_eq!(run(&mut e, id), Err(format!("{id}: not implemented")));
-    }
-    assert!(e.doc.save().unwrap() == before && !e.modified);
-}
 
 #[test]
 fn select_all_follows_the_mode_of_the_menu() {
@@ -49,7 +32,10 @@ fn select_all_follows_the_mode_of_the_menu() {
 fn nothing_runs_while_playing() {
     let mut e = open("swing600.pmm");
     run(&mut e, "ctl:408").unwrap();
-    for id in ["menu:217", "menu:255", "key:J", "menu:302"] {
+    for id in [
+        "menu:217", "menu:255", "key:J", "menu:302", "menu:300", "menu:222", "menu:219", "key:D",
+        "menu:242", "menu:251", "key:R", "menu:252", "menu:250", "key:F",
+    ] {
         assert_eq!(run(&mut e, id), Err(format!("{id}: not while playing")));
     }
 }

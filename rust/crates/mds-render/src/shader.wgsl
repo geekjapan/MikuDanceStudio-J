@@ -164,9 +164,6 @@ fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
         color = color + s;
     }
 
-    // The toon texture has the lit end at v = 0 and the shadow color at v = 1. Under self-shadow
-    // the color blends toward the shadow color as N.L falls from 0.34 to 0.03 (fitted to the
-    // golden scene, frames 300 and 599).
     var specular = vec3<f32>(0.0);
     let power = mat.specular.w;
     if power > 0.0 {
@@ -174,12 +171,16 @@ fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
         let h = normalize(to_light + to_eye);
         specular = mat.specular.rgb * lc * pow(max(dot(n, h), 0.0), power);
     }
-    // Under self-shadow the highlight is part of the lit color only, so the shadow takes it away
-    // (golden2 `selfshadow-*.png`: the models' shadowed fronts are flat).
+    // The toon texture has the lit end at v = 0 and the shadow color at v = 1. Under self-shadow
+    // the color blends from the lit color toward the shadow color as 3 N.L, with the normal as
+    // interpolated, falls from 1 to 0, or as the self-shadow falls, whichever is darker. The
+    // highlight is part of the lit color only. Fitted to golden2 `selfshadow-*.png` (the ramps and
+    // the flat shadowed fronts of the models), and the golden scene, frames 300 and 599.
     let ndl = dot(n, to_light);
     if scene.light_dir.w == 2.0 {
         let shade = textureSampleLevel(toon, clamped, vec2<f32>(0.5, 1.0), 0.0).rgb;
-        color = mix(color * shade, color + specular, min(clamp(3.2 * ndl - 0.1, 0.0, 1.0), lit));
+        let toon_lit = clamp(3.0 * dot(i.normal, to_light), 0.0, 1.0);
+        color = mix(color * shade, color + specular, min(toon_lit, lit));
     } else {
         if scene.light_dir.w == 1.0 {
             color = color * textureSampleLevel(toon, clamped, vec2<f32>(0.5, 0.5 - 0.5 * ndl), 0.0).rgb;

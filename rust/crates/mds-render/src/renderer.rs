@@ -31,12 +31,13 @@ struct Pipelines {
     ground_shadow: wgpu::RenderPipeline,
     accessory: wgpu::RenderPipeline,
     picture: wgpu::RenderPipeline,
+    /// Depth from the light, both sides of every face (golden2 `selfshadow-*.png`: 0.9977 and
+    /// 0.9973 within 4, against 0.994 culling back faces and 0.984 culling front faces).
     shadow: wgpu::RenderPipeline,
-    shadow_two_sided: wgpu::RenderPipeline,
 }
 
 /// Render pipelines in one [`Pipelines`] set.
-const PIPELINES_PER_SET: usize = 8;
+const PIPELINES_PER_SET: usize = 7;
 
 /// The self-shadow map: its size (the render target of the `shadow` lines of the golden2 probes,
 /// the app's default) and its format.
@@ -821,42 +822,36 @@ impl Renderer {
             read_mask: 0xff,
             write_mask: 0xff,
         };
-        let shadow = |cull: Option<wgpu::Face>| {
-            self.device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("vs_shadow"),
-                    layout: Some(&self.light_layout),
-                    vertex: wgpu::VertexState {
-                        module: &self.shader,
-                        entry_point: Some("vs_shadow"),
-                        compilation_options: Default::default(),
-                        buffers: &[Some(wgpu::VertexBufferLayout {
-                            array_stride: BODY_STRIDE,
-                            step_mode: wgpu::VertexStepMode::Vertex,
-                            attributes: &body_attrs,
-                        })],
-                    },
-                    primitive: wgpu::PrimitiveState {
-                        front_face: wgpu::FrontFace::Cw,
-                        cull_mode: cull,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: SHADOW_FORMAT,
-                        depth_write_enabled: Some(true),
-                        depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                        stencil: Default::default(),
-                        bias: Default::default(),
-                    }),
-                    multisample: Default::default(),
-                    fragment: None,
-                    multiview_mask: None,
-                    cache: None,
-                })
-        };
+        let shadow = self
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("vs_shadow"),
+                layout: Some(&self.light_layout),
+                vertex: wgpu::VertexState {
+                    module: &self.shader,
+                    entry_point: Some("vs_shadow"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: BODY_STRIDE,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &body_attrs,
+                    })],
+                },
+                primitive: Default::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: SHADOW_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                fragment: None,
+                multiview_mask: None,
+                cache: None,
+            });
         Pipelines {
-            shadow: shadow(None),
-            shadow_two_sided: shadow(None),
+            shadow,
             body: pipeline(
                 "vs_main",
                 "fs_main",
@@ -939,33 +934,17 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            pass.set_pipeline(&pipelines.shadow);
             pass.set_bind_group(0, &self.light_group, &[]);
+            // Only the models: an accessory in the map (golden2 `selfshadow-*.png`, the floor)
+            // widens the models' shadows on it by about a texel each side.
             for (&(mesh, _), key) in frame.models.iter().zip(Self::keys(frame)) {
                 let res = &self.models[&key];
                 pass.set_index_buffer(res.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.set_vertex_buffer(0, res.vertices.slice(..));
                 for (m, &alpha) in mesh.materials.iter().zip(&res.alpha) {
                     if m.count > 0 && alpha > 0.0 && m.flags & FLAG_SHADOW_CAST != 0 {
-                        pass.set_pipeline(if m.flags & FLAG_DOUBLE_SIDED != 0 {
-                            &pipelines.shadow_two_sided
-                        } else {
-                            &pipelines.shadow
-                        });
                         pass.draw_indexed(m.start..m.start + m.count, 0, 0..1);
-                    }
-                }
-            }
-            pass.set_pipeline(&pipelines.shadow);
-            for (a, key) in stage.accessories.iter().zip(Self::accessory_keys(stage)) {
-                if !a.state.visible || !a.state.shadow_enabled {
-                    continue;
-                }
-                let res = &self.models[&key];
-                pass.set_index_buffer(res.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.set_vertex_buffer(0, res.vertices.slice(..));
-                for (&(start, count), &alpha) in res.ranges.iter().zip(&res.alpha) {
-                    if count > 0 && alpha > 0.0 {
-                        pass.draw_indexed(start..start + count, 0, 0..1);
                     }
                 }
             }

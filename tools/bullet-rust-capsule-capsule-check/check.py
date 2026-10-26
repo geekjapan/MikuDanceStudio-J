@@ -146,7 +146,7 @@ def main():
     for line in coverage_lines:
         operation, label = line.split()
         groups[group_for_operation[int(operation)]]['coverage'].add(label)
-    selected = set(range(32))
+    selected = set(range(32)) | set(range(len(groups)-4, len(groups)))
     covered = set().union(*(groups[i]['coverage'] for i in selected))
     while required - covered:
         best = max(range(len(groups)), key=lambda i: len(groups[i]['coverage'] & (required-covered)))
@@ -172,7 +172,7 @@ def main():
     mutations = {
         'inclusive-threshold': ('if distance < self.threshold {', 'if distance <= self.threshold {'),
         'extra-margin': ('let distance = (len2.sqrt() - ra) - rb;', 'let distance = (len2.sqrt() - (ra + 0.04)) - (rb + 0.04);'),
-        'omit-recompute': ('ta = (tb * dot + at).clamp(-ha, ha);', 'let _ = (tb, dot, at);'),
+        'omit-recompute': ('ta = clamp_a(tb * dot + at);', 'let _ = (tb, dot, at);'),
         'fixed-tangent': ('let normal = if len2 <=', 'let normal = if true { Vec3([1.0, 0.0, 0.0]) } else if len2 <='),
     }
     for name, (before, after) in mutations.items():

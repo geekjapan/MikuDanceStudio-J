@@ -50,4 +50,11 @@ def main():
         new(a,b);step(pa,pb)
         if i%5==0: print('J');step(pa,pb)
 
+    # Raw dimensions retain native lower-first comparisons, even for inverted bounds.
+    for a, b in [((1,-2),(1,2)), ((1,2),(1,-2)), ((1,-2),(1,-2)), ((1,float('nan')),(1,2))]:
+        new(a,b)
+        for xyz, angle in [((.1,0,0),(.7,.3,.5)), ((.1,-5,0),(0,0,0)), ((.1,5,0),(0,0,0)), ((.1,0,0),(0,0,0))]:
+            step(pose(),pose(xyz,angle))
+        print('J');step(pose(),pose((.1,0,0)));print('R')
+
 if __name__=='__main__': main()

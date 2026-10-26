@@ -120,5 +120,5 @@ fn native_capsule_capsule_traces_match_production_manifold() {
         include_str!("../capsule_capsule_data/inputs.tsv"),
         include_str!("../capsule_capsule_data/native.tsv"),
     );
-    assert_eq!((operations, candidates), (258, 159));
+    assert_eq!((operations, candidates), (286, 173));
 }

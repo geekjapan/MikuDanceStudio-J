@@ -409,18 +409,28 @@ fn capsule_capsule_contact(
     let at = (tr.0[2] * z + tr.0[0] * x) + tr.0[1] * y;
     let bt = (tr.0[2] * db.0[2] + tr.0[1] * db.0[1]) + tr.0[0] * db.0[0];
     let denom = 1.0 - dot * dot;
+    // Native comparisons are lower-first even for inverted or NaN raw bounds.
+    let clamp_a = |value| {
+        if value < -ha {
+            -ha
+        } else if value > ha {
+            ha
+        } else {
+            value
+        }
+    };
     let mut ta = if denom == 0.0 {
         0.0
     } else {
-        ((at - bt * dot) / denom).clamp(-ha, ha)
+        clamp_a((at - bt * dot) / denom)
     };
     let mut tb = ta * dot - bt;
     if tb < -hb {
         tb = -hb;
-        ta = (tb * dot + at).clamp(-ha, ha);
+        ta = clamp_a(tb * dot + at);
     } else if tb > hb {
         tb = hb;
-        ta = (tb * dot + at).clamp(-ha, ha);
+        ta = clamp_a(tb * dot + at);
     }
     let offset_b = db.scale(tb);
     let pts = tr.sub(da.scale(ta)).add(offset_b);

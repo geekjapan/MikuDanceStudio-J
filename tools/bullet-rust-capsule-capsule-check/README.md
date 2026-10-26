@@ -29,8 +29,13 @@ both endpoint clamps, zero heights, asymmetric dimensions, coincident centerline
 both tangent branches, exact threshold equality and its adjacent floats, reversed
 inputs, large shared translations, and contact replacement, slide, separation, and
 reentry. Another 400 deterministic generated scenarios extend the native comparison.
-The committed fixtures retain the 32 complete directed scenarios, including all
-observed branch labels. `--freeze` writes those native-derived fixture bytes.
+Four appended raw-dimension scenarios cover negative A height, negative B height,
+both negative heights, and a quiet NaN A height. Endpoint comparisons retain native
+lower-first ordering without validating raw dimensions. The NaN A case has finite
+serialized fields and does not require NaN-sign exceptions. NaN B heights, signaling
+NaNs, and other nonfinite dimensions remain outside these directed checks.
+The committed fixtures retain the original 32 complete directed scenarios as byte
+prefixes and append the four raw-dimension scenarios, including all observed branch labels. `--freeze` writes those native-derived fixture bytes.
 
 The check compiles an observed copy of the original source under the output
 directory. It records source hashes and the hook diff, compares the original and

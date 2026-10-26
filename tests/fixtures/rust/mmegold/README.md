@@ -135,6 +135,18 @@ self-shadow, light (-0.5, -1, 0.5).
   (`third_party/mmeffect/src/mmeffect/sas_exec.cpp`).
 - `anime-0` and `anime-3` are the same image, and so are `anime-9` and
   `anime-30`.
+- `post-0.png` and `post-30.png` are white because of the effect, not the C++
+  path (slice `winoracle3`). The `Final` pass of `mme/effects/post.fx` draws
+  to the back buffer as `RenderColorTarget0` with `RenderColorTarget1=Full`
+  bound beside it. The dump's back buffer is multisampled (`--mds-frame-dump`
+  refuses to run without that, `src/tools/trace_mode.cpp`), and `Full` is not,
+  so Direct3D 9 drops the draw, and the image keeps the white clear of the
+  back buffer. With the two `RenderColorTarget1` lines removed, the same build
+  shows `ClearColor` with the grid over it (sha256
+  `9944945e8f967338cd6119a7ad33bdb932d8b4bb6590fb93823aa432b6668a5f`, not
+  committed); with the file as it is, it gives the committed white image
+  again. A non-white image needs a change in `post.fx`, which would change
+  `post.emm` and the probes, so the fixtures stay as they are.
 
 ## Files
 

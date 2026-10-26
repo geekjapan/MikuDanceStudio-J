@@ -183,18 +183,23 @@ impl JointSolver {
         let mut impulse = row.rhs - row.applied_impulse * j.cfm;
         impulse -= va * row.diagonal_inverse;
         impulse -= vb * row.diagonal_inverse;
-        let sum = row.applied_impulse + impulse;
+        let old_impulse = row.applied_impulse;
+        let sum = old_impulse + impulse;
         if sum < j.lower_impulse {
             impulse = j.lower_impulse - row.applied_impulse;
             row.applied_impulse = j.lower_impulse;
-        } else if (self.mode == SolverMode::Simd
-            && sum.partial_cmp(&j.upper_impulse) != Some(std::cmp::Ordering::Less))
-            || (self.mode == SolverMode::Scalar && sum > j.upper_impulse)
-        {
+        } else if self.mode == SolverMode::Scalar && sum > j.upper_impulse {
             impulse = j.upper_impulse - row.applied_impulse;
             row.applied_impulse = j.upper_impulse;
         } else {
             row.applied_impulse = sum;
+        }
+        // Native SIMD applies both masks to the original sum; the upper mask wins.
+        if self.mode == SolverMode::Simd
+            && sum.partial_cmp(&j.upper_impulse) != Some(std::cmp::Ordering::Less)
+        {
+            impulse = j.upper_impulse - old_impulse;
+            row.applied_impulse = j.upper_impulse;
         }
         let [ia, ib] = row.bodies;
         let linear_a = product(j.j1_linear, a.inverse_mass);

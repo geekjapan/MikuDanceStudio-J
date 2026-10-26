@@ -35,6 +35,14 @@ velocities finite. Native scalar retains NaN impulses and velocities. Both modes
 compare every captured bit, including native NaN bits. The original 512-solve
 fixture prefix is unchanged.
 
+Two further solves use nonzero inertia and an enabled angular motor with
+`maxMotorForce = -2`, zero target and zero initial velocities. This finite public
+motor input creates lower impulse 2 and upper impulse -2. Both SIMD masks match
+the original zero sum, so native SIMD selects the upper bound after the lower
+selection. Its delta uses the original applied impulse. Scalar retains its
+lower-first branch. Both solves compare all captured words, with ten iterations
+and every SIMD row event. The original 516-line fixture prefix is unchanged.
+
 A separate 64-case native fixture checks factor setters, central force, torque,
 gravity, velocity integration, and force clearing. The focused harness also runs
 the unchanged 5,247-row body fixture. Existing kernels compile as a support crate

@@ -62,6 +62,7 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
     let mut setup_rows = 0;
     let mut spring_targets = [false; 2];
     let mut zero_inertia_cases = [0; 2];
+    let mut negative_motor_cases = [0; 2];
     let mut nonzero_equilibrium = false;
     for line in include_str!("../solver_data/native.tsv").lines() {
         let mut fields = line.split('\t');
@@ -128,13 +129,23 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
                 nonzero_equilibrium |= spring.enabled && spring.equilibrium != 0.0;
             }
         }
-        if cases >= 512 {
+        if (512..516).contains(&cases) {
             assert_eq!(solver.rows.len(), 2);
             for row in &solver.rows {
                 assert_eq!(row.diagonal_inverse, f32::INFINITY);
                 assert!(row.rhs.is_nan());
                 assert_eq!(row.joint_row.lower_impulse, -2.0);
                 assert_eq!(row.joint_row.upper_impulse, 2.0);
+            }
+        }
+        if cases >= 516 {
+            negative_motor_cases[usize::from(mode == SolverMode::Scalar)] += 1;
+            assert_eq!(solver.rows.len(), 2);
+            for row in &solver.rows {
+                assert!(row.diagonal_inverse.is_finite());
+                assert_eq!(row.rhs, 0.0);
+                assert_eq!(row.joint_row.lower_impulse, 2.0);
+                assert_eq!(row.joint_row.upper_impulse, -2.0);
             }
         }
         setup_rows += solver.rows.len();
@@ -181,7 +192,7 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
             solver.iterate();
         }
         solver.writeback(&mut bodies);
-        if cases >= 512 {
+        if (512..516).contains(&cases) {
             let simd = mode == SolverMode::Simd;
             zero_inertia_cases[usize::from(!simd)] += 1;
             for row in &solver.rows {
@@ -219,7 +230,8 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
         previous = Some((bodies, joints));
         cases += 1;
     }
-    assert_eq!(cases, 516);
+    assert_eq!(cases, 518);
+    assert_eq!(negative_motor_cases, [1, 1]);
     assert_eq!(zero_inertia_cases, [2, 2]);
     assert!(zero_rows >= 4);
     assert!(row_events > 10000);

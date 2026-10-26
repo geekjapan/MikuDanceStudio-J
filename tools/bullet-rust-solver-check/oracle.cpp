@@ -83,9 +83,9 @@ static int factors() {
 }
 int main(int argc,char**) {
  if(argc>1)return factors();
- for(int scenario=0;scenario<260;scenario++) {
-    const int variant=scenario<256?scenario/128:(scenario-256)/2;
-    const int id=scenario<256?scenario%128:128+scenario%2;
+ for(int scenario=0;scenario<262;scenario++) {
+    const int variant=scenario<256?scenario/128:(scenario<260?(scenario-256)/2:scenario-260);
+    const int id=scenario<256?scenario%128:(scenario<260?128+scenario%2:130);
     btTransform worlds[3];btVector3 inertias[3];float masses[3];
     std::vector<std::unique_ptr<btRigidBody>> bodies;
     for(int i=0;i<3;i++) {
@@ -99,7 +99,7 @@ int main(int argc,char**) {
         }
         masses[i]=(i==1 && id%4<2)?0.0f:float(i+1);
         inertias[i]=btVector3(i+1,i+2,i+3);
-        if(id>=128){worlds[i].setIdentity();masses[i]=1;inertias[i]=btVector3(0,0,0);}
+        if(id>=128){worlds[i].setIdentity();masses[i]=1;inertias[i]=id==130?btVector3(1,2,3):btVector3(0,0,0);}
         bodies.emplace_back(new btRigidBody(masses[i],nullptr,nullptr,inertias[i]));
         auto& b=*bodies.back();b.setCenterOfMassTransform(worlds[i]);b.setCompanionId(-1);b.m_debugBodyId=i;
         if(i==1 && id%4==1)b.setCollisionFlags(b.getCollisionFlags()|btCollisionObject::CF_KINEMATIC_OBJECT);
@@ -130,11 +130,11 @@ int main(int argc,char**) {
         }
     }
     if(id>=128) {
-        // Finite dynamic inputs with zero angular effective mass exercise unordered SSE clamps.
+        // Finite motor inputs exercise unordered sums and overlapping reversed-bound masks.
         for(auto* jp:joints){auto& j=*static_cast<SpringJoint*>(jp);
             for(int axis=0;axis<6;axis++){j.setLimit(axis,1,-1);j.enableSpring(axis,false);}
             auto* m=j.getRotationalLimitMotor(0);m->m_enableMotor=true;
-            m->m_targetVelocity=0;m->m_maxMotorForce=2;
+            m->m_targetVelocity=0;m->m_maxMotorForce=id==130?-2:2;
         }
     }
     if(id%8==4) {

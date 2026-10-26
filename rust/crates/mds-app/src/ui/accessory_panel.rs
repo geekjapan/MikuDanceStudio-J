@@ -9,9 +9,8 @@
 //! [`select`], [`set_parent_model`], [`set_parent_bone`] and [`set_field`], which a test calls
 //! too. The buttons and check boxes run through the table.
 //!
-//! Not yet, for lack of a document command (see the report of the slice): 473 delete
-//! (`DeleteAccessory`) and 477 additive blend (`SetAccessoryAdditive`). Their buttons are drawn
-//! greyed out.
+//! Button 473 asks the C++ confirmation box first (`DeleteSelectedAccessory`,
+//! `command_panel_toggles.cpp:222`); a test has no window and no box.
 
 use super::{button, Ctx};
 use crate::actions::Action;
@@ -25,9 +24,11 @@ const EDIT_LABELS: [&str; 8] = ["X", "Y", "Z", "X", "Y", "Z", "拡大", "不透�
 const ACTIONS: &[Action] = &[
     Action::inline("ctl:471"),
     Action::run("ctl:472", load, true),
+    Action::run("ctl:473", delete, true),
     Action::inline("ctl:474"),
     Action::inline("ctl:475"),
     Action::run("ctl:476", toggle_visible, true),
+    Action::run("ctl:477", toggle_additive, true),
     Action::inline("ctl:478"),
     Action::inline("ctl:479"),
     Action::inline("ctl:480"),
@@ -188,6 +189,37 @@ fn toggle_shadow(ctx: &mut Ctx) -> Result<(), String> {
     toggle(ctx, false, true)
 }
 
+/// Check box 477 (`command_panel_toggles.cpp:554`): the additive flag of the selected accessory.
+fn toggle_additive(ctx: &mut Ctx) -> Result<(), String> {
+    let on = selected(ctx).ok_or("no accessory selected")?.state.additive == 0;
+    apply(ctx, Command::SetAccessoryAdditive(on))
+}
+
+/// Button 473 (`command_panel_toggles.cpp:222`): after the OK / Cancel box, the selected
+/// accessory and its keys go. Nothing without a selected accessory.
+fn delete(ctx: &mut Ctx) -> Result<(), String> {
+    let Some(a) = selected(ctx) else {
+        return Ok(());
+    };
+    let slot = a.slot;
+    if ctx.egui.is_some() && !confirm_delete(&a.name.text) {
+        return Ok(());
+    }
+    apply(ctx, Command::DeleteAccessory(slot))
+}
+
+/// `kMsgDelAccessoryJp` and `kCaptionDelAccessoryJp`.
+fn confirm_delete(name: &str) -> bool {
+    rfd::MessageDialog::new()
+        .set_title("アクセサリ削除")
+        .set_description(format!(
+            "アクセサリ：{name}を削除します\nアクセサリのフレームデータも全て削除されます\n(この操作は元に戻す事はできません)\n\n削除してもよろしいですか？"
+        ))
+        .set_buttons(rfd::MessageButtons::OkCancel)
+        .show()
+        == rfd::MessageDialogResult::Ok
+}
+
 /// Button 487: the selected accessory's state as a key at the current frame
 /// (`RegisterAccessoryKey`, `command_panel_toggles.cpp:590`). The edits commit as they change,
 /// so the `CommitEditControl` loop of the C++ has nothing left to do.
@@ -289,11 +321,10 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
                     ctx.run(id);
                 }
             }
-            // `ctl:477` has no document command yet.
-            ui.add_enabled(
-                false,
-                egui::Checkbox::new(&mut (state.additive != 0), "加算"),
-            );
+            let mut additive = state.additive != 0;
+            if ui.checkbox(&mut additive, "加算").changed() {
+                ctx.run("ctl:477");
+            }
             button(ui, ctx, "ctl:487", "登録");
         });
     });

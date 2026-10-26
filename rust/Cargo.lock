@@ -1245,6 +1245,7 @@ dependencies = [
  "mds-physics",
  "mds-pose",
  "mds-scene",
+ "mds-vsq",
 ]
 
 [[package]]

@@ -33,12 +33,21 @@
 //! differs, clears and marks again ([`set_marks`]); the C++ range sweep that replaces the marks of
 //! the swept tracks only is [`replace_marks`].
 //!
+//! # The curve
+//!
+//! Buttons 430 to 432 copy, paste and reset the interpolation curve of the channel in the combo
+//! 433 (`CopyInterpolationCurve` and the others, `command_frame_edit.cpp:987` to `:1124`); the
+//! curve box beside them is the C++ curve panel, whose two control points drag with
+//! `DragInterpolationControlPoint` (`ui_selection_reeval.cpp:115`).
+//!
 //! # Not ported
 //!
-//! The rows that need a document command that `mds-doc` lacks are left out of the action table:
-//! 422 (mirrored paste), 424 (range scaling), 430 to 432 and `mouse:curve-point-drag` (the
-//! interpolation curve), `mouse:timeline-key-drag` (moving the marked keys) and
-//! `mouse:timeline-margin-click` (the display group flag the PMM saves).
+//! * `mouse:timeline-key-drag` (moving the marked keys sideways) needs a document command that
+//!   `mds-doc` lacks (`MoveSelectedKeys`).
+//! * 424 (range scaling) has its command, `Command::ScaleFrames`, but its argument type is
+//!   `mds_ops::RangeScale`, and `mds-app` depends on neither `mds-ops` nor a re-export of it.
+//!
+//! Both are left out of the action table; the buttons stay greyed.
 
 use super::Ctx;
 use crate::actions::Action;
@@ -59,12 +68,16 @@ const ACTIONS: &[Action] = &[
     Action::run("ctl:419", next, true),
     Action::run("ctl:420", copy, true),
     Action::run("ctl:421", paste, true),
+    Action::run("ctl:422", paste_mirrored, true),
     Action::run("ctl:423", delete, true),
     Action::inline("ctl:425"),
     Action::inline("ctl:426"),
     Action::inline("ctl:427"),
     Action::inline("ctl:428"),
     Action::run("ctl:429", show_current, true),
+    Action::run("ctl:430", copy_curve, true),
+    Action::run("ctl:431", paste_curve, true),
+    Action::run("ctl:432", reset_curve, true),
     Action::inline("ctl:433"),
     Action::inline("ctl:434"),
     Action::run("ctl:532", next_keyframe, true),
@@ -86,12 +99,14 @@ const ACTIONS: &[Action] = &[
     Action::run("key:Enter@camera-mode", register_rows, true),
     Action::run("key:Delete", delete, true),
     Action::inline("key:Tab@panel-edits"),
+    Action::inline("mouse:timeline-margin-click"),
     Action::inline("mouse:timeline-name-click"),
     Action::inline("mouse:timeline-name-rect-click"),
     Action::inline("mouse:timeline-cell-click"),
     Action::inline("mouse:timeline-frame-strip-click"),
     Action::inline("mouse:timeline-dblclick"),
     Action::inline("mouse:timeline-hover"),
+    Action::inline("mouse:curve-point-drag"),
 ];
 
 pub fn actions() -> &'static [Action] {
@@ -130,6 +145,9 @@ pub struct Panel {
     pub columns: u32,
     /// Where a box selection started and where the pointer is: `(row, frame)`.
     pub drag: Option<[(usize, u32); 2]>,
+    /// The control point of the curve box under the pointer: `false` the start, `true` the end
+    /// (`PendingTimelineSelectionRow` 1 and 2).
+    pub curve_drag: Option<bool>,
 }
 
 impl Default for Panel {
@@ -149,6 +167,7 @@ impl Default for Panel {
             scroll: [0.0; 2],
             columns: 40,
             drag: None,
+            curve_drag: None,
         }
     }
 }
@@ -408,14 +427,27 @@ impl Row {
     }
 }
 
-/// The bones of each display group of the model file, or all of them in one group when the
-/// file has none that fits the PMM.
-fn bone_groups(doc: &Document, i: usize) -> Vec<(String, Vec<u32>)> {
+/// Whether the model has the facial display group (`facialFrameCount != 0`), which the C++ puts
+/// at group 2 and which moves the bone groups up by one.
+fn facial(doc: &Document, i: usize) -> bool {
+    match &doc.models[i] {
+        ModelFile::Pmx(p) => p.frames.iter().any(|f| f.entries.iter().any(|e| e.0 == 1)),
+        ModelFile::Pmd(p) => !p.morph_display.is_empty(),
+        ModelFile::Missing => false,
+    }
+}
+
+/// The bones of each display group of the model file, with the group's index in the PMM's
+/// `group_flags` (`DisplayGroups`, `pmx_load.cpp:1421`), or all of them in one group when the
+/// file has none that fits the PMM. The first two PMX frames (the root and the facial frame) are
+/// no flag groups; neither is the fallback group.
+fn bone_groups(doc: &Document, i: usize) -> Vec<(String, Vec<u32>, Option<u8>)> {
     let count = doc.pmm.models[i].bone_names.len();
     let mut groups = Vec::new();
     if let ModelFile::Pmx(p) = &doc.models[i] {
         if p.bones.len() == count {
-            for f in &p.frames {
+            let facial = usize::from(facial(doc, i));
+            for (n, f) in p.frames.iter().enumerate() {
                 let bones: Vec<u32> = f
                     .entries
                     .iter()
@@ -423,13 +455,14 @@ fn bone_groups(doc: &Document, i: usize) -> Vec<(String, Vec<u32>)> {
                     .map(|e| e.1 as u32)
                     .collect();
                 if !bones.is_empty() {
-                    groups.push((f.name.text.clone(), bones));
+                    let flag = (n >= 2).then(|| (n + facial) as u8);
+                    groups.push((f.name.text.clone(), bones, flag));
                 }
             }
         }
     }
     if groups.is_empty() {
-        groups.push(("ボーン".into(), (0..count as u32).collect()));
+        groups.push(("ボーン".into(), (0..count as u32).collect(), None));
     }
     groups
 }
@@ -470,7 +503,7 @@ pub fn rows(doc: &Document, folded: &[(u8, usize)]) -> Vec<Row> {
     let m = &doc.pmm.models[i];
     let open = |g| !folded.contains(&(m.slot, g));
     let mut v = vec![row(RowKind::Display, "表示・IK")];
-    for (g, (name, bones)) in bone_groups(doc, i).into_iter().enumerate() {
+    for (g, (name, bones, _)) in bone_groups(doc, i).into_iter().enumerate() {
         v.push(row(RowKind::Header(g), &name));
         if open(g) {
             v.extend(
@@ -497,6 +530,15 @@ pub fn rows(doc: &Document, folded: &[(u8, usize)]) -> Vec<Row> {
         }
     }
     v
+}
+
+/// The index in `group_flags` of the group that header `g` stands for, if it has a flag.
+pub fn group_flag(doc: &Document, g: usize) -> Option<u8> {
+    let i = active(doc)?;
+    match g {
+        MORPHS => facial(doc, i).then_some(2),
+        _ => bone_groups(doc, i).get(g)?.2,
+    }
 }
 
 fn selected_bones(doc: &Document) -> Vec<u32> {
@@ -658,6 +700,74 @@ fn paste(ctx: &mut Ctx) -> Result<(), String> {
 
 fn delete(ctx: &mut Ctx) -> Result<(), String> {
     ctx.editor.apply(Command::DeleteSelectedKeys)
+}
+
+/// 422.
+fn paste_mirrored(ctx: &mut Ctx) -> Result<(), String> {
+    ctx.editor.apply(Command::PasteMirrored)
+}
+
+/// The combo 433 channel as the document commands take it.
+fn channel(ctx: &Ctx) -> u8 {
+    panel(ctx).curve.min(CURVES.len() - 1) as u8
+}
+
+/// 430.
+fn copy_curve(ctx: &mut Ctx) -> Result<(), String> {
+    let channel = channel(ctx);
+    ctx.editor
+        .apply(Command::CopyInterpolationCurve { channel })
+}
+
+/// 431.
+fn paste_curve(ctx: &mut Ctx) -> Result<(), String> {
+    let channel = channel(ctx);
+    ctx.editor
+        .apply(Command::PasteInterpolationCurve { channel })
+}
+
+/// 432: the linear curve, the bytes 20, 20, 107, 107.
+fn reset_curve(ctx: &mut Ctx) -> Result<(), String> {
+    let channel = channel(ctx);
+    ctx.editor
+        .apply(Command::ResetInterpolationCurves { channel })
+}
+
+/// The control points `[start, end]` as `[x, y]` (0 to 127, y up) of the channel in the combo, on
+/// the first marked key: the curve the C++ panel draws (`DrawCurve` and `DrawControlPoints`). The
+/// "all" entry shows channel 0 (`ui_selection_reeval.cpp:176`). `None` without a marked key.
+pub fn curve_points(doc: &Document, channel: usize) -> Option<[[u8; 2]; 2]> {
+    fn first<K: PoolKey + Clone>(pool: &KeyPool<K>, marked: impl Fn(&K) -> bool) -> Option<K> {
+        let heads = pool.heads().iter().enumerate().map(|(i, k)| (i as u32, k));
+        heads
+            .chain(pool.records().iter().map(|(i, k)| (*i, k)))
+            .filter(|(_, k)| marked(k))
+            .min_by_key(|(i, _)| *i)
+            .map(|(_, k)| k.clone())
+    }
+    if camera_mode(doc) {
+        let k = first(&doc.pmm.camera, |k| k.selected != 0)?;
+        let ch = if channel < 6 { channel } else { 0 };
+        let i = &k.interpolation;
+        return Some([[i[0][ch], i[1][ch]], [i[2][ch], i[3][ch]]]);
+    }
+    let k = first(&doc.pmm.models[active(doc)?].bone_keys, |k| {
+        k.allocated != 0
+    })?;
+    let ch = if channel < 4 { channel } else { 0 };
+    let i = &k.interpolation;
+    Some([[i[ch], i[4 + ch]], [i[8 + ch], i[12 + ch]]])
+}
+
+/// The drag of a control point of the curve box: the point goes to `pos`, in curve units, on
+/// every marked key (`DragInterpolationControlPoint`; the document clamps to 0 to 127).
+pub fn drag_curve_point(ctx: &mut Ctx, end: bool, point: [i32; 2]) -> Result<(), String> {
+    let channel = channel(ctx);
+    ctx.editor.apply(Command::SetKeyInterpolation {
+        channel,
+        end,
+        point,
+    })
 }
 
 /// 429.
@@ -834,9 +944,21 @@ fn register_rows(ctx: &mut Ctx) -> Result<(), String> {
 // ---- the mouse ---------------------------------------------------------------------------
 
 /// A click on the frame strip, and a double click (`HandleLButtonDown_FrameStripHit`,
-/// `ui_editor_click.cpp:801`): the clicked column becomes the current frame.
+/// `ui_editor_click.cpp:801`): the clicked column becomes the current frame. Unlike the frame edit
+/// (`SetFrame`) it keeps the bone selection ([`Command::ClickFrame`]).
 pub fn click_strip(ctx: &mut Ctx, frame: u32) -> Result<(), String> {
-    ctx.editor.seek(frame)
+    if ctx.editor.playing() {
+        return Err("not while playing".into());
+    }
+    quietly(ctx, Command::ClickFrame(frame))
+}
+
+/// Applies a command that the C++ does not count as a scene edit (`SceneModified` stays).
+fn quietly(ctx: &mut Ctx, cmd: Command) -> Result<(), String> {
+    let modified = ctx.editor.modified;
+    let done = ctx.editor.apply(cmd);
+    ctx.editor.modified = modified;
+    done
 }
 
 /// A click on a cell (`HandleLButtonDown_TimelineAreaHit`, `ui_editor_click.cpp:685`;
@@ -951,7 +1073,20 @@ pub fn click_plus(ctx: &mut Ctx, row: &Row) -> Result<(), String> {
         RowKind::Morph(n) => ctx.editor.apply(Command::RegisterMorphKey(n as i32)),
         RowKind::Display => ctx.editor.apply(Command::RegisterDisplayKey),
         RowKind::Global(g) => ctx.editor.apply(Command::RegisterGlobalKeys(vec![g])),
-        RowKind::Header(_) => Ok(()),
+        RowKind::Header(_) => click_margin(ctx, row),
+    }
+}
+
+/// The margin column of a display group row (`HandleLButtonDown_MarginColumnToggle`,
+/// `ui_editor_click.cpp:439`): the group's flag, which the PMM saves. The view's fold stays with
+/// the name click.
+pub fn click_margin(ctx: &mut Ctx, row: &Row) -> Result<(), String> {
+    let RowKind::Header(g) = row.kind else {
+        return Ok(());
+    };
+    match group_flag(&ctx.editor.doc, g) {
+        Some(n) => quietly(ctx, Command::ToggleDisplayGroup(n)),
+        None => Ok(()),
     }
 }
 
@@ -1009,11 +1144,15 @@ enum Event {
     Name(Row, bool),
     Plus(Row),
     Box(Vec<Track>, u32, u32, bool),
+    /// A control point of the curve box moved: `(end, [x, y])`.
+    Curve(bool, [i32; 2]),
 }
 
 fn run_event(ctx: &mut Ctx, e: Event) -> Result<(), String> {
     match e {
-        Event::Seek(f) | Event::Strip(f) => click_strip(ctx, f),
+        Event::Seek(f) => ctx.editor.seek(f),
+        Event::Strip(f) => click_strip(ctx, f),
+        Event::Curve(end, point) => drag_curve_point(ctx, end, point),
         Event::Cell(t, f, shift) => click_cell(ctx, t, f, shift),
         Event::Name(row, shift) => click_name(ctx, &row, shift),
         Event::Plus(row) => click_plus(ctx, &row),
@@ -1157,6 +1296,20 @@ fn grid(ui: &mut egui::Ui, ctx: &Ctx, p: &mut Panel, events: &mut Vec<Event>) {
             if let RowKind::Header(g) = row.kind {
                 let folded = p.folded.contains(&(doc.pmm.selected_model_slot, g));
                 text = format!("{} {}", if folded { "▶" } else { "▼" }, text);
+                // The margin glyph is the group's saved flag: `+` closed, `-` open
+                // (`ui_panel_sweep.cpp:219` and `:243`).
+                if let Some(n) = group_flag(doc, g) {
+                    let open = active(doc)
+                        .and_then(|i| doc.pmm.models[i].selection.group_flags.get(usize::from(n)))
+                        .is_some_and(|&f| f != 0);
+                    painter.text(
+                        Pos2::new(view.min.x + PLUS / 2.0, y + ROW / 2.0),
+                        Align2::CENTER_CENTER,
+                        if open { "-" } else { "+" },
+                        font.clone(),
+                        Color32::GRAY,
+                    );
+                }
             } else {
                 painter.text(
                     Pos2::new(view.min.x + PLUS / 2.0, y + ROW / 2.0),
@@ -1340,11 +1493,76 @@ fn toolbar(
     });
 }
 
+/// The side of the curve box in points; curve units (0 to 127) scale to it.
+const CURVE_BOX: f32 = 96.0;
+
+/// The curve panel: the curve of the first marked key and its two control points, which drag.
+fn curve_box(ui: &mut egui::Ui, ctx: &Ctx, p: &mut Panel, events: &mut Vec<Event>) {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(CURVE_BOX), Sense::drag());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 0.0, Color32::WHITE);
+    let unit = CURVE_BOX / 127.0;
+    // Curve units to the screen, y up.
+    let to_screen = |c: [u8; 2]| {
+        Pos2::new(
+            rect.min.x + f32::from(c[0]) * unit,
+            rect.max.y - f32::from(c[1]) * unit,
+        )
+    };
+    let Some(points) = curve_points(&ctx.editor.doc, p.curve) else {
+        return;
+    };
+    let [a, b] = points.map(to_screen);
+    painter.add(egui::epaint::CubicBezierShape::from_points_stroke(
+        [to_screen([0, 0]), a, b, to_screen([127, 127])],
+        false,
+        Color32::TRANSPARENT,
+        Stroke::new(1.5, Color32::BLACK),
+    ));
+    painter.line_segment([to_screen([0, 0]), a], Stroke::new(1.0, Color32::BLACK));
+    painter.line_segment([to_screen([127, 127]), b], Stroke::new(1.0, Color32::BLACK));
+    for c in [a, b] {
+        let arm = Vec2::splat(3.0);
+        painter.line_segment([c - arm, c + arm], Stroke::new(2.0, Color32::RED));
+        painter.line_segment(
+            [c + Vec2::new(arm.x, -arm.y), c + Vec2::new(-arm.x, arm.y)],
+            Stroke::new(2.0, Color32::RED),
+        );
+    }
+    if ctx.editor.playing() {
+        return;
+    }
+    // The point within reach of the press is the one that follows the pointer.
+    if resp.drag_started() {
+        p.curve_drag = resp.interact_pointer_pos().and_then(|pos| {
+            let near = |c: Pos2| c.distance(pos) <= 8.0;
+            [(false, a), (true, b)]
+                .into_iter()
+                .filter(|(_, c)| near(*c))
+                .min_by(|x, y| x.1.distance(pos).total_cmp(&y.1.distance(pos)))
+                .map(|(end, _)| end)
+        });
+    }
+    if let (Some(end), Some(pos)) = (p.curve_drag, resp.interact_pointer_pos()) {
+        let at = |v: f32| (v / unit).round() as i32;
+        events.push(Event::Curve(
+            end,
+            [at(pos.x - rect.min.x), at(rect.max.y - pos.y)],
+        ));
+    }
+    if resp.drag_stopped() {
+        p.curve_drag = None;
+    }
+}
+
 pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
     let mut p = panel(ctx);
     let (mut run, mut events) = (Vec::new(), Vec::new());
     ui.vertical(|ui| {
-        toolbar(ui, ctx, &mut p, &mut run, &mut events);
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| toolbar(ui, ctx, &mut p, &mut run, &mut events));
+            curve_box(ui, ctx, &mut p, &mut events);
+        });
         grid(ui, ctx, &mut p, &mut events);
     });
     set_panel(ctx, p);

@@ -66,6 +66,20 @@
 //         (per loaded model in slot order: the bone PmdEdgeDistance uses, its
 //         bind position moved by matInit, that point moved by the world
 //         matrix, its distance to CameraPosition, and the result)
+//   frame "shadow" mapWidth mapHeight mode distance light.xyz target.xyz eye.xyz
+//         slope scale zScale positive negative parthf lightView(16)
+//         lightViewProjection(16) LF
+//         (only when the self-shadow pass runs, UseEffectModelRenderer: the
+//         inputs, intermediates, and result of RenderShadowMap in
+//         src/render/model_renderers.cpp. The probe renders the frame first
+//         and fails unless its restated matrix equals the one the pass stored,
+//         bit for bit. light is SceneLight().Direction; the depth comparison
+//         constants live in the effect, res/assets/skin_effect_sm3.fx)
+//   frame "ground" drawn light.xyz ambient blend plane(16) material(17) LF
+//         (only with the ground shadow on: whether BeginProjectedGroundShadow
+//         draws it this frame, LightDirection(), the shadow ambient and
+//         translucent flag, the plane matrix it multiplies the frame world
+//         matrix by, and ProjectedShadowMaterial() as D3DMATERIAL9 floats)
 // Floats are printf "%.9g", which reads back to the same float.
 //
 // --mds-mesh-dump <pmm> <out-dir> <x-file>...  (accgold, wave 3): mesh_dump.cpp.
@@ -107,6 +121,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <cwchar>
 #include <filesystem>
 #include <fstream>
@@ -399,6 +414,153 @@ bool WriteEdgeProbe(std::ostream& out, MMDApp* app, std::uint32_t frame) {
     return out.good();
 }
 
+void AppendFloats(std::string& line, const float* values, int count) {
+    char word[24];
+    for (int i = 0; i < count; ++i) {
+        std::snprintf(word, sizeof word, " %.9g", values[i]);
+        line += word;
+    }
+}
+
+// The shadow and ground lines of the edge probe; RenderShadowMap and
+// BeginProjectedGroundShadow (src/render/model_renderers.cpp) restated, the
+// same float operations in the same order.
+bool WriteShadowProbe(std::ostream& out, MMDApp* app, std::uint32_t frame, const D3DMATRIX& world) {
+    using Matrix = d3dx::D3DXMATRIXF;
+    auto& api = d3dx::Get();
+    if (UseEffectModelRenderer(app)) {
+        app->state.messageSeen = 2; // as DumpFrame
+        RenderFrameScene(app);
+        const D3DVECTOR& light = app->SceneLight().Direction;
+        const float target[3] = {app->ViewOffsetX(), app->ViewOffsetY(), app->CameraDistance()};
+        const float eye[3] = {target[0] - light.x * 50.0f, target[1] - light.y * 50.0f,
+                              target[2] - light.z * 50.0f};
+        const float up[3] = {0.0f, 0.0f, 1.0f};
+        Matrix lightView;
+        api.lookAtLH(&lightView, eye, target, up);
+        float direction[3] = {light.x, light.y, light.z};
+        api.vec3Normalize(direction, direction);
+        const float slope = -direction[2];
+        const float edge = 1.0f - std::fabs(slope);
+        const float base = app->ShadowDistance();
+        const bool modeOne = app->ShadowMode() == 1;
+        float scale;
+        if (modeOne) {
+            if (slope < -0.9f || slope > 0.9f)
+                scale = base;
+            else if (slope < -0.8f)
+                scale = ((slope - 0.1f) * 10.0f + 10.0f) * base + base;
+            else if (slope > 0.8f)
+                scale = (10.0f - (slope + 0.1f) * 10.0f) * base + base;
+            else
+                scale = base + base;
+        } else {
+            if (slope < -0.9f || slope > 0.9f)
+                scale = base;
+            else if (slope < -0.8f)
+                scale = (slope * 20.0f + 19.0f) * base;
+            else if (slope > 0.8f)
+                scale = (19.0f - slope * 20.0f) * base;
+            else
+                scale = base * 3.0f;
+        }
+        float positive;
+        float negative;
+        if (slope < -0.9f || slope > 0.9f) {
+            positive = edge;
+            negative = -edge;
+        } else if (slope < -0.8f) {
+            positive = modeOne ? 4.0f * slope + 3.7f : 9.0f * slope + 8.2f;
+            negative = -9.0f * slope - 8.2f;
+        } else if (slope > 0.8f) {
+            positive = modeOne ? 3.7f - 4.0f * slope : 8.2f - 9.0f * slope;
+            negative = 9.0f * slope - 8.2f;
+        } else {
+            positive = modeOne ? 0.5f : 1.0f;
+            negative = -1.0f;
+        }
+        Matrix projection{};
+        projection.m[0][0] = scale;
+        projection.m[1][1] = scale;
+        projection.m[2][2] = base * 0.1500000059604645f;
+        projection.m[3][3] = 1.0f;
+        Matrix orientation{};
+        orientation.m[0][0] = orientation.m[1][1] = orientation.m[2][2] = 1.0f;
+        orientation.m[3][3] = 1.0f;
+        orientation.m[1][3] = positive;
+        orientation.m[3][1] = negative;
+        Matrix shadow;
+        Matrix temp;
+        Matrix transform;
+        api.multiply(&temp, reinterpret_cast<const Matrix*>(&world), &lightView);
+        api.multiply(&shadow, &temp, &projection);
+        api.scaling(&transform, 1.0f, 1.0f, 2.0f);
+        api.multiply(&shadow, &shadow, &transform);
+        api.translation(&transform, 0.0f, 0.0f, -1.0f);
+        api.multiply(&shadow, &shadow, &transform);
+        api.multiply(&shadow, &shadow, &orientation);
+        api.translation(&transform, 0.0f, 0.0f, 1.0f);
+        api.multiply(&shadow, &shadow, &transform);
+        api.scaling(&transform, 1.0f, 1.0f, 0.5f);
+        api.multiply(&shadow, &shadow, &transform);
+        if (std::memcmp(&shadow, &app->LightViewProjection(), sizeof shadow) != 0) {
+            WriteError("mds-edge-probe: frame " + std::to_string(frame) +
+                       ": the restated shadow matrix is not RenderShadowMap's\n");
+            return false;
+        }
+        const D3DRenderer* r = app->Renderer();
+        char head[64];
+        std::snprintf(head, sizeof head, "%u shadow %d %d %d", frame, r->renderTargetWidth,
+                      r->renderTargetHeight, static_cast<int>(app->ShadowMode()));
+        std::string line = head;
+        const float values[] = {base,
+                                light.x,
+                                light.y,
+                                light.z,
+                                target[0],
+                                target[1],
+                                target[2],
+                                eye[0],
+                                eye[1],
+                                eye[2],
+                                slope,
+                                scale,
+                                projection.m[2][2],
+                                positive,
+                                negative,
+                                modeOne ? 0.0f : 1.0f};
+        AppendFloats(line, values, 16);
+        AppendFloats(line, &lightView.m[0][0], 16);
+        AppendFloats(line, &shadow.m[0][0], 16);
+        out << line << '\n';
+    }
+    if (app->GroundShadowEnabled() != 0) {
+        const float* light = app->LightDirection();
+        const bool drawn =
+            (app->PlaybackActive() != 0 || app->UsesViewportTool()) && light[1] < 0.0f;
+        Matrix plane{};
+        plane.m[0][0] = 1.0f;
+        plane.m[1][0] = -light[0] / light[1];
+        plane.m[1][2] = -light[2] / light[1];
+        plane.m[2][2] = 1.0f;
+        plane.m[3][1] = 0.10000000149011612f;
+        plane.m[3][3] = 1.0f;
+        const D3DMATERIAL9 material = app->ProjectedShadowMaterial();
+        char head[64];
+        std::snprintf(head, sizeof head, "%u ground %d", frame, drawn ? 1 : 0);
+        std::string line = head;
+        const float values[] = {light[0], light[1], light[2],
+                                app->ProjectedShadowAmbientIntensity(),
+                                static_cast<float>(app->ProjectedShadowBlendEnabled())};
+        AppendFloats(line, values, 5);
+        AppendFloats(line, &plane.m[0][0], 16);
+        AppendFloats(line, reinterpret_cast<const float*>(&material),
+                     17); // D3DMATERIAL9: 17 floats
+        out << line << '\n';
+    }
+    return out.good();
+}
+
 // With `probe` set (--mds-edge-probe) the requested frames are probed instead
 // of rendered, after the same setup. An MME dump renders every pass.
 int RunFrameDump(MMDApp* app, const TraceRequest& request, std::ostream* probe) {
@@ -461,6 +623,11 @@ int RunFrameDump(MMDApp* app, const TraceRequest& request, std::ostream* probe) 
         ++next;
         if (probe != nullptr) {
             ok = WriteEdgeProbe(*probe, app, frame);
+            if (ok) {
+                D3DMATRIX world{};
+                ok = SUCCEEDED(r->device->GetTransform(D3DTS_WORLD, &world)) &&
+                     WriteShadowProbe(*probe, app, frame, world);
+            }
             continue;
         }
         ok = DumpFrame(app, prefix + std::to_wstring(frame) + L".png");

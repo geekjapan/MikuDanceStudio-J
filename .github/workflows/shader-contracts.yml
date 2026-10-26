@@ -76,12 +76,8 @@ jobs:
           python3 tools/shader/compare.py --validate shader-contracts/native.tsv > shader-contracts/summary.json
       - name: Preserve frozen native successes
         run: |
-          if test -f tools/shader/native-baseline.tsv; then
-            python3 tools/shader/compare.py tools/shader/native-baseline.tsv shader-contracts/native.tsv \
-              > shader-contracts/comparison.json
-          else
-            echo 'No verified frozen baseline is checked in yet. This run captures the candidate only.'
-          fi
+          python3 tools/shader/compare.py tools/shader/native-baseline.tsv shader-contracts/native.tsv \
+            > shader-contracts/comparison.json
       - name: Preserve contracts and generated shader outputs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

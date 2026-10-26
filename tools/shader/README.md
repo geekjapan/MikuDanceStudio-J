@@ -55,10 +55,24 @@ acceptance rather than byte-for-byte generated text.
 
 The `Native shader contracts` workflow fetches the pinned ray-mmd corpus and
 builds the pinned patched native vkd3d compiler. It always uploads the manifest,
-summary, logs, provenance, and generated shader outputs as an artifact. Until a
-verified native capture is checked in as `tools/shader/native-baseline.tsv`, it
-captures a candidate and explicitly reports the missing frozen baseline.
-Inspect the actual artifact and its provenance before freezing that manifest.
-Workflow configuration alone is not native capture evidence. Baseline updates
-must retain the reviewed native artifact rather than regenerate it from a
-replacement compiler.
+summary, logs, provenance, and generated shader outputs as an artifact. It requires
+comparison against `tools/shader/native-baseline.tsv`; a missing baseline fails.
+The baseline preserves the exact manifest from successful hosted run
+[40369078702](https://github.com/geekjapan/MikuDanceStudio-J/actions/runs/40369078702).
+`native-baseline.provenance.json` records its SHA-256, artifact, source tree,
+compiler identity, corpus, and measured inventory. The captured synthetic merge
+and reviewed head have the same Git tree.
+
+The capture contains 1,481 unique entry identities from 515 discovered FX files,
+with no parse failures, rejected compiles, or reflection/coverage gaps. Reflection
+uses CTAB for 1,444 entries and the probe for 37. The independent probe check
+matches all 1,444 CTAB entries; it is unavailable for the 37 probe-origin entries.
+The compiler binary hash identifies the hosted Linux x64 build; the artifact
+does not contain that binary. Generated outputs remain in the hosted artifact,
+which expires at the time recorded in the receipt.
+
+This baseline protects v2 compile acceptance and scan/reflection/probe contracts.
+It does not prove direct D3D9 bytecode or assembly instruction/hash equivalence,
+backend text equality, or GPU behavior. Acceptance of all native shader APIs is
+still required before replacing the compiler. Baseline updates must retain the
+reviewed native artifact rather than regenerate it from a replacement compiler.

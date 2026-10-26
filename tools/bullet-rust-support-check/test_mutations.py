@@ -1,5 +1,6 @@
 import json
-from pathlib import Path
+import os
+from pathlib import Path, PureWindowsPath
 import subprocess
 import tempfile
 import unittest
@@ -17,6 +18,40 @@ MDS_SUPPORT_NATIVE_MISMATCH_END
 
 test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 '''
+
+
+class GeneratedPaths(unittest.TestCase):
+    def test_harness_serializes_all_three_module_paths(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            root = PureWindowsPath('C:/a/日本語/with "quotes"')
+            with patch.object(mutations, 'ROOT', root), patch.object(
+                    mutations.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, '', '')):
+                mutations.run_harness('', directory, directory / 'crt.rlib', {})
+            source = (directory / 'test.rs').read_text(encoding='utf-8')
+            for path in [root / 'rust/crates/mds-bullet/src/core/math.rs', directory / 'shape.rs',
+                         root / 'rust/crates/mds-bullet/tests/pure_bullet/support.rs']:
+                self.assertIn(f'#[path = {mutations.rust_path_literal(path)}]', source)
+
+    def test_windows_unicode_and_quoted_paths_compile_as_rust_metadata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            windows = (PureWindowsPath(directory) if os.name == 'nt' else PureWindowsPath('C:/a')) / '日本語' / 'module.rs'
+            module = directory / windows.as_posix()
+            module.parent.mkdir(parents=True, exist_ok=True)
+            module.write_text('pub const VALUE: u8 = 1;\n')
+            quoted = PureWindowsPath('C:/a/日本語/with "quotes"/module.rs')
+            source = directory / 'paths.rs'
+            source.write_text(
+                f'#[path = {mutations.rust_path_literal(windows)}] mod module;\n'
+                f'const PATH: &str = {mutations.rust_path_literal(quoted)};\n', encoding='utf-8')
+            result = subprocess.run(
+                ['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--crate-type=lib',
+                 '--emit=metadata', str(source), '-o', str(directory / 'paths.rmeta')],
+                capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((directory / 'paths.rmeta').is_file())
+            self.assertEqual(json.loads(mutations.rust_path_literal(quoted)), quoted.as_posix())
 
 
 class MutationClassification(unittest.TestCase):

@@ -8,8 +8,9 @@
     "run": 40399749981,
     "artifact": 12689482840,
     "artifact_sha256": "14bf9309471382414b9883d2e773e990e5496c85bc189a85567517b0b9fe975e",
-    "source_tree": "0a3f0b5880cce4008c041c2fa954f916a9c98b74",
-    "native_observed_identical": true
+    "native_observed_identical": true,
+    "artifact_source_commit": "012fe478b852cb21de7c0c4dd134529c2331d348",
+    "equivalent_source_tree": "0a3f0b5880cce4008c041c2fa954f916a9c98b74"
   },
   "sha256": {
     "inputs.tsv": "e7cd6ee45cba3e96eb647c6c4893e9f1c21327e4326075cf51b7874893ce9efb",

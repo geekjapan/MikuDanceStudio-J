@@ -64,7 +64,8 @@ Run the capture and comparator negative controls with:
 python3 -m unittest discover -s tools/bullet-rust-support-check -v
 ```
 
-The Linux profile comes from artifact 12689482840 of run 40399749981, source tree
+The Linux profile comes from artifact 12689482840 of run 40399749981, capture commit
+`012fe478b852cb21de7c0c4dd134529c2331d348`. Its checked source tree is equivalent to
 `0a3f0b5880cce4008c041c2fa954f916a9c98b74`. Support sources match
 `6c87687fc80cd1480afa6ba8f0a2a8d7421586be`. The ARM baseline is the accepted
 3,377-row capture, not the older 3,188-row capture. Captured native agreement

@@ -1,6 +1,6 @@
 //! The `background` area through the action table, with no window: the 13 rows of the
-//! Background menu. The loads cannot succeed yet (nothing sets `EditState::viewport`, see the
-//! module doc of `ui::background`), so they are tested as far as they go.
+//! Background menu. The loads need `EditState::viewport`, which the window sets; the tests set it
+//! where they load.
 
 use mds_app::actions;
 use mds_app::editor::Editor;
@@ -151,10 +151,6 @@ fn the_three_dialog_rows_open_their_dialogs() {
 /// The loads read the file, then the document refuses to place it without a viewport; nothing
 /// changes (no path, no `enabled`, no `SceneModified`). With a window the file dialog opens
 /// first, so the actions themselves need one.
-///
-/// SKIP: the success path (path stored, placement `MediaAspect`, menu 216/233 checked) needs
-/// `EditState::viewport`, which nothing sets from the window, and `mds-app` cannot name the
-/// `mds_media::background::Viewport` type without a Cargo.toml dependency.
 #[test]
 fn a_load_without_a_viewport_changes_nothing() {
     let dir = std::env::temp_dir().join(format!("mds-bg-{}", std::process::id()));

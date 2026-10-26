@@ -16,12 +16,9 @@
 //!   4:3 crop, 3 background refresh) through `Command::SetCaptureMode`; nothing reads it yet (the
 //!   capture is the recorder's).
 //!
-//! # What does not work yet
-//!
 //! The loaders place the file with `MediaAspect`, which reads `EditState::viewport` (the
-//! rectangle and `viewScale` of the window). Nothing sets it: `window.rs` would have to build an
-//! `mds_media::background::Viewport` from the viewport, and `mds-app` has no `mds-media`
-//! dependency to name that type with. Until then both loads fail with "no viewport for
+//! rectangle and `viewScale` of the window, which `window.rs` sets every pass from the central
+//! panel, [`crate::viewport::media_viewport`]). Without it both loads fail with "no viewport for
 //! MediaAspect" and change nothing.
 //!
 //! Without a window (`Ctx::egui` is `None`) the two file dialogs return an error; the `*_path`

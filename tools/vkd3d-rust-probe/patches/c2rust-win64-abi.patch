@@ -43,7 +43,7 @@ index ef9d929..8ca6c2c 100644
      // handled as `FunctionNoPrototype` instances. Note: we could handle both
      // cases by overriding `VisitFunctionType` instead of the current
      // two-function solution.
-+    static const char *callingConvention(const FunctionType *T) {
++    static const char *callingConvention(const clang::FunctionType *T) {
 +        switch (T->getCallConv()) {
 +        case CC_C: return "C";
 +        case CC_Win64: return "win64";

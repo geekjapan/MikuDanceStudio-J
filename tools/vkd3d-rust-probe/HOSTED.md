@@ -12,7 +12,7 @@ commit before any hosted attempt.
 | --- | --- |
 | Runner | Existing included standard `ubuntu-24.04`, Linux x64 only. |
 | Preparation | 35-minute job; package step 10 minutes, Rust 3, pinned native source/baseline 8, official C2Rust build 12, bundle 2. Job limit caps their aggregate. |
-| Packages | Preparation retains explicit clang-18, llvm-18-dev, libclang-18-dev, libclang-cpp18-dev. apt acquisition uses 3 retries and 30-second HTTP/HTTPS timeouts. |
+| Packages | Preparation retains explicit clang-18, llvm-18-dev, libclang-18-dev, libclang-cpp18-dev. It bypasses the hosted Azure mirror with Ubuntu's canonical HTTPS archive mirror; apt uses 0 retries and 30-second HTTP/HTTPS timeouts, with 120 seconds for update and 300 seconds for install. |
 | Tool | Official C2Rust `ac687698b6c13491dfec45c6a9ad9e8b4da35227`; Rust 1.95.0. No refactorer, guessed reorganization option, or extra toolchain. |
 | Translation | One call, no filter, `--fail-on-error --edition 2024`, 1,800 seconds. Exact shader/common source paths are checked against `full_compiler.UNITS`, not just a count. |
 | Builds | Raw stable, working stable, then bootstrap and experimental flags if necessary. Each build/link gets 300 seconds. Native syntax checks remain capped at 120 seconds per unit. |

@@ -140,6 +140,7 @@ pub struct Shot<'a> {
     /// The timeline frame (the light, self-shadow and accessory tracks are read at it).
     pub frame: u32,
     pub camera: &'a Camera,
+    pub view_offset: [f32; 2],
     pub size: [u32; 2],
     /// As [`Frame::samples`].
     pub samples: &'a [[f32; 2]],
@@ -226,7 +227,9 @@ pub fn with_stage_lit<R>(
     let frame = Frame {
         width,
         height,
-        view: view(doc, shot.camera, shot.size),
+        view: shot
+            .camera
+            .view_with_offset(shot.view_offset, width, height),
         light,
         background: BACKGROUND,
         toon: true,

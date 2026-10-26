@@ -129,6 +129,7 @@ pub fn run(gpu: &Gpu, request: &Request) -> Result<(), String> {
             physics: &physics,
             frame,
             camera: &camera,
+            view_offset: [0.0; 2],
             size: [WIDTH, HEIGHT],
             samples: &SAMPLES_8X,
             picture_viewport: request.picture_viewport,
@@ -166,7 +167,7 @@ fn run_mme(
             .ok_or_else(|| format!("light track at frame {frame}"))?;
         let view = View {
             camera: &camera,
-            view_offset: scene::view_offset(doc),
+            view_offset: [0.0; 2],
             shadow_map: Default::default(),
             shadow_map_display: false,
             light,

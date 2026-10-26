@@ -90,6 +90,75 @@ fn the_window_texture_gets_the_frame_without_a_read_back() {
     editor.doc.pmm.self_shadow.heads_mut()[0].mode = 2;
     editor.doc.pmm.self_shadow.heads_mut()[0].distance = 0.01;
     for assignment in &mut editor.mme.assignments {
+        assignment.effect = super::fixtures()
+            .join("mme/effects/objects.fx")
+            .to_string_lossy()
+            .into_owned();
+    }
+    editor.mme.unload();
+    let mut baseline = None;
+    for (offset, display, size) in [
+        ([0.0; 2], false, mds_render::ShadowMapSize::Texels2048),
+        ([1.5, -0.75], false, mds_render::ShadowMapSize::Texels2048),
+        ([1.5, -0.75], true, mds_render::ShadowMapSize::Texels2048),
+        ([1.5, -0.75], true, mds_render::ShadowMapSize::Texels4096),
+        ([0.0; 2], false, mds_render::ShadowMapSize::Texels4096),
+    ] {
+        editor.doc.pmm.camera_state[3] = offset[0];
+        editor.doc.pmm.camera_state[4] = offset[1];
+        editor.shadow_map = size;
+        editor.shadow_map_display = display;
+        let view = editor.view(0, SIZE, 0.0).unwrap();
+        assert_eq!(view.view_offset, offset);
+        assert_eq!(view.shadow_map, size);
+        let pixels = editor
+            .mme
+            .render(&editor.doc, &editor.physics, &view)
+            .unwrap();
+        assert_eq!(editor.mme.loaded(), 1, "the assigned effect loaded");
+        editor
+            .mme
+            .render_into(device, queue, &editor.doc, &editor.physics, &view, &texture)
+            .unwrap();
+        assert_eq!(read(device, queue, &texture), pixels);
+        match &baseline {
+            None => baseline = Some(pixels.clone()),
+            Some(base) if offset == [0.0; 2] => assert_eq!(
+                &pixels, base,
+                "turning the display off restores the effects"
+            ),
+            Some(base) => assert_ne!(
+                &pixels, base,
+                "offset and map display reach the all-effect scene"
+            ),
+        }
+        if display {
+            assert!(pixels.chunks_exact(4).all(|p| p[0] == p[1] && p[1] == p[2]));
+            assert!(
+                pixels.chunks_exact(4).any(|p| p[0] < 255),
+                "the map contains model depth"
+            );
+        }
+    }
+    editor.doc.pmm.self_shadow.heads_mut()[0].distance = 0.0;
+    editor.shadow_map_display = false;
+    let view = editor.view(0, SIZE, 0.0).unwrap();
+    let no_map = editor
+        .mme
+        .render(&editor.doc, &editor.physics, &view)
+        .unwrap();
+    editor.shadow_map_display = true;
+    let view = editor.view(0, SIZE, 0.0).unwrap();
+    assert_eq!(
+        editor
+            .mme
+            .render(&editor.doc, &editor.physics, &view)
+            .unwrap(),
+        no_map,
+        "a zero-distance shadow has no map to display over the effects"
+    );
+    editor.doc.pmm.self_shadow.heads_mut()[0].distance = 0.01;
+    for assignment in &mut editor.mme.assignments {
         assignment.shown = false;
     }
     editor.mme.assignments[0].effect = dir.join("mmegold/post.fx").to_string_lossy().into_owned();

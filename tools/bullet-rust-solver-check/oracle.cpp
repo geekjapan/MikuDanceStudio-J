@@ -83,7 +83,9 @@ static int factors() {
 }
 int main(int argc,char**) {
  if(argc>1)return factors();
- for(int variant=0;variant<2;variant++) for(int id=0;id<128;id++) {
+ for(int scenario=0;scenario<260;scenario++) {
+    const int variant=scenario<256?scenario/128:(scenario-256)/2;
+    const int id=scenario<256?scenario%128:128+scenario%2;
     btTransform worlds[3];btVector3 inertias[3];float masses[3];
     std::vector<std::unique_ptr<btRigidBody>> bodies;
     for(int i=0;i<3;i++) {
@@ -97,16 +99,18 @@ int main(int argc,char**) {
         }
         masses[i]=(i==1 && id%4<2)?0.0f:float(i+1);
         inertias[i]=btVector3(i+1,i+2,i+3);
+        if(id>=128){worlds[i].setIdentity();masses[i]=1;inertias[i]=btVector3(0,0,0);}
         bodies.emplace_back(new btRigidBody(masses[i],nullptr,nullptr,inertias[i]));
         auto& b=*bodies.back();b.setCenterOfMassTransform(worlds[i]);b.setCompanionId(-1);b.m_debugBodyId=i;
         if(i==1 && id%4==1)b.setCollisionFlags(b.getCollisionFlags()|btCollisionObject::CF_KINEMATIC_OBJECT);
         if(i==1 && id%4==2)b.setCollisionFlags(b.getCollisionFlags()|btCollisionObject::CF_KINEMATIC_OBJECT);
         b.setLinearVelocity(btVector3(sample(),sample(),id%8==0?-0.0f:sample()));
         b.setAngularVelocity(btVector3(sample(),sample(),sample()));
-        if(id%3==0){b.setLinearFactor(btVector3(0.5f,1.25f,0.0f));b.setAngularFactor(btVector3(1.5f,0.25f,0.0f));}
+        if(id>=128){b.setLinearVelocity(btVector3(0,0,id==129?-0.0f:0.0f));b.setAngularVelocity(btVector3(0,0,0));}
+        if(id<128 && id%3==0){b.setLinearFactor(btVector3(0.5f,1.25f,0.0f));b.setAngularFactor(btVector3(1.5f,0.25f,0.0f));}
     }
     btTransform frames[4];for(auto& f:frames)f.setIdentity();
-    if(id%2)for(auto& f:frames)f.setOrigin(btVector3(sample()*0.2f,sample()*0.2f,sample()*0.2f));
+    if(id<128 && id%2)for(auto& f:frames)f.setOrigin(btVector3(sample()*0.2f,sample()*0.2f,sample()*0.2f));
     SpringJoint j0(*bodies[0],*bodies[1],frames[0],frames[1],true);
     SpringJoint j1(*bodies[1],*bodies[2],frames[2],frames[3],true);
     btTypedConstraint* joints[]={&j0,&j1};
@@ -125,6 +129,14 @@ int main(int argc,char**) {
             if(id<2)j.setLimit(axis,1,-1);
         }
     }
+    if(id>=128) {
+        // Finite dynamic inputs with zero angular effective mass exercise unordered SSE clamps.
+        for(auto* jp:joints){auto& j=*static_cast<SpringJoint*>(jp);
+            for(int axis=0;axis<6;axis++){j.setLimit(axis,1,-1);j.enableSpring(axis,false);}
+            auto* m=j.getRotationalLimitMotor(0);m->m_enableMotor=true;
+            m->m_targetVelocity=0;m->m_maxMotorForce=2;
+        }
+    }
     if(id%8==4) {
         // MMD uses this no-argument setter. Move a body afterwards to exercise
         // restoring forces around the captured nonzero equilibrium.
@@ -140,8 +152,8 @@ int main(int argc,char**) {
         }
     }
     const float dt=1.0f/60.0f;
-    for(int repeat=0;repeat<2;repeat++) {
-        std::printf("%d",variant*256+id*2+repeat);scalar(dt);word(variant?4:260);word(3);word(2);
+    for(int repeat=0;repeat<(id<128?2:1);repeat++) {
+        std::printf("%d",scenario<256?variant*256+id*2+repeat:512+scenario-256);scalar(dt);word(variant?4:260);word(3);word(2);
         for(int i=0;i<3;i++) {auto& b=*bodies[i];b.setCompanionId(-1);
             scalar(masses[i]);vector(inertias[i]);transform(b.getCenterOfMassTransform());
             vector(b.getLinearVelocity());vector(b.getAngularVelocity());vector(b.getLinearFactor());vector(b.getAngularFactor());

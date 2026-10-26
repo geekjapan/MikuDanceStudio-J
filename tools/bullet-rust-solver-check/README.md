@@ -12,7 +12,7 @@ Clippy with Rust 1.95.0. Native floating-point contraction and fast math are off
 `det_math.h` selects the same SSE path used by supported application targets.
 Use `--record` only when deliberately updating the native fixtures.
 
-The 512 solves cover 256 SIMD and 256 scalar solves. Each pair reuses the bodies
+The first 512 solves cover 256 SIMD and 256 scalar solves. Each pair reuses the bodies
 and joint state from its preceding solve. The native setup and iteration functions
 run directly, with ten iterations throughout. Existing native `postnc` logging
 provides every SIMD row impulse and both bodies' velocity deltas. Scalar mode
@@ -25,6 +25,15 @@ boundaries, angular fixed-limit boundaries, free and locked axes, nonidentity
 rotations and inertia, nonzero velocities, signed zero, and nonunit factors.
 Springs include both constructor-zero equilibrium and the no-argument
 `setEquilibriumPoint()` used by MMD. Seeded cases use a bounded xorshift stream.
+
+Four appended single solves cover zero angular effective mass in SIMD and scalar
+modes, with positive zero and signed zero velocities. Their finite inputs use
+mass-one bodies, zero local inertia, identity frames, and angular motors bounded
+by -2 and 2. The signed-zero case also retains a nonzero-mass kinematic body.
+Native SIMD selects the finite upper impulse for unordered sums and leaves all
+velocities finite. Native scalar retains NaN impulses and velocities. Both modes
+compare every captured bit, including native NaN bits. The original 512-solve
+fixture prefix is unchanged.
 
 A separate 64-case native fixture checks factor setters, central force, torque,
 gravity, velocity integration, and force clearing. The focused harness also runs

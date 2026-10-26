@@ -187,7 +187,8 @@ impl JointSolver {
         if sum < j.lower_impulse {
             impulse = j.lower_impulse - row.applied_impulse;
             row.applied_impulse = j.lower_impulse;
-        } else if (self.mode == SolverMode::Simd && sum >= j.upper_impulse)
+        } else if (self.mode == SolverMode::Simd
+            && sum.partial_cmp(&j.upper_impulse) != Some(std::cmp::Ordering::Less))
             || (self.mode == SolverMode::Scalar && sum > j.upper_impulse)
         {
             impulse = j.upper_impulse - row.applied_impulse;

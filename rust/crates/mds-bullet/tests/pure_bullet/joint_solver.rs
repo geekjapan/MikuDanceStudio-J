@@ -61,6 +61,7 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
     let mut checked_words = 0;
     let mut setup_rows = 0;
     let mut spring_targets = [false; 2];
+    let mut zero_inertia_cases = [0; 2];
     let mut nonzero_equilibrium = false;
     for line in include_str!("../solver_data/native.tsv").lines() {
         let mut fields = line.split('\t');
@@ -104,7 +105,7 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
                 state: w.state(),
             })
             .collect();
-        if cases % 2 == 1 {
+        if cases < 512 && cases % 2 == 1 {
             let (prior_bodies, prior_joints): (Vec<RigidBody>, Vec<Joint>) =
                 previous.take().unwrap();
             for (a, b) in bodies.iter().zip(&prior_bodies) {
@@ -125,6 +126,15 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
                 spring_targets[usize::from(i >= 3)] |=
                     spring.enabled && motor.target_velocity != 0.0;
                 nonzero_equilibrium |= spring.enabled && spring.equilibrium != 0.0;
+            }
+        }
+        if cases >= 512 {
+            assert_eq!(solver.rows.len(), 2);
+            for row in &solver.rows {
+                assert_eq!(row.diagonal_inverse, f32::INFINITY);
+                assert!(row.rhs.is_nan());
+                assert_eq!(row.joint_row.lower_impulse, -2.0);
+                assert_eq!(row.joint_row.upper_impulse, 2.0);
             }
         }
         setup_rows += solver.rows.len();
@@ -171,6 +181,28 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
             solver.iterate();
         }
         solver.writeback(&mut bodies);
+        if cases >= 512 {
+            let simd = mode == SolverMode::Simd;
+            zero_inertia_cases[usize::from(!simd)] += 1;
+            for row in &solver.rows {
+                if simd {
+                    assert_eq!(row.applied_impulse, row.joint_row.upper_impulse);
+                } else {
+                    assert!(row.applied_impulse.is_nan());
+                }
+            }
+            for body in &bodies {
+                let state = body.snapshot();
+                for value in state
+                    .linear_velocity
+                    .0
+                    .into_iter()
+                    .chain(state.angular_velocity.0)
+                {
+                    assert_eq!(value.is_finite(), simd);
+                }
+            }
+        }
         for (b, world) in bodies.iter().zip(original_worlds) {
             let s = b.snapshot();
             assert_eq!(s.world, world, "case {id} must not integrate transforms");
@@ -187,7 +219,8 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
         previous = Some((bodies, joints));
         cases += 1;
     }
-    assert_eq!(cases, 512);
+    assert_eq!(cases, 516);
+    assert_eq!(zero_inertia_cases, [2, 2]);
     assert!(zero_rows >= 4);
     assert!(row_events > 10000);
     assert!(spring_targets.into_iter().all(|seen| seen));

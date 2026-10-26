@@ -137,7 +137,7 @@ fn compile_reports_vkd3d_errors() {
 fn disassemble_lists_every_pass_in_d3d_assembly() {
     let vk = vkd3d();
     let fx = effect("skin_effect_sm3.fx");
-    let text = mds_shader::disassemble(&vk, &fx, "sm3");
+    let text = mds_shader::disassemble(&vk, &fx, "sm3").unwrap();
     let passes: usize = fx.ast.techniques.iter().map(|t| t.passes.len()).sum();
     let count = |prefix: &str| text.lines().filter(|l| l.starts_with(prefix)).count();
     assert_eq!(count("  pass "), passes);

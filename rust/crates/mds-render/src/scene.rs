@@ -52,6 +52,7 @@ pub fn stage_at(pmm: &Pmm, frame: u32) -> Stage<'static> {
     Stage {
         accessories: &[],
         picture: None,
+        shadow_map: Default::default(),
         self_shadow: evaluate_self_shadow(&pmm.self_shadow, f64::from(frame))
             .filter(|&(mode, _)| mode != 0)
             .map(|(mode, distance)| SelfShadow { mode, distance }),

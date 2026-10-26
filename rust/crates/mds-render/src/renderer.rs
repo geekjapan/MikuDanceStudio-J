@@ -29,6 +29,8 @@ struct Pipelines {
     body_two_sided: wgpu::RenderPipeline,
     edge: wgpu::RenderPipeline,
     ground_shadow: wgpu::RenderPipeline,
+    /// The ground shadow of the edge hull.
+    ground_shadow_edge: wgpu::RenderPipeline,
     accessory: wgpu::RenderPipeline,
     picture: wgpu::RenderPipeline,
     /// Depth from the light, both sides of every face (golden2 `selfshadow-*.png`: 0.9977 and
@@ -37,11 +39,8 @@ struct Pipelines {
 }
 
 /// Render pipelines in one [`Pipelines`] set.
-const PIPELINES_PER_SET: usize = 7;
+const PIPELINES_PER_SET: usize = 8;
 
-/// The self-shadow map: its size (the render target of the `shadow` lines of the golden2 probes,
-/// the app's default) and its format.
-const SHADOW_MAP_SIZE: u32 = 2048;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 fn depth_state(write: bool, stencil: wgpu::StencilState) -> wgpu::DepthStencilState {
@@ -93,11 +92,15 @@ pub struct Renderer {
     material_layout: wgpu::BindGroupLayout,
     layout: wgpu::PipelineLayout,
     scene_buf: wgpu::Buffer,
+    scene_layout: wgpu::BindGroupLayout,
+    /// Over the scene uniform and `shadow_map`.
     scene_group: wgpu::BindGroup,
     /// The scene uniform alone, for the pass that draws the shadow map.
     light_layout: wgpu::PipelineLayout,
     light_group: wgpu::BindGroup,
     shadow_map: wgpu::TextureView,
+    /// The size `shadow_map` was made at.
+    shadow_map_size: crate::ShadowMapSize,
     white: wgpu::TextureView,
     toon: wgpu::TextureView,
     /// Bilinear; the texture slot repeats (Direct3D's default wrap address mode) and blends its
@@ -105,7 +108,7 @@ pub struct Renderer {
     /// golden2 `accessory-30.png`, whose cube shows one face edge on: 37 pixels beyond the
     /// tolerance with it, 50 without. Anisotropic filtering (a clamp of 4, 8 or 16 gives the same
     /// image, 2 does not) passes that image. The background picture keeps `picture_sampler`, the
-    /// same without anisotropy (`background-0.png`: 0.98805 within 4, 0.98692 with it).
+    /// same without anisotropy: `fs_picture` filters anisotropically itself.
     repeat: wgpu::Sampler,
     picture_sampler: wgpu::Sampler,
     sampler: wgpu::Sampler,
@@ -172,31 +175,9 @@ impl Renderer {
             immediate_size: 0,
         });
         let scene_buf = empty_buffer(device, wgpu::BufferUsages::UNIFORM, SCENE_BYTES);
-        let shadow_map = device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("self-shadow map"),
-                size: wgpu::Extent3d {
-                    width: SHADOW_MAP_SIZE,
-                    height: SHADOW_MAP_SIZE,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: SHADOW_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-            .create_view(&Default::default());
-        let scene_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &scene_layout,
-            entries: &[
-                bind_entry(0, scene_buf.as_entire_binding()),
-                bind_entry(1, wgpu::BindingResource::TextureView(&shadow_map)),
-            ],
-        });
+        let shadow_map_size = crate::ShadowMapSize::default();
+        let (shadow_map, scene_group) =
+            shadow_map(device, &scene_layout, &scene_buf, shadow_map_size);
         let light_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &light_scene_layout,
@@ -234,10 +215,12 @@ impl Renderer {
             material_layout,
             layout,
             scene_buf,
+            scene_layout,
             scene_group,
             light_layout,
             light_group,
             shadow_map,
+            shadow_map_size,
             pipelines: HashMap::new(),
             pipelines_created: 0,
             models: HashMap::new(),
@@ -499,7 +482,12 @@ impl Renderer {
                 .as_ref()
                 .is_some_and(|(img, _, _)| Arc::ptr_eq(img, pic.image))
             {
-                let view = self.view_of(&mut HashMap::new(), &Some(pic.image.clone()), &self.white);
+                let (w, h) = PICTURE_TEXTURE;
+                let view = texture(
+                    &self.device,
+                    &self.queue,
+                    &pic.image.resized(w, h).mip_chain(),
+                );
                 let (buf, group) = self
                     .material_groups(
                         vec![[view, self.white.clone(), self.toon.clone()]],
@@ -889,6 +877,14 @@ impl Renderer {
                 body_layout,
                 None,
                 alpha,
+                depth_state(true, shadow_stencil.clone()),
+            ),
+            ground_shadow_edge: pipeline(
+                "vs_ground_shadow_edge",
+                "fs_ground_shadow",
+                (EDGE_STRIDE, &edge_attrs[..]),
+                None,
+                alpha,
                 depth_state(true, shadow_stencil),
             ),
             accessory: pipeline(
@@ -922,6 +918,15 @@ impl Renderer {
     ) -> wgpu::CommandEncoder {
         let (width, height) = (frame.width, frame.height);
         self.ensure((width, height), samples);
+        if stage.shadow_map != self.shadow_map_size {
+            (self.shadow_map, self.scene_group) = shadow_map(
+                &self.device,
+                &self.scene_layout,
+                &self.scene_buf,
+                stage.shadow_map,
+            );
+            self.shadow_map_size = stage.shadow_map;
+        }
         self.queue
             .write_buffer(&self.scene_buf, 0, &scene_data(frame, stage, shift));
         let pipelines = &self.pipelines[&samples];
@@ -998,16 +1003,29 @@ impl Renderer {
             }
             // The ground shadow first: the models then cover it where they stand in front of it.
             if stage.ground_shadow.is_some() && casts_ground_shadow(frame) {
-                pass.set_pipeline(&pipelines.ground_shadow);
                 pass.set_stencil_reference(0);
                 for (&(mesh, _), key) in frame.models.iter().zip(Self::keys(frame)) {
                     let res = &self.models[&key];
                     pass.set_index_buffer(res.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    let casting = || {
+                        mesh.materials
+                            .iter()
+                            .zip(&res.materials)
+                            .zip(res.alpha.iter().zip(&res.edge_drawn))
+                            .filter(|((m, _), (&alpha, _))| {
+                                m.count > 0 && alpha > 0.0 && m.flags & FLAG_GROUND_SHADOW != 0
+                            })
+                    };
+                    pass.set_pipeline(&pipelines.ground_shadow);
                     pass.set_vertex_buffer(0, res.vertices.slice(..));
-                    for ((m, (_, group)), &alpha) in
-                        mesh.materials.iter().zip(&res.materials).zip(&res.alpha)
-                    {
-                        if m.count > 0 && alpha > 0.0 && m.flags & FLAG_GROUND_SHADOW != 0 {
+                    for ((m, (_, group)), _) in casting() {
+                        pass.set_bind_group(1, group, &[]);
+                        pass.draw_indexed(m.start..m.start + m.count, 0, 0..1);
+                    }
+                    pass.set_pipeline(&pipelines.ground_shadow_edge);
+                    pass.set_vertex_buffer(0, res.edge_vertices.slice(..));
+                    for ((m, (_, group)), (_, &has_edge)) in casting() {
+                        if has_edge {
                             pass.set_bind_group(1, group, &[]);
                             pass.draw_indexed(m.start..m.start + m.count, 0, 0..1);
                         }
@@ -1082,6 +1100,10 @@ fn finish(error_scope: wgpu::ErrorScopeGuard) -> Result<(), String> {
         None => Ok(()),
     }
 }
+
+/// The app stretches a background picture to this size when it loads it (golden2 README, "Notes
+/// for render2"); `background-0.png` shows the picture filtered from that texture.
+const PICTURE_TEXTURE: (u32, u32) = (1024, 1024);
 
 /// Bytes of the scene uniform: three matrices and nine vectors.
 const SCENE_BYTES: u64 = 3 * 64 + 9 * 16;
@@ -1159,16 +1181,17 @@ fn scene_data(frame: &Frame, stage: &Stage, shift: [f32; 2]) -> Vec<u8> {
         frame.pixel_offset[1] - shift[1],
     ];
     scene.extend([GROUND_SHADOW_HEIGHT, sample[0], sample[1], 0.0]);
+    let map_size = stage.shadow_map.texels() as f32;
     match self_shadow_map(stage) {
         Some(s) => {
             let m = view.self_shadow_view_proj(&frame.light, s.mode, s.distance);
             scene.extend(m.iter().flatten());
             let (k, by_v) = shadow_factor(s.mode);
-            scene.extend([1.0, k, f32::from(u8::from(by_v)), SHADOW_MAP_SIZE as f32]);
+            scene.extend([1.0, k, f32::from(u8::from(by_v)), map_size]);
         }
         None => {
             scene.extend(view::IDENTITY.iter().flatten());
-            scene.extend([0.0, 0.0, 0.0, SHADOW_MAP_SIZE as f32]);
+            scene.extend([0.0, 0.0, 0.0, map_size]);
         }
     }
     bytes(&scene)
@@ -1211,6 +1234,40 @@ fn texture(device: &wgpu::Device, queue: &wgpu::Queue, levels: &[Image]) -> wgpu
         );
     }
     tex.create_view(&Default::default())
+}
+
+/// The self-shadow map at `size`, and the scene bind group over `scene_buf` and the map.
+fn shadow_map(
+    device: &wgpu::Device,
+    scene_layout: &wgpu::BindGroupLayout,
+    scene_buf: &wgpu::Buffer,
+    size: crate::ShadowMapSize,
+) -> (wgpu::TextureView, wgpu::BindGroup) {
+    let map = device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("self-shadow map"),
+            size: wgpu::Extent3d {
+                width: size.texels(),
+                height: size.texels(),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: SHADOW_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+        .create_view(&Default::default());
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: scene_layout,
+        entries: &[
+            bind_entry(0, scene_buf.as_entire_binding()),
+            bind_entry(1, wgpu::BindingResource::TextureView(&map)),
+        ],
+    });
+    (map, group)
 }
 
 fn empty_buffer(device: &wgpu::Device, usage: wgpu::BufferUsages, size: u64) -> wgpu::Buffer {

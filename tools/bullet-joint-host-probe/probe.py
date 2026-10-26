@@ -30,9 +30,9 @@ def save_adapter(original, adapted, destination):
                              fromfile='checked-in', tofile=str(destination))))
 
 
-def joint_adapter(source):
+def joint_adapter(source, native):
     source = replace_once(source, 'include_str!("../solver_data/native.tsv")',
-                          f'include_str!({json.dumps(FIXTURE.as_posix())})')
+                          f'include_str!({json.dumps(native.as_posix())})')
     old = '''        for (index, (a, b)) in actual.iter().zip(&expected).enumerate() {
             assert_eq!(a, b, "case {id} word {index}: Rust {a:08x}, native {b:08x}");
         }'''
@@ -55,7 +55,19 @@ def check_adapter(source, harness):
                     'Native joint output differs from checked-in fixture']:
         source = replace_once(source, f"raise SystemExit('{message}')",
                               f"print('FAIL diagnostic frozen comparison: {message}')")
-    source = source.replace("HERE / 'harness.rs'", repr(str(harness)))
+    for old, new in [
+        ("HERE / 'harness.rs'", repr(str(harness))),
+        ("subprocess.check_output([executable, '--factors'], env=environment)",
+         "capture_output([executable, '--factors'], 'factors', env=environment)"),
+        ("subprocess.check_output([executable], env=environment)",
+         "capture_output([executable], 'oracle', env=environment)"),
+    ]:
+        if old == "HERE / 'harness.rs'":
+            if source.count(old) != 2:
+                raise ValueError('adapter harness anchor changed')
+            source = source.replace(old, new)
+        else:
+            source = replace_once(source, old, new)
     source = replace_once(source, "print(f'Native fixture and pure Rust agree for {len(captured.splitlines())} joint cases.')",
                           "print(f'Diagnostic capture completed for {len(captured.splitlines())} joint cases; see status.json for comparisons.')")
     if os.name == 'nt':
@@ -71,7 +83,18 @@ def kind(word):
     return 'zero' if value & 0x7fffffff == 0 else 'finite'
 
 
-def compare(left, right, output):
+def input_fingerprint(path):
+    records = []
+    for line in path.read_text().splitlines():
+        fields = line.split('\t')
+        if len(fields) < 302:
+            raise ValueError(f'{path}: truncated input')
+        records.append('\t'.join(fields[:302]) + '\n')
+    return {'cases': len(records), 'words_per_case': 301,
+            'sha256': hashlib.sha256(''.join(records).encode()).hexdigest()}
+
+
+def compare(left, right, output, joint=False):
     a, b = left.read_text().splitlines(), right.read_text().splitlines()
     mismatches = 0
     categories = {}
@@ -92,9 +115,16 @@ def compare(left, right, output):
                 report.write(f'{index}\t{field}\t{x}\t{y}\t{kx}\t{ky}\n')
                 mismatches += 1
     byte_equal = left.read_bytes() == right.read_bytes()
-    return {'status': 'PASS' if byte_equal else 'FAIL', 'byte_equal': byte_equal, 'mismatches': mismatches,
+    result = {'status': 'PASS' if byte_equal else 'FAIL', 'byte_equal': byte_equal, 'mismatches': mismatches,
             'categories': categories, 'left': str(left), 'right': str(right),
             'left_lines': len(a), 'right_lines': len(b)}
+    if joint:
+        result['left_inputs'] = input_fingerprint(left)
+        result['right_inputs'] = input_fingerprint(right)
+        result['input_equal'] = result['left_inputs'] == result['right_inputs']
+        result['attribution'] = ('same serialized inputs; exact output comparison' if result['input_equal']
+                                 else 'input inequality; output attribution unavailable')
+    return result
 
 
 def counts(path):
@@ -127,6 +157,30 @@ def msvc_command(command, profile, out, native_libs):
     return command
 
 
+def capture_command(out, label, command, **kwargs):
+    command = list(map(str, command))
+    (out / f'{label}.command.json').write_text(json.dumps(command) + '\n')
+    record = {'command': command, 'returncode': None, 'status': 'FAIL'}
+    stdout = stderr = b''
+    try:
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
+        stdout, stderr = result.stdout, result.stderr
+        record.update(returncode=result.returncode, status='PASS' if result.returncode == 0 else 'FAIL')
+    except BaseException as error:
+        record['error'] = f'{type(error).__name__}: {error}'
+        raise
+    finally:
+        (out / f'{label}.stdout').write_bytes(stdout)
+        (out / f'{label}.stderr').write_bytes(stderr)
+        if label in ['factors', 'oracle']:
+            (out / f'{label}.tsv').write_bytes(stdout)
+        (out / f'{label}.status.json').write_text(json.dumps(record, indent=2) + '\n')
+        with (out / 'build-and-test.log').open('ab') as log:
+            log.write(stdout + stderr)
+    result.check_returncode()
+    return stdout, stderr
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out-dir', type=Path, required=True)
@@ -138,93 +192,111 @@ def main():
     if out.exists() and any(out.iterdir()):
         parser.error('out-dir must be empty to prevent stale evidence')
     out.mkdir(parents=True, exist_ok=True)
-    joint = out / 'joint_solver.rs'
-    save_adapter(JOINT.read_text(), joint_adapter(JOINT.read_text()), joint)
-    harness_source = (CHECK.parent / 'harness.rs').read_text()
-    harness = out / 'harness.rs'
-    for relative in re.findall(r'#\[path = "([^"]+)"\]', harness_source):
-        path = joint if relative.endswith('/joint_solver.rs') else (CHECK.parent / relative).resolve()
-        harness_source = replace_once(harness_source, json.dumps(relative), json.dumps(path.as_posix()))
-    save_adapter((CHECK.parent / 'harness.rs').read_text(), harness_source, harness)
-    adapted = check_adapter(CHECK.read_text(), harness)
-    save_adapter(CHECK.read_text(), adapted, out / 'check.py')
-    provenance = {'profile': args.profile, 'platform': platform.platform(),
-                  'python': sys.version, 'math': 'unchanged det_math.h + real mds-crtmath staticlib',
-                  'scope': 'helper diagnostic; CMake WIN32 macro profile is not a full app oracle'}
-    (out / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
-    commands = out / 'commands.jsonl'
-    native_libs = []
-
-    def invoke(command, **kwargs):
-        with commands.open('a') as log:
-            log.write(json.dumps(command) + '\n')
-        result = subprocess.run(command, cwd=out if command[0] == 'cl' else ROOT / 'rust',
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kwargs)
-        sys.stdout.buffer.write(result.stdout)
-        sys.stdout.buffer.flush()
-        with (out / 'build-and-test.log').open('ab') as log:
-            log.write(result.stdout)
-        result.check_returncode()
-        return result.stdout
-
-    def run(command, **kwargs):
-        command = list(map(str, command))
-        if args.profile.startswith('msvc-') and command[0] == os.environ.get('CXX', 'clang++'):
-            command = msvc_command(command, args.profile, out, native_libs)
-            (out / 'native-command.txt').write_text(subprocess.list2cmdline(command) + '\n')
-        if '--crate-type' in command and command[command.index('--crate-type') + 1] == 'staticlib':
-            command += ['--print', 'native-static-libs']
-        if any(x.endswith('/oracle.cpp') or x.endswith('\\oracle.cpp') for x in command):
-            macro_source = out / 'profile.cpp'
-            macros = ['WIN32', '_WIN32', '_WIN64', '_MSC_VER', '__clang_major__',
-                      '__x86_64__', '__aarch64__', 'BT_USE_SSE', 'BT_USE_DOUBLE_PRECISION',
-                      'BT_NO_PROFILE', 'MDS_BT_SYSTEM_MATH']
-            code = '#include "LinearMath/btScalar.h"\n#include <cstdio>\n'
-            code += '#define S_(x) #x\n#define S(x) S_(x)\nint main() {\n'
-            for macro in macros:
-                code += (f'#ifdef {macro}\nstd::puts("{macro}=" S({macro}));\n'
-                         f'#else\nstd::puts("{macro}=<undefined>");\n#endif\n')
-            code += 'std::printf("pointer_bits=%zu\\n", sizeof(void*) * 8);\n}\n'
-            macro_source.write_text(code)
-            macro_command = []
-            inserted = False
-            for arg in command:
-                if arg.endswith('.cpp'):
-                    if not inserted:
-                        macro_command.append(str(macro_source))
-                        inserted = True
-                else:
-                    macro_command.append(arg.replace('native-joints', 'native-profile'))
-            invoke(macro_command, **kwargs)
-            profile_exe = out / ('native-profile.exe' if os.name == 'nt' else 'native-profile')
-            profile_data = invoke([str(profile_exe)], **kwargs)
-            (out / 'effective-profile.txt').write_bytes(profile_data)
-            profile = dict(line.split('=', 1) for line in profile_data.decode().splitlines())
-            assert profile['BT_USE_SSE'] != '<undefined>', profile
-            if os.name == 'nt':
-                assert profile['_WIN64'] == '1' and profile['pointer_bits'] == '64', profile
-                assert (profile['WIN32'] != '<undefined>') == (args.profile == 'msvc-cmake-win32'), profile
-        result = invoke(command, **kwargs)
-        if b'native-static-libs:' in result:
-            native_libs[:] = result.decode(errors='replace').split('native-static-libs:')[-1].splitlines()[0].split()
-
-    compiler = os.environ.get('CXX', 'cl' if os.name == 'nt' else 'clang++')
-    for name, command in [('compiler', [compiler, '/?'] if os.name == 'nt' else [compiler, '--version']),
-                          ('rustc', ['rustup', 'run', '1.95.0', 'rustc', '-Vv']),
-                          ('git-head', ['git', 'rev-parse', 'HEAD'])]:
-        (out / f'{name}.txt').write_bytes(invoke(command))
-
+    status = {'execution': 'FAIL', 'phase': 'setup'}
     env = os.environ.copy()
-    os.environ['MDS_JOINT_ACTUAL'] = str(out / 'rust.tsv')
-    namespace = {'__name__': 'probe_adapter', '__file__': str(CHECK)}
-    exec(compile(adapted, str(out / 'check.py'), 'exec'), namespace)
-    namespace['run'] = run
-    status = {'execution': 'FAIL'}
+    argv = sys.argv[:]
     try:
+        joint = out / 'joint_solver.rs'
+        save_adapter(JOINT.read_text(), joint_adapter(JOINT.read_text(), out / 'native.tsv'), joint)
+        harness_source = (CHECK.parent / 'harness.rs').read_text()
+        harness = out / 'harness.rs'
+        for relative in re.findall(r'#\[path = "([^"]+)"\]', harness_source):
+            path = joint if relative.endswith('/joint_solver.rs') else (CHECK.parent / relative).resolve()
+            harness_source = replace_once(harness_source, json.dumps(relative), json.dumps(path.as_posix()))
+        save_adapter((CHECK.parent / 'harness.rs').read_text(), harness_source, harness)
+        adapted = check_adapter(CHECK.read_text(), harness)
+        save_adapter(CHECK.read_text(), adapted, out / 'check.py')
+        provenance = {'profile': args.profile, 'platform': platform.platform(),
+                      'python': sys.version, 'math': 'unchanged det_math.h + real mds-crtmath staticlib',
+                      'scope': 'helper diagnostic; CMake WIN32 macro profile is not a full app oracle'}
+        (out / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
+        commands = out / 'commands.jsonl'
+        native_libs = []
+
+        def invoke(command, label=None, **kwargs):
+            status['phase'] = label or 'build-and-test'
+            with commands.open('a') as log:
+                log.write(json.dumps(command) + '\n')
+            label = label or f'command-{sum(1 for _ in commands.open()):03d}'
+            stdout, stderr = capture_command(out, label, command,
+                cwd=out if command[0] == 'cl' else ROOT / 'rust', **kwargs)
+            return stdout + stderr
+
+        def capture_output(command, label, **kwargs):
+            status['phase'] = label
+            stdout, _ = capture_command(out, label, command, **kwargs)
+            return stdout
+
+        def run(command, **kwargs):
+            command = list(map(str, command))
+            if args.profile.startswith('msvc-') and command[0] == os.environ.get('CXX', 'clang++'):
+                command = msvc_command(command, args.profile, out, native_libs)
+                (out / 'native-command.txt').write_text(subprocess.list2cmdline(command) + '\n')
+            if '--crate-type' in command and command[command.index('--crate-type') + 1] == 'staticlib':
+                command += ['--print', 'native-static-libs']
+            if any(x.endswith('/oracle.cpp') or x.endswith('\\oracle.cpp') for x in command):
+                macro_source = out / 'profile.cpp'
+                macros = ['WIN32', '_WIN32', '_WIN64', '_MSC_VER', '__clang_major__',
+                          '__x86_64__', '__aarch64__', 'BT_USE_SSE', 'BT_USE_DOUBLE_PRECISION',
+                          'BT_NO_PROFILE', 'MDS_BT_SYSTEM_MATH']
+                code = '#include "LinearMath/btScalar.h"\n#include <cstdio>\n'
+                code += '#define S_(x) #x\n#define S(x) S_(x)\nint main() {\n'
+                for macro in macros:
+                    code += (f'#ifdef {macro}\nstd::puts("{macro}=" S({macro}));\n'
+                             f'#else\nstd::puts("{macro}=<undefined>");\n#endif\n')
+                code += 'std::printf("pointer_bits=%zu\\n", sizeof(void*) * 8);\n}\n'
+                macro_source.write_text(code)
+                macro_command = []
+                inserted = False
+                for arg in command:
+                    if arg.endswith('.cpp'):
+                        if not inserted:
+                            macro_command.append(str(macro_source))
+                            inserted = True
+                    else:
+                        macro_command.append(arg.replace('native-joints', 'native-profile'))
+                invoke(macro_command, **kwargs)
+                profile_exe = out / ('native-profile.exe' if os.name == 'nt' else 'native-profile')
+                profile_data = invoke([str(profile_exe)], **kwargs)
+                (out / 'effective-profile.txt').write_bytes(profile_data)
+                profile = dict(line.split('=', 1) for line in profile_data.decode().splitlines())
+                assert profile['BT_USE_SSE'] != '<undefined>', profile
+                if os.name == 'nt':
+                    assert profile['_WIN64'] == '1' and profile['pointer_bits'] == '64', profile
+                    assert (profile['WIN32'] != '<undefined>') == (args.profile == 'msvc-cmake-win32'), profile
+            result = invoke(command, **kwargs)
+            if b'native-static-libs:' in result:
+                native_libs[:] = result.decode(errors='replace').split('native-static-libs:')[-1].splitlines()[0].split()
+
+        compiler = os.environ.get('CXX', 'cl' if os.name == 'nt' else 'clang++')
+        for name, command in [('compiler', [compiler, '/?'] if os.name == 'nt' else [compiler, '--version']),
+                              ('rustc', ['rustup', 'run', '1.95.0', 'rustc', '-Vv']),
+                              ('git-head', ['git', 'rev-parse', 'HEAD'])]:
+            (out / f'{name}.txt').write_bytes(invoke(command, label=name))
+
+        os.environ['MDS_JOINT_ACTUAL'] = str(out / 'rust.tsv')
+        namespace = {'__name__': 'probe_adapter', '__file__': str(CHECK)}
+        exec(compile(adapted, str(out / 'check.py'), 'exec'), namespace)
+        namespace['run'] = run
+        namespace['capture_output'] = capture_output
+        status['phase'] = 'check'
         sys.argv = [str(CHECK), '--out-dir', str(out)]
         namespace['main']()
+        status['phase'] = 'comparison'
+        for name in ['native', 'rust']:
+            counts(out / f'{name}.tsv')
+        comparison = compare(out / 'rust.tsv', out / 'native.tsv', out / 'rust-vs-native.diff.tsv', joint=True)
+        if not comparison['input_equal']:
+            raise ValueError('same-host input invariant failed')
+        if comparison['status'] != 'PASS':
+            raise SystemExit('same-host exact bit comparison failed; see diagnostic artifacts')
         status['execution'] = 'PASS'
+    except BaseException as error:
+        status['error'] = f'{type(error).__name__}: {error}'
+        status['returncode'] = getattr(error, 'returncode', error.code if isinstance(error, SystemExit) else None)
+        raise
     finally:
+        sys.argv = argv
         os.environ.clear()
         os.environ.update(env)
         for name in ['native', 'rust']:
@@ -232,14 +304,18 @@ def main():
             if path.exists():
                 try:
                     status[name] = counts(path)
-                except ValueError as error:
+                except (ValueError, UnicodeError) as error:
                     status[name] = {'error': str(error)}
         for label, left, right in [('native-vs-frozen', out / 'native.tsv', FIXTURE),
                                    ('rust-vs-native', out / 'rust.tsv', out / 'native.tsv'),
                                    ('rust-vs-frozen', out / 'rust.tsv', FIXTURE),
                                    ('factors-vs-frozen', out / 'factors.tsv', FIXTURE.with_name('factors.tsv'))]:
             if left.exists() and right.exists():
-                status[label] = compare(left, right, out / f'{label}.diff.tsv')
+                try:
+                    status[label] = compare(left, right, out / f'{label}.diff.tsv', joint=label != 'factors-vs-frozen')
+                except (ValueError, UnicodeError) as error:
+                    status[label] = {'status': 'FAIL', 'error': str(error)}
+        (out / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
         hashes = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
                   for folder in ['recipes/bullet275/bullet-src/src', 'rust/crates/mds-bullet/src',
                                  'rust/crates/mds-bullet-sys/shim', 'rust/crates/mds-crtmath/src',
@@ -251,12 +327,7 @@ def main():
         hashes.update({path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                        for path in out.iterdir() if path.is_file()})
         (out / 'sha256.json').write_text(json.dumps(hashes, indent=2) + '\n')
-        (out / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
         print(json.dumps(status, indent=2))
-    if any('error' in status.get(name, {}) for name in ['native', 'rust']):
-        raise SystemExit('incomplete diagnostic capture')
-    if status.get('rust-vs-native', {}).get('status') != 'PASS':
-        raise SystemExit('same-host exact bit comparison failed; see diagnostic artifacts')
 
 
 if __name__ == '__main__':

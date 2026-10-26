@@ -2,6 +2,7 @@
 // Copyright (C) 2004 Hans Leidekker
 // SPDX-License-Identifier: LGPL-2.1-or-later
 //
+// Modified on 2026-10-27 by translating the checksum implementation to Rust.
 // Ported from vkd3d 2.1 libs/vkd3d-shader/checksum.c. This library is free
 // software under LGPL version 2.1 or later, without any warranty. See LICENSE.
 // The original MD5 implementation is based on Colin Plumb's public domain

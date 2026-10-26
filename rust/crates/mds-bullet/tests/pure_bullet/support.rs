@@ -1,3 +1,13 @@
+fn host_native() -> &'static str {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        include_str!("../support_data/native.tsv")
+    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        include_str!("../support_data/native-linux-x64.tsv")
+    } else {
+        panic!("unreviewed support host profile; run the native capture workflow")
+    }
+}
+
 use super::core::math::Vec3;
 use super::core::shape::Shape;
 
@@ -12,12 +22,14 @@ fn nonvirtual_support_matches_native_words() {
     let inputs = full_inputs
         .as_deref()
         .unwrap_or(include_str!("../support_data/inputs.tsv"));
-    let expected = full_expected
-        .as_deref()
-        .unwrap_or(include_str!("../support_data/native.tsv"));
+    let expected = full_expected.as_deref().unwrap_or_else(|| host_native());
     assert_eq!(inputs.lines().count(), expected.lines().count());
-    for (input, output) in inputs.lines().zip(expected.lines()) {
+    let mut capture = String::new();
+    let mut mismatches = Vec::new();
+    for (index, (input, output)) in inputs.lines().zip(expected.lines()).enumerate() {
         let c: Vec<_> = input.split_whitespace().collect();
+        assert_eq!(c.len(), 8);
+        assert_eq!(c[0], index.to_string());
         let v: Vec<_> = c[2..]
             .iter()
             .map(|w| f32::from_bits(u32::from_str_radix(w, 16).unwrap()))
@@ -40,13 +52,36 @@ fn nonvirtual_support_matches_native_words() {
         .flat_map(|v| v.0)
         .map(f32::to_bits)
         .collect();
+        use std::fmt::Write;
+        write!(capture, "{}", c[0]).unwrap();
+        for word in &actual {
+            write!(capture, "\t{word:08x}").unwrap();
+        }
+        capture.push('\n');
+        let output_fields: Vec<_> = output.split_whitespace().collect();
+        assert_eq!(output_fields.len(), 10);
+        assert_eq!(output_fields[0], c[0]);
         let words: Vec<_> = output
             .split_whitespace()
             .skip(1)
             .map(|w| u32::from_str_radix(w, 16).unwrap())
             .collect();
-        assert_eq!(actual, words, "support case {}", c[0]);
+        if actual != words {
+            mismatches.push(format!(
+                "support case {} actual {actual:08x?} expected {words:08x?}",
+                c[0]
+            ));
+        }
     }
+    if let Ok(path) = std::env::var("MDS_SUPPORT_ACTUAL") {
+        let capture = if cfg!(target_os = "windows") {
+            capture.replace('\n', "\r\n")
+        } else {
+            capture
+        };
+        std::fs::write(path, capture).unwrap();
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
     if full_inputs.is_none() {
         assert_eq!(inputs.lines().count(), 1600);
     }

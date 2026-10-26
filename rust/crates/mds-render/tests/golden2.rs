@@ -355,7 +355,6 @@ fn accessory_0() {
 }
 
 #[test]
-#[ignore = "within 4 is 0.99982 (37 px over, 20 allowed): the cube face seen edge on"]
 fn accessory_30() {
     gate("accessory", 30);
 }

@@ -103,8 +103,11 @@ pub struct Renderer {
     /// Bilinear; the texture slot repeats (Direct3D's default wrap address mode) and blends its
     /// mip levels, the sphere and toon slots clamp and read level 0. The mip blend is chosen by
     /// golden2 `accessory-30.png`, whose cube shows one face edge on: 37 pixels beyond the
-    /// tolerance with it, 50 without.
+    /// tolerance with it, 50 without. Anisotropic filtering (a clamp of 4, 8 or 16 gives the same
+    /// image, 2 does not) passes that image. The background picture keeps `picture_sampler`, the
+    /// same without anisotropy (`background-0.png`: 0.98805 within 4, 0.98692 with it).
     repeat: wgpu::Sampler,
+    picture_sampler: wgpu::Sampler,
     sampler: wgpu::Sampler,
     pipelines: HashMap<u32, Pipelines>,
     pipelines_created: usize,
@@ -204,6 +207,14 @@ impl Renderer {
             bind_group_layouts: &[Some(&light_scene_layout)],
             immediate_size: 0,
         });
+        let repeat = wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        };
         let renderer = Renderer {
             white: texture(device, queue, &[Image::new(1, 1, vec![255; 4])]),
             toon: texture(device, queue, &[Image::new(1, 32, toon_ramp())]),
@@ -213,13 +224,10 @@ impl Renderer {
                 ..Default::default()
             }),
             repeat: device.create_sampler(&wgpu::SamplerDescriptor {
-                address_mode_u: wgpu::AddressMode::Repeat,
-                address_mode_v: wgpu::AddressMode::Repeat,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::MipmapFilterMode::Linear,
-                ..Default::default()
+                anisotropy_clamp: 16,
+                ..repeat.clone()
             }),
+            picture_sampler: device.create_sampler(&repeat),
             device: device.clone(),
             queue: queue.clone(),
             shader,
@@ -493,7 +501,10 @@ impl Renderer {
             {
                 let view = self.view_of(&mut HashMap::new(), &Some(pic.image.clone()), &self.white);
                 let (buf, group) = self
-                    .material_groups(vec![[view, self.white.clone(), self.toon.clone()]])
+                    .material_groups(
+                        vec![[view, self.white.clone(), self.toon.clone()]],
+                        &self.picture_sampler,
+                    )
                     .pop()
                     .expect("one group");
                 self.picture = Some((pic.image.clone(), buf, group));
@@ -625,7 +636,7 @@ impl Renderer {
             ),
             edge_vertices: empty_buffer(device, wgpu::BufferUsages::VERTEX, 4),
             indices: index_buf,
-            materials: self.material_groups(views),
+            materials: self.material_groups(views, &self.repeat),
             edge_drawn: Vec::new(),
             alpha: Vec::new(),
             ranges,
@@ -651,6 +662,7 @@ impl Renderer {
     fn material_groups(
         &self,
         views: Vec<[wgpu::TextureView; 3]>,
+        texture_sampler: &wgpu::Sampler,
     ) -> Vec<(wgpu::Buffer, wgpu::BindGroup)> {
         views
             .iter()
@@ -664,7 +676,7 @@ impl Renderer {
                         bind_entry(1, wgpu::BindingResource::TextureView(tex)),
                         bind_entry(2, wgpu::BindingResource::TextureView(sphere)),
                         bind_entry(3, wgpu::BindingResource::TextureView(toon)),
-                        bind_entry(4, wgpu::BindingResource::Sampler(&self.repeat)),
+                        bind_entry(4, wgpu::BindingResource::Sampler(texture_sampler)),
                         bind_entry(5, wgpu::BindingResource::Sampler(&self.sampler)),
                     ],
                 });
@@ -699,7 +711,7 @@ impl Renderer {
             vertices: empty_buffer(device, wgpu::BufferUsages::VERTEX, vertices * BODY_STRIDE),
             edge_vertices: empty_buffer(device, wgpu::BufferUsages::VERTEX, vertices * EDGE_STRIDE),
             indices,
-            materials: self.material_groups(views),
+            materials: self.material_groups(views, &self.repeat),
             edge_drawn: Vec::new(),
             alpha: Vec::new(),
             ranges: Vec::new(),

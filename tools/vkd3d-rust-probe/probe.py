@@ -66,6 +66,17 @@ def outcome(result):
         return "translation_failure"
     if not result.get("complete_translation"):
         return "incomplete"
+    if result.get("all_unit_prototype"):
+        if result.get("raw_preserved") is False:
+            return "incomplete"
+        if result.get("patch_failure"):
+            return "patch_failure"
+        builds = [result.get(mode + "_build", {}) for mode in ("stable", "patched_stable", "bootstrap", "prototype")]
+        if not any(build.get("exit_code") == 0 for build in builds):
+            return "incomplete" if any(build.get("timed_out") for build in builds) else "compiler_failure"
+        if result.get("link", {}).get("status") != "success":
+            return "linker_failure"
+        return "prototype_success" if result.get("runtime_comparison", {}).get("status") == "success" else "runtime_unverified"
     for mode in ("stable", "bootstrap", "prototype"):
         build = result.get(mode + "_build")
         if build and build["exit_code"] == 0:
@@ -81,11 +92,15 @@ def main():
     parser.add_argument("--artifacts", type=Path, required=True)
     parser.add_argument("--c2rust", type=Path, required=True)
     parser.add_argument("--clang", type=Path, required=True)
+    parser.add_argument("--all-unit-prototype", action="store_true")
+    parser.add_argument("--native-library", type=Path)
     parser.add_argument("--filter", help="Regular expression selecting C translation units")
     parser.add_argument("--timeout", type=int, default=300, help="Seconds per tool invocation")
     parser.add_argument("--build-timeout", type=int, default=120, help="Seconds per Rust build")
     parser.add_argument("--rust-toolchain", default="stable")
     args = parser.parse_args()
+    if args.all_unit_prototype and args.filter:
+        parser.error("all-unit prototype cannot use a unit filter")
     original = args.source.resolve()
     artifacts = args.artifacts.resolve()
     if artifacts == original or original in artifacts.parents:
@@ -105,6 +120,10 @@ def main():
         sources = [p for p in sources if re.search(args.filter, str(p))]
         if not sources:
             parser.error("filter matched no C sources")
+    if args.all_unit_prototype:
+        from full_compiler import UNITS
+        if sorted(str(p.relative_to(source)) for p in sources) != list(UNITS):
+            parser.error("configured source differs from exact pinned 24-unit inventory")
     entries = []
     for path in sources:
         flags = ["-DHAVE_CONFIG_H", "-D_WIN32_WINNT=0x0600", "-std=c99"]
@@ -141,6 +160,10 @@ def main():
                                "--emit-build-files", "--output-dir", str(output), str(database)],
                               artifacts / "transpile.log", cwd=source, timeout=args.timeout)
     checkpoint()
+    if output.exists():
+        shutil.copytree(output, artifacts / "rust-raw")
+        result["raw_sha256"] = {str(p.relative_to(output)): hashlib.sha256(p.read_bytes()).hexdigest()
+                                for p in sorted(output.rglob("*")) if p.is_file()}
     shutil.copy2(source / "LICENSE", artifacts / "VKD3D-LICENSE")
     result["translated_sources"] = []
     for path in sources:
@@ -196,6 +219,22 @@ fn main() {''' + "".join(checks) + 'println!("6 MD5 vectors passed");}\n')
     inventory = {"declared": sorted(declared), "defined": sorted(defined),
                  "unresolved_declared": sorted(declared - defined)}
     (artifacts / "externs.json").write_text(json.dumps(inventory, indent=2) + "\n")
+    if args.all_unit_prototype and result["complete_translation"] and (output / "Cargo.toml").exists():
+        from full_compiler import collect
+        shutil.copy2(source / "LICENSE", output / "LICENSE")
+        manifest = output / "Cargo.toml"
+        manifest.write_text(manifest.read_text().replace("[package]", '[package]\nlicense = "LGPL-2.1-or-later"'))
+        try:
+            collect(result, args, source, output, entries, artifacts, run, checkpoint)
+        finally:
+            result["raw_preserved"] = all(
+                (artifacts / "rust-raw" / name).is_file()
+                and hashlib.sha256((artifacts / "rust-raw" / name).read_bytes()).hexdigest() == expected
+                for name, expected in result.get("raw_sha256", {}).items())
+            checkpoint()
+        result["status"] = outcome(result)
+        checkpoint()
+        return
     if result["complete_translation"] and (output / "Cargo.toml").exists():
         shutil.copy2(source / "LICENSE", output / "LICENSE")
         manifest = output / "Cargo.toml"
@@ -203,6 +242,7 @@ fn main() {''' + "".join(checks) + 'println!("6 MD5 vectors passed");}\n')
         env = dict(os.environ, CARGO_TARGET_DIR=str(artifacts / "rust-target"))
         env.pop("RUSTC_BOOTSTRAP", None)
         env.pop("RUSTFLAGS", None)
+        env.pop("CARGO_ENCODED_RUSTFLAGS", None)
         result["stable_build"] = run(["cargo", "+" + args.rust_toolchain, "build", "--manifest-path", str(output / "Cargo.toml")],
                                       artifacts / "cargo-stable.log", env=env, timeout=args.build_timeout)
         checkpoint()

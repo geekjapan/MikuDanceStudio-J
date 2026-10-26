@@ -1,95 +1,101 @@
-# Hosted translation probe
+# Hosted all-unit compiler prototype
 
-The [workflow](../../.github/workflows/vkd3d-rust-probe.yml) collects
-evidence for `hlsl.c`, `hlsl.tab.c`, `hlsl.yy.c`, and `d3d_asm.c` separately.
-Configuration and local script checks do not establish a hosted result.
-No extended local translation is part of this continuation.
+The [workflow](../../.github/workflows/vkd3d-rust-probe.yml) now runs one
+complete 24-unit translation, compilation, executable link, and shader
+comparison experiment. This supersedes the four standalone unit jobs; it
+has not been executed for this change. The root reviews and pushes the
+commit before any hosted attempt.
 
 ## Execution contract
 
-| Stage | Configuration |
+| Stage | Bound |
 | --- | --- |
-| Runner | Standard `ubuntu-24.04`, Linux x64. No larger runner or external service. |
-| Setup | One job, maximum 35 minutes. Package installation 5 minutes, Rust installation 3, native input preparation 8, C2Rust build 12, bundle 2. |
-| Input | Existing `tools/vkd3d/build.sh linux-native`, with unchanged source URLs, checksums, patches, and `build_in` rules. |
-| Source location | `$MDS_VKD3D_OUT/work-linux-native/vkd3d-2.1`, with sibling `hdr` and `spv` include trees. The workflow checks `include/config.h` and all four generated or handwritten C files. |
-| Migration tool | Official C2Rust `ac687698b6c13491dfec45c6a9ad9e8b4da35227`, compiled once and shared in a tar artifact. |
-| LLVM | Ubuntu Noble `clang-18`, `llvm-18-dev`, `libclang-18-dev`, and `libclang-cpp18-dev`. Actual package versions and dynamic dependencies are logged. A failed tool build is a setup failure, not a translation timeout. |
-| Rust | Explicit `1.95.0` for the tool and generated crate, independent of runner defaults. |
-| Translation | Four matrix entries, serialized with `max-parallel: 1`, `fail-fast: false`. Each translator gets 1,800 seconds with `--fail-on-error --edition 2024`. |
-| Other limits | Native syntax check 120 seconds. Each Rust build 120 seconds. Probe step 40 minutes, each matrix job 50 minutes, including setup and artifact slack. |
-| Permissions | `contents: read`, checkout credentials disabled. No PR trigger, secrets, deployment, or package publication. |
-| Triggers | Manual dispatch, or pushes to `w2-shader-c2rust-prototype` that change this workflow, probe Python files, or `tools/vkd3d/build.sh`. Documentation-only changes do not trigger translation. |
-| Concurrency | Grouped by repository and Git ref. An existing attempt is not canceled by another dispatch. |
-| Artifacts | Input/tool bundle retained 1 day. Setup logs and each unit's complete generated source, copied input, license notices, hashes, logs, and extern inventory retained 7 days. Cargo targets are excluded. |
+| Runner | Existing included standard `ubuntu-24.04`, Linux x64 only. |
+| Preparation | 35-minute job; package step 10 minutes, Rust 3, pinned native source/baseline 8, official C2Rust build 12, bundle 2. Job limit caps their aggregate. |
+| Packages | Explicit clang-18, llvm-18-dev, libclang-18-dev, libclang-cpp18-dev retained. apt acquisition uses 3 retries and 30-second HTTP/HTTPS timeouts. |
+| Tool | Official C2Rust `ac687698b6c13491dfec45c6a9ad9e8b4da35227`; Rust 1.95.0. No refactorer, guessed reorganization option, or extra toolchain. |
+| Translation | One call, no filter, `--fail-on-error --edition 2024`, 1,800 seconds. Exact shader/common source paths are checked against `full_compiler.UNITS`, not just a count. |
+| Builds | Raw stable, patched stable, then bootstrap and experimental flags if necessary. Each build/link gets 300 seconds. Native syntax checks remain capped at 120 seconds per unit. |
+| Numeric proof | Native C against actual configured `hlsl.h`, then stable Rust against complete translated layout declarations; each compiler 60 seconds, run 30 seconds. |
+| Runtime | Four shader shapes, VS/PS, shader models 2/3, SPIR-V/D3D assembly/D3D9 bytecode: 48 cases, 30 seconds per process. The 55-minute step and 70-minute job cap aggregate work. |
+| Trigger | Manual dispatch or executable-path push on `w3-shader-full-compiler-probe` only. No PR trigger. |
+| Authority | `contents: read`, checkout credentials disabled, no secrets, publication, deployment, larger runner, or paid service. Root alone pushes/dispatches. |
+| Artifacts | Pinned configured input, installed native baseline, and tool bundle for 1 day; setup and all experiment evidence for 7 days. Cargo targets excluded. |
 
-Ubuntu's [Noble LLVM package](https://packages.ubuntu.com/noble/llvm-18-dev)
-and the official [Ubuntu 24.04 runner image inventory](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md)
-establish this toolchain's availability. The hosted C2Rust build is still a
-required check. The workflow does not assume that the local LLVM 23 result
-proves LLVM 18 compatibility.
+Preparation reuses `tools/vkd3d/build.sh linux-native` unchanged. The native
+library is solely the comparison oracle. The translated compiler's build
+and executable link use generated Rust and platform libraries, with no
+native vkd3d library on their link command. `ldd` records the executable's
+dependencies. No full local translation/build is part of this continuation.
 
-The new native target requires Linux and fresh `work-linux-native` and
-`linux-native` output paths. It rejects existing directories and symlinks
-before download or cleanup. Existing build targets keep their behavior.
+## Preservation and the parser correction
 
-## Result interpretation
+`rust-raw/` preserves the emitted files byte for byte before license notices
+are restored in `rust/`; `raw_sha256` records every original file.
+`rust-working/` is a separate copy with restored original license notices.
+The existing source/header SHA256 records, syntax checks, extern inventory,
+and LGPL license copy remain. The untouched configured C input is copied.
+Cargo may add lockfiles; generated source bytes must remain unchanged.
 
-`probe.py` checkpoints `result.json` before external tools run. It records
-UTC start and end timestamps, elapsed time, user and system CPU time, peak RSS
-in bytes, exit code, and timeout for each command. Resource values come from
-POSIX `wait4`; they describe the command and its waited children, not total
-runner memory. A timeout, exception, or interruption kills the owned command's
-process group and reaps the child. The CLI turns SIGINT and SIGTERM into that
-cleanup path. The artifact directory must be new, including when an existing
-directory is empty. The workflow creates only its parent evidence directory
-and always uploads that parent, preserving logs if result creation is rejected.
+Only this known C2Rust output is corrected:
 
-`validate.py` checks that the expected C unit was selected and reports:
-
-- `incomplete` for missing output, timeout, signal termination, or interrupted evidence collection.
-- `syntax_failure` for rejected native C input.
-- `translation_failure` for a translator error or emitted placeholder macro.
-- `compiler_failure` when complete emitted Rust does not compile.
-- `prototype_success` when only explicit bootstrap or experimental flags compile the unit.
-- `success` only when the entire emitted unit builds on the pinned stable compiler.
-
-Only `success` passes the hosted validation step. Prototype success remains
-visible but does not make the job green. Missing translation units,
-`compile_error!`, `unimplemented!`, and `todo!` cannot count as a complete
-translation. A failed or incomplete job still uploads available artifacts.
-Setup failure prevents the matrix from starting and has separate setup
-metadata and logs. An absent result is never treated as success.
-
-The result concerns one translation unit. It does not prove a full compiler
-link, shader equivalence, Windows portability, memory safety, or GPU behavior.
-The faithful vkd3d Rust translation remains the selected migration route;
-C2Rust remains a helper for that work.
-
-## Dispatch and checks
-
-The root owns independent review, integration, push, and dispatch. The initial
-attempt starts when the root pushes the independently reviewed commit to
-`w2-shader-c2rust-prototype`. The push trigger applies only to that branch
-and the executable paths above. No translation has been started here.
-
-GitHub requires a manual workflow to [exist on the default branch before dispatch](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
-After integration, the root can select the exact reviewed ref manually:
-
-```sh
-gh workflow run vkd3d-rust-probe.yml --ref REVIEWED_REF
+```rust
+offset_of!(hlsl_attribute, args[(*yyvsp.offset(-2isize)).initializer.args_count as usize]) as size_t
 ```
 
-The dispatch must stay within the repository's existing included Actions
-and artifact-storage allowance. This workflow does not enable additional
-spending. Maximum configured job time is 235 standard runner minutes across
-one setup and four serialized matrix jobs; actual billed use depends on
-execution and the repository's plan. No hosted job has been started here.
+Whitespace differences are allowed inside that exact token sequence. Exactly
+one occurrence, the expected `hlsl_src` array element, `size_t = usize`, and
+unsigned count declarations are required. Any mismatch stops patched builds.
+The replacement is the base field offset plus wrapping `size_of::<hlsl_src>()`
+times the index, both represented as `size_t`; it does not assume the element
+is a pointer. The patch receipt includes occurrence counts and both SHA256s.
 
-Focused local checks:
+The native C proof evaluates real `offsetof(struct hlsl_attribute, args[n])`
+for 0, 1, 31, 65535, and UINT_MAX. Stable Rust checks the actual translated
+layout and every result. A failed proof blocks patched compilation. The
+UINT_MAX case follows the grammar's unsigned argument count; no out-of-range
+memory access is performed. This evidence does not establish other C ABI
+layouts or another target's pointer width.
 
-```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/vkd3d-rust-probe -p 'test_*.py' -v
-actionlint .github/workflows/vkd3d-rust-probe.yml
-bash -n tools/vkd3d/build.sh
-```
+## Link and comparison
+
+After an all-unit static library exists, `nm` records defined and undefined
+archive symbols. Those raw undefined entries include references resolved by
+other archive members, and are not all final external dependencies. The
+standalone Rust `shader_driver.rs` links the real public compile/free C ABI
+exports from that archive, plus system math/thread/dynamic-loader libraries.
+The actual linker result/log decides executable closure. If compilation does
+not produce an archive, link and symbol evidence are explicitly unavailable.
+
+The same executable invokes the pinned native library via `dlopen` only in
+its native comparison process. Its translated mode calls linked Rust exports.
+The deterministic matrix covers c4 uniforms, helpers, branches, struct IO,
+VS/PS and shader models 2/3. It compares return codes, diagnostics and output
+bytes. Nonempty output and success on both sides are required: matching
+unsupported-target rejections are failures. Process crashes/timeouts remain
+failures. Scan/reflection and GPU execution are explicitly `not_run`.
+
+## Status and acceptance
+
+Raw stable builds clear inherited bootstrap, Rust flags and compiler wrappers.
+All failures are retained. No feature attributes, real compiler functions,
+variadic definitions or foreign types are removed or stubbed. Bootstrap and
+experimental flags are recorded and remain prototype-only.
+
+Statuses distinguish `incomplete`, `syntax_failure`, `translation_failure`,
+`compiler_failure`, `patch_failure`, `linker_failure`, `runtime_unverified`,
+and `prototype_success`. A successful patched/bootstrap link and full matrix
+still yields only `prototype_success`. The all-unit validator checks exact
+input and translated inventories and always fails production stable acceptance
+for this experiment. A red hosted gate is expected until the faithful stable
+migration is independently complete; it must not be reported as stable PASS.
+
+Known gaps remain real c_variadic definitions, glibc extern types, other
+emitted compiler errors not reached previously, C runtime dependencies,
+unsafe aliasing/lifetimes/mutable statics, scan/reflection, Windows x64,
+Linux ARM64, and full Apple Silicon compiler acceptance. The unavailable
+2023 refactorer is not a Rust-2024 solution.
+
+Local checks are Python unit tests, actionlint, rustfmt, shell syntax, diff
+whitespace, and the tiny saved-parser native C/Rust numeric check. Configuration
+and those checks do not establish hosted translation, linkage, or semantics.

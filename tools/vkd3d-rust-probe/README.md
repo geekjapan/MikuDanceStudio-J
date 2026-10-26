@@ -2,7 +2,7 @@
 
 This is an isolated migration experiment, not a production shader backend.
 The [hosted continuation](HOSTED.md) describes the bounded GitHub Actions
-attempt for large units, its status rules, and its unexecuted acceptance gates.
+all-unit compile/link/comparison experiment, its status rules, and its unexecuted hosted gates.
 The generated Rust is derived from vkd3d and remains LGPL-2.1-or-later;
 the script restores copyright/license comments and copies `LICENSE`.
 Generated parser skeleton notices and exceptions must also be retained.

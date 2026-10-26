@@ -7,7 +7,7 @@ use crate::{not, Document, Error, ModelFile, PhysicsField};
 use mds_formats::pmd::{Joint, Pmd, Rigid};
 use mds_formats::text::{decode_sjis, FixedSjis};
 
-/// The English name the dialog of menu 262 edits
+/// The English name the dialog of menu 259 edits
 /// (`CollectEnglishNameEdit`, `src/window/english_name_dialog.cpp` 118-205,
 /// and `ApplyEnglishNameDialog` 325-362).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -8,7 +8,6 @@
 //! the `list_name` of the accessory with order `r`.
 
 use crate::{not, Document, Error};
-use mds_formats::text::FixedSjis;
 
 /// `slots` is every slot of `have`, once.
 fn permutation(slots: &[u8], mut have: Vec<u8>) -> Result<(), Error> {
@@ -53,14 +52,9 @@ impl Document {
         for (i, &slot) in slots.iter().enumerate() {
             let a = p.accessories.iter_mut().find(|a| a.slot == slot).unwrap();
             a.order = i as u8;
-            let text = &a.list_name.raw;
+            let text = a.list_name.raw;
             let len = text.iter().position(|&b| b == 0).unwrap_or(text.len());
-            let mut raw = [0; 100];
-            raw[..len].copy_from_slice(&text[..len]);
-            a.name = FixedSjis {
-                raw,
-                text: a.list_name.text.clone(),
-            };
+            crate::accessory::strcpy_name(&mut a.name, &text[..len]);
         }
         p.accessories.sort_by_key(|a| a.order);
         if let Some(&first) = slots.first() {

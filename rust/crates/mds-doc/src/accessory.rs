@@ -17,6 +17,36 @@ pub(crate) fn fixed<const N: usize>(text: &str) -> FixedSjis<N> {
     }
 }
 
+/// `strcpy_s` (and `WideToAnsi`) into a 100-byte name: the bytes and a NUL;
+/// what follows stays.
+pub(crate) fn strcpy_name(name: &mut FixedSjis<100>, s: &[u8]) {
+    let s = &s[..s.len().min(99)];
+    name.raw[..s.len()].copy_from_slice(s);
+    name.raw[s.len()] = 0;
+    name.text = mds_formats::text::decode_sjis(&name.raw);
+}
+
+fn cstr(s: &[u8]) -> &[u8] {
+    &s[..s.iter().position(|&b| b == 0).unwrap_or(s.len())]
+}
+
+/// The name an accessory record holds after a PMM load (`pmm_load_v2.cpp`
+/// 1799-1865): a zeroed record, `LoadAccessoryObject`'s file name of the
+/// path (`accessory.cpp` 445), then `strcpy_s` of the saved name.
+// ponytail: a `.vac` writes the name of its mesh between the two; the
+// document does not read the `.vac` here, so its file name stands in.
+pub(crate) fn record_name(a: &mut pmm::Accessory) {
+    let path = cstr(&a.path.raw);
+    let Some(at) = path.iter().rposition(|&b| b == b'\\') else {
+        return;
+    };
+    let saved = cstr(&a.name.raw).to_vec();
+    let mut name = fixed::<100>("");
+    strcpy_name(&mut name, &path[at + 1..]);
+    strcpy_name(&mut name, &saved);
+    a.name = name;
+}
+
 /// The accessory record for `path`: `InitAccessoryRecord`
 /// (`src/render/debug_geometry.cpp`), the name after the last backslash
 /// (`LoadAccessoryObject`), the next combo index as its order, and the
@@ -32,9 +62,17 @@ pub(crate) fn load(p: &mut Pmm, path: &str, data: &[u8]) -> Result<u8, Error> {
 }
 
 /// The mesh file a `.vac` names: its second line without the newline
-/// (`fgets`, then the `\n` cut), as Shift-JIS bytes.
+/// (`fgets`, then the `\n` cut), as Shift-JIS bytes. The file is read in
+/// text mode (`_wfopen_s(.., L"r")`, `accessory.cpp` 464), so CRLF reads as
+/// LF.
 pub fn vac_mesh_name(vac: &[u8]) -> Vec<u8> {
-    let mut lines = vac.split_inclusive(|&b| b == b'\n');
+    let mut text = Vec::with_capacity(vac.len());
+    for (i, &b) in vac.iter().enumerate() {
+        if !(b == b'\r' && vac.get(i + 1) == Some(&b'\n')) {
+            text.push(b);
+        }
+    }
+    let mut lines = text.split_inclusive(|&b| b == b'\n');
     lines.next();
     let line = lines.next().unwrap_or(&[]);
     let line = &line[..line.len().min(255)];
@@ -103,10 +141,16 @@ fn place(
         shadow: state.shadow,
         ..AccessoryKey::default()
     };
+    // `LoadAccessoryObject`: the file name of the path, then a `.vac`'s
+    // mesh name over it (`accessory.cpp` 445, 477).
+    let mut record = fixed::<100>("");
+    let tail = path.rsplit_once('\\').map_or(path, |(_, t)| t);
+    strcpy_name(&mut record, &crate::add_model::sjis(tail, 100).raw);
+    strcpy_name(&mut record, &crate::add_model::sjis(name, 100).raw);
     let a = pmm::Accessory {
         list_name: fixed(name),
         slot,
-        name: fixed(name),
+        name: record,
         path: fixed(path),
         order,
         keys: KeyPool::new(GLOBAL_KEY_CAPACITY, vec![head])

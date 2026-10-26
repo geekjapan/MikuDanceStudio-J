@@ -72,7 +72,8 @@
 //!   256-byte scratch buffer: zeros after the NUL on first use, the residue
 //!   of the previous string afterwards, and an empty path writes the buffer
 //!   unchanged. The wave, AVI and picture paths are zeroed first. Accessory
-//!   names keep zeros after the NUL (`strcpy_s` into a zeroed record).
+//!   names are saved whole, with what the record holds after the NUL
+//!   ([`Document::load`]).
 //! * Accessory transparency bytes go through the float opacity the C++
 //!   keeps ([`save::opacity_byte`]).
 //! * The play start and stop frames and the max frame are read back from
@@ -585,7 +586,7 @@ pub enum Command {
     /// (center bone), 2 the selected bone. In model mode the view offset
     /// and distance are re-anchored ([`camera_reference`]).
     SetCameraReference(u8),
-    /// The English name dialog (menu 262) on the selected model
+    /// The English name dialog (menu 259) on the selected model
     /// ([`pmd_edit::EnglishName`]).
     SetEnglishName {
         name: EnglishName,
@@ -597,7 +598,7 @@ pub enum Command {
     /// stored name. The C++ stores a name only when the texture loads from
     /// the model directory; that check is the caller's.
     SetToonFileNames(Vec<String>),
-    /// The OK of the physics model dialog (menu 264, `CommitPhysicsEdits`,
+    /// The OK of the physics model dialog (menu 262, `CommitPhysicsEdits`,
     /// `physics_model_dialog.cpp` 1129-1295) on the selected PMD: the rigid
     /// bodies and joints as the dialog left them, in file form.
     SetPhysicsModel {
@@ -916,6 +917,7 @@ impl Document {
         pmm.accessories.sort_by_key(|a| a.order);
         for (a, r) in pmm.accessories.iter_mut().zip(rows) {
             a.list_name = r;
+            accessory::record_name(a);
         }
         let mut models = Vec::with_capacity(pmm.models.len());
         for m in &pmm.models {

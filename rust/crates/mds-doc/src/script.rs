@@ -331,6 +331,19 @@ impl Runner {
             }
             ["register", "bone"] => Command::RegisterBoneKeys,
             ["register", "display"] => Command::RegisterDisplayKey,
+            ["load", "accessory", p] if p.contains(".vac") => {
+                // `LoadAccessoryObject` looks for the mesh next to the `.vac`.
+                let vac = load(p)?;
+                let name = mds_formats::text::decode_sjis(&crate::vac_mesh_name(&vac));
+                let dir = p.rsplit_once('\\').map_or("", |(d, _)| d);
+                let mesh_path = format!("{dir}\\{name}");
+                Command::LoadVac {
+                    path: p.to_string(),
+                    mesh: load(&mesh_path)?,
+                    vac,
+                    mesh_path,
+                }
+            }
             ["load", "accessory", p] => Command::LoadAccessory {
                 path: p.to_string(),
                 data: load(p)?,
@@ -494,6 +507,25 @@ impl Runner {
                     display: check(display)?,
                 })
             }
+            ["camera", "reference", m] => Command::SetCameraReference(atol(m, 8) as u8),
+            ["delete", "model"] => {
+                let m = self.doc.selected_model().ok_or("no model selected")?;
+                Command::DeleteModel(m.slot)
+            }
+            ["drag", _, frames] => Command::MoveSelectedKeys(atol(frames, 100) as i32),
+            ["load", "lip", "sync", p] => {
+                // `ApplyModelComboSelection` grays menu 224 in camera mode
+                // (`ui_model_reload.cpp` 453).
+                if self.doc.camera_mode() {
+                    return Err("menu item 224 is disabled".into());
+                }
+                let data = load(p)?;
+                return self.lip_sync(p, &data, false);
+            }
+            ["drop", p] if p.to_ascii_lowercase().ends_with(".vsq") => {
+                let data = load(p)?;
+                return self.lip_sync(p, &data, true);
+            }
             ["undo"] => Command::Undo,
             ["redo"] => Command::Redo,
             _ => return Err("not ported".into()),
@@ -556,6 +588,28 @@ impl Runner {
             direction: [l[3], l[4], l[5]],
         };
         self.doc.apply(cmd).map_err(e)
+    }
+
+    /// `LoadVsqFile`, and the `.txt` it writes beside the VSQ (`L"wt"`:
+    /// CRLF lines), named after the VSQ. The refusal of a drop in camera
+    /// mode is an info box, not a failed step.
+    fn lip_sync(&mut self, path: &str, vsq: &[u8], dropped: bool) -> Result<Vec<Saved>, String> {
+        let run = match self.doc.lip_sync(vsq, dropped) {
+            Err(Error::NotApplicable(_)) if dropped && self.doc.camera_mode() => {
+                return Ok(Vec::new());
+            }
+            r => r.map_err(e)?,
+        };
+        let name = path.rsplit(['\\', '/']).next().unwrap_or(path);
+        let txt = mds_vsq::txt_path(name).ok_or("a VSQ path without .vsq")?;
+        let mut bytes = Vec::with_capacity(run.txt.len());
+        for &b in &run.txt {
+            if b == b'\n' {
+                bytes.push(b'\r');
+            }
+            bytes.push(b);
+        }
+        Ok(self.saved(&txt, bytes))
     }
 
     fn saved(&mut self, name: &str, bytes: Vec<u8>) -> Vec<Saved> {

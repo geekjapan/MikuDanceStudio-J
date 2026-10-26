@@ -4,11 +4,12 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
 description = "Safe wrapper over the vendored Bullet 2.75 with deterministic float math"
-license = "MIT"
+license = "MIT AND Zlib"
 publish = false
 
 [dependencies]
 mds-bullet-sys = { path = "../mds-bullet-sys" }
+mds-crtmath = { path = "../mds-crtmath" }
 
 [features]
 # Builds the C++ chain8_bench driver next to the Rust example (perf comparison).

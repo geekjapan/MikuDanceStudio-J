@@ -78,3 +78,5 @@ uiwire4	3c	doccmds4	mac	sonnet	pending	rust/crates/mds-app/src/ui/edit.rs,rust/c
 floorshim	3c	doccmds4	mac	opus	pending	rust/crates/mds-bullet-sys/,rust/crates/mds-physics/
 cppfix2	3c	script4	windows	sonnet	pending	src/window/physics_model_dialog.cpp,src/app/frame_modes_bone.cpp,tests/fixtures/rust/script4/,src/tools/,tools/oracle/
 docgold4	3c	script4	mac	opus	pending	rust/crates/mds-doc/,rust/crates/mds-edit/,rust/crates/mds-ops/
+physgold	3c	floorshim	mac	opus	pending	rust/crates/mds-physics/,rust/crates/mds-pose/
+mmehost2	3c	appmme	mac	opus	pending	rust/crates/mds-mmert/,rust/crates/mds-app/src/mme.rs,rust/crates/mds-app/tests/app_mme/

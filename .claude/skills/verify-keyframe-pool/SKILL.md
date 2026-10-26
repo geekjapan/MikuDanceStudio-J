@@ -88,6 +88,43 @@ tools/keypool_check/run.sh 5      # deeper, about 15-20 min
 Needs `clang++` with AddressSanitizer. Confirmed with Apple clang 21.0.0.
 Exit 0 means PASS; exit 1 prints each violation once with its shortest trace.
 Full ASan reports go to `${TMPDIR:-/tmp}/keypool_check/asan.log`.
+Use a unique `TMPDIR` for each concurrent run: `run.sh` reuses that directory.
+
+### Hosted verification
+
+For heavy validation, use `.github/workflows/keyframe-pool.yml` (the
+**Keyframe pool verification** workflow). It runs on relevant source,
+harness, and Rust replay changes, or `workflow_dispatch`. It runs the
+unchanged verifier at depth 4, rejects ASan findings and tracked-window
+cuts, compares the generated dump byte-for-byte with the committed Rust
+fixture, and replays that fixture with `cargo test --locked -p mds-edit
+--test keypool_replay`.
+
+It also runs the real-source mutation check:
+
+```sh
+python3 -m unittest discover -s tools/keypool_check -p 'test_*.py'
+python3 tools/keypool_check/check_selector_mutation.py /tmp/keypool-mutation-evidence
+```
+
+The helper requires exactly one production selector guard, removes it in a
+disposable source copy, then runs `run.sh 1` with isolated output. Success
+requires exit 1, the display-paste shortest trace, and a symbolized ASan
+heap-buffer-overflow in `key_registrars.cpp`. Compiler failures, unrelated
+crashes, and successful mutated runs fail the check. The checkout is never
+mutated, including on interruption. Its output directory must be unique
+per concurrent invocation.
+
+The always-uploaded `keyframe-pool-<sha>` artifact contains the checked
+commit, compiler version, baseline and mutation logs, ASan reports, generated
+dump, oracle comparison, and Rust replay log when those steps ran. Missing
+or skipped evidence is not PASS. Require a successful workflow for the
+actual tested commit before claiming hosted verification or advancing sync.
+
+Linux hosted CPUs may expose floating-point differences from the Apple
+clang baseline even with `-ffp-contract=off` and the shared RSQRT table.
+Investigate a dump mismatch; do not replace the fixture, lower the depth,
+weaken checks, or accept a known finding to turn the job green.
 
 `run.sh 4 --dump FILE` also writes every explored state with its operation
 trace. `mds-edit` replays that dump in `cargo test`, so after a change to the
@@ -190,6 +227,27 @@ setup, update `Apply`/`Paste`/`BuildModel` in `keypool_check.cpp` and the
 table above in the same change. If the property itself changes (for example,
 heads no longer pinned at frame 0), edit `CheckPool` and the property text
 here together.
+
+## Maintenance audit for hosted CI
+
+At `f15981b`, the covered source files are unchanged from sync `4e5432f`.
+The covered-file history from the earlier sync `7b847da` contains only
+`4e5432f`: the selector index guard changed; no covered function moved and
+no new writer of `searchCursor` or the three model pools appeared. A wider
+`src`/`include` diff search found a new read of pool selection flags in
+`src/tools/script_mode.cpp` (`SelectedKeyRow`), not a new pool writer. The
+other changes do not alter the modeled handlers or initialization.
+
+Camera, light, self-shadow, gravity, and accessory global pools (including
+`global_key_registration.cpp` and PMM global-pool loaders) remain outside
+this model. Existing unmodeled model-pool callers, undo/redo, and other
+limits listed above remain uncovered. This workflow does not prove them.
+
+The source at `4e5432f` was already checked at depth 4 and by removing the
+selector guard; its regenerated oracle matched the committed fixture.
+The CI maintenance change keeps that verified source baseline. Its own
+hosted run is pending until the workflow executes on the actual commit;
+local helper tests do not replace that run. No property or bound changed.
 
 ## Coverage record
 

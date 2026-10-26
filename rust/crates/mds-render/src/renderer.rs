@@ -1,7 +1,10 @@
 //! [`Renderer`]: the pipelines, the default textures and the per-model buffers, kept between frames
 //! on a device the caller owns.
 
-use crate::mesh::{EdgeView, FLAG_DOUBLE_SIDED, FLAG_EDGE, FLAG_GROUND_SHADOW};
+use crate::mesh::{
+    EdgeView, FLAG_DOUBLE_SIDED, FLAG_EDGE, FLAG_GROUND_SHADOW, FLAG_SHADOW_CAST,
+    FLAG_SHADOW_RECEIVE,
+};
 use crate::Image;
 use crate::{
     linear_to_srgb, srgb_to_linear_table, view, Frame, Mesh, Stage, COLOR_FORMAT, DEPTH_FORMAT,
@@ -28,10 +31,17 @@ struct Pipelines {
     ground_shadow: wgpu::RenderPipeline,
     accessory: wgpu::RenderPipeline,
     picture: wgpu::RenderPipeline,
+    shadow: wgpu::RenderPipeline,
+    shadow_two_sided: wgpu::RenderPipeline,
 }
 
 /// Render pipelines in one [`Pipelines`] set.
-const PIPELINES_PER_SET: usize = 6;
+const PIPELINES_PER_SET: usize = 8;
+
+/// The self-shadow map: its size (the render target of the `shadow` lines of the golden2 probes,
+/// the app's default) and its format.
+const SHADOW_MAP_SIZE: u32 = 2048;
+const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 fn depth_state(write: bool, stencil: wgpu::StencilState) -> wgpu::DepthStencilState {
     wgpu::DepthStencilState {
@@ -83,6 +93,10 @@ pub struct Renderer {
     layout: wgpu::PipelineLayout,
     scene_buf: wgpu::Buffer,
     scene_group: wgpu::BindGroup,
+    /// The scene uniform alone, for the pass that draws the shadow map.
+    light_layout: wgpu::PipelineLayout,
+    light_group: wgpu::BindGroup,
+    shadow_map: wgpu::TextureView,
     white: wgpu::TextureView,
     toon: wgpu::TextureView,
     /// Bilinear; the texture slot repeats (Direct3D's default wrap address mode) and blends its
@@ -109,9 +123,25 @@ impl Renderer {
             label: Some("mds-render"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
+        let light_scene_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: None,
+                entries: &[uniform_entry(0, both)],
+            });
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
-            entries: &[uniform_entry(0, both)],
+            entries: &[
+                uniform_entry(0, both),
+                entry(
+                    1,
+                    wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    wgpu::ShaderStages::FRAGMENT,
+                ),
+            ],
         });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
@@ -138,10 +168,40 @@ impl Renderer {
             immediate_size: 0,
         });
         let scene_buf = empty_buffer(device, wgpu::BufferUsages::UNIFORM, SCENE_BYTES);
+        let shadow_map = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("self-shadow map"),
+                size: wgpu::Extent3d {
+                    width: SHADOW_MAP_SIZE,
+                    height: SHADOW_MAP_SIZE,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: SHADOW_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
         let scene_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &scene_layout,
+            entries: &[
+                bind_entry(0, scene_buf.as_entire_binding()),
+                bind_entry(1, wgpu::BindingResource::TextureView(&shadow_map)),
+            ],
+        });
+        let light_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &light_scene_layout,
             entries: &[bind_entry(0, scene_buf.as_entire_binding())],
+        });
+        let light_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[Some(&light_scene_layout)],
+            immediate_size: 0,
         });
         let renderer = Renderer {
             white: texture(device, queue, &[Image::new(1, 1, vec![255; 4])]),
@@ -166,6 +226,9 @@ impl Renderer {
             layout,
             scene_buf,
             scene_group,
+            light_layout,
+            light_group,
+            shadow_map,
             pipelines: HashMap::new(),
             pipelines_created: 0,
             models: HashMap::new(),
@@ -393,7 +456,7 @@ impl Renderer {
                     t.sphere
                         .as_ref()
                         .map_or(0.0, |(_, mode)| *mode as u8 as f32),
-                    0.0,
+                    f32::from(u8::from(mesh.materials[k].flags & FLAG_SHADOW_RECEIVE != 0)),
                     0.0,
                 ];
                 let u = [
@@ -489,8 +552,8 @@ impl Renderer {
                     t.sphere
                         .as_ref()
                         .map_or(0.0, |(_, mode)| *mode as u8 as f32),
-                    0.0,
-                    0.0,
+                    f32::from(u8::from(a.state.shadow_enabled)),
+                    stage.ground_shadow.map_or(1.0, |g| g.ambient),
                 ];
                 let [dr, dg, db, _] = m.diffuse;
                 let [sr, sg, sb, _] = m.specular;
@@ -758,7 +821,42 @@ impl Renderer {
             read_mask: 0xff,
             write_mask: 0xff,
         };
+        let shadow = |cull: Option<wgpu::Face>| {
+            self.device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("vs_shadow"),
+                    layout: Some(&self.light_layout),
+                    vertex: wgpu::VertexState {
+                        module: &self.shader,
+                        entry_point: Some("vs_shadow"),
+                        compilation_options: Default::default(),
+                        buffers: &[Some(wgpu::VertexBufferLayout {
+                            array_stride: BODY_STRIDE,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &body_attrs,
+                        })],
+                    },
+                    primitive: wgpu::PrimitiveState {
+                        front_face: wgpu::FrontFace::Cw,
+                        cull_mode: cull,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: SHADOW_FORMAT,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                        stencil: Default::default(),
+                        bias: Default::default(),
+                    }),
+                    multisample: Default::default(),
+                    fragment: None,
+                    multiview_mask: None,
+                    cache: None,
+                })
+        };
         Pipelines {
+            shadow: shadow(None),
+            shadow_two_sided: shadow(None),
             body: pipeline(
                 "vs_main",
                 "fs_main",
@@ -825,6 +923,53 @@ impl Renderer {
             None => (target, None, wgpu::StoreOp::Store),
         };
         let mut encoder = self.device.create_command_encoder(&Default::default());
+        if self_shadow_map(stage).is_some() {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("self-shadow map"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.shadow_map,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_bind_group(0, &self.light_group, &[]);
+            for (&(mesh, _), key) in frame.models.iter().zip(Self::keys(frame)) {
+                let res = &self.models[&key];
+                pass.set_index_buffer(res.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.set_vertex_buffer(0, res.vertices.slice(..));
+                for (m, &alpha) in mesh.materials.iter().zip(&res.alpha) {
+                    if m.count > 0 && alpha > 0.0 && m.flags & FLAG_SHADOW_CAST != 0 {
+                        pass.set_pipeline(if m.flags & FLAG_DOUBLE_SIDED != 0 {
+                            &pipelines.shadow_two_sided
+                        } else {
+                            &pipelines.shadow
+                        });
+                        pass.draw_indexed(m.start..m.start + m.count, 0, 0..1);
+                    }
+                }
+            }
+            pass.set_pipeline(&pipelines.shadow);
+            for (a, key) in stage.accessories.iter().zip(Self::accessory_keys(stage)) {
+                if !a.state.visible || !a.state.shadow_enabled {
+                    continue;
+                }
+                let res = &self.models[&key];
+                pass.set_index_buffer(res.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.set_vertex_buffer(0, res.vertices.slice(..));
+                for (&(start, count), &alpha) in res.ranges.iter().zip(&res.alpha) {
+                    if count > 0 && alpha > 0.0 {
+                        pass.draw_indexed(start..start + count, 0, 0..1);
+                    }
+                }
+            }
+        }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("mds-render"),
@@ -945,8 +1090,24 @@ fn finish(error_scope: wgpu::ErrorScopeGuard) -> Result<(), String> {
     }
 }
 
-/// Bytes of the scene uniform: two matrices and eight vectors.
-const SCENE_BYTES: u64 = 2 * 64 + 8 * 16;
+/// Bytes of the scene uniform: three matrices and nine vectors.
+const SCENE_BYTES: u64 = 3 * 64 + 9 * 16;
+
+/// The self-shadow that draws a map: mode 1 or 2 with the shading on and a distance above 0
+/// ([`Stage::legacy`] has distance 0 and draws none).
+fn self_shadow_map(stage: &Stage) -> Option<crate::SelfShadow> {
+    stage.self_shadow.filter(|s| s.shades() && s.distance > 0.0)
+}
+
+/// The depth difference factor of the self-shadow comparison (`SKII1` and `SKII2` of the golden2
+/// README) and whether mode 2 scales it by the map's v (`parthf`).
+fn shadow_factor(mode: u8) -> (f32, bool) {
+    if mode == 2 {
+        (8000.0, true)
+    } else {
+        (1500.0, false)
+    }
+}
 
 /// The ground shadow projects along the light onto y = 0, so a light that does not go down casts
 /// none.
@@ -954,16 +1115,14 @@ fn casts_ground_shadow(frame: &Frame) -> bool {
     view::normalize(frame.light.direction)[1] < -1e-6
 }
 
-/// The color of the ground shadow over white in `groundshadow-*.png` of
-/// `tests/fixtures/rust/golden2` is 141 with a shadow ambient of 0.5, translucent. The alpha is
-/// the 0.7 of the accessory shadow material (`mds_accessory::transform::projected_shadow_material`);
-/// the color is `ambient * SHADOW_LIGHT` with this factor fitted to that one image, so another
-/// ambient, or an opaque shadow, is extrapolated.
-const SHADOW_LIGHT: f32 = 0.7227;
-/// The ground shadow lies about 0.1 above y = 0, where the app's grid lines are too (the golden2
-/// orthographic scenes show both 3.7 px above the models' feet).
+/// The ground shadow, from the `ground` lines of golden2 `groundshadow.edge.txt`: the plane matrix
+/// flattens a point along the light onto y = 0 and lifts it to [`GROUND_SHADOW_HEIGHT`], and the
+/// material is ambient = the shadow ambient with diffuse alpha [`SHADOW_ALPHA`] (both 0.5 there,
+/// translucent). The color is `ambient * SHADOW_LIGHT`, the light fitted to that scene's 141 over
+/// white; another ambient, or an opaque shadow (taken as alpha 1), is extrapolated.
+const SHADOW_LIGHT: f32 = 0.2118;
 const GROUND_SHADOW_HEIGHT: f32 = 0.1;
-const SHADOW_ALPHA: f32 = 0.7;
+const SHADOW_ALPHA: f32 = 0.5;
 
 fn scene_data(frame: &Frame, stage: &Stage, shift: [f32; 2]) -> Vec<u8> {
     let view = &frame.view;
@@ -1007,6 +1166,18 @@ fn scene_data(frame: &Frame, stage: &Stage, shift: [f32; 2]) -> Vec<u8> {
         frame.pixel_offset[1] - shift[1],
     ];
     scene.extend([GROUND_SHADOW_HEIGHT, sample[0], sample[1], 0.0]);
+    match self_shadow_map(stage) {
+        Some(s) => {
+            let m = view.self_shadow_view_proj(&frame.light, s.mode, s.distance);
+            scene.extend(m.iter().flatten());
+            let (k, by_v) = shadow_factor(s.mode);
+            scene.extend([1.0, k, f32::from(u8::from(by_v)), SHADOW_MAP_SIZE as f32]);
+        }
+        None => {
+            scene.extend(view::IDENTITY.iter().flatten());
+            scene.extend([0.0, 0.0, 0.0, SHADOW_MAP_SIZE as f32]);
+        }
+    }
     bytes(&scene)
 }
 

@@ -14,9 +14,14 @@ struct Scene {
     screen: vec4<f32>,
     // The ground shadow color and alpha.
     ground_shadow: vec4<f32>,
-    // x: the height of the plane the ground shadow lies on; yz: the multisample position this
+    // x: the height the ground shadow is lifted to; yz: the multisample position this
     // render stands for, in pixels from the pixel center (y down); w unused.
     ground_shadow_plane: vec4<f32>,
+    // Self-shadow: the light view projection of a scene point (`view::self_shadow_matrices`).
+    light_view_proj: mat4x4<f32>,
+    // x: 1 when the self-shadow map applies; y: the depth difference factor; z: 1 when the factor
+    // is also scaled by the map's v (mode 2, `parthf`); w: the map's size in texels.
+    self_shadow: vec4<f32>,
 }
 
 struct Material {
@@ -24,14 +29,15 @@ struct Material {
     ambient: vec4<f32>,
     // rgb specular color, w specular power.
     specular: vec4<f32>,
-    // x 1 when the texture slot has an image, y sphere mode (0 none, 1 multiply, 2 add); the rest
-    // unused.
+    // x 1 when the texture slot has an image, y sphere mode (0 none, 1 multiply, 2 add), z 1 when
+    // the material receives the self-shadow; w unused.
     params: vec4<f32>,
     // Accessories only.
     emissive: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> scene: Scene;
+@group(0) @binding(1) var shadow_map: texture_depth_2d;
 @group(1) @binding(0) var<uniform> mat: Material;
 @group(1) @binding(1) var tex: texture_2d<f32>;
 @group(1) @binding(2) var sphere: texture_2d<f32>;
@@ -85,8 +91,55 @@ fn center_uv(uv: vec2<f32>) -> vec2<f32> {
     return uv - dpdx(uv) * o.x - dpdy(uv) * o.y;
 }
 
+// How lit a point is under self-shadow, 1 lit to 0 in shadow, from the depth the shadow map holds
+// where the point projects. Outside the map nothing is shadowed. The depth is filtered between
+// the four nearest texels (golden2 `selfshadow-*.png` shows no texel steps on the models; 0.996
+// and 0.995 within 4 against 0.991 and 0.990 with the nearest texel). The comparison `1 - saturate(max(z - map, 0) * k - 0.3)`, with k 1500 in mode 1 and
+// 8000 times the map's v in mode 2, takes the constants the golden2 README names; its form is
+// fitted to golden2 `selfshadow-0.png` and `selfshadow-30.png` (the penumbra ramps).
+// The shadow map at a texel, clamped to its edge.
+fn map_depth(texel: vec2<i32>) -> f32 {
+    let n = i32(scene.self_shadow.w) - 1;
+    return textureLoad(shadow_map, clamp(texel, vec2<i32>(0), vec2<i32>(n)), 0);
+}
+
+fn lit_fraction(world: vec3<f32>) -> f32 {
+    if scene.self_shadow.x == 0.0 || mat.params.z == 0.0 {
+        return 1.0;
+    }
+    let c = scene.light_view_proj * vec4<f32>(world, 1.0);
+    if c.w <= 0.0 {
+        return 1.0;
+    }
+    let p = c.xyz / c.w;
+    let uv = vec2<f32>(1.0 + p.x, 1.0 - p.y) * 0.5;
+    if any(clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)) != uv) {
+        return 1.0;
+    }
+    let t = uv * scene.self_shadow.w - 0.5;
+    let f = fract(t);
+    let i = vec2<i32>(floor(t));
+    let depth = mix(
+        mix(map_depth(i), map_depth(i + vec2<i32>(1, 0)), f.x),
+        mix(map_depth(i + vec2<i32>(0, 1)), map_depth(i + vec2<i32>(1, 1)), f.x),
+        f.y,
+    );
+    var k = scene.self_shadow.y;
+    if scene.self_shadow.z == 1.0 {
+        k = k * uv.y;
+    }
+    return 1.0 - clamp(max(p.z - depth, 0.0) * k - 0.3, 0.0, 1.0);
+}
+
+// The scene point at the pixel center, as `center_uv` takes the texture coordinate there.
+fn center_world(world: vec3<f32>) -> vec3<f32> {
+    let o = scene.ground_shadow_plane.yz;
+    return world - dpdx(world) * o.x - dpdy(world) * o.y;
+}
+
 @fragment
 fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
+    let lit = lit_fraction(center_world(i.world));
     // Without self-shadow (toon 1) the normal is used as interpolated, not renormalized.
     var n = i.normal;
     if scene.light_dir.w != 1.0 {
@@ -114,19 +167,24 @@ fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
     // The toon texture has the lit end at v = 0 and the shadow color at v = 1. Under self-shadow
     // the color blends toward the shadow color as N.L falls from 0.34 to 0.03 (fitted to the
     // golden scene, frames 300 and 599).
-    let ndl = dot(n, to_light);
-    if scene.light_dir.w == 1.0 {
-        color = color * textureSampleLevel(toon, clamped, vec2<f32>(0.5, 0.5 - 0.5 * ndl), 0.0).rgb;
-    } else if scene.light_dir.w == 2.0 {
-        let shade = textureSampleLevel(toon, clamped, vec2<f32>(0.5, 1.0), 0.0).rgb;
-        color = mix(color * shade, color, clamp(3.2 * ndl - 0.1, 0.0, 1.0));
-    }
-
+    var specular = vec3<f32>(0.0);
     let power = mat.specular.w;
     if power > 0.0 {
         let to_eye = normalize(scene.eye.xyz - i.world);
         let h = normalize(to_light + to_eye);
-        color = color + mat.specular.rgb * lc * pow(max(dot(n, h), 0.0), power);
+        specular = mat.specular.rgb * lc * pow(max(dot(n, h), 0.0), power);
+    }
+    // Under self-shadow the highlight is part of the lit color only, so the shadow takes it away
+    // (golden2 `selfshadow-*.png`: the models' shadowed fronts are flat).
+    let ndl = dot(n, to_light);
+    if scene.light_dir.w == 2.0 {
+        let shade = textureSampleLevel(toon, clamped, vec2<f32>(0.5, 1.0), 0.0).rgb;
+        color = mix(color * shade, color + specular, min(clamp(3.2 * ndl - 0.1, 0.0, 1.0), lit));
+    } else {
+        if scene.light_dir.w == 1.0 {
+            color = color * textureSampleLevel(toon, clamped, vec2<f32>(0.5, 0.5 - 0.5 * ndl), 0.0).rgb;
+        }
+        color = color + specular;
     }
     return vec4<f32>(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), mat.diffuse.a);
 }
@@ -137,14 +195,25 @@ fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
 // cube faces that turn from the light give La = 0.52 * light, and the floor (N.L = 0.8165) then
 // gives Ld = 16 * light, which is 10 at that light color (the README's "ten times as bright").
 // Whether they follow the light color is a guess.
+//
+// Under self-shadow an accessory that receives it (params.z) is lit by the effect instead: the
+// emissive part (scaled by the projected-shadow ambient, `params.w`) plus `ambient * La`, and the
+// diffuse part `diffuse * La * N.L`, which the shadow takes away. Fitted to golden2
+// `selfshadow-0.png` and `selfshadow-30.png` (shadow_floor.x: 97 lit, 92 in shadow); other
+// emissive and diffuse values are extrapolated.
 @fragment
 fn fs_accessory(i: VsOut) -> @location(0) vec4<f32> {
+    let lit = lit_fraction(center_world(i.world));
     let n = normalize(i.normal);
     let uv = center_uv(i.uv);
     let to_light = -normalize(scene.light_dir.xyz);
     let lc = scene.light_color.rgb;
-    var color = mat.emissive.rgb + mat.ambient.rgb * 0.52 * lc
-        + mat.diffuse.rgb * 16.0 * lc * max(dot(n, to_light), 0.0);
+    let ndl = max(dot(n, to_light), 0.0);
+    var color = mat.emissive.rgb + mat.ambient.rgb * 0.52 * lc + mat.diffuse.rgb * 16.0 * lc * ndl;
+    if mat.params.z == 1.0 && scene.self_shadow.x == 1.0 {
+        color = mat.emissive.rgb * mat.params.w + (mat.ambient.rgb + mat.diffuse.rgb * ndl * lit)
+            * 0.52 * lc;
+    }
     color = clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
     if mat.params.x == 1.0 {
         color = color * textureSample(tex, samp, uv).rgb;
@@ -199,11 +268,23 @@ fn fs_edge(i: EdgeOut) -> @location(0) vec4<f32> {
     return i.color;
 }
 
-// Ground shadow: the model flattened onto y = 0 along the light, in one color.
+// The self-shadow map: depth seen from the light. Direct3D 9 puts texel centers on integer
+// coordinates, so the map is shifted half a texel right and down, as `PIXEL_OFFSET_D3D9` shifts
+// the picture.
+@vertex
+fn vs_shadow(v: VsIn) -> @builtin(position) vec4<f32> {
+    let c = scene.light_view_proj * vec4<f32>(v.position, 1.0);
+    let shift = 1.0 / scene.self_shadow.w;
+    return vec4<f32>(c.x + shift * c.w, c.y - shift * c.w, c.z, c.w);
+}
+
+// Ground shadow: the model flattened onto y = 0 along the light, then lifted to the plane height,
+// in one color (the plane matrix of the `ground` probe line).
 @vertex
 fn vs_ground_shadow(v: VsIn) -> @builtin(position) vec4<f32> {
     let d = normalize(scene.light_dir.xyz);
-    let p = v.position - d * ((v.position.y - scene.ground_shadow_plane.x) / d.y);
+    var p = v.position - d * (v.position.y / d.y);
+    p.y = scene.ground_shadow_plane.x;
     return shifted(scene.view_proj * vec4<f32>(p, 1.0));
 }
 

@@ -1,7 +1,15 @@
-//! The `edit` area of the UI through the action table, with no window.
+//! The `edit` area of the UI through the action table, with no window, and the dialogs of the
+//! bulk menus (`expression` and the dialog rows of `view` and `help` are in `ui_view`).
 
+mod dialogs;
 mod gates;
+#[allow(dead_code)]
+#[path = "../ui_view/labels.rs"]
+mod labels;
 mod replay;
+#[allow(dead_code)]
+#[path = "../ui_view/rig.rs"]
+mod rig;
 
 use mds_app::editor::Editor;
 use mds_app::ui::Ctx;

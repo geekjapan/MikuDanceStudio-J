@@ -109,8 +109,11 @@ python3 tools/keypool_check/check_selector_mutation.py /tmp/keypool-mutation-evi
 
 The helper requires exactly one production selector guard, removes it in a
 disposable source copy, then runs `run.sh 1` with isolated output. Success
-requires exit 1, the display-paste shortest trace, and a symbolized ASan
-heap-buffer-overflow in `key_registrars.cpp`. Compiler failures, unrelated
+requires exit 1, the display-paste shortest trace, and one ASan report with
+a symbolized `RegisterDisplayKeyFromRecord` fault frame in
+`key_registrars.cpp` and a heap-buffer-overflow SUMMARY. Linux may name the
+`strcmp` interceptor in that SUMMARY; the source frame must be in the same
+report. Compiler failures, unrelated
 crashes, and successful mutated runs fail the check. The checkout is never
 mutated, including on interruption. Its output directory must be unique
 per concurrent invocation.
@@ -248,6 +251,13 @@ selector guard; its regenerated oracle matched the committed fixture.
 The CI maintenance change keeps that verified source baseline. Its own
 hosted run is pending until the workflow executes on the actual commit;
 local helper tests do not replace that run. No property or bound changed.
+
+Hosted run `40355765898` passed the baseline and byte-identical oracle
+comparison. Its mutation exited 1 with the expected trace and source frame,
+but the receipt helper rejected Linux's `strcmp` SUMMARY. This is verification
+output-format drift, not a product bug or property change. The helper now
+checks the fault frame and SUMMARY within one report; hosted verification
+remains pending until the corrected workflow passes on its actual commit.
 
 ## Coverage record
 

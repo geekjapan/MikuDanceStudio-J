@@ -25,13 +25,17 @@ def require_detection(status, log, asan):
         raise ValueError(f"expected verifier violation exit 1, got {status}")
     if "paste display key at frame 0" not in log or "VIOLATION" not in log:
         raise ValueError("missing shortest display-paste violation")
-    summaries = re.findall(r"SUMMARY: AddressSanitizer: heap-buffer-overflow[^\n]*", asan)
-    if not any(
-        re.search(r"key_registrars\.cpp:\d+", summary)
-        and "RegisterDisplayKeyFromRecord" in summary
-        for summary in summaries
-    ):
-        raise ValueError("missing symbolized ASan selector-source heap-buffer-overflow")
+    # Linux may summarize strcmp; bind the fault stack and summary to one report.
+    for report in re.split(r"(?m)(?=^==\d+==(?:ERROR|WARNING):)", asan):
+        if not re.match(r"==\d+==ERROR: AddressSanitizer: heap-buffer-overflow\b", report):
+            continue
+        fault_stack = report.split("\n\n", 1)[0]
+        if re.search(
+            r"(?m)^ +#\d+ [^\n]*\bRegisterDisplayKeyFromRecord\([^\n]*[ /]key_registrars\.cpp:\d+\b",
+            fault_stack,
+        ) and re.search(r"(?m)^SUMMARY: AddressSanitizer: heap-buffer-overflow\b", report):
+            return
+    raise ValueError("missing symbolized ASan selector-source heap-buffer-overflow")
 
 
 def main():

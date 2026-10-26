@@ -85,13 +85,11 @@
 //!
 //! # Not ported
 //!
-//! * `PostModelReload` modes 1 and 2.
 //! * The physics of the frame loop ([`frame::FrameLoop`]) rebuilds the world
 //!   when the model set changes, where the C++ adds the new bodies to the
 //!   world it has; a failing motion load requests no settle.
-//! * Leaving camera mode with a camera parent or a reference mode other
-//!   than 0, and the model-name fallbacks of the loaders (unmappable
-//!   characters, the `Null_NN` names of textures and materials).
+//! * The model-name fallbacks of the loaders (unmappable characters, the
+//!   `Null_NN` names of textures and materials).
 //! * Range scaling (`ChainedBoneKeys` undo entries).
 //! * Bone matrices are those of the saved pose without physics, and
 //!   without outside parents in other models, wherever the C++ reads the
@@ -205,8 +203,9 @@ pub enum Command {
     /// `RefreshAfterFrameApply` (VA 0x00432FA0): every model with a selected
     /// bone pushes `SnapshotPoseBeforeFrameChange` at the new frame (when a
     /// bone is edited) and loses its bone selection, the timeline scrolls,
-    /// every model seeks to the frame, and in camera mode the camera,
-    /// light, self-shadow, gravity and accessory states follow their keys.
+    /// every model seeks to the frame, and in camera mode or with camera
+    /// follow the camera, light, self-shadow, gravity and accessories follow
+    /// their keys.
     SetFrame(u32),
     /// The selected model's bone selection (`boneSelection`); the first bone
     /// becomes `selectedBone`.
@@ -1202,7 +1201,7 @@ impl Document {
     }
 
     /// The tail every frame change shares: the timeline scroll, every model
-    /// at the frame, and in camera mode the camera-mode tracks.
+    /// at the frame, and the global tracks in camera mode or with camera follow.
     fn seek_frame(&mut self) {
         // `CameraAttachmentTransformSuppressed() = 0` (`ui_frame_step.cpp`
         // 188, `ui_editor_click.cpp` 805).
@@ -1216,9 +1215,7 @@ impl Document {
         for (m, f) in self.pmm.models.iter_mut().zip(&self.models) {
             refresh::seek_model(m, f, frame, mode);
         }
-        if self.camera_mode() {
-            self.refresh_context();
-        }
+        self.refresh_frame_context();
     }
 
     /// The refresh tail of the delete and paste handlers: in camera mode the
@@ -1301,16 +1298,12 @@ impl Document {
                 if !self.pmm.models.iter().any(|m| m.slot == slot) {
                     return Err(not("no model in that slot"));
                 }
-                let follow = self.pmm.appearance.camera_parent_model >= 0
-                    && self.pmm.appearance.follow_camera != 0;
-                if self.camera_mode() && !refresh::model_mode_supported(&self.pmm)
-                    || !self.camera_mode() && follow
-                {
-                    return Err(not("a model selection with a camera parent (not ported)"));
-                }
+                let old = self.pmm.selected_model_slot;
                 self.pmm.selected_model_slot = slot;
                 if self.camera_mode() {
-                    refresh::rebuild_model_mode(&mut self.pmm, &mut self.edit.self_shadow_mode);
+                    self.rebuild_model_mode();
+                } else {
+                    self.refresh_model_selection(old);
                 }
                 self.pmm.timeline.edit_mode = 0;
             }
@@ -1831,11 +1824,6 @@ impl Document {
             }
             Command::LoadModel { path, data } => {
                 let file = parse_model(&path, &data)?;
-                if self.camera_mode() && !refresh::model_mode_supported(&self.pmm) {
-                    return Err(not(
-                        "leaving camera mode with a camera parent or reference (not ported)",
-                    ));
-                }
                 let slot = (0..=254u8)
                     .find(|s| self.pmm.models.iter().all(|m| m.slot != *s))
                     .ok_or(not("every model slot is taken"))?;
@@ -1849,7 +1837,7 @@ impl Document {
                 self.edit.models.insert(at, ModelEdit::default());
                 self.pmm.selected_model_slot = slot;
                 if self.camera_mode() {
-                    refresh::rebuild_model_mode(&mut self.pmm, &mut self.edit.self_shadow_mode);
+                    self.rebuild_model_mode();
                 }
                 self.pmm.timeline.edit_mode = 0;
             }

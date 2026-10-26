@@ -422,3 +422,31 @@ fn the_light_track_plays_only_behind_the_camera_gate() {
     e.apply(Command::SelectCameraMode).unwrap();
     assert_eq!(drawn(&e), track(&e), "camera mode");
 }
+
+#[test]
+fn parent_camera_selection_load_and_frame_commands_reach_the_document() {
+    let mut e = Editor::empty();
+    e.load_model(&fixtures().join("chain8.pmx")).unwrap();
+    e.load_model(&fixtures().join("morph4.pmx")).unwrap();
+    for reference in 0..=2 {
+        e.apply(Command::SelectCameraMode).unwrap();
+        let k = &mut e.doc.pmm.camera.heads_mut()[0];
+        k.parent_model = 0;
+        k.parent_bone = 2;
+        k.eye = [11.0, 13.0, 17.0];
+        e.doc.pmm.appearance.camera_parent_model = 0;
+        e.doc.pmm.appearance.camera_parent_bone = 2;
+        e.doc.pmm.appearance.follow_camera = 1;
+        e.apply(Command::SetCameraReference(reference)).unwrap();
+        e.apply(Command::SelectModel(1)).unwrap();
+        e.apply(Command::SelectModel(0)).unwrap();
+        e.doc.pmm.light_state.fill(77.0);
+        e.seek(0).unwrap();
+        assert_ne!(e.doc.pmm.light_state, [77.0; 6]);
+        assert!(e.doc.pmm.camera_state.iter().all(|v| v.is_finite()));
+        e.apply(Command::SelectCameraMode).unwrap();
+        e.load_model(&fixtures().join("chain8.pmx")).unwrap();
+        assert_eq!(e.doc.pmm.settings.options[0], 0);
+        assert_eq!(e.doc.pmm.timeline.camera_reference_mode, reference);
+    }
+}

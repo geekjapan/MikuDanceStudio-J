@@ -69,6 +69,14 @@ jobs:
           if ($extract.ExitCode -ne 0) { throw "DirectX extraction failed: $($extract.ExitCode)" }
           $install = Start-Process -FilePath (Join-Path $unpack 'DXSETUP.exe') -ArgumentList '/silent' -Wait -PassThru -WindowStyle Hidden
           if ($install.ExitCode -ne 0) { throw "DirectX installation failed: $($install.ExitCode)" }
+      - name: Compare Rust camera refresh with the production C++ body
+        working-directory: rust
+        env:
+          MDS_CAMERA_RELOAD_ORACLE: ${{ github.workspace }}/out/ci/build/Release/camera_reload_oracle.exe
+        run: |
+          rustup show active-toolchain
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo +1.95.0 test --locked -p mds-doc --test camera_reload
       - name: Run Release regressions
         run: >-
           ctest --test-dir out/ci/build -C Release --output-on-failure

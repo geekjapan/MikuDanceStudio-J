@@ -14,9 +14,10 @@
 //!
 //! The follow check box 535 (`command_frame_register.cpp:594`) is drawn in both modes.
 //!
-//! Not yet: the camera reference check boxes 412 and 531 (`command_frame_edit.cpp:1448`,
-//! `command_frame_register.cpp:560`): `mds-doc` has no command that sets `camera_reference_mode`
-//! (see the report of the slice).
+//! The camera reference check boxes 412 and 531 (`command_frame_edit.cpp:1448`,
+//! `command_frame_register.cpp:560`) are two views of one value, `camera_reference_mode`
+//! (`Command::SetCameraReference`): checking one sets its mode, which unchecks the other, and
+//! unchecking sets 0. Neither handler sets `SceneModified`, so [`Editor::modified`] stays.
 
 use super::{button, Ctx};
 use crate::actions::Action;
@@ -46,6 +47,8 @@ const ACTIONS: &[Action] = &[
     Action::inline("ctl:549"),
     Action::inline("ctl:550"),
     Action::run("ctl:535", toggle_follow, false),
+    Action::run("ctl:412", |c| toggle_reference(c, 1), false),
+    Action::run("ctl:531", |c| toggle_reference(c, 2), false),
 ];
 
 pub fn actions() -> &'static [Action] {
@@ -199,6 +202,22 @@ fn toggle_follow(ctx: &mut Ctx) -> Result<(), String> {
     let on = ctx.editor.doc.pmm.appearance.follow_camera == 0;
     let modified = ctx.editor.modified;
     ctx.editor.apply(Command::SetFollowCamera(on))?;
+    ctx.editor.modified = modified;
+    Ok(())
+}
+
+/// Check box 412 (`mode` 1, the model) or 531 (`mode` 2, the selected bone): checking sets the
+/// mode and unchecks the other box, unchecking the box that is checked sets 0. The C++ sets the
+/// mode in either edit mode and moves the view only in model mode (the document does the same).
+fn toggle_reference(ctx: &mut Ctx, mode: u8) -> Result<(), String> {
+    let now = ctx.editor.doc.pmm.timeline.camera_reference_mode;
+    let modified = ctx.editor.modified;
+    ctx.editor
+        .apply(Command::SetCameraReference(if now == mode {
+            0
+        } else {
+            mode
+        }))?;
     ctx.editor.modified = modified;
     Ok(())
 }
@@ -369,6 +388,11 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut Ctx) {
     let playing = ctx.editor.playing();
     let follow = ctx.editor.doc.pmm.appearance.follow_camera != 0;
     toggle(ui, ctx, "ctl:535", "track", follow);
+    let reference = ctx.editor.doc.pmm.timeline.camera_reference_mode;
+    ui.horizontal(|ui| {
+        toggle(ui, ctx, "ctl:412", "ref model", reference == 1);
+        toggle(ui, ctx, "ctl:531", "ref bone", reference == 2);
+    });
     if in_camera_mode(ctx) {
         let on = ctx.editor.doc.pmm.camera_perspective != 0;
         ui.horizontal(|ui| {

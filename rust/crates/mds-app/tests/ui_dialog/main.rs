@@ -2,6 +2,7 @@
 //! dialog, the seams type into its form and press its buttons, the document is the result.
 
 mod forms;
+mod model_dialogs;
 mod prompts;
 mod replay;
 

@@ -105,7 +105,8 @@ const FAR: f32 = 5000.0;
 /// The PMM camera at one frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
-    /// The point looked at (the key's position).
+    /// The point the view turns about: the key's position in the camera view, the reference
+    /// point (the origin, or a bone) in the model view.
     pub target: [f32; 3],
     /// Pitch, yaw, roll in radians. Roll is not checked against a golden image.
     pub rotation: [f32; 3],
@@ -149,13 +150,26 @@ impl Camera {
     }
 
     pub fn view(&self, width: u32, height: u32) -> View {
+        self.view_with_offset([0.0, 0.0], width, height)
+    }
+
+    /// [`view`](Camera::view) with the model view's offsets (`camera_state[3..5]` of the PMM,
+    /// which the model-mode pans move): the eye sits at `(x, y, distance)` of the camera space
+    /// instead of `(0, 0, distance)` and looks along +z, so the picture is the one of the target
+    /// moved by `x` along the camera's right axis and `y` along its up axis. The frame world
+    /// matrix, the point the edge distance is measured to, and the self-shadow's light view do
+    /// not move with the offsets: they are those of the camera without them.
+    pub fn view_with_offset(&self, offset: [f32; 2], width: u32, height: u32) -> View {
         let aspect = width as f32 / height as f32;
         let world = self.world();
         let r = rotation_rows(self.rotation);
-        // The eye is (0, 0, distance) of the camera space taken back to the scene: through R^T.
-        let eye = std::array::from_fn(|i| self.target[i] + self.distance * r[i][2]);
+        let local = [offset[0], offset[1], self.distance];
+        // The eye in the camera space taken back to the scene: through R^T.
+        let eye = std::array::from_fn(|i| {
+            self.target[i] + (0..3).map(|k| local[k] * r[i][k]).sum::<f32>()
+        });
         let mut back = IDENTITY;
-        back[3][2] = -self.distance;
+        back[3] = [-local[0], -local[1], -local[2], 1.0];
         let view = mul(&back, &world);
         let proj = if self.orthographic {
             let w = ORTHO_WIDTH_PER_DISTANCE * self.distance.abs();
@@ -342,6 +356,67 @@ mod tests {
             }
         }
         assert_eq!((probes, edges), (7, 35));
+    }
+
+    /// The view offsets: no fixture has them (every golden2 PMM stores 0, 0), so the expected
+    /// values are derived. The offsets move the eye within the camera space, which draws the
+    /// picture of the target moved along the camera's right and up axes (the pan of mds-app's
+    /// model view); the frame world matrix, the edge distance's point and the self-shadow light
+    /// view are the unmoved camera's.
+    #[test]
+    fn view_offset_moves_the_picture_not_the_frame_world() {
+        let camera = Camera {
+            target: [1.0, 10.0, -2.0],
+            rotation: [0.3, -0.7, 0.2],
+            distance: -45.0,
+            fov_deg: 30.0,
+            orthographic: false,
+        };
+        let offset = [3.5, -1.25];
+        let r = rotation_rows(camera.rotation);
+        let moved = Camera {
+            target: std::array::from_fn(|i| {
+                camera.target[i] + offset[0] * r[i][0] + offset[1] * r[i][1]
+            }),
+            ..camera
+        };
+        for orthographic in [false, true] {
+            let c = Camera {
+                orthographic,
+                ..camera
+            };
+            let got = c.view_with_offset(offset, 640, 360);
+            let picture = Camera {
+                orthographic,
+                ..moved
+            }
+            .view(640, 360);
+            let plain = c.view(640, 360);
+            for (g, w) in got
+                .view_proj
+                .iter()
+                .flatten()
+                .zip(picture.view_proj.iter().flatten())
+            {
+                assert!((g - w).abs() <= 1e-5, "{got:?} {picture:?}");
+            }
+            for i in 0..3 {
+                assert!((got.eye[i] - picture.eye[i]).abs() <= 1e-4);
+            }
+            assert_ne!(got.view_proj, plain.view_proj);
+            assert_eq!(got.edge_world, plain.edge_world);
+            assert_eq!(got.edge_origin, plain.edge_origin);
+            assert_eq!(got.distance, plain.distance);
+            let light = DEFAULT_LIGHT;
+            assert_eq!(
+                got.self_shadow_view_proj(&light, 1, 0.01125),
+                plain.self_shadow_view_proj(&light, 1, 0.01125)
+            );
+        }
+        assert_eq!(
+            camera.view_with_offset([0.0; 2], 640, 360).view_proj,
+            camera.view(640, 360).view_proj
+        );
     }
 
     /// Every `shadow` line of the golden2 probes: the light view and light view projection that

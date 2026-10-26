@@ -119,3 +119,6 @@ fn invalid_boundary_inputs_do_not_advance_the_clock() {
 
 #[path = "pure_bullet/support.rs"]
 mod support;
+
+#[path = "pure_bullet/gjk_epa.rs"]
+mod gjk_epa;

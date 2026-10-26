@@ -191,11 +191,11 @@ fn multisampled_render_resolves_into_the_target() {
     let mut renderer = Renderer::new(gpu.device(), gpu.queue()).unwrap();
     let px = render_into(&gpu, &mut renderer, &f, 4);
     assert!(covered(&px) > 100);
-    assert_eq!(renderer.pipelines_created(), 10);
+    assert_eq!(renderer.pipelines_created(), 9);
     render_into(&gpu, &mut renderer, &f, 1);
-    assert_eq!(renderer.pipelines_created(), 20, "one set per sample count");
+    assert_eq!(renderer.pipelines_created(), 18, "one set per sample count");
     render_into(&gpu, &mut renderer, &f, 4);
-    assert_eq!(renderer.pipelines_created(), 20);
+    assert_eq!(renderer.pipelines_created(), 18);
     assert!(renderer
         .render_into(
             &target(gpu.device()).create_view(&Default::default()),

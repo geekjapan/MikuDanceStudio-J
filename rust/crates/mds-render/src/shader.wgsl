@@ -344,13 +344,7 @@ fn ground_shadow_clip(position: vec3<f32>) -> vec4<f32> {
     return shifted(scene.view_proj * vec4<f32>(p, 1.0));
 }
 
-@vertex
-fn vs_ground_shadow(v: VsIn) -> @builtin(position) vec4<f32> {
-    return ground_shadow_clip(v.position);
-}
-
-// The edge hull casts a ground shadow too (golden2 `groundshadow-*.png`: the shadow's edges reach
-// as far as the hull's shadow does, one multisample past the body's).
+// The ground shadow is the edge hull's (winprobe2: no body is drawn under the ground matrix).
 @vertex
 fn vs_ground_shadow_edge(v: EdgeIn) -> @builtin(position) vec4<f32> {
     return ground_shadow_clip(v.position);

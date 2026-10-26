@@ -28,7 +28,6 @@ struct Pipelines {
     body: wgpu::RenderPipeline,
     body_two_sided: wgpu::RenderPipeline,
     edge: wgpu::RenderPipeline,
-    ground_shadow: wgpu::RenderPipeline,
     /// The ground shadow of the edge hull.
     ground_shadow_edge: wgpu::RenderPipeline,
     accessory: wgpu::RenderPipeline,
@@ -43,7 +42,7 @@ struct Pipelines {
 }
 
 /// Render pipelines in one [`Pipelines`] set.
-const PIPELINES_PER_SET: usize = 10;
+const PIPELINES_PER_SET: usize = 9;
 
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -919,14 +918,6 @@ impl Renderer {
                 alpha,
                 opaque(),
             ),
-            ground_shadow: pipeline(
-                "vs_ground_shadow",
-                "fs_ground_shadow",
-                body_layout,
-                None,
-                alpha,
-                depth_state(true, shadow_stencil.clone()),
-            ),
             ground_shadow_edge: pipeline(
                 "vs_ground_shadow_edge",
                 "fs_ground_shadow",
@@ -1049,6 +1040,7 @@ impl Renderer {
                 pass.set_bind_group(1, group, &[]);
                 pass.draw(0..6, 0..1);
             }
+            // The grid first, as the app draws it (winprobe2's draw list of `groundshadow.pmm`).
             if stage.grid {
                 pass.set_pipeline(&pipelines.line);
                 pass.set_vertex_buffer(0, self.grid.slice(..));
@@ -1060,25 +1052,14 @@ impl Renderer {
                 for (&(mesh, _), key) in frame.models.iter().zip(Self::keys(frame)) {
                     let res = &self.models[&key];
                     pass.set_index_buffer(res.indices.slice(..), wgpu::IndexFormat::Uint32);
-                    let casting = || {
-                        mesh.materials
-                            .iter()
-                            .zip(&res.materials)
-                            .zip(res.alpha.iter().zip(&res.edge_drawn))
-                            .filter(|((m, _), (&alpha, _))| {
-                                m.count > 0 && alpha > 0.0 && m.flags & FLAG_GROUND_SHADOW != 0
-                            })
-                    };
-                    pass.set_pipeline(&pipelines.ground_shadow);
-                    pass.set_vertex_buffer(0, res.vertices.slice(..));
-                    for ((m, (_, group)), _) in casting() {
-                        pass.set_bind_group(1, group, &[]);
-                        pass.draw_indexed(m.start..m.start + m.count, 0, 0..1);
-                    }
+                    // The edge buffer alone, the body not (winprobe2: `BeginProjectedGroundShadow`
+                    // draws the hull of every model and no body), whatever the edge flag.
                     pass.set_pipeline(&pipelines.ground_shadow_edge);
                     pass.set_vertex_buffer(0, res.edge_vertices.slice(..));
-                    for ((m, (_, group)), (_, &has_edge)) in casting() {
-                        if has_edge {
+                    for ((m, (_, group)), &alpha) in
+                        mesh.materials.iter().zip(&res.materials).zip(&res.alpha)
+                    {
+                        if m.count > 0 && alpha > 0.0 && m.flags & FLAG_GROUND_SHADOW != 0 {
                             pass.set_bind_group(1, group, &[]);
                             pass.draw_indexed(m.start..m.start + m.count, 0, 0..1);
                         }

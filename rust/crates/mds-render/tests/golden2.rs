@@ -356,9 +356,11 @@ const IMAGES: [(&str, u32); 11] = [
 const ONE_SAMPLE: u8 = 11;
 
 /// The grid and the axes against every golden2 image, on the pixels [`grid_mask`] leaves out of
-/// [`gate`]: each pixel within [`ONE_SAMPLE`] of the golden one, but for [`GRID_MAX_OFF`] pixels
-/// per image (the y axis meets the flat chain models in their own plane, and which wins there is
-/// a matter of rounding, as is where the translucent faces of `skin_tex.pmx` end).
+/// [`gate`]: at least [`GRID_MIN_CLOSE`] of them within the tolerance, and at most
+/// [`GRID_MAX_OFF`] further than [`ONE_SAMPLE`]. Measured: 0.994 to 1 within 4, and up to 91
+/// pixels beyond one sample (`perspective-0`), where the y axis meets the flat chain models in
+/// their own plane (which wins is a matter of depth rounding) and where single samples of the
+/// slanted lines fall on the other side of a pixel edge. Without the grid an image has thousands.
 #[test]
 fn grid_lines() {
     let Some(gpu) = gpu_or_skip() else { return };
@@ -380,23 +382,22 @@ fn grid_lines() {
             close as f64 / lines.len() as f64,
             diffs.iter().max().unwrap()
         );
-        if off > GRID_MAX_OFF {
+        if off > GRID_MAX_OFF || (close as f64) < GRID_MIN_CLOSE * lines.len() as f64 {
             failed.push(name);
         }
     }
     assert!(failed.is_empty(), "{failed:?}");
 }
 
-const GRID_MAX_OFF: usize = 1000;
+const GRID_MAX_OFF: usize = 100;
+const GRID_MIN_CLOSE: f64 = 0.99;
 
 #[test]
-#[ignore = "within 4 is 0.99977 (51 px over, 21 allowed): single pixels on slanted ground-shadow edges"]
 fn groundshadow_0() {
     gate("groundshadow", 0);
 }
 
 #[test]
-#[ignore = "within 4 is 0.99977 (50 px over, 21 allowed): single pixels on slanted ground-shadow edges"]
 fn groundshadow_30() {
     gate("groundshadow", 30);
 }
@@ -480,7 +481,7 @@ fn accessory_30() {
 }
 
 #[test]
-#[ignore = "within 4 is 0.99927, max 107: a 23 px sliver and the translucent faces' edges"]
+#[ignore = "within 4 is 0.99927, max 107: the edge hull and the body of a translucent face meet in a 23 px sliver (depth rounding), and the translucent faces' edges"]
 fn skin_0() {
     gate("skin", 0);
 }

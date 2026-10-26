@@ -28,7 +28,7 @@
 //! renormalized; with self-shadow on it is a blend toward the toon's shadow color by the angle to
 //! the light (see [`SelfShadow::shades`]). A back face is lit with its normal as it is, not
 //! flipped. Materials with the edge flag get an inverted-hull edge.
-//! Diffuse alpha blends. The ground shadow is the model and its edge hull flattened along the light
+//! Diffuse alpha blends. The ground shadow is the edge hull alone flattened along the light
 //! onto the ground, blended once per pixel.
 //!
 //! The vertex buffers and material values of every frame are `mds-skin`'s: BDEF, SDEF and QDEF

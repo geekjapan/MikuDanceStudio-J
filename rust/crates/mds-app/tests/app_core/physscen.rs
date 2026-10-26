@@ -79,8 +79,9 @@ fn replay(name: &str) -> String {
             ["loop", on] => e.options.looped = on == "on",
             ["step", "forward"] => run(&mut e, now, "ctl:419"),
             ["step", "back"] => run(&mut e, now, "ctl:418"),
-            // swing600's model is a PMX, for which menu 270 is greyed (`ui_model_reload.cpp:553`);
-            // the runner's `WM_COMMAND` (`script_mode.cpp:479`) runs the handler all the same.
+            // `ui::physics` refuses menu 270 for a PMX model; the C++ handler
+            // (`command_view_menu.cpp:1082`) has no such gate, and the runner's `WM_COMMAND`
+            // (`script_mode.cpp:479`) runs it.
             ["physics", "mode", "3"] => e.apply(Command::SetPhysicsMode(3)).unwrap(),
             ["physics", "mode", m] => {
                 let id = ["menu:272", "menu:265", "menu:269"][m.parse::<usize>().unwrap()];

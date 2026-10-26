@@ -255,6 +255,7 @@ add_executable(MikuDanceStudio WIN32
     src/main/winmain.cpp
     src/tools/trace_mode.cpp
     src/tools/mesh_dump.cpp
+    src/tools/msaa_probe.cpp
     src/tools/script_mode.cpp
     src/tools/mme_probe.cpp
     res/MMD.rc

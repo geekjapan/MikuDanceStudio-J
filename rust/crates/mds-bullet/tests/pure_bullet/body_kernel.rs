@@ -47,6 +47,8 @@ fn real_bullet_body_operations_match_every_float_bit() {
         .unwrap_or_else(|_| include_str!("../body_data/native.tsv").to_owned());
     let mut body = None;
     let mut count = 0;
+    let mut signed_zero_constructors = 0;
+    let mut signed_zero_commits = std::collections::BTreeSet::new();
     let mut operations = std::collections::BTreeSet::new();
     let mut shape_kinds = std::collections::BTreeSet::new();
     let mut flags = std::collections::BTreeSet::new();
@@ -99,9 +101,9 @@ fn real_bullet_body_operations_match_every_float_bit() {
                 3 => Shape::static_plane(dims, 0.7),
                 _ => panic!("shape kind"),
             };
-            let start = transform(&mut values);
+            let center_of_mass = transform(&mut values);
             basis_cases.insert(
-                start
+                center_of_mass
                     .basis
                     .0
                     .into_iter()
@@ -122,10 +124,27 @@ fn real_bullet_body_operations_match_every_float_bit() {
                 } else {
                     shape.local_inertia(mass)
                 },
-                start,
+                center_of_mass,
                 linear_damping,
                 angular_damping,
             }));
+            let snapshot = body.as_ref().unwrap().snapshot();
+            let expected: Vec<_> = transform_words(center_of_mass).map(f32::to_bits).collect();
+            assert_eq!(
+                transform_words(snapshot.world)
+                    .map(f32::to_bits)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(
+                transform_words(snapshot.interpolation_world)
+                    .map(f32::to_bits)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            if expected.contains(&(-0.0_f32).to_bits()) {
+                signed_zero_constructors += 1;
+            }
         }
         block_length += 1;
         let b = body.as_mut().unwrap();
@@ -141,7 +160,36 @@ fn real_bullet_body_operations_match_every_float_bit() {
             "I" => b.integrate_velocities(values.next().unwrap()),
             "D" => b.apply_damping(values.next().unwrap()),
             "P" => prediction = Some(b.predict_transform(values.next().unwrap())),
-            "C" => b.set_center_of_mass_transform(transform(&mut values)),
+            "C" => {
+                let center_of_mass = transform(&mut values);
+                let before = b.snapshot();
+                b.set_center_of_mass_transform(center_of_mass);
+                if transform_words(center_of_mass).any(|v| v.to_bits() == (-0.0_f32).to_bits()) {
+                    signed_zero_commits.insert((before.is_static, before.is_kinematic));
+                    let interpolation = if before.is_static || before.is_kinematic {
+                        before.world
+                    } else {
+                        center_of_mass
+                    };
+                    let after = b.snapshot();
+                    assert_eq!(
+                        transform_words(after.world)
+                            .map(f32::to_bits)
+                            .collect::<Vec<_>>(),
+                        transform_words(center_of_mass)
+                            .map(f32::to_bits)
+                            .collect::<Vec<_>>()
+                    );
+                    assert_eq!(
+                        transform_words(after.interpolation_world)
+                            .map(f32::to_bits)
+                            .collect::<Vec<_>>(),
+                        transform_words(interpolation)
+                            .map(f32::to_bits)
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
             "Z" => b.clear_forces(),
             "L" => b.set_linear_velocity(vector(&mut values)),
             "W" => {
@@ -172,11 +220,14 @@ fn real_bullet_body_operations_match_every_float_bit() {
     }
     *block_counts.entry(block_length).or_default() += 1;
     // 144 shape/mass/basis/damping traces, 14 angular traces, 36 custom-inertia
-    // traces and one gravity/mass transition trace are declared in cases.py.
-    assert_eq!(count, 4 * 4 * 3 * 3 * 32 + 7 * 2 * 13 + 4 * 3 * 3 * 12 + 10);
+    // traces, one gravity/mass transition trace and three signed-zero COM traces.
+    assert_eq!(
+        count,
+        4 * 4 * 3 * 3 * 32 + 7 * 2 * 13 + 4 * 3 * 3 * 12 + 10 + 3 * 5
+    );
     assert_eq!(
         block_counts,
-        [(10, 1), (12, 36), (13, 14), (32, 144)].into()
+        [(5, 3), (10, 1), (12, 36), (13, 14), (32, 144)].into()
     );
     assert_eq!(
         operations,
@@ -187,7 +238,12 @@ fn real_bullet_body_operations_match_every_float_bit() {
     assert_eq!(shape_kinds, [0, 1, 2, 3].into());
     assert_eq!(mass_kinds, [0, 1, 2].into());
     assert_eq!(damping_clamps, [0, 1, 2].into());
-    assert_eq!(basis_cases.len(), 3);
+    assert_eq!(basis_cases.len(), 4);
+    assert_eq!(signed_zero_constructors, 3);
+    assert_eq!(
+        signed_zero_commits,
+        [(false, false), (true, false), (false, true)].into()
+    );
     assert_eq!(
         flags,
         [(false, false), (false, true), (true, false), (true, true)].into()

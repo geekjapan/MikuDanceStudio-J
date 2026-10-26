@@ -1,6 +1,5 @@
 // Test adapter. All body operations execute in real vendored Bullet.
 #include "BulletDynamics/Dynamics/btRigidBody.h"
-#include "LinearMath/btDefaultMotionState.h"
 #include "BulletCollision/CollisionShapes/btSphereShape.h"
 #include "BulletCollision/CollisionShapes/btBoxShape.h"
 #include "BulletCollision/CollisionShapes/btCapsuleShape.h"
@@ -52,7 +51,6 @@ static void snapshot(btRigidBody& b) {
 }
 int main() {
     std::unique_ptr<btCollisionShape> shape;
-    std::unique_ptr<btDefaultMotionState> motion;
     std::unique_ptr<btRigidBody> body;
     std::string line;
     while(std::getline(std::cin,line)) {
@@ -60,7 +58,7 @@ int main() {
         btTransform predicted; bool prediction=false;
         switch(op) {
         case 'N': {
-            body.reset(); motion.reset(); shape.reset();
+            body.reset(); shape.reset();
             const float mass=read(input), ld=read(input), ad=read(input);
             const int kind=int(read(input)); const btVector3 dimensions=read_vector(input);
             switch(kind) {
@@ -69,11 +67,11 @@ int main() {
             case 2: shape.reset(new btCapsuleShape(dimensions[0], dimensions[1])); break;
             default: shape.reset(new btStaticPlaneShape(dimensions, .7f)); break;
             }
-            const btTransform start=read_transform(input);
+            const btTransform center_of_mass=read_transform(input);
             const bool custom=read(input)!=0; btVector3 inertia=read_vector(input);
             if(!custom) shape->calculateLocalInertia(mass,inertia);
-            motion.reset(new btDefaultMotionState(start));
-            btRigidBody::btRigidBodyConstructionInfo init(mass,motion.get(),shape.get(),inertia);
+            btRigidBody::btRigidBodyConstructionInfo init(mass,nullptr,shape.get(),inertia);
+            init.m_startWorldTransform=center_of_mass;
             init.m_linearDamping=ld; init.m_angularDamping=ad;
             body.reset(new btRigidBody(init)); break;
         }

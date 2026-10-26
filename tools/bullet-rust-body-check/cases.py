@@ -10,6 +10,7 @@ def emit(op, *values):
 IDENTITY = (1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0.)
 ROTATED = (0., -1., 0., 1., 0., 0., 0., 0., 1., 2., -3., 1.)
 SKEW = (.9, -.2, .17, .3, 1.1, -.1, .07, .2, .8, -.7, 2.3, 4.1)
+SIGNED_ZERO = (1., -0., -0., -0., 1., -0., -0., -0., 1., -0., 0., -0.)
 PI_HALF = struct.unpack('>f', bytes.fromhex('3fc90fdb'))[0]
 
 
@@ -89,6 +90,15 @@ def main():
     emit('G', 100., 200., 300.)
     emit('M', 3.1, 0., 0., 0.)
     emit('A')
+
+    # Resolved COM construction preserves zero signs; COM commits differ only in
+    # whether static/kinematic interpolation retains the preceding transform.
+    for mass, kinematic in ((0., 0.), (.7, 0.), (.7, 1.)):
+        emit('N', mass, 0., 0., 0., .7, 0., 0., *SIGNED_ZERO, 0., 0., 0., 0.)
+        emit('K', kinematic)
+        emit('C', *IDENTITY)
+        emit('C', *SIGNED_ZERO)
+        emit('P', 0.)
 
 
 if __name__ == '__main__':

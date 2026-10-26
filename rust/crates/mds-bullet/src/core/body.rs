@@ -103,7 +103,8 @@ impl FreeBody {
 pub struct BodyInit {
     pub mass: f32,
     pub local_inertia: Vec3,
-    pub start: Transform,
+    /// Already resolved center-of-mass transform; motion-state offsets are external.
+    pub center_of_mass: Transform,
     pub linear_damping: f32,
     pub angular_damping: f32,
 }
@@ -143,8 +144,8 @@ impl RigidBody {
                 inverse_mass: 0.0,
                 inverse_inertia_local: Vec3::ZERO,
                 inverse_inertia_world: Basis([[0.0; 3]; 3]),
-                world: init.start,
-                interpolation_world: init.start,
+                world: init.center_of_mass,
+                interpolation_world: init.center_of_mass,
                 linear_velocity: Vec3::ZERO,
                 angular_velocity: Vec3::ZERO,
                 interpolation_linear_velocity: Vec3::ZERO,

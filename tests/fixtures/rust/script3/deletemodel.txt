@@ -7,8 +7,8 @@ load model morph4.pmx
 load accessory .\tri.x
 select camera
 select accessory tri.x
-accessory parent lips 首
 frame 10
+accessory parent lips 首
 register accessory
 save pmm three.pmm
 

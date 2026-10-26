@@ -162,6 +162,12 @@ jobs:
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/bullet-native/gjk-epa"
           python3 tools/bullet-rust-gjk-epa-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/gjk-epa" 2>&1 | tee "$RUNNER_TEMP/bullet-native/gjk-epa/check.log"
+      - name: Recapture outer GJK and mixed persistent manifolds
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/bullet-native/gjk-pair"
+          python3 tools/bullet-rust-gjk-pair-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/gjk-pair" 2>&1 | tee "$RUNNER_TEMP/bullet-native/gjk-pair/check.log"
       - name: Save native recaptures and evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

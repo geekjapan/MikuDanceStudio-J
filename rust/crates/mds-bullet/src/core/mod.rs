@@ -31,6 +31,7 @@ pub mod box_box;
 pub mod contact;
 pub mod contact_solver;
 pub mod gjk_epa;
+pub mod gjk_pair;
 pub mod joint_coordinates;
 pub mod joint_rows;
 pub mod math;

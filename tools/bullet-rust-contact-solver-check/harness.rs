@@ -17,3 +17,10 @@ pub mod core {
 }
 #[path = "../../rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs"]
 mod contact_solver_tests;
+
+#[path = "../../rust/crates/mds-bullet/src/core/simplex.rs"]
+pub mod simplex;
+#[path = "../../rust/crates/mds-bullet/src/core/gjk_epa.rs"]
+pub mod gjk_epa;
+#[path = "../../rust/crates/mds-bullet/src/core/gjk_pair.rs"]
+pub mod gjk_pair;

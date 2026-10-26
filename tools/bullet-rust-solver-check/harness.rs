@@ -18,3 +18,10 @@ mod joint_solver;
 
 #[path = "../../rust/crates/mds-bullet/tests/pure_bullet/body_kernel.rs"]
 mod body_kernel;
+
+#[path = "../../rust/crates/mds-bullet/src/core/simplex.rs"]
+pub mod simplex;
+#[path = "../../rust/crates/mds-bullet/src/core/gjk_epa.rs"]
+pub mod gjk_epa;
+#[path = "../../rust/crates/mds-bullet/src/core/gjk_pair.rs"]
+pub mod gjk_pair;

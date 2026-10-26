@@ -9,6 +9,43 @@ use mds_mmert::{
 
 mod common;
 
+#[test]
+fn fixture_top_level_symbols_are_disjoint() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/material-textures.fx");
+    let fx = mds_fx::Effect::parse_file(&path).unwrap();
+    let mut symbols = std::collections::HashSet::new();
+    for name in fx
+        .ast
+        .globals
+        .iter()
+        .map(|g| &g.name)
+        .chain(fx.ast.functions.iter().map(|f| &f.name))
+        .chain(fx.ast.structs.iter().map(|s| &s.name))
+    {
+        assert!(
+            symbols.insert(name.as_str()),
+            "duplicate top-level symbol {name}"
+        );
+    }
+    for technique in &fx.ast.techniques {
+        let name = technique
+            .name
+            .as_deref()
+            .expect("named diagnostic technique");
+        assert!(
+            symbols.insert(name),
+            "technique collides with top-level symbol {name}"
+        );
+    }
+    assert!(
+        fx.ast
+            .techniques
+            .iter()
+            .all(|t| t.name.as_deref().unwrap().starts_with("MdsMaterial")),
+        "diagnostic technique names must use the non-keyword MdsMaterial prefix"
+    );
+}
+
 fn png(pixels: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut enc = png::Encoder::new(&mut out, (pixels.len() / 4) as u32, 1);

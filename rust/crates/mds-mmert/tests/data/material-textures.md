@@ -19,6 +19,18 @@ For the C++ Windows oracle, copy the generated PMX and PNG files beside
 Keep `materials.pmm`, `materials.emm`, `material-textures.fx` and `blink.gif`
 together in the capture directory. Run in the console session.
 
+Build the existing CMake target `fx_reflect` and use its executable as
+`$fxReflect` to preflight the complete effect with native D3DX before capture.
+Its JSON result must be `ok`; process exit alone does not prove compilation.
+
+```powershell
+$compiled = @(& $fxReflect "$fixture\material-textures.fx" |
+    ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.file })
+if ($LASTEXITCODE -ne 0 -or $compiled.Count -ne 1 -or $compiled[0].result -ne 'ok') {
+    throw ($compiled | ConvertTo-Json -Depth 10)
+}
+```
+
 ```powershell
 & $exe --mds-mme-dump "$fixture\materials.pmm" "$out" 0 30
 ```
@@ -40,3 +52,8 @@ toon names use the model directory. Only exact lowercase bare `toon01.bmp` throu
 custom images bind null. Native toon10 recovery requires an existing native null
 cache entry. This loader records only successfully decoded images, so a missing
 custom image does not create that entry.
+
+All diagnostic technique names start with `MdsMaterial` and are disjoint from
+global, function and struct names in the actual FX AST. This CPU regression
+catches native namespace collisions. Native D3DX preflight remains necessary
+because Rust parsing and shader compilation do not establish native FX validity.

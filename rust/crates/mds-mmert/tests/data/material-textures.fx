@@ -22,20 +22,20 @@ float4 PS(V i) : COLOR0 {
 }
 float4 CubePS(V i) : COLOR0 { return texCUBE(BadS, float3(1,0,0)); }
 float4 VolumePS(V i) : COLOR0 { return tex3D(VolumeS, float3(i.uv,0)); }
-technique Geometry < string MmdPass = "object"; > {
+technique MdsMaterialGeometry < string MmdPass = "object"; > {
     pass P { CullMode = NONE; ZEnable = FALSE; AlphaBlendEnable = FALSE; VertexShader = compile vs_3_0 GeometryVS(); PixelShader = compile ps_3_0 PS(); }
 }
-technique BufferTechnique < string MmdPass = "edge"; > {
+technique MdsMaterialBuffer < string MmdPass = "edge"; > {
     pass P < string Script = "Draw=Buffer;"; > { CullMode = NONE; ZEnable = FALSE; AlphaBlendEnable = FALSE; VertexShader = compile vs_3_0 BufferVS(); PixelShader = compile ps_3_0 PS(); }
 }
-technique Cube {
+technique MdsMaterialCube {
     pass P < string Script = "Draw=Buffer;"; > { ZEnable = FALSE; VertexShader = compile vs_3_0 BufferVS(); PixelShader = compile ps_3_0 CubePS(); }
 }
-technique Volume {
+technique MdsMaterialVolume {
     pass P < string Script = "Draw=Buffer;"; > { ZEnable = FALSE; VertexShader = compile vs_3_0 BufferVS(); PixelShader = compile ps_3_0 VolumePS(); }
 }
 
 float4 AnimPS(V i) : COLOR0 { return tex2D(AnimS, i.uv); }
-technique Animation {
+technique MdsMaterialAnimation {
     pass P < string Script = "Draw=Buffer;"; > { ZEnable = FALSE; VertexShader = compile vs_3_0 BufferVS(); PixelShader = compile ps_3_0 AnimPS(); }
 }

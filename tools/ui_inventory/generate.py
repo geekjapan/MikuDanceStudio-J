@@ -25,7 +25,7 @@ README = HERE / "README.md"
 COLUMNS = ["id", "kind", "label_ja", "label_en", "cpp_handler", "area", "rust"]
 AREAS = ["file", "edit", "view", "background", "expression", "physics", "mocap", "help",
          "timeline", "play", "model-panel", "camera-panel", "light-panel", "accessory-panel",
-         "bone-panel", "morph-panel", "shadow-panel", "viewport", "dialog"]
+         "bone-panel", "morph-panel", "shadow-panel", "viewport", "dialog", "mme", "mme-dialog"]
 MENU_AREAS = AREAS[:8]  # top-level popup order of menus.rc
 COUNTS_BEGIN, COUNTS_END = "<!-- counts:begin -->", "<!-- counts:end -->"
 
@@ -436,12 +436,104 @@ def keymouse_rows(rows_by_id):
     return rows
 
 
+# ---------------------------------------------------------------- MMEffect
+
+MME_RC = "third_party/mmeffect/res/MMEffect.rc"
+MME_UI = "third_party/mmeffect/src/mmeffect/mme_ui.cpp"
+MME_DLG = "third_party/mmeffect/src/mmeffect/mme_dlg.cpp"
+# Mapping dialog controls that are functions (the 1004 caption and the 1006 group box are
+# labels): id -> kind, handler anchors in mme_dlg.cpp.
+MME_DLG_CONTROLS = {
+    1002: ("tab", ["case WM_NOTIFY:", "TCN_SELCHANGE"]),
+    1003: ("list", ["case WM_NOTIFY:", "case LVN_ITEMCHANGED:"]),
+    1007: ("button", ["case kBtnSetFile:"]),
+    1008: ("button", ["case kBtnRemove:"]),
+    1011: ("button", ["case kBtnHideShow:"]),
+    1: ("button", ["case 1:\n"]),
+    2: ("button", ["case 40011:", "case 2:"]),
+    1005: ("button", ["case kBtnRefresh:"]),
+}
+
+
+def mme_menus():
+    """{template: [(popup or None, label, id)]} of MMEffect.rc, separators left out."""
+    menus, cur, popup = {}, None, None
+    for line in read(MME_RC).splitlines():
+        m = re.match(r"(IDR_\w+) MENU\s*$", line)
+        if m:
+            cur, popup = m.group(1), None
+            menus[cur] = []
+            continue
+        m = re.match(r'\s+POPUP "(.*)"', line)
+        if m and cur:
+            popup = m.group(1)
+            continue
+        m = re.match(r'\s+MENUITEM "(.*)",\s*(\d+)', line)
+        if m and cur:
+            menus[cur].append((popup, c_unescape(m.group(1)), int(m.group(2))))
+    return menus
+
+
+def mme_case(rel, cmd):
+    return ref(rel, f"case {cmd}:")
+
+
+def mme_rows():
+    menus = mme_menus()
+    rows = []
+    ja, en = menus["IDR_MME_MENU_JP"], menus["IDR_MME_MENU_EN"]
+    if len(ja) != len(en):
+        raise Fail("the JP and EN MMEffect menus differ in length")
+    # The EN menu's Enable Effect is 40020, which the C++ dispatch ignores (mme_ui.cpp); the
+    # row takes the JP id that the dispatch and the Ctrl+Shift+E hook post.
+    for (_, label_ja, cmd), (_, label_en, _) in zip(ja, en):
+        rows.append([f"menu:mme-{cmd}", "menu", label_ja, label_en, mme_case(MME_UI, cmd), "mme", ""])
+    rows.append(["key:Ctrl+Shift+E", "key", rows[1][2], "Toggle the effects (posts menu 40006)",
+                 ref(MME_UI, "LRESULT CALLBACK MmeKeyboardHookProc"), "mme", ""])
+    log_caption = re.search(r'IDD_MME_LOG DIALOGEX.*?\nCAPTION "([^"]*)"', read(MME_RC), re.S).group(1)
+    rows.append(["dlg:IDD_MME_LOG", "dialog", log_caption, log_caption,
+                 ref(MME_UI, "MAKEINTRESOURCEA(IDD_MME_LOG)"), "mme", ""])
+    ja, en = menus["IDR_MME_MAPPING_MENU_JP"], menus["IDR_MME_MAPPING_MENU_EN"]
+    if [x[2] for x in ja] != [x[2] for x in en]:
+        raise Fail("the JP and EN mapping dialog menus list different commands")
+    caption = re.search(r'IDD_MME_MAPPING DIALOGEX.*?\nCAPTION "([^"]*)"', read(MME_RC), re.S).group(1)
+    dlg = read(MME_DLG)
+    english = dlg[dlg.index("if (!japanese) {"):]
+    english = english[:english.index("}")]
+    rows.append(["dlg:IDD_MME_MAPPING", "dialog", caption,
+                 re.search(r'SetWindowTextA\(dlg, "([^"]*)"\)', english).group(1),
+                 ref(MME_DLG, "MAKEINTRESOURCEA(IDD_MME_MAPPING)"), "mme-dialog", ""])
+    for (_, label_ja, cmd), (_, label_en, _) in zip(ja, en):
+        rows.append([f"menu:mme-dialog-{cmd}", "menu", label_ja, label_en, mme_case(MME_DLG, cmd),
+                     "mme-dialog", ""])
+    consts = {k: int(v) for k, v in re.findall(r"const int (k\w+)\s*=\s*(\d+);", dlg)}
+    en_text = {}
+    for item, text in re.findall(r'SetWindowTextA\(GetDlgItem\(dlg, (\w+)\), "([^"]*)"\)', english):
+        en_text[consts.get(item) or int(item)] = text
+    block = read(MME_RC)
+    block = block[block.index("IDD_MME_MAPPING DIALOGEX"):]
+    captions = {int(i): t for t, i in re.findall(r'CONTROL "([^"]*)", (\d+),', block)}
+    for cid in sorted(MME_DLG_CONTROLS):
+        kind, anchors = MME_DLG_CONTROLS[cid]
+        label_ja = captions[cid] or f"<{kind} {cid}>"
+        rows.append([f"ctl:mme-dialog-{cid}", kind, label_ja, en_text.get(cid, label_ja),
+                     ("~" if kind in ("tab", "list") else "") + ref(MME_DLG, *anchors), "mme-dialog", ""])
+    rows.append(["mouse:mme-dialog-dblclick", "mouse", "",
+                 "Double click a row of the mapping list to set its effect file", ref(MME_DLG, "case NM_DBLCLK:"),
+                 "mme-dialog", ""])
+    rows.append(["drop:mme-dialog", "drop", "",
+                 "Drop one .emm on the mapping dialog to load it, or one .fx/.fxm/.fxsub to assign it to the selection",
+                 ref(MME_DLG, "case WM_DROPFILES:"), "mme-dialog", ""])
+    return rows
+
+
 # --------------------------------------------------------------------- output
 
 def build_rows():
     cmds, pan = menu_commands(), panel_ids()
     rows = menu_rows(cmds) + control_rows(pan) + dialog_rows()
     rows += keymouse_rows({r[0]: r for r in rows})
+    rows += mme_rows()
     ids = [r[0] for r in rows]
     dup = [k for k, v in Counter(ids).items() if v > 1]
     if dup:

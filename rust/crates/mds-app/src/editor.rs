@@ -38,6 +38,7 @@ use crate::scene::{self, read_model, Assets, Shot};
 use mds_doc::{Command, Document};
 use mds_physics::PhysicsScene;
 use mds_render::{Camera, Frame, Stage};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct Editor {
@@ -62,6 +63,9 @@ pub struct Editor {
     last_pump_ms: Option<u64>,
     /// An edit while playing left the live models' keys behind the document's.
     keys_stale: bool,
+    /// The bytes of the models `Command::LoadModel` added, by stored path: the physics world is
+    /// built again from them, wherever the file was.
+    loaded: HashMap<String, Vec<u8>>,
 }
 
 impl Editor {
@@ -86,6 +90,7 @@ impl Editor {
             playback: None,
             last_pump_ms: None,
             keys_stale: false,
+            loaded: HashMap::new(),
         })
     }
 
@@ -185,6 +190,9 @@ impl Editor {
         }
         let new_scene = cmd == NewScene;
         let follow = matches!(cmd, ClickFrame(_));
+        if let LoadModel { path, data } = &cmd {
+            self.loaded.insert(path.clone(), data.clone());
+        }
         let (files, camera) = (Files::of(&self.doc), scene::state_camera(&self.doc));
         self.doc.apply(cmd).map_err(|e| e.to_string())?;
         if new_scene {
@@ -211,6 +219,7 @@ impl Editor {
                 return Ok(());
             }
             if follow {
+                self.physics.seek(self.current_frame());
                 self.follow_track(self.current_frame())?;
             } else if moved != camera {
                 self.camera = moved;
@@ -232,14 +241,21 @@ impl Editor {
     fn models_changed(&mut self) -> Result<(), String> {
         self.playback = None;
         self.assets.meshes = scene::meshes(&self.doc, &self.dir)?;
-        self.physics = PhysicsScene::open(&self.doc.pmm, |p| read_model(&self.dir, p))?;
+        let read = |p: &str| match self.loaded.get(p) {
+            Some(b) => Ok(b.clone()),
+            None => read_model(&self.dir, p),
+        };
+        self.physics = PhysicsScene::open(&self.doc.pmm, read)?;
         self.physics_opens += 1;
         Ok(())
     }
 
-    /// The edited keys and saved pose into the live models, then, while stopped, a seek to the
-    /// current frame (an edit moves the keys in place in the C++; the world stays). While playing
-    /// the cursor keeps the frame.
+    /// The edited keys and the saved pose into the live models (an edit moves the keys in place
+    /// in the C++; the world stays). The saved pose is what the window shows: the document puts
+    /// the keys' pose there where the C++ handler seeks (a paste, a delete, a motion load), and
+    /// leaves an edited pose that is not registered yet, which the C++ keeps on screen until the
+    /// frame changes. So no seek here; a settle when the command's C++ handler requests one
+    /// (`PhysicsResetPending`). While playing the cursor keeps the frame.
     fn sync_keys(&mut self) -> Result<(), String> {
         if self.playing() {
             // `apply_pmm` puts the saved pose on the bones, which would move the playing world;
@@ -259,7 +275,9 @@ impl Editor {
                 m.apply_pmm(source)?;
             }
         }
-        self.physics.seek(self.current_frame());
+        if std::mem::take(&mut self.doc.edit.physics_reset_pending) {
+            self.physics.reset();
+        }
         Ok(())
     }
 

@@ -124,11 +124,11 @@ fn selections_leave_the_scene_unmodified() {
         .pmm
         .models
         .iter()
-        .find(|m| m.group_count > 0)
+        .find(|m| m.group_count > 1)
         .unwrap()
         .slot;
     e.apply(Command::SelectModel(grouped)).unwrap();
-    e.apply(Command::ToggleDisplayGroup(0)).unwrap();
+    e.apply(Command::ToggleDisplayGroup(1)).unwrap();
     for c in [
         Command::SetEditMode(1),
         Command::SelectAllBones,
@@ -186,4 +186,43 @@ fn the_startup_scene_is_the_cpp_startup() {
     let opened = open("swing600.pmm");
     assert!(opened.doc.edit.auto_interpolation);
     assert!(run(&mut Editor::empty(), "menu:204").is_ok());
+}
+
+/// A bone pose edit (`BonePosEdit`, `BoneRotEdit`, the viewport drags) stays on screen through
+/// the frame loop until it is registered or the frame changes; the frame change shows the keys
+/// again.
+#[test]
+fn an_unregistered_pose_edit_stays_on_screen() {
+    let mut e = Editor::new(mds_doc::Document::startup(), Some(fixtures().join("x.pmm"))).unwrap();
+    e.load_model(std::path::Path::new("chain8.pmx")).unwrap();
+    let slot = e.doc.pmm.models[0].slot;
+    let bone = 3;
+    let rotation = [0.0, 0.38268343, 0.0, 0.9238795];
+    e.apply(Command::SetBonePose {
+        bone,
+        translation: [0.0; 3],
+        rotation,
+    })
+    .unwrap();
+    for t in 1..=5 {
+        e.pump(t * 33).unwrap();
+    }
+    let live = |e: &Editor| {
+        let m = e
+            .physics
+            .scene
+            .models
+            .iter()
+            .find(|m| m.slot == slot)
+            .unwrap();
+        m.bones[bone as usize].rot_quat
+    };
+    assert_eq!(live(&e), rotation, "the edited pose is shown");
+    e.seek(5).unwrap();
+    e.pump(200).unwrap();
+    assert_eq!(
+        live(&e),
+        [0.0, 0.0, 0.0, 1.0],
+        "the keys' pose at another frame"
+    );
 }

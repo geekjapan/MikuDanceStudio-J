@@ -63,7 +63,7 @@ class ProbeTests(unittest.TestCase):
             for flag in ['/O2', '/MD', '/fp:precise', '/EHsc', '/W0', '/DBT_NO_PROFILE=1']:
                 self.assertIn(flag, command)
             self.assertIn('/src/oracle.cpp', command)
-            self.assertIn('/out/libmds_crtmath.a', command)
+            self.assertIn(str(Path('/out') / 'libmds_crtmath.a'), command)
             self.assertIn('kernel32.lib', command)
             self.assertNotIn('/shim/sse_emu', command)
             self.assertTrue(any(arg.startswith('/FI') and arg.endswith('det_math.h') for arg in command))

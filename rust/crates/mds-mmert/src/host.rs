@@ -920,7 +920,11 @@ impl Host {
             toon: true,
             models: &models,
             samples: &[[0.0, 0.0]],
-            pixel_offset: mds_render::PIXEL_OFFSET_D3D9,
+            pixel_offset: if display {
+                [0.0; 2]
+            } else {
+                mds_render::PIXEL_OFFSET_D3D9
+            },
         };
         let stage = Stage {
             accessories: &accessories,

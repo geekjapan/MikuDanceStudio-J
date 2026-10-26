@@ -289,8 +289,7 @@ fn the_view_tools_dolly_and_pan() {
 
 /// `ConsumeRightButtonDrag` in model mode with Shift (`pump_navigation.cpp:330..334`):
 /// `ViewOffsetY += dy * 0.1`, `ViewOffsetX -= dx * 0.1`, saved in `camera_state[3..5]`. The view
-/// camera has no offsets; its target moves by the same amount along the camera's right and up
-/// axes, which draws the same picture.
+/// camera keeps its reference point; the saved offsets are applied when projecting.
 #[test]
 fn shift_right_drag_pans_the_view_in_model_mode() {
     let mut r = Rig::new(chain());
@@ -302,14 +301,14 @@ fn shift_right_drag_pans_the_view_in_model_mode() {
         ..input(Some([300.0, 300.0]), KeyState::Idle, true)
     });
     close(&r.offset(), &[offset[0] - 1.0, offset[1] - 0.4], "offsets");
-    close(
-        &r.e.camera.target,
-        &[
-            start.target[0] - 1.0,
-            start.target[1] - 0.4,
-            start.target[2],
-        ],
-        "pan",
+    assert_eq!(r.e.camera.target, start.target, "the reference point stays");
+    let point = [1.0, 2.0, 3.0];
+    let view = mds_app::scene::view(&r.e.doc, &r.e.camera, SIZE.map(|v| v as u32));
+    assert_eq!(
+        view.clip(point),
+        start
+            .view_with_offset(r.offset(), SIZE[0] as u32, SIZE[1] as u32)
+            .clip(point)
     );
     assert_eq!(r.e.camera.rotation, start.rotation, "no orbit");
     assert_eq!(r.e.modified, modified, "a view change is not a scene edit");

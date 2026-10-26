@@ -73,6 +73,7 @@ fn the_window_draws_the_pixels_of_the_dump() {
         .apply(mds_doc::Command::SetViewOffset([1.5, -0.75]))
         .unwrap();
     editor.camera.rotation = [0.1, 0.2, 0.05];
+    editor.seek(0).unwrap();
     editor
         .apply(mds_doc::Command::SetSelfShadow {
             mode: 2,
@@ -100,7 +101,7 @@ fn the_window_draws_the_pixels_of_the_dump() {
             .unwrap()
             .unwrap();
         assert!(
-            covered(&window) > 1000,
+            editor.shadow_map_display || covered(&window) > 1000,
             "frame {frame}: the models are drawn"
         );
         assert!(window == dump, "frame {frame}: window and dump differ");
@@ -167,10 +168,10 @@ fn standalone_dump_ignores_model_pan_while_the_editor_draws_it() {
     let mut doc = mds_app::file::read(&dir().join("swing600-nophys.pmm")).unwrap();
     doc.pmm.settings.options[0] = 0;
     doc.pmm.appearance.follow_camera = 0;
-    for model in &mut doc.pmm.models {
-        model.path.text = scene::resolve(&dir(), &model.path.text)
-            .to_string_lossy()
-            .into_owned();
+    for model in &doc.pmm.models {
+        let staged = scene::resolve(&scratch, &model.path.text);
+        std::fs::create_dir_all(staged.parent().unwrap()).unwrap();
+        std::fs::copy(scene::resolve(&dir(), &model.path.text), staged).unwrap();
     }
     let mut dumps = Vec::new();
     for (name, offset) in [("zero", [0.0; 2]), ("pan", [2.0, -1.0])] {

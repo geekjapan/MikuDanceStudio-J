@@ -20,7 +20,7 @@ use mds_mmert::host::{Frame, Host, OffscreenTarget, Source};
 use mds_mmert::scene::Offscreen;
 use mds_mmert::Gpu;
 use mds_physics::PhysicsScene;
-use mds_render::Camera;
+use mds_render::CameraFrame;
 use mds_shader::vkd3d::Vkd3d;
 
 /// The menu state of MMEffect (`MmeContext::effectEnabled`, `g_autoReload`, `g_emmAutoSave`).
@@ -47,7 +47,10 @@ impl Default for Switches {
 
 /// The view an MME frame is drawn from.
 pub struct View<'a> {
-    pub camera: &'a Camera,
+    pub camera: &'a CameraFrame,
+    pub view_offset: [f32; 2],
+    pub shadow_map: mds_render::ShadowMapSize,
+    pub shadow_map_display: bool,
     /// `[r, g, b, x, y, z]`: the light color and the direction it travels.
     pub light: [f32; 6],
     pub frame: u32,
@@ -371,6 +374,9 @@ impl Mme {
             pmm: &doc.pmm,
             poses: &physics.scene.models,
             camera: view.camera,
+            view_offset: view.view_offset,
+            shadow_map: view.shadow_map,
+            shadow_map_display: view.shadow_map_display,
             light: view.light,
             frame: view.frame,
             elapsed: view.elapsed,

@@ -65,7 +65,7 @@ pub use mesh::{Mesh, Pose};
 pub use renderer::Renderer;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 pub use texture::Image;
-pub use view::{Camera, Light, View};
+pub use view::{Camera, CameraFrame, Light, View};
 
 pub const WIDTH: u32 = 512;
 pub const HEIGHT: u32 = 512;

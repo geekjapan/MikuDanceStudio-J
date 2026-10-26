@@ -172,6 +172,7 @@ pub const COMPLETE: &[&str] = &[
     "morph-panel",
     "physics",
     "play",
+    "shadow-panel",
     "timeline",
     "view",
     "viewport",

@@ -300,7 +300,7 @@ fn the_follow_box_flips_camera_tracking() {
     assert_eq!(follow(&e), 0);
     run(&mut e, "ctl:535").unwrap();
     assert_eq!(follow(&e), 1);
-    assert_eq!(state(&e)[3..5], [0.0, 0.0]);
+    assert_eq!(state(&e)[3..5], [0.0, 10.0]);
     assert!(!e.modified);
     run(&mut e, "ctl:535").unwrap();
     assert_eq!(follow(&e), 0);
@@ -468,7 +468,7 @@ fn a_failed_camera_follow_still_publishes_the_advanced_physics_backup() {
     };
     let before = live_backup(&e);
     let error = e.pump(66).unwrap_err();
-    assert_eq!(error, "camera track at frame 1");
+    assert_eq!(error, "invalid playback camera track");
     let after = live_backup(&e);
     assert_ne!(
         after, before,

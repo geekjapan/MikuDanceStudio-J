@@ -151,38 +151,12 @@ pub(super) fn camera_mode_only(ctx: &Ctx) -> Result<(), String> {
     }
 }
 
-/// The camera values of `Command::SetCamera`.
-struct Camera {
-    position: [f32; 3],
-    rotation: [f32; 3],
-    distance: f32,
-    fov: f32,
-    perspective: bool,
+fn camera(ctx: &Ctx) -> mds_doc::CameraControls {
+    ctx.editor.doc.camera_controls()
 }
 
-fn camera(ctx: &Ctx) -> Camera {
-    let p = &ctx.editor.doc.pmm;
-    let s = &p.camera_state;
-    Camera {
-        position: [s[0], s[1], s[2]],
-        rotation: [s[6], s[7], s[8]],
-        distance: s[5],
-        fov: p.settings.camera_fov,
-        perspective: p.camera_perspective != 0,
-    }
-}
-
-/// One edit of the camera, the other values staying (`CommitEditControlTail`).
-fn edit_camera(ctx: &mut Ctx, f: impl FnOnce(&mut Camera)) -> Result<(), String> {
-    let mut c = camera(ctx);
-    f(&mut c);
-    ctx.editor.apply(Command::SetCamera {
-        position: c.position,
-        rotation: c.rotation,
-        distance: c.distance,
-        fov: c.fov,
-        perspective: c.perspective,
-    })
+fn edit_camera(ctx: &mut Ctx, f: impl FnOnce(&mut mds_doc::CameraControls)) -> Result<(), String> {
+    ctx.editor.edit_camera_controls(f)
 }
 
 /// Whether the camera follows a model (`CameraParentModel() >= 0`).
@@ -193,7 +167,7 @@ fn parented(ctx: &Ctx) -> bool {
 /// Check box 446 (`src/window/command_frame_edit.cpp:1627`).
 fn toggle_perspective(ctx: &mut Ctx) -> Result<(), String> {
     camera_mode_only(ctx)?;
-    edit_camera(ctx, |c| c.perspective = !c.perspective)
+    edit_camera(ctx, |c| c.orthographic = !c.orthographic)
 }
 
 /// Check box 535: camera and lighting tracking, as menu 247 flips it. The C++ sets no
@@ -220,7 +194,7 @@ fn toggle_reference(ctx: &mut Ctx, mode: u8) -> Result<(), String> {
 /// `ui_edit_commit.cpp:324`).
 pub fn set_fov(ctx: &mut Ctx, degrees: i64) -> Result<(), String> {
     camera_mode_only(ctx)?;
-    edit_camera(ctx, |c| c.fov = degrees as f32)
+    edit_camera(ctx, |c| c.fov_deg = degrees as f32)
 }
 
 pub fn commit_fov(ctx: &mut Ctx, text: &str) -> Result<(), String> {
@@ -232,7 +206,7 @@ fn reset(ctx: &mut Ctx) -> Result<(), String> {
     camera_mode_only(ctx)?;
     let free = !parented(ctx);
     edit_camera(ctx, |c| {
-        c.position = [0.0, if free { 10.0 } else { 0.0 }, 0.0];
+        c.target = [0.0, if free { 10.0 } else { 0.0 }, 0.0];
         c.rotation = [0.0; 3];
         c.distance = if free { -45.0 } else { 0.0 };
     })
@@ -260,8 +234,8 @@ pub fn set_readout(ctx: &mut Ctx, field: usize, value: f64) -> Result<(), String
     }
     let flip = parented(ctx);
     edit_camera(ctx, |c| match field {
-        0 | 1 => c.position[field] = value as f32,
-        2 => c.position[2] = if flip { -value } else { value } as f32,
+        0 | 1 => c.target[field] = value as f32,
+        2 => c.target[2] = if flip { -value } else { value } as f32,
         3 => c.rotation[0] = (-value * PI_LIT / 180.0) as f32,
         4 | 5 => c.rotation[field - 3] = (value * PI_LIT / 180.0) as f32,
         _ => c.distance = (-value) as f32,
@@ -279,7 +253,7 @@ fn reset_axis(ctx: &mut Ctx, field: usize) -> Result<(), String> {
         return set_readout(ctx, field, 0.0);
     }
     edit_camera(ctx, |c| match field {
-        0..=2 => c.position[field] = 0.0,
+        0..=2 => c.target[field] = 0.0,
         _ => c.rotation[field - 3] = 0.0,
     })
 }
@@ -316,13 +290,13 @@ pub fn readout_text(ctx: &Ctx, field: usize) -> String {
         let degrees = |r: f32| f64::from(r) / pi * 180.0;
         let zero = |v: f64| if v.abs() < f64::from(1e-7f32) { 0.0 } else { v };
         return match field {
-            0 | 1 => format!("{:.2}", c.position[field]),
+            0 | 1 => format!("{:.2}", c.target[field]),
             2 => format!(
                 "{:.2}",
                 if parented(ctx) {
-                    -c.position[2]
+                    -c.target[2]
                 } else {
-                    c.position[2]
+                    c.target[2]
                 }
             ),
             3 => format!("{:.1}", zero(-degrees(c.rotation[0]))),

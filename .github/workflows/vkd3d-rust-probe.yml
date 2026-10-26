@@ -84,6 +84,8 @@ jobs:
           python3 tools/vkd3d-rust-probe/apply_c2rust_patch.py \
             --source "$RUNNER_TEMP/c2rust-src" --artifacts "$RUNNER_TEMP/vkd3d-probe/logs"
           cargo +1.95.0 install --locked --path "$RUNNER_TEMP/c2rust-src/c2rust" --root "$RUNNER_TEMP/vkd3d-probe/tool"
+          cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" \
+            -p c2rust-transpile --lib win64_foreign_block_names_and_reexports
           cp "$RUNNER_TEMP/c2rust-src/Cargo.lock" "$RUNNER_TEMP/vkd3d-probe/logs/c2rust-Cargo.lock"
           cp "$RUNNER_TEMP/c2rust-src/LICENSE" "$RUNNER_TEMP/vkd3d-probe/tool/LICENSE"
           "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" --version

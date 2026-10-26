@@ -383,6 +383,126 @@ index e423e49..30566ea 100644
                      self.ast_context.resolve_type(ret.ctype).kind.clone()
                  }
                  ref k => {
+diff --git a/c2rust-transpile/src/translator/mod.rs b/c2rust-transpile/src/translator/mod.rs
+index 8fb6f5b..653c9b4 100644
+--- a/c2rust-transpile/src/translator/mod.rs
++++ b/c2rust-transpile/src/translator/mod.rs
+@@ -612,13 +612,15 @@ pub fn emit_c_decl_map(
+                 path_to_c_source_range.insert(ident, (decl, source_range));
+             }
+             Some(ConvertedDecl::Item(item)) => {
+-                let ident = item_ident(item).unwrap();
+-                path_to_c_source_range.insert(ident, (decl, source_range));
++                for ident in item_idents(item) {
++                    path_to_c_source_range.insert(ident, (decl, source_range));
++                }
+             }
+             Some(ConvertedDecl::Items(items)) => {
+                 for item in items {
+-                    let ident = item_ident(item).unwrap();
+-                    path_to_c_source_range.insert(ident, (decl, source_range));
++                    for ident in item_idents(item) {
++                        path_to_c_source_range.insert(ident, (decl, source_range));
++                    }
+                 }
+             }
+             Some(ConvertedDecl::NoItem) => {}
+@@ -1347,6 +1349,18 @@ fn item_ident(i: &Item) -> Option<&Ident> {
+     })
+ }
+ 
++fn item_idents(item: &Item) -> Vec<&Ident> {
++    if let Item::ForeignMod(block) = item {
++        block
++            .items
++            .iter()
++            .filter_map(|item| foreign_item_ident_vis(item).map(|(ident, _)| ident))
++            .collect()
++    } else {
++        item_ident(item).into_iter().collect()
++    }
++}
++
+ fn item_vis(i: &Item) -> Option<Visibility> {
+     use Item::*;
+     Some(
+@@ -1397,6 +1411,61 @@ fn foreign_item_ident_vis(fi: &ForeignItem) -> Option<(&Ident, Visibility)> {
+     })
+ }
+ 
++#[test]
++fn win64_foreign_block_names_and_reexports() {
++    let item: Item = syn::parse_quote! {
++        unsafe extern "win64" {
++            pub fn native_callback(a: i64, b: f64) -> f64;
++            pub fn native_second() -> i64;
++        }
++    };
++    let names: Vec<_> = item_idents(&item)
++        .into_iter()
++        .map(ToString::to_string)
++        .collect();
++    assert_eq!(names, ["native_callback", "native_second"]);
++    let path = Path::new("native_api.h");
++    let context = TypedAstContext::new(
++        path,
++        &[SrcFile {
++            path: Some(path.into()),
++            include_loc: None,
++        }],
++    );
++    let mut store = ItemStore::new();
++    store.add_item(Box::new(item));
++    let mut exports = ItemStore::new();
++    let module = make_submodule(
++        &context,
++        &mut store,
++        0,
++        &mut exports,
++        &RefCell::default(),
++        true,
++        Edition2024,
++    );
++    let (items, foreign, uses) = exports.drain();
++    assert!(items.is_empty() && foreign.is_empty());
++    let mut exported = Vec::new();
++    for item in uses.into_items() {
++        let Item::Use(item) = *item else {
++            panic!("expected module reexport")
++        };
++        let IdentsOrGlob::Idents(names) = use_idents(&item.tree) else {
++            panic!("expected named reexports")
++        };
++        exported.extend(names.into_iter().map(ToString::to_string));
++    }
++    assert_eq!(exported, ["native_callback", "native_second"]);
++    let Item::Mod(module) = *module else {
++        panic!("expected header module")
++    };
++    let Item::ForeignMod(block) = &module.content.unwrap().1[0] else {
++        panic!("expected preserved extern block")
++    };
++    assert_eq!(block.abi.name.as_ref().unwrap().value(), "win64");
++}
++
+ /// Create a submodule containing the items in `item_store`. Populates `use_item_store` with the set
+ /// of `use`s to import the submodule's exports.
+ fn make_submodule(
+@@ -1431,7 +1500,13 @@ fn make_submodule(
+         use_item_store.add_use_with_attr(false, use_path(), &ident_name, vis);
+     }
+ 
+-    for foreign_item in foreign_items.iter() {
++    for foreign_item in foreign_items.iter().chain(items.iter().flat_map(|item| {
++        if let Item::ForeignMod(block) = &**item {
++            block.items.iter()
++        } else {
++            [].iter()
++        }
++    })) {
+         let ident_name = match foreign_item_ident_vis(foreign_item) {
+             Some((ident, _vis)) => ident.to_string(),
+             None => continue,
 diff --git a/c2rust-transpile/src/translator/variadic.rs b/c2rust-transpile/src/translator/variadic.rs
 index 8416eaf..7851312 100644
 --- a/c2rust-transpile/src/translator/variadic.rs

@@ -105,7 +105,7 @@ and those checks do not establish hosted translation, linkage, or semantics.
 The official source revision remains `ac687698b6c13491dfec45c6a9ad9e8b4da35227`.
 `apply_c2rust_patch.py` refuses another revision or dirty source, checks the patch
 with `git apply --check`, then records its SHA256, applied diff, original revision,
-and modified source hashes. The setup artifact also records executable hashes and
+and hashes for all eight modified upstream source files. The setup artifact also records executable hashes and
 retains the official LICENSE and Cargo.lock. Only the local patch is committed.
 
 The exporter unwraps `MacroQualifiedType` for both type IDs and traversal, and
@@ -123,8 +123,26 @@ and floating arguments, including stack arguments. A C caller checks translated
 Rust direct and vtable calls against 204, a no-prototype vtable call against 17,
 and an ordinary C function against 86. Translated Rust calls a native Win64
 callback and the C caller checks 120. Every compile/link/run must succeed and
-runtime output must exactly match. This C fixture never enters the production
+runtime output must exactly match. The native caller also populates a mixed and
+no-prototype Win64 vtable. The translated C unit invokes both pointers with the
+same eight arguments and checks both results against 120. The no-prototype
+translated definition remains exercised separately against 17. This C fixture never enters the production
 compiler driver. LLVM 18 AST output is retained for the fixture and real blob.
+
+The smoke requires a new owned artifact directory, including refusal of an
+existing empty directory. Workflow setup creates only its parent `evidence/`.
+The real translation enables `--emit-c-decl-map` and requires the used Win64
+`native_callback` declaration in `translated.c_decls.json`. No stale Rust output
+can satisfy a fresh run. Existing evidence is left untouched on refusal.
+
+The patched upstream `translator/mod.rs` also fixes header-module reexports of
+foreign blocks. Setup runs the filtered
+`win64_foreign_block_names_and_reexports` Rust unit test after building the tool.
+It calls the actual `make_submodule` consumer, checks both emitted import names
+through the resulting Rust AST, and checks that the block retains `win64`.
+This avoids requiring unstable `register_tool` attributes for a reorganized
+translation compile. Neither gate is a source-string assertion. Both hosted
+gates remain unexecuted locally.
 
 Only after this executable passes does real `blob.c` receive a 60-second
 `--fail-on-error` translation gate. `--translation-only` stops this targeted probe

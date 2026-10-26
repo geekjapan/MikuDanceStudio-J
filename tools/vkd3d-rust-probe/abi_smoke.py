@@ -17,7 +17,7 @@ def main():
     parser.add_argument('--rust-toolchain', default='1.95.0')
     args = parser.parse_args()
     root = args.artifacts.resolve()
-    root.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=False)
     fixture = Path(__file__).resolve().parent / 'abi-fixtures'
     for path in fixture.glob('*.c'):
         shutil.copy2(path, root / path.name)
@@ -39,8 +39,12 @@ def main():
         stage('clang-ast', [args.clang, '-std=c99', '-Xclang', '-ast-dump-all', '-fsyntax-only', str(source)])
         stage('transpile', [str(args.c2rust.resolve().with_name('c2rust-transpile')),
                            '--fail-on-error', '--disable-rustfmt', '--edition', '2024',
+                           '--emit-c-decl-map',
                            '--output-dir', str(root / 'rust'), str(database)])
         generated = root / 'rust/translated.rs'
+        declarations = json.loads(generated.with_suffix('.c_decls.json').read_text())
+        if 'native_callback' not in declarations.get('definitions', {}):
+            raise RuntimeError('used Win64 extern declaration missing from C declaration map')
         text = generated.read_text()
         if 'extern "win64" fn' not in text or 'extern "C" fn' not in text:
             raise RuntimeError('actual generated ABI definitions missing')
@@ -49,11 +53,11 @@ def main():
         stage('c-link', [args.clang, '-std=c99', str(root / 'caller.c'), str(root / 'libtranslated.a'),
                          '-ldl', '-lpthread', '-lm', '-o', str(root / 'abi-check')])
         stage('abi-run', [str(root / 'abi-check')], 10)
-        expected = 'C to Rust Win64 direct/vtable 204; Rust to C Win64 callback 120; C ABI 86\n'
+        expected = 'C to Rust Win64 direct/vtable 204; Rust to C Win64 direct/vtable/NoProto 120; C ABI 86\n'
         if (root / 'abi-run.log').read_text() != expected:
             raise RuntimeError('missing or unexpected ABI runtime result')
         result['status'] = 'success'
-    except (RuntimeError, OSError) as error:
+    except (RuntimeError, OSError, ValueError) as error:
         result['status'] = 'failure'
         result['error'] = str(error)
     finally:

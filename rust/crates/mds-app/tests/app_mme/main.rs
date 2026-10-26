@@ -1,7 +1,8 @@
 //! `mds-app --frame-dump` of every scene of `tests/fixtures/rust/mmegold/` against the C++ MME
 //! images, by the per-pixel rule and gate list of `mds-mmert/tests/mmegold.rs` ([`LIMITS`],
-//! [`flat`], [`score`], [`overlay`], [`host_drawn`] and [`PIXEL_GATED`] are copied from there,
-//! because a test file of another crate cannot be imported).
+//! [`flat`], [`score`], [`overlay`] and [`PIXEL_GATED`] are copied from there, because a test
+//! file of another crate cannot be imported). Both draw through `mds_mmert::host`, so the models
+//! without an effect are compared, not masked.
 //!
 //! Each scene is staged as the Windows lane `tools/oracle/mmegold.ps1` stages it: the PMM with its
 //! EMM beside it, the `$(fixtures)`, `$(mmegold)` and `$(corpus)` effect paths made absolute, and
@@ -19,16 +20,8 @@ mod editor;
 mod menu;
 mod window;
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-use mds_formats::pmm::Pmm;
-use mds_formats::pmx::Pmx;
-use mds_math::Mat4;
-use mds_mmert::bind::{look_at_lh, mul, perspective_lh, Mat};
-use mds_physics::PhysicsScene;
-use mds_scene::track::{evaluate_camera, CameraMode};
 
 const W: u32 = 640;
 const H: u32 = 360;
@@ -137,118 +130,6 @@ pub fn stage(name: &str, dir: &Path, corpus: &Path) {
         })
         .collect();
     std::fs::write(dir.join(format!("{name}.emm")), emm).unwrap();
-}
-
-// ---- the mask of what the host draws (mmegold.rs) ----
-
-/// The view and projection of `host_scene` in mmegold.rs.
-fn view_projection(pmm: &Pmm, frame: u32) -> Mat {
-    let c = evaluate_camera(&pmm.camera, f64::from(frame), CameraMode::Playback).unwrap();
-    let [pitch, yaw, roll] = c.rotation;
-    let t = Mat4::translation(-c.position[0], -c.position[1], -c.position[2]);
-    let r = Mat4::multiply(&Mat4::rotation_y(yaw), &Mat4::rotation_x(pitch));
-    let r = Mat4::multiply(&r, &Mat4::rotation_z(roll));
-    let frame_world = Mat4::multiply(&t, &r);
-    let eye = [0.0, 0.0, c.distance];
-    let view = look_at_lh(eye, [0.0, 0.0, c.distance + 80.0], [0.0, 1.0, 0.0]);
-    let fov = (f64::from(c.fov) * std::f64::consts::PI / 180.0) as f32;
-    let view = mul(&frame_world.0, &view);
-    mul(
-        &view,
-        &perspective_lh(fov, W as f32 / H as f32, 1.0, 100000.0),
-    )
-}
-
-/// `Host::host_drawn`: the screen rectangle, 2 px wider, of each model other than the first that
-/// has no effect row. Each vertex moves with its first bone.
-fn host_drawn(
-    pmm: &Pmm,
-    pmxs: &[Pmx],
-    assigned: &[bool],
-    physics: &PhysicsScene,
-    frame: u32,
-) -> Vec<bool> {
-    let view_proj = view_projection(pmm, frame);
-    let mut mask = vec![false; (W * H) as usize];
-    for (i, (m, pmx)) in pmm.models.iter().zip(pmxs).enumerate().skip(1) {
-        if assigned[i] {
-            continue;
-        }
-        let posed = physics
-            .scene
-            .models
-            .iter()
-            .find(|p| p.slot == m.slot)
-            .unwrap();
-        let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
-        for v in &pmx.vertices {
-            let b = &posed.bones[v.bones[0] as usize].mat_init.0;
-            let p: [f32; 3] = std::array::from_fn(|c| {
-                v.position[0] * b[c]
-                    + v.position[1] * b[4 + c]
-                    + v.position[2] * b[8 + c]
-                    + b[12 + c]
-            });
-            let clip: [f32; 4] = std::array::from_fn(|c| {
-                p[0] * view_proj[c]
-                    + p[1] * view_proj[4 + c]
-                    + p[2] * view_proj[8 + c]
-                    + view_proj[12 + c]
-            });
-            let px = [
-                (clip[0] / clip[3] + 1.0) * 0.5 * W as f32,
-                (1.0 - clip[1] / clip[3]) * 0.5 * H as f32,
-            ];
-            for c in 0..2 {
-                lo[c] = lo[c].min(px[c]);
-                hi[c] = hi[c].max(px[c]);
-            }
-        }
-        let range = |c: usize, n: u32| {
-            (lo[c] - 2.0).floor().max(0.0) as u32..((hi[c] + 2.0).ceil().max(0.0) as u32).min(n)
-        };
-        for y in range(1, H) {
-            for x in range(0, W) {
-                mask[(y * W + x) as usize] = true;
-            }
-        }
-    }
-    mask
-}
-
-/// [`host_drawn`] of `name` at each frame of `frames`, with the physics stepped as the dump steps it.
-fn host_masks(name: &str, frames: &[u32]) -> BTreeMap<u32, Vec<bool>> {
-    let pmm = Pmm::read(&std::fs::read(mmegold().join(format!("{name}.pmm"))).unwrap()).unwrap();
-    let read = |p: &str| {
-        let name = p.rsplit(['\\', '/']).next().unwrap();
-        std::fs::read(fixtures().join(name)).map_err(|e| e.to_string())
-    };
-    let pmxs: Vec<Pmx> = pmm
-        .models
-        .iter()
-        .map(|m| Pmx::read(&read(&m.path.text).unwrap()).unwrap())
-        .collect();
-    let emm = std::fs::read(mmegold().join(format!("{name}.emm"))).unwrap();
-    let (emm, _) = mds_mmert::emm::parse_emm(&emm, name);
-    let keys: Vec<String> = emm.unwrap().sections[0]
-        .entries
-        .iter()
-        .map(|e| e.key.clone())
-        .collect();
-    let assigned: Vec<bool> = (0..pmm.models.len())
-        .map(|i| keys.contains(&format!("Pmd{i}")))
-        .collect();
-    let mut physics = PhysicsScene::new(&pmm, read).unwrap();
-    let mut out = BTreeMap::new();
-    for f in 0..=*frames.iter().max().unwrap() {
-        if f > 0 {
-            physics.step().unwrap();
-        }
-        if frames.contains(&f) {
-            out.insert(f, host_drawn(&pmm, &pmxs, &assigned, &physics, f));
-        }
-    }
-    out
 }
 
 // ---- pixels (mmegold.rs) ----
@@ -383,20 +264,19 @@ fn frame_dumps_meet_the_mmegold_rule() {
             .status()
             .unwrap();
         assert!(status.success(), "{name}: mds-app --frame-dump: {status}");
-        let masks = host_masks(name, frames);
         for &f in frames {
             let px = read_png(&dir.join(format!("out/{name}-{f}.png")));
             let gold = read_png(&mmegold().join(format!("{name}-{f}.png")));
-            let m: Vec<bool> = mask.iter().zip(&masks[&f]).map(|(a, b)| a | b).collect();
-            let s = score(&px, &gold, &m);
+            let s = score(&px, &gold, &mask);
             let image = format!("{name}-{f}");
             table.push(format!(
-                "{image:<14} {:>7} {:>9.5} {:>4} {:>7.3} {:>5}  {}{}",
+                "{image:<14} {:>7} {:>9.5} {:>4} {:>7.3} {:>5} {:>7}  {}{}",
                 s.pixels,
                 s.close,
                 s.max,
                 s.mean,
                 s.flat,
+                (W * H) as usize - s.pixels,
                 if gated(name) { "yes" } else { "no" },
                 if s.passes() { "" } else { " (fails)" }
             ));
@@ -406,8 +286,8 @@ fn frame_dumps_meet_the_mmegold_rule() {
         }
     }
     eprintln!(
-        "{:<14} {:>7} {:>9} {:>4} {:>7} {:>5}  gated",
-        "image", "pixels", "within 4", "max", "mean", "flat"
+        "{:<14} {:>7} {:>9} {:>4} {:>7} {:>5} {:>7}  gated",
+        "image", "pixels", "within 4", "max", "mean", "flat", "masked"
     );
     for l in &table {
         eprintln!("{l}");

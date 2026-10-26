@@ -84,6 +84,8 @@ struct Runtime {
     gpu: Gpu,
     vk: Vkd3d,
     host: Host,
+    /// Built on a caller's device ([`Mme::render_into`]), not on one of its own.
+    shared: bool,
 }
 
 /// The objects of a document as the EMM sees them: the models, then the accessories.
@@ -300,10 +302,12 @@ impl Mme {
         view: &View,
         device: Option<(&wgpu::Device, &wgpu::Queue)>,
     ) -> Result<&'a mut Runtime, String> {
-        if let (Some(rt), Some((d, _))) = (slot.as_ref(), device) {
-            if rt.gpu.device != *d {
-                *slot = None;
-            }
+        // Devices of two wgpu instances can compare equal, so the runtime also starts again
+        // when it moves between its own device and a caller's.
+        if slot.as_ref().is_some_and(|rt| {
+            rt.shared != device.is_some() || device.is_some_and(|(d, _)| rt.gpu.device != *d)
+        }) {
+            *slot = None;
         }
         if slot.is_none() {
             let started = self.start(doc, view.size, device).inspect_err(|e| {
@@ -330,7 +334,7 @@ impl Mme {
             resolve: &resolve,
         };
         let mut log = Vec::new();
-        let Runtime { gpu, vk, host } = rt;
+        let Runtime { gpu, vk, host, .. } = rt;
         let (skipped, errors) = gpu.scoped(|| host.render(gpu, vk, &f, &mut log));
         let mut l = self.log.borrow_mut();
         l.extend(log);
@@ -376,7 +380,12 @@ impl Mme {
             let added = host.add(&gpu, &a.path.text, source, 1.0, beside(&path));
             log.extend(added.err());
         }
-        Ok(Runtime { gpu, vk, host })
+        Ok(Runtime {
+            gpu,
+            vk,
+            host,
+            shared: device.is_some(),
+        })
     }
 }
 

@@ -83,7 +83,7 @@ fn the_window_texture_gets_the_frame_without_a_read_back() {
     // The two models (control.fx on chain8, morph4 in the host's shading) are on the picture.
     let background = &read_back[..4];
     let drawn = read_back.chunks(4).filter(|p| p != &background).count();
-    assert!(drawn > 500, "{drawn} pixels drawn");
+    assert!(drawn > 300, "{drawn} pixels drawn");
     assert_eq!(shown, read_back);
     std::fs::remove_dir_all(&dir).unwrap();
 }

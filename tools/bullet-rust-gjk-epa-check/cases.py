@@ -58,4 +58,6 @@ def cases():
             a=dims[kind].copy();a[0]=value
             yield kind,1,a+dims[1]+I+[0,0,0]+I+[4,0,0]+[1,0,0]
 if __name__=='__main__':
+    import sys
+    sys.stdout.reconfigure(newline='\n')
     for i,(a,b,v) in enumerate(cases()): print(i,a,b,*map(word,v),sep='\t')

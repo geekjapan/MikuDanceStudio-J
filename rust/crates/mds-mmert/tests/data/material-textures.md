@@ -13,6 +13,9 @@ MDS_MATERIAL_FIXTURE_DIR=/absolute/output \
 slot. `second.pmx` uses different images and the same effect. The effect writes
 base red, sphere green, toon blue and base alpha. Its base image has two texels
 with different red and alpha values. Sphere mode 3 retains its image.
+The PMM uses distinct nonzero model selection orders 1 and 2. Native MME uses
+these orders as object lookup keys; zero means no object, and duplicate orders
+overwrite the object lookup. The separate display-order bytes remain 0 and 1.
 
 For the C++ Windows oracle, copy the generated PMX and PNG files beside
 `MikuDanceStudio.exe`, as `tools/oracle/mmegold.ps1` stages bare model paths.

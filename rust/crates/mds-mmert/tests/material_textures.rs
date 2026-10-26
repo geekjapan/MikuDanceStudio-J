@@ -385,6 +385,7 @@ fn write_native_fixture() {
     std::fs::write(dir.join("second.pmx"), second.write().unwrap()).unwrap();
     let mut other = pmm.models[0].clone();
     other.slot = 1;
+    other.selection.combo_index = 2;
     other.display_order = 1;
     other.path.raw.fill(0);
     other.path.raw[..10].copy_from_slice(b"second.pmx");
@@ -416,12 +417,16 @@ fn write_native_fixture() {
             .len(),
         3
     );
+    let readback = Pmm::read(&std::fs::read(dir.join("materials.pmm")).unwrap()).unwrap();
+    assert_eq!(readback.models.len(), 2);
     assert_eq!(
-        Pmm::read(&std::fs::read(dir.join("materials.pmm")).unwrap())
-            .unwrap()
+        readback
             .models
-            .len(),
-        2
+            .iter()
+            .map(|m| m.selection.combo_index)
+            .collect::<Vec<_>>(),
+        [1, 2],
+        "MMHack object orders must be nonzero and distinct"
     );
     std::fs::write(dir.join("materials.emm"),"[Info]\nVersion = 3\n[Object]\nPmd0 = materials.pmx\nPmd1 = second.pmx\n[Effect]\nDefault = none\nPmd0 = material-textures.fx\nPmd1 = material-textures.fx\n").unwrap();
 }

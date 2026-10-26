@@ -60,4 +60,4 @@ uitimeline2	3c	doccmds	mac	sonnet	pending	rust/crates/mds-app/src/ui/timeline.rs
 uiviewport	3c	doccmds	mac	opus	pending	rust/crates/mds-app/src/ui/viewport.rs,rust/crates/mds-app/tests/ui_viewport/
 doccmds2	3c	doccmds	mac	opus	pending	rust/crates/mds-doc/,rust/crates/mds-edit/,rust/crates/mds-ops/,rust/crates/mds-formats/,rust/crates/mds-vsq/
 mmertgold	3c	mmegold	mac	opus	pending	rust/crates/mds-mmert/
-winprobe	3c	mmegold	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/golden2/,tests/fixtures/rust/mmegold/,third_party/mmeffect/,CMakeLists.txt
+winprobe	3c	mmegold	windows	opus	pending	src/tools/,tools/oracle/,tests/fixtures/rust/golden2/,tests/fixtures/rust/mmegold/,third_party/mmeffect/,CMakeLists.txt,rust/crates/mds-render/src/view.rs

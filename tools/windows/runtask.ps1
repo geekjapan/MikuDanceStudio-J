@@ -1,5 +1,5 @@
 # Run a .ps1 in the console session through a one-shot interactive scheduled
-# task, wait for it, and return its exit code. OpenSSH runs in session 0, which
+# task, wait for it, and return an SSH-safe exit code. OpenSSH runs in session 0, which
 # cannot create a D3D9 device or drive the GUI.
 # -Exclusive holds the machine-wide mutex Global\mds-console-input for the whole
 # run. Use it for any lane that sends keyboard or mouse input, so two agents'
@@ -50,14 +50,22 @@ try {
     Write-Error $_ -ErrorAction Continue
 } finally {
     if ($created) {
-        $operations = @('/Delete')
-        if ($running) { $operations = @('/End', '/Delete') }
-        foreach ($operation in $operations) {
+        if ($running) {
             try {
-                $taskArgs = @('/TN', $name)
-                if ($operation -eq '/Delete') { $taskArgs += '/F' }
-                schtasks $operation @taskArgs | Out-Null
-                if ($LASTEXITCODE -ne 0) { throw "schtasks $operation failed: $LASTEXITCODE" }
+                schtasks /End /TN $name | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "schtasks /End failed: $LASTEXITCODE" }
+                $running = $false
+            } catch {
+                Write-Warning $_
+                $exitCode = 1
+                Write-Warning "Stop not confirmed. Retained task '$name'; wrapper '$wrap'; log '$Log'; completion '$Log.done'."
+                Write-Warning "Recover with schtasks /End /TN $name. Confirm the task has stopped before schtasks /Delete /TN $name /F and removal of '$wrap'. Do not start another exclusive lane until then; the helper mutex is released on exit."
+            }
+        }
+        if (-not $running) {
+            try {
+                schtasks /Delete /TN $name /F | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "schtasks /Delete failed: $LASTEXITCODE" }
             } catch {
                 Write-Warning $_
                 if ($exitCode -eq 0) { $exitCode = 1 }
@@ -65,7 +73,7 @@ try {
         }
     }
     try {
-        if (Test-Path $wrap) { Remove-Item $wrap }
+        if (-not $running -and (Test-Path $wrap)) { Remove-Item $wrap }
     } catch {
         Write-Warning $_
         if ($exitCode -eq 0) { $exitCode = 1 }
@@ -79,4 +87,6 @@ try {
         } finally { $mutex.Dispose() }
     }
 }
+# POSIX and SSH expose only eight bits. Keep the full task result in the diagnostic.
+if ($exitCode -lt 0 -or $exitCode -gt 255) { $exitCode = 1 }
 exit $exitCode

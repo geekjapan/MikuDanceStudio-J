@@ -88,7 +88,7 @@ class TaskExit(unittest.TestCase):
                     self.assertIn(str(root / 'smoke.log'), run.stdout)
                     self.assertIn('Stop not confirmed', run.stdout)
                     self.assertIn('schtasks /End /TN', run.stdout)
-                    self.assertIn('mutex released', run.stdout)
+                    self.assertIn('mutex is released', run.stdout)
                 else:
                     self.assertFalse(wrappers)
                 if case in ('positive-256', 'negative-256'):

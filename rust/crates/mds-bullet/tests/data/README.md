@@ -35,6 +35,23 @@ rustc --edition=2021 --test -O rust/crates/mds-bullet/tests/pure_bullet.rs --ext
 /tmp/pure_bullet
 ```
 
-The translated core retains Bullet's zlib notice in `src/core/mod.rs`. Its local
-vendored patch ancestry remains pending audit. This is an initial migration
-pilot, not evidence of complete Bullet or L2 replacement.
+The combined `pure_bullet.rs` executable also runs the math and shape fixtures.
+Use the pinned, native-free command on Windows x64, macOS ARM64, Linux x64 or
+Linux ARM64 (Python 3 and Rust 1.95.0 required):
+
+```sh
+python3 tools/bullet-rust-math-check/check.py --rust-only
+```
+
+The dedicated `bullet-primitives.yml` workflow runs these six tests on all four
+supported hosts, and recaptures math and shapes from native sources on Linux x64.
+Workflow configuration is not evidence that those hosted jobs have passed.
+
+The translated core retains the full Bullet zlib notice in `src/core/mod.rs`.
+Pilot math/body/time operations were compared with stock Bullet 2.75 non-x86
+branches from the official archive with SHA-256
+`0ebae4b2afabcd493d5878efb4582f3dda82e2088b3ca18d6ec6aeb0ef69329d`.
+New math (including solver SSE dot) and shape inertia include vendored local
+patches whose ancestry remains pending audit, as do unported vendored ranges. The wrapper remains MIT and crate metadata
+remains `MIT AND Zlib`. Frozen fixtures establish numerical behavior, not legal
+provenance or complete Bullet/L2 replacement.

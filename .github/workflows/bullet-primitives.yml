@@ -1,0 +1,56 @@
+name: Bullet primitives
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bullet-primitives-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'branch' }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  pure:
+    name: Native-free Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15, ubuntu-24.04, ubuntu-24.04-arm]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Check frozen math, shapes and free-body fixtures without native code
+        run: python3 tools/bullet-rust-math-check/check.py --rust-only
+
+  native:
+    name: Native recapture (Linux x64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Recapture math and compare every frozen bit
+        run: python3 tools/bullet-rust-math-check/check.py
+      - name: Recapture shapes and compare every frozen bit
+        run: python3 tools/bullet-rust-shape-check/check.py --out-dir "$RUNNER_TEMP/bullet-shapes"

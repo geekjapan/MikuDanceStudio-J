@@ -35,7 +35,11 @@ pub fn element(usage: &str, index: u32) -> Option<(u64, wgpu::VertexFormat)> {
 pub struct MaterialTexture(wgpu::Texture);
 
 impl MaterialTexture {
-    fn upload(gpu: &crate::Gpu, image: &mds_render::Image) -> Self {
+    fn upload(gpu: &crate::Gpu, image: &mds_render::Image) -> Option<Self> {
+        let limit = gpu.device.limits().max_texture_dimension_2d;
+        if image.width > limit || image.height > limit {
+            return None;
+        }
         let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("MME material texture"),
             size: wgpu::Extent3d {
@@ -51,7 +55,7 @@ impl MaterialTexture {
             view_formats: &[],
         });
         crate::resource::write_level(gpu, &texture, 0, image.width, image.height, &image.rgba);
-        Self(texture)
+        Some(Self(texture))
     }
 
     pub(crate) fn view(&self) -> wgpu::TextureView {
@@ -310,7 +314,7 @@ impl Model {
                         } else {
                             read(name).and_then(|b| mds_render::Image::decode(&b).ok())
                         }?;
-                        Some(MaterialTexture::upload(gpu, &image))
+                        MaterialTexture::upload(gpu, &image)
                     })
                     .clone()
             };

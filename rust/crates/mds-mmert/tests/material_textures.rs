@@ -235,6 +235,48 @@ fn sampled_slots_follow_the_draw_snapshot_without_sticking() {
     assert!(errors.is_empty(), "wgpu errors {errors:?}");
 }
 
+#[test]
+fn oversized_material_images_clear_slots_before_gpu_upload() {
+    let Some(gpu) = common::gpu() else { return };
+    let (_, errors) = gpu.scoped(|| {
+        let mut model = model(&gpu);
+        let limit = gpu.device.limits().max_texture_dimension_2d;
+        let oversized = png(&vec![255; (limit as usize + 1) * 4]);
+        let decoded = mds_render::Image::decode(&oversized).unwrap();
+        assert_eq!((decoded.width, decoded.height), (limit + 1, 1));
+        eprintln!(
+            "decoded {}x1 PNG exceeds device D2 limit {limit}",
+            decoded.width
+        );
+        let material = &mut model.materials[0];
+        assert!(material.textures.texture.is_some());
+        assert!(material.textures.sphere.is_some());
+        assert!(material.textures.toon.is_some());
+        material.texture = Some("oversized.png".into());
+        material.sphere = Some("oversized.png".into());
+        material.toon_texture = Some("oversized.png".into());
+        assert_eq!(material.sphere_mode, 3);
+        model.load_textures(
+            &gpu,
+            |name| {
+                if name == "oversized.png" {
+                    Some(oversized.clone())
+                } else {
+                    image(name)
+                }
+            },
+            |_| None,
+        );
+        let material = &model.materials[0];
+        assert_eq!(material.textures, Default::default());
+        assert!(!material.has_texture);
+        assert_eq!(material.sphere_mode, 0);
+        assert!(material.toon);
+        assert!(model.materials[1].textures.texture.is_some());
+    });
+    assert!(errors.is_empty(), "wgpu errors {errors:?}");
+}
+
 fn text(s: &str) -> PmxText {
     PmxText {
         text: s.into(),

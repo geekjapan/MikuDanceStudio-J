@@ -66,6 +66,31 @@ Each slice gates on a committed oracle that runs without the Windows host, as in
 | `package` | 3c | Builds for Windows, macOS, and Linux with the license texts. | The builds start and load a fixture on each platform. |
 | `rmcpp` | 3d | Deletion of the C++. Operator approval required. | `tools/rust/check.sh` passes with no C++ under the deleted paths. |
 
+## Progress
+
+On 2026-10-26, after PR #109:
+
+- **3a and 3b are merged.** That includes `script`, `doc`, `media`, `vsq`, `accessory`, `skin`, `ops`, `mmert`, `accgold`, `docgold`, `pmm1`, `golden2`, `mmegold`, and `shell`.
+- **Added slices.** The plan table above did not list these:
+  - `shaderwire`: all 515 ray-mmd effects compile through vkd3d.
+  - `kinect` and `bgmovie`.
+  - `script2`: oracles for the bulk operations, the physics scenarios, and PMM 0001.
+  - `doccmds` and `doccmds2`: the document commands that the UI needs.
+  - `winprobe`: the self-shadow and ground-shadow probe lines.
+  - `mmertgold`: `mds-mmert` gated on the mmegold images. 6 of the 8 scenes pass.
+- **The UI.** 321 of the 399 inventory rows have an action. 7 of the 19 areas are in `ui::COMPLETE`, and `tests/ui_coverage.rs` prints the count per area.
+- **Running.**
+  - `render4`: the self-shadow map.
+  - `winoracle3`: C++ oracles for the newer commands.
+  - `doccmds3`: outside parent, order, view offset, physics record, and background media.
+  - `appmedia`: recording and audio.
+  - `uiphysics` and `uimocap`.
+- **Left after that.**
+  - The background area, and the UI rows that wait on `doccmds3`.
+  - `package`.
+  - The pool fixes that change C++ and Rust together.
+  - `rmcpp`.
+
 ## Product decisions
 
 These functions depend on hardware or APIs that a cross-platform Rust application cannot carry as they are. The operator decided all five on 2026-10-25: Kinect is ported, 3D Vision is dropped, and the other three take the defaults below.

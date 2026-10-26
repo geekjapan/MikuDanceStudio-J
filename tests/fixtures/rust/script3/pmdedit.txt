@@ -1,0 +1,20 @@
+# The PMD edits that "save enhanced model" (menu 263) writes: a toon
+# texture name (menu 261) and the physics model (menu 262); the save also
+# sets the model path that the PMM records. The English names (menu 259) are
+# not here: README.md, "Not reached".
+load model .\lips.pmd
+toon 3 toonx.bmp
+
+physics model open
+dialog text 718 2.5
+dialog select 704 3
+dialog text 712 0.25
+dialog click 727
+dialog ok
+save pmd edited.pmd
+save pmm edited.pmm
+
+physics model open
+dialog text 718 9
+dialog cancel
+save pmd cancelled.pmd

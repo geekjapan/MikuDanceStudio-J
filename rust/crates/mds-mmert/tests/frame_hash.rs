@@ -13,7 +13,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use mds_mmert::control::{Controls, Object};
-use mds_mmert::{DrawInput, Effect, Gpu, Model, Scene, Target, BACKBUFFER};
+use mds_mmert::{DrawInput, Effect, Model, Scene, Target, BACKBUFFER};
+
+mod common;
 
 /// `(label, root, effect below the root)`; `corpus` roots need the ray-mmd corpus.
 const EFFECTS: [(&str, &str); 5] = [
@@ -30,14 +32,8 @@ fn report(text: &str) {
 
 fn root(kind: &str) -> PathBuf {
     match kind {
-        "fixtures" => {
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/rust/mme/effects")
-        }
-        _ => match std::env::var_os("MDS_CORPUS") {
-            Some(p) => PathBuf::from(p),
-            None => std::env::temp_dir().join("mds-corpus"),
-        }
-        .join("ray-mmd"),
+        "fixtures" => common::fixtures().join("mme/effects"),
+        _ => common::corpus_path(),
     }
 }
 
@@ -66,29 +62,10 @@ fn read_table() -> BTreeMap<(String, String), String> {
 
 #[test]
 fn frames_match_the_recorded_hashes() {
-    let Some(gpu) = Gpu::new().unwrap() else {
-        report("SKIP: no wgpu adapter (a skip is not a pass)");
-        return;
-    };
-    let lib = match std::env::var_os("MDS_VKD3D_LIB") {
-        Some(p) => PathBuf::from(p),
-        None if cfg!(target_os = "macos") => {
-            std::env::temp_dir().join("mds-vkd3d/macos/lib/libvkd3d-shader.1.dylib")
-        }
-        None => {
-            let arch = if cfg!(target_arch = "x86_64") {
-                "amd64"
-            } else {
-                "arm64"
-            };
-            std::env::temp_dir().join(format!("mds-vkd3d/linux-{arch}/lib/libvkd3d-shader.so.1"))
-        }
-    };
-    let vk = mds_shader::vkd3d::Vkd3d::open(&lib)
-        .unwrap_or_else(|e| panic!("vkd3d-shader not loaded: {e}"));
-    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/rust");
-    let pmx =
-        mds_formats::pmx::Pmx::read(&std::fs::read(fixtures.join("chain8.pmx")).unwrap()).unwrap();
+    let Some(gpu) = common::gpu() else { return };
+    let Some(vk) = common::vkd3d() else { return };
+    let pmx = std::fs::read(common::fixtures().join("chain8.pmx")).unwrap();
+    let pmx = mds_formats::pmx::Pmx::read(&pmx).unwrap();
     let model = Model::from_pmx(&gpu.device, &pmx).unwrap();
     // The drawn chain8.pmx owns the effects; ctrl.pmx is the object offscreen.fx reads its
     // `Morph` from.
@@ -103,11 +80,7 @@ fn frames_match_the_recorded_hashes() {
     let mut mismatches = Vec::new();
     for (kind, rel) in EFFECTS {
         let dir = root(kind);
-        if !dir.is_dir() {
-            report(&format!(
-                "SKIP {rel}: no corpus at {} (a skip is not a pass)",
-                dir.display()
-            ));
+        if common::corpus_at(&dir).is_none() {
             continue;
         }
         let ((pixels, report_), errors) = gpu.scoped(|| {

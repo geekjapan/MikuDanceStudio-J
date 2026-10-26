@@ -1,0 +1,4 @@
+# A .vac accessory (LoadAccessoryObject): the mesh it names, its scale,
+# position, rotation, and shadow.
+load accessory .\tri2.vac
+save pmm vac.pmm

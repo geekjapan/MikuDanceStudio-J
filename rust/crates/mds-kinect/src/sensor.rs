@@ -68,7 +68,7 @@ pub struct FakeHandle(Arc<Mutex<FakeState>>);
 
 impl Fake {
     /// A fake that tracks a performer whose every joint is lost.
-    pub fn new(version: Version) -> (Box<dyn Sensor>, FakeHandle) {
+    pub fn start(version: Version) -> (Box<dyn Sensor>, FakeHandle) {
         let handle = FakeHandle(Arc::new(Mutex::new(FakeState {
             tracking: true,
             joints: [[0.0, LOST, 0.0]; JOINT_COUNT],
@@ -131,7 +131,7 @@ mod tests {
             (Version::V140, 19),
             (Version::V150, 22),
         ] {
-            let (mut sensor, handle) = Fake::new(version);
+            let (mut sensor, handle) = Fake::start(version);
             handle.state().joints[0] = [1.0, 2.0, 3.0];
             let mut j = Joints::default();
             joints::capture(&mut j, u32::from(sensor.version().code()), |id, slot| {

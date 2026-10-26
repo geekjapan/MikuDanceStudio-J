@@ -1,0 +1,16 @@
+# The camera reference check boxes (412 model, 531 bone) and
+# ApplyCameraReferenceModeChange (frame_modes.cpp) in model mode, then the
+# same boxes in camera mode, where the view does not move.
+load model chain8.pmx
+select bone 首
+bone position 0 0.5 0
+camera reference 1
+save pmm model-root.pmm
+camera reference 2
+save pmm selected-bone.pmm
+camera reference 0
+save pmm none.pmm
+
+select camera
+camera reference 2
+save pmm camera-mode.pmm

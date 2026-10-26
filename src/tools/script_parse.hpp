@@ -113,6 +113,20 @@ enum class ScriptOp {
     PhysicsPlaybackToggle,
     Trace,
     AnswerFile,
+    // the document commands of mds-doc that script and script2 do not run (script3)
+    DragKeys,
+    DeleteModel,
+    CameraReference,
+    LoadLipSync,
+    Drop,
+    EnglishOpen,
+    PhysicsModelOpen,
+    DialogText,
+    DialogClick,
+    DialogSelect,
+    DialogOk,
+    DialogCancel,
+    Toon,
 };
 
 struct ScriptCommandSpec {
@@ -217,6 +231,19 @@ inline constexpr ScriptCommandSpec kScriptCommands[] = {
     {"physics playback toggle", ScriptOp::PhysicsPlaybackToggle, ""},
     {"trace", ScriptOp::Trace, "t"},
     {"answer file", ScriptOp::AnswerFile, "t"},
+    {"drag", ScriptOp::DragKeys, "fn"},
+    {"delete model", ScriptOp::DeleteModel, ""},
+    {"camera reference", ScriptOp::CameraReference, "l"},
+    {"load lip sync", ScriptOp::LoadLipSync, "t"},
+    {"drop", ScriptOp::Drop, "t"},
+    {"english open", ScriptOp::EnglishOpen, ""},
+    {"physics model open", ScriptOp::PhysicsModelOpen, ""},
+    {"dialog text", ScriptOp::DialogText, "ft"},
+    {"dialog click", ScriptOp::DialogClick, "f"},
+    {"dialog select", ScriptOp::DialogSelect, "ff"},
+    {"dialog ok", ScriptOp::DialogOk, ""},
+    {"dialog cancel", ScriptOp::DialogCancel, ""},
+    {"toon", ScriptOp::Toon, "ft"},
 };
 // clang-format on
 

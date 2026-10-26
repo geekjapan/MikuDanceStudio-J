@@ -1,0 +1,32 @@
+# The key drag of the timeline in model mode (HandleMouseMove, RemapList):
+# the marked bone keys dragged back past the head key, which holds them, then
+# the marked bone and display keys dragged forward. The bones of chain8 are
+# in folded display groups, so the press lands on the group row.
+load model chain8.pmx
+frame 15
+register display
+frame 10
+select bone センター
+bone position 1 0 0
+register bone
+frame 20
+select bone センター
+bone position 2 0 0
+register bone
+frame 30
+select bone センター
+bone position 3 0 0
+register bone
+save pmm registered.pmm
+
+select all bone
+frame 20
+drag 20 -15
+save pmm back.pmm
+
+select all bone
+select all display
+frame 15
+drag 15 40
+save pmm forward.pmm
+save vmd forward.vmd

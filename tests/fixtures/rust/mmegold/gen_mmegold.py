@@ -83,11 +83,21 @@ VS_OUT VS(float4 Pos : POSITION, float2 Tex : TEXCOORD0) {
 float4 PS(VS_OUT i) : COLOR0 { return tex2D(AnimSamp, i.Tex); }
 """ + OBJECT_TAIL).encode("ascii")
 
+# mme/effects/post.fx without the two RenderColorTarget1 lines. The Final pass
+# draws to the back buffer, which the dump mode multisamples, and Direct3D 9
+# drops a draw that binds the non-multisampled Full beside it.
+_POST = (HERE.parent / "mme" / "effects" / "post.fx").read_text(encoding="ascii")
+POST_FX = ("// mmegold: mme/effects/post.fx with the Final pass's second target unbound (see README.md).\n"
+           + _POST.replace('        "RenderColorTarget1=Full;"\n', "")
+                  .replace('"Pass=Final;"\n        "RenderColorTarget1=;";', '"Pass=Final;";')
+           ).encode("ascii")
+assert POST_FX.count(b"RenderColorTarget1") == 0
+
 MAIN = "$(corpus)\\Main\\main.fx"
 # scene -> models, accessories, the EMM's [Effect] rows, frames
 SCENES = {
     "objects": dict(rows={"Pmd0": "$(fixtures)\\objects.fx"}, frames=[0, 30]),
-    "post": dict(rows={"Pmd0": "$(fixtures)\\post.fx"}, frames=[0, 30]),
+    "post": dict(rows={"Pmd0": "$(mmegold)\\post.fx"}, frames=[0, 30]),
     "offscreen": dict(rows={"Pmd0": "$(fixtures)\\offscreen.fx"}, frames=[0, 30]),
     "timeofday": dict(rows={"Pmd0": "$(corpus)\\Skybox\\Time of day\\Time of day.fx"},
                       frames=[0, 30]),
@@ -112,7 +122,7 @@ def emm(models, accessories, rows):
 
 
 def generate():
-    out = {"control.fx": CONTROL_FX, "anime.fx": ANIME_FX}
+    out = {"control.fx": CONTROL_FX, "anime.fx": ANIME_FX, "post.fx": POST_FX}
     for name, scene in SCENES.items():
         models = scene.get("models", [CHAIN])
         accessories = scene.get("accessories", [])

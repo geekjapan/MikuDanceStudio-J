@@ -136,8 +136,6 @@ pub struct Scene {
     pub light_specular: [f32; 3],
     pub time: f32,
     pub elapsed: f32,
-    /// `GetCurrentFrameTime`: the raw frame clock in seconds, which drives animated textures.
-    pub frame_time: f32,
     /// The BeginScene viewport, which `VIEWPORTPIXELSIZE` reports.
     pub viewport: (u32, u32),
     /// The host clear color (ARGB), the start value of `ClearSetColor`.
@@ -169,7 +167,6 @@ impl Scene {
             light_specular: [154.0 / 255.0; 3],
             time: 0.0,
             elapsed: 0.0,
-            frame_time: 0.0,
             viewport: (width, height),
             background: 0xFFFF_FFFF,
         }
@@ -196,6 +193,8 @@ pub struct Draw<'a> {
     pub scene: &'a Scene,
     pub material: Option<&'a Material>,
     pub draw_type: u8,
+    /// The drawn model's material count (`SubsetCount`).
+    pub subsets: usize,
 }
 
 fn set(values: &mut [f32], v: &[f32]) {
@@ -315,6 +314,8 @@ fn material_value(semantic: &str, d: &Draw) -> Option<[f32; 4]> {
             [a[0] * l[0], a[1] * l[1], a[2] * l[2], 0.65]
         }),
         "SPECULARPOWER" => {
+            // The edge draw's material has no power (the probes of tests/fixtures/rust/mmegold).
+            let power = if d.draw_type == DRAW_EDGE { 0.0 } else { power };
             let p = if power == 0.0 { 0.1 } else { power };
             Some([p; 4])
         }
@@ -338,6 +339,8 @@ fn material_value(semantic: &str, d: &Draw) -> Option<[f32; 4]> {
 fn bind_names(params: &[Item], values: &mut [Vec<f32>], d: &Draw) {
     let s = d.scene;
     let m = d.material;
+    // The edge draw has no texture, sphere map, or toon (the probes of tests/fixtures/rust/mmegold).
+    let maps = m.filter(|_| d.draw_type != DRAW_EDGE);
     for (p, vals) in params.iter().zip(values.iter_mut()) {
         if !p.semantic.is_empty() {
             continue;
@@ -363,14 +366,17 @@ fn bind_names(params: &[Item], values: &mut [Vec<f32>], d: &Draw) {
                 let n = normalize(s.light_direction);
                 Some([n[0], n[1], n[2], 0.0])
             }
-            "use_texture" => Some(b(m.is_some_and(|m| m.has_texture))),
-            "use_spheremap" => Some(b(m.is_some_and(|m| m.sphere_mode > 0))),
-            "use_subtexture" => Some(b(m.is_some_and(|m| m.sphere_mode == 3))),
-            "use_toon" => Some(b(m.is_some_and(|m| m.toon))),
-            "spadd" => Some(b(m.is_some_and(|m| m.sphere_mode == 2))),
+            "use_texture" => Some(b(maps.is_some_and(|m| m.has_texture))),
+            "use_spheremap" => Some(b(maps.is_some_and(|m| m.sphere_mode > 0))),
+            "use_subtexture" => Some(b(maps.is_some_and(|m| m.sphere_mode == 3))),
+            "use_toon" => Some(b(maps.is_some_and(|m| m.toon))),
+            "spadd" => Some(b(maps.is_some_and(|m| m.sphere_mode == 2))),
             "transp" | "parthf" | "opadd" => Some(b(false)),
             "egcolor" => m.map(|m| m.edge_color),
+            // The edge draw's material is black (the probes of tests/fixtures/rust/mmegold).
+            "difcolor" if d.draw_type == DRAW_EDGE => m.map(|_| [0.0, 0.0, 0.0, 1.0]),
             "difcolor" => m.map(|m| m.diffuse),
+            "subsetcount" => Some([d.subsets as f32; 4]),
             "spccolor" => m.map(|m| [m.specular[0], m.specular[1], m.specular[2], 1.0]),
             "tooncolor" => Some([1.0; 4]),
             _ => None,

@@ -184,25 +184,6 @@ impl Tracks {
         self.max_frame = self.max_frame.max(frame);
     }
 
-    /// `RegisterBoneKey` (VA 0x49D880) without `useSelected`: the key of
-    /// `clip` at `frame_offset + clip.frame` on the bone named `clip.name`.
-    /// An unknown name registers nothing. A fixed-axis bone needs
-    /// [`Tracks::register_bone_key_with`].
-    pub fn register_bone_key(
-        &mut self,
-        rig: &Rig,
-        clip: &BoneClip,
-        frame_offset: i32,
-    ) -> Result<()> {
-        self.register_bone_key_with(
-            rig,
-            &Extra::default(),
-            clip,
-            frame_offset,
-            BoneTarget::Named,
-        )
-    }
-
     /// `RegisterBoneKey` (VA 0x49D880) and `RegisterMirroredBoneKey` (VA
     /// 0x49E310): the key of `clip` at `frame_offset + clip.frame` on the
     /// bone `target` picks, with the twist correction for a fixed-axis bone.
@@ -393,13 +374,6 @@ impl Tracks {
         Ok(())
     }
 
-    /// `RegisterBonePoseAtFrame` (VA 0x4B38A0): the current pose of bone
-    /// `bone` at `frame`. A bone with a rigid body needs
-    /// [`Tracks::register_bone_pose_with`].
-    pub fn register_bone_pose(&mut self, rig: &Rig, bone: usize, frame: u32) -> Result<()> {
-        self.bone_pose(rig, None, bone, frame).map(|_| ())
-    }
-
     /// `RegisterBonePoseAtFrame` (VA 0x4B38A0) with the physics state. For a
     /// bone with a rigid body that physics drives (mode 1, or mode 2 and up
     /// with physics on for the bone), the key and the bone's pose in `rig`
@@ -468,23 +442,8 @@ impl Tracks {
     }
 
     /// `RegisterSelectedBoneKeys` (VA 0x4C2080), the register button: clears
-    /// every mark, then registers the pose of each selected bone. A bone
-    /// with a rigid body needs [`Tracks::register_selected_bone_keys_with`].
-    pub fn register_selected_bone_keys(
-        &mut self,
-        rig: &Rig,
-        selected: &[bool],
-        frame: u32,
-    ) -> Result<()> {
-        self.clear_marks();
-        for (bone, _) in selected.iter().enumerate().filter(|(_, s)| **s) {
-            self.register_bone_pose(rig, bone, frame)?;
-        }
-        Ok(())
-    }
-
-    /// [`Tracks::register_selected_bone_keys`] with the physics state, as
-    /// [`Tracks::register_bone_pose_with`] registers each bone.
+    /// every mark, then registers the pose of each selected bone as
+    /// [`Tracks::register_bone_pose_with`] does.
     pub fn register_selected_bone_keys_with(
         &mut self,
         rig: &mut Rig,
@@ -501,22 +460,9 @@ impl Tracks {
 
     /// `PasteSelectedKeyframes` (`frame_clipboard.cpp`, model mode): clears
     /// the marks, then resets the cursor and registers the bone, morph and
-    /// display keys in turn, at `frame_offset`. A full pool stops its own
-    /// loop only, as in the original; the first error is returned at the end.
-    /// Fixed-axis bones need [`Tracks::paste_with`].
-    pub fn paste(
-        &mut self,
-        rig: &Rig,
-        bones: &[BoneClip],
-        morphs: &[MorphClip],
-        displays: &[DisplayClip],
-        frame_offset: i32,
-    ) -> Result<()> {
-        let extra = &Extra::default();
-        self.paste_with(rig, extra, bones, morphs, displays, frame_offset)
-    }
-
-    /// [`Tracks::paste`] with the twist axes of `extra`.
+    /// display keys in turn, at `frame_offset`, with the twist axes of
+    /// `extra`. A full pool stops its own loop only, as in the original; the
+    /// first error is returned at the end.
     pub fn paste_with(
         &mut self,
         rig: &Rig,

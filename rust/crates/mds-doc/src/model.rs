@@ -226,10 +226,14 @@ pub struct ModelEdit {
     pub history: History,
     /// `BoneRecord::ikBackup` per bone, `(rotation, translation)`: the pose
     /// the last physics step left, which the frame loop (not the document)
-    /// computes. `None` until a frame loop reports one; a register that
-    /// needs it is refused then.
+    /// computes. `None` until a frame loop reports one; the registrars then
+    /// read [`NO_PHYSICS_POSE`].
     pub physics_pose: Option<Vec<([f32; 4], [f32; 3])>>,
 }
+
+/// `ikBackup` before the first physics step: the loaders zero the bone
+/// records (`mds_pose::model::Bone::ik_backup`).
+pub const NO_PHYSICS_POSE: ([f32; 4], [f32; 3]) = ([0.0; 4], [0.0; 3]);
 
 /// The physics controls the bone registrars read.
 #[derive(Clone, Copy, Debug)]
@@ -247,7 +251,7 @@ pub fn extra(m: &pmm::Model, s: &Skeleton, e: &ModelEdit, physics: Physics) -> E
         e.physics_pose
             .as_ref()
             .and_then(|v| v.get(i).copied())
-            .unwrap_or(([0.0, 0.0, 0.0, 1.0], [0.0; 3]))
+            .unwrap_or(NO_PHYSICS_POSE)
     };
     Extra {
         bones: m
@@ -265,11 +269,6 @@ pub fn extra(m: &pmm::Model, s: &Skeleton, e: &ModelEdit, physics: Physics) -> E
         physics_checkbox: physics.checkbox,
         physics_mode: i32::from(physics.mode),
     }
-}
-
-/// Whether `RegisterBonePoseAtFrame` stores the physics pose of `bone`.
-fn takes_physics_pose(m: &pmm::Model, s: &Skeleton, physics: Physics, bone: usize) -> bool {
-    s.bones[bone].2 && (physics.mode == 1 || (physics.mode >= 2 && m.bone_pose[bone].flags[0] == 0))
 }
 
 /// `RegisterSelectedBoneKeys` (VA 0x004C2080), the register button (500):
@@ -290,13 +289,6 @@ pub fn register_bones(
     let selected: Vec<usize> = (0..rig.bones.len())
         .filter(|&i| m.bone_pose[i].flags[2] != 0)
         .collect();
-    if e.physics_pose.is_none()
-        && selected
-            .iter()
-            .any(|&b| takes_physics_pose(m, s, physics, b))
-    {
-        return Err(mds_edit::Error::Unsupported("pose of a bone with a rigid body").into());
-    }
     let mut extra = extra(m, s, e, physics);
     e.history.push(Entry::BoneKeys {
         frame,

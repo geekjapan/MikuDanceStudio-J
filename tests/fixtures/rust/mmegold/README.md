@@ -10,7 +10,10 @@ Rendered on the Windows host `nanoha-lan` (i9-12900K, RTX 3090, driver
 with `tools/windows/build.ps1`. The back buffer was 3072x1728, A8R8G8B8
 (format 21), 8x multisampling. `tools/oracle/mmegold.ps1` ran every scene twice
 in the console session (`tools/windows/runtask.ps1`), and the two runs gave
-the same bytes for every file. On the same build, `tools/oracle/golden2.ps1`
+the same bytes for every file. `post-*` were rendered again by the app built
+at `1502f1e` with the slice `cppfix` changes (`post.fx` below); a run of every
+scene there gave the same bytes as the files of `8f3bed1` for all other
+files. On the same build, `tools/oracle/golden2.ps1`
 and `tools/oracle/frame_dump.ps1` gave the hashes of `../golden2/README.md`
 and `../golden/README.md`.
 
@@ -34,7 +37,7 @@ the ray-mmd corpus of `tools/fixtures/fetch_corpus.sh` (commit `218a91c`) at
 to the exe, and stages each PMM in `<Out>\stage` with its EMM. MMEffect takes
 EMM effect paths as they are, so the lane writes the EMM with `$(fixtures)`,
 `$(mmegold)`, and `$(corpus)` replaced by `<Out>\stage\effects` (a copy of
-`../mme/effects`), `<Out>\stage\mmegold` (the two effects here and
+`../mme/effects`), `<Out>\stage\mmegold` (the three effects here and
 `rust/crates/mds-mmert/tests/data/blink.gif`), and `<Out>\stage\ray-mmd` (a
 copy of the corpus without `.git`). It runs `--mds-mme-dump` on each scene into
 `<Out>\run1` and `<Out>\run2`, prints the size and sha256 of each file, and
@@ -95,7 +98,7 @@ self-shadow, light (-0.5, -1, 0.5).
 | Scene | Frames | Effects (EMM rows) | What it checks |
 |---|---|---|---|
 | `objects` | 0, 30 | `Pmd0 = mme/effects/objects.fx` | An object effect: techniques by pass, subset and Use* filters, a looped technique script. |
-| `post` | 0, 30 | `Pmd0 = mme/effects/post.fx` | A postprocess scene effect on a model: render targets, clears, `ScriptExternal`. The image is the post chain's output. |
+| `post` | 0, 30 | `Pmd0 = mmegold/post.fx` | A postprocess scene effect on a model: render targets, clears, `ScriptExternal`. The image is the post chain's output: `ClearColor` with the grid over it. |
 | `offscreen` | 0, 30 | `Pmd0 = mme/effects/offscreen.fx` | `OFFSCREENRENDERTARGET` with `DefaultEffect` rows, `CONTROLOBJECT` of an absent model and of `(self)`. |
 | `timeofday` | 0, 30 | `Pmd0 = ray-mmd/Skybox/Time of day/Time of day.fx` | The ray-mmd sky effect on a model: `TIME`, `ELAPSEDTIME`, many transform semantics. |
 | `main` | 0, 30 | `Pmd0 = ray-mmd/Main/main.fx` | The ray-mmd material effect alone, as in `frame_hash.rs`. |
@@ -135,6 +138,16 @@ self-shadow, light (-0.5, -1, 0.5).
   (`third_party/mmeffect/src/mmeffect/sas_exec.cpp`).
 - `anime-0` and `anime-3` are the same image, and so are `anime-9` and
   `anime-30`.
+- `post.fx` here is `mme/effects/post.fx` without its two `RenderColorTarget1`
+  lines (`gen_mmegold.py` cuts them; `mme/effects/post.fx` stays as it is,
+  because mds-mme and mds-mmert read it). With `RenderColorTarget1=Full` bound
+  beside the back buffer in the `Final` pass, the images were white (slice
+  `winoracle3`): the dump's back buffer is multisampled
+  (`--mds-frame-dump` refuses to run without that, `src/tools/trace_mode.cpp`)
+  and `Full` is not, so Direct3D 9 dropped the draw and the image kept the
+  white clear of the back buffer. Without them `post-0.png` and `post-30.png`
+  show `ClearColor` with the grid over it. The probes differ from the old ones
+  only in the effect path (`mmegold/post.fx`).
 
 ## Files
 
@@ -162,7 +175,7 @@ self-shadow, light (-0.5, -1, 0.5).
 | `control.emm` | `2b1d1c5263ef290c67fb7de29fb4bee9d9f35267988a4e4ac316eab37e00aa2a` |
 | `control.fx` | `6b628586d7bc068f3394a9c6d008ee1e7bcdc7f6deb34c76f389f39e6dbaf66c` |
 | `control.pmm` | `ed1ded354446c1ec6d0a4e423dcb74f371bddf131f7f071d13118bb2c8363490` |
-| `gen_mmegold.py` | `15552863eb6c99302fbda02cffd0344a2f193b2a6fe55fcc1fbf66000d29cb8f` |
+| `gen_mmegold.py` | `5bfd3cf5e31befb2f89f1dcc41b2ae5f5b0901d8a4088036f68b0fc753096e1b` |
 | `main-0.mme.txt` | `d080348490c87431a4566e3aa4b01012b1274e27bcddb24db43a2755b08181fd` |
 | `main-0.png` | `f6348db3948462b4d1fcc514513ca4aeb5258a0a5b20462fa71640dc77337293` |
 | `main-30.mme.txt` | `984855ecc7f2d036169f2fa29cef12a0a70adcec09dde9899b99ebcb5513db0e` |
@@ -181,11 +194,12 @@ self-shadow, light (-0.5, -1, 0.5).
 | `offscreen-30.png` | `90b6ec1458a6a7ab20eb5436a3d14edcbb05dbdfe8f5c394e5700929007c004a` |
 | `offscreen.emm` | `aedb92908ab1cd434e4b6746fdd50a58272e77a7bdc1ba8eb5b37be7a16df3e1` |
 | `offscreen.pmm` | `cd17d8842da7f6b1b2bdbe2dc2517f1cdce99218988390650a3c0f796ef90bbe` |
-| `post-0.mme.txt` | `e7ca56f6e7f7e2c3330b2e16aaea6f8d30448f083cb597b544172ba914a0740e` |
-| `post-0.png` | `ea477d5b28718c7c1479d4ceb2e7fc96b95a795ada6e2f8961420556d143129b` |
-| `post-30.mme.txt` | `26629951be78e17021332aa8280e088b6e16e74de7cfafbf26f93e481006a798` |
-| `post-30.png` | `ea477d5b28718c7c1479d4ceb2e7fc96b95a795ada6e2f8961420556d143129b` |
-| `post.emm` | `1826d417abfe33c1cf8daaee0198c335966738503d2e1d20cf5af61e8aec2e0c` |
+| `post-0.mme.txt` | `8c558bf1a4ab5bbbaf8e6cbfd7f7eba38b56cc16fba59e292f019aeb70c9f9ba` |
+| `post-0.png` | `9944945e8f967338cd6119a7ad33bdb932d8b4bb6590fb93823aa432b6668a5f` |
+| `post-30.mme.txt` | `5a0bbd16de1fbb23d52af86c2567e44da1ffecb4d6bdf27b63f772e8d14dbc0f` |
+| `post-30.png` | `9944945e8f967338cd6119a7ad33bdb932d8b4bb6590fb93823aa432b6668a5f` |
+| `post.emm` | `69e3787691f72d830ddde5fc834baed74d392ae364190d341b63dc21885587ad` |
+| `post.fx` | `d3be5c12449f23259260afa6cb634def70674356d2999db4eac0a51e9a731868` |
 | `post.pmm` | `cd17d8842da7f6b1b2bdbe2dc2517f1cdce99218988390650a3c0f796ef90bbe` |
 | `ray-0.mme.txt` | `008649ffc184c0317a0b9a20dc420ed3f7f74dfbac3d05c200818df0506b7284` |
 | `ray-0.png` | `b0f2db200f901a88e6ba3df7213f6261b9d73a8dd5c9ca2568f5ad0bca3d8576` |

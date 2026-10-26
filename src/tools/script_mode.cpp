@@ -63,6 +63,16 @@
 // every pump pass append the rigid-body lines of the L2 trace format
 // (trace_l2.hpp) to <out-dir>\<name>. The main window stays hidden, so no
 // stray mouse or keyboard input reaches it.
+//
+// Slice script3 adds the commands that need the mouse, the shell, or a
+// modeless dialog. `drag` sends the WM_MOUSEMOVE, WM_LBUTTONDOWN,
+// WM_MOUSEMOVE, WM_LBUTTONUP of a key drag in the timeline; the cell it
+// presses is found in the hit maps that PanelPaint (ui_panel_paint.cpp)
+// fills, the layout a user sees. `drop` sends WM_DROPFILES with an HDROP
+// that holds one absolute path, as the shell does. `english open` and
+// `physics model open` open the modeless dialogs of menus 259 and 262, and
+// the `dialog` commands set their controls and close them. The text file
+// that a VSQ lip sync writes next to the VSQ is copied into <out-dir>.
 // =========================================================================//
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -70,6 +80,7 @@
 #include <bcrypt.h>
 #include <commctrl.h>
 #include <commdlg.h>
+#include <shlobj.h> // DROPFILES
 
 #include <cstdint>
 #include <cstdio>
@@ -96,6 +107,7 @@
 
 namespace mikudancestudio {
 void SelectDisplayBone(MMDApp* app, int boneIdx); // model_query_helpers.cpp (no header)
+void PanelPaint(MMDApp* app);                     // ui_panel_paint.cpp (no header)
 } // namespace mikudancestudio
 
 namespace mikudancestudio::tools {
@@ -106,6 +118,18 @@ constexpr std::size_t kDialogPathLength = 0x100; // the handlers' path buffers
 // ApplyFrameRangeScale reads its edits with GetWindowTextA(.., 8); the other
 // dialogs read 19 characters. One limit for all keeps a value from being cut.
 constexpr std::size_t kDialogTextLength = 7;
+// The toon dialog reads its edits with GetWindowTextA(.., 0x100) and stores
+// them with strcpy_s(.., 0x64).
+constexpr std::size_t kToonNameLength = 0x63;
+// The timeline layout of PanelPaint and HandleLButtonDown
+// (ui_panel_paint.cpp, ui_editor_click.cpp): frame columns 13 pixels wide
+// from x 100, track rows 14 pixels high from y 160, the accessory rows from
+// y 216, and (sidebar - 84) / 13 visible columns.
+constexpr int kTimelineLeft = 100;
+constexpr int kTimelineTop = 160;
+constexpr int kAccessoryTop = 216;
+constexpr int kColumnWidth = 13;
+constexpr int kRowHeight = 14;
 
 // ---- text ---------------------------------------------------------------
 
@@ -191,6 +215,7 @@ struct StepState {
     bool allowDialogWindow = false; // a #32770 window may open (gravity, a bulk operation)
     const std::vector<DialogInput>* dialogInputs = nullptr; // the next modal dialog's controls
     bool dialogFilled = false;                              // a modal dialog got them
+    int okCancelAnswered = 0;                               // OK/Cancel questions answered
 };
 
 StepState g_step;
@@ -254,9 +279,18 @@ BOOL WINAPI ScriptGetSaveFileNameW(LPOPENFILENAMEW ofn) {
     return AnswerFileDialog(ofn, "save file");
 }
 
-int AnswerMessageBox(const std::string& caption, const std::string& text, UINT type) {
-    if ((type & MB_TYPEMASK) == MB_OKCANCEL && g_step.answerOkCancel)
+bool IsDialogWindow(HWND window);
+
+int AnswerMessageBox(HWND owner, const std::string& caption, const std::string& text, UINT type) {
+    if ((type & MB_TYPEMASK) == MB_OKCANCEL && g_step.answerOkCancel) {
+        ++g_step.okCancelAnswered;
         return IDOK;
+    }
+    // The toon dialog's "cannot find" box is owned by the dialog; the
+    // reminder after a successful OK by the main window.
+    if (g_step.command != nullptr && g_step.command->op == ScriptOp::Toon && owner != nullptr &&
+        IsDialogWindow(owner))
+        AbortStep("message box: " + caption + ": " + text);
     if ((type & MB_TYPEMASK) == MB_OK && g_step.answerInfo) {
         std::string oneLine;
         for (const char c : text)
@@ -268,13 +302,13 @@ int AnswerMessageBox(const std::string& caption, const std::string& text, UINT t
     AbortStep("message box: " + caption + ": " + text);
 }
 
-int WINAPI ScriptMessageBoxA(HWND, LPCSTR text, LPCSTR caption, UINT type) {
-    return AnswerMessageBox(SjisToUtf8(caption != nullptr ? caption : ""),
+int WINAPI ScriptMessageBoxA(HWND owner, LPCSTR text, LPCSTR caption, UINT type) {
+    return AnswerMessageBox(owner, SjisToUtf8(caption != nullptr ? caption : ""),
                             SjisToUtf8(text != nullptr ? text : ""), type);
 }
 
-int WINAPI ScriptMessageBoxW(HWND, LPCWSTR text, LPCWSTR caption, UINT type) {
-    return AnswerMessageBox(Utf8(caption != nullptr ? caption : L""),
+int WINAPI ScriptMessageBoxW(HWND owner, LPCWSTR text, LPCWSTR caption, UINT type) {
+    return AnswerMessageBox(owner, Utf8(caption != nullptr ? caption : L""),
                             Utf8(text != nullptr ? text : L""), type);
 }
 
@@ -560,11 +594,13 @@ struct Runner {
 
     // A modal dialog step: `open` makes the handler open it, the hook fills
     // `inputs` and clicks OK.
-    template <class Open> bool WithModalDialog(const std::vector<DialogInput>& inputs, Open open) {
+    template <class Open>
+    bool WithModalDialog(const std::vector<DialogInput>& inputs, Open open,
+                         std::size_t maxLength = kDialogTextLength) {
         for (const DialogInput& input : inputs)
-            if (input.text.size() > kDialogTextLength)
-                return Fail("\"" + input.text + "\" is longer than " +
-                            std::to_string(kDialogTextLength) + " characters");
+            if (input.text.size() > maxLength)
+                return Fail("\"" + input.text + "\" is longer than " + std::to_string(maxLength) +
+                            " characters");
         g_step.dialogInputs = &inputs;
         g_step.dialogFilled = false;
         const bool ok = open();
@@ -627,7 +663,7 @@ struct Runner {
     // "out/<name>" names a file that an earlier step saved into <out-dir>;
     // any other relative path names a file next to the exe. Sets *wide to
     // the path the file dialog returns.
-    bool InputPath(const std::string& path, std::wstring* wide) {
+    bool InputPath(const std::string& path, std::wstring* wide, std::wstring* full = nullptr) {
         const bool fromOut = path.compare(0, 4, "out/") == 0;
         *wide = fromOut ? request.out + L"\\" + Wide(path.substr(4)) : Wide(path);
         const bool absolute = wide->size() > 1 && ((*wide)[1] == L':' || (*wide)[0] == L'\\');
@@ -637,6 +673,8 @@ struct Runner {
         const std::wstring resolved = absolute ? *wide : exeDir + *wide;
         if (!IsFile(resolved))
             return Fail("input file not found: " + Utf8(resolved));
+        if (full != nullptr)
+            *full = FullPath(resolved);
         if (wide->size() >= kDialogPathLength)
             return Fail("the path is longer than the handler's buffer");
         return true;
@@ -649,16 +687,29 @@ struct Runner {
         return WithDialog(wide, [&] { return isMenu ? Menu(id) : Click(id); });
     }
 
+    // A PMD is saved as .\<name>, next to the exe, and then moved into
+    // <out-dir>: the saved path becomes the model's path, which later PMM
+    // saves record, and a relative one keeps them free of <out-dir>.
     bool Save(const std::string& name, int menu) {
         const std::wstring path = request.out + L"\\" + Wide(name);
         if (path.size() >= kDialogPathLength)
             return Fail("the output path is longer than the handler's buffer");
         DeleteFileW(path.c_str());
-        if (!WithDialog(path, [&] { return Menu(menu); }))
+        const bool besideExe = menu == MDS_CMD_SAVE_ENHANCED_MODEL;
+        std::wstring exeDir = app->ExeDir();
+        if (!exeDir.empty() && exeDir.back() != L'\\')
+            exeDir += L'\\';
+        const std::wstring written = besideExe ? exeDir + Wide(name) : path;
+        if (besideExe && IsFile(written))
+            return Fail(Utf8(written) +
+                        " exists (an input or a leftover); save under another name");
+        if (!WithDialog(besideExe ? L".\\" + Wide(name) : path, [&] { return Menu(menu); }))
             return false;
         Settle();
-        if (!IsFile(path))
-            return Fail("the handler wrote no file " + Utf8(path));
+        if (!IsFile(written))
+            return Fail("the handler wrote no file " + Utf8(written));
+        if (besideExe && !MoveFileExW(written.c_str(), path.c_str(), MOVEFILE_COPY_ALLOWED))
+            return Fail("cannot move " + Utf8(written) + " into <out-dir>");
         if (menu == MDS_CMD_SAVE_MOTION && !ZeroVmdSignatureTail(path))
             return Fail("cannot rewrite " + Utf8(path));
         return RecordOutputs(name);
@@ -749,6 +800,260 @@ struct Runner {
             }
         }
         return Fail("the selected model has no bone \"" + name + "\"");
+    }
+
+    // ---- script3 ------------------------------------------------------------
+
+    // The y of a track row whose key is selected in timeline column
+    // `column`, -1 when none: the cell a user presses to drag the marked keys.
+    int SelectedKeyRow(int column) {
+        const auto& st = app->state;
+        if (app->CameraMode() == 0) {
+            unsigned char* model = app->SelectedModel();
+            if (model == nullptr)
+                return -1;
+            // A cell holds the record index, -10 for record 0, 0 or below
+            // for no key or a group row.
+            auto record = [](std::int32_t v) { return v == -10 ? 0 : v > 0 ? v : -1; };
+            for (int row = 0; row < 200; ++row) {
+                const int cell = row + 200 * column;
+                // A folded group row holds -1 where one of its keys is
+                // marked; a press there starts the drag too (StageRangeRow).
+                if (st.rowHitMorph[cell] == -1 || st.rowHitBone[cell] == -1)
+                    return kTimelineTop + kRowHeight * row;
+                const int display = record(st.rowHitIk[cell]);
+                const int morph = record(st.rowHitMorph[cell]);
+                const int bone = record(st.rowHitBone[cell]);
+                if ((display >= 0 && mdl::DisplayKeys(model)[display].allocated != 0) ||
+                    (morph >= 0 && mdl::MorphKeys(model)[morph].allocated != 0) ||
+                    (bone >= 0 && mdl::BoneKeys(model)[bone].allocated != 0))
+                    return kTimelineTop + kRowHeight * row;
+            }
+            return -1;
+        }
+        const std::int32_t* bands[4] = {st.rowHitBand0, st.rowHitBand1, st.rowHitBand2,
+                                        st.rowHitBand3};
+        for (int band = 0; band < 4; ++band) {
+            const int key = bands[band][column];
+            if (key < 0)
+                continue;
+            const std::uint8_t selected = band == 0   ? app->CameraKeys()[key].selected
+                                          : band == 1 ? app->LightKeys()[key].selected
+                                          : band == 2 ? app->ShadowKeys()[key].selected
+                                                      : app->GravityKeys()[key].selected;
+            if (selected != 0)
+                return kTimelineTop + kRowHeight * band;
+        }
+        // Read through a pointer: the accessory map runs past the 800 ints
+        // the layout names (see ui_panel_paint.cpp).
+        const std::int32_t* accessoryMap = st.rowHitAcc;
+        for (int row = 0; row < 200 && st.jointLineMap[row] >= 0; ++row) {
+            const int key = accessoryMap[column * 200 + row];
+            if (key >= 0 && app->AccessoryKeys(st.jointLineMap[row])[key].selected != 0)
+                return kAccessoryTop + kRowHeight * row;
+        }
+        return -1;
+    }
+
+    // The non-empty hit map cells of a column, for a failed `drag`:
+    // " row:display/morph/bone" in model mode, " row:key" in camera mode.
+    std::string ColumnCells(int column) const {
+        const auto& st = app->state;
+        std::string cells;
+        for (int row = 0; row < 200; ++row) {
+            const int cell = row + 200 * column;
+            if (app->CameraMode() == 0 &&
+                (st.rowHitIk[cell] != 0 || st.rowHitMorph[cell] != 0 || st.rowHitBone[cell] != 0))
+                cells += " " + std::to_string(row) + ":" + std::to_string(st.rowHitIk[cell]) + "/" +
+                         std::to_string(st.rowHitMorph[cell]) + "/" +
+                         std::to_string(st.rowHitBone[cell]);
+        }
+        return cells.empty() ? " (the column is empty)" : " (cells" + cells + ")";
+    }
+
+    void Mouse(UINT message, WPARAM buttons, int x, int y) {
+        SendMessageA(Main(), message, buttons,
+                     MAKELPARAM(static_cast<WORD>(x & 0xFFFF), static_cast<WORD>(y & 0xFFFF)));
+    }
+
+    // Presses a selected key at `frame` in the timeline, moves the mouse by
+    // `frames` columns, and releases it.
+    bool DragKeys(const std::string& frameText, const std::string& framesText) {
+        if (framesText.find('.') != std::string::npos)
+            return Fail("the drag distance is a whole number of frames");
+        const int frame = std::stoi(frameText);
+        const int frames = std::stoi(framesText);
+        PanelPaint(app); // the timeline as it is on screen: fills the hit maps
+        const int column = frame - app->state.timelineStartFrame;
+        const int columns = (app->SidebarWidth() - 84) / kColumnWidth;
+        if (column < 0 || column >= columns)
+            return Fail("frame " + frameText + " is not among the " + std::to_string(columns) +
+                        " timeline columns from frame " +
+                        std::to_string(app->state.timelineStartFrame));
+        const int top = SelectedKeyRow(column);
+        if (top < 0)
+            return Fail("no selected key at frame " + frameText + " in the timeline" +
+                        ColumnCells(column));
+        const int x = kTimelineLeft + kColumnWidth * column + kColumnWidth / 2;
+        const int y = top + kRowHeight / 2;
+        RECT client;
+        GetClientRect(Main(), &client);
+        Mouse(WM_MOUSEMOVE, 0, x, y);
+        Mouse(WM_LBUTTONDOWN, MK_LBUTTON, x, y);
+        if (app->TimelineSelectionChanged() == 0) {
+            Mouse(WM_LBUTTONUP, 0, x, y);
+            return Fail("the press at (" + std::to_string(x) + ", " + std::to_string(y) +
+                        ") started no drag (client " + std::to_string(client.right) + "x" +
+                        std::to_string(client.bottom) + ", sidebar " +
+                        std::to_string(app->SidebarWidth()) + ")");
+        }
+        Mouse(WM_MOUSEMOVE, MK_LBUTTON, x + kColumnWidth * frames, y);
+        Mouse(WM_LBUTTONUP, 0, x + kColumnWidth * frames, y);
+        return true;
+    }
+
+    // Check boxes 412 (model) and 531 (bone); 0 clears the checked one.
+    bool CameraReference(int mode) {
+        if (mode > 2)
+            return Fail("the camera reference is 0, 1, or 2");
+        const HWND model = EnabledControl(panel::kCameraRefModelCheckbox);
+        const HWND bone =
+            model != nullptr ? EnabledControl(panel::kCameraRefBoneCheckbox) : nullptr;
+        if (bone == nullptr)
+            return false;
+        const bool modelOn = SendMessageA(model, BM_GETCHECK, 0, 0) == BST_CHECKED;
+        const bool boneOn = SendMessageA(bone, BM_GETCHECK, 0, 0) == BST_CHECKED;
+        if (mode == 1)
+            return SetCheckbox(panel::kCameraRefModelCheckbox, true, modelOn);
+        if (mode == 2)
+            return SetCheckbox(panel::kCameraRefBoneCheckbox, true, boneOn);
+        return SetCheckbox(panel::kCameraRefModelCheckbox, false, modelOn) &&
+               SetCheckbox(panel::kCameraRefBoneCheckbox, false, boneOn);
+    }
+
+    // The lip sync text LoadVsqFile writes in place of the VSQ (vsq_load.cpp):
+    // deleted before the step, copied into <out-dir> after it.
+    static std::wstring LipSyncText(const std::wstring& vsq) {
+        const std::size_t dot = vsq.find_last_of(L'.');
+        return vsq.substr(0, dot) + L".txt";
+    }
+
+    bool KeepLipSyncText(const std::wstring& vsq) {
+        const std::wstring text = LipSyncText(vsq);
+        if (!IsFile(text))
+            return true; // the handler refused the file before it read it
+        const std::size_t slash = text.find_last_of(L'\\');
+        const std::string name = Utf8(text.substr(slash + 1));
+        if (hashes.count(name) != 0 || IsFile(request.out + L"\\" + Wide(name)))
+            return Fail(name + " is already in <out-dir>; lip sync another VSQ file");
+        if (!CopyFileW(text.c_str(), (request.out + L"\\" + Wide(name)).c_str(), TRUE))
+            return Fail("cannot copy " + Utf8(text));
+        std::string hash;
+        if (!Sha256(request.out + L"\\" + Wide(name), &hash))
+            return Fail("cannot read " + name);
+        hashes[name] = hash;
+        manifest.push_back(std::to_string(g_step.command->line) + "\t" + name + "\t" + hash);
+        return true;
+    }
+
+    bool LoadLipSync(const std::string& path) {
+        std::wstring wide, full;
+        if (!InputPath(path, &wide, &full))
+            return false;
+        DeleteFileW(LipSyncText(full).c_str());
+        return WithDialog(wide, [&] { return Menu(MDS_CMD_LOAD_LIP_SYNC); }) &&
+               KeepLipSyncText(full);
+    }
+
+    // WM_DROPFILES with the absolute path, as the shell sends a drop; the
+    // handler frees the HDROP (DragFinish).
+    bool Drop(const std::string& path) {
+        std::wstring wide, full;
+        if (!InputPath(path, &wide, &full))
+            return false;
+        const bool vsq = full.size() > 4 && _wcsicmp(full.c_str() + full.size() - 4, L".vsq") == 0;
+        if (vsq)
+            DeleteFileW(LipSyncText(full).c_str());
+        const std::size_t bytes = sizeof(DROPFILES) + (full.size() + 2) * sizeof(wchar_t);
+        const HGLOBAL drop = GlobalAlloc(GHND, bytes);
+        auto* files = static_cast<DROPFILES*>(GlobalLock(drop));
+        if (files == nullptr)
+            return Fail("cannot allocate the HDROP");
+        files->pFiles = sizeof(DROPFILES);
+        files->fWide = TRUE;
+        std::memcpy(reinterpret_cast<unsigned char*>(files) + sizeof(DROPFILES), full.c_str(),
+                    full.size() * sizeof(wchar_t));
+        GlobalUnlock(drop);
+        SendMessageA(Main(), WM_DROPFILES, reinterpret_cast<WPARAM>(drop), 0);
+        return !vsq || KeepLipSyncText(full);
+    }
+
+    // The open modeless dialog of `english open` or `physics model open`.
+    HWND ModelessDialog() {
+        const HWND english = app->EnglishNameDialog();
+        const HWND physics = app->state.frameCopyDialog;
+        if ((english != nullptr) == (physics != nullptr)) {
+            Fail(english != nullptr ? "both the English name and the physics model dialogs are open"
+                                    : "no dialog is open (english open, physics model open)");
+            return nullptr;
+        }
+        return english != nullptr ? english : physics;
+    }
+
+    HWND DialogControl(HWND dialog, const std::string& idText) {
+        const HWND control = GetDlgItem(dialog, std::stoi(idText));
+        if (control == nullptr)
+            Fail("the dialog has no control " + idText);
+        else if (!IsWindowEnabled(control))
+            Fail("dialog control " + idText + " is disabled");
+        else
+            return control;
+        return nullptr;
+    }
+
+    // A click: an auto check box toggles and an auto radio button checks
+    // itself before the dialog gets BN_CLICKED, as with the mouse.
+    bool DialogClick(const std::string& idText) {
+        const HWND dialog = ModelessDialog();
+        const HWND control = dialog != nullptr ? DialogControl(dialog, idText) : nullptr;
+        if (control == nullptr)
+            return false;
+        char windowClass[16] = "";
+        GetClassNameA(control, windowClass, sizeof windowClass);
+        const LONG_PTR type = GetWindowLongPtrA(control, GWL_STYLE) & BS_TYPEMASK;
+        if (_stricmp(windowClass, "Button") == 0 && type == BS_AUTOCHECKBOX)
+            SendMessageA(control, BM_SETCHECK,
+                         SendMessageA(control, BM_GETCHECK, 0, 0) == BST_CHECKED ? BST_UNCHECKED
+                                                                                 : BST_CHECKED,
+                         0);
+        else if (_stricmp(windowClass, "Button") == 0 && type == BS_AUTORADIOBUTTON)
+            SendMessageA(control, BM_SETCHECK, BST_CHECKED, 0);
+        SendMessageA(dialog, WM_COMMAND, MAKEWPARAM(std::stoi(idText), BN_CLICKED),
+                     reinterpret_cast<LPARAM>(control));
+        return true;
+    }
+
+    bool DialogSelect(const std::string& idText, const std::string& item) {
+        const HWND dialog = ModelessDialog();
+        const HWND control = dialog != nullptr ? DialogControl(dialog, idText) : nullptr;
+        if (control == nullptr)
+            return false;
+        if (SendMessageA(control, CB_SETCURSEL, std::stoul(item), 0) == CB_ERR)
+            return Fail("combo " + idText + " has no item " + item);
+        SendMessageA(dialog, WM_COMMAND, MAKEWPARAM(std::stoi(idText), CBN_SELCHANGE),
+                     reinterpret_cast<LPARAM>(control));
+        return true;
+    }
+
+    bool DialogClose(int id) {
+        const HWND dialog = ModelessDialog();
+        if (dialog == nullptr)
+            return false;
+        SendMessageA(dialog, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED),
+                     reinterpret_cast<LPARAM>(GetDlgItem(dialog, id)));
+        if (app->EnglishNameDialog() != nullptr || app->state.frameCopyDialog != nullptr)
+            return Fail("the dialog is still open");
+        return true;
     }
 
     static int MorphLane(const std::string& lane) { return lane[0] - '0'; }
@@ -1010,6 +1315,56 @@ struct Runner {
             g_fileAnswers.push_back(wide);
             return true;
         }
+        case ScriptOp::DragKeys:
+            return DragKeys(a[0], a[1]);
+        case ScriptOp::DeleteModel:
+            if (!Click(panel::kDeleteModelButton))
+                return false;
+            if (g_step.okCancelAnswered == 0)
+                return Fail("the handler asked no question (no model in the combo, or a dialog "
+                            "is open)");
+            return true;
+        case ScriptOp::CameraReference:
+            return CameraReference(a[0][0] - '0');
+        case ScriptOp::LoadLipSync:
+            return LoadLipSync(a[0]);
+        case ScriptOp::Drop:
+            return Drop(a[0]);
+        case ScriptOp::EnglishOpen:
+            if (!Menu(MDS_CMD_EDIT_ENGLISH_NAMES))
+                return false;
+            return app->EnglishNameDialog() != nullptr ||
+                   Fail("the English name dialog did not open (camera mode?)");
+        case ScriptOp::PhysicsModelOpen:
+            if (!Menu(MDS_CMD_PHYSICS_MODEL))
+                return false;
+            return app->state.frameCopyDialog != nullptr ||
+                   Fail("the physics model dialog did not open (camera mode?)");
+        case ScriptOp::DialogText: {
+            const HWND dialog = ModelessDialog();
+            const HWND control = dialog != nullptr ? DialogControl(dialog, a[0]) : nullptr;
+            if (control == nullptr)
+                return false;
+            SetWindowTextA(control, Sjis(a[1]).c_str());
+            return true;
+        }
+        case ScriptOp::DialogClick:
+            return DialogClick(a[0]);
+        case ScriptOp::DialogSelect:
+            return DialogSelect(a[0], a[1]);
+        case ScriptOp::DialogOk:
+            return DialogClose(IDOK);
+        case ScriptOp::DialogCancel:
+            return DialogClose(IDCANCEL);
+        case ScriptOp::Toon: {
+            const int slot = std::stoi(a[0]);
+            if (slot < 1 || slot > 10)
+                return Fail("the toon slot is 1..10");
+            // Edits 709..718 hold toon01..toon10 (CollectToonFileNames).
+            return WithModalDialog(
+                {{DialogInput::Text, 708 + slot, Sjis(a[1])}},
+                [&] { return Menu(MDS_CMD_TOON_TEXTURES); }, kToonNameLength);
+        }
         }
         return Fail("unhandled command");
     }
@@ -1018,14 +1373,16 @@ struct Runner {
 bool AnswersOkCancel(ScriptOp op) {
     return op == ScriptOp::New || op == ScriptOp::LoadPmm || op == ScriptOp::LoadModel ||
            op == ScriptOp::LoadVmd || op == ScriptOp::PasteDifferent || op == ScriptOp::DeleteLip ||
-           op == ScriptOp::DeleteEye || op == ScriptOp::DeleteEyebrow;
+           op == ScriptOp::DeleteEye || op == ScriptOp::DeleteEyebrow ||
+           op == ScriptOp::DeleteModel;
 }
 
 bool OpensDialogWindow(ScriptOp op) {
     return op == ScriptOp::GravityOpen || op == ScriptOp::CenterBias || op == ScriptOp::ShiftLip ||
            op == ScriptOp::RegisterBlink || op == ScriptOp::MultiplyCamera ||
            op == ScriptOp::MultiplyBone || op == ScriptOp::MultiplyMorph ||
-           op == ScriptOp::PhysicsFrames || op == ScriptOp::ScaleRange;
+           op == ScriptOp::PhysicsFrames || op == ScriptOp::ScaleRange ||
+           op == ScriptOp::EnglishOpen || op == ScriptOp::PhysicsModelOpen || op == ScriptOp::Toon;
 }
 
 } // namespace
@@ -1093,9 +1450,12 @@ int RunScriptMode(MMDApp* app, const ScriptRequest& request) {
         // The boxes that come with a queued file answer (the 0001 loader's
         // "cannot open" notes) are answered too.
         const bool queuing = command.op == ScriptOp::AnswerFile;
+        // The "save enhanced model" reminder after the OK of the PMD edit
+        // dialogs, and the drop refusal in camera mode, are answered too.
         g_step.answerInfo = command.op == ScriptOp::DeleteUnused ||
                             command.op == ScriptOp::RegisterBlink ||
-                            (!queuing && !g_fileAnswers.empty());
+                            command.op == ScriptOp::DialogOk || command.op == ScriptOp::Toon ||
+                            command.op == ScriptOp::Drop || (!queuing && !g_fileAnswers.empty());
         g_step.allowDialogWindow = OpensDialogWindow(command.op);
         WriteError(StepName() + "start\n"); // the last line names the step of a crash
         const bool ok = runner.Run(command);

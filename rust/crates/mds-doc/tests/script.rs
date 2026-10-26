@@ -23,6 +23,8 @@ fn read_input(path: &str) -> Option<Vec<u8>> {
         fixtures(),
         fixtures().join("script/inputs"),
         fixtures().join("script2/inputs"),
+        fixtures().join("script3/inputs"),
+        fixtures().join("vsq"),
     ]
     .iter()
     .find_map(|d| std::fs::read(d.join(name)).ok())
@@ -270,5 +272,48 @@ mod script2 {
     #[test]
     fn unused() {
         check_in("script2", "unused");
+    }
+}
+
+/// The document commands of `tests/fixtures/rust/script3/` (slice
+/// `winoracle3`): the key drag, model delete, the camera reference, lip
+/// sync, `.vac` accessories and menu 250 in camera mode. `pmdedit` needs
+/// the physics dialog's edit boxes, which the runner does not have.
+mod script3 {
+    use super::check_in;
+
+    #[test]
+    fn camref() {
+        check_in("script3", "camref");
+    }
+
+    #[test]
+    fn deletemodel() {
+        check_in("script3", "deletemodel");
+    }
+
+    #[test]
+    fn drag() {
+        check_in("script3", "drag");
+    }
+
+    #[test]
+    fn dragcamera() {
+        check_in("script3", "dragcamera");
+    }
+
+    #[test]
+    fn lipsync() {
+        check_in("script3", "lipsync");
+    }
+
+    #[test]
+    fn pastecamera() {
+        check_in("script3", "pastecamera");
+    }
+
+    #[test]
+    fn vac() {
+        check_in("script3", "vac");
     }
 }

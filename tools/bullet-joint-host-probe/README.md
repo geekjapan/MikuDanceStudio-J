@@ -64,6 +64,11 @@ iterations `0..9` with each row's `noncontact`, `postnc` pair followed by joints
 0 and 1. Every scalar and vector has a checked shape and hexadecimal words.
 Each 13-word postnc payload must match the native trace. Missing, duplicate,
 reordered, malformed, and extra records fail even when total counts balance.
+Before running the copied Rust test, the probe validates the native TSV,
+oracle prefix, and complete resolve sequence. It passes the derived event count
+as `MDS_JOINT_EXPECTED_EVENTS`. The temporary test compares its observed event
+total against that required value. A missing or incorrect value fails. The
+production frozen test retains its `20_580` assertion.
 Same-host fingerprints and raw bytes must still match exactly.
 
 Failure finalization starts immediately after accepting the empty output

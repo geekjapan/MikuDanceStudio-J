@@ -48,6 +48,9 @@ def joint_adapter(source, native):
             }
             writeln!(out).unwrap();
         }'''
+    source = replace_once(source, 'assert_eq!(row_events, 20_580);',
+                          'assert_eq!(row_events, std::env::var("MDS_JOINT_EXPECTED_EVENTS")'
+                          '.expect("validated native event count").parse::<usize>().unwrap());')
     return replace_once(source, old, new)
 
 
@@ -72,6 +75,9 @@ def check_adapter(source, harness):
             source = replace_once(source, old, new)
     source = replace_once(source, "print(f'Native fixture and pure Rust agree for {len(captured.splitlines())} joint cases.')",
                           "print(f'Diagnostic capture completed for {len(captured.splitlines())} joint cases; see status.json for comparisons.')")
+    source = replace_once(source, "run([output / 'rust-joints', '--nocapture'], env=environment)",
+                          "environment['MDS_JOINT_EXPECTED_EVENTS'] = str(validate_native_capture(output)['simd_events'])\n"
+                          "    run([output / 'rust-joints', '--nocapture'], env=environment)")
     if os.name == 'nt':
         source = replace_once(source, "output / 'native-joints'", "output / 'native-joints.exe'")
         source = source.replace("output / 'rust-joints'", "output / 'rust-joints.exe'")
@@ -211,13 +217,8 @@ def resolve_record(line):
     return record
 
 
-def validate_capture(directory):
+def validate_native_capture(directory):
     cases = capture_cases(directory / 'native.tsv')
-    counts(directory / 'rust.tsv')
-    if input_fingerprint(directory / 'native.tsv') != input_fingerprint(directory / 'rust.tsv'):
-        raise ValueError('same-host input invariant failed')
-    if (directory / 'native.tsv').read_bytes() != (directory / 'rust.tsv').read_bytes():
-        raise ValueError('same-host raw bytes differ')
     oracle = (directory / 'oracle.tsv').read_text().splitlines()
     if len(oracle) != len(cases):
         raise ValueError('oracle case count differs')
@@ -254,6 +255,16 @@ def validate_capture(directory):
             raise ValueError('extra resolve event')
     return {'cases': len(cases), 'rows': sum(rows for _, rows, _ in cases),
             'simd_events': sum(events for _, _, events in cases), 'resolve_records': sequence}
+
+
+def validate_capture(directory):
+    structure = validate_native_capture(directory)
+    counts(directory / 'rust.tsv')
+    if input_fingerprint(directory / 'native.tsv') != input_fingerprint(directory / 'rust.tsv'):
+        raise ValueError('same-host input invariant failed')
+    if (directory / 'native.tsv').read_bytes() != (directory / 'rust.tsv').read_bytes():
+        raise ValueError('same-host raw bytes differ')
+    return structure
 
 
 def msvc_command(command, profile, out, native_libs):
@@ -389,7 +400,8 @@ def main():
             (out / f'{name}.txt').write_bytes(invoke(command, label=name))
 
         os.environ['MDS_JOINT_ACTUAL'] = str(out / 'rust.tsv')
-        namespace = {'__name__': 'probe_adapter', '__file__': str(CHECK)}
+        namespace = {'__name__': 'probe_adapter', '__file__': str(CHECK),
+                     'validate_native_capture': validate_native_capture}
         sys.path.insert(0, str(CHECK.parent))
         exec(compile(adapted, str(out / 'check.py'), 'exec'), namespace)
         namespace['run'] = run

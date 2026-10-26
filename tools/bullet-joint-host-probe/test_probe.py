@@ -27,7 +27,7 @@ class ProbeTests(unittest.TestCase):
         loop = '''        for (index, (a, b)) in actual.iter().zip(&expected).enumerate() {
             assert_eq!(a, b, "case {id} word {index}: Rust {a:08x}, native {b:08x}");
         }'''
-        for anchor in ['include_str!("../solver_data/native.tsv")', 'include_str!("../solver_data/native-x86_64.tsv")', loop]:
+        for anchor in ['include_str!("../solver_data/native.tsv")', 'include_str!("../solver_data/native-x86_64.tsv")', 'assert_eq!(row_events, 20_580);', loop]:
             for changed in [original.replace(anchor, ''), original + '\n' + anchor]:
                 with self.assertRaises(ValueError):
                     probe.joint_adapter(changed, Path('/tmp/native.tsv'))
@@ -167,6 +167,29 @@ class ProbeTests(unittest.TestCase):
                            cwd=probe.ROOT / 'rust', check=True, capture_output=True)
             self.assertEqual(subprocess.check_output([executable]), b'3d000001')
             self.assertNotIn(str(probe.FIXTURE), adapter)
+
+    def test_adapted_event_gate_executes_host_specific_totals(self):
+        adapted = probe.joint_adapter(probe.JOINT.read_text(), Path('/tmp/native.tsv'))
+        assertion = next(line.strip() for line in adapted.splitlines() if 'assert_eq!(row_events,' in line)
+        self.assertIn('MDS_JOINT_EXPECTED_EVENTS', assertion)
+        self.assertIn('assert_eq!(row_events, 20_580);', probe.JOINT.read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'gate.rs'
+            source.write_text('fn main() { let row_events: usize = std::env::args().nth(1).unwrap().parse().unwrap();'
+                              + assertion + '}')
+            executable = Path(directory) / ('gate.exe' if os.name == 'nt' else 'gate')
+            subprocess.run(['rustup', 'run', '1.95.0', 'rustc', str(source), '-o', str(executable)],
+                           cwd=probe.ROOT / 'rust', check=True, capture_output=True)
+            for actual in ['20580', '20640']:
+                env = dict(os.environ, MDS_JOINT_EXPECTED_EVENTS=actual)
+                subprocess.run([executable, actual], env=env, check=True, capture_output=True)
+                wrong = '20640' if actual == '20580' else '20580'
+                self.assertNotEqual(subprocess.run([executable, wrong], env=env, capture_output=True).returncode, 0)
+            env = dict(os.environ)
+            env.pop('MDS_JOINT_EXPECTED_EVENTS', None)
+            self.assertNotEqual(subprocess.run([executable, '20580'], env=env, capture_output=True).returncode, 0)
+        check = probe.check_adapter(probe.CHECK.read_text(), Path('/tmp/harness.rs'))
+        self.assertIn("environment['MDS_JOINT_EXPECTED_EVENTS'] = str(validate_native_capture(output)['simd_events'])", check)
 
     def test_setup_failure_finalizes_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

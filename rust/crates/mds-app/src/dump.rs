@@ -166,6 +166,9 @@ fn run_mme(
             .ok_or_else(|| format!("light track at frame {frame}"))?;
         let view = View {
             camera: &camera,
+            view_offset: scene::view_offset(doc),
+            shadow_map: Default::default(),
+            shadow_map_display: false,
             light,
             frame,
             elapsed,

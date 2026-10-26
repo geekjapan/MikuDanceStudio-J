@@ -70,6 +70,9 @@ pub struct Frame<'a> {
     /// The posed models (`PhysicsScene::scene.models`), found by slot.
     pub poses: &'a [Posed],
     pub camera: &'a Camera,
+    pub view_offset: [f32; 2],
+    pub shadow_map: mds_render::ShadowMapSize,
+    pub shadow_map_display: bool,
     /// `[r, g, b, x, y, z]`: the light color and the direction it travels.
     pub light: [f32; 6],
     pub frame: u32,
@@ -196,6 +199,7 @@ fn stamp(path: &Path) -> Option<SystemTime> {
 /// its inverse; `None` for a camera with no inverse.
 pub fn scene(
     camera: &Camera,
+    view_offset: [f32; 2],
     light: [f32; 6],
     frame: u32,
     elapsed: f32,
@@ -208,8 +212,9 @@ pub fn scene(
     let r = Mat4::multiply(&r, &Mat4::rotation_z(roll));
     let frame_world = Mat4::multiply(&t, &r);
     let inverse = frame_world.inverse()?.0 .0;
-    let eye = [0.0, 0.0, c.distance];
-    let look = look_at_lh(eye, [0.0, 0.0, c.distance + 80.0], [0.0, 1.0, 0.0]);
+    let [ox, oy] = view_offset;
+    let eye = [ox, oy, c.distance];
+    let look = look_at_lh(eye, [ox, oy, c.distance + 80.0], [0.0, 1.0, 0.0]);
     let aspect = w as f32 / h as f32;
     let [r, g, b, x, y, z] = light;
     let mut s = Scene::default_view(w, h);
@@ -514,7 +519,7 @@ impl Host {
         log: &mut Vec<String>,
     ) -> Vec<String> {
         let Some((scene, frame_world, inverse)) =
-            scene(f.camera, f.light, f.frame, f.elapsed, f.size)
+            scene(f.camera, f.view_offset, f.light, f.frame, f.elapsed, f.size)
         else {
             return vec!["camera matrix".into()];
         };
@@ -684,6 +689,33 @@ impl Host {
             skipped.extend(r.skipped);
             skipped.extend(inner);
         }
+        // shortcut: the map uses posed mesh geometry; use effect depth passes for vertex deformations.
+        if f.shadow_map_display
+            && mds_render::scene::stage_at(f.pmm, f.frame)
+                .self_shadow
+                .is_some()
+        {
+            let masks: Vec<_> = (0..self.objects.len())
+                .filter(|&o| !carriers[o] && assignment(o).shown)
+                .filter_map(|o| {
+                    self.objects[o].model.as_ref().map(|m| {
+                        (
+                            o,
+                            (0..m.materials.len())
+                                .map(|s| assignment(o).subset_shown(s as i32))
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                })
+                .collect();
+            let list: Vec<_> = masks
+                .iter()
+                .map(|(o, mask)| (*o, mask.as_slice()))
+                .collect();
+            if let Err(e) = self.draw_standard(gpu, &target, &list, &drawn, true) {
+                skipped.push(e);
+            }
+        }
         for l in &mut self.effects {
             l.effect.tick_animes(gpu, scene.time);
         }
@@ -773,7 +805,7 @@ impl Host {
             .filter(|p| p.host.contains(&true))
             .map(|p| (p.o, &p.host[..]))
             .collect();
-        if let Err(e) = self.draw_standard(gpu, target, &host, drawn) {
+        if let Err(e) = self.draw_standard(gpu, target, &host, drawn, false) {
             skipped.push(e);
         }
         if !host.is_empty() && plans.iter().any(|p| !p.effects.is_empty()) {
@@ -818,6 +850,7 @@ impl Host {
         target: &Target,
         list: &[(usize, &[bool])],
         drawn: &Drawn,
+        display: bool,
     ) -> Result<(), String> {
         if list.is_empty() {
             return Ok(());
@@ -878,7 +911,7 @@ impl Host {
         let frame = mds_render::Frame {
             width: w,
             height: h,
-            view: f.camera.view(f.size.0, f.size.1),
+            view: f.camera.view_with_offset(f.view_offset, f.size.0, f.size.1),
             light: Light {
                 color: [r, g, b],
                 direction: [x, y, z],
@@ -891,6 +924,8 @@ impl Host {
         };
         let stage = Stage {
             accessories: &accessories,
+            shadow_map: f.shadow_map,
+            shadow_map_display: display.then_some([0.0, 0.0, w as f32, h as f32]),
             ..mds_render::scene::stage_at(f.pmm, f.frame)
         };
         let standard = match &mut self.standard {
@@ -1414,6 +1449,28 @@ mod tests {
     /// The orthographic `PROJECTION` is `SetupFrameWorldTransform`'s matrix
     /// (`debug_geometry.cpp`, 0x46BC20): `-2 / distance`, the aspect times it, `0.0013`, `1`.
     #[test]
+    fn view_offsets_move_the_view_without_moving_the_reference_world() {
+        let camera = Camera {
+            target: [3.0, 10.0, -2.0],
+            rotation: [0.2, -0.7, 0.1],
+            distance: -45.0,
+            fov_deg: 30.0,
+            orthographic: false,
+        };
+        let (base, world, inverse) =
+            scene(&camera, [0.0; 2], [0.6; 6], 0, 0.0, (640, 360)).unwrap();
+        let (offset, moved_world, moved_inverse) =
+            scene(&camera, [2.0, -3.0], [0.6; 6], 0, 0.0, (640, 360)).unwrap();
+        assert_eq!(moved_world, world);
+        assert_eq!(moved_inverse, inverse);
+        assert_eq!(offset.projection, base.projection);
+        let expected = mul(&base.view, &Mat4::translation(-2.0, 3.0, 0.0).0);
+        for (got, want) in offset.view.iter().zip(expected) {
+            assert!((got - want).abs() < 1e-5);
+        }
+    }
+
+    #[test]
     fn the_orthographic_projection_is_the_cpp_matrix() {
         let camera = Camera {
             target: [0.0, 10.0, 0.0],
@@ -1422,7 +1479,7 @@ mod tests {
             fov_deg: 30.0,
             orthographic: true,
         };
-        let (s, _, _) = scene(&camera, [0.6; 6], 0, 0.0, (640, 360)).unwrap();
+        let (s, _, _) = scene(&camera, [0.0; 2], [0.6; 6], 0, 0.0, (640, 360)).unwrap();
         let x = -2.0 / -45.0f32;
         let mut want = [0.0; 16];
         want[0] = x;
@@ -1435,7 +1492,7 @@ mod tests {
             orthographic: false,
             ..camera
         };
-        let (p, _, _) = scene(&perspective, [0.6; 6], 0, 0.0, (640, 360)).unwrap();
+        let (p, _, _) = scene(&perspective, [0.0; 2], [0.6; 6], 0, 0.0, (640, 360)).unwrap();
         assert_eq!(p.projection[11], 1.0);
     }
 }

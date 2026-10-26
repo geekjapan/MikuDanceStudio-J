@@ -259,11 +259,15 @@ pub fn state_camera(doc: &Document) -> Camera {
 
 /// The view offsets belong to the model view, separate from its reference point.
 pub fn view(doc: &Document, camera: &Camera, [width, height]: [u32; 2]) -> mds_render::View {
+    camera.view_with_offset(view_offset(doc), width, height)
+}
+
+/// The model view's saved pan, disabled for the camera view.
+pub fn view_offset(doc: &Document) -> [f32; 2] {
     let p = &doc.pmm;
-    let offset = if p.settings.options[0] == 0 && p.appearance.follow_camera == 0 {
+    if p.settings.options[0] == 0 && p.appearance.follow_camera == 0 {
         [p.camera_state[3], p.camera_state[4]]
     } else {
         [0.0; 2]
-    };
-    camera.view_with_offset(offset, width, height)
+    }
 }

@@ -686,7 +686,7 @@ impl Editor {
             false => {
                 let light = self.light_while(frame, true)?;
                 scene::with_stage_lit(&self.doc, &self.assets, &shot, light, |f, s| {
-                    mds_render::render_frame_with(r.gpu(), f, s)
+                    mds_render::render_frame_with(r.gpu(), f, &self.render_stage(s, r.size()))
                 })??
             }
         };
@@ -772,6 +772,9 @@ impl Editor {
         let ([r, g, b], [x, y, z]) = (l.color, l.direction);
         Ok(View {
             camera: &self.camera,
+            view_offset: scene::view_offset(&self.doc),
+            shadow_map: self.shadow_map,
+            shadow_map_display: self.shadow_map_display,
             light: [r, g, b, x, y, z],
             frame,
             elapsed,
@@ -807,18 +810,21 @@ impl Editor {
         };
         let light = self.light(shot.frame)?;
         scene::with_stage_lit(&self.doc, &self.assets, &shot, light, |frame, stage| {
-            let stage = Stage {
-                shadow_map: self.shadow_map,
-                shadow_map_display: self.shadow_map_display.then_some([
-                    0.0,
-                    0.0,
-                    size[0] as f32,
-                    size[1] as f32,
-                ]),
-                ..*stage
-            };
-            draw(frame, &stage)
+            draw(frame, &self.render_stage(stage, size))
         })
+    }
+
+    fn render_stage<'a>(&self, stage: &Stage<'a>, [width, height]: [u32; 2]) -> Stage<'a> {
+        Stage {
+            shadow_map: self.shadow_map,
+            shadow_map_display: self.shadow_map_display.then_some([
+                0.0,
+                0.0,
+                width as f32,
+                height as f32,
+            ]),
+            ..*stage
+        }
     }
 }
 
@@ -878,5 +884,29 @@ impl Files {
                 .collect(),
             picture: (p.picture.enabled, p.picture.path.text.clone()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recording_stage_uses_the_controls_at_the_output_size() {
+        let mut editor = Editor::empty();
+        editor.shadow_map = ShadowMapSize::Texels4096;
+        editor.shadow_map_display = true;
+        let stage = Stage {
+            grid: true,
+            ..Stage::default()
+        };
+        let recording = editor.render_stage(&stage, [1920, 1080]);
+        assert_eq!(recording.shadow_map, ShadowMapSize::Texels4096);
+        assert_eq!(
+            recording.shadow_map_display,
+            Some([0.0, 0.0, 1920.0, 1080.0])
+        );
+        assert!(recording.grid);
+        assert!(!editor.modified);
     }
 }

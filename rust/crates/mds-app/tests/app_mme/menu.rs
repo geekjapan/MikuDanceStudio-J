@@ -256,6 +256,9 @@ fn a_runtime_that_cannot_start_leaves_the_scene_without_effects() {
     assert!(mme.active());
     let view = View {
         camera: &editor.camera,
+        view_offset: [0.0; 2],
+        shadow_map: Default::default(),
+        shadow_map_display: false,
         light: [0.6, 0.6, 0.6, -0.5, -1.0, 0.5],
         frame: 0,
         elapsed: 0.0,

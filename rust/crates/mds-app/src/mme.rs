@@ -48,6 +48,9 @@ impl Default for Switches {
 /// The view an MME frame is drawn from.
 pub struct View<'a> {
     pub camera: &'a Camera,
+    pub view_offset: [f32; 2],
+    pub shadow_map: mds_render::ShadowMapSize,
+    pub shadow_map_display: bool,
     /// `[r, g, b, x, y, z]`: the light color and the direction it travels.
     pub light: [f32; 6],
     pub frame: u32,
@@ -368,6 +371,9 @@ impl Mme {
             pmm: &doc.pmm,
             poses: &physics.scene.models,
             camera: view.camera,
+            view_offset: view.view_offset,
+            shadow_map: view.shadow_map,
+            shadow_map_display: view.shadow_map_display,
             light: view.light,
             frame: view.frame,
             elapsed: view.elapsed,

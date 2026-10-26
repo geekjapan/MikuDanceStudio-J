@@ -200,10 +200,7 @@ fn toggle_perspective(ctx: &mut Ctx) -> Result<(), String> {
 /// `SceneModified` for either. Playback does not grey it (`StartPlayback` greys 536 and on).
 fn toggle_follow(ctx: &mut Ctx) -> Result<(), String> {
     let on = ctx.editor.doc.pmm.appearance.follow_camera == 0;
-    let modified = ctx.editor.modified;
-    ctx.editor.apply(Command::SetFollowCamera(on))?;
-    ctx.editor.modified = modified;
-    Ok(())
+    ctx.editor.apply(Command::SetFollowCamera(on))
 }
 
 /// Check box 412 (`mode` 1, the model) or 531 (`mode` 2, the selected bone): checking sets the
@@ -211,15 +208,12 @@ fn toggle_follow(ctx: &mut Ctx) -> Result<(), String> {
 /// mode in either edit mode and moves the view only in model mode (the document does the same).
 fn toggle_reference(ctx: &mut Ctx, mode: u8) -> Result<(), String> {
     let now = ctx.editor.doc.pmm.timeline.camera_reference_mode;
-    let modified = ctx.editor.modified;
     ctx.editor
         .apply(Command::SetCameraReference(if now == mode {
             0
         } else {
             mode
-        }))?;
-    ctx.editor.modified = modified;
-    Ok(())
+        }))
 }
 
 /// The view angle, from slider 447 (`src/window/ui_hscroll.cpp:232`) or edit 448 (`atol`,

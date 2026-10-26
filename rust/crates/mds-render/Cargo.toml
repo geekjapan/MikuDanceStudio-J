@@ -23,3 +23,5 @@ image = { version = "0.25", default-features = false, features = ["bmp", "dds", 
 # Tests only: the library (MIT) does not depend on the physics crate.
 mds-physics = { path = "../mds-physics" }
 png = "0.18"
+# Validates the shader without a GPU; the release wgpu already locks.
+naga = { version = "=30.0.1", features = ["wgsl-in"] }

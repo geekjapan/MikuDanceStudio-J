@@ -90,6 +90,23 @@ impl Assets {
         a.iter().map(|a| accessory(dir, &a.path.text)).collect()
     }
 
+    /// The textures, sphere maps and toons of every model and accessory read again from their
+    /// files, as menu 278 does (`ReloadTextureCache`, `src/window/enhance_model_io.cpp:779`, after
+    /// `InitToonTextures`, `src/render/toon_textures.cpp:62`). Returns the files found that did
+    /// not decode; the C++ keeps no texture for them either.
+    pub fn reload_textures(&mut self, doc: &Document, dir: &Path) -> Vec<(String, String)> {
+        let mut errors = Vec::new();
+        for (mesh, m) in self.meshes.iter_mut().zip(&doc.pmm.models) {
+            errors.extend(mesh.load_textures(beside(&resolve(dir, &m.path.text))));
+        }
+        for (mesh, a) in self.accessories.iter_mut().zip(&doc.pmm.accessories) {
+            if let Some(mesh) = mesh {
+                errors.extend(mesh.load_textures(beside(&resolve(dir, &a.path.text))));
+            }
+        }
+        errors
+    }
+
     /// The model edge scales again from the document (`Command::SetEdgeScale`).
     pub fn set_edge_scales(&mut self, doc: &Document) {
         for (mesh, m) in self.meshes.iter_mut().zip(&doc.pmm.models) {

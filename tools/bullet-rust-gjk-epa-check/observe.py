@@ -30,7 +30,7 @@ def observe(src, command, executable, inputs, output, environment):
             for label, value in [('nonconvex', 'NonConvex'), ('degenerated', 'Degenerated'), ('invalid-hull', 'InvalidHull'), ('vertices', 'OutOfVertices'), ('accuracy', 'AccuraryReached')]:
                 old = f'm_status=eStatus::{value};'
                 if old in epa:
-                    epa = epa.replace(old, old + f' std::fprintf(stderr,"epa-{label}\\n");')
+                    epa = epa.replace(old, f'(m_status=eStatus::{value}, std::fprintf(stderr,"epa-{label}\\n"));')
             epa = epa.replace('m_status=m_stock.root?eStatus::OutOfVertices:eStatus::OutOfFaces;', 'm_status=m_stock.root?eStatus::OutOfVertices:eStatus::OutOfFaces; std::fprintf(stderr,"epa-stock-empty\\n");')
             changed = before + epa
         else:
@@ -52,6 +52,8 @@ def observe(src, command, executable, inputs, output, environment):
     (output / 'observed.tsv').write_bytes(result)
     assert result == (output / 'native.tsv').read_bytes(), 'Observation changed stdout'
     counts = Counter((output / 'coverage.log').read_text().splitlines())
+    assert counts['epa-degenerated'] == 302, counts['epa-degenerated']
+    assert counts['epa-nonconvex'] == 97, counts['epa-nonconvex']
     gaps = [label for label in ['gjk-project 2','gjk-project 3','gjk-project 4','enclose-rank 1','enclose-rank 2','enclose-rank 3','enclose-rank 4','epa-result 0','epa-result 4','epa-result 5','epa-result 6','epa-result 7','epa-result 8','adapter-distance-fallback','adapter-distance-success','adapter-untouched','gjk-result 2','epa-best-tie'] if not counts[label]]
     (output / 'coverage.json').write_text(json.dumps({'counts': dict(counts), 'unobserved': gaps, 'original-observed-stdout-identical': True}, indent=2)+'\n')
     required = ['gjk-project 2', 'gjk-project 3', 'gjk-project 4', 'gjk-projection-valid 0', 'gjk-projection-valid 1', 'gjk-mask 15', 'enclose-rank 2', 'enclose-rank 3', 'enclose-rank 4', 'epa-result 4', 'epa-result 7', 'epa-result 8', 'epa-stock-empty', 'epa-best-tie', 'adapter-distance-success', 'adapter-untouched']

@@ -1,0 +1,15 @@
+[package]
+name = "bullet-dbvt-consumer-profile"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+mds-bullet-sys = { path = "../../rust/crates/mds-bullet-sys" }
+dbvt-math = { path = "../bullet-rust-dbvt-check/math-dependency" }
+
+[[bin]]
+name = "consumer-profile"
+path = "main.rs"

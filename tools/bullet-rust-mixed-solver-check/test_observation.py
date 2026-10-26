@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from observation import captures,differences,identity,verify
+from observation import captures,differences,identity,verify,digest
 
 
 class ObservationTests(unittest.TestCase):
@@ -11,7 +11,7 @@ class ObservationTests(unittest.TestCase):
             out=Path(directory);profiles=out/'profiles';profiles.mkdir()
             for name in ['compiler.txt','rust-target.txt','effective-profile.txt']:(out/name).write_text('frozen '+name)
             for name in ['inputs.tsv','original.tsv','native.tsv','rust.tsv']:(out/name).write_text('frozen '+name)
-            (out/'source-sha256.json').write_text('{}')
+            (out/'source-sha256.json').write_text(json.dumps({'source.rs':'frozen'}))
             words=['00000001','ffffffff']+['00000000']*18+['00000000']*5
             # Pool body delta-linear x is word 13 in the complete event.
             native='0\t0\t0\t-1\t-1\t'+'\t'.join(words)+'\n'
@@ -19,9 +19,23 @@ class ObservationTests(unittest.TestCase):
             rust_words=native_words[:];rust_words[13]='ffc00000';rust='\t'.join(rust_words)+'\n'
             (out/'native.trace').write_text(native);(out/'rust.trace').write_text(rust)
             inventory=differences(out/'native.trace',out/'rust.trace')
-            profile={'name':'bounded-test','identity':identity(out),'captures':captures(out),'producer_sources':{},'differences':inventory,'limit':'exact synthetic test only'}
+            profile={'name':'bounded-test','identity':identity(out),'captures':captures(out),'producer_sources':{'source.rs':'frozen'},'differences':inventory,'limit':'exact synthetic test only'}
             profile_path=profiles/'test.json';profile_path.write_text(json.dumps(profile))
             self.assertFalse(verify(out,profiles)['raw_bit_equality'])
+            (out/'compiler-banner.txt').write_bytes(b'Microsoft compiler 19.44.35229 for x64\r\n')
+            windows=json.loads(json.dumps(profile));windows['identity']=identity(out)
+            windows['identity_raw']={'compiler-banner.txt':digest(out/'compiler-banner.txt')}
+            profile_path.write_text(json.dumps(windows))
+            self.assertFalse(verify(out,profiles)['raw_bit_equality'])
+            (out/'compiler-banner.txt').write_bytes(b'Microsoft compiler 19.44.35230 for x64\r\n')
+            with self.assertRaisesRegex(ValueError,'unknown or ambiguous'):verify(out,profiles)
+            (out/'compiler-banner.txt').write_bytes(b'Microsoft compiler 19.44.35229 for x64\n')
+            with self.assertRaisesRegex(ValueError,'raw compiler identity'):verify(out,profiles)
+            (out/'compiler-banner.txt').unlink();profile_path.write_text(json.dumps(profile))
+
+            (out/'source-sha256.json').write_text(json.dumps({'source.rs':'changed'}))
+            with self.assertRaisesRegex(ValueError,'source profile differs'):verify(out,profiles)
+            (out/'source-sha256.json').write_text(json.dumps({'source.rs':'frozen'}))
             altered=json.loads(json.dumps(profile));altered['legacy_prefix']={'native.trace':{'lines':1,'sha256':'wrong'}}
             profile_path.write_text(json.dumps(altered))
             with self.assertRaisesRegex(ValueError,'legacy capture prefix differs'):verify(out,profiles)
@@ -39,5 +53,16 @@ class ObservationTests(unittest.TestCase):
             for field,value in [('word',14),('native','ffc00000'),('field','pool[0].delta_angular[0]')]:
                 altered=json.loads(json.dumps(profile));altered['differences'][0][field]=value;profile_path.write_text(json.dumps(altered))
                 with self.assertRaises(ValueError):verify(out,profiles)
+
+    def test_actual_msvc_banner_is_required_and_raw_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out=Path(directory)
+            for name in ['compiler.txt','rust-target.txt','effective-profile.txt']:(out/name).write_text('same help and target')
+            first=identity(out)
+            (out/'compiler-banner.txt').write_bytes(b'Microsoft compiler 19.44.35229 for x64\r\n')
+            second=identity(out)
+            self.assertNotEqual(first,second)
+            (out/'compiler-banner.txt').write_bytes(b'Microsoft compiler 19.44.35230 for x64\r\n')
+            self.assertNotEqual(second,identity(out))
 
 if __name__=='__main__':unittest.main()

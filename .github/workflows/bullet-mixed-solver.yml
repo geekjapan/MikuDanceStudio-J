@@ -7,6 +7,8 @@ on:
     paths:
       - 'rust/crates/mds-bullet/src/core/**'
       - 'rust/crates/mds-crtmath/**'
+      - 'rust/crates/mds-bullet-sys/shim/**'
+      - 'tools/bullet-rust-contact-solver-check/support.rs'
       - 'tools/bullet-rust-mixed-solver-check/**'
       - 'recipes/bullet275/bullet-src/src/**'
       - '.github/workflows/bullet-mixed-solver.yml'

@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import re
 from trace import compare
+from observation import schema_fields
 
 
 def once(source, old, new):
@@ -16,6 +17,43 @@ def once(source, old, new):
     return re.sub(pattern,lambda _:new,source,count=1)
 
 
+def rust_path(path):
+    return json.dumps(path.as_posix(), ensure_ascii=False)
+
+
+def relocate_runner(source, here, solver, contact):
+    def module(match):
+        relative = match[1]
+        path = solver if relative.endswith('/solver.rs') else contact if relative.endswith('/contact_solver.rs') else (here / relative).resolve()
+        return '#[path = ' + rust_path(path) + ']'
+    return re.sub(r'#\[path = "([^"]+)"\]', module, source)
+
+
+def check_capture_syntax(path):
+    number = 0
+    with path.open() as stream:
+        for number, line in enumerate(stream, 1):
+            fields = line.rstrip('\n').split('\t')
+            try:
+                if len(fields) < 10 or any(re.fullmatch(r'-?\d+', word) is None for word in fields[:5]):
+                    raise ValueError('invalid header')
+                if any(re.fullmatch(r'[0-9a-f]{8}', word) is None for word in fields[5:]):
+                    raise ValueError('invalid raw word')
+                schema_fields(fields)
+            except (ValueError, IndexError) as error:
+                raise ValueError(f'{number}: malformed mutation capture') from error
+    if not number:raise ValueError('empty malformed mutation capture')
+
+
+def check_stdout_syntax(actual, baseline):
+    rows, expected = actual.splitlines(), baseline.splitlines()
+    if len(rows) != len(expected):raise ValueError('malformed mutation stdout count')
+    for row, original in zip(rows, expected):
+        words, reference = row.split(b'\t'), original.split(b'\t')
+        if words[:2] != reference[:2] or len(words) != len(reference) or any(re.fullmatch(rb'[0-9a-f]{8}', word) is None for word in words[2:]):
+            raise ValueError('malformed mutation stdout fields')
+
+
 def run_mutations(root, here, out, inputs, run, rust_command, suffix, native):
     solver = (root / 'rust/crates/mds-bullet/src/core/solver.rs').read_text()
     contact = (root / 'rust/crates/mds-bullet/src/core/contact_solver.rs').read_text()
@@ -26,6 +64,15 @@ def run_mutations(root, here, out, inputs, run, rust_command, suffix, native):
     selected_lines = [line for line in inputs.read_text().splitlines() if int(line.split('\t')[0]) in selected]
     mutation_inputs = out / 'mutation-inputs.tsv';mutation_inputs.write_text('\n'.join(selected_lines)+'\n')
     baseline = run([native,mutation_inputs,out / 'mutation-baseline.trace'])
+    run(rust_command(here / 'runner.rs','mutation-clean'))
+    clean_trace = out / 'mutation-clean.trace'
+    clean = run([out / ('mutation-clean'+suffix),mutation_inputs,clean_trace])
+    check_capture_syntax(clean_trace)
+    check_stdout_syntax(clean,baseline)
+    if clean != baseline or compare(out / 'mutation-baseline.trace',clean_trace) is not None:
+        raise AssertionError('clean mutation baseline differs from native')
+    (out / 'mutation-baseline.json').write_text(json.dumps({'compiled':True,'stdout_equal':True,'trace_equal':True,'status':'PASS'})+'\n')
+    clean_trace.unlink()
     mutations = []
     def add(name, s=solver, c=contact, r=runner):mutations.append((name,s,c,r))
     joint_start = solver.index('            for index in 0..self.joint_rows.len()')
@@ -65,18 +112,19 @@ def run_mutations(root, here, out, inputs, run, rust_command, suffix, native):
     separate = once(runner,'GroupSolver::setup(&bodies,&mut joints,&mut manifolds,dt,mode)','GroupSolver::setup(&bodies,&mut joints,&mut [],dt,mode)')
     separate = once(separate,'s.writeback(&mut bodies,&mut manifolds);','s.writeback(&mut bodies,&mut manifolds);let mut contacts=GroupSolver::setup(&bodies,&mut [],&mut manifolds,dt,mode);contacts.iterate(&bodies,&[],|_,_|{});contacts.writeback(&mut bodies,&mut manifolds);')
     add('separate-full-solves',r=separate)
+    assert len(mutations) == 19
     reports = []
     for name, s, c, r in mutations:
         directory=out / 'mutations' / name;directory.mkdir(parents=True,exist_ok=True)
-        sp=directory / 'solver.rs';cp=directory / 'contact_solver.rs';sp.write_text(s);cp.write_text(c)
-        for relative in re.findall(r'#\[path = "([^"]+)"\]',r):
-            path=sp if relative.endswith('/solver.rs') else cp if relative.endswith('/contact_solver.rs') else (here / relative).resolve()
-            r=r.replace(json.dumps(relative),json.dumps(path.as_posix()))
-        rp=directory / 'runner.rs';rp.write_text(r)
+        sp=directory / 'solver.rs';cp=directory / 'contact_solver.rs';sp.write_text(s,encoding='utf-8');cp.write_text(c,encoding='utf-8')
+        r=relocate_runner(r,here,sp,cp)
+        rp=directory / 'runner.rs';rp.write_text(r,encoding='utf-8')
         label=str(directory / 'mutant')
         run(rust_command(rp,label))
         trace=directory / 'actual.trace';actual=run([Path(label+suffix),mutation_inputs,trace])
         (directory / 'actual.tsv').write_bytes(actual)
+        check_capture_syntax(trace)
+        check_stdout_syntax(actual,baseline)
         difference=compare(out / 'mutation-baseline.trace',trace)
         if actual == baseline and difference is None:
             raise AssertionError(f'{name}: compiled mutation survived behavioral comparison')
@@ -90,6 +138,8 @@ def run_mutations(root, here, out, inputs, run, rust_command, suffix, native):
                 expected = run([native,mode_inputs,expected_trace])
                 actual_trace = directory / f'actual-{mode}.trace'
                 actual_mode = run([Path(label+suffix),mode_inputs,actual_trace])
+                check_capture_syntax(actual_trace)
+                check_stdout_syntax(actual_mode,expected)
                 mode_difference = compare(expected_trace,actual_trace)
                 expected_case = min(cases) + int(name == 'register-masszero-kinematic')
                 if mode_difference is None or list(map(int,mode_difference['event'])) != [expected_case,0,0,-1,-1]:
@@ -97,5 +147,6 @@ def run_mutations(root, here, out, inputs, run, rust_command, suffix, native):
                 report['directed_modes'].append({'mode':mode,'stdout_equal':actual_mode==expected,'first_trace_difference':mode_difference,'status':'CAUGHT'})
         reports.append(report);(directory / 'result.json').write_text(json.dumps(report,indent=2)+'\n')
         trace.unlink()
-        print(name,'CAUGHT',difference)
+        (out / 'mutations.json').write_text(json.dumps(reports,indent=2)+'\n')
+        print(name,'CAUGHT',difference,flush=True)
     (out / 'mutations.json').write_text(json.dumps(reports,indent=2)+'\n')

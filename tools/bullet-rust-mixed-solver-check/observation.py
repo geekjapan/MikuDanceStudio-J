@@ -16,7 +16,9 @@ def schema_fields(fields):
     labels=['case','step','kind','iteration','index'];cursor=5
     def count(label):
         nonlocal cursor
-        labels.append(label);value=int(fields[cursor],16);cursor+=1;return value
+        labels.append(label);value=int(fields[cursor],16);cursor+=1
+        if value > len(fields):raise ValueError('schema count exceeds capture width')
+        return value
     def add(names):
         nonlocal cursor
         labels.extend(names);cursor+=len(names)
@@ -50,7 +52,9 @@ def differences(native,rust):
 
 
 def identity(out):
-    return {name:(out/name).read_text() for name in ['compiler.txt','rust-target.txt','effective-profile.txt']}
+    names = ['compiler.txt','rust-target.txt','effective-profile.txt']
+    if (out/'compiler-banner.txt').is_file():names.append('compiler-banner.txt')
+    return {name:(out/name).read_text() for name in names}
 
 
 def captures(out):
@@ -63,6 +67,11 @@ def verify(out,profiles):
     candidates=[p for p in candidates if p['identity']==observed_identity]
     if len(candidates)!=1:raise ValueError('unknown or ambiguous arithmetic observation host/toolchain profile')
     expected=candidates[0]
+    source_manifest=json.loads((out/'source-sha256.json').read_text())
+    source_manifest={name.replace('\\','/'):value for name,value in source_manifest.items()}
+    if any(source_manifest.get(name)!=value for name,value in expected['producer_sources'].items()):raise ValueError('arithmetic observation source profile differs')
+    if any(digest(out/name)!=value for name,value in expected.get('identity_raw',{}).items()):raise ValueError('raw compiler identity differs')
+    if any(digest(out/name)!=value for name,value in expected.get('observer_sources',{}).items()):raise ValueError('instrumented observer source differs')
     actual_differences=differences(out/'native.trace',out/'rust.trace')
     if actual_differences != expected['differences']:raise ValueError('unknown arithmetic observation field/value/location/count')
     if captures(out)!=expected['captures']:raise ValueError('paired capture differs from its exact frozen stream')
@@ -74,6 +83,4 @@ def verify(out,profiles):
                 if not line:raise ValueError('truncated legacy capture prefix')
                 value.update(line)
         if value.hexdigest()!=prefix['sha256']:raise ValueError('legacy capture prefix differs')
-    source_manifest=json.loads((out/'source-sha256.json').read_text())
-    if any(source_manifest.get(name)!=value for name,value in expected['producer_sources'].items()):raise ValueError('arithmetic observation source profile differs')
     return {'status':'SOURCE_DEFINED_ARITHMETIC_OBSERVATION','profile':expected['name'],'raw_bit_equality':False,'difference_words':len(actual_differences),'first_difference':actual_differences[0],'limit':expected['limit']}

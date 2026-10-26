@@ -2,7 +2,7 @@ name: Bullet support native host profiles
 
 on:
   push:
-    branches: [w3-bullet-support-host-profiles]
+    branches: [w3-bullet-support-host-profiles, w3-bullet-nonvirtual-support]
   workflow_dispatch:
 
 permissions:

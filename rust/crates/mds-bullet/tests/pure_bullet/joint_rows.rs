@@ -1,5 +1,5 @@
-use super::core::math;
 use super::core::joint_rows;
+use super::core::math;
 
 use joint_rows::*;
 use math::{Basis, Vec3};
@@ -112,7 +112,7 @@ fn every_joint_row_and_state_word_matches_native() {
             iterations: words.word(),
         };
         let fixture_prior = words.state();
-        let mut state = if id % 6 == 0 {
+        let mut state = if id.is_multiple_of(6) {
             fixture_prior
         } else {
             previous_state.unwrap()

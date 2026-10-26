@@ -216,6 +216,38 @@ fn cache_threshold_ties_persistence_and_swap_removal() {
         &[point(0.5)],
         "removal fills the hole with the last slot"
     );
+
+    for (friction, expected) in [
+        (-0.0, -0.0),
+        (0.0, 0.0),
+        (f32::NEG_INFINITY, -10.0),
+        (f32::INFINITY, 10.0),
+        (f32::NAN, f32::NAN),
+    ] {
+        let body = ContactBody {
+            world: Transform::IDENTITY,
+            friction,
+            restitution: 0.0,
+        };
+        m.count = 0;
+        m.process(
+            body,
+            ContactBody {
+                friction: 1.0,
+                ..body
+            },
+        );
+        assert_eq!(m.contacts().len(), 1);
+        let actual = m.contacts()[0].combined_friction;
+        if expected.is_nan() {
+            assert!(actual.is_nan());
+        } else {
+            assert_eq!(actual.to_bits(), expected.to_bits());
+        }
+    }
+    m.threshold = f32::NAN;
+    m.refresh(Transform::IDENTITY, Transform::IDENTITY);
+    assert!(m.contacts().is_empty(), "unordered distances are removed");
 }
 
 #[test]

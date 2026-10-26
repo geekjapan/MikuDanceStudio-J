@@ -108,7 +108,7 @@ impl PairManifold {
                 };
                 let diff = body0.world.origin.sub(body1.world.origin);
                 let length = diff.length();
-                if !(length > a + b) {
+                if length.partial_cmp(&(a + b)) != Some(std::cmp::Ordering::Greater) {
                     let normal = if length > f32::EPSILON {
                         diff.scale(1.0 / length)
                     } else {
@@ -206,13 +206,7 @@ impl PairManifold {
                 local_point(bodies[1].world, world_b, [1, 0, 0]),
             )
         };
-        let mut friction = bodies[0].friction * bodies[1].friction;
-        if friction < -10.0 {
-            friction = -10.0;
-        }
-        if friction > 10.0 {
-            friction = 10.0;
-        }
+        let friction = (bodies[0].friction * bodies[1].friction).clamp(-10.0, 10.0);
         self.insert(ContactPoint {
             local_a,
             local_b,
@@ -304,7 +298,10 @@ impl PairManifold {
         }
         for i in (0..self.count).rev() {
             let point = self.points[i];
-            if !(point.distance <= self.threshold) {
+            if !matches!(
+                point.distance.partial_cmp(&self.threshold),
+                Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+            ) {
                 self.remove(i);
             } else {
                 let projected = point.world_a.sub(point.normal_on_b.scale(point.distance));

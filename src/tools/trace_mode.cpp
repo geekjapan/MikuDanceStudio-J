@@ -82,6 +82,31 @@
 //         matrix by, and ProjectedShadowMaterial() as D3DMATERIAL9 floats)
 // Floats are printf "%.9g", which reads back to the same float.
 //
+// --mds-frame-dump-4096 <pmm> <out-dir> <frame>...  (winprobe2, wave 3)
+// --mds-frame-dump after the shadow panel's map-size checkbox (ctl 556,
+// command_frame_register.cpp): the self-shadow map is 4096x4096, created by
+// RenderShadowMap on first use. The run fails unless the map it drew into
+// is that size.
+//
+// --mds-ground-probe <pmm> <out> <frame>...  (winprobe2, wave 3)
+// Runs the setup and passes of --mds-frame-dump, renders each requested frame
+// as the dump does, and records every draw that reaches
+// mme::DrawIndexedPrimitive (the draw of every model body and edge,
+// src/render/mme/draw_observer.hpp): the vertex buffer of stream 0 and the
+// world transform at the call. Format:
+//   "mds-ground-probe 1" LF, then per requested frame:
+//   frame "draw" index slot buffer space startIndex primitives world(16) LF
+//         (in draw order; buffer is "body" for the model's vertexBuffer,
+//         "edge" for vertexBuffer2 (the edge hull UpdateModelVertexBuffers
+//         writes), or "other" with slot -1; space is "ground" when the world
+//         matrix is BeginProjectedGroundShadow's plane matrix times the frame
+//         world matrix, bit for bit, "frame" when it is the frame world
+//         matrix, else "other")
+//   frame "groundpass" edgeDraws edgePrimitives bodyDraws bodyPrimitives
+//         otherDraws otherPrimitives LF   (the draws in the "ground" space)
+//
+// --mds-msaa-probe <pmm> <out>: msaa_probe.cpp.
+//
 // --mds-mesh-dump <pmm> <out-dir> <x-file>...  (accgold, wave 3): mesh_dump.cpp.
 //
 // --mds-mme-dump <pmm> <out-dir> <frame>...  (mmegold, wave 3)
@@ -127,6 +152,7 @@
 #include <fstream>
 #include <ios>
 #include <string>
+#include <vector>
 
 #include "btBulletDynamicsCommon.h"
 
@@ -136,6 +162,7 @@
 #include "mikudancestudio/model.hpp"
 #include "mikudancestudio/ported_funcs.hpp"
 
+#include "../render/mme/draw_observer.hpp"
 #include "trace_l2.hpp"
 #include "trace_mode.hpp"
 
@@ -414,6 +441,19 @@ bool WriteEdgeProbe(std::ostream& out, MMDApp* app, std::uint32_t frame) {
     return out.good();
 }
 
+// The plane matrix of BeginProjectedGroundShadow (src/render/model_renderers.cpp).
+d3dx::D3DXMATRIXF GroundPlane(MMDApp* app) {
+    const float* light = app->LightDirection();
+    d3dx::D3DXMATRIXF plane{};
+    plane.m[0][0] = 1.0f;
+    plane.m[1][0] = -light[0] / light[1];
+    plane.m[1][2] = -light[2] / light[1];
+    plane.m[2][2] = 1.0f;
+    plane.m[3][1] = 0.10000000149011612f;
+    plane.m[3][3] = 1.0f;
+    return plane;
+}
+
 void AppendFloats(std::string& line, const float* values, int count) {
     char word[24];
     for (int i = 0; i < count; ++i) {
@@ -538,13 +578,7 @@ bool WriteShadowProbe(std::ostream& out, MMDApp* app, std::uint32_t frame, const
         const float* light = app->LightDirection();
         const bool drawn =
             (app->PlaybackActive() != 0 || app->UsesViewportTool()) && light[1] < 0.0f;
-        Matrix plane{};
-        plane.m[0][0] = 1.0f;
-        plane.m[1][0] = -light[0] / light[1];
-        plane.m[1][2] = -light[2] / light[1];
-        plane.m[2][2] = 1.0f;
-        plane.m[3][1] = 0.10000000149011612f;
-        plane.m[3][3] = 1.0f;
+        const Matrix plane = GroundPlane(app);
         const D3DMATERIAL9 material = app->ProjectedShadowMaterial();
         char head[64];
         std::snprintf(head, sizeof head, "%u ground %d", frame, drawn ? 1 : 0);
@@ -561,8 +595,108 @@ bool WriteShadowProbe(std::ostream& out, MMDApp* app, std::uint32_t frame, const
     return out.good();
 }
 
-// With `probe` set (--mds-edge-probe) the requested frames are probed instead
-// of rendered, after the same setup. An MME dump renders every pass.
+// A draw as mme::DrawIndexedPrimitive received it.
+struct ObservedDraw {
+    const void* buffer; // stream 0
+    unsigned int startIndex;
+    unsigned int primitives;
+    D3DMATRIX world;
+};
+std::vector<ObservedDraw> g_draws;
+
+void ObserveDraw(IDirect3DDevice9* device, unsigned int startIndex, unsigned int primitives) {
+    ObservedDraw draw{nullptr, startIndex, primitives, {}};
+    IDirect3DVertexBuffer9* buffer = nullptr;
+    UINT offset = 0;
+    UINT stride = 0;
+    if (SUCCEEDED(device->GetStreamSource(0, &buffer, &offset, &stride)) && buffer != nullptr) {
+        draw.buffer = buffer;
+        buffer->Release(); // only the pointer is compared
+    }
+    device->GetTransform(D3DTS_WORLD, &draw.world);
+    g_draws.push_back(draw);
+}
+
+// Renders the frame as DumpFrame does, with ObserveDraw on the bridge.
+bool WriteGroundProbe(std::ostream& out, MMDApp* app, std::uint32_t frame) {
+    using Matrix = d3dx::D3DXMATRIXF;
+    g_draws.clear();
+    mme::SetDrawObserver(ObserveDraw);
+    app->state.messageSeen = 2;
+    RenderFrameScene(app);
+    mme::SetDrawObserver(nullptr);
+    SetupFrameWorldTransform(app);
+    Matrix world{};
+    if (FAILED(app->Renderer()->device->GetTransform(D3DTS_WORLD,
+                                                     reinterpret_cast<D3DMATRIX*>(&world))))
+        return false;
+    const Matrix plane = GroundPlane(app);
+    Matrix ground;
+    d3dx::Get().multiply(&ground, &plane, &world);
+    unsigned int draws[3]{};      // edge, body, other, in the ground space
+    unsigned int primitives[3]{}; // the same
+    for (std::size_t i = 0; i < g_draws.size(); ++i) {
+        const ObservedDraw& draw = g_draws[i];
+        int slot = -1;
+        int kind = 2;
+        for (int s = 0; s < kModelSlotCount && slot < 0; ++s) {
+            unsigned char* model = app->ModelSlot(s);
+            if (model == nullptr || draw.buffer == nullptr)
+                continue;
+            if (mdl::Mdl(model)->vertexBuffer2 == draw.buffer)
+                kind = 0;
+            else if (mdl::Mdl(model)->vertexBuffer == draw.buffer)
+                kind = 1;
+            else
+                continue;
+            slot = s;
+        }
+        const bool inGround = std::memcmp(&draw.world, &ground, sizeof ground) == 0;
+        const char* space = inGround                                              ? "ground"
+                            : std::memcmp(&draw.world, &world, sizeof world) == 0 ? "frame"
+                                                                                  : "other";
+        if (inGround) {
+            ++draws[kind];
+            primitives[kind] += draw.primitives;
+        }
+        static const char* const kKinds[] = {"edge", "body", "other"};
+        char head[96];
+        std::snprintf(head, sizeof head, "%u draw %zu %d %s %s %u %u", frame, i, slot, kKinds[kind],
+                      space, draw.startIndex, draw.primitives);
+        std::string line = head;
+        AppendFloats(line, &draw.world.m[0][0], 16);
+        out << line << '\n';
+    }
+    char line[128];
+    std::snprintf(line, sizeof line, "%u groundpass %u %u %u %u %u %u\n", frame, draws[0],
+                  primitives[0], draws[1], primitives[1], draws[2], primitives[2]);
+    out << line;
+    return out.good();
+}
+
+// The shadow panel's map-size checkbox (ctl 556, command_frame_register.cpp):
+// RenderShadowMap creates the three objects again at the new size.
+void SelectShadowMapSize(D3DRenderer* r, std::int32_t size) {
+    r->renderTargetWidth = size;
+    r->renderTargetHeight = size;
+    IUnknown* objects[] = {r->hdrTexture, r->shadowDepthSurface, r->shadowSurface};
+    for (IUnknown* object : objects)
+        if (object != nullptr)
+            object->Release();
+    r->hdrTexture = nullptr;
+    r->shadowDepthSurface = nullptr;
+    r->shadowSurface = nullptr;
+}
+
+bool ShadowMapIs(D3DRenderer* r, std::int32_t size) {
+    D3DSURFACE_DESC desc{};
+    return r->hdrTexture != nullptr && SUCCEEDED(r->hdrTexture->GetLevelDesc(0, &desc)) &&
+           desc.Width == static_cast<UINT>(size) && desc.Height == static_cast<UINT>(size);
+}
+
+// With `probe` set (--mds-edge-probe, --mds-ground-probe) the requested frames
+// are probed instead of rendered, after the same setup. An MME dump renders
+// every pass.
 int RunFrameDump(MMDApp* app, const TraceRequest& request, std::ostream* probe) {
     D3DRenderer* r = app->Renderer();
     if (r == nullptr || r->device == nullptr)
@@ -596,6 +730,8 @@ int RunFrameDump(MMDApp* app, const TraceRequest& request, std::ostream* probe) 
     const std::wstring prefix =
         request.out + L"\\" + std::filesystem::path(request.pmm).stem().wstring() + L"-";
     const bool mme = request.mode == TraceRequest::Mode::MmeDump;
+    if (request.shadowMapSize != 0)
+        SelectShadowMapSize(r, request.shadowMapSize);
     ArmFrameStep(app, request.frames);
     if (mme) {
         // MmeUpdateFrameTime takes the first non-edit frame's ELAPSEDTIME from
@@ -621,6 +757,10 @@ int RunFrameDump(MMDApp* app, const TraceRequest& request, std::ostream* probe) 
             continue;
         }
         ++next;
+        if (request.mode == TraceRequest::Mode::GroundProbe) {
+            ok = WriteGroundProbe(*probe, app, frame);
+            continue;
+        }
         if (probe != nullptr) {
             ok = WriteEdgeProbe(*probe, app, frame);
             if (ok) {
@@ -631,6 +771,11 @@ int RunFrameDump(MMDApp* app, const TraceRequest& request, std::ostream* probe) 
             continue;
         }
         ok = DumpFrame(app, prefix + std::to_wstring(frame) + L".png");
+        if (ok && request.shadowMapSize != 0 && !ShadowMapIs(r, request.shadowMapSize)) {
+            WriteError("mds-frame-dump: the self-shadow map is not " +
+                       std::to_string(request.shadowMapSize) + " texels square\n");
+            ok = false;
+        }
         if (ok && mme) {
             const int effects = WriteMmeProbe(
                 prefix + std::to_wstring(frame) + L".mme.txt", frame, app->PlaybackCursorSeconds(),
@@ -701,6 +846,8 @@ int RunTraceMode(MMDApp* app, const TraceRequest& request) {
     ShowWindow(static_cast<HWND>(app->Hwnd()), SW_HIDE);
     if (request.mode == TraceRequest::Mode::MeshDump)
         return RunMeshDump(app, request);
+    if (request.mode == TraceRequest::Mode::MsaaProbe)
+        return RunMsaaProbe(app, request);
     bool anyModel = false;
     for (int slot = 0; slot < kModelSlotCount; ++slot)
         anyModel = anyModel || app->ModelSlot(slot) != nullptr;
@@ -720,8 +867,10 @@ int RunTraceMode(MMDApp* app, const TraceRequest& request) {
     g_guardFile = &file;
 
     bool ok = true;
-    if (request.mode == TraceRequest::Mode::EdgeProbe) {
-        file << "mds-edge-probe 1\n";
+    if (request.mode == TraceRequest::Mode::EdgeProbe ||
+        request.mode == TraceRequest::Mode::GroundProbe) {
+        file << (request.mode == TraceRequest::Mode::EdgeProbe ? "mds-edge-probe 1\n"
+                                                               : "mds-ground-probe 1\n");
         ok = RunFrameDump(app, request, &file) == 0;
     } else {
         ArmFrameStep(app, request.frames);

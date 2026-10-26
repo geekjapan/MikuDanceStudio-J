@@ -26,6 +26,12 @@ edge probe gained the `shadow` and `ground` lines. On that build the two runs
 gave the same bytes, every other file here kept its hash, and the probes
 without their `shadow` and `ground` lines are the bytes they were.
 
+`msaa.txt`, `groundshadow.ground.txt`, and `selfshadow4096-*.png` came from the
+app built at `27fba5e` (slice `winprobe2`), which added the three modes that
+write them. The probe code reads state and draws nothing into the other
+outputs: on that build the two runs gave the same bytes, and every other file
+here kept its hash.
+
 ## Regenerating
 
 The inputs (the scene PMMs, `skin_tex.pmx`, the textures, the two floor
@@ -43,7 +49,8 @@ The outputs come from the Windows host, from a checkout at `<checkout>`:
 `golden2.ps1` copies the models, textures, and accessories next to the exe,
 runs `--mds-frame-dump` and `--mds-edge-probe` on each scene into `<Out>\run1`
 and `<Out>\run2`, and the edge probe of `../swing600-golden.pmm` (frames 0,
-150, 300, 599). It prints the size and sha256 of each file and exits 1 when a
+150, 300, 599), `--mds-msaa-probe`, `--mds-ground-probe` of `groundshadow.pmm`,
+and `--mds-frame-dump-4096` of `selfshadow.pmm`. It prints the size and sha256 of each file and exits 1 when a
 run fails or the two runs differ. Copy `<Out>\run1\*` here. The frames of each
 scene are listed in `golden2.ps1` and in `SCENES` of `gen_golden2.py`
 (`gen_golden2.py --frames` prints them).
@@ -70,6 +77,80 @@ rad so the ground shows. With yaw pi, +x is on the left of the image.
 
 `*.edge.txt` is the edge probe of each scene at the same frames.
 `swing600-golden.edge.txt` is the probe of the golden scene of `../golden/`.
+`selfshadow4096-0.png` and `selfshadow4096-30.png` are the `selfshadow` scene
+with a 4096x4096 self-shadow map (`--mds-frame-dump-4096`, as the shadow
+panel's checkbox selects it; the run fails unless the map drawn into is that
+size). They differ from `selfshadow-*.png` in 1978 and 2202 pixels, where the
+self-shadow falls.
+
+## The multisample probe
+
+`msaa.txt` is the output of `--mds-msaa-probe` (format in
+`src/tools/msaa_probe.cpp`) on the frame dump's back buffer:
+`D3DMULTISAMPLE_8_SAMPLES`, quality 0 (the only level the driver reports for
+the color and the depth format), `D3DRS_MULTISAMPLEANTIALIAS` 1, mask
+`ffffffff`. It draws a white quad per pixel with its top-left corner at 64x64
+sub-pixel offsets (1/32 px apart, 2 px wide around the pixel) and records the
+resolved value, once with the app's mask and once with each single mask bit.
+`msaa_positions.py` derives the positions from it and exits 1 when the data
+do not fit (the counts and the single bits must agree):
+
+    python3 -I tests/fixtures/rust/golden2/msaa_positions.py
+
+The 8 sample positions, in 1/16 px, y down, are the D3D10.1 standard 8x
+pattern, in its order of mask bits:
+
+| Bit | From the D3D9 pixel center (integer coordinate) | From the pixel's top-left corner |
+|---|---|---|
+| 0 | (1, -3) | (9, 5) |
+| 1 | (-1, 3) | (7, 11) |
+| 2 | (5, 1) | (13, 9) |
+| 3 | (-3, -5) | (5, 3) |
+| 4 | (-5, 5) | (3, 13) |
+| 5 | (-7, -1) | (1, 7) |
+| 6 | (3, 7) | (11, 15) |
+| 7 | (7, -7) | (15, 1) |
+
+Each is within 1/64 px of the value given. Every sample lies within half a
+pixel of the integer coordinate, so the D3D9 pixel center of pre-transformed
+vertices is that coordinate; the corner column is the same pattern for a
+rasterizer with its pixel center at +0.5.
+
+The resolve is gamma-correct on this host. With n of the 8 samples white and
+the rest black, the resolved value is 255 * srgb(n / 8), not 255 * n / 8:
+
+| n | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|---|
+| Resolved | 0 | 99 | 137 | 165 | 188 | 207 | 225 | 241 | 255 |
+| 255 * n / 8 | 0 | 31.9 | 63.8 | 95.6 | 127.5 | 159.4 | 191.3 | 223.1 | 255 |
+| 255 * srgb(n / 8) | 0 | 99.1 | 137.0 | 164.8 | 187.5 | 207.2 | 224.6 | 240.4 | 255 |
+
+Inferred, not probed: for other colors the resolve likely averages the
+samples after the sRGB decoding and encodes the mean again, which is what
+NVIDIA's gamma-corrected antialiasing does. The probe shows black and white
+only. So the edge pixels of the images here come from the standard 8x
+pattern and a resolve of sRGB-encoded coverage, not a linear box average.
+
+## The ground probe
+
+`groundshadow.ground.txt` is the output of `--mds-ground-probe` on
+`groundshadow.pmm` at frames 0 and 30 (format in `src/tools/trace_mode.cpp`).
+It renders each frame as the dump does and lists every draw that reaches
+`mme::DrawIndexedPrimitive`, with its vertex buffer and world matrix.
+
+`BeginProjectedGroundShadow` draws the edge (hull) geometry and nothing else
+of the models. Under the ground matrix (the plane matrix times the frame world
+matrix, bit for bit) the `groundpass` line of both frames is
+
+    groundpass 2 16 0 0 0 0
+
+that is, 2 draws from the edge buffer (`vertexBuffer2`, which
+`UpdateModelVertexBuffers` writes with the edge offset) with 16 triangles in
+all: 14 for slot 0 (`chain8.pmx`) and 2 for slot 1 (`morph4.pmx`), and no draw
+from a body buffer. The bodies are drawn once, with the frame world matrix,
+after the ground pass, and the outlines after them from the same edge buffer.
+The first draw of each frame is the 45 lines of the ground grid (no model
+buffer).
 
 ## The edge probe
 
@@ -174,7 +255,10 @@ a `D3DMATERIAL9`). The format is in `src/tools/trace_mode.cpp`.
 | `groundshadow-0.png` | `52f289d606cbd3c05127639c0606b3b2fe5f2c82d8e43202e45a5237ee7bb19f` |
 | `groundshadow-30.png` | `a552bf547f309d8b447b7ebfa3c4d174bca1938aa2b9ee412ec16f9ecf05d445` |
 | `groundshadow.edge.txt` | `5dd99952328fbf8f1eddd7552435c2ce4d4b04f13b8bc3245ae7d8a8f0cf5f29` |
+| `groundshadow.ground.txt` | `36c6141f6321541a9a9e8dae03b7f13f693019c1b1ce306336bea687f7f55023` |
 | `groundshadow.pmm` | `081ad947aa478ffec077e224b9eca7aed981467a3a1cb9a935619111c0f94ae3` |
+| `msaa.txt` | `f12b3a9257904e35151191bbd969628fee3009d77c38c54f7e7972c6b4c829d0` |
+| `msaa_positions.py` | `1e72e2f9959ae24f73f9dadfa79888d203c3b1cc8532243bd17f3ef132fbb6f0` |
 | `perspective-0.png` | `f9650fcb5e7a4a0e6641630c48171aa738a05d882e632007f286b6e35854f1ec` |
 | `perspective-30.png` | `f95b4a111d6e47a4551d869fb03c680c98bfe7022edf8a332fd48648f93f19ea` |
 | `perspective.edge.txt` | `eafe1eaf4ddc44eaf2abeaa0652fd5139f1b9064a2ed9f53293718350b760b57` |
@@ -183,6 +267,8 @@ a `D3DMATERIAL9`). The format is in `src/tools/trace_mode.cpp`.
 | `selfshadow-30.png` | `b3138bb595359253f9d76db0f256eb5a478f4a4c4d65b34dd448f6613127fb2e` |
 | `selfshadow.edge.txt` | `8afc7b645da82fae58846b4006f578f3567fdae0baf3d53118089d08f8272494` |
 | `selfshadow.pmm` | `98b2adab073ddf3057b3cebf8c8450f1594aac241bf733b444710d18efcdc83e` |
+| `selfshadow4096-0.png` | `2f54058a64dc1a04d3dfce055c078d22a343b26d5a3af83acd8938ed7027bc81` |
+| `selfshadow4096-30.png` | `6dd0d8f7f48cf162dfa16a974e65fd2884b4f61dcd47cb92fa097fa201493456` |
 | `shadow_floor.x` | `adfd3e6fb4b552f6c38eb9b94bc8b75061270e7d24a4933694c73df02e58122c` |
 | `skin-0.png` | `b2a5c0da74e192d85433a74504950636b6826970f06f37a97c04b92d7ab257c4` |
 | `skin-30.png` | `ba2e8a493608fa0246c060dc14d16e6b3924979704d85fa23e9abfea29d9bab5` |

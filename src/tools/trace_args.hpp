@@ -5,7 +5,7 @@
 #include <vector>
 
 namespace mikudancestudio::tools {
-// Command lines of the five headless modes. The flag must be the first
+// Command lines of the headless modes. The flag must be the first
 // argument, and <pmm> must end in ".pmm" (any case).
 //   MikuDanceStudio.exe --mds-trace <pmm> <out> <frames>
 //     Exactly these four arguments. <frames> is a decimal number in
@@ -15,6 +15,15 @@ namespace mikudancestudio::tools {
 //     ascending.
 //   MikuDanceStudio.exe --mds-edge-probe <pmm> <out> <frame>...
 //     The frames as for --mds-frame-dump; <out> is the probe text file.
+//   MikuDanceStudio.exe --mds-frame-dump-4096 <pmm> <out-dir> <frame>...
+//     --mds-frame-dump with a 4096x4096 self-shadow map, as the shadow
+//     panel's checkbox selects it.
+//   MikuDanceStudio.exe --mds-ground-probe <pmm> <out> <frame>...
+//     The frames as for --mds-frame-dump; <out> lists the model draws of each
+//     requested frame and those under the ground shadow matrix.
+//   MikuDanceStudio.exe --mds-msaa-probe <pmm> <out>
+//     Exactly these four arguments. Writes the multisample coverage of quads
+//     at sub-pixel offsets; the PMM only hosts the device.
 //   MikuDanceStudio.exe --mds-mme-dump <pmm> <out-dir> <frame>...
 //     The frames as for --mds-frame-dump; writes an image and an MME probe
 //     per frame.
@@ -26,7 +35,9 @@ struct TraceRequest {
         FrameDump,
         EdgeProbe,
         MeshDump,
-        MmeDump
+        MmeDump,
+        GroundProbe,
+        MsaaProbe
     };
     Mode mode = Mode::Trace;
     std::wstring pmm;
@@ -34,6 +45,7 @@ struct TraceRequest {
     std::uint32_t frames = 0;              // passes: the trace length, or the last dump frame + 1
     std::vector<std::uint32_t> dumpFrames; // FrameDump, EdgeProbe, and MmeDump
     std::vector<std::wstring> meshFiles;   // MeshDump
+    std::int32_t shadowMapSize = 0;        // FrameDump: 0 keeps the app's 2048
 };
 
 enum class TraceArgs {
@@ -85,7 +97,12 @@ inline TraceArgs ParseTraceArgs(int argc, const wchar_t* const* argv, TraceReque
         if (argc != 5 || !ParseDecimal(argv[4], &parsed.frames) || parsed.frames < 1 ||
             parsed.frames > kMaxTraceFrames)
             return TraceArgs::Malformed;
-    } else if (flag == L"--mds-frame-dump" || flag == L"--mds-edge-probe" ||
+    } else if (flag == L"--mds-msaa-probe") {
+        if (argc != 4)
+            return TraceArgs::Malformed;
+        parsed.mode = TraceRequest::Mode::MsaaProbe;
+    } else if (flag == L"--mds-frame-dump" || flag == L"--mds-frame-dump-4096" ||
+               flag == L"--mds-edge-probe" || flag == L"--mds-ground-probe" ||
                flag == L"--mds-mme-dump") {
         if (argc < 5)
             return TraceArgs::Malformed;
@@ -96,9 +113,12 @@ inline TraceArgs ParseTraceArgs(int argc, const wchar_t* const* argv, TraceReque
                 return TraceArgs::Malformed;
             parsed.dumpFrames.push_back(frame);
         }
-        parsed.mode = flag == L"--mds-frame-dump"   ? TraceRequest::Mode::FrameDump
-                      : flag == L"--mds-edge-probe" ? TraceRequest::Mode::EdgeProbe
-                                                    : TraceRequest::Mode::MmeDump;
+        parsed.mode = flag == L"--mds-edge-probe"     ? TraceRequest::Mode::EdgeProbe
+                      : flag == L"--mds-ground-probe" ? TraceRequest::Mode::GroundProbe
+                      : flag == L"--mds-mme-dump"     ? TraceRequest::Mode::MmeDump
+                                                      : TraceRequest::Mode::FrameDump;
+        if (flag == L"--mds-frame-dump-4096")
+            parsed.shadowMapSize = 4096;
         parsed.frames = parsed.dumpFrames.back() + 1;
     } else if (flag == L"--mds-mesh-dump") {
         if (argc < 5)

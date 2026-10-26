@@ -152,7 +152,7 @@ for bit, but that test does not gate them yet.
 | File | sha256 |
 |---|---|
 | `__pycache__/budget.cpython-313.pyc` | `e4b4124973ed9bbe838ddebc7ea30083f9e150e3d29ed0ad02147010d41d5008` |
-| `budget.py` | `aff2407b824078e55d0910e82a6602d77ec5457bf9c7e8d4380d962600478742` |
+| `budget.py` | `34bbff62cdd8016f096f443c037646420d31757a9683e315d346618d8896f75c` |
 | `budget.txt` | `0b25b54c56362be52a6d2aa142620a3ea2f90f58557db0f670435420e2ad8cff` |
 | `expected/budget/budget.pmm` | `f67d751f34ebad744770d590ebf2d71b8e718cfa3e20c51ecc2f6b5fc6184a43` |
 | `expected/budget/budget.trace` | `1e1fcca3d0d3fb85e9c06f54e0b14dd761517b1d1e6399361786cf246c028bfe` |

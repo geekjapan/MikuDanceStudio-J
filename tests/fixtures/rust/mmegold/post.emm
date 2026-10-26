@@ -6,4 +6,4 @@ Pmd0 = chain8.pmx
 
 [Effect]
 Default = none
-Pmd0 = $(fixtures)\post.fx
+Pmd0 = $(mmegold)\post.fx

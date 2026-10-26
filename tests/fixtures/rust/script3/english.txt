@@ -1,0 +1,22 @@
+# The English names that the dialog of menu 259 edits: the model name and
+# comment, a bone, a morph, and a display group; the save of the enhanced
+# model writes them. Both OK and Cancel apply the edits (ApplyEnglishNameDialog).
+load model .\lips.pmd
+
+english open
+dialog text 667 "Lip Model"
+dialog text 668 "English comment of the lip model."
+dialog select 669 1
+dialog text 672 "Neck bone"
+dialog select 673 1
+dialog text 676 "Mouth i"
+dialog select 677 0
+dialog text 680 "Face group"
+dialog ok
+save pmd english.pmd
+save pmm english.pmm
+
+english open
+dialog text 667 "Cancelled Name"
+dialog cancel
+save pmd cancelled.pmd

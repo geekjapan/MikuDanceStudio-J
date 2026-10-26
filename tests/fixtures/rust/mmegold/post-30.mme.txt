@@ -1,7 +1,7 @@
 mds-mme-probe 1
 frame 30 1
-object chain8.pmx effect effects/post.fx class 1 render 2 shown 1
-effect effects/post.fx class 1 order 2 errors 0
+object chain8.pmx effect mmegold/post.fx class 1 render 2 shown 1
+effect mmegold/post.fx class 1 order 2 errors 0
 param Script STANDARDSGLOBAL 0 3 1x1x0 0.800000012
 param ViewportSize VIEWPORTPIXELSIZE 1 3 1x2x0 640 360
 param ClearColor - 1 3 1x4x0 0.25 0.5 0.75 1

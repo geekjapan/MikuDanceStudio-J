@@ -251,11 +251,12 @@ fn the_mapping_dialog_edits_the_assignment() {
 #[test]
 fn a_runtime_that_cannot_start_leaves_the_scene_without_effects() {
     let (editor, dir) = control("nostart");
+    let camera = *editor.camera_frame();
     let mut mme = editor.mme;
     mme.vkd3d = Some(dir.join("no-such-vkd3d.dylib"));
     assert!(mme.active());
     let view = View {
-        camera: &editor.camera,
+        camera: &camera,
         view_offset: [0.0; 2],
         shadow_map: Default::default(),
         shadow_map_display: false,
@@ -329,6 +330,29 @@ fn disassemble_lists_the_selected_rows_effect() {
         text.ends_with("\r\n") && !text.contains("// error"),
         "{text}"
     );
+}
+
+#[test]
+fn disassemble_failure_opens_empty_text_and_logs_the_error() {
+    let lib = vkd3d_lib();
+    mds_shader::vkd3d::Vkd3d::open(&lib).expect("real shader compiler");
+    let (mut editor, _) = control("disassemble-failure");
+    editor.mme.vkd3d = Some(lib);
+    let path = PathBuf::from(&editor.mme.assignments[0].effect);
+    run(&mut editor, "menu:mme-40005");
+    select(&[Row::Object(0)]);
+    for (source, expected_error) in [
+        ("float4 main() : COLOR { return nope; } technique T { pass P { PixelShader = compile ps_3_0 main(); } }", "E5005"),
+        ("technique T { pass P {", ""),
+    ] {
+        std::fs::write(&path, source).unwrap();
+        editor.mme.log.borrow_mut().clear();
+        run(&mut editor, "menu:mme-dialog-40014");
+        assert_eq!(dialog::disassembly().as_deref(), Some(""));
+        let log = editor.mme.log.borrow();
+        assert_eq!(log.len(), 1, "{log:?}");
+        assert!(!log[0].is_empty() && log[0].contains(expected_error), "{log:?}");
+    }
 }
 
 /// The offscreen tab (1002, `mme_dlg.cpp:1746`) on the mmegold `offscreen` scene: `chain8.pmx`

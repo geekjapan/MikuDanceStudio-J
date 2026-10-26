@@ -58,7 +58,7 @@ fn a_posed_model_draws_in_its_pose() {
         let f = Frame {
             pmm: &pmm,
             poses: std::slice::from_ref(posed),
-            camera: &camera,
+            camera: &camera.into(),
             view_offset: [0.0; 2],
             shadow_map: Default::default(),
             shadow_map_display: false,
@@ -113,7 +113,7 @@ fn draw_with_objects_fx(
     let f = Frame {
         pmm: &pmm,
         poses,
-        camera: &camera,
+        camera: &camera.into(),
         view_offset: [0.0; 2],
         shadow_map: Default::default(),
         shadow_map_display: false,
@@ -190,7 +190,7 @@ fn draw_scene(
     let f = Frame {
         pmm,
         poses,
-        camera: &camera,
+        camera: &camera.into(),
         view_offset: [0.0; 2],
         shadow_map: Default::default(),
         shadow_map_display: false,

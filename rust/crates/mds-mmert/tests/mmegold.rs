@@ -268,7 +268,7 @@ impl Staged {
     fn old_host_mask(&self, physics: &PhysicsScene, frame: u32) -> Vec<bool> {
         let light = evaluate_light(&self.pmm.light, f64::from(frame), LightMode::Playback).unwrap();
         let (scene, _, _) = scene(
-            &camera(&self.pmm, frame),
+            &camera(&self.pmm, frame).into(),
             [0.0; 2],
             light,
             frame,
@@ -340,7 +340,7 @@ impl Staged {
         let f = Frame {
             pmm: &self.pmm,
             poses: &physics.scene.models,
-            camera: &camera,
+            camera: &camera.into(),
             view_offset: [0.0; 2],
             shadow_map: Default::default(),
             shadow_map_display: false,

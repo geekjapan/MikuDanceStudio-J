@@ -1307,6 +1307,7 @@ name = "mds-bullet"
 version = "0.1.0"
 dependencies = [
  "mds-bullet-sys",
+ "mds-crtmath",
 ]
 
 [[package]]
@@ -1500,6 +1501,10 @@ dependencies = [
 
 [[package]]
 name = "mds-trace"
+version = "0.1.0"
+
+[[package]]
+name = "mds-vkd3d"
 version = "0.1.0"
 
 [[package]]

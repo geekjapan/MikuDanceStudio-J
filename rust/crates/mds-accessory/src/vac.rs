@@ -87,7 +87,7 @@ pub fn parse(text: &[u8]) -> Vac {
     let mut s = Scan { s: text, pos: 0 };
     s.line();
     let second = s.line().to_vec();
-    let mesh = String::from_utf8_lossy(second.strip_suffix(b"\n").unwrap_or(&second));
+    let mesh = mds_formats::text::decode_sjis(second.strip_suffix(b"\n").unwrap_or(&second));
     let mesh = mesh.strip_suffix('\r').unwrap_or(&mesh).to_string();
     let mut vac = Vac {
         mesh,

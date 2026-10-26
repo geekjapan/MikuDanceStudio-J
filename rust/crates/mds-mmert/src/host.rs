@@ -37,7 +37,7 @@ use mds_formats::pmx::Pmx;
 use mds_math::Mat4;
 use mds_mme::sas::SEM_OFFSCREEN;
 use mds_pose::model::Model as Posed;
-use mds_render::{AccessoryDraw, AccessoryMesh, Camera, Light, Mesh, Pose, Renderer, Stage};
+use mds_render::{AccessoryDraw, AccessoryMesh, CameraFrame, Light, Mesh, Pose, Renderer, Stage};
 use mds_shader::vkd3d::Vkd3d;
 use mds_skin::Skin;
 
@@ -69,7 +69,7 @@ pub struct Frame<'a> {
     pub pmm: &'a Pmm,
     /// The posed models (`PhysicsScene::scene.models`), found by slot.
     pub poses: &'a [Posed],
-    pub camera: &'a Camera,
+    pub camera: &'a CameraFrame,
     pub view_offset: [f32; 2],
     pub shadow_map: mds_render::ShadowMapSize,
     pub shadow_map_display: bool,
@@ -198,7 +198,7 @@ fn stamp(path: &Path) -> Option<SystemTime> {
 /// (`command_panel_toggles.cpp:414`, `material_bind.cpp:1906`). Also returns the frame world and
 /// its inverse; `None` for a camera with no inverse.
 pub fn scene(
-    camera: &Camera,
+    camera: &CameraFrame,
     view_offset: [f32; 2],
     light: [f32; 6],
     frame: u32,
@@ -206,11 +206,7 @@ pub fn scene(
     (w, h): (u32, u32),
 ) -> Option<(Scene, Mat, Mat)> {
     let c = camera;
-    let [pitch, yaw, roll] = c.rotation;
-    let t = Mat4::translation(-c.target[0], -c.target[1], -c.target[2]);
-    let r = Mat4::multiply(&Mat4::rotation_y(yaw), &Mat4::rotation_x(pitch));
-    let r = Mat4::multiply(&r, &Mat4::rotation_z(roll));
-    let frame_world = Mat4::multiply(&t, &r);
+    let frame_world = Mat4(camera.world().concat().try_into().unwrap());
     let inverse = frame_world.inverse()?.0 .0;
     let [ox, oy] = view_offset;
     let eye = [ox, oy, c.distance];
@@ -1446,6 +1442,7 @@ impl Blit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mds_render::Camera;
 
     /// The orthographic `PROJECTION` is `SetupFrameWorldTransform`'s matrix
     /// (`debug_geometry.cpp`, 0x46BC20): `-2 / distance`, the aspect times it, `0.0013`, `1`.
@@ -1459,9 +1456,9 @@ mod tests {
             orthographic: false,
         };
         let (base, world, inverse) =
-            scene(&camera, [0.0; 2], [0.6; 6], 0, 0.0, (640, 360)).unwrap();
+            scene(&camera.into(), [0.0; 2], [0.6; 6], 0, 0.0, (640, 360)).unwrap();
         let (offset, moved_world, moved_inverse) =
-            scene(&camera, [2.0, -3.0], [0.6; 6], 0, 0.0, (640, 360)).unwrap();
+            scene(&camera.into(), [2.0, -3.0], [0.6; 6], 0, 0.0, (640, 360)).unwrap();
         assert_eq!(moved_world, world);
         assert_eq!(moved_inverse, inverse);
         assert_eq!(offset.projection, base.projection);
@@ -1480,7 +1477,7 @@ mod tests {
             fov_deg: 30.0,
             orthographic: true,
         };
-        let (s, _, _) = scene(&camera, [0.0; 2], [0.6; 6], 0, 0.0, (640, 360)).unwrap();
+        let (s, _, _) = scene(&camera.into(), [0.0; 2], [0.6; 6], 0, 0.0, (640, 360)).unwrap();
         let x = -2.0 / -45.0f32;
         let mut want = [0.0; 16];
         want[0] = x;
@@ -1493,7 +1490,7 @@ mod tests {
             orthographic: false,
             ..camera
         };
-        let (p, _, _) = scene(&perspective, [0.0; 2], [0.6; 6], 0, 0.0, (640, 360)).unwrap();
+        let (p, _, _) = scene(&perspective.into(), [0.0; 2], [0.6; 6], 0, 0.0, (640, 360)).unwrap();
         assert_eq!(p.projection[11], 1.0);
     }
 }

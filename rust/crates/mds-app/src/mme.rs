@@ -20,7 +20,7 @@ use mds_mmert::host::{Frame, Host, OffscreenTarget, Source};
 use mds_mmert::scene::Offscreen;
 use mds_mmert::Gpu;
 use mds_physics::PhysicsScene;
-use mds_render::Camera;
+use mds_render::CameraFrame;
 use mds_shader::vkd3d::Vkd3d;
 
 /// The menu state of MMEffect (`MmeContext::effectEnabled`, `g_autoReload`, `g_emmAutoSave`).
@@ -47,7 +47,7 @@ impl Default for Switches {
 
 /// The view an MME frame is drawn from.
 pub struct View<'a> {
-    pub camera: &'a Camera,
+    pub camera: &'a CameraFrame,
     pub view_offset: [f32; 2],
     pub shadow_map: mds_render::ShadowMapSize,
     pub shadow_map_display: bool,
@@ -520,22 +520,31 @@ mod tests {
         doc.pmm.models[0].path.text = model.to_string_lossy().into_owned();
         let mme = Mme::autoload(&doc, None);
         assert!(!mme.assignments[0].effect.is_empty());
-        assert_eq!(
-            effect_file(Path::new(""), &mme.assignments[0].effect),
-            effect
-        );
-
-        assert_eq!(effect_file(&dir, "Materials/Material_2.0.fx"), effect);
-        assert_eq!(effect_file(&dir, "materials\\material_2.0.FX"), effect);
-        assert_eq!(
-            effect_file(&dir, "materials/../MATERIALS/material_2.0.fx"),
-            effect
-        );
+        for (base, stored) in [
+            (Path::new(""), mme.assignments[0].effect.as_str()),
+            (dir.as_path(), "Materials/Material_2.0.fx"),
+            (dir.as_path(), "materials\\material_2.0.FX"),
+            (dir.as_path(), "materials/../MATERIALS/material_2.0.fx"),
+        ] {
+            let native = base.join(stored.replace('\\', "/"));
+            let expected = if native.is_file() {
+                native
+            } else {
+                effect.clone()
+            };
+            let resolved = effect_file(base, stored);
+            assert_eq!(resolved, expected);
+            assert_eq!(std::fs::read(resolved).unwrap(), b"effect");
+        }
         let absolute = dir.join("materials/material_2.0.FX");
-        assert_eq!(
-            effect_file(Path::new("unused"), absolute.to_str().unwrap()),
-            effect
-        );
+        let expected = if absolute.is_file() {
+            absolute.clone()
+        } else {
+            effect.clone()
+        };
+        let resolved = effect_file(Path::new("unused"), absolute.to_str().unwrap());
+        assert_eq!(resolved, expected);
+        assert_eq!(std::fs::read(resolved).unwrap(), b"effect");
         assert_eq!(
             beside(&effect)("..\\materials\\diffuse.png"),
             Some(b"texture".to_vec())

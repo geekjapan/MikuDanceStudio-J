@@ -223,3 +223,22 @@ fn vac_resolves_windows_mesh_names_without_changing_placement() {
     assert!(!acc.state.shadow_enabled);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn vac_decodes_shift_jis_before_resolving_separators() {
+    let dir = std::env::temp_dir().join(format!("mds-vac-sjis-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("Sub")).unwrap();
+    std::fs::copy(fixture("cube.x"), dir.join("Sub/表.x")).unwrap();
+    let mut text = std::fs::read(fixture("placed.vac")).unwrap();
+    let start = text.windows(6).position(|s| s == b"cube.x").unwrap();
+    text.splice(start..start + 6, b"sub\\\x95\x5c.X".iter().copied());
+    let path = dir.join("placed.vac");
+    std::fs::write(&path, &text).unwrap();
+    assert_eq!(vac::parse(&text).mesh, "sub\\表.X");
+    let acc = vac::load_vac(&path).unwrap();
+    assert_eq!(acc.vertices.len(), 24);
+    assert_eq!(acc.state.scale, 2.5);
+    assert_eq!(acc.state.position, [1.0, 2.0, 3.0]);
+    assert!(!acc.state.shadow_enabled);
+    std::fs::remove_dir_all(dir).unwrap();
+}

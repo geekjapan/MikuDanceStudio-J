@@ -1285,6 +1285,18 @@ mod tests {
     }
 
     #[test]
+    fn shift_jis_include_decodes_before_windows_separators() {
+        let t = TempTree::new();
+        t.write("main.fx", b"#include \"sub\\\x95\x5c.FXSUB\"\n");
+        t.write("Sub/表.fxsub", b"float x;\n");
+        let r = pp(&t, "main.fx").unwrap();
+        assert_eq!(r.text.trim(), "float x;");
+        assert_eq!(r.includes[0].name, "sub\\表.FXSUB");
+        assert_eq!(r.includes[0].resolved, t.path("Sub/表.fxsub"));
+        assert_eq!(r.includes[0].via, Via::TopLevelDir);
+    }
+
+    #[test]
     fn shift_jis_bytes_decode() {
         // \x83\x65 is `テ` in Shift-JIS and invalid UTF-8
         let bytes = b"string s = \"\x83\x65\";\n".to_vec();

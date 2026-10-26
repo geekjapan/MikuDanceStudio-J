@@ -3,11 +3,12 @@
 //!
 //! The metric, per pixel: the largest difference over R, G and B (alpha is 255 on both sides). The
 //! whole picture passes when at least [`LIMITS`]`.min_close` of the pixels differ by at most
-//! `tolerance` and none differs by more than `max_diff`. The only pixels left out are what the C++
-//! app draws apart from the models (see [`overlay`]).
+//! `tolerance` and none differs by more than `max_diff`. Every pixel counts: the ground grid and
+//! the axes are drawn too (the PMM's grid flag is on; seen edge on, the grid is rows 320 and 321,
+//! and the y axis is column 320 above the models).
 //!
 //! `MDS_RENDER_PNG_DIR=<dir>` writes `render-<frame>.png` and `diff-<frame>.png` (4 times the
-//! difference; masked pixels magenta) for a human to look at.
+//! difference) for a human to look at.
 //!
 //! The pose of every frame comes from `mds-physics` (a dev-dependency: the library does not use
 //! it), stepped from the load the way its L2 gate steps `swing600.pmm`: physics mode 2, frame 0 is
@@ -106,22 +107,13 @@ fn render_at(gpu: &Gpu, pmm: &Pmm, posed: &[Pose], frame: u32) -> Vec<u8> {
     .unwrap()
 }
 
-/// What the C++ app draws besides the models, which the render does not: the ground line (two rows
-/// of a gray 1 px line at the bottom of the models, rows 320 and 321 at this camera) and the
-/// green bone axis (column 320, from the top of the picture down to the selected bone, which
-/// moves with the pose; it ends above row 274 in all four frames). The grid and the axis follow
-/// the app's own drawing rules, and the golden images show them only as one line each.
-fn overlay(x: usize, y: usize) -> bool {
-    (320..=321).contains(&y) || (x == 320 && y <= 273)
-}
-
-/// Compares `px` with the golden image of `frame` outside the overlay. With `dir`, writes the
-/// render and the difference image there (4 times the difference; the overlay is magenta).
+/// Compares `px` with the golden image of `frame`. With `dir`, writes the render and the
+/// difference image there (4 times the difference).
 fn score(px: &[u8], frame: u32, dir: Option<&std::path::Path>) -> Score {
     let gold = golden(frame);
     let mut diff: Vec<u8> = [255, 0, 255, 255].repeat(W * H);
     let (mut n, mut close, mut max, mut sum) = (0, 0, 0u8, 0u64);
-    for i in (0..W * H).filter(|&i| !overlay(i % W, i / W)) {
+    for i in 0..W * H {
         let d = pixel_diff(px, &gold, i);
         let v = 255 - d.saturating_mul(4);
         diff[i * 4..i * 4 + 3].copy_from_slice(&[v, v, v]);

@@ -1,0 +1,15 @@
+# VSQ lip sync (LoadVsqFile): menu 224, a dropped .vsq, and a drop in camera
+# mode, which the handler refuses with a message box.
+load model lips.pmd
+load lip sync basic.vsq
+save pmm menu.pmm
+select all morph
+save vmd menu.vmd
+
+frame 0
+drop vowels.vsq
+save pmm drop.pmm
+
+select camera
+drop rests.vsq
+save pmm refused.pmm

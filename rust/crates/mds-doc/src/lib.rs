@@ -72,7 +72,8 @@
 //!   256-byte scratch buffer: zeros after the NUL on first use, the residue
 //!   of the previous string afterwards, and an empty path writes the buffer
 //!   unchanged. The wave, AVI and picture paths are zeroed first. Accessory
-//!   names keep zeros after the NUL (`strcpy_s` into a zeroed record).
+//!   names are saved whole, with what the record holds after the NUL
+//!   ([`Document::load`]).
 //! * Accessory transparency bytes go through the float opacity the C++
 //!   keeps ([`save::opacity_byte`]).
 //! * The play start and stop frames and the max frame are read back from
@@ -92,12 +93,12 @@
 //!   than 0, and the model-name fallbacks of the loaders (unmappable
 //!   characters, the `Null_NN` names of textures and materials).
 //! * Range scaling (`ChainedBoneKeys` undo entries).
-//! * The outside-parent dialog of button 442 (`EditAccessoryAttachments`,
-//!   `command_frame_edit.cpp` 1344-1378, with `ApplyBoneAttach` and
-//!   `ResetModelSelection` of `dialog_select_ops.cpp` 334-460).
-//! * Bone matrices are those of the saved pose without physics wherever the
-//!   C++ reads the frame loop's `matInit` ([`Command::SetCameraReference`],
-//!   [`Command::SetCameraParentModel`]).
+//! * Bone matrices are those of the saved pose without physics, and
+//!   without outside parents in other models, wherever the C++ reads the
+//!   frame loop's `matInit` ([`Command::SetCameraReference`],
+//!   [`Command::SetCameraParentModel`], [`Command::ApplyOutsideParent`]).
+//! * The runtime state of the background media (size, frame range, decoded
+//!   frames): [`background`] keeps what the PMM saves.
 //!
 //! The script replay of `tests/fixtures/rust/script/` and `script2/` is
 //! [`script::Runner`]; `tests/script.rs` compares every save with the C++
@@ -105,6 +106,7 @@
 
 mod accessory;
 mod add_model;
+pub mod background;
 mod bulk;
 mod camera_reference;
 mod delete_model;
@@ -114,6 +116,8 @@ pub mod history;
 mod lip_sync;
 pub mod model;
 pub mod new_scene;
+mod order;
+pub mod outside_parent;
 pub mod panel;
 pub mod pmd_edit;
 pub mod pose_file;
@@ -491,7 +495,7 @@ pub enum Command {
         start_frame: i32,
         stop_frame: i32,
     },
-    /// The view switches of menus 211, 215, 221, 254 and 279.
+    /// The view switches of menus 211, 215, 221, 254, 279 and 282.
     SetViewOption {
         option: ViewOption,
         on: bool,
@@ -582,7 +586,7 @@ pub enum Command {
     /// (center bone), 2 the selected bone. In model mode the view offset
     /// and distance are re-anchored ([`camera_reference`]).
     SetCameraReference(u8),
-    /// The English name dialog (menu 262) on the selected model
+    /// The English name dialog (menu 259) on the selected model
     /// ([`pmd_edit::EnglishName`]).
     SetEnglishName {
         name: EnglishName,
@@ -594,7 +598,7 @@ pub enum Command {
     /// stored name. The C++ stores a name only when the texture loads from
     /// the model directory; that check is the caller's.
     SetToonFileNames(Vec<String>),
-    /// The OK of the physics model dialog (menu 264, `CommitPhysicsEdits`,
+    /// The OK of the physics model dialog (menu 262, `CommitPhysicsEdits`,
     /// `physics_model_dialog.cpp` 1129-1295) on the selected PMD: the rigid
     /// bodies and joints as the dialog left them, in file form.
     SetPhysicsModel {
@@ -607,6 +611,128 @@ pub enum Command {
         slot: u8,
         path: String,
     },
+    /// Button 630 of the outside-parent dialog (button 442,
+    /// `ApplyBoneAttach`, `dialog_select_ops.cpp` 404-460) on the bone of
+    /// selector `selector` of the selected model, with the parent the
+    /// dialog's combos show: the pose that keeps the bone where it is under
+    /// that parent ([`outside_parent`]), the bone alone selected, then the
+    /// register button's `RegisterSelectedBoneKeys`. The model's selector
+    /// records stay; [`Command::RegisterOutsideParents`] writes them.
+    ApplyOutsideParent {
+        selector: u32,
+        parent: OutsideParent,
+    },
+    /// Button 632 of the outside-parent dialog (`ResetModelSelection`,
+    /// `dialog_select_ops.cpp` 334-376): every key mark of the selected
+    /// model cleared, the dialog's records (one per selector) written to
+    /// the model, and `RegisterDisplayKeyCurrent`.
+    RegisterOutsideParents(Vec<OutsideParent>),
+    /// The outside-parent dialog closing (`EditAccessoryAttachments`,
+    /// `command_frame_edit.cpp` 1344-1378; its cancel ends the dialog with
+    /// `IDOK`): the selected model seeks when 630 or 632 ran since the last
+    /// close.
+    CloseOutsideParentDialog,
+    /// The OK of the model draw order dialog (menu 288,
+    /// `ModelDisplayOrderDlgProc`, `model_order_dialog.cpp` 201-325): the
+    /// model slots in their new combo order, all of them. Then the combo's
+    /// camera entry, as [`Command::SelectCameraMode`].
+    SetModelDrawOrder(Vec<u8>),
+    /// The OK of the model calculation order dialog (menu 289,
+    /// `ModelCalculateOrderDlgProc`, `model_order_dialog.cpp` 114-185): the
+    /// model slots in their new calculation order, all of them
+    /// (`pmm::Model::display_order`, `comboSelIndex2`).
+    SetModelCalcOrder(Vec<u8>),
+    /// The OK of the accessory order dialog (menu 249,
+    /// `AccessorySettingsDlgProc`, `command_file_menu.cpp` 720-900, and
+    /// `ApplyAccessorySettingsDialog` 932-958): the accessory slots in their
+    /// new combo order, all of them. Each takes its combo text as its name;
+    /// the first becomes the selected accessory.
+    SetAccessoryOrder(Vec<u8>),
+    /// The rename button (633) of the accessory order dialog: the combo
+    /// text and, on OK, the name of the accessory in `slot`. An empty name
+    /// changes nothing.
+    RenameAccessory {
+        slot: u8,
+        name: String,
+    },
+    /// The count edit (0x27B) of the accessory order dialog on OK:
+    /// `accessoryRenderSplitOrder`, clamped to `0..=` the accessory count
+    /// as its `EN_CHANGE` clamps it.
+    SetAccessoryRenderSplit(i32),
+    /// The start of a viewport bone drag (`frame_modes.cpp` 351, 353):
+    /// `PushBoneEditUndo` of the selected bones. The moves are
+    /// [`Command::DragBonePose`].
+    BeginBoneEdit,
+    /// One move of a viewport bone drag: [`Command::SetBonePose`] without
+    /// the undo entry, which [`Command::BeginBoneEdit`] pushed.
+    DragBonePose {
+        bone: u32,
+        translation: [f32; 3],
+        rotation: [f32; 4],
+    },
+    /// The model-mode view offset, `viewOffsetX` and `viewOffsetY`
+    /// (`camera_state[3..5]`), as the shift+right drag
+    /// (`pump_navigation.cpp` 330-334), the middle-button pan (376-380) and
+    /// the pan tool (`frame_modes.cpp` 530-537) write it; the PMM saves it.
+    /// The callers' model-mode gate is theirs.
+    SetViewOffset([f32; 2]),
+    /// A viewport drag on the record the physics model dialog shows
+    /// (`EditModeRecord`, `frame_modes_bone.cpp` 158-224), on
+    /// [`EditState::physics_scratch`]: rigid body `index` (`joint ==
+    /// false`) or joint `index`, `axis` 0..2, by the mouse row delta `dy`.
+    /// Rotation moves by 0.01 radian per row, position and size by 0.05; a
+    /// size stays at 0.1 or more. A joint has no size.
+    EditPhysicsRecord {
+        joint: bool,
+        index: u32,
+        field: PhysicsField,
+        axis: u8,
+        dy: i32,
+    },
+    /// "Load background AVI file" (menu 213, a dropped `.avi`;
+    /// `LoadAviFile`, `src/media/media_load.cpp` 155-314) with the path the
+    /// loader resolved and the file bytes ([`background`]).
+    LoadBackgroundMovie {
+        path: String,
+        data: Vec<u8>,
+    },
+    /// "Load background picture file" (menu 232, a dropped `.bmp`;
+    /// `LoadBackgroundPicture`, `media_load.cpp` 321-378) with the path the
+    /// loader resolved and the file bytes ([`background`]).
+    LoadBackgroundPicture {
+        path: String,
+        data: Vec<u8>,
+    },
+    /// Menu 216 (`command_dispatch.cpp` 541-553): the AVI background shown
+    /// or hidden. Showing needs a loaded movie.
+    ShowBackgroundMovie(bool),
+    /// Menu 233 (`command_file_menu.cpp` 1893-1906): the picture background
+    /// shown or hidden. Showing needs a loaded picture.
+    ShowBackgroundPicture(bool),
+    /// The Delete key (`PumpDeleteRebuild`, `pump_edit_keys.cpp` 241-254):
+    /// [`Command::DeleteSelectedKeys`], without the button's `SceneModified`.
+    DeleteKey,
+}
+
+/// A parent of the outside-parent dialog (`BoneOrderEntry::linkedModel`
+/// and `linkedBone`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutsideParent {
+    /// "none" (-1).
+    None,
+    /// "ground" (-2).
+    Ground,
+    /// Bone `bone` of the model in slot `model`.
+    Bone { model: u8, bone: u32 },
+}
+
+/// The record field of [`Command::EditPhysicsRecord`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PhysicsField {
+    Rotation,
+    Position,
+    /// The rigid-body size (Shift held).
+    Size,
 }
 
 impl Command {
@@ -615,10 +741,10 @@ impl Command {
     /// the caller sets its flag when [`Document::apply`] succeeds. The
     /// handlers that leave it alone include every selection, view, panel
     /// and pose edit, and the PMD edits, which set `EnhancedModelDirty`
-    /// instead. [`Command::NewScene`] and "open project" clear it. Two
-    /// gates are not seen here: a paste with an empty clipboard and the
-    /// Delete key (`PumpDeleteRebuild`) leave the flag, where this says
-    /// `true`. [`Document::lip_sync`] sets it (menu 224 and the drop).
+    /// instead. [`Command::NewScene`] and "open project" clear it. A paste
+    /// with an empty clipboard leaves the flag, where this says `true`;
+    /// [`Document::marks_modified`] sees that gate. [`Document::lip_sync`]
+    /// sets it (menu 224 and the drop).
     pub fn marks_modified(&self) -> bool {
         use Command as C;
         matches!(
@@ -671,6 +797,14 @@ impl Command {
                 | C::DeleteModel(_)
                 | C::DeleteAccessory(_)
                 | C::MoveSelectedKeys(_)
+                // dialog_select_ops.cpp 335, 437; command_frame_edit.cpp
+                // 1357; command_impl.cpp 570, command_file_menu.cpp 1889 (set
+                // even when the load fails).
+                | C::ApplyOutsideParent { .. }
+                | C::RegisterOutsideParents(_)
+                | C::CloseOutsideParentDialog
+                | C::LoadBackgroundMovie { .. }
+                | C::LoadBackgroundPicture { .. }
         )
     }
 }
@@ -718,6 +852,20 @@ pub struct EditState {
     /// the render size (menu 212); the application sets it from its device.
     /// `None` checks nothing.
     pub max_texture_size: Option<[i32; 2]>,
+    /// The viewport rectangle and `viewScale` that `MediaAspect` reads
+    /// when a background loads; the application sets it from its window.
+    /// `None` refuses the background loads.
+    pub viewport: Option<mds_media::background::Viewport>,
+    /// The rigid bodies and joints the open physics model dialog edits
+    /// (`rigidScratchArray`, `jointScratchArray`, `physics_model_dialog.cpp`
+    /// 574-685), which [`Command::EditPhysicsRecord`] drags; the dialog
+    /// fills it when it opens, commits it through
+    /// [`Command::SetPhysicsModel`] after reading its edit boxes back
+    /// (`%3.2f` sizes and positions, `%5.4f` joint positions), and clears
+    /// it when it closes.
+    pub physics_scratch: Option<(Vec<mds_formats::pmd::Rigid>, Vec<mds_formats::pmd::Joint>)>,
+    /// `AccessoryApplyGate`: 630 or 632 of the outside-parent dialog ran.
+    pub outside_parent_applied: bool,
 }
 
 impl EditState {
@@ -758,7 +906,19 @@ impl Document {
         data: &[u8],
         mut read: impl FnMut(&str) -> Option<Vec<u8>>,
     ) -> Result<Document, Error> {
-        let pmm = Pmm::read(data).map_err(|e| Error::Format(e.to_string()))?;
+        let mut pmm = Pmm::read(data).map_err(|e| Error::Format(e.to_string()))?;
+        // The combo rows stay in place; the accessories move to their rows
+        // ([`order`]).
+        let rows: Vec<_> = pmm
+            .accessories
+            .iter()
+            .map(|a| a.list_name.clone())
+            .collect();
+        pmm.accessories.sort_by_key(|a| a.order);
+        for (a, r) in pmm.accessories.iter_mut().zip(rows) {
+            a.list_name = r;
+            accessory::record_name(a);
+        }
         let mut models = Vec::with_capacity(pmm.models.len());
         for m in &pmm.models {
             let path = m.path.text.as_str();
@@ -841,6 +1001,8 @@ impl Document {
         d.edit.physics_checkbox = self.edit.physics_checkbox;
         d.edit.rand = self.edit.rand;
         d.edit.blink_phase = self.edit.blink_phase;
+        d.edit.max_texture_size = self.edit.max_texture_size;
+        d.edit.viewport = self.edit.viewport;
         // `LoadSceneV2_ReleaseTracks`: no model in the selected slot means
         // camera mode.
         if d.active().is_none() {
@@ -889,7 +1051,10 @@ impl Document {
         };
         let bytes = pose_file::save_pmd(pmd)?;
         let slot = self.pmm.models[i].slot;
-        self.set_model_path(slot, path)?;
+        self.apply(Command::SetModelPath {
+            slot,
+            path: path.to_string(),
+        })?;
         Ok(bytes)
     }
 
@@ -1012,7 +1177,6 @@ impl Document {
         // the three paste handlers, and the undo and redo buttons. A command
         // that fails is one the user could not run.
         let model_mode = self.pmm.settings.options[0] == 0;
-        let clip = &self.edit.model_clipboard;
         let settles = match &cmd {
             Command::SetFrame(_) | Command::ClickFrame(_) | Command::LoadMotion(_) => true,
             Command::PasteBonePose { .. } => {
@@ -1021,22 +1185,41 @@ impl Document {
             Command::LoadPose(_) | Command::Undo | Command::Redo => {
                 model_mode && self.active().is_some()
             }
-            Command::Paste if model_mode => {
-                !(clip.bones.is_empty() && clip.morphs.is_empty() && clip.displays.is_empty())
-            }
-            Command::Paste => !self.edit.global_clipboard.is_empty(),
-            Command::PasteMirrored | Command::PasteToSelectedBone => {
-                model_mode && !clip.bones.is_empty()
-            }
-            _ => false,
+            Command::CenterPositionBias(_) => model_mode,
+            Command::PasteToSelectedBone if !model_mode => false,
+            c => self.paste_runs(c).unwrap_or(false),
         };
-        let settles = settles || matches!(cmd, Command::CenterPositionBias(_)) && model_mode;
         self.edit.reported = None;
         let r = self.apply_inner(cmd);
         if r.is_ok() && settles {
             self.edit.physics_reset_pending = true;
         }
         r
+    }
+
+    /// For a paste command, whether its handler gets past the clipboard
+    /// gate (`frame_clipboard.cpp` 491-516, 653-678, 761-786;
+    /// `command_file_menu.cpp` 1471-1501).
+    fn paste_runs(&self, cmd: &Command) -> Option<bool> {
+        let model_mode = !self.camera_mode();
+        let clip = &self.edit.model_clipboard;
+        Some(match cmd {
+            Command::Paste if model_mode => {
+                !(clip.bones.is_empty() && clip.morphs.is_empty() && clip.displays.is_empty())
+            }
+            Command::Paste => !self.edit.global_clipboard.is_empty(),
+            Command::PasteMirrored => model_mode && !clip.bones.is_empty(),
+            Command::PasteToSelectedBone if model_mode => !clip.bones.is_empty(),
+            Command::PasteToSelectedBone => !self.edit.global_clipboard.accessories.is_empty(),
+            _ => return None,
+        })
+    }
+
+    /// [`Command::marks_modified`] with the clipboard gates of the paste
+    /// commands, which depend on the document: whether `cmd`, applied to
+    /// this document, sets `SceneModified`. Ask before [`Document::apply`].
+    pub fn marks_modified(&self, cmd: &Command) -> bool {
+        cmd.marks_modified() && self.paste_runs(cmd).unwrap_or(true)
     }
 
     fn apply_inner(&mut self, cmd: Command) -> Result<(), Error> {
@@ -1170,15 +1353,15 @@ impl Document {
                 rotation,
             } => {
                 let i = self.active_model()?;
-                let m = &mut self.pmm.models[i];
-                if bone as usize >= m.bone_pose.len() {
+                if bone as usize >= self.pmm.models[i].bone_pose.len() {
                     return Err(not("no such bone"));
                 }
-                model::push_pose_edit(m, &mut self.edit.models[i].history);
-                let p = &mut m.bone_pose[bone as usize];
-                p.translation = translation;
-                p.rotation = rotation;
-                p.flags[1] = 1;
+                self.apply_inner(Command::BeginBoneEdit)?;
+                self.apply_inner(Command::DragBonePose {
+                    bone,
+                    translation,
+                    rotation,
+                })?;
             }
             Command::SetMorph { morph, value } => {
                 let i = self.active_model()?;
@@ -1732,6 +1915,7 @@ impl Document {
                     ViewOption::GroundShadow => &mut p.view.ground_shadow,
                     ViewOption::GroundShadowTransparency => &mut p.physics.projected_shadow_blend,
                     ViewOption::SelfShadow => &mut p.self_shadow_mode,
+                    ViewOption::BlackBackground => &mut p.appearance.black_background,
                 } = u8::from(on);
             }
             Command::SetFpsLimit(fps) => self.pmm.view.fps_limit = fps,
@@ -1791,6 +1975,74 @@ impl Document {
                 self.set_physics_model(rigids, joints)?
             }
             Command::SetModelPath { slot, path } => self.set_model_path(slot, &path)?,
+            Command::ApplyOutsideParent { selector, parent } => {
+                self.apply_outside_parent(selector, parent)?
+            }
+            Command::RegisterOutsideParents(records) => self.register_outside_parents(&records)?,
+            Command::CloseOutsideParentDialog => {
+                if std::mem::take(&mut self.edit.outside_parent_applied) {
+                    self.seek(self.active_model()?);
+                }
+            }
+            Command::SetModelDrawOrder(slots) => {
+                self.set_model_draw_order(&slots)?;
+                self.apply_inner(Command::SelectCameraMode)?;
+            }
+            Command::SetModelCalcOrder(slots) => self.set_model_calc_order(&slots)?,
+            Command::SetAccessoryOrder(slots) => self.set_accessory_order(&slots)?,
+            Command::RenameAccessory { slot, name } => self.rename_accessory(slot, &name)?,
+            Command::SetAccessoryRenderSplit(n) => {
+                let count = self.pmm.accessories.len() as i32;
+                self.pmm.physics.accessory_render_order = n.clamp(0, count);
+            }
+            Command::BeginBoneEdit => {
+                let i = self.active_model()?;
+                model::push_pose_edit(&self.pmm.models[i], &mut self.edit.models[i].history);
+            }
+            Command::DragBonePose {
+                bone,
+                translation,
+                rotation,
+            } => {
+                let i = self.active_model()?;
+                let p = self.pmm.models[i]
+                    .bone_pose
+                    .get_mut(bone as usize)
+                    .ok_or(not("no such bone"))?;
+                p.translation = translation;
+                p.rotation = rotation;
+                p.flags[1] = 1;
+            }
+            Command::SetViewOffset([x, y]) => {
+                self.pmm.camera_state[3] = x;
+                self.pmm.camera_state[4] = y;
+            }
+            Command::EditPhysicsRecord {
+                joint,
+                index,
+                field,
+                axis,
+                dy,
+            } => self.edit_physics_record(joint, index, field, axis, dy)?,
+            Command::LoadBackgroundMovie { path, data } => {
+                self.load_background_movie(&path, &data)?
+            }
+            Command::LoadBackgroundPicture { path, data } => {
+                self.load_background_picture(&path, &data)?
+            }
+            Command::ShowBackgroundMovie(on) => {
+                let a = &mut self.pmm.avi;
+                if !on || !a.path.text.is_empty() {
+                    a.enabled = u32::from(on);
+                }
+            }
+            Command::ShowBackgroundPicture(on) => {
+                let p = &mut self.pmm.picture;
+                if !on || !p.path.text.is_empty() {
+                    p.enabled = u32::from(on);
+                }
+            }
+            Command::DeleteKey => return self.apply_inner(Command::DeleteSelectedKeys),
             Command::SetAccessoryAdditive(on) => {
                 let slot = self.pmm.selected_accessory_slot;
                 if let Ok(a) = global::accessory(&mut self.pmm, slot) {
@@ -1807,6 +2059,8 @@ impl Document {
                     physics_checkbox: self.edit.physics_checkbox,
                     rand: self.edit.rand,
                     blink_phase: self.edit.blink_phase,
+                    max_texture_size: self.edit.max_texture_size,
+                    viewport: self.edit.viewport,
                     ..EditState::default()
                 };
                 // The refresh tail of `ResetAppState`.

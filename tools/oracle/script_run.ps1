@@ -1,6 +1,6 @@
-# Script lane (wave 3 slices script and script2): runs every
+# Script lane (wave 3 slices script, script2, script3): runs every
 # tests\fixtures\rust\<Dir>\*.txt (Dir: script by default, script2, physscen,
-# script2\pmm1) with --mds-script twice, into <Out>\run1\<name> and <Out>\run2\<name>, and
+# script2\pmm1, script3) with --mds-script twice, into <Out>\run1\<name> and <Out>\run2\<name>, and
 # compares the two runs file by file. Stages the fixtures next to the exe
 # first (the scripts name their inputs relative to the exe directory).
 # Needs build.ps1 first, and the console session for the D3D9 device:
@@ -8,7 +8,8 @@
 #               -ScriptArgs '-Root <checkout> -Out <empty dir>'
 # -Filter runs only the scripts whose name contains the text. Staged next to the
 # exe: tests\fixtures\rust\*, script\inputs\*, <Dir>\inputs\*, and for
-# script2\pmm1 also tests\fixtures\rust\pmm1\*.
+# script2\pmm1 also tests\fixtures\rust\pmm1\*, for script3 also
+# tests\fixtures\rust\vsq\*.vsq.
 param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Out, [string]$Filter = '',
       [string]$Dir = 'script')
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -17,8 +18,9 @@ $exeDir = "$Root\out\ci\build\Release"
 $fixtures = "$Root\tests\fixtures\rust"
 $stage = @($fixtures, "$fixtures\script\inputs", "$fixtures\$Dir\inputs")
 if ($Dir -eq 'script2\pmm1') { $stage += "$fixtures\pmm1" }
+if ($Dir -eq 'script3') { $stage += "$fixtures\vsq" }
 foreach ($f in Get-ChildItem -File $stage -ErrorAction SilentlyContinue) {
-    if ($f.Extension -in '.pmd', '.pmx', '.pmm', '.vmd', '.vpd', '.x', '.wav', '.png', '.bmp') {
+    if ($f.Extension -in '.pmd', '.pmx', '.pmm', '.vmd', '.vpd', '.x', '.wav', '.png', '.bmp', '.vsq', '.vac') {
         Copy-Item $f.FullName "$exeDir\$($f.Name)" -Force
     }
 }

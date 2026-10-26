@@ -12,6 +12,7 @@ mds-accessory = { path = "../mds-accessory" }
 mds-edit = { path = "../mds-edit" }
 mds-formats = { path = "../mds-formats" }
 mds-math = { path = "../mds-math" }
+mds-media = { path = "../mds-media" }
 mds-ops = { path = "../mds-ops" }
 mds-physics = { path = "../mds-physics" }
 mds-pose = { path = "../mds-pose" }

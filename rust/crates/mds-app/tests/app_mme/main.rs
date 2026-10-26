@@ -11,6 +11,12 @@
 //! `tools/fixtures/fetch_corpus.sh` (`MDS_CORPUS`); without them it prints SKIP.
 //!
 //! `MDS_APP_MME_DIR=<dir>` keeps the staged scenes and the dumped PNGs there.
+//!
+//! [`menu`] has the tests of the MMEffect menu and the mapping dialog, [`editor`] those of two
+//! editor calls beside them.
+
+mod editor;
+mod menu;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -49,7 +55,7 @@ const PIXEL_GATED: &[&str] = &[
     "anime",
 ];
 
-fn fixtures() -> PathBuf {
+pub fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/rust")
 }
 
@@ -61,7 +67,7 @@ fn gated(name: &str) -> bool {
     PIXEL_GATED.contains(&name) || (name == "post" && mmegold().join("post.fx").is_file())
 }
 
-fn vkd3d_lib() -> PathBuf {
+pub fn vkd3d_lib() -> PathBuf {
     match std::env::var_os("MDS_VKD3D_LIB") {
         Some(p) => PathBuf::from(p),
         None if cfg!(target_os = "macos") => {
@@ -89,7 +95,7 @@ fn corpus() -> Option<PathBuf> {
 
 /// The scene `name` in `dir`: the PMM, its EMM with absolute effect paths, the models, and the
 /// accessory; the effects of `mmegold/` with `blink.gif` in `dir/mmegold`.
-fn stage(name: &str, dir: &Path, corpus: &Path) {
+pub fn stage(name: &str, dir: &Path, corpus: &Path) {
     let effects = dir.join("mmegold");
     std::fs::create_dir_all(&effects).unwrap();
     for e in std::fs::read_dir(mmegold()).unwrap() {

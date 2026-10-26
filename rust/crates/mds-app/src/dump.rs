@@ -90,7 +90,13 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
 }
 
 pub fn run(gpu: &Gpu, request: &Request) -> Result<(), String> {
-    let doc = file::read(&request.pmm)?;
+    let mut doc = file::read(&request.pmm)?;
+    let [l, t, r, b] = request
+        .picture_viewport
+        .unwrap_or([0.0, 0.0, WIDTH as f32, HEIGHT as f32]);
+    doc.edit.viewport = Some(crate::viewport::media_viewport(
+        [l, t, r, b].map(|v| v as i32),
+    ));
     let dir = request.pmm.parent().unwrap_or(Path::new("."));
     let assets = Assets::load(&doc, dir)?;
     let mut physics = PhysicsScene::new(&doc.pmm, |p| scene::read_model(dir, p))?;

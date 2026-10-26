@@ -36,13 +36,21 @@
 //! instead of the wall clock, and writes each frame before the step. [`Editor::playing`] is
 //! true while it runs. The loaded WAV ([`Editor::wave`]) plays along with playback and frame
 //! moves ([`audio`]).
+//!
+//! The effects ([`Editor::mme`]) follow the document's objects: autoloaded with the PMM
+//! ([`Mme::autoload`]), assigned again when the models or accessories change, written beside the
+//! PMM on save with Auto Save Mapping File on (`MmeAutoSaveEmmForPmm`,
+//! `third_party/mmeffect/src/mmeffect/emm_manager.cpp`), and with Auto Reload on loaded again when
+//! their file changes, polled every 100 ms (`mme_ui.cpp`). A recording draws through them when
+//! they are active.
 
+use crate::mme::{self, Mme, View};
 use crate::playback::{self, Options, Pass, Playback};
 use crate::record::{self, Recording};
 use crate::scene::{self, read_model, Assets, Shot};
 use crate::ui::dialog::AviSettings;
 use crate::{audio, file};
-use mds_doc::{Command, Document};
+use mds_doc::{Command, Document, ModelFile};
 use mds_media::wav::Wave;
 use mds_physics::PhysicsScene;
 use mds_render::{Camera, Frame, Stage};
@@ -72,6 +80,10 @@ pub struct Editor {
     pub recording: Option<Recording>,
     /// The document's WAV (`LoadWaveFile`), when it loads as PCM.
     pub wave: Option<Arc<Wave>>,
+    /// The MME effects of the document's objects.
+    pub mme: Mme,
+    /// When Auto Reload last polled the effect files.
+    last_reload_ms: u64,
     last_pump_ms: Option<u64>,
     /// An edit while playing left the live models' keys behind the document's.
     keys_stale: bool,
@@ -90,6 +102,8 @@ impl Editor {
         let physics = PhysicsScene::open(&doc.pmm, |p| read_model(&dir, p))?;
         let current = doc.pmm.timeline.current_frame.max(0) as u32;
         Ok(Editor {
+            mme: Mme::autoload(&doc, path.as_deref()),
+            last_reload_ms: 0,
             assets: Assets::load(&doc, &dir)?,
             wave: wave_of(&doc, &dir),
             recording: None,
@@ -203,6 +217,7 @@ impl Editor {
                     | SetOutlineColor(_)
             );
         let new_scene = cmd == NewScene;
+        let bodies = matches!(cmd, SetPhysicsModel { .. });
         let follow = matches!(cmd, ClickFrame(_));
         if let LoadModel { path, data } = &cmd {
             self.loaded.insert(path.clone(), data.clone());
@@ -226,11 +241,22 @@ impl Editor {
             return Ok(());
         }
         let now = Files::of(&self.doc);
-        if now.models != files.models {
+        if bodies {
+            // `CommitPhysicsEdits` puts the edited bodies into the world: it is built again from
+            // the edited PMDs.
+            for (m, f) in self.doc.pmm.models.iter().zip(&self.doc.models) {
+                if let ModelFile::Pmd(pmd) = f {
+                    let bytes = pmd.write().map_err(|e| e.to_string())?;
+                    self.loaded.insert(m.path.text.clone(), bytes);
+                }
+            }
+        }
+        if now.models != files.models || bodies {
             self.models_changed()?;
         }
         if now.accessories != files.accessories {
             self.assets.accessories = Assets::load_accessories(&self.doc, &self.dir);
+            self.mme.objects_changed(&self.doc);
         }
         if now.picture != files.picture {
             self.assets.picture = scene::picture(&self.doc, &self.dir);
@@ -274,6 +300,7 @@ impl Editor {
         };
         self.physics = PhysicsScene::open(&self.doc.pmm, read)?;
         self.physics_opens += 1;
+        self.mme.objects_changed(&self.doc);
         Ok(())
     }
 
@@ -379,6 +406,10 @@ impl Editor {
             .last_pump_ms
             .map_or(0.0, |t| now_ms.saturating_sub(t) as f32 * 0.001);
         self.last_pump_ms = Some(now_ms);
+        if self.mme.switches.auto_reload && now_ms >= self.last_reload_ms + 100 {
+            self.last_reload_ms = now_ms;
+            self.mme.reload_changed();
+        }
         if let Some(mut r) = self.recording.take() {
             if std::mem::take(&mut r.pending) {
                 // The pass of the menu command: a stopped `PhysicsFrame`, then section 10 arms
@@ -460,9 +491,16 @@ impl Editor {
             samples: &mds_render::SAMPLES_8X,
             picture_viewport: None,
         };
-        let px = scene::with_stage(&self.doc, &self.assets, &shot, |f, s| {
-            mds_render::render_frame_with(r.gpu(), f, s)
-        })??;
+        let px = match self.mme.active() {
+            true => self.mme.render(
+                &self.doc,
+                &self.physics,
+                &self.view(frame, r.size(), 1.0 / r.settings.fps)?,
+            )?,
+            false => scene::with_stage(&self.doc, &self.assets, &shot, |f, s| {
+                mds_render::render_frame_with(r.gpu(), f, s)
+            })??,
+        };
         r.write(&px)?;
         r.n += 1;
         let s = &r.settings;
@@ -494,9 +532,29 @@ impl Editor {
 
     pub fn save_as(&mut self, path: &Path) -> Result<(), String> {
         file::write(&self.doc, path)?;
+        if self.mme.switches.auto_save {
+            let emm = mme::emm_path(path);
+            std::fs::write(&emm, self.mme.save_emm(&self.doc))
+                .map_err(|e| format!("{}: {e}", emm.display()))?;
+        }
         self.path = Some(path.to_path_buf());
         self.modified = false;
         Ok(())
+    }
+
+    /// The MME view of the frame on screen from the view camera: `frame` at `size`, `elapsed`
+    /// seconds after the last.
+    pub fn view(&self, frame: u32, size: [u32; 2], elapsed: f32) -> Result<View<'_>, String> {
+        let l = mds_render::scene::light_at(&self.doc.pmm, frame)
+            .ok_or_else(|| format!("light track at frame {frame}"))?;
+        let ([r, g, b], [x, y, z]) = (l.color, l.direction);
+        Ok(View {
+            camera: &self.camera,
+            light: [r, g, b, x, y, z],
+            frame,
+            elapsed,
+            size,
+        })
     }
 
     /// Calls `draw` with the frame on screen at `size`; `samples` as [`Frame::samples`].

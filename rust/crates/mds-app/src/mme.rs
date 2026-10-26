@@ -82,6 +82,8 @@ pub struct Mme {
     pub switches: Switches,
     /// One per object: the PMM models in order, then the accessories.
     pub assignments: Vec<Assignment>,
+    /// The objects the assignments are of: model or accessory, slot, and stored path.
+    objects: Vec<(bool, i32, String)>,
     /// `Default` of the EMM's `[Effect]` section, `""` for `none`.
     pub default: String,
     /// The folder relative effect paths resolve against (the PMM's).
@@ -92,6 +94,9 @@ pub struct Mme {
     runtime: RefCell<Option<Runtime>>,
     /// The back buffer `ViewportRatio` targets are sized against; `None` is the frame's size.
     pub backbuffer: Option<(u32, u32)>,
+    /// The vkd3d-shader library; `None` is [`Vkd3d::load`]'s (`MDS_VKD3D_LIB`, else beside the
+    /// executable).
+    pub vkd3d: Option<PathBuf>,
 }
 
 struct Loaded {
@@ -164,11 +169,13 @@ impl Mme {
         Mme {
             switches: Switches::default(),
             assignments: Vec::new(),
+            objects: Vec::new(),
             default: String::new(),
             dir: dir.to_path_buf(),
             log: RefCell::new(Vec::new()),
             runtime: RefCell::new(None),
             backbuffer: None,
+            vkd3d: None,
         }
     }
 
@@ -191,6 +198,7 @@ impl Mme {
         let live = live(doc);
         self.assignments
             .resize_with(live.len(), Assignment::default);
+        self.objects = live.iter().map(key).collect();
         for (a, l) in self.assignments.iter_mut().zip(&live) {
             if a.effect.is_empty() {
                 let object = crate::scene::resolve(&self.dir, &l.path);
@@ -232,6 +240,19 @@ impl Mme {
         emm::save_emm(&live(doc), &self.assignments, &self.default, &cwd)
     }
 
+    /// The folder relative effect paths resolve against.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// How many effects are loaded (assigned ones and those of the offscreen turns).
+    pub fn loaded(&self) -> usize {
+        self.runtime
+            .borrow()
+            .as_ref()
+            .map_or(0, |r| r.state.effects.len())
+    }
+
     /// Whether a frame draws through MME: effects on and an object with an effect.
     pub fn active(&self) -> bool {
         self.switches.enabled
@@ -244,7 +265,14 @@ impl Mme {
     /// The objects changed (a model or accessory loaded or deleted): the assignment follows
     /// the new list, the meshes load again.
     pub fn objects_changed(&mut self, doc: &Document) {
-        self.assignments.truncate(live(doc).len());
+        let old = std::mem::take(&mut self.assignments);
+        self.assignments = live(doc)
+            .iter()
+            .map(|l| match self.objects.iter().position(|o| *o == key(l)) {
+                Some(i) => old[i].clone(),
+                None => Assignment::default(),
+            })
+            .collect();
         self.assign_beside(doc);
         self.unload();
     }
@@ -306,7 +334,11 @@ impl Mme {
 
     fn start(&self, doc: &Document, size: [u32; 2]) -> Result<Runtime, String> {
         let gpu = Gpu::new()?.ok_or("MME: no wgpu adapter")?;
-        let vk = Vkd3d::load().map_err(|e| format!("MME: vkd3d-shader: {e}"))?;
+        let vk = match &self.vkd3d {
+            Some(p) => Vkd3d::open(p),
+            None => Vkd3d::load(),
+        }
+        .map_err(|e| format!("MME: vkd3d-shader: {e}"))?;
         let models = doc
             .models
             .iter()
@@ -326,6 +358,10 @@ impl Mme {
             },
         })
     }
+}
+
+fn key(l: &Live) -> (bool, i32, String) {
+    (l.model, l.slot, l.path.clone())
 }
 
 fn stamp(path: &Path) -> Option<SystemTime> {
@@ -448,6 +484,9 @@ impl State {
         // The effect's includes and textures may sit anywhere above it (`..\ray.conf`), so the
         // root it resolves below is the file system's.
         let root = path.ancestors().last().unwrap_or(Path::new("/"));
+        mme.log
+            .borrow_mut()
+            .push(format!("Loading effect file: {}", path.display()));
         match Effect::load(gpu, vk, path, root, self.backbuffer) {
             Ok(effect) => {
                 if effect.sas.has_errors {

@@ -693,7 +693,7 @@ impl Host {
         if f.shadow_map_display
             && mds_render::scene::stage_at(f.pmm, f.frame)
                 .self_shadow
-                .is_some()
+                .is_some_and(|shadow| shadow.shades() && shadow.distance > 0.0)
         {
             let masks: Vec<_> = (0..self.objects.len())
                 .filter(|&o| !carriers[o] && assignment(o).shown)
@@ -852,7 +852,7 @@ impl Host {
         drawn: &Drawn,
         display: bool,
     ) -> Result<(), String> {
-        if list.is_empty() {
+        if list.is_empty() && !display {
             return Ok(());
         }
         for &(o, mask) in list {

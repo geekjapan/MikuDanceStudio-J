@@ -23,6 +23,9 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "consumer_probe.rs"]
+mod consumer_probe;
+
 const BULLET_DIRS: [&str; 3] = ["LinearMath", "BulletCollision", "BulletDynamics"];
 
 fn collect_cpp(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -119,11 +122,19 @@ fn main() {
     build.define("BT_NO_PROFILE", Some("1"));
     build.compile("mds_bullet_sys");
 
+    println!("cargo:rerun-if-env-changed=MDS_BT_CONSUMER_PROBE_OUT");
+    if let Some(out) = env::var_os("MDS_BT_CONSUMER_PROBE_OUT") {
+        consumer_probe::run(&build, &src, &shim, Path::new(&out));
+    }
+
     if env::var_os("CARGO_FEATURE_BENCH").is_some() {
         build_bench(&build, &shim);
     }
 
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=consumer_probe.rs");
+    println!("cargo:rerun-if-changed=../../../tools/bullet-dbvt-consumer-profile/probe.cpp");
+    println!("cargo:rerun-if-changed=../../../tools/bullet-rust-dbvt-check/oracle.cpp");
     println!("cargo:rerun-if-changed=shim");
     println!("cargo:rerun-if-changed={}", src.display());
 }

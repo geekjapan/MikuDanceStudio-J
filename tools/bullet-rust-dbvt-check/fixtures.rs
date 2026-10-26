@@ -149,9 +149,18 @@ fn native_controlled_address_parity() {
                 tree.opath,
                 u8::from(tree.free.is_some())
             );
-            assert_eq!(state, fields[0], "order {order} operation {i}: {input}");
-            assert_eq!(topology, fields[1], "order {order} operation {i}: {input}");
-            assert_eq!(events, fields[3], "order {order} operation {i}: {input}");
+            assert_eq!(
+                state, fields[0],
+                "DBVT_COMPATIBILITY_MISMATCH order {order} operation {i}: {input}"
+            );
+            assert_eq!(
+                topology, fields[1],
+                "DBVT_COMPATIBILITY_MISMATCH order {order} operation {i}: {input}"
+            );
+            assert_eq!(
+                events, fields[3],
+                "DBVT_COMPATIBILITY_MISMATCH order {order} operation {i}: {input}"
+            );
             ids.extend(tree.free);
             let ranks: Vec<usize> = fields[2]
                 .split(',')
@@ -303,16 +312,19 @@ fn ordinary_native_and_production_allocator_query_sets() {
         assert_eq!(
             leaf_records(&topology),
             leaf_records(fields[1]),
-            "operation {i} {input}"
+            "DBVT_COMPATIBILITY_MISMATCH operation {i} {input}"
         );
         if matches!(input.as_bytes()[0], b'v' | b's' | b'q' | b'x') {
             assert_eq!(
                 query_set(&events),
                 query_set(fields[3]),
-                "operation {i} {input}"
+                "DBVT_COMPATIBILITY_MISMATCH operation {i} {input}"
             );
         } else {
-            assert_eq!(events, fields[3], "operation {i} {input}");
+            assert_eq!(
+                events, fields[3],
+                "DBVT_COMPATIBILITY_MISMATCH operation {i} {input}"
+            );
         }
     }
 }

@@ -628,6 +628,8 @@ if(BUILD_TESTING)
     target_include_directories(math_vectors PRIVATE include tools/oracle)
     target_link_libraries(math_vectors PRIVATE D3DXRuntime)
     add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/camera_reload_body.inc
+        ${CMAKE_CURRENT_BINARY_DIR}/camera_reload_source.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/camera_reload_manifest.json
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/oracle/extract_camera_reload.py
             ${CMAKE_CURRENT_SOURCE_DIR}/src/window/ui_model_reload.cpp
             ${CMAKE_CURRENT_BINARY_DIR}/camera_reload_body.inc

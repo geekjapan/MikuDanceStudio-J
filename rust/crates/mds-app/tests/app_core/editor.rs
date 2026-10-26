@@ -450,3 +450,120 @@ fn parent_camera_selection_load_and_frame_commands_reach_the_document() {
         assert_eq!(e.doc.pmm.timeline.camera_reference_mode, reference);
     }
 }
+
+#[test]
+fn parent_selection_updates_the_displayed_view_in_both_directions() {
+    use mds_math::Mat4;
+    for (parent_rotation, camera_rotation) in [
+        ([0.0, 0.0, 0.6, 0.8], [0.2, -0.4, 0.3]),
+        (
+            [
+                std::f32::consts::FRAC_1_SQRT_2,
+                0.0,
+                0.0,
+                std::f32::consts::FRAC_1_SQRT_2,
+            ],
+            [0.0; 3],
+        ),
+        (
+            [
+                std::f32::consts::FRAC_1_SQRT_2,
+                0.0,
+                0.0,
+                std::f32::consts::FRAC_1_SQRT_2,
+            ],
+            [0.0005, 0.0, 0.0],
+        ),
+    ] {
+        for reference in 0..=2 {
+            let mut e = Editor::empty();
+            for _ in 0..2 {
+                e.load_model(&fixtures().join("chain8.pmx")).unwrap();
+            }
+            for (i, m) in e.doc.pmm.models.iter_mut().enumerate() {
+                m.bone_pose[0].translation = [3.0 + 7.0 * i as f32, -2.0, 5.0];
+                m.bone_pose[0].rotation = parent_rotation;
+                m.selection.selected_bone = 2;
+            }
+            e.apply(Command::SelectCameraMode).unwrap();
+            let k = &mut e.doc.pmm.camera.heads_mut()[0];
+            k.parent_model = 0;
+            k.parent_bone = 2;
+            k.eye = [11.0, 13.0, -37.0];
+            k.target = camera_rotation;
+            e.doc.pmm.appearance.camera_parent_model = 0;
+            e.doc.pmm.appearance.camera_parent_bone = 2;
+            e.doc.pmm.appearance.follow_camera = 1;
+            e.apply(Command::SetCameraReference(reference)).unwrap();
+            for m in &mut e.physics.scene.models {
+                mds_pose::pose::apply_morphs(m);
+                mds_pose::pose::set_physics_mode(
+                    m,
+                    0,
+                    &mds_pose::pose::Others { models: [&[], &[]] },
+                    0,
+                );
+            }
+            for slot in [1, 0, 1, 0] {
+                e.apply(Command::SelectModel(slot)).unwrap();
+                let p = &e.doc.pmm;
+                let s = &p.camera_state;
+                let parent = &e.physics.scene.models[0].bones[2];
+                let point = |b: &mds_pose::model::Bone| {
+                    std::array::from_fn::<_, 3, _>(|c| {
+                        b.mat_init.0[12 + c]
+                            + (0..3)
+                                .map(|a| b.position[a] * b.mat_init.0[a * 4 + c])
+                                .sum::<f32>()
+                    })
+                };
+                let model = &e.physics.scene.models[slot as usize];
+                let focus = if slot == 0 {
+                    point(parent)
+                } else {
+                    match reference {
+                        1 => model.bones[model.center_bone].mat_init.0[12..15]
+                            .try_into()
+                            .unwrap(),
+                        2 => point(&model.bones[2]),
+                        _ => [0.0; 3],
+                    }
+                };
+                let basis = Mat4(std::array::from_fn(|i| {
+                    if i / 4 < 3 && i % 4 < 3 {
+                        parent.mat_init.0[(i % 4) * 4 + i / 4]
+                    } else {
+                        Mat4::IDENTITY.0[i]
+                    }
+                }));
+                let r = Mat4::multiply(&Mat4::rotation_y(s[7]), &Mat4::rotation_x(s[6]));
+                let r = Mat4::multiply(&basis, &Mat4::multiply(&r, &Mat4::rotation_z(s[8])));
+                let offset = if slot == 0 {
+                    [s[0], s[1], s[2]]
+                } else {
+                    [s[3], s[4], s[5]]
+                };
+                assert!(basis != Mat4::IDENTITY);
+                for point in [[0.0; 3], [4.0, 7.0, -2.0], [-3.0, 1.0, 9.0]] {
+                    let view: [f32; 3] = std::array::from_fn(|c| {
+                        (0..3)
+                            .map(|a| (point[a] - focus[a]) * r.0[a * 4 + c])
+                            .sum::<f32>()
+                            - offset[c]
+                    });
+                    let clip = e
+                        .with_frame([640, 480], &[[0.0; 2]], |f| f.view.clip(point))
+                        .unwrap();
+                    let f = 1.0 / (p.settings.camera_fov.to_radians() / 2.0).tan();
+                    let want = [view[0] * f / (640.0 / 480.0), view[1] * f, view[2]];
+                    for (got, want) in [clip[0], clip[1], clip[3]].into_iter().zip(want) {
+                        assert!(
+                            (got - want).abs() < 0.0002,
+                            "reference {reference}, selected {slot}: {got} != {want}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

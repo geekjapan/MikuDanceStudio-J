@@ -116,6 +116,16 @@ fn native_expected(d: &Document, selected: usize, s: [f32; 9]) -> Option<([f32; 
         .write_all(input.as_bytes())
         .unwrap();
     let out = child.wait_with_output().unwrap();
+    if let Some(dir) = std::env::var_os("MDS_CAMERA_RELOAD_LOG_DIR") {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static CASE: AtomicUsize = AtomicUsize::new(0);
+        let dir = PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let case = CASE.fetch_add(1, Ordering::Relaxed);
+        std::fs::write(dir.join(format!("{case}.input.txt")), &input).unwrap();
+        std::fs::write(dir.join(format!("{case}.output.txt")), &out.stdout).unwrap();
+        std::fs::write(dir.join(format!("{case}.stderr.txt")), &out.stderr).unwrap();
+    }
     assert!(out.status.success(), "native camera oracle failed");
     let values: Vec<f32> = String::from_utf8(out.stdout)
         .unwrap()

@@ -486,6 +486,11 @@ fn beside(file: &Path) -> impl FnMut(&str) -> Option<Vec<u8>> + '_ {
     move |name| std::fs::read(effect_file(folder, name)).ok()
 }
 
+/// Shared toon files are application data, independently of the object's folder.
+fn shared_toon(name: &str) -> Option<Vec<u8>> {
+    std::fs::read(Path::new("data").join(name)).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -551,9 +556,4 @@ mod tests {
         assert_eq!(effect_file(&dir, "EFFECT.FX"), dir.join("Effect.fx"));
         std::fs::remove_dir_all(dir).unwrap();
     }
-}
-
-/// Shared toon files are application data, independently of the object's folder.
-fn shared_toon(name: &str) -> Option<Vec<u8>> {
-    std::fs::read(Path::new("data").join(name)).ok()
 }

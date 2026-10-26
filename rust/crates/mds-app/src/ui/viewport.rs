@@ -17,10 +17,10 @@
 //! A bone drag is one undo entry: the press on a gizmo or a model tool row pushes it
 //! ([`Command::BeginBoneEdit`], `PushBoneEditUndo`, `frame_modes.cpp:351`) and each move sets the
 //! poses ([`Command::DragBonePose`]); the box and the pick go through [`Command::SelectBones`].
-//! Camera tools edit the view camera as the other navigation does, accessory targets go through
+//! Camera tools edit raw document controls before deriving the view; accessory targets go through
 //! [`Command::AccessoryEdit`]. The model-mode pans (the pan tool, the middle button and Shift with
 //! the right button) write the view offsets ([`Command::SetViewOffset`], `camera_state[3..5]`)
-//! and move the view camera's target along with them, because the view camera has no offsets.
+//! and the derived view includes these offsets once.
 //! The model-mode orbit and Ctrl distance of the right button write the camera state they move
 //! (`camera_state[5..8]`, [`Command::SetCamera`]), which the PMM saves too.
 //!
@@ -34,9 +34,10 @@ use crate::actions::Action;
 use crate::editor::Editor;
 use crate::navigation::{self, KeyState, Modifiers, ViewButton, WHEEL_DELTA};
 use egui::{Color32, Event, MouseWheelUnit, PointerButton, Rect, Sense, Stroke, Vec2};
+use mds_doc::CameraControls as Camera;
 use mds_doc::{Command, ModelFile, PhysicsField};
 use mds_math::{Mat4, Quat, Vec3};
-use mds_render::{Camera, View};
+use mds_render::View;
 
 const ACTIONS: &[Action] = &[
     Action::run("ctl:402", |c| view(c, ViewButton::Front), false),
@@ -91,14 +92,19 @@ pub fn actions() -> &'static [Action] {
 }
 
 fn view(ctx: &mut Ctx, b: ViewButton) -> Result<(), String> {
-    b.apply(&mut ctx.editor.camera);
-    Ok(())
+    ctx.editor.apply(Command::ResetViewPreset {
+        preset: b,
+        playing: ctx.editor.playing(),
+    })
 }
 
 /// `ConsumeNumpadViewPresets` runs in the stopped branch of the pump only.
 fn numpad(ctx: &mut Ctx, digit: u8) -> Result<(), String> {
-    if !ctx.editor.playing() {
-        navigation::numpad(&mut ctx.editor.camera, digit);
+    let focus = ctx.egui.as_ref().is_none_or(|egui| {
+        egui.input(|i| i.viewport().focused.unwrap_or(true)) && !egui.egui_wants_keyboard_input()
+    });
+    if focus && !ctx.editor.playing() && (camera_mode(ctx.editor) || !bone_edit_path(ctx.editor)) {
+        ctx.editor.apply(Command::NumpadViewPreset(digit))?;
     }
     Ok(())
 }
@@ -190,32 +196,35 @@ fn apply_or_report(ctx: &mut Ctx, cmd: Command) -> bool {
     ctx.editor.apply(cmd).map_err(|e| *ctx.status = e).is_ok()
 }
 
+fn edit_camera(ctx: &mut Ctx, edit: impl FnOnce(&mut Camera)) {
+    if let Err(e) = ctx.editor.edit_camera_controls(edit) {
+        *ctx.status = e;
+    }
+}
+
 /// The model-mode view offset moved by `(dx, dy)` (`ViewOffsetX` and `ViewOffsetY`, the pans of
 /// `pump_navigation.cpp:330`, `:376` and `frame_modes.cpp:530`).
 fn pan(ctx: &mut Ctx, dx: f32, dy: f32) {
     let s = &ctx.editor.doc.pmm.camera_state;
     apply_or_report(ctx, Command::SetViewOffset([s[3] + dx, s[4] + dy]));
-    pan_view_offset(&mut ctx.editor.camera, dx, dy);
 }
 
 /// The model-mode right drag without Shift (`pump_navigation.cpp:335` to `:342`): Ctrl moves
 /// `CameraDistance`, else the drag turns `CameraYaw` and `CameraPitch`. The view camera turns
 /// with the state and keeps its target.
+fn middle_drag(ctx: &mut Ctx, dx: i32, dy: i32, m: Modifiers) {
+    let parent = ctx.editor.doc.pmm.appearance.camera_parent_model >= 0;
+    edit_camera(ctx, |camera| {
+        if parent {
+            navigation::parent_middle_drag(camera, dx, dy, m);
+        } else {
+            navigation::middle_drag(camera, dx, dy, m);
+        }
+    });
+}
+
 fn orbit(ctx: &mut Ctx, dx: i32, dy: i32, m: Modifiers) {
-    let mut view = ctx.editor.camera;
-    navigation::right_drag(&mut view, dx, dy, m);
-    let p = &ctx.editor.doc.pmm;
-    let mut state = crate::scene::state_camera(&ctx.editor.doc);
-    navigation::right_drag(&mut state, dx, dy, m);
-    let cmd = Command::SetCamera {
-        position: state.target,
-        rotation: state.rotation,
-        distance: state.distance,
-        fov: p.settings.camera_fov,
-        perspective: p.camera_perspective != 0,
-    };
-    apply_or_report(ctx, cmd);
-    ctx.editor.camera = view;
+    edit_camera(ctx, |camera| navigation::right_drag(camera, dx, dy, m));
 }
 
 // ---- the selected model ----------------------------------------------------------------------
@@ -948,19 +957,6 @@ fn drag_scale(m: Modifiers) -> f32 {
     }
 }
 
-/// The model-mode view offsets (`ViewOffsetX/Y`, the eye of the fixed look-at view,
-/// `src/render/debug_geometry.cpp:560`) moved by `(dx, dy)`: the target moves along the camera's
-/// right and up axes, which draws the same picture. [`pan`] also writes the offsets to the
-/// document.
-pub fn pan_view_offset(camera: &mut Camera, dx: f32, dy: f32) {
-    let [pitch, yaw, roll] = camera.rotation;
-    let r = Mat4::multiply(&Mat4::rotation_y(yaw), &Mat4::rotation_x(pitch));
-    let r = Mat4::multiply(&r, &Mat4::rotation_z(roll)).0;
-    for j in 0..3 {
-        camera.target[j] += dx * r[j * 4] + dy * r[j * 4 + 1];
-    }
-}
-
 /// `BoneEditPathActive` (`pump_navigation.cpp:110`): the camera follows the selected model, so a
 /// model-mode right or middle drag only refreshes the readouts.
 fn bone_edit_path(editor: &Editor) -> bool {
@@ -1002,7 +998,7 @@ struct Overlay {
 fn overlay(editor: &Editor, size: [i32; 2]) -> Overlay {
     let rig = rig(editor).filter(|_| size[0] > 0 && size[1] > 0);
     let screen = rig.as_ref().map_or_else(Vec::new, |r| {
-        let view = editor.camera.view(size[0] as u32, size[1] as u32);
+        let view = editor.camera_view(size.map(|v| v as u32));
         screen(r, &view, size)
     });
     let center = rig
@@ -1136,8 +1132,8 @@ pub fn input(ctx: &mut Ctx, i: &Input) {
             }
         }
         match s.view_tool {
-            1 => ctx.editor.camera.distance -= dy as f32 * 0.1,
-            2 if camera_mode => navigation::middle_drag(&mut ctx.editor.camera, dx, dy, m),
+            1 => edit_camera(ctx, |camera| camera.distance -= dy as f32 * 0.1),
+            2 if camera_mode => middle_drag(ctx, dx, dy, m),
             2 => pan(ctx, -(dx as f32) * drag_scale(m), dy as f32 * drag_scale(m)),
             _ => {}
         }
@@ -1148,7 +1144,7 @@ pub fn input(ctx: &mut Ctx, i: &Input) {
     let model_path = !camera_mode && bone_edit_path(ctx.editor);
     if i.right == KeyState::Held && !model_path {
         if camera_mode {
-            navigation::right_drag(&mut ctx.editor.camera, px, py, m);
+            edit_camera(ctx, |camera| navigation::right_drag(camera, px, py, m));
         } else if i.shift {
             pan(ctx, -(px as f32) * 0.1, py as f32 * 0.1);
         } else {
@@ -1157,14 +1153,22 @@ pub fn input(ctx: &mut Ctx, i: &Input) {
     }
     if i.middle == KeyState::Held {
         if camera_mode {
-            navigation::middle_drag(&mut ctx.editor.camera, px, py, m);
+            middle_drag(ctx, px, py, m);
         } else {
             let k = drag_scale(m);
             pan(ctx, -(px as f32) * k, py as f32 * k);
         }
     }
     if i.wheel != 0.0 {
-        navigation::wheel(&mut ctx.editor.camera, i.wheel.round() as i16);
+        if camera_mode && ctx.editor.doc.pmm.appearance.camera_parent_model >= 0 {
+            edit_camera(ctx, |camera| {
+                camera.target[2] += f32::from(i.wheel.round() as i16) * 0.05
+            });
+        } else if !model_path {
+            edit_camera(ctx, |camera| {
+                navigation::wheel(camera, i.wheel.round() as i16)
+            });
+        }
     }
 
     if held && s.drag != 0 {
@@ -1198,12 +1202,12 @@ fn drag(ctx: &mut Ctx, o: &Overlay, s: State, p: &Pointer, size: [i32; 2]) {
             } else {
                 let global =
                     ctx.editor.doc.pmm.appearance.camera_parent_model >= 0 || s.coordinate == 1;
-                camera_move(&mut ctx.editor.camera, axis, p, global);
+                edit_camera(ctx, |camera| camera_move(camera, axis, p, global));
             }
         } else if s.coordinate == 2 {
             accessory_step(ctx, 3 + axis as u8, dy * tool_scale(p, [0.2, 0.002, 0.02]));
         } else {
-            camera_turn(&mut ctx.editor.camera, axis, p);
+            edit_camera(ctx, |camera| camera_turn(camera, axis, p));
         }
         return;
     }
@@ -1214,7 +1218,7 @@ fn drag(ctx: &mut Ctx, o: &Overlay, s: State, p: &Pointer, size: [i32; 2]) {
     let Some(rig) = &o.rig else {
         return;
     };
-    let c = &ctx.editor.camera;
+    let c = crate::scene::state_camera(&ctx.editor.doc);
     let poses = match mode {
         1..=6 => rotate(rig, mode, p, c.rotation),
         7..=9 => {

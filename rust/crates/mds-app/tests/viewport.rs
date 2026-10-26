@@ -108,11 +108,10 @@ fn without_physics_the_window_shows_the_dumped_frame() {
         editor.pump(u64::from(frame)).unwrap();
         let (texture, _, _) = viewport.draw(&editor, SIZE, 1).unwrap();
         let window = read(&gpu, texture);
-        let camera = scene::track_camera(&doc, frame).unwrap();
         let shot = Shot {
             physics: &physics,
             frame,
-            camera: &camera,
+            camera: &editor.camera,
             size: SIZE,
             samples: &ONE,
             picture_viewport: None,

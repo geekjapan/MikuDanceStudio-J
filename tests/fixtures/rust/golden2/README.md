@@ -128,8 +128,8 @@ the rest black, the resolved value is 255 * srgb(n / 8), not 255 * n / 8:
 Inferred, not probed: for other colors the resolve likely averages the
 samples after the sRGB decoding and encodes the mean again, which is what
 NVIDIA's gamma-corrected antialiasing does. The probe shows black and white
-only. The sample pattern is therefore not what differs at the golden2 edges;
-the resolve is.
+only. So the edge pixels of the images here come from the standard 8x
+pattern and a resolve of sRGB-encoded coverage, not a linear box average.
 
 ## The ground probe
 

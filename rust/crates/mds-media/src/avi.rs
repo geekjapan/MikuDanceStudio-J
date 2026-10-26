@@ -265,6 +265,11 @@ impl<W: Write + Seek> AviWriter<W> {
         head.extend(w.hdrl());
         w.riff.movi = head.len() as u64;
         movi_open(&mut head);
+        if head.len() as u64 + tail_len([0; 2], true) > riff_limit {
+            return Err(Error::Param(
+                "RIFF limit cannot hold the header and indexes",
+            ));
+        }
         w.out.write_all(&head)?;
         w.pos = head.len() as u64;
         Ok(w)
@@ -276,6 +281,10 @@ impl<W: Write + Seek> AviWriter<W> {
         if bgr.len() != w * h * 3 {
             return Err(Error::Param("frame length is not width * height * 3"));
         }
+        let frames = self
+            .frames
+            .checked_add(1)
+            .ok_or(Error::Param("frame count exceeds u32"))?;
         let stride = (w * 3).div_ceil(4) * 4;
         let mut dib = vec![0u8; stride * h];
         for (y, src) in bgr.chunks_exact(w * 3).enumerate() {
@@ -283,7 +292,7 @@ impl<W: Write + Seek> AviWriter<W> {
             dib[at..at + src.len()].copy_from_slice(src);
         }
         self.write_chunk(VIDEO, &dib)?;
-        self.frames += 1;
+        self.frames = frames;
         Ok(())
     }
 
@@ -295,8 +304,13 @@ impl<W: Write + Seek> AviWriter<W> {
         if !pcm.len().is_multiple_of(a.block_align() as usize) {
             return Err(Error::Param("audio is not a whole number of blocks"));
         }
+        let audio_bytes = self
+            .audio_bytes
+            .checked_add(pcm.len() as u64)
+            .filter(|bytes| bytes / u64::from(a.block_align()) <= u64::from(u32::MAX))
+            .ok_or(Error::Param("audio block count exceeds u32"))?;
         self.write_chunk(AUDIO, pcm)?;
-        self.audio_bytes += pcm.len() as u64;
+        self.audio_bytes = audio_bytes;
         Ok(())
     }
 
@@ -542,5 +556,44 @@ impl<W: Write + Seek> AviWriter<W> {
         }
         b.resize(24 + 16 * SUPER_ENTRIES, 0);
         b
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn stream_count_limits_reject_chunks_before_writing() {
+        let mut avi = AviWriter::new(
+            Cursor::new(Vec::new()),
+            Config {
+                width: 1,
+                height: 1,
+                fps_num: 30,
+                fps_den: 1,
+                audio: Some(AudioFormat {
+                    channels: 2,
+                    sample_rate: 48000,
+                    bits: 16,
+                }),
+            },
+        )
+        .unwrap();
+        avi.frames = u32::MAX - 1;
+        avi.write_frame(&[0; 3]).unwrap();
+        assert_eq!(avi.frames, u32::MAX);
+        let before = avi.out.get_ref().clone();
+        assert!(matches!(avi.write_frame(&[0; 3]), Err(Error::Param(_))));
+        assert_eq!(avi.frames, u32::MAX);
+        assert_eq!(avi.out.get_ref(), &before);
+
+        avi.audio_bytes = (u64::from(u32::MAX) - 1) * 4;
+        avi.write_audio(&[0; 4]).unwrap();
+        let before = avi.out.get_ref().clone();
+        assert!(matches!(avi.write_audio(&[0; 4]), Err(Error::Param(_))));
+        assert_eq!(avi.audio_bytes, u64::from(u32::MAX) * 4);
+        assert_eq!(avi.out.get_ref(), &before);
     }
 }

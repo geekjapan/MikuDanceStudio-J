@@ -223,6 +223,76 @@ impl Seek for Counter {
 }
 
 #[test]
+fn audio_block_count_cannot_wrap_the_stream_length() {
+    let mut avi = AviWriter::new(
+        Counter { pos: 0 },
+        Config {
+            width: 1,
+            height: 1,
+            fps_num: 30,
+            fps_den: 1,
+            audio: Some(AudioFormat {
+                channels: 1,
+                sample_rate: 48000,
+                bits: 8,
+            }),
+        },
+    )
+    .unwrap();
+    avi.write_frame(&[0; 3]).unwrap();
+    let pcm = vec![0; 1024 * 1024];
+    for _ in 0..4095 {
+        avi.write_audio(&pcm).unwrap();
+    }
+    avi.write_audio(&pcm[..pcm.len() - 1]).unwrap();
+    assert!(matches!(avi.write_audio(&[0]), Err(Error::Param(_))));
+    avi.finish().unwrap();
+}
+
+#[test]
+fn riff_limit_includes_the_initial_header_and_empty_index() {
+    for audio in [
+        None,
+        Some(AudioFormat {
+            channels: 1,
+            sample_rate: 48000,
+            bits: 8,
+        }),
+    ] {
+        let cfg = Config {
+            width: 1,
+            height: 1,
+            fps_num: 30,
+            fps_den: 1,
+            audio,
+        };
+        let empty = AviWriter::new(Cursor::new(Vec::new()), cfg)
+            .unwrap()
+            .finish()
+            .unwrap()
+            .into_inner();
+        let minimum = empty.len() as u64;
+        for limit in [8192, minimum - 1] {
+            let mut out = Cursor::new(Vec::new());
+            assert!(matches!(
+                AviWriter::with_riff_limit(&mut out, cfg, limit),
+                Err(Error::Param(_))
+            ));
+            assert!(out.into_inner().is_empty());
+        }
+        for limit in [minimum, minimum + 1] {
+            let out = AviWriter::with_riff_limit(Cursor::new(Vec::new()), cfg, limit)
+                .unwrap()
+                .finish()
+                .unwrap()
+                .into_inner();
+            assert_eq!(out, empty);
+            assert!(out.len() as u64 <= limit);
+        }
+    }
+}
+
+#[test]
 fn the_super_index_capacity_ends_the_file() {
     let (w, h) = (100usize, 100usize);
     let frame = vec![0u8; w * h * 3];

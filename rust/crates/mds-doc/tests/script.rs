@@ -277,8 +277,9 @@ mod script2 {
 
 /// The document commands of `tests/fixtures/rust/script3/` (slice
 /// `winoracle3`): the key drag, model delete, the camera reference, lip
-/// sync, `.vac` accessories and menu 250 in camera mode. `pmdedit` needs
-/// the physics dialog's edit boxes, which the runner does not have.
+/// sync, `.vac` accessories, menu 250 in camera mode, and the toon and
+/// physics model edits of `pmdedit`. `english` (the English name dialog)
+/// is not replayed.
 mod script3 {
     use super::check_in;
 
@@ -315,5 +316,10 @@ mod script3 {
     #[test]
     fn vac() {
         check_in("script3", "vac");
+    }
+
+    #[test]
+    fn pmdedit() {
+        check_in("script3", "pmdedit");
     }
 }

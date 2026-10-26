@@ -3,8 +3,11 @@
 //! [`Command`]s. `tests/fixtures/rust/script/README.md` says which handler
 //! each line drives; the [`Command`] it maps to ports that handler.
 
+mod physics_dialog;
+
 use crate::frame::FrameLoop;
 use crate::{Command, Document, Error, GlobalTrack, SelectAll};
+use physics_dialog::PhysicsDialog;
 use std::collections::BTreeMap;
 
 /// A file a save step wrote.
@@ -21,6 +24,8 @@ pub struct Runner {
     /// The self-shadow range edit (561), once a script typed into it.
     shadow_range: Option<String>,
     gravity_open: bool,
+    /// The physics model dialog of menu 262, while it is open.
+    physics_dialog: Option<PhysicsDialog>,
     frames: FrameLoop,
 }
 
@@ -101,6 +106,7 @@ impl Runner {
             out: BTreeMap::new(),
             shadow_range: None,
             gravity_open: false,
+            physics_dialog: None,
             frames: FrameLoop::default(),
         }
     }
@@ -288,9 +294,9 @@ impl Runner {
                 return Ok(self.saved(name, bytes));
             }
             ["save", "pmd", name] => {
-                // ponytail: the C++ records the dialog's absolute path in
-                // <out-dir>; the replay records the name.
-                let bytes = self.doc.save_pmd(name).map_err(e)?;
+                // The C++ runner answers the save dialog with `.\<name>`
+                // (script3/README.md, "Saved PMDs").
+                let bytes = self.doc.save_pmd(&format!(".\\{name}")).map_err(e)?;
                 return Ok(self.saved(name, bytes));
             }
             ["load", "vpd", p] => Command::LoadPose(load(p)?),
@@ -528,6 +534,51 @@ impl Runner {
             }
             ["undo"] => Command::Undo,
             ["redo"] => Command::Redo,
+            ["physics", "model", "open"] => {
+                if self.physics_dialog.is_some() {
+                    return Err("the physics model dialog is open".into());
+                }
+                self.physics_dialog = Some(PhysicsDialog::open(&mut self.doc)?);
+                return Ok(Vec::new());
+            }
+            ["dialog", rest @ ..] => {
+                let d = self.physics_dialog.as_mut().ok_or("no dialog is open")?;
+                if d.run(&mut self.doc, rest)? {
+                    self.physics_dialog = None;
+                }
+                return Ok(Vec::new());
+            }
+            // Menu 261: the dialog's edit `708 + slot` set, then OK
+            // (`CollectToonFileNames`, `enhance_model_io.cpp` 57-95). The
+            // texture has to load from the model directory, which
+            // `pmd_load.cpp` cuts after the last backslash of the path, or
+            // after its first character.
+            ["toon", slot, name] => {
+                let slot: usize = slot
+                    .parse()
+                    .ok()
+                    .filter(|s| (1..=10).contains(s))
+                    .ok_or_else(|| format!("bad toon slot {slot}"))?;
+                let path = &self
+                    .doc
+                    .selected_model()
+                    .ok_or("no model selected")?
+                    .path
+                    .text;
+                let dir = match path.rfind('\\') {
+                    Some(i) => &path[..=i],
+                    None => path.get(..1).unwrap_or(""),
+                };
+                let file = format!("{dir}{name}");
+                load(&file).map_err(|_| format!("cannot find {file} (a message box)"))?;
+                let names = (1..=10)
+                    .map(|i| match i == slot {
+                        true => name.to_string(),
+                        false => format!("toon{i:02}.bmp"),
+                    })
+                    .collect();
+                Command::SetToonFileNames(names)
+            }
             _ => return Err("not ported".into()),
         };
         self.doc.apply(cmd).map_err(e)?;

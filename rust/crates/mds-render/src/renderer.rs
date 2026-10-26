@@ -809,7 +809,9 @@ impl Renderer {
         let body_layout = (BODY_STRIDE, &body_attrs[..]);
         let opaque = || depth_state(true, Default::default());
         // A ground shadow pixel is blended once however many triangles cover it: the first
-        // marks the stencil and the rest fail the test.
+        // marks the stencil and the rest fail the test. The shadow writes depth, so the bottom of
+        // a model behind its plane is hidden (golden2 `groundshadow-*.png`: the models' last two
+        // rows show the shadow over white).
         let once = wgpu::StencilFaceState {
             compare: wgpu::CompareFunction::Equal,
             fail_op: wgpu::StencilOperation::Keep,
@@ -875,7 +877,7 @@ impl Renderer {
                 body_layout,
                 None,
                 alpha,
-                depth_state(false, shadow_stencil),
+                depth_state(true, shadow_stencil),
             ),
             accessory: pipeline(
                 "vs_main",
@@ -982,7 +984,7 @@ impl Renderer {
                 pass.set_bind_group(1, group, &[]);
                 pass.draw(0..6, 0..1);
             }
-            // The ground shadow first: the models then cover it where they stand in front.
+            // The ground shadow first: the models then cover it where they stand in front of it.
             if stage.ground_shadow.is_some() && casts_ground_shadow(frame) {
                 pass.set_pipeline(&pipelines.ground_shadow);
                 pass.set_stencil_reference(0);

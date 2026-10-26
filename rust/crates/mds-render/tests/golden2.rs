@@ -326,13 +326,13 @@ fn gate(scene: &str, frame: u32) {
 }
 
 #[test]
-#[ignore = "within 4 is 0.9966: the curled model's shading and its shadow's edge pixels"]
+#[ignore = "within 4 is 0.9972: the curled model's shading and its shadow's edge pixels"]
 fn groundshadow_0() {
     gate("groundshadow", 0);
 }
 
 #[test]
-#[ignore = "within 4 is 0.9940: the curled model's shading and its shadow's edge pixels"]
+#[ignore = "within 4 is 0.9945: the curled model's shading and its shadow's edge pixels"]
 fn groundshadow_30() {
     gate("groundshadow", 30);
 }

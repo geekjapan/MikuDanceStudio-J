@@ -49,5 +49,7 @@ def generate():
         yield rng.randrange(3),tuple(bits(rng.uniform(-5,5)) for _ in range(6))
 
 if __name__=='__main__':
+    import sys
+    sys.stdout.reconfigure(newline='\n')
     for i,(kind,words) in enumerate(generate()):
         print(i,kind,*(f'{w:08x}' for w in words),sep='\t')

@@ -26,7 +26,10 @@ fn main() -> ExitCode {
 }
 
 fn frame_dump(args: &[String]) -> Result<(), String> {
-    let request = dump::parse(args)?;
+    let mut request = dump::parse(args)?;
+    if let Some(v) = std::env::var_os("MDS_FRAME_DUMP_PICTURE_VIEWPORT") {
+        request.picture_viewport = Some(dump::parse_viewport(&v.to_string_lossy())?);
+    }
     let gpu = Gpu::new()?.ok_or("no wgpu adapter")?;
     dump::run(&gpu, &request)
 }

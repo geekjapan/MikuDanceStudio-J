@@ -62,8 +62,8 @@ impl Viewport {
         }
         let (texture, view) = self.target.as_ref().expect("target created above");
         let renderer = &mut self.renderer;
-        editor.with_frame(size, &[[0.0, 0.0]], |f| {
-            renderer.render_into(view, f, sample_count)
+        editor.with_stage(size, &[[0.0, 0.0]], |f, s| {
+            renderer.render_into_with(view, f, s, sample_count)
         })??;
         Ok((texture, view, resized))
     }

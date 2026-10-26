@@ -187,12 +187,14 @@ fn paste_to_another_bone_asks_first() {
     assert!(err.contains("no bone is selected"), "{err}");
 }
 
-/// The accessory path of camera mode has no document command.
+/// In camera mode menu 250 pastes the copied accessory keys onto the selected accessory;
+/// with nothing copied it changes nothing.
 #[test]
-fn paste_to_another_accessory_is_refused() {
+fn paste_to_another_accessory_without_a_copy_changes_nothing() {
     let mut rig = camera_rig();
-    let err = rig.run("menu:250").unwrap_err();
-    assert!(err.contains("not ported"), "{err}");
+    let before = rig.editor.doc.save().unwrap();
+    rig.run("menu:250").unwrap();
+    assert!(rig.editor.doc.save().unwrap() == before);
     assert!(!is_open(&rig));
 }
 

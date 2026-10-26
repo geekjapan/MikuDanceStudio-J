@@ -11,3 +11,8 @@ dbvt-math = { path = "math-dependency" }
 [[test]]
 name = "dbvt"
 path = "test.rs"
+
+[[bin]]
+name = "dbvt-lifecycle"
+path = "lifecycle.rs"
+test = false

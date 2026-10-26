@@ -100,6 +100,11 @@ pub struct Dbvt {
     #[cfg(test)]
     address_ranks: Option<Vec<usize>>,
 }
+impl Drop for Dbvt {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
 impl Default for Dbvt {
     fn default() -> Self {
         Self::new()

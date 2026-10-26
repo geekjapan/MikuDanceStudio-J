@@ -24,6 +24,16 @@ def main():
     command=[os.environ.get('CXX','clang++'),'-std=c++17','-O2','-fdeclspec','-DBT_NO_PROFILE=1','-I',src,HERE/'oracle.cpp',src/'BulletCollision/BroadphaseCollision/btDbvt.cpp',src/'LinearMath/btAlignedAllocator.cpp','-o',out/'oracle']
     (out/'native-command.txt').write_text(' '.join(map(str,command))+'\n')
     run(command)
+    lifecycle_command=command.copy()
+    lifecycle_command[lifecycle_command.index(HERE/'oracle.cpp')]=HERE/'lifecycle.cpp'
+    lifecycle_command[-1]=out/'lifecycle'
+    (out/'lifecycle-native-command.txt').write_text(' '.join(map(str,lifecycle_command))+'\n')
+    run(lifecycle_command)
+    native_lifecycle=subprocess.check_output([out/'lifecycle'])
+    (out/'native-lifecycle.tsv').write_bytes(native_lifecycle)
+    rust_lifecycle=subprocess.check_output(['rustup','run','1.95.0','cargo','run','--manifest-path',str(HERE/'Cargo.toml'),'--release','--bin','dbvt-lifecycle'],cwd=ROOT)
+    (out/'rust-lifecycle.tsv').write_bytes(rust_lifecycle)
+    assert rust_lifecycle==native_lifecycle, 'actual allocator release order differs from native'
     inputs=subprocess.check_output([sys.executable,HERE/'cases.py'])
     (out/'inputs.tsv').write_bytes(inputs)
     for order in range(4):

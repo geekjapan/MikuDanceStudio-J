@@ -65,3 +65,15 @@ macOS topology fixture is not evidence for the Windows SSE profile.
 The two native comparison tests require `DBVT_FIXTURES` to name the capture
 output directory. `check.py` sets it. Shared-suite registration must preserve
 this capture step or move these tests behind the standalone harness.
+
+The lifecycle probe additionally compares actual allocator release events for
+empty, single-leaf, populated, cached-free, and completely removed trees. Each
+case runs implicit destruction and repeated explicit clear followed by destruction.
+The Rust owner is moved before teardown. Native uses the official allocator hook
+with real `malloc`/`free`; Rust observes real 16-byte-aligned Box allocations and
+`System` deallocations. Fixed buffers avoid allocations inside callbacks, and
+allocation/release counts guard the observer's scope. Neither probe changes the
+production address comparison or simulates the native deletion algorithm.
+`native-lifecycle.tsv` and `rust-lifecycle.tsv` record scenario, explicit-clear
+flag, allocation count, pre-teardown release count, and the complete release
+sequence of allocation ordinals, including the final cached node.

@@ -41,7 +41,13 @@ def main():
                            '--fail-on-error', '--disable-rustfmt', '--edition', '2024',
                            '--emit-c-decl-map',
                            '--output-dir', str(root / 'rust'), str(database)])
-        generated = root / 'rust/translated.rs'
+        output = root / 'rust'
+        generated = output / 'src/translated.rs'
+        for expected in (generated, generated.with_suffix('.c_decls.json')):
+            matches = list(output.rglob(expected.name))
+            if (matches != [expected] or not expected.is_file()
+                    or not expected.resolve().is_relative_to(root)):
+                raise RuntimeError('missing, ambiguous, or outside-owned generated output: ' + str(expected))
         declarations = json.loads(generated.with_suffix('.c_decls.json').read_text())
         if 'native_callback' not in declarations.get('definitions', {}):
             raise RuntimeError('used Win64 extern declaration missing from C declaration map')

@@ -148,6 +148,15 @@ existing empty directory. Workflow setup creates only its parent `evidence/`.
 The real translation enables `--emit-c-decl-map` and requires the used Win64
 `native_callback` declaration in `translated.c_decls.json`. No stale Rust output
 can satisfy a fresh run. Existing evidence is left untouched on refusal.
+The pinned translator places these files in `rust/src/`. The smoke requires
+exactly that source and sibling declaration map within its owned artifact tree.
+Missing, duplicate, or outside-owned files fail before compilation. The same
+validated source path is passed directly to `rustc`; this smoke has no Cargo manifest.
+
+`abi-fixtures/generated/src/` preserves the unmodified Rust source and declaration
+map emitted by hosted run `40395084023` at repository commit `c0cd511`.
+The regression tests replay these files through the smoke stages. Mocked build,
+link, and runtime stages test orchestration only; hosted execution remains the ABI gate.
 
 The patched upstream `translator/mod.rs` also fixes header-module reexports of
 foreign blocks. Setup runs the filtered

@@ -1,0 +1,29 @@
+# The key drag of the timeline in camera mode: camera, light, and accessory
+# keys (RemapList, RemapAccList).
+load accessory .\tri.x
+select camera
+frame 10
+camera position 1 2 3
+register camera
+frame 20
+camera distance 30
+register camera
+frame 12
+light direction 0.5 -1 0
+register light
+select accessory tri.x
+frame 25
+accessory position 1 0 0
+register accessory
+save pmm registered.pmm
+
+select all camera
+select all light
+select all accessory
+drag 10 7
+save pmm forward.pmm
+
+select all camera
+drag 27 -30
+save pmm back.pmm
+save vmd back.vmd

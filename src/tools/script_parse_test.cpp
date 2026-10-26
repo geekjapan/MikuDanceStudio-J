@@ -81,6 +81,14 @@ int main() {
         commands[1].op == ScriptOp::Delete && commands[2].op == ScriptOp::RegisterAllMorph &&
         commands[3].op == ScriptOp::ShiftLip && commands[3].args[0] == "-5");
 
+    CHECK(ParseScript("delete model\ndrag 10 -3\ndialog text 667 \"a b\"\ncamera reference 2",
+                      &commands, &error) &&
+          commands.size() == 4 && commands[0].op == ScriptOp::DeleteModel &&
+          commands[1].op == ScriptOp::DragKeys && commands[1].args[1] == "-3" &&
+          commands[2].op == ScriptOp::DialogText && commands[2].args[1] == "a b" &&
+          commands[3].op == ScriptOp::CameraReference);
+    CHECK(Error("drag -1 3").find("bad argument") != std::string::npos);
+
     // Every command spec is reachable by its own words.
     for (const ScriptCommandSpec& spec : kScriptCommands) {
         std::string line = spec.words;

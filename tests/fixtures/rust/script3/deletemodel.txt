@@ -1,0 +1,21 @@
+# The delete button of the model panel (437, DeleteSelectedModel): links to
+# the deleted slot (accessory parent and its keys) are cut, the combo order
+# above it moves down, and the scene enters camera mode.
+load model chain8.pmx
+load model lips.pmd
+load model morph4.pmx
+load accessory .\tri.x
+select camera
+select accessory tri.x
+accessory parent lips 首
+frame 10
+register accessory
+save pmm three.pmm
+
+select model lips
+delete model
+save pmm deleted-lips.pmm
+
+select model chain8
+delete model
+save pmm deleted-chain8.pmm

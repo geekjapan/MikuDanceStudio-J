@@ -1,0 +1,18 @@
+# Menu 250 in camera mode: the copied accessory keys onto the selected
+# accessory, at the current frame.
+load accessory .\tri.x
+load accessory .\tri2.x
+select camera
+select accessory tri.x
+frame 10
+accessory position 1 2 3
+register accessory
+frame 20
+accessory position 4 5 6
+register accessory
+select all accessory
+copy
+select accessory tri2.x
+frame 40
+paste different
+save pmm pasted.pmm

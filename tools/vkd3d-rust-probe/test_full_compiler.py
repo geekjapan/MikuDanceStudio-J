@@ -30,33 +30,7 @@ let size = offset_of!(
 
 
 class FullCompilerTests(unittest.TestCase):
-    def test_exact_parser_patch_preserves_other_bytes_and_records_hashes(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / 'parser.rs'
-            path.write_text(PARSER)
-            report = full.patch_parser(path)
-            self.assertEqual(path.read_text(), PARSER[:PARSER.index('offset_of!')] + full.GOOD_OFFSET + ';\n')
-            self.assertNotEqual(report['original_sha256'], report['patched_sha256'])
-            self.assertEqual(report['patched_occurrences'], 1)
-            # Reapplying or a changed generator shape must stop, never guess.
-            patched = path.read_bytes()
-            with self.assertRaises(ValueError):
-                full.patch_parser(path)
-            self.assertEqual(path.read_bytes(), patched)
-
-    def test_unexpected_parser_shapes_are_rejected_without_writes(self):
-        candidates = [PARSER.replace('[hlsl_src; 0]', '[*mut hlsl_src; 0]'),
-                      PARSER.replace('= usize;', '= u32;'), PARSER + PARSER,
-                      PARSER.replace('offset(- 2isize)', 'offset(- 3isize)')]
-        for text in candidates:
-            with self.subTest(text=text), tempfile.TemporaryDirectory() as directory:
-                path = Path(directory) / 'parser.rs'
-                path.write_text(text)
-                with self.assertRaises(ValueError):
-                    full.patch_parser(path)
-                self.assertEqual(path.read_text(), text)
-
-    def collect_fixture(self, root, invalid=None, numeric_failure=False):
+    def collect_fixture(self, root, invalid=None, valid_new=False, working_success=False):
         artifacts = root / 'artifacts'
         artifacts.mkdir()
         output = artifacts / 'rust'
@@ -70,21 +44,20 @@ class FullCompilerTests(unittest.TestCase):
             target = root / 'hlsl_tab.rs' if invalid == 'outside' else output / 'src/parser-target.rs'
             parser.rename(target)
             parser.symlink_to(target)
+        if valid_new:
+            parser.write_text('pub unsafe extern "C" fn new_generator_output() {}\n')
         before = {p.relative_to(output): full.digest(p) for p in output.rglob('*') if p.is_file()}
         calls = []
 
         def execute(command, log, **kwargs):
             calls.append(log.stem)
             log.write_text('')
-            if log.stem == 'offset-c-run':
-                log.write_text('56 24 8\n' + ''.join(f'{n} {56 + 24 * n}\n' for n in full.COUNTS))
-            if log.stem == 'offset-rust-build':
-                proof = (artifacts / 'offset_check.rs').read_text()
-                self.assertIn('pub args: [hlsl_src; 0]', proof)
-                self.assertIn('pub value: *mut hlsl_ir_node', proof)
-                self.assertEqual(proof.count('.wrapping_mul('), 5)
-            return {'exit_code': 101 if log.stem.startswith('cargo-') or (
-                numeric_failure and log.stem == 'offset-rust-run') else 0}
+            if log.stem in ('cargo-stable', 'cargo-working-stable'):
+                self.assertNotIn('RUSTC_BOOTSTRAP', kwargs['env'])
+                self.assertNotIn('RUSTFLAGS', kwargs['env'])
+            if working_success and log.stem == 'cargo-working-stable':
+                return {'exit_code': 0}
+            return {'exit_code': 101 if log.stem.startswith('cargo-') else 0}
 
         result = {}
         full.collect(result, SimpleNamespace(rust_toolchain='1.95.0', build_timeout=5),
@@ -94,34 +67,59 @@ class FullCompilerTests(unittest.TestCase):
                                   for p in output.rglob('*') if p.is_file()})
         return result, calls, artifacts
 
-    def test_actual_nested_layout_reaches_collect_patch_numeric_proof_and_build(self):
+    def test_new_generator_output_reaches_working_build_without_source_rewrite(self):
         with tempfile.TemporaryDirectory() as directory:
-            result, calls, artifacts = self.collect_fixture(Path(directory))
-            self.assertNotIn('patch_failure', result)
-            self.assertTrue(result['offset_check']['success'])
-            parser = artifacts / 'rust-working/src/vkd3d_shader/hlsl_tab.rs'
-            self.assertEqual(result['parser_patch']['path'], str(parser))
-            self.assertEqual(result['parser_patch']['patched_sha256'], full.digest(parser))
-            self.assertIn('cargo-patched-stable', calls)
-            self.assertEqual(calls.count('offset-rust-run'), 1)
+            result, calls, artifacts = self.collect_fixture(Path(directory), valid_new=True)
+            self.assertNotIn('working_copy_failure', result)
+            self.assertTrue(result['working_source_identity']['equal'])
+            self.assertEqual(full.source_manifest(artifacts / 'rust'),
+                             full.source_manifest(artifacts / 'rust-working'))
+            self.assertIn('cargo-working-stable', calls)
+            self.assertEqual(result['stable_build']['exit_code'], 101)
+            self.assertEqual(result['working_stable_build']['exit_code'], 101)
+            self.assertEqual(result['bootstrap_build']['exit_code'], 101)
+            self.assertEqual(result['prototype_build']['exit_code'], 101)
+            self.assertEqual(probe.outcome(dict(result, complete_translation=True,
+                             transpile={'exit_code': 0})), 'compiler_failure')
 
-    def test_missing_or_ambiguous_nested_parser_stops_before_patch_proof_and_build(self):
+    def test_working_stable_success_skips_bootstrap_and_preserves_raw_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, calls, _ = self.collect_fixture(Path(directory), working_success=True)
+            self.assertEqual(result['stable_build']['exit_code'], 101)
+            self.assertEqual(result['working_stable_build']['exit_code'], 0)
+            self.assertNotIn('cargo-bootstrap', calls)
+            self.assertNotIn('cargo-prototype', calls)
+            self.assertEqual(probe.outcome(dict(result, complete_translation=True,
+                             transpile={'exit_code': 0})), 'linker_failure')
+
+    def test_changed_working_copy_is_rejected_before_build(self):
+        copytree = shutil.copytree
+        def corrupt(source, target, *args, **kwargs):
+            result = copytree(source, target, *args, **kwargs)
+            if Path(target).name == 'rust-working':
+                (Path(target) / 'lib.rs').write_text('changed source')
+            return result
+        with tempfile.TemporaryDirectory() as directory, patch.object(full.shutil, 'copytree', corrupt):
+            result, calls, _ = self.collect_fixture(Path(directory))
+            self.assertFalse(result['working_source_identity']['equal'])
+            self.assertIn('manifest differs', result['working_copy_failure'])
+            self.assertEqual(calls, ['cargo-stable'])
+
+    def test_missing_or_ambiguous_nested_parser_stops_before_working_build(self):
         for invalid in ('missing', 'ambiguous'):
             with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as directory:
                 result, calls, artifacts = self.collect_fixture(Path(directory), invalid)
-                self.assertIn('missing, ambiguous, or outside-owned generated parser', result['patch_failure'])
+                self.assertIn('missing, ambiguous, or outside-owned generated parser', result['working_copy_failure'])
                 self.assertEqual(calls, ['cargo-stable'])
-                self.assertNotIn('parser_patch', result)
-                self.assertFalse((artifacts / 'parser-patch.json').exists())
+                self.assertNotIn('working_stable_build', result)
 
-    def test_collect_rejects_outside_parser_before_copy_proof_and_patched_build(self):
+    def test_collect_rejects_outside_parser_before_copy_and_working_build(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             result, calls, artifacts = self.collect_fixture(root, 'outside')
-            self.assertIn('outside-owned generated parser', result['patch_failure'])
+            self.assertIn('outside-owned generated parser', result['working_copy_failure'])
             self.assertEqual(calls, ['cargo-stable'])
-            self.assertNotIn('parser_patch', result)
-            self.assertFalse((artifacts / 'parser-patch.json').exists())
+            self.assertNotIn('working_stable_build', result)
             self.assertFalse((artifacts / 'rust-working').exists())
             parser = artifacts / 'rust/src/vkd3d_shader/hlsl_tab.rs'
             self.assertTrue(parser.is_symlink())
@@ -131,9 +129,9 @@ class FullCompilerTests(unittest.TestCase):
     def test_collect_accepts_parser_symlink_inside_owned_output(self):
         with tempfile.TemporaryDirectory() as directory:
             result, calls, _ = self.collect_fixture(Path(directory), 'inside')
-            self.assertNotIn('patch_failure', result)
-            self.assertTrue(result['offset_check']['success'])
-            self.assertIn('cargo-patched-stable', calls)
+            self.assertNotIn('working_copy_failure', result)
+            self.assertTrue(result['working_source_identity']['equal'])
+            self.assertIn('cargo-working-stable', calls)
 
     def test_outside_generated_parser_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -146,12 +144,6 @@ class FullCompilerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'outside-owned'):
                 full.generated_parser(working)
             self.assertEqual(outside.read_text(), PARSER)
-
-    def test_failed_nested_numeric_proof_refuses_patched_compilation(self):
-        with tempfile.TemporaryDirectory() as directory:
-            result, calls, _ = self.collect_fixture(Path(directory), numeric_failure=True)
-            self.assertIn('numeric proof failed', result['patch_failure'])
-            self.assertNotIn('cargo-patched-stable', calls)
 
     def test_stable_environment_clears_inherited_experimental_flags(self):
         with patch.dict(os.environ, {key: 'injected' for key in (
@@ -174,7 +166,7 @@ class FullCompilerTests(unittest.TestCase):
     def test_validator_checks_exact_inventory_not_count_and_rejects_prototype(self):
         result = {'all_unit_prototype': True, 'status': 'prototype_success', 'complete_translation': True,
                   'transpile': {'exit_code': 0}, 'stable_build': {'exit_code': 101},
-                  'bootstrap_build': {'exit_code': 0}, 'link': {'status': 'success'},
+                  'working_stable_build': {'exit_code': 0}, 'link': {'status': 'success'},
                   'runtime_comparison': {'status': 'success'},
                   'input_sha256': {unit: 'hash' for unit in full.UNITS},
                   'translated_sources': list(full.UNITS), 'syntax': [{'exit_code': 0}] * 24}

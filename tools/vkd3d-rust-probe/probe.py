@@ -71,9 +71,9 @@ def outcome(result):
     if result.get("all_unit_prototype"):
         if result.get("raw_preserved") is False:
             return "incomplete"
-        if result.get("patch_failure"):
-            return "patch_failure"
-        builds = [result.get(mode + "_build", {}) for mode in ("stable", "patched_stable", "bootstrap", "prototype")]
+        if result.get("working_copy_failure"):
+            return "working_copy_failure"
+        builds = [result.get(mode + "_build", {}) for mode in ("stable", "working_stable", "bootstrap", "prototype")]
         if not any(build.get("exit_code") == 0 for build in builds):
             return "incomplete" if any(build.get("timed_out") for build in builds) else "compiler_failure"
         if result.get("link", {}).get("status") != "success":

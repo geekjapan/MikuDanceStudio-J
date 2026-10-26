@@ -38,7 +38,8 @@ def main():
     for key in ("exit_code", "timed_out", "wall_seconds", "user_cpu_seconds", "system_cpu_seconds", "max_rss_bytes"):
         print(f"- Translator {key}: {translation.get(key, 'unavailable')}")
     if args.all_units:
-        print("\nParser patch: " + str(result.get("parser_patch", "unavailable")))
+        print("\nWorking source identity: " + str(result.get("working_source_identity", "unavailable")))
+        print("\nWorking stable build: " + str(result.get("working_stable_build", "unavailable")))
         print("\nLink: " + str(result.get("link", "unavailable")))
         print("\nRuntime: " + str(result.get("runtime_comparison", {}).get("status", "unavailable")))
         return 1  # A bootstrap/modified prototype is never production stable acceptance.

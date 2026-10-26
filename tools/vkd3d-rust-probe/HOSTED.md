@@ -15,10 +15,10 @@ commit before any hosted attempt.
 | Packages | Preparation retains explicit clang-18, llvm-18-dev, libclang-18-dev, libclang-cpp18-dev. apt acquisition uses 3 retries and 30-second HTTP/HTTPS timeouts. |
 | Tool | Official C2Rust `ac687698b6c13491dfec45c6a9ad9e8b4da35227`; Rust 1.95.0. No refactorer, guessed reorganization option, or extra toolchain. |
 | Translation | One call, no filter, `--fail-on-error --edition 2024`, 1,800 seconds. Exact shader/common source paths are checked against `full_compiler.UNITS`, not just a count. |
-| Builds | Raw stable, patched stable, then bootstrap and experimental flags if necessary. Each build/link gets 300 seconds. Native syntax checks remain capped at 120 seconds per unit. |
-| Numeric proof | Native C against actual configured `hlsl.h`, then stable Rust against complete translated layout declarations; each compiler 60 seconds, run 30 seconds. |
+| Builds | Raw stable, working stable, then bootstrap and experimental flags if necessary. Each build/link gets 300 seconds. Native syntax checks remain capped at 120 seconds per unit. |
+| Numeric proof | Original-header C, freestanding extracted C, and actual generated stable Rust compare 95 layout metrics and 200 numeric vectors. Each stage has 120 seconds. |
 | Runtime | Four shader shapes, VS/PS, shader models 2/3, SPIR-V/D3D assembly/D3D9 bytecode: 48 cases, 30 seconds per process. The 55-minute step and 70-minute job cap aggregate work. |
-| Trigger | Manual dispatch or executable-path push on `w3-shader-full-compiler-probe` or `w3-c2rust-win64-abi`. No PR trigger. |
+| Trigger | Manual dispatch or executable-path push on `w3-shader-full-compiler-probe`, `w3-c2rust-win64-abi`, `w3-shader-variable-offset-fix`, or `w3-shader-offset-harness-fix`. No PR trigger. |
 | Authority | `contents: read`, checkout credentials disabled, no secrets, publication, deployment, larger runner, or paid service. Root alone pushes/dispatches. |
 | Artifacts | Pinned configured input, installed native baseline, and tool bundle for 1 day; setup and all experiment evidence for 7 days. Cargo targets excluded. |
 
@@ -28,34 +28,25 @@ and executable link use generated Rust and platform libraries, with no
 native vkd3d library on their link command. `ldd` records the executable's
 dependencies. No full local translation/build is part of this continuation.
 
-## Preservation and the parser correction
+## Source preservation
 
 `rust-raw/` preserves the emitted files byte for byte before license notices
 are restored in `rust/`; `raw_sha256` records every original file.
-`rust-working/` is a separate copy with restored original license notices.
-The existing source/header SHA256 records, syntax checks, extern inventory,
-and LGPL license copy remain. The untouched configured C input is copied.
-Cargo may add lockfiles; generated source bytes must remain unchanged.
+`rust-working/` copies `rust/` without source edits. Both copies require one
+owned `src/**/hlsl_tab.rs`. `working_source_identity` records identical complete
+file manifests before the working build. The existing source/header SHA256
+records, syntax checks, extern inventory, and LGPL license copy remain.
+The untouched configured C input is copied. Cargo may add lockfiles.
 
-Only this known C2Rust output is corrected:
+Raw stable Cargo runs first and retains its actual status and log.
+`working_stable_build` records the separate unchanged stable build in
+`cargo-working-stable.log`. Copy or identity failures stop before that build.
+The numeric probe below replaces the historical parser-only rewrite and proof.
+No generated Rust source is rewritten to make this experiment compile.
 
-```rust
-offset_of!(hlsl_attribute, args[(*yyvsp.offset(-2isize)).initializer.args_count as usize]) as size_t
-```
-
-Whitespace differences are allowed inside that exact token sequence. Exactly
-one occurrence, the expected `hlsl_src` array element, `size_t = usize`, and
-unsigned count declarations are required. Any mismatch stops patched builds.
-The replacement is the base field offset plus wrapping `size_of::<hlsl_src>()`
-times the index, both represented as `size_t`; it does not assume the element
-is a pointer. The patch receipt includes occurrence counts and both SHA256s.
-
-The native C proof evaluates real `offsetof(struct hlsl_attribute, args[n])`
-for 0, 1, 31, 65535, and UINT_MAX. Stable Rust checks the actual translated
-layout and every result. A failed proof blocks patched compilation. The
-UINT_MAX case follows the grammar's unsigned argument count; no out-of-range
-memory access is performed. This evidence does not establish other C ABI
-layouts or another target's pointer width.
+The archived `full-compiler-fixtures/generated` parser remains historical
+ownership test data. Its original bytes and Cargo EOF exception are preserved.
+It is not evidence of current translator output or numeric correctness.
 
 ## Link and comparison
 
@@ -83,8 +74,8 @@ variadic definitions or foreign types are removed or stubbed. Bootstrap and
 experimental flags are recorded and remain prototype-only.
 
 Statuses distinguish `incomplete`, `syntax_failure`, `translation_failure`,
-`compiler_failure`, `patch_failure`, `linker_failure`, `runtime_unverified`,
-and `prototype_success`. A successful patched/bootstrap link and full matrix
+`compiler_failure`, `working_copy_failure`, `linker_failure`, `runtime_unverified`,
+and `prototype_success`. A successful working or bootstrap link and full matrix
 still yields only `prototype_success`. The all-unit validator checks exact
 input and translated inventories and always fails production stable acceptance
 for this experiment. A red hosted gate is expected until the faithful stable
@@ -97,7 +88,7 @@ Linux ARM64, and full Apple Silicon compiler acceptance. The unavailable
 2023 refactorer is not a Rust-2024 solution.
 
 Local checks are Python unit tests, actionlint, rustfmt, shell syntax, diff
-whitespace, and the tiny saved-parser native C/Rust numeric check. Configuration
+whitespace, and the original-header versus extracted C layout check. Configuration
 and those checks do not establish hosted translation, linkage, or semantics.
 
 ## Pinned C2Rust Win64 repair
@@ -206,9 +197,22 @@ it does not prove ABI or translation acceptance.
 Focused local check: `python3 -m unittest discover -s tools/vkd3d-rust-probe -p 'test_check_runtime.py'`.
 
 The variable `offsetof` regression runs after the ABI smoke and before the full
-24-unit translation. `check_variable_offsetof.py` copies the required declarations
-and ten affected expressions from the prepared source, then compiles their C
-oracle and actual translated Rust separately. The native caller checks 200
+24-unit translation. `check_variable_offsetof.py` extracts 19 exact-source
+struct and enum declarations, including all by-value dependencies, and ten
+affected expressions from the prepared source. Missing or duplicate declarations
+fail. `provenance.json` records source positions, whole-file and declaration
+hashes, the metric inventory, and separately labeled synthetic operand holders.
+Six pointer-only leaves use inert complete substitutes. Their bodies are never
+instantiated, dereferenced, or measured. The translated fixture includes only
+`stddef.h`, `stdint.h`, and `stdbool.h`.
+
+A separate native oracle includes the original headers and the exact source-local
+declarations. The caller requires original C, extracted C, and actual generated
+Rust to agree on 95 size, alignment, and field-offset metrics. Flexible arrays
+contribute field offsets, not invalid array sizes. Direct stable Rust 1.95.0
+compiles the complete generated file with `stable_env`, without bootstrap or edits.
+The local `word_count` follows the source's `unsigned int`, while allocator count
+and stride remain `size_t`. The native caller checks 200
 numeric comparisons, including signed and unsigned indices, size wrapping,
 compound index arithmetic, fixed and flexible arrays, typedefs, reserved names,
 packed/aligned structs, nested immediate array/struct element layout, and index
@@ -225,8 +229,9 @@ result cast. `WithStmts` preserves index effects and inserts the index once.
 Constant offsets and the existing ABI lowering remain unchanged.
 
 Local expression checks compile the patch's actual emitted expression template
-with Rust 1.95.0. They do not rebuild or execute the whole translator. Only a new
-hosted LLVM 18 tool rebuild, the numeric probe, the ABI receipts, and regeneration
+with Rust 1.95.0. They do not rebuild or execute the whole translator. Native-forwarding tests
+check only the caller and are not translated success. Only a new hosted LLVM 18
+tool rebuild, the numeric probe, the ABI receipts, and regeneration
 of all 24 units establish integration evidence. Any subsequent raw or working
 Cargo errors remain failures. `validate.py --all-units` continues to reject the
 prototype as production acceptance.

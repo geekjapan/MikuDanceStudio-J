@@ -88,6 +88,10 @@ def classify(result):
     return {'status': 'rejected', 'returncode': result.returncode, 'differences': differences}
 
 
+def rust_path_literal(path):
+    return json.dumps(path.as_posix(), ensure_ascii=False)
+
+
 def run_harness(source, directory, crt_rlib, environment):
     directory.mkdir(parents=True, exist_ok=True)
     shape = directory / 'shape.rs'
@@ -95,7 +99,7 @@ def run_harness(source, directory, crt_rlib, environment):
     harness = directory / 'test.rs'
     math = ROOT / 'rust/crates/mds-bullet/src/core/math.rs'
     test = ROOT / 'rust/crates/mds-bullet/tests/pure_bullet/support.rs'
-    harness.write_text(f'#![allow(dead_code)]\nmod core {{ #[path = "{math}"] pub mod math; #[path = "{shape}"] pub mod shape; }}\n#[path = "{test}"] mod support;\n')
+    harness.write_text(f'#![allow(dead_code)]\nmod core {{ #[path = {rust_path_literal(math)}] pub mod math; #[path = {rust_path_literal(shape)}] pub mod shape; }}\n#[path = {rust_path_literal(test)}] mod support;\n', encoding='utf-8')
     executable = directory / ('test.exe' if os.name == 'nt' else 'test')
     command = ['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--test', '-O', str(harness), '--extern', f'mds_crtmath={crt_rlib.resolve()}', '-o', str(executable)]
     try:

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Require each compiled semantic mutation to fail the real native comparison."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -9,7 +10,7 @@ import subprocess
 import sys
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/bullet-rust-support-check'))
-from host_profiles import fields
+from host_profiles import fields, rows
 
 TEST = 'gjk_pair_tests::outer_and_persistent_mixed_pairs_match_native_words'
 
@@ -96,19 +97,60 @@ def classify(result):
     return {'status': 'rejected', 'returncode': result.returncode, 'differences': differences} if differences else gap
 
 
+def rust_path_literal(path):
+    return json.dumps(path.as_posix(), ensure_ascii=False)
+
+
+def full_baseline(directory, environment):
+    facts = {'status': 'validation-gap'}
+    try:
+        inputs = Path(environment['MDS_GJK_PAIR_INPUTS']).read_bytes()
+        native = Path(environment['MDS_GJK_PAIR_NATIVE']).read_bytes()
+        (directory / 'baseline-inputs.tsv').write_bytes(inputs)
+        (directory / 'baseline-native.tsv').write_bytes(native)
+        facts['raw_sha256'] = {name: hashlib.sha256(data).hexdigest()
+                               for name, data in [('inputs', inputs), ('native', native)]}
+        generated = subprocess.check_output([sys.executable, ROOT / 'tools/bullet-rust-gjk-pair-check/cases.py'])
+        generated = generated.replace(b'\r\n', b'\n')
+        if len(generated.splitlines()) != 5081:
+            raise ValueError('Generator must produce exactly 5081 rows')
+        if inputs not in (generated, generated.replace(b'\n', b'\r\n')):
+            raise ValueError('Full baseline inputs must exactly match all 5081 generated rows in order with LF or CRLF transport')
+        facts['inputs'] = {'rows': 5081, 'line_ending': 'CRLF' if b'\r' in inputs else 'LF',
+                           'lf_sha256': hashlib.sha256(generated).hexdigest()}
+        normalized = native.replace(b'\r\n', b'\n')
+        if (b'\r' in normalized or normalized.count(b'\n') != 5081 or not normalized.endswith(b'\n')
+                or native not in (normalized, normalized.replace(b'\n', b'\r\n'))):
+            raise ValueError('Full native baseline requires complete LF or CRLF transport')
+        rows(normalized, 'gjk-pair', 5081)
+        facts['native'] = {'rows': 5081, 'line_ending': 'CRLF' if b'\r' in native else 'LF',
+                           'lf_sha256': hashlib.sha256(normalized).hexdigest()}
+        facts['status'] = 'validated'
+    except (KeyError, OSError, ValueError, subprocess.CalledProcessError) as error:
+        facts['error'] = str(error)
+    (directory / 'baseline-validation.json').write_text(json.dumps(facts, indent=2) + '\n', encoding='utf-8')
+    return facts
+
+
 def run_harness(module, changed, directory, crt_rlib, environment):
     directory.mkdir(parents=True, exist_ok=True)
+    if any(key in environment for key in ['MDS_GJK_PAIR_INPUTS', 'MDS_GJK_PAIR_NATIVE']):
+        validation = full_baseline(directory, environment)
+        if validation['status'] != 'validated':
+            return {'status': 'validation-gap', 'reason': 'invalid-full-baseline', 'error': validation['error']}
+        environment = dict(environment, MDS_GJK_PAIR_INPUTS=str(directory / 'baseline-inputs.tsv'),
+                           MDS_GJK_PAIR_NATIVE=str(directory / 'baseline-native.tsv'))
     core = ROOT / 'rust/crates/mds-bullet/src/core'
     harness = (ROOT / 'tools/bullet-rust-gjk-pair-check/harness.rs').read_text()
-    harness = re.sub(r'#\[path = "([^\"]+)"\]', lambda m: '#[path = ' + json.dumps(str((ROOT / 'tools/bullet-rust-gjk-pair-check' / m[1]).resolve())) + ']', harness)
+    harness = re.sub(r'#\[path = "([^\"]+)"\]', lambda m: '#[path = ' + rust_path_literal((ROOT / 'tools/bullet-rust-gjk-pair-check' / m[1]).resolve()) + ']', harness)
     if module is not None:
-        changed = re.sub(r'#\[path = "(../../tests/[^\"]+)"\]', lambda m: '#[path = ' + json.dumps(str((core / m[1]).resolve())) + ']', changed)
+        changed = re.sub(r'#\[path = "(../../tests/[^\"]+)"\]', lambda m: '#[path = ' + rust_path_literal((core / m[1]).resolve()) + ']', changed)
         source = directory / (module + '.rs')
-        source.write_text(changed)
-        harness = harness.replace(json.dumps(str(core / (module + '.rs'))), json.dumps(str(source)))
+        source.write_text(changed, encoding='utf-8')
+        harness = harness.replace(rust_path_literal(core / (module + '.rs')), rust_path_literal(source))
     harness = harness.replace('#![allow(dead_code)]', '#![allow(dead_code,unused_variables)]')
     test = directory / 'harness.rs'
-    test.write_text(harness)
+    test.write_text(harness, encoding='utf-8')
     binary = directory / ('test.exe' if os.name == 'nt' else 'test')
     command = ['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--test', '-O', str(test), '--extern', f'mds_crtmath={crt_rlib.resolve()}', '-o', str(binary)]
     try:

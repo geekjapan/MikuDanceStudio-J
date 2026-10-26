@@ -675,10 +675,10 @@ impl Editor {
             true => self.mme.render(
                 &self.doc,
                 &self.physics,
-                &self.view(frame, r.size(), 1.0 / r.settings.fps)?,
+                &self.view_while(frame, r.size(), 1.0 / r.settings.fps, true)?,
             )?,
             false => {
-                let light = self.light(frame)?;
+                let light = self.light_while(frame, true)?;
                 scene::with_stage_lit(&self.doc, &self.assets, &shot, light, |f, s| {
                     mds_render::render_frame_with(r.gpu(), f, s)
                 })??
@@ -730,8 +730,14 @@ impl Editor {
 
     /// The light of `frame` on screen; see the module doc.
     pub fn light(&self, frame: u32) -> Result<Light, String> {
+        self.light_while(frame, self.playing())
+    }
+
+    /// [`Editor::light`] with `playing` for [`Editor::playing`], which a recording pass, holding
+    /// its recording out of the editor, cannot ask.
+    fn light_while(&self, frame: u32, playing: bool) -> Result<Light, String> {
         let p = &self.doc.pmm;
-        let track = p.settings.options[0] != 0 || p.appearance.follow_camera != 0 && self.playing();
+        let track = p.settings.options[0] != 0 || p.appearance.follow_camera != 0 && playing;
         if !track {
             let s = p.light_state;
             return Ok(Light {
@@ -745,7 +751,18 @@ impl Editor {
     /// The MME view of the frame on screen from the view camera: `frame` at `size`, `elapsed`
     /// seconds after the last.
     pub fn view(&self, frame: u32, size: [u32; 2], elapsed: f32) -> Result<View<'_>, String> {
-        let l = self.light(frame)?;
+        self.view_while(frame, size, elapsed, self.playing())
+    }
+
+    /// [`Editor::view`] with `playing` as [`Editor::light_while`].
+    fn view_while(
+        &self,
+        frame: u32,
+        size: [u32; 2],
+        elapsed: f32,
+        playing: bool,
+    ) -> Result<View<'_>, String> {
+        let l = self.light_while(frame, playing)?;
         let ([r, g, b], [x, y, z]) = (l.color, l.direction);
         Ok(View {
             camera: &self.camera,

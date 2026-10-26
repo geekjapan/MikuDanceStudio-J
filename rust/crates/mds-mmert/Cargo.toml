@@ -19,13 +19,14 @@ pollster = "1"
 png = "0.18"
 encoding_rs = "0.8"
 weezl = "0.1"
-
+# The host (`host`): the posed models and their vertices, the accessories, and the standard
+# shading of the objects without an effect.
+mds-accessory = { path = "../mds-accessory" }
+mds-pose = { path = "../mds-pose" }
+mds-render = { path = "../mds-render" }
+mds-skin = { path = "../mds-skin" }
 
 [dev-dependencies]
-# The tests' host: the camera and light tracks, and the pose of each frame (physics mode 0).
+# The tests' scenes: the camera and light tracks, and the pose of each frame (physics mode 0).
 mds-scene = { path = "../mds-scene" }
 mds-physics = { path = "../mds-physics" }
-mds-pose = { path = "../mds-pose" }
-# The accessory track and world matrix of the scenes with an accessory.
-mds-accessory = { path = "../mds-accessory" }
-mds-render = { path = "../mds-render" }

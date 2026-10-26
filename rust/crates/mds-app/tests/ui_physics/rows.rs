@@ -2,7 +2,7 @@ use crate::labels;
 use crate::rig::Rig;
 use mds_app::actions::{self, Handler};
 use mds_app::ui::{dialog, physics};
-use mds_doc::{Command, GlobalTrack, SelectAll};
+use mds_doc::{Command, GlobalTrack, SelectAll, Track};
 
 fn area_rows() -> Vec<String> {
     labels::inventory()
@@ -115,6 +115,26 @@ fn select_physical_bones_marks_the_bones_with_bodies() {
             .selected_bone,
         last as i32
     );
+}
+
+/// With marks and no rigid-body bone menu 273 clears the marks and keeps `selectedBone`
+/// (`command_view_menu.cpp:1186-1196`: the loop writes `sel[i] = 0` and never `selectedBone`).
+#[test]
+fn select_physical_bones_without_bodies_clears_the_marks() {
+    let mut r = Rig::pmd();
+    r.editor
+        .apply(Command::SetPhysicsModel {
+            rigids: Vec::new(),
+            joints: Vec::new(),
+        })
+        .unwrap();
+    r.editor.apply(Command::SelectBones(vec![2, 1])).unwrap();
+    r.editor.modified = false;
+    r.run("menu:273").unwrap();
+    assert!(selected_marks(&r).iter().all(|&m| !m));
+    let m = r.editor.doc.selected_model().unwrap();
+    assert_eq!(m.selection.selected_bone, 2);
+    assert!(!r.editor.modified);
 }
 
 #[test]
@@ -280,4 +300,77 @@ fn display_bodies_flips_and_a_new_scene_clears_it() {
     // `rigidBodyDisplayEnabled = 0` in the scene load (pmm_load_v2.cpp:2164, reset_app_state.cpp:83).
     r.editor.apply(Command::NewScene).unwrap();
     assert!(!physics::bodies_shown(&r.egui, &r.editor));
+}
+
+/// Menu 266 is not greyed while playing (`DisablePlaybackMenus`, `playback_state.cpp:67` to
+/// `:77`, leaves it), and its handler has no playback gate (`command_view_menu.cpp:1117`).
+#[test]
+fn the_gravity_dialog_opens_while_playing() {
+    let mut r = Rig::open("swing600.pmm");
+    r.run("ctl:408").unwrap();
+    assert!(r.editor.playing());
+    r.run("menu:266").unwrap();
+    assert_eq!(dialog::current(&r.egui), Some("IDD_GRAVITY"));
+}
+
+/// Menu 273 on a model without rigid bodies (`command_view_menu.cpp:1186` to `:1196`): every mark
+/// is cleared and `selectedBone` is not written. With no mark set that is no change at all.
+#[test]
+fn select_physical_bones_without_bodies_keeps_the_selected_bone() {
+    let mut r = Rig::pmd();
+    r.editor
+        .apply(Command::SetPhysicsModel {
+            rigids: Vec::new(),
+            joints: Vec::new(),
+        })
+        .unwrap();
+    r.editor.apply(Command::SelectBones(vec![2])).unwrap();
+    r.editor.apply(Command::SetFrame(1)).unwrap();
+    let selected = |r: &Rig| {
+        r.editor
+            .doc
+            .selected_model()
+            .unwrap()
+            .selection
+            .selected_bone
+    };
+    assert!(selected_marks(&r).iter().all(|&m| !m));
+    let before = selected(&r);
+    r.run("menu:273").unwrap();
+    assert_eq!(selected(&r), before);
+    assert!(selected_marks(&r).iter().all(|&m| !m));
+}
+
+/// `SelectPhysicsOnBoneKeys` sweeps the model's three pools only (`model_keyframe_edit.cpp:730`):
+/// the camera-mode marks stay.
+#[test]
+fn select_physics_on_frames_leaves_the_camera_marks() {
+    let mut r = Rig::open("swing600.pmm");
+    r.editor
+        .apply(Command::SelectKeys {
+            track: Track::Global(GlobalTrack::Camera),
+            from: 0,
+            to: u32::MAX,
+        })
+        .unwrap();
+    let marked = |r: &Rig| {
+        let c = &r.editor.doc.pmm.camera;
+        let heads = c.heads().iter().filter(|k| k.selected != 0).count();
+        heads + c.records().iter().filter(|(_, k)| k.selected != 0).count()
+    };
+    let before = marked(&r);
+    assert!(before > 0);
+    r.run("menu:274").unwrap();
+    assert_eq!(marked(&r), before);
+}
+
+/// Check box 530 sets no `SceneModified` (`command_frame_register.cpp:555`: no handler), nor `]`
+/// (`PumpInterpolationToggle`, `pump_edit_keys.cpp:221` to `:229`).
+#[test]
+fn the_automatic_interpolation_box_is_no_scene_edit() {
+    let mut r = Rig::open("swing600.pmm");
+    r.editor.modified = false;
+    r.run("ctl:530").unwrap();
+    r.run("key:]").unwrap();
+    assert!(!r.editor.modified);
 }

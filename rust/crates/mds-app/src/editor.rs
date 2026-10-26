@@ -25,9 +25,31 @@
 //! loaded model to the world it has (`LoadModelFile`, `src/model/add_model.cpp`); `mds-physics`
 //! has no call for that yet, so a model load builds the world again.
 //!
-//! The view camera is the C++ camera state (app+0x310, [`scene::state_camera`]): a seek, a
-//! frame step and the playback put the track's camera there, and an edit that moves the state
-//! (the camera panel, a paste or delete of camera keys) shows it before any key is registered.
+//! The C++ builds its one world at `WM_CREATE` (`SceneConstruct`, `src/window/ui_init.cpp:219`),
+//! and the first paint (`UpdateWindow`, `src/window/window_init.cpp:423`) spends the 1/60 s the
+//! new world's substep clock starts at. A PMM named on the command line loads before that paint
+//! (`LoadSceneFile`, `window_init.cpp:402`), into the fresh world ([`Editor::startup`],
+//! [`PhysicsScene::open`]); every later load (File > Open, a drop, a model load, a new scene)
+//! loads into a world that has spent it ([`Editor::open`], [`PhysicsScene::open_running`]). The
+//! clock remainder that wall-clock pumps leave in the C++ world is not carried into a new one.
+//!
+//! Gate A of `PhysicsFrame` (`src/physics/physics_frame.cpp:688`) skips the whole stopped pump
+//! once the message counter `messageSeen` has decayed to 0. `AdvanceFrameRenderGate`
+//! (`src/app/frame_driver.cpp:61`) holds it at 1 while playing, while menu 299
+//! (`FrameVolumeControlEnabled`) is off, and while the English names dialog is open; otherwise
+//! it walks 1, 2, 3, 0, and every window message sets it to 1 ([`Editor::message`]).
+//!
+//! The view camera is the C++ camera state (app+0x310, [`scene::state_camera`]): in the camera
+//! view a seek, a frame step and the playback put the track's camera there, and an edit that
+//! moves the state (the camera panel, a paste or delete of camera keys) shows it before any key is
+//! registered. The model view turns about its reference point with the view offsets in the eye
+//! ([`model_view`]) and keeps its camera over seeks and playback.
+//! The light is the light state (`light_state`, which the light panel edits and a camera-mode seek
+//! moves to the track, `RefreshAfterFrameApply`) except in camera mode and while playing with
+//! camera tracking on: `PlaybackPoseAdvance` plays the light track only behind the same gate as
+//! the camera's (`src/app/timeline_advance.cpp:389-394`), and `UpdateBoneFrames` starts it only
+//! there (`InitGlobalTracks`, `src/app/playback_state.cpp:327`). In camera mode the track at the
+//! frame on screen stands for the state a seek put there ([`Editor::light`]).
 //! While playing, the C++ greys out every register path (`PlaybackActive() == 0` gates of
 //! `src/app/key_ladder.cpp` and `src/app/pump_edit_keys.cpp`, `DisablePlaybackMenus`), so
 //! [`Editor::apply`] refuses the register commands then, and no edit seeks the playing world.
@@ -49,11 +71,12 @@ use crate::playback::{self, Options, Pass, Playback};
 use crate::record::{self, Recording};
 use crate::scene::{self, read_model, Assets, Shot};
 use crate::ui::dialog::AviSettings;
+use crate::ui::viewport::pan_view_offset;
 use crate::{audio, file};
 use mds_doc::{Command, Document, ModelFile};
 use mds_media::wav::Wave;
 use mds_physics::PhysicsScene;
-use mds_render::{Camera, Frame, Stage};
+use mds_render::{Camera, Frame, Light, Stage};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -90,16 +113,35 @@ pub struct Editor {
     /// The bytes of the models `Command::LoadModel` added, by stored path: the physics world is
     /// built again from them, wherever the file was.
     loaded: HashMap<String, Vec<u8>>,
+    /// Menu 299 on and the English names dialog closed: gate A may close ([`Editor::message`]).
+    /// The window sets it every pass.
+    pub low_power: bool,
+    /// `messageSeen`.
+    message_seen: u8,
+    /// Menu 285's ground body. The C++ builds its world once (`SceneConstruct`,
+    /// `src/window/ui_init.cpp:219`) and keeps it across scene and model loads, and a PMM load
+    /// leaves the ground alone (`pmm_load_v2.cpp:2366` only sets its deactivation time), so each
+    /// new world here gets the last menu state again. On at start-up (`app_defaults.cpp:173`).
+    floor: bool,
 }
 
 impl Editor {
+    /// `doc` as the application starts with it, before the first paint.
     pub fn new(doc: Document, path: Option<PathBuf>) -> Result<Editor, String> {
+        Editor::build(doc, path, false)
+    }
+
+    fn build(doc: Document, path: Option<PathBuf>, running: bool) -> Result<Editor, String> {
         let dir = path
             .as_deref()
             .and_then(Path::parent)
             .unwrap_or(Path::new("."))
             .to_path_buf();
-        let physics = PhysicsScene::open(&doc.pmm, |p| read_model(&dir, p))?;
+        let read = |p: &str| read_model(&dir, p);
+        let physics = match running {
+            true => PhysicsScene::open_running(&doc.pmm, read)?,
+            false => PhysicsScene::open(&doc.pmm, read)?,
+        };
         let current = doc.pmm.timeline.current_frame.max(0) as u32;
         Ok(Editor {
             mme: Mme::autoload(&doc, path.as_deref()),
@@ -107,7 +149,10 @@ impl Editor {
             assets: Assets::load(&doc, &dir)?,
             wave: wave_of(&doc, &dir),
             recording: None,
-            camera: scene::track_camera(&doc, current)?,
+            camera: match model_view(&doc) {
+                Some(c) => c,
+                None => scene::track_camera(&doc, current)?,
+            },
             options: Options::of(&doc.pmm.timeline),
             doc,
             path,
@@ -119,24 +164,62 @@ impl Editor {
             last_pump_ms: None,
             keys_stale: false,
             loaded: HashMap::new(),
+            low_power: false,
+            message_seen: 1,
+            floor: true,
         })
     }
 
-    /// The startup scene with the PMM at `path` opened, as `mds-app <pmm>` starts: the edit
-    /// state the file does not hold (the auto-interpolation and physics check boxes) is the
-    /// startup's.
+    /// The PMM at `path` opened in the running application (File > Open, a drop), for
+    /// [`Editor::adopt`]: the edit state the file does not hold (the auto-interpolation and
+    /// physics check boxes) is the startup's, and the world has spent its first 1/60 s.
     pub fn open(path: &Path) -> Result<Editor, String> {
+        Editor::read(path, true)
+    }
+
+    /// The PMM at `path` named on the command line, as `mds-app <pmm>` starts: [`Editor::open`]
+    /// before the first paint, into a fresh world.
+    pub fn startup(path: &Path) -> Result<Editor, String> {
+        Editor::read(path, false)
+    }
+
+    fn read(path: &Path, running: bool) -> Result<Editor, String> {
         let mut doc = file::read(path)?;
         let startup = Document::startup().edit;
         doc.edit.auto_interpolation = startup.auto_interpolation;
         doc.edit.physics_checkbox = startup.physics_checkbox;
-        Editor::new(doc, Some(path.to_path_buf()))
+        Editor::build(doc, Some(path.to_path_buf()), running)
     }
 
     /// The scene the application starts with ([`Document::startup`]: the empty scene, with
     /// automatic interpolation on as `checkPhysicsFrame` sets it, `src/window/window_init.cpp`).
     pub fn empty() -> Editor {
         Editor::new(Document::startup(), None).expect("the startup scene opens")
+    }
+
+    /// `fresh`, a scene just opened (`LoadSceneFile`), takes this editor's place with what the C++
+    /// keeps across a scene load: the auto-interpolation and physics check boxes
+    /// (`Document::load_scene` keeps them too), the physics menus of its one world, the clock of
+    /// the frame loop and gate A, and the MMEffect menu state, runtime library and log.
+    pub fn adopt(&mut self, mut fresh: Editor) -> Result<(), String> {
+        let (old, new) = (&self.doc.edit, &mut fresh.doc.edit);
+        new.auto_interpolation = old.auto_interpolation;
+        new.physics_checkbox = old.physics_checkbox;
+        fresh.last_pump_ms = self.last_pump_ms;
+        fresh.low_power = self.low_power;
+        fresh.message_seen = self.message_seen;
+        fresh.floor = self.floor;
+        fresh.reapply_physics_menus(self.physics.always_on_off)?;
+        fresh.physics_opens += self.physics_opens;
+        let (old, new) = (&mut self.mme, &mut fresh.mme);
+        new.switches = old.switches;
+        new.vkd3d = old.vkd3d.take();
+        new.backbuffer = old.backbuffer;
+        let mut log = old.log.take();
+        log.append(new.log.get_mut());
+        *new.log.get_mut() = log;
+        *self = fresh;
+        Ok(())
     }
 
     /// "Add model" (button 435, a dropped PMD or PMX): `LoadModelFile` on the file at `path`,
@@ -167,8 +250,21 @@ impl Editor {
         self.playback.is_some() || self.recording.is_some()
     }
 
+    /// The view camera at `frame` of the camera track, where the C++ draws from the camera: in
+    /// camera mode, and with camera tracking on while playing or with the camera's parent model
+    /// selected (`cameraView`, `src/render/debug_geometry.cpp:476`). The model view keeps its
+    /// camera over seeks and playback (`RefreshAfterFrameApply` moves the camera state in camera
+    /// mode only), and with it the view offsets the pans moved it by.
     fn follow_track(&mut self, frame: u32) -> Result<(), String> {
-        self.camera = scene::track_camera(&self.doc, frame)?;
+        let p = &self.doc.pmm;
+        let a = &p.appearance;
+        let parent_selected =
+            a.camera_parent_model >= 0 && a.camera_parent_model == i32::from(p.selected_model_slot);
+        let camera_view = p.settings.options[0] != 0
+            || a.follow_camera != 0 && (self.playing() || parent_selected);
+        if camera_view {
+            self.camera = scene::track_camera(&self.doc, frame)?;
+        }
         Ok(())
     }
 
@@ -189,6 +285,7 @@ impl Editor {
                 | SelectCameraMode
                 | SetFrame(_)
                 | SelectBones(_)
+                | ClearBoneMarks
                 | ClearKeySelection
                 | SelectKeys { .. }
                 | Copy
@@ -200,25 +297,16 @@ impl Editor {
                 | SelectUnregisteredBones
                 | CopyBonePose
         );
-        // `marks_modified`, and the commands the UI tests expect to mark the scene where it
-        // says no: the camera of menus 300 and 302, whose C++ handlers do set `SceneModified`
-        // (`src/window/command_view_menu.cpp:1771`, `:1870`), and the select all of menu 217
-        // (`SelectFrameGroup`, `src/window/frame_line_edit.cpp:536`), the bone pose reset and
-        // pastes 495, 497 and 498 (`src/window/bone_pose_edit.cpp:25`,
-        // `src/window/bone_pose_clipboard.cpp:89`, `:175`) and the edge color 286
-        // (`command_view_menu.cpp:1464`), whose C++ handlers do not.
-        let dirty = cmd.marks_modified()
-            || matches!(
-                cmd,
-                SetCamera { .. }
-                    | SelectAll(_)
-                    | ResetBonePose
-                    | PasteBonePose { .. }
-                    | SetOutlineColor(_)
-            );
+        // Asked before the command runs: a paste's clipboard gate reads the document as it was.
+        let dirty = self.doc.marks_modified(&cmd);
         let new_scene = cmd == NewScene;
         let bodies = matches!(cmd, SetPhysicsModel { .. });
         let follow = matches!(cmd, ClickFrame(_));
+        let (physics_mode, floor) = match cmd {
+            SetPhysicsMode(m) => (Some(m), None),
+            SetFloorVisible(on) => (None, Some(on)),
+            _ => (None, None),
+        };
         if let LoadModel { path, data } = &cmd {
             self.loaded.insert(path.clone(), data.clone());
         }
@@ -227,7 +315,21 @@ impl Editor {
             _ => None,
         };
         let (files, camera) = (Files::of(&self.doc), scene::state_camera(&self.doc));
+        let camera_mode = self.doc.pmm.settings.options[0];
         self.doc.apply(cmd).map_err(|e| e.to_string())?;
+        if self.doc.pmm.settings.options[0] != camera_mode && !self.playing() {
+            // The other view: the camera state, or the model view about its reference point.
+            self.camera = model_view(&self.doc).unwrap_or_else(|| scene::state_camera(&self.doc));
+        }
+        if let Some(m) = physics_mode {
+            // `ModelKinematicSync` of every model (`command_view_menu.cpp:1048` to `:1110`).
+            self.physics.set_physics_mode(m)?;
+        }
+        if let Some(on) = floor {
+            // The ground body's collision flags (`command_view_menu.cpp:1437`).
+            self.floor = on;
+            self.physics.set_floor_visible(on)?;
+        }
         if let Some(w) = wave {
             audio::stop();
             self.wave = None;
@@ -298,10 +400,23 @@ impl Editor {
             Some(b) => Ok(b.clone()),
             None => read_model(&self.dir, p),
         };
-        self.physics = PhysicsScene::open(&self.doc.pmm, read)?;
+        let always_on_off = self.physics.always_on_off;
+        self.physics = PhysicsScene::open_running(&self.doc.pmm, read)?;
         self.physics_opens += 1;
+        self.reapply_physics_menus(always_on_off)?;
         self.mme.objects_changed(&self.doc);
         Ok(())
+    }
+
+    /// The menu state the C++ keeps in its one world onto a new world: the floor (285) and
+    /// `playbackAlwaysOnOffMode` (271, `command_view_menu.cpp:1163`, cleared only at start-up,
+    /// `app_defaults.cpp:239`).
+    fn reapply_physics_menus(&mut self, always_on_off: bool) -> Result<(), String> {
+        self.physics.always_on_off = always_on_off;
+        match self.floor {
+            true => Ok(()),
+            false => self.physics.set_floor_visible(false),
+        }
     }
 
     /// The edited keys and the saved pose into the live models (an edit moves the keys in place
@@ -395,9 +510,70 @@ impl Editor {
         self.follow_track(frame)
     }
 
+    /// `LoadVsqFile` of the `.vsq` at `path` onto the selected model (menu 224, a dropped file
+    /// when `dropped`; [`Document::lip_sync`]), then the frame the load moved to in the live
+    /// models, as a seek. Both callers set `SceneModified` after the load, whatever it did
+    /// (`command_file_menu.cpp:1169`, `ui_dropfiles.cpp:261`). The `.txt` it writes beside the VSQ
+    /// ([`mds_vsq::txt_path`]) is a text-mode file, with CRLF lines on Windows. The inner `Err` is
+    /// a load that stopped, whose message box is the caller's.
+    pub fn lip_sync(
+        &mut self,
+        path: &Path,
+        dropped: bool,
+    ) -> Result<Result<(), mds_vsq::Stop>, String> {
+        self.stopped()?;
+        let vsq = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let run = self.doc.lip_sync(&vsq, dropped);
+        if run.is_ok() || !dropped {
+            self.modified = true;
+        }
+        // The keys, the frame and the timeline start change even when a key fails to register.
+        self.sync_keys()?;
+        let frame = self.current_frame();
+        self.physics.seek(frame);
+        self.follow_track(frame)?;
+        let run = run.map_err(|e| e.to_string())?;
+        let name = path.to_string_lossy();
+        let txt = mds_vsq::txt_path(&name).ok_or("a VSQ path without .vsq")?;
+        let mut text = Vec::with_capacity(run.txt.len());
+        for &b in &run.txt {
+            if cfg!(windows) && b == b'\n' {
+                text.push(b'\r');
+            }
+            text.push(b);
+        }
+        std::fs::write(&txt, text).map_err(|e| format!("{txt}: {e}"))?;
+        Ok(run.outcome.map(|_| ()))
+    }
+
+    /// Menu 278, restore texture (`command_view_menu.cpp:1343`): every texture file read again
+    /// ([`Assets::reload_textures`]); returns the files found that did not decode.
+    pub fn reload_textures(&mut self) -> Vec<(String, String)> {
+        self.assets.reload_textures(&self.doc, &self.dir)
+    }
+
     /// The physics reset, menu 268 (`MDS_CMD_RESET_PHYSICS_BODIES`).
     pub fn reset_physics(&mut self) {
         self.physics.reset();
+    }
+
+    /// A window message (`MainWndProc` entry): gate A opens for the next pumps.
+    pub fn message(&mut self) {
+        self.message_seen = 1;
+    }
+
+    /// `AdvanceFrameRenderGate` (`src/app/frame_driver.cpp:61`); whether the stopped pump runs
+    /// `PhysicsFrame`.
+    fn render_gate(&mut self) -> bool {
+        if self.playing() || !self.low_power {
+            self.message_seen = 1;
+        }
+        self.message_seen = match self.message_seen {
+            1 => 2,
+            2 => 3,
+            _ => 0,
+        };
+        self.message_seen != 0
     }
 
     /// One window pass at wall-clock `now_ms`; see the module doc.
@@ -406,6 +582,7 @@ impl Editor {
             .last_pump_ms
             .map_or(0.0, |t| now_ms.saturating_sub(t) as f32 * 0.001);
         self.last_pump_ms = Some(now_ms);
+        let gate = self.render_gate();
         if self.mme.switches.auto_reload && now_ms >= self.last_reload_ms + 100 {
             self.last_reload_ms = now_ms;
             self.mme.reload_changed();
@@ -435,7 +612,10 @@ impl Editor {
             };
         }
         let Some(mut p) = self.playback else {
-            return self.physics.tick(dt);
+            return match gate {
+                true => self.physics.tick(dt),
+                false => Ok(()),
+            };
         };
         match p.pass(&self.options, now_ms) {
             Pass::Playing => {
@@ -495,11 +675,14 @@ impl Editor {
             true => self.mme.render(
                 &self.doc,
                 &self.physics,
-                &self.view(frame, r.size(), 1.0 / r.settings.fps)?,
+                &self.view_while(frame, r.size(), 1.0 / r.settings.fps, true)?,
             )?,
-            false => scene::with_stage(&self.doc, &self.assets, &shot, |f, s| {
-                mds_render::render_frame_with(r.gpu(), f, s)
-            })??,
+            false => {
+                let light = self.light_while(frame, true)?;
+                scene::with_stage_lit(&self.doc, &self.assets, &shot, light, |f, s| {
+                    mds_render::render_frame_with(r.gpu(), f, s)
+                })??
+            }
         };
         r.write(&px)?;
         r.n += 1;
@@ -545,11 +728,41 @@ impl Editor {
         Ok(())
     }
 
+    /// The light of `frame` on screen; see the module doc.
+    pub fn light(&self, frame: u32) -> Result<Light, String> {
+        self.light_while(frame, self.playing())
+    }
+
+    /// [`Editor::light`] with `playing` for [`Editor::playing`], which a recording pass, holding
+    /// its recording out of the editor, cannot ask.
+    fn light_while(&self, frame: u32, playing: bool) -> Result<Light, String> {
+        let p = &self.doc.pmm;
+        let track = p.settings.options[0] != 0 || p.appearance.follow_camera != 0 && playing;
+        if !track {
+            let s = p.light_state;
+            return Ok(Light {
+                color: [s[0], s[1], s[2]],
+                direction: [s[3], s[4], s[5]],
+            });
+        }
+        mds_render::scene::light_at(p, frame).ok_or_else(|| format!("light track at frame {frame}"))
+    }
+
     /// The MME view of the frame on screen from the view camera: `frame` at `size`, `elapsed`
     /// seconds after the last.
     pub fn view(&self, frame: u32, size: [u32; 2], elapsed: f32) -> Result<View<'_>, String> {
-        let l = mds_render::scene::light_at(&self.doc.pmm, frame)
-            .ok_or_else(|| format!("light track at frame {frame}"))?;
+        self.view_while(frame, size, elapsed, self.playing())
+    }
+
+    /// [`Editor::view`] with `playing` as [`Editor::light_while`].
+    fn view_while(
+        &self,
+        frame: u32,
+        size: [u32; 2],
+        elapsed: f32,
+        playing: bool,
+    ) -> Result<View<'_>, String> {
+        let l = self.light_while(frame, playing)?;
         let ([r, g, b], [x, y, z]) = (l.color, l.direction);
         Ok(View {
             camera: &self.camera,
@@ -586,8 +799,34 @@ impl Editor {
             samples,
             picture_viewport: None,
         };
-        scene::with_stage(&self.doc, &self.assets, &shot, draw)
+        let light = self.light(shot.frame)?;
+        scene::with_stage_lit(&self.doc, &self.assets, &shot, light, draw)
     }
+}
+
+/// The camera of the C++ model view (`src/render/debug_geometry.cpp:472` to `:566`) when the
+/// document opens in it: the camera state's rotation about the reference point, the origin for
+/// reference mode 0 without a camera parent, with the eye moved by the view offsets
+/// `camera_state[3..5]` (`ViewOffsetX`, `ViewOffsetY`), which the target moved along the camera's
+/// right and up axes draws the same ([`pan_view_offset`]). `None` in camera mode, with camera
+/// tracking on, and for the reference modes 1 and 2 (the center bone or the selected bone), which
+/// need the posed bones.
+fn model_view(doc: &Document) -> Option<Camera> {
+    let p = &doc.pmm;
+    let model_view = p.settings.options[0] == 0
+        && p.appearance.follow_camera == 0
+        && p.appearance.camera_parent_model < 0
+        && p.timeline.camera_reference_mode == 0;
+    if !model_view {
+        return None;
+    }
+    let s = &p.camera_state;
+    let mut camera = Camera {
+        target: [0.0; 3],
+        ..scene::state_camera(doc)
+    };
+    pan_view_offset(&mut camera, s[3], s[4]);
+    Some(camera)
 }
 
 /// The whole frame a cursor at `cursor` seconds shows ([`Playback::frame`]).

@@ -132,9 +132,9 @@ fn the_check_rejects_what_it_should() {
         .iter()
         .any(|e| e.contains("registered by file, inventory area physics")));
     assert!(errors.iter().any(|e| e == "menu:268: registered twice"));
-    let errors = check(&rows, &ok, &["file"]).unwrap_err();
+    let errors = check(&rows, &ok, &["shadow-panel"]).unwrap_err();
     assert!(
-        errors[0].starts_with("complete area file misses"),
+        errors[0].starts_with("complete area shadow-panel misses"),
         "{errors:?}"
     );
 }

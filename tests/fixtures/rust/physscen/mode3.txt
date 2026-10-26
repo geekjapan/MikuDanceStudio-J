@@ -1,0 +1,18 @@
+# Physics mode 3 (menu 270): the world steps only on a settle or while
+# playing. Idle passes, a seek, steps forward and back, and a playback.
+settle 0
+load pmm swing600.pmm
+physics mode 3
+trace mode3.trace
+pump 3 33
+frame 300
+pump 2 33
+step forward
+pump 2 33
+step back
+pump 2 33
+play 300 360
+pump 5 33
+stop
+pump 3 33
+save pmm mode3.pmm

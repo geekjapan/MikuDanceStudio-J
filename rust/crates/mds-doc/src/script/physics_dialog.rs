@@ -319,6 +319,11 @@ impl PhysicsDialog {
         let Some(index) = (if joint { self.joint } else { self.body }) else {
             return Ok(());
         };
+        // On the joint page Shift moves the joint too (`frame_modes_bone.cpp:196-204`).
+        let field = match field {
+            PhysicsField::Size if joint => PhysicsField::Position,
+            f => f,
+        };
         let cmd = Command::EditPhysicsRecord {
             joint,
             index: index as u32,

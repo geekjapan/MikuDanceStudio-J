@@ -19,7 +19,8 @@
 //!   [`Effect::programs`]; its draws are recorded and skipped.
 //! - [`Target`]: the back buffer and depth stencil, of the size the effect was loaded for
 //!   ([`BACKBUFFER`], the oracle's 1000x600, by default).
-//! - [`Model`]: the vertex and index buffers and material subsets `Draw=Geometry` draws.
+//! - [`Model`]: the vertex and index buffers and material subsets `Draw=Geometry` draws, of a PMX,
+//!   a PMD or an accessory; [`Model::update`] writes a pose.
 //! - [`Scene`]: the camera, light, clocks, and viewport the parameters bind to.
 //! - [`Effect::frame`]: one frame that runs every technique in scan order, as the plan's
 //!   `runs` section does, on one device, and returns those lines.
@@ -30,20 +31,19 @@
 //! - [`scene`]: what each object draws in an offscreen turn, from the `DefaultEffect` rows;
 //!   [`Effect::begin_offscreen`] binds and clears the turn's target, and [`Effect::draw`]
 //!   draws one object's effect into it.
+//! - [`host`]: the application's side, shared by `mds-app` and the mmegold test: the objects
+//!   posed through `mds-skin`, the camera, the turn and draw order of a frame, and the objects
+//!   without an effect in `mds-render`'s standard shading.
+//! - [`Gpu::from_device`]: the runtime on a window's device.
 //!
 //! # Not ported
 //!
-//! - The host's own draws: a `none` row of an offscreen turn and the scene at `ScriptExternal`
-//!   are the renderer's (`mds-render`); the walk at `ScriptExternal` suspends and resumes with
-//!   only [`Effect::frame_with_scene`]'s callback in between. The turn order (one turn per
-//!   target before the base scene) is the caller's; the post-effect turn snapshot
+//! - The walk at `ScriptExternal` suspends and resumes with only [`Effect::frame_with_scene`]'s
+//!   callback in between ([`host`] draws the scene there). The post-effect turn snapshot
 //!   (`pass_planner.cpp:MmeSnapshotMainTargets`) is not ported.
 //! - Texture shaders (`Function`/`Target`; `mds-mme` does not model them), the effect cache and
 //!   context (`effect_engine.cpp`, `mme_context.cpp`), multisampled targets (`AntiAlias`),
 //!   automatic mip generation of `Miplevels=0` targets.
-//! - Skinned and morphed geometry: `Model::from_pmx` is the bind pose. `mds-render` keeps its
-//!   GPU device, mesh buffers, and skinning crate-private; this crate builds its own until
-//!   `mds-render` exposes them.
 //! - Pixel-center alignment: wgpu samples at pixel centers where D3D9 is half a pixel off.
 
 pub mod anime;
@@ -52,6 +52,7 @@ pub mod control;
 pub mod emm;
 mod exec;
 mod gpu;
+pub mod host;
 pub mod model;
 pub mod resource;
 pub mod scene;

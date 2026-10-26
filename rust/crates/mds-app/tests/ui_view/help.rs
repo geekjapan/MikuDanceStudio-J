@@ -71,10 +71,38 @@ fn the_labels_are_those_of_the_inventory() {
     labels::check("help", help::LABELS);
 }
 
-/// Menu 278 waits for an `Editor` call that loads the textures again.
+/// The golden2 scenes and their inputs in a folder of their own.
+fn golden2_copy(name: &str) -> std::path::PathBuf {
+    let dir = temp(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = fixtures();
+    for from in [f.join("accessory"), f.clone(), f.join("golden2")] {
+        for e in std::fs::read_dir(&from).unwrap() {
+            let e = e.unwrap();
+            if e.file_type().unwrap().is_file() {
+                std::fs::copy(e.path(), dir.join(e.file_name())).unwrap();
+            }
+        }
+    }
+    dir
+}
+
+/// Menu 278 (`command_view_menu.cpp:1343`): `ReloadTextureCache` reads every named texture file
+/// again (`enhance_model_io.cpp:779`), the model's (`skin_tex.bmp` of `skin_tex.pmx`) and the
+/// accessory's (`cube.bmp` of `cube.x`); a file that no longer decodes keeps no texture.
 #[test]
-fn restore_textures_is_not_faked() {
-    assert!(actions::find("menu:278").is_none());
+fn restore_textures_reads_the_files_again() {
+    for (scene, texture) in [("skin.pmm", "skin_tex.bmp"), ("accessory.pmm", "cube.bmp")] {
+        let dir = golden2_copy(scene);
+        let mut rig = Rig::with_editor(mds_app::editor::Editor::open(&dir.join(scene)).unwrap());
+        rig.run("menu:278").unwrap();
+        std::fs::write(dir.join(texture), b"not a picture").unwrap();
+        let err = rig.run("menu:278").unwrap_err();
+        assert!(err.starts_with(texture), "{scene}: {err}");
+        std::fs::copy(fixtures().join("golden2").join(texture), dir.join(texture)).unwrap();
+        rig.run("menu:278").unwrap();
+        assert!(!rig.editor.modified, "{scene}");
+    }
 }
 
 /// Menus 259, 261 and 262 open their dialogs through the action of the dialog area, in model mode

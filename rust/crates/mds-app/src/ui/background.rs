@@ -16,18 +16,15 @@
 //!   4:3 crop, 3 background refresh) through `Command::SetCaptureMode`; nothing reads it yet (the
 //!   capture is the recorder's).
 //!
-//! # What does not work yet
-//!
 //! The loaders place the file with `MediaAspect`, which reads `EditState::viewport` (the
-//! rectangle and `viewScale` of the window). Nothing sets it: `window.rs` would have to build an
-//! `mds_media::background::Viewport` from the viewport, and `mds-app` has no `mds-media`
-//! dependency to name that type with. Until then both loads fail with "no viewport for
+//! rectangle and `viewScale` of the window, which `window.rs` sets every pass from the central
+//! panel, [`crate::viewport::media_viewport`]). Without it both loads fail with "no viewport for
 //! MediaAspect" and change nothing.
 //!
 //! Without a window (`Ctx::egui` is `None`) the two file dialogs return an error; the `*_path`
 //! functions are the testable entry points.
 
-use super::{dialog, help, Ctx};
+use super::{help, Ctx};
 use crate::actions::{self, Action};
 use mds_doc::{Command, ViewOption};
 use rfd::FileDialog;
@@ -133,13 +130,10 @@ pub fn pass(_ui: &mut egui::Ui, _ctx: &mut Ctx) {}
 /// Menu 282 and the `B` key flip `blackBackgroundEnabled`.
 fn toggle_black(ctx: &mut Ctx) -> Result<(), String> {
     let on = ctx.editor.doc.pmm.appearance.black_background != 0;
-    dialog::apply_cpp(
-        ctx,
-        Command::SetViewOption {
-            option: ViewOption::BlackBackground,
-            on: !on,
-        },
-    )
+    ctx.editor.apply(Command::SetViewOption {
+        option: ViewOption::BlackBackground,
+        on: !on,
+    })
 }
 
 // ---- 243 to 246 ----
@@ -152,12 +146,12 @@ fn capture(ctx: &mut Ctx, mode: i32) -> Result<(), String> {
 
 fn show_movie(ctx: &mut Ctx) -> Result<(), String> {
     let on = ctx.editor.doc.pmm.avi.enabled != 0;
-    dialog::apply_cpp(ctx, Command::ShowBackgroundMovie(!on))
+    ctx.editor.apply(Command::ShowBackgroundMovie(!on))
 }
 
 fn show_picture(ctx: &mut Ctx) -> Result<(), String> {
     let on = ctx.editor.doc.pmm.picture.enabled != 0;
-    dialog::apply_cpp(ctx, Command::ShowBackgroundPicture(!on))
+    ctx.editor.apply(Command::ShowBackgroundPicture(!on))
 }
 
 // ---- 213, 232 ----
@@ -223,9 +217,11 @@ pub fn load_picture_path(ctx: &mut Ctx, path: &Path) -> Result<(), String> {
     attempt(ctx, cmd)
 }
 
+/// The command marks the scene on success; a file the loader refuses fails the command, which
+/// the C++ marks too (`command_impl.cpp:569`, `command_file_menu.cpp:1888`, `ui_dropfiles.cpp:227`).
 fn attempt(ctx: &mut Ctx, cmd: Command) -> Result<(), String> {
     let r = ctx.editor.apply(cmd);
-    if r.is_ok() || ctx.editor.doc.edit.viewport.is_some() {
+    if r.is_err() && ctx.editor.doc.edit.viewport.is_some() {
         ctx.editor.modified = true;
     }
     r

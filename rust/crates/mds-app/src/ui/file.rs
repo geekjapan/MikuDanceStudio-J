@@ -19,7 +19,11 @@
 //! The area's state (the folders of menu 301 and the scripted answers) is kept per thread
 //! ([`STATE`]), because the functions run without a window too.
 //!
-//! Missing (no API yet): the drops of `.vac`, `.avi`, `.bmp`, `.jpg`, `.vsq` and `.oni`.
+//! The drops of `.avi`, `.bmp` and `.jpg` load the background through the background area's
+//! loads, a `.vsq` runs the lip sync of the expression area, and an `.oni` runs the MoCap menu's
+//! load (296), which has no sensor session to open it yet. The C++ main window takes no MMEffect
+//! files; here an `.emm` loads as on the mapping dialog, and an `.fx`, `.fxm` or `.fxsub` is
+//! assigned to the selected model (the selected accessory in camera mode).
 
 use super::dialog::AviSettings;
 use super::{button, Ctx};
@@ -58,6 +62,12 @@ const ACTIONS: &[Action] = &[
     Action::inline("drop:vmd"),
     Action::inline("drop:x"),
     Action::inline("drop:wav"),
+    Action::inline("drop:vac"),
+    Action::inline("drop:avi"),
+    Action::inline("drop:bmp"),
+    Action::inline("drop:jpg"),
+    Action::inline("drop:vsq"),
+    Action::inline("drop:oni"),
 ];
 
 pub fn actions() -> &'static [Action] {
@@ -364,17 +374,12 @@ fn open(ctx: &mut Ctx) -> Result<(), String> {
     }
 }
 
-/// `LoadSceneFile` of `path`; the auto-interpolation and physics check boxes carry over, as
-/// `Document::load_scene` keeps them. A scene whose model files do not all load is refused (the
+/// `LoadSceneFile` of `path`; what the C++ keeps across the load carries over ([`Editor::adopt`]). A scene whose model files do not all load is refused (the
 /// cancel of `IDD_PMM_MISSING_MODEL`, `src/io/pmm_load_v2.cpp:1056`): the editor cannot draw
 /// or simulate a model without its file, and the document has no call that replaces or drops a
 /// model record, which the dialog's locate and skip need.
 pub fn open_path(ctx: &mut Ctx, path: &Path) -> Result<(), String> {
-    let mut fresh = Editor::open(path)?;
-    let (old, new) = (&ctx.editor.doc.edit, &mut fresh.doc.edit);
-    new.auto_interpolation = old.auto_interpolation;
-    new.physics_checkbox = old.physics_checkbox;
-    *ctx.editor = fresh;
+    ctx.editor.adopt(Editor::open(path)?)?;
     *ctx.status = path.display().to_string();
     Ok(())
 }
@@ -630,7 +635,8 @@ fn toggle_previous_folder(_: &mut Ctx) -> Result<(), String> {
 // ---- dropped files ----
 
 /// `HandleDropFiles`: each file by its extension, in the order dropped. A `.pmm` asks when the
-/// scene is modified (cancel drops the rest); a `.vpd` in camera mode shows a box.
+/// scene is modified (cancel drops the rest); a `.vpd` and a `.vsq` in camera mode show a box
+/// (`ui_dropfiles.cpp:177`, `:253`).
 pub fn drop_files(ctx: &mut Ctx, paths: &[PathBuf]) {
     for path in paths {
         let ext = path
@@ -656,7 +662,22 @@ pub fn drop_files(ctx: &mut Ctx, paths: &[PathBuf]) {
             "vpd" => load_pose_path(ctx, path),
             "vmd" => load_motion_path(ctx, path),
             "x" => load_accessory_path(ctx, path),
+            "vac" => load_vac_path(ctx, path),
             "wav" => load_wave_path(ctx, path),
+            "avi" => super::background::load_movie_path(ctx, path),
+            "bmp" | "jpg" => super::background::load_picture_path(ctx, path),
+            "vsq" if ctx.editor.doc.pmm.settings.options[0] != 0 => {
+                let (caption, text) = match english(ctx) {
+                    true => ("open vsq data", "Not selected model!"),
+                    false => ("vsq", "カメラ・照明モードではvsqデータは読めません"),
+                };
+                tell(ctx, caption, text);
+                Ok(())
+            }
+            "vsq" => super::expression::lip_sync(ctx, path, true),
+            "oni" => crate::actions::run(ctx, "menu:296"),
+            "emm" => super::mme_dialog::drop_files(ctx, std::slice::from_ref(path)),
+            "fx" | "fxm" | "fxsub" => assign_effect(ctx, path),
             _ => Err(format!(
                 "{}: this file type is not supported yet",
                 path.display()
@@ -666,6 +687,46 @@ pub fn drop_files(ctx: &mut Ctx, paths: &[PathBuf]) {
             *ctx.status = e;
         }
     }
+}
+
+/// `LoadAccessoryFile` of a `.vac` (`ui_dropfiles.cpp:211`): the mesh it names is the file of
+/// that name beside it (`LoadAccessoryObject`, `src/render/accessory.cpp:461`).
+pub fn load_vac_path(ctx: &mut Ctx, path: &Path) -> Result<(), String> {
+    let vac = read(path)?;
+    let name = mds_formats::text::decode_sjis(&mds_doc::vac_mesh_name(&vac));
+    let mesh = path.with_file_name(name.replace('\\', "/"));
+    let stored = |p: &Path| p.to_string_lossy().replace('/', "\\");
+    ctx.editor.apply(Command::LoadVac {
+        path: stored(path),
+        vac,
+        mesh_path: stored(&mesh),
+        mesh: read(&mesh)?,
+    })
+}
+
+/// An effect file dropped on the window: the effect of the selected model in model mode, of the
+/// selected accessory in camera mode.
+fn assign_effect(ctx: &mut Ctx, path: &Path) -> Result<(), String> {
+    let p = &ctx.editor.doc.pmm;
+    let object = match p.settings.options[0] {
+        0 => p
+            .models
+            .iter()
+            .position(|m| m.slot == p.selected_model_slot),
+        _ => p
+            .accessories
+            .iter()
+            .position(|a| a.slot == p.selected_accessory_slot)
+            .map(|i| p.models.len() + i),
+    };
+    let mme = &mut ctx.editor.mme;
+    let a = object
+        .and_then(|o| mme.assignments.get_mut(o))
+        .ok_or("no object selected for the effect")?;
+    a.effect = path.to_string_lossy().into_owned();
+    a.shown = true;
+    mme.unload();
+    Ok(())
 }
 
 /// `LoadAccessoryFile` of a `.x`. The document takes the accessory's name from what follows the

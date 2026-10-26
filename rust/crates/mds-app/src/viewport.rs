@@ -1,7 +1,7 @@
 //! The window's viewport: one [`Renderer`] on eframe's wgpu device draws the editor's frame into
-//! a texture this module owns, and egui shows that texture as a native texture. Nothing is read
-//! back, except with effects on ([`crate::mme`]): `mds-mmert` draws on its own device, so its
-//! picture is read back and written into the texture.
+//! a texture this module owns, and egui shows that texture as a native texture. With effects on
+//! ([`crate::mme`]) `mds-mmert` draws into the same texture on the same device. Nothing is read
+//! back.
 
 use crate::editor::Editor;
 use eframe::egui_wgpu;
@@ -73,17 +73,10 @@ impl Viewport {
             let elapsed = self.last_mme.map_or(0.0, |t| (now - t).as_secs_f32());
             self.last_mme = Some(now);
             let shot = editor.view(editor.shown_frame(), size, elapsed)?;
-            let px = editor.mme.render(&editor.doc, &editor.physics, &shot)?;
-            self.queue.write_texture(
-                texture.as_image_copy(),
-                &px,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(size[0] * 4),
-                    rows_per_image: Some(size[1]),
-                },
-                texture.size(),
-            );
+            let (doc, physics) = (&editor.doc, &editor.physics);
+            editor
+                .mme
+                .render_into(&self.device, &self.queue, doc, physics, &shot, texture)?;
             return Ok((texture, view, resized));
         }
         let renderer = &mut self.renderer;

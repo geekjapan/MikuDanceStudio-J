@@ -299,7 +299,8 @@ def main():
         report['comparisons']['corpus'] = test_matches['controlled_corpus'] and test_matches['ordinary_corpus']
         report['compatibility'] = 'PASS' if all(report['comparisons'].values()) else 'FAIL'
         report['classification'] = 'compatible' if report['compatibility'] == 'PASS' else 'compatibility-mismatch'
-    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired,
+            KeyError, TypeError, IndexError, AttributeError) as error:
         report['failure'] = str(error)
         report['classification'] = 'environment-failure' if isinstance(error, (OSError, subprocess.TimeoutExpired)) else 'validation-gap'
     finally:

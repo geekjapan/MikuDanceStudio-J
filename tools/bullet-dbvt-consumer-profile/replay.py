@@ -79,7 +79,9 @@ def main():
     results['win-directed-marker'] = {key: report[key] for key in ('observation', 'compatibility', 'comparisons')}
     for name, error in [('compile', RuntimeError('consumer-build exited 1')),
                         ('signal', RuntimeError('consumer-build exited -11')),
-                        ('parser', ValueError('malformed capture'))]:
+                        ('parser', ValueError('malformed capture')),
+                        ('configuration', KeyError('TARGET')),
+                        ('configuration-shape', TypeError('expected configuration object'))]:
         code, report = replay(args.artifacts / 'mac', args.out_dir / name,
                               failure=('consumer-build', error))
         assert code == 1 and report['classification'] == 'validation-gap'

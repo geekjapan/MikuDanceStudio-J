@@ -246,26 +246,55 @@ Camera, light, self-shadow, gravity, and accessory global pools (including
 this model. Existing unmodeled model-pool callers, undo/redo, and other
 limits listed above remain uncovered. This workflow does not prove them.
 
-The source at `4e5432f` was already checked at depth 4 and by removing the
-selector guard; its regenerated oracle matched the committed fixture.
-The CI maintenance change keeps that verified source baseline. Its own
-hosted run is pending until the workflow executes on the actual commit;
-local helper tests do not replace that run. No property or bound changed.
+The source at `4e5432f` was checked at depth 4 and by removing the selector
+guard; its regenerated oracle matched the committed fixture. No property or
+bound changed in the later CI maintenance work. The earlier hosted run
+`40355765898` exposed Linux ASan output-format drift: the fault frame and
+`heap-buffer-overflow` SUMMARY appeared in the same report, but the receipt
+helper expected another SUMMARY format. This was verification output drift,
+not a product bug or a changed property. The helper was corrected to accept
+the actual report structure.
 
-Hosted run `40355765898` passed the baseline and byte-identical oracle
-comparison. Its mutation exited 1 with the expected trace and source frame,
-but the receipt helper rejected Linux's `strcmp` SUMMARY. This is verification
-output-format drift, not a product bug or property change. The helper now
-checks the fault frame and SUMMARY within one report; hosted verification
-remains pending until the corrected workflow passes on its actual commit.
+Hosted run [`40399429308`](https://github.com/geekjapan/MikuDanceStudio-J/actions/runs/40399429308)
+passed on tested checkout `7006c9a4200d03efafbb643e54d24e207f2e95b4`
+(artifact `12689415482`, ZIP SHA-256
+`e79b9bde293ac11a7e63ddfd1010865ef8e2cb3acfbb417ecf84585d949cbaa1`). The
+Ubuntu run used clang 18.1.3 and built the real native C++ sources with
+AddressSanitizer. All four configurations completed depth 4 with 12,319
+states and 121,814 transitions each, zero cuts and zero violations. The
+baseline ASan log was empty; the display-1000 and morph-20000 capacity checks
+passed. The generated oracle matched the committed fixture byte-for-byte
+(SHA-256 `fa3ab370962892e45011deb10327ab0112b0056e81942588c398bb0e365d4069`),
+and the Rust 1.95 replay passed (1 passed, 0 failed, 0 ignored).
+
+The disposable mutation removed the real selector guard. It exited 1 with
+the shortest trace `paste display key at frame 0`; all 24 ASan reports tied a
+`RegisterDisplayKeyFromRecord` source frame at `key_registrars.cpp:739` to a
+`heap-buffer-overflow` SUMMARY in the same report. The corrected receipt
+helper accepted this evidence. The workflow's 258-file input closure,
+including covered native sources, harness, workflow, skill, Rust replay
+crates, workspace manifest/lock, and toolchain, has manifest SHA-256
+`6a001b779dd625f7e811c3222fc67cae9efc0e7706b346c48978ba9ae0b13437`; the
+audit confirmed that closure is identical at current `main`
+`32878816e41cf19207affb9a7f47d1da5e8966bf`. This establishes that current
+`main` has the same checked inputs. The workflow itself was executed on
+`7006c9a`, not on current `main`.
+
+No local checker, mutation, or full suite was rerun for this documentation
+audit. Undo/redo, global pools, multi-key paste, bone-pool capacity,
+depth 5 and above, non-x64 layouts, and native UI remain outside the verified
+model.
 
 ## Coverage record
 
-Sync commit: `4e5432f`. The verification was last confirmed to describe the
-files and functions listed under "Does my change touch the verified code?" at
-this commit.
+Sync commit: `7006c9a4200d03efafbb643e54d24e207f2e95b4`. The successful
+hosted workflow checked this exact commit and confirmed the files and
+functions listed under "Does my change touch the verified code?". The audit
+read the covered-file history since the prior sync commit `4e5432f` and
+confirmed that the table, initial state, and baseline still describe the
+covered code. Current `main` has the same audited workflow input closure, but
+was not itself the workflow checkout.
 
-Move the sync commit forward only after you have run the check at the new
-commit, read the diff of the covered files since the old sync commit, and
-confirmed that the table, the initial state, and the baseline still describe
-the code.
+Move the sync commit forward only after the check runs successfully at the new
+commit, the covered-file diff since the old sync commit is read, and the
+table, initial state, and baseline are confirmed to describe the code.

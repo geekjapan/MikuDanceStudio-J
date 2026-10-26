@@ -1,6 +1,9 @@
 # The key drag of the timeline in model mode (HandleMouseMove, RemapList):
-# one key held back by its neighbour, then every marked key moved forward.
+# the key that the last register marked, held back by its neighbour, then
+# every marked key moved forward.
 load model chain8.pmx
+frame 15
+register display
 select bone センター
 frame 10
 bone position 1 0 0
@@ -11,12 +14,8 @@ register bone
 frame 30
 bone position 3 0 0
 register bone
-frame 15
-register display
 save pmm registered.pmm
 
-select bone センター
-frame 30
 drag 30 -15
 save pmm back.pmm
 

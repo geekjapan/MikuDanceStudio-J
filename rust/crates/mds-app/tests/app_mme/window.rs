@@ -85,7 +85,11 @@ fn the_window_texture_gets_the_frame_without_a_read_back() {
     let drawn = read_back.chunks(4).filter(|p| p != &background).count();
     assert!(drawn > 300, "{drawn} pixels drawn");
     assert_eq!(shown, read_back);
-    editor.doc.pmm.settings.options[0] = 0;
+    editor
+        .apply(mds_doc::Command::SelectModel(
+            editor.doc.pmm.selected_model_slot,
+        ))
+        .unwrap();
     editor.doc.pmm.appearance.follow_camera = 0;
     editor.doc.pmm.self_shadow.heads_mut()[0].mode = 2;
     editor.doc.pmm.self_shadow.heads_mut()[0].distance = 0.01;
@@ -104,8 +108,9 @@ fn the_window_texture_gets_the_frame_without_a_read_back() {
         ([1.5, -0.75], true, mds_render::ShadowMapSize::Texels4096),
         ([0.0; 2], false, mds_render::ShadowMapSize::Texels4096),
     ] {
-        editor.doc.pmm.camera_state[3] = offset[0];
-        editor.doc.pmm.camera_state[4] = offset[1];
+        editor
+            .apply(mds_doc::Command::SetViewOffset(offset))
+            .unwrap();
         editor.shadow_map = size;
         editor.shadow_map_display = display;
         let view = editor.view(0, SIZE, 0.0).unwrap();

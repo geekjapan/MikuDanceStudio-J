@@ -37,6 +37,61 @@ impl Shape {
         }
     }
 
+    /// Bounding sphere radius plus center length, as in btCollisionShape.
+    pub fn angular_motion_disc(self) -> f32 {
+        let (minimum, maximum) = self.aabb(Transform::IDENTITY);
+        maximum.sub(minimum).length() * 0.5 + minimum.add(maximum).scale(0.5).length()
+    }
+
+    /// Virtual support entry used by btConvexPlaneCollisionAlgorithm.
+    pub fn supporting_vertex(self, direction: Vec3) -> Option<Vec3> {
+        let normalize_margin = || {
+            let v = if direction.length2() < f32::EPSILON * f32::EPSILON {
+                Vec3([-1.0; 3])
+            } else {
+                direction
+            };
+            v.normalize()
+        };
+        Some(match self {
+            Self::Sphere { radius } => Vec3::ZERO.add(normalize_margin().scale(radius)),
+            Self::Box {
+                half_extents_without_margin: half,
+            } => Vec3(std::array::from_fn(|i| {
+                let extent = half.0[i] + CONVEX_MARGIN;
+                if direction.0[i] >= 0.0 {
+                    extent
+                } else {
+                    -extent
+                }
+            })),
+            Self::CapsuleY {
+                radius,
+                half_height,
+            } => {
+                let v = if direction.length2() < 0.0001 {
+                    Vec3([1.0, 0.0, 0.0])
+                } else {
+                    direction.normalize()
+                };
+                let mut support = Vec3::ZERO;
+                let mut maximum = -1e18;
+                for cap in [half_height, -half_height] {
+                    let vertex = Vec3([0.0, cap, 0.0])
+                        .add(Vec3(v.0.map(|x| x * 1.0)).scale(radius))
+                        .sub(v.scale(CONVEX_MARGIN));
+                    let dot = v.dot(vertex);
+                    if dot > maximum {
+                        maximum = dot;
+                        support = vertex;
+                    }
+                }
+                support.add(normalize_margin().scale(CONVEX_MARGIN))
+            }
+            Self::StaticPlane { .. } => return None,
+        })
+    }
+
     pub fn margin(self) -> f32 {
         match self {
             Self::Sphere { radius } => radius,

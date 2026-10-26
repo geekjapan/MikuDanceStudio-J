@@ -26,6 +26,9 @@ subject to the following restrictions:
 #![forbid(unsafe_code)]
 
 pub mod body;
+pub mod contact;
+pub mod joint_coordinates;
+pub mod joint_rows;
 pub mod math;
 pub mod shape;
 pub mod time;

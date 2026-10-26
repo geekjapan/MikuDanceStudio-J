@@ -12,14 +12,15 @@
 //! `Command::SetAutoInterpolation`; `]` flips it).
 //!
 //! The mode radios 265, 269, 270 and 272 are [`Command::SetPhysicsMode`] (`PlaybackPhysicsMode`,
-//! `command_view_menu.cpp:1048` to `:1110`) and then [`mds_physics::PhysicsScene::set_physics_mode`]
-//! (`ModelKinematicSync` of every model); modes 1 to 3 request a settle, which the document
-//! sets. Item 270 is greyed while playing (`DisablePlaybackMenus`, `src/app/playback_state.cpp:77`),
-//! in camera mode (`ui_model_reload.cpp:474`) and for a PMX model (`ui_model_reload.cpp:553`);
-//! the other three are never greyed. Menu 285 is [`Command::SetFloorVisible`]
-//! (`command_view_menu.cpp:1437`); the C++ also stores -1 or 1 into the ground body's
-//! `m_collisionFlags`, which `mds-physics` cannot do until its floor shim lands, so the floor
-//! flag changes and the live ground body does not. Check box 499 is
+//! `command_view_menu.cpp:1048` to `:1110`), after which the editor calls
+//! [`mds_physics::PhysicsScene::set_physics_mode`] (`ModelKinematicSync` of every model); modes 1
+//! to 3 request a settle, which the document sets. Item 270 is greyed while playing
+//! (`DisablePlaybackMenus`, `src/app/playback_state.cpp:77`), in camera mode
+//! (`ui_model_reload.cpp:474`) and for a PMX model (`ui_model_reload.cpp:553`); the other three
+//! are never greyed. Menu 285 is [`Command::SetFloorVisible`] (`command_view_menu.cpp:1437`),
+//! after which the editor sets the ground body's collision flags
+//! ([`mds_physics::PhysicsScene::set_floor_visible`]) and keeps the state for every world it
+//! builds. Check box 499 is
 //! [`Command::SetPhysicsCheckbox`] (`EditState::physics_checkbox`, which "register" stores
 //! negated as `physicsDisabled`, `src/model/model_keyframe_edit.cpp:277`).
 //!
@@ -45,7 +46,9 @@ const ACTIONS: &[Action] = &[
     Action::run("menu:285", toggle_floor, false),
     Action::run("ctl:499", toggle_checkbox, false),
     Action::run("menu:264", toggle_bodies, false),
-    Action::run("menu:266", gravity, true),
+    // Not greyed while playing: `DisablePlaybackMenus` (`playback_state.cpp:67` to `:77`) leaves
+    // 266 enabled.
+    Action::run("menu:266", gravity, false),
     Action::run("menu:267", about, false),
     Action::run("menu:268", reset, false),
     Action::run("menu:271", toggle_playback_on_off, false),
@@ -332,10 +335,9 @@ fn reset(ctx: &mut Ctx) -> Result<(), String> {
 }
 
 /// Menus 265, 269 and 272 (`command_view_menu.cpp:1048`, `:1066`, `:1098`): the playback physics
-/// mode, then every model's `ModelKinematicSync`.
+/// mode; the editor then runs every model's `ModelKinematicSync`.
 fn set_mode(ctx: &mut Ctx, mode: u8) -> Result<(), String> {
-    ctx.editor.apply(Command::SetPhysicsMode(mode))?;
-    ctx.editor.physics.set_physics_mode(mode)
+    ctx.editor.apply(Command::SetPhysicsMode(mode))
 }
 
 /// Whether the selected model is a PMX (`ModelRecord::physicsMode == 2`).
@@ -379,9 +381,9 @@ fn toggle_playback_on_off(ctx: &mut Ctx) -> Result<(), String> {
     Ok(())
 }
 
-/// Menu 273 (`command_view_menu.cpp:1180`): the bones with a rigid body are selected and the last
-/// of them is the selected bone; the others are not selected. The C++ keeps `selectedBone` when
-/// no bone has a body; `Command::SelectBones` clears it.
+/// Menu 273 (`command_view_menu.cpp:1180` to `:1196`): the bones with a rigid body are selected
+/// and the last of them is the selected bone; the others are not selected. With no rigid-body bone
+/// the marks are cleared and `selectedBone` stays ([`Command::ClearBoneMarks`]).
 fn select_physics_bones(ctx: &mut Ctx) -> Result<(), String> {
     let Some(rig) = viewport::rig(ctx.editor) else {
         return Ok(());
@@ -390,14 +392,16 @@ fn select_physics_bones(ctx: &mut Ctx) -> Result<(), String> {
         return Ok(());
     }
     let marks: Vec<bool> = rig.bones.iter().map(|b| b.rigid).collect();
-    let last = marks.iter().rposition(|&m| m).map_or(-1, |i| i as i32);
-    ctx.editor
-        .apply(Command::SelectBones(viewport::selection_list(&marks, last)))
+    let cmd = match marks.iter().rposition(|&m| m) {
+        Some(last) => Command::SelectBones(viewport::selection_list(&marks, last as i32)),
+        None => Command::ClearBoneMarks,
+    };
+    ctx.editor.apply(cmd)
 }
 
 /// Menu 274 (`SelectPhysicsOnBoneKeys`, `model_keyframe_edit.cpp:730`): every mark of the model's
-/// key pools is cleared, then each key of a rigid-body bone whose `physicsDisabled` is 0 is
-/// marked. `Command::ClearKeySelection` also clears the camera-mode marks.
+/// three key pools is cleared, then each key of a rigid-body bone whose `physicsDisabled` is 0 is
+/// marked; the camera-mode marks stay.
 fn select_physics_on_frames(ctx: &mut Ctx) -> Result<(), String> {
     let Some(rig) = viewport::rig(ctx.editor) else {
         return Ok(());
@@ -425,7 +429,12 @@ fn select_physics_on_frames(ctx: &mut Ctx) -> Result<(), String> {
             index = key.next;
         }
     }
-    ctx.editor.apply(Command::ClearKeySelection)?;
+    // `ReplaceKeySelection` clears the model's pools only; the empty range marks nothing.
+    ctx.editor.apply(Command::ReplaceKeySelection {
+        track: Track::Bone(0),
+        from: 1,
+        to: 0,
+    })?;
     for (bone, frame) in on {
         ctx.editor.apply(Command::SelectKeys {
             track: Track::Bone(bone),

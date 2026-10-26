@@ -10,7 +10,7 @@ use mds_doc::{Document, ModelFile};
 use mds_physics::PhysicsScene;
 use mds_render::picture::PictureQuad;
 use mds_render::{
-    scene, AccessoryDraw, AccessoryMesh, Camera, Frame, Image, Mesh, Picture, Stage,
+    scene, AccessoryDraw, AccessoryMesh, Camera, Frame, Image, Light, Mesh, Picture, Stage,
     PIXEL_OFFSET_D3D9,
 };
 use std::path::{Path, PathBuf};
@@ -90,6 +90,23 @@ impl Assets {
         a.iter().map(|a| accessory(dir, &a.path.text)).collect()
     }
 
+    /// The textures, sphere maps and toons of every model and accessory read again from their
+    /// files, as menu 278 does (`ReloadTextureCache`, `src/window/enhance_model_io.cpp:779`, after
+    /// `InitToonTextures`, `src/render/toon_textures.cpp:62`). Returns the files found that did
+    /// not decode; the C++ keeps no texture for them either.
+    pub fn reload_textures(&mut self, doc: &Document, dir: &Path) -> Vec<(String, String)> {
+        let mut errors = Vec::new();
+        for (mesh, m) in self.meshes.iter_mut().zip(&doc.pmm.models) {
+            errors.extend(mesh.load_textures(beside(&resolve(dir, &m.path.text))));
+        }
+        for (mesh, a) in self.accessories.iter_mut().zip(&doc.pmm.accessories) {
+            if let Some(mesh) = mesh {
+                errors.extend(mesh.load_textures(beside(&resolve(dir, &a.path.text))));
+            }
+        }
+        errors
+    }
+
     /// The model edge scales again from the document (`Command::SetEdgeScale`).
     pub fn set_edge_scales(&mut self, doc: &Document) {
         for (mesh, m) in self.meshes.iter_mut().zip(&doc.pmm.models) {
@@ -132,11 +149,24 @@ pub struct Shot<'a> {
 }
 
 /// Calls `draw` with the frame and the stage of `shot`: the models in `physics`' pose, the PMM's
-/// self-shadow and ground shadow at the frame, its accessories and its background picture.
+/// light, self-shadow and ground shadow at the frame, its accessories and its background picture.
 pub fn with_stage<R>(
     doc: &Document,
     assets: &Assets,
     shot: &Shot,
+    draw: impl FnOnce(&Frame, &Stage) -> R,
+) -> Result<R, String> {
+    let light = scene::light_at(&doc.pmm, shot.frame)
+        .ok_or_else(|| format!("light track at frame {}", shot.frame))?;
+    with_stage_lit(doc, assets, shot, light, draw)
+}
+
+/// [`with_stage`] in `light`.
+pub fn with_stage_lit<R>(
+    doc: &Document,
+    assets: &Assets,
+    shot: &Shot,
+    light: Light,
     draw: impl FnOnce(&Frame, &Stage) -> R,
 ) -> Result<R, String> {
     let pmm = &doc.pmm;
@@ -193,8 +223,6 @@ pub fn with_stage<R>(
         picture,
         ..scene::stage_at(pmm, shot.frame)
     };
-    let light = scene::light_at(pmm, shot.frame)
-        .ok_or_else(|| format!("light track at frame {}", shot.frame))?;
     let frame = Frame {
         width,
         height,

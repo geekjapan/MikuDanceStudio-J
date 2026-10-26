@@ -1,0 +1,16 @@
+# The settle at play start: three passes spend the load's settle; play 0..30
+# from the current frame 0 requests none, play 100..200 from another frame
+# requests one.
+settle 0
+load pmm swing600.pmm
+trace playsettle.trace
+pump 3 33
+play 0 30
+pump 5 33
+stop
+pump 3 33
+play 100 200
+pump 5 33
+stop
+pump 1 33
+save pmm playsettle.pmm

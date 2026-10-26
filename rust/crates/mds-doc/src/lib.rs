@@ -211,6 +211,10 @@ pub enum Command {
     /// The selected model's bone selection (`boneSelection`); the first bone
     /// becomes `selectedBone`.
     SelectBones(Vec<u32>),
+    /// Menu 273 on a model with no rigid-body bone
+    /// (`command_view_menu.cpp:1186-1196`): every bone mark of the selected
+    /// model is cleared and `selectedBone` stays.
+    ClearBoneMarks,
     /// A pose edit of one bone (`BonePosEdit`, `BoneRotEdit`, the viewport
     /// drags): `PushBoneEditUndo`, the pose, and the edited mark.
     SetBonePose {
@@ -1393,6 +1397,12 @@ impl Document {
                     p.flags[2] = u8::from(bones.contains(&(i as u32)));
                 }
                 m.selection.selected_bone = bones.first().map_or(-1, |&b| b as i32);
+            }
+            Command::ClearBoneMarks => {
+                let i = self.active_model()?;
+                for p in &mut self.pmm.models[i].bone_pose {
+                    p.flags[2] = 0;
+                }
             }
             Command::SetBonePose {
                 bone,

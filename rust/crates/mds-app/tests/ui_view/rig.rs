@@ -57,6 +57,10 @@ impl Rig {
         Rig::with(Editor::new(runner.doc, Some(path)).unwrap())
     }
 
+    pub fn with_editor(editor: Editor) -> Rig {
+        Rig::with(editor)
+    }
+
     fn with(editor: Editor) -> Rig {
         Rig {
             editor,

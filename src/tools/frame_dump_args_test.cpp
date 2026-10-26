@@ -73,6 +73,30 @@ int main() {
     CHECK(Parse({L"app", L"--mds-mesh-dump", L"a.pmm", L"dir", L""}, &request) ==
           TraceArgs::Malformed);
 
+    CHECK(Parse({L"app", L"--mds-frame-dump-4096", L"a.pmm", L"dir", L"0", L"30"}, &request) ==
+          TraceArgs::Ready);
+    CHECK(request.mode == TraceRequest::Mode::FrameDump && request.shadowMapSize == 4096 &&
+          request.frames == 31);
+    CHECK(Parse({L"app", L"--mds-frame-dump", L"a.pmm", L"dir", L"0"}, &request) ==
+          TraceArgs::Ready);
+    CHECK(request.shadowMapSize == 0);
+
+    CHECK(Parse({L"app", L"--mds-ground-probe", L"a.pmm", L"g.txt", L"0", L"30"}, &request) ==
+          TraceArgs::Ready);
+    CHECK(request.mode == TraceRequest::Mode::GroundProbe && request.out == L"g.txt" &&
+          request.frames == 31 && (request.dumpFrames == std::vector<std::uint32_t>{0, 30}));
+    CHECK(Parse({L"app", L"--mds-ground-probe", L"a.pmm", L"g.txt"}, &request) ==
+          TraceArgs::Malformed);
+
+    CHECK(Parse({L"app", L"--mds-msaa-probe", L"a.pmm", L"msaa.txt"}, &request) ==
+          TraceArgs::Ready);
+    CHECK(request.mode == TraceRequest::Mode::MsaaProbe && request.out == L"msaa.txt" &&
+          request.dumpFrames.empty());
+    CHECK(Parse({L"app", L"--mds-msaa-probe", L"a.pmm", L"msaa.txt", L"0"}, &request) ==
+          TraceArgs::Malformed);
+    CHECK(Parse({L"app", L"--mds-msaa-probe", L"a.pmx", L"msaa.txt"}, &request) ==
+          TraceArgs::Malformed);
+
     // --mds-trace still parses as a trace.
     CHECK(Parse({L"app", L"--mds-trace", L"a.pmm", L"o.trace", L"600"}, &request) ==
           TraceArgs::Ready);

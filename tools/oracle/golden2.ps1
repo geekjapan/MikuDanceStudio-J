@@ -1,6 +1,9 @@
 # golden2 lane: renders the scenes of tests/fixtures/rust/golden2 with
 # --mds-frame-dump and writes their edge probes (--mds-edge-probe), plus the
-# edge probe of tests/fixtures/rust/swing600-golden.pmm. Runs everything twice
+# edge probe of tests/fixtures/rust/swing600-golden.pmm, the multisample probe
+# (--mds-msaa-probe, msaa.txt), the ground probe of the groundshadow scene
+# (--mds-ground-probe, groundshadow.ground.txt), and the selfshadow scene with
+# the 4096 shadow map (--mds-frame-dump-4096, selfshadow4096-*.png). Runs everything twice
 # into <Out>\run1 and <Out>\run2, prints the size and sha256 of every file of
 # run1, and exits 1 when a run fails or the two runs differ.
 # Needs build.ps1 first, and the console session for D3D9:
@@ -53,6 +56,19 @@ foreach ($run in 'run1', 'run2') {
     }
     $r = Run @('--mds-edge-probe', "$fixtures\swing600-golden.pmm", "$dir\swing600-golden.edge.txt", '0', '150', '300', '599') $dir "$run swing600-golden probe"
     $failed = $failed -or ($r[-1] -ne 0); $r[0..($r.Count - 2)]
+    $r = Run @('--mds-msaa-probe', "$golden2\groundshadow.pmm", "$dir\msaa.txt") $dir "$run msaa probe"
+    $failed = $failed -or ($r[-1] -ne 0); $r[0..($r.Count - 2)]
+    $r = Run (@('--mds-ground-probe', "$golden2\groundshadow.pmm", "$dir\groundshadow.ground.txt") + $scenes['groundshadow']) $dir "$run groundshadow ground probe"
+    $failed = $failed -or ($r[-1] -ne 0); $r[0..($r.Count - 2)]
+    # The dump names its images after the PMM, so it writes them aside first.
+    $big = "$dir\shadow4096"
+    New-Item -ItemType Directory -Force $big | Out-Null
+    $r = Run (@('--mds-frame-dump-4096', "$golden2\selfshadow.pmm", $big) + $scenes['selfshadow']) $dir "$run selfshadow 4096 dump"
+    $failed = $failed -or ($r[-1] -ne 0); $r[0..($r.Count - 2)]
+    foreach ($f in $scenes['selfshadow']) {
+        if (Test-Path "$big\selfshadow-$f.png") { Move-Item "$big\selfshadow-$f.png" "$dir\selfshadow4096-$f.png" -Force }
+    }
+    Remove-Item -Recurse -Force $big
 }
 
 foreach ($f in Get-ChildItem "$Out\run1" -File | Sort-Object Name) {

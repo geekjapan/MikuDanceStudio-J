@@ -20,91 +20,18 @@ concurrency:
 
 jobs:
   build:
-    runs-on: windows-2022
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86
-            platform: Win32
-          - arch: x64
-            platform: x64
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref_name }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Validate tag and version
-        env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-        run: python scripts/release.py --tag "$env:RELEASE_TAG"
-      - name: Install Conan
-        run: python -m pip install conan==2.27.1
-      - name: Build vendored Bullet and configure dependencies
-        run: |
-          conan profile detect --force
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          conan create recipes/bullet275 --profile:all profiles/${{ matrix.arch }} -s compiler.cppstd=17 -s build_type=Release --build=missing --lockfile=""
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          conan install . --profile:all profiles/${{ matrix.arch }} -s compiler.cppstd=17 -s build_type=Release --build=missing --lockfile="" --output-folder=out/ci
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-      - name: Configure Release
-        run: >-
-          cmake -S . -B out/ci/build -G "Visual Studio 17 2022" -A ${{ matrix.platform }}
-          -DCMAKE_TOOLCHAIN_FILE="$env:GITHUB_WORKSPACE/out/ci/build/generators/conan_toolchain.cmake"
-          -DBUILD_TESTING=ON -DMIKUDANCESTUDIO_DIAG=OFF
-      - name: Build Release
-        run: cmake --build out/ci/build --config Release --parallel 4
-      - name: Install legacy DirectX test runtime
-        run: |
-          $archive = Join-Path $env:RUNNER_TEMP 'directx_Jun2010_redist.exe'
-          $unpack = Join-Path $env:RUNNER_TEMP 'directx-june2010'
-          New-Item -ItemType Directory -Force $unpack | Out-Null
-          # Microsoft Download Center, id=8109. Keep the exact tested payload.
-          Invoke-WebRequest 'https://download.microsoft.com/download/8/4/a/84a35bf1-dafe-4ae8-82af-ad2ae20b6b14/directx_Jun2010_redist.exe' -OutFile $archive
-          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '053F76DCBB28802E23341B6A787E3B0791C0FA5C8D4D011B1044172DBF89C73B') {
-            throw 'Unexpected DirectX redistributable payload'
-          }
-          $extract = Start-Process -FilePath $archive -ArgumentList '/Q', ('/T:"{0}"' -f $unpack) -Wait -PassThru -WindowStyle Hidden
-          if ($extract.ExitCode -ne 0) { throw "DirectX extraction failed: $($extract.ExitCode)" }
-          $install = Start-Process -FilePath (Join-Path $unpack 'DXSETUP.exe') -ArgumentList '/silent' -Wait -PassThru -WindowStyle Hidden
-          if ($install.ExitCode -ne 0) { throw "DirectX installation failed: $($install.ExitCode)" }
-      - name: Run Release regressions
-        run: >-
-          ctest --test-dir out/ci/build -C Release --output-on-failure
-          --timeout 90 --no-tests=error
-          --output-junit "$env:GITHUB_WORKSPACE/out/ci/build/test-results.xml"
-      - name: Preserve test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tests-${{ matrix.arch }}
-          path: |
-            out/ci/build/test-results.xml
-            out/ci/build/Testing/Temporary/*.log
-          if-no-files-found: warn
-      - name: Package
-        env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-        run: python scripts/release.py --tag "$env:RELEASE_TAG" --build-dir out/ci/build --arch ${{ matrix.arch }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ matrix.arch }}
-          path: out/release/*
-          if-no-files-found: error
+    uses: ./.github/workflows/windows-build.yml
+    with:
+      release-tag: ${{ inputs.tag || github.ref_name }}
 
   publish:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-*
           merge-multiple: true

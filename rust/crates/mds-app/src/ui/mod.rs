@@ -163,6 +163,8 @@ pub const COMPLETE: &[&str] = &[
     "dialog",
     "edit",
     "expression",
+    "file",
+    "help",
     "light-panel",
     "mme",
     "mocap",

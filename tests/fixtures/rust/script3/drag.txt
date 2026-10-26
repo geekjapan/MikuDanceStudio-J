@@ -16,11 +16,13 @@ register display
 save pmm registered.pmm
 
 select bone センター
+frame 30
 drag 30 -15
 save pmm back.pmm
 
 select all bone
 select all display
+frame 10
 drag 10 40
 save pmm forward.pmm
 save vmd forward.vmd

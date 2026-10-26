@@ -1,28 +1,20 @@
-# The PMD edits that "save enhanced model" (menu 263) writes: English names
-# (menu 259), a toon texture name (menu 261), and the physics model (menu
-# 262); the save also sets the model path that the PMM records.
+# The PMD edits that "save enhanced model" (menu 263) writes: a toon
+# texture name (menu 261) and the physics model (menu 262); the save also
+# sets the model path that the PMM records. The English names (menu 259) are
+# not here: README.md, "Not reached".
 load model lips.pmd
-english open
-dialog text 667 "lips model"
-dialog text 668 "An English comment"
-dialog select 669 2
-dialog text 672 UpperBody
-dialog select 673 3
-dialog text 676 oo
-dialog select 677 1
-dialog text 680 HairGroup
-dialog ok
 toon 3 toonx.bmp
 
 physics model open
 dialog text 718 2.5
 dialog select 704 3
 dialog text 712 0.25
+dialog click 727
 dialog ok
 save pmd edited.pmd
 save pmm edited.pmm
 
-english open
-dialog text 667 cancelled
+physics model open
+dialog text 718 9
 dialog cancel
-save pmm cancelled.pmm
+save pmd cancelled.pmd

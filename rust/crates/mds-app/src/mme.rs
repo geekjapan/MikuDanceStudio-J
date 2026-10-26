@@ -422,14 +422,22 @@ impl Mme {
                 ModelFile::Pmd(pmd) => Source::Pmd(pmd),
                 ModelFile::Missing => Source::Missing,
             };
-            let added = host.add(&gpu, &m.path.text, source, m.edge_scale, beside(&path));
+            let added = host.add_with_shared(
+                &gpu,
+                &m.path.text,
+                source,
+                m.edge_scale,
+                beside(&path),
+                shared_toon,
+            );
             log.extend(added.err());
         }
         for a in &doc.pmm.accessories {
             let path = crate::scene::resolve(&self.dir, &a.path.text);
             let source =
                 mds_accessory::vac::load_file(&path).map_or(Source::Missing, Source::Accessory);
-            let added = host.add(&gpu, &a.path.text, source, 1.0, beside(&path));
+            let added =
+                host.add_with_shared(&gpu, &a.path.text, source, 1.0, beside(&path), shared_toon);
             log.extend(added.err());
         }
         Ok(Runtime {
@@ -476,6 +484,11 @@ fn key(l: &Live) -> (bool, i32, String) {
 fn beside(file: &Path) -> impl FnMut(&str) -> Option<Vec<u8>> + '_ {
     let folder = file.parent().unwrap_or(Path::new("."));
     move |name| std::fs::read(effect_file(folder, name)).ok()
+}
+
+/// Shared toon files are application data, independently of the object's folder.
+fn shared_toon(name: &str) -> Option<Vec<u8>> {
+    std::fs::read(Path::new("data").join(name)).ok()
 }
 
 #[cfg(test)]

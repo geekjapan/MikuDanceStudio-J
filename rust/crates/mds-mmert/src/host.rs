@@ -37,9 +37,7 @@ use mds_formats::pmx::Pmx;
 use mds_math::Mat4;
 use mds_mme::sas::SEM_OFFSCREEN;
 use mds_pose::model::Model as Posed;
-use mds_render::{
-    AccessoryDraw, AccessoryMesh, CameraFrame, Image, Light, Mesh, Pose, Renderer, Stage,
-};
+use mds_render::{AccessoryDraw, AccessoryMesh, CameraFrame, Light, Mesh, Pose, Renderer, Stage};
 use mds_shader::vkd3d::Vkd3d;
 use mds_skin::Skin;
 
@@ -301,7 +299,20 @@ impl Host {
         edge_scale: f32,
         read: impl FnMut(&str) -> Option<Vec<u8>>,
     ) -> Result<(), String> {
-        let (r, model, kind) = match load(gpu, source, edge_scale, read) {
+        self.add_with_shared(gpu, name, source, edge_scale, read, |_| None)
+    }
+
+    /// Adds an object with a separate reader for application shared toon names.
+    pub fn add_with_shared(
+        &mut self,
+        gpu: &Gpu,
+        name: &str,
+        source: Source,
+        edge_scale: f32,
+        read: impl FnMut(&str) -> Option<Vec<u8>>,
+        shared: impl FnMut(&str) -> Option<Vec<u8>>,
+    ) -> Result<(), String> {
+        let (r, model, kind) = match load(gpu, source, edge_scale, read, shared) {
             Ok((model, kind)) => (Ok(()), model, kind),
             Err(e) => (Err(format!("{name}: {e}")), None, Kind::Missing),
         };
@@ -1093,6 +1104,7 @@ fn load(
     source: Source,
     edge_scale: f32,
     mut read: impl FnMut(&str) -> Option<Vec<u8>>,
+    shared: impl FnMut(&str) -> Option<Vec<u8>>,
 ) -> Result<(Option<Model>, Kind), String> {
     let mut textures: HashMap<String, Option<Vec<u8>>> = HashMap::new();
     let mut fetch = |n: &str| {
@@ -1122,8 +1134,7 @@ fn load(
             let mut model = Model::from_accessory(&gpu.device, &acc)?;
             let mut mesh = AccessoryMesh::new(acc.clone());
             mesh.load_textures(&mut fetch);
-            let loaded = loaded_files(&model, fetch);
-            model.loaded(|n| loaded.contains(n));
+            model.load_textures(gpu, &mut fetch, shared);
             return Ok((
                 Some(model),
                 Kind::Accessory(Box::new(AccessoryShape {
@@ -1139,8 +1150,7 @@ fn load(
     };
     mesh.load_textures(&mut fetch);
     mesh.set_edge_scale(edge_scale);
-    let loaded = loaded_files(&model, fetch);
-    model.loaded(|n| loaded.contains(n));
+    model.load_textures(gpu, &mut fetch, shared);
     let shape = Shape {
         skin,
         mesh,
@@ -1153,22 +1163,6 @@ fn load(
         used: HashSet::new(),
     };
     Ok((Some(model), Kind::Model(Box::new(shape))))
-}
-
-/// The texture and sphere files of `model` that read and decode.
-fn loaded_files(model: &Model, mut fetch: impl FnMut(&str) -> Option<Vec<u8>>) -> HashSet<String> {
-    let names = model
-        .materials
-        .iter()
-        .flat_map(|m| [&m.texture, &m.sphere])
-        .flatten();
-    let mut loaded = HashSet::new();
-    for n in names {
-        if !loaded.contains(n) && fetch(n).is_some_and(|b| Image::decode(&b).is_ok()) {
-            loaded.insert(n.clone());
-        }
-    }
-    loaded
 }
 
 /// The object and edge passes of `item` with `effect` into `target`, over the subsets `subset`

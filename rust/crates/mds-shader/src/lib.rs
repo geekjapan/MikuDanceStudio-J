@@ -322,10 +322,11 @@ pub fn compile_with(
 }
 
 /// A listing of `fx` in Direct3D shader assembly: per technique and pass, each shader state
-/// followed by the vkd3d-shader assembly of its entry ([`Target::D3dAsm`]), or by the compile
-/// error. Each entry compiles once; `name` labels the source in vkd3d messages.
-pub fn disassemble(vk: &Vkd3d, fx: &Effect, name: &str) -> String {
-    let mut listings: std::collections::HashMap<Entry, String> = Default::default();
+/// followed by the vkd3d-shader assembly of its entry ([`Target::D3dAsm`]). Returns an error
+/// if any entry fails to compile. Each entry compiles once; `name` labels the source in
+/// vkd3d messages.
+pub fn disassemble(vk: &Vkd3d, fx: &Effect, name: &str) -> Result<String, String> {
+    let mut listings: std::collections::HashMap<Entry, Result<String, String>> = Default::default();
     let mut out = String::new();
     for t in &fx.ast.techniques {
         out.push_str(&format!("technique {}\n", t.name.as_deref().unwrap_or("")));
@@ -347,7 +348,9 @@ pub fn disassemble(vk: &Vkd3d, fx: &Effect, name: &str) -> String {
                 };
                 let text = listings
                     .entry(entry)
-                    .or_insert_with_key(|e| assembly(vk, fx, e, name));
+                    .or_insert_with_key(|e| assembly(vk, fx, e, name))
+                    .as_ref()
+                    .map_err(Clone::clone)?;
                 for line in text.lines() {
                     out.push_str("      ");
                     out.push_str(line);
@@ -356,30 +359,25 @@ pub fn disassemble(vk: &Vkd3d, fx: &Effect, name: &str) -> String {
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// [`disassemble`] of the effect file at `path`.
 pub fn disassemble_file(vk: &Vkd3d, path: &std::path::Path) -> Result<String, String> {
     let fx = Effect::parse_file(path).map_err(|e| e.to_string())?;
-    Ok(disassemble(vk, &fx, &path.to_string_lossy()))
+    disassemble(vk, &fx, &path.to_string_lossy())
 }
 
 /// The assembly of one entry, retried with [`guard_pow`] on E5027 as [`compile`] does.
-fn assembly(vk: &Vkd3d, fx: &Effect, entry: &Entry, name: &str) -> String {
-    let (source, ep) = match entry_source(fx, entry) {
-        Ok(s) => s,
-        Err(e) => return format!("// error: {e}"),
-    };
+fn assembly(vk: &Vkd3d, fx: &Effect, entry: &Entry, name: &str) -> Result<String, String> {
+    let (source, ep) = entry_source(fx, entry)?;
     let asm = |src: &str| vk.compile_hlsl(src, name, &entry.profile, &ep, Target::D3dAsm);
     let r = match asm(&source) {
         Err(e) if is_e5027(&e) => asm(&guard_pow(&source)),
         r => r,
     };
-    match r {
-        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-        Err(e) => format!("// error: {}", e.summary()),
-    }
+    r.map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .map_err(|e| e.summary())
 }
 
 #[cfg(test)]

@@ -731,9 +731,12 @@ bool RegisterDisplayKeyFromRecord(unsigned char* model, int frameArg, unsigned c
         const mdl::BoneOrderEntry* const relationships = mdl::BoneOrder(m);
         for (int i = 0; i < selCnt; ++i) {
             if (cnt2 > 0) {
+                const int bone = relationships[i].boneIndex;
+                if (bone < 0 || static_cast<std::uint32_t>(bone) >= mdl::Mdl(m)->boneCount)
+                    continue;
                 const unsigned char* e = entries28;
                 const unsigned char* const selBone = reinterpret_cast<const unsigned char*>(
-                    mdl::Bones(m) + relationships[i].boneIndex);
+                    mdl::Bones(m) + bone);
                 int k = 0;
                 while (std::strcmp(reinterpret_cast<const char*>(e),
                                    reinterpret_cast<const char*>(selBone)) != 0) {

@@ -145,7 +145,7 @@ impl Rig {
     /// The screen point of bone `k` on [`SIZE`].
     pub fn bone_at(&self, k: usize) -> [f32; 2] {
         let r = viewport::rig(&self.e).unwrap();
-        let view = mds_app::scene::view(&self.e.doc, &self.e.camera, SIZE.map(|v| v as u32));
+        let view = self.e.camera_view(SIZE.map(|v| v as u32));
         let ([x, y], _) = viewport::screen(&r, &view, SIZE.map(|v| v as i32))[k].unwrap();
         [x as f32, y as f32]
     }

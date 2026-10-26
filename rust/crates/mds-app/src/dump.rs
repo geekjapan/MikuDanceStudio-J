@@ -22,7 +22,6 @@ use crate::file;
 use crate::mme::{Mme, View};
 use crate::scene::{self, Assets, Shot};
 use mds_physics::PhysicsScene;
-use mds_render::Camera;
 use mds_render::{encode_png, Gpu, SAMPLES_8X};
 use mds_scene::track::{evaluate_camera, evaluate_light, CameraMode, LightMode};
 use std::path::{Path, PathBuf};
@@ -114,7 +113,7 @@ pub fn run(gpu: &Gpu, request: &Request) -> Result<(), String> {
     let mut mme = Mme::autoload(&doc, Some(&request.pmm));
     if mme.active() {
         mme.backbuffer = Some(MME_BACKBUFFER);
-        return run_mme(&doc, &mme, &mut physics, &request.frames, write);
+        return run_mme(&mut doc, &mme, &mut physics, &request.frames, write);
     }
     let mut at = 0;
     for &frame in &request.frames {
@@ -124,12 +123,13 @@ pub fn run(gpu: &Gpu, request: &Request) -> Result<(), String> {
                 .map_err(|e| format!("frame {}: {e}", at + 1))?;
             at += 1;
         }
-        let camera = scene::track_camera(&doc, frame)?;
+        let prepared = dump_camera(&mut doc, &physics, frame, CameraMode::Seek)?;
+        let camera = scene::camera_frame(prepared);
         let shot = Shot {
             physics: &physics,
             frame,
             camera: &camera,
-            view_offset: [0.0; 2],
+            view_offset: prepared.offset,
             size: [WIDTH, HEIGHT],
             samples: &SAMPLES_8X,
             picture_viewport: request.picture_viewport,
@@ -144,30 +144,22 @@ pub fn run(gpu: &Gpu, request: &Request) -> Result<(), String> {
 
 /// The MME dump (see the module doc).
 fn run_mme(
-    doc: &mds_doc::Document,
+    doc: &mut mds_doc::Document,
     mme: &Mme,
     physics: &mut PhysicsScene,
     frames: &[u32],
     write: impl Fn(u32, &[u8]) -> Result<(), String>,
 ) -> Result<(), String> {
     let last = *frames.last().ok_or("no frames")?;
-    let draw = |physics: &PhysicsScene, frame: u32, elapsed: f32| {
-        let pmm = &doc.pmm;
+    let mut draw = |physics: &PhysicsScene, frame: u32, elapsed: f32| {
         let at = f64::from(frame);
-        let c = evaluate_camera(&pmm.camera, at, CameraMode::Playback)
-            .ok_or_else(|| format!("camera track at frame {frame}"))?;
-        let camera = Camera {
-            target: c.position,
-            rotation: c.rotation,
-            distance: c.distance,
-            fov_deg: c.fov,
-            orthographic: c.perspective == 1,
-        };
-        let light = evaluate_light(&pmm.light, at, LightMode::Playback)
+        let prepared = dump_camera(doc, physics, frame, CameraMode::Playback)?;
+        let camera = scene::camera_frame(prepared);
+        let light = evaluate_light(&doc.pmm.light, at, LightMode::Playback)
             .ok_or_else(|| format!("light track at frame {frame}"))?;
         let view = View {
             camera: &camera,
-            view_offset: [0.0; 2],
+            view_offset: prepared.offset,
             shadow_map: Default::default(),
             shadow_map_display: false,
             light,
@@ -191,6 +183,19 @@ fn run_mme(
         eprintln!("mme: {line}");
     }
     Ok(())
+}
+
+fn dump_camera(
+    doc: &mut mds_doc::Document,
+    physics: &PhysicsScene,
+    frame: u32,
+    mode: CameraMode,
+) -> Result<mds_doc::CameraFrame, String> {
+    let sample = evaluate_camera(&doc.pmm.camera, f64::from(frame), mode)
+        .ok_or_else(|| format!("camera track at frame {frame}"))?;
+    doc.commit_camera_sample(&sample);
+    doc.pmm.settings.options[0] = 1;
+    Ok(doc.prepare_camera_frame(mds_doc::camera_anchors(doc, &physics.scene.models), true))
 }
 
 #[cfg(test)]

@@ -750,6 +750,10 @@ pub enum Command {
         samples: u32,
         keys: Vec<mds_kinect::KeyRegistration>,
     },
+    /// The screen capture radios 243..246 (`command_file_menu.cpp`
+    /// 2053-2090): `view.capture_mode`, 0 off, 1 full frame, 2 the 4:3
+    /// crop, 3 background refresh.
+    SetCaptureMode(i32),
 }
 
 /// A parent of the outside-parent dialog (`BoneOrderEntry::linkedModel`
@@ -2092,6 +2096,12 @@ impl Document {
                 }
                 self.pmm.physics.playback_mode = m;
             }
+            Command::SetCaptureMode(mode) => {
+                if !(0..=3).contains(&mode) {
+                    return Err(not("no such capture mode"));
+                }
+                self.pmm.view.capture_mode = mode;
+            }
             Command::SetFloorVisible(on) => self.pmm.appearance.floor_visible = u8::from(on),
             Command::SetPhysicsCheckbox(on) => self.edit.physics_checkbox = on,
             Command::SetCameraFromMenu {
@@ -2100,7 +2110,9 @@ impl Document {
                 distance,
             } => {
                 if !self.camera_mode() {
-                    return Err(not("the camera path of menus 300 and 302 is camera mode only"));
+                    return Err(not(
+                        "the camera path of menus 300 and 302 is camera mode only",
+                    ));
                 }
                 let s = &mut self.pmm.camera_state;
                 s[..3].copy_from_slice(&position);

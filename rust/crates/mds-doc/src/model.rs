@@ -828,9 +828,10 @@ pub fn register_capture(
     let well_formed = (samples > 0 || keys.is_empty())
         && runs.iter().all(|run| {
             run.len() == samples as usize
-                && run.iter().zip(frame..).all(|(k, f)| {
-                    k.bone == run[0].bone && k.bone < bones && k.frame == f
-                })
+                && run
+                    .iter()
+                    .zip(frame..)
+                    .all(|(k, f)| k.bone == run[0].bone && k.bone < bones && k.frame == f)
         });
     if !well_formed {
         return Err(Error::NotApplicable(
@@ -848,9 +849,9 @@ pub fn register_capture(
     });
     let mut touched = Touched::default();
     let max = &mut m.selection.max_frame;
-    let r = runs.iter().try_for_each(|run| {
-        register_trace_run(&mut m.bone_keys, &mut touched, max, frame, run)
-    });
+    let r = runs
+        .iter()
+        .try_for_each(|run| register_trace_run(&mut m.bone_keys, &mut touched, max, frame, run));
     fill_keys(&mut e.history, touched);
     r
 }

@@ -121,7 +121,10 @@ fn a_capture_at_frame_0_writes_the_head() {
     register(&mut d, 0, 2, run(1, 0, 2));
     let m = &d.pmm.models[0];
     let head = &m.bone_keys.heads()[1];
-    assert_eq!((head.frame, head.position, head.allocated), (0, [0.0, 1.0, 0.0], 1));
+    assert_eq!(
+        (head.frame, head.position, head.allocated),
+        (0, [0.0, 1.0, 0.0], 1)
+    );
     assert_eq!(
         frames(&m.bone_keys, 1),
         [0, 1, 100, 200, 300, 400, 500, 599]
@@ -230,7 +233,11 @@ fn every_mark_is_cleared_and_no_samples_push_nothing() {
     assert!(m.bone_keys.records().iter().all(|(_, k)| k.allocated == 0));
     assert!(m.bone_keys.heads().iter().all(|k| k.allocated == 0));
     assert!(m.display_keys.heads().iter().all(|k| k.allocated == 0));
-    assert!(m.display_keys.records().iter().all(|(_, k)| k.allocated == 0));
+    assert!(m
+        .display_keys
+        .records()
+        .iter()
+        .all(|(_, k)| k.allocated == 0));
     assert_eq!(format!("{:?}", d.edit.models[0].history.undo), history);
 }
 
@@ -295,7 +302,9 @@ fn the_keys_of_mds_kinect_register() {
     let pool = &d.pmm.models[0].bone_keys;
     let key = |bone: u32, frame: u32| {
         let t = track(pool, bone);
-        pool.get(t.iter().find(|k| k.1 == frame).unwrap().0).unwrap().clone()
+        pool.get(t.iter().find(|k| k.1 == frame).unwrap().0)
+            .unwrap()
+            .clone()
     };
     let center = key(1, 12);
     assert_eq!(center.position, [200.0, 201.0, 202.0]);

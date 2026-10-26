@@ -33,6 +33,26 @@ fn the_physics_menus_set_the_mode_and_modes_1_to_3_settle() {
 }
 
 #[test]
+fn the_capture_menus_set_the_saved_mode() {
+    // command_file_menu.cpp 2053-2090: `CaptureMode()` 0..3
+    // (`ScreenCaptureMode`, mmd_app.hpp 125-130), no `SceneModified`.
+    let mut d = doc();
+    for mode in [3, 2, 1, 0] {
+        d.apply(Command::SetCaptureMode(mode)).unwrap();
+        assert_eq!(d.pmm.view.capture_mode, mode);
+    }
+    assert!(d.apply(Command::SetCaptureMode(4)).is_err());
+    assert_eq!(d.pmm.view.capture_mode, 0);
+    assert!(!Command::SetCaptureMode(1).marks_modified());
+    let saved = mds_formats::pmm::Pmm::read(&{
+        d.apply(Command::SetCaptureMode(2)).unwrap();
+        d.save().unwrap()
+    })
+    .unwrap();
+    assert_eq!(saved.view.capture_mode, 2);
+}
+
+#[test]
 fn the_floor_menu_sets_the_saved_flag() {
     // command_view_menu.cpp 1437-1452: `floorVisible` 0 or 1.
     let mut d = doc();

@@ -131,6 +131,12 @@ int mds_mmd_world_step(mds_mmd_world *W, float dt, int32_t max_sub_steps, float 
   });
 }
 
+int mds_mmd_world_set_floor(mds_mmd_world *W, int32_t on) {
+  if (!W) return MDS_BT_ERR_NULL;
+  W->bodies[0]->rb->setCollisionFlags(on ? 1 : -1);
+  return MDS_BT_OK;
+}
+
 int mds_mmd_body_create(mds_mmd_world *W, int32_t shape, float sx, float sy, float sz,
                         const float origin[3], const float rotation[4], int32_t mode, float mass,
                         float linear_damping, float angular_damping, float restitution,

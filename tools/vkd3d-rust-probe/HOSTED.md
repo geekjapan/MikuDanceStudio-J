@@ -163,9 +163,10 @@ Only after this executable passes does real `blob.c` receive a 60-second
 before redundant compiler builds and labels the result `translation_only_success`.
 It does not count as compilation, link, or runtime acceptance. Then the unchanged
 24-unit experiment includes all five common and 19 shader units. Remaining
-variadic and foreign-type stable-Rust failures stay visible. The parser offsetof
-patch, raw/working hashes, runtime comparison, and status classification are
-otherwise unchanged. Extern inventory includes every emitted ABI and preserves
+variadic and foreign-type stable-Rust failures stay visible. The numeric
+`offsetof` probe compares actual translated expressions against Clang 18, and
+the configured C working copy is checked byte-identical to its source. Extern
+inventory includes every emitted ABI and preserves
 the aggregate declared/defined/unresolved sets alongside per-ABI sets.
 
 No hosted tool build, smoke executable, or 24-unit result for this patch has been

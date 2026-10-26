@@ -54,6 +54,7 @@ int main() {
  while(std::getline(std::cin,line)) {
   if(line.empty()) continue;
   std::istringstream in(line); std::string op; int id,n; read(in,id,op,n);
+  std::cerr << "I " << id << '\n';
   if(op=="U") {
    btUnionFind uf; uf.reset(n); std::cout << id << " reset"; uf_dump(uf); std::cout << '\n';
    int count; read(in,count); for(int k=0;k<count;++k) { char command; int a,b; read(in,command); int result=-1;
@@ -69,7 +70,7 @@ int main() {
    for(int i=0;i<n;++i) {
     int state,flags,response,tag,comp; uint32_t time,hit; read(in,state,flags,response,time,tag,comp,hit);
     auto* body=new btRigidBody(1,nullptr,&shape,btVector3(1,1,1)); btTransform t; t.setIdentity(); t.setOrigin(btVector3(i*8,0,0)); body->setWorldTransform(t);
-    body->setCollisionFlags(flags | (response?0:btCollisionObject::CF_NO_CONTACT_RESPONSE)); body->forceActivationState(state); body->setDeactivationTime(scalar(time)); body->setIslandTag(tag); body->setCompanionId(comp); body->setHitFraction(scalar(hit)); 
+    body->setCollisionFlags(flags | (response?0:btCollisionObject::CF_NO_CONTACT_RESPONSE)); body->forceActivationState(state); body->setDeactivationTime(scalar(time)); body->setIslandTag(tag); body->setCompanionId(comp); body->setHitFraction(scalar(hit));
     world.addCollisionObject(body,btBroadphaseProxy::DefaultFilter,btBroadphaseProxy::AllFilter); bodies.push_back(body); registered.push_back(body);
    }
    int count; read(in,count); for(int k=0;k<count;++k) { int a,b; read(in,a,b); broadphase.getOverlappingPairCache()->addOverlappingPair(bodies[a]->getBroadphaseHandle(),bodies[b]->getBroadphaseHandle()); }
@@ -102,4 +103,9 @@ void island_observe_objects(const char* label,int a,int b,int c,btCollisionWorld
 }
 void island_observe_constraints(const btAlignedObjectArray<btTypedConstraint*>& sorted) {
  std::cerr << "Q " << sorted.size(); for(int i=0;i<sorted.size();++i) { size_t j=0; while(cs[j]!=sorted[i]) ++j; std::cerr << ' ' << j; } std::cerr << '\n';
+}
+
+int body_index_observed(btCollisionObject* object,btCollisionWorld* world) {
+ for(int i=0;i<world->getNumCollisionObjects();++i) if(world->getCollisionObjectArray()[i]==object) return i;
+ std::abort();
 }

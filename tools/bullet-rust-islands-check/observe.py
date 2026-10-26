@@ -29,13 +29,20 @@ def prepare(source, destination):
         ('m_elements[i].m_id = i; m_elements[i].m_sz = 1; \n\t} ', 'm_elements[i].m_id = i; m_elements[i].m_sz = 1; \n\t} \n    island_observe_uf("reset",N,0,*this);',1),
         ('m_elements.quickSort(btUnionFindElementSortPredicate());','m_elements.quickSort(btUnionFindElementSortPredicate());\n    island_observe_uf("sort",0,0,*this);',1),
     ])
+    wake_hooks = []
+    for branch, source_index, target_index in [('A', 0, 1), ('B', 1, 0)]:
+        guard = f'if (colObj{source_index}->isKinematicObject() && colObj{source_index}->getActivationState() != ISLAND_SLEEPING)'
+        old = guard + f'\n\t\t\t{{\n\t\t\t\tcolObj{target_index}->activate();\n\t\t\t}}'
+        before = f'island_observe_objects("wake_{branch}_before",i,body_index_observed(colObj{source_index},collisionWorld),body_index_observed(colObj{target_index},collisionWorld),collisionWorld)'
+        after = before.replace('_before', '_after')
+        new = guard + f'\n\t\t\t{{\n\t\t\t\t({before}, colObj{target_index}->activate(), {after});\n\t\t\t}}'
+        wake_hooks.append((old, new, 1))
     edit('BulletCollision/CollisionDispatch/btSimulationIslandManager.cpp',[
-        ('//#include <stdio.h>', 'void island_observe_objects(const char*,int,int,int,btCollisionWorld*);\n//#include <stdio.h>',1),
+        ('//#include <stdio.h>', 'void island_observe_objects(const char*,int,int,int,btCollisionWorld*);\nint body_index_observed(btCollisionObject*,btCollisionWorld*);\n//#include <stdio.h>',1),
         ('\n\t}\n\n\t\n\tint i;\n\tint maxNumManifolds', '\n        island_observe_objects("sleep",islandId,allSleeping,endIslandIndex-startIslandIndex,collisionWorld);\n\t}\n\n\t\n\tint i;\n\tint maxNumManifolds',1),
-        ('\n\t}\n}\n\n\n\n///@todo:', '\n        island_observe_objects("wake",i,0,0,collisionWorld);\n\t}\n}\n\n\n\n///@todo:',1),
         ('\n\t\t\tif (!islandSleeping)\n', '\n            island_observe_objects("scan",islandId,islandSleeping,startManifoldIndex,collisionWorld);\n\t\t\tif (!islandSleeping)\n',1),
         ('startManifoldIndex = endManifoldIndex;', 'startManifoldIndex = endManifoldIndex;\n                island_observe_objects("cursor",islandId,startManifoldIndex,numIslandManifolds,collisionWorld);',1),
-    ])
+    ] + wake_hooks)
     edit('BulletDynamics/Dynamics/btDiscreteDynamicsWorld.cpp',[
         ('sortedConstraints.quickSort(btSortConstraintOnIslandPredicate());','sortedConstraints.quickSort(btSortConstraintOnIslandPredicate());\n    island_observe_constraints(sortedConstraints);',1),
         ('#include "btDiscreteDynamicsWorld.h"','#include "btDiscreteDynamicsWorld.h"\nvoid island_observe_constraints(const btAlignedObjectArray<btTypedConstraint*>&);',1),

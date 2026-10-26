@@ -11,6 +11,7 @@ import subprocess
 import sys
 from cases import corpus
 from observe import prepare
+from wake import validate_wake, focused_inputs, negative_controls
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -48,7 +49,7 @@ def main():
     macros = subprocess.check_output([*command[:command.index(HERE / 'oracle.cpp')], '-dM', '-E', HERE / 'oracle.cpp'], env=environment)
     (output / 'macros.txt').write_bytes(macros)
     inputs, compact_rows, scenarios = corpus()
-    captured = subprocess.check_output([executable], input=inputs, env=environment)
+    captured = subprocess.check_output([executable], input=inputs, env=environment, stderr=subprocess.DEVNULL)
     assert captured
     observed_src = output / 'observed-src'
     prepare(src, observed_src)
@@ -58,7 +59,19 @@ def main():
     with (output / 'observer.tsv').open('wb') as trace:
         observed = subprocess.check_output([output / 'native-observed'], input=inputs, env=environment, stderr=trace)
     assert observed == captured, 'observer changed native stdout'
-    assert (output / 'observer.tsv').stat().st_size > 0
+    trace_text = (output / 'observer.tsv').read_text()
+    wake_coverage = validate_wake(inputs, trace_text)
+    focused = focused_inputs()
+    focused_native = subprocess.check_output([executable], input=focused, env=environment, stderr=subprocess.DEVNULL)
+    with (output / 'wake-focused-observer.tsv').open('wb') as trace:
+        focused_observed = subprocess.check_output([output / 'native-observed'], input=focused, env=environment, stderr=trace)
+    assert focused_observed == focused_native, 'observer changed focused native stdout'
+    (output / 'wake-focused-inputs.tsv').write_bytes(focused)
+    (output / 'wake-focused-native.tsv').write_bytes(focused_native)
+    focused_trace = (output / 'wake-focused-observer.tsv').read_text()
+    (output / 'wake-coverage.json').write_text(json.dumps(wake_coverage, indent=2) + '\n')
+    (output / 'wake-focused-coverage.json').write_text(json.dumps(validate_wake(focused, focused_trace), indent=2) + '\n')
+    (output / 'wake-negative-controls.json').write_text(json.dumps(negative_controls(focused, focused_trace), indent=2) + '\n')
     (output / 'inputs.tsv').write_bytes(inputs)
     (output / 'native.tsv').write_bytes(captured)
     fixture = ROOT / 'rust/crates/mds-bullet/tests/islands_data'
@@ -92,6 +105,9 @@ def main():
     with (output / 'observer.tsv').open() as trace:
         for line in trace:
             fields = line.split()
+            if fields[0] == 'I':
+                assert len(fields) == 2
+                continue
             assert fields[0] in ('UF','O','Q'), fields[0]
             count_index, width = {'UF': (4,2), 'O': (5,6), 'Q': (1,1)}[fields[0]]
             assert len(fields) == count_index + 1 + int(fields[count_index]) * width, 'malformed observer row'
@@ -101,7 +117,7 @@ def main():
                 branches['scan_skipped' if int(fields[3]) else 'scan_active'] += 1
             if fields[:2] == ['O', 'sleep']:
                 branches['all_sleeping' if int(fields[3]) else 'group_awake'] += 1
-    assert all(branches[k] for k in ('UF:reset','UF:find','UF:unite','UF:sort','O:sleep','O:wake','O:scan','O:cursor','Q','scan_skipped','scan_active','all_sleeping','group_awake'))
+    assert all(branches[k] for k in ('UF:reset','UF:find','UF:unite','UF:sort','O:sleep','O:wake_A_before','O:wake_A_after','O:wake_B_before','O:wake_B_after','O:scan','O:cursor','Q','scan_skipped','scan_active','all_sleeping','group_awake'))
     (output / 'branches.json').write_text(json.dumps(branches, indent=2)+'\n')
     schema = {
         'schema': 'bullet275-islands-v1', 'status': 'complete',

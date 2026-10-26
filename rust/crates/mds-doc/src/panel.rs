@@ -59,25 +59,55 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// A model in its saved pose, with the bone matrices the frame loop leaves
-/// in `BoneRecord::matInit` without physics.
-pub(crate) fn posed(file: &crate::ModelFile, m: &pmm::Model, mode: u8) -> Option<PoseModel> {
+/// in `BoneRecord::matInit` without physics. An outside parent in a model
+/// of `others` reads its bones; one in any other model counts as none.
+pub(crate) fn posed(
+    file: &crate::ModelFile,
+    m: &pmm::Model,
+    mode: u8,
+    others: &[PoseModel],
+) -> Option<PoseModel> {
     let mut pose = match file {
         crate::ModelFile::Pmx(p) => PoseModel::from_pmx(m.slot, p).ok()?,
         crate::ModelFile::Pmd(p) => PoseModel::from_pmd(m.slot, p).ok()?,
         crate::ModelFile::Missing => return None,
     };
     pose.apply_pmm(m).ok()?;
-    // ponytail: no other model is posed here, so an outside parent in
-    // another model counts as none (`Others::NONE` would panic on it); pose
-    // the scene in calculation order when a caller needs those bones.
     for s in &mut pose.selectors {
-        if s.linked_model >= 0 && s.linked_model != i32::from(m.slot) {
+        let known = s.linked_model == i32::from(m.slot)
+            || others.iter().any(|o| i32::from(o.slot) == s.linked_model);
+        if s.linked_model >= 0 && !known {
             s.linked_model = -1;
         }
     }
     mds_pose::pose::apply_morphs(&mut pose);
-    mds_pose::pose::set_physics_mode(&mut pose, 0, &mds_pose::pose::Others::NONE, i32::from(mode));
+    let others = mds_pose::pose::Others {
+        models: [others, &[]],
+    };
+    mds_pose::pose::set_physics_mode(&mut pose, 0, &others, i32::from(mode));
     Some(pose)
+}
+
+/// Every model in its saved pose ([`posed`]), by model index, posed in
+/// calculation order as the frame loop poses them: an outside parent reads
+/// the bones of a model posed before its own.
+// ponytail: a parent later in the order counts as none, where the frame
+// loop reads that model's matrices of the previous frame; pose twice when a
+// script needs it.
+pub(crate) fn posed_scene(doc: &Document) -> Vec<Option<PoseModel>> {
+    let mode = doc.pmm.physics.playback_mode;
+    let mut order: Vec<usize> = (0..doc.pmm.models.len()).collect();
+    order.sort_by_key(|&i| doc.pmm.models[i].display_order);
+    let mut done: Vec<PoseModel> = Vec::new();
+    let mut out = vec![None; order.len()];
+    for i in order {
+        let pose = posed(&doc.models[i], &doc.pmm.models[i], mode, &done);
+        if let Some(p) = &pose {
+            done.push(p.clone());
+        }
+        out[i] = pose;
+    }
+    out
 }
 
 /// The world position of a model's bone in the saved pose ([`posed`]), as
@@ -85,7 +115,7 @@ pub(crate) fn posed(file: &crate::ModelFile, m: &pmm::Model, mode: u8) -> Option
 /// double, the Y term first, rounded once. `ApplyCameraReferenceModeChange`
 /// sums X first in float (`camera_reference.rs`); each matches its own C++.
 fn bone_world(file: &crate::ModelFile, m: &pmm::Model, bone: usize, mode: u8) -> Option<[f64; 3]> {
-    let pose = posed(file, m, mode)?;
+    let pose = posed(file, m, mode, &[])?;
     let b = pose.bones.get(bone)?;
     let (p, t) = (b.position.map(f64::from), b.mat_init.0.map(f64::from));
     Some(std::array::from_fn(|c| {

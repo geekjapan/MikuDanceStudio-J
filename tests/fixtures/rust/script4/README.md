@@ -25,7 +25,7 @@ for this directory, and the scripts name them as `.\lips.pmd`, `.\tri2.x`,
 | `model calc order open` | menu 289 | `ModelCalculateOrderDlgProc` (`src/window/model_order_dialog.cpp`), modal | As the draw order. |
 | `dialog edit <id> <text>` | `SetWindowTextA` on control `<id>` of the open dialog, then `WM_KEYDOWN VK_RETURN` to it | `PhysicsEditSubclassProc` (`src/window/physics_model_dialog.cpp` 360) | Typing a value and pressing Enter: the physics model dialog applies it to the selected body or joint at once (sizes below 0.1 become 0.1). `dialog text` only sets the text. |
 | `view drag <right/middle> <none/shift/ctrl> <dx> <dy>` | the button pressed at the viewport centre with the modifier held, one frame, `WM_MOUSEMOVE` by (dx, dy), one frame, the release, one frame | `ConsumeRightButtonDrag`, `ConsumeMiddleButtonPan` (`src/app/pump_navigation.cpp`) | Model mode: shift + right and the middle drag move the view offset (`camera_state[3..5]` of the PMM), plain right orbits, ctrl + right changes the distance. Below. |
-| `physics drag <rotate/move> <x/y/z> <none/shift/ctrl> <dy>` | `WM_LBUTTONDOWN` on the cell of the viewport tool (the rotate row or the move row), one frame, the mouse moves of the drag, one frame, the release, one frame | `BeginOrEndViewportToolDrag` (`src/app/frame_modes.cpp`), `EditModeRecord` (`src/app/frame_modes_bone.cpp` 158) | Needs the physics model dialog open and model mode. Moves the selected body by -0.05 * dy along the axis (shift: changes its size by as much), or rotates it by -0.01 * dy rad. Below. |
+| `physics drag <rotate/move> <x/y/z> <none/shift/ctrl> <dy>` | `WM_LBUTTONDOWN` on the cell of the viewport tool (the rotate row or the move row), one frame, the mouse moves of the drag, one frame, the release, one frame | `BeginOrEndViewportToolDrag` (`src/app/frame_modes.cpp`), `EditModeRecord` (`src/app/frame_modes_bone.cpp` 158) | Needs the physics model dialog open and model mode. Moves the selected body by -0.05 * dy along the axis (shift: changes its size by as much), or rotates it by -0.01 * dy rad. On the joint page (radio 801) it edits the selected joint instead: move changes its position by -0.05 * dy (shift makes no difference), rotate its rotation by -0.01 * dy rad. Below. |
 | `load background movie <path>` | menu 213 | `CmdLoadAvi` (`src/window/command_impl.cpp`), `LoadAviFile` (`src/media/media_load.cpp`) | |
 | `load background picture <path>` | menu 232 | `LoadBackgroundPicture` (`src/media/media_load.cpp`) | |
 | `toggle background movie` | menu 216 | `src/window/command_dispatch.cpp` 541 | Shows or hides the AVI; does nothing before an AVI is loaded. |
@@ -89,6 +89,7 @@ or when those gates stay set.
 | `viewoffset.txt` | `chain8.pmx` | `view drag`: shift + right (40, -20), middle (10, 30), middle shift (-4, 2), middle ctrl (0, 100), right (15, 5), ctrl + right (0, 10). |
 | `physicsdrag.txt` | `lips.pmd` | `dialog edit` of the mass and the linear damping of body 0; `physics drag` of body 0 (move y 10, shift move x -4, rotate z 25); body 3 renamed (`dialog edit 705`) and moved (z 3); the joint page (801) and a joint position edit (744); OK; `save pmd` and the PMM; a drag and cancel. |
 | `background.txt` | `raw24_bottomup.avi`, `toonx.bmp` | The three toggles before any media, `load background movie`, `load background picture`, the toggles again, and the movie shown once more. |
+| `jointdrag.txt` | `lips.pmd` | The record drag on the joint page: `nodrag.pmd` (joint page opened, OK, no drag), then joint 2 (move y 10, shift move x -4, rotate z 25) and joint 4 (rotate x -15) dragged, OK; `save pmd` and the PMM; the dialog opened again, a move y 5 drag on its body page, OK. |
 | `pmx263.txt` | `chain8.pmx`, `lips.pmd` | `save pmd refused` on chain8.pmx, `save pmd` of lips.pmd, and the PMM with chain8's path unchanged. |
 
 ## Menu 263 on a PMX model
@@ -144,10 +145,19 @@ vertex count).
   sizes y and z are 0.1. Body 3 (renamed `body3`) moves z 3 to -0.15 with
   size z 0.1. Joint 0's position x is 0.5 from edit 744, and its rotation
   limits become ±0.50003684 and ±0.5000367 by the same degree round trip. The
-  OK shows the box in `physicsdrag/messages.tsv` (caption `モデル括張`, as in
+  OK shows the box in `physicsdrag/messages.tsv` (caption `モデル拡張`, from
   `physics_model_dialog.cpp` `kCaptionEnhanceModelJp`). `save pmd` makes
   the file the model's path (`dragged.pmm` names `.\dragged.pmd`). A drag and a cancel
   leave the model as it was: `cancelled.pmd` equals `dragged.pmd`.
+- **Joint page.** On the joint page the same drags edit the selected joint
+  (`jointdrag/`). `nodrag.pmd` differs from `before.pmd` only in body 0's
+  sizes y and z (0 to 0.1, the clamp of the OK read above). `joints.pmd`
+  differs from `nodrag.pmd` in joints 2 and 4 only, no body: joint 2's
+  position goes from (0, 2.5, 0) to (0.2, 2, 0) (move y 10 gives -0.5; shift
+  move x -4 gives +0.2, shift makes no difference) and its rotation to z
+  -0.24993116; joint 4's rotation to x 0.14992379 (rotate x -15). The dialog
+  opened again starts on the body page: `body.pmd` differs from `joints.pmd`
+  in body 0's position y only (-0.25).
 - **Background.** 216 and 233 do nothing before a load; 282 toggles
   `black_background` (`none.pmm`: 1). Loading sets the AVI to offset
   (0, -214), scale 40, and the picture to (0, -500), scale 640, both shown;
@@ -158,15 +168,28 @@ vertex count).
   `chain8.pmx` (lips names `.\saved.pmd`); `saved.pmd` of lips.pmd equals
   `physicsdrag/before.pmd`.
 
+## The joint page of the physics dialog
+
+`EditModeRecord` (`src/app/frame_modes_bone.cpp` 166, 196) edits the selected
+joint instead of the selected body when `state.physicsEditorJointPage` is set,
+but nothing wrote that field: the page radios (800, 801) reach
+`FlipPhysicsDialogPage` (`src/window/physics_model_dialog.cpp`), which set
+only the file-local `s_jointPageVisible`, so a record drag on the joint page
+moved the selected body. `FlipPhysicsDialogPage` and the dialog's init now
+write `state.physicsEditorJointPage` (the file-local flag is gone), and the
+OK and Cancel paths clear it with the dialog's pointer, so the bone edit's
+direct mode (`frame_modes_bone.cpp` 468) and the debug geometry
+(`debug_geometry.cpp` 319), which read it, never see it set after the dialog.
+The same commit corrects the OK box's caption in that file from `モデル括張`
+(`\x8a\x87`) to `モデル拡張` (`\x8a\x67`), as `enhanced_model_messages.hpp`
+has it. `jointdrag.txt` is the oracle; `physicsdrag/messages.tsv` changes by
+the caption only. The caption also changes the pmdedit box of
+`../script3/expected/pmdedit/messages.tsv` (step 13), which this directory
+does not own; its text and its sha256 in `../script3/README.md` are updated
+by the root (`23706d3f...72ce97c`).
+
 ## Not reached
 
-- **The record drag on the physics dialog's joint page.** `EditModeRecord`
-  edits the selected joint when `state.physicsEditorJointPage` is set, but
-  nothing writes that field: the dialog's page radios (800, 801) set the
-  file-local `s_jointPageVisible` in `physics_model_dialog.cpp`
-  (`FlipPhysicsDialogPage`). A drag on the joint page therefore moves the
-  selected body. The script edits the joint through its edit boxes only.
-  Those files are not this slice's.
 - **The pan tool of the viewport header** (`ViewportToolAtPoint` operation 2,
   a left drag that moves the view offset by `DragScale`,
   `src/app/frame_modes.cpp`) is not in a script; `view drag` covers the
@@ -177,9 +200,6 @@ vertex count).
 - **Menu 263 through its menu on a PMX model.** The GUI grays the popup that
   holds it, so a user cannot reach the refusal; `save pmd refused` sends
   `WM_COMMAND 263`, which the C++ handles whatever the popup's state.
-</content>
-</invoke>
-
 ## Outputs
 
 `expected/<script>/` holds `manifest.tsv` (format: `../script/README.md`),
@@ -188,7 +208,7 @@ from a loaded model or accessory also writes `<name>.emm`, which holds
 absolute paths on the host (`C:\mds\w2-script4\repo\out\ci\build\Release\...`);
 nothing else depends on the checkout.
 
-Build: commit `70032ae` of branch `w2-script4` on `nanoha-lan` (Windows, x64
+Build: commit `67a50d1` of branch `w2-cppfix2` on `nanoha-lan` (Windows, x64
 Release, VS 2022, `tools/windows/build.ps1 -Testing OFF -Targets
 MikuDanceStudio`; the later commits change only this directory), run
 2026-10-26 with
@@ -198,9 +218,11 @@ MikuDanceStudio`; the later commits change only this directory), run
 
 `-Exclusive` is required: the drags move the cursor. Two runs gave identical
 bytes for every file. The same build reran the scripts of `../script/`,
-`../script2/`, `../script2/pmm1/`, `../physscen/`, and `../script3/` and
-saved the files of their committed manifests byte for byte (173 files; the
-`.emm` files differ by the checkout path).
+`../script2/`, `../script2/pmm1/`, `../physscen/`, and `../script3/` with no
+failure and identical run1 and run2 bytes, and saved the files of their
+committed manifests byte for byte, the `.emm` files (the checkout path) and
+`script3/expected/pmdedit/messages.tsv` (the caption above) excepted. The
+`.emm` of `jointdrag` holds `C:\mds\w2-cppfix2\repo\...`.
 
 ## Files
 
@@ -208,6 +230,7 @@ saved the files of their committed manifests byte for byte (173 files; the
 |---|---|
 | `accessoryorder.txt` | `e00d667816dba4eb75a837beae00cb2b93a4d4156fd0f171253260d3e9b0298a` |
 | `background.txt` | `5ad8b635cec610169621f5217c512ce54690b48db13e4a4716135be87ecb90ab` |
+| `jointdrag.txt` | `34ef890014c00e1b3a3cc2decf04431511d25b4ffdee12365c9065773dee65c0` |
 | `modelorder.txt` | `50958d919cae35877172b5458d7498a77952b525418cfb3d8e14d02600c67aa0` |
 | `outsideparent.txt` | `f9f14a6e3a6b08eabdb5d7199dec0ea45395d11a0951f66632f8cacbce084f04` |
 | `physicsdrag.txt` | `5613a8307a6476b99c1e4ee30825017fb408a210f8ef66158ed112efc2b848c8` |
@@ -229,6 +252,14 @@ saved the files of their committed manifests byte for byte (173 files; the
 | `expected/background/none.pmm` | `dd197a0b203a8b272dbb410c6ad9f7df01ff063b1df40c4cb1a9954e8b2f781f` |
 | `expected/background/shown.emm` | `096ea09ec3f32e8e55db3f589da7f2ac2735594c9e3da42d5546734d03381305` |
 | `expected/background/shown.pmm` | `47836956f736322b8f9ba7fa5db38ff94e06bebec0e813dd70cc76cddb175a61` |
+| `expected/jointdrag/before.pmd` | `829a41d6f9901725e1bc1b087e739572eaf92597e1dc3c42b4b59e1a8e32f522` |
+| `expected/jointdrag/body.pmd` | `ec10ad1ae4367f9b5df0f333316dc8cab713f81c34e4d1f89de7f2a4c63d9cbf` |
+| `expected/jointdrag/joints.emm` | `c3b16cf05f381299a6ab61fa261d111715a200b5d0120f67cd3598a16c7e4427` |
+| `expected/jointdrag/joints.pmd` | `2002f6813b44a93348934cb0a3231783e5cba4680fef78cbd84f18614143cc98` |
+| `expected/jointdrag/joints.pmm` | `fd10dce41d46d943b7787196823426187d8c0f037a6eed092d9d27222f8aec23` |
+| `expected/jointdrag/manifest.tsv` | `c614715829b5b604ceae07258c846a31daf219550566beda534cdd046b83ce1b` |
+| `expected/jointdrag/messages.tsv` | `d5274073d084b973d40fd015a858fb51b1e08a43bd368d496e9f6ac22cfe2170` |
+| `expected/jointdrag/nodrag.pmd` | `ea2d34569fc1c8357a8bf1d27f0d1b4167715c3b4fe3d2deb8f341a15a2b8705` |
 | `expected/modelorder/before.emm` | `603c6fe3e237a4afc1a7eab321352501c47899d34096f429b070c4ca1d972f1a` |
 | `expected/modelorder/before.pmm` | `71f9c12ae3e1738999b80bf4ac4f1ba02a726406897943b0743ae0262acfb712` |
 | `expected/modelorder/calc-cancelled.emm` | `603c6fe3e237a4afc1a7eab321352501c47899d34096f429b070c4ca1d972f1a` |
@@ -251,7 +282,7 @@ saved the files of their committed manifests byte for byte (173 files; the
 | `expected/physicsdrag/dragged.pmd` | `77bd30e8cff97238d50504357524e0b472db6acb5542d0d413946c669068411d` |
 | `expected/physicsdrag/dragged.pmm` | `dbfb5c92c2136a8ec9e17ce693fecb84a17e565afea8e812750e6bb08574082c` |
 | `expected/physicsdrag/manifest.tsv` | `ded2f39059c8443ab4529277d53eb6a66d634de5aee747e16e1d90f75c8d0248` |
-| `expected/physicsdrag/messages.tsv` | `52b9a54011d8ef602e2839f5d009137764eb8968881d6d0870bd0d808858511f` |
+| `expected/physicsdrag/messages.tsv` | `93f294643672e0624da39cdd099f38d72be0e13570f6a2f4ba13e9726c5c9163` |
 | `expected/pmx263/after.emm` | `9ec2c56e12ca87ffb43e6f411af33f75dca106b707b552a90622ffe666754831` |
 | `expected/pmx263/after.pmm` | `3a19272eda078bad5b6a18c87f85ca157b8d627aa64f0e57a4a62ca6d512de35` |
 | `expected/pmx263/manifest.tsv` | `83a35e2d34e2b06371afdf85c4f28d9ca5a25b0253686ae853a94fac2c4ebbb1` |

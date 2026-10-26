@@ -19,7 +19,7 @@ use mds_physics::PhysicsScene;
 use mds_render::picture::PictureQuad;
 use mds_render::{
     encode_png, render_frame_with, scene, AccessoryDraw, AccessoryMesh, Frame, Gpu, Image, Mesh,
-    Picture, Pose, Stage, View, PIXEL_OFFSET_D3D9, SAMPLES_8X,
+    Picture, Pose, ShadowMapSize, Stage, View, PIXEL_OFFSET_D3D9, SAMPLES_8X,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -102,7 +102,7 @@ fn accessories_of(pmm: &Pmm) -> Vec<AccessoryMesh> {
         .collect()
 }
 
-fn render_at(gpu: &Gpu, pmm: &Pmm, frame: u32) -> (Vec<u8>, View) {
+fn render_at(gpu: &Gpu, pmm: &Pmm, frame: u32, shadow_map: ShadowMapSize) -> (Vec<u8>, View) {
     let meshes: Vec<Mesh> = pmm
         .models
         .iter()
@@ -141,6 +141,7 @@ fn render_at(gpu: &Gpu, pmm: &Pmm, frame: u32) -> (Vec<u8>, View) {
     let stage = Stage {
         accessories: &draws,
         picture,
+        shadow_map,
         ..scene::stage_at(pmm, frame)
     };
     let models: Vec<_> = meshes
@@ -306,7 +307,7 @@ fn score(px: &[u8], gold: &[u8], mask: &[bool], name: &str, dir: Option<&Path>) 
 fn gate(scene: &str, frame: u32) {
     let Some(gpu) = gpu_or_skip() else { return };
     let pmm = pmm(scene);
-    let (px, view) = render_at(&gpu, &pmm, frame);
+    let (px, view) = render_at(&gpu, &pmm, frame, ShadowMapSize::default());
     let name = format!("{scene}-{frame}");
     let (w, h, gold) = read_png(&golden2().join(format!("{name}.png")));
     assert_eq!((w, h), (W, H));
@@ -326,15 +327,35 @@ fn gate(scene: &str, frame: u32) {
 }
 
 #[test]
-#[ignore = "within 4 is 0.9972: the curled model's shading and its shadow's edge pixels"]
+#[ignore = "within 4 is 0.99977 (51 px over, 21 allowed): single pixels on slanted ground-shadow edges"]
 fn groundshadow_0() {
     gate("groundshadow", 0);
 }
 
 #[test]
-#[ignore = "within 4 is 0.9945: the curled model's shading and its shadow's edge pixels"]
+#[ignore = "within 4 is 0.99977 (50 px over, 21 allowed): single pixels on slanted ground-shadow edges"]
 fn groundshadow_30() {
     gate("groundshadow", 30);
+}
+
+/// No golden image has the 4096 map. It must render, change the picture (the map is used), and
+/// keep it close to the 2048 map's; the 2048 render after it checks that the map is made again.
+#[test]
+fn selfshadow_0_map_4096() {
+    let Some(gpu) = gpu_or_skip() else { return };
+    let pmm = pmm("selfshadow");
+    let (big, _) = render_at(&gpu, &pmm, 0, ShadowMapSize::Texels4096);
+    let (base, _) = render_at(&gpu, &pmm, 0, ShadowMapSize::Texels2048);
+    let close = (0..W * H)
+        .filter(|&i| pixel_diff(&big, &base, i) <= LIMITS.tolerance)
+        .count() as f64
+        / (W * H) as f64;
+    eprintln!(
+        "selfshadow-0, 4096 against 2048: within {} {close:.5}",
+        LIMITS.tolerance
+    );
+    assert_ne!(big, base);
+    assert!(close > 0.99, "{close}");
 }
 
 #[test]
@@ -360,19 +381,18 @@ fn accessory_30() {
 }
 
 #[test]
-#[ignore = "within 4 is 0.962: the specular of the large faces (see the slice report)"]
+#[ignore = "within 4 is 0.99927, max 107: a 23 px sliver and the translucent faces' edges"]
 fn skin_0() {
     gate("skin", 0);
 }
 
 #[test]
-#[ignore = "within 4 is 0.996: the translucent faces and their edges"]
+#[ignore = "within 4 is 0.99889: the translucent faces and their edges"]
 fn skin_30() {
     gate("skin", 30);
 }
 
 #[test]
-#[ignore = "within 4 is 0.988: the checker edges of the picture (the app resamples it first)"]
 fn background_0() {
     gate("background", 0);
 }

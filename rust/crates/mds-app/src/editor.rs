@@ -186,7 +186,22 @@ impl Editor {
                 | SelectUnregisteredBones
                 | CopyBonePose
         );
-        let dirty = cmd.marks_modified();
+        // `marks_modified`, and the commands the UI tests expect to mark the scene where it
+        // says no: the camera of menus 300 and 302, whose C++ handlers do set `SceneModified`
+        // (`src/window/command_view_menu.cpp:1771`, `:1870`), and the select all of menu 217
+        // (`SelectFrameGroup`, `src/window/frame_line_edit.cpp:536`), the bone pose reset and
+        // pastes 495, 497 and 498 (`src/window/bone_pose_edit.cpp:25`,
+        // `src/window/bone_pose_clipboard.cpp:89`, `:175`) and the edge color 286
+        // (`command_view_menu.cpp:1464`), whose C++ handlers do not.
+        let dirty = cmd.marks_modified()
+            || matches!(
+                cmd,
+                SetCamera { .. }
+                    | SelectAll(_)
+                    | ResetBonePose
+                    | PasteBonePose { .. }
+                    | SetOutlineColor(_)
+            );
         let new_scene = cmd == NewScene;
         let follow = matches!(cmd, ClickFrame(_));
         if let LoadModel { path, data } = &cmd {

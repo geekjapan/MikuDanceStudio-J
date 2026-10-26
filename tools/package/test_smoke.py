@@ -90,7 +90,9 @@ esac
                     args = ["bash", str(package / script)]
                     if script == "smoke.sh":
                         args.append(str(archive))
-                    run = subprocess.run(args, env=env, capture_output=True, text=True, timeout=10)
+                    # The real PowerShell stand-in has its own 20-second child deadline.
+                    run = subprocess.run(args, env=env, capture_output=True, text=True,
+                                         timeout=30 if task_failure else 10)
                     log = out / ("smoke-macos.log" if script == "smoke.sh" else "smoke-windows.log")
                     if task_failure:
                         self.assertNotEqual(run.returncode, 0, run.stdout + run.stderr)

@@ -26,7 +26,7 @@ def main():
     run(command)
     inputs=subprocess.check_output([sys.executable,HERE/'cases.py'])
     (out/'inputs.tsv').write_bytes(inputs)
-    for order in range(3):
+    for order in range(4):
         captured=subprocess.check_output([out/'oracle',str(order)],input=inputs)
         (out/f'native-{order}.tsv').write_bytes(captured)
     env=dict(os.environ,DBVT_FIXTURES=str(out))

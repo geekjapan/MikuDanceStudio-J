@@ -406,6 +406,10 @@ impl Dbvt {
             };
             sets[side].push(n);
         }
+        if sets.iter().any(Vec::is_empty) {
+            // Native counts >0 but partitions <0; zero centers can otherwise recurse forever.
+            return self.bottom_up(sets.into_iter().flatten().collect());
+        }
         let placeholder = sets[0][0];
         let p = self.create(volume, None, Kind::Branch([placeholder; 2]));
         let [left, right] = sets;

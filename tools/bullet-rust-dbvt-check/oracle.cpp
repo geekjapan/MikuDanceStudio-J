@@ -42,8 +42,10 @@ int main(int argc,char** argv) {
     std::cout.setf(std::ios::unitbuf);
     order=argc>1?std::atoi(argv[1]):0;
     arena=static_cast<unsigned char*>(std::aligned_alloc(16,slots*stride));
-    btAlignedAllocSetCustomAligned(allocate,release);
-    btAlignedAllocSetCustom(allocate_raw,release);
+    if(order!=3) {
+        btAlignedAllocSetCustomAligned(allocate,release);
+        btAlignedAllocSetCustom(allocate_raw,release);
+    }
     {
         btDbvt tree; std::vector<btDbvtNode*> leaves(128,nullptr); std::string line;
         while(std::getline(std::cin,line)) {

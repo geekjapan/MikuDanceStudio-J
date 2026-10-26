@@ -33,3 +33,19 @@ changes outside this unit remains unaudited. This slice deliberately does not
 register the module, modify shared test drivers, or wire World/broadphase stages.
 KDOP, OCL, clone, softbody, and compound helpers are outside this application's
 required tree API.
+
+The original seeded `t 4` operation at row 295 crashes native Bullet with stack
+overflow. `native-topdown-nontermination.tsv` preserves the complete reproducer.
+Native counts centers with `> 0` and partitions with `< 0`; a zero center and a
+positive center can therefore produce an empty left partition. The Rust version
+falls back to the existing bottom-up builder for an empty partition. This is a
+localized behavior repair for native nontermination, not a native parity claim.
+Terminating native cases retain strict comparisons. The regression validates
+termination, retained exact leaf bounds, tree links, and query sets. A second
+regression reduces the failure to two boxes.
+
+An additional ordinary native allocator run compares exact leaf volume bits and
+query sets with production Rust addresses. Its optimization topology and callback
+order are intentionally conditional on each allocator's addresses. A direct Rust
+sort test checks that the actual larger parent address triggers a rotation and
+that Box addresses remain stable.

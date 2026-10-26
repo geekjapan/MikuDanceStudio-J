@@ -210,3 +210,158 @@ fn merge_preserves_right_operand_zero_and_nan_bits() {
     assert_eq!(merged.min.0.map(f32::to_bits), b.min.0.map(f32::to_bits));
     assert_eq!(merged.max.0.map(f32::to_bits), b.max.0.map(f32::to_bits));
 }
+
+#[test]
+fn native_empty_partition_regression_terminates() {
+    let inputs = include_str!("native-topdown-nontermination.tsv");
+    let mut tree = Dbvt::new();
+    for input in inputs.lines().take(294) {
+        execute(&mut tree, input);
+    }
+    let mut before = String::new();
+    serialize(&tree, tree.root, &mut before, &mut Vec::new());
+    tree.optimize_top_down(4);
+    invariant(&tree);
+    let mut after = String::new();
+    serialize(&tree, tree.root, &mut after, &mut Vec::new());
+    assert_eq!(leaf_records(&before), leaf_records(&after));
+    for i in 0..20 {
+        let q = Aabb {
+            min: Vec3([i as f32 - 10.0, -10.0, -10.0]),
+            max: Vec3([i as f32 - 9.0, 10.0, 10.0]),
+        };
+        let mut actual = Vec::new();
+        tree.collide_volume(q, |k| actual.push(k.0));
+        actual.sort_unstable();
+        let mut expected: Vec<_> = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(j, n)| {
+                if tree.free == Some(NodeId(j)) {
+                    return None;
+                }
+                n.as_deref().and_then(|n| match n.kind {
+                    Kind::Leaf(k) if n.volume.intersects(q) => Some(k.0),
+                    _ => None,
+                })
+            })
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(actual, expected);
+    }
+}
+fn leaf_records(topology: &str) -> Vec<&str> {
+    let mut records: Vec<_> = topology
+        .split(['(', ';', ')'])
+        .filter(|s| !s.is_empty() && !s.starts_with('B') && *s != "_")
+        .collect();
+    records.sort_unstable();
+    records
+}
+fn query_set(events: &str) -> Vec<String> {
+    let mut result: Vec<_> = events
+        .split(',')
+        .filter(|e| !e.is_empty())
+        .map(|e| {
+            if let Some((a, b)) = e.split_once(':') {
+                let a: u32 = a.parse().unwrap();
+                let b: u32 = b.parse().unwrap();
+                format!("{}:{}", a.min(b), a.max(b))
+            } else {
+                e.to_owned()
+            }
+        })
+        .collect();
+    result.sort_unstable();
+    result
+}
+#[test]
+fn ordinary_native_and_production_allocator_query_sets() {
+    let root = std::path::PathBuf::from(std::env::var("DBVT_FIXTURES").unwrap());
+    let inputs = std::fs::read_to_string(root.join("inputs.tsv")).unwrap();
+    let native = std::fs::read_to_string(root.join("native-3.tsv")).unwrap();
+    let mut tree = Dbvt::new();
+    for (i, (input, expected)) in inputs.lines().zip(native.lines()).enumerate() {
+        let events = execute(&mut tree, input);
+        let fields: Vec<_> = expected.split('|').collect();
+        let mut topology = String::new();
+        serialize(&tree, tree.root, &mut topology, &mut Vec::new());
+        assert_eq!(
+            leaf_records(&topology),
+            leaf_records(fields[1]),
+            "operation {i} {input}"
+        );
+        if matches!(input.as_bytes()[0], b'v' | b's' | b'q') {
+            assert_eq!(
+                query_set(&events),
+                query_set(fields[3]),
+                "operation {i} {input}"
+            );
+        } else {
+            assert_eq!(events, fields[3], "operation {i} {input}");
+        }
+    }
+}
+
+#[test]
+fn production_sort_rotates_by_actual_box_address() {
+    let mut tree = Dbvt::new();
+    let v = Aabb {
+        min: Vec3([0.0; 3]),
+        max: Vec3([1.0; 3]),
+    };
+    let a = tree.create(v, None, Kind::Leaf(ProxyKey(90)));
+    let b = tree.create(v, None, Kind::Leaf(ProxyKey(91)));
+    let (n, p) = if tree.address(a) < tree.address(b) {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    let children = std::array::from_fn(|i| tree.create(v, None, Kind::Leaf(ProxyKey(i as u32))));
+    let sibling = tree.create(v, Some(p), Kind::Leaf(ProxyKey(3)));
+    tree.node_mut(n).kind = Kind::Branch(children);
+    tree.node_mut(n).parent = Some(p);
+    for child in children {
+        tree.node_mut(child).parent = Some(n);
+    }
+    tree.node_mut(p).kind = Kind::Branch([n, sibling]);
+    tree.root = Some(p);
+    tree.leaves = 3;
+    let addresses = (tree.address(n), tree.address(p));
+    assert!(addresses.1 > addresses.0);
+    assert_eq!(tree.sort(n), p);
+    assert_eq!(tree.root, Some(n));
+    assert_eq!((tree.address(n), tree.address(p)), addresses);
+    invariant(&tree);
+}
+#[test]
+fn zero_center_split_falls_back_without_changing_leaves() {
+    let mut tree = Dbvt::new();
+    tree.insert(
+        ProxyKey(1),
+        Aabb {
+            min: Vec3([-3.0; 3]),
+            max: Vec3([3.0; 3]),
+        },
+    );
+    tree.insert(
+        ProxyKey(2),
+        Aabb {
+            min: Vec3([0.5; 3]),
+            max: Vec3([1.5; 3]),
+        },
+    );
+    tree.optimize_top_down(1);
+    invariant(&tree);
+    let mut keys = Vec::new();
+    tree.collide_volume(
+        Aabb {
+            min: Vec3([-10.0; 3]),
+            max: Vec3([10.0; 3]),
+        },
+        |k| keys.push(k.0),
+    );
+    keys.sort_unstable();
+    assert_eq!(keys, [1, 2]);
+}

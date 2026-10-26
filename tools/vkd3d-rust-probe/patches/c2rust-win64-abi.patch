@@ -393,15 +393,6 @@ diff --git a/c2rust-transpile/src/translator/mod.rs b/c2rust-transpile/src/trans
 index 8fb6f5b..4be39b3 100644
 --- a/c2rust-transpile/src/translator/mod.rs
 +++ b/c2rust-transpile/src/translator/mod.rs
-@@ -14,7 +14,7 @@
- use indexmap::{IndexMap, IndexSet};
- use itertools::Itertools;
- use log::{error, trace, warn};
--use proc_macro2::{Punct, Spacing::*, Span, TokenStream, TokenTree};
-+use proc_macro2::{Span, TokenStream, TokenTree};
- use serde_derive::Serialize;
- use syn::spanned::Spanned as _;
- use syn::{
 @@ -612,13 +612,15 @@ pub fn emit_c_decl_map(
                  path_to_c_source_range.insert(ident, (decl, source_range));
              }

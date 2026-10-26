@@ -1,12 +1,14 @@
 # Continuous integration
 
-`CI` runs on branch pushes, pull requests, and manual dispatches. A newer run cancels an older run for the same branch or pull request.
+`CI` runs on branch pushes, pull requests, and manual dispatches. Push and pull request runs share a concurrency group for the source branch, so a newer run cancels an older run. Manual runs use a separate group for each branch.
 
-- Windows x86 and x64: build the vendored Bullet dependency with Conan, build Release with CMake, install the checksum-verified DirectX June 2010 runtime, and run CTest. JUnit results and CTest logs are uploaded even when a test fails.
-- Rust release builds: compile the entire workspace with the lockfile on Windows x64, macOS Intel and Apple Silicon, and Linux x64 and ARM64. Each target uploads the `mds-app` executable in a tar archive to preserve executable permissions.
+- Windows x64: build the vendored Bullet dependency with Conan, build Release with CMake, install the checksum-verified DirectX June 2010 runtime, and run CTest. JUnit results and CTest logs are uploaded even when a test fails.
+- Rust release builds: compile the entire workspace with the lockfile on Windows x64, macOS Apple Silicon, and Linux x64 and ARM64. Each target uploads the `mds-app` executable in a tar archive to preserve executable permissions.
 - Linux Rust: install the toolchain from `rust/rust-toolchain.toml`, fetch the pinned ray-mmd corpus, build the patched vkd3d-shader library, and run `tools/rust/check.sh` (format, Clippy with warnings denied, and workspace tests). Mesa supplies a software Vulkan adapter. FFmpeg supplies the media test tools. The Rust log is uploaded even when a check fails. Missing GPU adapters fail the job.
 
-Windows CI and `Windows release` call `windows-build.yml`. CI archives Rust executables as build artifacts. It does not publish a release. The release workflow retains its `v*` tag and manual existing-tag triggers. It packages both architectures and publishes only after both builds and their tests succeed. Only the publish job has repository write permission.
+Windows CI and `Windows release` call `windows-build.yml`. CI archives Rust executables as build artifacts. It does not publish a release. The release workflow retains its `v*` tag and manual existing-tag triggers. It packages Windows x64 and publishes only after its build and tests succeed. Only the publish job has repository write permission.
+
+Windows Win32 and Intel macOS are unsupported and are excluded from the CI matrices.
 
 The official Actions are pinned to release commit SHAs. No repository secrets or self-hosted runners are required.
 

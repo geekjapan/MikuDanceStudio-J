@@ -41,10 +41,9 @@ so `searchCursor == 0`) and the pool tail of `pmx_load.cpp:1672-1709`. bone0
 (右b) is a Move bone with a rigid body. bone1 (左b) is the IK bone and a
 FixedAxis bone with axis (0.48, 0.6, 0.64) and `trans` (1, 0.25, 0). The two
 names make reverse paste map each bone onto the other. There are two
-selectors: the root (bone -1) and one for bone0, with link (2, 1). One zeroed
-bone record sits in front of the bone table, because the display paste reads
-`bones[-1]` (see the baseline). The pad is a name that matches nothing, so
-that read does not mask the pool checks.
+selectors: the root (bone -1) and one for bone0, with link (2, 1). The bone
+table has exactly `boneCount` records, as in the loaders. The root selector
+has no bone name and is skipped during display paste.
 
 The search runs once per configuration of (auto-interpolation checkbox 530,
 physics checkbox 499, mode): {0,0,2}, {1,1,2}, {1,0,1}, {0,1,0}. Together they
@@ -88,8 +87,6 @@ tools/keypool_check/run.sh 5      # deeper, about 15-20 min
 
 Needs `clang++` with AddressSanitizer. Confirmed with Apple clang 21.0.0.
 Exit 0 means PASS; exit 1 prints each violation once with its shortest trace.
-A known C++ finding prints above the result line and keeps exit 0
-(`result: PASS, with 1 known C++ finding`).
 Full ASan reports go to `${TMPDIR:-/tmp}/keypool_check/asan.log`.
 
 `run.sh 4 --dump FILE` also writes every explored state with its operation
@@ -103,21 +100,23 @@ tools/keypool_check/run.sh 4 --dump rust/crates/mds-edit/tests/data/keypool-dept
 
 ## Baseline at the sync commit
 
-At the sync commit the check PASSES: no violation at depth 4 or 5, and both
-pool-full runs print `ok`. Any violation is a new problem.
+At the sync commit the check PASSES: no violation at depth 4, and both
+pool-full runs print `ok`. Depth 5 was not rerun after the selector guard
+change. Any violation is a new problem.
 
-One known C++ finding is reported and not fixed: pasting a display key reads
-`bones[-1]` in `RegisterDisplayKeyFromRecord`, in the selector loop, for the
-root selector (`key_registrars.cpp:738`, the strcmp). The loaders allocate
-exactly `boneCount` bone records (`pmx_load.cpp:736`), and `bone_sort.cpp:46`
-gives selector 0 the bone index -1. Shortest trace: "1. paste display key at
-frame 1". `run.sh` sets ASan `redzone=1024` so the read lands in a redzone,
-and a separate finding run allocates the bone table as the loaders do.
-`mds-edit` matches the root selector against no entry, which is what the C++
-does in practice.
+Display paste skips selector bone indices outside `[0, boneCount)`. The root
+selector has bone index -1; its pair stays unchanged. Valid bone selectors
+still use the first matching clipboard name. The depth-4 dump is unchanged.
+The search uses an exactly sized bone table and treats every ASan finding as
+a failure. Restoring the old unguarded selector lookup fails at depth 1:
+`1. paste display key at frame 0`, an ASan read before the bone table.
+`run.sh` keeps `redzone=1024` so that read lands in a redzone.
 
 These earlier findings are fixed. If one comes back, a change undid its fix:
 
+- Display paste reading `bones[-1]` for the root selector. The selector
+  lookup now skips negative and out-of-range bone indices before forming a
+  pointer into the bone table.
 - A bone head record taken as a free record (`head record moved off frame 0`,
   `links into the head record of track N`). The shared `searchCursor` can hold
   another pool's position. `kfa::AllocateFromCursor`
@@ -157,7 +156,7 @@ Run the check if the diff touches any of these:
 List what changed in the covered files since the sync commit:
 
 ```sh
-git diff --stat 7b847da -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp include/mikudancestudio/ported_funcs.hpp include/mikudancestudio/bone_layout.hpp include/mikudancestudio/panel_controls.hpp src/window/command_file_menu.cpp src/model/bone_sort.cpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp src/model/pmd_load.cpp
+git diff --stat 4e5432f -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp include/mikudancestudio/ported_funcs.hpp include/mikudancestudio/bone_layout.hpp include/mikudancestudio/panel_controls.hpp src/window/command_file_menu.cpp src/model/bone_sort.cpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp src/model/pmd_load.cpp
 ```
 
 Use the sync commit from the coverage record below as the base.
@@ -194,7 +193,7 @@ here together.
 
 ## Coverage record
 
-Sync commit: `7b847da`. The verification was last confirmed to describe the
+Sync commit: `4e5432f`. The verification was last confirmed to describe the
 files and functions listed under "Does my change touch the verified code?" at
 this commit.
 

@@ -305,9 +305,7 @@ impl Tracks {
             }
         }
         for (i, sel) in rig.selectors.iter().enumerate() {
-            // The root selector (bone -1) has no bone. The C++ compares the
-            // names with the bytes before the bone table, which match none
-            // (tools/keypool_check, FindingRun).
+            // The root selector (bone -1) has no bone name to match.
             let Some(bone) = rig.bones.get(sel.bone as usize) else {
                 continue;
             };

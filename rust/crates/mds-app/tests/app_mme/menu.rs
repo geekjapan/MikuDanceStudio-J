@@ -5,7 +5,7 @@
 use super::{fixtures, stage, vkd3d_lib};
 use mds_app::editor::Editor;
 use mds_app::mme::{emm_path, View};
-use mds_app::ui::mme::{answer, dialog, dirty, open_windows, select, Row};
+use mds_app::ui::mme::{answer, dialog, dirty, open_windows, select, select_tab, Row};
 use mds_app::ui::Ctx;
 use mds_doc::script::Runner;
 use std::path::{Path, PathBuf};
@@ -326,4 +326,107 @@ fn disassemble_lists_the_selected_rows_effect() {
         text.ends_with("\r\n") && !text.contains("// error"),
         "{text}"
     );
+}
+
+/// The offscreen tab (1002, `mme_dlg.cpp:1746`) on the mmegold `offscreen` scene: `chain8.pmx`
+/// with `offscreen.fx`, whose `MirrorRT` rows are `self=hide; *=none;`. The tab's edits are the
+/// target's overrides (`DlgUpsertOffscreenRow` :357, `DlgApplyShown` :741,
+/// `DlgRemoveOffscreenRows` :363), its texts those of `DlgOffscreenRowText` (:383) and
+/// `DlgOffscreenDefaultRowText` (:393), and the turn draws as they say.
+#[test]
+fn the_offscreen_tab_edits_the_targets_overrides() {
+    if mds_render::Gpu::new().expect("device").is_none() {
+        eprintln!("SKIP: no wgpu adapter on this host (not a pass)");
+        return;
+    }
+    let lib = vkd3d_lib();
+    if let Err(e) = mds_shader::vkd3d::Vkd3d::open(&lib) {
+        eprintln!("SKIP: vkd3d-shader not loaded: {e} (not a pass)");
+        return;
+    }
+    let dir = scratch("offscreen-tab");
+    stage("offscreen", &dir, Path::new(""));
+    let mut editor = Editor::open(&dir.join("offscreen.pmm")).unwrap();
+    editor.mme.vkd3d = Some(lib);
+    let draw = |e: &Editor| {
+        let view: View = e.view(0, [64, 36], 0.0).unwrap();
+        e.mme.render(&e.doc, &e.physics, &view).unwrap();
+    };
+    run(&mut editor, "menu:mme-40005");
+    draw(&editor);
+    assert_eq!(editor.mme.loaded(), 1);
+    let targets = editor.mme.offscreen_targets();
+    assert_eq!(targets.len(), 1);
+    let t = &targets[0];
+    assert_eq!(
+        (t.name.as_str(), t.description.as_str(), t.owner),
+        ("MirrorRT", "Mirror", 0)
+    );
+    let key = (t.file.clone(), t.name.clone());
+    let mut status = String::new();
+    let text = |editor: &mut Editor, row: Row| {
+        let mut status = String::new();
+        dialog::row_text(&ctx(editor, &mut status), row)
+    };
+    let main_effect = text(&mut editor, Row::Object(0)).1;
+    assert!(main_effect.ends_with("offscreen.fx"), "{main_effect}");
+
+    select_tab(Some(key.clone()));
+    assert!(dialog::current_tab(&ctx(&mut editor, &mut status)).is_some());
+    assert_eq!(
+        text(&mut editor, Row::Default),
+        ("(default)".into(), "self=hide; *=none; ".into())
+    );
+    // The owner is `self`: hidden.
+    assert_eq!(
+        text(&mut editor, Row::Object(0)),
+        ("chain8.pmx (hide)".into(), "(hide)".into())
+    );
+    // The (default) row is not collected on a target tab: no effect to disassemble, none set.
+    select(&[Row::Default]);
+    run(&mut editor, "menu:mme-dialog-40014");
+    assert_eq!(dialog::disassembly().as_deref(), Some(""));
+    run(&mut editor, "menu:mme-dialog-40007");
+    assert!(editor.mme.offscreen.is_empty());
+    // Shown: the `hide` row is no effect, the host's draw.
+    select(&[Row::Object(0)]);
+    run(&mut editor, "ctl:mme-dialog-1011");
+    assert_eq!(
+        text(&mut editor, Row::Object(0)),
+        ("chain8.pmx".into(), "(none)".into())
+    );
+    // An effect for the target: the turn loads it.
+    let fx = dir.join("mmegold/control.fx");
+    answer(Some(fx.clone()));
+    run(&mut editor, "menu:mme-dialog-40007");
+    let fx_text = fx.to_string_lossy().into_owned();
+    assert_eq!(text(&mut editor, Row::Object(0)).1, fx_text);
+    assert_eq!(
+        dialog::selected_effect(&ctx(&mut editor, &mut status)),
+        fx_text
+    );
+    select_tab(None);
+    assert_eq!(
+        text(&mut editor, Row::Object(0)).1,
+        main_effect,
+        "Main is unchanged"
+    );
+    draw(&editor);
+    assert_eq!(
+        editor.mme.loaded(),
+        2,
+        "the turn draws chain8.pmx with control.fx"
+    );
+    select_tab(Some(key.clone()));
+    // Remove writes `none`; Reset drops every override of the object.
+    run(&mut editor, "menu:mme-dialog-40012");
+    assert_eq!(text(&mut editor, Row::Object(0)).1, "(none)");
+    run(&mut editor, "menu:mme-dialog-40008");
+    assert_eq!(text(&mut editor, Row::Object(0)).1, "(hide)");
+    assert!(editor.mme.offscreen[&key].is_empty());
+    // Reload All loads the effects, and their targets, anew.
+    run(&mut editor, "ctl:mme-dialog-1011");
+    run(&mut editor, "menu:mme-40004");
+    assert!(editor.mme.offscreen.is_empty());
+    select_tab(None);
 }

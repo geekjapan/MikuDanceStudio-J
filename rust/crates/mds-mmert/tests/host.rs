@@ -313,9 +313,7 @@ fn a_host_drawn_model_hides_an_effect_model_behind_it() {
     );
     // B still draws where A does not cover it.
     let beside = (0..(W * H) as usize)
-        .filter(|&i| {
-            &a_alone[i * 4..i * 4 + 3] == &a_alone[..3] && &b_alone[i * 4..i * 4 + 3] != bg
-        })
+        .filter(|&i| a_alone[i * 4..i * 4 + 3] == a_alone[..3] && &b_alone[i * 4..i * 4 + 3] != bg)
         .filter(|&i| both[i * 4..i * 4 + 3] == b_alone[i * 4..i * 4 + 3])
         .count();
     assert!(beside > 200, "B beside A at {beside} pixels");

@@ -11,6 +11,7 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
+from host_profiles import validate_capture, native_command, compiler_version
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -23,13 +24,13 @@ def run(args, **kwargs):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out-dir', type=Path, required=True)
-    parser.add_argument('--record', action='store_true', help='replace the checked-in native fixture')
     args = parser.parse_args()
     output = args.out_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     environment = os.environ.copy()
     environment.pop('MDS_SUPPORT_INPUTS', None)
     environment.pop('MDS_SUPPORT_NATIVE', None)
+    environment.pop('MDS_SUPPORT_ACTUAL', None)
     temporary = output / 'tmp'
     temporary.mkdir(exist_ok=True)
     environment['TMPDIR'] = str(temporary)
@@ -44,7 +45,7 @@ def main():
         'btCollisionShape', 'btConvexShape', 'btConvexInternalShape',
         'btPolyhedralConvexShape', 'btConcaveShape']]
     native_sources += [src / 'LinearMath/btAlignedAllocator.cpp']
-    executable = output / 'native-support'
+    executable = output / ('native-support.exe' if os.name == 'nt' else 'native-support')
     command = [os.environ.get('CXX', 'clang++'), '-std=c++17', '-O2', '-ffp-contract=off',
                '-fno-fast-math', '-fdeclspec', '-w', '-DBT_NO_PROFILE=1',
                '-I', shim / 'sse_emu', '-I', src, '-I', shim,
@@ -55,6 +56,8 @@ def main():
     else:
         command += ['-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections', '-ldl', '-lpthread', '-lm']
     (output / 'native-command.json').write_text(json.dumps(list(map(str, command)), indent=2) + '\n')
+    command = native_command(command, output, environment)
+    (output / 'effective-native-command.json').write_text(json.dumps(command, indent=2) + '\n')
     run(command, env=environment)
     source = shapes / 'btConvexShape.cpp'
     observed_source = output / 'btConvexShape-observed.cpp'
@@ -71,38 +74,43 @@ def main():
     (output / 'observed.patch').write_text(''.join(difflib.unified_diff(original.splitlines(True), observed_source.read_text().splitlines(True), fromfile=str(source), tofile=str(observed_source))))
     observed_command = [str(x) for x in command]
     observed_command[observed_command.index(str(source))] = str(observed_source)
-    observed_command[observed_command.index(str(executable))] = str(output / 'native-support-observed')
-    observed_command += ['-I', str(shapes)]
+    observed_executable = output / ('native-support-observed.exe' if os.name == 'nt' else 'native-support-observed')
+    observed_command = [arg.replace(str(executable), str(observed_executable)) for arg in observed_command]
+    observed_command[1:1] = [f'/I{shapes}'] if os.name == 'nt' else ['-I', str(shapes)]
+    (output / 'observed-command.json').write_text(json.dumps(observed_command, indent=2) + '\n')
     run(observed_command, env=environment)
     inputs = subprocess.check_output([sys.executable, HERE / 'cases.py'])
     (output / 'inputs.tsv').write_bytes(inputs)
     captured = subprocess.check_output([executable], input=inputs, env=environment)
     (output / 'native.tsv').write_bytes(captured)
     with (output / 'coverage.log').open('wb') as coverage:
-        observed_capture = subprocess.check_output([output / 'native-support-observed'], input=inputs, env=environment, stderr=coverage)
+        observed_capture = subprocess.check_output([output / ('native-support-observed.exe' if os.name == 'nt' else 'native-support-observed')], input=inputs, env=environment, stderr=coverage)
     (output / 'observed.tsv').write_bytes(observed_capture)
     if observed_capture != captured:
         raise SystemExit('Observation hooks changed native stdout')
     fixture = ROOT / 'rust/crates/mds-bullet/tests/support_data/native.tsv'
     frozen_inputs = fixture.with_name('inputs.tsv')
     compact = 1600
-    if args.record:
-        frozen_inputs.write_bytes(b''.join(inputs.splitlines(keepends=True)[:compact]))
-    captured_compact = b''.join(captured.splitlines(keepends=True)[:compact])
-    if args.record:
-        fixture.write_bytes(captured_compact)
     if frozen_inputs.read_bytes() != b''.join(inputs.splitlines(keepends=True)[:compact]):
         raise SystemExit('Frozen support inputs differ from generator prefix')
-    if fixture.read_bytes() != captured_compact:
-        raise SystemExit('Native support output differs from checked-in fixture')
     run(['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--crate-name', 'mds_crtmath', '--crate-type', 'rlib',
          '-O', crt, '-o', output / 'libmds_crtmath.rlib'], env=environment)
     run(['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--test', '-D', 'warnings', '-O',
          ROOT / 'rust/crates/mds-bullet/tests/pure_bullet.rs', '--extern',
          f'mds_crtmath={output / "libmds_crtmath.rlib"}', '-o', output / 'rust-support'], env=environment)
-    run([output / 'rust-support', 'support::'], env=environment)
     environment['MDS_SUPPORT_INPUTS'] = str(output / 'inputs.tsv')
     environment['MDS_SUPPORT_NATIVE'] = str(output / 'native.tsv')
+    environment['MDS_SUPPORT_ACTUAL'] = str(output / 'rust.tsv')
+    provenance = [platform.platform(), compiler_version(),
+                  subprocess.check_output(['rustup', 'run', '1.95.0', 'rustc', '-Vv'], text=True)]
+    (output / 'provenance.txt').write_text('\n'.join(provenance))
+    run([output / 'rust-support', 'support::'], env=environment)
+    if (output / 'rust.tsv').read_bytes() != captured:
+        raise SystemExit('Full same-host Rust output differs from native')
+    fixture = validate_capture(output)
+    environment.pop('MDS_SUPPORT_INPUTS')
+    environment.pop('MDS_SUPPORT_ACTUAL')
+    environment['MDS_SUPPORT_NATIVE'] = str(fixture)
     run([output / 'rust-support', 'support::'], env=environment)
     run([sys.executable, HERE / 'mutations.py', '--out-dir', output / 'mutations',
          '--crt-rlib', output / 'libmds_crtmath.rlib'], env={k: v for k, v in environment.items() if not k.startswith('MDS_SUPPORT_')})
@@ -136,7 +144,7 @@ def main():
              ROOT / 'rust/crates/mds-bullet/src/core/shape.rs',
              output / 'inputs.tsv', output / 'native.tsv', output / 'observed.tsv', observed_source]
     (output / 'sha256.json').write_text(json.dumps({str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}, indent=2) + '\n')
-    provenance = [platform.platform(), subprocess.check_output([os.environ.get('CXX', 'clang++'), '--version'], text=True),
+    provenance = [platform.platform(), compiler_version(),
                   subprocess.check_output(['rustup', 'run', '1.95.0', 'rustc', '-Vv'], text=True)]
     (output / 'provenance.txt').write_text('\n'.join(provenance))
     print(f'Native fixture and pure Rust agree for {len(captured.splitlines())} support cases.')

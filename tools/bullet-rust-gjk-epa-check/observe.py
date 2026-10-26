@@ -2,6 +2,7 @@
 from collections import Counter
 import difflib
 import json
+import os
 from pathlib import Path
 import subprocess
 
@@ -43,9 +44,10 @@ def observe(src, command, executable, inputs, output, environment):
         observed.write_text(changed)
         (output / (name + '-observed.patch')).write_text(''.join(difflib.unified_diff(original.splitlines(True), changed.splitlines(True), fromfile=str(source), tofile=str(observed))))
         replacements[str(source)] = str(observed)
-    observed_exe = output / 'native-gjk-epa-observed'
-    cmd = [replacements.get(str(x), str(observed_exe) if x == executable else str(x)) for x in command]
-    cmd += ['-I', str(narrow)]
+    observed_exe = output / ('native-gjk-epa-observed.exe' if os.name == 'nt' else 'native-gjk-epa-observed')
+    cmd = [replacements.get(str(x), str(x).replace(str(executable), str(observed_exe))) for x in command]
+    cmd[1:1] = [f'/I{narrow}'] if os.name == 'nt' else ['-I', str(narrow)]
+    (output / 'observed-command.json').write_text(json.dumps(cmd, indent=2) + '\n')
     subprocess.run(cmd, check=True, env=environment)
     with (output / 'coverage.log').open('wb') as log:
         result = subprocess.check_output([observed_exe], input=inputs, stderr=log, env=environment)

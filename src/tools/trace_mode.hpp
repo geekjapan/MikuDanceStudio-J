@@ -6,7 +6,7 @@ class MMDApp;
 }
 
 namespace mikudancestudio::tools {
-// --mds-trace, --mds-frame-dump, --mds-edge-probe, --mds-mesh-dump, and --mds-mme-dump support for the x64 app (Windows only; the
+// The headless modes of trace_args.hpp for the x64 app (Windows only; the
 // portable parts are trace_args.hpp and trace_l2.hpp).
 //
 // PrepareTraceRequest runs first in WinMain, before any window or D3D object
@@ -35,6 +35,10 @@ bool ArmTraceDialogGuard(const TraceRequest& request);
 // file is deleted; the PNGs already written stay).
 // A mesh dump goes to RunMeshDump (mesh_dump.cpp) and needs no model.
 int RunTraceMode(MMDApp* app, const TraceRequest& request);
+
+// Writes the multisample coverage probe to <out> through "<out>.tmp" (format:
+// msaa_probe.cpp). Returns 0, or 1 on any failure. Needs no model.
+int RunMsaaProbe(MMDApp* app, const TraceRequest& request);
 
 // Writes "<out-dir>\<file name>.txt" per accessory file (format: mesh_dump.cpp).
 // Returns 0, or 1 when a file cannot be written.

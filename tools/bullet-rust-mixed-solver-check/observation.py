@@ -66,6 +66,14 @@ def verify(out,profiles):
     actual_differences=differences(out/'native.trace',out/'rust.trace')
     if actual_differences != expected['differences']:raise ValueError('unknown arithmetic observation field/value/location/count')
     if captures(out)!=expected['captures']:raise ValueError('paired capture differs from its exact frozen stream')
+    for name, prefix in expected.get('legacy_prefix', {}).items():
+        value=hashlib.sha256()
+        with (out/name).open('rb') as stream:
+            for _ in range(prefix['lines']):
+                line=stream.readline()
+                if not line:raise ValueError('truncated legacy capture prefix')
+                value.update(line)
+        if value.hexdigest()!=prefix['sha256']:raise ValueError('legacy capture prefix differs')
     source_manifest=json.loads((out/'source-sha256.json').read_text())
     if any(source_manifest.get(name)!=value for name,value in expected['producer_sources'].items()):raise ValueError('arithmetic observation source profile differs')
     return {'status':'SOURCE_DEFINED_ARITHMETIC_OBSERVATION','profile':expected['name'],'raw_bit_equality':False,'difference_words':len(actual_differences),'first_difference':actual_differences[0],'limit':expected['limit']}

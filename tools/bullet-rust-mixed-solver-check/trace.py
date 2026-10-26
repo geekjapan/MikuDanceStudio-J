@@ -56,24 +56,34 @@ def records(path):
             yield (case, step, kind, iteration, index), pool, groups, bodies, points
 
 
-def validate(path, cases=96):
+def validate(path, inputs=None):
+    from cases import corpus, input_records
+    scenarios = input_records(corpus() if inputs is None else inputs.read_text())
     stream = iter(records(path)); counters = Counter(); events = 0
     def consume(expected):
         nonlocal events
         record = next(stream, None)
         if record is None or record[0] != expected:
             raise ValueError(f'event {events}: expected {expected}, got {None if record is None else record[0]}')
+        if expected[0] >= 96:
+            _, pool, groups, bodies, _ = record
+            excluded = expected[0] in [96,98]
+            assert [b[0] for b in pool] == (['ffffffff','00000001','00000002'] if excluded else ['ffffffff','00000002'])
+            assert [b[0] for b in bodies] == (['ffffffff','00000001','00000002'] if excluded else ['ffffffff','ffffffff','00000001'])
+            if excluded:assert groups == [[],[],[]]
+            counters[f'directed_registration_event_{expected[2]}'] += 1
         events += 1; counters[f'event_{expected[2]}'] += 1
         return record
-    for case in range(cases):
+    for case, mode, input_bodies, input_joints, manifolds in scenarios:
         for step in range(2):
             setup = consume((case, step, 0, -1, -1))
             _, pool, groups, bodies, points = setup
             nj, nn, nf = map(len, groups)
             # The corpus serializes one joint between adjacent non-ground bodies,
             # plus a free joint in the lazy-registration variants.
-            variant = case % 48
-            joints = 0 if variant == 0 else 1 if variant == 1 else len(bodies) - 2 + int(variant % 9 == 1)
+            joints = len(input_joints)
+            if case >= 96:
+                registration_coverage(setup, mode, input_bodies, input_joints, manifolds, counters)
             counters['empty_group'] += int(not pool)
             counters['normal_warmstart'] += sum(int(int(r[22],16) & 0x7fffffff != 0) for r in groups[1])
             counters['joint_impulse_reset'] += sum(r[22] == '00000000' for r in groups[0])
@@ -115,7 +125,7 @@ def validate(path, cases=96):
     if next(stream,None) is not None:
         raise ValueError('trailing cases/events')
     counters['events'] = events
-    required = ['empty_group','normal_warmstart','joint_impulse_reset','lazy_callback_addition','negative_friction','zero_friction','reversed_friction_bounds','fixed_nonzero_delta','event_9']
+    required = ['empty_group','normal_warmstart','joint_impulse_reset','lazy_callback_addition','negative_friction','zero_friction','reversed_friction_bounds','fixed_nonzero_delta','event_9'] + [f'{name}_{mode}' for mode in [260,4] for name in ['all_excluded_registered','masszero_kinematic_fixed','nonzero_kinematic_registered']]
     missing = [name for name in required if not counters[name]]
     if missing:
         raise ValueError(f'corpus branch gaps: {missing}')
@@ -133,3 +143,31 @@ def compare(left, right):
                     if u != v:
                         return {'line':number,'event':xx[:5],'word':index,'left':u,'right':v}
     return None
+
+
+def registration_coverage(record, mode, inputs, joints, manifolds, counters):
+    _, pool, groups, bodies, points = record
+    assert not joints and len(manifolds) == 1 and len(inputs) == 3
+    header, input_points = manifolds[0]
+    assert header[:2] == ['00000001', '00000002'] and len(input_points) == 2
+    scalar = lambda w: struct.unpack('!f', bytes.fromhex(w))[0]
+    excluded = all(scalar(p[15]) > scalar(header[2]) for p in input_points)
+    assert not groups[0]
+    if excluded:
+        assert points == [input_points], 'excluded setup changed input points'
+        assert all(scalar(b[0]) > 0 for b in inputs[1:])
+        assert [b[0] for b in pool] == ['ffffffff', '00000001', '00000002']
+        assert [b[0] for b in bodies] == ['ffffffff', '00000001', '00000002']
+        assert not groups[1] and not groups[2], 'excluded points generated response rows'
+        counters[f'all_excluded_registered_{mode}'] += 1
+    else:
+        assert inputs[1][0] == '00000000' and inputs[1][-1] == '00000001'
+        assert scalar(inputs[2][0]) > 0 and inputs[2][-1] == '00000001'
+        assert bodies[1][-2:] == ['00000001', '00000001']
+        assert bodies[2][-2:] == ['00000000', '00000001']
+        assert [b[0] for b in pool] == ['ffffffff', '00000002']
+        assert [b[0] for b in bodies] == ['ffffffff', 'ffffffff', '00000001']
+        assert len(groups[1]) == len(groups[2]) == 2
+        assert all(r[:2] == ['00000000', '00000001'] for r in groups[1] + groups[2])
+        counters[f'masszero_kinematic_fixed_{mode}'] += 1
+        counters[f'nonzero_kinematic_registered_{mode}'] += 1

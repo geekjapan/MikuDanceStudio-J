@@ -63,4 +63,38 @@ def corpus():
                 values = [float(pi), 0., 0., 0., float(pi), 0., pair[0] * .125 + pi * .05, .425, -.125 * pair[0], pi * .05, 0., 0., 0., 1., 0., distance, friction, .88 if variant % 2 else 0., .2 if variant % 3 else -.1, .125, -.25]
                 words += list(map(f, values)) + [2 + variant % 2, variant % 2] + list(map(f, [1., 0., 0., 0., 0., 1.]))
         lines.append(str(case) + '\t' + '\t'.join(f'{w:08x}' for w in words))
+    for mode in [260, 4]:
+        for excluded in [True, False]:
+            words = [f(1 / 60), mode, 3, 2]
+            for i in range(3):
+                mass = 0. if i == 0 or (not excluded and i == 1) else float(i)
+                words += list(map(f, [mass] + [1., 2., 3.] + identity + [i * .125, .5, 0.] + [.125, -.25, .375, 0., 0., 0.] + [1.] * 6))
+                words += [int(not excluded and i > 0)]
+            words += [0, 1, 1, 2, f(.02), 2]
+            for pi in range(2):
+                values = [float(pi), 0., 0., 0., float(pi), 0., .125, .5, 0., .25, .5, 0., 0., 1., 0., .020000003 + pi * .001 if excluded else -.025, .5, 0., .2, .125, -.25]
+                words += list(map(f, values)) + [2, 0] + list(map(f, [1., 0., 0., 0., 0., 1.]))
+            lines.append(str(len(lines)) + '\t' + '\t'.join(f'{w:08x}' for w in words))
     return '\n'.join(lines) + '\n'
+
+
+def input_records(text):
+    result = []
+    for line in text.splitlines():
+        fields = line.split('\t'); case = int(fields[0]); words = fields[1:]; cursor = 4
+        def take(n):
+            nonlocal cursor
+            value = words[cursor:cursor+n]; cursor += n
+            assert len(value) == n
+            return value
+        def count():
+            return int(take(1)[0], 16)
+        bodies = [take(29) for _ in range(int(words[2], 16))]
+        joints = [take(80) for _ in range(count())]
+        manifolds = []
+        for _ in range(count()):
+            header = take(4)
+            manifolds.append((header, [take(29) for _ in range(int(header[3], 16))]))
+        assert cursor == len(words)
+        result.append((case, int(words[1], 16), bodies, joints, manifolds))
+    return result

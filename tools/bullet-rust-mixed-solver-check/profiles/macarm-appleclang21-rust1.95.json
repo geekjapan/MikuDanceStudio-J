@@ -1,17 +1,17 @@
 {
-  "name": "macarm-appleclang21-rust1.95-mixed-nan-v1",
+  "name": "macarm-appleclang21-rust1.95-mixed-nan-v2-registration",
   "identity": {
     "compiler.txt": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin\n",
     "rust-target.txt": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: aarch64-apple-darwin\nrelease: 1.95.0\nLLVM version: 22.1.2\n",
     "effective-profile.txt": "BT_USE_SSE=\nBT_USE_DOUBLE_PRECISION=<undefined>\nBT_NO_PROFILE=1\nWIN32=<undefined>\n_WIN64=<undefined>\n_M_X64=<undefined>\n__x86_64__=<undefined>\n__aarch64__=1\n_M_ARM64=<undefined>\npointer_bits=64\n"
   },
   "captures": {
-    "inputs.tsv": "0a82cc8c9d1870a8a41e2fc6c3dda56748a9f182ccde32a5596a2906fb3084bd",
-    "original.tsv": "8a8b1c21b75f83b052a0dd2f4dc0a3e7db1082968886da49de482d4df14f5382",
-    "native.tsv": "8a8b1c21b75f83b052a0dd2f4dc0a3e7db1082968886da49de482d4df14f5382",
-    "rust.tsv": "8a8b1c21b75f83b052a0dd2f4dc0a3e7db1082968886da49de482d4df14f5382",
-    "native.trace": "ea471ce3400f8eeb22fb40a1166cc66f2ae16b5e03c1a9b8024a8a7cb9616dc8",
-    "rust.trace": "29fe08bf23ca359f3eb1167b3ba3b74bfd723cbc4f3d9112ed803b58f5f7bb35"
+    "inputs.tsv": "a5f7a60e83d992ae9f2628992827f77c371cb9e1292709ee2f37b0a61eacf8ed",
+    "original.tsv": "e6c89f4b3497e4fc6f90e20615fd87efa5888d961384f886cdadcc66f6711a89",
+    "native.tsv": "e6c89f4b3497e4fc6f90e20615fd87efa5888d961384f886cdadcc66f6711a89",
+    "rust.tsv": "e6c89f4b3497e4fc6f90e20615fd87efa5888d961384f886cdadcc66f6711a89",
+    "native.trace": "9187cee59e3eed93288c19180ed2ccebff1e9def4f441217c5e97cbfb20b2b1f",
+    "rust.trace": "84e17b17cdaa86ba4acbab3c971f2e896e67aeffeca8df4421ca218c43e4ddd8"
   },
   "producer_sources": {
     "rust/crates/mds-bullet-sys/shim/det_math.h": "e3c39b25400a4127abfcc7274441288904cc4aa9df397c5c5507ec5a57b0bd73",
@@ -19,7 +19,8 @@
     "tools/bullet-rust-mixed-solver-check/runner.rs": "0fb38baf025832c065875db36d7219193a11139d05164de17ce8a569b00126d6",
     "tools/bullet-rust-mixed-solver-check/oracle.cpp": "0de3e2dd716003322289b3ae42b87f311e52b246b7dfbb2ef804f2e98da6ed79",
     "rust/crates/mds-bullet/src/core/solver.rs": "a18df5dcf83c07be8222af61b35ce8914b1db6878d6e6cdd5e55a965cc99e8e4",
-    "rust/crates/mds-bullet/src/core/contact_solver.rs": "abcd4d8c860ffa7a9b8d5492f042d125ef1062838254d97781b0ef8942425460"
+    "rust/crates/mds-bullet/src/core/contact_solver.rs": "abcd4d8c860ffa7a9b8d5492f042d125ef1062838254d97781b0ef8942425460",
+    "tools/bullet-rust-mixed-solver-check/cases.py": "9d634aa3a9bd08239237edc7a316e1eab33883f930b26adf269c14508da5d0bb"
   },
   "differences": [
     {
@@ -27300,5 +27301,31 @@
     "native": "btSequentialImpulseConstraintSolver.cpp normal warmstart applyImpulse, fixed body B, second scalar solve",
     "rust": "contact_solver.rs normal warmstart target.delta_linear.add(linear.scale(impulse)) and angular additions",
     "probe": "native same-flags boundary probe preserves stored7fc00000 and unary negativeffc00000; first paired divergence occurs after arithmetic, all input/row copies unchanged"
+  },
+  "legacy_prefix": {
+    "rust.trace": {
+      "lines": 76699,
+      "sha256": "29fe08bf23ca359f3eb1167b3ba3b74bfd723cbc4f3d9112ed803b58f5f7bb35"
+    },
+    "inputs.tsv": {
+      "lines": 96,
+      "sha256": "0a82cc8c9d1870a8a41e2fc6c3dda56748a9f182ccde32a5596a2906fb3084bd"
+    },
+    "rust.tsv": {
+      "lines": 192,
+      "sha256": "8a8b1c21b75f83b052a0dd2f4dc0a3e7db1082968886da49de482d4df14f5382"
+    },
+    "native.tsv": {
+      "lines": 192,
+      "sha256": "8a8b1c21b75f83b052a0dd2f4dc0a3e7db1082968886da49de482d4df14f5382"
+    },
+    "original.tsv": {
+      "lines": 192,
+      "sha256": "8a8b1c21b75f83b052a0dd2f4dc0a3e7db1082968886da49de482d4df14f5382"
+    },
+    "native.trace": {
+      "lines": 76699,
+      "sha256": "ea471ce3400f8eeb22fb40a1166cc66f2ae16b5e03c1a9b8024a8a7cb9616dc8"
+    }
   }
 }

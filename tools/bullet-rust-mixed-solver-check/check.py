@@ -153,7 +153,7 @@ def main():
         from observation import verify
         comparison = verify(out,HERE / 'profiles')
     (out / 'comparison.json').write_text(json.dumps(comparison,indent=2)+'\n')
-    coverage = validate(out / 'native.trace')
+    coverage = validate(out / 'native.trace', inputs)
     (out / 'coverage.json').write_text(json.dumps(coverage,indent=2)+'\n')
     run(rust_command(HERE / 'runner.rs','clippy-mixed','clippy-driver'))
     if args.mutations:

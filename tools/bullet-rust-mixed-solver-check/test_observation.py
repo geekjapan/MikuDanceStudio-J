@@ -22,6 +22,10 @@ class ObservationTests(unittest.TestCase):
             profile={'name':'bounded-test','identity':identity(out),'captures':captures(out),'producer_sources':{},'differences':inventory,'limit':'exact synthetic test only'}
             profile_path=profiles/'test.json';profile_path.write_text(json.dumps(profile))
             self.assertFalse(verify(out,profiles)['raw_bit_equality'])
+            altered=json.loads(json.dumps(profile));altered['legacy_prefix']={'native.trace':{'lines':1,'sha256':'wrong'}}
+            profile_path.write_text(json.dumps(altered))
+            with self.assertRaisesRegex(ValueError,'legacy capture prefix differs'):verify(out,profiles)
+            profile_path.write_text(json.dumps(profile))
             # Finite, signed-zero, infinity, unrecorded NaN, copy, location and count changes all fail.
             for index,value in [(7,'3f800000'),(7,'80000000'),(7,'7f800000'),(8,'ffc00000'),(13,'7fc00000'),(14,'ffc00000')]:
                 changed=rust_words[:];changed[index]=value;(out/'rust.trace').write_text('\t'.join(changed)+'\n')

@@ -22,7 +22,7 @@ def run_mutations(root, here, out, inputs, run, rust_command, suffix, native):
     runner = (here / 'runner.rs').read_text()
     # These complete cases cover lazy registration, reversed bounds, zero impulse,
     # warmstart, both modes, factors, large normal impulse and consecutive solves.
-    selected = {1,3,4,9,15,49,51,52,57,63}
+    selected = {1,3,4,9,15,49,51,52,57,63,96,97,98,99}
     selected_lines = [line for line in inputs.read_text().splitlines() if int(line.split('\t')[0]) in selected]
     mutation_inputs = out / 'mutation-inputs.tsv';mutation_inputs.write_text('\n'.join(selected_lines)+'\n')
     baseline = run([native,mutation_inputs,out / 'mutation-baseline.trace'])
@@ -41,6 +41,11 @@ def run_mutations(root, here, out, inputs, run, rust_command, suffix, native):
     add('contact-setup-first',s=solver[:setup_loop]+build+'\n'+solver[setup_loop:begin]+solver[finish:])
     add('callback-preregister',s=solver[:begin]+'        for j in joints.iter() { for i in j.bodies { solver.bodies.get_or_init(bodies, i); } }\n'+solver[begin:])
     add('callback-omit',s=solver[:callback_start]+'            let _ = (bodies,joints);\n'+solver[contact_start:])
+    registration = '        let ids = manifold.bodies.map(|i| pool.get_or_init(bodies, i));\n        if ids == [0, 0] {\n            continue;\n        }\n'
+    delayed = once(contact, registration, '')
+    delayed = once(delayed, '            let rel = [', registration + '            let rel = [')
+    add('register-after-point-acceptance', c=delayed)
+    add('register-masszero-kinematic', s=once(solver, 'if state.inverse_mass == 0.0 {', 'if state.inverse_mass == 0.0 && !state.is_kinematic {'))
     add('duplicate-body',s=once(solver,'if let Some(id) = self.companions[original] {','if let Some(id) = None::<usize> {'))
     add('duplicate-writeback',s=solver.replace('state.linear_velocity.add(solver_body.delta_linear)','state.linear_velocity.add(solver_body.delta_linear).add(solver_body.delta_linear)'))
     for factor in ['0.0','1.0']:
@@ -76,6 +81,20 @@ def run_mutations(root, here, out, inputs, run, rust_command, suffix, native):
         if actual == baseline and difference is None:
             raise AssertionError(f'{name}: compiled mutation survived behavioral comparison')
         report={'mutation':name,'compiled':True,'stdout_equal':actual==baseline,'first_trace_difference':difference,'status':'CAUGHT'}
+        if name in ['register-after-point-acceptance','register-masszero-kinematic']:
+            report['directed_modes'] = []
+            for mode, cases in [(260,{96,97}), (4,{98,99})]:
+                mode_inputs = directory / f'inputs-{mode}.tsv'
+                mode_inputs.write_text('\n'.join(line for line in selected_lines if int(line.split('\t')[0]) in cases)+'\n')
+                expected_trace = directory / f'native-{mode}.trace'
+                expected = run([native,mode_inputs,expected_trace])
+                actual_trace = directory / f'actual-{mode}.trace'
+                actual_mode = run([Path(label+suffix),mode_inputs,actual_trace])
+                mode_difference = compare(expected_trace,actual_trace)
+                expected_case = min(cases) + int(name == 'register-masszero-kinematic')
+                if mode_difference is None or list(map(int,mode_difference['event'])) != [expected_case,0,0,-1,-1]:
+                    raise AssertionError(f'{name}: mode {mode} did not fail its directed setup comparison')
+                report['directed_modes'].append({'mode':mode,'stdout_equal':actual_mode==expected,'first_trace_difference':mode_difference,'status':'CAUGHT'})
         reports.append(report);(directory / 'result.json').write_text(json.dumps(report,indent=2)+'\n')
         trace.unlink()
         print(name,'CAUGHT',difference)

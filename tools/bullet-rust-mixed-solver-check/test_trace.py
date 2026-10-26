@@ -3,7 +3,7 @@ from pathlib import Path
 import unittest
 from trace import compare, records, validate
 from check import hooks, SOLVER
-from cases import corpus
+from cases import corpus, input_records
 
 
 class TraceTests(unittest.TestCase):
@@ -33,6 +33,9 @@ class TraceTests(unittest.TestCase):
         for kind in range(1,10):
             self.assertEqual(source.count(f'MIXED({kind}, iteration, j)'),2)
         self.assertEqual(corpus(),corpus())
-        self.assertEqual(len(corpus().splitlines()),96)
+        self.assertEqual(len(corpus().splitlines()),100)
+        directed = input_records(corpus())[96:]
+        self.assertEqual([case[1] for case in directed], [260,260,4,4])
+        self.assertTrue(all(not case[3] for case in directed))
 
 if __name__=='__main__':unittest.main()

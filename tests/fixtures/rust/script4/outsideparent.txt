@@ -1,0 +1,31 @@
+# The outside-parent dialog of button 442 (SelectNavDlgProc): a bone of
+# chain8 attached to a bone of lips (630), the dialog's records saved into
+# the model as a display key (632), then the same bone on the ground. A
+# close without 630 or 632 does not seek the model.
+load model .\lips.pmd
+load model chain8.pmx
+frame 10
+outside parent open
+dialog select 669 1
+dialog select 673 2
+dialog select 677 3
+dialog click 630
+dialog click 632
+dialog cancel
+save pmm attached.pmm
+
+frame 20
+outside parent open
+dialog select 669 1
+dialog select 673 1
+dialog click 630
+dialog click 632
+dialog cancel
+save pmm ground.pmm
+
+frame 30
+outside parent open
+dialog select 669 2
+dialog select 673 2
+dialog cancel
+save pmm closed.pmm

@@ -40,7 +40,8 @@
 //!
 //! [`Stage::picture`] draws a background picture as a quad in output pixels.
 //!
-//! Not in this crate yet: the self-shadow map.
+//! Under self-shadow (modes 1 and 2) the models draw depth into a 2048 x 2048 map from the light,
+//! and every material that receives the self-shadow compares against it.
 
 mod accessory;
 mod mesh;

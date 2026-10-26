@@ -157,12 +157,19 @@ pub const AREAS: [Area; 21] = [
 /// Areas whose every inventory row has an action.
 pub const COMPLETE: &[&str] = &[
     "accessory-panel",
+    "background",
     "bone-panel",
+    "camera-panel",
+    "dialog",
     "edit",
+    "expression",
     "light-panel",
+    "model-panel",
     "morph-panel",
     "play",
+    "timeline",
     "view",
+    "viewport",
 ];
 
 /// The inventory name of a key with its modifiers (`Ctrl+S`, `Numpad2`, `Enter`, `]`), or

@@ -16,9 +16,10 @@
 //!    the host draws itself: the grid, axes, ground line, and bone marks (every pixel that is not
 //!    white in `offscreen-0.png`, whose effect draws nothing visible) and the models without an
 //!    effect ([`Host::host_drawn`]). [`PIXEL_GATED`] lists the scenes that meet it; the table
-//!    prints them all. Not gated: `ray`, whose C++ image is broken (`ClearSetStencil` is
-//!    unsupported there), and `post`, whose C++ image is white everywhere, grid included, where
-//!    the runtime's Final pass shows `Work` cleared to `ClearColor`.
+//!    prints them all. Not gated: `ray`, whose scene is dark (the light hits the faces the camera
+//!    sees from behind, and there is no sky; see the mmegold README). `post` runs
+//!    `mmegold/post.fx`, which drops the non-multisampled `RenderColorTarget1` that Direct3D 9
+//!    refused beside the multisampled back buffer.
 //!
 //! `MDS_MMERT_PNG_DIR=<dir>` writes `<scene>-<frame>.png` and a difference image per frame.
 
@@ -74,6 +75,7 @@ const KNOWN_INPUTS: &[(&str, &str, &str, &str)] = &[(
 /// Scenes whose every probed frame meets [`LIMITS`].
 const PIXEL_GATED: &[&str] = &[
     "objects",
+    "post",
     "offscreen",
     "timeofday",
     "main",
@@ -96,7 +98,7 @@ fn mmegold() -> PathBuf {
 fn stage() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("mds-mmertgold-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    for f in ["anime.fx", "control.fx"] {
+    for f in ["anime.fx", "control.fx", "post.fx"] {
         std::fs::copy(mmegold().join(f), dir.join(f)).unwrap();
     }
     let gif = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/blink.gif");

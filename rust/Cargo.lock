@@ -1327,6 +1327,7 @@ dependencies = [
  "mds-accessory",
  "mds-edit",
  "mds-formats",
+ "mds-kinect",
  "mds-math",
  "mds-media",
  "mds-ops",

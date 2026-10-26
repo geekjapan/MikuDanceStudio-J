@@ -7,8 +7,14 @@
 //! its gate and `RestorePlaybackMenus` grays the items, and so does the menu here. The dialogs and
 //! question boxes are [`super::edit::Form`]s.
 //!
-//! Missing: the VSQ lip sync (224, `LoadVsqFile`). `mds-vsq` converts the file, but `mds-doc` has
-//! no command that registers its keys; the slice report names the command.
+//! The VSQ lip sync (224, `LoadVsqFile`) asks for a `.vsq` file and runs
+//! [`mds_doc::Document::lip_sync`] on it, in model mode only (`ApplyModelComboSelection` greys
+//! the item in camera mode, `src/window/ui_model_reload.cpp:453`). It is a document method, not a
+//! [`Command`], so the editor does not see it: [`lip_sync`] brings the live models up to date
+//! with a no-op edit and sets the modified flag, which the menu handler does after the load
+//! (`:1169`). The text dump that `LoadVsqFile` writes beside the VSQ is not written, and the
+//! message box of a rejected file (`mds_vsq::Reject::message`) shows as the stop reason on the
+//! status line, because `mds-app` has no dependency on `mds-vsq` to name the type.
 //!
 //! The menus pick morphs by their kind (`MorphRecord::type`), not by their lane, so on a PMD the
 //! three deletes and the shift find nothing (`tests/fixtures/rust/script2/README.md`).
@@ -17,9 +23,11 @@ use super::edit::{gated, localized, open, say, Field, Form, Mode, Text};
 use super::{button, help, Ctx};
 use crate::actions::Action;
 use mds_doc::Command;
+use rfd::FileDialog;
 
 const ACTIONS: &[Action] = &[
     Action::run("menu:226", delete_lip, true),
+    Action::run("menu:224", load_vsq, true),
     Action::run("menu:225", shift_lip, true),
     Action::run("menu:228", delete_eye, true),
     Action::run("menu:227", register_blinks, true),
@@ -83,6 +91,44 @@ fn confirm(
 ) -> Result<(), String> {
     gated(ctx, Mode::Model, id)?;
     open(ctx, Form::new(caption, ok).message(text))
+}
+
+/// Menu 224 (`command_file_menu.cpp:1147`): the open dialog for `.vsq` files, then [`lip_sync`].
+fn load_vsq(ctx: &mut Ctx) -> Result<(), String> {
+    gated(ctx, Mode::Model, "menu:224")?;
+    let egui = ctx.egui.clone().ok_or("no window")?;
+    let Some(path) = FileDialog::new()
+        .set_title(help::pick(&egui, "vsqデータ読込", "load vsq data"))
+        .add_filter("vsq files(*.vsq)", &["vsq"])
+        .pick_file()
+    else {
+        return Ok(());
+    };
+    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    lip_sync(ctx, &bytes)
+}
+
+/// `LoadVsqFile` on the bytes of a VSQ ([`mds_doc::Document::lip_sync`]) and `SceneModified`.
+pub fn lip_sync(ctx: &mut Ctx, vsq: &[u8]) -> Result<(), String> {
+    gated(ctx, Mode::Model, "menu:224")?;
+    let run = ctx.editor.doc.lip_sync(vsq, false);
+    // The keys, the frame and the timeline start changed even when a key failed to register.
+    resync(ctx)?;
+    let run = run.map_err(|e| e.to_string())?;
+    ctx.editor.modified = true;
+    match run.outcome {
+        Ok(_) => Ok(()),
+        Err(stop) => Err(format!("lip sync stopped: {stop:?}")),
+    }
+}
+
+/// An edit that changes nothing in the document, which makes the editor copy the keys into the
+/// live models and settle the physics world at the frame the load moved to.
+fn resync(ctx: &mut Ctx) -> Result<(), String> {
+    let start = ctx.editor.doc.pmm.timeline.start_frame;
+    ctx.editor.apply(Command::SetTimelineStart(start))?;
+    ctx.editor.physics.seek(ctx.editor.current_frame());
+    Ok(())
 }
 
 /// Menu 226 (`command_file_menu.cpp:1323`): `PurgeMorphFrames(app, 3)`.

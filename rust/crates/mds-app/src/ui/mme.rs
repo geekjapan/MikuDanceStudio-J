@@ -484,7 +484,7 @@ pub mod dialog {
             let a = &mut mme.assignments[o];
             a.effect =
                 emm::effect_for_model(&file.to_string_lossy(), &default.to_string_lossy(), &|p| {
-                    Path::new(p).is_file()
+                    effect_file(Path::new(""), p).is_file()
                 });
             a.subsets.clear();
             a.subset_shows.clear();

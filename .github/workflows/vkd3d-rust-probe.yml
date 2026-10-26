@@ -3,7 +3,7 @@ name: vkd3d Rust translation probe
 on:
   workflow_dispatch:
   push:
-    branches: [w3-shader-full-compiler-probe, w3-c2rust-win64-abi]
+    branches: [w3-shader-full-compiler-probe, w3-c2rust-win64-abi, w3-shader-variable-offset-fix]
     paths:
       - .github/workflows/vkd3d-rust-probe.yml
       - tools/vkd3d-rust-probe/*.py

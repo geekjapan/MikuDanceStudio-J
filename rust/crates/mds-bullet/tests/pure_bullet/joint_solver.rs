@@ -2,6 +2,13 @@ use super::core::body::{BodyInit, RigidBody};
 use super::core::joint_rows::*;
 use super::core::math::{Basis, Transform, Vec3};
 use super::core::solver::{Joint, JointSolver, SolverMode};
+#[cfg(target_arch = "aarch64")]
+const NATIVE_PROFILE: &str = include_str!("../solver_data/native.tsv");
+#[cfg(target_arch = "x86_64")]
+const NATIVE_PROFILE: &str = include_str!("../solver_data/native-x86_64.tsv");
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+compile_error!("joint native fixture supports only aarch64 and x86_64 targets");
+
 struct Words<'a>(std::slice::Iter<'a, u32>);
 impl Words<'_> {
     fn word(&mut self) -> u32 {
@@ -64,7 +71,7 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
     let mut zero_inertia_cases = [0; 2];
     let mut negative_motor_cases = [0; 2];
     let mut nonzero_equilibrium = false;
-    for line in include_str!("../solver_data/native.tsv").lines() {
+    for line in NATIVE_PROFILE.lines() {
         let mut fields = line.split('\t');
         let id = fields.next().unwrap();
         let input: Vec<_> = fields
@@ -234,7 +241,7 @@ fn native_joint_solver_matches_every_setup_iteration_and_writeback_bit() {
     assert_eq!(negative_motor_cases, [1, 1]);
     assert_eq!(zero_inertia_cases, [2, 2]);
     assert!(zero_rows >= 4);
-    assert!(row_events > 10000);
+    assert_eq!(row_events, 20_580);
     assert!(spring_targets.into_iter().all(|seen| seen));
     assert!(nonzero_equilibrium);
     println!("{cases} solves, {setup_rows} setup rows, {row_events} SIMD row events, {zero_rows} zero-row solves, {checked_words} output words");

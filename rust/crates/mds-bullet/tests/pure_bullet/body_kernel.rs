@@ -266,3 +266,93 @@ fn real_bullet_body_operations_match_every_float_bit() {
         assert!(angular_inputs.contains(&speed.to_bits()));
     }
 }
+
+struct FactorWords<'a>(std::slice::Iter<'a, u32>);
+impl FactorWords<'_> {
+    fn word(&mut self) -> u32 {
+        *self.0.next().expect("factor fixture word")
+    }
+    fn scalar(&mut self) -> f32 {
+        f32::from_bits(self.word())
+    }
+    fn vector(&mut self) -> Vec3 {
+        Vec3(std::array::from_fn(|_| self.scalar()))
+    }
+    fn transform(&mut self) -> Transform {
+        Transform {
+            basis: Basis(std::array::from_fn(|_| self.vector().0)),
+            origin: self.vector(),
+        }
+    }
+}
+fn factor_snapshot(body: &RigidBody, output: &mut Vec<u32>) {
+    let s = body.snapshot();
+    for v in [
+        body.linear_factor(),
+        body.angular_factor(),
+        s.total_force,
+        s.total_torque,
+        s.gravity_acceleration,
+        s.linear_velocity,
+        s.angular_velocity,
+    ] {
+        output.extend(v.0.map(f32::to_bits));
+    }
+    for row in s.inverse_inertia_world.0 {
+        output.extend(row.map(f32::to_bits));
+    }
+    output.push(s.inverse_mass.to_bits());
+}
+#[test]
+fn nonunit_factors_affect_existing_body_operations_like_native() {
+    let mut cases = 0;
+    for line in include_str!("../solver_data/factors.tsv").lines() {
+        let mut fields = line.split('\t');
+        let id = fields.next().unwrap();
+        let input: Vec<_> = fields
+            .map(|x| u32::from_str_radix(x, 16).unwrap())
+            .collect();
+        let mut w = FactorWords(input.iter());
+        let mass = w.scalar();
+        let inertia = w.vector();
+        let world = w.transform();
+        let lf = w.vector();
+        let af = w.vector();
+        let force = w.vector();
+        let torque = w.vector();
+        let gravity = w.vector();
+        let dt = w.scalar();
+        let kin = w.word() != 0;
+        let expected: Vec<_> = w.0.copied().collect();
+        let mut actual = Vec::new();
+        let mut body = RigidBody::new(BodyInit {
+            mass,
+            local_inertia: inertia,
+            center_of_mass: world,
+            linear_damping: 0.0,
+            angular_damping: 0.0,
+        });
+        body.set_kinematic(kin);
+        body.set_linear_factor(lf);
+        body.set_angular_factor(af);
+        body.set_gravity(gravity);
+        factor_snapshot(&body, &mut actual);
+        body.add_force(force);
+        body.add_torque(torque);
+        factor_snapshot(&body, &mut actual);
+        body.apply_gravity();
+        factor_snapshot(&body, &mut actual);
+        body.integrate_velocities(dt);
+        factor_snapshot(&body, &mut actual);
+        body.clear_forces();
+        factor_snapshot(&body, &mut actual);
+        body.set_linear_factor(af);
+        body.set_angular_factor(lf);
+        body.add_force(force);
+        body.add_torque(torque);
+        factor_snapshot(&body, &mut actual);
+        assert_eq!(actual, expected, "factor case {id}");
+        cases += 1;
+    }
+    assert_eq!(cases, 64);
+}

@@ -97,6 +97,16 @@ impl Words<'_> {
 
 #[test]
 fn native_contact_setup_iterations_and_writeback_match_every_bit() {
+    replay_native_contacts(true);
+}
+
+#[test]
+fn native_contact_unobserved_iteration_and_writeback_match_every_bit() {
+    replay_native_contacts(false);
+}
+
+fn replay_native_contacts(observe: bool) {
+    let mut cases = 0;
     for (case, line) in include_str!("../contact_solver_data/native.tsv")
         .lines()
         .enumerate()
@@ -162,29 +172,33 @@ fn native_contact_setup_iterations_and_writeback_match_every_bit() {
             }
         }
         let mut events = Vec::new();
-        solver.iterate_with_observer(|s, iteration, friction, index| {
-            let row = if friction {
-                s.frictions[index].numeric
-            } else {
-                s.normals[index].numeric
-            };
-            let [a, b] = row.bodies.map(|i| s.bodies[i]);
-            let mut event = vec![
-                iteration as u32,
-                u32::from(friction),
-                index as u32,
-                row.applied_impulse.to_bits(),
-            ];
-            for v in [
-                a.delta_linear,
-                a.delta_angular,
-                b.delta_linear,
-                b.delta_angular,
-            ] {
-                event.extend(v.0.map(f32::to_bits));
-            }
-            events.push(event);
-        });
+        if observe {
+            solver.iterate_with_observer(|s, iteration, friction, index| {
+                let row = if friction {
+                    s.frictions[index].numeric
+                } else {
+                    s.normals[index].numeric
+                };
+                let [a, b] = row.bodies.map(|i| s.bodies[i]);
+                let mut event = vec![
+                    iteration as u32,
+                    u32::from(friction),
+                    index as u32,
+                    row.applied_impulse.to_bits(),
+                ];
+                for v in [
+                    a.delta_linear,
+                    a.delta_angular,
+                    b.delta_linear,
+                    b.delta_angular,
+                ] {
+                    event.extend(v.0.map(f32::to_bits));
+                }
+                events.push(event);
+            });
+        } else {
+            solver.iterate();
+        }
         solver.writeback(&mut bodies, &mut manifolds);
         for body in &bodies {
             w.vec(body.snapshot().linear_velocity);
@@ -195,14 +209,18 @@ fn native_contact_setup_iterations_and_writeback_match_every_bit() {
                 w.check_point(point);
             }
         }
-        w.expect(events.len() as u32);
-        for event in events {
-            for word in event {
-                w.expect(word);
+        if observe {
+            w.expect(events.len() as u32);
+            for event in events {
+                for word in event {
+                    w.expect(word);
+                }
             }
+            assert!(w.words.next().is_none());
         }
-        assert!(w.words.next().is_none());
+        cases += 1;
     }
+    assert_eq!(cases, 144);
 }
 
 #[test]

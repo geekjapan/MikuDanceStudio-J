@@ -187,14 +187,19 @@ fn cache_threshold_ties_persistence_and_swap_removal() {
         distance: -0.1,
         ..ContactPoint::EMPTY
     };
+    assert!(m.contacts_mut().is_empty());
     let seed = ContactPoint {
         lifetime: 17,
-        applied_impulse: 3.0,
-        lateral_impulses: [-2.0, 4.0],
         ..point(0.0)
     };
     m.insert(seed);
+    let [cached] = m.contacts_mut() else {
+        panic!("one inserted contact must expose one mutable slot");
+    };
+    cached.applied_impulse = 3.0;
+    cached.lateral_impulses = [-2.0, 4.0];
     m.insert(point(0.5));
+    assert_eq!(m.contacts_mut().len(), 2);
     assert_eq!(m.nearest(point(0.25)), None, "merge threshold is strict");
     m.threshold = 0.3;
     assert_eq!(
@@ -213,8 +218,8 @@ fn cache_threshold_ties_persistence_and_swap_removal() {
     );
     m.remove(0);
     assert_eq!(
-        m.contacts(),
-        &[point(0.5)],
+        m.contacts_mut(),
+        &mut [point(0.5)],
         "removal fills the hole with the last slot"
     );
 

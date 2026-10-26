@@ -5,9 +5,12 @@ use core::activation::{ActivationState, BodyActivation, CollisionClassification}
 use core::body::{BodyInit, RigidBody};
 use core::contact::ContactPoint;
 use core::contact_solver::ContactManifold;
-use core::islands::{IslandManifold, IslandObject, SimulationIslands, SolverEvent};
+use core::islands::{
+    IslandConstraint, IslandManifold, IslandObject, SimulationIslands, SolverEvent,
+};
+use core::joint_rows::{AngularMotor, AxisMotor, JointState, Spring};
 use core::math::{Basis, Transform, Vec3};
-use core::solver::{GroupSelection, GroupSolver, SolverMode, SolverWorkspace};
+use core::solver::{GroupSelection, GroupSolver, Joint, SolverMode, SolverWorkspace};
 struct Reader<'a>(std::str::SplitWhitespace<'a>);
 impl Reader<'_> {
     fn token(&mut self, s: &str) {
@@ -27,6 +30,20 @@ fn main() {
     let a: Vec<_> = std::env::args().collect();
     let text = std::fs::read_to_string(&a[1]).unwrap();
     let mut r = Reader(text.split_whitespace());
+    let mode = if a.get(2).is_some_and(|s| s == "scalar") {
+        SolverMode::Scalar
+    } else {
+        SolverMode::Simd
+    };
+    let mut initial = std::collections::HashMap::new();
+    if r.0.clone().next() == Some("INIT") {
+        r.token("INIT");
+        let n = r.int();
+        for _ in 0..n {
+            r.token("I");
+            initial.insert(r.int(), [r.vec(), r.vec()]);
+        }
+    }
     let mut bodies: Vec<RigidBody> = Vec::new();
     let mut objects = Vec::new();
     let mut ids = Vec::new();
@@ -62,6 +79,10 @@ fn main() {
                 });
                 body.set_kinematic(flags & 2 != 0);
                 body.set_gravity(Vec3([0.0, -10.0, 0.0]));
+                if let Some([linear, angular]) = initial.get(&id) {
+                    body.set_linear_velocity(*linear);
+                    body.set_angular_velocity(*angular);
+                }
                 bodies.push(body);
                 objects.push(IslandObject {
                     activation: BodyActivation {
@@ -134,11 +155,15 @@ fn main() {
         if step != 0 {
             for (mi, p) in points.iter().enumerate() {
                 for (pi, q) in p.iter().enumerate() {
-                    assert_eq!(
-                        Some(&q.applied_impulse.to_bits()),
-                        prior_impulses.get(&(owners[mi], pi)),
-                        "incoming normal warmstart differs"
-                    );
+                    if q.lifetime == 1 {
+                        assert_eq!(q.applied_impulse.to_bits(), 0, "new contact warmstart");
+                    } else {
+                        assert_eq!(
+                            Some(&q.applied_impulse.to_bits()),
+                            prior_impulses.get(&(owners[mi], pi)),
+                            "incoming normal warmstart differs"
+                        );
+                    }
                 }
             }
         }
@@ -147,6 +172,52 @@ fn main() {
                 r.token("PAIR");
                 [r.int(), r.int()]
             })
+            .collect();
+        let mut joints = Vec::new();
+        if r.0.clone().next() == Some("JOINTS") {
+            r.token("JOINTS");
+            let nj = r.int();
+            for _ in 0..nj {
+                r.token("J");
+                let endpoints = [r.int(), r.int()];
+                let frames = std::array::from_fn(|_| Transform {
+                    basis: Basis(std::array::from_fn(|_| r.vec().0)),
+                    origin: r.vec(),
+                });
+                let motors: [AxisMotor; 6] = std::array::from_fn(|_| AxisMotor {
+                    lower: r.scalar(),
+                    upper: r.scalar(),
+                    enabled: r.int() != 0,
+                    target_velocity: r.scalar(),
+                    max_motor_force: r.scalar(),
+                    current_position: 0.0,
+                    current_limit: 0,
+                    current_limit_error: 0.0,
+                });
+                joints.push(Joint {
+                    bodies: endpoints,
+                    frames,
+                    state: JointState {
+                        linear: motors[..3].try_into().unwrap(),
+                        angular: std::array::from_fn(|i| AngularMotor {
+                            motor: motors[i + 3],
+                            erp: 0.2,
+                            bounce: 0.0,
+                        }),
+                        linear_erp: 0.2,
+                        springs: [Spring {
+                            enabled: false,
+                            equilibrium: 0.0,
+                            stiffness: 0.0,
+                            damping: 0.0,
+                        }; 6],
+                    },
+                });
+            }
+        }
+        let constraints: Vec<_> = joints
+            .iter()
+            .map(|j| IslandConstraint { bodies: j.bodies })
             .collect();
         let mut manifolds: Vec<_> = points
             .iter_mut()
@@ -161,8 +232,8 @@ fn main() {
             .iter()
             .map(|&bodies| IslandManifold { bodies })
             .collect();
-        islands.calculate(&mut objects, pairs, &[]);
-        islands.solve_constraints(&mut objects, &im, &[], true, |objects, event| {
+        islands.calculate(&mut objects, pairs, &constraints);
+        islands.solve_constraints(&mut objects, &im, &constraints, true, |objects, event| {
             if let SolverEvent::SolveGroup {
                 island,
                 constraints,
@@ -186,7 +257,7 @@ fn main() {
                     &mut workspace,
                     objects,
                     &bodies,
-                    &mut [],
+                    &mut joints,
                     &mut manifolds,
                     GroupSelection {
                         bodies: island.bodies,
@@ -194,9 +265,18 @@ fn main() {
                         manifolds: island.manifolds,
                     },
                     dt,
-                    SolverMode::Simd,
+                    mode,
                 )
                 .unwrap();
+                if !s.joint_rows.is_empty() {
+                    print!("JROWS {}", s.joint_rows.len());
+                    for row in &s.joint_rows {
+                        for id in row.bodies {
+                            print!(" {id}");
+                        }
+                    }
+                    println!();
+                }
                 print!(
                     "S {} {} {}",
                     s.bodies.live_len(),
@@ -212,7 +292,7 @@ fn main() {
                     print!(" {}", b.original.map_or(-1, |i| ids[i] as i32));
                 }
                 println!();
-                s.iterate(&bodies, &[], |_, _| {}).unwrap();
+                s.iterate(&bodies, &joints, |_, _| {}).unwrap();
                 s.writeback(&mut bodies, &mut manifolds);
             }
         });

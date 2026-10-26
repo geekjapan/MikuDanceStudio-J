@@ -292,6 +292,11 @@ impl<'a, 's> GroupSolver<'a, 's> {
             }
             let [a_id, b_id] = joint.bodies.map(|i| solver.bodies.get_or_init(bodies, i));
             let ids = [a_id?, b_id?];
+            for id in ids {
+                let body = solver.bodies.slot_mut(id);
+                body.delta_linear = Vec3::ZERO;
+                body.delta_angular = Vec3::ZERO;
+            }
             for &row in rows.as_slice() {
                 let n = row.j1_linear;
                 let ia = a.inverse_inertia_world.apply(row.j1_angular);

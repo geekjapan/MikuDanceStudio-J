@@ -17,6 +17,7 @@ def once(s,old,new):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--only', action='append', choices=['joint-delta-reset'])
     p.add_argument('--out-dir',type=Path,required=True)
     p.add_argument('--crt-rlib',type=Path,required=True)
     p.add_argument('--native-capture',type=Path,required=True)
@@ -40,7 +41,7 @@ def main():
         p=subprocess.run(list(map(str,command)),capture_output=True,cwd=ROOT/'rust')
         (directory/(label+'.stdout')).write_bytes(p.stdout);(directory/(label+'.stderr')).write_bytes(p.stderr)
         return p
-    for name,(s,c) in variants.items():
+    for name,(s,c) in (variants.items() if not args.only else []):
         directory=out/name;directory.mkdir(exist_ok=True)
         (directory/'solver.rs').write_text(s);(directory/'contact_solver.rs').write_text(c)
         mod=(CORE/'mod.rs').read_text()
@@ -54,6 +55,45 @@ def main():
         actual=execute([binary,'persistent_solver'],'test')
         assert actual.returncode!=0 and b'test result: FAILED' in actual.stdout,(name,'survived or crashed')
         reports.append({'mutation':name,'compiled':True,'behavior_rejected':True})
+    reset = """            for id in ids {
+                let body = solver.bodies.slot_mut(id);
+                body.delta_linear = Vec3::ZERO;
+                body.delta_angular = Vec3::ZERO;
+            }
+"""
+    controls = {
+        'joint-delta-reset': '',
+        'joint-linear-reset': reset.replace('                body.delta_linear = Vec3::ZERO;\n', ''),
+        'joint-angular-reset': reset.replace('                body.delta_angular = Vec3::ZERO;\n', ''),
+    }
+    for name, replacement in controls.items():
+        directory=out/name;directory.mkdir(exist_ok=True)
+        (directory/'solver.rs').write_text(once(solver, reset, replacement))
+        mod=(CORE/'mod.rs').read_text()
+        mod=re.sub(r'pub mod (\w+);',lambda m:'#[path = '+json.dumps((directory/'solver.rs' if m[1]=='solver' else CORE/(m[1]+'.rs')).as_posix())+']\npub mod '+m[1]+';',mod)
+        (directory/'core.rs').write_text(mod)
+        mutated=re.sub(r'#\[path = "[^"]+/core/mod.rs"\]',lambda _: '#[path = '+json.dumps((directory/'core.rs').as_posix())+']',runner)
+        (directory/'runner.rs').write_text(mutated)
+        binary=directory/('runner.exe' if __import__('os').name=='nt' else 'runner')
+        compiled=execute(['rustup','run','1.95.0','rustc','--edition=2021','-O',directory/'runner.rs','--extern',f'mds_crtmath={args.crt_rlib.resolve()}','-o',binary],'compile')
+        assert compiled.returncode==0,compiled.stderr.decode()
+        rejected=[]
+        for incoming in sorted(args.native_capture.glob('k[3456]-*.input')):
+            if '.original.' in incoming.name: continue
+            label=incoming.stem
+            actual=execute([binary,incoming,'scalar' if label.endswith('-scalar') else 'simd'],label)
+            native=(args.native_capture/(label+'-observed.stdout')).read_text().splitlines()
+            expected=sorted('V '+' '.join(x.split()[1:3]+x.split()[5:]) for x in native if x.startswith('state '))
+            got=sorted(x for x in actual.stdout.decode().splitlines() if x.startswith('V '))
+            first_native=[x for x in expected if x.startswith('V 0 ')]
+            first_actual=[x for x in got if x.startswith('V 0 ')]
+            assert len(first_actual)==len(first_native)==3, (name,label,'missing defined first-step output')
+            if first_actual!=first_native: rejected.append(label)
+        assert rejected,'suppressed joint delta reset survived genuine native World comparison'
+        reports.append({'mutation':name,'compiled':True,'native_comparison_rejected':rejected})
+    if args.only:
+        (out/'results.json').write_text(json.dumps(reports,indent=2)+'\n')
+        print(json.dumps(reports,indent=2)); return
     # Step clearing lives in the caller; exercise its compiled real scheduling replay.
     directory=out/'step-workspace-clearing';directory.mkdir(exist_ok=True)
     core_path=json.dumps((CORE/'mod.rs').as_posix())

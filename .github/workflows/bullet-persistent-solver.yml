@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - 'rust/crates/mds-bullet/src/core/**'
+      - 'rust/crates/mds-bullet/tests/pure_bullet/persistent_solver.rs'
       - 'rust/crates/mds-crtmath/**'
       - 'rust/crates/mds-bullet-sys/shim/**'
       - 'tools/bullet-rust-contact-solver-check/support.rs'

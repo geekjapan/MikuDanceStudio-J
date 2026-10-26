@@ -34,3 +34,20 @@ Historical mixed-solver measurements remain bound to their original producer
 hashes. This check does not approve a changed mixed arithmetic source profile.
 The separate mixed checker must retain its capture and reject unknown current
 source profiles until an independently audited exact profile is approved.
+
+The original 36 scenes remain the ordered prefix. An additional 48 scenes cover
+nonzero-row linear and angular motors, both endpoint orientations, all six body
+registration orders and SIMD/scalar modes. Their finite asymmetric contact history
+crosses real World island groups. Initial velocity inputs are captured before
+stepping. Second-step state still comes from Rust integration. A newly generated
+contact (native lifetime 1) must have zero warmstart; surviving contacts must match
+Rust's prior writeback. A source-copy mutant suppresses both joint delta resets
+and must differ in complete first-step final velocities from genuine native
+output. Separate controls suppress only the linear or angular reset. `JROWS`
+records nonzero joint row endpoint IDs, including reachable same-slot aliases.
+
+The live source manifest recursively includes the complete CRT Rust source tree.
+Closure tests reject omitted compiled modules, altered math module contents and
+new source files at the end gate. Start and end manifests are retained separately.
+Use `--mutation joint-delta-reset` to run only the new native mutation control
+when the unrelated workspace controls have already been verified.

@@ -492,3 +492,109 @@ fn fixed_and_one_dynamic_slot_grow_capacity_to_two() {
     assert_eq!((s.bodies.live_len(), s.bodies.native_capacity()), (2, 2));
     assert_eq!(s.bodies.companion_id(0), None);
 }
+
+fn free_joint() -> crate::core::solver::Joint {
+    use crate::core::joint_rows::{AngularMotor, AxisMotor, JointState, Spring};
+    use crate::core::solver::Joint;
+    let axis = AxisMotor {
+        lower: 1.0,
+        upper: -1.0,
+        enabled: false,
+        target_velocity: 0.0,
+        max_motor_force: 0.0,
+        current_position: 99.0,
+        current_limit: 0,
+        current_limit_error: 0.0,
+    };
+    Joint {
+        bodies: [0, 1],
+        frames: [Transform::IDENTITY; 2],
+        state: JointState {
+            linear: [axis; 3],
+            angular: [AngularMotor {
+                motor: axis,
+                erp: 0.2,
+                bounce: 0.0,
+            }; 3],
+            linear_erp: 0.2,
+            springs: [Spring {
+                enabled: false,
+                equilibrium: 0.0,
+                stiffness: 0.0,
+                damping: 0.0,
+            }; 6],
+        },
+    }
+}
+
+#[test]
+fn nonzero_joint_resets_cross_group_linear_and_angular_endpoint_deltas() {
+    for mode in [SolverMode::Simd, SolverMode::Scalar] {
+        for endpoints in [[2, 1], [1, 2], [2, 0]] {
+            for enabled in [false, true] {
+                let mut w = SolverWorkspace::default();
+                let mut objects = [object(); 3];
+                let mut bodies = [body(1.0), body(2.0), body(3.0)];
+                let mut p = [ContactPoint {
+                    world_a: Vec3([0.0, 1.0, 0.5]),
+                    world_b: Vec3([0.0, 0.5, 1.0]),
+                    ..point()
+                }];
+                let mut m = [ContactManifold::new([0, 1], &mut p)];
+                let s = GroupSolver::setup(
+                    &mut w,
+                    &mut objects,
+                    &bodies,
+                    &mut [],
+                    &mut m,
+                    GroupSelection {
+                        bodies: &[0, 1],
+                        joints: &[],
+                        manifolds: &[0],
+                    },
+                    1.0 / 60.0,
+                    mode,
+                )
+                .unwrap();
+                s.writeback(&mut bodies, &mut m);
+                assert_eq!(w.slot(2).unwrap().delta_linear, Vec3([-0.85, 0.0, 0.0]));
+                assert_ne!(w.slot(2).unwrap().delta_angular, Vec3::ZERO);
+                let old = *w.slot(2).unwrap();
+                let mut joint = free_joint();
+                joint.bodies = endpoints;
+                joint.state.linear[0].enabled = enabled;
+                joint.state.linear[0].target_velocity = 4.0;
+                joint.state.linear[0].max_motor_force = 1.0;
+                let s = GroupSolver::setup(
+                    &mut w,
+                    &mut objects,
+                    &bodies,
+                    &mut [joint],
+                    &mut [],
+                    GroupSelection {
+                        bodies: &[],
+                        joints: &[0],
+                        manifolds: &[],
+                    },
+                    1.0 / 60.0,
+                    mode,
+                )
+                .unwrap();
+                if enabled {
+                    assert_eq!(s.joint_rows.len(), 1);
+                    for id in s.joint_rows[0].bodies {
+                        assert_eq!(s.bodies.slot(id).unwrap().delta_linear, Vec3::ZERO);
+                        assert_eq!(s.bodies.slot(id).unwrap().delta_angular, Vec3::ZERO);
+                    }
+                    if endpoints == [2, 0] {
+                        assert_eq!(s.joint_rows[0].bodies, [1, 1]);
+                    }
+                } else {
+                    assert!(s.joint_rows.is_empty());
+                    assert_eq!(s.bodies.slot(2).unwrap().delta_linear, old.delta_linear);
+                    assert_eq!(s.bodies.slot(2).unwrap().delta_angular, old.delta_angular);
+                }
+            }
+        }
+    }
+}

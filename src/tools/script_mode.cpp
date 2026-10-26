@@ -92,6 +92,7 @@
 #include <commdlg.h>
 #include <shlobj.h> // DROPFILES
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -1254,7 +1255,11 @@ struct Runner {
         const RECT view = app->ViewportRect();
         const int x = view.right - static_cast<int>(kCellX[column] * scale);
         const int y = view.bottom - static_cast<int>((rotate ? 65.0f : 25.0f) * scale);
-        const int cx = (view.left + view.right) / 2;
+        // HandleMouseMove (ui_mousemove.cpp) ignores the moves of a tool drag
+        // right of view.right - 200 * scale until one lands left of it, so
+        // the drag runs left of that line (the window is small when hidden).
+        const int cx = std::min((view.left + view.right) / 2,
+                                view.right - static_cast<int>(scale * 200.0) - 1);
         const int cy = (view.top + view.bottom) / 2;
         const WPARAM flags = ModifierFlags(modifier);
         g_step.foreground = true;
@@ -1263,13 +1268,17 @@ struct Runner {
         Mouse(WM_LBUTTONDOWN, flags | MK_LBUTTON, x, y);
         Frame();
         const int mode = static_cast<int>(app->InteractionDragMode());
-        // BeginCenteredDrag moved the cursor to the viewport centre; the
-        // mouse move of that jump comes first, then the drag.
+        // BeginCenteredDrag moved the cursor to the viewport centre and set
+        // separateWindowMouseSeen, so HandleMouseMove takes the first move
+        // after it as the jump and counts no distance: a one-pixel move,
+        // then the drag of dy.
         Mouse(WM_MOUSEMOVE, flags | MK_LBUTTON, cx, cy);
-        Mouse(WM_MOUSEMOVE, flags | MK_LBUTTON, cx, cy + dy);
+        Mouse(WM_MOUSEMOVE, flags | MK_LBUTTON, cx, cy + 1);
+        const bool moving = app->state.a06B5 == 0 && app->state.separateWindowMouseSeen == 0;
+        Mouse(WM_MOUSEMOVE, flags | MK_LBUTTON, cx, cy + 1 + dy);
         Frame();
         HoldKeys(modifier);
-        Mouse(WM_LBUTTONUP, flags, cx, cy + dy);
+        Mouse(WM_LBUTTONUP, flags, cx, cy + 1 + dy);
         Frame();
         HoldKeys();
         g_step.foreground = false;
@@ -1278,6 +1287,9 @@ struct Runner {
             return Fail("the press at (" + std::to_string(x) + ", " + std::to_string(y) +
                         ") started drag mode " + std::to_string(mode) + ", not " +
                         std::to_string(expected) + ViewportText());
+        if (!moving)
+            return Fail("the moves to (" + std::to_string(cx) + ", " + std::to_string(cy) +
+                        ") left the tool's move gates set" + ViewportText());
         return true;
     }
 
@@ -1592,6 +1604,17 @@ struct Runner {
             if (control == nullptr)
                 return false;
             SetWindowTextA(control, Sjis(a[1]).c_str());
+            return true;
+        }
+        case ScriptOp::DialogEdit: {
+            // Typed and committed with Enter, which the physics model
+            // dialog's edit subclass (PhysicsEditSubclassProc) applies.
+            const HWND dialog = ModelessDialog();
+            const HWND control = dialog != nullptr ? DialogControl(dialog, a[0]) : nullptr;
+            if (control == nullptr)
+                return false;
+            SetWindowTextA(control, Sjis(a[1]).c_str());
+            SendMessageA(control, WM_KEYDOWN, VK_RETURN, 0);
             return true;
         }
         case ScriptOp::DialogClick:

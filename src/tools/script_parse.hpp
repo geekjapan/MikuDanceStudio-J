@@ -140,6 +140,7 @@ enum class ScriptOp {
     ToggleBackgroundMovie,
     ToggleBackgroundPicture,
     ToggleBlackBackground,
+    DialogEdit,
 };
 
 struct ScriptCommandSpec {
@@ -271,13 +272,14 @@ inline constexpr ScriptCommandSpec kScriptCommands[] = {
     {"toggle background movie", ScriptOp::ToggleBackgroundMovie, ""},
     {"toggle background picture", ScriptOp::ToggleBackgroundPicture, ""},
     {"toggle black background", ScriptOp::ToggleBlackBackground, ""},
+    {"dialog edit", ScriptOp::DialogEdit, "ft"},
 };
 
 // The commands that run inside a modal dialog: the `dialog` lines that
 // follow a command opening one (IsModalDialogOpener) up to the first other
 // line.
 inline bool IsDialogCommand(ScriptOp op) {
-    return op == ScriptOp::DialogText || op == ScriptOp::DialogClick ||
+    return op == ScriptOp::DialogText || op == ScriptOp::DialogEdit || op == ScriptOp::DialogClick ||
            op == ScriptOp::DialogSelect || op == ScriptOp::DialogOk ||
            op == ScriptOp::DialogCancel;
 }

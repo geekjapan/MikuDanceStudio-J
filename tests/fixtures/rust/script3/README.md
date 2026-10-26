@@ -94,9 +94,11 @@ Every saved PMM, VMD, and PMD reads and writes back byte for byte through
   frame and then `lastRegisteredFrame` become -2 as well (`lipsync/drop.pmm`).
 - **A dropped `.vsq` is refused in camera mode** with an info box
   (`lipsync/messages.tsv`), and `refused.pmm` keeps the keys of the drop
-  before it. Menu 224 has no such gate in its handler, but the menu item is
-  grayed out in camera mode, so a user cannot reach it there (`load lip
-  sync` after `select camera` fails with "menu item 224 is disabled").
+  before it. Menu 224 has no such gate in its handler, but the switch to
+  camera mode grays it out (`ApplyModelComboSelection`,
+  `src/window/ui_model_reload.cpp` 453), so a user cannot reach it there
+  (`load lip sync` after `select camera` fails with "menu item 224 is
+  disabled").
 - **`.vac` lines are read in text mode**, so a CRLF file names the mesh
   `tri2.x` without the CR (`vac/vac.pmm`). `mds_doc::vac_mesh_name` splits the
   raw bytes at `\n` only and keeps the CR.

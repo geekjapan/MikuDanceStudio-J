@@ -144,9 +144,9 @@ self-shadow, light (-0.5, -1, 0.5).
   back buffer. With the two `RenderColorTarget1` lines removed, the same build
   shows `ClearColor` with the grid over it (sha256
   `9944945e8f967338cd6119a7ad33bdb932d8b4bb6590fb93823aa432b6668a5f`, not
-  committed); with the file as it is, it gives the committed white image
-  again. A non-white image needs a change in `post.fx`, which would change
-  `post.emm` and the probes, so the fixtures stay as they are.
+  committed) and the same `post-0.mme.txt` probe; with the file as it is, it
+  gives the committed white image again. A non-white image needs a change in
+  `post.fx`, so the fixtures stay as they are.
 
 ## Files
 

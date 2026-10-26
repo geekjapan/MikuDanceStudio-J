@@ -1,0 +1,26 @@
+# The physics model dialog (menu 262) edited through its edit boxes (typed
+# and committed with Enter, PhysicsEditSubclassProc) and by dragging the
+# selected body on the viewport tool (EditModeRecord): body 0 moved, sized
+# (shift), and rotated, body 3 renamed and moved; the joint page (801) and
+# a joint edit. Cancel drops the drag before it. Joint drags: README.md.
+load model .\lips.pmd
+save pmd before.pmd
+physics model open
+dialog edit 718 2.5
+dialog edit 720 0.75
+physics drag move y none 10
+physics drag move x shift -4
+physics drag rotate z none 25
+dialog select 704 3
+dialog edit 705 body3
+physics drag move z none 3
+dialog click 801
+dialog edit 744 0.5
+dialog ok
+save pmd dragged.pmd
+save pmm dragged.pmm
+
+physics model open
+physics drag move y none 20
+dialog cancel
+save pmd cancelled.pmd

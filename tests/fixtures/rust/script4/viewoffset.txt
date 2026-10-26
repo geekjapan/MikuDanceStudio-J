@@ -1,0 +1,14 @@
+# The model-mode view drags of pump_navigation.cpp: shift + right drag and
+# the middle drag (plain, shift, ctrl) move the view offset; a plain right
+# drag orbits, ctrl + right drag changes the distance. The PMM saves them.
+load model chain8.pmx
+view drag right shift 40 -20
+save pmm shift-right.pmm
+view drag middle none 10 30
+save pmm middle.pmm
+view drag middle shift -4 2
+view drag middle ctrl 0 100
+save pmm middle-modifiers.pmm
+view drag right none 15 5
+view drag right ctrl 0 10
+save pmm orbit.pmm

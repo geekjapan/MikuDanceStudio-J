@@ -1,0 +1,9 @@
+# Menu 263 (save enhanced model) on a PMX model: SaveEnhancedModel writes
+# PMD only and refuses it with a box, writing nothing; the model keeps its
+# path. A PMD model still saves.
+load model chain8.pmx
+save pmd refused refused.pmd
+load model .\lips.pmd
+save pmd saved.pmd
+select model chain8
+save pmm after.pmm

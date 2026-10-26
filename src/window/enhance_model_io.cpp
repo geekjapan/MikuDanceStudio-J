@@ -134,6 +134,23 @@ void SaveEnhancedModel(MMDApp* app, const wchar_t* path) { // 0x41EC10
     mdl::ModelRecord& model = *mdl::Mdl(app->SelectedModel());
     D3DRenderer* renderer = app->Renderer();
 
+    // The writer is PMD only: the menu grays its "model enhance" popup for a
+    // PMX model (physicsMode 2, ui_model_reload.cpp SetPhysicsMenuState), and
+    // a PMX model has no rawVertices, so the vertex _write below got a null
+    // buffer and the CRT ended the process (0xC0000409). Refuse before the
+    // file is created, as the Rust port does (mds-app ui/help.rs).
+    if (model.physicsMode == 2) {
+        if (app->EnglishUI() != 0)
+            MessageBoxA(static_cast<HWND>(model.hwnd), "A PMX model cannot be saved as a PMD.",
+                        "save enhanced model", 0);
+        else // "PMXモデルは拡張モデル保存できません" / "拡張モデル保存"
+            MessageBoxA(static_cast<HWND>(model.hwnd),
+                        "PMX\x83\x82\x83\x66\x83\x8b\x82\xcd\x8a\x67\x92\xa3\x83\x82\x83\x66"
+                        "\x83\x8b\x95\xdb\x91\xb6\x82\xc5\x82\xab\x82\xdc\x82\xb9\x82\xf1",
+                        "\x8a\x67\x92\xa3\x83\x82\x83\x66\x83\x8b\x95\xdb\x91\xb6", 0);
+        return;
+    }
+
     int fh = -1;
     const errno_t openErr =
         _wsopen_s(&fh, path, _O_BINARY | _O_WRONLY | _O_CREAT | _O_TRUNC, _SH_DENYNO, _S_IREAD);

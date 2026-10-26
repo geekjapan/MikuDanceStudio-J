@@ -1,22 +1,20 @@
 //! The runtime against the C++ application's MME path: the scenes, probes, and images of
 //! `tests/fixtures/rust/mmegold/` (README there: `--mds-mme-dump`, the probe format).
 //!
-//! The test is the host. Per scene it loads the PMM, takes the effect rows of the EMM, loads the
-//! effects, and renders every frame from 0 as the dump does: frame 0 twice, then each frame.
-//! A frame draws each offscreen turn's objects, then the scene: per material subset the object
-//! pass, then the edge pass, each with the technique `SasSelectTechnique` picks (a post effect
-//! draws the scene at `ScriptExternal`), and ticks the animated textures at its end. The camera,
-//! light, and world matrices are composed as `SetupFrameWorldTransform` and `OnBeginScene` do;
-//! the poses come from `mds-physics` (physics mode 0: the motion alone).
+//! Per scene the test loads the PMM and its objects into `mds_mmert::host` (the host `mds-app`
+//! draws through), takes the effect rows of the EMM, and renders every frame from 0 as the dump
+//! does: frame 0 twice, then each frame. The poses come from `mds-physics` (physics mode 0: the
+//! motion alone); the camera and light from the playback tracks.
 //!
 //! 1. Inputs: after each probed frame, every numeric parameter of every effect the probe lists
 //!    equals it within [`VALUE_TOL`] (the count of bit-equal values is printed). `MOUSEPOSITION`
 //!    follows the host's cursor and is not compared. [`KNOWN_INPUTS`] lists the known differences.
 //! 2. Pixels: the 640x360 image against the golden PNG by the rule of [`LIMITS`], outside what
 //!    the host draws itself: the grid, axes, ground line, and bone marks (every pixel that is not
-//!    white in `offscreen-0.png`, whose effect draws nothing visible) and the models without an
-//!    effect ([`Host::host_drawn`]). [`PIXEL_GATED`] lists the scenes that meet it; the table
-//!    prints them all. Not gated: `ray`, whose scene is dark (the light hits the faces the camera
+//!    white in `offscreen-0.png`, whose effect draws nothing visible). The models without an effect
+//!    are the host's standard shading and are compared; the table prints beside each mask the one
+//!    the gate took before the host drew them ([`Staged::old_host_mask`]). [`PIXEL_GATED`] lists
+//!    the scenes that meet the rule; the table prints them all. Not gated: `ray`, whose scene is dark (the light hits the faces the camera
 //!    sees from behind, and there is no sky; see the mmegold README). `post` runs
 //!    `mmegold/post.fx`, which drops the non-multisampled `RenderColorTarget1` that Direct3D 9
 //!    refused beside the multisampled back buffer.
@@ -28,14 +26,12 @@ use std::path::{Path, PathBuf};
 
 use mds_formats::pmm::Pmm;
 use mds_formats::pmx::Pmx;
-use mds_math::Mat4;
-use mds_mme::sas::SEM_OFFSCREEN;
-use mds_mmert::bind::{look_at_lh, mul, perspective_lh, Mat, DRAW_EDGE, DRAW_OBJECT};
-use mds_mmert::control::{Controls, Object};
+use mds_mmert::bind::mul;
 use mds_mmert::emm::{parse_emm, Assignment};
-use mds_mmert::scene::{turn_draw, TurnDraw, TurnObject};
-use mds_mmert::{DrawInput, Effect, Gpu, Model, Scene, Target};
+use mds_mmert::host::{scene, Frame, Host, Source};
+use mds_mmert::Gpu;
 use mds_physics::PhysicsScene;
+use mds_render::Camera;
 use mds_scene::track::{evaluate_camera, evaluate_light, CameraMode, LightMode};
 use mds_shader::vkd3d::Vkd3d;
 
@@ -82,13 +78,6 @@ const PIXEL_GATED: &[&str] = &[
     "control",
     "anime",
 ];
-
-/// MMEffect `SasMmdPass`: the draw modes `plan::select` takes.
-const PASS_OBJECT: i32 = 0;
-const PASS_EDGE: i32 = 3;
-
-/// PMX material flag: draw the edge.
-const FLAG_EDGE: u8 = 0x10;
 
 fn mmegold() -> PathBuf {
     common::fixtures().join("mmegold")
@@ -170,10 +159,10 @@ fn parse_probe(text: &str) -> Probe {
     p
 }
 
-// ---- the host ----
+// ---- the scene ----
 
-/// Where an effect path of the stage lives here: `(file, root)`.
-fn local(path: &str, stage: &Path, corpus: &Path) -> (PathBuf, PathBuf) {
+/// Where an effect path of the stage lives here.
+fn local(path: &str, stage: &Path, corpus: &Path) -> PathBuf {
     let path = path.replace('\\', "/");
     let (dir, rest) = path.split_once('/').unwrap();
     let root = match dir {
@@ -182,7 +171,7 @@ fn local(path: &str, stage: &Path, corpus: &Path) -> (PathBuf, PathBuf) {
         "ray-mmd" => corpus.to_path_buf(),
         _ => panic!("unknown effect root in {path}"),
     };
-    (root.join(rest), root)
+    root.join(rest)
 }
 
 /// The probe's spelling of an EMM effect row (`$(fixtures)\objects.fx` is `effects/objects.fx`).
@@ -202,120 +191,30 @@ fn scene_file(path: &str) -> Result<Vec<u8>, String> {
     std::fs::read(common::fixtures().join(name)).map_err(|e| format!("{name}: {e}"))
 }
 
-fn m4(m: &Mat4) -> Mat {
-    m.0
-}
-
-/// The frame's camera, light, and clocks as MMEffect's `OnBeginScene` sees them: the device
-/// world is the frame world of `SetupFrameWorldTransform` (the target to the origin, then yaw,
-/// pitch, roll), the device view its fixed look along +z from the camera distance, and the
-/// projection `RefreshMainWindowViewport`'s. MME's `VIEW` is the world times the view, and an
-/// object's `WORLD` its device world (its own world times the frame world) times the inverse of
-/// the frame world. Also returns the frame world and its inverse.
-fn host_scene(pmm: &Pmm, frame: u32, elapsed: f32) -> (Scene, Mat, Mat) {
+/// The scene's camera at `frame`, as the dump's playback evaluates it.
+fn camera(pmm: &Pmm, frame: u32) -> Camera {
     let c = evaluate_camera(&pmm.camera, f64::from(frame), CameraMode::Playback).unwrap();
-    let [pitch, yaw, roll] = c.rotation;
-    let t = Mat4::translation(-c.position[0], -c.position[1], -c.position[2]);
-    let r = Mat4::multiply(&Mat4::rotation_y(yaw), &Mat4::rotation_x(pitch));
-    let r = Mat4::multiply(&r, &Mat4::rotation_z(roll));
-    let frame_world = Mat4::multiply(&t, &r);
-    let inverse = frame_world.inverse().unwrap().0 .0;
-    let eye = [0.0, 0.0, c.distance];
-    let view = look_at_lh(eye, [0.0, 0.0, c.distance + 80.0], [0.0, 1.0, 0.0]);
-    let fov = (f64::from(c.fov) * std::f64::consts::PI / 180.0) as f32;
-    let light = evaluate_light(&pmm.light, f64::from(frame), LightMode::Playback).unwrap();
-    let color = [light[0], light[1], light[2]];
-    let mut s = Scene::default_view(W, H);
-    s.world = mul(&m4(&frame_world), &inverse);
-    s.view = mul(&m4(&frame_world), &view);
-    s.projection = perspective_lh(fov, W as f32 / H as f32, 1.0, 100000.0);
-    s.light_direction = [light[3], light[4], light[5]];
-    s.light_ambient = color;
-    s.light_diffuse = color;
-    s.light_specular = color;
-    s.time = frame as f32 / 30.0;
-    s.elapsed = elapsed;
-    (s, m4(&frame_world), inverse)
-}
-
-/// The scene's objects as the host exports them: the models by draw order (1-based), with
-/// their bones and morphs from the pose, then the accessories.
-fn host_controls(pmm: &Pmm, pmxs: &[Pmx], physics: &PhysicsScene, frame: u32) -> Controls {
-    let mut objects = Vec::new();
-    for (i, (m, pmx)) in pmm.models.iter().zip(pmxs).enumerate() {
-        let mut o = Object::model(file_name(&m.path.text), i as i32 + 1);
-        let posed = physics
-            .scene
-            .models
-            .iter()
-            .find(|p| p.slot == m.slot)
-            .unwrap();
-        o.bones = pmx
-            .bones
-            .iter()
-            .zip(&posed.bones)
-            .map(|(b, p)| (b.name.text.clone(), bone_world(p)))
-            .collect();
-        o.morphs = pmx
-            .morphs
-            .iter()
-            .zip(&posed.morphs)
-            .map(|(m, p)| (m.name.text.clone(), p.value))
-            .collect();
-        objects.push(o);
+    Camera {
+        target: c.position,
+        rotation: c.rotation,
+        distance: c.distance,
+        fov_deg: c.fov,
+        orthographic: c.perspective == 1,
     }
-    for (a, (state, world)) in pmm.accessories.iter().zip(accessories(pmm, physics, frame)) {
-        let mut o = Object::model(file_name(&a.path.text), i32::from(a.order) + 1);
-        o.model = false;
-        o.shown = state.visible;
-        o.world = world;
-        let [x, y, z] = state.position;
-        let [rx, ry, rz] = state.rotation;
-        o.accessory = [x, y, z, rx, ry, rz, state.scale, state.opacity];
-        objects.push(o);
-    }
-    Controls { objects }
 }
 
-/// `ExpGetPmdBoneWorldMat`: the bone's position moved by its world matrix.
-fn bone_world(b: &mds_pose::model::Bone) -> Mat {
-    let [x, y, z] = b.position;
-    Mat4::multiply(&Mat4::translation(x, y, z), &b.mat_init).0
-}
-
-/// The state and world matrix of each PMM accessory at `frame`.
-fn accessories(
-    pmm: &Pmm,
-    physics: &PhysicsScene,
-    frame: u32,
-) -> Vec<(mds_accessory::AccessoryState, Mat)> {
-    pmm.accessories
-        .iter()
-        .map(|a| mds_render::scene::accessory_at(a, frame, &physics.scene.models).unwrap())
-        .collect()
-}
-
-/// One loaded effect and the object (an index into the controls) it is assigned to.
-struct Loaded {
-    path: String,
-    effect: Effect,
-    owner: usize,
-}
-
-struct Host {
+struct Staged {
     pmm: Pmm,
     pmxs: Vec<Pmx>,
-    model: Model,
-    /// The effects the EMM assigns, then those the offscreen turns load.
-    effects: Vec<Loaded>,
+    host: Host,
     stage: PathBuf,
     corpus: PathBuf,
-    /// The EMM rows, by object index.
+    /// The EMM rows, by object index, in the probe's spelling.
     assignments: Vec<Assignment>,
 }
 
-impl Host {
-    fn new(gpu: &Gpu, vk: &Vkd3d, name: &str, stage: &Path, corpus: &Path) -> Host {
+impl Staged {
+    fn new(gpu: &Gpu, name: &str, stage: &Path, corpus: &Path) -> Staged {
         let pmm =
             Pmm::read(&std::fs::read(mmegold().join(format!("{name}.pmm"))).unwrap()).unwrap();
         let pmxs: Vec<Pmx> = pmm
@@ -323,7 +222,18 @@ impl Host {
             .iter()
             .map(|m| Pmx::read(&scene_file(&m.path.text).unwrap()).unwrap())
             .collect();
-        let model = Model::from_pmx(&gpu.device, &pmxs[0]).unwrap();
+        let mut host = Host::new(BACKBUFFER);
+        let read = |n: &str| std::fs::read(common::fixtures().join(n)).ok();
+        for (m, pmx) in pmm.models.iter().zip(&pmxs) {
+            host.add(gpu, &m.path.text, Source::Pmx(pmx), m.edge_scale, read)
+                .unwrap();
+        }
+        for a in &pmm.accessories {
+            let file = corpus.join(file_name(&a.path.text));
+            let acc = mds_accessory::vac::load_file(&file).unwrap();
+            host.add(gpu, &a.path.text, Source::Accessory(acc), 1.0, read)
+                .unwrap();
+        }
         let emm_path = mmegold().join(format!("{name}.emm"));
         let (emm, log) = parse_emm(
             &std::fs::read(&emm_path).unwrap(),
@@ -333,41 +243,31 @@ impl Host {
         let section = emm.sections.iter().find(|s| s.is_default()).unwrap();
         let n_models = pmm.models.len();
         let mut assignments = vec![Assignment::default(); n_models + pmm.accessories.len()];
-        let mut effects = Vec::new();
         for e in &section.entries {
-            let (model, slot) = if let Some(s) = e.key.strip_prefix("Pmd") {
-                (true, s.parse::<usize>().unwrap())
+            let owner = if let Some(s) = e.key.strip_prefix("Pmd") {
+                s.parse::<usize>().unwrap()
             } else {
-                (false, e.key.strip_prefix("Acs").unwrap().parse().unwrap())
+                n_models + e.key.strip_prefix("Acs").unwrap().parse::<usize>().unwrap()
             };
-            let owner = if model { slot } else { n_models + slot };
-            let path = stage_path(&e.effect);
-            assignments[owner].effect = path.clone();
-            let (file, root) = local(&path, stage, corpus);
-            let effect = Effect::load(gpu, vk, &file, &root, BACKBUFFER)
-                .unwrap_or_else(|e| panic!("{path}: {e}"));
-            effects.push(Loaded {
-                path,
-                effect,
-                owner,
-            });
+            assignments[owner].effect = stage_path(&e.effect);
         }
-        Host {
+        Staged {
             pmm,
             pmxs,
-            model,
-            effects,
+            host,
             stage: stage.to_path_buf(),
             corpus: corpus.to_path_buf(),
             assignments,
         }
     }
 
-    /// The pixels the host draws with its own shading at `frame`: the screen rectangle, 2 px
-    /// wider, of each model other than the effect owner that has no effect (`morph4.pmx` of
-    /// `control`). Each vertex moves with its first bone.
-    fn host_drawn(&self, physics: &PhysicsScene, frame: u32) -> Vec<bool> {
-        let (scene, _, _) = host_scene(&self.pmm, frame, 0.0);
+    /// The mask the gate took before the host drew the objects without an effect: the screen
+    /// rectangle, 2 px wider, of each model other than the first that has no effect (`morph4.pmx`
+    /// of `control`). Each vertex moves with its first bone. The table prints its size beside
+    /// today's mask.
+    fn old_host_mask(&self, physics: &PhysicsScene, frame: u32) -> Vec<bool> {
+        let light = evaluate_light(&self.pmm.light, f64::from(frame), LightMode::Playback).unwrap();
+        let (scene, _, _) = scene(&camera(&self.pmm, frame), light, frame, 0.0, (W, H)).unwrap();
         let view_proj = mul(&scene.view, &scene.projection);
         let mut mask = vec![false; (W * H) as usize];
         for (i, (m, pmx)) in self.pmm.models.iter().zip(&self.pmxs).enumerate().skip(1) {
@@ -416,246 +316,59 @@ impl Host {
         mask
     }
 
-    /// Index of the loaded effect `path`, loading it for an offscreen turn's object.
-    fn effect_for(&mut self, gpu: &Gpu, vk: &Vkd3d, file: &Path, owner: usize) -> usize {
-        let rel = |root: &Path| file.strip_prefix(root).ok().map(Path::to_path_buf);
-        let path = if let Some(r) = rel(&self.corpus) {
-            format!("ray-mmd/{}", r.to_string_lossy())
-        } else if let Some(r) = rel(&common::fixtures().join("mme/effects")) {
-            format!("effects/{}", r.to_string_lossy())
-        } else {
-            format!("mmegold/{}", rel(&self.stage).unwrap().to_string_lossy())
-        }
-        .replace('\\', "/");
-        if let Some(i) = self.effects.iter().position(|l| l.path == path) {
-            return i;
-        }
-        let (file, root) = local(&path, &self.stage, &self.corpus);
-        let effect = Effect::load(gpu, vk, &file, &root, BACKBUFFER)
-            .unwrap_or_else(|e| panic!("{path}: {e}"));
-        self.effects.push(Loaded {
-            path,
-            effect,
-            owner,
-        });
-        self.effects.len() - 1
-    }
-
-    /// The object and edge passes of the model (object 0) with effect `e` into `target`.
-    fn draw_model(
-        &mut self,
-        gpu: &Gpu,
-        e: usize,
-        target: &Target,
-        input: &DrawInput,
-    ) -> Vec<String> {
-        let mut skipped = Vec::new();
-        let model = &self.model;
-        let pmx = &self.pmxs[0];
-        for (mode, draw_type) in [(PASS_OBJECT, DRAW_OBJECT), (PASS_EDGE, DRAW_EDGE)] {
-            for (s, m) in model.materials.iter().enumerate() {
-                if mode == PASS_EDGE && pmx.materials[s].flags & FLAG_EDGE == 0 {
-                    continue;
-                }
-                let effect = &mut self.effects[e].effect;
-                let input = DrawInput {
-                    geometry: Some((model, s)),
-                    draw_type,
-                    ..*input
-                };
-                // Every host draw binds the effect's parameters, whether a technique takes it
-                // or not (MmeApplyModelRenderSnapshot).
-                effect.bind(&input);
-                // Only the object passes select by the material's Use* state.
-                let object = mode == PASS_OBJECT;
-                let (Some(h), _) = mds_mme::plan::select(
-                    &effect.sas,
-                    mode,
-                    s as i32,
-                    object && m.has_texture,
-                    object && m.sphere_mode > 0,
-                    object && m.toon,
-                ) else {
-                    continue;
-                };
-                let tech = effect
-                    .sas
-                    .techniques
-                    .iter()
-                    .position(|t| t.fx == h)
-                    .unwrap();
-                let r = effect.draw_technique(gpu, target, &input, tech);
-                skipped.extend(r.skipped);
-            }
-        }
-        skipped
-    }
-
-    /// Renders `frame` into `target` and returns why draws were skipped.
+    /// Renders `frame` into the host's back buffer and returns why draws were skipped.
     fn render(
         &mut self,
         gpu: &Gpu,
         vk: &Vkd3d,
-        target: &Target,
         frame: u32,
         elapsed: f32,
         physics: &PhysicsScene,
     ) -> Vec<String> {
-        let (scene, frame_world, inverse) = host_scene(&self.pmm, frame, elapsed);
-        let controls = host_controls(&self.pmm, &self.pmxs, physics, frame);
-        // A post effect's carrier is the accessory: its WORLD is the accessory's.
-        let n_models = self.pmm.models.len();
-        let carrier_scenes: Vec<Scene> = accessories(&self.pmm, physics, frame)
-            .iter()
-            .map(|(_, w)| Scene {
-                world: mul(&mul(w, &frame_world), &inverse),
-                ..scene.clone()
-            })
-            .collect();
-        let scene_of = |owner: usize| {
-            if owner < n_models {
-                &scene
-            } else {
-                &carrier_scenes[owner - n_models]
-            }
+        let camera = camera(&self.pmm, frame);
+        let light = evaluate_light(&self.pmm.light, f64::from(frame), LightMode::Playback).unwrap();
+        let (stage, corpus) = (self.stage.clone(), self.corpus.clone());
+        let resolve = |p: &str| local(p, &stage, &corpus);
+        let f = Frame {
+            pmm: &self.pmm,
+            poses: &physics.scene.models,
+            camera: &camera,
+            light,
+            frame,
+            elapsed,
+            size: (W, H),
+            assignments: &self.assignments,
+            resolve: &resolve,
         };
-        let base = DrawInput {
-            scene: &scene,
-            geometry: None,
-            draw_type: DRAW_OBJECT,
-            controls: Some(&controls),
-            owner: None,
-            offscreen_owner: None,
-        };
-        let mut skipped = Vec::new();
-        let names: Vec<String> = controls.objects.iter().map(|o| o.name.clone()).collect();
-
-        // The offscreen turns: each target of each assigned effect, the model drawn as its rows say.
-        let carriers: Vec<usize> = (0..self.effects.len()).collect();
-        for c in carriers {
-            let owner = self.effects[c].owner;
-            let targets: Vec<usize> = (0..self.effects[c].effect.sas.resources.len())
-                .filter(|&r| self.effects[c].effect.sas.resources[r].semantic == SEM_OFFSCREEN)
-                .collect();
-            for r in targets {
-                let Some(turn) = self.effects[c].effect.begin_offscreen(gpu, r) else {
-                    continue;
-                };
-                let obj = TurnObject {
-                    name: &names[0],
-                    owner: owner == 0,
-                    render_class: i32::from(
-                        self.effects
-                            .iter()
-                            .any(|l| l.owner == 0 && l.effect.sas.script_class == 1),
-                    ),
-                    main: &self.assignments[0],
-                };
-                let draw = turn_draw(&self.effects[c].effect.sas.resources[r], &obj, None);
-                if let TurnDraw::Effect(file) = draw {
-                    let e = self.effect_for(gpu, vk, &file, 0);
-                    // VIEWPORTPIXELSIZE in a turn is its target's.
-                    let turn_scene = Scene {
-                        viewport: (turn.color.width(), turn.color.height()),
-                        ..scene.clone()
-                    };
-                    let input = DrawInput {
-                        scene: &turn_scene,
-                        owner: Some(0),
-                        offscreen_owner: Some(owner),
-                        ..base
-                    };
-                    skipped.extend(self.draw_model(gpu, e, &turn, &input));
-                }
-            }
-        }
-
-        // The scene: a post effect draws the objects at its ScriptExternal; without one the
-        // objects draw into the back buffer after the host's clear.
-        target.clear_turn(gpu, Some(scene.background), 1.0, true);
-        let objects: Vec<usize> = (0..self.effects.len())
-            .filter(|&i| {
-                let l = &self.effects[i];
-                l.owner == 0
-                    && l.path == self.assignments[0].effect
-                    && l.effect.sas.script_class != 1
-            })
-            .collect();
-        let posts: Vec<usize> = (0..self.effects.len())
-            .filter(|&i| {
-                let l = &self.effects[i];
-                l.path == self.assignments[l.owner].effect && l.effect.sas.script_class == 1
-            })
-            .collect();
-        if posts.is_empty() {
-            for &e in &objects {
-                let input = DrawInput {
-                    owner: Some(0),
-                    ..base
-                };
-                skipped.extend(self.draw_model(gpu, e, target, &input));
-            }
-        }
-        for p in posts {
-            // The post effect leaves the list while it runs, so that the scene draw can borrow the
-            // object effects.
-            let mut post = self.effects.remove(p);
-            let objects: Vec<usize> = objects
-                .iter()
-                .map(|&e| if e > p { e - 1 } else { e })
-                .collect();
-            let input = DrawInput {
-                scene: scene_of(post.owner),
-                owner: Some(post.owner),
-                ..base
-            };
-            let mut inner = Vec::new();
-            let r = post
-                .effect
-                .frame_with_scene(gpu, target, &input, &mut |_, t| {
-                    for &e in &objects {
-                        let input = DrawInput {
-                            owner: Some(0),
-                            ..base
-                        };
-                        inner.extend(self.draw_model(gpu, e, t, &input));
-                    }
-                });
-            self.effects.insert(p, post);
-            skipped.extend(r.skipped);
-            skipped.extend(inner);
-        }
-        for l in &mut self.effects {
-            l.effect.tick_animes(gpu, scene.time);
-        }
-        skipped
+        let mut log = Vec::new();
+        self.host.render(gpu, vk, &f, &mut log)
     }
 }
 
 /// Renders `name` from frame 0 to its last probed frame and calls `at` after each probed frame
-/// with the image, the skipped draws, and [`Host::host_drawn`]. Returns the wgpu errors.
+/// with the image, the skipped draws, and [`Staged::old_host_mask`]. Returns the wgpu errors.
 fn run_scene(
     gpu: &Gpu,
     vk: &Vkd3d,
-    host: &mut Host,
+    staged: &mut Staged,
     frames: &[u32],
-    mut at: impl FnMut(&Host, u32, Vec<u8>, Vec<String>, Vec<bool>),
+    mut at: impl FnMut(&Staged, u32, Vec<u8>, Vec<String>, Vec<bool>),
 ) -> Vec<String> {
-    let mut physics = PhysicsScene::new(&host.pmm, scene_file).unwrap();
-    let target = Target::new(gpu, (W, H));
+    let mut physics = PhysicsScene::new(&staged.pmm, scene_file).unwrap();
     let ((), errors) = gpu.scoped(|| {
         // The render while the app loads: the frame before frame 0 in edit mode, which makes
         // ELAPSEDTIME 0 at frame 0.
-        host.render(gpu, vk, &target, 0, 0.0, &physics);
+        staged.render(gpu, vk, 0, 0.0, &physics);
         for f in 0..=*frames.iter().max().unwrap() {
             if f > 0 {
                 physics.step().unwrap();
             }
             let elapsed = if f == 0 { 0.0 } else { 1.0 / 30.0 };
-            let skipped = host.render(gpu, vk, &target, f, elapsed, &physics);
+            let skipped = staged.render(gpu, vk, f, elapsed, &physics);
             if frames.contains(&f) {
-                let drawn = host.host_drawn(&physics, f);
-                at(host, f, target.read(gpu).unwrap(), skipped, drawn);
+                let old = staged.old_host_mask(&physics, f);
+                let px = staged.host.target().unwrap().read(gpu).unwrap();
+                at(staged, f, px, skipped, old);
             }
         }
     });
@@ -680,7 +393,12 @@ fn close(a: f32, b: f32) -> bool {
     (a - b).abs() <= VALUE_TOL * b.abs().max(1.0)
 }
 
-fn compare_inputs(scene: &str, host: &Host, probe: &Probe, out: &mut InputScore) {
+/// A path to compare loaded effects by: the file itself, else as it is spelled.
+fn canonical(p: &Path) -> PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+fn compare_inputs(scene: &str, host: &Staged, probe: &Probe, out: &mut InputScore) {
     let at = format!("{scene}-{}", probe.frame);
     let assigned: Vec<(String, String)> = host
         .pmm
@@ -710,10 +428,12 @@ fn compare_inputs(scene: &str, host: &Host, probe: &Probe, out: &mut InputScore)
         ));
     }
     for pe in &probe.effects {
+        let file = canonical(&local(&pe.path, &host.stage, &host.corpus));
         let Some(l) = host
-            .effects
+            .host
+            .effects()
             .iter()
-            .find(|l| l.path.eq_ignore_ascii_case(&pe.path))
+            .find(|l| canonical(&l.file) == file)
         else {
             out.failures.push(format!("{at}: {} not loaded", pe.path));
             continue;
@@ -883,8 +603,8 @@ fn scenes_match_the_cpp_probes_and_images() {
     let png_dir = std::env::var_os("MDS_MMERT_PNG_DIR").map(PathBuf::from);
     let mut inputs = InputScore::default();
     let mut table = vec![format!(
-        "{:<14} {:>7} {:>9} {:>4} {:>7} {:>5}  gated",
-        "image", "pixels", "within 4", "max", "mean", "flat"
+        "{:<14} {:>7} {:>9} {:>4} {:>7} {:>5} {:>7} {:>7}  gated",
+        "image", "pixels", "within 4", "max", "mean", "flat", "masked", "before"
     )];
     let mut pixel_failures = Vec::new();
     let mut by_scene: BTreeMap<&str, bool> = BTreeMap::new();
@@ -898,13 +618,13 @@ fn scenes_match_the_cpp_probes_and_images() {
             }
             None => PathBuf::new(),
         };
-        let mut host = Host::new(&gpu, &vk, name, &stage, &corpus);
+        let mut staged = Staged::new(&gpu, name, &stage, &corpus);
         let errors = run_scene(
             &gpu,
             &vk,
-            &mut host,
+            &mut staged,
             frames,
-            |host, f, px, skipped, drawn| {
+            |host, f, px, skipped, old_mask| {
                 let probe = parse_probe(
                     &std::fs::read_to_string(mmegold().join(format!("{name}-{f}.mme.txt")))
                         .unwrap(),
@@ -916,18 +636,24 @@ fn scenes_match_the_cpp_probes_and_images() {
                 }
                 let gold = read_png(&mmegold().join(format!("{name}-{f}.png")));
                 let image = format!("{name}-{f}");
-                let mask: Vec<bool> = mask.iter().zip(&drawn).map(|(a, b)| a | b).collect();
                 let s = score(&px, &gold, &mask, &image, png_dir.as_deref());
+                let before = mask
+                    .iter()
+                    .zip(&old_mask)
+                    .filter(|(a, b)| **a || **b)
+                    .count();
                 let pass = s.passes();
                 let gated = name != "ray" && PIXEL_GATED.contains(&name);
                 *by_scene.entry(name).or_insert(true) &= pass;
                 table.push(format!(
-                    "{image:<14} {:>7} {:>9.5} {:>4} {:>7.3} {:>5}  {}{}",
+                    "{image:<14} {:>7} {:>9.5} {:>4} {:>7.3} {:>5} {:>7} {:>7}  {}{}",
                     s.pixels,
                     s.close,
                     s.max,
                     s.mean,
                     s.flat,
+                    (W * H) as usize - s.pixels,
+                    before,
                     if gated { "yes" } else { "no" },
                     if pass { "" } else { " (fails)" }
                 ));

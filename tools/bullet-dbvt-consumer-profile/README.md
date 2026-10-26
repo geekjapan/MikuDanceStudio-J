@@ -34,10 +34,16 @@ also saved as bytes before comparison.
 A measured Rust mismatch produces `observation=complete`, `compatibility=FAIL`,
 `classification=compatibility-mismatch`, and a nonzero exit after capture.
 An unknown branch, malformed capture, or unfinished Rust test run produces a validation gap.
+Compiler exits, signals, parser failures, and configuration failures produce a validation gap.
 Process launch failures and timeouts produce an environment failure. Neither is a pass.
 
 The report includes source, input, capture, and archive SHA-256 hashes, native target,
 compiler arguments and version, Rust version, and a compiler-environment allowlist.
+Source hashes cover the local compiled closure, including DBVT, pair cache, math,
+`mds-crtmath`, native sources, manifests, lockfiles, and diagnostic sources.
+The report records hashes before execution and on completion or failure. A changed
+source manifest invalidates the observation. `check.log` is excluded explicitly
+because its caller may still be writing it. The receipt itself is excluded too.
 The full environment is never dumped. The ordinary archive is also copied to the artifact directory.
 
 ## Reproduction
@@ -60,3 +66,27 @@ fast, and artifacts upload even when compatibility fails. Workflow configuration
 alone does not establish any host result. Default Windows compatibility may fail
 because Rust currently selects SSE semantics by target OS while the actual consumer
 may select generic semantics. This diagnostic reports that discrepancy without changing product behavior.
+
+## Capture regression
+
+`comparison_result` requires all eleven unique Rust tests to complete. Only the
+three named native comparisons may fail with their matching semantic assertion
+markers. The directed Select marker belongs only to the assertion against native
+events. The target-profile assertion and parser errors remain validation gaps.
+The receipt records Select, AABB, directed Select, controlled corpus, and ordinary
+corpus results separately, even when compatibility fails.
+
+Replay downloaded artifacts from run `40416359576` without rebuilding:
+
+```sh
+python3 tools/bullet-dbvt-consumer-profile/replay.py \
+  --artifacts /path/to/artifacts --out-dir /path/to/replay
+```
+
+The artifact directory contains `arm`, `x64`, `mac`, and `win` subdirectories.
+Replay preserves the original captures. It requires the original Windows output
+to remain a validation gap. A separate regression adds only the new assertion
+marker to that captured failure and checks complete/FAIL with both corpus
+comparisons passing. This models the diagnostic change and is not a new Windows
+execution. Replay also checks early compiler and signal failures, source mutation
+on success and failure, and finalized artifact hashes.

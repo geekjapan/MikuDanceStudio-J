@@ -39,7 +39,10 @@ fn directed_select_association_matches_native() {
         .filter(|s| !s.is_empty())
         .map(|s| s.parse().unwrap())
         .collect();
-    assert_eq!(events, expected);
+    assert_eq!(
+        events, expected,
+        "DBVT_COMPATIBILITY_MISMATCH directed Select native"
+    );
     assert_eq!(
         events,
         if cfg!(windows) {

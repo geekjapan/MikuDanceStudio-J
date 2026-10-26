@@ -82,6 +82,12 @@ def validate_aabb(data):
 
 
 
+def validate_select(data):
+    text = data.decode('ascii')
+    if not re.fullmatch(r'(?:[0-9]+,){3}\r?\n', text) or sorted(map(int, text.strip().split(',')[:-1])) != [1, 2, 3]:
+        raise ValueError('malformed Rust directed Select capture')
+
+
 def validate_native(data, inputs):
     rows = data.decode('ascii').splitlines()
     operations = inputs.decode('ascii').splitlines()
@@ -144,26 +150,70 @@ def validate_native(data, inputs):
             raise ValueError('unexpected native event')
 
 
+COMPARISON_TESTS = {
+    'dbvt::tests::native_controlled_address_parity': ('controlled_corpus', 'order '),
+    'dbvt::tests::ordinary_native_and_production_allocator_query_sets': ('ordinary_corpus', 'operation '),
+    'select::directed_select_association_matches_native': ('directed_select', 'directed Select native'),
+}
+REQUIRED_TESTS = set(COMPARISON_TESTS) | {
+    'dbvt::tests::' + name for name in (
+        'merge_preserves_right_operand_zero_and_nan_bits',
+        'one_free_box_is_reused_and_dead_slots_stay_bounded',
+        'native_empty_partition_regression_terminates',
+        'large_finite_optimization_subprocess',
+        'production_address_order_and_query_sets',
+        'production_sort_rotates_by_actual_box_address',
+        'zero_center_split_falls_back_without_changing_leaves',
+        'optimization_unwind_subprocess',
+    )
+}
+
+
 def comparison_result(tests):
     text = tests.stdout.decode('utf-8', errors='strict')
-    summaries = re.findall(r'^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored; \d+ measured; (\d+) filtered out;', text, re.M)
+    summaries = re.findall(r'^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured; (\d+) filtered out;', text, re.M)
     outcomes = re.findall(r'^test ([\w:]+) \.\.\. (ok|FAILED)$', text, re.M)
-    required = {'dbvt::tests::native_controlled_address_parity', 'dbvt::tests::ordinary_native_and_production_allocator_query_sets'}
-    if len(summaries) != 1 or not required <= {name for name, _ in outcomes}:
-        raise ValueError('Rust comparison did not complete its test run')
-    status, passed, failed, ignored, filtered = summaries[0]
-    failed_names = [name for name, outcome in outcomes if outcome == 'FAILED']
-    if int(ignored) or int(filtered) or int(passed) + int(failed) != len(outcomes) or int(failed) != len(failed_names):
+    if (len(summaries) != 1 or len(outcomes) != len(REQUIRED_TESTS)
+            or {name for name, _ in outcomes} != REQUIRED_TESTS):
+        raise ValueError('Rust comparison did not complete all eleven required tests')
+    status, passed, failed, ignored, measured, filtered = summaries[0]
+    failed_names = {name for name, outcome in outcomes if outcome == 'FAILED'}
+    if (int(ignored) or int(measured) or int(filtered)
+            or int(passed) + int(failed) != len(outcomes) or int(failed) != len(failed_names)):
         raise ValueError('incomplete Rust comparison results')
-    if tests.returncode == 0 and status == 'ok' and not failed_names:
-        return True
-    panics = re.findall(r"^thread '[^']+'(?: \([0-9]+\))? panicked at [^\n]+:\n([^\n]+)", text, re.M)
+    panics = re.findall(r"^thread '([^']+)'(?: \([0-9]+\))? panicked at [^\n]+:\n([^\n]+)", text, re.M)
+    if text.count(' panicked at ') != len(panics):
+        raise ValueError('unrecognized Rust panic transport')
+    result = {key: name not in failed_names for name, (key, _) in COMPARISON_TESTS.items()}
+    if tests.returncode == 0 and status == 'ok' and not failed_names and not panics:
+        return result
     marker = 'assertion `left == right` failed: DBVT_COMPATIBILITY_MISMATCH '
     if (tests.returncode == 101 and status == 'FAILED' and failed_names
-            and set(failed_names) <= required and len(panics) == len(failed_names)
-            and all(line.startswith(marker) for line in panics)):
-        return False
+            and failed_names <= COMPARISON_TESTS.keys() and len(panics) == len(failed_names)
+            and {name for name, _ in panics} == failed_names
+            and all(line.startswith(marker + COMPARISON_TESTS[name][1]) for name, line in panics)):
+        return result
     raise ValueError('Rust failure is not an identified compatibility comparison')
+
+
+def source_manifest():
+    paths = [
+        'recipes/bullet275/bullet-src/src', 'rust/crates/mds-bullet-sys',
+        'rust/crates/mds-crtmath', 'rust/crates/mds-bullet/src/core/dbvt.rs',
+        'rust/crates/mds-bullet/src/core/math.rs', 'rust/crates/mds-bullet/src/core/pair_cache.rs',
+        'rust/Cargo.toml', 'rust/Cargo.lock', 'rust/rust-toolchain.toml',
+        'tools/bullet-rust-dbvt-check', 'tools/bullet-dbvt-consumer-profile',
+    ]
+    files = subprocess.check_output(
+        ['git', 'ls-files', '--cached', '--others', '--exclude-standard', '-z', *paths],
+        cwd=ROOT).decode().split('\0')
+    return {p: digest(ROOT / p) for p in sorted(files) if p and (ROOT / p).is_file()}
+
+
+def artifact_manifest(out):
+    # check.log belongs to the caller and can still be open when this report is written.
+    excluded = ('report.json', 'check.log')
+    return {p.name: digest(p) for p in sorted(out.iterdir()) if p.is_file() and p.name not in excluded}
 
 
 def run(argv, out, name, *, check=True, **kwargs):
@@ -190,6 +240,7 @@ def main():
     target_dir = out / 'target'
     env = dict(os.environ, MDS_BT_CONSUMER_PROBE_OUT=str(out))
     try:
+        report['source_start_sha256'] = source_manifest()
         for key in ('MDS_BT_SYSTEM_MATH', 'MDS_BT_ASAN'):
             if env.get(key) not in (None, '', '0'):
                 raise ValueError(f'{key} must be disabled')
@@ -221,6 +272,7 @@ def main():
         (out / 'original-select-stdout.log').write_bytes(native_select)
         validate_native(native_select, directed)
         rust_select = run([exe, 'select'], out, 'rust-select').stdout
+        validate_select(rust_select)
         expected = b'2,3,1,' if inline[0]['Select'] == 'generic' else b'3,2,1,'
         if native_select.splitlines()[-1].split(b'|')[-1] != expected:
             raise ValueError('Select branch disagrees with native behavior')
@@ -238,22 +290,28 @@ def main():
             native = run([exe, 'oracle', str(order)], out, f'native-{order}', input=inputs).stdout
             validate_native(native, inputs)
             (out / f'native-{order}.tsv').write_bytes(native)
-        tests = run(['rustup', 'run', '1.95.0', 'cargo', 'test', '--locked', '--release', '--manifest-path', OLD / 'Cargo.toml'], out, 'rust-tests', check=False, env=dict(os.environ, DBVT_FIXTURES=str(out)))
-        corpus_matches = comparison_result(tests)
-        report['observation'] = 'complete'
         report['comparisons'] = dict(select=rust_select.strip() == expected,
-                                     aabb=native_aabb.splitlines() == rust_aabb.splitlines(),
-                                     corpus=corpus_matches)
+                                     aabb=native_aabb.splitlines() == rust_aabb.splitlines())
+        tests = run(['rustup', 'run', '1.95.0', 'cargo', 'test', '--locked', '--release', '--manifest-path', OLD / 'Cargo.toml'], out, 'rust-tests', check=False, env=dict(os.environ, DBVT_FIXTURES=str(out)))
+        test_matches = comparison_result(tests)
+        report['observation'] = 'complete'
+        report['comparisons'].update(test_matches)
+        report['comparisons']['corpus'] = test_matches['controlled_corpus'] and test_matches['ordinary_corpus']
         report['compatibility'] = 'PASS' if all(report['comparisons'].values()) else 'FAIL'
         report['classification'] = 'compatible' if report['compatibility'] == 'PASS' else 'compatibility-mismatch'
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
         report['failure'] = str(error)
-        report['classification'] = 'environment-failure' if isinstance(error, (OSError, RuntimeError, subprocess.TimeoutExpired)) else 'validation-gap'
+        report['classification'] = 'environment-failure' if isinstance(error, (OSError, subprocess.TimeoutExpired)) else 'validation-gap'
     finally:
-        files = subprocess.check_output(['git', 'ls-files', '--cached', '--others', '--exclude-standard', '-z', 'recipes/bullet275/bullet-src/src', 'rust/crates/mds-bullet-sys', 'rust/crates/mds-bullet/src/core/dbvt.rs', 'tools/bullet-rust-dbvt-check', 'tools/bullet-dbvt-consumer-profile'], cwd=ROOT).decode().split('\0')
-        report['source_sha256'] = {p: digest(ROOT / p) for p in files if p and (ROOT / p).is_file()}
+        report['source_sha256'] = source_manifest()
+        report['source_unchanged'] = report.get('source_start_sha256') == report['source_sha256']
+        if not report['source_unchanged']:
+            report.update(observation='incomplete', compatibility='not-evaluated',
+                          classification='validation-gap', failure='source changed during observation')
         report['input_sha256'] = {p.name: digest(p) for p in out.glob('*inputs.tsv')}
-        report['artifact_sha256'] = {p.name: digest(p) for p in out.iterdir() if p.is_file() and p.name != 'report.json'}
+        report['artifact_sha256'] = artifact_manifest(out)
+        report['artifact_hash_exclusions'] = {'report.json': 'receipt written after manifest',
+                                              'check.log': 'caller-owned orchestration log may still be open'}
         report['capture_sha256'] = {p.name: digest(p) for p in out.glob('*.stdout')}
         (out / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
         print(json.dumps({k: report[k] for k in ('observation', 'compatibility', 'target')}, indent=2))

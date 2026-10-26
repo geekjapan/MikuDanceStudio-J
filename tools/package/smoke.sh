@@ -67,6 +67,6 @@ grep -q '^Pmd0 = anime.fx' "$dir/mme/anime.emm"
         bash /smoke/run.sh --inside /smoke Vulkan "vulkaninfo --summary 2>/dev/null | grep -E \"deviceName|driverName|driverInfo|deviceType\""' ;;
   esac
   echo "== compare.py out golden swing600-golden $FRAMES"
-  python3 -I "$here/compare.py" "$dir/out" "$fx/golden" swing600-golden $FRAMES || true
+  python3 -I "$here/compare.py" "$dir/out" "$fx/golden" swing600-golden $FRAMES
 } 2>&1 | tee "$log"
 grep -q '^golden rule' "$log"

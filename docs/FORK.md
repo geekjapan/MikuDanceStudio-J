@@ -78,7 +78,7 @@ git merge upstream/main
 | 範囲 | ライセンス |
 |---|---|
 | 下の行に挙げたもの以外のすべて。上流から受け継いだコード、それを変更したコード、上流の C++ を移植した `rust/crates/mds-formats`、`mds-scene`、`mds-edit`、`mds-pose` を含みます | ライセンス保留 |
-| `rust/`（上の 4 crate と `mds-crtmath` を除く）、`tools/fixtures/`、`tools/oracle/`、`tools/orchestrate/`、`tools/rust/`、`tools/vkd3d/`、`tools/windows/`、`tests/fixtures/rust/`、`docs/FORK.md`、`docs/RUST_MIGRATION_PLAN.md`、`docs/RUST_WAVE2_PLAN.md`、`docs/prototypes/` | [MIT](../LICENSE-MIT) |
+| `rust/`（上の 4 crate と `mds-crtmath` を除く）、`tools/fixtures/`、`tools/oracle/`、`tools/orchestrate/`、`tools/package/`、`tools/rust/`、`tools/vkd3d/`、`tools/windows/`、`tests/fixtures/rust/`、`docs/FORK.md`、`docs/PACKAGING.md`、`licenses/` のこのフォーク独自の文書と生成用メタデータ（第三者の文書とライセンス保留部分を除く）、`docs/RUST_MIGRATION_PLAN.md`、`docs/RUST_WAVE2_PLAN.md`、`docs/prototypes/` | [MIT](../LICENSE-MIT) |
 | `rust/crates/mds-crtmath`。AMD AOCL-LibM（BSD-3-Clause）の翻訳を含み、AMD の表示は crate の README にあります | MIT AND BSD-3-Clause |
 
 [LICENSE](../LICENSE) は上流のファイルを、文面を変えずにそのまま残しています。

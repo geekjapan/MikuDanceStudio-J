@@ -44,7 +44,7 @@ scp -q "$host:$fwd/smoke/out/*.png" "$out/smoke-windows/out/"
   tr -d '\r' <"$out/smoke-windows/smoke.log"
   echo "== compare.py out golden swing600-golden $FRAMES (on $(uname -sm))"
   python3 -I "$repo/tools/package/compare.py" "$out/smoke-windows/out" \
-    "$repo/tests/fixtures/rust/golden" swing600-golden $FRAMES || true
-} | tee "$out/smoke-windows.log"
+    "$repo/tests/fixtures/rust/golden" swing600-golden $FRAMES
+} 2>&1 | tee "$out/smoke-windows.log"
 echo "archive $out/$name.zip $(wc -c <"$out/$name.zip" | tr -d ' ') bytes"
 grep -q '^golden rule' "$out/smoke-windows.log"

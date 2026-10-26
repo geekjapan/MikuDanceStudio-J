@@ -96,6 +96,12 @@ the commit. After a dependency change, run `licenses.py --fetch`, then
 commit `licenses/`. Run `mingw-copyright.sh` when the vkd3d Windows build
 changes its runtime DLLs.
 
+License generation also needs the pinned toolchain's `rust-docs` component,
+which the minimal Rust profile does not install. From `rust/`, run
+`rustup component add rust-docs` if it is missing. Generated files are staged
+before replacement, so a missing input leaves the previous generated files
+intact. The cached `fetched/` and `mingw-runtime/` notices are preserved.
+
 ## Smoke test
 
 `tools/package/smoke.sh <archive>` (macOS, Linux) and `smoke.ps1` (Windows,
@@ -120,6 +126,12 @@ packages. Docker on the Mac has no GPU, so wgpu runs on Mesa lavapipe
 `error: XDG_RUNTIME_DIR is invalid or not set` there while wgpu probes the
 window systems; the dumps do not need one. The logs are
 `<out>/smoke-<platform>.log`.
+
+A comparison failure or interrupted comparator makes the shell script fail;
+its output and diagnostics remain in the log. Run the local gate checks with
+`python3 -I tools/package/test_smoke.py` and
+`python3 -I tools/package/test_licenses.py`. They use temporary directories
+and stand-ins, without builds, GPUs, containers, or Windows host access.
 
 ## Unverified
 

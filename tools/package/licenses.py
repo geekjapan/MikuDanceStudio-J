@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -140,7 +141,7 @@ def copy(src, dst):
     shutil.copyfile(src, dst)
 
 
-def vkd3d():
+def vkd3d(root):
     tmp = os.environ.get("TMPDIR", "/tmp").rstrip("/")
     tarball = Path(os.environ.get("MDS_VKD3D_OUT", f"{tmp}/mds-vkd3d")) / "dl/vkd3d-2.1.tar.xz"
     build = (REPO / "tools/vkd3d/build.sh").read_text()
@@ -150,7 +151,7 @@ def vkd3d():
         die(f"{tarball} missing; run tools/vkd3d/build.sh")
     if hashlib.sha256(tarball.read_bytes()).hexdigest() != sha:
         die(f"{tarball} is not the tarball of tools/vkd3d/build.sh")
-    out = OUT / "vkd3d"
+    out = root / "vkd3d"
     with tarfile.open(tarball) as t:
         for name in ["LICENSE", "COPYING", "AUTHORS"]:
             (out / name).parent.mkdir(parents=True, exist_ok=True)
@@ -170,27 +171,28 @@ def vkd3d():
         "<https://github.com/geekjapan/MikuDanceStudio-J>, under `tools/vkd3d/`.\n")
 
 
-def crtmath():
+def crtmath(root):
     readme = (REPO / "rust/crates/mds-crtmath/README.md").read_text()
     m = re.search(r"## License\n.*?```\n(.*?)```", readme, re.S)
     if not m:
         die("no AOCL-LibM notice in rust/crates/mds-crtmath/README.md")
-    out = OUT / "mds-crtmath/AOCL-LibM.txt"
+    out = root / "mds-crtmath/AOCL-LibM.txt"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("rust/crates/mds-crtmath contains constants, tables, and algorithms translated "
                    "from AMD AOCL-LibM 5.3.2, which is under this notice "
                    "(rust/crates/mds-crtmath/README.md):\n\n" + m.group(1))
 
 
-def rust_std():
+def rust_std(root):
     sysroot = subprocess.run(["rustc", "--print", "sysroot"], cwd=REPO / "rust", check=True,
                              capture_output=True, text=True).stdout.strip()
     doc = Path(sysroot) / "share/doc/rust"
-    if not (doc / "COPYRIGHT-library.html").is_file():
-        die(f"{doc}/COPYRIGHT-library.html missing")
-    copy(doc / "COPYRIGHT-library.html", OUT / "rust/COPYRIGHT-library.html")
+    if not (doc / "COPYRIGHT-library.html").is_file() or not (doc / "licenses").is_dir():
+        die(f"Rust license documentation missing in {doc}; "
+            "run `rustup component add rust-docs` from rust/ for the pinned toolchain")
+    copy(doc / "COPYRIGHT-library.html", root / "rust/COPYRIGHT-library.html")
     for f in sorted((doc / "licenses").iterdir()):
-        copy(f, OUT / "rust/licenses" / f.name)
+        copy(f, root / "rust/licenses" / f.name)
 
 
 def main():
@@ -218,23 +220,32 @@ def main():
     if missing:
         die("crates without a license text (run licenses.py --fetch):\n  " + "\n  ".join(missing))
 
-    for g in GENERATED:
-        t = OUT / g
-        shutil.rmtree(t) if t.is_dir() else t.unlink(missing_ok=True)
+    if not (OUT / "mingw-runtime").is_dir():
+        die("licenses/mingw-runtime missing; run tools/package/mingw-copyright.sh")
+    with tempfile.TemporaryDirectory(prefix=".licenses-", dir=OUT.parent) as tmp:
+        staged = Path(tmp)
+        write(staged, rows, texts)
+        for g in GENERATED:
+            t = OUT / g
+            shutil.rmtree(t) if t.is_dir() else t.unlink(missing_ok=True)
+            shutil.move(staged / g, t)
+    print(f"licenses.py: {len(rows)} crates, {len(texts)} distinct texts, "
+          f"{sum(r[4] == 'fetched' for r in rows)} from repositories")
+
+
+def write(out, rows, texts):
     for src, dst in [("LICENSE", "LICENSE"), ("LICENSE-MIT", "LICENSE-MIT"),
                      ("docs/FORK.md", "FORK.md"),
                      ("recipes/bullet275/LICENSE.txt", "bullet-2.75/LICENSE.txt")]:
-        copy(REPO / src, OUT / dst)
-    vkd3d()
-    crtmath()
-    rust_std()
-    if not (OUT / "mingw-runtime").is_dir():
-        die("licenses/mingw-runtime missing; run tools/package/mingw-copyright.sh")
-    with open(OUT / "crates.tsv", "w") as f:
+        copy(REPO / src, out / dst)
+    vkd3d(out)
+    crtmath(out)
+    rust_std(out)
+    with open(out / "crates.tsv", "w") as f:
         f.write("name\tversion\tlicense\trepository\ttext from\tfiles\n")
         for r in rows:
             f.write("\t".join(r) + "\n")
-    with open(OUT / "THIRD-PARTY.txt", "wb") as f:
+    with open(out / "THIRD-PARTY.txt", "wb") as f:
         f.write(f"License texts of the {len(rows)} third-party crates mds-app is built from "
                 "(crates.tsv). Each text is given once, after the crates and files it comes "
                 "from.\n".encode())
@@ -242,7 +253,7 @@ def main():
             f.write(b"\n" + b"=" * 78 + b"\n")
             f.write("".join(f"{u}\n" for u in users).encode())
             f.write(b"-" * 78 + b"\n" + data.rstrip(b"\n") + b"\n")
-    (OUT / "README.md").write_text(
+    (out / "README.md").write_text(
         "# Licenses\n\n"
         "Written by `tools/package/licenses.py`; every package carries this folder.\n\n"
         "| Path | What |\n|---|---|\n"
@@ -259,8 +270,7 @@ def main():
         f"| `crates.tsv`, `THIRD-PARTY.txt` | The {len(rows)} third-party crates and their "
         "license texts. |\n"
         "| `fetched/` | Texts of crates that publish none, from their repositories. |\n")
-    print(f"licenses.py: {len(rows)} crates, {len(texts)} distinct texts, "
-          f"{sum(r[4] == 'fetched' for r in rows)} from repositories")
 
 
-main()
+if __name__ == "__main__":
+    main()

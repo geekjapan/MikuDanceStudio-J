@@ -25,6 +25,7 @@ subject to the following restrictions:
 
 #![forbid(unsafe_code)]
 
+pub mod axis_sweep;
 pub mod body;
 pub mod contact;
 pub mod joint_coordinates;

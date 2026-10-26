@@ -114,6 +114,12 @@ jobs:
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/bullet-native/pair-cache"
           python3 tools/bullet-rust-pair-cache-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/pair-cache" 2>&1 | tee "$RUNNER_TEMP/bullet-native/pair-cache/check.log"
+      - name: Recapture 32-bit axis sweep and compare every frozen operation
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/bullet-native/axis-sweep"
+          python3 tools/bullet-rust-axis-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/axis-sweep" 2>&1 | tee "$RUNNER_TEMP/bullet-native/axis-sweep/check.log"
       - name: Save native recaptures and evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

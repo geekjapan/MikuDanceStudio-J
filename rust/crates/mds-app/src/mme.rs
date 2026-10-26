@@ -121,14 +121,17 @@ pub fn live(doc: &Document) -> Vec<Live> {
 }
 
 /// An effect path as an EMM or the assignment stores it, on this system: `\` as the separator,
-/// relative to `dir`.
+/// relative to `dir`, with the case-insensitive lookup of Windows.
 pub fn effect_file(dir: &Path, stored: &str) -> PathBuf {
     let native = stored.replace('\\', std::path::MAIN_SEPARATOR_STR);
     let windows_rooted = stored.as_bytes().get(1) == Some(&b':');
-    match Path::new(&native).is_absolute() || windows_rooted {
+    let path = match Path::new(&native).is_absolute() || windows_rooted {
         true => PathBuf::from(native),
         false => dir.join(native),
-    }
+    };
+    let root = path.ancestors().last().unwrap_or(Path::new("."));
+    let relative = path.strip_prefix(root).unwrap().to_string_lossy();
+    mds_fx::preprocess::resolve_ci(root, &relative).unwrap_or(path)
 }
 
 /// The `.emm` beside a PMM (`MmeBuildEmmPathForPmm`).
@@ -179,7 +182,7 @@ impl Mme {
             if a.effect.is_empty() {
                 let object = crate::scene::resolve(&self.dir, &l.path);
                 a.effect = emm::effect_for_model(&object.to_string_lossy(), "", &|p| {
-                    Path::new(p).is_file()
+                    effect_file(Path::new(""), p).is_file()
                 });
             }
         }
@@ -480,7 +483,74 @@ fn key(l: &Live) -> (bool, i32, String) {
 /// A reader of the texture names a file at `file` stores (relative to its folder, `\` or `/`).
 fn beside(file: &Path) -> impl FnMut(&str) -> Option<Vec<u8>> + '_ {
     let folder = file.parent().unwrap_or(Path::new("."));
-    move |name| std::fs::read(folder.join(name.replace('\\', "/"))).ok()
+    move |name| std::fs::read(effect_file(folder, name)).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effect_paths_and_texture_reader_match_windows_case() {
+        let dir = std::env::temp_dir().join(format!("mds-mme-paths-{}", std::process::id()));
+        let materials = dir.join("Materials");
+        std::fs::create_dir_all(&materials).unwrap();
+        let effect = materials.join("Material_2.0.fx");
+        std::fs::write(&effect, b"effect").unwrap();
+        let texture = materials.join("Diffuse.PNG");
+        std::fs::write(&texture, b"texture").unwrap();
+        let model = materials.join("material_2.0.pmx");
+        std::fs::write(&model, b"").unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../tests/fixtures/rust/mmegold/control.pmm");
+        let mut doc = Document::load(&std::fs::read(fixture).unwrap(), |_| None).unwrap();
+        doc.pmm.models[0].path.text = model.to_string_lossy().into_owned();
+        let mme = Mme::autoload(&doc, None);
+        assert!(!mme.assignments[0].effect.is_empty());
+        assert_eq!(
+            effect_file(Path::new(""), &mme.assignments[0].effect),
+            effect
+        );
+
+        assert_eq!(effect_file(&dir, "Materials/Material_2.0.fx"), effect);
+        assert_eq!(effect_file(&dir, "materials\\material_2.0.FX"), effect);
+        assert_eq!(
+            effect_file(&dir, "materials/../MATERIALS/material_2.0.fx"),
+            effect
+        );
+        let absolute = dir.join("materials/material_2.0.FX");
+        assert_eq!(
+            effect_file(Path::new("unused"), absolute.to_str().unwrap()),
+            effect
+        );
+        assert_eq!(
+            beside(&effect)("..\\materials\\diffuse.png"),
+            Some(b"texture".to_vec())
+        );
+        assert_eq!(beside(&effect)("missing.png"), None);
+        assert_eq!(
+            effect_file(&dir, "missing\\effect.fx"),
+            dir.join("missing/effect.fx")
+        );
+        assert_eq!(
+            effect_file(&dir, "C:\\missing\\effect.fx"),
+            PathBuf::from("C:/missing/effect.fx")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn effect_paths_prefer_exact_case_then_deterministic_fallback() {
+        let dir = std::env::temp_dir().join(format!("mds-mme-path-case-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["Effect.fx", "effect.fx"] {
+            std::fs::write(dir.join(name), name).unwrap();
+        }
+        assert_eq!(effect_file(&dir, "effect.fx"), dir.join("effect.fx"));
+        assert_eq!(effect_file(&dir, "EFFECT.FX"), dir.join("Effect.fx"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
 
 /// Shared toon files are application data, independently of the object's folder.

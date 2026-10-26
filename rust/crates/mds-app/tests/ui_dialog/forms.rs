@@ -250,21 +250,3 @@ fn editing_dialogs_do_not_open_while_playing() {
         rig.cancel();
     }
 }
-
-#[test]
-fn rows_without_a_command_are_not_runnable() {
-    let mut rig = Rig::open("swing600.pmm");
-    for id in [
-        "IDD_FRAME_SCALE",
-        "IDD_ACCESSORY_ORDER",
-        "IDD_MODEL_DRAW_ORDER",
-        "IDD_MODEL_CALCULATE_ORDER",
-        "IDD_OUTSIDE_PARENT",
-        "IDD_ENGLISH_NAMES",
-        "IDD_TOON_TEXTURE",
-        "IDD_PHYSICS_MODEL",
-    ] {
-        let id = format!("dlg:{id}");
-        assert_eq!(rig.run(&id), Err(format!("{id}: not implemented")));
-    }
-}

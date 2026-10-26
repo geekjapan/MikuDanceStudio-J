@@ -29,7 +29,7 @@ def main():
     src = ROOT / 'recipes/bullet275/bullet-src/src'
     shim = ROOT / 'rust/crates/mds-bullet-sys/shim'
     crt = ROOT / 'rust/crates/mds-crtmath/src/lib.rs'
-    run(['rustc', '--edition=2021', '--crate-name', 'mds_crtmath', '--crate-type', 'staticlib',
+    run(['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--crate-name', 'mds_crtmath', '--crate-type', 'staticlib',
          '-O', crt, '-o', output / 'libmds_crtmath.a'], env=environment)
     shapes = src / 'BulletCollision/CollisionShapes'
     native_sources = [shapes / f'{name}.cpp' for name in [
@@ -56,10 +56,10 @@ def main():
         fixture.write_bytes(captured)
     if fixture.read_bytes() != captured:
         raise SystemExit('Native shape output differs from checked-in fixture')
-    run(['rustc', '--edition=2021', '--crate-name', 'mds_crtmath', '--crate-type', 'rlib',
+    run(['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--crate-name', 'mds_crtmath', '--crate-type', 'rlib',
          '-O', crt, '-o', output / 'libmds_crtmath.rlib'], env=environment)
-    run(['rustc', '--edition=2021', '--test', '-O',
-         ROOT / 'rust/crates/mds-bullet/tests/shapes.rs', '--extern',
+    run(['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--test', '-D', 'warnings', '-O',
+         ROOT / 'rust/crates/mds-bullet/tests/pure_bullet.rs', '--extern',
          f'mds_crtmath={output / "libmds_crtmath.rlib"}', '-o', output / 'rust-shapes'], env=environment)
     run([output / 'rust-shapes'], env=environment)
     print(f'Native fixture and pure Rust agree for {len(captured.splitlines())} shape cases.')

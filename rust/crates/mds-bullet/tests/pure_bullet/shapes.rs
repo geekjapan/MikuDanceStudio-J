@@ -1,18 +1,10 @@
-//! Standalone native-free check against actual Bullet shape output.
-#[allow(dead_code)]
-#[path = "../src/core/mod.rs"]
-mod core;
-#[path = "../src/core/shape.rs"]
-mod shape;
-
-use core::math;
-use math::{Basis, Quat, Transform, Vec3};
-use shape::Shape;
+use super::core::math::{Basis, Quat, Transform, Vec3};
+use super::core::shape::Shape;
 
 #[test]
 fn shape_float_words_match_native_bullet() {
     let mut count = 0;
-    for line in include_str!("shape_data/native.tsv").lines() {
+    for line in include_str!("../shape_data/native.tsv").lines() {
         let columns: Vec<_> = line.split('\t').collect();
         let id: usize = columns[0].parse().unwrap();
         let kind: i32 = columns[1].parse().unwrap();

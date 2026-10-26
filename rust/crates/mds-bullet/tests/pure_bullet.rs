@@ -6,6 +6,8 @@ mod core;
 mod math_vectors;
 #[path = "support/pilot_cases.rs"]
 mod pilot_cases;
+#[path = "pure_bullet/shapes.rs"]
+mod shapes;
 
 use core::body::FreeBody;
 use core::math::{Quat, Vec3};

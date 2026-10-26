@@ -11,8 +11,8 @@ The check compiles the actual vendored Bullet sources and a native driver. It
 force-includes `mds-bullet-sys/shim/det_math.h`, puts `shim/sse_emu` first on the
 include path, disables fast math and contraction, and links the Rust UCRT math
 ports. It does not use system-math replacements or a previously built Bullet
-archive. Native outputs must match the fixture before the standalone Rust test
-runs. `--record` deliberately replaces the fixture with the new native capture.
+archive. Native outputs must match the fixture before the combined standalone Rust tests
+run. `--record` deliberately replaces the fixture with the new native capture.
 
 The driver calls each shape's constructor, dimension accessors, `getMargin`,
 `calculateLocalInertia`, and `getAabb`. It contains no translated shape formulas.
@@ -54,8 +54,8 @@ The source of truth is `recipes/bullet275/bullet-src/src`.
   mass/kinematic checks remain a body-boundary concern. `mds_mmd.cpp` passes raw
   dimensions to Bullet, so the pure core keeps raw typed constructors.
 
-`Shape` currently belongs to the native-free core migration. Its tests include
-it by path until the parent integrates `core/mod.rs`. No public World or MMD
+`Shape` belongs to the native-free core migration. `core/mod.rs` exports it, and
+its fixture check is a child of the combined `pure_bullet.rs` test executable. No public World or MMD
 facade is switched to this module by this change. Local scaling, shape mutation,
 contacts, support mapping, collision dispatch, and world dynamics are outside
 this unit. Bullet's retained zlib notice lives in `core/mod.rs`; this is an

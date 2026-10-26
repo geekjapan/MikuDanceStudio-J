@@ -1,8 +1,11 @@
-//! Native-free Bullet 2.75 migration pilot. Not yet connected to the public World.
+//! Native-free Bullet 2.75 migration core. Not yet connected to the public World.
 //!
 //! Altered Rust translation of the vendored Bullet sources, including local
-//! changes. Local patch ancestry is pending audit. This translation retains the
-//! Bullet zlib license below; it is not an MIT relicensing of Bullet.
+//! changes. Pilot math/body/time operations were compared with stock Bullet 2.75
+//! non-x86 branches. New math (including solver SSE dot) and shape inertia include
+//! vendored local patches whose ancestry remains pending audit, as do unported
+//! vendored ranges. This translation retains
+//! the Bullet zlib license below; it is not an MIT relicensing of Bullet.
 /*
 Bullet Continuous Collision Detection and Physics Library
 Copyright (c) 2003-2009 Erwin Coumans  http://bulletphysics.org
@@ -24,6 +27,7 @@ subject to the following restrictions:
 
 pub mod body;
 pub mod math;
+pub mod shape;
 pub mod time;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -6,7 +6,12 @@ Run the focused native and native-free gate on macOS or Linux with Clang, Python
 python3 tools/bullet-rust-math-check/check.py
 ```
 
-The script compiles only `mds-crtmath` and the C++ header oracle. It compares the native output with `rust/crates/mds-bullet/tests/data/math-native-bits.tsv`, then runs the standalone Rust math and free-body pilot tests. It does not build `mds-bullet-sys`, the application, or the workspace. Compiler outputs use an isolated temporary directory. Pass `--work-dir PATH` to place that directory under an assigned evidence store.
+The script compiles only `mds-crtmath` and the C++ header oracle. It compares the native output with `rust/crates/mds-bullet/tests/data/math-native-bits.tsv`, then runs the combined standalone Rust math, shape and free-body pilot tests. It does not build `mds-bullet-sys`, the application, or the workspace. Compiler outputs use an isolated temporary directory. Pass `--work-dir PATH` to place that directory under an assigned evidence store.
+
+To run only the frozen-fixture Rust checks on any supported host, including
+Windows x64, use `python3 tools/bullet-rust-math-check/check.py --rust-only`.
+This mode builds only the `mds-crtmath` rlib and the combined test executable.
+It does not invoke C++, build scripts, Cargo, or `mds-bullet-sys`.
 
 To replace the fixture after an intentional native behavior change, pass `--record`. Review the fixture change before accepting it.
 

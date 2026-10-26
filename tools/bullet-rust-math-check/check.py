@@ -12,7 +12,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--record", action="store_true", help="replace the committed native bit fixture")
     parser.add_argument("--work-dir", type=Path, help="parent for isolated compiler outputs")
+    parser.add_argument("--rust-only", action="store_true", help="test frozen fixtures without a C++ compiler")
     args = parser.parse_args()
+    if args.rust_only and args.record:
+        parser.error("--record requires the native oracle")
     root = Path(__file__).resolve().parents[2]
     if args.work_dir:
         args.work_dir.mkdir(parents=True, exist_ok=True)
@@ -25,24 +28,25 @@ def main():
         def run(command):
             subprocess.run([str(x) for x in command], cwd=rust, env=env, check=True)
 
-        run([*rustc, "--edition=2021", "--crate-name", "mds_crtmath", "--crate-type", "rlib,staticlib",
+        run([*rustc, "--edition=2021", "--crate-name", "mds_crtmath", "--crate-type", "rlib" if args.rust_only else "rlib,staticlib",
              "-C", "opt-level=2", "--out-dir", work, "crates/mds-crtmath/src/lib.rs"])
-        shim = root / "rust/crates/mds-bullet-sys/shim"
-        executable = work / "oracle"
-        native_libraries = ["-ldl", "-lpthread", "-lm"] if platform.system() == "Linux" else []
-        run([os.environ.get("CXX", "clang++"), "-std=c++11", "-O2", "-ffp-contract=off",
-             "-fno-fast-math", "-fdeclspec", "-w", "-I", shim / "sse_emu",
-             "-I", root / "recipes/bullet275/bullet-src/src", "-include", shim / "det_math.h",
-             root / "tools/bullet-rust-math-check/oracle.cpp", work / "libmds_crtmath.a",
-             "-o", executable, *native_libraries])
-        actual = subprocess.check_output([str(executable)], env=env)
-        fixture = root / "rust/crates/mds-bullet/tests/data/math-native-bits.tsv"
-        if args.record:
-            fixture.write_bytes(actual)
-        if actual != fixture.read_bytes():
-            raise SystemExit("native oracle differs from committed bit fixture")
-        print(f"Native fixture matched: {len(actual.splitlines())} rows on {platform.platform()}", flush=True)
-        test = work / "pure_bullet"
+        if not args.rust_only:
+            shim = root / "rust/crates/mds-bullet-sys/shim"
+            executable = work / "oracle"
+            native_libraries = ["-ldl", "-lpthread", "-lm"] if platform.system() == "Linux" else []
+            run([os.environ.get("CXX", "clang++"), "-std=c++11", "-O2", "-ffp-contract=off",
+                 "-fno-fast-math", "-fdeclspec", "-w", "-I", shim / "sse_emu",
+                 "-I", root / "recipes/bullet275/bullet-src/src", "-include", shim / "det_math.h",
+                 root / "tools/bullet-rust-math-check/oracle.cpp", work / "libmds_crtmath.a",
+                 "-o", executable, *native_libraries])
+            actual = subprocess.check_output([str(executable)], env=env)
+            fixture = root / "rust/crates/mds-bullet/tests/data/math-native-bits.tsv"
+            if args.record:
+                fixture.write_bytes(actual)
+            if actual != fixture.read_bytes():
+                raise SystemExit("native oracle differs from committed bit fixture")
+            print(f"Native fixture matched: {len(actual.splitlines())} rows on {platform.platform()}", flush=True)
+        test = work / ("pure_bullet.exe" if os.name == "nt" else "pure_bullet")
         run([*rustc, "--edition=2021", "--test", "-D", "warnings", "-C", "opt-level=2", "--extern",
              f"mds_crtmath={work / 'libmds_crtmath.rlib'}", "crates/mds-bullet/tests/pure_bullet.rs",
              "-o", test])

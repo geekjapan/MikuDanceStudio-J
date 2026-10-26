@@ -211,6 +211,7 @@ struct PipelineKey {
     pass: usize,
     buffer: bool,
     cull: u32,
+    z_func: wgpu::CompareFunction,
     colors: [Option<wgpu::TextureFormat>; 4],
     depth: Option<wgpu::TextureFormat>,
 }
@@ -293,7 +294,8 @@ impl Effect {
     }
 
     /// `MmeAnimeTick`: each animated texture shows the frame of its `SeekVariable` or of the
-    /// host frame clock `frame_time`.
+    /// host frame clock `frame_time` (`GetCurrentFrameTime`, seconds). The host calls it after
+    /// the frame's draws, as `OnEndScene` does, so a frame draws what the previous tick chose.
     pub fn tick_animes(&mut self, gpu: &Gpu, frame_time: f32) {
         for a in &mut self.animes {
             let time = a
@@ -566,7 +568,7 @@ impl Effect {
                 format,
                 depth_write_enabled: Some(z && st.z_write),
                 depth_compare: Some(if z {
-                    st.z_func
+                    key.z_func
                 } else {
                     wgpu::CompareFunction::Always
                 }),
@@ -1263,18 +1265,32 @@ impl Run<'_> {
             scene: self.input.scene,
             material,
             draw_type: self.input.draw_type,
+            subsets: self.input.geometry.map_or(0, |(m, _)| m.materials.len()),
         };
         bind::bind_semantics(&self.effect.sas.fx.params, &mut self.effect.values, &draw);
 
         let colors = self.dev.colors();
         let depth = self.dev.depth_view(self.gpu);
         let program = self.effect.programs[tech][pass].as_ref().unwrap();
-        let cull = if buffer { 1 } else { program.states.cull };
+        // The device state the host leaves for the draw: MikuMikuDance's edge preamble sets
+        // CULLMODE CW and ZFUNC LESS (`model_renderers.cpp`), the other passes CCW and LESSEQUAL.
+        let edge = self.input.draw_type == bind::DRAW_EDGE;
+        let cull = if buffer {
+            1
+        } else {
+            program.states.cull.unwrap_or(if edge { 2 } else { 3 })
+        };
+        let z_func = program.states.z_func.unwrap_or(if edge {
+            wgpu::CompareFunction::Less
+        } else {
+            wgpu::CompareFunction::LessEqual
+        });
         let key = PipelineKey {
             tech,
             pass,
             buffer,
             cull,
+            z_func,
             colors: colors.map(|s| s.map(|i| self.dev.surfaces[i].format)),
             depth: depth.as_ref().map(|d| d.1),
         };

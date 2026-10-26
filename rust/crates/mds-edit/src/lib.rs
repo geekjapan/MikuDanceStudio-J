@@ -15,11 +15,10 @@
 //! [`Error::Corrupt`] or stops, instead of indexing out of bounds or looping.
 //!
 //! The fixed-axis twist correction calls the D3DX quaternion functions
-//! through `mds-math`. The operations that take an [`Extra`] (the `*_with`
-//! ones and [`Tracks::paste_bones`]) get the bone fields and UI state beyond
-//! [`Rig`] that the twist correction and the pose of a bone with a rigid
-//! body read. The operations without it return [`Error::Unsupported`] on
-//! those two paths.
+//! through `mds-math`. The bone operations take an [`Extra`]: the bone
+//! fields and UI state beyond [`Rig`] that the twist correction and the pose
+//! of a bone with a rigid body read. An [`Extra`] without the bone returns
+//! [`Error::Unsupported`] on those two paths.
 //!
 //! Not ported: undo and redo bookkeeping and the overflow message boxes (the
 //! operations return [`Error::Full`]).

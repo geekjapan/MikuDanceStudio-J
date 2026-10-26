@@ -532,28 +532,49 @@ pub(crate) fn paste(pmm: &mut Pmm, clip: &GlobalClipboard) -> Result<(), Error> 
         }
     }
     for c in &clip.accessories {
-        // `PasteAccessoryKeyRecord` (accessory_paste.cpp): a slot with no
-        // accessory is skipped.
-        let frame = at(pmm, c.frame);
-        let Ok(a) = accessory(pmm, c.slot) else {
-            continue;
-        };
-        let r = insert(&mut a.keys, frame, false, |k| {
-            k.opacity_visible = c.opacity_visible;
-            k.shadow = c.shadow;
-            k.parent_model = c.parent_model;
-            k.parent_bone = c.parent_bone;
-            k.position = c.position;
-            k.rotation = c.rotation;
-            k.scale = c.scale;
-            k.selected = 1;
-        })
-        .map(|p| bump(pmm, p, frame));
-        if note(r) {
+        if note(paste_accessory(pmm, c, c.slot)) {
             break;
         }
     }
     first
+}
+
+/// `PasteAccessoryKeyRecord` (`src/window/accessory_paste.cpp` 202-263) of
+/// one copied key onto the accessory in `slot`, at the current frame plus
+/// the key's offset. A slot with no accessory is skipped.
+fn paste_accessory(pmm: &mut Pmm, c: &AccessoryClip, slot: u8) -> Result<(), Error> {
+    let frame = c.frame.wrapping_add(pmm.timeline.current_frame as u32);
+    let Ok(a) = accessory(pmm, slot) else {
+        return Ok(());
+    };
+    let r = insert(&mut a.keys, frame, false, |k| {
+        k.opacity_visible = c.opacity_visible;
+        k.shadow = c.shadow;
+        k.parent_model = c.parent_model;
+        k.parent_bone = c.parent_bone;
+        k.position = c.position;
+        k.rotation = c.rotation;
+        k.scale = c.scale;
+        k.selected = 1;
+    })?;
+    bump(pmm, r, frame);
+    Ok(())
+}
+
+/// The camera-mode path of menu 250 (`command_file_menu.cpp` 1596-1637):
+/// every global mark cleared, then each copied accessory key onto the
+/// selected accessory until one fails. No undo entry.
+pub(crate) fn paste_onto_selected_accessory(
+    pmm: &mut Pmm,
+    clip: &GlobalClipboard,
+) -> Result<(), Error> {
+    let slot = pmm.selected_accessory_slot;
+    accessory(pmm, slot)
+        .map_err(|_| Error::NotApplicable("Please select accessary (a message box)"))?;
+    clear_selection(pmm);
+    clip.accessories
+        .iter()
+        .try_for_each(|c| paste_accessory(pmm, c, slot))
 }
 
 /// `UnlinkGlobalKey` / `UnlinkAccessoryKey`: writes through both links, so

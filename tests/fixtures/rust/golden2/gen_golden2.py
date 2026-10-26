@@ -243,7 +243,9 @@ def model_bytes(slot, m):
     o += i32(len(morphs)) + b"".join(sjis_str(n[0]) for n in morphs)
     o += i32(len(iks)) + b"".join(i32(i) for i in iks)
     o += i32(len(sels)) + b"".join(i32(i) for i in sels)
-    o += u8(slot, 1) + i32(0) + i32(0, 0, 0, 0) + u8(groups) + u8(*[1] * groups)
+    # draw order (1-based, as the app writes it: combo item 0 is camera mode),
+    # load complete
+    o += u8(slot + 1, 1) + i32(0) + i32(0, 0, 0, 0) + u8(groups) + u8(*[1] * groups)
     o += i32(0) + u32(LAST_FRAME)
     o += g.track_bytes(bone_heads, bone_pool, g.pack_bone_key)
     o += g.track_bytes(morph_heads, morph_pool, g.pack_morph_key)
@@ -302,7 +304,8 @@ def build_pmm(models, camera_keys, light_keys, shadow_keys, perspective=1,
     accessories under self-shadow, and 1.0 is the app's start-up value. picture: (file name, scale) or
     None."""
     o = bytearray(b"Polygon Movie maker 0002" + b"\0" * 6)
-    o += i32(1280, 720, 244) + f32(30.0) + u8(0, 1, 0, 0, 0, 0, 0)
+    # camera mode on, so the camera keys play with a model selected
+    o += i32(1280, 720, 244) + f32(30.0) + u8(1, 1, 0, 0, 0, 0, 0)
     o += u8(0, len(models))
     for slot, m in enumerate(models):
         o += model_bytes(slot, m)

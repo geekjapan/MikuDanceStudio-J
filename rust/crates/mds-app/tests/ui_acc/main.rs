@@ -316,8 +316,7 @@ fn the_panel_buttons_keep_the_state_outside_the_scene() {
     assert_eq!(editor.doc.save().unwrap(), saved);
 }
 
-/// Drawing the panel changes nothing in the scene, and the unfinished rows are the two the
-/// document cannot do.
+/// Drawing the panel changes nothing in the scene.
 #[test]
 fn drawing_the_panel_leaves_the_scene_alone() {
     let mut editor = scene();
@@ -343,13 +342,106 @@ fn drawing_the_panel_leaves_the_scene_alone() {
     }
     assert_eq!(editor.doc.save().unwrap(), saved);
     assert!(!editor.modified);
-    let missing: Vec<_> = ["ctl:473", "ctl:477"]
-        .into_iter()
-        .filter(|id| actions::find(id).is_none())
-        .collect();
-    assert_eq!(missing, ["ctl:473", "ctl:477"]);
     assert!(matches!(
         actions::find("ctl:478").unwrap().handler,
         Handler::Inline
     ));
+}
+
+/// Check box 477 toggles `additiveBlend` of the selected accessory and no other field
+/// (`command_panel_toggles.cpp:554`).
+#[test]
+fn the_additive_box_toggles_one_flag() {
+    let mut editor = scene();
+    let slot = tri(&editor);
+    with_ctx(&mut editor, None, |ctx| panel::select(ctx, slot).unwrap());
+    let before = state(&editor);
+    assert_eq!(before.additive, 0);
+    let saved = editor.doc.save().unwrap();
+    with_ctx(&mut editor, None, |ctx| ctx.run("ctl:477"));
+    let on = state(&editor);
+    assert_eq!(on.additive, 1);
+    assert_eq!(
+        (
+            on.opacity_visible,
+            on.shadow,
+            on.scale,
+            on.position,
+            on.rotation
+        ),
+        (
+            before.opacity_visible,
+            before.shadow,
+            before.scale,
+            before.position,
+            before.rotation
+        )
+    );
+    assert_ne!(editor.doc.save().unwrap(), saved);
+    with_ctx(&mut editor, None, |ctx| ctx.run("ctl:477"));
+    assert_eq!(editor.doc.save().unwrap(), saved);
+}
+
+/// Button 473 (`DeleteSelectedAccessory`, `command_panel_toggles.cpp:222` to `:321`): the selected
+/// accessory and its keys go, the orders above close up, and the accessory of order 0 becomes the
+/// selected one.
+#[test]
+fn delete_removes_the_accessory_and_its_keys() {
+    let mut editor = scene();
+    with_ctx(&mut editor, None, |ctx| {
+        panel::load_file(ctx, ".\\tri2.x", &fixtures().join("script/inputs/tri.x")).unwrap()
+    });
+    let slots: Vec<u8> = editor.doc.pmm.accessories.iter().map(|a| a.slot).collect();
+    assert_eq!(slots.len(), 2);
+    with_ctx(&mut editor, None, |ctx| {
+        panel::select(ctx, slots[0]).unwrap();
+        ctx.run("ctl:487");
+        assert_eq!(ctx.status, "");
+        panel::select(ctx, slots[1]).unwrap();
+    });
+    let before = editor.doc.pmm.accessories[1].clone();
+    assert_eq!(before.order, 1);
+    with_ctx(&mut editor, None, |ctx| {
+        panel::select(ctx, slots[0]).unwrap();
+        ctx.run("ctl:473");
+        assert_eq!(ctx.status, "");
+    });
+    let left = &editor.doc.pmm.accessories;
+    assert_eq!(left.len(), 1);
+    assert_eq!((left[0].slot, left[0].order), (slots[1], 0));
+    assert_eq!(editor.doc.pmm.selected_accessory_slot, slots[1]);
+    assert!(editor.modified);
+    let reloaded = mds_doc::Document::load(&editor.doc.save().unwrap(), |_| None).unwrap();
+    assert_eq!(reloaded.pmm.accessories.len(), 1);
+    assert_eq!(reloaded.pmm.accessories[0].slot, slots[1]);
+
+    with_ctx(&mut editor, None, |ctx| ctx.run("ctl:473"));
+    assert!(editor.doc.pmm.accessories.is_empty());
+    let saved = editor.doc.save().unwrap();
+    with_ctx(&mut editor, None, |ctx| {
+        ctx.run("ctl:473");
+        ctx.run("ctl:477");
+        assert!(ctx.status.contains("no accessory selected"));
+    });
+    assert_eq!(editor.doc.save().unwrap(), saved, "nothing to delete");
+}
+
+#[test]
+fn delete_and_additive_refuse_while_playing() {
+    let mut editor = scene();
+    editor.toggle_play(0).unwrap();
+    for id in ["ctl:473", "ctl:477"] {
+        let mut status = String::new();
+        let r = mds_app::actions::run(
+            &mut Ctx {
+                editor: &mut editor,
+                now_ms: 0,
+                egui: None,
+                viewport: None,
+                status: &mut status,
+            },
+            id,
+        );
+        assert_eq!(r, Err(format!("{id}: not while playing")));
+    }
 }

@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 
 use mds_doc::{Document, ModelFile};
 use mds_mmert::emm::{self, Assignment, Live};
-use mds_mmert::host::{Frame, Host, Source};
+use mds_mmert::host::{Frame, Host, OffscreenTarget, Source};
+use mds_mmert::scene::Offscreen;
 use mds_mmert::Gpu;
 use mds_physics::PhysicsScene;
 use mds_render::Camera;
@@ -66,6 +67,10 @@ pub struct Mme {
     pub default: String,
     /// The folder relative effect paths resolve against (the PMM's).
     dir: PathBuf,
+    /// The mapping dialog's edits of the offscreen targets (`SasResource::effectOverrides` and
+    /// `shownOverrides`). They outlive the effects loading again, which the dialog's every edit
+    /// causes here; Reload All clears them.
+    pub offscreen: Offscreen,
     /// The MME log (the log window, 40002).
     pub log: RefCell<Vec<String>>,
     /// The device, the compiler and the loaded effects, built at the first MME frame.
@@ -138,6 +143,7 @@ impl Mme {
             objects: Vec::new(),
             default: String::new(),
             dir: dir.to_path_buf(),
+            offscreen: Offscreen::new(),
             log: RefCell::new(Vec::new()),
             runtime: RefCell::new(None),
             failed: Cell::new(false),
@@ -231,6 +237,14 @@ impl Mme {
         }
     }
 
+    /// The offscreen targets of the loaded effects, the tabs of the mapping dialog.
+    pub fn offscreen_targets(&self) -> Vec<OffscreenTarget> {
+        self.runtime
+            .borrow()
+            .as_ref()
+            .map_or_else(Vec::new, |r| r.host.offscreen_targets())
+    }
+
     /// How many effects are loaded (assigned ones and those of the offscreen turns).
     pub fn loaded(&self) -> usize {
         self.runtime
@@ -253,13 +267,22 @@ impl Mme {
     /// the new list, the meshes load again.
     pub fn objects_changed(&mut self, doc: &Document) {
         let old = std::mem::take(&mut self.assignments);
-        self.assignments = live(doc)
+        let was: Vec<Option<usize>> = live(doc)
             .iter()
-            .map(|l| match self.objects.iter().position(|o| *o == key(l)) {
-                Some(i) => old[i].clone(),
-                None => Assignment::default(),
-            })
+            .map(|l| self.objects.iter().position(|o| *o == key(l)))
             .collect();
+        self.assignments = was
+            .iter()
+            .map(|i| i.map_or_else(Assignment::default, |i| old[i].clone()))
+            .collect();
+        for objects in self.offscreen.values_mut() {
+            let old = std::mem::take(objects);
+            for (now, i) in was.iter().enumerate() {
+                if let Some(o) = i.and_then(|i| old.get(&i)) {
+                    objects.insert(now, o.clone());
+                }
+            }
+        }
         self.assign_beside(doc);
         self.unload();
     }
@@ -350,6 +373,7 @@ impl Mme {
             elapsed: view.elapsed,
             size: (view.size[0], view.size[1]),
             assignments: &self.assignments,
+            offscreen: &self.offscreen,
             resolve: &resolve,
         };
         let mut log = Vec::new();

@@ -64,6 +64,7 @@ fn a_posed_model_draws_in_its_pose() {
             elapsed: 0.0,
             size: (W, H),
             assignments: &assignments,
+            offscreen: &Default::default(),
             resolve: &resolve,
         };
         let mut log = Vec::new();
@@ -115,6 +116,7 @@ fn draw_with_objects_fx(
         elapsed: 0.0,
         size: (W, H),
         assignments: &assignments,
+        offscreen: &Default::default(),
         resolve: &resolve,
     };
     let mut log = Vec::new();

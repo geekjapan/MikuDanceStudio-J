@@ -40,12 +40,22 @@ pub struct Material {
     pub specular: [f32; 3],
     pub power: f32,
     pub edge_color: [f32; 4],
+    /// `UseTexture`: the material has a main texture that loaded (`GetTexture`, read from the
+    /// texture stages: a file that did not load binds none).
     pub has_texture: bool,
-    /// PMX sphere mode: 0 off, 1 multiply, 2 add, 3 sub-texture.
+    /// PMX sphere mode: 0 off, 1 multiply, 2 add, 3 sub-texture; 0 when the sphere did not load.
     pub sphere_mode: u8,
+    /// `UseToon` (`IsToonUsed`): every model material, no accessory's.
     pub toon: bool,
+    /// The main texture and sphere files the material names, relative to the object's folder;
+    /// [`Model::loaded`] drops the flags of those that do not load.
+    pub texture: Option<String>,
+    pub sphere: Option<String>,
     /// The material draws its edge (the PMX flag 0x10, the PMD edge byte).
     pub edge: bool,
+    /// Both sides of the faces draw, as `mds-render` culls: the PMX flag 0x01 or a diffuse alpha
+    /// below 1.
+    pub double_sided: bool,
     /// An accessory's `D3DMATERIAL9` (diffuse, ambient, specular, emissive), which
     /// `ExpGetAcsMaterial` returns in place of the fields above.
     pub accessory: Option<[[f32; 4]; 4]>,
@@ -83,6 +93,10 @@ impl Model {
                 _ => return Err(format!("index {i} is outside the {n} vertices")),
             }
         }
+        let tex = |i: i32| {
+            let t = usize::try_from(i).ok().and_then(|i| pmx.textures.get(i))?;
+            nonempty(&t.text)
+        };
         let mut start = 0u32;
         let mut materials = Vec::new();
         for m in &pmx.materials {
@@ -90,6 +104,13 @@ impl Model {
             if (start + count) as usize > indices.len() {
                 return Err("a material reaches past the index list".into());
             }
+            // pmx_load.cpp:627-646: the sphere is used only with a mode.
+            let texture = tex(m.texture);
+            let sphere = if m.sphere_mode != 0 {
+                tex(m.sphere)
+            } else {
+                None
+            };
             materials.push(Material {
                 diffuse: m.diffuse,
                 mirror: m.diffuse,
@@ -97,10 +118,13 @@ impl Model {
                 specular: m.specular,
                 power: m.specular_power,
                 edge_color: m.edge_color,
-                has_texture: m.texture >= 0,
-                sphere_mode: if m.sphere >= 0 { m.sphere_mode } else { 0 },
-                toon: m.shared_toon != 0 || m.toon >= 0,
+                has_texture: texture.is_some(),
+                sphere_mode: if sphere.is_some() { m.sphere_mode } else { 0 },
+                toon: true,
+                texture,
+                sphere,
                 edge: m.flags & 0x10 != 0,
+                double_sided: m.flags & 0x01 != 0 || m.diffuse[3] < 1.0,
                 accessory: None,
                 start,
                 count,
@@ -110,8 +134,10 @@ impl Model {
         Ok(Model::new(device, &data, &indices, materials))
     }
 
-    /// A PMD model in its bind pose. Its texture name splits as an accessory's does
-    /// (`name*map.sph`); every PMD material draws with a toon (the file has no switch).
+    /// A PMD model in its bind pose. Its texture field is `texture*sphere` (`pmd_load.cpp:296`):
+    /// the sphere multiplies when its name has `.sph` or `.SPH`, else adds
+    /// (`model_renderers.cpp:551`); a field without `*` is a sphere alone when it has `.sph` or
+    /// `.spa` (`:521`, `:527`), else the texture. Every PMD material draws with a toon.
     pub fn from_pmd(device: &wgpu::Device, pmd: &Pmd) -> Result<Model, String> {
         let mut data = Vec::with_capacity(pmd.vertices.len() * VERTEX_FLOATS);
         for v in &pmd.vertices {
@@ -132,9 +158,14 @@ impl Model {
             if (start + count) as usize > indices.len() {
                 return Err("a material reaches past the index list".into());
             }
-            let name = &m.texture.raw;
-            let name = &name[..name.iter().position(|&b| b == 0).unwrap_or(name.len())];
-            let (has_texture, sphere_mode) = texture_use(&TextureSlot::parse(Some(name)));
+            let field = m.texture.text.as_str();
+            let has = |n: &str, ext: &str| n.contains(ext) || n.contains(&ext.to_uppercase());
+            let (texture, sphere, mode) = match field.split_once('*') {
+                Some((t, s)) => (nonempty(t), nonempty(s), if has(s, ".sph") { 1 } else { 2 }),
+                None if has(field, ".sph") => (None, nonempty(field), 1),
+                None if has(field, ".spa") => (None, nonempty(field), 2),
+                None => (nonempty(field), None, 0),
+            };
             materials.push(Material {
                 diffuse: m.diffuse,
                 mirror: m.diffuse,
@@ -142,10 +173,13 @@ impl Model {
                 specular: m.specular,
                 power: m.specular_power,
                 edge_color: [0.0, 0.0, 0.0, 1.0],
-                has_texture,
-                sphere_mode,
+                has_texture: texture.is_some(),
+                sphere_mode: if sphere.is_some() { mode } else { 0 },
                 toon: true,
+                texture,
+                sphere,
                 edge: m.edge != 0,
+                double_sided: m.diffuse[3] < 1.0,
                 accessory: None,
                 start,
                 count,
@@ -179,7 +213,7 @@ impl Model {
                 }
                 indices.extend(face);
             }
-            let (has_texture, sphere_mode) = texture_use(&m.texture);
+            let (texture, sphere, sphere_mode) = texture_use(&m.texture);
             materials.push(Material {
                 diffuse: m.diffuse,
                 mirror: m.ambient,
@@ -187,10 +221,13 @@ impl Model {
                 specular: [m.specular[0], m.specular[1], m.specular[2]],
                 power: m.power,
                 edge_color: [0.0; 4],
-                has_texture,
-                sphere_mode,
+                has_texture: texture.is_some(),
+                sphere_mode: if sphere.is_some() { sphere_mode } else { 0 },
                 toon: false,
+                texture,
+                sphere,
                 edge: false,
+                double_sided: false,
                 accessory: Some([m.diffuse, m.ambient, m.specular, m.emissive]),
                 start,
                 count: indices.len() as u32 - start,
@@ -219,6 +256,17 @@ impl Model {
         }
     }
 
+    /// Drops `UseTexture` and the sphere mode of the materials whose file `loaded` says did not
+    /// load.
+    pub fn loaded(&mut self, loaded: impl Fn(&str) -> bool) {
+        for m in &mut self.materials {
+            m.has_texture = m.texture.as_deref().is_some_and(&loaded);
+            if !m.sphere.as_deref().is_some_and(&loaded) {
+                m.sphere_mode = 0;
+            }
+        }
+    }
+
     /// The pose `skin` holds after `Skin::apply_morphs` and `Skin::update`: its vertex buffer
     /// (position, normal, uv and the additional uvs, padded to four) and its material values.
     pub fn update(&mut self, queue: &wgpu::Queue, skin: &Skin) {
@@ -240,15 +288,22 @@ impl Model {
     }
 }
 
-/// Whether a texture slot has a main texture, and its sphere mode as PMX numbers it.
-fn texture_use(t: &TextureSlot) -> (bool, u8) {
+fn nonempty(s: &str) -> Option<String> {
+    (!s.is_empty()).then(|| s.to_string())
+}
+
+/// An accessory's texture slot (`accessory.cpp:520-540`): its main texture, its sphere, and the
+/// sphere mode as PMX numbers it. `screen.bmp` is the capture texture (`:533`, `:162`), which the
+/// application creates only in screen capture mode, so it binds none here.
+fn texture_use(t: &TextureSlot) -> (Option<String>, Option<String>, u8) {
+    let (primary, sphere) = (nonempty(&t.primary.text), nonempty(&t.sphere.text));
     match t.kind {
-        TextureKind::Plain => (!t.primary.raw.is_empty(), 0),
-        TextureKind::SphereMultiply => (false, 1),
-        TextureKind::SphereAdd => (false, 2),
-        TextureKind::Screen => (true, 0),
-        TextureKind::SubMultiply => (true, 1),
-        TextureKind::SubAdd => (true, 2),
+        TextureKind::Plain => (primary, None, 0),
+        TextureKind::SphereMultiply => (None, primary, 1),
+        TextureKind::SphereAdd => (None, primary, 2),
+        TextureKind::Screen => (None, None, 0),
+        TextureKind::SubMultiply => (primary, sphere, 1),
+        TextureKind::SubAdd => (primary, sphere, 2),
     }
 }
 

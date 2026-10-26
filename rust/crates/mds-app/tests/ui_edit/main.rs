@@ -10,6 +10,7 @@ mod replay;
 #[allow(dead_code)]
 #[path = "../ui_view/rig.rs"]
 mod rig;
+mod shadow_slider;
 
 use mds_app::editor::Editor;
 use mds_app::ui::Ctx;

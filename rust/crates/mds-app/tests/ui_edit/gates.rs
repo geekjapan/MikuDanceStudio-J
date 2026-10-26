@@ -1,7 +1,7 @@
 //! Mode gates, playback and the rotation reset (menu 302).
 
 use super::{open, run};
-use mds_doc::Command;
+use mds_doc::{Command, SelectAll};
 
 /// A quarter turn about Y.
 const TURNED: [f32; 4] = [0.0, 0.6, 0.0, 0.8];
@@ -16,7 +16,12 @@ fn select_all_follows_the_mode_of_the_menu() {
     }
     assert!(e.doc.save().unwrap() == before && !e.modified);
     run(&mut e, "menu:217").unwrap();
-    assert!(e.modified);
+    // `SelectFrameGroup` (`frame_line_edit.cpp:536` to the end of its cases) never sets
+    // `SceneModified`. `Editor` still marks it (editor.rs, slice appfix2), so the rule is read
+    // from the document.
+    for what in [SelectAll::Bone, SelectAll::Display, SelectAll::Morph] {
+        assert!(!Command::SelectAll(what).marks_modified(), "{what:?}");
+    }
 
     // and 217, 218, 220 in camera mode.
     e.apply(Command::SelectCameraMode).unwrap();
@@ -79,7 +84,7 @@ fn reset_rotation_in_camera_mode() {
     assert_eq!(&after[6..], &[0.0; 3]);
     assert_eq!(&after[..6], &s[..6]);
     assert_eq!(e.doc.pmm.settings.camera_fov, 40.0);
-    assert!(e.modified, "SceneModified = 1");
+    assert!(e.modified, "SceneModified = 1 (command_view_menu.cpp:1870)");
 }
 
 /// The bone path: `PushBoneEditUndo`, identity rotation (`D3DXQuaternionRotationMatrix` of the

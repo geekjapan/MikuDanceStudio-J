@@ -13,8 +13,8 @@
 //!   [`load_picture_path`] are the part after the dialog.
 //! * 216 and 233 show or hide them; showing needs a loaded file, and nothing happens without one.
 //! * 243 to 246 set the screen capture mode (`pmm.view.capture_mode`: 0 off, 1 full frame, 2 the
-//!   4:3 crop, 3 background refresh). `mds-doc` has no command for it, so the radio writes the
-//!   PMM's field; nothing reads it yet (the capture is the recorder's).
+//!   4:3 crop, 3 background refresh) through `Command::SetCaptureMode`; nothing reads it yet (the
+//!   capture is the recorder's).
 //!
 //! # What does not work yet
 //!
@@ -145,8 +145,7 @@ fn toggle_black(ctx: &mut Ctx) -> Result<(), String> {
 // ---- 243 to 246 ----
 
 fn capture(ctx: &mut Ctx, mode: i32) -> Result<(), String> {
-    ctx.editor.doc.pmm.view.capture_mode = mode;
-    Ok(())
+    ctx.editor.apply(Command::SetCaptureMode(mode))
 }
 
 // ---- 216, 233 ----

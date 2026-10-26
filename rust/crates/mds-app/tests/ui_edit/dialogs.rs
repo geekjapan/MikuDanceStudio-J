@@ -212,10 +212,13 @@ fn numeric_input_edits_the_camera() {
     assert_eq!(boxes(&rig), shown);
     edit::close(rig.egui.as_ref().unwrap());
 
-    // OK with nothing typed writes nothing.
+    // OK with nothing typed writes the camera's own values back and still sets `SceneModified`
+    // (`command_view_menu.cpp:1771`).
     let before = rig.editor.doc.save().unwrap();
     rig.answer("menu:300", &[]).unwrap();
-    assert!(rig.editor.doc.save().unwrap() == before && !rig.editor.modified);
+    assert!(rig.editor.doc.save().unwrap() == before);
+    assert!(rig.editor.modified);
+    rig.editor.modified = false;
 
     let s = rig.editor.doc.pmm.camera_state;
     let mut typed: Vec<&str> = shown.iter().map(String::as_str).collect();
@@ -228,7 +231,10 @@ fn numeric_input_edits_the_camera() {
     for i in [0, 1, 2, 3, 4, 7, 8] {
         assert_eq!(after[i], s[i], "camera_state[{i}]");
     }
-    assert!(rig.editor.modified);
+    assert!(
+        rig.editor.modified,
+        "SceneModified = 1 (command_view_menu.cpp:1771)"
+    );
 }
 
 /// The bone path opens only with a selected bone (`selectedBone == -1` returns first) and shows

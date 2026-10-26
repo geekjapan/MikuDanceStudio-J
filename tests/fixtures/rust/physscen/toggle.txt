@@ -1,0 +1,21 @@
+# The playback ON/OFF override (menu 271) forces mode 2 while playing: in
+# mode 1 and in mode 0, play 100..200 across the physics-off key of bone 髪2
+# at frame 120.
+settle 0
+load pmm swing600.pmm
+trace toggle.trace
+physics mode 1
+pump 3 33
+physics playback toggle
+play 100 200
+pump 30 33
+stop
+pump 1 33
+physics mode 0
+pump 3 33
+play 100 200
+pump 30 33
+stop
+pump 1 33
+physics playback toggle
+save pmm toggle.pmm

@@ -151,12 +151,15 @@ impl Editor {
             recording: None,
             camera: match model_view(&doc, &physics.scene.models) {
                 Some(c) => c,
-                None => view_camera(
-                    &doc,
-                    &physics.scene.models,
-                    true,
-                    scene::track_camera(&doc, current)?,
-                ),
+                None => {
+                    let (state, parent) = mds_render::scene::camera_with_parent_at(
+                        &doc.pmm,
+                        current,
+                        mds_scene::track::CameraMode::Seek,
+                    )
+                    .ok_or_else(|| format!("camera track at frame {current}"))?;
+                    view_camera(&doc, &physics.scene.models, true, state, parent)
+                }
             },
             options: Options::of(&doc.pmm.timeline),
             doc,
@@ -268,9 +271,16 @@ impl Editor {
         let camera_view = p.settings.options[0] != 0
             || a.follow_camera != 0 && (self.playing() || parent_selected);
         if camera_view {
-            let state = scene::track_camera(&self.doc, frame)?;
-            self.camera = view_camera(&self.doc, &self.physics.scene.models, true, state);
-        } else if a.follow_camera != 0 {
+            let mode = if self.playing() {
+                mds_scene::track::CameraMode::Playback
+            } else {
+                mds_scene::track::CameraMode::Seek
+            };
+            let (state, parent) =
+                mds_render::scene::camera_with_parent_at(&self.doc.pmm, frame, mode)
+                    .ok_or_else(|| format!("camera track at frame {frame}"))?;
+            self.camera = view_camera(&self.doc, &self.physics.scene.models, true, state, parent);
+        } else {
             self.camera = model_view(&self.doc, &self.physics.scene.models).unwrap_or(self.camera);
         }
         Ok(())
@@ -322,21 +332,8 @@ impl Editor {
             LoadWave { data, .. } => Some(Wave::from_bytes(data.clone())),
             _ => None,
         };
-        let (files, camera) = (Files::of(&self.doc), scene::state_camera(&self.doc));
-        let camera_mode = self.doc.pmm.settings.options[0];
-        let selection = matches!(cmd, SelectModel(_));
+        let files = Files::of(&self.doc);
         self.doc.apply(cmd).map_err(|e| e.to_string())?;
-        if (self.doc.pmm.settings.options[0] != camera_mode || selection) && !self.playing() {
-            // The other view: the camera state, or the model view about its reference point.
-            self.camera = model_view(&self.doc, &self.physics.scene.models).unwrap_or_else(|| {
-                view_camera(
-                    &self.doc,
-                    &self.physics.scene.models,
-                    true,
-                    scene::state_camera(&self.doc),
-                )
-            });
-        }
         if let Some(m) = physics_mode {
             // `ModelKinematicSync` of every model (`command_view_menu.cpp:1048` to `:1110`).
             self.physics.set_physics_mode(m)?;
@@ -383,21 +380,52 @@ impl Editor {
             self.modified |= dirty;
             self.assets.set_edge_scales(&self.doc);
             self.sync_keys()?;
-            let moved = scene::state_camera(&self.doc);
             if self.playing() {
                 return Ok(());
             }
             if follow {
                 self.physics.seek(self.current_frame());
                 self.follow_track(self.current_frame())?;
-            } else if moved != camera {
-                self.camera =
-                    model_view(&self.doc, &self.physics.scene.models).unwrap_or_else(|| {
-                        view_camera(&self.doc, &self.physics.scene.models, true, moved)
-                    });
             }
         }
+        if !self.playing() {
+            self.refresh_camera();
+        }
         Ok(())
+    }
+
+    /// Edit native controls before composing them with the live attachment and reference pivot.
+    pub fn edit_camera(&mut self, edit: impl FnOnce(&mut Camera)) -> Result<(), String> {
+        let mut camera = scene::state_camera(&self.doc);
+        edit(&mut camera);
+        self.apply(Command::SetCamera {
+            position: camera.target,
+            rotation: camera.rotation,
+            distance: camera.distance,
+            fov: camera.fov_deg,
+            perspective: camera.orthographic,
+        })?;
+        if self.playing() {
+            self.refresh_camera();
+        }
+        Ok(())
+    }
+
+    fn refresh_camera(&mut self) {
+        let p = &self.doc.pmm;
+        let a = &p.appearance;
+        let camera_view = p.settings.options[0] != 0
+            || a.follow_camera != 0
+                && (self.playing()
+                    || a.camera_parent_model >= 0
+                        && a.camera_parent_model == i32::from(p.selected_model_slot));
+        self.camera = view_camera(
+            &self.doc,
+            &self.physics.scene.models,
+            camera_view,
+            scene::state_camera(&self.doc),
+            [a.camera_parent_model, a.camera_parent_bone],
+        );
     }
 
     /// The world again from the document, after a new scene.
@@ -620,6 +648,9 @@ impl Editor {
     pub fn pump(&mut self, now_ms: u64) -> Result<(), String> {
         let result = self.pump_inner(now_ms);
         self.sync_physics_pose();
+        if result.is_ok() && !self.playing() {
+            self.refresh_camera();
+        }
         result
     }
 
@@ -864,6 +895,10 @@ fn model_view(doc: &Document, models: &[mds_pose::model::Model]) -> Option<Camer
         models,
         camera_view,
         scene::state_camera(doc),
+        [
+            p.appearance.camera_parent_model,
+            p.appearance.camera_parent_bone,
+        ],
     ))
 }
 
@@ -873,14 +908,15 @@ fn view_camera(
     models: &[mds_pose::model::Model],
     camera_view: bool,
     mut camera: Camera,
+    attachment: [i32; 2],
 ) -> Camera {
     use mds_math::Mat4;
     let p = &doc.pmm;
     let a = &p.appearance;
     let parent = models
         .iter()
-        .find(|m| i32::from(m.slot) == a.camera_parent_model)
-        .and_then(|m| m.bones.get(a.camera_parent_bone as usize));
+        .find(|m| i32::from(m.slot) == attachment[0])
+        .and_then(|m| m.bones.get(attachment[1] as usize));
     let point = |b: &mds_pose::model::Bone| {
         std::array::from_fn(|c| {
             b.mat_init.0[c] * b.position[0]

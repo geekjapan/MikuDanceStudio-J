@@ -14,14 +14,26 @@ use mds_scene::track::{
 /// reads 1 for an orthographic view in the golden scene (README of `tests/fixtures/rust/golden`).
 /// `None` when the track cannot be evaluated.
 pub fn camera_at(pmm: &Pmm, frame: u32) -> Option<Camera> {
-    let c = evaluate_camera(&pmm.camera, f64::from(frame), CameraMode::Seek)?;
-    Some(Camera {
-        target: c.position,
-        rotation: c.rotation,
-        distance: c.distance,
-        fov_deg: c.fov,
-        orthographic: c.perspective == 1,
-    })
+    camera_with_parent_at(pmm, frame, CameraMode::Seek).map(|(camera, _)| camera)
+}
+
+/// The same evaluated camera with the attachment pair of its active key.
+pub fn camera_with_parent_at(
+    pmm: &Pmm,
+    frame: u32,
+    mode: CameraMode,
+) -> Option<(Camera, [i32; 2])> {
+    let c = evaluate_camera(&pmm.camera, f64::from(frame), mode)?;
+    Some((
+        Camera {
+            target: c.position,
+            rotation: c.rotation,
+            distance: c.distance,
+            fov_deg: c.fov,
+            orthographic: c.perspective == 1,
+        },
+        [c.parent_model, c.parent_bone],
+    ))
 }
 
 /// The light at `frame`, from the PMM light track.

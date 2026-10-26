@@ -107,6 +107,7 @@ fn native_expected(d: &Document, selected: usize, s: [f32; 9]) -> Option<([f32; 
     let mut child = Process::new(exe)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     child

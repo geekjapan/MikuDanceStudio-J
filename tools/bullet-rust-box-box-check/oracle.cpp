@@ -15,7 +15,9 @@ static btTransform transform() { auto o=vector(); btMatrix3x3 b; for(int i=0;i<3
 static void word(float f) { unsigned u; std::memcpy(&u,&f,4); std::printf("\t%08x",u); }
 static void output(const btVector3& v) { for(int i=0;i<3;i++) word(v[i]); }
 static std::set<int> codes, polygons, candidates;
-void boxCoverage(int code,int n,int cnum) { codes.insert(code);polygons.insert(n);candidates.insert(cnum); }
+static int operation = 0;
+static bool trace = false;
+void boxCoverage(int code,int n,int cnum) { codes.insert(code);polygons.insert(n);candidates.insert(cnum); if(trace)std::fprintf(stderr,"trace %d %d %d %d\n",operation,code,n,cnum); }
 struct Sink: btDiscreteCollisionDetectorInterface::Result {
  struct Point {btVector3 normal,point;float depth;};
  Point points[4];int count=0;
@@ -45,6 +47,7 @@ struct Dispatcher final:btDispatcher {
     void freeCollisionAlgorithm(void*) override {std::abort();}
 };
 int main() {
+ trace=std::getenv("BOX_COVERAGE_TRACE")!=nullptr;
  Dispatcher dispatcher;
  btCollisionObject bodies[2];
  std::unique_ptr<btBoxShape> shapes[2];
@@ -85,6 +88,7 @@ int main() {
    if(p.m_lateralFrictionInitialized){output(p.m_lateralFrictionDir1);output(p.m_lateralFrictionDir2);}else{output(btVector3(0,0,0));output(btVector3(0,0,0));}
   }
   std::putchar('\n');
+  ++operation;
  }
  for(auto pair:{std::make_pair("codes",&codes),std::make_pair("polygon",&polygons),std::make_pair("candidates",&candidates)}){std::fprintf(stderr,"%s",pair.first);for(int v:*pair.second)std::fprintf(stderr," %d",v);std::fputc('\n',stderr);}
 }

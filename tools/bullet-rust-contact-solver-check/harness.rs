@@ -1,3 +1,5 @@
+#[path = "../../rust/crates/mds-bullet/src/core/box_box.rs"]
+pub mod box_box;
 extern crate bullet_core_support as base;
 pub use base::{joint_coordinates, joint_rows, math, time, InvalidArgument};
 #[path = "../../rust/crates/mds-bullet/src/core/body.rs"]

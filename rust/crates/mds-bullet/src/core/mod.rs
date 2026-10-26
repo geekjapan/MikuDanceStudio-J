@@ -27,6 +27,7 @@ subject to the following restrictions:
 
 pub mod axis_sweep;
 pub mod body;
+pub mod box_box;
 pub mod contact;
 pub mod contact_solver;
 pub mod joint_coordinates;

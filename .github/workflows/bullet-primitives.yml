@@ -138,6 +138,12 @@ jobs:
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/bullet-native/box-box"
           python3 tools/bullet-rust-box-box-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/box-box" 2>&1 | tee "$RUNNER_TEMP/bullet-native/box-box/check.log"
+      - name: Recapture Voronoi simplex operations and defined state
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/bullet-native/simplex"
+          python3 tools/bullet-rust-simplex-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/simplex" 2>&1 | tee "$RUNNER_TEMP/bullet-native/simplex/check.log"
       - name: Save native recaptures and evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

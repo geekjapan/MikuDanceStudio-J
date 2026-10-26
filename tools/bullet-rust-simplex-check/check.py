@@ -45,6 +45,26 @@ def coverage(rows, labels):
     return {'usage_masks':{n:sorted(v) for n,v in regions.items()},'threshold_degenerate':thresholds}
 
 
+def selected_fixture(inputs, captured, labels, name):
+    # Keep the contiguous structured prefix so retained caches remain native-derived.
+    selected = labels if name == 'nonfinite' else [label for label in labels if not label['name'].startswith('random-')]
+    end = selected[-1]['end']
+    selected_input = b''.join(inputs.splitlines(keepends=True)[:end])
+    selected_native = b''.join(captured.splitlines(keepends=True)[:end])
+    provenance = {
+        'selection': 'complete contiguous structured prefix; singleton seeded',
+        'scenarios': len(selected), 'operations': end,
+        'labels': [label['name'] for label in selected],
+        'input_sha256': hashlib.sha256(selected_input).hexdigest(),
+        'native_sha256': hashlib.sha256(selected_native).hexdigest(),
+        'full_input_sha256': hashlib.sha256(inputs).hexdigest(),
+        'full_native_sha256': hashlib.sha256(captured).hexdigest(),
+    }
+    if name == 'finite':
+        provenance['coverage'] = coverage(selected_native, selected)
+    return selected_input, selected_native, provenance
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out-dir',type=Path,required=True)
@@ -69,6 +89,7 @@ def main():
     run([*rustc,'--test','-D','warnings',HERE/'harness.rs',*external,'-o',out/'rust-simplex-tests'])
     run([out/'rust-simplex-tests'])
     fixture_hashes={}
+    selected_provenance={}
     summary={ 'source_sha256':SOURCES, 'host':platform.platform(),
         'rustc':subprocess.check_output(['rustup','run','1.95.0','rustc','--version'],text=True).strip(),
         'cxx':subprocess.check_output([os.environ.get('CXX','clang++'),'--version'],text=True).splitlines()[0], 'nan_comparison':'classification only; every non-NaN f32 uses raw bits', 'cases':{} }
@@ -84,6 +105,13 @@ def main():
         if args.record: fixture.write_bytes(gzip.compress(captured,mtime=0))
         assert gzip.decompress(fixture.read_bytes())==captured, f'{name} native fixture changed'
         (out/f'{name}-labels.json').write_text(json.dumps(labels,indent=2)+'\n')
+        selected_input, selected_native, selected_provenance[name] = selected_fixture(inputs, captured, labels, name)
+        selected_dir = ROOT/'rust/crates/mds-bullet/tests/simplex_data'
+        for suffix, data in [('inputs', selected_input), ('native', selected_native)]:
+            selected_path = selected_dir/f'{name}-{suffix}.tsv'
+            if args.record: selected_path.write_bytes(data)
+            assert selected_path.read_bytes() == data, f'{name} selected {suffix} differs from native capture'
+        run([out/'rust-simplex', selected_dir/f'{name}-inputs.tsv', selected_dir/f'{name}-native.tsv'])
         fixture_hashes[name]={'input_sha256':hashlib.sha256(inputs).hexdigest(),'decoded_sha256':hashlib.sha256(captured).hexdigest(),'gzip_sha256':hashlib.sha256(fixture.read_bytes()).hexdigest()}
         summary['cases'][name]={'scenarios':len(labels),'operations':len(captured.splitlines())}
         if name=='finite': summary['coverage']=coverage(captured,labels)
@@ -91,11 +119,16 @@ def main():
     if args.record: manifest.write_text(json.dumps(fixture_hashes,indent=2)+'\n')
     assert json.loads(manifest.read_text())==fixture_hashes, 'fixture provenance differs'
     summary['fixture_sha256']=fixture_hashes
+    selected_manifest = ROOT/'rust/crates/mds-bullet/tests/simplex_data/provenance.json'
+    if args.record: selected_manifest.write_text(json.dumps(selected_provenance, indent=2)+'\n')
+    assert json.loads(selected_manifest.read_text()) == json.loads(json.dumps(selected_provenance)), 'selected native provenance differs'
+    summary['selected'] = selected_provenance
     original=(ROOT/'rust/crates/mds-bullet/src/core/simplex.rs').read_text()
     mutation=original.replace('self.cached_v = self.cached_p1.sub(self.cached_p2);','self.cached_v = self.vertices[0].w;',1)
     assert mutation!=original
     (out/'mutant.rs').write_text(mutation)
     harness=(HERE/'harness.rs').read_text().replace('../../rust/crates/mds-bullet/src/core/math.rs',str(ROOT/'rust/crates/mds-bullet/src/core/math.rs')).replace('../../rust/crates/mds-bullet/src/core/simplex.rs',str(out/'mutant.rs'))
+    harness=harness.replace('../../rust/crates/mds-bullet/tests/pure_bullet/simplex.rs',str(ROOT/'rust/crates/mds-bullet/tests/pure_bullet/simplex.rs'))
     (out/'mutant-harness.rs').write_text(harness)
     run([*rustc,'--crate-name','simplex_mutant',out/'mutant-harness.rs',*external,'-o',out/'rust-mutant'])
     mutant=subprocess.check_output([out/'rust-mutant',out/'finite-inputs.tsv'])

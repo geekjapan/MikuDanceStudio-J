@@ -14,7 +14,9 @@ The helper compiles the native solver with `-O2 -ffp-contract=off
 -fno-fast-math` and the existing `det_math.h` and SSE emulation configuration.
 It checks both native source hashes before compilation. It compiles the Rust
 solver through a dedicated `#[path]` harness using the existing `Vec3`.
-No Cargo module, dependency, build script, or workflow changes are required.
+The kernel is exposed by the shared core module. The harness and native-free
+pure driver share one trace runner. The twelfth native CI group runs this helper;
+no dependency or build script is added.
 
 The finite-input corpus contains 2,286 scenarios and 29,940 operations. It covers
 all three segment usage masks, all seven triangle masks, and all fifteen nonempty
@@ -53,7 +55,9 @@ these helper-owned fixture files and their hash manifest.
 
 The helper also compiles a temporary mutant that returns stored `w` for a
 singleton instead of `p - q`. The native comparison must reject it.
-Two direct Rust tests cover fifth-vertex rejection and cache/last-vertex behavior.
+Three Rust tests cover the selected native snapshots, fifth-vertex rejection and cache/last-vertex behavior. The selected plain-text
+fixtures and provenance are documented in
+`rust/crates/mds-bullet/tests/simplex_data/README.md`.
 Run those tests without native compilation or capture from `rust/`.
 
 ```sh

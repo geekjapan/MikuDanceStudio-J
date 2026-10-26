@@ -74,8 +74,6 @@ fn camera_txt_saves_the_bytes_of_the_cpp_application() {
 const MISSING: &[(&str, &str)] = &[
     ("ctl:412", "Command::SetCameraReference: camera_reference_mode = ModelRoot, then ApplyCameraReferenceModeChange"),
     ("ctl:531", "Command::SetCameraReference: camera_reference_mode = SelectedBone, then ApplyCameraReferenceModeChange"),
-    ("ctl:535", "Command::SetFollowCamera: appearance.follow_camera and the refresh chain of command_frame_register.cpp:594"),
-    ("ctl:556", "renderer state: the self-shadow map size (mds-render has no self-shadow map)"),
     ("key:Shift+G", "renderer state: the self-shadow map shown over the viewport (mds-render has none)"),
 ];
 

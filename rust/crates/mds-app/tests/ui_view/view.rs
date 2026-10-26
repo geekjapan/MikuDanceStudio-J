@@ -207,14 +207,6 @@ fn the_labels_are_those_of_the_inventory() {
     labels::check("view", view::LABELS);
 }
 
-/// The rows left to a document command stay unregistered, so the menu greys them out.
-#[test]
-fn the_rows_waiting_for_a_command_are_not_faked() {
-    for id in ["menu:212", "menu:247", "menu:253", "menu:286"] {
-        assert!(actions::find(id).is_none(), "{id}");
-    }
-}
-
 #[test]
 fn the_area_registers_each_id_once_and_runs_what_it_can() {
     let ids: Vec<_> = view::actions().iter().map(|a| a.id).collect();
@@ -267,5 +259,141 @@ fn the_menus_draw_in_both_languages() {
             mds_app::ui::expression::show(ui, ctx);
         });
         rig.run("menu:260").unwrap();
+    }
+}
+
+fn form_boxes(rig: &Rig) -> Option<Vec<String>> {
+    let form = mds_app::ui::edit::current(rig.egui.as_ref().unwrap())?;
+    Some(form.fields.into_iter().map(|f| f.text).collect())
+}
+
+/// Menu 212 (`ScreenSizeDlgProc`, `command_file_menu.cpp:436`): the boxes open with the render
+/// size as `"%3d"`; a size above the device's limit is refused and the dialog stays; a size within
+/// it is stored and the dialog closes.
+#[test]
+fn the_screen_size_dialog_refuses_what_the_device_cannot_draw() {
+    use mds_app::ui::edit;
+    let mut rig = Rig::new();
+    let s = &rig.editor.doc.pmm.settings;
+    let shown = vec![
+        format!("{:3}", s.render_width),
+        format!("{:3}", s.render_height),
+    ];
+    rig.run("menu:212").unwrap();
+    assert_eq!(form_boxes(&rig), Some(shown.clone()));
+
+    rig.editor.doc.edit.max_texture_size = Some([2048, 2048]);
+    let egui = rig.egui.clone().unwrap();
+    edit::set_text(&egui, 0, "4096");
+    edit::set_text(&egui, 1, "512");
+    let err = rig.submit().unwrap_err();
+    assert!(err.contains("too big"), "{err}");
+    assert!(form_boxes(&rig).is_some(), "the dialog stays open");
+    let s = &rig.editor.doc.pmm.settings;
+    assert_eq!(
+        vec![
+            format!("{:3}", s.render_width),
+            format!("{:3}", s.render_height)
+        ],
+        shown
+    );
+    assert!(!rig.editor.modified);
+
+    edit::set_text(&egui, 0, "1024");
+    edit::set_text(&egui, 1, "768 ");
+    rig.submit().unwrap();
+    assert_eq!(form_boxes(&rig), None);
+    let s = &rig.editor.doc.pmm.settings;
+    assert_eq!([s.render_width, s.render_height], [1024, 768]);
+    assert!(rig.editor.modified);
+}
+
+/// Menu 247 flips `followCameraEnabled` through the document command and shows it.
+#[test]
+fn camera_and_lighting_tracking_flips_the_document_flag() {
+    let (mut rig, mut direct) = (Rig::open("camera3.pmm"), Rig::open("camera3.pmm"));
+    let before = rig.editor.doc.pmm.appearance.follow_camera;
+    rig.run("menu:247").unwrap();
+    direct
+        .editor
+        .apply(Command::SetFollowCamera(before == 0))
+        .unwrap();
+    assert_eq!(
+        rig.editor.doc.pmm.appearance.follow_camera,
+        u8::from(before == 0)
+    );
+    assert!(rig.editor.doc.save().unwrap() == direct.editor.doc.save().unwrap());
+    rig.run("menu:247").unwrap();
+    assert_eq!(rig.editor.doc.pmm.appearance.follow_camera, before);
+}
+
+/// Menu 253 (`command_view_menu.cpp:550`): model mode only; the slider is `TBM_GETPOS / 100.0`
+/// from 0 to 200 and sets the selected model's edge scale as it moves.
+#[test]
+fn the_edge_thickness_slider_sets_the_edge_scale() {
+    let mut rig = Rig::open("camera3.pmm");
+    rig.editor.apply(Command::SelectCameraMode).unwrap();
+    assert_eq!(
+        rig.run("menu:253"),
+        Err("menu:253: not in this mode".into())
+    );
+    assert!(!rig.options().edge_dialog);
+
+    let mut rig = Rig::open("swing600.pmm");
+    rig.run("menu:253").unwrap();
+    assert!(rig.options().edge_dialog);
+    for (position, want) in [(150, 1.5), (0, 0.0), (7, 0.07), (999, 2.0)] {
+        rig.with_ctx(|ctx| view::set_edge_thickness(ctx, position))
+            .unwrap();
+        assert_eq!(rig.editor.doc.pmm.models[0].edge_scale, want, "{position}");
+    }
+    assert!(rig.editor.modified);
+    rig.frame(vec![], view::pass);
+    assert!(
+        rig.options().edge_dialog,
+        "the dialog stays until it is closed"
+    );
+
+    rig.editor.toggle_play(0).unwrap();
+    assert_eq!(
+        rig.run("menu:253"),
+        Err("menu:253: not while playing".into())
+    );
+}
+
+/// Menu 286 (`command_view_menu.cpp:1464`): the picker starts on the model outline color and OK
+/// stores the chosen one; camera mode has no gate.
+#[test]
+fn the_edge_color_picker_stores_the_chosen_color() {
+    let mut rig = Rig::open("camera3.pmm");
+    rig.editor.apply(Command::SelectCameraMode).unwrap();
+    let c = rig.editor.doc.pmm.appearance.outline_color;
+    rig.run("menu:286").unwrap();
+    assert_eq!(rig.options().outline_dialog, Some(c.map(|v| v as u8)));
+    rig.frame(vec![], view::pass);
+    assert!(rig.options().outline_dialog.is_some());
+
+    rig.with_ctx(|ctx| view::set_outline_color(ctx, [10, 20, 30]))
+        .unwrap();
+    assert_eq!(rig.editor.doc.pmm.appearance.outline_color, [10, 20, 30]);
+    assert!(rig.editor.modified);
+}
+
+#[test]
+fn the_document_menus_are_refused_while_playing() {
+    let mut rig = Rig::new();
+    rig.editor.toggle_play(0).unwrap();
+    for id in ["menu:212", "menu:247", "menu:253", "menu:286"] {
+        assert_eq!(rig.run(id), Err(format!("{id}: not while playing")));
+    }
+}
+
+#[test]
+fn every_row_of_the_area_has_an_action() {
+    for id in ["menu:212", "menu:247", "menu:253", "menu:286"] {
+        assert!(matches!(
+            actions::find(id).map(|a| a.handler),
+            Some(Handler::Run(_))
+        ));
     }
 }

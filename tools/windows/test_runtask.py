@@ -29,6 +29,9 @@ function schtasks {
         switch ($env:TEST_CASE) {
             'run-fail' { $global:LASTEXITCODE = 6 }
             'timeout' { }
+            'end-fail' { }
+            'positive-256' { Set-Content "$env:TEST_LOG.done" '256' }
+            'negative-256' { Set-Content "$env:TEST_LOG.done" '-256' }
             'multiline' { Set-Content "$env:TEST_LOG.done" @('0', '0') }
             'malformed' { Set-Content "$env:TEST_LOG.done" '0 garbage' }
             'overflow' { Set-Content "$env:TEST_LOG.done" '99999999999999999999' }
@@ -37,6 +40,9 @@ function schtasks {
             'nonzero' { Set-Content "$env:TEST_LOG.done" '7' }
             default { Set-Content "$env:TEST_LOG.done" '0' }
         }
+    }
+    if ($op -eq '/End' -and $env:TEST_CASE -eq 'end-fail') {
+        $global:LASTEXITCODE = 5
     }
     if ($op -eq '/Delete' -and $env:TEST_CASE -in @('cleanup-fail', 'nonzero-cleanup-fail')) {
         $global:LASTEXITCODE = 8
@@ -56,6 +62,7 @@ class TaskExit(unittest.TestCase):
     def test_terminal_status_and_cleanup(self):
         self.assertIsNotNone(PWSH, "PowerShell is required; scheduler remains a stand-in")
         for case, expected in (("success", 0), ("nonzero", 7), ("nonzero-cleanup-fail", 7), ("timeout", 1),
+                               ("positive-256", 1), ("negative-256", 1), ("end-fail", 1),
                                ("malformed", 1), ("multiline", 1), ("overflow", 1), ("empty", 1),
                                ("create-fail", 1), ("run-fail", 1), ("cleanup-fail", 1)):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
@@ -70,10 +77,23 @@ class TaskExit(unittest.TestCase):
                 names = {line.split('/TN ')[1].split()[0] for line in calls}
                 self.assertEqual(len(names), 1, calls)
                 self.assertTrue(next(iter(names)).startswith('mds-lane-'), calls)
-                self.assertEqual(any('/Delete ' in line for line in calls), case != 'create-fail', calls)
-                self.assertEqual(any('/End ' in line for line in calls), case == 'timeout', calls)
+                self.assertEqual(any('/Delete ' in line for line in calls), case not in ('create-fail', 'end-fail'), calls)
+                self.assertEqual(any('/End ' in line for line in calls), case in ('timeout', 'end-fail'), calls)
                 self.assertEqual((unrelated / "keep").read_text(), "previous artifact")
-                self.assertFalse(list(root.glob('mds-lane-*.cmd')))
+                wrappers = list(root.glob('mds-lane-*.cmd'))
+                if case == 'end-fail':
+                    self.assertEqual(len(wrappers), 1, run.stdout + run.stderr)
+                    self.assertIn(next(iter(names)), run.stdout)
+                    self.assertIn(str(wrappers[0]), run.stdout)
+                    self.assertIn(str(root / 'smoke.log'), run.stdout)
+                    self.assertIn('Stop not confirmed', run.stdout)
+                    self.assertIn('schtasks /End /TN', run.stdout)
+                    self.assertIn('mutex released', run.stdout)
+                else:
+                    self.assertFalse(wrappers)
+                if case in ('positive-256', 'negative-256'):
+                    code = 256 if case == 'positive-256' else -256
+                    self.assertIn(f'task exit code: {code}', run.stdout)
                 self.assertIn('holding Global\\mds-console-input', run.stdout)
 
 

@@ -16,11 +16,12 @@ HERE = Path(__file__).resolve().parent
 class SmokeGate(unittest.TestCase):
     def test_comparator_status_and_log(self):
         for script in ("smoke.sh", "package-windows.sh"):
-            cases = [(0, "golden rule: pass", False),
-                     (1, "golden rule: FAIL", False),
-                     (2, "comparison interrupted", False)]
+            cases = [(0, "golden rule: pass", None),
+                     (1, "golden rule: FAIL", None),
+                     (2, "comparison interrupted", None)]
             if script == "package-windows.sh":
-                cases.append((0, "golden rule: pass", True))
+                cases.extend((0, "golden rule: pass", case)
+                             for case in ("nonzero", "positive-256", "negative-256"))
             for status, message, task_failure in cases:
                 with self.subTest(script=script, status=status, task_failure=task_failure), tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
@@ -67,8 +68,8 @@ esac
                     self.executable(mocks / "ssh", '''#!/bin/sh
 case "$*" in
   *runtask.ps1*)
-    if [ "$TASK_FAILURE" = 1 ]; then
-      exec "$REAL_PYTHON" -I "$TASK_TEST" --stand-in nonzero
+    if [ -n "$TASK_FAILURE" ]; then
+      exec "$REAL_PYTHON" -I "$TASK_TEST" --stand-in "$TASK_FAILURE"
     fi ;;
 esac
 exit 0
@@ -84,7 +85,7 @@ esac
                     env = dict(os.environ, PATH=f"{mocks}:{os.environ['PATH']}",
                                MDS_PACKAGE_OUT=str(out), MDS_VKD3D_OUT=str(out / "vkd3d"),
                                COMPARE_STATUS=str(status), COMPARE_MESSAGE=message,
-                               TASK_FAILURE=str(int(task_failure)), REAL_PYTHON=sys.executable,
+                               TASK_FAILURE=task_failure or "", REAL_PYTHON=sys.executable,
                                TASK_TEST=str(HERE.parent / "windows/test_runtask.py"))
                     args = ["bash", str(package / script)]
                     if script == "smoke.sh":
@@ -93,7 +94,8 @@ esac
                     log = out / ("smoke-macos.log" if script == "smoke.sh" else "smoke-windows.log")
                     if task_failure:
                         self.assertNotEqual(run.returncode, 0, run.stdout + run.stderr)
-                        self.assertIn("task exit code: 7", run.stdout)
+                        code = {"nonzero": 7, "positive-256": 256, "negative-256": -256}[task_failure]
+                        self.assertIn(f"task exit code: {code}", run.stdout)
                         self.assertFalse(log.exists(), "failed smoke must stop before golden comparison")
                         continue
                     self.assertTrue(log.is_file(), run.stdout + run.stderr)

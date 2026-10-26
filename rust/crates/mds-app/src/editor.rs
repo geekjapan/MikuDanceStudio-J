@@ -25,6 +25,20 @@
 //! loaded model to the world it has (`LoadModelFile`, `src/model/add_model.cpp`); `mds-physics`
 //! has no call for that yet, so a model load builds the world again.
 //!
+//! The C++ builds its one world at `WM_CREATE` (`SceneConstruct`, `src/window/ui_init.cpp:219`),
+//! and the first paint (`UpdateWindow`, `src/window/window_init.cpp:423`) spends the 1/60 s the
+//! new world's substep clock starts at. A PMM named on the command line loads before that paint
+//! (`LoadSceneFile`, `window_init.cpp:402`), into the fresh world ([`Editor::startup`],
+//! [`PhysicsScene::open`]); every later load (File > Open, a drop, a model load, a new scene)
+//! loads into a world that has spent it ([`Editor::open`], [`PhysicsScene::open_running`]). The
+//! clock remainder that wall-clock pumps leave in the C++ world is not carried into a new one.
+//!
+//! Gate A of `PhysicsFrame` (`src/physics/physics_frame.cpp:688`) skips the whole stopped pump
+//! once the message counter `messageSeen` has decayed to 0. `AdvanceFrameRenderGate`
+//! (`src/app/frame_driver.cpp:61`) holds it at 1 while playing, while menu 299
+//! (`FrameVolumeControlEnabled`) is off, and while the English names dialog is open; otherwise
+//! it walks 1, 2, 3, 0, and every window message sets it to 1 ([`Editor::message`]).
+//!
 //! The view camera is the C++ camera state (app+0x310, [`scene::state_camera`]): in the camera
 //! view a seek, a frame step and the playback put the track's camera there, and an edit that
 //! moves the state (the camera panel, a paste or delete of camera keys) shows it before any key is
@@ -93,6 +107,11 @@ pub struct Editor {
     /// The bytes of the models `Command::LoadModel` added, by stored path: the physics world is
     /// built again from them, wherever the file was.
     loaded: HashMap<String, Vec<u8>>,
+    /// Menu 299 on and the English names dialog closed: gate A may close ([`Editor::message`]).
+    /// The window sets it every pass.
+    pub low_power: bool,
+    /// `messageSeen`.
+    message_seen: u8,
     /// Menu 285's ground body. The C++ builds its world once (`SceneConstruct`,
     /// `src/window/ui_init.cpp:219`) and keeps it across scene and model loads, and a PMM load
     /// leaves the ground alone (`pmm_load_v2.cpp:2366` only sets its deactivation time), so each
@@ -101,13 +120,22 @@ pub struct Editor {
 }
 
 impl Editor {
+    /// `doc` as the application starts with it, before the first paint.
     pub fn new(doc: Document, path: Option<PathBuf>) -> Result<Editor, String> {
+        Editor::build(doc, path, false)
+    }
+
+    fn build(doc: Document, path: Option<PathBuf>, running: bool) -> Result<Editor, String> {
         let dir = path
             .as_deref()
             .and_then(Path::parent)
             .unwrap_or(Path::new("."))
             .to_path_buf();
-        let physics = PhysicsScene::open(&doc.pmm, |p| read_model(&dir, p))?;
+        let read = |p: &str| read_model(&dir, p);
+        let physics = match running {
+            true => PhysicsScene::open_running(&doc.pmm, read)?,
+            false => PhysicsScene::open(&doc.pmm, read)?,
+        };
         let current = doc.pmm.timeline.current_frame.max(0) as u32;
         Ok(Editor {
             mme: Mme::autoload(&doc, path.as_deref()),
@@ -130,19 +158,31 @@ impl Editor {
             last_pump_ms: None,
             keys_stale: false,
             loaded: HashMap::new(),
+            low_power: false,
+            message_seen: 1,
             floor: true,
         })
     }
 
-    /// The startup scene with the PMM at `path` opened, as `mds-app <pmm>` starts: the edit
-    /// state the file does not hold (the auto-interpolation and physics check boxes) is the
-    /// startup's.
+    /// The PMM at `path` opened in the running application (File > Open, a drop), for
+    /// [`Editor::adopt`]: the edit state the file does not hold (the auto-interpolation and
+    /// physics check boxes) is the startup's, and the world has spent its first 1/60 s.
     pub fn open(path: &Path) -> Result<Editor, String> {
+        Editor::read(path, true)
+    }
+
+    /// The PMM at `path` named on the command line, as `mds-app <pmm>` starts: [`Editor::open`]
+    /// before the first paint, into a fresh world.
+    pub fn startup(path: &Path) -> Result<Editor, String> {
+        Editor::read(path, false)
+    }
+
+    fn read(path: &Path, running: bool) -> Result<Editor, String> {
         let mut doc = file::read(path)?;
         let startup = Document::startup().edit;
         doc.edit.auto_interpolation = startup.auto_interpolation;
         doc.edit.physics_checkbox = startup.physics_checkbox;
-        Editor::new(doc, Some(path.to_path_buf()))
+        Editor::build(doc, Some(path.to_path_buf()), running)
     }
 
     /// The scene the application starts with ([`Document::startup`]: the empty scene, with
@@ -153,12 +193,15 @@ impl Editor {
 
     /// `fresh`, a scene just opened (`LoadSceneFile`), takes this editor's place with what the C++
     /// keeps across a scene load: the auto-interpolation and physics check boxes
-    /// (`Document::load_scene` keeps them too), the physics menus of its one world, and the
-    /// MMEffect menu state, runtime library and log.
+    /// (`Document::load_scene` keeps them too), the physics menus of its one world, the clock of
+    /// the frame loop and gate A, and the MMEffect menu state, runtime library and log.
     pub fn adopt(&mut self, mut fresh: Editor) -> Result<(), String> {
         let (old, new) = (&self.doc.edit, &mut fresh.doc.edit);
         new.auto_interpolation = old.auto_interpolation;
         new.physics_checkbox = old.physics_checkbox;
+        fresh.last_pump_ms = self.last_pump_ms;
+        fresh.low_power = self.low_power;
+        fresh.message_seen = self.message_seen;
         fresh.floor = self.floor;
         fresh.reapply_physics_menus(self.physics.always_on_off)?;
         fresh.physics_opens += self.physics_opens;
@@ -352,7 +395,7 @@ impl Editor {
             None => read_model(&self.dir, p),
         };
         let always_on_off = self.physics.always_on_off;
-        self.physics = PhysicsScene::open(&self.doc.pmm, read)?;
+        self.physics = PhysicsScene::open_running(&self.doc.pmm, read)?;
         self.physics_opens += 1;
         self.reapply_physics_menus(always_on_off)?;
         self.mme.objects_changed(&self.doc);
@@ -508,12 +551,32 @@ impl Editor {
         self.physics.reset();
     }
 
+    /// A window message (`MainWndProc` entry): gate A opens for the next pumps.
+    pub fn message(&mut self) {
+        self.message_seen = 1;
+    }
+
+    /// `AdvanceFrameRenderGate` (`src/app/frame_driver.cpp:61`); whether the stopped pump runs
+    /// `PhysicsFrame`.
+    fn render_gate(&mut self) -> bool {
+        if self.playing() || !self.low_power {
+            self.message_seen = 1;
+        }
+        self.message_seen = match self.message_seen {
+            1 => 2,
+            2 => 3,
+            _ => 0,
+        };
+        self.message_seen != 0
+    }
+
     /// One window pass at wall-clock `now_ms`; see the module doc.
     pub fn pump(&mut self, now_ms: u64) -> Result<(), String> {
         let dt = self
             .last_pump_ms
             .map_or(0.0, |t| now_ms.saturating_sub(t) as f32 * 0.001);
         self.last_pump_ms = Some(now_ms);
+        let gate = self.render_gate();
         if self.mme.switches.auto_reload && now_ms >= self.last_reload_ms + 100 {
             self.last_reload_ms = now_ms;
             self.mme.reload_changed();
@@ -543,7 +606,10 @@ impl Editor {
             };
         }
         let Some(mut p) = self.playback else {
-            return self.physics.tick(dt);
+            return match gate {
+                true => self.physics.tick(dt),
+                false => Ok(()),
+            };
         };
         match p.pass(&self.options, now_ms) {
             Pass::Playing => {

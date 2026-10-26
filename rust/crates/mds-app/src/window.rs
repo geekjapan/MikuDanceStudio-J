@@ -12,7 +12,7 @@ use std::time::Instant;
 
 pub fn run(pmm: Option<PathBuf>) -> Result<(), String> {
     let editor = match &pmm {
-        Some(path) => Editor::open(path)?,
+        Some(path) => Editor::startup(path)?,
         None => Editor::empty(),
     };
     let options = eframe::NativeOptions {
@@ -198,6 +198,12 @@ impl eframe::App for App {
             (area.pass)(ui, &mut ctx);
         }
         ui::keys(ui, &mut ctx);
+        // Gate A of the physics (`Editor::low_power`): any input is a window message.
+        let english = ui::dialog::current(ui.ctx()) == Some("IDD_ENGLISH_NAMES");
+        ctx.editor.low_power = ui::view::options(ui.ctx(), ctx.editor).low_power && !english;
+        if ui.input(|i| !i.events.is_empty()) {
+            ctx.editor.message();
+        }
         if let Err(e) = ctx.editor.pump(ctx.now_ms) {
             *ctx.status = e;
         }

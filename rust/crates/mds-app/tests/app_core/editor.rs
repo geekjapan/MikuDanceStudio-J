@@ -1,5 +1,6 @@
 //! The editor's derived state against the C++ frame loop: the view camera after a camera edit,
-//! edits while playing, the modified flag, a model load, and the startup scene.
+//! edits while playing, the modified flag, a model load, the startup scene, and gate A of the
+//! physics with menu 299 on.
 
 use super::{fixtures, run, scratch, stage_golden2};
 use mds_app::editor::Editor;
@@ -318,4 +319,66 @@ fn the_front_view_of_the_golden_strips_shows_their_edge_color() {
         n > 1000 && back.iter().all(|&c| c > 100.0),
         "back: {n} px of {back:?}"
     );
+}
+
+/// Gate A of `PhysicsFrame` (`physics_frame.cpp:688`) with menu 299 on: `AdvanceFrameRenderGate`
+/// (`frame_driver.cpp:61-77`) walks the message counter 1, 2, 3, 0 when nothing holds it, so the
+/// third stopped pump after the last message runs no physics, and a message opens it again. With
+/// 299 off (the start-up state, `app_defaults.cpp:215`) every pump runs it.
+#[test]
+fn low_power_stops_the_idle_physics_two_pumps_after_the_last_message() {
+    let opened = || {
+        let mut e = Editor::empty();
+        e.pump(0).unwrap();
+        e.adopt(open("swing600.pmm")).unwrap();
+        e.seek(300).unwrap();
+        e
+    };
+    let (mut on, mut off) = (opened(), opened());
+    on.low_power = true;
+    on.message();
+    let mut now = 0;
+    let mut pump = |on: &mut Editor, off: &mut Editor| {
+        now += 33;
+        on.pump(now).unwrap();
+        off.pump(now).unwrap();
+        (on.physics.body_poses().unwrap(), off.physics.body_poses().unwrap())
+    };
+    let mut last = pump(&mut on, &mut off);
+    assert!(last.0 == last.1);
+    for pass in 2..=4 {
+        let poses = pump(&mut on, &mut off);
+        assert!(poses.1 != last.1, "pass {pass}: the bodies move");
+        match pass {
+            2 => assert!(poses.0 == poses.1, "pass 2 runs"),
+            _ => assert!(poses.0 == last.0, "pass {pass} is gated"),
+        }
+        last = poses;
+    }
+    on.message();
+    let poses = pump(&mut on, &mut off);
+    assert!(poses.0 != last.0, "a message opens the gate");
+}
+
+/// The PMM named on the command line loads before the first paint (`window_init.cpp:402`, then
+/// `UpdateWindow` at `:423`), into a world whose substep clock still holds its first 1/60 s; a
+/// File > Open loads into the world that paint stepped. The two differ from the first tick.
+#[test]
+fn the_command_line_load_gets_the_fresh_world() {
+    let path = fixtures().join("swing600.pmm");
+    let read = |p: &str| std::fs::read(fixtures().join(p)).map_err(|e| e.to_string());
+    let pmm = mds_formats::pmm::Pmm::read(&std::fs::read(&path).unwrap()).unwrap();
+    let mut fresh = mds_physics::PhysicsScene::open(&pmm, read).unwrap();
+    let (mut startup, mut opened) = (Editor::startup(&path).unwrap(), open("swing600.pmm"));
+    fresh.seek(300);
+    for e in [&mut startup, &mut opened] {
+        e.seek(300).unwrap();
+        e.pump(0).unwrap();
+        e.pump(33).unwrap();
+    }
+    fresh.tick(0.0).unwrap();
+    fresh.tick(0.033).unwrap();
+    let poses = |e: &Editor| e.physics.body_poses().unwrap();
+    assert!(poses(&startup) == fresh.body_poses().unwrap());
+    assert!(poses(&startup) != poses(&opened));
 }

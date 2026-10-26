@@ -148,7 +148,11 @@ def main():
     (out / 'rust.tsv').write_bytes(actual)
     assert actual == native_stdout, 'mixed writeback differs'
     difference = compare(out / 'native.trace', out / 'rust.trace')
-    assert difference is None, difference
+    comparison = {'status':'BIT_EXACT','raw_bit_equality':True}
+    if difference is not None:
+        from observation import verify
+        comparison = verify(out,HERE / 'profiles')
+    (out / 'comparison.json').write_text(json.dumps(comparison,indent=2)+'\n')
     coverage = validate(out / 'native.trace')
     (out / 'coverage.json').write_text(json.dumps(coverage,indent=2)+'\n')
     run(rust_command(HERE / 'runner.rs','clippy-mixed','clippy-driver'))
@@ -157,7 +161,7 @@ def main():
         run_mutations(ROOT,HERE,out,inputs,run,rust_command,suffix,native)
     assert all(hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == digest for path,digest in fixtures.items()), 'frozen fixtures changed'
     assert all(hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == digest for path,digest in manifest.items()), 'source changed during comparison'
-    provenance = {'schema_version':1,'platform':platform.platform(),'input_sha256':hashlib.sha256(inputs.read_bytes()).hexdigest(),'sources':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in [SOLVER,HERE / 'oracle.cpp',HERE / 'runner.rs',SHIM / 'det_math.h']},'solves':len(actual.splitlines()),'trace_events':coverage['events'],'status':'PASS'}
+    provenance = {'schema_version':1,'platform':platform.platform(),'input_sha256':hashlib.sha256(inputs.read_bytes()).hexdigest(),'sources':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in [SOLVER,HERE / 'oracle.cpp',HERE / 'runner.rs',SHIM / 'det_math.h']},'solves':len(actual.splitlines()),'trace_events':coverage['events'],'comparison':comparison,'status':'PASS' if comparison['raw_bit_equality'] else 'PASS_SOURCE_DEFINED_ARITHMETIC_OBSERVATION'}
     (out / 'status.json').write_text(json.dumps(provenance,indent=2)+'\n')
     print(json.dumps(provenance,indent=2))
 

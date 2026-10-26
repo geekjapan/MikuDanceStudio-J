@@ -317,6 +317,83 @@ fn a_host_drawn_model_hides_an_effect_model_behind_it() {
         .filter(|&i| both[i * 4..i * 4 + 3] == b_alone[i * 4..i * 4 + 3])
         .count();
     assert!(beside > 200, "B beside A at {beside} pixels");
+
+    let mut transparent = pmx.clone();
+    for material in &mut transparent.materials {
+        material.diffuse[3] = 0.0;
+        material.flags &= !0x10;
+    }
+    let mut transparent_host = Host::new((W, H));
+    transparent_host
+        .add(
+            &gpu,
+            "transparent.pmx",
+            Source::Pmx(&transparent),
+            0.0,
+            |_| None,
+        )
+        .unwrap();
+    transparent_host
+        .add(&gpu, "b.pmx", Source::Pmx(&pmx), 0.0, |_| None)
+        .unwrap();
+    let transparent_px = draw_scene(
+        &gpu,
+        &vk,
+        &mut transparent_host,
+        &pmm,
+        &[
+            pose(sa, Mat4::IDENTITY),
+            pose(sb, Mat4::translation(1.0, 0.0, away)),
+        ],
+        &[none.clone(), effect("objects.fx")],
+    );
+    assert!(
+        transparent_px == b_alone,
+        "zero-alpha host material must not hide B"
+    );
+    let mut morphed = pmx.clone();
+    for material in &mut morphed.materials {
+        material.flags &= !0x10;
+    }
+    let mut values = [0.0; 28];
+    values[3] = -1.0;
+    let name = mds_formats::text::PmxText {
+        raw: Vec::new(),
+        text: String::new(),
+    };
+    morphed.morphs.push(mds_formats::pmx::Morph {
+        name: name.clone(),
+        name_en: name,
+        panel: 4,
+        kind: 8,
+        offsets: mds_formats::pmx::Offsets::Material(vec![mds_formats::pmx::MaterialOffset {
+            material: -1,
+            operation: 1,
+            values,
+        }]),
+    });
+    let mut a = mds_pose::model::Model::from_pmx(sa, &morphed).unwrap();
+    for bone in &mut a.bones {
+        bone.mat_init = Mat4::IDENTITY;
+    }
+    a.morphs.last_mut().unwrap().value = 1.0;
+    let mut host = Host::new((W, H));
+    host.add(&gpu, "morphed.pmx", Source::Pmx(&morphed), 0.0, |_| None)
+        .unwrap();
+    host.add(&gpu, "b.pmx", Source::Pmx(&pmx), 0.0, |_| None)
+        .unwrap();
+    let pixels = draw_scene(
+        &gpu,
+        &vk,
+        &mut host,
+        &pmm,
+        &[a, pose(sb, Mat4::translation(1.0, 0.0, away))],
+        &[none, effect("objects.fx")],
+    );
+    assert!(
+        pixels == b_alone,
+        "material morph to zero alpha must not hide B"
+    );
 }
 
 /// Item 2 of the host: an object whose effect is assigned to some subsets draws the others with
@@ -374,4 +451,187 @@ fn subsets_without_an_effect_draw_with_the_standard_shading() {
         rest > 100 && rest + 100 < all,
         "{rest} of {all} pixels without subset 0"
     );
+}
+
+#[test]
+fn an_accessory_effect_hides_only_its_selected_material() {
+    let gpu = common::gpu().expect("GPU required for accessory subset regression");
+    let vk = common::vkd3d().expect("vkd3d required for accessory subset regression");
+    let fixtures = common::fixtures();
+    let mut pmm = Pmm::read(&std::fs::read(fixtures.join("mmegold/objects.pmm")).unwrap()).unwrap();
+    pmm.models.clear();
+    pmm.accessories = vec![mds_formats::pmm::Accessory {
+        list_name: mds_formats::text::FixedSjis {
+            raw: [0; 100],
+            text: String::new(),
+        },
+        name: mds_formats::text::FixedSjis {
+            raw: [0; 100],
+            text: String::new(),
+        },
+        path: mds_formats::text::FixedSjis {
+            raw: [0; 256],
+            text: String::new(),
+        },
+        slot: 0,
+        order: 0,
+        keys: mds_formats::key_pool::KeyPool::new(
+            10000,
+            vec![mds_formats::pmm::AccessoryKey {
+                opacity_visible: 1,
+                parent_model: -1,
+                scale: 0.1,
+                ..Default::default()
+            }],
+        )
+        .unwrap(),
+        state: Default::default(),
+    }];
+    let acc = mds_accessory::load_x(
+        br#"xof 0303txt 0032
+Mesh Two {
+8;
+-4;-2;0;, -1;-2;0;, -1;2;0;, -4;2;0;,
+1;-2;0;, 4;-2;0;, 4;2;0;, 1;2;0;;
+4; 3;0,1,2;, 3;0,2,3;, 3;4,5,6;, 3;4,6,7;;
+MeshMaterialList { 2; 4; 0,0,1,1;;
+Material A { 1;0;0;1;; 1; 0;0;0;; 0;0;0;; }
+Material B { 0;1;0;1;; 1; 0;0;0;; 0;0;0;; }
+}
+}"#,
+    )
+    .unwrap();
+    let mut host = Host::new((W, H));
+    host.add(&gpu, "two.x", Source::Accessory(acc.clone()), 0.0, |_| None)
+        .unwrap();
+    let all = draw_scene(&gpu, &vk, &mut host, &pmm, &[], &[Assignment::default()]);
+    let dir = std::env::temp_dir().join(format!("mds-accessory-subsets-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let fx = dir.join("hide.fx");
+    std::fs::write(
+        &fx,
+        "technique Hide < string MMDPass=\"object\"; string Subset=\"0\"; > {}",
+    )
+    .unwrap();
+    let hidden = draw_scene(
+        &gpu,
+        &vk,
+        &mut host,
+        &pmm,
+        &[],
+        &[effect(fx.to_str().unwrap())],
+    );
+    let mut only_second = acc.clone();
+    only_second.indices.drain(..6);
+    only_second.face_material.drain(..2);
+    let mut expected_host = Host::new((W, H));
+    expected_host
+        .add(
+            &gpu,
+            "second.x",
+            Source::Accessory(only_second),
+            0.0,
+            |_| None,
+        )
+        .unwrap();
+    let expected = draw_scene(
+        &gpu,
+        &vk,
+        &mut expected_host,
+        &pmm,
+        &[],
+        &[Assignment::default()],
+    );
+    assert!(
+        covered(&expected) > 100,
+        "material 1 must remain visible, covered {}, all {}",
+        covered(&expected),
+        covered(&all)
+    );
+    assert!(
+        covered(&all) > covered(&expected) + 100,
+        "material 0 must be visible in the control"
+    );
+    assert!(
+        hidden == expected,
+        "only material 1 should reach standard shading"
+    );
+    let restored = draw_scene(&gpu, &vk, &mut host, &pmm, &[], &[Assignment::default()]);
+    assert!(
+        restored == all,
+        "removing the effect restores both materials"
+    );
+
+    let mut back = pmm.accessories[0].clone();
+    back.slot = 1;
+    back.keys.heads_mut()[0].position[2] = -1.0;
+    pmm.accessories.push(back);
+    let mut layered = Host::new((W, H));
+    for name in ["front.x", "back.x"] {
+        layered
+            .add(&gpu, name, Source::Accessory(acc.clone()), 0.0, |_| None)
+            .unwrap();
+    }
+    let absent = Assignment {
+        shown: false,
+        ..Assignment::default()
+    };
+    let behind = draw_scene(
+        &gpu,
+        &vk,
+        &mut layered,
+        &pmm,
+        &[],
+        &[absent, effect("objects.fx")],
+    );
+    let opaque = draw_scene(
+        &gpu,
+        &vk,
+        &mut layered,
+        &pmm,
+        &[],
+        &[Assignment::default(), effect("objects.fx")],
+    );
+    assert!(
+        covered(&behind) > 100 && opaque != behind,
+        "opaque accessory must occlude the effect control"
+    );
+    pmm.accessories[0].keys.heads_mut()[0].opacity_visible = 201;
+    let transparent = draw_scene(
+        &gpu,
+        &vk,
+        &mut layered,
+        &pmm,
+        &[],
+        &[Assignment::default(), effect("objects.fx")],
+    );
+    assert!(
+        transparent == behind,
+        "zero accessory opacity must not write depth"
+    );
+    pmm.accessories[0].keys.heads_mut()[0].opacity_visible = 1;
+    let mut clear = acc.clone();
+    for material in &mut clear.materials {
+        material.diffuse[3] = 0.0;
+    }
+    let mut layered = Host::new((W, H));
+    layered
+        .add(&gpu, "clear.x", Source::Accessory(clear), 0.0, |_| None)
+        .unwrap();
+    layered
+        .add(&gpu, "back.x", Source::Accessory(acc), 0.0, |_| None)
+        .unwrap();
+    let transparent = draw_scene(
+        &gpu,
+        &vk,
+        &mut layered,
+        &pmm,
+        &[],
+        &[Assignment::default(), effect("objects.fx")],
+    );
+    assert!(
+        transparent == behind,
+        "zero accessory material alpha must not write depth"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
 }

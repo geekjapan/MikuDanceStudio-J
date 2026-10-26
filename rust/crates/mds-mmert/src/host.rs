@@ -133,9 +133,17 @@ struct Shape {
     used: HashSet<Vec<bool>>,
 }
 
+struct AccessoryShape {
+    mesh: AccessoryMesh,
+    source: Accessory,
+    textures: HashMap<String, Option<Vec<u8>>>,
+    partial: HashMap<Vec<bool>, AccessoryMesh>,
+    used: HashSet<Vec<bool>>,
+}
+
 enum Kind {
     Model(Box<Shape>),
-    Accessory(Box<AccessoryMesh>),
+    Accessory(Box<AccessoryShape>),
     Missing,
 }
 
@@ -401,6 +409,8 @@ impl Host {
         for (o, item) in self.objects.iter_mut().enumerate() {
             item.skinned = false;
             if let Kind::Model(shape) = &mut item.kind {
+                shape.used.clear();
+            } else if let Kind::Accessory(shape) = &mut item.kind {
                 shape.used.clear();
             }
             let posed = f
@@ -681,6 +691,8 @@ impl Host {
             if let Kind::Model(shape) = &mut item.kind {
                 let Shape { partial, used, .. } = &mut **shape;
                 partial.retain(|mask, _| used.contains(mask));
+            } else if let Kind::Accessory(shape) = &mut item.kind {
+                shape.partial.retain(|mask, _| shape.used.contains(mask));
             }
         }
         self.target = Some(target);
@@ -820,6 +832,22 @@ impl Host {
                     shape.partial.insert(mask.to_vec(), mesh);
                 }
                 shape.used.insert(mask.to_vec());
+            } else if let Kind::Accessory(shape) = &mut self.objects[o].kind {
+                if !mask.contains(&false) {
+                    continue;
+                }
+                shape.partial.entry(mask.to_vec()).or_insert_with(|| {
+                    let mut acc = shape.source.clone();
+                    for (face, &material) in acc.face_material.iter().enumerate() {
+                        if !mask.get(material as usize).copied().unwrap_or(false) {
+                            acc.indices[face * 3..face * 3 + 3].fill(0);
+                        }
+                    }
+                    let mut mesh = AccessoryMesh::new(acc);
+                    mesh.load_textures(|n| shape.textures.get(n).cloned().flatten());
+                    mesh
+                });
+                shape.used.insert(mask.to_vec());
             }
         }
         let f = drawn.f;
@@ -832,8 +860,8 @@ impl Host {
                     let mesh = shape.partial.get(mask).unwrap_or(&shape.mesh);
                     models.push((mesh, drawn.poses[o].as_ref()));
                 }
-                // ponytail: an accessory draws whole (the dialog extracts no accessory subsets).
-                Kind::Accessory(mesh) => {
+                Kind::Accessory(shape) => {
+                    let mesh = shape.partial.get(mask).unwrap_or(&shape.mesh);
                     if let Some(Some((state, world))) = drawn.accessories.get(o - n_models) {
                         accessories.push(AccessoryDraw {
                             mesh,
@@ -938,7 +966,12 @@ impl Host {
                     resource: uniform.as_entire_binding(),
                 }],
             });
-            draws.push((model, mask, group));
+            let opacity = o
+                .checked_sub(n_models)
+                .and_then(|a| drawn.accessories.get(a))
+                .and_then(|a| a.as_ref())
+                .map_or(1.0, |(s, _)| s.opacity);
+            draws.push((model, mask, group, opacity));
         }
         for cull in [true, false] {
             depth.pipeline(&gpu.device, format, cull);
@@ -964,11 +997,14 @@ impl Host {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            for (model, mask, group) in &draws {
+            for (model, mask, group, opacity) in &draws {
                 rp.set_bind_group(0, group, &[]);
                 rp.set_vertex_buffer(0, model.vertices.slice(..));
                 rp.set_index_buffer(model.indices.slice(..), wgpu::IndexFormat::Uint32);
                 for (m, _) in model.materials.iter().zip(*mask).filter(|(_, &on)| on) {
+                    if m.diffuse[3] * opacity <= 0.0 {
+                        continue;
+                    }
                     let cull = !m.double_sided;
                     rp.set_pipeline(&depth.pipelines[&(format, cull)]);
                     rp.draw_indexed(m.start..m.start + m.count, 0, 0..1);
@@ -1046,11 +1082,20 @@ fn load(
         ),
         Source::Accessory(acc) => {
             let mut model = Model::from_accessory(&gpu.device, &acc)?;
-            let mut mesh = AccessoryMesh::new(acc);
+            let mut mesh = AccessoryMesh::new(acc.clone());
             mesh.load_textures(&mut fetch);
             let loaded = loaded_files(&model, fetch);
             model.loaded(|n| loaded.contains(n));
-            return Ok((Some(model), Kind::Accessory(Box::new(mesh))));
+            return Ok((
+                Some(model),
+                Kind::Accessory(Box::new(AccessoryShape {
+                    mesh,
+                    source: acc,
+                    textures,
+                    partial: HashMap::new(),
+                    used: HashSet::new(),
+                })),
+            ));
         }
         Source::Missing => return Ok((None, Kind::Missing)),
     };

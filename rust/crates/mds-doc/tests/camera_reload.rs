@@ -404,8 +404,14 @@ fn draw_composes_live_matrix_once_and_keeps_saved_basis_lifetime() {
     use mds_doc::{CameraAnchors, CameraBone};
     let mut d = doc();
     configure(&mut d, true, 2, false);
-    let parent = CameraBone { mat_init: Mat4::rotation_z(0.7), position: [2.0, 3.0, 4.0] };
-    let anchors = CameraAnchors { parent: Some(parent), ..Default::default() };
+    let parent = CameraBone {
+        mat_init: Mat4::rotation_z(0.7),
+        position: [2.0, 3.0, 4.0],
+    };
+    let anchors = CameraAnchors {
+        parent: Some(parent),
+        ..Default::default()
+    };
     let saved = Mat4::rotation_y(0.8).0;
     d.pmm.appearance.camera_attachment_basis = saved;
     d.pmm.appearance.suppress_camera_transform = 0;
@@ -413,9 +419,22 @@ fn draw_composes_live_matrix_once_and_keeps_saved_basis_lifetime() {
         d.pmm.camera_state[6..].copy_from_slice(&[pitch, -0.4, 0.3]);
         let frame = d.prepare_camera_frame(anchors, false);
         let mut basis = Mat4::IDENTITY;
-        for i in 0..3 { for j in 0..3 { basis.0[i*4+j] = parent.mat_init.0[j*4+i]; } }
-        let expected = Mat4::multiply(&basis, &Mat4::multiply(&Mat4::multiply(&Mat4::rotation_y(-0.4), &Mat4::rotation_x(pitch)), &Mat4::rotation_z(0.3)));
-        assert_eq!(frame.rotation, std::array::from_fn::<_, 3, _>(|i| std::array::from_fn(|j| expected.0[i*4+j])));
+        for i in 0..3 {
+            for j in 0..3 {
+                basis.0[i * 4 + j] = parent.mat_init.0[j * 4 + i];
+            }
+        }
+        let expected = Mat4::multiply(
+            &basis,
+            &Mat4::multiply(
+                &Mat4::multiply(&Mat4::rotation_y(-0.4), &Mat4::rotation_x(pitch)),
+                &Mat4::rotation_z(0.3),
+            ),
+        );
+        assert_eq!(
+            frame.rotation,
+            std::array::from_fn::<_, 3, _>(|i| std::array::from_fn(|j| expected.0[i * 4 + j]))
+        );
         assert_eq!(frame.target, parent.point());
         assert_eq!(frame.offset, [11.0, 13.0]);
         assert_eq!(frame.distance, 17.0);
@@ -429,5 +448,96 @@ fn draw_composes_live_matrix_once_and_keeps_saved_basis_lifetime() {
     d.pmm.appearance.camera_attachment_basis = saved;
     let frame = d.prepare_camera_frame(Default::default(), false);
     assert_eq!(d.pmm.appearance.camera_attachment_basis, saved);
-    assert_ne!(frame.rotation, [[1.0,0.0,0.0],[0.0,1.0,0.0],[0.0,0.0,1.0]]);
+    assert_ne!(
+        frame.rotation,
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    );
+}
+
+#[test]
+fn menu_and_numpad_presets_keep_their_distinct_native_flags() {
+    use mds_doc::CameraViewPreset as Preset;
+    for reference in 0..=2 {
+        let mut d = doc();
+        configure(&mut d, true, reference, true);
+        d.pmm.settings.options[0] = 0;
+        d.pmm.selected_model_slot = 0;
+        let before = d.pmm.camera_state;
+        let basis = d.pmm.appearance.camera_attachment_basis;
+        d.apply_with_camera_pose(
+            Command::ResetViewPreset {
+                preset: Preset::Left,
+                playing: false,
+            },
+            &mut |_, _| panic!("menu skip must not reload"),
+        )
+        .unwrap();
+        assert_eq!(d.pmm.camera_state, before);
+        assert_eq!(d.pmm.appearance.camera_attachment_basis, basis);
+        d.apply(Command::NumpadViewPreset(4)).unwrap();
+        assert_eq!(d.pmm.camera_state[3], 0.0);
+        assert_eq!(
+            d.pmm.camera_state[4],
+            if reference == 2 { 0.0 } else { 10.0 }
+        );
+        assert_eq!(d.pmm.camera_state[5], -45.0);
+        assert_eq!(d.pmm.camera_state[7].to_bits(), 0x3fc90ff9);
+        assert_eq!(d.pmm.appearance.suppress_camera_transform, 1);
+        assert_eq!(d.pmm.appearance.camera_attachment_basis, Mat4::IDENTITY.0);
+        d.apply(Command::NumpadViewPreset(1)).unwrap();
+        assert_eq!(d.pmm.camera_state[5], -30.0);
+        assert_eq!(d.pmm.camera_state[4], 0.0);
+        let mut calls = 0;
+        d.apply_with_camera_pose(Command::NumpadViewPreset(0), &mut |doc, _| {
+            calls += 1;
+            assert_eq!(doc.pmm.appearance.suppress_camera_transform, 0);
+            assert_eq!(&doc.pmm.camera_state[3..5], &[0.0, 0.0]);
+            Ok(Default::default())
+        })
+        .unwrap();
+        assert_eq!(calls, 1);
+    }
+}
+
+#[test]
+fn provider_observes_seek_and_model_insertion_at_native_transition() {
+    use mds_doc::CameraPoseRequest;
+    let mut d = doc();
+    configure(&mut d, true, 0, true);
+    d.pmm.settings.options[0] = 0;
+    let mut calls = 0;
+    d.apply_with_camera_pose(Command::SetFrame(30), &mut |doc, request| {
+        calls += 1;
+        assert_eq!(doc.pmm.timeline.current_frame, 30);
+        assert!(matches!(request, CameraPoseRequest::AfterFrameSeek));
+        Ok(Default::default())
+    })
+    .unwrap();
+    assert_eq!(calls, 1);
+    d.pmm.settings.options[0] = 1;
+    let count = d.pmm.models.len();
+    let mut calls = 0;
+    d.apply_with_camera_pose(
+        Command::LoadModel {
+            path: "chain8.pmx".into(),
+            data: fixture("chain8.pmx"),
+        },
+        &mut |doc, request| {
+            calls += 1;
+            let CameraPoseRequest::AfterModelLoad { slot } = request else {
+                panic!("new slot request")
+            };
+            assert_eq!(doc.pmm.models.len(), count + 1);
+            assert_eq!(doc.pmm.selected_model_slot, slot);
+            assert_eq!(doc.pmm.settings.options[0], 0);
+            Ok(Default::default())
+        },
+    )
+    .unwrap();
+    assert_eq!(calls, 1);
+    d.pmm.appearance.camera_parent_model = -1;
+    d.apply_with_camera_pose(Command::SetCameraParentModel(None), &mut |_, _| {
+        panic!("already detached does not request a pose")
+    })
+    .unwrap();
 }

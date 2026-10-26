@@ -110,7 +110,7 @@ mod camera;
 mod camera_reference;
 pub use camera::{
     camera_anchors, CameraAnchors, CameraBone, CameraControls, CameraFrame, CameraPoseProvider,
-    CameraPoseRequest,
+    CameraPoseRequest, CameraViewPreset,
 };
 mod delete_model;
 pub mod frame;
@@ -212,6 +212,11 @@ pub enum Command {
     /// follow the camera, light, self-shadow, gravity and accessories follow
     /// their keys.
     SetFrame(u32),
+    ResetViewPreset {
+        preset: CameraViewPreset,
+        playing: bool,
+    },
+    NumpadViewPreset(u8),
     /// Native stop tail, distinct from an ordinary seek.
     FinishPlayback {
         frame: Option<u32>,
@@ -1403,6 +1408,10 @@ impl Document {
                     a.state.parent_bone = bone as i32;
                 }
             }
+            Command::ResetViewPreset { preset, playing } => {
+                self.reset_view_preset(preset, playing, pose)?
+            }
+            Command::NumpadViewPreset(digit) => self.numpad_view_preset(digit, pose)?,
             Command::FinishPlayback { frame } => {
                 if let Some(frame) = frame {
                     self.pmm.timeline.current_frame = frame as i32;

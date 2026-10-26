@@ -3,8 +3,8 @@ use mds_app::ui::viewport::{
     self, drag_mode, local_axes, next_coordinate, pick, project, selection_list, tool_at,
     BoneState, Hit, Pointer,
 };
-use mds_math::Mat4;
 use mds_doc::CameraControls as Camera;
+use mds_math::Mat4;
 
 fn camera() -> Camera {
     Camera {
@@ -267,23 +267,25 @@ fn camera_moves_scale_with_shift_and_ctrl() {
 }
 
 #[test]
-fn model_view_projection_keeps_the_reference_and_camera_mode_ignores_offsets() {
+fn canonical_frame_keeps_native_offsets_in_camera_and_follow_views() {
     let mut doc = mds_doc::Document::startup();
-    let c = camera();
-    doc.pmm.camera_state[3] = 1.5;
-    doc.pmm.camera_state[4] = -0.75;
-    for (mode, follow, offset) in [(0, 0, [1.5, -0.75]), (1, 0, [0.0; 2]), (0, 1, [0.0; 2])] {
+    for (mode, follow) in [(0, 0), (1, 0), (0, 1)] {
         doc.pmm.settings.options[0] = mode;
         doc.pmm.appearance.follow_camera = follow;
-        for reference in 0..=2 {
-            doc.pmm.timeline.camera_reference_mode = reference;
-            let view = mds_app::scene::view(&doc, &render(c), [640, 360]);
-            let expected = render(c).view_with_offset(offset, 640, 360);
-            for point in [c.target, [0.0; 3], [3.0, 5.0, 7.0]] {
-                assert_eq!(view.clip(point), expected.clip(point));
-            }
-        }
+        doc.pmm.camera_state[3..5].copy_from_slice(&[1.5, -0.75]);
+        let frame = doc.prepare_camera_frame(Default::default(), true);
+        assert_eq!(frame.offset, [1.5, -0.75]);
+        assert_eq!(doc.pmm.camera_state[3..5], [1.5, -0.75]);
     }
 }
 
-fn render(c: Camera) -> mds_render::CameraFrame { mds_render::Camera { target: c.target, rotation: c.rotation, distance: c.distance, fov_deg: c.fov_deg, orthographic: c.orthographic }.into() }
+fn render(c: Camera) -> mds_render::CameraFrame {
+    mds_render::Camera {
+        target: c.target,
+        rotation: c.rotation,
+        distance: c.distance,
+        fov_deg: c.fov_deg,
+        orthographic: c.orthographic,
+    }
+    .into()
+}

@@ -85,7 +85,7 @@ fn repeated_clicks_cycle_through_overlapping_bones() {
     let size = [100.0, 80.0];
     let at = {
         let rig = viewport::rig(&r.e).unwrap();
-        let view = mds_app::scene::view(&r.e.doc, r.e.camera_frame(), [100, 80]);
+        let view = r.e.camera_view([100, 80]);
         let s = viewport::screen(&rig, &view, [100, 80]);
         let ([x, y], _) = s[2].unwrap();
         [x as f32, y as f32]
@@ -242,7 +242,11 @@ fn the_camera_tool_rows_move_and_turn_the_camera() {
     );
     r.run("key:L");
     r.left_drag([690.0, 575.0], &[[690.0, 585.0]], false);
-    close(&r.e.camera_frame().target, &[t[0] + 0.5, t[1], t[2]], "global X");
+    close(
+        &r.e.camera_frame().target,
+        &[t[0] + 0.5, t[1], t[2]],
+        "global X",
+    );
     r.left_drag([730.0, 535.0], &[[730.0, 545.0]], false);
     close(
         &r.e.doc.camera_controls().rotation,
@@ -302,9 +306,13 @@ fn shift_right_drag_pans_the_view_in_model_mode() {
         ..input(Some([300.0, 300.0]), KeyState::Idle, true)
     });
     close(&r.offset(), &[offset[0] - 1.0, offset[1] - 0.4], "offsets");
-    assert_eq!(r.e.camera_frame().target, start.target, "the reference point stays");
+    assert_eq!(
+        r.e.camera_frame().target,
+        start.target,
+        "the reference point stays"
+    );
     let point = [1.0, 2.0, 3.0];
-    let view = mds_app::scene::view(&r.e.doc, r.e.camera_frame(), SIZE.map(|v| v as u32));
+    let view = r.e.camera_view(SIZE.map(|v| v as u32));
     assert_eq!(
         view.clip(point),
         start
@@ -605,7 +613,15 @@ fn orbit_with_a_rotated_parent_edits_raw_angles_and_draws_the_composed_view() {
     let check = |r: &Rig| {
         let s = &r.e.doc.pmm.camera_state;
         let rot = Mat4::multiply(&Mat4::rotation_y(s[7]), &Mat4::rotation_x(s[6]));
-        let rot = Mat4::multiply(&basis, &Mat4::multiply(&rot, &Mat4::rotation_z(s[8])));
+        let active_basis = if r.e.doc.pmm.appearance.suppress_camera_transform == 0 {
+            basis
+        } else {
+            Mat4::IDENTITY
+        };
+        let rot = Mat4::multiply(
+            &active_basis,
+            &Mat4::multiply(&rot, &Mat4::rotation_z(s[8])),
+        );
         let point = [4.0, 7.0, -2.0];
         let view: [f32; 3] = std::array::from_fn(|c| {
             (0..3).map(|j| point[j] * rot.0[j * 4 + c]).sum::<f32>() - s[3 + c]
@@ -676,4 +692,80 @@ fn a_parented_camera_wheel_edits_raw_z_and_the_displayed_distance() {
         &angles,
         "wheel preserves composed rotation",
     );
+}
+
+#[test]
+fn numpad_respects_focus_playback_and_selected_parent_outer_gates() {
+    let mut r = Rig::new(chain());
+    r.apply(Command::SetFollowCamera(true));
+    r.apply(Command::SetCameraParentModel(Some(0)));
+    r.apply(Command::SetCamera {
+        position: [2.0, 3.0, -4.0],
+        rotation: [0.2, 0.3, 0.4],
+        distance: -37.0,
+        fov: 45.0,
+        perspective: false,
+    });
+    let before = r.e.doc.pmm.camera_state;
+    r.run("key:Numpad4");
+    assert_eq!(
+        r.e.doc.pmm.camera_state, before,
+        "selected-parent bone edit path skips numpad"
+    );
+    r.apply(Command::SelectCameraMode);
+    r.e.edit_camera_controls(|c| c.rotation = [0.2, 0.3, 0.4])
+        .unwrap();
+    let before = r.e.doc.pmm.camera_state;
+    let mut raw = egui::RawInput::default();
+    raw.viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .unwrap()
+        .focused = Some(false);
+    r.egui.begin_pass(raw);
+    r.run("key:Numpad4");
+    let mut output = r.egui.end_pass();
+    output.textures_delta.clear();
+    assert_eq!(
+        r.e.doc.pmm.camera_state, before,
+        "inactive viewport skips numpad"
+    );
+    r.e.toggle_play(0).unwrap();
+    let before = r.e.doc.pmm.camera_state;
+    r.run("key:Numpad4");
+    assert_eq!(r.e.doc.pmm.camera_state, before, "playing skips numpad");
+}
+
+#[test]
+fn parent_middle_input_edits_raw_xy_with_fov_and_keeps_depth() {
+    for z in [0.3, 0.30001, 1.0, -30.0] {
+        for fov in [30.0, 60.0] {
+            let mut r = Rig::new(chain());
+            r.apply(Command::SelectCameraMode);
+            r.apply(Command::SetCameraParentModel(Some(0)));
+            r.apply(Command::SetCamera {
+                position: [11.0, 13.0, z],
+                rotation: [0.2, 0.3, 0.4],
+                distance: -37.0,
+                fov,
+                perspective: false,
+            });
+            r.pass(viewport::Input {
+                middle: KeyState::Held,
+                pixels: [10, -4],
+                ..input(Some([300.0, 300.0]), KeyState::Idle, false)
+            });
+            let depth = if z.abs() <= 0.3 {
+                10.0
+            } else {
+                z.abs().max(1.0)
+            };
+            let xy = [
+                11.0 - 10.0 * 2e-5 * depth * fov,
+                13.0 - 4.0 * 2e-5 * depth * fov,
+            ];
+            assert_eq!(r.e.doc.camera_controls().target, [xy[0], xy[1], z]);
+            assert_eq!(r.e.camera_offset(), xy);
+            assert_eq!(r.e.camera_frame().distance, z);
+        }
+    }
 }

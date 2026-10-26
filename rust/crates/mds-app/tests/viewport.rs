@@ -72,7 +72,9 @@ fn the_window_draws_the_pixels_of_the_dump() {
     editor
         .apply(mds_doc::Command::SetViewOffset([1.5, -0.75]))
         .unwrap();
-    editor.edit_camera_controls(|c| c.rotation = [0.1, 0.2, 0.05]).unwrap();
+    editor
+        .edit_camera_controls(|c| c.rotation = [0.1, 0.2, 0.05])
+        .unwrap();
     editor.seek(0).unwrap();
     editor
         .apply(mds_doc::Command::SetSelfShadow {

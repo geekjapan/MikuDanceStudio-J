@@ -508,15 +508,40 @@ mod matrix_frame_tests {
     use super::*;
     #[test]
     fn composed_matrix_offsets_preserve_edges_and_light() {
-        let mut c = CameraFrame::from(Camera { target: [2.0, 4.0, -3.0], rotation: [1.570795, -0.4, 0.7], distance: -37.0, fov_deg: 42.0, orthographic: false });
+        let mut c = CameraFrame::from(Camera {
+            target: [2.0, 4.0, -3.0],
+            rotation: [1.570795, -0.4, 0.7],
+            distance: -37.0,
+            fov_deg: 42.0,
+            orthographic: false,
+        });
         let a = rotation_rows([0.3, -0.8, 0.2]);
-        c.rotation = std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| a[i][k]*c.rotation[k][j]).sum()));
+        c.rotation = std::array::from_fn(|i| {
+            std::array::from_fn(|j| (0..3).map(|k| a[i][k] * c.rotation[k][j]).sum())
+        });
         let base = c.view(640, 480);
         let moved = c.view_with_offset([3.0, -2.0], 640, 480);
         assert_eq!(base.edge_world, moved.edge_world);
         assert_eq!(base.edge_origin, moved.edge_origin);
-        assert_eq!(base.self_shadow_view_proj(&Light { direction: [0.2,-1.0,0.5], color: [0.6; 3] }, 2, 0.03), moved.self_shadow_view_proj(&Light { direction: [0.2,-1.0,0.5], color: [0.6; 3] }, 2, 0.03));
-        assert_ne!(base.clip([4.0,7.0,-2.0]), moved.clip([4.0,7.0,-2.0]));
+        assert_eq!(
+            base.self_shadow_view_proj(
+                &Light {
+                    direction: [0.2, -1.0, 0.5],
+                    color: [0.6; 3]
+                },
+                2,
+                0.03
+            ),
+            moved.self_shadow_view_proj(
+                &Light {
+                    direction: [0.2, -1.0, 0.5],
+                    color: [0.6; 3]
+                },
+                2,
+                0.03
+            )
+        );
+        assert_ne!(base.clip([4.0, 7.0, -2.0]), moved.clip([4.0, 7.0, -2.0]));
         assert_eq!(base.edge_world, c.world());
     }
 }

@@ -382,7 +382,14 @@ impl Document {
         slot: Option<u8>,
         pose: &mut crate::CameraPoseProvider<'_>,
     ) -> Result<(), Error> {
-        let anchors = if slot.is_none() {
+        let anchors = if slot.is_none()
+            && self.pmm.appearance.camera_parent_model >= 0
+            && self
+                .pmm
+                .models
+                .iter()
+                .any(|m| i32::from(m.slot) == self.pmm.appearance.camera_parent_model)
+        {
             Some(pose(self, crate::CameraPoseRequest::Current)?)
         } else {
             None

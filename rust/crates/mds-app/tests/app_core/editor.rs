@@ -37,7 +37,11 @@ fn a_camera_edit_shows_before_it_is_registered() {
         perspective: false,
     })
     .unwrap();
-    assert_eq!(*e.camera_frame(), edited.into(), "the view draws the edited state");
+    assert_eq!(
+        *e.camera_frame(),
+        edited.into(),
+        "the view draws the edited state"
+    );
     assert_eq!(
         scene::track_camera(&e.doc, 10).unwrap(),
         track,
@@ -48,12 +52,19 @@ fn a_camera_edit_shows_before_it_is_registered() {
         direction: [0.0, -1.0, 0.0],
     })
     .unwrap();
-    assert_eq!(*e.camera_frame(), edited.into(), "another edit keeps the edited view");
+    assert_eq!(
+        *e.camera_frame(),
+        edited.into(),
+        "another edit keeps the edited view"
+    );
     e.apply(Command::RegisterGlobalKeys(vec![GlobalTrack::Camera]))
         .unwrap();
     assert_eq!(scene::track_camera(&e.doc, 10).unwrap(), edited);
     e.seek(0).unwrap();
-    assert_eq!(*e.camera_frame(), scene::track_camera(&e.doc, 0).unwrap().into());
+    assert_eq!(
+        *e.camera_frame(),
+        scene::track_camera(&e.doc, 0).unwrap().into()
+    );
 }
 
 /// Plays `name` for `passes` window passes after `edit_at`, with `edit` applied there, and
@@ -277,10 +288,7 @@ fn the_model_view_keeps_its_view_offsets() {
     e.apply(Command::SetFollowCamera(true)).unwrap();
     e.toggle_play(400).unwrap();
     e.pump(433).unwrap();
-    assert_eq!(
-        *e.camera_frame(),
-        scene::state_camera(&e.doc).into()
-    );
+    assert_eq!(*e.camera_frame(), scene::state_camera(&e.doc).into());
 }
 
 /// The mean color of the pixels the models cover, and their count.
@@ -319,7 +327,8 @@ fn the_front_view_of_the_golden_strips_shows_their_edge_color() {
     e.toggle_play(0).unwrap();
     e.pump(33).unwrap();
     assert_eq!(
-        e.doc.camera_controls().rotation, [0.0; 3],
+        e.doc.camera_controls().rotation,
+        [0.0; 3],
         "the saved model view while playing"
     );
     let (n, front) = model_pixels(&e, &gpu);

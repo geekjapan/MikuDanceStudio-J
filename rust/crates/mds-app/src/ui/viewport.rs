@@ -92,15 +92,19 @@ pub fn actions() -> &'static [Action] {
 }
 
 fn view(ctx: &mut Ctx, b: ViewButton) -> Result<(), String> {
-    ctx.editor.edit_camera_controls(|camera| b.apply(camera))
+    ctx.editor.apply(Command::ResetViewPreset {
+        preset: b,
+        playing: ctx.editor.playing(),
+    })
 }
 
 /// `ConsumeNumpadViewPresets` runs in the stopped branch of the pump only.
 fn numpad(ctx: &mut Ctx, digit: u8) -> Result<(), String> {
-    if !ctx.editor.playing() {
-        ctx.editor.edit_camera_controls(|camera| {
-            navigation::numpad(camera, digit);
-        })?;
+    let focus = ctx.egui.as_ref().is_none_or(|egui| {
+        egui.input(|i| i.viewport().focused.unwrap_or(true)) && !egui.egui_wants_keyboard_input()
+    });
+    if focus && !ctx.editor.playing() && (camera_mode(ctx.editor) || !bone_edit_path(ctx.editor)) {
+        ctx.editor.apply(Command::NumpadViewPreset(digit))?;
     }
     Ok(())
 }
@@ -208,6 +212,17 @@ fn pan(ctx: &mut Ctx, dx: f32, dy: f32) {
 /// The model-mode right drag without Shift (`pump_navigation.cpp:335` to `:342`): Ctrl moves
 /// `CameraDistance`, else the drag turns `CameraYaw` and `CameraPitch`. The view camera turns
 /// with the state and keeps its target.
+fn middle_drag(ctx: &mut Ctx, dx: i32, dy: i32, m: Modifiers) {
+    let parent = ctx.editor.doc.pmm.appearance.camera_parent_model >= 0;
+    edit_camera(ctx, |camera| {
+        if parent {
+            navigation::parent_middle_drag(camera, dx, dy, m);
+        } else {
+            navigation::middle_drag(camera, dx, dy, m);
+        }
+    });
+}
+
 fn orbit(ctx: &mut Ctx, dx: i32, dy: i32, m: Modifiers) {
     edit_camera(ctx, |camera| navigation::right_drag(camera, dx, dy, m));
 }
@@ -1118,9 +1133,7 @@ pub fn input(ctx: &mut Ctx, i: &Input) {
         }
         match s.view_tool {
             1 => edit_camera(ctx, |camera| camera.distance -= dy as f32 * 0.1),
-            2 if camera_mode => {
-                edit_camera(ctx, |camera| navigation::middle_drag(camera, dx, dy, m))
-            }
+            2 if camera_mode => middle_drag(ctx, dx, dy, m),
             2 => pan(ctx, -(dx as f32) * drag_scale(m), dy as f32 * drag_scale(m)),
             _ => {}
         }
@@ -1140,7 +1153,7 @@ pub fn input(ctx: &mut Ctx, i: &Input) {
     }
     if i.middle == KeyState::Held {
         if camera_mode {
-            edit_camera(ctx, |camera| navigation::middle_drag(camera, px, py, m));
+            middle_drag(ctx, px, py, m);
         } else {
             let k = drag_scale(m);
             pan(ctx, -(px as f32) * k, py as f32 * k);

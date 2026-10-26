@@ -6,7 +6,7 @@
 
 use mds_media::avi::{AudioFormat, AviWriter, Config, Error, SUPER_ENTRIES};
 use mds_media::movie::Movie;
-use std::io::{self, Cursor, Seek, SeekFrom, Write};
+use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -609,6 +609,19 @@ fn a_file_over_one_gibibyte_reads_back() {
         video,
         pcm,
     };
+    let mut f = std::fs::File::open(&path).unwrap();
+    let (mut at, mut forms) = (0u64, Vec::new());
+    while at < size {
+        let mut h = [0u8; 12];
+        f.seek(SeekFrom::Start(at)).unwrap();
+        f.read_exact(&mut h).unwrap();
+        let len = u64::from(u32::from_le_bytes(h[4..8].try_into().unwrap())) + 8;
+        assert!(&h[..4] == b"RIFF" && len <= 1 << 30);
+        forms.push((String::from_utf8_lossy(&h[8..]).into_owned(), len));
+        at += len;
+    }
+    assert_eq!(at, size);
+    eprintln!("RIFFs: {forms:?}");
     let p = probe(&path);
     assert_eq!(
         get(&p, "streams.stream.0.nb_read_frames"),

@@ -891,6 +891,7 @@ impl Host {
         };
         let stage = Stage {
             accessories: &accessories,
+            grid: false,
             ..mds_render::scene::stage_at(f.pmm, f.frame)
         };
         let standard = match &mut self.standard {

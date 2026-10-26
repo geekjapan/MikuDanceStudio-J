@@ -58,6 +58,34 @@ class HostProfiles(unittest.TestCase):
             with patch.object(profiles, 'ROOT', directory), patch.object(profiles, 'HERE', directory), self.assertRaisesRegex(ValueError, 'hash'):
                 profiles.load()
 
+    def test_strict_capture_transport(self):
+        lf = b'0\t00000000\n1\t80000000\n'
+        crlf = lf.replace(b'\n', b'\r\n')
+        for ending, data in [('LF', lf), ('CRLF', crlf)]:
+            profile = {'line_ending': ending}
+            digest = hashlib.sha256(data).hexdigest()
+            self.assertEqual(profiles.capture_text(data, profile, 2, digest), lf)
+            mutants = [data.replace(b'00000000', b'00000001'), data[:-1], data + b'\n',
+                       data.replace(b'\n', b'\r\n', 1), data.replace(b'\r', b''),
+                       data.replace(b'\r\n', b'\n', 1), data.replace(b'\n', b'\r\r\n')]
+            for changed in mutants:
+                if changed != data:
+                    with self.subTest(ending=ending, changed=changed), self.assertRaises(ValueError):
+                        profiles.capture_text(changed, profile, 2, digest)
+            newline_mutants = [data[:-1], data + b'\n', data.replace(b'\n', b'\r\n', 1),
+                               data.replace(b'\r', b''), data.replace(b'\r\n', b'\n', 1),
+                               data.replace(b'\n', b'\r\r\n')]
+            for changed in newline_mutants:
+                if changed != data:
+                    with self.subTest(rehashed=changed), self.assertRaises(ValueError):
+                        profiles.capture_text(changed, profile, 2, hashlib.sha256(changed).hexdigest())
+            with self.assertRaises(ValueError):
+                profiles.capture_text(data, profile, 1, digest)
+            with self.assertRaises(ValueError):
+                profiles.capture_text(data, profile, 2, '0' * 64)
+        with self.assertRaises(ValueError):
+            profiles.capture_text(lf, {'line_ending': 'unknown'}, 2, hashlib.sha256(lf).hexdigest())
+
     def test_msvc_reuses_reviewed_flags_and_static_libraries(self):
         output = Path('/capture')
         src = profiles.ROOT / 'recipes/bullet275/bullet-src/src'
@@ -94,7 +122,7 @@ class HostProfiles(unittest.TestCase):
                     with self.subTest(name=name), self.assertRaises(ValueError):
                         profiles.validate_capture(output)
                     (output / name).write_bytes(original)
-            with patch.object(profiles, 'load', return_value=(manifest, base)), patch.object(profiles, 'host', return_value='linux-arm64'), self.assertRaisesRegex(ValueError, 'Unreviewed'):
+            with patch.object(profiles, 'load', return_value=(manifest, base)), patch.object(profiles, 'host', return_value='unknown-host'), self.assertRaisesRegex(ValueError, 'Unreviewed'):
                 profiles.validate_capture(output)
             report = json.loads((output / 'host-profile.json').read_text())
             self.assertFalse(report['profile_known'])

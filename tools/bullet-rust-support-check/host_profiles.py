@@ -70,6 +70,22 @@ def load(kind='support'):
     return manifest, base
 
 
+def capture_text(data, profile, count, expected_hash):
+    """Validate reviewed raw transport before comparing its LF fixture."""
+    ending = profile.get('line_ending', 'LF')
+    if ending == 'CRLF':
+        if data.count(b'\r\n') != count or data.count(b'\r') != count or data.count(b'\n') != count or not data.endswith(b'\r\n'):
+            raise ValueError('Expected strict CRLF capture transport')
+    elif ending == 'LF':
+        if b'\r' in data or data.count(b'\n') != count or not data.endswith(b'\n'):
+            raise ValueError('Expected strict LF capture transport')
+    else:
+        raise ValueError(f'Unknown capture line ending {ending}')
+    if hashlib.sha256(data).hexdigest() != expected_hash:
+        raise ValueError('Native capture hash differs from reviewed host profile')
+    return data.replace(b'\r\n', b'\n') if ending == 'CRLF' else data
+
+
 def validate_capture(output, kind='support'):
     manifest, base = load(kind)
     native = (output / 'native.tsv').read_bytes()
@@ -88,11 +104,12 @@ def validate_capture(output, kind='support'):
     (output / 'host-profile.json').write_text(json.dumps(report, indent=2) + '\n')
     if profile is None:
         raise ValueError(f'Unreviewed host profile {host()}; capture archived for review')
+    capture_text(native, profile, manifest['full_rows'], profile['full_sha256'])
     prefix = b''.join(native.splitlines(keepends=True)[:manifest['compact_rows']])
-    if prefix != (base / profile['compact']).read_bytes():
+    expected = (base / profile['compact']).read_bytes()
+    compact_hash = profile.get('compact_sha256', manifest['sha256'][profile['compact']])
+    if capture_text(prefix, profile, manifest['compact_rows'], compact_hash) != expected:
         raise ValueError('Native compact output differs from exact host profile')
-    if hashlib.sha256(native).hexdigest() != profile['full_sha256']:
-        raise ValueError('Full native capture hash differs from reviewed host profile')
     return base / profile['compact']
 
 

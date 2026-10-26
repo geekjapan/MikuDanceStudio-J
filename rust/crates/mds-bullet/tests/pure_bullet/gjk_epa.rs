@@ -39,6 +39,30 @@ fn status(s: Status) -> u8 {
         Status::EpaFailed => 3,
     }
 }
+fn host_native(raw: bool) -> &'static str {
+    if cfg!(all(
+        any(target_os = "macos", target_os = "linux"),
+        target_arch = "aarch64"
+    )) {
+        if raw {
+            include_str!("../gjk_epa_data/raw-native.tsv")
+        } else {
+            include_str!("../gjk_epa_data/native.tsv")
+        }
+    } else if cfg!(all(
+        any(target_os = "linux", target_os = "windows"),
+        target_arch = "x86_64"
+    )) {
+        if raw {
+            include_str!("../gjk_epa_data/raw-native-linux-x64.tsv")
+        } else {
+            include_str!("../gjk_epa_data/native-linux-x64.tsv")
+        }
+    } else {
+        panic!("unreviewed GJK/EPA host profile; run the native capture workflow")
+    }
+}
+
 #[test]
 fn internal_queries_match_native_words() {
     let full_inputs = std::env::var("MDS_GJK_EPA_INPUTS")
@@ -50,24 +74,37 @@ fn internal_queries_match_native_words() {
     let inputs = full_inputs
         .as_deref()
         .unwrap_or(include_str!("../gjk_epa_data/inputs.tsv"));
-    let native = full_native
-        .as_deref()
-        .unwrap_or(include_str!("../gjk_epa_data/native.tsv"));
-    replay(inputs, native);
+    let native = full_native.as_deref().unwrap_or_else(|| host_native(false));
+    replay(inputs, native, "MDS_GJK_EPA_ACTUAL");
 }
 
 #[test]
 fn directed_raw_inputs_match_native_words() {
+    let inputs = std::env::var("MDS_GJK_EPA_RAW_INPUTS")
+        .ok()
+        .map(|p| std::fs::read_to_string(p).unwrap());
+    let native = std::env::var("MDS_GJK_EPA_RAW_NATIVE")
+        .ok()
+        .map(|p| std::fs::read_to_string(p).unwrap());
     replay(
-        include_str!("../gjk_epa_data/raw-inputs.tsv"),
-        include_str!("../gjk_epa_data/raw-native.tsv"),
+        inputs
+            .as_deref()
+            .unwrap_or(include_str!("../gjk_epa_data/raw-inputs.tsv")),
+        native.as_deref().unwrap_or_else(|| host_native(true)),
+        "MDS_GJK_EPA_RAW_ACTUAL",
     );
 }
 
-fn replay(inputs: &str, native: &str) {
+fn replay(inputs: &str, native: &str, output_variable: &str) {
     assert_eq!(inputs.lines().count(), native.lines().count());
-    for (input, expected) in inputs.lines().zip(native.lines()) {
+    let start: usize = inputs.split_whitespace().next().unwrap().parse().unwrap();
+    assert!(start == 0 || start == 6801);
+    let mut capture = String::new();
+    let mut mismatches = Vec::new();
+    for (index, (input, expected)) in inputs.lines().zip(native.lines()).enumerate() {
         let c: Vec<_> = input.split_whitespace().collect();
+        assert_eq!(c.len(), 36);
+        assert_eq!(c[0], (start + index).to_string());
         let v: Vec<_> = c[3..]
             .iter()
             .map(|s| f32::from_bits(u32::from_str_radix(s, 16).unwrap()))
@@ -113,7 +150,27 @@ fn replay(inputs: &str, native: &str) {
             vector(&mut actual, v);
         }
         vector(&mut actual, n);
-        assert_eq!(actual, expected, "query {} input {input}", c[0]);
+        capture.push_str(&actual);
+        capture.push('\n');
+        if actual != expected {
+            mismatches.push(format!(
+                "query {} input {input} actual {actual} expected {expected}",
+                c[0]
+            ));
+        }
     }
+    if let Ok(path) = std::env::var(output_variable) {
+        let capture = if cfg!(target_os = "windows") {
+            capture.replace('\n', "\r\n")
+        } else {
+            capture
+        };
+        std::fs::write(path, capture).unwrap();
+    }
+    assert!(
+        mismatches.is_empty(),
+        "MDS_GJK_EPA_NATIVE_MISMATCH_BEGIN\n{}\nMDS_GJK_EPA_NATIVE_MISMATCH_END",
+        mismatches.join("\n")
+    );
     assert!(!inputs.is_empty());
 }

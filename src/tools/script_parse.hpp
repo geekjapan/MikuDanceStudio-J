@@ -127,13 +127,28 @@ enum class ScriptOp {
     DialogOk,
     DialogCancel,
     Toon,
+    // the document commands of mds-doc that script3 does not run (script4)
+    SavePmdRefused,
+    OutsideParentOpen,
+    AccessoryOrderOpen,
+    ModelDrawOrderOpen,
+    ModelCalcOrderOpen,
+    ViewDrag,
+    PhysicsDrag,
+    LoadBackgroundMovie,
+    LoadBackgroundPicture,
+    ToggleBackgroundMovie,
+    ToggleBackgroundPicture,
+    ToggleBlackBackground,
 };
 
 struct ScriptCommandSpec {
     const char* words; // the fixed words, space separated
     ScriptOp op;
     // One letter per argument: t text, n number, f frame (an integer below
-    // kMaxScriptFrame), l lane (0..3), o on or off.
+    // kMaxScriptFrame), l lane (0..3), o on or off, i a whole number (may be
+    // negative), b right or middle, m none, shift, or ctrl, r rotate or move,
+    // a x, y, or z.
     const char* args;
 };
 
@@ -244,7 +259,33 @@ inline constexpr ScriptCommandSpec kScriptCommands[] = {
     {"dialog ok", ScriptOp::DialogOk, ""},
     {"dialog cancel", ScriptOp::DialogCancel, ""},
     {"toon", ScriptOp::Toon, "ft"},
+    {"save pmd refused", ScriptOp::SavePmdRefused, "t"},
+    {"outside parent open", ScriptOp::OutsideParentOpen, ""},
+    {"accessory order open", ScriptOp::AccessoryOrderOpen, ""},
+    {"model draw order open", ScriptOp::ModelDrawOrderOpen, ""},
+    {"model calc order open", ScriptOp::ModelCalcOrderOpen, ""},
+    {"view drag", ScriptOp::ViewDrag, "bmii"},
+    {"physics drag", ScriptOp::PhysicsDrag, "rami"},
+    {"load background movie", ScriptOp::LoadBackgroundMovie, "t"},
+    {"load background picture", ScriptOp::LoadBackgroundPicture, "t"},
+    {"toggle background movie", ScriptOp::ToggleBackgroundMovie, ""},
+    {"toggle background picture", ScriptOp::ToggleBackgroundPicture, ""},
+    {"toggle black background", ScriptOp::ToggleBlackBackground, ""},
 };
+
+// The commands that run inside a modal dialog: the `dialog` lines that
+// follow a command opening one (IsModalDialogOpener) up to the first other
+// line.
+inline bool IsDialogCommand(ScriptOp op) {
+    return op == ScriptOp::DialogText || op == ScriptOp::DialogClick ||
+           op == ScriptOp::DialogSelect || op == ScriptOp::DialogOk ||
+           op == ScriptOp::DialogCancel;
+}
+
+inline bool IsModalDialogOpener(ScriptOp op) {
+    return op == ScriptOp::OutsideParentOpen || op == ScriptOp::AccessoryOrderOpen ||
+           op == ScriptOp::ModelDrawOrderOpen || op == ScriptOp::ModelCalcOrderOpen;
+}
 // clang-format on
 
 struct ScriptCommand {
@@ -292,6 +333,10 @@ inline bool IsScriptNumber(const std::string& text) {
             return false;
     }
     return digits;
+}
+
+inline bool IsScriptInteger(const std::string& text) {
+    return IsScriptNumber(text) && text.find('.') == std::string::npos;
 }
 
 inline bool IsScriptFrame(const std::string& text) {
@@ -370,6 +415,11 @@ inline bool ParseScript(const std::string& text, std::vector<ScriptCommand>* com
                             : kind == 'n' ? IsScriptNumber(arg)
                             : kind == 'f' ? IsScriptFrame(arg)
                             : kind == 'o' ? arg == "on" || arg == "off"
+                            : kind == 'i' ? IsScriptInteger(arg)
+                            : kind == 'b' ? arg == "right" || arg == "middle"
+                            : kind == 'm' ? arg == "none" || arg == "shift" || arg == "ctrl"
+                            : kind == 'r' ? arg == "rotate" || arg == "move"
+                            : kind == 'a' ? arg == "x" || arg == "y" || arg == "z"
                                           : arg.size() == 1 && arg[0] >= '0' && arg[0] <= '3';
             if (!ok) {
                 *error = where + command.name + ": bad argument \"" + arg + "\"";
@@ -379,7 +429,7 @@ inline bool ParseScript(const std::string& text, std::vector<ScriptCommand>* com
         // A trace file is written into <out-dir> like a save target.
         const bool isSave = command.op == ScriptOp::SavePmm || command.op == ScriptOp::SaveVmd ||
                             command.op == ScriptOp::SaveVpd || command.op == ScriptOp::SavePmd ||
-                            command.op == ScriptOp::Trace;
+                            command.op == ScriptOp::SavePmdRefused || command.op == ScriptOp::Trace;
         if (isSave) {
             const std::string& file = command.args[0];
             if (file.find_first_of("\\/:") != std::string::npos || file == "." || file == ".." ||

@@ -1713,7 +1713,7 @@ diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/sr
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_variadic.rs
-@@ -0,0 +1,1330 @@
+@@ -0,0 +1,1328 @@
 +use super::*;
 +use serde_json::{Value, json};
 +
@@ -2622,7 +2622,6 @@ new file mode 100644
 +                if let Some(expected) = &baseline { assert_eq!(&facts, expected); }
 +                else { baseline = Some(facts); }
 +
-+                // A shared child reached first near the limit must still be checked at its deeper occurrence.
 +                ast.c_types.insert(t(100), not_located(CTypeKind::Function(q(20), vec![q(1)], true, false, true, CCallingConvention::C)));
 +                let facts = ast.cursor_required_relations(Path::new("depth.c"), &ast.cursor_declaration_owners());
 +                assert!(facts["roots"].as_array().unwrap().iter()
@@ -2700,7 +2699,6 @@ new file mode 100644
 +        ast.c_stmts.insert(CStmtId(80), not_located(CStmtKind::Expr(CExprId(80))));
 +        ast.c_stmts.insert(CStmtId(60), not_located(CStmtKind::Compound(vec![CStmtId(61), CStmtId(70), CStmtId(71), CStmtId(72), CStmtId(80)])));
 +        ast.c_types.insert(CTypeId(999), not_located(CTypeKind::Int));
-+        // Only lexical initializers may select enum members or unrelated record field types.
 +        for (id, typ, initializer) in [(51, 11, Some(CExprId(810))), (52, 12, None), (53, 11, Some(CExprId(80)))] {
 +            ast.c_decls.insert(CDeclId(id), not_located(CDeclKind::Variable {
 +                ident: format!("local_{id}"), typ: q(typ), initializer, has_static_duration: false,

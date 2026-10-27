@@ -43,6 +43,9 @@ jobs:
       - name: Install pinned Rust
         shell: bash
         run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Test checker under optimized Python
+        shell: bash
+        run: python -O -m unittest discover -s tools/bullet-rust-world-objects-check -p 'test_*.py'
       - name: Compare native and Rust registered object traces
         if: runner.os != 'Windows'
         shell: bash

@@ -16,6 +16,9 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 BASE = 'ba741bc903404a680481578b871a613213b4f949'
 
+def require(ok, message):
+    if not ok: raise AssertionError(message)
+
 def hashes(root):
     return {p.relative_to(root).as_posix(): 'symlink:' + os.readlink(p) if p.is_symlink() else hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted(root.rglob('*')) if p.is_file() or p.is_symlink()}
@@ -79,8 +82,6 @@ def expected_records(extended=True):
 
 def validate(raw, reference=None, extended=True):
     rows = raw.decode().splitlines(); records = expected_records(extended)
-    def require(ok, message):
-        if not ok: raise AssertionError(message)
     def integer(value, low, high):
         require(re.fullmatch(r'-?(0|[1-9][0-9]*)', value) is not None, 'malformed integer')
         require(low <= int(value) <= high, 'integer out of range')
@@ -146,9 +147,9 @@ def main():
     def save(name, value): (out / name).write_text(json.dumps(value, indent=2) + '\n')
     def dep_snapshot(): return {name: hashlib.sha256(Path(name).read_bytes()).hexdigest() if Path(name).is_file() else None for name in dependencies}
     def run(argv, label, inputs=None):
-        assert source_snapshot() == before, 'source closure changed before command'
-        assert hashes(generated_root) == generated, 'generated closure changed before command'
-        assert dep_snapshot() == dependencies, 'include closure changed before command'
+        require(source_snapshot() == before, 'source closure changed before command')
+        require(hashes(generated_root) == generated, 'generated closure changed before command')
+        require(dep_snapshot() == dependencies, 'include closure changed before command')
         argv = list(map(str, argv)); commands.append({'label': label, 'argv': argv}); save('commands.json', commands)
         p = subprocess.run(argv, cwd=ROOT / 'rust', capture_output=True, env=env, input=inputs, timeout=240)
         (out / (label + '.stdout')).write_bytes(p.stdout); (out / (label + '.stderr')).write_bytes(p.stderr)
@@ -156,17 +157,18 @@ def main():
         save(label + '-includes.json', list(map(str,included)))
         for path in included:
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            assert dependencies.setdefault(str(path), digest) == digest
+            previous = dependencies.setdefault(str(path), digest)
+            require(previous == digest, 'include closure changed during command')
         save('native-includes.json', dependencies)
-        assert p.returncode == 0, f'{label} failed ({p.returncode}): {p.stderr.decode(errors="replace")[-2000:]}'
+        require(p.returncode == 0, f'{label} failed ({p.returncode}): {p.stderr.decode(errors="replace")[-2000:]}')
         return p.stdout
     env = {k:v for k,v in os.environ.items() if not k.startswith('OPENMMD_DUMP_')}; env['VSLANG'] = '1033'
     save('source-start.json', before)
     try:
         machine = platform.machine().lower(); system = platform.system()
-        assert machine in ['x86_64','amd64','aarch64','arm64']
-        assert system != 'Darwin' or machine == 'arm64'
-        assert system != 'Windows' or machine in ['amd64','x86_64']
+        require(machine in ['x86_64','amd64','aarch64','arm64'], 'unsupported host architecture')
+        require(system != 'Darwin' or machine == 'arm64', 'unsupported macOS architecture')
+        require(system != 'Windows' or machine in ['amd64','x86_64'], 'unsupported Windows architecture')
         status['host'] = {'system': platform.platform(), 'architecture': machine, 'runner_image': os.environ.get('ImageOS'), 'runner_version': os.environ.get('ImageVersion')}
         variants = ['observed'] + ([] if args.skip_mutations else args.mutation or list(MUTANTS))
         source = (ROOT / 'rust/crates/mds-bullet/src/core/world_objects.rs').read_text()
@@ -178,7 +180,7 @@ def main():
             if name == 'observed':
                 code = code.replace('// OBSERVER_ANCHOR', 'eprintln!("OBS {} {} {} {}",k,r,w.bodies().len(),w.joints().len());')
             else:
-                old, new = MUTANTS[name]; assert source.count(old) == 1, f'missing or ambiguous mutant anchor {name}'
+                old, new = MUTANTS[name]; require(source.count(old) == 1, f'missing or ambiguous mutant anchor {name}')
                 (tree / 'rust/crates/mds-bullet/src/core/world_objects.rs').write_text(source.replace(old,new))
             runner.write_text(code)
         macro = generated_root / 'macros.cpp'
@@ -187,7 +189,7 @@ def main():
             code += f'#ifdef {name}\nputs("{name}=" S({name}));\n#else\nputs("{name}=<undefined>");\n#endif\n'
         macro.write_text(code + 'printf("pointer_bits=%zu\\n",sizeof(void*)*8);}\n')
         generated = hashes(generated_root); save('generated-start.json', generated)
-        assert all(not value.startswith('symlink:') for value in generated.values()), 'generated source symlink forbidden'
+        require(all(not value.startswith('symlink:') for value in generated.values()), 'generated source symlink forbidden')
         compiler = os.environ.get('CXX', 'cl' if os.name == 'nt' else 'clang++')
         src = ROOT / 'recipes/bullet275/bullet-src/src'; shim = ROOT / 'rust/crates/mds-bullet-sys/shim'
         flags = ['/showIncludes','/nologo','/std:c++17','/O2','/MD','/EHsc','/fp:precise','/W0','/DBT_NO_PROFILE=1',f'/I{src}',f'/I{shim}',f'/FI{shim / "det_math.h"}'] if os.name == 'nt' else ['-H','-std=c++17','-O2','-ffp-contract=off','-fno-fast-math','-fdeclspec','-w','-DBT_NO_PROFILE=1','-I',shim/'sse_emu','-I',src,'-I',shim,'-include',shim/'det_math.h']
@@ -222,7 +224,7 @@ def main():
             run(command,'build-'+name)
         original_headers = json.loads((out / 'build-native-includes.json').read_text())
         observer_headers = json.loads((out / 'build-native-observed-includes.json').read_text())
-        assert original_headers and original_headers == observer_headers, 'observer include resolution differs'
+        require(original_headers and original_headers == observer_headers, 'observer include resolution differs')
         rargs = [*rust,'--extern',f'mds_crtmath={out / "libmds_crtmath.rlib"}']
         for name,path in [('rust',HERE/'runner.rs'),*[(name,generated_root/name/'tools/bullet-rust-world-objects-check/runner.rs') for name in variants]]:
             run([*rargs,path,'-o',out/(name+suffix)],'build-'+name)
@@ -230,16 +232,16 @@ def main():
         native = run([out/('native'+suffix)],'native'); observed = run([out/('native-observed'+suffix)],'native-observed')
         actual = run([out/('rust'+suffix)],'rust'); robserved = run([out/('observed'+suffix)],'rust-observed')
         for raw in [native,observed,actual,robserved]:validate(raw,native)
-        assert native == observed, 'native observer changed stdout';assert actual == robserved, 'Rust observer changed stdout'
-        assert (out/'native-observed.stderr').read_bytes() == (out/'rust-observed.stderr').read_bytes(), 'observer counts differ'
+        require(native == observed, 'native observer changed stdout');require(actual == robserved, 'Rust observer changed stdout')
+        require((out/'native-observed.stderr').read_bytes() == (out/'rust-observed.stderr').read_bytes(), 'observer counts differ')
         (out/'native-rust.diff').write_text(''.join(difflib.unified_diff(native.decode().splitlines(True),actual.decode().splitlines(True),fromfile='native',tofile='rust')))
-        assert native == actual, 'raw mismatch; full capture retained; no numeric profile approved'
+        require(native == actual, 'raw mismatch; full capture retained; no numeric profile approved')
         results = {}
         for name in variants:
             if name == 'observed': continue
             raw = run([out/(name+suffix)],'mutant-'+name);validate(raw,native)
             results[name] = 'CAUGHT' if raw != native else 'SURVIVED';save('mutations.json',results)
-            assert raw != native, f'mutant survived: {name}'
+            require(raw != native, f'mutant survived: {name}')
         status['status'] = 'PASS_FOCUSED_ONLY' if args.skip_mutations else 'PASS_SAME_HOST_RAW_AND_MUTATIONS'
         status['trace_lines'] = len(native.splitlines());status['mutants'] = results
         if args.mutation: status['status'] = 'PASS_SELECTED_MUTATIONS_ONLY'

@@ -143,8 +143,8 @@ def capture(output, environment):
     try:
         observe(src, command, executable, inputs, output, environment)
     except (AssertionError, subprocess.CalledProcessError) as error:
-        observation_error = str(error)
-        write_json(output / 'observer-failure.json', {'error': observation_error})
+        observation_error = error
+        write_json(output / 'observer-failure.json', {'type': type(error).__name__, 'error': str(error)})
     run(['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--crate-name', 'mds_crtmath', '--crate-type', 'rlib', '-O', crt, '-o', output / 'libmds_crtmath.rlib'], env=environment)
     env = dict(environment, MDS_GJK_PAIR_INPUTS=str(output / 'inputs.tsv'),
                MDS_GJK_PAIR_NATIVE=str(output / 'native.tsv'), MDS_GJK_PAIR_ACTUAL=str(output / 'rust.tsv'))
@@ -164,8 +164,8 @@ def capture(output, environment):
     if not (fallback == (output / 'fallback-native.tsv').read_bytes()):
         raise AssertionError('Fallback requires prior history')
     facts = audit(output)
-    if observation_error or facts['collection'] != 'complete':
-        raise ValueError('Collection incomplete or observer coverage failed')
+    if observation_error is not None or facts['collection'] != 'complete':
+        raise ValueError('Collection incomplete or observer coverage failed') from observation_error
     from measured_profiles import validate
     receipt = validate(output, host=host, inventory=inventory, source_hashes=source_hashes,
                        stream=stream, transport=transport)

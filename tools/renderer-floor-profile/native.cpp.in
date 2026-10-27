@@ -1,0 +1,179 @@
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+#include <d3dx9.h>
+#include <bcrypt.h>
+#include <intrin.h>
+#include <xmmintrin.h>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <cwchar>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <memory>
+#include <sstream>
+#include <string>
+#include <vector>
+#include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/accessory_layout.hpp"
+#include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/model.hpp"
+#include "native_observer.hpp"
+using namespace mikudancestudio;
+namespace {
+bool good=true;
+void Emit(const std::string& s) { std::printf("FP %s\n",s.c_str()); }
+std::string Quote(const std::string& s) {
+    std::ostringstream o; o << '"';
+    for(unsigned char c:s) {
+        if(c=='"'||c=='\\')o << '\\' << char(c);
+        else if(c<32 || c>=127) {char b[8];std::snprintf(b,sizeof b,"\\u%04x",unsigned(c));o<<b;}
+        else o<<char(c);
+    }
+    return o.str()+'"';
+}
+template<class T> std::string Array(const T* p,size_t n) {
+    std::ostringstream o;o<<'[';for(size_t i=0;i<n;++i){if(i)o<<',';o<<p[i];}return o.str()+']';
+}
+std::string Words(const void* p,size_t n) {
+    std::vector<std::uint32_t> w(n);std::memcpy(w.data(),p,n*4);return Array(w.data(),n);
+}
+bool Hr(const char* operation,HRESULT hr) {
+    Emit("{\"stage\":\"hr\",\"operation\":"+Quote(operation)+",\"value\":"+std::to_string(std::uint32_t(hr))+"}");
+    good &= SUCCEEDED(hr);return SUCCEEDED(hr);
+}
+void Fp(const char* point) {Emit("{\"stage\":\"fp\",\"point\":"+Quote(point)+",\"mxcsr\":"+std::to_string(_mm_getcsr())+"}");}
+template<class T> struct Com {T* p=nullptr;~Com(){if(p)p->Release();}T* operator->()const{return p;}};
+bool Mesh(const char* stage,ID3DXMesh* mesh) {
+    if(!mesh)return good=false;
+    const DWORD n=mesh->GetNumVertices(),f=mesh->GetNumFaces(),stride=mesh->GetNumBytesPerVertex();
+    if(!n||n>1000000||!f||f>1000000||stride>256)return good=false;
+    D3DVERTEXELEMENT9 decl[65]{};if(!Hr("GetDeclaration",mesh->GetDeclaration(decl)))return false;
+    int offset=-1;bool end=false;
+    for(const auto& e:decl) {
+        if(e.Stream==0xff){end=true;break;}
+        if(e.Usage==D3DDECLUSAGE_POSITION && e.UsageIndex==0) {
+            if(offset!=-1||e.Stream!=0||e.Type!=D3DDECLTYPE_FLOAT3||e.Method!=0||e.Offset+12>stride)return good=false;
+            offset=e.Offset;
+        }
+    }
+    if(!end||offset<0)return good=false;
+    Com<IDirect3DVertexBuffer9> vb;D3DVERTEXBUFFER_DESC vd{};
+    if(!Hr("GetVertexBuffer",mesh->GetVertexBuffer(&vb.p))||!vb.p||!Hr("VertexBufferGetDesc",vb->GetDesc(&vd))||vd.Size!=n*stride)return good=false;
+    Com<IDirect3DIndexBuffer9> ib;D3DINDEXBUFFER_DESC id{};
+    const bool wide=(mesh->GetOptions()&1)!=0;const DWORD width=wide?4:2;
+    if(!Hr("GetIndexBuffer",mesh->GetIndexBuffer(&ib.p))||!ib.p||!Hr("IndexBufferGetDesc",ib->GetDesc(&id))||id.Size!=f*3*width||id.Format!=(wide?D3DFMT_INDEX32:D3DFMT_INDEX16))return good=false;
+    void* locked=nullptr;if(!Hr("LockVertexBuffer",mesh->LockVertexBuffer(D3DLOCK_READONLY,&locked))||!locked)return good=false;
+    std::string positions="[";
+    for(DWORD i=0;i<n;++i){if(i)positions+=',';positions+=Words(static_cast<unsigned char*>(locked)+size_t(i)*stride+offset,3);}
+    positions+=']';if(!Hr("UnlockVertexBuffer",mesh->UnlockVertexBuffer()))return false;
+    if(!Hr("LockIndexBuffer",mesh->LockIndexBuffer(D3DLOCK_READONLY,&locked))||!locked)return good=false;
+    std::vector<std::uint32_t> indices(f*3);
+    for(size_t i=0;i<indices.size();++i)indices[i]=wide?static_cast<DWORD*>(locked)[i]:static_cast<WORD*>(locked)[i];
+    if(!Hr("UnlockIndexBuffer",mesh->UnlockIndexBuffer()))return false;
+    DWORD* attributes=nullptr;if(!Hr("LockAttributeBuffer",mesh->LockAttributeBuffer(D3DLOCK_READONLY,&attributes))||!attributes)return good=false;
+    std::string attrs=Array(attributes,f);if(!Hr("UnlockAttributeBuffer",mesh->UnlockAttributeBuffer()))return false;
+    DWORD count=0;if(!Hr("GetAttributeTableSize",mesh->GetAttributeTable(nullptr,&count)))return false;
+    std::vector<D3DXATTRIBUTERANGE> table(count);
+    if(count && !Hr("GetAttributeTable",mesh->GetAttributeTable(table.data(),&count)))return false;
+    std::string ts="[";for(size_t i=0;i<table.size();++i){if(i)ts+=',';ts+=Array(reinterpret_cast<const DWORD*>(&table[i]),5);}ts+=']';
+    Emit("{\"stage\":"+Quote(stage)+",\"positions\":"+positions+",\"indices\":"+Array(indices.data(),indices.size())+",\"attributes\":"+attrs+",\"table\":"+ts+",\"bounds\":["+std::to_string(n)+","+std::to_string(f)+","+std::to_string(stride)+","+std::to_string(offset)+","+std::to_string(vd.Size)+","+std::to_string(id.Size)+","+std::to_string(width)+"],\"initialized\":[\"position\"],\"unknown\":[\"uv\",\"padding\",\"other-declaration-channels\"]}");
+    return true;
+}
+void Materials(const char* stage,const D3DMATERIAL9* m,DWORD n) {
+    std::string rows="[";for(DWORD i=0;i<n;++i){if(i)rows+=',';rows+=Words(m+i,17);}rows+=']';
+    Emit("{\"stage\":"+Quote(stage)+",\"words\":"+rows+"}");
+}
+std::vector<unsigned char> Read(const std::filesystem::path& p) {
+    std::ifstream f(p,std::ios::binary);return {std::istreambuf_iterator<char>(f),{}};
+}
+std::string Sha(const std::vector<unsigned char>& raw) {
+    BCRYPT_ALG_HANDLE a=nullptr;BCRYPT_HASH_HANDLE h=nullptr;DWORD size=0,got=0;unsigned char hash[32]{};
+    if(BCryptOpenAlgorithmProvider(&a,BCRYPT_SHA256_ALGORITHM,nullptr,0)<0)return {};
+    if(BCryptGetProperty(a,BCRYPT_OBJECT_LENGTH,reinterpret_cast<PUCHAR>(&size),4,&got,0)<0){BCryptCloseAlgorithmProvider(a,0);return {};}
+    std::vector<unsigned char> object(size);
+    bool ok=BCryptCreateHash(a,&h,object.data(),size,nullptr,0,0)>=0;
+    if(ok)ok=BCryptHashData(h,const_cast<PUCHAR>(raw.data()),ULONG(raw.size()),0)>=0 && BCryptFinishHash(h,hash,32,0)>=0;
+    if(h)BCryptDestroyHash(h);BCryptCloseAlgorithmProvider(a,0);
+    if(!ok)return {};std::string s;for(auto b:hash){char x[3];std::snprintf(x,3,"%02x",b);s+=x;}return s;
+}
+void* Import(const char* name) {
+    auto* base=reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
+    auto* dos=reinterpret_cast<IMAGE_DOS_HEADER*>(base);auto* nt=reinterpret_cast<IMAGE_NT_HEADERS64*>(base+dos->e_lfanew);
+    if(nt->Signature!=IMAGE_NT_SIGNATURE||nt->FileHeader.Machine!=IMAGE_FILE_MACHINE_AMD64)return nullptr;
+    auto rva=nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;if(!rva)return nullptr;
+    auto* d=reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base+rva);
+    for(;d->Name;++d) {
+        if(_stricmp(reinterpret_cast<char*>(base+d->Name),"d3dx9_43.dll"))continue;
+        if(!d->OriginalFirstThunk)return nullptr;
+        auto* names=reinterpret_cast<IMAGE_THUNK_DATA64*>(base+d->OriginalFirstThunk);
+        auto* targets=reinterpret_cast<IMAGE_THUNK_DATA64*>(base+d->FirstThunk);
+        for(;names->u1.AddressOfData;++names,++targets) {
+            if(IMAGE_SNAP_BY_ORDINAL64(names->u1.Ordinal))continue;
+            auto* n=reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base+names->u1.AddressOfData);
+            if(!std::strcmp(reinterpret_cast<char*>(n->Name),name))return reinterpret_cast<void*>(targets->u1.Function);
+        }
+    }
+    return nullptr;
+}
+void Cpu() {
+    int r[4]{};__cpuid(r,0);int vendor[3]={r[1],r[3],r[2]};int max=r[0];
+    __cpuid(r,1);int identity=r[0],features[3]={r[2],r[3],0};if(max>=7){__cpuidex(r,7,0);features[2]=r[1];}
+    int ext[4];__cpuid(ext,0x80000000);int brand[12]{};if(unsigned(ext[0])>=0x80000004)for(int i=0;i<3;++i)__cpuid(brand+4*i,0x80000002+i);
+    Emit("{\"stage\":\"cpu\",\"vendor\":"+Words(vendor,3)+",\"identity\":"+std::to_string(std::uint32_t(identity))+",\"brand\":"+Words(brand,12)+",\"features\":"+Words(features,3)+"}");
+}
+struct Record {mdl::AccessoryRecord value{};Record(){InitAccessoryRecord(&value);}~Record(){DisposeAccessory(&value);}};
+}
+void FloorProfileRaw(ID3DXMesh* mesh) { Fp("production-raw-before");Mesh("production-raw",mesh);Fp("production-raw-after"); }
+int wmain(int argc,wchar_t** argv) {
+    if(argc!=3 || std::wcscmp(argv[1],L"fixed") || (std::wcscmp(argv[2],L"control") && std::wcscmp(argv[2],L"observed")))return 2;
+    Emit("{\"stage\":\"begin\",\"language\":\"native\"}");Cpu();Fp("device-before");
+    HWND window=CreateWindowW(L"STATIC",L"Floor profile",WS_OVERLAPPED,0,0,64,64,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+    Com<IDirect3D9> d3d;d3d.p=Direct3DCreate9(D3D_SDK_VERSION);Com<IDirect3DDevice9> device;
+    if(!window||!d3d.p)return 3;
+    D3DPRESENT_PARAMETERS pp{};pp.BackBufferWidth=pp.BackBufferHeight=64;pp.BackBufferFormat=D3DFMT_A8R8G8B8;pp.SwapEffect=D3DSWAPEFFECT_DISCARD;pp.Windowed=TRUE;pp.hDeviceWindow=window;
+    if(!Hr("CreateDevice",d3d->CreateDevice(D3DADAPTER_DEFAULT,D3DDEVTYPE_HAL,window,D3DCREATE_SOFTWARE_VERTEXPROCESSING,&pp,&device.p)))return 4;
+    Fp("device-after");
+    HMODULE dll=GetModuleHandleW(L"d3dx9_43.dll");if(!dll)return 5;
+    auto loader=GetProcAddress(dll,"D3DXLoadMeshFromXW");
+    // Coord has the SDK's same float3 pointer signature as TransformNormal.
+    auto coord=reinterpret_cast<decltype(&D3DXVec3TransformNormal)>(GetProcAddress(dll,"D3DXVec3TransformCoord"));
+    auto transform=reinterpret_cast<decltype(&D3DXVec3Transform)>(GetProcAddress(dll,"D3DXVec3Transform"));
+    if(!loader||!coord||!transform||Import("D3DXLoadMeshFromXW")!=reinterpret_cast<void*>(loader))return 6;
+    for(auto p:{reinterpret_cast<void*>(loader),reinterpret_cast<void*>(coord),reinterpret_cast<void*>(transform)}) {
+        HMODULE owner=nullptr;if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(p),&owner)||owner!=dll)return 7;
+    }
+    wchar_t path[32768]{};DWORD length=GetModuleFileNameW(dll,path,32768);if(!length||length>=32768)return 8;
+    auto bytes=Read(path);auto sha=Sha(bytes);if(sha.size()!=64)return 9;
+    const auto base=reinterpret_cast<std::uintptr_t>(dll);
+    Emit("{\"stage\":\"dll\",\"path\":"+Quote(std::filesystem::path(path).u8string())+",\"size\":"+std::to_string(bytes.size())+",\"sha256\":"+Quote(sha)+",\"base\":"+std::to_string(base)+",\"rvas\":["+std::to_string(reinterpret_cast<std::uintptr_t>(loader)-base)+","+std::to_string(reinterpret_cast<std::uintptr_t>(coord)-base)+","+std::to_string(reinterpret_cast<std::uintptr_t>(transform)-base)+"],\"import_target\":"+std::to_string(reinterpret_cast<std::uintptr_t>(Import("D3DXLoadMeshFromXW")))+"}");
+    auto app=std::make_unique<MMDApp>();std::memset(&app->state,0,sizeof app->state);
+    auto renderer=std::make_unique<D3DRenderer>();renderer->device=device.p;app->Renderer()=renderer.get();
+    const char* ids[5]={@IDS@};const wchar_t* files[5]={@FILES@};
+    for(int i=0;i<5;++i) {
+        Emit("{\"stage\":\"case\",\"id\":"+Quote(ids[i])+"}");Fp("independent-before");
+        Com<ID3DXMesh> raw;Com<ID3DXBuffer> material;DWORD count=0;
+        if(!Hr("D3DXLoadMeshFromXW",D3DXLoadMeshFromXW(files[i],544,device.p,nullptr,&material.p,nullptr,&count,&raw.p)))return 10;
+        Fp("independent-after");if(!Mesh("independent-raw",raw.p))return 11;
+        if(!material.p||!count||material->GetBufferSize()<count*sizeof(D3DXMATERIAL))return 12;
+        std::vector<D3DMATERIAL9> mats(count);auto* src=static_cast<D3DXMATERIAL*>(material->GetBufferPointer());if(!src)return 12;
+        for(DWORD j=0;j<count;++j)mats[j]=src[j].MatD3D;Materials("independent-material-raw",mats.data(),count);
+        Record record;Fp("loader-before");bool loaded=LoadAccessoryObject(app.get(),&record.value,files[i]);Fp("loader-after");
+        Emit("{\"stage\":\"loader\",\"success\":"+std::string(loaded?"true":"false")+"}");if(!loaded)return 13;
+        auto& r=record.value;if(!Mesh("before-observation",static_cast<ID3DXMesh*>(r.mesh)))return 14;
+        if(std::wcscmp(argv[2],L"observed")==0 && !Mesh("observation",static_cast<ID3DXMesh*>(r.mesh)))return 15;
+        if(!Mesh("final-adjusted",static_cast<ID3DXMesh*>(r.mesh)))return 16;
+        if(!r.materials||!r.materialCount)return 17;Materials("final-material-adjusted",static_cast<D3DMATERIAL9*>(r.materials),r.materialCount);
+    }
+    const float matrices[3][16]=@MATRICES@;const float points[5][3]=@POINTS@;
+    for(int m=0;m<3;++m)for(int p=0;p<5;++p)for(int op=0;op<2;++op) {
+        D3DXVECTOR3 input;std::memcpy(&input,points[p],12);D3DXMATRIX matrix;std::memcpy(&matrix,matrices[m],64);
+        D3DXVECTOR3 q{};D3DXVECTOR4 t{};unsigned before=_mm_getcsr();bool returned=false;
+        if(op==0)returned=coord(&q,&input,&matrix)==&q;else returned=transform(&t,&input,&matrix)==&t;
+        unsigned after=_mm_getcsr();if(!returned)return 18;
+        Emit("{\"stage\":\"direct\",\"operation\":"+Quote(op?"Transform":"TransformCoord")+",\"matrix\":"+std::to_string(m)+",\"point\":"+std::to_string(p)+",\"words\":"+Words(op?static_cast<void*>(&t):static_cast<void*>(&q),op?4:3)+",\"before\":"+std::to_string(before)+",\"after\":"+std::to_string(after)+"}");
+    }
+    DestroyWindow(window);Emit("{\"stage\":\"end\",\"status\":"+std::to_string(good?0:19)+"}");return good?0:19;
+}

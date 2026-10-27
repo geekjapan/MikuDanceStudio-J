@@ -19,7 +19,7 @@ ROOT = HERE.parents[1]
 BASE = '77b3e431bc1ac2ab5610692f2e12c903a7629090'
 BASE_TREE = '778782dc8ad6352585a9b7eeb135c04150d1f2e4'
 SCHEMA = 'mds-floor-profile-v2'
-PARENT = 'f7b600b6c063b5174ac19c38f39ea8e2068a5604'
+PARENT = '86a990fde0a0815f892a4e267355c5ae0b47bcb5'
 FP_CONTRACT = {'snapshot':'HardwareMxcsr', 'identity':'SourceSiteOnly',
                'rust_operation_ordering':'Unproved', 'exception_attribution':'Unsupported',
                'operation_environment':'Unproved'}
@@ -529,7 +529,7 @@ def native_commands(stdout,stderr,r):
             active=None;owner=None;task=header[1];continue
         project=re.fullmatch(r'(\S+[.]vcxproj) -> (.+)',text)
         if project:
-            require(stack and PureWindowsPath(project[1]).name==stack[-1][1].name,'matching project output')
+            require(stack and winpath(project[1],root)==winpath(stack[-1][1],root),'matching project output')
             if active is not None:
                 require(owner==stack[-1] and task in ('Lib','Link') and winpath(project[2],root)==winpath(option(active[1:],'/OUT'),root),'matching command output')
             active=None;owner=None;continue

@@ -576,6 +576,29 @@ class Controls(unittest.TestCase):
         self.assertEqual(len(r.native_commands(native_log(suspension,recipe),b'',recipe)),1)
         with self.assertRaisesRegex(ValueError,'serial project start'):r.native_commands(native_log(suspension.replace(b'       FinalizeBuildStatus:\n',b''),recipe),b'',recipe)
 
+    def test_25_project_output_preserves_full_owner_path(self):
+        recipe=r.recipe('D:/a/_temp','control','Od');root=r.PureWindowsPath(recipe['native_target'])
+        owner=root/'mikudancestudio_core.vcxproj'
+        def admitted(raw):
+            receipt={'argv':recipe['commands']['native-build'],'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
+            for suffix,value in [('stdout',raw),('stderr',b'')]:receipt[suffix]={'name':'native-build.'+suffix,'sha256':r.digest(value),'size':len(value)}
+            files={'.json':json.dumps(receipt).encode(),'.stdout':raw,'.stderr':b''}
+            with patch.object(Path,'read_bytes',lambda path:files[path.suffix]):
+                checked,stdout,stderr=r.checked(Path('/resealed-owner'),'native-build')
+            r.admit_command(checked,recipe,'native-build')
+            return r.native_commands(stdout,stderr,recipe)
+        for task,tool,output in [('Lib','lib','Release/mikudancestudio_core.lib'),('Link','link','Release/mikudancestudio_core.exe')]:
+            command=['C:\\VS\\'+tool+'.exe','/OUT:'+str(root/output),'accessory.obj']
+            body=('       '+task+':\n         '+' '.join(command)+'\n').encode()
+            baseline=native_log(body,recipe,'mikudancestudio_core','6')
+            self.assertEqual(admitted(baseline),[command])
+            for project in [owner.name,str(owner),owner.as_posix(),str(owner.with_suffix('')).upper()+'.vcxproj','./'+owner.name,'child/../'+owner.name]:
+                raw=native_log(body+('     6>'+project+' -> '+str(root/output)+'\n').encode(),recipe,'mikudancestudio_core','6')
+                with self.subTest(task=task,project=project):self.assertEqual(admitted(raw),[command])
+            for project in ['C:/foreign/'+owner.name,'D:/foreign/'+owner.name,'foreign/'+owner.name,'../'+owner.name,'C:'+owner.name,'different.vcxproj']:
+                raw=native_log(body+('     6>'+project+' -> '+str(root/output)+'\n').encode(),recipe,'mikudancestudio_core','6')
+                with self.subTest(task=task,project=project),self.assertRaisesRegex(ValueError,'matching project output'):admitted(raw)
+
     def test_zz_real_effects_rejected_before_effects(self):
         target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-floor-profile-boundary-fix/effect-probe')
         self.assertFalse(target.exists());r.readonly()

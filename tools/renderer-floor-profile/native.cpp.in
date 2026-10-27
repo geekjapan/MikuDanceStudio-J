@@ -138,8 +138,8 @@ int wmain(int argc,wchar_t** argv) {
     Fp("device-after");
     HMODULE dll=GetModuleHandleW(L"d3dx9_43.dll");if(!dll)return 5;
     auto loader=GetProcAddress(dll,"D3DXLoadMeshFromXW");
-    // Coord has the SDK's same float3 pointer signature as TransformNormal.
-    auto coord=reinterpret_cast<decltype(&D3DXVec3TransformNormal)>(GetProcAddress(dll,"D3DXVec3TransformCoord"));
+    using TransformCoord = D3DXVECTOR3* (WINAPI*)(D3DXVECTOR3*,const D3DXVECTOR3*,const D3DXMATRIX*);
+    auto coord=reinterpret_cast<TransformCoord>(GetProcAddress(dll,"D3DXVec3TransformCoord"));
     auto transform=reinterpret_cast<decltype(&D3DXVec3Transform)>(GetProcAddress(dll,"D3DXVec3Transform"));
     if(!loader||!coord||!transform||Import("D3DXLoadMeshFromXW")!=reinterpret_cast<void*>(loader))return 6;
     for(auto p:{reinterpret_cast<void*>(loader),reinterpret_cast<void*>(coord),reinterpret_cast<void*>(transform)}) {

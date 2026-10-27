@@ -11,6 +11,9 @@ on:
       - 'tools/oracle/test_d3d9_capture.py'
       - 'tools/windows/provision_capture_vc90.ps1'
       - 'tools/windows/test_provision_capture_vc90.py'
+      - 'tools/windows/fixtures/vc90-*/**'
+      - 'tools/windows/provision_capture_audio.ps1'
+      - 'tools/windows/test_provision_capture_audio.py'
   workflow_dispatch:
 
 permissions:

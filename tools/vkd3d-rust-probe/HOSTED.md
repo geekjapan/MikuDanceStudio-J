@@ -346,7 +346,11 @@ stable acceptance remain separate, including the public variadic VaList boundary
 ## Closed variadic inventory prerequisite
 
 The project patch emits a sibling `*.variadic.json` before Rust generation when
-`--emit-c-decl-map` is enabled. It records actual typed AST function signatures,
+`--emit-variadic-inventory` is enabled. The existing `--emit-c-decl-map` option
+also retains inventory output for compatibility. The dedicated inventory option
+does not request preprocessed source collection, declaration ranges, or source
+slicing. ABI smoke still requests declaration maps and requires the
+`definitions.native_callback` record. It records actual typed AST function signatures,
 ABI, target C widths read from Clang, original typedef types before portable
 pullback, promoted argument types and implicit conversion chains, direct
 calls, function references outside direct callees, and `va_arg` locations.
@@ -362,7 +366,11 @@ bytes. Only the native C executable runs at this stage. Generated Rust is kept
 and hashed, but is not yet stable or executed. The fixture deliberately leaves
 its indirect public callback unclassified in the inventory plan.
 
-The hosted all-unit probe now requests these sidecars. The subsequent
+The hosted all-unit probe and both inventory fixture translations request these
+sidecars with `--emit-variadic-inventory`. Translation still runs to completion;
+exit zero, all 24 Rust outputs, and no invalid output markers remain required.
+The decoupled actual exporter and complete 24-unit run require hosted execution.
+The subsequent
 `closed_variadic_plan.py --probe /path/to/result --output /new/plan.json` requires
 the exact 24 source paths and the actual 23-export map with `local: *`. It joins
 all declarations before distinguishing private definitions from external libc

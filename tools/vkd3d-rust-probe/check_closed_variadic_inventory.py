@@ -15,6 +15,15 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def require_inventory_outputs(output, stems):
+    for stem in stems:
+        for suffix in ('.rs', '.variadic.json'):
+            if not (output / 'src' / (stem + suffix)).is_file():
+                raise RuntimeError('missing inventory translation output ' + stem + suffix)
+    if any(output.rglob('*.c_decls.json')):
+        raise RuntimeError('inventory-only translation emitted C declaration source maps')
+
+
 def check(tool, root, clang):
     root = root.resolve()
     root.mkdir(parents=True, exist_ok=False)
@@ -44,8 +53,9 @@ def check(tool, root, clang):
                                *map(str, units), str(root / 'consumer.c'), '-o', str(root / 'native-check')])
         stage('native-run', [str(root / 'native-check')])
         stage('transpile', [str(tool.with_name('c2rust-transpile')), '--fail-on-error',
-                            '--disable-rustfmt', '--edition', '2024', '--emit-c-decl-map',
+                            '--disable-rustfmt', '--edition', '2024', '--emit-variadic-inventory',
                             '--output-dir', str(root / 'rust'), str(database)], 120)
+        require_inventory_outputs(root / 'rust', [p.stem for p in units])
         paths = [root / 'rust/src' / (p.stem + '.variadic.json') for p in units]
         if sorted(root.glob('rust/**/*.variadic.json')) != sorted(paths):
             raise RuntimeError('unexpected actual inventory paths')
@@ -74,8 +84,9 @@ def check(tool, root, clang):
         label_database.write_text(json.dumps([{'directory': str(label_root), 'file': str(label_source),
                                                'arguments': [clang, '-std=c11', '-c', str(label_source)]}]))
         stage('late-asm-label-export', [str(tool.with_name('c2rust-transpile')), '--fail-on-error',
-                                       '--disable-rustfmt', '--edition', '2024', '--emit-c-decl-map',
+                                       '--disable-rustfmt', '--edition', '2024', '--emit-variadic-inventory',
                                        '--output-dir', str(label_root / 'rust'), str(label_database)], 120)
+        require_inventory_outputs(label_root / 'rust', ['late_asm_label'])
         label_inventory = json.loads((label_root / 'rust/src/late_asm_label.variadic.json').read_text())
         label_declarations = [d for d in label_inventory['declarations']
                               if d['symbol'] == {'linker': 'effective_late_label'}]

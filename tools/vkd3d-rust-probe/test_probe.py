@@ -249,6 +249,8 @@ class ProbeTests(unittest.TestCase):
             def fake_tool(command, log, **kwargs):
                 log.write_text("fixture tool\n")
                 if "--emit-build-files" in command:
+                    self.assertIn("--emit-variadic-inventory", command)
+                    self.assertNotIn("--emit-c-decl-map", command)
                     output = artifacts / "rust"
                     (output / "src").mkdir(parents=True)
                     (output / "src/hlsl_tab.rs").write_text('pub unsafe extern "C" fn fixture() {}\n')

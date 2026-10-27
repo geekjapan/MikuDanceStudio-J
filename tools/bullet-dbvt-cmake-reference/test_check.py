@@ -21,6 +21,14 @@ spec.loader.exec_module(check)
 
 
 class ClassificationTests(unittest.TestCase):
+    def test_rust_probe_requires_explicit_policy_before_mode(self):
+        self.assertIn('Some("mmd-win64-sse") => dbvt::DbvtPolicy::MmdWin64Sse', check.RUST_DRIVER)
+        self.assertIn('Some("generic-reference") => dbvt::DbvtPolicy::GenericReference', check.RUST_DRIVER)
+        self.assertIn('std::env::args().nth(2)', check.RUST_DRIVER)
+        self.assertIn('dbvt::Dbvt::new(policy)', check.RUST_DRIVER)
+        self.assertNotIn('Dbvt::new()', check.RUST_DRIVER)
+        self.assertNotIn('mmd-win64-sse', check.measure.__code__.co_consts)
+
     def profile(self, select='return(Proximity(o,a)<Proximity(o,b)?0:1);'):
         return '''bool Intersect(const A& a,const A& b) { return(a.mi.x()<=b.mx.x()); }
 int Select(const A& o,const A& a,const A& b) { %s }
@@ -167,14 +175,13 @@ class Controls(unittest.TestCase):
             self.assertEqual(json.loads((out / (prefix.name + '-result.json')).read_text())['failure'], 'time')
             self.assertFalse((out / 'windows-timeout-replay-include-paths.json').exists())
 
-    def test_developer_environment_timeout_retains_partial_outputs(self):
+    def test_developer_environment_portable_process_timeout_retains_partial_outputs(self):
         with tempfile.TemporaryDirectory() as folder:
             batch, compiler, out = self.developer_fixture(Path(folder))
             batch.write_text('@exit /b 0\n')
             original = check.run
 
             def timed(command, output, name, **kwargs):
-                # Portable process control proves retention, not Windows command transport.
                 return original([sys.executable, '-c',
                                  'import sys,time; print("partial stdout",flush=True); '
                                  'print("partial stderr",file=sys.stderr,flush=True); time.sleep(5)'],
@@ -1298,7 +1305,6 @@ class Controls(unittest.TestCase):
                         check.archive_commands(root, out, libs)
                     with self.assertRaisesRegex(ValueError, 'source mode'):
                         check.preprocess_args(args, source, cwd=project)
-            # The explicit input has no extension and /Fo names a directory.
             changed = original[:]
             changed[1] = subprocess.list2cmdline(['/c', '/Fo' + str(tlog.parent) + '/', str(source), '/Tcother'])
             tlog.write_text('\n'.join(changed) + '\n')
@@ -1817,7 +1823,6 @@ class Controls(unittest.TestCase):
         self.assertTrue(result['comparisons']['archive_merge'])
 
     def test_genuine_mismatch_remains_distinct_from_gap(self):
-        # The receipt must stay incomplete if no actual archive observation exists.
         with tempfile.TemporaryDirectory() as folder, patch.object(check, 'source_manifest', return_value={}):
             out = Path(folder)
             check.save(out / 'source-start.json', {})

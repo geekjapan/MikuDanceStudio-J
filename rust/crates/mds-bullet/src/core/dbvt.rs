@@ -1,5 +1,4 @@
 //! Altered Rust translation of the locally modified Bullet 2.75 btDbvt.
-//! Stable boxed allocations retain native address ordering; links never expose pointers.
 /*
 Bullet Continuous Collision Detection and Physics Library
 Copyright (c) 2003-2006 Erwin Coumans  http://continuousphysics.com/Bullet/
@@ -16,6 +15,39 @@ subject to the following restrictions:
 */
 
 use super::{math::Vec3, pair_cache::ProxyKey};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DbvtPolicy {
+    MmdWin64Sse,
+    GenericReference,
+}
+
+impl DbvtPolicy {
+    pub fn intersects(self, a: Aabb, b: Aabb) -> bool {
+        match self {
+            Self::MmdWin64Sse => {
+                !(0..3).any(|i| b.max.0[i] < a.min.0[i] || a.max.0[i] < b.min.0[i])
+            }
+            Self::GenericReference => {
+                (0..3).all(|i| a.min.0[i] <= b.max.0[i] && a.max.0[i] >= b.min.0[i])
+            }
+        }
+    }
+    fn select(self, volume: Aabb, a: Aabb, b: Aabb) -> usize {
+        let a = volume.proximity(a, self);
+        let b = volume.proximity(b, self);
+        match self {
+            Self::MmdWin64Sse => usize::from(b <= a),
+            Self::GenericReference => {
+                if a < b {
+                    0
+                } else {
+                    1
+                }
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Aabb {
@@ -45,24 +77,17 @@ impl Aabb {
     pub fn contains(self, rhs: Self) -> bool {
         (0..3).all(|i| self.min.0[i] <= rhs.min.0[i] && self.max.0[i] >= rhs.max.0[i])
     }
-    pub fn intersects(self, rhs: Self) -> bool {
-        if cfg!(target_os = "windows") {
-            !(0..3).any(|i| rhs.max.0[i] < self.min.0[i] || self.max.0[i] < rhs.min.0[i])
-        } else {
-            (0..3).all(|i| self.min.0[i] <= rhs.max.0[i] && self.max.0[i] >= rhs.min.0[i])
-        }
-    }
     fn center(self) -> Vec3 {
         self.min.add(self.max).scale(0.5)
     }
-    fn proximity(self, rhs: Self) -> f32 {
+    fn proximity(self, rhs: Self, policy: DbvtPolicy) -> f32 {
         let d = self
             .min
             .add(self.max)
             .sub(rhs.min.add(rhs.max))
             .0
             .map(f32::abs);
-        if cfg!(target_os = "windows") {
+        if policy == DbvtPolicy::MmdWin64Sse {
             (d[0] + d[2]) + (d[1] + 0.0)
         } else {
             (d[0] + d[1]) + d[2]
@@ -91,6 +116,7 @@ struct Node {
 
 #[derive(Debug)]
 pub struct Dbvt {
+    policy: DbvtPolicy,
     nodes: Vec<Option<Box<Node>>>,
     root: Option<NodeId>,
     free: Option<NodeId>,
@@ -105,14 +131,10 @@ impl Drop for Dbvt {
         self.clear();
     }
 }
-impl Default for Dbvt {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 impl Dbvt {
-    pub fn new() -> Self {
+    pub fn new(policy: DbvtPolicy) -> Self {
         Self {
+            policy,
             nodes: Vec::new(),
             root: None,
             free: None,
@@ -188,15 +210,9 @@ impl Dbvt {
         };
         let volume = self.node(leaf).volume;
         while let Some(c) = self.children(root) {
-            let a = volume.proximity(self.node(c[0]).volume);
-            let b = volume.proximity(self.node(c[1]).volume);
-            let side = if cfg!(target_os = "windows") {
-                usize::from(b <= a)
-            } else if a < b {
-                0
-            } else {
-                1
-            };
+            let side = self
+                .policy
+                .select(volume, self.node(c[0]).volume, self.node(c[1]).volume);
             root = c[side];
         }
         let mut prev = self.node(root).parent;
@@ -327,6 +343,9 @@ impl Dbvt {
     }
     pub fn volume(&self, key: ProxyKey) -> Aabb {
         self.node(self.find(key)).volume
+    }
+    pub fn bounds(&self) -> Option<Aabb> {
+        self.root.map(|root| self.node(root).volume)
     }
     pub fn leaf_count(&self) -> usize {
         self.leaves
@@ -538,7 +557,7 @@ impl Dbvt {
         // Bullet 2.75 clear leaves m_leaves unchanged.
     }
     pub fn collide_volume(&self, volume: Aabb, mut process: impl FnMut(ProxyKey)) {
-        self.query(|v| v.intersects(volume), &mut process);
+        self.query(|v| self.policy.intersects(v, volume), &mut process);
     }
     fn query(&self, test: impl Fn(Aabb) -> bool, process: &mut impl FnMut(ProxyKey)) {
         let mut stack: Vec<_> = self.root.into_iter().collect();
@@ -552,8 +571,28 @@ impl Dbvt {
         }
     }
     pub fn collide_tree(&self, other: &Self, mut process: impl FnMut(ProxyKey, ProxyKey)) {
+        self.collide_roots(other, other.root, &mut process);
+    }
+    pub fn collide_leaf(
+        &self,
+        other: &Self,
+        key: ProxyKey,
+        mut process: impl FnMut(ProxyKey, ProxyKey),
+    ) {
+        self.collide_roots(other, Some(other.find(key)), &mut process);
+    }
+    fn collide_roots(
+        &self,
+        other: &Self,
+        root: Option<NodeId>,
+        process: &mut impl FnMut(ProxyKey, ProxyKey),
+    ) {
+        assert_eq!(
+            self.policy, other.policy,
+            "cross-tree DBVT policies must match"
+        );
         let mut stack = Vec::new();
-        if let (Some(a), Some(b)) = (self.root, other.root) {
+        if let (Some(a), Some(b)) = (self.root, root) {
             stack.push((a, b));
         }
         while let Some((a, b)) = stack.pop() {
@@ -563,7 +602,10 @@ impl Dbvt {
                 if let Some([x, y]) = ca {
                     stack.extend([(x, x), (y, y), (x, y)]);
                 }
-            } else if self.node(a).volume.intersects(other.node(b).volume) {
+            } else if self
+                .policy
+                .intersects(self.node(a).volume, other.node(b).volume)
+            {
                 match (ca, cb) {
                     (Some([a0, a1]), Some([b0, b1])) => {
                         stack.extend([(a0, b0), (a1, b0), (a0, b1), (a1, b1)])
@@ -619,4 +661,4 @@ impl Dbvt {
 
 #[cfg(test)]
 #[path = "../../../../../tools/bullet-rust-dbvt-check/fixtures.rs"]
-mod tests;
+pub(crate) mod tests;

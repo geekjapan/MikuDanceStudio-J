@@ -4,7 +4,7 @@ use crate::pair_cache::ProxyKey;
 
 #[test]
 fn directed_select_association_matches_native() {
-    let mut tree = Dbvt::new();
+    let mut tree = Dbvt::new(crate::policy());
     for (key, point) in [
         (1, [0.5, 8388608.0, 0.5]),
         (2, [1.0, 8388608.0, 0.0]),
@@ -42,7 +42,7 @@ fn directed_select_association_matches_native() {
     assert_eq!(events, expected);
     assert_eq!(
         events,
-        if cfg!(windows) {
+        if crate::policy() == crate::dbvt::DbvtPolicy::MmdWin64Sse {
             vec![3, 2, 1]
         } else {
             vec![2, 3, 1]

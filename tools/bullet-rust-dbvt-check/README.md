@@ -1,11 +1,12 @@
 # Verify the DBVT tree kernel
 
-Run `python3 tools/bullet-rust-dbvt-check/check.py --out-dir /tmp/bullet-dbvt`.
+Run `python3 tools/bullet-rust-dbvt-check/check.py --out-dir /tmp/bullet-dbvt --expected-profile generic --rust-policy generic-reference` on macOS/Linux. Windows uses `--expected-profile sse --rust-policy mmd-win64-sse`.
 The check requires Clang C++ (or activated MSVC x64 on Windows), Python 3,
 and Rust 1.95.0. It compiles unmodified
 vendored `btDbvt.cpp` and runs a native-free Rust harness. No World or GPU runs.
 
-The stream covers 2,326 operations per native allocation history, including 12
+The stream covers 2,355 operations per native allocation history, with the original
+2,326-operation prefix followed by 29 additional operations. It includes 12
 seeded mutation histories, ordered TV, self TT, and cross-tree TT callbacks, internal ray queries,
 margin and velocity update, lookahead, clear, bottom-up, top-down, and incremental
 optimization. AABB values compare exact float bits; metadata and ordered children
@@ -30,8 +31,7 @@ insertion and operations on absent keys panic, matching native caller preconditi
 
 The module is an altered translation of the locally modified Bullet 2.75 sources.
 The full zlib notice is preserved in `core/dbvt.rs`. Ancestry of local native
-changes outside this unit remains unaudited. This slice deliberately does not
-register the module, modify shared test drivers, or wire World/broadphase stages.
+changes outside this unit remains unaudited. This slice registers the module and pure tests. It does not wire World/broadphase stages.
 KDOP, OCL, clone, softbody, and compound helpers are outside this application's
 required tree API.
 
@@ -67,8 +67,7 @@ Windows SSE parity.
 The gate asserts actual CPU architecture and the profile observed from
 `btDbvt.h`. Windows uses `/DWIN32`, `/O2`, `/MD`, `/EHsc`, and `/fp:precise`,
 matching the original CMake MSVC x64 SSE selection. Other hosts require generic
-DBVT. Each host runs all 11 existing Rust tests, 6,978 strict snapshots,
-2,326 ordinary allocator comparisons, and 10 native/Rust lifecycle cases. An
+DBVT. Each host retains the original 2,326 operation prefix and appends 29 bounds/root-vs-leaf operations: 7,065 strict snapshots, 2,355 ordinary allocator comparisons, and 10 native/Rust lifecycle cases. An
 additional directed Select test compares native and Rust callback order for
 point boxes whose float association distinguishes generic from SSE. Its native
 inputs and output are separate from the original corpus.
@@ -100,13 +99,13 @@ intentionally crashing native top-down or overflow input runs. Existing Rust
 repair regressions still run.
 
 Run cheap helper checks with
-`python3 -m unittest discover -s tools/bullet-rust-dbvt-check -p test_check.py -v`.
-Add `--expected-profile generic --expected-arch arm64` to `check.py` on Apple
-Silicon, or `--expected-profile sse --expected-arch x64` in an activated MSVC shell.
+`python3 -I tools/bullet-rust-dbvt-check/test_check.py -v` and repeat with `-O`.
+Add `--expected-profile generic --expected-arch arm64` to `check.py --rust-policy generic-reference` on Apple
+Silicon, or `--expected-profile sse --expected-arch x64 --rust-policy mmd-win64-sse` in an activated MSVC shell.
 
 The two native comparison tests require `DBVT_FIXTURES` to name the capture
-output directory. `check.py` sets it. Shared-suite registration must preserve
-this capture step or move these tests behind the standalone harness.
+output directory. `check.py` sets it. They are callable helpers with mandatory standalone wrappers; pure tests do not require native captures.
+`DBVT_POLICY` is required by the wrappers and is explicitly set by the checker.
 
 The lifecycle probe additionally compares actual allocator release events for
 empty, single-leaf, populated, cached-free, and completely removed trees. Each
@@ -137,6 +136,32 @@ finite regression checks both optimization entry points in child processes,
 exact leaf-bound bits, live links, leaf count, volume queries and self-tree pairs.
 Before the repair both children aborted from a second panic in Drop.
 
+`Dbvt::new(DbvtPolicy)` requires an immutable explicit policy. There is no host
+inference or default. `MmdWin64Sse` is the future production policy on all four
+targets; `GenericReference` is used for genuine generic native comparisons.
+Cross-tree and root-vs-leaf TT require matching policies. `bounds()` reads the
+actual root, including after clear (which preserves native leaf count).
+`collide_leaf` reads the stored leaf volume and uses native TT traversal order,
+including suppression of the same leaf. Node IDs remain private.
+
+The small `tests/dbvt_data` fixtures are raw actual-Windows CMake run 40465192152,
+artifact 12716603181. Their provenance binds ZIP/member hashes, source association,
+commands and results. Registered pure tests replay all 51 numeric rows, both
+archive Merge insertion orders, and directed Select on every target. These are
+numeric fixtures, not portable allocator goldens.
+
+The hosted workflow additionally replays the fresh Windows controlled captures
+on all four Rust targets using `--replay-dir ... --rust-policy mmd-win64-sse`.
+These results are labelled Windows-sourced replay. The local native generic lanes
+remain separate. The checker compiles and runs a genuine Rust numeric binary
+with each policy: both must exit zero with the complete numeric schema; the
+wrong generic policy must disagree on exactly cases 27..50 and directed Select.
+It never edits oracle output or emulates native Windows SSE on ARM.
+
+No World, production broadphase integration, allocator-independent callback order,
+or full public acceptance follows from this bounded core unit. Hosted execution
+and independent reviews are required before root acceptance.
+
 The gate retains `rust-0.tsv` through `rust-3.tsv` from the actual computed Rust
 state, topology, and events before the existing assertions and native rank import.
 Each row contains the zero-based operation index, exact input line, and a snapshot,
@@ -145,7 +170,7 @@ keeps observed native address ranks separate from Rust results. Topology and
 callback events stay in their original order. Direct file writes preserve the
 completed prefix if a later Rust assertion fails.
 
-After all tests pass, Python independently requires exactly 2,326 rows in each
+After all tests pass, Python independently requires exactly 2,355 rows in each
 native and Rust stream and checks every Rust index and input identity. Modes 0,
 1, and 2 compare exact state, complete topology, and events. These comparisons
 remain conditional on the observed native address ranks imported after each
@@ -162,7 +187,7 @@ Cargo builds with the pinned toolchain, locked manifest, release profile, and
 `--no-run --message-format=json` from `rust/`. The checker selects exactly one
 `dbvt` test artifact with the expected source, manifest, and test profile. It
 copies only that executable to `dbvt-tests` or `dbvt-tests.exe` in the output
-directory, then executes the retained copy from `rust/` with `DBVT_FIXTURES` set.
+directory, then executes the retained copy from `rust/` with `DBVT_FIXTURES` and `DBVT_POLICY` set.
 `rust-test-binary.json` records its source path, retained path, byte count,
 SHA-256, working directory, toolchain, and argv. All 11 tests must pass with zero
 failed, ignored, measured, or filtered tests. Cargo JSON and both process logs
@@ -170,3 +195,8 @@ remain available. Source provenance includes the consumed `mds-crtmath` crate.
 
 These retention changes require fresh execution and artifact readback on all four
 hosted targets. Helper tests with synthetic rows do not provide that evidence.
+
+Windows-sourced replay copies inputs and native histories into its own output
+directory before running the retained Rust test binary. It retains computed
+Rust streams there and applies the same complete-stream checks. Downloaded
+Windows capture bytes remain unchanged.

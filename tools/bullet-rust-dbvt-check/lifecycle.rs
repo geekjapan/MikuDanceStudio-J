@@ -42,12 +42,17 @@ unsafe impl GlobalAlloc for Capture {
 static ALLOCATOR: Capture = Capture;
 
 fn main() {
+    let policy = match std::env::args().nth(1).as_deref() {
+        Some("mmd-win64-sse") => dbvt::DbvtPolicy::MmdWin64Sse,
+        Some("generic-reference") => dbvt::DbvtPolicy::GenericReference,
+        _ => panic!("explicit DBVT policy required"),
+    };
     for scenario in 0..5 {
         for explicit_clear in 0..2 {
             COUNT.store(0, SeqCst);
             RELEASED.store(0, SeqCst);
             ENABLED.store(true, SeqCst);
-            let mut tree = dbvt::Dbvt::new();
+            let mut tree = dbvt::Dbvt::new(policy);
             let n = match scenario {
                 0 => 0,
                 1 => 1,

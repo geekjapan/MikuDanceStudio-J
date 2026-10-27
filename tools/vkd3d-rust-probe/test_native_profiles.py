@@ -12,6 +12,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import shlex
+import shutil
 import unittest
 
 from check_shader_inputs import source_identity, sha, include_recipe, literal_include_graph, input_inventory, producer_identity
@@ -156,24 +158,25 @@ class NativeProfileTest(unittest.TestCase):
 
 
 class FreshProducerTest(unittest.TestCase):
-    def test_receipt_boundary_and_relocation(self):
+    def test_receipt_boundary_and_arm_workflow_mapping(self):
         reference = json.loads(Path(__file__).with_name('native-profile-reference.json').read_text())
         with tempfile.TemporaryDirectory() as directory:
-            record = Path(directory) / 'transported-record'
+            root = Path(directory) / 'native-arm64'
+            record = root / 'record'
             source = record / 'work/vkd3d-2.1'
             names = {'vkd3d-2.1/' + name for key in ('source_files', 'target_configuration')
                      for name in reference[key]}
             names |= set(reference['external_headers'])
             names |= {'vkd3d-2.1/config.status', 'vkd3d-2.1/libtool'}
-            original = '/tmp/work-windows'
+            original = str(root / 'build/work-linux-native')
             for name in names:
                 path = record / 'work' / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text('synthetic producer fixture')
-            (source / 'Makefile').write_text('CPPFLAGS = -I/tmp/work-windows/hdr/include -I/tmp/work-windows/spv/include\n')
+            (source / 'Makefile').write_text(f'CPPFLAGS = -I{original}/hdr/include -I{original}/spv/include\n')
             recipe = Path(__file__).parent.parent / 'vkd3d/build.sh'
             (record / 'build.sh').write_bytes(recipe.read_bytes())
-            (record / 'configure-argv.nul').write_bytes(b'./configure\0--disable-dependency-tracking\0--host=x86_64-w64-mingw32\0')
+            (record / 'configure-argv.nul').write_bytes(b'./configure\0--disable-dependency-tracking\0')
             entries = [{'path': name, 'sha256': sha(record / 'work' / name), 'executable': False}
                        for name in sorted(names)]
             contract = reference['producer_contract']
@@ -190,14 +193,29 @@ class FreshProducerTest(unittest.TestCase):
                 'libs/vkd3d-shader/hlsl.tab.h', 'libs/vkd3d-shader/preproc.tab.h',
                 'libs/vkd3d-shader/hlsl.tab.c', 'libs/vkd3d-shader/hlsl.yy.c',
                 'libs/vkd3d-shader/preproc.tab.c', 'libs/vkd3d-shader/preproc.yy.c'],
-                prefix + ['-j2', 'libvkd3d-shader.la', 'vkd3d-compiler.exe'],
+                prefix + ['-j2', 'libvkd3d-shader.la', 'vkd3d-compiler'],
                 prefix + ['install-libLTLIBRARIES', 'install-binPROGRAMS',
-                          'lib_LTLIBRARIES=libvkd3d-shader.la', 'bin_PROGRAMS=vkd3d-compiler.exe']]
+                          'lib_LTLIBRARIES=libvkd3d-shader.la', 'bin_PROGRAMS=vkd3d-compiler']]
             path = record / 'producer-receipt.json'
             def verify(value):
                 path.write_text(json.dumps(value))
                 return producer_identity(record, reference, source, {})
             verify(receipt)  # Original Linux paths need not exist on the capture host.
+            shutil.copytree(record / 'work', original)
+            original_source = Path(original) / 'vkd3d-2.1'
+            for name in names:
+                self.assertEqual((record / 'work' / name).read_bytes(), (Path(original) / name).read_bytes())
+            workflow = Path(__file__).resolve().parents[2] / '.github/workflows/vkd3d-native-profiles.yml'
+            arm_job = workflow.read_text().split('  capture-linux-arm64:', 1)[1]
+            source_line = next(line for line in arm_job.splitlines() if '--source ' in line)
+            arguments = shlex.split(source_line.removesuffix('\\'))
+            with patch.dict(os.environ, {'MDS_VKD3D_OUT': str(root / 'build'),
+                                         'MDS_VKD3D_RECORD_DIR': str(record)}):
+                workflow_source = Path(os.path.expandvars(arguments[arguments.index('--source') + 1]))
+            self.assertEqual(workflow_source.resolve(), source.resolve())
+            producer_identity(record, reference, workflow_source, {})
+            with self.assertRaisesRegex(RuntimeError, 'source is outside retained producer mapping'):
+                producer_identity(record, reference, original_source, {})
             variants = []
             for key, value in [('schema', 'unknown'), ('recipe_sha256', '0' * 64),
                                ('archives', {}), ('patches', {}), ('status', 'incomplete'),

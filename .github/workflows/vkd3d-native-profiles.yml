@@ -190,7 +190,7 @@ jobs:
           export LD_LIBRARY_PATH="$MDS_VKD3D_OUT/linux-native/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           python3 tools/vkd3d-rust-probe/check_shader_inputs.py --native-only --cc "$CC" \
             --compare-driver "$GITHUB_WORKSPACE/.native-reference/tools/vkd3d-rust-probe/shader_driver.rs" \
-            --source "$MDS_VKD3D_OUT/work-linux-native/vkd3d-2.1" --build-record "$MDS_VKD3D_RECORD_DIR" \
+            --source "$MDS_VKD3D_RECORD_DIR/work/vkd3d-2.1" --build-record "$MDS_VKD3D_RECORD_DIR" \
             --header "$MDS_VKD3D_OUT/linux-native/include/vkd3d/vkd3d_shader.h" \
             --native-library "$MDS_VKD3D_OUT/linux-native/lib/libvkd3d-shader.so.1" \
             --artifacts "$RUNNER_TEMP/native-arm64/capture"

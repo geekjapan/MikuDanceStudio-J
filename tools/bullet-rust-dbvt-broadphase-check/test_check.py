@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+
+import check
 
 from check import CONTROLS, ROOT, classify, fixed_inputs, mutate, source_paths, witness
 from trace import bind_inputs, differences, validate
@@ -24,6 +27,36 @@ class Helpers(unittest.TestCase):
         names = {h['history'] for h in manifest['histories']}
         for count in [99, 100, 101, 200]:
             self.assertIn('fixed-optimization-' + str(count), names)
+    def test_capture_preserves_exact_corpus_bytes_with_host_newlines(self):
+        inputs, manifest = fixed_inputs()
+        original_open, original_save = Path.open, check.save
+        for newline in ['\n', '\r\n']:
+            with self.subTest(newline=newline), tempfile.TemporaryDirectory() as folder:
+                out = Path(folder)
+                def host_open(path, mode='r', *args, **kwargs):
+                    if 'b' not in mode and kwargs.get('newline') is None:
+                        kwargs['newline'] = newline
+                    return original_open(path, mode, *args, **kwargs)
+                def stop_after_manifest(path, value):
+                    original_save(path, value)
+                    if path.name == 'manifest.json':
+                        raise RuntimeError('capture boundary reached')
+                with patch.object(Path, 'open', host_open):
+                    probe = out / 'newline-probe.txt'
+                    probe.write_text('H 0\n')
+                    self.assertEqual(probe.read_bytes(), ('H 0' + newline).encode())
+                    with patch.object(check.sys, 'argv', ['check.py', '--out-dir', str(out),
+                                                         '--policy', 'mmd-win64-sse']), \
+                            patch.object(check, 'snapshot', return_value={}), \
+                            patch.object(check, 'save', side_effect=stop_after_manifest), \
+                            patch.object(check.subprocess, 'run') as run:
+                        with self.assertRaisesRegex(RuntimeError, 'capture boundary reached'):
+                            check.main()
+                        run.assert_not_called()
+                archived = (out / 'inputs.txt').read_bytes()
+                self.assertEqual(archived, inputs.encode())
+                self.assertNotIn(b'\r', archived)
+                self.assertEqual(check.digest(archived), manifest['sha256'])
     def test_empty_native_rank_binding_and_strict_equality(self):
         rows = validate(self.raw(), self.inputs, True)
         self.assertEqual(bind_inputs(self.inputs, rows), 'H 0\nB 0 - 0 -\n')

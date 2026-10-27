@@ -148,7 +148,7 @@ def main():
     save(out / 'source-start.json', before)
     canonical = {name: digest((ROOT / name).read_bytes().replace(b'\r\n', b'\n')) for name in before}
     save(out / 'source-canonical.json', canonical)
-    (out / 'inputs.txt').write_text(inputs)
+    (out / 'inputs.txt').write_bytes(inputs.encode())
     save(out / 'manifest.json', manifest)
     for name in before:
         target = out / 'source' / name

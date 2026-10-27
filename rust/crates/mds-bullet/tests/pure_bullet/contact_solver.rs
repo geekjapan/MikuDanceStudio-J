@@ -3,7 +3,7 @@ use crate::core::contact::ContactPoint;
 use crate::core::contact_solver::ContactManifold;
 use crate::core::math::{Basis, Transform, Vec3};
 use crate::core::solver::{
-    GroupSelection, GroupSolver, ImpulseRow, Phase, RowKind, SolveEvent, SolverMode,
+    solve_group, GroupSelection, GroupSolver, ImpulseRow, Phase, RowKind, SolveEvent, SolverMode,
     SolverWorkspace,
 };
 
@@ -37,6 +37,37 @@ impl Words<'_> {
     fn vec(&mut self, actual: Vec3) {
         for x in actual.0 {
             self.scalar(x);
+        }
+    }
+    fn bodies(&mut self) -> [RigidBody; 3] {
+        std::array::from_fn(|_| {
+            let mass = self.float();
+            let inertia = self.vector();
+            let world = Transform {
+                basis: Basis(std::array::from_fn(|_| self.vector().0)),
+                origin: self.vector(),
+            };
+            let linear = self.vector();
+            let angular = self.vector();
+            let lf = self.vector();
+            let af = self.vector();
+            let mut body = RigidBody::new(BodyInit {
+                mass,
+                local_inertia: inertia,
+                center_of_mass: world,
+                linear_damping: 0.0,
+                angular_damping: 0.0,
+            });
+            body.set_linear_velocity(linear);
+            body.set_angular_velocity(angular);
+            body.set_linear_factor(lf);
+            body.set_angular_factor(af);
+            body
+        })
+    }
+    fn skip(&mut self, count: usize) {
+        for _ in 0..count {
+            self.word();
         }
     }
     fn point(&mut self) -> ContactPoint {
@@ -122,30 +153,7 @@ fn replay_native_contacts(observe: bool) {
             position: 0,
         };
         let dt = w.float();
-        let mut bodies: [_; 3] = std::array::from_fn(|_| {
-            let mass = w.float();
-            let inertia = w.vector();
-            let world = Transform {
-                basis: Basis(std::array::from_fn(|_| w.vector().0)),
-                origin: w.vector(),
-            };
-            let linear = w.vector();
-            let angular = w.vector();
-            let lf = w.vector();
-            let af = w.vector();
-            let mut body = RigidBody::new(BodyInit {
-                mass,
-                local_inertia: inertia,
-                center_of_mass: world,
-                linear_damping: 0.0,
-                angular_damping: 0.0,
-            });
-            body.set_linear_velocity(linear);
-            body.set_angular_velocity(angular);
-            body.set_linear_factor(lf);
-            body.set_angular_factor(af);
-            body
-        });
+        let mut bodies = w.bodies();
         let mut owners = [[0; 2]; 2];
         let mut points: [Vec<ContactPoint>; 2] = std::array::from_fn(|mi| {
             owners[mi] = [w.word() as usize, w.word() as usize];
@@ -261,6 +269,86 @@ fn replay_native_contacts(observe: bool) {
                 }
             }
             assert!(w.words.next().is_none());
+        }
+        cases += 1;
+    }
+    assert_eq!(cases, 144);
+}
+
+#[test]
+fn native_default_solve_group_matches_final_velocities_and_impulses() {
+    let mut cases = 0;
+    for (case, line) in include_str!("../contact_solver_data/native.tsv")
+        .lines()
+        .enumerate()
+    {
+        let mut fields = line.split('\t');
+        assert_eq!(fields.next().unwrap().parse::<usize>().unwrap(), case);
+        let mut w = Words {
+            words: fields,
+            case,
+            position: 0,
+        };
+        let dt = w.float();
+        let mut bodies = w.bodies();
+        let worlds = bodies.each_ref().map(|body| body.snapshot().world);
+        let mut owners = [[0; 2]; 2];
+        let mut points: [Vec<ContactPoint>; 2] = std::array::from_fn(|mi| {
+            owners[mi] = [w.word() as usize, w.word() as usize];
+            (0..w.word()).map(|_| w.point()).collect()
+        });
+        let mut manifolds: Vec<_> = points
+            .iter_mut()
+            .enumerate()
+            .map(|(mi, p)| ContactManifold::new(owners[mi], p))
+            .collect();
+        // Skip the native setup rows, solver-body deltas and setup contact points.
+        let normal_rows = w.word() as usize;
+        w.skip(normal_rows * 2 * 23);
+        let solver_bodies = w.word() as usize;
+        w.skip(solver_bodies * 6);
+        w.skip(manifolds.iter().map(|m| m.points.len()).sum::<usize>() * 23);
+
+        let mut workspace = SolverWorkspace::default();
+        let mut objects: Vec<_> = (0..bodies.len())
+            .map(|_| crate::core::islands::IslandObject {
+                activation: crate::core::activation::BodyActivation::default(),
+                classification: crate::core::activation::CollisionClassification::Dynamic,
+                contact_response: true,
+                island_tag: -1,
+                companion_id: -1,
+                hit_fraction: 1.0,
+            })
+            .collect();
+        let selection = GroupSelection {
+            bodies: &[0, 1, 2],
+            joints: &[],
+            manifolds: &[0, 1],
+        };
+        solve_group(
+            &mut workspace,
+            &mut objects,
+            &mut bodies,
+            &mut [],
+            &mut manifolds,
+            selection,
+            dt,
+        )
+        .unwrap();
+
+        for (body, world) in bodies.iter().zip(worlds) {
+            let state = body.snapshot();
+            assert_eq!(
+                state.world, world,
+                "case {case} must not integrate transforms"
+            );
+            w.vec(state.linear_velocity);
+            w.vec(state.angular_velocity);
+        }
+        for manifold in &manifolds {
+            for point in &*manifold.points {
+                w.check_point(point);
+            }
         }
         cases += 1;
     }

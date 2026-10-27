@@ -1713,7 +1713,7 @@ diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/sr
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_variadic.rs
-@@ -0,0 +1,837 @@
+@@ -0,0 +1,1224 @@
 +use super::*;
 +use serde_json::{Value, json};
 +
@@ -2089,6 +2089,248 @@ new file mode 100644
 +        value
 +    }
 +
++    fn required_qualified_type(typ: CQualTypeId) -> Value {
++        json!({"type_id": typ.ctype.0, "const": typ.qualifiers.is_const,
++            "volatile": typ.qualifiers.is_volatile, "restrict": typ.qualifiers.is_restrict})
++    }
++
++    fn required_type_relation(&self, id: CTypeId, rows: &mut std::collections::BTreeMap<CTypeId, Value>,
++        visiting: &mut HashSet<CTypeId>, depth: usize) -> bool {
++        if depth > 32 || visiting.contains(&id) {
++            rows.insert(id, json!({"type_id": id.0, "unproved": "required type cycle or depth limit"}));
++            return false;
++        }
++        if let Some(row) = rows.get(&id) { return row.get("unproved").is_none(); }
++        let mut row = json!({"type_id": id.0});
++        let mut children = vec![];
++        match self.c_types.get(&id).map(|t| &t.kind) {
++            Some(CTypeKind::Typedef(decl)) => {
++                row["kind"] = json!("typedef"); row["declaration"] = json!(decl.0);
++                match (self.c_decls.get(decl).map(|d| &d.kind), self.source_typedef_types.get(decl)) {
++                    (Some(CDeclKind::Typedef { .. }), Some(original)) => {
++                        row["original"] = Self::required_qualified_type(*original); children.push(original.ctype);
++                    }
++                    _ => row["unproved"] = json!("missing original typedef declaration or type"),
++                }
++            }
++            Some(CTypeKind::Elaborated(inner)) | Some(CTypeKind::Paren(inner)) |
++            Some(CTypeKind::TypeOf(inner)) | Some(CTypeKind::Decayed(inner)) | Some(CTypeKind::Auto(inner)) => {
++                row["kind"] = json!(match &self[id].kind {
++                    CTypeKind::Elaborated(_) => "elaborated", CTypeKind::Paren(_) => "paren",
++                    CTypeKind::TypeOf(_) => "typeof", CTypeKind::Decayed(_) => "decayed", _ => "auto",
++                });
++                row["inner"] = json!(inner.0); children.push(*inner);
++            }
++            Some(CTypeKind::ConstantArray(element, _)) | Some(CTypeKind::IncompleteArray(element)) => {
++                row["kind"] = json!("array");
++                row["length"] = match &self[id].kind { CTypeKind::ConstantArray(_, n) => json!(n), _ => Value::Null };
++                match self.source_array_elements.get(&id) {
++                    Some(original) if original.ctype == *element => {
++                        row["element"] = Self::required_qualified_type(*original); children.push(original.ctype);
++                    }
++                    _ => row["unproved"] = json!("missing or inconsistent qualified array element"),
++                }
++            }
++            Some(CTypeKind::Pointer(inner)) => {
++                row["kind"] = json!("pointer"); row["pointee"] = Self::required_qualified_type(*inner);
++                children.push(inner.ctype);
++            }
++            Some(CTypeKind::Function(ret, args, variadic, noreturn, prototype, abi)) => {
++                row["kind"] = json!("function"); row["return"] = Self::required_qualified_type(*ret);
++                row["parameters"] = json!(args.iter().map(|t| Self::required_qualified_type(*t)).collect::<Vec<_>>());
++                row["variadic"] = json!(variadic); row["noreturn"] = json!(noreturn);
++                row["prototype"] = json!(prototype); row["abi"] = json!(abi.as_str());
++                children.push(ret.ctype); children.extend(args.iter().map(|t| t.ctype));
++            }
++            Some(CTypeKind::Struct(decl)) | Some(CTypeKind::Union(decl)) | Some(CTypeKind::Enum(decl)) => {
++                row["kind"] = json!(match &self[id].kind { CTypeKind::Struct(_) => "struct", CTypeKind::Union(_) => "union", _ => "enum" });
++                row["declaration"] = json!(decl.0);
++                let matching = matches!((&self[id].kind, self.c_decls.get(decl).map(|d| &d.kind)),
++                    (CTypeKind::Struct(_), Some(CDeclKind::Struct { .. })) |
++                    (CTypeKind::Union(_), Some(CDeclKind::Union { .. })) |
++                    (CTypeKind::Enum(_), Some(CDeclKind::Enum { .. })));
++                if !matching { row["unproved"] = json!("missing or inconsistent record declaration"); }
++            }
++            Some(CTypeKind::BuiltinFn) => {
++                row["kind"] = json!("builtin_function");
++                row["unproved"] = json!("BuiltinFn requires a native endpoint relation");
++            }
++            Some(kind @ (CTypeKind::Void | CTypeKind::Bool | CTypeKind::SChar | CTypeKind::UChar |
++                CTypeKind::Short | CTypeKind::UShort | CTypeKind::Int | CTypeKind::UInt |
++                CTypeKind::Long | CTypeKind::ULong | CTypeKind::LongLong | CTypeKind::ULongLong |
++                CTypeKind::Float | CTypeKind::Double | CTypeKind::Int128 | CTypeKind::UInt128 | CTypeKind::Half)) => {
++                row["kind"] = json!(format!("{kind:?}"));
++            }
++            Some(CTypeKind::Char) => {
++                row["kind"] = json!("Char");
++                match self.source_char_signedness.get(&id) {
++                    Some(signed) => row["signed"] = json!(signed),
++                    None => row["unproved"] = json!("missing plain char signedness"),
++                }
++            }
++            _ => row["unproved"] = json!("missing or unsupported required type"),
++        }
++        visiting.insert(id);
++        for child in children {
++            if !self.required_type_relation(child, rows, visiting, depth + 1) {
++                row["unproved"] = json!("required type dependency unproved");
++            }
++        }
++        visiting.remove(&id);
++        let proved = row.get("unproved").is_none();
++        rows.insert(id, row);
++        proved
++    }
++
++    fn required_native_record(&self, id: CDeclId) -> Value {
++        let mut row = json!({"declaration": id.0});
++        match (self.native_va_list_records.contains(&id), self.c_decls.get(&id).map(|d| &d.kind), self.record_evidence.get(&id)) {
++            (true, Some(CDeclKind::Struct { fields: Some(_), platform_byte_size, platform_alignment,
++                is_packed, manual_alignment, max_field_alignment, .. }), Some(e))
++                if e.0 == 2 && e.1 == "struct" && e.9 && e.10 == Some((*is_packed, *manual_alignment,
++                    *max_field_alignment, *platform_byte_size, *platform_alignment)) => {
++                row["origin"] = json!("ASTContext.getVaListTagDecl"); row["kind"] = json!("struct");
++                row["complete"] = json!(true); row["size"] = json!(platform_byte_size);
++                row["alignment"] = json!(platform_alignment);
++            }
++            _ => row["unproved"] = json!("missing or inconsistent native va_list tag origin and layout"),
++        }
++        row
++    }
++
++    fn cursor_required_relations(&self, unit: &Path, owners: &HashMap<CDeclId, HashSet<CDeclId>>) -> Value {
++        let mut roots = HashSet::new();
++        let mut expressions = std::collections::BTreeSet::new();
++        let mut declarations = std::collections::BTreeSet::new();
++        for (id, decl) in self.iter_decls() {
++            let CDeclKind::Function { typ, body: Some(body), parameters, .. } = &decl.kind else { continue };
++            if !matches!(self.c_types.get(typ).map(|t| &t.kind), Some(CTypeKind::Function(_, _, true, _, _, _))) { continue; }
++            roots.insert(CQualTypeId::new(*typ)); declarations.insert(*id);
++            declarations.extend(parameters.iter().copied());
++            for node in iterators::DFExpr::new(self, (*body).into()) {
++                if let Some(expr) = node.expr() { expressions.insert(expr); }
++                if let Some(decl) = node.decl() { declarations.insert(decl); }
++            }
++        }
++        let mut builtin_ids = std::collections::BTreeSet::new();
++        let mut endpoints = vec![];
++        for id in &expressions {
++            let Some(expr) = self.c_exprs.get(id) else { continue };
++            if let Some(typ) = expr.kind.get_qual_type() { roots.insert(typ); }
++            match &expr.kind {
++                CExprKind::DeclRef(_, decl, _) => { declarations.insert(*decl); }
++                CExprKind::UnaryType(_, _, _, typ) => { roots.insert(*typ); }
++                CExprKind::Binary(_, _, _, _, left, right) => { roots.extend(left.iter().chain(right.iter()).copied()); }
++                _ => {}
++            }
++            if let CExprKind::Call(_, callee, _) = expr.kind {
++                if let Some(decl) = self.inventory_callee(callee) { builtin_ids.insert(decl); }
++            }
++            if let CExprKind::ImplicitCast(output, child, CastKind::BuiltinFnToFnPtr, _, _) = expr.kind {
++                let Some(CExprKind::DeclRef(input, decl, _)) = self.c_exprs.get(&child).map(|e| &e.kind) else {
++                    endpoints.push(json!({"expression": id.0, "unproved": "BuiltinFn cast input is not a direct declaration reference"}));
++                    continue;
++                };
++                let mut endpoint = json!({"expression": id.0, "reference": child.0, "declaration": decl.0, "cast": "BuiltinFnToFnPtr",
++                    "input": Self::required_qualified_type(*input), "output": Self::required_qualified_type(output)});
++                if !matches!(self.c_types.get(&input.ctype).map(|t| &t.kind), Some(CTypeKind::BuiltinFn)) {
++                    endpoint["unproved"] = json!("native endpoint input is not BuiltinFn");
++                }
++                builtin_ids.insert(*decl); endpoints.push(endpoint);
++            }
++        }
++        let mut cursors = vec![];
++        let mut selected: std::collections::BTreeMap<CDeclId, Vec<Value>> = std::collections::BTreeMap::new();
++        let mut enum_owners = vec![];
++        for id in &declarations {
++            match self.c_decls.get(id).map(|d| &d.kind) {
++                Some(CDeclKind::Variable { typ, .. }) | Some(CDeclKind::Field { typ, .. }) => { roots.insert(*typ); }
++                Some(CDeclKind::Function { typ, .. }) => { roots.insert(CQualTypeId::new(*typ)); }
++                Some(CDeclKind::EnumConstant { name, value }) => {
++                    match owners.get(id) {
++                        Some(ids) if ids.len() == 1 => {
++                            let owner = *ids.iter().next().unwrap();
++                            let member = match self.c_decls.get(&owner).map(|d| &d.kind) {
++                                Some(CDeclKind::Enum { variants, .. }) => variants.iter().filter(|d| *d == id).count() == 1,
++                                _ => false,
++                            };
++                            if member {
++                                let variant = match value {
++                                    ConstIntExpr::I(n) => json!({"declaration": id.0, "name": name, "signed": true, "value": n}),
++                                    ConstIntExpr::U(n) => json!({"declaration": id.0, "name": name, "signed": false, "value": n}),
++                                };
++                                selected.entry(owner).or_default().push(variant);
++                            } else { enum_owners.push(json!({"variant": id.0, "unproved": "missing or duplicate enum membership"})); }
++                        }
++                        _ => enum_owners.push(json!({"variant": id.0, "unproved": "missing or ambiguous enum owner"})),
++                    }
++                }
++                _ => {}
++            }
++            if let Some((declared, builtin, kind)) = self.native_cursor_types.get(id) {
++                roots.insert(*declared); roots.insert(*builtin);
++                let source = match self.c_decls.get(id).map(|d| &d.kind) {
++                    Some(CDeclKind::Variable { typ, .. }) => Self::required_qualified_type(*typ),
++                    _ => json!({"unproved": "native cursor is not a variable"}),
++                };
++                cursors.push(json!({"declaration": id.0, "source": source,
++                    "declared": Self::required_qualified_type(*declared), "builtin": Self::required_qualified_type(*builtin),
++                    "same_canonical_type": true, "target_kind": kind}));
++            }
++        }
++        for (owner, variants) in selected {
++            enum_owners.push(json!({"declaration": owner.0, "identity": self.inventory_record_identity(owner, 0), "variants": variants}));
++        }
++        enum_owners.sort_by_key(|v| (v["declaration"].as_u64(), v["variant"].as_u64()));
++        let mut builtins = vec![];
++        for id in builtin_ids {
++            let Some((builtin, semantic)) = self.cursor_builtin_identity.get(&id) else { continue };
++            if !matches!(semantic.as_str(), "va_start" | "va_end" | "va_copy" | "vsnprintf") { continue; }
++            let mut row = json!({"declaration": id.0, "builtin_id": builtin, "semantic": semantic});
++            match self.c_decls.get(&id).map(|d| &d.kind) {
++                Some(CDeclKind::Function { typ, name, is_global: true, .. }) if *builtin != 0 && self.linker_names.contains_key(&id) => {
++                    row["name"] = json!(name); row["symbol"] = self.inventory_symbol(id, unit).unwrap_or(Value::Null);
++                    row["type"] = Self::required_qualified_type(CQualTypeId::new(*typ)); roots.insert(CQualTypeId::new(*typ));
++                }
++                _ => row["unproved"] = json!("missing native builtin declaration or linker identity"),
++            }
++            builtins.push(row);
++        }
++        let mut types = std::collections::BTreeMap::new();
++        let mut ordered_roots: Vec<_> = roots.into_iter().collect();
++        ordered_roots.sort_by_key(|t| (t.ctype.0, t.qualifiers.is_const, t.qualifiers.is_volatile, t.qualifiers.is_restrict));
++        for root in &ordered_roots { self.required_type_relation(root.ctype, &mut types, &mut HashSet::new(), 0); }
++        let mut native_ids = std::collections::BTreeSet::new();
++        for id in types.keys() {
++            if let Some(CTypeKind::Struct(decl)) = self.c_types.get(id).map(|t| &t.kind) {
++                if self.native_va_list_records.contains(decl) { native_ids.insert(*decl); }
++            }
++        }
++        for row in &mut builtins {
++            if let Some(id) = row["type"]["type_id"].as_u64() {
++                if types.get(&CTypeId(id)).is_some_and(|t| t.get("unproved").is_none()) {
++                    row["signature"] = self.cursor_type(CQualTypeId::new(CTypeId(id)), 0);
++                } else { row["unproved"] = json!("native builtin signature relation unproved"); }
++            }
++        }
++        for endpoint in &mut endpoints {
++            let decl = endpoint["declaration"].as_u64();
++            let builtin = builtins.iter().find(|b| b["declaration"].as_u64() == decl && b.get("unproved").is_none());
++            let output = endpoint["output"]["type_id"].as_u64().map(CTypeId);
++            let signature = builtin.and_then(|b| b["type"]["type_id"].as_u64()).map(CTypeId);
++            let matching = match output.and_then(|id| self.c_types.get(&id)).map(|t| &t.kind) {
++                Some(CTypeKind::Pointer(inner)) => Some(inner.ctype) == signature,
++                _ => false,
++            };
++            if !matching || builtin.is_none() { endpoint["unproved"] = json!("native builtin endpoint signature mismatch"); }
++        }
++        json!({"schema": 1, "authorization": "witness_only",
++            "roots": ordered_roots.into_iter().map(Self::required_qualified_type).collect::<Vec<_>>(),
++            "types": types.into_values().collect::<Vec<_>>(), "cursors": cursors,
++            "native_records": native_ids.into_iter().map(|id| self.required_native_record(id)).collect::<Vec<_>>(),
++            "enum_owners": enum_owners, "builtin_declarations": builtins, "builtin_endpoints": endpoints})
++    }
++
 +    /// A separate raw witness. Statement order comes only from the compound body.
 +    pub fn cursor_witness(&self, unit: &Path) -> Value {
 +        let owners = self.cursor_declaration_owners();
@@ -2133,6 +2375,7 @@ new file mode 100644
 +        json!({"schema": 2, "authorization": "witness_only", "unit": unit, "target": self.target,
 +            "native_va_list_kind": self.va_list_kind as u64,
 +            "functions": functions, "calls": calls,
++            "required_relations": self.cursor_required_relations(unit, &owners),
 +            "native_va_list_records": self.native_va_list_records.iter().map(|id| id.0).collect::<Vec<_>>(),
 +            "expressions": self.c_exprs.iter().map(|(id, _)| self.cursor_expression(*id)).collect::<Vec<_>>(),
 +            "declarations": self.iter_decls().filter(|(_, d)| matches!(d.kind, CDeclKind::Variable { .. } | CDeclKind::EnumConstant { .. })).map(|(id, _)| self.cursor_declaration(*id, &owners)).collect::<Vec<_>>(),
@@ -2309,8 +2552,152 @@ new file mode 100644
 +            ["owning_enum"]["unproved"].is_string());
 +    }
 +
++    fn cursor_required_relations_are_bounded_native_facts() {
++        use c2rust_ast_exporter::clang_ast::RecordEvidence;
++        let mut ast = TypedAstContext::default();
++        let q = |n| CQualTypeId::new(CTypeId(n));
++        let function = |typ, name: &str, body| not_located(CDeclKind::Function {
++            is_global: true, is_inline: false, is_implicit: false, is_extern: true,
++            is_inline_externally_visible: false, typ: CTypeId(typ), name: name.into(),
++            parameters: vec![], body, attrs: IndexSet::new(),
++        });
++        ast.c_types.insert(CTypeId(1), not_located(CTypeKind::Void));
++        ast.c_types.insert(CTypeId(2), not_located(CTypeKind::Struct(CDeclId(20))));
++        ast.c_decls.insert(CDeclId(20), not_located(CDeclKind::Struct {
++            name: Some("arbitrary_native_tag".into()), fields: Some(vec![]), is_packed: false,
++            manual_alignment: None, max_field_alignment: None, platform_byte_size: 24, platform_alignment: 8,
++        }));
++        ast.record_evidence.insert(CDeclId(20), RecordEvidence(2, "struct".into(), None,
++            "".into(), 0, 0, "unproved".into(), None, false, true, Some((false, None, None, 24, 8))));
++        ast.native_va_list_records.insert(CDeclId(20));
++        let mut element = q(2); element.qualifiers.is_const = true;
++        element.qualifiers.is_volatile = true; element.qualifiers.is_restrict = true;
++        ast.c_types.insert(CTypeId(3), not_located(CTypeKind::ConstantArray(CTypeId(2), 1)));
++        ast.source_array_elements.insert(CTypeId(3), element);
++        let mut original = q(3); original.qualifiers.is_volatile = true;
++        ast.c_types.insert(CTypeId(4), not_located(CTypeKind::Typedef(CDeclId(40))));
++        ast.c_decls.insert(CDeclId(40), not_located(CDeclKind::Typedef {
++            name: "alias".into(), typ: q(1), is_implicit: false, target_dependent_macro: None,
++        }));
++        ast.source_typedef_types.insert(CDeclId(40), original);
++        ast.c_types.insert(CTypeId(5), not_located(CTypeKind::Elaborated(CTypeId(4))));
++        let mut source = q(5); source.qualifiers.is_const = true;
++        ast.c_decls.insert(CDeclId(50), not_located(CDeclKind::Variable {
++            ident: "args".into(), typ: source, initializer: None, has_static_duration: false,
++            has_thread_duration: false, is_externally_visible: false, is_defn: true, attrs: IndexSet::new(),
++        }));
++        ast.native_cursor_types.insert(CDeclId(50), (original, original, 5));
++        ast.c_types.insert(CTypeId(6), not_located(CTypeKind::Function(q(1), vec![], true, false, true, CCallingConvention::C)));
++        ast.c_decls.insert(CDeclId(60), function(6, "body", Some(CStmtId(60))));
++        ast.c_stmts.insert(CStmtId(61), not_located(CStmtKind::Decls(vec![CDeclId(50)])));
++        ast.c_types.insert(CTypeId(7), not_located(CTypeKind::Pointer(q(2))));
++        ast.c_types.insert(CTypeId(8), not_located(CTypeKind::Function(q(1), vec![q(7)], true, false, true, CCallingConvention::C)));
++        ast.c_types.insert(CTypeId(9), not_located(CTypeKind::Pointer(q(8))));
++        ast.c_types.insert(CTypeId(10), not_located(CTypeKind::BuiltinFn));
++        for (decl, builtin, semantic) in [(70, 415, "va_start"), (71, 416, "va_end"), (72, 907, "vsnprintf")] {
++            ast.c_decls.insert(CDeclId(decl), function(8, "renamed", None));
++            ast.linker_names.insert(CDeclId(decl), format!("link_{decl}"));
++            ast.cursor_builtin_identity.insert(CDeclId(decl), (builtin, semantic.into()));
++            let reference = CExprId(decl * 10);
++            let cast = CExprId(decl * 10 + 1);
++            let call = CExprId(decl * 10 + 2);
++            ast.c_exprs.insert(reference, not_located(CExprKind::DeclRef(if decl == 72 { q(8) } else { q(10) }, CDeclId(decl), LRValue::RValue)));
++            ast.c_exprs.insert(cast, not_located(CExprKind::ImplicitCast(q(9), reference,
++                if decl == 72 { CastKind::FunctionToPointerDecay } else { CastKind::BuiltinFnToFnPtr }, None, LRValue::RValue)));
++            ast.c_exprs.insert(call, not_located(CExprKind::Call(q(1), cast, vec![])));
++            ast.c_stmts.insert(CStmtId(decl), not_located(CStmtKind::Expr(call)));
++        }
++        ast.c_decls.insert(CDeclId(80), not_located(CDeclKind::EnumConstant { name: "opcode".into(), value: ConstIntExpr::U(6) }));
++        ast.c_decls.insert(CDeclId(81), not_located(CDeclKind::EnumConstant { name: "unused".into(), value: ConstIntExpr::I(7) }));
++        ast.c_decls.insert(CDeclId(82), not_located(CDeclKind::Enum { name: Some("op".into()), variants: vec![CDeclId(80), CDeclId(81)], underlying_type_id: None }));
++        ast.record_evidence.insert(CDeclId(82), RecordEvidence(2, "enum".into(), Some("op".into()),
++            "/enum.h".into(), 2, 1, "file".into(), None, false, true, None));
++        ast.c_types.insert(CTypeId(11), not_located(CTypeKind::Enum(CDeclId(82))));
++        ast.c_exprs.insert(CExprId(80), not_located(CExprKind::DeclRef(q(11), CDeclId(80), LRValue::RValue)));
++        ast.c_stmts.insert(CStmtId(80), not_located(CStmtKind::Expr(CExprId(80))));
++        ast.c_stmts.insert(CStmtId(60), not_located(CStmtKind::Compound(vec![CStmtId(61), CStmtId(70), CStmtId(71), CStmtId(72), CStmtId(80)])));
++        ast.c_types.insert(CTypeId(999), not_located(CTypeKind::Int));
++        let facts = |ast: &TypedAstContext| ast.cursor_required_relations(Path::new("body.c"), &ast.cursor_declaration_owners());
++        let row = |rows: &Value, key: &str, id| rows.as_array().unwrap().iter().find(|r| r[key] == json!(id)).unwrap().clone();
++        let positive = facts(&ast);
++        assert_eq!(positive, facts(&ast));
++        assert_eq!(positive["schema"], 1);
++        assert_eq!(positive["authorization"], "witness_only");
++        assert!(positive["types"].as_array().unwrap().iter().all(|r| r["type_id"] != 999));
++        assert_eq!(row(&positive["types"], "type_id", 5)["inner"], 4);
++        assert_eq!(row(&positive["types"], "type_id", 4)["declaration"], 40);
++        assert_eq!(row(&positive["types"], "type_id", 4)["original"]["volatile"], true);
++        assert_eq!(positive["cursors"][0]["source"]["const"], true);
++        let array = row(&positive["types"], "type_id", 3);
++        assert_eq!(array["length"], 1);
++        for qualifier in ["const", "volatile", "restrict"] { assert_eq!(array["element"][qualifier], true); }
++        assert_eq!(positive["native_records"][0]["origin"], "ASTContext.getVaListTagDecl");
++        assert_eq!(positive["native_records"][0]["size"], 24);
++        assert!(ast.inventory_record_identity(CDeclId(20), 0)["unproved"].is_string());
++        assert_eq!(positive["enum_owners"][0]["declaration"], 82);
++        assert_eq!(positive["enum_owners"][0]["variants"], json!([{"declaration": 80, "name": "opcode", "signed": false, "value": 6}]));
++        assert_eq!(positive["builtin_declarations"].as_array().unwrap().len(), 3);
++        assert_eq!(positive["builtin_endpoints"].as_array().unwrap().len(), 2);
++        assert!(positive["builtin_endpoints"].as_array().unwrap().iter().all(|r| r.get("unproved").is_none()));
++        assert_eq!(positive["builtin_declarations"][0]["signature"]["canonical"]["parameters"][0]["canonical"]["pointer"]["canonical"]["native_va_list_record"], 20);
++        assert!(ast.inventory_type(q(8), 0)["canonical"]["parameters"][0]["canonical"]["pointer"]["canonical"]["record"]["unproved"].is_string());
++        assert!(row(&positive["types"], "type_id", 10)["unproved"].is_string());
++        assert!(ast.cursor_type(q(10), 0)["canonical"]["unproved"].is_string());
++        ast.source_array_elements.remove(&CTypeId(3));
++        assert!(row(&facts(&ast)["types"], "type_id", 3)["unproved"].is_string());
++        ast.source_array_elements.insert(CTypeId(3), q(1));
++        assert!(row(&facts(&ast)["types"], "type_id", 3)["unproved"].is_string());
++        ast.source_array_elements.insert(CTypeId(3), element);
++        ast.source_typedef_types.remove(&CDeclId(40));
++        assert!(row(&facts(&ast)["types"], "type_id", 4)["unproved"].is_string());
++        ast.source_typedef_types.insert(CDeclId(40), q(5));
++        assert!(row(&facts(&ast)["types"], "type_id", 5)["unproved"].is_string());
++        ast.source_typedef_types.insert(CDeclId(40), original);
++        ast.c_types.insert(CTypeId(4), not_located(CTypeKind::Elaborated(CTypeId(998))));
++        assert!(row(&facts(&ast)["types"], "type_id", 998)["unproved"].is_string());
++        ast.c_types.insert(CTypeId(4), not_located(CTypeKind::Typedef(CDeclId(40))));
++        ast.native_va_list_records.remove(&CDeclId(20));
++        assert!(ast.required_native_record(CDeclId(20))["unproved"].is_string());
++        assert!(facts(&ast)["native_records"].as_array().unwrap().is_empty());
++        ast.native_va_list_records.insert(CDeclId(20));
++        ast.record_evidence.get_mut(&CDeclId(20)).unwrap().10 = Some((false, None, None, 25, 8));
++        assert!(facts(&ast)["native_records"][0]["unproved"].is_string());
++        ast.record_evidence.get_mut(&CDeclId(20)).unwrap().10 = Some((false, None, None, 24, 8));
++        ast.c_decls.insert(CDeclId(83), not_located(CDeclKind::Enum { name: Some("op".into()), variants: vec![CDeclId(80)], underlying_type_id: None }));
++        assert!(facts(&ast)["enum_owners"][0]["unproved"].is_string());
++        ast.c_decls.remove(&CDeclId(83));
++        if let CDeclKind::Enum { variants, .. } = &mut ast.c_decls.get_mut(&CDeclId(82)).unwrap().kind { variants.push(CDeclId(80)); }
++        assert!(facts(&ast)["enum_owners"][0]["unproved"].is_string());
++        if let CDeclKind::Enum { variants, .. } = &mut ast.c_decls.get_mut(&CDeclId(82)).unwrap().kind { variants.pop(); }
++        ast.c_decls.remove(&CDeclId(82));
++        assert!(facts(&ast)["enum_owners"][0]["unproved"].is_string());
++        if let CExprKind::ImplicitCast(_, _, cast, _, _) = &mut ast.c_exprs.get_mut(&CExprId(701)).unwrap().kind {
++            *cast = CastKind::FunctionToPointerDecay;
++        }
++        assert_eq!(facts(&ast)["builtin_endpoints"].as_array().unwrap().len(), 1);
++        assert!(row(&facts(&ast)["types"], "type_id", 10)["unproved"].is_string());
++        if let CExprKind::ImplicitCast(_, _, cast, _, _) = &mut ast.c_exprs.get_mut(&CExprId(701)).unwrap().kind {
++            *cast = CastKind::BuiltinFnToFnPtr;
++        }
++        if let CExprKind::DeclRef(_, decl, _) = &mut ast.c_exprs.get_mut(&CExprId(700)).unwrap().kind { *decl = CDeclId(60); }
++        assert!(facts(&ast)["builtin_endpoints"][0]["unproved"].is_string());
++        if let CExprKind::DeclRef(_, decl, _) = &mut ast.c_exprs.get_mut(&CExprId(700)).unwrap().kind { *decl = CDeclId(70); }
++        ast.cursor_builtin_identity.get_mut(&CDeclId(70)).unwrap().0 = 0;
++        assert!(facts(&ast)["builtin_endpoints"][0]["unproved"].is_string());
++        ast.cursor_builtin_identity.get_mut(&CDeclId(70)).unwrap().0 = 415;
++        ast.cursor_builtin_identity.get_mut(&CDeclId(70)).unwrap().1 = "unknown".into();
++        assert!(facts(&ast)["builtin_endpoints"][0]["unproved"].is_string());
++        ast.cursor_builtin_identity.get_mut(&CDeclId(70)).unwrap().1 = "va_start".into();
++        ast.c_types.insert(CTypeId(9), not_located(CTypeKind::Pointer(q(6))));
++        assert!(facts(&ast)["builtin_endpoints"][0]["unproved"].is_string());
++        ast.c_types.insert(CTypeId(9), not_located(CTypeKind::Pointer(q(8))));
++        ast.c_types.insert(CTypeId(10), not_located(CTypeKind::Int));
++        assert!(facts(&ast)["builtin_endpoints"][0]["unproved"].is_string());
++    }
++
 +    #[test]
 +    fn closed_variadic_inventory_uses_promoted_ast_types_and_linker_identity() {
++        cursor_required_relations_are_bounded_native_facts();
 +        cursor_local_owners_use_lexical_declarations_not_references_or_names();
 +        cursor_enum_owners_use_variant_ids_and_preserve_distinct_tags();
 +        let mut ast = TypedAstContext::default();

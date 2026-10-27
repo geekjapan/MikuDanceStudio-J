@@ -1,5 +1,6 @@
 from pathlib import Path
 import tempfile
+import hashlib
 import json
 import subprocess
 import unittest
@@ -25,6 +26,48 @@ class ApplyPatchTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'must be clean'):
                     apply_c2rust_patch.apply(root, root / 'artifacts')
                 self.assertEqual(git.call_count, 2)
+
+
+class RequiredRelationsSourceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.patch = (Path(__file__).parent / 'patches/c2rust-win64-abi.patch').read_text()
+        cls.sections = cls.patch.split('diff --git ')[1:]
+        section = next(s for s in cls.sections if s.startswith(
+            'a/c2rust-transpile/src/c_ast/closed_variadic.rs '))
+        cls.source = '\n'.join(line[1:] for line in section.splitlines()
+                               if line.startswith('+') and not line.startswith('+++')) + '\n'
+
+    def test_only_closed_variadic_patch_destination_changes(self):
+        self.assertEqual(len(apply_c2rust_patch.patch_destinations(
+            Path(__file__).parent / 'patches/c2rust-win64-abi.patch')), 27)
+        others = ''.join('diff --git ' + s for s in self.sections if not s.startswith(
+            'a/c2rust-transpile/src/c_ast/closed_variadic.rs '))
+        self.assertEqual(hashlib.sha256(others.encode()).hexdigest(), '3792a84914e3dae8681868b3408da745db9645a92f29a2e822a218c2e841ebb0')
+        inventory = self.source.split('    pub fn closed_variadic_inventory(', 1)[1].split('#[cfg(test)]', 1)[0]
+        self.assertEqual(hashlib.sha256(inventory.encode()).hexdigest(), '2954bab6fe2621c786bf5409dae0cab30032cce895c621a03f3422edb7399c0b')
+
+    def test_required_facts_remain_witness_only_and_reached_by_named_unit(self):
+        witness = self.source.split('    pub fn cursor_witness(', 1)[1].split(
+            '    pub fn closed_variadic_inventory(', 1)[0]
+        self.assertIn('"required_relations": self.cursor_required_relations(unit, &owners)', witness)
+        relations = self.source.split('    fn cursor_required_relations(', 1)[1].split(
+            '    /// A separate raw witness.', 1)[0]
+        for table in ('roots', 'types', 'cursors', 'native_records', 'enum_owners',
+                      'builtin_declarations', 'builtin_endpoints'):
+            self.assertIn('"' + table + '"', relations)
+        self.assertIn('"schema": 1, "authorization": "witness_only"', relations)
+        unit = self.source.split(
+            '    fn closed_variadic_inventory_uses_promoted_ast_types_and_linker_identity() {', 1)[1]
+        self.assertTrue(unit.startswith('\n        cursor_required_relations_are_bounded_native_facts();\n'))
+        helper = self.source.split('    fn cursor_required_relations_are_bounded_native_facts() {', 1)[1].split('    #[test]', 1)[0]
+        for control in ('source_array_elements.remove', 'source_typedef_types.remove',
+                        'native_va_list_records.remove', 'variants.push',
+                        'BuiltinFnToFnPtr', '"unknown".into()', 'CTypeId(998)',
+                        '"restrict"', '"ASTContext.getVaListTagDecl"'):
+            self.assertIn(control, helper)
+        self.assertNotIn('#[cfg', helper)
+        self.assertNotIn('return;', helper)
 
 
 class AppliedSourceEvidenceTests(unittest.TestCase):

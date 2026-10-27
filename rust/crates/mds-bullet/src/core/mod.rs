@@ -43,6 +43,7 @@ pub mod shape;
 pub mod simplex;
 pub mod solver;
 pub mod time;
+pub mod world_objects;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InvalidArgument;

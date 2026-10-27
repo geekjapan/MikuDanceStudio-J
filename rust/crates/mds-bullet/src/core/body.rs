@@ -300,6 +300,20 @@ impl RigidBody {
         self.update_inertia_tensor();
     }
 
+    /// btCollisionObject setters do not update inertia or interpolation state.
+    pub fn set_world_transform(&mut self, transform: Transform) {
+        self.state.world = transform;
+    }
+
+    pub fn set_interpolation_world_transform(&mut self, transform: Transform) {
+        self.state.interpolation_world = transform;
+    }
+
+    pub fn set_interpolation_velocities(&mut self, linear: Vec3, angular: Vec3) {
+        self.state.interpolation_linear_velocity = linear;
+        self.state.interpolation_angular_velocity = angular;
+    }
+
     pub fn clear_forces(&mut self) {
         self.state.total_force = Vec3::ZERO;
         self.state.total_torque = Vec3::ZERO;

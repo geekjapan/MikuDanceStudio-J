@@ -99,7 +99,6 @@ impl View {
 /// The ortho view is `ORTHO_WIDTH_PER_DISTANCE * |distance|` world units wide (measured on the
 /// golden images: 8 and 12 units between model roots are 113.8 and 170.7 px of 640 at distance 45).
 const ORTHO_WIDTH_PER_DISTANCE: f32 = 1.0;
-const NEAR: f32 = 0.5;
 const FAR: f32 = 5000.0;
 
 /// The PMM camera at one frame.
@@ -211,7 +210,7 @@ impl CameraFrame {
             p[3][2] = 0.0;
             p
         } else {
-            perspective_lh(self.fov_deg.to_radians(), aspect, NEAR, FAR)
+            perspective_lh(self.fov_deg.to_radians(), aspect, 1.0, 100000.0)
         };
         View {
             view,
@@ -326,7 +325,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn orthographic_depth_matches_native_without_changing_xy_w_or_perspective() {
+    fn camera_depth_matches_native_without_changing_xy_w() {
         for (width, height) in [(640, 360), (800, 600)] {
             for rotation in [[0.0; 3], [0.3, -0.7, 0.2]] {
                 for offset in [[0.0; 2], [3.5, -1.25]] {
@@ -343,7 +342,7 @@ mod tests {
                         let old_proj = if orthographic {
                             ortho_lh(45.0, 45.0 / aspect, -FAR, FAR)
                         } else {
-                            perspective_lh(camera.fov_deg.to_radians(), aspect, NEAR, FAR)
+                            perspective_lh(camera.fov_deg.to_radians(), aspect, 0.5, FAR)
                         };
                         let old = mul(&old_proj, &got.view);
                         let mut native_proj = old_proj;
@@ -351,6 +350,10 @@ mod tests {
                             // SetupFrameWorldTransform zero-initializes P and sets Pzz = 0.0013f.
                             native_proj[2][2] = 0.0013;
                             native_proj[3][2] = 0.0;
+                        } else {
+                            // Native viewport perspective uses near 1 and far 100000.
+                            native_proj[2][2] = f32::from_bits(0x3f800054);
+                            native_proj[3][2] = f32::from_bits(0xbf800054);
                         }
                         let expected = mul(&native_proj, &got.view);
                         for c in 0..4 {
@@ -359,7 +362,7 @@ mod tests {
                                     got.view_proj[c][row].to_bits(),
                                     expected[c][row].to_bits()
                                 );
-                                if !orthographic || row != 2 {
+                                if row != 2 {
                                     assert_eq!(
                                         got.view_proj[c][row].to_bits(),
                                         old[c][row].to_bits()

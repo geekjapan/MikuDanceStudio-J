@@ -1,0 +1,7 @@
+{
+  "source": "renderer-2210-actual-sample-audit/extracted/renderer-sample-evidence/control",
+  "usage": "Historical parser fixtures only; not a shadow eligibility execution witness.",
+  "cargo_source": "/home/runner/work/_temp/renderer-sample-evidence/sources/control",
+  "cargo_target": "/home/runner/work/_temp/renderer-sample-build/control",
+  "transformation": "canonical.stdout omits its final blank line; Cargo JSON retains only the golden2 artifact and terminal with compact encoding."
+}

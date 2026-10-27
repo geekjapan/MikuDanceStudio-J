@@ -1,0 +1,47 @@
+SAMPLE_ADAPTER llvmpipe (LLVM 20.1.2, 256 bits)|Vulkan|accessory_0
+accessory-0: 207126 px (23274 masked), within 4 0.99992, max 14, mean 0.0024
+SAMPLE_ADAPTER llvmpipe (LLVM 20.1.2, 256 bits)|Vulkan|accessory_30
+accessory-30: 207126 px (23274 masked), within 4 0.99992, max 12, mean 0.0033
+SAMPLE_ADAPTER llvmpipe (LLVM 20.1.2, 256 bits)|Vulkan|background_0
+background-0: 207126 px (23274 masked), within 4 1.00000, max 4, mean 0.0302
+SAMPLE_ADAPTER llvmpipe (LLVM 20.1.2, 256 bits)|Vulkan|grid_lines
+selfshadow-0 grid: 10812 px, within 4 0.99991, beyond one sample 1, max 15
+selfshadow-30 grid: 10812 px, within 4 0.99991, beyond one sample 1, max 15
+groundshadow-0 grid: 10812 px, within 4 0.99695, beyond one sample 2, max 22
+groundshadow-30 grid: 10812 px, within 4 0.99982, beyond one sample 1, max 15
+accessory-0 grid: 23274 px, within 4 0.99716, beyond one sample 65, max 87
+accessory-30 grid: 23274 px, within 4 1.00000, beyond one sample 0, max 1
+skin-0 grid: 25194 px, within 4 0.99829, beyond one sample 13, max 99
+skin-30 grid: 25194 px, within 4 0.99809, beyond one sample 15, max 99
+background-0 grid: 23274 px, within 4 0.99669, beyond one sample 77, max 87
+perspective-0 grid: 34078 px, within 4 0.99648, beyond one sample 58, max 118
+perspective-30 grid: 33226 px, within 4 0.99419, beyond one sample 31, max 99
+SAMPLE_ADAPTER llvmpipe (LLVM 20.1.2, 256 bits)|Vulkan|groundshadow_0
+groundshadow-0: 219588 px (10812 masked), within 4 1.00000, max 1, mean 0.0040
+SAMPLE_ADAPTER llvmpipe (LLVM 20.1.2, 256 bits)|Vulkan|groundshadow_30
+groundshadow-30: 219588 px (10812 masked), within 4 1.00000, max 1, mean 0.0017
+SAMPLE_ADAPTER llvmpipe (LLVM 20.1.2, 256 bits)|Vulkan|perspective_0
+perspective-0: 196322 px (34078 masked), within 4 1.00000, max 1, mean 0.0001
+SAMPLE_ADAPTER llvmpipe (LLVM 20.1.2, 256 bits)|Vulkan|perspective_30
+perspective-30: 197174 px (33226 masked), within 4 1.00000, max 1, mean 0.0001
+SAMPLE_ADAPTER llvmpipe (LLVM 20.1.2, 256 bits)|Vulkan|selfshadow_0
+selfshadow-0: 219588 px (10812 masked), within 4 0.99997, max 48, mean 0.0090
+SAMPLE_ADAPTER llvmpipe (LLVM 20.1.2, 256 bits)|Vulkan|selfshadow_0_map_4096
+selfshadow-0, 4096 against 2048: within 4 0.99401
+SAMPLE_ADAPTER llvmpipe (LLVM 20.1.2, 256 bits)|Vulkan|selfshadow_30
+selfshadow-30: 219588 px (10812 masked), within 4 0.99998, max 56, mean 0.0099
+
+thread 'selfshadow_30' (4499) panicked at crates/mds-render/tests/golden2.rs:337:5:
+selfshadow-30: Score { pixels: 219588, close: 0.9999817840683461, max: 56, mean: 0.00985481902471902 }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+SAMPLE_ADAPTER llvmpipe (LLVM 20.1.2, 256 bits)|Vulkan|shadow_map_display_draws_the_map_in_gray
+SAMPLE_ADAPTER llvmpipe (LLVM 20.1.2, 256 bits)|Vulkan|skin_0
+skin-0: 205206 px (25194 masked), within 4 0.99928, max 78, mean 0.0338
+
+thread 'skin_0' (4521) panicked at crates/mds-render/tests/golden2.rs:337:5:
+skin-0: Score { pixels: 205206, close: 0.9992836466769978, max: 78, mean: 0.03379530812939193 }
+SAMPLE_ADAPTER llvmpipe (LLVM 20.1.2, 256 bits)|Vulkan|skin_30
+skin-30: 205206 px (25194 masked), within 4 0.99881, max 112, mean 0.0352
+
+thread 'skin_30' (4532) panicked at crates/mds-render/tests/golden2.rs:337:5:
+skin-30: Score { pixels: 205206, close: 0.9988060777949962, max: 112, mean: 0.0352085221679678 }

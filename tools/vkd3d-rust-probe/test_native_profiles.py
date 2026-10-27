@@ -1,5 +1,8 @@
 """Native profile boundary checks without a native compiler build."""
 import argparse
+import copy
+import os
+from unittest.mock import patch
 import hashlib
 import io
 import json
@@ -11,7 +14,7 @@ import sys
 import tempfile
 import unittest
 
-from check_shader_inputs import source_identity, sha, include_recipe, literal_include_graph, input_inventory
+from check_shader_inputs import source_identity, sha, include_recipe, literal_include_graph, input_inventory, producer_identity
 
 
 class NativeProfileTest(unittest.TestCase):
@@ -132,8 +135,8 @@ class NativeProfileTest(unittest.TestCase):
             self.assertEqual(result['status'], 'failure')
             self.assertEqual(result['translated_comparison'], 'not_run')
             self.assertEqual(result['cases'], [])
-            self.assertEqual(result['commands'][0]['command'], ['missing-caller-compiler', '--version'])
-            self.assertIsNone(result['commands'][0]['exit_code'])
+            self.assertEqual(result['commands'], [])
+            self.assertIn('requires fresh producer', result['error'])
             seal = json.loads((artifacts / 'seal.json').read_text())
             self.assertEqual(seal['result.json'], sha(artifacts / 'result.json'))
             partial = root / 'source-failure'
@@ -150,6 +153,83 @@ class NativeProfileTest(unittest.TestCase):
             self.assertEqual(result['commands'], [])
             seal = json.loads((partial / 'seal.json').read_text())
             self.assertEqual(seal['result.json'], sha(partial / 'result.json'))
+
+
+class FreshProducerTest(unittest.TestCase):
+    def test_receipt_boundary_and_relocation(self):
+        reference = json.loads(Path(__file__).with_name('native-profile-reference.json').read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory) / 'transported-record'
+            source = record / 'work/vkd3d-2.1'
+            names = {'vkd3d-2.1/' + name for key in ('source_files', 'target_configuration')
+                     for name in reference[key]}
+            names |= set(reference['external_headers'])
+            names |= {'vkd3d-2.1/config.status', 'vkd3d-2.1/libtool'}
+            original = '/tmp/work-windows'
+            for name in names:
+                path = record / 'work' / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('synthetic producer fixture')
+            (source / 'Makefile').write_text('CPPFLAGS = -I/tmp/work-windows/hdr/include -I/tmp/work-windows/spv/include\n')
+            recipe = Path(__file__).parent.parent / 'vkd3d/build.sh'
+            (record / 'build.sh').write_bytes(recipe.read_bytes())
+            (record / 'configure-argv.nul').write_bytes(b'./configure\0--disable-dependency-tracking\0--host=x86_64-w64-mingw32\0')
+            entries = [{'path': name, 'sha256': sha(record / 'work' / name), 'executable': False}
+                       for name in sorted(names)]
+            contract = reference['producer_contract']
+            receipt = {**{key: contract[key] for key in ('schema', 'recipe_sha256', 'archives', 'patches')},
+                       'status': 'success', 'exit_code': 0, 'original_work_root': original,
+                       'retained_work_root': 'work',
+                       'include_roots': [{'original': original + '/' + name, 'retained': 'work/' + name}
+                           for name in ('vkd3d-2.1', 'vkd3d-2.1/include', 'vkd3d-2.1/include/private',
+                                        'hdr/include', 'spv/include', 'vkd3d-2.1/libs/vkd3d-shader')],
+                       'stages': [{'stage': stage, 'files': copy.deepcopy(entries)} for stage in
+                                  ('prepared', 'configured', 'frozen', 'compiled', 'installed')]}
+            prefix = ['-f', original + '/vkd3d-2.1/Makefile', 'V=1']
+            receipt['make_commands'] = [prefix + ['include/private/spirv_grammar.h', 'include/private/vkd3d_version.h',
+                'libs/vkd3d-shader/hlsl.tab.h', 'libs/vkd3d-shader/preproc.tab.h',
+                'libs/vkd3d-shader/hlsl.tab.c', 'libs/vkd3d-shader/hlsl.yy.c',
+                'libs/vkd3d-shader/preproc.tab.c', 'libs/vkd3d-shader/preproc.yy.c'],
+                prefix + ['-j2', 'libvkd3d-shader.la', 'vkd3d-compiler.exe'],
+                prefix + ['install-libLTLIBRARIES', 'install-binPROGRAMS',
+                          'lib_LTLIBRARIES=libvkd3d-shader.la', 'bin_PROGRAMS=vkd3d-compiler.exe']]
+            path = record / 'producer-receipt.json'
+            def verify(value):
+                path.write_text(json.dumps(value))
+                return producer_identity(record, reference, source, {})
+            verify(receipt)  # Original Linux paths need not exist on the capture host.
+            variants = []
+            for key, value in [('schema', 'unknown'), ('recipe_sha256', '0' * 64),
+                               ('archives', {}), ('patches', {}), ('status', 'incomplete'),
+                               ('original_work_root', '/different/root'), ('retained_work_root', '../work')]:
+                changed = copy.deepcopy(receipt); changed[key] = value; variants.append((key, changed))
+            for count in range(5):
+                changed = copy.deepcopy(receipt); changed['stages'] = changed['stages'][:count]
+                variants.append(('missing stage ' + str(count), changed))
+            for index, label in ((2, 'frozen'), (3, 'compiled'), (4, 'installed')):
+                changed = copy.deepcopy(receipt); changed['stages'][index]['files'][0]['sha256'] = '0' * 64
+                variants.append((label, changed))
+            for name in ('duplicate', 'missing', 'escaping'):
+                changed = copy.deepcopy(receipt)
+                entries = changed['stages'][2]['files']
+                if name == 'duplicate': entries.append(entries[0])
+                elif name == 'missing': entries.pop()
+                else: entries[0]['path'] = '../escape'
+                variants.append((name, changed))
+            changed = copy.deepcopy(receipt); changed['make_commands'][1].remove('-f')
+            variants.append(('unfrozen make', changed))
+            for label, changed in variants:
+                with self.subTest(label=label), self.assertRaises(RuntimeError): verify(changed)
+            verify(receipt)
+            for name in ('include/config.h', 'libtool', 'libs/vkd3d-shader/hlsl.tab.c'):
+                target = source / name; original_bytes = target.read_bytes()
+                target.write_bytes(original_bytes + b'\n%:include "untracked.inc"\n')
+                with self.subTest(changed=name), self.assertRaisesRegex(RuntimeError, 'frozen producer input differs'):
+                    verify(receipt)
+                target.write_bytes(original_bytes)
+            path.unlink()
+            with self.assertRaisesRegex(RuntimeError, 'missing fresh producer receipt'):
+                producer_identity(record, reference, source, {})
 
 
 def verify_authenticated_archive(archive, artifacts):
@@ -372,11 +452,40 @@ def verify_authenticated_archive(archive, artifacts):
                 path.write_bytes(original)
             else:
                 path.unlink()
+    # Historical authenticated inputs are a catalog control, never a fresh producer receipt.
+    producer_rejections = []
+    additions = ('GNUmakefile', 'makefile', 'extra-override.mk',
+                 'libs/vkd3d-shader/.deps/libvkd3d_shader_la-hlsl.Plo')
+    changes = ('include/config.h', 'libtool', 'libs/vkd3d-shader/hlsl.tab.c')
+    for name in ('unchanged historical tree', *additions, *changes):
+        target = source / name
+        existed = target.is_file()
+        original = target.read_bytes() if existed else None
+        try:
+            if name != 'unchanged historical tree':
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((original or b'') + b'\n%:include "untracked.inc"\n')
+            capture = artifacts / ('producer-reject-' + name.replace('/', '-'))
+            command = [sys.executable, *(['-O'] if sys.flags.optimize else []),
+                       str(Path(__file__).with_name('check_shader_inputs.py')),
+                       '--source', str(source), '--build-record', str(artifacts),
+                       '--header', str(source / 'include/vkd3d_shader.h'),
+                       '--native-library', str(artifacts / 'never-loaded'), '--native-only', '--artifacts', str(capture)]
+            completed = subprocess.run(command, capture_output=True, text=True)
+            result = json.loads((capture / 'result.json').read_text())
+            check(completed.returncode != 0 and result['commands'] == [] and result['cases'] == [],
+                  'historical tree admitted without fresh receipt: ' + name)
+            check('missing fresh producer receipt' in result['error'], result['error'])
+            producer_rejections.append(name)
+        finally:
+            if name != 'unchanged historical tree':
+                if existed: target.write_bytes(original)
+                else: target.unlink()
     check(source_identity(source, reference)['identical_source_profile'], 'authenticated source restoration differs')
     report = {'zip_sha256': reference['zip_sha256'], 'prepared_tar_sha256': reference['prepared_tar_sha256'],
               'reference_sha256': sha(Path(__file__).with_name('native-profile-reference.json')),
               'vendor_inventory': vendor, 'local_inventory': local, 'include_graph': graph, 'include_recipe': include_recipe(makefile), 'mutated_and_omitted_inputs': checks, 'sealed_cli_captures': captures,
-              'boundary_checks': boundary_checks, 'native_commands_executed': 0, 'optimized': bool(sys.flags.optimize)}
+              'boundary_checks': boundary_checks, 'fresh_producer_rejections': producer_rejections, 'native_commands_executed': 0, 'optimized': bool(sys.flags.optimize)}
     (artifacts / 'verification.json').write_text(json.dumps(report, indent=2) + '\n')
     print('Authenticated archive verified; mutated and omitted', len(checks), 'inputs;', len(captures), 'sealed CLI rejections before native commands.')
 

@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build existing MinGW recipe and retain actual producer records
+      - name: Build finite fresh MinGW producer and retain stage evidence
         timeout-minutes: 25
         env:
           MDS_VKD3D_OUT: ${{ runner.temp }}/native-windows/build
@@ -47,6 +47,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/native-windows"
           set -o pipefail
           bash tools/vkd3d/build.sh windows 2>&1 | tee "$RUNNER_TEMP/native-windows/build.log"
+          python3 -c 'import json, os; from pathlib import Path; p = Path(os.environ["MDS_VKD3D_RECORD_DIR"]); r = json.loads((p / "producer-receipt.json").read_text()); r["status"] == "success" and len(r["stages"]) == 5 or exit("incomplete fresh producer")'
           cd "$RUNNER_TEMP/native-windows"
           tar -chzf windows-profile.tar.gz record
           sha256sum windows-profile.tar.gz > windows-profile.sha256
@@ -178,7 +179,7 @@ jobs:
           python3 -O -m unittest discover -s tools/vkd3d-rust-probe -p test_native_profiles.py
           python3 -m unittest discover -s tools/vkd3d -p test_build_record.py
           python3 -O -m unittest discover -s tools/vkd3d -p test_build_record.py
-      - name: Build existing native recipe with actual GCC 13 producer records
+      - name: Build finite fresh native GCC 13 producer and retain stage evidence
         timeout-minutes: 12
         run: |
           set -o pipefail

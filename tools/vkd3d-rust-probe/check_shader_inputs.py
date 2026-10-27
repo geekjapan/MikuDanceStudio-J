@@ -7,7 +7,7 @@ import platform
 import re
 import shutil
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import struct
 import subprocess
 
@@ -164,7 +164,7 @@ def source_identity(source, reference, receipt=None):
     identity = receipt if receipt is not None else {}
     identity.update({'files': {}, 'external_headers': {}, 'target_configuration': {},
                      'generated_source_differences': [], 'target_configuration_differences': [],
-                     'identical_source_profile': False, 'identical_producer_profile': False})
+                     'identical_source_profile': False, 'identity_scope': 'reference_catalog_only', 'identical_producer_profile': False})
     local_files, local_links = input_inventory(source)
     actual_headers = {name for name in local_files if name.endswith(LOCAL_INPUT_SUFFIXES)}
     expected_headers = {name for name in reference['source_files'] if name.endswith(LOCAL_INPUT_SUFFIXES)}
@@ -221,6 +221,97 @@ def source_identity(source, reference, receipt=None):
     return identity
 
 
+
+def producer_identity(record, reference, source, receipt):
+    """Validate transported evidence from the reviewed fresh producer before native work."""
+    path = record / 'producer-receipt.json'
+    require(path.is_file(), 'missing fresh producer receipt')
+    producer = json.loads(path.read_text())
+    receipt['producer'] = producer
+    contract = reference['producer_contract']
+    require(producer.get('schema') == contract['schema'], 'untrusted producer schema')
+    require(producer.get('recipe_sha256') == contract['recipe_sha256']
+            and sha(record / 'build.sh') == contract['recipe_sha256'], 'untrusted producer recipe')
+    require(producer.get('archives') == contract['archives'], 'untrusted producer archives')
+    require(producer.get('patches') == contract['patches'], 'untrusted producer patches')
+    require(producer.get('status') == 'success' and producer.get('exit_code') == 0,
+            'producer did not finish successfully')
+    stages = producer.get('stages', [])
+    require([item.get('stage') for item in stages] ==
+            ['prepared', 'configured', 'frozen', 'compiled', 'installed'], 'incomplete producer stages')
+    original = PurePosixPath(producer.get('original_work_root', ''))
+    require(original.is_absolute() and str(original) == producer['original_work_root']
+            and '..' not in original.parts and str(original) != '/', 'invalid original producer root')
+    require(producer.get('retained_work_root') == 'work', 'invalid retained producer root')
+    roots = ('vkd3d-2.1', 'vkd3d-2.1/include', 'vkd3d-2.1/include/private',
+             'hdr/include', 'spv/include', 'vkd3d-2.1/libs/vkd3d-shader')
+    require(producer.get('include_roots') ==
+            [{'original': str(original / name), 'retained': 'work/' + name} for name in roots],
+            'producer include root mapping differs')
+    require(source.resolve() == (record / 'work/vkd3d-2.1').resolve(),
+            'source is outside retained producer mapping')
+    files, links = input_inventory(record / 'work')
+    require(not links and not record.is_symlink(), 'symlink producer receipt inputs')
+    maps = []
+    for stage in stages:
+        entries = stage['files']
+        mapping = {}
+        for item in entries:
+            name = item['path']
+            relative = PurePosixPath(name)
+            require(not relative.is_absolute() and str(relative) == name and '..' not in relative.parts
+                    and len(relative.parts) > 1 and relative.parts[0] in ('vkd3d-2.1', 'hdr', 'spv'),
+                    'invalid producer manifest path')
+            require(name not in mapping, 'duplicate producer manifest path')
+            require(re.fullmatch('[0-9a-f]{64}', item['sha256']) is not None
+                    and type(item['executable']) is bool, 'invalid producer manifest entry')
+            mapping[name] = item
+        require(mapping, 'empty producer stage')
+        maps.append(mapping)
+    generated = {'vkd3d-2.1/' + name for name in GENERATED_FILES}
+    require(all(maps[2].get(name) == item for name, item in maps[1].items() if name not in generated),
+            'non-generated input changed during generation')
+    require(not (maps[2].keys() - maps[1].keys() - generated), 'unexpected input added during generation')
+    require(maps[2] == maps[3] == maps[4], 'frozen producer snapshot changed')
+    required = {'vkd3d-2.1/' + name for name in reference['source_files']}
+    required |= {'vkd3d-2.1/' + name for name in reference['target_configuration']}
+    required |= set(reference['external_headers'])
+    required |= {'vkd3d-2.1/config.status', 'vkd3d-2.1/libtool', 'vkd3d-2.1/Makefile'}
+    require(required <= maps[2].keys(), 'incomplete frozen producer manifest')
+    for name, item in maps[2].items():
+        target = record / 'work' / name
+        require(name in files and target.resolve().is_relative_to((record / 'work').resolve())
+                and sha(target) == item['sha256'], 'frozen producer input differs: ' + name)
+        # POSIX execute bits are not preserved by every Windows archive transport.
+        if os.name != 'nt':
+            require(bool(target.stat().st_mode & 0o111) == item['executable'],
+                    'frozen producer executable mode differs: ' + name)
+    makefile = (source / 'Makefile').read_text()
+    expected_flags = 'CPPFLAGS = -I' + str(original / 'hdr/include') + ' -I' + str(original / 'spv/include')
+    require(expected_flags in makefile.splitlines(), 'actual producer vendor prefix differs')
+    require(b'--disable-dependency-tracking' in (record / 'configure-argv.nul').read_bytes().split(b'\0'),
+            'producer dependency tracking was not disabled')
+    commands = producer.get('make_commands', [])
+    prefix = ['-f', str(original / 'vkd3d-2.1/Makefile'), 'V=1']
+    generation = ['include/private/spirv_grammar.h', 'include/private/vkd3d_version.h',
+                  'libs/vkd3d-shader/hlsl.tab.h', 'libs/vkd3d-shader/preproc.tab.h',
+                  'libs/vkd3d-shader/hlsl.tab.c', 'libs/vkd3d-shader/hlsl.yy.c',
+                  'libs/vkd3d-shader/preproc.tab.c', 'libs/vkd3d-shader/preproc.yy.c']
+    argv = (record / 'configure-argv.nul').read_bytes().split(b'\0')
+    windows = b'--host=x86_64-w64-mingw32' in argv
+    executable = 'vkd3d-compiler.exe' if windows else 'vkd3d-compiler'
+    targets = ['libvkd3d-shader.la', executable]
+    install = ['install-libLTLIBRARIES', 'install-binPROGRAMS',
+               'lib_LTLIBRARIES=libvkd3d-shader.la', 'bin_PROGRAMS=' + executable]
+    require(len(commands) in (3, 4) and all(isinstance(command, list) and len(command) >= 4 and command[:3] == prefix for command in commands),
+            'untrusted producer make invocation')
+    require(commands[0][3:] == generation and commands[-1][3:] == install
+            and re.fullmatch('-j[1-9][0-9]*', commands[1][3]) is not None
+            and commands[1][4:] == targets and (len(commands) == 3 or commands[2][3:] == targets),
+            'incomplete or unknown producer make stages')
+    receipt['producer_contract_verified'] = True
+    return producer
+
 def module_identity(output, library):
     paths = Path(str(output) + '.modules').read_text(encoding='utf-8').splitlines()
     modules = {str(Path(path).resolve()): (None if sys.platform == 'darwin' and not Path(path).is_file() else sha(Path(path))) for path in paths}
@@ -261,6 +352,7 @@ def check(args):
         require(completed.returncode == 0, f'{name} failed; see log')
         return completed.stdout
 
+    require(not args.native_only or args.source is not None, 'native-only capture requires fresh producer source and receipt')
     driver = Path(__file__).with_name('shader_driver.rs').resolve()
     if args.source is not None:
         reference_path = Path(__file__).with_name('native-profile-reference.json')
@@ -272,6 +364,7 @@ def check(args):
         source_identity(args.source, reference, result.setdefault('source', {}))
         require(args.build_record is not None, 'source profile requires --build-record')
         record = args.build_record
+        producer_identity(record, reference, args.source, result)
         require((record / 'build-exit-code').read_text().strip() == '0', 'native build did not succeed')
         require(source_identity(record / 'work/vkd3d-2.1', reference) == result['source'], 'source differs from actual build record')
         recorded_libraries = [path for path in (record / 'prefix').rglob(args.native_library.name) if path.is_file()]

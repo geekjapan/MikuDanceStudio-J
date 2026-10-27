@@ -15,15 +15,28 @@ Missing libraries and exports fail without fallback. Both caller modes share
 input construction, status, diagnostics, output, and compile/free ownership.
 
 `MDS_VKD3D_RECORD_DIR=/absolute/fresh/path bash tools/vkd3d/build.sh windows`
-enables recording. The default recipe and compiler selection are unchanged.
-Record mode runs actual make commands with `V=1`, including generation, retries,
-and installation. It retains configure arguments, environment build flags,
-compiler path, hash, version, target, specs, internal tool hashes, package and
-generator versions, configured work, logs, dependency files, generated sources,
-installed libraries, runtime DLLs, licenses, and Windows import tables.
-The container EXIT trap copies work and prefix to the mounted record directory
-on success and failure before `--rm` removes the container.
-Use an empty record directory for each build.
+enables the finite `mds-vkd3d-fresh-producer-v1` recording contract. Only the
+Windows cross producer and Linux native producer are supported in record mode.
+The default non-record recipe and runtime comparators retain their behavior.
+Record mode requires fresh output, authenticates the three raw archives with the
+existing fixed hashes, applies the reviewed patches, and records full input
+snapshots at preparation, configuration, generation/freeze, compilation, and
+installation. Configuration uses `--disable-dependency-tracking`; every generation,
+parallel build, fallback, and install invocation explicitly selects the same
+`-f /physical/source/Makefile` and `V=1`. Ambient make flags, `MAKEFILES`, compiler
+include/search injection, and tool overrides are rejected. Configure and all
+make/generator children receive only PATH, HOME, TMPDIR, LANG, LC_ALL, CC, and
+CONFIG_SITE; CONFIG_SITE is explicitly `/dev/null`. Receipt Python runs isolated. `CC` may be unset or
+`/usr/bin/gcc-13`, matching the two hosted recipes.
+
+The configured-to-frozen transition may change only the eight listed generated
+outputs. All other prepared/configured files, including Makefile, config.status,
+config.h, libtool, and executable build helpers, are frozen before compilation.
+Compilation and installation must preserve every frozen file and executable bit.
+The receipt records actual ordered make argv, including a fallback only if run.
+The retained work tree contains frozen inputs and logs; build-output symlinks are
+excluded. Installed libraries and runtime DLLs remain in the retained prefix.
+Failures retain available work, stage/error records, and build exit status.
 
 `check_shader_inputs.py --native-only --cc /path/to/caller-cc --source
 /path/to/configured/vkd3d-2.1 --build-record /path/to/record --header
@@ -49,16 +62,20 @@ and `spv/include/` SPIRV tree (73 files) include conditional, unused, C++, gramm
 and `vk_video/` child inputs. This intentionally conservative inventory rejects
 changes to shipped files even when the current target does not use them.
 
-The retained in-tree Makefile has `srcdir`, `builddir`, `top_srcdir`, and
-`top_builddir` equal to `.`. Its actual compile recipes search the including file's
-directory for quoted includes, then `-I.`, `include/`, `include/private/`, the two
-vendor roots from `CPPFLAGS`, and (for shader units) `libs/vkd3d-shader/`.
-The checker binds these Makefile variables, the `COMPILE`/`LTCOMPILE` order,
-shader flags, and actual compiler recipe lines to the authenticated reference.
-Vendor absolute prefixes may relocate together with the retained bundle; their
-ordered sibling suffixes remain fixed. Raw Makefile hashes remain in target
-configuration. Different ordinary compiler flags retain separate configuration
-identity; include-affecting flags outside this contract fail closed.
+The producer receipt binds the reviewed recipe hash, archive hashes, patches,
+ordered stages, frozen manifest, and physical ordered include roots to a strict
+relative mapping under `record/work`. The collector checks every transported
+frozen file before any caller compiler or native command. Original POSIX producer
+paths are compared as POSIX strings and need not exist on Windows. The original
+vendor prefix must exactly match the recorded Makefile; arbitrary sibling-prefix
+normalization does not authorize a different producer tree.
+
+The existing Makefile projection and literal include graph are supplementary
+catalog observations. `identical_source_profile` is explicitly scoped by
+`identity_scope: reference_catalog_only`; it is not complete compiler-input
+identity or native admission. Generated/configuration differences are accepted
+for capture only when bound to a complete fresh producer receipt and unchanged
+post-freeze snapshots. An old configured tree without that receipt is rejected.
 
 All files under both vendor roots and all local header/grammar files must be
 classified. Every symlink in the source tree or vendor include trees, including
@@ -75,12 +92,10 @@ suffixes, changed resolution edges, and changed unresolved includes fail closed,
 including changes in generated files. This graph is source inspection, not a
 target preprocessor execution. The tar contains no compiler dependency records.
 
-Only the eight explicitly listed Makefile parser/lexer and private generated
-outputs may differ as generated files. Missing inputs, changed handwritten or
-external inputs, and unclassified headers/grammars fail before native commands.
-Generated and target configuration differences retain raw hashes and separate
-lists; either prevents an identical source profile claim. Failure receipts retain
-observed hashes, missing paths, classifications, and available graph/recipe data.
+The eight generated filenames classify catalog differences; their names alone
+never authorize received generated bytes. The collector also requires the
+versioned producer contract for native-only captures. Missing, unknown, incomplete,
+mutated, duplicate-path, escaping-path, or wrongly mapped receipts fail closed.
 
 `python3 test_native_profiles.py --archive /path/to/vkd3d-probe-input.zip
 --artifacts /path/to/new/verification`
@@ -89,7 +104,12 @@ inventory equality with the manifest. It checks the complete include graph and
 actual Makefile binding, mutates and removes all 209 frozen inputs, and exercises
 first-root shadows throughout the search trees, unknown additions, linked roots
 and directories, cycles, unsupported includes, recipe/order drift, and separate
-configuration receipts. Real CLI rejections retain sealed partial receipts with
+configuration receipts. These original 209 input and 41 boundary controls remain
+catalog checks. Eight additional authenticated historical-tree controls cover the
+unchanged tree, GNUmakefile/makefile, an extra make fragment, the exact previously
+untracked `.Plo` path, config.h, libtool, and generated C; all require sealed
+pre-native rejection without a fresh receipt. Synthetic receipt tests separately
+exercise relocation and receipt invariants. Real CLI rejections retain sealed partial receipts with
 zero native commands. Repeat with `python3 -O`; the checks do not use assertions.
 The ordinary synthetic unit tests do not replace authenticated verification.
 
@@ -106,3 +126,10 @@ and compares all 50 output, status, and diagnostics files byte for byte.
 check. Windows mock DLL tests exercise the actual platform loader and free counts.
 Mock tests, caller compilation, and configured workflows do not prove native
 Windows or ARM64 execution. Those results require completed hosted capture jobs.
+
+A producer receipt is evidence, not a cryptographic attestation. Its reviewed
+recipe hash identifies the contract; it does not authenticate who ran it.
+Independent GitHub job/API provenance auditing is required for hosted acceptance.
+No old prepared artifact is relabeled as a new trusted producer. Neither the
+receipt nor catalog traversal proves complete system SDK/compiler identity,
+remote reproducibility, native Windows/ARM execution, or Rust acceptance.

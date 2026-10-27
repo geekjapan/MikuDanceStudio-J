@@ -1560,5 +1560,17 @@
         "xlocale.h"
       ]
     ]
+  },
+  "producer_contract": {
+    "schema": "mds-vkd3d-fresh-producer-v1",
+    "recipe_sha256": "88b67b70a68f38f9042607ca4cdbc278ed40a731d57ee4d15b55f5779223d19f",
+    "archives": {
+      "vkd3d-2.1.tar.xz": "7510146aff2adfb4ae07ab890701a607e5ff7c66e57100cfc9f630ec92eeda6a",
+      "vulkan-headers.tar.gz": "437925ada160d86ed763d29dcb9318c1bb0d024d7deaf77bc7c170b8eb6b6f10",
+      "spirv-headers.tar.gz": "a96f8b4f2dfb18f7432e5c523e220ab0075372a9509e0c25fbff21c76af0de7c"
+    },
+    "patches": {
+      "0001-vpos-vface-io.patch": "08266707781812c410e732d349cc17adf41092c1e0eea041b75ce75126d82212"
+    }
   }
 }

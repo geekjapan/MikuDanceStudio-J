@@ -464,44 +464,60 @@ same-signed exports test missing, unknown and integer signedness rejection.
 The hosted Rust serializer test checks both signedness values and missing
 side-table evidence. Compiled exporter and Rust execution remain CI gates.
 
-## Opt-in straight-line cursor witness
+## Opt-in cursor facts
 
-`--emit-cursor-witness` writes separate `*.cursor-witness.json` schema-1 files,
+`--emit-cursor-witness` writes separate `*.cursor-witness.json` schema-2 facts,
 paired schema-2 `*.variadic.json`, original `*.cursor.cbor`, and typed AST debug
-snapshots `*.typed-ast.txt` from the same translation. The flag defaults to false.
-Clang `FunctionDecl::getBuiltinID()` classifies start, end, copy, and vsnprintf;
-spellings and expression ID ordering do not establish cursor semantics.
+snapshots `*.typed-ast.txt` from one native translation. The flag defaults to false.
+These facts do not authorize lowering. The exact body proof remains unsupported,
+and every proof attempt rejects. Schema 1 and a schema-2 relabel also reject.
 
-`full_compiler.collect_cursor_witness()` retains each raw paired export and its
-attempted proof, including rejection. The schema-1 capture cannot establish a
-proof: it lacks native canonical cursor identity, complete typed body and
-reference edges, and the actual same-invocation Clang input buffers. Relabeling
-it schema 2 also rejects. Witness v2 is unsupported until those facts are
-implemented and exercised against the actual LLVM18 output.
+Clang compares each candidate VarDecl type with its canonical builtin `va_list`
+through `ASTContext::hasSameType`. Both canonical types pass through TypeEncoder
+and the existing Rust type mapper. Only the exact ASTContext builtin tag
+identifies a native cursor record in the witness. Physical record identities in
+the schema-2 inventory retain their existing rules. Function builtin IDs,
+parameter and cursor references, declaration initializers, expression types,
+operators, and child edges are separate facts. Unknown expression kinds remain
+unsupported.
 
-The receipt revalidates the existing nested source/patch/metadata and both
-binary checks on every attempted proof. Its retained patch must match the
-reviewed patch beside this checker. Compile command directory plus file must
-resolve bijectively to the inventory and witness unit. The native exporter also
-requires exactly one returned translation unit matching the requested input
-when retaining cursor CBOR. Default translation keeps its existing behavior.
-These checks bind retained artifacts, not full source-input consistency or
-hosted-job authenticity. Included/generated/system/forced headers, macro-only
-inputs, builtins and effective native arguments are not yet captured. PCH,
-modules, VFS and unknown input shapes have no supported proof path.
+The exporter copies actual loaded buffers through LLVM 18
+[`ContentCache::getBufferIfLoaded`](https://github.com/llvm/llvm-project/blob/llvmorg-18.1.8/clang/include/clang/Basic/SourceManager.h#L243).
+It joins the lexer callback ledger with the final local SourceManager entries
+and loaded file caches after preprocessing ends. Each buffer retains its bytes,
+length, SHA256, path aliases, native file identity, and callback file IDs.
+Nonfile predefines and scratch buffers retain their own identities and bytes.
+The exporter records the adjusted driver arguments, regenerated cc1 arguments,
+working directory, target triple, CPU, ABI, and both target feature lists.
+The regenerated cc1 arguments are not the original driver command.
 
-The fixture now mirrors the actual production member-name body and its sole
-`cb%u` / `reg_idx` call, including the mandatory terminal zero assignment.
-Additional C controls cover format reassignment/address escape, an unknown
-non-cursor call and a missing terminal assignment. They are prepared controls,
-not executed proof evidence. The hosted positive fixture remains a required
-proof gate and fails while v2 is unsupported; it must never count rejection as
-PASS. The all-24 paired positive gate also returns nonzero after retaining a
-rejected attempt. Hosted test-target compilation covers explicit configuration
-literals as well as the existing library tests.
+The binding checker revalidates every transported physical input and alias
+against the current bytes on every proof attempt. Its local Python controls
+cover changed macro-only, generated, forced, and system header entries. Those
+controls do not establish native exporter coverage. No later compiler command,
+AST location table, or source reread supplies the native buffer facts.
 
-The all-24 schema-2 inventory/plan, all 33 record cases, record boundary
-mutations, ABI/CVR checks and stable translation gates remain unchanged.
-No stable lowering, slots, generic formatter or global cursor proof is enabled.
-The complete witness-v2 implementation and actual exporter acceptance remain
-blocking work; this change is a bounded capture/tool-safety prerequisite.
+PCH, preambles, modules, external AST or preprocessor sources, remaps, explicit
+VFS overlay files, overridden or invalid buffers, partial preprocessing,
+preprocessed or nonfile main inputs, diagnostic errors, and incomplete callback
+coverage reject. ClangTool's normal empty in-memory overlay on the real file
+system is supported. These checks establish input consistency, not SDK or runner
+attestation, or negative `__has_include` existence proofs.
+
+The receipt also revalidates nested tool sources, metadata, patch, and both
+binaries. The retained patch must match the reviewed patch beside the checker.
+Compile commands, native main input, inventories, and witnesses retain their
+canonical bijection. Default translation retains its existing selection path.
+
+The fixture uses the production ARRAY_SIZE macro shape, typed opcode enum,
+13 statements, terminal zero assignment, and a local UInt `reg_idx` tail.
+The prepare job captures the pilot immediately after the tool build and tool
+receipt, before test-target, ABI, or record gates. It requires all four raw
+artifacts and records `raw_facts_captured` separately from the rejected proof.
+The existing `always()` setup artifact includes the whole capture directory.
+The hosted positive fixture and all-24 positive gate remain mandatory and return
+nonzero on rejection. Raw facts and attempted proof JSON remain in the failure
+artifacts. LLVM 18 build, test-target typechecking, native buffer coverage,
+actual wrapper observation, the exact body matcher, and positive proof acceptance
+remain unverified or incomplete. The existing ABI, CVR, 33 record, and inventory
+gates remain required.

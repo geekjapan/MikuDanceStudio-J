@@ -1,12 +1,12 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
-#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
 struct vkd3d_spirv_stream { unsigned int word; };
 struct vkd3d_spirv_builder { struct vkd3d_spirv_stream debug_stream; };
-enum { SpvOpMemberName = 6 };
+typedef enum SpvOp { SpvOpMemberName = 6 } SpvOp;
 extern unsigned int vkd3d_spirv_string_word_count(const char *name);
-extern unsigned int vkd3d_spirv_opcode_word(unsigned int opcode, unsigned int count);
+extern unsigned int vkd3d_spirv_opcode_word(SpvOp opcode, unsigned int count);
 extern void vkd3d_spirv_build_word(struct vkd3d_spirv_stream *stream, unsigned int word);
 extern void vkd3d_spirv_build_string(struct vkd3d_spirv_stream *stream, const char *name, unsigned int size);
 extern void unknown_consumer(va_list args);
@@ -66,7 +66,8 @@ static void vkd3d_spirv_build_op_member_name(struct vkd3d_spirv_builder *builder
     vkd3d_spirv_build_string(stream, name, name_size);
 }
 void cursor_entry(struct vkd3d_spirv_builder *builder, uint32_t type_id, uint32_t member,
-        unsigned int reg_idx)
+        unsigned int index)
 {
+    unsigned int reg_idx = index;
     vkd3d_spirv_build_op_member_name(builder, type_id, member, "cb%u", reg_idx);
 }

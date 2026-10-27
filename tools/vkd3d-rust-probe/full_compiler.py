@@ -128,8 +128,100 @@ def cursor_command_units(entries):
     return units
 
 
+def verify_native_cursor_inputs(raw, unit, target, command):
+    """Revalidate transported cached bytes, without manufacturing compiler facts."""
+    facts = raw.get('native_inputs')
+    required = {'schema', 'main_input', 'cwd', 'adjusted_driver_argv', 'regenerated_cc1_argv',
+                'target', 'cpu', 'abi', 'features', 'features_as_written', 'vfs', 'unsupported', 'buffers', 'lexer_events'}
+    if not isinstance(facts, dict) or set(facts) != required or facts['schema'] != 2:
+        raise ValueError('cursor witness missing native cached input facts')
+    if facts['unsupported'] != [] or facts['vfs'] != 'clangtool_empty_overlay_on_real_filesystem':
+        raise ValueError('cursor witness unsupported native input mode')
+    if (facts['main_input'] != unit or str(Path(unit).resolve()) != unit
+            or facts['target'] != target or not Path(facts['cwd']).is_absolute()
+            or Path(facts['cwd']).resolve() != Path(command['directory']).resolve()):
+        raise ValueError('cursor witness native invocation identity differs')
+    for key in ('adjusted_driver_argv', 'regenerated_cc1_argv', 'features', 'features_as_written'):
+        if not isinstance(facts[key], list) or any(not isinstance(a, str) for a in facts[key]):
+            raise ValueError('cursor witness invalid native invocation arguments')
+    if not facts['adjusted_driver_argv'] or not facts['regenerated_cc1_argv'] or not any(
+            a == '-resource-dir' or a.startswith('-resource-dir=') for a in facts['adjusted_driver_argv']):
+        raise ValueError('cursor witness missing adjusted invocation or resource directory')
+    if any(not isinstance(facts[k], str) for k in ('cpu', 'abi')):
+        raise ValueError('cursor witness invalid native target options')
+    buffers = facts['buffers']
+    if not isinstance(buffers, list) or not buffers:
+        raise ValueError('cursor witness empty native buffer manifest')
+    events = facts['lexer_events']
+    if not isinstance(events, list) or not events:
+        raise ValueError('cursor witness missing native lexer event ledger')
+    entered = set()
+    for event in events:
+        if (not isinstance(event, dict) or set(event) != {'file_id', 'reason', 'characteristic'}
+                or not isinstance(event['file_id'], str) or not event['file_id'].isascii()
+                or not event['file_id'].isdigit() or event['reason'] not in ('enter', 'exit')
+                or type(event['characteristic']) is not int or event['characteristic'] not in range(5)):
+            raise ValueError('cursor witness invalid native lexer event')
+        if event['reason'] == 'enter': entered.add(event['file_id'])
+    seen, roles, covered = set(), [], set()
+    for record in buffers:
+        if not isinstance(record, dict) or set(record) != {
+                'role', 'identifier', 'physical_path', 'aliases', 'native_device', 'native_file',
+                'length', 'bytes_hex', 'sha256', 'lexed', 'lexer_file_ids'}:
+            raise ValueError('cursor witness invalid native buffer record')
+        role = record['role']
+        if role not in ('main', 'file', 'predefines', 'scratch') or type(record['lexed']) is not bool or (
+                role != 'scratch' and not record['lexed']):
+            raise ValueError('cursor witness native buffer missing lexer coverage')
+        if type(record['length']) is not int or record['length'] < 0 or not isinstance(record['bytes_hex'], str):
+            raise ValueError('cursor witness invalid native buffer length')
+        data = bytes.fromhex(record['bytes_hex'])
+        if (data.hex() != record['bytes_hex'] or len(data) != record['length']
+                or hashlib.sha256(data).hexdigest() != record['sha256']):
+            raise ValueError('cursor witness native cached bytes differ')
+        if not isinstance(record['identifier'], str) or any(
+                not isinstance(record[k], str) or not record[k].isascii() or not record[k].isdigit()
+                for k in ('native_device', 'native_file')):
+            raise ValueError('cursor witness invalid native buffer identity')
+        ids = record['lexer_file_ids']
+        if (not isinstance(ids, list) or any(not isinstance(i, str) for i in ids)
+                or len(ids) != len(set(ids)) or set(ids) & covered
+                or not set(ids) <= entered or bool(ids) != record['lexed']):
+            raise ValueError('cursor witness native lexer/cache coverage differs')
+        covered.update(ids)
+        aliases = record['aliases']
+        if not isinstance(aliases, list) or any(not isinstance(a, str) or not a for a in aliases) or len(aliases) != len(set(aliases)):
+            raise ValueError('cursor witness invalid native path aliases')
+        physical = record['physical_path']
+        if role in ('main', 'file'):
+            path = Path(physical)
+            if not physical or not path.is_absolute() or str(path.resolve()) != physical:
+                raise ValueError('cursor witness invalid physical buffer path')
+            paths = [path, *[Path(facts['cwd']) / a for a in aliases]]
+            for alias in paths:
+                if alias.resolve() != path or alias.read_bytes() != data:
+                    raise ValueError('cursor witness current input differs: ' + str(alias))
+            identity = ('file', physical)
+            if role == 'main' and physical != unit:
+                raise ValueError('cursor witness native main buffer differs')
+        else:
+            if physical or aliases or record['native_device'] != '0' or record['native_file'] != '0':
+                raise ValueError('cursor witness nonfile buffer has physical identity')
+            if role == 'scratch' and record['identifier'] != '<scratch space>':
+                raise ValueError('cursor witness unknown scratch buffer')
+            identity = (role, record['identifier'], record['sha256'])
+        if identity in seen:
+            raise ValueError('cursor witness duplicate native input buffer')
+        seen.add(identity)
+        roles.append(role)
+    if entered != covered:
+        raise ValueError('cursor witness unaccounted native lexer event')
+    if roles.count('main') != 1 or roles.count('predefines') != 1:
+        raise ValueError('cursor witness missing native main or predefines buffer')
+
+
 def cursor_witness_receipt(tool, database, output):
-    """Retain raw paired exports; source-input consistency remains unsupported."""
+    """Retain raw paired exports and revalidate native cached input bytes."""
     verify_cursor_tool(tool)
     entries = json.loads(database.read_text())
     inventories = sorted(output.rglob('*.variadic.json'))
@@ -149,6 +241,7 @@ def cursor_witness_receipt(tool, database, output):
         cbor = inventory.with_name(inventory.name.removesuffix('.variadic.json') + '.cursor.cbor')
         typed = inventory.with_name(inventory.name.removesuffix('.variadic.json') + '.typed-ast.txt')
         entry = units.pop(unit)
+        verify_native_cursor_inputs(raw, unit, item['target'], entry)
         pairs.append({'unit': unit, 'target': item['target'], 'compile_command': entry,
                       'files': {str(p.resolve()): digest(p) for p in (inventory, witness, cbor, typed, Path(unit))},
                       'inventory': str(inventory.resolve()), 'witness': str(witness.resolve()),
@@ -160,7 +253,7 @@ def cursor_witness_receipt(tool, database, output):
                       (tool, tool.parent.parent / 'source-receipt.json', database)},
             'database': str(database.resolve()), 'tool': str(tool.resolve()),
             'source_receipt': str((tool.parent.parent / 'source-receipt.json').resolve()),
-            'source_input_consistency': 'unsupported', 'authentic_job_proof': False}
+            'source_input_consistency': 'cached_inputs_revalidated', 'authentic_job_proof': False}
 
 
 def prove_bound_cursor_witness(receipt, symbol):
@@ -194,6 +287,7 @@ def prove_bound_cursor_witness(receipt, symbol):
             if (inventory['unit'] != unit or witness['unit'] != unit
                     or inventory['target'] != pair['target'] or witness['target'] != pair['target']):
                 raise ValueError('cursor witness binding identity differs')
+            verify_native_cursor_inputs(witness, unit, pair['target'], pair['compile_command'])
             inventories.append(inventory)
             witnesses.append(witness)
         if units:

@@ -98,6 +98,39 @@ jobs:
           python3 tools/vkd3d-rust-probe/apply_c2rust_patch.py \
             --source "$RUNNER_TEMP/c2rust-src" --artifacts "$RUNNER_TEMP/vkd3d-probe/logs"
           cargo +1.95.0 install --locked --path "$RUNNER_TEMP/c2rust-src/c2rust" --root "$RUNNER_TEMP/vkd3d-probe/tool"
+          python3 tools/vkd3d-rust-probe/apply_c2rust_patch.py \
+            --source "$RUNNER_TEMP/c2rust-src" --artifacts "$RUNNER_TEMP/vkd3d-probe/logs" \
+            --tool "$RUNNER_TEMP/vkd3d-probe/tool"
+          python3 - <<'PY_CAPTURE'
+          import json, os, shutil, sys
+          from pathlib import Path
+          sys.path.insert(0, 'tools/vkd3d-rust-probe')
+          from probe import run
+          from full_compiler import collect_cursor_witness
+          root = Path(os.environ['RUNNER_TEMP']) / 'vkd3d-probe/logs/cursor-native-facts'
+          root.mkdir(parents=True)
+          source = root / 'pilot.c'
+          shutil.copy2('tools/vkd3d-rust-probe/fixtures/cursor-witness/pilot.c', source)
+          database = root / 'compile_commands.json'
+          database.write_text(json.dumps([{'directory': str(root), 'file': str(source),
+              'arguments': ['/usr/bin/clang-18', '-std=c11', '-c', str(source)]}]))
+          tool = Path(os.environ['RUNNER_TEMP']) / 'vkd3d-probe/tool/bin/c2rust-transpile'
+          proof = collect_cursor_witness(tool, database, root / 'paired', run,
+              {'unit': str(source), 'static': 'vkd3d_spirv_build_op_member_name'})
+          witnesses = sorted((root / 'paired/raw').rglob('*.cursor-witness.json'))
+          if len(witnesses) != 1:
+              raise SystemExit('Native pilot did not retain exactly one raw witness')
+          witness = witnesses[0]
+          raw = json.loads(witness.read_text())
+          prefix = witness.name.removesuffix('.cursor-witness.json')
+          if raw.get('schema') != 2 or raw.get('unit') != str(source) or not raw.get('native_inputs'):
+              raise SystemExit('Native pilot did not produce schema-2 input facts')
+          for suffix in ('.cursor.cbor', '.typed-ast.txt', '.variadic.json'):
+              if not witness.with_name(prefix + suffix).is_file():
+                  raise SystemExit('Native pilot missing paired raw artifact ' + suffix)
+          (root / 'capture.json').write_text(json.dumps({'status': 'raw_facts_captured',
+              'authorization': 'witness_only', 'proof_status': proof['status']}, indent=2) + '\n')
+          PY_CAPTURE
           cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" \
             -p c2rust-transpile --tests --no-run
           cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" \
@@ -119,9 +152,6 @@ jobs:
             --artifacts "$RUNNER_TEMP/vkd3d-probe/logs/function-pointer-nulls"
           cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" \
             -p c2rust-transpile --lib closed_variadic_inventory_uses_promoted_ast_types_and_linker_identity
-          python3 tools/vkd3d-rust-probe/apply_c2rust_patch.py \
-            --source "$RUNNER_TEMP/c2rust-src" --artifacts "$RUNNER_TEMP/vkd3d-probe/logs" \
-            --tool "$RUNNER_TEMP/vkd3d-probe/tool"
           python3 tools/vkd3d-rust-probe/check_closed_variadic_inventory.py \
             --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
             --clang /usr/bin/clang-18 \

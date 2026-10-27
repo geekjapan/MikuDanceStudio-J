@@ -445,12 +445,12 @@ def main():
 
 
 def prove_cursor_witness(inventories, witnesses, symbol):
-    """Reject raw captures until complete native witness-v2 facts are implemented."""
+    """Reject raw captures until exact typed body allocation is implemented."""
     if not inventories or len(inventories) != len(witnesses):
         raise PlanError('cursor witness: incomplete paired units')
-    if any(w.get('schema') != 2 for w in witnesses):
+    if any(not isinstance(w, dict) or w.get('schema') != 2 for w in witnesses):
         raise PlanError('cursor witness: schema 1 capture cannot establish a proof')
-    raise PlanError('cursor witness: native input buffers and exact body witness v2 unsupported')
+    raise PlanError('cursor witness: exact body witness v2 unsupported')
 
 
 if __name__ == '__main__':

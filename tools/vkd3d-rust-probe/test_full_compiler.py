@@ -198,6 +198,23 @@ class FullCompilerTests(unittest.TestCase):
 
 
 
+def native_inputs_fixture(source, target):
+    import hashlib
+    def record(role, identifier, data, path=''):
+        return {'role': role, 'identifier': identifier, 'physical_path': path,
+                'aliases': [path] if path else [], 'native_device': '1' if path else '0',
+                'native_file': '2' if path else '0', 'length': len(data), 'bytes_hex': data.hex(),
+                'sha256': hashlib.sha256(data).hexdigest(), 'lexed': True,
+                'lexer_file_ids': ['1' if role == 'main' else '2']}
+    return {'schema': 2, 'main_input': str(source), 'cwd': str(source.parent),
+            'adjusted_driver_argv': ['clang', '-resource-dir=/llvm/lib/clang/18', str(source)],
+            'regenerated_cc1_argv': ['-triple', target], 'target': target, 'cpu': '', 'abi': '',
+            'features': [], 'features_as_written': [], 'vfs': 'clangtool_empty_overlay_on_real_filesystem', 'unsupported': [],
+            'lexer_events': [{'file_id': str(i), 'reason': 'enter', 'characteristic': 0} for i in (1, 2)],
+            'buffers': [record('main', str(source), source.read_bytes(), str(source)),
+                        record('predefines', '<built-in>', b'#define __clang__ 1\n')]}
+
+
 class CursorBindingTests(unittest.TestCase):
     def fixture(self, root):
         from test_closed_variadic_plan import CursorWitnessTests
@@ -206,6 +223,7 @@ class CursorBindingTests(unittest.TestCase):
         source = root / 'pilot.c'
         source.write_text('/* synthetic binding fixture */\n')
         inv['unit'] = witness['unit'] = symbol['unit'] = str(source)
+        witness['native_inputs'] = native_inputs_fixture(source, inv['target'])
         database = root / 'compile_commands.json'
         database.write_text(json.dumps([{'file': str(source), 'directory': str(root),
                                         'arguments': ['clang', '-c', str(source)]}]))
@@ -246,7 +264,7 @@ class CursorBindingTests(unittest.TestCase):
             from closed_variadic_plan import PlanError
             with self.assertRaisesRegex(PlanError, 'schema 1 capture'):
                 full.prove_bound_cursor_witness(receipt, symbol)
-            self.assertEqual(receipt['source_input_consistency'], 'unsupported')
+            self.assertEqual(receipt['source_input_consistency'], 'cached_inputs_revalidated')
             self.assertFalse(receipt['authentic_job_proof'])
             self.assertEqual(len(receipt['pairs'][0]['files']), 5)
             self.assertEqual(len(receipt['files']), 3)
@@ -352,6 +370,75 @@ class CursorBindingTests(unittest.TestCase):
                 pair['files'][str(path)] = full.digest(path)
                 with self.assertRaisesRegex(PlanError, 'binding identity'):
                     full.prove_bound_cursor_witness(receipt, symbol)
+
+    def test_all_transported_headers_rechecked_on_every_proof(self):
+        from closed_variadic_plan import PlanError
+        from copy import deepcopy
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            receipt, symbol = self.fixture(root)
+            pair = receipt['pairs'][0]
+            path = Path(pair['witness'])
+            raw = json.loads(path.read_text())
+            for name in ('macro-only.h', 'generated.h', 'forced.h', 'system.h'):
+                header = root / name
+                header.write_bytes(b'#define EXPORTED_VALUE 1\n')
+                record = deepcopy(raw['native_inputs']['buffers'][0])
+                record.update(role='file', identifier=name, physical_path=str(header), aliases=[name],
+                              native_file=str(len(raw['native_inputs']['buffers']) + 10),
+                              bytes_hex=header.read_bytes().hex(), length=len(header.read_bytes()),
+                              sha256=full.digest(header))
+                record['lexer_file_ids'] = [record['native_file']]
+                raw['native_inputs']['lexer_events'].append(
+                    {'file_id': record['native_file'], 'reason': 'enter', 'characteristic': 1})
+                raw['native_inputs']['buffers'].append(record)
+            path.write_text(json.dumps(raw))
+            pair['files'][str(path)] = full.digest(path)
+            self.assert_binding_valid(receipt, symbol)
+            for record in raw['native_inputs']['buffers'][2:]:
+                header = Path(record['physical_path'])
+                original = header.read_bytes()
+                header.write_bytes(original + b'changed')
+                with self.assertRaisesRegex(PlanError, 'current input differs'):
+                    full.prove_bound_cursor_witness(receipt, symbol)
+                header.write_bytes(original)
+            self.assert_binding_valid(receipt, symbol)
+            raw['native_inputs']['buffers'].pop()
+            path.write_text(json.dumps(raw))
+            pair['files'][str(path)] = full.digest(path)
+            with self.assertRaisesRegex(PlanError, 'unaccounted native lexer event'):
+                full.prove_bound_cursor_witness(receipt, symbol)
+
+    def test_native_input_manifest_missing_tampered_or_unsupported_rejects(self):
+        from copy import deepcopy
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory).resolve() / 'pilot.c'
+            source.write_text('int x;')
+            facts = native_inputs_fixture(source, 'x86_64-linux-gnu')
+            command = {'directory': str(source.parent)}
+            def check(value):
+                full.verify_native_cursor_inputs({'native_inputs': value}, str(source), facts['target'], command)
+            check(facts)
+            for field in facts:
+                invalid = deepcopy(facts)
+                del invalid[field]
+                with self.subTest(missing=field), self.assertRaises((ValueError, KeyError, TypeError)):
+                    check(invalid)
+            for field, value in [('unsupported', ['pch_or_preamble']), ('vfs', 'unknown'),
+                                 ('main_input', '/different.c'), ('target', 'other'),
+                                 ('adjusted_driver_argv', []), ('regenerated_cc1_argv', []),
+                                 ('lexer_events', []), ('lexer_events', [
+                                     {'file_id': '9', 'reason': 'enter', 'characteristic': 0}])]:
+                invalid = deepcopy(facts); invalid[field] = value
+                with self.subTest(field=field), self.assertRaises(ValueError): check(invalid)
+            for field, value in [('bytes_hex', '00'), ('length', True), ('sha256', '0' * 64),
+                                 ('lexed', False), ('role', 'unknown'), ('aliases', ['missing.h']),
+                                 ('native_file', 'not-a-native-id'), ('lexer_file_ids', ['unknown'])]:
+                invalid = deepcopy(facts); invalid['buffers'][0][field] = value
+                with self.subTest(buffer=field), self.assertRaises((ValueError, OSError)): check(invalid)
+            for buffers in ([], facts['buffers'][:1], facts['buffers'] * 2):
+                invalid = deepcopy(facts); invalid['buffers'] = buffers
+                with self.assertRaises(ValueError): check(invalid)
 
     def test_failed_capture_retains_attempted_proof(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -330,7 +330,7 @@ def check_cursor_cases(tool, root, clang, stage):
                             if expression.get('builtin') and expression['builtin'][1] == 'va_start':
                                 expression['builtin'] = [0, 'va_start']
                 elif name == 'unknown-cursor-reference':
-                    function['cursor_references'].append({'id': -1, 'decl': function['cursors'][0], 'type': {}})
+                    function['parameter_and_cursor_references'].append({'id': -1, 'decl': function['cursors'][0], 'type': {}})
                 elif name == 'incomplete-body':
                     function['complete_body'] = False
                 else:

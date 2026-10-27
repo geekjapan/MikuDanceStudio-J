@@ -3,6 +3,11 @@ name: Windows build
 on:
   workflow_call:
     inputs:
+      d3d9-capture:
+        description: Run isolated unchanged-app selfshadow capture and HAL capability diagnostic
+        required: false
+        default: false
+        type: boolean
       release-tag:
         description: Existing tag to validate and package; empty for CI
         required: false
@@ -33,6 +38,19 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
+      - name: Prepare D3D9 capture provenance
+        if: inputs.d3d9-capture
+        run: >-
+          python -I tools/oracle/d3d9_capture.py --prepare --root .
+          --build out/ci/build/Release --out out/d3d9-capture
+      - name: Test D3D9 capture runner boundaries
+        id: capture_runner_selftests
+        if: inputs.d3d9-capture
+        run: |
+          python -I tools/oracle/test_d3d9_capture.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -I -O tools/oracle/test_d3d9_capture.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Test scheduled-task exit boundary (stand-in scheduler)
         run: python -I tools/windows/test_runtask.py
       - name: Validate tag and version
@@ -55,6 +73,7 @@ jobs:
           cmake -S . -B out/ci/build -G "Visual Studio 17 2022" -A ${{ matrix.platform }}
           -DCMAKE_TOOLCHAIN_FILE="$env:GITHUB_WORKSPACE/out/ci/build/generators/conan_toolchain.cmake"
           -DBUILD_TESTING=ON -DMIKUDANCESTUDIO_DIAG=OFF
+          -DMIKUDANCESTUDIO_D3D9_CAPABILITY=${{ inputs.d3d9-capture && 'ON' || 'OFF' }}
       - name: Build Release
         run: cmake --build out/ci/build --config Release --parallel 4
       - name: Install legacy DirectX test runtime
@@ -71,6 +90,54 @@ jobs:
           if ($extract.ExitCode -ne 0) { throw "DirectX extraction failed: $($extract.ExitCode)" }
           $install = Start-Process -FilePath (Join-Path $unpack 'DXSETUP.exe') -ArgumentList '/silent' -Wait -PassThru -WindowStyle Hidden
           if ($install.ExitCode -ne 0) { throw "DirectX installation failed: $($install.ExitCode)" }
+      - name: Test capture VC90 provisioning boundaries (stand-in installer)
+        if: inputs.d3d9-capture && matrix.arch == 'x64'
+        run: |
+          python -I tools/windows/test_provision_capture_vc90.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -I -O tools/windows/test_provision_capture_vc90.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Provision VC90 for unchanged-app capture only
+        if: inputs.d3d9-capture && matrix.arch == 'x64'
+        env:
+          MDS_D3D9_CAPTURE: '1'
+        run: >-
+          ./tools/windows/provision_capture_vc90.ps1
+          -Receipts "$env:GITHUB_WORKSPACE/out/d3d9-capture/vc90-provisioning"
+      - name: Test capture audio boundaries (stand-in services and DirectSound)
+        id: capture_audio_selftests
+        if: always() && !cancelled() && inputs.d3d9-capture && matrix.arch == 'x64'
+        run: |
+          python -I tools/windows/test_provision_capture_audio.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -I -O tools/windows/test_provision_capture_audio.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Measure and prepare existing audio services for capture only
+        if: always() && !cancelled() && inputs.d3d9-capture && matrix.arch == 'x64' && steps.capture_audio_selftests.outcome == 'success'
+        timeout-minutes: 8
+        env:
+          MDS_D3D9_CAPTURE: '1'
+        run: >-
+          ./tools/windows/provision_capture_audio.ps1
+          -Receipts "$env:GITHUB_WORKSPACE/out/d3d9-capture/audio-provisioning"
+      - name: Capture unchanged selfshadow frames and D3D9 capabilities
+        if: always() && !cancelled() && inputs.d3d9-capture
+        run: >-
+          python -I tools/oracle/d3d9_capture.py --root .
+          --build out/ci/build/Release --out out/d3d9-capture
+          ${{ steps.capture_runner_selftests.outcome == 'success' && '--observe-recoverable-dialog' || '' }}
+      - name: Require bounded normal GUI continuation observation
+        if: always() && !cancelled() && inputs.d3d9-capture
+        run: |
+          $observation = Get-Content -Raw out/d3d9-capture/recoverable-dialog/observation.json -ErrorAction Stop | ConvertFrom-Json
+          if ($observation.status -ne 'OBSERVED') { throw "Normal GUI continuation was not observed; frame/audio/policy gates remain independent" }
+      - name: Preserve D3D9 capture including partial failures
+        if: always() && inputs.d3d9-capture
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-d3d9-capture-${{ matrix.arch }}
+          path: out/d3d9-capture/
+          if-no-files-found: error
       - name: Compare Rust camera refresh with the production C++ body
         working-directory: rust
         env:

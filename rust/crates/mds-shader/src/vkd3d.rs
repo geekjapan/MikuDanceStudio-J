@@ -402,7 +402,7 @@ impl Vkd3d {
         };
         let mut messages: *mut c_char = std::ptr::null_mut();
         // SAFETY: every pointer in `info` points into locals that outlive the call. vkd3d
-        // allocates `out` and `messages`; both are copied and freed with vkd3d's own functions.
+        // allocates messages and successful output; these are copied and freed with its functions.
         unsafe {
             let ret = (self.compile)(&info, &mut out, &mut messages);
             let text = if messages.is_null() {
@@ -413,7 +413,7 @@ impl Vkd3d {
                 s
             };
             if ret < 0 {
-                (self.free_code)(&mut out);
+                // Failed compilation can leave an output pointer already freed by vkd3d.
                 return Err(CompileError {
                     code: ret,
                     messages: text,
@@ -579,6 +579,83 @@ unsafe fn load(path: &Path) -> Result<Library, libloading::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    thread_local! {
+        static RESULT: Cell<c_int> = const { Cell::new(0) };
+        static CODE_FREES: Cell<usize> = const { Cell::new(0) };
+        static MESSAGE_FREES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    unsafe extern "C" fn mock_compile(
+        _: *const CompileInfo,
+        out: *mut Code,
+        messages: *mut *mut c_char,
+    ) -> c_int {
+        *out = Code {
+            code: b"sentinel".as_ptr().cast(),
+            size: 8,
+        };
+        *messages = CString::new("matrix.hlsl: E2004: rejected")
+            .unwrap()
+            .into_raw();
+        RESULT.get()
+    }
+
+    unsafe extern "C" fn mock_free_code(_: *mut Code) {
+        CODE_FREES.set(CODE_FREES.get() + 1);
+    }
+
+    unsafe extern "C" fn mock_free_messages(messages: *mut c_char) {
+        MESSAGE_FREES.set(MESSAGE_FREES.get() + 1);
+        drop(CString::from_raw(messages));
+    }
+
+    unsafe extern "C" fn unused_scan(_: *const CompileInfo, _: *mut *mut c_char) -> c_int {
+        0
+    }
+    unsafe extern "C" fn unused_free_signature(_: *mut ScanSignatureInfo) {}
+    unsafe extern "C" fn unused_free_descriptors(_: *mut ScanDescriptorInfo) {}
+
+    #[test]
+    fn compile_owns_output_only_on_success() {
+        #[cfg(unix)]
+        let lib = libloading::os::unix::Library::this().into();
+        #[cfg(windows)]
+        let lib = libloading::os::windows::Library::this().unwrap().into();
+        let vk = Vkd3d {
+            compile: mock_compile,
+            scan: unused_scan,
+            free_signature: unused_free_signature,
+            free_descriptors: unused_free_descriptors,
+            free_code: mock_free_code,
+            free_messages: mock_free_messages,
+            path: PathBuf::new(),
+            version: String::new(),
+            _lib: lib,
+        };
+        for result in [-4, 0] {
+            RESULT.set(result);
+            CODE_FREES.set(0);
+            MESSAGE_FREES.set(0);
+            let compiled =
+                vk.compile_hlsl("", "matrix.hlsl", "ps_3_0", "main", Target::SpirvBinary);
+            if result < 0 {
+                assert_eq!(
+                    compiled,
+                    Err(CompileError {
+                        code: -4,
+                        messages: "matrix.hlsl: E2004: rejected".into(),
+                    })
+                );
+                assert_eq!(CODE_FREES.get(), 0);
+            } else {
+                assert_eq!(compiled.unwrap(), b"sentinel");
+                assert_eq!(CODE_FREES.get(), 1);
+            }
+            assert_eq!(MESSAGE_FREES.get(), 1);
+        }
+    }
 
     #[test]
     fn summary_strips_the_location() {

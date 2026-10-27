@@ -87,7 +87,7 @@ def run_mutations(root, here, out, inputs, run, rust_command, suffix, native):
     setup_loop = solver.index('        for &index in selection.joints')
     add('contact-setup-first',s=solver[:setup_loop]+build+'\n'+solver[setup_loop:begin]+solver[finish:])
     add('callback-preregister',s=solver[:begin]+'        for j in joints.iter() { for i in j.bodies { solver.bodies.get_or_init(bodies, i).unwrap(); } }\n'+solver[begin:])
-    add('callback-omit',s=solver[:callback_start]+'            let _ = (bodies,joints);\n'+solver[contact_start:])
+    add('callback-omit',s=solver[:callback_start]+'            let _ = (bodies,joints,self.selection);\n'+solver[contact_start:])
     registration = '        let [a_id, b_id] = manifold.bodies.map(|i| pool.get_or_init(bodies, i));\n        let ids = [a_id?, b_id?];\n        if ids == [0, 0] {\n            continue;\n        }\n'
     delayed = once(contact, registration, '')
     delayed = once(delayed, '            let rel = [', registration + '            let rel = [')

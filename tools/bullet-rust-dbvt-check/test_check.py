@@ -652,6 +652,11 @@ class HelperTests(unittest.TestCase):
                 (captures / f'native-{order}.tsv').write_text(''.join(
                     mock_snapshot(line) + '\n' for line in inputs.decode().splitlines()))
             (captures / 'original-profile.txt').write_bytes(profile('1', '1', '1', '1'))
+            selected = (b'1,-1,0,0|1,1056964608,1258291200,1056964608,1056964608,1258291200,1056964608|0,|\r\n'
+                        b'2,-1,0,0|B,1056964608,1258291200,0,1065353216,1258291200,1056964608(1,1056964608,1258291200,1056964608,1056964608,1258291200,1056964608;2,1065353216,1258291200,0,1065353216,1258291200,0)|2,0,1,|\r\n'
+                        b'3,-1,0,0|B,0,0,0,1065353216,1258291200,1056964608(1,1056964608,1258291200,1056964608,1056964608,1258291200,1056964608;B,0,0,0,1065353216,1258291200,0(2,1065353216,1258291200,0,1065353216,1258291200,0;3,0,0,0,0,0,0))|2,0,4,1,3,|\r\n'
+                        b'3,-1,0,0|B,0,0,0,1065353216,1258291200,1056964608(1,1056964608,1258291200,1056964608,1056964608,1258291200,1056964608;B,0,0,0,1065353216,1258291200,0(2,1065353216,1258291200,0,1065353216,1258291200,0;3,0,0,0,0,0,0))|2,0,4,1,3,|3,2,1,\r\n')
+            (captures / 'original-select-stdout.log').write_bytes(selected)
             (captures / 'provenance.json').write_text(json.dumps({
                 'commit': commit, 'source_lf_sha256': hashes}))
             retained = {p: p.read_bytes() for p in captures.iterdir()}
@@ -670,6 +675,9 @@ class HelperTests(unittest.TestCase):
                 self.assertEqual(command, [out / ('dbvt-tests.exe' if check.os.name == 'nt' else 'dbvt-tests')])
                 self.assertEqual(kwargs['env']['DBVT_FIXTURES'], str(out))
                 self.assertEqual(kwargs['env']['DBVT_POLICY'], 'mmd-win64-sse')
+                self.assertEqual(name, 'windows-sourced-rust-tests')
+                self.assertEqual((Path(kwargs['env']['DBVT_FIXTURES']) /
+                                  'original-select-stdout.log').read_bytes(), selected)
                 for order in range(4):
                     (out / f'rust-{order}.tsv').write_text(''.join(
                         f'{i}\t{line}\t{mock_snapshot(line)}\n' for i, line in enumerate(inputs.decode().splitlines())))
@@ -681,6 +689,34 @@ class HelperTests(unittest.TestCase):
             numeric.assert_called_once_with(out)
             self.assertEqual({p: p.read_bytes() for p in captures.iterdir()}, retained)
             self.assertEqual((out / ('dbvt-tests.exe' if check.os.name == 'nt' else 'dbvt-tests')).read_bytes(), binary.read_bytes())
+
+    def test_replay_rejects_missing_or_invalid_select_before_build_or_outputs(self):
+        inputs = check.subprocess.check_output([sys.executable, check.HERE / 'cases.py'])
+        hashes = {p: check.hashlib.sha256((check.ROOT / p).read_bytes().replace(b'\r\n', b'\n')).hexdigest()
+                  for p in check.source_paths()}
+        commit = check.subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=check.ROOT).decode().strip()
+        with tempfile.TemporaryDirectory() as directory:
+            captures, out = Path(directory) / 'captures', Path(directory) / 'out'
+            captures.mkdir()
+            out.mkdir()
+            (captures / 'inputs.tsv').write_bytes(inputs)
+            for order in range(4):
+                (captures / f'native-{order}.tsv').write_bytes(b'unit-control\n' * 2355)
+            (captures / 'original-profile.txt').write_bytes(profile('1', '1', '1', '1'))
+            (captures / 'provenance.json').write_text(json.dumps({
+                'commit': commit, 'source_lf_sha256': hashes}))
+            for selected, error in [(None, FileNotFoundError), (b'x\n' * 3, AssertionError),
+                                    (b'x\nx\nstate|B(B(1;3);2)|rank|\nx\n', AssertionError)]:
+                with self.subTest(selected=selected):
+                    if selected is not None:
+                        (captures / 'original-select-stdout.log').write_bytes(selected)
+                    retained = {p: p.read_bytes() for p in captures.iterdir()}
+                    with patch.object(check, 'run') as run:
+                        with self.assertRaises(error):
+                            check.replay(out, captures)
+                        run.assert_not_called()
+                    self.assertEqual(list(out.iterdir()), [])
+                    self.assertEqual({p: p.read_bytes() for p in captures.iterdir()}, retained)
 
     def test_actual_windows_fixture_bytes_match_provenance(self):
         fixtures = check.ROOT / 'rust/crates/mds-bullet/tests/dbvt_data'

@@ -172,12 +172,14 @@ def replay(out, captures):
         if hashlib.sha256((ROOT / path).read_bytes().replace(b'\r\n', b'\n')).hexdigest() != expected:
             raise ValueError(f'Windows replay source bytes differ: {path}')
     observed = validate_profile((captures / 'original-profile.txt').read_bytes(), 'sse')
+    validate_select((captures / 'original-select-stdout.log').read_bytes(), 'sse')
     (out / 'replay-provenance.json').write_text(json.dumps(dict(
         classification='Windows-sourced controlled capture replay; not local native execution',
         capture_provenance=captured_provenance, profile=observed,
         capture_sha256={p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in captures.iterdir() if p.is_file()},
         rust_policy='mmd-win64-sse'), indent=2) + '\n')
-    for name in ['inputs.tsv', *(f'native-{order}.tsv' for order in range(4))]:
+    for name in ['inputs.tsv', *(f'native-{order}.tsv' for order in range(4)),
+                 'original-select-stdout.log']:
         shutil.copy2(captures / name, out / name)
     env = dict(os.environ, DBVT_FIXTURES=str(out), DBVT_POLICY='mmd-win64-sse')
     build = run(['rustup', 'run', '1.95.0', 'cargo', 'test', '--locked', '--manifest-path',

@@ -1,4 +1,3 @@
-"""Compiler-free controls use synthetic receipts, never actual execution evidence."""
 import copy
 import json
 from pathlib import Path
@@ -159,6 +158,12 @@ class SourceControls(unittest.TestCase):
             diagonal=f32(2*f32(extent+f32(.02)))
             squared.append(f32(f32(diagonal*diagonal)+f32(2.04*2.04*2)))
         self.assertLess(squared[0],f32(1e12));self.assertEqual(squared[1],f32(1e12));self.assertGreater(squared[2],f32(1e12))
+
+
+def load_tests(loader, tests, pattern):
+    from test_evidence import AdmissionControls
+    tests.addTests(loader.loadTestsFromTestCase(AdmissionControls))
+    return tests
 
 
 if __name__=='__main__':

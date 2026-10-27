@@ -1,4 +1,3 @@
-"""Strict ordered trace, ownership, independent lifetimes and allocator validation."""
 import json
 import re
 from hooks import require

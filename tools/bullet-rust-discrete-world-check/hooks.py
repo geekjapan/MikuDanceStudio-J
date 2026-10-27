@@ -1,4 +1,3 @@
-"""Exact reversible observation edits in disposable original-source copies."""
 from pathlib import Path
 
 CORE = 'rust/crates/mds-bullet/src/core/'

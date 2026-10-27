@@ -1,4 +1,3 @@
-"""Ordered public-shim and explicitly injected collision-world inputs."""
 import struct
 
 

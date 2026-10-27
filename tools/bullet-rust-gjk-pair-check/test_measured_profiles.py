@@ -91,8 +91,9 @@ class MeasuredProfileTests(unittest.TestCase):
                 raise AssertionError('Compiler drift was accepted')
         """)
         with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / 'source-head.txt').write_bytes(b'1' * 40 + b'\n')
             (Path(temp) / 'provenance.txt').write_text('deliberately unreviewed compiler')
-            result = subprocess.run([sys.executable, '-c', script, check.__file__, temp],
+            result = subprocess.run([sys.executable, '-B', *(['-O'] if sys.flags.optimize else []), '-c', script, check.__file__, temp],
                                     capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('real validator rejected compiler drift', result.stdout)
@@ -202,13 +203,67 @@ class FiniteMeasurementTests(unittest.TestCase):
                 self.assertEqual(measurement['capture_source_map_sha256'], measured_profiles.source_map_digest(historical))
             self.assertEqual(set(profile['measured_verification_sha256']), set(self.manifest['verification_sha256'][host]))
 
+    def test_history_anchor_rejects_coordinated_source_digest_refresh(self):
+        def coordinated(value):
+            profile = value['profiles']['linux-x64']
+            path = next(iter(profile['protected_source_sha256']))
+            profile['protected_source_sha256'][path] = '0' * 64
+            identity = measured_profiles.source_map_digest({**profile['protected_source_sha256'],
+                                                         **profile['measured_verification_sha256']})
+            for measurement in profile['measurements']:
+                measurement['capture_source_map_sha256'] = identity
+        with self.assertRaisesRegex(ValueError, 'immutable historical projection'):
+            self.load_changed(coordinated)
+        with self.assertRaisesRegex(ValueError, 'immutable historical projection'):
+            self.load_changed(lambda value: value['profiles']['linux-x64']['measurements'].reverse())
+        self.assertEqual(measured_profiles.source_map_digest({name: self.manifest[name]
+                         for name in ['profiles', 'frozen_fixtures']}),
+                         'db3da5b75c9c53145e6be0aec4f83264f3a0bbce2a128ea321caf24ae0e7e501')
+
+    def test_exact_bounded_source_admission_rejects_malformed_delta(self):
+        def delta(value):
+            return value['source_admission']['hosts']['linux-x64']
+        replacement = next(iter(measured_profiles.REPLACEMENTS))
+        addition = next(iter(measured_profiles.ADDITIONS))
+        changes = [lambda v: v['source_admission'].update(extra={}),
+                   lambda v: v['source_admission'].update(kind='another-bridge'),
+                   lambda v: v['source_admission']['hosts'].pop('windows-x64'),
+                   lambda v: v['source_admission']['hosts'].update(unknown={}),
+                   lambda v: delta(v).update(extra={}),
+                   lambda v: delta(v)['replacements'].update({replacement: v['profiles']['linux-x64']['protected_source_sha256'][replacement]})]
+        for name in ['reviewed_base_head', 'integration_head', 'integration_tree']:
+            for bad in [None, True, '0' * 40, 'invalid']:
+                changes.append(lambda v, name=name, bad=bad: v['source_admission'].update({name: bad}))
+        for name, path in [('replacements', replacement), ('additions', addition)]:
+            changes.extend([lambda v, name=name, path=path: delta(v)[name].pop(path),
+                            lambda v, name=name: delta(v)[name].update({'extra': '0' * 64}),
+                            lambda v, name=name: delta(v).update({name: []})])
+            for bad in [None, True, 1, 'A' * 64, '0' * 63]:
+                changes.append(lambda v, name=name, path=path, bad=bad: delta(v)[name].update({path: bad}))
+            for substitute in [replacement if name == 'additions' else addition,
+                               'rust/crates/mds-bullet/src/core/math.rs', measured_profiles.MANIFEST_PATH,
+                               '/absolute', '../escape', 'C:/drive', 'bad\\path', 'bad/./path', 'bad//path', 'bad\npath']:
+                def change(v, name=name, path=path, substitute=substitute):
+                    delta(v)[name][substitute] = delta(v)[name].pop(path)
+                changes.append(change)
+        for change in changes:
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'schema'):
+                self.load_changed(change)
+        for host in measured_profiles.HOSTS:
+            current = measured_profiles.approved_source_map(self.manifest, host)
+            self.assertEqual(len(current), 474)
+            self.assertEqual(set(current), set(self.manifest['profiles'][host]['protected_source_sha256'])
+                             | measured_profiles.ADDITIONS | set(self.manifest['verification_sha256'][host]))
+
     def test_synthetic_replay_receipts_and_contract_guards(self):
         fixture = check.ROOT / 'rust/crates/mds-bullet/tests/gjk_pair_data'
         for host_name, profile in self.manifest['profiles'].items():
-            source = {**profile['protected_source_sha256'], **self.manifest['verification_sha256'][host_name]}
+            source = measured_profiles.approved_source_map(self.manifest, host_name)
             compact = (fixture / ('native-x64.tsv' if host_name.endswith('x64') else 'native.tsv')).read_bytes().replace(b'\r\n', b'\n')
             with tempfile.TemporaryDirectory() as directory:
-                output = Path(directory)
+                output = Path(directory) / 'capture'
+                output.mkdir()
+                (output / 'source-head.txt').write_bytes(b'1' * 40 + b'\n')
                 for name, command in profile['commands'].items():
                     (output / name).write_text(json.dumps(command))
                 (output / 'full-rust-result.json').write_text(json.dumps({'status': 'passed', 'returncode': 0}))
@@ -228,9 +283,28 @@ class FiniteMeasurementTests(unittest.TestCase):
                     (output / 'provenance.txt').write_bytes(measurement['compiler_provenance'].encode())
                     receipt = validate()
                     for field in measured_profiles.MEASUREMENT_FIELDS - {'compiler_provenance'}:
-                        self.assertEqual(receipt[field], measurement[field])
-                    self.assertEqual(receipt['source_sha256'], source)
-                    self.assertEqual(receipt['current_source_map_sha256'], measured_profiles.source_map_digest(source))
+                        self.assertEqual(receipt['historical_measurement'][field], measurement[field])
+                    self.assertEqual(receipt['current_source']['source_sha256'], source)
+                    self.assertEqual(receipt['current_source']['source_map_sha256'], measured_profiles.source_map_digest(source))
+                self.assertEqual(receipt['historical_measurement']['role'], 'historical-reference')
+                self.assertEqual(receipt['current_source']['capture_head'], '1' * 40)
+                self.assertEqual(receipt['current_source']['integration_head'], self.manifest['source_admission']['integration_head'])
+                self.assertEqual(receipt['current_source']['verification_manifest_sha256'], measured_profiles.sha((measured_profiles.HERE / 'measured-profiles.json').read_bytes()))
+                self.assertIn('requires fresh four-host gates', receipt['approval'])
+                (output.parent / 'source-head.txt').write_bytes(b'2' * 40 + b'\n')
+                for valid in [b'1' * 40 + b'\n', b'1' * 40 + b'\r\n']:
+                    (output / 'source-head.txt').write_bytes(valid)
+                    self.assertEqual(validate()['current_source']['capture_head'], '1' * 40)
+                for invalid in [b'', b'1' * 40, b'A' * 40 + b'\n', b'1' * 40 + b'\r\r\n',
+                                b'1' * 40 + b'\n\n', b' ' + b'1' * 40 + b'\n', b'1' * 40 + b' \n',
+                                b'1' * 40 + b'\n' + b'2' * 40 + b'\n', b'\xff' * 40 + b'\n']:
+                    (output / 'source-head.txt').write_bytes(invalid)
+                    with self.assertRaisesRegex(ValueError, 'head framing'):
+                        validate()
+                (output / 'source-head.txt').unlink()
+                with self.assertRaises(FileNotFoundError):
+                    validate()
+                (output / 'source-head.txt').write_bytes(b'1' * 40 + b'\n')
                 for name in profile['commands']:
                     original = (output / name).read_bytes()
                     (output / name).write_text('["drift"]')

@@ -44,3 +44,29 @@ Each measurement records its actual evidence head, run, job, artifact, ZIP hash,
 `verification_sha256` describes current expected physical source bytes derived from fixed reviewed Git blobs and each path's measured LF or CRLF checkout transport. Its status is `reviewed-current-source-expectation-execution-pending`. This expectation does not claim the historical captures executed the current validator. Receipts return the selected historical measurement and separately identify the current source map and manifest. Runtime schema checks do not authenticate arbitrary artifact IDs. Admission review must resolve the recorded identities to immutable actual GitHub artifacts and members.
 
 Fresh final-head four-host capture and independent review must prove current source-before and source-after identities, the current validator, all commands and twelve streams, full same-host baselines, and 52 compiled mutants with 16 mutation-suite baselines. Historical 39-mutant and 12-baseline runs cannot fill that requirement. Pure replay of both Linux records does not establish fresh native execution in both environments. Compiler executable, linker and runtime-library byte identities remain unknown. Seven legacy whole outer-suite optimized-Python failures remain tracked separately in issue 212. Hosted preparation runs the dedicated model tests under normal Python and `-O` without treating that legacy optimized suite as passing.
+
+
+Schema 3 retains all five historical measurements and both Linux kernel variants
+unchanged. The validator anchors the canonical `profiles` and `frozen_fixtures`
+projection to SHA256 `db3da5b75c9c53145e6be0aec4f83264f3a0bbce2a128ea321caf24ae0e7e501`.
+The bounded DBVT source admission binds reviewed main `4d6878ec` to integration
+`c31de920` and its tree. It permits exactly three replacements and seven additions
+in the collected source map, alongside the existing ten current verification paths.
+All 474 current entries excluding the manifest must match physical checkout bytes.
+No deletion, path substitution or chained bridge is admitted.
+
+Receipts separate `historical_measurement` with role `historical-reference` from
+`current_source`. Historical heads, runs, jobs, artifacts, ZIPs and source digests
+remain historical identities. The current capture head comes from the capture's
+own `source-head.txt`, containing exactly 40 lowercase ASCII hexadecimal bytes
+and one LF or CRLF terminator. The receipt also records the current map digest,
+raw manifest digest, reviewed base and integration head/tree. This receipt is
+written before mutations and final source-integrity checks. It is not acceptance.
+
+The isolated GJK harness inputs remain unchanged across this DBVT integration.
+The collector is a conservative inventory, not the full whole-pure-suite compiler
+closure. Whole pure tests also consume DBVT fixtures outside this inventory.
+Fresh final-head four-host execution must still prove 52 compiled semantic
+rejections, 16 suite baselines, four full baselines and source-before/end integrity.
+Historical Linux kernel 7 measurements do not prove current-source native execution
+on that kernel. Whole pure and General integration remain separate gates.

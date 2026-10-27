@@ -20,6 +20,13 @@ def canonical_command(command, root, output):
 
 
 MANIFEST_PATH = 'tools/bullet-rust-gjk-pair-check/measured-profiles.json'
+HISTORICAL_SHA256 = 'db3da5b75c9c53145e6be0aec4f83264f3a0bbce2a128ea321caf24ae0e7e501'
+REPLACEMENTS = {'rust/crates/mds-bullet/' + path for path in
+                ['src/core/dbvt.rs', 'src/core/mod.rs', 'tests/pure_bullet.rs']}
+ADDITIONS = {'rust/crates/mds-bullet/tests/' + path for path in
+             ['pure_bullet/dbvt.rs', *['dbvt_data/' + name for name in
+              ['archive-intersect.tsv', 'archive-merge.tsv', 'inline-aabb.tsv',
+               'inputs.tsv', 'provenance.json', 'select.tsv']]]}
 HOSTS = {'macos-arm64', 'linux-arm64', 'linux-x64', 'windows-x64'}
 COMMANDS = {'native-command.json', 'effective-native-command.json', 'observed-command.json'}
 STREAMS = {'capture/' + prefix + name + '.tsv'
@@ -49,7 +56,8 @@ def source_map_digest(value):
 def hash_map(value, count, label):
     schema(isinstance(value, dict) and len(value) == count, label + ' count')
     schema(all(isinstance(path, str) and path and not path.startswith('/')
-               and '\\' not in path and all(part not in {'', '.', '..'} for part in path.split('/'))
+               and not any(ord(c) < 32 or ord(c) == 127 for c in path)
+               and ':' not in path and '\\' not in path and all(part not in {'', '.', '..'} for part in path.split('/'))
                and digest(identity) for path, identity in value.items()), label + ' identities')
     schema(MANIFEST_PATH not in value, label + ' manifest self-exclusion')
 
@@ -72,8 +80,8 @@ def normalize_provenance(value):
 
 def load_manifest(path):
     manifest = json.loads(path.read_text(), object_pairs_hook=unique_object)
-    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256'}, 'manifest')
-    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 2, 'schema_version')
+    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission'}, 'manifest')
+    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 3, 'schema_version')
     schema(manifest['status'] == 'reviewed-current-source-expectation-execution-pending', 'status')
     fields(manifest['profiles'], HOSTS, 'profiles')
     fields(manifest['verification_sha256'], HOSTS, 'verification hosts')
@@ -132,7 +140,40 @@ def load_manifest(path):
             schema(measurement['capture_source_map_sha256'] == captured_digest, 'historical source digest')
             schema(measurement['provenance_sha256'] == sha(measurement['compiler_provenance'].encode('utf-8')),
                    'provenance member digest')
+    schema(source_map_digest({name: manifest[name] for name in ['profiles', 'frozen_fixtures']})
+           == HISTORICAL_SHA256, 'immutable historical projection')
+    admission = manifest['source_admission']
+    fields(admission, {'kind', 'reviewed_base_head', 'integration_head', 'integration_tree', 'hosts'}, 'source admission')
+    schema(admission['kind'] == 'bounded-dbvt-policy-bridge', 'source admission kind')
+    for name in ['reviewed_base_head', 'integration_head', 'integration_tree']:
+        schema(digest(admission[name], 40), 'source admission ' + name)
+    schema(admission['reviewed_base_head'] == '4d6878ec05e9ec63f4514bdc21ba679f36681fce'
+           and admission['integration_head'] == 'c31de92064e960f88c142c7f86e506477f14f8e0'
+           and admission['integration_tree'] == '12affc9b9b2b260012a71dfa74644942999116a6',
+           'source admission reviewed integration')
+    fields(admission['hosts'], HOSTS, 'source admission hosts')
+    for host in HOSTS:
+        approved_source_map(manifest, host)
     return manifest
+
+
+def approved_source_map(manifest, host):
+    profile = manifest['profiles'][host]
+    protected = profile['protected_source_sha256']
+    verification = manifest['verification_sha256'][host]
+    delta = manifest['source_admission']['hosts'][host]
+    fields(delta, {'replacements', 'additions'}, 'source admission delta')
+    for name, paths in [('replacements', REPLACEMENTS), ('additions', ADDITIONS)]:
+        hash_map(delta[name], len(paths), 'source admission ' + name)
+        schema(set(delta[name]) == paths, 'source admission ' + name + ' paths')
+    schema(not REPLACEMENTS & ADDITIONS, 'source admission overlap')
+    schema(REPLACEMENTS <= set(protected), 'replacement must exist historically')
+    schema(not ADDITIONS & (set(protected) | set(profile['measured_verification_sha256'])
+                            | set(verification)), 'addition must be absent historically')
+    schema(not (REPLACEMENTS | ADDITIONS) & set(verification), 'source admission verification overlap')
+    schema(all(delta['replacements'][path] != protected[path] for path in REPLACEMENTS),
+           'replacement must change historical hash')
+    return {**protected, **delta['replacements'], **delta['additions'], **verification}
 
 
 def select_measurement(profile, provenance):
@@ -154,11 +195,14 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
     if profile is None:
         raise ValueError('Unknown outer GJK measured profile')
     current = source_hashes()
-    expected = {**profile['protected_source_sha256'], **manifest['verification_sha256'][host_name]}
-    expected.pop('tools/bullet-rust-gjk-pair-check/measured-profiles.json', None)
+    expected = approved_source_map(manifest, host_name)
     actual = {p: h for p, h in current.items() if p != 'tools/bullet-rust-gjk-pair-check/measured-profiles.json'}
     if actual != expected:
         raise ValueError('Outer GJK source closure differs from reviewed producer and verification code')
+    capture_head = (output / 'source-head.txt').read_bytes()
+    if re.fullmatch(rb'[0-9a-f]{40}(?:\n|\r\n)', capture_head) is None:
+        raise ValueError('Outer GJK capture source head framing differs')
+    capture_head = capture_head[:40].decode('ascii')
     provenance = (output / 'provenance.txt').read_bytes().decode('utf-8')
     measurement = select_measurement(profile, provenance)
     for name, expected_command in profile['commands'].items():
@@ -196,8 +240,13 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
     if full != {'status': 'passed', 'returncode': 0} or type(full.get('returncode')) is not int:
         raise ValueError('Exact full same-host baseline did not pass')
     return {'host': host_name, 'status': 'measured-profile-matched',
-            **{name: value for name, value in measurement.items() if name != 'compiler_provenance'},
-            'source_sha256': current, 'current_source_map_sha256': source_map_digest(actual),
-            'current_source_status': manifest['status'],
-            'verification_manifest_sha256': sha((HERE / 'measured-profiles.json').read_bytes()),
+            'historical_measurement': {
+                'role': 'historical-reference',
+                **{name: value for name, value in measurement.items() if name != 'compiler_provenance'}},
+            'current_source': {
+                **{name: value for name, value in manifest['source_admission'].items() if name != 'hosts'},
+                'capture_head': capture_head, 'source_sha256': current,
+                'source_map_sha256': source_map_digest(actual),
+                'status': manifest['status'],
+                'verification_manifest_sha256': sha((HERE / 'measured-profiles.json').read_bytes())},
             'approval': 'requires fresh four-host gates and independent review'}

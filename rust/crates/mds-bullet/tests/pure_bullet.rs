@@ -1,4 +1,3 @@
-
 #[path = "pure_bullet/axis_sweep.rs"]
 mod axis_sweep;
 #[path = "pure_bullet/body_kernel.rs"]

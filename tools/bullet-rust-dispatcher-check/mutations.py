@@ -24,8 +24,8 @@ MUTATIONS = {
     'per-pair-simplex': ('&mut self.simplex,', '&mut VoronoiSimplexSolver::default(),'),
 }
 MUTATIONS['stable-remove'] = (
-    '            drop(self.manifolds.swap_remove(index));\n            if let Some(moved) = self.manifolds.get(index) {\n                self.algorithms[moved.owner.0 as usize]\n                    .as_mut()\n                    .unwrap()\n                    .manifold_index = Some(index);\n            }',
-    '            drop(self.manifolds.remove(index));\n            for j in index..self.manifolds.len() { self.algorithms[self.manifolds[j].owner.0 as usize].as_mut().unwrap().manifold_index = Some(j); }',
+    '            self.manifolds.swap_remove(index);\n            if let Some(moved) = self.manifolds.get(index) {\n                self.algorithms[moved.owner.0 as usize]\n                    .as_mut()\n                    .unwrap()\n                    .manifold_index = Some(index);\n            }',
+    '            self.manifolds.remove(index);\n            for j in index..self.manifolds.len() { self.algorithms[self.manifolds[j].owner.0 as usize].as_mut().unwrap().manifold_index = Some(j); }',
 )
 MUTATIONS['delayed-release'] = (
     '        let index = self.algorithms[key.0 as usize]',

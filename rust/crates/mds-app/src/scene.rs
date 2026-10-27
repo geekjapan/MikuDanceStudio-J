@@ -10,8 +10,8 @@ use mds_doc::{Document, ModelFile};
 use mds_physics::PhysicsScene;
 use mds_render::picture::PictureQuad;
 use mds_render::{
-    scene, AccessoryDraw, AccessoryMesh, Camera, Frame, Image, Light, Mesh, Picture, Stage,
-    PIXEL_OFFSET_D3D9,
+    scene, AccessoryDraw, AccessoryMesh, Camera, CameraFrame, Frame, Image, Light, Mesh, Picture,
+    Stage, PIXEL_OFFSET_D3D9,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -21,7 +21,8 @@ use std::sync::Arc;
 pub const BACKGROUND: [u8; 4] = [255; 4];
 
 /// Where a path as the PMM stores it is on disk: the stored path when it exists (with `\` as the
-/// separator of the system), else the file of that name in `dir`.
+/// separator of the system), else the file of that name in `dir`. Lookup ignores case after
+/// exact direct candidates. Stored document strings are never rewritten.
 pub fn resolve(dir: &Path, stored: &str) -> PathBuf {
     // A path stored with `\` separators names the same file on a system with `/` ones.
     let native = stored.replace('\\', std::path::MAIN_SEPARATOR_STR);
@@ -32,7 +33,13 @@ pub fn resolve(dir: &Path, stored: &str) -> PathBuf {
     {
         return direct.to_path_buf();
     }
-    dir.join(stored.rsplit(['\\', '/']).next().unwrap_or(stored))
+    for candidate in [stored, &native].map(Path::new) {
+        if let Some(path) = mds_formats::path::resolve_path_ci(candidate) {
+            return path;
+        }
+    }
+    let name = stored.rsplit(['\\', '/']).next().unwrap_or(stored);
+    mds_formats::path::resolve_ci(dir, name).unwrap_or_else(|| dir.join(name))
 }
 
 /// The bytes of a model path as the PMM stores it.
@@ -43,7 +50,10 @@ pub fn read_model(dir: &Path, stored: &str) -> Result<Vec<u8>, String> {
 /// A reader of the texture names a file at `file` stores (relative to its folder, `\` or `/`).
 fn beside(file: &Path) -> impl Fn(&str) -> Option<Vec<u8>> + '_ {
     let folder = file.parent().unwrap_or(Path::new("."));
-    move |name| std::fs::read(folder.join(name.replace('\\', "/"))).ok()
+    move |name: &str| {
+        let path = folder.join(name.replace('\\', "/"));
+        std::fs::read(mds_formats::path::resolve_path_ci(&path)?).ok()
+    }
 }
 
 /// One mesh per document model, in PMM order, with its textures and edge scale.
@@ -139,7 +149,8 @@ pub struct Shot<'a> {
     pub physics: &'a PhysicsScene,
     /// The timeline frame (the light, self-shadow and accessory tracks are read at it).
     pub frame: u32,
-    pub camera: &'a Camera,
+    pub camera: &'a CameraFrame,
+    pub view_offset: [f32; 2],
     pub size: [u32; 2],
     /// As [`Frame::samples`].
     pub samples: &'a [[f32; 2]],
@@ -226,7 +237,9 @@ pub fn with_stage_lit<R>(
     let frame = Frame {
         width,
         height,
-        view: shot.camera.view(width, height),
+        view: shot
+            .camera
+            .view_with_offset(shot.view_offset, width, height),
         light,
         background: BACKGROUND,
         toon: true,
@@ -254,5 +267,15 @@ pub fn state_camera(doc: &Document) -> Camera {
         distance: s[5],
         fov_deg: p.settings.camera_fov,
         orthographic: p.camera_perspective != 0,
+    }
+}
+
+pub(crate) fn camera_frame(frame: mds_doc::CameraFrame) -> CameraFrame {
+    CameraFrame {
+        target: frame.target,
+        rotation: frame.rotation,
+        distance: frame.distance,
+        fov_deg: frame.fov_deg,
+        orthographic: frame.orthographic,
     }
 }

@@ -5,7 +5,7 @@ use crate::core::contact_solver::ContactManifold;
 use crate::core::islands::{IslandManifold, IslandObject, SimulationIslands, SolverEvent};
 use crate::core::math::{Transform, Vec3};
 use crate::core::solver::{
-    GroupSelection, GroupSolver, SolverMode, SolverWorkspace, UninitializedSolverSlot,
+    solve_group, GroupSelection, GroupSolver, SolverMode, SolverWorkspace, UninitializedSolverSlot,
 };
 
 fn body(mass: f32) -> RigidBody {
@@ -597,4 +597,63 @@ fn nonzero_joint_resets_cross_group_linear_and_angular_endpoint_deltas() {
             }
         }
     }
+}
+
+#[test]
+fn default_group_entry_matches_simd_stages_without_integrating_transforms() {
+    let mut results = Vec::new();
+    for default_entry in [false, true] {
+        let mut workspace = SolverWorkspace::default();
+        let mut objects = [object(); 2];
+        let mut bodies = [body(2.0), body(3.0)];
+        let mut points = [point()];
+        let mut manifolds = [ContactManifold::new([0, 1], &mut points)];
+        let selection = GroupSelection {
+            bodies: &[0, 1],
+            joints: &[],
+            manifolds: &[0],
+        };
+        if default_entry {
+            solve_group(
+                &mut workspace,
+                &mut objects,
+                &mut bodies,
+                &mut [],
+                &mut manifolds,
+                selection,
+                1.0 / 60.0,
+            )
+            .unwrap();
+        } else {
+            let mut solver = GroupSolver::setup(
+                &mut workspace,
+                &mut objects,
+                &bodies,
+                &mut [],
+                &mut manifolds,
+                selection,
+                1.0 / 60.0,
+                SolverMode::Simd,
+            )
+            .unwrap();
+            solver.iterate(&bodies, &[], |_, _| {}).unwrap();
+            solver.writeback(&mut bodies, &mut manifolds);
+        }
+        let velocities: Vec<_> = selection
+            .bodies
+            .iter()
+            .map(|&i| {
+                let state = bodies[i].snapshot();
+                assert_eq!(state.world, Transform::IDENTITY);
+                assert_ne!(state.linear_velocity, Vec3::ZERO);
+                (
+                    state.linear_velocity.0.map(f32::to_bits),
+                    state.angular_velocity.0.map(f32::to_bits),
+                )
+            })
+            .collect();
+        assert_eq!(workspace.live_len(), 0);
+        results.push((velocities, points[0].applied_impulse.to_bits()));
+    }
+    assert_eq!(results[0], results[1]);
 }

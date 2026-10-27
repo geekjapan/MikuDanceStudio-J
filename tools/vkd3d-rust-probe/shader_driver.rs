@@ -33,6 +33,20 @@ struct HlslInfo {
     secondary: Code,
     profile: *const c_char,
 }
+#[repr(C)]
+struct SpirvTargetInfo {
+    ty: u32,
+    next: *const c_void,
+    entry_point: *const c_char,
+    environment: u32,
+    extensions: *const u32,
+    extension_count: u32,
+    parameters: *const c_void,
+    parameter_count: u32,
+    dual_source_blending: bool,
+    output_swizzles: *const u32,
+    output_swizzle_count: u32,
+}
 type Compile = unsafe extern "C" fn(*const CompileInfo, *mut Code, *mut *mut c_char) -> i32;
 type FreeCode = unsafe extern "C" fn(*mut Code);
 type FreeMessages = unsafe extern "C" fn(*mut c_char);
@@ -50,18 +64,35 @@ unsafe extern "C" {
 }
 fn main() {
     let args: Vec<_> = std::env::args().collect();
-    assert_eq!(
-        args.len(),
-        6,
-        "source profile target output native-library-or-dash"
+    assert!(
+        args.len() == 6 || (args.len() == 7 && args[6] == "no-float-controls"),
+        "source profile target output native-library-or-dash [no-float-controls]"
     );
     let source = std::fs::read(&args[1]).unwrap();
     let profile = CString::new(args[2].as_str()).unwrap();
     let target: u32 = args[3].parse().unwrap();
     let options = [OptionValue { name: 4, value: 21 }];
+    let extensions = [6u32]; // VKD3D_SHADER_SPIRV_EXTENSION_KHR_FLOAT_CONTROLS.
+    let spirv = SpirvTargetInfo {
+        ty: 4,
+        next: ptr::null(),
+        entry_point: ptr::null(),
+        environment: 2, // Preserve the default Vulkan 1.0 environment.
+        extensions: extensions.as_ptr(),
+        extension_count: u32::from(args.len() == 6),
+        parameters: ptr::null(),
+        parameter_count: 0,
+        dual_source_blending: false,
+        output_swizzles: ptr::null(),
+        output_swizzle_count: 0,
+    };
     let hlsl = HlslInfo {
         ty: 6,
-        next: ptr::null(),
+        next: if target == 1 {
+            (&spirv as *const SpirvTargetInfo).cast()
+        } else {
+            ptr::null()
+        },
         entry: c"main".as_ptr(),
         secondary: Code {
             code: ptr::null(),

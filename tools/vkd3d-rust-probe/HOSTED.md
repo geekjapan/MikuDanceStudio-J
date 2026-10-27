@@ -66,13 +66,36 @@ bytes. Nonempty output and success on both sides are required: matching
 unsupported-target rejections are failures. Process crashes/timeouts remain
 failures. Scan/reflection and GPU execution are explicitly `not_run`.
 
+SPIR-V normal cases chain the pinned `vkd3d_shader_spirv_target_info` with
+`KHR_FLOAT_CONTROLS` and the existing default Vulkan 1.0 environment. Both
+native and translated calls receive that same chain. The compiler can emit
+`SPV_KHR_float_controls` and `DenormFlushToZero 32`; SPIR-V bytes may therefore
+change where those declarations were previously unavailable. Denormal behavior
+is preserved. Assembly and legacy bytecode calls receive no SPIR-V target info.
+Pixel struct IO uses separate TEXCOORD inputs and COLOR outputs.
+
+Two controls live in `negative_controls`, outside the 48 successful cases:
+missing float controls requires E2004, and the old invalid pixel TEXCOORD output
+requires E5013. Each requires API -4, empty output, and equal diagnostics on
+both implementations. An unexpected success or another rejection fails the gate.
+
+`check_shader_inputs.py --header /path/to/vkd3d_shader.h --native-library
+/path/to/library --artifacts /new/evidence/directory` runs a bounded CPU-only
+native baseline. It compares the actual driver's complete SPIR-V target layout
+with the original C header, records input identities, compiles all 48 cases,
+checks generated SPIR-V float controls and pixel interfaces, and exercises both
+negative controls. It explicitly leaves translated comparison `not_run`.
+Run `test_shader_matrix.py` with normal Python and `python3 -O` for focused
+runner acceptance controls. This native check does not replace the hosted
+translated matrix or stable compiler acceptance.
+
 The driver reads and frees compiler output only after a nonnegative compile
 result. Rejections retain their status and diagnostics, write empty output,
 and free diagnostics once. Run `python3 -m unittest discover -s
 tools/vkd3d-rust-probe -p test_shader_driver.py` for a safe mock ABI regression
 against the actual driver executable with Rust 1.95.0. It checks both rejection
 and success ownership. It does not establish real compiler or hosted matrix
-acceptance. Matching negative return codes remain `compile_failure`.
+acceptance. Matching negative return codes in normal cases remain `compile_failure`.
 
 ## Status and acceptance
 

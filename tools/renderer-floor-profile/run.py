@@ -19,7 +19,7 @@ ROOT = HERE.parents[1]
 BASE = '77b3e431bc1ac2ab5610692f2e12c903a7629090'
 BASE_TREE = '778782dc8ad6352585a9b7eeb135c04150d1f2e4'
 SCHEMA = 'mds-floor-profile-v2'
-PARENT = '86a990fde0a0815f892a4e267355c5ae0b47bcb5'
+PARENT = 'c1ae0aadbead9190934dab7947bde655d79925e8'
 FP_CONTRACT = {'snapshot':'HardwareMxcsr', 'identity':'SourceSiteOnly',
                'rust_operation_ordering':'Unproved', 'exception_attribution':'Unsupported',
                'operation_environment':'Unproved'}
@@ -489,6 +489,11 @@ def native_commands(stdout,stderr,r):
             require(stack and PureWindowsPath(done[1])==stack[-1][1] and number in (None,stack[-1][0]),'matching project completion')
             require(active is None or owner==stack[-1],'pending project completion')
             active=None;owner=None;stack.pop();task=None;continue
+        if text=='Checking Build System':
+            require(active is None and owner is None and task=='CustomBuild' and len(stack)==2 and
+                    number==stack[0][0] and winpath(stack[0][1],root)==winpath(project_root,root) and
+                    winpath(stack[1][1],root)==winpath(root/'ZERO_CHECK.vcxproj',root),'closed build-system progress')
+            continue
         if number:
             require(stack and number==stack[-1][0],'out-of-owner project activity')
         if text=='Build succeeded.':

@@ -599,6 +599,34 @@ class Controls(unittest.TestCase):
                 raw=native_log(body+('     6>'+project+' -> '+str(root/output)+'\n').encode(),recipe,'mikudancestudio_core','6')
                 with self.subTest(task=task,project=project),self.assertRaisesRegex(ValueError,'matching project output'):admitted(raw)
 
+    def test_26_closed_build_system_progress(self):
+        recipe=r.recipe('D:/a/_temp','control','Od');root=r.PureWindowsPath(recipe['native_target'])
+        body=b'       CustomBuild:\n  1>Checking Build System\n'
+        def log(value):return native_log(value,recipe,'ZERO_CHECK','2')
+        baseline=log(body)
+        self.assertEqual(r.native_commands(baseline,b'',recipe),[])
+        command=b'       ClCompile:\n         C:\\VS\\cl.exe /c C:\\src\\accessory.cpp\n'
+        after=baseline.replace(b'     1>Done Building',command+b'     1>Done Building',1)
+        self.assertEqual(r.native_commands(after,b'',recipe),[['C:\\VS\\cl.exe','/c','C:\\src\\accessory.cpp']])
+        for bad in [baseline.replace(b'  1>Checking',prefix+b'Checking') for prefix in (b'  2>',b'  9>',b'')]+[
+                baseline.replace(b'ZERO_CHECK.vcxproj',b'OTHER.vcxproj'),
+                baseline.replace(str(root/'ZERO_CHECK.vcxproj').encode(),str(root/'foreign/ZERO_CHECK.vcxproj').encode()),
+                baseline.replace(str(root/'floor_profile.vcxproj').encode(),str(root/'foreign/floor_profile.vcxproj').encode()),
+                log(body.replace(b'CustomBuild:',b'ClCompile:')),
+                log(body.replace(b'Checking Build System',b'Checking Build System /O1')),
+                log(body.replace(b'Checking Build System',b'Checking Build Systems')),
+                baseline[:baseline.index(b'     2>Done Building')]]:
+            with self.subTest(raw=bad),self.assertRaises(ValueError):r.native_commands(bad,b'',recipe)
+        for task,tool in [('ClCompile','cl'),('Lib','lib'),('Link','link')]:
+            pending=('       '+task+':\n         C:\\VS\\'+tool+'.exe /OUT:Release\\check.lib accessory.obj\n').encode()
+            valid=log(pending)
+            expected=r.native_commands(valid,b'',recipe)
+            self.assertEqual(len(expected),1)
+            for progress in (b'  1>Checking Build System\n',b'  2>Checking Build System\n'):
+                with self.subTest(task=task,progress=progress),self.assertRaises(ValueError):r.native_commands(log(pending+progress),b'',recipe)
+        for stderr in (body,b'  1>Checking Build System\n'):
+            with self.assertRaisesRegex(ValueError,'unordered native stderr'):r.native_commands(baseline,stderr,recipe)
+
     def test_zz_real_effects_rejected_before_effects(self):
         target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-floor-profile-boundary-fix/effect-probe')
         self.assertFalse(target.exists());r.readonly()

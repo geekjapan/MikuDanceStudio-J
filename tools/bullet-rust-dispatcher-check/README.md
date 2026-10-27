@@ -1,0 +1,19 @@
+# Persistent collision dispatcher check
+
+Run `python3 tools/bullet-rust-dispatcher-check/check.py --out-dir <directory>` from the repository. The checker uses Rust 1.95.0 and the current host C++ compiler. It does not run GPU work or switch either public World entrypoint.
+
+The native oracle uses real `btDefaultCollisionConfiguration`, `btCollisionDispatcher`, `btHashedOverlappingPairCache`, proxies, rigid bodies, shapes and the sequential impulse solver. It registers pairs directly without DBVT. Native and Rust source instrumentation exists only in output copies. Original and observed native stdout must agree before comparison with Rust. Original and observed Rust stdout must also agree. A separate observer measures whether the actual generic collision process uses the configuration simplex. It compares pointer equality without printing addresses. Native and Rust observer events must agree.
+
+The command corpus covers all 16 ordered shape combinations, every activation-state pair, static/kinematic/no-response flags, asymmetric one-body constraint references, the plane-first constructor rejection, cached contacts and empty manifolds, registry and pair swap removal, repeated proxy cleaning, generic convex interleaving and two-step sphere/plane solves in both orders. Rust integration derives from its own solver writeback. The `L` record measures whether actual solver inputs reference the registry's contact storage. It prints a boolean, never an address.
+
+Trace records contain operation headers `O`, dense pairs and allocation lifetime IDs `P`, dense manifold metadata `M`, initialized contact words `Q`, body origins and velocities `B`, solver alias measurements `L`, and a final row count `Z`. Friction directions appear only when initialized. Padding, absolute pointers and uninitialized words are never compared. The parser requires a complete stream before a mutation can count as a semantic mismatch.
+
+The checker captures exact compiler arguments, compiler/Rust identities, platform macros, runner architecture, Git text attributes, raw streams, source identities and instrumentation diffs. It enumerates the current native/header/Rust/test/verifier closure at the beginning and in `finally`. Separate raw producer and verifier manifests preserve their different roles. Protected fixture, kernel, shim and historical checker bytes are also rechecked. Generated observer sources receive their own before/finally hashes.
+
+`--skip-mutations` is a local focused check and reports `PASS_FOCUSED_ONLY`. Full acceptance requires four actual host runs and all mutation controls. A compile failure, runtime failure, malformed trace or unchanged mutant output fails the mutation gate. `--mutation` selects controls for debugging and does not establish complete acceptance.
+
+## Remaining acceptance gates
+
+The controls cover algorithm recreation, inactive contact clearing, both-body exclusion filtering, plane endpoint reversal, stable removal, omitted moved-owner repair, dropped empty manifolds, per-pair simplex allocation, delayed release, no-response generation suppression and contact clone/copyback. The simplex and clone controls use actual borrowed-storage observations because numeric contact results alone can remain equal. All controls must compile and complete schema-valid traces before a mismatch counts.
+
+Four-host dispatcher acceptance and the parent's persistent current-source acceptance are pending. Existing mixed arithmetic profiles and source guards remain unchanged. This module changes the inherited source closure; historical profile hashes must not be relabeled to approve it. Broader `tools/rust/check.sh` integration remains a separate CI gate. Public World, typed MMD lifecycle registration and native dependency removal are outside this unit.

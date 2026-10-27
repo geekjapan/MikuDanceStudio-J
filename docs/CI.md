@@ -12,6 +12,43 @@ Windows Win32 and Intel macOS are unsupported and are excluded from the CI matri
 
 The official Actions are pinned to release commit SHAs. No repository secrets or self-hosted runners are required.
 
+## Keyframe pool verification
+
+The dedicated **Keyframe pool verification** workflow runs on relevant
+`src`, `include`, harness, and Rust replay changes, and manual dispatch. It
+uses Ubuntu hosted runners and clang AddressSanitizer; it does not require
+secrets. It does not add heavy local checks to the ordinary development
+loop.
+
+It runs the real C++ model-pool verifier at depth 4 with the existing bounds
+(2 bones, 2 morphs, frames 0..2, 24 tracked records, 4 configurations),
+including the display and morph pool-full checks. ASan findings and
+tracked-window cuts fail the job. The generated dump must match
+`rust/crates/mds-edit/tests/data/keypool-depth4.txt` byte-for-byte, then the
+Rust `keypool_replay` test must pass.
+
+A separate mutation step removes the exact production display-selector
+bounds guard in a disposable source copy and runs depth 1. It must fail
+with the display-paste trace and a symbolized ASan heap-buffer-overflow in
+`key_registrars.cpp`. Compilation errors, unrelated crashes, or a passing
+mutant fail the job. The original checkout remains unchanged on failure or
+interruption. Baseline and mutation builds use separate temporary directories.
+
+The `keyframe-pool-<sha>` artifact is uploaded even on failure and retains
+compiler and commit information, verifier logs, ASan logs, the generated
+oracle, the comparison result, and the targeted Rust replay log when those
+steps ran. Read the run conclusion and these logs together. A missing step
+or canceled run is not verification. Floating-point output may differ on a
+hosted CPU from the existing Apple clang baseline; investigate a mismatch
+without weakening bounds or silently refreshing the fixture.
+
+The maintained skill at `.claude/skills/verify-keyframe-pool/SKILL.md`
+records the property, assumptions, audited source, exclusions, and sync
+commit. Advance sync only after inspecting covered-source changes and an
+actual successful run at the new commit. Adding this workflow alone is not
+proof of a hosted run. Camera, light, self-shadow, gravity, accessory,
+undo/redo, and unmodeled call orders are outside its proof.
+
 ## Verification limits
 
 The Rust build artifacts contain the application executable only. They are not standalone installers: MME requires the matching vkd3d-shader shared library at runtime, and Linux requires the application system libraries. These jobs verify compilation and linking; the Linux test job verifies runtime behavior separately. The C++ application targets Windows only.

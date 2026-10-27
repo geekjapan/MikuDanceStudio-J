@@ -1,0 +1,103 @@
+name: Rust vkd3d checksum
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'rust/crates/mds-vkd3d/**'
+      - 'rust/Cargo.toml'
+      - 'rust/Cargo.lock'
+      - 'rust/rust-toolchain.toml'
+      - 'tools/vkd3d-rust-checksum/**'
+      - 'tests/fixtures/vkd3d-rust-checksum/**'
+      - '.github/workflows/vkd3d-rust-checksum.yml'
+  pull_request:
+    paths:
+      - 'rust/crates/mds-vkd3d/**'
+      - 'rust/Cargo.toml'
+      - 'rust/Cargo.lock'
+      - 'rust/rust-toolchain.toml'
+      - 'tools/vkd3d-rust-checksum/**'
+      - 'tests/fixtures/vkd3d-rust-checksum/**'
+      - '.github/workflows/vkd3d-rust-checksum.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vkd3d-checksum-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'branch' }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Pure Rust (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare log
+        run: touch "$RUNNER_TEMP/vkd3d-checksum.log"
+      - name: Check stable Rust checksum core
+        working-directory: rust
+        run: |
+          set -o pipefail
+          {
+            rustup show active-toolchain
+            rustup target add ${{ matrix.target }}
+            cargo fmt --check -p mds-vkd3d
+            cargo clippy --locked -p mds-vkd3d --all-targets --target ${{ matrix.target }} -- -D warnings
+            cargo test --locked -p mds-vkd3d --target ${{ matrix.target }}
+          } 2>&1 | tee "$RUNNER_TEMP/vkd3d-checksum.log"
+      - name: Preserve Rust log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vkd3d-checksum-${{ matrix.target }}
+          path: ${{ runner.temp }}/vkd3d-checksum.log
+          if-no-files-found: warn
+
+  native:
+    name: Recapture actual vkd3d 2.1 source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare log directory
+        run: mkdir -p "$RUNNER_TEMP/vkd3d-checksum-native"
+      - name: Check native fixtures and size truncation
+        run: |
+          set -o pipefail
+          python3 tools/vkd3d-rust-checksum/capture.py --output "$RUNNER_TEMP/vkd3d-checksum-native" \
+            2>&1 | tee "$RUNNER_TEMP/vkd3d-checksum-native/capture.log"
+      - name: Preserve native recapture evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vkd3d-checksum-native-linux-x64
+          path: ${{ runner.temp }}/vkd3d-checksum-native/
+          if-no-files-found: warn

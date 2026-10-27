@@ -1,5 +1,5 @@
-//! Altered Rust translation of Bullet 2.75's joint-only sequential impulse solver.
-//! Contacts, friction, islands and transform integration are outside this kernel.
+//! Altered Rust translation of Bullet 2.75 joint solving and shared impulse rows.
+//! Contact row setup lives in contact_solver; world scheduling remains external.
 /*
 Bullet Continuous Collision Detection and Physics Library
 Copyright (c) 2003-2006 Erwin Coumans  http://continuousphysics.com/Bullet/
@@ -60,7 +60,7 @@ pub struct JointSolver {
     callback_bodies: Vec<SolverBody>,
 }
 
-fn product(a: Vec3, b: Vec3) -> Vec3 {
+pub(crate) fn product(a: Vec3, b: Vec3) -> Vec3 {
     Vec3(std::array::from_fn(|i| a.0[i] * b.0[i]))
 }
 
@@ -168,63 +168,20 @@ impl JointSolver {
     /// Resolve one row in native input order. Exposed for exact event comparison.
     pub fn resolve_row(&mut self, index: usize) {
         let row = &mut self.rows[index];
-        let [a, b] = row.bodies.map(|i| self.bodies[i]);
-        let j = row.joint_row;
-        let (va, vb) = match self.mode {
-            SolverMode::Simd => (
-                j.j1_linear.dot_sse(a.delta_linear) + j.j1_angular.dot_sse(a.delta_angular),
-                j.j2_angular.dot_sse(b.delta_angular) - j.j1_linear.dot_sse(b.delta_linear),
-            ),
-            SolverMode::Scalar => (
-                j.j1_linear.dot(a.delta_linear) + j.j1_angular.dot(a.delta_angular),
-                -j.j1_linear.dot(b.delta_linear) + j.j2_angular.dot(b.delta_angular),
-            ),
+        let mut numeric = ImpulseRow {
+            bodies: row.bodies,
+            normal: row.joint_row.j1_linear,
+            angular: [row.joint_row.j1_angular, row.joint_row.j2_angular],
+            angular_components: row.angular_components,
+            diagonal_inverse: row.diagonal_inverse,
+            rhs: row.rhs,
+            cfm: row.joint_row.cfm,
+            lower_impulse: row.joint_row.lower_impulse,
+            upper_impulse: row.joint_row.upper_impulse,
+            applied_impulse: row.applied_impulse,
         };
-        let mut impulse = row.rhs - row.applied_impulse * j.cfm;
-        impulse -= va * row.diagonal_inverse;
-        impulse -= vb * row.diagonal_inverse;
-        let old_impulse = row.applied_impulse;
-        let sum = old_impulse + impulse;
-        if sum < j.lower_impulse {
-            impulse = j.lower_impulse - row.applied_impulse;
-            row.applied_impulse = j.lower_impulse;
-        } else if self.mode == SolverMode::Scalar && sum > j.upper_impulse {
-            impulse = j.upper_impulse - row.applied_impulse;
-            row.applied_impulse = j.upper_impulse;
-        } else {
-            row.applied_impulse = sum;
-        }
-        // Native SIMD applies both masks to the original sum; the upper mask wins.
-        if self.mode == SolverMode::Simd
-            && sum.partial_cmp(&j.upper_impulse) != Some(std::cmp::Ordering::Less)
-        {
-            impulse = j.upper_impulse - old_impulse;
-            row.applied_impulse = j.upper_impulse;
-        }
-        let [ia, ib] = row.bodies;
-        let linear_a = product(j.j1_linear, a.inverse_mass);
-        let linear_b = product(j.j1_linear, b.inverse_mass);
-        self.bodies[ia].delta_linear = self.bodies[ia].delta_linear.add(linear_a.scale(impulse));
-        let angular_a = match self.mode {
-            SolverMode::Simd => row.angular_components[0].scale(impulse),
-            SolverMode::Scalar => {
-                product(row.angular_components[0], a.angular_factor.scale(impulse))
-            }
-        };
-        self.bodies[ia].delta_angular = self.bodies[ia].delta_angular.add(angular_a);
-        self.bodies[ib].delta_linear = match self.mode {
-            SolverMode::Simd => self.bodies[ib].delta_linear.sub(linear_b.scale(impulse)),
-            SolverMode::Scalar => self.bodies[ib]
-                .delta_linear
-                .add(product(j.j1_linear.negate(), b.inverse_mass).scale(impulse)),
-        };
-        let angular_b = match self.mode {
-            SolverMode::Simd => row.angular_components[1].scale(impulse),
-            SolverMode::Scalar => {
-                product(row.angular_components[1], b.angular_factor.scale(impulse))
-            }
-        };
-        self.bodies[ib].delta_angular = self.bodies[ib].delta_angular.add(angular_b);
+        resolve(&mut self.bodies, &mut numeric, self.mode, false);
+        row.applied_impulse = numeric.applied_impulse;
     }
 
     pub fn iterate(&mut self) {
@@ -252,4 +209,80 @@ impl JointSolver {
             }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ImpulseRow {
+    pub bodies: [usize; 2],
+    pub normal: Vec3,
+    pub angular: [Vec3; 2],
+    pub angular_components: [Vec3; 2],
+    pub diagonal_inverse: f32,
+    pub rhs: f32,
+    pub cfm: f32,
+    pub lower_impulse: f32,
+    pub upper_impulse: f32,
+    pub applied_impulse: f32,
+}
+
+pub(crate) fn resolve(
+    bodies: &mut [SolverBody],
+    row: &mut ImpulseRow,
+    mode: SolverMode,
+    lower_only: bool,
+) {
+    let [a, b] = row.bodies.map(|i| bodies[i]);
+    let j = *row;
+    let (va, vb) = match mode {
+        SolverMode::Simd => (
+            j.normal.dot_sse(a.delta_linear) + j.angular[0].dot_sse(a.delta_angular),
+            j.angular[1].dot_sse(b.delta_angular) - j.normal.dot_sse(b.delta_linear),
+        ),
+        SolverMode::Scalar => (
+            j.normal.dot(a.delta_linear) + j.angular[0].dot(a.delta_angular),
+            -j.normal.dot(b.delta_linear) + j.angular[1].dot(b.delta_angular),
+        ),
+    };
+    let mut impulse = row.rhs - row.applied_impulse * j.cfm;
+    impulse -= va * row.diagonal_inverse;
+    impulse -= vb * row.diagonal_inverse;
+    let old_impulse = row.applied_impulse;
+    let sum = old_impulse + impulse;
+    if sum < j.lower_impulse {
+        impulse = j.lower_impulse - row.applied_impulse;
+        row.applied_impulse = j.lower_impulse;
+    } else if !lower_only && mode == SolverMode::Scalar && sum > j.upper_impulse {
+        impulse = j.upper_impulse - row.applied_impulse;
+        row.applied_impulse = j.upper_impulse;
+    } else {
+        row.applied_impulse = sum;
+    }
+    // Native SIMD applies both masks to the original sum; the upper mask wins.
+    if !lower_only
+        && mode == SolverMode::Simd
+        && sum.partial_cmp(&j.upper_impulse) != Some(std::cmp::Ordering::Less)
+    {
+        impulse = j.upper_impulse - old_impulse;
+        row.applied_impulse = j.upper_impulse;
+    }
+    let [ia, ib] = row.bodies;
+    let linear_a = product(j.normal, a.inverse_mass);
+    let linear_b = product(j.normal, b.inverse_mass);
+    bodies[ia].delta_linear = bodies[ia].delta_linear.add(linear_a.scale(impulse));
+    let angular_a = match mode {
+        SolverMode::Simd => row.angular_components[0].scale(impulse),
+        SolverMode::Scalar => product(row.angular_components[0], a.angular_factor.scale(impulse)),
+    };
+    bodies[ia].delta_angular = bodies[ia].delta_angular.add(angular_a);
+    bodies[ib].delta_linear = match mode {
+        SolverMode::Simd => bodies[ib].delta_linear.sub(linear_b.scale(impulse)),
+        SolverMode::Scalar => bodies[ib]
+            .delta_linear
+            .add(product(j.normal.negate(), b.inverse_mass).scale(impulse)),
+    };
+    let angular_b = match mode {
+        SolverMode::Simd => row.angular_components[1].scale(impulse),
+        SolverMode::Scalar => product(row.angular_components[1], b.angular_factor.scale(impulse)),
+    };
+    bodies[ib].delta_angular = bodies[ib].delta_angular.add(angular_b);
 }

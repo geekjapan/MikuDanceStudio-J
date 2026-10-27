@@ -33,10 +33,12 @@ pub struct ContactPoint {
     pub applied_impulse: f32,
     pub lateral_impulses: [f32; 2],
     pub lifetime: i32,
+    pub lateral_initialized: bool,
+    pub lateral_directions: [Vec3; 2],
 }
 
 impl ContactPoint {
-    const EMPTY: Self = Self {
+    pub const EMPTY: Self = Self {
         local_a: Vec3::ZERO,
         local_b: Vec3::ZERO,
         world_a: Vec3::ZERO,
@@ -48,6 +50,8 @@ impl ContactPoint {
         applied_impulse: 0.0,
         lateral_impulses: [0.0; 2],
         lifetime: 0,
+        lateral_initialized: false,
+        lateral_directions: [Vec3::ZERO; 2],
     };
 }
 
@@ -94,6 +98,10 @@ impl PairManifold {
     }
     pub fn contacts(&self) -> &[ContactPoint] {
         &self.points[..self.count]
+    }
+
+    pub fn contacts_mut(&mut self) -> &mut [ContactPoint] {
+        &mut self.points[..self.count]
     }
 
     pub fn process(&mut self, body0: ContactBody, body1: ContactBody) {
@@ -325,7 +333,7 @@ fn local_point(transform: Transform, point: Vec3, order: [u8; 3]) -> Vec3 {
     }))
 }
 
-fn plane_space(n: Vec3) -> Vec3 {
+pub(crate) fn plane_space(n: Vec3) -> Vec3 {
     let [x, y, z] = n.0;
     if z.abs() > std::f32::consts::FRAC_1_SQRT_2 {
         let k = 1.0 / (y * y + z * z).sqrt();

@@ -4,6 +4,12 @@ The historical macARM profile and four measured Actions profiles have bounded ar
 
 Run from the checkout with the pinned Rust toolchain installed.
 
+Four `profiles/*-run40426173732-current219.json` records bind the measured current 219-file producer closure at `fa418493a170aca71021301f171d45d5ce48e9ef`. Their measurement metadata identifies actual checkout `345f647d6d0693b1a6caf176394d5af43537a441`, run 40426173732, each artifact ID and ZIP digest, all 233 archived source hashes, raw compiler text and hashes, observer hash, command digest, and executable hashes. The complete six capture hashes and ordered paired differences equal the respective historical host observations. The old profile files and six frozen joint and contact fixtures retain their original bytes.
+
+Profile selection requires both host identity and producer hashes. The current records also require the exact producer path closure. Unknown producer hashes, missing or extra producer paths, ambiguous manifest aliases, raw compiler newline changes, observer changes, or any unlisted word pair or stream fail. The 14 archived verifier hashes describe the measured run. New verifier scripts and records are protected by the live checker's initial snapshot and final integrity check.
+
+These records authorize only the exact measured arithmetic observation. Run 40426173732 stopped at the source-profile guard after the default captures. It did not execute Clippy, the native mutation baseline, the independently compiled clean Rust baseline, or the 19 semantic mutants. A new successful four-host run with all these gates and mode 260 and 4 registration controls remains required for acceptance. Helper tests exercise selection and rejection without replaying the full historical traces. Run helper discovery separately for each checker because their Python modules share names.
+
 ```sh
 python3 tools/bullet-rust-mixed-solver-check/check.py --out-dir /tmp/bullet-mixed --mutations
 python3 -m unittest discover -s tools/bullet-rust-mixed-solver-check -v

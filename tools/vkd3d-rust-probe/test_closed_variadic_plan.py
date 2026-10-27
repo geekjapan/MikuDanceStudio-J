@@ -517,7 +517,6 @@ class RecordEvidenceTests(unittest.TestCase):
 
 
 def exercise_actual_cursor_payload(inventory, witness):
-    """Shared hosted/local controls, always derived from a real producer capture."""
     import copy
     from closed_variadic_plan import prove_cursor_witness
     symbol = {'unit': witness['unit'], 'static': 'vkd3d_spirv_build_op_member_name'}
@@ -680,6 +679,54 @@ def exercise_actual_cursor_payload(inventory, witness):
     add('incoming-side-effect', expression(expressions[incoming['id']]['children'][1], lambda x: x.__setitem__('cast', 'IntegralCast')))
     add('hidden-statement-allocation', lambda i, w: target(w)['statements'][1]['expressions'].append(
         copy.deepcopy(target(w)['statements'][0]['expressions'].pop())))
+    callee_decay = expressions[expressions[incoming['id']]['children'][0]]
+    for expr in (callee_decay, format_expr):
+        for value in (None, 0, -1, 'mapped-id', True, 1.25):
+            add('incoming-qualified-ID-' + str(expr['id']) + '-' + repr(value),
+                expression(expr['id'], lambda x, value=value: x.__setitem__('type_id', value)))
+        other = format_expr if expr is callee_decay else callee_decay
+        add('incoming-type-meaning-collision-' + str(expr['id']),
+            expression(expr['id'], lambda x, ident=other['type_id']: x.__setitem__('type_id', ident)))
+        add('incoming-existing-type-collision-' + str(expr['id']),
+            expression(expr['id'], lambda x: x.__setitem__('type_id', declarations[tail]['type_id'])))
+    for qualifier in ('const', 'restrict', 'volatile'):
+        add('required-root-integer-' + qualifier, lambda i, w, qualifier=qualifier:
+            [r.__setitem__(qualifier, int(r[qualifier])) for r in w['required_relations']['roots']])
+    add('tail-float-owner', declaration(tail, lambda d: d.__setitem__('owning_function', float(d['owning_function']))))
+
+    def scalar_copies(inv, w, edit):
+        def transform(value):
+            if isinstance(value, dict):
+                row = {k: (v if k == 'native_inputs' else transform(v)) for k, v in value.items()}
+                edit(row)
+                return row
+            if isinstance(value, list):
+                return [transform(v) for v in value]
+            return value
+        for payload in (inv, w):
+            replaced = transform(payload)
+            payload.clear()
+            payload.update(replaced)
+
+    add('native-float-canonical-ID', lambda i, w: scalar_copies(i, w, lambda row:
+        row.__setitem__('native_va_list_record', float(row['native_va_list_record']))
+        if 'native_va_list_record' in row else None))
+    add('native-float-membership-ID', lambda i, w:
+        w.__setitem__('native_va_list_records', [float(v) for v in w['native_va_list_records']]))
+    for value in (True, 1.0):
+        add('native-canonical-array-length-' + repr(value), lambda i, w, value=value:
+            scalar_copies(i, w, lambda row: row.__setitem__('length', value)
+                if set(row) == {'array', 'length'} and row['length'] == 1 else None))
+    for ident in [a['direct_decl'] for a in expressions[incoming['id']]['arguments'][:3]]:
+        add('incoming-declaration-integer-local-' + str(ident),
+            declaration(ident, lambda d: d.__setitem__('local', int(d['local']))))
+    for endpoint in witness['required_relations']['builtin_endpoints']:
+        if endpoint['expression'] in body_ids:
+            for field in ('reference', 'declaration'):
+                add('endpoint-float-' + str(endpoint['expression']) + '-' + field,
+                    lambda i, w, ident=endpoint['expression'], field=field, value=float(endpoint[field]):
+                    next(r for r in w['required_relations']['builtin_endpoints']
+                         if r['expression'] == ident).__setitem__(field, value))
     affected_expressions = set(body_ids)
     pending = [incoming['id']]
     while pending:
@@ -689,12 +736,16 @@ def exercise_actual_cursor_payload(inventory, witness):
         affected_expressions.add(ident)
         pending.extend(expressions[ident]['children'])
     affected_declarations = set(function['parameters']) | {tail} | {
+        a['direct_decl'] for a in expressions[incoming['id']]['arguments'][:3]} | {
         d['id'] for s in function['statements'] for d in s['declarations']}
     unchanged = [witness['native_inputs']]
     for key in ('expressions', 'calls'):
         unchanged.extend(x for x in witness[key] if x['id'] not in affected_expressions)
     unchanged.extend(d for d in witness['declarations'] if d['id'] not in affected_declarations and d['id'] != enum['id'])
-    unchanged.extend(f for f in witness['functions'] if f['declaration'] != function_id)
+    unchanged.extend(f for f in witness['functions'] if f['declaration'] != function_id
+                     and not any(d['id'] in affected_declarations for d in f['parameter_declarations'])
+                     and not any(d['id'] in affected_declarations for s in f['statements'] for d in s['declarations'])
+                     and not any(e['id'] in affected_expressions for s in f['statements'] for e in s['expressions']))
     unchanged.extend(d for d in inventory['declarations'] if d['id'] != function_id and d is not inventory['declarations'][0])
     unchanged.extend(c for c in inventory['calls'] if c['id'] not in affected_expressions)
     rejected = []
@@ -728,7 +779,15 @@ def exercise_actual_cursor_payload(inventory, witness):
     alias['inner'] = source['declared']['type_id']
     if prove_cursor_witness([inventory], [equivalent], symbol)['status'] != 'witness_proven':
         raise RuntimeError('equivalent closed native alias path changed proof meaning')
+    fresh = copy.deepcopy(witness, {id(value): value for value in unchanged})
+    for expr, ident in ((callee_decay, 1000001), (format_expr, 1000002)):
+        if ident in {r['type_id'] for r in witness['required_relations']['types']}:
+            raise RuntimeError('fresh mapped type control ID already exists')
+        expression(expr['id'], lambda x, ident=ident: x.__setitem__('type_id', ident))(inventory, fresh)
+    if prove_cursor_witness([inventory], [fresh], symbol)['status'] != 'witness_proven':
+        raise RuntimeError('fresh omitted mapped type IDs changed proof meaning')
     return {'status': result['status'], 'mutations_rejected': rejected, 'alpha_renaming': 'accepted',
+            'fresh_incoming_type_ids': 'accepted',
             'equivalent_alias_path': 'accepted; capture byte changes still require the independent receipt gate'}
 
 
@@ -783,6 +842,56 @@ class CursorWitnessTests(unittest.TestCase):
         for inventories, witnesses in (([], []), ([inv], []), ([], [witness])):
             with self.assertRaisesRegex(PlanError, 'incomplete paired units'):
                 prove_cursor_witness(inventories, witnesses, symbol)
+
+class CursorFixtureCollectionTests(unittest.TestCase):
+    def collect(self, root, export, receipt, semantic):
+        from unittest.mock import patch
+        from check_closed_variadic_inventory import collect_cursor_fixture
+        with patch('check_closed_variadic_inventory.run', return_value=export,
+                   side_effect=export if isinstance(export, Exception) else None), \
+             patch('full_compiler.cursor_witness_receipt', side_effect=receipt), \
+             patch('closed_variadic_plan.prove_cursor_witness', side_effect=semantic) as checker:
+            try:
+                result = collect_cursor_fixture(root / 'tool', root / 'database', root / 'paired', {'static': 'target'})
+            except (OSError, RuntimeError, KeyError, TypeError, ValueError):
+                self.assertEqual(checker.call_count, 0)
+                raise
+            self.assertEqual(checker.call_count, 1)
+            return result
+
+    def test_export_and_binding_failures_propagate(self):
+        import tempfile
+        from pathlib import Path
+        for label, export, receipt, error in (
+                ('export', {'exit_code': 1}, None, RuntimeError),
+                ('export-crash', OSError('exporter failed to start'), None, OSError),
+                ('missing-receipt', {'exit_code': 0}, OSError('missing output'), OSError),
+                ('malformed-receipt', {'exit_code': 0}, ValueError('invalid receipt'), ValueError),
+                ('native-input', {'exit_code': 0}, ValueError('cached input differs'), ValueError),
+                ('source-binding', {'exit_code': 0}, ValueError('source receipt differs'), ValueError),
+                ('malformed-pair', {'exit_code': 0}, {'pairs': [{}]}, KeyError),
+                ('missing-pair', {'exit_code': 0}, {'pairs': [{'inventory': '/absent/pair'}]}, OSError)):
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                receipt_fn = (lambda *args, value=receipt: value) if isinstance(receipt, dict) else receipt
+                with self.assertRaises(error):
+                    self.collect(Path(temp), export, receipt_fn, PlanError('semantic rejection'))
+                self.assertFalse((Path(temp) / 'paired/proof.json').exists())
+
+    def test_only_semantic_plan_error_is_negative_proof(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            inv, witness = root / 'inventory.json', root / 'witness.json'
+            inv.write_text('{}')
+            witness.write_text('{}')
+            receipt = {'pairs': [{'inventory': str(inv), 'witness': str(witness)}]}
+            result = self.collect(root, {'exit_code': 0}, lambda *args: receipt, PlanError('intentional semantic rejection'))
+            self.assertEqual(result['status'], 'rejected')
+            self.assertEqual(result['reason'], 'intentional semantic rejection')
+            self.assertIn('export_command', json.loads((root / 'paired/receipt.json').read_text()))
+            self.assertEqual(json.loads((root / 'paired/export-result.json').read_text())['exit_code'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()

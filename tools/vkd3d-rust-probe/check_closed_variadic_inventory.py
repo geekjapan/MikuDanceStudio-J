@@ -292,8 +292,30 @@ def check(tool, root, clang):
 
 
 
+def collect_cursor_fixture(tool, database, output, symbol):
+    from full_compiler import cursor_witness_receipt
+    from closed_variadic_plan import PlanError, prove_cursor_witness
+    output.mkdir(parents=True, exist_ok=False)
+    command = [str(tool), '--fail-on-error', '--disable-rustfmt', '--edition', '2024',
+               '--emit-cursor-witness', '--output-dir', str(output / 'raw'), str(database)]
+    exported = run(command, output / 'export.log', timeout=1800)
+    (output / 'export-result.json').write_text(json.dumps(exported, indent=2) + '\n')
+    if exported['exit_code']:
+        raise RuntimeError('paired cursor fixture export failed: ' + str(exported))
+    receipt = cursor_witness_receipt(tool, database, output / 'raw')
+    receipt['export_command'] = command
+    (output / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+    inventories = [json.loads(Path(pair['inventory']).read_text()) for pair in receipt['pairs']]
+    witnesses = [json.loads(Path(pair['witness']).read_text()) for pair in receipt['pairs']]
+    try:
+        proof = prove_cursor_witness(inventories, witnesses, symbol)
+    except PlanError as error:
+        proof = {'schema': 1, 'authorization': 'witness_only', 'status': 'rejected', 'reason': str(error)}
+    (output / 'proof.json').write_text(json.dumps(proof, indent=2) + '\n')
+    return proof
+
+
 def check_cursor_cases(tool, root, clang, stage):
-    from full_compiler import collect_cursor_witness
     fixture = Path(__file__).parent / 'fixtures/cursor-witness/pilot.c'
     results = {}
     for case in ('positive', 'ESCAPE', 'ASSIGNMENT', 'COPY', 'BRANCH', 'MISSING_END', 'UNKNOWN_CALL', 'UNKNOWN_BUILTIN',
@@ -309,7 +331,7 @@ def check_cursor_cases(tool, root, clang, stage):
         argv = [clang, '-std=c11', *flags, '-c', str(source)]
         stage('cursor-' + case + '-syntax', [*argv, '-fsyntax-only'])
         database.write_text(json.dumps([{'directory': str(case_root), 'file': str(source), 'arguments': argv}]))
-        proof = collect_cursor_witness(tool.with_name('c2rust-transpile'), database, case_root / 'paired', run,
+        proof = collect_cursor_fixture(tool.with_name('c2rust-transpile'), database, case_root / 'paired',
                                        {'unit': str(source), 'static': 'vkd3d_spirv_build_op_member_name'})
         expected = 'witness_proven' if case == 'positive' else 'rejected'
         if proof['status'] != expected:

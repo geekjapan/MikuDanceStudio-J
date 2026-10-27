@@ -3,7 +3,9 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::activation::{ActivationState, BodyActivation, CollisionClassification};
+use super::activation::{
+    ActivationState, BodyActivation, CollisionClassification, DeactivationSettings,
+};
 use super::body::{BodyInit, RigidBody};
 use super::dispatcher::DispatchObject;
 use super::islands::{IslandConstraint, IslandObject};
@@ -293,6 +295,24 @@ impl WorldObjects {
                 local_time * self.objects[i].hit_fraction,
             );
             self.data[i].motion.set_world_transform(interpolated);
+        }
+    }
+
+    pub fn update_activation_state(&mut self, dt: f32, settings: DeactivationSettings) {
+        for &i in &self.non_static {
+            let state = self.bodies[i].snapshot();
+            let mut linear = state.linear_velocity;
+            let mut angular = state.angular_velocity;
+            let object = &mut self.objects[i];
+            object.activation.update_activation_state(
+                dt,
+                object.classification,
+                &mut linear,
+                &mut angular,
+                settings,
+            );
+            self.bodies[i].set_angular_velocity(angular);
+            self.bodies[i].set_linear_velocity(linear);
         }
     }
 

@@ -24,6 +24,7 @@ def main_probe(case, directory, host='native'):
     for prefix, width in check.expected_records():
         fields = prefix + ['00000000'] * ((width or 9) - len(prefix))
         if prefix[0] == 'W': fields[7:] = ['N', '0']
+        elif prefix[0] == 'A': fields[5] = '0'
         else: fields[-6:-1] = ['0', '1', '0', '0', '0']
         rows.append(' '.join(fields))
     raw = ('\n'.join(rows) + '\n').encode()
@@ -61,6 +62,7 @@ def main_probe(case, directory, host='native'):
          patch.object(check.platform, 'machine', return_value='AMD64' if host == 'Windows' else check.platform.machine()), \
          patch.object(sys, 'argv', ['check.py','--out-dir',str(out),'--mutation','gravity-ignore-active']), \
          patch.object(check, 'source_snapshot', side_effect=lambda: dict(source)), \
+         patch.object(check, 'LEGACY_SHA256', check.hashlib.sha256(b''.join(raw.splitlines(keepends=True)[:1368])).hexdigest()), \
          patch.object(check.subprocess, 'run', side_effect=command), \
          contextlib.redirect_stdout(io.StringIO()):
         try: check.main()
@@ -99,7 +101,7 @@ class RuntimeChecks(unittest.TestCase):
                     self.assertEqual(status['status'], 'FAIL' if error else 'PASS_SELECTED_MUTATIONS_ONLY')
                     if error: self.assertIn(error, status['error'])
                     else:
-                        self.assertEqual(status['trace_lines'], 1368)
+                        self.assertEqual(status['trace_lines'], len(check.expected_records()))
                         self.assertEqual(status['mutants'], {'gravity-ignore-active': 'CAUGHT'})
                         if host == 'Windows':
                             commands = json.loads((out / 'commands.json').read_text())
@@ -125,6 +127,7 @@ class SchemaChecks(unittest.TestCase):
         for prefix, width in check.expected_records():
             fields = prefix + ['00000000'] * ((width or 9) - len(prefix))
             if prefix[0] == 'W': fields[7:] = ['N', '0']
+            elif prefix[0] == 'A': fields[5] = '0'
             else: fields[-6:-1] = ['0', '1', '0', '0', '0']
             rows.append(' '.join(fields))
         raw = ('\n'.join(rows) + '\n').encode()
@@ -136,3 +139,21 @@ class SchemaChecks(unittest.TestCase):
         for offset, value in [(-6, '999'), (-5, '0'), (-4, '65535'), (-2, '1'), (-1, 'bad')]:
             changed = fields.copy(); changed[offset] = value
             with self.assertRaises(AssertionError): check.validate(('\n'.join([rows[0], ' '.join(changed), *rows[2:]])+'\n').encode())
+
+    def test_activation_zero_is_separately_bounded_and_motion_prefix_is_frozen(self):
+        rows = []
+        for prefix, width in check.expected_records():
+            fields = prefix + ['00000000'] * ((width or 9) - len(prefix))
+            if prefix[0] == 'W': fields[7:] = ['N', '0']
+            elif prefix[0] == 'A': fields[5] = '0'
+            else: fields[-6:-1] = ['0', '0' if prefix[1] in ('AP', 'AM') else '1', '0', '0', '0']
+            rows.append(' '.join(fields))
+        raw = ('\n'.join(rows) + '\n').encode()
+        check.validate(raw)
+        with self.assertRaisesRegex(AssertionError, 'original motion segment changed'):
+            check.preserved_motion(raw)
+        for state in ['-1', '6']:
+            broken = rows.copy()
+            i = next(i for i, line in enumerate(rows) if line.startswith('B AP '))
+            fields = broken[i].split(); fields[-5] = state; broken[i] = ' '.join(fields)
+            with self.assertRaises(AssertionError): check.validate(('\n'.join(broken)+'\n').encode())

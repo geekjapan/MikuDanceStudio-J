@@ -1,4 +1,5 @@
 import json
+from itertools import product
 from pathlib import Path
 import tempfile
 import unittest
@@ -86,8 +87,8 @@ class ObservationTests(unittest.TestCase):
         import io
         import tarfile
         from unittest.mock import patch
-        for host,count in [('macarm',1948),('linuxarm',1948),('linuxx64',696),('windows',954)]:
-            with self.subTest(host=host),tempfile.TemporaryDirectory() as directory:
+        for (host,count),autocrlf in product([('macarm',1948),('linuxarm',1948),('linuxx64',696),('windows',954)],['false','true']):
+            with self.subTest(host=host,autocrlf=autocrlf),tempfile.TemporaryDirectory() as directory:
                 out=Path(directory)
                 profile=json.loads((HERE/'profiles'/f'{host}-run40426173732-current219.json').read_text())
                 measured=profile['measurement']
@@ -113,7 +114,8 @@ class ObservationTests(unittest.TestCase):
                 self.assertEqual(measured['historical_profile'],old['name'])
                 self.assertTrue(measured['historical_difference_inventory_and_captures_identical'])
                 for name,raw in measured['identity_raw_text'].items():(out/name).write_bytes(raw.encode())
-                archive=subprocess.check_output(['git','archive',measured['head'],*sorted(producers)],cwd=ROOT)
+                with patch.dict('os.environ',{'GIT_CONFIG_COUNT':'1','GIT_CONFIG_KEY_0':'core.autocrlf','GIT_CONFIG_VALUE_0':autocrlf}):
+                    archive=subprocess.check_output(['git','-c','core.autocrlf=false','archive',measured['head'],*sorted(producers)],cwd=ROOT)
                 with tarfile.open(fileobj=io.BytesIO(archive)) as pinned:
                     for name in sorted(producers):
                         raw=pinned.extractfile(name).read()

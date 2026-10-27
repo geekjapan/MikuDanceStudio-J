@@ -286,5 +286,20 @@ with AST-storage shims. It also checks that opaque records cannot be constructed
 and do not implement Send, Sync or Unpin. Their Rust marker layout is not a C
 pointee layout. Only thin pointers are supported by this incomplete-type model.
 This check does not establish libc portability or complete stable generation.
-The independent function-pointer null-check `static_mut_refs` issue, variadic
-ABI and all-unit acceptance remain separate.
+Variadic ABI and all-unit acceptance remain separate.
+
+The setup job runs `check_function_pointer_nulls.py --c2rust` after these gates.
+The rebuilt actual translator processes the nonvariadic C fixture, and stable
+Rust 1.95.0 compiles its untouched Rust 2024 output without lint suppression.
+Native comparison checks 268 results for null/non-null truth, negation, null
+comparison in both directions, storage qualifiers, single evaluation and short
+circuiting. Each isolated volatile function must contain exactly one volatile
+read and one raw address in the generated source.
+
+For a local bounded emitter check use
+`check_function_pointer_nulls.py --source <patched-source> --artifacts <new-directory> --focused`.
+It compiles the actual shared pointer-null method and WithStmts map with the
+pinned AST builder. Expression conversion, type classification, volatile inputs
+and surrounding control flow are shims. This does not execute the exporter or
+prove actual volatile lowering. Actual all-24 diagnostic removal and complete
+stable acceptance remain separate, including the public variadic VaList boundary.

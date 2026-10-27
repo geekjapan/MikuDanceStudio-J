@@ -981,3 +981,117 @@ index 4c0ffb2..86ed44c 100644
 +    }
 +    return 0;
 +}
+diff --git a/c2rust-transpile/src/translator/pointers.rs b/c2rust-transpile/src/translator/pointers.rs
+index 08c5e17..c003f00 100644
+--- a/c2rust-transpile/src/translator/pointers.rs
++++ b/c2rust-transpile/src/translator/pointers.rs
+@@ -696,7 +696,10 @@ pub(crate) fn convert_pointer_is_null(
+
+         if self.ast_context.is_function_pointer(expr_type_id.ctype) {
+             let method = if is_null { "is_none" } else { "is_some" };
+-            Ok(expr_rs.map(|expr_rs| mk().method_call_expr(expr_rs, method, vec![])))
++            Ok(expr_rs.map(|expr_rs| {
++                let value = mk().block_expr(mk().block(vec![mk().expr_stmt(expr_rs)]));
++                mk().method_call_expr(value, method, vec![])
++            }))
+         } else {
+             // TODO: `pointer::is_null` becomes stably const in Rust 1.84.
+             if ctx.is_const {
+diff --git a/tests/unit/pointers/src/function_pointer_nulls.c b/tests/unit/pointers/src/function_pointer_nulls.c
+new file mode 100644
+index 0000000..e304b23
+--- /dev/null
++++ b/tests/unit/pointers/src/function_pointer_nulls.c
+@@ -0,0 +1,68 @@
++typedef int (*callback)(void);
++static int yes(void) { return 7; }
++static callback file_callback;
++static callback const immutable_callback = yes;
++static callback const immutable_null = 0;
++static callback volatile volatile_callback;
++static int calls;
++static callback next(callback p) { ++calls; return p; }
++struct holder { callback fp; };
++static struct holder *next_holder(struct holder *p) { ++calls; return p; }
++int fp_volatile_local(int nonnull) {
++    callback volatile p = nonnull ? yes : 0;
++    return !!p;
++}
++int fp_volatile_static(int nonnull) {
++    (void)nonnull;
++    return !!volatile_callback;
++}
++int fp_const_volatile(int nonnull) {
++    callback const volatile p = nonnull ? yes : 0;
++    return !!p;
++}
++#define CHECK(p) do { \
++    out[i++] = (p) ? 1 : 0; \
++    out[i++] = !(p); out[i++] = !!(p); \
++    out[i++] = (p) == 0; out[i++] = 0 == (p); \
++    out[i++] = (p) != 0; out[i++] = 0 != (p); \
++    if (p) out[i++] = 1; else out[i++] = 0; \
++    if (!(p)) out[i++] = 1; else out[i++] = 0; \
++    if (!!(p)) out[i++] = 1; else out[i++] = 0; \
++    if ((p) == 0) out[i++] = 1; else out[i++] = 0; \
++    if (0 == (p)) out[i++] = 1; else out[i++] = 0; \
++    if ((p) != 0) out[i++] = 1; else out[i++] = 0; \
++    if (0 != (p)) out[i++] = 1; else out[i++] = 0; \
++} while (0)
++static int argument(callback p, int *out) {
++    int i = 0;
++    callback const local = p;
++    static callback block_callback;
++    struct holder h = {p};
++    callback array[1] = {p};
++    file_callback = p;
++    block_callback = p;
++    volatile_callback = p;
++    CHECK(p); CHECK(local); CHECK(file_callback); CHECK(block_callback);
++    CHECK(immutable_callback); CHECK(immutable_null); CHECK(h.fp); CHECK(array[0]);
++    out[i++] = fp_volatile_local(!!p);
++    out[i++] = fp_volatile_static(!!p);
++    out[i++] = fp_const_volatile(!!p);
++    calls = 0; out[i++] = !!next(p); out[i++] = calls;
++    calls = 0; out[i++] = !!next_holder(&h)->fp; out[i++] = calls;
++    int index = 0; out[i++] = !!array[index++]; out[i++] = index;
++    calls = 0; out[i++] = next(p) && next(p); out[i++] = calls;
++    calls = 0; out[i++] = next(p) || next(p); out[i++] = calls;
++    calls = 0; out[i++] = !next(p) && next(p); out[i++] = calls;
++    calls = 0; out[i++] = !next(p) || next(p); out[i++] = calls;
++    calls = 0; out[i++] = p ? !!next(p) : !!next(p); out[i++] = calls;
++    int result = 0;
++    while (p) { result = 1; break; } out[i++] = result;
++    result = 0; for (; p;) { result = 1; break; } out[i++] = result;
++    if (p) goto present;
++    out[i++] = 0; return i;
++present:
++    out[i++] = 1; return i;
++}
++int function_pointer_nulls(int nonnull, int *out) {
++    return argument(nonnull ? yes : 0, out);
++}
+diff --git a/tests/unit/pointers/src/test_function_pointer_nulls.rs b/tests/unit/pointers/src/test_function_pointer_nulls.rs
+new file mode 100644
+index 0000000..377926c
+--- /dev/null
++++ b/tests/unit/pointers/src/test_function_pointer_nulls.rs
+@@ -0,0 +1,18 @@
++#[link(name = "test")]
++extern "C" {
++    fn function_pointer_nulls(nonnull: i32, out: *mut i32) -> i32;
++}
++#[test]
++fn test_function_pointer_nulls() {
++    for nonnull in [0, 1] {
++        let mut native = [0; 160];
++        let mut generated = [0; 160];
++        unsafe {
++            let n = function_pointer_nulls(nonnull, native.as_mut_ptr());
++            let r = crate::function_pointer_nulls::rust_function_pointer_nulls(nonnull, generated.as_mut_ptr());
++            assert_eq!(n, 134);
++            assert_eq!(r, n);
++        }
++        assert_eq!(native, generated);
++    }
++}

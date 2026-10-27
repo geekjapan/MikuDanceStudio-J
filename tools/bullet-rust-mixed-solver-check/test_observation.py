@@ -98,19 +98,41 @@ class ObservationTests(unittest.TestCase):
                 producers=set(archived)-archived_verifiers
                 source=sorted(producers)[0]
                 admission=profile['source_admission']
-                self.assertEqual(admission['actual_run'],40473401249)
-                self.assertEqual(admission['head'],'07fa0792a56d9fa3c5c3af4cff3bd88a7567a033')
-                self.assertEqual(admission['actual_checkout'],'c6bc51b118e14d6d3235b08cb01dbca110b37b1e')
-                self.assertEqual((admission['source_entries'],admission['producer_entries']),(237,219))
-                self.assertEqual(admission['actual_artifact']['id'],{
-                    'windows':12720600329,'linuxx64':12720971984,
-                    'linuxarm':12720004369,'macarm':12721090702}[host])
+                records=[(40473401249, '07fa0792a56d9fa3c5c3af4cff3bd88a7567a033', 'c6bc51b118e14d6d3235b08cb01dbca110b37b1e', {'windows': 12720600329, 'linuxx64': 12720971984, 'linuxarm': 12720004369, 'macarm': 12721090702}), (40475346000, '3533392d05fa141cc9007915eda6433cc8901f03', '466f148cf134c4d3f2bf9b772c5000e744e375f6', {'windows': 12721281932, 'linuxx64': 12721772123, 'linuxarm': 12720867637, 'macarm': 12721601268}), (40475350148, '5b9efad6650605f0b95727bd8197c2692b8cbfc2', 'c443fbe58ddb7a44b45e1cf2517f49e487ab49a8', {'windows': 12720557986, 'linuxx64': 12720579162, 'linuxarm': 12721139948, 'macarm': 12721156864}), (40475352618, '422f4e93dbb73ed75207130494312b45d82979f1', '403ca66203924da05e1053da2f2b885770987bc6', {'windows': 12720602983, 'linuxx64': 12722586526, 'linuxarm': 12722116506, 'macarm': 12720911999})]
+                lineage=profile['source_admission_history']+[admission]
+                self.assertGreaterEqual(len(lineage),2)
+                self.assertLessEqual(len(lineage),len(records))
+                for index,record in enumerate(lineage):
+                    run,head,checkout,artifacts=records[index]
+                    self.assertEqual((record['actual_run'],record['head'],record['actual_checkout']),
+                                     (run,head,checkout))
+                    self.assertEqual(record['actual_artifact']['id'],artifacts[host])
+                    self.assertEqual((record['source_entries'],record['producer_entries']),(237,219))
+                    tree=subprocess.check_output(['git','rev-parse',head+'^{tree}'],cwd=ROOT,text=True).strip()
+                    self.assertEqual(record['head_and_checkout_tree'],tree)
+                    expected_changes={'rust/crates/mds-bullet/src/core/contact.rs',
+                                      'tools/bullet-rust-mixed-solver-check/runner.rs'}
+                    if index>=1:expected_changes|={'rust/crates/mds-bullet/src/core/body.rs',
+                                                   'rust/crates/mds-bullet/src/core/joint_rows.rs'}
+                    if index>=2:expected_changes.add('rust/crates/mds-bullet/src/core/math.rs')
+                    deltas=record['changed_producer_sources']
+                    self.assertEqual(set(deltas),expected_changes)
+                    archive=subprocess.check_output(['git','-c','core.autocrlf=false','archive',head,*sorted(producers)],cwd=ROOT)
+                    with tarfile.open(fileobj=io.BytesIO(archive)) as pinned:
+                        recorded={}
+                        for name in sorted(producers):
+                            raw=pinned.extractfile(name).read()
+                            if name in deltas:self.assertEqual(hashlib.sha256(raw).hexdigest(),deltas[name]['git_lf_sha256'])
+                            if host=='windows':raw=raw.replace(b'\n',b'\r\n')
+                            recorded[name]=hashlib.sha256(raw).hexdigest()
+                    self.assertEqual(recorded,{n:deltas[n]['observed'] if n in deltas else archived[n] for n in producers})
+                    for name,delta in deltas.items():
+                        self.assertEqual(delta['previous'],archived[name])
+                        self.assertEqual(delta['transport'],'strict-CRLF' if host=='windows' else 'exact')
+                    self.assertEqual(record['status'],'MEASURED_SOURCE_ADMISSION_ONLY_NOT_FULL_GATE_ACCEPTANCE')
+                    self.assertEqual(record['fresh_compiled_mutants'],0)
                 changed=admission['changed_producer_sources']
-                self.assertEqual(set(changed),{'rust/crates/mds-bullet/src/core/contact.rs',
-                                              'tools/bullet-rust-mixed-solver-check/runner.rs'})
-                for name,delta in changed.items():self.assertEqual(delta['previous'],archived[name])
-                self.assertEqual(profile['producer_sources'],{
-                    n:changed[n]['observed'] if n in changed else archived[n] for n in producers})
+                self.assertEqual(profile['producer_sources'],recorded)
                 self.assertEqual(len(profile['producer_sources']),len(archived)-len(archived_verifiers))
                 self.assertEqual(len(archived_verifiers),14)
                 self.assertTrue(profile['strict_producer_closure'])

@@ -12,6 +12,8 @@
     "compiler-banner.txt": "8e29834a4f5a5cbf82a6436414d68d51c3bdeb68d2dff0023409cdedc21e862c"
   },
   "producer_sources": {
+    "recipes/bullet275/bullet-src/src/btBulletCollisionCommon.h": "4789216352af186cbca95e11e32bbf924fa87757fe39872b8d127982a71ba420",
+    "recipes/bullet275/bullet-src/src/btBulletDynamicsCommon.h": "604294534691c9f6b4fb8b8894cf18a094065f265b12d6da4e2ced128869066e",
     "recipes/bullet275/bullet-src/src/Bullet-C-Api.h": "d6eb2fb4082692cdf55f55b752a16c25ccae69301d59bf923dc46ee1da298280",
     "recipes/bullet275/bullet-src/src/BulletCollision/BroadphaseCollision/btAxisSweep3.h": "2f46f2b36782a84604f48d442a4c575de68ad18efb43e6f51d9dc7f187951a73",
     "recipes/bullet275/bullet-src/src/BulletCollision/BroadphaseCollision/btBroadphaseInterface.h": "00f63124d2ba4ac632c3e68acdb9185c453cf9bdc58d479789f72b75d5d2688a",
@@ -25,7 +27,6 @@
     "recipes/bullet275/bullet-src/src/BulletCollision/BroadphaseCollision/btOverlappingPairCallback.h": "6f1555fbbdc9d8d7b76c66e434a8c35821a849961b95aed6873911c27b46074a",
     "recipes/bullet275/bullet-src/src/BulletCollision/BroadphaseCollision/btQuantizedBvh.h": "d50f66dd0ca393a7c8268b5cd03167c88464d66998684be185d1324d96efbc40",
     "recipes/bullet275/bullet-src/src/BulletCollision/BroadphaseCollision/btSimpleBroadphase.h": "43c1622fa9541bc17c6719066f98b170c2c14cdde8dbf6189fd63f1d0078fb49",
-    "recipes/bullet275/bullet-src/src/BulletCollision/CollisionDispatch/SphereTriangleDetector.h": "402449cda75826ba5a09d41810683f1f64929b41955ad58d9f53e78ea48db520",
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionDispatch/btActivatingCollisionAlgorithm.h": "121ef8d6bda0d95056f4be50dd3c8f5bf267ac480f8c26247df6d56de2ffcf60",
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionDispatch/btBox2dBox2dCollisionAlgorithm.h": "dd60bd9bb62a00c8fa6207e68520a3a46c305a101e5d1d90feb3fadf5d941373",
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionDispatch/btBoxBoxCollisionAlgorithm.h": "8912b78b646a75ca1de96af5fa012082d4a51b58c3248715b4537ef3c62881d4",
@@ -50,6 +51,7 @@
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionDispatch/btSphereSphereCollisionAlgorithm.h": "fa3e154dc12932ab255d28f23d95b8d8e471e7ddaa85736014092eeae3d1ce6a",
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionDispatch/btSphereTriangleCollisionAlgorithm.h": "13db7a3b5532c773f3d6983db7239dd59722356ababc3d4596d07546f76325f8",
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionDispatch/btUnionFind.h": "9ad077d24fc621a694324a048747943e2001f61916a913d6c5fbf305c31ca2c4",
+    "recipes/bullet275/bullet-src/src/BulletCollision/CollisionDispatch/SphereTriangleDetector.h": "402449cda75826ba5a09d41810683f1f64929b41955ad58d9f53e78ea48db520",
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionShapes/btBox2dShape.h": "8aabc328fd14f352ff7fd281499d384de6179368147604b51e17c0bb94f6532f",
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionShapes/btBoxShape.h": "13ec8df73fe50ee1aabfe5436a26a74dc70df31935d892aa11a001f54a210c7d",
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionShapes/btBvhTriangleMeshShape.h": "d5bfb77417b30af5a5992437dccec72359f3cb620809f97b1ca725d461dfaf7a",
@@ -70,8 +72,8 @@
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionShapes/btHeightfieldTerrainShape.h": "2d1089823cb04863cd2d17585fe7e99dbd77742f7a2d8d3482104a12958ea655",
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionShapes/btMaterial.h": "3bcfbbad53f704b3338d4dfd4507681a4258d51e5fbf78b8e29df87543251bce",
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionShapes/btMinkowskiSumShape.h": "d7ff56e1e22def5005d0ba57008d01f4ad94a1f60d851e70d7acf04a52859b49",
-    "recipes/bullet275/bullet-src/src/BulletCollision/CollisionShapes/btMultiSphereShape.h": "1ee94bc7730c9c2319c929c0ac713854caed8fadc40dbba271f4aa375000eb61",
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionShapes/btMultimaterialTriangleMeshShape.h": "11742b1830ce0f4f818dedac2ce40d37d6d706e2fd654e9b7fa8c591cb5539ba",
+    "recipes/bullet275/bullet-src/src/BulletCollision/CollisionShapes/btMultiSphereShape.h": "1ee94bc7730c9c2319c929c0ac713854caed8fadc40dbba271f4aa375000eb61",
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionShapes/btOptimizedBvh.h": "110129d382e87128f3d60a198ab8a4f5867c37f82810a48c89467fb38deabcbd",
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionShapes/btPolyhedralConvexShape.h": "f0779a587726606918a61613d7aa0734fd604ea960bf99acca32cb54a52ac8be",
     "recipes/bullet275/bullet-src/src/BulletCollision/CollisionShapes/btScaledBvhTriangleMeshShape.h": "7cac991fab559f2e028d07c332d860f84dfde0e5fa7746ad45403fe5277cb0c1",
@@ -91,13 +93,13 @@
     "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/btBoxCollision.h": "2badb64bf9162ba2abec920e3a91d0bfaf52363f4be3df15fbd7aec047fd8e5a",
     "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/btClipPolygon.h": "9fff03b2d83277c972d82fb3f4b90e137c9464b563f84bb2c55e21a2958fc157",
     "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/btContactProcessing.h": "a858ee9c4bbcfdaf51a5eccc8e106a818a149ba65af9e8ebd35e5e02bda94dd7",
+    "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/btGenericPoolAllocator.h": "8f2c3d4285cc66ae1b9adb85c861e9df63ca98c922a6fcc679f8801184cfcf94",
+    "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/btGeometryOperations.h": "24487838e9ccd5940c0ad05bf5225af539e40a3cf7f8271f9a3498a04840122d",
     "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/btGImpactBvh.h": "8aaa11650ae56ec7c68a10229bc9311ffbe23ff89ad06af21a574596321bbc10",
     "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/btGImpactCollisionAlgorithm.h": "6e36cc95f2048bd108cbba7798265f0dbdfe1f9a59a3b33fa4a0da8147e2605b",
     "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/btGImpactMassUtil.h": "79559f8e2015bb7eaf2431725197c856baf1c9b9817290d2ee6819549918fb40",
     "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/btGImpactQuantizedBvh.h": "bd2cc4c25e6dc4750bc4cd132cea385099a8698ba0049e5de9678765d5fc42fd",
     "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/btGImpactShape.h": "ae6c2f0ce4ccc62886a97ae24352650e0baea604a1add205f191fca47946b721",
-    "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/btGenericPoolAllocator.h": "8f2c3d4285cc66ae1b9adb85c861e9df63ca98c922a6fcc679f8801184cfcf94",
-    "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/btGeometryOperations.h": "24487838e9ccd5940c0ad05bf5225af539e40a3cf7f8271f9a3498a04840122d",
     "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/btQuantization.h": "7a096eb411077ea7cf9ff1b5abf2476750354d8282b6fac177bbb94ccb24e6be",
     "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/btTriangleShapeEx.h": "3bb688b08072100b4e5a70d75cac13510337929ff49d19a8e48faa5ad46f17ed",
     "recipes/bullet275/bullet-src/src/BulletCollision/Gimpact/gim_array.h": "65c84395e65a3e81fd8e21dc858cda22d6d66013b53b43e71454a3cab39206c1",
@@ -200,14 +202,8 @@
     "recipes/bullet275/bullet-src/src/LinearMath/btTransform.h": "06290d8754defe620e12bd4f23ff4a88ebb9d1f7e3bfdea5854764b5c6ef7203",
     "recipes/bullet275/bullet-src/src/LinearMath/btTransformUtil.h": "b8944edcf64de95281f941bea7b8c9be413cd69a192d6b91c04c9c8f53903c50",
     "recipes/bullet275/bullet-src/src/LinearMath/btVector3.h": "1ffa44e6d9303f6c96c6449eaa7ffdd77b710c9f3c7fdd032ac88d7dfdf38f2a",
-    "recipes/bullet275/bullet-src/src/btBulletCollisionCommon.h": "4789216352af186cbca95e11e32bbf924fa87757fe39872b8d127982a71ba420",
-    "recipes/bullet275/bullet-src/src/btBulletDynamicsCommon.h": "604294534691c9f6b4fb8b8894cf18a094065f265b12d6da4e2ced128869066e",
-    "rust/crates/mds-bullet-sys/shim/det_math.h": "4e0dde74a6090625960b5068637af2bcc08424a274676689a7227cd6668a1ae4",
-    "rust/crates/mds-bullet-sys/shim/mds_bt.h": "bdf4f42448fd0eb7e3a72195bb651f36aefe2b1144d8bcae70f3ff6f2259ca61",
-    "rust/crates/mds-bullet-sys/shim/mds_mmd.h": "8a86c9e44b2775563648f1e1fe14fe6712097582e2b2a7a971a8971acdec7ca3",
-    "rust/crates/mds-bullet-sys/shim/sse_emu/emmintrin.h": "ae2b8ab794bfb5ea6fd57fb15ba799dec90e38e57ffee66c78fc8fe3cbc32082",
     "rust/crates/mds-bullet/src/core/activation.rs": "0bb94829046c355d48f187bb4accbfb446337ace73e5dd4030ce4e9d0618b067",
-    "rust/crates/mds-bullet/src/core/body.rs": "6536bb5dfa7bc724db994f7d2f77710c2b8f21066368bdadd448de79bd523c2c",
+    "rust/crates/mds-bullet/src/core/body.rs": "45b3fe0c21c126ff1e3edcdbdd39a4bbec77ed428ca3c991beb939262655c412",
     "rust/crates/mds-bullet/src/core/box_box.rs": "2ab44305e2f49f1f3e21b157ad293e720ce141a29c8051f77047e3bfab9d6843",
     "rust/crates/mds-bullet/src/core/contact.rs": "e34a0ec2ef763a9b6ee37f4f500c562410004dc5aab65149c871e28b30079eac",
     "rust/crates/mds-bullet/src/core/contact_solver.rs": "d8d5b409e22481f70cb0c87f4a9e30fc0f49843801b37326d9cc37e91e860add",
@@ -215,12 +211,16 @@
     "rust/crates/mds-bullet/src/core/gjk_pair.rs": "83a6903272d055f2d0755445d67921d76c34d0ba513ea1d9a854f64698cf0e46",
     "rust/crates/mds-bullet/src/core/islands.rs": "a8ecdabd9563a35b12d77f585e22cdc77d2e66efde44585753d4c305899c10a8",
     "rust/crates/mds-bullet/src/core/joint_coordinates.rs": "01b86fc35d4765c4856a30643a415d6ecdd0b5e3907fd60738e9b617890e98f3",
-    "rust/crates/mds-bullet/src/core/joint_rows.rs": "57a0dc07ff38c3965d9d0d577fa2ecb313b279be7c981ba6b7e2f840d7241e73",
+    "rust/crates/mds-bullet/src/core/joint_rows.rs": "d7bb3457a98e586e6204682ae523c6209a53b1904d3800fbf2ae03e9272483e9",
     "rust/crates/mds-bullet/src/core/math.rs": "3239c65c0edce1ad09cb16f127bc3d1cb6d941b5a038213d7f24f4e43cf5ed2c",
     "rust/crates/mds-bullet/src/core/shape.rs": "9883aa54d5d5beed2dcc73e2cc081aca3e5d45c42201a1a6dde6277b506ed799",
     "rust/crates/mds-bullet/src/core/simplex.rs": "4186cf8a7d57188e37d586771707623b9153e46d1096a424dbd663be496d9959",
     "rust/crates/mds-bullet/src/core/solver.rs": "89de5e25186e909ca60f6cf42600b507ea64c204c603c6572d8571fa3a5d3f37",
     "rust/crates/mds-bullet/src/core/time.rs": "d1113af007a5baf628cdad16ef05628d877745defaf7448ab68dc96e9a8b49d1",
+    "rust/crates/mds-bullet-sys/shim/det_math.h": "4e0dde74a6090625960b5068637af2bcc08424a274676689a7227cd6668a1ae4",
+    "rust/crates/mds-bullet-sys/shim/mds_bt.h": "bdf4f42448fd0eb7e3a72195bb651f36aefe2b1144d8bcae70f3ff6f2259ca61",
+    "rust/crates/mds-bullet-sys/shim/mds_mmd.h": "8a86c9e44b2775563648f1e1fe14fe6712097582e2b2a7a971a8971acdec7ca3",
+    "rust/crates/mds-bullet-sys/shim/sse_emu/emmintrin.h": "ae2b8ab794bfb5ea6fd57fb15ba799dec90e38e57ffee66c78fc8fe3cbc32082",
     "rust/crates/mds-crtmath/src/digest.rs": "6d4adebad28a913501ca40d60b0504e4068ff2887939e812aacf8614036f8a29",
     "rust/crates/mds-crtmath/src/explog.rs": "7c0839865b717a3b1781d65e9a4ea1648d1edd0d4aeacbdc8c16ccf7239a75b0",
     "rust/crates/mds-crtmath/src/inv.rs": "f7a458406f6d244278abda88f8cfd54e726c86da9bb7b5ded481a9a96bdb6cd2",
@@ -13890,27 +13890,39 @@
     "status": "VERIFICATION_PROFILE_ONLY_NOT_FULL_GATE_ACCEPTANCE"
   },
   "source_admission": {
-    "actual_run": 40473401249,
-    "head": "07fa0792a56d9fa3c5c3af4cff3bd88a7567a033",
-    "actual_checkout": "c6bc51b118e14d6d3235b08cb01dbca110b37b1e",
-    "head_and_checkout_tree": "c66f1442ac5bcd85c0774c0ed9eedd2a42aa5518",
+    "actual_run": 40475346000,
+    "head": "3533392d05fa141cc9007915eda6433cc8901f03",
+    "actual_checkout": "466f148cf134c4d3f2bf9b772c5000e744e375f6",
+    "head_and_checkout_tree": "7a88f418a3e6bd79a434f5efb167d18104c094a3",
     "actual_artifact": {
-      "id": 12720600329,
+      "id": 12721281932,
       "name": "bullet-mixed-windows-2022",
-      "digest": "sha256:5b7a2daa8261f6dfb10abe13e8cebe8f968162dc193997065079f72621e34654",
-      "bytes": 90202900
+      "digest": "sha256:dc473f5b13560852ef8df8679eb30c3d92f8231ec89e0753214b092fdc83a9aa",
+      "bytes": 90202741
     },
-    "source_manifest_raw_sha256": "b1a387cb8cdf02c69c7cc413c1b8f4e149e8182df4f48c359a80407713538710",
+    "source_manifest_raw_sha256": "543c41e4fe583d87967f5ebd2ee40201df335c998a264dc4ce1dbd8300e631de",
     "source_entries": 237,
     "producer_entries": 219,
     "source_transport": {
       "strict-CRLF": 237
     },
     "changed_producer_sources": {
+      "rust/crates/mds-bullet/src/core/body.rs": {
+        "previous": "6536bb5dfa7bc724db994f7d2f77710c2b8f21066368bdadd448de79bd523c2c",
+        "observed": "45b3fe0c21c126ff1e3edcdbdd39a4bbec77ed428ca3c991beb939262655c412",
+        "git_lf_sha256": "ad60ba586e1cadeb63ee37e30d5dcb73a28eb08398cfc2551b417dc3bc8ffbb9",
+        "transport": "strict-CRLF"
+      },
       "rust/crates/mds-bullet/src/core/contact.rs": {
         "previous": "cea5598e35d6831b2328963b1cfd5ee44501b924c4c28fad0bbff69a5b0215e6",
         "observed": "e34a0ec2ef763a9b6ee37f4f500c562410004dc5aab65149c871e28b30079eac",
         "git_lf_sha256": "b473127a44fc4c4fcc381022ac0d46887e49e171cdbdbe5389e4689793a1fec4",
+        "transport": "strict-CRLF"
+      },
+      "rust/crates/mds-bullet/src/core/joint_rows.rs": {
+        "previous": "57a0dc07ff38c3965d9d0d577fa2ecb313b279be7c981ba6b7e2f840d7241e73",
+        "observed": "d7bb3457a98e586e6204682ae523c6209a53b1904d3800fbf2ae03e9272483e9",
+        "git_lf_sha256": "80aed8338c34aa26a6a4318415b8e6ea0dd1be89ce6caa41d890748e224011cc",
         "transport": "strict-CRLF"
       },
       "tools/bullet-rust-mixed-solver-check/runner.rs": {
@@ -13926,5 +13938,45 @@
     "fresh_compiled_mutants": 0,
     "status": "MEASURED_SOURCE_ADMISSION_ONLY_NOT_FULL_GATE_ACCEPTANCE",
     "limit": "Admits only these observed producer hashes with the existing exact capture gate. This is not a new passing producer run or acceptance of dispatcher behavior outside this compilation closure."
-  }
+  },
+  "source_admission_history": [
+    {
+      "actual_run": 40473401249,
+      "head": "07fa0792a56d9fa3c5c3af4cff3bd88a7567a033",
+      "actual_checkout": "c6bc51b118e14d6d3235b08cb01dbca110b37b1e",
+      "head_and_checkout_tree": "c66f1442ac5bcd85c0774c0ed9eedd2a42aa5518",
+      "actual_artifact": {
+        "id": 12720600329,
+        "name": "bullet-mixed-windows-2022",
+        "digest": "sha256:5b7a2daa8261f6dfb10abe13e8cebe8f968162dc193997065079f72621e34654",
+        "bytes": 90202900
+      },
+      "source_manifest_raw_sha256": "b1a387cb8cdf02c69c7cc413c1b8f4e149e8182df4f48c359a80407713538710",
+      "source_entries": 237,
+      "producer_entries": 219,
+      "source_transport": {
+        "strict-CRLF": 237
+      },
+      "changed_producer_sources": {
+        "rust/crates/mds-bullet/src/core/contact.rs": {
+          "previous": "cea5598e35d6831b2328963b1cfd5ee44501b924c4c28fad0bbff69a5b0215e6",
+          "observed": "e34a0ec2ef763a9b6ee37f4f500c562410004dc5aab65149c871e28b30079eac",
+          "git_lf_sha256": "b473127a44fc4c4fcc381022ac0d46887e49e171cdbdbe5389e4689793a1fec4",
+          "transport": "strict-CRLF"
+        },
+        "tools/bullet-rust-mixed-solver-check/runner.rs": {
+          "previous": "0fb88f6bd357918f966682cfa8ce09323544acea226800e5fa08eb0a6ac1247c",
+          "observed": "5b41457522ec0d9dcc213fc79cb483e8c335785c72c87715396acb2608cede49",
+          "git_lf_sha256": "4876a0c33bf3c44c4d45bef74187aa9f5d3b717d5dc47c66551aa50594ad8a3d",
+          "transport": "strict-CRLF"
+        }
+      },
+      "commands_raw_sha256": "9d300f5055bc94b92e068787f5da54bc8498779b8ce71dab4f5718bee17d390f",
+      "historical_capture_provenance": "measurement remains the original run40426173732 capture provenance; captures, differences and identity are unchanged.",
+      "actual_run_status": "FAIL at arithmetic observation source profile differs after captures; clippy and mutants did not run.",
+      "fresh_compiled_mutants": 0,
+      "status": "MEASURED_SOURCE_ADMISSION_ONLY_NOT_FULL_GATE_ACCEPTANCE",
+      "limit": "Admits only these observed producer hashes with the existing exact capture gate. This is not a new passing producer run or acceptance of dispatcher behavior outside this compilation closure."
+    }
+  ]
 }

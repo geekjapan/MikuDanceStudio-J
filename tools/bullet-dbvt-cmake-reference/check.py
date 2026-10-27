@@ -434,13 +434,18 @@ def package_paths(graph, out):
     cache = Path(result['build']) / 'CMakeCache.txt'
     shutil.copyfile(cache, out / 'native-CMakeCache.txt')
     values = {}
+    identity_keys = ('CMAKE_GENERATOR', 'CMAKE_GENERATOR_PLATFORM', 'CMAKE_HOME_DIRECTORY')
     for number, line in enumerate(cache.read_text().splitlines(), 1):
         match = re.fullmatch(r'([^/#][^:=]*):[^=]+=(.*)', line)
         if match:
             key, value = match.groups()
-            if key in values and key in ('CMAKE_GENERATOR', 'CMAKE_GENERATOR_PLATFORM', 'CMAKE_HOME_DIRECTORY'):
+            if key in values and key in identity_keys:
                 raise ValueError(f'duplicate CMake cache key {key} at line {number}')
             values[key] = value
+        else:
+            key = re.split(r'[:=\s]', line, maxsplit=1)[0]
+            if key in identity_keys:
+                raise ValueError(f'malformed CMake cache key {key} at line {number}')
     if values.get('CMAKE_GENERATOR') != 'Visual Studio 17 2022' or values.get('CMAKE_GENERATOR_PLATFORM') != 'x64':
         raise ValueError('native archive generator or architecture differs')
     result['source'] = values['CMAKE_HOME_DIRECTORY']

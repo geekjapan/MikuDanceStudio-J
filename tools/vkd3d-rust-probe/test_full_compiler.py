@@ -197,5 +197,56 @@ class FullCompilerTests(unittest.TestCase):
             self.assertTrue(all(case['status'] == 'compile_failure' for case in result['cases']))
 
 
+
+class CursorBindingTests(unittest.TestCase):
+    def fixture(self, root):
+        from test_closed_variadic_plan import CursorWitnessTests
+        root = root.resolve()
+        inv, witness, symbol = CursorWitnessTests().fixture()
+        source = root / 'pilot.c'
+        source.write_text('/* synthetic binding fixture */\n')
+        inv['unit'] = witness['unit'] = symbol['unit'] = str(source)
+        database = root / 'compile_commands.json'
+        database.write_text(json.dumps([{'file': str(source), 'directory': str(root),
+                                        'arguments': ['clang', '-c', str(source)]}]))
+        tool = root / 'tool/bin/c2rust-transpile'
+        tool.parent.mkdir(parents=True)
+        tool.write_bytes(b'synthetic exporter identity')
+        (tool.parent.parent / 'source-receipt.json').write_text('{}')
+        output = root / 'raw'
+        output.mkdir()
+        for suffix, data in [('.variadic.json', json.dumps(inv)), ('.cursor-witness.json', json.dumps(witness)),
+                             ('.cursor.cbor', 'synthetic cbor'), ('.typed-ast.txt', 'synthetic typed AST')]:
+            (output / ('pilot' + suffix)).write_text(data)
+        with patch('apply_c2rust_patch.verify_tool') as verify:
+            receipt = full.cursor_witness_receipt(tool, database, output)
+            verify.assert_called_once_with(tool.parent.parent)
+        return receipt, symbol
+
+    def test_complete_receipt_binds_every_artifact_and_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipt, symbol = self.fixture(Path(directory))
+            self.assertEqual(full.prove_bound_cursor_witness(receipt, symbol)['status'], 'witness_proven')
+            self.assertFalse(receipt['authentic_job_proof'])
+            self.assertEqual(len(receipt['pairs'][0]['files']), 5)
+            self.assertEqual(len(receipt['files']), 3)
+
+    def test_tampered_or_missing_binding_is_rejected(self):
+        from copy import deepcopy
+        from closed_variadic_plan import PlanError
+        with tempfile.TemporaryDirectory() as directory:
+            receipt, symbol = self.fixture(Path(directory))
+            for index, record in enumerate([receipt, receipt['pairs'][0]]):
+                for name in record['files']:
+                    with self.subTest(name=name):
+                        tampered = deepcopy(receipt)
+                        target = tampered if index == 0 else tampered['pairs'][0]
+                        target['files'][name] = '0' * 64
+                        with self.assertRaises(PlanError): full.prove_bound_cursor_witness(tampered, symbol)
+                        del target['files'][name]
+                        with self.assertRaises(PlanError): full.prove_bound_cursor_witness(tampered, symbol)
+            receipt['pairs'][0]['compile_command']['arguments'].append('-funsigned-char')
+            with self.assertRaises(PlanError): full.prove_bound_cursor_witness(receipt, symbol)
+
 if __name__ == '__main__':
     unittest.main()

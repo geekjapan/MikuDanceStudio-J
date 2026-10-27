@@ -515,5 +515,77 @@ class RecordEvidenceTests(unittest.TestCase):
             self.assertIn('record_compatibility_unproved', self.codes(a, b))
 
 
+
+class CursorWitnessTests(unittest.TestCase):
+    def fixture(self):
+        inv = inventory('/pilot.c', True)
+        inv['declarations'][0]['symbol'] = {'unit': inv['unit'], 'static': 'cursor_pilot'}
+        symbol = inv['declarations'][0]['symbol']
+        typ = scalar('UInt')
+        def operand(ident, decl=None, refs=(), literal=None):
+            return {'id': ident, 'direct_decl': decl, 'references': list(refs), 'literal': literal, 'type': typ}
+        statements = [{'id': 11, 'kind': 'declarations', 'root': None,
+                       'declarations': [{'id': 9, 'initialized': False, 'type': typ}], 'expressions': []}]
+        # Decreasing IDs force the proof to use compound statement order.
+        for number, semantic, count, position in [(90, 'va_start', 2, 0), (60, 'vsnprintf', 4, 3), (30, 'va_end', 1, 0)]:
+            ref = {'id': number + 1, 'decl': 9, 'kind': 'reference', 'type': typ}
+            args = [operand(number + j + 10) for j in range(count)]
+            args[position] = operand(number + 1, 9, [{'id': number + 1, 'decl': 9}])
+            if semantic == 'va_start': args[1]['direct_decl'] = 2
+            if semantic == 'vsnprintf': args[2]['direct_decl'] = 2
+            call = {'id': number, 'kind': 'call', 'type': typ, 'callee_decl': number + 100,
+                    'builtin': [number + 1000, semantic], 'arguments': args}
+            statements.append({'id': number + 2, 'kind': 'expression', 'root': number,
+                               'declarations': [], 'expressions': [call, ref]})
+        raw_call = {'id': 200, 'kind': 'call', 'callee_decl': 1,
+                    'arguments': [operand(201, literal=[99, 98, 37, 117]), operand(202)]}
+        inv['calls'] = [{'id': 200, 'owner': None, 'callee': symbol, 'location': '/pilot.c:20',
+                         'arguments': [{'id': a['id'], 'type': a['type']} for a in raw_call['arguments']]}]
+        function = {'declaration': 1, 'symbol': symbol, 'body': 10, 'complete_body': True,
+                    'parameters': [2], 'last_fixed_parameter': 2, 'cursors': [9], 'statements': statements,
+                    'full_statement_ids': [10, *[s['id'] for s in statements]],
+                    'cursor_references': [{'id': n + 1, 'decl': 9, 'type': typ} for n in (90, 60, 30)]}
+        witness = {'schema': 1, 'authorization': 'witness_only', 'unit': inv['unit'], 'target': inv['target'],
+                   'functions': [function], 'calls': [raw_call]}
+        return inv, witness, symbol
+
+    def test_pilot_proof_preserves_inventory_and_uses_statement_order(self):
+        from closed_variadic_plan import prove_cursor_witness
+        inv, witness, symbol = self.fixture()
+        before = json.dumps(inv, sort_keys=True)
+        proof = prove_cursor_witness([inv], [witness], symbol)
+        self.assertEqual(proof['status'], 'witness_proven')
+        self.assertEqual(proof['stable_lowering'], 'not_authorized')
+        self.assertFalse(proof['global_cursor_proof'])
+        self.assertEqual(before, json.dumps(inv, sort_keys=True))
+        self.assertEqual([d['code'] for d in build_plan([inv], [inv['unit']], [])['diagnostics']], ['cursor_dataflow_unproved'])
+
+    def test_cursor_negative_controls(self):
+        from closed_variadic_plan import prove_cursor_witness
+        for name in ('escape', 'assignment', 'copy', 'branch', 'missing-end', 'unknown-builtin', 'unknown-ref',
+                     'incomplete', 'callset', 'signed-tail', 'format', 'order', 'last-fixed', 'extra-cursor', 'unwalked-statement'):
+            with self.subTest(name=name):
+                inv, witness, symbol = self.fixture()
+                f = witness['functions'][0]
+                if name == 'escape': f['statements'][1]['expressions'][0]['arguments'][0]['direct_decl'] = None
+                elif name == 'assignment': f['statements'][1]['expressions'][0]['kind'] = 'binary'
+                elif name == 'copy': f['statements'][2]['expressions'][0]['builtin'][1] = 'va_copy'
+                elif name == 'branch': f['statements'][2]['kind'] = 'unsupported'
+                elif name == 'missing-end': f['statements'].pop()
+                elif name == 'unknown-builtin': f['statements'][1]['expressions'][0]['builtin'][0] = 0
+                elif name == 'unknown-ref': f['cursor_references'].append({'id': 999, 'decl': 9, 'type': scalar('UInt')})
+                elif name == 'incomplete': f['complete_body'] = False
+                elif name == 'callset': witness['calls'] = []
+                elif name == 'signed-tail':
+                    inv['calls'][0]['arguments'][-1]['type'] = scalar('Int')
+                    witness['calls'][0]['arguments'][-1]['type'] = scalar('Int')
+                elif name == 'format': witness['calls'][0]['arguments'][0]['literal'] = [37, 100]
+                elif name == 'order': f['statements'][1:3] = reversed(f['statements'][1:3])
+                elif name == 'last-fixed': f['last_fixed_parameter'] = 99
+                elif name == 'extra-cursor': f['cursors'].append(99)
+                elif name == 'unwalked-statement': f['full_statement_ids'].append(999)
+                with self.assertRaises(PlanError):
+                    prove_cursor_witness([inv], [witness], symbol)
+
 if __name__ == '__main__':
     unittest.main()

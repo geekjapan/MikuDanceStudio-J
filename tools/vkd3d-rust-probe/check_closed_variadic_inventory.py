@@ -281,6 +281,7 @@ def check(tool, root, clang):
         result['late_asm_label_sha256'] = {str(p.relative_to(root)): digest(p)
                                          for p in label_root.rglob('*') if p.is_file()}
         result['record_cases'] = check_records(tool, root, clang, stage)
+        result['cursor_witness_cases'] = check_cursor_cases(tool, root, clang, stage)
         result['status'] = 'inventory_fixture_success'
     except (RuntimeError, OSError, ValueError) as error:
         result['status'] = 'failure'
@@ -289,6 +290,66 @@ def check(tool, root, clang):
         (root / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     return result
 
+
+
+def check_cursor_cases(tool, root, clang, stage):
+    from full_compiler import collect_cursor_witness
+    fixture = Path(__file__).parent / 'fixtures/cursor-witness/pilot.c'
+    results = {}
+    for case in ('positive', 'ESCAPE', 'ASSIGNMENT', 'COPY', 'BRANCH', 'MISSING_END', 'UNKNOWN_CALL', 'UNKNOWN_BUILTIN'):
+        case_root = root / ('cursor-' + case.lower())
+        case_root.mkdir()
+        source = case_root / 'pilot.c'
+        shutil.copy2(fixture, source)
+        database = case_root / 'compile_commands.json'
+        flags = [] if case == 'positive' else ['-D' + case]
+        argv = [clang, '-std=c11', *flags, '-c', str(source)]
+        stage('cursor-' + case + '-syntax', [*argv, '-fsyntax-only'])
+        database.write_text(json.dumps([{'directory': str(case_root), 'file': str(source), 'arguments': argv}]))
+        proof = collect_cursor_witness(tool.with_name('c2rust-transpile'), database, case_root / 'paired', run,
+                                       {'unit': str(source), 'static': 'cursor_pilot'})
+        expected = 'witness_proven' if case == 'positive' else 'rejected'
+        if proof['status'] != expected:
+            raise RuntimeError('actual cursor fixture oracle differs for ' + case + ': ' + str(proof))
+        results[case] = proof
+        if case == 'positive':
+            from full_compiler import prove_bound_cursor_witness
+            from closed_variadic_plan import PlanError, prove_cursor_witness
+            receipt = json.loads((case_root / 'paired/receipt.json').read_text())
+            pair = receipt['pairs'][0]
+            original = json.loads(Path(pair['witness']).read_text())
+            inventory = json.loads(Path(pair['inventory']).read_text())
+            mutations = {}
+            for name in ('unknown-builtin', 'unknown-cursor-reference', 'incomplete-body', 'call-set'):
+                witness = copy.deepcopy(original)
+                function = next(f for f in witness['functions'] if f['symbol']['static'] == 'cursor_pilot')
+                if name == 'unknown-builtin':
+                    for statement in function['statements']:
+                        for expression in statement['expressions']:
+                            if expression.get('builtin') and expression['builtin'][1] == 'va_start':
+                                expression['builtin'] = [0, 'va_start']
+                elif name == 'unknown-cursor-reference':
+                    function['cursor_references'].append({'id': -1, 'decl': function['cursors'][0], 'type': {}})
+                elif name == 'incomplete-body':
+                    function['complete_body'] = False
+                else:
+                    witness['calls'] = []
+                try:
+                    prove_cursor_witness([inventory], [witness], function['symbol'])
+                except PlanError as error:
+                    mutations[name] = {'origin': 'actual-export-derived payload mutation', 'witness': witness, 'reason': str(error)}
+                else:
+                    raise RuntimeError('cursor mutation accepted: ' + name)
+            tampered = copy.deepcopy(receipt)
+            tampered['pairs'][0]['files'][pair['witness']] = '0' * 64
+            try:
+                prove_bound_cursor_witness(tampered, {'unit': str(source), 'static': 'cursor_pilot'})
+            except PlanError as error:
+                mutations['tampered-binding'] = {'receipt': tampered, 'reason': str(error)}
+            else:
+                raise RuntimeError('cursor tampered binding accepted')
+            (case_root / 'mutations.json').write_text(json.dumps(mutations, indent=2) + '\n')
+    return results
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

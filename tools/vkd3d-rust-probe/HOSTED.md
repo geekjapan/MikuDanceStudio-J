@@ -463,3 +463,35 @@ explicit signed/unsigned char callbacks remain positive. Copies of the actual
 same-signed exports test missing, unknown and integer signedness rejection.
 The hosted Rust serializer test checks both signedness values and missing
 side-table evidence. Compiled exporter and Rust execution remain CI gates.
+
+## Opt-in straight-line cursor witness
+
+`--emit-cursor-witness` writes separate `*.cursor-witness.json` schema-1 files,
+paired schema-2 `*.variadic.json`, original `*.cursor.cbor`, and typed AST debug
+snapshots `*.typed-ast.txt` from the same translation. The flag defaults to false.
+Clang `FunctionDecl::getBuiltinID()` classifies start, end, copy, and vsnprintf;
+spellings and expression ID ordering do not establish cursor semantics.
+
+`full_compiler.collect_cursor_witness()` runs that separate export and retains a
+receipt binding every paired inventory, witness, CBOR, typed snapshot, source,
+compile command database, target, translator binary, and complete patched tool
+receipt. The proof checks these hashes before joining any IDs. These receipts
+establish artifact consistency, not authentic hosted-job provenance; the actual
+job and downloaded artifacts still require independent audit.
+
+The only pilot is `vkd3d_spirv_build_op_member_name` in `spirv.c`: one local
+cursor, complete ordered compound body, direct start/one vsnprintf/end sequence,
+one literal `cb%u` caller, and one promoted UInt tail. Assignment, copy, escape,
+unsupported statements/expressions, unknown cursor uses, incomplete walks,
+missing end, differing call sets, and changed bindings reject. The fixture gate
+also records actual-export-derived payload mutations separately from C cases.
+
+The existing all-24 inventory/plan and all 33 record cases plus six record
+mutations remain separate and unchanged. A new hosted step retains paired
+witness output and proof/rejection without changing the original plan. Even a
+`witness_proven` result has `authorization: witness_only`, explicitly denies
+stable lowering, and makes no global cursor claim. The remaining symbols,
+unknown signatures, record diagnostics, compiler failures, and runtime results
+remain visible in the original artifacts. No formatter or Rust lowering is
+implemented. Python checks and patch reconstruction do not execute the exporter;
+the rebuilt LLVM18 exporter and hosted fixture/all-unit proof are pending gates.

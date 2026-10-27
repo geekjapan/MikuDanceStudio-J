@@ -99,3 +99,81 @@ def collect(result, args, source, output, entries, artifacts, run, checkpoint):
         result['linked_dependencies'] = run(['ldd', str(binary)], artifacts / 'linked-dependencies.log', timeout=30)
         from shader_matrix import compare
         result['runtime_comparison'] = compare(binary, args.native_library, artifacts, run)
+
+
+def cursor_witness_receipt(tool, database, output):
+    """Bind paired files from one opt-in exporter run, without claiming job authenticity."""
+    from apply_c2rust_patch import verify_tool
+    verify_tool(tool.parent.parent)
+    entries = json.loads(database.read_text())
+    inventories = sorted(output.rglob('*.variadic.json'))
+    units = {str(Path(e['file']).resolve()): e for e in entries}
+    if len(units) != len(entries) or len(inventories) != len(entries):
+        raise ValueError('cursor witness paired unit manifest differs')
+    pairs = []
+    for inventory in inventories:
+        item = json.loads(inventory.read_text())
+        unit = item['unit']
+        if unit not in units:
+            raise ValueError('cursor witness unit outside compile database')
+        witness = inventory.with_name(inventory.name.removesuffix('.variadic.json') + '.cursor-witness.json')
+        cbor = inventory.with_name(inventory.name.removesuffix('.variadic.json') + '.cursor.cbor')
+        typed = inventory.with_name(inventory.name.removesuffix('.variadic.json') + '.typed-ast.txt')
+        entry = units.pop(unit)
+        pairs.append({'unit': unit, 'target': item['target'], 'compile_command': entry,
+                      'files': {str(p.resolve()): digest(p) for p in (inventory, witness, cbor, typed, Path(unit))},
+                      'inventory': str(inventory.resolve()), 'witness': str(witness.resolve()),
+                      'cbor': str(cbor.resolve()), 'typed_ast': str(typed.resolve())})
+    if units:
+        raise ValueError('cursor witness missing compile database units')
+    return {'schema': 1, 'authorization': 'witness_only', 'pairs': pairs,
+            'files': {str(p.resolve()): digest(p) for p in
+                      (tool, tool.parent.parent / 'source-receipt.json', database)},
+            'database': str(database.resolve()), 'tool': str(tool.resolve()),
+            'source_receipt': str((tool.parent.parent / 'source-receipt.json').resolve()),
+            'authentic_job_proof': False}
+
+
+def prove_bound_cursor_witness(receipt, symbol):
+    from closed_variadic_plan import PlanError, prove_cursor_witness
+    if receipt.get('schema') != 1 or receipt.get('authorization') != 'witness_only':
+        raise PlanError('unsupported cursor binding receipt')
+    if set(receipt['files']) != {receipt[k] for k in ('database', 'tool', 'source_receipt')}:
+        raise PlanError('cursor witness incomplete tool binding')
+    entries = json.loads(Path(receipt['database']).read_text())
+    if sorted((p['compile_command'] for p in receipt['pairs']), key=lambda e: e['file']) != sorted(entries, key=lambda e: e['file']):
+        raise PlanError('cursor witness command binding differs')
+    inventories, witnesses = [], []
+    for record in [receipt, *receipt['pairs']]:
+        for name, expected in record['files'].items():
+            if digest(Path(name)) != expected:
+                raise PlanError('cursor witness binding differs: ' + name)
+    for pair in receipt['pairs']:
+        if set(pair['files']) != {pair[k] for k in ('inventory', 'witness', 'cbor', 'typed_ast', 'unit')}:
+            raise PlanError('cursor witness incomplete AST binding')
+        inventory = json.loads(Path(pair['inventory']).read_text())
+        witness = json.loads(Path(pair['witness']).read_text())
+        if inventory['unit'] != pair['unit'] or inventory['target'] != pair['target']:
+            raise PlanError('cursor witness binding identity differs')
+        inventories.append(inventory)
+        witnesses.append(witness)
+    return prove_cursor_witness(inventories, witnesses, symbol)
+
+
+def collect_cursor_witness(tool, database, output, run, symbol):
+    output.mkdir(parents=True, exist_ok=False)
+    command = [str(tool), '--fail-on-error', '--disable-rustfmt', '--edition', '2024',
+               '--emit-cursor-witness', '--output-dir', str(output / 'raw'), str(database)]
+    exported = run(command, output / 'export.log', timeout=1800)
+    if exported['exit_code']:
+        raise ValueError('paired cursor witness export failed')
+    receipt = cursor_witness_receipt(tool, database, output / 'raw')
+    receipt['export_command'] = command
+    (output / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+    from closed_variadic_plan import PlanError
+    try:
+        proof = prove_bound_cursor_witness(receipt, symbol)
+    except (PlanError, KeyError, TypeError, ValueError) as error:
+        proof = {'schema': 1, 'authorization': 'witness_only', 'status': 'rejected', 'reason': str(error)}
+    (output / 'proof.json').write_text(json.dumps(proof, indent=2) + '\n')
+    return proof

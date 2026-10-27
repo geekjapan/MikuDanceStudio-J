@@ -231,6 +231,24 @@ impl Transform {
         self.basis.transpose().apply(point.sub(self.origin))
     }
 
+    /// btTransformUtil::calculateVelocity requires a nonzero timestep and invertible old basis.
+    pub fn calculate_velocity(self, next: Self, dt: f32) -> (Vec3, Vec3) {
+        let linear = next.origin.sub(self.origin).scale(1.0 / dt);
+        let rotation = next
+            .basis
+            .multiply(self.basis.inverse())
+            .rotation()
+            .normalize();
+        let angle = 2.0 * mds_crtmath::acosf(rotation.0[3]);
+        let axis = Vec3([rotation.0[0], rotation.0[1], rotation.0[2]]);
+        let axis = if axis.length2() < f32::EPSILON * f32::EPSILON {
+            Vec3([1.0, 0.0, 0.0])
+        } else {
+            axis.normalize()
+        };
+        (linear, axis.scale(angle).scale(1.0 / dt))
+    }
+
     pub fn integrate(self, linear: Vec3, angular: Vec3, dt: f32) -> Self {
         let mut angle = angular.dot(angular).sqrt();
         // Bullet's SIMD_PI is converted to f32 before the threshold arithmetic.

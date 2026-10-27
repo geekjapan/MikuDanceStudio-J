@@ -8,6 +8,7 @@ extern crate bullet_core_support as base;
 pub use base::{joint_coordinates, joint_rows, math, time, InvalidArgument};
 #[path = "../../rust/crates/mds-bullet/src/core/body.rs"]
 pub mod body;
+#[allow(dead_code)]
 #[path = "../../rust/crates/mds-bullet/src/core/contact.rs"]
 pub mod contact;
 #[path = "../../rust/crates/mds-bullet/src/core/contact_solver.rs"]

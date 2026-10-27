@@ -1,12 +1,16 @@
 """Cheap checks for command construction and profile acceptance boundaries."""
 import tempfile
 import unittest
+from unittest.mock import patch
 import contextlib
 import io
 import json
 import sys
 from pathlib import Path
-import check
+import importlib.util
+spec = importlib.util.spec_from_file_location('check', Path(__file__).with_name('check.py'))
+check = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(check)
 
 
 def profile(selected, win32='0', sse='0', template='0'):
@@ -99,6 +103,56 @@ class HelperTests(unittest.TestCase):
         for rows in [b'', b'x\nx\nx\n']:
             with self.subTest(rows=rows), self.assertRaisesRegex(AssertionError, 'incomplete directed Select capture'):
                 check.validate_select(rows, 'generic')
+
+    def test_corpus_preserves_prefix_and_requires_extension(self):
+        data = check.subprocess.check_output([sys.executable, check.HERE / 'cases.py'])
+        self.assertEqual(check.validate_corpus(data), 2355)
+        self.assertEqual(check.validate_corpus(data.replace(b'\n', b'\r\n')), 2355)
+        for broken in [b'bad\n' + data, b''.join(data.splitlines(keepends=True)[:2326])]:
+            with self.assertRaisesRegex(ValueError, 'frozen operation prefix'):
+                check.validate_corpus(broken)
+
+    def test_explicit_numeric_driver_and_capture_wrappers(self):
+        source = check.reference_module().RUST_DRIVER
+        self.assertIn('Some("mmd-win64-sse")', source)
+        self.assertIn('Some("generic-reference")', source)
+        self.assertIn('policy.intersects(a, b)', source)
+        self.assertNotIn('cfg!', source)
+        fixtures = (check.HERE / 'fixtures.rs').read_text()
+        for name in ['native_controlled_address_parity', 'ordinary_native_and_production_allocator_query_sets']:
+            self.assertIn(f'fn {name}(policy: DbvtPolicy)', fixtures)
+            self.assertNotIn(f'#[test]\nfn {name}', fixtures)
+            self.assertIn(f'#[test]\nfn {name}', (check.HERE / 'test.rs').read_text())
+
+    def test_replay_rejects_incomplete_or_foreign_captures_before_running_rust(self):
+        inputs = check.subprocess.check_output([sys.executable, check.HERE / 'cases.py'])
+        with tempfile.TemporaryDirectory() as directory:
+            captures = Path(directory)
+            (captures / 'inputs.tsv').write_bytes(inputs)
+            for order in range(4):
+                (captures / f'native-{order}.tsv').write_bytes(b'')
+            with patch.object(check, 'run') as run:
+                with self.assertRaisesRegex(ValueError, 'incomplete Windows-sourced'):
+                    check.replay(captures, captures)
+                for order in range(4):
+                    (captures / f'native-{order}.tsv').write_bytes(b'unit-control\n' * 2355)
+                (captures / 'provenance.json').write_text(json.dumps({'commit': 'foreign-checkout'}))
+                with self.assertRaisesRegex(ValueError, 'source commit differs'):
+                    check.replay(captures, captures)
+                run.assert_not_called()
+
+    def test_actual_windows_fixture_bytes_match_provenance(self):
+        fixtures = check.ROOT / 'rust/crates/mds-bullet/tests/dbvt_data'
+        provenance = json.loads((fixtures / 'provenance.json').read_text())
+        self.assertEqual(provenance['run_id'], 40465192152)
+        self.assertEqual(provenance['zip_sha256'], '4d3247c287eee3e3040f06efe64a60600c3740f947220f8427c8534b5fbc5ecf')
+        for name, item in provenance['members'].items():
+            self.assertEqual(check.hashlib.sha256((fixtures / name).read_bytes()).hexdigest(), item['sha256'])
+        reference = check.reference_module()
+        self.assertEqual(len(reference.rows((fixtures / 'inline-aabb.tsv').read_bytes(), 13)), 51)
+        for width, name in [(12, 'archive-merge.tsv'), (1, 'archive-intersect.tsv')]:
+            self.assertEqual(len(reference.rows((fixtures / name).read_bytes(), width)), 51)
+
 
 
 if __name__ == '__main__':

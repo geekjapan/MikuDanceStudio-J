@@ -21,6 +21,14 @@ spec.loader.exec_module(check)
 
 
 class ClassificationTests(unittest.TestCase):
+    def test_rust_probe_requires_explicit_policy_before_mode(self):
+        self.assertIn('Some("mmd-win64-sse") => dbvt::DbvtPolicy::MmdWin64Sse', check.RUST_DRIVER)
+        self.assertIn('Some("generic-reference") => dbvt::DbvtPolicy::GenericReference', check.RUST_DRIVER)
+        self.assertIn('std::env::args().nth(2)', check.RUST_DRIVER)
+        self.assertIn('dbvt::Dbvt::new(policy)', check.RUST_DRIVER)
+        self.assertNotIn('Dbvt::new()', check.RUST_DRIVER)
+        self.assertNotIn('mmd-win64-sse', check.measure.__code__.co_consts)
+
     def profile(self, select='return(Proximity(o,a)<Proximity(o,b)?0:1);'):
         return '''bool Intersect(const A& a,const A& b) { return(a.mi.x()<=b.mx.x()); }
 int Select(const A& o,const A& a,const A& b) { %s }

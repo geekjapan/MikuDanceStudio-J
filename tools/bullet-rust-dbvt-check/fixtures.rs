@@ -92,7 +92,7 @@ fn execute(tree: &mut Dbvt, line: &str) -> String {
         "v" => tree.collide_volume(aabb(&mut w), |k| write!(events, "{},", k.0).unwrap()),
         "s" => tree.collide_tree(tree, |a, b| write!(events, "{}:{},", a.0, b.0).unwrap()),
         "x" => {
-            let mut other = Dbvt::new();
+            let mut other = Dbvt::new(tree.policy);
             for i in 0..4 {
                 other.insert(
                     ProxyKey(100 + i),
@@ -103,6 +103,26 @@ fn execute(tree: &mut Dbvt, line: &str) -> String {
                 );
             }
             tree.collide_tree(&other, |a, b| write!(events, "{}:{},", a.0, b.0).unwrap());
+        }
+        "h" => match tree.bounds() {
+            Some(v) => {
+                events.push('1');
+                volume(&mut events, v);
+            }
+            None => events.push('0'),
+        },
+        "f" => {
+            let key = ProxyKey(w.next().unwrap().parse().unwrap());
+            tree.collide_leaf(tree, key, |a, b| {
+                write!(events, "{}:{},", a.0, b.0).unwrap()
+            });
+        }
+        "g" => {
+            let mut other = Dbvt::new(tree.policy);
+            other.insert(ProxyKey(100), aabb(&mut w));
+            tree.collide_leaf(&other, ProxyKey(100), |a, b| {
+                write!(events, "{}:{},", a.0, b.0).unwrap()
+            });
         }
         "q" => {
             let from = vec3(&mut w);
@@ -126,16 +146,24 @@ fn execute(tree: &mut Dbvt, line: &str) -> String {
     invariant(tree);
     events
 }
-#[test]
-fn native_controlled_address_parity() {
+#[allow(
+    dead_code,
+    reason = "capture helpers run through the mandatory standalone harness"
+)]
+pub(crate) fn native_controlled_address_parity(policy: DbvtPolicy) {
     let root = std::path::PathBuf::from(
         std::env::var("DBVT_FIXTURES").expect("run check.py to capture the real native oracle"),
     );
     let inputs = std::fs::read_to_string(root.join("inputs.tsv")).unwrap();
+    assert_eq!(
+        inputs.lines().count(),
+        2355,
+        "mandatory full capture corpus"
+    );
     for order in 0..3 {
         let native = std::fs::read_to_string(root.join(format!("native-{order}.tsv"))).unwrap();
         assert_eq!(inputs.lines().count(), native.lines().count());
-        let mut tree = Dbvt::new();
+        let mut tree = Dbvt::new(policy);
         for (i, (input, expected)) in inputs.lines().zip(native.lines()).enumerate() {
             let events = execute(&mut tree, input);
             let fields: Vec<_> = expected.split('|').collect();
@@ -169,7 +197,7 @@ fn native_controlled_address_parity() {
 }
 #[test]
 fn production_address_order_and_query_sets() {
-    let mut tree = Dbvt::new();
+    let mut tree = Dbvt::new(DbvtPolicy::GenericReference);
     for i in 0..80 {
         let x = (i % 11) as f32;
         tree.insert(
@@ -227,7 +255,7 @@ fn merge_preserves_right_operand_zero_and_nan_bits() {
 #[test]
 fn native_empty_partition_regression_terminates() {
     let inputs = include_str!("native-topdown-nontermination.tsv");
-    let mut tree = Dbvt::new();
+    let mut tree = Dbvt::new(DbvtPolicy::GenericReference);
     for input in inputs.lines().take(294) {
         execute(&mut tree, input);
     }
@@ -255,7 +283,7 @@ fn native_empty_partition_regression_terminates() {
                     return None;
                 }
                 n.as_deref().and_then(|n| match n.kind {
-                    Kind::Leaf(k) if n.volume.intersects(q) => Some(k.0),
+                    Kind::Leaf(k) if tree.policy.intersects(n.volume, q) => Some(k.0),
                     _ => None,
                 })
             })
@@ -272,6 +300,10 @@ fn leaf_records(topology: &str) -> Vec<&str> {
     records.sort_unstable();
     records
 }
+#[allow(
+    dead_code,
+    reason = "capture helpers run through the mandatory standalone harness"
+)]
 fn query_set(events: &str) -> Vec<String> {
     let mut result: Vec<_> = events
         .split(',')
@@ -289,12 +321,21 @@ fn query_set(events: &str) -> Vec<String> {
     result.sort_unstable();
     result
 }
-#[test]
-fn ordinary_native_and_production_allocator_query_sets() {
+#[allow(
+    dead_code,
+    reason = "capture helpers run through the mandatory standalone harness"
+)]
+pub(crate) fn ordinary_native_and_production_allocator_query_sets(policy: DbvtPolicy) {
     let root = std::path::PathBuf::from(std::env::var("DBVT_FIXTURES").unwrap());
     let inputs = std::fs::read_to_string(root.join("inputs.tsv")).unwrap();
+    assert_eq!(
+        inputs.lines().count(),
+        2355,
+        "mandatory full capture corpus"
+    );
     let native = std::fs::read_to_string(root.join("native-3.tsv")).unwrap();
-    let mut tree = Dbvt::new();
+    assert_eq!(inputs.lines().count(), native.lines().count());
+    let mut tree = Dbvt::new(policy);
     for (i, (input, expected)) in inputs.lines().zip(native.lines()).enumerate() {
         let events = execute(&mut tree, input);
         let fields: Vec<_> = expected.split('|').collect();
@@ -305,7 +346,7 @@ fn ordinary_native_and_production_allocator_query_sets() {
             leaf_records(fields[1]),
             "operation {i} {input}"
         );
-        if matches!(input.as_bytes()[0], b'v' | b's' | b'q' | b'x') {
+        if matches!(input.as_bytes()[0], b'v' | b's' | b'q' | b'x' | b'f' | b'g') {
             assert_eq!(
                 query_set(&events),
                 query_set(fields[3]),
@@ -319,7 +360,7 @@ fn ordinary_native_and_production_allocator_query_sets() {
 
 #[test]
 fn production_sort_rotates_by_actual_box_address() {
-    let mut tree = Dbvt::new();
+    let mut tree = Dbvt::new(DbvtPolicy::GenericReference);
     let v = Aabb {
         min: Vec3([0.0; 3]),
         max: Vec3([1.0; 3]),
@@ -350,7 +391,7 @@ fn production_sort_rotates_by_actual_box_address() {
 }
 #[test]
 fn zero_center_split_falls_back_without_changing_leaves() {
-    let mut tree = Dbvt::new();
+    let mut tree = Dbvt::new(DbvtPolicy::GenericReference);
     tree.insert(
         ProxyKey(1),
         Aabb {
@@ -381,7 +422,7 @@ fn zero_center_split_falls_back_without_changing_leaves() {
 
 #[test]
 fn one_free_box_is_reused_and_dead_slots_stay_bounded() {
-    let mut tree = Dbvt::new();
+    let mut tree = Dbvt::new(DbvtPolicy::GenericReference);
     let volume = Aabb {
         min: Vec3([0.0; 3]),
         max: Vec3([1.0; 3]),
@@ -416,7 +457,7 @@ fn large_finite_optimization_subprocess() {
             .chain(volume.max.0)
             .all(f32::is_finite));
         assert!(volume.size().is_infinite());
-        let mut tree = Dbvt::new();
+        let mut tree = Dbvt::new(DbvtPolicy::GenericReference);
         for key in 0..3 {
             tree.insert(ProxyKey(key), volume);
         }
@@ -452,14 +493,17 @@ fn large_finite_optimization_subprocess() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "dbvt::tests::large_finite_optimization_subprocess",
+                &format!(
+                    "{}::large_finite_optimization_subprocess",
+                    module_path!().split_once("::").unwrap().1
+                ),
                 "--nocapture",
             ])
             .env(CHILD, mode)
             .output()
             .unwrap();
         assert!(
-            output.status.success(),
+            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
             "{mode}: {:?}\n{}",
             output.status,
             String::from_utf8_lossy(&output.stderr)
@@ -486,7 +530,7 @@ fn optimization_unwind_subprocess() {
     const CHILD: &str = "DBVT_OPTIMIZATION_UNWIND_CHILD";
     if let Ok(mode) = std::env::var(CHILD) {
         let result = std::panic::catch_unwind(|| {
-            let mut tree = Dbvt::new();
+            let mut tree = Dbvt::new(DbvtPolicy::GenericReference);
             for key in 0..3 {
                 tree.insert(
                     ProxyKey(key),
@@ -515,14 +559,17 @@ fn optimization_unwind_subprocess() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "dbvt::tests::optimization_unwind_subprocess",
+                &format!(
+                    "{}::optimization_unwind_subprocess",
+                    module_path!().split_once("::").unwrap().1
+                ),
                 "--nocapture",
             ])
             .env(CHILD, mode)
             .output()
             .unwrap();
         assert!(
-            output.status.success(),
+            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
             "{mode}: {:?}\n{}",
             output.status,
             String::from_utf8_lossy(&output.stderr)

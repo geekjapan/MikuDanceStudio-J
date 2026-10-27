@@ -1029,8 +1029,13 @@ RUST_DRIVER = r'''
 use dbvt_math as math;
 use std::io::{self, Read};
 fn main() {
-    if std::env::args().nth(1).as_deref() == Some("select") {
-        let mut tree = dbvt::Dbvt::new();
+    let policy = match std::env::args().nth(1).as_deref() {
+        Some("mmd-win64-sse") => dbvt::DbvtPolicy::MmdWin64Sse,
+        Some("generic-reference") => dbvt::DbvtPolicy::GenericReference,
+        _ => panic!("explicit DBVT policy required"),
+    };
+    if std::env::args().nth(2).as_deref() == Some("select") {
+        let mut tree = dbvt::Dbvt::new(policy);
         for (i, p) in [[0.5, 8388608.0, 0.5], [1.0, 8388608.0, 0.0], [0.0; 3]].into_iter().enumerate() {
             tree.insert(pair_cache::ProxyKey(i as u32 + 1), dbvt::Aabb { min: math::Vec3(p), max: math::Vec3(p) });
         }
@@ -1046,7 +1051,7 @@ fn main() {
             min: math::Vec3(std::array::from_fn(|i| f32::from_bits(v[i]))),
             max: math::Vec3(std::array::from_fn(|i| f32::from_bits(v[i+3]))) }).collect();
         let (a, b) = (bounds[0], bounds[1]);
-        print!("{},{}", id, a.intersects(b) as u32);
+        print!("{},{}", id, policy.intersects(a, b) as u32);
         for v in [a.merge(b), b.merge(a)] { for f in v.min.0.into_iter().chain(v.max.0) { print!(",{}", f.to_bits()); } }
         println!();
     }
@@ -1068,7 +1073,7 @@ def rust_probe(out, data):
     shutil.copyfile(exe, out / 'cmake-dbvt-rust-reference.exe')
     save(out / 'rust-binary.json', dict(path=str(exe), sha256=digest(exe), source='rust-driver/main.rs',
          source_sha256=digest(folder / 'main.rs'), build_command='rust-build-command.json', version='rust-version.stdout'))
-    return run([exe, 'select'], out, 'rust-select', timeout=10), rows(run([exe, 'aabb'], out, 'rust-aabb', data=data, timeout=10), 13)
+    return run([exe, 'mmd-win64-sse', 'select'], out, 'rust-select', timeout=10), rows(run([exe, 'mmd-win64-sse', 'aabb'], out, 'rust-aabb', data=data, timeout=10), 13)
 
 
 def comparison_report(selected, aabb, merged, intersected, rust_selected, rust):

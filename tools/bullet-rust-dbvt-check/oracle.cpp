@@ -74,6 +74,9 @@ int main(int argc,char** argv) {
                 for(int i=0;i<4;++i) { auto v=btDbvtVolume::FromMM(btVector3(i-2,-1,-1),btVector3(i+1,2,2)); other.insert(v,reinterpret_cast<void*>(static_cast<intptr_t>(100+i))); }
                 tree.collideTT(tree.m_root,other.m_root,policy);
             }
+            if(op=='h') { policy.events<<(tree.m_root?1:0); if(tree.m_root) volume(policy.events,tree.m_root->volume); }
+            if(op=='f') { in>>key; tree.collideTT(tree.m_root,leaves[key],policy); }
+            if(op=='g') { btDbvt other; auto v=box(in); auto leaf=other.insert(v,reinterpret_cast<void*>(100)); tree.collideTT(tree.m_root,leaf,policy); }
             if(op=='q') { auto from=vector(in); auto inv=vector(in); unsigned signs[3]={unsigned(inv.x()<0),unsigned(inv.y()<0),unsigned(inv.z()<0)}; float lambda; in>>lambda; auto aabb=box(in); tree.rayTestInternal(tree.m_root,from,from,inv,signs,lambda,aabb.Mins(),aabb.Maxs(),policy); }
             if(op=='c') { tree.clear(); for(auto& n:leaves) n=nullptr; }
             std::ostringstream ranks;

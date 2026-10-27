@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the real PowerShell trust boundary with a stand-in child, no installation."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -258,6 +259,117 @@ class ProvisionBoundary(unittest.TestCase):
                     for family in ("CRT", "OpenMP"):
                         copies = [r for r in evidence["assemblies"] if r["name"].lower() == f"policy.9.0.microsoft.vc90.{family}".lower()]
                         self.assertEqual(len({r["sha256"] for r in copies}), 1)
+
+
+
+    def test_original_pinned_package_xml(self):
+        self.assertIsNotNone(PWSH, "PowerShell is required")
+        fixtures = HERE / "fixtures/vc90-9.0.30729.6161"
+        digests = {
+            "manifest.30729.6161.Microsoft_VC90_CRT_x64.QFE": "EBDC380C42F68788F5B85AA4E5879C6DD395A58DC33CA7608148C0B1FA563979",
+            "manifest.30729.6161.Microsoft_VC90_OpenMP_x64.QFE": "776DA1EA32B3E6C6C994E46E9F3BAA5060A487BC118523CF5093D45E0667BC2C",
+            "policy.30729.6161.policy_9_0_Microsoft_VC90_CRT_x64.QFE": "D564F6725C6A6DE3A450F8D93920F17D9DB7B8793469040D227D718ED26FD347",
+            "policy.30729.6161.policy_9_0_Microsoft_VC90_OpenMP_x64.QFE": "1FB07274FF049A470A4923658F1A4F230167A5DBB5748E144B06DBB79F41EB4E",
+        }
+        for name, digest in digests.items():
+            self.assertEqual(hashlib.sha256((fixtures / name).read_bytes()).hexdigest().upper(), digest)
+        positive = ("package", "package_copies", "policy_only", "targets_only")
+        negative = ("duplicate", "overlap_same_target", "overlap_conflict", "endpoint_overlap",
+                    "namespace_reset", "namespace_foreign", "reference_reset", "redirect_reset",
+                    "target_file_reset", "target_noInheritable_reset", "target_hash_reset",
+                    "policy_hash_extension", "target_hash_wrong_parent", "target_dsig_outside_hash",
+                    "version_overflow", "second_short_range", "missing_second_target",
+                    "duplicate_reference", "wrong_hierarchy")
+        for case in positive + negative:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                manifests = root / "WinSxS/Manifests"
+                manifests.mkdir(parents=True)
+                for family in ("CRT", "OpenMP"):
+                    target_xml = (fixtures / f"manifest.30729.6161.Microsoft_VC90_{family}_x64.QFE").read_bytes()
+                    policy_xml = (fixtures / f"policy.30729.6161.policy_9_0_Microsoft_VC90_{family}_x64.QFE").read_bytes()
+                    first = b'oldVersion="9.0.20718.0-9.0.21022.8"'
+                    second = b'oldVersion="9.0.30201.0-9.0.30729.6161"'
+                    if case in ("duplicate", "overlap_same_target", "overlap_conflict", "endpoint_overlap"):
+                        replacement = {
+                            "duplicate": first,
+                            "overlap_same_target": b'oldVersion="9.0.21022.0-9.0.30729.6161"',
+                            "overlap_conflict": b'oldVersion="9.0.21022.0-9.0.30729.6161"',
+                            "endpoint_overlap": b'oldVersion="9.0.21022.8-9.0.30729.6161"',
+                        }[case]
+                        policy_xml = policy_xml.replace(second, replacement)
+                        if case == "overlap_conflict":
+                            policy_xml = policy_xml.replace(replacement + b' newVersion="9.0.30729.6161"',
+                                                            replacement + b' newVersion="9.0.9999.9"')
+                    for control, element, namespace in (
+                        ("namespace_reset", b"dependency", b""),
+                        ("namespace_foreign", b"dependency", b"urn:invalid"),
+                        ("reference_reset", b"dependentAssembly", b""),
+                        ("redirect_reset", b"bindingRedirect", b""),
+                    ):
+                        if case == control:
+                            policy_xml = policy_xml.replace(b"<" + element, b"<" + element + b' xmlns="' + namespace + b'"')
+                    for control, element in (("target_file_reset", b"file"),
+                                             ("target_noInheritable_reset", b"noInheritable")):
+                        if case == control:
+                            target_xml = target_xml.replace(b"<" + element, b"<" + element + b' xmlns=""')
+                    if case == "target_hash_reset":
+                        target_xml = target_xml.replace(b'xmlns:asmv2="urn:schemas-microsoft-com:asm.v2"', b'xmlns:asmv2="urn:invalid"')
+                    if case == "policy_hash_extension":
+                        policy_xml = policy_xml.replace(b"</assembly>", b'<file name="bad"><h:hash xmlns:h="urn:schemas-microsoft-com:asm.v2"/></file></assembly>')
+                    if case == "target_hash_wrong_parent":
+                        target_xml = target_xml.replace(b"<file ", b"<wrapper ").replace(b"</file>", b"</wrapper>")
+                    if case == "target_dsig_outside_hash":
+                        target_xml = target_xml.replace(b"</assembly>", b'<d:DigestValue xmlns:d="http://www.w3.org/2000/09/xmldsig#">bad</d:DigestValue></assembly>')
+                    if case == "version_overflow":
+                        policy_xml = policy_xml.replace(second, b'oldVersion="9.0.30201.0-9.0.65536.1"')
+                    if case == "second_short_range":
+                        policy_xml = policy_xml.replace(second, b'oldVersion="9.0-9.0.30729.6161"')
+                    if case == "missing_second_target":
+                        policy_xml = policy_xml.replace(second + b' newVersion="9.0.30729.6161"', second)
+                    if case == "duplicate_reference":
+                        reference = next(line for line in policy_xml.splitlines() if b'name="Microsoft.VC90.' in line)
+                        policy_xml = policy_xml.replace(reference, reference + reference)
+                    if case == "wrong_hierarchy":
+                        policy_xml = policy_xml.replace(b"dependency>", b"wrapper>")
+                    if case == "policy_only":
+                        target_xml = (f'<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">'
+                                      f'<assemblyIdentity type="win32" name="Microsoft.VC90.{family}" '
+                                      'version="9.0.30729.6161" processorArchitecture="amd64" '
+                                      'publicKeyToken="1fc8b3b9a1e18e3b"/></assembly>').encode()
+                    if case == "targets_only":
+                        policy_xml = b"\n".join(line for line in policy_xml.splitlines() if second not in line)
+                    base = f"amd64_microsoft.vc90.{family}_1fc8b3b9a1e18e3b_9.0.30729.6161_none_test"
+                    (root / "WinSxS" / base).mkdir()
+                    (manifests / (base + ".manifest")).write_bytes(target_xml)
+                    policy = root / f"WinSxS/Policies/amd64_policy.9.0.microsoft.vc90.{family}_test/9.0.30729.6161.policy"
+                    policy.parent.mkdir(parents=True)
+                    policy.write_bytes(policy_xml)
+                    if case == "package_copies":
+                        (manifests / f"amd64_policy.9.0.microsoft.vc90.{family}_test.manifest").write_bytes(policy_xml)
+                receipts = root / "receipts"
+                receipts.mkdir()
+                run = subprocess.run([PWSH, "-NoProfile", "-Command",
+                                      ". $env:TEST_HELPER; Get-Vc90PolicyEvidence -Destination $env:TEST_RECEIPTS"],
+                                     env=dict(os.environ, WINDIR=tmp, TEST_HELPER=str(HERE / "provision_capture_vc90.ps1"),
+                                              TEST_RECEIPTS=str(receipts)),
+                                     capture_output=True, text=True, timeout=15)
+                evidence = json.loads((receipts / "policy.json").read_text(encoding="utf-8-sig"))
+                self.assertEqual(run.returncode, 0 if case in positive else 1, run.stdout + run.stderr)
+                self.assertEqual(evidence["status"], "POLICY_AND_TARGET_PRESENT" if case in positive else "UNPROVEN")
+                self.assertIn("NOT_EVALUATED", evidence["activation"])
+                self.assertEqual(len(evidence["assemblies"]), 6 if case == "package_copies" else 4)
+                for record in evidence["assemblies"]:
+                    self.assertEqual(Path(record["source"]).read_bytes(), Path(record["copy"]).read_bytes())
+                    self.assertEqual(hashlib.sha256(Path(record["copy"]).read_bytes()).hexdigest().upper(), record["sha256"])
+                if case in positive:
+                    self.assertFalse(evidence["errors"])
+                    self.assertEqual([len(c["matches"]) for c in evidence["compatibility"]],
+                                     [2, 2] if case == "package_copies" else [1, 1])
+                    policies = [r for r in evidence["assemblies"] if r["type"] == "win32-policy"]
+                    self.assertTrue(all(len(r["redirects"]) == (1 if case == "targets_only" else 2) for r in policies))
+                else:
+                    self.assertTrue(evidence["errors"])
 
 
 if __name__ == "__main__":

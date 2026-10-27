@@ -306,22 +306,74 @@ def run(argv, out, name, *, cwd=ROOT, data=None, timeout=300, build=False, env=N
     return outputs[0]
 
 
-def tlog_commands(path, *, reads=False):
+def tlog_tasks(path):
+    """Retain each caret's identities and physical payload lines before interpretation."""
     text, _ = decode(path.read_bytes())
+    if '\x00' in text:
+        raise ValueError('NUL in tlog task')
     records = []
     for line in text.splitlines():
         if line.startswith('^'):
-            records.append((line[1:].split('|'), []))
+            sources = line[1:].split('|')
+            if any(not source.strip() or source != source.strip() for source in sources):
+                raise ValueError('empty or malformed tlog source identity')
+            records.append((sources, []))
+        elif records:
+            records[-1][1].append(line)
         elif line.strip():
-            if not records:
-                raise ValueError('command tlog lacks source association')
-            if reads:
-                records[-1][1].append(line.strip())
-            elif records[-1][1]:
-                raise ValueError('multiple command lines in one tlog task')
-            else:
-                records[-1][1].extend(split_command(line))
+            raise ValueError('command tlog lacks source association')
+    if not records or any(not any(line.strip() for line in lines) for _, lines in records):
+        raise ValueError('empty or truncated tlog task')
     return records
+
+
+def tlog_commands(path, *, reads=False):
+    records = []
+    for sources, lines in tlog_tasks(path):
+        payload = [line for line in lines if line.strip()]
+        if reads:
+            args = [line.strip() for line in payload]
+        else:
+            if len(payload) != 1:
+                raise ValueError('multiple command lines in one tlog task')
+            args = split_command(payload[0])
+            if not args or any(not arg for arg in args):
+                raise ValueError('empty tlog command argument')
+        records.append((sources, args))
+    return records
+
+
+def librarian_args(task, cwd, responses):
+    sources, lines = task
+    payload = [line for line in lines if line.strip()]
+    if not payload:
+        raise ValueError('empty librarian task')
+    args = expand(split_command(payload[0]), cwd, responses)
+    # Later physical lines are object operands, never another command or options.
+    for line in payload[1:]:
+        operands = split_command(line)
+        if not operands or any(not arg.lower().endswith('.obj') or arg.startswith(('@', '-'))
+                               or arg.startswith('/') and not Path(arg).is_absolute() for arg in operands):
+            raise ValueError('librarian continuation must contain only object operands')
+        args.extend(operands)
+    inputs = []
+    for arg in args:
+        upper = arg.upper()
+        if upper.startswith('/OUT:') and len(arg) > 5:
+            continue
+        if upper in ('/NOLOGO', '/MACHINE:X64'):
+            continue
+        if not arg.lower().endswith('.obj') or arg.startswith(('@', '-')) or (
+                arg.startswith('/') and not Path(arg).is_absolute()):
+            raise ValueError('unsupported librarian argument')
+        inputs.append(str((cwd / arg).resolve()).lower())
+    option(args, '/OUT:')
+    identities = [str((cwd / source).resolve()).lower() for source in sources]
+    if not inputs or len(set(inputs)) != len(inputs) or len(set(identities)) != len(identities):
+        raise ValueError('missing or repeated librarian object identity')
+    if set(inputs) != set(identities):
+        raise ValueError('librarian object operands differ from caret identities')
+    return args
 
 
 CL_VALUE_OPTIONS = ('/D', '/U', '/I', '/FI', '/external:I')
@@ -672,11 +724,11 @@ def archive_commands(native, out, libs):
         if len(logs) != 1:
             raise ValueError(f'missing or ambiguous actual librarian command for {name}')
         _, encoding = decode(logs[0].read_bytes())
-        tasks = tlog_commands(logs[0])
+        tasks = tlog_tasks(logs[0])
         if len(tasks) != 1:
             raise ValueError(f'ambiguous actual librarian task for {name}')
         records = []
-        args = expand(tasks[0][1], project, records)
+        args = librarian_args(tasks[0], project, records)
         if (project / option(args, '/OUT:')).resolve() != Path(libs[name]['build']).resolve():
             raise ValueError(f'librarian output does not match resolved {name} archive')
         inputs = [(project / arg).resolve() for arg in args if arg.lower().endswith('.obj')]
@@ -684,7 +736,9 @@ def archive_commands(native, out, libs):
             raise ValueError(f'librarian {name} has missing object inputs')
         if len(set(inputs)) != len(inputs):
             raise ValueError(f'librarian {name} repeats object inputs')
-        entry = dict(tlog=str(logs[0]), argv=args, cwd=str(project), encoding=encoding, responses=records,
+        entry = dict(tlog=str(logs[0]), tlog_sha256=digest(logs[0]),
+                     task=dict(sources=tasks[0][0], lines=tasks[0][1]),
+                     argv=args, cwd=str(project), encoding=encoding, responses=records,
                      inputs={str(obj): digest(obj) for obj in inputs}, archive_sha256=digest(libs[name]['build']))
         if name == 'BulletCollision':
             members = archive_members(libs[name]['build'])

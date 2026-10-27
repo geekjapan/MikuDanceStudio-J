@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -547,6 +548,93 @@ class Controls(unittest.TestCase):
             with self.assertRaises(ValueError):
                 check.tlog_commands(path)
 
+    def test_actual_librarian_tasks_preserve_lines_and_argv(self):
+        import ntpath
+        from pathlib import PureWindowsPath
+
+        class WindowsPath(PureWindowsPath):
+            def resolve(self):
+                return WindowsPath(ntpath.normpath(str(self)))
+
+        fixtures = Path(__file__).with_name('fixtures') / 'librarian'
+        counts = {'BulletSoftBody': 7, 'BulletDynamics': 20, 'BulletCollision': 89, 'LinearMath': 5}
+        for name, count in counts.items():
+            path = fixtures / (name + '.tlog')
+            expected = json.loads(path.with_suffix('.tlog.json').read_text())
+            with self.subTest(name=name):
+                self.assertEqual(check.digest(path), expected['sha256'])
+                [(sources, lines)] = check.tlog_tasks(path)
+                raw_lines = path.read_bytes().decode('utf-16').splitlines()
+                self.assertEqual(sources, raw_lines[0][1:].split('|'))
+                self.assertEqual(lines, raw_lines[1:])
+                self.assertEqual(len(lines), count)
+                cwd = WindowsPath(sources[0]).parent.parent.parent
+                with patch.object(check, 'Path', WindowsPath):
+                    argv = check.librarian_args((sources, lines), cwd, [])
+                identity = json.dumps(argv, separators=(',', ':'), ensure_ascii=False).encode()
+                self.assertEqual(hashlib.sha256(identity).hexdigest(), expected['argv_sha256'])
+                with self.assertRaisesRegex(ValueError, 'multiple command lines'):
+                    check.tlog_commands(path)
+
+    def test_tlog_tasks_reject_missing_empty_and_truncated_records(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'command.tlog'
+            for text in ('', '/c source.cpp', '^', '^a||b\n/c a', '^a\n^b\n/c b', '^a\n   ', '^a\n/c a\x00'):
+                with self.subTest(text=text):
+                    path.write_text(text)
+                    with self.assertRaises(ValueError):
+                        check.tlog_tasks(path)
+            path.write_text('^a\n  /c a  \n\n^b\n/c b\n')
+            self.assertEqual(check.tlog_tasks(path), [(['a'], ['  /c a  ', '']), (['b'], ['/c b'])])
+            self.assertEqual(check.tlog_commands(path), [(['a'], ['/c', 'a']), (['b'], ['/c', 'b'])])
+
+    def test_librarian_rejects_ambiguous_and_truncated_operands(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            sources = [str(root / 'a.obj'), str(root / 'b.obj')]
+            first = '/OUT:result.lib /NOLOGO /MACHINE:X64 a.obj'
+            for lines in ([first], [first, 'b.obj', 'extra.obj'], [first, 'a.obj'],
+                          [first, '/OUT:other.lib b.obj'], [first, 'lib.exe b.obj'],
+                          [first, '"b.obj'], [first, 'b.obj /NOLOGO'],
+                          [first, 'b.obj hidden.lib'], [first, '"" b.obj'],
+                          ['/OUT:result.lib /UNKNOWN a.obj', 'b.obj'],
+                          ['/OUT:result.lib /MACHINE:ARM64 a.obj', 'b.obj']):
+                with self.subTest(lines=lines), self.assertRaises(ValueError):
+                    check.librarian_args((sources, lines), root, [])
+            with self.assertRaises(ValueError):
+                check.librarian_args(([sources[0], sources[0]], [first]), root, [])
+            (root / 'inputs.rsp').write_text('a.obj b.obj')
+            self.assertEqual(check.librarian_args((sources, ['/OUT:result.lib @inputs.rsp']), root, []),
+                             ['/OUT:result.lib', 'a.obj', 'b.obj'])
+            (root / 'inputs.rsp').write_text('a.obj b.obj /UNKNOWN')
+            with self.assertRaises(ValueError):
+                check.librarian_args((sources, ['/OUT:result.lib @inputs.rsp']), root, [])
+
+    def test_linker_keeps_single_command_contract(self):
+        with tempfile.TemporaryDirectory() as folder:
+            build, out, libs, tlog, _ = self.link_fixture(Path(folder))
+            tlog.write_text(tlog.read_text() + '\n/NOLOGO\n')
+            with self.assertRaisesRegex(ValueError, 'multiple command lines'):
+                check.link_proof(build, 'app', out, libs)
+
+    def test_librarian_multiline_archive_consumer(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            out, libs = self.archive_fixture(root)
+            for name in check.LIBS:
+                path = next((root / name).rglob('Lib.command.1.tlog'))
+                sources, command = path.read_text().splitlines()
+                args = check.split_command(command)
+                path.write_text(sources + '\n' + '\n'.join(subprocess.list2cmdline([arg]) for arg in args) + '\n')
+            result = check.archive_commands(root, out, libs)
+            self.assertEqual(set(result), set(check.LIBS))
+            for entry in result.values():
+                self.assertEqual([str(Path(source).resolve()) for source in entry['task']['sources']], list(entry['inputs']))
+                self.assertGreater(len(entry['task']['lines']), 1)
+            path.write_text(path.read_text() + '^extra.obj\n/OUT:extra.lib extra.obj\n')
+            with self.assertRaisesRegex(ValueError, 'ambiguous actual librarian task'):
+                check.archive_commands(root, out, libs)
+
     def test_allowlisted_environment_only(self):
         with patch.dict(os.environ, {'CL': '/DWIN32 /fp:precise', '_CL_': '/UWIN32'}, clear=True):
             self.assertEqual(check.compiler_environment()['CL'], ['/DWIN32', '/fp:precise'])
@@ -714,7 +802,7 @@ class Controls(unittest.TestCase):
                 with tlog.with_name('CL.command.1.tlog').open('a') as stream:
                     stream.write('^' + str(source) + '\n' + subprocess.list2cmdline(['/c', '/Fo' + str(obj), str(source)]) + '\n')
             self.coff_archive(library, [(str(obj.relative_to(project)), obj.read_bytes()) for obj in objects])
-            tlog.write_text('^inputs\n' + subprocess.list2cmdline(['/OUT:' + str(library), *map(str, objects)]))
+            tlog.write_text('^' + '|'.join(map(str, objects)) + '\n' + subprocess.list2cmdline(['/OUT:' + str(library), *map(str, objects)]))
         return out, libs
 
     def test_librarian_binds_real_compiler_output_and_archive_bytes(self):

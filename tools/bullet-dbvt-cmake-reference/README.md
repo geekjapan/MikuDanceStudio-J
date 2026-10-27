@@ -79,3 +79,29 @@ Other valid MSVC flags require an explicit grammar change and a parser control. 
 The retained Actions 40439880708 capture has 122 CL commands. They use 606 `/D` options, 363 `/I` options, 122 attached `/Fo` paths, and 122 attached `/Fd` paths. The flag list above contains their exact flags plus explicit replay and floating-point or architecture controls. The capture has no PCH or dependency-output options.
 
 Microsoft documents [output pathname attachment](https://learn.microsoft.com/en-us/cpp/build/reference/specifying-the-pathname?view=msvc-170), [compiler option forms](https://learn.microsoft.com/en-us/cpp/build/reference/compiler-options-listed-alphabetically?view=msvc-170), and the optional attached PCH syntax for [`/Yu`](https://learn.microsoft.com/en-us/cpp/build/reference/yu-use-precompiled-header-file?view=msvc-170) and [`/Yc`](https://learn.microsoft.com/en-us/cpp/build/reference/yc-create-precompiled-header-file?view=msvc-170). Required separated dependency paths and stdout forms are documented for [`/sourceDependencies`](https://learn.microsoft.com/en-us/cpp/build/reference/sourcedependencies?view=msvc-170), [`/sourceDependencies:directives`](https://learn.microsoft.com/en-us/cpp/build/reference/sourcedependencies-directives?view=msvc-170), and [`/scanDependencies`](https://learn.microsoft.com/en-us/cpp/build/reference/scandependencies?view=msvc-170).
+
+### Tlog task contracts
+
+`tlog_tasks` retains each caret's source identities and every physical payload
+line, including blank lines. It rejects missing carets, empty identities, NULs,
+and empty tasks. CL and LINK command consumers require exactly one nonempty
+command line per task. Read-log consumers retain one path per nonempty line.
+
+The librarian consumer requires exactly one task. Its first payload line accepts
+`/OUT:`, `/NOLOGO`, `/MACHINE:X64`, object operands, and response files expanded
+with the existing recursion and quoting checks. Later payload lines accept only
+object operands. Each physical line must have complete quoting. The expanded
+argv must contain one output, supported options, and unique object paths that
+exactly match the caret identities after path resolution and case normalization.
+Unknown options, extra commands, missing or extra objects, and repeated identities
+fail validation. Archive/object byte checks remain required after parsing.
+Archive evidence retains the original caret identities, payload lines, tlog
+SHA256, ordered expanded argv, and response-file identities.
+
+`fixtures/librarian/` contains the four unmodified UTF-16 librarian tlogs from
+Windows run 40447023256, artifact 12709290514. Each adjacent JSON file records its
+original member path, source head, ZIP and tlog SHA256, ordered argv SHA256, and
+operand count. The tasks contain 7, 20, 89, and 5 payload lines. These fixtures
+prove parsing of the captured records. Complete archive, object, LINK/read/map,
+preprocessing/header, macro-policy, and numeric acceptance still require the
+actual Windows measurement.

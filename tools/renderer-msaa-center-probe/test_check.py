@@ -168,15 +168,22 @@ def fixture(directory):
         cargo_rows, executables = [], {}
         for target, key in [('golden2', 'golden2'), ('center_reconstruction', 'calibration')]:
             retained = identity(variant+'-'+target, variant+' inert executable '+target)
-            cargo_path = str(root/('target-'+variant)/target)
-            cargo_rows.append(json.dumps({'reason': 'compiler-artifact', 'target': {'name': target}, 'executable': cargo_path}))
+            cargo_path = str(root/('target-'+variant)/'debug/deps'/(target+'-0123456789abcdef'))
+            cargo_rows.append(json.dumps({'reason': 'compiler-artifact',
+                'manifest_path': str(source/'rust/crates/mds-render/Cargo.toml'),
+                'target': {'name': target, 'src_path': str(source/'rust/crates/mds-render/tests'/f'{target}.rs'),
+                           'kind': ['test'], 'crate_types': ['bin'], 'test': True},
+                'profile': {'opt_level': '0', 'debuginfo': 2, 'debug_assertions': True,
+                            'overflow_checks': True, 'test': True},
+                'filenames': [cargo_path], 'executable': cargo_path}))
             executables[key] = {'cargo_path': cargo_path, 'retained': retained}
+        cargo_rows.append(json.dumps({'reason': 'build-finished', 'success': True}))
         build_argv = ['cargo', '+1.95.0', 'test', '-p', 'mds-render', '--test', 'golden2', '--test',
                       'center_reconstruction', '--no-run', '--locked', '--message-format=json', '-vv']
         v = {'variant': variant, 'source_root': str(source), 'sources': sources, 'source_archive': check.file_id(archive),
              'inputs': {}, 'build_target': venv['CARGO_TARGET_DIR'], 'executables': executables, 'adapter': adapter,
              'image_dir': str(image_dir), 'images': check.snapshot(image_dir),
-             'build': record(variant+'-build', '\n'.join(cargo_rows), argv=build_argv, cwd=source/'rust', environment=venv)}
+             'build': record(variant+'-build', '\n'.join(cargo_rows)+'\n', argv=build_argv, cwd=source/'rust', environment=venv)}
         for key, raw, code, count in [('golden2', golden_raw(), 101, 14), ('calibration', calibration_raw(variant=='B'), 0, 1)]:
             v[key] = record(variant+'-'+key, raw, '\n'.join(['CENTER_ADAPTER '+adapter]*count)+'\n',
                             argv=[executables[key]['retained']['path'], '--include-ignored', '--nocapture', '--test-threads=1'],
@@ -199,6 +206,77 @@ class ManifestControls(unittest.TestCase):
             shutil.move(original, relocated)
             with patch.object(check, 'RELOCATION', (original, relocated)):
                 self.assertEqual(check.verify(manifest)['status'], 'VALID_EXPERIMENT')
+
+    def test_cargo_mixed_stream_and_fail_closed_controls(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(check, 'BASE_SHADER_SHA256', check.digest(b'control')), \
+             patch.object(check, 'analyze_images', return_value=[]):
+            manifest = fixture(directory)
+            variant = manifest['variants'][0]
+            build = variant['build']
+            path = Path(build['stdout']['path'])
+            original = path.read_bytes()
+            rows = [check.load_json(line) for line in original.splitlines()]
+            expected = {name: variant['executables'][key]['cargo_path'] for name, key in
+                        [('golden2', 'golden2'), ('center_reconstruction', 'calibration')]}
+            def write(raw):
+                path.write_bytes(raw)
+                build['stdout'] = check.file_id(path)
+            mixed = b'\r\n[quote 1.0.47] cargo:rerun-if-changed=build.rs\r\nplain text\r\n' + original.replace(b'\n', b'\r\n') + b'\r\nretained trailing text'
+            write(mixed)
+            self.assertEqual(check.cargo_executables(build, variant['source_root']), expected)
+            self.assertEqual(check.verify(manifest)['status'], 'VALID_EXPERIMENT')
+            self.assertEqual(path.read_bytes(), mixed)
+            bad_streams = [
+                original[:-1], b'plain text only\n',
+                b'\n'.join(original.splitlines()[:-1])+b'\n',
+                original.replace(b'"success": true', b'"success": false'),
+                original.replace(b'"success": true', b'"success": 1'),
+                original+original.splitlines()[-1]+b'\n',
+                original+b'{"reason":"future-message"}\n',
+                original+b'{\n', original+b'{"x":1,"x":2}\n',
+                original+b'{"x":NaN}\n', original+b'{"x":Infinity}\n',
+                original+b'{"x":-Infinity}\n', original+b'{}\n',
+                original+b'{"reason": []}\n',
+            ]
+            mutations = [
+                lambda rs: rs.pop(0),
+                lambda rs: rs.insert(0, copy.deepcopy(rs[0])),
+                lambda rs: rs[0].update(manifest_path='/wrong/Cargo.toml'),
+                lambda rs: rs[0]['target'].update(src_path='/wrong/golden2.rs'),
+                lambda rs: rs[0]['target'].update(kind=['bin']),
+                lambda rs: rs[0]['target'].update(crate_types=['lib']),
+                lambda rs: rs[0]['target'].update(test=False),
+                lambda rs: rs[0]['profile'].update(test=False),
+                lambda rs: rs[0]['profile'].update(opt_level='3'),
+                lambda rs: rs[0]['profile'].update(debuginfo=True),
+                lambda rs: rs[0]['profile'].update(debug_assertions=1),
+                lambda rs: rs[0].update(profile=[]),
+                lambda rs: rs[0].update(target=[]),
+                lambda rs: rs[0].update(executable=None),
+                lambda rs: rs[0].update(executable='/wrong/golden2-abcdef'),
+                lambda rs: rs[0].update(filenames=[]),
+            ]
+            for mutate in mutations:
+                changed = copy.deepcopy(rows)
+                mutate(changed)
+                bad_streams.append(('\n'.join(map(json.dumps, changed))+'\n').encode())
+            for raw in bad_streams:
+                with self.subTest(raw=raw):
+                    write(raw)
+                    with self.assertRaises(ValueError):
+                        check.cargo_executables(build, variant['source_root'])
+                    with self.assertRaises(ValueError):
+                        check.verify(manifest)
+            write(original)
+            build['status'] = 1
+            with self.assertRaises(ValueError):
+                check.cargo_executables(build, variant['source_root'])
+            with self.assertRaises(ValueError):
+                check.verify(manifest)
+            build['status'] = 0
+            build['stdout']['sha256'] = '0'*64
+            with self.assertRaises(ValueError):
+                check.cargo_executables(build, variant['source_root'])
 
     def test_inert_complete_pair_and_malformed_controls(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(check, 'BASE_SHADER_SHA256', check.digest(b'control')), \

@@ -236,6 +236,50 @@ def validate_command(record):
         checked_file(record[key])
 
 
+def cargo_executables(build, source_root):
+    validate_command(build)
+    require(build['status'] == 0, 'build failed')
+    raw = artifact_path(build['stdout']['path']).read_bytes()
+    # Cargo only controls its own JSON output; -vv also exposes other tools' stdout.
+    lines = [line for line in raw.splitlines(keepends=True) if line.startswith(b'{')]
+    require(all(line.endswith(b'\n') for line in lines), 'truncated Cargo object line')
+    rows = [load_json(line) for line in lines]
+    require(all(isinstance(r, dict) and isinstance(r.get('reason'), str) and r['reason'] for r in rows),
+            'Cargo object shape')
+    finishes = [r for r in rows if r['reason'] == 'build-finished']
+    require(len(finishes) == 1 and rows[-1] == finishes[0] and
+            finishes[0] == {'reason': 'build-finished', 'success': True} and finishes[0]['success'] is True,
+            'Cargo successful terminal build-finished required')
+    crate = Path(source_root)/'rust/crates/mds-render'
+    executables = {}
+    for r in rows:
+        if r['reason'] != 'compiler-artifact':
+            continue
+        target = r.get('target')
+        require(isinstance(target, dict) and isinstance(target.get('name'), str), 'Cargo target shape')
+        name = target['name']
+        if name not in ('golden2', 'center_reconstruction'):
+            continue
+        require(name not in executables, 'ambiguous Cargo target: ' + name)
+        require(r.get('manifest_path') == str(crate/'Cargo.toml') and
+                target.get('src_path') == str(crate/'tests'/f'{name}.rs') and
+                target.get('kind') == ['test'] and target.get('crate_types') == ['bin'] and
+                target.get('test') is True, 'Cargo target identity: ' + name)
+        require(r.get('profile') == {'opt_level': '0', 'debuginfo': 2, 'debug_assertions': True,
+                                     'overflow_checks': True, 'test': True} and
+                type(r['profile']['debuginfo']) is int and
+                all(r['profile'][key] is True for key in ('debug_assertions', 'overflow_checks', 'test')),
+                'Cargo test profile: ' + name)
+        executable = r.get('executable')
+        require(isinstance(executable, str) and
+                Path(executable).parent == Path(build['env']['CARGO_TARGET_DIR'])/'debug/deps' and
+                re.fullmatch(name + '-[0-9a-f]+', Path(executable).name) and
+                r.get('filenames') == [executable], 'Cargo executable identity: ' + name)
+        executables[name] = executable
+    require(set(executables) == {'golden2', 'center_reconstruction'}, 'Cargo test executables missing')
+    return executables
+
+
 def analyze_images(a, b, golden, logs):
     rows = []
     for name in NAMES:
@@ -321,10 +365,9 @@ def verify(manifest):
                           'center_reconstruction', '--no-run', '--locked', '--message-format=json', '-vv']
         require(v['build']['argv'] == expected_build and v['build']['cwd'] == str(Path(v['source_root'])/'rust'), 'build command identity')
         require(v['build']['env']['CARGO_TARGET_DIR'] == v['build_target'], 'build directory identity')
-        cargo = [load_json(line) for line in artifact_path(v['build']['stdout']['path']).read_text().splitlines()]
+        cargo = cargo_executables(v['build'], v['source_root'])
         for target, key in [('golden2', 'golden2'), ('center_reconstruction', 'calibration')]:
-            matches = [r['executable'] for r in cargo if r.get('reason') == 'compiler-artifact' and r['target']['name'] == target and r.get('executable')]
-            require(len(matches) == 1 and matches[0] == v['executables'][key]['cargo_path'], 'Cargo executable identity')
+            require(cargo[target] == v['executables'][key]['cargo_path'], 'Cargo executable identity')
             checked_file(v['executables'][key]['retained'])
             argv = [v['executables'][key]['retained']['path'], '--include-ignored', '--nocapture', '--test-threads=1']
             require(v[key]['argv'] == argv and v[key]['cwd'] == v['build']['cwd'], 'execution command identity')
@@ -452,13 +495,11 @@ def run(out, build_root):
         manifest['variants'].append(v)
         if build['status'] != 0:
             continue
-        cargo = [load_json(line) for line in Path(build['stdout']['path']).read_text().splitlines()]
+        cargo = cargo_executables(build, source)
         for target, key in [('golden2', 'golden2'), ('center_reconstruction', 'calibration')]:
-            executables = [r['executable'] for r in cargo if r.get('reason') == 'compiler-artifact' and r['target']['name'] == target and r.get('executable')]
-            require(len(executables) == 1, 'one executable required: ' + target)
             binary = directory/target
-            shutil.copy2(executables[0], binary)
-            v['executables'][key] = {'cargo_path': executables[0], 'retained': file_id(binary)}
+            shutil.copy2(cargo[target], binary)
+            v['executables'][key] = {'cargo_path': cargo[target], 'retained': file_id(binary)}
             test_env = variant_env | ({'MDS_RENDER_PNG_DIR': str(images)} if key == 'golden2' else {})
             v[key] = command(directory, key, [str(binary), '--include-ignored', '--nocapture', '--test-threads=1'], source/'rust', test_env)
         raw = output(v['golden2'])

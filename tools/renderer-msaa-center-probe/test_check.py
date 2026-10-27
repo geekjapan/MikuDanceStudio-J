@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 import json
+import math
 from pathlib import Path
 import struct
 import shutil
@@ -93,6 +94,17 @@ class Boundaries(unittest.TestCase):
         for bad in ('{"x":1,"x":2}', '{"x": NaN}', '{"x": Infinity}', '{'):
             with self.assertRaises(ValueError):
                 check.load_json(bad)
+
+    def test_json_float_tokens_must_remain_finite(self):
+        for token in ('1e999', '-1e999', 'NaN', 'Infinity', '-Infinity'):
+            for raw in (token, '[0, ' + token + ']', '{"unused":{"values":[' + token + ']}}'):
+                with self.subTest(raw=raw), self.assertRaisesRegex(ValueError, 'nonfinite JSON'):
+                    check.load_json(raw)
+        raw = '[1e308, -1e308, 1.7976931348623157e308, 6.022e23, 1.25e-3, 1e-999, -0.0, 0.1, 9007199254740993]'
+        values = check.load_json(raw)
+        self.assertEqual(values, json.loads(raw))
+        self.assertEqual(math.copysign(1, values[6]), -1)
+        self.assertIs(type(values[-1]), int)
 
     def test_image_analysis_recomputes_changes_and_checks_diff(self):
         size = 640*360
@@ -226,6 +238,24 @@ class ManifestControls(unittest.TestCase):
             self.assertEqual(check.cargo_executables(build, variant['source_root']), expected)
             self.assertEqual(check.verify(manifest)['status'], 'VALID_EXPERIMENT')
             self.assertEqual(path.read_bytes(), mixed)
+            before, terminal = original.rsplit(b'{"reason": "build-finished"', 1)
+            terminal = b'{"reason": "build-finished"' + terminal
+            for token in ('1e308', '-1e308', '6.022e23', '1.25e-3', '-0.0'):
+                raw = before + ('{"reason":"future-message","unused":{"values":[' + token + ']}}\n').encode() + terminal
+                write(raw)
+                self.assertEqual(check.cargo_executables(build, variant['source_root']), expected)
+                self.assertEqual(check.verify(manifest)['status'], 'VALID_EXPERIMENT')
+                self.assertEqual(path.read_bytes(), raw)
+            for token in ('1e999', '-1e999', 'NaN', 'Infinity', '-Infinity'):
+                for value in (token, '{"nested":[' + token + ']}'):
+                    raw = before + ('{"reason":"future-message","unused":' + value + '}\n').encode() + terminal
+                    write(raw)
+                    with self.subTest(value=value):
+                        with self.assertRaisesRegex(ValueError, 'nonfinite JSON'):
+                            check.cargo_executables(build, variant['source_root'])
+                        with self.assertRaisesRegex(ValueError, 'nonfinite JSON'):
+                            check.verify(manifest)
+                        self.assertEqual(path.read_bytes(), raw)
             bad_streams = [
                 original[:-1], b'plain text only\n',
                 b'\n'.join(original.splitlines()[:-1])+b'\n',

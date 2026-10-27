@@ -53,7 +53,11 @@ def load_json(raw):
             require(k not in result, 'duplicate JSON key: ' + k)
             result[k] = v
         return result
-    return json.loads(raw, object_pairs_hook=pairs,
+    def finite_number(value):
+        number = float(value)
+        require(math.isfinite(number), 'nonfinite JSON: ' + value)
+        return number
+    return json.loads(raw, object_pairs_hook=pairs, parse_float=finite_number,
                       parse_constant=lambda v: (_ for _ in ()).throw(ValueError('nonfinite JSON: ' + v)))
 
 

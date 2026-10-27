@@ -200,11 +200,9 @@ class Controls(unittest.TestCase):
             self.assertTrue(default_reads)
 
     def test_captured_index_formats_and_buffer_guards(self):
-        # Raw canonical-control mesh from hosted run 40555918638, attempt 1.
         mesh={'vertices': 4, 'faces': 2, 'stride': 24, 'options': 544, 'fvf': 18, 'index_width': 2, 'decl': [[0, 2, 0, 0], [12, 2, 3, 0]], 'vb': 'ffff7fbf00000000ffff7fbf00000000ffff7f3f00000000ffff7fbf00000000ffff7f3f00000000ffff7f3f00000000ffff7f3f00000000ffff7f3f00000000ffff7f3f00000000ffff7f3f00000000ffff7fbf00000000ffff7f3f00000000', 'ib': '000001000200000002000300', 'attributes': '0000000000000000', 'materials': 1, 'material_bits': [[1061997773, 1061997773, 1061997773, 1065353216, 0, 0, 0, 1065353216, 0, 0, 0, 1065353216, 1036831949, 1036831949, 1036831949, 1065353216, 1084227584]], 'table': [[0, 0, 2, 0, 4]], 'vb_size': 96, 'ib_size': [12, 101]}
         expected=[0,1,2,0,2,3]
         self.assertEqual(r.validate_mesh(mesh)['indices'],expected)
-        # Width4 is a derived unit control, not captured native 32-bit execution.
         wide=copy.deepcopy(mesh)
         wide.update(index_width=4,options=mesh['options']|1,ib_size=[24,102],ib=struct.pack('<6I',*expected).hex())
         self.assertEqual(r.validate_mesh(wide)['indices'],expected)

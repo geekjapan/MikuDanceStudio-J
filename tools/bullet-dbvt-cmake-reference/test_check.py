@@ -19,6 +19,107 @@ spec.loader.exec_module(check)
 
 
 class Controls(unittest.TestCase):
+    def test_record_build_production_argv_reaches_run_unchanged(self):
+        command = ['cmake', '--build', 'out/ci/build', '--config', 'Release',
+                   '--parallel', '4', '--', '/verbosity:normal', '/clp:ShowCommandLine']
+        with tempfile.TemporaryDirectory() as folder:
+            argv = ['check.py', 'record-build', '--out-dir', folder, '--build-command', *command]
+            with patch.object(sys, 'argv', argv), patch.object(check, 'run') as run:
+                self.assertEqual(check.main(), 0)
+            run.assert_called_once_with(command, Path(folder).resolve(), 'app-build', build=True, timeout=900)
+
+    def test_record_build_requires_command(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for suffix in ([], ['--build-command']):
+                with self.subTest(suffix=suffix), patch.object(sys, 'argv',
+                        ['check.py', 'record-build', '--out-dir', folder, *suffix]), \
+                        patch.object(check, 'run') as run, self.assertRaisesRegex(ValueError, 'missing build command'):
+                    check.main()
+                run.assert_not_called()
+
+    def test_cli_prefix_is_strict(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for option in ('--unknown', '--build-comman'):
+                argv = ['check.py', 'record-build', '--out-dir', folder, option,
+                        '--build-command', 'cmake', '--', '/verbosity:normal']
+                with self.subTest(option=option), patch.object(sys, 'argv', argv), \
+                        patch.object(check, 'run') as run, contextlib.redirect_stderr(io.StringIO()), \
+                        self.assertRaises(SystemExit) as error:
+                    check.main()
+                self.assertEqual(error.exception.code, 2)
+                run.assert_not_called()
+
+    def test_prepare_and_measure_cli_parsing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for mode, result in (('prepare', 0), ('measure', 1)):
+                with self.subTest(mode=mode), patch.object(sys, 'argv',
+                        ['check.py', mode, '--out-dir', folder]), \
+                        patch.object(check, mode, return_value=result) as action:
+                    self.assertEqual(check.main(), result)
+                action.assert_called_once_with(Path(folder).resolve())
+
+    def package_cache_fixture(self, root, text):
+        package, build, source = (root / name for name in ('package', 'cache-build', 'cache-source'))
+        for folder in (package, build / 'build', source, build / 'bullet-src'):
+            folder.mkdir(parents=True, exist_ok=True)
+        cache = build / 'build/CMakeCache.txt'
+        cache.write_bytes(text.replace('SOURCE', str(build / 'bullet-src')).encode())
+        graph = {'graph': {'nodes': {'1': dict(ref='bullet275/2.75#recipe', context='host',
+                 package_id='package', prev='revision', package_folder=str(package))}}}
+        return graph, cache, [str(path).encode() for path in (package, build, source)]
+
+    def test_package_cache_commented_lf_and_crlf(self):
+        text = ('# This is the CMakeCache file.\n\n//Name of generator.\n'
+                'CMAKE_GENERATOR:INTERNAL=Visual Studio 17 2022\n\n//Platform.\n'
+                'CMAKE_GENERATOR_PLATFORM:INTERNAL=x64\n\n//Source directory.\n'
+                'CMAKE_HOME_DIRECTORY:INTERNAL=SOURCE\n')
+        for newline in ('\n', '\r\n'):
+            with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                graph, cache, paths = self.package_cache_fixture(root, text.replace('\n', newline))
+                with patch.object(check, 'run', side_effect=paths):
+                    result = check.package_paths(graph, root)
+                self.assertEqual(result['source'], str(root / 'cache-build/bullet-src'))
+                self.assertEqual((root / 'native-CMakeCache.txt').read_bytes(), cache.read_bytes())
+                self.assertTrue((root / 'resolved-package.json').is_file())
+
+    def test_package_cache_duplicate_identity_diagnostic(self):
+        for key, value in (('CMAKE_GENERATOR', 'Visual Studio 17 2022'),
+                           ('CMAKE_GENERATOR_PLATFORM', 'x64'), ('CMAKE_HOME_DIRECTORY', 'SOURCE')):
+            text = f'# comment\n{key}:INTERNAL={value}\n\n// comment\n{key}:INTERNAL={value}\n'
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                graph, cache, paths = self.package_cache_fixture(root, text)
+                with patch.object(check, 'run', side_effect=paths), self.assertRaisesRegex(
+                        ValueError, f'^duplicate CMake cache key {key} at line 5$'):
+                    check.package_paths(graph, root)
+                self.assertEqual((root / 'native-CMakeCache.txt').read_bytes(), cache.read_bytes())
+
+    def test_package_cache_missing_malformed_and_duplicate_values(self):
+        valid = ('CMAKE_GENERATOR:INTERNAL=Visual Studio 17 2022\n'
+                 'CMAKE_GENERATOR_PLATFORM:INTERNAL=x64\n'
+                 'CMAKE_HOME_DIRECTORY:INTERNAL=SOURCE\n')
+        cases = [(valid.replace(line, ''), ValueError) for line in valid.splitlines(keepends=True)[:2]]
+        cases += [(valid.replace('CMAKE_HOME_DIRECTORY:INTERNAL=SOURCE\n', ''), KeyError),
+                  (valid.replace(':INTERNAL=', '=') , ValueError),
+                  (valid.replace('Visual Studio 17 2022', 'Ninja'), ValueError),
+                  (valid.replace('x64', 'Win32'), ValueError),
+                  (valid + 'CMAKE_GENERATOR_PLATFORM:INTERNAL=Win32\n', ValueError),
+                  ('CMAKE_GENERATOR_PLATFORM:INTERNAL=Win32\n' + valid, ValueError),
+                  (valid.replace('CMAKE_GENERATOR:INTERNAL=', 'CMAKE_GENERATOR:INTERNAL\n='), ValueError)]
+        for text, error in cases:
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                graph, cache, paths = self.package_cache_fixture(root, text)
+                with patch.object(check, 'run', side_effect=paths):
+                    if error:
+                        with self.assertRaises(error):
+                            check.package_paths(graph, root)
+                        self.assertFalse((root / 'resolved-package.json').exists())
+                    else:
+                        check.package_paths(graph, root)
+                self.assertEqual((root / 'native-CMakeCache.txt').read_bytes(), cache.read_bytes())
+
     def test_windows_quotes_round_trip(self):
         for args in ([r'C:\Program Files\cl.exe', '/Iinc path', '/DNAME="value"', 'C:\\output\\', ''],
                      ['/FIforced.h', '/DWIN32', r'quote\"x', 'a b\\']):

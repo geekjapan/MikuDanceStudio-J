@@ -131,3 +131,11 @@ mod gjk_pair;
 
 #[path = "pure_bullet/islands.rs"]
 mod islands;
+
+#[path = "pure_bullet/persistent_solver.rs"]
+mod persistent_solver;
+
+#[path = "pure_bullet/world_motion.rs"]
+mod world_motion;
+#[path = "pure_bullet/world_objects.rs"]
+mod world_objects;

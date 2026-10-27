@@ -133,7 +133,7 @@ impl AxisMotor {
     }
 }
 
-fn normalize_angle(angle: f32) -> f32 {
+pub(crate) fn normalize_angle(angle: f32) -> f32 {
     let angle = angle % std::f32::consts::TAU;
     if angle < -std::f32::consts::PI {
         angle + std::f32::consts::TAU

@@ -209,7 +209,7 @@
     "rust/crates/mds-bullet/src/core/activation.rs": "0bb94829046c355d48f187bb4accbfb446337ace73e5dd4030ce4e9d0618b067",
     "rust/crates/mds-bullet/src/core/body.rs": "6536bb5dfa7bc724db994f7d2f77710c2b8f21066368bdadd448de79bd523c2c",
     "rust/crates/mds-bullet/src/core/box_box.rs": "2ab44305e2f49f1f3e21b157ad293e720ce141a29c8051f77047e3bfab9d6843",
-    "rust/crates/mds-bullet/src/core/contact.rs": "cea5598e35d6831b2328963b1cfd5ee44501b924c4c28fad0bbff69a5b0215e6",
+    "rust/crates/mds-bullet/src/core/contact.rs": "e34a0ec2ef763a9b6ee37f4f500c562410004dc5aab65149c871e28b30079eac",
     "rust/crates/mds-bullet/src/core/contact_solver.rs": "d8d5b409e22481f70cb0c87f4a9e30fc0f49843801b37326d9cc37e91e860add",
     "rust/crates/mds-bullet/src/core/gjk_epa.rs": "2f83ad0f8c04fcfff257e6a03c587a2d1e7ad2fd974d3e2056b2e1d396117479",
     "rust/crates/mds-bullet/src/core/gjk_pair.rs": "83a6903272d055f2d0755445d67921d76c34d0ba513ea1d9a854f64698cf0e46",
@@ -230,7 +230,7 @@
     "tools/bullet-rust-contact-solver-check/support.rs": "ae27a1aa857ab6a513634efa1a0314a4b9368be819835715a4e0a73844bdc089",
     "tools/bullet-rust-mixed-solver-check/cases.py": "a2908ccee7cd90b85caefac3cc0fa98b2a6caba4cbdc3170587c38d0485dad95",
     "tools/bullet-rust-mixed-solver-check/oracle.cpp": "e93d5e843ae9a4917d084518d3cc3c39a1b95f8d27296301af191c86c9d2e875",
-    "tools/bullet-rust-mixed-solver-check/runner.rs": "0fb88f6bd357918f966682cfa8ce09323544acea226800e5fa08eb0a6ac1247c"
+    "tools/bullet-rust-mixed-solver-check/runner.rs": "5b41457522ec0d9dcc213fc79cb483e8c335785c72c87715396acb2608cede49"
   },
   "observer_sources": {
     "btSequentialImpulseConstraintSolver.cpp": "ee746d0d2908129d27f2a5bb79a1352b548a809a6d314ba9f4a0335e43dbe092"
@@ -13888,5 +13888,43 @@
     "historical_profile": "windows-run40411448747-rust1.95",
     "historical_difference_inventory_and_captures_identical": true,
     "status": "VERIFICATION_PROFILE_ONLY_NOT_FULL_GATE_ACCEPTANCE"
+  },
+  "source_admission": {
+    "actual_run": 40473401249,
+    "head": "07fa0792a56d9fa3c5c3af4cff3bd88a7567a033",
+    "actual_checkout": "c6bc51b118e14d6d3235b08cb01dbca110b37b1e",
+    "head_and_checkout_tree": "c66f1442ac5bcd85c0774c0ed9eedd2a42aa5518",
+    "actual_artifact": {
+      "id": 12720600329,
+      "name": "bullet-mixed-windows-2022",
+      "digest": "sha256:5b7a2daa8261f6dfb10abe13e8cebe8f968162dc193997065079f72621e34654",
+      "bytes": 90202900
+    },
+    "source_manifest_raw_sha256": "b1a387cb8cdf02c69c7cc413c1b8f4e149e8182df4f48c359a80407713538710",
+    "source_entries": 237,
+    "producer_entries": 219,
+    "source_transport": {
+      "strict-CRLF": 237
+    },
+    "changed_producer_sources": {
+      "rust/crates/mds-bullet/src/core/contact.rs": {
+        "previous": "cea5598e35d6831b2328963b1cfd5ee44501b924c4c28fad0bbff69a5b0215e6",
+        "observed": "e34a0ec2ef763a9b6ee37f4f500c562410004dc5aab65149c871e28b30079eac",
+        "git_lf_sha256": "b473127a44fc4c4fcc381022ac0d46887e49e171cdbdbe5389e4689793a1fec4",
+        "transport": "strict-CRLF"
+      },
+      "tools/bullet-rust-mixed-solver-check/runner.rs": {
+        "previous": "0fb88f6bd357918f966682cfa8ce09323544acea226800e5fa08eb0a6ac1247c",
+        "observed": "5b41457522ec0d9dcc213fc79cb483e8c335785c72c87715396acb2608cede49",
+        "git_lf_sha256": "4876a0c33bf3c44c4d45bef74187aa9f5d3b717d5dc47c66551aa50594ad8a3d",
+        "transport": "strict-CRLF"
+      }
+    },
+    "commands_raw_sha256": "9d300f5055bc94b92e068787f5da54bc8498779b8ce71dab4f5718bee17d390f",
+    "historical_capture_provenance": "measurement remains the original run40426173732 capture provenance; captures, differences and identity are unchanged.",
+    "actual_run_status": "FAIL at arithmetic observation source profile differs after captures; clippy and mutants did not run.",
+    "fresh_compiled_mutants": 0,
+    "status": "MEASURED_SOURCE_ADMISSION_ONLY_NOT_FULL_GATE_ACCEPTANCE",
+    "limit": "Admits only these observed producer hashes with the existing exact capture gate. This is not a new passing producer run or acceptance of dispatcher behavior outside this compilation closure."
   }
 }

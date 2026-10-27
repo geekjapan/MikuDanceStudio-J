@@ -89,6 +89,20 @@ jobs:
           if ($extract.ExitCode -ne 0) { throw "DirectX extraction failed: $($extract.ExitCode)" }
           $install = Start-Process -FilePath (Join-Path $unpack 'DXSETUP.exe') -ArgumentList '/silent' -Wait -PassThru -WindowStyle Hidden
           if ($install.ExitCode -ne 0) { throw "DirectX installation failed: $($install.ExitCode)" }
+      - name: Test capture VC90 provisioning boundaries (stand-in installer)
+        if: inputs.d3d9-capture && matrix.arch == 'x64'
+        run: |
+          python -I tools/windows/test_provision_capture_vc90.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -I -O tools/windows/test_provision_capture_vc90.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Provision VC90 for unchanged-app capture only
+        if: inputs.d3d9-capture && matrix.arch == 'x64'
+        env:
+          MDS_D3D9_CAPTURE: '1'
+        run: >-
+          ./tools/windows/provision_capture_vc90.ps1
+          -Receipts "$env:GITHUB_WORKSPACE/out/d3d9-capture/vc90-provisioning"
       - name: Capture unchanged selfshadow frames and D3D9 capabilities
         if: always() && inputs.d3d9-capture
         run: >-

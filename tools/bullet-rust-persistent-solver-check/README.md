@@ -46,8 +46,21 @@ and must differ in complete first-step final velocities from genuine native
 output. Separate controls suppress only the linear or angular reset. `JROWS`
 records nonzero joint row endpoint IDs, including reachable same-slot aliases.
 
-The live source manifest recursively includes the complete CRT Rust source tree.
-Closure tests reject omitted compiled modules, altered math module contents and
-new source files at the end gate. Start and end manifests are retained separately.
+The live source manifest recursively includes the complete CRT Rust source tree
+and every file under `rust/crates/mds-bullet/tests`. The tests tree is a
+conservative superset of compiled test modules and compile-time inputs, including
+`cfg(test)` modules and their `include_str!` fixtures. Filtering tests at runtime
+does not remove these compilation dependencies. This manifest is not an exact
+list of compiled files. The tests tree must contain only regular directories and
+regular files; symlinks (including directory and dangling links) and other
+nonregular entries are rejected at both snapshot and end verification, without
+following them.
+
+Closure tests reject omitted manifest members, byte edits, additions and deletions
+of test modules and fixtures, and changes to CRT modules. Hashes use raw file
+bytes and POSIX relative paths. Start and end manifests must match exactly and
+are retained separately. Keep generated evidence outside the enumerated source
+trees. Historical captures retain their original manifests; complete provenance
+requires a new capture on all four supported hosts after an enumeration change.
 Use `--mutation joint-delta-reset` to run only the new native mutation control
 when the unrelated workspace controls have already been verified.

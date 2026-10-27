@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import stat
 import subprocess
 
 HERE = Path(__file__).resolve().parent
@@ -17,13 +18,21 @@ ROOT = HERE.parents[1]
 def source_paths(root=ROOT):
     src = root / 'recipes/bullet275/bullet-src/src'
     shim = root / 'rust/crates/mds-bullet-sys/shim'
+    tests = root / 'rust/crates/mds-bullet/tests'
+    assert stat.S_ISDIR(tests.lstat().st_mode), f'compiled source closure requires a regular directory: {tests}'
+    test_files = []
+    for path in tests.rglob('*'):
+        mode = path.lstat().st_mode
+        assert stat.S_ISREG(mode) or stat.S_ISDIR(mode), f'compiled source closure rejects nonregular entry: {path}'
+        if stat.S_ISREG(mode):
+            test_files.append(path)
     return sorted(set([
         *(p for folder in ['LinearMath','BulletCollision','BulletDynamics'] for p in (src/folder).rglob('*.cpp')),
         *src.rglob('*.h'), *shim.rglob('*.h'),
         *(root/'rust/crates/mds-bullet/src/core').rglob('*.rs'),
         *(root/'rust/crates/mds-crtmath/src').rglob('*.rs'),
         *(root/'tools/bullet-rust-persistent-solver-check').glob('*.*'),
-        root/'rust/crates/mds-bullet/tests/pure_bullet/persistent_solver.rs',
+        *test_files,
     ]))
 
 

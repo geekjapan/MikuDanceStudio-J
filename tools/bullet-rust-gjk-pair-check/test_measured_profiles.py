@@ -202,8 +202,7 @@ class FiniteMeasurementTests(unittest.TestCase):
                 self.assertEqual(measurement['capture_source_map_sha256'], measured_profiles.source_map_digest(historical))
             self.assertEqual(set(profile['measured_verification_sha256']), set(self.manifest['verification_sha256'][host]))
 
-    def test_receipts_and_all_contract_guards_with_current_expectation_bridge(self):
-        # Pure bridge controls replay contracts; they do not claim native execution of current code.
+    def test_synthetic_replay_receipts_and_contract_guards(self):
         fixture = check.ROOT / 'rust/crates/mds-bullet/tests/gjk_pair_data'
         for host_name, profile in self.manifest['profiles'].items():
             source = {**profile['protected_source_sha256'], **self.manifest['verification_sha256'][host_name]}

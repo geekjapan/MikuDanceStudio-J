@@ -66,6 +66,14 @@ bytes. Nonempty output and success on both sides are required: matching
 unsupported-target rejections are failures. Process crashes/timeouts remain
 failures. Scan/reflection and GPU execution are explicitly `not_run`.
 
+The driver reads and frees compiler output only after a nonnegative compile
+result. Rejections retain their status and diagnostics, write empty output,
+and free diagnostics once. Run `python3 -m unittest discover -s
+tools/vkd3d-rust-probe -p test_shader_driver.py` for a safe mock ABI regression
+against the actual driver executable with Rust 1.95.0. It checks both rejection
+and success ownership. It does not establish real compiler or hosted matrix
+acceptance. Matching negative return codes remain `compile_failure`.
+
 ## Status and acceptance
 
 Raw stable builds clear inherited bootstrap, Rust flags and compiler wrappers.

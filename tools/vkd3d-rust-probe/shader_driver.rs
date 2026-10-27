@@ -122,13 +122,16 @@ fn main() {
             CStr::from_ptr(messages).to_bytes()
         };
         std::fs::write(format!("{}.diagnostics", args[4]), diagnostics).unwrap();
-        let bytes = if out.code.is_null() {
+        // Failed compilation can leave an output pointer already freed by the compiler.
+        let bytes = if result < 0 || out.code.is_null() {
             &[][..]
         } else {
             std::slice::from_raw_parts(out.code.cast::<u8>(), out.size)
         };
         std::fs::write(&args[4], bytes).unwrap();
-        free_code(&mut out);
+        if result >= 0 {
+            free_code(&mut out);
+        }
         if !messages.is_null() {
             free_messages(messages);
         }

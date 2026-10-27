@@ -1,4 +1,3 @@
-"""Compiler-free checks. Synthetic packets never establish compiled acceptance."""
 import copy
 import json
 import subprocess

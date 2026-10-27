@@ -428,7 +428,7 @@ def verify(out):
     require((native_dir/'source/native.cpp').read_bytes()==source.encode() and manifest['source_sha256']==digest(source.encode()),'native source identity')
     base_inv=c.source_inventory(out/'sources/base');expected=dict(base_inv)
     expected['native.cpp']={'sha256':digest(source.encode()),'mode':0o644}
-    cmake=(out/'sources/base/CMakeLists.txt').read_text()+native_cmake()
+    cmake=(out/'sources/base/CMakeLists.txt').read_text(encoding='utf-8')+native_cmake()
     require(manifest['cases']==['canonical','winding','scale'] and manifest['floor_relative']==old.FLOOR,'native case/asset binding')
     from pathlib import PureWindowsPath
     cwd=PureWindowsPath(manifest['cwd'])
@@ -480,7 +480,7 @@ def native(out,archive,build_root,toolchain):
     require(load_json((out/'capture.json').read_bytes())['head']==os.environ.get('GITHUB_SHA'),'workflow/archive HEAD binding')
     directory=out/'native';directory.mkdir();source=directory/'source';shutil.copytree(out/'sources/base',source)
     cpp,_=extract(out/'sources/base');(source/'native.cpp').write_bytes(cpp.encode('utf-8'))
-    (source/'CMakeLists.txt').write_bytes(((source/'CMakeLists.txt').read_text()+native_cmake()).encode('utf-8'))
+    (source/'CMakeLists.txt').write_bytes(((source/'CMakeLists.txt').read_text(encoding='utf-8')+native_cmake()).encode('utf-8'))
     env=os.environ.copy();build_root.mkdir(parents=True)
     configure=['cmake','-S',str(source),'-B',str(build_root),'-G','Visual Studio 17 2022','-A','x64','-DCMAKE_TOOLCHAIN_FILE='+str(toolchain),'-DBUILD_TESTING=OFF','-DMIKUDANCESTUDIO_DIAG=OFF']
     require(record(directory,'configure',configure,source,env)['status']==0,'native configure')

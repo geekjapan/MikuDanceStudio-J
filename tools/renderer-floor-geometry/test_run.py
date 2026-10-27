@@ -156,6 +156,49 @@ class Controls(unittest.TestCase):
                     self.assertEqual(actual,raw)
                     self.assertEqual(r.digest(actual),r.digest(raw))
 
+    def test_native_source_reads_preserve_utf8_under_cp1252(self):
+        class ReachedConfigure(Exception):pass
+        original_read_text=Path.read_text
+        default_reads=[]
+        def cp1252_read_text(path,encoding=None,errors=None):
+            if encoding is None:default_reads.append(path)
+            return original_read_text(path,encoding=encoding or 'cp1252',errors=errors)
+        expected_rust={observed:r.generated(r.ROOT,observed) for observed in (False,True)}
+        expected_contract=r.h.contract(r.ROOT)
+        cmake_raw=(r.ROOT/'CMakeLists.txt').read_bytes()
+        self.assertEqual(r.digest(cmake_raw),'96d2369bfca4b81ad49eeb82f781a0406d208e6d02c04d6493820002f753faeb')
+        source,_=r.extract(r.ROOT)
+        expected={'native.cpp':source.encode('utf-8'),'CMakeLists.txt':cmake_raw+r.native_cmake().encode('utf-8')}
+        with tempfile.TemporaryDirectory() as temp:
+            directory=Path(temp);out=directory/'out';build=directory/'build';toolchain=directory/'toolchain.cmake'
+            toolchain.write_bytes(b'')
+            def transport(archive,dest,extract):
+                base=dest/'sources/base';base.mkdir(parents=True)
+                for name in ('CMakeLists.txt','src/tools/mesh_dump.cpp',r.old.ACCESSORY):
+                    target=base/name;target.parent.mkdir(parents=True,exist_ok=True)
+                    target.write_bytes((r.ROOT/name).read_bytes())
+                (dest/'capture.json').write_bytes(b'{"head":"test-head"}')
+            with patch.object(Path,'read_text',cp1252_read_text):
+                with self.assertRaises(UnicodeDecodeError) as error:(r.ROOT/'CMakeLists.txt').read_text()
+                self.assertEqual((error.exception.start,error.exception.end,cmake_raw[error.exception.start]),(7674,7675,0x90))
+                self.assertEqual((r.ROOT/'CMakeLists.txt').read_text(encoding='utf-8'),cmake_raw.decode('utf-8'))
+                with patch.object(r.sys,'platform','win32'),patch.dict(r.os.environ,{'GITHUB_ACTIONS':'true','GITHUB_SHA':'test-head'}),patch.object(r.c,'transport',side_effect=transport),patch.object(r,'verify_seal'),patch.object(r,'verify_capture'),patch.object(r,'record',side_effect=ReachedConfigure) as record:
+                    with self.assertRaises(ReachedConfigure):r.native(out,directory/'archive.tar',build,toolchain)
+                self.assertEqual(record.call_args.args[1],'configure')
+                for name,raw in expected.items():
+                    actual=(out/'native/source'/name).read_bytes()
+                    self.assertNotIn(b'\r\n',raw)
+                    self.assertEqual(actual,raw)
+                    self.assertEqual(r.digest(actual),r.digest(raw))
+                manifest={'source_sha256':r.digest(expected['native.cpp']),'cases':['canonical','winding','scale'],'floor_relative':r.old.FLOOR,'cwd':'C:/packet/native/source','floor_path':'C:/packet/native/source/'+r.old.FLOOR,'binary_path':'C:/packet/native/floor_geometry.exe','input_path':'C:/packet/input.txt'}
+                (out/'native/manifest.json').write_bytes(r.json.dumps(manifest).encode('utf-8'))
+                with patch.object(r,'verify_capture'):
+                    with self.assertRaises(FileNotFoundError) as missing:r.verify(out)
+                self.assertEqual(Path(missing.exception.filename),out/'native/floor_geometry.exe')
+                for observed in (False,True):self.assertEqual(r.generated(r.ROOT,observed),expected_rust[observed])
+                self.assertEqual(r.h.contract(r.ROOT),expected_contract)
+            self.assertTrue(default_reads)
+
     def test_strict_json_and_numbers(self):
         for raw in ('{"x":1,"x":2}','{"x":NaN}'):
             with self.assertRaises(ValueError):r.load_json(raw)

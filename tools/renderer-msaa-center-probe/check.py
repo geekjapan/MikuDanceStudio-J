@@ -58,7 +58,6 @@ def load_json(raw):
 
 
 def read_png(path, dimensions=(640, 360)):
-    """The existing package comparator's RGBA8 format, with explicit boundary checks."""
     data = Path(path).read_bytes()
     require(data[:8] == b'\x89PNG\r\n\x1a\n', 'PNG signature')
     pos, chunks, idat, ended = 8, [], bytearray(), False

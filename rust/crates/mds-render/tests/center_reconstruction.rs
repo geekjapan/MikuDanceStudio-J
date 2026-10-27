@@ -1,10 +1,7 @@
-//! Diagnostic calibration, separate from the unchanged golden2 matrix.
-
 mod common;
 
 const SHADER: &str = include_str!("../src/shader.wgsl");
 const ATTR: [[f64; 3]; 3] = [[0.2, 0.4, 0.6], [1.8, -0.6, 2.5], [-0.8, 1.5, -1.2]];
-// Propagating 64 f32 roundings with magnitudes below 4 and q above 0.48 is below 5e-5.
 const TOLERANCE: f64 = 0.00005;
 
 fn helper(name: &str) -> &str {

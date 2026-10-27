@@ -1,5 +1,3 @@
-"""Inert evidence fixtures exercise rejection boundaries, never GPU parity evidence."""
-
 import copy
 import importlib.util
 import json

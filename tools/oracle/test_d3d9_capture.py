@@ -17,6 +17,16 @@ capture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(capture)
 
 
+MATCHING_EVENT = r'''<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System><Provider Name="SideBySide"/><EventID>33</EventID><Level>2</Level>
+    <TimeCreated SystemTime="2026-10-27T04:00:00.0054321Z"/>
+    <EventRecordID>42</EventRecordID><Channel>Application</Channel><Computer>stand-in</Computer>
+  </System>
+  <EventData><Data>stand-in dependency resolution failure</Data>
+    <Data>C:\isolated\MikuDanceStudio.exe</Data></EventData>
+</Event>'''
+
+
 class CaptureBoundary(unittest.TestCase):
     def test_actual_exit_timeout_and_partial_streams(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -86,7 +96,7 @@ class CaptureBoundary(unittest.TestCase):
                         elif outcome == "timeout":
                             return real_run([sys.executable, "-c", "import time; time.sleep(5)"], target, 0.1)
                         else:
-                            xml = "<Events><Event><EventData><Data>stand-in missing assembly</Data></EventData></Event></Events>"
+                            xml = f"<Events>{MATCHING_EVENT}</Events>"
                             if outcome == "empty":
                                 xml = "<Events/>"
                             elif outcome == "invalid":
@@ -116,6 +126,91 @@ class CaptureBoundary(unittest.TestCase):
                 self.assertLessEqual(len(calls), 5)
                 if outcome == "timeout":
                     self.assertEqual(result["commands"][-1]["status"], "TIMEOUT")
+
+    def test_main_validates_returned_activation_event_records(self):
+        valid = MATCHING_EVENT
+        namespace = ' xmlns="http://schemas.microsoft.com/win/2004/08/events/event"'
+        provider = '<Provider Name="SideBySide"/>'
+        cases = {
+            "matching": (f"<Events>{valid}</Events>", 1),
+            "empty": ("<Events/>", 0),
+            "syntax": ("<Events>", 0),
+            "wrong-root": (f"<Other>{valid}</Other>", 0),
+            "unrelated-child": ("<Events><NotAnEvent/></Events>", 0),
+            "event-as-wrapper": (valid, 0),
+            "missing-namespace": (f'<Events>{valid.replace(namespace, "")}</Events>', 0),
+            "wrong-namespace": (f'<Events>{valid.replace("/events/event", "/events/other")}</Events>', 0),
+            "wrong-provider": (f'<Events>{valid.replace("SideBySide", "Unrelated")}</Events>', 0),
+            "wrong-path": (f'<Events>{valid.replace("MikuDanceStudio.exe", "other.exe")}</Events>', 0),
+            "partial-path": (f'<Events>{valid.replace("MikuDanceStudio.exe</Data>", "MikuDanceStudio.exe.extra</Data>")}</Events>', 0),
+            "missing-provider": (f'<Events>{valid.replace(provider, "")}</Events>', 0),
+            "missing-time": (f'<Events>{valid.replace("TimeCreated", "OtherTime")}</Events>', 0),
+            "missing-data": (f'<Events>{valid.replace("EventData", "UserData")}</Events>', 0),
+        }
+        for label, stamp in (
+            ("before", "2026-10-27T03:59:59.9999999Z"),
+            ("after", "2026-10-27T04:00:02.011Z"),
+            ("after-submicrosecond", "2026-10-27T04:00:02.0100001Z"),
+            ("malformed-time", "not a timestamp"),
+            ("invalid-date", "2026-02-30T04:00:00Z"),
+            ("naive-time", "2026-10-27T04:00:00"),
+            ("non-utc", "2026-10-27T05:00:00+01:00"),
+            ("non-schema-time", "2026-10-27 04:00:00Z"),
+        ):
+            cases[label] = (f'<Events>{valid.replace("2026-10-27T04:00:00.0054321Z", stamp)}</Events>', 0)
+        for label, stamp in (("lower-bound", "2026-10-27T04:00:00Z"),
+                             ("upper-bound", "2026-10-27T04:00:02.0100000Z")):
+            cases[label] = (f'<Events>{valid.replace("2026-10-27T04:00:00.0054321Z", stamp)}</Events>', 1)
+        cases["mixed"] = (f'<Events>{valid}<NotAnEvent/>{valid.replace("SideBySide", "Unrelated")}'
+                          f'{valid.replace("2026-10-27T04:00:00.0054321Z", "invalid")}{valid}</Events>', 2)
+        for label, (xml, count) in cases.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                root, out, build = (Path(tmp) / name for name in ("repo", "evidence", "build"))
+                root.mkdir()
+                build.mkdir()
+                for name in capture.SOURCES + capture.ASSETS:
+                    source = root / name
+                    source.parent.mkdir(parents=True, exist_ok=True)
+                    source.write_text("stand-in source")
+                for name in ("MikuDanceStudio.exe", "d3d9_capability.exe"):
+                    (build / name).write_text("stand-in executable")
+                real_run = capture.run_command
+                calls = []
+
+                def stand_in_process(command, target, timeout=capture.TIMEOUT):
+                    calls.append([str(value) for value in command])
+                    if target.name == "frames":
+                        error = OSError(22, "original activation failure")
+                        error.winerror = 14001
+                        with patch.object(capture.subprocess, "Popen", side_effect=error):
+                            result = real_run(command, target, timeout)
+                        result.update(command=[r"C:\isolated\MikuDanceStudio.exe", "--mds-frame-dump"],
+                                      started_utc="2026-10-27T04:00:00+00:00",
+                                      finished_utc="2026-10-27T04:00:00.010000+00:00")
+                        return result
+                    body = f"import sys; sys.stdout.buffer.write({xml.encode('utf-16')!r})" if target.name.startswith("events-") else "print('stand-in help or message')"
+                    return real_run([sys.executable, "-c", body], target, timeout)
+
+                argv = ["d3d9_capture.py", "--root", str(root), "--build", str(build), "--out", str(out)]
+                with patch.object(capture, "os", SimpleNamespace(name="nt", environ=os.environ)), patch.dict(os.environ, {"SystemRoot": "stand-in Windows"}), patch.object(capture, "run_command", side_effect=stand_in_process), patch.object(capture.time, "sleep"), patch.object(sys, "argv", argv):
+                    self.assertEqual(capture.main(), 1)
+                report = json.loads((out / "report.json").read_text())
+                diagnostic = report["activation_diagnostics"][0]
+                self.assertEqual(diagnostic["status"], "COLLECTED" if count else "INCOMPLETE")
+                self.assertEqual(diagnostic.get("event_count", 0), count)
+                self.assertEqual(report["status"], "FAIL")
+                self.assertEqual(report["commands"][2]["status"], "FAIL")
+                self.assertEqual(report["commands"][2]["startup_error"]["winerror"], 14001)
+                self.assertIn("original activation failure", report["commands"][2]["cause"])
+                self.assertEqual(report["commands"][3]["status"], "PASS")
+                self.assertEqual(report["cause"], report["original_error"])
+                self.assertEqual(report["closure"]["status"], "PASS")
+                self.assertEqual(len(report["closure"]["checks"]), 2 * len(report["copies"]))
+                self.assertEqual((out / "activation/frames/events-0/stdout.txt").read_bytes(), xml.encode("utf-16"))
+                self.assertTrue((out / "activation/frames/help/command.json").exists())
+                self.assertTrue((out / "activation/frames/query-help/stdout.txt").exists())
+                self.assertEqual((out / "activation/frames/messages/stdout.txt").exists(), bool(count))
+                self.assertLessEqual(sum("wevtutil.exe" in call[0] for call in calls), 5)
 
     def test_activation_diagnostic_failure_preserves_capture_and_closure(self):
         for winerror, diagnostic_failure in ((14001, False), (14001, True), (2, False), (None, False)):

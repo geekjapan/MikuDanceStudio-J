@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import struct
 import subprocess
@@ -105,7 +106,7 @@ def activation_diagnostics(original, directory):
     diagnostic = {"status": "INCOMPLETE", "kind": "SideBySide activation events",
                   "original_command": original["command"], "original_cwd": original["cwd"],
                   "original_startup_error": original["startup_error"], "commands": [],
-                  "retry": False,
+                  "retry": False, "event_count": 0,
                   "documentation": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil"}
     try:
         executable = original["command"][0]
@@ -131,7 +132,31 @@ def activation_diagnostics(original, directory):
                 diagnostic["cause"] = "SideBySide event query failed; see command and streams"
                 break
             events = ET.parse(directory / f"events-{attempt}" / "stdout.txt").getroot()
-            matches = list(events)
+            if events.tag != "Events":
+                raise ValueError("Expected the Events query wrapper")
+            ns = {"e": "http://schemas.microsoft.com/win/2004/08/events/event"}
+            matches = []
+            for event in events.findall("e:Event", ns):
+                provider = event.find("e:System/e:Provider", ns)
+                created = event.find("e:System/e:TimeCreated", ns)
+                if provider is None or provider.get("Name") != "SideBySide" or created is None:
+                    continue
+                timestamp = created.get("SystemTime", "")
+                parsed = re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d+))?(?:Z|\+00:00)", timestamp)
+                if parsed is None:
+                    continue
+                try:
+                    logged = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if not start <= logged <= end:
+                    continue
+                # datetime truncates submicrosecond precision from Windows event timestamps.
+                if logged == end and any(digit != "0" for digit in (parsed.group(1) or "")[6:]):
+                    continue
+                if any(data.text == executable and len(data) == 0
+                       for data in event.findall("e:EventData/e:Data", ns)):
+                    matches.append(event)
             if matches:
                 message = run_command([tool, "qe", "Application", f"/q:{query}", "/rd:true",
                                        "/c:8", "/f:text", "/l:en-US", "/uni:true"],

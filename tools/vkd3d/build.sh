@@ -28,8 +28,29 @@ here="$(cd "$(dirname "$0")" && pwd)"
 tmp="${TMPDIR:-/tmp}"
 root="${MDS_VKD3D_OUT:-${tmp%/}/mds-vkd3d}"
 dl="$root/dl"
+record="${MDS_VKD3D_RECORD_DIR:-}"
+make_flags=()
+if [ -n "$record" ]; then
+  mkdir -p "$record"
+  record="$(cd "$record" && pwd)"
+  if [ -n "$(find "$record" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+    echo "build.sh: record directory must be empty: $record" >&2
+    exit 2
+  fi
+  make_flags=(V=1)
+fi
 
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+
+save_record() {
+  local build_status="$1"
+  trap - EXIT
+  mkdir -p "$record"
+  cp -a "$record_work" "$record/work"
+  cp -a "$record_prefix" "$record/prefix"
+  printf '%s\n' "$build_status" > "$record/build-exit-code"
+  exit "$build_status"
+}
 
 fetch() { # url sha file
   if [ ! -f "$dl/$3" ] || [ "$(sha256 "$dl/$3")" != "$2" ]; then
@@ -53,6 +74,14 @@ build_in() {
   mkdir -p "$work/spv"
   tar -xzf "$dl/spirv-headers.tar.gz" -C "$work/spv" --strip-components=1
   local src="$work/vkd3d-2.1"
+  if [ -n "$record" ]; then
+    record_work="$work"
+    record_prefix="$prefix"
+    trap 'save_record $?' EXIT
+    cp "$0" "$record/build.sh"
+    uname -a > "$record/host.txt"
+    if command -v dpkg-query >/dev/null; then dpkg-query -W > "$record/packages.txt"; fi
+  fi
   # Our fixes (LGPL-2.1, like vkd3d), applied in name order for every target.
   for p in "$here"/patches/*.patch; do
     [ -e "$p" ] || continue
@@ -62,22 +91,45 @@ build_in() {
   # with widl, which these hosts lack.
   touch "$src"/include/*.h
   ( cd "$src"
+    if [ -n "$record" ]; then
+      printf '%s\0' ./configure --prefix="$prefix" --disable-tests --disable-static --disable-doxygen-doc \
+        --without-ncurses --without-xcb --without-opengl SONAME_LIBVULKAN=unused-libvulkan \
+        "CPPFLAGS=-I$work/hdr/include -I$work/spv/include" "$@" > "$record/configure-argv.nul"
+      env | LC_ALL=C sort | sed -n '/^\(CC\|CFLAGS\|CPPFLAGS\|LDFLAGS\|AR\|RANLIB\|BISON\|FLEX\)=/p' > "$record/build-environment.txt"
+    fi
     ./configure --prefix="$prefix" --disable-tests --disable-static --disable-doxygen-doc \
       --without-ncurses --without-xcb --without-opengl \
       SONAME_LIBVULKAN=unused-libvulkan CPPFLAGS="-I$work/hdr/include -I$work/spv/include" "$@" >"$work/configure.log" 2>&1 \
       || { tail -30 "$work/configure.log"; exit 1; }
+    if [ -n "$record" ]; then
+      local compiler
+      compiler=$(sed -n 's/^CC = //p' Makefile)
+      compiler=$(command -v "$compiler")
+      printf '%s\n' "$compiler" > "$record/compiler-path.txt"
+      sha256 "$compiler" > "$record/compiler-sha256.txt"
+      for flag in --version -v -dumpmachine -dumpfullversion -dumpspecs; do
+        "$compiler" "$flag" > "$record/compiler${flag}.txt" 2>&1
+      done
+      for tool in cc1 collect2 lto1 lto-wrapper ld as ar ranlib; do
+        local tool_path
+        tool_path=$("$compiler" -print-prog-name="$tool")
+        tool_path=$(command -v "$tool_path" || true)
+        [ -z "$tool_path" ] || { printf '%s %s\n' "$(sha256 "$tool_path")" "$tool_path"; }
+      done > "$record/compiler-tools-sha256.txt"
+      for tool in bison flex make; do "$tool" --version; done > "$record/generator-versions.txt" 2>&1
+    fi
     exe=""; case "$*" in *mingw32*) exe=.exe ;; esac
     # The generated headers that `make all` would build first through BUILT_SOURCES.
-    make include/private/spirv_grammar.h include/private/vkd3d_version.h \
+    make "${make_flags[@]}" include/private/spirv_grammar.h include/private/vkd3d_version.h \
       libs/vkd3d-shader/hlsl.tab.h libs/vkd3d-shader/preproc.tab.h >"$work/make.log" 2>&1 \
       || { tail -40 "$work/make.log"; exit 1; }
     # Under qemu user emulation (linux-amd64 on an arm64 host) the LTO link cannot use the
     # parallel make's jobserver, so link again without -j when the parallel build fails.
-    make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" libvkd3d-shader.la "vkd3d-compiler$exe" \
+    make "${make_flags[@]}" -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" libvkd3d-shader.la "vkd3d-compiler$exe" \
       >>"$work/make.log" 2>&1 \
-      || make libvkd3d-shader.la "vkd3d-compiler$exe" >>"$work/make.log" 2>&1 \
+      || make "${make_flags[@]}" libvkd3d-shader.la "vkd3d-compiler$exe" >>"$work/make.log" 2>&1 \
       || { tail -40 "$work/make.log"; exit 1; }
-    make install-libLTLIBRARIES install-binPROGRAMS lib_LTLIBRARIES=libvkd3d-shader.la \
+    make "${make_flags[@]}" install-libLTLIBRARIES install-binPROGRAMS lib_LTLIBRARIES=libvkd3d-shader.la \
       "bin_PROGRAMS=vkd3d-compiler$exe" >>"$work/make.log" 2>&1 || { tail -40 "$work/make.log"; exit 1; }
     mkdir -p "$prefix/share/vkd3d" "$prefix/include/vkd3d"
     cp LICENSE COPYING AUTHORS "$prefix/share/vkd3d/"
@@ -86,6 +138,9 @@ build_in() {
     cp include/vkd3d_shader.h include/vkd3d_types.h "$prefix/include/vkd3d/" )
   rm -f "$prefix"/lib/*.la "$prefix"/bin/*.la
   case "$*" in *mingw32*) copy_mingw_runtime "$prefix/bin" ;; esac
+  if [ -n "$record" ] && [[ "$*" == *mingw32* ]]; then
+    x86_64-w64-mingw32-objdump -p "$prefix"/bin/*.dll "$prefix"/bin/*.exe > "$record/imports.txt"
+  fi
   echo "built $prefix"
   find "$prefix" -name '*vkd3d-shader*' -o -name 'vkd3d-compiler*' | sort
 }
@@ -109,7 +164,9 @@ copy_mingw_runtime() { # bin dir
 docker_build() { # platform target [configure args...]
   local platform="$1" target="$2"; shift 2
   local args="$*"
-  docker run --rm --platform "$platform" -v "$here:/tools:ro" -v "$dl:/dl:ro" -v "$root:/out" \
+  local record_mount=()
+  if [ -n "$record" ]; then record_mount=(-v "$record:/record" -e MDS_VKD3D_RECORD_DIR=/record); fi
+  docker run --rm "${record_mount[@]}" --platform "$platform" -v "$here:/tools:ro" -v "$dl:/dl:ro" -v "$root:/out" \
     -e MDS_VKD3D_OUT=/out -e IN_CONTAINER=1 "$IMAGE" bash -euc "
       apt-get update -qq >/dev/null
       apt-get install -y -qq --no-install-recommends build-essential bison flex pkg-config \

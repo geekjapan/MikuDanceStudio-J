@@ -50,6 +50,7 @@ struct SpirvTargetInfo {
 type Compile = unsafe extern "C" fn(*const CompileInfo, *mut Code, *mut *mut c_char) -> i32;
 type FreeCode = unsafe extern "C" fn(*mut Code);
 type FreeMessages = unsafe extern "C" fn(*mut c_char);
+#[cfg(not(native_only))]
 unsafe extern "C" {
     fn vkd3d_shader_compile(
         info: *const CompileInfo,
@@ -58,10 +59,148 @@ unsafe extern "C" {
     ) -> i32;
     fn vkd3d_shader_free_shader_code(code: *mut Code);
     fn vkd3d_shader_free_messages(messages: *mut c_char);
-    fn dlopen(path: *const c_char, mode: i32) -> *mut c_void;
-    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
-    fn dlclose(handle: *mut c_void) -> i32;
 }
+
+#[cfg(unix)]
+mod loader {
+    use super::*;
+    unsafe extern "C" {
+        fn dlopen(path: *const c_char, mode: i32) -> *mut c_void;
+        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+        fn dlclose(handle: *mut c_void) -> i32;
+    }
+    pub unsafe fn open(path: &str) -> *mut c_void {
+        let path = CString::new(path).unwrap();
+        unsafe { dlopen(path.as_ptr(), 2) }
+    }
+    pub unsafe fn symbol(handle: *mut c_void, name: &CStr) -> *mut c_void {
+        unsafe { dlsym(handle, name.as_ptr()) }
+    }
+    pub unsafe fn close(handle: *mut c_void) {
+        unsafe {
+            dlclose(handle);
+        }
+    }
+    #[cfg(target_os = "linux")]
+    pub fn modules() -> Vec<String> {
+        std::fs::read_to_string("/proc/self/maps")
+            .unwrap()
+            .lines()
+            .filter_map(|line| line.find('/').map(|start| line[start..].to_owned()))
+            .collect()
+    }
+    #[cfg(target_os = "macos")]
+    pub fn modules() -> Vec<String> {
+        unsafe extern "C" {
+            fn _dyld_image_count() -> u32;
+            fn _dyld_get_image_name(index: u32) -> *const c_char;
+        }
+        unsafe {
+            (0.._dyld_image_count())
+                .map(|index| {
+                    CStr::from_ptr(_dyld_get_image_name(index))
+                        .to_str()
+                        .unwrap()
+                        .to_owned()
+                })
+                .collect()
+        }
+    }
+}
+
+#[cfg(windows)]
+mod loader {
+    use super::*;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn LoadLibraryExW(path: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
+        fn GetProcAddress(handle: *mut c_void, name: *const c_char) -> *mut c_void;
+        fn FreeLibrary(handle: *mut c_void) -> i32;
+        fn GetModuleFileNameW(handle: *mut c_void, path: *mut u16, size: u32) -> u32;
+        fn GetCurrentProcess() -> *mut c_void;
+        fn K32EnumProcessModules(
+            process: *mut c_void,
+            modules: *mut *mut c_void,
+            bytes: u32,
+            needed: *mut u32,
+        ) -> i32;
+    }
+    pub unsafe fn open(path: &str) -> *mut c_void {
+        assert!(
+            std::path::Path::new(path).is_absolute(),
+            "native DLL path must be absolute"
+        );
+        let wide: Vec<u16> = std::ffi::OsStr::new(path)
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        unsafe { LoadLibraryExW(wide.as_ptr(), ptr::null_mut(), 0x100 | 0x1000) }
+    }
+    pub unsafe fn symbol(handle: *mut c_void, name: &CStr) -> *mut c_void {
+        unsafe { GetProcAddress(handle, name.as_ptr()) }
+    }
+    pub unsafe fn close(handle: *mut c_void) {
+        unsafe {
+            FreeLibrary(handle);
+        }
+    }
+    pub fn modules() -> Vec<String> {
+        let mut modules = vec![ptr::null_mut(); 1024];
+        let mut needed = 0;
+        unsafe {
+            assert_ne!(
+                K32EnumProcessModules(
+                    GetCurrentProcess(),
+                    modules.as_mut_ptr(),
+                    (modules.len() * size_of::<*mut c_void>()) as u32,
+                    &mut needed
+                ),
+                0,
+                "module enumeration failed"
+            );
+            assert!(
+                (needed as usize) <= modules.len() * size_of::<*mut c_void>(),
+                "module list truncated"
+            );
+            modules.truncate(needed as usize / size_of::<*mut c_void>());
+            modules
+                .into_iter()
+                .map(|module| {
+                    let mut path = vec![0u16; 32768];
+                    let count = GetModuleFileNameW(module, path.as_mut_ptr(), path.len() as u32);
+                    assert!(
+                        count > 0 && (count as usize) < path.len(),
+                        "module path unavailable"
+                    );
+                    std::ffi::OsString::from_wide(&path[..count as usize])
+                        .into_string()
+                        .unwrap()
+                })
+                .collect()
+        }
+    }
+}
+
+unsafe fn native_api(path: &str, handle: &mut *mut c_void) -> (Compile, FreeCode, FreeMessages) {
+    unsafe {
+        *handle = loader::open(path);
+        assert!(!handle.is_null(), "native baseline load failed");
+        let a = loader::symbol(*handle, c"vkd3d_shader_compile");
+        let b = loader::symbol(*handle, c"vkd3d_shader_free_shader_code");
+        let c = loader::symbol(*handle, c"vkd3d_shader_free_messages");
+        if a.is_null() || b.is_null() || c.is_null() {
+            loader::close(*handle);
+            panic!("native API missing");
+        }
+        (
+            std::mem::transmute::<*mut c_void, Compile>(a),
+            std::mem::transmute::<*mut c_void, FreeCode>(b),
+            std::mem::transmute::<*mut c_void, FreeMessages>(c),
+        )
+    }
+}
+
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     assert!(
@@ -116,6 +255,12 @@ fn main() {
     };
     unsafe {
         let mut handle = ptr::null_mut();
+        #[cfg(native_only)]
+        let (compile, free_code, free_messages) = {
+            assert_ne!(args[5], "-", "native-only caller requires a library");
+            native_api(&args[5], &mut handle)
+        };
+        #[cfg(not(native_only))]
         let (compile, free_code, free_messages): (Compile, FreeCode, FreeMessages) =
             if args[5] == "-" {
                 (
@@ -124,22 +269,14 @@ fn main() {
                     vkd3d_shader_free_messages,
                 )
             } else {
-                let path = CString::new(args[5].as_str()).unwrap();
-                handle = dlopen(path.as_ptr(), 2);
-                assert!(!handle.is_null(), "native baseline dlopen failed");
-                let a = dlsym(handle, c"vkd3d_shader_compile".as_ptr());
-                let b = dlsym(handle, c"vkd3d_shader_free_shader_code".as_ptr());
-                let c = dlsym(handle, c"vkd3d_shader_free_messages".as_ptr());
-                assert!(
-                    !a.is_null() && !b.is_null() && !c.is_null(),
-                    "native API missing"
-                );
-                (
-                    std::mem::transmute::<*mut c_void, Compile>(a),
-                    std::mem::transmute::<*mut c_void, FreeCode>(b),
-                    std::mem::transmute::<*mut c_void, FreeMessages>(c),
-                )
+                native_api(&args[5], &mut handle)
             };
+        if !handle.is_null() {
+            let mut paths = loader::modules();
+            paths.sort();
+            paths.dedup();
+            std::fs::write(format!("{}.modules", args[4]), paths.join("\n")).unwrap();
+        }
         let mut out = Code {
             code: ptr::null(),
             size: 0,
@@ -167,7 +304,7 @@ fn main() {
             free_messages(messages);
         }
         if !handle.is_null() {
-            dlclose(handle);
+            loader::close(handle);
         }
     }
 }

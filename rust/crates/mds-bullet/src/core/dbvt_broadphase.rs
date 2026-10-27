@@ -408,10 +408,13 @@ impl DbvtBroadphase {
 }
 
 #[cfg(test)]
+type NativeNodeAddressRank = (Option<usize>, Aabb, usize);
+
+#[cfg(test)]
 impl DbvtBroadphase {
     pub(crate) fn bind_native_address_ranks(
         &mut self,
-        ranks: [(&[(Option<usize>, Aabb, usize)], Option<usize>); 2],
+        ranks: [(&[NativeNodeAddressRank], Option<usize>); 2],
     ) {
         let mapped = ranks.map(|(nodes, free)| {
             let nodes: Vec<_> = nodes

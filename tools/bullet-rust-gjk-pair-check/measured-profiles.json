@@ -3867,7 +3867,7 @@
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "6465504fc34c83537439f8d77742d9ccd6b8a0f85f34db5b09176cc75bc7eea5",
       "tools/bullet-rust-gjk-pair-check/check.py": "363e144267110687b6982a3f68f4b54a1f4de252a52e54923fc73a867f8bbcbc",
-      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "7495bf9c99f5a996ca5f03cf4acbba8ca4a14668be8c0fe1a6021480a8f7d886",
+      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "6ede71e9735090ce18508f6d9540fe60096340100dd150c1b9d52dfa1ef73887",
       "tools/bullet-rust-gjk-pair-check/mutations.py": "a291052539ac00fcd7bd786bca7c09ebad71488480e30ac4bf2be97b122ec79a",
       "tools/bullet-rust-gjk-pair-check/native-x64-provenance.json": "630f0fa5a7404b92ab4dfbd645e008554419aac413f524704c58f3c63b6dcefa",
       "tools/bullet-rust-gjk-pair-check/test_capture.py": "2741346f823de39b120ced7cdcdaad287238f55194291619aa6c6c2457613038",
@@ -3879,7 +3879,7 @@
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "6465504fc34c83537439f8d77742d9ccd6b8a0f85f34db5b09176cc75bc7eea5",
       "tools/bullet-rust-gjk-pair-check/check.py": "363e144267110687b6982a3f68f4b54a1f4de252a52e54923fc73a867f8bbcbc",
-      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "7495bf9c99f5a996ca5f03cf4acbba8ca4a14668be8c0fe1a6021480a8f7d886",
+      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "6ede71e9735090ce18508f6d9540fe60096340100dd150c1b9d52dfa1ef73887",
       "tools/bullet-rust-gjk-pair-check/mutations.py": "a291052539ac00fcd7bd786bca7c09ebad71488480e30ac4bf2be97b122ec79a",
       "tools/bullet-rust-gjk-pair-check/native-x64-provenance.json": "630f0fa5a7404b92ab4dfbd645e008554419aac413f524704c58f3c63b6dcefa",
       "tools/bullet-rust-gjk-pair-check/test_capture.py": "2741346f823de39b120ced7cdcdaad287238f55194291619aa6c6c2457613038",
@@ -3891,7 +3891,7 @@
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "6465504fc34c83537439f8d77742d9ccd6b8a0f85f34db5b09176cc75bc7eea5",
       "tools/bullet-rust-gjk-pair-check/check.py": "363e144267110687b6982a3f68f4b54a1f4de252a52e54923fc73a867f8bbcbc",
-      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "7495bf9c99f5a996ca5f03cf4acbba8ca4a14668be8c0fe1a6021480a8f7d886",
+      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "6ede71e9735090ce18508f6d9540fe60096340100dd150c1b9d52dfa1ef73887",
       "tools/bullet-rust-gjk-pair-check/mutations.py": "a291052539ac00fcd7bd786bca7c09ebad71488480e30ac4bf2be97b122ec79a",
       "tools/bullet-rust-gjk-pair-check/native-x64-provenance.json": "630f0fa5a7404b92ab4dfbd645e008554419aac413f524704c58f3c63b6dcefa",
       "tools/bullet-rust-gjk-pair-check/test_capture.py": "2741346f823de39b120ced7cdcdaad287238f55194291619aa6c6c2457613038",
@@ -3903,7 +3903,7 @@
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "c9aa97f3e582c1613e85cbbbda966248771677813654c2f33e3a8401b29b98ea",
       "tools/bullet-rust-gjk-pair-check/check.py": "9204fa0498fa85a68f0e0ad8860a1e40f89cbd9640174315f341d4d54e46412b",
-      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "0acdf1ba04514786a5de7602dfcdb221f76ccf61b52bebc72f3d988a4d019651",
+      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "33313688f82f9ccea79807b230f8c7048f4db6420fc556479cbff3f9bca704c3",
       "tools/bullet-rust-gjk-pair-check/mutations.py": "61d9cf572923b5d5007b4bfd576f657a68e8b5a121bee66877cfbd6d1536d132",
       "tools/bullet-rust-gjk-pair-check/native-x64-provenance.json": "b5ea3c0fa1b625a37bb7e94c576deca0e4cee895b3dfedfe9e1a1823d0e170af",
       "tools/bullet-rust-gjk-pair-check/test_capture.py": "4bf98fb11a8e65b08792ea5fbd812a6f4d8a455339bb40c70c734f526b6c5e3b",
@@ -4045,7 +4045,7 @@
           }
         },
         "additions": {
-          "rust/crates/mds-bullet/src/core/dbvt_broadphase.rs": "0d2af4a63ba1542c91f9eca725e079b51b532a166b063984596f2516b1983fb6",
+          "rust/crates/mds-bullet/src/core/dbvt_broadphase.rs": "7706a40391680849d279e33d9cecd04c5558ea21dfa14eba47438a88152118a7",
           "rust/crates/mds-bullet/tests/pure_bullet/dbvt_broadphase.rs": "ad6b3c3f52a9b6dd4ae9a10bdda5b58fe38eea22d9bfa3aeed6706c24b0967c6"
         }
       },
@@ -4065,7 +4065,7 @@
           }
         },
         "additions": {
-          "rust/crates/mds-bullet/src/core/dbvt_broadphase.rs": "0d2af4a63ba1542c91f9eca725e079b51b532a166b063984596f2516b1983fb6",
+          "rust/crates/mds-bullet/src/core/dbvt_broadphase.rs": "7706a40391680849d279e33d9cecd04c5558ea21dfa14eba47438a88152118a7",
           "rust/crates/mds-bullet/tests/pure_bullet/dbvt_broadphase.rs": "ad6b3c3f52a9b6dd4ae9a10bdda5b58fe38eea22d9bfa3aeed6706c24b0967c6"
         }
       },
@@ -4085,7 +4085,7 @@
           }
         },
         "additions": {
-          "rust/crates/mds-bullet/src/core/dbvt_broadphase.rs": "0d2af4a63ba1542c91f9eca725e079b51b532a166b063984596f2516b1983fb6",
+          "rust/crates/mds-bullet/src/core/dbvt_broadphase.rs": "7706a40391680849d279e33d9cecd04c5558ea21dfa14eba47438a88152118a7",
           "rust/crates/mds-bullet/tests/pure_bullet/dbvt_broadphase.rs": "ad6b3c3f52a9b6dd4ae9a10bdda5b58fe38eea22d9bfa3aeed6706c24b0967c6"
         }
       },
@@ -4105,7 +4105,7 @@
           }
         },
         "additions": {
-          "rust/crates/mds-bullet/src/core/dbvt_broadphase.rs": "a6b857c0d45c03bc2132fed54f92c4bf9ee9d9304fed5d39d608bb1cf3b60b6d",
+          "rust/crates/mds-bullet/src/core/dbvt_broadphase.rs": "379e54a80d47e77fed3973ce1077092c24226ea2e02656346befe9153482a07b",
           "rust/crates/mds-bullet/tests/pure_bullet/dbvt_broadphase.rs": "ad6b3c3f52a9b6dd4ae9a10bdda5b58fe38eea22d9bfa3aeed6706c24b0967c6"
         }
       }

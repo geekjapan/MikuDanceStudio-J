@@ -30,7 +30,7 @@ REGISTRATION_FORMAT = {
     'old_sha256': '448ee12c55dfad95be039dd94f3bc33d223fdacdb3cc9c8497e374cc275f53c0',
     'new_sha256': 'db2ec5f155bf1f7a10654a7c0c263435349ba55c8fe1c5fcfdcc67853fba7157',
 }
-BROADPHASE_SHA256 = '12aafd16e106fe98db03326b9b354a80f1d3722bfc6e25eaad53fe22dd499c96'
+BROADPHASE_SHA256 = '539ad318be991f1b55770363f2698f08cd86f85280d8b46e0600ec44df32d53d'
 BROADPHASE_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
                         ['src/core/dbvt_broadphase.rs', 'tests/pure_bullet/dbvt_broadphase.rs']}
 HISTORICAL_SHA256 = 'db3da5b75c9c53145e6be0aec4f83264f3a0bbce2a128ea321caf24ae0e7e501'

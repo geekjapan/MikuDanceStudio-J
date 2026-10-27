@@ -144,6 +144,12 @@ jobs:
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/bullet-native/simplex"
           python3 tools/bullet-rust-simplex-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/simplex" 2>&1 | tee "$RUNNER_TEMP/bullet-native/simplex/check.log"
+      - name: Recapture capsule-capsule production manifolds
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/bullet-native/capsule-capsule"
+          python3 tools/bullet-rust-capsule-capsule-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/capsule-capsule" 2>&1 | tee "$RUNNER_TEMP/bullet-native/capsule-capsule/check.log"
       - name: Save native recaptures and evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

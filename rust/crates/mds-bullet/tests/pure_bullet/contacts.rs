@@ -174,7 +174,7 @@ fn unsupported_pairs_have_no_manifold() {
     let p = Shape::static_plane(Vec3([0.0, 1.0, 0.0]), 0.0);
     assert_eq!(PairManifold::new(b, b).unwrap().kind(), PairKind::BoxBox);
     let s = Shape::Sphere { radius: 1.0 };
-    for (a, b) in [(s, b), (b, s), (b, c), (c, c), (p, p)] {
+    for (a, b) in [(s, b), (b, s), (b, c), (c, s), (s, c), (p, p)] {
         assert!(PairManifold::new(a, b).is_none());
     }
 }

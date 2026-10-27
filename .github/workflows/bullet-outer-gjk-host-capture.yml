@@ -38,7 +38,7 @@ jobs:
           python3 -m unittest discover -s tools/bullet-rust-support-check -v 2>&1 | tee "$PROFILE_OUT/shared-helper-tests.log"
           python3 -m unittest discover -s tools/bullet-rust-gjk-pair-check -v 2>&1 | tee "$PROFILE_OUT/helper-tests.log"
       - name: Capture native and replay full Rust output
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         shell: bash
         env:
           CXX: clang++
@@ -46,7 +46,7 @@ jobs:
           set -o pipefail
           python3 tools/bullet-rust-gjk-pair-check/check.py --out-dir "$PROFILE_OUT/capture" 2>&1 | tee "$PROFILE_OUT/check.log"
       - name: Activate MSVC and capture native and full Rust output
-        if: runner.os == 'Windows'
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
         shell: cmd
         run: |
           @echo on

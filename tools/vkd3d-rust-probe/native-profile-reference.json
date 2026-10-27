@@ -1,0 +1,1594 @@
+{
+  "head": "d04607ea268403039576e85963064e927bcb6d3a",
+  "run_id": 40457744278,
+  "artifact_id": 12712854308,
+  "zip_sha256": "5e91fd623d475c8519a024e9f80a1db758e1a23a3e9af4fa6642263edf8f7d84",
+  "prepared_tar_sha256": "706e37ca52133ab785d1649ab0c201d9122c3b497a7b518ecd050c4cde5421f6",
+  "production_units": [
+    "libs/vkd3d-shader/checksum.c",
+    "libs/vkd3d-shader/d3d_asm.c",
+    "libs/vkd3d-shader/d3dbc.c",
+    "libs/vkd3d-shader/dxbc.c",
+    "libs/vkd3d-shader/dxil.c",
+    "libs/vkd3d-shader/fx.c",
+    "libs/vkd3d-shader/glsl.c",
+    "libs/vkd3d-shader/hlsl.c",
+    "libs/vkd3d-shader/hlsl.tab.c",
+    "libs/vkd3d-shader/hlsl.yy.c",
+    "libs/vkd3d-shader/hlsl_codegen.c",
+    "libs/vkd3d-shader/hlsl_constant_ops.c",
+    "libs/vkd3d-shader/ir.c",
+    "libs/vkd3d-shader/msl.c",
+    "libs/vkd3d-shader/preproc.tab.c",
+    "libs/vkd3d-shader/preproc.yy.c",
+    "libs/vkd3d-shader/spirv.c",
+    "libs/vkd3d-shader/tpf.c",
+    "libs/vkd3d-shader/vkd3d_shader_main.c",
+    "libs/vkd3d-common/blob.c",
+    "libs/vkd3d-common/debug.c",
+    "libs/vkd3d-common/error.c",
+    "libs/vkd3d-common/memory.c",
+    "libs/vkd3d-common/utf8.c"
+  ],
+  "source_files": {
+    "include/private/list.h": "0a26ad30970b147c06f2068e6e419f88b638db03414aed653fc4df594ef73ae7",
+    "include/private/rbtree.h": "7a9096144091e0ac49827bc554b192879a72b288df0c5c0525bb19ee798baef1",
+    "include/private/spirv.core.grammar.json": "4de2ef3e72c19d2a2f8947c4b7e1be889e5bfc77e7e9c68763b63d609110ee97",
+    "include/private/spirv_grammar.h": "6247dcb53332a3498edc9493e5267cd9ab88a0ab61d38b07e3958460ddcec44b",
+    "include/private/vkd3d_blob.h": "ad593430382d73af3e87f28358f576a602e2c72b9a3b3e13ebb1963db50ad6fd",
+    "include/private/vkd3d_common.h": "3d2d4688656a633a20cabff7452cf2922ddbaa1bdd2034697b017c8304d9af7a",
+    "include/private/vkd3d_memory.h": "da59a05c9be041d21e754f2cea84fd0d4015dffef7eb14ba0fa3b0a305616652",
+    "include/private/vkd3d_shader_utils.h": "7bb1eaf8bf6ac95fda151e51d9e972e60fbafc2ee103be7e7ef950c6c48f1163",
+    "include/private/vkd3d_test.h": "54c703ba1f359788598df9bc3f4a69730db4a7e7a9ba95ca332570803404f404",
+    "include/private/vkd3d_utf8.h": "d720501047172fa7c5d7d83935e5cbf062d9bb42d95585d9c78d2b9645b98f09",
+    "include/private/vkd3d_version.h": "c23bfcfbd556340778015b89f5f1ab3480a52fb4a61e558d4816a2dcaf164f07",
+    "include/vkd3d.h": "76306417111f4332536576e887ce146f48581ca0d7d53cd08e340c6230bdf0a2",
+    "include/vkd3d_d3d10_1shader.h": "3ad9d930a7fa479e223f83b87e70131c2b0cd1d083d47240779929a2688f6107",
+    "include/vkd3d_d3d10shader.h": "ad40c0f544a311042eb1fbef01676807e8370915e90d6cd49c498c5b8211cd8a",
+    "include/vkd3d_d3d11shader.h": "150b5a7ed4703c9affd33c56e8c818af84fdf47aa84ed6c975f4f2eaa3b39715",
+    "include/vkd3d_d3d12.h": "0f8d37e03931a6d228dba9a4a1f99e9e8b271c0ab9ef7a964eceef66c0405d18",
+    "include/vkd3d_d3d12sdklayers.h": "5512f565d56d6772ab6d8b8b7a78c50f7673d1d87b07edb51b035bc2d16ecdae",
+    "include/vkd3d_d3d12shader.h": "9803394fa2a3f12fd88b5292e6f3739c1cd866aa66cd60d6fc192c564e5aba0a",
+    "include/vkd3d_d3d9types.h": "31e6ffa0ed28f87447485ff9c0e36bba0742407805d0b55bc16e482002ca5c0f",
+    "include/vkd3d_d3dcommon.h": "6ba468f989afd3f9e79d4464a1cfa2c22a70035a49cbdb282a23220ca483c478",
+    "include/vkd3d_d3dcompiler.h": "aff2dee7c69e6dd95253e49167ee01a2234fea1e532b2a0367e2c1def2830954",
+    "include/vkd3d_d3dcompiler_types.h": "75aa5e32dbb5c653f4ef31a98725312efde82548d40b9fa1fd781a5974f9c42a",
+    "include/vkd3d_d3dx9shader.h": "87b1afc61549af6b4a4716973bc325bf252fa056eaa120e514262a1c320542b5",
+    "include/vkd3d_dxgi.h": "e39fa0076ddf2eaf4bbace3f5c6a7b40eeed04c3fe2d81a0b93170aa2d4abeb4",
+    "include/vkd3d_dxgi1_2.h": "a683292d1c40f22e05e11e90eee1e94b65e8245bb2329d87b0567b292aacdcf5",
+    "include/vkd3d_dxgi1_3.h": "5d6905f2394e280091be6173b7053cf5ace7eb307ca90a7a5fa5f09aa1d15a84",
+    "include/vkd3d_dxgi1_4.h": "4b6ab40f1b4856be7d5e3d01bb1c1f560e288a0b83211c602a627ed1c7ca12c2",
+    "include/vkd3d_dxgibase.h": "7565e70e427466007ad91002b6e9221e0fdcff32c077c8fefe3e1954867532a6",
+    "include/vkd3d_dxgiformat.h": "623ab6954867b6dbdb62f5d73b84fbdee0566a00e71c80605a0733841d89f6b3",
+    "include/vkd3d_dxgitype.h": "8c5752319326ec46d4f7cae6ab0ab87a8e89aecdacee36e43267b446128f13f6",
+    "include/vkd3d_shader.h": "27bb621f86f2d4b2bd0aa1efe169c88551dc3a0f2914196617d74acc3798c89c",
+    "include/vkd3d_types.h": "c3e55c06f6fbfe9523d3a35b0ecad474fcdc20fd8dfb077decf951e4659128d2",
+    "include/vkd3d_utils.h": "e655a67809f670db95793f0aaf6e2adb1616a1c93f800b7503f6b23c9694fe0e",
+    "include/vkd3d_windows.h": "9ec351c4a8bc51e9b290cd417ecc54c8c7faffd330bf55127f9ef721816c7455",
+    "libs/vkd3d-common/blob.c": "6d70c648e0bc864bc3d278034f56beca81715f5366997c22a28c1b83d12d3190",
+    "libs/vkd3d-common/debug.c": "205c251723176fedbf5b571efd1e4693c12056b861ee28aa8e6feafd021ff7d3",
+    "libs/vkd3d-common/error.c": "0d22b3f957c186952473c0c20b284b0f29cf59c0bc346bef5d64d97be1dcdbc9",
+    "libs/vkd3d-common/memory.c": "586b645052200f19464a7a3b72c221f9dff75036eb987d3e2a7b5cb693282ea6",
+    "libs/vkd3d-common/utf8.c": "e7be320bc67f8d5ba50a2fe99dd90d1e2d47fb4e15a40d0a02ee2315c5aeb441",
+    "libs/vkd3d-shader/checksum.c": "4f44212d7a29417583d3b89728e28c597ade13f883227cf1ed21644252a02a13",
+    "libs/vkd3d-shader/d3d_asm.c": "fb88f6396ee9b8ea24b094200ac7014147fd77f6f5a1800184450405c5d9c2f1",
+    "libs/vkd3d-shader/d3dbc.c": "13105ac4f7cbdcb6d67179e5d827cd5674c90fb1a96444b0e1c32cb6197410d0",
+    "libs/vkd3d-shader/dxbc.c": "27ca9b8425fe6521600b7ccbb4de2891e3da278ab8ec6ff7482656efe32f5469",
+    "libs/vkd3d-shader/dxil.c": "9b577e8525660cce1a431650501869c1894bf2b2cb60b76d96fb3741c4995028",
+    "libs/vkd3d-shader/fx.c": "12765a9dd1569aa1c6f1b7e5b01a4ff8759ac1edea8b6b7400933d5ff5ec13b5",
+    "libs/vkd3d-shader/glsl.c": "5f81c3dcd74415bba2562551b785a1b4646e6ad709c05e68154cb91bc39b69a1",
+    "libs/vkd3d-shader/hlsl.c": "c76b5227592d0e6345a9b342d88fb4d8477a0ddc0e04ab0c5e2e62add89c7d62",
+    "libs/vkd3d-shader/hlsl.h": "142ae96a0f46b00500f7f485bc0eb57e3a073619f2970cfd7e34cada3a9a3f1f",
+    "libs/vkd3d-shader/hlsl.l": "3850824807ff696f724b3c0595504a5b48c250861b10b62eec38791813dddf13",
+    "libs/vkd3d-shader/hlsl.tab.c": "3e926d01c69ec0eab32f8864252caaccdb20b0e21597022afd54bb4f4a3f9cfd",
+    "libs/vkd3d-shader/hlsl.tab.h": "034a824ec3f809eb9809e29bef2a9727efd45073d18d25c3af6c8df675c60d58",
+    "libs/vkd3d-shader/hlsl.y": "03bf308f1cb129015624e9a8dfe3c75dd5828d73aec36227e842b2cf2e205301",
+    "libs/vkd3d-shader/hlsl.yy.c": "fb2b085e69f1c7a7c205d4ebf6d788753fb8d71e049be99d1f1ceabe629b35b3",
+    "libs/vkd3d-shader/hlsl_codegen.c": "6d54bdf032d41dbf05888e38ca41e91ad2949d36a344e8a47c6e27d09951abe3",
+    "libs/vkd3d-shader/hlsl_constant_ops.c": "91bc7a0b404b0eaa75454851556864410a9e47d0c3ee5e208df6efac8ebc2868",
+    "libs/vkd3d-shader/ir.c": "c19a6214197e84bd850bbb43e4bd2fca30ff3357fd4d7adc2a8914876b0b3db3",
+    "libs/vkd3d-shader/make_spirv": "264753c7fc6d326c4a699fabf61ce865f3d69e37a600ac119dbf170557172baf",
+    "libs/vkd3d-shader/msl.c": "30e9e52eaf5bf57d8a8bb2ce4ebf296a6dbce4ba75dd9e9aa2a0bbe54572f4f9",
+    "libs/vkd3d-shader/preproc.h": "05c8427862789fdf581fecea4f38cfd6a80bb5a6a3cfcc0a1b03d5ceac3791c6",
+    "libs/vkd3d-shader/preproc.l": "d7b8c75751e2f8cec9f79aadf2a6ba61ffe3af7dfe8f271aa92d962caa477aee",
+    "libs/vkd3d-shader/preproc.tab.c": "1b73eff54131fb29ac4b8907f72ea738085ccb3e2616a218d300937c6efc7a94",
+    "libs/vkd3d-shader/preproc.tab.h": "0cd7288b2a3300d61a49273630bd52e30f3c7e99bbdffdb4a5863d19d1a2cf15",
+    "libs/vkd3d-shader/preproc.y": "6d51044486832fa38ddf538ce199579bcf2ffaf361ca5c6ae722ba8ba484cd28",
+    "libs/vkd3d-shader/preproc.yy.c": "022866f3b43b5aab0ac2d127eb32503c16dbb3145f100f91fe85254b815b4305",
+    "libs/vkd3d-shader/spirv.c": "8b3aaa79d65011d9f4a3e190a6e4dea4dab80f696f43c7b0c89f3a9147dab41e",
+    "libs/vkd3d-shader/tpf.c": "bfcb1fbdca545b8e5febdf4064d1ccee6d09e105c2294c551fd71824e85d1b3c",
+    "libs/vkd3d-shader/vkd3d_shader.map": "cfd8cecb7e42556f203549cc60f5a3947c74c9db19db31d4fc6b717c20de3d3d",
+    "libs/vkd3d-shader/vkd3d_shader_main.c": "7cb33f12549f22f20717575aa0fe11bd363231df8351b5cf3942b90df9f1be24",
+    "libs/vkd3d-shader/vkd3d_shader_private.h": "775dfb70aba299ed2371ddf6623d90298a304aea63a68c4f93ae8db1d44c70fa",
+    "demos/demo.h": "f088c92ebad8a05c30067638878750896ce39d8aee6ae5087b88cbcfa572df0a",
+    "demos/demo_d3d12.h": "39efb92c13e0090c5ea868c2ff603ad0f86c6a8a1fffb642759ce82d53c1cef6",
+    "demos/demo_macos.h": "628315dd646dc98ef5c13c13d6fb3085043627ae2dc902e5460d5cdc7b268840",
+    "demos/demo_vkd3d.h": "32cae93556976b671edc8343c964a14c5dcc4928b7c0ef6bda2a02590777e0d4",
+    "demos/demo_win32.h": "a5ecc8bd8582ab79f331e25c50dd8010e08309b10f585d849017bf113cd7d72c",
+    "demos/demo_xcb.h": "c3228d4446be5417821e2a7fd4adb7f69fa04027fa158b40052050f5bcb894c2",
+    "demos/etl16-unicode.h": "b701241090a591df2b97504c7307a0ee5fc72e57b2494421161b0987b7dba8d3",
+    "demos/teapot.h": "ae55ff7cdf616841b4a29972d0fecad416b1b44150183287accc9d1e9464c063",
+    "libs/vkd3d-utils/vkd3d_utils_private.h": "e270967cc4228c484001bef5b6c7b4c9452269528e35d3cd41df24fcc6daf8bf",
+    "libs/vkd3d/vkd3d_private.h": "dcbddff80bc4108d2b3efb410a336cda585a65709663ec04a7efeed8e048b011",
+    "libs/vkd3d/vkd3d_shaders.h": "a69ad8ff919973935235eca20f82fd7a548839cd5f0c24f8985cd99d0f0b26ea",
+    "libs/vkd3d/vulkan_procs.h": "6ab77b0318f25e3debaf2a9787ef7840bef2ed58a3c14a856409fa4374956ef0",
+    "tests/d3d12_crosstest.h": "bf9ef35e09da6c5b7b882bc7fbd583b0ff78294b178761b9077d2c9e1a3c98aa",
+    "tests/d3d12_test_utils.h": "81e23d0f380af54b289336451aad79d1145ad8531b22d121cca9491c168952ac",
+    "tests/dxcompiler.h": "44d7ce619fabb77e4e7e81b6b831ed10e71fd02a1fa3d5599f16d577d5712982",
+    "tests/shader_runner.h": "96311244b94f876512b0e8d75634bedcf508693030e028641370bfa1acbb91a4",
+    "tests/utils.h": "9031960b8cf003542f4dae6d033d93c8a8eda4cb9fbdb27a452523d39b3a1e7a",
+    "tests/vulkan_procs.h": "a4edb48503eaf84ef553445e5db9c2c9b300abc3a2a796000a104fd957ca2096",
+    "tests/vulkan_utils.h": "2abf5e22fad6eab46e5cc6f9042bccba98ea0d8e7b51b1c2ba402a18ced77dd1"
+  },
+  "target_configuration": {
+    "include/config.h": "3eb48753699269921021e83dd87af85f0b11c0e20d4ee13084463d81d9db76d9",
+    "Makefile": "22c8d498cc7052dc08de3c3a433747124ca3bcca9c327acb1538497950fe72d2",
+    "libtool": "d9e07dc0d654ca706676d1bcda60a609a8bef90b8335b3b5d82c55bfda567269"
+  },
+  "matrix_sha256": "e2d2404a5dce85d9676372eefd0648e0b009cb4b50108be4e22dfc4340d6b196",
+  "patch_sha256": "08266707781812c410e732d349cc17adf41092c1e0eea041b75ce75126d82212",
+  "old_driver_sha256": "d409d1c8c41773b78e8bb2d2a50edf576200977acd37e648a016a8f3529d2dc8",
+  "fixtures": {
+    "c4-vs": "f10a5dea7134c41f98de974e6f19ee7d6b76a7b8ab4d97e868bde67acd3b587b",
+    "c4-ps": "889cc45a7974cfc5f320a23d7fec941deb02d83f177586de0cd98bade2482741",
+    "helper-vs": "07e708529a48c27ec2f5cd86ae96b39c49925f745275dd9f54bc5ddcff574263",
+    "helper-ps": "0f0e45ef937584a5ed6c51650743ff560d8c2c53371b575c588adc19f7b34a11",
+    "branch-vs": "55b67d9528ad50d72eab614ca428245e4adca2bcebf22f8fe15335e55f1d5d46",
+    "branch-ps": "f41915e513cd3b83b532875e4ca455664a5d8d1da9a6e4205dcfd15b567990fc",
+    "struct_io-vs": "ff4cd5ababcaeed5006cf588058e15859b1ab4b8fb76c2520481859feb2a3c84",
+    "struct_io-ps": "83cf3eb7cbb3acd3d99e5eafdb1231fc0e0b12577a46ea69a94af7e41efb8ecb",
+    "missing_float_controls": "f10a5dea7134c41f98de974e6f19ee7d6b76a7b8ab4d97e868bde67acd3b587b",
+    "invalid_pixel_semantic": "1b205c200f9a9db564078cc1d2a56a827f34882186afec5579e239d7073fd840"
+  },
+  "old_build_sha256": "4865d6fcd7632f07add8fb85b49b31b5273cd7b9606f2f246313d6fa1de77e0a",
+  "generated_files": [
+    "include/private/spirv_grammar.h",
+    "include/private/vkd3d_version.h",
+    "libs/vkd3d-shader/hlsl.tab.c",
+    "libs/vkd3d-shader/hlsl.tab.h",
+    "libs/vkd3d-shader/hlsl.yy.c",
+    "libs/vkd3d-shader/preproc.tab.c",
+    "libs/vkd3d-shader/preproc.tab.h",
+    "libs/vkd3d-shader/preproc.yy.c"
+  ],
+  "external_headers": {
+    "hdr/include/vk_video/vulkan_video_codec_av1std.h": "76c408eb8dce6e1f068594eb3239e75a05e3395f2ce10fef512599bd916fe879",
+    "hdr/include/vk_video/vulkan_video_codec_av1std_decode.h": "2b912389d39d6627ee8af01e052e9557d213b27c0b79a0e25f5366cfe1942f1a",
+    "hdr/include/vk_video/vulkan_video_codec_av1std_encode.h": "93ad363de123988cd7b27acc7930f7f93497bc2e5d74f8420ee8ba18e8746e0a",
+    "hdr/include/vk_video/vulkan_video_codec_h264std.h": "05859b58e094a8dcc88cb3766a1fcbfd62bcaab20c93d2c3e5cec853628f277c",
+    "hdr/include/vk_video/vulkan_video_codec_h264std_decode.h": "d2be01f84f773644a24b7634f49e63ff8c6f0e807119b1bf609176585031f93a",
+    "hdr/include/vk_video/vulkan_video_codec_h264std_encode.h": "c68a1fa4ebadd1b50992a61fb93310a6686d5ea932b91b850d3ad9bc8dec488e",
+    "hdr/include/vk_video/vulkan_video_codec_h265std.h": "a5d0b2e7b47843db610d2769c7b0202c90cd7db82108b60fb2631d1c7976a395",
+    "hdr/include/vk_video/vulkan_video_codec_h265std_decode.h": "944646ced5bf9f49b79144c18369f0b932900c375fd81c262a3c30e9c60de8c6",
+    "hdr/include/vk_video/vulkan_video_codec_h265std_encode.h": "aa8c75beac0962abf752a5ec741a42b1a108ee28fb6b3abcdc995e57e20c6c14",
+    "hdr/include/vk_video/vulkan_video_codecs_common.h": "7afc98e84d3bea72e40a65161463abbd4be2ff1e1853eca3f8c331afb7329a8b",
+    "hdr/include/vulkan/vk_icd.h": "6c80200a7fcc4c7da3170ef9dc674eab142c92767bfc9733c98649bce78aecb9",
+    "hdr/include/vulkan/vk_layer.h": "861cd0ea24c7d81b935e5726520d184dbbc00e571f9089e17a723ccbbc1944e2",
+    "hdr/include/vulkan/vk_platform.h": "2fa47dd60cd94eb6fd8d7615953878f5664eb57fdff3b1b9b856c1d8f1496737",
+    "hdr/include/vulkan/vulkan.cppm": "1c8bda9beeb969d47f5f5d3cc34ae458a4b74759e282c534d7624f2dd9ea4a33",
+    "hdr/include/vulkan/vulkan.h": "c3c0635de74ae3dd38268d6a4cb767b36e07135e68fa6f64b777e2d4d2db7d1a",
+    "hdr/include/vulkan/vulkan.hpp": "57bc65721f21b7c4f796e6878fdd912913e856c2f9a8e2e573c7f78018a74c7b",
+    "hdr/include/vulkan/vulkan_android.h": "298808a42c18f61a43d9c74beb91815c52f1808b41e4881c0a448f32ff6aa5cc",
+    "hdr/include/vulkan/vulkan_beta.h": "0f8da462cdd475a2010b47051b665d43e203c7930b1e1c7f771b641568e083bc",
+    "hdr/include/vulkan/vulkan_core.h": "39f358bb99f7be5206524d119de4a5b5ab5c515c329c2857ff395d37e6387b4c",
+    "hdr/include/vulkan/vulkan_directfb.h": "f80f5bccc82a1f5b940b4363273312f42e889cfe2050c90335ec8e0e5244d184",
+    "hdr/include/vulkan/vulkan_enums.hpp": "57d7a4afdbc89bf8827af2b0677c4232aa8e4e29d48f8fbb2f8797d8d823498e",
+    "hdr/include/vulkan/vulkan_extension_inspection.hpp": "a4cb272db388bbe12dd90529fb1c8899ce48f6cec0fa6aafff0e42794ce3cfd3",
+    "hdr/include/vulkan/vulkan_format_traits.hpp": "cbad36afe7cd4c6dd943c23b322619ee26e3b207920b0561b3cc5d35680c2198",
+    "hdr/include/vulkan/vulkan_fuchsia.h": "a1a8d10ae6cc15c43369feb941dceb1a06fa04e72a64431893d79456b20329da",
+    "hdr/include/vulkan/vulkan_funcs.hpp": "6f333e1d31eb845fc3cca9a93e7af8be7058e4267995c24f746008ac0d2b0451",
+    "hdr/include/vulkan/vulkan_ggp.h": "1cba2eb3fdb9c5c5b7843509d3c3905bc501d496d94af65cdd1676a245656e23",
+    "hdr/include/vulkan/vulkan_handles.hpp": "04783e908a910f8b589b4bb9ff27fe768f264c0cc68f2d8e04a904e7804f5925",
+    "hdr/include/vulkan/vulkan_hash.hpp": "8fccf0e87b11de35c11436a5f11d3cfbb28f12afde6567aba3ada649ce810572",
+    "hdr/include/vulkan/vulkan_hpp_macros.hpp": "d00e24b5853ae67f57ba4e5f21732d2cda8f64a407f93390a6a1f68c503bdea6",
+    "hdr/include/vulkan/vulkan_ios.h": "5913e5cec5c5117ae4ac94d7d3356f49dd9dffdb0fc1341c0bff61fdc7ceaafa",
+    "hdr/include/vulkan/vulkan_macos.h": "ad4434d698904eea0da0415c5915074291e1bb97dea112e7695ccd7ee3fc443c",
+    "hdr/include/vulkan/vulkan_metal.h": "008e5f4073715d637d3c167dfea7c47639f9a17c773b109f2e630894cf3e8c2d",
+    "hdr/include/vulkan/vulkan_raii.hpp": "54dfe102b170564d86e2423f09327bb1377d86a9df27349c1a312b102a1b8bfa",
+    "hdr/include/vulkan/vulkan_screen.h": "35da80553e4e5ec2cac98436f65517403e05aab9cb6524055ab140c776dc4234",
+    "hdr/include/vulkan/vulkan_shared.hpp": "0d5ac991efe5a43fc749531c34730c1e76744d4fcb77832ec783ceaf9f67d984",
+    "hdr/include/vulkan/vulkan_static_assertions.hpp": "d493679043db55d0512a7961c76ec0ecb66554056674baf3c529adea74d30ad2",
+    "hdr/include/vulkan/vulkan_structs.hpp": "464956220f044b5413c35a5c04813ffeb8c4950063848f9c09af394050be0d3f",
+    "hdr/include/vulkan/vulkan_to_string.hpp": "da23d4f965347c2563ab579fa8e620803760d27a7f7697a37a0fc2e0100e92eb",
+    "hdr/include/vulkan/vulkan_vi.h": "7b21d547b031645f99bdc4d8551bc20a14f0b500b1c35f92a9557b0a0245f443",
+    "hdr/include/vulkan/vulkan_video.hpp": "9f277e58dd09e2d478a13f0aeedd9de93ebe96c16ac3efdfe8c683a12afea236",
+    "hdr/include/vulkan/vulkan_wayland.h": "7b28a129b92c86aec3b59dd0a095f6bcefb2ee343bcd88a16387af896d0d569d",
+    "hdr/include/vulkan/vulkan_win32.h": "09dd68b959c58d2a0ef55aecf82ece844a1a38c46f016a01b968f1485ae5cbf8",
+    "hdr/include/vulkan/vulkan_xcb.h": "5068dcfe130f2c83e8e9aae94c1df17ad29c538b7e4e7c9dbb25b9714ef1c65c",
+    "hdr/include/vulkan/vulkan_xlib.h": "e65c2e3f27fe9a35f4367eb90bafff93acada40693f3b427e93c1ae0058bdff6",
+    "hdr/include/vulkan/vulkan_xlib_xrandr.h": "c7a2acf2ee68fb1b2622a97f608f37f540e840893e42f7cc4c81d9619fb4758c",
+    "spv/include/spirv/1.0/GLSL.std.450.h": "20f32378793c5f416bc0704f44345c2a14c99cba3f411e3beaf1bcea372d58ba",
+    "spv/include/spirv/1.0/OpenCL.std.h": "1bf64f1224a5368b7ae8182a5f9ebb29ebda56c43ddf1a387220c248a4963e49",
+    "spv/include/spirv/1.0/extinst.glsl.std.450.grammar.json": "3bcf78c13b71a9ebba51e890c55f41a5e0f47ba283bc7c08fd7e1344ea5f47a6",
+    "spv/include/spirv/1.0/extinst.opencl.std.100.grammar.json": "b6be3248af8e6150332ec5d9df2e578b364d588c762533831b7550f607a73ff8",
+    "spv/include/spirv/1.0/spirv.core.grammar.json": "0ee6f4207abffdfb13cd0ef3f3166eb56c58282df970325f87371538b98c2b55",
+    "spv/include/spirv/1.0/spirv.cs": "7ae09b3799f6d533765d1f321a4f2e2fce46e48ded27308d5bd3adffb1b4ec42",
+    "spv/include/spirv/1.0/spirv.h": "2d5012f7c72d90550f288d9a8f7d8bf4fab85522d42b9e25240d68bac5bbda7b",
+    "spv/include/spirv/1.0/spirv.hpp": "6a788efe40b59ae770bed56072b9c65cb2d998a0ccc706e849082835ecf7ab26",
+    "spv/include/spirv/1.0/spirv.hpp11": "a7d79fd03dd5a8e7a2b543415e804d0f47fa0c68d13bc3b2163caadcf7a5c938",
+    "spv/include/spirv/1.0/spirv.json": "0d65e97a7ddb2e987fef1e58bf0ff32de2c9475c1e9aa7557c88dd7b37906206",
+    "spv/include/spirv/1.0/spirv.lua": "02828ad5fba2cb80313cbc888ab8e5a97bb46071b078073c5e5c48ae8ec6d6a0",
+    "spv/include/spirv/1.0/spirv.py": "f26b9f9ed7df9c95004953662547c26b63ccda8a04e4260a883a6c891e4e1be5",
+    "spv/include/spirv/1.1/GLSL.std.450.h": "20f32378793c5f416bc0704f44345c2a14c99cba3f411e3beaf1bcea372d58ba",
+    "spv/include/spirv/1.1/OpenCL.std.h": "1bf64f1224a5368b7ae8182a5f9ebb29ebda56c43ddf1a387220c248a4963e49",
+    "spv/include/spirv/1.1/extinst.glsl.std.450.grammar.json": "3bcf78c13b71a9ebba51e890c55f41a5e0f47ba283bc7c08fd7e1344ea5f47a6",
+    "spv/include/spirv/1.1/extinst.opencl.std.100.grammar.json": "b6be3248af8e6150332ec5d9df2e578b364d588c762533831b7550f607a73ff8",
+    "spv/include/spirv/1.1/spirv.core.grammar.json": "1c1fdaf1c7f5a5e43368e9058158f9dfa8818fa2af9690969479eafdd3a312e8",
+    "spv/include/spirv/1.1/spirv.cs": "35b7d6589f7af7ddfc7cb767087ed91bc995e9cbdcd10720c87ff017908ade9e",
+    "spv/include/spirv/1.1/spirv.h": "bff97d2f7597ed7e7e179cd989e92746e3baba2244b4845cf81fc3a1e0199475",
+    "spv/include/spirv/1.1/spirv.hpp": "ad8ba5758ef28fc5cecbc2a7b794f3ee6f3aa06f4b5c05c6bd07e65ae0c14395",
+    "spv/include/spirv/1.1/spirv.hpp11": "56600c2401e908e17828fcba3a5a6605116e7050892d171978318a7d5097d22f",
+    "spv/include/spirv/1.1/spirv.json": "ca2fcda12f1f74521a0be893fbf21c286ed492f0052f48fb5b9f656dcd3c2550",
+    "spv/include/spirv/1.1/spirv.lua": "7c3799f2b35d7ef50f601f921373bf41774d4ba5d6d5b6f07e77e876d4970150",
+    "spv/include/spirv/1.1/spirv.py": "80b42128a214bb2639f3f459a2550347dec71eedd96028f48d5c529fb1d063aa",
+    "spv/include/spirv/1.2/GLSL.std.450.h": "20f32378793c5f416bc0704f44345c2a14c99cba3f411e3beaf1bcea372d58ba",
+    "spv/include/spirv/1.2/OpenCL.std.h": "1bf64f1224a5368b7ae8182a5f9ebb29ebda56c43ddf1a387220c248a4963e49",
+    "spv/include/spirv/1.2/extinst.glsl.std.450.grammar.json": "3bcf78c13b71a9ebba51e890c55f41a5e0f47ba283bc7c08fd7e1344ea5f47a6",
+    "spv/include/spirv/1.2/extinst.opencl.std.100.grammar.json": "b6be3248af8e6150332ec5d9df2e578b364d588c762533831b7550f607a73ff8",
+    "spv/include/spirv/1.2/spirv.core.grammar.json": "3e04cd2830b382dbbc58bed98bec73d0a90937208fc3219a9a57b3a1149c1d52",
+    "spv/include/spirv/1.2/spirv.cs": "2a8650a17c7684cf7c7331555c58d6a66a2600fd9b0b8eda8ab0c24b7ca1f422",
+    "spv/include/spirv/1.2/spirv.h": "6ded440f20b37749d24b5381580e8fc2399131b7eaeafdab620c131c70f751f5",
+    "spv/include/spirv/1.2/spirv.hpp": "112cbd9795fbc1a200f6945192c37bbad44d87b26a7f3d03e5eb1e8a47431168",
+    "spv/include/spirv/1.2/spirv.hpp11": "c57d150216560dd5d960efedda1ee410b15d6730574e2156651de6a93a8bea6b",
+    "spv/include/spirv/1.2/spirv.json": "c305c77c0a57f1abeaae3cd016e2abfb00399931de13453716bb8a65c1524e37",
+    "spv/include/spirv/1.2/spirv.lua": "51f16765ddd90f66f7a08dc29e4fb0d182634b76a1dc2216915d3794d8e3e155",
+    "spv/include/spirv/1.2/spirv.py": "bd950f3969acb714f97d39a7139e5143ad476bd4337fae9a3aac835f387d9aa6",
+    "spv/include/spirv/spir-v.xml": "c9e8efdbf2c6dcde13d38d42b08e13599eb83799ef178a2357a14091110a07e0",
+    "spv/include/spirv/unified1/AMD_gcn_shader.h": "4a96133110a8af1a6b2b9f406e5e9b6f8bebcbaf6724fa35cf248ccee30e72a5",
+    "spv/include/spirv/unified1/AMD_shader_ballot.h": "490a6c939fe5bab522ef9f19eb02db59b5b8e787afa02d150fc1659b3891481d",
+    "spv/include/spirv/unified1/AMD_shader_explicit_vertex_parameter.h": "a0941f660b24547f189c04ca915e93516f057e01612c689e42e92dfeed5ed3e7",
+    "spv/include/spirv/unified1/AMD_shader_trinary_minmax.h": "a3f71c268f3aa7c75cfc8a652e5d9c939fa43acd1fe88f72d13c8316f9a343ee",
+    "spv/include/spirv/unified1/DebugInfo.h": "8322942ed8d1a61779f486c4b19d3641404204d6ad8ed36907353360f32d1b79",
+    "spv/include/spirv/unified1/GLSL.std.450.h": "8bca15bf3e149e5927e366adfe048c00535273e81dd21e3f0f0bc1f58fd9f293",
+    "spv/include/spirv/unified1/NonSemanticClspvReflection.h": "bd17bd1ef71cbcaddbcaadae2b4fde6f08ab1079f0e1ba41a4dfb163956813c2",
+    "spv/include/spirv/unified1/NonSemanticDebugBreak.h": "12a1fb15d3f30c08c631f5465fbab359198738b991512b5e6a9ee1aa54ef8646",
+    "spv/include/spirv/unified1/NonSemanticDebugPrintf.h": "7f74b5d06fc0e92861b3cc7561bc34f465750aa08400673b6c5703e4246f0f1c",
+    "spv/include/spirv/unified1/NonSemanticShaderDebugInfo100.h": "f22e8ce116c326c81ad4d0cc99b8da7b95f8fb800de77c11f7129bd04d251299",
+    "spv/include/spirv/unified1/NonSemanticVkspReflection.h": "3b667c721d8d695e349ffd047e2aa9923cad84e94422a21825bfea03a62375a3",
+    "spv/include/spirv/unified1/OpenCL.std.h": "b2ba3fa9c4368e979addc6885b6255da0f2e797d32dd9a3dfce448f995e5e4c8",
+    "spv/include/spirv/unified1/OpenCLDebugInfo100.h": "e159af6efe64db36cc526c178b657d15e25be29dfd1dddf0e02c278865928586",
+    "spv/include/spirv/unified1/extinst.debuginfo.grammar.json": "a24c296b55ce91a96a8314278dedd1f73dec690c0c595bc210e412083d631e14",
+    "spv/include/spirv/unified1/extinst.glsl.std.450.grammar.json": "d211843d2d7f253e2b4b4e56f2afe546f6e4abbdedebca78b1cd8cfdb0ec69a5",
+    "spv/include/spirv/unified1/extinst.nonsemantic.clspvreflection.grammar.json": "372a42af2d9b11453aa2f2a5769647a963deef14af46afb6c5a6e1a0d7b0c7c6",
+    "spv/include/spirv/unified1/extinst.nonsemantic.debugbreak.grammar.json": "1d30fb3a054592f8d749dff42ad4aa4f695bd5f0d4a9cadc70694a1d0cafe23b",
+    "spv/include/spirv/unified1/extinst.nonsemantic.debugprintf.grammar.json": "cee40052315c2eb05472f8eaf6b89a2103924f60960de38b91176daa676a0b06",
+    "spv/include/spirv/unified1/extinst.nonsemantic.shader.debuginfo.100.grammar.json": "b8fdafe12dba77e9f0da0d4650f2c4ad4a291ac2d2428d2159dda2a8f0bff1fe",
+    "spv/include/spirv/unified1/extinst.nonsemantic.vkspreflection.grammar.json": "5479df05d87a80d84031fe8837908fb66b02b8f07f5cdb43b06005534d749200",
+    "spv/include/spirv/unified1/extinst.opencl.debuginfo.100.grammar.json": "19c119a9a4acc25099d4c333b081b841a2fd6ce95b7cba86a11c0a90bad46a97",
+    "spv/include/spirv/unified1/extinst.opencl.std.100.grammar.json": "3b35d875c91910b0a57a3dd0e22c5fbcd40757a128bcf77d740ce02e1c0d7b52",
+    "spv/include/spirv/unified1/extinst.spv-amd-gcn-shader.grammar.json": "7b972dba987f7c1fbe45576b6c8519e44ceca376e72149cce6ced715036ea931",
+    "spv/include/spirv/unified1/extinst.spv-amd-shader-ballot.grammar.json": "e157110872680641caf4f0c85a87c4fd6f938cf44ee2e86aed08e1ad05e10239",
+    "spv/include/spirv/unified1/extinst.spv-amd-shader-explicit-vertex-parameter.grammar.json": "bc1a31468a8bc0f0181f1f9df5670c681a73508e6f5b20c15542afda84e1e9fa",
+    "spv/include/spirv/unified1/extinst.spv-amd-shader-trinary-minmax.grammar.json": "c00616ee0b00eeec3710fd32dbc26959fcaee50ae7ce3add4d216755c1d48efa",
+    "spv/include/spirv/unified1/spirv.bf": "642a7f54d457313a4fdcb8d2575d77afa7595c160917ffc2cea0069c39e2edbe",
+    "spv/include/spirv/unified1/spirv.core.grammar.json": "9a3c5318f6561a74a9cadbb203fba01b2dcf69b56ea182a3d2ed79ec5dea23c6",
+    "spv/include/spirv/unified1/spirv.cs": "8a510e77c6456b5b26e174f7e33af2b26397a6a8d894fb52db66e73fd23eecf2",
+    "spv/include/spirv/unified1/spirv.h": "11356988137205582c030435c29a9606b4a13f2d03955ffbdec52de9f9a9ef0a",
+    "spv/include/spirv/unified1/spirv.hpp": "2b9333cdf1d580c9875e37dad2579c6bf808081dda2a69499774a00537a289bd",
+    "spv/include/spirv/unified1/spirv.hpp11": "b7e9e7f918ee188b9630b15bcd2f55228e919f5d2dddc9e14af1d80bece6f9d6",
+    "spv/include/spirv/unified1/spirv.json": "b390d9c5b0a32863c79b42c8cf8cee643670ab0ab967fa596f2ba0e7dafcb523",
+    "spv/include/spirv/unified1/spirv.lua": "3fc00e8856c6626bfebf0cf18794c9adefbda6c0d67f84e75288c163bffb0054",
+    "spv/include/spirv/unified1/spirv.py": "fbcf888f1f7a54ddcfdaecfe37ba2d0b575f2f5453f733628921783b52120887",
+    "spv/include/spirv/unified1/spv.d": "26182b9e5191301b1081860eef0b2d3990c1e9054830f708a0add40c99a9e87d"
+  },
+  "external_archives": {
+    "Vulkan-Headers-v1.4.309": "437925ada160d86ed763d29dcb9318c1bb0d024d7deaf77bc7c170b8eb6b6f10",
+    "SPIRV-Headers-vulkan-sdk-1.4.309.0": "a96f8b4f2dfb18f7432e5c523e220ab0075372a9509e0c25fbff21c76af0de7c"
+  },
+  "dependency_boundary": "Conservative recursive inventory of all .h/.l/.y under the actual source search root (.), all 24 production units and generator/export inputs, and every file under both vendor include roots. Target include/config.h remains separate. Symlinks anywhere in these trees fail closed. The authenticated Makefile binds search order, shader-specific roots and compile recipes; literal traversal of all production units and reachable includes rejects unsupported include forms or filename suffixes. Generated/configuration differences are separate; system/compiler/platform SDK inputs and complete producer identity are not claimed.",
+  "external_include_roots": [
+    "hdr/include",
+    "spv/include"
+  ],
+  "local_include_roots": [
+    ".",
+    "include",
+    "include/private",
+    "libs/vkd3d-shader"
+  ],
+  "include_recipe": {
+    "DEFAULT_INCLUDES": "-I. -I$(top_builddir)/include",
+    "AM_CPPFLAGS": "-I$(srcdir)/include -I$(srcdir)/include/private -I$(builddir)/include/private",
+    "COMPILE": "$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)",
+    "LTCOMPILE": "$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)",
+    "srcdir": ".",
+    "builddir": ".",
+    "top_srcdir": ".",
+    "top_builddir": ".",
+    "libvkd3d_shader_la_CFLAGS": "$(AM_CFLAGS) -DLIBVKD3D_SHADER_SOURCE -DVKD3D_DEBUG_ENV=VKD3D_SHADER_DEBUG -I$(srcdir)/libs/vkd3d-shader",
+    "CPPFLAGS": [
+      "-I../hdr/include",
+      "-I../spv/include"
+    ],
+    "INCLUDES": "",
+    "compile_recipes_sha256": "dd99ab8611496db57ce9fc1ca485718cd8fa259b39b15d6d2e3d5a9fa71a309e"
+  },
+  "literal_include_graph": {
+    "visited": [
+      "hdr/include/vk_video/vulkan_video_codec_av1std.h",
+      "hdr/include/vk_video/vulkan_video_codec_av1std_decode.h",
+      "hdr/include/vk_video/vulkan_video_codec_av1std_encode.h",
+      "hdr/include/vk_video/vulkan_video_codec_h264std.h",
+      "hdr/include/vk_video/vulkan_video_codec_h264std_decode.h",
+      "hdr/include/vk_video/vulkan_video_codec_h264std_encode.h",
+      "hdr/include/vk_video/vulkan_video_codec_h265std.h",
+      "hdr/include/vk_video/vulkan_video_codec_h265std_decode.h",
+      "hdr/include/vk_video/vulkan_video_codec_h265std_encode.h",
+      "hdr/include/vk_video/vulkan_video_codecs_common.h",
+      "hdr/include/vulkan/vk_platform.h",
+      "hdr/include/vulkan/vulkan.h",
+      "hdr/include/vulkan/vulkan_android.h",
+      "hdr/include/vulkan/vulkan_beta.h",
+      "hdr/include/vulkan/vulkan_core.h",
+      "hdr/include/vulkan/vulkan_directfb.h",
+      "hdr/include/vulkan/vulkan_fuchsia.h",
+      "hdr/include/vulkan/vulkan_ggp.h",
+      "hdr/include/vulkan/vulkan_ios.h",
+      "hdr/include/vulkan/vulkan_macos.h",
+      "hdr/include/vulkan/vulkan_metal.h",
+      "hdr/include/vulkan/vulkan_screen.h",
+      "hdr/include/vulkan/vulkan_vi.h",
+      "hdr/include/vulkan/vulkan_wayland.h",
+      "hdr/include/vulkan/vulkan_win32.h",
+      "hdr/include/vulkan/vulkan_xcb.h",
+      "hdr/include/vulkan/vulkan_xlib.h",
+      "hdr/include/vulkan/vulkan_xlib_xrandr.h",
+      "spv/include/spirv/unified1/GLSL.std.450.h",
+      "spv/include/spirv/unified1/spirv.h",
+      "vkd3d-2.1/include/config.h",
+      "vkd3d-2.1/include/private/list.h",
+      "vkd3d-2.1/include/private/rbtree.h",
+      "vkd3d-2.1/include/private/spirv_grammar.h",
+      "vkd3d-2.1/include/private/vkd3d_blob.h",
+      "vkd3d-2.1/include/private/vkd3d_common.h",
+      "vkd3d-2.1/include/private/vkd3d_memory.h",
+      "vkd3d-2.1/include/private/vkd3d_shader_utils.h",
+      "vkd3d-2.1/include/private/vkd3d_utf8.h",
+      "vkd3d-2.1/include/private/vkd3d_version.h",
+      "vkd3d-2.1/include/vkd3d.h",
+      "vkd3d-2.1/include/vkd3d_d3d10_1shader.h",
+      "vkd3d-2.1/include/vkd3d_d3d10shader.h",
+      "vkd3d-2.1/include/vkd3d_d3d11shader.h",
+      "vkd3d-2.1/include/vkd3d_d3d12.h",
+      "vkd3d-2.1/include/vkd3d_d3d12sdklayers.h",
+      "vkd3d-2.1/include/vkd3d_d3d12shader.h",
+      "vkd3d-2.1/include/vkd3d_d3d9types.h",
+      "vkd3d-2.1/include/vkd3d_d3dcommon.h",
+      "vkd3d-2.1/include/vkd3d_d3dx9shader.h",
+      "vkd3d-2.1/include/vkd3d_dxgibase.h",
+      "vkd3d-2.1/include/vkd3d_dxgiformat.h",
+      "vkd3d-2.1/include/vkd3d_shader.h",
+      "vkd3d-2.1/include/vkd3d_types.h",
+      "vkd3d-2.1/include/vkd3d_windows.h",
+      "vkd3d-2.1/libs/vkd3d-common/blob.c",
+      "vkd3d-2.1/libs/vkd3d-common/debug.c",
+      "vkd3d-2.1/libs/vkd3d-common/error.c",
+      "vkd3d-2.1/libs/vkd3d-common/memory.c",
+      "vkd3d-2.1/libs/vkd3d-common/utf8.c",
+      "vkd3d-2.1/libs/vkd3d-shader/checksum.c",
+      "vkd3d-2.1/libs/vkd3d-shader/d3d_asm.c",
+      "vkd3d-2.1/libs/vkd3d-shader/d3dbc.c",
+      "vkd3d-2.1/libs/vkd3d-shader/dxbc.c",
+      "vkd3d-2.1/libs/vkd3d-shader/dxil.c",
+      "vkd3d-2.1/libs/vkd3d-shader/fx.c",
+      "vkd3d-2.1/libs/vkd3d-shader/glsl.c",
+      "vkd3d-2.1/libs/vkd3d-shader/hlsl.c",
+      "vkd3d-2.1/libs/vkd3d-shader/hlsl.h",
+      "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.c",
+      "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.h",
+      "vkd3d-2.1/libs/vkd3d-shader/hlsl.yy.c",
+      "vkd3d-2.1/libs/vkd3d-shader/hlsl_codegen.c",
+      "vkd3d-2.1/libs/vkd3d-shader/hlsl_constant_ops.c",
+      "vkd3d-2.1/libs/vkd3d-shader/ir.c",
+      "vkd3d-2.1/libs/vkd3d-shader/msl.c",
+      "vkd3d-2.1/libs/vkd3d-shader/preproc.h",
+      "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.c",
+      "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.h",
+      "vkd3d-2.1/libs/vkd3d-shader/preproc.yy.c",
+      "vkd3d-2.1/libs/vkd3d-shader/spirv.c",
+      "vkd3d-2.1/libs/vkd3d-shader/tpf.c",
+      "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_main.c",
+      "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+    ],
+    "edges": [
+      [
+        "hdr/include/vk_video/vulkan_video_codec_av1std.h",
+        "vulkan_video_codecs_common.h",
+        "hdr/include/vk_video/vulkan_video_codecs_common.h"
+      ],
+      [
+        "hdr/include/vk_video/vulkan_video_codec_av1std_decode.h",
+        "vulkan_video_codec_av1std.h",
+        "hdr/include/vk_video/vulkan_video_codec_av1std.h"
+      ],
+      [
+        "hdr/include/vk_video/vulkan_video_codec_av1std_encode.h",
+        "vulkan_video_codec_av1std.h",
+        "hdr/include/vk_video/vulkan_video_codec_av1std.h"
+      ],
+      [
+        "hdr/include/vk_video/vulkan_video_codec_h264std.h",
+        "vulkan_video_codecs_common.h",
+        "hdr/include/vk_video/vulkan_video_codecs_common.h"
+      ],
+      [
+        "hdr/include/vk_video/vulkan_video_codec_h264std_decode.h",
+        "vulkan_video_codec_h264std.h",
+        "hdr/include/vk_video/vulkan_video_codec_h264std.h"
+      ],
+      [
+        "hdr/include/vk_video/vulkan_video_codec_h264std_encode.h",
+        "vulkan_video_codec_h264std.h",
+        "hdr/include/vk_video/vulkan_video_codec_h264std.h"
+      ],
+      [
+        "hdr/include/vk_video/vulkan_video_codec_h265std.h",
+        "vulkan_video_codecs_common.h",
+        "hdr/include/vk_video/vulkan_video_codecs_common.h"
+      ],
+      [
+        "hdr/include/vk_video/vulkan_video_codec_h265std_decode.h",
+        "vulkan_video_codec_h265std.h",
+        "hdr/include/vk_video/vulkan_video_codec_h265std.h"
+      ],
+      [
+        "hdr/include/vk_video/vulkan_video_codec_h265std_encode.h",
+        "vulkan_video_codec_h265std.h",
+        "hdr/include/vk_video/vulkan_video_codec_h265std.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vk_platform.h",
+        "hdr/include/vulkan/vk_platform.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_android.h",
+        "hdr/include/vulkan/vulkan_android.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_beta.h",
+        "hdr/include/vulkan/vulkan_beta.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_core.h",
+        "hdr/include/vulkan/vulkan_core.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_directfb.h",
+        "hdr/include/vulkan/vulkan_directfb.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_fuchsia.h",
+        "hdr/include/vulkan/vulkan_fuchsia.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_ggp.h",
+        "hdr/include/vulkan/vulkan_ggp.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_ios.h",
+        "hdr/include/vulkan/vulkan_ios.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_macos.h",
+        "hdr/include/vulkan/vulkan_macos.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_metal.h",
+        "hdr/include/vulkan/vulkan_metal.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_screen.h",
+        "hdr/include/vulkan/vulkan_screen.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_vi.h",
+        "hdr/include/vulkan/vulkan_vi.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_wayland.h",
+        "hdr/include/vulkan/vulkan_wayland.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_win32.h",
+        "hdr/include/vulkan/vulkan_win32.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_xcb.h",
+        "hdr/include/vulkan/vulkan_xcb.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_xlib.h",
+        "hdr/include/vulkan/vulkan_xlib.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_xlib_xrandr.h",
+        "hdr/include/vulkan/vulkan_xlib_xrandr.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan_core.h",
+        "vk_platform.h",
+        "hdr/include/vulkan/vk_platform.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan_core.h",
+        "vk_video/vulkan_video_codec_av1std.h",
+        "hdr/include/vk_video/vulkan_video_codec_av1std.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan_core.h",
+        "vk_video/vulkan_video_codec_av1std_decode.h",
+        "hdr/include/vk_video/vulkan_video_codec_av1std_decode.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan_core.h",
+        "vk_video/vulkan_video_codec_av1std_encode.h",
+        "hdr/include/vk_video/vulkan_video_codec_av1std_encode.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan_core.h",
+        "vk_video/vulkan_video_codec_h264std.h",
+        "hdr/include/vk_video/vulkan_video_codec_h264std.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan_core.h",
+        "vk_video/vulkan_video_codec_h264std_decode.h",
+        "hdr/include/vk_video/vulkan_video_codec_h264std_decode.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan_core.h",
+        "vk_video/vulkan_video_codec_h264std_encode.h",
+        "hdr/include/vk_video/vulkan_video_codec_h264std_encode.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan_core.h",
+        "vk_video/vulkan_video_codec_h265std.h",
+        "hdr/include/vk_video/vulkan_video_codec_h265std.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan_core.h",
+        "vk_video/vulkan_video_codec_h265std_decode.h",
+        "hdr/include/vk_video/vulkan_video_codec_h265std_decode.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan_core.h",
+        "vk_video/vulkan_video_codec_h265std_encode.h",
+        "hdr/include/vk_video/vulkan_video_codec_h265std_encode.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_blob.h",
+        "vkd3d_d3dcommon.h",
+        "vkd3d-2.1/include/vkd3d_d3dcommon.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_blob.h",
+        "vkd3d_windows.h",
+        "vkd3d-2.1/include/vkd3d_windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_common.h",
+        "config.h",
+        "vkd3d-2.1/include/config.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_common.h",
+        "vkd3d_types.h",
+        "vkd3d-2.1/include/vkd3d_types.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_common.h",
+        "vkd3d_windows.h",
+        "vkd3d-2.1/include/vkd3d_windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_memory.h",
+        "vkd3d_common.h",
+        "vkd3d-2.1/include/private/vkd3d_common.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_shader_utils.h",
+        "vkd3d_shader.h",
+        "vkd3d-2.1/include/vkd3d_shader.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_utf8.h",
+        "vkd3d_common.h",
+        "vkd3d-2.1/include/private/vkd3d_common.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d.h",
+        "vkd3d_d3d12.h",
+        "vkd3d-2.1/include/vkd3d_d3d12.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d.h",
+        "vkd3d_types.h",
+        "vkd3d-2.1/include/vkd3d_types.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d.h",
+        "vkd3d_windows.h",
+        "vkd3d-2.1/include/vkd3d_windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d.h",
+        "vulkan/vulkan.h",
+        "hdr/include/vulkan/vulkan.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d10_1shader.h",
+        "vkd3d_d3d10shader.h",
+        "vkd3d-2.1/include/vkd3d_d3d10shader.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d10shader.h",
+        "vkd3d_d3dcommon.h",
+        "vkd3d-2.1/include/vkd3d_d3dcommon.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d11shader.h",
+        "vkd3d_d3dcommon.h",
+        "vkd3d-2.1/include/vkd3d_d3dcommon.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12.h",
+        "vkd3d_d3d12sdklayers.h",
+        "vkd3d-2.1/include/vkd3d_d3d12sdklayers.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12.h",
+        "vkd3d_d3dcommon.h",
+        "vkd3d-2.1/include/vkd3d_d3dcommon.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12.h",
+        "vkd3d_dxgibase.h",
+        "vkd3d-2.1/include/vkd3d_dxgibase.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12.h",
+        "vkd3d_windows.h",
+        "vkd3d-2.1/include/vkd3d_windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12sdklayers.h",
+        "vkd3d_d3d12.h",
+        "vkd3d-2.1/include/vkd3d_d3d12.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12shader.h",
+        "vkd3d_d3dcommon.h",
+        "vkd3d-2.1/include/vkd3d_d3dcommon.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12shader.h",
+        "vkd3d_windows.h",
+        "vkd3d-2.1/include/vkd3d_windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3dcommon.h",
+        "vkd3d_windows.h",
+        "vkd3d-2.1/include/vkd3d_windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3dx9shader.h",
+        "vkd3d_d3d9types.h",
+        "vkd3d-2.1/include/vkd3d_d3d9types.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3dx9shader.h",
+        "vkd3d_windows.h",
+        "vkd3d-2.1/include/vkd3d_windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_dxgibase.h",
+        "vkd3d_dxgiformat.h",
+        "vkd3d-2.1/include/vkd3d_dxgiformat.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_dxgibase.h",
+        "vkd3d_windows.h",
+        "vkd3d-2.1/include/vkd3d_windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_shader.h",
+        "vkd3d_types.h",
+        "vkd3d-2.1/include/vkd3d_types.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/blob.c",
+        "vkd3d.h",
+        "vkd3d-2.1/include/vkd3d.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/blob.c",
+        "vkd3d_blob.h",
+        "vkd3d-2.1/include/private/vkd3d_blob.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/blob.c",
+        "vkd3d_d3d10_1shader.h",
+        "vkd3d-2.1/include/vkd3d_d3d10_1shader.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/blob.c",
+        "vkd3d_d3d10shader.h",
+        "vkd3d-2.1/include/vkd3d_d3d10shader.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/blob.c",
+        "vkd3d_d3d11shader.h",
+        "vkd3d-2.1/include/vkd3d_d3d11shader.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/blob.c",
+        "vkd3d_d3d12shader.h",
+        "vkd3d-2.1/include/vkd3d_d3d12shader.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/blob.c",
+        "vkd3d_memory.h",
+        "vkd3d-2.1/include/private/vkd3d_memory.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/debug.c",
+        "vkd3d_common.h",
+        "vkd3d-2.1/include/private/vkd3d_common.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/debug.c",
+        "vkd3d_memory.h",
+        "vkd3d-2.1/include/private/vkd3d_memory.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/error.c",
+        "vkd3d_common.h",
+        "vkd3d-2.1/include/private/vkd3d_common.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/memory.c",
+        "vkd3d_memory.h",
+        "vkd3d-2.1/include/private/vkd3d_memory.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/utf8.c",
+        "vkd3d_memory.h",
+        "vkd3d-2.1/include/private/vkd3d_memory.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/utf8.c",
+        "vkd3d_utf8.h",
+        "vkd3d-2.1/include/private/vkd3d_utf8.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/checksum.c",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/d3d_asm.c",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/d3dbc.c",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/dxbc.c",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/dxil.c",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/fx.c",
+        "hlsl.h",
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/glsl.c",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.c",
+        "hlsl.h",
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.h",
+        "rbtree.h",
+        "vkd3d-2.1/include/private/rbtree.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.h",
+        "vkd3d_d3dx9shader.h",
+        "vkd3d-2.1/include/vkd3d_d3dx9shader.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.h",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.c",
+        "hlsl.tab.h",
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.h",
+        "hlsl.h",
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.yy.c",
+        "config.h",
+        "vkd3d-2.1/include/config.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.yy.c",
+        "hlsl.h",
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.yy.c",
+        "hlsl.tab.h",
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl_codegen.c",
+        "hlsl.h",
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl_codegen.c",
+        "vkd3d_d3dcommon.h",
+        "vkd3d-2.1/include/vkd3d_d3dcommon.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl_codegen.c",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl_constant_ops.c",
+        "hlsl.h",
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/ir.c",
+        "rbtree.h",
+        "vkd3d-2.1/include/private/rbtree.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/ir.c",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/ir.c",
+        "vkd3d_types.h",
+        "vkd3d-2.1/include/vkd3d_types.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/msl.c",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.h",
+        "rbtree.h",
+        "vkd3d-2.1/include/private/rbtree.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.h",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.c",
+        "preproc.tab.h",
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.c",
+        "vkd3d_shader_utils.h",
+        "vkd3d-2.1/include/private/vkd3d_shader_utils.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.h",
+        "preproc.h",
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.h",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.yy.c",
+        "config.h",
+        "vkd3d-2.1/include/config.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.yy.c",
+        "preproc.tab.h",
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/spirv.c",
+        "rbtree.h",
+        "vkd3d-2.1/include/private/rbtree.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/spirv.c",
+        "spirv/unified1/GLSL.std.450.h",
+        "spv/include/spirv/unified1/GLSL.std.450.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/spirv.c",
+        "spirv/unified1/spirv.h",
+        "spv/include/spirv/unified1/spirv.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/spirv.c",
+        "spirv_grammar.h",
+        "vkd3d-2.1/include/private/spirv_grammar.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/spirv.c",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/tpf.c",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_main.c",
+        "hlsl.h",
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_main.c",
+        "vkd3d_shader_private.h",
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_main.c",
+        "vkd3d_version.h",
+        "vkd3d-2.1/include/private/vkd3d_version.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h",
+        "list.h",
+        "vkd3d-2.1/include/private/list.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h",
+        "vkd3d_common.h",
+        "vkd3d-2.1/include/private/vkd3d_common.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h",
+        "vkd3d_memory.h",
+        "vkd3d-2.1/include/private/vkd3d_memory.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h",
+        "vkd3d_shader.h",
+        "vkd3d-2.1/include/vkd3d_shader.h"
+      ]
+    ],
+    "unresolved_system_sdk_or_disabled": [
+      [
+        "hdr/include/vk_video/vulkan_video_codecs_common.h",
+        "stdint.h"
+      ],
+      [
+        "hdr/include/vulkan/vk_platform.h",
+        "stddef.h"
+      ],
+      [
+        "hdr/include/vulkan/vk_platform.h",
+        "stdint.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "X11/Xlib.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "X11/extensions/Xrandr.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "directfb.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "ggp_c/vulkan_types.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "nvscibuf.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "nvscisync.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "screen/screen.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "vulkan_sci.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "windows.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "xcb/xcb.h"
+      ],
+      [
+        "hdr/include/vulkan/vulkan.h",
+        "zircon/types.h"
+      ],
+      [
+        "spv/include/spirv/unified1/spirv.h",
+        "stdbool.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/list.h",
+        "stddef.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_common.h",
+        "ctype.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_common.h",
+        "dlfcn.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_common.h",
+        "intrin.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_common.h",
+        "limits.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_common.h",
+        "pthread.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_common.h",
+        "stdbool.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_common.h",
+        "stdint.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_common.h",
+        "stdio.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_common.h",
+        "stdlib.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_memory.h",
+        "stdbool.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_memory.h",
+        "stdlib.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_memory.h",
+        "string.h"
+      ],
+      [
+        "vkd3d-2.1/include/private/vkd3d_shader_utils.h",
+        "sys/stat.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d10_1shader.h",
+        "ole2.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d10_1shader.h",
+        "rpc.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d10_1shader.h",
+        "rpcndr.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d10_1shader.h",
+        "windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d10shader.h",
+        "ole2.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d10shader.h",
+        "rpc.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d10shader.h",
+        "rpcndr.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d10shader.h",
+        "windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d11shader.h",
+        "ole2.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d11shader.h",
+        "rpc.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d11shader.h",
+        "rpcndr.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d11shader.h",
+        "windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12.h",
+        "ole2.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12.h",
+        "rpc.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12.h",
+        "rpcndr.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12.h",
+        "windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12sdklayers.h",
+        "ole2.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12sdklayers.h",
+        "rpc.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12sdklayers.h",
+        "rpcndr.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12sdklayers.h",
+        "windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12shader.h",
+        "ole2.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12shader.h",
+        "rpc.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12shader.h",
+        "rpcndr.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3d12shader.h",
+        "windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3dcommon.h",
+        "ole2.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3dcommon.h",
+        "rpc.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3dcommon.h",
+        "rpcndr.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3dcommon.h",
+        "windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3dx9shader.h",
+        "ole2.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3dx9shader.h",
+        "rpc.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3dx9shader.h",
+        "rpcndr.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_d3dx9shader.h",
+        "windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_dxgibase.h",
+        "ole2.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_dxgibase.h",
+        "rpc.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_dxgibase.h",
+        "rpcndr.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_dxgibase.h",
+        "windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_dxgiformat.h",
+        "ole2.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_dxgiformat.h",
+        "rpc.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_dxgiformat.h",
+        "rpcndr.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_dxgiformat.h",
+        "windows.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_shader.h",
+        "stdbool.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_shader.h",
+        "stddef.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_shader.h",
+        "stdint.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_types.h",
+        "stdarg.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_windows.h",
+        "stddef.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_windows.h",
+        "stdint.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_windows.h",
+        "stdlib.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_windows.h",
+        "string.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_windows.h",
+        "wchar.h"
+      ],
+      [
+        "vkd3d-2.1/include/vkd3d_windows.h",
+        "windows.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/debug.c",
+        "ctype.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/debug.c",
+        "errno.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/debug.c",
+        "inttypes.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/debug.c",
+        "limits.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/debug.c",
+        "pthread.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/debug.c",
+        "stdbool.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/debug.c",
+        "stdio.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/debug.c",
+        "stdlib.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/debug.c",
+        "string.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/debug.c",
+        "unistd.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-common/utf8.c",
+        "inttypes.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/d3d_asm.c",
+        "math.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/d3d_asm.c",
+        "stdio.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.c",
+        "stdio.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.c",
+        "alloca.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.c",
+        "libintl.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.c",
+        "limits.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.c",
+        "malloc.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.c",
+        "stddef.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.c",
+        "stdint.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.c",
+        "stdio.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.c",
+        "stdlib.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.tab.h",
+        "stdio.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.yy.c",
+        "errno.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.yy.c",
+        "inttypes.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.yy.c",
+        "stdio.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.yy.c",
+        "stdlib.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.yy.c",
+        "string.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl.yy.c",
+        "unistd.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl_codegen.c",
+        "math.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl_codegen.c",
+        "stdio.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/hlsl_constant_ops.c",
+        "math.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.c",
+        "alloca.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.c",
+        "libintl.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.c",
+        "limits.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.c",
+        "malloc.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.c",
+        "stddef.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.c",
+        "stdint.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.c",
+        "stdio.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.c",
+        "stdlib.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.tab.h",
+        "stdio.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.yy.c",
+        "errno.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.yy.c",
+        "inttypes.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.yy.c",
+        "stdio.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.yy.c",
+        "stdlib.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.yy.c",
+        "string.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/preproc.yy.c",
+        "unistd.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/spirv.c",
+        "spirv-tools/libspirv.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/spirv.c",
+        "stdarg.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/spirv.c",
+        "stdio.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/spirv.c",
+        "vulkan/GLSL.std.450.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/spirv.c",
+        "vulkan/spirv.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_main.c",
+        "math.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_main.c",
+        "stdio.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h",
+        "inttypes.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h",
+        "limits.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h",
+        "locale.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h",
+        "stdbool.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h",
+        "string.h"
+      ],
+      [
+        "vkd3d-2.1/libs/vkd3d-shader/vkd3d_shader_private.h",
+        "xlocale.h"
+      ]
+    ]
+  },
+  "producer_contract": {
+    "schema": "mds-vkd3d-fresh-producer-v1",
+    "recipe_sha256": "5d0b14c53e86988b6fe91b48deffa523f761ccd45c7da3ac2e78de8b621a3bb5",
+    "archives": {
+      "vkd3d-2.1.tar.xz": "7510146aff2adfb4ae07ab890701a607e5ff7c66e57100cfc9f630ec92eeda6a",
+      "vulkan-headers.tar.gz": "437925ada160d86ed763d29dcb9318c1bb0d024d7deaf77bc7c170b8eb6b6f10",
+      "spirv-headers.tar.gz": "a96f8b4f2dfb18f7432e5c523e220ab0075372a9509e0c25fbff21c76af0de7c"
+    },
+    "patches": {
+      "0001-vpos-vface-io.patch": "08266707781812c410e732d349cc17adf41092c1e0eea041b75ce75126d82212"
+    }
+  },
+  "finite_record_compile_recipe": {
+    "compile_recipes_sha256": "4a247faa05bde2d300ac65c8493cd6c6ad2dc6b8ed8355992eaa30ac94ba5f6f",
+    "configure_argument": "--disable-dependency-tracking",
+    "observed_provenance": {
+      "repository": "geekjapan/MikuDanceStudio-J",
+      "run_id": 40479716813,
+      "run_attempt": 1,
+      "job_id": 122106673148,
+      "api_head": "8b358d87c798174e82c8be940b4a3610c5d4761e",
+      "checkout": "87451d36cffce385f088dca8f96570c7e0ad9883",
+      "artifact_id": 12722487135,
+      "artifact_name": "native-linux-arm64-capture",
+      "artifact_sha256": "3a58dbf756ec363d684f56db97dc4c019ff36a56727886247b11be9b555b483f",
+      "producer_recipe_sha256": "88b67b70a68f38f9042607ca4cdbc278ed40a731d57ee4d15b55f5779223d19f",
+      "makefile_member": "record/work/vkd3d-2.1/Makefile",
+      "compile_recipe_count": 65
+    }
+  }
+}

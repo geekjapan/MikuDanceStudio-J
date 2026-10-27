@@ -1,0 +1,217 @@
+name: vkd3d native producer profiles
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/vkd3d-native-profiles.yml
+      - tools/vkd3d/build.sh
+      - tools/vkd3d/test_build_record.py
+      - tools/vkd3d/patches/**
+      - tools/vkd3d-rust-probe/shader_driver.rs
+      - tools/vkd3d-rust-probe/check_shader_inputs.py
+      - tools/vkd3d-rust-probe/test_shader_driver.py
+      - tools/vkd3d-rust-probe/test_native_profiles.py
+      - tools/vkd3d-rust-probe/native-profile-reference.json
+      - tools/vkd3d-rust-probe/NATIVE_PROFILES.md
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-profiles-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GIT_CONFIG_COUNT: '1'
+  GIT_CONFIG_KEY_0: core.autocrlf
+  GIT_CONFIG_VALUE_0: 'false'
+
+jobs:
+  build-windows-producer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build finite fresh MinGW producer and retain stage evidence
+        timeout-minutes: 25
+        env:
+          MDS_VKD3D_OUT: ${{ runner.temp }}/native-windows/build
+          MDS_VKD3D_RECORD_DIR: ${{ runner.temp }}/native-windows/record
+        run: |
+          mkdir -p "$RUNNER_TEMP/native-windows"
+          set -o pipefail
+          bash tools/vkd3d/build.sh windows 2>&1 | tee "$RUNNER_TEMP/native-windows/build.log"
+          python3 -c 'import json, os; from pathlib import Path; p = Path(os.environ["MDS_VKD3D_RECORD_DIR"]); r = json.loads((p / "producer-receipt.json").read_text()); r["status"] == "success" and len(r["stages"]) == 5 or exit("incomplete fresh producer")'
+          cd "$RUNNER_TEMP/native-windows"
+          tar -chzf windows-profile.tar.gz record
+          sha256sum windows-profile.tar.gz > windows-profile.sha256
+      - name: Record job outcome
+        if: always()
+        env:
+          CAPTURE_JOB_STATUS: ${{ job.status }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/native-windows"
+          python3 - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'native-windows'
+          (root / 'job.json').write_text(json.dumps({key: os.environ.get(key) for key in ('CAPTURE_JOB_STATUS', 'GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'ImageVersion')}, indent=2) + '\n')
+          PYTHON
+      - name: Retain producer bundle and partial records
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-windows-producer
+          path: |
+            ${{ runner.temp }}/native-windows/record/
+            ${{ runner.temp }}/native-windows/build.log
+            ${{ runner.temp }}/native-windows/job.json
+            ${{ runner.temp }}/native-windows/windows-profile.tar.gz
+            ${{ runner.temp }}/native-windows/windows-profile.sha256
+          retention-days: 7
+          if-no-files-found: error
+          include-hidden-files: true
+
+  capture-windows:
+    needs: build-windows-producer
+    runs-on: windows-2022
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-windows-producer
+          path: ${{ runner.temp }}/native-windows-input
+      - name: Verify producer bundle and caller tools
+        timeout-minutes: 5
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'native-windows-input'
+          $bundle = Join-Path $root 'windows-profile.tar.gz'
+          $expected = ((Get-Content (Join-Path $root 'windows-profile.sha256')).Split(' '))[0]
+          if ((Get-FileHash $bundle -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'producer bundle hash differs' }
+          $capture = Join-Path $env:RUNNER_TEMP 'native-windows-capture'
+          New-Item -ItemType Directory -Force $capture | Out-Null
+          tar -xzf $bundle -C $capture
+          if ($LASTEXITCODE -ne 0) { throw 'producer extraction failed' }
+          if (!(Test-Path C:/mingw64/bin/gcc.exe)) { throw 'header caller compiler unavailable' }
+          rustup toolchain install 1.95.0 --profile minimal
+          if ($LASTEXITCODE -ne 0) { throw 'pinned Rust unavailable' }
+      - name: Exercise actual Windows loader and ownership
+        timeout-minutes: 5
+        run: |
+          python -m unittest discover -s tools/vkd3d-rust-probe -p test_shader_driver.py
+          if ($LASTEXITCODE -ne 0) { throw 'loader tests failed' }
+          python -O -m unittest discover -s tools/vkd3d-rust-probe -p test_shader_driver.py
+          if ($LASTEXITCODE -ne 0) { throw 'optimized loader tests failed' }
+          python -m unittest discover -s tools/vkd3d-rust-probe -p test_native_profiles.py
+          if ($LASTEXITCODE -ne 0) { throw 'profile tests failed' }
+          python -O -m unittest discover -s tools/vkd3d-rust-probe -p test_native_profiles.py
+          if ($LASTEXITCODE -ne 0) { throw 'optimized profile tests failed' }
+      - name: Capture actual MinGW DLL with unchanged 48 inputs and 2 rejections
+        timeout-minutes: 8
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'native-windows-capture'
+          $record = Join-Path $root 'record'
+          python tools/vkd3d-rust-probe/check_shader_inputs.py --native-only --cc C:/mingw64/bin/gcc.exe --source "$record/work/vkd3d-2.1" --build-record $record --header "$record/prefix/include/vkd3d/vkd3d_shader.h" --native-library "$record/prefix/bin/libvkd3d-shader-1.dll" --artifacts "$root/capture"
+          if ($LASTEXITCODE -ne 0) { throw 'native Windows capture failed' }
+      - name: Record job outcome
+        if: always()
+        env:
+          CAPTURE_JOB_STATUS: ${{ job.status }}
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'native-windows-capture'
+          New-Item -ItemType Directory -Force $root | Out-Null
+          @{ status = $env:CAPTURE_JOB_STATUS; sha = $env:GITHUB_SHA; run = $env:GITHUB_RUN_ID; image = $env:ImageVersion } | ConvertTo-Json | Set-Content (Join-Path $root 'job.json')
+      - name: Preserve actual Windows capture and partial records
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-windows-capture
+          path: ${{ runner.temp }}/native-windows-capture/
+          retention-days: 7
+          if-no-files-found: error
+          include-hidden-files: true
+
+  capture-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      CC: /usr/bin/gcc-13
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: d04607ea268403039576e85963064e927bcb6d3a
+          path: .native-reference
+      - name: Install native build tools and pinned Rust
+        timeout-minutes: 7
+        run: |
+          mkdir -p "$RUNNER_TEMP/native-arm64"
+          echo "MDS_VKD3D_OUT=$RUNNER_TEMP/native-arm64/build" >> "$GITHUB_ENV"
+          echo "MDS_VKD3D_RECORD_DIR=$RUNNER_TEMP/native-arm64/record" >> "$GITHUB_ENV"
+          exec > >(tee "$RUNNER_TEMP/native-arm64/setup.log") 2>&1
+          sudo timeout --kill-after=10s 120s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update
+          sudo timeout --kill-after=10s 240s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends build-essential gcc-13 bison flex pkg-config libjson-perl xz-utils
+          rustup toolchain install 1.95.0 --profile minimal
+      - name: Exercise native caller and record boundaries
+        timeout-minutes: 5
+        run: |
+          python3 -m unittest discover -s tools/vkd3d-rust-probe -p test_shader_driver.py
+          python3 -O -m unittest discover -s tools/vkd3d-rust-probe -p test_shader_driver.py
+          python3 -m unittest discover -s tools/vkd3d-rust-probe -p test_native_profiles.py
+          python3 -O -m unittest discover -s tools/vkd3d-rust-probe -p test_native_profiles.py
+          python3 -m unittest discover -s tools/vkd3d -p test_build_record.py
+          python3 -O -m unittest discover -s tools/vkd3d -p test_build_record.py
+      - name: Build finite fresh native GCC 13 producer and retain stage evidence
+        timeout-minutes: 12
+        run: |
+          set -o pipefail
+          bash tools/vkd3d/build.sh linux-native 2>&1 | tee "$RUNNER_TEMP/native-arm64/build.log"
+      - name: Capture actual ARM64 native library with unchanged 48 inputs and 2 rejections
+        timeout-minutes: 5
+        run: |
+          export LD_LIBRARY_PATH="$MDS_VKD3D_OUT/linux-native/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          python3 tools/vkd3d-rust-probe/check_shader_inputs.py --native-only --cc "$CC" \
+            --compare-driver "$GITHUB_WORKSPACE/.native-reference/tools/vkd3d-rust-probe/shader_driver.rs" \
+            --source "$MDS_VKD3D_RECORD_DIR/work/vkd3d-2.1" --build-record "$MDS_VKD3D_RECORD_DIR" \
+            --header "$MDS_VKD3D_OUT/linux-native/include/vkd3d/vkd3d_shader.h" \
+            --native-library "$MDS_VKD3D_OUT/linux-native/lib/libvkd3d-shader.so.1" \
+            --artifacts "$RUNNER_TEMP/native-arm64/capture"
+      - name: Record job outcome
+        if: always()
+        env:
+          CAPTURE_JOB_STATUS: ${{ job.status }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/native-arm64"
+          python3 - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'native-arm64'
+          (root / 'job.json').write_text(json.dumps({key: os.environ.get(key) for key in ('CAPTURE_JOB_STATUS', 'GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'ImageVersion')}, indent=2) + '\n')
+          PYTHON
+      - name: Preserve ARM64 capture and partial producer records
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-linux-arm64-capture
+          path: ${{ runner.temp }}/native-arm64/
+          retention-days: 7
+          if-no-files-found: error
+          include-hidden-files: true

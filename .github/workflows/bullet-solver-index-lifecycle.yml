@@ -1,0 +1,68 @@
+name: Bullet solver index lifecycle
+
+on:
+  push:
+    paths:
+      - 'tools/bullet-solver-index-lifecycle/**'
+      - 'recipes/bullet275/bullet-src/src/**'
+      - 'rust/crates/mds-bullet-sys/**'
+      - 'rust/crates/mds-crtmath/**'
+      - '.github/workflows/bullet-solver-index-lifecycle.yml'
+  pull_request:
+    paths:
+      - 'tools/bullet-solver-index-lifecycle/**'
+      - 'recipes/bullet275/bullet-src/src/**'
+      - 'rust/crates/mds-bullet-sys/**'
+      - 'rust/crates/mds-crtmath/**'
+      - '.github/workflows/bullet-solver-index-lifecycle.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Real World and sequential impulse solver (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15, ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Install Clang on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+      - name: Characterize native lifecycle with Clang and ASan
+        if: runner.os != 'Windows'
+        env:
+          CXX: clang++
+        run: python3 tools/bullet-solver-index-lifecycle/check.py --out-dir "${{ runner.temp }}/bullet-solver-index"
+      - name: Characterize native lifecycle with MSVC and ASan
+        if: runner.os == 'Windows'
+        shell: cmd
+        env:
+          CXX: cl
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          python tools/bullet-solver-index-lifecycle/check.py --out-dir "${{ runner.temp }}\bullet-solver-index"
+      - name: Save terminal results, copied-source diffs, inputs, and hashes
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bullet-solver-index-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/bullet-solver-index/*.json
+            ${{ runner.temp }}/bullet-solver-index/*.stdout
+            ${{ runner.temp }}/bullet-solver-index/*.stderr
+            ${{ runner.temp }}/bullet-solver-index/*.diff
+            ${{ runner.temp }}/bullet-solver-index/*.cpp
+          if-no-files-found: error

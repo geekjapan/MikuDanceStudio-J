@@ -380,6 +380,15 @@ promoted tails, exported candidates, address escapes, signature conflicts,
 four-host C width execution, actual lowering, and four-host generated-code ABI execution
 remain required. No production variadic definition is enabled by this work.
 
+Top-level `{"unproved":"reason"}` function signatures retain their definition
+unit, declaration ID, name, location, raw signature, and reason in
+`unclassified_definitions`, separate from known `symbols`. Each produces
+`candidate_signature_unproved`. Calls to those definitions, including aliases,
+produce `call_signature_unproved` without assigning tail slots. An unproved
+declaration cannot establish compatibility with a known candidate. Malformed
+signature envelopes raise `PlanError`. Unknown signatures supply no ABI,
+variadic flag, or parameter defaults. The additional list is omitted when empty.
+
 The new hosted inventory checks have not yet executed. The existing isolated
 four-host native cursor probe remains separate prerequisite evidence.
 

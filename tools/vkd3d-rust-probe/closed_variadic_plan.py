@@ -32,8 +32,26 @@ def compatible_type(typ):
     return result
 
 
+class SignatureUnproved(PlanError):
+    pass
+
+
 def function_signature(declaration):
-    return compatible_type(declaration['signature']['canonical'])
+    signature = declaration.get('signature')
+    if isinstance(signature, dict) and set(signature) == {'unproved'}:
+        if not isinstance(signature['unproved'], str) or not signature['unproved']:
+            raise PlanError('invalid unproved function signature reason')
+        raise SignatureUnproved(signature['unproved'])
+    if not isinstance(signature, dict) or set(signature) != {'canonical', 'const', 'volatile', 'restrict'} or any(
+            type(signature[k]) is not bool for k in ('const', 'volatile', 'restrict')):
+        raise PlanError('invalid function signature envelope')
+    canonical = signature['canonical']
+    if not isinstance(canonical, dict) or set(canonical) != {'return', 'parameters', 'variadic', 'noreturn', 'prototype', 'abi'} or not (
+            isinstance(canonical['return'], dict) and isinstance(canonical['parameters'], list)
+            and all(isinstance(p, dict) for p in canonical['parameters']) and isinstance(canonical['abi'], str)) or any(
+            type(canonical[k]) is not bool for k in ('variadic', 'noreturn', 'prototype')):
+        raise PlanError('invalid canonical function signature facts')
+    return compatible_type(canonical)
 
 
 class RecordUnproved(PlanError):
@@ -227,16 +245,26 @@ def build_plan(inventories, expected_units, exports):
         raise PlanError('Clang target C widths differ from supported slot contract')
     declarations = {}
     tables = {}
+    signatures = {}
+    unproved_signatures = {}
+    declaration_units = {}
     for item in inventories:
         if item.get('schema') != 2 or item.get('record_evidence_schema') != 2 or item['authorization'] != 'inventory_only':
             raise PlanError('unsupported inventory contract')
         table = record_table(item)
         for declaration in item['declarations']:
             tables[id(declaration)] = table
+            declaration_units[id(declaration)] = item['unit']
+            try:
+                signatures[id(declaration)] = function_signature(declaration)
+            except SignatureUnproved as error:
+                unproved_signatures[id(declaration)] = str(error)
             key = symbol_key(declaration['symbol'])
             declarations.setdefault(key, []).append(declaration)
     candidates = {}
     diagnostics = []
+    unclassified_definitions = []
+    unclassified_keys = set()
 
     def reject(code, key, location, detail=None):
         diagnostics.append({'code': code, 'symbol': list(key), 'location': location, 'detail': detail})
@@ -274,20 +302,34 @@ def build_plan(inventories, expected_units, exports):
 
     for key, records in declarations.items():
         definitions = [d for d in records if d['definition']]
-        if not definitions or not any(function_signature(d)['variadic'] or d['va_parameters'] for d in definitions):
+        for definition in definitions:
+            if id(definition) in unproved_signatures:
+                reason = unproved_signatures[id(definition)]
+                unclassified_keys.add(key)
+                unclassified_definitions.append({
+                    'symbol': list(key), 'unit': declaration_units[id(definition)],
+                    'id': definition['id'], 'name': key[-1], 'location': definition['location'],
+                    'signature': definition['signature'], 'reason': reason})
+                reject('candidate_signature_unproved', key, definition['location'], reason)
+        known_definitions = [d for d in definitions if id(d) in signatures]
+        if not any(signatures[id(d)]['variadic'] or d['va_parameters'] for d in known_definitions):
             continue
-        definition = definitions[0]
-        signature = function_signature(definition)
+        definition = known_definitions[0]
+        signature = signatures[id(definition)]
         candidates[key] = {'symbol': list(key), 'definition': definition['location'],
                            'signature': signature, 'calls': []}
         if len(definitions) != 1:
             reject('multiple_definitions', key, definition['location'])
         try:
             for declaration in records:
+                if id(declaration) in unproved_signatures:
+                    raise SignatureUnproved(unproved_signatures[id(declaration)])
                 validate_type(declaration['signature'], tables[id(declaration)])
-            matches = [compare_evidence(signature, function_signature(d), tables[id(definition)], tables[id(d)]) for d in records]
+            matches = [compare_evidence(signature, signatures[id(d)], tables[id(definition)], tables[id(d)]) for d in records]
             if not all(matches):
                 reject('signature_mismatch', key, definition['location'])
+        except SignatureUnproved as error:
+            reject('candidate_signature_unproved', key, definition['location'], str(error))
         except RecordUnproved as error:
             reject('record_compatibility_unproved', key, definition['location'], str(error))
         if key[0] == 'linker' and key[1] in exports:
@@ -321,7 +363,12 @@ def build_plan(inventories, expected_units, exports):
                     reject('unclassified_indirect_call', owner, call['location'])
                 continue
             key = symbol_key(call['callee'])
+            unknown_targets = alias_reachable.get(key, {key}) & unclassified_keys
+            for unknown in sorted(unknown_targets):
+                reject('call_signature_unproved', unknown, call['location'])
             for key in visible_candidates(key):
+                if key in unknown_targets:
+                    continue
                 signature = candidates[key]['signature']
                 fixed = len(signature['parameters'])
                 if len(call['arguments']) < fixed or (not signature['variadic'] and len(call['arguments']) != fixed):
@@ -335,12 +382,15 @@ def build_plan(inventories, expected_units, exports):
                         reject('unsupported_tail_type', key, call['location'], str(error))
                 candidates[key]['calls'].append({'unit': item['unit'], 'location': call['location'],
                                                  'expression': call['id'], 'slots': slots})
-    return {'schema': 2, 'record_evidence_schema': 2, 'target': target, 'target_c_widths_bits': widths, 'authorization': 'inventory_only',
+    plan = {'schema': 2, 'record_evidence_schema': 2, 'target': target, 'target_c_widths_bits': widths, 'authorization': 'inventory_only',
             'units': sorted(units), 'symbols': list(candidates.values()),
             'record_definitions': {item['unit']: item['record_definitions'] for item in inventories},
             'diagnostics': diagnostics,
             'remaining_gates': ['four_host_target_C_width_execution', 'cursor_alias_and_control_flow',
                                 'generator_lowering', 'four_host_generated_code_ABI']}
+    if unclassified_definitions:
+        plan['unclassified_definitions'] = unclassified_definitions
+    return plan
 
 
 def collect_probe(root):

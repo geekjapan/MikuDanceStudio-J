@@ -8,7 +8,7 @@ import io
 import json
 import tarfile
 import zipfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import subprocess
 import sys
 import tempfile
@@ -168,7 +168,8 @@ class FreshProducerTest(unittest.TestCase):
                      for name in reference[key]}
             names |= set(reference['external_headers'])
             names |= {'vkd3d-2.1/config.status', 'vkd3d-2.1/libtool'}
-            original = str(root / 'build/work-linux-native')
+            original = '/tmp/work-linux-native'
+            original_tree = root / 'build/work-linux-native'
             for name in names:
                 path = record / 'work' / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -201,10 +202,24 @@ class FreshProducerTest(unittest.TestCase):
                 path.write_text(json.dumps(value))
                 return producer_identity(record, reference, source, {})
             verify(receipt)  # Original Linux paths need not exist on the capture host.
-            shutil.copytree(record / 'work', original)
-            original_source = Path(original) / 'vkd3d-2.1'
+            windows_root = PureWindowsPath(r'C:\runner\native-windows-capture')
+            resolve = Path.resolve
+            local_root = root.resolve()
+            def windows_resolve(path, *args, **kwargs):
+                resolved = resolve(path, *args, **kwargs)
+                return windows_root.joinpath(*resolved.relative_to(local_root).parts)
+            with self.subTest(transport='Windows retained paths'), patch.object(Path, 'resolve', windows_resolve):
+                self.assertEqual(source.resolve(), windows_root / 'record/work/vkd3d-2.1')
+                verify(receipt)
+                changed = copy.deepcopy(receipt)
+                changed['original_work_root'] = str(windows_root / 'build/work-linux-native')
+                with self.assertRaisesRegex(RuntimeError, 'invalid original producer root'):
+                    verify(changed)
+            verify(receipt)
+            shutil.copytree(record / 'work', original_tree)
+            original_source = original_tree / 'vkd3d-2.1'
             for name in names:
-                self.assertEqual((record / 'work' / name).read_bytes(), (Path(original) / name).read_bytes())
+                self.assertEqual((record / 'work' / name).read_bytes(), (original_tree / name).read_bytes())
             workflow = Path(__file__).resolve().parents[2] / '.github/workflows/vkd3d-native-profiles.yml'
             arm_job = workflow.read_text().split('  capture-linux-arm64:', 1)[1]
             source_line = next(line for line in arm_job.splitlines() if '--source ' in line)

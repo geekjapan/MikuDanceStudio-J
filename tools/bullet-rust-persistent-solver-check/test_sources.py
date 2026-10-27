@@ -1,13 +1,27 @@
 """Exercise live provenance against real CRT module membership and contents."""
+import hashlib
 import shutil
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from unittest.mock import patch
 
 import check
 
 
 class SourceClosureTests(unittest.TestCase):
+    def test_manifest_keys_are_posix_and_hashes_preserve_bytes(self):
+        data = b'first\r\nsecond\n'
+        relative = 'rust/crates/mds-crtmath/src/digest.rs'
+        for path_type, directory in [(PureWindowsPath, 'C:/repo'), (PurePosixPath, '/repo')]:
+            with self.subTest(path_type=path_type):
+                root = path_type(directory)
+                with patch.object(check, 'source_paths', return_value=[root / relative]), \
+                        patch.object(path_type, 'read_bytes', create=True, return_value=data):
+                    self.assertEqual(check.source_hashes(root), {
+                        relative: hashlib.sha256(data).hexdigest(),
+                    })
+
     def test_compiled_crt_modules_are_required(self):
         manifest = check.source_hashes()
         for name in ['digest.rs', 'explog.rs', 'inv.rs', 'tables.rs', 'trig.rs']:

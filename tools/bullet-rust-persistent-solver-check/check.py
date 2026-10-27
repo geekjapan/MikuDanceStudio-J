@@ -28,7 +28,7 @@ def source_paths(root=ROOT):
 
 
 def source_hashes(root=ROOT):
-    return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in source_paths(root)}
+    return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in source_paths(root)}
 
 
 def verify_sources(before, root=ROOT):

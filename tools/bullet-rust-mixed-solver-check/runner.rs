@@ -1,9 +1,14 @@
+#[path = "../../rust/crates/mds-bullet/src/core/activation.rs"]
+pub mod activation;
+#[path = "../../rust/crates/mds-bullet/src/core/islands.rs"]
+pub mod islands;
 extern crate bullet_core_support as base;
 pub use base::{joint_coordinates, joint_rows, math, time, InvalidArgument};
 #[path = "../../rust/crates/mds-bullet/src/core/body.rs"]
 pub mod body;
 #[path = "../../rust/crates/mds-bullet/src/core/box_box.rs"]
 pub mod box_box;
+#[allow(dead_code)]
 #[path = "../../rust/crates/mds-bullet/src/core/contact.rs"]
 pub mod contact;
 #[path = "../../rust/crates/mds-bullet/src/core/contact_solver.rs"]
@@ -24,7 +29,10 @@ use contact::ContactPoint;
 use contact_solver::ContactManifold;
 use joint_rows::{AngularMotor, AxisMotor, JointState, Spring};
 use math::{Basis, Transform, Vec3};
-use solver::{GroupSolver, ImpulseRow, Joint, Phase, RowKind, SolveEvent, SolverMode};
+use solver::{
+    GroupSelection, GroupSolver, ImpulseRow, Joint, Phase, RowKind, SolveEvent, SolverMode,
+    SolverWorkspace,
+};
 use std::io::Write;
 struct Reader<'a>(std::str::SplitWhitespace<'a>);
 impl Reader<'_> {
@@ -94,12 +102,12 @@ fn originals(
     w: &mut Vec<u32>,
     bodies: &[RigidBody],
     manifolds: &[ContactManifold<'_>],
-    companions: Option<&[Option<usize>]>,
+    companions: Option<&[i32]>,
 ) {
     w.push(bodies.len() as u32);
     for (i, b) in bodies.iter().enumerate() {
         if let Some(companions) = companions {
-            w.push(companions[i].map_or(u32::MAX, |id| id as u32));
+            w.push(companions[i] as u32);
         }
         let bstate = b.snapshot();
         transform(w, bstate.world);
@@ -183,8 +191,8 @@ fn numeric(r: solver::SolverRow) -> ImpulseRow {
     }
 }
 fn snapshot(s: &GroupSolver, bodies: &[RigidBody], manifolds: &[ContactManifold<'_>]) -> Vec<u32> {
-    let mut w = vec![s.bodies.entries.len() as u32];
-    for b in &s.bodies.entries {
+    let mut w = vec![s.bodies.live_len() as u32];
+    for b in s.bodies.live_entries() {
         w.push(b.original.map_or(u32::MAX, |i| i as u32));
         for v in [
             b.inverse_mass,
@@ -221,7 +229,16 @@ fn snapshot(s: &GroupSolver, bodies: &[RigidBody], manifolds: &[ContactManifold<
             1,
         ]);
     }
-    originals(&mut w, bodies, manifolds, Some(&s.bodies.companions));
+    originals(
+        &mut w,
+        bodies,
+        manifolds,
+        Some(
+            &(0..bodies.len())
+                .map(|i| s.bodies.companion_id(i).map_or(-1, |id| id as i32))
+                .collect::<Vec<_>>(),
+        ),
+    );
     w
 }
 fn emit(out: &mut impl Write, prefix: &str, words: Vec<u32>) {
@@ -347,7 +364,36 @@ fn main() {
             })
             .collect();
         for step in 0..steps {
-            let mut s = GroupSolver::setup(&bodies, &mut joints, &mut manifolds, dt, mode);
+            let mut workspace = SolverWorkspace::default();
+            let mut objects: Vec<_> = (0..bodies.len())
+                .map(|_| crate::islands::IslandObject {
+                    activation: crate::activation::BodyActivation::default(),
+                    classification: crate::activation::CollisionClassification::Dynamic,
+                    contact_response: true,
+                    island_tag: -1,
+                    companion_id: -1,
+                    hit_fraction: 1.0,
+                })
+                .collect();
+            let body_indices: Vec<_> = (0..bodies.len()).collect();
+            let joint_indices: Vec<_> = (0..joints.len()).collect();
+            let manifold_indices: Vec<_> = (0..manifolds.len()).collect();
+            let selection = GroupSelection {
+                bodies: &body_indices,
+                joints: &joint_indices,
+                manifolds: &manifold_indices,
+            };
+            let mut s = GroupSolver::setup(
+                &mut workspace,
+                &mut objects,
+                &bodies,
+                &mut joints,
+                &mut manifolds,
+                selection,
+                dt,
+                mode,
+            )
+            .unwrap();
             emit(
                 &mut trace,
                 &format!("{case}\t{step}\t0\t-1\t-1"),
@@ -381,16 +427,29 @@ fn main() {
                     &format!("{case}\t{step}\t{kind}\t{it}\t{index}"),
                     snapshot(s, &bodies, &manifolds),
                 );
-            });
+            })
+            .unwrap();
             // Keep the final owned state for comparison after consuming writeback.
             let mut end = snapshot(&s, &bodies, &manifolds);
             let tail = {
                 let mut w = Vec::new();
-                originals(&mut w, &bodies, &manifolds, Some(&s.bodies.companions));
+                originals(
+                    &mut w,
+                    &bodies,
+                    &manifolds,
+                    Some(
+                        &(0..bodies.len())
+                            .map(|i| s.bodies.companion_id(i).map_or(-1, |id| id as i32))
+                            .collect::<Vec<_>>(),
+                    ),
+                );
                 w.len()
             };
-            let companions = s.bodies.companions.clone();
-            let pool_originals: Vec<_> = s.bodies.entries.iter().map(|b| b.original).collect();
+            let companions: Vec<_> = (0..bodies.len())
+                .map(|i| s.bodies.companion_id(i).map_or(-1, |id| id as i32))
+                .collect();
+            let pool_originals: Vec<_> =
+                s.bodies.live_entries().iter().map(|b| b.original).collect();
             let before = end.clone();
             let body_offset = end.len() - tail + 1;
             s.writeback(&mut bodies, &mut manifolds);

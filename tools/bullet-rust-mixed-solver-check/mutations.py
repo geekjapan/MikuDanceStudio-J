@@ -76,24 +76,24 @@ def run_mutations(root, here, out, inputs, run, rust_command, suffix, native):
     mutations = []
     def add(name, s=solver, c=contact, r=runner):mutations.append((name,s,c,r))
     joint_start = solver.index('            for index in 0..self.joint_rows.len()')
-    callback_start = solver.index('            for (joint, constraint) in joints.iter().enumerate()')
+    callback_start = solver.index('            for &joint in self.selection.joints')
     contact_start = solver.index('            for index in 0..self.normals.len()')
-    iterate_end = solver.index('\n        }\n    }\n\n    pub fn writeback',contact_start)
+    iterate_end = solver.index('\n        }\n        Ok(())\n    }\n\n    pub fn writeback',contact_start)
     contact_block = solver[contact_start:iterate_end]
     add('ten-joint-then-ten-contact',s=solver[:contact_start] + solver[iterate_end:iterate_end+10] + '\n        for iteration in 0..10 {\n' + contact_block + solver[iterate_end:])
     setup_call = '        build_rows(\n'
-    begin = solver.index(setup_call); finish = solver.index('\n        solver\n',begin)
+    begin = solver.index(setup_call); finish = solver.index('\n        Ok(solver)\n',begin)
     build = solver[begin:finish]
-    setup_loop = solver.index('        for joint in joints.iter_mut()')
+    setup_loop = solver.index('        for &index in selection.joints')
     add('contact-setup-first',s=solver[:setup_loop]+build+'\n'+solver[setup_loop:begin]+solver[finish:])
-    add('callback-preregister',s=solver[:begin]+'        for j in joints.iter() { for i in j.bodies { solver.bodies.get_or_init(bodies, i); } }\n'+solver[begin:])
-    add('callback-omit',s=solver[:callback_start]+'            let _ = (bodies,joints);\n'+solver[contact_start:])
-    registration = '        let ids = manifold.bodies.map(|i| pool.get_or_init(bodies, i));\n        if ids == [0, 0] {\n            continue;\n        }\n'
+    add('callback-preregister',s=solver[:begin]+'        for j in joints.iter() { for i in j.bodies { solver.bodies.get_or_init(bodies, i).unwrap(); } }\n'+solver[begin:])
+    add('callback-omit',s=solver[:callback_start]+'            let _ = (bodies,joints,self.selection);\n'+solver[contact_start:])
+    registration = '        let [a_id, b_id] = manifold.bodies.map(|i| pool.get_or_init(bodies, i));\n        let ids = [a_id?, b_id?];\n        if ids == [0, 0] {\n            continue;\n        }\n'
     delayed = once(contact, registration, '')
     delayed = once(delayed, '            let rel = [', registration + '            let rel = [')
     add('register-after-point-acceptance', c=delayed)
     add('register-masszero-kinematic', s=once(solver, 'if state.inverse_mass == 0.0 {', 'if state.inverse_mass == 0.0 && !state.is_kinematic {'))
-    add('duplicate-body',s=once(solver,'if let Some(id) = self.companions[original] {','if let Some(id) = None::<usize> {'))
+    add('duplicate-body',s=once(solver,'if let Some(id) = self.companion_id(original) {','if let Some(id) = None::<usize> {'))
     add('duplicate-writeback',s=solver.replace('state.linear_velocity.add(solver_body.delta_linear)','state.linear_velocity.add(solver_body.delta_linear).add(solver_body.delta_linear)'))
     for factor in ['0.0','1.0']:
         add('warmstart-'+factor,c=once(contact,'point.applied_impulse * 0.85','point.applied_impulse * '+factor))
@@ -109,8 +109,8 @@ def run_mutations(root, here, out, inputs, run, rust_command, suffix, native):
     add('friction-order',s=once(solver,'for index in 0..self.frictions.len() {','for index in (0..self.frictions.len()).rev() {'))
     add('lateral-writeback',s=once(solver,'manifolds[mi].points[pi].applied_impulse = row.numeric.applied_impulse;','manifolds[mi].points[pi].applied_impulse = row.numeric.applied_impulse;\n            manifolds[mi].points[pi].lateral_impulses[0] = self.frictions[mi].numeric.applied_impulse;'))
     add('lifetime-writeback',s=once(solver,'manifolds[mi].points[pi].applied_impulse = row.numeric.applied_impulse;','manifolds[mi].points[pi].applied_impulse = row.numeric.applied_impulse;\n            manifolds[mi].points[pi].lifetime += 1;'))
-    separate = once(runner,'GroupSolver::setup(&bodies,&mut joints,&mut manifolds,dt,mode)','GroupSolver::setup(&bodies,&mut joints,&mut [],dt,mode)')
-    separate = once(separate,'s.writeback(&mut bodies,&mut manifolds);','s.writeback(&mut bodies,&mut manifolds);let mut contacts=GroupSolver::setup(&bodies,&mut [],&mut manifolds,dt,mode);contacts.iterate(&bodies,&[],|_,_|{});contacts.writeback(&mut bodies,&mut manifolds);')
+    separate = once(runner,'GroupSolver::setup(&mut workspace,&mut objects,&bodies,&mut joints,&mut manifolds,selection,dt,mode).unwrap()','GroupSolver::setup(&mut workspace,&mut objects,&bodies,&mut joints,&mut [],GroupSelection { manifolds: &[], ..selection },dt,mode).unwrap()')
+    separate = once(separate,'s.writeback(&mut bodies,&mut manifolds);','s.writeback(&mut bodies,&mut manifolds);let mut contacts=GroupSolver::setup(&mut workspace,&mut objects,&bodies,&mut [],&mut manifolds,GroupSelection { joints: &[], ..selection },dt,mode).unwrap();contacts.iterate(&bodies,&[],|_,_|{}).unwrap();contacts.writeback(&mut bodies,&mut manifolds);')
     add('separate-full-solves',r=separate)
     assert len(mutations) == 19
     reports = []

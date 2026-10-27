@@ -1,0 +1,159 @@
+import importlib.util
+from pathlib import Path
+import tempfile
+import unittest
+
+spec = importlib.util.spec_from_file_location('objects_check', Path(__file__).with_name('check.py'))
+check = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(check)
+
+
+def main_probe(case, directory, host='native'):
+    import contextlib
+    import io
+    import json
+    import subprocess
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    out = Path(directory) / 'evidence'
+    header = Path(directory) / 'header.h'; header.write_text('original')
+    source = {'source': 'original'}
+    rows = []
+    for prefix, width in check.expected_records():
+        fields = prefix + ['00000000'] * ((width or 9) - len(prefix))
+        if prefix[0] == 'W': fields[7:] = ['N', '0']
+        elif prefix[0] == 'A': fields[5] = '0'
+        else: fields[-6:-1] = ['0', '1', '0', '0', '0']
+        rows.append(' '.join(fields))
+    raw = ('\n'.join(rows) + '\n').encode()
+    changed = raw.replace(b'00000000', b'80000000', 1)
+    check.validate(raw); check.validate(changed)
+    def command(argv, **kwargs):
+        label = json.loads((out / 'commands.json').read_text())[-1]['label']
+        stdout = b''; stderr = b''; code = 0
+        if label == 'compiler-version':
+            stderr = (f'Note: including file: {header}\n' if check.os.name == 'nt' else f'. {header}\n').encode()
+            if case == 'nonzero': code = 9
+        if label == 'crt':
+            stderr = b'note: native-static-libs: kernel32.lib advapi32.lib bcrypt.lib ntdll.lib userenv.lib ws2_32.lib dbghelp.lib msvcrt.lib\n'
+        if label == 'rust-version':
+            if case == 'include-closure': header.write_text('changed')
+            if case == 'source-closure': source['source'] = 'changed'
+            if case == 'generated-closure': (out / 'generated-sources/extra').write_text('changed')
+        if label in ('build-native','build-native-observed'):
+            path = header if case != 'observer-includes' or label == 'build-native' else Path(__file__)
+            stderr = (f'Note: including file: {path}\n' if check.os.name == 'nt' else f'. {path}\n').encode()
+        if label in ('native','native-observed','rust','rust-observed') or label.startswith('mutant-'):
+            stdout = raw
+            if label in ('native-observed','rust-observed'): stderr = b'OBS P 0 0 8\n'
+            if case == 'native-observer' and label == 'native-observed': stdout = changed
+            if case == 'rust-observer' and label == 'rust-observed': stdout = changed
+            if case == 'observer-counts' and label == 'rust-observed': stderr = b'OBS P 0 0 9\n'
+            if case == 'raw-mismatch' and label in ('rust','rust-observed'): stdout = changed
+            if label.startswith('mutant-'):
+                if case != 'survivor': stdout = changed
+                if case == 'final-closure': source['source'] = 'changed'
+        return subprocess.CompletedProcess(argv, code, stdout, stderr)
+    # Replace only the checker's OS view so pathlib keeps the real host's paths.
+    with patch.object(check, 'os', SimpleNamespace(**(vars(check.os) | {'name': 'nt' if host == 'Windows' else check.os.name}))), \
+         patch.object(check.platform, 'system', return_value='Windows' if host == 'Windows' else check.platform.system()), \
+         patch.object(check.platform, 'machine', return_value='AMD64' if host == 'Windows' else check.platform.machine()), \
+         patch.object(sys, 'argv', ['check.py','--out-dir',str(out),'--mutation','gravity-ignore-active']), \
+         patch.object(check, 'source_snapshot', side_effect=lambda: dict(source)), \
+         patch.object(check, 'LEGACY_SHA256', check.hashlib.sha256(b''.join(raw.splitlines(keepends=True)[:1368])).hexdigest()), \
+         patch.object(check.subprocess, 'run', side_effect=command), \
+         contextlib.redirect_stdout(io.StringIO()):
+        try: check.main()
+        except AssertionError: pass
+
+
+class RuntimeChecks(unittest.TestCase):
+    def test_main_acceptance_boundaries_in_normal_and_optimized_python(self):
+        from itertools import product
+        import json
+        import subprocess
+        import sys
+        errors = {
+            'clean': None,
+            'nonzero': 'compiler-version failed (9)',
+            'native-observer': 'native observer changed stdout',
+            'rust-observer': 'Rust observer changed stdout',
+            'observer-counts': 'observer counts differ',
+            'raw-mismatch': 'raw mismatch',
+            'survivor': 'mutant survived: gravity-ignore-active',
+            'observer-includes': 'observer include resolution differs',
+            'include-closure': 'closure changed: include',
+            'source-closure': 'closure changed: source',
+            'generated-closure': 'closure changed: generated',
+            'final-closure': 'closure changed: source',
+        }
+        for host, optimized in product(('native', 'Windows'), (False, True)):
+            for case, error in errors.items():
+                with self.subTest(host=host, optimized=optimized, case=case), tempfile.TemporaryDirectory() as directory:
+                    result = subprocess.run([sys.executable, *(['-O'] if optimized else []), '-c',
+                        'import test_check; test_check.main_probe(*__import__("sys").argv[1:])', case, directory, host],
+                        cwd=Path(__file__).parent, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    out = Path(directory) / 'evidence'
+                    status = json.loads((out / 'status.json').read_text())
+                    self.assertEqual(status['status'], 'FAIL' if error else 'PASS_SELECTED_MUTATIONS_ONLY')
+                    if error: self.assertIn(error, status['error'])
+                    else:
+                        self.assertEqual(status['trace_lines'], len(check.expected_records()))
+                        self.assertEqual(status['mutants'], {'gravity-ignore-active': 'CAUGHT'})
+                        if host == 'Windows':
+                            commands = json.loads((out / 'commands.json').read_text())
+                            for command in commands:
+                                if command['label'] in ('build-native', 'build-native-observed'):
+                                    self.assertIn('/link', command['argv'])
+                                    self.assertIn('kernel32.lib', command['argv'])
+                    self.assertEqual(len(json.loads((out / 'native-includes.json').read_text())), 1 if case != 'observer-includes' else 2)
+                    if 'closure' in case:
+                        self.assertEqual(status['integrity'], 'FAIL')
+                        if case != 'final-closure': self.assertIn('before command', status['original_error'])
+                    else: self.assertEqual(status['integrity'], 'PASS')
+
+class SchemaChecks(unittest.TestCase):
+    def test_mutations_change_one_real_source_anchor(self):
+        for name, (file, old, new) in check.MUTANTS.items():
+            source = (check.ROOT / 'rust/crates/mds-bullet/src/core' / file).read_text()
+            self.assertEqual(source.count(old), 1, name)
+            self.assertNotEqual(source, source.replace(old, new), name)
+
+    def test_schema_requires_all_snapshots_and_typed_values(self):
+        rows = []
+        for prefix, width in check.expected_records():
+            fields = prefix + ['00000000'] * ((width or 9) - len(prefix))
+            if prefix[0] == 'W': fields[7:] = ['N', '0']
+            elif prefix[0] == 'A': fields[5] = '0'
+            else: fields[-6:-1] = ['0', '1', '0', '0', '0']
+            rows.append(' '.join(fields))
+        raw = ('\n'.join(rows) + '\n').encode()
+        check.validate(raw)
+        for broken in [b'\n'.join(raw.splitlines()[:-1]), raw.replace(b'W P 0 0', b'W P 0 1', 1),
+                       raw.replace(b'00000000', b'NaN', 1), raw + raw.splitlines()[0] + b'\n']:
+            with self.assertRaises(AssertionError): check.validate(broken)
+        fields = rows[1].split()
+        for offset, value in [(-6, '999'), (-5, '0'), (-4, '65535'), (-2, '1'), (-1, 'bad')]:
+            changed = fields.copy(); changed[offset] = value
+            with self.assertRaises(AssertionError): check.validate(('\n'.join([rows[0], ' '.join(changed), *rows[2:]])+'\n').encode())
+
+    def test_activation_zero_is_separately_bounded_and_motion_prefix_is_frozen(self):
+        rows = []
+        for prefix, width in check.expected_records():
+            fields = prefix + ['00000000'] * ((width or 9) - len(prefix))
+            if prefix[0] == 'W': fields[7:] = ['N', '0']
+            elif prefix[0] == 'A': fields[5] = '0'
+            else: fields[-6:-1] = ['0', '0' if prefix[1] in ('AP', 'AM') else '1', '0', '0', '0']
+            rows.append(' '.join(fields))
+        raw = ('\n'.join(rows) + '\n').encode()
+        check.validate(raw)
+        with self.assertRaisesRegex(AssertionError, 'original motion segment changed'):
+            check.preserved_motion(raw)
+        for state in ['-1', '6']:
+            broken = rows.copy()
+            i = next(i for i, line in enumerate(rows) if line.startswith('B AP '))
+            fields = broken[i].split(); fields[-5] = state; broken[i] = ' '.join(fields)
+            with self.assertRaises(AssertionError): check.validate(('\n'.join(broken)+'\n').encode())

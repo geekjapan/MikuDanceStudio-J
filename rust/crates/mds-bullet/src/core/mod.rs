@@ -31,6 +31,7 @@ pub mod body;
 pub mod box_box;
 pub mod contact;
 pub mod contact_solver;
+pub mod dispatcher;
 pub mod gjk_epa;
 pub mod gjk_pair;
 pub mod islands;
@@ -42,6 +43,7 @@ pub mod shape;
 pub mod simplex;
 pub mod solver;
 pub mod time;
+pub mod world_objects;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InvalidArgument;

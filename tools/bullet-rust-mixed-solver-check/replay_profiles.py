@@ -44,7 +44,7 @@ def replay(artifacts, hosts=('macarm','linuxarm','linuxx64','windows'), receipt_
             for name, expected in recorded.items():
                 if hashlib.sha256(source(name)).hexdigest() != expected:
                     raise ValueError('archived source differs: ' + name)
-            expected_paths = {p.relative_to(ROOT).as_posix() for p in producer_paths(ROOT)}
+            expected_paths = {p.relative_to(ROOT).as_posix() for p in producer_paths(ROOT, lambda p: source(p.relative_to(ROOT).as_posix()).decode())}
             if set(profile['producer_sources']) != expected_paths:
                 raise ValueError('incomplete measured producer closure')
             reconstructed = {name: hashlib.sha256(source(name)).hexdigest() for name in expected_paths}

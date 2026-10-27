@@ -110,21 +110,17 @@ impl CollisionDispatcher {
                 [Shape::Sphere { .. }, Shape::Sphere { .. }] => {
                     self.allocate_manifold(key, objects)
                 }
-                [Shape::Box { .. }, Shape::Box { .. }] => {
-                    if needs_collision(input_bodies, objects) {
-                        self.allocate_manifold(key, objects);
-                    }
+                [Shape::Box { .. }, Shape::Box { .. }]
+                    if needs_collision(input_bodies, objects) =>
+                {
+                    self.allocate_manifold(key, objects);
                 }
                 [Shape::StaticPlane { .. }, Shape::StaticPlane { .. }] => (),
-                [Shape::StaticPlane { .. }, _] => {
-                    if needs_collision([b, a], objects) {
-                        self.allocate_manifold(key, objects);
-                    }
+                [Shape::StaticPlane { .. }, _] if needs_collision([b, a], objects) => {
+                    self.allocate_manifold(key, objects);
                 }
-                [_, Shape::StaticPlane { .. }] => {
-                    if needs_collision(input_bodies, objects) {
-                        self.allocate_manifold(key, objects);
-                    }
+                [_, Shape::StaticPlane { .. }] if needs_collision(input_bodies, objects) => {
+                    self.allocate_manifold(key, objects);
                 }
                 _ => (),
             }
@@ -191,7 +187,7 @@ impl CollisionDispatcher {
             .manifold_index;
         if let Some(index) = index {
             self.manifolds[index].manifold.clear_contacts();
-            drop(self.manifolds.swap_remove(index));
+            self.manifolds.swap_remove(index);
             if let Some(moved) = self.manifolds.get(index) {
                 self.algorithms[moved.owner.0 as usize]
                     .as_mut()

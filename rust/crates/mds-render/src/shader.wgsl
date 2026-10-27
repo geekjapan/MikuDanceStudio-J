@@ -107,9 +107,12 @@ fn vertex_specular(p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
 // center, for all its samples; `render_frame` draws one render per sample instead, so it takes
 // the texture back to the center (golden2 `accessory-*.png`: the cube's checker is as sharp as one
 // lookup per pixel).
-fn center_uv(uv: vec2<f32>) -> vec2<f32> {
+fn center_uv(uv: vec2<f32>, q: f32) -> vec2<f32> {
     let o = scene.ground_shadow_plane.yz;
-    return uv - dpdx(uv) * o.x - dpdy(uv) * o.y;
+    let n = uv * q;
+    let numerator = n - dpdx(n) * o.x - dpdy(n) * o.y;
+    let denominator = q - dpdx(q) * o.x - dpdy(q) * o.y;
+    return numerator / denominator;
 }
 
 // How lit a point is under self-shadow, 1 lit to 0 in shadow, from the depth the shadow map holds
@@ -153,26 +156,32 @@ fn lit_fraction(world: vec3<f32>) -> f32 {
 }
 
 // A varying at the pixel center, as `center_uv` takes the texture coordinate there.
-fn center_value(v: vec3<f32>) -> vec3<f32> {
+fn center_value(v: vec3<f32>, q: f32) -> vec3<f32> {
     let o = scene.ground_shadow_plane.yz;
-    return v - dpdx(v) * o.x - dpdy(v) * o.y;
+    let n = v * q;
+    let numerator = n - dpdx(n) * o.x - dpdy(n) * o.y;
+    let denominator = q - dpdx(q) * o.x - dpdy(q) * o.y;
+    return numerator / denominator;
 }
 
 // The scene point at the pixel center, as `center_uv` takes the texture coordinate there.
-fn center_world(world: vec3<f32>) -> vec3<f32> {
+fn center_world(world: vec3<f32>, q: f32) -> vec3<f32> {
     let o = scene.ground_shadow_plane.yz;
-    return world - dpdx(world) * o.x - dpdy(world) * o.y;
+    let n = world * q;
+    let numerator = n - dpdx(n) * o.x - dpdy(n) * o.y;
+    let denominator = q - dpdx(q) * o.x - dpdy(q) * o.y;
+    return numerator / denominator;
 }
 
 @fragment
 fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
-    let lit = lit_fraction(center_world(i.world));
+    let lit = lit_fraction(center_world(i.world, i.clip.w));
     // Without self-shadow (toon 1) the normal is used as interpolated, not renormalized.
     var n = i.normal;
     if scene.light_dir.w != 1.0 {
         n = normalize(n);
     }
-    let uv = center_uv(i.uv);
+    let uv = center_uv(i.uv, i.clip.w);
     let to_light = -normalize(scene.light_dir.xyz);
     let lc = scene.light_color.rgb;
     var color = clamp(mat.ambient.rgb + mat.diffuse.rgb * lc, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -196,7 +205,7 @@ fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
     // Self-shadow off draws the fixed-function highlight, lit per vertex; self-shadow on lights it
     // per pixel.
     if scene.light_dir.w == 1.0 {
-        specular = center_value(i.specular);
+        specular = center_value(i.specular, i.clip.w);
     } else if power > 0.0 {
         let to_eye = normalize(scene.eye.xyz - i.world);
         let h = normalize(to_light + to_eye);
@@ -235,9 +244,9 @@ fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
 // emissive and diffuse values are extrapolated.
 @fragment
 fn fs_accessory(i: VsOut) -> @location(0) vec4<f32> {
-    let lit = lit_fraction(center_world(i.world));
+    let lit = lit_fraction(center_world(i.world, i.clip.w));
     let n = normalize(i.normal);
-    let uv = center_uv(i.uv);
+    let uv = center_uv(i.uv, i.clip.w);
     let to_light = -normalize(scene.light_dir.xyz);
     let lc = scene.light_color.rgb;
     let ndl = max(dot(n, to_light), 0.0);
@@ -288,7 +297,7 @@ fn vs_picture(@builtin(vertex_index) k: u32) -> PictureOut {
 // trilinear sample, at any LOD, below 0.986 within 4 on the picture's pixels.
 @fragment
 fn fs_picture(i: PictureOut) -> @location(0) vec4<f32> {
-    let uv = center_uv(i.uv);
+    let uv = center_uv(i.uv, i.clip.w);
     let size = vec2<f32>(textureDimensions(tex));
     let dx = dpdx(i.uv);
     let dy = dpdy(i.uv);

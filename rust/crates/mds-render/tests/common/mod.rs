@@ -65,6 +65,9 @@ pub fn pixel_diff(a: &[u8], b: &[u8], i: usize) -> u8 {
 
 pub fn gpu_or_skip() -> Option<Gpu> {
     let gpu = Gpu::new().expect("device");
+    if let Some(ref gpu) = gpu {
+        eprintln!("CENTER_ADAPTER {}", gpu.adapter);
+    }
     if gpu.is_none() {
         eprintln!("SKIP: no wgpu adapter on this host (not a pass)");
     }

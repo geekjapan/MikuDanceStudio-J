@@ -2,6 +2,7 @@
 """Collect complete source-bound outer GJK observations before compatibility approval."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -103,6 +104,13 @@ def audit(output):
         facts['native_rust_differences'] = inventory(normalized['full', 'native'], normalized['full', 'rust'], 5081)
         fixture = ROOT / 'rust/crates/mds-bullet/tests/gjk_pair_data/native.tsv'
         facts['frozen_native_differences'] = inventory(fixture.read_bytes(), normalized['compact', 'native'], COMPACT)
+    if (output / 'measured-profile.json').exists():
+        facts['profile_known'] = True
+        gate = json.loads((output / 'mutation-gate.json').read_text())
+        facts['mutations'] = gate['status']
+        integrity = output / 'integrity.json'
+        unchanged = not integrity.exists() or json.loads(integrity.read_text())['source_and_fixtures_unchanged']
+        facts['compatibility'] = 'PASS' if gate['status'] == 'passed' and unchanged else 'FAIL'
     write_json(output / 'host-profile.json', facts)
     return facts
 
@@ -137,13 +145,13 @@ def capture(output, environment):
         observation_error = str(error)
         write_json(output / 'observer-failure.json', {'error': observation_error})
     run(['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--crate-name', 'mds_crtmath', '--crate-type', 'rlib', '-O', crt, '-o', output / 'libmds_crtmath.rlib'], env=environment)
-    binary = output / ('rust-gjk-pair.exe' if os.name == 'nt' else 'rust-gjk-pair')
-    run(['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '--test', '-D', 'warnings', '-O', HERE / 'harness.rs', '--extern', f'mds_crtmath={output / "libmds_crtmath.rlib"}', '-o', binary], env=environment)
     env = dict(environment, MDS_GJK_PAIR_INPUTS=str(output / 'inputs.tsv'),
                MDS_GJK_PAIR_NATIVE=str(output / 'native.tsv'), MDS_GJK_PAIR_ACTUAL=str(output / 'rust.tsv'))
-    result = subprocess.run([binary, '--exact', 'gjk_pair_tests::outer_and_persistent_mixed_pairs_match_native_words'], env=env, cwd=ROOT / 'rust', capture_output=True)
-    (output / 'full-rust.log').write_bytes(result.stdout + result.stderr)
-    write_json(output / 'full-rust-result.json', {'returncode': result.returncode})
+    spec = importlib.util.spec_from_file_location('outer_mutations', HERE / 'mutations.py')
+    mutation_runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mutation_runner)
+    result = mutation_runner.run_harness(None, None, output / 'full-rust', output / 'libmds_crtmath.rlib', env)
+    write_json(output / 'full-rust-result.json', result)
     for implementation in ['native', 'observed', 'rust']:
         path = output / f'{implementation}.tsv'
         if path.exists():
@@ -156,7 +164,13 @@ def capture(output, environment):
     facts = audit(output)
     if observation_error or facts['collection'] != 'complete':
         raise ValueError('Collection incomplete or observer coverage failed')
-    raise ValueError(f'Unreviewed outer GJK host profile {host()}; complete observations retained; mutations not run')
+    from measured_profiles import validate
+    receipt = validate(output)
+    write_json(output / 'measured-profile.json', receipt)
+    run([sys.executable, HERE / 'mutations.py', '--out-dir', output / 'mutations',
+         '--crt-rlib', output / 'libmds_crtmath.rlib', '--inputs', output / 'inputs.tsv',
+         '--native', output / 'native.tsv'], env=environment)
+    write_json(output / 'mutation-gate.json', {'status': 'passed', 'required': 13})
 
 
 def main():
@@ -186,8 +200,8 @@ def main():
         write_json(output / 'integrity.json', {'source_and_fixtures_unchanged': before == after,
                    'changed': [p for p in before.keys() | after.keys() if before.get(p) != after.get(p)]})
         audit(output)
-        write_json(output / 'sha256.json', {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                   for p in output.iterdir() if p.is_file() and p.name != 'sha256.json'})
+        write_json(output / 'sha256.json', {p.relative_to(output).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                   for p in output.rglob('*') if p.is_file() and p != output / 'sha256.json'})
         if before != after:
             raise ValueError('Source or frozen fixture integrity changed')
 

@@ -22,6 +22,13 @@ fn vector(out: &mut String, v: Vec3) {
 fn word(out: &mut String, x: f32) {
     write!(out, "\t{:08x}", x.to_bits()).unwrap();
 }
+fn default_native() -> &'static str {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows" | "linux", "x86_64") => include_str!("../gjk_pair_data/native-x64.tsv"),
+        ("macos" | "linux", "aarch64") => include_str!("../gjk_pair_data/native.tsv"),
+        host => panic!("Unsupported outer GJK fixture host {host:?}"),
+    }
+}
 #[test]
 fn outer_and_persistent_mixed_pairs_match_native_words() {
     let inputs = std::env::var("MDS_GJK_PAIR_INPUTS")
@@ -34,9 +41,7 @@ fn outer_and_persistent_mixed_pairs_match_native_words() {
         inputs
             .as_deref()
             .unwrap_or(include_str!("../gjk_pair_data/inputs.tsv")),
-        native
-            .as_deref()
-            .unwrap_or(include_str!("../gjk_pair_data/native.tsv")),
+        native.as_deref().unwrap_or(default_native()),
         std::env::var("MDS_GJK_PAIR_ACTUAL").ok().as_deref(),
     );
 }

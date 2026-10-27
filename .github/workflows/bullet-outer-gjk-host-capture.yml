@@ -2,7 +2,7 @@ name: Bullet outer GJK host capture
 
 on:
   push:
-    branches: [w3-outer-gjk-four-host-capture, w3-bullet-outer-gjk]
+    branches: [w3-outer-gjk-four-host-capture, w3-bullet-outer-gjk, w3-outer-measured-profiles]
   workflow_dispatch:
 
 permissions:
@@ -16,7 +16,7 @@ jobs:
   capture:
     name: Outer GJK native and Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:

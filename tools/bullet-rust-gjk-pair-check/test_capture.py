@@ -248,7 +248,7 @@ class CaptureTests(unittest.TestCase):
         log = (f"thread '{mutations.TEST}' panicked at /source/gjk_pair.rs:210:5:\n"
                f'MDS_GJK_PAIR_NATIVE_MISMATCH_BEGIN\ninput {input_line} actual {actual} expected {expected}\n'
                'MDS_GJK_PAIR_NATIVE_MISMATCH_END\n'
-               'test result: FAILED. 0 passed; 1 failed; 0 ignored;')
+               'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out;')
         result = SimpleNamespace(returncode=101, stdout=log, stderr='')
         self.assertEqual(mutations.classify(result)['status'], 'rejected')
         for damaged in [log.replace('MDS_GJK_PAIR_NATIVE_MISMATCH_BEGIN', 'other'),

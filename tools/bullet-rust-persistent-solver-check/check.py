@@ -23,7 +23,7 @@ def source_paths(root=ROOT):
         *(root/'rust/crates/mds-bullet/src/core').rglob('*.rs'),
         *(root/'rust/crates/mds-crtmath/src').rglob('*.rs'),
         *(root/'tools/bullet-rust-persistent-solver-check').glob('*.*'),
-        root/'rust/crates/mds-bullet/tests/pure_bullet/persistent_solver.rs',
+        *(p for p in (root/'rust/crates/mds-bullet/tests').rglob('*') if p.is_file()),
     ]))
 
 

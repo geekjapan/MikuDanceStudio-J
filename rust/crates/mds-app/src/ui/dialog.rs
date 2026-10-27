@@ -2571,7 +2571,11 @@ fn ok_toon(ctx: &mut Ctx, f: &Form) -> Result<(), String> {
     for (i, typed) in f.t.iter().enumerate() {
         let name = window_text(typed, 256).to_string();
         let default = format!("toon{:02}.bmp", i + 1);
-        if name == default || (!name.is_empty() && folder.join(name.replace('\\', "/")).is_file()) {
+        if name == default
+            || (!name.is_empty()
+                && mds_formats::path::resolve_path_ci(&folder.join(name.replace('\\', "/")))
+                    .is_some())
+        {
             names.push(name);
         } else {
             names.push(old[i].clone());

@@ -1,0 +1,91 @@
+vkd3d-shader 2.1: sm3 pixel shader vPos and vFace reads with other inputs.
+
+This is a modification of vkd3d-shader 2.1 (libs/vkd3d-shader/ir.c) and is under the
+vkd3d-shader license, LGPL-2.1 or later. tools/vkd3d/build.sh applies it in the vkd3d-2.1
+source directory with `patch -p1`.
+
+vsir_program_normalise_io_registers() has two faults for a ps_3_0 shader that reads vPos
+or vFace:
+
+1. io_normaliser_init_misctype() inserts a read of the VPOS (VFACE) element that already
+   addresses the signature element by its index. The second loop normalises that read
+   again, as if the index were a register. With other inputs before VPOS the lookup fails
+   (E9022 "Unable to resolve I/O register type 0x1, index 2"); otherwise it may resolve to
+   another element. The second loop now points these reads at the element after the merge
+   and leaves them alone.
+2. vPos and vFace are MISCTYPE registers 0 and 1, and their signature elements carry
+   register indices 0 and 1, the same as v0 and v1. A v0 read resolved to VPOS when VPOS
+   came first in the signature. v# reads now skip the POSITION and IS_FRONT_FACE elements.
+
+Measured with mds-shader over the ray-mmd corpus (218a91c): the 40 E9022 entries compile,
+and the WGSL of every entry that compiled before is unchanged.
+
+--- a/libs/vkd3d-shader/ir.c
++++ b/libs/vkd3d-shader/ir.c
+@@ -5704,6 +5704,35 @@
+     reg->idx_count = id_idx + 1;
+ 
+     return true;
++}
++
++/* In sm3 pixel shaders vPos and vFace are MISCTYPE registers 0 and 1, which share their
++ * register indices with the v# inputs. A v# read must not resolve to them. */
++static bool shader_signature_find_input_for_reg(const struct io_normaliser *normaliser,
++        const struct vsir_signature *signature, unsigned int reg_idx, unsigned int write_mask,
++        unsigned int *element_idx)
++{
++    const struct vsir_signature_element *e;
++    unsigned int i;
++
++    if (normaliser->shader_type != VKD3D_SHADER_TYPE_PIXEL || normaliser->major != 3
++            || signature != normaliser->input_signature)
++        return shader_signature_find_element_for_reg(signature, reg_idx, write_mask, element_idx);
++
++    for (i = 0; i < signature->element_count; ++i)
++    {
++        e = &signature->elements[i];
++        if (e->sysval_semantic == VKD3D_SHADER_SV_POSITION || e->sysval_semantic == VKD3D_SHADER_SV_IS_FRONT_FACE)
++            continue;
++        if (e->register_index <= reg_idx && e->register_count > reg_idx - e->register_index
++                && (e->mask & write_mask) == write_mask)
++        {
++            *element_idx = i;
++            return true;
++        }
++    }
++
++    return false;
+ }
+ 
+ static void vsir_src_operand_io_normalise(struct vsir_src_operand *src,
+@@ -5782,7 +5811,7 @@
+ 
+     id_idx = reg->idx_count - 1;
+     write_mask = VKD3DSP_WRITEMASK_0 << vsir_swizzle_get_component(src->swizzle, 0);
+-    if (!shader_signature_find_element_for_reg(signature, reg_idx, write_mask, &element_idx))
++    if (!shader_signature_find_input_for_reg(normaliser, signature, reg_idx, write_mask, &element_idx))
+     {
+         vkd3d_shader_error(normaliser->message_context, &ins->location, VKD3D_SHADER_ERROR_VSIR_INVALID_SIGNATURE,
+                 "Unable to resolve I/O register type %#x, index %u, swizzle %#x, to a signature element.",
+@@ -5953,6 +5982,21 @@
+     normaliser.phase = VSIR_OP_INVALID;
+     for (ins = vsir_program_iterator_head(&it); ins; ins = vsir_program_iterator_next(&it))
+     {
++        unsigned int idx;
++
++        /* The vPos and vFace reads that io_normaliser_init_misctype() inserted already address
++         * a signature element, not a register: point them at the element after the merge. */
++        if (ins->dst_count == 1 && ins->dst[0].reg.type == VSIR_REGISTER_SSA && ins->src_count
++                && ins->src[0].reg.type == VSIR_REGISTER_INPUT
++                && (ins->dst[0].reg.idx[0].offset == normaliser.vpos_ssa
++                || ins->dst[0].reg.idx[0].offset == normaliser.vface_ssa))
++        {
++            if (vsir_signature_find_sysval(&program->input_signature,
++                    ins->dst[0].reg.idx[0].offset == normaliser.vpos_ssa
++                    ? VKD3D_SHADER_SV_POSITION : VKD3D_SHADER_SV_IS_FRONT_FACE, 0, &idx))
++                ins->src[0].reg.idx[0].offset = idx;
++            continue;
++        }
+         shader_instruction_normalise_io_params(ins, &normaliser);
+     }
+ 

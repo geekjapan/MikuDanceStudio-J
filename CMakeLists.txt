@@ -627,6 +627,18 @@ if(BUILD_TESTING)
     add_executable(math_vectors tools/oracle/math_vectors.cpp)
     target_include_directories(math_vectors PRIVATE include tools/oracle)
     target_link_libraries(math_vectors PRIVATE D3DXRuntime)
+    add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/camera_reload_body.inc
+        ${CMAKE_CURRENT_BINARY_DIR}/camera_reload_source.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/camera_reload_manifest.json
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/oracle/extract_camera_reload.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/window/ui_model_reload.cpp
+            ${CMAKE_CURRENT_BINARY_DIR}/camera_reload_body.inc
+        DEPENDS tools/oracle/extract_camera_reload.py src/window/ui_model_reload.cpp
+        VERBATIM)
+    add_executable(camera_reload_oracle tools/oracle/camera_reload.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/camera_reload_body.inc)
+    target_include_directories(camera_reload_oracle PRIVATE include ${CMAKE_CURRENT_BINARY_DIR})
+    target_link_libraries(camera_reload_oracle PRIVATE D3DXRuntime)
     add_executable(fx_reflect tools/oracle/fx_reflect.cpp)
     target_link_libraries(fx_reflect PRIVATE D3DXRuntime d3d9 user32)
     # MME pass-plan dump (wave 2 slice passplan): runs the engine's effect loader

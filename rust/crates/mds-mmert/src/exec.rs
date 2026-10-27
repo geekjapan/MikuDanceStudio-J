@@ -691,6 +691,8 @@ impl Effect {
         program: (usize, usize),
         stage: Stage,
         attached: &[usize],
+        material: Option<&model::Material>,
+        draw_type: u8,
     ) -> wgpu::BindGroup {
         enum Res {
             Buffer(wgpu::Buffer),
@@ -770,6 +772,22 @@ impl Effect {
                         .sampler_param(s, *reg)
                         .and_then(|g| state::sampler(self.sampler_state(g), false, false).0)
                         .and_then(|name| self.sas.fx.param_by_name(&name));
+                    let semantic =
+                        param.and_then(|p| material_texture_slot(&self.sas.fx.params[p].semantic));
+                    if let Some(material_slot) = semantic {
+                        let texture = material.and_then(|m| match material_slot {
+                            0 if draw_type != bind::DRAW_EDGE => m.textures.texture.as_ref(),
+                            1 if draw_type != bind::DRAW_EDGE => m.textures.sphere.as_ref(),
+                            2 => m.textures.toon.as_ref(),
+                            _ => None,
+                        });
+                        let view = texture
+                            .filter(|_| *dim == wgpu::TextureViewDimension::D2)
+                            .map(model::MaterialTexture::view)
+                            .unwrap_or_else(|| self.placeholder(gpu, *dim));
+                        resources.push((slot.binding(), Res::View(view)));
+                        continue;
+                    }
                     let animated = param
                         .and_then(|param| self.animes.iter().find(|a| a.param == param))
                         .filter(|_| *dim == wgpu::TextureViewDimension::D2)
@@ -820,6 +838,17 @@ impl Effect {
             entries: &entries,
         })
     }
+}
+
+fn material_texture_slot(semantic: &str) -> Option<u8> {
+    [
+        "MaterialTexture",
+        "MaterialSphereMap",
+        "MaterialToonTexture",
+    ]
+    .iter()
+    .position(|s| semantic.eq_ignore_ascii_case(s))
+    .map(|i| i as u8)
 }
 
 pub struct Surface {
@@ -1257,7 +1286,7 @@ impl Run<'_> {
         } else {
             Some(self.input.geometry.ok_or("Draw=Geometry with no model")?)
         };
-        let material = geometry.and_then(|(m, s)| m.materials.get(s));
+        let material = self.input.geometry.and_then(|(m, s)| m.materials.get(s));
         if geometry.is_some() && material.is_none_or(|m| m.count == 0) {
             return Err("empty subset".into());
         }
@@ -1300,10 +1329,22 @@ impl Run<'_> {
             .filter_map(|&i| self.dev.surfaces[i].resource)
             .collect();
         let groups = [
-            self.effect
-                .bind_group(self.gpu, (tech, pass), Stage::Vertex, &attached),
-            self.effect
-                .bind_group(self.gpu, (tech, pass), Stage::Fragment, &attached),
+            self.effect.bind_group(
+                self.gpu,
+                (tech, pass),
+                Stage::Vertex,
+                &attached,
+                material,
+                self.input.draw_type,
+            ),
+            self.effect.bind_group(
+                self.gpu,
+                (tech, pass),
+                Stage::Fragment,
+                &attached,
+                material,
+                self.input.draw_type,
+            ),
         ];
         let vp = self.dev.vp;
         let quad;

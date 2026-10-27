@@ -266,6 +266,70 @@ class RecordEvidenceTests(unittest.TestCase):
             mutation(b)
             self.assertIn('record_compatibility_unproved', self.codes(a, b))
 
+    def test_plain_char_signedness_is_required_and_compared_recursively(self):
+        import copy
+        wrappers = [lambda t: t,
+                    lambda t: {'canonical': {'pointer': t}, 'const': False, 'volatile': False, 'restrict': False},
+                    lambda t: {'canonical': {'array': t, 'length': 2}, 'const': False, 'volatile': False, 'restrict': False},
+                    lambda t: {'canonical': {'return': scalar('Int'), 'parameters': [t],
+                               'variadic': False, 'noreturn': False, 'prototype': True, 'abi': 'C'},
+                               'const': False, 'volatile': False, 'restrict': False}]
+        for wrap in wrappers:
+            for signed in (True, False):
+                a, b = self.pair()
+                for item in (a, b):
+                    typ = scalar('Char')
+                    typ['canonical']['signed'] = signed
+                    item['record_definitions'][0]['facts']['fields'][0]['type'] = wrap(typ)
+                self.assertEqual(self.codes(a, b), {'cursor_dataflow_unproved'})
+                typ_b = b['record_definitions'][0]['facts']['fields'][0]['type']
+                def chars(tree):
+                    if isinstance(tree, dict):
+                        if tree.get('kind') == 'Char':
+                            yield tree
+                        for child in tree.values():
+                            yield from chars(child)
+                    elif isinstance(tree, list):
+                        for child in tree:
+                            yield from chars(child)
+                next(chars(typ_b))['signed'] = not signed
+                self.assertIn('signature_mismatch', self.codes(a, b))
+                for value in (None, 'unknown', 1):
+                    bad = copy.deepcopy(a)
+                    char = next(chars(bad['record_definitions'][0]['facts']['fields'][0]['type']))
+                    if value is None:
+                        del char['signed']
+                    else:
+                        char['signed'] = value
+                    other = copy.deepcopy(bad)
+                    other['unit'] = 'b.c'
+                    self.assertIn('record_compatibility_unproved', self.codes(bad, other))
+
+    def test_actual_export_char_boundary_mutator_preserves_inputs(self):
+        import copy
+        from check_closed_variadic_inventory import check_char_boundaries
+        a, b = self.pair()
+        for item in (a, b):
+            typ = scalar('Char')
+            typ['canonical']['signed'] = True
+            item['record_definitions'][0]['facts']['fields'][0]['type'] = typ
+        originals = copy.deepcopy([a, b])
+        results = check_char_boundaries([a, b], ['a.c', 'b.c'])
+        self.assertEqual(set(results), {'missing', 'unknown', 'integer'})
+        self.assertEqual([a, b], originals)
+        for result in results.values():
+            self.assertIn('record_compatibility_unproved',
+                          {d['code'] for d in result['plan']['diagnostics']})
+
+    def test_explicit_char_builtin_kinds_remain_distinct(self):
+        a, b = self.pair()
+        for kind in ('SChar', 'UChar'):
+            for item in (a, b):
+                item['record_definitions'][0]['facts']['fields'][0]['type'] = scalar(kind)
+            self.assertEqual(self.codes(a, b), {'cursor_dataflow_unproved'})
+        a['record_definitions'][0]['facts']['fields'][0]['type'] = scalar('SChar')
+        self.assertIn('signature_mismatch', self.codes(a, b))
+
     def test_long_double_is_unproved_through_callback_record_and_array(self):
         for wrap in (lambda t: t,
                      lambda t: {'canonical': {'array': t, 'length': 2}, 'const': False, 'volatile': False, 'restrict': False},

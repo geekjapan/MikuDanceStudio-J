@@ -28,6 +28,11 @@ def require_inventory_outputs(output, stems):
 
 RECORD_CASES = {
     'same-header': ([], 'compatible'),
+    'char-signedness': (['-funsigned-char', '-UEXPECTED_CHAR_SIGNED', '-DEXPECTED_CHAR_SIGNED=0'], 'mismatch'),
+    'char-signed-same': ([], 'compatible'),
+    'char-unsigned-same': ([], 'compatible'),
+    'explicit-signed-char': ([], 'compatible'),
+    'explicit-unsigned-char': ([], 'compatible'),
     'parameter-cvr': (['-DPARAMETER_CONST='], 'compatible'),
     'array-const': (['-DARRAY_CVR=const'], 'mismatch'),
     'array-volatile': (['-DARRAY_CVR=volatile'], 'mismatch'),
@@ -59,6 +64,11 @@ RECORD_CASES = {
 
 
 RECORD_BASE_FLAGS = {
+    'char-signedness': ['--target=x86_64-unknown-linux-gnu', '-DCALLBACK_ARGUMENT_TYPE=char', '-DEXPECTED_CHAR_SIGNED=1'],
+    'char-signed-same': ['--target=x86_64-unknown-linux-gnu', '-fsigned-char', '-DCALLBACK_ARGUMENT_TYPE=char', '-DEXPECTED_CHAR_SIGNED=1'],
+    'char-unsigned-same': ['--target=x86_64-unknown-linux-gnu', '-funsigned-char', '-DCALLBACK_ARGUMENT_TYPE=char', '-DEXPECTED_CHAR_SIGNED=0'],
+    'explicit-signed-char': ['--target=x86_64-unknown-linux-gnu', '-funsigned-char', '-DCALLBACK_ARGUMENT_TYPE=signed char'],
+    'explicit-unsigned-char': ['--target=x86_64-unknown-linux-gnu', '-funsigned-char', '-DCALLBACK_ARGUMENT_TYPE=unsigned char'],
     'array-const-volatile': ['-DARRAY_CVR=const'],
     'array-qualified-same': ['-DARRAY_CVR=const volatile'],
     'array-restrict-same': ['-DPOINTER_ARRAY_CVR=restrict'],
@@ -88,6 +98,32 @@ def check_physical_boundaries(inventories, units):
         plan = build_plan(mutated, list(map(str, units)), [])
         if 'record_compatibility_unproved' not in {d['code'] for d in plan['diagnostics']}:
             raise RuntimeError('actual-export-derived physical boundary accepted ' + name)
+        results[name] = {'origin': 'actual-export-derived payload mutation', 'inventories': mutated, 'plan': plan}
+    return results
+
+
+def check_char_boundaries(inventories, units):
+    results = {}
+    for name, value in [('missing', None), ('unknown', 'unknown'), ('integer', 1)]:
+        mutated = copy.deepcopy(inventories)
+
+        def mutate(tree):
+            if isinstance(tree, dict):
+                if tree.get('kind') == 'Char':
+                    if value is None:
+                        tree.pop('signed', None)
+                    else:
+                        tree['signed'] = value
+                for child in tree.values():
+                    mutate(child)
+            elif isinstance(tree, list):
+                for child in tree:
+                    mutate(child)
+
+        mutate(mutated)
+        plan = build_plan(mutated, list(map(str, units)), [])
+        if 'record_compatibility_unproved' not in {d['code'] for d in plan['diagnostics']}:
+            raise RuntimeError('actual-export-derived char boundary accepted ' + name)
         results[name] = {'origin': 'actual-export-derived payload mutation', 'inventories': mutated, 'plan': plan}
     return results
 
@@ -133,6 +169,20 @@ def check_records(tool, root, clang, stage):
                 restricted = fields['pointer_array']['canonical']['array']['restrict']
                 if restricted != (case == 'array-restrict-same' or case == 'array-restrict' and index == 1):
                     raise RuntimeError('actual restrict pointer array element qualifier lost')
+        if case.startswith('char-') or case.startswith('explicit-'):
+            for index, inv in enumerate(inventories):
+                record = next(d for d in inv['record_definitions'] if d['identity'].get('tag') == 'shared_record')
+                field = next(f for f in record['facts']['fields'] if f['name'] == 'abi_callback')
+                argument = field['type']['canonical']['pointer']['canonical']['parameters'][0]['canonical']
+                if case.startswith('char-'):
+                    expected_char = {'kind': 'Char', 'signed': case != 'char-unsigned-same' and not (case == 'char-signedness' and index == 1)}
+                else:
+                    expected_char = {'kind': 'SChar' if case == 'explicit-signed-char' else 'UChar'}
+                if argument != expected_char:
+                    raise RuntimeError('actual compiler char metadata lost for ' + case)
+            if case == 'char-signed-same':
+                boundaries = check_char_boundaries(inventories, units)
+                (case_root / 'char-boundary-mutations.json').write_text(json.dumps(boundaries, indent=2) + '\n')
         if case in ('deep-pointer', 'unsupported-atomic', 'long-double-abi'):
             sentinel = {'deep-pointer': 'type depth limit', 'unsupported-atomic': 'unsupported type or wrapper limit',
                         'long-double-abi': 'long double ABI shape'}[case]

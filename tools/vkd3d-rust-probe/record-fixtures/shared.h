@@ -34,6 +34,9 @@
 #ifndef CALLBACK_ARGUMENT_TYPE
 #define CALLBACK_ARGUMENT_TYPE int
 #endif
+#if defined(EXPECTED_CHAR_SIGNED)
+_Static_assert(((char)-1 < 0) == EXPECTED_CHAR_SIGNED, "plain char signedness fixture");
+#endif
 #if defined(EXPECTED_LONG_DOUBLE_SIZE)
 _Static_assert(sizeof(long double) == EXPECTED_LONG_DOUBLE_SIZE, "long double ABI fixture");
 #endif

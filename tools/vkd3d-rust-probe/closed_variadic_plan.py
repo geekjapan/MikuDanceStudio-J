@@ -96,7 +96,9 @@ def validate_type(typ, table, visited=None, depth=0):
     if not isinstance(canonical, dict):
         raise RecordUnproved('missing canonical type facts')
     keys = set(canonical)
-    if keys == {'kind'} and isinstance(canonical['kind'], str) and canonical['kind'] in SCALARS:
+    if keys == {'kind'} and isinstance(canonical['kind'], str) and canonical['kind'] in SCALARS - {'Char'}:
+        return
+    if keys == {'kind', 'signed'} and canonical['kind'] == 'Char' and type(canonical['signed']) is bool:
         return
     if keys == {'pointer'}:
         validate_type(canonical['pointer'], table, visited, depth=depth + 1)

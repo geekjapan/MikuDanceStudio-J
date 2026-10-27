@@ -437,3 +437,20 @@ physical evidence carries a path directly, independent of diagnostic file IDs.
 The existing hosted Rust inventory unit test also exercises the actual typed
 CBOR decoder with malformed tuples and invalid physical coordinates. These
 checks still require execution by the newly built exporter in CI.
+
+Plain `char` carries Clang's `Char_S` or `Char_U` signedness as a boolean in
+its existing type-node extras. Conversion preserves that fact in an
+inventory-only typed side table. Shared translator type tags and `CTypeKind`
+remain unchanged. Schema 2 requires `{"kind": "Char", "signed": true|false}`;
+missing or non-boolean evidence is unproved, including through pointers,
+arrays, callbacks and records. Explicit `SChar` and `UChar` keep their kinds.
+
+The prepare gate retains all previous 28 record cases and adds five char
+cases. Independent default and `-funsigned-char` x86_64 Linux TUs include the
+same physical callback header and statically assert opposite char signedness.
+The checker requires the actual exported callback metadata to differ and the
+planner to reject the signature. Same-signed and same-unsigned profiles and
+explicit signed/unsigned char callbacks remain positive. Copies of the actual
+same-signed exports test missing, unknown and integer signedness rejection.
+The hosted Rust serializer test checks both signedness values and missing
+side-table evidence. Compiled exporter and Rust execution remain CI gates.

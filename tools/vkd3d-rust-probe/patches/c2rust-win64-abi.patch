@@ -1,5 +1,5 @@
 diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/AstExporter.cpp
-index ef9d929..986f7ad 100644
+index ef9d929..0d28d69 100644
 --- a/c2rust-ast-exporter/src/AstExporter.cpp
 +++ b/c2rust-ast-exporter/src/AstExporter.cpp
 @@ -12,6 +12,7 @@
@@ -39,7 +39,22 @@ index ef9d929..986f7ad 100644
          auto qt = encodeQualType(t);
          auto k = T->getAttrKind();
 
-@@ -585,6 +592,15 @@ private:
+@@ -577,7 +584,13 @@ private:
+             }
+         }();
+
+-        encodeType(T, tag);
++        if (tag == TagChar) {
++            encodeType(T, tag, [kind](CborEncoder *local) {
++                cbor_encode_boolean(local, kind == BuiltinType::Char_S);
++            });
++        } else {
++            encodeType(T, tag);
++        }
+     }
+
+     // Clang represents function declarations with parameters as
+@@ -585,6 +598,15 @@ private:
      // handled as `FunctionNoPrototype` instances. Note: we could handle both
      // cases by overriding `VisitFunctionType` instead of the current
      // two-function solution.
@@ -55,7 +70,7 @@ index ef9d929..986f7ad 100644
      void VisitFunctionProtoType(const FunctionProtoType *T) {
          LLVM_DEBUG(dbgs() << "Visit ");
          LLVM_DEBUG(T->dump());
-@@ -608,6 +624,7 @@ private:
+@@ -608,6 +630,7 @@ private:
              cbor_encode_boolean(local, T->getExtProtoInfo().Variadic);
              cbor_encode_boolean(local, T->getNoReturnAttr());
              cbor_encode_boolean(local, true); // has arguments
@@ -63,7 +78,7 @@ index ef9d929..986f7ad 100644
          });
 
          VisitQualType(T->getReturnType());
-@@ -631,6 +648,7 @@ private:
+@@ -631,6 +654,7 @@ private:
              cbor_encode_boolean(local, false); // Variable argument function
              cbor_encode_boolean(local, T->getNoReturnAttr());
              cbor_encode_boolean(local, false); // has arguments
@@ -71,7 +86,7 @@ index ef9d929..986f7ad 100644
          });
 
          VisitQualType(T->getReturnType());
-@@ -2252,6 +2270,15 @@ class TranslateASTVisitor final
+@@ -2252,6 +2276,15 @@ class TranslateASTVisitor final
                  }
 
                  cbor_encoder_close_container(array, &attr_array);
@@ -87,7 +102,7 @@ index ef9d929..986f7ad 100644
              });
          typeEncoder.VisitQualTypeOf(functionType, paramsFD);
 
-@@ -2357,6 +2384,47 @@ class TranslateASTVisitor final
+@@ -2357,6 +2390,47 @@ class TranslateASTVisitor final
       Extras:
       - name as string
       */
@@ -135,7 +150,7 @@ index ef9d929..986f7ad 100644
      bool VisitRecordDecl(RecordDecl *D) {
          if (!D->isCanonicalDecl()) {
              // Emit non-canonical decl so we have a placeholder to attach comments to.
-@@ -2448,6 +2516,7 @@ class TranslateASTVisitor final
+@@ -2448,6 +2522,7 @@ class TranslateASTVisitor final
 
                  // 7. Encode the platform specific alignment of this record
                  cbor_encode_uint(local, recordAlignment);
@@ -143,7 +158,7 @@ index ef9d929..986f7ad 100644
              });
 
          return true;
-@@ -2467,13 +2536,14 @@ class TranslateASTVisitor final
+@@ -2467,13 +2542,14 @@ class TranslateASTVisitor final
          typeEncoder.VisitQualTypeOf(underlying_type, D);
 
          encode_entry(D, TagEnumDecl, childIds, underlying_type,
@@ -159,7 +174,7 @@ index ef9d929..986f7ad 100644
                       });
 
          return true;
-@@ -3026,7 +3096,7 @@ class TranslateConsumer : public clang::ASTConsumer {
+@@ -3026,7 +3102,7 @@ class TranslateConsumer : public clang::ASTConsumer {
              cbor_encoder_init(&encoder, buffer, len, 0);
 
              CborEncoder outer;
@@ -168,7 +183,7 @@ index ef9d929..986f7ad 100644
 
              CborEncoder array;
 
-@@ -3136,6 +3206,14 @@ class TranslateConsumer : public clang::ASTConsumer {
+@@ -3136,6 +3212,14 @@ class TranslateConsumer : public clang::ASTConsumer {
              auto target = Context.getTargetInfo().getTriple().str();
              cbor_encode_string(&outer, target);
 
@@ -184,7 +199,7 @@ index ef9d929..986f7ad 100644
          };
 
 diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_ast/conversion.rs
-index de549e2..abc0ddb 100644
+index de549e2..8c3ea92 100644
 --- a/c2rust-transpile/src/c_ast/conversion.rs
 +++ b/c2rust-transpile/src/c_ast/conversion.rs
 @@ -601,6 +601,7 @@ fn convert(&mut self, untyped_context: &AstContext) {
@@ -195,7 +210,17 @@ index de549e2..abc0ddb 100644
      }
 
      /// Visit child nodes of a `RecordDecl` (`struct` or `union`) and collect `FieldDecl` node IDs.
-@@ -826,8 +827,16 @@ fn visit_node(
+@@ -659,6 +660,9 @@ fn visit_node(
+                 }
+
+                 TypeTag::TagChar if expected_ty & OTHER_TYPE != 0 => {
++                    if let [Value::Bool(signed)] = ty_node.extras.as_slice() {
++                        self.typed_context.source_char_signedness.insert(CTypeId(new_id), *signed);
++                    }
+                     self.add_type(new_id, not_located(CTypeKind::Char));
+                     self.processed_nodes.insert(new_id, OTHER_TYPE);
+                 }
+@@ -826,8 +830,16 @@ fn visit_node(
                          .expect("NoReturn of function type not found");
                      let has_proto = from_value(ty_node.extras[3].clone())
                          .expect("HasProto of function type not found");
@@ -213,7 +238,7 @@ index de549e2..abc0ddb 100644
                      self.add_type(new_id, not_located(function_ty));
                      self.processed_nodes.insert(new_id, FUNC_TYPE);
 
-@@ -958,7 +967,9 @@ fn visit_node(
+@@ -958,7 +970,9 @@ fn visit_node(
 
                  TypeTag::TagConstantArrayType => {
                      let element_id = from_value(ty_node.extras[0].clone()).expect("element id");
@@ -224,7 +249,7 @@ index de549e2..abc0ddb 100644
 
                      let count: usize = from_value(ty_node.extras[1].clone()).expect("count");
 
-@@ -969,7 +980,9 @@ fn visit_node(
+@@ -969,7 +983,9 @@ fn visit_node(
 
                  TypeTag::TagIncompleteArrayType => {
                      let element_id = from_value(ty_node.extras[0].clone()).expect("element id");
@@ -235,7 +260,7 @@ index de549e2..abc0ddb 100644
 
                      let element_ty = CTypeKind::IncompleteArray(element);
                      self.add_type(new_id, not_located(element_ty));
-@@ -2137,6 +2150,10 @@ fn visit_node(
+@@ -2137,6 +2153,10 @@ fn visit_node(
                      let name = from_value::<String>(node.extras[0].clone())
                          .expect("Expected to find function name");
 
@@ -246,7 +271,7 @@ index de549e2..abc0ddb 100644
                      let is_global =
                          from_value(node.extras[1].clone()).expect("Expected to find visibility");
                      let mut is_inline =
-@@ -2209,6 +2226,7 @@ fn visit_node(
+@@ -2209,6 +2229,7 @@ fn visit_node(
                          .type_id
                          .expect("Expected to find type on typedef declaration");
                      let mut typ = self.visit_qualified_type(typ_old);
@@ -254,7 +279,7 @@ index de549e2..abc0ddb 100644
 
                      // Clang injects definitions of the form `#define __SIZE_TYPE__ unsigned int` into
                      // compilation units based on the target. (See lib/Frontend/InitPreprocessor.cpp
-@@ -2330,6 +2348,10 @@ fn visit_node(
+@@ -2330,6 +2351,10 @@ fn visit_node(
                  }
 
                  ASTEntryTag::TagEnumDecl if expected_ty & ENUM_DECL != 0 => {
@@ -265,7 +290,7 @@ index de549e2..abc0ddb 100644
                      let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
 
                      let variants = node
-@@ -2426,6 +2448,10 @@ fn visit_node(
+@@ -2426,6 +2451,10 @@ fn visit_node(
                  }
 
                  ASTEntryTag::TagStructDecl if expected_ty & RECORD_DECL != 0 => {
@@ -276,7 +301,7 @@ index de549e2..abc0ddb 100644
                      let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
                      let has_def = from_value(node.extras[1].clone())
                          .expect("Expected has_def flag on struct");
-@@ -2467,6 +2493,10 @@ fn visit_node(
+@@ -2467,6 +2496,10 @@ fn visit_node(
                  }
 
                  ASTEntryTag::TagUnionDecl if expected_ty & RECORD_DECL != 0 => {
@@ -301,7 +326,7 @@ index 123c377..75a3074 100644
              for p in params {
                  res.push(p.ctype.into())
 diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.rs
-index 0cbfdca..8a2cefb 100644
+index 0cbfdca..8893d07 100644
 --- a/c2rust-transpile/src/c_ast/mod.rs
 +++ b/c2rust-transpile/src/c_ast/mod.rs
 @@ -18,6 +18,7 @@
@@ -312,7 +337,7 @@ index 0cbfdca..8a2cefb 100644
  mod conversion;
  pub mod iterators;
  mod print;
-@@ -121,6 +122,11 @@ pub struct TypedAstContext {
+@@ -121,6 +122,12 @@ pub struct TypedAstContext {
 
      pub va_list_kind: BuiltinVaListKind,
      pub target: String,
@@ -320,11 +345,12 @@ index 0cbfdca..8a2cefb 100644
 +    pub linker_names: HashMap<CDeclId, String>,
 +    pub source_typedef_types: HashMap<CDeclId, CQualTypeId>,
 +    pub source_array_elements: HashMap<CTypeId, CQualTypeId>,
++    pub source_char_signedness: HashMap<CTypeId, bool>,
 +    pub record_evidence: HashMap<CDeclId, c2rust_ast_exporter::clang_ast::RecordEvidence>,
  }
 
  /// Information about a single macro invocation.
-@@ -1020,6 +1026,7 @@ pub(crate) fn type_kinds_eq(
+@@ -1020,6 +1027,7 @@ pub(crate) fn type_kinds_eq(
                      is_variable_argument1,
                      is_noreturn1,
                      has_prototype1,
@@ -332,7 +358,7 @@ index 0cbfdca..8a2cefb 100644
                  ),
                  Function(
                      result_type_id2,
-@@ -1027,6 +1034,7 @@ pub(crate) fn type_kinds_eq(
+@@ -1027,6 +1035,7 @@ pub(crate) fn type_kinds_eq(
                      is_variable_argument2,
                      is_noreturn2,
                      has_prototype2,
@@ -340,7 +366,7 @@ index 0cbfdca..8a2cefb 100644
                  ),
              ) => {
                  self.qual_types_eq(*result_type_id1, *result_type_id2, resolver)
-@@ -1040,6 +1048,7 @@ pub(crate) fn type_kinds_eq(
+@@ -1040,6 +1049,7 @@ pub(crate) fn type_kinds_eq(
                      && is_variable_argument1 == is_variable_argument2
                      && is_noreturn1 == is_noreturn2
                      && has_prototype1 == has_prototype2
@@ -348,7 +374,7 @@ index 0cbfdca..8a2cefb 100644
              }
 
              (Attributed(type_id1, ref attribute1), Attributed(type_id2, ref attribute2)) => {
-@@ -1095,8 +1104,8 @@ pub fn fn_decl_ty_with_declared_args(&self, func_decl: &CDeclKind) -> CTypeKind
+@@ -1095,8 +1105,8 @@ pub fn fn_decl_ty_with_declared_args(&self, func_decl: &CDeclKind) -> CTypeKind
              let typ = self.resolve_type_id(*typ);
              let decl_arg_tys = self.tys_of_params(parameters).unwrap();
              let typ_kind = &self[typ].kind;
@@ -359,7 +385,7 @@ index 0cbfdca..8a2cefb 100644
              }
              panic!("expected {typ:?} to be CTypeKind::Function, but it was {typ_kind:?}")
          }
-@@ -1179,7 +1188,7 @@ pub fn expr_diverges(&self, expr_id: CExprId) -> bool {
+@@ -1179,7 +1189,7 @@ pub fn expr_diverges(&self, expr_id: CExprId) -> bool {
          };
 
          match self.index(pointed_id).kind {
@@ -368,7 +394,7 @@ index 0cbfdca..8a2cefb 100644
              _ => false,
          }
      }
-@@ -2830,9 +2839,25 @@ pub(crate) fn not_volatile(self) -> Self {
+@@ -2830,9 +2840,25 @@ pub(crate) fn not_volatile(self) -> Self {
  //  * UnaryTransformType <http://clang.llvm.org/doxygen/classclang_1_1UnaryTransformType.html>
  //  * AdjustedType <http://clang.llvm.org/doxygen/classclang_1_1AdjustedType.html>
 
@@ -397,7 +423,7 @@ index 0cbfdca..8a2cefb 100644
  #[derive(Debug, Clone, PartialEq, Eq, Hash)]
  pub enum CTypeKind {
      Void,
-@@ -2894,7 +2919,7 @@ pub enum CTypeKind {
+@@ -2894,7 +2920,7 @@ pub enum CTypeKind {
      // Note a function taking no arguments should have one `void` argument. Functions without any
      // arguments are in K&R format.
      // Flags: is_variable_argument, is_noreturn, has prototype
@@ -1408,10 +1434,10 @@ index a96ee1c..6b279e9 100644
  }
 diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/src/c_ast/closed_variadic.rs
 new file mode 100644
-index 0000000..2dfbfe9
+index 0000000..69109c0
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_variadic.rs
-@@ -0,0 +1,443 @@
+@@ -0,0 +1,461 @@
 +use super::*;
 +use serde_json::{Value, json};
 +
@@ -1465,10 +1491,13 @@ index 0000000..2dfbfe9
 +                }
 +                array
 +            }
++            CTypeKind::Char => match self.source_char_signedness.get(&canonical_type) {
++                Some(signed) => json!({"kind": "Char", "signed": signed}),
++                None => json!({"unproved": "missing plain char signedness"}),
++            },
 +            CTypeKind::LongDouble => json!({"unproved": "long double ABI shape"}),
 +            CTypeKind::Void
 +            | CTypeKind::Bool
-+            | CTypeKind::Char
 +            | CTypeKind::SChar
 +            | CTypeKind::Short
 +            | CTypeKind::Int
@@ -1751,6 +1780,21 @@ index 0000000..2dfbfe9
 +                vec![CExprId(2), CExprId(3)],
 +            )),
 +        );
++        ast.c_types.insert(CTypeId(20), not_located(CTypeKind::Char));
++        let plain_char = CQualTypeId::new(CTypeId(20));
++        assert_eq!(ast.inventory_type(plain_char, 0)["canonical"]["unproved"],
++                   "missing plain char signedness");
++        for signed in [true, false] {
++            ast.source_char_signedness.insert(CTypeId(20), signed);
++            assert_eq!(ast.inventory_type(plain_char, 0)["canonical"],
++                       json!({"kind": "Char", "signed": signed}));
++        }
++        for (index, kind, name) in [(21, CTypeKind::SChar, "SChar"),
++                                     (22, CTypeKind::UChar, "UChar")] {
++            ast.c_types.insert(CTypeId(index), not_located(kind));
++            assert_eq!(ast.inventory_type(CQualTypeId::new(CTypeId(index)), 0)["canonical"],
++                       json!({"kind": name}));
++        }
 +        ast.c_types.insert(CTypeId(8), not_located(CTypeKind::Long));
 +        ast.c_types
 +            .insert(CTypeId(9), not_located(CTypeKind::Typedef(CDeclId(9))));

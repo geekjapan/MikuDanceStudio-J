@@ -36,7 +36,7 @@ def run(args, **kwargs):
     subprocess.run(list(map(str, args)), check=True, cwd=ROOT / 'rust', **kwargs)
 
 
-def stream(data, count, start=0):
+def transport(data, count):
     ending = 'CRLF' if data.count(b'\r\n') == count else 'LF'
     if data.count(b'\n') != count or not data.endswith(b'\n'):
         raise ValueError('Incomplete stream transport')
@@ -48,10 +48,31 @@ def stream(data, count, start=0):
         if b'\r' in data:
             raise ValueError('Mixed stream transport')
         text = data
-    rows(text, 'gjk-pair', count, start)
     return text, {'rows': count, 'line_ending': ending,
                   'raw_sha256': hashlib.sha256(data).hexdigest(),
                   'lf_sha256': hashlib.sha256(text).hexdigest()}
+
+
+def stream(data, count, start=0):
+    text, facts = transport(data, count)
+    rows(text, 'gjk-pair', count, start)
+    return text, facts
+
+
+def capture_inputs(output, inputs):
+    (output / 'inputs.tsv').write_bytes(inputs)
+    normalized, full = transport(inputs, 5081)
+    facts = {'inputs.tsv': full}
+    fixture = ROOT / 'rust/crates/mds-bullet/tests/gjk_pair_data'
+    for name, count, data, expected in [
+            ('compact', COMPACT, b''.join(inputs.splitlines(keepends=True)[:COMPACT]), 'inputs.tsv'),
+            ('fallback', 6, b''.join(inputs.splitlines(keepends=True)[-6:]), 'fallback-inputs.tsv')]:
+        filename = f'{name}-inputs.tsv'
+        (output / filename).write_bytes(data)
+        text, facts[filename] = transport(data, count)
+        assert (fixture / expected).read_bytes() == text, 'Frozen inputs changed'
+    write_json(output / 'input-transport.json', facts)
+    return normalized
 
 
 def inventory(native, rust, count, start=0):
@@ -107,14 +128,7 @@ def capture(output, environment):
     write_json(output / 'effective-native-command.json', command)
     run(command, env=environment)
     inputs = subprocess.check_output([sys.executable, HERE / 'cases.py'])
-    assert len(inputs.splitlines()) == 5081
-    (output / 'inputs.tsv').write_bytes(inputs)
-    fixture = ROOT / 'rust/crates/mds-bullet/tests/gjk_pair_data'
-    for name, data in [('compact', b''.join(inputs.splitlines(keepends=True)[:COMPACT])),
-                       ('fallback', b''.join(inputs.splitlines(keepends=True)[-6:]))]:
-        (output / f'{name}-inputs.tsv').write_bytes(data)
-        expected = fixture / ('inputs.tsv' if name == 'compact' else 'fallback-inputs.tsv')
-        assert expected.read_bytes() == data, 'Frozen inputs changed'
+    capture_inputs(output, inputs)
     (output / 'native.tsv').write_bytes(subprocess.check_output([executable], input=inputs, env=environment))
     observation_error = None
     try:

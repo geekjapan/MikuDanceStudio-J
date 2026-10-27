@@ -1,4 +1,5 @@
 """Capture failure paths retain evidence without approving numerical differences."""
+import hashlib
 import importlib.util
 import json
 import os
@@ -51,6 +52,43 @@ class CaptureTests(unittest.TestCase):
         for word in [b'3f800000', b'80000000', b'7f800000', b'ffc00000']:
             changed = lf.replace(b'00000000', word, 1)
             self.assertTrue(check.inventory(lf, changed, 1800))
+
+    def test_generated_input_transport_preserves_raw_and_frozen_binding(self):
+        generated = subprocess.check_output([sys.executable, Path(check.__file__).with_name('cases.py')]).replace(b'\r\n', b'\n')
+        self.assertEqual(hashlib.sha256(generated).hexdigest(),
+                         'c2d062c601c5cc2a8f9cbf269fb3aec3974511d70d2a7003719c9cf953091522')
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp)
+            for ending, label in [(b'\n', 'LF'), (b'\r\n', 'CRLF')]:
+                raw = generated.replace(b'\n', ending)
+                self.assertEqual(check.capture_inputs(output, raw), generated)
+                self.assertEqual((output / 'inputs.tsv').read_bytes(), raw)
+                facts = json.loads((output / 'input-transport.json').read_text())
+                for filename, count in [('inputs.tsv', 5081), ('compact-inputs.tsv', 1800), ('fallback-inputs.tsv', 6)]:
+                    data = (output / filename).read_bytes()
+                    self.assertEqual(facts[filename]['rows'], count)
+                    self.assertEqual(facts[filename]['line_ending'], label)
+                    self.assertEqual(facts[filename]['raw_sha256'], hashlib.sha256(data).hexdigest())
+                    self.assertEqual(facts[filename]['lf_sha256'], hashlib.sha256(data.replace(b'\r\n', b'\n')).hexdigest())
+                for filename, frozen in [('compact-inputs.tsv', 'inputs.tsv'), ('fallback-inputs.tsv', 'fallback-inputs.tsv')]:
+                    self.assertEqual((output / filename).read_bytes().replace(b'\r\n', b'\n'), (FIXTURE / frozen).read_bytes())
+                if label == 'CRLF':
+                    self.assertEqual(facts['inputs.tsv']['raw_sha256'],
+                                     '48f581294a697e2cf9961fa3c77abe7f0fc7223fa15310a283c2f9f8a123836a')
+            lines = generated.splitlines(keepends=True)
+            changed_last = lines[-1].split(b'\t')
+            changed_last[4] = b'80000000' if changed_last[4] != b'80000000' else b'00000000'
+            corruptions = [generated[:-1], generated + b'\n', generated.replace(b'\n', b'\r\n', 1),
+                           generated.replace(b'\n', b'\r', 1), generated.replace(b'\n', b'\r\r\n', 1),
+                           b''.join(lines[:-1]), generated.replace(b'\t', b' ', 1),
+                           generated.replace(b'00000000', b'80000000', 1),
+                           b''.join([lines[1], lines[0], *lines[2:]]),
+                           b''.join([lines[0], lines[0], *lines[2:]]),
+                           b''.join(lines[:-1]) + b'\t'.join(changed_last)]
+            for index, broken in enumerate(corruptions):
+                with self.subTest(index=index), self.assertRaises((ValueError, AssertionError)):
+                    check.capture_inputs(output, broken)
+                self.assertEqual((output / 'inputs.tsv').read_bytes(), broken)
 
     def test_failure_always_records_integrity_and_unknown_profile(self):
         with tempfile.TemporaryDirectory() as temp:

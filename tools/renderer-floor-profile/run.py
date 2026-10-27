@@ -19,7 +19,7 @@ ROOT = HERE.parents[1]
 BASE = '77b3e431bc1ac2ab5610692f2e12c903a7629090'
 BASE_TREE = '778782dc8ad6352585a9b7eeb135c04150d1f2e4'
 SCHEMA = 'mds-floor-profile-v2'
-PARENT = 'bf9141ea7425083f097f3fd58deb6ec8f32017a7'
+PARENT = 'baaa02c0f3c5314493bb75ed44d99cba954e7df8'
 FP_CONTRACT = {'snapshot':'HardwareMxcsr', 'identity':'SourceSiteOnly',
                'rust_operation_ordering':'Unproved', 'exception_attribution':'Unsupported',
                'operation_environment':'Unproved'}
@@ -454,30 +454,35 @@ def command_words(line):
 
 
 def native_commands(raw):
-    result=[];task=None;active=None;indent=None;continued=False
+    result=[];task=None;active=None;indent=None
     for line in raw.decode(errors='strict').splitlines():
-        header=re.fullmatch(r'\s*(?:\d+>)?(ClCompile|Lib|Link):',line)
+        header=re.fullmatch(r'(\s*)(?:\d+>)?(\w+):',line)
+        project=re.fullmatch(r'\s*(?:\d+>)?(?:\S+[.]vcxproj -> .+|Done Building Project ".+" .+[.]|Project ".+[.]vcxproj"(?: \(\d+\) is building ".+[.]vcxproj" \(\d+\))? on node \d+ \(.+ targets\)[.])',line)
+        if header or project:
+            require(active is None or project or len(header[1])<len(indent),'ambiguous native task boundary')
+            active=None;task=header[2] if header else None
+            continue
         match=re.fullmatch(r'(\s*)(?:\d+>)?("?)([A-Za-z]:[^"\r\n]*[\\/](cl|link|lib)[.]exe)\2\s+(.+)',line,re.I)
         if match:
-            require(not active or not continued,'unterminated native command continuation')
             tool=match[4].lower()
-            require(task is None or tool=={'ClCompile':'cl','Lib':'lib','Link':'link'}[task],'native task/tool identity')
-            active=[match[3]]+command_words(match[5]);indent=match[1];continued=False
+            require(task is None or tool=={'ClCompile':'cl','Lib':'lib','Link':'link'}.get(task),'native task/tool identity')
+            active=[match[3]]+command_words(match[5]);indent=match[1]
             result.append(active)
             continue
-        if active is not None and task is not None and not re.fullmatch(r'\s*\S+[.]vcxproj -> .+',line) and line.startswith(indent) and line[len(indent):] and not line[len(indent):][0].isspace():
-            text=line[len(indent):]
-            if task=='ClCompile' and re.fullmatch(r'[^\\/\s]+[.]cpp',text,re.I):
-                active=None;task=None;continued=False;continue
-            # MSBuild emits archive members at the command's own indentation.
-            if re.search(r'(?i)[.](?:obj|lib|cpp)(?:"|\s|$)',text) or text.startswith(('/','-','@','"')):
-                args=command_words(text)
-                suffixes={'ClCompile':('.cpp',),'Lib':('.obj',),'Link':('.obj','.lib')}[task]
-                require(all(v.startswith(('/','-')) or (v.lower().endswith(suffixes) and not any(c in v for c in '"<>|?*')) for v in args),'ambiguous native continuation')
-                active.extend(args);continued=True;continue
-        active=None;continued=False
-        task=header[1] if header else None
-    require(not continued,'truncated native command continuation')
+        if active is None or not line.strip():continue
+        text=line[len(indent):] if line.startswith(indent) else ''
+        if task=='ClCompile':
+            if re.fullmatch(r'[^\\/\s]+[.]cpp',text,re.I):
+                require(text.lower() in [PureWindowsPath(v).name.lower() for v in active[1:] if v.lower().endswith('.cpp')],'unrelated compiler progress')
+                continue
+            if re.fullmatch(r'\s*(?:\d+>)?[A-Za-z]:.+\(\d+(?:,\d+)?\): warning C\d+: .+ \[.+[.]vcxproj\]',line):continue
+        if task=='Link' and re.fullmatch(r'\s+Creating library .+[.]lib and object .+[.]exp',line):continue
+        require(task in ('ClCompile','Lib','Link') and text and not text[0].isspace(),'ambiguous native command content')
+        args=command_words(text)
+        suffixes={'ClCompile':('.cpp',),'Lib':('.obj',),'Link':('.obj','.lib')}[task]
+        require(all(v.startswith(('/','-')) or (v.lower().endswith(suffixes) and not any(c in v for c in '"<>|?*')) for v in args),'ambiguous native continuation')
+        active.extend(args)
+    require(active is None,'truncated native command')
     return [row for i,row in enumerate(result) if row not in result[:i]]
 
 

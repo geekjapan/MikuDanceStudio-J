@@ -327,10 +327,10 @@ class Controls(unittest.TestCase):
         objects={accessory.relative_to(root).as_posix():b'accessory',native.relative_to(root).as_posix():b'native'}
         archive=member(b'accessory')
         self.assertEqual(r.native_provenance(commands,recipe,'Od',objects,archive),str(exe))
-        raw=('\n'.join(' '.join('"'+v+'"' if ' ' in v else v for v in row) for row in commands)+'\n').encode()
+        raw=('\n'.join(' '.join('"'+v+'"' if ' ' in v else v for v in row) for row in commands)+'\nresult.vcxproj -> C:/result\n').encode()
         self.assertEqual(r.native_commands(raw),commands)
         spaced=copy.deepcopy(commands);spaced[0][0]='C:\\Program Files\\VS\\cl.exe'
-        raw=('\n'.join(' '.join(row) for row in spaced)+'\n').encode()
+        raw=('\n'.join(' '.join(row) for row in spaced)+'\nresult.vcxproj -> C:/result\n').encode()
         self.assertEqual(r.native_commands(raw),spaced)
         for opt in ('Od','O2'):
             for index in (0,1):
@@ -344,15 +344,21 @@ class Controls(unittest.TestCase):
         for task,row in zip(('ClCompile','ClCompile','Lib','Link'),commands):
             lines.extend(['       '+task+':','         '+' '.join('"'+v+'"' for v in row[:-1]),'         "'+row[-1]+'"','       FinalizeBuildStatus:'])
         multiline=('\n'.join(lines)+'\n').encode()
-        def admitted(raw):
+        def admitted(raw,stderr=b''):
             receipt={'argv':recipe['commands']['native-build'],'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
-            for suffix,value in [('stdout',raw),('stderr',b'')]:receipt[suffix]={'name':'native-build.'+suffix,'sha256':r.digest(value),'size':len(value)}
-            files={'.json':json.dumps(receipt).encode(),'.stdout':raw,'.stderr':b''}
+            for suffix,value in [('stdout',raw),('stderr',stderr)]:receipt[suffix]={'name':'native-build.'+suffix,'sha256':r.digest(value),'size':len(value)}
+            files={'.json':json.dumps(receipt).encode(),'.stdout':raw,'.stderr':stderr}
             with patch.object(Path,'read_bytes',lambda path:files[path.suffix]):
-                checked,stdout,_=r.checked(Path('/resealed'),'native-build')
+                checked,stdout,stderr=r.checked(Path('/resealed'),'native-build')
             r.admit_command(checked,recipe,'native-build')
-            return r.native_provenance(r.native_commands(stdout),recipe,'Od',objects,archive)
+            return r.native_provenance(r.native_commands(stdout+b'\n'+stderr),recipe,'Od',objects,archive)
         self.assertEqual(admitted(multiline),str(exe))
+        for separator in (b'\n',b'\n\n',b'         unrecognized diagnostic\n'):
+            with self.subTest(separator=separator),self.assertRaises(ValueError):
+                admitted(multiline.replace(b'       FinalizeBuildStatus:',separator+b'         /O1\n       FinalizeBuildStatus:',1))
+        for stderr in (b'',b'\n\n',b'         diagnostic\n         /O1\n'):
+            with self.subTest(stderr=stderr),self.assertRaises(ValueError):
+                admitted(multiline[:multiline.index(b'       FinalizeBuildStatus:')],stderr)
         for old,new in [(str(accessory).encode(),b'wrong.obj'),(str(native).encode(),b'wrong.obj'),(str(library).encode(),b'wrong.lib'),(str(exe).encode(),b'wrong.exe'),(str(source/r.ACCESSORY).encode(),b'wrong.cpp')]:
             with self.subTest(member=old),self.assertRaises(ValueError):admitted(multiline.replace(old,new))
         with self.assertRaises(ValueError):admitted(multiline.replace(('         "'+str(accessory)+'"\n').encode(),b''))
@@ -391,8 +397,23 @@ class Controls(unittest.TestCase):
         args=r.native_commands(batch)[0]
         self.assertEqual(args[-1],'/Od');self.assertEqual(r.option(args[1:],'/Fo'),'core.dir\\Release\\')
         self.assertIn('C:\\src\\accessory.cpp',args)
-        emitted=b'       ClCompile:\n         C:\\VS\\cl.exe /c C:\\src\\accessory.cpp\n         accessory.cpp\n'
+        emitted=b'       ClCompile:\n         C:\\VS\\cl.exe /c C:\\src\\accessory.cpp\n         accessory.cpp\n       Lib:\n'
         self.assertEqual(r.native_commands(emitted)[0],['C:\\VS\\cl.exe','/c','C:\\src\\accessory.cpp'])
+
+    def test_22_native_boundaries_and_progress_do_not_drop_options(self):
+        compile=b'       ClCompile:\n         C:\\VS\\cl.exe /c /O2 /Od /Foaccessory.obj C:\\src\\accessory.cpp\n'
+        progress=b'         accessory.cpp\n'
+        self.assertEqual(r.native_commands(compile+b'         C:\\src\\other.cpp\n       Lib:\n')[0][-1],'C:\\src\\other.cpp')
+        boundary=b'       Lib:\n'
+        self.assertEqual(r.native_commands(compile+progress+b'\n         /O1\n'+boundary)[0][-1],'/O1')
+        warning=b'     6>C:\\src\\accessory.cpp(1,2): warning C4018: signed mismatch [C:\\build\\core.vcxproj]\n'
+        self.assertEqual(r.native_commands(compile+warning+progress+b'         /O1\n'+boundary)[0][-1],'/O1')
+        for tail in (b'',b'\n',b'\n\n',progress,progress+b'\n',warning):
+            with self.subTest(tail=tail),self.assertRaises(ValueError):r.native_commands(compile+tail)
+        for content in (b'         unrecognized diagnostic\n',b'         ClCompile:\n',b'         wrong.cpp\n',b'         @hidden.rsp\n',b'         "unterminated.cpp\n',b'       Lib:\n         C:\\VS\\cl.exe /c C:\\src\\accessory.cpp\n'):
+            with self.subTest(content=content),self.assertRaises(ValueError):r.native_commands(compile+content+boundary)
+        for transition in (boundary,b'         core.vcxproj -> C:\\build\\core.lib\n',b'     6>Done Building Project "C:\\build\\core.vcxproj" (default targets).\n',b'     1>Project "C:\\build\\one.vcxproj" (1) is building "C:\\build\\two.vcxproj" (2) on node 1 (default targets).\n'):
+            self.assertEqual(len(r.native_commands(compile+progress+transition)),1)
 
     def test_18_fixed_schema_contract_even_after_reseal(self):
         manifest={'schema':r.SCHEMA,'fp_observation_contract':copy.deepcopy(r.FP_CONTRACT),'base':r.BASE,'paths':r.PATHS,'head':'1'*40}
@@ -454,7 +475,7 @@ class Controls(unittest.TestCase):
                 builds[0]['commands'][label]=old;receipt['argv']=old;seal()
 
     def test_zz_real_effects_rejected_before_effects(self):
-        target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-floor-profile-transport-fix/effect-probe')
+        target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-floor-profile-boundary-fix/effect-probe')
         self.assertFalse(target.exists());r.readonly()
         probes=[lambda:target.write_bytes(b'forbidden'),lambda:target.mkdir(),lambda:subprocess.run([sys.executable,'-c','raise SystemExit(99)'],check=True),lambda:socket.socket()]
         for probe in probes:

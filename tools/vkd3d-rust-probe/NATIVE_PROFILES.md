@@ -49,11 +49,34 @@ includes establish this boundary. Distributed IDL headers are frozen inputs
 because the recipe retains them without regeneration.
 Only the eight explicitly listed Makefile parser/lexer and private generated
 outputs may differ as generated files. Missing inputs, changed handwritten or
-external headers, and unclassified headers/grammars fail closed. The two actual
-SPIRV-Headers unified1 header dependencies are hashed, and the fixed Vulkan and
-SPIRV archive identities are retained. Vulkan headers do not enter the shader
-producer's include closure. System and SDK headers remain part of compiler and
-target evidence, outside any identical producer claim.
+external headers, and unclassified headers/grammars fail closed. The complete authenticated `hdr/include/` Vulkan tree (45 files) and
+`spv/include/` SPIRV tree (73 files) are hashed, including conditional, unused,
+C++, grammar, and `vk_video/` child inputs. The actual Makefile adds both roots
+to compiler include paths. `libs/vkd3d-common/blob.c` includes `vkd3d.h`, which
+includes `vulkan/vulkan.h`, `vulkan_core.h`, and video codec children.
+`VKD3D_NO_VULKAN_H` is not defined by the retained configuration or recipe.
+Both roots are fixed classifications. Missing or modified manifest files and
+any unclassified file under either root fail before native commands run.
+The source remains `vkd3d-2.1/`, with `hdr/` and `spv/` siblings, matching the
+existing Windows bundle and ARM recipe. The fixed vendor archive identities
+remain recorded. System C headers, compiler builtins, Windows/MinGW SDK headers,
+and conditional platform SDKs (for example X11, Wayland, and Zircon) are not
+hashed by this source profile. Disabled SPIRV-Tools and legacy Vulkan SPIRV
+fallback branches are not claims of extracted vendor dependencies. Target flags
+and generated configuration retain raw hashes and separate differences; this
+boundary does not claim complete toolchain or SDK identity.
+
+`python3 test_native_profiles.py --archive /path/to/vkd3d-probe-input.zip
+--artifacts /path/to/new/verification`
+authenticates the retained ZIP and prepared tar, derives the complete vendor
+inventory from both archive trees, and requires exact manifest path/hash equality.
+It checks Makefile include roots and the actual Vulkan include chain, then mutates
+and removes every frozen source, vendor, and target configuration input, including
+real Vulkan and transitive child headers. It also checks unclassified additions
+and sealed CLI rejection before native execution. Run the same command with
+`python3 -O` to verify that checks do not depend on assertions. No archive fetch
+or native build is performed by this check. The ordinary unit tests use small
+synthetic fixtures and do not replace authenticated archive verification.
 Generated and target configuration differences retain their raw hashes and
 separate difference lists. Either prevents an identical source profile claim.
 Failed source checks retain observed hashes, missing paths, and difference lists

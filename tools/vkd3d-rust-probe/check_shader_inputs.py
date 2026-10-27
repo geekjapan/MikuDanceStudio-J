@@ -52,6 +52,9 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+EXTERNAL_INCLUDE_ROOTS = frozenset(('hdr/include', 'spv/include'))
+
+
 GENERATED_FILES = frozenset([
     'include/private/spirv_grammar.h', 'include/private/vkd3d_version.h',
     *('libs/vkd3d-shader/' + name for name in
@@ -84,7 +87,12 @@ def source_identity(source, reference, receipt=None):
                       if path.is_file() and path.suffix in ('.h', '.y', '.l')
                       and path != source / 'include/config.h'}
     expected_headers = {name for name in reference['source_files'] if name.endswith(('.h', '.y', '.l'))}
-    identity['unclassified_inputs'] = sorted(actual_headers - expected_headers)
+    actual_external = {path.relative_to(source.parent).as_posix()
+                       for directory in EXTERNAL_INCLUDE_ROOTS
+                       for path in (source.parent / directory).rglob('*') if path.is_file()}
+    identity['external_include_roots'] = sorted(EXTERNAL_INCLUDE_ROOTS)
+    identity['unclassified_inputs'] = sorted((actual_headers - expected_headers)
+                                             | (actual_external - reference['external_headers'].keys()))
     differences = [name for name, digest in identity['files'].items()
                    if digest != reference['source_files'][name]]
     identity['generated_source_differences'] = [name for name in differences if name in GENERATED_FILES]
@@ -93,6 +101,12 @@ def source_identity(source, reference, receipt=None):
                                               if digest != reference['external_headers'][name]]
     identity['target_configuration_differences'] = [name for name, digest in identity['target_configuration'].items()
                                                    if digest != reference['target_configuration'][name]]
+    require(set(reference['external_include_roots']) == EXTERNAL_INCLUDE_ROOTS,
+            'unknown or missing external include root classification')
+    require(all(any(name.startswith(root + '/') for name in reference['external_headers'])
+                for root in EXTERNAL_INCLUDE_ROOTS)
+            and all(any(name.startswith(root + '/') for root in EXTERNAL_INCLUDE_ROOTS)
+                    for name in reference['external_headers']), 'unclassified external reference input')
     require(not missing, f'missing required producer inputs: {missing}')
     require(not identity['unclassified_inputs'], f'unclassified producer inputs: {identity["unclassified_inputs"]}')
     require(not identity['handwritten_source_differences'],

@@ -97,7 +97,20 @@ class ObservationTests(unittest.TestCase):
                 archived_verifiers={n for n in archived if n.startswith(verifier_prefix) and Path(n).suffix in {'.py','.json'} and n!=verifier_prefix+'cases.py'}
                 producers=set(archived)-archived_verifiers
                 source=sorted(producers)[0]
-                self.assertEqual(profile['producer_sources'],{n:archived[n] for n in producers})
+                admission=profile['source_admission']
+                self.assertEqual(admission['actual_run'],40473401249)
+                self.assertEqual(admission['head'],'07fa0792a56d9fa3c5c3af4cff3bd88a7567a033')
+                self.assertEqual(admission['actual_checkout'],'c6bc51b118e14d6d3235b08cb01dbca110b37b1e')
+                self.assertEqual((admission['source_entries'],admission['producer_entries']),(237,219))
+                self.assertEqual(admission['actual_artifact']['id'],{
+                    'windows':12720600329,'linuxx64':12720971984,
+                    'linuxarm':12720004369,'macarm':12721090702}[host])
+                changed=admission['changed_producer_sources']
+                self.assertEqual(set(changed),{'rust/crates/mds-bullet/src/core/contact.rs',
+                                              'tools/bullet-rust-mixed-solver-check/runner.rs'})
+                for name,delta in changed.items():self.assertEqual(delta['previous'],archived[name])
+                self.assertEqual(profile['producer_sources'],{
+                    n:changed[n]['observed'] if n in changed else archived[n] for n in producers})
                 self.assertEqual(len(profile['producer_sources']),len(archived)-len(archived_verifiers))
                 self.assertEqual(len(archived_verifiers),14)
                 self.assertTrue(profile['strict_producer_closure'])
@@ -111,14 +124,16 @@ class ObservationTests(unittest.TestCase):
                 old=json.loads((HERE/'profiles'/f'{host}-run40411448747.json').read_text())
                 self.assertEqual(profile['captures'],old['captures'])
                 self.assertEqual(profile['differences'],old['differences'])
+                self.assertEqual(profile['identity'],old['identity'])
                 self.assertEqual(measured['historical_profile'],old['name'])
                 self.assertTrue(measured['historical_difference_inventory_and_captures_identical'])
                 for name,raw in measured['identity_raw_text'].items():(out/name).write_bytes(raw.encode())
                 with patch.dict('os.environ',{'GIT_CONFIG_COUNT':'1','GIT_CONFIG_KEY_0':'core.autocrlf','GIT_CONFIG_VALUE_0':autocrlf}):
-                    archive=subprocess.check_output(['git','-c','core.autocrlf=false','archive',measured['head'],*sorted(producers)],cwd=ROOT)
+                    archive=subprocess.check_output(['git','-c','core.autocrlf=false','archive',admission['head'],*sorted(producers)],cwd=ROOT)
                 with tarfile.open(fileobj=io.BytesIO(archive)) as pinned:
                     for name in sorted(producers):
                         raw=pinned.extractfile(name).read()
+                        if name in changed:self.assertEqual(hashlib.sha256(raw).hexdigest(),changed[name]['git_lf_sha256'])
                         if host=='windows':raw=raw.replace(b'\n',b'\r\n')
                         self.assertEqual(hashlib.sha256(raw).hexdigest(),profile['producer_sources'][name],name)
                     solver_source=pinned.extractfile(SOLVER.relative_to(ROOT).as_posix()).read().decode()

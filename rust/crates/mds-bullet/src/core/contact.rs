@@ -111,6 +111,10 @@ impl PairManifold {
         &self.points[..self.count]
     }
 
+    pub(crate) fn clear_contacts(&mut self) {
+        self.count = 0;
+    }
+
     pub fn contacts_mut(&mut self) -> &mut [ContactPoint] {
         &mut self.points[..self.count]
     }

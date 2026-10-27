@@ -115,6 +115,12 @@ impl AxisSweep32 {
     pub fn cache(&self) -> &HashedPairCache {
         &self.cache
     }
+    pub fn for_each_algorithm(
+        &mut self,
+        visit: impl FnMut([ProxyKey; 2], &mut Option<AlgorithmKey>),
+    ) {
+        self.cache.for_each_algorithm(visit);
+    }
     pub fn states(&self) -> &[ProxyState] {
         &self.states
     }

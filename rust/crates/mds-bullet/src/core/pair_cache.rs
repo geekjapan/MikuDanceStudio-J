@@ -78,6 +78,15 @@ impl HashedPairCache {
         &self.pairs
     }
 
+    pub fn for_each_algorithm(
+        &mut self,
+        mut visit: impl FnMut([ProxyKey; 2], &mut Option<AlgorithmKey>),
+    ) {
+        for pair in &mut self.pairs {
+            visit(pair.proxies, &mut pair.algorithm);
+        }
+    }
+
     /// Indices are transient: any removal can move the last pair into another slot.
     /// Keys must index states; live UIDs must be unique and stable until removal.
     pub fn find(&self, mut a: ProxyKey, mut b: ProxyKey, states: &[ProxyState]) -> Option<usize> {

@@ -25,6 +25,7 @@
 
 pub mod actions;
 pub mod audio;
+mod camera_track;
 pub mod dump;
 pub mod editor;
 pub mod file;

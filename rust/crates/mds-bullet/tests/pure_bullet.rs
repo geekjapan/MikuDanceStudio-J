@@ -7,7 +7,7 @@ mod body_kernel;
 #[path = "pure_bullet/contact_solver.rs"]
 mod contact_solver;
 #[path = "../src/core/mod.rs"]
-pub mod core;
+mod core;
 #[path = "pure_bullet/joint_coordinates.rs"]
 mod joint_coordinates;
 #[path = "pure_bullet/joint_rows.rs"]

@@ -592,6 +592,34 @@ class Controls(unittest.TestCase):
         kernel.TerminateProcess.assert_not_called()
         kernel.CloseHandle.assert_called_once_with(102)
 
+    def test_windows_race_wait_binding_preserves_dword_failures(self):
+        import ctypes
+        results = iter([0xffffffff])
+        wait = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32)(
+            lambda handle, timeout: next(results))
+        self.assertEqual(wait(102, 0), -1)
+        kernel = MagicMock()
+        kernel.WaitForSingleObject = wait
+        with patch.object(ctypes, 'WinDLL', return_value=kernel, create=True), \
+             patch.object(subprocess, 'Popen', side_effect=RuntimeError('binding configured')) as popen, \
+             patch.object(time, 'sleep'), self.assertRaisesRegex(RuntimeError, 'binding configured'):
+            self.windows_race_control()
+        popen.assert_called_once()
+        self.assertEqual(ctypes.sizeof(wait.restype), 4)
+        for result in (0, 258, 0xffffffff):
+            results = iter([result])
+            self.assertEqual(wait(102, 0), result)
+        for statuses, message in (([0xffffffff], 'initial wait failed.*error=123'),
+                                  ([258, 0xffffffff], 'cleanup failed.*wait error=123')):
+            with self.subTest(statuses=statuses):
+                results = iter(statuses)
+                kernel.CloseHandle.reset_mock()
+                with patch.object(ctypes, 'get_last_error', return_value=123, create=True) as error, \
+                     self.assertRaisesRegex(AssertionError, message):
+                    self.close_windows_descendant(kernel, 102)
+                error.assert_called_once_with()
+                kernel.CloseHandle.assert_called_once_with(102)
+
     def windows_race_control(self, failure=None):
         import ctypes
         from ctypes import wintypes
@@ -612,6 +640,7 @@ class Controls(unittest.TestCase):
             kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
             kernel.OpenProcess.restype = wintypes.HANDLE
             kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel.WaitForSingleObject.restype = ctypes.c_uint32
             kernel.CloseHandle.argtypes = [wintypes.HANDLE]
             kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
 

@@ -13,7 +13,7 @@ import sys
 import time
 
 from cases import corpus
-from trace import bind_inputs, differences, require, validate, validate_allocator
+from trace import bind_inputs, differences, require, validate, validate_allocator, validate_profile
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -306,25 +306,21 @@ def main():
                 require(matching, 'actual selected archive member binding: ' + member)
                 selected_members[member] = matching
             save(out / 'actual-link-members.json', selected_members)
-            actual_profile = json.loads(run([native, 'profile'], 'actual-macros'))
-            require(actual_profile['pointer_bits'] == 64, 'actual 64-bit consumer')
-            require(actual_profile['prevent_false_update'] == 0 and actual_profile['accurate_sleeping'] == 0,
-                    'actual required broadphase compile policy')
-            require(actual_profile['margin_bits'] == 1028443341, 'actual native margin 0.05 bits')
-            require(actual_profile['bt_use_sse'] == (args.policy == 'mmd-win64-sse'), 'actual consumer SSE macro')
+            actual_profile = validate_profile(run([native, 'profile'], 'actual-macros'), args.policy)
             save(out / 'actual-macros.json', actual_profile)
             status['native'] = 'ACTUAL_UNMODIFIED_ARCHIVE'
             status['native_binary_sha256'] = digest(native.read_bytes())
             for mode in MODES[1:]:
                 raw = run([native, mode, out / ('allocator-' + mode + '.jsonl')], 'native-' + mode, inputs.encode())
                 validate(raw, inputs, True)
+        actual_profile = validate_profile((capture / 'actual-macros.json').read_bytes(), args.policy)
         controlled = {}
         for mode in MODES:
             raw = (capture / ('native-' + mode + '.stdout')).read_bytes()
             native_rows = validate(raw, inputs, True)
             receipt_path = capture / ('allocator-' + mode + '.jsonl')
             require(receipt_path.is_file(), 'required allocator receipt: ' + mode)
-            validate_allocator(receipt_path.read_bytes(), native_rows, mode)
+            validate_allocator(receipt_path.read_bytes(), native_rows, mode, actual_profile)
             if mode == 'ordinary':
                 mismatch = differences(native_rows, plain)
                 status['ordinary_raw_order'] = 'EQUAL' if not mismatch else 'DIVERGED'

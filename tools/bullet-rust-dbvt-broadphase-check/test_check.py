@@ -11,7 +11,7 @@ from unittest.mock import patch
 import check
 
 from check import CONTROLS, ROOT, classify, fixed_inputs, mutate, source_paths, witness
-from trace import bind_inputs, differences, validate, validate_allocator
+from trace import bind_inputs, differences, validate, validate_allocator, validate_profile, LAYOUT_FIELDS
 
 
 class Helpers(unittest.TestCase):
@@ -120,18 +120,20 @@ class Helpers(unittest.TestCase):
 
 
 class AllocatorReceipts(unittest.TestCase):
-    def fixture(self, mode='ascending'):
+    def fixture(self, mode='ascending', node_bytes=64):
         base = 1 << 24
         slots = {'ascending': [0, 1], 'descending': [65535, 65534], 'alternating': [0, 65535], 'ordinary': [0, 1]}[mode]
         pointers = [base + slot * 128 for slot in slots]
         controlled = mode != 'ordinary'
         header = dict(schema=1, mode=mode, hooks=controlled, arena_base=base, slots=65536,
-                      stride=128, arena_alignment=64, pointer_bytes=8, node_bytes=64, node_alignment=16,
+                      stride=128, arena_alignment=64, pointer_bytes=8, node_bytes=node_bytes, node_alignment=16,
+                      node_type_alignment=8 if node_bytes == 56 else 16, node_volume_offset=0,
+                      node_parent_offset=32, node_childs_offset=40, raw_node_bytes=node_bytes+23,
                       bt_has_aligned_allocator=False, bt_debug_memory_allocations=False, cellos_lv2=False)
         def event(op, ordinal, pointer):
             value = dict(op=op, route='raw', ordinal=ordinal, pointer=pointer)
             if op == 'alloc':
-                value.update(size=87, alignment=0)
+                value.update(size=node_bytes+23, alignment=0)
             return value
         def record(index, events, counters):
             return dict(kind='checkpoint', identity=[0, index, 'H' if index == 0 else 'p'],
@@ -148,20 +150,93 @@ class AllocatorReceipts(unittest.TestCase):
         rows[1][12][0] = [[node(pointers[0]), node(pointers[1])], None]
         rows[2][12] = [[[], None], [[], None]]
         return records, rows
-    def check(self, records, rows, mode='ascending'):
-        return validate_allocator(('\n'.join(json.dumps(r) for r in records)+'\n').encode(), rows, mode)
+    def profile(self, node_bytes=64, policy='generic-reference'):
+        header = self.fixture(node_bytes=node_bytes)[0][0]
+        return dict(pointer_bits=64, prevent_false_update=0, accurate_sleeping=0, margin_bits=1028443341,
+                    bt_use_sse=policy == 'mmd-win64-sse', win32=policy == 'mmd-win64-sse',
+                    **{key: header[key] for key in LAYOUT_FIELDS})
+    def check(self, records, rows, mode='ascending', profile=None):
+        if profile is None:
+            profile = self.profile(56 if records[0].get('node_bytes') == 56 else 64)
+        return validate_allocator(('\n'.join(json.dumps(r) for r in records)+'\n').encode(), rows, mode, profile)
     def test_actual_raw_callbacks_cached_reuse_and_final_frees(self):
-        for mode in ['ascending', 'descending', 'alternating', 'ordinary']:
-            with self.subTest(mode=mode):
-                records, rows = self.fixture(mode)
-                result = self.check(records, rows, mode)
-                self.assertEqual(result['allocations'], 0 if mode == 'ordinary' else 2)
-                self.assertEqual(result['cache_reuse'], True)
+        for node_bytes in [56, 64]:
+            for mode in ['ascending', 'descending', 'alternating', 'ordinary']:
+                with self.subTest(mode=mode, node_bytes=node_bytes):
+                    records, rows = self.fixture(mode, node_bytes)
+                    result = self.check(records, rows, mode)
+                    self.assertEqual(result['allocations'], 0 if mode == 'ordinary' else 2)
+                    self.assertEqual(result['cache_reuse'], True)
+    def test_profile_and_header_layout_must_match_exactly(self):
+        for node_bytes in [56, 64]:
+            profile = self.profile(node_bytes)
+            self.assertEqual(validate_profile(json.dumps(profile), 'generic-reference'), profile)
+            records, rows = self.fixture(node_bytes=node_bytes)
+            for key in LAYOUT_FIELDS:
+                broken = copy.deepcopy(profile)
+                broken[key] = not profile[key] if type(profile[key]) is bool else profile[key] + 1
+                with self.subTest(node_bytes=node_bytes, key=key), self.assertRaises(ValueError):
+                    self.check(records, rows, profile=broken)
+            other = self.profile(64 if node_bytes == 56 else 56)
+            with self.assertRaisesRegex(ValueError, 'header matches native profile'):
+                self.check(records, rows, profile=other)
+    def test_strict_profile_and_bounded_layout_reject(self):
+        for node_bytes in [56, 64]:
+            profile = self.profile(node_bytes)
+            for key in profile:
+                changes = [lambda p, k=key: p.pop(k), lambda p, k=key: p.update({k: True if type(p[k]) is int else 1})]
+                if key in LAYOUT_FIELDS - {'bt_has_aligned_allocator', 'bt_debug_memory_allocations', 'cellos_lv2'}:
+                    changes += [lambda p, k=key: p.update({k: p[k]+1})]
+                for change in changes:
+                    broken = copy.deepcopy(profile)
+                    change(broken)
+                    with self.subTest(node_bytes=node_bytes, key=key), self.assertRaises(ValueError):
+                        validate_profile(json.dumps(broken), 'generic-reference')
+            for raw in [b'{}', b'[]', b'NaN', json.dumps(dict(profile, extra=1)).encode(),
+                        json.dumps(profile).replace('"pointer_bits": 64', '"pointer_bits": 64, "pointer_bits": 64').encode()]:
+                with self.assertRaises(ValueError):
+                    validate_profile(raw, 'generic-reference')
+            records, rows = self.fixture(node_bytes=node_bytes)
+            for key in LAYOUT_FIELDS:
+                for value in [True, None, 1 << 64]:
+                    broken = copy.deepcopy(records)
+                    broken[0][key] = value
+                    with self.subTest(node_bytes=node_bytes, key=key, value=value), self.assertRaises(ValueError):
+                        self.check(broken, rows)
+                broken = copy.deepcopy(records)
+                broken[0].pop(key)
+                with self.assertRaises(ValueError):
+                    self.check(broken, rows)
+            for request in [79 if node_bytes == 64 else 87, True, 128, 1 << 64]:
+                broken = copy.deepcopy(records)
+                broken[1]['events'][0]['size'] = request
+                with self.assertRaises(ValueError):
+                    self.check(broken, rows)
+    def test_both_layouts_retain_counter_history_and_live_bounds(self):
+        for node_bytes in [56, 64]:
+            for mode in ['ascending', 'descending', 'alternating']:
+                records, rows = self.fixture(mode, node_bytes)
+                broken = copy.deepcopy(records)
+                for record in broken[1:-1]:
+                    record['counters'] = [3, 3, 0, 0]
+                with self.subTest(node_bytes=node_bytes, mode=mode), self.assertRaisesRegex(ValueError, 'counter history'):
+                    self.check(broken, rows, mode)
+                for pointer in [records[0]['arena_base']+65536*128+16, rows[0][12][0][1]+128,
+                                rows[0][12][0][1]-1]:
+                    broken_rows = copy.deepcopy(rows)
+                    broken_rows[0][12][0][1] = pointer
+                    with self.subTest(node_bytes=node_bytes, mode=mode, pointer=pointer), self.assertRaises(ValueError):
+                        self.check(records, broken_rows, mode)
+                broken = copy.deepcopy(records)
+                broken[0]['node_bytes'] = 128
+                broken[0]['raw_node_bytes'] = 151
+                with self.assertRaises(ValueError):
+                    self.check(broken, rows, mode)
     def test_receipt_and_checkpoint_schema_reject(self):
         records, rows = self.fixture()
         for raw in [b'', b'{}', b'NaN', b'{}\n'*5]:
             with self.subTest(raw=raw), self.assertRaises(ValueError):
-                validate_allocator(raw, rows, 'ascending')
+                validate_allocator(raw, rows, 'ascending', self.profile())
         changes = [lambda r: r.pop(), lambda r: r.append(r[-1]),
                    lambda r: r.__setitem__(2, copy.deepcopy(r[1])),
                    lambda r: r[1]['identity'].__setitem__(1, True),
@@ -196,7 +271,7 @@ class AllocatorReceipts(unittest.TestCase):
                 self.check(broken, rows)
         encoded = ('\n'.join(json.dumps(r) for r in records)+'\n').replace('"schema": 1', '"schema": 1, "schema": 1')
         with self.assertRaisesRegex(ValueError, 'duplicate receipt field'):
-            validate_allocator(encoded.encode(), rows, 'ascending')
+            validate_allocator(encoded.encode(), rows, 'ascending', self.profile())
         with self.assertRaises(ValueError):
             self.check(records, rows, 'unknown')
     def test_checkpoint_counters_must_cover_live_arena_allocations(self):
@@ -322,12 +397,17 @@ class AllocatorReceipts(unittest.TestCase):
             row[12] = None
             plain.append(row)
         rust_raw = ('\n'.join(json.dumps(r) for r in plain)+'\n').encode()
-        for missing in check.MODES:
+        for missing in [*check.MODES, 'profile-layout', 'profile-schema', 'profile-missing']:
             with self.subTest(missing=missing), tempfile.TemporaryDirectory() as folder:
                 capture, out = Path(folder)/'capture', Path(folder)/'out'
                 capture.mkdir()
                 check.save(capture/'report.json', dict(status='CONTROLLED_PASS', policy='mmd-win64-sse', host=dict(system='Windows')))
                 check.save(capture/'artifact-manifest.json', {})
+                if missing != 'profile-missing':
+                    profile = self.profile(56 if missing == 'profile-layout' else 64, policy='mmd-win64-sse')
+                    if missing == 'profile-schema':
+                        profile.pop('node_type_alignment')
+                    check.save(capture/'actual-macros.json', profile)
                 check.save(capture/'source-canonical.json', {})
                 (capture/'inputs.txt').write_bytes(inputs.encode())
                 for mode in check.MODES:
@@ -346,10 +426,16 @@ class AllocatorReceipts(unittest.TestCase):
                         patch.object(check.subprocess, 'run', side_effect=run), \
                         patch.object(check, 'bind_inputs', wraps=bind_inputs) as bind, \
                         patch.object(check, 'differences', wraps=differences) as compare:
-                    with self.assertRaisesRegex(ValueError, 'required allocator receipt: '+missing):
+                    error = 'required allocator receipt: '+missing
+                    if missing.startswith('profile-'):
+                        error = {'profile-layout': 'header matches native profile',
+                                 'profile-schema': 'native profile schema',
+                                 'profile-missing': 'actual-macros.json'}[missing]
+                    with self.assertRaisesRegex(FileNotFoundError if missing == 'profile-missing' else ValueError, error):
                         check.main()
-                    self.assertEqual(bind.call_count, check.MODES.index(missing))
-                    self.assertEqual(compare.call_count, check.MODES.index(missing))
+                    count = check.MODES.index(missing) if missing in check.MODES else 0
+                    self.assertEqual(bind.call_count, count)
+                    self.assertEqual(compare.call_count, count)
     def test_zero_callbacks_and_ordinary_hook_claims_reject(self):
         records, rows = self.fixture()
         for r in records[1:]:

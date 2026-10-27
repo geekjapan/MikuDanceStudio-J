@@ -5,6 +5,7 @@
 #include "BulletCollision/CollisionShapes/btSphereShape.h"
 #include "LinearMath/btAlignedAllocator.h"
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -21,6 +22,7 @@ static const size_t STRIDE = 128;
 static const size_t RAW_NODE_BYTES = sizeof(btDbvtNode) + sizeof(void*) + 15;
 alignas(64) static unsigned char arena[SLOTS * STRIDE];
 static_assert(sizeof(btDbvtNode) + 16 <= STRIDE && RAW_NODE_BYTES <= STRIDE, "controlled node and header fit slot");
+static_assert(16 % alignof(btDbvtNode) == 0, "requested alignment supports native node");
 static unsigned allocation_index;
 static std::string allocation_mode;
 static uint64_t raw_allocs, raw_frees, aligned_allocs, aligned_frees;
@@ -138,34 +140,14 @@ static void ranks(const btDbvtNode* n, bool& first) {
     std::cout << ']';
     if (n->isinternal()) { ranks(n->childs[0],first); ranks(n->childs[1],first); }
 }
-int main(int argc, char** argv) {
-    if (argc < 2) return 2;
-    allocation_mode = argv[1];
-    if (allocation_mode == "profile") {
-        if (argc != 2) return 2;
-        std::cout << "{\"pointer_bits\":" << sizeof(void*)*8 << ",\"prevent_false_update\":" << DBVT_BP_PREVENTFALSEUPDATE
-            << ",\"accurate_sleeping\":" << DBVT_BP_ACCURATESLEEPING << ",\"margin_bits\":" << bits(DBVT_BP_MARGIN);
-#ifdef BT_USE_SSE
-        std::cout << ",\"bt_use_sse\":true";
-#else
-        std::cout << ",\"bt_use_sse\":false";
-#endif
-#ifdef WIN32
-        std::cout << ",\"win32\":true";
-#else
-        std::cout << ",\"win32\":false";
-#endif
-        std::cout << "}\n";
-        return 0;
-    }
-    if (allocation_mode != "ordinary" && allocation_mode != "ascending" && allocation_mode != "descending" && allocation_mode != "alternating") return 2;
-    if (argc != 3) return 2;
-    std::ofstream allocator_receipt(argv[2]);
-    if (!allocator_receipt) return 2;
-    allocator_receipt << "{\"schema\":1,\"mode\":\"" << allocation_mode << "\",\"hooks\":"
-        << (allocation_mode == "ordinary" ? "false" : "true") << ",\"arena_base\":" << reinterpret_cast<uintptr_t>(arena)
-        << ",\"slots\":" << SLOTS << ",\"stride\":" << STRIDE << ",\"arena_alignment\":64,\"pointer_bytes\":" << sizeof(void*)
-        << ",\"node_bytes\":" << sizeof(btDbvtNode) << ",\"node_alignment\":16,\"bt_has_aligned_allocator\":"
+static void layout(std::ostream& out) {
+    out << "\"pointer_bytes\":" << sizeof(void*)
+        << ",\"node_bytes\":" << sizeof(btDbvtNode) << ",\"node_alignment\":16"
+        << ",\"node_type_alignment\":" << alignof(btDbvtNode)
+        << ",\"node_volume_offset\":" << offsetof(btDbvtNode, volume)
+        << ",\"node_parent_offset\":" << offsetof(btDbvtNode, parent)
+        << ",\"node_childs_offset\":" << offsetof(btDbvtNode, childs)
+        << ",\"raw_node_bytes\":" << RAW_NODE_BYTES << ",\"bt_has_aligned_allocator\":"
 #ifdef BT_HAS_ALIGNED_ALLOCATOR
         << "true"
 #else
@@ -183,8 +165,43 @@ int main(int argc, char** argv) {
 #else
         << "false"
 #endif
-        << "}\n";
-    if (sizeof(void*) != 8 || sizeof(btDbvtNode) != 64) return 5;
+        ;
+}
+int main(int argc, char** argv) {
+    if (argc < 2) return 2;
+    allocation_mode = argv[1];
+    if (allocation_mode == "profile") {
+        if (argc != 2) return 2;
+        std::cout << "{\"pointer_bits\":" << sizeof(void*)*8 << ",\"prevent_false_update\":" << DBVT_BP_PREVENTFALSEUPDATE
+            << ",\"accurate_sleeping\":" << DBVT_BP_ACCURATESLEEPING << ",\"margin_bits\":" << bits(DBVT_BP_MARGIN);
+#ifdef BT_USE_SSE
+        std::cout << ",\"bt_use_sse\":true";
+#else
+        std::cout << ",\"bt_use_sse\":false";
+#endif
+#ifdef WIN32
+        std::cout << ",\"win32\":true";
+#else
+        std::cout << ",\"win32\":false";
+#endif
+        std::cout << ',';
+        layout(std::cout);
+        std::cout << "}\n";
+        return 0;
+    }
+    if (allocation_mode != "ordinary" && allocation_mode != "ascending" && allocation_mode != "descending" && allocation_mode != "alternating") return 2;
+    if (argc != 3) return 2;
+    std::ofstream allocator_receipt(argv[2]);
+    if (!allocator_receipt) return 2;
+    allocator_receipt << "{\"schema\":1,\"mode\":\"" << allocation_mode << "\",\"hooks\":"
+        << (allocation_mode == "ordinary" ? "false" : "true") << ",\"arena_base\":" << reinterpret_cast<uintptr_t>(arena)
+        << ",\"slots\":" << SLOTS << ",\"stride\":" << STRIDE << ",\"arena_alignment\":64,";
+    layout(allocator_receipt);
+    allocator_receipt << "}\n";
+    if (sizeof(void*) != 8 || offsetof(btDbvtNode, volume) != 0 || offsetof(btDbvtNode, parent) != 32
+        || offsetof(btDbvtNode, childs) != 40
+        || !((sizeof(btDbvtNode) == 56 && alignof(btDbvtNode) == 8)
+             || (sizeof(btDbvtNode) == 64 && alignof(btDbvtNode) == 16))) return 5;
 #if defined(BT_HAS_ALIGNED_ALLOCATOR) || defined(BT_DEBUG_MEMORY_ALLOCATIONS) || defined(__CELLOS_LV2__)
     return 5;
 #endif

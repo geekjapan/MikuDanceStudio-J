@@ -24,8 +24,10 @@ a CMake or final Rust FFI consumer.
 Three native allocation histories install both raw and aligned callbacks in
 ascending, descending and alternating order. The current non-debug, non-CellOS,
 non-`BT_HAS_ALIGNED_ALLOCATOR` profile uses the raw callback. A node's raw request
-is `sizeof(btDbvtNode) + sizeof(void*) + 15` (87 bytes in the required 64-bit,
-64-byte-node layout). The size-matched arena returns a backing slot, and Bullet
+is `sizeof(btDbvtNode) + sizeof(void*) + 15`. The bounded 64-bit layouts admit
+56-byte nodes with type alignment 8 and 79-byte requests, or 64-byte nodes with
+type alignment 16 and 87-byte requests. Both request alignment 16. The node
+volume, parent and child-union offsets must be 0, 32 and 40 bytes respectively. The size-matched arena returns a backing slot, and Bullet
 adds its own header and alignment to produce the node at backing + 16. Other
 allocations of that size may also use slots. Raw fallback uses malloc/free;
 aligned fallback keeps its separate hidden-header pair. Slots have stride 128
@@ -33,8 +35,13 @@ and are never reissued, including across history resets. Unknown macro or layout
 profiles fail without changing Bullet flags.
 
 Each actual mode invocation writes `allocator-<mode>.jsonl` through a separate
-oracle argument. The `profile` invocation stays compatible. A strict header
-records mode, installed hooks, arena geometry, sizeof values and macro states.
+oracle argument. The `profile` invocation and every strict allocator header
+record actual `sizeof`, `alignof`, field offsets, raw request size and allocator
+macro states. `node_alignment` is the requested alignment 16;
+`node_type_alignment` is `alignof(btDbvtNode)`. Header layout facts must match
+the validated native profile exactly during local capture and Windows replay.
+The header also records mode, hook selection and arena geometry. A diagnostic
+header emitted before a fatal layout guard does not prove that hooks ran.
 Each checkpoint records its identity, cumulative raw/aligned allocation/free
 callback counters and size-matched arena callback events in actual order. Event
 ordinals count all callbacks on that route, including fallback allocations.
@@ -86,6 +93,17 @@ The source closure includes every directly compiled Rust core, test fixture,
 helper and the full `mds-crtmath/src` module tree, including `lib.rs`. PR214's
 inherited omission of that direct CRT entry point is disclosed separately and
 is not copied into this checker.
+
+The previous verifier assumed every node occupied 64 bytes. At base `b15a8e0`,
+run `40501081248` measured 56-byte nodes on Apple Silicon macOS, Linux x64 and
+Linux ARM64, then refused them before hook installation. That diagnostic measured
+node size and pointer size, and reported requested alignment 16. It did not
+measure type alignment, offsets or callback request sizes on those hosts. The
+56-byte natural-alignment-8 layout follows from the unchanged native definition;
+fresh CI must record the new layout facts and actual 79-byte callbacks. Synthetic
+fixtures are unit controls, not native execution proof. Fresh acceptance requires
+all four native captures, four Windows replays and all 15 compiled semantic
+controls. Strict archive binding and Rust parity gates remain unchanged.
 
 Run helpers with Python normally and under `-O`. From any directory:
 

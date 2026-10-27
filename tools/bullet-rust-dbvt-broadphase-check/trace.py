@@ -99,34 +99,73 @@ def differences(native_rows, rust_rows):
     return [i for i, (a, b) in enumerate(zip(native_rows, rust_rows)) if a[:12] != b[:12]]
 
 
-def validate_allocator(raw, rows, mode):
+
+LAYOUT_FIELDS = {'pointer_bytes', 'node_bytes', 'node_alignment', 'node_type_alignment',
+                 'node_volume_offset', 'node_parent_offset', 'node_childs_offset', 'raw_node_bytes',
+                 'bt_has_aligned_allocator', 'bt_debug_memory_allocations', 'cellos_lv2'}
+MACRO_FIELDS = {'bt_has_aligned_allocator', 'bt_debug_memory_allocations', 'cellos_lv2'}
+
+
+def object_fields(pairs):
+    result = {}
+    for key, value in pairs:
+        require(key not in result, 'duplicate receipt field')
+        result[key] = value
+    return result
+
+
+def validate_layout(layout):
+    require(type(layout) is dict and set(layout) == LAYOUT_FIELDS, 'native layout schema')
+    for key in LAYOUT_FIELDS - MACRO_FIELDS:
+        integer(layout[key])
+    for key in MACRO_FIELDS:
+        require(layout[key] is False, 'unknown allocator macro profile')
+    require([layout[k] for k in ['pointer_bytes', 'node_alignment', 'node_volume_offset',
+                                'node_parent_offset', 'node_childs_offset']] == [8, 16, 0, 32, 40],
+            'unknown allocator layout')
+    require((layout['node_bytes'], layout['node_type_alignment'], layout['raw_node_bytes'])
+            in [(56, 8, 79), (64, 16, 87)], 'unknown native node layout')
+
+
+def validate_profile(raw, policy):
+    profile = json.loads(raw, object_pairs_hook=object_fields,
+                         parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+    fields = {'pointer_bits', 'prevent_false_update', 'accurate_sleeping', 'margin_bits', 'bt_use_sse', 'win32'}
+    require(type(profile) is dict and set(profile) == fields | LAYOUT_FIELDS, 'native profile schema')
+    for key in fields - {'bt_use_sse', 'win32'}:
+        integer(profile[key])
+    require(profile['pointer_bits'] == 64, 'actual 64-bit consumer')
+    require(profile['prevent_false_update'] == 0 and profile['accurate_sleeping'] == 0,
+            'actual required broadphase compile policy')
+    require(profile['margin_bits'] == 1028443341, 'actual native margin 0.05 bits')
+    require(policy in ['generic-reference', 'mmd-win64-sse'], 'native profile policy')
+    require(type(profile['bt_use_sse']) is bool and type(profile['win32']) is bool, 'native profile macro types')
+    require(profile['bt_use_sse'] == (policy == 'mmd-win64-sse'), 'actual consumer SSE macro')
+    validate_layout({key: profile[key] for key in LAYOUT_FIELDS})
+    return profile
+
+
+def validate_allocator(raw, rows, mode, profile):
     """Check actual callback receipts before any native rank is trusted."""
     require(mode in ['ascending', 'descending', 'alternating', 'ordinary'], 'allocator mode')
     require(type(raw) is bytes and raw, 'required allocator receipt')
-    def object_fields(pairs):
-        result = {}
-        for key, value in pairs:
-            require(key not in result, 'duplicate receipt field')
-            result[key] = value
-        return result
     records = [json.loads(line, object_pairs_hook=object_fields,
                           parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
                for line in raw.decode('utf-8').splitlines()]
     require(len(records) == len(rows) + 2, 'allocator checkpoint count')
     header = records[0]
-    fields = {'schema', 'mode', 'hooks', 'arena_base', 'slots', 'stride', 'arena_alignment',
-              'pointer_bytes', 'node_bytes', 'node_alignment', 'bt_has_aligned_allocator',
-              'bt_debug_memory_allocations', 'cellos_lv2'}
+    fields = {'schema', 'mode', 'hooks', 'arena_base', 'slots', 'stride', 'arena_alignment'} | LAYOUT_FIELDS
     require(type(header) is dict and set(header) == fields, 'allocator header schema')
     for key in fields - {'mode', 'hooks', 'bt_has_aligned_allocator', 'bt_debug_memory_allocations', 'cellos_lv2'}:
         integer(header[key])
     require(header['schema'] == 1 and header['mode'] == mode, 'allocator header identity')
     controlled = mode != 'ordinary'
     require(type(header['hooks']) is bool and header['hooks'] == controlled, 'actual allocator hooks')
-    for key in ['bt_has_aligned_allocator', 'bt_debug_memory_allocations', 'cellos_lv2']:
-        require(header[key] is False, 'unknown allocator macro profile')
-    require([header[k] for k in ['slots', 'stride', 'arena_alignment', 'pointer_bytes', 'node_bytes', 'node_alignment']]
-            == [65536, 128, 64, 8, 64, 16], 'unknown allocator layout')
+    layout = {key: header[key] for key in LAYOUT_FIELDS}
+    validate_layout(layout)
+    require(layout == {key: profile[key] for key in LAYOUT_FIELDS}, 'allocator header matches native profile')
+    require([header[k] for k in ['slots', 'stride', 'arena_alignment']] == [65536, 128, 64],
+            'unknown allocator layout')
     base = header['arena_base']
     end = base + 65536 * 128
     require(base > 0 and base % 64 == 0 and end <= (1 << 64) - 1, 'arena pointer bounds/alignment')
@@ -171,7 +210,7 @@ def validate_allocator(raw, rows, mode):
             if alloc:
                 integer(event['size'])
                 integer(event['alignment'])
-                require(event['size'] == header['node_bytes'] + header['pointer_bytes'] + 15
+                require(event['size'] == header['raw_node_bytes']
                         and event['alignment'] == 0, 'raw node backing request')
                 require(cursor < 65536, 'arena slot exhaustion')
                 slot = cursor

@@ -1,0 +1,40 @@
+name: Exact member-name stable trace pilot
+on:
+  push:
+    branches: [w4-shader-member-name-lowering-pilot]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  trace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned stable compiler
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Acquire fixed retained inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B tools/vkd3d-rust-probe/member_name_lowering.py --acquire "$RUNNER_TEMP/member-inputs"
+      - name: Compiler-free controls in both Python modes
+        env:
+          MEMBER_NAME_ALL24: ${{ runner.temp }}/member-inputs/all24.zip
+        run: |
+          python3 -B tools/vkd3d-rust-probe/test_member_name_lowering.py
+          python3 -B -O tools/vkd3d-rust-probe/test_member_name_lowering.py
+      - name: Execute exact C and stable Rust normal and optimized trace pilots
+        run: python3 -B tools/vkd3d-rust-probe/member_name_lowering.py --artifacts "$RUNNER_TEMP/member-inputs" --run-hosted "$RUNNER_TEMP/member-results"
+      - name: Read-only replay in both Python modes
+        run: |
+          python3 -B tools/vkd3d-rust-probe/member_name_lowering.py --artifacts "$RUNNER_TEMP/member-inputs" --replay "$RUNNER_TEMP/member-results"
+          python3 -B -O tools/vkd3d-rust-probe/member_name_lowering.py --artifacts "$RUNNER_TEMP/member-inputs" --replay "$RUNNER_TEMP/member-results"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: exact-member-name-stable-trace
+          path: |
+            ${{ runner.temp }}/member-inputs
+            ${{ runner.temp }}/member-results
+          if-no-files-found: error

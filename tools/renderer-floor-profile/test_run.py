@@ -474,6 +474,30 @@ class Controls(unittest.TestCase):
                 with self.assertRaises(ValueError):r.replay(out)
                 builds[0]['commands'][label]=old;receipt['argv']=old;seal()
 
+    def test_23_old_verbosity_receipt_rejected_after_reseal(self):
+        for opt in ('Od','O2'):
+            for variant in ('control','observed'):
+                recipe=r.recipe('C:/runner/temp',variant,opt)
+                self.assertEqual(recipe['commands']['native-build'][-1],'--verbose')
+                receipt={'argv':recipe['commands']['native-build'][:-1]+['--','/v:diag'],
+                         'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],
+                         'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)',
+                         'CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,
+                         'start_utc':'start','end_utc':'end'}
+                files={'.stdout':b'old diagnostic output\n','.stderr':b''}
+                for suffix in ('stdout','stderr'):
+                    raw=files['.'+suffix]
+                    receipt[suffix]={'name':'native-build.'+suffix,'sha256':r.digest(raw),'size':len(raw)}
+                files['.json']=json.dumps(receipt).encode()
+                with patch.object(Path,'read_bytes',lambda path:files[path.suffix]):
+                    checked,_,_=r.checked(Path('/resealed'),'native-build')
+                with self.assertRaises(ValueError):r.admit_command(checked,recipe,'native-build')
+                build={key:copy.deepcopy(recipe[key]) for key in ('id','source','target','evidence','commands')}
+                build.update(variant=variant,optimization=opt)
+                build['commands']['native-build']=checked['argv']
+                with self.assertRaises(ValueError):
+                    r.admit_recipe({'runner_temp':'C:/runner/temp','input_root':recipe['input_root']},build)
+
     def test_zz_real_effects_rejected_before_effects(self):
         target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-floor-profile-boundary-fix/effect-probe')
         self.assertFalse(target.exists());r.readonly()

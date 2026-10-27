@@ -19,7 +19,7 @@ ROOT = HERE.parents[1]
 BASE = '77b3e431bc1ac2ab5610692f2e12c903a7629090'
 BASE_TREE = '778782dc8ad6352585a9b7eeb135c04150d1f2e4'
 SCHEMA = 'mds-floor-profile-v2'
-PARENT = 'baaa02c0f3c5314493bb75ed44d99cba954e7df8'
+PARENT = '4defdf8a58c3624c4cab1b7910ad54b33e0fb233'
 FP_CONTRACT = {'snapshot':'HardwareMxcsr', 'identity':'SourceSiteOnly',
                'rust_operation_ordering':'Unproved', 'exception_attribution':'Unsupported',
                'operation_environment':'Unproved'}
@@ -374,7 +374,7 @@ def recipe(runner_temp,variant,opt):
     mode=['--release'] if opt=='O2' else []
     commands={
         'configure':['cmake','-S',str(source),'-B',str(native),'-G','Visual Studio 17 2022','-A','x64','-DCMAKE_TOOLCHAIN_FILE='+str(root/'floor-profile-deps/build/generators/conan_toolchain.cmake'),'-DBUILD_TESTING=OFF','-DMIKUDANCESTUDIO_DIAG=OFF'],
-        'native-build':['cmake','--build',str(native),'--config','Release','--target','floor_profile','--parallel','4','--','/v:diag'],
+        'native-build':['cmake','--build',str(native),'--config','Release','--target','floor_profile','--parallel','4','--verbose'],
         'native':[str(directory/'floor_profile.exe'),'fixed',variant],
         'rust-build':['cargo','+1.95.0','test','-p','mds-accessory','--lib','--no-run','--message-format=json']+mode,
         'rust':[str(directory/'rust-profile.exe'),'mesh::floor_profile::diagnostic','--exact','--nocapture','--test-threads=1'],

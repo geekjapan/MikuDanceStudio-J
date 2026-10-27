@@ -372,5 +372,130 @@ class ProvisionBoundary(unittest.TestCase):
                     self.assertTrue(evidence["errors"])
 
 
+    def check_discovery(self, location, attribute=None, invalid=False, missing_target=False, enumeration_error=False):
+        self.assertIsNotNone(PWSH, "PowerShell is required")
+        fixtures = HERE / "fixtures/vc90-9.0.30729.6161"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifests = root / "WinSxS/Manifests"
+            manifests.mkdir(parents=True)
+            marked = []
+            for family in ("CRT", "OpenMP"):
+                base = f"amd64_microsoft.vc90.{family}_1fc8b3b9a1e18e3b_9.0.30729.6161_none_test"
+                if not missing_target or family != "OpenMP":
+                    (root / "WinSxS" / base).mkdir()
+                manifest = manifests / (base + ".manifest")
+                manifest.write_bytes((fixtures / f"manifest.30729.6161.Microsoft_VC90_{family}_x64.QFE").read_bytes())
+                if location == "target_manifest":
+                    marked.append(manifest)
+                if location == "policy_manifest":
+                    policy = manifests / f"amd64_policy.9.0.microsoft.vc90.{family}_test.manifest"
+                else:
+                    store = root / "WinSxS" if location.endswith("root") else root / "WinSxS/Policies"
+                    policy = store / f"amd64_policy.9.0.microsoft.vc90.{family}_test/9.0.30729.6161.policy"
+                    policy.parent.mkdir(parents=True, exist_ok=True)
+                    if location.startswith("dot_file"):
+                        policy = policy.with_name(".hidden.policy")
+                policy.write_bytes(b"not XML" if invalid else
+                                   (fixtures / f"policy.30729.6161.policy_9_0_Microsoft_VC90_{family}_x64.QFE").read_bytes())
+                if location.startswith("policy_dir"):
+                    marked.append(policy.parent)
+                elif location != "target_manifest":
+                    marked.append(policy)
+            receipts = root / "receipts"
+            receipts.mkdir()
+            harness = r'''
+. $env:TEST_HELPER
+if ($env:TEST_ATTRIBUTE) {
+    $attribute = [Enum]::Parse([IO.FileAttributes], $env:TEST_ATTRIBUTE)
+    foreach ($path in (ConvertFrom-Json $env:TEST_MARKED)) {
+        $item = Get-Item -LiteralPath $path -Force
+        $item.Attributes = $item.Attributes -bor $attribute
+        if (-not ((Get-Item -LiteralPath $path -Force).Attributes -band $attribute)) {
+            throw "Attribute was not applied to $path"
+        }
+    }
+}
+if ($env:TEST_ENUMERATION_ERROR -eq 'yes') {
+    function Get-ChildItem {
+        param($Path, $Filter, [switch]$File, [switch]$Directory, [switch]$Force)
+        if ($Directory -and $Path -eq (Join-Path $env:WINDIR 'WinSxS') -and $Filter -like '*vc90.crt_*') {
+            throw 'Injected relevant enumeration failure'
+        }
+        Microsoft.PowerShell.Management\Get-ChildItem @PSBoundParameters
+    }
+}
+Get-Vc90PolicyEvidence -Destination $env:TEST_RECEIPTS
+'''
+            script = root / "discovery.ps1"
+            script.write_text(harness)
+            env = dict(os.environ, WINDIR=tmp, TEST_HELPER=str(HERE / "provision_capture_vc90.ps1"),
+                       TEST_RECEIPTS=str(receipts), TEST_MARKED=json.dumps([str(p) for p in marked]),
+                       TEST_ATTRIBUTE=attribute or "", TEST_ENUMERATION_ERROR="yes" if enumeration_error else "no")
+            if (attribute or location.startswith("dot_file")) and not (invalid or missing_target):
+                baseline = root / "without-force.ps1"
+                baseline.write_text((HERE / "provision_capture_vc90.ps1").read_text()
+                                    .replace("-File -Force)", "-File)").replace("-Directory -Force)", "-Directory)"))
+                baseline_receipts = root / "without-force-receipts"
+                baseline_receipts.mkdir()
+                old = subprocess.run([PWSH, "-NoProfile", "-File", str(script)],
+                                     env=dict(env, TEST_HELPER=str(baseline), TEST_RECEIPTS=str(baseline_receipts)),
+                                     capture_output=True, text=True, timeout=15)
+                self.assertEqual(old.returncode, 1, "without -Force must reproduce omitted candidates: " + old.stdout + old.stderr)
+                old_evidence = json.loads((baseline_receipts / "policy.json").read_text(encoding="utf-8-sig"))
+                self.assertEqual(old_evidence["status"], "UNPROVEN")
+                self.assertLess(len(old_evidence["assemblies"]), 4)
+            run = subprocess.run([PWSH, "-NoProfile", "-File", str(script)], env=env,
+                                 capture_output=True, text=True, timeout=15)
+            evidence = json.loads((receipts / "policy.json").read_text(encoding="utf-8-sig"))
+            failed = invalid or missing_target or enumeration_error
+            self.assertEqual(run.returncode, 1 if failed else 0, run.stdout + run.stderr)
+            self.assertEqual(evidence["status"], "UNPROVEN" if failed else "POLICY_AND_TARGET_PRESENT")
+            discovery = json.loads((receipts / "discovery.json").read_text(encoding="utf-8-sig"))
+            self.assertEqual(discovery, evidence["discovery"])
+            self.assertTrue(all(q["force"] is True for q in discovery))
+            entries = {e["path"]: e for q in discovery for e in q["entries"]}
+            self.assertEqual(len(evidence["assemblies"]), 4)
+            for record in evidence["assemblies"]:
+                entry = entries[record["source"]]
+                self.assertEqual(entry["name"], Path(record["source"]).name)
+                self.assertEqual(entry["size"], Path(record["source"]).stat().st_size)
+                self.assertFalse(entry["directory"])
+                self.assertEqual(Path(record["source"]).read_bytes(), Path(record["copy"]).read_bytes())
+                self.assertEqual(hashlib.sha256(Path(record["copy"]).read_bytes()).hexdigest().upper(), record["sha256"])
+            for path in marked:
+                self.assertIn(str(path), entries)
+                if attribute:
+                    self.assertIn(attribute, entries[str(path)]["attributes"])
+                    self.assertTrue(entries[str(path)]["attributes_value"] & (2 if attribute == "Hidden" else 4))
+            if enumeration_error:
+                self.assertTrue(any(q["error"] and 'Injected' in q["error"] for q in discovery))
+                self.assertTrue(evidence["errors"])
+                self.assertTrue(all(c["matches"] for c in evidence["compatibility"]))
+            if invalid:
+                self.assertTrue(evidence["errors"])
+                self.assertEqual(sum(not r["valid"] for r in evidence["assemblies"]), 2)
+            if missing_target:
+                self.assertFalse(evidence["compatibility"][1]["matches"])
+
+    @unittest.skipUnless(os.name == "nt", "SKIP: real Windows Hidden/System filesystem attributes require Windows")
+    def test_windows_hidden_system_discovery(self):
+        for attribute in ("Hidden", "System"):
+            for location in ("target_manifest", "policy_manifest", "policy_dir_root", "policy_dir_Policies",
+                             "policy_file_root", "policy_file_Policies"):
+                with self.subTest(attribute=attribute, location=location):
+                    self.check_discovery(location, attribute)
+            with self.subTest(attribute=attribute, case="malformed relevant policy"):
+                self.check_discovery("policy_file_Policies", attribute, invalid=True)
+            with self.subTest(attribute=attribute, case="missing target"):
+                self.check_discovery("policy_file_Policies", attribute, missing_target=True)
+
+    def test_discovery_observation_and_fail_closed(self):
+        for location in ("dot_file_root", "dot_file_Policies"):
+            with self.subTest(location=location):
+                self.check_discovery(location)
+        self.check_discovery("policy_file_Policies", enumeration_error=True)
+
+
 if __name__ == "__main__":
     unittest.main()

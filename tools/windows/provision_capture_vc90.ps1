@@ -10,24 +10,55 @@ function Get-Vc90PolicyEvidence {
         }
         return [version]$Value
     }
+    function Get-Vc90EntryMetadata($Entry) {
+        [ordered]@{ path = $Entry.FullName; name = $Entry.Name; attributes = [string]$Entry.Attributes
+            attributes_value = [int]$Entry.Attributes; directory = $Entry.PSIsContainer
+            size = $(if ($Entry.PSIsContainer) { $null } else { $Entry.Length }) }
+    }
     $sxs = Join-Path $env:WINDIR 'WinSxS'
     $files = @()
+    $errors = @()
+    $enumerations = @()
     foreach ($family in @('crt', 'openmp')) {
         $manifests = Join-Path $sxs 'Manifests'
-        if (Test-Path $manifests -PathType Container) {
-            foreach ($prefix in @("amd64_microsoft.vc90.${family}_", "amd64_policy.9.0.microsoft.vc90.${family}_")) {
-                $files += @(Get-ChildItem $manifests -Filter "$prefix*.manifest" -File)
-            }
+        foreach ($prefix in @("amd64_microsoft.vc90.${family}_", "amd64_policy.9.0.microsoft.vc90.${family}_")) {
+            $query = [ordered]@{ root = $manifests; filter = "$prefix*.manifest"; kind = 'File'; force = $true
+                exists = $null; entries = @(); error = $null }
+            $enumerations += $query
+            try {
+                $query.exists = Test-Path $manifests -PathType Container
+                if ($query.exists) {
+                    $entries = @(Get-ChildItem $manifests -Filter $query.filter -File -Force)
+                    $query.entries = @($entries | ForEach-Object { Get-Vc90EntryMetadata $_ })
+                    $files += $entries
+                }
+            } catch { $query.error = [string]$_; $errors += "$manifests`: $_" }
         }
         foreach ($store in @($sxs, (Join-Path $sxs 'Policies'))) {
-            if (-not (Test-Path $store -PathType Container)) { continue }
-            foreach ($directory in Get-ChildItem $store -Filter "amd64_policy.9.0.microsoft.vc90.${family}_*" -Directory) {
-                $files += @(Get-ChildItem $directory.FullName -Filter '*.policy' -File)
+            $query = [ordered]@{ root = $store; filter = "amd64_policy.9.0.microsoft.vc90.${family}_*"; kind = 'Directory'; force = $true
+                exists = $null; entries = @(); error = $null }
+            $enumerations += $query
+            try {
+                $query.exists = Test-Path $store -PathType Container
+                if (-not $query.exists) { continue }
+                $directories = @(Get-ChildItem $store -Filter $query.filter -Directory -Force)
+                $query.entries = @($directories | ForEach-Object { Get-Vc90EntryMetadata $_ })
+            } catch { $query.error = [string]$_; $errors += "$store`: $_"; continue }
+            foreach ($directory in $directories) {
+                $query = [ordered]@{ root = $directory.FullName; filter = '*.policy'; kind = 'File'; force = $true
+                    exists = $null; entries = @(); error = $null }
+                $enumerations += $query
+                try {
+                    $query.exists = Test-Path $directory.FullName -PathType Container
+                    $entries = @(Get-ChildItem $directory.FullName -Filter '*.policy' -File -Force)
+                    $query.entries = @($entries | ForEach-Object { Get-Vc90EntryMetadata $_ })
+                    $files += $entries
+                } catch { $query.error = [string]$_; $errors += "$($directory.FullName): $_" }
             }
         }
     }
+    $enumerations | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $Destination 'discovery.json') -Encoding utf8
     $records = @()
-    $errors = @()
     foreach ($file in $files | Sort-Object FullName -Unique) {
         $copy = Join-Path $Destination ('installed-' + $records.Count + '.xml')
         Copy-Item $file.FullName $copy
@@ -166,7 +197,7 @@ function Get-Vc90PolicyEvidence {
         }
         $compatible += [ordered]@{ name = $name; requested_version = '9.0.21022.8'; matches = $matches }
     }
-    $evidence = [ordered]@{ assemblies = $records; compatibility = $compatible; errors = @($errors | Select-Object -Unique)
+    $evidence = [ordered]@{ discovery = $enumerations; assemblies = $records; compatibility = $compatible; errors = @($errors | Select-Object -Unique)
         status = $(if ($errors.Count -or @($compatible | Where-Object { $_.matches.Count -eq 0 }).Count) { 'UNPROVEN' } else { 'POLICY_AND_TARGET_PRESENT' })
         activation = 'NOT_EVALUATED; unchanged application capture remains authoritative' }
     $evidence | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $Destination 'policy.json') -Encoding utf8

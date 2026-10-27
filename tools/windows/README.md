@@ -52,7 +52,13 @@ defines these version redirects. Discovery reads only the exact amd64 VC90 CRT
 and OpenMP prefixes in `WinSxS/Manifests` and immediate policy directories in
 `WinSxS` and `WinSxS/Policies`. The latter contains version-named `.Policy`
 files as documented in [Publisher Configuration](https://learn.microsoft.com/en-us/windows/win32/sbscs/publisher-configuration).
-Absent optional stores are allowed; unreadable relevant evidence fails the gate.
+All three bounded enumerations use `-Force` to include Hidden/System entries.
+`discovery.json` is saved before XML processing and repeated in `policy.json`.
+Each query records its root, filter, file/directory kind, force setting,
+existence check, returned physical paths, names, attributes, file sizes, and
+any enumeration error. Absent optional stores are allowed; enumeration and
+XML errors keep the result `UNPROVEN`, even if compatible candidates exist.
+Zero matches do not prove that a package or assembly is globally absent.
 
 The helper checks the asm.v1 policy namespace, manifestVersion 1.0, one definition
 identity, and matching reference identities under each direct dependency.
@@ -77,12 +83,29 @@ Provisioning never reports application activation success. The existing
 FAIL, SideBySide diagnostics, source/staged closure, process-start receipts,
 output validation, and frame/mask thresholds remain authoritative. Policy
 presence and installer exit zero cannot replace unchanged-app startup and
-rendered output. A later activation or rendering failure remains possible.
+rendered output.
+
+In [run 40457568854](https://github.com/geekjapan/MikuDanceStudio-J/actions/runs/40457568854),
+the fixed download, Windows trust check, and installer completed successfully
+with exit 0. The MSI log recorded OpenMP assembly and policy publication.
+The bounded collector retained only CRT 9.0.30729.9635 XML, so its OpenMP
+requirement remained `UNPROVEN`. Both unchanged capture commands then started
+the application and failed on `Cannot make DirectSound!!`, without the prior
+WinError 14001. No frame or edge output was produced. That run did not retain
+OpenMP physical paths or attributes. Hidden/System omission is a hypothesis,
+not an established cause or installed-layout claim. A new Windows run must
+check the discovery repair; audio initialization and rendering remain open.
 
 Run `python -I tools/windows/test_provision_capture_vc90.py` and the same
 command with `-O` for local boundary checks. These use fake downloads and
 signatures, real stand-in subprocesses, and fixture policy XML. They do not
 validate Windows trust, install the package, or exercise native rendering.
+Windows-only controls set and verify real Hidden/System attributes on relevant
+manifests, policy directories, and policy files in both bounded policy stores.
+They also keep malformed relevant XML and missing targets `UNPROVEN`.
+Other hosts explicitly skip these attribute controls. Portable dot-hidden policy
+files exercise forced file discovery, and an injected enumeration error checks
+that otherwise compatible XML cannot turn an incomplete observation into PASS.
 
 The four original XML fixtures in `fixtures/vc90-9.0.30729.6161/` come from
 `vc_red.cab` inside the pinned

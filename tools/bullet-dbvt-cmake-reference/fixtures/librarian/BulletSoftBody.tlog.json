@@ -1,0 +1,12 @@
+{
+  "run": 40447023256,
+  "artifact": 12709290514,
+  "artifact_sha256": "ca9738ccaf91c9cdf62655c7c3368ec48c38eaafee40f831916ffaf8ab78f795",
+  "head": "62a00441d4b4152d05469f4f627e2f7d99d1508c",
+  "tlog": "native-build-metadata/BulletSoftBody/BulletSoftBody.dir/Release/BulletSoftBody.tlog/Lib.command.1.tlog",
+  "sha256": "588195557b8549bb584570e6fa8b3919d078b115f6f2f0b6df22626f28cff51e",
+  "argument_lines": 7,
+  "argv_sha256": "fd4573b25a933bf3744384690075f5814df52fe29ba47427891dee5fe7956038",
+  "input_objects": 7,
+  "failure_line": 3
+}

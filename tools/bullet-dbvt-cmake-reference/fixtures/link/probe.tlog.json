@@ -1,0 +1,10 @@
+{
+  "run": 40452363088,
+  "artifact": 12711876690,
+  "artifact_sha256": "55823f2297ed5071658dcfce087c628b01f21c988c5dd80d3da3a12312286757",
+  "head": "ceab8eb3ec06dab17ae632bef1d5915d7d556052",
+  "tlog": "probe-build-metadata/dbvt_cmake_reference.dir/Release/dbvt_cma.DC31E876.tlog/link.command.1.tlog",
+  "sha256": "308e4a4c96978039818abe6055365650f53ae54c448e7e33a82c28ec51c0043c",
+  "argument_lines": 1,
+  "argv_sha256": "5445f875e9a92d830bcc37953f733f8b3b17c99ccd205577c5bf364c5de8b673"
+}

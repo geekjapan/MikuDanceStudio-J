@@ -9,6 +9,7 @@ extern "C" void replay_offsets();
 int main() {
 #ifdef _WIN32
   _setmode(_fileno(stdout),_O_BINARY);
+  _setmode(_fileno(stderr),_O_BINARY);
 #endif
   replay_public();replay_mmd(); replay_offsets();
 }

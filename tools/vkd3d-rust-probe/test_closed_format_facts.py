@@ -618,6 +618,8 @@ class ClosedFormatFactsTests(unittest.TestCase):
         expr = {e['id']: e for e in facts['expressions']}
         for event in facts['cursor_events']:
             event['operands'] = copy.deepcopy(expr[event['expression']]['arguments'])
+            event['builtin'] = copy.deepcopy(expr[event['expression']]['builtin'])
+            event['callee_declaration'] = expr[event['expression']]['callee_decl']
         facts['native_record_identities'] = [{'declaration': row['id'], 'identity': row['identity']}
                                             for row in facts['variables'] if row.get('native_va_list_record')]
         selected = set(expr)
@@ -1231,6 +1233,14 @@ class ClosedFormatFactsTests(unittest.TestCase):
         record['fields'] *= 2; record['df_children'] *= 2; record['structural_children'] *= 2
         next(d for d in repeated['graph']['declarations'] if d['id']==802)['owners'] *= 2
         F.ReportGraph(repeated)
+        for builtin_id in (0, 2 ** 64 - 1):
+            valid = copy.deepcopy(facts)
+            next(d for d in valid['graph']['declarations'] if d['id']==808)['builtin'] = [builtin_id,'unknown']
+            F.ReportGraph(valid)
+        for builtin_id in (True, False, -1, 2 ** 64):
+            invalid = copy.deepcopy(facts)
+            next(d for d in invalid['graph']['declarations'] if d['id']==808)['builtin'] = [builtin_id,'unknown']
+            with self.assertRaisesRegex(F.FactsError,'invalid builtin identity'): F.ReportGraph(invalid)
         physical = dict(kind='struct',tag=None,physical=dict(path='/native/fixture.c',line=1,column=1),scope={'file':True})
         physical_facts = copy.deepcopy(facts)
         next(d for d in physical_facts['graph']['declarations'] if d['id']==800)['identity'] = physical
@@ -1285,6 +1295,8 @@ class ClosedFormatFactsTests(unittest.TestCase):
             else:
                 row.update(kind='implicit_cast', native_shape='ImplicitCast', operands={'child':1001}, field=None, cast='NoOp',
                            structural_children=[F.ReportGraph.edge('type', 1), F.ReportGraph.edge('expression', 1001)])
+            if shape == 'ImplicitCast':
+                next(d for d in facts['graph']['declarations'] if d['id']==1)['builtin'] = [0,'unknown']
             self.refresh_graph_views(data, prepare=False)
         for shape in ('BadExpr', 'Member', 'ImplicitCast'):
             self.reject_coordinated(lambda data, shape=shape: legal(data, shape), None)

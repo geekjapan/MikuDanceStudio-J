@@ -445,7 +445,7 @@ class ReportGraph:
             need(isinstance(row['aliases'], list) and all(isinstance(a, str) for a in row['aliases']), 'invalid function aliases')
             if row['builtin'] is not None:
                 need(isinstance(row['builtin'], list) and len(row['builtin']) == 2 and type(row['builtin'][0]) is int
-                     and row['builtin'][0] > 0 and isinstance(row['builtin'][1], str) and row['builtin'][1], 'invalid builtin identity')
+                     and 0 <= row['builtin'][0] < 2 ** 64 and isinstance(row['builtin'][1], str) and row['builtin'][1], 'invalid builtin identity')
         elif kind in ('variable', 'field', 'enum_constant'):
             self.text(row['name'])
             if kind == 'variable':

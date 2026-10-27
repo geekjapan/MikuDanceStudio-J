@@ -62,6 +62,22 @@ def packet(language,observed=True):
 def wire(rows):return ('\n'.join('FP '+json.dumps(row) for row in rows)+'\n').encode()
 
 
+
+def fixture_names(label):
+    raw=(r.ROOT/('rust/crates/mds-accessory/tests/'+label+'.rs')).read_bytes()
+    expected={'mesh_dump':'cf96765ec013b75ad16dd405214417ba7a54a4b3b3c10582f861ac57e6fcc8bb',
+              'x_files':'9aec8203be9fa490d6439e68a5d875fce9c0e284c42178090b929ddd1ad769b8'}
+    r.require(r.digest(raw)==expected[label],'frozen product fixture test source')
+    return r.re.findall(r'#\[test\]\nfn ([a-z_0-9]+)\(',raw.decode())
+
+
+def fixture_output(label):
+    names=fixture_names(label);count=len(names)
+    return ('\nrunning '+str(count)+(' test\n' if count==1 else ' tests\n')+
+            ''.join('test '+name+' ... ok\n' for name in names)+
+            f'\ntest result: ok. {count} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n').encode()
+
+
 def tar_bytes(entries):
     raw=io.BytesIO()
     with tarfile.open(fileobj=raw,mode='w') as archive:
@@ -473,7 +489,7 @@ class Controls(unittest.TestCase):
                 for name in binaries:files[directory/name]=b'MZ'
                 files[directory/'mikudancestudio_core.lib']=b'synthetic-archive'
                 for label in recipe['commands']:
-                    stdout=(wire(n) if label=='native' else wire(p)+b'test result: ok. 1 passed; 0 failed; 0 ignored;\n' if label=='rust' else b'test result: ok. 1 passed; 0 failed; 0 ignored;\n' if label in ('mesh_dump','x_files') else b'')
+                    stdout=(wire(n) if label=='native' else wire(p)+b'test result: ok. 1 passed; 0 failed; 0 ignored;\n' if label=='rust' else fixture_output(label) if label in ('mesh_dump','x_files') else b'')
                     receipt={'argv':copy.deepcopy(recipe['commands'][label]),'cwd':recipe['cwd'][label],
                              'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''}}
                     if label in ('native','rust'):receipt['executed_binary']={'path':recipe['commands'][label][0],'sha256':r.digest(b'MZ'),'size':2}
@@ -626,6 +642,119 @@ class Controls(unittest.TestCase):
                 with self.subTest(task=task,progress=progress),self.assertRaises(ValueError):r.native_commands(log(pending+progress),b'',recipe)
         for stderr in (body,b'  1>Checking Build System\n'):
             with self.assertRaisesRegex(ValueError,'unordered native stderr'):r.native_commands(baseline,stderr,recipe)
+
+    def test_27_complete_fixture_output_boundary(self):
+        emitter='fn emit(value: String) { ACTIVE.with(|a| if a.get() { println!("FP {value}"); }); }'
+        self.assertEqual(r.FIXTURE_EMITTER,emitter)
+        self.assertEqual((r.HERE/'observer.rs').read_text().splitlines().count(emitter),1)
+        for opt in ('Od','O2'):
+            for variant in ('control','observed'):
+                generated,_=r.generated(lambda path:(r.ROOT/path).read_bytes(),variant=='observed','C:/runner/temp/floor-profile-evidence/inputs')
+                source_lines=generated[r.MESH].decode().splitlines()
+                self.assertEqual(source_lines.count(emitter),1)
+                excerpt=(str(source_lines.index(emitter)+1)+' | '+emitter+'\n').encode()
+                recipe=r.recipe('C:/runner/temp',variant,opt)
+                for label in ('mesh_dump','x_files'):
+                    names=fixture_names(label);count=len(names);stdout=fixture_output(label)
+                    self.assertEqual(count,1 if label=='mesh_dump' else 13)
+                    self.assertEqual(set(names),r.FIXTURE_TESTS[label])
+                    def admitted(out,err,argv=None,coordinated=False):
+                        command=recipe['commands'][label] if argv is None else argv
+                        receipt={'argv':command,'cwd':recipe['cwd'][label],
+                                 'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''},
+                                 'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
+                        files={label+'.stdout':out,label+'.stderr':err}
+                        for suffix in ('stdout','stderr'):
+                            raw=files[label+'.'+suffix];receipt[suffix]={'name':label+'.'+suffix,'sha256':r.digest(raw),'size':len(raw)}
+                        files[label+'.json']=json.dumps(receipt).encode()
+                        build={key:copy.deepcopy(recipe[key]) for key in ('id','source','target','evidence','commands')}
+                        build.update(variant=variant,optimization=opt)
+                        if coordinated:build['commands'][label]=command
+                        manifest={'runner_temp':'C:/runner/temp','input_root':recipe['input_root'],'builds':[build]}
+                        files['manifest.json']=json.dumps(manifest).encode()
+                        inventory=lambda:{name:{'size':len(raw),'sha256':r.digest(raw)} for name,raw in files.items() if name!='seal.json'}
+                        files['seal.json']=json.dumps({'schema':r.SCHEMA,'files':inventory()}).encode()
+                        with patch.object(Path,'read_bytes',lambda path:files[path.name]):
+                            self.assertEqual(r.load_json(files['seal.json'])['files'],inventory())
+                            checked,a,b=r.checked(Path('/refreshed-fixture'),label)
+                            fixed=r.admit_recipe(manifest,build);r.admit_command(checked,fixed,label)
+                            r.fixture_result(label,a,b)
+                    for err in (b'',b'warning: function emit is never used\n'+excerpt):
+                        admitted(stdout,err)
+                        admitted(stdout.replace(b'\n',b'\r\n'),err.replace(b'\n',b'\r\n'))
+                    lines=stdout.split(b'\n');reordered=lines[:];reordered[2:2+count]=reversed(reordered[2:2+count])
+                    admitted(b'\n'.join(reordered),excerpt)
+                    bad_outputs={
+                        'wrong-name':stdout.replace(names[0].encode(),b'wrong_name',1),
+                        'missing-name':b'\n'.join(lines[:2]+lines[3:]),
+                        'duplicate-row':b'\n'.join(lines[:3]+[lines[2]]+lines[3:]),
+                        'wrong-header':stdout.replace(('running '+str(count)).encode(),b'running 99',1),
+                        'wrong-summary':stdout.replace((str(count)+' passed;').encode(),b'99 passed;'),
+                        'ignored':stdout.replace(b'0 ignored;',b'1 ignored;'),
+                        'filtered':stdout.replace(b'0 filtered out;',b'1 filtered out;'),
+                        'measured':stdout.replace(b'0 measured;',b'1 measured;'),
+                        'failure':stdout.replace(b'0 failed;',b'1 failed;'),
+                        'failed-status':stdout.replace(b'test result: ok.',b'test result: FAILED.'),
+                        'ignored-row':stdout.replace(b' ... ok',b' ... ignored',1),
+                        'skip':stdout+b'SKIP unsupported\n',
+                        'zero':b'\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n',
+                        'missing-header':b'\n'.join(lines[:1]+lines[2:]),
+                        'missing-summary':b'\n'.join(lines[:-3]+lines[-2:]),
+                        'multiple':stdout+stdout,'truncated':stdout[:-1],
+                        'unknown':stdout+b'unknown output\n','no-leading-blank':stdout[1:],
+                        'extra-blank':b'\n'+stdout,'bare-cr':stdout.replace(b'\n',b'\r'),
+                        'invalid-utf8':stdout+b'\xff',
+                    }
+                    if count>1:
+                        bad_outputs['duplicate-name']=stdout.replace(names[1].encode(),names[0].encode(),1)
+                    for telemetry in (b'FP {"stage":"begin"}',b'FP {broken',b'FP',b'FP ',b'FP{truncated'):
+                        bad_outputs['standalone-'+repr(telemetry)]=stdout+telemetry+b'\n'
+                        bad_outputs['inline-'+repr(telemetry)]=stdout.replace(b' ... ok',b' ... '+telemetry+b' ok',1)
+                    for name,bad in bad_outputs.items():
+                        with self.subTest(variant=variant,opt=opt,label=label,case=name),self.assertRaises(ValueError):admitted(bad,excerpt)
+                    bad_errors=[b'SKIP unsupported\n',b'FP {"stage":"begin"}\n',b'FP {broken\n',b'FP\n',b'prefix FP {broken\n',
+                                b'running '+str(count).encode()+b' tests\n',lines[2]+b'\n',lines[-3]+b'\n',
+                                b'prefix '+excerpt,excerpt.rstrip()+b' suffix\n',excerpt.replace(b'ACTIVE',b'INACTIVE'),
+                                b'584 | FP {"stage":"begin"}\n',excerpt+b'FP {broken\n',excerpt+excerpt]
+                    for bad in bad_errors:
+                        with self.subTest(variant=variant,opt=opt,label=label,stderr=bad),self.assertRaises(ValueError):admitted(stdout,bad)
+                    with self.assertRaises(ValueError):admitted(b'',stdout)
+                    original=recipe['commands'][label]
+                    wrong=[v for v in original if v!='--nocapture']
+                    for argv in (wrong,original+['some_filter'],original+['--ignored'],original+['--include-ignored'],original+['--skip','some_test']):
+                        with self.assertRaisesRegex(ValueError,'exact command/cwd binding'):admitted(stdout,excerpt,argv)
+                        with self.assertRaisesRegex(ValueError,'closed command/source/target/evidence recipe'):admitted(stdout,excerpt,argv,True)
+
+    def test_28_capture_and_replay_share_fixture_boundary(self):
+        calls=[];validator=r.fixture_result
+        def observed(label,stdout,stderr):
+            validator(label,stdout,stderr);calls.append(label)
+        with patch.object(r,'fixture_result',observed):
+            self.test_19_synthetic_replay_resealed_result_and_coordinated_commands()
+        self.assertEqual(calls[:8],['mesh_dump','x_files']*4)
+        self.assertEqual(set(calls),{'mesh_dump','x_files'})
+        recipe=r.recipe('C:/runner/temp','control','Od');out=Path('C:/runner/temp/floor-profile-evidence')
+        build=Path('C:/runner/temp/floor-profile-build');toolchain=Path('C:/runner/temp/floor-profile-deps/build/generators/conan_toolchain.cmake')
+        files={};captured=[];fixtures={label:fixture_output(label) for label in ('mesh_dump','x_files')}
+        class Complete(Exception):pass
+        def record(directory,label,argv,cwd,env,timeout=1200):
+            raw=(b'1'*40 if label=='git-head' else '\n'.join(r.PATHS).encode() if label=='git-paths' else
+                 fixtures[label] if label in ('mesh_dump','x_files') else b'')
+            files[directory/(label+'.stdout')]=raw;files[directory/(label+'.stderr')]=b''
+            return {'status':0}
+        def boundary(label,stdout,stderr):
+            validator(label,stdout,stderr);captured.append(label)
+            if label=='x_files':raise Complete()
+        def parse(raw,language,observed):return {'dll':{'path':'synthetic-dll'}} if language=='native' else {}
+        with patch.object(r.sys,'platform','win32'),patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_TEMP':'C:/runner/temp','GITHUB_SHA':'1'*40}), \
+             patch.object(Path,'exists',return_value=False),patch.object(Path,'is_file',return_value=True),patch.object(Path,'mkdir'), \
+             patch.object(Path,'read_bytes',lambda path:files.get(path,b'')),patch.object(Path,'read_text',lambda path,**kwargs:files.get(path,b'').decode()), \
+             patch.object(r,'record',record),patch.object(r.shutil,'copyfile'),patch.object(r.shutil,'copytree'),patch.object(r.c,'safe_tar',return_value={}), \
+             patch.object(r.c,'source_inventory',return_value={}),patch.object(r,'inputs',return_value=[]),patch.object(r,'source_expected',return_value=({}, {}, {})), \
+             patch.object(r,'native_commands',return_value=[]),patch.object(r,'parse',parse),patch.object(r,'cargo_binary',return_value='synthetic-cargo'), \
+             patch.object(r,'fixture_result',boundary):
+            with self.assertRaises(Complete):r.run(out,build,toolchain)
+        self.assertEqual(captured,['mesh_dump','x_files'])
 
     def test_zz_real_effects_rejected_before_effects(self):
         target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-floor-profile-boundary-fix/effect-probe')

@@ -19,7 +19,7 @@ ROOT = HERE.parents[1]
 BASE = '77b3e431bc1ac2ab5610692f2e12c903a7629090'
 BASE_TREE = '778782dc8ad6352585a9b7eeb135c04150d1f2e4'
 SCHEMA = 'mds-floor-profile-v2'
-PARENT = 'c1ae0aadbead9190934dab7947bde655d79925e8'
+PARENT = '2a8fe1eccb59e622bc24cdf800c4e28092cc72e8'
 FP_CONTRACT = {'snapshot':'HardwareMxcsr', 'identity':'SourceSiteOnly',
                'rust_operation_ordering':'Unproved', 'exception_attribution':'Unsupported',
                'operation_environment':'Unproved'}
@@ -365,6 +365,47 @@ def pe_exports(raw):
     return result
 
 
+
+FIXTURE_TESTS = {
+    'mesh_dump': {'every_fixture_equals_its_windows_dump'},
+    'x_files': {'cube_text','cube_binary_matches_text',
+                'several_materials_group_faces_and_resolve_references',
+                'nested_frames_apply_their_transforms_in_order',
+                'mesh_without_normals_or_uvs_gets_computed_normals_and_default_material',
+                'normals_in_the_file_are_replaced_when_texture_coordinates_are_missing',
+                'normals_in_the_file_stay_when_texture_coordinates_exist',
+                'texture_names_choose_the_sphere_map_type','malformed_files_return_their_error',
+                'every_truncation_of_a_valid_file_is_handled','more_than_16_bit_vertices_are_refused',
+                'deep_nesting_does_not_overflow_the_stack','xmesh_reports_what_the_loaded_format_had'},
+}
+FIXTURE_EMITTER = 'fn emit(value: String) { ACTIVE.with(|a| if a.get() { println!("FP {value}"); }); }'
+
+
+def fixture_result(label,stdout,stderr):
+    require(label in FIXTURE_TESTS,'known fixture target')
+    expected=FIXTURE_TESTS[label];count=len(expected)
+    text=stdout.decode('utf-8').replace('\r\n','\n')
+    require('\r' not in text and 'SKIP' not in text,'fixture stdout encoding/unsupported execution')
+    lines=text.split('\n')
+    require(len(lines)==count+6 and lines[0]==lines[-1]==lines[-2]==lines[-4]=='' and
+            lines[1]==f'running {count} '+('test' if count==1 else 'tests'),'complete fixture run framing')
+    names=[]
+    for line in lines[2:2+count]:
+        row=re.fullmatch(r'test ([a-z_][a-z_0-9]*) \.\.\. ok',line)
+        require(row is not None,'fixture named ok row')
+        names.append(row[1])
+    require(len(set(names))==count and set(names)==expected,'complete unique fixture names')
+    require(re.fullmatch(r'test result: ok[.] '+str(count)+r' passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in [0-9]+[.][0-9]{2}s',lines[-3]) is not None,'complete fixture success summary')
+    quoted=False
+    for line in stderr.decode('utf-8').splitlines():
+        require('SKIP' not in line,'fixture stderr unsupported execution')
+        if 'FP' in line:
+            quote=re.fullmatch(r' *[1-9][0-9]* \| (.*)',line)
+            require(not quoted and quote is not None and quote[1]==FIXTURE_EMITTER,'fixture stderr runtime telemetry or altered source excerpt')
+            quoted=True
+        require(re.search(r'running [0-9]+ tests?|test .* \.\.\.|test result:',line) is None,'fixture stderr forged libtest output')
+
+
 def recipe(runner_temp,variant,opt):
     root=PureWindowsPath(runner_temp)
     require(root.is_absolute() and '..' not in root.parts and variant in ('control','observed') and opt in ('Od','O2'),'closed recipe inputs')
@@ -380,7 +421,7 @@ def recipe(runner_temp,variant,opt):
         'rust':[str(directory/'rust-profile.exe'),'mesh::floor_profile::diagnostic','--exact','--nocapture','--test-threads=1'],
     }
     for test in ('mesh_dump','x_files'):
-        commands[test]=['cargo','+1.95.0','test','-p','mds-accessory','--test',test]+mode+['--','--test-threads=1']
+        commands[test]=['cargo','+1.95.0','test','-p','mds-accessory','--test',test]+mode+['--','--nocapture','--test-threads=1']
     return {'id':id,'source':str(source),'target':str(target),'evidence':str(directory),
             'native_target':str(native),'input_root':str(out/'inputs'),'commands':commands,
             'cwd':{label:str(source/'rust') if label.startswith('rust') or label in ('mesh_dump','x_files') else str(source) for label in commands}}
@@ -677,6 +718,7 @@ def replay(out,archive=None):
         for label in ('configure','native-build','rust-build','mesh_dump','x_files','native','rust'):
             receipt,stdout,stderr=checked(directory,label)
             admit_command(receipt,r,label)
+            if label in ('mesh_dump','x_files'):fixture_result(label,stdout,stderr)
             if label in ('native','rust'):
                 binary=(directory/('floor_profile.exe' if label=='native' else 'rust-profile.exe')).read_bytes()
                 require(receipt['executed_binary']=={'path':r['commands'][label][0],'sha256':digest(binary),'size':len(binary)},'executed retained binary receipt')
@@ -693,9 +735,6 @@ def replay(out,archive=None):
         require(set(b['binaries'])=={'floor_profile.exe','rust-profile.exe','d3dx9_43.dll'},'exact retained runtime binaries')
         for name,row in b['binaries'].items():
             raw=(directory/name).read_bytes();require(digest(raw)==row['sha256'] and len(raw)==row['size'],'binary/source binding');pe_exports(raw) if name=='d3dx9_43.dll' else require(raw[:2]==b'MZ','actual executable PE')
-        for test in ('mesh_dump','x_files'):
-            log=(directory/(test+'.stdout')).read_text()+(directory/(test+'.stderr')).read_text()
-            require('test result: ok.' in log and re.search(r'0 failed; 0 ignored;',log) and 'SKIP' not in log and 'FP ' not in log,'fixture tests executed with inactive sink')
         _,nout,nerr=checked(directory,'native');require(not nerr,'native stderr');native=parse(nout,'native',b['variant']=='observed')
         _,rout,_=checked(directory,'rust');require(b'test result: ok. 1 passed; 0 failed; 0 ignored;' in rout,'one actual Rust unit probe with no ignored tests');rust=parse(rout,'rust',b['variant']=='observed')
         dll=native['dll'];raw=(directory/'d3dx9_43.dll').read_bytes();exports=pe_exports(raw)
@@ -765,6 +804,7 @@ def run(out,build_root,toolchain):
             rust=parse((directory/'rust.stdout').read_bytes(),'rust',variant=='observed')
             for test in ('mesh_dump','x_files'):
                 require(record(directory,test,commands[test],source/'rust',e)['status']==0,'unchanged fixture contract '+test)
+                fixture_result(test,(directory/(test+'.stdout')).read_bytes(),(directory/(test+'.stderr')).read_bytes())
             require(c.source_inventory(source)==expected,'source end drift')
             objects={}
             for object_path in sorted(native_target.rglob('*.obj')):

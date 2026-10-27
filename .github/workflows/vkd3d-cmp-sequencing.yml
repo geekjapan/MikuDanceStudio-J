@@ -1,0 +1,72 @@
+name: Historical vkd3d CMP sequencing experiment
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [w4-shader-cmp-sequencing-experiment]
+    paths:
+      - .github/workflows/vkd3d-cmp-sequencing.yml
+      - tools/vkd3d-rust-probe/check_cmp_sequencing.py
+      - tools/vkd3d-rust-probe/test_cmp_sequencing.py
+  pull_request:
+    paths:
+      - .github/workflows/vkd3d-cmp-sequencing.yml
+      - tools/vkd3d-rust-probe/check_cmp_sequencing.py
+      - tools/vkd3d-rust-probe/test_cmp_sequencing.py
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: cmp-sequencing-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  finite-experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: f9c4036b21aa80d7c90b9ce099adbd7054b7f1cd
+          path: historical-f9c
+          persist-credentials: false
+      - name: Focused Python checks
+        run: |
+          python3 -m unittest discover -s tools/vkd3d-rust-probe -p test_cmp_sequencing.py
+          python3 -O -m unittest discover -s tools/vkd3d-rust-probe -p test_cmp_sequencing.py
+      - name: Prepare existing hosted build dependencies
+        timeout-minutes: 10
+        run: |
+          mkdir -p "$RUNNER_TEMP/cmp-setup"
+          exec > >(tee "$RUNNER_TEMP/cmp-setup/setup.log") 2>&1
+          sudo timeout --kill-after=10s 120s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update
+          sudo timeout --kill-after=10s 300s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends build-essential bison flex libjson-perl pkg-config xz-utils
+          rustup toolchain install 1.95.0 --profile minimal
+      - name: Run isolated finite historical experiment
+        timeout-minutes: 60
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/vkd3d-rust-probe/check_cmp_sequencing.py \
+            --historical "$GITHUB_WORKSPACE/historical-f9c" \
+            --artifacts "$RUNNER_TEMP/cmp-sequencing"
+      - name: Retain experiment and failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vkd3d-cmp-sequencing-experiment
+          path: |
+            ${{ runner.temp }}/cmp-setup/
+            ${{ runner.temp }}/cmp-sequencing/
+            !${{ runner.temp }}/cmp-sequencing/variants/*/target/
+            !${{ runner.temp }}/cmp-sequencing/variants/*/driver-target/
+          retention-days: 7
+          if-no-files-found: error

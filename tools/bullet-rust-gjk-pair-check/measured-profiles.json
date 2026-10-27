@@ -1,6 +1,6 @@
 {
   "status": "measured candidates requiring fresh execution and review",
-  "evidence_head": "217c54d4e95829ea7761823c7b8c66eff2e6b873",
+  "evidence_head": "5d472010d456ad34196344f14d5402cace87add1",
   "frozen_fixtures": {
     "fallback-inputs.tsv": {
       "git_blob": "8cafeb55098c3a932c46b2118750c39c3187a447",
@@ -21,8 +21,8 @@
   },
   "profiles": {
     "macos-arm64": {
-      "artifact_id": 12698813722,
-      "zip_sha256": "44802c83ed59e395c2b6d3d444718a8b424b3ad7f5f88e1037bf00e3e9f6c982",
+      "artifact_id": 12712336670,
+      "zip_sha256": "4e5d445a6f6a25b0bc6b4b828fe6c19668193c3dcb18caa02df77b7d6199a8f9",
       "compiler_provenance": "macOS-15.7.9-arm64-arm-64bit-Mach-O\nApple clang version 17.0.0 (clang-1700.0.13.5)\nTarget: arm64-apple-darwin24.6.0\nThread model: posix\nInstalledDir: /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n\nrustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: aarch64-apple-darwin\nrelease: 1.95.0\nLLVM version: 22.1.2\n",
       "streams": {
         "capture/compact-inputs.tsv": {
@@ -787,7 +787,7 @@
         "rust/crates/mds-bullet/src/core/body.rs": "7f5f5b2f30206ccec1fdbb8ac961a3ff480ae14c3cfb61a5afd4595ed32e31bb",
         "rust/crates/mds-bullet/src/core/box_box.rs": "c40b69ace4dfda599e7ea7b83a35245b3f601dd748af898f9731d26fd6f4b72a",
         "rust/crates/mds-bullet/src/core/contact.rs": "35f74a1ce4ed5f2087e1ceb72b68d7d3c6b4bb0fcee0a85d0567f572ed84f862",
-        "rust/crates/mds-bullet/src/core/contact_solver.rs": "5f6800815eaf1c607bc52dc2073652645a087da8f681f0f627d5793b698c21a8",
+        "rust/crates/mds-bullet/src/core/contact_solver.rs": "abcd4d8c860ffa7a9b8d5492f042d125ef1062838254d97781b0ef8942425460",
         "rust/crates/mds-bullet/src/core/gjk_epa.rs": "58eee56b1c34d29f0a1f6816f2722465d09015d8dd0467e3fae2f80b8a66ebe1",
         "rust/crates/mds-bullet/src/core/gjk_pair.rs": "d8181c2f1fe88fdeb263f6a61d3b21f43d29fb03122e56cdf460e01e71e10f88",
         "rust/crates/mds-bullet/src/core/joint_coordinates.rs": "3bb5b225cc5effad99b292b8b8140b82cde996f89c95d4ff9abf4b10f5fc2295",
@@ -797,7 +797,7 @@
         "rust/crates/mds-bullet/src/core/pair_cache.rs": "0b2257cc5f685383c08c800ca8ae6d3ed61644b915c78691d49168bcb15aa951",
         "rust/crates/mds-bullet/src/core/shape.rs": "204ff8a0d7ca857be376ad3d2b0d952443077ef5c1b21aeac9301888afc2007d",
         "rust/crates/mds-bullet/src/core/simplex.rs": "f04df5838a50f9b52efc7b8aafed691faa6a3a7230c5584a7bceabc056aaa222",
-        "rust/crates/mds-bullet/src/core/solver.rs": "d8240107497dc18a344b8062558f2f786559e3ca3f29fb152b4d02978c462967",
+        "rust/crates/mds-bullet/src/core/solver.rs": "a18df5dcf83c07be8222af61b35ce8914b1db6878d6e6cdd5e55a965cc99e8e4",
         "rust/crates/mds-bullet/src/core/time.rs": "5d36edd5361641161244cdaeb946ff805d641a5a445d278c5e020c474e0b2ddc",
         "rust/crates/mds-bullet/src/lib.rs": "d898767584df0e4d45a16231b9d35183edd267cb7ca1a51c767a2012ffb385e1",
         "rust/crates/mds-bullet/tests/activation_data/inputs.tsv": "9b25d4564a3fffc21cfa5366c7dcbf3e3ced57fa2a175bbbac31595337aa113b",
@@ -840,12 +840,12 @@
         "rust/crates/mds-bullet/tests/pure_bullet/body_kernel.rs": "09e13d791de950206da6b070670b980ea5dd6311a05a77f06283132e1f220c17",
         "rust/crates/mds-bullet/tests/pure_bullet/box_box.rs": "50e68e46e7e640d25c4ce1678b30127539ebc0970911813aa452530703aa2a0f",
         "rust/crates/mds-bullet/tests/pure_bullet/capsule_capsule.rs": "d7cf61e8b25f6b4cc0dd6e2b08debf71792d2000810cc46a975ef0144c509628",
-        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "4477c52ad539a3283a998f454c94bb179bdaf129cc8fc69eeb93c94c6eaf432a",
+        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "b70a2a51876d6c58e04c70994c945a6b98ae106ade2b24599b8512cecf67951e",
         "rust/crates/mds-bullet/tests/pure_bullet/contacts.rs": "63af7af42ab88eac332fd36a694214c8319e72da794e059b6713c28444951591",
         "rust/crates/mds-bullet/tests/pure_bullet/gjk_epa.rs": "8a141d4c43fd349b53dd2be2ae46667163494e37cd17d587518a2cdded3351e4",
         "rust/crates/mds-bullet/tests/pure_bullet/joint_coordinates.rs": "9c9e7987ea8208994743091199c8e08670d9b973c284f3c9dd09a64d8074300d",
         "rust/crates/mds-bullet/tests/pure_bullet/joint_rows.rs": "e5408d3e8143142bbaddb15c1a8a44a95d68fcd8b4ad0b5beaf145e2c14bd042",
-        "rust/crates/mds-bullet/tests/pure_bullet/joint_solver.rs": "8d8fa624f32042c816ee52b1311be988ece2d3e53838a28267194dcdeb85b7a1",
+        "rust/crates/mds-bullet/tests/pure_bullet/joint_solver.rs": "419af9c8edb5c1894c98bdbd45eb8f065736342787dcb1fa3ecfdbca6c62ffe6",
         "rust/crates/mds-bullet/tests/pure_bullet/math_vectors.rs": "ea9af2aacc9914375b5525cd05d24eeabf7c181a03730d123e32eb426c2d8b5c",
         "rust/crates/mds-bullet/tests/pure_bullet/pair_cache.rs": "da27a0f363a49bb840b17264e8583b48e1098deef6c7ae0fb24ea4032ccb3c10",
         "rust/crates/mds-bullet/tests/pure_bullet/shapes.rs": "94c53c819f0bddde689b01f660d50afaf5fab76afe7b008376e55e2c4f4e770d",
@@ -906,8 +906,8 @@
       }
     },
     "linux-x64": {
-      "artifact_id": 12699497293,
-      "zip_sha256": "231a23de72e46edc20215f26c2ecdd4bd2ae91232b9ae517ca61a03e9c213656",
+      "artifact_id": 12712430663,
+      "zip_sha256": "6d38a6791042a226a15f468f0c223cd9793b4abbf59c42db5d40548b94bdda04",
       "compiler_provenance": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39\nUbuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\n\nrustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2\n",
       "streams": {
         "capture/compact-inputs.tsv": {
@@ -1742,7 +1742,7 @@
         "rust/crates/mds-bullet/src/core/body.rs": "7f5f5b2f30206ccec1fdbb8ac961a3ff480ae14c3cfb61a5afd4595ed32e31bb",
         "rust/crates/mds-bullet/src/core/box_box.rs": "c40b69ace4dfda599e7ea7b83a35245b3f601dd748af898f9731d26fd6f4b72a",
         "rust/crates/mds-bullet/src/core/contact.rs": "35f74a1ce4ed5f2087e1ceb72b68d7d3c6b4bb0fcee0a85d0567f572ed84f862",
-        "rust/crates/mds-bullet/src/core/contact_solver.rs": "5f6800815eaf1c607bc52dc2073652645a087da8f681f0f627d5793b698c21a8",
+        "rust/crates/mds-bullet/src/core/contact_solver.rs": "abcd4d8c860ffa7a9b8d5492f042d125ef1062838254d97781b0ef8942425460",
         "rust/crates/mds-bullet/src/core/gjk_epa.rs": "58eee56b1c34d29f0a1f6816f2722465d09015d8dd0467e3fae2f80b8a66ebe1",
         "rust/crates/mds-bullet/src/core/gjk_pair.rs": "d8181c2f1fe88fdeb263f6a61d3b21f43d29fb03122e56cdf460e01e71e10f88",
         "rust/crates/mds-bullet/src/core/joint_coordinates.rs": "3bb5b225cc5effad99b292b8b8140b82cde996f89c95d4ff9abf4b10f5fc2295",
@@ -1752,7 +1752,7 @@
         "rust/crates/mds-bullet/src/core/pair_cache.rs": "0b2257cc5f685383c08c800ca8ae6d3ed61644b915c78691d49168bcb15aa951",
         "rust/crates/mds-bullet/src/core/shape.rs": "204ff8a0d7ca857be376ad3d2b0d952443077ef5c1b21aeac9301888afc2007d",
         "rust/crates/mds-bullet/src/core/simplex.rs": "f04df5838a50f9b52efc7b8aafed691faa6a3a7230c5584a7bceabc056aaa222",
-        "rust/crates/mds-bullet/src/core/solver.rs": "d8240107497dc18a344b8062558f2f786559e3ca3f29fb152b4d02978c462967",
+        "rust/crates/mds-bullet/src/core/solver.rs": "a18df5dcf83c07be8222af61b35ce8914b1db6878d6e6cdd5e55a965cc99e8e4",
         "rust/crates/mds-bullet/src/core/time.rs": "5d36edd5361641161244cdaeb946ff805d641a5a445d278c5e020c474e0b2ddc",
         "rust/crates/mds-bullet/src/lib.rs": "d898767584df0e4d45a16231b9d35183edd267cb7ca1a51c767a2012ffb385e1",
         "rust/crates/mds-bullet/tests/activation_data/inputs.tsv": "9b25d4564a3fffc21cfa5366c7dcbf3e3ced57fa2a175bbbac31595337aa113b",
@@ -1795,12 +1795,12 @@
         "rust/crates/mds-bullet/tests/pure_bullet/body_kernel.rs": "09e13d791de950206da6b070670b980ea5dd6311a05a77f06283132e1f220c17",
         "rust/crates/mds-bullet/tests/pure_bullet/box_box.rs": "50e68e46e7e640d25c4ce1678b30127539ebc0970911813aa452530703aa2a0f",
         "rust/crates/mds-bullet/tests/pure_bullet/capsule_capsule.rs": "d7cf61e8b25f6b4cc0dd6e2b08debf71792d2000810cc46a975ef0144c509628",
-        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "4477c52ad539a3283a998f454c94bb179bdaf129cc8fc69eeb93c94c6eaf432a",
+        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "b70a2a51876d6c58e04c70994c945a6b98ae106ade2b24599b8512cecf67951e",
         "rust/crates/mds-bullet/tests/pure_bullet/contacts.rs": "63af7af42ab88eac332fd36a694214c8319e72da794e059b6713c28444951591",
         "rust/crates/mds-bullet/tests/pure_bullet/gjk_epa.rs": "8a141d4c43fd349b53dd2be2ae46667163494e37cd17d587518a2cdded3351e4",
         "rust/crates/mds-bullet/tests/pure_bullet/joint_coordinates.rs": "9c9e7987ea8208994743091199c8e08670d9b973c284f3c9dd09a64d8074300d",
         "rust/crates/mds-bullet/tests/pure_bullet/joint_rows.rs": "e5408d3e8143142bbaddb15c1a8a44a95d68fcd8b4ad0b5beaf145e2c14bd042",
-        "rust/crates/mds-bullet/tests/pure_bullet/joint_solver.rs": "8d8fa624f32042c816ee52b1311be988ece2d3e53838a28267194dcdeb85b7a1",
+        "rust/crates/mds-bullet/tests/pure_bullet/joint_solver.rs": "419af9c8edb5c1894c98bdbd45eb8f065736342787dcb1fa3ecfdbca6c62ffe6",
         "rust/crates/mds-bullet/tests/pure_bullet/math_vectors.rs": "ea9af2aacc9914375b5525cd05d24eeabf7c181a03730d123e32eb426c2d8b5c",
         "rust/crates/mds-bullet/tests/pure_bullet/pair_cache.rs": "da27a0f363a49bb840b17264e8583b48e1098deef6c7ae0fb24ea4032ccb3c10",
         "rust/crates/mds-bullet/tests/pure_bullet/shapes.rs": "94c53c819f0bddde689b01f660d50afaf5fab76afe7b008376e55e2c4f4e770d",
@@ -1861,8 +1861,8 @@
       }
     },
     "linux-arm64": {
-      "artifact_id": 12700020083,
-      "zip_sha256": "d79d39d615715286e9889a270799cbd27b5db39d69c938355107604345879b29",
+      "artifact_id": 12711474497,
+      "zip_sha256": "b9bc61b25c9d63f7d71990309409cb4e07a8e340a79a9fb32532b95eee9e3ea4",
       "compiler_provenance": "Linux-6.17.0-1022-azure-aarch64-with-glibc2.39\nUbuntu clang version 18.1.3 (1ubuntu1)\nTarget: aarch64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\n\nrustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: aarch64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2\n",
       "streams": {
         "capture/compact-inputs.tsv": {
@@ -2642,7 +2642,7 @@
         "rust/crates/mds-bullet/src/core/body.rs": "7f5f5b2f30206ccec1fdbb8ac961a3ff480ae14c3cfb61a5afd4595ed32e31bb",
         "rust/crates/mds-bullet/src/core/box_box.rs": "c40b69ace4dfda599e7ea7b83a35245b3f601dd748af898f9731d26fd6f4b72a",
         "rust/crates/mds-bullet/src/core/contact.rs": "35f74a1ce4ed5f2087e1ceb72b68d7d3c6b4bb0fcee0a85d0567f572ed84f862",
-        "rust/crates/mds-bullet/src/core/contact_solver.rs": "5f6800815eaf1c607bc52dc2073652645a087da8f681f0f627d5793b698c21a8",
+        "rust/crates/mds-bullet/src/core/contact_solver.rs": "abcd4d8c860ffa7a9b8d5492f042d125ef1062838254d97781b0ef8942425460",
         "rust/crates/mds-bullet/src/core/gjk_epa.rs": "58eee56b1c34d29f0a1f6816f2722465d09015d8dd0467e3fae2f80b8a66ebe1",
         "rust/crates/mds-bullet/src/core/gjk_pair.rs": "d8181c2f1fe88fdeb263f6a61d3b21f43d29fb03122e56cdf460e01e71e10f88",
         "rust/crates/mds-bullet/src/core/joint_coordinates.rs": "3bb5b225cc5effad99b292b8b8140b82cde996f89c95d4ff9abf4b10f5fc2295",
@@ -2652,7 +2652,7 @@
         "rust/crates/mds-bullet/src/core/pair_cache.rs": "0b2257cc5f685383c08c800ca8ae6d3ed61644b915c78691d49168bcb15aa951",
         "rust/crates/mds-bullet/src/core/shape.rs": "204ff8a0d7ca857be376ad3d2b0d952443077ef5c1b21aeac9301888afc2007d",
         "rust/crates/mds-bullet/src/core/simplex.rs": "f04df5838a50f9b52efc7b8aafed691faa6a3a7230c5584a7bceabc056aaa222",
-        "rust/crates/mds-bullet/src/core/solver.rs": "d8240107497dc18a344b8062558f2f786559e3ca3f29fb152b4d02978c462967",
+        "rust/crates/mds-bullet/src/core/solver.rs": "a18df5dcf83c07be8222af61b35ce8914b1db6878d6e6cdd5e55a965cc99e8e4",
         "rust/crates/mds-bullet/src/core/time.rs": "5d36edd5361641161244cdaeb946ff805d641a5a445d278c5e020c474e0b2ddc",
         "rust/crates/mds-bullet/src/lib.rs": "d898767584df0e4d45a16231b9d35183edd267cb7ca1a51c767a2012ffb385e1",
         "rust/crates/mds-bullet/tests/activation_data/inputs.tsv": "9b25d4564a3fffc21cfa5366c7dcbf3e3ced57fa2a175bbbac31595337aa113b",
@@ -2695,12 +2695,12 @@
         "rust/crates/mds-bullet/tests/pure_bullet/body_kernel.rs": "09e13d791de950206da6b070670b980ea5dd6311a05a77f06283132e1f220c17",
         "rust/crates/mds-bullet/tests/pure_bullet/box_box.rs": "50e68e46e7e640d25c4ce1678b30127539ebc0970911813aa452530703aa2a0f",
         "rust/crates/mds-bullet/tests/pure_bullet/capsule_capsule.rs": "d7cf61e8b25f6b4cc0dd6e2b08debf71792d2000810cc46a975ef0144c509628",
-        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "4477c52ad539a3283a998f454c94bb179bdaf129cc8fc69eeb93c94c6eaf432a",
+        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "b70a2a51876d6c58e04c70994c945a6b98ae106ade2b24599b8512cecf67951e",
         "rust/crates/mds-bullet/tests/pure_bullet/contacts.rs": "63af7af42ab88eac332fd36a694214c8319e72da794e059b6713c28444951591",
         "rust/crates/mds-bullet/tests/pure_bullet/gjk_epa.rs": "8a141d4c43fd349b53dd2be2ae46667163494e37cd17d587518a2cdded3351e4",
         "rust/crates/mds-bullet/tests/pure_bullet/joint_coordinates.rs": "9c9e7987ea8208994743091199c8e08670d9b973c284f3c9dd09a64d8074300d",
         "rust/crates/mds-bullet/tests/pure_bullet/joint_rows.rs": "e5408d3e8143142bbaddb15c1a8a44a95d68fcd8b4ad0b5beaf145e2c14bd042",
-        "rust/crates/mds-bullet/tests/pure_bullet/joint_solver.rs": "8d8fa624f32042c816ee52b1311be988ece2d3e53838a28267194dcdeb85b7a1",
+        "rust/crates/mds-bullet/tests/pure_bullet/joint_solver.rs": "419af9c8edb5c1894c98bdbd45eb8f065736342787dcb1fa3ecfdbca6c62ffe6",
         "rust/crates/mds-bullet/tests/pure_bullet/math_vectors.rs": "ea9af2aacc9914375b5525cd05d24eeabf7c181a03730d123e32eb426c2d8b5c",
         "rust/crates/mds-bullet/tests/pure_bullet/pair_cache.rs": "da27a0f363a49bb840b17264e8583b48e1098deef6c7ae0fb24ea4032ccb3c10",
         "rust/crates/mds-bullet/tests/pure_bullet/shapes.rs": "94c53c819f0bddde689b01f660d50afaf5fab76afe7b008376e55e2c4f4e770d",
@@ -2761,8 +2761,8 @@
       }
     },
     "windows-x64": {
-      "artifact_id": 12698843811,
-      "zip_sha256": "f4ba6cbba62f63def02c2a21c53df7512c91f29c545310dd0b31fdb4f0698bc8",
+      "artifact_id": 12712710616,
+      "zip_sha256": "a8e116d64cee70fd944b5715da810bf44b270eb92d6b19f3b93064d153533349",
       "compiler_provenance": "Windows-2022Server-10.0.20348-SP0\r\nusage: cl [ option... ] filename... [ /link linkoption... ]\r\nMicrosoft (R) C/C++ Optimizing Compiler Version 19.44.35229 for x64\r\nCopyright (C) Microsoft Corporation.  All rights reserved.\r\n\r\n\r\nrustc 1.95.0 (59807616e 2026-04-14)\r\nbinary: rustc\r\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\r\ncommit-date: 2026-04-14\r\nhost: x86_64-pc-windows-msvc\r\nrelease: 1.95.0\r\nLLVM version: 22.1.2\r\n",
       "streams": {
         "capture/compact-inputs.tsv": {
@@ -3593,7 +3593,7 @@
         "rust/crates/mds-bullet/src/core/body.rs": "6536bb5dfa7bc724db994f7d2f77710c2b8f21066368bdadd448de79bd523c2c",
         "rust/crates/mds-bullet/src/core/box_box.rs": "2ab44305e2f49f1f3e21b157ad293e720ce141a29c8051f77047e3bfab9d6843",
         "rust/crates/mds-bullet/src/core/contact.rs": "cea5598e35d6831b2328963b1cfd5ee44501b924c4c28fad0bbff69a5b0215e6",
-        "rust/crates/mds-bullet/src/core/contact_solver.rs": "61e0ced0a9dd315898203d081afcecd2e138e77ed46670f654057d8cd9957fc5",
+        "rust/crates/mds-bullet/src/core/contact_solver.rs": "9a6581b0040d98b957d14a3955cf9a5ee0583eef2aab338d50fb689e0bf47a48",
         "rust/crates/mds-bullet/src/core/gjk_epa.rs": "2f83ad0f8c04fcfff257e6a03c587a2d1e7ad2fd974d3e2056b2e1d396117479",
         "rust/crates/mds-bullet/src/core/gjk_pair.rs": "83a6903272d055f2d0755445d67921d76c34d0ba513ea1d9a854f64698cf0e46",
         "rust/crates/mds-bullet/src/core/joint_coordinates.rs": "01b86fc35d4765c4856a30643a415d6ecdd0b5e3907fd60738e9b617890e98f3",
@@ -3603,7 +3603,7 @@
         "rust/crates/mds-bullet/src/core/pair_cache.rs": "76c6332934413d3b13bb06c7ae6ed6309e2c0134d27bc5026fb08a27ff28d588",
         "rust/crates/mds-bullet/src/core/shape.rs": "9883aa54d5d5beed2dcc73e2cc081aca3e5d45c42201a1a6dde6277b506ed799",
         "rust/crates/mds-bullet/src/core/simplex.rs": "4186cf8a7d57188e37d586771707623b9153e46d1096a424dbd663be496d9959",
-        "rust/crates/mds-bullet/src/core/solver.rs": "60504db4cf00f3d8555432a22424af42320b08e7f03f8ebd19b245b695e71766",
+        "rust/crates/mds-bullet/src/core/solver.rs": "cf2cd74e55ea11300a48a6bac421d88a1974c1114e28e2e73db6f5d9c95b64e2",
         "rust/crates/mds-bullet/src/core/time.rs": "d1113af007a5baf628cdad16ef05628d877745defaf7448ab68dc96e9a8b49d1",
         "rust/crates/mds-bullet/src/lib.rs": "0bbc3187be8c6a8f97f49039e8e193a348120af5ec976ae4aee251ae83739fd7",
         "rust/crates/mds-bullet/tests/activation_data/inputs.tsv": "9b25d4564a3fffc21cfa5366c7dcbf3e3ced57fa2a175bbbac31595337aa113b",
@@ -3646,12 +3646,12 @@
         "rust/crates/mds-bullet/tests/pure_bullet/body_kernel.rs": "09e13d791de950206da6b070670b980ea5dd6311a05a77f06283132e1f220c17",
         "rust/crates/mds-bullet/tests/pure_bullet/box_box.rs": "50e68e46e7e640d25c4ce1678b30127539ebc0970911813aa452530703aa2a0f",
         "rust/crates/mds-bullet/tests/pure_bullet/capsule_capsule.rs": "d7cf61e8b25f6b4cc0dd6e2b08debf71792d2000810cc46a975ef0144c509628",
-        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "4477c52ad539a3283a998f454c94bb179bdaf129cc8fc69eeb93c94c6eaf432a",
+        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "b70a2a51876d6c58e04c70994c945a6b98ae106ade2b24599b8512cecf67951e",
         "rust/crates/mds-bullet/tests/pure_bullet/contacts.rs": "63af7af42ab88eac332fd36a694214c8319e72da794e059b6713c28444951591",
         "rust/crates/mds-bullet/tests/pure_bullet/gjk_epa.rs": "8a141d4c43fd349b53dd2be2ae46667163494e37cd17d587518a2cdded3351e4",
         "rust/crates/mds-bullet/tests/pure_bullet/joint_coordinates.rs": "9c9e7987ea8208994743091199c8e08670d9b973c284f3c9dd09a64d8074300d",
         "rust/crates/mds-bullet/tests/pure_bullet/joint_rows.rs": "e5408d3e8143142bbaddb15c1a8a44a95d68fcd8b4ad0b5beaf145e2c14bd042",
-        "rust/crates/mds-bullet/tests/pure_bullet/joint_solver.rs": "8d8fa624f32042c816ee52b1311be988ece2d3e53838a28267194dcdeb85b7a1",
+        "rust/crates/mds-bullet/tests/pure_bullet/joint_solver.rs": "419af9c8edb5c1894c98bdbd45eb8f065736342787dcb1fa3ecfdbca6c62ffe6",
         "rust/crates/mds-bullet/tests/pure_bullet/math_vectors.rs": "ea9af2aacc9914375b5525cd05d24eeabf7c181a03730d123e32eb426c2d8b5c",
         "rust/crates/mds-bullet/tests/pure_bullet/pair_cache.rs": "da27a0f363a49bb840b17264e8583b48e1098deef6c7ae0fb24ea4032ccb3c10",
         "rust/crates/mds-bullet/tests/pure_bullet/shapes.rs": "94c53c819f0bddde689b01f660d50afaf5fab76afe7b008376e55e2c4f4e770d",
@@ -3714,7 +3714,7 @@
   },
   "verification_sha256": {
     "macos-arm64": {
-      ".github/workflows/bullet-outer-gjk-host-capture.yml": "1b1bdd5fb8fed29c5df7e361694b97a12f53153c19646e4b007a710fb79b81c4",
+      ".github/workflows/bullet-outer-gjk-host-capture.yml": "b74e8403a2744b7f977a47b8658fcafb462e9412b8b4f73a307489e0ff08a277",
       "rust/crates/mds-bullet/tests/gjk_pair_data/native-x64.tsv": "8dd1bbcc577f1f50594d444e925c45a9eb7fe7bcf9f1b991db3f5b40cf2f66ad",
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "44d3f352df8de68555bcfc4e183294b3848f961f1228da72f70035fbb0ad969c",
@@ -3726,7 +3726,7 @@
       "tools/bullet-rust-gjk-pair-check/test_measured_profiles.py": "c52212a5236522d9721f96815963fc138e992fb7d1c42942dda67e1c89c78201"
     },
     "linux-x64": {
-      ".github/workflows/bullet-outer-gjk-host-capture.yml": "1b1bdd5fb8fed29c5df7e361694b97a12f53153c19646e4b007a710fb79b81c4",
+      ".github/workflows/bullet-outer-gjk-host-capture.yml": "b74e8403a2744b7f977a47b8658fcafb462e9412b8b4f73a307489e0ff08a277",
       "rust/crates/mds-bullet/tests/gjk_pair_data/native-x64.tsv": "8dd1bbcc577f1f50594d444e925c45a9eb7fe7bcf9f1b991db3f5b40cf2f66ad",
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "44d3f352df8de68555bcfc4e183294b3848f961f1228da72f70035fbb0ad969c",
@@ -3738,7 +3738,7 @@
       "tools/bullet-rust-gjk-pair-check/test_measured_profiles.py": "c52212a5236522d9721f96815963fc138e992fb7d1c42942dda67e1c89c78201"
     },
     "linux-arm64": {
-      ".github/workflows/bullet-outer-gjk-host-capture.yml": "1b1bdd5fb8fed29c5df7e361694b97a12f53153c19646e4b007a710fb79b81c4",
+      ".github/workflows/bullet-outer-gjk-host-capture.yml": "b74e8403a2744b7f977a47b8658fcafb462e9412b8b4f73a307489e0ff08a277",
       "rust/crates/mds-bullet/tests/gjk_pair_data/native-x64.tsv": "8dd1bbcc577f1f50594d444e925c45a9eb7fe7bcf9f1b991db3f5b40cf2f66ad",
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "44d3f352df8de68555bcfc4e183294b3848f961f1228da72f70035fbb0ad969c",
@@ -3750,7 +3750,7 @@
       "tools/bullet-rust-gjk-pair-check/test_measured_profiles.py": "c52212a5236522d9721f96815963fc138e992fb7d1c42942dda67e1c89c78201"
     },
     "windows-x64": {
-      ".github/workflows/bullet-outer-gjk-host-capture.yml": "b67256b17ceb20ad384bfdb8e0a6518af8691ff798e01c22cd0039300d34c451",
+      ".github/workflows/bullet-outer-gjk-host-capture.yml": "f2119f606f0ddf92e2154d4f507f3c01a1a96562d2089a2b2de08ee363b1c0bc",
       "rust/crates/mds-bullet/tests/gjk_pair_data/native-x64.tsv": "8dd1bbcc577f1f50594d444e925c45a9eb7fe7bcf9f1b991db3f5b40cf2f66ad",
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "dcb862e2be8edc3a082ad477b2871a1501deacea1262799c1cb2b1248b3ff0ff",

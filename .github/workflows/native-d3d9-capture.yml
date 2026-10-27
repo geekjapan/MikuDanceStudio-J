@@ -1,6 +1,14 @@
 name: Native D3D9 capability and unchanged capture
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/native-d3d9-capture.yml'
+      - '.github/workflows/windows-build.yml'
+      - 'CMakeLists.txt'
+      - 'tools/oracle/d3d9_capability.cpp'
+      - 'tools/oracle/d3d9_capture.py'
+      - 'tools/oracle/test_d3d9_capture.py'
   workflow_dispatch:
 
 permissions:

@@ -516,6 +516,14 @@ class _CursorBody:
                 self.declaration_role(row['declaration'], row['kind'])
         self.record_ids, self.record_identities = {}, {}
         self.type_meanings = {}
+        self.supplied_type_meanings, self.conflicting_type_ids = {}, set()
+        for expression in self.e.values():
+            ident, typ = expression.get('type_id'), expression.get('type')
+            if type(ident) is int and ident > 0 and isinstance(typ, dict) and 'canonical' in typ:
+                canonical = typ['canonical']
+                if not _cursor_same(self.supplied_type_meanings.get(ident, canonical), canonical):
+                    self.conflicting_type_ids.add(ident)
+                self.supplied_type_meanings[ident] = canonical
         self.seen, self.body_ids = set(), set()
         self.helpers = {}
         self.uint = _cursor_type({'kind': 'UInt'})
@@ -540,6 +548,9 @@ class _CursorBody:
     def type_meaning(self, q, typ):
         self.qualified(q)
         canonical = typ['canonical']
+        _cursor_need(q['type_id'] not in self.conflicting_type_ids
+                     and _cursor_same(self.supplied_type_meanings.get(q['type_id'], canonical), canonical),
+                     'supplied mapped type canonical meaning collision')
         _cursor_need(_cursor_same(self.type_meanings.get(q['type_id'], canonical), canonical),
                      'mapped type canonical meaning collision')
         self.type_meanings[q['type_id']] = canonical

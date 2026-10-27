@@ -107,3 +107,8 @@ void cursor_entry(struct vkd3d_spirv_builder *builder, uint32_t type_id, uint32_
     vkd3d_spirv_build_op_member_name(builder, type_id, member, "cb%u", reg_idx);
 #endif
 }
+
+double cursor_scalar_identity(double value)
+{
+    return value;
+}

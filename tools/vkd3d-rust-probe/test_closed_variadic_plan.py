@@ -518,7 +518,7 @@ class RecordEvidenceTests(unittest.TestCase):
 
 def exercise_actual_cursor_payload(inventory, witness):
     import copy
-    from closed_variadic_plan import prove_cursor_witness
+    from closed_variadic_plan import SCALARS, _cursor_same, prove_cursor_witness
     symbol = {'unit': witness['unit'], 'static': 'vkd3d_spirv_build_op_member_name'}
     function = next(f for f in witness['functions'] if f['symbol'] == symbol)
     function_id = function['declaration']
@@ -735,6 +735,17 @@ def exercise_actual_cursor_payload(inventory, witness):
             continue
         affected_expressions.add(ident)
         pending.extend(expressions[ident]['children'])
+    relation_ids = {r['type_id'] for r in witness['required_relations']['types']} | {
+        r['type_id'] for r in witness['required_relations']['roots']}
+    for expr in (callee_decay, format_expr):
+        candidate = next((e for e in witness['expressions']
+            if e['id'] not in affected_expressions and type(e['type_id']) is int
+            and e['type_id'] > 0 and e['type_id'] not in relation_ids
+            and isinstance(e['type'], dict) and e['type'].get('canonical', {}).get('kind') in SCALARS
+            and not _cursor_same(e['type']['canonical'], expr['type']['canonical'])), None)
+        if candidate is not None:
+            add('incoming-outside-closure-type-collision-' + str(expr['id']),
+                expression(expr['id'], lambda x, ident=candidate['type_id']: x.__setitem__('type_id', ident)))
     affected_declarations = set(function['parameters']) | {tail} | {
         a['direct_decl'] for a in expressions[incoming['id']]['arguments'][:3]} | {
         d['id'] for s in function['statements'] for d in s['declarations']}

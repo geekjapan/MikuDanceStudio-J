@@ -46,14 +46,26 @@ Each measurement records its actual evidence head, run, job, artifact, ZIP hash,
 Fresh final-head four-host capture and independent review must prove current source-before and source-after identities, the current validator, all commands and twelve streams, full same-host baselines, and 52 compiled mutants with 16 mutation-suite baselines. Historical 39-mutant and 12-baseline runs cannot fill that requirement. Pure replay of both Linux records does not establish fresh native execution in both environments. Compiler executable, linker and runtime-library byte identities remain unknown. Seven legacy whole outer-suite optimized-Python failures remain tracked separately in issue 212. Hosted preparation runs the dedicated model tests under normal Python and `-O` without treating that legacy optimized suite as passing.
 
 
-Schema 4 retains all five historical measurements and both Linux kernel variants
+Schema 5 retains all five historical measurements and both Linux kernel variants
 unchanged. The validator anchors the canonical `profiles` and `frozen_fixtures`
 projection to SHA256 `db3da5b75c9c53145e6be0aec4f83264f3a0bbce2a128ea321caf24ae0e7e501`.
 The bounded DBVT source admission binds reviewed main `4d6878ec` to integration
 `c31de920` and its tree. It permits exactly three replacements and seven additions
 in the collected source map, alongside the existing ten current verification paths.
 All 474 current entries excluding the manifest must match physical checkout bytes.
-No deletion, path substitution or chained bridge is admitted.
+The complete original `source_admission` object is anchored to canonical SHA256
+`f210f29ada5dfc664dc70bd738e561f84ce9c11c0db239674596fb557f5c6c63`.
+Exactly one `registration_format_admission` follows this fixed bridge. Its literal
+seven-field tuple binds parent `32c09594`, format commit `d51054c6` and tree
+`02c2f2d270758051b24a27e930efe6a88f17302f` to
+`rust/crates/mds-bullet/tests/pure_bullet.rs`. It replaces only SHA256
+`448ee12c55dfad95be039dd94f3bc33d223fdacdb3cc9c8497e374cc275f53c0` with
+`db2ec5f155bf1f7a10654a7c0c263435349ba55c8fe1c5fcfdcc67853fba7157`.
+The Git change removes exactly the initial LF. This path remains LF on every host,
+including Windows. Current admission reconstructs the old 464 protected entries,
+checks that old registration identity, applies this one replacement, then joins
+the ten current verification entries. No whitespace normalization, deletion,
+arbitrary chain, path substitution or additional override is admitted.
 
 Receipts separate `measurement_reference` with role `historical-reference` or
 `supplemental-reference` from
@@ -61,7 +73,8 @@ Receipts separate `measurement_reference` with role `historical-reference` or
 remain historical identities. The current capture head comes from the capture's
 own `source-head.txt`, containing exactly 40 lowercase ASCII hexadecimal bytes
 and one LF or CRLF terminator. The receipt also records the current map digest,
-raw manifest digest, reviewed base and integration head/tree. This receipt is
+raw manifest digest, original `bridge` provenance and the fixed
+`registration_format_admission`. The format head is not the capture head. This receipt is
 written before mutations and final source-integrity checks. It is not acceptance.
 
 The isolated GJK harness inputs remain unchanged across this DBVT integration.
@@ -71,7 +84,7 @@ Fresh final-head four-host execution must still prove 52 compiled semantic
 rejections, 16 suite baselines, four full baselines and source-before/end integrity.
 Historical measurements do not prove fresh final-head native execution. Whole pure and General integration remain separate gates.
 
-Schema 4 adds exactly one `supplemental_measurements` record for Linux ARM64
+Schema 5 preserves exactly one `supplemental_measurements` record for Linux ARM64
 kernel `7.0.0-1017`, captured at `46b54133d247322027915733b4acf51574298c68`.
 Run `40550671157`, job `122353217320`, artifact `12755645749` retain the actual
 H46 provenance, source member hashes and captured verification hashes. The

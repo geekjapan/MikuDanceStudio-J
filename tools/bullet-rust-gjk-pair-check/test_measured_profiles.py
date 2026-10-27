@@ -306,7 +306,7 @@ class FiniteMeasurementTests(unittest.TestCase):
         for change in changes:
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'schema'):
                 self.load_changed(change)
-        with self.assertRaisesRegex(ValueError, 'immutable supplemental projection'):
+        with self.assertRaisesRegex(ValueError, 'immutable source admission'):
             self.load_changed(coordinated)
         captured = self.manifest['supplemental_measurements'][0]['captured_verification_sha256']
         self.assertNotEqual(captured, self.manifest['verification_sha256']['linux-arm64'])
@@ -321,6 +321,70 @@ class FiniteMeasurementTests(unittest.TestCase):
                 measured_profiles.validate(Path('/unused'), host=lambda: 'linux-arm64',
                     inventory=check.inventory, source_hashes=lambda: source,
                     stream=check.stream, transport=check.transport)
+
+    def test_fixed_registration_format_tuple_rejects_every_override(self):
+        admission = self.manifest['registration_format_admission']
+        self.assertEqual(set(admission), {'kind', 'parent_head', 'format_head', 'format_tree',
+                                         'path', 'old_sha256', 'new_sha256'})
+        changes = [lambda v: v.update(registration_format_admission=[]),
+                   lambda v: v['registration_format_admission'].update(extra={}),
+                   lambda v: v.update(registration_format_admissions=[admission])]
+        for field in admission:
+            changes.extend([lambda v, field=field: v['registration_format_admission'].pop(field),
+                            lambda v, field=field: v['registration_format_admission'].update({field: '0' * 64})])
+        for change in changes:
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'schema'):
+                self.load_changed(change)
+
+    def test_captured_bridge_is_independent_of_current_format_and_verification(self):
+        measurement, = self.manifest['supplemental_measurements']
+        self.assertEqual(measured_profiles.source_map_digest(self.manifest['source_admission']),
+                         'f210f29ada5dfc664dc70bd738e561f84ce9c11c0db239674596fb557f5c6c63')
+        for host in measured_profiles.HOSTS:
+            old = measured_profiles.bridge_protected_source_map(self.manifest, host)
+            self.assertEqual(len(old), 464)
+            self.assertEqual(old[measured_profiles.REGISTRATION_FORMAT['path']],
+                             measured_profiles.REGISTRATION_FORMAT['old_sha256'])
+            current = measured_profiles.approved_source_map(self.manifest, host)
+            self.assertEqual({path for path in old if old[path] != current[path]},
+                             {measured_profiles.REGISTRATION_FORMAT['path']})
+        captured = {**measured_profiles.bridge_protected_source_map(self.manifest, 'linux-arm64'),
+                    **measurement['captured_verification_sha256']}
+        self.assertEqual(measured_profiles.source_map_digest(captured),
+                         'db721138ff4e155d5c413144497d8718844b0ac95501f0499401b3a3929dbfb9')
+        changed = copy.deepcopy(self.manifest)
+        changed['registration_format_admission'] = None
+        changed['verification_sha256'] = None
+        self.assertEqual(measured_profiles.bridge_protected_source_map(changed, 'linux-arm64'),
+                         measured_profiles.bridge_protected_source_map(self.manifest, 'linux-arm64'))
+
+    def test_all_host_bridge_cannot_be_coordinated_with_current_and_captured_hashes(self):
+        def coordinated(value):
+            for host in measured_profiles.HOSTS:
+                delta = value['source_admission']['hosts'][host]
+                delta['replacements'][sorted(measured_profiles.REPLACEMENTS)[0]] = '0' * 64
+                value['verification_sha256'][host] = {p: '1' * 64 for p in value['verification_sha256'][host]}
+            supplemental = value['supplemental_measurements'][0]
+            supplemental['captured_verification_sha256'] = dict(value['verification_sha256']['linux-arm64'])
+            supplemental['capture_source_map_sha256'] = measured_profiles.source_map_digest({
+                **measured_profiles.bridge_protected_source_map(value, 'linux-arm64'),
+                **supplemental['captured_verification_sha256']})
+        with self.assertRaisesRegex(ValueError, 'immutable source admission'):
+            self.load_changed(coordinated)
+
+    def test_exact_format_physical_bytes_and_source_refusals_on_every_host(self):
+        admission = self.manifest['registration_format_admission']
+        data = (check.ROOT / admission['path']).read_bytes()
+        self.assertEqual(measured_profiles.sha(data), admission['new_sha256'])
+        self.assertEqual(measured_profiles.sha(b'\n' + data), admission['old_sha256'])
+        for host in measured_profiles.HOSTS:
+            source = measured_profiles.approved_source_map(self.manifest, host)
+            for broken in [b'\n' + data, data.replace(b'\n', b'\r\n'), data + b' ',
+                           data.replace(b'mod ', b'mod changed_', 1)]:
+                changed = dict(source, **{admission['path']: measured_profiles.sha(broken)})
+                with self.subTest(host=host), self.assertRaisesRegex(ValueError, 'source closure'):
+                    measured_profiles.validate(Path('/unused'), host=lambda: host, inventory=check.inventory,
+                        source_hashes=lambda: changed, stream=check.stream, transport=check.transport)
 
     def test_synthetic_replay_receipts_and_contract_guards(self):
         fixture = check.ROOT / 'rust/crates/mds-bullet/tests/gjk_pair_data'
@@ -357,8 +421,9 @@ class FiniteMeasurementTests(unittest.TestCase):
                     self.assertEqual(receipt['measurement_reference']['role'],
                                      'supplemental-reference' if 'host' in measurement else 'historical-reference')
                 self.assertEqual(receipt['current_source']['capture_head'], '1' * 40)
-                self.assertEqual(receipt['current_source']['integration_head'], self.manifest['source_admission']['integration_head'])
+                self.assertEqual(receipt['current_source']['bridge']['integration_head'], self.manifest['source_admission']['integration_head'])
                 self.assertEqual(receipt['current_source']['verification_manifest_sha256'], measured_profiles.sha((measured_profiles.HERE / 'measured-profiles.json').read_bytes()))
+                self.assertEqual(receipt['current_source']['registration_format_admission'], measured_profiles.REGISTRATION_FORMAT)
                 self.assertIn('requires fresh four-host gates', receipt['approval'])
                 (output.parent / 'source-head.txt').write_bytes(b'2' * 40 + b'\n')
                 for valid in [b'1' * 40 + b'\n', b'1' * 40 + b'\r\n']:

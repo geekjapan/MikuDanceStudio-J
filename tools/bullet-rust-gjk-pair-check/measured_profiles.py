@@ -20,6 +20,16 @@ def canonical_command(command, root, output):
 
 MANIFEST_PATH = 'tools/bullet-rust-gjk-pair-check/measured-profiles.json'
 SUPPLEMENTAL_SHA256 = '9ef6deafdf627e0e8df714ae0038af947127768ca9f5eb2e46d24a27d022c12c'
+BRIDGE_SHA256 = 'f210f29ada5dfc664dc70bd738e561f84ce9c11c0db239674596fb557f5c6c63'
+REGISTRATION_FORMAT = {
+    'kind': 'fixed-registration-leading-lf-removal',
+    'parent_head': '32c0959476e3e5e5964f78dad84616caccec6a42',
+    'format_head': 'd51054c6c8925c4775d8b73c05357e8fd61eec06',
+    'format_tree': '02c2f2d270758051b24a27e930efe6a88f17302f',
+    'path': 'rust/crates/mds-bullet/tests/pure_bullet.rs',
+    'old_sha256': '448ee12c55dfad95be039dd94f3bc33d223fdacdb3cc9c8497e374cc275f53c0',
+    'new_sha256': 'db2ec5f155bf1f7a10654a7c0c263435349ba55c8fe1c5fcfdcc67853fba7157',
+}
 HISTORICAL_SHA256 = 'db3da5b75c9c53145e6be0aec4f83264f3a0bbce2a128ea321caf24ae0e7e501'
 REPLACEMENTS = {'rust/crates/mds-bullet/' + path for path in
                 ['src/core/dbvt.rs', 'src/core/mod.rs', 'tests/pure_bullet.rs']}
@@ -80,8 +90,8 @@ def normalize_provenance(value):
 
 def load_manifest(path):
     manifest = json.loads(path.read_text(), object_pairs_hook=unique_object)
-    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'supplemental_measurements'}, 'manifest')
-    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 4, 'schema_version')
+    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'registration_format_admission', 'supplemental_measurements'}, 'manifest')
+    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 5, 'schema_version')
     schema(manifest['status'] == 'reviewed-current-source-expectation-execution-pending', 'status')
     fields(manifest['profiles'], HOSTS, 'profiles')
     fields(manifest['verification_sha256'], HOSTS, 'verification hosts')
@@ -155,6 +165,8 @@ def load_manifest(path):
            and admission['integration_tree'] == '12affc9b9b2b260012a71dfa74644942999116a6',
            'source admission reviewed integration')
     fields(admission['hosts'], HOSTS, 'source admission hosts')
+    schema(source_map_digest(admission) == BRIDGE_SHA256, 'immutable source admission')
+    schema(manifest['registration_format_admission'] == REGISTRATION_FORMAT, 'fixed registration format admission')
     for host in HOSTS:
         approved_source_map(manifest, host)
     supplemental = manifest['supplemental_measurements']
@@ -165,18 +177,17 @@ def load_manifest(path):
         captured = measurement['captured_verification_sha256']
         hash_map(captured, 10, 'captured verification')
         schema(set(captured) == verification_paths, 'captured verification paths')
-        current = approved_source_map(manifest, measurement['host'])
-        protected = {path: identity for path, identity in current.items() if path not in verification_paths}
+        protected = bridge_protected_source_map(manifest, measurement['host'])
         validate_measurement(measurement, source_map_digest({**protected, **captured}),
                              MEASUREMENT_FIELDS | {'host', 'captured_verification_sha256'})
     schema(source_map_digest(supplemental) == SUPPLEMENTAL_SHA256, 'immutable supplemental projection')
     return manifest
 
 
-def approved_source_map(manifest, host):
+def bridge_protected_source_map(manifest, host):
     profile = manifest['profiles'][host]
     protected = profile['protected_source_sha256']
-    verification = manifest['verification_sha256'][host]
+    verification = profile['measured_verification_sha256']
     delta = manifest['source_admission']['hosts'][host]
     fields(delta, {'replacements', 'additions'}, 'source admission delta')
     for name, paths in [('replacements', REPLACEMENTS), ('additions', ADDITIONS)]:
@@ -189,7 +200,16 @@ def approved_source_map(manifest, host):
     schema(not (REPLACEMENTS | ADDITIONS) & set(verification), 'source admission verification overlap')
     schema(all(delta['replacements'][path] != protected[path] for path in REPLACEMENTS),
            'replacement must change historical hash')
-    return {**protected, **delta['replacements'], **delta['additions'], **verification}
+    return {**protected, **delta['replacements'], **delta['additions']}
+
+
+def approved_source_map(manifest, host):
+    protected = bridge_protected_source_map(manifest, host)
+    admission = manifest['registration_format_admission']
+    schema(admission == REGISTRATION_FORMAT, 'fixed registration format admission')
+    schema(protected[admission['path']] == admission['old_sha256'], 'registration old identity')
+    protected[admission['path']] = admission['new_sha256']
+    return {**protected, **manifest['verification_sha256'][host]}
 
 
 def select_measurement(manifest, host, provenance):
@@ -262,7 +282,8 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
                 'role': 'supplemental-reference' if 'host' in measurement else 'historical-reference',
                 **{name: value for name, value in measurement.items() if name != 'compiler_provenance'}},
             'current_source': {
-                **{name: value for name, value in manifest['source_admission'].items() if name != 'hosts'},
+                'bridge': {name: value for name, value in manifest['source_admission'].items() if name != 'hosts'},
+                'registration_format_admission': manifest['registration_format_admission'],
                 'capture_head': capture_head, 'source_sha256': current,
                 'source_map_sha256': source_map_digest(actual),
                 'status': manifest['status'],

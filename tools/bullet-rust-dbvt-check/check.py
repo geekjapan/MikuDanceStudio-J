@@ -49,23 +49,31 @@ def validate_profile(data, expected, *, ffi_default=False):
     profile = dict(line.split('=', 1) for line in data.decode().splitlines())
     selected = '1' if expected == 'sse' else '0'
     for key in ('DBVT_SELECT_IMPL', 'DBVT_MERGE_IMPL', 'DBVT_INT0_IMPL'):
-        assert profile[key] == selected, (key, profile, expected)
-    assert profile['BT_HAS_ALIGNED_ALLOCATOR'] == '0', profile
-    assert profile['BT_USE_DOUBLE_PRECISION'] == '0', profile
+        if profile[key] != selected:
+            raise AssertionError((key, profile, expected))
+    if profile['BT_HAS_ALIGNED_ALLOCATOR'] != '0':
+        raise AssertionError(profile)
+    if profile['BT_USE_DOUBLE_PRECISION'] != '0':
+        raise AssertionError(profile)
     if expected == 'sse':
-        assert profile['WIN32'] == '1' and profile['BT_USE_SSE'] == '1', profile
-        assert profile['DBVT_USE_TEMPLATE'] == '1', profile
+        if profile['WIN32'] != '1' or profile['BT_USE_SSE'] != '1':
+            raise AssertionError(profile)
+        if profile['DBVT_USE_TEMPLATE'] != '1':
+            raise AssertionError(profile)
     if ffi_default:
-        assert profile['WIN32'] == '0' and profile['BT_USE_SSE'] == '1', profile
+        if profile['WIN32'] != '0' or profile['BT_USE_SSE'] != '1':
+            raise AssertionError(profile)
     return profile
 
 
 def validate_select(data, expected):
     rows = data.decode().splitlines()
-    assert len(rows) == 4, 'incomplete directed Select capture'
+    if len(rows) != 4:
+        raise AssertionError('incomplete directed Select capture')
     topology = rows[2].split('|')[1]
     shape = re.sub(r',\d+', '', topology)
-    assert shape == ('B(1;B(2;3))' if expected == 'sse' else 'B(B(1;3);2)'), (expected, shape)
+    if shape != ('B(1;B(2;3))' if expected == 'sse' else 'B(B(1;3);2)'):
+        raise AssertionError((expected, shape))
 
 
 def provenance(out):
@@ -95,7 +103,8 @@ def main():
     provenance(out)
     arch = {'amd64': 'x64', 'x86_64': 'x64', 'aarch64': 'arm64', 'arm64': 'arm64'}.get(platform.machine().lower())
     if args.expected_arch:
-        assert arch == args.expected_arch, (platform.machine(), args.expected_arch)
+        if arch != args.expected_arch:
+            raise AssertionError((platform.machine(), args.expected_arch))
     msvc = os.name == 'nt'
     compiler = os.environ.get('CXX', 'cl' if msvc else 'clang++')
     suffix = '.exe' if msvc else ''
@@ -106,7 +115,8 @@ def main():
     marker = '#undef DBVT_USE_MEMMOVE'
     keys = ('DBVT_SELECT_IMPL', 'DBVT_MERGE_IMPL', 'DBVT_INT0_IMPL',
             'DBVT_USE_TEMPLATE', 'DBVT_USE_INTRINSIC_SSE')
-    assert header.count(marker) == 1
+    if header.count(marker) != 1:
+        raise AssertionError()
     observation = '// Altered profile-only copy: preserve configuration before PP cleanup.\n'
     observation += ''.join(f'constexpr int observed_{key} = {key};\n' for key in keys)
     observed_header = out / 'observed-btDbvt.h'
@@ -148,19 +158,24 @@ def main():
                          out, 'rust-lifecycle', capture=True, cwd=ROOT / 'rust')
     (out / 'rust-lifecycle.tsv').write_bytes(rust_lifecycle)
     # Windows iostream emits CRLF while Rust writes LF. Compare the same event records.
-    assert rust_lifecycle.splitlines() == native_lifecycle.splitlines(), 'actual allocator release order differs from native'
+    if rust_lifecycle.splitlines() != native_lifecycle.splitlines():
+        raise AssertionError('actual allocator release order differs from native')
     inputs = run([sys.executable, HERE / 'cases.py'], out, 'cases', capture=True)
-    assert len(inputs.splitlines()) == 2326, 'operation corpus changed'
-    assert len(native_lifecycle.splitlines()) == 10, 'lifecycle corpus changed'
+    if len(inputs.splitlines()) != 2326:
+        raise AssertionError('operation corpus changed')
+    if len(native_lifecycle.splitlines()) != 10:
+        raise AssertionError('lifecycle corpus changed')
     (out / 'inputs.tsv').write_bytes(inputs)
     for order in range(4):
         captured = run([out / ('oracle' + suffix), str(order)], out, f'native-{order}', capture=True, input=inputs)
-        assert len(captured.splitlines()) == 2326, (order, 'incomplete capture')
+        if len(captured.splitlines()) != 2326:
+            raise AssertionError((order, 'incomplete capture'))
         (out / f'native-{order}.tsv').write_bytes(captured)
     if msvc:
         for order in range(4):
             captured = run([diagnostic, str(order)], out, f'ffi-default-native-{order}', capture=True, input=inputs)
-            assert len(captured.splitlines()) == 2326, (order, 'incomplete diagnostic capture')
+            if len(captured.splitlines()) != 2326:
+                raise AssertionError((order, 'incomplete diagnostic capture'))
     env = dict(os.environ, DBVT_FIXTURES=str(out))
     run(['rustup', 'run', '1.95.0', 'cargo', 'test', '--locked', '--manifest-path',
          HERE / 'Cargo.toml', '--release'], out, 'rust-tests', env=env, cwd=ROOT / 'rust')

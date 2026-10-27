@@ -200,12 +200,8 @@
     "recipes/bullet275/bullet-src/src/LinearMath/btVector3.h": "ac24417b04bdb8be964e00a372fdeb920627a60fc4d7f75555e5250669231142",
     "recipes/bullet275/bullet-src/src/btBulletCollisionCommon.h": "658389198ef501b0837b058837c2a97c025d3fef07e9338f6814d7eef01a20a5",
     "recipes/bullet275/bullet-src/src/btBulletDynamicsCommon.h": "a1902892a832eed14ec737d01056ee62dca4534e4d5dde435e49882f608e5885",
-    "rust/crates/mds-bullet-sys/shim/det_math.h": "e3c39b25400a4127abfcc7274441288904cc4aa9df397c5c5507ec5a57b0bd73",
-    "rust/crates/mds-bullet-sys/shim/mds_bt.h": "f3ab216da1fbcc66c03a5332aae4d790cd42c11b7737e9b43eaf1a9f005d161c",
-    "rust/crates/mds-bullet-sys/shim/mds_mmd.h": "659a6debd576e42d235f8a4464d8afae657514c4d8575e642fc1b63b72f53505",
-    "rust/crates/mds-bullet-sys/shim/sse_emu/emmintrin.h": "69541c9e7bef95ff058e695c42317686bdefedc0c481641ccd91f13ed6580266",
     "rust/crates/mds-bullet/src/core/activation.rs": "7535d6a2b09942ffd34e8a224f4f026d48253230255b0ba21b8152b60445b4d1",
-    "rust/crates/mds-bullet/src/core/body.rs": "7f5f5b2f30206ccec1fdbb8ac961a3ff480ae14c3cfb61a5afd4595ed32e31bb",
+    "rust/crates/mds-bullet/src/core/body.rs": "ad60ba586e1cadeb63ee37e30d5dcb73a28eb08398cfc2551b417dc3bc8ffbb9",
     "rust/crates/mds-bullet/src/core/box_box.rs": "c40b69ace4dfda599e7ea7b83a35245b3f601dd748af898f9731d26fd6f4b72a",
     "rust/crates/mds-bullet/src/core/contact.rs": "b473127a44fc4c4fcc381022ac0d46887e49e171cdbdbe5389e4689793a1fec4",
     "rust/crates/mds-bullet/src/core/contact_solver.rs": "cf75cd640c429e7e3bdaf5fbacfd541beab89b8aea29f5e44f789ed1e74de73a",
@@ -213,12 +209,16 @@
     "rust/crates/mds-bullet/src/core/gjk_pair.rs": "d8181c2f1fe88fdeb263f6a61d3b21f43d29fb03122e56cdf460e01e71e10f88",
     "rust/crates/mds-bullet/src/core/islands.rs": "6b21312fb4f1d41c62e9e64fb3d2daf04f6f44dc222042839fbdaa061c339651",
     "rust/crates/mds-bullet/src/core/joint_coordinates.rs": "3bb5b225cc5effad99b292b8b8140b82cde996f89c95d4ff9abf4b10f5fc2295",
-    "rust/crates/mds-bullet/src/core/joint_rows.rs": "9521f9eea59f2d9af3252e979a37ad933c3eb304500d04cefbd6eb1c499fe197",
-    "rust/crates/mds-bullet/src/core/math.rs": "3fba17ac6d4a7ec0a8933422acabf15f2794591eff4fed64cd4f333d9cc7c78d",
+    "rust/crates/mds-bullet/src/core/joint_rows.rs": "80aed8338c34aa26a6a4318415b8e6ea0dd1be89ce6caa41d890748e224011cc",
+    "rust/crates/mds-bullet/src/core/math.rs": "04bb3c1660b9ddc501cb66250d57cf1e757972e16f327896c189756f86283e97",
     "rust/crates/mds-bullet/src/core/shape.rs": "204ff8a0d7ca857be376ad3d2b0d952443077ef5c1b21aeac9301888afc2007d",
     "rust/crates/mds-bullet/src/core/simplex.rs": "f04df5838a50f9b52efc7b8aafed691faa6a3a7230c5584a7bceabc056aaa222",
     "rust/crates/mds-bullet/src/core/solver.rs": "7f075ce58c727f24bd64071f58191b066d6f9274df165d03a4df2e9d822f2b04",
     "rust/crates/mds-bullet/src/core/time.rs": "5d36edd5361641161244cdaeb946ff805d641a5a445d278c5e020c474e0b2ddc",
+    "rust/crates/mds-bullet-sys/shim/det_math.h": "e3c39b25400a4127abfcc7274441288904cc4aa9df397c5c5507ec5a57b0bd73",
+    "rust/crates/mds-bullet-sys/shim/mds_bt.h": "f3ab216da1fbcc66c03a5332aae4d790cd42c11b7737e9b43eaf1a9f005d161c",
+    "rust/crates/mds-bullet-sys/shim/mds_mmd.h": "659a6debd576e42d235f8a4464d8afae657514c4d8575e642fc1b63b72f53505",
+    "rust/crates/mds-bullet-sys/shim/sse_emu/emmintrin.h": "69541c9e7bef95ff058e695c42317686bdefedc0c481641ccd91f13ed6580266",
     "rust/crates/mds-crtmath/src/digest.rs": "3d08a69790da1b84025973d45200bc537bffe9dcacc3d24f6d6999632bd908ac",
     "rust/crates/mds-crtmath/src/explog.rs": "2d22a86a39b230cddc3ddbe4a2b53629dcaa9cd8dc619b67714c5379fcc76581",
     "rust/crates/mds-crtmath/src/inv.rs": "46077982d891b76becd7ce7d4ce944f6cc73e320b9668184cfe30993a90dfd65",
@@ -27803,27 +27803,45 @@
     "status": "VERIFICATION_PROFILE_ONLY_NOT_FULL_GATE_ACCEPTANCE"
   },
   "source_admission": {
-    "actual_run": 40473401249,
-    "head": "07fa0792a56d9fa3c5c3af4cff3bd88a7567a033",
-    "actual_checkout": "c6bc51b118e14d6d3235b08cb01dbca110b37b1e",
-    "head_and_checkout_tree": "c66f1442ac5bcd85c0774c0ed9eedd2a42aa5518",
+    "actual_run": 40475350148,
+    "head": "5b9efad6650605f0b95727bd8197c2692b8cbfc2",
+    "actual_checkout": "c443fbe58ddb7a44b45e1cf2517f49e487ab49a8",
+    "head_and_checkout_tree": "fb0bc4f18620b8665e0e690ac8bfb27696e1a40d",
     "actual_artifact": {
-      "id": 12721090702,
+      "id": 12721156864,
       "name": "bullet-mixed-macos-15",
-      "digest": "sha256:8bcce03202a779c80fa5bb369cb215d7716f772cf26de32e6a75ea063a051dc9",
-      "bytes": 91951030
+      "digest": "sha256:cf78879438ae6f2a87a9703aca95e6f7a3539405680c0a69059b20558b182fe8",
+      "bytes": 91952290
     },
-    "source_manifest_raw_sha256": "085db80c4cf4db0ab355c96713d1897accb8aa4a89f3b3ee1fc2d630aab49328",
+    "source_manifest_raw_sha256": "3ad994f738c1b9418ee71eea2e4fe2b071b7ea972050d883ac473a71e0df6dd8",
     "source_entries": 237,
     "producer_entries": 219,
     "source_transport": {
       "exact": 237
     },
     "changed_producer_sources": {
+      "rust/crates/mds-bullet/src/core/body.rs": {
+        "previous": "7f5f5b2f30206ccec1fdbb8ac961a3ff480ae14c3cfb61a5afd4595ed32e31bb",
+        "observed": "ad60ba586e1cadeb63ee37e30d5dcb73a28eb08398cfc2551b417dc3bc8ffbb9",
+        "git_lf_sha256": "ad60ba586e1cadeb63ee37e30d5dcb73a28eb08398cfc2551b417dc3bc8ffbb9",
+        "transport": "exact"
+      },
       "rust/crates/mds-bullet/src/core/contact.rs": {
         "previous": "35f74a1ce4ed5f2087e1ceb72b68d7d3c6b4bb0fcee0a85d0567f572ed84f862",
         "observed": "b473127a44fc4c4fcc381022ac0d46887e49e171cdbdbe5389e4689793a1fec4",
         "git_lf_sha256": "b473127a44fc4c4fcc381022ac0d46887e49e171cdbdbe5389e4689793a1fec4",
+        "transport": "exact"
+      },
+      "rust/crates/mds-bullet/src/core/joint_rows.rs": {
+        "previous": "9521f9eea59f2d9af3252e979a37ad933c3eb304500d04cefbd6eb1c499fe197",
+        "observed": "80aed8338c34aa26a6a4318415b8e6ea0dd1be89ce6caa41d890748e224011cc",
+        "git_lf_sha256": "80aed8338c34aa26a6a4318415b8e6ea0dd1be89ce6caa41d890748e224011cc",
+        "transport": "exact"
+      },
+      "rust/crates/mds-bullet/src/core/math.rs": {
+        "previous": "3fba17ac6d4a7ec0a8933422acabf15f2794591eff4fed64cd4f333d9cc7c78d",
+        "observed": "04bb3c1660b9ddc501cb66250d57cf1e757972e16f327896c189756f86283e97",
+        "git_lf_sha256": "04bb3c1660b9ddc501cb66250d57cf1e757972e16f327896c189756f86283e97",
         "transport": "exact"
       },
       "tools/bullet-rust-mixed-solver-check/runner.rs": {
@@ -27839,5 +27857,95 @@
     "fresh_compiled_mutants": 0,
     "status": "MEASURED_SOURCE_ADMISSION_ONLY_NOT_FULL_GATE_ACCEPTANCE",
     "limit": "Admits only these observed producer hashes with the existing exact capture gate. This is not a new passing producer run or acceptance of dispatcher behavior outside this compilation closure."
-  }
+  },
+  "source_admission_history": [
+    {
+      "actual_run": 40473401249,
+      "head": "07fa0792a56d9fa3c5c3af4cff3bd88a7567a033",
+      "actual_checkout": "c6bc51b118e14d6d3235b08cb01dbca110b37b1e",
+      "head_and_checkout_tree": "c66f1442ac5bcd85c0774c0ed9eedd2a42aa5518",
+      "actual_artifact": {
+        "id": 12721090702,
+        "name": "bullet-mixed-macos-15",
+        "digest": "sha256:8bcce03202a779c80fa5bb369cb215d7716f772cf26de32e6a75ea063a051dc9",
+        "bytes": 91951030
+      },
+      "source_manifest_raw_sha256": "085db80c4cf4db0ab355c96713d1897accb8aa4a89f3b3ee1fc2d630aab49328",
+      "source_entries": 237,
+      "producer_entries": 219,
+      "source_transport": {
+        "exact": 237
+      },
+      "changed_producer_sources": {
+        "rust/crates/mds-bullet/src/core/contact.rs": {
+          "previous": "35f74a1ce4ed5f2087e1ceb72b68d7d3c6b4bb0fcee0a85d0567f572ed84f862",
+          "observed": "b473127a44fc4c4fcc381022ac0d46887e49e171cdbdbe5389e4689793a1fec4",
+          "git_lf_sha256": "b473127a44fc4c4fcc381022ac0d46887e49e171cdbdbe5389e4689793a1fec4",
+          "transport": "exact"
+        },
+        "tools/bullet-rust-mixed-solver-check/runner.rs": {
+          "previous": "424a4455f80ee83a5cc0caf8a7985b951647db55308371974b80cded3cdaeebb",
+          "observed": "4876a0c33bf3c44c4d45bef74187aa9f5d3b717d5dc47c66551aa50594ad8a3d",
+          "git_lf_sha256": "4876a0c33bf3c44c4d45bef74187aa9f5d3b717d5dc47c66551aa50594ad8a3d",
+          "transport": "exact"
+        }
+      },
+      "commands_raw_sha256": "c8ec430d2036ca860f33e9c8888f057bc995edc61156f01e4aeb193139b1b6f6",
+      "historical_capture_provenance": "measurement remains the original run40426173732 capture provenance; captures, differences and identity are unchanged.",
+      "actual_run_status": "FAIL at arithmetic observation source profile differs after captures; clippy and mutants did not run.",
+      "fresh_compiled_mutants": 0,
+      "status": "MEASURED_SOURCE_ADMISSION_ONLY_NOT_FULL_GATE_ACCEPTANCE",
+      "limit": "Admits only these observed producer hashes with the existing exact capture gate. This is not a new passing producer run or acceptance of dispatcher behavior outside this compilation closure."
+    },
+    {
+      "actual_run": 40475346000,
+      "head": "3533392d05fa141cc9007915eda6433cc8901f03",
+      "actual_checkout": "466f148cf134c4d3f2bf9b772c5000e744e375f6",
+      "head_and_checkout_tree": "7a88f418a3e6bd79a434f5efb167d18104c094a3",
+      "actual_artifact": {
+        "id": 12721601268,
+        "name": "bullet-mixed-macos-15",
+        "digest": "sha256:2048190295952b5faf0fec2cf29869925ff2b27a3e10af64a86200e0db029ac3",
+        "bytes": 91951029
+      },
+      "source_manifest_raw_sha256": "7ca54904b74c83a5769f1fcd7242432220d79bf7502cf9b684bb13ae5307f999",
+      "source_entries": 237,
+      "producer_entries": 219,
+      "source_transport": {
+        "exact": 237
+      },
+      "changed_producer_sources": {
+        "rust/crates/mds-bullet/src/core/body.rs": {
+          "previous": "7f5f5b2f30206ccec1fdbb8ac961a3ff480ae14c3cfb61a5afd4595ed32e31bb",
+          "observed": "ad60ba586e1cadeb63ee37e30d5dcb73a28eb08398cfc2551b417dc3bc8ffbb9",
+          "git_lf_sha256": "ad60ba586e1cadeb63ee37e30d5dcb73a28eb08398cfc2551b417dc3bc8ffbb9",
+          "transport": "exact"
+        },
+        "rust/crates/mds-bullet/src/core/contact.rs": {
+          "previous": "35f74a1ce4ed5f2087e1ceb72b68d7d3c6b4bb0fcee0a85d0567f572ed84f862",
+          "observed": "b473127a44fc4c4fcc381022ac0d46887e49e171cdbdbe5389e4689793a1fec4",
+          "git_lf_sha256": "b473127a44fc4c4fcc381022ac0d46887e49e171cdbdbe5389e4689793a1fec4",
+          "transport": "exact"
+        },
+        "rust/crates/mds-bullet/src/core/joint_rows.rs": {
+          "previous": "9521f9eea59f2d9af3252e979a37ad933c3eb304500d04cefbd6eb1c499fe197",
+          "observed": "80aed8338c34aa26a6a4318415b8e6ea0dd1be89ce6caa41d890748e224011cc",
+          "git_lf_sha256": "80aed8338c34aa26a6a4318415b8e6ea0dd1be89ce6caa41d890748e224011cc",
+          "transport": "exact"
+        },
+        "tools/bullet-rust-mixed-solver-check/runner.rs": {
+          "previous": "424a4455f80ee83a5cc0caf8a7985b951647db55308371974b80cded3cdaeebb",
+          "observed": "4876a0c33bf3c44c4d45bef74187aa9f5d3b717d5dc47c66551aa50594ad8a3d",
+          "git_lf_sha256": "4876a0c33bf3c44c4d45bef74187aa9f5d3b717d5dc47c66551aa50594ad8a3d",
+          "transport": "exact"
+        }
+      },
+      "commands_raw_sha256": "c8ec430d2036ca860f33e9c8888f057bc995edc61156f01e4aeb193139b1b6f6",
+      "historical_capture_provenance": "measurement remains the original run40426173732 capture provenance; captures, differences and identity are unchanged.",
+      "actual_run_status": "FAIL at arithmetic observation source profile differs after captures; clippy and mutants did not run.",
+      "fresh_compiled_mutants": 0,
+      "status": "MEASURED_SOURCE_ADMISSION_ONLY_NOT_FULL_GATE_ACCEPTANCE",
+      "limit": "Admits only these observed producer hashes with the existing exact capture gate. This is not a new passing producer run or acceptance of dispatcher behavior outside this compilation closure."
+    }
+  ]
 }

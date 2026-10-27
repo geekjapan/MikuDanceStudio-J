@@ -1259,6 +1259,35 @@ class ClosedFormatFactsTests(unittest.TestCase):
         changed['graph']['types'][0]['inner'] = 1
         with self.assertRaisesRegex(F.FactsError, 'raw constructor fields'): F.ReportGraph(changed)
 
+    def test_record_physical_position_unsigned_range(self):
+        import copy
+        identity = dict(kind='struct', tag=None,
+                        physical=dict(path='/native/fixture.c', line=1, column=1), scope={'file': True})
+        record = dict(id=800, kind='struct', identity=identity, native_va_list_record=False,
+                      fields=[], layout=None, state='complete', diagnostic_location=None,
+                      parameter_owners=[], df_children=[], structural_children=[])
+        facts = dict(unit='/native/fixture.c', graph=dict(types=[], qualified_types=[], expressions=[],
+                     statements=[], declarations=[record], declaration_order=[800]))
+        for nested in (False, True):
+            legal = copy.deepcopy(facts)
+            target = legal['graph']['declarations'][0]['identity']
+            if nested:
+                target['scope'] = {'record': copy.deepcopy(identity)}
+                target = target['scope']['record']
+            F.ReportGraph(legal)
+            for field in ('line', 'column'):
+                for value in (1, 2 ** 64 - 1, 0, -1, True, False, 2 ** 64, '1', 1.0, None):
+                    changed = copy.deepcopy(legal)
+                    position = changed['graph']['declarations'][0]['identity']
+                    if nested: position = position['scope']['record']
+                    position['physical'][field] = value
+                    with self.subTest(nested=nested, field=field, value=value):
+                        if type(value) is int and 0 < value < 2 ** 64:
+                            F.ReportGraph(changed)
+                        else:
+                            reason = 'invalid record physical position' if type(value) is int and value == 0 else 'invalid raw integer'
+                            with self.assertRaisesRegex(F.FactsError, reason): F.ReportGraph(changed)
+
     def test_qualified_normalization_flags_and_coordinated_peers(self):
         import copy
         flags = ('const', 'volatile', 'restrict')

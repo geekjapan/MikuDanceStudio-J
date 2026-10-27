@@ -330,7 +330,8 @@ class ReportGraph:
         self.keys(physical, 'path line column')
         need(isinstance(physical['path'], str) and physical['path'].startswith('/'), 'invalid record physical path')
         for name in ('line', 'column'):
-            need(type(physical[name]) is int and physical[name] > 0, 'invalid record physical position')
+            self.integer(physical[name])
+            need(physical[name] > 0, 'invalid record physical position')
         scope = value['scope']
         need(isinstance(scope, dict), 'invalid record scope')
         if 'file' in scope:

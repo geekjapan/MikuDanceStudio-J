@@ -236,3 +236,20 @@ tool rebuild, the numeric probe, the ABI receipts, and regeneration
 of all 24 units establish integration evidence. Any subsequent raw or working
 Cargo errors remain failures. `validate.py --all-units` continues to reject the
 prototype as production acceptance.
+
+The variable offsetof base field follows the translator's existing alignment
+wrapper representation. It uses `offset_of!(ConvertedType, 0.renamed_field)`
+when the owning record has an inner struct, and a direct field otherwise.
+The original C size type, wrapping arithmetic, immediate element stride, and
+index conversion remain unchanged. The upstream regression includes direct
+and typedef aligned records with the reserved field name `mod`.
+
+For a focused token API check against the patched pinned source, run
+`python3 tools/vkd3d-rust-probe/check_offsetof_tokens.py --source /path/to/c2rust --artifacts /path/to/evidence`.
+It compiles the actual field-path and arithmetic snippets with the pinned
+AST builder and syn, then compares 40 values with the upstream native C
+fixture. The record predicate is supplied as a boolean, and the Rust record
+representations are explicit test fixtures. This check does not run the
+exporter, type converter, field renamer, or complete translator. Hosted tool
+rebuild, ABI 204/120/86, all 95 metrics and 200 vectors, and the unchanged raw
+and working stable all-24-unit gates remain required.

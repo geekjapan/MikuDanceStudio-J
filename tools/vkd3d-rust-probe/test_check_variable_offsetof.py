@@ -93,6 +93,9 @@ size_t layout_probe(unsigned int w) { return METRIC; }
         added = '\n'.join(line[1:] for line in patch.splitlines() if line.startswith('+') and not line.startswith('+++'))
         self.assertIn('self.convert_expr(ctx, *expr_id, None)?.map(|index|', added)
         self.assertNotIn('to_pure_expr', added)
+        self.assertIn('self.ast_context.parents[field_id]', added)
+        self.assertIn('self.ast_context.has_inner_struct_decl(record_id)', added)
+        self.assertIn('syn::parse_quote!(0 . #field_ident)', added)
         start = added.index('((::core::mem::offset_of!')
         end = added.index('\n                        }', start)
         expression = added[start:end].strip()
@@ -104,7 +107,7 @@ size_t layout_probe(unsigned int w) { return METRIC; }
             self.fail('rustc is required for the focused numeric regression')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            expression = (expression.replace('#struct_ty', 'Layout').replace('#field_ident', 'data')
+            expression = (expression.replace('#struct_ty', 'Layout').replace('#field_path', 'data')
                           .replace('#element_ty', 'u32').replace('#size_ty', 'u64')
                           .replace('#cast_ty', 'u8').replace('#index', '{ calls += 1; index }'))
             harness = '''

@@ -390,7 +390,7 @@ index e423e49..30566ea 100644
                  }
                  ref k => {
 diff --git a/c2rust-transpile/src/translator/mod.rs b/c2rust-transpile/src/translator/mod.rs
-index 8fb6f5b..4be39b3 100644
+index 8fb6f5b..ba137be 100644
 --- a/c2rust-transpile/src/translator/mod.rs
 +++ b/c2rust-transpile/src/translator/mod.rs
 @@ -612,13 +612,15 @@ pub fn emit_c_decl_map(
@@ -509,7 +509,7 @@ index 8fb6f5b..4be39b3 100644
          let ident_name = match foreign_item_ident_vis(foreign_item) {
              Some((ident, _vis)) => ident.to_string(),
              None => continue,
-@@ -3574,62 +3649,36 @@ pub(crate) fn convert_expr(
+@@ -3574,62 +3649,42 @@ pub(crate) fn convert_expr(
                      false,
                  )?)),
                  OffsetOfKind::Variable(qty, field_id, expr_id) => {
@@ -566,6 +566,12 @@ index 8fb6f5b..4be39b3 100644
 -                    ));
 -
 -                    // Cast type
++                    let record_id = self.ast_context.parents[field_id];
++                    let field_path: TokenStream = if self.ast_context.has_inner_struct_decl(record_id) {
++                        syn::parse_quote!(0 . #field_ident)
++                    } else {
++                        syn::parse_quote!(#field_ident)
++                    };
 +                    let field_ty = match self.ast_context[*field_id].kind {
 +                        CDeclKind::Field { typ, .. } => typ,
 +                        _ => unreachable!("Expected offsetof field declaration"),
@@ -586,7 +592,7 @@ index 8fb6f5b..4be39b3 100644
 +                    // Clang computes the byte offset modulo the original C size_t width.
 +                    Ok(self.convert_expr(ctx, *expr_id, None)?.map(|index| {
 +                        syn::parse_quote! {
-+                            ((::core::mem::offset_of!(#struct_ty, #field_ident) as #size_ty)
++                            ((::core::mem::offset_of!(#struct_ty, #field_path) as #size_ty)
 +                                .wrapping_add(((#index) as #size_ty).wrapping_mul(
 +                                    ::core::mem::size_of::<#element_ty>() as #size_ty))) as #cast_ty
 +                        }
@@ -616,7 +622,7 @@ index 8416eaf..7851312 100644
  
                      cast_kind = Some(VaArgCastKind::Transmute(self.convert_type(ty.ctype)?));
 diff --git a/tests/unit/structs/src/test_variable_offsetof.rs b/tests/unit/structs/src/test_variable_offsetof.rs
-index 97f83ad..012e2f3 100644
+index 97f83ad..3e9b07d 100644
 --- a/tests/unit/structs/src/test_variable_offsetof.rs
 +++ b/tests/unit/structs/src/test_variable_offsetof.rs
 @@ -1,5 +1,3 @@
@@ -637,7 +643,7 @@ index 97f83ad..012e2f3 100644
 +
 +#[test]
 +fn test_layout_wrapping_and_effects() {
-+    for which in 0..13 {
++    for which in 0..14 {
 +        for idx in [0, 1, 3, -1, -5, u32::MAX as i64, i64::MAX, 1i64 << 62] {
 +            unsafe {
 +                assert_eq!(crate::variable_offsetof::rust_offset_case(which, idx), offset_case(which, idx),
@@ -647,10 +653,10 @@ index 97f83ad..012e2f3 100644
 +    }
 +}
 diff --git a/tests/unit/structs/src/variable_offsetof.c b/tests/unit/structs/src/variable_offsetof.c
-index 4c0ffb2..35cd0fa 100644
+index 4c0ffb2..86ed44c 100644
 --- a/tests/unit/structs/src/variable_offsetof.c
 +++ b/tests/unit/structs/src/variable_offsetof.c
-@@ -17,3 +17,34 @@ struct yield {
+@@ -17,3 +17,36 @@ struct yield {
  size_t get_offset2(size_t idx) {
      return offsetof(struct yield, mod[idx]);
  }
@@ -663,6 +669,7 @@ index 4c0ffb2..35cd0fa 100644
 +struct element { unsigned long long wide; char tail; };
 +struct elements { char head; struct element mod[4]; };
 +typedef struct flexible alias;
++typedef struct aligned aligned_alias;
 +static unsigned int counter;
 +static unsigned int next_index(void) { return counter++; }
 +
@@ -682,6 +689,7 @@ index 4c0ffb2..35cd0fa 100644
 +        case 10: (void)offsetof(alias, mod[next_index()]); return counter;
 +        case 11: return (unsigned char)offsetof(alias, mod[idx]);
 +        case 12: return offsetof(alias, mod[(unsigned int)idx * 8u]);
++        case 13: return offsetof(aligned_alias, mod[idx]);
 +    }
 +    return 0;
 +}

@@ -104,9 +104,10 @@ class HelperTests(unittest.TestCase):
             'ffi-default-select': b'x\nx\nstate|B(B(1;3);2)|rank|\nx\n',
             'native-lifecycle': b'event\r\n' * 10,
             'rust-lifecycle': b'event\n' * 10,
-            'cases': b'operation\n' * 2326,
+            'cases': b'l 0\n' * 2326,
+            'rust-tests': b'\ntest result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n',
         }
-        captures.update({f'native-{order}': b'state\n' * 2326 for order in range(4)})
+        captures.update({f'native-{order}': b'0,0,0,0|_||\n' * 2326 for order in range(4)})
         captures.update({f'ffi-default-native-{order}': b'state\n' * 2326 for order in range(4)})
         captures.update(overrides or {})
         with tempfile.TemporaryDirectory() as directory:
@@ -114,6 +115,26 @@ class HelperTests(unittest.TestCase):
             source = root / 'BulletCollision/BroadphaseCollision'
             source.mkdir(parents=True)
             (source / 'btDbvt.h').write_text(header)
+            binary = root / 'test-binary'
+            binary.write_bytes(b'mock compiled executable')
+            captures.setdefault('rust-tests-build', json.dumps(dict(
+                reason='compiler-artifact', target=dict(name='dbvt', kind=['test'],
+                src_path=str(check.HERE / 'test.rs')), manifest_path=str(check.HERE / 'Cargo.toml'),
+                profile=dict(test=True), executable=str(binary))).encode() +
+                b'\n{"reason":"build-finished","success":true}\n')
+
+            def capture(command, out, name, **kwargs):
+                if name == 'rust-tests':
+                    self.assertEqual(kwargs['cwd'], check.ROOT / 'rust')
+                    self.assertEqual(command, [out / ('dbvt-tests.exe' if msvc else 'dbvt-tests')])
+                    for order in range(4):
+                        (out / f'rust-{order}.tsv').write_text(''.join(
+                            f'{i}\tl 0\t0,0,0,0|_||\n' for i in range(2326)))
+                if name == 'rust-tests-build':
+                    self.assertEqual(kwargs['cwd'], check.ROOT / 'rust')
+                    self.assertEqual(command[-2:], ['--no-run', '--message-format=json'])
+                return captures.get(name, b'')
+
             argv = ['check.py', '--out-dir', str(root / 'out'), '--expected-arch', arch,
                     '--expected-profile', 'sse' if msvc else 'generic']
             with patch.object(check, 'SRC', root), patch.object(check, 'provenance'), \
@@ -121,8 +142,7 @@ class HelperTests(unittest.TestCase):
                         name='nt' if msvc else 'posix', environ={}, sep='/')), \
                     patch.object(check.platform, 'machine', return_value=machine), \
                     patch.object(sys, 'argv', argv), \
-                    patch.object(check, 'run', side_effect=lambda command, out, name, **kw:
-                                 captures.get(name, b'')) as run, \
+                    patch.object(check, 'run', side_effect=capture) as run, \
                     contextlib.redirect_stdout(io.StringIO()):
                 check.main()
                 self.assertEqual(run.call_args.args[2], 'rust-tests')
@@ -155,6 +175,190 @@ class HelperTests(unittest.TestCase):
                 with self.assertRaises(AssertionError) as caught:
                     self.run_mock_capture(**kwargs)
                 self.assertEqual(str(caught.exception), message)
+
+    def replay_fixture(self, root, *, input='v 0 0 0 1 1 1',
+                       native='0,0,0,0|_||', rust='0,0,0,0|_||'):
+        (root / 'inputs.tsv').write_text((input + '\n') * 2326)
+        for order in range(4):
+            (root / f'native-{order}.tsv').write_text((native + '\n') * 2326)
+            (root / f'rust-{order}.tsv').write_text(''.join(
+                f'{i}\t{input}\t{rust}\n' for i in range(2326)))
+
+    def test_complete_stream_replay_and_transport(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.replay_fixture(root)
+            for path in root.glob('*.tsv'):
+                path.write_bytes(path.read_bytes().replace(b'\n', b'\r\n'))
+            check.compare_streams(root)
+
+    def test_stream_length_and_identity_reject_missing_extra_duplicate_and_reorder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.replay_fixture(root)
+            for order in range(4):
+                for kind in ('native', 'rust'):
+                    path = root / f'{kind}-{order}.tsv'
+                    valid = path.read_text()
+                    lines = valid.splitlines(keepends=True)
+                    invalids = ['', ''.join(lines[:-1]), valid + lines[-1]]
+                    if kind == 'rust':
+                        invalids += [lines[0] + ''.join(lines[:-1]),
+                                     lines[1] + lines[0] + ''.join(lines[2:]),
+                                     valid.replace('0\tv ', '0\tq ', 1)]
+                    for invalid in invalids:
+                        with self.subTest(order=order, kind=kind, length=len(invalid)):
+                            path.write_text(invalid)
+                            with self.assertRaises(AssertionError):
+                                check.compare_streams(root)
+                    path.write_text(valid)
+            path = root / 'rust-0.tsv'
+            path.unlink()
+            with self.assertRaises(FileNotFoundError):
+                check.compare_streams(root)
+
+    def test_corrupted_complete_stream_rejects_without_changing_raw(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.replay_fixture(root, input='l 0')
+            for order in range(4):
+                path = root / f'rust-{order}.tsv'
+                valid = path.read_text()
+                for replacement in ('0,0,0,0|_||1,', '0,0,0,0|broken||',
+                                    '0,0,0,0|_||bad', '0,0,0,0|_|1,|'):
+                    raw = valid.replace('0,0,0,0|_||', replacement, 1)
+                    path.write_text(raw)
+                    with self.subTest(order=order, replacement=replacement):
+                        with self.assertRaises(AssertionError):
+                            check.compare_streams(root)
+                        self.assertEqual(path.read_text(), raw)
+                path.write_text(valid)
+
+    def test_ordinary_semantics_keep_raw_order_but_controlled_is_exact(self):
+        a = '1,0,0,0,0,0,0'
+        b = '2,0,0,0,0,0,0'
+        branch = 'B,0,0,0,0,0,0'
+        native = f'2,0,0,0|{branch}({a};{b})|0,1,2,|2:1,1:2,'
+        rust = f'2,0,0,0|{branch}({b};{a})||1:2,2:1,'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.replay_fixture(root, input='s', native=native,
+                                rust=native.replace('|0,1,2,|', '||'))
+            path = root / 'rust-3.tsv'
+            path.write_text(path.read_text().replace(native.replace('|0,1,2,|', '||'), rust))
+            check.compare_streams(root)
+            for order in range(3):
+                path = root / f'rust-{order}.tsv'
+                valid = path.read_text()
+                path.write_text(valid.replace(native.replace('|0,1,2,|', '||'), rust))
+                with self.assertRaisesRegex(AssertionError, 'replay differs'):
+                    check.compare_streams(root)
+                path.write_text(valid)
+            path = root / 'rust-3.tsv'
+            path.write_text(path.read_text().replace('1:2,2:1,', '1:2,'))
+            with self.assertRaises(AssertionError):
+                check.compare_streams(root)
+
+    def test_snapshot_parser_rejects_malformed_complete_rows(self):
+        for row in ('', '0,0,0,0|_||extra|', '0,0,0,2|_||',
+                    '0,0,0,0|_x||', '0,0,0,0|_(;)||',
+                    '0,0,0,0|B,0,0,0,0,0,0(_;)||', '0,0,0,0|B,0,0,0,0,0,0(_;_)||', '0,0,0,0|_||1:2',
+                    '0,0,0,0|_|oops|'):
+            with self.subTest(row=row), self.assertRaises(AssertionError):
+                check.parse_snapshot(row)
+
+    def test_test_summary_rejects_filtered_ignored_empty_and_duplicate(self):
+        valid = b'test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n'
+        check.validate_test_result(valid)
+        for invalid in (b'', valid + valid, valid.replace(b'11 passed', b'10 passed'),
+                        valid.replace(b'0 ignored', b'1 ignored'),
+                        valid.replace(b'0 filtered', b'1 filtered'),
+                        valid.replace(b'ok.', b'FAILED.')):
+            with self.subTest(invalid=invalid), self.assertRaises(AssertionError):
+                check.validate_test_result(invalid)
+
+    def test_exact_cargo_artifact_retains_only_owned_binary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / 'original'
+            binary.write_bytes(b'actual mock test bytes')
+            out = root / 'out'
+            out.mkdir()
+            item = dict(reason='compiler-artifact', target=dict(name='dbvt', kind=['test'],
+                src_path=str(check.HERE / 'test.rs')), manifest_path=str(check.HERE / 'Cargo.toml'),
+                profile=dict(test=True), executable=str(binary))
+            encode = lambda value: (json.dumps(value) + '\n' +
+                '{"reason":"build-finished","success":true}\n').encode()
+            retained = check.retain_test_binary(
+                b'[quote 1.0.47] cargo:rerun-if-changed=build.rs\r\n' + encode(item) +
+                b'non-JSON trailing diagnostic\n', out)
+            self.assertEqual(retained.read_bytes(), binary.read_bytes())
+            manifest = json.loads((out / 'rust-test-binary.json').read_text())
+            self.assertEqual(manifest['bytes'], binary.stat().st_size)
+            self.assertEqual(manifest['sha256'], check.hashlib.sha256(binary.read_bytes()).hexdigest())
+            self.assertEqual(manifest['cwd'], str(check.ROOT / 'rust'))
+            self.assertEqual(manifest['argv'], [str(retained)])
+            for invalid in (b'', b'not JSON', encode(item) * 2,
+                            (json.dumps(item) + '\n').encode() + encode(item),
+                            b'{"reason":"build-finished","success":true}\n',
+                            encode(dict(item, manifest_path=str(root / 'Cargo.toml'))),
+                            encode(dict(item, target=dict(item['target'], name='foreign'))),
+                            encode(dict(item, target=[])),
+                            encode(dict(item, profile=[])),
+                            encode(dict(item, executable=7)),
+                            encode(dict(item, executable=None)),
+                            encode(dict(item, executable=str(root / 'missing'))),
+                            encode(dict(item, profile=dict(test=False))),
+                            encode(dict(item, target=dict(item['target'], src_path=str(root / 'test.rs')))),
+                            encode(dict(item, target=dict(item['target'], kind=['bin'])))):
+                with self.subTest(invalid=invalid), self.assertRaises((AssertionError, ValueError)):
+                    check.retain_test_binary(invalid, out)
+            binary.write_bytes(b'')
+            with self.assertRaisesRegex(AssertionError, 'empty'):
+                check.retain_test_binary(encode(item), out)
+
+    def test_cargo_object_stream_requires_strict_json_and_terminal_success(self):
+        artifact = b'{"reason":"compiler-artifact","target":{"name":"foreign"}}\n'
+        finish = b'{"reason":"build-finished","success":true}\n'
+        mixed = b'[quote 1.0.47] cargo:rerun-if-changed=build.rs\r\n' + artifact + finish
+        self.assertEqual(check.cargo_objects(mixed), [json.loads(artifact), json.loads(finish)])
+        self.assertEqual(check.cargo_objects(mixed + b'program output\n'),
+                         check.cargo_objects(mixed))
+        for invalid in (b'', b'non-JSON success=true', artifact, finish + finish,
+                        finish + artifact, b'{broken}\n' + finish,
+                        b'{"reason":"build-finished","reason":"build-finished","success":true}\n',
+                        b'{"reason":"message","nested":{"x":1,"x":2}}\n' + finish,
+                        b'{"reason":"message","x":NaN}\n' + finish,
+                        b'{"reason":"message","x":Infinity}\n' + finish,
+                        b'{"reason":"message","x":-Infinity}\n' + finish,
+                        b'{"reason":"message","x":1e999}\n' + finish,
+                        b'{"reason":"build-finished"}\n',
+                        b'{"reason":"build-finished","success":false}\n',
+                        b'{"reason":"build-finished","success":1}\n',
+                        b'{"reason":"build-finished","success":true',
+                        b'{}\n' + finish, b'{"reason":null}\n' + finish):
+            with self.subTest(invalid=invalid), self.assertRaises((AssertionError, ValueError)):
+                check.cargo_objects(invalid)
+
+    def test_provenance_includes_consumed_crtmath_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'rust/crates/mds-crtmath/src/lib.rs'
+            path.parent.mkdir(parents=True)
+            path.write_bytes(b'consumed source')
+            def git(command, **kwargs):
+                self.assertEqual(kwargs['cwd'], root)
+                if command[1] == 'ls-files':
+                    self.assertIn('rust/crates/mds-crtmath', command)
+                    return b'rust/crates/mds-crtmath/src/lib.rs\0'
+                return b'fixed-head\n'
+            with patch.object(check, 'ROOT', root), \
+                    patch.object(check.platform, 'platform', return_value='mock host'), \
+                    patch.object(check.subprocess, 'check_output', side_effect=git):
+                check.provenance(root)
+            data = json.loads((root / 'provenance.json').read_text())
+            self.assertEqual(data['source_sha256'], {
+                'rust/crates/mds-crtmath/src/lib.rs': check.hashlib.sha256(path.read_bytes()).hexdigest()})
 
     def test_failed_process_preserves_logs_and_command(self):
         import sys

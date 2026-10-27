@@ -9,7 +9,7 @@ The stream covers 2,326 operations per native allocation history, including 12
 seeded mutation histories, ordered TV, self TT, and cross-tree TT callbacks, internal ray queries,
 margin and velocity update, lookahead, clear, bottom-up, top-down, and incremental
 optimization. AABB values compare exact float bits; metadata and ordered children
-compare exactly. Native compiler commands, inputs, and complete traces remain in
+compare exactly. Native compiler commands, inputs, and complete native and Rust traces remain in
 the output directory. Regenerate them for each host; they are not portable frozen
 allocator fixtures.
 
@@ -67,7 +67,7 @@ Windows SSE parity.
 The gate asserts actual CPU architecture and the profile observed from
 `btDbvt.h`. Windows uses `/DWIN32`, `/O2`, `/MD`, `/EHsc`, and `/fp:precise`,
 matching the original CMake MSVC x64 SSE selection. Other hosts require generic
-DBVT. Each host retains all 10 existing Rust tests, 6,978 strict snapshots,
+DBVT. Each host runs all 11 existing Rust tests, 6,978 strict snapshots,
 2,326 ordinary allocator comparisons, and 10 native/Rust lifecycle cases. An
 additional directed Select test compares native and Rust callback order for
 point boxes whose float association distinguishes generic from SSE. Its native
@@ -136,3 +136,37 @@ fallback is a deliberate safety repair with no native parity claim. The large
 finite regression checks both optimization entry points in child processes,
 exact leaf-bound bits, live links, leaf count, volume queries and self-tree pairs.
 Before the repair both children aborted from a second panic in Drop.
+
+The gate retains `rust-0.tsv` through `rust-3.tsv` from the actual computed Rust
+state, topology, and events before the existing assertions and native rank import.
+Each row contains the zero-based operation index, exact input line, and a snapshot,
+separated by tabs. The snapshot has `state|topology||events`. The empty column
+keeps observed native address ranks separate from Rust results. Topology and
+callback events stay in their original order. Direct file writes preserve the
+completed prefix if a later Rust assertion fails.
+
+After all tests pass, Python independently requires exactly 2,326 rows in each
+native and Rust stream and checks every Rust index and input identity. Modes 0,
+1, and 2 compare exact state, complete topology, and events. These comparisons
+remain conditional on the observed native address ranks imported after each
+checkpoint. Mode 3 compares exact leaf-volume records and query sets with the
+same pair normalization and duplicate multiplicity as the Rust fixture. Other
+events compare exactly. Its raw topology and state remain available but are not
+required to match allocator-dependent native structure. Missing, extra, malformed,
+reordered, or duplicated Rust rows fail. Python exceptions stay active under `-O`.
+Replay never rewrites the raw streams. Run it again without compilers with
+`python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0,
+"tools/bullet-rust-dbvt-check"); import check; check.compare_streams(Path("/tmp/bullet-dbvt"))'`.
+
+Cargo builds with the pinned toolchain, locked manifest, release profile, and
+`--no-run --message-format=json` from `rust/`. The checker selects exactly one
+`dbvt` test artifact with the expected source, manifest, and test profile. It
+copies only that executable to `dbvt-tests` or `dbvt-tests.exe` in the output
+directory, then executes the retained copy from `rust/` with `DBVT_FIXTURES` set.
+`rust-test-binary.json` records its source path, retained path, byte count,
+SHA-256, working directory, toolchain, and argv. All 11 tests must pass with zero
+failed, ignored, measured, or filtered tests. Cargo JSON and both process logs
+remain available. Source provenance includes the consumed `mds-crtmath` crate.
+
+These retention changes require fresh execution and artifact readback on all four
+hosted targets. Helper tests with synthetic rows do not provide that evidence.

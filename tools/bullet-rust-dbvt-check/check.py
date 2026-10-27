@@ -3,10 +3,12 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import sys
 
@@ -79,6 +81,7 @@ def validate_select(data, expected):
 def provenance(out):
     tracked = subprocess.check_output(['git', 'ls-files', '-z', 'recipes/bullet275/bullet-src/src',
                                       'rust/crates/mds-bullet', 'rust/crates/mds-bullet-sys',
+                                      'rust/crates/mds-crtmath',
                                       'tools/bullet-rust-dbvt-check', 'rust/Cargo.lock',
                                       '.github/workflows/bullet-dbvt-hosted.yml'], cwd=ROOT)
     hashes = {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest()
@@ -89,6 +92,160 @@ def provenance(out):
                 compiler_environment={k: os.environ.get(k) for k in ('CXX', 'CL', '_CL_', 'CXXFLAGS')},
                 source_sha256=hashes)
     (out / 'provenance.json').write_text(json.dumps(data, indent=2) + '\n')
+
+
+def cargo_objects(data):
+    def object_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('duplicate Cargo JSON key')
+            result[key] = value
+        return result
+
+    def finite_number(value):
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError('non-finite Cargo JSON number')
+        return number
+
+    objects = []
+    finished = False
+    for line in data.decode().splitlines():
+        # Cargo cannot control stdout from other tools; raw logs retain those lines.
+        if not line.startswith('{'):
+            continue
+        item = json.loads(line, object_pairs_hook=object_pairs,
+                          parse_constant=finite_number, parse_float=finite_number)
+        if not isinstance(item, dict) or not isinstance(item.get('reason'), str):
+            raise ValueError('expected Cargo JSON object with a reason')
+        if finished:
+            raise AssertionError('Cargo JSON object after build-finished')
+        if item['reason'] == 'build-finished':
+            if item.get('success') is not True:
+                raise AssertionError('Cargo build did not succeed')
+            finished = True
+        objects.append(item)
+    if not finished:
+        raise AssertionError('missing successful Cargo build-finished')
+    return objects
+
+
+def retain_test_binary(data, out):
+    candidates = []
+    for item in cargo_objects(data):
+        if item.get('reason') != 'compiler-artifact':
+            continue
+        target = item.get('target')
+        if not isinstance(target, dict) or not isinstance(item.get('profile'), dict):
+            raise ValueError('malformed Cargo compiler-artifact')
+        if target.get('name') != 'dbvt':
+            continue
+        if (target.get('kind') != ['test'] or
+                not all(isinstance(value, str) and value for value in (
+                    target.get('src_path'), item.get('manifest_path'), item.get('executable'))) or
+                Path(target.get('src_path', '')).resolve() != (HERE / 'test.rs').resolve() or
+                Path(item.get('manifest_path', '')).resolve() != (HERE / 'Cargo.toml').resolve() or
+                item.get('profile', {}).get('test') is not True or not item.get('executable')):
+            raise AssertionError('unexpected DBVT test artifact')
+        candidates.append(Path(item['executable']))
+    if len(candidates) != 1 or not candidates[0].is_file():
+        raise AssertionError('expected exactly one existing DBVT test executable')
+    source = candidates[0].resolve()
+    executable = out / ('dbvt-tests.exe' if os.name == 'nt' else 'dbvt-tests')
+    shutil.copy2(source, executable)
+    raw = executable.read_bytes()
+    if not raw or raw != source.read_bytes():
+        raise AssertionError('DBVT test executable copy differs or is empty')
+    (out / 'rust-test-binary.json').write_text(json.dumps(dict(
+        source_path=str(source), retained_path=str(executable), bytes=len(raw),
+        sha256=hashlib.sha256(raw).hexdigest(), cwd=str(ROOT / 'rust'),
+        toolchain='1.95.0', argv=[str(executable)]), indent=2) + '\n')
+    return executable
+
+
+def validate_test_result(data):
+    summaries = re.findall(rb'test result: (.+)', data)
+    if len(summaries) != 1 or not re.fullmatch(
+            rb'ok\. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in .+',
+            summaries[0]):
+        raise AssertionError('expected all 11 DBVT tests with none ignored or filtered')
+
+
+def parse_snapshot(line, *, rust=False):
+    fields = line.split('|')
+    if len(fields) != 4 or not re.fullmatch(r'\d+,-?\d+,\d+,[01]', fields[0]):
+        raise AssertionError('malformed DBVT snapshot')
+    if (rust and fields[2]) or (not rust and not re.fullmatch(r'(?:\d+,)*', fields[2])):
+        raise AssertionError('malformed DBVT rank column')
+    topology = fields[1]
+    tokens = re.findall(r'_|(?:B|\d+)(?:,\d+){6}|[();]', topology)
+    if ''.join(tokens) != topology:
+        raise AssertionError('malformed DBVT topology')
+    position = 0
+    leaves = []
+
+    def node(*, root=False):
+        nonlocal position
+        if position == len(tokens):
+            raise AssertionError('truncated DBVT topology')
+        token = tokens[position]
+        position += 1
+        if token in ('(', ')', ';') or (token == '_' and not root):
+            raise AssertionError('malformed DBVT topology node')
+        if token.startswith('B'):
+            for delimiter in ('(', ';', ')'):
+                if position == len(tokens) or tokens[position] != delimiter:
+                    raise AssertionError('malformed DBVT topology branch')
+                position += 1
+                if delimiter != ')':
+                    node()
+        elif token != '_':
+            leaves.append(token)
+
+    node(root=True)
+    if position != len(tokens):
+        raise AssertionError('extra DBVT topology tokens')
+    events = fields[3]
+    if not re.fullmatch(r'(?:\d+(?::\d+)?,)*|[01](?:,\d+){6}', events):
+        raise AssertionError('malformed DBVT events')
+    return fields, sorted(leaves)
+
+
+def query_set(events):
+    result = []
+    for event in events.split(','):
+        if event:
+            if ':' in event:
+                a, b = map(int, event.split(':'))
+                event = f'{min(a, b)}:{max(a, b)}'
+            result.append(event)
+    return sorted(result)
+
+
+def compare_streams(out):
+    inputs = (out / 'inputs.tsv').read_text().splitlines()
+    if len(inputs) != 2326 or any(not line for line in inputs):
+        raise AssertionError('operation corpus changed')
+    for order in range(4):
+        native = (out / f'native-{order}.tsv').read_text().splitlines()
+        rust = (out / f'rust-{order}.tsv').read_text().splitlines()
+        if len(native) != len(inputs) or len(rust) != len(inputs):
+            raise AssertionError((order, 'incomplete or extra replay rows'))
+        for i in range(len(inputs)):
+            identity = rust[i].split('\t')
+            if len(identity) != 3 or identity[:2] != [str(i), inputs[i]]:
+                raise AssertionError((order, i, 'Rust operation identity differs'))
+            actual, actual_leaves = parse_snapshot(identity[2], rust=True)
+            expected, expected_leaves = parse_snapshot(native[i])
+            if order < 3:
+                equal = [actual[j] for j in (0, 1, 3)] == [expected[j] for j in (0, 1, 3)]
+            else:
+                equal = actual_leaves == expected_leaves
+                equal = equal and (query_set(actual[3]) == query_set(expected[3])
+                                   if inputs[i][0] in 'vsqx' else actual[3] == expected[3])
+            if not equal:
+                raise AssertionError((order, i, 'native/Rust replay differs'))
 
 
 def main():
@@ -177,8 +334,13 @@ def main():
             if len(captured.splitlines()) != 2326:
                 raise AssertionError((order, 'incomplete diagnostic capture'))
     env = dict(os.environ, DBVT_FIXTURES=str(out))
-    run(['rustup', 'run', '1.95.0', 'cargo', 'test', '--locked', '--manifest-path',
-         HERE / 'Cargo.toml', '--release'], out, 'rust-tests', env=env, cwd=ROOT / 'rust')
+    build = run(['rustup', 'run', '1.95.0', 'cargo', 'test', '--locked', '--manifest-path',
+                 HERE / 'Cargo.toml', '--release', '--no-run', '--message-format=json'],
+                out, 'rust-tests-build', capture=True, cwd=ROOT / 'rust')
+    executable = retain_test_binary(build, out)
+    result = run([executable], out, 'rust-tests', env=env, cwd=ROOT / 'rust', capture=True)
+    validate_test_result(result)
+    compare_streams(out)
     print('6,978 strict snapshots, 2,326 ordinary allocator comparisons and 10 lifecycle cases compared.')
 
 

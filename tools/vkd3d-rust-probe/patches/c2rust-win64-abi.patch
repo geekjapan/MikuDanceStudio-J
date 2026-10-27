@@ -382,7 +382,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +    }
 +    void InclusionDirective(SourceLocation, const Token &, StringRef, bool,
 +                            CharSourceRange, OptionalFileEntryRef file, StringRef,
-+                            StringRef, const Module *, SrcMgr::CharacteristicKind) override {
++                            StringRef, const clang::Module *, SrcMgr::CharacteristicKind) override {
 +        inputs->included(file);
 +    }
 +    void FileSkipped(const FileEntryRef &file, const Token &, SrcMgr::CharacteristicKind) override {

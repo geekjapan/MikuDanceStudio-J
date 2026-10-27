@@ -53,6 +53,15 @@ def check_source_tree(source):
 
 
 class InventoryRouteTests(unittest.TestCase):
+    def test_include_callback_matches_llvm18_module_type(self):
+        exporter = patched_lines('c2rust-ast-exporter/src/AstExporter.cpp')
+        self.assertIn(
+            'void InclusionDirective(SourceLocation, const Token &, StringRef, bool,\n'
+            '                            CharSourceRange, OptionalFileEntryRef file, StringRef,\n'
+            '                            StringRef, const clang::Module *, SrcMgr::CharacteristicKind) override {\n'
+            '        inputs->included(file);\n'
+            '    }', exporter)
+
     def test_inventory_only_and_legacy_map_route(self):
         condition = inventory_condition(patched_lines('c2rust-transpile/src/lib.rs'))
         for inventory, maps, witness, expected in (

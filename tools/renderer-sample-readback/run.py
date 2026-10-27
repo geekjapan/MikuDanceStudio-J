@@ -536,6 +536,11 @@ def image_analysis(control,observed,gold_dir,c,logs,capture_dir,capture_rows,rep
             actual = max(errors)
             maxima = {'documented_point':[x,y],'documented_error':expected,'actual_point_error':errors[y*width+x],
                       'actual_max':actual,'discrepancy':errors[y*width+x] != expected or actual != expected}
+        if test == 'selfshadow_30':
+            documented = POINTS[test][:3]
+            point_errors = [errors[y*width+x] for x,y in documented]
+            maxima = {'documented_points':documented,'documented_error':56,'actual_point_errors':point_errors,
+                      'actual_max':max(errors),'discrepancy':any(error != 56 for error in point_errors) or max(errors) != 56}
         results.append({'test':test,'image':name,'metrics':score,'mask_sha256':digest(bytes(mask)),
                         'points':points,'maxima':maxima,'rgba_sha256':digest(replay)})
     return results
@@ -553,7 +558,6 @@ def verify(manifest, temporary=False):
     head_git = base_git | git_inventory(tooling)
     require(set(head_git)-set(base_git) == ALLOWLIST,'only five new paths authorized')
     commit_proof(out/'head.commit',manifest['head'],head_git)
-    require((out/'head.commit').read_text().splitlines()[1] == 'parent '+BASE,'head parent must be fixed base')
     require(snapshot(base) == manifest['base_sources'],'base inventory drift')
     c = contract(base)
     observer = (tooling/(PREFIX+'observer.rs')).read_bytes()

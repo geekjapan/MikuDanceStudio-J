@@ -34,12 +34,14 @@ def includes(raw):
     return sorted({Path(m[1]).resolve() for line in raw.decode(errors='replace').splitlines()
                    if (m := re.match(pattern, line)) and Path(m[1]).is_file()})
 
-def expected_records():
+def expected_records(extended=True):
     records = []
     def snapshot(kind, row, bodies, joints):
         records.append((['W',kind,str(row)], None))
         records.extend((['B',kind,str(row),str(i)],120) for i in range(bodies))
-        records.extend((['J',kind,str(row),str(i)],64 if kind == 'P' else 65) for i in range(joints))
+        for i in range(joints):
+            records.append((['J',kind,str(row),str(i)],64 if kind in ('P','Q') else 65))
+            if kind in ('Q','N'): records.append((['T',kind,str(row),str(i)],28))
     snapshot('P',0,0,0)
     for i in range(7):
         records.append((['C','P',str(i)],4));snapshot('P',i+1,i+1,0)
@@ -53,24 +55,69 @@ def expected_records():
     for row in range(5,12):snapshot('M',row,5,0)
     for j in range(3):
         records.append((['K','M',str(j)],4));snapshot('M',12+j,5,j+1)
+    if extended:
+        records.insert(0, (['W','P','15'], None))
+        public = [r for r in records if r[0][1] == 'P']
+        mmd = [r for r in records if r[0][1] == 'M']
+        def rotated(rs, kind):
+            result = []
+            for prefix,width in rs:
+                result.append(([prefix[0],kind,*prefix[2:]],width))
+                if prefix[0] == 'J': result.append((['T',kind,*prefix[2:]],28))
+            return result
+        records = public + rotated(public,'Q') + mmd + rotated(mmd,'N')
+        mmd_start = next(i for i,(prefix,_) in enumerate(records) if prefix[1] == 'M')
+        tail = records[mmd_start:]; records = records[:mmd_start]
+        records += [(['V','Q',str(i)],5) for i in range(4)]
+        snapshot('Q',16,7,3)
+        records += tail
+        for i in range(2):
+            records.append((['V','N',str(i)],5));snapshot('N',15+i,6+i,3)
+        records += [(['O','P',str(i)],51) for i in range(2)]
     return records
 
 
-def validate(raw, reference=None):
-    rows = raw.decode().splitlines(); records = expected_records()
-    assert len(rows) == len(records), 'incomplete trace'
+def validate(raw, reference=None, extended=True):
+    rows = raw.decode().splitlines(); records = expected_records(extended)
+    def require(ok, message):
+        if not ok: raise AssertionError(message)
+    def integer(value, low, high):
+        require(re.fullmatch(r'-?(0|[1-9][0-9]*)', value) is not None, 'malformed integer')
+        require(low <= int(value) <= high, 'integer out of range')
+    def words(values):
+        require(all(re.fullmatch(r'[0-9a-f]{8}', v) for v in values), 'malformed float word')
+    require(len(rows) == len(records), 'incomplete trace')
     for line, (prefix, width) in zip(rows, records):
         a = line.split()
-        assert a[:len(prefix)] == prefix, 'trace record order or identity changed'
-        if width is not None: assert len(a) == width, 'trace record width changed'
+        require(a[:len(prefix)] == prefix, 'trace record order or identity changed')
+        if width is not None: require(len(a) == width, 'trace record width changed')
         if a[0] == 'W':
-            assert a[6] == 'N' and len(a) == 8 + int(a[7]), 'registration trace width changed'
-            assert all(re.fullmatch(r'[0-9a-f]{8}', v) for v in a[3:6])
+            require(len(a) >= 8 and a[6] == 'N', 'malformed registration trace')
+            words(a[3:6]); integer(a[7], 0, 2147483647)
+            require(len(a) == 8 + int(a[7]), 'registration count differs')
+            bodies = sum(p[:3] == ['B', *prefix[1:]] for p,_ in records)
+            for value in a[8:]: integer(value, 0, bodies - 1)
+            require(len(set(a[8:])) == len(a[8:]), 'duplicate registration index')
         elif a[0] == 'B':
-            assert all(re.fullmatch(r'[0-9a-f]{8}', v) for v in a[4:-5]), 'malformed body float bits'
-            assert all(re.fullmatch(r'-?[0-9]+', v) for v in a[-5:]), 'malformed body metadata'
-        else:
-            assert all(re.fullmatch(r'-?[0-9]+|[0-9a-f]{8}',v) for v in a[len(prefix):]), 'malformed trace token'
+            words(a[4:-5])
+            integer(a[-5], -1, 127); integer(a[-4], 1, 5)
+            for value in a[-3:-1]: integer(value, -32768, 32767)
+            joints = sum(p[:3] == ['J', *prefix[1:3]] for p,_ in records)
+            integer(a[-1], 0, joints)
+        elif a[0] == 'J':
+            boolean = {6,11,16,21,28,35,40,44,48,52,56,60}
+            for i in range(4,64):
+                if i in boolean: require(a[i] in ('0','1'), 'malformed boolean')
+                else: words([a[i]])
+            if len(a) == 65: integer(a[64], -2147483648, 2147483647)
+        elif a[0] == 'O': words(a[3:])
+        elif a[0] == 'T': words(a[4:])
+        elif a[0] == 'V':
+            require(a[3] == ('-2' if a[1] == 'Q' else '0'), 'boundary status changed')
+            integer(a[4], 7 if a[1] == 'Q' else 6 + int(a[2]), 7 if a[1] == 'Q' else 6 + int(a[2]))
+        elif a[0] in ('C','K'): require(a[3] == '0', 'creation status differs from registered count')
+        elif a[0] == 'R': integer(a[3], 7, 7)
+        elif a[0] != 'F': require(False, 'unknown record')
 
 MUTANTS = {
     'motion-body-confusion': ('self.data[i].motion.set_world_transform(world);\n        Ok(())', 'self.bodies[i].set_world_transform(world);\n        Ok(())'),
@@ -198,13 +245,18 @@ def main():
         if args.mutation: status['status'] = 'PASS_SELECTED_MUTATIONS_ONLY'
         save('source-end.json',source_snapshot()); save('generated-end.json',hashes(generated_root)); save('native-includes-end.json',dep_snapshot())
     except BaseException as error:
-        status['error'] = str(error);raise
+        status['status'] = 'FAIL'; status['error'] = str(error);raise
     finally:
         after = source_snapshot(); generated_after=hashes(generated_root);deps_after=dep_snapshot()
         save('source-finally.json',after);save('generated-finally.json',generated_after);save('native-includes-finally.json',deps_after)
         status['integrity'] = 'PASS' if before==after and generated==generated_after and dependencies==deps_after else 'FAIL'
+        if status['integrity'] != 'PASS':
+            if 'error' in status: status['original_error'] = status['error']
+            changed = [name for name, old, new in [('source',before,after), ('generated',generated,generated_after), ('include',dependencies,deps_after)] if old != new]
+            status['status'] = 'FAIL'
+            status['error'] = 'closure changed: ' + ', '.join(changed)
         save('status.json',status)
-        assert status['integrity']=='PASS', 'source/include/generated closure changed'
+        if status['integrity'] != 'PASS': raise AssertionError(status['error'])
     print(json.dumps(status,indent=2))
 
 if __name__ == '__main__': main()

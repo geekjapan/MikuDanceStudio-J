@@ -2,7 +2,7 @@ name: Shader compiler format facts
 
 on:
   push:
-    branches: [w4-shader-format-facts]
+    branches: [w4-shader-format-report-graph]
   workflow_dispatch:
 
 permissions:
@@ -67,7 +67,10 @@ jobs:
           python3 -B tools/vkd3d-rust-probe/apply_c2rust_patch.py --source "$RUNNER_TEMP/c2rust-src" --artifacts "$RUNNER_TEMP/format-facts/logs"
           cargo +1.95.0 install --locked --path "$RUNNER_TEMP/c2rust-src/c2rust" --root "$RUNNER_TEMP/format-facts/tool"
           python3 -B tools/vkd3d-rust-probe/apply_c2rust_patch.py --source "$RUNNER_TEMP/c2rust-src" --artifacts "$RUNNER_TEMP/format-facts/logs" --tool "$RUNNER_TEMP/format-facts/tool"
-          cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" -p c2rust-transpile --lib closed_format_facts
+          cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" -p c2rust-transpile --lib closed_format_ -- --list | tee "$RUNNER_TEMP/format-facts/logs/closed-format-tests-list.log"
+          grep -F 'closed_format_native_record_identity_is_compiler_owned: test' "$RUNNER_TEMP/format-facts/logs/closed-format-tests-list.log"
+          cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" -p c2rust-transpile --lib closed_format_ -- --nocapture | tee "$RUNNER_TEMP/format-facts/logs/closed-format-tests-execution.log"
+          grep -E 'test .*closed_format_native_record_identity_is_compiler_owned \.\.\. ok' "$RUNNER_TEMP/format-facts/logs/closed-format-tests-execution.log"
           cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" -p c2rust-transpile --lib closed_variadic_inventory_uses_promoted_ast_types_and_linker_identity
           python3 -B tools/vkd3d-rust-probe/check_runtime.py --tool "$RUNNER_TEMP/format-facts/tool" --record
           cp "$RUNNER_TEMP/c2rust-src/Cargo.lock" "$RUNNER_TEMP/format-facts/logs/Cargo.lock"

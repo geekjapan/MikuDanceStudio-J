@@ -9,6 +9,106 @@ import closed_format_facts as F
 from full_compiler import UNITS
 
 
+def coherent_graph_fixture(facts, inventory):
+    import copy
+    q = lambda ident: dict(type_id=ident, const=False, volatile=False, restrict=False)
+    edge = F.ReportGraph.edge
+    types = {1: dict(type_id=1, kind='Int'), 4: dict(type_id=4, kind='UInt')}
+    variables = {v['id']: copy.deepcopy(v) for v in facts['variables']}
+    expressions = {e['id']: copy.deepcopy(e) for e in facts['expressions']}
+    statements = {s['id']: copy.deepcopy(s) for s in facts['statements']}
+    for row in inventory['declarations']:
+        ident = row['id']
+        type_id = 200000 + ident
+        params = variables.get(ident, {}).get('parameters', [])
+        if ident >= 100:
+            types[type_id] = dict(type_id=type_id, kind='attributed', original=q(1))
+            body = 91000 + ident
+            statements[body] = dict(id=body, kind='empty', native_shape='Empty', children=[], edge_count=0,
+                                    label_target=None, location=facts['unclassified_definitions'][0]['location'],
+                                    flow={'state': 'Unproved', 'reason': 'structural edges only; execution and cursor state relations not established'})
+            variables[ident] = dict(id=ident, kind='function', builtin=None, parameters=[], parameter_owners=[])
+        else:
+            types[type_id] = dict(type_id=type_id, kind='function', return_=q(1), parameters=[q(1) for _ in params],
+                                  variadic=ident <= 33, noreturn=False, prototype=True, abi='C')
+            types[type_id]['return'] = types[type_id].pop('return_')
+            body = next((d['body'] for d in facts['definitions'] if d['declaration'] == ident), None)
+        raw = variables[ident]
+        raw.update(type_id=type_id, qualified_type=q(type_id), symbol=row['symbol'], body=body,
+                   aliases=[], va_parameters=row['va_parameters'], diagnostic_location=row.get('location'))
+        row['location'] = raw['diagnostic_location']
+        row['aliases'] = []
+    for ident, row in variables.items():
+        if row['kind'] == 'variable':
+            row.update(qualified_type=q(row['type_id']), diagnostic_location=None, va_list=ident >= 600)
+    for row in expressions.values():
+        if row['kind'] == 'reference' and row['decl'] in variables and variables[row['decl']]['kind'] == 'function':
+            row['type_id'] = variables[row['decl']]['type_id']
+        row['qualified_type'] = q(row['type_id'])
+        row['diagnostic_location'] = 'display'
+        row['native_shape'] = {'literal': 'Literal', 'reference': 'DeclRef', 'call': 'Call'}[row['kind']]
+        row['statement_body'] = None
+        row['va_list'] = False
+        row['df_children'] = [edge('expression', i) for i in row['children']]
+        row['structural_children'] = copy.deepcopy(row['df_children'])
+        for name in ('type', 'promotion_chain', 'arguments', 'callee_decl', 'callee_reference', 'callee_expression', 'builtin'):
+            row.pop(name, None)
+    for call in inventory['calls']:
+        for arg in call['arguments']:
+            expressions[arg['id']]['va_list'] = arg['va_list']
+    unsupported = facts['unsupported_expressions'][0]
+    expressions[unsupported['expression']] = dict(id=unsupported['expression'], kind='unsupported', native_shape='ConstantExpr',
+        qualified_type=q(1), type_id=1, location=unsupported['location'], diagnostic_location=None,
+        children=[1001], edge_count=1, df_children=[edge('expression', 1001)], structural_children=[edge('expression', 1001)], statement_body=None, va_list=False,
+        effect_relation={'state': 'Unproved', 'reason': 'synthetic unsupported'})
+    for row in variables.values():
+        if row['kind'] == 'function':
+            children = [edge('type', row['type_id'])] + [edge('declaration', p) for p in row['parameters']]
+            if row['body'] is not None:
+                children += [edge('statement', row['body'])]
+        else:
+            children = [edge('type', row['type_id'])]
+        row['df_children'] = children
+        row['structural_children'] = copy.deepcopy(children)
+    for row in statements.values():
+        row['label_target'] = None
+        row['df_children'] = [{k: e[k] for k in ('kind', 'id')} for e in row['children']]
+        row['structural_children'] = copy.deepcopy(row['df_children'])
+    for row in types.values():
+        children = ([edge('type', 1)] * (1 + len(row['parameters']))) if row['kind'] == 'function' else ([edge('type', 1)] if row['kind'] == 'attributed' else [])
+        row['df_children'] = children
+        row['structural_children'] = copy.deepcopy(children)
+    qualified = [dict(source=q(ident), path=[ident], **({'unproved': 'attributed type facts'} if row['kind'] == 'attributed' else {'normalized': q(ident)}))
+                 for ident, row in types.items()]
+    facts['graph'] = dict(expressions=list(expressions.values()), statements=list(statements.values()),
+                          declarations=list(variables.values()), types=list(types.values()), qualified_types=qualified,
+                          declaration_order=list(variables))
+    facts['schema'] = 2
+    # Use the graph projections to populate the coherent positive transport.
+    graph = F.ReportGraph(facts)
+    inventory.clear()
+    inventory.update(graph.inventory(facts))
+    facts['declarations'] = copy.deepcopy(inventory['declarations'])
+    facts['expressions'] = [graph.expression(e['id']) for e in facts['expressions']]
+    facts['variables'] = [copy.deepcopy(variables[v['id']]) for v in facts['variables']]
+    facts['statements'] = [copy.deepcopy(statements[s['id']]) for s in facts['statements']]
+    selected_types = {v['type_id'] for v in facts['variables'] if 'type_id' in v} | {1}
+    facts['types'] = [copy.deepcopy(t) for i, t in types.items() if i in selected_types]
+    raw_calls = {c['id']: c for c in inventory['calls']}
+    for call in facts['calls']:
+        call.update(copy.deepcopy(raw_calls[call['id']]))
+    for event in facts['cursor_events']:
+        expr = graph.expression(event['expression'])
+        event['operands'] = expr['arguments']
+    for definition in facts['definitions']:
+        definition['signature'] = graph.type_view(variables[definition['declaration']]['qualified_type'], True)
+    for unknown in facts['unclassified_definitions']:
+        unknown['signature'] = graph.type_view(variables[unknown['declaration']]['qualified_type'])
+    facts['unsupported_expressions'][0]['native_shape'] = 'ConstantExpr'
+    facts['unsupported_expressions'][0]['type'] = graph.type_view(q(1), True)
+    facts['unsupported_expressions'][0]['relevance'] = {'state': 'Unproved', 'reason': 'outside selected slice; influence on formatting, control and effects is not established'}
+
+
 def synthetic_packet_fixture(root):
     def write(name, value):
         path = root / name
@@ -132,6 +232,7 @@ def synthetic_packet_fixture(root):
                      types=[{'type_id': 1, 'kind': 'Int'}], native_record_identities=[], cursor_events=events, function_edges=function_edges,
                      unsupported_expression_count=1, unsupported_expressions=[{'expression': 9900000,
                          'native_shape': 'Atomic', 'within_slice': False, 'location': location, 'relevance': unresolved}])
+        coherent_graph_fixture(facts, inventory)
         prefix = str(index) + '/' + Path(UNITS[index]).stem.replace('.', '_')
         pair = {'unit': unit, 'facts': 'on/' + prefix + '.closed-format.json', 'inventory': 'on/' + prefix + '.variadic.json',
                 'cbor': 'on/' + prefix + '.cursor.cbor', 'typed_ast': 'on/' + prefix + '.typed-ast.txt',
@@ -280,7 +381,7 @@ class ClosedFormatFactsTests(unittest.TestCase):
             if reason is None:
                 self.assertEqual(F.replay(self.root)['status'], 'complete_coverage')
             else:
-                with self.assertRaisesRegex((F.FactsError, ValueError), reason):
+                with self.assertRaisesRegex((F.FactsError, ValueError), reason + '|graph projection|graph closure|classification projection'):
                     F.replay(self.root)
         finally:
             for name, raw in saved.items():
@@ -288,25 +389,7 @@ class ClosedFormatFactsTests(unittest.TestCase):
             (self.root / 'seal.json').write_text(json.dumps(F.manifest(self.root)))
 
     def test_recursive_type_reference_closure_is_structural(self):
-        packet_path = self.root / 'packet.json'
-        fact_path = self.root / 'on/0/blob.closed-format.json'
-        original_packet, original_facts = packet_path.read_bytes(), fact_path.read_bytes()
-        facts = F.loads(original_facts)
-        facts['types'].extend([{'type_id': 2, 'kind': 'pointer', 'pointee': {'type_id': 3}},
-                               {'type_id': 3, 'kind': 'struct', 'declaration': 800}])
-        facts['variables'].extend([{'id': 800, 'kind': 'struct', 'fields': [801], 'parameter_owners': []},
-                                   {'id': 801, 'kind': 'field', 'type_id': 2, 'parameter_owners': []}])
-        try:
-            fact_path.write_text(json.dumps(facts))
-            packet = F.loads(original_packet)
-            packet['units'][0]['files']['facts'] = F.sha(fact_path.read_bytes())
-            packet_path.write_text(json.dumps(packet))
-            (self.root / 'seal.json').write_text(json.dumps(F.manifest(self.root)))
-            self.assertEqual(F.replay(self.root)['status'], 'complete_coverage')
-        finally:
-            packet_path.write_bytes(original_packet)
-            fact_path.write_bytes(original_facts)
-            (self.root / 'seal.json').write_text(json.dumps(F.manifest(self.root)))
+        self.reject_coordinated(self.native_record_positive, None)
 
     def test_coordinated_tool_identity_controls(self):
         evidence = 'tool/source-evidence/c2rust-patch.json'
@@ -415,10 +498,12 @@ class ClosedFormatFactsTests(unittest.TestCase):
                 expr = {e['id']: e for e in d[name]['expressions']}
                 expr[1003].update(kind='paren', children=children, edge_count=len(children))
             self.reject_coordinated(wrapper, 'cyclic|ambiguous|callee terminal|promotion chain coverage')
-        for parameters in ([999999999], [638], [639, 639], [639, 539]):
+        for parameters in ([], [999999999], [638], [639, 639], [639, 539]):
             def va(d, parameters=parameters):
                 for key in (name, inventory):
                     d[key]['declarations'][39]['va_parameters'] = parameters
+                raw = next(row for row in d[name]['graph']['declarations'] if row['id'] == 40)
+                raw['va_parameters'] = parameters
             self.reject_coordinated(va, 'va parameter')
         def edge(d):
             d[name]['function_edges'] = [e for e in d[name]['function_edges'] if e['declaration'] != 40]
@@ -441,44 +526,265 @@ class ClosedFormatFactsTests(unittest.TestCase):
             expr[1000]['callee_reference'] = 1013
         self.reject_coordinated(nested_promotion, 'expression type contradicts promotion chain')
 
+    @staticmethod
+    def refresh_graph_views(data):
+        import copy
+        facts = data['on/0/blob.closed-format.json']
+        graph = F.ReportGraph(facts)
+        inventory = graph.inventory(facts)
+        data['on/0/blob.variadic.json'] = inventory
+        facts['declarations'] = copy.deepcopy(inventory['declarations'])
+        for field, table in (('variables', graph.declarations), ('statements', graph.statements), ('types', graph.types)):
+            key = 'type_id' if field == 'types' else 'id'
+            facts[field] = [copy.deepcopy(table[row[key]]) for row in facts[field]]
+        facts['expressions'] = [graph.expression(row['id']) for row in facts['expressions']]
+        calls = {c['id']: c for c in inventory['calls']}
+        for call in facts['calls']:
+            call.update(copy.deepcopy(calls[call['id']]))
+        expr = {e['id']: e for e in facts['expressions']}
+        for event in facts['cursor_events']:
+            event['operands'] = copy.deepcopy(expr[event['expression']]['arguments'])
+        facts['native_record_identities'] = [{'declaration': row['id'], 'identity': row['identity']}
+                                            for row in facts['variables'] if row.get('native_va_list_record')]
+        selected = set(expr)
+        facts['unsupported_expressions'] = [{'expression': ident, 'native_shape': row['native_shape'],
+            'type': graph.expression(ident)['type'], 'within_slice': ident in selected, 'location': row['location'],
+            'relevance': {'state': 'Unproved', 'reason': 'selected unsupported expression retains its complete structural children'
+                          if ident in selected else 'outside selected slice; influence on formatting, control and effects is not established'}}
+            for ident, row in sorted(graph.expressions.items()) if row['kind'] == 'unsupported']
+        facts['unsupported_expression_count'] = len(facts['unsupported_expressions'])
+
+    def native_record_positive(self, data):
+        import copy
+        facts = data['on/0/blob.closed-format.json']
+        graph = facts['graph']
+        q = lambda ident: dict(type_id=ident, const=False, volatile=False, restrict=False)
+        edge = F.ReportGraph.edge
+        raw = {e['id']: e for e in graph['expressions']}
+        terminal = copy.deepcopy(raw[1003])
+        terminal['id'] = 999999
+        graph['expressions'].append(terminal)
+        facts['expressions'].append({'id': 999999})
+        raw[1003].update(kind='paren', native_shape='Paren', children=[999999], edge_count=1,
+                         df_children=[edge('expression', 999999)],
+                         structural_children=[edge('type', raw[1003]['type_id']), edge('expression', 999999)])
+        raw[1003].pop('decl')
+        for ident, fields in ((800, [802]), (801, [])):
+            row = dict(id=ident, kind='struct', fields=fields, parameter_owners=[], native_va_list_record=True,
+                       identity={'unproved': 'missing physical record evidence'}, state='unproved', layout=None,
+                       diagnostic_location=None, df_children=[edge('declaration', p) for p in fields],
+                       structural_children=[edge('declaration', p) for p in fields])
+            graph['declarations'].append(row)
+            graph['declaration_order'].append(ident)
+            if ident == 800:
+                facts['variables'].append({'id': ident})
+        field = dict(id=802, kind='field', name='next', type_id=2, qualified_type=q(2), parameter_owners=[],
+                     bit_width=None, bit_offset=0, type_bit_width=64, alignment=None, diagnostic_location=None,
+                     df_children=[edge('type', 2)], structural_children=[edge('type', 2)])
+        graph['declarations'].append(field)
+        graph['declaration_order'].append(802)
+        facts['variables'].append({'id': 802})
+        for row in (dict(type_id=2, kind='pointer', pointee=q(3), df_children=[edge('type', 3)], structural_children=[edge('type', 3)]),
+                    dict(type_id=3, kind='struct', declaration=800, df_children=[edge('declaration', 800)], structural_children=[edge('declaration', 800)])):
+            graph['types'].append(row)
+            facts['types'].append({'type_id': row['type_id']})
+            graph['qualified_types'].append(dict(source=q(row['type_id']), path=[row['type_id']], normalized=q(row['type_id'])))
+        raw[1002].update(type_id=2, qualified_type=q(2))
+        self.refresh_graph_views(data)
+
     def test_producer_wrapper_and_inventory_cursor_type_relations_accept(self):
-        name, inventory = 'on/0/blob.closed-format.json', 'on/0/blob.variadic.json'
-        def positive(d):
-            f = d[name]
-            expr = {e['id']: e for e in f['expressions']}
-            terminal = dict(expr[1003], id=999999)
-            f['expressions'].append(terminal)
-            expr[1003].update(kind='paren', children=[999999], edge_count=1,
-                             promotion_chain=[expr[1003]['type'], terminal['type']])
-            expr[1000]['callee_reference'] = 999999
-            cursor = {'canonical': {'pointer': {'canonical': {'native_va_list_record': 800},
-                                              'const': False, 'volatile': False, 'restrict': False}},
-                      'const': False, 'volatile': False, 'restrict': False}
-            imported = json.loads(json.dumps(cursor))
-            imported['canonical']['pointer']['canonical'] = {'record': {'unproved': 'physical record location or macro declaration'}}
-            f['variables'].append({'id': 800, 'kind': 'struct', 'fields': [], 'parameter_owners': []})
-            f['native_record_identities'] = [{'declaration': 800,
-                'identity': imported['canonical']['pointer']['canonical']['record']}]
-            expr[1002]['type'] = cursor
-            expr[1002]['promotion_chain'] = [imported]
-            expr[1000]['arguments'][1]['type'] = cursor
-            f['cursor_events'][0]['operands'][1]['type'] = cursor
-            for key in (name, inventory):
-                d[key]['calls'][0]['arguments'][1]['type'] = imported
-                d[key]['calls'][0]['arguments'][1]['promotion_chain'] = [imported]
-        self.reject_coordinated(positive, None)
-        for change in ('missing', 'wrong_identity', 'wrong_existing_struct'):
-            def contradict(d, change=change):
-                positive(d)
-                f = d[name]
+        self.reject_coordinated(self.native_record_positive, None)
+        for change in ('missing', 'wrong_identity', 'wrong_existing_struct', 'same_unknown_other_marker'):
+            def contradict(data, change=change):
+                self.native_record_positive(data)
+                facts = data['on/0/blob.closed-format.json']
                 if change == 'missing':
-                    f['native_record_identities'] = []
+                    facts['native_record_identities'] = []
                 elif change == 'wrong_identity':
-                    f['native_record_identities'][0]['identity'] = {'unproved': 'different record origin'}
+                    facts['native_record_identities'][0]['identity'] = {'unproved': 'different record origin'}
+                elif change == 'wrong_existing_struct':
+                    facts['native_record_identities'][0]['declaration'] = 801
                 else:
-                    f['variables'].append({'id': 801, 'kind': 'struct', 'fields': [], 'parameter_owners': []})
-                    f['native_record_identities'][0]['declaration'] = 801
-            self.reject_coordinated(contradict, 'native record inventory identity missing|expression type contradicts promotion chain')
+                    expressions = {e['id']: e for e in facts['expressions']}
+                    cursor = expressions[1002]['type']
+                    cursor['canonical']['pointer']['canonical']['native_va_list_record'] = 801
+                    expressions[1000]['arguments'][1]['type'] = cursor
+                    facts['cursor_events'][0]['operands'][1]['type'] = cursor
+                    facts['native_record_identities'][0]['declaration'] = 801
+            self.reject_coordinated(contradict, 'projection')
+
+    def test_operand_projection_rejects_false_direct_and_outside_reference(self):
+        for field, value in (('direct_decl', 2), ('references', [{'id': 1013, 'decl': 1}])):
+            def mutate(data, field=field, value=value):
+                facts = data['on/0/blob.closed-format.json']
+                call = next(e for e in facts['expressions'] if e['id'] == 1000)
+                call['arguments'][0][field] = value
+                facts['cursor_events'][0]['operands'][0][field] = value
+            self.reject_coordinated(mutate, 'selected expressions graph projection')
+        def uint_source_with_int_view(data):
+            facts = data['on/0/blob.closed-format.json']
+            for rows in (facts['expressions'], facts['graph']['expressions']):
+                row = next(e for e in rows if e['id'] == 1001)
+                row['type_id'] = row['qualified_type']['type_id'] = 4
+            facts['types'].append(next(t for t in facts['graph']['types'] if t['type_id'] == 4))
+        self.reject_coordinated(uint_source_with_int_view, 'selected expressions graph projection')
+
+    def shared_subtree_positive(self, data):
+        facts = data['on/0/blob.closed-format.json']
+        raw = {e['id']: e for e in facts['graph']['expressions']}
+        row = raw[1002]
+        edge = F.ReportGraph.edge
+        nested = dict(row, id=999990, kind='binary', native_shape='Binary', children=[1013, 1003], edge_count=2,
+                      df_children=[edge('expression', i) for i in (1013, 1003)],
+                      structural_children=[edge('expression', i) for i in (1013, 1003)])
+        nested.pop('literal')
+        facts['graph']['expressions'].append(nested)
+        facts['expressions'].append({'id': 999990})
+        row.update(kind='binary', native_shape='Binary', children=[1003, 999990], edge_count=2,
+                   df_children=[edge('expression', i) for i in (1003, 999990)],
+                   structural_children=[edge('expression', i) for i in (1003, 999990)])
+        row.pop('literal')
+        self.refresh_graph_views(data)
+
+    def test_shared_subtree_reference_order_and_duplicates(self):
+        self.reject_coordinated(self.shared_subtree_positive, None)
+        for mode in ('missing', 'duplicate', 'reversed'):
+            def mutate(data, mode=mode):
+                self.shared_subtree_positive(data)
+                facts = data['on/0/blob.closed-format.json']
+                row = next(e for e in facts['expressions'] if e['id'] == 1000)
+                refs = row['arguments'][1]['references']
+                changed = refs[:-1] if mode == 'missing' else refs + refs[:1] if mode == 'duplicate' else [refs[1], refs[0], refs[2]]
+                row['arguments'][1]['references'] = changed
+                facts['cursor_events'][0]['operands'][1]['references'] = changed
+            self.reject_coordinated(mutate, 'selected expressions graph projection')
+
+    def statement_subtree_positive(self, data):
+        self.native_record_positive(data)
+        facts = data['on/0/blob.closed-format.json']
+        edge = F.ReportGraph.edge
+        graph = facts['graph']
+        raw = next(e for e in graph['expressions'] if e['id'] == 1002)
+        raw.update(kind='unsupported', native_shape='Statements', children=[], edge_count=0, statement_body=998000,
+                   df_children=[edge('statement', 998000)], structural_children=[edge('statement', 998000)])
+        raw.pop('literal')
+        statement = dict(id=998000, kind='declarations', native_shape='Decls', label_target=None,
+                         children=[dict(role='declaration', kind='declaration', id=804)], edge_count=1,
+                         df_children=[edge('declaration', 804)], structural_children=[edge('declaration', 804)],
+                         location=raw['location'], flow={'state': 'Unproved', 'reason': 'synthetic structural statement'})
+        graph['statements'].append(statement)
+        facts['statements'].append({'id': 998000})
+        declaration = dict(id=804, kind='variable', type_id=2,
+                           qualified_type=dict(type_id=2, const=False, volatile=False, restrict=False),
+                           initializer=1013, local=False, owning_function=None, parameter_owners=[], va_list=False,
+                           df_children=[edge('type', 2), edge('expression', 1013)],
+                           structural_children=[edge('type', 2), edge('expression', 1013)])
+        graph['declarations'].append(declaration)
+        graph['declaration_order'].append(804)
+        facts['variables'].append({'id': 804})
+        self.refresh_graph_views(data)
+
+    def test_statement_declaration_initializer_and_cycle_df_projection(self):
+        self.reject_coordinated(self.statement_subtree_positive, None)
+        def remove_reference(data):
+            self.statement_subtree_positive(data)
+            facts = data['on/0/blob.closed-format.json']
+            call = next(e for e in facts['expressions'] if e['id'] == 1000)
+            operand = call['arguments'][1]
+            self.assertEqual(operand['references'], [{'id': 1013, 'decl': 1}])
+            self.assertEqual(operand['references_unproved'], 'cyclic DF traversal retains raw edges')
+            operand['references'] = []
+            facts['cursor_events'][0]['operands'][1]['references'] = []
+        self.reject_coordinated(remove_reference, 'selected expressions graph projection')
+
+    def qualified_path_positive(self, data):
+        facts = data['on/0/blob.closed-format.json']
+        graph = facts['graph']
+        edge = F.ReportGraph.edge
+        q = lambda ident, **flags: dict(type_id=ident, const=flags.get('const', False),
+                                        volatile=flags.get('volatile', False), restrict=False)
+        original = q(1, const=True)
+        for row in (dict(type_id=5, kind='typedef', declaration=805, original=original,
+                         df_children=[edge('declaration', 805)], structural_children=[edge('declaration', 805)]),
+                    dict(type_id=6, kind='elaborated', inner=5, df_children=[], structural_children=[])):
+            graph['types'].append(row)
+            facts['types'].append({'type_id': row['type_id']})
+        declaration = dict(id=805, kind='typedef', type_id=1, qualified_type=original, parameter_owners=[],
+                           df_children=[edge('type', 1)], structural_children=[edge('type', 1)])
+        graph['declarations'].append(declaration)
+        graph['declaration_order'].append(805)
+        facts['variables'].append({'id': 805})
+        graph['qualified_types'].append(dict(source=q(6, volatile=True), path=[6, 5, 1], normalized=q(1, const=True, volatile=True)))
+        row = next(e for e in graph['expressions'] if e['id'] == 1002)
+        row.update(type_id=6, qualified_type=q(6, volatile=True))
+        self.refresh_graph_views(data)
+
+    def test_compiler_owned_qualified_paths_and_terminal_projection(self):
+        self.reject_coordinated(self.qualified_path_positive, None)
+        for mode in ('hop', 'terminal', 'copy'):
+            def mutate(data, mode=mode):
+                self.qualified_path_positive(data)
+                facts = data['on/0/blob.closed-format.json']
+                row = next(q for q in facts['graph']['qualified_types'] if q['source']['type_id'] == 6)
+                if mode == 'hop':
+                    row['path'] = [6, 1]
+                elif mode == 'terminal':
+                    row['normalized']['type_id'] = 4
+                else:
+                    row['normalized']['const'] = False
+            self.reject_coordinated(mutate, 'normalization path|normalized terminal|graph projection')
+
+    def test_raw_cycles_do_not_relax_selected_lexical_ownership(self):
+        import copy
+        def positive(data):
+            facts = data['on/0/blob.closed-format.json']
+            row = copy.deepcopy(facts['graph']['statements'][0])
+            row.update(id=999995, children=[dict(role='item', kind='statement', id=999995)], edge_count=1,
+                       df_children=[F.ReportGraph.edge('statement', 999995)],
+                       structural_children=[F.ReportGraph.edge('statement', 999995)])
+            facts['graph']['statements'].append(row)
+        self.reject_coordinated(positive, None)
+        for mode in ('shared', 'cyclic'):
+            def mutate(data, mode=mode):
+                positive(data)
+                facts = data['on/0/blob.closed-format.json']
+                body = facts['definitions'][0]['body']
+                for rows in (facts['statements'], facts['graph']['statements']):
+                    row = next(s for s in rows if s['id'] == body)
+                    ident = body if mode == 'cyclic' else row['children'][0]['id']
+                    row['children'].append(dict(role='item', kind='statement', id=ident))
+                    row['edge_count'] += 1
+                    row['df_children'].append(F.ReportGraph.edge('statement', ident))
+                    row['structural_children'].append(F.ReportGraph.edge('statement', ident))
+            self.reject_coordinated(mutate, 'cyclic or shared statement ownership')
+
+    def test_full_inventory_census_missing_and_extra_rows(self):
+        for field in ('declarations', 'calls', 'record_definitions', 'non_call_references', 'va_arg'):
+            for mode in ('missing', 'extra'):
+                def mutate(data, field=field, mode=mode):
+                    self.native_record_positive(data)
+                    facts = data['on/0/blob.closed-format.json']
+                    raw = facts['graph']['expressions']
+                    # Both extra census kinds have concrete raw roots outside the selected closure.
+                    reference = dict(next(e for e in raw if e['id'] == 999999), id=999998)
+                    raw.append(reference)
+                    arg = dict(next(e for e in raw if e['id'] == 1001), id=999997, native_shape='VAArg', kind='unsupported',
+                               children=[1001], edge_count=1, df_children=[F.ReportGraph.edge('expression', 1001)],
+                               structural_children=[F.ReportGraph.edge('type', 1), F.ReportGraph.edge('expression', 1001)])
+                    arg.pop('literal')
+                    raw.append(arg)
+                    self.refresh_graph_views(data)
+                    rows = data['on/0/blob.variadic.json'][field]
+                    self.assertTrue(rows, field)
+                    if mode == 'missing':
+                        rows.pop()
+                    else:
+                        rows.append(json.loads(json.dumps(rows[-1])))
+                self.reject_coordinated(mutate, 'full inventory graph projection')
+
+    def test_old_facts_schema_is_rejected(self):
+        self.reject_coordinated(lambda data: data['on/0/blob.closed-format.json'].__setitem__('schema', 1),
+                                'not a complete report-only compiler record')
 
     def test_raw_ast_replacement_with_refreshed_pairs_and_seal_rejects(self):
         for name in ('on/0/blob.cursor.cbor', 'on/0/blob.typed-ast.txt'):

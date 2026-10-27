@@ -756,10 +756,9 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
                      let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
                      let has_def = from_value(node.extras[1].clone())
 diff --git a/c2rust-transpile/src/c_ast/iterators.rs b/c2rust-transpile/src/c_ast/iterators.rs
-index 123c377..75a3074 100644
 --- a/c2rust-transpile/src/c_ast/iterators.rs
 +++ b/c2rust-transpile/src/c_ast/iterators.rs
-@@ -320,7 +320,7 @@ fn immediate_type_children(kind: &CTypeKind) -> Vec<SomeId> {
+@@ -320,12 +320,33 @@
              }
              res
          }
@@ -768,6 +767,32 @@ index 123c377..75a3074 100644
              let mut res = intos![ret.ctype];
              for p in params {
                  res.push(p.ctype.into())
+             }
+             res
++        }
++    }
++}
++
++pub(super) fn report_children(context: &TypedAstContext, node: SomeId) -> (Vec<SomeId>, Vec<SomeId>) {
++    match node {
++        SomeId::Expr(id) => {
++            let kind = &context.c_exprs.get(&id).expect("missing report expression").kind;
++            (immediate_expr_children(kind), immediate_expr_children_all_types(kind))
++        }
++        SomeId::Stmt(id) => {
++            let children = immediate_stmt_children(&context.c_stmts.get(&id).expect("missing report statement").kind);
++            (children.clone(), children)
++        }
++        SomeId::Decl(id) => {
++            let children = immediate_decl_children(&context.c_decls.get(&id).expect("missing report declaration").kind);
++            (children.clone(), children)
++        }
++        SomeId::Type(id) => {
++            let children = immediate_type_children(&context.c_types.get(&id).expect("missing report type").kind);
++            (children.clone(), children)
+         }
+     }
+ }
 diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.rs
 --- a/c2rust-transpile/src/c_ast/mod.rs
 +++ b/c2rust-transpile/src/c_ast/mod.rs
@@ -1859,9 +1884,710 @@ diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/sr
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_variadic.rs
-@@ -0,0 +1,1669 @@
+@@ -0,0 +1,2089 @@
 +use super::*;
 +use serde_json::{Value, json};
++
++pub struct ClosedFormatReport {
++    pub inventory: Value,
++    pub facts: Value,
++}
++
++struct ReportGraph<'a> {
++    order: Vec<CDeclId>,
++    ast: &'a TypedAstContext,
++    unit: &'a Path,
++    locations: Value,
++    parameter_owners: HashMap<CDeclId, Vec<u64>>,
++    field_owners: HashMap<CDeclId, Vec<Value>>,
++    types: std::collections::BTreeMap<CTypeId, Value>,
++    records: HashMap<CDeclId, Value>,
++    qualified: std::cell::RefCell<std::collections::BTreeMap<String, Value>>,
++    expressions: std::collections::BTreeMap<CExprId, Value>,
++    variables: std::collections::BTreeMap<CDeclId, Value>,
++    statements: std::collections::BTreeMap<CStmtId, Value>,
++}
++
++impl ClosedFormatReport {
++    pub fn capture(ast: &TypedAstContext, unit: &Path) -> Self {
++        let graph = ReportGraph::capture(ast, unit);
++        let inventory = graph.inventory();
++        let facts = graph.facts(&inventory);
++        Self { inventory, facts }
++    }
++}
++
++impl<'a> ReportGraph<'a> {
++    fn qualified_key(typ: CQualTypeId) -> Value {
++        TypedAstContext::required_qualified_type(typ)
++    }
++
++    fn read_key(value: &Value) -> CQualTypeId {
++        CQualTypeId {
++            ctype: CTypeId(value["type_id"].as_u64().expect("qualified type ID")),
++            qualifiers: Qualifiers {
++                is_const: value["const"].as_bool().expect("const qualifier"),
++                is_volatile: value["volatile"].as_bool().expect("volatile qualifier"),
++                is_restrict: value["restrict"].as_bool().expect("restrict qualifier"),
++            },
++        }
++    }
++
++    fn normalize(&self, source: CQualTypeId) -> Value {
++        let source_key = Self::qualified_key(source);
++        let key = source_key.to_string();
++        if let Some(row) = self.qualified.borrow().get(&key) { return row.clone(); }
++        let mut current = source;
++        let mut path = vec![];
++        let mut seen = HashSet::new();
++        let mut reason = None;
++        for step in 0..=32 {
++            path.push(current.ctype.0);
++            if step == 32 { break; }
++            if !seen.insert(current.ctype) { reason = Some("typedef or wrapper cycle"); break; }
++            let row = self.types.get(&current.ctype).expect("raw type missing");
++            match row["kind"].as_str() {
++                Some("typedef") => {
++                    if let Some(original) = row.get("original") {
++                        let original = Self::read_key(original);
++                        current.qualifiers = current.qualifiers.and(original.qualifiers);
++                        current.ctype = original.ctype;
++                    } else { reason = Some("missing original typedef"); break; }
++                }
++                Some("typeof" | "paren" | "elaborated" | "decayed" | "auto") => {
++                    current.ctype = CTypeId(row["inner"].as_u64().expect("wrapper type"));
++                }
++                Some("attributed") => { reason = Some("attributed type facts"); break; }
++                _ => break,
++            }
++        }
++        let mut row = json!({"source": source_key, "path": path});
++        if let Some(reason) = reason { row["unproved"] = json!(reason); }
++        else { row["normalized"] = Self::qualified_key(current); }
++        self.qualified.borrow_mut().insert(key, row.clone());
++        row
++    }
++
++    fn type_view(&self, source: CQualTypeId, depth: usize, cursor: bool) -> Value {
++        if depth > 32 { return json!({"unproved": "type depth limit"}); }
++        let normalized = self.normalize(source);
++        if let Some(reason) = normalized.get("unproved") { return json!({"unproved": reason}); }
++        let key = &normalized["normalized"];
++        let row = &self.types[&CTypeId(key["type_id"].as_u64().unwrap())];
++        let child = |q: &Value| self.type_view(Self::read_key(q), depth + 1, cursor);
++        let canonical = match row["kind"].as_str() {
++            Some("pointer") => json!({"pointer": child(&row["pointee"])}),
++            Some("function") => json!({"return": child(&row["return"]),
++                "parameters": row["parameters"].as_array().unwrap().iter().map(child).collect::<Vec<_>>(),
++                "variadic": row["variadic"], "noreturn": row["noreturn"], "prototype": row["prototype"], "abi": row["abi"]}),
++            Some("array") => {
++                let Some(element) = row.get("element") else { return json!({"unproved": "missing original qualified array element"}); };
++                let mut value = json!({"array": child(element)});
++                if !row["length"].is_null() { value["length"] = row["length"].clone(); }
++                value
++            }
++            Some("struct" | "union" | "enum") => {
++                let decl = CDeclId(row["declaration"].as_u64().unwrap());
++                let record = &self.records[&decl];
++                if cursor && record["native_va_list_record"] == true { json!({"native_va_list_record": decl.0}) }
++                else { json!({"record": record["identity"]}) }
++            }
++            Some("Char") => match row.get("signed") {
++                Some(signed) => json!({"kind": "Char", "signed": signed}),
++                None => json!({"unproved": "missing plain char signedness"}),
++            },
++            Some("LongDouble") => json!({"unproved": "long double ABI shape"}),
++            Some(kind @ ("Void" | "Bool" | "SChar" | "Short" | "Int" | "Long" | "LongLong" |
++                "UChar" | "UShort" | "UInt" | "ULong" | "ULongLong" | "Float" | "Double" |
++                "Int128" | "UInt128" | "Half")) => json!({"kind": kind}),
++            _ => json!({"unproved": "unsupported type or wrapper limit"}),
++        };
++        json!({"canonical": canonical, "const": key["const"], "volatile": key["volatile"], "restrict": key["restrict"]})
++    }
++
++    fn inventory_type(&self, typ: CQualTypeId, depth: usize) -> Value { self.type_view(typ, depth, false) }
++    fn cursor_type(&self, typ: CQualTypeId, depth: usize) -> Value { self.type_view(typ, depth, true) }
++
++    fn edge(node: iterators::SomeId) -> Value {
++        use iterators::SomeId::*;
++        let (kind, id) = match node {
++            Expr(id) => ("expression", id.0), Stmt(id) => ("statement", id.0),
++            Decl(id) => ("declaration", id.0), Type(id) => ("type", id.0),
++        };
++        json!({"kind": kind, "id": id})
++    }
++
++    fn edges(&self, node: iterators::SomeId, row: &mut Value) {
++        let (df, structural) = iterators::report_children(self.ast, node);
++        for child in df.iter().chain(structural.iter()) {
++            assert!(self.ast.contains_node(*child), "missing mandatory report child: {child:?}");
++        }
++        row["df_children"] = json!(df.into_iter().map(Self::edge).collect::<Vec<_>>());
++        row["structural_children"] = json!(structural.into_iter().map(Self::edge).collect::<Vec<_>>());
++    }
++
++    fn walk(&self, root: Value) -> (Vec<Value>, bool) {
++        fn visit(graph: &ReportGraph<'_>, node: Value, path: &mut HashSet<(String, u64)>, result: &mut Vec<Value>, cyclic: &mut bool) {
++            let kind = node["kind"].as_str().unwrap();
++            let id = node["id"].as_u64().unwrap();
++            let key = (kind.to_owned(), id);
++            if !path.insert(key.clone()) { *cyclic = true; return; }
++            result.push(node.clone());
++            let row = match kind {
++                "expression" => &graph.expressions[&CExprId(id)],
++                "statement" => &graph.statements[&CStmtId(id)],
++                "declaration" => &graph.variables[&CDeclId(id)],
++                "type" => &graph.types[&CTypeId(id)],
++                _ => unreachable!(),
++            };
++            for child in row["df_children"].as_array().unwrap() { visit(graph, child.clone(), path, result, cyclic); }
++            path.remove(&key);
++        }
++        let mut result = vec![];
++        let mut cyclic = false;
++        visit(self, root, &mut HashSet::new(), &mut result, &mut cyclic);
++        (result, cyclic)
++    }
++
++    fn terminal(&self, mut id: CExprId) -> CExprId {
++        let mut seen = HashSet::new();
++        while matches!(self.expressions[&id]["kind"].as_str(), Some("paren" | "implicit_cast")) {
++            assert!(seen.insert(id), "cyclic expression wrapper path");
++            let children = self.expressions[&id]["children"].as_array().unwrap();
++            assert_eq!(children.len(), 1, "ambiguous expression wrapper path");
++            id = CExprId(children[0].as_u64().unwrap());
++        }
++        id
++    }
++
++    fn callee(&self, root: CExprId) -> Option<CDeclId> {
++        let row = &self.expressions[&self.terminal(root)];
++        let id = CDeclId(row["decl"].as_u64()?);
++        (self.variables[&id]["kind"] == "function").then_some(id)
++    }
++
++    fn promotions(&self, mut id: CExprId) -> Vec<Value> {
++        let mut result = vec![];
++        let mut seen = HashSet::new();
++        loop {
++            assert!(seen.insert(id), "cyclic expression promotion path");
++            let row = &self.expressions[&id];
++            if !row["qualified_type"].is_null() { result.push(self.inventory_type(Self::read_key(&row["qualified_type"]), 0)); }
++            if !matches!(row["kind"].as_str(), Some("paren" | "implicit_cast")) { break; }
++            id = CExprId(row["children"][0].as_u64().unwrap());
++        }
++        result
++    }
++
++    fn operand(&self, id: CExprId) -> Value {
++        let row = &self.expressions[&id];
++        let terminal = &self.expressions[&self.terminal(id)];
++        let (nodes, cyclic) = self.walk(Self::edge(id.into()));
++        let references: Vec<_> = nodes.iter().filter_map(|node| {
++            if node["kind"] != "expression" { return None; }
++            let e = &self.expressions[&CExprId(node["id"].as_u64().unwrap())];
++            (e["kind"] == "reference").then(|| json!({"id": e["id"], "decl": e["decl"]}))
++        }).collect();
++        let mut operand = json!({"id": id.0, "direct_decl": terminal.get("decl").filter(|_| terminal["kind"] == "reference"),
++            "literal": terminal["literal"]["bytes"].as_array().filter(|_| terminal["literal"]["width"] == 1),
++            "type": if row["qualified_type"].is_null() { Value::Null } else { self.cursor_type(Self::read_key(&row["qualified_type"]), 0) },
++            "references": references});
++        if cyclic { operand["references_unproved"] = json!("cyclic DF traversal retains raw edges"); }
++        operand
++    }
++
++    fn expression(&self, id: CExprId) -> Value {
++        let mut row = self.expressions[&id].clone();
++        row["type"] = if row["qualified_type"].is_null() { Value::Null } else { self.cursor_type(Self::read_key(&row["qualified_type"]), 0) };
++        row["promotion_chain"] = json!(self.promotions(id));
++        if row["kind"] == "member" {
++            row["member"] = self.variables[&CDeclId(row["member"]["id"].as_u64().unwrap())].clone();
++        }
++        if row["kind"] == "call" {
++            let callee = CExprId(row["children"][0].as_u64().unwrap());
++            let declaration = self.callee(callee);
++            row["callee_expression"] = json!(callee.0);
++            row["callee_reference"] = json!(self.terminal(callee).0);
++            row["callee_decl"] = json!(declaration.map(|d| d.0));
++            row["builtin"] = declaration.map(|d| self.variables[&d]["builtin"].clone()).unwrap_or(Value::Null);
++            row["arguments"] = json!(row["children"].as_array().unwrap()[1..].iter()
++                .map(|a| self.operand(CExprId(a.as_u64().unwrap()))).collect::<Vec<_>>());
++        }
++        row
++    }
++
++    fn inventory(&self) -> Value {
++        let mut owners = HashMap::new();
++        let mut declarations = vec![];
++        for id in &self.order {
++            let row = &self.variables[id];
++            if row["kind"] != "function" { continue; }
++            declarations.push(json!({"id": id.0, "symbol": row["symbol"], "location": row["diagnostic_location"],
++                "signature": self.inventory_type(Self::read_key(&row["qualified_type"]), 0),
++                "definition": !row["body"].is_null(), "aliases": row["aliases"], "va_parameters": row["va_parameters"]}));
++            if let Some(body) = row["body"].as_u64() {
++                for node in self.walk(Self::edge(CStmtId(body).into())).0 {
++                    if node["kind"] == "expression" { owners.insert(node["id"].as_u64().unwrap(), id.0); }
++                }
++            }
++        }
++        let mut direct_refs = HashSet::new();
++        let mut calls = vec![];
++        for (id, row) in &self.expressions {
++            if row["kind"] != "call" { continue; }
++            let callee = CExprId(row["children"][0].as_u64().unwrap());
++            let declaration = self.callee(callee);
++            if declaration.is_some() {
++                for node in self.walk(Self::edge(callee.into())).0 {
++                    if node["kind"] == "expression" { direct_refs.insert(node["id"].as_u64().unwrap()); }
++                }
++            }
++            calls.push(json!({"id": id.0, "owner": owners.get(&id.0), "location": row["diagnostic_location"],
++                "callee": declaration.map(|d| self.variables[&d]["symbol"].clone()),
++                "arguments": row["children"].as_array().unwrap()[1..].iter().map(|a| {
++                    let id = CExprId(a.as_u64().unwrap()); let arg = &self.expressions[&id];
++                    json!({"id": id.0, "promotion_chain": self.promotions(id),
++                        "type": if arg["qualified_type"].is_null() { Value::Null } else { self.inventory_type(Self::read_key(&arg["qualified_type"]), 0) },
++                        "va_list": arg["va_list"]})
++                }).collect::<Vec<_>>()}));
++        }
++        let mut escapes = vec![];
++        let mut va_arg = vec![];
++        for (id, row) in &self.expressions {
++            if row["kind"] == "reference" && !direct_refs.contains(&id.0) {
++                let decl = &self.variables[&CDeclId(row["decl"].as_u64().unwrap())];
++                if decl["kind"] == "function" { escapes.push(json!({"symbol": decl["symbol"], "location": row["diagnostic_location"]})); }
++            }
++            if row["native_shape"] == "VAArg" { va_arg.push(json!({"owner": owners.get(&id.0), "location": row["diagnostic_location"]})); }
++        }
++        let records: Vec<_> = self.order.iter().filter_map(|id| self.records.get(id)).map(|r| {
++            let mut facts = json!({});
++            if r["kind"] == "enum" {
++                facts["underlying"] = if r["underlying"].is_null() { Value::Null } else { self.inventory_type(Self::read_key(&r["underlying"]), 0) };
++                facts["variants"] = json!(r["variants"].as_array().unwrap().iter().map(|id| {
++                    let v = &self.variables[&CDeclId(id.as_u64().unwrap())];
++                    if v["kind"] == "enum_constant" { json!({"name": v["name"], "signed": v["signed"], "value": v["value"]}) }
++                    else { json!({"unproved": "non-enumerator child"}) }
++                }).collect::<Vec<_>>());
++            } else {
++                facts["fields"] = r["fields"].as_array().map(|fields| json!(fields.iter().map(|id| {
++                    let f = &self.variables[&CDeclId(id.as_u64().unwrap())];
++                    if f["kind"] == "field" { json!({"name": f["name"], "type": self.inventory_type(Self::read_key(&f["qualified_type"]), 0),
++                        "bit_width": f["bit_width"], "bit_offset": f["bit_offset"], "type_bit_width": f["type_bit_width"], "alignment": f["alignment"]}) }
++                    else { json!({"unproved": "non-field record child"}) }
++                }).collect::<Vec<_>>())).unwrap_or(Value::Null);
++                facts["layout"] = r["layout"].clone();
++            }
++            json!({"identity": r["identity"], "state": r["state"], "facts": facts, "diagnostic_location": r["diagnostic_location"]})
++        }).collect();
++        json!({"schema": 2, "record_evidence_schema": 2, "record_definitions": records, "unit": self.unit, "target": self.ast.target,
++            "target_c_widths_bits": {"char": self.ast.target_c_widths[0], "short": self.ast.target_c_widths[1], "int": self.ast.target_c_widths[2],
++                "long": self.ast.target_c_widths[3], "long_long": self.ast.target_c_widths[4], "pointer": self.ast.target_c_widths[5],
++                "float": self.ast.target_c_widths[6], "double": self.ast.target_c_widths[7]},
++            "authorization": "inventory_only", "declarations": declarations, "calls": calls, "non_call_references": escapes, "va_arg": va_arg})
++    }
++
++    fn record_identity(&self, id: CDeclId, _depth: usize) -> Value { self.records[&id]["identity"].clone() }
++
++    fn location(&self, id: u64) -> Value {
++        self.locations.get(id.to_string()).cloned().unwrap_or(json!({"unproved": "native importer origin missing"}))
++    }
++
++    fn capture(ast: &'a TypedAstContext, unit: &'a Path) -> Self {
++        let locations = ast.format_locations.as_ref().map(|s| serde_json::from_str(s).expect("mapped native locations")).unwrap_or(json!({}));
++        let mut graph = Self { ast, unit, locations, parameter_owners: Default::default(), field_owners: Default::default(), order: ast.iter_decls().map(|(id, _)| *id).collect(),
++            types: Default::default(), records: Default::default(), qualified: Default::default(),
++            expressions: Default::default(), variables: Default::default(), statements: Default::default() };
++        for (id, _) in &ast.c_types {
++            let (mut row, _) = ast.required_type_relation(*id);
++            match &ast[*id].kind {
++                CTypeKind::Attributed(q, _) => { row["kind"] = json!("attributed"); row["original"] = Self::qualified_key(*q); }
++                CTypeKind::LongDouble => row["kind"] = json!("LongDouble"),
++                _ => {}
++            }
++            graph.edges((*id).into(), &mut row);
++            graph.types.insert(*id, row);
++        }
++        for (id, decl) in ast.iter_decls() {
++            let mut row = json!({"id": id.0, "identity": ast.inventory_record_identity(*id, 0),
++                "native_va_list_record": ast.native_va_list_records.contains(id),
++                "diagnostic_location": decl.begin_loc().map(|l| ast.loc_to_string(l))});
++            match &decl.kind {
++                CDeclKind::Struct { fields, .. } | CDeclKind::Union { fields, .. } => {
++                    row["kind"] = json!(if matches!(decl.kind, CDeclKind::Struct { .. }) { "struct" } else { "union" });
++                    row["fields"] = json!(fields.as_ref().map(|fs| fs.iter().map(|f| f.0).collect::<Vec<_>>()));
++                    row["layout"] = ast.record_evidence.get(id).map(|e| json!(e.10)).unwrap_or(Value::Null);
++                }
++                CDeclKind::Enum { variants, underlying_type_id, .. } => {
++                    row["kind"] = json!("enum"); row["variants"] = json!(variants.iter().map(|v| v.0).collect::<Vec<_>>());
++                    row["underlying"] = underlying_type_id.map(Self::qualified_key).unwrap_or(Value::Null);
++                }
++                _ => continue,
++            }
++            row["state"] = json!(match ast.record_evidence.get(id) { Some(e) if e.0 == 2 && e.9 => "complete", Some(e) if e.0 == 2 => "incomplete", _ => "unproved" });
++            graph.records.insert(*id, row);
++        }
++        for (owner, decl) in ast.iter_decls() {
++            if let CDeclKind::Function { parameters, .. } = &decl.kind {
++                for id in parameters { graph.parameter_owners.entry(*id).or_default().push(owner.0); }
++            }
++            if let CDeclKind::Struct { fields: Some(fields), .. } | CDeclKind::Union { fields: Some(fields), .. } = &decl.kind {
++                for id in fields { graph.field_owners.entry(*id).or_default().push(graph.records[owner]["identity"].clone()); }
++            }
++        }
++        let owners = ast.cursor_declaration_owners();
++        for (id, _) in ast.iter_decls() { graph.variables.insert(*id, graph.capture_declaration(*id, &owners)); }
++        for id in ast.c_exprs.keys() { graph.expressions.insert(*id, graph.capture_expression(*id)); }
++        graph.capture_statements();
++        graph
++    }
++
++    fn capture_statements(&mut self) {
++        let statements: Vec<_> = self.ast.c_stmts.keys().copied().collect();
++        let statements: Vec<_> = statements.into_iter().map(|id| {
++            let mut children = vec![];
++            let mut edge = |role: &str, node: iterators::SomeId| {
++                let (kind, id) = if let Some(id) = node.stmt() { ("statement", id.0) }
++                    else if let Some(id) = node.expr() { ("expression", id.0) }
++                    else { ("declaration", node.decl().expect("structural declaration").0) };
++                children.push(json!({"role": role, "kind": kind, "id": id}));
++            };
++            let (kind, shape) = match &self.ast[id].kind {
++                CStmtKind::Compound(items) => { for s in items { edge("item", (*s).into()); } ("compound", "Compound") }
++                CStmtKind::Expr(e) => { edge("expression", (*e).into()); ("expression", "Expr") }
++                CStmtKind::Decls(items) => { for d in items { edge("declaration", (*d).into()); } ("declarations", "Decls") }
++                CStmtKind::Return(e) => { for e in e { edge("value", (*e).into()); } ("return", if e.is_some() { "ReturnValue" } else { "ReturnVoid" }) }
++                CStmtKind::If { scrutinee, true_variant, false_variant } => {
++                    edge("condition", (*scrutinee).into()); edge("then", (*true_variant).into());
++                    for s in false_variant { edge("else", (*s).into()); } ("branch", if false_variant.is_some() { "IfElse" } else { "If" })
++                }
++                CStmtKind::Switch { scrutinee, body } => { edge("condition", (*scrutinee).into()); edge("body", (*body).into()); ("branch", "Switch") }
++                CStmtKind::While { condition, body } => { edge("condition", (*condition).into()); edge("body", (*body).into()); ("loop", "While") }
++                CStmtKind::DoWhile { condition, body } => { edge("body", (*body).into()); edge("condition", (*condition).into()); ("loop", "DoWhile") }
++                CStmtKind::ForLoop { init, condition, increment, body } => {
++                    for s in init { edge("init", (*s).into()); } for e in condition { edge("condition", (*e).into()); }
++                    for e in increment { edge("increment", (*e).into()); } edge("body", (*body).into());
++                    let mask = usize::from(init.is_some()) * 4 + usize::from(condition.is_some()) * 2 + usize::from(increment.is_some());
++                    ("loop", ["ForLoop000", "ForLoop001", "ForLoop010", "ForLoop011", "ForLoop100", "ForLoop101", "ForLoop110", "ForLoop111"][mask])
++                }
++                CStmtKind::Label(s) => { edge("body", (*s).into()); ("label", "Label") }
++                CStmtKind::Case(e, s, _) => { edge("value", (*e).into()); edge("body", (*s).into()); ("label", "Case") }
++                CStmtKind::Default(s) => { edge("body", (*s).into()); ("label", "Default") }
++                CStmtKind::Attributed { substatement, .. } => { edge("body", (*substatement).into()); ("attributed", "Attributed") }
++                CStmtKind::Goto(_) => ("goto", "Goto"), CStmtKind::Break => ("break", "Break"),
++                CStmtKind::Continue => ("continue", "Continue"), CStmtKind::Empty => ("empty", "Empty"),
++                CStmtKind::Asm { .. } => {
++                    for n in iterators::report_children(self.ast, id.into()).1 { edge("operand", n); } ("unsupported", "Asm")
++                }
++                CStmtKind::BadStmt => ("unsupported", "BadStmt"),
++            };
++            let label_target = match self.ast[id].kind { CStmtKind::Goto(label) => Some(label.0), _ => None };
++            let mut row = json!({"id": id.0, "kind": kind, "label_target": label_target, "native_shape": shape, "location": self.location(id.0), "edge_count": children.len(),
++                "children": children, "flow": {"state": "Unproved", "reason": "structural edges only; execution and cursor state relations not established"}});
++            self.edges(id.into(), &mut row);
++            (id, row)
++        }).collect();
++        self.statements = statements.into_iter().collect();
++    }
++    fn capture_declaration(&self, id: CDeclId, owners: &HashMap<CDeclId, HashSet<CDeclId>>) -> Value {
++        let mut value = json!({"id": id.0});
++        match &self.ast[id].kind {
++            CDeclKind::Variable { ident, typ, initializer, has_static_duration, has_thread_duration, is_externally_visible, .. } => {
++                value["kind"] = json!("variable");
++                value["name"] = json!(ident);
++                value["local"] = json!(self.ast.native_local_variables.contains(&id));
++                value["va_list"] = json!(self.ast.is_va_list(typ.ctype));
++                value["owning_function"] = if self.ast.native_local_variables.contains(&id) {
++                    match owners.get(&id) {
++                        Some(ids) if ids.len() == 1 => json!(ids.iter().next().unwrap().0),
++                        _ => json!({"unproved": "missing or ambiguous lexical function owner"}),
++                    }
++                } else { Value::Null };
++                value["type"] = self.cursor_type(*typ, 0);
++                value["type_id"] = json!(typ.ctype.0);
++                value["initializer"] = json!(initializer.map(|e| e.0));
++                value["static"] = json!(has_static_duration);
++                value["thread"] = json!(has_thread_duration);
++                value["externally_visible"] = json!(is_externally_visible);
++                value["native_va_list"] = self.ast.native_cursor_types.get(&id).map(|(declared, builtin, kind)|
++                    json!({"same_canonical_type": true, "declared_type_id": declared.ctype.0,
++                        "builtin_type_id": builtin.ctype.0,
++                        "declared_canonical_type": self.cursor_type(*declared, 0),
++                        "builtin_canonical_type": self.cursor_type(*builtin, 0),
++                        "declared_const": declared.qualifiers.is_const,
++                        "declared_volatile": declared.qualifiers.is_volatile, "declared_restrict": declared.qualifiers.is_restrict,
++                        "builtin_const": builtin.qualifiers.is_const, "builtin_volatile": builtin.qualifiers.is_volatile,
++                        "builtin_restrict": builtin.qualifiers.is_restrict, "target_kind": kind})).unwrap_or(Value::Null);
++            }
++            CDeclKind::Field { name, typ, .. } => {
++                value["kind"] = json!("field"); value["name"] = json!(name);
++                value["type"] = self.cursor_type(*typ, 0);
++                value["type_id"] = json!(typ.ctype.0);
++                value["owners"] = json!(self.field_owners.get(&id).cloned().unwrap_or_default());
++            }
++            CDeclKind::EnumConstant { name, value: number } => {
++                value["kind"] = json!("enum_constant"); value["name"] = json!(name);
++                value["owning_enum"] = match owners.get(&id) {
++                    Some(ids) if ids.len() == 1 => {
++                        let owner = *ids.iter().next().unwrap();
++                        json!({"declaration": owner.0, "identity": self.record_identity(owner, 0)})
++                    }
++                    _ => json!({"unproved": "missing or ambiguous enum variant owner"}),
++                };
++                value["value"] = match number { ConstIntExpr::I(n) => json!(n), ConstIntExpr::U(n) => json!(n) };
++            }
++            _ => value["kind"] = json!("unsupported"),
++        }
++        value["diagnostic_location"] = json!(self.ast[id].begin_loc().map(|l| self.ast.loc_to_string(l)));
++        value["parameter_owners"] = json!(self.parameter_owners.get(&id).cloned().unwrap_or_default());
++        match &self.ast[id].kind {
++            CDeclKind::Function { typ, parameters, body, attrs, .. } => {
++                value["kind"] = json!("function"); value["type_id"] = json!(typ.0);
++                value["qualified_type"] = Self::qualified_key(CQualTypeId::new(*typ));
++                value["parameters"] = json!(parameters.iter().map(|p| p.0).collect::<Vec<_>>());
++                value["body"] = json!(body.map(|b| b.0));
++                value["builtin"] = json!(self.ast.cursor_builtin_identity.get(&id));
++                value["symbol"] = self.ast.inventory_symbol(id, self.unit).unwrap();
++                value["aliases"] = json!(attrs.iter().filter_map(|a| match a { Attribute::Alias(name) => Some(name.clone()), _ => None }).collect::<Vec<_>>());
++                value["va_parameters"] = json!(parameters.iter().filter(|p| match self.ast[**p].kind {
++                    CDeclKind::Variable { typ, .. } => self.ast.is_va_list(typ.ctype), _ => false,
++                }).map(|p| p.0).collect::<Vec<_>>());
++            }
++            CDeclKind::Variable { typ, .. } | CDeclKind::Typedef { typ, .. } | CDeclKind::Field { typ, .. } => {
++                value["qualified_type"] = Self::qualified_key(*typ);
++                if matches!(self.ast[id].kind, CDeclKind::Typedef { .. }) { value["kind"] = json!("typedef"); value["type_id"] = json!(typ.ctype.0); }
++            }
++            CDeclKind::Struct { .. } | CDeclKind::Union { .. } | CDeclKind::Enum { .. } => {
++                for (key, field) in self.records[&id].as_object().unwrap() { value[key] = field.clone(); }
++            }
++            _ => {}
++        }
++        if let CDeclKind::Field { bitfield_width, platform_bit_offset, platform_type_bitwidth, manual_alignment, .. } = &self.ast[id].kind {
++            value["bit_width"] = json!(bitfield_width); value["bit_offset"] = json!(platform_bit_offset);
++            value["type_bit_width"] = json!(platform_type_bitwidth); value["alignment"] = json!(manual_alignment);
++        }
++        if let CDeclKind::EnumConstant { value: number, .. } = &self.ast[id].kind {
++            value["signed"] = json!(matches!(number, ConstIntExpr::I(_)));
++        }
++        self.edges(id.into(), &mut value);
++        value
++    }
++
++    fn capture_expression(&self, id: CExprId) -> Value {
++        let mut value = json!({"id": id.0, "kind": "unsupported",
++            "qualified_type": self.ast[id].kind.get_qual_type().map(Self::qualified_key),
++            "type_id": self.ast[id].kind.get_qual_type().map(|t| t.ctype.0),
++            "children": []});
++        match &self.ast[id].kind {
++            CExprKind::Literal(_, literal) => {
++                value["kind"] = json!("literal");
++                value["literal"] = match literal {
++                    CLiteral::Integer(n, _) => json!({"integer": n}),
++                    CLiteral::Character(n) => json!({"character": n}),
++                    CLiteral::String(bytes, width) => json!({"bytes": bytes, "width": width}),
++                    _ => json!({"unsupported": true}),
++                };
++            }
++            CExprKind::DeclRef(_, decl, _) => {
++                value["kind"] = json!("reference"); value["decl"] = json!(decl.0);
++            }
++            CExprKind::Paren(_, child) => {
++                value["kind"] = json!("paren"); value["children"] = json!([child.0]);
++            }
++            CExprKind::ImplicitCast(_, child, cast, field, _) |
++            CExprKind::ExplicitCast(_, child, cast, field, _) => {
++                value["kind"] = json!(if matches!(self.ast[id].kind, CExprKind::ImplicitCast(..)) { "implicit_cast" } else { "explicit_cast" });
++                value["children"] = json!([child.0]); value["cast"] = json!(format!("{:?}", cast));
++                value["field"] = json!(field.map(|f| f.0));
++            }
++            CExprKind::Unary(_, op, child, _) => {
++                value["kind"] = json!("unary"); value["operator"] = json!(format!("{:?}", op));
++                value["children"] = json!([child.0]);
++            }
++            CExprKind::UnaryType(_, op, child, argument_type) => {
++                value["kind"] = json!("unary_type"); value["operator"] = json!(format!("{:?}", op));
++                value["children"] = json!(child.iter().map(|c| c.0).collect::<Vec<_>>());
++                value["argument_qualified_type"] = Self::qualified_key(*argument_type);
++                value["argument_type"] = self.cursor_type(*argument_type, 0);
++            }
++            CExprKind::Binary(_, op, left, right, lhs_type, rhs_type) => {
++                value["kind"] = json!("binary"); value["operator"] = json!(format!("{:?}", op));
++                value["children"] = json!([left.0, right.0]);
++                value["computation_qualified_types"] = json!([lhs_type.map(Self::qualified_key), rhs_type.map(Self::qualified_key)]);
++                value["computation_types"] = json!([lhs_type.map(|t| self.cursor_type(t, 0)), rhs_type.map(|t| self.cursor_type(t, 0))]);
++            }
++            CExprKind::Call(_, callee, args) => {
++                value["kind"] = json!("call");
++                value["children"] = json!(std::iter::once(callee.0).chain(args.iter().map(|a| a.0)).collect::<Vec<_>>());
++            }
++            CExprKind::Member(_, parent, member, kind, _) => {
++                value["kind"] = json!("member"); value["children"] = json!([parent.0]);
++                value["member"] = json!({"id": member.0});
++                value["access"] = json!(format!("{:?}", kind));
++            }
++            CExprKind::ArraySubscript(_, base, index, _) => {
++                value["kind"] = json!("subscript"); value["children"] = json!([base.0, index.0]);
++            }
++            _ => {}
++        }
++        value["native_shape"] = json!(self.ast.format_expression_shape(id));
++        value["diagnostic_location"] = json!(self.ast[id].begin_loc().map(|l| self.ast.loc_to_string(l)));
++        value["location"] = self.location(id.0);
++        value["statement_body"] = match self.ast[id].kind { CExprKind::Statements(_, body) => json!(body.0), _ => Value::Null };
++        value["va_list"] = json!(self.ast[id].kind.get_qual_type().map(|t| self.ast.is_va_list(t.ctype)));
++        self.edges(id.into(), &mut value);
++        value["children"] = json!(value["structural_children"].as_array().unwrap().iter()
++            .filter(|e| e["kind"] == "expression").map(|e| e["id"].clone()).collect::<Vec<_>>());
++        value["edge_count"] = json!(value["children"].as_array().unwrap().len());
++        value["effect_relation"] = json!({"state": "Unproved", "reason": "calls, writes, volatile access and conditional evaluation retained without commutativity proof"});
++        if value["qualified_type"].is_null() { value["type_unproved"] = json!("importer expression has no qualified type"); }
++        value
++    }
++
++    fn facts(&self, inventory: &Value) -> Value {
++        use std::collections::{BTreeMap, BTreeSet};
++        let unit = self.unit;
++        let owners = self.ast.cursor_declaration_owners();
++        let native_locations: Value = self.ast.format_locations.as_ref().map(|s| serde_json::from_str(s).expect("mapped native locations")).unwrap_or(json!({}));
++        let location = |id: u64| native_locations.get(id.to_string()).cloned()
++            .unwrap_or(json!({"unproved": "native importer origin missing"}));
++        let mut relevant = BTreeMap::new();
++        let mut definitions = vec![];
++        let mut function_edges = vec![];
++        let mut unclassified = vec![];
++        let mut pending = vec![];
++        for (id, declaration) in self.ast.iter_decls() {
++            let CDeclKind::Function { typ, parameters, body, .. } = &declaration.kind else { continue };
++            let signature = self.inventory_type(CQualTypeId::new(*typ), 0);
++            let va_parameters: Vec<_> = parameters.iter().filter(|p| match self.ast[**p].kind {
++                CDeclKind::Variable { typ, .. } => self.ast.is_va_list(typ.ctype), _ => false,
++            }).copied().collect();
++            let variadic = signature["canonical"]["variadic"].as_bool();
++            if variadic.is_none() {
++                if body.is_some() { unclassified.push(json!({"declaration": id.0, "symbol": self.ast.inventory_symbol(*id, unit),
++                    "signature": signature, "location": location(id.0), "state": "Unproved", "reason": "native attributed function signature unclassified"})); }
++                continue;
++            }
++            if variadic != Some(true) && va_parameters.is_empty() { continue; }
++            let fixed = parameters.len();
++            let format_position = if variadic == Some(true) { fixed.checked_sub(1) } else {
++                parameters.iter().position(|p| va_parameters.contains(p)).and_then(|p| p.checked_sub(1))
++            };
++            pending.push(iterators::SomeId::Decl(*id));
++            pending.extend(parameters.iter().map(|p| iterators::SomeId::Decl(*p)));
++            pending.push(iterators::SomeId::Type(*typ));
++            relevant.insert(*id, (fixed, format_position));
++            function_edges.push(json!({"declaration": id.0, "parameters": parameters.iter().map(|p| p.0).collect::<Vec<_>>(),
++                "fixed_count": fixed, "format_position": format_position,
++                "format_parameter": format_position.and_then(|p| parameters.get(p)).map(|p| p.0)}));
++            if let Some(body) = body {
++                pending.push(iterators::SomeId::Stmt(*body));
++                definitions.push(json!({"declaration": id.0, "symbol": self.ast.inventory_symbol(*id, unit),
++                    "variadic": variadic, "signature": self.cursor_type(CQualTypeId::new(*typ), 0),
++                    "parameters": parameters.iter().map(|p| p.0).collect::<Vec<_>>(),
++                    "va_parameters": va_parameters.iter().map(|p| p.0).collect::<Vec<_>>(), "body": body.0,
++                    "location": location(id.0), "generated_origin": {"state": "Unproved", "reason": "generated item interval not exported by emitter"},
++                    "control_effect_lifetime": {"state": "Unproved", "reason": "complete structural slice retained; aliasing, commutativity, lifetime and C evaluation order require closure"}}));
++            }
++        }
++        let mut calls = vec![];
++        for row in inventory["calls"].as_array().unwrap() {
++            let id = CExprId(row["id"].as_u64().unwrap());
++            let CExprKind::Call(_, callee, args) = &self.ast[id].kind else { continue };
++            let Some(decl) = self.callee(*callee) else { continue };
++            let Some((fixed, format_position)) = relevant.get(&decl) else { continue };
++            pending.push(iterators::SomeId::Expr(id));
++            let mut call = row.clone();
++            call["callee_declaration"] = json!(decl.0);
++            call["fixed_count"] = json!(fixed);
++            call["format_position"] = json!(format_position);
++            call["format_position_relation"] = json!({"state": "Unproved", "reason": "signature-adjacent format candidate; no format attribute proof"});
++            call["format"] = format_position.and_then(|p| args.get(p)).map(|e| self.ast.format_origin(*e, 0))
++                .unwrap_or(json!({"kind": "Unproved", "reason": "format argument absent"}));
++            call["native_location"] = location(id.0);
++            call["evaluation"] = json!({"state": "Unproved", "reason": "AST child order is not C sibling evaluation order or effect independence"});
++            call["generated_origin"] = json!({"state": "Unproved", "reason": "generated expression interval not exported by emitter"});
++            calls.push(call);
++        }
++        let mut visited = std::collections::HashSet::new();
++        let mut expressions = BTreeSet::new();
++        let mut statements = BTreeSet::new();
++        let mut declarations = BTreeSet::new();
++        let mut type_rows = BTreeMap::new();
++        while let Some(node) = pending.pop() {
++            if !visited.insert(node) { continue; }
++            if let Some(id) = node.type_() {
++                let (_, children) = self.ast.required_type_relation(id);
++                let row = self.types[&id].clone();
++                pending.extend(children.into_iter().map(iterators::SomeId::Type));
++                pending.extend(iterators::report_children(self.ast, node).1);
++                if let Some(decl) = row["declaration"].as_u64() { pending.push(iterators::SomeId::Decl(CDeclId(decl))); }
++                type_rows.insert(id, row);
++                continue;
++            }
++            if let Some(id) = node.expr() {
++                expressions.insert(id);
++                if let Some(typ) = self.ast[id].kind.get_qual_type() { pending.push(iterators::SomeId::Type(typ.ctype)); }
++                if let CExprKind::ImplicitCast(_, _, _, Some(field), _) | CExprKind::ExplicitCast(_, _, _, Some(field), _) = self.ast[id].kind {
++                    pending.push(iterators::SomeId::Decl(field));
++                }
++                if let CExprKind::DeclRef(_, decl, _) = self.ast[id].kind { pending.push(iterators::SomeId::Decl(decl)); }
++                if let CExprKind::Member(_, _, member, _, _) = self.ast[id].kind { pending.push(iterators::SomeId::Decl(member)); }
++            }
++            if let Some(id) = node.stmt() { statements.insert(id); }
++            if let Some(id) = node.decl() {
++                declarations.insert(id);
++                if let Some(ids) = owners.get(&id) {
++                    pending.extend(ids.iter().map(|d| iterators::SomeId::Decl(*d)));
++                }
++                if let Some((declared, builtin, _)) = self.ast.native_cursor_types.get(&id) {
++                    pending.extend([iterators::SomeId::Type(declared.ctype), iterators::SomeId::Type(builtin.ctype)]);
++                }
++                if let CDeclKind::Function { typ, ref parameters, .. } = self.ast[id].kind {
++                    pending.push(iterators::SomeId::Type(typ));
++                    pending.extend(parameters.iter().map(|p| iterators::SomeId::Decl(*p)));
++                    continue;
++                }
++            }
++            pending.extend(iterators::report_children(self.ast, node).1);
++        }
++
++        let expressions: Vec<_> = expressions.into_iter().map(|id| self.expression(id)).collect();
++        let statements: Vec<_> = statements.into_iter().map(|id| self.statements[&id].clone()).collect();
++        let variables: Vec<_> = declarations.into_iter().map(|id| self.variables[&id].clone()).collect();
++        let native_record_identities: Vec<_> = variables.iter().filter(|row| row["native_va_list_record"] == true)
++            .map(|row| json!({"declaration": row["id"], "identity": row["identity"]})).collect();
++        let selected: HashSet<_> = expressions.iter().filter_map(|e| e["id"].as_u64()).collect();
++        let unsupported_expressions: Vec<_> = self.expressions.iter().filter(|(_, row)| row["kind"] == "unsupported").map(|(id, row)| {
++            json!({"expression": id.0, "native_shape": row["native_shape"], "type": self.expression(*id)["type"],
++                "within_slice": selected.contains(&id.0), "location": row["location"],
++                "relevance": {"state": "Unproved", "reason": if selected.contains(&id.0) {
++                    "selected unsupported expression retains its complete structural children"
++                } else { "outside selected slice; influence on formatting, control and effects is not established" }}})
++        }).collect();
++        let cursor_events: Vec<_> = expressions.iter().filter(|e| e["kind"] == "call").map(|e| {
++            json!({"expression": e["id"], "builtin": e["builtin"], "callee_declaration": e["callee_decl"],
++                "operands": e["arguments"], "relation": {"state": "Unproved", "reason": "cursor state, forwarding, lifetime and repeated-use closure pending"}})
++        }).collect();
++        // Materialize every view before sealing the qualified normalization census.
++        for id in self.expressions.keys() { self.expression(*id); }
++        let qualified_types: Vec<_> = self.qualified.borrow().values().cloned().collect();
++        json!({"schema": 2, "authorization": "analysis_only", "status": "CompleteReport", "unit": unit,
++            "target": self.ast.target, "target_c_widths_bits": inventory["target_c_widths_bits"],
++            "definitions": definitions, "function_edges": function_edges, "declarations": inventory["declarations"], "calls": calls,
++            "unclassified_definitions": unclassified, "expressions": expressions, "statements": statements,
++            "variables": variables, "types": type_rows.into_values().collect::<Vec<_>>(), "cursor_events": cursor_events,
++            "native_record_identities": native_record_identities,
++            "unsupported_expression_count": unsupported_expressions.len(), "unsupported_expressions": unsupported_expressions,
++            "graph": {"declaration_order": self.order.iter().map(|id| id.0).collect::<Vec<_>>(),
++                "expressions": self.expressions.values().collect::<Vec<_>>(), "statements": self.statements.values().collect::<Vec<_>>(),
++                "declarations": self.variables.values().collect::<Vec<_>>(), "types": self.types.values().collect::<Vec<_>>(),
++                "qualified_types": qualified_types},
++            "native_inputs": self.ast.cursor_inputs.as_ref().map(|s| serde_json::from_str::<Value>(s).expect("native inputs")),
++            "lowering": "not_authorized", "abi_execution": "Linux_x64_only_unrun"})
++    }
++}
++
 +
 +impl TypedAstContext {
 +    fn inventory_type(&self, typ: CQualTypeId, depth: usize) -> Value {
@@ -1977,60 +2703,6 @@ new file mode 100644
 +            .get(&id)
 +            .map(|e| identity(e, depth))
 +            .unwrap_or_else(|| json!({"unproved": "missing physical record evidence"}))
-+    }
-+
-+    fn inventory_record_definitions(&self) -> Vec<Value> {
-+        self.iter_decls().filter_map(|(id, decl)| {
-+            let mut facts = json!({});
-+            match &decl.kind {
-+                CDeclKind::Struct { fields, .. } | CDeclKind::Union { fields, .. } => {
-+                    facts["fields"] = fields.as_ref().map(|fields| fields.iter().map(|field| {
-+                        match &self[*field].kind {
-+                            CDeclKind::Field { name, typ, bitfield_width, platform_bit_offset,
-+                                platform_type_bitwidth, manual_alignment } => json!({
-+                                    "name": name, "type": self.inventory_type(*typ, 0),
-+                                    "bit_width": bitfield_width, "bit_offset": platform_bit_offset,
-+                                    "type_bit_width": platform_type_bitwidth, "alignment": manual_alignment,
-+                                }),
-+                            _ => json!({"unproved": "non-field record child"}),
-+                        }
-+                    }).collect::<Vec<_>>()).map(Value::Array).unwrap_or(Value::Null);
-+                    facts["layout"] = self.record_evidence.get(id).map(|e| json!(e.10)).unwrap_or(Value::Null);
-+                }
-+                CDeclKind::Enum { variants, underlying_type_id, .. } => {
-+                    facts["underlying"] = underlying_type_id.map(|t| self.inventory_type(t, 0)).unwrap_or(Value::Null);
-+                    facts["variants"] = json!(variants.iter().map(|variant| match &self[*variant].kind {
-+                        CDeclKind::EnumConstant { name, value } => match value {
-+                            ConstIntExpr::I(value) => json!({"name": name, "signed": true, "value": value}),
-+                            ConstIntExpr::U(value) => json!({"name": name, "signed": false, "value": value}),
-+                        },
-+                        _ => json!({"unproved": "non-enumerator child"}),
-+                    }).collect::<Vec<_>>());
-+                }
-+                _ => return None,
-+            }
-+            let state = match self.record_evidence.get(id) {
-+                Some(e) if e.0 == 2 && e.9 => "complete",
-+                Some(e) if e.0 == 2 => "incomplete",
-+                _ => "unproved",
-+            };
-+            Some(json!({"identity": self.inventory_record_identity(*id, 0), "state": state, "facts": facts, "diagnostic_location": decl.begin_loc().map(|l| self.loc_to_string(l))}))
-+        }).collect()
-+    }
-+
-+    fn inventory_promotions(&self, mut expr: CExprId) -> Vec<Value> {
-+        let mut types = vec![];
-+        loop {
-+            if let Some(typ) = self[expr].kind.get_qual_type() {
-+                types.push(self.inventory_type(typ, 0));
-+            }
-+            match self[expr].kind {
-+                CExprKind::ImplicitCast(_, inner, _, _, _) | CExprKind::Paren(_, inner) => {
-+                    expr = inner
-+                }
-+                _ => return types,
-+            }
-+        }
 +    }
 +
 +    fn inventory_symbol(&self, id: CDeclId, unit: &Path) -> Option<Value> {
@@ -2624,299 +3296,14 @@ new file mode 100644
 +            "type_compatibility": {"state": "Unproved", "reason": "specifier and canonical promoted argument relation not established"}})
 +    }
 +
-+    pub fn closed_format_facts(&self, unit: &Path) -> Value {
-+        use std::collections::{BTreeMap, BTreeSet};
-+        let inventory = self.closed_variadic_inventory(unit);
-+        let owners = self.cursor_declaration_owners();
-+        let native_locations: Value = self.format_locations.as_ref().map(|s| serde_json::from_str(s).expect("mapped native locations")).unwrap_or(json!({}));
-+        let location = |id: u64| native_locations.get(id.to_string()).cloned()
-+            .unwrap_or(json!({"unproved": "native importer origin missing"}));
-+        let mut relevant = BTreeMap::new();
-+        let mut definitions = vec![];
-+        let mut function_edges = vec![];
-+        let mut unclassified = vec![];
-+        let mut pending = vec![];
-+        for (id, declaration) in self.iter_decls() {
-+            let CDeclKind::Function { typ, parameters, body, .. } = &declaration.kind else { continue };
-+            let signature = self.inventory_type(CQualTypeId::new(*typ), 0);
-+            let va_parameters: Vec<_> = parameters.iter().filter(|p| match self[**p].kind {
-+                CDeclKind::Variable { typ, .. } => self.is_va_list(typ.ctype), _ => false,
-+            }).copied().collect();
-+            let variadic = signature["canonical"]["variadic"].as_bool();
-+            if variadic.is_none() {
-+                if body.is_some() { unclassified.push(json!({"declaration": id.0, "symbol": self.inventory_symbol(*id, unit),
-+                    "signature": signature, "location": location(id.0), "state": "Unproved", "reason": "native attributed function signature unclassified"})); }
-+                continue;
-+            }
-+            if variadic != Some(true) && va_parameters.is_empty() { continue; }
-+            let fixed = parameters.len();
-+            let format_position = if variadic == Some(true) { fixed.checked_sub(1) } else {
-+                parameters.iter().position(|p| va_parameters.contains(p)).and_then(|p| p.checked_sub(1))
-+            };
-+            pending.push(iterators::SomeId::Decl(*id));
-+            pending.extend(parameters.iter().map(|p| iterators::SomeId::Decl(*p)));
-+            pending.push(iterators::SomeId::Type(*typ));
-+            relevant.insert(*id, (fixed, format_position));
-+            function_edges.push(json!({"declaration": id.0, "parameters": parameters.iter().map(|p| p.0).collect::<Vec<_>>(),
-+                "fixed_count": fixed, "format_position": format_position,
-+                "format_parameter": format_position.and_then(|p| parameters.get(p)).map(|p| p.0)}));
-+            if let Some(body) = body {
-+                pending.push(iterators::SomeId::Stmt(*body));
-+                definitions.push(json!({"declaration": id.0, "symbol": self.inventory_symbol(*id, unit),
-+                    "variadic": variadic, "signature": self.cursor_type(CQualTypeId::new(*typ), 0),
-+                    "parameters": parameters.iter().map(|p| p.0).collect::<Vec<_>>(),
-+                    "va_parameters": va_parameters.iter().map(|p| p.0).collect::<Vec<_>>(), "body": body.0,
-+                    "location": location(id.0), "generated_origin": {"state": "Unproved", "reason": "generated item interval not exported by emitter"},
-+                    "control_effect_lifetime": {"state": "Unproved", "reason": "complete structural slice retained; aliasing, commutativity, lifetime and C evaluation order require closure"}}));
-+            }
-+        }
-+        let mut calls = vec![];
-+        for row in inventory["calls"].as_array().unwrap() {
-+            let id = CExprId(row["id"].as_u64().unwrap());
-+            let CExprKind::Call(_, callee, args) = &self[id].kind else { continue };
-+            let Some(decl) = self.inventory_callee(*callee) else { continue };
-+            let Some((fixed, format_position)) = relevant.get(&decl) else { continue };
-+            pending.push(iterators::SomeId::Expr(id));
-+            let mut call = row.clone();
-+            call["callee_declaration"] = json!(decl.0);
-+            call["fixed_count"] = json!(fixed);
-+            call["format_position"] = json!(format_position);
-+            call["format_position_relation"] = json!({"state": "Unproved", "reason": "signature-adjacent format candidate; no format attribute proof"});
-+            call["format"] = format_position.and_then(|p| args.get(p)).map(|e| self.format_origin(*e, 0))
-+                .unwrap_or(json!({"kind": "Unproved", "reason": "format argument absent"}));
-+            call["native_location"] = location(id.0);
-+            call["evaluation"] = json!({"state": "Unproved", "reason": "AST child order is not C sibling evaluation order or effect independence"});
-+            call["generated_origin"] = json!({"state": "Unproved", "reason": "generated expression interval not exported by emitter"});
-+            calls.push(call);
-+        }
-+        let mut visited = std::collections::HashSet::new();
-+        let mut expressions = BTreeSet::new();
-+        let mut statements = BTreeSet::new();
-+        let mut declarations = BTreeSet::new();
-+        let mut type_rows = BTreeMap::new();
-+        while let Some(node) = pending.pop() {
-+            if !visited.insert(node) { continue; }
-+            if let Some(id) = node.type_() {
-+                let (row, children) = self.required_type_relation(id);
-+                pending.extend(children.into_iter().map(iterators::SomeId::Type));
-+                if let Some(decl) = row["declaration"].as_u64() { pending.push(iterators::SomeId::Decl(CDeclId(decl))); }
-+                type_rows.insert(id, row);
-+                continue;
-+            }
-+            if let Some(id) = node.expr() {
-+                expressions.insert(id);
-+                if let Some(typ) = self[id].kind.get_qual_type() { pending.push(iterators::SomeId::Type(typ.ctype)); }
-+                if let CExprKind::ImplicitCast(_, _, _, Some(field), _) | CExprKind::ExplicitCast(_, _, _, Some(field), _) = self[id].kind {
-+                    pending.push(iterators::SomeId::Decl(field));
-+                }
-+                if let CExprKind::DeclRef(_, decl, _) = self[id].kind { pending.push(iterators::SomeId::Decl(decl)); }
-+                if let CExprKind::Member(_, _, member, _, _) = self[id].kind { pending.push(iterators::SomeId::Decl(member)); }
-+            }
-+            if let Some(id) = node.stmt() { statements.insert(id); }
-+            if let Some(id) = node.decl() {
-+                declarations.insert(id);
-+                if let Some(ids) = owners.get(&id) {
-+                    pending.extend(ids.iter().map(|d| iterators::SomeId::Decl(*d)));
-+                }
-+                if let Some((declared, builtin, _)) = self.native_cursor_types.get(&id) {
-+                    pending.extend([iterators::SomeId::Type(declared.ctype), iterators::SomeId::Type(builtin.ctype)]);
-+                }
-+                if let CDeclKind::Function { typ, ref parameters, .. } = self[id].kind {
-+                    pending.push(iterators::SomeId::Type(typ));
-+                    pending.extend(parameters.iter().map(|p| iterators::SomeId::Decl(*p)));
-+                    continue;
-+                }
-+            }
-+            pending.extend(iterators::immediate_children_all_types(self, node));
-+        }
-+        let expressions: Vec<_> = expressions.into_iter().map(|id| {
-+            let mut row = self.cursor_expression(id);
-+            row["location"] = location(id.0);
-+            if let CExprKind::Call(_, callee, _) = self[id].kind {
-+                row["callee_expression"] = json!(callee.0);
-+                let mut reference = callee;
-+                while let CExprKind::Paren(_, inner) | CExprKind::ImplicitCast(_, inner, _, _, _) = self[reference].kind { reference = inner; }
-+                row["callee_reference"] = json!(reference.0);
-+            }
-+            row["children"] = json!(iterators::immediate_children_all_types(self, id.into()).into_iter()
-+                .filter_map(|n| n.expr().map(|e| e.0)).collect::<Vec<_>>());
-+            row["edge_count"] = json!(row["children"].as_array().unwrap().len());
-+            row["native_shape"] = json!(self.format_expression_shape(id));
-+            row["statement_body"] = match self[id].kind { CExprKind::Statements(_, body) => json!(body.0), _ => Value::Null };
-+            if self[id].kind.get_qual_type().is_none() { row["type_unproved"] = json!("importer expression has no qualified type"); }
-+            row["promotion_chain"] = self.inventory_promotions(id);
-+            row["qualified_type"] = self[id].kind.get_qual_type().map(Self::required_qualified_type).unwrap_or(Value::Null);
-+            row["effect_relation"] = json!({"state": "Unproved", "reason": "calls, writes, volatile access and conditional evaluation retained without commutativity proof"});
-+            row
-+        }).collect();
-+        let statements: Vec<_> = statements.into_iter().map(|id| {
-+            let mut children = vec![];
-+            let mut edge = |role: &str, node: iterators::SomeId| {
-+                let (kind, id) = if let Some(id) = node.stmt() { ("statement", id.0) }
-+                    else if let Some(id) = node.expr() { ("expression", id.0) }
-+                    else { ("declaration", node.decl().expect("structural declaration").0) };
-+                children.push(json!({"role": role, "kind": kind, "id": id}));
-+            };
-+            let (kind, shape) = match &self[id].kind {
-+                CStmtKind::Compound(items) => { for s in items { edge("item", (*s).into()); } ("compound", "Compound") }
-+                CStmtKind::Expr(e) => { edge("expression", (*e).into()); ("expression", "Expr") }
-+                CStmtKind::Decls(items) => { for d in items { edge("declaration", (*d).into()); } ("declarations", "Decls") }
-+                CStmtKind::Return(e) => { for e in e { edge("value", (*e).into()); } ("return", if e.is_some() { "ReturnValue" } else { "ReturnVoid" }) }
-+                CStmtKind::If { scrutinee, true_variant, false_variant } => {
-+                    edge("condition", (*scrutinee).into()); edge("then", (*true_variant).into());
-+                    for s in false_variant { edge("else", (*s).into()); } ("branch", if false_variant.is_some() { "IfElse" } else { "If" })
-+                }
-+                CStmtKind::Switch { scrutinee, body } => { edge("condition", (*scrutinee).into()); edge("body", (*body).into()); ("branch", "Switch") }
-+                CStmtKind::While { condition, body } => { edge("condition", (*condition).into()); edge("body", (*body).into()); ("loop", "While") }
-+                CStmtKind::DoWhile { condition, body } => { edge("body", (*body).into()); edge("condition", (*condition).into()); ("loop", "DoWhile") }
-+                CStmtKind::ForLoop { init, condition, increment, body } => {
-+                    for s in init { edge("init", (*s).into()); } for e in condition { edge("condition", (*e).into()); }
-+                    for e in increment { edge("increment", (*e).into()); } edge("body", (*body).into());
-+                    let mask = usize::from(init.is_some()) * 4 + usize::from(condition.is_some()) * 2 + usize::from(increment.is_some());
-+                    ("loop", ["ForLoop000", "ForLoop001", "ForLoop010", "ForLoop011", "ForLoop100", "ForLoop101", "ForLoop110", "ForLoop111"][mask])
-+                }
-+                CStmtKind::Label(s) => { edge("body", (*s).into()); ("label", "Label") }
-+                CStmtKind::Case(e, s, _) => { edge("value", (*e).into()); edge("body", (*s).into()); ("label", "Case") }
-+                CStmtKind::Default(s) => { edge("body", (*s).into()); ("label", "Default") }
-+                CStmtKind::Attributed { substatement, .. } => { edge("body", (*substatement).into()); ("attributed", "Attributed") }
-+                CStmtKind::Goto(_) => ("goto", "Goto"), CStmtKind::Break => ("break", "Break"),
-+                CStmtKind::Continue => ("continue", "Continue"), CStmtKind::Empty => ("empty", "Empty"),
-+                CStmtKind::Asm { .. } => {
-+                    for n in iterators::immediate_children_all_types(self, id.into()) { edge("operand", n); } ("unsupported", "Asm")
-+                }
-+                CStmtKind::BadStmt => ("unsupported", "BadStmt"),
-+            };
-+            let label_target = match self[id].kind { CStmtKind::Goto(label) => Some(label.0), _ => None };
-+            json!({"id": id.0, "kind": kind, "label_target": label_target, "native_shape": shape, "location": location(id.0), "edge_count": children.len(),
-+                "children": children, "flow": {"state": "Unproved", "reason": "structural edges only; execution and cursor state relations not established"}})
-+        }).collect();
-+        let variables: Vec<_> = declarations.into_iter().map(|d| {
-+            let mut row = self.cursor_declaration(d, &owners);
-+            let parameter_owners: Vec<_> = self.iter_decls().filter_map(|(owner, decl)| match &decl.kind {
-+                CDeclKind::Function { parameters, .. } if parameters.contains(&d) => Some(owner.0), _ => None,
-+            }).collect();
-+            row["parameter_owners"] = json!(parameter_owners);
-+            match &self[d].kind {
-+                CDeclKind::Function { typ, parameters, .. } => {
-+                    row["kind"] = json!("function"); row["type_id"] = json!(typ.0);
-+                    row["builtin"] = json!(self.cursor_builtin_identity.get(&d));
-+                    row["parameters"] = json!(parameters.iter().map(|p| p.0).collect::<Vec<_>>());
-+                }
-+                CDeclKind::Typedef { typ, .. } => { row["kind"] = json!("typedef"); row["type_id"] = json!(typ.ctype.0); }
-+                CDeclKind::Struct { fields, .. } | CDeclKind::Union { fields, .. } => {
-+                    row["kind"] = json!(if matches!(self[d].kind, CDeclKind::Struct { .. }) { "struct" } else { "union" });
-+                    row["fields"] = json!(fields.as_ref().map(|fs| fs.iter().map(|f| f.0).collect::<Vec<_>>()));
-+                }
-+                CDeclKind::Enum { variants, .. } => { row["kind"] = json!("enum"); row["variants"] = json!(variants.iter().map(|v| v.0).collect::<Vec<_>>()); }
-+                _ => {}
-+            }
-+            row
-+        }).collect();
-+        let native_record_identities: Vec<_> = variables.iter().filter_map(|row| {
-+            let id = CDeclId(row["id"].as_u64()?);
-+            self.native_va_list_records.contains(&id).then(|| json!({
-+                "declaration": id.0, "identity": self.inventory_record_identity(id, 0)}))
-+        }).collect();
-+        let selected: HashSet<_> = expressions.iter().filter_map(|e| e["id"].as_u64()).collect();
-+        let unsupported_expressions: Vec<_> = self.c_exprs.iter().filter_map(|(id, _)| {
-+            let row = self.cursor_expression(*id);
-+            if row["kind"] != "unsupported" { return None; }
-+            Some(json!({"expression": id.0, "native_shape": self.format_expression_shape(*id), "type": row["type"],
-+                "within_slice": selected.contains(&id.0), "location": location(id.0),
-+                "relevance": {"state": "Unproved", "reason": if selected.contains(&id.0) {
-+                    "selected unsupported expression retains its complete structural children"
-+                } else { "outside selected slice; influence on formatting, control and effects is not established" }}}))
-+        }).collect();
-+        let cursor_events: Vec<_> = expressions.iter().filter(|e| e["kind"] == "call").map(|e| {
-+            json!({"expression": e["id"], "builtin": e["builtin"], "callee_declaration": e["callee_decl"],
-+                "operands": e["arguments"], "relation": {"state": "Unproved", "reason": "cursor state, forwarding, lifetime and repeated-use closure pending"}})
-+        }).collect();
-+        json!({"schema": 1, "authorization": "analysis_only", "status": "CompleteReport", "unit": unit,
-+            "target": self.target, "target_c_widths_bits": inventory["target_c_widths_bits"],
-+            "definitions": definitions, "function_edges": function_edges, "declarations": inventory["declarations"], "calls": calls,
-+            "unclassified_definitions": unclassified, "expressions": expressions, "statements": statements,
-+            "variables": variables, "types": type_rows.into_values().collect::<Vec<_>>(), "cursor_events": cursor_events,
-+            "native_record_identities": native_record_identities,
-+            "unsupported_expression_count": unsupported_expressions.len(), "unsupported_expressions": unsupported_expressions,
-+            "native_inputs": self.cursor_inputs.as_ref().map(|s| serde_json::from_str::<Value>(s).expect("native inputs")),
-+            "lowering": "not_authorized", "abi_execution": "Linux_x64_only_unrun"})
++    pub fn closed_format_report(&self, unit: &Path) -> ClosedFormatReport {
++        ClosedFormatReport::capture(self, unit)
 +    }
-+    /// Facts only. No inventory record authorizes lowering without the closed-program gates.
++
 +    pub fn closed_variadic_inventory(&self, unit: &Path) -> Value {
-+        let mut declarations = vec![];
-+        let mut owners = HashMap::new();
-+        for (id, decl) in self.iter_decls() {
-+            if let CDeclKind::Function {
-+                typ,
-+                body,
-+                parameters,
-+                ..
-+            } = &decl.kind
-+            {
-+                declarations.push(json!({
-+                    "id": id.0, "symbol": self.inventory_symbol(*id, unit),
-+                    "location": decl.begin_loc().map(|l| self.loc_to_string(l)),
-+                    "signature": self.inventory_type(CQualTypeId::new(*typ), 0),
-+                    "definition": body.is_some(),
-+                    "aliases": match &decl.kind { CDeclKind::Function { attrs, .. } => attrs.iter().filter_map(|a| match a { Attribute::Alias(name) => Some(name.clone()), _ => None }).collect::<Vec<_>>(), _ => vec![] },
-+                    "va_parameters": parameters.iter().filter(|p| match self[**p].kind {
-+                        CDeclKind::Variable { typ, .. } => self.is_va_list(typ.ctype), _ => false,
-+                    }).map(|p| p.0).collect::<Vec<_>>(),
-+                }));
-+                if let Some(body) = body {
-+                    for node in iterators::DFExpr::new(self, (*body).into()) {
-+                        if let Some(expr) = node.expr() {
-+                            owners.insert(expr, *id);
-+                        }
-+                    }
-+                }
-+            }
-+        }
-+        let mut direct_refs = HashSet::new();
-+        let mut calls = vec![];
-+        let mut expressions: Vec<_> = self.c_exprs.iter().collect();
-+        expressions.sort_by_key(|(id, _)| id.0);
-+        for (id, expr) in &expressions {
-+            if let CExprKind::Call(_, callee, args) = &expr.kind {
-+                let callee_id = self.inventory_callee(*callee);
-+                if callee_id.is_some() {
-+                    for node in iterators::DFExpr::new(self, (*callee).into()) {
-+                        if let Some(reference) = node.expr() {
-+                            direct_refs.insert(reference);
-+                        }
-+                    }
-+                }
-+                calls.push(json!({
-+                    "id": id.0, "owner": owners.get(id).map(|d| d.0),
-+                    "location": expr.begin_loc().map(|l| self.loc_to_string(l)),
-+                    "callee": callee_id.and_then(|d| self.inventory_symbol(d, unit)),
-+                    "arguments": args.iter().map(|arg| json!({
-+                        "id": arg.0,
-+                        "promotion_chain": self.inventory_promotions(*arg),
-+                        "type": self[*arg].kind.get_qual_type().map(|t| self.inventory_type(t, 0)),
-+                        "va_list": self[*arg].kind.get_qual_type().map(|t| self.is_va_list(t.ctype)),
-+                    })).collect::<Vec<_>>(),
-+                }));
-+            }
-+        }
-+        let mut escapes = vec![];
-+        let mut va_arg = vec![];
-+        for (id, expr) in expressions {
-+            match expr.kind {
-+                CExprKind::DeclRef(_, decl, _) if !direct_refs.contains(id) => {
-+                    if let Some(symbol) = self.inventory_symbol(decl, unit) {
-+                        escapes.push(json!({"symbol": symbol, "location": expr.begin_loc().map(|l| self.loc_to_string(l))}));
-+                    }
-+                }
-+                CExprKind::VAArg(_, _) => va_arg.push(json!({"owner": owners.get(id).map(|d| d.0), "location": expr.begin_loc().map(|l| self.loc_to_string(l))})),
-+                _ => (),
-+            }
-+        }
-+        json!({"schema": 2, "record_evidence_schema": 2, "record_definitions": self.inventory_record_definitions(), "unit": unit, "target": self.target,
-+            "target_c_widths_bits": {"char": self.target_c_widths[0], "short": self.target_c_widths[1], "int": self.target_c_widths[2], "long": self.target_c_widths[3], "long_long": self.target_c_widths[4], "pointer": self.target_c_widths[5], "float": self.target_c_widths[6], "double": self.target_c_widths[7]},
-+            "authorization": "inventory_only", "declarations": declarations,
-+            "calls": calls, "non_call_references": escapes, "va_arg": va_arg})
++        ReportGraph::capture(self, unit).inventory()
 +    }
++
 +}
 +
 +#[cfg(test)]
@@ -2958,15 +3345,69 @@ new file mode 100644
 +        ast.c_decls.insert(CDeclId(60), not_located(declaration));
 +        ast.linker_names.insert(CDeclId(60), "owner".into());
 +        ast.c_stmts.insert(CStmtId(60), not_located(CStmtKind::Decls(vec![CDeclId(50)])));
-+        let facts = ast.closed_format_facts(Path::new("body.c"));
++        let facts = ClosedFormatReport::capture(&ast, Path::new("body.c")).facts;
 +        assert_eq!(facts["native_record_identities"], json!([{
 +            "declaration": 20, "identity": ast.inventory_record_identity(CDeclId(20), 0)}]));
 +        assert!(facts["native_record_identities"][0]["identity"]["unproved"].is_string());
 +        ast.record_evidence.insert(CDeclId(20), RecordEvidence(2, "struct".into(), Some("native".into()),
 +            "/native.h".into(), 2, 1, "file".into(), None, false, true, None));
-+        let facts = ast.closed_format_facts(Path::new("body.c"));
++        let facts = ClosedFormatReport::capture(&ast, Path::new("body.c")).facts;
 +        assert_eq!(facts["native_record_identities"][0]["identity"]["physical"]["path"], "/native.h");
 +        assert_eq!(facts["native_record_identities"][0]["identity"], ast.inventory_type(q(2), 0)["canonical"]["record"]);
++    }
++
++    #[test]
++    fn closed_format_report_projects_wrapper_literals_and_shared_references() {
++        let mut ast = TypedAstContext::default();
++        let q = |id| CQualTypeId::new(CTypeId(id));
++        ast.c_types.insert(CTypeId(1), not_located(CTypeKind::Int));
++        ast.c_types.insert(CTypeId(2), not_located(CTypeKind::Function(q(1), vec![], true, false, true, CCallingConvention::C)));
++        let mut decl = function(CStmtId(99));
++        if let CDeclKind::Function { typ, body, .. } = &mut decl { *typ = CTypeId(2); *body = None; }
++        ast.c_decls.insert(CDeclId(10), not_located(decl));
++        ast.linker_names.insert(CDeclId(10), "format".into());
++        ast.c_exprs.insert(CExprId(1), not_located(CExprKind::DeclRef(q(2), CDeclId(10), LRValue::RValue)));
++        ast.c_exprs.insert(CExprId(2), not_located(CExprKind::Literal(q(1), CLiteral::String(vec![b'x'], 1))));
++        ast.c_exprs.insert(CExprId(3), not_located(CExprKind::Paren(q(1), CExprId(2))));
++        ast.c_exprs.insert(CExprId(4), not_located(CExprKind::Binary(q(1), CBinOp::Add, CExprId(1), CExprId(1), None, None)));
++        ast.c_exprs.insert(CExprId(5), not_located(CExprKind::Call(q(1), CExprId(1), vec![CExprId(3), CExprId(4)])));
++        let report = ClosedFormatReport::capture(&ast, Path::new("wrapper.c"));
++        let graph = ReportGraph::capture(&ast, Path::new("wrapper.c"));
++        assert_eq!(report.facts["schema"], 2);
++        assert_eq!(report.inventory, graph.inventory());
++        assert_eq!(graph.operand(CExprId(3))["direct_decl"], Value::Null);
++        assert_eq!(graph.operand(CExprId(3))["literal"], json!([b'x']));
++        assert_eq!(graph.operand(CExprId(4))["references"], json!([{"id": 1, "decl": 10}, {"id": 1, "decl": 10}]));
++        let raw = &graph.expressions[&CExprId(3)];
++        assert_eq!(raw["df_children"], json!([{"kind": "expression", "id": 2}]));
++        assert_eq!(raw["structural_children"], json!([{"kind": "type", "id": 1}, {"kind": "expression", "id": 2}]));
++    }
++
++    #[test]
++    fn closed_format_qualified_paths_use_compiler_qualifiers() {
++        let mut ast = TypedAstContext::default();
++        let mut original = CQualTypeId::new(CTypeId(1));
++        original.qualifiers.is_const = true;
++        ast.c_types.insert(CTypeId(1), not_located(CTypeKind::Int));
++        ast.c_types.insert(CTypeId(2), not_located(CTypeKind::Typedef(CDeclId(10))));
++        ast.c_types.insert(CTypeId(3), not_located(CTypeKind::Elaborated(CTypeId(2))));
++        ast.c_decls.insert(CDeclId(10), not_located(CDeclKind::Typedef {
++            name: "qualified_int".into(), typ: original, is_implicit: false, target_dependent_macro: None,
++        }));
++        ast.source_typedef_types.insert(CDeclId(10), original);
++        let mut source = CQualTypeId::new(CTypeId(3));
++        source.qualifiers.is_volatile = true;
++        let graph = ReportGraph::capture(&ast, Path::new("qualified.c"));
++        let normalized = graph.normalize(source);
++        assert_eq!(normalized["path"], json!([3, 2, 1]));
++        assert_eq!(normalized["normalized"]["type_id"], 1);
++        assert_eq!(normalized["normalized"]["const"], true);
++        assert_eq!(normalized["normalized"]["volatile"], true);
++        let view = graph.inventory_type(source, 0);
++        assert_eq!(view["canonical"]["kind"], "Int");
++        assert_eq!(view["const"], true);
++        assert_eq!(view["volatile"], true);
++        assert_eq!(graph.types[&CTypeId(2)]["original"], ReportGraph::qualified_key(original));
 +    }
 +
 +    fn not_located<T>(kind: T) -> Located<T> {
@@ -3431,6 +3872,10 @@ new file mode 100644
 +        }] {
 +            assert!(from_value::<RecordEvidence>(invalid).is_err());
 +        }
++        ast.c_decls.insert(CDeclId(9), not_located(CDeclKind::Typedef {
++            name: "original_long".into(), typ: CQualTypeId::new(CTypeId(8)),
++            is_implicit: false, target_dependent_macro: None,
++        }));
 +        let a = ast.closed_variadic_inventory(Path::new("caller.c"));
 +        let b = ast.closed_variadic_inventory(Path::new("definition.c"));
 +        assert_eq!(a["declarations"][0]["symbol"]["linker"], "asm_format");
@@ -3550,16 +3995,17 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
      ) {
          Err(e) => {
              warn!(
-@@ -718,6 +722,32 @@
+@@ -718,6 +722,34 @@
      if tcfg.pretty_typed_context {
          println!("Pretty-printed Clang AST");
          println!("{:#?}", Printer::new(io::stdout()).print(&typed_context));
 +    }
 +
-+    if tcfg.emit_closed_format_facts {
++    let mut closed_report = tcfg.emit_closed_format_facts.then(|| typed_context.closed_format_report(input_path));
++    if let Some(report) = &mut closed_report {
 +        let typed_ast = format!("{typed_context:#?}");
 +        let raw_cbor = std::fs::read(output_path.with_extension("cursor.cbor")).expect("read session CBOR");
-+        let mut facts = typed_context.closed_format_facts(input_path);
++        let facts = &mut report.facts;
 +        facts["compiler_session"] = serde_json::json!({
 +            "raw_cbor_sha256": c2rust_ast_exporter::sha256(&raw_cbor),
 +            "typed_ast_sha256": c2rust_ast_exporter::sha256(typed_ast.as_bytes())});
@@ -3577,7 +4023,8 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
 +    }
 +    if tcfg.emit_variadic_inventory || tcfg.emit_c_decl_map || tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts {
 +        let inventory_path = output_path.with_extension("variadic.json");
-+        let inventory = typed_context.closed_variadic_inventory(input_path);
++        let inventory = closed_report.as_ref().map(|report| report.inventory.clone())
++            .unwrap_or_else(|| typed_context.closed_variadic_inventory(input_path));
 +        let file = File::create(&inventory_path).expect("create closed variadic inventory");
 +        serde_json::to_writer_pretty(file, &inventory).expect("write closed variadic inventory");
      }

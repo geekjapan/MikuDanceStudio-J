@@ -129,7 +129,6 @@ def cursor_command_units(entries):
 
 
 def verify_native_cursor_inputs(raw, unit, target, command, *, read_current=True):
-    """Revalidate cached native facts, optionally including the current source files."""
     def canonical_path(value):
         return str(Path(value).resolve()) if read_current else str(PurePosixPath(value))
     facts = raw.get('native_inputs')
@@ -319,7 +318,6 @@ def collect_cursor_witness(tool, database, output, run, symbol):
 
 
 def collect_closed_format_facts(tool, database, output, run, syntax):
-    """Hosted-only paired emission. Default replay lives in closed_format_facts."""
     from closed_format_facts import FactsError, manifest, replay
     from closed_variadic_plan import build_plan
     output.mkdir(parents=True, exist_ok=False)
@@ -384,18 +382,18 @@ def collect_closed_format_facts(tool, database, output, run, syntax):
         tool_root = tool.parent.parent
         retained = output / 'tool'
         retained.mkdir()
-        tool_files = {'compiler': tool, 'source_receipt': tool_root / 'source-receipt.json',
-                      'patch': tool_root / 'source-evidence/c2rust-source.patch',
-                      'source_evidence': tool_root / 'source-evidence/c2rust-patch.json'}
-        names = {}
-        for label, path in tool_files.items():
-            target = retained / path.name
-            shutil.copy2(path, target)
-            names[label] = target.relative_to(output).as_posix()
+        (retained / 'bin').mkdir()
+        for name in ('c2rust', 'c2rust-transpile'):
+            shutil.copy2(tool_root / 'bin' / name, retained / 'bin' / name)
+        shutil.copy2(tool_root / 'source-receipt.json', retained / 'source-receipt.json')
+        shutil.copytree(tool_root / 'source-evidence', retained / 'source-evidence')
+        names = {'compiler': 'tool/bin/c2rust-transpile', 'source_receipt': 'tool/source-receipt.json',
+                 'patch': 'tool/source-evidence/c2rust-source.patch',
+                 'source_evidence': 'tool/source-evidence/c2rust-patch.json'}
         snapshots = output / 'verifier-source'
         snapshots.mkdir()
         verifier_sources = {}
-        for name in ('closed_format_facts.py', 'full_compiler.py', 'probe.py'):
+        for name in ('closed_format_facts.py', 'full_compiler.py', 'probe.py', 'apply_c2rust_patch.py'):
             shutil.copy2(Path(__file__).with_name(name), snapshots / name)
             verifier_sources[name] = 'verifier-source/' + name
         packet = {'schema': 1, 'authorization': 'analysis_only', 'units': pairs, 'tool': names,
@@ -419,7 +417,6 @@ def collect_closed_format_facts(tool, database, output, run, syntax):
 
 
 def collect_closed_format_fixture(tool, clang, output, run):
-    """Hosted source fixture tests native extraction, including presumed locations."""
     output.mkdir(parents=True, exist_ok=False)
     source = output / 'facts.c'
     source.write_text('''#include <stdarg.h>
@@ -468,6 +465,14 @@ void caller(int choose) {
     if len(paths) != 1:
         raise ValueError('format fixture raw fact coverage differs')
     facts = json.loads(paths[0].read_text())
+    from closed_format_facts import check_unit, sha
+    prefix = paths[0].name.removesuffix('.closed-format.json')
+    check_unit(facts, json.loads(paths[0].with_name(prefix + '.variadic.json').read_text()),
+               json.loads(database.read_text())[0])
+    if facts['compiler_session'] != {
+            'raw_cbor_sha256': sha(paths[0].with_name(prefix + '.cursor.cbor').read_bytes()),
+            'typed_ast_sha256': sha(paths[0].with_name(prefix + '.typed-ast.txt').read_bytes())}:
+        raise ValueError('fixture compiler session binding differs')
     definitions = {key: row for row in facts['definitions'] for key in [row['symbol'].get('linker')]}
     if not {'consume', 'produce'} <= definitions.keys():
         raise ValueError('format fixture cursor consumer omitted')

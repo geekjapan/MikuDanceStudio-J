@@ -1,13 +1,16 @@
 diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/AstExporter.cpp
 --- a/c2rust-ast-exporter/src/AstExporter.cpp
 +++ b/c2rust-ast-exporter/src/AstExporter.cpp
-@@ -5,4 +5,5 @@
+@@ -4,6 +4,7 @@
+ #include <fstream>
  #include <iostream>
  #include <iterator>
 +#include <map>
  #include <optional>
  #include <set>
-@@ -13,5 +14,13 @@
+ #include <unordered_map>
+@@ -12,7 +13,15 @@
+
  #include "llvm/Support/CommandLine.h"
  #include "llvm/Support/Debug.h"
 +#include "llvm/Support/ErrorHandling.h"
@@ -21,21 +24,27 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +#include "clang/Lex/HeaderSearchOptions.h"
  #include "llvm/Support/raw_ostream.h"
  // Declares clang::SyntaxOnlyAction.
-@@ -59,4 +68,6 @@
+ #include "clang/Frontend/FrontendActions.h"
+@@ -58,6 +67,8 @@
+ using clang::ASTContext;
  using clang::QualType;
  using std::string;
 +
 +static llvm::cl::opt<bool> CaptureCursorInputs("c2rust-cursor-inputs", llvm::cl::init(false));
 
  namespace { // for local definitions, preferred to making each `static`
-@@ -224,4 +235,6 @@
+
+@@ -223,6 +234,8 @@
+
    public:
      uintptr_t encodeQualType(QualType t) {
 +        while (const auto *macro = dyn_cast<MacroQualifiedType>(t.getTypePtr()))
 +            t = macro->getUnderlyingType().withCVRQualifiers(t.getCVRQualifiers());
          auto s = t.split();
 
-@@ -260,4 +273,8 @@
+         auto desugared = sugared->find((void *)s.Ty);
+@@ -259,6 +272,10 @@
+
      void VisitQualType(const QualType &QT) {
          if (!QT.isNull()) {
 +            if (const auto *macro = dyn_cast<MacroQualifiedType>(QT.getTypePtr())) {
@@ -44,14 +53,18 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +            }
              auto s = QT.split();
 
-@@ -272,5 +289,5 @@
+             auto desugared = sugared->find((void *)s.Ty);
+@@ -271,7 +288,7 @@
+     }
 
      void VisitAttributedType(const AttributedType *T) {
 -        auto t = T->getModifiedType();
 +        auto t = T->isCallingConv() ? T->getEquivalentType() : T->getModifiedType();
          auto qt = encodeQualType(t);
          auto k = T->getAttrKind();
-@@ -578,5 +595,11 @@
+
+@@ -577,7 +594,13 @@
+             }
          }();
 
 -        encodeType(T, tag);
@@ -64,7 +77,9 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +        }
      }
 
-@@ -586,4 +609,13 @@
+     // Clang represents function declarations with parameters as
+@@ -585,6 +608,15 @@
+     // handled as `FunctionNoPrototype` instances. Note: we could handle both
      // cases by overriding `VisitFunctionType` instead of the current
      // two-function solution.
 +    static const char *callingConvention(const clang::FunctionType *T) {
@@ -78,19 +93,25 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +
      void VisitFunctionProtoType(const FunctionProtoType *T) {
          LLVM_DEBUG(dbgs() << "Visit ");
-@@ -609,4 +641,5 @@
+         LLVM_DEBUG(T->dump());
+@@ -608,6 +640,7 @@
+             cbor_encode_boolean(local, T->getExtProtoInfo().Variadic);
              cbor_encode_boolean(local, T->getNoReturnAttr());
              cbor_encode_boolean(local, true); // has arguments
 +            cbor_encode_text_stringz(local, callingConvention(T));
          });
 
-@@ -632,4 +665,5 @@
+         VisitQualType(T->getReturnType());
+@@ -631,6 +664,7 @@
+             cbor_encode_boolean(local, false); // Variable argument function
              cbor_encode_boolean(local, T->getNoReturnAttr());
              cbor_encode_boolean(local, false); // has arguments
 +            cbor_encode_text_stringz(local, callingConvention(T));
          });
 
-@@ -2253,4 +2287,25 @@
+         VisitQualType(T->getReturnType());
+@@ -2252,6 +2286,27 @@
+                 }
 
                  cbor_encoder_close_container(array, &attr_array);
 +                const AsmLabelAttr *label = nullptr;
@@ -116,7 +137,9 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +                cbor_encode_text_stringz(array, semantic);
              });
          typeEncoder.VisitQualTypeOf(functionType, paramsFD);
-@@ -2344,7 +2399,19 @@
+
+@@ -2343,9 +2398,21 @@
+                 }
 
                  cbor_encoder_close_container(array, &attr_array);
 +                if (CaptureCursorInputs && Context->hasSameType(VD->getType(), Context->getBuiltinVaListType())) {
@@ -136,7 +159,9 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +            typeEncoder.VisitQualType(Context->getCanonicalType(Context->getBuiltinVaListType()));
 
          return true;
-@@ -2358,4 +2425,45 @@
+     }
+@@ -2357,6 +2424,47 @@
+      Extras:
       - name as string
       */
 +    void encodeRecordEvidence(CborEncoder *enc, const TagDecl *decl) {
@@ -182,27 +207,34 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +
      bool VisitRecordDecl(RecordDecl *D) {
          if (!D->isCanonicalDecl()) {
-@@ -2449,4 +2557,6 @@
+             // Emit non-canonical decl so we have a placeholder to attach comments to.
+@@ -2448,6 +2556,8 @@
+
                  // 7. Encode the platform specific alignment of this record
                  cbor_encode_uint(local, recordAlignment);
 +                encodeRecordEvidence(local, D);
 +                cbor_encode_boolean(local, CaptureCursorInputs && D == Context->getVaListTagDecl());
              });
 
-@@ -2468,5 +2578,5 @@
+         return true;
+@@ -2467,13 +2577,14 @@
+         typeEncoder.VisitQualTypeOf(underlying_type, D);
 
          encode_entry(D, TagEnumDecl, childIds, underlying_type,
 -                     [D](CborEncoder *local) {
 +                     [this, D](CborEncoder *local) {
                           auto name = D->getNameAsString();
                           if (name.empty()) {
-@@ -2475,4 +2585,5 @@
+                              cbor_encode_null(local);
+                          } else {
                               cbor_encode_string(local, name);
                           }
 +                         encodeRecordEvidence(local, D);
                       });
 
-@@ -3003,15 +3114,276 @@
+         return true;
+@@ -3002,17 +3113,278 @@
+   VisitQualType(t);
  }
 
 +
@@ -482,14 +514,18 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +    void finish(clang::ASTContext &Context) {
          CborEncoder encoder;
 
-@@ -3027,5 +3399,5 @@
+         // There are some type nodes (see `TypedefType` and `RecordType`) which
+@@ -3026,7 +3398,7 @@
+             cbor_encoder_init(&encoder, buffer, len, 0);
 
              CborEncoder outer;
 -            cbor_encoder_create_array(&encoder, &outer, 6);
 +            cbor_encoder_create_array(&encoder, &outer, 8);
 
              CborEncoder array;
-@@ -3137,4 +3509,14 @@
+
+@@ -3136,6 +3508,16 @@
+             auto target = Context.getTargetInfo().getTriple().str();
              cbor_encode_string(&outer, target);
 
 +            CborEncoder widths;
@@ -504,7 +540,9 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +            else cbor_encode_null(&outer);
              cbor_encoder_close_container(&encoder, &outer);
          };
-@@ -3159,7 +3541,13 @@
+
+@@ -3158,9 +3540,15 @@
+
  class TranslateAction : public clang::ASTFrontendAction {
      Outputs *outputs;
 +    const std::vector<std::string> *argv;
@@ -519,7 +557,9 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +    TranslateAction(Outputs *outputs, const std::vector<std::string> *argv) : outputs(outputs), argv(argv) {}
 
      virtual std::unique_ptr<clang::ASTConsumer>
-@@ -3176,6 +3564,13 @@
+     CreateASTConsumer(clang::CompilerInstance &Compiler,
+@@ -3175,8 +3563,15 @@
+             return nullptr;
          }
 
 -        return std::unique_ptr<clang::ASTConsumer>(
@@ -535,7 +575,9 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +        return result;
      }
  };
-@@ -3271,15 +3666,16 @@
+
+@@ -3270,17 +3665,18 @@
+
  class MyFrontendActionFactory : public FrontendActionFactory {
      Outputs *outputs;
 +    const std::vector<std::string> *argv;
@@ -555,7 +597,9 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +        return std::make_unique<TranslateAction>(outputs, argv);
      }
  #endif // CLANG_VERSION_MAJOR
-@@ -3374,5 +3770,10 @@
+ };
+@@ -3373,7 +3769,12 @@
+     ClangTool Tool(OptionsParser.getCompilations(), sourcePathList);
 
      Outputs outputs;
 -    MyFrontendActionFactory myFrontendActionFactory(&outputs);
@@ -567,6 +611,18 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +    MyFrontendActionFactory myFrontendActionFactory(&outputs, &adjustedArgv);
 
      *result = Tool.run(&myFrontendActionFactory);
+     assert(outputs.size() == 1 && "Expected exactly one output.");
+@@ -3411,5 +3812,10 @@
+
+ void drop_export_result(ExportResult *result) { delete result; }
+
++void c2rust_sha256(const uint8_t *data, size_t size, uint8_t *output) {
++    auto hash = llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(data, size));
++    std::copy(hash.begin(), hash.end(), output);
++}
++
+ const char *clang_version() { return "" CLANG_VERSION_STRING; }
+ }
 diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_ast/conversion.rs
 --- a/c2rust-transpile/src/c_ast/conversion.rs
 +++ b/c2rust-transpile/src/c_ast/conversion.rs
@@ -1803,7 +1859,7 @@ diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/sr
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_variadic.rs
-@@ -0,0 +1,1560 @@
+@@ -0,0 +1,1630 @@
 +use super::*;
 +use serde_json::{Value, json};
 +
@@ -2597,6 +2653,9 @@ new file mode 100644
 +            let format_position = if variadic == Some(true) { fixed.checked_sub(1) } else {
 +                parameters.iter().position(|p| va_parameters.contains(p)).and_then(|p| p.checked_sub(1))
 +            };
++            pending.push(iterators::SomeId::Decl(*id));
++            pending.extend(parameters.iter().map(|p| iterators::SomeId::Decl(*p)));
++            pending.push(iterators::SomeId::Type(*typ));
 +            relevant.insert(*id, (fixed, format_position));
 +            function_edges.push(json!({"declaration": id.0, "parameters": parameters.iter().map(|p| p.0).collect::<Vec<_>>(),
 +                "fixed_count": fixed, "format_position": format_position,
@@ -2634,25 +2693,51 @@ new file mode 100644
 +        let mut expressions = BTreeSet::new();
 +        let mut statements = BTreeSet::new();
 +        let mut declarations = BTreeSet::new();
++        let mut type_rows = BTreeMap::new();
 +        while let Some(node) = pending.pop() {
-+            if node.type_().is_some() || !visited.insert(node) { continue; }
++            if !visited.insert(node) { continue; }
++            if let Some(id) = node.type_() {
++                let (row, children) = self.required_type_relation(id);
++                pending.extend(children.into_iter().map(iterators::SomeId::Type));
++                if let Some(decl) = row["declaration"].as_u64() { pending.push(iterators::SomeId::Decl(CDeclId(decl))); }
++                type_rows.insert(id, row);
++                continue;
++            }
 +            if let Some(id) = node.expr() {
 +                expressions.insert(id);
-+                if let CExprKind::DeclRef(_, decl, _) = self[id].kind { declarations.insert(decl); }
++                if let Some(typ) = self[id].kind.get_qual_type() { pending.push(iterators::SomeId::Type(typ.ctype)); }
++                if let CExprKind::ImplicitCast(_, _, _, Some(field), _) | CExprKind::ExplicitCast(_, _, _, Some(field), _) = self[id].kind {
++                    pending.push(iterators::SomeId::Decl(field));
++                }
++                if let CExprKind::DeclRef(_, decl, _) = self[id].kind { pending.push(iterators::SomeId::Decl(decl)); }
++                if let CExprKind::Member(_, _, member, _, _) = self[id].kind { pending.push(iterators::SomeId::Decl(member)); }
 +            }
 +            if let Some(id) = node.stmt() { statements.insert(id); }
 +            if let Some(id) = node.decl() {
 +                declarations.insert(id);
-+                if !matches!(self[id].kind, CDeclKind::Variable { .. }) { continue; }
++                if let Some(ids) = owners.get(&id) {
++                    pending.extend(ids.iter().map(|d| iterators::SomeId::Decl(*d)));
++                }
++                if let Some((declared, builtin, _)) = self.native_cursor_types.get(&id) {
++                    pending.extend([iterators::SomeId::Type(declared.ctype), iterators::SomeId::Type(builtin.ctype)]);
++                }
++                if let CDeclKind::Function { typ, ref parameters, .. } = self[id].kind {
++                    pending.push(iterators::SomeId::Type(typ));
++                    pending.extend(parameters.iter().map(|p| iterators::SomeId::Decl(*p)));
++                    continue;
++                }
 +            }
-+            pending.extend(iterators::immediate_children_all_types(self, node).into_iter().filter(|n| n.type_().is_none()));
-+        }
-+        for definition in &definitions {
-+            for parameter in definition["parameters"].as_array().unwrap() { declarations.insert(CDeclId(parameter.as_u64().unwrap())); }
++            pending.extend(iterators::immediate_children_all_types(self, node));
 +        }
 +        let expressions: Vec<_> = expressions.into_iter().map(|id| {
 +            let mut row = self.cursor_expression(id);
 +            row["location"] = location(id.0);
++            if let CExprKind::Call(_, callee, _) = self[id].kind {
++                row["callee_expression"] = json!(callee.0);
++                let mut reference = callee;
++                while let CExprKind::Paren(_, inner) | CExprKind::ImplicitCast(_, inner, _, _, _) = self[reference].kind { reference = inner; }
++                row["callee_reference"] = json!(reference.0);
++            }
 +            row["children"] = json!(iterators::immediate_children_all_types(self, id.into()).into_iter()
 +                .filter_map(|n| n.expr().map(|e| e.0)).collect::<Vec<_>>());
 +            row["edge_count"] = json!(row["children"].as_array().unwrap().len());
@@ -2665,28 +2750,68 @@ new file mode 100644
 +            row
 +        }).collect();
 +        let statements: Vec<_> = statements.into_iter().map(|id| {
-+            let kind = match self[id].kind {
-+                CStmtKind::Compound(..) => "compound", CStmtKind::Expr(..) => "expression", CStmtKind::Decls(..) => "declarations",
-+                CStmtKind::Return(..) => "return", CStmtKind::If { .. } | CStmtKind::Switch { .. } => "branch",
-+                CStmtKind::While { .. } | CStmtKind::DoWhile { .. } | CStmtKind::ForLoop { .. } => "loop",
-+                CStmtKind::Break => "break", CStmtKind::Continue => "continue", CStmtKind::Goto(..) => "goto",
-+                CStmtKind::Empty => "empty", _ => "unsupported",
++            let mut children = vec![];
++            let mut edge = |role: &str, node: iterators::SomeId| {
++                let (kind, id) = if let Some(id) = node.stmt() { ("statement", id.0) }
++                    else if let Some(id) = node.expr() { ("expression", id.0) }
++                    else { ("declaration", node.decl().expect("structural declaration").0) };
++                children.push(json!({"role": role, "kind": kind, "id": id}));
 +            };
-+            let edge_count = iterators::immediate_children_all_types(self, id.into()).into_iter().filter(|n| n.type_().is_none()).count();
-+            json!({"id": id.0, "kind": kind, "location": location(id.0), "edge_count": edge_count,
-+                "children": iterators::immediate_children_all_types(self, id.into()).into_iter().filter_map(|n| {
-+                    if let Some(s) = n.stmt() { Some(json!({"kind": "statement", "id": s.0})) }
-+                    else if let Some(e) = n.expr() { Some(json!({"kind": "expression", "id": e.0})) }
-+                    else { n.decl().map(|d| json!({"kind": "declaration", "id": d.0})) }
-+                }).collect::<Vec<_>>(), "flow": {"state": "Unproved", "reason": "structural edges only; execution and cursor state relations not established"}})
++            let (kind, shape) = match &self[id].kind {
++                CStmtKind::Compound(items) => { for s in items { edge("item", (*s).into()); } ("compound", "Compound") }
++                CStmtKind::Expr(e) => { edge("expression", (*e).into()); ("expression", "Expr") }
++                CStmtKind::Decls(items) => { for d in items { edge("declaration", (*d).into()); } ("declarations", "Decls") }
++                CStmtKind::Return(e) => { for e in e { edge("value", (*e).into()); } ("return", if e.is_some() { "ReturnValue" } else { "ReturnVoid" }) }
++                CStmtKind::If { scrutinee, true_variant, false_variant } => {
++                    edge("condition", (*scrutinee).into()); edge("then", (*true_variant).into());
++                    for s in false_variant { edge("else", (*s).into()); } ("branch", if false_variant.is_some() { "IfElse" } else { "If" })
++                }
++                CStmtKind::Switch { scrutinee, body } => { edge("condition", (*scrutinee).into()); edge("body", (*body).into()); ("branch", "Switch") }
++                CStmtKind::While { condition, body } => { edge("condition", (*condition).into()); edge("body", (*body).into()); ("loop", "While") }
++                CStmtKind::DoWhile { condition, body } => { edge("body", (*body).into()); edge("condition", (*condition).into()); ("loop", "DoWhile") }
++                CStmtKind::ForLoop { init, condition, increment, body } => {
++                    for s in init { edge("init", (*s).into()); } for e in condition { edge("condition", (*e).into()); }
++                    for e in increment { edge("increment", (*e).into()); } edge("body", (*body).into());
++                    let mask = usize::from(init.is_some()) * 4 + usize::from(condition.is_some()) * 2 + usize::from(increment.is_some());
++                    ("loop", ["ForLoop000", "ForLoop001", "ForLoop010", "ForLoop011", "ForLoop100", "ForLoop101", "ForLoop110", "ForLoop111"][mask])
++                }
++                CStmtKind::Label(s) => { edge("body", (*s).into()); ("label", "Label") }
++                CStmtKind::Case(e, s, _) => { edge("value", (*e).into()); edge("body", (*s).into()); ("label", "Case") }
++                CStmtKind::Default(s) => { edge("body", (*s).into()); ("label", "Default") }
++                CStmtKind::Attributed { substatement, .. } => { edge("body", (*substatement).into()); ("attributed", "Attributed") }
++                CStmtKind::Goto(_) => ("goto", "Goto"), CStmtKind::Break => ("break", "Break"),
++                CStmtKind::Continue => ("continue", "Continue"), CStmtKind::Empty => ("empty", "Empty"),
++                CStmtKind::Asm { .. } => {
++                    for n in iterators::immediate_children_all_types(self, id.into()) { edge("operand", n); } ("unsupported", "Asm")
++                }
++                CStmtKind::BadStmt => ("unsupported", "BadStmt"),
++            };
++            let label_target = match self[id].kind { CStmtKind::Goto(label) => Some(label.0), _ => None };
++            json!({"id": id.0, "kind": kind, "label_target": label_target, "native_shape": shape, "location": location(id.0), "edge_count": children.len(),
++                "children": children, "flow": {"state": "Unproved", "reason": "structural edges only; execution and cursor state relations not established"}})
 +        }).collect();
-+        let variables: Vec<_> = declarations.into_iter().map(|d| self.cursor_declaration(d, &owners)).collect();
-+        let mut types = BTreeMap::new();
-+        for row in expressions.iter().chain(variables.iter()) {
-+            if let Some(id) = row["type_id"].as_u64() {
-+                self.required_type_closure(CTypeId(id), &mut types, &mut HashSet::new(), &mut HashMap::new(), 0);
++        let variables: Vec<_> = declarations.into_iter().map(|d| {
++            let mut row = self.cursor_declaration(d, &owners);
++            let parameter_owners: Vec<_> = self.iter_decls().filter_map(|(owner, decl)| match &decl.kind {
++                CDeclKind::Function { parameters, .. } if parameters.contains(&d) => Some(owner.0), _ => None,
++            }).collect();
++            row["parameter_owners"] = json!(parameter_owners);
++            match &self[d].kind {
++                CDeclKind::Function { typ, parameters, .. } => {
++                    row["kind"] = json!("function"); row["type_id"] = json!(typ.0);
++                    row["builtin"] = json!(self.cursor_builtin_identity.get(&d));
++                    row["parameters"] = json!(parameters.iter().map(|p| p.0).collect::<Vec<_>>());
++                }
++                CDeclKind::Typedef { typ, .. } => { row["kind"] = json!("typedef"); row["type_id"] = json!(typ.ctype.0); }
++                CDeclKind::Struct { fields, .. } | CDeclKind::Union { fields, .. } => {
++                    row["kind"] = json!(if matches!(self[d].kind, CDeclKind::Struct { .. }) { "struct" } else { "union" });
++                    row["fields"] = json!(fields.as_ref().map(|fs| fs.iter().map(|f| f.0).collect::<Vec<_>>()));
++                }
++                CDeclKind::Enum { variants, .. } => { row["kind"] = json!("enum"); row["variants"] = json!(variants.iter().map(|v| v.0).collect::<Vec<_>>()); }
++                _ => {}
 +            }
-+        }
++            row
++        }).collect();
 +        let selected: HashSet<_> = expressions.iter().filter_map(|e| e["id"].as_u64()).collect();
 +        let unsupported_expressions: Vec<_> = self.c_exprs.iter().filter_map(|(id, _)| {
 +            let row = self.cursor_expression(*id);
@@ -2705,7 +2830,7 @@ new file mode 100644
 +            "target": self.target, "target_c_widths_bits": inventory["target_c_widths_bits"],
 +            "definitions": definitions, "function_edges": function_edges, "declarations": inventory["declarations"], "calls": calls,
 +            "unclassified_definitions": unclassified, "expressions": expressions, "statements": statements,
-+            "variables": variables, "types": types.into_values().map(|(row, _)| row).collect::<Vec<_>>(), "cursor_events": cursor_events,
++            "variables": variables, "types": type_rows.into_values().collect::<Vec<_>>(), "cursor_events": cursor_events,
 +            "unsupported_expression_count": unsupported_expressions.len(), "unsupported_expressions": unsupported_expressions,
 +            "native_inputs": self.cursor_inputs.as_ref().map(|s| serde_json::from_str::<Value>(s).expect("native inputs")),
 +            "lowering": "not_authorized", "abi_execution": "Linux_x64_only_unrun"})
@@ -2794,6 +2919,7 @@ new file mode 100644
 +
 +    #[test]
 +    fn closed_format_facts_consumption_retains_stars_lengths_and_unknowns() {
++        assert_eq!(c2rust_ast_exporter::sha256(b""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 +        let parsed = TypedAstContext::format_consumption(b"%*.*zu:%lld:%s\0");
 +        assert_eq!(parsed["state"], "Parsed");
 +        assert_eq!(parsed["arguments"], 5);
@@ -3365,10 +3491,9 @@ new file mode 100644
 +    }
 +}
 diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
-index 28d34bd..67a525e 100644
 --- a/c2rust-transpile/src/lib.rs
 +++ b/c2rust-transpile/src/lib.rs
-@@ -75,6 +75,9 @@ pub struct TranspilerConfig {
+@@ -75,6 +75,9 @@
      pub verbose: bool,
      pub debug_ast_exporter: bool,
      pub emit_c_decl_map: bool,
@@ -3378,7 +3503,7 @@ index 28d34bd..67a525e 100644
 
      // Options that control translation
      pub incremental_relooper: bool,
-@@ -682,6 +685,7 @@ fn transpile_single(
+@@ -682,6 +685,7 @@
          extra_clang_args,
          tcfg.debug_ast_exporter,
          tcfg.emit_c_decl_map,
@@ -3386,15 +3511,22 @@ index 28d34bd..67a525e 100644
      ) {
          Err(e) => {
              warn!(
-@@ -720,6 +724,27 @@ fn transpile_single(
+@@ -718,6 +722,32 @@
+     if tcfg.pretty_typed_context {
+         println!("Pretty-printed Clang AST");
          println!("{:#?}", Printer::new(io::stdout()).print(&typed_context));
-     }
-
++    }
++
 +    if tcfg.emit_closed_format_facts {
-+        let facts = typed_context.closed_format_facts(input_path);
++        let typed_ast = format!("{typed_context:#?}");
++        let raw_cbor = std::fs::read(output_path.with_extension("cursor.cbor")).expect("read session CBOR");
++        let mut facts = typed_context.closed_format_facts(input_path);
++        facts["compiler_session"] = serde_json::json!({
++            "raw_cbor_sha256": c2rust_ast_exporter::sha256(&raw_cbor),
++            "typed_ast_sha256": c2rust_ast_exporter::sha256(typed_ast.as_bytes())});
 +        serde_json::to_writer_pretty(File::create(output_path.with_extension("closed-format.json")).expect("create format facts"), &facts)
 +            .expect("write format facts");
-+        std::fs::write(output_path.with_extension("typed-ast.txt"), format!("{typed_context:#?}"))
++        std::fs::write(output_path.with_extension("typed-ast.txt"), typed_ast)
 +            .expect("retain format typed AST");
 +    }
 +    if tcfg.emit_cursor_witness {
@@ -3409,11 +3541,9 @@ index 28d34bd..67a525e 100644
 +        let inventory = typed_context.closed_variadic_inventory(input_path);
 +        let file = File::create(&inventory_path).expect("create closed variadic inventory");
 +        serde_json::to_writer_pretty(file, &inventory).expect("write closed variadic inventory");
-+    }
-+
+     }
+
      // Extract preprocessed text for each function definition so the C decl
-     // map can carry it alongside the original source snippet.
-     let preprocessed_definitions = preprocessed_source
 diff --git a/c2rust/src/bin/c2rust-transpile.rs b/c2rust/src/bin/c2rust-transpile.rs
 index ce727c0..1bd3954 100644
 --- a/c2rust/src/bin/c2rust-transpile.rs
@@ -3478,7 +3608,22 @@ index d763a1d..566adfd 100644
 diff --git a/c2rust-ast-exporter/src/lib.rs b/c2rust-ast-exporter/src/lib.rs
 --- a/c2rust-ast-exporter/src/lib.rs
 +++ b/c2rust-ast-exporter/src/lib.rs
-@@ -37,10 +37,25 @@
+@@ -14,6 +14,13 @@
+     fn default() -> Self {
+         Self::CharPtrBuiltinVaList
+     }
++}
++
++pub fn sha256(data: &[u8]) -> String {
++    extern "C" { fn c2rust_sha256(data: *const u8, size: usize, output: *mut u8); }
++    let mut output = [0u8; 32];
++    unsafe { c2rust_sha256(data.as_ptr(), data.len(), output.as_mut_ptr()); }
++    output.iter().map(|b| format!("{b:02x}")).collect()
+ }
+
+ pub fn get_clang_major_version() -> Option<u32> {
+@@ -36,12 +43,27 @@
+     extra_args: &[&str],
      debug: bool,
      emit_preprocessed: bool,
 +    retained_cbor: Option<&Path>,
@@ -3509,13 +3654,17 @@ diff --git a/c2rust-ast-exporter/src/lib.rs b/c2rust-ast-exporter/src/lib.rs
 +    }
 
      // let cbor_path = file_path.with_extension("cbor");
-@@ -72,4 +87,5 @@
+     // let mut cbor_file = File::create(&cbor_path)?;
+@@ -71,6 +93,7 @@
+     extra_args: &[&str],
      debug: bool,
      emit_preprocessed: bool,
 +    cursor_inputs: bool,
  ) -> HashMap<String, (Vec<u8>, Option<String>)> {
      let mut args_owned = vec![CString::new("ast_exporter").unwrap()];
-@@ -81,4 +97,6 @@
+     args_owned.push(CString::new(file_path.to_str().unwrap()).unwrap());
+@@ -80,5 +103,7 @@
+     for &arg in extra_args {
          args_owned.push(CString::new(["-extra-arg=", arg].join("")).unwrap())
      }
 +

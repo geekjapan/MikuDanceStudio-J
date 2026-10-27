@@ -6,7 +6,7 @@ import os
 from pathlib import Path, PurePosixPath
 import sys
 
-from full_compiler import UNITS, verify_native_cursor_inputs
+from full_compiler import UNITS, verify_cursor_tool, verify_native_cursor_inputs
 
 MAX_FILE = 512 * 1024 * 1024
 MAX_PACKET = 4 * 1024 * 1024 * 1024
@@ -115,6 +115,21 @@ def unproved(row):
          'relation requires a concrete Unproved record; no proof is admitted')
 
 
+def check_invocation(native, command):
+    # AstExporter.cpp augment_argv and LLVM 18 ClangTool, retained all24 commands.
+    additions = ['-fno-builtin-strlen', '-fparse-all-comments', '-Wwrite-strings',
+                 '-D_FORTIFY_SOURCE=0', '-DC2RUST=1',
+                 '-resource-dir=/usr/lib/llvm-18/bin/../lib/clang/18', '-fsyntax-only']
+    need(native['adjusted_driver_argv'] == command['arguments'] + additions,
+         'compile database differs from actual adjusted invocation')
+    cc1 = native['regenerated_cc1_argv']
+    for pair in (['-x', 'c'], ['-triple', native['target']],
+                 ['-resource-dir', '/usr/lib/llvm-18/bin/../lib/clang/18']):
+        need(any(cc1[i:i + 2] == pair for i in range(len(cc1) - 1)), 'regenerated invocation identity differs')
+    need(command['file'] in cc1 and '-fdebug-compilation-dir=' + command['directory'] in cc1,
+         'regenerated source or cwd differs')
+
+
 def check_unit(facts, inventory, command):
     need(facts.get('schema') == 1 and facts.get('authorization') == 'analysis_only'
          and facts.get('status') == 'CompleteReport' and facts.get('lowering') == 'not_authorized',
@@ -127,6 +142,7 @@ def check_unit(facts, inventory, command):
               long_long=64, pointer=64, float=32, double=64), 'unretained target ABI')
     verify_native_cursor_inputs(facts, unit, facts['target'], command, read_current=False)
     native = facts['native_inputs']
+    check_invocation(native, command)
     need(native.get('schema') == 2 and native.get('main_input') == unit and native.get('target') == facts['target']
          and native.get('unsupported') == [] and native.get('cwd') == command['directory'], 'native invocation mismatch')
     buffers = {}
@@ -143,13 +159,6 @@ def check_unit(facts, inventory, command):
     need(unit in paths, 'native main input missing')
     declarations = table(facts['declarations'], 'id', 'declaration')
     need(facts['declarations'] == inventory['declarations'], 'compiler declaration census differs from inventory')
-    function_edges = table(facts['function_edges'], 'declaration', 'function parameter edges')
-    for i, edge in function_edges.items():
-        need(i in declarations and edge['fixed_count'] == len(edge['parameters'])
-             and len(set(edge['parameters'])) == len(edge['parameters']), 'function parameter reference coverage differs')
-        position = edge['format_position']
-        need(position is None and edge['format_parameter'] is None or type(position) is int
-             and 0 <= position < len(edge['parameters']) and edge['format_parameter'] == edge['parameters'][position], 'function format parameter edge differs')
     raw_calls = table(inventory['calls'], 'id', 'inventory call')
     calls = table(facts['calls'], 'id', 'format call')
     definitions = table(facts['definitions'], 'declaration', 'definition')
@@ -158,17 +167,86 @@ def check_unit(facts, inventory, command):
     statements = table(facts['statements'], 'id', 'statement')
     variables = table(facts['variables'], 'id', 'variable')
     types = table(facts['types'], 'type_id', 'type')
-    def type_references(value):
+    function_edges = table(facts['function_edges'], 'declaration', 'function parameter edges')
+    for i, edge in function_edges.items():
+        need(i in declarations and edge['fixed_count'] == len(edge['parameters'])
+             and len(set(edge['parameters'])) == len(edge['parameters']), 'function parameter reference coverage differs')
+        need(i in variables and variables[i]['kind'] == 'function' and variables[i]['parameters'] == edge['parameters'],
+             'ordered function declaration references differ')
+        need(all(p in variables and variables[p]['kind'] == 'variable'
+                 and variables[p]['parameter_owners'] == [i] for p in edge['parameters']),
+             'parameter declaration missing or owned by another function')
+        position = edge['format_position']
+        need(position is None and edge['format_parameter'] is None or type(position) is int
+             and 0 <= position < len(edge['parameters']) and edge['format_parameter'] == edge['parameters'][position], 'function format parameter edge differs')
+    def reference(value, rows, label):
+        need(type(value) is int and value in rows, label + ' reference missing')
+    def typed_references(value):
         if isinstance(value, dict):
-            if 'type_id' in value and not (value['type_id'] is None and value.get('type_unproved')):
-                need(value['type_id'] in types, 'qualified type reference missing')
+            for field in ('type_id', 'declared_type_id', 'builtin_type_id'):
+                if field in value and value[field] is not None:
+                    reference(value[field], types, 'qualified type')
+            if 'native_va_list_record' in value:
+                reference(value['native_va_list_record'], variables, 'native record')
+                need(variables[value['native_va_list_record']]['kind'] == 'struct', 'native record kind differs')
             for child in value.values():
-                type_references(child)
+                typed_references(child)
         elif isinstance(value, list):
             for child in value:
-                type_references(child)
-    for row in [*expressions.values(), *variables.values(), *types.values()]:
-        type_references(row)
+                typed_references(child)
+    for row in [*facts['declarations'], *calls.values(), *expressions.values(), *variables.values(), *types.values()]:
+        typed_references(row)
+    for i, row in types.items():
+        kind = row.get('kind')
+        need(isinstance(kind, str) or isinstance(row.get('unproved'), str) and row['unproved'], 'missing native type shape')
+        required = {'typedef': ('declaration',), 'pointer': ('pointee',), 'function': ('return', 'parameters'),
+                    'elaborated': ('inner',), 'paren': ('inner',), 'typeof': ('inner',), 'decayed': ('inner',),
+                    'auto': ('inner',), 'struct': ('declaration',), 'union': ('declaration',), 'enum': ('declaration',)}
+        need(all(field in row for field in required.get(kind, ())), 'mandatory type reference missing')
+        if kind in ('array', 'typedef'):
+            need(('element' if kind == 'array' else 'original') in row or bool(row.get('unproved')),
+                 'missing original qualified type reference')
+        for field in ('pointee', 'element', 'return', 'original'):
+            if field in row:
+                need(isinstance(row[field], dict) and 'type_id' in row[field], 'missing qualified type reference')
+        if kind == 'function':
+            need(isinstance(row['parameters'], list) and all(isinstance(t, dict) and 'type_id' in t for t in row['parameters']),
+                 'missing ordered function type references')
+        for field in ('inner',):
+            if field in row:
+                reference(row[field], types, 'inner type')
+        if 'declaration' in row:
+            reference(row['declaration'], variables, 'type declaration')
+            need(variables[row['declaration']]['kind'] == row['kind'], 'type declaration kind differs')
+    need(not (expressions.keys() & statements.keys()) and not (expressions.keys() & variables.keys())
+         and not (statements.keys() & variables.keys()), 'impossible cross-table node identity')
+    for i, row in variables.items():
+        if row.get('initializer') is not None:
+            reference(row['initializer'], expressions, 'initializer expression')
+        for field, kind in (('fields', 'field'), ('variants', 'enum_constant')):
+            for d in row.get(field) or []:
+                reference(d, variables, field)
+                need(variables[d]['kind'] == kind, 'record member kind differs')
+        for owner in row.get('parameter_owners', []):
+            reference(owner, declarations, 'parameter function')
+            need(i in function_edges.get(owner, variables.get(owner, {})).get('parameters', []),
+                 'parameter ownership differs')
+        owner = row.get('owning_function')
+        if type(owner) is int:
+            reference(owner, declarations, 'lexical function')
+        owner = row.get('owning_enum')
+        if isinstance(owner, dict) and 'declaration' in owner:
+            reference(owner['declaration'], variables, 'enum owner')
+            need(i in variables[owner['declaration']].get('variants', []), 'enum variant ownership differs')
+        if row['kind'] == 'function':
+            for d in row['parameters']:
+                reference(d, variables, 'function parameter')
+                need(variables[d]['parameter_owners'] == [i], 'function parameter ownership differs')
+            if i in function_edges:
+                need(row['parameters'] == function_edges[i]['parameters'], 'ordered function parameters differ')
+    for i, row in definitions.items():
+        need(i in function_edges and row['parameters'] == function_edges[i]['parameters'],
+             'ordered definition parameters differ')
     unsupported = table(facts['unsupported_expressions'], 'expression', 'unsupported expression')
     need(type(facts['unsupported_expression_count']) is int and facts['unsupported_expression_count'] == len(unsupported),
          'unsupported expression census coverage differs')
@@ -209,7 +287,13 @@ def check_unit(facts, inventory, command):
         need(raw is not None and all(row.get(k) == v for k, v in raw.items()), 'call inventory facts changed')
         need(row['callee_declaration'] in declarations
              and declarations[row['callee_declaration']]['symbol'] == row['callee'], 'callee declaration edge differs')
+        if row['owner'] is not None:
+            reference(row['owner'], declarations, 'call owner')
         need(row['id'] in expressions, 'call expression missing')
+        expr = expressions[row['id']]
+        need(expr['kind'] == 'call' and expr['callee_decl'] == row['callee_declaration']
+             and [a['id'] for a in expr['arguments']] == [a['id'] for a in row['arguments']],
+             'inventory call callee or ordered operands contradict expression')
         need(type(row['fixed_count']) is int and 0 <= row['fixed_count'] <= len(row['arguments']), 'fixed argument coverage differs')
         need(row['callee_declaration'] in function_edges, 'call function parameter edges absent')
         edge = function_edges[row['callee_declaration']]
@@ -232,10 +316,70 @@ def check_unit(facts, inventory, command):
             need(row['decl'] in variables or row['decl'] in declarations, 'expression declaration missing')
         if row.get('kind') == 'call':
             need(all(a['id'] in expressions for a in row['arguments']), 'body call argument missing')
+            reference(row['callee_expression'], expressions, 'callee expression')
+            reference(row['callee_reference'], expressions, 'callee reference')
+            need(row['children'][0] == row['callee_expression'], 'callee structural expression differs')
+            if row['callee_decl'] is not None:
+                need(expressions[row['callee_reference']].get('decl') == row['callee_decl'], 'callee reference contradicts declaration')
+            need(len(row['children']) == 1 + len(row['arguments'])
+                 and row['children'][1:] == [a['id'] for a in row['arguments']], 'call structural operands differ')
+            if row['callee_decl'] is not None:
+                reference(row['callee_decl'], declarations, 'call callee')
+                need(row['callee_decl'] in variables and variables[row['callee_decl']]['kind'] == 'function'
+                     and row['builtin'] == variables[row['callee_decl']]['builtin'], 'call builtin contradicts declaration')
+            for operand in row['arguments']:
+                need(operand['type'] == expressions[operand['id']]['type'], 'cursor operand type differs from expression')
+                if operand.get('direct_decl') is not None:
+                    reference(operand['direct_decl'], variables | declarations, 'operand declaration')
+                for ref in operand.get('references', []):
+                    reference(ref['id'], expressions, 'operand expression')
+                    need(expressions[ref['id']].get('decl') == ref['decl'], 'operand declaration contradicts expression')
+        if row.get('field') is not None:
+            reference(row['field'], variables, 'cast field')
+            need(variables[row['field']]['kind'] == 'field', 'cast field kind differs')
+        if row.get('kind') == 'member':
+            member = row['member']
+            reference(member['id'], variables, 'member declaration')
+            need(all(variables[member['id']].get(k) == v for k, v in member.items()), 'member declaration differs')
     for row in statements.values():
         need(type(row['edge_count']) is int and row['edge_count'] == len(row['children']), 'control statement edge coverage differs')
-        need(row['kind'] in ('compound', 'expression', 'declarations', 'return', 'branch', 'loop',
-             'break', 'continue', 'goto', 'empty', 'unsupported'), 'invalid statement classification')
+        if row.get('label_target') is not None:
+            reference(row['label_target'], statements, 'goto label')
+            need(statements[row['label_target']]['native_shape'] == 'Label', 'goto target is not a label')
+        need((row['kind'] == 'goto') == (row.get('label_target') is not None), 'goto label reference missing')
+        shape = row['native_shape']
+        shapes = {
+            'Compound': ('compound', {}, {'item': 'statement'}),
+            'Expr': ('expression', {'expression': 'expression'}, {}),
+            'Decls': ('declarations', {}, {'declaration': 'declaration'}),
+            'ReturnValue': ('return', {'value': 'expression'}, {}), 'ReturnVoid': ('return', {}, {}),
+            'If': ('branch', {'condition': 'expression', 'then': 'statement'}, {}),
+            'IfElse': ('branch', {'condition': 'expression', 'then': 'statement', 'else': 'statement'}, {}),
+            'Switch': ('branch', {'condition': 'expression', 'body': 'statement'}, {}),
+            'While': ('loop', {'condition': 'expression', 'body': 'statement'}, {}),
+            'DoWhile': ('loop', {'body': 'statement', 'condition': 'expression'}, {}),
+            'Label': ('label', {'body': 'statement'}, {}), 'Default': ('label', {'body': 'statement'}, {}),
+            'Case': ('label', {'value': 'expression', 'body': 'statement'}, {}),
+            'Attributed': ('attributed', {'body': 'statement'}, {}),
+            'Goto': ('goto', {}, {}), 'Break': ('break', {}, {}), 'Continue': ('continue', {}, {}),
+            'Empty': ('empty', {}, {}), 'Asm': ('unsupported', {}, {'operand': 'expression'}),
+            'BadStmt': ('unsupported', {}, {})}
+        for mask in range(8):
+            roles = {'body': 'statement'}
+            for bit, role, target in ((4, 'init', 'statement'), (2, 'condition', 'expression'), (1, 'increment', 'expression')):
+                if mask & bit:
+                    roles[role] = target
+            shapes['ForLoop' + format(mask, '03b')] = ('loop', roles, {})
+        need(shape in shapes, 'unknown concrete statement schema')
+        kind, required_roles, optional_roles = shapes[shape]
+        need(row['kind'] == kind, 'statement classification contradicts concrete shape')
+        roles = [e['role'] for e in row['children']]
+        need(all(roles.count(r) == 1 for r in required_roles), 'mandatory statement role missing or repeated')
+        repeated = {'item', 'declaration', 'operand'}
+        need(all(r in required_roles or r in optional_roles for r in roles)
+             and all(r in repeated or roles.count(r) == 1 for r in roles), 'incompatible statement roles')
+        need(all(e['kind'] == (required_roles | optional_roles)[e['role']] for e in row['children']),
+             'statement role table differs')
         for edge in row['children']:
             target = {'statement': statements, 'expression': expressions, 'declaration': variables}.get(edge['kind'])
             need(target is not None and edge['id'] in target, 'structural control edge missing')
@@ -250,6 +394,28 @@ def check_unit(facts, inventory, command):
         reachable.add(node)
         pending.extend(e['id'] for e in statements[node]['children'] if e['kind'] == 'statement')
     need(reachable == statements.keys(), 'missing branch loop return or complete body edge')
+    for owner, definition in definitions.items():
+        pending, seen = [('statement', definition['body'])], set()
+        while pending:
+            kind, ident = pending.pop()
+            if (kind, ident) in seen:
+                continue
+            seen.add((kind, ident))
+            if kind == 'statement':
+                pending.extend((e['kind'], e['id']) for e in statements[ident]['children'])
+            elif kind == 'expression':
+                expr = expressions[ident]
+                pending.extend(('expression', e) for e in expr['children'])
+                if expr.get('statement_body') is not None:
+                    pending.append(('statement', expr['statement_body']))
+                if ident in calls:
+                    need(calls[ident]['owner'] == owner, 'call lexical ownership differs')
+            else:
+                decl = variables[ident]
+                if decl.get('local'):
+                    need(decl.get('owning_function') == owner, 'variable lexical ownership differs')
+                if decl.get('initializer') is not None:
+                    pending.append(('expression', decl['initializer']))
     def consumption(row, literal):
         need(isinstance(row, dict) and row.get('state') in ('Parsed', 'Unproved'), 'missing compiler format consumption')
         conversions = row.get('conversions', []) if row['state'] == 'Parsed' else row.get('prefix', [])
@@ -303,7 +469,7 @@ def replay(root):
     need(packet.get('schema') == 1 and packet.get('authorization') == 'analysis_only', 'invalid packet schema')
     def read(name):
         return loads(safe_file(root, name).read_bytes())
-    need(set(packet['verifier_sources']) == {'closed_format_facts.py', 'full_compiler.py', 'probe.py'}, 'incomplete verifier source identity')
+    need(set(packet['verifier_sources']) == {'closed_format_facts.py', 'full_compiler.py', 'probe.py', 'apply_c2rust_patch.py'}, 'incomplete verifier source identity')
     for name, snapshot in packet['verifier_sources'].items():
         need(safe_file(root, snapshot).read_bytes() == Path(__file__).with_name(name).read_bytes(), 'verifier source identity differs')
     commands = read(packet['database'])
@@ -320,11 +486,14 @@ def replay(root):
     need(set(packet['tool']) == expected_tools, 'incomplete compiler tool binding')
     for name in packet['tool'].values():
         safe_file(root, name)
-    receipt = read(packet['tool']['source_receipt'])
-    evidence = read(packet['tool']['source_evidence'])
-    need(sha(safe_file(root, packet['tool']['patch']).read_bytes()) == receipt['patch_sha256'] == evidence['patch_sha256']
-         and receipt['source_receipt_sha256'] == sha(safe_file(root, packet['tool']['source_evidence']).read_bytes())
-         and receipt['binary_sha256']['c2rust-transpile'] == sha(safe_file(root, packet['tool']['compiler']).read_bytes()), 'compiler source patch or executable identity differs')
+    need(packet['tool'] == {'compiler': 'tool/bin/c2rust-transpile', 'source_receipt': 'tool/source-receipt.json',
+         'patch': 'tool/source-evidence/c2rust-source.patch',
+         'source_evidence': 'tool/source-evidence/c2rust-patch.json'}, 'unexpected retained tool layout')
+    read(packet['tool']['source_receipt'])
+    read(packet['tool']['source_evidence'])
+    verify_cursor_tool(safe_file(root, packet['tool']['compiler']))
+    need(read(packet['tool']['source_evidence'])['official_repository'] == 'https://github.com/immunant/c2rust.git',
+         'wrong compiler source repository')
     native_files = read(packet['native_files'])
     observed_native_files = set()
     symbols, incoming, extras = {}, {}, {}
@@ -341,6 +510,10 @@ def replay(root):
             need(sha(safe_file(root, pair[field]).read_bytes()) == pair['files'][field], 'paired raw AST or emission digest differs')
         facts, inventory = read(pair['facts']), read(pair['inventory'])
         need(pair['unit'] == facts['unit'], 'fact pair unit differs')
+        need(facts['compiler_session'] == {
+             'raw_cbor_sha256': sha(safe_file(root, pair['cbor']).read_bytes()),
+             'typed_ast_sha256': sha(safe_file(root, pair['typed_ast']).read_bytes())},
+             'raw CBOR or typed AST differs from compiler session')
         for field in ('cbor', 'typed_ast', 'rust_off', 'rust_on'):
             safe_file(root, pair[field])
         need(safe_file(root, pair['rust_off']).read_bytes() == safe_file(root, pair['rust_on']).read_bytes(), 'flag-only generated Rust bytes differ')

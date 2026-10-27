@@ -1,5 +1,5 @@
 diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/AstExporter.cpp
-index ef9d929..4234ed4 100644
+index ef9d929..caf8145 100644
 --- a/c2rust-ast-exporter/src/AstExporter.cpp
 +++ b/c2rust-ast-exporter/src/AstExporter.cpp
 @@ -12,6 +12,7 @@
@@ -71,11 +71,52 @@ index ef9d929..4234ed4 100644
          });
 
          VisitQualType(T->getReturnType());
+@@ -2252,6 +2270,8 @@ class TranslateASTVisitor final
+                 }
+
+                 cbor_encoder_close_container(array, &attr_array);
++                const auto *label = FD->getAttr<AsmLabelAttr>();
++                cbor_encode_string(array, label ? label->getLabel().str() : name);
+             });
+         typeEncoder.VisitQualTypeOf(functionType, paramsFD);
+
+@@ -3026,7 +3046,7 @@ class TranslateConsumer : public clang::ASTConsumer {
+             cbor_encoder_init(&encoder, buffer, len, 0);
+
+             CborEncoder outer;
+-            cbor_encoder_create_array(&encoder, &outer, 6);
++            cbor_encoder_create_array(&encoder, &outer, 7);
+
+             CborEncoder array;
+
+@@ -3136,6 +3156,14 @@ class TranslateConsumer : public clang::ASTConsumer {
+             auto target = Context.getTargetInfo().getTriple().str();
+             cbor_encode_string(&outer, target);
+
++            CborEncoder widths;
++            cbor_encoder_create_array(&outer, &widths, 8);
++            for (QualType type : {Context.CharTy, Context.ShortTy, Context.IntTy,
++                                  Context.LongTy, Context.LongLongTy, Context.VoidPtrTy,
++                                  Context.FloatTy, Context.DoubleTy})
++                cbor_encode_uint(&widths, Context.getTypeSize(type));
++            cbor_encoder_close_container(&outer, &widths);
++
+             cbor_encoder_close_container(&encoder, &outer);
+         };
+
 diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_ast/conversion.rs
-index de549e2..aac1017 100644
+index de549e2..fee160c 100644
 --- a/c2rust-transpile/src/c_ast/conversion.rs
 +++ b/c2rust-transpile/src/c_ast/conversion.rs
-@@ -826,8 +826,16 @@ fn visit_node(
+@@ -601,6 +601,7 @@ fn convert(&mut self, untyped_context: &AstContext) {
+
+         self.typed_context.va_list_kind = untyped_context.va_list_kind;
+         self.typed_context.target = untyped_context.target.clone();
++        self.typed_context.target_c_widths = untyped_context.target_c_widths;
+     }
+
+     /// Visit child nodes of a `RecordDecl` (`struct` or `union`) and collect `FieldDecl` node IDs.
+@@ -826,8 +827,16 @@ fn visit_node(
                          .expect("NoReturn of function type not found");
                      let has_proto = from_value(ty_node.extras[3].clone())
                          .expect("HasProto of function type not found");
@@ -93,6 +134,25 @@ index de549e2..aac1017 100644
                      self.add_type(new_id, not_located(function_ty));
                      self.processed_nodes.insert(new_id, FUNC_TYPE);
 
+@@ -2137,6 +2146,10 @@ fn visit_node(
+                     let name = from_value::<String>(node.extras[0].clone())
+                         .expect("Expected to find function name");
+
++                    let linker_name = from_value::<String>(node.extras[8].clone())
++                        .expect("Expected to find function linker name");
++                    self.typed_context.linker_names.insert(CDeclId(new_id), linker_name);
++
+                     let is_global =
+                         from_value(node.extras[1].clone()).expect("Expected to find visibility");
+                     let mut is_inline =
+@@ -2209,6 +2222,7 @@ fn visit_node(
+                         .type_id
+                         .expect("Expected to find type on typedef declaration");
+                     let mut typ = self.visit_qualified_type(typ_old);
++                    self.typed_context.source_typedef_types.insert(CDeclId(new_id), typ);
+
+                     // Clang injects definitions of the form `#define __SIZE_TYPE__ unsigned int` into
+                     // compilation units based on the target. (See lib/Frontend/InitPreprocessor.cpp
 diff --git a/c2rust-transpile/src/c_ast/iterators.rs b/c2rust-transpile/src/c_ast/iterators.rs
 index 123c377..75a3074 100644
 --- a/c2rust-transpile/src/c_ast/iterators.rs
@@ -107,10 +167,28 @@ index 123c377..75a3074 100644
              for p in params {
                  res.push(p.ctype.into())
 diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.rs
-index 0cbfdca..b8ea7f2 100644
+index 0cbfdca..b3fd858 100644
 --- a/c2rust-transpile/src/c_ast/mod.rs
 +++ b/c2rust-transpile/src/c_ast/mod.rs
-@@ -1020,6 +1020,7 @@ pub(crate) fn type_kinds_eq(
+@@ -18,6 +18,7 @@
+ pub use self::print::Printer;
+ pub use c2rust_ast_exporter::clang_ast::{BuiltinVaListKind, SrcFile, SrcLoc, SrcSpan};
+
++mod closed_variadic;
+ mod conversion;
+ pub mod iterators;
+ mod print;
+@@ -121,6 +122,9 @@ pub struct TypedAstContext {
+
+     pub va_list_kind: BuiltinVaListKind,
+     pub target: String,
++    pub target_c_widths: [u64; 8],
++    pub linker_names: HashMap<CDeclId, String>,
++    pub source_typedef_types: HashMap<CDeclId, CQualTypeId>,
+ }
+
+ /// Information about a single macro invocation.
+@@ -1020,6 +1024,7 @@ pub(crate) fn type_kinds_eq(
                      is_variable_argument1,
                      is_noreturn1,
                      has_prototype1,
@@ -118,7 +196,7 @@ index 0cbfdca..b8ea7f2 100644
                  ),
                  Function(
                      result_type_id2,
-@@ -1027,6 +1028,7 @@ pub(crate) fn type_kinds_eq(
+@@ -1027,6 +1032,7 @@ pub(crate) fn type_kinds_eq(
                      is_variable_argument2,
                      is_noreturn2,
                      has_prototype2,
@@ -126,7 +204,7 @@ index 0cbfdca..b8ea7f2 100644
                  ),
              ) => {
                  self.qual_types_eq(*result_type_id1, *result_type_id2, resolver)
-@@ -1040,6 +1042,7 @@ pub(crate) fn type_kinds_eq(
+@@ -1040,6 +1046,7 @@ pub(crate) fn type_kinds_eq(
                      && is_variable_argument1 == is_variable_argument2
                      && is_noreturn1 == is_noreturn2
                      && has_prototype1 == has_prototype2
@@ -134,7 +212,7 @@ index 0cbfdca..b8ea7f2 100644
              }
 
              (Attributed(type_id1, ref attribute1), Attributed(type_id2, ref attribute2)) => {
-@@ -1095,8 +1098,8 @@ pub fn fn_decl_ty_with_declared_args(&self, func_decl: &CDeclKind) -> CTypeKind
+@@ -1095,8 +1102,8 @@ pub fn fn_decl_ty_with_declared_args(&self, func_decl: &CDeclKind) -> CTypeKind
              let typ = self.resolve_type_id(*typ);
              let decl_arg_tys = self.tys_of_params(parameters).unwrap();
              let typ_kind = &self[typ].kind;
@@ -145,7 +223,7 @@ index 0cbfdca..b8ea7f2 100644
              }
              panic!("expected {typ:?} to be CTypeKind::Function, but it was {typ_kind:?}")
          }
-@@ -1179,7 +1182,7 @@ pub fn expr_diverges(&self, expr_id: CExprId) -> bool {
+@@ -1179,7 +1186,7 @@ pub fn expr_diverges(&self, expr_id: CExprId) -> bool {
          };
 
          match self.index(pointed_id).kind {
@@ -154,7 +232,7 @@ index 0cbfdca..b8ea7f2 100644
              _ => false,
          }
      }
-@@ -2830,9 +2833,25 @@ pub(crate) fn not_volatile(self) -> Self {
+@@ -2830,9 +2837,25 @@ pub(crate) fn not_volatile(self) -> Self {
  //  * UnaryTransformType <http://clang.llvm.org/doxygen/classclang_1_1UnaryTransformType.html>
  //  * AdjustedType <http://clang.llvm.org/doxygen/classclang_1_1AdjustedType.html>
 
@@ -183,7 +261,7 @@ index 0cbfdca..b8ea7f2 100644
  #[derive(Debug, Clone, PartialEq, Eq, Hash)]
  pub enum CTypeKind {
      Void,
-@@ -2894,7 +2913,7 @@ pub enum CTypeKind {
+@@ -2894,7 +2917,7 @@ pub enum CTypeKind {
      // Note a function taking no arguments should have one `void` argument. Functions without any
      // arguments are in K&R format.
      // Flags: is_variable_argument, is_noreturn, has prototype
@@ -1136,3 +1214,366 @@ index 0000000..377926c
 +        assert_eq!(native, generated);
 +    }
 +}
+diff --git a/c2rust-ast-exporter/src/clang_ast.rs b/c2rust-ast-exporter/src/clang_ast.rs
+index a96ee1c..2254919 100644
+--- a/c2rust-ast-exporter/src/clang_ast.rs
++++ b/c2rust-ast-exporter/src/clang_ast.rs
+@@ -156,6 +156,7 @@ pub struct AstContext {
+     pub files: Vec<SrcFile>,
+     pub va_list_kind: BuiltinVaListKind,
+     pub target: String,
++    pub target_c_widths: [u64; 8],
+ }
+
+ pub fn expect_opt_str(val: &Value) -> Option<Option<&str>> {
+@@ -197,13 +198,14 @@ pub fn process(items: Value) -> error::Result<AstContext> {
+     type RawComment = (u64, u64, u64, ByteBuf);
+     type VaListKind = u64;
+     type Target = String;
+-    let (all_nodes, top_nodes, files, raw_comments, va_list_kind, target): (
++    let (all_nodes, top_nodes, files, raw_comments, va_list_kind, target, target_c_widths): (
+         Vec<AllNode>,
+         Vec<TopNode>,
+         Vec<File>,
+         Vec<RawComment>,
+         VaListKind,
+         Target,
++        [u64; 8],
+     ) = from_value(items)?;
+
+     let va_list_kind = import_va_list_kind(va_list_kind);
+@@ -310,5 +312,6 @@ pub fn process(items: Value) -> error::Result<AstContext> {
+         files,
+         va_list_kind,
+         target,
++        target_c_widths,
+     })
+ }
+diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/src/c_ast/closed_variadic.rs
+new file mode 100644
+index 0000000..2d54564
+--- /dev/null
++++ b/c2rust-transpile/src/c_ast/closed_variadic.rs
+@@ -0,0 +1,304 @@
++use super::*;
++use serde_json::{json, Value};
++
++impl TypedAstContext {
++    fn inventory_type(&self, typ: CQualTypeId, depth: usize) -> Value {
++        if depth > 32 {
++            return json!({"unsupported": "recursive type"});
++        }
++        let mut canonical_type = typ.ctype;
++        let mut qualifiers = typ.qualifiers;
++        for _ in 0..32 {
++            canonical_type = match self[canonical_type].kind {
++                CTypeKind::Typedef(id) => {
++                    let original = self
++                        .source_typedef_types
++                        .get(&id)
++                        .expect("missing original Clang typedef type");
++                    qualifiers = qualifiers.and(original.qualifiers);
++                    original.ctype
++                }
++                CTypeKind::TypeOf(id)
++                | CTypeKind::Paren(id)
++                | CTypeKind::Elaborated(id)
++                | CTypeKind::Decayed(id)
++                | CTypeKind::Auto(id) => id,
++                CTypeKind::Attributed(inner, _) => {
++                    qualifiers = qualifiers.and(inner.qualifiers);
++                    inner.ctype
++                }
++                _ => break,
++            };
++        }
++        let kind = &self[canonical_type].kind;
++        let canonical = match kind {
++            CTypeKind::Pointer(inner) => json!({"pointer": self.inventory_type(*inner, depth + 1)}),
++            CTypeKind::Function(ret, args, variadic, noreturn, prototype, abi) => json!({
++                "return": self.inventory_type(*ret, depth + 1),
++                "parameters": args.iter().map(|t| self.inventory_type(*t, depth + 1)).collect::<Vec<_>>(),
++                "variadic": variadic, "noreturn": noreturn, "prototype": prototype, "abi": abi.as_str()
++            }),
++            CTypeKind::Struct(id) | CTypeKind::Union(id) | CTypeKind::Enum(id) => json!({
++                "record_kind": match kind { CTypeKind::Struct(_) => "struct", CTypeKind::Union(_) => "union", _ => "enum" },
++                "declaration": self[*id].begin_loc().map(|l| self.loc_to_string(l)),
++                "enum_underlying": match self[*id].kind { CDeclKind::Enum { underlying_type_id: Some(t), .. } => Some(self.inventory_type(t, depth + 1)), _ => None },
++            }),
++            CTypeKind::ConstantArray(inner, len) => {
++                json!({"array": self.inventory_type(CQualTypeId::new(*inner), depth + 1), "length": len})
++            }
++            CTypeKind::IncompleteArray(inner) => {
++                json!({"array": self.inventory_type(CQualTypeId::new(*inner), depth + 1)})
++            }
++            _ => json!({"kind": format!("{kind:?}")}),
++        };
++        json!({"canonical": canonical, "const": qualifiers.is_const, "volatile": qualifiers.is_volatile, "restrict": qualifiers.is_restrict})
++    }
++
++    fn inventory_promotions(&self, mut expr: CExprId) -> Vec<Value> {
++        let mut types = vec![];
++        loop {
++            if let Some(typ) = self[expr].kind.get_qual_type() {
++                types.push(self.inventory_type(typ, 0));
++            }
++            match self[expr].kind {
++                CExprKind::ImplicitCast(_, inner, _, _, _) | CExprKind::Paren(_, inner) => {
++                    expr = inner
++                }
++                _ => return types,
++            }
++        }
++    }
++
++    fn inventory_symbol(&self, id: CDeclId, unit: &Path) -> Option<Value> {
++        if let CDeclKind::Function {
++            name, is_global, ..
++        } = &self[id].kind
++        {
++            Some(if *is_global {
++                json!({"linker": self.linker_names.get(&id).expect("missing Clang function linker identity")})
++            } else {
++                json!({"unit": unit, "static": name})
++            })
++        } else {
++            None
++        }
++    }
++
++    fn inventory_callee(&self, mut expr: CExprId) -> Option<CDeclId> {
++        loop {
++            match self[expr].kind {
++                CExprKind::Paren(_, inner) | CExprKind::ImplicitCast(_, inner, _, _, _) => {
++                    expr = inner
++                }
++                CExprKind::DeclRef(_, id, _) => {
++                    return self.inventory_symbol(id, &self.main_file).map(|_| id)
++                }
++                _ => return None,
++            }
++        }
++    }
++
++    /// Facts only. No inventory record authorizes lowering without the closed-program gates.
++    pub fn closed_variadic_inventory(&self, unit: &Path) -> Value {
++        let mut declarations = vec![];
++        let mut owners = HashMap::new();
++        for (id, decl) in self.iter_decls() {
++            if let CDeclKind::Function {
++                typ,
++                body,
++                parameters,
++                ..
++            } = &decl.kind
++            {
++                declarations.push(json!({
++                    "id": id.0, "symbol": self.inventory_symbol(*id, unit),
++                    "location": decl.begin_loc().map(|l| self.loc_to_string(l)),
++                    "signature": self.inventory_type(CQualTypeId::new(*typ), 0),
++                    "definition": body.is_some(),
++                    "aliases": match &decl.kind { CDeclKind::Function { attrs, .. } => attrs.iter().filter_map(|a| match a { Attribute::Alias(name) => Some(name.clone()), _ => None }).collect::<Vec<_>>(), _ => vec![] },
++                    "va_parameters": parameters.iter().filter(|p| match self[**p].kind {
++                        CDeclKind::Variable { typ, .. } => self.is_va_list(typ.ctype), _ => false,
++                    }).map(|p| p.0).collect::<Vec<_>>(),
++                }));
++                if let Some(body) = body {
++                    for node in iterators::DFExpr::new(self, (*body).into()) {
++                        if let Some(expr) = node.expr() {
++                            owners.insert(expr, *id);
++                        }
++                    }
++                }
++            }
++        }
++        let mut direct_refs = HashSet::new();
++        let mut calls = vec![];
++        let mut expressions: Vec<_> = self.c_exprs.iter().collect();
++        expressions.sort_by_key(|(id, _)| id.0);
++        for (id, expr) in &expressions {
++            if let CExprKind::Call(_, callee, args) = &expr.kind {
++                let callee_id = self.inventory_callee(*callee);
++                if callee_id.is_some() {
++                    for node in iterators::DFExpr::new(self, (*callee).into()) {
++                        if let Some(reference) = node.expr() {
++                            direct_refs.insert(reference);
++                        }
++                    }
++                }
++                calls.push(json!({
++                    "id": id.0, "owner": owners.get(id).map(|d| d.0),
++                    "location": expr.begin_loc().map(|l| self.loc_to_string(l)),
++                    "callee": callee_id.and_then(|d| self.inventory_symbol(d, unit)),
++                    "arguments": args.iter().map(|arg| json!({
++                        "id": arg.0,
++                        "promotion_chain": self.inventory_promotions(*arg),
++                        "type": self[*arg].kind.get_qual_type().map(|t| self.inventory_type(t, 0)),
++                        "va_list": self[*arg].kind.get_qual_type().map(|t| self.is_va_list(t.ctype)),
++                    })).collect::<Vec<_>>(),
++                }));
++            }
++        }
++        let mut escapes = vec![];
++        let mut va_arg = vec![];
++        for (id, expr) in expressions {
++            match expr.kind {
++                CExprKind::DeclRef(_, decl, _) if !direct_refs.contains(id) => {
++                    if let Some(symbol) = self.inventory_symbol(decl, unit) {
++                        escapes.push(json!({"symbol": symbol, "location": expr.begin_loc().map(|l| self.loc_to_string(l))}));
++                    }
++                }
++                CExprKind::VAArg(_, _) => va_arg.push(json!({"owner": owners.get(id).map(|d| d.0), "location": expr.begin_loc().map(|l| self.loc_to_string(l))})),
++                _ => (),
++            }
++        }
++        json!({"schema": 1, "unit": unit, "target": self.target,
++            "target_c_widths_bits": {"char": self.target_c_widths[0], "short": self.target_c_widths[1], "int": self.target_c_widths[2], "long": self.target_c_widths[3], "long_long": self.target_c_widths[4], "pointer": self.target_c_widths[5], "float": self.target_c_widths[6], "double": self.target_c_widths[7]},
++            "authorization": "inventory_only", "declarations": declarations,
++            "calls": calls, "non_call_references": escapes, "va_arg": va_arg})
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn not_located<T>(kind: T) -> Located<T> {
++        Located { loc: None, kind }
++    }
++
++    #[test]
++    fn closed_variadic_inventory_uses_promoted_ast_types_and_linker_identity() {
++        let mut ast = TypedAstContext::default();
++        let int = CQualTypeId::new(CTypeId(1));
++        let short = CQualTypeId::new(CTypeId(2));
++        let function = CTypeId(3);
++        ast.c_types.insert(int.ctype, not_located(CTypeKind::Int));
++        ast.c_types
++            .insert(short.ctype, not_located(CTypeKind::UShort));
++        ast.c_types.insert(
++            function,
++            not_located(CTypeKind::Function(
++                int,
++                vec![int],
++                true,
++                false,
++                true,
++                CCallingConvention::C,
++            )),
++        );
++        let declaration = CDeclId(1);
++        ast.linker_names.insert(declaration, "asm_format".into());
++        ast.target_c_widths = [8, 16, 32, 32, 64, 64, 32, 64];
++        ast.c_decls.insert(
++            declaration,
++            not_located(CDeclKind::Function {
++                is_global: true,
++                is_inline: false,
++                is_implicit: false,
++                is_extern: true,
++                is_inline_externally_visible: false,
++                typ: function,
++                name: "private_format".into(),
++                parameters: vec![],
++                body: None,
++                attrs: IndexSet::new(),
++            }),
++        );
++        ast.c_exprs.insert(
++            CExprId(1),
++            not_located(CExprKind::DeclRef(
++                CQualTypeId::new(function),
++                declaration,
++                LRValue::RValue,
++            )),
++        );
++        ast.c_exprs
++            .insert(CExprId(2), not_located(CExprKind::ImplicitValueInit(short)));
++        ast.c_exprs.insert(
++            CExprId(3),
++            not_located(CExprKind::ImplicitCast(
++                int,
++                CExprId(2),
++                CastKind::IntegralCast,
++                None,
++                LRValue::RValue,
++            )),
++        );
++        ast.c_exprs.insert(
++            CExprId(4),
++            not_located(CExprKind::Call(
++                int,
++                CExprId(1),
++                vec![CExprId(2), CExprId(3)],
++            )),
++        );
++        ast.c_types.insert(CTypeId(8), not_located(CTypeKind::Long));
++        ast.c_types
++            .insert(CTypeId(9), not_located(CTypeKind::Typedef(CDeclId(9))));
++        ast.source_typedef_types
++            .insert(CDeclId(9), CQualTypeId::new(CTypeId(8)));
++        assert_eq!(
++            ast.inventory_type(CQualTypeId::new(CTypeId(9)), 0)["canonical"]["kind"],
++            "Long"
++        );
++        let a = ast.closed_variadic_inventory(Path::new("caller.c"));
++        let b = ast.closed_variadic_inventory(Path::new("definition.c"));
++        assert_eq!(a["declarations"][0]["symbol"]["linker"], "asm_format");
++        assert_eq!(a["target_c_widths_bits"]["long"], 32);
++        assert_eq!(
++            a["declarations"][0]["symbol"],
++            b["declarations"][0]["symbol"]
++        );
++        assert_eq!(
++            a["calls"][0]["arguments"][1]["type"]["canonical"]["kind"],
++            "Int"
++        );
++        assert_eq!(
++            a["calls"][0]["arguments"][1]["promotion_chain"][1]["canonical"]["kind"],
++            "UShort"
++        );
++        assert_eq!(a["non_call_references"], json!([]));
++        ast.c_exprs.insert(
++            CExprId(5),
++            not_located(CExprKind::DeclRef(
++                CQualTypeId::new(function),
++                declaration,
++                LRValue::RValue,
++            )),
++        );
++        assert_eq!(
++            ast.closed_variadic_inventory(Path::new("caller.c"))["non_call_references"]
++                .as_array()
++                .unwrap()
++                .len(),
++            1
++        );
++        if let CDeclKind::Function { is_global, .. } =
++            &mut ast.c_decls.get_mut(&declaration).unwrap().kind
++        {
++            *is_global = false;
++        }
++        assert_ne!(
++            ast.closed_variadic_inventory(Path::new("caller.c"))["declarations"][0]["symbol"],
++            ast.closed_variadic_inventory(Path::new("definition.c"))["declarations"][0]["symbol"]
++        );
++    }
++}
+diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
+index 28d34bd..dd48ea1 100644
+--- a/c2rust-transpile/src/lib.rs
++++ b/c2rust-transpile/src/lib.rs
+@@ -720,6 +720,13 @@ fn transpile_single(
+         println!("{:#?}", Printer::new(io::stdout()).print(&typed_context));
+     }
+
++    if tcfg.emit_c_decl_map {
++        let inventory_path = output_path.with_extension("variadic.json");
++        let inventory = typed_context.closed_variadic_inventory(input_path);
++        let file = File::create(&inventory_path).expect("create closed variadic inventory");
++        serde_json::to_writer_pretty(file, &inventory).expect("write closed variadic inventory");
++    }
++
+     // Extract preprocessed text for each function definition so the C decl
+     // map can carry it alongside the original source snippet.
+     let preprocessed_definitions = preprocessed_source

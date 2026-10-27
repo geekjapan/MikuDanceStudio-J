@@ -178,7 +178,7 @@ def main():
     output = artifacts / "rust"
     transpiler = args.c2rust.resolve().with_name("c2rust-transpile")
     result["transpile"] = run([str(transpiler), "--fail-on-error", "--disable-rustfmt", "--edition", "2024",
-                               "--emit-build-files", "--output-dir", str(output), str(database)],
+                               "--emit-build-files", "--emit-c-decl-map", "--output-dir", str(output), str(database)],
                               artifacts / "transpile.log", cwd=source, timeout=args.timeout)
     checkpoint()
     if output.exists():

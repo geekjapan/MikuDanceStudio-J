@@ -314,3 +314,35 @@ pinned AST builder. Expression conversion, type classification, volatile inputs
 and surrounding control flow are shims. This does not execute the exporter or
 prove actual volatile lowering. Actual all-24 diagnostic removal and complete
 stable acceptance remain separate, including the public variadic VaList boundary.
+
+## Closed variadic inventory prerequisite
+
+The project patch emits a sibling `*.variadic.json` before Rust generation when
+`--emit-c-decl-map` is enabled. It records actual typed AST function signatures,
+ABI, target C widths read from Clang, original typedef types before portable
+pullback, promoted argument types and implicit conversion chains, direct
+calls, function references outside direct callees, and `va_arg` locations.
+Global identities include Clang asm labels and join across units; static identities include
+the unit. These records authorize no conversion.
+
+`check_closed_variadic_inventory.py --c2rust /path/to/c2rust --artifacts /new/path`
+uses the rebuilt tool on untouched `variadic-fixtures/definition.c` and
+`caller.c`. The separate C consumer checks the callback, two independent copies,
+14 mixed arguments, narrow unsigned and enum promotions, native long widths,
+15 fixed/tail evaluations, nested zero-tail calls, formatting retries and stream
+bytes. Only the native C executable runs at this stage. Generated Rust is kept
+and hashed, but is not yet stable or executed. The fixture deliberately leaves
+its indirect public callback unclassified in the inventory plan.
+
+The hosted all-unit probe now requests these sidecars. The subsequent
+`closed_variadic_plan.py --probe /path/to/result --output /new/plan.json` requires
+the exact 24 source paths and the actual 23-export map with `local: *`. It joins
+all declarations before distinguishing private definitions from external libc
+calls, and retains source, map and inventory hashes. The plan reports unsupported
+promoted tails, exported candidates, address escapes, signature conflicts,
+`va_arg` and unclassified indirect calls. Cursor alias/control-flow analysis,
+four-host C width execution, actual lowering, and four-host generated-code ABI execution
+remain required. No production variadic definition is enabled by this work.
+
+The new hosted inventory checks have not yet executed. The existing isolated
+four-host native cursor probe remains separate prerequisite evidence.

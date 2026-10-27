@@ -19,6 +19,7 @@ def canonical_command(command, root, output):
 
 
 MANIFEST_PATH = 'tools/bullet-rust-gjk-pair-check/measured-profiles.json'
+SUPPLEMENTAL_SHA256 = '9ef6deafdf627e0e8df714ae0038af947127768ca9f5eb2e46d24a27d022c12c'
 HISTORICAL_SHA256 = 'db3da5b75c9c53145e6be0aec4f83264f3a0bbce2a128ea321caf24ae0e7e501'
 REPLACEMENTS = {'rust/crates/mds-bullet/' + path for path in
                 ['src/core/dbvt.rs', 'src/core/mod.rs', 'tests/pure_bullet.rs']}
@@ -79,8 +80,8 @@ def normalize_provenance(value):
 
 def load_manifest(path):
     manifest = json.loads(path.read_text(), object_pairs_hook=unique_object)
-    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission'}, 'manifest')
-    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 3, 'schema_version')
+    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'supplemental_measurements'}, 'manifest')
+    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 4, 'schema_version')
     schema(manifest['status'] == 'reviewed-current-source-expectation-execution-pending', 'status')
     fields(manifest['profiles'], HOSTS, 'profiles')
     fields(manifest['verification_sha256'], HOSTS, 'verification hosts')
@@ -89,6 +90,25 @@ def load_manifest(path):
         fields(identity, {'git_blob', 'sha256'}, 'fixture')
         schema(digest(identity['git_blob'], 40) and digest(identity['sha256']), 'fixture identity')
     artifact_ids, job_ids, provenances = set(), set(), set()
+    def validate_measurement(measurement, captured_digest, expected_fields):
+        fields(measurement, expected_fields, 'measurement')
+        provenance = normalize_provenance(measurement['compiler_provenance'])
+        schema(provenance not in provenances, 'duplicate normalized provenance')
+        provenances.add(provenance)
+        for name in ['run_id', 'job_id', 'artifact_id']:
+            schema(type(measurement[name]) is int and measurement[name] > 0, name)
+        schema(measurement['artifact_id'] not in artifact_ids and measurement['job_id'] not in job_ids,
+               'duplicate artifact or job identity')
+        artifact_ids.add(measurement['artifact_id'])
+        job_ids.add(measurement['job_id'])
+        schema(digest(measurement['evidence_head'], 40), 'evidence_head')
+        for name in ['zip_sha256', 'capture_source_map_sha256', 'source_before_sha256',
+                     'source_after_sha256', 'provenance_sha256']:
+            schema(digest(measurement[name]), name)
+        schema(measurement['capture_source_map_sha256'] == captured_digest, 'captured source digest')
+        schema(measurement['provenance_sha256'] == sha(measurement['compiler_provenance'].encode('utf-8')),
+               'provenance member digest')
+
     protected_paths = verification_paths = None
     for host, profile in manifest['profiles'].items():
         fields(profile, {'protected_source_sha256', 'measured_verification_sha256', 'commands', 'streams',
@@ -122,23 +142,7 @@ def load_manifest(path):
         schema(isinstance(measurements, list) and bool(measurements), 'measurements must be nonempty')
         captured_digest = source_map_digest({**protected, **historical})
         for measurement in measurements:
-            fields(measurement, MEASUREMENT_FIELDS, 'measurement')
-            provenance = normalize_provenance(measurement['compiler_provenance'])
-            schema(provenance not in provenances, 'duplicate normalized provenance')
-            provenances.add(provenance)
-            for name in ['run_id', 'job_id', 'artifact_id']:
-                schema(type(measurement[name]) is int and measurement[name] > 0, name)
-            schema(measurement['artifact_id'] not in artifact_ids and measurement['job_id'] not in job_ids,
-                   'duplicate artifact or job identity')
-            artifact_ids.add(measurement['artifact_id'])
-            job_ids.add(measurement['job_id'])
-            schema(digest(measurement['evidence_head'], 40), 'evidence_head')
-            for name in ['zip_sha256', 'capture_source_map_sha256', 'source_before_sha256',
-                         'source_after_sha256', 'provenance_sha256']:
-                schema(digest(measurement[name]), name)
-            schema(measurement['capture_source_map_sha256'] == captured_digest, 'historical source digest')
-            schema(measurement['provenance_sha256'] == sha(measurement['compiler_provenance'].encode('utf-8')),
-                   'provenance member digest')
+            validate_measurement(measurement, captured_digest, MEASUREMENT_FIELDS)
     schema(source_map_digest({name: manifest[name] for name in ['profiles', 'frozen_fixtures']})
            == HISTORICAL_SHA256, 'immutable historical projection')
     admission = manifest['source_admission']
@@ -153,6 +157,19 @@ def load_manifest(path):
     fields(admission['hosts'], HOSTS, 'source admission hosts')
     for host in HOSTS:
         approved_source_map(manifest, host)
+    supplemental = manifest['supplemental_measurements']
+    schema(isinstance(supplemental, list) and len(supplemental) == 1, 'one supplemental measurement')
+    for measurement in supplemental:
+        fields(measurement, MEASUREMENT_FIELDS | {'host', 'captured_verification_sha256'}, 'supplemental measurement')
+        schema(measurement['host'] == 'linux-arm64', 'supplemental host')
+        captured = measurement['captured_verification_sha256']
+        hash_map(captured, 10, 'captured verification')
+        schema(set(captured) == verification_paths, 'captured verification paths')
+        current = approved_source_map(manifest, measurement['host'])
+        protected = {path: identity for path, identity in current.items() if path not in verification_paths}
+        validate_measurement(measurement, source_map_digest({**protected, **captured}),
+                             MEASUREMENT_FIELDS | {'host', 'captured_verification_sha256'})
+    schema(source_map_digest(supplemental) == SUPPLEMENTAL_SHA256, 'immutable supplemental projection')
     return manifest
 
 
@@ -175,12 +192,14 @@ def approved_source_map(manifest, host):
     return {**protected, **delta['replacements'], **delta['additions'], **verification}
 
 
-def select_measurement(profile, provenance):
+def select_measurement(manifest, host, provenance):
     try:
         provenance = normalize_provenance(provenance)
     except ValueError:
         raise ValueError('Outer GJK compiler or toolchain differs from measured profile') from None
-    matches = [measurement for measurement in profile['measurements']
+    candidates = manifest['profiles'][host]['measurements'] + [
+        measurement for measurement in manifest['supplemental_measurements'] if measurement['host'] == host]
+    matches = [measurement for measurement in candidates
                if provenance == normalize_provenance(measurement['compiler_provenance'])]
     if len(matches) != 1:
         raise ValueError('Outer GJK compiler or toolchain differs from measured profile')
@@ -203,7 +222,7 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
         raise ValueError('Outer GJK capture source head framing differs')
     capture_head = capture_head[:40].decode('ascii')
     provenance = (output / 'provenance.txt').read_bytes().decode('utf-8')
-    measurement = select_measurement(profile, provenance)
+    measurement = select_measurement(manifest, host_name, provenance)
     for name, expected_command in profile['commands'].items():
         actual_command = json.loads((output / name).read_text())
         if canonical_command(actual_command, ROOT, output) != expected_command:
@@ -239,8 +258,8 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
     if full != {'status': 'passed', 'returncode': 0} or type(full.get('returncode')) is not int:
         raise ValueError('Exact full same-host baseline did not pass')
     return {'host': host_name, 'status': 'measured-profile-matched',
-            'historical_measurement': {
-                'role': 'historical-reference',
+            'measurement_reference': {
+                'role': 'supplemental-reference' if 'host' in measurement else 'historical-reference',
                 **{name: value for name, value in measurement.items() if name != 'compiler_provenance'}},
             'current_source': {
                 **{name: value for name, value in manifest['source_admission'].items() if name != 'hosts'},

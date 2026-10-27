@@ -12,7 +12,7 @@ The helper invokes Rust 1.95.0 from `rust/`. It compiles the real vendored nativ
 
 The dedicated `bullet-outer-gjk-host-capture.yml` workflow runs Windows x64 with MSVC activation, Apple Silicon macOS, Linux x64 and Linux ARM64. It disables matrix fail-fast and always uploads evidence. Both this slice branch and `w3-bullet-outer-gjk` trigger it on push. Configuration is not execution evidence.
 
-Schema version 3 shares one historical source, command and stream contract per architecture and selects one exact historical measurement by its complete provenance text. Linux x64 retains actual old-kernel run 40513776259 and new-kernel run 40510314246 measurements. Other architectures retain their existing run 40510314246 measurements. Every record is validated before selection, including unselected records. Unknown provenance, duplicate identities and malformed manifests fail closed. Unknown identities fail closed after capture. The original four fixtures remain unchanged. Windows and Linux x64 default replay uses the additive `native-x64.tsv` fixture copied from the verified Linux x64 Actions ZIP. It differs only in the nine measured query-axis NaN sign words. Profile acceptance still requires fresh execution and independent review. `host-profile.json` records collection completeness separately from compatibility, exact case and field differences, and raw transport hashes and line endings. It does not canonicalize NaNs or relax finite, signed-zero, infinity or copied values. Full 5,081-row, compact 1,800-row and directed six-row native, observed and Rust streams are retained. Native fallback output is also recaptured independently. Generated inputs accept only complete uniform LF or CRLF transport. `input-transport.json` records raw and LF-normalized input hashes and line endings. Raw full, compact and fallback input files are preserved. Only line endings are normalized for exact comparisons against the unchanged frozen input prefix and fallback fixtures.
+Schema version 4 shares one historical source, command and stream contract per architecture and selects one exact historical measurement by its complete provenance text. Linux x64 retains actual old-kernel run 40513776259 and new-kernel run 40510314246 measurements. Other architectures retain their existing run 40510314246 measurements. Every record is validated before selection, including unselected records. Unknown provenance, duplicate identities and malformed manifests fail closed. Unknown identities fail closed after capture. The original four fixtures remain unchanged. Windows and Linux x64 default replay uses the additive `native-x64.tsv` fixture copied from the verified Linux x64 Actions ZIP. It differs only in the nine measured query-axis NaN sign words. Profile acceptance still requires fresh execution and independent review. `host-profile.json` records collection completeness separately from compatibility, exact case and field differences, and raw transport hashes and line endings. It does not canonicalize NaNs or relax finite, signed-zero, infinity or copied values. Full 5,081-row, compact 1,800-row and directed six-row native, observed and Rust streams are retained. Native fallback output is also recaptured independently. Generated inputs accept only complete uniform LF or CRLF transport. `input-transport.json` records raw and LF-normalized input hashes and line endings. Raw full, compact and fallback input files are preserved. Only line endings are normalized for exact comparisons against the unchanged frozen input prefix and fallback fixtures.
 
 `source-before.json`, `source-after.json` and `integrity.json` cover the source closure and fixtures even when compilation or comparison fails. `sha256.json` hashes all evidence files recursively, including mutant logs and source proofs. Effective native and observer commands, compiler provenance, raw stream bytes, observer patches and branch coverage are retained. Use a new empty output directory for each run to exclude stale observations. Root must audit all four actual artifact ZIPs before approving any numeric profile.
 
@@ -41,12 +41,12 @@ Native-free frozen replay is included in the existing Windows x64, Apple Silicon
 
 Each measurement records its actual evidence head, run, job, artifact, ZIP hash, raw provenance member hash, before and after source member hashes, and capture source-map hash. `measured_verification_sha256` preserves the ten historical verification hashes. The capture source-map digest is SHA256 of UTF-8 `json.dumps(map, sort_keys=True)` with Python default separators, excluding only this manifest. The 457 protected hashes and ten verification paths are disjoint.
 
-`verification_sha256` describes current expected physical source bytes derived from fixed reviewed Git blobs and each path's measured LF or CRLF checkout transport. Its status is `reviewed-current-source-expectation-execution-pending`. This expectation does not claim the historical captures executed the current validator. Receipts return the selected historical measurement and separately identify the current source map and manifest. Runtime schema checks do not authenticate arbitrary artifact IDs. Admission review must resolve the recorded identities to immutable actual GitHub artifacts and members.
+`verification_sha256` describes current expected physical source bytes derived from fixed reviewed Git blobs and each path's measured LF or CRLF checkout transport. Its status is `reviewed-current-source-expectation-execution-pending`. This expectation does not claim the historical captures executed the current validator. Receipts return the selected measurement reference and separately identify the current source map and manifest. Runtime schema checks do not authenticate arbitrary artifact IDs. Admission review must resolve the recorded identities to immutable actual GitHub artifacts and members.
 
 Fresh final-head four-host capture and independent review must prove current source-before and source-after identities, the current validator, all commands and twelve streams, full same-host baselines, and 52 compiled mutants with 16 mutation-suite baselines. Historical 39-mutant and 12-baseline runs cannot fill that requirement. Pure replay of both Linux records does not establish fresh native execution in both environments. Compiler executable, linker and runtime-library byte identities remain unknown. Seven legacy whole outer-suite optimized-Python failures remain tracked separately in issue 212. Hosted preparation runs the dedicated model tests under normal Python and `-O` without treating that legacy optimized suite as passing.
 
 
-Schema 3 retains all five historical measurements and both Linux kernel variants
+Schema 4 retains all five historical measurements and both Linux kernel variants
 unchanged. The validator anchors the canonical `profiles` and `frozen_fixtures`
 projection to SHA256 `db3da5b75c9c53145e6be0aec4f83264f3a0bbce2a128ea321caf24ae0e7e501`.
 The bounded DBVT source admission binds reviewed main `4d6878ec` to integration
@@ -55,7 +55,8 @@ in the collected source map, alongside the existing ten current verification pat
 All 474 current entries excluding the manifest must match physical checkout bytes.
 No deletion, path substitution or chained bridge is admitted.
 
-Receipts separate `historical_measurement` with role `historical-reference` from
+Receipts separate `measurement_reference` with role `historical-reference` or
+`supplemental-reference` from
 `current_source`. Historical heads, runs, jobs, artifacts, ZIPs and source digests
 remain historical identities. The current capture head comes from the capture's
 own `source-head.txt`, containing exactly 40 lowercase ASCII hexadecimal bytes
@@ -68,5 +69,21 @@ The collector is a conservative inventory, not the full whole-pure-suite compile
 closure. Whole pure tests also consume DBVT fixtures outside this inventory.
 Fresh final-head four-host execution must still prove 52 compiled semantic
 rejections, 16 suite baselines, four full baselines and source-before/end integrity.
-Historical Linux kernel 7 measurements do not prove current-source native execution
-on that kernel. Whole pure and General integration remain separate gates.
+Historical measurements do not prove fresh final-head native execution. Whole pure and General integration remain separate gates.
+
+Schema 4 adds exactly one `supplemental_measurements` record for Linux ARM64
+kernel `7.0.0-1017`, captured at `46b54133d247322027915733b4acf51574298c68`.
+Run `40550671157`, job `122353217320`, artifact `12755645749` retain the actual
+H46 provenance, source member hashes and captured verification hashes. The
+canonical supplemental projection is separately anchored in the validator. Its
+464 protected hashes are reconstructed from the historical 457 and the existing
+exact DBVT bridge, then combined with its ten captured verification hashes to
+check the fixed capture source-map digest. Current verification updates cannot
+rewrite that observation. No repeated delta or source-generation registry exists.
+
+All legacy and supplemental records share normalized provenance, job and artifact
+uniqueness checks. A matrix run may contain distinct jobs. Selection requires
+exactly one match for the requested host and complete provenance. The captured
+commands and twelve streams match the existing ARM contract. This failed discovery
+run completed its full baseline but has no ARM semantic mutations or suite
+baselines. It remains an observation and cannot satisfy final-head acceptance.

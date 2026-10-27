@@ -127,16 +127,17 @@ class FiniteMeasurementTests(unittest.TestCase):
             self.assertEqual(len(profile['measurements']), 2 if host == 'linux-x64' else 1)
             for measurement in profile['measurements']:
                 provenance = measurement['compiler_provenance'].replace('\r\n', '\n')
-                self.assertEqual(measured_profiles.select_measurement(profile, provenance), measurement)
-                reversed_profile = dict(profile, measurements=list(reversed(profile['measurements'])))
-                self.assertEqual(measured_profiles.select_measurement(reversed_profile, provenance), measurement)
+                self.assertEqual(measured_profiles.select_measurement(self.manifest, host, provenance), measurement)
+                reversed_manifest = copy.deepcopy(self.manifest)
+                reversed_manifest['profiles'][host]['measurements'].reverse()
+                self.assertEqual(measured_profiles.select_measurement(reversed_manifest, host, provenance), measurement)
                 for broken in [provenance.replace(provenance.splitlines()[0], 'third kernel'),
                                provenance.replace('rustc', 'unmeasured-rustc'), provenance + 'extra\n',
                                provenance.replace('clang', 'unmeasured-clang'), provenance.replace('\n', '\r', 1),
                                provenance.replace('\n', '\r\n', 1)]:
                     if broken != provenance:
                         with self.assertRaisesRegex(ValueError, 'compiler or toolchain'):
-                            measured_profiles.select_measurement(profile, broken)
+                            measured_profiles.select_measurement(self.manifest, host, broken)
         linux = self.manifest['profiles']['linux-x64']['measurements']
         self.assertEqual({m['artifact_id'] for m in linux}, {12739416224, 12735984749})
         self.assertEqual({m['zip_sha256'] for m in linux}, {
@@ -253,6 +254,74 @@ class FiniteMeasurementTests(unittest.TestCase):
             self.assertEqual(set(current), set(self.manifest['profiles'][host]['protected_source_sha256'])
                              | measured_profiles.ADDITIONS | set(self.manifest['verification_sha256'][host]))
 
+    def test_supplemental_exact_selection_and_global_identities(self):
+        measurement, = self.manifest['supplemental_measurements']
+        self.assertEqual(measurement['evidence_head'], '46b54133d247322027915733b4acf51574298c68')
+        self.assertEqual((measurement['run_id'], measurement['job_id'], measurement['artifact_id']),
+                         (40550671157, 122353217320, 12755645749))
+        for provenance in [measurement['compiler_provenance'], measurement['compiler_provenance'].replace('\n', '\r\n')]:
+            self.assertEqual(measured_profiles.select_measurement(self.manifest, 'linux-arm64', provenance), measurement)
+            for host in measured_profiles.HOSTS - {'linux-arm64'}:
+                with self.assertRaisesRegex(ValueError, 'compiler or toolchain'):
+                    measured_profiles.select_measurement(self.manifest, host, provenance)
+        duplicate = copy.deepcopy(self.manifest)
+        duplicate['supplemental_measurements'].append(measurement)
+        with self.assertRaisesRegex(ValueError, 'compiler or toolchain'):
+            measured_profiles.select_measurement(duplicate, 'linux-arm64', measurement['compiler_provenance'])
+        historical = [m for p in self.manifest['profiles'].values() for m in p['measurements']]
+        self.assertLess(len({m['run_id'] for m in historical}), len(historical))
+        self.assertEqual(len({m['job_id'] for m in historical}), len(historical))
+
+    def test_unselected_supplement_and_coordinated_tampering_fail_closed(self):
+        def supplemental(value):
+            return value['supplemental_measurements'][0]
+        def refresh_capture(value):
+            measurement = supplemental(value)
+            current = measured_profiles.approved_source_map(value, 'linux-arm64')
+            measurement['capture_source_map_sha256'] = measured_profiles.source_map_digest({
+                **current, **measurement['captured_verification_sha256']})
+        def coordinated(value):
+            path = sorted(measured_profiles.REPLACEMENTS)[0]
+            value['source_admission']['hosts']['linux-arm64']['replacements'][path] = '0' * 64
+            value['verification_sha256']['linux-arm64'] = dict(supplemental(value)['captured_verification_sha256'])
+            refresh_capture(value)
+        def current_as_capture(value):
+            supplemental(value)['captured_verification_sha256'] = dict(value['verification_sha256']['linux-arm64'])
+            refresh_capture(value)
+        changes = [lambda v: v.update(supplemental_measurements=[]),
+                   lambda v: v.update(supplemental_measurements={}),
+                   lambda v: v['supplemental_measurements'].append(copy.deepcopy(supplemental(v))),
+                   lambda v: supplemental(v).update(host='linux-x64'),
+                   lambda v: supplemental(v).update(host=[]),
+                   lambda v: supplemental(v)['captured_verification_sha256'].pop(next(iter(supplemental(v)['captured_verification_sha256']))),
+                   lambda v: supplemental(v)['captured_verification_sha256'].update(extra='0' * 64),
+                   coordinated, current_as_capture]
+        for field in measured_profiles.MEASUREMENT_FIELDS | {'host', 'captured_verification_sha256'}:
+            changes.append(lambda v, field=field: supplemental(v).pop(field))
+        for field in ['job_id', 'artifact_id', 'compiler_provenance']:
+            changes.append(lambda v, field=field: supplemental(v).update({field: v['profiles']['linux-x64']['measurements'][0][field]}))
+        for field in ['run_id', 'job_id', 'artifact_id']:
+            for bad in [True, 0, '1']:
+                changes.append(lambda v, field=field, bad=bad: supplemental(v).update({field: bad}))
+        for change in changes:
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'schema'):
+                self.load_changed(change)
+        with self.assertRaisesRegex(ValueError, 'immutable supplemental projection'):
+            self.load_changed(coordinated)
+        captured = self.manifest['supplemental_measurements'][0]['captured_verification_sha256']
+        self.assertNotEqual(captured, self.manifest['verification_sha256']['linux-arm64'])
+
+    def test_protected_observer_stays_rejected_with_refreshed_verification(self):
+        refreshed = self.load_changed(lambda value: value['verification_sha256']['linux-arm64'].update(
+            {path: '1' * 64 for path in value['verification_sha256']['linux-arm64']}))
+        source = measured_profiles.approved_source_map(refreshed, 'linux-arm64')
+        source['tools/bullet-rust-gjk-pair-check/observe.py'] = '0' * 64
+        with patch.object(measured_profiles, 'load_manifest', return_value=refreshed):
+            with self.assertRaisesRegex(ValueError, 'source closure'):
+                measured_profiles.validate(Path('/unused'), host=lambda: 'linux-arm64',
+                    inventory=check.inventory, source_hashes=lambda: source,
+                    stream=check.stream, transport=check.transport)
+
     def test_synthetic_replay_receipts_and_contract_guards(self):
         fixture = check.ROOT / 'rust/crates/mds-bullet/tests/gjk_pair_data'
         for host_name, profile in self.manifest['profiles'].items():
@@ -277,14 +346,16 @@ class FiniteMeasurementTests(unittest.TestCase):
                 def validate():
                     return measured_profiles.validate(output, host=lambda: host_name, inventory=lambda *args: profile['exact_frozen_compact_differences'],
                         source_hashes=lambda: source, stream=replay, transport=replay)
-                for measurement in profile['measurements']:
+                candidates = profile['measurements'] + [m for m in self.manifest['supplemental_measurements'] if m['host'] == host_name]
+                for measurement in candidates:
                     (output / 'provenance.txt').write_bytes(measurement['compiler_provenance'].encode())
                     receipt = validate()
                     for field in measured_profiles.MEASUREMENT_FIELDS - {'compiler_provenance'}:
-                        self.assertEqual(receipt['historical_measurement'][field], measurement[field])
+                        self.assertEqual(receipt['measurement_reference'][field], measurement[field])
                     self.assertEqual(receipt['current_source']['source_sha256'], source)
                     self.assertEqual(receipt['current_source']['source_map_sha256'], measured_profiles.source_map_digest(source))
-                self.assertEqual(receipt['historical_measurement']['role'], 'historical-reference')
+                    self.assertEqual(receipt['measurement_reference']['role'],
+                                     'supplemental-reference' if 'host' in measurement else 'historical-reference')
                 self.assertEqual(receipt['current_source']['capture_head'], '1' * 40)
                 self.assertEqual(receipt['current_source']['integration_head'], self.manifest['source_admission']['integration_head'])
                 self.assertEqual(receipt['current_source']['verification_manifest_sha256'], measured_profiles.sha((measured_profiles.HERE / 'measured-profiles.json').read_bytes()))

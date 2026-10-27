@@ -123,6 +123,9 @@ jobs:
           cp "$RUNNER_TEMP/c2rust-src/Cargo.lock" "$RUNNER_TEMP/vkd3d-probe/logs/c2rust-Cargo.lock"
           cp "$RUNNER_TEMP/c2rust-src/LICENSE" "$RUNNER_TEMP/vkd3d-probe/tool/LICENSE"
           "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" --version
+          python3 tools/vkd3d-rust-probe/apply_c2rust_patch.py \
+            --source "$RUNNER_TEMP/c2rust-src" --artifacts "$RUNNER_TEMP/vkd3d-probe/logs" \
+            --tool "$RUNNER_TEMP/vkd3d-probe/tool"
           python3 tools/vkd3d-rust-probe/check_runtime.py \
             --tool "$RUNNER_TEMP/vkd3d-probe/tool" --record
           sha256sum "$RUNNER_TEMP/vkd3d-probe/tool/bin/"* > "$RUNNER_TEMP/vkd3d-probe/logs/c2rust-binaries-sha256.txt"

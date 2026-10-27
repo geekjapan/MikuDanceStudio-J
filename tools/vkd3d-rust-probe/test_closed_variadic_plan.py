@@ -115,6 +115,78 @@ class ClosedPlanTests(unittest.TestCase):
             with self.assertRaisesRegex(PlanError, 'local wildcard'):
                 collect_probe(root)
 
+    def test_parameter_top_level_qualifiers_are_compatible(self):
+        a, b = inventory('definition.c', True), inventory('caller.c')
+        a['declarations'][0]['signature']['canonical']['parameters'][0].update(
+            const=True, volatile=True, restrict=True)
+        self.assertNotIn('signature_mismatch', [d['code'] for d in self.plan(a, b)['diagnostics']])
+
+    def test_pointee_qualifiers_abi_and_real_types_still_mismatch(self):
+        for control in ['pointee', 'abi', 'parameter', 'return', 'variadic']:
+            with self.subTest(control=control):
+                a, b = inventory('definition.c', True), inventory('caller.c')
+                sig = b['declarations'][0]['signature']['canonical']
+                if control == 'pointee':
+                    for item in (a, b):
+                        item['declarations'][0]['signature']['canonical']['parameters'] = [
+                            {'canonical': {'pointer': scalar('Int')}, 'const': False}]
+                    sig['parameters'][0]['canonical']['pointer']['const'] = True
+                elif control == 'abi':
+                    sig['abi'] = 'win64'
+                elif control == 'parameter':
+                    sig['parameters'] = [scalar('UInt')]
+                elif control == 'return':
+                    sig['return'] = scalar('UInt')
+                else:
+                    sig['variadic'] = False
+                self.assertIn('signature_mismatch', [d['code'] for d in self.plan(a, b)['diagnostics']])
+
+    def test_no_body_alias_chain_propagates_export_call_and_escape(self):
+        a, b = inventory('definition.c', True), inventory('caller.c')
+        for ident, name, target in [(2, 'alias_one', 'format'), (3, 'public_alias', 'alias_one')]:
+            declaration = json.loads(json.dumps(b['declarations'][0]))
+            declaration.update(id=ident, symbol={'linker': name}, aliases=[target])
+            b['declarations'].append(declaration)
+        b['calls'] = [{'id': 10, 'owner': None, 'callee': {'linker': 'public_alias'},
+                       'location': 'caller.c:10', 'arguments': [{'type': scalar('Int')}, {'type': scalar('Double')}]}]
+        b['non_call_references'] = [{'symbol': {'linker': 'alias_one'}, 'location': 'caller.c:11'}]
+        plan = self.plan(a, b, ['public_alias'])
+        candidate = plan['symbols'][0]
+        self.assertEqual(candidate['calls'][0]['slots'], ['c_double'])
+        codes = {d['code'] for d in plan['diagnostics'] if d['symbol'] == candidate['symbol']}
+        self.assertTrue({'unsupported_linker_alias', 'exported_variadic_or_cursor_definition',
+                         'address_escape', 'cursor_dataflow_unproved'} <= codes)
+
+    def test_exported_alias_to_static_candidate_is_rejected(self):
+        a, b = inventory('definition.c', True), inventory('caller.c')
+        a['declarations'][0]['symbol'] = {'unit': 'definition.c', 'static': 'format'}
+        alias = json.loads(json.dumps(a['declarations'][0]))
+        alias.update(id=2, definition=False, symbol={'linker': 'public_alias'}, aliases=['format'])
+        a['declarations'].append(alias)
+        result = self.plan(a, b, ['public_alias'])
+        self.assertIn('exported_variadic_or_cursor_definition', [d['code'] for d in result['diagnostics']])
+        self.assertNotIn('unresolved_linker_alias', [d['code'] for d in result['diagnostics']])
+
+    def test_pointer_parameter_top_level_qualification_is_compatible(self):
+        a, b = inventory('definition.c', True), inventory('caller.c')
+        for item in (a, b):
+            item['declarations'][0]['signature']['canonical']['parameters'] = [
+                {'canonical': {'pointer': scalar('Int')}, 'const': False}]
+        a['declarations'][0]['signature']['canonical']['parameters'][0]['const'] = True
+        self.assertNotIn('signature_mismatch', [d['code'] for d in self.plan(a, b)['diagnostics']])
+
+    def test_alias_cycle_unresolved_and_private_alias_are_rejected(self):
+        for aliases, expected in [({'format': 'missing'}, 'unresolved_linker_alias'),
+                                  ({'format': 'other', 'other': 'format'}, 'cyclic_linker_alias'),
+                                  ({'other': 'format'}, 'unsupported_linker_alias')]:
+            with self.subTest(aliases=aliases):
+                a, b = inventory('definition.c', True), inventory('caller.c')
+                for index, (name, target) in enumerate(aliases.items()):
+                    declaration = json.loads(json.dumps(b['declarations'][0]))
+                    declaration.update(id=index + 2, symbol={'linker': name}, aliases=[target])
+                    b['declarations'].append(declaration)
+                self.assertIn(expected, [d['code'] for d in self.plan(a, b)['diagnostics']])
+
     def test_promoted_types_and_rejections(self):
         for kind in ['Int', 'UInt', 'Long', 'ULong', 'LongLong', 'ULongLong', 'Double']:
             self.assertIsInstance(promoted_slot({'type': scalar(kind)}), str)

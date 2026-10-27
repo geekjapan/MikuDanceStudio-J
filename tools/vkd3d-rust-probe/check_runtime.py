@@ -5,6 +5,8 @@ from pathlib import Path
 import re
 import subprocess
 
+from apply_c2rust_patch import verify_tool
+
 
 def output(command):
     result = subprocess.run(command, text=True, stdout=subprocess.PIPE,
@@ -15,6 +17,7 @@ def output(command):
 
 
 def check(tool, record=False):
+    verify_tool(tool)
     versions = {
         'clang': output(['/usr/bin/clang-18', '--version']).splitlines()[0],
         'llvm': output(['/usr/bin/llvm-config-18', '--version']).strip(),

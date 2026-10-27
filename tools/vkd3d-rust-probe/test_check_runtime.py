@@ -10,6 +10,18 @@ import check_runtime
 
 
 class RuntimeTests(unittest.TestCase):
+    def setUp(self):
+        verification = patch.object(check_runtime, 'verify_tool')
+        verification.start()
+        self.addCleanup(verification.stop)
+
+    def test_incomplete_source_stops_before_runtime_recording(self):
+        with patch.object(check_runtime, 'verify_tool', side_effect=ValueError('incomplete source')):
+            with patch.object(check_runtime, 'output') as command:
+                with self.assertRaisesRegex(ValueError, 'incomplete source'):
+                    check_runtime.check(Path('/unused'), record=True)
+                command.assert_not_called()
+
     def output(self, command):
         if command[0] == '/usr/bin/clang-18':
             return 'Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64\n'

@@ -18,8 +18,22 @@ def symbol_key(symbol):
     raise PlanError('invalid symbol identity')
 
 
+def compatible_type(typ):
+    if isinstance(typ, list):
+        return [compatible_type(t) for t in typ]
+    if not isinstance(typ, dict):
+        return typ
+    result = {key: compatible_type(value) for key, value in typ.items()}
+    if 'parameters' in result:
+        # C function compatibility ignores parameter CVR, not pointee CVR.
+        result['parameters'] = [{k: v for k, v in parameter.items()
+                                 if k not in ('const', 'volatile', 'restrict')}
+                                for parameter in result['parameters']]
+    return result
+
+
 def function_signature(declaration):
-    return declaration['signature']['canonical']
+    return compatible_type(declaration['signature']['canonical'])
 
 
 def promoted_slot(argument):
@@ -71,6 +85,37 @@ def build_plan(inventories, expected_units, exports):
     def reject(code, key, location, detail=None):
         diagnostics.append({'code': code, 'symbol': list(key), 'location': location, 'detail': detail})
 
+    alias_targets = {}
+    for item in inventories:
+        for declaration in item['declarations']:
+            key = symbol_key(declaration['symbol'])
+            for name in declaration.get('aliases', []):
+                target = ('static', item['unit'], name)
+                if target not in declarations:
+                    target = ('linker', name)
+                alias_targets.setdefault(key, set()).add(target)
+                reject('unsupported_linker_alias', key, declaration['location'], list(target))
+                if target not in declarations:
+                    reject('unresolved_linker_alias', key, declaration['location'], list(target))
+
+    alias_reachable = {}
+    for key, targets in alias_targets.items():
+        location = declarations[key][0]['location']
+        if len(targets) != 1:
+            reject('ambiguous_linker_alias', key, location)
+        reachable = set()
+        pending = [(key, ())]
+        while pending:
+            current, path = pending.pop()
+            if current in path:
+                reject('cyclic_linker_alias', key, location, [list(k) for k in (*path, current)])
+                continue
+            if current in reachable:
+                continue
+            reachable.add(current)
+            pending.extend((target, (*path, current)) for target in sorted(alias_targets.get(current, ())))
+        alias_reachable[key] = reachable
+
     for key, records in declarations.items():
         definitions = [d for d in records if d['definition']]
         if not definitions or not any(function_signature(d)['variadic'] or d['va_parameters'] for d in definitions):
@@ -85,17 +130,24 @@ def build_plan(inventories, expected_units, exports):
             reject('signature_mismatch', key, definition['location'])
         if key[0] == 'linker' and key[1] in exports:
             reject('exported_variadic_or_cursor_definition', key, definition['location'])
-        if any(d.get('aliases') for d in records):
-            reject('unsupported_linker_alias', key, definition['location'])
         if signature['abi'] != 'C' or not signature['prototype']:
             reject('unsupported_calling_convention_or_prototype', key, definition['location'])
         reject('cursor_dataflow_unproved', key, definition['location'])
+    for alias, reachable in alias_reachable.items():
+        for key in sorted(reachable & candidates.keys()):
+            reject('unsupported_linker_alias', key, declarations[alias][0]['location'], list(alias))
+            if alias[0] == 'linker' and alias[1] in exports:
+                reject('exported_variadic_or_cursor_definition', key, declarations[alias][0]['location'], list(alias))
+
+    def visible_candidates(key):
+        return sorted(alias_reachable.get(key, {key}) & candidates.keys())
+
     for item in inventories:
         owners = {d['id']: symbol_key(d['symbol']) for d in item['declarations']}
         for escape in item['non_call_references']:
             key = symbol_key(escape['symbol'])
-            if key in candidates:
-                reject('address_escape', key, escape['location'])
+            for candidate in visible_candidates(key):
+                reject('address_escape', candidate, escape['location'])
         for use in item['va_arg']:
             key = owners.get(use['owner'])
             if key in candidates:
@@ -107,21 +159,20 @@ def build_plan(inventories, expected_units, exports):
                     reject('unclassified_indirect_call', owner, call['location'])
                 continue
             key = symbol_key(call['callee'])
-            if key not in candidates:
-                continue
-            signature = candidates[key]['signature']
-            fixed = len(signature['parameters'])
-            if len(call['arguments']) < fixed or (not signature['variadic'] and len(call['arguments']) != fixed):
-                reject('argument_count_mismatch', key, call['location'])
-                continue
-            slots = []
-            for argument in call['arguments'][fixed:]:
-                try:
-                    slots.append(promoted_slot(argument))
-                except PlanError as error:
-                    reject('unsupported_tail_type', key, call['location'], str(error))
-            candidates[key]['calls'].append({'unit': item['unit'], 'location': call['location'],
-                                             'expression': call['id'], 'slots': slots})
+            for key in visible_candidates(key):
+                signature = candidates[key]['signature']
+                fixed = len(signature['parameters'])
+                if len(call['arguments']) < fixed or (not signature['variadic'] and len(call['arguments']) != fixed):
+                    reject('argument_count_mismatch', key, call['location'])
+                    continue
+                slots = []
+                for argument in call['arguments'][fixed:]:
+                    try:
+                        slots.append(promoted_slot(argument))
+                    except PlanError as error:
+                        reject('unsupported_tail_type', key, call['location'], str(error))
+                candidates[key]['calls'].append({'unit': item['unit'], 'location': call['location'],
+                                                 'expression': call['id'], 'slots': slots})
     return {'schema': 1, 'target': target, 'target_c_widths_bits': widths, 'authorization': 'inventory_only',
             'units': sorted(units), 'symbols': list(candidates.values()),
             'diagnostics': diagnostics,

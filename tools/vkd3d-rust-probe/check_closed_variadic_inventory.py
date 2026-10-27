@@ -65,6 +65,27 @@ def check(tool, root, clang):
             raise RuntimeError('unexpected fixture diagnostic')
         (root / 'closed-plan.json').write_text(json.dumps(plan, indent=2) + '\n')
         result['generated_sha256'] = {str(p.relative_to(root)): digest(p) for p in (root / 'rust').rglob('*') if p.is_file()}
+        label_root = root / 'late-asm-label'
+        label_root.mkdir()
+        label_input = fixtures.parent / 'exporter-fixtures/late_asm_label.c'
+        label_source = label_root / label_input.name
+        shutil.copy2(label_input, label_source)
+        label_database = label_root / 'compile_commands.json'
+        label_database.write_text(json.dumps([{'directory': str(label_root), 'file': str(label_source),
+                                               'arguments': [clang, '-std=c11', '-c', str(label_source)]}]))
+        stage('late-asm-label-export', [str(tool.with_name('c2rust-transpile')), '--fail-on-error',
+                                       '--disable-rustfmt', '--edition', '2024', '--emit-c-decl-map',
+                                       '--output-dir', str(label_root / 'rust'), str(label_database)], 120)
+        label_inventory = json.loads((label_root / 'rust/src/late_asm_label.variadic.json').read_text())
+        label_declarations = [d for d in label_inventory['declarations']
+                              if d['symbol'] == {'linker': 'effective_late_label'}]
+        if len(label_declarations) != 1 or not any(
+                c['callee'] == {'linker': 'effective_late_label'} for c in label_inventory['calls']):
+            raise RuntimeError('later asm label missing from actual exporter declaration or call')
+        if any(d['symbol'] == {'linker': 'declared_first'} for d in label_inventory['declarations']):
+            raise RuntimeError('canonical declaration lost the effective later asm label')
+        result['late_asm_label_sha256'] = {str(p.relative_to(root)): digest(p)
+                                         for p in label_root.rglob('*') if p.is_file()}
         result['status'] = 'inventory_fixture_success'
     except (RuntimeError, OSError, ValueError) as error:
         result['status'] = 'failure'

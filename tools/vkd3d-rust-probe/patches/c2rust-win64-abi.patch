@@ -71,16 +71,23 @@ index ef9d929..caf8145 100644
          });
 
          VisitQualType(T->getReturnType());
-@@ -2252,6 +2270,8 @@ class TranslateASTVisitor final
+@@ -2252,6 +2270,15 @@ class TranslateASTVisitor final
                  }
 
                  cbor_encoder_close_container(array, &attr_array);
-+                const auto *label = FD->getAttr<AsmLabelAttr>();
++                const AsmLabelAttr *label = nullptr;
++                for (const auto *redecl : FD->redecls()) {
++                    if (const auto *attr = redecl->getAttr<AsmLabelAttr>()) {
++                        if (label && label->getLabel() != attr->getLabel())
++                            llvm::report_fatal_error("conflicting function asm labels");
++                        label = attr;
++                    }
++                }
 +                cbor_encode_string(array, label ? label->getLabel().str() : name);
              });
          typeEncoder.VisitQualTypeOf(functionType, paramsFD);
 
-@@ -3026,7 +3046,7 @@ class TranslateConsumer : public clang::ASTConsumer {
+@@ -3026,7 +3053,7 @@ class TranslateConsumer : public clang::ASTConsumer {
              cbor_encoder_init(&encoder, buffer, len, 0);
 
              CborEncoder outer;
@@ -89,7 +96,7 @@ index ef9d929..caf8145 100644
 
              CborEncoder array;
 
-@@ -3136,6 +3156,14 @@ class TranslateConsumer : public clang::ASTConsumer {
+@@ -3136,6 +3163,14 @@ class TranslateConsumer : public clang::ASTConsumer {
              auto target = Context.getTargetInfo().getTriple().str();
              cbor_encode_string(&outer, target);
 

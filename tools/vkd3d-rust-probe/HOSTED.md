@@ -103,9 +103,14 @@ and those checks do not establish hosted translation, linkage, or semantics.
 
 The official source revision remains `ac687698b6c13491dfec45c6a9ad9e8b4da35227`.
 `apply_c2rust_patch.py` refuses another revision or dirty source, checks the patch
-with `git apply --check`, then records its SHA256, applied diff, original revision,
-and hashes for all eight modified upstream source files. The setup artifact also records executable hashes and
-retains the official LICENSE and Cargo.lock. Only the local patch is committed.
+with `git apply --check`, then saves the complete applied patch, original revision,
+and exact bytes and SHA256 hashes for every patch destination, including new modules.
+It rejects unsafe, duplicate, missing and symlink destinations. The tool bundle retains
+this evidence under `tool/source-evidence`. After the build, `--tool` verifies the
+compiler source against that evidence and binds both executable hashes to the source
+receipt. `check_runtime.py` verifies the binding and retained source before accepting
+the hosted runtime. The setup artifact also retains the official LICENSE and Cargo.lock.
+Only the local patch is committed.
 
 The exporter unwraps `MacroQualifiedType` for both type IDs and traversal, and
 uses the equivalent type for calling-convention attributes. Function prototype
@@ -346,3 +351,9 @@ remain required. No production variadic definition is enabled by this work.
 
 The new hosted inventory checks have not yet executed. The existing isolated
 four-host native cursor probe remains separate prerequisite evidence.
+
+The actual two-TU inventory gate also translates `exporter-fixtures/late_asm_label.c`.
+The fixture introduces an asm label after the first declaration. The gate requires
+both its exported declaration and direct call to use the effective later label.
+This check requires the rebuilt LLVM18 exporter. A local AST API check does not
+satisfy that hosted gate.

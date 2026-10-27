@@ -50,8 +50,10 @@ impl DiscreteCollisionWorld {
             .shape
             .aabb(self.objects.bodies()[i].snapshot().world);
         let [group, mask] = self.objects.data()[i].filter;
-        self.proxy_by_body
-            .push(self.broadphase.create_proxy(Aabb { min, max }, i, group, mask));
+        self.proxy_by_body.push(
+            self.broadphase
+                .create_proxy(Aabb { min, max }, i, group, mask),
+        );
         Ok(handle)
     }
 

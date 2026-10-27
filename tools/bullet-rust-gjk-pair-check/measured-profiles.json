@@ -3867,7 +3867,7 @@
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "6465504fc34c83537439f8d77742d9ccd6b8a0f85f34db5b09176cc75bc7eea5",
       "tools/bullet-rust-gjk-pair-check/check.py": "363e144267110687b6982a3f68f4b54a1f4de252a52e54923fc73a867f8bbcbc",
-      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "9b97a985f17d6f3ba02e521b511a5c2037c2fa3abf447469d0c6d1d16f4e1eef",
+      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "78b33baefcadc45416646df6f1de1d879456f127b57d1f0c6f2c36ec14a7d727",
       "tools/bullet-rust-gjk-pair-check/mutations.py": "a291052539ac00fcd7bd786bca7c09ebad71488480e30ac4bf2be97b122ec79a",
       "tools/bullet-rust-gjk-pair-check/native-x64-provenance.json": "630f0fa5a7404b92ab4dfbd645e008554419aac413f524704c58f3c63b6dcefa",
       "tools/bullet-rust-gjk-pair-check/test_capture.py": "2741346f823de39b120ced7cdcdaad287238f55194291619aa6c6c2457613038",
@@ -3879,7 +3879,7 @@
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "6465504fc34c83537439f8d77742d9ccd6b8a0f85f34db5b09176cc75bc7eea5",
       "tools/bullet-rust-gjk-pair-check/check.py": "363e144267110687b6982a3f68f4b54a1f4de252a52e54923fc73a867f8bbcbc",
-      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "9b97a985f17d6f3ba02e521b511a5c2037c2fa3abf447469d0c6d1d16f4e1eef",
+      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "78b33baefcadc45416646df6f1de1d879456f127b57d1f0c6f2c36ec14a7d727",
       "tools/bullet-rust-gjk-pair-check/mutations.py": "a291052539ac00fcd7bd786bca7c09ebad71488480e30ac4bf2be97b122ec79a",
       "tools/bullet-rust-gjk-pair-check/native-x64-provenance.json": "630f0fa5a7404b92ab4dfbd645e008554419aac413f524704c58f3c63b6dcefa",
       "tools/bullet-rust-gjk-pair-check/test_capture.py": "2741346f823de39b120ced7cdcdaad287238f55194291619aa6c6c2457613038",
@@ -3891,7 +3891,7 @@
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "6465504fc34c83537439f8d77742d9ccd6b8a0f85f34db5b09176cc75bc7eea5",
       "tools/bullet-rust-gjk-pair-check/check.py": "363e144267110687b6982a3f68f4b54a1f4de252a52e54923fc73a867f8bbcbc",
-      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "9b97a985f17d6f3ba02e521b511a5c2037c2fa3abf447469d0c6d1d16f4e1eef",
+      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "78b33baefcadc45416646df6f1de1d879456f127b57d1f0c6f2c36ec14a7d727",
       "tools/bullet-rust-gjk-pair-check/mutations.py": "a291052539ac00fcd7bd786bca7c09ebad71488480e30ac4bf2be97b122ec79a",
       "tools/bullet-rust-gjk-pair-check/native-x64-provenance.json": "630f0fa5a7404b92ab4dfbd645e008554419aac413f524704c58f3c63b6dcefa",
       "tools/bullet-rust-gjk-pair-check/test_capture.py": "2741346f823de39b120ced7cdcdaad287238f55194291619aa6c6c2457613038",
@@ -3903,7 +3903,7 @@
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "c9aa97f3e582c1613e85cbbbda966248771677813654c2f33e3a8401b29b98ea",
       "tools/bullet-rust-gjk-pair-check/check.py": "9204fa0498fa85a68f0e0ad8860a1e40f89cbd9640174315f341d4d54e46412b",
-      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "946a892eb87cefbdb487d6efd6680d19ab6b435f8457cf90a0ea9fb05b2ab4b4",
+      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "cb9db59ad80282c693e59665e03afcac8c59c5506a76a8a16931d0074ab58ca7",
       "tools/bullet-rust-gjk-pair-check/mutations.py": "61d9cf572923b5d5007b4bfd576f657a68e8b5a121bee66877cfbd6d1536d132",
       "tools/bullet-rust-gjk-pair-check/native-x64-provenance.json": "b5ea3c0fa1b625a37bb7e94c576deca0e4cee895b3dfedfe9e1a1823d0e170af",
       "tools/bullet-rust-gjk-pair-check/test_capture.py": "4bf98fb11a8e65b08792ea5fbd812a6f4d8a455339bb40c70c734f526b6c5e3b",
@@ -4125,7 +4125,7 @@
           }
         },
         "additions": {
-          "rust/crates/mds-bullet/src/core/discrete_collision_world.rs": "5a41a2f2a3894fb92e81f212c3fb9cb57add20518da7015cbe7892ae4d584181",
+          "rust/crates/mds-bullet/src/core/discrete_collision_world.rs": "574091251e35e2db54ec62d0afc2c719db2efec613091d8adc0ab94110ba3929",
           "rust/crates/mds-bullet/tests/discrete_collision_world.rs": "70ceaeaf379f7499d8722c1aa52a734d68a8e695c26c9e5f605f022f5fb4f2fd"
         }
       },
@@ -4137,7 +4137,7 @@
           }
         },
         "additions": {
-          "rust/crates/mds-bullet/src/core/discrete_collision_world.rs": "5a41a2f2a3894fb92e81f212c3fb9cb57add20518da7015cbe7892ae4d584181",
+          "rust/crates/mds-bullet/src/core/discrete_collision_world.rs": "574091251e35e2db54ec62d0afc2c719db2efec613091d8adc0ab94110ba3929",
           "rust/crates/mds-bullet/tests/discrete_collision_world.rs": "70ceaeaf379f7499d8722c1aa52a734d68a8e695c26c9e5f605f022f5fb4f2fd"
         }
       },
@@ -4149,7 +4149,7 @@
           }
         },
         "additions": {
-          "rust/crates/mds-bullet/src/core/discrete_collision_world.rs": "5a41a2f2a3894fb92e81f212c3fb9cb57add20518da7015cbe7892ae4d584181",
+          "rust/crates/mds-bullet/src/core/discrete_collision_world.rs": "574091251e35e2db54ec62d0afc2c719db2efec613091d8adc0ab94110ba3929",
           "rust/crates/mds-bullet/tests/discrete_collision_world.rs": "70ceaeaf379f7499d8722c1aa52a734d68a8e695c26c9e5f605f022f5fb4f2fd"
         }
       },
@@ -4161,7 +4161,7 @@
           }
         },
         "additions": {
-          "rust/crates/mds-bullet/src/core/discrete_collision_world.rs": "50502e4fd01058d75f9885c1b33f67d096b9f4a92f3447bfe0daf8cda2de3352",
+          "rust/crates/mds-bullet/src/core/discrete_collision_world.rs": "e845ada45adeb47ecfbbd4ac1f09682f054947360e5c04d051abc218b35faf0b",
           "rust/crates/mds-bullet/tests/discrete_collision_world.rs": "70ceaeaf379f7499d8722c1aa52a734d68a8e695c26c9e5f605f022f5fb4f2fd"
         }
       }

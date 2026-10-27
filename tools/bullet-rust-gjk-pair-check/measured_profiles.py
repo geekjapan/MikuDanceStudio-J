@@ -30,7 +30,7 @@ REGISTRATION_FORMAT = {
     'old_sha256': '448ee12c55dfad95be039dd94f3bc33d223fdacdb3cc9c8497e374cc275f53c0',
     'new_sha256': 'db2ec5f155bf1f7a10654a7c0c263435349ba55c8fe1c5fcfdcc67853fba7157',
 }
-DISCRETE_WORLD_SHA256 = '579f151f02962c0e592d3e50d9ac2433b264a8f103e8de029ad14f64f9c2bd0a'
+DISCRETE_WORLD_SHA256 = 'ad4394ab65ef522aa251da2cd91ccfa18afe0a7e63de9ffe1233141e72e8c030'
 DISCRETE_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
                             ['src/core/discrete_collision_world.rs', 'tests/discrete_collision_world.rs']}
 DISCRETE_WORLD_REPLACEMENTS = {'rust/crates/mds-bullet/src/core/mod.rs'}

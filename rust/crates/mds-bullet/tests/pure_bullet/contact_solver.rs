@@ -3,7 +3,8 @@ use crate::core::contact::ContactPoint;
 use crate::core::contact_solver::ContactManifold;
 use crate::core::math::{Basis, Transform, Vec3};
 use crate::core::solver::{
-    solve_group, GroupSolver, ImpulseRow, Phase, RowKind, SolveEvent, SolverMode,
+    solve_group, GroupSelection, GroupSolver, ImpulseRow, Phase, RowKind, SolveEvent, SolverMode,
+    SolverWorkspace,
 };
 
 struct Words<'a> {
@@ -163,7 +164,36 @@ fn replay_native_contacts(observe: bool) {
             .enumerate()
             .map(|(mi, p)| ContactManifold::new(owners[mi], p))
             .collect();
-        let mut solver = GroupSolver::setup(&bodies, &mut [], &mut manifolds, dt, SolverMode::Simd);
+        let mut workspace = SolverWorkspace::default();
+        let mut objects: Vec<_> = (0..bodies.len())
+            .map(|_| crate::core::islands::IslandObject {
+                activation: crate::core::activation::BodyActivation::default(),
+                classification: crate::core::activation::CollisionClassification::Dynamic,
+                contact_response: true,
+                island_tag: -1,
+                companion_id: -1,
+                hit_fraction: 1.0,
+            })
+            .collect();
+        let body_indices: Vec<_> = (0..bodies.len()).collect();
+        let joint_indices: Vec<_> = (0..0).collect();
+        let manifold_indices: Vec<_> = (0..manifolds.len()).collect();
+        let selection = GroupSelection {
+            bodies: &body_indices,
+            joints: &joint_indices,
+            manifolds: &manifold_indices,
+        };
+        let mut solver = GroupSolver::setup(
+            &mut workspace,
+            &mut objects,
+            &bodies,
+            &mut [],
+            &mut manifolds,
+            selection,
+            dt,
+            SolverMode::Simd,
+        )
+        .unwrap();
         w.expect(solver.normals.len() as u32);
         for row in &solver.normals {
             w.row(row.numeric);
@@ -171,8 +201,8 @@ fn replay_native_contacts(observe: bool) {
         for row in &solver.frictions {
             w.row(row.numeric);
         }
-        w.expect(solver.bodies.entries.len() as u32);
-        for body in &solver.bodies.entries {
+        w.expect(solver.bodies.live_len() as u32);
+        for body in solver.bodies.live_entries() {
             w.vec(body.delta_linear);
             w.vec(body.delta_angular);
         }
@@ -183,41 +213,43 @@ fn replay_native_contacts(observe: bool) {
         }
         let mut events = Vec::new();
         if observe {
-            solver.iterate(&bodies, &[], |s, event| {
-                let SolveEvent::Row {
-                    kind,
-                    phase: Phase::After,
-                    iteration,
-                    index,
-                } = event
-                else {
-                    return;
-                };
-                let friction = kind == RowKind::Friction;
-                let row = if friction {
-                    s.frictions[index].numeric
-                } else {
-                    s.normals[index].numeric
-                };
-                let [a, b] = row.bodies.map(|i| s.bodies.entries[i]);
-                let mut event = vec![
-                    iteration as u32,
-                    u32::from(friction),
-                    index as u32,
-                    row.applied_impulse.to_bits(),
-                ];
-                for v in [
-                    a.delta_linear,
-                    a.delta_angular,
-                    b.delta_linear,
-                    b.delta_angular,
-                ] {
-                    event.extend(v.0.map(f32::to_bits));
-                }
-                events.push(event);
-            });
+            solver
+                .iterate(&bodies, &[], |s, event| {
+                    let SolveEvent::Row {
+                        kind,
+                        phase: Phase::After,
+                        iteration,
+                        index,
+                    } = event
+                    else {
+                        return;
+                    };
+                    let friction = kind == RowKind::Friction;
+                    let row = if friction {
+                        s.frictions[index].numeric
+                    } else {
+                        s.normals[index].numeric
+                    };
+                    let [a, b] = row.bodies.map(|i| *s.bodies.slot(i).unwrap());
+                    let mut event = vec![
+                        iteration as u32,
+                        u32::from(friction),
+                        index as u32,
+                        row.applied_impulse.to_bits(),
+                    ];
+                    for v in [
+                        a.delta_linear,
+                        a.delta_angular,
+                        b.delta_linear,
+                        b.delta_angular,
+                    ] {
+                        event.extend(v.0.map(f32::to_bits));
+                    }
+                    events.push(event);
+                })
+                .unwrap();
         } else {
-            solver.iterate(&bodies, &[], |_, _| {});
+            solver.iterate(&bodies, &[], |_, _| {}).unwrap();
         }
         solver.writeback(&mut bodies, &mut manifolds);
         for body in &bodies {
@@ -277,7 +309,32 @@ fn native_default_solve_group_matches_final_velocities_and_impulses() {
         w.skip(solver_bodies * 6);
         w.skip(manifolds.iter().map(|m| m.points.len()).sum::<usize>() * 23);
 
-        solve_group(&mut bodies, &mut [], &mut manifolds, dt);
+        let mut workspace = SolverWorkspace::default();
+        let mut objects: Vec<_> = (0..bodies.len())
+            .map(|_| crate::core::islands::IslandObject {
+                activation: crate::core::activation::BodyActivation::default(),
+                classification: crate::core::activation::CollisionClassification::Dynamic,
+                contact_response: true,
+                island_tag: -1,
+                companion_id: -1,
+                hit_fraction: 1.0,
+            })
+            .collect();
+        let selection = GroupSelection {
+            bodies: &[0, 1, 2],
+            joints: &[],
+            manifolds: &[0, 1],
+        };
+        solve_group(
+            &mut workspace,
+            &mut objects,
+            &mut bodies,
+            &mut [],
+            &mut manifolds,
+            selection,
+            dt,
+        )
+        .unwrap();
 
         for (body, world) in bodies.iter().zip(worlds) {
             let state = body.snapshot();

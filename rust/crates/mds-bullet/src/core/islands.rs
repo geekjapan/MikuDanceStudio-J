@@ -285,17 +285,20 @@ impl SimulationIslands {
         objects: &mut [IslandObject],
         manifolds: &[IslandManifold],
         split: bool,
-        mut callback: impl FnMut(IslandCallback<'_>),
+        mut callback: impl FnMut(&mut [IslandObject], IslandCallback<'_>),
     ) {
         self.build(objects, manifolds, split);
         if !split {
             self.ordered_bodies = (0..objects.len()).collect();
             self.ordered_manifolds = (0..manifolds.len()).collect();
-            callback(IslandCallback {
-                island_id: -1,
-                bodies: &self.ordered_bodies,
-                manifolds: &self.ordered_manifolds,
-            });
+            callback(
+                objects,
+                IslandCallback {
+                    island_id: -1,
+                    bodies: &self.ordered_bodies,
+                    manifolds: &self.ordered_manifolds,
+                },
+            );
             return;
         }
         quick_sort(&mut self.ordered_manifolds, |a, b| {
@@ -329,11 +332,14 @@ impl SimulationIslands {
                 }
             }
             if !sleeping {
-                callback(IslandCallback {
-                    island_id: root,
-                    bodies: &self.ordered_bodies,
-                    manifolds: &self.ordered_manifolds[cursor..next],
-                });
+                callback(
+                    objects,
+                    IslandCallback {
+                        island_id: root,
+                        bodies: &self.ordered_bodies,
+                        manifolds: &self.ordered_manifolds[cursor..next],
+                    },
+                );
             }
             cursor = next;
             start = end;
@@ -348,7 +354,7 @@ impl SimulationIslands {
         manifolds: &[IslandManifold],
         constraints: &[IslandConstraint],
         split: bool,
-        mut callback: impl FnMut(SolverEvent<'_>),
+        mut callback: impl FnMut(&mut [IslandObject], SolverEvent<'_>),
     ) {
         let mut sorted: Vec<usize> = (0..constraints.len()).collect();
         quick_sort(&mut sorted, |a, b| {
@@ -358,11 +364,14 @@ impl SimulationIslands {
             .iter()
             .map(|c| island_key(objects, c.bodies))
             .collect();
-        callback(SolverEvent::Prepare {
-            num_bodies: objects.len(),
-            num_manifolds: manifolds.len(),
-        });
-        self.build_and_process(objects, manifolds, split, |island| {
+        callback(
+            objects,
+            SolverEvent::Prepare {
+                num_bodies: objects.len(),
+                num_manifolds: manifolds.len(),
+            },
+        );
+        self.build_and_process(objects, manifolds, split, |objects, island| {
             let (start, count) = if island.island_id < 0 {
                 (0, sorted.len())
             } else {
@@ -377,12 +386,15 @@ impl SimulationIslands {
                 (start, count)
             };
             if !island.manifolds.is_empty() || count != 0 {
-                callback(SolverEvent::SolveGroup {
-                    island,
-                    constraints: &sorted[start..start + count],
-                });
+                callback(
+                    objects,
+                    SolverEvent::SolveGroup {
+                        island,
+                        constraints: &sorted[start..start + count],
+                    },
+                );
             }
         });
-        callback(SolverEvent::AllSolved);
+        callback(objects, SolverEvent::AllSolved);
     }
 }

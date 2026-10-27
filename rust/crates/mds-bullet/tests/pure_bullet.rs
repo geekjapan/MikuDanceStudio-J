@@ -131,3 +131,6 @@ mod gjk_pair;
 
 #[path = "pure_bullet/islands.rs"]
 mod islands;
+
+#[path = "pure_bullet/persistent_solver.rs"]
+mod persistent_solver;

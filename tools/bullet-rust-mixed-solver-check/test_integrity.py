@@ -1,27 +1,37 @@
 import json
+import os
+import sys
 from pathlib import Path, PureWindowsPath
 import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
 import check
-from integrity import producer_paths
+from integrity import producer_paths, snapshot, source_paths, check_integrity
 from mutations import check_capture_syntax, relocate_runner, rust_path, run_mutations, check_stdout_syntax
 
 
 class IntegrityTests(unittest.TestCase):
     def test_compiled_closure_includes_support_core_crt_and_sse(self):
         paths = {p.relative_to(check.ROOT).as_posix() for p in producer_paths(check.ROOT)}
-        for name in ['body', 'math', 'joint_rows', 'joint_coordinates', 'time', 'shape', 'gjk_epa', 'gjk_pair', 'simplex', 'box_box', 'contact', 'contact_solver', 'solver']:
+        for name in ['activation', 'islands', 'body', 'math', 'joint_rows', 'joint_coordinates', 'time', 'shape', 'gjk_epa', 'gjk_pair', 'simplex', 'box_box', 'contact', 'contact_solver', 'solver']:
             self.assertIn('rust/crates/mds-bullet/src/core/' + name + '.rs', paths)
         self.assertIn('tools/bullet-rust-contact-solver-check/support.rs', paths)
         self.assertIn('rust/crates/mds-bullet-sys/shim/sse_emu/emmintrin.h', paths)
         self.assertIn('rust/crates/mds-crtmath/src/trig.rs', paths)
 
+    def test_historical_closure_uses_pinned_module_source(self):
+        def pinned(path):
+            return subprocess.check_output(['git', '-C', str(check.ROOT), 'show',
+                'bead7792eff1c9442cdbd3fa3aceaaf87fefe5ad:' + path.relative_to(check.ROOT).as_posix()]).decode()
+        paths = {p.relative_to(check.ROOT).as_posix() for p in producer_paths(check.ROOT, pinned)}
+        self.assertNotIn('rust/crates/mds-bullet/src/core/islands.rs', paths)
+        self.assertIn('rust/crates/mds-bullet/src/core/solver.rs', paths)
+
     def test_every_exception_checks_integrity_and_records_failure(self):
         for change in [False, True]:
             with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory); here = root / 'tools/check'; here.mkdir(parents=True)
+                root = Path(directory); here = root / 'tools/bullet-rust-mixed-solver-check'; here.mkdir(parents=True)
                 producer = root / 'producer.rs'; producer.write_text('frozen')
                 out = root / 'out'
                 def fail(*args, **kwargs):
@@ -41,6 +51,180 @@ class IntegrityTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'snapshot incomplete'):check.main()
             self.assertEqual(json.loads((out/'status.json').read_text())['status'],'FAIL')
             self.assertEqual(json.loads((out/'integrity.json').read_text())['status'],'FAIL')
+
+    def membership_tree(self, root):
+        here=root/'tools/bullet-rust-mixed-solver-check'
+        names=['tools/bullet-rust-contact-solver-check/support.rs',
+               'rust/crates/mds-bullet-sys/shim/base.h', 'rust/crates/mds-crtmath/src/lib.rs',
+               *('recipes/bullet275/bullet-src/src/'+name+'.cpp' for name in check.SOURCES),
+               *(str(here.relative_to(root)/name) for name in ['runner.rs','oracle.cpp','cases.py','check.py','observation.py','profiles/base.json'])]
+        for name in names:
+            path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'frozen\r\n')
+        return here
+
+    def test_late_membership_changes_after_snapshot_and_selection(self):
+        from observation import select_profile
+        for stage in ['snapshot','selection']:
+            for change in ['header','cache_header','cache_symlink','verifier_py','verifier_json','delete_verifier','delete_producer']:
+                with self.subTest(stage=stage,change=change),tempfile.TemporaryDirectory() as directory:
+                    root=Path(directory);here=self.membership_tree(root);out=root/'out';out.mkdir()
+                    for name in ['compiler.txt','rust-target.txt','effective-profile.txt']:(out/name).write_text('identity')
+                    sources=snapshot(root,source_paths(root,out))
+                    profile={'name':'test','identity':{name:'identity' for name in ['compiler.txt','rust-target.txt','effective-profile.txt']},
+                             'producer_sources':snapshot(root,producer_paths(root)), 'strict_producer_closure':True}
+                    (here/'profiles/base.json').write_text(json.dumps(profile))
+                    sources=snapshot(root,source_paths(root,out))
+                    (out/'source-sha256.json').write_text(json.dumps(sources))
+                    with patch('observation.__file__',str(here/'observation.py')):
+                        if stage=='selection':self.assertEqual(select_profile(out,here/'profiles')['name'],'test')
+                        if change=='header':(root/'recipes/bullet275/bullet-src/src/late.h').write_text('late')
+                        elif change in ['cache_header','cache_symlink']:
+                            cache=root/'recipes/bullet275/bullet-src/src/__pycache__'
+                            if change=='cache_symlink':cache.symlink_to(here,target_is_directory=True)
+                            else:
+                                cache.mkdir();(cache/'late.h').write_bytes(b'late\r\n')
+                        elif change=='verifier_py':(here/'late.py').write_text('late')
+                        elif change=='verifier_json':(here/'late.json').write_text('{}')
+                        elif change=='delete_verifier':(here/'check.py').unlink()
+                        else:(here/'oracle.cpp').unlink()
+                        if stage=='snapshot':
+                            with self.assertRaises(ValueError):select_profile(out,here/'profiles')
+                        with self.assertRaises(ValueError):check_integrity(root,out,sources,{})
+                    self.assertEqual(json.loads((out/'integrity.json').read_text())['status'],'FAIL')
+
+    def test_producer_cache_named_members_are_inputs(self):
+        from observation import select_profile
+        for producer in ['recipes/bullet275/bullet-src/src', 'rust/crates/mds-bullet-sys/shim',
+                         'rust/crates/mds-crtmath/src']:
+            for kind in ['header', 'symlink_directory', 'symlink_file', 'directory']:
+                with self.subTest(producer=producer,kind=kind),tempfile.TemporaryDirectory() as directory:
+                    root=Path(directory);here=self.membership_tree(root);out=root/'out';out.mkdir()
+                    identity={name:'identity' for name in ['compiler.txt','rust-target.txt','effective-profile.txt']}
+                    for name,value in identity.items():(out/name).write_text(value)
+                    profile={'name':'test','identity':identity,'producer_sources':snapshot(root,producer_paths(root)),
+                             'strict_producer_closure':True}
+                    (here/'profiles/base.json').write_text(json.dumps(profile))
+                    sources=snapshot(root,source_paths(root,out))
+                    (out/'source-sha256.json').write_text(json.dumps(sources))
+                    cache=root/producer/'__pycache__'
+                    suffix='.rs' if producer.endswith('/src') and producer.startswith('rust/') else '.h'
+                    late=cache/('late'+suffix)
+                    if kind=='symlink_directory':cache.symlink_to(root/'tools',target_is_directory=True)
+                    else:
+                        cache.mkdir()
+                        if kind=='header':late.write_bytes(b'late\r\n')
+                        elif kind=='symlink_file':(cache/'unmatched').symlink_to(here/'oracle.cpp')
+                        else:late.mkdir()
+                    if kind=='header':
+                        self.assertIn(late.relative_to(root).as_posix(),snapshot(root,source_paths(root,out)))
+                    else:
+                        with self.assertRaises(ValueError):snapshot(root,source_paths(root,out))
+                    with patch('observation.__file__',str(here/'observation.py')):
+                        with self.assertRaises(ValueError):select_profile(out,here/'profiles')
+                    with self.assertRaises(ValueError):check_integrity(root,out,sources,{})
+                    self.assertEqual(json.loads((out/'integrity.json').read_text())['status'],'FAIL')
+
+    def test_finally_rediscovers_membership_on_failure(self):
+        for change in ['header','cache_header','cache_symlink','verifier_py','verifier_json','delete_verifier']:
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);here=self.membership_tree(root);out=root/'out'
+                def fail(*args,**kwargs):
+                    if change=='header':(root/'recipes/bullet275/bullet-src/src/late.h').write_text('late')
+                    elif change in ['cache_header','cache_symlink']:
+                        cache=root/'recipes/bullet275/bullet-src/src/__pycache__'
+                        if change=='cache_symlink':cache.symlink_to(here,target_is_directory=True)
+                        else:
+                            cache.mkdir();(cache/'late.h').write_bytes(b'late\r\n')
+                    elif change=='verifier_py':(here/'late.py').write_text('late')
+                    elif change=='verifier_json':(here/'late.json').write_text('{}')
+                    else:(here/'check.py').unlink()
+                    raise RuntimeError('capture failed')
+                with patch.object(check,'ROOT',root),patch.object(check,'HERE',here),patch.object(check.subprocess,'run',side_effect=fail),patch('sys.argv',['check.py','--out-dir',str(out)]):
+                    with self.assertRaises(ValueError):check.main()
+                self.assertEqual(json.loads((out/'status.json').read_text())['status'],'FAIL')
+                self.assertEqual(json.loads((out/'integrity.json').read_text())['status'],'FAIL')
+
+    def test_raw_bytes_outputs_and_nonregular_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);here=self.membership_tree(root);out=here/'generated';out.mkdir()
+            sources=snapshot(root,source_paths(root,out))
+            (out/'result.json').write_text('{}');(out/'observer.py').write_text('output')
+            (here/'__pycache__').mkdir();(here/'__pycache__/generated.json').write_text('{}')
+            check_integrity(root,out,sources,{})
+            producer=here/'oracle.cpp';producer.write_bytes(b'frozen\n')
+            with self.assertRaises(ValueError):check_integrity(root,out,sources,{})
+            producer.write_bytes(b'frozen\r\n')
+            for entry in [here/'check.py',root/'recipes/bullet275/bullet-src/src/link.h']:
+                if entry.exists():entry.unlink()
+                entry.symlink_to(producer)
+                with self.assertRaises(ValueError):snapshot(root,source_paths(root,out))
+                entry.unlink()
+                if entry.name=='check.py':entry.write_bytes(b'frozen\r\n')
+            linked=here/'linked';linked.symlink_to(out,target_is_directory=True)
+            with self.assertRaises(ValueError):snapshot(root,source_paths(root,out))
+            linked.unlink()
+            (here/'directory.py').mkdir()
+            with self.assertRaises(ValueError):snapshot(root,source_paths(root,out))
+
+    @unittest.skipUnless(hasattr(os, 'mkfifo'), 'os.mkfifo is unavailable on this platform')
+    def test_fifo_verifier_is_rejected(self):
+        self.module_reader_controls('fifo', ['tools/bullet-rust-mixed-solver-check/pipe.py'])
+
+    @unittest.skipUnless(hasattr(os, 'mkfifo'), 'os.mkfifo is unavailable on this platform')
+    def test_fifo_module_readers_are_rejected_without_blocking(self):
+        self.module_reader_controls('fifo', ['tools/bullet-rust-mixed-solver-check/runner.rs',
+            'tools/bullet-rust-contact-solver-check/support.rs',
+            'recipes/bullet275/bullet-src/src/__pycache__/unmatched',
+            'rust/crates/mds-bullet-sys/shim/__pycache__/unmatched',
+            'rust/crates/mds-crtmath/src/__pycache__/unmatched'])
+
+    def test_directory_module_readers_are_rejected_without_blocking(self):
+        self.module_reader_controls('directory')
+
+    def module_reader_controls(self, kind, targets=None):
+        code = """
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+from unittest.mock import patch
+sys.path.insert(0, sys.argv[1])
+from test_integrity import IntegrityTests
+from integrity import snapshot, source_paths, producer_paths, check_integrity
+from observation import select_profile
+tempfile.tempdir=sys.argv[5]
+with tempfile.TemporaryDirectory() as directory:
+    root=Path(directory);here=IntegrityTests().membership_tree(root);out=root/'out';out.mkdir()
+    target=root/sys.argv[3]
+    target.parent.mkdir(parents=True,exist_ok=True)
+    if not target.exists():target.write_bytes(b'frozen')
+    identity={name:'identity' for name in ['compiler.txt','rust-target.txt','effective-profile.txt']}
+    for name,value in identity.items():(out/name).write_text(value)
+    profile={'name':'test','identity':identity,'producer_sources':snapshot(root,producer_paths(root)),
+             'strict_producer_closure':True}
+    (here/'profiles/base.json').write_text(json.dumps(profile))
+    sources=snapshot(root,source_paths(root,out))
+    (out/'source-sha256.json').write_text(json.dumps(sources))
+    target.unlink()
+    if sys.argv[4]=='fifo':os.mkfifo(target)
+    else:target.mkdir()
+    with patch('observation.__file__',str(here/'observation.py')):
+        try:
+            if sys.argv[2]=='snapshot':snapshot(root,source_paths(root,out))
+            elif sys.argv[2]=='integrity':check_integrity(root,out,sources,{})
+            else:select_profile(out,here/'profiles')
+        except ValueError as error:
+            assert 'nonregular source entry' in str(error), str(error)
+        else:raise AssertionError('nonregular source was accepted')
+"""
+        for boundary in ['snapshot', 'integrity', 'selection']:
+            for target in targets or ['tools/bullet-rust-mixed-solver-check/runner.rs',
+                                      'tools/bullet-rust-contact-solver-check/support.rs']:
+                with self.subTest(boundary=boundary,target=target),tempfile.TemporaryDirectory() as directory:
+                    result=subprocess.run([sys.executable,'-c',code,str(Path(__file__).parent),boundary,target,kind,directory],
+                                          capture_output=True,text=True,timeout=5)
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def test_windows_module_paths_are_rust_literals(self):
         path = PureWindowsPath('C:/Users/runner name/日本語/solver.rs')

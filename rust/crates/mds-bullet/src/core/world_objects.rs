@@ -228,6 +228,80 @@ impl WorldObjects {
         Ok(())
     }
 
+    pub fn save_kinematic_state(&mut self, dt: f32) {
+        if dt == 0.0 {
+            return;
+        }
+        for i in 0..self.bodies.len() {
+            if self.data[i].collision_flags & 2 != 0
+                && self.objects[i].activation.state != ActivationState::IslandSleeping
+            {
+                let world = self.data[i].motion.get_world_transform();
+                let (linear, angular) = self.bodies[i]
+                    .snapshot()
+                    .interpolation_world
+                    .calculate_velocity(world, dt);
+                self.bodies[i].set_world_transform(world);
+                self.bodies[i].set_linear_velocity(linear);
+                self.bodies[i].set_angular_velocity(angular);
+                self.bodies[i].set_interpolation_velocities(linear, angular);
+                self.bodies[i].set_interpolation_world_transform(world);
+            }
+        }
+    }
+
+    pub fn apply_gravity(&mut self) {
+        for &i in &self.non_static {
+            if self.objects[i].activation.is_active() {
+                self.bodies[i].apply_gravity();
+            }
+        }
+    }
+
+    pub fn predict_unconstraint_motion(&mut self, dt: f32) {
+        for &i in &self.non_static {
+            if self.data[i].collision_flags & 3 == 0 {
+                self.bodies[i].integrate_velocities(dt);
+                self.bodies[i].apply_damping(dt);
+                let predicted = self.bodies[i].predict_transform(dt);
+                self.bodies[i].set_interpolation_world_transform(predicted);
+            }
+        }
+    }
+
+    pub fn synchronize_motion_states(&mut self, local_time: f32, synchronize_all: bool) {
+        if synchronize_all {
+            for i in 0..self.bodies.len() {
+                self.synchronize_motion_state(i, local_time);
+            }
+        } else {
+            for n in 0..self.non_static.len() {
+                let i = self.non_static[n];
+                if self.objects[i].activation.is_active() {
+                    self.synchronize_motion_state(i, local_time);
+                }
+            }
+        }
+    }
+
+    fn synchronize_motion_state(&mut self, i: usize, local_time: f32) {
+        if self.data[i].collision_flags & 3 == 0 {
+            let state = self.bodies[i].snapshot();
+            let interpolated = state.interpolation_world.integrate(
+                state.interpolation_linear_velocity,
+                state.interpolation_angular_velocity,
+                local_time * self.objects[i].hit_fraction,
+            );
+            self.data[i].motion.set_world_transform(interpolated);
+        }
+    }
+
+    pub fn clear_forces(&mut self) {
+        for &i in &self.non_static {
+            self.bodies[i].clear_forces();
+        }
+    }
+
     pub fn create_public_body(&mut self, desc: BodyDesc) -> Result<BodyHandle, InvalidArgument> {
         let p = desc.shape_params;
         if !finite(p)

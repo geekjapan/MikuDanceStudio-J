@@ -2360,7 +2360,7 @@ new file mode 100644
 +        ast.c_decls.insert(cursor, not_located(CDeclKind::Variable {
 +            ident: "args".into(), typ: builtin, initializer: None,
 +            has_static_duration: false, has_thread_duration: false,
-+            is_externally_visible: false, is_defn: true, attrs: vec![],
++            is_externally_visible: false, is_defn: true, attrs: IndexSet::new(),
 +        }));
 +        ast.native_local_variables.insert(cursor);
 +        ast.native_cursor_types.insert(cursor, (builtin, builtin, 0));

@@ -19,9 +19,12 @@ def require_fallback_coverage(events):
             if pair:
                 pairs[pair][fields[0].removeprefix('outer-')] += 1
     for pair, counts in pairs.items():
-        assert counts['distance-fallback'] > 0, f'{pair} has no observed fallback replacement'
-        assert counts['penetration-adapter'] >= counts['distance-fallback'], pair
-        assert counts['emitted'] >= counts['distance-fallback'], pair
+        if not (counts['distance-fallback'] > 0):
+            raise AssertionError(f'{pair} has no observed fallback replacement')
+        if not (counts['penetration-adapter'] >= counts['distance-fallback']):
+            raise AssertionError(pair)
+        if not (counts['emitted'] >= counts['distance-fallback']):
+            raise AssertionError(pair)
     return {pair: dict(counts) for pair, counts in pairs.items()}
 
 
@@ -50,17 +53,23 @@ def observe(src, command, executable, inputs, output, environment):
         source=src/relative;original=source.read_text();changed='#include <cstdio>\n'+original
         if source.stem=='btGjkPairDetector':
             for label,needle in labels.items():
-                assert changed.count(needle)==1,(label,needle)
+                if not (changed.count(needle)==1):
+                    raise AssertionError((label,needle))
                 changed=changed.replace(needle,needle+f' std::fprintf(stderr,"outer-{label} %d %d\\n",m_shapeTypeA,m_shapeTypeB);')
             needle='if (m_curIter++ > gGjkMaxIter)\n\t\t\t\t  {'
-            assert needle in changed
+            if not (needle in changed):
+                raise AssertionError()
             changed=changed.replace(needle,needle+' std::fprintf(stderr,"outer-iteration-limit %d %d\\n",m_shapeTypeA,m_shapeTypeB);')
             changed=changed.replace('m_simplexSolver->backup_closest(m_cachedSeparatingAxis);\n\t\t\t\t\tbreak;', 'std::fprintf(stderr,"outer-full-simplex %d %d\\n",m_shapeTypeA,m_shapeTypeB); m_simplexSolver->backup_closest(m_cachedSeparatingAxis);\n\t\t\t\t\tbreak;')
         elif source.stem=='btConvexConvexAlgorithm':
-            needle='resultOut->refreshContactPoints();';assert needle in changed
+            needle='resultOut->refreshContactPoints();'
+            if not (needle in changed):
+                raise AssertionError()
             changed=changed.replace(needle,'std::fprintf(stderr,"manifold-refresh\\n"); '+needle)
         else:
-            needle='if (depth > m_manifoldPtr->getContactBreakingThreshold())';assert needle in changed
+            needle='if (depth > m_manifoldPtr->getContactBreakingThreshold())'
+            if not (needle in changed):
+                raise AssertionError()
             changed=changed.replace(needle, 'std::fprintf(stderr,"manifold-depth %d\\n",int(depth > m_manifoldPtr->getContactBreakingThreshold()));\n'+needle)
         copied=output/(source.stem+'-observed.cpp');copied.write_text(changed)
         (output/(source.stem+'-observed.patch')).write_text(''.join(difflib.unified_diff(original.splitlines(True),changed.splitlines(True),fromfile=str(source),tofile=str(copied))))
@@ -78,12 +87,15 @@ def observe(src, command, executable, inputs, output, environment):
     with (output/'coverage.log').open('wb') as log:
         result=subprocess.check_output([observed],input=inputs,stderr=log,env=environment)
     (output/'observed.tsv').write_bytes(result)
-    assert result==(output/'native.tsv').read_bytes(),'Observer changed output'
+    if not (result==(output/'native.tsv').read_bytes()):
+        raise AssertionError('Observer changed output')
     events=(output/'coverage.log').read_text().splitlines()
     counts=Counter(line.split()[0] if line.startswith('outer-') else line for line in events)
     pair_counts=require_fallback_coverage(events)
     (output/'coverage.json').write_text(json.dumps({'counts':dict(counts),'ordered-pair-counts':dict(pair_counts),'unobserved':[label for label in [*labels,'full-simplex','iteration-limit'] if not counts['outer-'+label]],'original-observed-stdout-identical':True},indent=2)+'\n')
     for label in ['max-distance','duplicate','near-origin','penetration-adapter','penetration-replaced','distance-fallback','tail','emitted']:
-        assert counts['outer-'+label],label
-    assert counts['manifold-depth 0'] and counts['manifold-depth 1'] and counts['manifold-refresh']
+        if not (counts['outer-'+label]):
+            raise AssertionError(label)
+    if not (counts['manifold-depth 0'] and counts['manifold-depth 1'] and counts['manifold-refresh']):
+        raise AssertionError()
     return list(map(Path,replacements.values()))

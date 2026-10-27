@@ -276,5 +276,116 @@ class CaptureTests(unittest.TestCase):
             self.assertIn('/fp:precise', effective)
 
 
+    def test_fallback_history_mismatch_is_rejected(self):
+        generated = subprocess.check_output([sys.executable, Path(check.__file__).with_name('cases.py')])
+        native = b''.join(f'{i}\tnative\n'.encode() for i in range(5081))
+        def output(command, **kwargs):
+            if '-Vv' in command:
+                return 'test rustc'
+            if str(command[-1]).endswith('cases.py'):
+                return generated
+            return b'independent mismatch\n' if 'input' in kwargs and kwargs['input'] != generated else native
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with patch.object(check, 'test_fallback_coverage'), patch.object(check, 'compiler_version', return_value='test'), patch.object(check.platform, 'platform', return_value='test platform'), patch.object(check, 'native_command', side_effect=lambda cmd, *args: list(map(str, cmd))), patch.object(check, 'run'), patch.object(check, 'observe'), patch.object(check.subprocess, 'check_output', side_effect=output), patch.object(mutations, 'run_harness', return_value={}):
+                # capture loads its runner by filename, so replace that loader's module too.
+                with patch.object(check.importlib.util, 'module_from_spec', return_value=mutations), patch('importlib.machinery.SourceFileLoader.exec_module', return_value=None):
+                    with self.assertRaisesRegex(AssertionError, 'Fallback requires prior history'):
+                        check.capture(root, {})
+            self.assertEqual((root / 'fallback-independent-native.tsv').read_bytes(), b'independent mismatch\n')
+
+    def test_observer_failure_blocks_profile_and_mutations_with_complete_streams(self):
+        import measured_profiles
+        generated = subprocess.check_output([sys.executable, Path(check.__file__).with_name('cases.py')])
+        compact = (FIXTURE / 'native.tsv').read_bytes()
+        last = compact.splitlines()[-1].split(b'\t', 1)[1]
+        native = compact + b''.join(str(i).encode() + b'\t' + last + b'\n' for i in range(1800, 5075))
+        fallback = (FIXTURE / 'fallback-native.tsv').read_bytes()
+        native += fallback
+        for error in [AssertionError(), AssertionError('coverage missing'), None]:
+            with self.subTest(error=repr(error)), tempfile.TemporaryDirectory() as temp:
+                output = Path(temp)
+                write_json = check.write_json
+                write_json(output / 'mutation-gate.json', {'status': 'not-run'})
+                def command_output(command, **kwargs):
+                    if '-Vv' in command:
+                        return 'test rustc'
+                    if str(command[-1]).endswith('cases.py'):
+                        return generated
+                    return native if kwargs['input'] == generated else fallback
+                def observed(*args):
+                    (output / 'observed.tsv').write_bytes(native)
+                    if error is not None:
+                        raise error
+                def harness(*args):
+                    (output / 'rust.tsv').write_bytes(native)
+                    return {'status': 'passed'}
+                with patch.object(check, 'test_fallback_coverage'), patch.object(check, 'compiler_version', return_value='test'), patch.object(check.platform, 'platform', return_value='test platform'), patch.object(check, 'native_command', side_effect=lambda cmd, *args: list(map(str, cmd))), patch.object(check, 'run') as run, patch.object(check, 'observe', side_effect=observed), patch.object(check.subprocess, 'check_output', side_effect=command_output), patch.object(mutations, 'run_harness', side_effect=harness), patch.object(measured_profiles, 'validate', return_value={'test': 'approved'}) as validate:
+                    with patch.object(check.importlib.util, 'module_from_spec', return_value=mutations), patch('importlib.machinery.SourceFileLoader.exec_module', return_value=None):
+                        if error is None:
+                            check.capture(output, {})
+                        else:
+                            with self.assertRaisesRegex(ValueError, 'observer coverage failed') as failure:
+                                check.capture(output, {})
+                            self.assertIs(failure.exception.__cause__, error)
+                facts = json.loads((output / 'host-profile.json').read_text())
+                self.assertEqual(facts['collection'], 'complete')
+                self.assertEqual(len(facts['streams']), 9)
+                self.assertTrue(facts['native_observed_equal'])
+                self.assertEqual(facts['native_rust_differences'], [])
+                self.assertEqual(facts['compatibility'], 'FAIL')
+                self.assertFalse(facts['profile_known'])
+                self.assertEqual((output / 'fallback-independent-native.tsv').read_bytes(), fallback)
+                if error is not None:
+                    validate.assert_not_called()
+                    self.assertEqual(run.call_count, 3)
+                    self.assertFalse((output / 'measured-profile.json').exists())
+                    self.assertEqual(json.loads((output / 'observer-failure.json').read_text()),
+                                     {'type': 'AssertionError', 'error': str(error)})
+                    self.assertEqual(json.loads((output / 'mutation-gate.json').read_text())['status'], 'not-run')
+                else:
+                    validate.assert_called_once()
+                    self.assertEqual(run.call_count, 4)
+                    self.assertEqual(Path(run.call_args.args[0][1]).name, 'mutations.py')
+                    self.assertFalse((output / 'observer-failure.json').exists())
+                    self.assertEqual(json.loads((output / 'measured-profile.json').read_text()), {'test': 'approved'})
+                    self.assertEqual(json.loads((output / 'mutation-gate.json').read_text())['status'], 'passed')
+
+    def test_observer_guards_reject_each_missing_evidence(self):
+        import observe
+        complete = [f'outer-{branch} {a} {b}' for a, b in observe.PAIRS
+                    for branch in ['penetration-adapter', 'distance-fallback', 'emitted']]
+        complete += [f'outer-{label} 8 0' for label in ['max-distance', 'duplicate', 'near-origin', 'penetration-replaced', 'tail']]
+        complete += ['manifold-depth 0', 'manifold-depth 1', 'manifold-refresh']
+        for branch in ['penetration-adapter', 'distance-fallback', 'emitted']:
+            with self.subTest(branch=branch), self.assertRaises(AssertionError):
+                observe.require_fallback_coverage([event for event in complete if event != f'outer-{branch} 8 0'])
+        with self.assertRaisesRegex(AssertionError, 'sphere-box'):
+            observe.require_fallback_coverage([])
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp)
+            (output / 'native.tsv').write_bytes(b'native\n')
+            src = check.ROOT / 'recipes/bullet275/bullet-src/src'
+            def attempt(events, stdout=b'native\n'):
+                def observed(command, **kwargs):
+                    kwargs['stderr'].write(('\n'.join(events) + '\n').encode())
+                    return stdout
+                with patch.object(observe.subprocess, 'run'), patch.object(observe.subprocess, 'check_output', side_effect=observed):
+                    return observe.observe(src, ['compiler'], output / 'native', b'', output, {})
+            self.assertEqual(len(attempt(complete)), 3)
+            with self.assertRaisesRegex(AssertionError, 'Observer changed output'):
+                attempt(complete, b'changed\n')
+            for missing in ['outer-max-distance 8 0', 'outer-duplicate 8 0', 'outer-near-origin 8 0', 'outer-penetration-replaced 8 0', 'outer-tail 8 0', 'manifold-depth 0', 'manifold-depth 1', 'manifold-refresh']:
+                with self.subTest(missing=missing), self.assertRaises(AssertionError):
+                    attempt([event for event in complete if event != missing])
+            anchors = ['checkSimplex=true;', 'if (m_curIter++ > gGjkMaxIter)\n\t\t\t\t  {', 'resultOut->refreshContactPoints();', 'if (depth > m_manifoldPtr->getContactBreakingThreshold())']
+            read_text = Path.read_text
+            for anchor in anchors:
+                def changed(path, *args, **kwargs):
+                    return read_text(path, *args, **kwargs).replace(anchor, '')
+                with self.subTest(anchor=anchor), patch.object(Path, 'read_text', changed), self.assertRaises(AssertionError):
+                    attempt(complete)
+
+
 if __name__ == '__main__':
     unittest.main()

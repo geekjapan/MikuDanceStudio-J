@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 import copy
 import importlib.util
+import io
 from pathlib import Path
 import struct
+import tempfile
 import unittest
+from unittest.mock import patch
 
 spec=importlib.util.spec_from_file_location('floor',Path(__file__).with_name('run.py'))
 r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
@@ -108,7 +111,6 @@ class Controls(unittest.TestCase):
 
     def test_unknown_clone_channels_are_explicit_and_raw_retained(self):
         native=r.native_parse(native_text(),0)
-        # Source-declared raw UVs are absent; the loaded clone still declares their space.
         raw=native['raw'];raw['decl']=[v for v in raw['decl'] if v[2]!=5]
         native['final']['mesh']['initialized_usage']=[0,3]
         loaded=native['final']['mesh'];data=bytearray.fromhex(loaded['vb']);data[24:28]=struct.pack('<I',0x7fc00000);loaded['vb']=data.hex()
@@ -124,6 +126,35 @@ class Controls(unittest.TestCase):
             with self.assertRaises(ValueError):r.rust_parse(malformed,p)
         wrong=copy.deepcopy(p);wrong['fields']['scale']['value']+=1
         with self.assertRaises(ValueError):r.rust_parse(text,wrong)
+
+    def test_native_source_writes_preserve_lf_bytes_on_windows(self):
+        class ReachedConfigure(Exception):pass
+        source,_=r.extract(r.ROOT)
+        cmake=(r.ROOT/'CMakeLists.txt').read_text()+r.native_cmake()
+        expected={'native.cpp':source.encode('utf-8'),'CMakeLists.txt':cmake.encode('utf-8')}
+        def windows_write_text(path,text,encoding=None,errors=None,newline=None):
+            buffer=io.BytesIO()
+            stream=io.TextIOWrapper(buffer,encoding=encoding or 'utf-8',errors=errors,newline='\r\n' if newline is None else newline)
+            count=stream.write(text);stream.flush();path.write_bytes(buffer.getvalue())
+            return count
+        with tempfile.TemporaryDirectory() as temp:
+            directory=Path(temp);out=directory/'out';build=directory/'build';toolchain=directory/'toolchain.cmake'
+            toolchain.write_bytes(b'')
+            def transport(archive,dest,extract):
+                base=dest/'sources/base';base.mkdir(parents=True)
+                for name in ('CMakeLists.txt','src/tools/mesh_dump.cpp',r.old.ACCESSORY):
+                    target=base/name;target.parent.mkdir(parents=True,exist_ok=True)
+                    target.write_bytes((r.ROOT/name).read_bytes())
+                (dest/'capture.json').write_bytes(b'{"head":"test-head"}')
+            with patch.object(r.sys,'platform','win32'),patch.dict(r.os.environ,{'GITHUB_ACTIONS':'true','GITHUB_SHA':'test-head'}),patch.object(r.c,'transport',side_effect=transport),patch.object(r,'verify_seal'),patch.object(r,'verify_capture'),patch.object(r,'record',side_effect=ReachedConfigure) as record,patch.object(Path,'write_text',windows_write_text):
+                with self.assertRaises(ReachedConfigure):r.native(out,directory/'archive.tar',build,toolchain)
+            self.assertEqual(record.call_args.args[1],'configure')
+            for name,raw in expected.items():
+                with self.subTest(source=name):
+                    actual=(out/'native/source'/name).read_bytes()
+                    self.assertNotIn(b'\r\n',raw)
+                    self.assertEqual(actual,raw)
+                    self.assertEqual(r.digest(actual),r.digest(raw))
 
     def test_strict_json_and_numbers(self):
         for raw in ('{"x":1,"x":2}','{"x":NaN}'):

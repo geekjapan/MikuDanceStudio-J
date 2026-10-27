@@ -479,14 +479,13 @@ def native(out,archive,build_root,toolchain):
     c.transport(archive,out,True);verify_seal(out);verify_capture(out)
     require(load_json((out/'capture.json').read_bytes())['head']==os.environ.get('GITHUB_SHA'),'workflow/archive HEAD binding')
     directory=out/'native';directory.mkdir();source=directory/'source';shutil.copytree(out/'sources/base',source)
-    cpp,_=extract(out/'sources/base');(source/'native.cpp').write_text(cpp)
-    (source/'CMakeLists.txt').write_text((source/'CMakeLists.txt').read_text()+native_cmake())
+    cpp,_=extract(out/'sources/base');(source/'native.cpp').write_bytes(cpp.encode('utf-8'))
+    (source/'CMakeLists.txt').write_bytes(((source/'CMakeLists.txt').read_text()+native_cmake()).encode('utf-8'))
     env=os.environ.copy();build_root.mkdir(parents=True)
     configure=['cmake','-S',str(source),'-B',str(build_root),'-G','Visual Studio 17 2022','-A','x64','-DCMAKE_TOOLCHAIN_FILE='+str(toolchain),'-DBUILD_TESTING=OFF','-DMIKUDANCESTUDIO_DIAG=OFF']
     require(record(directory,'configure',configure,source,env)['status']==0,'native configure')
     require(record(directory,'build',['cmake','--build',str(build_root),'--config','Release','--target','floor_geometry','--parallel','4','--verbose'],source,env)['status']==0,'native build')
     original=build_root/'Release/floor_geometry.exe';binary=directory/'floor_geometry.exe';shutil.copy2(original,binary);shutil.copy2(original,directory/'original-floor_geometry.exe')
-    # Use the authenticated fixture already in the source archive; loader cwd changes remain process-local.
     floor=source/old.FLOOR;input_path=out/'input.txt'
     manifest={'source_sha256':digest(cpp.encode()),'binary_sha256':digest(binary.read_bytes()),'original_binary_sha256':digest(original.read_bytes()),'binary_path':str(binary),'floor_path':str(floor),'input_path':str(input_path),'cwd':str(source),'floor_relative':old.FLOOR,'cases':['canonical','winding','scale']}
     write_json(directory/'manifest.json',manifest)

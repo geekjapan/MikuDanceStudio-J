@@ -97,10 +97,15 @@ def expand(args, cwd, records, stack=()):
 def compiler_environment():
     result = {}
     # Unknown options fail without recording their potentially unrelated values.
-    pattern = re.compile(r'^[-/](?:D.+|U.+|I.+|FI.+|std:c\+\+\w+|arch:\w+|fp:\w+|O[bdgistxy12-]+|[Mm][DdTt]d?|EH\w+|Zc:[\w+-]+|favor:\w+|openmp(?::\w+)?|utf-8|nologo)$', re.I)
     for key in ('CL', '_CL_'):
         args = split_command(os.environ.get(key, ''))
-        if any(not pattern.fullmatch(arg) for arg in args):
+        try:
+            tokens = cl_arguments(args)
+        except ValueError as error:
+            raise ValueError(f'{key} contains an unrecognized compiler option') from error
+        if any(option not in CL_VALUE_OPTIONS and (option is None or not option.startswith(
+                ('/std:', '/arch:', '/fp:', '/O', '/MD', '/MT', '/EH', '/Zc:', '/nologo')))
+               for option, _, _ in tokens):
             raise ValueError(f'{key} contains an unrecognized compiler option')
         result[key] = args
     return result
@@ -319,48 +324,71 @@ def tlog_commands(path, *, reads=False):
     return records
 
 
-def compile_source_index(args, source, cwd):
-    operands = []
-    value_options = ('/D', '/U', '/I', '/FI', '/Fo', '/Fd', '/Fe', '/Fa', '/Fi', '/Fp', '/external:I')
-    optional_attached_options = ('/Yu', '/Yc')
-    global_cpp = False
-    dependency_options = ('/sourceDependencies', '/sourceDependencies:directives', '/scanDependencies')
-    flags = re.compile(
-        r'/(?:c|E|EP|P|nologo|showIncludes|FC|FS|bigobj|utf-8|'
-        r'W[0-4]|WX-?|external:W[0-4]|diagnostics:(?:column|classic|caret)|'
-        r'O(?:[012d]|b[0-3]|[gistxy]-?)|M[DT]d?|EH[a-z]+|'
-        r'G[RSdm]-?|G[drzv]|RTC[1csu]+|Z[7iI]|MP[0-9]*|'
-        r'Zc:[\w+-]+|std:c\+\+[\w]+|arch:[\w]+|fp:[\w]+|'
-        r'favor:[\w]+|openmp(?::[\w]+)?)')
-    skip_next = False
-    for index, arg in enumerate(args):
-        if skip_next:
-            skip_next = False
-            continue
+CL_VALUE_OPTIONS = ('/D', '/U', '/I', '/FI', '/external:I')
+CL_OUTPUT_OPTIONS = ('/Fo', '/Fd', '/Fe', '/Fa', '/Fi', '/Fp')
+CL_DEPENDENCY_OPTIONS = ('/sourceDependencies', '/sourceDependencies:directives', '/scanDependencies')
+CL_FLAGS = frozenset(('/c', '/E', '/EP', '/P', '/showIncludes', '/TP', '/nologo',
+                      '/W0', '/W1', '/WX-', '/diagnostics:column', '/O2', '/Ob2', '/Od',
+                      '/EHsc', '/MD', '/MDd', '/GS', '/GR', '/Gd', '/Gm-', '/RTC1', '/FC',
+                      '/Zc:wchar_t', '/Zc:forScope', '/Zc:inline', '/std:c++17',
+                      '/external:W0', '/external:W1', '/fp:precise', '/fp:fast', '/fp:strict',
+                      '/arch:SSE2', '/arch:AVX', '/arch:AVX2'))
+
+
+def cl_arguments(args):
+    """Classify supported CL tokens as (normalized option, value, original argv span)."""
+    result = []
+    index = 0
+    while index < len(args):
+        start = index
+        arg = args[index]
         option = '/' + arg[1:] if arg.startswith('-') else arg
-        if option == '/TP':
-            global_cpp = True
-            continue
-        if option.startswith(('/Tc', '/Tp', '/TC', '/TP')):
+        value = None
+        if option in CL_FLAGS or option in tuple(name + '-' for name in CL_DEPENDENCY_OPTIONS):
+            pass
+        elif option.startswith(('/Tc', '/Tp', '/TC', '/TP')):
             raise ValueError('unsupported explicit CL source mode')
-        if option.startswith(optional_attached_options):
-            continue
-        if option in dependency_options or option in value_options:
-            if index + 1 == len(args) or not args[index + 1]:
-                raise ValueError('compiler option is missing its value')
-            skip_next = True
-        elif any(option.startswith(name) for name in value_options):
-            continue
-        elif flags.fullmatch(option):
-            continue
-        elif arg.startswith(('/', '-')):
-            # Portable controls use absolute POSIX paths; CL captures use Windows paths.
-            if os.name != 'nt' and Path(arg).is_absolute() and '/' in arg[1:]:
-                operands.append(index)
-            else:
-                raise ValueError('unsupported or ambiguous CL option')
         else:
-            operands.append(index)
+            name = next((name for name in (*CL_VALUE_OPTIONS, *CL_OUTPUT_OPTIONS, '/Yu', '/Yc')
+                         if option.startswith(name)), None)
+            if option in CL_DEPENDENCY_OPTIONS:
+                name = option
+            if name:
+                value = option[len(name):]
+                option = name
+                if not value and name in (*CL_VALUE_OPTIONS, *CL_DEPENDENCY_OPTIONS):
+                    index += 1
+                    if index == len(args):
+                        raise ValueError('compiler option is missing its value')
+                    value = args[index]
+                if not value and name not in ('/Yu', '/Yc'):
+                    raise ValueError('compiler option is missing its value')
+                if value.startswith(':') or (value.startswith(('/', '-')) and not (
+                        name not in ('/D', '/U') and os.name != 'nt' and
+                        Path(value).is_absolute() and '/' in value[1:])):
+                    raise ValueError('unsupported or ambiguous CL option value')
+            elif arg.startswith(('/', '-')):
+                # Portable controls use absolute POSIX paths; CL captures use Windows paths.
+                if os.name != 'nt' and Path(arg).is_absolute() and '/' in arg[1:]:
+                    option = None
+                else:
+                    raise ValueError('unsupported or ambiguous CL option')
+            else:
+                option = None
+        if option is None and not arg:
+            raise ValueError('unsupported or ambiguous CL input operand')
+        result.append((option, value, tuple(range(start, index + 1))))
+        index += 1
+    return result
+
+
+def compile_source_index(args, source, cwd):
+    return cl_source_index(args, cl_arguments(args), source, cwd)
+
+
+def cl_source_index(args, tokens, source, cwd):
+    operands = [span[0] for option, _, span in tokens if option is None]
+    global_cpp = any(option == '/TP' for option, _, _ in tokens)
     if not global_cpp and any(
             not args[index].lower().endswith(('.cpp', '.c', '.cxx', '.cc', '.c++')) for index in operands):
         raise ValueError('unsupported or ambiguous CL input operand')
@@ -373,40 +401,25 @@ def compile_source_index(args, source, cwd):
 
 
 def preprocess_args(args, source, *, cwd=None):
-    source_index = compile_source_index(args, source, Path.cwd() if cwd is None else cwd)
+    tokens = cl_arguments(args)
+    source_index = cl_source_index(args, tokens, source, Path.cwd() if cwd is None else cwd)
     result = []
-    skip_next = False
-    for index, arg in enumerate(args):
-        if skip_next:
-            skip_next = False
+    for option, _, span in tokens:
+        if option in ('/c', '/E', '/EP', '/P', '/showIncludes', '/Fo', '/Fd', '/Fe', '/Fa', '/Fi') or option is None:
             continue
-        option = '/' + arg[1:] if arg.startswith('-') else arg
-        if option in ('/Fo', '/Fd', '/Fe', '/Fa', '/Fi'):
-            skip_next = True
-            continue
-        if index == source_index or option in ('/c', '/E', '/EP', '/P', '/showIncludes') or option.startswith(('/Fo', '/Fd', '/Fe', '/Fa', '/Fi')):
-            continue
-        result.append(arg)
+        result.extend(args[index] for index in span)
     return [*result, '/E', '/showIncludes', args[source_index]]
 
 
 def policy_flags(args):
     result = []
-    i = 0
-    while i < len(args):
-        arg = args[i]
-        if arg in ('/D', '/U', '/FI', '/I'):
-            if i + 1 == len(args):
-                raise ValueError('compiler option is missing its value')
-            arg += args[i + 1]
-            i += 1
-        if arg.startswith(('/D', '/U')):
-            name = arg[2:].split('=', 1)[0]
+    for option, value, _ in cl_arguments(args):
+        if option in ('/D', '/U'):
+            name = value.split('=', 1)[0]
             if name in ('WIN32', '_WIN32', '_WIN64', 'BT_USE_SSE', 'BT_USE_DOUBLE_PRECISION', 'BT_HAS_ALIGNED_ALLOCATOR') or name.startswith('DBVT_'):
-                result.append(arg)
-        elif arg.startswith(('/fp:', '/arch:', '/std:', '/FI')):
-            result.append(arg)
-        i += 1
+                result.append(option + value)
+        elif option and option.startswith(('/fp:', '/arch:', '/std:', '/FI')):
+            result.append(option + (value or ''))
     return result
 
 
@@ -637,7 +650,10 @@ def compile_record(folder, name, out):
     responses = []
     args = expand(args, cwd, responses)
     compile_source_index(args, source, cwd)
-    output = option(args, '/Fo')
+    outputs = [value for flag, value, _ in cl_arguments(args) if flag == '/Fo']
+    if len(outputs) != 1:
+        raise ValueError('expected one actual CL object output')
+    output = outputs[0]
     obj = (cwd / output).resolve()
     if output.endswith(('\\', '/')) or obj.is_dir():
         obj = obj / (source.stem + '.obj')

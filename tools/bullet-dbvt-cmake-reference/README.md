@@ -50,6 +50,32 @@ Local parser controls and a portable syntax check do not execute the Windows ref
 
 The focused suite includes Windows-only race controls. Each parent starts suspended and joins an outer kill-on-close job before execution. A barrier forces the old inner-job launch-before-assignment schedule and confirms its descendant escapes the inner job. The outer job still owns that descendant. The corrected launch delays inner-job assignment, checks that no child code ran, and retains a terminate-capable descendant handle before allowing the parent to exit. Closing the inner job must signal that handle. Deterministic failures exercise baseline and corrected readiness timeouts before a descendant handle is acquired, and an orphan that survives the inner job. Every exit closes outer containment. Known descendant handles support explicit termination, a bounded wait, and handle close. A delayed repeated marker detects activity after cleanup. Portable mocks check survivor termination and cleanup failures, suspended launch order, assignment and resume failures, and snapshot and thread handle cleanup. The actual Windows controls are skipped on other hosts and require Windows CI acceptance.
 
-The CL source check accepts standalone `/TP` and `-TP` and preserves them during preprocessing. It consumes known required definition, include, output, and dependency option values before requiring exactly one positional input matching the tlog caret. PCH options `/Yu` and `/Yc`, including dash forms, accept an optional attached filename and never consume the next token. Bare PCH options remain in replay. Empty positional tokens and missing or empty required option values fail validation. With `/TP`, that input may have any extension. Extra inputs, per-file `/Tp` and `/Tc`, C mode `/TC`, and unknown options fail closed. The option grammar covers the captured CMake commands and the supported replay flags; a new option requires a parser control before acceptance.
+The CL boundary uses one strict grammar for source validation, preprocessing, compiler environment options, and policy extraction. Both `/` and `-` introduce case-sensitive options. Compile records retain the exact expanded argv. Policy comparisons normalize the option prefix to `/` and join separated values without changing override order.
 
-Microsoft documents the optional attached PCH syntax for [`/Yu`](https://learn.microsoft.com/en-us/cpp/build/reference/yu-use-precompiled-header-file?view=msvc-170) and [`/Yc`](https://learn.microsoft.com/en-us/cpp/build/reference/yc-create-precompiled-header-file?view=msvc-170).
+| Option class | Supported spelling | Preprocessing |
+| --- | --- | --- |
+| Definitions and includes | `/Dvalue`, `/Uvalue`, `/Ipath`, `/FIpath`, `/external:Ipath`, or the same option followed by a separate nonempty value. | Preserve the original tokens. |
+| Output paths | `/Fopath`, `/Fdpath`, `/Fepath`, `/Fapath`, `/Fipath`, `/Fppath`. A nonempty attached path is required. Bare and colon forms are unsupported, including documented `/Fo:` and `/Fe:` alternatives. | Remove `/Fo`, `/Fd`, `/Fe`, `/Fa`, and `/Fi` with their attached paths. Preserve `/Fp`. |
+| PCH | Bare `/Yu` and `/Yc`, or an attached filename. They never consume the next token. Colon forms are unsupported. | Preserve the original token. |
+| Dependency output | `/sourceDependencies path`, `/sourceDependencies:directives path`, `/scanDependencies path`, or each exact option with a trailing `-` for stdout. Attached filenames and colon filename forms are unsupported. | Preserve the original tokens. |
+| Source | Exactly one positional input whose canonical full path matches the single tlog caret. Standalone `/TP` permits any input extension. Without `/TP`, the input must end in `.cpp`, `.c`, `.cxx`, `.cc`, or `.c++`. | Move the original source token to the end. |
+
+Missing or empty values, values beginning with `:`, and option-like values fail closed. Portable tests also allow absolute POSIX paths for path values and source operands. `/D` and `/U` cannot take option-like values. Extra inputs, empty positional tokens, `/Tc`, `/Tp`, `/TC`, and unknown options fail before archive proof or replay.
+
+The exact supported flags are:
+
+```text
+/c /E /EP /P /showIncludes /TP /nologo
+/W0 /W1 /WX- /diagnostics:column /external:W0 /external:W1
+/O2 /Ob2 /Od /EHsc /MD /MDd /GS /GR /Gd /Gm- /RTC1 /FC
+/Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17
+/fp:precise /fp:fast /fp:strict /arch:SSE2 /arch:AVX /arch:AVX2
+```
+
+Other valid MSVC flags require an explicit grammar change and a parser control. In particular, other `/EH`, `/Zc`, `/std`, `/arch`, and `/fp` forms, and all `/favor` and `/openmp` forms, are unsupported. Preprocessing removes only classified `/c`, `/E`, `/EP`, `/P`, `/showIncludes`, and output-path tokens, then adds `/E` and `/showIncludes`. Every other accepted option retains its original tokens and order. The logging-only `/Bv` is added after parsing by the replay runner.
+
+`CL` and `_CL_` accept definitions and includes from the same grammar, plus supported flags beginning with `/std:`, `/arch:`, `/fp:`, `/O`, `/MD`, `/MT`, `/EH`, `/Zc:`, and `/nologo`. Output paths, source modes, positional inputs, and other flags are rejected in these environment variables.
+
+The retained Actions 40439880708 capture has 122 CL commands. They use 606 `/D` options, 363 `/I` options, 122 attached `/Fo` paths, and 122 attached `/Fd` paths. The flag list above contains their exact flags plus explicit replay and floating-point or architecture controls. The capture has no PCH or dependency-output options.
+
+Microsoft documents [output pathname attachment](https://learn.microsoft.com/en-us/cpp/build/reference/specifying-the-pathname?view=msvc-170), [compiler option forms](https://learn.microsoft.com/en-us/cpp/build/reference/compiler-options-listed-alphabetically?view=msvc-170), and the optional attached PCH syntax for [`/Yu`](https://learn.microsoft.com/en-us/cpp/build/reference/yu-use-precompiled-header-file?view=msvc-170) and [`/Yc`](https://learn.microsoft.com/en-us/cpp/build/reference/yc-create-precompiled-header-file?view=msvc-170). Required separated dependency paths and stdout forms are documented for [`/sourceDependencies`](https://learn.microsoft.com/en-us/cpp/build/reference/sourcedependencies?view=msvc-170), [`/sourceDependencies:directives`](https://learn.microsoft.com/en-us/cpp/build/reference/sourcedependencies-directives?view=msvc-170), and [`/scanDependencies`](https://learn.microsoft.com/en-us/cpp/build/reference/scandependencies?view=msvc-170).

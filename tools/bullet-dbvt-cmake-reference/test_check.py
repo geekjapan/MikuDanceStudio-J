@@ -346,11 +346,11 @@ class Controls(unittest.TestCase):
                           '/std:c++17', '/fp:precise', '/O2', '/E', '/showIncludes', 'source.cpp'])
 
     def test_replay_preserves_separate_forced_include(self):
-        self.assertEqual(check.preprocess_args(['/c', '/FI', 'forced.h', '/Fo', 'a.obj', 'a.cpp'], 'a.cpp'),
+        self.assertEqual(check.preprocess_args(['/c', '/FI', 'forced.h', '/Foa.obj', 'a.cpp'], 'a.cpp'),
                          ['/FI', 'forced.h', '/E', '/showIncludes', 'a.cpp'])
 
     def test_replay_preserves_case_and_dash_switch_semantics(self):
-        self.assertEqual(check.preprocess_args(['-TP', '-c', '-FI', 'forced.h', '-Fo', 'output.obj', '-Fioutput.i', 'good.cpp'], 'good.cpp'),
+        self.assertEqual(check.preprocess_args(['-TP', '-c', '-FI', 'forced.h', '-Fooutput.obj', '-Fioutput.i', 'good.cpp'], 'good.cpp'),
                          ['-TP', '-FI', 'forced.h', '/E', '/showIncludes', 'good.cpp'])
         for flag in ('/fi', '/FO', '-fo', '-fI'):
             with self.subTest(flag=flag), self.assertRaises(ValueError):
@@ -376,7 +376,7 @@ class Controls(unittest.TestCase):
 
     def test_global_cpp_mode_counts_every_positional_input(self):
         for mode in ('/TP', '-TP'):
-            for source in ('good.cpp', 'good.h', 'extensionless', 'input.obj'):
+            for source in ('good.cpp', 'good.h', 'extensionless', 'input.obj', 'input.lib', 'input.bin'):
                 for args in ([mode, '/c', source], ['/c', source, mode]):
                     with self.subTest(args=args):
                         self.assertEqual(check.preprocess_args(args, source), [mode, '/E', '/showIncludes', source])
@@ -388,10 +388,15 @@ class Controls(unittest.TestCase):
                 check.preprocess_args([mode, 'other.cpp'], 'good.cpp')
 
     def test_cl_option_values_are_not_source_operands(self):
-        options = ('D', 'U', 'I', 'FI', 'Fo', 'Fd', 'Fe', 'Fa', 'Fi', 'Fp', 'external:I')
+        options = ('D', 'U', 'I', 'FI', 'external:I')
         for prefix in ('/', '-'):
             for option in options:
-                for value in ('other.cpp', 'other.h', 'extensionless', 'input.obj'):
+                values = ('other.cpp', 'other.h', 'extensionless', 'input.obj')
+                if option == 'D':
+                    values = tuple('NAME=' + value for value in values)
+                elif option == 'U':
+                    values = ('OTHER_CPP', 'OTHER_H', 'EXTENSIONLESS', 'INPUT_OBJ')
+                for value in values:
                     for flags in ([prefix + option, value], [prefix + option + value]):
                         args = ['/TP', *flags, 'good.cpp']
                         with self.subTest(args=args):
@@ -411,9 +416,63 @@ class Controls(unittest.TestCase):
             with self.subTest(extra=extra), self.assertRaises(ValueError):
                 check.preprocess_args(['good.cpp', extra], 'good.cpp')
 
+    def test_output_paths_are_attached_and_never_hide_following_tokens(self):
+        for prefix in ('/', '-'):
+            for name in ('Fo', 'Fd', 'Fe', 'Fa', 'Fi', 'Fp'):
+                for value in ('other.cpp', 'other.h', 'extensionless', 'input.obj',
+                              'input.lib', prefix + 'TC', prefix + 'Tpother.h', prefix + 'unknown'):
+                    args = [prefix + 'TP', prefix + name, value, 'good.cpp']
+                    with self.subTest(args=args):
+                        with self.assertRaises(ValueError):
+                            check.compile_source_index(args, 'good.cpp', Path.cwd())
+                        with self.assertRaises(ValueError):
+                            check.preprocess_args(args, 'good.cpp')
+                for suffix in ('', ':', ':output.obj'):
+                    with self.subTest(name=name, suffix=suffix), self.assertRaises(ValueError):
+                        check.preprocess_args(['/TP', prefix + name + suffix, 'good.cpp'], 'good.cpp')
+                args = [prefix + 'TP', prefix + name + 'output.obj', 'good.cpp']
+                expected = [prefix + 'TP']
+                if name == 'Fp':
+                    expected.append(prefix + name + 'output.obj')
+                self.assertEqual(check.preprocess_args(args, 'good.cpp'),
+                                 [*expected, '/E', '/showIncludes', 'good.cpp'])
+
+    def test_cl_required_value_edges_and_dependency_forms(self):
+        for prefix in ('/', '-'):
+            for name in ('D', 'U', 'I', 'FI', 'external:I', 'sourceDependencies',
+                         'sourceDependencies:directives', 'scanDependencies'):
+                for value in ('', prefix + 'TC', prefix + 'Tpother.h', prefix + 'unknown', ':bad'):
+                    args = ['/TP', prefix + name, value, 'good.cpp']
+                    with self.subTest(args=args), self.assertRaises(ValueError):
+                        check.preprocess_args(args, 'good.cpp')
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    check.preprocess_args(['/TP', prefix + name + ':', 'good.cpp'], 'good.cpp')
+            for name in ('sourceDependencies', 'sourceDependencies:directives', 'scanDependencies'):
+                for tail in ([prefix + name, 'dep.json'], [prefix + name + '-']):
+                    args = ['/TP', *tail, 'good.cpp']
+                    self.assertEqual(check.preprocess_args(args, 'good.cpp'),
+                                     ['/TP', *tail, '/E', '/showIncludes', 'good.cpp'])
+                for suffix in (':dep.json', 'dep.json'):
+                    with self.assertRaises(ValueError):
+                        check.preprocess_args(['/TP', prefix + name + suffix, 'good.cpp'], 'good.cpp')
+
+    def test_modes_are_an_exact_supported_set(self):
+        bogus = ('EHnotanoption', 'Zc:notACompilerOption', 'arch:madeup', 'fp:madeup',
+                 'std:c++notastandard', 'favor:madeup', 'openmp:madeup')
+        for prefix in ('/', '-'):
+            for mode in bogus:
+                with self.subTest(mode=mode, prefix=prefix), self.assertRaises(ValueError):
+                    check.preprocess_args([prefix + mode, 'good.cpp'], 'good.cpp')
+            for mode in ('EHsc', 'Zc:wchar_t', 'Zc:forScope', 'Zc:inline', 'std:c++17',
+                         'fp:precise', 'fp:fast', 'fp:strict', 'arch:SSE2', 'arch:AVX', 'arch:AVX2'):
+                self.assertEqual(check.preprocess_args([prefix + mode, 'good.cpp'], 'good.cpp'),
+                                 [prefix + mode, '/E', '/showIncludes', 'good.cpp'])
+
     def test_pch_filename_is_optional_and_attached(self):
         for prefix in ('/', '-'):
             for pch in ('Yu', 'Yc'):
+                with self.assertRaises(ValueError):
+                    check.preprocess_args([prefix + pch + ':header.h', 'good.cpp'], 'good.cpp')
                 for value in ('', 'other.h', 'other.cpp', 'extensionless'):
                     flag = prefix + pch + value
                     for args in ([prefix + 'TP', flag, 'good.cpp'],
@@ -447,7 +506,7 @@ class Controls(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             response = root / 'inner.rsp'
-            (root / 'outer.rsp').write_text('/c @inner.rsp /Fo output.obj')
+            (root / 'outer.rsp').write_text('/c @inner.rsp /Fooutput.obj')
             tlog = root / 'CL.command.1.tlog'
             tlog.write_bytes('^good.cpp\n@outer.rsp\n'.encode('utf-16'))
             [(sources, command)] = check.tlog_commands(tlog)
@@ -470,7 +529,7 @@ class Controls(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'inner.rsp').write_bytes('/TP /FI forced.h /D NAME=other.cpp good.cpp'.encode('utf-16'))
-            (root / 'outer.rsp').write_text('/c @inner.rsp /Fo output.obj')
+            (root / 'outer.rsp').write_text('/c @inner.rsp /Fooutput.obj')
             args = check.expand(['@outer.rsp'], root, [])
             self.assertEqual(check.preprocess_args(args, 'good.cpp', cwd=root),
                              ['/TP', '/FI', 'forced.h', '/D', 'NAME=other.cpp', '/E', '/showIncludes', 'good.cpp'])
@@ -688,6 +747,32 @@ class Controls(unittest.TestCase):
                 tlog.write_text('\n'.join(changed) + '\n')
                 with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, 'exactly one source'):
                     check.archive_commands(root, out, libs)
+
+    def test_archive_boundary_rejects_hidden_output_tokens_and_bogus_modes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            out, libs = self.archive_fixture(root)
+            tlog = root / 'BulletCollision/BulletCollision.dir/Release/CL.command.1.tlog'
+            original = tlog.read_text().splitlines()
+            args = ['/TP', *check.split_command(original[1])]
+            for prefix in ('/', '-'):
+                tails = [[prefix + name, value] for name in ('Fo', 'Fd', 'Fe', 'Fa', 'Fi', 'Fp')
+                         for value in ('other.cpp', 'other.h', 'extensionless', 'input.obj', 'input.lib',
+                                       prefix + 'TC', prefix + 'Tpother.h', prefix + 'unknown')]
+                tails += [[prefix + mode] for mode in ('EHnotanoption', 'Zc:notACompilerOption',
+                           'arch:madeup', 'fp:madeup', 'std:c++notastandard', 'favor:madeup', 'openmp:madeup')]
+                for tail in tails:
+                    changed = original[:]
+                    changed[1] = subprocess.list2cmdline([*args, *tail])
+                    tlog.write_text('\n'.join(changed) + '\n')
+                    with self.subTest(tail=tail), self.assertRaises(ValueError):
+                        check.archive_commands(root, out, libs)
+            dashed = [('-' + arg[1:]) if arg.startswith(('/Fo', '/c')) else arg for arg in args]
+            changed = original[:]
+            changed[1] = subprocess.list2cmdline(dashed)
+            tlog.write_text('\n'.join(changed) + '\n')
+            record = check.archive_commands(root, out, libs)['BulletCollision']['dbvt_objects']['btDbvt']['compile']
+            self.assertEqual(record['argv'], dashed)
 
     def test_compile_source_operand_must_match_caret_full_path(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -1214,6 +1299,24 @@ class Controls(unittest.TestCase):
         self.assertEqual(check.policy_flags(['/D', 'WIN32', '/DUNRELATED', '/UWIN32', '/DWIN32', '/fp:precise', '/FI', 'forced.h']),
                          ['/DWIN32', '/UWIN32', '/DWIN32', '/fp:precise', '/FIforced.h'])
         self.assertNotEqual(check.policy_flags(['/DWIN32', '/UWIN32']), check.policy_flags(['/UWIN32', '/DWIN32']))
+
+    def test_compiler_environment_uses_the_same_strict_grammar(self):
+        for flag in ('/EHnotanoption', '-fp:madeup', '/Zc:notACompilerOption', '/Fooutput.obj'):
+            with patch.dict(os.environ, {'CL': flag, '_CL_': ''}):
+                with self.subTest(flag=flag), self.assertRaises(ValueError):
+                    check.compiler_environment()
+        with patch.dict(os.environ, {'CL': '-D WIN32 -fp:precise -FI forced.h', '_CL_': ''}):
+            self.assertEqual(check.compiler_environment()['CL'],
+                             ['-D', 'WIN32', '-fp:precise', '-FI', 'forced.h'])
+
+    def test_policy_normalizes_dash_options_without_losing_semantics(self):
+        args = ['/D', 'WIN32', '/UWIN32', '/DDBVT_TEST=1', '/FI', 'forced.h',
+                '/fp:precise', '/fp:fast', '/arch:AVX2', '/std:c++17']
+        dashed = ['-' + arg[1:] if arg.startswith('/') else arg for arg in args]
+        self.assertEqual(check.policy_flags(dashed), check.policy_flags(args))
+        self.assertNotEqual(check.policy_flags(['-fp:precise']), check.policy_flags(['-fp:fast']))
+        self.assertEqual(check.policy_flags(['-DWIN32', '-UWIN32', '-FIforced.h']),
+                         ['/DWIN32', '/UWIN32', '/FIforced.h'])
 
     def test_complete_numeric_mismatch_is_not_validation_gap(self):
         rust = [[1] + [0] * 12 for _ in range(51)]

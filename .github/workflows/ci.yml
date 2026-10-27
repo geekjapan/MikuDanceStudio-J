@@ -58,6 +58,33 @@ jobs:
         run: |
           rustup show active-toolchain
           rustup target add ${{ matrix.target }}
+      - name: Test asset paths on the native host
+        working-directory: rust
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          test "$(rustc +1.95.0 -vV | sed -n 's/^host: //p')" = "$TARGET"
+          run_cpu_tests() {
+            local suites="$1"
+            shift
+            local log
+            log="$(mktemp)"
+            "$@" 2>&1 | tee "$log"
+            awk -v expected="$suites" '
+              /^test [^ ]+ \.\.\. ok/ { named++ }
+              /^test result:/ {
+                suites++
+                if ($3 != "ok." || $4 + 0 < 1) invalid = 1
+              }
+              END { exit !(suites >= expected && named > 0 && !invalid) }
+            ' "$log"
+          }
+          run_cpu_tests 2 cargo +1.95.0 test --locked --target "$TARGET" -p mds-formats -p mds-fx --lib -- --test-threads=1
+          run_cpu_tests 1 cargo +1.95.0 test --locked --target "$TARGET" -p mds-accessory --test placement -- --test-threads=1
+          run_cpu_tests 1 cargo +1.95.0 test --locked --target "$TARGET" -p mds-app --no-default-features --test asset_paths -- --test-threads=1
+          run_cpu_tests 1 cargo +1.95.0 test --locked --target "$TARGET" -p mds-app --no-default-features --lib mme::tests:: -- --test-threads=1
+          run_cpu_tests 1 cargo +1.95.0 test --locked --target "$TARGET" -p mds-mmert --lib model::tests::toon_resolution_keeps_shared_names_out_of_the_model_directory -- --exact --test-threads=1
       - name: Build the Rust workspace
         working-directory: rust
         run: cargo build --locked --release --workspace --target ${{ matrix.target }}
@@ -98,6 +125,10 @@ jobs:
           sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3 install -y --no-install-recommends clang pkg-config libasound2-dev libudev-dev libwayland-dev libvulkan1 mesa-vulkan-drivers ffmpeg
           mkdir -p "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
+      - name: Test package gates (local stand-ins)
+        run: |
+          python3 -I tools/package/test_licenses.py
+          python3 -I tools/package/test_smoke.py
       - name: Install the repository Rust toolchain
         working-directory: rust
         run: rustup show active-toolchain

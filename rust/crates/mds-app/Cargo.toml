@@ -10,7 +10,6 @@ publish.workspace = true
 mds-accessory = { path = "../mds-accessory" }
 mds-doc = { path = "../mds-doc" }
 mds-formats = { path = "../mds-formats" }
-mds-fx = { path = "../mds-fx" }
 # The Kinect / OpenNI capture of the MoCap menu.
 mds-kinect = { path = "../mds-kinect" }
 mds-math = { path = "../mds-math" }

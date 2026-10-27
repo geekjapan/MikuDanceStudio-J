@@ -175,7 +175,7 @@ def ints(raw,width=4):
 def validate_mesh(m):
     n,f,s=m['vertices'],m['faces'],m['stride'];require(0<n<=1000000 and 0<f<=1000000 and 0<s<=256,'bounded mesh size')
     vb,ib,attributes=[hexbytes(m[k]) for k in ('vb','ib','attributes')]
-    require(m['vb_size']==n*s and m['ib_size']==[f*3*m['index_width'],102 if m['index_width']==2 else 101],'actual buffer declaration sizes/format')
+    require(m['vb_size']==n*s and m['ib_size']==[f*3*m['index_width'],101 if m['index_width']==2 else 102],'actual buffer declaration sizes/format')
     require(len(vb)==n*s and len(ib)==f*3*m['index_width'] and len(attributes)==f*4,'buffer sizes')
     index=ints(ib,m['index_width']);attrs=ints(attributes)
     require(all(i<n for i in index) and all(i<m['materials'] for i in attrs),'index/material bounds')

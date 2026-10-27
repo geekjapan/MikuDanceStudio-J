@@ -14,7 +14,7 @@ r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
 def packet():
     pack=lambda values:struct.pack('<'+'I'*len(values),*values).hex()
     vertices=[[0,0,0],[1065353216,0,0],[0,0,1065353216]]
-    mesh={'vertices':3,'faces':1,'stride':12,'options':544,'fvf':2,'index_width':2,'decl':[[0,2,0,0]],'vb':pack(sum(vertices,[])),'ib':struct.pack('<3H',0,1,2).hex(),'attributes':pack([0]),'materials':1,'material_bits':[[0]*17],'table':[[0,0,1,0,3]],'vb_size':36,'ib_size':[6,102]}
+    mesh={'vertices':3,'faces':1,'stride':12,'options':544,'fvf':2,'index_width':2,'decl':[[0,2,0,0]],'vb':pack(sum(vertices,[])),'ib':struct.pack('<3H',0,1,2).hex(),'attributes':pack([0]),'materials':1,'material_bits':[[0]*17],'table':[[0,0,1,0,3]],'vb_size':36,'ib_size':[6,101]}
     return mesh
 
 def native_text(observed=False):
@@ -24,7 +24,7 @@ def native_text(observed=False):
     def section(name):
         lines=[f"{name} fvf 274 options 544 vertices 3 faces 1 stride 32"]
         lines += ['hr '+v+' 00000000' for v in hrs]
-        lines += ['vb_size 96','ib_size 6 102','vb '+mesh['vb'],'ib '+mesh['ib'],'attributes '+mesh['attributes']]
+        lines += ['vb_size 96','ib_size 6 101','vb '+mesh['vb'],'ib '+mesh['ib'],'attributes '+mesh['attributes']]
         for off,typ,usage,ui in mesh['decl']:
             lines += [f'decl {off} {typ} {usage} {ui}','decl_bytes '+struct.pack('<HHBBBB',0,off,typ,0,usage,ui).hex()]
         lines += ['v '+str(i)+' 0 0 0 0 0 0 0 0' for i in range(3)]
@@ -81,7 +81,7 @@ class Controls(unittest.TestCase):
         m['vertices']=4;m['vb']+='00'*12;m['vb_size']+=12
         self.assertEqual(len(r.validate_mesh(m)['vertices']),4)
     def test_malformed_meshes(self):
-        for key,value in [('vb','00'),('ib','00'),('attributes',''),('materials',0),('vb_size',12),('ib_size',[6,101]),('decl',[[12,2,0,0]]),('table',[[1,0,1,0,3]])]:
+        for key,value in [('vb','00'),('ib','00'),('attributes',''),('materials',0),('vb_size',12),('ib_size',[6,102]),('decl',[[12,2,0,0]]),('table',[[1,0,1,0,3]])]:
             with self.subTest(key=key):
                 m=packet();m[key]=value
                 with self.assertRaises((ValueError,KeyError)):r.validate_mesh(m)
@@ -198,6 +198,26 @@ class Controls(unittest.TestCase):
                 for observed in (False,True):self.assertEqual(r.generated(r.ROOT,observed),expected_rust[observed])
                 self.assertEqual(r.h.contract(r.ROOT),expected_contract)
             self.assertTrue(default_reads)
+
+    def test_captured_index_formats_and_buffer_guards(self):
+        # Raw canonical-control mesh from hosted run 40555918638, attempt 1.
+        mesh={'vertices': 4, 'faces': 2, 'stride': 24, 'options': 544, 'fvf': 18, 'index_width': 2, 'decl': [[0, 2, 0, 0], [12, 2, 3, 0]], 'vb': 'ffff7fbf00000000ffff7fbf00000000ffff7f3f00000000ffff7fbf00000000ffff7f3f00000000ffff7f3f00000000ffff7f3f00000000ffff7f3f00000000ffff7f3f00000000ffff7f3f00000000ffff7fbf00000000ffff7f3f00000000', 'ib': '000001000200000002000300', 'attributes': '0000000000000000', 'materials': 1, 'material_bits': [[1061997773, 1061997773, 1061997773, 1065353216, 0, 0, 0, 1065353216, 0, 0, 0, 1065353216, 1036831949, 1036831949, 1036831949, 1065353216, 1084227584]], 'table': [[0, 0, 2, 0, 4]], 'vb_size': 96, 'ib_size': [12, 101]}
+        expected=[0,1,2,0,2,3]
+        self.assertEqual(r.validate_mesh(mesh)['indices'],expected)
+        # Width4 is a derived unit control, not captured native 32-bit execution.
+        wide=copy.deepcopy(mesh)
+        wide.update(index_width=4,options=mesh['options']|1,ib_size=[24,102],ib=struct.pack('<6I',*expected).hex())
+        self.assertEqual(r.validate_mesh(wide)['indices'],expected)
+        for value in (mesh,wide):
+            width=value['index_width']
+            for label in ('format','size','truncated','bounds'):
+                with self.subTest(width=width,invalid=label):
+                    invalid=copy.deepcopy(value)
+                    if label=='format':invalid['ib_size'][1]=102 if width==2 else 101
+                    elif label=='size':invalid['ib_size'][0]-=1
+                    elif label=='truncated':invalid['ib']=invalid['ib'][:-2]
+                    else:invalid['ib']=struct.pack('<'+('H' if width==2 else 'I')*6,0,1,4,0,2,3).hex()
+                    with self.assertRaises(ValueError):r.validate_mesh(invalid)
 
     def test_strict_json_and_numbers(self):
         for raw in ('{"x":1,"x":2}','{"x":NaN}'):

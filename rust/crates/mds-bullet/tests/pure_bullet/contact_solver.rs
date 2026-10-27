@@ -1,8 +1,8 @@
 use crate::core::body::{BodyInit, RigidBody};
 use crate::core::contact::ContactPoint;
-use crate::core::contact_solver::{ContactManifold, ContactSolver};
+use crate::core::contact_solver::ContactManifold;
 use crate::core::math::{Basis, Transform, Vec3};
-use crate::core::solver::ImpulseRow;
+use crate::core::solver::{GroupSolver, ImpulseRow, Phase, RowKind, SolveEvent, SolverMode};
 
 struct Words<'a> {
     words: std::str::Split<'a, char>,
@@ -153,7 +153,7 @@ fn replay_native_contacts(observe: bool) {
             .enumerate()
             .map(|(mi, p)| ContactManifold::new(owners[mi], p))
             .collect();
-        let mut solver = ContactSolver::setup(&bodies, &mut manifolds, dt);
+        let mut solver = GroupSolver::setup(&bodies, &mut [], &mut manifolds, dt, SolverMode::Simd);
         w.expect(solver.normals.len() as u32);
         for row in &solver.normals {
             w.row(row.numeric);
@@ -161,8 +161,8 @@ fn replay_native_contacts(observe: bool) {
         for row in &solver.frictions {
             w.row(row.numeric);
         }
-        w.expect(solver.bodies.len() as u32);
-        for body in &solver.bodies {
+        w.expect(solver.bodies.entries.len() as u32);
+        for body in &solver.bodies.entries {
             w.vec(body.delta_linear);
             w.vec(body.delta_angular);
         }
@@ -173,13 +173,23 @@ fn replay_native_contacts(observe: bool) {
         }
         let mut events = Vec::new();
         if observe {
-            solver.iterate_with_observer(|s, iteration, friction, index| {
+            solver.iterate(&bodies, &[], |s, event| {
+                let SolveEvent::Row {
+                    kind,
+                    phase: Phase::After,
+                    iteration,
+                    index,
+                } = event
+                else {
+                    return;
+                };
+                let friction = kind == RowKind::Friction;
                 let row = if friction {
                     s.frictions[index].numeric
                 } else {
                     s.normals[index].numeric
                 };
-                let [a, b] = row.bodies.map(|i| s.bodies[i]);
+                let [a, b] = row.bodies.map(|i| s.bodies.entries[i]);
                 let mut event = vec![
                     iteration as u32,
                     u32::from(friction),
@@ -197,7 +207,7 @@ fn replay_native_contacts(observe: bool) {
                 events.push(event);
             });
         } else {
-            solver.iterate();
+            solver.iterate(&bodies, &[], |_, _| {});
         }
         solver.writeback(&mut bodies, &mut manifolds);
         for body in &bodies {

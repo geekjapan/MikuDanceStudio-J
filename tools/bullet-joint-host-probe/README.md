@@ -84,3 +84,11 @@ output directory is refused without changing its contents.
 Each matrix job uploads its complete evidence even on failure. Windows profile
 artifacts each contain a Rust capture and its comparison to that profile's actual
 native capture. Workflow configuration is not evidence that a hosted run passed.
+
+## Replay a saved host capture after a solver API change
+
+`replay.py` compiles the current product joint replay against the exact serialized inputs in an existing complete capture. It validates the host-specific event count from that capture, retains the adapted source and full Rust output, and checks input fingerprints. It does not claim cross-host output-bit equivalence.
+
+```sh
+python3 tools/bullet-joint-host-probe/replay.py --capture /absolute/capture/native.tsv --out-dir /tmp/joint-replay
+```

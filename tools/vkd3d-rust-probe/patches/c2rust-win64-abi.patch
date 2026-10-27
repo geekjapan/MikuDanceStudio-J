@@ -1713,7 +1713,7 @@ diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/sr
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_variadic.rs
-@@ -0,0 +1,1224 @@
+@@ -0,0 +1,1330 @@
 +use super::*;
 +use serde_json::{Value, json};
 +
@@ -2094,13 +2094,7 @@ new file mode 100644
 +            "volatile": typ.qualifiers.is_volatile, "restrict": typ.qualifiers.is_restrict})
 +    }
 +
-+    fn required_type_relation(&self, id: CTypeId, rows: &mut std::collections::BTreeMap<CTypeId, Value>,
-+        visiting: &mut HashSet<CTypeId>, depth: usize) -> bool {
-+        if depth > 32 || visiting.contains(&id) {
-+            rows.insert(id, json!({"type_id": id.0, "unproved": "required type cycle or depth limit"}));
-+            return false;
-+        }
-+        if let Some(row) = rows.get(&id) { return row.get("unproved").is_none(); }
++    fn required_type_relation(&self, id: CTypeId) -> (Value, Vec<CTypeId>) {
 +        let mut row = json!({"type_id": id.0});
 +        let mut children = vec![];
 +        match self.c_types.get(&id).map(|t| &t.kind) {
@@ -2170,15 +2164,23 @@ new file mode 100644
 +            }
 +            _ => row["unproved"] = json!("missing or unsupported required type"),
 +        }
++        (row, children)
++    }
++
++    fn required_type_closure(&self, id: CTypeId,
++        rows: &mut std::collections::BTreeMap<CTypeId, (Value, Vec<CTypeId>)>,
++        visiting: &mut HashSet<CTypeId>, checked: &mut HashMap<(CTypeId, usize), bool>, depth: usize) -> bool {
++        if depth > 32 || visiting.contains(&id) { return false; }
++        if let Some(proved) = checked.get(&(id, depth)) { return *proved; }
++        let (row, children) = rows.entry(id).or_insert_with(|| self.required_type_relation(id));
++        let mut proved = row.get("unproved").is_none();
++        let children = children.clone();
 +        visiting.insert(id);
 +        for child in children {
-+            if !self.required_type_relation(child, rows, visiting, depth + 1) {
-+                row["unproved"] = json!("required type dependency unproved");
-+            }
++            if !self.required_type_closure(child, rows, visiting, checked, depth + 1) { proved = false; }
 +        }
 +        visiting.remove(&id);
-+        let proved = row.get("unproved").is_none();
-+        rows.insert(id, row);
++        checked.insert((id, depth), proved);
 +        proved
 +    }
 +
@@ -2207,9 +2209,17 @@ new file mode 100644
 +            if !matches!(self.c_types.get(typ).map(|t| &t.kind), Some(CTypeKind::Function(_, _, true, _, _, _))) { continue; }
 +            roots.insert(CQualTypeId::new(*typ)); declarations.insert(*id);
 +            declarations.extend(parameters.iter().copied());
-+            for node in iterators::DFExpr::new(self, (*body).into()) {
++            let mut pending = vec![iterators::SomeId::Stmt(*body)];
++            let mut visited = HashSet::new();
++            while let Some(node) = pending.pop() {
++                if !visited.insert(node) || node.type_().is_some() { continue; }
 +                if let Some(expr) = node.expr() { expressions.insert(expr); }
-+                if let Some(decl) = node.decl() { declarations.insert(decl); }
++                if let Some(decl) = node.decl() {
++                    if !matches!(self.c_decls.get(&decl).map(|d| &d.kind), Some(CDeclKind::Variable { .. })) { continue; }
++                    declarations.insert(decl);
++                }
++                pending.extend(iterators::immediate_children_all_types(self, node)
++                    .into_iter().filter(|child| child.type_().is_none()));
 +            }
 +        }
 +        let mut builtin_ids = std::collections::BTreeSet::new();
@@ -2299,7 +2309,15 @@ new file mode 100644
 +        let mut types = std::collections::BTreeMap::new();
 +        let mut ordered_roots: Vec<_> = roots.into_iter().collect();
 +        ordered_roots.sort_by_key(|t| (t.ctype.0, t.qualifiers.is_const, t.qualifiers.is_volatile, t.qualifiers.is_restrict));
-+        for root in &ordered_roots { self.required_type_relation(root.ctype, &mut types, &mut HashSet::new(), 0); }
++        let mut root_facts = vec![];
++        let mut root_proved = HashMap::new();
++        for root in &ordered_roots {
++            let proved = self.required_type_closure(root.ctype, &mut types, &mut HashSet::new(), &mut HashMap::new(), 0);
++            root_proved.insert(root.ctype, proved);
++            let mut fact = Self::required_qualified_type(*root);
++            if !proved { fact["unproved"] = json!("required type dependency, cycle or depth limit"); }
++            root_facts.push(fact);
++        }
 +        let mut native_ids = std::collections::BTreeSet::new();
 +        for id in types.keys() {
 +            if let Some(CTypeKind::Struct(decl)) = self.c_types.get(id).map(|t| &t.kind) {
@@ -2308,7 +2326,7 @@ new file mode 100644
 +        }
 +        for row in &mut builtins {
 +            if let Some(id) = row["type"]["type_id"].as_u64() {
-+                if types.get(&CTypeId(id)).is_some_and(|t| t.get("unproved").is_none()) {
++                if root_proved.get(&CTypeId(id)) == Some(&true) {
 +                    row["signature"] = self.cursor_type(CQualTypeId::new(CTypeId(id)), 0);
 +                } else { row["unproved"] = json!("native builtin signature relation unproved"); }
 +            }
@@ -2325,8 +2343,8 @@ new file mode 100644
 +            if !matching || builtin.is_none() { endpoint["unproved"] = json!("native builtin endpoint signature mismatch"); }
 +        }
 +        json!({"schema": 1, "authorization": "witness_only",
-+            "roots": ordered_roots.into_iter().map(Self::required_qualified_type).collect::<Vec<_>>(),
-+            "types": types.into_values().collect::<Vec<_>>(), "cursors": cursors,
++            "roots": root_facts,
++            "types": types.into_values().map(|(row, _)| row).collect::<Vec<_>>(), "cursors": cursors,
 +            "native_records": native_ids.into_iter().map(|id| self.required_native_record(id)).collect::<Vec<_>>(),
 +            "enum_owners": enum_owners, "builtin_declarations": builtins, "builtin_endpoints": endpoints})
 +    }
@@ -2552,6 +2570,70 @@ new file mode 100644
 +            ["owning_enum"]["unproved"].is_string());
 +    }
 +
++    fn cursor_required_relations_depth_is_per_root() {
++        fn normalize(value: &mut Value, mask: u64) {
++            match value {
++                Value::Object(object) => for (key, child) in object {
++                    if matches!(key.as_str(), "type_id" | "inner" | "declaration") && child.is_u64() {
++                        *child = json!(child.as_u64().unwrap() ^ mask);
++                    } else { normalize(child, mask); }
++                },
++                Value::Array(array) => for child in array { normalize(child, mask); },
++                _ => {}
++            }
++        }
++        let mut baseline = None;
++        for mask in [0u64, 20, 255] {
++            for reverse in [false, true] {
++                let mut ast = TypedAstContext::default();
++                let t = |id| CTypeId(id ^ mask);
++                let d = |id| CDeclId(id ^ mask);
++                let s = |id| CStmtId(id ^ mask);
++                let q = |id| CQualTypeId::new(t(id));
++                for id in 1..35 { ast.c_types.insert(t(id), not_located(CTypeKind::Paren(t(id + 1)))); }
++                ast.c_types.insert(t(35), not_located(CTypeKind::Void));
++                ast.c_types.insert(t(100), not_located(CTypeKind::Function(q(35), vec![], true, false, true, CCallingConvention::C)));
++                ast.c_decls.insert(d(60), not_located(CDeclKind::Function {
++                    is_global: true, is_inline: false, is_implicit: false, is_extern: true,
++                    is_inline_externally_visible: false, typ: t(100), name: "depth".into(),
++                    parameters: vec![], body: Some(s(60)), attrs: IndexSet::new(),
++                }));
++                ast.linker_names.insert(d(60), "depth".into());
++                for (decl, typ) in [(61, 1), (62, 20), (63, 2), (64, 3)] {
++                    ast.c_decls.insert(d(decl), not_located(CDeclKind::Variable {
++                        ident: format!("root_{typ}"), typ: q(typ), initializer: None, has_static_duration: false,
++                        has_thread_duration: false, is_externally_visible: false, is_defn: true, attrs: IndexSet::new(),
++                    }));
++                }
++                let mut declarations = vec![d(61), d(62), d(63), d(64)];
++                if reverse { declarations.reverse(); }
++                ast.c_stmts.insert(s(60), not_located(CStmtKind::Decls(declarations)));
++                let mut facts = ast.cursor_required_relations(Path::new("depth.c"), &ast.cursor_declaration_owners());
++                let roots = facts["roots"].as_array().unwrap();
++                assert!(roots.iter().find(|r| r["type_id"] == json!(t(1).0)).unwrap()["unproved"].is_string());
++                assert!(roots.iter().find(|r| r["type_id"] == json!(t(20).0)).unwrap().get("unproved").is_none());
++                assert!(roots.iter().find(|r| r["type_id"] == json!(t(2).0)).unwrap()["unproved"].is_string());
++                assert!(roots.iter().find(|r| r["type_id"] == json!(t(3).0)).unwrap().get("unproved").is_none());
++                assert!(facts["types"].as_array().unwrap().iter().all(|r| r.get("unproved").is_none()));
++                normalize(&mut facts, mask);
++                for table in ["roots", "types"] {
++                    facts[table].as_array_mut().unwrap().sort_by_key(|r| r["type_id"].as_u64());
++                }
++                if let Some(expected) = &baseline { assert_eq!(&facts, expected); }
++                else { baseline = Some(facts); }
++
++                // A shared child reached first near the limit must still be checked at its deeper occurrence.
++                ast.c_types.insert(t(100), not_located(CTypeKind::Function(q(20), vec![q(1)], true, false, true, CCallingConvention::C)));
++                let facts = ast.cursor_required_relations(Path::new("depth.c"), &ast.cursor_declaration_owners());
++                assert!(facts["roots"].as_array().unwrap().iter()
++                    .find(|r| r["type_id"] == json!(t(100).0)).unwrap()["unproved"].is_string());
++                ast.c_types.insert(t(35), not_located(CTypeKind::Paren(t(20))));
++                let facts = ast.cursor_required_relations(Path::new("depth.c"), &ast.cursor_declaration_owners());
++                assert!(facts["roots"].as_array().unwrap().iter().all(|r| r["unproved"].is_string()));
++            }
++        }
++    }
++
 +    fn cursor_required_relations_are_bounded_native_facts() {
 +        use c2rust_ast_exporter::clang_ast::RecordEvidence;
 +        let mut ast = TypedAstContext::default();
@@ -2589,6 +2671,7 @@ new file mode 100644
 +        ast.native_cursor_types.insert(CDeclId(50), (original, original, 5));
 +        ast.c_types.insert(CTypeId(6), not_located(CTypeKind::Function(q(1), vec![], true, false, true, CCallingConvention::C)));
 +        ast.c_decls.insert(CDeclId(60), function(6, "body", Some(CStmtId(60))));
++        ast.linker_names.insert(CDeclId(60), "body".into());
 +        ast.c_stmts.insert(CStmtId(61), not_located(CStmtKind::Decls(vec![CDeclId(50)])));
 +        ast.c_types.insert(CTypeId(7), not_located(CTypeKind::Pointer(q(2))));
 +        ast.c_types.insert(CTypeId(8), not_located(CTypeKind::Function(q(1), vec![q(7)], true, false, true, CCallingConvention::C)));
@@ -2617,6 +2700,26 @@ new file mode 100644
 +        ast.c_stmts.insert(CStmtId(80), not_located(CStmtKind::Expr(CExprId(80))));
 +        ast.c_stmts.insert(CStmtId(60), not_located(CStmtKind::Compound(vec![CStmtId(61), CStmtId(70), CStmtId(71), CStmtId(72), CStmtId(80)])));
 +        ast.c_types.insert(CTypeId(999), not_located(CTypeKind::Int));
++        // Only lexical initializers may select enum members or unrelated record field types.
++        for (id, typ, initializer) in [(51, 11, Some(CExprId(810))), (52, 12, None), (53, 11, Some(CExprId(80)))] {
++            ast.c_decls.insert(CDeclId(id), not_located(CDeclKind::Variable {
++                ident: format!("local_{id}"), typ: q(typ), initializer, has_static_duration: false,
++                has_thread_duration: false, is_externally_visible: false, is_defn: true, attrs: IndexSet::new(),
++            }));
++        }
++        ast.c_exprs.insert(CExprId(810), not_located(CExprKind::Statements(q(11), CStmtId(810))));
++        ast.c_stmts.insert(CStmtId(810), not_located(CStmtKind::Decls(vec![CDeclId(53)])));
++        ast.c_decls.insert(CDeclId(90), not_located(CDeclKind::Struct {
++            name: Some("local_record".into()), fields: Some(vec![CDeclId(91)]), is_packed: false,
++            manual_alignment: None, max_field_alignment: None, platform_byte_size: 4, platform_alignment: 4,
++        }));
++        ast.c_decls.insert(CDeclId(91), not_located(CDeclKind::Field {
++            name: "unused".into(), typ: q(999), bitfield_width: None,
++            platform_bit_offset: 0, platform_type_bitwidth: 32, manual_alignment: None,
++        }));
++        ast.c_types.insert(CTypeId(12), not_located(CTypeKind::Struct(CDeclId(90))));
++        ast.c_stmts.insert(CStmtId(61), not_located(CStmtKind::Decls(vec![CDeclId(50), CDeclId(51), CDeclId(52), CDeclId(82), CDeclId(90)])));
++        ast.c_stmts.insert(CStmtId(60), not_located(CStmtKind::Compound(vec![CStmtId(61), CStmtId(70), CStmtId(71), CStmtId(72)])));
 +        let facts = |ast: &TypedAstContext| ast.cursor_required_relations(Path::new("body.c"), &ast.cursor_declaration_owners());
 +        let row = |rows: &Value, key: &str, id| rows.as_array().unwrap().iter().find(|r| r[key] == json!(id)).unwrap().clone();
 +        let positive = facts(&ast);
@@ -2634,6 +2737,8 @@ new file mode 100644
 +        assert_eq!(positive["native_records"][0]["origin"], "ASTContext.getVaListTagDecl");
 +        assert_eq!(positive["native_records"][0]["size"], 24);
 +        assert!(ast.inventory_record_identity(CDeclId(20), 0)["unproved"].is_string());
++        assert_eq!(positive["enum_owners"].as_array().unwrap().len(), 1);
++        assert!(positive["roots"].as_array().unwrap().iter().any(|r| r["type_id"] == 12));
 +        assert_eq!(positive["enum_owners"][0]["declaration"], 82);
 +        assert_eq!(positive["enum_owners"][0]["variants"], json!([{"declaration": 80, "name": "opcode", "signed": false, "value": 6}]));
 +        assert_eq!(positive["builtin_declarations"].as_array().unwrap().len(), 3);
@@ -2651,7 +2756,7 @@ new file mode 100644
 +        ast.source_typedef_types.remove(&CDeclId(40));
 +        assert!(row(&facts(&ast)["types"], "type_id", 4)["unproved"].is_string());
 +        ast.source_typedef_types.insert(CDeclId(40), q(5));
-+        assert!(row(&facts(&ast)["types"], "type_id", 5)["unproved"].is_string());
++        assert!(row(&facts(&ast)["roots"], "type_id", 5)["unproved"].is_string());
 +        ast.source_typedef_types.insert(CDeclId(40), original);
 +        ast.c_types.insert(CTypeId(4), not_located(CTypeKind::Elaborated(CTypeId(998))));
 +        assert!(row(&facts(&ast)["types"], "type_id", 998)["unproved"].is_string());
@@ -2698,6 +2803,7 @@ new file mode 100644
 +    #[test]
 +    fn closed_variadic_inventory_uses_promoted_ast_types_and_linker_identity() {
 +        cursor_required_relations_are_bounded_native_facts();
++        cursor_required_relations_depth_is_per_root();
 +        cursor_local_owners_use_lexical_declarations_not_references_or_names();
 +        cursor_enum_owners_use_variant_ids_and_preserve_distinct_tags();
 +        let mut ast = TypedAstContext::default();

@@ -70,6 +70,41 @@ class RequiredRelationsSourceTests(unittest.TestCase):
         self.assertNotIn('return;', helper)
 
 
+    def test_retarget_fixture_has_imported_linker_identity(self):
+        helper = self.source.split('    fn cursor_required_relations_are_bounded_native_facts() {', 1)[1]
+        fixture = 'ast.linker_names.insert(CDeclId(60), "body".into());'
+        self.assertIn(fixture, helper)
+        self.assertLess(helper.index(fixture), helper.index('*decl = CDeclId(60);'))
+
+    def test_body_collection_prunes_types_and_nonlexical_declarations(self):
+        walk = self.source.split('    fn cursor_required_relations(', 1)[1].split('        let mut builtin_ids', 1)[0]
+        self.assertNotIn('DFExpr', walk)
+        self.assertIn('node.type_().is_some()', walk)
+        self.assertIn('Some(CDeclKind::Variable { .. })) { continue; }', walk)
+        self.assertIn('filter(|child| child.type_().is_none())', walk)
+        helper = self.source.split('    fn cursor_required_relations_are_bounded_native_facts() {', 1)[1]
+        for control in ('CTypeKind::Struct(CDeclId(90))', 'CDeclId(91)',
+                        'Some(CExprId(810))', 'Some(CExprId(80))',
+                        'positive["enum_owners"].as_array().unwrap().len(), 1'):
+            self.assertIn(control, helper)
+
+    def test_depth_checks_are_per_root_and_named_unit_covers_renaming(self):
+        relation = self.source.split('    fn required_type_relation(', 1)[1].split('    fn required_native_record(', 1)[0]
+        self.assertIn('depth > 32 || visiting.contains(&id)', relation)
+        self.assertIn('checked.get(&(id, depth))', relation)
+        self.assertNotIn('rows.insert', relation)
+        roots = self.source.split('        let mut root_facts = vec![];', 1)[1].split('        let mut native_ids', 1)[0]
+        self.assertIn('&mut HashSet::new(), &mut HashMap::new(), 0', roots)
+        self.assertIn('fact["unproved"]', roots)
+        self.assertIn('root_proved.get(&CTypeId(id)) == Some(&true)', self.source)
+        unit = self.source.split('    fn closed_variadic_inventory_uses_promoted_ast_types_and_linker_identity() {', 1)[1]
+        self.assertIn('cursor_required_relations_depth_is_per_root();', unit)
+        helper = self.source.split('    fn cursor_required_relations_depth_is_per_root() {', 1)[1].split('    fn cursor_required_relations_are_bounded_native_facts()', 1)[0]
+        for control in ('[0u64, 20, 255]', '[false, true]', 'normalize(&mut facts, mask)',
+                        'assert_eq!(&facts, expected)', 'vec![q(1)]', 'CTypeKind::Paren(t(20))'):
+            self.assertIn(control, helper)
+
+
 class AppliedSourceEvidenceTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()

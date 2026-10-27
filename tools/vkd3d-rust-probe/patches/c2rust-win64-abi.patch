@@ -390,7 +390,7 @@ index e423e49..30566ea 100644
                  }
                  ref k => {
 diff --git a/c2rust-transpile/src/translator/mod.rs b/c2rust-transpile/src/translator/mod.rs
-index 8fb6f5b..ba137be 100644
+index 8fb6f5b..9a7a118 100644
 --- a/c2rust-transpile/src/translator/mod.rs
 +++ b/c2rust-transpile/src/translator/mod.rs
 @@ -612,13 +612,15 @@ pub fn emit_c_decl_map(
@@ -509,7 +509,24 @@ index 8fb6f5b..ba137be 100644
          let ident_name = match foreign_item_ident_vis(foreign_item) {
              Some((ident, _vis)) => ident.to_string(),
              None => continue,
-@@ -3574,62 +3649,42 @@ pub(crate) fn convert_expr(
+@@ -3554,7 +3629,15 @@ pub(crate) fn convert_expr(
+                     if ctx.is_pattern {
+                         self.convert_expr(ctx, child, override_ty)
+                     } else {
+-                        self.convert_constant(constant).map(WithStmts::new_val)
++                        let value = self.convert_constant(constant)?;
++                        let target_ty = override_ty.unwrap_or(ty);
++                        let value = match self.ast_context.resolve_type(target_ty.ctype).kind {
++                            CTypeKind::Enum(enum_id) => {
++                                self.enum_constructor_expr(enum_id, value, false)
++                            }
++                            _ => value,
++                        };
++                        Ok(WithStmts::new_val(value))
+                     }
+                 } else {
+                     self.convert_expr(ctx, child, Some(override_ty.unwrap_or(ty)))
+@@ -3574,62 +3657,42 @@ pub(crate) fn convert_expr(
                      false,
                  )?)),
                  OffsetOfKind::Variable(qty, field_id, expr_id) => {
@@ -621,6 +638,55 @@ index 8416eaf..7851312 100644
                      )?;
  
                      cast_kind = Some(VaArgCastKind::Transmute(self.convert_type(ty.ctype)?));
+diff --git a/tests/unit/enums/src/constant_array.c b/tests/unit/enums/src/constant_array.c
+new file mode 100644
+index 0000000..5f2c6e8
+--- /dev/null
++++ b/tests/unit/enums/src/constant_array.c
+@@ -0,0 +1,22 @@
++enum operand_type { OPERAND_INTEGER = 40, OPERAND_LARGE = 0x80000000u };
++enum signed_type { SIGNED_NEGATIVE = -7, SIGNED_POSITIVE = 13 };
++typedef enum signed_type signed_alias;
++
++static const enum operand_type *operands = (enum operand_type[]){OPERAND_INTEGER, 0, (enum operand_type)3, OPERAND_LARGE};
++static const signed_alias *signed_values = (signed_alias[]){SIGNED_NEGATIVE, 0, SIGNED_POSITIVE, (signed_alias)-3};
++static const int *integers = (int[]){OPERAND_INTEGER, 0, SIGNED_NEGATIVE, (int)SIGNED_POSITIVE};
++
++long long enum_array_probe(unsigned which) {
++    if (which < 4) return operands[which];
++    if (which < 8) return signed_values[which - 4];
++    if (which < 12) return integers[which - 8];
++    switch (which) {
++    case 12: return sizeof(enum operand_type);
++    case 13: return __alignof__(enum operand_type);
++    case 14: return sizeof(signed_alias);
++    case 15: return __alignof__(signed_alias);
++    case 16: return sizeof((enum operand_type[]){OPERAND_INTEGER, 0, (enum operand_type)3, OPERAND_LARGE});
++    case 17: return sizeof((signed_alias[]){SIGNED_NEGATIVE, 0, SIGNED_POSITIVE, (signed_alias)-3});
++    default: return -999;
++    }
++}
+diff --git a/tests/unit/enums/src/test_constant_array.rs b/tests/unit/enums/src/test_constant_array.rs
+new file mode 100644
+index 0000000..88d922a
+--- /dev/null
++++ b/tests/unit/enums/src/test_constant_array.rs
+@@ -0,0 +1,15 @@
++use crate::constant_array::rust_enum_array_probe;
++
++#[link(name = "test")]
++unsafe extern "C" { fn enum_array_probe(which: u32) -> i64; }
++
++#[test]
++fn constant_enum_array_values_and_layout() {
++    let expected = [40, 0, 3, 0x80000000, -7, 0, 13, -3, 40, 0, -7, 13, 4, 4, 4, 4, 16, 16];
++    for (which, value) in expected.into_iter().enumerate() {
++        unsafe {
++            assert_eq!(enum_array_probe(which as u32), value);
++            assert_eq!(rust_enum_array_probe(which as u32), value);
++        }
++    }
++}
 diff --git a/tests/unit/structs/src/test_variable_offsetof.rs b/tests/unit/structs/src/test_variable_offsetof.rs
 index 97f83ad..3e9b07d 100644
 --- a/tests/unit/structs/src/test_variable_offsetof.rs

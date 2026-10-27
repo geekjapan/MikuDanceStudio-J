@@ -253,3 +253,21 @@ representations are explicit test fixtures. This check does not run the
 exporter, type converter, field renamer, or complete translator. Hosted tool
 rebuild, ABI 204/120/86, all 95 metrics and 200 vectors, and the unchanged raw
 and working stable all-24-unit gates remain required.
+
+Evaluated `ConstantExpr` values retain an effective enum type through the existing
+type resolver and enum constructor. Integer and pattern contexts keep their
+previous lowering. The upstream `constant_array.c` regression covers named
+enumerators, zero, negative values, explicit casts, multiple elements, a typedef,
+and ordinary integer arrays. The setup job translates it with the rebuilt tool
+and compares 12 values and six layout metrics with native C on stable Rust.
+Its evidence is under the setup artifact's `enum-constants` directory.
+
+For a local check without rebuilding LLVM, run
+`python3 tools/vkd3d-rust-probe/check_enum_constants.py --source /path/to/c2rust --artifacts /path/to/evidence --focused`.
+This compiles the actual ConstantExpr branch, type resolver, constant emitter,
+and enum constructor with AST shims and the pinned AST builder. It compares
+the emitted arrays with the same native C fixture and checks pattern delegation.
+It does not execute the exporter, complete translator, or all 24 shader units.
+Use `--c2rust /path/to/c2rust` in place of `--focused` for the actual translator.
+The 145 enum-array diagnostics and the separate stable E0554 blocker still need
+a new hosted all-unit result. This regression does not waive any existing gate.

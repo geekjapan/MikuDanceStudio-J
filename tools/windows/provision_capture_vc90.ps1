@@ -39,11 +39,22 @@ function Get-Vc90PolicyEvidence {
             $xml = [xml](Get-Content $file.FullName -Raw)
             $ns = [Xml.XmlNamespaceManager]::new($xml.NameTable)
             $ns.AddNamespace('a', 'urn:schemas-microsoft-com:asm.v1')
+            $ns.AddNamespace('h', 'urn:schemas-microsoft-com:asm.v2')
+            $isPolicy = $file.Name -like 'amd64_policy.*' -or $file.Extension -ieq '.policy'
+            $invalidNamespaces = if ($isPolicy) {
+                $xml.SelectNodes('//*[namespace-uri() != "urn:schemas-microsoft-com:asm.v1"]').Count
+            } else {
+                # Original Microsoft targets carry asm.v2 hashes with XMLDSIG descendants beneath files.
+                $xml.SelectNodes('//*[namespace-uri() != "urn:schemas-microsoft-com:asm.v1" and
+                    not(self::h:hash[parent::a:file[parent::a:assembly]]) and
+                    not(namespace-uri() = "http://www.w3.org/2000/09/xmldsig#" and
+                        ancestor::h:hash[parent::a:file[parent::a:assembly]])]', $ns).Count
+            }
             $root = $xml.DocumentElement
             $identities = $xml.SelectNodes('/a:assembly/a:assemblyIdentity', $ns)
             if ($root.LocalName -cne 'assembly' -or $root.NamespaceURI -cne $ns.LookupNamespace('a') -or
                 $root.GetAttribute('manifestVersion') -cne '1.0' -or $identities.Count -ne 1 -or
-                $xml.SelectNodes('//*[namespace-uri() != "urn:schemas-microsoft-com:asm.v1"]').Count) {
+                $invalidNamespaces) {
                 throw 'Expected asm.v1 assembly, manifestVersion 1.0 and one definition identity'
             }
             $identity = $identities[0]
@@ -53,7 +64,6 @@ function Get-Vc90PolicyEvidence {
             $record.type = $identity.GetAttribute('type')
             $record.version = $identity.GetAttribute('version')
             $null = Read-Vc90Version $record.version
-            $isPolicy = $file.Name -like 'amd64_policy.*' -or $file.Extension -ieq '.policy'
             $familyName = if ($file.FullName -match '(?i)vc90\.(crt|openmp)_') { "Microsoft.VC90.$($Matches[1])" } else { throw 'Unexpected VC90 file prefix' }
             $expectedName = if ($isPolicy) { "policy.9.0.$familyName" } else { $familyName }
             $expectedType = if ($isPolicy) { 'win32-policy' } else { 'win32' }
@@ -78,7 +88,7 @@ function Get-Vc90PolicyEvidence {
                     $dependent = $dependencies[0]
                     $dependencyIdentities = $dependent.SelectNodes('a:assemblyIdentity', $ns)
                     $redirects = $dependent.SelectNodes('a:bindingRedirect', $ns)
-                    if (@($dependent.Attributes | Where-Object { $_.NamespaceURI -cne "http://www.w3.org/2000/xmlns/" }).Count -or $dependencyIdentities.Count -ne 1 -or $redirects.Count -ne 1 -or
+                    if (@($dependent.Attributes | Where-Object { $_.NamespaceURI -cne "http://www.w3.org/2000/xmlns/" }).Count -or $dependencyIdentities.Count -ne 1 -or $redirects.Count -lt 1 -or
                         $dependent.SelectNodes('*').Count -ne (1 + $redirects.Count) -or
                         $dependent.SelectNodes('*')[0] -ne $dependencyIdentities[0]) {
                         throw 'Expected one reference identity followed by redirects'
@@ -101,6 +111,11 @@ function Get-Vc90PolicyEvidence {
                         if ($low -gt $high -or $low.Major -ne 9 -or $high.Major -ne 9 -or
                             $low.Minor -ne 0 -or $high.Minor -ne 0 -or $targetVersion.Major -ne 9 -or $targetVersion.Minor -ne 0) {
                             throw 'Invalid or mismatched VC90 redirect range'
+                        }
+                        foreach ($previous in $record.redirects) {
+                            if ($low -le [version]$previous.high -and [version]$previous.low -le $high) {
+                                throw 'Duplicate or overlapping redirect ranges in one policy'
+                            }
                         }
                         $record.redirects += [ordered]@{ name = $dependency.GetAttribute('name'); architecture = $record.architecture
                             token = $record.token; type = 'win32'; old_version = $redirect.GetAttribute('oldVersion')

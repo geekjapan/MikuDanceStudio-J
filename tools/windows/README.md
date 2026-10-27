@@ -54,13 +54,18 @@ and OpenMP prefixes in `WinSxS/Manifests` and immediate policy directories in
 files as documented in [Publisher Configuration](https://learn.microsoft.com/en-us/windows/win32/sbscs/publisher-configuration).
 Absent optional stores are allowed; unreadable relevant evidence fails the gate.
 
-The helper checks the asm.v1 namespace, manifestVersion 1.0, one definition
-identity, matching reference identities, and one redirect per direct dependency against
-[Microsoft's policy schema](https://learn.microsoft.com/en-us/windows/win32/sbscs/publisher-configuration-file-schema).
+The helper checks the asm.v1 policy namespace, manifestVersion 1.0, one definition
+identity, and matching reference identities under each direct dependency.
+A dependentAssembly can contain multiple non-overlapping redirects. The pinned
+Microsoft package has two such redirects, despite the older
+[policy schema](https://learn.microsoft.com/en-us/windows/win32/sbscs/publisher-configuration-file-schema)
+listing one. Target manifests can contain asm.v2 hashes and XMLDSIG descendants
+beneath asm.v1 file elements. These hashes are retained, not verified.
 Versions have four decimal components in the range 0–65535, as specified by
 [Assembly Versions](https://learn.microsoft.com/en-us/windows/win32/sbscs/assembly-versions).
-Malformed records and conflicting overlapping redirects for the same policy
-identity and version fail the gate. Distinct installed policy versions and
+Malformed records, duplicate or overlapping ranges within one policy, and
+conflicting overlapping redirects across copies of the same policy identity and
+version fail the gate. Distinct installed policy versions and
 identical copies across stores retain separate provenance and XML receipts.
 `POLICY_AND_TARGET_PRESENT` reports candidates only. It does not identify the
 policy selected by Windows or verify target DLL contents. Missing policy
@@ -78,3 +83,13 @@ Run `python -I tools/windows/test_provision_capture_vc90.py` and the same
 command with `-O` for local boundary checks. These use fake downloads and
 signatures, real stand-in subprocesses, and fixture policy XML. They do not
 validate Windows trust, install the package, or exercise native rendering.
+
+The four original XML fixtures in `fixtures/vc90-9.0.30729.6161/` come from
+`vc_red.cab` inside the pinned
+[Microsoft package](https://download.microsoft.com/download/5/D/8/5D8C65CB-C849-4025-8E95-C3966CAFD8AE/vcredist_x64.exe).
+The package SHA256 is `C5E273A4A16AB4D5471E91C7477719A2F45DDADB76C7F98A38FA5074A6838654`.
+The CAB SHA256 is `9F218CEFE505A28A589B10F4E7C28AC479ECA159E438012A9666E6F709BCF82F`.
+The fixtures retain the original CAB entry names, bytes, encoding, and notices.
+The test pins each XML SHA256 and mutates temporary copies for negative controls.
+Placing these bytes in fixture WinSxS paths tests discovery. It does not establish
+where Windows installs this package.

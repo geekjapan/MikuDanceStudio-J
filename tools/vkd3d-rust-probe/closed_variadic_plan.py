@@ -444,13 +444,559 @@ def main():
 
 
 
+def _cursor_need(condition, message):
+    if not condition:
+        raise PlanError('cursor witness: ' + message)
+
+
+def _cursor_same(left, right):
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return set(left) == set(right) and all(_cursor_same(left[k], right[k]) for k in left)
+    if isinstance(left, list):
+        return len(left) == len(right) and all(_cursor_same(a, b) for a, b in zip(left, right))
+    return left == right
+
+
+def _cursor_index(rows, key='id'):
+    result = {}
+    for row in rows:
+        ident = row[key]
+        _cursor_need(type(ident) is int and ident > 0 and ident not in result,
+                     'duplicate or invalid mapped ID')
+        result[ident] = row
+    return result
+
+
+def _cursor_type(canonical, const=False):
+    return {'canonical': canonical, 'const': const, 'volatile': False, 'restrict': False}
+
+
+def _cursor_pointer(typ):
+    return _cursor_type({'pointer': typ})
+
+
+def _cursor_signature(result, parameters, variadic=False):
+    return _cursor_type({'return': result, 'parameters': parameters, 'variadic': variadic,
+                         'noreturn': False, 'prototype': True, 'abi': 'C'})
+
+
+class _CursorBody:
+    """The measured member-name body, with position-specific expression recipes."""
+
+    def __init__(self, inventory, witness, function):
+        self.inv, self.w, self.f = inventory, witness, function
+        self.e = _cursor_index(witness['expressions'])
+        self.d = _cursor_index(witness['declarations'])
+        self.calls = _cursor_index(witness['calls'])
+        self.idecls = _cursor_index(inventory['declarations'])
+        self.icalls = _cursor_index(inventory['calls'])
+        _cursor_need(set(self.calls) == {k for k, v in self.e.items() if v['kind'] == 'call'}
+                     and all(_cursor_same(self.e[k], v) for k, v in self.calls.items()), 'global call copies differ')
+        _cursor_need(set(self.calls) == set(self.icalls), 'paired call set differs')
+        self.records = record_table(inventory)
+        r = witness['required_relations']
+        _cursor_need(set(r) == {'schema', 'authorization', 'types', 'roots', 'cursors',
+                               'native_records', 'enum_owners', 'builtin_declarations', 'builtin_endpoints'}
+                     and type(r['schema']) is int and r['schema'] == 1
+                     and r['authorization'] == 'witness_only', 'required relations schema')
+        self.r = r
+        self.types = _cursor_index(r['types'], 'type_id')
+        self.roots = _cursor_index(r['roots'], 'type_id')
+        self.native = _cursor_index(r['native_records'], 'declaration')
+        self.enums = _cursor_index(r['enum_owners'], 'declaration')
+        self.builtins = _cursor_index(r['builtin_declarations'], 'declaration')
+        self.endpoints = _cursor_index(r['builtin_endpoints'], 'expression')
+        self.decl_roles = {}
+        for ident in self.idecls:
+            self.declaration_role(ident, 'function')
+        for ident, dec in self.d.items():
+            self.declaration_role(ident, dec['kind'])
+        for row in self.types.values():
+            if row['kind'] in ('struct', 'enum', 'typedef'):
+                self.declaration_role(row['declaration'], row['kind'])
+        self.record_ids, self.record_identities = {}, {}
+        self.seen, self.body_ids = set(), set()
+        self.helpers = {}
+        self.uint = _cursor_type({'kind': 'UInt'})
+        self.int = _cursor_type({'kind': 'Int'})
+        self.ulong = _cursor_type({'kind': 'ULong'})
+        self.void = _cursor_type({'kind': 'Void'})
+        self.char = _cursor_type({'kind': 'Char', 'signed': True})
+        self.cchar = _cursor_type({'kind': 'Char', 'signed': True}, True)
+        self.charptr, self.fmt_type = _cursor_pointer(self.char), _cursor_pointer(self.cchar)
+
+    def declaration_role(self, ident, role):
+        _cursor_need(type(ident) is int and ident > 0 and self.decl_roles.get(ident, role) == role,
+                     'mapped declaration namespace collision')
+        self.decl_roles[ident] = role
+
+    def qualified(self, q):
+        _cursor_need(set(q) == {'type_id', 'const', 'restrict', 'volatile'}
+                     and type(q['type_id']) is int and q['type_id'] > 0
+                     and all(type(q[k]) is bool for k in ('const', 'restrict', 'volatile')),
+                     'invalid qualified mapped type')
+
+    def type_join(self, q, typ, active=()):
+        self.qualified(q)
+        ident = q['type_id']
+        _cursor_need(ident not in active and len(active) < 64, 'cyclic or excessive type chain')
+        row = self.types[ident]
+        k = row['kind']
+        qualifiers = {k: q[k] for k in ('const', 'restrict', 'volatile')}
+        _cursor_need(isinstance(typ, dict) and set(typ) == {'canonical', *qualifiers}, 'type envelope')
+        active = (*active, ident)
+        if k in ('elaborated', 'paren', 'attributed', 'decayed'):
+            _cursor_need(set(row) == {'type_id', 'kind', 'inner'}, 'wrapper relation')
+            return self.type_join(dict(q, type_id=row['inner']), typ, active)
+        if k == 'typedef':
+            _cursor_need(set(row) == {'type_id', 'kind', 'declaration', 'original'}
+                         and type(row['declaration']) is int and row['declaration'] > 0, 'typedef relation')
+            inner = dict(row['original'])
+            self.qualified(inner)
+            inner.update({k: q[k] or inner[k] for k in qualifiers})
+            return self.type_join(inner, typ, active)
+        _cursor_need(all(typ[k] is v for k, v in qualifiers.items()), 'type qualifiers differ')
+        c = typ['canonical']
+        if k == 'pointer':
+            _cursor_need(set(row) == {'type_id', 'kind', 'pointee'} and set(c) == {'pointer'}, 'pointer relation')
+            self.type_join(row['pointee'], c['pointer'], active)
+        elif k == 'array':
+            _cursor_need(set(row) == {'type_id', 'kind', 'length', 'element'}
+                         and set(c) == {'array', 'length'} and type(row['length']) is int
+                         and row['length'] >= 0 and c['length'] == row['length'], 'array relation')
+            self.type_join(row['element'], c['array'], active)
+        elif k == 'function':
+            _cursor_need(set(row) == {'type_id', 'kind', 'return', 'parameters', 'variadic',
+                                     'noreturn', 'prototype', 'abi'}
+                         and set(c) == {'return', 'parameters', 'variadic', 'noreturn', 'prototype', 'abi'}
+                         and row['abi'] == c['abi'] == 'C'
+                         and all(type(row[x]) is bool and row[x] is c[x]
+                                 for x in ('variadic', 'noreturn', 'prototype'))
+                         and len(row['parameters']) == len(c['parameters']), 'function relation')
+            self.type_join(row['return'], c['return'], active)
+            for a, b in zip(row['parameters'], c['parameters']):
+                self.type_join(a, b, active)
+        elif k in ('struct', 'enum'):
+            _cursor_need(set(row) == {'type_id', 'kind', 'declaration'}, 'record relation')
+            dec = row['declaration']
+            _cursor_need(type(dec) is int and dec > 0, 'record declaration ID')
+            if dec in self.native:
+                _cursor_need(k == 'struct' and c == {'native_va_list_record': dec}, 'native terminal')
+                native = self.native[dec]
+                _cursor_need(_cursor_same(native, {'declaration': dec, 'origin': 'ASTContext.getVaListTagDecl',
+                                        'kind': 'struct', 'complete': True, 'size': 24, 'alignment': 8})
+                             and dec in self.w['native_va_list_records'], 'native origin or layout')
+            else:
+                _cursor_need(set(c) == {'record'} and c['record']['kind'] == k, 'physical record terminal')
+                identity = record_key(c['record'])
+                _cursor_need(self.record_ids.get(dec, identity) == identity
+                             and self.record_identities.get(identity, dec) == dec, 'record mapped identity collision')
+                self.record_ids[dec], self.record_identities[identity] = identity, dec
+                validate_type(typ, self.records)
+                if k == 'enum':
+                    _cursor_need(self.enums[dec]['identity'] == c['record'], 'enum relation owner')
+        else:
+            expected = {'type_id': ident, **c}
+            _cursor_need(k in SCALARS and _cursor_same(row, expected), 'unproved or mismatched required type')
+
+    def expression_type(self, expression, typ, caller=False):
+        _cursor_need(_cursor_same(expression['type'], typ), 'expression type differs')
+        q = {k: typ[k] for k in ('const', 'restrict', 'volatile')}
+        q['type_id'] = expression['type_id']
+        if caller and q['type_id'] not in self.types:
+            _cursor_need(expression['kind'] == 'literal' and expression['literal'] == {'bytes': [99, 98, 37, 117], 'width': 1}
+                         or expression['kind'] == 'implicit_cast' and expression['cast'] == 'FunctionToPointerDecay',
+                         'missing caller declaration type relation')
+            validate_type(typ, self.records)
+        else:
+            self.type_join(q, typ)
+            root = self.roots[q['type_id']]
+            _cursor_need(root == q, 'missing or unproved required root')
+
+    def variable(self, dec, name, typ, local, initializer, owner):
+        _cursor_need(set(dec) == {'id', 'kind', 'name', 'type', 'type_id', 'local', 'static', 'thread',
+                                 'externally_visible', 'initializer', 'native_va_list', 'owning_function'}
+                     and dec['kind'] == 'variable' and dec['name'] == name and _cursor_same(dec['type'], typ)
+                     and dec['local'] is local and dec['static'] is False and dec['thread'] is False
+                     and dec['externally_visible'] is False and dec['initializer'] == initializer
+                     and _cursor_same(dec['owning_function'], owner), 'variable declaration differs')
+        q = {k: typ[k] for k in ('const', 'restrict', 'volatile')}
+        self.type_join(dict(q, type_id=dec['type_id']), typ)
+
+    def refs(self, ident):
+        x = self.e[ident]
+        return ([{'id': ident, 'decl': x['decl']}] if x['kind'] == 'reference' else
+                [v for child in x['children'] for v in self.refs(child)])
+
+    def ordinary(self, typ):
+        if isinstance(typ, list):
+            return [self.ordinary(v) for v in typ]
+        if not isinstance(typ, dict):
+            return typ
+        if set(typ) == {'native_va_list_record'}:
+            _cursor_need(typ['native_va_list_record'] in self.native, 'unknown native record')
+            return {'record': {'unproved': 'physical record location or macro declaration'}}
+        return {k: self.ordinary(v) for k, v in typ.items()}
+
+    def promotion_chain(self, ident):
+        x = self.e[ident]
+        chain = [self.ordinary(x['type'])]
+        while x['kind'] in ('implicit_cast', 'paren'):
+            x = self.e[x['children'][0]]
+            chain.append(self.ordinary(x['type']))
+        return chain
+
+    def argument(self, ident):
+        x = self.e[ident]
+        while x['kind'] in ('implicit_cast', 'paren'):
+            x = self.e[x['children'][0]]
+        return {'id': ident, 'type': self.e[ident]['type'], 'references': self.refs(ident),
+                'direct_decl': x['decl'] if x['kind'] == 'reference' else None,
+                'literal': x['literal'].get('bytes') if x['kind'] == 'literal' else None}
+
+    def node(self, kind, typ, children=(), **facts):
+        return kind, typ, list(children), facts
+
+    def ref(self, dec, typ):
+        return self.node('reference', typ, decl=dec)
+
+    def cast(self, kind, typ, child):
+        return self.node('implicit_cast', typ, [child], cast=kind, field=None)
+
+    def value(self, dec, typ):
+        return self.cast('LValueToRValue', typ, self.ref(dec, typ))
+
+    def binary(self, op, typ, left, right):
+        return self.node('binary', typ, [left, right], operator=op, computation_types=[None, None])
+
+    def paren(self, typ, child):
+        return self.node('paren', typ, [child])
+
+    def literal(self, value, character=False):
+        return self.node('literal', self.int, literal={'character' if character else 'integer': value})
+
+    def match(self, ident, recipe, caller=False):
+        _cursor_need(ident not in self.seen, 'expression ID reused or cyclic')
+        self.seen.add(ident)
+        x = self.e[ident]
+        kind, typ, children, facts = recipe
+        _cursor_need(x['kind'] == kind and len(x['children']) == len(children), 'ordered expression shape')
+        expected_keys = {'id', 'kind', 'type', 'type_id', 'children', *facts}
+        if kind == 'call':
+            expected_keys.add('arguments')
+        _cursor_need(set(x) == expected_keys and all(_cursor_same(x[k], v) for k, v in facts.items()),
+                     'expression operator, literal or identity differs')
+        if kind == 'reference' and facts['decl'] in self.d and self.d[facts['decl']]['kind'] == 'variable':
+            _cursor_need(x['type_id'] == self.d[facts['decl']]['type_id'], 'reference source type ID differs')
+        if typ == 'builtin_endpoint':
+            _cursor_need(x['type'] == _cursor_type({'unproved': 'unsupported type or wrapper limit'}),
+                         'BuiltinFn reference envelope')
+        else:
+            self.expression_type(x, typ, caller)
+        for child, expected in zip(x['children'], children):
+            self.match(child, expected, caller)
+        if kind == 'call':
+            _cursor_need(_cursor_same(x['arguments'], [self.argument(a) for a in x['children'][1:]]), 'argument summaries differ')
+            inv = self.icalls[ident]
+            _cursor_need(len(inv['arguments']) == len(x['arguments'])
+                         and all(_cursor_same(a['id'], b['id']) and _cursor_same(a['type'], self.ordinary(b['type']))
+                                 for a, b in zip(inv['arguments'], x['arguments'])), 'paired call arguments differ')
+            _cursor_need(inv['callee'] == self.idecls[x['callee_decl']]['symbol'], 'paired call callee differs')
+            if not caller:
+                _cursor_need(_cursor_same(inv['owner'], self.f['declaration']), 'body call owner differs')
+            for a in inv['arguments']:
+                expected_cursor = self.e[a['id']]['type']['canonical'].get('pointer', {}).get('canonical', {}).get('native_va_list_record')
+                _cursor_need(a['va_list'] is bool(expected_cursor)
+                             and _cursor_same(a['promotion_chain'], self.promotion_chain(a['id'])), 'argument promotion/cursor classification')
+            if x['builtin'][1] in ('va_start', 'va_end'):
+                end = self.endpoints[x['children'][0]]
+                cast = self.e[end['expression']]
+                ref = self.e[end['reference']]
+                _cursor_need(set(end) == {'expression', 'reference', 'declaration', 'cast', 'input', 'output'}
+                             and end['cast'] == cast['cast'] == 'BuiltinFnToFnPtr'
+                             and end['reference'] == cast['children'][0]
+                             and end['declaration'] == ref['decl'] == x['callee_decl'], 'builtin endpoint IDs')
+                for field, expr in [('input', ref), ('output', cast)]:
+                    q = end[field]
+                    self.qualified(q)
+                    _cursor_need(q == dict(type_id=expr['type_id'], **{k: expr['type'][k]
+                                 for k in ('const', 'restrict', 'volatile')}), 'builtin endpoint qualified type')
+                row = self.types[end['input']['type_id']]
+                _cursor_need(row == {'type_id': row['type_id'], 'kind': 'builtin_function',
+                                    'unproved': 'BuiltinFn requires a native endpoint relation'}, 'builtin endpoint input kind')
+                _cursor_need(self.roots[row['type_id']] == dict(end['input'],
+                             unproved='required type dependency, cycle or depth limit'), 'BuiltinFn root boundary')
+
+    def helper(self, name, signature, builtin=None):
+        if name in self.helpers:
+            return self.helpers[name]
+        candidates = [d for d in self.idecls.values() if d['symbol'].get('linker', d['symbol'].get('static')) == name]
+        _cursor_need(len(candidates) == 1, 'helper identity is not unique')
+        d = candidates[0]
+        _cursor_need(d['aliases'] == [] and (set(d['symbol']) == {'linker'}
+                     or d['symbol'] == {'unit': self.w['unit'], 'static': name}), 'helper alias or TU identity')
+        if builtin:
+            b = self.builtins[d['id']]
+            _cursor_need(set(b) == {'declaration', 'name', 'symbol', 'type', 'signature', 'builtin_id', 'semantic'}
+                         and b['symbol'] == d['symbol'] == {'linker': name}
+                         and b['name'] == name and _cursor_same([b['builtin_id'], b['semantic']], builtin)
+                         and _cursor_same(b['signature'], signature) and d['definition'] is False, 'native builtin identity/signature')
+            self.type_join(b['type'], signature)
+            _cursor_need(_cursor_same(d['signature'], self.ordinary(signature)), 'native builtin inventory signature')
+        else:
+            _cursor_need(_cursor_same(d['signature'], signature), 'helper signature')
+            validate_type(signature, self.records)
+        self.helpers[name] = d['id']
+        return d['id']
+
+    def call(self, name, signature, args, builtin=None):
+        dec = self.helper(name, signature, builtin)
+        callee = self.ref(dec, 'builtin_endpoint' if builtin and builtin[1] in ('va_start', 'va_end') else signature)
+        callee = self.cast('BuiltinFnToFnPtr' if builtin and builtin[1] in ('va_start', 'va_end')
+                           else 'FunctionToPointerDecay', _cursor_pointer(signature), callee)
+        return self.node('call', signature['canonical']['return'], [callee, *args],
+                         callee_decl=dec, builtin=builtin or [0, 'unknown'])
+
+    def prove(self):
+        f = self.f
+        _cursor_need(set(f) == {'body', 'complete_body', 'cursors', 'declaration', 'full_statement_ids',
+                               'last_fixed_parameter', 'parameter_declarations', 'parameters',
+                               'parameter_and_cursor_references', 'signature', 'statements', 'symbol'}, 'function witness schema')
+        _cursor_need(f['complete_body'] is True and len(f['statements']) == 13
+                     and [s['kind'] for s in f['statements']] == ['declarations'] * 4 + ['expression'] * 9,
+                     'exact 13 statement roles')
+        statements = _cursor_index(f['statements'])
+        _cursor_need(type(f['body']) is int and f['body'] > 0
+                     and all(type(k) is int and k > 0 for k in f['full_statement_ids'])
+                     and len(f['full_statement_ids']) == 14 and len(set(f['full_statement_ids'])) == 14
+                     and set(f['full_statement_ids']) == {f['body'], *statements}, 'full statement closure')
+        _cursor_need(len(f['parameters']) == len(set(f['parameters'])) == 4
+                     and all(type(k) is int and k > 0 for k in f['parameters'])
+                     and _cursor_same(f['last_fixed_parameter'], f['parameters'][-1]), 'four fixed parameters')
+        builder, type_id, member, fmt = f['parameters']
+        params = [self.d[k] for k in f['parameters']]
+        _cursor_need(_cursor_same(f['parameter_declarations'], params), 'parameter copies differ')
+        builder_type = params[0]['type']
+        builder_record = builder_type['canonical']['pointer']['canonical']['record']
+        _cursor_need(builder_record['tag'] == 'vkd3d_spirv_builder' and builder_record['kind'] == 'struct'
+                     and builder_record['scope'] == {'file': True}, 'builder record')
+        _cursor_need(_cursor_same(builder_type, _cursor_pointer(_cursor_type({'record': builder_record}))),
+                     'builder pointer qualifiers')
+        signature = _cursor_signature(self.void, [builder_type, self.uint, self.uint, self.fmt_type], True)
+        _cursor_need(_cursor_same(f['signature'], signature) and _cursor_same(self.idecls[f['declaration']]['signature'], signature),
+                     'target signature')
+        validate_type(signature, self.records)
+        for dec, name, typ in zip(params, ['builder', 'type_id', 'member', 'fmt'], signature['canonical']['parameters']):
+            self.variable(dec, name, typ, False, None, None)
+            _cursor_need(dec['native_va_list'] is None, 'unexpected parameter cursor')
+        locals_ = []
+        for s in f['statements'][:4]:
+            _cursor_need(s['root'] is None and len(s['declarations']) == 1, 'single local declaration')
+            dec = s['declarations'][0]
+            _cursor_need(_cursor_same(self.d[dec['id']], dec), 'local declaration copy differs')
+            locals_.append(dec)
+        stream, size, name, args = [d['id'] for d in locals_]
+        _cursor_need(len({*f['parameters'], stream, size, name, args}) == 8 and _cursor_same(f['cursors'], [args]), 'local/parameter ID collision')
+        stream_type = locals_[0]['type']
+        stream_record = stream_type['canonical']['pointer']['canonical']['record']
+        _cursor_need(stream_record['tag'] == 'vkd3d_spirv_stream' and stream_record['kind'] == 'struct'
+                     and stream_record['scope'] == {'file': True}, 'stream record')
+        _cursor_need(_cursor_same(stream_type, _cursor_pointer(_cursor_type({'record': stream_record}))),
+                     'stream pointer qualifiers')
+        name_type = _cursor_type({'array': self.char, 'length': 1024})
+        native_relation = _cursor_index(self.r['cursors'], 'declaration')[args]
+        _cursor_need(set(native_relation) == {'declaration', 'source', 'declared', 'builtin', 'target_kind', 'same_canonical_type'}
+                     and type(native_relation['target_kind']) is int and type(self.w['native_va_list_kind']) is int
+                     and native_relation['target_kind'] == self.w['native_va_list_kind'] == 5
+                     and native_relation['same_canonical_type'] is True, 'native cursor relation')
+        args_type = locals_[3]['type']
+        native_record = args_type['canonical']['array']['canonical']['native_va_list_record']
+        native_type = _cursor_type({'native_va_list_record': native_record})
+        _cursor_need(args_type == _cursor_type({'array': native_type, 'length': 1}), 'native cursor array')
+        native_ptr = _cursor_pointer(native_type)
+        self.type_join(native_relation['source'], args_type)
+        native = locals_[3]['native_va_list']
+        expected_native = {'same_canonical_type': True, 'target_kind': 5}
+        for prefix in ('declared', 'builtin'):
+            q = native_relation[prefix]
+            self.type_join(q, args_type)
+            expected_native.update({prefix + '_type_id': q['type_id'], prefix + '_canonical_type': args_type,
+                                    **{prefix + '_' + k: q[k] for k in ('const', 'restrict', 'volatile')}})
+        _cursor_need(_cursor_same(native, expected_native) and _cursor_same(native_relation['source'], dict(type_id=locals_[3]['type_id'],
+                     **{k: args_type[k] for k in ('const', 'restrict', 'volatile')})), 'native canonical/source joins')
+        for dec, label, typ in zip(locals_, ['stream', 'name_size', 'name', 'args'],
+                                   [stream_type, self.uint, name_type, args_type]):
+            self.variable(dec, label, typ, True, dec['initializer'] if label == 'stream' else None, f['declaration'])
+            if label != 'args':
+                _cursor_need(dec['native_va_list'] is None, 'unexpected local cursor')
+        init = self.e[locals_[0]['initializer']]
+        field = self.e[init['children'][0]]['member']
+        _cursor_need(set(field) == {'id', 'kind', 'name', 'type_id', 'type', 'owners'}
+                     and field['kind'] == 'field' and field['name'] == 'debug_stream'
+                     and field['owners'] == [builder_record] and field['type'] == _cursor_type({'record': stream_record}),
+                     'debug_stream member owner or type')
+        self.declaration_role(field['id'], 'field')
+        field_type = field['type']
+        self.type_join(dict(type_id=field['type_id'], **{k: field_type[k] for k in ('const', 'restrict', 'volatile')}), field_type)
+        fields = self.records[record_key(builder_record)]['facts']['fields']
+        _cursor_need(sum(x['name'] == 'debug_stream' and x['type'] == field_type for x in fields) == 1,
+                     'debug_stream physical field')
+        initializer = self.node('unary', stream_type,
+            [self.node('member', field_type, [self.value(builder, builder_type)], access='Arrow', member=field)], operator='AddressOf')
+        name_ref = self.ref(name, name_type)
+        name_ptr = self.cast('ArrayToPointerDecay', self.charptr, name_ref)
+        name_const = self.cast('NoOp', self.fmt_type, name_ptr)
+        args_ptr = self.cast('ArrayToPointerDecay', native_ptr, self.ref(args, args_type))
+        def array_size():
+            numerator = self.node('unary_type', self.ulong, [self.paren(name_type, name_ref)],
+                                  operator='SizeOf', argument_type=name_type)
+            deref = self.node('unary', self.char,
+                             [self.cast('ArrayToPointerDecay', self.charptr, self.paren(name_type, name_ref))], operator='Deref')
+            denominator = self.node('unary_type', self.ulong, [self.paren(self.char, deref)],
+                                    operator='SizeOf', argument_type=self.char)
+            return self.paren(self.ulong, self.binary('Divide', self.ulong, numerator, denominator))
+        enum_candidates = [d for d in self.d.values() if d['kind'] == 'enum_constant' and d['name'] == 'SpvOpMemberName']
+        _cursor_need(len(enum_candidates) == 1, 'selected enum constant not unique')
+        enum = enum_candidates[0]
+        owner = self.enums[enum['owning_enum']['declaration']]
+        _cursor_need(enum['owning_enum'] == {'declaration': owner['declaration'], 'identity': owner['identity']}
+                     and type(enum['value']) is int and enum['value'] == 6
+                     and _cursor_same(_cursor_index(owner['variants'], 'declaration')[enum['id']],
+                         {'declaration': enum['id'], 'name': 'SpvOpMemberName', 'signed': True, 'value': 6}), 'selected enum membership')
+        _cursor_need(owner['identity']['tag'] in ('SpvOp', 'SpvOp_')
+                     and owner['identity']['scope'] == {'file': True}, 'opcode enum identity')
+        enum_type = _cursor_type({'record': owner['identity']})
+        validate_type(enum_type, self.records)
+        _cursor_need({'name': 'SpvOpMemberName', 'signed': True, 'value': 6}
+                     in self.records[record_key(owner['identity'])]['facts']['variants'], 'physical enum membership')
+        word_sig = _cursor_signature(self.void, [stream_type, self.uint])
+        opcode_sig = _cursor_signature(self.uint, [enum_type, self.uint])
+        opcode = self.call('vkd3d_spirv_opcode_word', opcode_sig,
+            [self.cast('IntegralCast', enum_type, self.ref(enum['id'], self.int)),
+             self.binary('Add', self.uint, self.cast('IntegralCast', self.uint, self.literal(3)), self.value(size, self.uint))])
+        recipes = [initializer,
+            self.call('__builtin_va_start', _cursor_signature(self.void, [native_ptr], True),
+                      [args_ptr, self.ref(fmt, self.fmt_type)], [415, 'va_start']),
+            self.call('vsnprintf', _cursor_signature(self.int, [self.charptr, self.ulong, self.fmt_type, native_ptr]),
+                      [name_ptr, array_size(), self.value(fmt, self.fmt_type), args_ptr], [907, 'vsnprintf']),
+            self.binary('Assign', self.char,
+                self.node('subscript', self.char, [name_ptr, self.binary('Subtract', self.ulong, array_size(),
+                          self.cast('IntegralCast', self.ulong, self.literal(1)))]),
+                self.cast('IntegralCast', self.char, self.literal(0, True))),
+            self.call('__builtin_va_end', _cursor_signature(self.void, [native_ptr]), [args_ptr], [416, 'va_end']),
+            self.binary('Assign', self.uint, self.ref(size, self.uint),
+                self.call('vkd3d_spirv_string_word_count', _cursor_signature(self.uint, [self.fmt_type]), [name_const])),
+            self.call('vkd3d_spirv_build_word', word_sig, [self.value(stream, stream_type), opcode]),
+            self.call('vkd3d_spirv_build_word', word_sig, [self.value(stream, stream_type), self.value(type_id, self.uint)]),
+            self.call('vkd3d_spirv_build_word', word_sig, [self.value(stream, stream_type), self.value(member, self.uint)]),
+            self.call('vkd3d_spirv_build_string', _cursor_signature(self.void, [stream_type, self.fmt_type, self.uint]),
+                      [self.value(stream, stream_type), name_const, self.value(size, self.uint)])]
+        roots = [locals_[0]['initializer']] + [s['root'] for s in f['statements'][4:]]
+        for s in f['statements']:
+            _cursor_need(set(s) == {'id', 'kind', 'root', 'declarations', 'expressions'}, 'statement schema')
+            embedded = _cursor_index(s['expressions'])
+            _cursor_need(all(_cursor_same(self.e[k], v) for k, v in embedded.items()), 'embedded expression copy differs')
+            _cursor_need(not self.body_ids.intersection(embedded), 'expression belongs to multiple statements')
+            self.body_ids.update(embedded)
+            if s['kind'] == 'expression':
+                _cursor_need(s['declarations'] == [], 'hidden expression declaration')
+        role_statements = [f['statements'][0], *f['statements'][4:]]
+        for root, recipe, statement in zip(roots, recipes, role_statements):
+            before = set(self.seen)
+            self.match(root, recipe)
+            _cursor_need(self.seen - before == {e['id'] for e in statement['expressions']},
+                         'statement expression allocation differs')
+        _cursor_need(all(s['expressions'] == [] for s in f['statements'][1:4]), 'hidden declaration expressions')
+        _cursor_need(self.seen == self.body_ids and len(self.body_ids) == 102
+                     and len(self.body_ids.intersection(self.calls)) == 9, 'complete body expression/call closure')
+        local_ids = {stream, size, name, args, *f['parameters']}
+        actual_refs = sorted([{'id': x['id'], 'decl': x['decl'], 'type': x['type']}
+                              for x in self.e.values() if x['kind'] == 'reference'
+                              and x['decl'] in set(f['parameters']) | {args}], key=lambda x: x['id'])
+        _cursor_need(sorted(f['parameter_and_cursor_references'], key=lambda x: x['id']) == actual_refs,
+                     'independent parameter/cursor reference set')
+        _cursor_need(all(x['id'] in self.body_ids for x in self.e.values()
+                         if x['kind'] == 'reference' and x['decl'] in local_ids), 'local or parameter reference escape')
+        _cursor_need(all(x['owner'] != f['declaration'] for x in self.inv['va_arg']), 'unexpected va_arg')
+        for other in self.w['functions']:
+            for statement in other['statements']:
+                for expression in statement['expressions']:
+                    if expression['id'] in self.body_ids:
+                        _cursor_need(_cursor_same(expression, self.e[expression['id']]), 'conflicting embedded graph copy')
+        return signature
+
+
 def prove_cursor_witness(inventories, witnesses, symbol):
-    """Reject raw captures until exact typed body allocation is implemented."""
+    """Prove only the captured member-name body; never authorize stable lowering."""
     if not inventories or len(inventories) != len(witnesses):
         raise PlanError('cursor witness: incomplete paired units')
-    if any(not isinstance(w, dict) or w.get('schema') != 2 for w in witnesses):
+    if any(not isinstance(w, dict) or type(w.get('schema')) is not int or w['schema'] != 2 for w in witnesses):
         raise PlanError('cursor witness: schema 1 capture cannot establish a proof')
-    raise PlanError('cursor witness: exact body witness v2 unsupported')
+    try:
+        _cursor_need(isinstance(symbol, dict) and set(symbol) == {'unit', 'static'}
+                     and symbol['static'] == 'vkd3d_spirv_build_op_member_name', 'unsupported exact symbol')
+        units = set()
+        selected = []
+        for inv, w in zip(inventories, witnesses):
+            _cursor_need('required_relations' in w, 'missing required relations; witness v2 unsupported')
+            _cursor_need(type(inv['schema']) is int and inv['schema'] == 2
+                         and type(inv['record_evidence_schema']) is int and inv['record_evidence_schema'] == 2
+                         and inv['authorization'] == 'inventory_only' and w['authorization'] == 'witness_only'
+                         and inv['unit'] == w['unit'] and inv['target'] == w['target']
+                         and w['target'] == 'x86_64-pc-linux-gnu' and w['unit'] not in units, 'paired TU/target contract')
+            units.add(w['unit'])
+            for d in inv['declarations']:
+                _cursor_need(not (symbol['static'] in d['aliases']), 'target alias')
+                if d['symbol'] == symbol:
+                    _cursor_need(inv['unit'] == symbol['unit'] and d['definition'] is True
+                                 and d['aliases'] == [] and d['va_parameters'] == [], 'unique static target definition')
+                    selected.append((inv, w, d))
+            _cursor_need(all(x['symbol'] != symbol for x in inv['non_call_references']), 'target non-call reference')
+        _cursor_need(len(selected) == 1, 'unique target declaration')
+        inv, w, d = selected[0]
+        functions = [f for f in w['functions'] if f['declaration'] == d['id'] or f['symbol'] == symbol]
+        _cursor_need(len(functions) == 1 and functions[0]['symbol'] == symbol
+                     and _cursor_same(functions[0]['declaration'], d['id']), 'unique target witness')
+        body = _CursorBody(inv, w, functions[0])
+        signature = body.prove()
+        incoming = [(i, c) for i in inventories for c in i['calls'] if c['callee'] == symbol]
+        _cursor_need(len(incoming) == 1 and incoming[0][0]['unit'] == inv['unit'], 'sole incoming call')
+        call = incoming[0][1]
+        owner = body.idecls[call['owner']]
+        _cursor_need(owner['definition'] is True and owner['id'] != d['id'], 'incoming caller owner')
+        raw = body.calls[call['id']]
+        _cursor_need(len(raw['arguments']) == 5, 'five incoming arguments')
+        refs = [a['direct_decl'] for a in raw['arguments']]
+        args = []
+        for index, typ in enumerate(signature['canonical']['parameters'][:3]):
+            dec = body.d[refs[index]]
+            _cursor_need(dec['kind'] == 'variable' and dec['type'] == typ
+                         and dec['static'] is False and dec['thread'] is False
+                         and (not dec['local'] or _cursor_same(dec['owning_function'], owner['id'])), 'incoming declaration reference')
+            args.append(body.value(dec['id'], typ))
+        string_type = _cursor_type({'array': body.cchar, 'length': 5}, True)
+        args.append(body.cast('ArrayToPointerDecay', body.fmt_type,
+                             body.node('literal', string_type, literal={'bytes': [99, 98, 37, 117], 'width': 1})))
+        tail = body.d[refs[4]]
+        _cursor_need(tail['kind'] == 'variable' and tail['name'] == 'reg_idx' and tail['type'] == body.uint
+                     and tail['local'] is True and tail['owning_function'] == owner['id']
+                     and tail['static'] is False and tail['thread'] is False and tail['externally_visible'] is False
+                     and tail['native_va_list'] is None, 'caller-owned UInt reg_idx')
+        args.append(body.value(tail['id'], body.uint))
+        callee = body.cast('FunctionToPointerDecay', _cursor_pointer(signature), body.ref(d['id'], signature))
+        body.match(call['id'], body.node('call', body.void, [callee, *args],
+                                        callee_decl=d['id'], builtin=[0, 'unknown']), caller=True)
+        _cursor_need(all(x['owner'] != d['id'] or x['id'] in body.body_ids for x in inv['calls']),
+                     'extra body call in paired inventory')
+        target_refs = [x for x in body.e.values() if x['kind'] == 'reference' and x['decl'] == d['id']]
+        _cursor_need(len(target_refs) == 1 and target_refs[0]['id'] == body.e[raw['children'][0]]['children'][0],
+                     'extra target reference or alias')
+        return {'schema': 1, 'authorization': 'witness_only', 'status': 'witness_proven',
+                'symbol': symbol, 'unit': inv['unit'], 'declaration': d['id'], 'stable_lowering': 'not_authorized'}
+    except (KeyError, TypeError, IndexError, AttributeError, RecursionError, RecordUnproved) as error:
+        raise PlanError('cursor witness: missing or malformed required graph fact: ' + str(error)) from error
 
 
 if __name__ == '__main__':

@@ -516,6 +516,222 @@ class RecordEvidenceTests(unittest.TestCase):
 
 
 
+def exercise_actual_cursor_payload(inventory, witness):
+    """Shared hosted/local controls, always derived from a real producer capture."""
+    import copy
+    from closed_variadic_plan import prove_cursor_witness
+    symbol = {'unit': witness['unit'], 'static': 'vkd3d_spirv_build_op_member_name'}
+    function = next(f for f in witness['functions'] if f['symbol'] == symbol)
+    function_id = function['declaration']
+    body_ids = {e['id'] for s in function['statements'] for e in s['expressions']}
+    expressions = {e['id']: e for e in witness['expressions']}
+    declarations = {d['id']: d for d in witness['declarations']}
+    body_calls = [e for e in witness['calls'] if e['id'] in body_ids]
+    incoming = next(c for c in inventory['calls'] if c['callee'] == symbol)
+    result = prove_cursor_witness([inventory], [witness], symbol)
+    if result['status'] != 'witness_proven' or result['stable_lowering'] != 'not_authorized':
+        raise RuntimeError('actual positive witness was not proved with the narrow authorization')
+
+    def expression(ident, edit):
+        def mutate(inv, w):
+            rows = [w['expressions'], w['calls'], *[s['expressions'] for f in w['functions'] for s in f['statements']]]
+            for vector in rows:
+                for row in vector:
+                    if row['id'] == ident:
+                        edit(row)
+        return mutate
+
+    def declaration(ident, edit):
+        def mutate(inv, w):
+            rows = [w['declarations'], *[f['parameter_declarations'] for f in w['functions']],
+                    *[s['declarations'] for f in w['functions'] for s in f['statements']]]
+            for vector in rows:
+                for row in vector:
+                    if row['id'] == ident:
+                        edit(row)
+        return mutate
+
+    def target(w):
+        return next(f for f in w['functions'] if f['declaration'] == function_id)
+
+    mutations = []
+    def add(name, mutate):
+        mutations.append((name, mutate))
+
+    for field, value in [('complete_body', False), ('full_statement_ids', []), ('parameters', []),
+                         ('last_fixed_parameter', 0), ('cursors', []), ('parameter_declarations', []),
+                         ('parameter_and_cursor_references', [])]:
+        add('function-' + field, lambda i, w, field=field, value=value: target(w).__setitem__(field, value))
+    add('missing-relations', lambda i, w: w.pop('required_relations'))
+    add('float-schema', lambda i, w: w.__setitem__('schema', 2.0))
+    add('old-schema', lambda i, w: w.__setitem__('schema', 1))
+    for field, value in [('schema', 2), ('authorization', 'inventory_only')]:
+        add('relation-' + field, lambda i, w, field=field, value=value: w['required_relations'].__setitem__(field, value))
+    add('missing-statement', lambda i, w: target(w)['statements'].pop())
+    add('duplicate-statement', lambda i, w: target(w)['statements'].append(copy.deepcopy(target(w)['statements'][0])))
+    add('reordered-statements', lambda i, w: target(w)['statements'].reverse())
+    add('missing-body-expression', lambda i, w: w.__setitem__('expressions',
+        [x for x in w['expressions'] if x['id'] != function['statements'][4]['root']]))
+    add('duplicate-expression', lambda i, w: w['expressions'].append(copy.deepcopy(w['expressions'][0])))
+    add('duplicate-declaration', lambda i, w: w['declarations'].append(copy.deepcopy(w['declarations'][0])))
+    add('inconsistent-call-numeric-type', lambda i, w: next(c for c in w['calls']
+        if c['id'] == body_calls[0]['id'])['builtin'].__setitem__(0, float(body_calls[0]['builtin'][0])))
+    integer_literal = next(e for e in function['statements'][6]['expressions'] if e['kind'] == 'literal' and e['literal'].get('integer') == 1)
+    add('inconsistent-embedded-numeric-type', lambda i, w: next(e for e in target(w)['statements'][6]['expressions']
+        if e['id'] == integer_literal['id'])['literal'].__setitem__('integer', 1.0))
+    add('missing-call-set', lambda i, w: w.__setitem__('calls', []))
+    add('duplicate-call', lambda i, w: w['calls'].append(copy.deepcopy(w['calls'][0])))
+    add('missing-reference-set', lambda i, w: target(w)['parameter_and_cursor_references'].pop())
+    add('duplicate-reference', lambda i, w: target(w)['parameter_and_cursor_references'].append(
+        copy.deepcopy(target(w)['parameter_and_cursor_references'][0])))
+    add('duplicate-type-row', lambda i, w: w['required_relations']['types'].append(
+        copy.deepcopy(w['required_relations']['types'][0])))
+    add('duplicate-root', lambda i, w: w['required_relations']['roots'].append(
+        copy.deepcopy(w['required_relations']['roots'][0])))
+    add('duplicate-native', lambda i, w: w['required_relations']['native_records'].append(
+        copy.deepcopy(w['required_relations']['native_records'][0])))
+    add('duplicate-endpoint', lambda i, w: w['required_relations']['builtin_endpoints'].append(
+        copy.deepcopy(w['required_relations']['builtin_endpoints'][0])))
+    add('native-origin', lambda i, w: w['required_relations']['native_records'][0].__setitem__('origin', 'tag_name'))
+    add('native-boolean-layout', lambda i, w: w['required_relations']['native_records'][0].__setitem__('alignment', True))
+    add('native-layout', lambda i, w: w['required_relations']['native_records'][0].__setitem__('size', 8))
+    add('native-incomplete', lambda i, w: w['required_relations']['native_records'][0].__setitem__('complete', False))
+    add('native-kind', lambda i, w: w['required_relations']['native_records'][0].__setitem__('kind', 'union'))
+    for field, value in [('type_id', 0), ('const', True), ('volatile', True), ('restrict', True)]:
+        add('cursor-source-' + field, lambda i, w, field=field, value=value:
+            next(c for c in w['required_relations']['cursors'] if c['declaration'] == function['cursors'][0])['source'].__setitem__(field, value))
+    add('semantic-alias-retarget', lambda i, w: next(r for r in w['required_relations']['types']
+        if r['type_id'] == declarations[function['cursors'][0]]['type_id']).__setitem__('inner',
+            next(r['type_id'] for r in w['required_relations']['types'] if r['kind'] == 'UInt')))
+    for c in body_calls:
+        add('builtin-' + str(c['id']), expression(c['id'], lambda x: x.__setitem__('builtin', [1, 'unknown'])))
+        add('callee-' + str(c['id']), expression(c['id'], lambda x: x.__setitem__('callee_decl', 0)))
+        add('arguments-' + str(c['id']), expression(c['id'], lambda x: x.__setitem__('arguments', [])))
+        add('body-call-owner-' + str(c['id']), lambda i, w, ident=c['id']:
+            next(row for row in i['calls'] if row['id'] == ident).__setitem__('owner', 0))
+    for e in [expressions[k] for k in sorted(body_ids)]:
+        ident, kind = e['id'], e['kind']
+        if 'operator' in e:
+            add('operator-' + str(ident), expression(ident, lambda x: x.__setitem__('operator', 'AddAssign')))
+        if kind == 'implicit_cast':
+            add('cast-' + str(ident), expression(ident, lambda x: x.__setitem__('cast', 'BitCast')))
+        if kind == 'literal':
+            add('literal-' + str(ident), expression(ident, lambda x: x.__setitem__('literal', {'integer': 99})))
+        if kind == 'reference':
+            add('reference-retarget-' + str(ident), expression(ident, lambda x: x.__setitem__('decl', 0)))
+        if e['children']:
+            add('dangling-child-' + str(ident), expression(ident, lambda x: x['children'].__setitem__(0, 0)))
+            add('cyclic-child-' + str(ident), expression(ident, lambda x: x['children'].__setitem__(0, x['id'])))
+        if len(e['children']) > 1:
+            add('reordered-children-' + str(ident), expression(ident, lambda x: x['children'].reverse()))
+    for d in function['parameter_declarations'] + [s['declarations'][0] for s in function['statements'][:4]]:
+        for field, value in [('owning_function', 0), ('initializer', 0), ('type_id', 0), ('static', True)]:
+            add('declaration-' + str(d['id']) + '-' + field,
+                declaration(d['id'], lambda x, field=field, value=value: x.__setitem__(field, value)))
+    alias_ids = {d['type_id'] for d in function['parameter_declarations']}
+    alias_ids.add(next(d for d in declarations.values() if d['id'] == function['cursors'][0])['type_id'])
+    for ident in alias_ids:
+        row = next(r for r in witness['required_relations']['types'] if r['type_id'] == ident)
+        if 'inner' in row:
+            for value in [0, ident]:
+                add('alias-edge-' + str(ident) + '-' + str(value), lambda i, w, ident=ident, value=value:
+                    next(r for r in w['required_relations']['types'] if r['type_id'] == ident).__setitem__('inner', value))
+    for end in witness['required_relations']['builtin_endpoints']:
+        if end['expression'] not in body_ids:
+            continue
+        ident = end['expression']
+        for field in ['expression', 'reference', 'declaration']:
+            add('endpoint-' + str(ident) + '-' + field, lambda i, w, ident=ident, field=field:
+                next(r for r in w['required_relations']['builtin_endpoints'] if r['expression'] == ident).__setitem__(field, 0))
+        add('endpoint-input-cvr-' + str(ident), lambda i, w, ident=ident:
+            next(r for r in w['required_relations']['builtin_endpoints'] if r['expression'] == ident)['input'].__setitem__('const', True))
+    for semantic in ['va_start', 'va_end', 'vsnprintf']:
+        add('semantic-id-' + semantic, lambda i, w, semantic=semantic:
+            next(r for r in w['required_relations']['builtin_declarations'] if r['semantic'] == semantic).__setitem__('builtin_id', 1))
+    enum = next(d for d in declarations.values() if d['kind'] == 'enum_constant' and d['name'] == 'SpvOpMemberName')
+    add('enum-owner', lambda i, w: next(d for d in w['declarations'] if d['id'] == enum['id'])['owning_enum'].__setitem__('declaration', 0))
+    add('enum-membership', lambda i, w: next(r for r in w['required_relations']['enum_owners']
+        if r['declaration'] == enum['owning_enum']['declaration'])['variants'].clear())
+    add('enum-float-value', lambda i, w: next(r for r in w['required_relations']['enum_owners']
+        if r['declaration'] == enum['owning_enum']['declaration'])['variants'][-1].__setitem__('value', 6.0))
+    add('enum-signed-value', lambda i, w: next(r for r in w['required_relations']['enum_owners']
+        if r['declaration'] == enum['owning_enum']['declaration'])['variants'][-1].__setitem__('signed', False))
+    name = function['statements'][2]['declarations'][0]
+    add('name-array-length', lambda i, w: next(r for r in w['required_relations']['types']
+        if r['type_id'] == name['type_id']).__setitem__('length', 12))
+    add('name-array-element-cvr', lambda i, w: next(r for r in w['required_relations']['types']
+        if r['type_id'] == name['type_id'])['element'].__setitem__('const', True))
+    field_expr = next(e for e in expressions.values() if e['id'] in body_ids and e['kind'] == 'member')
+    add('member-owner', expression(field_expr['id'], lambda x: x['member'].__setitem__('owners', [])))
+    add('member-ID-collision', expression(field_expr['id'], lambda x: x['member'].__setitem__('id', function['parameters'][0])))
+    add('member-name', expression(field_expr['id'], lambda x: x['member'].__setitem__('name', 'other_stream')))
+    tail = expressions[incoming['id']]['arguments'][4]['direct_decl']
+    add('tail-owner', declaration(tail, lambda d: d.__setitem__('owning_function', function_id)))
+    add('tail-type', declaration(tail, lambda d: d.__setitem__('type', scalar('Int'))))
+    add('tail-name', declaration(tail, lambda d: d.__setitem__('name', 'other_idx')))
+    add('incoming-owner', lambda i, w: next(c for c in i['calls'] if c['id'] == incoming['id']).__setitem__('owner', function_id))
+    add('extra-incoming-call', lambda i, w: i['calls'].append(copy.deepcopy(incoming)))
+    add('target-noncall-reference', lambda i, w: i['non_call_references'].append({'symbol': symbol}))
+    add('target-alias', lambda i, w: i['declarations'][0]['aliases'].append(symbol['static']))
+    add('target-signature', lambda i, w: next(d for d in i['declarations'] if d['id'] == function_id)['signature']['canonical'].__setitem__('variadic', False))
+    format_expr = next(e for e in expressions.values() if e['id'] == expressions[expressions[incoming['id']]['children'][4]]['children'][0])
+    add('incoming-format', expression(format_expr['id'], lambda x: x.__setitem__('literal', {'width': 1, 'bytes': [37, 115]})))
+    add('incoming-format-width', expression(format_expr['id'], lambda x: x['literal'].__setitem__('width', 2)))
+    add('incoming-side-effect', expression(expressions[incoming['id']]['children'][1], lambda x: x.__setitem__('cast', 'IntegralCast')))
+    add('hidden-statement-allocation', lambda i, w: target(w)['statements'][1]['expressions'].append(
+        copy.deepcopy(target(w)['statements'][0]['expressions'].pop())))
+    affected_expressions = set(body_ids)
+    pending = [incoming['id']]
+    while pending:
+        ident = pending.pop()
+        if ident in affected_expressions:
+            continue
+        affected_expressions.add(ident)
+        pending.extend(expressions[ident]['children'])
+    affected_declarations = set(function['parameters']) | {tail} | {
+        d['id'] for s in function['statements'] for d in s['declarations']}
+    unchanged = [witness['native_inputs']]
+    for key in ('expressions', 'calls'):
+        unchanged.extend(x for x in witness[key] if x['id'] not in affected_expressions)
+    unchanged.extend(d for d in witness['declarations'] if d['id'] not in affected_declarations and d['id'] != enum['id'])
+    unchanged.extend(f for f in witness['functions'] if f['declaration'] != function_id)
+    unchanged.extend(d for d in inventory['declarations'] if d['id'] != function_id and d is not inventory['declarations'][0])
+    unchanged.extend(c for c in inventory['calls'] if c['id'] not in affected_expressions)
+    rejected = []
+    for label, mutate in mutations:
+        memo = {id(value): value for value in unchanged}
+        inv, w = copy.deepcopy(inventory, memo), copy.deepcopy(witness, memo)
+        mutate(inv, w)
+        try:
+            prove_cursor_witness([inv], [w], symbol)
+        except PlanError as error:
+            rejected.append({'case': label, 'reason': str(error)})
+        else:
+            raise RuntimeError('actual cursor mutation accepted: ' + label)
+
+    id_keys = {'id', 'decl', 'declaration', 'callee_decl', 'owner', 'owning_function', 'initializer',
+               'type_id', 'declared_type_id', 'builtin_type_id', 'body', 'last_fixed_parameter',
+               'direct_decl', 'native_va_list_record', 'inner', 'expression', 'reference', 'root'}
+    id_lists = {'children', 'parameters', 'cursors', 'full_statement_ids', 'native_va_list_records', 'va_parameters'}
+    def rename(value, key=None):
+        if isinstance(value, dict):
+            return {k: (v if k == 'native_inputs' else rename(v, k)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [v + 1000000 if key in id_lists and type(v) is int else rename(v) for v in value]
+        return value + 1000000 if key in id_keys and type(value) is int else value
+    renamed = prove_cursor_witness([rename(inventory)], [rename(witness)], symbol)
+    if renamed['status'] != 'witness_proven' or renamed['declaration'] != function_id + 1000000:
+        raise RuntimeError('total mapped-ID alpha-renaming changed proof meaning')
+    equivalent = copy.deepcopy(witness, {id(value): value for value in unchanged})
+    source = next(r for r in equivalent['required_relations']['cursors'] if r['declaration'] == function['cursors'][0])
+    alias = next(r for r in equivalent['required_relations']['types'] if r['type_id'] == source['source']['type_id'])
+    alias['inner'] = source['declared']['type_id']
+    if prove_cursor_witness([inventory], [equivalent], symbol)['status'] != 'witness_proven':
+        raise RuntimeError('equivalent closed native alias path changed proof meaning')
+    return {'status': result['status'], 'mutations_rejected': rejected, 'alpha_renaming': 'accepted',
+            'equivalent_alias_path': 'accepted; capture byte changes still require the independent receipt gate'}
+
+
 class CursorWitnessTests(unittest.TestCase):
     def fixture(self):
         inv = inventory('/pilot.c', True)
@@ -556,7 +772,7 @@ class CursorWitnessTests(unittest.TestCase):
                 inv, witness, symbol = self.fixture()
                 symbol['static'], witness['schema'] = name, schema
                 before = json.dumps([inv, witness], sort_keys=True)
-                expected = 'schema 1 capture' if schema == 1 else 'witness v2 unsupported'
+                expected = 'schema 1 capture' if schema == 1 else 'unsupported'
                 with self.assertRaisesRegex(PlanError, expected):
                     prove_cursor_witness([inv], [witness], symbol)
                 self.assertEqual(before, json.dumps([inv, witness], sort_keys=True))

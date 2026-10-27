@@ -297,7 +297,9 @@ def check_cursor_cases(tool, root, clang, stage):
     fixture = Path(__file__).parent / 'fixtures/cursor-witness/pilot.c'
     results = {}
     for case in ('positive', 'ESCAPE', 'ASSIGNMENT', 'COPY', 'BRANCH', 'MISSING_END', 'UNKNOWN_CALL', 'UNKNOWN_BUILTIN',
-                 'FMT_REASSIGNMENT', 'FMT_ESCAPE', 'UNKNOWN_NON_CURSOR_CALL', 'MISSING_TERMINATOR'):
+                 'FMT_REASSIGNMENT', 'FMT_ESCAPE', 'UNKNOWN_NON_CURSOR_CALL', 'MISSING_TERMINATOR',
+                 'WRONG_SIGNATURE', 'WRONG_TAIL', 'GLOBAL_TAIL', 'WRONG_ENUM_OWNER', 'WRONG_RECORD_OWNER',
+                 'SAME_NAME_SHADOW', 'FUNCTION_POINTER', 'ASM_IDENTITY', 'EXTRA_TARGET_CALL'):
         case_root = root / ('cursor-' + case.lower())
         case_root.mkdir()
         source = case_root / 'pilot.c'
@@ -320,7 +322,9 @@ def check_cursor_cases(tool, root, clang, stage):
             pair = receipt['pairs'][0]
             original = json.loads(Path(pair['witness']).read_text())
             inventory = json.loads(Path(pair['inventory']).read_text())
-            mutations = {}
+            from test_closed_variadic_plan import exercise_actual_cursor_payload
+            payload_controls = exercise_actual_cursor_payload(inventory, original)
+            mutations = {'actual-payload-controls': payload_controls}
             for name in ('unknown-builtin', 'unknown-cursor-reference', 'incomplete-body', 'call-set'):
                 witness = copy.deepcopy(original)
                 function = next(f for f in witness['functions'] if f['symbol']['static'] == 'vkd3d_spirv_build_op_member_name')

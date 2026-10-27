@@ -81,16 +81,41 @@ def bind_tool(source, artifacts, tool):
                                  for name in ('c2rust', 'c2rust-transpile')}}
     (tool / 'source-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
     verify_tool(tool)
+    retain_tool_identity(tool, artifacts)
 
 
 def verify_tool(tool):
     record = verify_evidence(tool / 'source-evidence')
-    receipt = json.loads((tool / 'source-receipt.json').read_text())
+    receipt = json.loads(source_file(tool, 'source-receipt.json').read_text())
     if (receipt['source_receipt_sha256'] != digest(tool / 'source-evidence/c2rust-patch.json')
             or receipt['patch_sha256'] != record['patch_sha256']
-            or receipt['binary_sha256'] != {name: digest(tool / 'bin' / name)
+            or receipt['binary_sha256'] != {name: digest(source_file(tool, 'bin/' + name))
                                            for name in ('c2rust', 'c2rust-transpile')}):
         raise ValueError('tool binary or applied source receipt differs')
+
+
+def retain_tool_identity(tool, artifacts):
+    verify_tool(tool)
+    record = verify_evidence(tool / 'source-evidence')
+    names = ['bin/c2rust', 'bin/c2rust-transpile', 'source-receipt.json',
+             'source-evidence/c2rust-source.patch', 'source-evidence/c2rust-patch.json']
+    names += ['source-evidence/c2rust-applied-source/' + name
+              for name in sorted(record['modified_source_sha256'])]
+    retained = artifacts / 'early-tool-identity'
+    retained.mkdir()
+    files = {}
+    for name in names:
+        original = source_file(tool, name)
+        expected = {'source': str(original.resolve()), 'sha256': digest(original),
+                    'bytes': original.stat().st_size}
+        destination = retained / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(original, destination)
+        if digest(destination) != expected['sha256'] or destination.stat().st_size != expected['bytes']:
+            raise ValueError('retained tool identity differs for ' + name)
+        files[name] = expected
+    verify_tool(retained)
+    (retained / 'retention.json').write_text(json.dumps({'files': files}, indent=2) + '\n')
 
 
 def apply(source, artifacts):

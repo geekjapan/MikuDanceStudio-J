@@ -105,12 +105,17 @@ class HelperTests(unittest.TestCase):
                 check.validate_select(rows, 'generic')
 
     def test_corpus_preserves_prefix_and_requires_extension(self):
-        data = check.subprocess.check_output([sys.executable, check.HERE / 'cases.py'])
-        self.assertEqual(check.validate_corpus(data), 2355)
-        self.assertEqual(check.validate_corpus(data.replace(b'\n', b'\r\n')), 2355)
-        for broken in [b'bad\n' + data, b''.join(data.splitlines(keepends=True)[:2326])]:
-            with self.assertRaisesRegex(ValueError, 'frozen operation prefix'):
-                check.validate_corpus(broken)
+        generated = check.subprocess.check_output([sys.executable, check.HERE / 'cases.py'])
+        lf = generated.replace(b'\r\n', b'\n')
+        for generator_output in (lf, lf.replace(b'\n', b'\r\n')):
+            with self.subTest(generator_crlf=b'\r\n' in generator_output):
+                data = generator_output.replace(b'\r\n', b'\n')
+                self.assertEqual(check.validate_corpus(data), 2355)
+                self.assertEqual(check.validate_corpus(data.replace(b'\n', b'\r\n')), 2355)
+                for broken in [b'bad\n' + data, b''.join(data.splitlines(keepends=True)[:2326]),
+                               data.replace(b'\n', b'\r\r\n')]:
+                    with self.assertRaisesRegex(ValueError, 'frozen operation prefix'):
+                        check.validate_corpus(broken)
 
     def test_explicit_numeric_driver_and_capture_wrappers(self):
         source = check.reference_module().RUST_DRIVER

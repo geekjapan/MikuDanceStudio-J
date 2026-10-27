@@ -150,6 +150,12 @@ jobs:
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/bullet-native/capsule-capsule"
           python3 tools/bullet-rust-capsule-capsule-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/capsule-capsule" 2>&1 | tee "$RUNNER_TEMP/bullet-native/capsule-capsule/check.log"
+      - name: Recapture nonvirtual support entries
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/bullet-native/support"
+          python3 tools/bullet-rust-support-check/check.py --out-dir "$RUNNER_TEMP/bullet-native/support" 2>&1 | tee "$RUNNER_TEMP/bullet-native/support/check.log"
       - name: Save native recaptures and evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

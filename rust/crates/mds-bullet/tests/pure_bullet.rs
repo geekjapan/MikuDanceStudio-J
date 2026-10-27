@@ -116,3 +116,6 @@ fn invalid_boundary_inputs_do_not_advance_the_clock() {
         .is_err());
     }
 }
+
+#[path = "pure_bullet/support.rs"]
+mod support;

@@ -92,6 +92,61 @@ impl Shape {
         })
     }
 
+    /// Nonvirtual convex support used by Bullet's GJK/EPA kernels.
+    pub fn supporting_vertex_without_margin_nonvirtual(self, direction: Vec3) -> Option<Vec3> {
+        Some(match self {
+            Self::Sphere { .. } => Vec3::ZERO,
+            Self::Box {
+                half_extents_without_margin: half,
+            } => Vec3(std::array::from_fn(|i| {
+                if direction.0[i] >= 0.0 {
+                    half.0[i]
+                } else {
+                    -half.0[i]
+                }
+            })),
+            Self::CapsuleY {
+                radius,
+                half_height,
+            } => {
+                let [x, y, z] = direction.0;
+                let length2 = (z * z + y * y) + x * x;
+                let v = if length2 < 0.0001 {
+                    Vec3([1.0, 0.0, 0.0])
+                } else {
+                    direction.scale(1.0 / length2.sqrt())
+                };
+                let mut support = Vec3::ZERO;
+                let mut maximum = -1e18;
+                for cap in [half_height, -half_height] {
+                    let vertex = Vec3([0.0, cap, 0.0])
+                        .add(Vec3(v.0.map(|x| x * 1.0)).scale(radius))
+                        .sub(v.scale(CONVEX_MARGIN));
+                    let dot = vertex.dot(v);
+                    if dot > maximum {
+                        maximum = dot;
+                        support = vertex;
+                    }
+                }
+                support
+            }
+            Self::StaticPlane { .. } => return None,
+        })
+    }
+
+    /// Rounded margin support, distinct from the virtual box entry.
+    pub fn supporting_vertex_nonvirtual(self, direction: Vec3) -> Option<Vec3> {
+        let [x, y, z] = direction.0;
+        let v = if (y * y + z * z) + x * x < f32::EPSILON * f32::EPSILON {
+            Vec3([-1.0; 3])
+        } else {
+            direction
+        }
+        .normalize();
+        self.supporting_vertex_without_margin_nonvirtual(v)
+            .map(|support| support.add(v.scale(self.margin())))
+    }
+
     pub fn margin(self) -> f32 {
         match self {
             Self::Sphere { radius } => radius,

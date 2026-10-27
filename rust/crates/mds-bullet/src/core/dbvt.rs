@@ -1,5 +1,4 @@
 //! Altered Rust translation of the locally modified Bullet 2.75 btDbvt.
-//! Stable boxed allocations retain native address ordering; links never expose pointers.
 /*
 Bullet Continuous Collision Detection and Physics Library
 Copyright (c) 2003-2006 Erwin Coumans  http://continuousphysics.com/Bullet/

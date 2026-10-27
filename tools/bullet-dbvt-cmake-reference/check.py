@@ -140,7 +140,6 @@ def expand(args, cwd, records, stack=()):
 
 def compiler_environment():
     result = {}
-    # Unknown options fail without recording their potentially unrelated values.
     for key in ('CL', '_CL_'):
         args = split_command(os.environ.get(key, ''))
         try:
@@ -356,7 +355,6 @@ def run(argv, out, name, *, cwd=ROOT, data=None, timeout=300, build=False, env=N
 
 
 def tlog_tasks(path):
-    """Retain each caret's identities and physical payload lines before interpretation."""
     text, _ = decode(path.read_bytes())
     if '\x00' in text:
         raise ValueError('NUL in tlog task')
@@ -463,7 +461,6 @@ CL_FLAGS = frozenset(('/c', '/E', '/EP', '/P', '/showIncludes', '/TP', '/nologo'
 
 
 def cl_arguments(args):
-    """Classify supported CL tokens as (normalized option, value, original argv span)."""
     result = []
     index = 0
     while index < len(args):
@@ -495,7 +492,6 @@ def cl_arguments(args):
                         Path(value).is_absolute() and '/' in value[1:])):
                     raise ValueError('unsupported or ambiguous CL option value')
             elif arg.startswith(('/', '-')):
-                # Portable controls use absolute POSIX paths; CL captures use Windows paths.
                 if os.name != 'nt' and Path(arg).is_absolute() and '/' in arg[1:]:
                     option = None
                 else:
@@ -613,7 +609,6 @@ def read_native_cache(cache, out):
         checker_sha256=digest(Path(__file__)),
         command_sha256=digest(out / 'native-cache-reader-command.json')))
     seen = set()
-    # This scan diagnoses required-key spelling and duplicates, never their values.
     for number, line in enumerate(raw.decode().split('\n'), 1):
         line = line.removesuffix('\r')
         match = re.fullmatch(r'([^/#][^:=]*):[^=]+=(.*)', line)

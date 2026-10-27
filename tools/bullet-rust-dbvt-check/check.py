@@ -79,14 +79,17 @@ def validate_select(data, expected):
         raise AssertionError((expected, shape))
 
 
-def provenance(out):
+def source_paths():
     tracked = subprocess.check_output(['git', 'ls-files', '-z', 'recipes/bullet275/bullet-src/src',
                                       'rust/crates/mds-bullet', 'rust/crates/mds-bullet-sys',
                                       'rust/crates/mds-crtmath',
                                       'tools/bullet-rust-dbvt-check', 'tools/bullet-dbvt-cmake-reference', 'rust/Cargo.lock',
                                       '.github/workflows/bullet-dbvt-hosted.yml'], cwd=ROOT)
-    hashes = {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest()
-              for p in tracked.decode().split('\0') if p and (ROOT / p).is_file()}
+    return [p for p in tracked.decode().split('\0') if p and (ROOT / p).is_file()]
+
+
+def provenance(out):
+    hashes = {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in source_paths()}
     data = dict(commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT).decode().strip(),
                 platform=platform.platform(), machine=platform.machine(), python=sys.version,
                 runner={k: os.environ.get(k) for k in ('RUNNER_OS', 'RUNNER_ARCH', 'ImageOS', 'ImageVersion')},
@@ -107,7 +110,6 @@ def reference_module():
 
 
 def validate_corpus(data):
-    # Keep original row bytes after CRLF/LF normalization; extensions append only.
     lines = data.splitlines()
     if hashlib.sha256(b'\n'.join(lines[:2326]) + b'\n').hexdigest() != '860efaddcfae02b859f18d6d5d0dbf6480effe8836b058f02b360a24e331cf93' or len(lines) <= 2326:
         raise ValueError('frozen operation prefix changed or extension missing')
@@ -115,7 +117,6 @@ def validate_corpus(data):
 
 
 def verify_numeric_policies(out):
-    """Run both real Rust policies against raw actual-Windows numeric captures."""
     reference = reference_module()
     core = ROOT / 'rust/crates/mds-bullet/src/core'
     source = reference.RUST_DRIVER.replace('DBVT', (core / 'dbvt.rs').as_posix()).replace('PAIR_CACHE', (core / 'pair_cache.rs').as_posix())
@@ -164,7 +165,10 @@ def replay(out, captures):
     current = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT).decode().strip()
     if captured_provenance['commit'] != current:
         raise ValueError('Windows replay source commit differs from current checkout')
-    for path, expected in captured_provenance['source_lf_sha256'].items():
+    hashes = captured_provenance.get('source_lf_sha256')
+    if not isinstance(hashes, dict) or set(hashes) != set(source_paths()):
+        raise ValueError('Windows replay source inventory differs from current checkout')
+    for path, expected in hashes.items():
         if hashlib.sha256((ROOT / path).read_bytes().replace(b'\r\n', b'\n')).hexdigest() != expected:
             raise ValueError(f'Windows replay source bytes differ: {path}')
     observed = validate_profile((captures / 'original-profile.txt').read_bytes(), 'sse')

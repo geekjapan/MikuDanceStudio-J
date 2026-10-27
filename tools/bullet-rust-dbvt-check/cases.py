@@ -49,7 +49,6 @@ print('q -1 0 0 1 1e30 1e30 1 0 0 0 0 0 0')
 print('q 1 0 0 1 1e30 1e30 2 0 0 0 0 0 0')
 print('c')
 
-# Append bounds and strict root-vs-leaf TT coverage; keep the original 2,326 rows.
 print('h')
 for key in range(1, 5): print('i', key, key - 1, 0, 0, key + 1, 2, 2)
 print('h')

@@ -5,7 +5,8 @@ The check requires Clang C++ (or activated MSVC x64 on Windows), Python 3,
 and Rust 1.95.0. It compiles unmodified
 vendored `btDbvt.cpp` and runs a native-free Rust harness. No World or GPU runs.
 
-The stream covers 2,326 operations per native allocation history, including 12
+The stream covers 2,355 operations per native allocation history, with the original
+2,326-operation prefix followed by 29 additional operations. It includes 12
 seeded mutation histories, ordered TV, self TT, and cross-tree TT callbacks, internal ray queries,
 margin and velocity update, lookahead, clear, bottom-up, top-down, and incremental
 optimization. AABB values compare exact float bits; metadata and ordered children

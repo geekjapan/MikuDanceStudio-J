@@ -1,4 +1,3 @@
-"""Cheap checks for command construction and profile acceptance boundaries."""
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -550,8 +549,51 @@ class HelperTests(unittest.TestCase):
                     check.replay(captures, captures)
                 run.assert_not_called()
 
+    def test_replay_rejects_invalid_source_inventory_before_source_reads_or_outputs(self):
+        inputs = check.subprocess.check_output([sys.executable, check.HERE / 'cases.py'])
+        hashes = {p: check.hashlib.sha256((check.ROOT / p).read_bytes().replace(b'\r\n', b'\n')).hexdigest()
+                  for p in check.source_paths()}
+        self.assertEqual(len(hashes), 480)
+        commit = check.subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=check.ROOT).decode().strip()
+        known = 'rust/crates/mds-bullet/src/core/dbvt.rs'
+        invalid = [None, [], '', {}, {known: hashes[known]},
+                   {p: h for p, h in hashes.items() if p != known}]
+        for extra in ['AGENTS.md', str(check.ROOT / known), 'rust/../' + known]:
+            invalid.append({**hashes, extra: hashes[known]})
+        with tempfile.TemporaryDirectory() as directory:
+            captures = Path(directory)
+            (captures / 'inputs.tsv').write_bytes(inputs)
+            for order in range(4):
+                (captures / f'native-{order}.tsv').write_bytes(b'unit-control\n' * 2355)
+            read_bytes = Path.read_bytes
+
+            def capture_read(path):
+                if path.is_relative_to(check.ROOT):
+                    self.fail('source read before inventory validation: ' + str(path))
+                return read_bytes(path)
+
+            for inventory in invalid:
+                with self.subTest(inventory_type=type(inventory).__name__, size=len(inventory) if inventory is not None else None):
+                    (captures / 'provenance.json').write_text(json.dumps({
+                        'commit': commit, 'source_lf_sha256': inventory}))
+                    with patch.object(Path, 'read_bytes', capture_read), \
+                            patch.object(Path, 'write_text', side_effect=AssertionError('replay output forbidden')), \
+                            patch.object(check, 'run', side_effect=AssertionError('build forbidden')):
+                        with self.assertRaisesRegex(ValueError, 'source inventory differs'):
+                            check.replay(captures, captures)
+            (captures / 'provenance.json').write_text(json.dumps({
+                'commit': commit, 'source_lf_sha256': {**hashes, known: '0' * 64}}))
+            with patch.object(Path, 'write_text', side_effect=AssertionError('replay output forbidden')), \
+                    patch.object(check, 'run', side_effect=AssertionError('build forbidden')):
+                with self.assertRaisesRegex(ValueError, 'source bytes differ'):
+                    check.replay(captures, captures)
+
     def test_windows_replay_retains_binary_and_streams_without_mutating_capture(self):
         inputs = check.subprocess.check_output([sys.executable, check.HERE / 'cases.py'])
+        hashes = {p: check.hashlib.sha256((check.ROOT / p).read_bytes().replace(b'\r\n', b'\n')).hexdigest()
+                  for p in check.source_paths()}
+        self.assertEqual(len(hashes), 480)
+        commit = check.subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=check.ROOT).decode().strip()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             captures, out = root / 'captures', root / 'out'
@@ -562,7 +604,7 @@ class HelperTests(unittest.TestCase):
                 (captures / f'native-{order}.tsv').write_bytes(b'0,0,0,0|_||\n' * 2355)
             (captures / 'original-profile.txt').write_bytes(profile('1', '1', '1', '1'))
             (captures / 'provenance.json').write_text(json.dumps({
-                'commit': 'fixed', 'source_lf_sha256': {}}))
+                'commit': commit, 'source_lf_sha256': hashes}))
             retained = {p: p.read_bytes() for p in captures.iterdir()}
             binary = root / 'built'
             binary.write_bytes(b'mocked executable')
@@ -584,8 +626,7 @@ class HelperTests(unittest.TestCase):
                         f'{i}\t{line}\t0,0,0,0|_||\n' for i, line in enumerate(inputs.decode().splitlines())))
                 return b'test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n'
 
-            with patch.object(check.subprocess, 'check_output', return_value=b'fixed\n'), \
-                    patch.object(check, 'run', side_effect=run), \
+            with patch.object(check, 'run', side_effect=run), \
                     patch.object(check, 'verify_numeric_policies') as numeric:
                 check.replay(out, captures)
             numeric.assert_called_once_with(out)

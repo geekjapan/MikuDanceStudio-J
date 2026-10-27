@@ -380,6 +380,15 @@ promoted tails, exported candidates, address escapes, signature conflicts,
 four-host C width execution, actual lowering, and four-host generated-code ABI execution
 remain required. No production variadic definition is enabled by this work.
 
+Top-level `{"unproved":"reason"}` function signatures retain their definition
+unit, declaration ID, name, location, raw signature, and reason in
+`unclassified_definitions`, separate from known `symbols`. Each produces
+`candidate_signature_unproved`. Calls to those definitions, including aliases,
+produce `call_signature_unproved` without assigning tail slots. An unproved
+declaration cannot establish compatibility with a known candidate. Malformed
+signature envelopes raise `PlanError`. Unknown signatures supply no ABI,
+variadic flag, or parameter defaults. The additional list is omitted when empty.
+
 The new hosted inventory checks have not yet executed. The existing isolated
 four-host native cursor probe remains separate prerequisite evidence.
 
@@ -388,3 +397,69 @@ The fixture introduces an asm label after the first declaration. The gate requir
 both its exported declaration and direct call to use the effective later label.
 This check requires the rebuilt LLVM18 exporter. A local AST API check does not
 satisfy that hosted gate.
+
+
+The closed variadic inventory and plan use schema 2 with record evidence schema 2.
+Schema 1 and mixed evidence versions are rejected. Existing inventories must be
+recollected with the bound patched exporter. They cannot be upgraded from their
+TU-local diagnostic identities.
+
+Record references carry the kind, tag, dedicated physical path and coordinates,
+and a proved file or record owning scope. The finite definition table retains
+ordered qualified field types and layout facts, including union alignment, and
+enum variants and underlying types. Definitions refer to record identities, so
+self and mutual recursion do not expand the table indefinitely. The planner
+compares the actual facts from each TU and retains each TU's table in the plan.
+Missing locations, macro declarations, unsupported scopes or types, forward-only
+records and incomplete definitions yield `record_compatibility_unproved`.
+Diagnostic locations retain their previous presumed `#line` semantics.
+
+The existing prepare gate runs `check_closed_variadic_inventory.py` against the
+built translator. Its record fixtures first syntax-check each TU independently,
+then compare actual inventories. Negative cases do not depend on incompatible
+C declarations being linked. The same-header case requires distinct diagnostic
+file IDs and identical physical identities despite a presumed `#line` path.
+The cases cover recursion, typedefs, forward-to-complete records, nested owners,
+field and array changes, packing, record and union alignment, enums, qualifiers,
+and function ABI. This evidence remains `inventory_only`. It does not authorize
+stable lowering or replace the complete 24-unit translation, build, link,
+runtime, native 23-export, target-width and source/binary provenance gates.
+
+
+Schema 2 array evidence retains the original qualified element type in an
+inventory-only side table for constant and incomplete arrays. Missing original
+elements are unproved. The actual record matrix checks const and volatile
+scalar elements, nested and flexible arrays, and valid restrict-qualified
+pointer elements, including identical-qualified positive cases. LongDouble is
+unproved even when both TUs report the same kind. Its ABI shape is not encoded;
+the negative callback fixture uses independent x86_64 Linux compile commands
+with default and `-mlong-double-64` modes and static size assertions of 16 and 8.
+This is a conservative type restriction, not a general ABI-option validator.
+
+The same gate exports valid 40-level pointer and atomic-field C fixtures and
+requires the actual serializer's depth and unsupported-type sentinels in both
+TUs. Identical unknown facts must remain unproved. Physical boundary cases
+mutate copies of the actual same-header exporter output and retain the mutated
+inventories and plans. They test rejection of unknown paths and zero physical
+coordinates; they do not claim Clang emitted invalid file mappings. Dedicated
+physical evidence carries a path directly, independent of diagnostic file IDs.
+The existing hosted Rust inventory unit test also exercises the actual typed
+CBOR decoder with malformed tuples and invalid physical coordinates. These
+checks still require execution by the newly built exporter in CI.
+
+Plain `char` carries Clang's `Char_S` or `Char_U` signedness as a boolean in
+its existing type-node extras. Conversion preserves that fact in an
+inventory-only typed side table. Shared translator type tags and `CTypeKind`
+remain unchanged. Schema 2 requires `{"kind": "Char", "signed": true|false}`;
+missing or non-boolean evidence is unproved, including through pointers,
+arrays, callbacks and records. Explicit `SChar` and `UChar` keep their kinds.
+
+The prepare gate retains all previous 28 record cases and adds five char
+cases. Independent default and `-funsigned-char` x86_64 Linux TUs include the
+same physical callback header and statically assert opposite char signedness.
+The checker requires the actual exported callback metadata to differ and the
+planner to reject the signature. Same-signed and same-unsigned profiles and
+explicit signed/unsigned char callbacks remain positive. Copies of the actual
+same-signed exports test missing, unknown and integer signedness rejection.
+The hosted Rust serializer test checks both signedness values and missing
+side-table evidence. Compiled exporter and Rust execution remain CI gates.

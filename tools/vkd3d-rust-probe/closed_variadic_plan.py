@@ -32,8 +32,179 @@ def compatible_type(typ):
     return result
 
 
+class SignatureUnproved(PlanError):
+    pass
+
+
 def function_signature(declaration):
-    return compatible_type(declaration['signature']['canonical'])
+    signature = declaration.get('signature')
+    if isinstance(signature, dict) and set(signature) == {'unproved'}:
+        if not isinstance(signature['unproved'], str) or not signature['unproved']:
+            raise PlanError('invalid unproved function signature reason')
+        raise SignatureUnproved(signature['unproved'])
+    if not isinstance(signature, dict) or set(signature) != {'canonical', 'const', 'volatile', 'restrict'} or any(
+            type(signature[k]) is not bool for k in ('const', 'volatile', 'restrict')):
+        raise PlanError('invalid function signature envelope')
+    canonical = signature['canonical']
+    if not isinstance(canonical, dict) or set(canonical) != {'return', 'parameters', 'variadic', 'noreturn', 'prototype', 'abi'} or not (
+            isinstance(canonical['return'], dict) and isinstance(canonical['parameters'], list)
+            and all(isinstance(p, dict) for p in canonical['parameters']) and isinstance(canonical['abi'], str)) or any(
+            type(canonical[k]) is not bool for k in ('variadic', 'noreturn', 'prototype')):
+        raise PlanError('invalid canonical function signature facts')
+    return compatible_type(canonical)
+
+
+class RecordUnproved(PlanError):
+    pass
+
+
+def record_key(identity, depth=0):
+    if depth > 32 or not isinstance(identity, dict) or set(identity) != {'kind', 'tag', 'physical', 'scope'}:
+        raise RecordUnproved('missing structured physical record identity')
+    if identity['kind'] not in ('struct', 'union', 'enum') or not (
+            identity['tag'] is None or isinstance(identity['tag'], str) and identity['tag']):
+        raise RecordUnproved('unsupported record kind or tag')
+    physical = identity['physical']
+    if not isinstance(physical, dict) or set(physical) != {'path', 'line', 'column'}:
+        raise RecordUnproved('missing dedicated physical position')
+    if not isinstance(physical['path'], str) or not Path(physical['path']).is_absolute() or any(
+            type(physical[k]) is not int or physical[k] <= 0 for k in ('line', 'column')):
+        raise RecordUnproved('invalid physical record position')
+    scope = identity['scope']
+    if not (isinstance(scope, dict) and set(scope) == {'file'} and scope['file'] is True):
+        if not isinstance(scope, dict) or set(scope) != {'record'}:
+            raise RecordUnproved('unproved owning scope')
+        record_key(scope['record'], depth + 1)
+    return json.dumps(identity, sort_keys=True)
+
+
+def record_table(inventory):
+    if not isinstance(inventory.get('record_definitions'), list):
+        raise PlanError('missing finite record definition table')
+    table = {}
+    for entry in inventory['record_definitions']:
+        if not isinstance(entry, dict) or set(entry) not in ({'identity', 'state', 'facts'}, {'identity', 'state', 'facts', 'diagnostic_location'}):
+            raise PlanError('invalid record definition entry')
+        if entry['state'] not in ('complete', 'incomplete', 'unproved'):
+            raise PlanError('invalid record definition state')
+        entry = {k: v for k, v in entry.items() if k != 'diagnostic_location'}
+        try:
+            key = record_key(entry['identity'])
+        except RecordUnproved:
+            continue  # Unreachable unknown records do not prove any required type.
+        if key in table and table[key] != entry:
+            table[key] = {'state': 'unproved'}
+        else:
+            table[key] = entry
+    return table
+
+
+SCALARS = {'Void', 'Bool', 'Char', 'SChar', 'Short', 'Int', 'Long', 'LongLong',
+           'UChar', 'UShort', 'UInt', 'ULong', 'ULongLong', 'Float', 'Double',
+           'Int128', 'UInt128', 'Half'}
+
+
+def validate_type(typ, table, visited=None, depth=0):
+    visited = set() if visited is None else visited
+    if depth > 64 or not isinstance(typ, dict) or set(typ) != {'canonical', 'const', 'volatile', 'restrict'}:
+        raise RecordUnproved('unknown or excessive required type evidence')
+    if 'canonical' not in typ or any(type(v) is not bool for k, v in typ.items() if k != 'canonical'):
+        raise RecordUnproved('missing canonical type or invalid qualifiers')
+    canonical = typ['canonical']
+    if not isinstance(canonical, dict):
+        raise RecordUnproved('missing canonical type facts')
+    keys = set(canonical)
+    if keys == {'kind'} and isinstance(canonical['kind'], str) and canonical['kind'] in SCALARS - {'Char'}:
+        return
+    if keys == {'kind', 'signed'} and canonical['kind'] == 'Char' and type(canonical['signed']) is bool:
+        return
+    if keys == {'pointer'}:
+        validate_type(canonical['pointer'], table, visited, depth=depth + 1)
+    elif keys in ({'array'}, {'array', 'length'}):
+        if 'length' in canonical and (type(canonical['length']) is not int or canonical['length'] < 0):
+            raise RecordUnproved('invalid array length')
+        validate_type(canonical['array'], table, visited, depth=depth + 1)
+    elif keys == {'return', 'parameters', 'variadic', 'noreturn', 'prototype', 'abi'}:
+        if canonical['abi'] not in ('C', 'win64', 'sysv64') or not isinstance(canonical['parameters'], list) or any(
+                type(canonical[k]) is not bool for k in ('variadic', 'noreturn', 'prototype')):
+            raise RecordUnproved('invalid function ABI evidence')
+        validate_type(canonical['return'], table, visited, depth=depth + 1)
+        for arg in canonical['parameters']:
+            validate_type(arg, table, visited, depth=depth + 1)
+    elif keys == {'record'}:
+        identity = canonical['record']
+        key = record_key(identity)
+        entry = table.get(key)
+        if entry is None or entry['state'] != 'complete':
+            raise RecordUnproved('required record has no proved complete definition')
+        if key in visited:
+            return
+        visited.add(key)
+        facts = entry['facts']
+        if not isinstance(facts, dict):
+            raise RecordUnproved('invalid record definition facts')
+        if identity['kind'] == 'enum':
+            if set(facts) != {'underlying', 'variants'} or not isinstance(facts['variants'], list):
+                raise RecordUnproved('missing enum definition facts')
+            validate_type(facts['underlying'], table, visited, depth=depth + 1)
+            for variant in facts['variants']:
+                if not isinstance(variant, dict) or set(variant) != {'name', 'signed', 'value'} or not isinstance(variant['name'], str) or type(variant['signed']) is not bool or type(variant['value']) is not int:
+                    raise RecordUnproved('invalid enum variant evidence')
+        else:
+            if set(facts) != {'fields', 'layout'} or not isinstance(facts['fields'], list):
+                raise RecordUnproved('missing ordered fields')
+            layout = facts['layout']
+            if not isinstance(layout, list) or len(layout) != 5 or type(layout[0]) is not bool or any(
+                    v is not None and (type(v) is not int or v <= 0) for v in layout[1:3]) or any(
+                    type(v) is not int or v < 0 for v in layout[3:]) or layout[4] == 0:
+                raise RecordUnproved('missing record layout proof')
+            for field in facts['fields']:
+                if not isinstance(field, dict) or set(field) != {'name', 'type', 'bit_width', 'bit_offset', 'type_bit_width', 'alignment'} or not isinstance(field['name'], str):
+                    raise RecordUnproved('invalid ordered field evidence')
+                if any(type(field[k]) is not int or field[k] < 0 for k in ('bit_offset', 'type_bit_width')) or any(
+                        field[k] is not None and (type(field[k]) is not int or field[k] < 0) for k in ('bit_width', 'alignment')):
+                    raise RecordUnproved('invalid field layout evidence')
+                validate_type(field['type'], table, visited, depth=depth + 1)
+    else:
+        raise RecordUnproved('unsupported required type evidence')
+
+
+def compare_evidence(left, right, left_table, right_table, visited=None):
+    visited = set() if visited is None else visited
+    if isinstance(left, dict) and isinstance(right, dict):
+        for value in (left, right):
+            if 'unproved' in value or 'unsupported' in value:
+                raise RecordUnproved('unsupported or incomplete required type evidence')
+            if 'kind' in value and 'physical' not in value and value['kind'] not in SCALARS:
+                raise RecordUnproved('unsupported required type kind')
+        if set(left) != set(right):
+            return False
+        if set(left) == {'record'}:
+            lk, rk = record_key(left['record']), record_key(right['record'])
+            for key, table in ((lk, left_table), (rk, right_table)):
+                if key not in table or table[key]['state'] != 'complete':
+                    raise RecordUnproved('required record has no proved complete definition')
+            pair = (lk, rk)
+            if pair in visited:
+                return True
+            visited.add(pair)
+            if lk != rk:
+                return False
+            lf, rf = left_table[lk]['facts'], right_table[rk]['facts']
+            for facts, identity in ((lf, left['record']), (rf, right['record'])):
+                if identity['kind'] == 'enum':
+                    if set(facts) != {'underlying', 'variants'} or facts['underlying'] is None or not isinstance(facts['variants'], list):
+                        raise RecordUnproved('missing enum definition facts')
+                elif set(facts) != {'fields', 'layout'} or not isinstance(facts['fields'], list) or not isinstance(facts['layout'], list) or len(facts['layout']) != 5:
+                    raise RecordUnproved('missing record definition or layout facts')
+            return compare_evidence(compatible_type(lf), compatible_type(rf), left_table, right_table, visited)
+        results = [compare_evidence(left[k], right[k], left_table, right_table, visited) for k in left]
+        return all(results)
+    if isinstance(left, list) and isinstance(right, list):
+        if len(left) != len(right):
+            return False
+        return all([compare_evidence(a, b, left_table, right_table, visited) for a, b in zip(left, right)])
+    return type(left) is type(right) and left == right
 
 
 def promoted_slot(argument):
@@ -73,14 +244,27 @@ def build_plan(inventories, expected_units, exports):
     if widths != expected_widths or any(i['target_c_widths_bits'] != widths for i in inventories):
         raise PlanError('Clang target C widths differ from supported slot contract')
     declarations = {}
+    tables = {}
+    signatures = {}
+    unproved_signatures = {}
+    declaration_units = {}
     for item in inventories:
-        if item['schema'] != 1 or item['authorization'] != 'inventory_only':
+        if item.get('schema') != 2 or item.get('record_evidence_schema') != 2 or item['authorization'] != 'inventory_only':
             raise PlanError('unsupported inventory contract')
+        table = record_table(item)
         for declaration in item['declarations']:
+            tables[id(declaration)] = table
+            declaration_units[id(declaration)] = item['unit']
+            try:
+                signatures[id(declaration)] = function_signature(declaration)
+            except SignatureUnproved as error:
+                unproved_signatures[id(declaration)] = str(error)
             key = symbol_key(declaration['symbol'])
             declarations.setdefault(key, []).append(declaration)
     candidates = {}
     diagnostics = []
+    unclassified_definitions = []
+    unclassified_keys = set()
 
     def reject(code, key, location, detail=None):
         diagnostics.append({'code': code, 'symbol': list(key), 'location': location, 'detail': detail})
@@ -118,16 +302,36 @@ def build_plan(inventories, expected_units, exports):
 
     for key, records in declarations.items():
         definitions = [d for d in records if d['definition']]
-        if not definitions or not any(function_signature(d)['variadic'] or d['va_parameters'] for d in definitions):
+        for definition in definitions:
+            if id(definition) in unproved_signatures:
+                reason = unproved_signatures[id(definition)]
+                unclassified_keys.add(key)
+                unclassified_definitions.append({
+                    'symbol': list(key), 'unit': declaration_units[id(definition)],
+                    'id': definition['id'], 'name': key[-1], 'location': definition['location'],
+                    'signature': definition['signature'], 'reason': reason})
+                reject('candidate_signature_unproved', key, definition['location'], reason)
+        known_definitions = [d for d in definitions if id(d) in signatures]
+        if not any(signatures[id(d)]['variadic'] or d['va_parameters'] for d in known_definitions):
             continue
-        definition = definitions[0]
-        signature = function_signature(definition)
+        definition = known_definitions[0]
+        signature = signatures[id(definition)]
         candidates[key] = {'symbol': list(key), 'definition': definition['location'],
                            'signature': signature, 'calls': []}
         if len(definitions) != 1:
             reject('multiple_definitions', key, definition['location'])
-        if any(function_signature(d) != signature for d in records):
-            reject('signature_mismatch', key, definition['location'])
+        try:
+            for declaration in records:
+                if id(declaration) in unproved_signatures:
+                    raise SignatureUnproved(unproved_signatures[id(declaration)])
+                validate_type(declaration['signature'], tables[id(declaration)])
+            matches = [compare_evidence(signature, signatures[id(d)], tables[id(definition)], tables[id(d)]) for d in records]
+            if not all(matches):
+                reject('signature_mismatch', key, definition['location'])
+        except SignatureUnproved as error:
+            reject('candidate_signature_unproved', key, definition['location'], str(error))
+        except RecordUnproved as error:
+            reject('record_compatibility_unproved', key, definition['location'], str(error))
         if key[0] == 'linker' and key[1] in exports:
             reject('exported_variadic_or_cursor_definition', key, definition['location'])
         if signature['abi'] != 'C' or not signature['prototype']:
@@ -159,7 +363,12 @@ def build_plan(inventories, expected_units, exports):
                     reject('unclassified_indirect_call', owner, call['location'])
                 continue
             key = symbol_key(call['callee'])
+            unknown_targets = alias_reachable.get(key, {key}) & unclassified_keys
+            for unknown in sorted(unknown_targets):
+                reject('call_signature_unproved', unknown, call['location'])
             for key in visible_candidates(key):
+                if key in unknown_targets:
+                    continue
                 signature = candidates[key]['signature']
                 fixed = len(signature['parameters'])
                 if len(call['arguments']) < fixed or (not signature['variadic'] and len(call['arguments']) != fixed):
@@ -173,11 +382,15 @@ def build_plan(inventories, expected_units, exports):
                         reject('unsupported_tail_type', key, call['location'], str(error))
                 candidates[key]['calls'].append({'unit': item['unit'], 'location': call['location'],
                                                  'expression': call['id'], 'slots': slots})
-    return {'schema': 1, 'target': target, 'target_c_widths_bits': widths, 'authorization': 'inventory_only',
+    plan = {'schema': 2, 'record_evidence_schema': 2, 'target': target, 'target_c_widths_bits': widths, 'authorization': 'inventory_only',
             'units': sorted(units), 'symbols': list(candidates.values()),
+            'record_definitions': {item['unit']: item['record_definitions'] for item in inventories},
             'diagnostics': diagnostics,
             'remaining_gates': ['four_host_target_C_width_execution', 'cursor_alias_and_control_flow',
                                 'generator_lowering', 'four_host_generated_code_ABI']}
+    if unclassified_definitions:
+        plan['unclassified_definitions'] = unclassified_definitions
+    return plan
 
 
 def collect_probe(root):

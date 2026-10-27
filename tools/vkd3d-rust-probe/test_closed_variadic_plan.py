@@ -7,13 +7,14 @@ from closed_variadic_plan import PlanError, build_plan, collect_probe, promoted_
 
 
 def scalar(kind):
-    return {'canonical': {'kind': kind}, 'const': False, 'volatile': False}
+    return {'canonical': {'kind': kind}, 'const': False, 'volatile': False, 'restrict': False}
 
 
 def inventory(unit, definition=False):
     signature = {'canonical': {'return': scalar('Int'), 'parameters': [scalar('Int')],
-                              'variadic': True, 'noreturn': False, 'prototype': True, 'abi': 'C'}}
-    return {'schema': 1, 'authorization': 'inventory_only', 'unit': unit, 'target': 'x86_64-unknown-linux-gnu',
+                              'variadic': True, 'noreturn': False, 'prototype': True, 'abi': 'C'},
+                 'const': False, 'volatile': False, 'restrict': False}
+    return {'schema': 2, 'record_evidence_schema': 2, 'record_definitions': [], 'authorization': 'inventory_only', 'unit': unit, 'target': 'x86_64-unknown-linux-gnu',
             'target_c_widths_bits': {'char': 8, 'short': 16, 'int': 32, 'long': 64, 'long_long': 64, 'pointer': 64, 'float': 32, 'double': 64},
             'declarations': [{'id': 1, 'symbol': {'linker': 'format'}, 'location': unit + ':1',
                               'signature': signature, 'definition': definition, 'va_parameters': []}],
@@ -24,6 +25,92 @@ class ClosedPlanTests(unittest.TestCase):
     def plan(self, a=None, b=None, exports=()):
         return build_plan([a or inventory('definition.c', True), b or inventory('caller.c')],
                           ['definition.c', 'caller.c'], exports)
+
+    def test_actual_blob_unproved_definitions_are_retained(self):
+        # Run 40465179935 blob.variadic.json SHA256 4e21d31be92241e67ef940729e140b8e1465d9121aba135a15e1e3eb1258b8ab.
+        unit = '/home/runner/work/_temp/vkd3d-probe/evidence/result/source/libs/vkd3d-common/blob.c'
+        item = inventory(unit, True)
+        item['declarations'] = [
+            {'aliases': [], 'definition': True, 'id': ident,
+             'location': '(fileid 39) ' + unit + ':' + str(line) + ':1',
+             'signature': {'unproved': 'attributed type facts'},
+             'symbol': {'static': name, 'unit': unit}, 'va_parameters': []}
+            for ident, line, name in [
+                (86884, 101, 'vkd3d_blob_GetBufferSize'),
+                (86952, 92, 'vkd3d_blob_GetBufferPointer'),
+                (87002, 75, 'vkd3d_blob_Release'),
+                (87129, 65, 'vkd3d_blob_AddRef'),
+                (87199, 47, 'vkd3d_blob_QueryInterface')]]
+        plan = build_plan([item], [unit], [])
+        self.assertEqual(plan['symbols'], [])
+        unknown = plan['unclassified_definitions']
+        self.assertEqual([d['id'] for d in unknown], [86884, 86952, 87002, 87129, 87199])
+        for original, retained in zip(item['declarations'], unknown):
+            self.assertEqual(retained['signature'], original['signature'])
+            self.assertEqual(retained['unit'], unit)
+            self.assertEqual(retained['name'], original['symbol']['static'])
+            self.assertEqual(retained['location'], original['location'])
+            self.assertEqual(retained['reason'], 'attributed type facts')
+        self.assertEqual([d['code'] for d in plan['diagnostics']],
+                         ['candidate_signature_unproved'] * 5)
+
+    def test_unknown_definition_eligibility_and_calls_fail_closed(self):
+        for va_parameters in ([], [0]):
+            with self.subTest(va_parameters=va_parameters):
+                a, b = inventory('definition.c', True), inventory('caller.c')
+                for item in (a, b):
+                    item['declarations'][0]['signature'] = {'unproved': 'attributed type facts'}
+                a['declarations'][0]['va_parameters'] = va_parameters
+                b['calls'] = [{'id': 9, 'owner': None, 'callee': {'linker': 'format'},
+                               'location': 'caller.c:9', 'arguments': []}]
+                plan = self.plan(a, b)
+                self.assertEqual(plan['symbols'], [])
+                self.assertEqual(len(plan['unclassified_definitions']), 1)
+                self.assertIn('call_signature_unproved', [d['code'] for d in plan['diagnostics']])
+                self.assertNotIn('signature_mismatch', [d['code'] for d in plan['diagnostics']])
+
+    def test_alias_call_to_unknown_definition_has_no_slots(self):
+        a, b = inventory('definition.c', True), inventory('caller.c')
+        a['declarations'][0]['signature'] = {'unproved': 'attributed type facts'}
+        b['declarations'][0].update(symbol={'linker': 'alias'}, aliases=['format'])
+        b['calls'] = [{'id': 9, 'owner': None, 'callee': {'linker': 'alias'},
+                       'location': 'caller.c:9', 'arguments': [{'type': scalar('Double')}]}]
+        plan = self.plan(a, b)
+        self.assertEqual(plan['symbols'], [])
+        self.assertIn('call_signature_unproved', [d['code'] for d in plan['diagnostics']])
+
+    def test_unknown_competing_definition_blocks_call_slots(self):
+        a, b = inventory('definition.c', True), inventory('caller.c', True)
+        b['declarations'][0]['signature'] = {'unproved': 'attributed type facts'}
+        b['calls'] = [{'id': 9, 'owner': None, 'callee': {'linker': 'format'},
+                       'location': 'caller.c:9', 'arguments': [{'type': scalar('Int')}]}]
+        plan = self.plan(a, b)
+        self.assertEqual(len(plan['symbols']), 1)
+        self.assertEqual(len(plan['unclassified_definitions']), 1)
+        self.assertEqual(plan['symbols'][0]['calls'], [])
+        self.assertTrue({'multiple_definitions', 'candidate_signature_unproved',
+                         'call_signature_unproved'} <= {d['code'] for d in plan['diagnostics']})
+
+    def test_unproved_declaration_cannot_match_known_candidate(self):
+        b = inventory('caller.c')
+        b['declarations'][0]['signature'] = {'unproved': 'attributed type facts'}
+        plan = self.plan(b=b)
+        self.assertEqual(len(plan['symbols']), 1)
+        self.assertIn('candidate_signature_unproved', [d['code'] for d in plan['diagnostics']])
+
+    def test_malformed_signature_is_not_valid_unproved_evidence(self):
+        for signature in (None, {}, {'unproved': ''}, {'unproved': 1},
+                          {'unproved': 'reason', 'canonical': {}},
+                          {'canonical': {}}, {'canonical': None}):
+            with self.subTest(signature=signature):
+                a = inventory('definition.c', True)
+                a['declarations'][0]['signature'] = signature
+                with self.assertRaisesRegex(PlanError, 'function signature'):
+                    self.plan(a=a)
+        a = inventory('definition.c', True)
+        del a['declarations'][0]['signature']
+        with self.assertRaisesRegex(PlanError, 'function signature'):
+            self.plan(a=a)
 
     def test_global_cross_unit_declaration_is_not_external(self):
         caller = inventory('caller.c')
@@ -129,7 +216,7 @@ class ClosedPlanTests(unittest.TestCase):
                 if control == 'pointee':
                     for item in (a, b):
                         item['declarations'][0]['signature']['canonical']['parameters'] = [
-                            {'canonical': {'pointer': scalar('Int')}, 'const': False}]
+                            {'canonical': {'pointer': scalar('Int')}, 'const': False, 'volatile': False, 'restrict': False}]
                     sig['parameters'][0]['canonical']['pointer']['const'] = True
                 elif control == 'abi':
                     sig['abi'] = 'win64'
@@ -171,7 +258,7 @@ class ClosedPlanTests(unittest.TestCase):
         a, b = inventory('definition.c', True), inventory('caller.c')
         for item in (a, b):
             item['declarations'][0]['signature']['canonical']['parameters'] = [
-                {'canonical': {'pointer': scalar('Int')}, 'const': False}]
+                {'canonical': {'pointer': scalar('Int')}, 'const': False, 'volatile': False, 'restrict': False}]
         a['declarations'][0]['signature']['canonical']['parameters'][0]['const'] = True
         self.assertNotIn('signature_mismatch', [d['code'] for d in self.plan(a, b)['diagnostics']])
 
@@ -198,6 +285,234 @@ class ClosedPlanTests(unittest.TestCase):
         for canonical in [{'record_kind': 'struct'}, {'record_kind': 'enum'}, {'kind': 'Vector'}]:
             with self.assertRaises(PlanError):
                 promoted_slot({'type': {'canonical': canonical}})
+
+
+def record_identity(tag='node', kind='struct', line=10):
+    return {'kind': kind, 'tag': tag,
+            'physical': {'path': '/shared/header.h', 'line': line, 'column': 1},
+            'scope': {'file': True}}
+
+
+def record_type(identity):
+    return {'canonical': {'record': identity}, 'const': False, 'volatile': False, 'restrict': False}
+
+
+def record_definition(identity):
+    return {'identity': identity, 'state': 'complete', 'facts': {
+        'layout': [False, None, None, 8, 8],
+        'fields': [{'name': 'next', 'type': {'canonical': {'pointer': record_type(identity)}, 'const': False, 'volatile': False, 'restrict': False},
+                    'bit_width': None, 'bit_offset': 0, 'type_bit_width': 64, 'alignment': None}]}}
+
+
+class RecordEvidenceTests(unittest.TestCase):
+    def pair(self):
+        import copy
+        a, b = inventory('a.c', True), inventory('b.c')
+        identity = record_identity()
+        for item in (a, b):
+            item['record_definitions'] = [copy.deepcopy(record_definition(identity))]
+            item['declarations'][0]['signature']['canonical']['parameters'] = [record_type(copy.deepcopy(identity))]
+        return a, b
+
+    def codes(self, a, b):
+        return {d['code'] for d in build_plan([a, b], ['a.c', 'b.c'], [])['diagnostics']}
+
+    def test_recursive_definition_terminates_and_stays_inventory_only(self):
+        a, b = self.pair()
+        plan = build_plan([a, b], ['a.c', 'b.c'], [])
+        self.assertEqual(plan['schema'], 2)
+        self.assertEqual(plan['authorization'], 'inventory_only')
+        self.assertEqual({d['code'] for d in plan['diagnostics']}, {'cursor_dataflow_unproved'})
+
+    def test_actual_layout_and_ordered_field_facts_must_match(self):
+        mutations = [lambda f: f['layout'].__setitem__(0, True),
+                     lambda f: f['layout'].__setitem__(1, 16),
+                     lambda f: f['layout'].__setitem__(2, 1),
+                     lambda f: f['layout'].__setitem__(3, 16),
+                     lambda f: f['layout'].__setitem__(4, 16),
+                     lambda f: f['fields'][0].__setitem__('name', 'renamed'),
+                     lambda f: f['fields'][0].__setitem__('bit_offset', 1),
+                     lambda f: f['fields'][0].__setitem__('bit_width', 3),
+                     lambda f: f['fields'][0].__setitem__('type', scalar('Long'))]
+        for mutate in mutations:
+            a, b = self.pair()
+            mutate(b['record_definitions'][0]['facts'])
+            self.assertIn('signature_mismatch', self.codes(a, b))
+
+    def test_unknown_evidence_never_proves_compatibility_even_when_identical(self):
+        for mutation in (
+                lambda i: i['record_definitions'][0].__setitem__('state', 'incomplete'),
+                lambda i: i['record_definitions'][0]['facts'].__setitem__('layout', None),
+                lambda i: i['declarations'][0]['signature']['canonical']['parameters'].__setitem__(0, {'unproved': 'depth limit'}),
+                lambda i: i['record_definitions'][0]['identity']['physical'].__setitem__('line', 0),
+                lambda i: i['record_definitions'][0]['identity'].__setitem__('scope', {'unknown': True}),
+                lambda i: i['record_definitions'][0]['facts']['fields'][0].__setitem__('type', scalar('Unknown'))):
+            a, b = self.pair()
+            mutation(a)
+            mutation(b)
+            self.assertIn('record_compatibility_unproved', self.codes(a, b))
+
+    def test_plain_char_signedness_is_required_and_compared_recursively(self):
+        import copy
+        wrappers = [lambda t: t,
+                    lambda t: {'canonical': {'pointer': t}, 'const': False, 'volatile': False, 'restrict': False},
+                    lambda t: {'canonical': {'array': t, 'length': 2}, 'const': False, 'volatile': False, 'restrict': False},
+                    lambda t: {'canonical': {'return': scalar('Int'), 'parameters': [t],
+                               'variadic': False, 'noreturn': False, 'prototype': True, 'abi': 'C'},
+                               'const': False, 'volatile': False, 'restrict': False}]
+        for wrap in wrappers:
+            for signed in (True, False):
+                a, b = self.pair()
+                for item in (a, b):
+                    typ = scalar('Char')
+                    typ['canonical']['signed'] = signed
+                    item['record_definitions'][0]['facts']['fields'][0]['type'] = wrap(typ)
+                self.assertEqual(self.codes(a, b), {'cursor_dataflow_unproved'})
+                typ_b = b['record_definitions'][0]['facts']['fields'][0]['type']
+                def chars(tree):
+                    if isinstance(tree, dict):
+                        if tree.get('kind') == 'Char':
+                            yield tree
+                        for child in tree.values():
+                            yield from chars(child)
+                    elif isinstance(tree, list):
+                        for child in tree:
+                            yield from chars(child)
+                next(chars(typ_b))['signed'] = not signed
+                self.assertIn('signature_mismatch', self.codes(a, b))
+                for value in (None, 'unknown', 1):
+                    bad = copy.deepcopy(a)
+                    char = next(chars(bad['record_definitions'][0]['facts']['fields'][0]['type']))
+                    if value is None:
+                        del char['signed']
+                    else:
+                        char['signed'] = value
+                    other = copy.deepcopy(bad)
+                    other['unit'] = 'b.c'
+                    self.assertIn('record_compatibility_unproved', self.codes(bad, other))
+
+    def test_actual_export_char_boundary_mutator_preserves_inputs(self):
+        import copy
+        from check_closed_variadic_inventory import check_char_boundaries
+        a, b = self.pair()
+        for item in (a, b):
+            typ = scalar('Char')
+            typ['canonical']['signed'] = True
+            item['record_definitions'][0]['facts']['fields'][0]['type'] = typ
+        originals = copy.deepcopy([a, b])
+        results = check_char_boundaries([a, b], ['a.c', 'b.c'])
+        self.assertEqual(set(results), {'missing', 'unknown', 'integer'})
+        self.assertEqual([a, b], originals)
+        for result in results.values():
+            self.assertIn('record_compatibility_unproved',
+                          {d['code'] for d in result['plan']['diagnostics']})
+
+    def test_explicit_char_builtin_kinds_remain_distinct(self):
+        a, b = self.pair()
+        for kind in ('SChar', 'UChar'):
+            for item in (a, b):
+                item['record_definitions'][0]['facts']['fields'][0]['type'] = scalar(kind)
+            self.assertEqual(self.codes(a, b), {'cursor_dataflow_unproved'})
+        a['record_definitions'][0]['facts']['fields'][0]['type'] = scalar('SChar')
+        self.assertIn('signature_mismatch', self.codes(a, b))
+
+    def test_long_double_is_unproved_through_callback_record_and_array(self):
+        for wrap in (lambda t: t,
+                     lambda t: {'canonical': {'array': t, 'length': 2}, 'const': False, 'volatile': False, 'restrict': False},
+                     lambda t: {'canonical': {'pointer': {'canonical': {'return': scalar('Int'), 'parameters': [t],
+                         'variadic': False, 'noreturn': False, 'prototype': True, 'abi': 'C'},
+                         'const': False, 'volatile': False, 'restrict': False}}, 'const': False, 'volatile': False, 'restrict': False}):
+            for unsupported in (scalar('LongDouble'), {'canonical': {'unproved': 'long double ABI shape'},
+                                                     'const': False, 'volatile': False, 'restrict': False}):
+                a, b = self.pair()
+                for item in (a, b):
+                    item['record_definitions'][0]['facts']['fields'][0]['type'] = wrap(unsupported)
+                self.assertIn('record_compatibility_unproved', self.codes(a, b))
+
+    def test_actual_export_boundary_mutator_rejects_identical_unknowns(self):
+        from check_closed_variadic_inventory import check_physical_boundaries
+        a, b = self.pair()
+        before = json.dumps([a, b], sort_keys=True)
+        results = check_physical_boundaries([a, b], ['a.c', 'b.c'])
+        self.assertEqual(set(results), {'unknown-path', 'zero-line', 'zero-column'})
+        self.assertEqual(json.dumps([a, b], sort_keys=True), before)
+        for result in results.values():
+            self.assertEqual(result['origin'], 'actual-export-derived payload mutation')
+            self.assertIn('record_compatibility_unproved', {d['code'] for d in result['plan']['diagnostics']})
+
+    def test_nested_array_qualifiers_must_match(self):
+        def array(t):
+            return {'canonical': {'array': t, 'length': 2}, 'const': False, 'volatile': False, 'restrict': False}
+        for qualifier in ('const', 'volatile', 'restrict'):
+            a, b = self.pair()
+            for item in (a, b):
+                item['record_definitions'][0]['facts']['fields'][0]['type'] = array(array(scalar('Int')))
+            b['record_definitions'][0]['facts']['fields'][0]['type']['canonical']['array']['canonical']['array'][qualifier] = True
+            self.assertIn('signature_mismatch', self.codes(a, b))
+
+    def test_schema_one_mixed_and_unknown_versions_are_rejected(self):
+        for schema, evidence in ((1, 2), (2, 1), (3, 3), (2, None)):
+            a, b = self.pair()
+            b['schema'], b['record_evidence_schema'] = schema, evidence
+            with self.assertRaisesRegex(PlanError, 'unsupported inventory contract'):
+                self.codes(a, b)
+
+    def test_nested_owner_is_part_of_identity(self):
+        a, b = self.pair()
+        b['record_definitions'][0]['identity']['scope'] = {'record': record_identity('owner')}
+        b['declarations'][0]['signature']['canonical']['parameters'][0]['canonical']['record']['scope'] = {'record': record_identity('owner')}
+        self.assertIn('signature_mismatch', self.codes(a, b))
+
+    def test_mutual_recursive_records_terminate(self):
+        a, b = self.pair()
+        for item in (a, b):
+            other = record_identity('other', line=20)
+            item['record_definitions'].append(record_definition(other))
+            item['record_definitions'][0]['facts']['fields'][0]['type']['canonical']['pointer'] = record_type(other)
+            item['record_definitions'][1]['facts']['fields'][0]['type']['canonical']['pointer'] = record_type(record_identity())
+        self.assertEqual(self.codes(a, b), {'cursor_dataflow_unproved'})
+
+    def test_nominal_kind_tag_and_physical_position_are_required(self):
+        for field, value in (('tag', 'other'), ('kind', 'union')):
+            a, b = self.pair()
+            b['record_definitions'][0]['identity'][field] = value
+            b['declarations'][0]['signature']['canonical']['parameters'][0]['canonical']['record'][field] = value
+            self.assertIn('signature_mismatch', self.codes(a, b))
+        for path, line in (('?', 10), ('/shared/header.h', 0)):
+            a, b = self.pair()
+            for item in (a, b):
+                for identity in (item['record_definitions'][0]['identity'], item['declarations'][0]['signature']['canonical']['parameters'][0]['canonical']['record']):
+                    identity['physical'].update(path=path, line=line)
+            self.assertIn('record_compatibility_unproved', self.codes(a, b))
+
+    def test_enum_values_and_underlying_type_are_compared(self):
+        for change in ('value', 'underlying'):
+            a, b = self.pair()
+            for item in (a, b):
+                item['record_definitions'][0]['identity']['kind'] = 'enum'
+                item['declarations'][0]['signature']['canonical']['parameters'][0]['canonical']['record']['kind'] = 'enum'
+                item['record_definitions'][0]['facts'] = {'underlying': scalar('UInt'),
+                    'variants': [{'name': 'value', 'signed': False, 'value': 1}]}
+            if change == 'value':
+                b['record_definitions'][0]['facts']['variants'][0]['value'] = 2
+            else:
+                b['record_definitions'][0]['facts']['underlying'] = scalar('Int')
+            self.assertIn('signature_mismatch', self.codes(a, b))
+
+    def test_incomplete_mix_and_missing_qualifiers_are_explicitly_unproved(self):
+        a, b = self.pair()
+        b['record_definitions'][0]['state'] = 'incomplete'
+        self.assertIn('record_compatibility_unproved', self.codes(a, b))
+        a, b = self.pair()
+        del b['record_definitions'][0]['facts']['fields'][0]['type']['volatile']
+        self.assertIn('record_compatibility_unproved', self.codes(a, b))
+
+    def test_depth_limit_and_typedef_sentinels_are_not_equal_proof(self):
+        for sentinel in ({'unsupported': 'recursive type'}, {'unproved': 'typedef cycle'}, {'kind': 'Attributed(None)'}):
+            a, b = self.pair()
+            for item in (a, b):
+                item['record_definitions'][0]['facts']['fields'][0]['type']['canonical'] = sentinel
+            self.assertIn('record_compatibility_unproved', self.codes(a, b))
 
 
 if __name__ == '__main__':

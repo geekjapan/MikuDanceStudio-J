@@ -21,8 +21,34 @@ The archive and its new oracle consumer must select the same observed policy.
 This is a new standalone consumer measurement. It does not assert equivalence to
 a CMake or final Rust FFI consumer.
 
-Three native allocation histories use actual aligned arena addresses in
-ascending, descending and alternating order. Every checkpoint captures preorder
+Three native allocation histories install both raw and aligned callbacks in
+ascending, descending and alternating order. The current non-debug, non-CellOS,
+non-`BT_HAS_ALIGNED_ALLOCATOR` profile uses the raw callback. A node's raw request
+is `sizeof(btDbvtNode) + sizeof(void*) + 15` (87 bytes in the required 64-bit,
+64-byte-node layout). The size-matched arena returns a backing slot, and Bullet
+adds its own header and alignment to produce the node at backing + 16. Other
+allocations of that size may also use slots. Raw fallback uses malloc/free;
+aligned fallback keeps its separate hidden-header pair. Slots have stride 128
+and are never reissued, including across history resets. Unknown macro or layout
+profiles fail without changing Bullet flags.
+
+Each actual mode invocation writes `allocator-<mode>.jsonl` through a separate
+oracle argument. The `profile` invocation stays compatible. A strict header
+records mode, installed hooks, arena geometry, sizeof values and macro states.
+Each checkpoint records its identity, cumulative raw/aligned allocation/free
+callback counters and size-matched arena callback events in actual order. Event
+ordinals count all callbacks on that route, including fallback allocations.
+The first checkpoint includes constructor events. The trailer includes final
+frees after all owned Bullet objects have been destroyed.
+
+Capture and Windows replay require these receipts before ordinary comparison or
+rank binding. The Python ledger reconstructs each mode's slot order, checks every
+live and cached-free node against a live allocation, rejects duplicate addresses
+across both trees, and requires cached-free to live reuse without an intervening
+free callback. Eligible allocations never observed as nodes are permitted but
+must be freed. Ordinary mode installs neither hook and requires zero callbacks,
+no events and node addresses outside the static arena. Missing receipts fail;
+a producer's `CONTROLLED_PASS` label alone supplies no allocator evidence. Every checkpoint captures preorder
 node kind, leaf owner, all volume bits, node address and cached-free address.
 Rust binds those observations through a test-only private-node adapter. It
 rejects missing nodes, wrong topology or volume bits, duplicate or zero ranks,

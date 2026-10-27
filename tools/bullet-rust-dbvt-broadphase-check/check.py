@@ -13,7 +13,7 @@ import sys
 import time
 
 from cases import corpus
-from trace import bind_inputs, differences, require, validate
+from trace import bind_inputs, differences, require, validate, validate_allocator
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -314,12 +314,15 @@ def main():
             status['native'] = 'ACTUAL_UNMODIFIED_ARCHIVE'
             status['native_binary_sha256'] = digest(native.read_bytes())
             for mode in MODES:
-                raw = run([native, mode], 'native-' + mode, inputs.encode())
+                raw = run([native, mode, out / ('allocator-' + mode + '.jsonl')], 'native-' + mode, inputs.encode())
                 validate(raw, inputs, True)
         controlled = {}
         for mode in MODES:
             raw = (capture / ('native-' + mode + '.stdout')).read_bytes()
             native_rows = validate(raw, inputs, True)
+            receipt_path = capture / ('allocator-' + mode + '.jsonl')
+            require(receipt_path.is_file(), 'required allocator receipt: ' + mode)
+            validate_allocator(receipt_path.read_bytes(), native_rows, mode)
             if mode == 'ordinary':
                 mismatch = differences(native_rows, plain)
                 status['ordinary_raw_order'] = 'EQUAL' if not mismatch else 'DIVERGED'

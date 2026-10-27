@@ -4,13 +4,14 @@ import copy
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 import check
 
 from check import CONTROLS, ROOT, classify, fixed_inputs, mutate, source_paths, witness
-from trace import bind_inputs, differences, validate
+from trace import bind_inputs, differences, validate, validate_allocator
 
 
 class Helpers(unittest.TestCase):
@@ -116,6 +117,181 @@ class Helpers(unittest.TestCase):
         changed[7] = [[1, 2, 0]]
         with self.assertRaises(ValueError):
             witness('order', [self.row], [changed])
+
+
+class AllocatorReceipts(unittest.TestCase):
+    def fixture(self, mode='ascending'):
+        base = 1 << 24
+        slots = {'ascending': [0, 1], 'descending': [65535, 65534], 'alternating': [0, 65535], 'ordinary': [0, 1]}[mode]
+        pointers = [base + slot * 128 for slot in slots]
+        controlled = mode != 'ordinary'
+        header = dict(schema=1, mode=mode, hooks=controlled, arena_base=base, slots=65536,
+                      stride=128, arena_alignment=64, pointer_bytes=8, node_bytes=64, node_alignment=16,
+                      bt_has_aligned_allocator=False, bt_debug_memory_allocations=False, cellos_lv2=False)
+        def event(op, ordinal, pointer):
+            value = dict(op=op, route='raw', ordinal=ordinal, pointer=pointer)
+            if op == 'alloc':
+                value.update(size=87, alignment=0)
+            return value
+        def record(index, events, counters):
+            return dict(kind='checkpoint', identity=[0, index, 'H' if index == 0 else 'p'],
+                        events=events if controlled else [], counters=counters if controlled else [0]*4)
+        records = [header,
+                   record(0, [event('alloc', 2, pointers[0]), event('alloc', 3, pointers[1])], [3, 0, 0, 0]),
+                   record(1, [], [3, 0, 0, 0]),
+                   record(2, [], [3, 0, 0, 0]),
+                   dict(kind='trailer', events=[event('free', 1, pointers[0]), event('free', 2, pointers[1])]
+                        if controlled else [], counters=[3, 3, 0, 0] if controlled else [0]*4)]
+        node = lambda p: [0, p + 16 if controlled else p + (1 << 28), *([0]*6)]
+        rows = [[0, i, 'H' if i == 0 else 'p', *([None]*9), [[[node(pointers[1])], pointers[0]+16 if controlled else pointers[0]+(1 << 28)], [[], None]]]
+                for i in range(3)]
+        rows[1][12][0] = [[node(pointers[0]), node(pointers[1])], None]
+        rows[2][12] = [[[], None], [[], None]]
+        return records, rows
+    def check(self, records, rows, mode='ascending'):
+        return validate_allocator(('\n'.join(json.dumps(r) for r in records)+'\n').encode(), rows, mode)
+    def test_actual_raw_callbacks_cached_reuse_and_final_frees(self):
+        for mode in ['ascending', 'descending', 'alternating', 'ordinary']:
+            with self.subTest(mode=mode):
+                records, rows = self.fixture(mode)
+                result = self.check(records, rows, mode)
+                self.assertEqual(result['allocations'], 0 if mode == 'ordinary' else 2)
+                self.assertEqual(result['cache_reuse'], True)
+    def test_receipt_and_checkpoint_schema_reject(self):
+        records, rows = self.fixture()
+        for raw in [b'', b'{}', b'NaN', b'{}\n'*5]:
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                validate_allocator(raw, rows, 'ascending')
+        changes = [lambda r: r.pop(), lambda r: r.append(r[-1]),
+                   lambda r: r.__setitem__(2, copy.deepcopy(r[1])),
+                   lambda r: r[1]['identity'].__setitem__(1, True),
+                   lambda r: r[1].update(extra=1), lambda r: r[0].update(extra=1),
+                   lambda r: r[0].update(mode='unknown'), lambda r: r[0].update(schema=True),
+                   lambda r: r[0].update(hooks=1), lambda r: r[0].update(bt_has_aligned_allocator=True),
+                   lambda r: r[0].update(bt_debug_memory_allocations=True), lambda r: r[0].update(cellos_lv2=True),
+                   lambda r: r[0].update(node_bytes=56), lambda r: r[0].update(pointer_bytes=4),
+                   lambda r: r[0].update(arena_base=(1 << 64)-64), lambda r: r[0].update(arena_base=(1 << 24)+16),
+                   lambda r: r[0].update(stride=64), lambda r: r[0].update(slots=65535),
+                   lambda r: r[1]['counters'].__setitem__(0, True),
+                   lambda r: r[1]['counters'].__setitem__(0, 1 << 64),
+                   lambda r: r[2]['counters'].__setitem__(0, 2),
+                   lambda r: r[2]['counters'].__setitem__(2, 1),
+                   lambda r: r[1]['events'][0].update(route='aligned'),
+                   lambda r: r[1]['events'][0].update(size=64),
+                   lambda r: r[1]['events'][0].update(alignment=16),
+                   lambda r: r[1]['events'][0].update(ordinal=0),
+                   lambda r: r[1]['events'][0].update(ordinal=4),
+                   lambda r: r[1]['events'][1].update(ordinal=2),
+                   lambda r: r[1]['events'][1].update(pointer=1 << 24),
+                   lambda r: r[1]['events'][0].update(pointer=(1 << 24)+128),
+                   lambda r: r[1]['events'][0].update(pointer=True),
+                   lambda r: r[-1]['events'][0].update(pointer=(1 << 24)+256),
+                   lambda r: r[-1]['events'][1].update(pointer=1 << 24),
+                   lambda r: r[-1]['events'].pop(),
+                   lambda r: r[-1]['counters'].__setitem__(1, 2)]
+        for index, change in enumerate(changes):
+            broken = copy.deepcopy(records)
+            change(broken)
+            with self.subTest(mutation=index), self.assertRaises(ValueError):
+                self.check(broken, rows)
+        encoded = ('\n'.join(json.dumps(r) for r in records)+'\n').replace('"schema": 1', '"schema": 1, "schema": 1')
+        with self.assertRaisesRegex(ValueError, 'duplicate receipt field'):
+            validate_allocator(encoded.encode(), rows, 'ascending')
+        with self.assertRaises(ValueError):
+            self.check(records, rows, 'unknown')
+    def test_live_and_cached_nodes_require_live_unique_exact_arena_allocations(self):
+        records, rows = self.fixture()
+        for field in ['live', 'cached']:
+            for pointer in [0, True, (1 << 64), (1 << 24)+17, (1 << 24)+256+16, (1 << 28)]:
+                broken = copy.deepcopy(rows)
+                if field == 'live':
+                    broken[0][12][0][0][0][1] = pointer
+                else:
+                    broken[0][12][0][1] = pointer
+                with self.subTest(field=field, pointer=pointer), self.assertRaises(ValueError):
+                    self.check(records, broken)
+        broken = copy.deepcopy(rows)
+        broken[0][12][1][1] = broken[0][12][0][1]
+        with self.assertRaisesRegex(ValueError, 'unique live and cached'):
+            self.check(records, broken)
+        broken = copy.deepcopy(rows)
+        broken[0][12][0][1] = broken[0][12][0][0][0][1]
+        with self.assertRaises(ValueError):
+            self.check(records, broken)
+        broken = copy.deepcopy(records)
+        broken[1]['events'] = []
+        with self.assertRaises(ValueError):
+            self.check(broken, rows)
+        broken = copy.deepcopy(records)
+        freed = broken[-1]['events'].pop(0)
+        broken[2]['events'] = [freed]
+        broken[2]['counters'][1] = 1
+        broken[3]['counters'][1] = 1
+        with self.assertRaises(ValueError):
+            self.check(broken, rows)
+        broken = copy.deepcopy(rows)
+        broken[1][12][0] = copy.deepcopy(broken[0][12][0])
+        with self.assertRaisesRegex(ValueError, 'genuine cached-free'):
+            self.check(records, broken)
+    def test_replay_requires_each_receipt_before_binding_or_ordinary_comparison(self):
+        inputs = 'H 0\np\np\n'
+        helper = Helpers()
+        helper.setUp()
+        plain = []
+        for i, op in enumerate(['H', 'p', 'p']):
+            row = copy.deepcopy(helper.row)
+            row[:3] = [0, i, op]
+            row[12] = None
+            plain.append(row)
+        rust_raw = ('\n'.join(json.dumps(r) for r in plain)+'\n').encode()
+        for missing in check.MODES:
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as folder:
+                capture, out = Path(folder)/'capture', Path(folder)/'out'
+                capture.mkdir()
+                check.save(capture/'report.json', dict(status='CONTROLLED_PASS', policy='mmd-win64-sse', host=dict(system='Windows')))
+                check.save(capture/'artifact-manifest.json', {})
+                check.save(capture/'source-canonical.json', {})
+                (capture/'inputs.txt').write_bytes(inputs.encode())
+                for mode in check.MODES:
+                    records, nodes = self.fixture(mode)
+                    native = copy.deepcopy(plain)
+                    for row, node_row in zip(native, nodes):
+                        row[12] = node_row[12]
+                    (capture/('native-'+mode+'.stdout')).write_text('\n'.join(json.dumps(r) for r in native)+'\n')
+                    if mode != missing:
+                        (capture/('allocator-'+mode+'.jsonl')).write_text('\n'.join(json.dumps(r) for r in records)+'\n')
+                def run(argv, **kwargs):
+                    return SimpleNamespace(returncode=0, stdout=rust_raw if 'rust-broadphase' in str(argv[0]) else b'', stderr=b'')
+                with patch.object(check.sys, 'argv', ['check.py', '--out-dir', str(out), '--policy', 'mmd-win64-sse', '--replay-dir', str(capture)]), \
+                        patch.object(check, 'snapshot', return_value={}), \
+                        patch.object(check, 'fixed_inputs', return_value=(inputs, {'checkpoints': 3})), \
+                        patch.object(check.subprocess, 'run', side_effect=run), \
+                        patch.object(check, 'bind_inputs', wraps=bind_inputs) as bind, \
+                        patch.object(check, 'differences', wraps=differences) as compare:
+                    with self.assertRaisesRegex(ValueError, 'required allocator receipt: '+missing):
+                        check.main()
+                    self.assertEqual(bind.call_count, check.MODES.index(missing))
+                    self.assertEqual(compare.call_count, check.MODES.index(missing))
+    def test_zero_callbacks_and_ordinary_hook_claims_reject(self):
+        records, rows = self.fixture()
+        for r in records[1:]:
+            r['events'] = []
+            r['counters'] = [0]*4
+        for row in rows:
+            row[12] = [[[], None], [[], None]]
+        with self.assertRaisesRegex(ValueError, 'nonzero raw'):
+            self.check(records, rows)
+        for change in [lambda r: r[0].update(hooks=True),
+                       lambda r: r[1]['counters'].__setitem__(0, 1),
+                       lambda r: r[1]['events'].append(dict(op='free', route='raw', ordinal=1, pointer=1))]:
+            records, rows = self.fixture('ordinary')
+            change(records)
+            with self.assertRaises(ValueError):
+                self.check(records, rows, 'ordinary')
+        records, rows = self.fixture('ordinary')
+        rows[0][12][0][1] = records[0]['arena_base']+16
+        with self.assertRaises(ValueError):
+            self.check(records, rows, 'ordinary')
 
 
 if __name__ == '__main__':

@@ -97,3 +97,123 @@ def bind_inputs(inputs, native_rows):
 def differences(native_rows, rust_rows):
     require(len(native_rows) == len(rust_rows), 'comparison count')
     return [i for i, (a, b) in enumerate(zip(native_rows, rust_rows)) if a[:12] != b[:12]]
+
+
+def validate_allocator(raw, rows, mode):
+    """Check actual callback receipts before any native rank is trusted."""
+    require(mode in ['ascending', 'descending', 'alternating', 'ordinary'], 'allocator mode')
+    require(type(raw) is bytes and raw, 'required allocator receipt')
+    def object_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, 'duplicate receipt field')
+            result[key] = value
+        return result
+    records = [json.loads(line, object_pairs_hook=object_fields,
+                          parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+               for line in raw.decode('utf-8').splitlines()]
+    require(len(records) == len(rows) + 2, 'allocator checkpoint count')
+    header = records[0]
+    fields = {'schema', 'mode', 'hooks', 'arena_base', 'slots', 'stride', 'arena_alignment',
+              'pointer_bytes', 'node_bytes', 'node_alignment', 'bt_has_aligned_allocator',
+              'bt_debug_memory_allocations', 'cellos_lv2'}
+    require(type(header) is dict and set(header) == fields, 'allocator header schema')
+    for key in fields - {'mode', 'hooks', 'bt_has_aligned_allocator', 'bt_debug_memory_allocations', 'cellos_lv2'}:
+        integer(header[key])
+    require(header['schema'] == 1 and header['mode'] == mode, 'allocator header identity')
+    controlled = mode != 'ordinary'
+    require(type(header['hooks']) is bool and header['hooks'] == controlled, 'actual allocator hooks')
+    for key in ['bt_has_aligned_allocator', 'bt_debug_memory_allocations', 'cellos_lv2']:
+        require(header[key] is False, 'unknown allocator macro profile')
+    require([header[k] for k in ['slots', 'stride', 'arena_alignment', 'pointer_bytes', 'node_bytes', 'node_alignment']]
+            == [65536, 128, 64, 8, 64, 16], 'unknown allocator layout')
+    base = header['arena_base']
+    end = base + 65536 * 128
+    require(base > 0 and base % 64 == 0 and end <= (1 << 64) - 1, 'arena pointer bounds/alignment')
+    previous = [0, 0, 0, 0]
+    live = set()
+    cursor = 0
+    cached = set()
+    reused = False
+    for index, record in enumerate(records[1:]):
+        trailer = index == len(rows)
+        expected = {'kind', 'counters', 'events'} | (set() if trailer else {'identity'})
+        require(type(record) is dict and set(record) == expected, 'allocator record schema')
+        require(record['kind'] == ('trailer' if trailer else 'checkpoint'), 'allocator record order')
+        if not trailer:
+            identity = record['identity']
+            require(type(identity) is list and len(identity) == 3, 'allocator checkpoint identity')
+            integer(identity[0], 0, (1 << 32) - 1)
+            integer(identity[1], 0, (1 << 32) - 1)
+            require(identity == rows[index][:3], 'allocator checkpoint identity/order')
+        counters = record['counters']
+        vector(counters, 4, 0, (1 << 64) - 1)
+        require(all(a <= b for a, b in zip(previous, counters)), 'allocator counter monotonicity')
+        require(counters[1] <= counters[0] and counters[3] <= counters[2], 'allocator free counter bounds')
+        require(counters[2:] == [0, 0], 'current profile must use raw callbacks')
+        require(type(record['events']) is list, 'allocator events array')
+        if not controlled:
+            require(counters == [0, 0, 0, 0] and record['events'] == [], 'ordinary callbacks disabled')
+        ordinals = previous.copy()
+        freed = set()
+        for event in record['events']:
+            require(type(event) is dict and event.get('op') in ['alloc', 'free'], 'allocator event operation')
+            alloc = event['op'] == 'alloc'
+            require(set(event) == {'op', 'route', 'ordinal', 'pointer'} | ({'size', 'alignment'} if alloc else set()),
+                    'allocator event schema')
+            require(event['route'] == 'raw', 'actual callback route')
+            counter = 0 if alloc else 1
+            integer(event['ordinal'], 1)
+            require(ordinals[counter] < event['ordinal'] <= counters[counter], 'allocator callback ordinal/delta')
+            ordinals[counter] = event['ordinal']
+            pointer = event['pointer']
+            integer(pointer, 1)
+            if alloc:
+                integer(event['size'])
+                integer(event['alignment'])
+                require(event['size'] == header['node_bytes'] + header['pointer_bytes'] + 15
+                        and event['alignment'] == 0, 'raw node backing request')
+                require(cursor < 65536, 'arena slot exhaustion')
+                slot = cursor
+                if mode == 'descending':
+                    slot = 65535 - cursor
+                elif mode == 'alternating':
+                    slot = 65535 - cursor // 2 if cursor % 2 else cursor // 2
+                require(pointer == base + slot * 128, 'actual allocation slot order')
+                require(pointer not in live, 'reissued live arena slot')
+                live.add(pointer)
+                cursor += 1
+            else:
+                require(pointer in live, 'unknown or double arena free')
+                live.remove(pointer)
+                freed.add(pointer + 16)
+        if not trailer:
+            active = set()
+            next_cached = set()
+            seen = set()
+            for nodes, free in rows[index][12]:
+                pointers = [node[1] for node in nodes]
+                active.update(pointers)
+                if free is not None:
+                    pointers.append(free)
+                    next_cached.add(free)
+                for pointer in pointers:
+                    integer(pointer, 1)
+                    require(pointer not in seen, 'unique live and cached addresses across trees')
+                    seen.add(pointer)
+                    if controlled:
+                        backing = pointer - 16
+                        require(backing in live and base <= backing < end and (backing-base) % 128 == 0
+                                and pointer % 16 == 0 and pointer + header['node_bytes'] <= backing + 128,
+                                'live/cached node must belong to current arena allocation')
+                    else:
+                        require(not base <= pointer < end, 'ordinary nodes outside arena')
+            reused |= bool((cached - freed) & active)
+            cached = next_cached
+        previous = counters
+    require(not live, 'final arena frees complete')
+    require(previous[0] == previous[1] and previous[2] == previous[3], 'final callback balance')
+    if controlled:
+        require(previous[0] > 0 and cursor > 0, 'actual nonzero raw allocation callbacks')
+        require(reused, 'genuine cached-free to live reuse without callback free')
+    return {'allocations': cursor, 'cache_reuse': reused, 'checkpoints': len(rows)}

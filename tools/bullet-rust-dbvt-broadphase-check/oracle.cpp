@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -16,17 +17,56 @@
 #include <vector>
 
 static const size_t SLOTS = 65536;
-alignas(64) static unsigned char arena[SLOTS * 128];
-static_assert(sizeof(btDbvtNode) <= 128, "controlled native allocation slot width");
+static const size_t STRIDE = 128;
+static const size_t RAW_NODE_BYTES = sizeof(btDbvtNode) + sizeof(void*) + 15;
+alignas(64) static unsigned char arena[SLOTS * STRIDE];
+static_assert(sizeof(btDbvtNode) + 16 <= STRIDE && RAW_NODE_BYTES <= STRIDE, "controlled node and header fit slot");
 static unsigned allocation_index;
 static std::string allocation_mode;
+static uint64_t raw_allocs, raw_frees, aligned_allocs, aligned_frees;
+struct AllocationEvent {
+    bool alloc;
+    bool aligned;
+    uint64_t ordinal;
+    uintptr_t pointer;
+    size_t size;
+    int alignment;
+};
+static std::vector<AllocationEvent> events;
+static bool in_arena(void* pointer) {
+    uintptr_t p = reinterpret_cast<uintptr_t>(pointer), start = reinterpret_cast<uintptr_t>(arena);
+    return p >= start && p < start + sizeof(arena);
+}
+static void* arena_allocate() {
+    if (allocation_index >= SLOTS) std::abort();
+    size_t i = allocation_index++;
+    if (allocation_mode == "descending") i = SLOTS - 1 - i;
+    if (allocation_mode == "alternating") i = i % 2 ? SLOTS - 1 - i/2 : i/2;
+    return arena + i * STRIDE;
+}
+static void* allocate_raw(size_t size) {
+    ++raw_allocs;
+    if (size == RAW_NODE_BYTES) {
+        void* p = arena_allocate();
+        events.push_back({true, false, raw_allocs, reinterpret_cast<uintptr_t>(p), size, 0});
+        return p;
+    }
+    void* p = std::malloc(size);
+    if (!p) std::abort();
+    return p;
+}
+static void deallocate_raw(void* pointer) {
+    ++raw_frees;
+    if (in_arena(pointer)) {
+        events.push_back({false, false, raw_frees, reinterpret_cast<uintptr_t>(pointer), 0, 0});
+    } else std::free(pointer);
+}
 static void* allocate(size_t size, int alignment) {
-    if (size == sizeof(btDbvtNode) && alignment <= 64) {
-        if (allocation_index >= SLOTS) std::abort();
-        size_t i = allocation_index++;
-        if (allocation_mode == "descending") i = SLOTS - 1 - i;
-        if (allocation_mode == "alternating") i = i % 2 ? SLOTS - 1 - i/2 : i/2;
-        return arena + i * 128;
+    ++aligned_allocs;
+    if (size == sizeof(btDbvtNode) && alignment == 16) {
+        void* p = arena_allocate();
+        events.push_back({true, true, aligned_allocs, reinterpret_cast<uintptr_t>(p), size, alignment});
+        return p;
     }
     void* raw = std::malloc(size + alignment + sizeof(void*));
     if (!raw) std::abort();
@@ -35,10 +75,25 @@ static void* allocate(size_t size, int alignment) {
     return reinterpret_cast<void*>(aligned);
 }
 static void deallocate(void* pointer) {
-    if (!pointer) return;
-    uintptr_t p = reinterpret_cast<uintptr_t>(pointer), start = reinterpret_cast<uintptr_t>(arena);
-    if (p >= start && p < start + sizeof(arena)) return;
-    std::free(reinterpret_cast<void**>(pointer)[-1]);
+    ++aligned_frees;
+    if (in_arena(pointer)) {
+        events.push_back({false, true, aligned_frees, reinterpret_cast<uintptr_t>(pointer), 0, 0});
+    } else if (pointer) std::free(reinterpret_cast<void**>(pointer)[-1]);
+}
+static void receipt(std::ostream& out, const std::string& identity) {
+    out << "{\"kind\":" << identity << ",\"counters\":[" << raw_allocs << ',' << raw_frees << ','
+        << aligned_allocs << ',' << aligned_frees << "],\"events\":[";
+    for (size_t i=0;i<events.size();++i) {
+        const auto& e = events[i];
+        if (i) out << ',';
+        out << "{\"op\":\"" << (e.alloc?"alloc":"free") << "\",\"route\":\"" << (e.aligned?"aligned":"raw")
+            << "\",\"ordinal\":" << e.ordinal << ",\"pointer\":" << e.pointer;
+        if(e.alloc) out << ",\"size\":" << e.size << ",\"alignment\":" << e.alignment;
+        out << '}';
+    }
+    out << "]}\n";
+    out.flush();
+    events.clear();
 }
 static uint32_t bits(btScalar value) {
     static_assert(sizeof(value) == sizeof(uint32_t), "single precision required");
@@ -84,9 +139,10 @@ static void ranks(const btDbvtNode* n, bool& first) {
     if (n->isinternal()) { ranks(n->childs[0],first); ranks(n->childs[1],first); }
 }
 int main(int argc, char** argv) {
-    if (argc != 2) return 2;
+    if (argc < 2) return 2;
     allocation_mode = argv[1];
     if (allocation_mode == "profile") {
+        if (argc != 2) return 2;
         std::cout << "{\"pointer_bits\":" << sizeof(void*)*8 << ",\"prevent_false_update\":" << DBVT_BP_PREVENTFALSEUPDATE
             << ",\"accurate_sleeping\":" << DBVT_BP_ACCURATESLEEPING << ",\"margin_bits\":" << bits(DBVT_BP_MARGIN);
 #ifdef BT_USE_SSE
@@ -103,7 +159,40 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (allocation_mode != "ordinary" && allocation_mode != "ascending" && allocation_mode != "descending" && allocation_mode != "alternating") return 2;
-    if (allocation_mode != "ordinary") btAlignedAllocSetCustomAligned(allocate,deallocate);
+    if (argc != 3) return 2;
+    std::ofstream allocator_receipt(argv[2]);
+    if (!allocator_receipt) return 2;
+    allocator_receipt << "{\"schema\":1,\"mode\":\"" << allocation_mode << "\",\"hooks\":"
+        << (allocation_mode == "ordinary" ? "false" : "true") << ",\"arena_base\":" << reinterpret_cast<uintptr_t>(arena)
+        << ",\"slots\":" << SLOTS << ",\"stride\":" << STRIDE << ",\"arena_alignment\":64,\"pointer_bytes\":" << sizeof(void*)
+        << ",\"node_bytes\":" << sizeof(btDbvtNode) << ",\"node_alignment\":16,\"bt_has_aligned_allocator\":"
+#ifdef BT_HAS_ALIGNED_ALLOCATOR
+        << "true"
+#else
+        << "false"
+#endif
+        << ",\"bt_debug_memory_allocations\":"
+#ifdef BT_DEBUG_MEMORY_ALLOCATIONS
+        << "true"
+#else
+        << "false"
+#endif
+        << ",\"cellos_lv2\":"
+#ifdef __CELLOS_LV2__
+        << "true"
+#else
+        << "false"
+#endif
+        << "}\n";
+    if (sizeof(void*) != 8 || sizeof(btDbvtNode) != 64) return 5;
+#if defined(BT_HAS_ALIGNED_ALLOCATOR) || defined(BT_DEBUG_MEMORY_ALLOCATIONS) || defined(__CELLOS_LV2__)
+    return 5;
+#endif
+    if (allocation_mode != "ordinary") {
+        btAlignedAllocSetCustomAligned(allocate,deallocate);
+        btAlignedAllocSetCustom(allocate_raw,deallocate_raw);
+    }
+    {
     btDefaultCollisionConfiguration config;
     auto dispatcher = std::unique_ptr<Dispatcher>(new Dispatcher(&config));
     auto bp = std::unique_ptr<btDbvtBroadphase>(new btDbvtBroadphase());
@@ -190,7 +279,12 @@ int main(int argc, char** argv) {
             std::cout << ']';
         }
         std::cout << "]]\n";
+        receipt(allocator_receipt, "\"checkpoint\",\"identity\":[" + std::to_string(history) + ','
+            + std::to_string(checkpoint-1) + ",\"" + op + "\"]");
     }
     for(auto* p:proxies) if(p) return 3;
     if(!dispatcher->generations.empty() || dispatcher->getNumManifolds()) return 3;
+    }
+    receipt(allocator_receipt, "\"trailer\"");
+    if (!allocator_receipt) return 6;
 }

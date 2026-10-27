@@ -320,6 +320,37 @@ class Checks(unittest.TestCase):
             for directory in (a,b): png(directory/'accessory-0-diff.png',[(254,254,254,255)]*2)
             self.reject(r.image_analysis,a,b,gold,c,logs,cap,rows,replay)
 
+    def test_fixed_maxima_discrepancies_keep_the_selected_points(self):
+        original_points = r.POINTS
+        try:
+            r.POINTS = {name:[(0,0),(1,0),(0,1)] for name in ('selfshadow_30','skin_0','skin_30')}
+            r.POINTS['selfshadow_30'].append((1,1))
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                for test,error in [('selfshadow_30',56),('skin_0',78),('skin_30',112)]:
+                    name = test.replace('_','-')
+                    a,b,gold,cap,replay = [root/test/key for key in ('a','b','gold','cap','replay')]
+                    for path in (a,b,gold,cap,replay): path.mkdir(parents=True)
+                    rendered = [(0,0,0,255)]*4
+                    for path in (a,b): png(path/(name+'.png'),rendered,2,2)
+                    (replay/(name+'.rgba')).write_bytes(bytes(v for p in rendered for v in p))
+                    call = cap/(test+'-0')
+                    call.mkdir()
+                    for index in range(8): (call/f'sample-{index}.rgba').write_bytes(bytes(v for p in rendered for v in p))
+                    errors = [error,error,error,0]
+                    for changed in (False,True):
+                        if changed: errors[0 if test == 'selfshadow_30' else 2] -= 1
+                        png(gold/(name+'.png'),[(value,0,0,255) for value in errors],2,2)
+                        diffs = [(255-min(255,4*value),)*3+(255,) for value in errors]
+                        for path in (a,b): png(path/(name+'-diff.png'),diffs,2,2)
+                        log = f'{name}: 4 px (0 masked), within 4 0.25000, max {error}, mean {sum(errors)/4:.4f}'
+                        rows = r.image_analysis(a,b,gold,{'dimensions':(2,2),'gates':{test:name}},[log]*2,cap,{test+'-0':{'points':[]}},replay)
+                        self.assertEqual(rows[0]['maxima']['discrepancy'],changed)
+                        maxima = rows[0]['maxima']
+                        self.assertEqual(maxima.get('documented_points',maxima.get('documented_point')),[(0,0),(1,0),(0,1)] if test == 'selfshadow_30' else [0,1])
+        finally:
+            r.POINTS = original_points
+
     def test_git_object_proof(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -295,6 +295,8 @@ def main():
             else:
                 link = [compiler, oracle_obj, library, '-Wl,-Map,' + str(link_map), '-o', native]
             link_output = run(link, 'oracle-link')
+            raw = run([native, MODES[0], out / ('allocator-' + MODES[0] + '.jsonl')], 'native-' + MODES[0], inputs.encode())
+            validate(raw, inputs, True)
             actual_map = link_map.read_bytes()
             selected_members = {}
             link_lines = (actual_map + link_output).decode(errors='replace').splitlines()
@@ -313,7 +315,7 @@ def main():
             save(out / 'actual-macros.json', actual_profile)
             status['native'] = 'ACTUAL_UNMODIFIED_ARCHIVE'
             status['native_binary_sha256'] = digest(native.read_bytes())
-            for mode in MODES:
+            for mode in MODES[1:]:
                 raw = run([native, mode, out / ('allocator-' + mode + '.jsonl')], 'native-' + mode, inputs.encode())
                 validate(raw, inputs, True)
         controlled = {}

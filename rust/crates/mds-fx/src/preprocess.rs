@@ -112,49 +112,7 @@ pub fn decode(bytes: &[u8]) -> Cow<'_, str> {
     }
 }
 
-/// Resolves `rel` below `base`. Parts match without case, `\` counts as `/`. An exact-case
-/// entry wins over a case-folded one, so the result does not depend on the file system.
-pub fn resolve_ci(base: &Path, rel: &str) -> Option<PathBuf> {
-    let mut cur = if base.as_os_str().is_empty() {
-        PathBuf::from(".")
-    } else {
-        base.to_path_buf()
-    };
-    for part in rel.replace('\\', "/").split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                // step out of a real directory name, so paths read `Shader/x` and not `Shadow/../Shader/x`
-                if matches!(
-                    cur.components().next_back(),
-                    Some(std::path::Component::Normal(_))
-                ) {
-                    cur.pop();
-                } else {
-                    cur.push("..");
-                }
-            }
-            p => {
-                let want = p.to_lowercase();
-                let mut folded: Option<std::ffi::OsString> = None;
-                let mut exact = None;
-                for e in fs::read_dir(&cur).ok()? {
-                    let name = e.ok()?.file_name();
-                    let s = name.to_string_lossy();
-                    if s == p {
-                        exact = Some(name.clone());
-                        break;
-                    }
-                    if s.to_lowercase() == want && folded.as_ref().is_none_or(|f| name < *f) {
-                        folded = Some(name.clone());
-                    }
-                }
-                cur.push(exact.or(folded)?);
-            }
-        }
-    }
-    cur.is_file().then_some(cur)
-}
+pub use mds_formats::path::resolve_ci;
 
 /// Preprocesses the file at `path`.
 pub fn preprocess_file(path: &Path, opts: &Options) -> Result<Preprocessed, FxError> {
@@ -1324,6 +1282,18 @@ mod tests {
         t.write("a.fx", b"#include \"b.fxsub\"\n");
         t.write("b.fxsub", b"#include \"a.fx\"\n");
         assert!(pp(&t, "a.fx").unwrap_err().message.contains("too deeply"));
+    }
+
+    #[test]
+    fn shift_jis_include_decodes_before_windows_separators() {
+        let t = TempTree::new();
+        t.write("main.fx", b"#include \"sub\\\x95\x5c.FXSUB\"\n");
+        t.write("Sub/表.fxsub", b"float x;\n");
+        let r = pp(&t, "main.fx").unwrap();
+        assert_eq!(r.text.trim(), "float x;");
+        assert_eq!(r.includes[0].name, "sub\\表.FXSUB");
+        assert_eq!(r.includes[0].resolved, t.path("Sub/表.fxsub"));
+        assert_eq!(r.includes[0].via, Via::TopLevelDir);
     }
 
     #[test]

@@ -185,12 +185,31 @@ class HelperTests(unittest.TestCase):
                 f'{i}\t{input}\t{rust}\n' for i in range(2326)))
 
     def test_complete_stream_replay_and_transport(self):
+        for newline in (b'\n', b'\r\n'):
+            with self.subTest(newline=newline), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.replay_fixture(root)
+                for path in root.glob('*.tsv'):
+                    path.write_bytes(path.read_text().encode().replace(b'\n', newline))
+                    self.assertEqual(path.read_bytes().count(newline), 2326)
+                    path.write_bytes(path.read_text().encode().replace(b'\n', b'\r\n'))
+                    raw = path.read_bytes()
+                    self.assertEqual(raw.count(b'\r\n'), 2326)
+                    self.assertNotIn(b'\r\r\n', raw)
+                retained = {path: path.read_bytes() for path in root.glob('*.tsv')}
+                check.compare_streams(root)
+                self.assertEqual({path: path.read_bytes() for path in retained}, retained)
+
+    def test_doubled_carriage_return_transport_rejects_full_corpus(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.replay_fixture(root)
             for path in root.glob('*.tsv'):
-                path.write_bytes(path.read_bytes().replace(b'\n', b'\r\n'))
-            check.compare_streams(root)
+                crlf = path.read_text().encode().replace(b'\n', b'\r\n')
+                path.write_bytes(crlf.replace(b'\n', b'\r\n'))
+                self.assertEqual(path.read_bytes().count(b'\r\r\n'), 2326)
+            with self.assertRaisesRegex(AssertionError, '^operation corpus changed$'):
+                check.compare_streams(root)
 
     def test_stream_length_and_identity_reject_missing_extra_duplicate_and_reorder(self):
         with tempfile.TemporaryDirectory() as directory:

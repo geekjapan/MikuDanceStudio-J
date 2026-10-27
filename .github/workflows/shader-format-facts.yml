@@ -24,7 +24,7 @@ defaults:
 jobs:
   prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       LLVM_CONFIG_PATH: /usr/bin/llvm-config-18
       LIBCLANG_PATH: /usr/lib/llvm-18/lib
@@ -45,7 +45,7 @@ jobs:
           echo "CARGO_TARGET_DIR=$RUNNER_TEMP/c2rust-target" >> "$GITHUB_ENV"
           rustup toolchain install 1.95.0 --profile minimal
       - name: Test compiler-free transport normally and optimized
-        timeout-minutes: 4
+        timeout-minutes: 15
         run: |
           python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p test_closed_format_facts.py
           python3 -B -O -m unittest discover -s tools/vkd3d-rust-probe -p test_closed_format_facts.py

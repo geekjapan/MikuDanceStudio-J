@@ -1,6 +1,76 @@
 param([string]$Receipts)
 $ErrorActionPreference = 'Stop'
 
+function Get-Vc90MsiDestinationObservation {
+    param([string]$Destination)
+    $assembly = 'amd64_microsoft.vc90.openmp_1fc8b3b9a1e18e3b_9.0.30729.6161_none_390d35aa0a1f21f9'
+    $policy = 'amd64_policy.9.0.microsoft.vc90.openmp_1fc8b3b9a1e18e3b_9.0.30729.6161_none_c6e675e4a2af6563'
+    # Fixed destinations from the retained MSI SetTargetFolder/AssemblyCopy operations, never log-supplied paths.
+    $paths = @($assembly, $policy,
+        "$assembly/amd64_Microsoft.VC90.OpenMP_1fc8b3b9a1e18e3b_9.0.30729.6161_x-ww_7fe65c7f.manifest",
+        "$policy/9.0.30729.6161.policy", "$assembly/vcomp90.dll")
+    $observation = [ordered]@{ schema = 1; status = 'OBSERVATION_ONLY'; activation = 'NOT_EVALUATED'
+        version = '9.0.30729.6161'; windir = $env:WINDIR; pshome = $PSHOME
+        process_path = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+        is_64bit_os = [Environment]::Is64BitOperatingSystem; is_64bit_process = [Environment]::Is64BitProcess
+        installer_log = $null; entries = @() }
+    function Read-Vc90LiteralItem([string]$Path) {
+        # Inspect each ancestor before following it, including WINDIR and WinSxS themselves.
+        $parents = @()
+        $parent = [IO.Path]::GetDirectoryName($Path)
+        while ($parent) {
+            $parents = @($parent) + $parents
+            $parent = [IO.Path]::GetDirectoryName($parent)
+        }
+        foreach ($candidate in $parents + @($Path)) {
+            $item = Get-Item -LiteralPath $candidate -Force -ErrorAction Stop
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "Refused reparse point: $candidate"
+            }
+        }
+        return $item
+    }
+    foreach ($relative in $paths) {
+        $record = [ordered]@{ relative_path = $relative; path = $null; status = 'UNKNOWN'; exists = $null
+            metadata = $null; sha256 = $null; copy = $null; error = $null }
+        try {
+            $record.path = Join-Path (Join-Path $env:WINDIR 'WinSxS') $relative
+            $item = Read-Vc90LiteralItem $record.path
+            $record.exists = $true
+            $record.metadata = [ordered]@{ path = $item.FullName; attributes = [string]$item.Attributes
+                attributes_value = [int]$item.Attributes; directory = $item.PSIsContainer
+                size = $(if ($item.PSIsContainer) { $null } else { $item.Length })
+                last_write_utc = $item.LastWriteTimeUtc.ToString('o') }
+            if ($item.PSIsContainer -ne ($relative -in @($assembly, $policy))) { throw 'Unexpected MSI destination item type' }
+            if (-not $item.PSIsContainer) {
+                $record.sha256 = (Get-FileHash -LiteralPath $record.path -Algorithm SHA256 -ErrorAction Stop).Hash
+                if ([IO.Path]::GetExtension($relative) -in @('.manifest', '.policy')) {
+                    $record.copy = Join-Path $Destination ('msi-destination-' + $observation.entries.Count + '.xml')
+                    Copy-Item -LiteralPath $record.path -Destination $record.copy -ErrorAction Stop
+                    if ((Get-FileHash -LiteralPath $record.copy -Algorithm SHA256 -ErrorAction Stop).Hash -cne $record.sha256) {
+                        throw 'MSI destination changed during copy'
+                    }
+                }
+            }
+            $record.status = 'PRESENT'
+        } catch [System.Management.Automation.ItemNotFoundException] {
+            $record.exists = $false; $record.status = 'MISSING'; $record.error = [string]$_
+        } catch { $record.error = [string]$_ }
+        $observation.entries += $record
+    }
+    $log = [ordered]@{ source = (Join-Path $Destination 'installer.log'); sha256 = $null; size = $null
+        status = 'UNKNOWN'; error = $null }
+    try {
+        $item = Read-Vc90LiteralItem $log.source
+        if ($item.PSIsContainer) { throw 'Installer log must be a file' }
+        $log.size = $item.Length
+        $log.sha256 = (Get-FileHash -LiteralPath $log.source -Algorithm SHA256 -ErrorAction Stop).Hash
+        $log.status = 'PRESENT'
+    } catch { $log.error = [string]$_ }
+    $observation.installer_log = $log
+    $observation | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $Destination 'msi-destinations.json') -Encoding utf8
+}
+
 function Get-Vc90PolicyEvidence {
     param([string]$Destination)
     function Read-Vc90Version([string]$Value) {
@@ -255,8 +325,10 @@ function Install-CaptureVc90 {
             default { 'FAILED' }
         }
         if ($process.ExitCode -ne 0) {
+            try { Get-Vc90MsiDestinationObservation -Destination $Destination } catch { $receipt.observation_error = [string]$_ }
             try { Get-Vc90PolicyEvidence -Destination $Destination } catch { $receipt.policy_error = [string]$_ }
             throw "VC2008 SP1 installer exit $($process.ExitCode): $($receipt.installer_result)" }
+        try { Get-Vc90MsiDestinationObservation -Destination $Destination } catch { $receipt.observation_error = [string]$_ }
         Get-Vc90PolicyEvidence -Destination $Destination
         $receipt.status = 'PROVISIONED; activation not evaluated'
     } catch {
@@ -273,6 +345,7 @@ function Install-CaptureVc90 {
             } catch { $receipt.cleanup_error = [string]$_ } finally { $process.Dispose() }
         }
         if ($receipt.timed_out) {
+            try { Get-Vc90MsiDestinationObservation -Destination $Destination } catch { $receipt.observation_error = [string]$_ }
             try { Get-Vc90PolicyEvidence -Destination $Destination } catch { $receipt.policy_error = [string]$_ }
         }
         $receipt.finished_utc = [DateTime]::UtcNow.ToString('o')

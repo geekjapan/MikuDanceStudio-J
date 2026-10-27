@@ -36,7 +36,8 @@ function Invoke-WebRequest {
     [IO.File]::WriteAllBytes($OutFile, [byte[]]::new($(if ($env:TEST_CASE -eq 'size') { 1 } else { 5211080 })))
 }
 function Get-FileHash {
-    param($Path, $Algorithm)
+    param($Path, $LiteralPath, $Algorithm, $ErrorAction)
+    if ($LiteralPath) { return Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $LiteralPath -Algorithm $Algorithm }
     @{ Hash = $(if ($env:TEST_CASE -eq 'hash') { 'BAD' } else { 'C5E273A4A16AB4D5471E91C7477719A2F45DDADB76C7F98A38FA5074A6838654' }) }
 }
 function Get-AuthenticodeSignature {
@@ -78,7 +79,7 @@ class ProvisionBoundary(unittest.TestCase):
                     "print('installer stderr', file=__import__('sys').stderr, flush=True)\n"
                     "if os.environ['TEST_CASE'] == 'timeout': time.sleep(60)\n"
                     "raise SystemExit(7 if os.environ['TEST_CASE'] == 'nonzero' else 0)\n")
-                env = dict(os.environ, TEST_CASE=case, TEST_ROOT=tmp,
+                env = dict(os.environ, WINDIR=str(root / "Windows"), TEST_CASE=case, TEST_ROOT=tmp,
                            TEST_HELPER=str(HERE / "provision_capture_vc90.ps1"),
                            TEST_RECEIPTS=str(root / "receipts"), TEST_PYTHON=sys.executable,
                            TEST_CHILD=str(root / "child.py"), TEST_MARKER=str(root / "started"),
@@ -100,6 +101,13 @@ class ProvisionBoundary(unittest.TestCase):
                     self.assertIn("installer stderr", (root / "receipts/stderr.txt").read_text())
                     command = json.loads((root / "command.json").read_text(encoding="utf-8-sig"))
                     self.assertEqual(command[1:4], ["/qn", "/norestart", "/l"])
+                if executed:
+                    observation = json.loads((root / "receipts/msi-destinations.json").read_text(encoding="utf-8-sig"))
+                    self.assertEqual(observation["status"], "OBSERVATION_ONLY")
+                    self.assertEqual(len(observation["entries"]), 5)
+                    self.assertTrue(all(e["status"] != "PRESENT" for e in observation["entries"]))
+                if case == "policy":
+                    self.assertIn("unproven", receipt["error"])
                 if case == "nonzero":
                     self.assertEqual(receipt["returncode"], 7, receipt)
                 if case == "timeout":
@@ -109,6 +117,104 @@ class ProvisionBoundary(unittest.TestCase):
                                            capture_output=True, timeout=10)
                     self.assertEqual(probe.returncode, 0, "owned child was not reaped")
 
+
+
+    def test_msi_destination_observation(self):
+        self.assertIsNotNone(PWSH, "PowerShell is required")
+        assembly = "amd64_microsoft.vc90.openmp_1fc8b3b9a1e18e3b_9.0.30729.6161_none_390d35aa0a1f21f9"
+        policy = "amd64_policy.9.0.microsoft.vc90.openmp_1fc8b3b9a1e18e3b_9.0.30729.6161_none_c6e675e4a2af6563"
+        manifest = "amd64_Microsoft.VC90.OpenMP_1fc8b3b9a1e18e3b_9.0.30729.6161_x-ww_7fe65c7f.manifest"
+        expected = [assembly, policy, f"{assembly}/{manifest}", f"{policy}/9.0.30729.6161.policy", f"{assembly}/vcomp90.dll"]
+        cases = ["present", "missing", "error", "wrong_type", "unknown_log_path", "policy_throw", "reparse"]
+        if os.name != "nt":
+            cases += ["ancestor_reparse"]
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                windows = root / "Windows"
+                sxs = windows / "WinSxS"
+                for directory in (assembly, policy):
+                    (sxs / directory).mkdir(parents=True)
+                raw = b'\xef\xbb\xbf<assembly>\r\n  deliberately unparsed XML\r\n</assembly>\r\n'
+                for relative in expected[2:]:
+                    (sxs / relative).write_bytes(raw if relative.endswith((".manifest", ".policy")) else b"DLL stand-in\x00")
+                receipts = root / "receipts"
+                receipts.mkdir()
+                outside = root / "not-allowed.xml"
+                outside.write_bytes(b"must never be copied or hashed")
+                log = receipts / "installer.log"
+                log.write_bytes((f"SetTargetFolder(Folder={outside.parent})\nAssemblyCopy(DestName={outside.name})\n"
+                                 if case == "unknown_log_path" else "retained installer stand-in\r\n").encode())
+                if case == "missing":
+                    (sxs / expected[2]).unlink()
+                if case == "wrong_type":
+                    (sxs / expected[2]).unlink()
+                    (sxs / expected[2]).mkdir()
+                if case == "reparse":
+                    (sxs / expected[2]).unlink()
+                    try:
+                        (sxs / expected[2]).symlink_to(outside)
+                    except OSError as error:
+                        self.skipTest(f"SKIP: symlink creation unavailable: {error}")
+                if case == "ancestor_reparse":
+                    moved = root / "actual-winsxs"
+                    sxs.rename(moved)
+                    sxs.symlink_to(moved, target_is_directory=True)
+                script = root / "observation.ps1"
+                script.write_text(r"""
+. $env:TEST_HELPER
+function Get-Item {
+    param($LiteralPath, [switch]$Force, $ErrorAction)
+    if (-not $Force -or $ErrorAction -ne 'Stop') { throw 'Literal forced read required' }
+    if ($LiteralPath -eq $env:TEST_OUTSIDE) { throw 'Unknown MSI path was accessed' }
+    if ($env:TEST_CASE -eq 'error' -and $LiteralPath.EndsWith('.manifest')) { throw 'Injected access failure' }
+    Microsoft.PowerShell.Management\Get-Item -LiteralPath $LiteralPath -Force -ErrorAction Stop
+}
+Get-Vc90MsiDestinationObservation -Destination $env:TEST_RECEIPTS
+if ($env:TEST_CASE -eq 'policy_throw') { Get-Vc90PolicyEvidence -Destination $env:TEST_RECEIPTS }
+""")
+                run = subprocess.run([PWSH, "-NoProfile", "-File", str(script)],
+                                     env=dict(os.environ, WINDIR=str(windows), TEST_HELPER=str(HERE / "provision_capture_vc90.ps1"),
+                                              TEST_RECEIPTS=str(receipts), TEST_CASE=case, TEST_OUTSIDE=str(outside)),
+                                     capture_output=True, text=True, timeout=15)
+                self.assertEqual(run.returncode, 1 if case == "policy_throw" else 0, run.stdout + run.stderr)
+                observation = json.loads((receipts / "msi-destinations.json").read_text(encoding="utf-8-sig"))
+                self.assertEqual(observation["status"], "OBSERVATION_ONLY")
+                self.assertEqual(observation["activation"], "NOT_EVALUATED")
+                self.assertEqual(observation["windir"], str(windows))
+                self.assertTrue(observation["pshome"])
+                self.assertTrue(observation["process_path"])
+                self.assertIsInstance(observation["is_64bit_os"], bool)
+                self.assertIsInstance(observation["is_64bit_process"], bool)
+                self.assertEqual(observation["installer_log"]["source"], str(log))
+                self.assertEqual(observation["installer_log"]["sha256"], hashlib.sha256(log.read_bytes()).hexdigest().upper())
+                self.assertEqual([e["relative_path"] for e in observation["entries"]], expected)
+                for index, entry in enumerate(observation["entries"]):
+                    failed = case == "ancestor_reparse" or index == 2 and case in ("missing", "error", "wrong_type", "reparse")
+                    if failed:
+                        self.assertEqual(entry["status"], "MISSING" if case == "missing" else "UNKNOWN")
+                        self.assertTrue(entry["error"])
+                        self.assertIsNone(entry["sha256"])
+                        self.assertIsNone(entry["copy"])
+                        if case in ("reparse", "ancestor_reparse"):
+                            self.assertIn("Refused reparse point", entry["error"])
+                        continue
+                    self.assertEqual(entry["status"], "PRESENT")
+                    self.assertTrue(entry["exists"])
+                    self.assertEqual(entry["metadata"]["directory"], index < 2)
+                    if index >= 2:
+                        original = (sxs / expected[index]).read_bytes()
+                        self.assertEqual(entry["sha256"], hashlib.sha256(original).hexdigest().upper())
+                        if index < 4:
+                            self.assertEqual(Path(entry["copy"]).read_bytes(), raw)
+                        else:
+                            self.assertIsNone(entry["copy"])
+                self.assertEqual(len(list(receipts.glob("msi-destination-*.xml"))),
+                                 0 if case == "ancestor_reparse" else 1 if case in ("missing", "error", "wrong_type", "reparse") else 2)
+                if case == "policy_throw":
+                    policy_result = json.loads((receipts / "policy.json").read_text(encoding="utf-8-sig"))
+                    self.assertEqual(policy_result["status"], "UNPROVEN")
+                    self.assertFalse(policy_result["compatibility"][1]["matches"])
 
     def test_installed_policy_requires_both_redirects_and_targets(self):
         self.assertIsNotNone(PWSH, "PowerShell is required")

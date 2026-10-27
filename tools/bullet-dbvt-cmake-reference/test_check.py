@@ -737,11 +737,11 @@ class Controls(unittest.TestCase):
                         with self.assertRaises(ValueError):
                             check.archive_commands(root, out, libs)
 
-    def test_linker_keeps_single_command_contract(self):
+    def test_linker_continuations_reject_options(self):
         with tempfile.TemporaryDirectory() as folder:
             build, out, libs, tlog, _ = self.link_fixture(Path(folder))
             tlog.write_text(tlog.read_text() + '\n/NOLOGO\n')
-            with self.assertRaisesRegex(ValueError, 'multiple command lines'):
+            with self.assertRaisesRegex(ValueError, 'linker continuation'):
                 check.link_proof(build, 'app', out, libs)
 
     def test_librarian_multiline_archive_consumer(self):
@@ -880,6 +880,31 @@ class Controls(unittest.TestCase):
                 map_path.write_text(map_path.read_text().replace(':btDbvt.obj', ':unrelated.obj'))
                 with self.assertRaisesRegex(ValueError, 'map lacks'):
                     check.link_proof(build, label, out, libs)
+
+    def test_multiline_link_preserves_read_and_probe_identity_gates(self):
+        for label in ('app', 'probe'):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as folder:
+                build, out, libs, tlog, _ = self.link_fixture(Path(folder), label)
+                original = tlog.read_text() + '\nextra.obj extra.res\n'
+                tlog.write_text(original)
+                readlog = tlog.with_name('link.read.1.tlog')
+                reads = readlog.read_text()
+                tlog.write_text(original.replace('^app.obj', '^changed.obj'))
+                with self.assertRaisesRegex(ValueError, 'read task does not match'):
+                    check.link_proof(build, label, out, libs)
+                tlog.write_text(original)
+                if label == 'probe':
+                    obj = str(tlog.parent / 'probe.obj')
+                    for replacement in ('other.obj', ''):
+                        args = check.split_command(original.splitlines()[1])
+                        args[args.index(obj):args.index(obj) + 1] = [replacement] if replacement else []
+                        tlog.write_text('^app.obj\n' + subprocess.list2cmdline(args) + '\nextra.obj extra.res\n')
+                        with self.subTest(replacement=replacement), self.assertRaisesRegex(ValueError, 'exact linker input/read object'):
+                            check.link_proof(build, label, out, libs)
+                    tlog.write_text(original)
+                    readlog.write_text(reads.replace(obj, 'other.obj'))
+                    with self.assertRaisesRegex(ValueError, 'exact linker input/read object'):
+                        check.link_proof(build, label, out, libs)
 
     def test_link_proof_requires_exact_target_map_and_each_library(self):
         for label in ('app', 'probe'):

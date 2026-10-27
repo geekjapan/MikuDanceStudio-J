@@ -84,8 +84,24 @@ Microsoft documents [output pathname attachment](https://learn.microsoft.com/en-
 
 `tlog_tasks` retains each caret's source identities and every physical payload
 line, including blank lines. It rejects missing carets, empty identities, NULs,
-and empty tasks. CL and LINK command consumers require exactly one nonempty
-command line per task. Read-log consumers retain one path per nonempty line.
+and empty tasks. CL command consumers require exactly one nonempty command
+line per task. Read-log consumers retain one path per nonempty line.
+
+The LINK consumer requires exactly one task. It expands response files on the
+first nonempty payload line with the existing recursion and quoting checks.
+Later physical lines accept only object or resource operands ending in `.obj`
+or `.res`. Options, response files, commands, invalid Windows filename characters,
+and incomplete quoting fail on each continuation line. Ordered argv retains all
+first-line operands, including generated resources outside the caret identities.
+LINK evidence retains the original carets and physical lines, tlog SHA256,
+encoding, expanded argv, and response provenance. The executable, map, library,
+matching read task, archive-member, and probe-object checks remain required.
+
+`fixtures/link/` contains unmodified UTF-16 app and probe LINK tlogs from Windows
+run 40452363088, artifact 12711876690. Their adjacent JSON files record source
+identity and byte and argv hashes. The app task has nine payload lines. The probe
+task has one. These fixtures establish parsing only. Downstream Windows proof
+and complete measurement acceptance require an actual Windows run.
 
 The librarian consumer requires exactly one task. Its first payload line accepts
 `/OUT:`, `/NOLOGO`, `/MACHINE:X64`, object operands, and response files expanded

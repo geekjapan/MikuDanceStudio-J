@@ -378,6 +378,28 @@ def librarian_args(task, cwd, responses):
     return args, outputs[0]
 
 
+def linker_args(task, cwd, responses):
+    _, lines = task
+    payload = [line for line in lines if line.strip()]
+    if not payload:
+        raise ValueError('empty linker task')
+    args = expand(split_command(payload[0]), cwd, responses)
+    if not args or any(not arg for arg in args):
+        raise ValueError('empty linker command argument')
+    for line in payload[1:]:
+        operands = split_command(line)
+        for arg in operands:
+            filename = arg[2:] if re.match(r'^[A-Za-z]:[\\/]', arg) else arg
+            if (not arg.lower().endswith(('.obj', '.res')) or arg.startswith(('@', '-'))
+                    or arg.startswith('/') and not (os.name != 'nt' and '/' in arg[1:])
+                    or re.search(r'["<>|?*\x00-\x1f:]', filename)):
+                raise ValueError('linker continuation must contain only object or resource operands')
+        if not operands:
+            raise ValueError('empty linker continuation')
+        args.extend(operands)
+    return args
+
+
 CL_VALUE_OPTIONS = ('/D', '/U', '/I', '/FI', '/external:I')
 CL_OUTPUT_OPTIONS = ('/Fo', '/Fd', '/Fe', '/Fa', '/Fi', '/Fp')
 CL_DEPENDENCY_OPTIONS = ('/sourceDependencies', '/sourceDependencies:directives', '/scanDependencies')
@@ -772,12 +794,12 @@ def link_proof(build, label, out, libs):
     if len(candidates) != 1:
         raise ValueError(f'ambiguous actual {label} link command')
     tlog = candidates[0]
-    records = tlog_commands(tlog)
-    if len(records) != 1:
+    tasks = tlog_tasks(tlog)
+    if len(tasks) != 1:
         raise ValueError(f'ambiguous actual {label} linker task')
-    sources, args = records[0]
+    sources, lines = tasks[0]
     responses = []
-    expanded = expand(args, build, responses)
+    expanded = linker_args(tasks[0], build, responses)
     exe = (build / option(expanded, '/OUT:')).resolve()
     map_path = (build / option(expanded, '/MAP:')).resolve()
     if exe != (build / 'Release' / (target + '.exe')).resolve() or not exe.is_file():
@@ -813,7 +835,9 @@ def link_proof(build, label, out, libs):
         if inputs.count(obj) != 1 or read_objects.count(obj) != 1:
             raise ValueError('probe compiler output is not the exact linker input/read object')
     shutil.copyfile(map_path, out / (label + '-link.map'))
-    proof = dict(tlog=str(tlog), argv=expanded, responses=responses, libraries=libs,
+    _, encoding = decode(tlog.read_bytes())
+    proof = dict(tlog=str(tlog), tlog_sha256=digest(tlog), encoding=encoding,
+                 task=dict(sources=sources, lines=lines), argv=expanded, responses=responses, libraries=libs,
                  executable=str(exe), executable_sha256=digest(exe), map=str(map_path), map_sha256=digest(map_path),
                  members=['btDbvt.obj', 'btDbvtBroadphase.obj'], probe_compile=probe_compile)
     save(out / (label + '-link.json'), proof)

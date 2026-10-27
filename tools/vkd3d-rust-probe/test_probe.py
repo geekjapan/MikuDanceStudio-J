@@ -16,6 +16,43 @@ import validate
 
 
 class ProbeTests(unittest.TestCase):
+    def test_closed_format_facts_refuses_filtered_or_lowering_modes(self):
+        for extra in (['--filter', 'spirv'], ['--all-unit-prototype'], ['--translation-only']):
+            with self.subTest(extra=extra), patch.object(sys, 'argv', ['probe', '--source', '/unused',
+                    '--artifacts', '/unused-artifacts', '--c2rust', '/unused-tool', '--clang', '/unused-clang',
+                    '--closed-format-facts', *extra]), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as error:
+                    probe.main()
+                self.assertEqual(error.exception.code, 2)
+
+    def test_closed_format_mode_runs_all_syntax_checks_and_stops_before_rust_builds(self):
+        import full_compiler
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self.source_fixture(root)
+            for unit in full_compiler.UNITS:
+                path = source / unit
+                if not path.exists():
+                    path.write_text('/* Copyright transport fixture. */\n')
+            artifacts = root / 'report'
+            calls = []
+            def syntax(argv, log, **kwargs):
+                self.assertIn('-fsyntax-only', argv)
+                calls.append(argv)
+                log.write_text('synthetic syntax receipt, never compiled')
+                return {'command': argv, 'exit_code': 0}
+            args = ['probe', '--source', str(source), '--artifacts', str(artifacts), '--c2rust', str(root / 'bin/c2rust'),
+                    '--clang', '/unused-clang', '--closed-format-facts']
+            with patch.object(sys, 'argv', args), patch.object(probe, 'run', syntax), patch.object(
+                    full_compiler, 'collect_closed_format_facts', return_value={'status': 'complete_coverage'}) as collect:
+                probe.main()
+            self.assertEqual(len(calls), 24)
+            self.assertEqual(collect.call_count, 1)
+            self.assertEqual(len(collect.call_args.args[4]), 24)
+            self.assertEqual(json.loads((artifacts / 'result.json').read_text())['status'], 'complete_coverage')
+            self.assertFalse((artifacts / 'rust').exists())
+            self.assertFalse((artifacts / 'rust-working').exists())
+
     def result(self):
         return {"status": "success", "syntax": [{"exit_code": 0}],
                 "transpile": {"exit_code": 0}, "complete_translation": True,

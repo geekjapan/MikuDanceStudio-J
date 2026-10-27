@@ -7,7 +7,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +#include <map>
  #include <optional>
  #include <set>
-@@ -13,5 +14,12 @@
+@@ -13,5 +14,13 @@
  #include "llvm/Support/CommandLine.h"
  #include "llvm/Support/Debug.h"
 +#include "llvm/Support/ErrorHandling.h"
@@ -15,26 +15,27 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +#include "llvm/Support/JSON.h"
 +#include "llvm/Support/SHA256.h"
 +#include "llvm/ADT/StringExtras.h"
++#include "clang/Lex/Lexer.h"
 +#include "clang/Lex/PPCallbacks.h"
 +#include "clang/Lex/PreprocessorOptions.h"
 +#include "clang/Lex/HeaderSearchOptions.h"
  #include "llvm/Support/raw_ostream.h"
  // Declares clang::SyntaxOnlyAction.
-@@ -59,4 +67,6 @@
+@@ -59,4 +68,6 @@
  using clang::QualType;
  using std::string;
 +
 +static llvm::cl::opt<bool> CaptureCursorInputs("c2rust-cursor-inputs", llvm::cl::init(false));
 
  namespace { // for local definitions, preferred to making each `static`
-@@ -224,4 +234,6 @@
+@@ -224,4 +235,6 @@
    public:
      uintptr_t encodeQualType(QualType t) {
 +        while (const auto *macro = dyn_cast<MacroQualifiedType>(t.getTypePtr()))
 +            t = macro->getUnderlyingType().withCVRQualifiers(t.getCVRQualifiers());
          auto s = t.split();
 
-@@ -260,4 +272,8 @@
+@@ -260,4 +273,8 @@
      void VisitQualType(const QualType &QT) {
          if (!QT.isNull()) {
 +            if (const auto *macro = dyn_cast<MacroQualifiedType>(QT.getTypePtr())) {
@@ -43,14 +44,14 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +            }
              auto s = QT.split();
 
-@@ -272,5 +288,5 @@
+@@ -272,5 +289,5 @@
 
      void VisitAttributedType(const AttributedType *T) {
 -        auto t = T->getModifiedType();
 +        auto t = T->isCallingConv() ? T->getEquivalentType() : T->getModifiedType();
          auto qt = encodeQualType(t);
          auto k = T->getAttrKind();
-@@ -578,5 +594,11 @@
+@@ -578,5 +595,11 @@
          }();
 
 -        encodeType(T, tag);
@@ -63,7 +64,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +        }
      }
 
-@@ -586,4 +608,13 @@
+@@ -586,4 +609,13 @@
      // cases by overriding `VisitFunctionType` instead of the current
      // two-function solution.
 +    static const char *callingConvention(const clang::FunctionType *T) {
@@ -77,19 +78,19 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +
      void VisitFunctionProtoType(const FunctionProtoType *T) {
          LLVM_DEBUG(dbgs() << "Visit ");
-@@ -609,4 +640,5 @@
+@@ -609,4 +641,5 @@
              cbor_encode_boolean(local, T->getNoReturnAttr());
              cbor_encode_boolean(local, true); // has arguments
 +            cbor_encode_text_stringz(local, callingConvention(T));
          });
 
-@@ -632,4 +664,5 @@
+@@ -632,4 +665,5 @@
              cbor_encode_boolean(local, T->getNoReturnAttr());
              cbor_encode_boolean(local, false); // has arguments
 +            cbor_encode_text_stringz(local, callingConvention(T));
          });
 
-@@ -2253,4 +2286,25 @@
+@@ -2253,4 +2287,25 @@
 
                  cbor_encoder_close_container(array, &attr_array);
 +                const AsmLabelAttr *label = nullptr;
@@ -115,7 +116,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +                cbor_encode_text_stringz(array, semantic);
              });
          typeEncoder.VisitQualTypeOf(functionType, paramsFD);
-@@ -2344,7 +2398,19 @@
+@@ -2344,7 +2399,19 @@
 
                  cbor_encoder_close_container(array, &attr_array);
 +                if (CaptureCursorInputs && Context->hasSameType(VD->getType(), Context->getBuiltinVaListType())) {
@@ -135,7 +136,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +            typeEncoder.VisitQualType(Context->getCanonicalType(Context->getBuiltinVaListType()));
 
          return true;
-@@ -2358,4 +2424,45 @@
+@@ -2358,4 +2425,45 @@
       - name as string
       */
 +    void encodeRecordEvidence(CborEncoder *enc, const TagDecl *decl) {
@@ -181,31 +182,101 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +
      bool VisitRecordDecl(RecordDecl *D) {
          if (!D->isCanonicalDecl()) {
-@@ -2449,4 +2556,6 @@
+@@ -2449,4 +2557,6 @@
                  // 7. Encode the platform specific alignment of this record
                  cbor_encode_uint(local, recordAlignment);
 +                encodeRecordEvidence(local, D);
 +                cbor_encode_boolean(local, CaptureCursorInputs && D == Context->getVaListTagDecl());
              });
 
-@@ -2468,5 +2577,5 @@
+@@ -2468,5 +2578,5 @@
 
          encode_entry(D, TagEnumDecl, childIds, underlying_type,
 -                     [D](CborEncoder *local) {
 +                     [this, D](CborEncoder *local) {
                           auto name = D->getNameAsString();
                           if (name.empty()) {
-@@ -2475,4 +2584,5 @@
+@@ -2475,4 +2585,5 @@
                               cbor_encode_string(local, name);
                           }
 +                         encodeRecordEvidence(local, D);
                       });
 
-@@ -3003,15 +3113,205 @@
+@@ -3003,15 +3114,276 @@
  }
 
 +
 +
++
++class FormatLocations : public RecursiveASTVisitor<FormatLocations> {
++    ASTContext &context;
++    std::map<std::string, llvm::json::Object> rows;
++    llvm::json::Object position(SourceRange range, bool spelling) {
++        auto &sm = context.getSourceManager();
++        auto begin = spelling ? sm.getSpellingLoc(range.getBegin()) : sm.getExpansionLoc(range.getBegin());
++        auto end = spelling ? sm.getSpellingLoc(range.getEnd()) : sm.getExpansionLoc(range.getEnd());
++        if (begin.isInvalid() || end.isInvalid() || sm.getFileID(begin) != sm.getFileID(end))
++            return {{"unproved", "invalid or cross-buffer native range"}};
++        end = Lexer::getLocForEndOfToken(end, 0, sm, context.getLangOpts());
++        if (end.isInvalid()) return {{"unproved", "invalid end of token"}};
++        bool invalid = false;
++        auto bytes = sm.getBufferData(sm.getFileID(begin), &invalid);
++        auto first = sm.getFileOffset(begin), last = sm.getFileOffset(end);
++        if (invalid || first > last || last > bytes.size())
++            return {{"unproved", "invalid native token interval"}};
++        auto data = llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size());
++        auto quoted = data.slice(first, last - first);
++        auto *entry = sm.getFileEntryForID(sm.getFileID(begin));
++        return {{"path", entry ? entry->tryGetRealPathName().str() : ""},
++            {"buffer_sha256", llvm::toHex(llvm::SHA256::hash(data), true)},
++            {"begin", int64_t(first)}, {"end", int64_t(last)}, {"bytes_hex", llvm::toHex(quoted, true)}};
++    }
++    void record(const void *id, SourceRange range) {
++        auto key = std::to_string(reinterpret_cast<uintptr_t>(id));
++        if (rows.count(key)) return;
++        auto presumed = context.getSourceManager().getPresumedLoc(range.getBegin());
++        rows.emplace(key, llvm::json::Object{{"spelling", position(range, true)},
++            {"expansion", position(range, false)},
++            {"presumed", llvm::json::Object{{"path", presumed.isValid() ? presumed.getFilename() : ""},
++                {"line", int64_t(presumed.isValid() ? presumed.getLine() : 0)}}}});
++    }
++    void statements(Stmt *stmt) {
++        if (!stmt) return;
++        record(stmt, stmt->getSourceRange());
++        if (auto *decls = dyn_cast<DeclStmt>(stmt))
++            for (auto *decl : decls->decls()) record(decl, decl->getSourceRange());
++        for (auto *child : stmt->children()) statements(child);
++    }
++    bool relevant(const FunctionDecl *decl) {
++        if (!decl) return false;
++        if (decl->isVariadic()) return true;
++        for (const auto *parameter : decl->parameters())
++            if (context.hasSameType(parameter->getOriginalType(), context.getBuiltinVaListType()) ||
++                context.hasSameType(parameter->getType(), context.getAdjustedParameterType(context.getBuiltinVaListType())))
++                return true;
++        return false;
++    }
++  public:
++    explicit FormatLocations(ASTContext &context) : context(context) {}
++    bool VisitFunctionDecl(FunctionDecl *decl) {
++        if (relevant(decl)) {
++            record(decl, decl->getSourceRange());
++            for (const auto *parameter : decl->parameters()) record(parameter, parameter->getSourceRange());
++            statements(decl->getBody());
++        }
++        return true;
++    }
++    bool VisitCallExpr(CallExpr *call) {
++        if (relevant(call->getDirectCallee())) statements(call);
++        return true;
++    }
++    llvm::json::Object collect() {
++        TraverseDecl(context.getTranslationUnitDecl());
++        llvm::json::Object result;
++        for (auto &row : rows) result[row.first] = std::move(row.second);
++        return result;
++    }
++};
 +// LLVM 18 SourceManager.h: getBufferIfLoaded never opens or refreshes a file.
 +class CursorInputs {
 +    struct Buffer {
@@ -358,6 +429,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +                return a == "-resource-dir" || StringRef(a).starts_with("-resource-dir=");
 +            })) errors.push_back("missing_explicit_resource_directory");
 +        llvm::json::Object result{
++            {"format_locations", FormatLocations(CI.getASTContext()).collect()},
 +            {"schema", 2}, {"main_input", sm.getFileEntryForID(sm.getMainFileID()) ? sm.getFileEntryForID(sm.getMainFileID())->tryGetRealPathName().str() : ""},
 +            {"cwd", cwd ? *cwd : ""}, {"adjusted_driver_argv", std::move(args)},
 +            {"regenerated_cc1_argv", std::move(cc1)}, {"target", CI.getTarget().getTriple().str()},
@@ -410,14 +482,14 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +    void finish(clang::ASTContext &Context) {
          CborEncoder encoder;
 
-@@ -3027,5 +3327,5 @@
+@@ -3027,5 +3399,5 @@
 
              CborEncoder outer;
 -            cbor_encoder_create_array(&encoder, &outer, 6);
 +            cbor_encoder_create_array(&encoder, &outer, 8);
 
              CborEncoder array;
-@@ -3137,4 +3437,14 @@
+@@ -3137,4 +3509,14 @@
              cbor_encode_string(&outer, target);
 
 +            CborEncoder widths;
@@ -432,7 +504,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +            else cbor_encode_null(&outer);
              cbor_encoder_close_container(&encoder, &outer);
          };
-@@ -3159,7 +3469,13 @@
+@@ -3159,7 +3541,13 @@
  class TranslateAction : public clang::ASTFrontendAction {
      Outputs *outputs;
 +    const std::vector<std::string> *argv;
@@ -447,7 +519,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +    TranslateAction(Outputs *outputs, const std::vector<std::string> *argv) : outputs(outputs), argv(argv) {}
 
      virtual std::unique_ptr<clang::ASTConsumer>
-@@ -3176,6 +3492,13 @@
+@@ -3176,6 +3564,13 @@
          }
 
 -        return std::unique_ptr<clang::ASTConsumer>(
@@ -463,7 +535,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +        return result;
      }
  };
-@@ -3271,15 +3594,16 @@
+@@ -3271,15 +3666,16 @@
  class MyFrontendActionFactory : public FrontendActionFactory {
      Outputs *outputs;
 +    const std::vector<std::string> *argv;
@@ -483,7 +555,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +        return std::make_unique<TranslateAction>(outputs, argv);
      }
  #endif // CLANG_VERSION_MAJOR
-@@ -3374,5 +3698,10 @@
+@@ -3374,5 +3770,10 @@
 
      Outputs outputs;
 -    MyFrontendActionFactory myFrontendActionFactory(&outputs);
@@ -498,14 +570,31 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_ast/conversion.rs
 --- a/c2rust-transpile/src/c_ast/conversion.rs
 +++ b/c2rust-transpile/src/c_ast/conversion.rs
-@@ -602,4 +602,6 @@
+@@ -602,4 +602,23 @@
          self.typed_context.va_list_kind = untyped_context.va_list_kind;
          self.typed_context.target = untyped_context.target.clone();
 +        self.typed_context.target_c_widths = untyped_context.target_c_widths;
-+        self.typed_context.cursor_inputs = untyped_context.cursor_inputs.clone();
++        if let Some(inputs) = &untyped_context.cursor_inputs {
++            let mut raw: serde_json::Value = serde_json::from_str(inputs).expect("native inputs JSON");
++            if let Some(locations) = raw.as_object_mut().unwrap().remove("format_locations") {
++                let mut mapped = serde_json::Map::new();
++                for (clang_id, location) in locations.as_object().expect("native locations object") {
++                    if let Some(id) = self.id_mapper.get_new(clang_id.parse().expect("native location ID")) {
++                        let key = id.to_string();
++                        if let Some(previous) = mapped.get(&key) {
++                            if previous != location {
++                                mapped.insert(key, serde_json::json!({"unproved": "merged native origins differ"}));
++                            }
++                        } else { mapped.insert(key, location.clone()); }
++                    }
++                }
++                self.typed_context.format_locations = Some(serde_json::Value::Object(mapped).to_string());
++            }
++            self.typed_context.cursor_inputs = Some(raw.to_string());
++        }
      }
 
-@@ -660,4 +662,7 @@
+@@ -660,4 +679,7 @@
 
                  TypeTag::TagChar if expected_ty & OTHER_TYPE != 0 => {
 +                    if let [Value::Bool(signed)] = ty_node.extras.as_slice() {
@@ -513,7 +602,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
 +                    }
                      self.add_type(new_id, not_located(CTypeKind::Char));
                      self.processed_nodes.insert(new_id, OTHER_TYPE);
-@@ -827,6 +832,14 @@
+@@ -827,6 +849,14 @@
                      let has_proto = from_value(ty_node.extras[3].clone())
                          .expect("HasProto of function type not found");
 +                    let abi_name: String = from_value(ty_node.extras[4].clone())
@@ -529,7 +618,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
 +                        CTypeKind::Function(ret, arguments, is_variadic, is_noreturn, has_proto, abi);
                      self.add_type(new_id, not_located(function_ty));
                      self.processed_nodes.insert(new_id, FUNC_TYPE);
-@@ -959,5 +972,7 @@
+@@ -959,5 +989,7 @@
                  TypeTag::TagConstantArrayType => {
                      let element_id = from_value(ty_node.extras[0].clone()).expect("element id");
 -                    let element = self.visit_type(element_id);
@@ -538,7 +627,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
 +                    self.typed_context.source_array_elements.insert(CTypeId(new_id), qualified_element);
 
                      let count: usize = from_value(ty_node.extras[1].clone()).expect("count");
-@@ -970,5 +985,7 @@
+@@ -970,5 +1002,7 @@
                  TypeTag::TagIncompleteArrayType => {
                      let element_id = from_value(ty_node.extras[0].clone()).expect("element id");
 -                    let element = self.visit_type(element_id);
@@ -547,7 +636,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
 +                    self.typed_context.source_array_elements.insert(CTypeId(new_id), qualified_element);
 
                      let element_ty = CTypeKind::IncompleteArray(element);
-@@ -2138,4 +2155,11 @@
+@@ -2138,4 +2172,11 @@
                          .expect("Expected to find function name");
 
 +                    let linker_name = from_value::<String>(node.extras[8].clone())
@@ -559,13 +648,13 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
 +
                      let is_global =
                          from_value(node.extras[1].clone()).expect("Expected to find visibility");
-@@ -2210,4 +2234,5 @@
+@@ -2210,4 +2251,5 @@
                          .expect("Expected to find type on typedef declaration");
                      let mut typ = self.visit_qualified_type(typ_old);
 +                    self.typed_context.source_typedef_types.insert(CDeclId(new_id), typ);
 
                      // Clang injects definitions of the form `#define __SIZE_TYPE__ unsigned int` into
-@@ -2331,4 +2356,8 @@
+@@ -2331,4 +2373,8 @@
 
                  ASTEntryTag::TagEnumDecl if expected_ty & ENUM_DECL != 0 => {
 +                    let evidence: c2rust_ast_exporter::clang_ast::RecordEvidence = from_value(node.extras[1].clone())
@@ -574,7 +663,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
 +                    self.typed_context.record_evidence.insert(CDeclId(new_id), evidence);
                      let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
 
-@@ -2411,4 +2440,14 @@
+@@ -2411,4 +2457,14 @@
                      let typ = self.visit_qualified_type(typ_id);
 
 +                    let native: Option<(u64, u64, u64)> = from_value(node.extras[6].clone())
@@ -589,7 +678,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
 +                    if local { self.typed_context.native_local_variables.insert(CDeclId(new_id)); }
                      let variable_decl = CDeclKind::Variable {
                          has_static_duration,
-@@ -2427,4 +2466,11 @@
+@@ -2427,4 +2483,11 @@
 
                  ASTEntryTag::TagStructDecl if expected_ty & RECORD_DECL != 0 => {
 +                    let evidence: c2rust_ast_exporter::clang_ast::RecordEvidence = from_value(node.extras[7].clone())
@@ -601,7 +690,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
 +                    if native_builtin { self.typed_context.native_va_list_records.insert(CDeclId(new_id)); }
                      let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
                      let has_def = from_value(node.extras[1].clone())
-@@ -2468,4 +2514,8 @@
+@@ -2468,4 +2531,8 @@
 
                  ASTEntryTag::TagUnionDecl if expected_ty & RECORD_DECL != 0 => {
 +                    let evidence: c2rust_ast_exporter::clang_ast::RecordEvidence = from_value(node.extras[7].clone())
@@ -632,11 +721,12 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
 +mod closed_variadic;
  mod conversion;
  pub mod iterators;
-@@ -122,4 +123,15 @@
+@@ -122,4 +123,16 @@
      pub va_list_kind: BuiltinVaListKind,
      pub target: String,
 +    pub target_c_widths: [u64; 8],
 +    pub cursor_inputs: Option<String>,
++    pub format_locations: Option<String>,
 +    pub native_local_variables: HashSet<CDeclId>,
 +    pub native_va_list_records: HashSet<CDeclId>,
 +    pub native_cursor_types: HashMap<CDeclId, (CQualTypeId, CQualTypeId, u64)>,
@@ -648,25 +738,25 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
 +    pub record_evidence: HashMap<CDeclId, c2rust_ast_exporter::clang_ast::RecordEvidence>,
  }
 
-@@ -1021,4 +1033,5 @@
+@@ -1021,4 +1034,5 @@
                      is_noreturn1,
                      has_prototype1,
 +                    abi1,
                  ),
                  Function(
-@@ -1028,4 +1041,5 @@
+@@ -1028,4 +1042,5 @@
                      is_noreturn2,
                      has_prototype2,
 +                    abi2,
                  ),
              ) => {
-@@ -1041,4 +1055,5 @@
+@@ -1041,4 +1056,5 @@
                      && is_noreturn1 == is_noreturn2
                      && has_prototype1 == has_prototype2
 +                    && abi1 == abi2
              }
 
-@@ -1096,6 +1111,6 @@
+@@ -1096,6 +1112,6 @@
              let decl_arg_tys = self.tys_of_params(parameters).unwrap();
              let typ_kind = &self[typ].kind;
 -            if let &CTypeKind::Function(ret, ref _arg_tys, a, b, c) = typ_kind {
@@ -675,14 +765,14 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
 +                return CTypeKind::Function(ret, decl_arg_tys, a, b, c, abi);
              }
              panic!("expected {typ:?} to be CTypeKind::Function, but it was {typ_kind:?}")
-@@ -1180,5 +1195,5 @@
+@@ -1180,5 +1196,5 @@
 
          match self.index(pointed_id).kind {
 -            CTypeKind::Function(_, _, _, no_return, _) => no_return,
 +            CTypeKind::Function(_, _, _, no_return, _, _) => no_return,
              _ => false,
          }
-@@ -2831,7 +2846,23 @@
+@@ -2831,7 +2847,23 @@
  //  * AdjustedType <http://clang.llvm.org/doxygen/classclang_1_1AdjustedType.html>
 
 -/// Represents a type in C (6.2.5 Types)
@@ -709,7 +799,7 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
 +/// Represents a type in C (6.2.5 Types).
  #[derive(Debug, Clone, PartialEq, Eq, Hash)]
  pub enum CTypeKind {
-@@ -2895,5 +2926,5 @@
+@@ -2895,5 +2927,5 @@
      // arguments are in K&R format.
      // Flags: is_variable_argument, is_noreturn, has prototype
 -    Function(CQualTypeId, Vec<CQualTypeId>, bool, bool, bool),
@@ -1713,7 +1803,7 @@ diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/sr
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_variadic.rs
-@@ -0,0 +1,1328 @@
+@@ -0,0 +1,1560 @@
 +use super::*;
 +use serde_json::{Value, json};
 +
@@ -2400,6 +2490,226 @@ new file mode 100644
 +            "native_inputs": self.cursor_inputs.as_ref().map(|s| serde_json::from_str::<Value>(s).expect("native input facts JSON"))})
 +    }
 +
++    fn format_expression_shape(&self, id: CExprId) -> &'static str {
++        match self[id].kind {
++            CExprKind::Literal(..) => "Literal", CExprKind::Unary(..) => "Unary",
++            CExprKind::UnaryType(..) => "UnaryType", CExprKind::OffsetOf(..) => "OffsetOf",
++            CExprKind::Binary(..) => "Binary", CExprKind::ImplicitCast(..) => "ImplicitCast",
++            CExprKind::ExplicitCast(..) => "ExplicitCast", CExprKind::ConstantExpr(..) => "ConstantExpr",
++            CExprKind::DeclRef(..) => "DeclRef", CExprKind::Call(..) => "Call",
++            CExprKind::Member(..) => "Member", CExprKind::ArraySubscript(..) => "ArraySubscript",
++            CExprKind::Conditional(..) => "Conditional", CExprKind::BinaryConditional(..) => "BinaryConditional",
++            CExprKind::InitList(..) => "InitList", CExprKind::ImplicitValueInit(..) => "ImplicitValueInit",
++            CExprKind::Paren(..) => "Paren", CExprKind::CompoundLiteral(..) => "CompoundLiteral",
++            CExprKind::ImaginaryLiteral(..) => "ImaginaryLiteral", CExprKind::Predefined(..) => "Predefined",
++            CExprKind::Statements(..) => "Statements", CExprKind::VAArg(..) => "VAArg",
++            CExprKind::ShuffleVector(..) => "ShuffleVector", CExprKind::ConvertVector(..) => "ConvertVector",
++            CExprKind::DesignatedInitExpr(..) => "DesignatedInitExpr", CExprKind::Choose(..) => "Choose",
++            CExprKind::Atomic { .. } => "Atomic", CExprKind::BadExpr => "BadExpr",
++        }
++    }
++
++    fn format_origin(&self, id: CExprId, depth: usize) -> Value {
++        if depth > 64 { return json!({"kind": "Unproved", "reason": "format expression depth limit", "expression": id.0}); }
++        match &self[id].kind {
++            CExprKind::Paren(_, inner) | CExprKind::ImplicitCast(_, inner, _, _, _) =>
++                json!({"kind": "Wrapper", "expression": id.0, "inner": self.format_origin(*inner, depth + 1)}),
++            CExprKind::Literal(_, CLiteral::String(bytes, 1)) =>
++                json!({"kind": "Literal", "expression": id.0, "bytes": bytes,
++                    "consumption": Self::format_consumption(bytes)}),
++            CExprKind::Conditional(_, condition, yes, no) => json!({"kind": "Conditional", "expression": id.0,
++                "condition": condition.0, "true": self.format_origin(*yes, depth + 1), "false": self.format_origin(*no, depth + 1)}),
++            CExprKind::DeclRef(_, decl, _) => json!({"kind": "Declaration", "expression": id.0,
++                "declaration": decl.0, "relation": {"state": "Unproved", "reason": "forwarded parameter or stored producer ownership requires interprocedural closure"}}),
++            _ => json!({"kind": "Unproved", "expression": id.0,
++                "reason": "runtime producer/store/read/free and lifetime relation not established"}),
++        }
++    }
++
++    fn format_consumption(bytes: &[u8]) -> Value {
++        let mut i = 0;
++        let mut slot = 0;
++        let mut conversions = vec![];
++        while i < bytes.len() && bytes[i] != 0 {
++            if bytes[i] != b'%' { i += 1; continue; }
++            let start = i; i += 1;
++            if bytes.get(i) == Some(&b'%') { i += 1; continue; }
++            while bytes.get(i).map_or(false, |b| b"-+ #0'".contains(b)) { i += 1; }
++            let mut consumed = vec![];
++            for part in 0..2 {
++                if part == 1 {
++                    if bytes.get(i) != Some(&b'.') { break; }
++                    i += 1;
++                }
++                if bytes.get(i) == Some(&b'*') {
++                    consumed.push(json!({"slot": slot, "role": if part == 0 { "width" } else { "precision" }}));
++                    slot += 1; i += 1;
++                } else { while bytes.get(i).map_or(false, |b| b.is_ascii_digit()) { i += 1; } }
++                if bytes.get(i) == Some(&b'$') {
++                    return json!({"state": "Unproved", "reason": "positional syntax", "offset": i, "prefix": conversions});
++                }
++            }
++            let length_start = i;
++            if bytes.get(i).map_or(false, |b| b"hljztL".contains(b)) {
++                let first = bytes[i]; i += 1;
++                if (first == b'h' || first == b'l') && bytes.get(i) == Some(&first) { i += 1; }
++            }
++            let length = &bytes[length_start..i];
++            let Some(&conversion) = bytes.get(i) else {
++                return json!({"state": "Unproved", "reason": "incomplete conversion", "offset": start, "prefix": conversions});
++            };
++            if !b"diouxXfFeEgGaAcspn".contains(&conversion) {
++                return json!({"state": "Unproved", "reason": "unsupported conversion", "offset": i, "prefix": conversions});
++            }
++            consumed.push(json!({"slot": slot, "role": "value"})); slot += 1; i += 1;
++            conversions.push(json!({"begin": start, "end": i, "length": length, "conversion": conversion, "arguments": consumed}));
++        }
++        json!({"state": "Parsed", "arguments": slot, "conversions": conversions,
++            "type_compatibility": {"state": "Unproved", "reason": "specifier and canonical promoted argument relation not established"}})
++    }
++
++    pub fn closed_format_facts(&self, unit: &Path) -> Value {
++        use std::collections::{BTreeMap, BTreeSet};
++        let inventory = self.closed_variadic_inventory(unit);
++        let owners = self.cursor_declaration_owners();
++        let native_locations: Value = self.format_locations.as_ref().map(|s| serde_json::from_str(s).expect("mapped native locations")).unwrap_or(json!({}));
++        let location = |id: u64| native_locations.get(id.to_string()).cloned()
++            .unwrap_or(json!({"unproved": "native importer origin missing"}));
++        let mut relevant = BTreeMap::new();
++        let mut definitions = vec![];
++        let mut function_edges = vec![];
++        let mut unclassified = vec![];
++        let mut pending = vec![];
++        for (id, declaration) in self.iter_decls() {
++            let CDeclKind::Function { typ, parameters, body, .. } = &declaration.kind else { continue };
++            let signature = self.inventory_type(CQualTypeId::new(*typ), 0);
++            let va_parameters: Vec<_> = parameters.iter().filter(|p| match self[**p].kind {
++                CDeclKind::Variable { typ, .. } => self.is_va_list(typ.ctype), _ => false,
++            }).copied().collect();
++            let variadic = signature["canonical"]["variadic"].as_bool();
++            if variadic.is_none() {
++                if body.is_some() { unclassified.push(json!({"declaration": id.0, "symbol": self.inventory_symbol(*id, unit),
++                    "signature": signature, "location": location(id.0), "state": "Unproved", "reason": "native attributed function signature unclassified"})); }
++                continue;
++            }
++            if variadic != Some(true) && va_parameters.is_empty() { continue; }
++            let fixed = parameters.len();
++            let format_position = if variadic == Some(true) { fixed.checked_sub(1) } else {
++                parameters.iter().position(|p| va_parameters.contains(p)).and_then(|p| p.checked_sub(1))
++            };
++            relevant.insert(*id, (fixed, format_position));
++            function_edges.push(json!({"declaration": id.0, "parameters": parameters.iter().map(|p| p.0).collect::<Vec<_>>(),
++                "fixed_count": fixed, "format_position": format_position,
++                "format_parameter": format_position.and_then(|p| parameters.get(p)).map(|p| p.0)}));
++            if let Some(body) = body {
++                pending.push(iterators::SomeId::Stmt(*body));
++                definitions.push(json!({"declaration": id.0, "symbol": self.inventory_symbol(*id, unit),
++                    "variadic": variadic, "signature": self.cursor_type(CQualTypeId::new(*typ), 0),
++                    "parameters": parameters.iter().map(|p| p.0).collect::<Vec<_>>(),
++                    "va_parameters": va_parameters.iter().map(|p| p.0).collect::<Vec<_>>(), "body": body.0,
++                    "location": location(id.0), "generated_origin": {"state": "Unproved", "reason": "generated item interval not exported by emitter"},
++                    "control_effect_lifetime": {"state": "Unproved", "reason": "complete structural slice retained; aliasing, commutativity, lifetime and C evaluation order require closure"}}));
++            }
++        }
++        let mut calls = vec![];
++        for row in inventory["calls"].as_array().unwrap() {
++            let id = CExprId(row["id"].as_u64().unwrap());
++            let CExprKind::Call(_, callee, args) = &self[id].kind else { continue };
++            let Some(decl) = self.inventory_callee(*callee) else { continue };
++            let Some((fixed, format_position)) = relevant.get(&decl) else { continue };
++            pending.push(iterators::SomeId::Expr(id));
++            let mut call = row.clone();
++            call["callee_declaration"] = json!(decl.0);
++            call["fixed_count"] = json!(fixed);
++            call["format_position"] = json!(format_position);
++            call["format_position_relation"] = json!({"state": "Unproved", "reason": "signature-adjacent format candidate; no format attribute proof"});
++            call["format"] = format_position.and_then(|p| args.get(p)).map(|e| self.format_origin(*e, 0))
++                .unwrap_or(json!({"kind": "Unproved", "reason": "format argument absent"}));
++            call["native_location"] = location(id.0);
++            call["evaluation"] = json!({"state": "Unproved", "reason": "AST child order is not C sibling evaluation order or effect independence"});
++            call["generated_origin"] = json!({"state": "Unproved", "reason": "generated expression interval not exported by emitter"});
++            calls.push(call);
++        }
++        let mut visited = std::collections::HashSet::new();
++        let mut expressions = BTreeSet::new();
++        let mut statements = BTreeSet::new();
++        let mut declarations = BTreeSet::new();
++        while let Some(node) = pending.pop() {
++            if node.type_().is_some() || !visited.insert(node) { continue; }
++            if let Some(id) = node.expr() {
++                expressions.insert(id);
++                if let CExprKind::DeclRef(_, decl, _) = self[id].kind { declarations.insert(decl); }
++            }
++            if let Some(id) = node.stmt() { statements.insert(id); }
++            if let Some(id) = node.decl() {
++                declarations.insert(id);
++                if !matches!(self[id].kind, CDeclKind::Variable { .. }) { continue; }
++            }
++            pending.extend(iterators::immediate_children_all_types(self, node).into_iter().filter(|n| n.type_().is_none()));
++        }
++        for definition in &definitions {
++            for parameter in definition["parameters"].as_array().unwrap() { declarations.insert(CDeclId(parameter.as_u64().unwrap())); }
++        }
++        let expressions: Vec<_> = expressions.into_iter().map(|id| {
++            let mut row = self.cursor_expression(id);
++            row["location"] = location(id.0);
++            row["children"] = json!(iterators::immediate_children_all_types(self, id.into()).into_iter()
++                .filter_map(|n| n.expr().map(|e| e.0)).collect::<Vec<_>>());
++            row["edge_count"] = json!(row["children"].as_array().unwrap().len());
++            row["native_shape"] = json!(self.format_expression_shape(id));
++            row["statement_body"] = match self[id].kind { CExprKind::Statements(_, body) => json!(body.0), _ => Value::Null };
++            if self[id].kind.get_qual_type().is_none() { row["type_unproved"] = json!("importer expression has no qualified type"); }
++            row["promotion_chain"] = self.inventory_promotions(id);
++            row["qualified_type"] = self[id].kind.get_qual_type().map(Self::required_qualified_type).unwrap_or(Value::Null);
++            row["effect_relation"] = json!({"state": "Unproved", "reason": "calls, writes, volatile access and conditional evaluation retained without commutativity proof"});
++            row
++        }).collect();
++        let statements: Vec<_> = statements.into_iter().map(|id| {
++            let kind = match self[id].kind {
++                CStmtKind::Compound(..) => "compound", CStmtKind::Expr(..) => "expression", CStmtKind::Decls(..) => "declarations",
++                CStmtKind::Return(..) => "return", CStmtKind::If { .. } | CStmtKind::Switch { .. } => "branch",
++                CStmtKind::While { .. } | CStmtKind::DoWhile { .. } | CStmtKind::ForLoop { .. } => "loop",
++                CStmtKind::Break => "break", CStmtKind::Continue => "continue", CStmtKind::Goto(..) => "goto",
++                CStmtKind::Empty => "empty", _ => "unsupported",
++            };
++            let edge_count = iterators::immediate_children_all_types(self, id.into()).into_iter().filter(|n| n.type_().is_none()).count();
++            json!({"id": id.0, "kind": kind, "location": location(id.0), "edge_count": edge_count,
++                "children": iterators::immediate_children_all_types(self, id.into()).into_iter().filter_map(|n| {
++                    if let Some(s) = n.stmt() { Some(json!({"kind": "statement", "id": s.0})) }
++                    else if let Some(e) = n.expr() { Some(json!({"kind": "expression", "id": e.0})) }
++                    else { n.decl().map(|d| json!({"kind": "declaration", "id": d.0})) }
++                }).collect::<Vec<_>>(), "flow": {"state": "Unproved", "reason": "structural edges only; execution and cursor state relations not established"}})
++        }).collect();
++        let variables: Vec<_> = declarations.into_iter().map(|d| self.cursor_declaration(d, &owners)).collect();
++        let mut types = BTreeMap::new();
++        for row in expressions.iter().chain(variables.iter()) {
++            if let Some(id) = row["type_id"].as_u64() {
++                self.required_type_closure(CTypeId(id), &mut types, &mut HashSet::new(), &mut HashMap::new(), 0);
++            }
++        }
++        let selected: HashSet<_> = expressions.iter().filter_map(|e| e["id"].as_u64()).collect();
++        let unsupported_expressions: Vec<_> = self.c_exprs.iter().filter_map(|(id, _)| {
++            let row = self.cursor_expression(*id);
++            if row["kind"] != "unsupported" { return None; }
++            Some(json!({"expression": id.0, "native_shape": self.format_expression_shape(*id), "type": row["type"],
++                "within_slice": selected.contains(&id.0), "location": location(id.0),
++                "relevance": {"state": "Unproved", "reason": if selected.contains(&id.0) {
++                    "selected unsupported expression retains its complete structural children"
++                } else { "outside selected slice; influence on formatting, control and effects is not established" }}}))
++        }).collect();
++        let cursor_events: Vec<_> = expressions.iter().filter(|e| e["kind"] == "call").map(|e| {
++            json!({"expression": e["id"], "builtin": e["builtin"], "callee_declaration": e["callee_decl"],
++                "operands": e["arguments"], "relation": {"state": "Unproved", "reason": "cursor state, forwarding, lifetime and repeated-use closure pending"}})
++        }).collect();
++        json!({"schema": 1, "authorization": "analysis_only", "status": "CompleteReport", "unit": unit,
++            "target": self.target, "target_c_widths_bits": inventory["target_c_widths_bits"],
++            "definitions": definitions, "function_edges": function_edges, "declarations": inventory["declarations"], "calls": calls,
++            "unclassified_definitions": unclassified, "expressions": expressions, "statements": statements,
++            "variables": variables, "types": types.into_values().map(|(row, _)| row).collect::<Vec<_>>(), "cursor_events": cursor_events,
++            "unsupported_expression_count": unsupported_expressions.len(), "unsupported_expressions": unsupported_expressions,
++            "native_inputs": self.cursor_inputs.as_ref().map(|s| serde_json::from_str::<Value>(s).expect("native inputs")),
++            "lowering": "not_authorized", "abi_execution": "Linux_x64_only_unrun"})
++    }
 +    /// Facts only. No inventory record authorizes lowering without the closed-program gates.
 +    pub fn closed_variadic_inventory(&self, unit: &Path) -> Value {
 +        let mut declarations = vec![];
@@ -2481,6 +2791,18 @@ new file mode 100644
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++
++    #[test]
++    fn closed_format_facts_consumption_retains_stars_lengths_and_unknowns() {
++        let parsed = TypedAstContext::format_consumption(b"%*.*zu:%lld:%s\0");
++        assert_eq!(parsed["state"], "Parsed");
++        assert_eq!(parsed["arguments"], 5);
++        assert_eq!(parsed["conversions"][0]["length"], json!([b'z']));
++        for bytes in [b"%2$d".as_slice(), b"%I64u", b"%", b"%*3$d"] {
++            assert_eq!(TypedAstContext::format_consumption(bytes)["state"], "Unproved");
++        }
++        assert_eq!(TypedAstContext::format_consumption(b"100%%")["arguments"], 0);
++    }
 +
 +    fn not_located<T>(kind: T) -> Located<T> {
 +        Located { loc: None, kind }
@@ -3046,27 +3368,35 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
 index 28d34bd..67a525e 100644
 --- a/c2rust-transpile/src/lib.rs
 +++ b/c2rust-transpile/src/lib.rs
-@@ -75,6 +75,8 @@ pub struct TranspilerConfig {
+@@ -75,6 +75,9 @@ pub struct TranspilerConfig {
      pub verbose: bool,
      pub debug_ast_exporter: bool,
      pub emit_c_decl_map: bool,
 +    pub emit_variadic_inventory: bool,
 +    pub emit_cursor_witness: bool,
++    pub emit_closed_format_facts: bool,
 
      // Options that control translation
      pub incremental_relooper: bool,
-@@ -682,6 +684,7 @@ fn transpile_single(
+@@ -682,6 +685,7 @@ fn transpile_single(
          extra_clang_args,
          tcfg.debug_ast_exporter,
          tcfg.emit_c_decl_map,
-+        tcfg.emit_cursor_witness.then(|| output_path.with_extension("cursor.cbor")).as_deref(),
++        (tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts).then(|| output_path.with_extension("cursor.cbor")).as_deref(),
      ) {
          Err(e) => {
              warn!(
-@@ -720,6 +723,20 @@ fn transpile_single(
+@@ -720,6 +724,27 @@ fn transpile_single(
          println!("{:#?}", Printer::new(io::stdout()).print(&typed_context));
      }
 
++    if tcfg.emit_closed_format_facts {
++        let facts = typed_context.closed_format_facts(input_path);
++        serde_json::to_writer_pretty(File::create(output_path.with_extension("closed-format.json")).expect("create format facts"), &facts)
++            .expect("write format facts");
++        std::fs::write(output_path.with_extension("typed-ast.txt"), format!("{typed_context:#?}"))
++            .expect("retain format typed AST");
++    }
 +    if tcfg.emit_cursor_witness {
 +        let witness = typed_context.cursor_witness(input_path);
 +        let file = File::create(output_path.with_extension("cursor-witness.json")).expect("create cursor witness");
@@ -3074,7 +3404,7 @@ index 28d34bd..67a525e 100644
 +        std::fs::write(output_path.with_extension("typed-ast.txt"), format!("{typed_context:#?}"))
 +            .expect("retain typed AST witness");
 +    }
-+    if tcfg.emit_variadic_inventory || tcfg.emit_c_decl_map || tcfg.emit_cursor_witness {
++    if tcfg.emit_variadic_inventory || tcfg.emit_c_decl_map || tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts {
 +        let inventory_path = output_path.with_extension("variadic.json");
 +        let inventory = typed_context.closed_variadic_inventory(input_path);
 +        let file = File::create(&inventory_path).expect("create closed variadic inventory");
@@ -3088,7 +3418,7 @@ diff --git a/c2rust/src/bin/c2rust-transpile.rs b/c2rust/src/bin/c2rust-transpil
 index ce727c0..1bd3954 100644
 --- a/c2rust/src/bin/c2rust-transpile.rs
 +++ b/c2rust/src/bin/c2rust-transpile.rs
-@@ -42,6 +42,14 @@ struct Args {
+@@ -42,6 +42,18 @@ struct Args {
      #[clap(long)]
      emit_c_decl_map: bool,
 
@@ -3100,15 +3430,20 @@ index ce727c0..1bd3954 100644
 +    #[clap(long)]
 +    emit_cursor_witness: bool,
 +
++    /// Export report-only closed format and cursor relations without changing Rust emission.
++    #[clap(long)]
++    emit_closed_format_facts: bool,
++
      /// Verbose mode
      #[clap(short = 'v', long)]
      verbose: bool,
-@@ -274,6 +282,8 @@ fn main() {
+@@ -274,6 +286,9 @@ fn main() {
          dump_structures: args.dump_structures,
          debug_ast_exporter: args.debug_ast_exporter,
          emit_c_decl_map: args.emit_c_decl_map,
 +        emit_variadic_inventory: args.emit_variadic_inventory,
 +        emit_cursor_witness: args.emit_cursor_witness,
++        emit_closed_format_facts: args.emit_closed_format_facts,
          verbose: args.verbose,
 
          incremental_relooper: !args.no_incremental_relooper,
@@ -3116,12 +3451,13 @@ diff --git a/c2rust-transpile/tests/common/mod.rs b/c2rust-transpile/tests/commo
 index b9bd350..ad1da96 100644
 --- a/c2rust-transpile/tests/common/mod.rs
 +++ b/c2rust-transpile/tests/common/mod.rs
-@@ -15,6 +15,8 @@ pub fn config(edition: RustEdition) -> TranspilerConfig {
+@@ -15,6 +15,9 @@ pub fn config(edition: RustEdition) -> TranspilerConfig {
          verbose: false,
          debug_ast_exporter: false,
          emit_c_decl_map: true, // Let snapshot tests validate the C declaration map.
 +        emit_variadic_inventory: false,
 +        emit_cursor_witness: false,
++        emit_closed_format_facts: false,
          incremental_relooper: true,
          fail_on_multiple: false,
          filter: None,
@@ -3129,12 +3465,13 @@ diff --git a/c2rust-transpile/tests/module_paths.rs b/c2rust-transpile/tests/mod
 index d763a1d..566adfd 100644
 --- a/c2rust-transpile/tests/module_paths.rs
 +++ b/c2rust-transpile/tests/module_paths.rs
-@@ -18,6 +18,8 @@ fn config(output_dir: PathBuf) -> TranspilerConfig {
+@@ -18,6 +18,9 @@ fn config(output_dir: PathBuf) -> TranspilerConfig {
          verbose: false,
          debug_ast_exporter: false,
          emit_c_decl_map: false,
 +        emit_variadic_inventory: false,
 +        emit_cursor_witness: false,
++        emit_closed_format_facts: false,
          incremental_relooper: true,
          fail_on_multiple: false,
          filter: None,

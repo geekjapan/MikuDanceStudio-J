@@ -113,6 +113,7 @@ def main():
     parser.add_argument("--c2rust", type=Path, required=True)
     parser.add_argument("--clang", type=Path, required=True)
     parser.add_argument("--all-unit-prototype", action="store_true")
+    parser.add_argument("--closed-format-facts", action="store_true", help="Hosted report-only all24 paired compiler extraction")
     parser.add_argument("--native-library", type=Path)
     parser.add_argument("--translation-only", action="store_true", help="Stop after translation and extern inventory")
     parser.add_argument("--filter", help="Regular expression selecting C translation units")
@@ -120,6 +121,8 @@ def main():
     parser.add_argument("--build-timeout", type=int, default=120, help="Seconds per Rust build")
     parser.add_argument("--rust-toolchain", default="stable")
     args = parser.parse_args()
+    if args.closed_format_facts and (args.filter or args.all_unit_prototype or args.translation_only):
+        parser.error("closed format facts require an unfiltered report-only phase")
     if args.all_unit_prototype and args.filter:
         parser.error("all-unit prototype cannot use a unit filter")
     original = args.source.resolve()
@@ -141,7 +144,7 @@ def main():
         sources = [p for p in sources if re.search(args.filter, str(p))]
         if not sources:
             parser.error("filter matched no C sources")
-    if args.all_unit_prototype:
+    if args.all_unit_prototype or args.closed_format_facts:
         from full_compiler import UNITS
         if sorted(str(p.relative_to(source)) for p in sources) != list(UNITS):
             parser.error("configured source differs from exact pinned 24-unit inventory")
@@ -173,6 +176,14 @@ def main():
         checkpoint()
     if any(step["exit_code"] for step in result["syntax"]):
         result["status"] = outcome(result)
+        checkpoint()
+        return
+    if args.closed_format_facts:
+        from full_compiler import collect_closed_format_facts
+        result["closed_format_facts"] = collect_closed_format_facts(
+            args.c2rust.resolve().with_name("c2rust-transpile"), database,
+            artifacts / "closed-format-facts", run, result["syntax"])
+        result["status"] = result["closed_format_facts"]["status"]
         checkpoint()
         return
     output = artifacts / "rust"

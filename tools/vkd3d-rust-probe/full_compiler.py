@@ -2,7 +2,7 @@
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 
 UNITS = tuple(sorted(
@@ -128,8 +128,10 @@ def cursor_command_units(entries):
     return units
 
 
-def verify_native_cursor_inputs(raw, unit, target, command):
-    """Revalidate transported cached bytes, without manufacturing compiler facts."""
+def verify_native_cursor_inputs(raw, unit, target, command, *, read_current=True):
+    """Revalidate cached native facts, optionally including the current source files."""
+    def canonical_path(value):
+        return str(Path(value).resolve()) if read_current else str(PurePosixPath(value))
     facts = raw.get('native_inputs')
     required = {'schema', 'main_input', 'cwd', 'adjusted_driver_argv', 'regenerated_cc1_argv',
                 'target', 'cpu', 'abi', 'features', 'features_as_written', 'vfs', 'unsupported', 'buffers', 'lexer_events'}
@@ -137,9 +139,9 @@ def verify_native_cursor_inputs(raw, unit, target, command):
         raise ValueError('cursor witness missing native cached input facts')
     if facts['unsupported'] != [] or facts['vfs'] != 'clangtool_empty_overlay_on_real_filesystem':
         raise ValueError('cursor witness unsupported native input mode')
-    if (facts['main_input'] != unit or str(Path(unit).resolve()) != unit
+    if (facts['main_input'] != unit or canonical_path(unit) != unit
             or facts['target'] != target or not Path(facts['cwd']).is_absolute()
-            or Path(facts['cwd']).resolve() != Path(command['directory']).resolve()):
+            or canonical_path(facts['cwd']) != canonical_path(command['directory'])):
         raise ValueError('cursor witness native invocation identity differs')
     for key in ('adjusted_driver_argv', 'regenerated_cc1_argv', 'features', 'features_as_written'):
         if not isinstance(facts[key], list) or any(not isinstance(a, str) for a in facts[key]):
@@ -195,10 +197,10 @@ def verify_native_cursor_inputs(raw, unit, target, command):
         physical = record['physical_path']
         if role in ('main', 'file'):
             path = Path(physical)
-            if not physical or not path.is_absolute() or str(path.resolve()) != physical:
+            if not physical or not path.is_absolute() or canonical_path(physical) != physical:
                 raise ValueError('cursor witness invalid physical buffer path')
             paths = [path, *[Path(facts['cwd']) / a for a in aliases]]
-            for alias in paths:
+            for alias in paths if read_current else ():
                 if alias.resolve() != path or alias.read_bytes() != data:
                     raise ValueError('cursor witness current input differs: ' + str(alias))
             identity = ('file', physical)
@@ -314,3 +316,186 @@ def collect_cursor_witness(tool, database, output, run, symbol):
         proof = {'schema': 1, 'authorization': 'witness_only', 'status': 'rejected', 'reason': str(error)}
     (output / 'proof.json').write_text(json.dumps(proof, indent=2) + '\n')
     return proof
+
+
+def collect_closed_format_facts(tool, database, output, run, syntax):
+    """Hosted-only paired emission. Default replay lives in closed_format_facts."""
+    from closed_format_facts import FactsError, manifest, replay
+    from closed_variadic_plan import build_plan
+    output.mkdir(parents=True, exist_ok=False)
+    report = {'schema': 1, 'authorization': 'analysis_only', 'status': 'AnalysisFailure',
+              'category': 'missing_data', 'lowering': 'not_authorized'}
+    try:
+        verify_cursor_tool(tool)
+        entries = json.loads(database.read_text())
+        units = cursor_command_units(entries)
+        if sorted(str(Path(c['file']).relative_to(c['directory'])) for c in entries) != list(UNITS):
+            raise ValueError('format facts require exact all24 command inventory')
+        if len(syntax) != len(entries) or any(record.get('exit_code') != 0 or record.get('timed_out')
+                or record.get('command') != entry['arguments'][:-2] + ['-fsyntax-only', entry['file']]
+                for entry, record in zip(entries, syntax)):
+            raise ValueError('format facts require actual successful all24 native syntax receipts')
+        (output / 'native-syntax.json').write_text(json.dumps(syntax, indent=2) + '\n')
+        emitted = output / 'emitted'
+        command = [str(tool), '--fail-on-error', '--disable-rustfmt', '--edition', '2024',
+                   '--emit-build-files', '--emit-variadic-inventory', '--output-dir', str(emitted), str(database)]
+        commands = {'off': command, 'on': [*command[:1], '--emit-closed-format-facts', *command[1:]]}
+        executions = {}
+        for mode in ('off', 'on'):
+            executions[mode] = run(commands[mode], output / (mode + '.log'), timeout=1800)
+            (output / 'executions.json').write_text(json.dumps(executions, indent=2) + '\n')
+            if executions[mode]['exit_code']:
+                report['category'] = ('timeout' if executions[mode].get('timed_out') else
+                                      'crash' if executions[mode]['exit_code'] < 0 else 'compiler_or_parse_failure')
+                raise ValueError('paired compiler extraction failed in ' + mode)
+            emitted.rename(output / mode)
+        off, on = output / 'off', output / 'on'
+        rust_off = {p.relative_to(off).as_posix(): digest(p) for p in off.rglob('*.rs')}
+        rust_on = {p.relative_to(on).as_posix(): digest(p) for p in on.rglob('*.rs')}
+        if not rust_off or rust_off != rust_on:
+            raise ValueError('facts flag changed generated Rust manifest or bytes')
+        pairs, inventories, native_files = [], [], {}
+        for path in sorted(on.rglob('*.closed-format.json')):
+            facts = json.loads(path.read_text())
+            unit = facts['unit']
+            if unit not in units:
+                raise ValueError('duplicate or unexpected format facts unit')
+            entry = units.pop(unit)
+            verify_native_cursor_inputs(facts, unit, facts['target'], entry)
+            for buffer in facts['native_inputs']['buffers']:
+                if buffer['physical_path']:
+                    native_files[buffer['physical_path']] = digest(Path(buffer['physical_path']))
+            prefix = path.name.removesuffix('.closed-format.json')
+            inventory = path.with_name(prefix + '.variadic.json')
+            inventories.append(json.loads(inventory.read_text()))
+            def relative(p):
+                return p.relative_to(output).as_posix()
+            pairs.append({'unit': unit, 'facts': relative(path), 'inventory': relative(inventory),
+                          'cbor': relative(path.with_name(prefix + '.cursor.cbor')),
+                          'typed_ast': relative(path.with_name(prefix + '.typed-ast.txt')),
+                          'rust_on': relative(path.with_name(prefix + '.rs')),
+                          'rust_off': relative(off / path.with_name(prefix + '.rs').relative_to(on))})
+            pairs[-1]['files'] = {name: digest(output / value) for name, value in pairs[-1].items() if name != 'unit'}
+        if units:
+            raise ValueError('missing all24 compiler facts')
+        (output / 'compile_commands.json').write_text(json.dumps(entries, indent=2) + '\n')
+        (output / 'native-files.json').write_text(json.dumps(native_files, indent=2) + '\n')
+        (output / 'inventory-plan.json').write_text(json.dumps(build_plan(inventories, [e['file'] for e in entries], []), indent=2) + '\n')
+        tool_root = tool.parent.parent
+        retained = output / 'tool'
+        retained.mkdir()
+        tool_files = {'compiler': tool, 'source_receipt': tool_root / 'source-receipt.json',
+                      'patch': tool_root / 'source-evidence/c2rust-source.patch',
+                      'source_evidence': tool_root / 'source-evidence/c2rust-patch.json'}
+        names = {}
+        for label, path in tool_files.items():
+            target = retained / path.name
+            shutil.copy2(path, target)
+            names[label] = target.relative_to(output).as_posix()
+        snapshots = output / 'verifier-source'
+        snapshots.mkdir()
+        verifier_sources = {}
+        for name in ('closed_format_facts.py', 'full_compiler.py', 'probe.py'):
+            shutil.copy2(Path(__file__).with_name(name), snapshots / name)
+            verifier_sources[name] = 'verifier-source/' + name
+        packet = {'schema': 1, 'authorization': 'analysis_only', 'units': pairs, 'tool': names,
+                  'database': 'compile_commands.json', 'native_files': 'native-files.json', 'verifier_sources': verifier_sources,
+                  'inventory_plan': 'inventory-plan.json', 'commands': commands, 'executions': 'executions.json',
+                  'native_syntax': 'native-syntax.json', 'authentic_job_proof': False,
+                  'paired_rust': {'off': rust_off, 'on': rust_on},
+                  'abi_scope': 'Linux_x64', 'stable_output_acceptance': 'unrun'}
+        (output / 'packet.json').write_text(json.dumps(packet, indent=2) + '\n')
+        (output / 'seal.json').write_text(json.dumps(manifest(output), indent=2) + '\n')
+        report = replay(output)
+    except (FactsError, OSError, KeyError, TypeError, ValueError) as error:
+        if isinstance(error, FactsError):
+            report['category'] = 'schema_reference_or_identity_failure'
+        elif isinstance(error, json.JSONDecodeError):
+            report['category'] = 'parse_failure'
+        report['reason'] = str(error)
+    (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
+    (output / 'seal.json').write_text(json.dumps(manifest(output), indent=2) + '\n')
+    return report
+
+
+def collect_closed_format_fixture(tool, clang, output, run):
+    """Hosted source fixture tests native extraction, including presumed locations."""
+    output.mkdir(parents=True, exist_ok=False)
+    source = output / 'facts.c'
+    source.write_text('''#include <stdarg.h>
+#include <stdio.h>
+#line 9000 "presumed-format-facts.c"
+volatile unsigned counter;
+int once(void) { return ++counter; }
+int consume(const char *format, va_list args) {
+    va_list copy;
+    va_copy(copy, args);
+    int result = vsnprintf(NULL, 0, format, copy);
+    va_end(copy);
+    return result;
+}
+int produce(int choose, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    for (unsigned i = 0; i < 2; ++i) {
+        if (choose) consume(format, args);
+    }
+    va_end(args);
+    return 0;
+}
+void caller(int choose) {
+    produce(1, choose ? "%*.*g" : "%*.*g", 2, 3, (float)1);
+    produce(1, "%d", once());
+    produce(1, "%u", counter);
+}
+''')
+    database = output / 'compile_commands.json'
+    database.write_text(json.dumps([{'directory': str(output), 'file': str(source),
+                                     'arguments': [str(clang), '-std=c11', '-c', str(source)]}]))
+    command = [str(tool), '--fail-on-error', '--disable-rustfmt', '--edition', '2024',
+               '--emit-variadic-inventory', '--output-dir', str(output / 'emitted'), str(database)]
+    for mode in ('off', 'on'):
+        argv = command if mode == 'off' else [*command[:1], '--emit-closed-format-facts', *command[1:]]
+        result = run(argv, output / (mode + '.log'), timeout=120)
+        if result['exit_code']:
+            raise ValueError('format fixture extraction failure ' + mode)
+        (output / 'emitted').rename(output / mode)
+    off = {p.relative_to(output / 'off'): p.read_bytes() for p in (output / 'off').rglob('*.rs')}
+    on = {p.relative_to(output / 'on'): p.read_bytes() for p in (output / 'on').rglob('*.rs')}
+    if not off or off != on:
+        raise ValueError('format fixture flag-only Rust byte equality failed')
+    paths = list((output / 'on').rglob('*.closed-format.json'))
+    if len(paths) != 1:
+        raise ValueError('format fixture raw fact coverage differs')
+    facts = json.loads(paths[0].read_text())
+    definitions = {key: row for row in facts['definitions'] for key in [row['symbol'].get('linker')]}
+    if not {'consume', 'produce'} <= definitions.keys():
+        raise ValueError('format fixture cursor consumer omitted')
+    kinds = {s['kind'] for s in facts['statements']}
+    if not {'branch', 'loop', 'return'} <= kinds:
+        raise ValueError('format fixture complete control slice omitted')
+    semantics = {e['builtin'][1] for e in facts['cursor_events'] if e['builtin']}
+    if not {'va_start', 'va_copy', 'va_end'} <= semantics:
+        raise ValueError('format fixture cursor events omitted')
+    if not any(e['type'] and e['type'].get('volatile') for e in facts['expressions']):
+        raise ValueError('format fixture volatile qualification omitted')
+    def conditional(origin):
+        return origin['kind'] == 'Conditional' or origin['kind'] == 'Wrapper' and conditional(origin['inner'])
+    if not any(conditional(c['format']) for c in facts['calls']):
+        raise ValueError('format fixture conditional origin omitted')
+    if not any(any(t.get('canonical', {}).get('kind') == 'Double' for t in a['promotion_chain'])
+               for c in facts['calls'] for a in c['arguments']):
+        raise ValueError('format fixture actual float promotion omitted')
+    once_ids = {d['id'] for d in facts['declarations'] if d['symbol'].get('linker') == 'once'}
+    if sum(e.get('callee_decl') in once_ids for e in facts['expressions']) != 1:
+        raise ValueError('format fixture evaluate-once expression count differs')
+    physical = [e['location'] for e in facts['expressions'] if 'spelling' in e['location']]
+    if not any(p['presumed']['path'] == 'presumed-format-facts.c'
+               and p['spelling'].get('path') == str(source) and p['presumed']['line'] >= 9000 for p in physical):
+        raise ValueError('format fixture physical and presumed locations conflated')
+    result = {'status': 'compiler_fixture_pass', 'paired_bytes': True,
+              'checks': ['literal', 'conditional', 'promotion', 'volatile', 'evaluate_once',
+                         'branch', 'loop', 'return', 'start', 'copy', 'end', 'physical_vs_presumed'],
+              'lowerability': 'unproved'}
+    (output / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
+    return result

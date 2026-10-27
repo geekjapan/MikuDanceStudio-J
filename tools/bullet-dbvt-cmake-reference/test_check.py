@@ -388,7 +388,7 @@ class Controls(unittest.TestCase):
                 check.preprocess_args([mode, 'other.cpp'], 'good.cpp')
 
     def test_cl_option_values_are_not_source_operands(self):
-        options = ('D', 'U', 'I', 'FI', 'Fo', 'Fd', 'Fe', 'Fa', 'Fi', 'Fp', 'Yu', 'Yc', 'external:I')
+        options = ('D', 'U', 'I', 'FI', 'Fo', 'Fd', 'Fe', 'Fa', 'Fi', 'Fp', 'external:I')
         for prefix in ('/', '-'):
             for option in options:
                 for value in ('other.cpp', 'other.h', 'extensionless', 'input.obj'):
@@ -410,6 +410,61 @@ class Controls(unittest.TestCase):
         for extra in ('other.h', 'extensionless', 'input.obj', 'input.lib'):
             with self.subTest(extra=extra), self.assertRaises(ValueError):
                 check.preprocess_args(['good.cpp', extra], 'good.cpp')
+
+    def test_pch_filename_is_optional_and_attached(self):
+        for prefix in ('/', '-'):
+            for pch in ('Yu', 'Yc'):
+                for value in ('', 'other.h', 'other.cpp', 'extensionless'):
+                    flag = prefix + pch + value
+                    for args in ([prefix + 'TP', flag, 'good.cpp'],
+                                 [prefix + 'TP', 'good.cpp', flag]):
+                        with self.subTest(args=args):
+                            original = args[:]
+                            self.assertEqual(check.preprocess_args(args, 'good.cpp'),
+                                             [prefix + 'TP', flag, '/E', '/showIncludes', 'good.cpp'])
+                            self.assertEqual(args, original)
+
+    def test_bare_pch_does_not_hide_inputs_or_switches(self):
+        for prefix in ('/', '-'):
+            for pch in ('Yu', 'Yc'):
+                for extra in ('other.h', 'other.cpp', 'extensionless', 'input.obj', 'input.lib',
+                              'good.cpp', '', prefix + 'TC', prefix + 'Tpother.h',
+                              prefix + 'Tcother.cpp', prefix + 'unknown'):
+                    args = [prefix + 'TP', prefix + pch, extra, 'good.cpp']
+                    with self.subTest(args=args), self.assertRaises(ValueError):
+                        check.preprocess_args(args, 'good.cpp')
+                for required in ('D', 'U', 'I', 'FI', 'Fo', 'Fd', 'Fe', 'Fa', 'Fi', 'Fp',
+                                 'external:I', 'sourceDependencies', 'sourceDependencies:directives',
+                                 'scanDependencies'):
+                    for tail in ([prefix + required], [prefix + required, '']):
+                        args = [prefix + 'TP', 'good.cpp', prefix + pch, *tail]
+                        with self.subTest(args=args), self.assertRaisesRegex(ValueError, 'missing its value'):
+                            check.preprocess_args(args, 'good.cpp')
+                with self.assertRaisesRegex(ValueError, 'caret full path'):
+                    check.preprocess_args([prefix + 'TP', prefix + pch, 'other.cpp'], 'good.cpp')
+
+    def test_response_pch_preserves_caret_and_rejects_hidden_inputs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            response = root / 'inner.rsp'
+            (root / 'outer.rsp').write_text('/c @inner.rsp /Fo output.obj')
+            tlog = root / 'CL.command.1.tlog'
+            tlog.write_bytes('^good.cpp\n@outer.rsp\n'.encode('utf-16'))
+            [(sources, command)] = check.tlog_commands(tlog)
+            for prefix in ('/', '-'):
+                for pch in ('Yu', 'Yc'):
+                    response.write_bytes(f'{prefix}TP {prefix}{pch} good.cpp'.encode('utf-16'))
+                    args = check.expand(command, root, [])
+                    original = args[:]
+                    with self.subTest(prefix=prefix, pch=pch):
+                        self.assertEqual(check.preprocess_args(args, sources[0], cwd=root),
+                                         [prefix + 'TP', prefix + pch, '/E', '/showIncludes', 'good.cpp'])
+                        self.assertEqual(args, original)
+                    for extra in ('other.h', 'other.cpp', 'extensionless', '""',
+                                  prefix + 'TC', prefix + 'Tpother.h', prefix + 'unknown'):
+                        response.write_text(f'{prefix}TP {prefix}{pch} {extra} good.cpp')
+                        with self.subTest(extra=extra, pch=pch, prefix=prefix), self.assertRaises(ValueError):
+                            check.preprocess_args(check.expand(command, root, []), sources[0], cwd=root)
 
     def test_response_expanded_global_mode_preserves_single_source(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -621,7 +676,7 @@ class Controls(unittest.TestCase):
             out, libs = self.archive_fixture(root)
             tlog = root / 'BulletCollision/BulletCollision.dir/Release/CL.command.1.tlog'
             lines = tlog.read_text().splitlines()
-            args = ['/TP', *check.split_command(lines[1])]
+            args = ['/TP', *check.split_command(lines[1]), '/Yu']
             lines[1] = subprocess.list2cmdline(args)
             tlog.write_text('\n'.join(lines) + '\n')
             record = check.archive_commands(root, out, libs)['BulletCollision']['dbvt_objects']['btDbvt']['compile']

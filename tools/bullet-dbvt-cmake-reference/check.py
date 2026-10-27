@@ -321,7 +321,8 @@ def tlog_commands(path, *, reads=False):
 
 def compile_source_index(args, source, cwd):
     operands = []
-    value_options = ('/D', '/U', '/I', '/FI', '/Fo', '/Fd', '/Fe', '/Fa', '/Fi', '/Fp', '/Yu', '/Yc', '/external:I')
+    value_options = ('/D', '/U', '/I', '/FI', '/Fo', '/Fd', '/Fe', '/Fa', '/Fi', '/Fp', '/external:I')
+    optional_attached_options = ('/Yu', '/Yc')
     global_cpp = False
     dependency_options = ('/sourceDependencies', '/sourceDependencies:directives', '/scanDependencies')
     flags = re.compile(
@@ -342,6 +343,8 @@ def compile_source_index(args, source, cwd):
             continue
         if option.startswith(('/Tc', '/Tp', '/TC', '/TP')):
             raise ValueError('unsupported explicit CL source mode')
+        if option.startswith(optional_attached_options):
+            continue
         if option in dependency_options or option in value_options:
             if index + 1 == len(args) or not args[index + 1]:
                 raise ValueError('compiler option is missing its value')

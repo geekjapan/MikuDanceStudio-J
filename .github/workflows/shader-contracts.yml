@@ -1,0 +1,87 @@
+name: Native shader contracts
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'rust/crates/mds-shader/**'
+      - 'rust/crates/mds-fx/**'
+      - 'rust/Cargo.lock'
+      - 'rust/Cargo.toml'
+      - 'rust/rust-toolchain.toml'
+      - 'tools/shader/**'
+      - 'tools/vkd3d/**'
+      - 'tools/fixtures/fetch_corpus.sh'
+      - '.github/workflows/shader-contracts.yml'
+  pull_request:
+    paths:
+      - 'rust/crates/mds-shader/**'
+      - 'rust/crates/mds-fx/**'
+      - 'rust/Cargo.lock'
+      - 'rust/Cargo.toml'
+      - 'rust/rust-toolchain.toml'
+      - 'tools/shader/**'
+      - 'tools/vkd3d/**'
+      - 'tools/fixtures/fetch_corpus.sh'
+      - '.github/workflows/shader-contracts.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shader-contracts-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      TMPDIR: /tmp
+      MDS_VKD3D_LIB: /tmp/mds-vkd3d/linux-amd64/lib/libvkd3d-shader.so.1
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare artifact directory
+        run: mkdir -p shader-contracts
+      - name: Fetch pinned corpus and build native compiler
+        run: |
+          bash tools/fixtures/fetch_corpus.sh
+          bash tools/vkd3d/build.sh linux-amd64
+          git -C /tmp/mds-corpus/ray-mmd rev-parse HEAD > shader-contracts/corpus-commit.txt
+          git rev-parse HEAD > shader-contracts/source-commit.txt
+          sha256sum "$MDS_VKD3D_LIB" > shader-contracts/compiler-sha256.txt
+      - name: Test contract capture and comparator
+        run: |
+          (cd rust && cargo test --locked -p mds-shader --bin mds-shader)
+          python3 -m unittest discover -s tools/shader -p 'test_*.py'
+      - name: Capture every native entry contract
+        run: |
+          set +e
+          (cd rust && cargo run --locked --release -p mds-shader -- corpus \
+            --manifest ../shader-contracts/native.tsv --emit ../shader-contracts/outputs \
+            /tmp/mds-corpus/ray-mmd) > shader-contracts/capture.log 2>&1
+          status=$?
+          set -e
+          echo "$status" > shader-contracts/capture-exit.txt
+          # Existing reflection gaps return 1; a complete manifest must still validate.
+          test "$status" -le 1
+          test -f shader-contracts/outputs/index.tsv
+          python3 tools/shader/compare.py --validate shader-contracts/native.tsv > shader-contracts/summary.json
+      - name: Preserve frozen native successes
+        run: |
+          python3 tools/shader/compare.py tools/shader/native-baseline.tsv shader-contracts/native.tsv \
+            > shader-contracts/comparison.json
+      - name: Preserve contracts and generated shader outputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-shader-contracts-linux-x64
+          path: shader-contracts/
+          if-no-files-found: error

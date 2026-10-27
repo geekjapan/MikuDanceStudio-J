@@ -16,4 +16,5 @@ name = "mds-fx"
 path = "src/main.rs"
 
 [dependencies]
+mds-formats = { path = "../mds-formats" }
 encoding_rs = "0.8"

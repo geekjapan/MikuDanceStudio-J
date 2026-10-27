@@ -19,7 +19,22 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def validate_float_words(words):
+    if not all(HEX.fullmatch(word) and int(word, 16) & 0x7f800000 != 0x7f800000
+               for word in words):
+        raise ValueError(f'invalid or nonfinite float words: {words}')
+
+
+def validate_counts(counts):
+    if not (len(counts) == 2 and all(len(c) == 6 for c in counts)
+            and [c[0] for c in counts] == ['skin-0', 'skin-30']
+            and all(isinstance(v, int) and v > 0 for c in counts for v in c[1:])
+            and counts[0][1:] == counts[1][1:]):
+        raise ValueError(f'expected matching nonempty skin-0/skin-30 counts: {counts}')
+
+
 def validate_cases(cases, counts):
+    validate_counts(counts)
     lines = [line.split() for line in cases.splitlines() if line.strip()]
     cursor = 0
     for label, vertices, stride, materials, bones, morphs in counts:
@@ -30,61 +45,78 @@ def validate_cases(cases, counts):
             words = lines[cursor]
             cursor += 1
             if op == 'shadow':
-                assert words in [['shadow', '0'], ['shadow', '1']], words
+                if not (words in [['shadow', '0'], ['shadow', '1']]):
+                    raise ValueError(words)
             elif isinstance(payload, int):
-                assert words[0] == op and len(words) == payload + 1, words
-                assert all(HEX.fullmatch(w) for w in words[1:]), words
+                if not (words[0] == op and len(words) == payload + 1):
+                    raise ValueError(words)
+                validate_float_words(words[1:])
             else:
-                assert words == [op, *payload], words
+                if not (words == [op, *payload]):
+                    raise ValueError(words)
         for op, count, width in [('morph', morphs, 1), ('bone', bones, 16)]:
             for index in range(count):
                 words = lines[cursor]
                 cursor += 1
-                assert words[:2] == [op, str(index)] and len(words) == width + 2, words
-                assert all(HEX.fullmatch(w) for w in words[2:]), words
-        assert lines[cursor] == ['end']
+                if not (words[:2] == [op, str(index)] and len(words) == width + 2):
+                    raise ValueError(words)
+                validate_float_words(words[2:])
+        if not (lines[cursor] == ['end']):
+            raise ValueError('missing case end directive')
         cursor += 1
-    assert cursor == len(lines), 'extra cases or directives (including qdef)'
+    if not (cursor == len(lines)):
+        raise ValueError('extra cases or directives (including qdef)')
 
 
 def read_counts(text):
     counts = []
     for line in text.splitlines():
         label, *values = line.split()
-        assert len(values) == 5
+        if not (len(values) == 5):
+            raise ValueError('expected five count fields')
         values = list(map(int, values))
-        assert all(v > 0 for v in values), values
+        if not (all(v > 0 for v in values)):
+            raise ValueError(values)
         counts.append((label, *values))
-    assert [c[0] for c in counts] == ['skin-0', 'skin-30']
-    assert counts[0][1:] == counts[1][1:]
+    validate_counts(counts)
     return counts
 
 
 def dump_records(text, counts, native=False):
+    validate_counts(counts)
     lines = [line.split() for line in text.splitlines()]
     cursor = 0
     records = []
     skipped_bones = 0
     for label, vertices, stride, materials, _, _ in counts:
-        assert lines[cursor] == ['model', 'skin_tex.pmx', 'pmx', 'vertices', str(vertices), 'stride', str(stride * 4)]
-        assert lines[cursor + 1] == ['case', label]
+        if not (lines[cursor] == ['model', 'skin_tex.pmx', 'pmx', 'vertices', str(vertices), 'stride', str(stride * 4)]):
+            raise ValueError('unexpected dump model, vertex count or stride')
+        if not (lines[cursor + 1] == ['case', label]):
+            raise ValueError('unexpected dump case')
         cursor += 2
         for kind, count, width in [('v', vertices, stride + 4), ('m', materials, 16)]:
             for index in range(count):
                 words = lines[cursor]
                 cursor += 1
-                assert words[:2] == [kind, str(index)] and len(words) == width + 2, words
-                assert all(HEX.fullmatch(w) for w in words[2:]), words
+                if not (words[:2] == [kind, str(index)] and len(words) == width + 2):
+                    raise ValueError(words)
+                if not (all(HEX.fullmatch(w) for w in words[2:])):
+                    raise ValueError(words)
+                # The last vertex word is packed edge diffuse, not a float.
+                validate_float_words(words[2:-1] if kind == 'v' else words[2:])
                 records.append((label, kind, index, words[2:]))
         # Bone morph work records are outside Mesh::skinned's returned buffers.
         if native:
             while cursor < len(lines) and lines[cursor][0] == 'b':
                 words = lines[cursor]
-                assert len(words) == 10 and int(words[1]) >= 0 and int(words[2]) >= 0
-                assert all(HEX.fullmatch(w) for w in words[3:])
+                if not (len(words) == 10 and int(words[1]) >= 0 and int(words[2]) >= 0):
+                    raise ValueError('malformed excluded bone morph record')
+                if not (all(HEX.fullmatch(w) for w in words[3:])):
+                    raise ValueError('malformed excluded bone morph words')
                 skipped_bones += 1
                 cursor += 1
-    assert cursor == len(lines), 'extra or malformed dump records'
+    if not (cursor == len(lines)):
+        raise ValueError('extra or malformed dump records')
     return records, skipped_bones
 
 
@@ -94,7 +126,8 @@ def compare(rust, native, counts):
     mismatches = []
     words = 0
     for a, b in zip(actual, expected, strict=True):
-        assert a[:3] == b[:3]
+        if not (a[:3] == b[:3]):
+            raise ValueError('dump record identity mismatch')
         for index, (av, bv) in enumerate(zip(a[3], b[3], strict=True)):
             words += 1
             if av != bv:
@@ -137,7 +170,8 @@ def snapshot(root, out, copy=False):
 
 
 def run(root, out):
-    assert sys.platform == 'linux' and os.uname().machine == 'x86_64', 'Linux x64 diagnostic only'
+    if not (sys.platform == 'linux' and os.uname().machine == 'x86_64'):
+        raise ValueError('Linux x64 diagnostic only')
     out.mkdir(parents=True, exist_ok=False)
     env = os.environ.copy()
     for key in list(env):
@@ -162,7 +196,8 @@ def run(root, out):
         # Build once, retaining the unchanged harness's old-case result as a baseline check.
         capture(out, 'cpp-build-old-cases', ['sh', '-x', '../tools/skin_check/run.sh', str(out / 'old.dump')], root / 'rust', env)
         baseline = root / 'tests/fixtures/rust/skin/skin.dump'
-        assert (out / 'old.dump').read_bytes() == baseline.read_bytes(), 'old C++ dump baseline changed'
+        if not ((out / 'old.dump').read_bytes() == baseline.read_bytes()):
+            raise ValueError('old C++ dump baseline changed')
         binary_dir = out / 'binaries'
         binary_dir.mkdir()
         native_build = Path(env['TMPDIR']) / 'skin_check'
@@ -172,7 +207,8 @@ def run(root, out):
         build = capture(out, 'rust-build', ['cargo', '+1.95.0', 'test', '--locked', '-vv', '-p', 'mds-render', '--lib', '--no-run', '--message-format=json'], root / 'rust', env)
         artifacts = [json.loads(line) for line in build.decode().splitlines() if line.startswith('{')]
         executables = [a['executable'] for a in artifacts if a.get('reason') == 'compiler-artifact' and a.get('target', {}).get('name') == 'mds_render' and a.get('profile', {}).get('test') and a.get('executable')]
-        assert len(executables) == 1, executables
+        if not (len(executables) == 1):
+            raise ValueError(executables)
         for path in Path(env['CARGO_TARGET_DIR']).glob('debug/build/*/out/*.a'):
             dest = binary_dir / 'rust-native' / path.parent.parent.name / path.name
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -189,32 +225,39 @@ def run(root, out):
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(path, dest)
         binary_start = {str(p.relative_to(binary_dir)): digest(p) for p in binary_dir.rglob('*') if p.is_file()}
-        assert binary_start['skin_check'] == digest(native)
+        if not (binary_start['skin_check'] == digest(native)):
+            raise ValueError('native executable differs from preserved binary')
         (out / 'binary-start.json').write_text(json.dumps(binary_start, indent=2) + '\n')
         result = capture(out, 'rust-frames', [str(rust), '--exact', TEST, '--ignored', '--nocapture', '--test-threads=1'], root / 'rust', env).decode()
-        assert f'test {TEST} ... ok' in result and '1 passed; 0 failed; 0 ignored' in result, result
+        if not (f'test {TEST} ... ok' in result and '1 passed; 0 failed; 0 ignored' in result):
+            raise ValueError(result)
         frames = out / 'frames'
         counts = read_counts((frames / 'counts.txt').read_text())
         validate_cases((frames / 'cases.txt').read_text(), counts)
         reads = Path(frames / 'fixture-reads.txt').read_text().splitlines()
-        assert reads and all(Path(p).resolve().is_relative_to(root / 'tests/fixtures/rust') for p in reads)
+        if not (reads and all(Path(p).resolve().is_relative_to(root / 'tests/fixtures/rust') for p in reads)):
+            raise ValueError('missing or out-of-scope fixture reads')
         missing = (frames / 'fixture-missing.txt').read_text().splitlines()
-        assert all(not Path(p).exists() and Path(p).resolve().is_relative_to(root / 'tests/fixtures/rust') for p in missing)
+        if not (all(not Path(p).exists() and Path(p).resolve().is_relative_to(root / 'tests/fixtures/rust') for p in missing)):
+            raise ValueError('invalid missing-fixture record')
         (out / 'fixture-read-hashes.json').write_text(json.dumps({p: digest(Path(p)) for p in reads}, indent=2) + '\n')
         native_dump = capture(out, 'cpp-frames', [str(native), str(root / 'tests/fixtures/rust/golden2'), str(frames / 'cases.txt')], root / 'rust', env).decode()
         report = compare((frames / 'rust.dump').read_text(), native_dump, counts)
         (out / 'comparison.json').write_text(json.dumps(report, indent=2) + '\n')
         binary_end = {str(p.relative_to(binary_dir)): digest(p) for p in binary_dir.rglob('*') if p.is_file()}
         (out / 'binary-end.json').write_text(json.dumps(binary_end, indent=2) + '\n')
-        assert binary_start == binary_end and binary_start['skin_check'] == digest(native)
-        assert report['conditional_cpu_equal'], 'CPU words differ; see comparison.json'
+        if not (binary_start == binary_end and binary_start['skin_check'] == digest(native)):
+            raise ValueError('diagnostic binaries changed')
+        if not (report['conditional_cpu_equal']):
+            raise ValueError('CPU words differ; see comparison.json')
     finally:
         end = snapshot(root, out)
         (out / 'source-end.json').write_text(json.dumps(end, indent=2) + '\n')
         (out / 'source-unchanged.json').write_text(json.dumps({'unchanged': start == end}) + '\n')
         seal = {str(p.relative_to(out)): digest(p) for p in sorted(out.rglob('*')) if p.is_file() and not p.is_relative_to(out / 'target') and not p.is_relative_to(out / 'tmp')}
         (out / 'SHA256SUMS.json').write_text(json.dumps(seal, indent=2) + '\n')
-        assert start == end, 'source or fixtures changed during the diagnostic'
+        if not (start == end):
+            raise ValueError('source or fixtures changed during the diagnostic')
 
 
 if __name__ == '__main__':

@@ -1,0 +1,107 @@
+name: Bullet default-owned DBVT broadphase
+
+on:
+  push:
+    branches: [w3-dbvt-default-owned-broadphase]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bullet-dbvt-broadphase-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Actual broadphase (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            policy: generic-reference
+          - os: ubuntu-24.04-arm
+            policy: generic-reference
+          - os: macos-15
+            policy: generic-reference
+          - os: windows-2022
+            policy: mmd-win64-sse
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Check strict capture and mutation helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B tools/bullet-rust-dbvt-broadphase-check/test_check.py -v
+          python3 -B -O tools/bullet-rust-dbvt-broadphase-check/test_check.py -v
+      - name: Compile and measure the unmodified native archive
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          CXX: clang++
+          POLICY: ${{ matrix.policy }}
+        run: |
+          set -euo pipefail
+          python3 -B tools/bullet-rust-dbvt-broadphase-check/check.py --out-dir "$RUNNER_TEMP/broadphase" --policy "$POLICY"
+      - name: Compile and measure the actual Windows SSE consumer
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          @echo on
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+          set CXX=cl
+          python -B tools\bullet-rust-dbvt-broadphase-check\check.py --out-dir "%RUNNER_TEMP%\broadphase" --policy mmd-win64-sse
+          exit /b %ERRORLEVEL%
+      - name: Save all actual commands, sources, archives and raw checkpoints
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: broadphase-${{ matrix.os }}
+          path: ${{ runner.temp }}/broadphase
+          if-no-files-found: error
+
+  windows_replay:
+    name: Actual Windows source replay (${{ matrix.os }})
+    needs: native
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15, ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: broadphase-windows-2022
+          path: ${{ runner.temp }}/windows-broadphase
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Replay every Windows checkpoint with explicit SSE policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B tools/bullet-rust-dbvt-broadphase-check/test_check.py -v
+          python3 -B -O tools/bullet-rust-dbvt-broadphase-check/test_check.py -v
+          python3 -B tools/bullet-rust-dbvt-broadphase-check/check.py --out-dir "$RUNNER_TEMP/broadphase-replay" --replay-dir "$RUNNER_TEMP/windows-broadphase" --policy mmd-win64-sse
+      - name: Save strict replay and compiled semantic controls
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: broadphase-windows-replay-${{ matrix.os }}
+          path: ${{ runner.temp }}/broadphase-replay
+          if-no-files-found: error

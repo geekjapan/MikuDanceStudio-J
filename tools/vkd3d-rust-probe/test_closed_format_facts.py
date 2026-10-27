@@ -16,13 +16,33 @@ def constructor_fixture_fields(graph):
                'builtin_function': 'BuiltinFn'}
     for row in graph['types']:
         row.setdefault('native_shape', mapping.get(row.get('kind'), row.get('kind')))
-        if row['native_shape'] == 'Attributed':
-            row.setdefault('counted_by', None)
+        shape = row['native_shape']
+        if shape == 'Attributed': row.setdefault('counted_by', None)
+        if shape in ('Reference', 'BlockPointer', 'Vector', 'Atomic', 'Complex', 'TypeOfExpr', 'VariableArray',
+                     'Attributed', 'LongDouble', 'BFloat16'):
+            row.setdefault('unproved', 'missing or unsupported required type')
+        elif shape == 'BuiltinFn': row.setdefault('unproved', 'BuiltinFn requires a native endpoint relation')
+        elif shape in ('ConstantArray', 'IncompleteArray') and 'element' not in row:
+            row.setdefault('unproved', 'missing or inconsistent qualified array element')
     for row in graph['declarations']:
+        row.setdefault('diagnostic_location', None)
         if row['kind'] == 'variable':
-            row.setdefault('initializer', None)
+            for key, value in dict(initializer=None, name='', local=False, owning_function=None, static=False,
+                                   thread=False, externally_visible=False, native_va_list=None).items():
+                row.setdefault(key, value)
+            row.setdefault('type', {'canonical': {'kind': 'Int'}, 'const': False, 'volatile': False, 'restrict': False})
+        elif row['kind'] == 'field':
+            row.setdefault('owners', [owner['identity'] for owner in graph['declarations']
+                                     if owner['kind'] in ('struct', 'union') and row['id'] in (owner['fields'] or [])])
+            row.setdefault('type', {'canonical': {'pointer': {'canonical': {'native_va_list_record': 800},
+                           'const': False, 'volatile': False, 'restrict': False}}, 'const': False, 'volatile': False, 'restrict': False})
     for row in graph['expressions']:
         shape, children = row['native_shape'], row['children']
+        if shape == 'Binary':
+            row.setdefault('operator', 'Add')
+            row.setdefault('computation_qualified_types', [None, None])
+            row.setdefault('computation_types', [None, None])
+        elif shape == 'UnaryType': row.setdefault('operator', 'SizeOf')
         if shape in ('Unary', 'ConstantExpr', 'ImplicitCast', 'ExplicitCast', 'Paren', 'CompoundLiteral',
                      'ImaginaryLiteral', 'Predefined', 'VAArg', 'Member'):
             operands = {'child': children[0]}
@@ -566,7 +586,24 @@ class ClosedFormatFactsTests(unittest.TestCase):
             graph = F.ReportGraph(facts)
         else:
             from unittest.mock import patch
-            with patch.object(F.ReportGraph, 'check_raw_constructors'):
+            def fixture_relations(owner):
+                for kind, rows in owner.tables.items():
+                    for row in rows.values():
+                        extra, references = [], []
+                        normalization = None
+                        if kind == 'type':
+                            shape = row['native_shape']
+                            if shape in ('Struct','Union','Enum','Typedef'): references = [owner.edge('declaration',row['declaration'])]
+                            if shape in ('TypeOf', 'Paren', 'Elaborated', 'Decayed', 'Auto'):
+                                normalization = owner.edge('type', row['inner']); extra.append(normalization)
+                            elif shape == 'Typedef' and 'original' in row:
+                                normalization = owner.edge('type', row['original']['type_id']); extra.append(normalization)
+                        elif kind == 'expression':
+                            if row['qualified_type'] is not None: extra.append(owner.edge('type', row['type_id']))
+                            if row['kind'] == 'reference':
+                                references = [owner.edge('declaration', row['decl'])]; extra += references
+                        owner.relation(kind, row, normalization, references, extra)
+            with patch.object(F.ReportGraph, 'check_raw_constructors', fixture_relations):
                 graph = F.ReportGraph(facts)
         inventory = graph.inventory(facts)
         data['on/0/blob.variadic.json'] = inventory
@@ -711,7 +748,7 @@ class ClosedFormatFactsTests(unittest.TestCase):
                          location=raw['location'], flow={'state': 'Unproved', 'reason': 'synthetic structural statement'})
         graph['statements'].append(statement)
         facts['statements'].append({'id': 998000})
-        declaration = dict(id=804, kind='variable', type_id=2,
+        declaration = dict(id=804, kind='variable', type_id=2, type=next(r['type'] for r in graph['declarations'] if r['id'] == 802),
                            qualified_type=dict(type_id=2, const=False, volatile=False, restrict=False),
                            initializer=1013, local=False, owning_function=None, parameter_owners=[], va_list=False,
                            df_children=[edge('type', 2), edge('expression', 1013)],
@@ -751,6 +788,7 @@ class ClosedFormatFactsTests(unittest.TestCase):
         graph['declarations'].append(declaration)
         graph['declaration_order'].append(805)
         facts['variables'].append({'id': 805})
+        graph['qualified_types'].append(dict(source=original, path=[1], normalized=original))
         graph['qualified_types'].append(dict(source=q(6, volatile=True), path=[6, 5, 1], normalized=q(1, const=True, volatile=True)))
         row = next(e for e in graph['expressions'] if e['id'] == 1002)
         row.update(type_id=6, qualified_type=q(6, volatile=True))
@@ -883,6 +921,7 @@ class ClosedFormatFactsTests(unittest.TestCase):
                 row[field] = target
             graph['declarations'].append(row)
             graph['declaration_order'].append(i)
+        constructor_fixture_fields(graph)
         F.ReportGraph(facts)
         for field, rows in (('types', types), ('declarations', graph['declarations'][-4:])):
             for row in rows:
@@ -924,7 +963,7 @@ class ClosedFormatFactsTests(unittest.TestCase):
             row.update(id=i, native_shape=shape, operands=operands, df_children=copy.deepcopy(df))
             structural = copy.deepcopy(df)
             if shape == 'UnaryType':
-                row.update(kind='unary_type', argument_qualified_type=base['qualified_type'],
+                row.update(kind='unary_type', operator='SizeOf', argument_qualified_type=base['qualified_type'],
                            argument_type=F.ReportGraph(facts).type_view(base['qualified_type'], True))
                 structural = [edge('type', 1)]
             elif shape == 'OffsetOf' and operands['type'] is not None:
@@ -972,6 +1011,341 @@ class ClosedFormatFactsTests(unittest.TestCase):
         self.assertNotIn('self.qualified.borrow()', facts)
         self.assertIn('fn closed_format_native_record_identity_is_compiler_owned', source)
         self.assertIn('assert_eq!(qualified.len(), graph.qualified.borrow().len())', source)
+
+    def test_closed_raw_records_and_reference_neighbors(self):
+        import copy
+        q = dict(type_id=1, const=False, volatile=False, restrict=False)
+        edge = lambda kind, ident: dict(kind=kind, id=ident)
+        unknown = {'unproved': 'independent native origin'}
+        effect = {'state': 'Unproved', 'reason': 'independent effect relation'}
+        base = dict(id=1001, kind='literal', native_shape='Literal', operands={}, literal={'integer': 1},
+                    qualified_type=q, type_id=1, va_list=False, statement_body=None, diagnostic_location=None,
+                    location=unknown, children=[], edge_count=0, df_children=[], structural_children=[], effect_relation=effect)
+        decl = dict(id=800, kind='struct', identity=unknown, native_va_list_record=False, fields=[802], layout=[False, None, None, 4, 4],
+                    state='complete', parameter_owners=[], diagnostic_location=None,
+                    df_children=[edge('declaration', 802)], structural_children=[edge('declaration', 802)])
+        view = {'canonical': {'kind': 'Int'}, 'const': False, 'volatile': False, 'restrict': False}
+        field = dict(id=802, kind='field', name='field', type_id=1, qualified_type=q, type=view, owners=[unknown],
+                     bit_width=None, bit_offset=0, type_bit_width=32, alignment=None, parameter_owners=[], diagnostic_location=None,
+                     df_children=[edge('type', 1)], structural_children=[edge('type', 1)])
+        typedef = dict(id=803, kind='typedef', type_id=1, qualified_type=q, parameter_owners=[], diagnostic_location=None,
+                       df_children=[edge('type', 1)], structural_children=[edge('type', 1)])
+        enum = dict(id=804, kind='enum', identity=unknown, native_va_list_record=False, variants=[805], underlying=q,
+                    state='complete', parameter_owners=[], diagnostic_location=None,
+                    df_children=[edge('declaration', 805), edge('type', 1)], structural_children=[edge('declaration', 805), edge('type', 1)])
+        variant = dict(id=805, kind='enum_constant', name='value', signed=True, value=-1,
+                       owning_enum={'declaration': 804, 'identity': unknown}, parameter_owners=[], diagnostic_location=None,
+                       df_children=[], structural_children=[])
+        variable = dict(id=806, kind='variable', name='v', type_id=1, qualified_type=q, type=view, local=False, owning_function=None,
+                        va_list=False, initializer=None, static=False, thread=False, externally_visible=False, native_va_list=None,
+                        parameter_owners=[], diagnostic_location=None, df_children=[edge('type', 1)], structural_children=[edge('type', 1)])
+        statement = dict(id=900, kind='empty', native_shape='Empty', label_target=None, location=unknown,
+                         edge_count=0, children=[], flow=effect, df_children=[], structural_children=[])
+        typ = dict(type_id=1, kind='Int', native_shape='Int', df_children=[], structural_children=[])
+        facts = {'unit':'/native/fixture.c', 'graph': dict(types=[typ], expressions=[base], declarations=[decl, field, typedef, enum, variant, variable],
+                              statements=[statement], declaration_order=[800, 802, 803, 804, 805, 806],
+                              qualified_types=[dict(source=q, path=[1], normalized=q)])}
+        expressions = [
+            ('BadExpr', 'unsupported', {}, [], [], dict(qualified_type=None, type_id=None, va_list=None,
+                type_unproved='importer expression has no qualified type')),
+            ('Member', 'member', {'child': 1001}, [edge('expression', 1001)], [edge('expression', 1001)], dict(member={'id':803}, access='Dot')),
+            ('ImplicitCast', 'implicit_cast', {'child':1001}, [edge('expression', 1001)], [edge('type', 1), edge('expression', 1001)], dict(cast='NoOp', field=802)),
+            ('ExplicitCast', 'explicit_cast', {'child':1001}, [edge('expression', 1001)], [edge('type', 1), edge('expression', 1001)], dict(cast='NoOp', field=None)),
+            ('DeclRef', 'reference', {}, [], [], dict(decl=803)),
+            ('ConstantExpr', 'unsupported', {'child':1001}, [edge('expression', 1001)], [edge('expression', 1001)], {}),
+            ('Unary', 'unary', {'child':1001}, [edge('expression', 1001)], [edge('expression', 1001)], dict(operator='Plus')),
+            ('Binary', 'binary', dict(left=1001, right=1001), [edge('expression', 1001)] * 2, [edge('expression', 1001)] * 2,
+             dict(operator='Add', computation_qualified_types=[q, None], computation_types=[view, None])),
+            ('UnaryType', 'unary_type', dict(expression=None), [], [edge('type', 1)], dict(operator='SizeOf', argument_qualified_type=q, argument_type=view)),
+        ]
+        for ident, (shape, kind, operands, df, structural, extra) in enumerate(expressions, 1100):
+            row = dict(copy.deepcopy(base), id=ident, kind=kind, native_shape=shape, operands=operands,
+                       df_children=df, structural_children=structural,
+                       children=[e['id'] for e in structural if e['kind'] == 'expression'])
+            row.pop('literal')
+            row.update(extra, edge_count=len(row['children']))
+            facts['graph']['expressions'].append(row)
+        types = [
+            dict(type_id=2, native_shape='Char', kind='Char', signed=False),
+            dict(type_id=3, native_shape='Char', kind='Char', unproved='missing plain char signedness'),
+            dict(type_id=4, native_shape='Typedef', kind='typedef', declaration=803, original=q),
+            dict(type_id=5, native_shape='Typedef', kind='typedef', declaration=803, unproved='missing original typedef declaration or type'),
+            dict(type_id=6, native_shape='ConstantArray', kind='array', element_type=1, element=q, length=2),
+            dict(type_id=7, native_shape='IncompleteArray', kind='array', element_type=1, length=None, unproved='missing or inconsistent qualified array element'),
+            dict(type_id=8, native_shape='Struct', kind='struct', declaration=800),
+            dict(type_id=9, native_shape='Enum', kind='enum', declaration=804),
+        ]
+        for row in types:
+            shape = row['native_shape']
+            edges = ([edge('declaration', row['declaration'])] if shape in ('Typedef', 'Struct', 'Enum') else
+                     [edge('type', 1)] if shape in ('ConstantArray', 'IncompleteArray') else [])
+            row.update(df_children=edges, structural_children=copy.deepcopy(edges))
+            facts['graph']['types'].append(row)
+        union = dict(copy.deepcopy(decl), id=807, kind='union', fields=None, layout=None, state='incomplete', df_children=[], structural_children=[])
+        facts['graph']['declarations'].append(union)
+        facts['graph']['declaration_order'].append(807)
+        scalars = ('Void Bool Short Long LongLong UShort UInt ULong ULongLong SChar UChar Double Float Int128 UInt128 Half').split()
+        for ident, shape in enumerate(scalars, 20):
+            facts['graph']['types'].append(dict(type_id=ident, native_shape=shape, kind=shape, df_children=[], structural_children=[]))
+        unsupported = ('BFloat16 UnhandledSveType Float128 Int8 Int16 Int32 Int64 IntPtr UInt8 UInt16 UInt32 UInt64 UIntPtr IntMax UIntMax Size SSize PtrDiff WChar').split()
+        for ident, shape in enumerate(unsupported, 50):
+            facts['graph']['types'].append(dict(type_id=ident, native_shape=shape, unproved='missing or unsupported required type', df_children=[], structural_children=[]))
+        extra_types = [
+            ('Pointer', 'pointer', dict(pointee=q), [edge('type',1)]),
+            ('Function', 'function', dict(return_=q, parameters=[q,q], variadic=False, noreturn=False, prototype=True, abi='C'), [edge('type',1)] * 3),
+            ('Union', 'union', dict(declaration=807), [edge('declaration',807)]),
+            ('BuiltinFn', 'builtin_function', dict(unproved='BuiltinFn requires a native endpoint relation'), []),
+            ('LongDouble', 'LongDouble', dict(unproved='missing or unsupported required type'), []),
+            ('TypeOfExpr', None, dict(expression=1001), [edge('expression',1001)]),
+            ('Complex', None, dict(element_type=1), [edge('type',1)]),
+            ('VariableArray', None, dict(element_type=1, count_expression=1001), [edge('type',1),edge('expression',1001)]),
+            ('VariableArray', None, dict(element_type=1, count_expression=None), [edge('type',1)]),
+            ('Attributed', 'attributed', dict(original=q,counted_by=1001), [edge('type',1),edge('expression',1001)]),
+            ('Attributed', 'attributed', dict(original=q,counted_by=None), [edge('type',1)]),
+        ]
+        for shape in ('Reference', 'BlockPointer', 'Vector', 'Atomic'):
+            extra_types.append((shape, None, dict(original=q), [edge('type',1)]))
+        for shape, kind in (('TypeOf','typeof'), ('Paren','paren'), ('Elaborated','elaborated'), ('Decayed','decayed'), ('Auto','auto')):
+            extra_types.append((shape, kind, dict(inner=1), [] if shape == 'Elaborated' else [edge('type',1)]))
+        for ident, (shape, kind, fields, edges) in enumerate(extra_types, 80):
+            row = dict(type_id=ident, native_shape=shape, df_children=edges, structural_children=copy.deepcopy(edges), **fields)
+            if 'return_' in row: row['return'] = row.pop('return_')
+            if kind is not None: row['kind'] = kind
+            if shape in ('Reference','BlockPointer','Vector','Atomic','Attributed','TypeOfExpr','Complex','VariableArray'):
+                row['unproved'] = 'missing or unsupported required type'
+            facts['graph']['types'].append(row)
+        extra_expressions = [
+            ('Literal','literal',{},[],dict(literal={'character':65})),
+            ('Literal','literal',{},[],dict(literal={'unsupported':True})),
+            ('Literal','literal',{},[],dict(literal={'bytes':[65,0], 'width':2})),
+            ('ArraySubscript','subscript',dict(left=1001,right=1001),[edge('expression',1001)]*2,{}),
+            ('Conditional','unsupported',dict(condition=1001,then=1001,**{'else':1001}),[edge('expression',1001)]*3,{}),
+            ('Choose','unsupported',dict(condition=1001,then=1001,**{'else':1001}),[edge('expression',1001)]*3,{}),
+            ('BinaryConditional','unsupported',dict(left=1001,right=1001),[edge('expression',1001)]*2,{}),
+            ('Call','call',dict(callee=1104,arguments=[1001]),[edge('expression',1104),edge('expression',1001)],{}),
+            ('InitList','unsupported',dict(initializers=[1001,1001]),[edge('expression',1001)]*2,{}),
+            ('ImplicitValueInit','unsupported',{},[],{}), ('DesignatedInitExpr','unsupported',{},[],{}),
+            ('Atomic','unsupported',dict(ptr=1001,order=1001,val1=None,order_fail=None,val2=None,weak=None),[edge('expression',1001)]*2,{}),
+            ('Statements','unsupported',dict(body=900),[edge('statement',900)],dict(statement_body=900)),
+        ]
+        for shape, kind in (('Paren','paren'), ('CompoundLiteral','unsupported'), ('ImaginaryLiteral','unsupported'), ('Predefined','unsupported'), ('VAArg','unsupported')):
+            extra_expressions.append((shape,kind,dict(child=1001),[edge('expression',1001)],{}))
+        for shape in ('ShuffleVector','ConvertVector'):
+            extra_expressions.append((shape,'unsupported',dict(elements=[1001,1001]),[],{}))
+        extra_expressions += [('OffsetOf','unsupported',dict(type=1,index=1001),[],{}), ('OffsetOf','unsupported',dict(type=None,index=None),[],{})]
+        for ident, (shape, kind, operands, df, fields) in enumerate(extra_expressions, 1200):
+            structural = copy.deepcopy(df)
+            if shape in ('Paren','CompoundLiteral','ImaginaryLiteral','VAArg'): structural.insert(0,edge('type',1))
+            elif shape in ('ShuffleVector','ConvertVector'): structural = [edge('expression',1001)]*2
+            elif shape == 'OffsetOf' and operands['type'] is not None: structural = [edge('type',1),edge('expression',1001)]
+            row = dict(copy.deepcopy(base), id=ident, native_shape=shape, kind=kind, operands=operands,
+                       df_children=df, structural_children=structural, children=[e['id'] for e in structural if e['kind']=='expression'])
+            row.pop('literal'); row.update(fields, edge_count=len(row['children']))
+            facts['graph']['expressions'].append(row)
+        statement_shapes = [
+            ('Compound','compound',[('item','statement',900),('item','statement',900)]),
+            ('Expr','expression',[('expression','expression',1001)]), ('Decls','declarations',[('declaration','declaration',806)]),
+            ('ReturnValue','return',[('value','expression',1001)]), ('ReturnVoid','return',[]),
+            ('If','branch',[('condition','expression',1001),('then','statement',900)]),
+            ('IfElse','branch',[('condition','expression',1001),('then','statement',900),('else','statement',900)]),
+            ('Switch','branch',[('condition','expression',1001),('body','statement',900)]),
+            ('While','loop',[('condition','expression',1001),('body','statement',900)]),
+            ('DoWhile','loop',[('body','statement',900),('condition','expression',1001)]),
+            ('Label','label',[('body','statement',900)]), ('Default','label',[('body','statement',900)]),
+            ('Case','label',[('value','expression',1001),('body','statement',900)]),
+            ('Attributed','attributed',[('body','statement',900)]), ('Goto','goto',[]), ('Break','break',[]),
+            ('Continue','continue',[]), ('Asm','unsupported',[('operand','expression',1001)]), ('BadStmt','unsupported',[])]
+        for mask in range(8):
+            roles = ([('init','statement',900)] if mask & 4 else [])
+            roles += [('condition','expression',1001)] if mask & 2 else []
+            roles += [('increment','expression',1001)] if mask & 1 else []
+            statement_shapes.append(('ForLoop'+format(mask,'03b'),'loop',roles+[('body','statement',900)]))
+        for ident, (shape, kind, roles) in enumerate(statement_shapes, 910):
+            children = [dict(role=role,kind=target,id=ident) for role,target,ident in roles]
+            edges = [dict(kind=e['kind'],id=e['id']) for e in children]
+            facts['graph']['statements'].append(dict(copy.deepcopy(statement),id=ident,native_shape=shape,kind=kind,
+                children=children,edge_count=len(children),df_children=edges,structural_children=copy.deepcopy(edges),label_target=920 if shape=='Goto' else None))
+        for ident, shape, fields, edges in ((810,'NonCanonicalDecl',dict(canonical_decl=803),[edge('declaration',803)]),
+                                            (811,'StaticAssert',dict(assert_expr=1001),[edge('expression',1001)]),
+                                            (812,'MacroObject',{},[]),(813,'MacroFunction',{},[])):
+            facts['graph']['declarations'].append(dict(id=ident,kind='unsupported',native_shape=shape,parameter_owners=[],diagnostic_location=None,
+                df_children=edges,structural_children=copy.deepcopy(edges),**fields))
+            facts['graph']['declaration_order'].append(ident)
+        function_type = dict(type_id=150,kind='function',native_shape='Function',parameters=[],variadic=False,noreturn=False,prototype=True,abi='C',
+                             df_children=[edge('type',1)],structural_children=[edge('type',1)],**{'return':q})
+        facts['graph']['types'].append(function_type)
+        function_key = dict(q,type_id=150)
+        facts['graph']['qualified_types'].append(dict(source=function_key,path=[150],normalized=function_key))
+        function = dict(id=808,kind='function',type_id=150,qualified_type=function_key,parameters=[],va_parameters=[],builtin=None,
+                        symbol={'unit':facts['unit'],'static':'local_function'},aliases=[],body=None,parameter_owners=[],diagnostic_location=None,
+                        df_children=[edge('type',150)],structural_children=[edge('type',150)])
+        facts['graph']['declarations'].append(function)
+        facts['graph']['declaration_order'].append(808)
+        graph = F.ReportGraph(copy.deepcopy(facts))
+        self.assertEqual(graph.expression(1101)['member'], typedef)
+        self.assertEqual(graph.expression(1100)['type'], None)
+        self.assertEqual(graph.relations['statement', 924].required, ())
+        self.assertEqual(graph.relations['statement', 924].references, ({'kind':'statement','id':920},))
+        rows = [(table, index) for table in ('types', 'expressions', 'statements', 'declarations')
+                for index in range(len(facts['graph'][table]))]
+        for table, index in rows:
+            row = facts['graph'][table][index]
+            for field in row:
+                for change in ('missing', 'null', 'bool'):
+                    nullable = table == 'expressions' and field == 'field' or table == 'declarations' and field == 'layout'
+                    if change == 'null' and (row[field] is None or nullable) or change == 'bool' and type(row[field]) is bool: continue
+                    changed = copy.deepcopy(facts)
+                    target = changed['graph'][table][index]
+                    if change == 'missing': target.pop(field)
+                    else: target[field] = None if change == 'null' else True
+                    with self.subTest(table=table, shape=row.get('native_shape', row.get('kind')), field=field, change=change):
+                        with self.assertRaises((F.FactsError, KeyError, TypeError, ValueError)):
+                            F.ReportGraph(changed)
+            candidates = {field:value for peer in facts['graph'][table] for field,value in peer.items() if field not in row}
+            for field,value in candidates.items():
+                changed = copy.deepcopy(facts)
+                changed['graph'][table][index][field] = copy.deepcopy(value)
+                with self.subTest(table=table, transplant=field, shape=row.get('native_shape',row.get('kind'))):
+                    with self.assertRaises((F.FactsError,KeyError,TypeError,ValueError)): F.ReportGraph(changed)
+            changed = copy.deepcopy(facts)
+            changed['graph'][table][index]['future_operand'] = q
+            with self.assertRaises(F.FactsError): F.ReportGraph(changed)
+        for table, ident, field_name, value in (
+            ('expressions',1101,'member',{'id':999999}), ('expressions',1101,'member',{'id':True}),
+            ('expressions',1101,'member',{'id':803,'extra':1}), ('expressions',1102,'field',803),
+            ('expressions',1102,'field',1001), ('expressions',1102,'field',999999),
+            ('expressions',1104,'decl',1001), ('types',8,'declaration',803),
+            ('declarations',805,'owning_enum',{'declaration':800,'identity':unknown}),
+            ('declarations',802,'owners',[{'unproved':'different'}]),
+            ('declarations',806,'type',{'unproved':'different'}),
+            ('declarations',806,'type',dict(view, const=0)),
+            ('types',1,'inner',1), ('expressions',1105,'qualified_type',None),
+        ):
+            changed = copy.deepcopy(facts)
+            key = 'type_id' if table == 'types' else 'id'
+            next(r for r in changed['graph'][table] if r[key] == ident)[field_name] = value
+            with self.subTest(table=table, ident=ident, field=field_name, value=value):
+                with self.assertRaises((F.FactsError, KeyError, TypeError, ValueError)): F.ReportGraph(changed)
+        repeated = copy.deepcopy(facts)
+        record = next(d for d in repeated['graph']['declarations'] if d['id']==800)
+        record['fields'] *= 2; record['df_children'] *= 2; record['structural_children'] *= 2
+        next(d for d in repeated['graph']['declarations'] if d['id']==802)['owners'] *= 2
+        F.ReportGraph(repeated)
+        physical = dict(kind='struct',tag=None,physical=dict(path='/native/fixture.c',line=1,column=1),scope={'file':True})
+        physical_facts = copy.deepcopy(facts)
+        next(d for d in physical_facts['graph']['declarations'] if d['id']==800)['identity'] = physical
+        next(d for d in physical_facts['graph']['declarations'] if d['id']==802)['owners'] = [physical]
+        F.ReportGraph(physical_facts)
+        for field,value in (('path','relative.c'),('line',True),('line',0),('column',None)):
+            changed = copy.deepcopy(physical_facts)
+            next(d for d in changed['graph']['declarations'] if d['id']==800)['identity']['physical'][field] = value
+            with self.assertRaises((F.FactsError,KeyError,TypeError,ValueError)): F.ReportGraph(changed)
+        changed = copy.deepcopy(facts)
+        next(d for d in changed['graph']['declarations'] if d['id']==808)['symbol']['unit'] = '/native/other.c'
+        with self.assertRaisesRegex(F.FactsError,'raw static symbol unit'): F.ReportGraph(changed)
+        changed = copy.deepcopy(facts)
+        changed['graph']['types'][0]['inner'] = 1
+        with self.assertRaisesRegex(F.FactsError, 'raw constructor fields'): F.ReportGraph(changed)
+
+    def test_closed_boundary_four_complete_coordinated_contradictions(self):
+        for case, reason in enumerate(('raw constructor fields', 'invalid source qualified key',
+                                       'raw declaration reference missing', 'raw declaration reference missing')):
+            def mutate(data, case=case):
+                import copy
+                facts = data['on/0/blob.closed-format.json']
+                if case == 0:
+                    for rows in (facts['graph']['types'], facts['types']):
+                        next(r for r in rows if r['type_id'] == 1)['inner'] = 4
+                    facts['types'].append(copy.deepcopy(next(r for r in facts['graph']['types'] if r['type_id'] == 4)))
+                else:
+                    row = next(e for e in facts['graph']['expressions'] if e['id'] == 9900000)
+                    if case == 1:
+                        row.update(qualified_type=None, type_id=None)
+                        facts['unsupported_expressions'][0]['type'] = None
+                    else:
+                        row.update(kind='member' if case == 2 else 'implicit_cast', native_shape='Member' if case == 2 else 'ImplicitCast', operands={'child':1001})
+                        if case == 2: row.update(member={'id':999999999}, access='Dot')
+                        else: row.update(cast='NoOp', field=999999999, structural_children=[F.ReportGraph.edge('type',1), F.ReportGraph.edge('expression',1001)])
+                        facts['unsupported_expressions'] = []
+                        facts['unsupported_expression_count'] = 0
+            self.reject_coordinated(mutate, reason)
+
+    def test_closed_boundary_coordinated_metadata_and_legal_neighbors(self):
+        import copy
+        name = 'on/0/blob.closed-format.json'
+        def legal(data, shape):
+            facts = data[name]
+            row = next(e for e in facts['graph']['expressions'] if e['id'] == 9900000)
+            if shape == 'BadExpr':
+                row.update(native_shape='BadExpr', operands={}, qualified_type=None, type_id=None, va_list=None,
+                           children=[], edge_count=0, df_children=[], structural_children=[],
+                           type_unproved='importer expression has no qualified type')
+            elif shape == 'Member':
+                row.update(kind='member', native_shape='Member', operands={'child':1001}, member={'id':1}, access='Dot')
+            else:
+                row.update(kind='implicit_cast', native_shape='ImplicitCast', operands={'child':1001}, field=None, cast='NoOp',
+                           structural_children=[F.ReportGraph.edge('type', 1), F.ReportGraph.edge('expression', 1001)])
+            self.refresh_graph_views(data, prepare=False)
+        for shape in ('BadExpr', 'Member', 'ImplicitCast'):
+            self.reject_coordinated(lambda data, shape=shape: legal(data, shape), None)
+        def native(data):
+            facts = data[name]
+            row = next(d for d in facts['graph']['declarations'] if d['id'] == 500)
+            canonical = copy.deepcopy(row['type'])
+            row['native_va_list'] = dict(same_canonical_type=True, target_kind=5)
+            for prefix in ('declared', 'builtin'):
+                row['native_va_list'].update({prefix + '_type_id':1, prefix + '_canonical_type':canonical,
+                                              prefix + '_const':False, prefix + '_volatile':False, prefix + '_restrict':False})
+            self.refresh_graph_views(data, prepare=False)
+        self.reject_coordinated(native, None)
+        cases = [
+            ('expression primitive', lambda f: next(e for e in f['graph']['expressions'] if e['id'] == 9900000).__setitem__('va_list', 0), 'expression source qualified'),
+            ('expression missing key', lambda f: next(e for e in f['graph']['expressions'] if e['id'] == 9900000).pop('diagnostic_location'), 'raw constructor fields'),
+            ('unsupported forbidden field', lambda f: next(e for e in f['graph']['expressions'] if e['id'] == 9900000).__setitem__('decl', 1), 'raw constructor fields'),
+            ('function aliases', lambda f: next(d for d in f['graph']['declarations'] if d['kind'] == 'function').__setitem__('aliases', [None]), 'invalid function aliases'),
+            ('function builtin', lambda f: next(d for d in f['graph']['declarations'] if d['kind'] == 'function').__setitem__('builtin', [True, 'va_copy']), 'invalid builtin identity'),
+            ('statement nested extra', lambda f: f['graph']['statements'][0]['flow'].__setitem__('extra', 1), 'Unproved record'),
+            ('statement missing key', lambda f: f['graph']['statements'][0].pop('label_target'), 'raw constructor fields'),
+            ('qualified extra', lambda f: f['graph']['qualified_types'][0]['source'].__setitem__('extra', False), 'invalid source qualified key'),
+            ('normalization bool', lambda f: f['graph']['qualified_types'][0]['path'].__setitem__(0, True), 'invalid normalization path'),
+            ('raw source bytes', lambda f: next(e for e in f['graph']['expressions'] if e['id'] == 9900000)['location']['spelling'].__setitem__('bytes_hex', '00'), 'quoted physical source bytes differ'),
+        ]
+        for label, change, reason in cases:
+            def mutate(data, change=change):
+                facts = data[name]
+                change(facts)
+                declarations = {r['id']:r for r in facts['graph']['declarations']}
+                statements = {r['id']:r for r in facts['graph']['statements']}
+                facts['variables'] = [copy.deepcopy(declarations[r['id']]) for r in facts['variables']]
+                facts['statements'] = [copy.deepcopy(statements[r['id']]) for r in facts['statements']]
+                for rows in (facts['declarations'],data['on/0/blob.variadic.json']['declarations']):
+                    for row in rows: row['aliases'] = copy.deepcopy(declarations[row['id']]['aliases'])
+                for row in facts['expressions']:
+                    if row['kind']=='call' and row['callee_decl'] is not None: row['builtin'] = copy.deepcopy(declarations[row['callee_decl']]['builtin'])
+                expressions = {r['id']:r for r in facts['expressions']}
+                for event in facts['cursor_events']: event['builtin'] = copy.deepcopy(expressions[event['expression']]['builtin'])
+                raw = {r['id']:r for r in facts['graph']['expressions']}
+                for row in facts['unsupported_expressions']: row['location'] = copy.deepcopy(raw[row['expression']]['location'])
+            with self.subTest(category=label): self.reject_coordinated(mutate, reason)
+        for mode, reason in (('copy', 'native cursor qualified projection'), ('bool', 'invalid source qualified key'),
+                             ('missing', 'raw constructor fields'), ('type', 'invalid source qualified key')):
+            def contradict(data, mode=mode):
+                native(data)
+                for rows in (data[name]['graph']['declarations'], data[name]['variables']):
+                    row = next(r for r in rows if r['id'] == 500)['native_va_list']
+                    if mode == 'copy': row['declared_canonical_type']['const'] = 0
+                    elif mode == 'bool': row['declared_type_id'] = True
+                    elif mode == 'missing': row.pop('builtin_restrict')
+                    else: row['declared_type_id'] = 1001
+            self.reject_coordinated(contradict, reason)
+        def member_wrong_table(data):
+            legal(data, 'Member')
+            next(e for e in data[name]['graph']['expressions'] if e['id'] == 9900000)['member']['id'] = 1001
+        self.reject_coordinated(member_wrong_table, 'raw declaration reference missing')
+        def field_wrong_kind(data):
+            legal(data, 'ImplicitCast')
+            next(e for e in data[name]['graph']['expressions'] if e['id'] == 9900000)['field'] = 1
+        self.reject_coordinated(field_wrong_kind, 'raw declaration reference kind')
 
     def test_old_facts_schema_is_rejected(self):
         self.reject_coordinated(lambda data: data['on/0/blob.closed-format.json'].__setitem__('schema', 1),

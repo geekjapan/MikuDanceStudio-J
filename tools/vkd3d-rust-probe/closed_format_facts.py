@@ -1,5 +1,6 @@
 """Read-only replay of compiler-owned, report-only closed format fact packets."""
 import argparse
+from collections import namedtuple
 import hashlib
 import json
 import os
@@ -19,6 +20,15 @@ class FactsError(ValueError):
 def need(condition, message):
     if not condition:
         raise FactsError(message)
+
+
+def same(left, right):
+    if type(left) is not type(right): return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(same(left[k], right[k]) for k in left)
+    if isinstance(left, list):
+        return len(left) == len(right) and all(same(a, b) for a, b in zip(left, right))
+    return left == right
 
 
 def sha(data):
@@ -51,7 +61,7 @@ def table(rows, field, label):
     need(isinstance(rows, list), 'missing ' + label)
     result = {}
     for row in rows:
-        need(isinstance(row, dict) and type(row.get(field)) is int and row[field] > 0,
+        need(isinstance(row, dict) and type(row.get(field)) is int and 0 < row[field] < 2 ** 64,
              'invalid ' + label + ' ID')
         need(row[field] not in result, 'duplicate ' + label + ' ID')
         result[row[field]] = row
@@ -110,7 +120,7 @@ def location(row, buffers, buffer_paths):
 
 
 def unproved(row):
-    need(isinstance(row, dict) and row.get('state') == 'Unproved'
+    need(isinstance(row, dict) and set(row) == {'state', 'reason'} and row['state'] == 'Unproved'
          and isinstance(row.get('reason'), str) and row['reason'],
          'relation requires a concrete Unproved record; no proof is admitted')
 
@@ -178,8 +188,13 @@ def check_statements(statements, expressions, variables):
             need(target is not None and edge['id'] in target, 'structural control edge missing')
         unproved(row['flow'])
 
+Relations = namedtuple('Relations', 'df structural normalization references required')
+
+
 class ReportGraph:
     def __init__(self, facts):
+        self.unit = facts['unit']
+        need(isinstance(self.unit, str) and self.unit, 'invalid raw unit identity')
         graph = facts['graph']
         self.expressions = table(graph['expressions'], 'id', 'raw expression')
         self.statements = table(graph['statements'], 'id', 'raw statement')
@@ -187,11 +202,19 @@ class ReportGraph:
         self.types = table(graph['types'], 'type_id', 'raw type')
         self.tables = {'expression': self.expressions, 'statement': self.statements,
                        'declaration': self.declarations, 'type': self.types}
+        self.keys(graph, 'expressions statements declarations types declaration_order qualified_types')
         self.order = graph['declaration_order']
+        need(isinstance(self.order, list) and all(type(i) is int for i in self.order), 'invalid raw declaration census order')
         need(len(self.order) == len(self.declarations) and set(self.order) == self.declarations.keys(),
              'raw declaration census order differs')
+        self.relations = {}
+        self.check_raw_constructors()
         self.qualified = {}
+        need(isinstance(graph['qualified_types'], list), 'invalid qualified census')
         for row in graph['qualified_types']:
+            self.keys(row, 'source path', 'unproved' if 'unproved' in row else 'normalized')
+            need(('unproved' in row) != ('normalized' in row), 'invalid qualified normalization record')
+            need(isinstance(row['path'], list) and all(type(i) is int and i in self.types for i in row['path']), 'invalid normalization path')
             source = self.qkey(row['source'])
             need(source not in self.qualified, 'duplicate qualified source key')
             self.qualified[source] = row
@@ -207,19 +230,16 @@ class ReportGraph:
                     break
                 seen.add(current)
                 raw = self.types[current]
-                kind = raw.get('kind')
-                if kind == 'typedef':
-                    if 'original' not in raw:
-                        reason = 'missing original typedef'
-                        break
-                    current = self.qkey(raw['original'])[0]
-                elif kind in ('typeof', 'paren', 'elaborated', 'decayed', 'auto'):
-                    current = raw['inner']
-                elif kind == 'attributed':
+                relation = self.relations['type', current]
+                if raw['native_shape'] == 'Typedef' and relation.normalization is None:
+                    reason = 'missing original typedef'
+                    break
+                if raw['native_shape'] == 'Attributed':
                     reason = 'attributed type facts'
                     break
-                else:
+                if relation.normalization is None:
                     break
+                current = relation.normalization['id']
             need(row['path'] == path, 'qualified normalization path differs from raw edges')
             if reason:
                 need(set(row) == {'source', 'path', 'unproved'} and row['unproved'] == reason,
@@ -227,16 +247,11 @@ class ReportGraph:
             else:
                 need(set(row) == {'source', 'path', 'normalized'} and self.qkey(row['normalized'])[0] == current,
                      'normalized terminal disconnected from source type')
-        self.check_raw_constructors()
         for ident, row in self.declarations.items():
-            if row['kind'] in ('struct', 'union', 'enum'):
-                need(type(row.get('native_va_list_record')) is bool, 'invalid native record classification')
             expected_owners = [owner for owner in self.order if self.declarations[owner]['kind'] == 'function'
                                and ident in self.declarations[owner]['parameters']]
             need(row['parameter_owners'] == expected_owners, 'complete raw parameter ownership differs')
             if row['kind'] == 'function':
-                need(len(row['parameters']) == len(set(row['parameters'])) and all(
-                    self.declarations[p]['kind'] == 'variable' for p in row['parameters']), 'raw ordered parameters differ')
                 need(row['va_parameters'] == [p for p in row['parameters'] if self.declarations[p]['va_list']],
                      'compiler va parameter classification projection differs')
         for row in self.declarations.values():
@@ -244,25 +259,27 @@ class ReportGraph:
             if q is not None:
                 need(row['type_id'] == q['type_id'], 'declaration source qualified key differs')
                 if 'type' in row:
-                    need(row['type'] == self.type_view(q, True), 'declaration canonical projection differs')
+                    need(same(row['type'], self.type_view(q, True)), 'declaration canonical projection differs')
             if row.get('native_va_list'):
                 native = row['native_va_list']
                 for prefix in ('declared', 'builtin'):
                     key = dict(type_id=native[prefix + '_type_id'], **{
                         flag: native[prefix + '_' + flag] for flag in ('const', 'volatile', 'restrict')})
-                    need(native[prefix + '_canonical_type'] == self.type_view(key, True), 'native cursor qualified projection differs')
+                    need(same(native[prefix + '_canonical_type'], self.type_view(key, True)), 'native cursor qualified projection differs')
         for row in self.expressions.values():
             q = row['qualified_type']
             need(row['type_id'] == (q['type_id'] if q else None), 'expression source qualified key differs')
             if 'argument_qualified_type' in row:
-                need(row['argument_type'] == self.type_view(row['argument_qualified_type'], True), 'unary qualified projection differs')
+                need(same(row['argument_type'], self.type_view(row['argument_qualified_type'], True)), 'unary qualified projection differs')
             if 'computation_qualified_types' in row:
-                need(row['computation_types'] == [self.type_view(q, True) if q else None for q in row['computation_qualified_types']],
+                need(same(row['computation_types'], [self.type_view(q, True) if q else None for q in row['computation_qualified_types']]),
                      'computation qualified projection differs')
+
+            self.expression(row['id'])
 
     @staticmethod
     def edge(kind, ident):
-        need(type(ident) is int and ident > 0, 'invalid raw constructor operand ID')
+        need(type(ident) is int and 0 < ident < 2 ** 64, 'invalid raw constructor operand ID')
         return {'kind': kind, 'id': ident}
 
     def qkey(self, value):
@@ -271,55 +288,262 @@ class ReportGraph:
              and all(type(value[k]) is bool for k in ('const', 'volatile', 'restrict')), 'invalid source qualified key')
         return tuple(value[k] for k in ('type_id', 'const', 'volatile', 'restrict'))
 
+    @staticmethod
+    def keys(row, required, optional=''):
+        required, optional = set(required.split()), set(optional.split())
+        need(isinstance(row, dict) and required <= row.keys() <= required | optional,
+             'raw constructor fields differ: ' + ','.join(sorted(required ^ row.keys())) if isinstance(row, dict) else 'raw record missing')
+
+    @staticmethod
+    def text(value, nullable=False):
+        need(nullable and value is None or isinstance(value, str), 'invalid raw text')
+
+    @staticmethod
+    def integer(value, nullable=False, signed=False):
+        need(nullable and value is None or type(value) is int and (-2 ** 63 <= value < 2 ** 63 if signed else 0 <= value < 2 ** 64), 'invalid raw integer')
+
+    def ref(self, kind, value, declaration_kind=None):
+        edge = self.edge(kind, value)
+        need(value in self.tables[kind], 'raw ' + kind + ' reference missing')
+        if declaration_kind is not None:
+            need(self.declarations[value]['kind'] == declaration_kind, 'raw declaration reference kind differs')
+        return edge
+
+    def refs(self, kind, values, declaration_kind=None):
+        need(isinstance(values, list), 'invalid raw reference list')
+        return [self.ref(kind, value, declaration_kind) for value in values]
+
+    def identity(self, value, depth=0):
+        need(depth <= 33 and isinstance(value, dict), 'invalid raw record identity')
+        if 'unproved' in value:
+            self.keys(value, 'unproved')
+            need(isinstance(value['unproved'], str) and value['unproved'], 'empty record identity reason')
+            return
+        need(depth <= 32, 'record identity exceeds producer depth')
+        self.keys(value, 'kind tag physical scope')
+        need(value['kind'] in ('struct', 'union', 'enum'), 'invalid record identity kind')
+        self.text(value['tag'], True)
+        physical = value['physical']
+        self.keys(physical, 'path line column')
+        need(isinstance(physical['path'], str) and physical['path'].startswith('/'), 'invalid record physical path')
+        for name in ('line', 'column'):
+            need(type(physical[name]) is int and physical[name] > 0, 'invalid record physical position')
+        scope = value['scope']
+        need(isinstance(scope, dict), 'invalid record scope')
+        if 'file' in scope:
+            self.keys(scope, 'file')
+            need(scope['file'] is True, 'invalid file scope')
+        else:
+            self.keys(scope, 'record')
+            self.identity(scope['record'], depth + 1)
+
+    def raw_location(self, value):
+        need(isinstance(value, dict), 'missing native location')
+        if 'unproved' in value:
+            self.keys(value, 'unproved')
+            need(isinstance(value['unproved'], str) and value['unproved'], 'empty native origin reason')
+            return
+        self.keys(value, 'spelling expansion presumed')
+        self.keys(value['presumed'], 'path line')
+        self.text(value['presumed']['path'])
+        self.integer(value['presumed']['line'])
+        for name in ('spelling', 'expansion'):
+            span = value[name]
+            if isinstance(span, dict) and 'unproved' in span:
+                self.keys(span, 'unproved')
+                need(isinstance(span['unproved'], str) and span['unproved'], 'empty physical interval reason')
+                continue
+            self.keys(span, 'path buffer_sha256 begin end bytes_hex')
+            self.text(span['path'])
+            need(isinstance(span['buffer_sha256'], str) and len(span['buffer_sha256']) == 64
+                 and all(c in '0123456789abcdef' for c in span['buffer_sha256']), 'invalid native buffer digest')
+            self.integer(span['begin']); self.integer(span['end'])
+            need(span['begin'] <= span['end'] and isinstance(span['bytes_hex'], str)
+                 and len(span['bytes_hex']) == 2 * (span['end'] - span['begin'])
+                 and all(c in '0123456789abcdef' for c in span['bytes_hex']), 'invalid physical interval bytes')
+
+    def relation(self, kind, row, normalization=None, references=(), extra=()):
+        ident = row['type_id' if kind == 'type' else 'id']
+        structural = row['structural_children']
+        required = [e for e in structural if not (kind == 'declaration' and row['kind'] == 'function' and e['kind'] == 'statement')]
+        required += list(extra)
+        self.relations[kind, ident] = Relations(tuple(row['df_children']), tuple(structural), normalization,
+                                               tuple(references), tuple(required))
+
     def check_raw_constructors(self):
+        need(not (self.expressions.keys() & self.statements.keys())
+             and not (self.expressions.keys() & self.declarations.keys())
+             and not (self.statements.keys() & self.declarations.keys()), 'impossible cross-table node identity')
         for rows in self.tables.values():
             for row in rows.values():
                 for field in ('df_children', 'structural_children'):
                     need(isinstance(row.get(field), list), 'missing unfiltered raw child sequence')
                     for edge in row[field]:
-                        need(isinstance(edge, dict) and set(edge) == {'kind', 'id'} and edge['kind'] in self.tables
-                             and type(edge['id']) is int and edge['id'] in self.tables[edge['kind']],
-                             'mandatory raw graph child missing')
+                        self.keys(edge, 'kind id')
+                        need(isinstance(edge['kind'], str) and edge['kind'] in self.tables, 'invalid raw edge table')
+                        self.ref(edge['kind'], edge['id'])
         for row in self.types.values():
             self.check_type_edges(row)
         for row in self.expressions.values():
             self.check_expr_edges(row)
+        for row in self.statements.values():
+            self.keys(row, 'id kind label_target native_shape location edge_count children flow df_children structural_children')
+            self.raw_location(row['location'])
+            need(isinstance(row['children'], list), 'invalid statement children')
+            for edge in row['children']:
+                self.keys(edge, 'role kind id')
+                self.text(edge['role'])
+                need(isinstance(edge['kind'], str) and edge['kind'] in self.tables, 'invalid statement child kind')
+                self.ref(edge['kind'], edge['id'])
+            if row['label_target'] is not None:
+                self.ref('statement', row['label_target'])
         check_statements(self.statements, self.expressions, self.declarations)
         for row in self.statements.values():
             need([{k: e[k] for k in ('kind', 'id')} for e in row['children']] == row['structural_children']
                  and row['df_children'] == row['structural_children'], 'raw statement sequence differs')
+            references = [] if row['label_target'] is None else [self.edge('statement', row['label_target'])]
+            self.relation('statement', row, references=references)
         for row in self.declarations.values():
-            kind = row['kind']
-            expected = []
-            if kind == 'function':
-                expected = [self.edge('type', row['type_id'])]
-                expected += [self.edge('declaration', p) for p in row['parameters']]
-                if row['body'] is not None:
-                    expected += [self.edge('statement', row['body'])]
-            elif kind in ('variable', 'field', 'typedef'):
-                self.qkey(row['qualified_type'])
-                need(row['qualified_type']['type_id'] == row['type_id'], 'raw declaration qualified operand differs')
-                expected = [self.edge('type', row['type_id'])]
-                if kind == 'variable' and row['initializer'] is not None:
-                    expected += [self.edge('expression', row['initializer'])]
-            elif kind in ('struct', 'union'):
-                expected = [self.edge('declaration', p) for p in row['fields'] or []]
-            elif kind == 'enum':
-                expected = [self.edge('declaration', p) for p in row['variants']]
-                if row['underlying'] is not None:
-                    self.qkey(row['underlying'])
-                    expected += [self.edge('type', row['underlying']['type_id'])]
-            elif kind == 'unsupported':
-                shape = row['native_shape']
-                if shape == 'NonCanonicalDecl':
-                    expected = [self.edge('declaration', row['canonical_decl'])]
-                elif shape == 'StaticAssert':
-                    expected = [self.edge('expression', row['assert_expr'])]
-                else:
-                    need(shape in ('MacroObject', 'MacroFunction'), 'unknown raw declaration constructor')
+            self.check_declaration(row)
+        self.check_raw_owners()
+
+    def check_declaration(self, row):
+        kind = row['kind']
+        fields = {
+            'function': 'type_id qualified_type parameters body builtin symbol aliases va_parameters',
+            'variable': 'name local va_list owning_function type type_id qualified_type initializer static thread externally_visible native_va_list',
+            'field': 'name type type_id qualified_type owners bit_width bit_offset type_bit_width alignment',
+            'typedef': 'type_id qualified_type',
+            'struct': 'identity native_va_list_record fields layout state',
+            'union': 'identity native_va_list_record fields layout state',
+            'enum': 'identity native_va_list_record variants underlying state',
+            'enum_constant': 'name owning_enum value signed',
+            'unsupported': 'native_shape'}
+        need(kind in fields, 'unknown raw declaration constructor')
+        extra_fields = ''
+        if kind == 'unsupported':
+            need(row['native_shape'] in ('NonCanonicalDecl', 'StaticAssert', 'MacroObject', 'MacroFunction'), 'unknown raw declaration constructor')
+            extra_fields = {'NonCanonicalDecl': 'canonical_decl', 'StaticAssert': 'assert_expr'}.get(row['native_shape'], '')
+        self.keys(row, 'id kind diagnostic_location parameter_owners df_children structural_children ' + fields[kind] + ' ' + extra_fields)
+        self.text(row['diagnostic_location'], True)
+        self.refs('declaration', row['parameter_owners'], 'function')
+        expected, references, extra = [], [], []
+        if kind in ('function', 'variable', 'field', 'typedef'):
+            self.qkey(row['qualified_type'])
+            need(type(row['type_id']) is int and row['qualified_type']['type_id'] == row['type_id'], 'raw declaration qualified operand differs')
+            expected = [self.ref('type', row['type_id'])]
+        if kind == 'function':
+            need(not any(row['qualified_type'][f] for f in ('const', 'volatile', 'restrict')), 'function source qualifiers differ')
+            expected += self.refs('declaration', row['parameters'], 'variable')
+            need(isinstance(row['va_parameters'], list) and all(type(i) is int and i in self.declarations
+                 and self.declarations[i]['kind'] == 'variable' for i in row['va_parameters']), 'raw va parameter reference missing')
+            self.refs('declaration', row['va_parameters'], 'variable')
+            need(len(row['parameters']) == len(set(row['parameters'])), 'raw ordered parameters differ')
+            if row['body'] is not None: expected += [self.ref('statement', row['body'])]
+            symbol = key(row['symbol'])
+            need(symbol[0] != 'static' or symbol[1] == self.unit, 'raw static symbol unit differs')
+            need(isinstance(row['aliases'], list) and all(isinstance(a, str) for a in row['aliases']), 'invalid function aliases')
+            if row['builtin'] is not None:
+                need(isinstance(row['builtin'], list) and len(row['builtin']) == 2 and type(row['builtin'][0]) is int
+                     and row['builtin'][0] > 0 and isinstance(row['builtin'][1], str) and row['builtin'][1], 'invalid builtin identity')
+        elif kind in ('variable', 'field', 'enum_constant'):
+            self.text(row['name'])
+            if kind == 'variable':
+                for name in ('local', 'va_list', 'static', 'thread', 'externally_visible'):
+                    need(type(row[name]) is bool, 'invalid variable flag')
+                owner = row['owning_function']
+                if row['local']:
+                    if isinstance(owner, dict):
+                        self.keys(owner, 'unproved')
+                        need(owner['unproved'] == 'missing or ambiguous lexical function owner', 'invalid lexical owner reason')
+                    else: references += [self.ref('declaration', owner, 'function')]
+                else: need(owner is None, 'nonlocal lexical owner differs')
+                if row['initializer'] is not None: expected += [self.ref('expression', row['initializer'])]
+                native = row['native_va_list']
+                if native is not None:
+                    native_fields = 'same_canonical_type target_kind'
+                    native_fields += ''.join(' ' + prefix + '_' + field for prefix in ('declared', 'builtin')
+                                             for field in ('type_id', 'canonical_type', 'const', 'volatile', 'restrict'))
+                    self.keys(native, native_fields)
+                    need(native['same_canonical_type'] is True, 'invalid cursor canonical relation')
+                    self.integer(native['target_kind'])
+                    for prefix in ('declared', 'builtin'):
+                        q = dict(type_id=native[prefix + '_type_id'], **{f: native[prefix + '_' + f] for f in ('const', 'volatile', 'restrict')})
+                        self.qkey(q)
+                        extra += [self.ref('type', q['type_id'])]
+            elif kind == 'field':
+                need(isinstance(row['owners'], list), 'invalid field owners')
+                owners = [self.declarations[i]['identity'] for i in self.order if self.declarations[i]['kind'] in ('struct', 'union')
+                          for field in self.declarations[i]['fields'] or [] if field == row['id']]
+                need(same(row['owners'], owners), 'raw field owner identity copies differ')
+                for identity in row['owners']: self.identity(identity)
+                for field in ('bit_width', 'alignment'): self.integer(row[field], True)
+                for field in ('bit_offset', 'type_bit_width'): self.integer(row[field])
             else:
-                need(kind == 'enum_constant', 'unknown raw declaration constructor')
-            need(row['df_children'] == expected == row['structural_children'], 'raw declaration mandatory edges differ')
+                need(type(row['signed']) is bool, 'invalid enum constant signedness')
+                self.integer(row['value'], signed=row['signed'])
+                owner = row['owning_enum']
+                need(isinstance(owner, dict), 'invalid enum owner')
+                if 'unproved' in owner:
+                    self.keys(owner, 'unproved')
+                    need(owner['unproved'] == 'missing or ambiguous enum variant owner', 'invalid enum owner reason')
+                else:
+                    self.keys(owner, 'declaration identity')
+                    references += [self.ref('declaration', owner['declaration'], 'enum')]
+                    target = self.declarations[owner['declaration']]
+                    need(row['id'] in target['variants'] and same(owner['identity'], target['identity']), 'raw enum owner identity differs')
+                    self.identity(owner['identity'])
+        elif kind in ('struct', 'union', 'enum'):
+            self.identity(row['identity'])
+            if 'kind' in row['identity']: need(row['identity']['kind'] == kind, 'record identity classification differs')
+            need(type(row['native_va_list_record']) is bool and row['state'] in ('complete', 'incomplete', 'unproved'), 'invalid raw record state')
+            if kind == 'enum':
+                expected = self.refs('declaration', row['variants'], 'enum_constant')
+                if row['underlying'] is not None:
+                    self.qkey(row['underlying']); expected += [self.ref('type', row['underlying']['type_id'])]
+            else:
+                if row['fields'] is not None: expected = self.refs('declaration', row['fields'], 'field')
+                if row['layout'] is not None:
+                    layout = row['layout']
+                    need(isinstance(layout, list) and len(layout) == 5 and type(layout[0]) is bool, 'invalid record layout')
+                    for value in layout[1:3]: self.integer(value, True)
+                    for value in layout[3:]: self.integer(value)
+        elif kind == 'unsupported':
+            if row['native_shape'] == 'NonCanonicalDecl': expected = [self.ref('declaration', row['canonical_decl'])]
+            elif row['native_shape'] == 'StaticAssert': expected = [self.ref('expression', row['assert_expr'])]
+        need(row['df_children'] == expected == row['structural_children'], 'raw declaration mandatory edges differ')
+        self.relation('declaration', row, references=references, extra=references + extra)
+
+    def check_raw_owners(self):
+        owners = {i: set() for i in self.declarations}
+        for ident in self.order:
+            row = self.declarations[ident]
+            if row['kind'] == 'enum':
+                for variant in row['variants']: owners[variant].add(ident)
+            if row['kind'] != 'function' or row['body'] is None: continue
+            pending, seen = [self.edge('statement', row['body'])], set()
+            while pending:
+                node = pending.pop()
+                key = node['kind'], node['id']
+                if key in seen: continue
+                seen.add(key)
+                if node['kind'] == 'type': continue
+                if node['kind'] == 'declaration' and self.declarations[node['id']]['kind'] != 'variable': continue
+                if node['kind'] == 'statement':
+                    statement = self.statements[node['id']]
+                    if statement['native_shape'] == 'Decls':
+                        for edge in statement['children']:
+                            decl = self.declarations[edge['id']]
+                            if decl['kind'] == 'variable' and decl['local']: owners[decl['id']].add(ident)
+                pending += self.relations[key].structural
+        for ident, row in self.declarations.items():
+            if row['kind'] == 'variable' and row['local']:
+                expected = next(iter(owners[ident])) if len(owners[ident]) == 1 else {'unproved': 'missing or ambiguous lexical function owner'}
+                need(row['owning_function'] == expected, 'complete raw lexical function owner differs')
+            elif row['kind'] == 'enum_constant':
+                expected = ({'declaration': next(iter(owners[ident])), 'identity': self.declarations[next(iter(owners[ident]))]['identity']}
+                            if len(owners[ident]) == 1 else {'unproved': 'missing or ambiguous enum variant owner'})
+                need(same(row['owning_enum'], expected), 'complete raw enum owner differs')
 
     def check_type_edges(self, row):
         shape = row['native_shape']
@@ -331,42 +555,80 @@ class ReportGraph:
                    'SChar', 'UChar', 'Char', 'Double', 'LongDouble', 'Float', 'Int128', 'UInt128', 'Half'}
         need(row.get('kind') == mapped.get(shape, shape if shape in scalars else None),
              'raw type classification differs')
-        expected = []
-        for field in ('pointee', 'element', 'original', 'return'):
-            if field in row:
-                self.qkey(row[field])
+        fields = {
+            'Pointer': 'pointee', 'Function': 'return parameters variadic noreturn prototype abi',
+            'Struct': 'declaration', 'Union': 'declaration', 'Enum': 'declaration', 'Typedef': 'declaration',
+            'TypeOf': 'inner', 'Paren': 'inner', 'Elaborated': 'inner', 'Decayed': 'inner', 'Auto': 'inner',
+            'ConstantArray': 'element_type length', 'IncompleteArray': 'element_type length',
+            'VariableArray': 'element_type count_expression', 'Complex': 'element_type',
+            'Reference': 'original', 'BlockPointer': 'original', 'Vector': 'original', 'Atomic': 'original',
+            'Attributed': 'original counted_by', 'TypeOfExpr': 'expression'}
+        unsupported = {'BFloat16', 'UnhandledSveType', 'Float128', 'Int8', 'Int16', 'Int32', 'Int64', 'IntPtr',
+                       'UInt8', 'UInt16', 'UInt32', 'UInt64', 'UIntPtr', 'IntMax', 'UIntMax', 'Size', 'SSize', 'PtrDiff', 'WChar'}
+        need(shape in fields or shape in scalars | unsupported | {'BuiltinFn'}, 'unknown raw type constructor')
+        required = 'type_id native_shape df_children structural_children ' + fields.get(shape, '')
+        if shape in mapped or shape in scalars: required += ' kind'
+        reason = None
+        optional = ''
+        if shape == 'Typedef':
+            if 'original' in row: required += ' original'
+            else: reason = 'missing original typedef declaration or type'
+        elif shape in ('ConstantArray', 'IncompleteArray'):
+            if 'element' in row: required += ' element'
+            else: reason = 'missing or inconsistent qualified array element'
+        elif shape == 'Char':
+            if 'signed' in row:
+                required += ' signed'
+                need(type(row['signed']) is bool, 'invalid plain char signedness')
+            else: reason = 'missing plain char signedness'
+        elif shape == 'BuiltinFn': reason = 'BuiltinFn requires a native endpoint relation'
+        elif shape in unsupported | {'LongDouble', 'Reference', 'BlockPointer', 'Vector', 'Atomic', 'Attributed', 'TypeOfExpr', 'VariableArray', 'Complex'}:
+            reason = 'missing or unsupported required type'
+        if reason is not None:
+            required += ' unproved'
+            need(row.get('unproved') == reason, 'raw type Unproved reason differs')
+        self.keys(row, required, optional)
+        expected, extra, references, normalization = [], [], [], None
         if shape in ('Struct', 'Union', 'Enum', 'Typedef'):
-            need(row.get('declaration') in self.declarations
-                 and self.declarations[row['declaration']]['kind'] == mapped[shape], 'raw type declaration reference differs')
-            expected = [self.edge('declaration', row['declaration'])]
+            references = [self.ref('declaration', row['declaration'], mapped[shape])]
+            expected = references[:]
+            if shape == 'Typedef' and 'original' in row:
+                self.qkey(row['original'])
+                normalization = self.ref('type', row['original']['type_id'])
+                extra += [normalization]
         elif shape == 'Pointer':
-            expected = [self.edge('type', row['pointee']['type_id'])]
+            self.qkey(row['pointee'])
+            expected = [self.ref('type', row['pointee']['type_id'])]
         elif shape == 'Function':
-            for q in [row['return'], *row['parameters']]:
-                self.qkey(q)
-            expected = [self.edge('type', q['type_id']) for q in [row['return'], *row['parameters']]]
+            need(isinstance(row['parameters'], list), 'invalid function type parameters')
+            for q in [row['return'], *row['parameters']]: self.qkey(q)
+            for flag in ('variadic', 'noreturn', 'prototype'):
+                need(type(row[flag]) is bool, 'invalid function type flag')
+            need(row['abi'] in ('C', 'win64', 'sysv64'), 'invalid function ABI')
+            expected = [self.ref('type', q['type_id']) for q in [row['return'], *row['parameters']]]
         elif shape in ('TypeOf', 'Paren', 'Elaborated', 'Decayed', 'Auto'):
-            need(type(row['inner']) is int and row['inner'] in self.types, 'raw inner type missing')
-            if shape != 'Elaborated':
-                expected = [self.edge('type', row['inner'])]
+            normalization = self.ref('type', row['inner'])
+            extra = [normalization]
+            if shape != 'Elaborated': expected = [normalization]
         elif shape in ('ConstantArray', 'IncompleteArray', 'VariableArray', 'Complex'):
-            expected = [self.edge('type', row['element_type'])]
-            if 'element' in row:
-                need(row['element']['type_id'] == row['element_type'], 'raw array element operand differs')
+            expected = [self.ref('type', row['element_type'])]
+            if shape in ('ConstantArray', 'IncompleteArray'):
+                if shape == 'ConstantArray': self.integer(row['length'])
+                else: need(row['length'] is None, 'incomplete array length differs')
+                if 'element' in row:
+                    self.qkey(row['element'])
+                    need(row['element']['type_id'] == row['element_type'], 'raw array element operand differs')
             if shape == 'VariableArray' and row['count_expression'] is not None:
-                expected += [self.edge('expression', row['count_expression'])]
+                expected += [self.ref('expression', row['count_expression'])]
         elif shape in ('Reference', 'BlockPointer', 'Vector', 'Atomic', 'Attributed'):
             self.qkey(row['original'])
-            expected = [self.edge('type', row['original']['type_id'])]
+            expected = [self.ref('type', row['original']['type_id'])]
             if shape == 'Attributed' and row['counted_by'] is not None:
-                expected += [self.edge('expression', row['counted_by'])]
-        elif shape == 'TypeOfExpr':
-            expected = [self.edge('expression', row['expression'])]
-        else:
-            need(shape in scalars | {'BuiltinFn', 'BFloat16', 'UnhandledSveType', 'Float128', 'Int8', 'Int16',
-                 'Int32', 'Int64', 'IntPtr', 'UInt8', 'UInt16', 'UInt32', 'UInt64', 'UIntPtr', 'IntMax',
-                 'UIntMax', 'Size', 'SSize', 'PtrDiff', 'WChar'}, 'unknown raw type constructor')
+                expected += [self.ref('expression', row['counted_by'])]
+        elif shape == 'TypeOfExpr': expected = [self.ref('expression', row['expression'])]
         need(row['df_children'] == expected == row['structural_children'], 'raw type mandatory edges differ')
+
+        self.relation('type', row, normalization, references, extra)
 
     def check_expr_edges(self, row):
         shape, operands = row['native_shape'], row['operands']
@@ -374,6 +636,68 @@ class ReportGraph:
                  'ExplicitCast': 'explicit_cast', 'Unary': 'unary', 'UnaryType': 'unary_type', 'Binary': 'binary',
                  'Call': 'call', 'Member': 'member', 'ArraySubscript': 'subscript'}
         need(row['kind'] == kinds.get(shape, 'unsupported'), 'raw expression classification differs')
+        fields = {'Literal': 'literal', 'DeclRef': 'decl', 'ImplicitCast': 'cast field', 'ExplicitCast': 'cast field',
+                  'Unary': 'operator', 'UnaryType': 'operator argument_qualified_type argument_type',
+                  'Binary': 'operator computation_qualified_types computation_types', 'Member': 'member access'}
+        self.keys(row, 'id kind qualified_type type_id children operands native_shape diagnostic_location location statement_body va_list '
+                  'df_children structural_children edge_count effect_relation ' + fields.get(shape, '')
+                  + (' type_unproved' if shape == 'BadExpr' else ''))
+        self.text(row['diagnostic_location'], True)
+        self.raw_location(row['location'])
+        unproved(row['effect_relation'])
+        references, extra = [], []
+        if shape == 'BadExpr':
+            need(row['qualified_type'] is None and row['type_id'] is None and row['va_list'] is None
+                 and row['type_unproved'] == 'importer expression has no qualified type', 'invalid typeless BadExpr')
+        else:
+            self.qkey(row['qualified_type'])
+            need(type(row['type_id']) is int and row['type_id'] == row['qualified_type']['type_id']
+                 and type(row['va_list']) is bool, 'expression source qualified key differs')
+            extra = [self.ref('type', row['type_id'])]
+        need(isinstance(row['children'], list) and all(type(i) is int and i in self.expressions for i in row['children']), 'invalid expression children')
+        if shape != 'Statements': need(row['statement_body'] is None, 'unexpected statement expression body')
+        if shape == 'DeclRef': references = [self.ref('declaration', row['decl'])]
+        elif shape == 'Member':
+            self.keys(row['member'], 'id')
+            references = [self.ref('declaration', row['member']['id'])]
+            need(row['access'] in ('Arrow', 'Dot'), 'invalid member access')
+        elif shape in ('ImplicitCast', 'ExplicitCast'):
+            need(row['cast'] in ('BitCast', 'LValueToRValue', 'NoOp', 'ToUnion', 'ArrayToPointerDecay', 'FunctionToPointerDecay',
+                 'NullToPointer', 'IntegralToPointer', 'PointerToIntegral', 'ToVoid', 'IntegralCast', 'IntegralToBoolean',
+                 'IntegralToFloating', 'FloatingToIntegral', 'FloatingToBoolean', 'BooleanToSignedIntegral', 'PointerToBoolean',
+                 'FloatingCast', 'FloatingRealToComplex', 'FloatingComplexToReal', 'FloatingComplexCast',
+                 'FloatingComplexToIntegralComplex', 'IntegralRealToComplex', 'IntegralComplexToReal', 'IntegralComplexToBoolean',
+                 'IntegralComplexCast', 'IntegralComplexToFloatingComplex', 'BuiltinFnToFnPtr', 'VectorSplat', 'AtomicToNonAtomic',
+                 'NonAtomicToAtomic'), 'invalid cast kind')
+            if row['field'] is not None: references = [self.ref('declaration', row['field'], 'field')]
+        elif shape == 'Literal':
+            literal = row['literal']
+            need(isinstance(literal, dict), 'invalid literal')
+            if 'integer' in literal:
+                self.keys(literal, 'integer'); self.integer(literal['integer'])
+            elif 'character' in literal:
+                self.keys(literal, 'character'); self.integer(literal['character'])
+            elif 'bytes' in literal:
+                self.keys(literal, 'bytes width')
+                need(isinstance(literal['bytes'], list) and all(type(i) is int and 0 <= i <= 255 for i in literal['bytes']), 'invalid string bytes')
+                need(type(literal['width']) is int and 0 <= literal['width'] <= 255, 'invalid string width')
+            else:
+                self.keys(literal, 'unsupported'); need(literal['unsupported'] is True, 'invalid unsupported literal')
+        if shape in ('Unary', 'UnaryType', 'Binary'):
+            operators = {
+                'Unary': ('AddressOf', 'Deref', 'Plus', 'PostIncrement', 'PreIncrement', 'Negate', 'PostDecrement',
+                          'PreDecrement', 'Complement', 'Not', 'Real', 'Imag', 'Extension', 'Coawait'),
+                'UnaryType': ('SizeOf', 'AlignOf', 'PreferredAlignOf'),
+                'Binary': ('Multiply', 'Divide', 'Modulus', 'Add', 'Subtract', 'ShiftLeft', 'ShiftRight', 'Less', 'Greater',
+                           'LessEqual', 'GreaterEqual', 'EqualEqual', 'NotEqual', 'BitAnd', 'BitXor', 'BitOr', 'And', 'Or',
+                           'Assign', 'AssignMultiply', 'AssignDivide', 'AssignModulus', 'AssignAdd', 'AssignSubtract',
+                           'AssignShiftLeft', 'AssignShiftRight', 'AssignBitAnd', 'AssignBitXor', 'AssignBitOr', 'Comma')}
+            need(row['operator'] in operators[shape], 'invalid expression operator')
+        if shape == 'Binary':
+            need(isinstance(row['computation_qualified_types'], list) and len(row['computation_qualified_types']) == 2
+                 and isinstance(row['computation_types'], list) and len(row['computation_types']) == 2, 'invalid computation keys')
+            for q in row['computation_qualified_types']:
+                if q is not None: self.qkey(q)
         single = {'Unary', 'ConstantExpr', 'ImplicitCast', 'ExplicitCast', 'Paren', 'CompoundLiteral',
                   'ImaginaryLiteral', 'Predefined', 'VAArg', 'Member'}
         pair = {'Binary', 'ArraySubscript', 'BinaryConditional'}
@@ -385,6 +709,8 @@ class ReportGraph:
                    'Atomic': ['ptr', 'order', 'val1', 'order_fail', 'val2', 'weak'],
                    'OffsetOf': ['type', 'index']}.get(shape, []))
         need(isinstance(operands, dict) and set(operands) == set(fields), 'raw expression operand schema differs')
+        for field in ('arguments', 'initializers', 'elements'):
+            if field in operands: need(isinstance(operands[field], list), 'invalid expression operand list')
         expr = lambda ident: self.edge('expression', ident)
         if shape in single | pair | triple:
             df = [expr(operands[f]) for f in fields]
@@ -420,6 +746,8 @@ class ReportGraph:
              and type(row['edge_count']) is int and row['edge_count'] == len(row['children']),
              'raw structural expression sequence differs')
 
+        self.relation('expression', row, references=references, extra=extra + references)
+
     def type_view(self, source, cursor=False, depth=0):
         if depth > 32:
             return {'unproved': 'type depth limit'}
@@ -443,8 +771,7 @@ class ReportGraph:
             if row['length'] is not None:
                 canonical['length'] = row['length']
         elif kind in ('struct', 'union', 'enum'):
-            decl = self.declarations.get(row['declaration'])
-            need(decl is not None and decl['kind'] == kind, 'normalized record declaration differs')
+            decl = self.declarations[self.relations['type', row['type_id']].references[0]['id']]
             canonical = {'native_va_list_record': decl['id']} if cursor and decl['native_va_list_record'] else {'record': decl['identity']}
         elif kind == 'Char':
             canonical = {'kind': kind, 'signed': row['signed']} if 'signed' in row else {'unproved': 'missing plain char signedness'}
@@ -472,8 +799,8 @@ class ReportGraph:
             path.add(key)
             result.append(edge)
             pending.append((edge, True))
-            row = self.tables[edge['kind']][edge['id']]
-            pending.extend((child, False) for child in reversed(row['df_children']))
+            relation = self.relations[edge['kind'], edge['id']]
+            pending.extend((child, False) for child in reversed(relation.df))
         return result, cyclic
 
     def terminal(self, ident):
@@ -488,7 +815,7 @@ class ReportGraph:
 
     def callee(self, ident):
         row = self.expressions[self.terminal(ident)]
-        decl = row.get('decl') if row['kind'] == 'reference' else None
+        decl = self.relations['expression', row['id']].references[0]['id'] if row['kind'] == 'reference' else None
         return decl if self.declarations.get(decl, {}).get('kind') == 'function' else None
 
     def promotions(self, ident):
@@ -513,8 +840,8 @@ class ReportGraph:
             if node['kind'] == 'expression':
                 expr = self.expressions[node['id']]
                 if expr['kind'] == 'reference':
-                    references.append({'id': expr['id'], 'decl': expr['decl']})
-        operand = {'id': ident, 'direct_decl': terminal.get('decl') if terminal['kind'] == 'reference' else None,
+                    references.append({'id': expr['id'], 'decl': self.relations['expression', expr['id']].references[0]['id']})
+        operand = {'id': ident, 'direct_decl': self.relations['expression', terminal['id']].references[0]['id'] if terminal['kind'] == 'reference' else None,
                 'literal': literal.get('bytes') if literal.get('width') == 1 else None,
                 'type': self.type_view(row['qualified_type'], True) if row['qualified_type'] else None,
                 'references': references}
@@ -527,7 +854,7 @@ class ReportGraph:
         row['type'] = self.type_view(row['qualified_type'], True) if row['qualified_type'] else None
         row['promotion_chain'] = self.promotions(ident)
         if row['kind'] == 'member':
-            row['member'] = self.declarations[row['member']['id']]
+            row['member'] = self.declarations[self.relations['expression', ident].references[0]['id']]
         if row['kind'] == 'call':
             callee = row['children'][0]
             decl = self.callee(callee)
@@ -565,7 +892,7 @@ class ReportGraph:
         escapes, va_arg = [], []
         for ident, row in sorted(self.expressions.items()):
             if row['kind'] == 'reference' and ident not in direct_refs:
-                decl = self.declarations[row['decl']]
+                decl = self.declarations[self.relations['expression', ident].references[0]['id']]
                 if decl['kind'] == 'function':
                     escapes.append({'symbol': decl['symbol'], 'location': row['diagnostic_location']})
             if row['native_shape'] == 'VAArg':
@@ -591,13 +918,13 @@ class ReportGraph:
                 'declarations': declarations, 'calls': calls, 'record_definitions': records, 'non_call_references': escapes, 'va_arg': va_arg}
 
     def check(self, facts, inventory):
-        need(self.inventory(facts) == inventory, 'full inventory graph projection differs')
+        need(same(self.inventory(facts), inventory), 'full inventory graph projection differs')
         for name, raw in (('expressions', self.expressions), ('statements', self.statements),
                           ('variables', self.declarations), ('types', self.types)):
             field = 'type_id' if name == 'types' else 'id'
             selected = table(facts[name], field, 'selected ' + name)
             for ident, row in selected.items():
-                need(ident in raw and row == (self.expression(ident) if name == 'expressions' else raw[ident]),
+                need(ident in raw and same(row, self.expression(ident) if name == 'expressions' else raw[ident]),
                      'selected ' + name + ' graph projection differs')
         targets = {d['id'] for d in inventory['declarations']
                    if type(d['signature'].get('canonical', {}).get('variadic')) is bool
@@ -613,36 +940,7 @@ class ReportGraph:
             if ident in closure[kind]:
                 continue
             closure[kind].add(ident)
-            row = self.tables[kind][ident]
-            if kind == 'declaration' and row['kind'] == 'function':
-                pending += [e for e in row['structural_children'] if e['kind'] != 'statement']
-                continue
-            pending += row['structural_children']
-            if kind == 'type':
-                for field in ('pointee', 'element', 'original', 'return'):
-                    if field in row:
-                        pending.append(self.edge('type', row[field]['type_id']))
-                pending += [self.edge('type', key['type_id']) for key in row.get('parameters', [])]
-                if 'inner' in row:
-                    pending.append(self.edge('type', row['inner']))
-                if 'declaration' in row:
-                    pending.append(self.edge('declaration', row['declaration']))
-            elif kind == 'expression':
-                if row['qualified_type']:
-                    pending.append(self.edge('type', row['qualified_type']['type_id']))
-                if row['kind'] == 'reference':
-                    pending.append(self.edge('declaration', row['decl']))
-                if row.get('field') is not None:
-                    pending.append(self.edge('declaration', row['field']))
-                if row['kind'] == 'member':
-                    pending.append(self.edge('declaration', row['member']['id']))
-            elif kind == 'declaration':
-                if type(row.get('owning_function')) is int:
-                    pending.append(self.edge('declaration', row['owning_function']))
-                if isinstance(row.get('owning_enum'), dict) and 'declaration' in row['owning_enum']:
-                    pending.append(self.edge('declaration', row['owning_enum']['declaration']))
-                if row.get('native_va_list'):
-                    pending += [self.edge('type', row['native_va_list'][prefix + '_type_id']) for prefix in ('declared', 'builtin')]
+            pending += self.relations[kind, ident].required
         for field, kind in (('expressions', 'expression'), ('statements', 'statement'), ('variables', 'declaration'), ('types', 'type')):
             need({r['type_id' if kind == 'type' else 'id'] for r in facts[field]} == closure[kind],
                  'complete selected ' + kind + ' graph closure differs')
@@ -653,18 +951,18 @@ class ReportGraph:
         need({d['declaration'] for d in facts['unclassified_definitions']} == unknowns, 'full unclassified definition census differs')
         for definition in facts['definitions']:
             raw = self.declarations[definition['declaration']]
-            need(definition['signature'] == self.type_view(raw['qualified_type'], True)
-                 and definition['body'] == raw['body'], 'definition source graph projection differs')
+            need(same(definition['signature'], self.type_view(raw['qualified_type'], True))
+                 and same(definition['body'], raw['body']), 'definition source graph projection differs')
         selected = {e['id'] for e in facts['expressions']}
         expected = [{'expression': ident, 'native_shape': row['native_shape'], 'type': self.expression(ident)['type'],
                      'within_slice': ident in selected, 'location': row['location'], 'relevance': {
                          'state': 'Unproved', 'reason': 'selected unsupported expression retains its complete structural children'
                          if ident in selected else 'outside selected slice; influence on formatting, control and effects is not established'}}
                     for ident, row in sorted(self.expressions.items()) if row['kind'] == 'unsupported']
-        need(facts['unsupported_expressions'] == expected, 'full unsupported graph census differs')
+        need(same(facts['unsupported_expressions'], expected), 'full unsupported graph census differs')
         expected_records = [{'declaration': row['id'], 'identity': row['identity']} for row in facts['variables']
                             if row.get('native_va_list_record') is True]
-        need(facts['native_record_identities'] == expected_records, 'native record declaration projection differs')
+        need(same(facts['native_record_identities'], expected_records), 'native record declaration projection differs')
 
 
 def check_unit(facts, inventory, command):
@@ -694,9 +992,12 @@ def check_unit(facts, inventory, command):
         if row['physical_path']:
             paths[row['physical_path']] = row['sha256']
     need(unit in paths, 'native main input missing')
+    for rows in (facts['graph']['expressions'], facts['graph']['statements']):
+        for row in rows:
+            location(row['location'], buffers, buffer_paths)
     ReportGraph(facts).check(facts, inventory)
     declarations = table(facts['declarations'], 'id', 'declaration')
-    need(facts['declarations'] == inventory['declarations'], 'compiler declaration census differs from inventory')
+    need(same(facts['declarations'], inventory['declarations']), 'compiler declaration census differs from inventory')
     raw_calls = table(inventory['calls'], 'id', 'inventory call')
     calls = table(facts['calls'], 'id', 'format call')
     definitions = table(facts['definitions'], 'declaration', 'definition')
@@ -704,7 +1005,6 @@ def check_unit(facts, inventory, command):
     expressions = table(facts['expressions'], 'id', 'expression')
     statements = table(facts['statements'], 'id', 'statement')
     variables = table(facts['variables'], 'id', 'variable')
-    types = table(facts['types'], 'type_id', 'type')
     function_edges = table(facts['function_edges'], 'declaration', 'function parameter edges')
     native_record_identities = table(facts['native_record_identities'], 'declaration', 'native record identity')
     for i, row in native_record_identities.items():
@@ -726,7 +1026,7 @@ def check_unit(facts, inventory, command):
     for i, edge in function_edges.items():
         need(i in declarations and edge['fixed_count'] == len(edge['parameters'])
              and len(set(edge['parameters'])) == len(edge['parameters']), 'function parameter reference coverage differs')
-        need(i in variables and variables[i]['kind'] == 'function' and variables[i]['parameters'] == edge['parameters'],
+        need(i in variables and variables[i]['kind'] == 'function' and same(variables[i]['parameters'], edge['parameters']),
              'ordered function declaration references differ')
         need(all(p in variables and variables[p]['kind'] == 'variable'
                  and variables[p]['parameter_owners'] == [i] for p in edge['parameters']),
@@ -736,72 +1036,11 @@ def check_unit(facts, inventory, command):
              and 0 <= position < len(edge['parameters']) and edge['format_parameter'] == edge['parameters'][position], 'function format parameter edge differs')
     def reference(value, rows, label):
         need(type(value) is int and value in rows, label + ' reference missing')
-    def typed_references(value):
-        if isinstance(value, dict):
-            for field in ('type_id', 'declared_type_id', 'builtin_type_id'):
-                if field in value and value[field] is not None:
-                    reference(value[field], types, 'qualified type')
-            if 'native_va_list_record' in value and type(value['native_va_list_record']) is not bool:
-                reference(value['native_va_list_record'], variables, 'native record')
-                need(variables[value['native_va_list_record']]['kind'] == 'struct', 'native record kind differs')
-                need(value['native_va_list_record'] in native_record_identities, 'native record inventory identity missing')
-            for child in value.values():
-                typed_references(child)
-        elif isinstance(value, list):
-            for child in value:
-                typed_references(child)
-    for row in [*facts['declarations'], *calls.values(), *expressions.values(), *variables.values(), *types.values()]:
-        typed_references(row)
-    for i, row in types.items():
-        kind = row.get('kind')
-        need(isinstance(kind, str) or isinstance(row.get('unproved'), str) and row['unproved'], 'missing native type shape')
-        required = {'typedef': ('declaration',), 'pointer': ('pointee',), 'function': ('return', 'parameters'),
-                    'elaborated': ('inner',), 'paren': ('inner',), 'typeof': ('inner',), 'decayed': ('inner',),
-                    'auto': ('inner',), 'struct': ('declaration',), 'union': ('declaration',), 'enum': ('declaration',)}
-        need(all(field in row for field in required.get(kind, ())), 'mandatory type reference missing')
-        if kind in ('array', 'typedef'):
-            need(('element' if kind == 'array' else 'original') in row or bool(row.get('unproved')),
-                 'missing original qualified type reference')
-        for field in ('pointee', 'element', 'return', 'original'):
-            if field in row:
-                need(isinstance(row[field], dict) and 'type_id' in row[field], 'missing qualified type reference')
-        if kind == 'function':
-            need(isinstance(row['parameters'], list) and all(isinstance(t, dict) and 'type_id' in t for t in row['parameters']),
-                 'missing ordered function type references')
-        for field in ('inner',):
-            if field in row:
-                reference(row[field], types, 'inner type')
-        if 'declaration' in row:
-            reference(row['declaration'], variables, 'type declaration')
-            need(variables[row['declaration']]['kind'] == row['kind'], 'type declaration kind differs')
-    need(not (expressions.keys() & statements.keys()) and not (expressions.keys() & variables.keys())
-         and not (statements.keys() & variables.keys()), 'impossible cross-table node identity')
     for i, row in variables.items():
-        if row.get('initializer') is not None:
-            reference(row['initializer'], expressions, 'initializer expression')
-        for field, kind in (('fields', 'field'), ('variants', 'enum_constant')):
-            for d in row.get(field) or []:
-                reference(d, variables, field)
-                need(variables[d]['kind'] == kind, 'record member kind differs')
-        for owner in row.get('parameter_owners', []):
-            reference(owner, declarations, 'parameter function')
-            need(i in function_edges.get(owner, variables.get(owner, {})).get('parameters', []),
-                 'parameter ownership differs')
-        owner = row.get('owning_function')
-        if type(owner) is int:
-            reference(owner, declarations, 'lexical function')
-        owner = row.get('owning_enum')
-        if isinstance(owner, dict) and 'declaration' in owner:
-            reference(owner['declaration'], variables, 'enum owner')
-            need(i in variables[owner['declaration']].get('variants', []), 'enum variant ownership differs')
-        if row['kind'] == 'function':
-            for d in row['parameters']:
-                reference(d, variables, 'function parameter')
-                need(variables[d]['parameter_owners'] == [i], 'function parameter ownership differs')
-            if i in function_edges:
-                need(row['parameters'] == function_edges[i]['parameters'], 'ordered function parameters differ')
+        if row['kind'] == 'function' and i in function_edges:
+            need(same(row['parameters'], function_edges[i]['parameters']), 'ordered function parameters differ')
     for i, row in definitions.items():
-        need(i in function_edges and row['parameters'] == function_edges[i]['parameters'],
+        need(i in function_edges and same(row['parameters'], function_edges[i]['parameters']),
              'ordered definition parameters differ')
     unsupported = table(facts['unsupported_expressions'], 'expression', 'unsupported expression')
     need(type(facts['unsupported_expression_count']) is int and facts['unsupported_expression_count'] == len(unsupported),
@@ -820,14 +1059,14 @@ def check_unit(facts, inventory, command):
     for i, event in events.items():
         unproved(event['relation'])
         expr = expected_events[i]
-        need(event['builtin'] == expr['builtin'] and event['callee_declaration'] == expr['callee_decl']
-             and event['operands'] == expr['arguments'], 'cursor event operands or builtin edge differs')
+        need(same(event['builtin'], expr['builtin']) and same(event['callee_declaration'], expr['callee_decl'])
+             and same(event['operands'], expr['arguments']), 'cursor event operands or builtin edge differs')
     for row in [*definitions.values(), *unclassified.values()]:
         decl = declarations.get(row['declaration'])
         need(decl is not None and decl['definition'] and decl['symbol'] == row['symbol'], 'definition declaration edge differs')
         location(row['location'], buffers, buffer_paths)
     for row in unclassified.values():
-        need(row['signature'] == declarations[row['declaration']]['signature'] and row['state'] == 'Unproved'
+        need(same(row['signature'], declarations[row['declaration']]['signature']) and row['state'] == 'Unproved'
              and row['reason'], 'unclassified native signature facts lost')
     for row in definitions.values():
         unproved(row['generated_origin'])
@@ -836,29 +1075,16 @@ def check_unit(facts, inventory, command):
         need(row['va_parameters'] == declarations[row['declaration']]['va_parameters'], 'consumer parameter edge differs')
     for row in calls.values():
         location(row['native_location'], buffers, buffer_paths)
-    for row in [*expressions.values(), *statements.values()]:
-        location(row['location'], buffers, buffer_paths)
-    def inventory_cursor_type(inventory_type, cursor_type):
-        if isinstance(inventory_type, dict) and isinstance(cursor_type, dict):
-            if set(inventory_type) == {'record'} and set(cursor_type) == {'native_va_list_record'}:
-                record = cursor_type['native_va_list_record']
-                return record in native_record_identities and inventory_type['record'] == native_record_identities[record]['identity']
-            return inventory_type.keys() == cursor_type.keys() and all(
-                inventory_cursor_type(value, cursor_type[name]) for name, value in inventory_type.items())
-        if isinstance(inventory_type, list) and isinstance(cursor_type, list):
-            return len(inventory_type) == len(cursor_type) and all(
-                inventory_cursor_type(a, b) for a, b in zip(inventory_type, cursor_type))
-        return inventory_type == cursor_type
     for row in calls.values():
         raw = raw_calls.get(row['id'])
-        need(raw is not None and all(row.get(k) == v for k, v in raw.items()), 'call inventory facts changed')
-        need(row['callee_declaration'] in declarations
+        need(raw is not None and all(same(row.get(k), v) for k, v in raw.items()), 'call inventory facts changed')
+        need(type(row['callee_declaration']) is int and row['callee_declaration'] in declarations
              and declarations[row['callee_declaration']]['symbol'] == row['callee'], 'callee declaration edge differs')
         if row['owner'] is not None:
             reference(row['owner'], declarations, 'call owner')
         need(row['id'] in expressions, 'call expression missing')
         expr = expressions[row['id']]
-        need(expr['kind'] == 'call' and expr['callee_decl'] == row['callee_declaration']
+        need(expr['kind'] == 'call' and same(expr['callee_decl'], row['callee_declaration'])
              and [a['id'] for a in expr['arguments']] == [a['id'] for a in row['arguments']],
              'inventory call callee or ordered operands contradict expression')
         need(type(row['fixed_count']) is int and 0 <= row['fixed_count'] <= len(row['arguments']), 'fixed argument coverage differs')
@@ -877,67 +1103,6 @@ def check_unit(facts, inventory, command):
             need(expr is not None and expr['promotion_chain'] == argument['promotion_chain'], 'promotion chain reference differs')
             need(argument['type'] == (expr['promotion_chain'][0] if expr['type'] is not None else None),
                  'inventory argument type contradicts promotion head')
-    for row in expressions.values():
-        unproved(row['effect_relation'])
-        need(type(row['edge_count']) is int and row['edge_count'] == len(row['children']), 'expression edge coverage differs')
-        need(set(row['children']) <= expressions.keys(), 'expression child missing')
-        pending, seen, chain = row['id'], set(), []
-        while True:
-            need(pending not in seen, 'cyclic expression wrapper path')
-            seen.add(pending)
-            current = expressions[pending]
-            if current['type'] is not None:
-                need(len(chain) < len(row['promotion_chain']) and inventory_cursor_type(
-                     row['promotion_chain'][len(chain)], current['type']),
-                     'expression type contradicts promotion chain')
-                chain.append(row['promotion_chain'][len(chain)])
-            if current['kind'] not in ('paren', 'implicit_cast'):
-                break
-            need(len(current['children']) == 1, 'ambiguous expression wrapper path')
-            pending = current['children'][0]
-        need(len(chain) == len(row['promotion_chain']), 'expression promotion chain coverage differs')
-        if row.get('kind') == 'reference':
-            need(row['decl'] in variables or row['decl'] in declarations, 'expression declaration missing')
-        if row.get('kind') == 'call':
-            need(all(a['id'] in expressions for a in row['arguments']), 'body call argument missing')
-            reference(row['callee_expression'], expressions, 'callee expression')
-            reference(row['callee_reference'], expressions, 'callee reference')
-            need(row['children'][0] == row['callee_expression'], 'callee structural expression differs')
-            terminal, seen = row['callee_expression'], set()
-            while expressions[terminal]['kind'] in ('paren', 'implicit_cast'):
-                need(terminal not in seen, 'cyclic callee wrapper path')
-                seen.add(terminal)
-                children = expressions[terminal]['children']
-                need(len(children) == 1, 'ambiguous callee wrapper path')
-                reference(children[0], expressions, 'callee wrapper')
-                terminal = children[0]
-            need(terminal == row['callee_reference'], 'callee terminal reference disconnected from wrapper path')
-            target = expressions[terminal]
-            declaration = target.get('decl') if target['kind'] == 'reference' else None
-            if variables.get(declaration, {}).get('kind') != 'function':
-                declaration = None
-            need(declaration == row['callee_decl'], 'callee terminal contradicts declaration')
-            need(len(row['children']) == 1 + len(row['arguments'])
-                 and row['children'][1:] == [a['id'] for a in row['arguments']], 'call structural operands differ')
-            if row['callee_decl'] is not None:
-                reference(row['callee_decl'], declarations, 'call callee')
-                need(row['callee_decl'] in variables and variables[row['callee_decl']]['kind'] == 'function'
-                     and row['builtin'] == variables[row['callee_decl']]['builtin'], 'call builtin contradicts declaration')
-            for operand in row['arguments']:
-                need(operand['type'] == expressions[operand['id']]['type'], 'cursor operand type differs from expression')
-                if operand.get('direct_decl') is not None:
-                    reference(operand['direct_decl'], variables | declarations, 'operand declaration')
-                for ref in operand.get('references', []):
-                    reference(ref['id'], expressions, 'operand expression')
-                    need(expressions[ref['id']].get('decl') == ref['decl'], 'operand declaration contradicts expression')
-        if row.get('field') is not None:
-            reference(row['field'], variables, 'cast field')
-            need(variables[row['field']]['kind'] == 'field', 'cast field kind differs')
-        if row.get('kind') == 'member':
-            member = row['member']
-            reference(member['id'], variables, 'member declaration')
-            need(all(variables[member['id']].get(k) == v for k, v in member.items()), 'member declaration differs')
-    check_statements(statements, expressions, variables)
     reachable = set()
     pending = [row['body'] for row in definitions.values()]
     pending.extend(row['statement_body'] for row in expressions.values() if row.get('statement_body') is not None)

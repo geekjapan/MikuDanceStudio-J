@@ -205,8 +205,11 @@ impl CameraFrame {
         let view = mul(&back, &world);
         let proj = if self.orthographic {
             let w = ORTHO_WIDTH_PER_DISTANCE * self.distance.abs();
-            // The depth range is wide: every model is near the target plane.
-            ortho_lh(w, w / aspect, -FAR, FAR)
+            let mut p = ortho_lh(w, w / aspect, -FAR, FAR);
+            // SetupFrameWorldTransform uses MMD's fixed orthographic depth mapping.
+            p[2][2] = 0.0013;
+            p[3][2] = 0.0;
+            p
         } else {
             perspective_lh(self.fov_deg.to_radians(), aspect, NEAR, FAR)
         };
@@ -321,6 +324,54 @@ pub(crate) fn bounding_box_view(min: [f32; 3], max: [f32; 3], front: f32, aspect
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn orthographic_depth_matches_native_without_changing_xy_w_or_perspective() {
+        for (width, height) in [(640, 360), (800, 600)] {
+            for rotation in [[0.0; 3], [0.3, -0.7, 0.2]] {
+                for offset in [[0.0; 2], [3.5, -1.25]] {
+                    for orthographic in [true, false] {
+                        let camera = Camera {
+                            target: [1.0, 10.0, -2.0],
+                            rotation,
+                            distance: -45.0,
+                            fov_deg: 30.0,
+                            orthographic,
+                        };
+                        let got = camera.view_with_offset(offset, width, height);
+                        let aspect = width as f32 / height as f32;
+                        let old_proj = if orthographic {
+                            ortho_lh(45.0, 45.0 / aspect, -FAR, FAR)
+                        } else {
+                            perspective_lh(camera.fov_deg.to_radians(), aspect, NEAR, FAR)
+                        };
+                        let old = mul(&old_proj, &got.view);
+                        let mut native_proj = old_proj;
+                        if orthographic {
+                            // SetupFrameWorldTransform zero-initializes P and sets Pzz = 0.0013f.
+                            native_proj[2][2] = 0.0013;
+                            native_proj[3][2] = 0.0;
+                        }
+                        let expected = mul(&native_proj, &got.view);
+                        for c in 0..4 {
+                            for row in 0..4 {
+                                assert_eq!(
+                                    got.view_proj[c][row].to_bits(),
+                                    expected[c][row].to_bits()
+                                );
+                                if !orthographic || row != 2 {
+                                    assert_eq!(
+                                        got.view_proj[c][row].to_bits(),
+                                        old[c][row].to_bits()
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /// Every `*.edge.txt` probe of `tests/fixtures/rust/golden2`: the camera line gives the
     /// frame world matrix of the `world` line, and each `edge` line's result follows from its

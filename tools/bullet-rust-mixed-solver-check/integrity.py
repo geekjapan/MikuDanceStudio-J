@@ -53,7 +53,7 @@ def producer_paths(root, read_source=None):
              root / 'tools/bullet-rust-contact-solver-check/support.rs'}
     read_source = read_source or (lambda path: path.read_text())
     for source in [here / 'runner.rs', root / 'tools/bullet-rust-contact-solver-check/support.rs']:
-        paths.update(Path(os.path.abspath(source.parent / relative)) for relative in re.findall(r'#\[path = "([^"]+)"\]', read_source(source)))
+        paths.update(Path(os.path.abspath(source.parent / relative)) for relative in re.findall(r'#\[path = "([^"]+)"\]', read_source(regular_path(root, source))))
     return sorted(paths)
 
 

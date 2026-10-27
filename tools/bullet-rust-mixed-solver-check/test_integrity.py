@@ -1,4 +1,6 @@
 import json
+import os
+import sys
 from pathlib import Path, PureWindowsPath
 import subprocess
 import tempfile
@@ -119,9 +121,63 @@ class IntegrityTests(unittest.TestCase):
             linked=here/'linked';linked.symlink_to(out,target_is_directory=True)
             with self.assertRaises(ValueError):snapshot(root,source_paths(root,out))
             linked.unlink()
-            import os
-            fifo=here/'pipe.py';os.mkfifo(fifo)
+            (here/'directory.py').mkdir()
             with self.assertRaises(ValueError):snapshot(root,source_paths(root,out))
+
+    @unittest.skipUnless(hasattr(os, 'mkfifo'), 'os.mkfifo is unavailable on this platform')
+    def test_fifo_verifier_is_rejected(self):
+        self.module_reader_controls('fifo', ['tools/bullet-rust-mixed-solver-check/pipe.py'])
+
+    @unittest.skipUnless(hasattr(os, 'mkfifo'), 'os.mkfifo is unavailable on this platform')
+    def test_fifo_module_readers_are_rejected_without_blocking(self):
+        self.module_reader_controls('fifo')
+
+    def test_directory_module_readers_are_rejected_without_blocking(self):
+        self.module_reader_controls('directory')
+
+    def module_reader_controls(self, kind, targets=None):
+        code = """
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+from unittest.mock import patch
+sys.path.insert(0, sys.argv[1])
+from test_integrity import IntegrityTests
+from integrity import snapshot, source_paths, producer_paths, check_integrity
+from observation import select_profile
+tempfile.tempdir=sys.argv[5]
+with tempfile.TemporaryDirectory() as directory:
+    root=Path(directory);here=IntegrityTests().membership_tree(root);out=root/'out';out.mkdir()
+    target=root/sys.argv[3]
+    if not target.exists():target.write_bytes(b'frozen')
+    identity={name:'identity' for name in ['compiler.txt','rust-target.txt','effective-profile.txt']}
+    for name,value in identity.items():(out/name).write_text(value)
+    profile={'name':'test','identity':identity,'producer_sources':snapshot(root,producer_paths(root)),
+             'strict_producer_closure':True}
+    (here/'profiles/base.json').write_text(json.dumps(profile))
+    sources=snapshot(root,source_paths(root,out))
+    (out/'source-sha256.json').write_text(json.dumps(sources))
+    target.unlink()
+    if sys.argv[4]=='fifo':os.mkfifo(target)
+    else:target.mkdir()
+    with patch('observation.__file__',str(here/'observation.py')):
+        try:
+            if sys.argv[2]=='snapshot':snapshot(root,source_paths(root,out))
+            elif sys.argv[2]=='integrity':check_integrity(root,out,sources,{})
+            else:select_profile(out,here/'profiles')
+        except ValueError as error:
+            assert 'nonregular source entry' in str(error), str(error)
+        else:raise AssertionError('nonregular source was accepted')
+"""
+        for boundary in ['snapshot', 'integrity', 'selection']:
+            for target in targets or ['tools/bullet-rust-mixed-solver-check/runner.rs',
+                                      'tools/bullet-rust-contact-solver-check/support.rs']:
+                with self.subTest(boundary=boundary,target=target),tempfile.TemporaryDirectory() as directory:
+                    result=subprocess.run([sys.executable,'-c',code,str(Path(__file__).parent),boundary,target,kind,directory],
+                                          capture_output=True,text=True,timeout=5)
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def test_windows_module_paths_are_rust_literals(self):
         path = PureWindowsPath('C:/Users/runner name/日本語/solver.rs')

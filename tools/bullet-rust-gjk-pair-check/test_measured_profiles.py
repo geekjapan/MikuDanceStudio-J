@@ -441,7 +441,7 @@ class FiniteMeasurementTests(unittest.TestCase):
         current = check.source_hashes()
         current.pop(measured_profiles.MANIFEST_PATH)
         self.assertEqual(len(current), 476)
-        self.assertEqual(current, measured_profiles.approved_source_map(self.manifest, 'macos-arm64'))
+        self.assertEqual(current, measured_profiles.approved_source_map(self.manifest, check.host()))
         for host in measured_profiles.HOSTS:
             source = measured_profiles.approved_source_map(self.manifest, host)
             self.assertNotIn(measured_profiles.MANIFEST_PATH, source)
@@ -462,6 +462,33 @@ class FiniteMeasurementTests(unittest.TestCase):
                         measured_profiles.validate(Path('/unused'), host=lambda: host,
                             inventory=check.inventory, source_hashes=lambda: changed,
                             stream=check.stream, transport=check.transport)
+
+    def test_physical_source_expectation_uses_exact_supported_host(self):
+        path = 'rust/crates/mds-bullet/src/core/dbvt.rs'
+        expectations = [
+            ('Darwin', 'arm64', 'macos-arm64', 'f70819446e34a506b5c71bd74410b618647f9c3c16c1deee0c009e4dc5f76bfe'),
+            ('Linux', 'x86_64', 'linux-x64', 'f70819446e34a506b5c71bd74410b618647f9c3c16c1deee0c009e4dc5f76bfe'),
+            ('Linux', 'aarch64', 'linux-arm64', 'f70819446e34a506b5c71bd74410b618647f9c3c16c1deee0c009e4dc5f76bfe'),
+            ('Windows', 'AMD64', 'windows-x64', '0dc9af5d7af0df8bf8492ab3c8ac5903fa27f29f674391679c372edaa147c26c'),
+        ]
+        for system, machine, host, identity in expectations:
+            source = measured_profiles.approved_source_map(self.manifest, host)
+            source[measured_profiles.MANIFEST_PATH] = measured_profiles.sha((measured_profiles.HERE / 'measured-profiles.json').read_bytes())
+            self.assertEqual(source[path], identity)
+            with self.subTest(host=host), patch('host_profiles.platform.system', return_value=system), \
+                    patch('host_profiles.platform.machine', return_value=machine):
+                self.assertEqual(check.host(), host)
+                with patch.object(check, 'source_hashes', side_effect=lambda: dict(source)):
+                    self.test_current_collector_and_broadphase_physical_source_refusals()
+                crossed_host = 'macos-arm64' if host == 'windows-x64' else 'windows-x64'
+                crossed = measured_profiles.approved_source_map(self.manifest, crossed_host)
+                crossed[measured_profiles.MANIFEST_PATH] = source[measured_profiles.MANIFEST_PATH]
+                with patch.object(check, 'source_hashes', side_effect=lambda: dict(crossed)), self.assertRaises(AssertionError):
+                    self.test_current_collector_and_broadphase_physical_source_refusals()
+        for system, machine in [('Darwin', 'x86_64'), ('Windows', 'x86')]:
+            with self.subTest(system=system, machine=machine), patch('host_profiles.platform.system', return_value=system), \
+                    patch('host_profiles.platform.machine', return_value=machine), self.assertRaisesRegex(ValueError, 'Unsupported host'):
+                check.host()
 
     def test_synthetic_replay_receipts_and_contract_guards(self):
         fixture = check.ROOT / 'rust/crates/mds-bullet/tests/gjk_pair_data'

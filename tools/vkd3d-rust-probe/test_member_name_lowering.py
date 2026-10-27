@@ -1,9 +1,11 @@
-"""Compiler-free controls; MEMBER_NAME_ALL24 supplies the fixed retained ZIP."""
 import copy
+from contextlib import contextmanager
 import io
 import os
 from pathlib import Path
 import sys
+import subprocess
+import tempfile
 import unittest
 import zipfile
 from unittest.mock import patch
@@ -172,6 +174,118 @@ class TraceTests(unittest.TestCase):
             with patch.object(M,'admission',return_value=({'proof':'test-only'},self.src)):
                 result=M.replay(None,{})
                 self.assertEqual(result['actual_compiled_pilot'],'UNRUN')
+
+    @contextmanager
+    def hosted_fixture(self, root, failed_stem=None, failure=None):
+        compiler = root.parent/'fixture-compiler'
+        compiler.write_bytes(b'fixture compiler, never executed')
+        binary = b'\x7fELF\x02\x01'+bytes(12)+b'\x3e\x00'+bytes(44)
+        identities = {'rustc':'rustc-identity','cc':'cc-identity','rustup':'pinned-rustc-path'}
+        def process(argv, **kwargs):
+            self.assertEqual(kwargs['timeout'],120)
+            self.assertEqual(kwargs['cwd'],root)
+            if argv[0] in identities and '-o' not in argv:
+                stem = identities[argv[0]]
+                output = (str(compiler)+'\n').encode() if argv[0]=='rustup' else (
+                    b'release: 1.95.0\nhost: x86_64-unknown-linux-gnu\n' if argv[0]=='rustc' else b'fixture cc\n')
+            elif '-o' in argv:
+                stem = argv[-1].removesuffix('.bin')+'-compile'
+                output = b''
+            else:
+                key = argv[0].removeprefix('./').removesuffix('.bin')
+                stem = key+'-run'
+                source = key.rsplit('-',1)[0]
+                mutant = None if source in ('oracle.c','stable.rs') else source.removesuffix('.rs')
+                output = M.expected(M.cases(),mutant)
+            if stem == failed_stem:
+                if isinstance(failure,Exception):
+                    raise failure
+                return subprocess.CompletedProcess(argv,failure,b'partial stdout',b'command failed')
+            if '-o' in argv:
+                (root/argv[-1]).write_bytes(binary)
+            return subprocess.CompletedProcess(argv,0,output,b'')
+        env = {'GITHUB_ACTIONS':'true','GITHUB_SHA':'fixture','RUNNER_OS':'Linux','RUNNER_ARCH':'X64',
+               'PATH':'fixture path','RUSTC_BOOTSTRAP':'1','RUSTFLAGS':'bad','CARGO_ENCODED_RUSTFLAGS':'bad'}
+        with patch.object(sys,'platform','linux'),patch('platform.machine',return_value='x86_64'), \
+             patch.dict(os.environ,env,clear=True),patch.object(M,'admission',return_value=({'fixture':True},self.src)), \
+             patch('shutil.which',return_value=str(compiler)),patch('subprocess.run',side_effect=process):
+            yield
+
+    def check_hosted_failure(self, stem, failure, status, code):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)/'packet'
+            with self.hosted_fixture(root,stem,failure):
+                with self.assertRaises(type(failure) if isinstance(failure,Exception) else ValueError):
+                    M.run_hosted(root,{})
+                receipt = M.loads((root/(stem+'.command.json')).read_bytes())
+                self.assertEqual(receipt['status'],status)
+                self.assertEqual(receipt['command']['exit_code'],code)
+                self.assertIsNotNone(receipt['failure'])
+                if code is None:
+                    self.assertEqual(receipt['failure']['kind'],status)
+                for path in root.glob('*.command.json'):
+                    saved = M.loads(path.read_bytes())
+                    command = saved['command']
+                    self.assertTrue(command['argv'])
+                    self.assertLessEqual(command['start'],command['end'])
+                    self.assertTrue(command['end'].endswith('+00:00'))
+                    self.assertEqual(set(command['environment']),{'GITHUB_ACTIONS','GITHUB_SHA','RUNNER_OS','RUNNER_ARCH','PATH','LC_ALL'})
+                    self.assertEqual(command['environment']['LC_ALL'],'C')
+                    self.assertEqual(command['removed_environment'],['RUSTC_BOOTSTRAP','RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS'])
+                    for field in ('stdout','stderr'):
+                        self.assertEqual(saved[field+'_sha256'],M.sha((root/command[field]).read_bytes()))
+                self.assertFalse((root/'executions.json').exists())
+                with self.assertRaises((ValueError,FileNotFoundError)):
+                    M.replay(root,{})
+            return receipt
+
+    def test_failed_identity_receipt(self):
+        receipt = self.check_hosted_failure('cc-identity',7,'failed',7)
+        self.assertEqual(receipt['command']['argv'],['cc','--version'])
+
+    def test_failed_compile_receipt(self):
+        receipt = self.check_hosted_failure('oracle.c-normal-compile',23,'failed',23)
+        self.assertEqual(receipt['command']['argv'],['cc','-std=c11','-D_POSIX_C_SOURCE=200809L','-O0','oracle.c','-o','oracle.c-normal.bin'])
+
+    def test_failed_execution_receipt(self):
+        receipt = self.check_hosted_failure('oracle.c-normal-run',19,'failed',19)
+        self.assertEqual(receipt['command']['argv'],['./oracle.c-normal.bin'])
+
+    def test_timeout_partial_output_receipt(self):
+        failure = subprocess.TimeoutExpired(['./oracle.c-normal.bin'],120,output=b'partial stdout',stderr=b'partial stderr')
+        receipt = self.check_hosted_failure('oracle.c-normal-run',failure,'timeout',None)
+        self.assertEqual(receipt['stdout_sha256'],M.sha(b'partial stdout'))
+        self.assertEqual(receipt['stderr_sha256'],M.sha(b'partial stderr'))
+
+    def test_launch_failure_receipt(self):
+        self.check_hosted_failure('cc-identity',FileNotFoundError('fixture missing compiler'),'launch_error',None)
+
+    def test_successful_replay_cross_checks_command_receipts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)/'packet'
+            with self.hosted_fixture(root):
+                result = M.run_hosted(root,{})
+                self.assertEqual(result['actual_compiled_pilot'],'PASS retained Linux x64 normal/optimized executions')
+                self.assertEqual(len(list(root.glob('*.command.json'))),35)
+                path = root/'oracle.c-normal-compile.command.json'
+                original = path.read_bytes()
+                receipt = M.loads(original)
+                changed_command = dict(receipt['command'],argv=['wrong'])
+                for changes in ({'status':'failed'}, {'failure':{'kind':'timeout'}},
+                                {'command':changed_command}, {'stdout_sha256':'0'*64}):
+                    path.write_text(M.json.dumps(dict(receipt,**changes)))
+                    (root/'seal.json').write_text(M.json.dumps(M.manifest(root)))
+                    with self.subTest(changes=changes),self.assertRaises(ValueError):
+                        M.replay(root,{})
+                path.unlink()
+                (root/'seal.json').write_text(M.json.dumps(M.manifest(root)))
+                with self.assertRaises(ValueError):
+                    M.replay(root,{})
+                path.write_bytes(original)
+                (root/'extra.command.json').write_bytes(original)
+                (root/'seal.json').write_text(M.json.dumps(M.manifest(root)))
+                with self.assertRaises(ValueError):
+                    M.replay(root,{})
 
 
 if __name__ == '__main__':

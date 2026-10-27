@@ -1,7 +1,7 @@
 """Exact member-name dependency-call-trace experiment, never product authorization.
 
-Default replay reads retained artifacts only. --run-hosted is the sole writer and
-compiler path. Captured Linux path aliases identify retained bytes, not live files.
+Default replay reads retained artifacts only. --acquire and --run-hosted write
+artifacts; only --run-hosted compiles. Captured Linux aliases identify retained bytes.
 """
 import argparse
 import copy
@@ -126,7 +126,6 @@ def cbor(data):
 
 
 class Transport:
-    """Explicit read-only alias table for the captured Linux namespace."""
     def __init__(self, z, setup):
         self.z, self.setup = z, setup
         self.files, self.aliases = {}, {}
@@ -347,7 +346,6 @@ def boundary_controls(transport, witness):
 
 
 def focused_proof_controls(inv, witness):
-    # Reuse the frozen actual-payload helper with only its five collision negatives.
     import inspect
     import test_closed_variadic_plan as T
     source = inspect.getsource(T.exercise_actual_cursor_payload)
@@ -678,6 +676,26 @@ def manifest(root):
     return {str(p.relative_to(root)): sha(p.read_bytes()) for p in sorted(root.rglob('*')) if p.is_file() and p.name != 'seal.json'}
 
 
+def verify_command_receipts(root, identities, records):
+    commands = {name if name == 'pinned-rustc-path' else name+'-identity': record
+                for name, record in identities.items()}
+    for key, record in records.items():
+        commands[key+'-compile'] = record['compile']
+        commands[key+'-run'] = {field: record[field] for field in record['compile']}
+    need({p.name for p in root.glob('*.command.json')} == {stem+'.command.json' for stem in commands},
+         'individual command receipt coverage')
+    for stem, command in commands.items():
+        receipt = loads((root/(stem+'.command.json')).read_bytes())
+        need(set(receipt) == {'status','command','failure','stdout_sha256','stderr_sha256'}, 'command receipt fields')
+        need(receipt['status'] == 'succeeded' and receipt['failure'] is None
+             and type(command['exit_code']) is int and command['exit_code'] == 0,
+             'unsuccessful command receipt')
+        need(receipt['command'] == command, 'aggregate/individual command receipt differs')
+        for field in ('stdout','stderr'):
+            need(command[field] == stem+'.'+field, 'command output identity')
+            need(receipt[field+'_sha256'] == sha((root/command[field]).read_bytes()), 'command output hash')
+
+
 def replay(root, paths):
     before = manifest(root) if root else None
     proof, src = admission(paths)
@@ -703,6 +721,7 @@ def replay(root, paths):
         need('release: 1.95.0\n' in version and 'host: x86_64-unknown-linux-gnu\n' in version and 'nightly' not in version, 'retained pinned stable compiler')
         records = loads((root/'executions.json').read_bytes())
         need(set(records) == {name+'-'+mode for name in generated for mode in ('normal','optimized')}, 'execution coverage')
+        verify_command_receipts(root, compiler['identities'], records)
         result['mutant_mismatch_cases'] = {key:verify_execution(root,key,record,rows,generated) for key,record in records.items()}
         result['actual_compiled_pilot'] = 'PASS retained Linux x64 normal/optimized executions'
         need(manifest(root) == before, 'replay wrote evidence')
@@ -730,12 +749,29 @@ def run_hosted(root, paths):
     need(env['RUNNER_OS'] == 'Linux' and env['RUNNER_ARCH'] == 'X64', 'runner identity')
     def run(argv, stem, stdin=None):
         start = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        process = subprocess.run(argv, input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=root, env=env, timeout=120)
-        end = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        (root/(stem+'.stdout')).write_bytes(process.stdout)
-        (root/(stem+'.stderr')).write_bytes(process.stderr)
-        return {'argv':argv, 'start':start, 'end':end, 'exit_code':process.returncode, 'stdout':stem+'.stdout','stderr':stem+'.stderr','environment':required_env,
-                'removed_environment':['RUSTC_BOOTSTRAP','RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS']}
+        output, errors, code, failure, caught = b'', b'', None, None, None
+        try:
+            process = subprocess.run(argv, input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=root, env=env, timeout=120)
+            output, errors, code = process.stdout, process.stderr, process.returncode
+            status = 'succeeded' if code == 0 else 'failed'
+            if code != 0:
+                failure = {'kind':'nonzero_exit','message':str(code)}
+        except (subprocess.TimeoutExpired, OSError) as error:
+            caught = error
+            status = 'timeout' if isinstance(error, subprocess.TimeoutExpired) else 'launch_error'
+            failure = {'kind':status,'message':str(error)}
+            if isinstance(error, subprocess.TimeoutExpired):
+                output, errors = error.stdout or b'', error.stderr or b''
+        command = {'argv':argv, 'start':start, 'end':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                   'exit_code':code, 'stdout':stem+'.stdout','stderr':stem+'.stderr','environment':required_env,
+                   'removed_environment':['RUSTC_BOOTSTRAP','RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS']}
+        (root/command['stdout']).write_bytes(output)
+        (root/command['stderr']).write_bytes(errors)
+        (root/(stem+'.command.json')).write_text(json.dumps({'status':status,'command':command,'failure':failure,
+            'stdout_sha256':sha(output),'stderr_sha256':sha(errors)},indent=2)+'\n')
+        if caught is not None:
+            raise caught
+        return command
     identities = {}
     for name, argv in [('rustc',['rustc','+1.95.0','-vV']), ('cc',['cc','--version'])]:
         identities[name] = run(argv, name+'-identity')

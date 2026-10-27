@@ -424,9 +424,32 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--out', required=True, type=Path)
     parser.add_argument('--prepare', action='store_true')
+    parser.add_argument('--run', choices=('capture','native'))
+    parser.add_argument('--build-root', type=Path)
+    parser.add_argument('--archive', type=Path)
+    parser.add_argument('--bundle', type=Path)
+    parser.add_argument('--unpack', action='store_true')
     args = parser.parse_args()
     out = args.out.resolve()
     require(not out.is_relative_to(ROOT), 'evidence must be outside source worktree')
+    if args.run or args.archive or args.bundle or (out/'capture.json').exists():
+        import capture
+        require(not args.unpack or (args.archive and not args.run), '--unpack requires --archive without execution')
+        if args.archive:
+            capture.transport(args.archive.resolve(), out, extract=args.run == 'native' or args.unpack)
+        if args.run == 'capture':
+            result = capture.capture_inputs(sys.modules[__name__], out, args.build_root.resolve() if args.build_root else None)
+        elif args.run == 'native':
+            result = capture.evaluate_native_predicates(sys.modules[__name__], out)
+        elif (out/'native/witness.json').exists():
+            result = capture.verify_native(sys.modules[__name__], out)
+        else:
+            require(not (out/'native').exists(), 'INVALID_NATIVE_EXECUTION_INCOMPLETE')
+            result = capture.verify_capture(sys.modules[__name__], out)
+        if args.bundle:
+            result = result | {'bundle':capture.bundle(out,args.bundle.resolve())}
+        print(json.dumps(result, sort_keys=True))
+        return
     if args.prepare:
         require(not out.exists(), 'fresh evidence directory required')
         packet, generated, blobs = preflight(ROOT)

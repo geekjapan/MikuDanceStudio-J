@@ -1,0 +1,40 @@
+name: Finite member-name actual state
+on:
+  push:
+    branches: [w4-shader-member-name-real-state]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  state:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned stable compiler
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Acquire admitted inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B tools/vkd3d-rust-probe/member_name_state.py --acquire "$RUNNER_TEMP/member-state-inputs"
+      - name: Compiler-free finite controls
+        env:
+          MEMBER_NAME_ALL24: ${{ runner.temp }}/member-state-inputs/all24.zip
+        run: |
+          python3 -B tools/vkd3d-rust-probe/test_member_name_state.py
+          python3 -B -O tools/vkd3d-rust-probe/test_member_name_state.py
+      - name: Actual C and Rust normal and optimized state execution
+        run: python3 -B tools/vkd3d-rust-probe/member_name_state.py --artifacts "$RUNNER_TEMP/member-state-inputs" --run-hosted "$RUNNER_TEMP/member-state-results"
+      - name: Guarded read-only replay
+        run: |
+          python3 -B tools/vkd3d-rust-probe/member_name_state.py --artifacts "$RUNNER_TEMP/member-state-inputs" --replay "$RUNNER_TEMP/member-state-results"
+          python3 -B -O tools/vkd3d-rust-probe/member_name_state.py --artifacts "$RUNNER_TEMP/member-state-inputs" --replay "$RUNNER_TEMP/member-state-results"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: finite-member-name-real-state
+          path: |
+            ${{ runner.temp }}/member-state-inputs
+            ${{ runner.temp }}/member-state-results
+          if-no-files-found: error

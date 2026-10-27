@@ -193,13 +193,15 @@ Run the check if the diff touches any of these:
   case 438), and the pool
   setup in `add_model.cpp` / `pmx_load.cpp` / `pmd_load.cpp`.
 
-List what changed in the covered files since the sync commit:
+List what changed in the covered files since the sync tree:
 
 ```sh
-git diff --stat 5dae4748c0b391c9ed6d77a3080b97d7388b43d3 -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp include/mikudancestudio/ported_funcs.hpp include/mikudancestudio/bone_layout.hpp include/mikudancestudio/panel_controls.hpp src/window/command_file_menu.cpp src/model/bone_sort.cpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp src/model/pmd_load.cpp
+git diff --stat 75fb8a166e17a7045937f6b7321633213da326f8 -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp include/mikudancestudio/ported_funcs.hpp include/mikudancestudio/bone_layout.hpp include/mikudancestudio/panel_controls.hpp src/window/command_file_menu.cpp src/model/bone_sort.cpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp src/model/pmd_load.cpp
 ```
 
-Use the sync commit from the coverage record below as the base.
+The sync identity remains the actual workflow checkout `5dae4748c0b391c9ed6d77a3080b97d7388b43d3`. That synthetic checkout is absent from this local Git object store, so the command uses PR head `75fb8a166e17a7045937f6b7321633213da326f8`, whose complete tree was independently confirmed identical to the actual checkout by retained GitHub commit API evidence. This makes the local diff runnable against the checked source tree; it does not mean the workflow executed on the PR head or on current `main`.
+
+Use the sync commit from the coverage record below as the identity of the executed workflow checkout.
 
 ## Real bug or modeling error?
 

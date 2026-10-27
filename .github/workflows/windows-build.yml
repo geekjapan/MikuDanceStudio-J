@@ -104,6 +104,7 @@ jobs:
           ./tools/windows/provision_capture_vc90.ps1
           -Receipts "$env:GITHUB_WORKSPACE/out/d3d9-capture/vc90-provisioning"
       - name: Test capture audio boundaries (stand-in services and DirectSound)
+        id: capture_audio_selftests
         if: always() && !cancelled() && inputs.d3d9-capture && matrix.arch == 'x64'
         run: |
           python -I tools/windows/test_provision_capture_audio.py
@@ -111,7 +112,7 @@ jobs:
           python -I -O tools/windows/test_provision_capture_audio.py
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Measure and prepare existing audio services for capture only
-        if: always() && !cancelled() && inputs.d3d9-capture && matrix.arch == 'x64'
+        if: always() && !cancelled() && inputs.d3d9-capture && matrix.arch == 'x64' && steps.capture_audio_selftests.outcome == 'success'
         timeout-minutes: 8
         env:
           MDS_D3D9_CAPTURE: '1'

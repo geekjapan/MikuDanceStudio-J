@@ -10,15 +10,9 @@
 //! Only the camera-mode branches: the model-mode view offsets and the camera parented to a model
 //! come with the input modes of slice `app`.
 
+use mds_doc::CameraControls as Camera;
 use mds_math::Mat4;
-use mds_render::Camera;
 
-/// The numpad angles as the image stores them (`kNumpadHalfPi` 0x3FC90FF9, `kNumpadPi`
-/// 0x40490FD8), a few ulps off the rounded constants that the view buttons use.
-const NUMPAD_HALF_PI: f32 = f32::from_bits(0x3FC9_0FF9);
-const NUMPAD_PI: f32 = f32::from_bits(0x4049_0FD8);
-/// `kNumpadDistance` and the distance of the view buttons.
-const PRESET_DISTANCE: f32 = -45.0;
 /// The arrow hold threshold (x64 .rdata 0x7FF7CB552D0C).
 const REPEAT_THRESHOLD: f32 = 0.4;
 /// One wheel notch of `WM_MOUSEWHEEL`.
@@ -65,86 +59,28 @@ pub fn middle_drag(camera: &mut Camera, dx: i32, dy: i32, m: Modifiers) {
     p[2] -= rx * r[2] * scale + ry * r[6] * scale + r[14];
 }
 
+/// Parented MMB uses raw camera depth and FOV (`pump_navigation.cpp:191`).
+pub fn parent_middle_drag(camera: &mut Camera, dx: i32, dy: i32, m: Modifiers) {
+    let pixel_scale = if m.shift {
+        2e-4
+    } else if m.ctrl {
+        2e-6
+    } else {
+        2e-5
+    };
+    let depth = camera.target[2].abs();
+    let factor = if depth <= 0.3 { 10.0 } else { depth.max(1.0) };
+    camera.target[0] -= dx as f32 * pixel_scale * factor * camera.fov_deg;
+    camera.target[1] += dy as f32 * pixel_scale * factor * camera.fov_deg;
+}
+
 /// The wheel over the viewport with no camera parent model (x64 0x7FF7CB45F410): the distance
 /// moves by `wheel * 0.05`, `wheel` in `WM_MOUSEWHEEL` units ([`WHEEL_DELTA`] a notch).
 pub fn wheel(camera: &mut Camera, wheel: i16) {
     camera.distance += f32::from(wheel) * 0.05;
 }
 
-fn preset(camera: &mut Camera, pitch: f32, yaw: f32) {
-    camera.rotation = [pitch, yaw, 0.0];
-    camera.distance = PRESET_DISTANCE;
-}
-
-/// A numpad view preset (`ApplyNumpadCameraPreset`). Keys 3, 7 and 9 have none (`false`).
-pub fn numpad(camera: &mut Camera, digit: u8) -> bool {
-    let (pitch, yaw) = match digit {
-        2 => (0.0, 0.0),
-        4 => (0.0, NUMPAD_HALF_PI),
-        6 => (0.0, -NUMPAD_HALF_PI),
-        8 => (0.0, NUMPAD_PI),
-        5 => (-NUMPAD_HALF_PI, 0.0),
-        0 | 1 => (NUMPAD_HALF_PI, 0.0),
-        _ => return false,
-    };
-    preset(camera, pitch, yaw);
-    true
-}
-
-/// The view buttons of the camera panel.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ViewButton {
-    /// 402.
-    Front,
-    /// 403.
-    Back,
-    /// 404.
-    Top,
-    /// 405.
-    Left,
-    /// 406.
-    Right,
-    /// 407, the reset (`ResetViewAndReloadModels`).
-    Bottom,
-}
-
-impl ViewButton {
-    pub const ALL: [ViewButton; 6] = [
-        ViewButton::Front,
-        ViewButton::Back,
-        ViewButton::Top,
-        ViewButton::Left,
-        ViewButton::Right,
-        ViewButton::Bottom,
-    ];
-
-    /// The button's label in the English UI.
-    pub fn label(self) -> &'static str {
-        match self {
-            ViewButton::Front => "front",
-            ViewButton::Back => "back",
-            ViewButton::Top => "top",
-            ViewButton::Left => "left",
-            ViewButton::Right => "right",
-            ViewButton::Bottom => "bottom",
-        }
-    }
-
-    /// The camera-mode branch: rotation and distance -45, with the rounded `f32` constants
-    /// `3.1415927f` and `1.5707964f`.
-    pub fn apply(self, camera: &mut Camera) {
-        use std::f32::consts::{FRAC_PI_2, PI};
-        let (pitch, yaw) = match self {
-            ViewButton::Front => (0.0, 0.0),
-            ViewButton::Back => (0.0, PI),
-            ViewButton::Top => (-FRAC_PI_2, 0.0),
-            ViewButton::Left => (0.0, FRAC_PI_2),
-            ViewButton::Right => (0.0, -FRAC_PI_2),
-            ViewButton::Bottom => (FRAC_PI_2, 0.0),
-        };
-        preset(camera, pitch, yaw);
-    }
-}
+pub use mds_doc::CameraViewPreset as ViewButton;
 
 /// A key as `PollKeyboardStates` sees it from one pass to the next.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -299,6 +235,16 @@ mod tests {
         assert_eq!(c.distance, -51.0);
     }
 
+    fn numpad(c: &mut Camera, digit: u8) -> bool {
+        let mut d = mds_doc::Document::startup();
+        d.apply((*c).into()).unwrap();
+        if d.apply(mds_doc::Command::NumpadViewPreset(digit)).is_err() {
+            return false;
+        }
+        *c = d.camera_controls();
+        true
+    }
+
     #[test]
     fn numpad_presets_use_the_stored_angles() {
         let mut c = camera();
@@ -376,5 +322,46 @@ mod tests {
         assert_eq!(KeyState::of(true, true), KeyState::Held);
         assert_eq!(KeyState::of(true, false), KeyState::Released);
         assert_eq!(KeyState::of(false, false), KeyState::Idle);
+    }
+}
+
+#[cfg(test)]
+mod parent_tests {
+    use super::*;
+    #[test]
+    fn parent_pan_scales_fov_and_depth_at_native_thresholds_and_preserves_z() {
+        for (z, depth) in [
+            (0.3, 10.0),
+            (-0.3, 10.0),
+            (0.30001, 1.0),
+            (1.0, 1.0),
+            (-30.0, 30.0),
+        ] {
+            for (shift, ctrl, scale) in [
+                (false, false, 2e-5),
+                (true, false, 2e-4),
+                (false, true, 2e-6),
+            ] {
+                for fov in [30.0, 60.0] {
+                    let mut c = Camera {
+                        target: [11.0, 13.0, z],
+                        rotation: [0.2, -0.4, 0.3],
+                        distance: -45.0,
+                        fov_deg: fov,
+                        orthographic: false,
+                    };
+                    parent_middle_drag(&mut c, 10, -4, Modifiers { shift, ctrl });
+                    assert_eq!(
+                        c.target,
+                        [
+                            11.0 - 10.0 * scale * depth * fov,
+                            13.0 - 4.0 * scale * depth * fov,
+                            z
+                        ]
+                    );
+                    assert_eq!(c.distance, -45.0);
+                }
+            }
+        }
     }
 }

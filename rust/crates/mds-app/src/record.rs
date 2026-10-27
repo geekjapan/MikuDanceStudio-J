@@ -82,7 +82,7 @@ pub fn png_path(path: &Path, k: u32) -> PathBuf {
 
 enum Sink {
     Avi {
-        writer: AviWriter<BufWriter<File>>,
+        writer: Box<AviWriter<BufWriter<File>>>,
         /// The WAV and the byte of the data chunk at the start frame.
         sound: Option<(Arc<Wave>, usize)>,
     },
@@ -147,7 +147,10 @@ impl Recording {
                 };
                 let file = File::create(path).map_err(|e| fail(&e))?;
                 let writer = AviWriter::new(BufWriter::new(file), config).map_err(|e| fail(&e))?;
-                Sink::Avi { writer, sound }
+                Sink::Avi {
+                    writer: Box::new(writer),
+                    sound,
+                }
             }
         };
         Ok(Recording {

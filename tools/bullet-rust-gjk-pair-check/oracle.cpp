@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <initializer_list>
 static float scalar(unsigned word){float v;std::memcpy(&v,&word,4);return v;}
 static void word(float v){unsigned w;std::memcpy(&w,&v,4);std::printf("\t%08x",w);}
 static void vector(const btVector3& v){for(int i=0;i<3;++i)word(v[i]);}

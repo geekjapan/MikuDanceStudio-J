@@ -248,18 +248,18 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +        auto begin = spelling ? sm.getSpellingLoc(range.getBegin()) : sm.getExpansionLoc(range.getBegin());
 +        auto end = spelling ? sm.getSpellingLoc(range.getEnd()) : sm.getExpansionLoc(range.getEnd());
 +        if (begin.isInvalid() || end.isInvalid() || sm.getFileID(begin) != sm.getFileID(end))
-+            return {{"unproved", "invalid or cross-buffer native range"}};
++            return llvm::json::Object{{"unproved", "invalid or cross-buffer native range"}};
 +        end = Lexer::getLocForEndOfToken(end, 0, sm, context.getLangOpts());
-+        if (end.isInvalid()) return {{"unproved", "invalid end of token"}};
++        if (end.isInvalid()) return llvm::json::Object{{"unproved", "invalid end of token"}};
 +        bool invalid = false;
 +        auto bytes = sm.getBufferData(sm.getFileID(begin), &invalid);
 +        auto first = sm.getFileOffset(begin), last = sm.getFileOffset(end);
 +        if (invalid || first > last || last > bytes.size())
-+            return {{"unproved", "invalid native token interval"}};
++            return llvm::json::Object{{"unproved", "invalid native token interval"}};
 +        auto data = llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size());
 +        auto quoted = data.slice(first, last - first);
 +        auto *entry = sm.getFileEntryForID(sm.getFileID(begin));
-+        return {{"path", entry ? entry->tryGetRealPathName().str() : ""},
++        return llvm::json::Object{{"path", entry ? entry->tryGetRealPathName().str() : ""},
 +            {"buffer_sha256", llvm::toHex(llvm::SHA256::hash(data), true)},
 +            {"begin", int64_t(first)}, {"end", int64_t(last)}, {"bytes_hex", llvm::toHex(quoted, true)}};
 +    }

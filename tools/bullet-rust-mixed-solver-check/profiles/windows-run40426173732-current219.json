@@ -13890,15 +13890,15 @@
     "status": "VERIFICATION_PROFILE_ONLY_NOT_FULL_GATE_ACCEPTANCE"
   },
   "source_admission": {
-    "actual_run": 40475350148,
-    "head": "5b9efad6650605f0b95727bd8197c2692b8cbfc2",
-    "actual_checkout": "c443fbe58ddb7a44b45e1cf2517f49e487ab49a8",
-    "head_and_checkout_tree": "fb0bc4f18620b8665e0e690ac8bfb27696e1a40d",
+    "actual_run": 40475352618,
+    "head": "422f4e93dbb73ed75207130494312b45d82979f1",
+    "actual_checkout": "403ca66203924da05e1053da2f2b885770987bc6",
+    "head_and_checkout_tree": "d017ec43ae35e63252ce6d8a08f0a8a18fbfced7",
     "actual_artifact": {
-      "id": 12720557986,
+      "id": 12720602983,
       "name": "bullet-mixed-windows-2022",
-      "digest": "sha256:d8d4d8cf5199533b347dc5dd103634de3f56d855e93fa57b1f38a28dfd4b24cf",
-      "bytes": 90204608
+      "digest": "sha256:fd2faccc964a89a353b8b00030778047dfe5eea43c154f87cded122b0ca9220c",
+      "bytes": 90204633
     },
     "source_manifest_raw_sha256": "87472cf6c992df12c4d27ef467f60b775e7250d1f624aa073c3c2eef5621eb97",
     "source_entries": 237,
@@ -14018,6 +14018,62 @@
           "previous": "57a0dc07ff38c3965d9d0d577fa2ecb313b279be7c981ba6b7e2f840d7241e73",
           "observed": "d7bb3457a98e586e6204682ae523c6209a53b1904d3800fbf2ae03e9272483e9",
           "git_lf_sha256": "80aed8338c34aa26a6a4318415b8e6ea0dd1be89ce6caa41d890748e224011cc",
+          "transport": "strict-CRLF"
+        },
+        "tools/bullet-rust-mixed-solver-check/runner.rs": {
+          "previous": "0fb88f6bd357918f966682cfa8ce09323544acea226800e5fa08eb0a6ac1247c",
+          "observed": "5b41457522ec0d9dcc213fc79cb483e8c335785c72c87715396acb2608cede49",
+          "git_lf_sha256": "4876a0c33bf3c44c4d45bef74187aa9f5d3b717d5dc47c66551aa50594ad8a3d",
+          "transport": "strict-CRLF"
+        }
+      },
+      "commands_raw_sha256": "9d300f5055bc94b92e068787f5da54bc8498779b8ce71dab4f5718bee17d390f",
+      "historical_capture_provenance": "measurement remains the original run40426173732 capture provenance; captures, differences and identity are unchanged.",
+      "actual_run_status": "FAIL at arithmetic observation source profile differs after captures; clippy and mutants did not run.",
+      "fresh_compiled_mutants": 0,
+      "status": "MEASURED_SOURCE_ADMISSION_ONLY_NOT_FULL_GATE_ACCEPTANCE",
+      "limit": "Admits only these observed producer hashes with the existing exact capture gate. This is not a new passing producer run or acceptance of dispatcher behavior outside this compilation closure."
+    },
+    {
+      "actual_run": 40475350148,
+      "head": "5b9efad6650605f0b95727bd8197c2692b8cbfc2",
+      "actual_checkout": "c443fbe58ddb7a44b45e1cf2517f49e487ab49a8",
+      "head_and_checkout_tree": "fb0bc4f18620b8665e0e690ac8bfb27696e1a40d",
+      "actual_artifact": {
+        "id": 12720557986,
+        "name": "bullet-mixed-windows-2022",
+        "digest": "sha256:d8d4d8cf5199533b347dc5dd103634de3f56d855e93fa57b1f38a28dfd4b24cf",
+        "bytes": 90204608
+      },
+      "source_manifest_raw_sha256": "87472cf6c992df12c4d27ef467f60b775e7250d1f624aa073c3c2eef5621eb97",
+      "source_entries": 237,
+      "producer_entries": 219,
+      "source_transport": {
+        "strict-CRLF": 237
+      },
+      "changed_producer_sources": {
+        "rust/crates/mds-bullet/src/core/body.rs": {
+          "previous": "6536bb5dfa7bc724db994f7d2f77710c2b8f21066368bdadd448de79bd523c2c",
+          "observed": "45b3fe0c21c126ff1e3edcdbdd39a4bbec77ed428ca3c991beb939262655c412",
+          "git_lf_sha256": "ad60ba586e1cadeb63ee37e30d5dcb73a28eb08398cfc2551b417dc3bc8ffbb9",
+          "transport": "strict-CRLF"
+        },
+        "rust/crates/mds-bullet/src/core/contact.rs": {
+          "previous": "cea5598e35d6831b2328963b1cfd5ee44501b924c4c28fad0bbff69a5b0215e6",
+          "observed": "e34a0ec2ef763a9b6ee37f4f500c562410004dc5aab65149c871e28b30079eac",
+          "git_lf_sha256": "b473127a44fc4c4fcc381022ac0d46887e49e171cdbdbe5389e4689793a1fec4",
+          "transport": "strict-CRLF"
+        },
+        "rust/crates/mds-bullet/src/core/joint_rows.rs": {
+          "previous": "57a0dc07ff38c3965d9d0d577fa2ecb313b279be7c981ba6b7e2f840d7241e73",
+          "observed": "d7bb3457a98e586e6204682ae523c6209a53b1904d3800fbf2ae03e9272483e9",
+          "git_lf_sha256": "80aed8338c34aa26a6a4318415b8e6ea0dd1be89ce6caa41d890748e224011cc",
+          "transport": "strict-CRLF"
+        },
+        "rust/crates/mds-bullet/src/core/math.rs": {
+          "previous": "3239c65c0edce1ad09cb16f127bc3d1cb6d941b5a038213d7f24f4e43cf5ed2c",
+          "observed": "b468eace2cfb7cf961a4448a1a3b0c38ac32a18e434cc4984f1395bfd18f15f5",
+          "git_lf_sha256": "04bb3c1660b9ddc501cb66250d57cf1e757972e16f327896c189756f86283e97",
           "transport": "strict-CRLF"
         },
         "tools/bullet-rust-mixed-solver-check/runner.rs": {

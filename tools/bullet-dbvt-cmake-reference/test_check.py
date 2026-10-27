@@ -82,7 +82,10 @@ class Controls(unittest.TestCase):
                 'CMAKE_GENERATOR_PLATFORM:INTERNAL=x64\n\n//Source directory.\n'
                 'CMAKE_HOME_DIRECTORY:INTERNAL=SOURCE\n\n//Ordinary entries.\n'
                 'BUILD_SHARED_LIBS:BOOL=OFF\nCMAKE_CONFIGURATION_TYPES:STRING=Debug;Release\n'
-                'CMAKE_CXX_FLAGS:STRING=\nUnrelated:STRING=first\nUnrelated:STRING=last\n')
+                'CMAKE_CXX_FLAGS:STRING=\nUnrelated:STRING=first\nUnrelated:STRING=last\n'
+                'Unrelated:=ignored\nUnrelated:STRING\n=ignored\nUnrelated=ignored\n'
+                'CMAKE_GENERATOR_EXTRA:=ignored\n//CMAKE_GENERATOR:=Ninja\n'
+                '#CMAKE_GENERATOR_PLATFORM:=Win32\n')
         for newline in ('\n', '\r\n'):
             with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
@@ -92,6 +95,26 @@ class Controls(unittest.TestCase):
                 self.assertEqual(result['source'], str(root / 'cache-build/bullet-src'))
                 self.assertEqual((root / 'native-CMakeCache.txt').read_bytes(), cache.read_bytes())
                 self.assertTrue((root / 'resolved-package.json').is_file())
+
+    def test_package_cache_valid_plus_malformed_identity(self):
+        valid = ('CMAKE_GENERATOR:INTERNAL=Visual Studio 17 2022\n'
+                 'CMAKE_GENERATOR_PLATFORM:INTERNAL=x64\n'
+                 'CMAKE_HOME_DIRECTORY:INTERNAL=SOURCE\n')
+        for key, value in (('CMAKE_GENERATOR', 'Ninja'),
+                           ('CMAKE_GENERATOR_PLATFORM', 'Win32'), ('CMAKE_HOME_DIRECTORY', 'SOURCE')):
+            for suffix in (f':={value}\n', f':INTERNAL\n={value}\n',
+                           f'={value}\n', ':INTERNAL\n', '\n'):
+                for newline in ('\n', '\r\n'):
+                    with self.subTest(key=key, suffix=suffix, newline=repr(newline)), \
+                            tempfile.TemporaryDirectory() as folder:
+                        root = Path(folder)
+                        text = (valid + '# comment\n\n// comment\n' + key + suffix).replace('\n', newline)
+                        graph, cache, paths = self.package_cache_fixture(root, text)
+                        with patch.object(check, 'run', side_effect=paths), self.assertRaisesRegex(
+                                ValueError, f'^malformed CMake cache key {key} at line 7$'):
+                            check.package_paths(graph, root)
+                        self.assertFalse((root / 'resolved-package.json').exists())
+                        self.assertEqual((root / 'native-CMakeCache.txt').read_bytes(), cache.read_bytes())
 
     def test_package_cache_duplicate_identity_diagnostic(self):
         for key, value in (('CMAKE_GENERATOR', 'Visual Studio 17 2022'),

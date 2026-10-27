@@ -577,12 +577,14 @@ class ClosedFormatFactsTests(unittest.TestCase):
         self.reject_coordinated(nested_promotion, 'expression type contradicts promotion chain')
 
     @staticmethod
-    def refresh_graph_views(data, *, prepare=True, validate=True):
+    def refresh_graph_views(data, *, prepare=True, validate=True, projection_graph=None):
         import copy
         facts = data['on/0/blob.closed-format.json']
         if prepare:
             constructor_fixture_fields(facts['graph'])
-        if validate:
+        if projection_graph is not None:
+            graph = projection_graph
+        elif validate:
             graph = F.ReportGraph(facts)
         else:
             from unittest.mock import patch
@@ -1256,6 +1258,89 @@ class ClosedFormatFactsTests(unittest.TestCase):
         changed = copy.deepcopy(facts)
         changed['graph']['types'][0]['inner'] = 1
         with self.assertRaisesRegex(F.FactsError, 'raw constructor fields'): F.ReportGraph(changed)
+
+    def test_qualified_normalization_flags_and_coordinated_peers(self):
+        import copy
+        flags = ('const', 'volatile', 'restrict')
+        def q(ident, values):
+            return dict(type_id=ident, **dict(zip(flags, values)))
+        def fixture(types, qualified, declarations=()):
+            return dict(unit='/native/qualifiers.c', graph=dict(types=types, qualified_types=qualified,
+                        declarations=list(declarations), declaration_order=[d['id'] for d in declarations],
+                        expressions=[], statements=[]))
+        scalar = dict(type_id=1, native_shape='Int', kind='Int', df_children=[], structural_children=[])
+        for mask in range(8):
+            source = q(1, tuple(bool(mask & bit) for bit in (4, 2, 1)))
+            facts = fixture([scalar], [dict(source=source, path=[1], normalized=copy.deepcopy(source))])
+            F.ReportGraph(facts)
+            for flag in flags:
+                changed = copy.deepcopy(facts)
+                changed['graph']['qualified_types'][0]['normalized'][flag] = not source[flag]
+                with self.subTest(shape='scalar', mask=mask, flag=flag):
+                    with self.assertRaisesRegex(F.FactsError, 'normalized terminal'):
+                        F.ReportGraph(changed)
+        for shape, kind in (('TypeOf', 'typeof'), ('Paren', 'paren'), ('Elaborated', 'elaborated'),
+                            ('Decayed', 'decayed'), ('Auto', 'auto')):
+            children = [] if shape == 'Elaborated' else [dict(kind='type', id=1)]
+            wrapper = dict(type_id=2, native_shape=shape, kind=kind, inner=1,
+                           df_children=children, structural_children=children)
+            source, terminal = q(2, (True, False, True)), q(1, (True, False, True))
+            facts = fixture([scalar, wrapper], [dict(source=source, path=[2, 1], normalized=terminal)])
+            F.ReportGraph(facts)
+            for flag in flags:
+                changed = copy.deepcopy(facts)
+                changed['graph']['qualified_types'][0]['normalized'][flag] = not terminal[flag]
+                with self.subTest(shape=shape, flag=flag):
+                    with self.assertRaisesRegex(F.FactsError, 'normalized terminal'):
+                        F.ReportGraph(changed)
+        original = q(1, (True, False, True))
+        typedef = dict(type_id=2, native_shape='Typedef', kind='typedef', declaration=803, original=original,
+                       df_children=[dict(kind='declaration', id=803)], structural_children=[dict(kind='declaration', id=803)])
+        declaration = dict(id=803, kind='typedef', type_id=1, qualified_type=original, parameter_owners=[],
+                           diagnostic_location=None, df_children=[dict(kind='type', id=1)], structural_children=[dict(kind='type', id=1)])
+        source, terminal = q(2, (False, True, False)), q(1, (True, True, True))
+        facts = fixture([scalar, typedef], [dict(source=original, path=[1], normalized=copy.deepcopy(original)),
+                        dict(source=source, path=[2, 1], normalized=terminal)], [declaration])
+        F.ReportGraph(facts)
+        for flag in flags:
+            changed = copy.deepcopy(facts)
+            changed['graph']['qualified_types'][1]['normalized'][flag] = False
+            with self.subTest(shape='typedef', flag=flag):
+                with self.assertRaisesRegex(F.FactsError, 'normalized terminal'):
+                    F.ReportGraph(changed)
+
+        def legal(data, shape):
+            facts = data['on/0/blob.closed-format.json']
+            if shape == 'typedef':
+                self.qualified_path_positive(data)
+                graph = facts['graph']
+                next(t for t in graph['types'] if t['type_id'] == 5)['original']['restrict'] = True
+                next(row for row in graph['qualified_types'] if row['source']['type_id'] == 6)['normalized']['restrict'] = True
+                self.refresh_graph_views(data, prepare=False)
+                return 6
+            graph = facts['graph']
+            source = q(150, (True, False, True))
+            row = dict(type_id=150, native_shape='Int' if shape == 'scalar' else 'Elaborated',
+                       kind='Int' if shape == 'scalar' else 'elaborated', df_children=[], structural_children=[])
+            if shape == 'wrapper': row['inner'] = 1
+            graph['types'].append(row)
+            graph['qualified_types'].append(dict(source=source, path=[150] if shape == 'scalar' else [150, 1],
+                                                 normalized=q(150 if shape == 'scalar' else 1, (True, False, True))))
+            next(e for e in graph['expressions'] if e['id'] == 9900000).update(type_id=150, qualified_type=source)
+            self.refresh_graph_views(data, prepare=False)
+            return 150
+        for shape in ('scalar', 'wrapper', 'typedef'):
+            self.reject_coordinated(lambda data, shape=shape: legal(data, shape), None)
+            for flag in flags:
+                def contradict(data, shape=shape, flag=flag):
+                    ident = legal(data, shape)
+                    facts = data['on/0/blob.closed-format.json']
+                    projection = F.ReportGraph(facts)
+                    row = next(row for row in facts['graph']['qualified_types'] if row['source']['type_id'] == ident)
+                    row['normalized'][flag] = not row['normalized'][flag]
+                    self.refresh_graph_views(data, prepare=False, projection_graph=projection)
+                with self.subTest(shape=shape, flag=flag):
+                    self.reject_coordinated(contradict, 'normalized terminal disconnected from source qualified type')
 
     def test_closed_boundary_four_complete_coordinated_contradictions(self):
         for case, reason in enumerate(('raw constructor fields', 'invalid source qualified key',

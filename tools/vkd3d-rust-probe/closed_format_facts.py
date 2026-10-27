@@ -219,6 +219,7 @@ class ReportGraph:
             need(source not in self.qualified, 'duplicate qualified source key')
             self.qualified[source] = row
             path, current, seen = [], source[0], set()
+            qualifiers = source[1:]
             reason = None
             for step in range(33):
                 path.append(current)
@@ -239,14 +240,16 @@ class ReportGraph:
                     break
                 if relation.normalization is None:
                     break
+                if raw['native_shape'] == 'Typedef':
+                    qualifiers = tuple(a or b for a, b in zip(qualifiers, self.qkey(raw['original'])[1:]))
                 current = relation.normalization['id']
             need(row['path'] == path, 'qualified normalization path differs from raw edges')
             if reason:
                 need(set(row) == {'source', 'path', 'unproved'} and row['unproved'] == reason,
                      'normalization Unproved relation differs')
             else:
-                need(set(row) == {'source', 'path', 'normalized'} and self.qkey(row['normalized'])[0] == current,
-                     'normalized terminal disconnected from source type')
+                need(set(row) == {'source', 'path', 'normalized'} and self.qkey(row['normalized']) == (current, *qualifiers),
+                     'normalized terminal disconnected from source qualified type')
         for ident, row in self.declarations.items():
             expected_owners = [owner for owner in self.order if self.declarations[owner]['kind'] == 'function'
                                and ident in self.declarations[owner]['parameters']]

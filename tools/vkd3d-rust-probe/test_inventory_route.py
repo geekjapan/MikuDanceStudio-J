@@ -81,7 +81,7 @@ class InventoryRouteTests(unittest.TestCase):
         self.assertIn('"--emit-variadic-inventory"', (ROOT / 'probe.py').read_text())
         self.assertNotIn('"--emit-c-decl-map"', (ROOT / 'probe.py').read_text())
         fixture = (ROOT / 'check_closed_variadic_inventory.py').read_text()
-        self.assertEqual(fixture.count("'--emit-variadic-inventory'"), 2)
+        self.assertEqual(fixture.count("'--emit-variadic-inventory'"), 3)
         self.assertNotIn("'--emit-c-decl-map'", fixture)
         abi = (ROOT / 'abi_smoke.py').read_text()
         self.assertIn('--emit-c-decl-map', abi)

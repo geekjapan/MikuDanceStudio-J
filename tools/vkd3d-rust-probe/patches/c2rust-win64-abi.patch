@@ -1,5 +1,5 @@
 diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/AstExporter.cpp
-index ef9d929..caf8145 100644
+index ef9d929..986f7ad 100644
 --- a/c2rust-ast-exporter/src/AstExporter.cpp
 +++ b/c2rust-ast-exporter/src/AstExporter.cpp
 @@ -12,6 +12,7 @@
@@ -87,7 +87,79 @@ index ef9d929..caf8145 100644
              });
          typeEncoder.VisitQualTypeOf(functionType, paramsFD);
 
-@@ -3026,7 +3053,7 @@ class TranslateConsumer : public clang::ASTConsumer {
+@@ -2357,6 +2384,47 @@ class TranslateASTVisitor final
+      Extras:
+      - name as string
+      */
++    void encodeRecordEvidence(CborEncoder *enc, const TagDecl *decl) {
++        const TagDecl *actual = decl->getDefinition();
++        if (!actual) actual = decl;
++        auto &sm = Context->getSourceManager();
++        auto begin = actual->getBeginLoc();
++        auto loc = sm.getFileLoc(begin);
++        auto fid = sm.getFileID(loc);
++        auto file = sm.getFileEntryForID(fid);
++        auto path = file ? file->tryGetRealPathName().str() : string();
++        auto context = actual->getLexicalDeclContext();
++        auto owner = dyn_cast<RecordDecl>(context);
++        bool lexicalMember = context->containsDecl(const_cast<TagDecl *>(actual));
++        CborEncoder a;
++        cbor_encoder_create_array(enc, &a, 11);
++        cbor_encode_uint(&a, 2);
++        cbor_encode_text_stringz(&a, actual->isEnum() ? "enum" : actual->isUnion() ? "union" : "struct");
++        auto name = actual->getNameAsString();
++        if (name.empty()) cbor_encode_null(&a); else cbor_encode_string(&a, name);
++        cbor_encode_string(&a, path);
++        cbor_encode_uint(&a, loc.isValid() ? sm.getSpellingLineNumber(loc) : 0);
++        cbor_encode_uint(&a, loc.isValid() ? sm.getSpellingColumnNumber(loc) : 0);
++        cbor_encode_text_stringz(&a, lexicalMember && context->isTranslationUnit() ? "file" : lexicalMember && owner ? "record" : "unproved");
++        if (owner) encodeRecordEvidence(&a, owner); else cbor_encode_null(&a);
++        cbor_encode_boolean(&a, begin.isMacroID() || actual->getLocation().isMacroID() || actual->getEndLoc().isMacroID());
++        cbor_encode_boolean(&a, actual->isCompleteDefinition());
++        if (auto record = dyn_cast<RecordDecl>(actual); record && record->isCompleteDefinition()) {
++            CborEncoder layout;
++            cbor_encoder_create_array(&a, &layout, 5);
++            cbor_encode_boolean(&layout, record->hasAttr<PackedAttr>());
++            if (auto align = record->getMaxAlignment()) cbor_encode_uint(&layout, align / 8);
++            else cbor_encode_null(&layout);
++            if (auto pack = record->getAttr<MaxFieldAlignmentAttr>()) cbor_encode_uint(&layout, pack->getAlignment() / 8);
++            else cbor_encode_null(&layout);
++            const auto &facts = Context->getASTRecordLayout(record);
++            cbor_encode_uint(&layout, facts.getSize().getQuantity());
++            cbor_encode_uint(&layout, facts.getAlignment().getQuantity());
++            cbor_encoder_close_container(&a, &layout);
++        } else cbor_encode_null(&a);
++        cbor_encoder_close_container(enc, &a);
++    }
++
+     bool VisitRecordDecl(RecordDecl *D) {
+         if (!D->isCanonicalDecl()) {
+             // Emit non-canonical decl so we have a placeholder to attach comments to.
+@@ -2448,6 +2516,7 @@ class TranslateASTVisitor final
+
+                 // 7. Encode the platform specific alignment of this record
+                 cbor_encode_uint(local, recordAlignment);
++                encodeRecordEvidence(local, D);
+             });
+
+         return true;
+@@ -2467,13 +2536,14 @@ class TranslateASTVisitor final
+         typeEncoder.VisitQualTypeOf(underlying_type, D);
+
+         encode_entry(D, TagEnumDecl, childIds, underlying_type,
+-                     [D](CborEncoder *local) {
++                     [this, D](CborEncoder *local) {
+                          auto name = D->getNameAsString();
+                          if (name.empty()) {
+                              cbor_encode_null(local);
+                          } else {
+                              cbor_encode_string(local, name);
+                          }
++                         encodeRecordEvidence(local, D);
+                      });
+
+         return true;
+@@ -3026,7 +3096,7 @@ class TranslateConsumer : public clang::ASTConsumer {
              cbor_encoder_init(&encoder, buffer, len, 0);
 
              CborEncoder outer;
@@ -96,7 +168,7 @@ index ef9d929..caf8145 100644
 
              CborEncoder array;
 
-@@ -3136,6 +3163,14 @@ class TranslateConsumer : public clang::ASTConsumer {
+@@ -3136,6 +3206,14 @@ class TranslateConsumer : public clang::ASTConsumer {
              auto target = Context.getTargetInfo().getTriple().str();
              cbor_encode_string(&outer, target);
 
@@ -112,7 +184,7 @@ index ef9d929..caf8145 100644
          };
 
 diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_ast/conversion.rs
-index de549e2..fee160c 100644
+index de549e2..03d05c3 100644
 --- a/c2rust-transpile/src/c_ast/conversion.rs
 +++ b/c2rust-transpile/src/c_ast/conversion.rs
 @@ -601,6 +601,7 @@ fn convert(&mut self, untyped_context: &AstContext) {
@@ -160,6 +232,39 @@ index de549e2..fee160c 100644
 
                      // Clang injects definitions of the form `#define __SIZE_TYPE__ unsigned int` into
                      // compilation units based on the target. (See lib/Frontend/InitPreprocessor.cpp
+@@ -2330,6 +2344,10 @@ fn visit_node(
+                 }
+
+                 ASTEntryTag::TagEnumDecl if expected_ty & ENUM_DECL != 0 => {
++                    let evidence: c2rust_ast_exporter::clang_ast::RecordEvidence = from_value(node.extras[1].clone())
++                        .expect("Expected strict physical record evidence schema 2");
++                    assert_eq!(evidence.0, 2, "unsupported record evidence schema");
++                    self.typed_context.record_evidence.insert(CDeclId(new_id), evidence);
+                     let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
+
+                     let variants = node
+@@ -2426,6 +2444,10 @@ fn visit_node(
+                 }
+
+                 ASTEntryTag::TagStructDecl if expected_ty & RECORD_DECL != 0 => {
++                    let evidence: c2rust_ast_exporter::clang_ast::RecordEvidence = from_value(node.extras[7].clone())
++                        .expect("Expected strict physical record evidence schema 2");
++                    assert_eq!(evidence.0, 2, "unsupported record evidence schema");
++                    self.typed_context.record_evidence.insert(CDeclId(new_id), evidence);
+                     let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
+                     let has_def = from_value(node.extras[1].clone())
+                         .expect("Expected has_def flag on struct");
+@@ -2467,6 +2489,10 @@ fn visit_node(
+                 }
+
+                 ASTEntryTag::TagUnionDecl if expected_ty & RECORD_DECL != 0 => {
++                    let evidence: c2rust_ast_exporter::clang_ast::RecordEvidence = from_value(node.extras[7].clone())
++                        .expect("Expected strict physical record evidence schema 2");
++                    assert_eq!(evidence.0, 2, "unsupported record evidence schema");
++                    self.typed_context.record_evidence.insert(CDeclId(new_id), evidence);
+                     let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
+                     let has_def = from_value(node.extras[1].clone())
+                         .expect("Expected has_def flag on struct");
 diff --git a/c2rust-transpile/src/c_ast/iterators.rs b/c2rust-transpile/src/c_ast/iterators.rs
 index 123c377..75a3074 100644
 --- a/c2rust-transpile/src/c_ast/iterators.rs
@@ -174,7 +279,7 @@ index 123c377..75a3074 100644
              for p in params {
                  res.push(p.ctype.into())
 diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.rs
-index 0cbfdca..b3fd858 100644
+index 0cbfdca..4e66a57 100644
 --- a/c2rust-transpile/src/c_ast/mod.rs
 +++ b/c2rust-transpile/src/c_ast/mod.rs
 @@ -18,6 +18,7 @@
@@ -185,17 +290,18 @@ index 0cbfdca..b3fd858 100644
  mod conversion;
  pub mod iterators;
  mod print;
-@@ -121,6 +122,9 @@ pub struct TypedAstContext {
+@@ -121,6 +122,10 @@ pub struct TypedAstContext {
 
      pub va_list_kind: BuiltinVaListKind,
      pub target: String,
 +    pub target_c_widths: [u64; 8],
 +    pub linker_names: HashMap<CDeclId, String>,
 +    pub source_typedef_types: HashMap<CDeclId, CQualTypeId>,
++    pub record_evidence: HashMap<CDeclId, c2rust_ast_exporter::clang_ast::RecordEvidence>,
  }
 
  /// Information about a single macro invocation.
-@@ -1020,6 +1024,7 @@ pub(crate) fn type_kinds_eq(
+@@ -1020,6 +1025,7 @@ pub(crate) fn type_kinds_eq(
                      is_variable_argument1,
                      is_noreturn1,
                      has_prototype1,
@@ -203,7 +309,7 @@ index 0cbfdca..b3fd858 100644
                  ),
                  Function(
                      result_type_id2,
-@@ -1027,6 +1032,7 @@ pub(crate) fn type_kinds_eq(
+@@ -1027,6 +1033,7 @@ pub(crate) fn type_kinds_eq(
                      is_variable_argument2,
                      is_noreturn2,
                      has_prototype2,
@@ -211,7 +317,7 @@ index 0cbfdca..b3fd858 100644
                  ),
              ) => {
                  self.qual_types_eq(*result_type_id1, *result_type_id2, resolver)
-@@ -1040,6 +1046,7 @@ pub(crate) fn type_kinds_eq(
+@@ -1040,6 +1047,7 @@ pub(crate) fn type_kinds_eq(
                      && is_variable_argument1 == is_variable_argument2
                      && is_noreturn1 == is_noreturn2
                      && has_prototype1 == has_prototype2
@@ -219,7 +325,7 @@ index 0cbfdca..b3fd858 100644
              }
 
              (Attributed(type_id1, ref attribute1), Attributed(type_id2, ref attribute2)) => {
-@@ -1095,8 +1102,8 @@ pub fn fn_decl_ty_with_declared_args(&self, func_decl: &CDeclKind) -> CTypeKind
+@@ -1095,8 +1103,8 @@ pub fn fn_decl_ty_with_declared_args(&self, func_decl: &CDeclKind) -> CTypeKind
              let typ = self.resolve_type_id(*typ);
              let decl_arg_tys = self.tys_of_params(parameters).unwrap();
              let typ_kind = &self[typ].kind;
@@ -230,7 +336,7 @@ index 0cbfdca..b3fd858 100644
              }
              panic!("expected {typ:?} to be CTypeKind::Function, but it was {typ_kind:?}")
          }
-@@ -1179,7 +1186,7 @@ pub fn expr_diverges(&self, expr_id: CExprId) -> bool {
+@@ -1179,7 +1187,7 @@ pub fn expr_diverges(&self, expr_id: CExprId) -> bool {
          };
 
          match self.index(pointed_id).kind {
@@ -239,7 +345,7 @@ index 0cbfdca..b3fd858 100644
              _ => false,
          }
      }
-@@ -2830,9 +2837,25 @@ pub(crate) fn not_volatile(self) -> Self {
+@@ -2830,9 +2838,25 @@ pub(crate) fn not_volatile(self) -> Self {
  //  * UnaryTransformType <http://clang.llvm.org/doxygen/classclang_1_1UnaryTransformType.html>
  //  * AdjustedType <http://clang.llvm.org/doxygen/classclang_1_1AdjustedType.html>
 
@@ -268,7 +374,7 @@ index 0cbfdca..b3fd858 100644
  #[derive(Debug, Clone, PartialEq, Eq, Hash)]
  pub enum CTypeKind {
      Void,
-@@ -2894,7 +2917,7 @@ pub enum CTypeKind {
+@@ -2894,7 +2918,7 @@ pub enum CTypeKind {
      // Note a function taking no arguments should have one `void` argument. Functions without any
      // arguments are in K&R format.
      // Flags: is_variable_argument, is_noreturn, has prototype
@@ -1222,10 +1328,31 @@ index 0000000..377926c
 +    }
 +}
 diff --git a/c2rust-ast-exporter/src/clang_ast.rs b/c2rust-ast-exporter/src/clang_ast.rs
-index a96ee1c..2254919 100644
+index a96ee1c..6b279e9 100644
 --- a/c2rust-ast-exporter/src/clang_ast.rs
 +++ b/c2rust-ast-exporter/src/clang_ast.rs
-@@ -156,6 +156,7 @@ pub struct AstContext {
+@@ -1,4 +1,4 @@
+-use serde::Deserialize;
++use serde::{Deserialize, Serialize};
+ use serde_bytes::ByteBuf;
+ use serde_cbor::error;
+ use std::collections::{HashMap, VecDeque};
+@@ -11,6 +11,14 @@
+
+ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+
++// Dedicated physical facts. Diagnostic SrcLoc intentionally retains presumed coordinates.
++#[derive(Debug, Clone, Deserialize, Serialize)]
++pub struct RecordEvidence(
++    pub u64, pub String, pub Option<String>, pub String, pub u64, pub u64,
++    pub String, pub Option<Box<RecordEvidence>>, pub bool, pub bool,
++    pub Option<(bool, Option<u64>, Option<u64>, u64, u64)>,
++);
++
+ #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+ pub enum LRValue {
+     LValue,
+@@ -156,6 +164,7 @@ pub struct AstContext {
      pub files: Vec<SrcFile>,
      pub va_list_kind: BuiltinVaListKind,
      pub target: String,
@@ -1233,7 +1360,7 @@ index a96ee1c..2254919 100644
  }
 
  pub fn expect_opt_str(val: &Value) -> Option<Option<&str>> {
-@@ -197,13 +198,14 @@ pub fn process(items: Value) -> error::Result<AstContext> {
+@@ -197,13 +206,14 @@ pub fn process(items: Value) -> error::Result<AstContext> {
      type RawComment = (u64, u64, u64, ByteBuf);
      type VaListKind = u64;
      type Target = String;
@@ -1249,7 +1376,7 @@ index a96ee1c..2254919 100644
      ) = from_value(items)?;
 
      let va_list_kind = import_va_list_kind(va_list_kind);
-@@ -310,5 +312,6 @@ pub fn process(items: Value) -> error::Result<AstContext> {
+@@ -310,5 +320,6 @@ pub fn process(items: Value) -> error::Result<AstContext> {
          files,
          va_list_kind,
          target,
@@ -1258,27 +1385,30 @@ index a96ee1c..2254919 100644
  }
 diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/src/c_ast/closed_variadic.rs
 new file mode 100644
-index 0000000..2d54564
+index 0000000..f4e6699
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_variadic.rs
-@@ -0,0 +1,304 @@
+@@ -0,0 +1,387 @@
 +use super::*;
-+use serde_json::{json, Value};
++use serde_json::{Value, json};
 +
 +impl TypedAstContext {
 +    fn inventory_type(&self, typ: CQualTypeId, depth: usize) -> Value {
 +        if depth > 32 {
-+            return json!({"unsupported": "recursive type"});
++            return json!({"unproved": "type depth limit"});
 +        }
 +        let mut canonical_type = typ.ctype;
 +        let mut qualifiers = typ.qualifiers;
++        let mut visited = HashSet::new();
 +        for _ in 0..32 {
++            if !visited.insert(canonical_type) {
++                return json!({"unproved": "typedef or wrapper cycle"});
++            }
 +            canonical_type = match self[canonical_type].kind {
 +                CTypeKind::Typedef(id) => {
-+                    let original = self
-+                        .source_typedef_types
-+                        .get(&id)
-+                        .expect("missing original Clang typedef type");
++                    let Some(original) = self.source_typedef_types.get(&id) else {
++                        return json!({"unproved": "missing original typedef"});
++                    };
 +                    qualifiers = qualifiers.and(original.qualifiers);
 +                    original.ctype
 +                }
@@ -1287,10 +1417,7 @@ index 0000000..2d54564
 +                | CTypeKind::Elaborated(id)
 +                | CTypeKind::Decayed(id)
 +                | CTypeKind::Auto(id) => id,
-+                CTypeKind::Attributed(inner, _) => {
-+                    qualifiers = qualifiers.and(inner.qualifiers);
-+                    inner.ctype
-+                }
++                CTypeKind::Attributed(_, _) => return json!({"unproved": "attributed type facts"}),
 +                _ => break,
 +            };
 +        }
@@ -1302,20 +1429,103 @@ index 0000000..2d54564
 +                "parameters": args.iter().map(|t| self.inventory_type(*t, depth + 1)).collect::<Vec<_>>(),
 +                "variadic": variadic, "noreturn": noreturn, "prototype": prototype, "abi": abi.as_str()
 +            }),
-+            CTypeKind::Struct(id) | CTypeKind::Union(id) | CTypeKind::Enum(id) => json!({
-+                "record_kind": match kind { CTypeKind::Struct(_) => "struct", CTypeKind::Union(_) => "union", _ => "enum" },
-+                "declaration": self[*id].begin_loc().map(|l| self.loc_to_string(l)),
-+                "enum_underlying": match self[*id].kind { CDeclKind::Enum { underlying_type_id: Some(t), .. } => Some(self.inventory_type(t, depth + 1)), _ => None },
-+            }),
++            CTypeKind::Struct(id) | CTypeKind::Union(id) | CTypeKind::Enum(id) => {
++                json!({"record": self.inventory_record_identity(*id, 0)})
++            }
 +            CTypeKind::ConstantArray(inner, len) => {
 +                json!({"array": self.inventory_type(CQualTypeId::new(*inner), depth + 1), "length": len})
 +            }
 +            CTypeKind::IncompleteArray(inner) => {
 +                json!({"array": self.inventory_type(CQualTypeId::new(*inner), depth + 1)})
 +            }
-+            _ => json!({"kind": format!("{kind:?}")}),
++            CTypeKind::Void
++            | CTypeKind::Bool
++            | CTypeKind::Char
++            | CTypeKind::SChar
++            | CTypeKind::Short
++            | CTypeKind::Int
++            | CTypeKind::Long
++            | CTypeKind::LongLong
++            | CTypeKind::UChar
++            | CTypeKind::UShort
++            | CTypeKind::UInt
++            | CTypeKind::ULong
++            | CTypeKind::ULongLong
++            | CTypeKind::Float
++            | CTypeKind::Double
++            | CTypeKind::LongDouble
++            | CTypeKind::Int128
++            | CTypeKind::UInt128
++            | CTypeKind::Half => json!({"kind": format!("{kind:?}")}),
++            _ => json!({"unproved": "unsupported type or wrapper limit"}),
 +        };
 +        json!({"canonical": canonical, "const": qualifiers.is_const, "volatile": qualifiers.is_volatile, "restrict": qualifiers.is_restrict})
++    }
++
++    fn inventory_record_identity(&self, id: CDeclId, depth: usize) -> Value {
++        fn identity(e: &c2rust_ast_exporter::clang_ast::RecordEvidence, depth: usize) -> Value {
++            if depth > 32
++                || e.0 != 2
++                || e.8
++                || e.3.is_empty()
++                || e.3 == "?"
++                || !Path::new(&e.3).is_absolute()
++                || e.4 == 0
++                || e.5 == 0
++            {
++                return json!({"unproved": "physical record location or macro declaration"});
++            }
++            let scope = match (e.6.as_str(), &e.7) {
++                ("file", None) => json!({"file": true}),
++                ("record", Some(owner)) => json!({"record": identity(owner, depth + 1)}),
++                _ => return json!({"unproved": "record owning scope"}),
++            };
++            json!({"kind": e.1, "tag": e.2,
++                "physical": {"path": e.3, "line": e.4, "column": e.5}, "scope": scope})
++        }
++        self.record_evidence
++            .get(&id)
++            .map(|e| identity(e, depth))
++            .unwrap_or_else(|| json!({"unproved": "missing physical record evidence"}))
++    }
++
++    fn inventory_record_definitions(&self) -> Vec<Value> {
++        self.iter_decls().filter_map(|(id, decl)| {
++            let mut facts = json!({});
++            match &decl.kind {
++                CDeclKind::Struct { fields, .. } | CDeclKind::Union { fields, .. } => {
++                    facts["fields"] = fields.as_ref().map(|fields| fields.iter().map(|field| {
++                        match &self[*field].kind {
++                            CDeclKind::Field { name, typ, bitfield_width, platform_bit_offset,
++                                platform_type_bitwidth, manual_alignment } => json!({
++                                    "name": name, "type": self.inventory_type(*typ, 0),
++                                    "bit_width": bitfield_width, "bit_offset": platform_bit_offset,
++                                    "type_bit_width": platform_type_bitwidth, "alignment": manual_alignment,
++                                }),
++                            _ => json!({"unproved": "non-field record child"}),
++                        }
++                    }).collect::<Vec<_>>()).map(Value::Array).unwrap_or(Value::Null);
++                    facts["layout"] = self.record_evidence.get(id).map(|e| json!(e.10)).unwrap_or(Value::Null);
++                }
++                CDeclKind::Enum { variants, underlying_type_id, .. } => {
++                    facts["underlying"] = underlying_type_id.map(|t| self.inventory_type(t, 0)).unwrap_or(Value::Null);
++                    facts["variants"] = json!(variants.iter().map(|variant| match &self[*variant].kind {
++                        CDeclKind::EnumConstant { name, value } => match value {
++                            ConstIntExpr::I(value) => json!({"name": name, "signed": true, "value": value}),
++                            ConstIntExpr::U(value) => json!({"name": name, "signed": false, "value": value}),
++                        },
++                        _ => json!({"unproved": "non-enumerator child"}),
++                    }).collect::<Vec<_>>());
++                }
++                _ => return None,
++            }
++            let state = match self.record_evidence.get(id) {
++                Some(e) if e.0 == 2 && e.9 => "complete",
++                Some(e) if e.0 == 2 => "incomplete",
++                _ => "unproved",
++            };
++            Some(json!({"identity": self.inventory_record_identity(*id, 0), "state": state, "facts": facts, "diagnostic_location": decl.begin_loc().map(|l| self.loc_to_string(l))}))
++        }).collect()
 +    }
 +
 +    fn inventory_promotions(&self, mut expr: CExprId) -> Vec<Value> {
@@ -1355,7 +1565,7 @@ index 0000000..2d54564
 +                    expr = inner
 +                }
 +                CExprKind::DeclRef(_, id, _) => {
-+                    return self.inventory_symbol(id, &self.main_file).map(|_| id)
++                    return self.inventory_symbol(id, &self.main_file).map(|_| id);
 +                }
 +                _ => return None,
 +            }
@@ -1433,7 +1643,7 @@ index 0000000..2d54564
 +                _ => (),
 +            }
 +        }
-+        json!({"schema": 1, "unit": unit, "target": self.target,
++        json!({"schema": 2, "record_evidence_schema": 2, "record_definitions": self.inventory_record_definitions(), "unit": unit, "target": self.target,
 +            "target_c_widths_bits": {"char": self.target_c_widths[0], "short": self.target_c_widths[1], "int": self.target_c_widths[2], "long": self.target_c_widths[3], "long_long": self.target_c_widths[4], "pointer": self.target_c_widths[5], "float": self.target_c_widths[6], "double": self.target_c_widths[7]},
 +            "authorization": "inventory_only", "declarations": declarations,
 +            "calls": calls, "non_call_references": escapes, "va_arg": va_arg})
@@ -1567,7 +1777,7 @@ index 0000000..2d54564
 +    }
 +}
 diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
-index 28d34bd305133b26c33d1bbfb626a651c8fda61b..cdda33adf91d853631df2bfca25b2f036e5e1959 100644
+index 28d34bd..cdda33a 100644
 --- a/c2rust-transpile/src/lib.rs
 +++ b/c2rust-transpile/src/lib.rs
 @@ -75,6 +75,7 @@ pub struct TranspilerConfig {
@@ -1593,7 +1803,7 @@ index 28d34bd305133b26c33d1bbfb626a651c8fda61b..cdda33adf91d853631df2bfca25b2f03
      // map can carry it alongside the original source snippet.
      let preprocessed_definitions = preprocessed_source
 diff --git a/c2rust/src/bin/c2rust-transpile.rs b/c2rust/src/bin/c2rust-transpile.rs
-index ce727c09473ecfd60e9cf45ef87dcb70ff7f7558..c76fbfb9e5e0dfa4d66479b758506edea8676658 100644
+index ce727c0..c76fbfb 100644
 --- a/c2rust/src/bin/c2rust-transpile.rs
 +++ b/c2rust/src/bin/c2rust-transpile.rs
 @@ -42,6 +42,10 @@ struct Args {
@@ -1616,7 +1826,7 @@ index ce727c09473ecfd60e9cf45ef87dcb70ff7f7558..c76fbfb9e5e0dfa4d66479b758506ede
 
          incremental_relooper: !args.no_incremental_relooper,
 diff --git a/c2rust-transpile/tests/common/mod.rs b/c2rust-transpile/tests/common/mod.rs
-index b9bd3505152adf9662d87d5c93f42d18bed6252d..ad1da961a6943cbd4cb75f1fb107dcfd6dc0c577 100644
+index b9bd350..ad1da96 100644
 --- a/c2rust-transpile/tests/common/mod.rs
 +++ b/c2rust-transpile/tests/common/mod.rs
 @@ -15,6 +15,7 @@ pub fn config(edition: RustEdition) -> TranspilerConfig {
@@ -1628,7 +1838,7 @@ index b9bd3505152adf9662d87d5c93f42d18bed6252d..ad1da961a6943cbd4cb75f1fb107dcfd
          fail_on_multiple: false,
          filter: None,
 diff --git a/c2rust-transpile/tests/module_paths.rs b/c2rust-transpile/tests/module_paths.rs
-index d763a1d475e128f4588c5fb5899b09d75564dbba..566adfd6543c37d1fe8b43bbdc8b37be960b760b 100644
+index d763a1d..566adfd 100644
 --- a/c2rust-transpile/tests/module_paths.rs
 +++ b/c2rust-transpile/tests/module_paths.rs
 @@ -18,6 +18,7 @@ fn config(output_dir: PathBuf) -> TranspilerConfig {

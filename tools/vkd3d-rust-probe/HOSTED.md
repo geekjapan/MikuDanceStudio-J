@@ -388,3 +388,30 @@ The fixture introduces an asm label after the first declaration. The gate requir
 both its exported declaration and direct call to use the effective later label.
 This check requires the rebuilt LLVM18 exporter. A local AST API check does not
 satisfy that hosted gate.
+
+
+The closed variadic inventory and plan use schema 2 with record evidence schema 2.
+Schema 1 and mixed evidence versions are rejected. Existing inventories must be
+recollected with the bound patched exporter. They cannot be upgraded from their
+TU-local diagnostic identities.
+
+Record references carry the kind, tag, dedicated physical path and coordinates,
+and a proved file or record owning scope. The finite definition table retains
+ordered qualified field types and layout facts, including union alignment, and
+enum variants and underlying types. Definitions refer to record identities, so
+self and mutual recursion do not expand the table indefinitely. The planner
+compares the actual facts from each TU and retains each TU's table in the plan.
+Missing locations, macro declarations, unsupported scopes or types, forward-only
+records and incomplete definitions yield `record_compatibility_unproved`.
+Diagnostic locations retain their previous presumed `#line` semantics.
+
+The existing prepare gate runs `check_closed_variadic_inventory.py` against the
+built translator. Its record fixtures first syntax-check each TU independently,
+then compare actual inventories. Negative cases do not depend on incompatible
+C declarations being linked. The same-header case requires distinct diagnostic
+file IDs and identical physical identities despite a presumed `#line` path.
+The cases cover recursion, typedefs, forward-to-complete records, nested owners,
+field and array changes, packing, record and union alignment, enums, qualifiers,
+and function ABI. This evidence remains `inventory_only`. It does not authorize
+stable lowering or replace the complete 24-unit translation, build, link,
+runtime, native 23-export, target-width and source/binary provenance gates.

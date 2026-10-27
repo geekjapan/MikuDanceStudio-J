@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import platform
+import re
 import shutil
 
 from closed_variadic_plan import build_plan
@@ -22,6 +23,72 @@ def require_inventory_outputs(output, stems):
                 raise RuntimeError('missing inventory translation output ' + stem + suffix)
     if any(output.rglob('*.c_decls.json')):
         raise RuntimeError('inventory-only translation emitted C declaration source maps')
+
+
+RECORD_CASES = {
+    'same-header': ([], 'compatible'),
+    'parameter-cvr': (['-DPARAMETER_CONST='], 'compatible'),
+    'field-type': (['-DFIELD_TYPE=long'], 'mismatch'),
+    'field-name': (['-DFIELD_NAME=renamed'], 'mismatch'),
+    'field-order': (['-DREVERSE_FIELDS'], 'mismatch'),
+    'array-length': (['-DARRAY_LENGTH=3'], 'mismatch'),
+    'different-tag': (['-DDIFFERENT_TAG'], 'mismatch'),
+    'different-kind': (['-DUNION_KIND'], 'mismatch'),
+    'packing': (['-DPACKING=1'], 'mismatch'),
+    'alignment': (['-DRECORD_ALIGNMENT=16'], 'mismatch'),
+    'union-alignment': (['-DUNION_ALIGNMENT=16'], 'mismatch'),
+    'enum-value': (['-DENUM_VALUE=3'], 'mismatch'),
+    'enum-underlying': (['-fshort-enums'], 'mismatch'),
+    'pointee-cvr': (['-DPOINTER_CONST='], 'mismatch'),
+    'function-abi': (['-DCALLBACK_ABI=__attribute__((ms_abi))'], 'reject'),
+    'macro-declaration': (['-DMACRO_DECL'], 'unproved'),
+    'prototype-scope': (['-DPROTOTYPE_SCOPE'], 'unproved'),
+    'block-scope': (['-DBLOCK_SCOPE'], 'unproved'),
+    'forward-only': (['-DFORWARD_ONLY'], 'unproved'),
+}
+
+
+def check_records(tool, root, clang, stage):
+    fixtures = Path(__file__).resolve().parent / 'record-fixtures'
+    summaries = {}
+    for case, (flags, expected) in RECORD_CASES.items():
+        case_root = root / ('record-' + case)
+        case_root.mkdir()
+        for path in fixtures.iterdir():
+            shutil.copy2(path, case_root / path.name)
+        units = [case_root / name for name in ('definition.c', 'caller.c')]
+        entries = []
+        for index, unit in enumerate(units):
+            args = [clang, '-std=c11', '-DPACKING=8', *(flags if index else []), str(unit)]
+            stage('record-' + case + '-syntax-' + str(index), [*args, '-fsyntax-only'])
+            entries.append({'directory': str(case_root), 'file': str(unit), 'arguments': [*args, '-c']})
+        database = case_root / 'compile_commands.json'
+        database.write_text(json.dumps(entries, indent=2))
+        stage('record-' + case + '-export', [str(tool.with_name('c2rust-transpile')), '--fail-on-error',
+              '--disable-rustfmt', '--edition', '2024', '--emit-variadic-inventory',
+              '--output-dir', str(case_root / 'rust'), str(database)], 120)
+        require_inventory_outputs(case_root / 'rust', ['definition', 'caller'])
+        inventories = [json.loads((case_root / 'rust/src' / (unit.stem + '.variadic.json')).read_text()) for unit in units]
+        plan = build_plan(inventories, list(map(str, units)), [])
+        codes = {d['code'] for d in plan['diagnostics']}
+        rejects = codes & {'signature_mismatch', 'record_compatibility_unproved'}
+        if expected == 'compatible' and rejects or expected == 'mismatch' and 'signature_mismatch' not in codes or expected == 'unproved' and 'record_compatibility_unproved' not in codes or expected == 'reject' and not rejects:
+            raise RuntimeError('actual record evidence oracle failed for ' + case + ': ' + str(codes))
+        if case == 'same-header':
+            declarations = [next(d for d in inv['record_definitions'] if d['identity'].get('tag') == 'shared_record') for inv in inventories]
+            identities = [d['identity'] for d in declarations]
+            fileids = [re.search(r'fileid (\d+)', d['diagnostic_location']) for d in declarations]
+            if not all(fileids) or fileids[0][1] == fileids[1][1]:
+                raise RuntimeError('fixture did not exercise different TU-local record file IDs')
+            physical_line = next(index for index, line in enumerate((case_root / 'shared.h').read_text().splitlines(), 1) if line == 'struct shared_record {')
+            if identities[0] != identities[1] or identities[0]['physical'] != {'path': str(case_root / 'shared.h'), 'line': physical_line, 'column': 1} or not all(int(re.search(r':(\d+):\d+$', d['diagnostic_location'])[1]) >= 700 for d in declarations):
+                raise RuntimeError('#line changed dedicated physical identity')
+        (case_root / 'closed-plan.json').write_text(json.dumps(plan, indent=2) + '\n')
+        summaries[case] = {'expected': expected, 'diagnostics': sorted(codes),
+                           'input_sha256': {p.name: digest(p) for p in case_root.iterdir() if p.is_file()},
+                           'inventory_sha256': {unit.stem: digest(case_root / 'rust/src' / (unit.stem + '.variadic.json')) for unit in units},
+                           'generated_sha256': {str(p.relative_to(case_root)): digest(p) for p in (case_root / 'rust').rglob('*') if p.is_file()}}
+    return summaries
 
 
 def check(tool, root, clang):
@@ -97,6 +164,7 @@ def check(tool, root, clang):
             raise RuntimeError('canonical declaration lost the effective later asm label')
         result['late_asm_label_sha256'] = {str(p.relative_to(root)): digest(p)
                                          for p in label_root.rglob('*') if p.is_file()}
+        result['record_cases'] = check_records(tool, root, clang, stage)
         result['status'] = 'inventory_fixture_success'
     except (RuntimeError, OSError, ValueError) as error:
         result['status'] = 'failure'

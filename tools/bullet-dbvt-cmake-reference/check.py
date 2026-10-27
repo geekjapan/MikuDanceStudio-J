@@ -160,12 +160,62 @@ def windows_job(process):
     return lambda: kernel.CloseHandle(job)
 
 
+def windows_resume(process):
+    """Popen closes its primary thread handle, so reopen it while still suspended."""
+    import ctypes
+    from ctypes import wintypes
+
+    class ThreadEntry(ctypes.Structure):
+        _fields_ = [('size', wintypes.DWORD), ('usage', wintypes.DWORD),
+                    ('thread', wintypes.DWORD), ('owner', wintypes.DWORD),
+                    ('priority', wintypes.LONG), ('delta', wintypes.LONG),
+                    ('flags', wintypes.DWORD)]
+
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel.Thread32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(ThreadEntry)]
+    kernel.Thread32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(ThreadEntry)]
+    kernel.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenThread.restype = wintypes.HANDLE
+    kernel.ResumeThread.argtypes = [wintypes.HANDLE]
+    kernel.ResumeThread.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    snapshot = kernel.CreateToolhelp32Snapshot(0x4, 0)  # TH32CS_SNAPTHREAD
+    if snapshot == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    threads = []
+    entry = ThreadEntry()
+    entry.size = ctypes.sizeof(entry)
+    try:
+        if not kernel.Thread32First(snapshot, ctypes.byref(entry)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        while True:
+            if entry.owner == process.pid:
+                threads.append(entry.thread)
+            if not kernel.Thread32Next(snapshot, ctypes.byref(entry)):
+                if ctypes.get_last_error() != 18:  # ERROR_NO_MORE_FILES
+                    raise ctypes.WinError(ctypes.get_last_error())
+                break
+    finally:
+        kernel.CloseHandle(snapshot)
+    if len(threads) != 1:
+        raise ValueError('suspended child must have exactly one primary thread')
+    thread = kernel.OpenThread(0x2, False, threads[0])  # THREAD_SUSPEND_RESUME
+    if not thread:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        previous = kernel.ResumeThread(thread)
+        if previous == 0xffffffff:
+            raise ctypes.WinError(ctypes.get_last_error())
+        if previous != 1:
+            raise ValueError('child primary thread had an unexpected suspend count')
+    finally:
+        kernel.CloseHandle(thread)
+
+
 def stop(process):
-    if os.name == 'nt':
-        if process.poll() is None:
-            subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
-    else:
+    if os.name != 'nt':
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -205,11 +255,14 @@ def run(argv, out, name, *, cwd=ROOT, data=None, timeout=300, build=False, env=N
         if time.monotonic() - start >= timeout:
             raise ValueError(f'{name} exceeded time bound while preparing input')
         process = subprocess.Popen(argv, cwd=cwd, stdin=stdin, stdout=stdout, stderr=stderr, env=env,
-                                   start_new_session=os.name != 'nt')
+                                   start_new_session=os.name != 'nt', creationflags=0x4 if os.name == 'nt' else 0)
         close_job = None
         try:
             if os.name == 'nt':
                 close_job = windows_job(process)
+                if time.monotonic() - start >= timeout:
+                    raise ValueError(f'{name} exceeded time bound before resuming child')
+                windows_resume(process)
             while process.poll() is None:
                 if time.monotonic() - start >= timeout:
                     failure = 'time'
@@ -219,9 +272,15 @@ def run(argv, out, name, *, cwd=ROOT, data=None, timeout=300, build=False, env=N
                     break
                 time.sleep(min(0.02, max(0, timeout - (time.monotonic() - start))))
         finally:
-            if close_job:
-                close_job()
-            stop(process)
+            try:
+                if close_job:
+                    close_job()
+            finally:
+                try:
+                    stop(process)
+                finally:
+                    if os.name == 'nt':
+                        process._handle.Close()
         stdout.seek(0); stderr.seek(0)
         outputs = (stdout.read(LIMIT + 1), stderr.read(LIMIT + 1))
     if any(len(value) > LIMIT for value in outputs):
@@ -245,24 +304,47 @@ def run(argv, out, name, *, cwd=ROOT, data=None, timeout=300, build=False, env=N
 def tlog_commands(path, *, reads=False):
     text, _ = decode(path.read_bytes())
     records = []
-    sources = None
     for line in text.splitlines():
         if line.startswith('^'):
-            sources = line[1:].split('|')
+            records.append((line[1:].split('|'), []))
         elif line.strip():
-            if sources is None:
+            if not records:
                 raise ValueError('command tlog lacks source association')
-            if reads and records and records[-1][0] == sources:
+            if reads:
                 records[-1][1].append(line.strip())
+            elif records[-1][1]:
+                raise ValueError('multiple command lines in one tlog task')
             else:
-                records.append((sources, [line.strip()] if reads else split_command(line)))
+                records[-1][1].extend(split_command(line))
     return records
 
 
-def preprocess_args(args, source):
+def compile_source_index(args, source, cwd):
+    operands = []
+    skip_next = False
+    for index, arg in enumerate(args):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in ('/D', '/U', '/I', '/FI', '/Fo', '/Fd', '/Fe', '/Fa', '/Fi', '/Fp', '/Yu', '/Yc'):
+            skip_next = True
+        elif arg.startswith(('/D', '/U', '/I', '/FI', '/Fo', '/Fd', '/Fe', '/Fa', '/Fi', '/Fp', '/Yu', '/Yc')):
+            continue
+        elif arg.lower().endswith(('.cpp', '.c', '.cxx', '.cc', '.c++')):
+            operands.append(index)
+    if len(operands) != 1:
+        raise ValueError('actual CL command must contain exactly one source operand')
+    index = operands[0]
+    if (Path(cwd) / args[index]).resolve() != (Path(cwd) / source).resolve():
+        raise ValueError('actual CL source operand does not match caret full path')
+    return index
+
+
+def preprocess_args(args, source, *, cwd=None):
+    source_index = compile_source_index(args, source, Path.cwd() if cwd is None else cwd)
     result = []
     skip_next = False
-    for arg in args:
+    for index, arg in enumerate(args):
         if skip_next:
             skip_next = False
             continue
@@ -273,14 +355,10 @@ def preprocess_args(args, source):
                 continue
             skip_next = True
             continue
-        if arg in ('/c', '/E', '/EP', '/P', '/showIncludes') or arg.startswith(('/Fo', '/Fd', '/Fe', '/Fa', '/Fi')):
-            continue
-        if arg.lower().endswith(('.cpp', '.c', '.cxx')):
-            if Path(arg).name.lower() != Path(source).name.lower():
-                raise ValueError('multi-source command cannot be replayed as a single TU')
+        if index == source_index or arg in ('/c', '/E', '/EP', '/P', '/showIncludes') or arg.startswith(('/Fo', '/Fd', '/Fe', '/Fa', '/Fi')):
             continue
         result.append(arg)
-    return [*result, '/E', '/showIncludes', str(source)]
+    return [*result, '/E', '/showIncludes', args[source_index]]
 
 
 def policy_flags(args):
@@ -441,6 +519,8 @@ def compile_record(folder, name, out):
         for sources, args in tlog_commands(path):
             for source in sources:
                 if Path(source).stem.lower() == name.lower():
+                    if len(sources) != 1:
+                        raise ValueError('actual CL caret must identify exactly one source')
                     matches.append((path, source, args))
     if len(matches) != 1:
         raise ValueError(f'expected one actual compile command for {name}, found {len(matches)}')
@@ -453,6 +533,7 @@ def compile_record(folder, name, out):
         raise ValueError(f'actual {name} source is missing')
     responses = []
     args = expand(args, cwd, responses)
+    compile_source_index(args, source, cwd)
     output = option(args, '/Fo')
     obj = (cwd / output).resolve()
     if output.endswith(('\\', '/')) or obj.is_dir():
@@ -600,7 +681,7 @@ def capture_tu(folder, name, out):
         raise ValueError(f'{name} compiler path lacks actual build command evidence')
     save(out / (name + '-actual-command.json'), dict(record, compiler=compiler, compiler_sha256=digest(compiler)))
     # /Bv with /E reports the version while preserving the actual TU flags.
-    argv = [compiler, *preprocess_args(args, source), '/Bv']
+    argv = [compiler, *preprocess_args(args, source, cwd=cwd), '/Bv']
     run(argv, out, name + '-preprocess', cwd=cwd, timeout=90, env=developer_environment(compiler, out, name))
     text = (out / (name + '-preprocess.stdout')).read_text(errors='strict')
     profile, extracts = consumer.classify(text, cpp=name == 'btDbvt')

@@ -10,7 +10,8 @@ import time
 import contextlib
 import io
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location('cmake_reference', Path(__file__).with_name('check.py'))
 check = importlib.util.module_from_spec(spec)
@@ -55,7 +56,7 @@ class Controls(unittest.TestCase):
                           '/std:c++17', '/fp:precise', '/O2', '/E', '/showIncludes', 'source.cpp'])
 
     def test_replay_preserves_separate_forced_include(self):
-        self.assertEqual(check.preprocess_args(['/c', '/FI', 'forced.h', '/Fo', 'a.obj'], 'a.cpp'),
+        self.assertEqual(check.preprocess_args(['/c', '/FI', 'forced.h', '/Fo', 'a.obj', 'a.cpp'], 'a.cpp'),
                          ['/FI', 'forced.h', '/E', '/showIncludes', 'a.cpp'])
 
     def test_replay_rejects_other_source(self):
@@ -245,6 +246,65 @@ class Controls(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'compiler output is missing'):
                 check.archive_commands(root, out, libs)
 
+    def test_compile_source_operand_must_match_caret_full_path(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            out, libs = self.archive_fixture(root)
+            tlog = root / 'BulletCollision/BulletCollision.dir/Release/CL.command.1.tlog'
+            original = tlog.read_text()
+            source = root / 'BulletCollision/btDbvt.cpp'
+            other = root / 'other/btDbvt.cpp'
+            other.parent.mkdir()
+            other.write_text('different actual source')
+            lines = original.splitlines()
+            for operands in ([str(other)], [str(source), str(other)], [str(source), str(source)], []):
+                args = check.split_command(lines[1])
+                args[-1:] = operands
+                changed = lines[:]
+                changed[1] = subprocess.list2cmdline(args)
+                tlog.write_text('\n'.join(changed) + '\n')
+                with self.subTest(operands=operands), self.assertRaises(ValueError):
+                    check.archive_commands(root, out, libs)
+
+    def test_expanded_relative_source_is_preserved_and_mismatch_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            out, libs = self.archive_fixture(root)
+            project = root / 'BulletCollision'
+            tlog = project / 'BulletCollision.dir/Release/CL.command.1.tlog'
+            lines = tlog.read_text().splitlines()
+            args = check.split_command(lines[1])
+            args[-1] = 'btDbvt.cpp'
+            response = project / 'compile.rsp'
+            response.write_text(subprocess.list2cmdline(args))
+            lines[1] = '@compile.rsp'
+            tlog.write_text('\n'.join(lines) + '\n')
+            record = check.archive_commands(root, out, libs)['BulletCollision']['dbvt_objects']['btDbvt']['compile']
+            self.assertEqual(record['argv'][-1], 'btDbvt.cpp')
+            self.assertEqual(check.preprocess_args(record['argv'], record['source'], cwd=record['cwd'])[-1], 'btDbvt.cpp')
+            other = root / 'other/btDbvt.cpp'
+            other.parent.mkdir()
+            other.write_text('other source')
+            args[-1] = str(other)
+            response.write_text(subprocess.list2cmdline(args))
+            with self.assertRaisesRegex(ValueError, 'caret full path'):
+                check.archive_commands(root, out, libs)
+            args[-1] = 'btDbvt.cpp'
+            response.write_text(subprocess.list2cmdline(args))
+            lines[0] += '|' + str(other)
+            tlog.write_text('\n'.join(lines) + '\n')
+            with self.assertRaisesRegex(ValueError, 'caret must identify exactly one source'):
+                check.archive_commands(root, out, libs)
+
+    def test_repeated_caret_read_tasks_cannot_pool_library_evidence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            build, out, libs, tlog, _ = self.link_fixture(Path(folder))
+            readlog = tlog.with_name('link.read.1.tlog')
+            lines = readlog.read_text().splitlines()
+            readlog.write_text('\n'.join([*lines[:3], lines[0], *lines[3:]]) + '\n')
+            with self.assertRaises(ValueError):
+                check.link_proof(build, 'app', out, libs)
+
     def test_unrelated_same_basename_or_missing_lib_input_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -290,6 +350,192 @@ class Controls(unittest.TestCase):
             check.run([sys.executable, '-c', parent], out, 'descendant', timeout=2)
             time.sleep(.5)
             self.assertFalse(marker.exists())
+
+    def test_windows_launch_is_suspended_until_job_assignment_and_cleans_failures(self):
+        for failure in (None, 'job', 'resume', 'close'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as folder:
+                events = []
+                process = MagicMock(returncode=0)
+                process.poll.return_value = 0
+
+                def event(name):
+                    events.append(name)
+                    if failure == name:
+                        raise OSError(name)
+
+                def launch(*args, **kwargs):
+                    self.assertEqual(kwargs['creationflags'], 0x4)
+                    self.assertFalse(kwargs['start_new_session'])
+                    self.assertEqual(kwargs['stdin'].read(), b'bounded input')
+                    event('create')
+                    return process
+
+                def job(child):
+                    self.assertIs(child, process)
+                    event('job')
+                    return lambda: event('close')
+
+                with patch.object(check, 'os', SimpleNamespace(name='nt', fstat=os.fstat)), \
+                     patch.object(check.subprocess, 'Popen', side_effect=launch), \
+                     patch.object(check, 'windows_job', side_effect=job), \
+                     patch.object(check, 'windows_resume', side_effect=lambda child: event('resume')), \
+                     patch.object(check, 'stop', side_effect=lambda child: event('stop')):
+                    if failure:
+                        with self.assertRaisesRegex(OSError, failure):
+                            check.run(['child'], Path(folder), 'order', data=b'bounded input')
+                    else:
+                        check.run(['child'], Path(folder), 'order', data=b'bounded input')
+                expected = ['create', 'job']
+                if failure != 'job':
+                    expected += ['resume', 'close']
+                self.assertEqual(events, [*expected, 'stop'])
+                process._handle.Close.assert_called_once_with()
+
+    def test_windows_job_api_owns_process_and_closes_failed_job(self):
+        import ctypes
+        for failure in (None, 'create', 'limits', 'assign'):
+            with self.subTest(failure=failure):
+                kernel = MagicMock()
+                kernel.CreateJobObjectW.return_value = 0 if failure == 'create' else 201
+
+                def limits(job, kind, pointer, size):
+                    self.assertEqual(pointer._obj.basic.flags, 0x2000)
+                    self.assertEqual(kind, 9)
+                    return failure != 'limits'
+
+                kernel.SetInformationJobObject.side_effect = limits
+                kernel.AssignProcessToJobObject.return_value = failure != 'assign'
+                with patch.object(ctypes, 'WinDLL', return_value=kernel, create=True), \
+                     patch.object(ctypes, 'get_last_error', return_value=5, create=True), \
+                     patch.object(ctypes, 'WinError', side_effect=lambda code: OSError(code, 'Windows API failure'), create=True):
+                    if failure:
+                        with self.assertRaises(OSError):
+                            check.windows_job(SimpleNamespace(_handle=301))
+                    else:
+                        close = check.windows_job(SimpleNamespace(_handle=301))
+                        kernel.CloseHandle.assert_not_called()
+                        kernel.AssignProcessToJobObject.assert_called_once_with(201, 301)
+                        close()
+                self.assertEqual(kernel.CloseHandle.call_count, 0 if failure == 'create' else 1)
+
+    def test_windows_stop_kills_unassigned_suspended_child_directly(self):
+        process = MagicMock()
+        process.poll.return_value = None
+        with patch.object(check, 'os', SimpleNamespace(name='nt')):
+            check.stop(process)
+        process.kill.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=5)
+
+    def test_windows_resume_api_and_handle_cleanup(self):
+        import ctypes
+        for failure in (None, 'snapshot', 'first', 'next', 'open', 'resume', 'count'):
+            with self.subTest(failure=failure):
+                kernel = MagicMock()
+                kernel.CreateToolhelp32Snapshot.return_value = ctypes.c_void_p(-1).value if failure == 'snapshot' else 101
+
+                def first(snapshot, pointer):
+                    pointer._obj.owner = 42
+                    pointer._obj.thread = 43
+                    return failure != 'first'
+
+                kernel.Thread32First.side_effect = first
+                kernel.Thread32Next.return_value = 0
+                kernel.OpenThread.return_value = 0 if failure == 'open' else 102
+                kernel.ResumeThread.return_value = 0xffffffff if failure == 'resume' else 2 if failure == 'count' else 1
+                with patch.object(ctypes, 'WinDLL', return_value=kernel, create=True), \
+                     patch.object(ctypes, 'get_last_error', return_value=5 if failure == 'next' else 18, create=True), \
+                     patch.object(ctypes, 'WinError', side_effect=lambda code: OSError(code, 'Windows API failure'), create=True):
+                    if failure:
+                        with self.assertRaises((OSError, ValueError)):
+                            check.windows_resume(SimpleNamespace(pid=42))
+                    else:
+                        check.windows_resume(SimpleNamespace(pid=42))
+                handles = [call.args[0] for call in kernel.CloseHandle.call_args_list]
+                self.assertEqual(handles, [] if failure == 'snapshot' else [101] if failure in ('first', 'next', 'open') else [101, 102])
+                if failure not in ('snapshot', 'first', 'next', 'open'):
+                    kernel.OpenThread.assert_called_once_with(0x2, False, 43)
+                    kernel.ResumeThread.assert_called_once_with(102)
+
+    @unittest.skipUnless(os.name == 'nt', 'requires actual Windows Job Object and suspended thread APIs')
+    def test_windows_delayed_assignment_prevents_escape_and_kills_orphan(self):
+        import ctypes
+        from ctypes import wintypes
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder)
+            started, ready, release, pidfile = [out / name for name in ('started', 'ready', 'release', 'pid')]
+            child = ('import pathlib,time;pathlib.Path(' + repr(str(ready)) + ').touch();'
+                     'time.sleep(30)')
+            parent = ('import pathlib,subprocess,sys,time\n'
+                      'pathlib.Path(' + repr(str(started)) + ').touch()\n'
+                      'child=subprocess.Popen([sys.executable,"-c",' + repr(child) + '])\n'
+                      'pathlib.Path(' + repr(str(pidfile)) + ').write_text(str(child.pid))\n'
+                      'while not pathlib.Path(' + repr(str(ready)) + ').exists(): time.sleep(.01)\n'
+                      'while not pathlib.Path(' + repr(str(release)) + ').exists(): time.sleep(.01)\n')
+            original_job, original_resume = check.windows_job, check.windows_resume
+            handles = []
+            kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+            kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+
+            kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+            baseline = subprocess.Popen([sys.executable, '-c', parent], stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            baseline_handle, close_baseline_job = None, None
+            try:
+                deadline = time.monotonic() + 5
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(ready.exists(), 'old schedule did not reach descendant barrier')
+                baseline_handle = kernel.OpenProcess(0x100001, False, int(pidfile.read_text()))
+                self.assertTrue(baseline_handle)
+                close_baseline_job = original_job(baseline)
+                release.touch()
+                self.assertEqual(baseline.wait(timeout=5), 0)
+                close_baseline_job()
+                close_baseline_job = None
+                self.assertEqual(kernel.WaitForSingleObject(baseline_handle, 0), 258,
+                                 'old schedule did not reproduce the escaped descendant')
+            finally:
+                if close_baseline_job:
+                    close_baseline_job()
+                check.stop(baseline)
+                baseline._handle.Close()
+                if baseline_handle:
+                    kernel.TerminateProcess(baseline_handle, 1)
+                    self.assertEqual(kernel.WaitForSingleObject(baseline_handle, 5000), 0)
+                    kernel.CloseHandle(baseline_handle)
+            for marker in (started, ready, release, pidfile):
+                marker.unlink(missing_ok=True)
+
+            def delayed_job(process):
+                time.sleep(.3)
+                self.assertFalse(started.exists(), 'child executed before job assignment')
+                self.assertFalse(pidfile.exists(), 'child spawned a descendant before job assignment')
+                return original_job(process)
+
+            def resume(process):
+                original_resume(process)
+                deadline = time.monotonic() + 5
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(ready.exists(), 'descendant did not reach its ready barrier')
+                handle = kernel.OpenProcess(0x100000, False, int(pidfile.read_text()))
+                self.assertTrue(handle, 'could not retain descendant synchronization handle')
+                handles.append(handle)
+                self.assertEqual(kernel.WaitForSingleObject(handle, 0), 258, 'descendant was not running')
+                release.touch()
+                self.assertEqual(process.wait(timeout=5), 0, 'parent did not exit before job close')
+
+            try:
+                with patch.object(check, 'windows_job', side_effect=delayed_job), patch.object(check, 'windows_resume', side_effect=resume):
+                    check.run([sys.executable, '-c', parent], out, 'windows-race', timeout=15)
+                self.assertEqual(len(handles), 1)
+                self.assertEqual(kernel.WaitForSingleObject(handles[0], 5000), 0, 'orphan survived job close')
+            finally:
+                for handle in handles:
+                    kernel.CloseHandle(handle)
 
     def test_probe_object_cannot_be_supplied_by_another_link_input(self):
         with tempfile.TemporaryDirectory() as folder:

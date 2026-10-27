@@ -23,6 +23,8 @@ def host():
 def fields(kind, words):
     if kind == 'support':
         names = [f'{entry}.{axis}' for entry in ['without-margin', 'with-margin', 'virtual'] for axis in 'xyz']
+    elif kind == 'gjk-pair':
+        return pair_fields(words)
     elif kind == 'gjk-epa':
         names = []
         position = 1
@@ -166,3 +168,49 @@ def compiler_version():
     compiler = os.environ.get('CXX', 'clang++')
     result = subprocess.run([compiler] if os.name == 'nt' else [compiler, '--version'], capture_output=True, text=True)
     return result.stdout + result.stderr
+
+
+def pair_fields(words):
+    """Outer query plus zero to four initialized manifold contact records."""
+    names = []
+    position = 1
+
+    def integer(name, minimum, maximum):
+        nonlocal position
+        if position >= len(words) or not re.fullmatch(r'-?(0|[1-9][0-9]*)', words[position]):
+            raise ValueError(f'Invalid integer {name}')
+        value = int(words[position])
+        if not minimum <= value <= maximum:
+            raise ValueError(f'Invalid integer range {name}')
+        names.append(name)
+        position += 1
+        return value
+
+    def floats(prefix, parts):
+        nonlocal position
+        for part in parts:
+            if position >= len(words) or not re.fullmatch('[0-9a-f]{8}', words[position]):
+                raise ValueError(f'Invalid float {prefix}.{part}')
+            names.append(f'{prefix}.{part}')
+            position += 1
+
+    valid = integer('query.valid', 0, 1)
+    integer('query.method', -1, 9)
+    integer('query.iterations', 0, 2147483647)
+    integer('query.degeneracy', 0, 12)
+    floats('query', ['axis.x', 'axis.y', 'axis.z', 'distance'])
+    if valid:
+        floats('result', ['normal.x', 'normal.y', 'normal.z', 'point.x', 'point.y', 'point.z', 'distance'])
+    contacts = integer('manifold.count', 0, 4)
+    floats('manifold', ['threshold'])
+    for index in range(contacts):
+        prefix = f'contact{index}'
+        floats(prefix, [f'{part}.{axis}' for part in ['local-a', 'local-b', 'world-a', 'world-b', 'normal'] for axis in 'xyz'] +
+               ['distance', 'friction', 'restitution', 'impulse', 'lateral-impulse1', 'lateral-impulse2'])
+        integer(prefix + '.lifetime', 0, 2147483647)
+        lateral = integer(prefix + '.lateral-initialized', 0, 1)
+        if lateral:
+            floats(prefix, [f'lateral{n}.{axis}' for n in [1, 2] for axis in 'xyz'])
+    if position != len(words):
+        raise ValueError('Invalid outer query row width')
+    return names

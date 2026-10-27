@@ -74,6 +74,6 @@ impl Document {
         }
         // The combo is set to its camera entry, then
         // `ApplyModelComboSelection`.
-        self.apply_inner(Command::SelectCameraMode)
+        self.apply(Command::SelectCameraMode)
     }
 }

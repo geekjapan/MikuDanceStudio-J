@@ -16,10 +16,11 @@ use std::path::{Path, PathBuf};
 
 use mds_doc::{Document, ModelFile};
 use mds_mmert::emm::{self, Assignment, Live};
-use mds_mmert::host::{Frame, Host, Source};
+use mds_mmert::host::{Frame, Host, OffscreenTarget, Source};
+use mds_mmert::scene::Offscreen;
 use mds_mmert::Gpu;
 use mds_physics::PhysicsScene;
-use mds_render::Camera;
+use mds_render::CameraFrame;
 use mds_shader::vkd3d::Vkd3d;
 
 /// The menu state of MMEffect (`MmeContext::effectEnabled`, `g_autoReload`, `g_emmAutoSave`).
@@ -46,7 +47,10 @@ impl Default for Switches {
 
 /// The view an MME frame is drawn from.
 pub struct View<'a> {
-    pub camera: &'a Camera,
+    pub camera: &'a CameraFrame,
+    pub view_offset: [f32; 2],
+    pub shadow_map: mds_render::ShadowMapSize,
+    pub shadow_map_display: bool,
     /// `[r, g, b, x, y, z]`: the light color and the direction it travels.
     pub light: [f32; 6],
     pub frame: u32,
@@ -66,6 +70,10 @@ pub struct Mme {
     pub default: String,
     /// The folder relative effect paths resolve against (the PMM's).
     dir: PathBuf,
+    /// The mapping dialog's edits of the offscreen targets (`SasResource::effectOverrides` and
+    /// `shownOverrides`). They outlive the effects loading again, which the dialog's every edit
+    /// causes here; Reload All clears them.
+    pub offscreen: Offscreen,
     /// The MME log (the log window, 40002).
     pub log: RefCell<Vec<String>>,
     /// The device, the compiler and the loaded effects, built at the first MME frame.
@@ -121,9 +129,7 @@ pub fn effect_file(dir: &Path, stored: &str) -> PathBuf {
         true => PathBuf::from(native),
         false => dir.join(native),
     };
-    let root = path.ancestors().last().unwrap_or(Path::new("."));
-    let relative = path.strip_prefix(root).unwrap().to_string_lossy();
-    mds_fx::preprocess::resolve_ci(root, &relative).unwrap_or(path)
+    mds_formats::path::resolve_path_ci(&path).unwrap_or(path)
 }
 
 /// The `.emm` beside a PMM (`MmeBuildEmmPathForPmm`).
@@ -141,6 +147,7 @@ impl Mme {
             objects: Vec::new(),
             default: String::new(),
             dir: dir.to_path_buf(),
+            offscreen: Offscreen::new(),
             log: RefCell::new(Vec::new()),
             runtime: RefCell::new(None),
             failed: Cell::new(false),
@@ -155,7 +162,13 @@ impl Mme {
         let dir = pmm.and_then(Path::parent).unwrap_or(Path::new("."));
         let mut mme = Mme::none(dir);
         mme.assign_beside(doc);
-        if let Some(path) = pmm.map(emm_path).filter(|p| p.is_file()) {
+        if let Some(path) = pmm.map(emm_path).and_then(|p| {
+            if p.is_file() {
+                Some(p)
+            } else {
+                mds_formats::path::resolve_path_ci(&p)
+            }
+        }) {
             if let Err(e) = mme.load_emm(doc, &path) {
                 mme.log.borrow_mut().push(e);
             }
@@ -215,6 +228,33 @@ impl Mme {
         &self.dir
     }
 
+    /// `DlgDisassembleFlow` (`mme_dlg.cpp:1459`): the effect `stored` (as an assignment stores
+    /// it) in shader assembly, with `\r\n` line breaks (`DlgDisassembleNormalizeLineEnds`,
+    /// `:1406`); empty when it does not load, as the C++ shows an empty window.
+    pub fn disassemble(&self, stored: &str) -> String {
+        let vk = match &self.vkd3d {
+            Some(p) => Vkd3d::open(p),
+            None => Vkd3d::load(),
+        };
+        let text =
+            vk.and_then(|vk| mds_shader::disassemble_file(&vk, &effect_file(&self.dir, stored)));
+        match text {
+            Ok(t) => crlf(&t),
+            Err(e) => {
+                self.log.borrow_mut().push(e);
+                String::new()
+            }
+        }
+    }
+
+    /// The offscreen targets of the loaded effects, the tabs of the mapping dialog.
+    pub fn offscreen_targets(&self) -> Vec<OffscreenTarget> {
+        self.runtime
+            .borrow()
+            .as_ref()
+            .map_or_else(Vec::new, |r| r.host.offscreen_targets())
+    }
+
     /// How many effects are loaded (assigned ones and those of the offscreen turns).
     pub fn loaded(&self) -> usize {
         self.runtime
@@ -237,13 +277,22 @@ impl Mme {
     /// the new list, the meshes load again.
     pub fn objects_changed(&mut self, doc: &Document) {
         let old = std::mem::take(&mut self.assignments);
-        self.assignments = live(doc)
+        let was: Vec<Option<usize>> = live(doc)
             .iter()
-            .map(|l| match self.objects.iter().position(|o| *o == key(l)) {
-                Some(i) => old[i].clone(),
-                None => Assignment::default(),
-            })
+            .map(|l| self.objects.iter().position(|o| *o == key(l)))
             .collect();
+        self.assignments = was
+            .iter()
+            .map(|i| i.map_or_else(Assignment::default, |i| old[i].clone()))
+            .collect();
+        for objects in self.offscreen.values_mut() {
+            let old = std::mem::take(objects);
+            for (now, i) in was.iter().enumerate() {
+                if let Some(o) = i.and_then(|i| old.get(&i)) {
+                    objects.insert(now, o.clone());
+                }
+            }
+        }
         self.assign_beside(doc);
         self.unload();
     }
@@ -329,11 +378,15 @@ impl Mme {
             pmm: &doc.pmm,
             poses: &physics.scene.models,
             camera: view.camera,
+            view_offset: view.view_offset,
+            shadow_map: view.shadow_map,
+            shadow_map_display: view.shadow_map_display,
             light: view.light,
             frame: view.frame,
             elapsed: view.elapsed,
             size: (view.size[0], view.size[1]),
             assignments: &self.assignments,
+            offscreen: &self.offscreen,
             resolve: &resolve,
         };
         let mut log = Vec::new();
@@ -373,14 +426,22 @@ impl Mme {
                 ModelFile::Pmd(pmd) => Source::Pmd(pmd),
                 ModelFile::Missing => Source::Missing,
             };
-            let added = host.add(&gpu, &m.path.text, source, m.edge_scale, beside(&path));
+            let added = host.add_with_shared(
+                &gpu,
+                &m.path.text,
+                source,
+                m.edge_scale,
+                beside(&path),
+                shared_toon,
+            );
             log.extend(added.err());
         }
         for a in &doc.pmm.accessories {
             let path = crate::scene::resolve(&self.dir, &a.path.text);
             let source =
                 mds_accessory::vac::load_file(&path).map_or(Source::Missing, Source::Accessory);
-            let added = host.add(&gpu, &a.path.text, source, 1.0, beside(&path));
+            let added =
+                host.add_with_shared(&gpu, &a.path.text, source, 1.0, beside(&path), shared_toon);
             log.extend(added.err());
         }
         Ok(Runtime {
@@ -392,6 +453,33 @@ impl Mme {
     }
 }
 
+/// `DlgDisassembleNormalizeLineEnds`: every `\n`, `\r` or `\r\n` ends a line with `\r\n`, NULs
+/// drop, and a last line without a break gets one.
+fn crlf(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + text.len() / 16);
+    let mut chars = text.chars().peekable();
+    let mut line = String::new();
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' | '\r' => {
+                out.push_str(&line);
+                out.push_str("\r\n");
+                line.clear();
+                if c == '\r' && chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+            }
+            '\0' => {}
+            c => line.push(c),
+        }
+    }
+    if !line.is_empty() {
+        out.push_str(&line);
+        out.push_str("\r\n");
+    }
+    out
+}
+
 fn key(l: &Live) -> (bool, i32, String) {
     (l.model, l.slot, l.path.clone())
 }
@@ -400,6 +488,15 @@ fn key(l: &Live) -> (bool, i32, String) {
 fn beside(file: &Path) -> impl FnMut(&str) -> Option<Vec<u8>> + '_ {
     let folder = file.parent().unwrap_or(Path::new("."));
     move |name| std::fs::read(effect_file(folder, name)).ok()
+}
+
+/// Shared toon files are application data, independently of the object's folder.
+fn shared_toon(name: &str) -> Option<Vec<u8>> {
+    std::fs::read(mds_formats::path::resolve_ci(
+        Path::new("."),
+        &format!("data/{name}"),
+    )?)
+    .ok()
 }
 
 #[cfg(test)]
@@ -423,22 +520,31 @@ mod tests {
         doc.pmm.models[0].path.text = model.to_string_lossy().into_owned();
         let mme = Mme::autoload(&doc, None);
         assert!(!mme.assignments[0].effect.is_empty());
-        assert_eq!(
-            effect_file(Path::new(""), &mme.assignments[0].effect),
-            effect
-        );
-
-        assert_eq!(effect_file(&dir, "Materials/Material_2.0.fx"), effect);
-        assert_eq!(effect_file(&dir, "materials\\material_2.0.FX"), effect);
-        assert_eq!(
-            effect_file(&dir, "materials/../MATERIALS/material_2.0.fx"),
-            effect
-        );
+        for (base, stored) in [
+            (Path::new(""), mme.assignments[0].effect.as_str()),
+            (dir.as_path(), "Materials/Material_2.0.fx"),
+            (dir.as_path(), "materials\\material_2.0.FX"),
+            (dir.as_path(), "materials/../MATERIALS/material_2.0.fx"),
+        ] {
+            let native = base.join(stored.replace('\\', "/"));
+            let expected = if native.is_file() {
+                native
+            } else {
+                effect.clone()
+            };
+            let resolved = effect_file(base, stored);
+            assert_eq!(resolved, expected);
+            assert_eq!(std::fs::read(resolved).unwrap(), b"effect");
+        }
         let absolute = dir.join("materials/material_2.0.FX");
-        assert_eq!(
-            effect_file(Path::new("unused"), absolute.to_str().unwrap()),
-            effect
-        );
+        let expected = if absolute.is_file() {
+            absolute.clone()
+        } else {
+            effect.clone()
+        };
+        let resolved = effect_file(Path::new("unused"), absolute.to_str().unwrap());
+        assert_eq!(resolved, expected);
+        assert_eq!(std::fs::read(resolved).unwrap(), b"effect");
         assert_eq!(
             beside(&effect)("..\\materials\\diffuse.png"),
             Some(b"texture".to_vec())
@@ -453,6 +559,30 @@ mod tests {
             PathBuf::from("C:/missing/effect.fx")
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn shared_toon_reads_actual_data_case_in_an_isolated_process() {
+        const CHILD: &str = "MDS_TEST_SHARED_TOON_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            assert_eq!(shared_toon("toon01.bmp"), Some(b"shared toon".to_vec()));
+            assert_eq!(shared_toon("missing.bmp"), None);
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("mds-shared-toon-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Data")).unwrap();
+        std::fs::write(dir.join("Data/Toon01.BMP"), b"shared toon").unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "mme::tests::shared_toon_reads_actual_data_case_in_an_isolated_process",
+            ])
+            .env(CHILD, "1")
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+        assert!(status.success());
     }
 
     #[cfg(target_os = "linux")]

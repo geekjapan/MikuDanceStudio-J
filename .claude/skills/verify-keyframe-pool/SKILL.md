@@ -41,10 +41,9 @@ so `searchCursor == 0`) and the pool tail of `pmx_load.cpp:1672-1709`. bone0
 (右b) is a Move bone with a rigid body. bone1 (左b) is the IK bone and a
 FixedAxis bone with axis (0.48, 0.6, 0.64) and `trans` (1, 0.25, 0). The two
 names make reverse paste map each bone onto the other. There are two
-selectors: the root (bone -1) and one for bone0, with link (2, 1). One zeroed
-bone record sits in front of the bone table, because the display paste reads
-`bones[-1]` (see the baseline). The pad is a name that matches nothing, so
-that read does not mask the pool checks.
+selectors: the root (bone -1) and one for bone0, with link (2, 1). The bone
+table has exactly `boneCount` records, as in the loaders. The root selector
+has no bone name and is skipped during display paste.
 
 The search runs once per configuration of (auto-interpolation checkbox 530,
 physics checkbox 499, mode): {0,0,2}, {1,1,2}, {1,0,1}, {0,1,0}. Together they
@@ -88,9 +87,47 @@ tools/keypool_check/run.sh 5      # deeper, about 15-20 min
 
 Needs `clang++` with AddressSanitizer. Confirmed with Apple clang 21.0.0.
 Exit 0 means PASS; exit 1 prints each violation once with its shortest trace.
-A known C++ finding prints above the result line and keeps exit 0
-(`result: PASS, with 1 known C++ finding`).
 Full ASan reports go to `${TMPDIR:-/tmp}/keypool_check/asan.log`.
+Use a unique `TMPDIR` for each concurrent run: `run.sh` reuses that directory.
+
+### Hosted verification
+
+For heavy validation, use `.github/workflows/keyframe-pool.yml` (the
+**Keyframe pool verification** workflow). It runs on relevant source,
+harness, and Rust replay changes, or `workflow_dispatch`. It runs the
+unchanged verifier at depth 4, rejects ASan findings and tracked-window
+cuts, compares the generated dump byte-for-byte with the committed Rust
+fixture, and replays that fixture with `cargo test --locked -p mds-edit
+--test keypool_replay`.
+
+It also runs the real-source mutation check:
+
+```sh
+python3 -m unittest discover -s tools/keypool_check -p 'test_*.py'
+python3 tools/keypool_check/check_selector_mutation.py /tmp/keypool-mutation-evidence
+```
+
+The helper requires exactly one production selector guard, removes it in a
+disposable source copy, then runs `run.sh 1` with isolated output. Success
+requires exit 1, the display-paste shortest trace, and one ASan report with
+a symbolized `RegisterDisplayKeyFromRecord` fault frame in
+`key_registrars.cpp` and a heap-buffer-overflow SUMMARY. Linux may name the
+`strcmp` interceptor in that SUMMARY; the source frame must be in the same
+report. Compiler failures, unrelated
+crashes, and successful mutated runs fail the check. The checkout is never
+mutated, including on interruption. Its output directory must be unique
+per concurrent invocation.
+
+The always-uploaded `keyframe-pool-<sha>` artifact contains the checked
+commit, compiler version, baseline and mutation logs, ASan reports, generated
+dump, oracle comparison, and Rust replay log when those steps ran. Missing
+or skipped evidence is not PASS. Require a successful workflow for the
+actual tested commit before claiming hosted verification or advancing sync.
+
+Linux hosted CPUs may expose floating-point differences from the Apple
+clang baseline even with `-ffp-contract=off` and the shared RSQRT table.
+Investigate a dump mismatch; do not replace the fixture, lower the depth,
+weaken checks, or accept a known finding to turn the job green.
 
 `run.sh 4 --dump FILE` also writes every explored state with its operation
 trace. `mds-edit` replays that dump in `cargo test`, so after a change to the
@@ -103,21 +140,23 @@ tools/keypool_check/run.sh 4 --dump rust/crates/mds-edit/tests/data/keypool-dept
 
 ## Baseline at the sync commit
 
-At the sync commit the check PASSES: no violation at depth 4 or 5, and both
-pool-full runs print `ok`. Any violation is a new problem.
+At the sync commit the check PASSES: no violation at depth 4, and both
+pool-full runs print `ok`. Depth 5 was not rerun after the selector guard
+change. Any violation is a new problem.
 
-One known C++ finding is reported and not fixed: pasting a display key reads
-`bones[-1]` in `RegisterDisplayKeyFromRecord`, in the selector loop, for the
-root selector (`key_registrars.cpp:738`, the strcmp). The loaders allocate
-exactly `boneCount` bone records (`pmx_load.cpp:736`), and `bone_sort.cpp:46`
-gives selector 0 the bone index -1. Shortest trace: "1. paste display key at
-frame 1". `run.sh` sets ASan `redzone=1024` so the read lands in a redzone,
-and a separate finding run allocates the bone table as the loaders do.
-`mds-edit` matches the root selector against no entry, which is what the C++
-does in practice.
+Display paste skips selector bone indices outside `[0, boneCount)`. The root
+selector has bone index -1; its pair stays unchanged. Valid bone selectors
+still use the first matching clipboard name. The depth-4 dump is unchanged.
+The search uses an exactly sized bone table and treats every ASan finding as
+a failure. Restoring the old unguarded selector lookup fails at depth 1:
+`1. paste display key at frame 0`, an ASan read before the bone table.
+`run.sh` keeps `redzone=1024` so that read lands in a redzone.
 
 These earlier findings are fixed. If one comes back, a change undid its fix:
 
+- Display paste reading `bones[-1]` for the root selector. The selector
+  lookup now skips negative and out-of-range bone indices before forming a
+  pointer into the bone table.
 - A bone head record taken as a free record (`head record moved off frame 0`,
   `links into the head record of track N`). The shared `searchCursor` can hold
   another pool's position. `kfa::AllocateFromCursor`
@@ -157,7 +196,7 @@ Run the check if the diff touches any of these:
 List what changed in the covered files since the sync commit:
 
 ```sh
-git diff --stat 7b847da -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp include/mikudancestudio/ported_funcs.hpp include/mikudancestudio/bone_layout.hpp include/mikudancestudio/panel_controls.hpp src/window/command_file_menu.cpp src/model/bone_sort.cpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp src/model/pmd_load.cpp
+git diff --stat 4e5432f -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp include/mikudancestudio/ported_funcs.hpp include/mikudancestudio/bone_layout.hpp include/mikudancestudio/panel_controls.hpp src/window/command_file_menu.cpp src/model/bone_sort.cpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp src/model/pmd_load.cpp
 ```
 
 Use the sync commit from the coverage record below as the base.
@@ -192,13 +231,70 @@ table above in the same change. If the property itself changes (for example,
 heads no longer pinned at frame 0), edit `CheckPool` and the property text
 here together.
 
+## Maintenance audit for hosted CI
+
+At `f15981b`, the covered source files are unchanged from sync `4e5432f`.
+The covered-file history from the earlier sync `7b847da` contains only
+`4e5432f`: the selector index guard changed; no covered function moved and
+no new writer of `searchCursor` or the three model pools appeared. A wider
+`src`/`include` diff search found a new read of pool selection flags in
+`src/tools/script_mode.cpp` (`SelectedKeyRow`), not a new pool writer. The
+other changes do not alter the modeled handlers or initialization.
+
+Camera, light, self-shadow, gravity, and accessory global pools (including
+`global_key_registration.cpp` and PMM global-pool loaders) remain outside
+this model. Existing unmodeled model-pool callers, undo/redo, and other
+limits listed above remain uncovered. This workflow does not prove them.
+
+The source at `4e5432f` was checked at depth 4 and by removing the selector
+guard; its regenerated oracle matched the committed fixture. No property or
+bound changed in the later CI maintenance work. The earlier hosted run
+`40355765898` exposed Linux ASan output-format drift: the fault frame and
+`heap-buffer-overflow` SUMMARY appeared in the same report, but the receipt
+helper expected another SUMMARY format. This was verification output drift,
+not a product bug or a changed property. The helper was corrected to accept
+the actual report structure.
+
+Hosted run [`40399429308`](https://github.com/geekjapan/MikuDanceStudio-J/actions/runs/40399429308)
+passed on tested checkout `7006c9a4200d03efafbb643e54d24e207f2e95b4`
+(artifact `12689415482`, ZIP SHA-256
+`e79b9bde293ac11a7e63ddfd1010865ef8e2cb3acfbb417ecf84585d949cbaa1`). The
+Ubuntu run used clang 18.1.3 and built the real native C++ sources with
+AddressSanitizer. All four configurations completed depth 4 with 12,319
+states and 121,814 transitions each, zero cuts and zero violations. The
+baseline ASan log was empty; the display-1000 and morph-20000 capacity checks
+passed. The generated oracle matched the committed fixture byte-for-byte
+(SHA-256 `fa3ab370962892e45011deb10327ab0112b0056e81942588c398bb0e365d4069`),
+and the Rust 1.95 replay passed (1 passed, 0 failed, 0 ignored).
+
+The disposable mutation removed the real selector guard. It exited 1 with
+the shortest trace `paste display key at frame 0`; all 24 ASan reports tied a
+`RegisterDisplayKeyFromRecord` source frame at `key_registrars.cpp:739` to a
+`heap-buffer-overflow` SUMMARY in the same report. The corrected receipt
+helper accepted this evidence. The workflow's 258-file input closure,
+including covered native sources, harness, workflow, skill, Rust replay
+crates, workspace manifest/lock, and toolchain, has manifest SHA-256
+`6a001b779dd625f7e811c3222fc67cae9efc0e7706b346c48978ba9ae0b13437`; the
+audit confirmed that closure is identical at current `main`
+`32878816e41cf19207affb9a7f47d1da5e8966bf`. This establishes that current
+`main` has the same checked inputs. The workflow itself was executed on
+`7006c9a`, not on current `main`.
+
+No local checker, mutation, or full suite was rerun for this documentation
+audit. Undo/redo, global pools, multi-key paste, bone-pool capacity,
+depth 5 and above, non-x64 layouts, and native UI remain outside the verified
+model.
+
 ## Coverage record
 
-Sync commit: `7b847da`. The verification was last confirmed to describe the
-files and functions listed under "Does my change touch the verified code?" at
-this commit.
+Sync commit: `7006c9a4200d03efafbb643e54d24e207f2e95b4`. The successful
+hosted workflow checked this exact commit and confirmed the files and
+functions listed under "Does my change touch the verified code?". The audit
+read the covered-file history since the prior sync commit `4e5432f` and
+confirmed that the table, initial state, and baseline still describe the
+covered code. Current `main` has the same audited workflow input closure, but
+was not itself the workflow checkout.
 
-Move the sync commit forward only after you have run the check at the new
-commit, read the diff of the covered files since the old sync commit, and
-confirmed that the table, the initial state, and the baseline still describe
-the code.
+Move the sync commit forward only after the check runs successfully at the new
+commit, the covered-file diff since the old sync commit is read, and the
+table, initial state, and baseline are confirmed to describe the code.

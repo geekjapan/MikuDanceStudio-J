@@ -26,6 +26,92 @@ class ClosedPlanTests(unittest.TestCase):
         return build_plan([a or inventory('definition.c', True), b or inventory('caller.c')],
                           ['definition.c', 'caller.c'], exports)
 
+    def test_actual_blob_unproved_definitions_are_retained(self):
+        # Run 40465179935 blob.variadic.json SHA256 4e21d31be92241e67ef940729e140b8e1465d9121aba135a15e1e3eb1258b8ab.
+        unit = '/home/runner/work/_temp/vkd3d-probe/evidence/result/source/libs/vkd3d-common/blob.c'
+        item = inventory(unit, True)
+        item['declarations'] = [
+            {'aliases': [], 'definition': True, 'id': ident,
+             'location': '(fileid 39) ' + unit + ':' + str(line) + ':1',
+             'signature': {'unproved': 'attributed type facts'},
+             'symbol': {'static': name, 'unit': unit}, 'va_parameters': []}
+            for ident, line, name in [
+                (86884, 101, 'vkd3d_blob_GetBufferSize'),
+                (86952, 92, 'vkd3d_blob_GetBufferPointer'),
+                (87002, 75, 'vkd3d_blob_Release'),
+                (87129, 65, 'vkd3d_blob_AddRef'),
+                (87199, 47, 'vkd3d_blob_QueryInterface')]]
+        plan = build_plan([item], [unit], [])
+        self.assertEqual(plan['symbols'], [])
+        unknown = plan['unclassified_definitions']
+        self.assertEqual([d['id'] for d in unknown], [86884, 86952, 87002, 87129, 87199])
+        for original, retained in zip(item['declarations'], unknown):
+            self.assertEqual(retained['signature'], original['signature'])
+            self.assertEqual(retained['unit'], unit)
+            self.assertEqual(retained['name'], original['symbol']['static'])
+            self.assertEqual(retained['location'], original['location'])
+            self.assertEqual(retained['reason'], 'attributed type facts')
+        self.assertEqual([d['code'] for d in plan['diagnostics']],
+                         ['candidate_signature_unproved'] * 5)
+
+    def test_unknown_definition_eligibility_and_calls_fail_closed(self):
+        for va_parameters in ([], [0]):
+            with self.subTest(va_parameters=va_parameters):
+                a, b = inventory('definition.c', True), inventory('caller.c')
+                for item in (a, b):
+                    item['declarations'][0]['signature'] = {'unproved': 'attributed type facts'}
+                a['declarations'][0]['va_parameters'] = va_parameters
+                b['calls'] = [{'id': 9, 'owner': None, 'callee': {'linker': 'format'},
+                               'location': 'caller.c:9', 'arguments': []}]
+                plan = self.plan(a, b)
+                self.assertEqual(plan['symbols'], [])
+                self.assertEqual(len(plan['unclassified_definitions']), 1)
+                self.assertIn('call_signature_unproved', [d['code'] for d in plan['diagnostics']])
+                self.assertNotIn('signature_mismatch', [d['code'] for d in plan['diagnostics']])
+
+    def test_alias_call_to_unknown_definition_has_no_slots(self):
+        a, b = inventory('definition.c', True), inventory('caller.c')
+        a['declarations'][0]['signature'] = {'unproved': 'attributed type facts'}
+        b['declarations'][0].update(symbol={'linker': 'alias'}, aliases=['format'])
+        b['calls'] = [{'id': 9, 'owner': None, 'callee': {'linker': 'alias'},
+                       'location': 'caller.c:9', 'arguments': [{'type': scalar('Double')}]}]
+        plan = self.plan(a, b)
+        self.assertEqual(plan['symbols'], [])
+        self.assertIn('call_signature_unproved', [d['code'] for d in plan['diagnostics']])
+
+    def test_unknown_competing_definition_blocks_call_slots(self):
+        a, b = inventory('definition.c', True), inventory('caller.c', True)
+        b['declarations'][0]['signature'] = {'unproved': 'attributed type facts'}
+        b['calls'] = [{'id': 9, 'owner': None, 'callee': {'linker': 'format'},
+                       'location': 'caller.c:9', 'arguments': [{'type': scalar('Int')}]}]
+        plan = self.plan(a, b)
+        self.assertEqual(len(plan['symbols']), 1)
+        self.assertEqual(len(plan['unclassified_definitions']), 1)
+        self.assertEqual(plan['symbols'][0]['calls'], [])
+        self.assertTrue({'multiple_definitions', 'candidate_signature_unproved',
+                         'call_signature_unproved'} <= {d['code'] for d in plan['diagnostics']})
+
+    def test_unproved_declaration_cannot_match_known_candidate(self):
+        b = inventory('caller.c')
+        b['declarations'][0]['signature'] = {'unproved': 'attributed type facts'}
+        plan = self.plan(b=b)
+        self.assertEqual(len(plan['symbols']), 1)
+        self.assertIn('candidate_signature_unproved', [d['code'] for d in plan['diagnostics']])
+
+    def test_malformed_signature_is_not_valid_unproved_evidence(self):
+        for signature in (None, {}, {'unproved': ''}, {'unproved': 1},
+                          {'unproved': 'reason', 'canonical': {}},
+                          {'canonical': {}}, {'canonical': None}):
+            with self.subTest(signature=signature):
+                a = inventory('definition.c', True)
+                a['declarations'][0]['signature'] = signature
+                with self.assertRaisesRegex(PlanError, 'function signature'):
+                    self.plan(a=a)
+        a = inventory('definition.c', True)
+        del a['declarations'][0]['signature']
+        with self.assertRaisesRegex(PlanError, 'function signature'):
+            self.plan(a=a)
+
     def test_global_cross_unit_declaration_is_not_external(self):
         caller = inventory('caller.c')
         caller['calls'] = [{'id': 9, 'owner': None, 'callee': {'linker': 'format'},

@@ -187,6 +187,10 @@ def validate_allocator(raw, rows, mode):
                 require(pointer in live, 'unknown or double arena free')
                 live.remove(pointer)
                 freed.add(pointer + 16)
+                # Hidden fallback frees need allocations beyond the surviving arena ledger.
+                ordinals[0] = max(ordinals[0], ordinals[1] + len(live))
+                require(ordinals[0] <= counters[0], 'allocator counter history')
+        require(counters[0] - counters[1] >= len(live), 'allocator counter history')
         if not trailer:
             active = set()
             next_cached = set()

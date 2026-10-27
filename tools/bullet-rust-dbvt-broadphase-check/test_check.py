@@ -222,7 +222,7 @@ class AllocatorReceipts(unittest.TestCase):
             for record in records[1:-1]:
                 record['counters'] = [102, 100, 0, 0]
             for row in rows:
-                for nodes, cached in row[12]:
+                for nodes, _ in row[12]:
                     for node in nodes:
                         if node[1] == first['pointer']+16:
                             node[1] = third['pointer']+16
@@ -268,6 +268,15 @@ class AllocatorReceipts(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(ValueError, 'allocator counter history'):
                         self.check(records, rows)
+    def test_initial_hidden_fallback_free_can_precede_arena_allocations(self):
+        for mode in ['ascending', 'descending', 'alternating']:
+            records, rows = self.fixture(mode)
+            for record in records[1:-1]:
+                record['counters'][1] = 1
+            for event in records[-1]['events']:
+                event['ordinal'] += 1
+            with self.subTest(mode=mode):
+                self.assertEqual(self.check(records, rows, mode)['allocations'], 2)
     def test_live_and_cached_nodes_require_live_unique_exact_arena_allocations(self):
         records, rows = self.fixture()
         for field in ['live', 'cached']:

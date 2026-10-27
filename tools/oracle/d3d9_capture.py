@@ -2,6 +2,7 @@
 """Bounded, isolated capture of the unchanged Windows app. No fallback renderer."""
 
 import argparse
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -12,6 +13,7 @@ import struct
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 
 TIMEOUT = 90
 SOURCES = (
@@ -60,24 +62,95 @@ def run_command(command, directory, timeout=TIMEOUT):
         raise ValueError("Native process timeout must be in (0, 90] seconds")
     directory.mkdir(parents=True, exist_ok=False)
     result = {"command": [str(x) for x in command], "cwd": str(directory),
-              "timeout_seconds": timeout, "status": "FAIL", "returncode": None}
+              "timeout_seconds": timeout, "status": "FAIL", "returncode": None,
+              "process_started": False, "started_utc": datetime.now(timezone.utc).isoformat()}
     start = time.monotonic()
+    process = None
     with (directory / "stdout.txt").open("wb") as stdout, (directory / "stderr.txt").open("wb") as stderr:
         try:
             process = subprocess.Popen(result["command"], cwd=directory, stdout=stdout, stderr=stderr)
-            try:
-                result["returncode"] = process.wait(timeout=timeout)
-                result["status"] = "PASS" if result["returncode"] == 0 else "FAIL"
-                result["cause"] = "completed" if result["returncode"] == 0 else "nonzero exit"
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=10)
-                result.update(status="TIMEOUT", returncode=process.returncode, cause="90-second bound exceeded" if timeout == 90 else "test timeout exceeded")
+            result["process_started"] = True
+            result["returncode"] = process.wait(timeout=timeout)
+            result["status"] = "PASS" if result["returncode"] == 0 else "FAIL"
+            result["cause"] = "completed" if result["returncode"] == 0 else "nonzero exit"
+        except subprocess.TimeoutExpired:
+            result.update(status="TIMEOUT", cause=f"{timeout}-second bound exceeded")
         except OSError as error:
-            result["cause"] = f"process launch failed: {error}"
+            result["cause"] = f"process launch failed: {error}" if process is None else f"process wait failed: {error}"
+            if process is None:
+                result["startup_error"] = {"type": type(error).__name__, "message": str(error),
+                                           "errno": error.errno, "winerror": getattr(error, "winerror", None)}
+        except subprocess.SubprocessError as error:
+            result["cause"] = f"process wait failed: {error}"
+        finally:
+            if process is not None:
+                try:
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=10)
+                    result["returncode"] = process.returncode
+                except (OSError, subprocess.SubprocessError) as error:
+                    result["cleanup_error"] = str(error)
+                    if result["status"] == "PASS":
+                        result.update(status="FAIL", cause="Process cleanup failed")
+    result["finished_utc"] = datetime.now(timezone.utc).isoformat()
     result["elapsed_seconds"] = round(time.monotonic() - start, 3)
     (directory / "command.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     return result
+
+
+def activation_diagnostics(original, directory):
+    """Read only matching SideBySide events; never start or stop a global trace."""
+    directory.mkdir(parents=True, exist_ok=False)
+    diagnostic = {"status": "INCOMPLETE", "kind": "SideBySide activation events",
+                  "original_command": original["command"], "original_cwd": original["cwd"],
+                  "original_startup_error": original["startup_error"], "commands": [],
+                  "retry": False,
+                  "documentation": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil"}
+    try:
+        executable = original["command"][0]
+        quote = "'" if "'" not in executable else '"'
+        if quote in executable:
+            raise ValueError("Cannot safely represent executable path in event XPath")
+        start = datetime.fromisoformat(original["started_utc"])
+        end = datetime.fromisoformat(original["finished_utc"]) + timedelta(seconds=2)
+        stamp = lambda value: value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        query = (f"*[System[Provider[@Name='SideBySide'] and "
+                 f"TimeCreated[@SystemTime >= '{stamp(start)}' and @SystemTime <= '{stamp(end)}']] "
+                 f"and EventData[Data={quote}{executable}{quote}]]")
+        diagnostic["query"] = query
+        tool = Path(os.environ["SystemRoot"]) / "System32" / "wevtutil.exe"
+        for name, arguments in (("help", ["/?"]), ("query-help", ["qe", "/?"])):
+            diagnostic["commands"].append(run_command([tool, *arguments], directory / name, 10))
+        for attempt in range(3):
+            result = run_command([tool, "qe", "Application", f"/q:{query}", "/rd:true",
+                                  "/c:8", "/f:xml", "/uni:true", "/e:Events"],
+                                 directory / f"events-{attempt}", 10)
+            diagnostic["commands"].append(result)
+            if result["status"] != "PASS":
+                diagnostic["cause"] = "SideBySide event query failed; see command and streams"
+                break
+            events = ET.parse(directory / f"events-{attempt}" / "stdout.txt").getroot()
+            matches = list(events)
+            if matches:
+                message = run_command([tool, "qe", "Application", f"/q:{query}", "/rd:true",
+                                       "/c:8", "/f:text", "/l:en-US", "/uni:true"],
+                                      directory / "messages", 10)
+                diagnostic["commands"].append(message)
+                diagnostic["message_status"] = message["status"]
+                diagnostic.update(status="COLLECTED" if message["status"] == "PASS" else "INCOMPLETE", event_count=len(matches),
+                                  evidence=f"events-{attempt}/stdout.txt",
+                                  cause="Matching activation events retained; dependency diagnosis requires inspecting event data and messages/stdout.txt")
+                break
+            if attempt < 2:
+                time.sleep(1)
+        else:
+            diagnostic["cause"] = "No matching SideBySide event was available within the bounded query attempts"
+    except (OSError, ValueError, KeyError, ET.ParseError, subprocess.SubprocessError) as error:
+        diagnostic["cause"] = f"Activation diagnostics failed: {error}"
+    finally:
+        (directory / "diagnostic.json").write_text(json.dumps(diagnostic, indent=2) + "\n", encoding="utf-8")
+    return diagnostic
 
 
 def validate_outputs(out):
@@ -145,8 +218,16 @@ def capture(root, build, out, prepare=False):
                 ("edge", [stage / "MikuDanceStudio.exe", "--mds-edge-probe", pmm, out / "edge" / "selfshadow.edge.txt", "0", "30"]),
             )
             for name, command in commands:
-                report["commands"].append(run_command(command, out / name))
+                result = run_command(command, out / name)
+                report["commands"].append(result)
                 save_report(out, report)
+                if os.name == "nt" and result.get("startup_error", {}).get("winerror") == 14001:
+                    try:
+                        diagnostic = activation_diagnostics(result, out / "activation" / name)
+                    except (OSError, ValueError, subprocess.SubprocessError) as error:
+                        diagnostic = {"status": "INCOMPLETE", "cause": str(error), "retry": False}
+                    report.setdefault("activation_diagnostics", []).append(diagnostic)
+                    save_report(out, report)
             if any(command["status"] != "PASS" for command in report["commands"]):
                 raise ValueError("Native command failed/unsupported or timed out; see retained command and stdout/stderr files")
             capability = (out / "capability" / "stdout.txt").read_text(encoding="utf-8", errors="replace")

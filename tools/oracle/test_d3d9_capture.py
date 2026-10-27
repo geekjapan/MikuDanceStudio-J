@@ -3,11 +3,13 @@
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import struct
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("capture", Path(__file__).with_name("d3d9_capture.py"))
@@ -38,6 +40,127 @@ class CaptureBoundary(unittest.TestCase):
             result = capture.run_command([root / "missing.exe"], root / "launch-error")
             self.assertEqual(result["status"], "FAIL")
             self.assertIn("launch failed", result["cause"])
+
+    def test_structured_activation_error_and_bounded_process_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            error = OSError(22, "stand-in activation failure")
+            error.winerror = 14001
+            with patch.object(capture.subprocess, "Popen", side_effect=error):
+                result = capture.run_command(["unchanged.exe", "--original"], Path(tmp) / "startup")
+            self.assertFalse(result["process_started"])
+            self.assertEqual(result["startup_error"]["winerror"], 14001)
+            self.assertEqual(result["startup_error"]["errno"], 22)
+            self.assertIsNone(result["returncode"])
+            self.assertEqual(result["command"], ["unchanged.exe", "--original"])
+            self.assertEqual(result["timeout_seconds"], 90)
+            process = unittest.mock.Mock()
+            process.wait.side_effect = [capture.subprocess.TimeoutExpired("stand-in", 0.1),
+                                        capture.subprocess.TimeoutExpired("stand-in cleanup", 10)]
+            process.poll.return_value = None
+            with patch.object(capture.subprocess, "Popen", return_value=process):
+                result = capture.run_command(["stand-in"], Path(tmp) / "timeout", 0.1)
+            self.assertEqual(result["status"], "TIMEOUT")
+            self.assertIn("0.1-second bound", result["cause"])
+            self.assertIn("cleanup_error", result)
+            process.kill.assert_called_once_with()
+            self.assertEqual(process.wait.call_args.kwargs, {"timeout": 10})
+
+    def test_scoped_activation_events_with_standin_commands(self):
+        original = {"command": [r"C:\isolated\MikuDanceStudio.exe", "--mds-frame-dump"],
+                    "cwd": "original frames", "startup_error": {"winerror": 14001},
+                    "started_utc": "2026-10-27T04:00:00+00:00",
+                    "finished_utc": "2026-10-27T04:00:00.010000+00:00"}
+        for outcome in ("events", "empty", "invalid", "failure", "timeout", "exception", "message-failure"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp) / "diagnostic"
+                calls = []
+                real_run = capture.run_command
+
+                def stand_in_tool(command, target, timeout):
+                    calls.append([str(value) for value in command])
+                    if target.name.startswith("events"):
+                        if outcome == "exception":
+                            raise OSError("stand-in diagnostic exception")
+                        if outcome == "failure":
+                            body = "raise SystemExit(9)"
+                        elif outcome == "timeout":
+                            return real_run([sys.executable, "-c", "import time; time.sleep(5)"], target, 0.1)
+                        else:
+                            xml = "<Events><Event><EventData><Data>stand-in missing assembly</Data></EventData></Event></Events>"
+                            if outcome == "empty":
+                                xml = "<Events/>"
+                            elif outcome == "invalid":
+                                xml = "invalid XML"
+                            body = f"import sys; sys.stdout.buffer.write({xml.encode('utf-16')!r})"
+                    elif target.name == "messages" and outcome == "message-failure":
+                        body = "raise SystemExit(8)"
+                    else:
+                        body = "print('stand-in tool help or dependency resolution failure message')"
+                    return real_run([sys.executable, "-c", body], target, timeout)
+
+                with patch.object(capture, "run_command", side_effect=stand_in_tool), patch.dict(os.environ, {"SystemRoot": "stand-in Windows"}), patch.object(capture.time, "sleep"):
+                    result = capture.activation_diagnostics(original, directory)
+                self.assertEqual(result["status"], "COLLECTED" if outcome == "events" else "INCOMPLETE")
+                self.assertEqual(result["original_startup_error"], {"winerror": 14001})
+                self.assertFalse(result["retry"])
+                self.assertEqual(json.loads((directory / "diagnostic.json").read_text()), result)
+                for command in calls:
+                    self.assertTrue(command[0].endswith("wevtutil.exe"))
+                    self.assertNotIn("stoptrace", command)
+                    if "Application" in command:
+                        query = next(value for value in command if value.startswith("/q:"))
+                        self.assertIn("Provider[@Name='SideBySide']", query)
+                        self.assertIn("EventData[Data='C:\\isolated\\MikuDanceStudio.exe']", query)
+                        self.assertIn("2026-10-27T04:00:02.010Z", query)
+                        self.assertIn("/c:8", command)
+                self.assertLessEqual(len(calls), 5)
+                if outcome == "timeout":
+                    self.assertEqual(result["commands"][-1]["status"], "TIMEOUT")
+
+    def test_activation_diagnostic_failure_preserves_capture_and_closure(self):
+        for winerror, diagnostic_failure in ((14001, False), (14001, True), (2, False), (None, False)):
+            with self.subTest(winerror=winerror, diagnostic_failure=diagnostic_failure), tempfile.TemporaryDirectory() as tmp:
+                root, out, build = (Path(tmp) / name for name in ("repo", "evidence", "build"))
+                root.mkdir()
+                build.mkdir()
+                for name in capture.SOURCES + capture.ASSETS:
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("stand-in source")
+                for name in ("MikuDanceStudio.exe", "d3d9_capability.exe"):
+                    (build / name).write_text("stand-in executable")
+                real_run = capture.run_command
+
+                def stand_in_process(command, directory):
+                    if directory.name == "frames":
+                        error = OSError(22, "first activation error")
+                        error.winerror = winerror
+                        with patch.object(capture.subprocess, "Popen", side_effect=error):
+                            return real_run(command, directory)
+                    return real_run([sys.executable, "-c", "print('stand-in')"], directory)
+
+                diagnostic = {"status": "INCOMPLETE", "cause": "stand-in missing event", "retry": False}
+                windows = SimpleNamespace(name="nt", environ=os.environ)
+                with patch.object(capture, "os", windows), patch.object(capture, "run_command", side_effect=stand_in_process), patch.object(capture, "activation_diagnostics", side_effect=OSError("diagnostic failed") if diagnostic_failure else None, return_value=diagnostic) as diagnose:
+                    self.assertEqual(capture.capture(root, build, out), 1)
+                report = json.loads((out / "report.json").read_text())
+                if winerror == 14001:
+                    diagnose.assert_called_once()
+                else:
+                    diagnose.assert_not_called()
+                self.assertEqual(len(report["commands"]), 4)
+                self.assertEqual(report["commands"][2]["startup_error"]["winerror"], winerror)
+                self.assertIn("first activation error", report["commands"][2]["cause"])
+                self.assertEqual(report["commands"][3]["status"], "PASS")
+                self.assertEqual(report["closure"]["status"], "PASS")
+                self.assertEqual(len(report["closure"]["checks"]), 2 * len(report["copies"]))
+                self.assertIn("Native command failed", report["original_error"])
+                self.assertEqual(report["cause"], report["original_error"])
+                if winerror == 14001:
+                    self.assertEqual(report["activation_diagnostics"][0]["status"], "INCOMPLETE")
+                else:
+                    self.assertNotIn("activation_diagnostics", report)
+                self.assertFalse((out / "frames" / "selfshadow-0.png").exists())
 
     def test_missing_asset_is_strict_failure_with_provenance(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -370,7 +370,8 @@ def replay_report(report, head, inputs, cases):
     require(type(report['compiled_controls']) is int and report['compiled_controls']==len(MUTANTS) and type(report['cases']) is int and report['cases']==len(cases) and type(report['checkpoints']) is int and report['checkpoints']==len(inputs.splitlines()), 'complete current-Rust replay corpus and controls')
     require(type(report['controlled']) is dict and report['controlled']=={mode:len(inputs.splitlines()) for mode in MODES} and all(type(value) is int for value in report['controlled'].values()), 'complete current-Rust replay modes')
     require(report['public_world']=='UNCHANGED_NATIVE_BACKEND' and report['scope']=='private default-DBVT discrete collision owner' and report['ordinary_unbound']=='WINDOWS_SOURCE_REPLAY' and report['limits']==LIMITS+['replay Rust inner linker chain unobserved'], 'qualified replay boundary')
-    fields(report['host'],['system','machine','image'],'replay host')
+    host = fields(report['host'],['system','machine','image'],'replay host')
+    require(type(host['system']) is str and type(host['machine']) is str and (host['image'] is None or type(host['image']) is str), 'replay host field types')
     return report
 
 
@@ -423,6 +424,7 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
     require(type(report['schema']) is int and report['schema']==2 and report['status']=='CONTROLLED_PASS' and report['base']==BASE, 'completed native schema')
     require(report['head']==expected_head and re.fullmatch('[0-9a-f]{40}',expected_head), 'current producer HEAD')
     host = fields(report['host'],['system','machine','image'],'host')
+    require(type(host['system']) is str and type(host['machine']) is str and (host['image'] is None or type(host['image']) is str), 'host field types')
     require((host['system'],host['machine'].lower()) in expected_host, 'allowed actual producer host')
     require(report['policy']==expected_policy and report['native']=='ACTUAL_ORIGINAL_PUBLIC_SHIM_WITH_UNMODIFIED_ARCHIVE_CONTROL'
             and type(report['compiled_controls']) is int and report['compiled_controls']==len(MUTANTS), 'complete genuine native controls')

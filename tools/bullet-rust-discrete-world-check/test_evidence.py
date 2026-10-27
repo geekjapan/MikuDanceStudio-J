@@ -249,6 +249,7 @@ class AdmissionControls(unittest.TestCase):
     def test_completed_native_claims_source_end_and_required_families(self):
         for key,value in [('native','UNRUN'),('compiled_controls','UNRUN'),('schema',3),('checkpoints',True),('unrecognized','foreign')]:
             self.rejected(lambda files,key=key,value=value:edit_json(files,'report.json',lambda report:report.update({key:value})), 'complete genuine|completed native|boolean|fields')
+        self.rejected(lambda files:edit_json(files,'report.json',lambda report:report['host'].update(image={})), 'host field types')
         self.rejected(lambda files:files.update({'source-end.json':b'{}\n'}),'source-start equals source-end')
         self.rejected(lambda files:files.update({'git-attributes.stdout':files['git-attributes.stdout'].replace(b': unset',b': set')}),'exact trusted Git attributes')
         self.rejected(lambda files:files.update({'git-transport.stdout':files['git-transport.stdout'].replace(b'w/crlf',b'w/lf')}),'physical source/Git transport binding')
@@ -345,7 +346,7 @@ class AdmissionControls(unittest.TestCase):
         report=json.loads(self.windows['report.json']);report.pop('compiler')
         report.update(schema=3,native='WINDOWS_SOURCE_REPLAY',producer_report_sha256=sha(self.windows['report.json']),ordinary_unbound='WINDOWS_SOURCE_REPLAY',limits=evidence.LIMITS+['replay Rust inner linker chain unobserved'])
         self.assertEqual(evidence.replay_report(report,self.expected['expected_head'],self.expected['inputs'],self.expected['cases']),report)
-        for key,value in [('schema',2),('compiled_controls','UNRUN'),('producer_report_sha256','foreign'),('native','UNRUN')]:
+        for key,value in [('schema',2),('compiled_controls','UNRUN'),('producer_report_sha256','foreign'),('native','UNRUN'),('host',{**report['host'],'image':{}})]:
             with self.assertRaises(ValueError):evidence.replay_report({**report,key:value},self.expected['expected_head'],self.expected['inputs'],self.expected['cases'])
 
     def test_bounds_closed_paths_and_container_payloads(self):

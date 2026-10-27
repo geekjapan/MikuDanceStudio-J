@@ -411,6 +411,80 @@ def prepare(out):
     shutil.copyfile(profile, out / 'conan-default-profile.txt')
 
 
+CACHE_IDENTITIES = ('CMAKE_GENERATOR', 'CMAKE_GENERATOR_PLATFORM', 'CMAKE_HOME_DIRECTORY')
+CACHE_READER = """cmake_minimum_required(VERSION 3.18)
+load_cache("${DBVT_INPUT}" INCLUDE_INTERNALS CMAKE_GENERATOR CMAKE_GENERATOR_PLATFORM CMAKE_HOME_DIRECTORY)
+foreach(key CMAKE_GENERATOR CMAKE_GENERATOR_PLATFORM CMAKE_HOME_DIRECTORY)
+  get_property(present CACHE "${key}" PROPERTY VALUE SET)
+  if(NOT present)
+    message(FATAL_ERROR "Missing cache identity ${key}")
+  endif()
+  get_property(value CACHE "${key}" PROPERTY VALUE)
+  string(HEX "${value}" value_hex)
+  message(STATUS "DBVT_CACHE_${key}=${value_hex}")
+endforeach()
+"""
+
+
+def read_native_cache(cache, out):
+    raw = cache.read_bytes()
+    saved = out / 'native-CMakeCache.txt'
+    saved.write_bytes(raw)
+    scratch = Path(tempfile.mkdtemp(prefix='native-cache-reader-', dir=out)).resolve()
+    inputs = scratch / 'input'
+    inputs.mkdir()
+    copied = inputs / 'CMakeCache.txt'
+    copied.write_bytes(raw)
+    script = scratch / 'reader.cmake'
+    script.write_text(CACHE_READER, encoding='utf-8')
+    command = ['cmake', '--log-level=STATUS', '-N', '-S', scratch, '-B', scratch,
+               f'-DDBVT_INPUT:STRING={inputs}', '-C', script]
+    save(out / 'native-cache-reader-command.json', dict(argv=list(map(str, command)), cwd=str(scratch)))
+    save(out / 'native-cache-reader-identity.json', dict(
+        original=str(cache), input=str(copied), script=str(script),
+        cache_sha256=hashlib.sha256(raw).hexdigest(), script_sha256=digest(script),
+        checker_sha256=digest(Path(__file__)),
+        command_sha256=digest(out / 'native-cache-reader-command.json')))
+    seen = set()
+    # This scan diagnoses required-key spelling and duplicates, never their values.
+    for number, line in enumerate(raw.decode().split('\n'), 1):
+        line = line.removesuffix('\r')
+        match = re.fullmatch(r'([^/#][^:=]*):[^=]+=(.*)', line)
+        key = match.group(1) if match else re.split(r'[:=\s]', line.lstrip(' \t'), maxsplit=1)[0]
+        key = key.lstrip(' \t')
+        if key.startswith('"') and key.endswith('"'):
+            key = key[1:-1]
+        if key in CACHE_IDENTITIES and (not match or match.group(1) != key):
+            raise ValueError(f'malformed CMake cache key {key} at line {number}')
+        if match and key in CACHE_IDENTITIES:
+            if key in seen:
+                raise ValueError(f'duplicate CMake cache key {key} at line {number}')
+            seen.add(key)
+    try:
+        output = run(command, out, 'native-cache-reader', cwd=scratch, timeout=10)
+    except RuntimeError as error:
+        raise ValueError(str(error)) from error
+    # External load_cache can report parse errors on stderr while returning zero.
+    if (out / 'native-cache-reader.stderr').read_bytes():
+        raise ValueError('CMake cache reader reported diagnostics; inspect native-cache-reader.stderr')
+    values = {}
+    for line in output.decode('utf-8').split('\n'):
+        if not line.startswith('-- DBVT_CACHE_'):
+            continue
+        match = re.fullmatch(r'-- DBVT_CACHE_(CMAKE_GENERATOR|CMAKE_GENERATOR_PLATFORM|CMAKE_HOME_DIRECTORY)=([0-9a-f]*)', line.removesuffix('\r'))
+        if not match or match[1] in values:
+            raise ValueError('malformed or duplicate CMake cache reader marker')
+        try:
+            values[match[1]] = bytes.fromhex(match[2]).decode('utf-8')
+        except (ValueError, UnicodeDecodeError) as error:
+            raise ValueError('invalid CMake cache reader value') from error
+    if set(values) != set(CACHE_IDENTITIES):
+        raise ValueError('missing CMake cache reader identity')
+    if any(path.read_bytes() != raw for path in (cache, saved, copied)):
+        raise ValueError('CMake cache bytes changed during validation')
+    return values
+
+
 def package_paths(graph, out):
     nodes = graph['graph']['nodes']
     matches = [node for node in nodes.values() if str(node.get('ref', '')).startswith('bullet275/2.75#') and node.get('context') == 'host']
@@ -432,24 +506,7 @@ def package_paths(graph, out):
     result['cache_build'], result['cache_source'] = result['build'], result['source']
     result['build'] = str(Path(result['cache_build']) / 'build')
     cache = Path(result['build']) / 'CMakeCache.txt'
-    shutil.copyfile(cache, out / 'native-CMakeCache.txt')
-    values = {}
-    identity_keys = ('CMAKE_GENERATOR', 'CMAKE_GENERATOR_PLATFORM', 'CMAKE_HOME_DIRECTORY')
-    # CMake records end at LF; other Unicode line separators remain in values or comments.
-    for number, line in enumerate(cache.read_bytes().decode().split('\n'), 1):
-        line = line.removesuffix('\r')
-        match = re.fullmatch(r'([^/#][^:=]*):[^=]+=(.*)', line)
-        key = match.group(1) if match else re.split(r'[:=\s]', line.lstrip(' \t'), maxsplit=1)[0]
-        key = key.lstrip(' \t')
-        if key.startswith('"') and key.endswith('"'):
-            key = key[1:-1]
-        if key in identity_keys and (not match or match.group(1) != key):
-            raise ValueError(f'malformed CMake cache key {key} at line {number}')
-        if match:
-            key, value = match.groups()
-            if key in values and key in identity_keys:
-                raise ValueError(f'duplicate CMake cache key {key} at line {number}')
-            values[key] = value
+    values = read_native_cache(cache, out)
     if values.get('CMAKE_GENERATOR') != 'Visual Studio 17 2022' or values.get('CMAKE_GENERATOR_PLATFORM') != 'x64':
         raise ValueError('native archive generator or architecture differs')
     result['source'] = values['CMAKE_HOME_DIRECTORY']

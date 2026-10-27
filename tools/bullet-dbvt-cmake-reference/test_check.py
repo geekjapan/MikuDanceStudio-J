@@ -66,6 +66,12 @@ class Controls(unittest.TestCase):
                     self.assertEqual(check.main(), result)
                 action.assert_called_once_with(Path(folder).resolve())
 
+    def conan_paths(self, paths):
+        original = check.run
+        answers = iter(paths)
+        return patch.object(check, 'run', side_effect=lambda argv, *args, **kwargs:
+                            next(answers) if argv[0] == 'conan' else original(argv, *args, **kwargs))
+
     def package_cache_fixture(self, root, text):
         package, build, source = (root / name for name in ('package', 'cache-build', 'cache-source'))
         for folder in (package, build / 'build', source, build / 'bullet-src'):
@@ -83,7 +89,6 @@ class Controls(unittest.TestCase):
                 'CMAKE_HOME_DIRECTORY:INTERNAL=SOURCE\n\n//Ordinary entries.\n'
                 'BUILD_SHARED_LIBS:BOOL=OFF\nCMAKE_CONFIGURATION_TYPES:STRING=Debug;Release\n'
                 'CMAKE_CXX_FLAGS:STRING=\nUnrelated:STRING=first\nUnrelated:STRING=last\n'
-                'Unrelated:=ignored\nUnrelated:STRING\n=ignored\nUnrelated=ignored\n'
                 'CMAKE_GENERATOR_EXTRA:=ignored\n//CMAKE_GENERATOR:=Ninja\n'
                 '#CMAKE_GENERATOR_PLATFORM:=Win32\n'
                 ' Ordinary:STRING=value\n\t"Quoted:ordinary":STRING=value\n'
@@ -93,7 +98,7 @@ class Controls(unittest.TestCase):
             with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 graph, cache, paths = self.package_cache_fixture(root, text.replace('\n', newline))
-                with patch.object(check, 'run', side_effect=paths):
+                with self.conan_paths(paths):
                     result = check.package_paths(graph, root)
                 self.assertEqual(result['source'], str(root / 'cache-build/bullet-src'))
                 self.assertEqual((root / 'native-CMakeCache.txt').read_bytes(), cache.read_bytes())
@@ -113,7 +118,7 @@ class Controls(unittest.TestCase):
                         root = Path(folder)
                         text = (valid + '# comment\n\n// comment\n' + key + suffix).replace('\n', newline)
                         graph, cache, paths = self.package_cache_fixture(root, text)
-                        with patch.object(check, 'run', side_effect=paths), self.assertRaisesRegex(
+                        with self.conan_paths(paths), self.assertRaisesRegex(
                                 ValueError, f'^malformed CMake cache key {key} at line 7$'):
                             check.package_paths(graph, root)
                         self.assertFalse((root / 'resolved-package.json').exists())
@@ -135,7 +140,7 @@ class Controls(unittest.TestCase):
                             root = Path(folder)
                             text = (valid + '# comment\n\n// comment\n' + spelling + suffix).replace('\n', newline)
                             graph, cache, paths = self.package_cache_fixture(root, text)
-                            with patch.object(check, 'run', side_effect=paths), self.assertRaisesRegex(
+                            with self.conan_paths(paths), self.assertRaisesRegex(
                                     ValueError, f'^malformed CMake cache key {key} at line 7$'):
                                 check.package_paths(graph, root)
                             self.assertFalse((root / 'resolved-package.json').exists())
@@ -156,7 +161,7 @@ class Controls(unittest.TestCase):
                             lines = list(identities)
                             lines[index] = prefix + separator + identity
                             graph, cache, paths = self.package_cache_fixture(root, newline.join(lines) + newline)
-                            with patch.object(check, 'run', side_effect=paths), \
+                            with self.conan_paths(paths), \
                                     self.assertRaises((ValueError, KeyError)):
                                 check.package_paths(graph, root)
                             self.assertFalse((root / 'resolved-package.json').exists())
@@ -171,9 +176,9 @@ class Controls(unittest.TestCase):
                 with self.subTest(separator=repr(separator), prefix=prefix), \
                         tempfile.TemporaryDirectory() as folder:
                     root = Path(folder)
-                    text = valid + prefix + separator + 'CMAKE_GENERATOR:STRING=Ninja\n'
+                    text = valid + prefix + separator + 'CMAKE_GENERATOR:STRING=Ninja\nTAIL:STRING=valid\n'
                     graph, cache, paths = self.package_cache_fixture(root, text)
-                    with patch.object(check, 'run', side_effect=paths):
+                    with self.conan_paths(paths):
                         result = check.package_paths(graph, root)
                     self.assertEqual(result['source'], str(root / 'cache-build/bullet-src'))
                     self.assertTrue((root / 'resolved-package.json').is_file())
@@ -186,7 +191,7 @@ class Controls(unittest.TestCase):
             with self.subTest(key=key), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 graph, cache, paths = self.package_cache_fixture(root, text)
-                with patch.object(check, 'run', side_effect=paths), self.assertRaisesRegex(
+                with self.conan_paths(paths), self.assertRaisesRegex(
                         ValueError, f'^duplicate CMake cache key {key} at line 5$'):
                     check.package_paths(graph, root)
                 self.assertEqual((root / 'native-CMakeCache.txt').read_bytes(), cache.read_bytes())
@@ -196,7 +201,7 @@ class Controls(unittest.TestCase):
                  'CMAKE_GENERATOR_PLATFORM:INTERNAL=x64\n'
                  'CMAKE_HOME_DIRECTORY:INTERNAL=SOURCE\n')
         cases = [(valid.replace(line, ''), ValueError) for line in valid.splitlines(keepends=True)[:2]]
-        cases += [(valid.replace('CMAKE_HOME_DIRECTORY:INTERNAL=SOURCE\n', ''), KeyError),
+        cases += [(valid.replace('CMAKE_HOME_DIRECTORY:INTERNAL=SOURCE\n', ''), ValueError),
                   (valid.replace(':INTERNAL=', '=') , ValueError),
                   (valid.replace('Visual Studio 17 2022', 'Ninja'), ValueError),
                   (valid.replace('x64', 'Win32'), ValueError),
@@ -207,7 +212,7 @@ class Controls(unittest.TestCase):
             with self.subTest(text=text), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 graph, cache, paths = self.package_cache_fixture(root, text)
-                with patch.object(check, 'run', side_effect=paths):
+                with self.conan_paths(paths):
                     if error:
                         with self.assertRaises(error):
                             check.package_paths(graph, root)
@@ -215,6 +220,94 @@ class Controls(unittest.TestCase):
                     else:
                         check.package_paths(graph, root)
                 self.assertEqual((root / 'native-CMakeCache.txt').read_bytes(), cache.read_bytes())
+
+    def test_package_cache_actual_nul_and_cr_aliases(self):
+        valid = ('CMAKE_GENERATOR:INTERNAL=Visual Studio 17 2022\n'
+                 'CMAKE_GENERATOR_PLATFORM:INTERNAL=x64\n'
+                 'CMAKE_HOME_DIRECTORY:INTERNAL=SOURCE\n')
+        cases = []
+        for key, value in zip(check.CACHE_IDENTITIES, ('Ninja', 'Win32', '/outside')):
+            cases += [valid.replace(key + ':INTERNAL=', key + ':INTER\0NAL='),
+                      valid + key + ':INTER\0NAL=' + value + '\n',
+                      valid + '\r \t\r' + key + ':STRING=' + value + '\n',
+                      valid + '\r \t\r' + key + ':STRING=' + value + '\n' +
+                      '\r' + key + ':STRING=' + value + '\n']
+        cases += [valid + 'UNRELATED:INTER\0NAL=x\n']
+        for text in cases:
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                graph, cache, paths = self.package_cache_fixture(root, text)
+                raw = cache.read_bytes()
+                sentinel = cache.parent / 'PreLoad.cmake'
+                sentinel.write_text('message(FATAL_ERROR "Native PreLoad executed")\n')
+                sentinel_raw = sentinel.read_bytes()
+                with self.conan_paths(paths), self.assertRaises(ValueError):
+                    check.package_paths(graph, root)
+                self.assertFalse((root / 'resolved-package.json').exists())
+                self.assertEqual(cache.read_bytes(), raw)
+                self.assertEqual((root / 'native-CMakeCache.txt').read_bytes(), raw)
+                self.assertEqual(sentinel.read_bytes(), sentinel_raw)
+                identity = json.loads((root / 'native-cache-reader-identity.json').read_text())
+                self.assertEqual(Path(identity['input']).read_bytes(), raw)
+                self.assertEqual(Path(identity['script']).read_text(), check.CACHE_READER)
+                stderr = root / 'native-cache-reader.stderr'
+                if '\0' in text and stderr.exists():
+                    self.assertTrue(stderr.read_bytes())
+
+    def test_cache_reader_rejects_zero_exit_stderr_and_bad_markers(self):
+        markers = ''.join('-- DBVT_CACHE_' + key + '=78\n' for key in check.CACHE_IDENTITIES).encode()
+        cases = [(markers, b'CMake Error: parse error\n'), (markers + markers, b''),
+                 (markers.replace(b'=78', b'=7'), b''),
+                 (markers.replace(b'=78', b'=FF'), b''),
+                 (markers.replace(b'=78', b'=ff'), b''),
+                 (markers.split(b'\n', 1)[1], b''),
+                 (markers + b'-- DBVT_CACHE_UNKNOWN=78\n', b'')]
+        for stdout, stderr in cases:
+            with self.subTest(stdout=stdout, stderr=stderr), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                cache = root / 'CMakeCache.txt'
+                cache.write_bytes(b'UNRELATED:STRING=x\n')
+                def reader(argv, out, name, **kwargs):
+                    (out / (name + '.stderr')).write_bytes(stderr)
+                    return stdout
+                with patch.object(check, 'run', side_effect=reader), self.assertRaises(ValueError):
+                    check.read_native_cache(cache, root)
+
+    def test_cache_reader_safe_scratch_and_byte_mutation(self):
+        valid = ('CMAKE_GENERATOR:INTERNAL=Visual Studio 17 2022\n'
+                 'CMAKE_GENERATOR_PLATFORM:INTERNAL=x64\n'
+                 'CMAKE_HOME_DIRECTORY:INTERNAL=SOURCE\n')
+        for mutate in (None, 'original', 'saved', 'input'):
+            with self.subTest(mutate=mutate), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                graph, cache, paths = self.package_cache_fixture(root, valid)
+                original_run = check.run
+                answers = iter(paths)
+                def reader(argv, out, name, **kwargs):
+                    if argv[0] == 'conan':
+                        return next(answers)
+                    scratch = Path(kwargs['cwd'])
+                    self.assertNotEqual(scratch, cache.parent)
+                    self.assertFalse((scratch / 'CMakeCache.txt').exists())
+                    self.assertFalse((scratch / 'PreLoad.cmake').exists())
+                    sentinel = scratch / 'input/PreLoad.cmake'
+                    sentinel.write_text('message(FATAL_ERROR "Input PreLoad executed")\n')
+                    before = sentinel.read_bytes()
+                    output = original_run(argv, out, name, **kwargs)
+                    self.assertEqual(sentinel.read_bytes(), before)
+                    if mutate:
+                        target = {'original': cache, 'saved': root / 'native-CMakeCache.txt',
+                                  'input': scratch / 'input/CMakeCache.txt'}[mutate]
+                        target.write_bytes(b'changed')
+                    return output
+                with patch.object(check, 'run', side_effect=reader):
+                    if mutate:
+                        with self.assertRaisesRegex(ValueError, 'bytes changed'):
+                            check.package_paths(graph, root)
+                        self.assertFalse((root / 'resolved-package.json').exists())
+                    else:
+                        check.package_paths(graph, root)
+                        self.assertTrue((root / 'resolved-package.json').exists())
 
     def test_windows_quotes_round_trip(self):
         for args in ([r'C:\Program Files\cl.exe', '/Iinc path', '/DNAME="value"', 'C:\\output\\', ''],

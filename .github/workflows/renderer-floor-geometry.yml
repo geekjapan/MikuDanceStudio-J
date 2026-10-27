@@ -101,9 +101,9 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Read-only complete replay in both Python modes
         run: |
-          python -B tools/renderer-floor-geometry/run.py --out "${{ runner.temp }}/floor-evidence" --archive "${{ runner.temp }}/floor-download/floor-capture.tar"
+          python -B tools/renderer-floor-geometry/run.py --out "${{ runner.temp }}/floor-evidence" --archive "${{ runner.temp }}/floor-complete.tar"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python -B -O tools/renderer-floor-geometry/run.py --out "${{ runner.temp }}/floor-evidence" --archive "${{ runner.temp }}/floor-download/floor-capture.tar"
+          python -B -O tools/renderer-floor-geometry/run.py --out "${{ runner.temp }}/floor-evidence" --archive "${{ runner.temp }}/floor-complete.tar"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Always retain complete or partial native evidence
         if: always()

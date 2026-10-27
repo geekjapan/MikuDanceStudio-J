@@ -16,3 +16,10 @@ fn main() {
     let (operations, candidates) = contact::box_box_tests::compare_trace(&input, &expected);
     println!("Exact native parity for {operations} operations and {candidates} ordered candidates.");
 }
+
+#[path = "../../rust/crates/mds-bullet/src/core/simplex.rs"]
+pub mod simplex;
+#[path = "../../rust/crates/mds-bullet/src/core/gjk_epa.rs"]
+pub mod gjk_epa;
+#[path = "../../rust/crates/mds-bullet/src/core/gjk_pair.rs"]
+pub mod gjk_pair;

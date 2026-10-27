@@ -4,12 +4,14 @@
 use super::box_box::box_box_contacts;
 use super::math::{Basis, Quat, Transform, Vec3};
 use super::shape::Shape;
+use super::simplex::VoronoiSimplexSolver;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PairKind {
     SphereSphere,
     BoxBox,
     CapsuleCapsule,
+    ConvexConvex,
     /// Manifold body A is the convex input and body B is the plane input.
     ConvexPlane {
         swapped: bool,
@@ -79,6 +81,10 @@ impl PairManifold {
             (StaticPlane { .. }, Sphere { .. } | Box { .. } | CapsuleY { .. }) => {
                 PairKind::ConvexPlane { swapped: true }
             }
+            (
+                Sphere { .. } | Box { .. } | CapsuleY { .. },
+                Sphere { .. } | Box { .. } | CapsuleY { .. },
+            ) => PairKind::ConvexConvex,
             _ => return None,
         };
         let a = shape0.angular_motion_disc() * 0.02;
@@ -109,9 +115,29 @@ impl PairManifold {
         &mut self.points[..self.count]
     }
 
-    pub fn process(&mut self, body0: ContactBody, body1: ContactBody) {
+    pub fn process(
+        &mut self,
+        body0: ContactBody,
+        body1: ContactBody,
+        simplex: &mut VoronoiSimplexSolver,
+    ) {
         let bodies = [body0, body1];
         match self.kind {
+            PairKind::ConvexConvex => {
+                let sum = self.shapes[1].margin() as f64
+                    + (self.threshold as f64 + self.shapes[0].margin() as f64);
+                if let Some(point) = super::gjk_pair::closest_points(
+                    self.shapes,
+                    [body0.world, body1.world],
+                    (sum * sum) as f32,
+                    simplex,
+                )
+                .contact
+                {
+                    self.add_contact(point.normal_on_b, point.point_on_b, point.distance, bodies);
+                }
+                self.refresh(body0.world, body1.world);
+            }
             PairKind::SphereSphere => {
                 let Shape::Sphere { radius: a } = self.shapes[0] else {
                     unreachable!()

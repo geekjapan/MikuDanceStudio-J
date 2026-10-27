@@ -28,6 +28,7 @@ fn vec_words(output: &mut String, value: Vec3) {
     }
 }
 pub fn compare_trace(input: &str, expected: &str) -> (usize, usize) {
+    let mut simplex = VoronoiSimplexSolver::default();
     let mut expected = expected.lines();
     let mut shapes = [Shape::box_shape(Vec3([1.0; 3])); 2];
     let mut manifold = PairManifold::new(shapes[0], shapes[1]).unwrap();
@@ -77,7 +78,7 @@ pub fn compare_trace(input: &str, expected: &str) -> (usize, usize) {
                     "candidates at operation {operations}: {line}"
                 );
                 if !borrowed {
-                    manifold.process(bodies[0], bodies[1]);
+                    manifold.process(bodies[0], bodies[1], &mut simplex);
                 }
             }
             "J" => {

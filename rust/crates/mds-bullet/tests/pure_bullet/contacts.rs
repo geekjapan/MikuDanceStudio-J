@@ -50,6 +50,7 @@ fn vector(out: &mut String, v: Vec3) {
 
 #[test]
 fn native_contact_traces_match_every_initialized_bit() {
+    let mut simplex = VoronoiSimplexSolver::default();
     let mut expected = include_str!("../contact_data/native.tsv").lines();
     let mut pair =
         PairManifold::new(Shape::Sphere { radius: 1.0 }, Shape::Sphere { radius: 1.0 }).unwrap();
@@ -92,15 +93,15 @@ fn native_contact_traces_match_every_initialized_bit() {
                     if pair.count == 0 {
                         let mut probe = PairManifold::new(pair.shapes[0], pair.shapes[1]).unwrap();
                         probe.plane_contact(Quat::IDENTITY, [a, b], swapped);
-                        pair.process(a, b);
+                        pair.process(a, b, &mut simplex);
                         if probe.count == 0 && pair.count > 0 {
                             perturb_only[usize::from(swapped)] = true;
                         }
                     } else {
-                        pair.process(a, b);
+                        pair.process(a, b, &mut simplex);
                     }
                 } else {
-                    pair.process(a, b);
+                    pair.process(a, b, &mut simplex);
                 }
             }
             "C" => {
@@ -168,15 +169,19 @@ fn native_contact_traces_match_every_initialized_bit() {
 }
 
 #[test]
-fn unsupported_pairs_have_no_manifold() {
+fn dedicated_and_generic_pairs_dispatch_without_plane_plane() {
     let b = Shape::box_shape(Vec3([1.0; 3]));
     let c = Shape::capsule_y(1.0, 1.0);
     let p = Shape::static_plane(Vec3([0.0, 1.0, 0.0]), 0.0);
     assert_eq!(PairManifold::new(b, b).unwrap().kind(), PairKind::BoxBox);
     let s = Shape::Sphere { radius: 1.0 };
-    for (a, b) in [(s, b), (b, s), (b, c), (c, s), (s, c), (p, p)] {
-        assert!(PairManifold::new(a, b).is_none());
+    for (a, b) in [(s, b), (b, s), (b, c), (c, b), (c, s), (s, c)] {
+        assert_eq!(
+            PairManifold::new(a, b).unwrap().kind(),
+            PairKind::ConvexConvex
+        );
     }
+    assert!(PairManifold::new(p, p).is_none());
 }
 
 #[test]
@@ -244,6 +249,7 @@ fn cache_threshold_ties_persistence_and_swap_removal() {
                 friction: 1.0,
                 ..body
             },
+            &mut VoronoiSimplexSolver::default(),
         );
         assert_eq!(m.contacts().len(), 1);
         let actual = m.contacts()[0].combined_friction;

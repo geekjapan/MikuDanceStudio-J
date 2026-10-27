@@ -6,3 +6,10 @@ pub mod contact;
 pub mod math;
 #[path = "../../rust/crates/mds-bullet/src/core/shape.rs"]
 pub mod shape;
+
+#[path = "../../rust/crates/mds-bullet/src/core/simplex.rs"]
+pub mod simplex;
+#[path = "../../rust/crates/mds-bullet/src/core/gjk_epa.rs"]
+pub mod gjk_epa;
+#[path = "../../rust/crates/mds-bullet/src/core/gjk_pair.rs"]
+pub mod gjk_pair;

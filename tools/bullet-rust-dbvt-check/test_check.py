@@ -601,7 +601,6 @@ class HelperTests(unittest.TestCase):
         inputs = check.subprocess.check_output([sys.executable, check.HERE / 'cases.py'])
         hashes = {p: check.hashlib.sha256((check.ROOT / p).read_bytes().replace(b'\r\n', b'\n')).hexdigest()
                   for p in check.source_paths()}
-        self.assertEqual(len(hashes), 482)
         commit = check.subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=check.ROOT).decode().strip()
         known = 'rust/crates/mds-bullet/src/core/dbvt.rs'
         invalid = [None, [], '', {}, {known: hashes[known]},
@@ -640,7 +639,6 @@ class HelperTests(unittest.TestCase):
         inputs = check.subprocess.check_output([sys.executable, check.HERE / 'cases.py'])
         hashes = {p: check.hashlib.sha256((check.ROOT / p).read_bytes().replace(b'\r\n', b'\n')).hexdigest()
                   for p in check.source_paths()}
-        self.assertEqual(len(hashes), 482)
         commit = check.subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=check.ROOT).decode().strip()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Synthetic parser/evaluator checks. These never compile Rust or execute a GPU."""
 import copy
 import importlib.util
 import json
@@ -7,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import struct
+import tarfile
 import tempfile
 import unittest
 import zlib
@@ -117,11 +117,20 @@ class Checks(unittest.TestCase):
     def log(self):
         text = '\n'.join(f'test {name} ... '+('FAILED' if name in r.FAILURES else 'ok') for name in self.c['calls'])
         text += '\n'+'\n'.join('SAMPLE_ADAPTER '+r.EXPECTED_ADAPTER+'|'+name for name in self.c['calls'])
-        return text+'\ntest result: FAILED. 11 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out;\n'
+        return text+'\ntest result: FAILED. 11 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.49s\n'
 
     def test_canonical_suite_adapter_controls(self):
         raw = self.log()
         self.assertEqual(len(r.golden_log(raw,101,self.c)),14)
+        summary = raw.splitlines()[-1]
+        for suffix in ('', ' finished in NaNs', ' finished in infs', ' finished in -1.00s',
+                       ' finished in 1e999s', ' finished in 8.49s trailing', ' finished in 8.49s; 1 passed',
+                       ' finished in '+ '9'*400 + '.00s'):
+            self.reject(r.golden_log,raw.replace(' finished in 8.49s',suffix),101,self.c)
+        self.reject(r.golden_log,raw+summary+'\n',101,self.c)
+        for before,after in [('FAILED.','ok.'),('3 failed','2 failed'),('0 measured','1 measured'),
+                             ('0 filtered out','1 filtered out'),('8.49s','8s'),('8.49s','8.4s')]:
+            self.reject(r.golden_log,raw.replace(before,after),101,self.c)
         for changed,code in [(raw,0),(raw+'SKIP',101),(raw.replace('11 passed','10 passed'),101),
                              (raw.replace('0 ignored','1 ignored'),101),(raw.replace('SAMPLE_ADAPTER','OTHER',1),101),
                              (raw.replace(r.EXPECTED_ADAPTER,'different|Vulkan',1),101),
@@ -337,19 +346,46 @@ class Checks(unittest.TestCase):
                     call = cap/(test+'-0')
                     call.mkdir()
                     for index in range(8): (call/f'sample-{index}.rgba').write_bytes(bytes(v for p in rendered for v in p))
-                    errors = [error,error,error,0]
-                    for changed in (False,True):
-                        if changed: errors[0 if test == 'selfshadow_30' else 2] -= 1
-                        png(gold/(name+'.png'),[(value,0,0,255) for value in errors],2,2)
-                        diffs = [(255-min(255,4*value),)*3+(255,) for value in errors]
-                        for path in (a,b): png(path/(name+'-diff.png'),diffs,2,2)
-                        log = f'{name}: 4 px (0 masked), within 4 0.25000, max {error}, mean {sum(errors)/4:.4f}'
-                        rows = r.image_analysis(a,b,gold,{'dimensions':(2,2),'gates':{test:name}},[log]*2,cap,{test+'-0':{'points':[]}},replay)
-                        self.assertEqual(rows[0]['maxima']['discrepancy'],changed)
-                        maxima = rows[0]['maxima']
-                        self.assertEqual(maxima.get('documented_points',maxima.get('documented_point')),[(0,0),(1,0),(0,1)] if test == 'selfshadow_30' else [0,1])
+                    for change in ('none','masked','point','unmasked'):
+                        with self.subTest(test=test,change=change):
+                            errors = [error,error,error,255]
+                            if change == 'point': errors[0 if test == 'selfshadow_30' else 2] -= 1
+                            if change == 'unmasked': errors[1] += 1
+                            masked = change != 'none'
+                            if not masked: errors[3] = 0
+                            png(gold/(name+'.png'),[(value,0,0,255) for value in errors],2,2)
+                            diffs = [(255-min(255,4*value),)*3+(255,) for value in errors]
+                            if masked: diffs[3] = (255,0,255,255)
+                            for path in (a,b): png(path/(name+'-diff.png'),diffs,2,2)
+                            scored = errors[:3] if masked else errors
+                            log = f'{name}: {len(scored)} px ({int(masked)} masked), within 4 {sum(v <= 4 for v in scored)/len(scored):.5f}, max {max(scored)}, mean {sum(scored)/len(scored):.4f}'
+                            rows = r.image_analysis(a,b,gold,{'dimensions':(2,2),'gates':{test:name}},[log]*2,cap,{test+'-0':{'points':[]}},replay)
+                            self.assertEqual(rows[0]['maxima']['discrepancy'],change in ('point','unmasked'))
+                            maxima = rows[0]['maxima']
+                            self.assertEqual(maxima['actual_max'],max(scored))
+                            self.assertEqual(maxima.get('documented_points',maxima.get('documented_point')),[(0,0),(1,0),(0,1)] if test == 'selfshadow_30' else [0,1])
         finally:
             r.POINTS = original_points
+
+    def test_evidence_tar_preserves_git_modes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root/'evidence'
+            source.mkdir()
+            executable = source/'executable'
+            executable.write_bytes(b'retained bytes')
+            executable.chmod(0o755)
+            (source/'.hidden').write_bytes(b'hidden receipt')
+            before = r.git_inventory(source)
+            archive = root/'evidence.tar'
+            with tarfile.open(archive,'w') as tar:
+                tar.add(source,arcname=source.name)
+            executable.chmod(0o644)
+            self.assertNotEqual(r.tree_hash(r.git_inventory(source)),r.tree_hash(before))
+            restored = root/'restored'
+            restored.mkdir()
+            r.archive_extract(archive,restored)
+            self.assertEqual(r.git_inventory(restored/source.name),before)
 
     def test_git_object_proof(self):
         with tempfile.TemporaryDirectory() as tmp:

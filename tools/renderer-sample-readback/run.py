@@ -356,8 +356,9 @@ def captures(root, c, stored=None):
 
 def golden_log(raw, code, c):
     require(code == 101 and not re.search(r'SKIP|validation error|wgpu error',raw,re.I), 'canonical return code/skip')
-    summaries = re.findall(r'test result: (.+)',raw)
-    require(len(summaries) == 1 and summaries[0] == 'FAILED. 11 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out;', 'canonical test totals')
+    summaries = re.findall(r'^test result: (.*)$',raw,re.M)
+    summary = re.fullmatch(r'FAILED\. 11 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in ([0-9]+\.[0-9]{2})s',summaries[0]) if len(summaries) == 1 else None
+    require(summary is not None and math.isfinite(float(summary[1])), 'canonical test totals')
     rows = re.findall(r'^test (\w+) \.\.\. (ok|FAILED)$',raw,re.M)
     require(len(rows) == 14 and len(dict(rows)) == 14 and set(dict(rows)) == set(c['calls']) and
             {n for n,s in rows if s == 'FAILED'} == FAILURES, 'canonical test identities/failures')
@@ -533,14 +534,14 @@ def image_analysis(control,observed,gold_dir,c,logs,capture_dir,capture_rows,rep
         if test in ('skin_0','skin_30'):
             x,y = POINTS[test][-1]
             expected = 78 if test == 'skin_0' else 112
-            actual = max(errors)
+            actual = score['max']
             maxima = {'documented_point':[x,y],'documented_error':expected,'actual_point_error':errors[y*width+x],
                       'actual_max':actual,'discrepancy':errors[y*width+x] != expected or actual != expected}
         if test == 'selfshadow_30':
             documented = POINTS[test][:3]
             point_errors = [errors[y*width+x] for x,y in documented]
             maxima = {'documented_points':documented,'documented_error':56,'actual_point_errors':point_errors,
-                      'actual_max':max(errors),'discrepancy':any(error != 56 for error in point_errors) or max(errors) != 56}
+                      'actual_max':score['max'],'discrepancy':any(error != 56 for error in point_errors) or score['max'] != 56}
         results.append({'test':test,'image':name,'metrics':score,'mask_sha256':digest(bytes(mask)),
                         'points':points,'maxima':maxima,'rgba_sha256':digest(replay)})
     return results

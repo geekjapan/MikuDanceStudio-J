@@ -356,10 +356,11 @@ def librarian_args(task, cwd, responses):
                                or arg.startswith('/') and not Path(arg).is_absolute() for arg in operands):
             raise ValueError('librarian continuation must contain only object operands')
         args.extend(operands)
-    inputs = []
+    inputs, outputs = [], []
     for arg in args:
         upper = arg.upper()
-        if upper.startswith('/OUT:') and len(arg) > 5:
+        if upper.startswith('/OUT:'):
+            outputs.append(arg[5:])
             continue
         if upper in ('/NOLOGO', '/MACHINE:X64'):
             continue
@@ -367,13 +368,14 @@ def librarian_args(task, cwd, responses):
                 arg.startswith('/') and not Path(arg).is_absolute()):
             raise ValueError('unsupported librarian argument')
         inputs.append(str((cwd / arg).resolve()).lower())
-    option(args, '/OUT:')
+    if len(outputs) != 1 or not outputs[0]:
+        raise ValueError('missing or ambiguous librarian /OUT: output option')
     identities = [str((cwd / source).resolve()).lower() for source in sources]
     if not inputs or len(set(inputs)) != len(inputs) or len(set(identities)) != len(identities):
         raise ValueError('missing or repeated librarian object identity')
     if set(inputs) != set(identities):
         raise ValueError('librarian object operands differ from caret identities')
-    return args
+    return args, outputs[0]
 
 
 CL_VALUE_OPTIONS = ('/D', '/U', '/I', '/FI', '/external:I')
@@ -728,8 +730,8 @@ def archive_commands(native, out, libs):
         if len(tasks) != 1:
             raise ValueError(f'ambiguous actual librarian task for {name}')
         records = []
-        args = librarian_args(tasks[0], project, records)
-        if (project / option(args, '/OUT:')).resolve() != Path(libs[name]['build']).resolve():
+        args, output = librarian_args(tasks[0], project, records)
+        if (project / output).resolve() != Path(libs[name]['build']).resolve():
             raise ValueError(f'librarian output does not match resolved {name} archive')
         inputs = [(project / arg).resolve() for arg in args if arg.lower().endswith('.obj')]
         if not inputs or any(not obj.is_file() for obj in inputs):

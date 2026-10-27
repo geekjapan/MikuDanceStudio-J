@@ -91,7 +91,11 @@ The librarian consumer requires exactly one task. Its first payload line accepts
 `/OUT:`, `/NOLOGO`, `/MACHINE:X64`, object operands, and response files expanded
 with the existing recursion and quoting checks. Later payload lines accept only
 object operands. Each physical line must have complete quoting. The expanded
-argv must contain one output, supported options, and unique object paths that
+argv must contain exactly one nonempty attached `/OUT:` value, matched without
+regard to option-name case. Duplicate output options fail regardless of casing
+or response expansion. Parsing retains the output path spelling and uses that
+same value to bind the archive identity. The argv must contain supported options
+and unique object paths that
 exactly match the caret identities after path resolution and case normalization.
 Unknown options, extra commands, missing or extra objects, and repeated identities
 fail validation. Archive/object byte checks remain required after parsing.

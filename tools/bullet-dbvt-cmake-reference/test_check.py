@@ -570,7 +570,8 @@ class Controls(unittest.TestCase):
                 self.assertEqual(len(lines), count)
                 cwd = WindowsPath(sources[0]).parent.parent.parent
                 with patch.object(check, 'Path', WindowsPath):
-                    argv = check.librarian_args((sources, lines), cwd, [])
+                    argv, output = check.librarian_args((sources, lines), cwd, [])
+                self.assertEqual(output, next(arg[5:] for arg in argv if arg.upper().startswith('/OUT:')))
                 identity = json.dumps(argv, separators=(',', ':'), ensure_ascii=False).encode()
                 self.assertEqual(hashlib.sha256(identity).hexdigest(), expected['argv_sha256'])
                 with self.assertRaisesRegex(ValueError, 'multiple command lines'):
@@ -605,10 +606,77 @@ class Controls(unittest.TestCase):
                 check.librarian_args(([sources[0], sources[0]], [first]), root, [])
             (root / 'inputs.rsp').write_text('a.obj b.obj')
             self.assertEqual(check.librarian_args((sources, ['/OUT:result.lib @inputs.rsp']), root, []),
-                             ['/OUT:result.lib', 'a.obj', 'b.obj'])
+                             (['/OUT:result.lib', 'a.obj', 'b.obj'], 'result.lib'))
             (root / 'inputs.rsp').write_text('a.obj b.obj /UNKNOWN')
             with self.assertRaises(ValueError):
                 check.librarian_args((sources, ['/OUT:result.lib @inputs.rsp']), root, [])
+
+    def test_librarian_output_requires_one_nonempty_attached_value(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            task = ['a.obj']
+            for command in ('a.obj', '/OUT: a.obj', '/out: result.lib a.obj',
+                            '/OUT:result.lib /OUT:result.lib a.obj',
+                            '/out:other.lib /OUT:result.lib a.obj',
+                            '/OUT:result.lib /out:other.lib a.obj',
+                            '/OUT:result.lib a.obj /out:other.lib',
+                            '/out: /OUT:result.lib a.obj',
+                            '/OUT:result.lib /out: a.obj'):
+                with self.subTest(command=command), self.assertRaises(ValueError):
+                    check.librarian_args((task, [command]), root, [])
+            (root / 'output.rsp').write_text('/oUt:"Mixed Case/Result.LIB" a.obj')
+            args, output = check.librarian_args((task, ['@output.rsp']), root, [])
+            self.assertEqual(output, 'Mixed Case/Result.LIB')
+            self.assertEqual(args, ['/oUt:Mixed Case/Result.LIB', 'a.obj'])
+            (root / 'output.rsp').write_text('/out:other.lib')
+            for command in ('@output.rsp /OUT:result.lib a.obj',
+                            '/OUT:result.lib a.obj @output.rsp'):
+                with self.subTest(command=command), self.assertRaises(ValueError):
+                    check.librarian_args((task, [command]), root, [])
+
+    def test_librarian_output_preserves_spelling_and_archive_identity(self):
+        for prefix in ('/OUT:', '/out:', '/OuT:'):
+            with self.subTest(prefix=prefix), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                out, libs = self.archive_fixture(root)
+                for name in check.LIBS:
+                    path = next((root / name).rglob('Lib.command.1.tlog'))
+                    path.write_text(path.read_text().replace('/OUT:', prefix))
+                    args, output = check.librarian_args(check.tlog_tasks(path)[0], root / name, [])
+                    self.assertEqual(output, libs[name]['build'])
+                    self.assertEqual(args[0], prefix + output)
+                proof = check.archive_commands(root, out, libs)
+                self.assertEqual(set(proof), set(check.LIBS))
+                for name, entry in proof.items():
+                    self.assertEqual(entry['argv'][0], prefix + libs[name]['build'])
+                    self.assertEqual(entry['archive_sha256'], check.digest(libs[name]['build']))
+                path.write_text(path.read_text().replace(libs[name]['build'], 'unverified-other.lib'))
+                with self.assertRaisesRegex(ValueError, 'librarian output does not match'):
+                    check.archive_commands(root, out, libs)
+
+    def test_librarian_rejects_duplicate_outputs_in_all_archives(self):
+        variants = (
+            ('/OUT:', ' /out:unverified-other.lib', False),
+            ('/out:', ' /OUT:unverified-other.lib', False),
+            ('/OUT:', ' /OUT:unverified-other.lib', False),
+            ('/OuT:', ' /oUt:unverified-other.lib', True),
+            ('/OUT:', ' /out:unverified-other.lib', True),
+            ('/OUT:', ' /out: unverified-other.lib', False),
+            ('/OUT:', ' /out:', False),
+        )
+        for prefix, extra, response in variants:
+            for name in check.LIBS:
+                with self.subTest(prefix=prefix, extra=extra, response=response, name=name):
+                    with tempfile.TemporaryDirectory() as folder:
+                        root = Path(folder)
+                        out, libs = self.archive_fixture(root)
+                        path = next((root / name).rglob('Lib.command.1.tlog'))
+                        text = path.read_text().replace('/OUT:', prefix)
+                        if response:
+                            (root / name / 'outputs.rsp').write_text(extra)
+                        path.write_text(text + (' @outputs.rsp' if response else extra))
+                        with self.assertRaises(ValueError):
+                            check.archive_commands(root, out, libs)
 
     def test_linker_keeps_single_command_contract(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include <stdio.h>
 
-enum fixture_unsigned { FIXTURE_ENUM = 65535 };
+enum fixture_unsigned { FIXTURE_ENUM_NEGATIVE = -1, FIXTURE_ENUM = 65535 };
 int private_format(const char *format, ...);
 int private_zero(int value, ...);
 int fixture_entry(void);

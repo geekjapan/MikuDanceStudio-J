@@ -188,6 +188,8 @@ class ClosedPlanTests(unittest.TestCase):
                 self.assertIn(expected, [d['code'] for d in self.plan(a, b)['diagnostics']])
 
     def test_promoted_types_and_rejections(self):
+        self.assertEqual(promoted_slot({'type': scalar('Int')}), 'c_int')
+        self.assertEqual(promoted_slot({'type': scalar('UInt')}), 'c_uint')
         for kind in ['Int', 'UInt', 'Long', 'ULong', 'LongLong', 'ULongLong', 'Double']:
             self.assertIsInstance(promoted_slot({'type': scalar(kind)}), str)
         for kind in ['Float', 'UShort', 'UChar', 'Bool', 'LongDouble', 'Int128', 'UInt128']:

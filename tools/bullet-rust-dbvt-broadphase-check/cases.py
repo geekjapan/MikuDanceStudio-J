@@ -1,4 +1,3 @@
-"""Immutable operation histories for the default-owned broadphase."""
 import struct
 
 

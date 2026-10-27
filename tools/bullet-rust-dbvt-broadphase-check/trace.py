@@ -1,4 +1,3 @@
-"""Strict checkpoint grammar. Semantic differences remain inspectable valid rows."""
 import json
 
 
@@ -146,7 +145,6 @@ def validate_profile(raw, policy):
 
 
 def validate_allocator(raw, rows, mode, profile):
-    """Check actual callback receipts before any native rank is trusted."""
     require(mode in ['ascending', 'descending', 'alternating', 'ordinary'], 'allocator mode')
     require(type(raw) is bytes and raw, 'required allocator receipt')
     records = [json.loads(line, object_pairs_hook=object_fields,
@@ -193,7 +191,7 @@ def validate_allocator(raw, rows, mode, profile):
         require(type(record['events']) is list, 'allocator events array')
         if not controlled:
             require(counters == [0, 0, 0, 0] and record['events'] == [], 'ordinary callbacks disabled')
-        ordinals = previous.copy()
+        minimum_callback_counts = previous.copy()
         freed = set()
         for event in record['events']:
             require(type(event) is dict and event.get('op') in ['alloc', 'free'], 'allocator event operation')
@@ -203,8 +201,8 @@ def validate_allocator(raw, rows, mode, profile):
             require(event['route'] == 'raw', 'actual callback route')
             counter = 0 if alloc else 1
             integer(event['ordinal'], 1)
-            require(ordinals[counter] < event['ordinal'] <= counters[counter], 'allocator callback ordinal/delta')
-            ordinals[counter] = event['ordinal']
+            require(minimum_callback_counts[counter] < event['ordinal'] <= counters[counter], 'allocator callback ordinal/delta')
+            minimum_callback_counts[counter] = event['ordinal']
             pointer = event['pointer']
             integer(pointer, 1)
             if alloc:
@@ -226,9 +224,8 @@ def validate_allocator(raw, rows, mode, profile):
                 require(pointer in live, 'unknown or double arena free')
                 live.remove(pointer)
                 freed.add(pointer + 16)
-                # Hidden fallback frees need allocations beyond the surviving arena ledger.
-                ordinals[0] = max(ordinals[0], ordinals[1] + len(live))
-                require(ordinals[0] <= counters[0], 'allocator counter history')
+                minimum_callback_counts[0] = max(minimum_callback_counts[0], minimum_callback_counts[1] + len(live))
+                require(minimum_callback_counts[0] <= counters[0], 'allocator counter history')
         require(counters[0] - counters[1] >= len(live), 'allocator counter history')
         if not trailer:
             active = set()

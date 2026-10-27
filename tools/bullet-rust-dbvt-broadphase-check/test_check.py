@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Native-free helper checks; all guards must survive python -O."""
 import copy
 import json
 from pathlib import Path

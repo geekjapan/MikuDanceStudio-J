@@ -89,5 +89,17 @@ class HelperTests(unittest.TestCase):
                         self.assertEqual(stderr.getvalue(), (out / 'cwd-stderr.log').read_bytes().decode() + '\n')
 
 
+    def test_all_profile_fields_and_short_select_are_rejected(self):
+        valid = profile('1', '1', '1', '1')
+        for line in valid.splitlines():
+            key, value = line.split(b'=')
+            broken = valid.replace(line, key + b'=' + (b'0' if value == b'1' else b'1'))
+            with self.subTest(key=key), self.assertRaises(AssertionError):
+                check.validate_profile(broken, 'sse')
+        for rows in [b'', b'x\nx\nx\n']:
+            with self.subTest(rows=rows), self.assertRaisesRegex(AssertionError, 'incomplete directed Select capture'):
+                check.validate_select(rows, 'generic')
+
+
 if __name__ == '__main__':
     unittest.main()

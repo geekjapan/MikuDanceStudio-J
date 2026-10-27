@@ -1,5 +1,7 @@
 //! Can also run with rustc --test and only the pure mds-crtmath rlib.
 
+#[path = "pure_bullet/axis_sweep.rs"]
+mod axis_sweep;
 #[path = "pure_bullet/body_kernel.rs"]
 mod body_kernel;
 #[path = "../src/core/mod.rs"]

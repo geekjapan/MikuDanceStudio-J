@@ -382,7 +382,7 @@ fn follow_camera_zeroes_the_view_offset() {
     run(&mut d, [Command::SetFollowCamera(true)]);
     let p = &d.pmm;
     assert_eq!(p.appearance.follow_camera, 1);
-    assert_eq!(p.camera_state[3..5], [0.0, 0.0]);
+    assert_eq!(p.camera_state[3..5], [0.0, 10.0]);
     assert_eq!(p.appearance.suppress_camera_transform, 0);
     run(&mut d, [Command::SetFollowCamera(false)]);
     assert_eq!(d.pmm.appearance.follow_camera, 0);

@@ -1,0 +1,41 @@
+name: Native va_list prerequisite experiment
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - tools/vkd3d-valist-probe/**
+      - .github/workflows/vkd3d-valist-probe.yml
+  pull_request:
+    paths:
+      - tools/vkd3d-valist-probe/**
+      - .github/workflows/vkd3d-valist-probe.yml
+permissions:
+  contents: read
+jobs:
+  native-consumer:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            expect: apple-arm64
+          - os: ubuntu-24.04
+            expect: linux-x64
+          - os: ubuntu-24.04-arm
+            expect: linux-arm64
+          - os: windows-2025
+            expect: windows-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned stable Rust
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Probe actual native callback
+        run: python tools/vkd3d-valist-probe/run.py --out evidence --expect ${{ matrix.expect }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-valist-${{ matrix.expect }}
+          path: evidence
+          if-no-files-found: error

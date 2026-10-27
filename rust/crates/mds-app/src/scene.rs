@@ -21,7 +21,8 @@ use std::sync::Arc;
 pub const BACKGROUND: [u8; 4] = [255; 4];
 
 /// Where a path as the PMM stores it is on disk: the stored path when it exists (with `\` as the
-/// separator of the system), else the file of that name in `dir`.
+/// separator of the system), else the file of that name in `dir`. Lookup ignores case after
+/// exact direct candidates. Stored document strings are never rewritten.
 pub fn resolve(dir: &Path, stored: &str) -> PathBuf {
     // A path stored with `\` separators names the same file on a system with `/` ones.
     let native = stored.replace('\\', std::path::MAIN_SEPARATOR_STR);
@@ -32,7 +33,13 @@ pub fn resolve(dir: &Path, stored: &str) -> PathBuf {
     {
         return direct.to_path_buf();
     }
-    dir.join(stored.rsplit(['\\', '/']).next().unwrap_or(stored))
+    for candidate in [stored, &native].map(Path::new) {
+        if let Some(path) = mds_formats::path::resolve_path_ci(candidate) {
+            return path;
+        }
+    }
+    let name = stored.rsplit(['\\', '/']).next().unwrap_or(stored);
+    mds_formats::path::resolve_ci(dir, name).unwrap_or_else(|| dir.join(name))
 }
 
 /// The bytes of a model path as the PMM stores it.
@@ -43,7 +50,10 @@ pub fn read_model(dir: &Path, stored: &str) -> Result<Vec<u8>, String> {
 /// A reader of the texture names a file at `file` stores (relative to its folder, `\` or `/`).
 fn beside(file: &Path) -> impl Fn(&str) -> Option<Vec<u8>> + '_ {
     let folder = file.parent().unwrap_or(Path::new("."));
-    move |name| std::fs::read(folder.join(name.replace('\\', "/"))).ok()
+    move |name: &str| {
+        let path = folder.join(name.replace('\\', "/"));
+        std::fs::read(mds_formats::path::resolve_path_ci(&path)?).ok()
+    }
 }
 
 /// One mesh per document model, in PMM order, with its textures and edge scale.

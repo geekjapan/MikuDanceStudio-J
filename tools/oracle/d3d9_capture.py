@@ -38,13 +38,19 @@ def save_report(out, report):
 
 
 def copy_checked(source, target, manifest):
-    expected = digest(source)
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
         raise FileExistsError(f"Refusing to overwrite {target}")
+    entry = {"source": str(source), "copy": str(target), "sha256": None}
+    manifest.append(entry)
+    try:
+        expected = digest(source)
+    except OSError as error:
+        entry["initial_error"] = str(error)
+        raise
+    entry["sha256"] = expected
     shutil.copy2(source, target)
     actual = digest(target)
-    manifest.append({"source": str(source), "copy": str(target), "sha256": expected})
     if actual != expected:
         raise ValueError(f"Copy hash mismatch: {source} -> {target}")
 
@@ -122,44 +128,69 @@ def capture(root, build, out, prepare=False):
                 raise ValueError("Cannot identify source revision")
         if prepare:
             report["cause"] = "prepared; native capture has not run"
-            return 0
-        stage = out / "runtime"
-        stage.mkdir(exist_ok=False)
-        for name in ("MikuDanceStudio.exe", "d3d9_capability.exe"):
-            copy_checked(build / name, stage / name, report["copies"])
-        for source in sorted(build.glob("*.dll")):
-            copy_checked(source, stage / source.name, report["copies"])
-        for relative in ASSETS:
-            copy_checked(root / relative, stage / Path(relative).name, report["copies"])
-        save_report(out, report)
-        pmm = stage / "selfshadow.pmm"
-        commands = (
-            ("capability", [stage / "d3d9_capability.exe"]),
-            ("frames", [stage / "MikuDanceStudio.exe", "--mds-frame-dump", pmm, out / "frames", "0", "30"]),
-            ("edge", [stage / "MikuDanceStudio.exe", "--mds-edge-probe", pmm, out / "edge" / "selfshadow.edge.txt", "0", "30"]),
-        )
-        for name, command in commands:
-            report["commands"].append(run_command(command, out / name))
+        else:
+            stage = out / "runtime"
+            stage.mkdir(exist_ok=False)
+            for name in ("MikuDanceStudio.exe", "d3d9_capability.exe"):
+                copy_checked(build / name, stage / name, report["copies"])
+            for source in sorted(build.glob("*.dll")):
+                copy_checked(source, stage / source.name, report["copies"])
+            for relative in ASSETS:
+                copy_checked(root / relative, stage / Path(relative).name, report["copies"])
             save_report(out, report)
-        if any(command["status"] != "PASS" for command in report["commands"]):
-            raise ValueError("Native command failed/unsupported or timed out; see retained command and stdout/stderr files")
-        capability = (out / "capability" / "stdout.txt").read_text(encoding="utf-8", errors="replace")
-        if "diagnostic_result=supported;" not in capability:
-            raise ValueError("Missing strict native capability result")
-        validate_outputs(out)
-        for entry in report["copies"]:
-            if digest(Path(entry["source"])) != entry["sha256"] or digest(Path(entry["copy"])) != entry["sha256"]:
-                raise ValueError(f"Source or staged file changed: {entry['source']}")
-        report.update(status="PASS", cause="Capability and unchanged-app frame/edge capture completed; not a parity result")
-        return 0
+            pmm = stage / "selfshadow.pmm"
+            commands = (
+                ("capability", [stage / "d3d9_capability.exe"]),
+                ("frames", [stage / "MikuDanceStudio.exe", "--mds-frame-dump", pmm, out / "frames", "0", "30"]),
+                ("edge", [stage / "MikuDanceStudio.exe", "--mds-edge-probe", pmm, out / "edge" / "selfshadow.edge.txt", "0", "30"]),
+            )
+            for name, command in commands:
+                report["commands"].append(run_command(command, out / name))
+                save_report(out, report)
+            if any(command["status"] != "PASS" for command in report["commands"]):
+                raise ValueError("Native command failed/unsupported or timed out; see retained command and stdout/stderr files")
+            capability = (out / "capability" / "stdout.txt").read_text(encoding="utf-8", errors="replace")
+            if "diagnostic_result=supported;" not in capability:
+                raise ValueError("Missing strict native capability result")
+            validate_outputs(out)
+            report.update(status="PASS", cause="Capability and unchanged-app frame/edge capture completed; not a parity result")
     except (OSError, ValueError, subprocess.SubprocessError) as error:
-        report.update(status="FAIL", cause=str(error))
-        return 1
+        report.update(status="FAIL", cause=str(error), original_error=str(error))
     finally:
-        report["files"] = [{"path": str(path.relative_to(out)), "bytes": path.stat().st_size,
-                            "sha256": digest(path)} for path in sorted(out.rglob("*"))
-                           if path.is_file() and path.name not in ("report.json", "report.json.tmp")]
+        checks = []
+        for entry in report["copies"]:
+            for role in ("source", "copy"):
+                check = {"role": role, "path": entry[role],
+                         "initial_sha256": entry["sha256"], "final_sha256": None}
+                if "initial_error" in entry:
+                    check["initial_error"] = entry["initial_error"]
+                try:
+                    check["final_sha256"] = digest(Path(entry[role]))
+                    check["status"] = ("unchanged" if check["final_sha256"] == entry["sha256"]
+                                       else "changed" if entry["sha256"] else "no_initial_hash")
+                except OSError as error:
+                    check.update(status="missing" if isinstance(error, FileNotFoundError) else "unreadable",
+                                 error=str(error))
+                checks.append(check)
+        closure_failed = any(check["status"] != "unchanged" for check in checks)
+        report["closure"] = {"status": "FAIL" if closure_failed else "PASS",
+                             "tracked_copies": len(report["copies"]), "checks": checks}
+        if closure_failed:
+            report.update(status="FAIL", cause=report.get("original_error", report["cause"]) +
+                          "; Source or staged file closure failed; see closure checks")
+        report["files"] = []
+        for path in sorted(out.rglob("*")):
+            if path.is_file() and path.name not in ("report.json", "report.json.tmp"):
+                entry = {"path": str(path.relative_to(out))}
+                try:
+                    entry.update(bytes=path.stat().st_size, sha256=digest(path))
+                except OSError as error:
+                    entry["error"] = str(error)
+                    report.update(status="FAIL", cause=report["cause"] +
+                                  f"; Artifact hash failed: {path}: {error}")
+                report["files"].append(entry)
         save_report(out, report)
+    return 0 if report["status"] == "PASS" or report["cause"] == "prepared; native capture has not run" else 1
 
 
 def main():

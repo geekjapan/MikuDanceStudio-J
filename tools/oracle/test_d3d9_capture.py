@@ -52,7 +52,13 @@ class CaptureBoundary(unittest.TestCase):
             self.assertEqual(report["status"], "FAIL")
             self.assertIn("chain8.pmd", report["cause"])
             self.assertEqual(report["commands"], [])
-            self.assertEqual(len(report["copies"]), len(capture.SOURCES))
+            self.assertEqual(len(report["copies"]), len(capture.SOURCES) + 1)
+            self.assertEqual(report["closure"]["tracked_copies"], len(capture.SOURCES) + 1)
+            self.assertEqual(len(report["closure"]["checks"]), 2 * (len(capture.SOURCES) + 1))
+            missing = report["closure"]["checks"][-2]
+            self.assertEqual(missing["status"], "missing")
+            self.assertIsNone(missing["initial_sha256"])
+            self.assertIn("initial_error", missing)
             self.assertTrue(report["files"])
 
     def test_prepared_hash_drift_is_failure(self):
@@ -102,6 +108,97 @@ class CaptureBoundary(unittest.TestCase):
             self.assertTrue((out / "edge" / "stdout.txt").exists())
             with self.assertRaisesRegex(FileExistsError, "existing runtime"):
                 capture.capture(root, build, out)
+
+    def test_partial_staging_checks_known_files_after_setup_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, out = Path(tmp) / "repo", Path(tmp) / "evidence"
+            root.mkdir()
+            for name in capture.SOURCES + capture.ASSETS:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("source")
+            real_run = capture.run_command
+            with patch.object(capture, "run_command", side_effect=lambda command, directory:
+                              real_run([sys.executable, "-c", "print('fixture-revision')"], directory)):
+                self.assertEqual(capture.capture(root, root / "missing-build", out), 1)
+            report = json.loads((out / "report.json").read_text())
+            self.assertIn("MikuDanceStudio.exe", report["original_error"])
+            self.assertIn(report["original_error"], report["cause"])
+            self.assertEqual(len(report["closure"]["checks"]), 2 * len(report["copies"]))
+            self.assertTrue(all(check["status"] == "unchanged" for check in report["closure"]["checks"][:-2]))
+            self.assertTrue(all(check["status"] == "missing" for check in report["closure"]["checks"][-2:]))
+
+    def test_final_closure_on_actual_process_failures_and_success(self):
+        for role in ("source", "copy"):
+            for failure in ("nonzero", "timeout", "outputs", "success"):
+                for mutation in ("changed", "missing", "unreadable", "unchanged"):
+                    with self.subTest(role=role, failure=failure, mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                        root, out, build = (Path(tmp).resolve() / name for name in ("repo", "evidence", "build"))
+                        root.mkdir()
+                        build.mkdir()
+                        for name in capture.SOURCES + capture.ASSETS:
+                            path = root / name
+                            path.parent.mkdir(parents=True, exist_ok=True)
+                            path.write_text("source")
+                        for name in ("MikuDanceStudio.exe", "d3d9_capability.exe"):
+                            (build / name).write_text("stand-in executable")
+                        target = root / capture.ASSETS[0] if role == "source" else out / "runtime" / Path(capture.ASSETS[0]).name
+                        initial = capture.digest(root / capture.ASSETS[0])
+                        real_run = capture.run_command
+
+                        def stand_in_process(command, directory):
+                            body = "from pathlib import Path; import struct, time; print('diagnostic_result=supported;', flush=True); "
+                            if directory.name == "frames":
+                                body += f"target = Path({str(target)!r}); "
+                                if mutation == "changed":
+                                    body += "target.write_text('changed'); "
+                                elif mutation == "missing":
+                                    body += "target.unlink(); "
+                                elif mutation == "unreadable":
+                                    body += "target.unlink(); target.mkdir(); "
+                                if failure == "nonzero":
+                                    body += "raise SystemExit(7)"
+                                elif failure == "timeout":
+                                    body += "time.sleep(5)"
+                                elif failure == "success":
+                                    png = b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + struct.pack(">II", 640, 360) + b"\0" * 9 + b"\0\0\0\0IEND\xaeB`\x82"
+                                    body += f"[Path('selfshadow-' + str(frame) + '.png').write_bytes({png!r}) for frame in (0, 30)]"
+                            elif directory.name == "edge":
+                                body += "Path('selfshadow.edge.txt').write_text('mds-edge-probe 1\\n0 shadow 2048 2048 1\\n30 shadow 2048 2048 1\\n')"
+                            return real_run([sys.executable, "-c", body], directory,
+                                            0.2 if failure == "timeout" and directory.name == "frames" else 10)
+
+                        with patch.object(capture, "run_command", side_effect=stand_in_process):
+                            self.assertEqual(capture.capture(root, build, out),
+                                             0 if failure == "success" and mutation == "unchanged" else 1)
+                        report = json.loads((out / "report.json").read_text())
+                        self.assertEqual(report["status"], "PASS" if failure == "success" and mutation == "unchanged" else "FAIL")
+                        self.assertEqual(report["closure"]["status"], "PASS" if mutation == "unchanged" else "FAIL")
+                        checks = [check for check in report["closure"]["checks"]
+                                  if check["path"] == str(target) and check["role"] == role]
+                        self.assertTrue(checks)
+                        for check in checks:
+                            self.assertEqual(check["initial_sha256"], initial)
+                            self.assertEqual(check["status"], mutation)
+                            if mutation in ("changed", "unchanged"):
+                                self.assertEqual(check["final_sha256"], capture.digest(target))
+                            else:
+                                self.assertIsNone(check["final_sha256"])
+                                self.assertIn("error", check)
+                        self.assertEqual(len(report["closure"]["checks"]), 2 * len(report["copies"]))
+                        self.assertEqual(len(report["commands"]), 4)
+                        if failure in ("nonzero", "timeout"):
+                            self.assertIn("Native command failed", report["original_error"])
+                            self.assertEqual(report["commands"][2]["status"], "TIMEOUT" if failure == "timeout" else "FAIL")
+                        elif failure == "outputs":
+                            self.assertIn("selfshadow-0.png", report["original_error"])
+                        else:
+                            self.assertNotIn("original_error", report)
+                            self.assertTrue(all(command["status"] == "PASS" for command in report["commands"]))
+                        if failure != "success":
+                            self.assertIn(report["original_error"], report["cause"])
+                        if mutation != "unchanged":
+                            self.assertIn("closure failed", report["cause"])
 
     def test_copy_hash_and_no_overwrite(self):
         with tempfile.TemporaryDirectory() as tmp:

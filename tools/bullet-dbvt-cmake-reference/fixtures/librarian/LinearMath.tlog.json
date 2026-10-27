@@ -1,0 +1,12 @@
+{
+  "run": 40447023256,
+  "artifact": 12709290514,
+  "artifact_sha256": "ca9738ccaf91c9cdf62655c7c3368ec48c38eaafee40f831916ffaf8ab78f795",
+  "head": "62a00441d4b4152d05469f4f627e2f7d99d1508c",
+  "tlog": "native-build-metadata/LinearMath/LinearMath.dir/Release/LinearMath.tlog/Lib.command.1.tlog",
+  "sha256": "81ef50f0b965400498ae8878dfdbf316e0a15540e120af5b544fdc27e51ae6b6",
+  "argument_lines": 5,
+  "argv_sha256": "e1c4f78673e22171095a98bea869c4128ac15074f8558069cdafa38db8eb9e31",
+  "input_objects": 5,
+  "failure_line": 3
+}

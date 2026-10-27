@@ -9,6 +9,36 @@ import closed_format_facts as F
 from full_compiler import UNITS
 
 
+def constructor_fixture_fields(graph):
+    mapping = {'pointer': 'Pointer', 'function': 'Function', 'array': 'ConstantArray', 'struct': 'Struct',
+               'union': 'Union', 'enum': 'Enum', 'typedef': 'Typedef', 'typeof': 'TypeOf', 'paren': 'Paren',
+               'elaborated': 'Elaborated', 'decayed': 'Decayed', 'auto': 'Auto', 'attributed': 'Attributed',
+               'builtin_function': 'BuiltinFn'}
+    for row in graph['types']:
+        row.setdefault('native_shape', mapping.get(row.get('kind'), row.get('kind')))
+        if row['native_shape'] == 'Attributed':
+            row.setdefault('counted_by', None)
+    for row in graph['declarations']:
+        if row['kind'] == 'variable':
+            row.setdefault('initializer', None)
+    for row in graph['expressions']:
+        shape, children = row['native_shape'], row['children']
+        if shape in ('Unary', 'ConstantExpr', 'ImplicitCast', 'ExplicitCast', 'Paren', 'CompoundLiteral',
+                     'ImaginaryLiteral', 'Predefined', 'VAArg', 'Member'):
+            operands = {'child': children[0]}
+        elif shape in ('Binary', 'ArraySubscript', 'BinaryConditional'):
+            operands = dict(zip(('left', 'right'), children))
+        elif shape in ('Conditional', 'Choose'):
+            operands = dict(zip(('condition', 'then', 'else'), children))
+        elif shape == 'Call':
+            operands = dict(callee=children[0], arguments=children[1:])
+        elif shape == 'Statements':
+            operands = dict(body=row['statement_body'])
+        else:
+            operands = row.get('operands', {})
+        row['operands'] = operands
+
+
 def coherent_graph_fixture(facts, inventory):
     import copy
     q = lambda ident: dict(type_id=ident, const=False, volatile=False, restrict=False)
@@ -84,7 +114,7 @@ def coherent_graph_fixture(facts, inventory):
                           declarations=list(variables.values()), types=list(types.values()), qualified_types=qualified,
                           declaration_order=list(variables))
     facts['schema'] = 2
-    # Use the graph projections to populate the coherent positive transport.
+    constructor_fixture_fields(facts['graph'])
     graph = F.ReportGraph(facts)
     inventory.clear()
     inventory.update(graph.inventory(facts))
@@ -527,10 +557,17 @@ class ClosedFormatFactsTests(unittest.TestCase):
         self.reject_coordinated(nested_promotion, 'expression type contradicts promotion chain')
 
     @staticmethod
-    def refresh_graph_views(data):
+    def refresh_graph_views(data, *, prepare=True, validate=True):
         import copy
         facts = data['on/0/blob.closed-format.json']
-        graph = F.ReportGraph(facts)
+        if prepare:
+            constructor_fixture_fields(facts['graph'])
+        if validate:
+            graph = F.ReportGraph(facts)
+        else:
+            from unittest.mock import patch
+            with patch.object(F.ReportGraph, 'check_raw_constructors'):
+                graph = F.ReportGraph(facts)
         inventory = graph.inventory(facts)
         data['on/0/blob.variadic.json'] = inventory
         facts['declarations'] = copy.deepcopy(inventory['declarations'])
@@ -765,7 +802,6 @@ class ClosedFormatFactsTests(unittest.TestCase):
                     self.native_record_positive(data)
                     facts = data['on/0/blob.closed-format.json']
                     raw = facts['graph']['expressions']
-                    # Both extra census kinds have concrete raw roots outside the selected closure.
                     reference = dict(next(e for e in raw if e['id'] == 999999), id=999998)
                     raw.append(reference)
                     arg = dict(next(e for e in raw if e['id'] == 1001), id=999997, native_shape='VAArg', kind='unsupported',
@@ -781,6 +817,161 @@ class ClosedFormatFactsTests(unittest.TestCase):
                     else:
                         rows.append(json.loads(json.dumps(rows[-1])))
                 self.reject_coordinated(mutate, 'full inventory graph projection')
+
+    def test_complete_raw_constructor_counterexamples_reject_after_refresh(self):
+        for case, reason in enumerate(('raw type mandatory edges', 'raw type mandatory edges',
+                                       'raw type mandatory edges', 'raw expression mandatory edges',
+                                       'mandatory statement role')):
+            def mutate(data, case=case):
+                if case in (0, 1):
+                    self.native_record_positive(data) if case == 0 else self.statement_subtree_positive(data)
+                facts = data['on/0/blob.closed-format.json']
+                graph = facts['graph']
+                if case in (0, 1):
+                    row = next(r for r in graph['types'] if r['type_id'] == 3)
+                    if case == 0:
+                        row['df_children'] = []
+                        row['structural_children'] = []
+                    else:
+                        row['df_children'].append(F.ReportGraph.edge('expression', 1023))
+                        row['structural_children'].append(F.ReportGraph.edge('expression', 1023))
+                elif case == 2:
+                    next(r for r in graph['types'] if r['type_id'] == 200001)['df_children'] = []
+                elif case == 3:
+                    row = next(r for r in graph['expressions'] if r['id'] == 9900000)
+                    row.update(df_children=[F.ReportGraph.edge('type', 1)],
+                               structural_children=[F.ReportGraph.edge('type', 1)], children=[], edge_count=0)
+                else:
+                    next(r for r in graph['statements'] if r['id'] == 91100).update(kind='return', native_shape='ReturnValue')
+                self.refresh_graph_views(data, prepare=False, validate=False)
+            self.reject_coordinated(mutate, reason)
+
+    def test_neighboring_raw_type_and_declaration_constructors(self):
+        import copy
+        facts = F.loads((self.root / 'on/0/blob.closed-format.json').read_bytes())
+        edge = F.ReportGraph.edge
+        q = lambda i: dict(type_id=i, const=False, volatile=False, restrict=False)
+        graph = facts['graph']
+        types = [
+            dict(native_shape='Reference', original=q(1)), dict(native_shape='BlockPointer', original=q(1)),
+            dict(native_shape='Vector', original=q(1)), dict(native_shape='Atomic', original=q(1)),
+            dict(native_shape='Complex', element_type=1), dict(native_shape='TypeOfExpr', expression=1001),
+            dict(native_shape='VariableArray', element_type=1, count_expression=1001),
+            dict(native_shape='VariableArray', element_type=1, count_expression=None),
+            dict(native_shape='ConstantArray', kind='array', element_type=1, element=q(1), length=2),
+            dict(native_shape='IncompleteArray', kind='array', element_type=1, length=None),
+            dict(native_shape='Attributed', kind='attributed', original=q(1), counted_by=1001),
+            dict(native_shape='Elaborated', kind='elaborated', inner=1),
+            dict(native_shape='TypeOf', kind='typeof', inner=1),
+            dict(native_shape='BFloat16'), dict(native_shape='BuiltinFn', kind='builtin_function')]
+        for i, row in enumerate(types, 880000):
+            row['type_id'] = i
+            shape = row['native_shape']
+            children = ([] if shape in ('Elaborated', 'BFloat16', 'BuiltinFn') else
+                        [edge('expression', 1001)] if shape == 'TypeOfExpr' else [edge('type', 1)])
+            if shape in ('VariableArray', 'Attributed') and row.get('count_expression', row.get('counted_by')) is not None:
+                children += [edge('expression', 1001)]
+            row.update(df_children=copy.deepcopy(children), structural_children=copy.deepcopy(children))
+            graph['types'].append(row)
+        for i, (shape, field, target) in enumerate((('NonCanonicalDecl', 'canonical_decl', 1),
+                                                   ('StaticAssert', 'assert_expr', 1001),
+                                                   ('MacroObject', None, None), ('MacroFunction', None, None)), 890000):
+            children = [] if field is None else [edge('declaration' if field == 'canonical_decl' else 'expression', target)]
+            row = dict(id=i, kind='unsupported', native_shape=shape, parameter_owners=[],
+                       df_children=copy.deepcopy(children), structural_children=copy.deepcopy(children))
+            if field:
+                row[field] = target
+            graph['declarations'].append(row)
+            graph['declaration_order'].append(i)
+        F.ReportGraph(facts)
+        for field, rows in (('types', types), ('declarations', graph['declarations'][-4:])):
+            for row in rows:
+                for projection in ('df_children', 'structural_children'):
+                    original = copy.deepcopy(row[projection])
+                    mutations = [[], [edge('expression', 1002)], original + [edge('type', 1)]]
+                    if len(original) > 1:
+                        mutations.append(list(reversed(original)))
+                    for changed in mutations:
+                        if changed == original:
+                            continue
+                        with self.subTest(field=field, shape=row['native_shape'], projection=projection, changed=changed):
+                            row[projection] = changed
+                            with self.assertRaisesRegex(F.FactsError, 'raw type mandatory edges|raw declaration mandatory edges'):
+                                F.ReportGraph(facts)
+                    row[projection] = original
+
+    def test_neighboring_expression_constructors_and_raw_statement_order(self):
+        import copy
+        facts = F.loads((self.root / 'on/0/blob.closed-format.json').read_bytes())
+        edge = F.ReportGraph.edge
+        raw = facts['graph']['expressions']
+        base = next(e for e in raw if e['id'] == 9900000)
+        rows = []
+        cases = [('ConstantExpr', dict(child=1001), [edge('expression', 1001)]),
+                 ('Predefined', dict(child=1001), [edge('expression', 1001)]),
+                 ('UnaryType', dict(expression=None), []),
+                 ('OffsetOf', dict(type=1, index=1001), []),
+                 ('OffsetOf', dict(type=None, index=None), []),
+                 ('ShuffleVector', dict(elements=[1001, 1002]), []),
+                 ('ConvertVector', dict(elements=[1002, 1001]), []),
+                 ('InitList', dict(initializers=[1002, 1001]), [edge('expression', 1002), edge('expression', 1001)]),
+                 ('Atomic', dict(ptr=1001, order=1002, val1=1001, order_fail=None, val2=None, weak=1002),
+                  [edge('expression', i) for i in (1001, 1002, 1001, 1002)]),
+                 ('Conditional', dict(condition=1001, then=1002, **{'else': 1001}),
+                  [edge('expression', i) for i in (1001, 1002, 1001)])]
+        for i, (shape, operands, df) in enumerate(cases, 885000):
+            row = copy.deepcopy(base)
+            row.update(id=i, native_shape=shape, operands=operands, df_children=copy.deepcopy(df))
+            structural = copy.deepcopy(df)
+            if shape == 'UnaryType':
+                row.update(kind='unary_type', argument_qualified_type=base['qualified_type'],
+                           argument_type=F.ReportGraph(facts).type_view(base['qualified_type'], True))
+                structural = [edge('type', 1)]
+            elif shape == 'OffsetOf' and operands['type'] is not None:
+                structural = [edge('type', 1), edge('expression', 1001)]
+            elif shape in ('ShuffleVector', 'ConvertVector'):
+                structural = [edge('expression', i) for i in operands['elements']]
+            row.update(structural_children=structural, children=[e['id'] for e in structural if e['kind'] == 'expression'])
+            row['edge_count'] = len(row['children'])
+            raw.append(row)
+            rows.append(row)
+        F.ReportGraph(facts)
+        for row in rows:
+            for projection in ('df_children', 'structural_children'):
+                original = copy.deepcopy(row[projection])
+                for changed in ([], [edge('type', 1)], original + [edge('expression', 1001)], list(reversed(original))):
+                    if changed == original:
+                        continue
+                    with self.subTest(shape=row['native_shape'], projection=projection, changed=changed):
+                        row[projection] = changed
+                        with self.assertRaisesRegex(F.FactsError, 'raw expression mandatory edges'):
+                            F.ReportGraph(facts)
+                row[projection] = original
+        statement = next(r for r in facts['graph']['statements'] if r['id'] == 91100)
+        statement.update(kind='loop', native_shape='DoWhile', edge_count=2,
+                         children=[dict(role='body', kind='statement', id=91100), dict(role='condition', kind='expression', id=1001)],
+                         df_children=[edge('statement', 91100), edge('expression', 1001)],
+                         structural_children=[edge('statement', 91100), edge('expression', 1001)])
+        F.ReportGraph(facts)
+        statement['children'].reverse()
+        statement['df_children'].reverse()
+        statement['structural_children'].reverse()
+        with self.assertRaisesRegex(F.FactsError, 'statement role order'):
+            F.ReportGraph(facts)
+
+    def test_producer_finalization_returns_views_with_qualified_snapshot(self):
+        patch = (Path(__file__).parent / 'patches/c2rust-win64-abi.patch').read_text()
+        source = patch.split('+++ b/c2rust-transpile/src/c_ast/closed_variadic.rs\n', 1)[1].split('diff --git ', 1)[0]
+        source = '\n'.join(line[1:] for line in source.splitlines() if line.startswith('+'))
+        finalizer = source.split('    fn finalize_expression_views(', 1)[1].split('    fn facts(', 1)[0]
+        self.assertLess(finalizer.index('self.expression(*id)'), finalizer.index('self.qualified.borrow()'))
+        self.assertIn('(expressions, qualified_types)', finalizer)
+        facts = source.split('    fn facts(', 1)[1].split('\nimpl TypedAstContext', 1)[0]
+        self.assertIn('let (expression_views, qualified_types) = self.finalize_expression_views();', facts)
+        self.assertNotIn('self.expression(', facts)
+        self.assertNotIn('self.qualified.borrow()', facts)
+        self.assertIn('fn closed_format_native_record_identity_is_compiler_owned', source)
+        self.assertIn('assert_eq!(qualified.len(), graph.qualified.borrow().len())', source)
 
     def test_old_facts_schema_is_rejected(self):
         self.reject_coordinated(lambda data: data['on/0/blob.closed-format.json'].__setitem__('schema', 1),

@@ -1884,7 +1884,7 @@ diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/sr
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_variadic.rs
-@@ -0,0 +1,2089 @@
+@@ -0,0 +1,2156 @@
 +use super::*;
 +use serde_json::{Value, json};
 +
@@ -2205,6 +2205,25 @@ new file mode 100644
 +                CTypeKind::LongDouble => row["kind"] = json!("LongDouble"),
 +                _ => {}
 +            }
++            let shape = format!("{:?}", ast[*id].kind);
++            row["native_shape"] = json!(shape.split('(').next().unwrap());
++            match &ast[*id].kind {
++                CTypeKind::ConstantArray(element, _) | CTypeKind::IncompleteArray(element) |
++                CTypeKind::Complex(element) => row["element_type"] = json!(element.0),
++                CTypeKind::VariableArray(element, count) => {
++                    row["element_type"] = json!(element.0);
++                    row["count_expression"] = json!(count.map(|e| e.0));
++                }
++                CTypeKind::Reference(q) | CTypeKind::BlockPointer(q) | CTypeKind::Vector(q, _) |
++                CTypeKind::Atomic(q) => row["original"] = Self::qualified_key(*q),
++                CTypeKind::Attributed(_, attr) => {
++                    row["counted_by"] = match attr {
++                        Some(Attribute::CountedBy(_, Some(e))) => json!(e.0), _ => Value::Null,
++                    };
++                }
++                CTypeKind::TypeOfExpr(e) => row["expression"] = json!(e.0),
++                _ => {}
++            }
 +            graph.edges((*id).into(), &mut row);
 +            graph.types.insert(*id, row);
 +        }
@@ -2336,6 +2355,18 @@ new file mode 100644
 +                };
 +                value["value"] = match number { ConstIntExpr::I(n) => json!(n), ConstIntExpr::U(n) => json!(n) };
 +            }
++            CDeclKind::NonCanonicalDecl { canonical_decl } => {
++                value["kind"] = json!("unsupported"); value["native_shape"] = json!("NonCanonicalDecl");
++                value["canonical_decl"] = json!(canonical_decl.0);
++            }
++            CDeclKind::StaticAssert { assert_expr, .. } => {
++                value["kind"] = json!("unsupported"); value["native_shape"] = json!("StaticAssert");
++                value["assert_expr"] = json!(assert_expr.0);
++            }
++            CDeclKind::MacroObject { .. } | CDeclKind::MacroFunction { .. } => {
++                value["kind"] = json!("unsupported");
++                value["native_shape"] = json!(if matches!(self.ast[id].kind, CDeclKind::MacroObject { .. }) { "MacroObject" } else { "MacroFunction" });
++            }
 +            _ => value["kind"] = json!("unsupported"),
 +        }
 +        value["diagnostic_location"] = json!(self.ast[id].begin_loc().map(|l| self.ast.loc_to_string(l)));
@@ -2430,6 +2461,30 @@ new file mode 100644
 +            }
 +            _ => {}
 +        }
++        value["operands"] = match &self.ast[id].kind {
++            CExprKind::Unary(_, _, e, _) | CExprKind::ConstantExpr(_, e, _) |
++            CExprKind::ImplicitCast(_, e, _, _, _) | CExprKind::ExplicitCast(_, e, _, _, _) |
++            CExprKind::Member(_, e, _, _, _) | CExprKind::Paren(_, e) |
++            CExprKind::CompoundLiteral(_, e) | CExprKind::ImaginaryLiteral(_, e) |
++            CExprKind::Predefined(_, e) | CExprKind::VAArg(_, e) => json!({"child": e.0}),
++            CExprKind::Binary(_, _, left, right, _, _) | CExprKind::ArraySubscript(_, left, right, _) |
++            CExprKind::BinaryConditional(_, left, right) => json!({"left": left.0, "right": right.0}),
++            CExprKind::Conditional(_, c, t, e) | CExprKind::Choose(_, c, t, e, _) =>
++                json!({"condition": c.0, "then": t.0, "else": e.0}),
++            CExprKind::UnaryType(_, _, expression, _) => json!({"expression": expression.map(|e| e.0)}),
++            CExprKind::Call(_, callee, args) => json!({"callee": callee.0, "arguments": args.iter().map(|a| a.0).collect::<Vec<_>>()}),
++            CExprKind::InitList(_, items, _, _) => json!({"initializers": items.iter().map(|e| e.0).collect::<Vec<_>>()}),
++            CExprKind::ShuffleVector(_, items) | CExprKind::ConvertVector(_, items) =>
++                json!({"elements": items.iter().map(|e| e.0).collect::<Vec<_>>()}),
++            CExprKind::Atomic { ptr, order, val1, order_fail, val2, weak, .. } =>
++                json!({"ptr": ptr.0, "order": order.0, "val1": val1.map(|e| e.0), "order_fail": order_fail.map(|e| e.0),
++                    "val2": val2.map(|e| e.0), "weak": weak.map(|e| e.0)}),
++            CExprKind::Statements(_, body) => json!({"body": body.0}),
++            CExprKind::OffsetOf(_, OffsetOfKind::Variable(q, _, index)) => json!({"type": q.ctype.0, "index": index.0}),
++            CExprKind::OffsetOf(_, OffsetOfKind::Constant(_)) => json!({"type": null, "index": null}),
++            CExprKind::Literal(..) | CExprKind::DeclRef(..) | CExprKind::ImplicitValueInit(..) |
++            CExprKind::BadExpr | CExprKind::DesignatedInitExpr(..) => json!({}),
++        };
 +        value["native_shape"] = json!(self.ast.format_expression_shape(id));
 +        value["diagnostic_location"] = json!(self.ast[id].begin_loc().map(|l| self.ast.loc_to_string(l)));
 +        value["location"] = self.location(id.0);
@@ -2442,6 +2497,12 @@ new file mode 100644
 +        value["effect_relation"] = json!({"state": "Unproved", "reason": "calls, writes, volatile access and conditional evaluation retained without commutativity proof"});
 +        if value["qualified_type"].is_null() { value["type_unproved"] = json!("importer expression has no qualified type"); }
 +        value
++    }
++
++    fn finalize_expression_views(&self) -> (std::collections::BTreeMap<CExprId, Value>, Vec<Value>) {
++        let expressions = self.expressions.keys().map(|id| (*id, self.expression(*id))).collect();
++        let qualified_types = self.qualified.borrow().values().cloned().collect();
++        (expressions, qualified_types)
 +    }
 +
 +    fn facts(&self, inventory: &Value) -> Value {
@@ -2552,14 +2613,15 @@ new file mode 100644
 +            pending.extend(iterators::report_children(self.ast, node).1);
 +        }
 +
-+        let expressions: Vec<_> = expressions.into_iter().map(|id| self.expression(id)).collect();
++        let (expression_views, qualified_types) = self.finalize_expression_views();
++        let expressions: Vec<_> = expressions.into_iter().map(|id| expression_views[&id].clone()).collect();
 +        let statements: Vec<_> = statements.into_iter().map(|id| self.statements[&id].clone()).collect();
 +        let variables: Vec<_> = declarations.into_iter().map(|id| self.variables[&id].clone()).collect();
 +        let native_record_identities: Vec<_> = variables.iter().filter(|row| row["native_va_list_record"] == true)
 +            .map(|row| json!({"declaration": row["id"], "identity": row["identity"]})).collect();
 +        let selected: HashSet<_> = expressions.iter().filter_map(|e| e["id"].as_u64()).collect();
 +        let unsupported_expressions: Vec<_> = self.expressions.iter().filter(|(_, row)| row["kind"] == "unsupported").map(|(id, row)| {
-+            json!({"expression": id.0, "native_shape": row["native_shape"], "type": self.expression(*id)["type"],
++            json!({"expression": id.0, "native_shape": row["native_shape"], "type": expression_views[id]["type"],
 +                "within_slice": selected.contains(&id.0), "location": row["location"],
 +                "relevance": {"state": "Unproved", "reason": if selected.contains(&id.0) {
 +                    "selected unsupported expression retains its complete structural children"
@@ -2569,9 +2631,6 @@ new file mode 100644
 +            json!({"expression": e["id"], "builtin": e["builtin"], "callee_declaration": e["callee_decl"],
 +                "operands": e["arguments"], "relation": {"state": "Unproved", "reason": "cursor state, forwarding, lifetime and repeated-use closure pending"}})
 +        }).collect();
-+        // Materialize every view before sealing the qualified normalization census.
-+        for id in self.expressions.keys() { self.expression(*id); }
-+        let qualified_types: Vec<_> = self.qualified.borrow().values().cloned().collect();
 +        json!({"schema": 2, "authorization": "analysis_only", "status": "CompleteReport", "unit": unit,
 +            "target": self.ast.target, "target_c_widths_bits": inventory["target_c_widths_bits"],
 +            "definitions": definitions, "function_edges": function_edges, "declarations": inventory["declarations"], "calls": calls,
@@ -3345,6 +3404,14 @@ new file mode 100644
 +        ast.c_decls.insert(CDeclId(60), not_located(declaration));
 +        ast.linker_names.insert(CDeclId(60), "owner".into());
 +        ast.c_stmts.insert(CStmtId(60), not_located(CStmtKind::Decls(vec![CDeclId(50)])));
++        ast.c_types.insert(CTypeId(4), not_located(CTypeKind::UInt));
++        ast.c_exprs.insert(CExprId(400), not_located(CExprKind::ImplicitValueInit(q(4))));
++        let graph = ReportGraph::capture(&ast, Path::new("body.c"));
++        assert!(graph.qualified.borrow().values().all(|row| row["source"]["type_id"] != 4));
++        let (views, qualified) = graph.finalize_expression_views();
++        assert_eq!(views[&CExprId(400)]["type"]["canonical"]["kind"], "UInt");
++        assert!(qualified.iter().any(|row| row["source"]["type_id"] == 4));
++        assert_eq!(qualified.len(), graph.qualified.borrow().len());
 +        let facts = ClosedFormatReport::capture(&ast, Path::new("body.c")).facts;
 +        assert_eq!(facts["native_record_identities"], json!([{
 +            "declaration": 20, "identity": ast.inventory_record_identity(CDeclId(20), 0)}]));

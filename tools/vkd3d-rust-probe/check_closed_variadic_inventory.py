@@ -315,6 +315,16 @@ def collect_cursor_fixture(tool, database, output, symbol):
     return proof
 
 
+def require_cursor_collision_coverage(controls):
+    labels = [row['case'] for row in controls['mutations_rejected']]
+    incoming = [label for label in labels if label.startswith('incoming-outside-closure-type-collision-')]
+    builtin = [label for label in labels if label.startswith('builtin-input-outside-closure-type-collision-')]
+    if (len(incoming) != 2 or len(set(incoming)) != 2
+            or len(builtin) != 3 or len(set(builtin)) != 3
+            or 'builtin-input-outside-closure-type-collision-all' not in builtin):
+        raise RuntimeError('actual positive cursor fixture collision coverage incomplete or duplicated')
+
+
 def check_cursor_cases(tool, root, clang, stage):
     fixture = Path(__file__).parent / 'fixtures/cursor-witness/pilot.c'
     results = {}
@@ -346,6 +356,7 @@ def check_cursor_cases(tool, root, clang, stage):
             inventory = json.loads(Path(pair['inventory']).read_text())
             from test_closed_variadic_plan import exercise_actual_cursor_payload
             payload_controls = exercise_actual_cursor_payload(inventory, original)
+            require_cursor_collision_coverage(payload_controls)
             mutations = {'actual-payload-controls': payload_controls}
             for name in ('unknown-builtin', 'unknown-cursor-reference', 'incomplete-body', 'call-set'):
                 witness = copy.deepcopy(original)

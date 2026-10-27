@@ -746,6 +746,36 @@ def exercise_actual_cursor_payload(inventory, witness):
         if candidate is not None:
             add('incoming-outside-closure-type-collision-' + str(expr['id']),
                 expression(expr['id'], lambda x, ident=candidate['type_id']: x.__setitem__('type_id', ident)))
+    endpoints = [r for r in witness['required_relations']['builtin_endpoints']
+                 if r['expression'] in body_ids]
+    candidate = None
+    for endpoint in endpoints:
+        ref = expressions[endpoint['reference']]
+        candidate = next((e for e in witness['expressions']
+            if e['id'] not in affected_expressions and type(e['type_id']) is int
+            and e['type_id'] > 0 and e['type_id'] not in relation_ids
+            and isinstance(e['type'], dict) and e['type'].get('canonical', {}).get('kind') in SCALARS), None)
+        if candidate is not None:
+            def retarget_builtin(inv, w, endpoint=endpoint, candidate=candidate):
+                source = endpoint['input']['type_id']
+                fresh = max(relation_ids | {e['type_id'] for e in w['expressions']
+                                            if type(e['type_id']) is int}) + 1000000
+                scalar_copies({}, w, lambda row: row.__setitem__('type_id', fresh)
+                              if type(row.get('type_id')) is int and row['type_id'] == source else None)
+                for field in ('types', 'roots'):
+                    row = copy.deepcopy(next(r for r in w['required_relations'][field] if r['type_id'] == fresh))
+                    row['type_id'] = candidate['type_id']
+                    w['required_relations'][field].append(row)
+                expression(endpoint['reference'], lambda x: x.__setitem__('type_id', candidate['type_id']))(inv, w)
+                next(r for r in w['required_relations']['builtin_endpoints']
+                     if r['expression'] == endpoint['expression'])['input']['type_id'] = candidate['type_id']
+            add('builtin-input-outside-closure-type-collision-' + str(ref['id']), retarget_builtin)
+    if endpoints and candidate is not None:
+        def retarget_all_builtins(inv, w):
+            sources = {r['input']['type_id'] for r in endpoints}
+            scalar_copies({}, w, lambda row: row.__setitem__('type_id', candidate['type_id'])
+                          if type(row.get('type_id')) is int and row['type_id'] in sources else None)
+        add('builtin-input-outside-closure-type-collision-all', retarget_all_builtins)
     affected_declarations = set(function['parameters']) | {tail} | {
         a['direct_decl'] for a in expressions[incoming['id']]['arguments'][:3]} | {
         d['id'] for s in function['statements'] for d in s['declarations']}
@@ -855,6 +885,21 @@ class CursorWitnessTests(unittest.TestCase):
                 prove_cursor_witness(inventories, witnesses, symbol)
 
 class CursorFixtureCollectionTests(unittest.TestCase):
+    def test_positive_fixture_requires_complete_collision_coverage(self):
+        from check_closed_variadic_inventory import require_cursor_collision_coverage
+        incoming = ['incoming-outside-closure-type-collision-' + str(i) for i in (1, 2)]
+        builtin = ['builtin-input-outside-closure-type-collision-' + str(i) for i in (3, 4)]
+        complete = incoming + builtin + ['builtin-input-outside-closure-type-collision-all']
+        def controls(labels):
+            return {'mutations_rejected': [{'case': label, 'reason': 'rejected'} for label in labels]}
+        require_cursor_collision_coverage(controls(complete))
+        for labels in ([], builtin, incoming, complete[:-1], complete[1:],
+                       complete[:2] + complete[3:], complete + [complete[0]],
+                       complete + [complete[2]], [complete[0], complete[0]] + complete[2:],
+                       complete[:2] + [complete[2], complete[2], complete[-1]]):
+            with self.subTest(labels=labels), self.assertRaisesRegex(RuntimeError, 'coverage'):
+                require_cursor_collision_coverage(controls(labels))
+
     def collect(self, root, export, receipt, semantic):
         from unittest.mock import patch
         from check_closed_variadic_inventory import collect_cursor_fixture

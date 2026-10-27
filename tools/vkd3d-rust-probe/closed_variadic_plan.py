@@ -709,6 +709,8 @@ class _CursorBody:
                      'expression operator, literal or identity differs')
         if kind == 'reference' and facts['decl'] in self.d and self.d[facts['decl']]['kind'] == 'variable':
             _cursor_need(_cursor_same(x['type_id'], self.d[facts['decl']]['type_id']), 'reference source type ID differs')
+        self.type_meaning(dict(type_id=x['type_id'], **{k: x['type'][k]
+                               for k in ('const', 'restrict', 'volatile')}), x['type'])
         if typ == 'builtin_endpoint':
             _cursor_need(_cursor_same(x['type'], _cursor_type({'unproved': 'unsupported type or wrapper limit'})),
                          'BuiltinFn reference envelope')

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise actual subprocess boundaries without claiming Windows/GPU coverage."""
 
+import ctypes
 import importlib.util
 import json
 import os
@@ -25,6 +26,241 @@ MATCHING_EVENT = r'''<Event xmlns="http://schemas.microsoft.com/win/2004/08/even
   <EventData><Data>stand-in dependency resolution failure</Data>
     <Data>C:\isolated\MikuDanceStudio.exe</Data></EventData>
 </Event>'''
+
+
+class FakeWin32:
+    """API stand-in; DialogWindows itself and ctypes buffers remain real."""
+
+    def __init__(self, windows):
+        self.windows = windows
+        self.calls = []
+        self.last_error = 999
+        self.failures = {}
+        self.kernel32 = SimpleNamespace(SetLastError=self.set_error, GetLastError=lambda: self.last_error)
+        names = ("EnumWindows", "EnumChildWindows", "GetWindowThreadProcessId", "GetClassNameW",
+                 "GetDlgCtrlID", "GetWindowTextW", "GetWindowLongW", "GetParent", "GetWindow",
+                 "GetMenu", "IsWindowVisible", "IsWindowEnabled", "GetWindowRect", "SendMessageTimeoutW")
+        self.user32 = SimpleNamespace(**{name: unittest.mock.Mock(side_effect=self.function(name)) for name in names})
+        self.user32.EnumWindows.side_effect = lambda callback, parameter: self.function("EnumWindows")(None, callback, parameter)
+
+    def set_error(self, value):
+        self.last_error = value
+
+    def function(self, name):
+        def call(hwnd, *args):
+            self.calls.append((name, hwnd, args))
+            if (name, hwnd) in self.failures:
+                self.last_error = self.failures[name, hwnd]
+                if name == "SendMessageTimeoutW":
+                    args[-1]._obj.value = 777  # Undefined output must never become a successful result.
+                return 0
+            if name in ("EnumWindows", "EnumChildWindows"):
+                callback = args[0]
+                for identifier, window in list(self.windows.items()):
+                    if (name == "EnumWindows" and window.get("top_level", True) or
+                        name == "EnumChildWindows" and not window.get("top_level", True) and
+                        window.get("root", window.get("parent")) == hwnd):
+                        if not callback(identifier, 0):
+                            self.last_error = 123  # Must not overwrite the saved callback error.
+                            return 0
+                return 1 if name == "EnumWindows" else 0  # Child API return value is unused.
+            window = self.windows[hwnd]
+            if name == "GetWindowThreadProcessId":
+                args[0]._obj.value = window.get("pid", 77)
+                return 88
+            if name == "GetClassNameW":
+                args[0].value = window["class"]
+                return len(window["class"])
+            if name == "GetWindowTextW":
+                args[0].value = window.get("text", "")
+                return len(args[0].value)
+            if name == "SendMessageTimeoutW":
+                message, count, parameter, flags, timeout, result = args
+                if message == 13:
+                    text = window.get("text", "")
+                    ctypes.memmove(parameter, ctypes.create_unicode_buffer(text), (len(text) + 1) * ctypes.sizeof(ctypes.c_wchar))
+                    result._obj.value = len(text)
+                return 1
+            if name == "GetWindowRect":
+                rect = args[0]._obj
+                rect.left, rect.top, rect.right, rect.bottom = window.get("rect", (0, 0, 640, 360))
+                return 1
+            key = {"GetDlgCtrlID": "id", "GetWindowLongW": "style", "GetParent": "parent",
+                   "GetWindow": "owner", "GetMenu": "menu", "IsWindowVisible": "visible",
+                   "IsWindowEnabled": "enabled"}[name]
+            return window.get(key, 1 if key in ("visible", "enabled") else 0)
+        return call
+
+    def observer(self, test):
+        test.enterContext(patch.object(ctypes, "WinDLL", return_value=self.user32, create=True))
+        test.enterContext(patch.object(ctypes, "WINFUNCTYPE", side_effect=lambda *args: lambda function: function, create=True))
+        test.enterContext(patch.object(ctypes, "set_last_error", side_effect=self.kernel32.SetLastError, create=True))
+        test.enterContext(patch.object(ctypes, "get_last_error", side_effect=self.kernel32.GetLastError, create=True))
+        windows = capture.DialogWindows()
+        self.windows_api = windows
+        return windows
+
+
+def dialog_metadata():
+    return {10: {"class": "#32770", "parent": 20, "owner": 20},
+            11: {"class": "Static", "top_level": False, "parent": 10,
+                 "text": "Cannot make DirectSound!!"},
+            12: {"class": "Button", "top_level": False, "parent": 10, "id": 1}}
+
+
+class DialogWin32Boundary(unittest.TestCase):
+    def test_metadata_only_for_hidden_main_ime_buttons_and_irrelevant_children(self):
+        fake = FakeWin32({20: {"class": "Polygon Movie Maker", "visible": 0},
+                          30: {"class": "IME", "visible": 0},
+                          21: {"class": "Button", "top_level": False, "parent": 20},
+                          22: {"class": "Static", "top_level": False, "parent": 20}})
+        windows = fake.observer(self)
+        facts = windows.snapshot(77)
+        self.assertEqual(len(facts), 4)
+        self.assertTrue(all(window["text"] is None for window in facts))
+        self.assertTrue(all(window["tid"] == 88 for window in facts))
+        self.assertFalse(any(name in ("GetWindowTextW", "SendMessageTimeoutW", "GetMenu", "GetWindowRect") for name, _, _ in fake.calls))
+        ctypes.WinDLL.assert_called_once_with("user32", use_last_error=True)
+
+    def test_only_needed_direct_static_and_caption_are_queried_and_facts_stable(self):
+        metadata = dialog_metadata()
+        metadata[20] = {"class": "Polygon Movie Maker", "enabled": 0}
+        metadata[13] = {"class": "Static", "top_level": False, "root": 10, "parent": 12}
+        fake = FakeWin32(metadata)
+        windows = fake.observer(self)
+        facts = windows.snapshot(77)
+        self.assertEqual(windows.snapshot(77), facts)
+        self.assertEqual([(name, hwnd) for name, hwnd, _ in fake.calls if name in ("SendMessageTimeoutW", "GetWindowTextW")],
+                         [("GetWindowTextW", 10), ("SendMessageTimeoutW", 11)] * 2)
+        self.assertEqual(next(item for item in facts if item["hwnd"] == 11)["text"], "Cannot make DirectSound!!")
+        self.assertIsNone(next(item for item in facts if item["hwnd"] == 12)["text"])
+        self.assertEqual(facts[0]["parent"], 20)  # Popup owner is not a child relationship.
+        for name, _, arguments in fake.calls:
+            if name == "SendMessageTimeoutW":
+                self.assertEqual(arguments[3], 0x22)
+                self.assertTrue(0 < arguments[4] <= 200)
+
+    def test_metadata_rejects_unknown_hidden_ambiguous_and_nontext_static_without_query(self):
+        for label in ("unknown", "hidden", "ambiguous", "hidden-static", "extra-static", "icon", "extra-button", "wrong-pid"):
+            with self.subTest(label=label):
+                metadata = dialog_metadata()
+                if label == "unknown":
+                    metadata[90] = {"class": "Unknown"}
+                elif label == "hidden":
+                    metadata[10]["visible"] = 0
+                elif label == "ambiguous":
+                    metadata[90] = {"class": "#32770"}
+                elif label == "hidden-static":
+                    metadata[11]["visible"] = 0
+                elif label == "extra-static":
+                    metadata[13] = dict(metadata[11])
+                elif label == "icon":
+                    metadata[11]["style"] = 3
+                elif label == "extra-button":
+                    metadata[13] = dict(metadata[12])
+                else:
+                    metadata[12]["pid"] = 78
+                fake = FakeWin32(metadata)
+                with self.assertRaises(ValueError):
+                    fake.observer(self).snapshot(77)
+                self.assertFalse(any(name in ("GetWindowTextW", "SendMessageTimeoutW") for name, _, _ in fake.calls))
+
+    def test_generic_timeout_and_other_errors_keep_original_context_and_partial_metadata(self):
+        for api, hwnd in (("SendMessageTimeoutW", 11), ("GetWindowTextW", 10), ("GetClassNameW", 12)):
+            for last_error in (0, 1460, 5, 1400):
+                if api != "SendMessageTimeoutW" and last_error == 0:
+                    continue  # Empty caption with error 0 is valid.
+                with self.subTest(api=api, last_error=last_error):
+                    fake = FakeWin32(dialog_metadata())
+                    fake.failures[api, hwnd] = last_error
+                    windows = fake.observer(self)
+                    with self.assertRaises(OSError) as raised:
+                        windows.snapshot(77)
+                    error = raised.exception
+                    context = error.api_error
+                    self.assertEqual((context["api"], context["hwnd"], context["return"], context["last_error"]), (api, hwnd, 0, last_error))
+                    self.assertEqual(context["window"]["pid"], 77)
+                    self.assertEqual(len(error.partial_windows), 3)
+                    self.assertLessEqual(context["start_monotonic"], context["end_monotonic"])
+                    self.assertNotIn("message_result", context)
+                    if api == "SendMessageTimeoutW":
+                        self.assertEqual(context["message"], 13)
+                        self.assertEqual(context["flags"], 0x22)
+                        self.assertTrue(0 < context["timeout_ms"] <= 200)
+                    json.dumps({"api_error": context, "partial_windows": error.partial_windows})
+
+    def test_deadline_cap_enum_failure_and_main_readiness(self):
+        fake = FakeWin32({number: {"class": "IME", "visible": 0} for number in range(1, 258)})
+        windows = fake.observer(self)
+        with self.assertRaises(ValueError) as raised:
+            windows.snapshot(77)
+        self.assertEqual(len(raised.exception.partial_windows), 256)
+        windows.deadline = 0
+        with self.assertRaises(ValueError) as raised:
+            windows.snapshot(77)
+        self.assertEqual(raised.exception.partial_windows, [])
+        fake = FakeWin32({})
+        fake.failures["EnumWindows", None] = 5
+        windows = fake.observer(self)
+        with self.assertRaises(OSError) as raised:
+            windows.snapshot(77)
+        self.assertEqual(raised.exception.api_error["api"], "EnumWindows")
+        fake = FakeWin32({20: {"class": "Polygon Movie Maker", "menu": 1},
+                          21: {"class": "Button", "parent": 20, "top_level": False}})
+        windows = fake.observer(self)
+        facts = windows.snapshot(77)
+        self.assertEqual(facts[0]["rect"], [0, 0, 640, 360])
+        self.assertTrue(facts[0]["menu"])
+        self.assertFalse(any(name == "SendMessageTimeoutW" for name, _, _ in fake.calls))
+
+    def test_callback_deadline_and_bounded_messages_do_not_retry(self):
+        fake = FakeWin32({20: {"class": "Polygon Movie Maker", "visible": 0},
+                          21: {"class": "Button", "parent": 20, "top_level": False}})
+        windows = fake.observer(self)
+        real_class = fake.user32.GetClassNameW.side_effect
+        def expire_after_class(*args):
+            returned = real_class(*args)
+            windows.deadline = 0
+            return returned
+        fake.user32.GetClassNameW.side_effect = expire_after_class
+        with self.assertRaises(ValueError) as raised:
+            windows.snapshot(77)
+        self.assertEqual(len(raised.exception.partial_windows), 1)
+        self.assertEqual(raised.exception.partial_windows[0]["class"], "Polygon Movie Maker")
+        fake = FakeWin32(dialog_metadata())
+        windows = fake.observer(self)
+        windows.snapshot(77)
+        windows.deadline = 10.05
+        fake.failures["SendMessageTimeoutW", 12] = 1460
+        with patch.object(capture.time, "monotonic", return_value=10), self.assertRaises(OSError) as raised:
+            windows.message(12, 0xF5)
+        self.assertEqual(raised.exception.api_error["stage"], "button command")
+        self.assertTrue(0 < raised.exception.api_error["timeout_ms"] <= 50)
+        self.assertEqual(len(raised.exception.partial_windows), 3)
+        clicks = [arguments for name, hwnd, arguments in fake.calls if name == "SendMessageTimeoutW" and hwnd == 12]
+        self.assertEqual(len(clicks), 1)
+        self.assertEqual(clicks[0][:4], (0xF5, 0, 0, 0x22))
+
+    def test_api_failure_reaches_observation_json_and_owned_cleanup(self):
+        fake = FakeWin32(dialog_metadata())
+        fake.failures["SendMessageTimeoutW", 11] = 0
+        windows = fake.observer(self)
+        process = unittest.mock.Mock(pid=77, returncode=-9)
+        process.poll.return_value = None
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executable = root / "trusted.exe"
+            executable.write_bytes(b"fixture")
+            with patch.object(capture, "os", SimpleNamespace(name="nt")), patch.object(capture, "DialogWindows", return_value=windows), patch.object(capture.subprocess, "Popen", return_value=process):
+                result = capture.observe_recoverable_dialog(executable, root / "input.pmm", root / "observation")
+            self.assertEqual(result["status"], "FAIL")
+            self.assertEqual(result["api_error"]["last_error"], 0)
+            self.assertEqual(result["api_error"]["api"], "SendMessageTimeoutW")
+            self.assertEqual(len(result["partial_windows"]), 3)
+            self.assertEqual(result["button_commands"], 0)
+            self.assertEqual(json.loads((root / "observation/observation.json").read_text()), result)
+            process.kill.assert_called_once_with()
+            process.wait.assert_called_once_with(timeout=10)
 
 
 class CaptureBoundary(unittest.TestCase):

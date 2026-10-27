@@ -117,6 +117,8 @@ class DialogWindows:
             "GetWindowThreadProcessId": ([w.HWND, ctypes.POINTER(w.DWORD)], w.DWORD),
             "GetClassNameW": ([w.HWND, w.LPWSTR, ctypes.c_int], ctypes.c_int),
             "GetDlgCtrlID": ([w.HWND], ctypes.c_int),
+            "GetWindowTextW": ([w.HWND, w.LPWSTR, ctypes.c_int], ctypes.c_int),
+            "GetWindowLongW": ([w.HWND, ctypes.c_int], ctypes.c_long),
             "GetParent": ([w.HWND], w.HWND),
             "GetWindow": ([w.HWND, w.UINT], w.HWND),
             "GetMenu": ([w.HWND], w.HMENU),
@@ -130,60 +132,161 @@ class DialogWindows:
             function = getattr(self.api, name)
             function.argtypes, function.restype = arguments, result
 
+    def api_call(self, api, hwnd, *arguments, message=None, flags=None, timeout=None):
+        start = time.monotonic()
+        if start >= self.deadline:
+            raise ValueError("GUI observation deadline exceeded")
+        self.c.set_last_error(0)
+        function = getattr(self.api, api)
+        returned = function(*arguments) if api == "EnumWindows" else function(hwnd, *arguments)
+        last_error = self.c.get_last_error()
+        end = time.monotonic()
+        context = {"api": api, "stage": getattr(self, "stage", "message"),
+                   "hwnd": hwnd, "window": next((dict(item) for item in getattr(self, "records", [])
+                                                   if item["hwnd"] == hwnd), None),
+                   "message": message, "flags": flags, "timeout_ms": timeout,
+                   "start_monotonic": start, "end_monotonic": end,
+                   "return": returned, "last_error": last_error}
+        return returned, context
+
+    def api_error(self, context):
+        error = OSError(f"{context['api']} failed: hwnd={context['hwnd']}, "
+                        f"message={context['message']}, last_error={context['last_error']}")
+        error.api_error = context
+        error.partial_windows = getattr(self, "records", [])
+        return error
+
     def message(self, hwnd, message, parameter=0):
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise ValueError("GUI observation deadline exceeded")
+        self.stage = {13: "dialog body", 0: "main responsiveness", 0xF5: "button command"}.get(message, "message")
+        timeout = max(1, min(200, int(remaining * 1000)))
         result = self.c.c_size_t()
-        if not self.api.SendMessageTimeoutW(hwnd, message, 4096 if message == 13 else 0,
-                                            parameter, 0x22, max(1, min(200, int(remaining * 1000))), self.c.byref(result)):
-            raise OSError(f"SendMessageTimeout failed: hwnd={hwnd}, message={message}")
+        returned, context = self.api_call(
+            "SendMessageTimeoutW", hwnd, message, 4096 if message == 13 else 0,
+            parameter, 0x22, timeout, self.c.byref(result),
+            message=message, flags=0x22, timeout=timeout)
+        if not returned:
+            # lpdwResult is not a message result when the API failed.
+            raise self.api_error(context)
         return result.value
 
     def snapshot(self, pid):
-        records, errors = [], []
+        self.records = records = []
+        errors = []
         top_level = True
+        self.stage = "top-level metadata"
 
         def read(hwnd, _):
             try:
                 owner = self.w.DWORD()
-                if not self.api.GetWindowThreadProcessId(hwnd, self.c.byref(owner)):
-                    raise OSError("Cannot identify window PID")
+                tid, context = self.api_call("GetWindowThreadProcessId", hwnd, self.c.byref(owner))
+                if not tid:
+                    raise self.api_error(context)
                 if owner.value != pid:
                     return True
                 if len(records) >= 256:
                     raise ValueError("Window enumeration exceeded 256-window bound")
+                record = {"hwnd": hwnd, "pid": owner.value, "tid": tid,
+                          "class": None, "top_level": top_level, "text": None,
+                          "id": None, "parent": None, "owner": None,
+                          "visible": None, "enabled": None, "menu": None, "rect": None}
+                records.append(record)
                 name = self.c.create_unicode_buffer(256)
-                if not self.api.GetClassNameW(hwnd, name, len(name)):
-                    raise OSError("Cannot read window class")
-                text = self.c.create_unicode_buffer(4096)
-                self.message(hwnd, 13, self.c.addressof(text))  # WM_GETTEXT reads remote controls.
-                rect = self.w.RECT()
-                if not self.api.GetWindowRect(hwnd, self.c.byref(rect)):
-                    raise OSError("Cannot read window rectangle")
-                records.append({"hwnd": hwnd, "pid": owner.value, "class": name.value, "top_level": top_level,
-                                "text": text.value, "id": self.api.GetDlgCtrlID(hwnd),
-                                "parent": self.api.GetParent(hwnd) or 0,
-                                "owner": self.api.GetWindow(hwnd, 4) or 0,
-                                "visible": bool(self.api.IsWindowVisible(hwnd)),
-                                "enabled": bool(self.api.IsWindowEnabled(hwnd)),
-                                "menu": bool(self.api.GetMenu(hwnd)),
-                                "rect": [rect.left, rect.top, rect.right, rect.bottom]})
+                returned, context = self.api_call("GetClassNameW", hwnd, name, len(name))
+                if not returned:
+                    raise self.api_error(context)
+                record["class"] = name.value
+                for key, api, arguments in (
+                    ("parent", "GetParent", ()), ("owner", "GetWindow", (4,)),
+                    ("visible", "IsWindowVisible", ()), ("enabled", "IsWindowEnabled", ())):
+                    returned, context = self.api_call(api, hwnd, *arguments)
+                    if not returned and context["last_error"]:
+                        raise self.api_error(context)
+                    record[key] = bool(returned) if key in ("visible", "enabled") else returned or 0
+                if not top_level:
+                    returned, context = self.api_call("GetDlgCtrlID", hwnd)
+                    if not returned and context["last_error"]:
+                        raise self.api_error(context)
+                    record["id"] = returned
+                if name.value.lower() == "static":
+                    returned, context = self.api_call("GetWindowLongW", hwnd, -16)
+                    if not returned and context["last_error"]:
+                        raise self.api_error(context)
+                    record["style"] = returned
             except (OSError, ValueError) as error:
-                errors.append(str(error))
+                errors.append(error)
                 return False
             return True
 
-        callback = self.callback(read)
-        if not self.api.EnumWindows(callback, 0) or errors:
-            raise OSError(f"Top-level window enumeration failed: {errors}")
-        top = list(records)
-        top_level = False
-        for window in top:
-            self.api.EnumChildWindows(window["hwnd"], callback, 0)
+        try:
+            callback = self.callback(read)
+            returned, context = self.api_call("EnumWindows", None, callback, 0)
             if errors:
-                raise OSError(f"Child window enumeration failed: {errors}")
-        return records
+                raise errors[0]
+            if not returned:
+                raise self.api_error(context)
+            top = list(records)
+            top_level = False
+            self.stage = "child metadata"
+            for window in top:
+                self.api_call("EnumChildWindows", window["hwnd"], callback, 0)
+                if errors:
+                    raise errors[0]
+            if time.monotonic() >= self.deadline:
+                raise ValueError("GUI observation deadline exceeded")
+            if any(window["top_level"] and window["visible"] and
+                   window["class"] not in ("#32770", "Polygon Movie Maker") for window in records):
+                raise ValueError("Unexpected visible top-level window")
+            dialogs = [window for window in records if window["class"] == "#32770"]
+            if dialogs:
+                if len(dialogs) != 1:
+                    raise ValueError("Ambiguous GUI dialogs")
+                dialog = dialogs[0]
+                if not dialog["top_level"] or not dialog["visible"] or not dialog["enabled"]:
+                    raise ValueError("Unexpected hidden, disabled or child dialog")
+                children = [window for window in records if not window["top_level"]
+                            and window["parent"] == dialog["hwnd"]]
+                statics = [window for window in children if window["class"].lower() == "static"]
+                buttons = [window for window in children if window["class"].lower() == "button"]
+                if (len(statics) != 1 or not statics[0]["visible"] or
+                    statics[0]["style"] & 0x1f not in (0, 1, 2, 11, 12) or
+                    len(buttons) != 1 or buttons[0]["id"] != 1 or
+                    not buttons[0]["visible"] or not buttons[0]["enabled"]):
+                    raise ValueError("Unexpected dialog Static or IDOK metadata")
+                self.stage = "dialog caption"
+                text = self.c.create_unicode_buffer(4096)
+                returned, context = self.api_call("GetWindowTextW", dialog["hwnd"], text, len(text))
+                if not returned and context["last_error"]:
+                    raise self.api_error(context)
+                dialog["text"] = text.value
+                if dialog["text"] != "":
+                    raise ValueError("Unexpected dialog title")
+                self.stage = "dialog body"
+                self.message(statics[0]["hwnd"], 13, self.c.addressof(text))
+                statics[0]["text"] = text.value
+            else:
+                self.stage = "main readiness"
+                mains = [window for window in top if window["class"] == "Polygon Movie Maker"
+                         and window["visible"] and window["enabled"]]
+                if len(mains) == 1 and any(not window["top_level"] and
+                                          window["parent"] == mains[0]["hwnd"] for window in records):
+                    main = mains[0]
+                    returned, context = self.api_call("GetMenu", main["hwnd"])
+                    if not returned and context["last_error"]:
+                        raise self.api_error(context)
+                    main["menu"] = bool(returned)
+                    if main["menu"]:
+                        rect = self.w.RECT()
+                        returned, context = self.api_call("GetWindowRect", main["hwnd"], self.c.byref(rect))
+                        if not returned:
+                            raise self.api_error(context)
+                        main["rect"] = [rect.left, rect.top, rect.right, rect.bottom]
+            return records
+        except (OSError, ValueError) as error:
+            error.partial_windows = records
+            raise
 
 
 def observe_recoverable_dialog(executable, pmm, directory, timeout=30):
@@ -225,7 +328,8 @@ def observe_recoverable_dialog(executable, pmm, directory, timeout=30):
                     if len(dialogs) != 1:
                         raise ValueError("Ambiguous GUI dialogs")
                     dialog = dialogs[0]
-                    children = [window for window in facts if window["parent"] == dialog["hwnd"]]
+                    children = [window for window in facts if not window.get("top_level")
+                                and window["parent"] == dialog["hwnd"]]
                     texts = [window for window in children if window["class"].lower() == "static" and window["text"]]
                     buttons = [window for window in children if window["class"].lower() == "button"]
                     if (dialog["text"] != "" or not dialog["visible"] or not dialog["enabled"] or
@@ -246,10 +350,10 @@ def observe_recoverable_dialog(executable, pmm, directory, timeout=30):
                     result["button_command"]["status"] = "COMPLETED"
                 elif result["button_commands"]:
                     main = [window for window in facts if window["class"] == "Polygon Movie Maker"
-                            and window["visible"] and window["enabled"] and window["menu"]
+                            and window["visible"] and window["enabled"] and window["menu"] and window["rect"]
                             and window["rect"][2] > window["rect"][0]
                             and window["rect"][3] > window["rect"][1]]
-                    if len(main) == 1 and any(window["parent"] == main[0]["hwnd"] for window in facts):
+                    if len(main) == 1 and any(not window.get("top_level") and window["parent"] == main[0]["hwnd"] for window in facts):
                         windows.message(main[0]["hwnd"], 0)  # WM_NULL responsiveness, not a render claim.
                         ready_since = ready_since or time.monotonic()
                         if time.monotonic() - ready_since >= 2:
@@ -265,6 +369,10 @@ def observe_recoverable_dialog(executable, pmm, directory, timeout=30):
                 raise ValueError("GUI continuation observation timed out")
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         result.update(status="FAIL", cause=str(error))
+        if hasattr(error, "api_error"):
+            result["api_error"] = error.api_error
+        if hasattr(error, "partial_windows"):
+            result["partial_windows"] = error.partial_windows
     finally:
         if process is not None:
             try:

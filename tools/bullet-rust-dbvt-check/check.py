@@ -4,10 +4,12 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import sys
 
@@ -50,36 +52,37 @@ def validate_profile(data, expected, *, ffi_default=False):
     profile = dict(line.split('=', 1) for line in data.decode().splitlines())
     selected = '1' if expected == 'sse' else '0'
     for key in ('DBVT_SELECT_IMPL', 'DBVT_MERGE_IMPL', 'DBVT_INT0_IMPL'):
-        if not (profile[key] == selected):
+        if profile[key] != selected:
             raise AssertionError((key, profile, expected))
-    if not (profile['BT_HAS_ALIGNED_ALLOCATOR'] == '0'):
+    if profile['BT_HAS_ALIGNED_ALLOCATOR'] != '0':
         raise AssertionError(profile)
-    if not (profile['BT_USE_DOUBLE_PRECISION'] == '0'):
+    if profile['BT_USE_DOUBLE_PRECISION'] != '0':
         raise AssertionError(profile)
     if expected == 'sse':
-        if not (profile['WIN32'] == '1' and profile['BT_USE_SSE'] == '1'):
+        if profile['WIN32'] != '1' or profile['BT_USE_SSE'] != '1':
             raise AssertionError(profile)
-        if not (profile['DBVT_USE_TEMPLATE'] == '1'):
+        if profile['DBVT_USE_TEMPLATE'] != '1':
             raise AssertionError(profile)
     if ffi_default:
-        if not (profile['WIN32'] == '0' and profile['BT_USE_SSE'] == '1'):
+        if profile['WIN32'] != '0' or profile['BT_USE_SSE'] != '1':
             raise AssertionError(profile)
     return profile
 
 
 def validate_select(data, expected):
     rows = data.decode().splitlines()
-    if not (len(rows) == 4):
+    if len(rows) != 4:
         raise AssertionError('incomplete directed Select capture')
     topology = rows[2].split('|')[1]
     shape = re.sub(r',\d+', '', topology)
-    if not (shape == ('B(1;B(2;3))' if expected == 'sse' else 'B(B(1;3);2)')):
+    if shape != ('B(1;B(2;3))' if expected == 'sse' else 'B(B(1;3);2)'):
         raise AssertionError((expected, shape))
 
 
 def provenance(out):
     tracked = subprocess.check_output(['git', 'ls-files', '-z', 'recipes/bullet275/bullet-src/src',
                                       'rust/crates/mds-bullet', 'rust/crates/mds-bullet-sys',
+                                      'rust/crates/mds-crtmath',
                                       'tools/bullet-rust-dbvt-check', 'tools/bullet-dbvt-cmake-reference', 'rust/Cargo.lock',
                                       '.github/workflows/bullet-dbvt-hosted.yml'], cwd=ROOT)
     hashes = {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest()
@@ -170,10 +173,171 @@ def replay(out, captures):
         capture_provenance=captured_provenance, profile=observed,
         capture_sha256={p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in captures.iterdir() if p.is_file()},
         rust_policy='mmd-win64-sse'), indent=2) + '\n')
-    env = dict(os.environ, DBVT_FIXTURES=str(captures), DBVT_POLICY='mmd-win64-sse')
-    run(['rustup', 'run', '1.95.0', 'cargo', 'test', '--locked', '--manifest-path',
-         HERE / 'Cargo.toml', '--release'], out, 'windows-sourced-rust-tests', env=env, cwd=ROOT / 'rust')
+    for name in ['inputs.tsv', *(f'native-{order}.tsv' for order in range(4))]:
+        shutil.copy2(captures / name, out / name)
+    env = dict(os.environ, DBVT_FIXTURES=str(out), DBVT_POLICY='mmd-win64-sse')
+    build = run(['rustup', 'run', '1.95.0', 'cargo', 'test', '--locked', '--manifest-path',
+                 HERE / 'Cargo.toml', '--release', '--no-run', '--message-format=json'],
+                out, 'windows-sourced-rust-tests-build', capture=True, cwd=ROOT / 'rust')
+    executable = retain_test_binary(build, out)
+    result = run([executable], out, 'windows-sourced-rust-tests', env=env, cwd=ROOT / 'rust', capture=True)
+    validate_test_result(result)
+    compare_streams(out)
     verify_numeric_policies(out)
+
+
+def cargo_objects(data):
+    def object_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('duplicate Cargo JSON key')
+            result[key] = value
+        return result
+
+    def finite_number(value):
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError('non-finite Cargo JSON number')
+        return number
+
+    objects = []
+    finished = False
+    for line in data.decode().splitlines():
+        # Cargo cannot control stdout from other tools; raw logs retain those lines.
+        if not line.startswith('{'):
+            continue
+        item = json.loads(line, object_pairs_hook=object_pairs,
+                          parse_constant=finite_number, parse_float=finite_number)
+        if not isinstance(item, dict) or not isinstance(item.get('reason'), str):
+            raise ValueError('expected Cargo JSON object with a reason')
+        if finished:
+            raise AssertionError('Cargo JSON object after build-finished')
+        if item['reason'] == 'build-finished':
+            if item.get('success') is not True:
+                raise AssertionError('Cargo build did not succeed')
+            finished = True
+        objects.append(item)
+    if not finished:
+        raise AssertionError('missing successful Cargo build-finished')
+    return objects
+
+
+def retain_test_binary(data, out):
+    candidates = []
+    for item in cargo_objects(data):
+        if item.get('reason') != 'compiler-artifact':
+            continue
+        target = item.get('target')
+        if not isinstance(target, dict) or not isinstance(item.get('profile'), dict):
+            raise ValueError('malformed Cargo compiler-artifact')
+        if target.get('name') != 'dbvt':
+            continue
+        if (target.get('kind') != ['test'] or
+                not all(isinstance(value, str) and value for value in (
+                    target.get('src_path'), item.get('manifest_path'), item.get('executable'))) or
+                Path(target.get('src_path', '')).resolve() != (HERE / 'test.rs').resolve() or
+                Path(item.get('manifest_path', '')).resolve() != (HERE / 'Cargo.toml').resolve() or
+                item.get('profile', {}).get('test') is not True or not item.get('executable')):
+            raise AssertionError('unexpected DBVT test artifact')
+        candidates.append(Path(item['executable']))
+    if len(candidates) != 1 or not candidates[0].is_file():
+        raise AssertionError('expected exactly one existing DBVT test executable')
+    source = candidates[0].resolve()
+    executable = out / ('dbvt-tests.exe' if os.name == 'nt' else 'dbvt-tests')
+    shutil.copy2(source, executable)
+    raw = executable.read_bytes()
+    if not raw or raw != source.read_bytes():
+        raise AssertionError('DBVT test executable copy differs or is empty')
+    (out / 'rust-test-binary.json').write_text(json.dumps(dict(
+        source_path=str(source), retained_path=str(executable), bytes=len(raw),
+        sha256=hashlib.sha256(raw).hexdigest(), cwd=str(ROOT / 'rust'),
+        toolchain='1.95.0', argv=[str(executable)]), indent=2) + '\n')
+    return executable
+
+
+def validate_test_result(data):
+    summaries = re.findall(rb'test result: (.+)', data)
+    if len(summaries) != 1 or not re.fullmatch(
+            rb'ok\. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in .+',
+            summaries[0]):
+        raise AssertionError('expected all 11 DBVT tests with none ignored or filtered')
+
+
+def parse_snapshot(line, *, rust=False):
+    fields = line.split('|')
+    if len(fields) != 4 or not re.fullmatch(r'\d+,-?\d+,\d+,[01]', fields[0]):
+        raise AssertionError('malformed DBVT snapshot')
+    if (rust and fields[2]) or (not rust and not re.fullmatch(r'(?:\d+,)*', fields[2])):
+        raise AssertionError('malformed DBVT rank column')
+    topology = fields[1]
+    tokens = re.findall(r'_|(?:B|\d+)(?:,\d+){6}|[();]', topology)
+    if ''.join(tokens) != topology:
+        raise AssertionError('malformed DBVT topology')
+    position = 0
+    leaves = []
+
+    def node(*, root=False):
+        nonlocal position
+        if position == len(tokens):
+            raise AssertionError('truncated DBVT topology')
+        token = tokens[position]
+        position += 1
+        if token in ('(', ')', ';') or (token == '_' and not root):
+            raise AssertionError('malformed DBVT topology node')
+        if token.startswith('B'):
+            for delimiter in ('(', ';', ')'):
+                if position == len(tokens) or tokens[position] != delimiter:
+                    raise AssertionError('malformed DBVT topology branch')
+                position += 1
+                if delimiter != ')':
+                    node()
+        elif token != '_':
+            leaves.append(token)
+
+    node(root=True)
+    if position != len(tokens):
+        raise AssertionError('extra DBVT topology tokens')
+    events = fields[3]
+    if not re.fullmatch(r'(?:\d+(?::\d+)?,)*|[01](?:,\d+){6}', events):
+        raise AssertionError('malformed DBVT events')
+    return fields, sorted(leaves)
+
+
+def query_set(events):
+    result = []
+    for event in events.split(','):
+        if event:
+            if ':' in event:
+                a, b = map(int, event.split(':'))
+                event = f'{min(a, b)}:{max(a, b)}'
+            result.append(event)
+    return sorted(result)
+
+
+def compare_streams(out):
+    inputs = (out / 'inputs.tsv').read_text().splitlines()
+    if len(inputs) != 2355 or any(not line for line in inputs):
+        raise AssertionError('operation corpus changed')
+    for order in range(4):
+        native = (out / f'native-{order}.tsv').read_text().splitlines()
+        rust = (out / f'rust-{order}.tsv').read_text().splitlines()
+        if len(native) != len(inputs) or len(rust) != len(inputs):
+            raise AssertionError((order, 'incomplete or extra replay rows'))
+        for i in range(len(inputs)):
+            identity = rust[i].split('\t')
+            if len(identity) != 3 or identity[:2] != [str(i), inputs[i]]:
+                raise AssertionError((order, i, 'Rust operation identity differs'))
+            actual, actual_leaves = parse_snapshot(identity[2], rust=True)
+            expected, expected_leaves = parse_snapshot(native[i])
+            if order < 3:
+                equal = [actual[j] for j in (0, 1, 3)] == [expected[j] for j in (0, 1, 3)]
+            else:
+                equal = actual_leaves == expected_leaves
+                equal = equal and (query_set(actual[3]) == query_set(expected[3])
+                                   if inputs[i][0] in 'vsqxfg' else actual[3] == expected[3])
+            if not equal:
+                raise AssertionError((order, i, 'native/Rust replay differs'))
 
 
 def main():
@@ -197,7 +361,7 @@ def main():
         raise ValueError('native comparison requires explicit matching Rust policy')
     arch = {'amd64': 'x64', 'x86_64': 'x64', 'aarch64': 'arm64', 'arm64': 'arm64'}.get(platform.machine().lower())
     if args.expected_arch:
-        if not (arch == args.expected_arch):
+        if arch != args.expected_arch:
             raise AssertionError((platform.machine(), args.expected_arch))
     msvc = os.name == 'nt'
     compiler = os.environ.get('CXX', 'cl' if msvc else 'clang++')
@@ -209,7 +373,7 @@ def main():
     marker = '#undef DBVT_USE_MEMMOVE'
     keys = ('DBVT_SELECT_IMPL', 'DBVT_MERGE_IMPL', 'DBVT_INT0_IMPL',
             'DBVT_USE_TEMPLATE', 'DBVT_USE_INTRINSIC_SSE')
-    if not (header.count(marker) == 1):
+    if header.count(marker) != 1:
         raise AssertionError()
     observation = '// Altered profile-only copy: preserve configuration before PP cleanup.\n'
     observation += ''.join(f'constexpr int observed_{key} = {key};\n' for key in keys)
@@ -252,26 +416,31 @@ def main():
                          out, 'rust-lifecycle', capture=True, cwd=ROOT / 'rust')
     (out / 'rust-lifecycle.tsv').write_bytes(rust_lifecycle)
     # Windows iostream emits CRLF while Rust writes LF. Compare the same event records.
-    if not (rust_lifecycle.splitlines() == native_lifecycle.splitlines()):
+    if rust_lifecycle.splitlines() != native_lifecycle.splitlines():
         raise AssertionError('actual allocator release order differs from native')
     inputs = run([sys.executable, HERE / 'cases.py'], out, 'cases', capture=True)
     count = validate_corpus(inputs)
-    if not (len(native_lifecycle.splitlines()) == 10):
+    if len(native_lifecycle.splitlines()) != 10:
         raise AssertionError('lifecycle corpus changed')
     (out / 'inputs.tsv').write_bytes(inputs)
     for order in range(4):
         captured = run([out / ('oracle' + suffix), str(order)], out, f'native-{order}', capture=True, input=inputs)
-        if not (len(captured.splitlines()) == count):
+        if len(captured.splitlines()) != count:
             raise AssertionError((order, 'incomplete capture'))
         (out / f'native-{order}.tsv').write_bytes(captured)
     if msvc:
         for order in range(4):
             captured = run([diagnostic, str(order)], out, f'ffi-default-native-{order}', capture=True, input=inputs)
-            if not (len(captured.splitlines()) == count):
+            if len(captured.splitlines()) != count:
                 raise AssertionError((order, 'incomplete diagnostic capture'))
     env = dict(os.environ, DBVT_FIXTURES=str(out), DBVT_POLICY=args.rust_policy)
-    run(['rustup', 'run', '1.95.0', 'cargo', 'test', '--locked', '--manifest-path',
-         HERE / 'Cargo.toml', '--release'], out, 'rust-tests', env=env, cwd=ROOT / 'rust')
+    build = run(['rustup', 'run', '1.95.0', 'cargo', 'test', '--locked', '--manifest-path',
+                 HERE / 'Cargo.toml', '--release', '--no-run', '--message-format=json'],
+                out, 'rust-tests-build', capture=True, cwd=ROOT / 'rust')
+    executable = retain_test_binary(build, out)
+    result = run([executable], out, 'rust-tests', env=env, cwd=ROOT / 'rust', capture=True)
+    validate_test_result(result)
+    compare_streams(out)
     verify_numeric_policies(out)
     print(f'{count * 3} strict snapshots, {count} ordinary allocator comparisons and 10 lifecycle cases compared.')
 

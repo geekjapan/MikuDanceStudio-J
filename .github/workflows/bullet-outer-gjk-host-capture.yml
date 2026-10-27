@@ -37,6 +37,7 @@ jobs:
           git ls-files --stage recipes/bullet275/bullet-src/src rust/crates/mds-bullet rust/crates/mds-bullet-sys/shim rust/crates/mds-crtmath tools/bullet-rust-support-check tools/bullet-rust-gjk-pair-check > "$PROFILE_OUT/source-manifest.txt"
           python3 -m unittest discover -s tools/bullet-rust-support-check -v 2>&1 | tee "$PROFILE_OUT/shared-helper-tests.log"
           python3 -m unittest discover -s tools/bullet-rust-gjk-pair-check -v 2>&1 | tee "$PROFILE_OUT/helper-tests.log"
+          python3 -O -m unittest discover -s tools/bullet-rust-gjk-pair-check -p test_measured_profiles.py -v 2>&1 | tee "$PROFILE_OUT/measured-model-optimized-tests.log"
       - name: Capture native and replay full Rust output
         if: ${{ !cancelled() && runner.os != 'Windows' }}
         shell: bash

@@ -9,7 +9,7 @@ The stream covers 2,326 operations per native allocation history, including 12
 seeded mutation histories, ordered TV, self TT, and cross-tree TT callbacks, internal ray queries,
 margin and velocity update, lookahead, clear, bottom-up, top-down, and incremental
 optimization. AABB values compare exact float bits; metadata and ordered children
-compare exactly. Native compiler commands, inputs, and complete traces remain in
+compare exactly. Native compiler commands, inputs, and complete native and Rust traces remain in
 the output directory. Regenerate them for each host; they are not portable frozen
 allocator fixtures.
 
@@ -160,3 +160,42 @@ It never edits oracle output or emulates native Windows SSE on ARM.
 No World, production broadphase integration, allocator-independent callback order,
 or full public acceptance follows from this bounded core unit. Hosted execution
 and independent reviews are required before root acceptance.
+
+The gate retains `rust-0.tsv` through `rust-3.tsv` from the actual computed Rust
+state, topology, and events before the existing assertions and native rank import.
+Each row contains the zero-based operation index, exact input line, and a snapshot,
+separated by tabs. The snapshot has `state|topology||events`. The empty column
+keeps observed native address ranks separate from Rust results. Topology and
+callback events stay in their original order. Direct file writes preserve the
+completed prefix if a later Rust assertion fails.
+
+After all tests pass, Python independently requires exactly 2,355 rows in each
+native and Rust stream and checks every Rust index and input identity. Modes 0,
+1, and 2 compare exact state, complete topology, and events. These comparisons
+remain conditional on the observed native address ranks imported after each
+checkpoint. Mode 3 compares exact leaf-volume records and query sets with the
+same pair normalization and duplicate multiplicity as the Rust fixture. Other
+events compare exactly. Its raw topology and state remain available but are not
+required to match allocator-dependent native structure. Missing, extra, malformed,
+reordered, or duplicated Rust rows fail. Python exceptions stay active under `-O`.
+Replay never rewrites the raw streams. Run it again without compilers with
+`python3 -B -c 'import sys; from pathlib import Path; sys.path.insert(0,
+"tools/bullet-rust-dbvt-check"); import check; check.compare_streams(Path("/tmp/bullet-dbvt"))'`.
+
+Cargo builds with the pinned toolchain, locked manifest, release profile, and
+`--no-run --message-format=json` from `rust/`. The checker selects exactly one
+`dbvt` test artifact with the expected source, manifest, and test profile. It
+copies only that executable to `dbvt-tests` or `dbvt-tests.exe` in the output
+directory, then executes the retained copy from `rust/` with `DBVT_FIXTURES` and `DBVT_POLICY` set.
+`rust-test-binary.json` records its source path, retained path, byte count,
+SHA-256, working directory, toolchain, and argv. All 11 tests must pass with zero
+failed, ignored, measured, or filtered tests. Cargo JSON and both process logs
+remain available. Source provenance includes the consumed `mds-crtmath` crate.
+
+These retention changes require fresh execution and artifact readback on all four
+hosted targets. Helper tests with synthetic rows do not provide that evidence.
+
+Windows-sourced replay copies inputs and native histories into its own output
+directory before running the retained Rust test binary. It retains computed
+Rust streams there and applies the same complete-stream checks. Downloaded
+Windows capture bytes remain unchanged.

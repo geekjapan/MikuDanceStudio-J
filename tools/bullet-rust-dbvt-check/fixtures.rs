@@ -1,5 +1,6 @@
 use super::*;
 use std::fmt::Write;
+use std::io::Write as IoWrite;
 
 fn volume(out: &mut String, v: Aabb) {
     for f in v.min.0.into_iter().chain(v.max.0) {
@@ -163,6 +164,7 @@ pub(crate) fn native_controlled_address_parity(policy: DbvtPolicy) {
     for order in 0..3 {
         let native = std::fs::read_to_string(root.join(format!("native-{order}.tsv"))).unwrap();
         assert_eq!(inputs.lines().count(), native.lines().count());
+        let mut output = std::fs::File::create(root.join(format!("rust-{order}.tsv"))).unwrap();
         let mut tree = Dbvt::new(policy);
         for (i, (input, expected)) in inputs.lines().zip(native.lines()).enumerate() {
             let events = execute(&mut tree, input);
@@ -177,6 +179,7 @@ pub(crate) fn native_controlled_address_parity(policy: DbvtPolicy) {
                 tree.opath,
                 u8::from(tree.free.is_some())
             );
+            writeln!(output, "{i}\t{input}\t{state}|{topology}||{events}").unwrap();
             assert_eq!(state, fields[0], "order {order} operation {i}: {input}");
             assert_eq!(topology, fields[1], "order {order} operation {i}: {input}");
             assert_eq!(events, fields[3], "order {order} operation {i}: {input}");
@@ -335,12 +338,21 @@ pub(crate) fn ordinary_native_and_production_allocator_query_sets(policy: DbvtPo
     );
     let native = std::fs::read_to_string(root.join("native-3.tsv")).unwrap();
     assert_eq!(inputs.lines().count(), native.lines().count());
+    let mut output = std::fs::File::create(root.join("rust-3.tsv")).unwrap();
     let mut tree = Dbvt::new(policy);
     for (i, (input, expected)) in inputs.lines().zip(native.lines()).enumerate() {
         let events = execute(&mut tree, input);
         let fields: Vec<_> = expected.split('|').collect();
         let mut topology = String::new();
         serialize(&tree, tree.root, &mut topology, &mut Vec::new());
+        let state = format!(
+            "{},{},{},{}",
+            tree.leaves,
+            tree.lookahead,
+            tree.opath,
+            u8::from(tree.free.is_some())
+        );
+        writeln!(output, "{i}\t{input}\t{state}|{topology}||{events}").unwrap();
         assert_eq!(
             leaf_records(&topology),
             leaf_records(fields[1]),

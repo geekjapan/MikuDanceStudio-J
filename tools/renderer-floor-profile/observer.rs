@@ -3,14 +3,12 @@ use std::cell::Cell;
 thread_local! { static ACTIVE: Cell<bool> = const { Cell::new(false) }; }
 fn emit(value: String) { ACTIVE.with(|a| if a.get() { println!("FP {value}"); }); }
 fn bits(v: &[f32]) -> Vec<u32> { v.iter().map(|x| x.to_bits()).collect() }
-fn fp() -> u32 {
-    #[allow(deprecated)]
-    unsafe { std::arch::x86_64::_mm_getcsr() }
+fn mxcsr_snapshot() -> u32 {
+    let mut raw = 0u32;
+    unsafe { std::arch::asm!("stmxcsr [{out}]", out = in(reg) &mut raw, options(nostack, preserves_flags)); }
+    raw
 }
 fn positions(v: &[Vertex]) -> Vec<Vec<u32>> { v.iter().map(|v| bits(&v.position)).collect() }
-fn materials(v: &[XMaterial]) -> Vec<Vec<u32>> {
-    v.iter().map(|m| bits(&[m.diffuse.as_slice(), &m.ambient, &m.specular, &m.emissive, &[m.power]].concat())).collect()
-}
 pub(super) fn parsed(nodes: &[Node]) {
     if !ACTIVE.with(|a| a.get()) { return; }
     fn walk(nodes: &[Node], parent: Vec<usize>) {
@@ -23,12 +21,11 @@ pub(super) fn parsed(nodes: &[Node]) {
             }).collect();
             emit(format!("{{\"stage\":\"parsed\",\"path\":{path:?},\"kind\":{:?},\"name\":{},\"values\":[{}]}}", n.kind,
                 n.name.as_ref().map_or("null".into(), |s| format!("{s:?}")), values.join(",")));
-            // Keep child ordinals, including references, in the actual parser order.
             for (j, child) in n.children.iter().enumerate() {
                 let mut p = path.clone(); p.push(j);
                 match child {
                     Child::Node(child) => walk(std::slice::from_ref(child), p),
-                    Child::Ref(r) => emit(format!("{{\"stage\":\"reference\",\"path\":{p:?},\"name\":{r:?}}")),
+                    Child::Ref(r) => emit(format!("{{\"stage\":\"reference\",\"path\":{p:?},\"name\":{r:?}}}")),
                 }
             }
         }
@@ -39,14 +36,14 @@ pub(super) fn parsed(nodes: &[Node]) {
 pub(super) fn premerge(containers: &[Container]) {
     if !ACTIVE.with(|a| a.get()) { return; }
     for (i, c) in containers.iter().enumerate() {
-        emit(format!("{{\"stage\":\"premerge\",\"ordinal\":{i},\"positions\":{:?},\"indices\":{:?},\"attributes\":{:?},\"matrix\":{:?}}", positions(&c.vertices), c.indices, c.face_material, bits(&c.transform.0)));
+        emit(format!("{{\"stage\":\"premerge\",\"ordinal\":{i},\"positions\":{:?},\"indices\":{:?},\"attributes\":{:?},\"matrix\":{:?},\"material_count\":{}}}", positions(&c.vertices), c.indices, c.face_material, bits(&c.transform.0), c.materials.len()));
     }
     emit("{\"stage\":\"premerge-end\"}".into());
 }
 pub(super) fn merged(m: &XMesh) {
     if !ACTIVE.with(|a| a.get()) { return; }
-    emit(format!("{{\"stage\":\"merged-raw\",\"positions\":{:?},\"indices\":{:?},\"attributes\":{:?},\"materials\":{:?},\"table\":{:?}}",
-        positions(&m.vertices), m.indices, m.face_material, materials(&m.materials),
+    emit(format!("{{\"stage\":\"merged-raw\",\"positions\":{:?},\"indices\":{:?},\"attributes\":{:?},\"material_count\":{},\"table\":{:?}}}",
+        positions(&m.vertices), m.indices, m.face_material, m.materials.len(),
         m.attribute_table.iter().map(|t| [t.id,t.face_start,t.face_count,t.vertex_start,t.vertex_count]).collect::<Vec<_>>()));
 }
 #[test]
@@ -54,20 +51,19 @@ fn diagnostic() {
     let cases: &[(&str, &[u8])] = &[@CASES@];
     println!("\nFP {{\"stage\":\"begin\",\"language\":\"rust\"}}");
     for (id, data) in cases {
-        println!("FP {{\"stage\":\"case\",\"id\":{id:?},\"mxcsr\":{}}}", fp());
+        println!("FP {{\"stage\":\"case\",\"id\":{id:?},\"mxcsr\":{}}}", mxcsr_snapshot());
         ACTIVE.with(|a| a.set(true));
         let loaded = crate::load_x(data).expect("fixed input load_x");
         ACTIVE.with(|a| a.set(false));
         let m = &loaded;
-        let materials: Vec<Vec<u32>> = m.materials.iter().map(|m| bits(&[m.diffuse.as_slice(), &m.ambient, &m.specular, &m.emissive, &[m.power]].concat())).collect();
-        println!("FP {{\"stage\":\"final-adjusted\",\"positions\":{:?},\"indices\":{:?},\"attributes\":{:?},\"materials\":{:?},\"table\":{:?},\"mxcsr\":{}}}", positions(&m.vertices),m.indices,m.face_material,materials,m.attribute_table.iter().map(|t| [t.id,t.face_start,t.face_count,t.vertex_start,t.vertex_count]).collect::<Vec<_>>(),fp());
+        println!("FP {{\"stage\":\"final-adjusted\",\"id\":{id:?},\"positions\":{:?},\"indices\":{:?},\"attributes\":{:?},\"material_count\":{},\"table\":{:?},\"mxcsr\":{}}}", positions(&m.vertices),m.indices,m.face_material,m.materials.len(),m.attribute_table.iter().map(|t| [t.id,t.face_start,t.face_count,t.vertex_start,t.vertex_count]).collect::<Vec<_>>(),mxcsr_snapshot());
     }
     let matrices: [[f32;16];3] = @MATRICES@;
     let points: [[f32;3];5] = @POINTS@;
     for (mi,m) in matrices.iter().enumerate() {
         for (pi,p) in points.iter().enumerate() {
-            let before = fp(); let q = transform_coord(*p, &Mat4(*m)); let after = fp();
-            println!("FP {{\"stage\":\"direct\",\"operation\":\"TransformCoord\",\"matrix\":{mi},\"point\":{pi},\"words\":{:?},\"before\":{before},\"after\":{after}}}", bits(&q));
+            let sample_a = mxcsr_snapshot(); let q = transform_coord(*p, &Mat4(*m)); let sample_b = mxcsr_snapshot();
+            println!("FP {{\"stage\":\"direct\",\"operation\":\"TransformCoord\",\"matrix\":{mi},\"point\":{pi},\"words\":{:?},\"sample_a\":{sample_a},\"sample_b\":{sample_b}}}", bits(&q));
         }
     }
     println!("FP {{\"stage\":\"end\",\"status\":0}}");

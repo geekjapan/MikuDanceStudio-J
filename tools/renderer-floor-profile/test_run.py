@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Compiler-free controls. Synthetic streams never count as hosted execution."""
 import copy
 import importlib.util
 import io
@@ -7,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import string
 import subprocess
 import sys
 import tarfile
@@ -20,38 +20,40 @@ r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
 HR=('GetDeclaration','GetVertexBuffer','VertexBufferGetDesc','GetIndexBuffer','IndexBufferGetDesc','LockVertexBuffer','UnlockVertexBuffer','LockIndexBuffer','UnlockIndexBuffer','LockAttributeBuffer','UnlockAttributeBuffer','GetAttributeTableSize')
 
 def geometry(stage):
-    return {'stage':stage,'positions':[[0,0,0],[r.word(1.),0,0],[0,r.word(1.),0]],'indices':[0,1,2],'attributes':[0],'table':[], 'materials':[[0]*17]}
+    return {'stage':stage,'positions':[[0,0,0],[r.word(1.),0,0],[0,r.word(1.),0]],'indices':[0,1,2],'attributes':[0],'table':[], 'material_count':1}
 
 
 def packet(language,observed=True):
     rows=[{'stage':'begin','language':language}]
-    def fp(point):rows.append({'stage':'fp','point':point,'mxcsr':8064})
+    current_case=None
+    def fp(point):rows.append({'stage':'fp','point':point,'case':current_case,'mxcsr':8064})
     def hr(name):rows.append({'stage':'hr','operation':name,'value':0})
     def mesh(stage):
         for name in HR:hr(name)
-        row=geometry(stage);row.pop('materials');row.update(bounds=[3,1,12,0,36,6,2],initialized=['position'],unknown=['uv','padding','other-declaration-channels']);rows.append(row)
+        row=geometry(stage);row.pop('material_count');row.update(bounds=[3,1,12,0,36,6,2],initialized=['position'],unknown=['uv','padding','other-declaration-channels']);rows.append(row)
     if language=='native':
         rows.append({'stage':'cpu','vendor':[0]*3,'identity':0,'brand':[0]*12,'features':[0]*3})
         fp('device-before');hr('CreateDevice');fp('device-after')
         rows.append({'stage':'dll','path':'C:\\diagnostic.dll','size':1,'sha256':'0'*64,'base':4096,'rvas':[1,2,3],'import_target':4097})
     for id,_,_ in r.CASES:
+        current_case=id
         rows.append({'stage':'case','id':id,'mxcsr':8064})
         if language=='native':
             fp('independent-before');hr('D3DXLoadMeshFromXW');fp('independent-after');mesh('independent-raw')
-            rows.append({'stage':'independent-material-raw','words':[[0]*17]});fp('loader-before')
+            rows.append({'stage':'independent-material-raw','material_count':1});fp('loader-before')
             if observed:fp('production-raw-before');mesh('production-raw');fp('production-raw-after')
             fp('loader-after');rows.append({'stage':'loader','success':True});mesh('before-observation')
             if observed:mesh('observation')
-            mesh('final-adjusted');rows.append({'stage':'final-material-adjusted','words':[[0]*17]})
+            mesh('final-adjusted');rows.append({'stage':'final-material-adjusted','material_count':1})
         else:
             if observed:
                 rows.extend([{'stage':'parsed','kind':'Mesh','name':'Synthetic','path':[0],'values':[['int',3]]+[['float',v] for p in geometry('')['positions'] for v in p]}, {'stage':'parsed-end'}])
-                row=geometry('premerge');row.pop('materials');row.pop('table');row.update(ordinal=0,matrix=list(map(r.word,r.IDENTITY)));rows.extend([row,{'stage':'premerge-end'},geometry('merged-raw')])
-            row=geometry('final-adjusted');row.update(mxcsr=8064);rows.append(row)
+                row=geometry('premerge');row.pop('table');row.update(ordinal=0,matrix=list(map(r.word,r.IDENTITY)));rows.extend([row,{'stage':'premerge-end'},geometry('merged-raw')])
+            row=geometry('final-adjusted');row.update(mxcsr=8064,id=id);rows.append(row)
     for m in range(3):
         for p in range(5):
             for op in (('TransformCoord','Transform') if language=='native' else ('TransformCoord',)):
-                rows.append({'stage':'direct','operation':op,'matrix':m,'point':p,'words':[r.word(1.)]*3+([r.word(3. if m==2 else 1.)] if op=='Transform' else []),'before':8064,'after':8064})
+                rows.append({'stage':'direct','operation':op,'matrix':m,'point':p,'words':[r.word(1.)]*3+([r.word(3. if m==2 else 1.)] if op=='Transform' else []),'sample_a':8064,'sample_b':8064})
                 if m==2 and op=='TransformCoord':rows[-1]['words']=[r.word(1./3)]*3
     rows.append({'stage':'end','status':0})
     return rows
@@ -92,6 +94,8 @@ class Controls(unittest.TestCase):
             self.assertNotIn(b'@',generated['native.cpp'])
             self.assertNotIn(b'@CASES@',generated[r.MESH])
             self.assertIn(b'#[cfg(mds_floor_profile)]\nmod floor_profile',generated[r.MESH])
+            for literal in r.re.findall(r'(?:format!|println!)\("((?:\\.|[^"\\])*)"', (r.HERE/'observer.rs').read_text()):
+                list(string.Formatter().parse(json.loads('"'+literal+'"')))
     def test_03_inverse_rejects_drift_and_duplicate_anchor(self):
         raw,p=r.insert(b'abc',b'b',b'added')
         with self.assertRaises(ValueError):r.inverse(raw+b'x',p)
@@ -150,7 +154,7 @@ class Controls(unittest.TestCase):
         self.assertEqual(r.semantic(a,a)['classification'],'Equal')
     def test_07_legitimate_empty_table_and_material_stage(self):
         row=geometry('merged-raw');r.mesh(row)
-        row['materials']=[]
+        row['material_count']=0
         with self.assertRaises(ValueError):r.mesh(row)
     def test_08_hardened_archive_controls_in_memory(self):
         opener=tarfile.open
@@ -183,8 +187,224 @@ class Controls(unittest.TestCase):
                 mutated=copy.deepcopy(receipt);mutated[key]=value
                 with patch.object(r.c.h,'load_json',return_value=mutated):
                     with self.assertRaises(ValueError):r.checked(Path('/in-memory'),'x')
+    def test_11_every_fp_site_is_strict(self):
+        for language in ('native','rust'):
+            base=packet(language)
+            sites=[(i,key) for i,row in enumerate(base) for key in ('mxcsr','sample_a','sample_b') if key in row and (language=='rust' or row['stage']!='case')]
+            for index,key in sites:
+                for bad in (-1,65536,True,1.5,'8064',None):
+                    with self.subTest(language=language,site=index,key=key,bad=bad):
+                        rows=copy.deepcopy(base)
+                        if bad is None:rows[index].pop(key)
+                        else:rows[index][key]=bad
+                        with self.assertRaises((ValueError,KeyError)):r.parse(wire(rows),language,True)
+                rows=copy.deepcopy(base);row=rows[index]
+                if row['stage']=='direct':row['point']=99
+                elif row['stage']=='fp':row['point']='wrong-site'
+                elif row['stage']=='case':row['id']='wrong-site'
+                else:row['id']='wrong-site'
+                with self.assertRaises(ValueError):r.parse(wire(rows),language,True)
+        rows=packet('native');next(row for row in rows if row['stage']=='fp' and row['case'])['case']='frames'
+        with self.assertRaises(ValueError):r.parse(wire(rows),'native',True)
+
+    def test_12_fp_qualification_preserves_differences_and_held_causes(self):
+        def classified(native=8064,rust=8064,device=8064):
+            n=packet('native');p=packet('rust')
+            next(row for row in p if row['stage']=='direct')['words'][0]=r.word(.5)
+            for rows,value in ((n,native),(p,rust)):
+                for row in rows:
+                    for key in ('mxcsr','sample_a','sample_b'):
+                        if key in row:row[key]=value
+            next(row for row in n if row['stage']=='fp')['mxcsr']=device
+            return r.classify(r.parse(wire(n),'native',True),r.parse(wire(p),'rust',True))
+        baseline=classified()
+        for n,p,status in [(8065,8064,'SampledDefaultControlsAgree'),(8064,8064,'SampledDefaultControlsAgree'),(0x9f80,0x9f80,'ObservedNondefaultControls'),(8064,0x9f80,'ObservedControlMismatch')]:
+            result=classified(n,p)
+            self.assertEqual(result['differences'],baseline['differences'])
+            self.assertTrue(result['differences'])
+            self.assertTrue(all(q['sampled_controls']==status and q['operation_environment']=='Unproved' for q in result['causal_qualification']))
+            causes=[f for f in result['findings'] if 'cause_status' in f]
+            self.assertTrue(causes)
+            self.assertTrue(all(f['cause_status']=='Held' and f['reason']=='OperationEnvironmentUnproved' for f in causes))
+        device=classified(device=0x9f80)
+        self.assertEqual(device['causal_qualification'],baseline['causal_qualification'])
+        self.assertNotEqual(device['fp_states'],baseline['fp_states'])
+
+    def test_13_direct_merged_actual_correspondence(self):
+        n=r.parse(wire(packet('native')),'native',True);rows=packet('rust')
+        points=[list(map(r.word,p)) for p in r.POINTS[:4]]
+        pre=next(row for row in rows if row['stage']=='premerge');pre['positions']=points
+        merged=next(row for row in rows if row['stage']=='merged-raw');merged['positions']=copy.deepcopy(points)
+        result=r.classify(n,r.parse(wire(rows),'rust',True));relation=result['output_relations'][0]
+        self.assertEqual(relation['classification'],'SemanticDifference')
+        for matrix in (r.AFFINE,[7.]*16):
+            pre['matrix']=list(map(r.word,matrix))
+            result=r.classify(n,r.parse(wire(rows),'rust',True))
+            self.assertEqual(result['output_relations'][0]['classification'],'SemanticDifference' if matrix==r.AFFINE else 'NotComparable')
+        pre['matrix']=list(map(r.word,r.IDENTITY))
+        for row in rows:
+            if row['stage']=='direct' and row['matrix']==0 and row['point']<4:row['words']=points[row['point']]
+        self.assertEqual(r.classify(n,r.parse(wire(rows),'rust',True))['output_relations'][0]['classification'],'Equal')
+        pre['positions'].reverse()
+        result=r.classify(n,r.parse(wire(rows),'rust',True))
+        self.assertEqual(result['output_relations'][0]['classification'],'NotComparable')
+
+    def test_14_independent_material_domains(self):
+        for language,stages in [('native',('independent-raw','production-raw','before-observation','observation','final-adjusted')),('rust',('premerge','merged-raw','final-adjusted'))]:
+            for stage in stages:
+                rows=packet(language);next(row for row in rows if row['stage']==stage)['attributes']=[999]
+                with self.assertRaises(ValueError):r.parse(wire(rows),language,True)
+        rows=packet('native')
+        next(row for row in rows if row['stage']=='independent-material-raw')['material_count']=2
+        next(row for row in rows if row['stage']=='independent-raw')['attributes']=[1]
+        r.parse(wire(rows),'native',True)
+        next(row for row in rows if row['stage']=='final-adjusted')['attributes']=[1]
+        with self.assertRaises(ValueError):r.parse(wire(rows),'native',True)
+        row=geometry('premerge');row['material_count']=0;r.mesh(row)
+        row['attributes']=[1]
+        with self.assertRaises(ValueError):r.mesh(row)
+        row=geometry('final-adjusted');row['table']=[[999,0,1,0,3]]
+        with self.assertRaises(ValueError):r.mesh(row)
+        for path in ('observer.rs','native.cpp.in'):
+            source=(r.HERE/path).read_text()
+            self.assertNotIn('Words(m+i,17)',source);self.assertNotIn('m.ambient',source)
+
+    def test_15_coordinated_recipe_and_receipt_controls(self):
+        recipe=r.recipe('C:/runner/temp','observed','O2')
+        manifest={'runner_temp':'C:/runner/temp','input_root':recipe['input_root']}
+        build={key:copy.deepcopy(recipe[key]) for key in ('id','source','target','evidence','commands')}
+        build.update(variant='observed',optimization='O2')
+        r.admit_recipe(manifest,build)
+        for key in ('source','target','evidence'):
+            bad=copy.deepcopy(build);bad[key]='C:\\wrong'
+            with self.assertRaises(ValueError):r.admit_recipe(manifest,bad)
+        for label in recipe['commands']:
+            receipt={'argv':copy.deepcopy(recipe['commands'][label]),'cwd':recipe['cwd'][label],
+                     'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''}}
+            r.admit_command(receipt,recipe,label)
+            for key in ('argv','cwd'):
+                bad=copy.deepcopy(receipt);bad[key]=['wrong.exe'] if key=='argv' else 'C:\\wrong'
+                resealed=copy.deepcopy(build)
+                if key=='argv':resealed['commands'][label]=bad[key]
+                with self.assertRaises(ValueError):r.admit_command(bad,recipe,label)
+                if key=='argv':
+                    with self.assertRaises(ValueError):r.admit_recipe(manifest,resealed)
+        bad=copy.deepcopy(manifest);bad['input_root']='C:\\wrong'
+        with self.assertRaises(ValueError):r.admit_recipe(bad,build)
+        for value in ('/O1','/Od'):
+            receipt['env']['_CL_']=value
+            with self.assertRaises(ValueError):r.admit_command(receipt,recipe,label)
+
+    def test_16_cargo_json_is_readmitted(self):
+        recipe=r.recipe('C:/runner/temp','observed','O2');source=r.PureWindowsPath(recipe['source'])/'rust/crates/mds-accessory'
+        exe=str(r.PureWindowsPath(recipe['target'])/'release/deps/mds_accessory-abcdef.exe')
+        artifact={'reason':'compiler-artifact','package_id':'path+file:///'+source.as_posix()+'#mds-accessory@0.1.0','manifest_path':str(source/'Cargo.toml'),
+                  'target':{'name':'mds_accessory','src_path':str(source/'src/lib.rs'),'kind':['lib'],'crate_types':['lib'],'test':True},
+                  'profile':{'opt_level':'3','debuginfo':0,'debug_assertions':False,'overflow_checks':False,'test':True},'executable':exe,'filenames':[exe]}
+        def cargo(row):return b'\n'.join(json.dumps(v).encode() for v in [row,{'reason':'build-finished','success':True}])+b'\n'
+        self.assertEqual(r.cargo_binary(cargo(artifact),recipe,'O2'),exe)
+        for key,value in [('executable',exe.replace('release','debug')),('package_id',artifact['package_id'].replace('mds-accessory@','wrong@')),('manifest_path','C:/wrong/Cargo.toml'),('filenames',[])]:
+            bad=copy.deepcopy(artifact);bad[key]=value
+            with self.assertRaises(ValueError):r.cargo_binary(cargo(bad),recipe,'O2')
+        for key,value in [('src_path','C:/wrong/lib.rs'),('kind',['test']),('name','wrong')]:
+            bad=copy.deepcopy(artifact);bad['target'][key]=value
+            with self.assertRaises(ValueError):r.cargo_binary(cargo(bad),recipe,'O2')
+        for key in artifact['profile']:
+            bad=copy.deepcopy(artifact);bad['profile'][key]='wrong'
+            with self.assertRaises(ValueError):r.cargo_binary(cargo(bad),recipe,'O2')
+        with self.assertRaises(ValueError):r.cargo_binary(cargo(artifact)[:-1],recipe,'O2')
+
+    def test_17_native_effective_options_objects_archive_and_link(self):
+        recipe=r.recipe('C:/runner/temp','observed','Od');root=r.PureWindowsPath(recipe['native_target']);source=r.PureWindowsPath(recipe['source'])
+        accessory=root/'mikudancestudio_core.dir/Release/accessory.obj';native=root/'floor_profile.dir/Release/native.obj';library=root/'Release/mikudancestudio_core.lib';exe=root/'Release/floor_profile.exe'
+        commands=[['C:\\VS\\cl.exe','/c','/O2','/Od','/Fo'+str(accessory),str(source/r.ACCESSORY)],
+                  ['C:\\VS\\cl.exe','/c','/O2','/Od','/Fo'+str(native),str(source/'native.cpp')],
+                  ['C:\\VS\\lib.exe','/OUT:'+str(library),str(accessory)],
+                  ['C:\\VS\\link.exe','/OUT:'+str(exe),str(native),str(library)]]
+        def member(raw):
+            header=b'accessory.obj/'.ljust(16)+b'0'.ljust(12)+b'0'.ljust(6)+b'0'.ljust(6)+b'100644'.ljust(8)+str(len(raw)).encode().ljust(10)+b'`\n'
+            return b'!<arch>\n'+header+raw+(b'\n' if len(raw)%2 else b'')
+        objects={accessory.relative_to(root).as_posix():b'accessory',native.relative_to(root).as_posix():b'native'}
+        archive=member(b'accessory')
+        self.assertEqual(r.native_provenance(commands,recipe,'Od',objects,archive),str(exe))
+        raw=('\n'.join(' '.join('"'+v+'"' if ' ' in v else v for v in row) for row in commands)+'\n').encode()
+        self.assertEqual(r.native_commands(raw),commands)
+        spaced=copy.deepcopy(commands);spaced[0][0]='C:\\Program Files\\VS\\cl.exe'
+        raw=('\n'.join(' '.join(row) for row in spaced)+'\n').encode()
+        self.assertEqual(r.native_commands(raw),spaced)
+        for opt in ('Od','O2'):
+            for index in (0,1):
+                for override in ('/O1','-O1','/Ox'):
+                    bad=copy.deepcopy(commands);bad[0][3]='/'+opt;bad[1][3]='/'+opt;bad[index].append(override)
+                    with self.assertRaises(ValueError):r.native_provenance(bad,recipe,opt,objects,archive)
+        for index,key,value in [(0,4,'/FoUNRELATED.obj'),(1,4,'/FoOTHER.obj'),(0,5,str(source/'wrong.cpp')),(2,2,str(native)),(3,2,'WRONG.obj'),(3,3,'wrong.lib'),(3,1,'/OUT:wrong.exe')]:
+            bad=copy.deepcopy(commands);bad[index][key]=value
+            with self.assertRaises(ValueError):r.native_provenance(bad,recipe,'Od',objects,archive)
+        with self.assertRaises(ValueError):r.native_provenance(commands,recipe,'Od',objects,member(b'unrelated'))
+        with self.assertRaises(ValueError):r.native_provenance(commands,recipe,'Od',{},archive)
+        with self.assertRaises(ValueError):r.command_words('cl.exe @hidden.rsp')
+
+    def test_18_fixed_schema_contract_even_after_reseal(self):
+        manifest={'schema':r.SCHEMA,'fp_observation_contract':copy.deepcopy(r.FP_CONTRACT),'base':r.BASE,'paths':r.PATHS,'head':'1'*40}
+        r.admit_manifest(manifest)
+        for key in ('schema','fp_observation_contract'):
+            bad=copy.deepcopy(manifest);bad[key]='wrong'
+            with self.assertRaises(ValueError):r.admit_manifest(json.loads(json.dumps(bad)))
+
+    def test_19_synthetic_replay_resealed_result_and_coordinated_commands(self):
+        out=Path('/synthetic-evidence');files={};receipts={};builds=[];parsed={}
+        exports={name:i+1 for i,name in enumerate(('D3DXLoadMeshFromXW','D3DXVec3TransformCoord','D3DXVec3Transform'))}
+        for opt in ('Od','O2'):
+            for variant in ('control','observed'):
+                recipe=r.recipe('C:/runner/temp',variant,opt);id=recipe['id'];directory=out/id
+                n=packet('native',variant=='observed');p=packet('rust',variant=='observed')
+                for rows in (n,p):
+                    case=None
+                    for row in rows:
+                        if row['stage']=='case':case=row['id']
+                        if case=='floor-affine' and row['stage'] in ('before-observation','observation','final-adjusted'):row['positions'][0][0]=r.word(.5)
+                dll=next(row for row in n if row['stage']=='dll');dll.update(size=2,sha256=r.digest(b'MZ'))
+                parsed[id]=(r.parse(wire(n),'native',variant=='observed'),r.parse(wire(p),'rust',variant=='observed'))
+                binaries={name:{'sha256':r.digest(b'MZ'),'size':2} for name in ('floor_profile.exe','rust-profile.exe','d3dx9_43.dll')}
+                b={key:copy.deepcopy(recipe[key]) for key in ('id','source','target','evidence','commands')}
+                b.update(variant=variant,optimization=opt,objects={},binaries=binaries,actual_native_commands=[],
+                         original_native_binary={'path':str(r.PureWindowsPath(recipe['native_target'])/'Release/floor_profile.exe'),'sha256':r.digest(b'MZ')},
+                         original_rust_binary={'path':'synthetic-cargo-executable','sha256':r.digest(b'MZ')})
+                builds.append(b)
+                for name in binaries:files[directory/name]=b'MZ'
+                files[directory/'mikudancestudio_core.lib']=b'synthetic-archive'
+                for label in recipe['commands']:
+                    stdout=(wire(n) if label=='native' else wire(p)+b'test result: ok. 1 passed; 0 failed; 0 ignored;\n' if label=='rust' else b'test result: ok. 1 passed; 0 failed; 0 ignored;\n' if label in ('mesh_dump','x_files') else b'')
+                    receipt={'argv':copy.deepcopy(recipe['commands'][label]),'cwd':recipe['cwd'][label],
+                             'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''}}
+                    if label in ('native','rust'):receipt['executed_binary']={'path':recipe['commands'][label][0],'sha256':r.digest(b'MZ'),'size':2}
+                    receipts[(id,label)]=(receipt,stdout,b'');files[directory/(label+'.stdout')]=stdout;files[directory/(label+'.stderr')]=b''
+        manifest={'schema':r.SCHEMA,'fp_observation_contract':r.FP_CONTRACT,'base':r.BASE,'head':'1'*40,'paths':r.PATHS,'runner_temp':'C:/runner/temp','input_root':r.recipe('C:/runner/temp','control','Od')['input_root'],'builds':builds}
+        result={'schema':r.SCHEMA,'fp_observation_contract':r.FP_CONTRACT,'head':'1'*40,'results':{opt:r.classify(*parsed['observed-'+opt]) for opt in ('Od','O2')},'hosted':'ExecutedWindowsOnly','profile_adoption':'NotAuthorized'}
+        def encode(value):return json.dumps(value).encode()
+        def inventory(_):return {str(path.relative_to(out)):{'sha256':r.digest(raw),'size':len(raw)} for path,raw in files.items() if path!=out/'seal.json'}
+        def seal():
+            files[out/'manifest.json']=encode(manifest);files[out/'result.json']=encode(result)
+            files[out/'seal.json']=encode({'schema':r.SCHEMA,'files':inventory(out)})
+        seal()
+        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(Path,'read_text',lambda path,**kwargs:files[path].decode()),patch.object(r.previous,'evidence_inventory',inventory),patch.object(r,'verify_sources'),patch.object(r,'checked',lambda directory,label:receipts[(directory.name,label)]),patch.object(r,'native_provenance',lambda commands,recipe,*args:str(r.PureWindowsPath(recipe['native_target'])/'Release/floor_profile.exe')),patch.object(r,'cargo_binary',return_value='synthetic-cargo-executable'),patch.object(r,'pe_exports',return_value=exports):
+            self.assertEqual(r.replay(out),result)
+            result['results']['Od']['causal_qualification'][0]['operation_environment']='Proved';seal()
+            with self.assertRaises(ValueError):r.replay(out)
+            result['results']['Od']=r.classify(*parsed['observed-Od']);seal()
+            for language in ('native','rust'):
+                receipt=receipts[(builds[0]['id'],language)][0];original=copy.deepcopy(receipt['executed_binary'])
+                receipt['executed_binary']['sha256']='0'*64;seal()
+                with self.assertRaises(ValueError):r.replay(out)
+                receipt['executed_binary']=original;seal()
+            for label in ('native','rust','configure','native-build','rust-build'):
+                old=copy.deepcopy(builds[0]['commands'][label]);receipt=receipts[(builds[0]['id'],label)][0]
+                builds[0]['commands'][label]=['wrong-executable'];receipt['argv']=['wrong-executable'];seal()
+                with self.assertRaises(ValueError):r.replay(out)
+                builds[0]['commands'][label]=old;receipt['argv']=old;seal()
+
     def test_zz_real_effects_rejected_before_effects(self):
-        target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-floor-profile/effect-probe')
+        target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-floor-profile-corrected/effect-probe')
         self.assertFalse(target.exists());r.readonly()
         probes=[lambda:target.write_bytes(b'forbidden'),lambda:target.mkdir(),lambda:subprocess.run([sys.executable,'-c','raise SystemExit(99)'],check=True),lambda:socket.socket()]
         for probe in probes:

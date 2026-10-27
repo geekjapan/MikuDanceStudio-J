@@ -24,6 +24,7 @@
 using namespace mikudancestudio;
 namespace {
 bool good=true;
+const char* active_case=nullptr;
 void Emit(const std::string& s) { std::printf("FP %s\n",s.c_str()); }
 std::string Quote(const std::string& s) {
     std::ostringstream o; o << '"';
@@ -44,7 +45,7 @@ bool Hr(const char* operation,HRESULT hr) {
     Emit("{\"stage\":\"hr\",\"operation\":"+Quote(operation)+",\"value\":"+std::to_string(std::uint32_t(hr))+"}");
     good &= SUCCEEDED(hr);return SUCCEEDED(hr);
 }
-void Fp(const char* point) {Emit("{\"stage\":\"fp\",\"point\":"+Quote(point)+",\"mxcsr\":"+std::to_string(_mm_getcsr())+"}");}
+void Fp(const char* point) {Emit("{\"stage\":\"fp\",\"point\":"+Quote(point)+",\"case\":"+(active_case?Quote(active_case):"null")+",\"mxcsr\":"+std::to_string(_mm_getcsr())+"}");}
 template<class T> struct Com {T* p=nullptr;~Com(){if(p)p->Release();}T* operator->()const{return p;}};
 bool Mesh(const char* stage,ID3DXMesh* mesh) {
     if(!mesh)return good=false;
@@ -82,9 +83,8 @@ bool Mesh(const char* stage,ID3DXMesh* mesh) {
     Emit("{\"stage\":"+Quote(stage)+",\"positions\":"+positions+",\"indices\":"+Array(indices.data(),indices.size())+",\"attributes\":"+attrs+",\"table\":"+ts+",\"bounds\":["+std::to_string(n)+","+std::to_string(f)+","+std::to_string(stride)+","+std::to_string(offset)+","+std::to_string(vd.Size)+","+std::to_string(id.Size)+","+std::to_string(width)+"],\"initialized\":[\"position\"],\"unknown\":[\"uv\",\"padding\",\"other-declaration-channels\"]}");
     return true;
 }
-void Materials(const char* stage,const D3DMATERIAL9* m,DWORD n) {
-    std::string rows="[";for(DWORD i=0;i<n;++i){if(i)rows+=',';rows+=Words(m+i,17);}rows+=']';
-    Emit("{\"stage\":"+Quote(stage)+",\"words\":"+rows+"}");
+void Materials(const char* stage,DWORD n) {
+    Emit("{\"stage\":"+Quote(stage)+",\"material_count\":"+std::to_string(n)+"}");
 }
 std::vector<unsigned char> Read(const std::filesystem::path& p) {
     std::ifstream f(p,std::ios::binary);return {std::istreambuf_iterator<char>(f),{}};
@@ -153,27 +153,27 @@ int wmain(int argc,wchar_t** argv) {
     auto renderer=std::make_unique<D3DRenderer>();renderer->device=device.p;app->Renderer()=renderer.get();
     const char* ids[5]={@IDS@};const wchar_t* files[5]={@FILES@};
     for(int i=0;i<5;++i) {
+        active_case=ids[i];
         Emit("{\"stage\":\"case\",\"id\":"+Quote(ids[i])+"}");Fp("independent-before");
         Com<ID3DXMesh> raw;Com<ID3DXBuffer> material;DWORD count=0;
         if(!Hr("D3DXLoadMeshFromXW",D3DXLoadMeshFromXW(files[i],544,device.p,nullptr,&material.p,nullptr,&count,&raw.p)))return 10;
         Fp("independent-after");if(!Mesh("independent-raw",raw.p))return 11;
         if(!material.p||!count||material->GetBufferSize()<count*sizeof(D3DXMATERIAL))return 12;
-        std::vector<D3DMATERIAL9> mats(count);auto* src=static_cast<D3DXMATERIAL*>(material->GetBufferPointer());if(!src)return 12;
-        for(DWORD j=0;j<count;++j)mats[j]=src[j].MatD3D;Materials("independent-material-raw",mats.data(),count);
+        Materials("independent-material-raw",count);
         Record record;Fp("loader-before");bool loaded=LoadAccessoryObject(app.get(),&record.value,files[i]);Fp("loader-after");
         Emit("{\"stage\":\"loader\",\"success\":"+std::string(loaded?"true":"false")+"}");if(!loaded)return 13;
         auto& r=record.value;if(!Mesh("before-observation",static_cast<ID3DXMesh*>(r.mesh)))return 14;
         if(std::wcscmp(argv[2],L"observed")==0 && !Mesh("observation",static_cast<ID3DXMesh*>(r.mesh)))return 15;
         if(!Mesh("final-adjusted",static_cast<ID3DXMesh*>(r.mesh)))return 16;
-        if(!r.materials||!r.materialCount)return 17;Materials("final-material-adjusted",static_cast<D3DMATERIAL9*>(r.materials),r.materialCount);
+        if(!r.materials||!r.materialCount)return 17;Materials("final-material-adjusted",r.materialCount);
     }
     const float matrices[3][16]=@MATRICES@;const float points[5][3]=@POINTS@;
     for(int m=0;m<3;++m)for(int p=0;p<5;++p)for(int op=0;op<2;++op) {
         D3DXVECTOR3 input;std::memcpy(&input,points[p],12);D3DXMATRIX matrix;std::memcpy(&matrix,matrices[m],64);
-        D3DXVECTOR3 q{};D3DXVECTOR4 t{};unsigned before=_mm_getcsr();bool returned=false;
+        D3DXVECTOR3 q{};D3DXVECTOR4 t{};unsigned sample_a=_mm_getcsr();bool returned=false;
         if(op==0)returned=coord(&q,&input,&matrix)==&q;else returned=transform(&t,&input,&matrix)==&t;
-        unsigned after=_mm_getcsr();if(!returned)return 18;
-        Emit("{\"stage\":\"direct\",\"operation\":"+Quote(op?"Transform":"TransformCoord")+",\"matrix\":"+std::to_string(m)+",\"point\":"+std::to_string(p)+",\"words\":"+Words(op?static_cast<void*>(&t):static_cast<void*>(&q),op?4:3)+",\"before\":"+std::to_string(before)+",\"after\":"+std::to_string(after)+"}");
+        unsigned sample_b=_mm_getcsr();if(!returned)return 18;
+        Emit("{\"stage\":\"direct\",\"operation\":"+Quote(op?"Transform":"TransformCoord")+",\"matrix\":"+std::to_string(m)+",\"point\":"+std::to_string(p)+",\"words\":"+Words(op?static_cast<void*>(&t):static_cast<void*>(&q),op?4:3)+",\"sample_a\":"+std::to_string(sample_a)+",\"sample_b\":"+std::to_string(sample_b)+"}");
     }
     DestroyWindow(window);Emit("{\"stage\":\"end\",\"status\":"+std::to_string(good?0:19)+"}");return good?0:19;
 }

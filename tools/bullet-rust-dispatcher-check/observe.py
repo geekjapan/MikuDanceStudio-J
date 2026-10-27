@@ -20,7 +20,7 @@ def instrument_rust(source):
     return source[:match.start()] + hook + match[1] + '                used_simplex,\n            );' + source[match.end():]
 
 
-def copy_rust(root, destination):
+def copy_rust(root, destination, diff_path):
     core = destination / 'rust/crates/mds-bullet/src/core'
     shutil.copytree(root / 'rust/crates/mds-bullet/src/core', core, dirs_exist_ok=True)
     runner = destination / 'tools/bullet-rust-dispatcher-check/runner.rs'
@@ -28,7 +28,7 @@ def copy_rust(root, destination):
     shutil.copyfile(root / 'tools/bullet-rust-dispatcher-check/runner.rs', runner)
     source = core / 'dispatcher.rs'
     original = source.read_text();observed = instrument_rust(original);source.write_text(observed)
-    (destination / 'observer.diff').write_text(''.join(difflib.unified_diff(original.splitlines(True), observed.splitlines(True))))
+    diff_path.write_text(''.join(difflib.unified_diff(original.splitlines(True), observed.splitlines(True))))
     return runner
 
 

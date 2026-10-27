@@ -19,12 +19,19 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 static void scalar(float f) { unsigned u; std::memcpy(&u,&f,4); std::printf(" %08x",u); }
 static void vector(const btVector3& v) { for(int i=0;i<3;i++) scalar(v[i]); }
 static int id(const void* b) { return *static_cast<const int*>(static_cast<const btCollisionObject*>(b)->getUserPointer()); }
 static float read_float(std::istringstream& in) { std::string s; in>>s; unsigned u=std::stoul(s,nullptr,16); float f;std::memcpy(&f,&u,4);return f; }
 int main() {
+#ifdef _WIN32
+    _setmode(_fileno(stdout),_O_BINARY);
+#endif
     btDefaultCollisionConfiguration configuration;
     btCollisionDispatcher dispatcher(&configuration);
     btHashedOverlappingPairCache cache;

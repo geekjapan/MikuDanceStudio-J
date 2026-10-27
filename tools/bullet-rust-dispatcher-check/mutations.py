@@ -3,13 +3,13 @@
 import argparse
 import difflib
 import json
-import hashlib
 import os
 from pathlib import Path
 import shutil
 import subprocess
 from trace import validate
 from observe import instrument_rust, simplex_events
+from check import generated_snapshot
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -70,9 +70,12 @@ def main():
         assert native_observation.returncode == 0 and native_observation.stdout == expected, 'native observer altered mutation baseline'
         expected_simplex = simplex_events(native_observation.stderr)
         (folder / 'inputs.tsv').write_bytes(inputs);(folder / 'native.stdout').write_bytes(expected);(folder / 'native.stderr').write_bytes(baseline.stderr);(folder / 'native-observed.stderr').write_bytes(native_observation.stderr)
-        core = folder / 'rust/crates/mds-bullet/src/core'
+        generated_root = folder / 'generated-sources'
+        generated_root.mkdir(exist_ok=True)
+        assert not any(generated_root.iterdir()), 'mutation source directory must be empty'
+        core = generated_root / 'rust/crates/mds-bullet/src/core'
         shutil.copytree(ROOT / 'rust/crates/mds-bullet/src/core', core, dirs_exist_ok=True)
-        runner = folder / 'tools/bullet-rust-dispatcher-check/runner.rs';runner.parent.mkdir(parents=True, exist_ok=True)
+        runner = generated_root / 'tools/bullet-rust-dispatcher-check/runner.rs';runner.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(HERE / 'runner.rs', runner)
         source = core / 'dispatcher.rs';original = source.read_text();anchor, replacement = MUTATIONS[name]
         if anchor == 'RUNNER':
@@ -103,10 +106,11 @@ def main():
         command = ['rustup', 'run', '1.95.0', 'rustc', '--edition=2021', '-O', str(runner), '--extern', f'mds_crtmath={capture / "libmds_crtmath.rlib"}', '-o', str(exe)]
         (folder / 'command.json').write_text(json.dumps(command, indent=2) + '\n')
         def sources():
-            return {path.relative_to(folder).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(folder.rglob('*.rs'))}
+            return generated_snapshot(generated_root)
         before = sources()
         (folder / 'producer-start.json').write_text(json.dumps(before, indent=2) + '\n')
         def guarded_run(argv, label, inputs=None):
+            assert before == sources(), 'mutation compiled source membership or raw bytes changed before command'
             (folder / (label + '-command.json')).write_text(json.dumps(argv, indent=2) + '\n')
             try:
                 return subprocess.run(argv, cwd=ROOT / 'rust', input=inputs, capture_output=True, timeout=120)
@@ -131,6 +135,9 @@ def main():
         (folder / 'simplex.diff').write_text(simplex_difference)
         (folder / 'semantic.diff').write_text(difference)
         difference += simplex_difference
+        after = sources()
+        (folder / 'producer-end.json').write_text(json.dumps(after, indent=2) + '\n')
+        assert before == after, 'mutation compiled source membership or raw bytes changed after capture'
         results.append({'mutation': name, 'status': 'SEMANTIC_MISMATCH' if difference else 'UNRESOLVED_UNOBSERVABLE'})
     (out / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     assert results and all(r['status'] == 'SEMANTIC_MISMATCH' for r in results), results

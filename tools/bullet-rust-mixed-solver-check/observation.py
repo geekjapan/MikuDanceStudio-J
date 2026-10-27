@@ -63,7 +63,9 @@ def captures(out):
 
 def select_profile(out,profiles):
     observed_identity=identity(out)
-    candidates=[json.loads(p.read_text()) for p in profiles.glob('*.json')]
+    from integrity import regular_path
+    here=Path(__file__).resolve().parent;root=here.parents[1]
+    candidates=[json.loads(regular_path(profiles.parent,p).read_text()) for p in profiles.glob('*.json')]
     candidates=[p for p in candidates if p['identity']==observed_identity]
     if not candidates:raise ValueError('unknown or ambiguous arithmetic observation host/toolchain profile')
     source_manifest=json.loads((out/'source-sha256.json').read_text())
@@ -74,12 +76,12 @@ def select_profile(out,profiles):
     if len(candidates)!=1:raise ValueError('unknown or ambiguous arithmetic observation host/toolchain profile')
     expected=candidates[0]
     if expected.get('strict_producer_closure'):
-        from integrity import producer_paths
-        here=Path(__file__).resolve().parent;root=here.parents[1]
+        from integrity import producer_paths, verifier_paths
         producers={p.relative_to(root).as_posix() for p in producer_paths(root)}
-        verifiers={p.relative_to(root).as_posix() for p in [*here.glob('*.py'),*here.rglob('*.json')]}
-        if set(expected['producer_sources'])!=producers or set(normalized)-producers-verifiers:
+        verifiers={regular_path(root,p).relative_to(root).as_posix() for p in verifier_paths(root,out)}
+        if set(expected['producer_sources'])!=producers or set(normalized)!=producers|verifiers:
             raise ValueError('arithmetic observation producer closure differs')
+        for name in producers:regular_path(root,root/name)
     if any(digest(out/name)!=value for name,value in expected.get('identity_raw',{}).items()):raise ValueError('raw compiler identity differs')
     if any(digest(out/name)!=value for name,value in expected.get('observer_sources',{}).items()):raise ValueError('instrumented observer source differs')
     return expected

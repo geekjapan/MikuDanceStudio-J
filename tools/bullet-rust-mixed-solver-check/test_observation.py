@@ -80,7 +80,7 @@ class ObservationTests(unittest.TestCase):
 
     def test_current_records_select_exact_raw_sources_and_reject_unknown_closure(self):
         from check import hooks, SOLVER, ROOT, HERE
-        from integrity import producer_paths
+        from integrity import producer_paths, verifier_paths, snapshot
         import hashlib
         from unittest.mock import patch
         producers={p.relative_to(ROOT).as_posix() for p in producer_paths(ROOT)}
@@ -103,7 +103,7 @@ class ObservationTests(unittest.TestCase):
                 observed=hooks(SOLVER.read_text()).encode()
                 if host=='windows':observed=observed.replace(b'\n',b'\r\n')
                 (out/SOLVER.name).write_bytes(observed)
-                sources=dict(measured['all_233_raw_sources'])
+                sources={**snapshot(ROOT,verifier_paths(ROOT)),**profile['producer_sources']}
                 manifest=out/'source-sha256.json'
                 manifest.write_text(json.dumps(sources))
                 aliases=dict(sources);aliases[source.replace('/','\\')]=sources[source]

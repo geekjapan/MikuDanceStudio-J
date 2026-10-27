@@ -404,9 +404,11 @@ CL_VALUE_OPTIONS = ('/D', '/U', '/I', '/FI', '/external:I')
 CL_OUTPUT_OPTIONS = ('/Fo', '/Fd', '/Fe', '/Fa', '/Fi', '/Fp')
 CL_DEPENDENCY_OPTIONS = ('/sourceDependencies', '/sourceDependencies:directives', '/scanDependencies')
 CL_FLAGS = frozenset(('/c', '/E', '/EP', '/P', '/showIncludes', '/TP', '/nologo',
-                      '/W0', '/W1', '/WX-', '/diagnostics:column', '/O2', '/Ob2', '/Od',
+                      '/W0', '/W1', '/W3', '/WX-', '/wd4267', '/wd4244', '/wd4245',
+                      '/diagnostics:column', '/O2', '/Ob2', '/Od',
                       '/EHsc', '/MD', '/MDd', '/GS', '/GR', '/Gd', '/Gm-', '/RTC1', '/FC',
-                      '/Zc:wchar_t', '/Zc:forScope', '/Zc:inline', '/std:c++17',
+                      '/Zc:wchar_t', '/Zc:forScope', '/Zc:inline', '/Zc:alignedNew-',
+                      '/std:c++17', '/openmp', '/permissive-', '/utf-8',
                       '/external:W0', '/external:W1', '/fp:precise', '/fp:fast', '/fp:strict',
                       '/arch:SSE2', '/arch:AVX', '/arch:AVX2'))
 

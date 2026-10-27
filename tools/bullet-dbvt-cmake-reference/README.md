@@ -66,13 +66,15 @@ The exact supported flags are:
 
 ```text
 /c /E /EP /P /showIncludes /TP /nologo
-/W0 /W1 /WX- /diagnostics:column /external:W0 /external:W1
+/W0 /W1 /W3 /WX- /wd4267 /wd4244 /wd4245
+/diagnostics:column /external:W0 /external:W1
 /O2 /Ob2 /Od /EHsc /MD /MDd /GS /GR /Gd /Gm- /RTC1 /FC
-/Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17
+/Zc:wchar_t /Zc:forScope /Zc:inline /Zc:alignedNew-
+/std:c++17 /openmp /permissive- /utf-8
 /fp:precise /fp:fast /fp:strict /arch:SSE2 /arch:AVX /arch:AVX2
 ```
 
-Other valid MSVC flags require an explicit grammar change and a parser control. In particular, other `/EH`, `/Zc`, `/std`, `/arch`, and `/fp` forms, and all `/favor` and `/openmp` forms, are unsupported. Preprocessing removes only classified `/c`, `/E`, `/EP`, `/P`, `/showIncludes`, and output-path tokens, then adds `/E` and `/showIncludes`. Every other accepted option retains its original tokens and order. The logging-only `/Bv` is added after parsing by the replay runner.
+Other valid MSVC flags require an explicit grammar change and a parser control. In particular, other `/EH`, `/Zc`, `/std`, `/arch`, and `/fp` forms, all `/favor` forms, and `/openmp` variants such as `/openmp:llvm`, are unsupported. Preprocessing removes only classified `/c`, `/E`, `/EP`, `/P`, `/showIncludes`, and output-path tokens, then adds `/E` and `/showIncludes`. Every other accepted option retains its original tokens and order. The logging-only `/Bv` is added after parsing by the replay runner.
 
 `CL` and `_CL_` accept definitions and includes from the same grammar, plus supported flags beginning with `/std:`, `/arch:`, `/fp:`, `/O`, `/MD`, `/MT`, `/EH`, `/Zc:`, and `/nologo`. Output paths, source modes, positional inputs, and other flags are rejected in these environment variables.
 
@@ -125,3 +127,15 @@ operand count. The tasks contain 7, 20, 89, and 5 payload lines. These fixtures
 prove parsing of the captured records. Complete archive, object, LINK/read/map,
 preprocessing/header, macro-policy, and numeric acceptance still require the
 actual Windows measurement.
+
+`fixtures/compiler/selected-tus.json` retains the six selected TU tasks from the
+same Windows run, with their original caret, payload line, ordered argv, tlog path,
+and complete original tlog hash. The app's `scene_create` uses eight additional
+operand-free flags. `/W3` and `/wd4267`, `/wd4244`, `/wd4245` control warnings.
+`/openmp` and `/permissive-` select language behavior. `/utf-8` selects character
+encoding. `/Zc:alignedNew-` selects allocation behavior. Each exact token is
+supported with the existing slash or dash prefix normalization and remains in
+preprocessing in its original order. These flags never consume a following
+source operand. Other warning numbers, language modes, encodings, and suffixes
+remain unsupported. The compiler environment's existing supported `/Zc:` rule
+also permits `/Zc:alignedNew-`. Its other option restrictions remain unchanged.

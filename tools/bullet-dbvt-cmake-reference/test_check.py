@@ -361,6 +361,62 @@ class Controls(unittest.TestCase):
         with self.assertRaises(ValueError):
             check.preprocess_args(['/c', 'other.cpp'], 'source.cpp')
 
+    def test_actual_selected_tus_preserve_source_argv_and_preprocessing(self):
+        import ntpath
+        from pathlib import PureWindowsPath
+
+        class WindowsPath(PureWindowsPath):
+            def resolve(self):
+                return WindowsPath(ntpath.normpath(str(self)))
+
+        fixture = Path(__file__).with_name('fixtures') / 'compiler/selected-tus.json'
+        records = json.loads(fixture.read_text())['records']
+        self.assertEqual([r['name'] for r in records], list(check.TUS))
+        for record in records:
+            with self.subTest(name=record['name']):
+                [source] = record['sources']
+                [line] = [line for line in record['lines'] if line.strip()]
+                argv = check.split_command(line)
+                self.assertEqual(argv, record['argv'])
+                original = argv[:]
+                cwd = WindowsPath(source).parent
+                with patch.object(check, 'Path', WindowsPath):
+                    index = check.compile_source_index(argv, source, cwd)
+                    replay = check.preprocess_args(argv, source, cwd=cwd)
+                self.assertEqual(argv[index], source)
+                self.assertEqual(argv, original)
+                self.assertEqual(replay[-3:], ['/E', '/showIncludes', source])
+                self.assertEqual(check.policy_flags(argv), ['/DWIN32', '/fp:precise', '/std:c++17'])
+                if record['name'] == 'scene_create':
+                    flags = ['/W3', '/openmp', '/permissive-', '/wd4267', '/wd4244',
+                             '/wd4245', '/utf-8', '/Zc:alignedNew-']
+                    self.assertEqual([arg for arg in replay if arg in flags], flags)
+                    self.assertFalse(any(arg.startswith(('/Fo', '/Fd')) for arg in replay))
+
+    def test_observed_cl_flags_are_exact_operand_free_tokens(self):
+        flags = ('W3', 'openmp', 'permissive-', 'wd4267', 'wd4244', 'wd4245', 'utf-8', 'Zc:alignedNew-')
+        for prefix in ('/', '-'):
+            args = [prefix + flag for flag in flags]
+            self.assertEqual(check.preprocess_args(['/c', *args, 'good.cpp'], 'good.cpp'),
+                             [*args, '/E', '/showIncludes', 'good.cpp'])
+            for flag in flags:
+                for extra in ('other.cpp', 'input.obj', 'extensionless', ''):
+                    with self.subTest(flag=flag, extra=extra), self.assertRaises(ValueError):
+                        check.preprocess_args([prefix + flag, extra, 'good.cpp'], 'good.cpp')
+                with self.subTest(flag=flag), self.assertRaisesRegex(ValueError, 'caret full path'):
+                    check.preprocess_args([prefix + flag, 'other.cpp'], 'good.cpp')
+            for flag in ('W2', 'W4', 'w3', 'wd9999', 'wd4267:bad', 'wd', 'openmp:llvm',
+                         'openmp:experimental', 'openmp-', 'permissive', 'permissive-:bad',
+                         'utf-8:bad', 'utf8', 'Zc:alignedNew', 'Zc:alignedNew-:bad'):
+                with self.subTest(flag=flag), self.assertRaises(ValueError):
+                    check.preprocess_args([prefix + flag, 'good.cpp'], 'good.cpp')
+        with patch.dict(os.environ, {'CL': '/Zc:alignedNew-', '_CL_': ''}):
+            self.assertEqual(check.compiler_environment()['CL'], ['/Zc:alignedNew-'])
+        for flag in flags[:-1]:
+            with patch.dict(os.environ, {'CL': '/' + flag, '_CL_': ''}):
+                with self.subTest(environment=flag), self.assertRaises(ValueError):
+                    check.compiler_environment()
+
     def test_actual_windows_dbvt_tlogs_keep_global_cpp_mode(self):
         # Actions 40439880708, artifact 12705684917, captured caret and command records.
         records = ['^D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC\\BULLETCOLLISION\\BROADPHASECOLLISION\\BTDBVT.CPP\n/c /I"D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC" /I\\SRC /I"D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC\\BULLETCOLLISION\\}" /nologo /W1 /WX- /diagnostics:column /O2 /Ob2 /D _MBCS /D WIN32 /D _WINDOWS /D NDEBUG /D "CMAKE_INTDIR=\\"Release\\"" /EHsc /MD /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /GR /std:c++17 /Fo"BULLETCOLLISION.DIR\\RELEASE\\\\" /Fd"D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BUILD\\BULLETCOLLISION\\RELEASE\\BULLETCOLLISION.PDB" /external:W1 /Gd /TP D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC\\BULLETCOLLISION\\BROADPHASECOLLISION\\BTDBVT.CPP\n', '^D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC\\BULLETCOLLISION\\BROADPHASECOLLISION\\BTDBVTBROADPHASE.CPP\n/c /I"D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC" /I\\SRC /I"D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC\\BULLETCOLLISION\\}" /nologo /W1 /WX- /diagnostics:column /O2 /Ob2 /D _MBCS /D WIN32 /D _WINDOWS /D NDEBUG /D "CMAKE_INTDIR=\\"Release\\"" /EHsc /MD /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /GR /std:c++17 /Fo"BULLETCOLLISION.DIR\\RELEASE\\\\" /Fd"D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BUILD\\BULLETCOLLISION\\RELEASE\\BULLETCOLLISION.PDB" /external:W1 /Gd /TP D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC\\BULLETCOLLISION\\BROADPHASECOLLISION\\BTDBVTBROADPHASE.CPP\n']
@@ -740,9 +796,12 @@ class Controls(unittest.TestCase):
     def test_linker_continuations_reject_options(self):
         with tempfile.TemporaryDirectory() as folder:
             build, out, libs, tlog, _ = self.link_fixture(Path(folder))
-            tlog.write_text(tlog.read_text() + '\n/NOLOGO\n')
-            with self.assertRaisesRegex(ValueError, 'linker continuation'):
-                check.link_proof(build, 'app', out, libs)
+            original = tlog.read_text()
+            for content, error in ((original + '\n/NOLOGO\n', 'linker continuation'),
+                                   (original + '\n' + original, 'ambiguous actual app linker task')):
+                tlog.write_text(content)
+                with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
+                    check.link_proof(build, 'app', out, libs)
 
     def test_librarian_multiline_archive_consumer(self):
         with tempfile.TemporaryDirectory() as folder:

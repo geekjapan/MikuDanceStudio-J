@@ -476,7 +476,8 @@ class FiniteMeasurementTests(unittest.TestCase):
             source[measured_profiles.MANIFEST_PATH] = measured_profiles.sha((measured_profiles.HERE / 'measured-profiles.json').read_bytes())
             self.assertEqual(source[path], identity)
             with self.subTest(host=host), patch('host_profiles.platform.system', return_value=system), \
-                    patch('host_profiles.platform.machine', return_value=machine):
+                    patch('host_profiles.platform.machine', return_value=machine), \
+                    patch.object(self, 'assertEqual', side_effect=lambda left, right: self.assertTrue(left == right)):
                 self.assertEqual(check.host(), host)
                 with patch.object(check, 'source_hashes', side_effect=lambda: dict(source)):
                     self.test_current_collector_and_broadphase_physical_source_refusals()

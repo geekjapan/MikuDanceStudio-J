@@ -331,4 +331,201 @@ mod tests {
             assert!((b[c] - a[c] - d[c]).abs() < 1e-5);
         }
     }
+
+    /// CPU diagnostic only: the golden2 Rust pose is an input, not a native PMM pose oracle.
+    #[test]
+    #[ignore = "explicit CI diagnostic; requires MDS_SKIN_FRAME_OUT"]
+    fn exact_frame_skin_cpu_probe() {
+        use crate::scene;
+        use mds_formats::pmm::Pmm;
+        use mds_physics::PhysicsScene;
+        use std::fmt::Write;
+        use std::path::PathBuf;
+
+        fn hex(out: &mut String, values: impl IntoIterator<Item = f32>) {
+            for v in values {
+                write!(out, " {:08x}", v.to_bits()).unwrap();
+            }
+            out.push('\n');
+        }
+        let out =
+            PathBuf::from(std::env::var_os("MDS_SKIN_FRAME_OUT").expect("MDS_SKIN_FRAME_OUT"));
+        std::fs::create_dir_all(&out).unwrap();
+        let fixtures =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/rust");
+        let golden = fixtures.join("golden2");
+        let reads = std::cell::RefCell::new(std::collections::BTreeSet::new());
+        let missing = std::cell::RefCell::new(std::collections::BTreeSet::new());
+        let read = |path: &str| -> Result<Vec<u8>, String> {
+            let name = path.rsplit(['\\', '/']).next().unwrap_or(path);
+            let file = [golden.clone(), fixtures.clone(), fixtures.join("accessory")]
+                .into_iter()
+                .map(|d| d.join(name))
+                .find(|f| f.is_file())
+                .unwrap_or_else(|| golden.join(name));
+            let data = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()));
+            if data.is_ok() {
+                reads.borrow_mut().insert(file);
+            } else {
+                missing.borrow_mut().insert(file);
+            }
+            data
+        };
+        let pmm = Pmm::read(&read("skin.pmm").unwrap()).unwrap();
+        assert_eq!(
+            pmm.models.len(),
+            1,
+            "diagnostic expects the skin scene model"
+        );
+        let mut cases = String::new();
+        let mut dump = String::new();
+        let mut details = String::new();
+        let mut counts = String::new();
+        for frame in [0, 30] {
+            let mut physics = PhysicsScene::new(&pmm, &read).unwrap();
+            for _ in 0..frame {
+                physics.step().unwrap();
+            }
+            let view = scene::camera_at(&pmm, frame).unwrap().view(640, 360);
+            let stage = scene::stage_at(&pmm, frame);
+            let edge = EdgeView {
+                world: view.edge_world.concat().try_into().unwrap(),
+                camera_position: view.edge_origin,
+                fov: view.edge_fov,
+                self_shadow: stage.self_shadow.is_some_and(|s| s.shades()),
+            };
+            let m = &pmm.models[0];
+            let name = m.path.text.rsplit(['\\', '/']).next().unwrap();
+            assert_eq!(name, "skin_tex.pmx");
+            let pmx = Pmx::read(&read(&m.path.text).unwrap()).unwrap();
+            assert!(pmx.vertices[9].weight_kind <= 2);
+            assert!(pmx.vertices[10].weight_kind <= 2);
+            let mut mesh = Mesh::from_pmx(&pmx).unwrap();
+            if m.path.text.contains('\\') {
+                assert!(mesh.load_textures(|name| read(name).ok()).is_empty());
+            }
+            mesh.set_edge_scale(m.edge_scale);
+            let model = physics
+                .scene
+                .models
+                .iter()
+                .find(|s| s.slot == m.slot)
+                .unwrap();
+            let pose = scene::pose_of(model);
+            assert_eq!(pose.skin.len(), pmx.bones.len());
+            assert_eq!(pose.morphs.len(), pmx.morphs.len());
+            let skin = mesh.skinned(Some(&pose), &edge);
+            let label = format!("skin-{frame}");
+            writeln!(
+                counts,
+                "{label} {} {} {} {} {}",
+                skin.vertex_count(),
+                skin.stride(),
+                skin.materials.len(),
+                pose.skin.len(),
+                pose.morphs.len()
+            )
+            .unwrap();
+            writeln!(cases, "model {name}\ncase {label}").unwrap();
+            cases.push_str("world");
+            hex(&mut cases, edge.world);
+            cases.push_str("camera");
+            hex(
+                &mut cases,
+                edge.camera_position.into_iter().chain([edge.fov]),
+            );
+            cases.push_str("edge");
+            hex(&mut cases, [m.edge_scale]);
+            writeln!(cases, "shadow {}", u8::from(edge.self_shadow)).unwrap();
+            for (i, &weight) in pose.morphs.iter().enumerate() {
+                write!(cases, "morph {i}").unwrap();
+                hex(&mut cases, [weight]);
+            }
+            for (i, &matrix) in pose.skin.iter().enumerate() {
+                assert_eq!(matrix, model.bones[i].mat_init.0);
+                write!(cases, "bone {i}").unwrap();
+                hex(&mut cases, matrix);
+            }
+            cases.push_str("end\n");
+            writeln!(
+                details,
+                "case {label}\nweight_kind 9 {}\nweight_kind 10 {}",
+                pmx.vertices[9].weight_kind, pmx.vertices[10].weight_kind
+            )
+            .unwrap();
+            for (field, values) in [
+                ("view", view.view.concat()),
+                ("view_proj", view.view_proj.concat()),
+                ("eye", view.eye.to_vec()),
+                ("distance", vec![view.distance]),
+            ] {
+                details.push_str(field);
+                hex(&mut details, values);
+            }
+            writeln!(
+                dump,
+                "model {name} pmx vertices {} stride {}\ncase {label}",
+                skin.vertex_count(),
+                skin.stride() * 4
+            )
+            .unwrap();
+            for (i, e) in skin.edge.iter().enumerate() {
+                write!(dump, "v {i}").unwrap();
+                for v in skin.main[i * skin.stride()..(i + 1) * skin.stride()]
+                    .iter()
+                    .chain(&e.position)
+                {
+                    write!(dump, " {:08x}", v.to_bits()).unwrap();
+                }
+                writeln!(dump, " {:08x}", e.diffuse).unwrap();
+            }
+            for (i, m) in skin.materials.iter().enumerate() {
+                write!(dump, "m {i}").unwrap();
+                hex(
+                    &mut dump,
+                    m.diffuse_mirror[..3]
+                        .iter()
+                        .copied()
+                        .chain([m.diffuse[3]])
+                        .chain(m.specular)
+                        .chain(m.ambient)
+                        .chain([m.specular_power])
+                        .chain(m.edge_color)
+                        .chain([m.edge_size]),
+                );
+                write!(details, "material {i}").unwrap();
+                hex(
+                    &mut details,
+                    m.diffuse
+                        .into_iter()
+                        .chain(m.diffuse_mirror)
+                        .chain(m.specular)
+                        .chain(m.ambient)
+                        .chain([m.specular_power])
+                        .chain(m.edge_color)
+                        .chain([m.edge_size]),
+                );
+            }
+        }
+        for (name, data) in [
+            ("cases.txt", cases),
+            ("rust.dump", dump),
+            ("details.txt", details),
+            ("counts.txt", counts),
+        ] {
+            std::fs::write(out.join(name), data).unwrap();
+        }
+        let files = reads
+            .into_inner()
+            .into_iter()
+            .map(|p| format!("{}\n", p.canonicalize().unwrap().display()))
+            .collect::<String>();
+        std::fs::write(out.join("fixture-reads.txt"), files).unwrap();
+        let missing = missing
+            .into_inner()
+            .into_iter()
+            .map(|p| format!("{}\n", p.display()))
+            .collect::<String>();
+        std::fs::write(out.join("fixture-missing.txt"), missing).unwrap();
+    }
 }

@@ -1,12 +1,14 @@
 //! Altered Rust translation of Bullet 2.75 narrowphase and persistent manifold.
 //! Includes the vendored MMD local-coordinate patches. See mod.rs for zlib notice.
 
+use super::box_box::box_box_contacts;
 use super::math::{Basis, Quat, Transform, Vec3};
 use super::shape::Shape;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PairKind {
     SphereSphere,
+    BoxBox,
     /// Manifold body A is the convex input and body B is the plane input.
     ConvexPlane {
         swapped: bool,
@@ -68,6 +70,7 @@ impl PairManifold {
         use Shape::*;
         let kind = match (shape0, shape1) {
             (Sphere { .. }, Sphere { .. }) => PairKind::SphereSphere,
+            (Box { .. }, Box { .. }) => PairKind::BoxBox,
             (Sphere { .. } | Box { .. } | CapsuleY { .. }, StaticPlane { .. }) => {
                 PairKind::ConvexPlane { swapped: false }
             }
@@ -128,6 +131,15 @@ impl PairManifold {
                         length - (a + b),
                         bodies,
                     );
+                }
+                self.refresh(body0.world, body1.world);
+            }
+            PairKind::BoxBox => {
+                for point in
+                    box_box_contacts(self.shapes[0], body0.world, self.shapes[1], body1.world)
+                        .unwrap()
+                {
+                    self.add_contact(point.normal_on_b, point.point_on_b, point.distance, bodies);
                 }
                 self.refresh(body0.world, body1.world);
             }
@@ -347,3 +359,7 @@ pub(crate) fn plane_space(n: Vec3) -> Vec3 {
 #[cfg(test)]
 #[path = "../../tests/pure_bullet/contacts.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/pure_bullet/box_box.rs"]
+mod box_box_tests;

@@ -23,7 +23,6 @@ fn reference(x: f64, y: f64, w: [f64; 3]) -> [f64; 3] {
 
 fn old_predictions(w: [f64; 3], offset: [f64; 2]) -> Vec<[f64; 3]> {
     let a = reference(3.5, 3.5, w);
-    // Ordinary derivatives may select either row/column of the 2x2 quad.
     [2.5, 3.5]
         .into_iter()
         .flat_map(|y| {

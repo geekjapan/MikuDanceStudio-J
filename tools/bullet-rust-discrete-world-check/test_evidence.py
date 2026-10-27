@@ -74,7 +74,6 @@ def fixture(system='Windows'):
     root=P('C:/work/repo' if win else '/work/repo');out=P('C:/capture/world' if win else '/capture/world')
     suffix,ext=('.exe','.obj') if win else ('','.o')
     inputs,cases=corpus();files={};source={p.relative_to(check.ROOT).as_posix():p.read_bytes() for p in check.paths()}
-    # These are independently constructed synthetic execution records, never actual compiler evidence.
     if win:
         source={name:raw.replace(b'\r\n',b'\n').replace(b'\n',b'\r\n') if '/src/core/' in name else raw for name,raw in source.items()}
     before={name:sha(raw) for name,raw in source.items()}
@@ -143,7 +142,6 @@ def fixture(system='Windows'):
         if name=='observed':maptext+='\n'+ ' '.join('observed-'+member+ext for member in ['btCollisionDispatcher','btCollisionWorld'])
         files[name+'.map']=maptext.encode();files[name+'-link-selection.json']=encode(selected)
         files[name+'-binary.json']=encode({'produced_sha256':sha(files[name+suffix]),'consumer_object_sha256':sha(files[name+'-consumer'+ext]),'observed_override_objects':{member+ext:sha(files[member+ext]) for member in (['observed-btCollisionDispatcher','observed-btCollisionWorld'] if name=='observed' else [])}})
-    # Author the actual producer schedule independently of command_schedule().
     T=context['tools'];rust=[T['rustup'],'run','1.95.0','rustc','--edition=2021','-O','-C','linker='+T['rust_linker']]
     rargs=[*rust,'--extern','mds_crtmath='+str(out/'libmds_crtmath.rlib')];here=root/'tools/bullet-rust-discrete-world-check';shadow=out/'generated';commands=[];includes={}
     def add(label,argv,data=None,cwd=None,outputs=(),compile=False):
@@ -156,7 +154,6 @@ def fixture(system='Windows'):
             header=str(root/'rust/crates/mds-bullet-sys/shim/det_math.h');key=header.lower() if win else header;value=before['rust/crates/mds-bullet-sys/shim/det_math.h']
             include_raw=('Note: including file: '+header+'\n' if win else '. '+header+'\n').encode()
             for stage in [label+'-discovery',label]:files[stage+'.stdout']=include_raw;files[stage+'.stderr']=b''
-            # Update the independently created discovery output digests after attaching its retained include stream.
             commands[-1]['stdout_sha256']=sha(include_raw);commands[-1]['stderr_sha256']=sha(b'')
             files['include-bytes/'+value]=source['rust/crates/mds-bullet-sys/shim/det_math.h'];includes[key]=value
             files[label+'-includes-pre.json']=encode({key:value});files[label+'-includes.json']=encode({key:value})

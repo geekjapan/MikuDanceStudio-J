@@ -1859,7 +1859,7 @@ diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/sr
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_variadic.rs
-@@ -0,0 +1,1630 @@
+@@ -0,0 +1,1669 @@
 +use super::*;
 +use serde_json::{Value, json};
 +
@@ -2812,6 +2812,11 @@ new file mode 100644
 +            }
 +            row
 +        }).collect();
++        let native_record_identities: Vec<_> = variables.iter().filter_map(|row| {
++            let id = CDeclId(row["id"].as_u64()?);
++            self.native_va_list_records.contains(&id).then(|| json!({
++                "declaration": id.0, "identity": self.inventory_record_identity(id, 0)}))
++        }).collect();
 +        let selected: HashSet<_> = expressions.iter().filter_map(|e| e["id"].as_u64()).collect();
 +        let unsupported_expressions: Vec<_> = self.c_exprs.iter().filter_map(|(id, _)| {
 +            let row = self.cursor_expression(*id);
@@ -2831,6 +2836,7 @@ new file mode 100644
 +            "definitions": definitions, "function_edges": function_edges, "declarations": inventory["declarations"], "calls": calls,
 +            "unclassified_definitions": unclassified, "expressions": expressions, "statements": statements,
 +            "variables": variables, "types": type_rows.into_values().collect::<Vec<_>>(), "cursor_events": cursor_events,
++            "native_record_identities": native_record_identities,
 +            "unsupported_expression_count": unsupported_expressions.len(), "unsupported_expressions": unsupported_expressions,
 +            "native_inputs": self.cursor_inputs.as_ref().map(|s| serde_json::from_str::<Value>(s).expect("native inputs")),
 +            "lowering": "not_authorized", "abi_execution": "Linux_x64_only_unrun"})
@@ -2928,6 +2934,39 @@ new file mode 100644
 +            assert_eq!(TypedAstContext::format_consumption(bytes)["state"], "Unproved");
 +        }
 +        assert_eq!(TypedAstContext::format_consumption(b"100%%")["arguments"], 0);
++    }
++
++    #[test]
++    fn closed_format_native_record_identity_is_compiler_owned() {
++        use c2rust_ast_exporter::clang_ast::RecordEvidence;
++        let mut ast = TypedAstContext::default();
++        let q = |n| CQualTypeId::new(CTypeId(n));
++        ast.c_types.insert(CTypeId(1), not_located(CTypeKind::Void));
++        ast.c_types.insert(CTypeId(2), not_located(CTypeKind::Struct(CDeclId(20))));
++        ast.c_types.insert(CTypeId(3), not_located(CTypeKind::Function(q(1), vec![], true, false, true, CCallingConvention::C)));
++        ast.c_decls.insert(CDeclId(20), not_located(CDeclKind::Struct {
++            name: None, fields: Some(vec![]), is_packed: false, manual_alignment: None,
++            max_field_alignment: None, platform_byte_size: 24, platform_alignment: 8,
++        }));
++        ast.native_va_list_records.extend([CDeclId(20), CDeclId(999)]);
++        ast.c_decls.insert(CDeclId(50), not_located(CDeclKind::Variable {
++            ident: "args".into(), typ: q(2), initializer: None, has_static_duration: false,
++            has_thread_duration: false, is_externally_visible: false, is_defn: true, attrs: IndexSet::new(),
++        }));
++        let mut declaration = function(CStmtId(60));
++        if let CDeclKind::Function { typ, .. } = &mut declaration { *typ = CTypeId(3); }
++        ast.c_decls.insert(CDeclId(60), not_located(declaration));
++        ast.linker_names.insert(CDeclId(60), "owner".into());
++        ast.c_stmts.insert(CStmtId(60), not_located(CStmtKind::Decls(vec![CDeclId(50)])));
++        let facts = ast.closed_format_facts(Path::new("body.c"));
++        assert_eq!(facts["native_record_identities"], json!([{
++            "declaration": 20, "identity": ast.inventory_record_identity(CDeclId(20), 0)}]));
++        assert!(facts["native_record_identities"][0]["identity"]["unproved"].is_string());
++        ast.record_evidence.insert(CDeclId(20), RecordEvidence(2, "struct".into(), Some("native".into()),
++            "/native.h".into(), 2, 1, "file".into(), None, false, true, None));
++        let facts = ast.closed_format_facts(Path::new("body.c"));
++        assert_eq!(facts["native_record_identities"][0]["identity"]["physical"]["path"], "/native.h");
++        assert_eq!(facts["native_record_identities"][0]["identity"], ast.inventory_type(q(2), 0)["canonical"]["record"]);
 +    }
 +
 +    fn not_located<T>(kind: T) -> Located<T> {

@@ -50,7 +50,7 @@ def synthetic_packet_fixture(root):
         for i in range(40):
             parameters = [500 + i] + ([600 + i] if i >= 33 else [])
             rows.append({'id': i + 1, 'symbol': symbol(i), 'definition': i % 24 == index,
-                         'va_parameters': parameters[1:], 'signature': typ})
+                         'va_parameters': parameters[1:], 'signature': dict(typ, canonical={'variadic': i < 33})})
             if i % 24 == index:
                 definitions.append({'declaration': i + 1, 'symbol': symbol(i), 'variadic': i < 33,
                                     'parameters': parameters, 'va_parameters': parameters[1:], 'body': 90000 + i,
@@ -129,7 +129,7 @@ def synthetic_packet_fixture(root):
         facts = dict(inventory, schema=1, authorization='analysis_only', status='CompleteReport', lowering='not_authorized',
                      calls=calls, definitions=definitions, unclassified_definitions=extra, native_inputs=native,
                      expressions=expressions, statements=statements, variables=variables,
-                     types=[{'type_id': 1, 'kind': 'Int'}], cursor_events=events, function_edges=function_edges,
+                     types=[{'type_id': 1, 'kind': 'Int'}], native_record_identities=[], cursor_events=events, function_edges=function_edges,
                      unsupported_expression_count=1, unsupported_expressions=[{'expression': 9900000,
                          'native_shape': 'Atomic', 'within_slice': False, 'location': location, 'relevance': unresolved}])
         prefix = str(index) + '/' + Path(UNITS[index]).stem.replace('.', '_')
@@ -277,8 +277,11 @@ class ClosedFormatFactsTests(unittest.TestCase):
                 pair['files'] = {k: F.sha((self.root / pair[k]).read_bytes()) for k in pair['files']}
             (self.root / 'packet.json').write_text(json.dumps(packet))
             (self.root / 'seal.json').write_text(json.dumps(F.manifest(self.root)))
-            with self.assertRaisesRegex((F.FactsError, ValueError), reason):
-                F.replay(self.root)
+            if reason is None:
+                self.assertEqual(F.replay(self.root)['status'], 'complete_coverage')
+            else:
+                with self.assertRaisesRegex((F.FactsError, ValueError), reason):
+                    F.replay(self.root)
         finally:
             for name, raw in saved.items():
                 (self.root / name).write_bytes(raw)
@@ -399,6 +402,83 @@ class ClosedFormatFactsTests(unittest.TestCase):
             expr['builtin'] = [123, 'va_copy']
             f['cursor_events'][0]['builtin'] = expr['builtin']
         self.reject_coordinated(builtin, 'builtin contradicts declaration')
+
+    def test_coordinated_graph_relations_reject(self):
+        name, inventory = 'on/0/blob.closed-format.json', 'on/0/blob.variadic.json'
+        def terminal(d):
+            expr = {e['id']: e for e in d[name]['expressions']}
+            expr[1003]['decl'] = 2
+            expr[1000]['callee_reference'] = 1013
+        self.reject_coordinated(terminal, 'callee terminal')
+        for children in ([1003], [1013], [1013, 1023]):
+            def wrapper(d, children=children):
+                expr = {e['id']: e for e in d[name]['expressions']}
+                expr[1003].update(kind='paren', children=children, edge_count=len(children))
+            self.reject_coordinated(wrapper, 'cyclic|ambiguous|callee terminal|promotion chain coverage')
+        for parameters in ([999999999], [638], [639, 639], [639, 539]):
+            def va(d, parameters=parameters):
+                for key in (name, inventory):
+                    d[key]['declarations'][39]['va_parameters'] = parameters
+            self.reject_coordinated(va, 'va parameter')
+        def edge(d):
+            d[name]['function_edges'] = [e for e in d[name]['function_edges'] if e['declaration'] != 40]
+        self.reject_coordinated(edge, 'edge coverage')
+        def argument_type(d):
+            for key in (name, inventory):
+                d[key]['calls'][0]['arguments'][0]['type']['canonical']['kind'] = 'UInt'
+        self.reject_coordinated(argument_type, 'argument type contradicts promotion head')
+        def promotion_type(d):
+            argument_type(d)
+            for key in (name, inventory):
+                d[key]['calls'][0]['arguments'][0]['promotion_chain'][0]['canonical']['kind'] = 'UInt'
+            f = d[name]
+            next(e for e in f['expressions'] if e['id'] == 1001)['promotion_chain'][0]['canonical']['kind'] = 'UInt'
+        self.reject_coordinated(promotion_type, 'expression type contradicts promotion chain')
+        def nested_promotion(d):
+            expr = {e['id']: e for e in d[name]['expressions']}
+            expr[1003].update(kind='implicit_cast', children=[1013], edge_count=1,
+                             promotion_chain=[expr[1003]['type'], {'canonical': {'kind': 'UInt'}}])
+            expr[1000]['callee_reference'] = 1013
+        self.reject_coordinated(nested_promotion, 'expression type contradicts promotion chain')
+
+    def test_producer_wrapper_and_inventory_cursor_type_relations_accept(self):
+        name, inventory = 'on/0/blob.closed-format.json', 'on/0/blob.variadic.json'
+        def positive(d):
+            f = d[name]
+            expr = {e['id']: e for e in f['expressions']}
+            terminal = dict(expr[1003], id=999999)
+            f['expressions'].append(terminal)
+            expr[1003].update(kind='paren', children=[999999], edge_count=1,
+                             promotion_chain=[expr[1003]['type'], terminal['type']])
+            expr[1000]['callee_reference'] = 999999
+            cursor = {'canonical': {'pointer': {'canonical': {'native_va_list_record': 800},
+                                              'const': False, 'volatile': False, 'restrict': False}},
+                      'const': False, 'volatile': False, 'restrict': False}
+            imported = json.loads(json.dumps(cursor))
+            imported['canonical']['pointer']['canonical'] = {'record': {'unproved': 'physical record location or macro declaration'}}
+            f['variables'].append({'id': 800, 'kind': 'struct', 'fields': [], 'parameter_owners': []})
+            f['native_record_identities'] = [{'declaration': 800,
+                'identity': imported['canonical']['pointer']['canonical']['record']}]
+            expr[1002]['type'] = cursor
+            expr[1002]['promotion_chain'] = [imported]
+            expr[1000]['arguments'][1]['type'] = cursor
+            f['cursor_events'][0]['operands'][1]['type'] = cursor
+            for key in (name, inventory):
+                d[key]['calls'][0]['arguments'][1]['type'] = imported
+                d[key]['calls'][0]['arguments'][1]['promotion_chain'] = [imported]
+        self.reject_coordinated(positive, None)
+        for change in ('missing', 'wrong_identity', 'wrong_existing_struct'):
+            def contradict(d, change=change):
+                positive(d)
+                f = d[name]
+                if change == 'missing':
+                    f['native_record_identities'] = []
+                elif change == 'wrong_identity':
+                    f['native_record_identities'][0]['identity'] = {'unproved': 'different record origin'}
+                else:
+                    f['variables'].append({'id': 801, 'kind': 'struct', 'fields': [], 'parameter_owners': []})
+                    f['native_record_identities'][0]['declaration'] = 801
+            self.reject_coordinated(contradict, 'native record inventory identity missing|expression type contradicts promotion chain')
 
     def test_raw_ast_replacement_with_refreshed_pairs_and_seal_rejects(self):
         for name in ('on/0/blob.cursor.cbor', 'on/0/blob.typed-ast.txt'):

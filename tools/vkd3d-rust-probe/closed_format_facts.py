@@ -168,6 +168,23 @@ def check_unit(facts, inventory, command):
     variables = table(facts['variables'], 'id', 'variable')
     types = table(facts['types'], 'type_id', 'type')
     function_edges = table(facts['function_edges'], 'declaration', 'function parameter edges')
+    native_record_identities = table(facts['native_record_identities'], 'declaration', 'native record identity')
+    for i, row in native_record_identities.items():
+        need(i in variables and variables[i]['kind'] == 'struct'
+             and isinstance(row.get('identity'), dict), 'native record identity reference differs')
+    expected_edges = {i for i, d in declarations.items()
+                      if type(d['signature'].get('canonical', {}).get('variadic')) is bool
+                      and (d['signature']['canonical']['variadic'] or d['va_parameters'])}
+    need(function_edges.keys() == expected_edges, 'target function parameter edge coverage differs')
+    for i, declaration in declarations.items():
+        parameters = variables.get(i, {}).get('parameters', [])
+        va_parameters = declaration['va_parameters']
+        need(isinstance(va_parameters, list) and len(set(va_parameters)) == len(va_parameters)
+             and all(p in variables and variables[p]['kind'] == 'variable'
+                     and variables[p]['parameter_owners'] == [i] and p in parameters for p in va_parameters),
+             'va parameter reference missing or owned by another function')
+        need([p for p in parameters if p in va_parameters] == va_parameters,
+             'ordered va parameter references differ')
     for i, edge in function_edges.items():
         need(i in declarations and edge['fixed_count'] == len(edge['parameters'])
              and len(set(edge['parameters'])) == len(edge['parameters']), 'function parameter reference coverage differs')
@@ -189,6 +206,7 @@ def check_unit(facts, inventory, command):
             if 'native_va_list_record' in value:
                 reference(value['native_va_list_record'], variables, 'native record')
                 need(variables[value['native_va_list_record']]['kind'] == 'struct', 'native record kind differs')
+                need(value['native_va_list_record'] in native_record_identities, 'native record inventory identity missing')
             for child in value.values():
                 typed_references(child)
         elif isinstance(value, list):
@@ -282,6 +300,17 @@ def check_unit(facts, inventory, command):
         location(row['native_location'], buffers, buffer_paths)
     for row in [*expressions.values(), *statements.values()]:
         location(row['location'], buffers, buffer_paths)
+    def inventory_cursor_type(inventory_type, cursor_type):
+        if isinstance(inventory_type, dict) and isinstance(cursor_type, dict):
+            if set(inventory_type) == {'record'} and set(cursor_type) == {'native_va_list_record'}:
+                record = cursor_type['native_va_list_record']
+                return record in native_record_identities and inventory_type['record'] == native_record_identities[record]['identity']
+            return inventory_type.keys() == cursor_type.keys() and all(
+                inventory_cursor_type(value, cursor_type[name]) for name, value in inventory_type.items())
+        if isinstance(inventory_type, list) and isinstance(cursor_type, list):
+            return len(inventory_type) == len(cursor_type) and all(
+                inventory_cursor_type(a, b) for a, b in zip(inventory_type, cursor_type))
+        return inventory_type == cursor_type
     for row in calls.values():
         raw = raw_calls.get(row['id'])
         need(raw is not None and all(row.get(k) == v for k, v in raw.items()), 'call inventory facts changed')
@@ -308,10 +337,27 @@ def check_unit(facts, inventory, command):
         for argument in row['arguments']:
             expr = expressions.get(argument['id'])
             need(expr is not None and expr['promotion_chain'] == argument['promotion_chain'], 'promotion chain reference differs')
+            need(argument['type'] == (expr['promotion_chain'][0] if expr['type'] is not None else None),
+                 'inventory argument type contradicts promotion head')
     for row in expressions.values():
         unproved(row['effect_relation'])
         need(type(row['edge_count']) is int and row['edge_count'] == len(row['children']), 'expression edge coverage differs')
         need(set(row['children']) <= expressions.keys(), 'expression child missing')
+        pending, seen, chain = row['id'], set(), []
+        while True:
+            need(pending not in seen, 'cyclic expression wrapper path')
+            seen.add(pending)
+            current = expressions[pending]
+            if current['type'] is not None:
+                need(len(chain) < len(row['promotion_chain']) and inventory_cursor_type(
+                     row['promotion_chain'][len(chain)], current['type']),
+                     'expression type contradicts promotion chain')
+                chain.append(row['promotion_chain'][len(chain)])
+            if current['kind'] not in ('paren', 'implicit_cast'):
+                break
+            need(len(current['children']) == 1, 'ambiguous expression wrapper path')
+            pending = current['children'][0]
+        need(len(chain) == len(row['promotion_chain']), 'expression promotion chain coverage differs')
         if row.get('kind') == 'reference':
             need(row['decl'] in variables or row['decl'] in declarations, 'expression declaration missing')
         if row.get('kind') == 'call':
@@ -319,8 +365,20 @@ def check_unit(facts, inventory, command):
             reference(row['callee_expression'], expressions, 'callee expression')
             reference(row['callee_reference'], expressions, 'callee reference')
             need(row['children'][0] == row['callee_expression'], 'callee structural expression differs')
-            if row['callee_decl'] is not None:
-                need(expressions[row['callee_reference']].get('decl') == row['callee_decl'], 'callee reference contradicts declaration')
+            terminal, seen = row['callee_expression'], set()
+            while expressions[terminal]['kind'] in ('paren', 'implicit_cast'):
+                need(terminal not in seen, 'cyclic callee wrapper path')
+                seen.add(terminal)
+                children = expressions[terminal]['children']
+                need(len(children) == 1, 'ambiguous callee wrapper path')
+                reference(children[0], expressions, 'callee wrapper')
+                terminal = children[0]
+            need(terminal == row['callee_reference'], 'callee terminal reference disconnected from wrapper path')
+            target = expressions[terminal]
+            declaration = target.get('decl') if target['kind'] == 'reference' else None
+            if variables.get(declaration, {}).get('kind') != 'function':
+                declaration = None
+            need(declaration == row['callee_decl'], 'callee terminal contradicts declaration')
             need(len(row['children']) == 1 + len(row['arguments'])
                  and row['children'][1:] == [a['id'] for a in row['arguments']], 'call structural operands differ')
             if row['callee_decl'] is not None:

@@ -1,6 +1,6 @@
 {
   "status": "measured candidates requiring fresh execution and review",
-  "evidence_head": "74895e7e53f9883cb00c56060e0981d01233184b",
+  "evidence_head": "5d472010d456ad34196344f14d5402cace87add1",
   "frozen_fixtures": {
     "fallback-inputs.tsv": {
       "git_blob": "8cafeb55098c3a932c46b2118750c39c3187a447",
@@ -21,8 +21,8 @@
   },
   "profiles": {
     "macos-arm64": {
-      "artifact_id": 12709533440,
-      "zip_sha256": "1d7c73fe054f6adfa8574fefd63128aeadba40a3d7dd9e7c7dada1b540e3f4db",
+      "artifact_id": 12712336670,
+      "zip_sha256": "4e5d445a6f6a25b0bc6b4b828fe6c19668193c3dcb18caa02df77b7d6199a8f9",
       "compiler_provenance": "macOS-15.7.9-arm64-arm-64bit-Mach-O\nApple clang version 17.0.0 (clang-1700.0.13.5)\nTarget: arm64-apple-darwin24.6.0\nThread model: posix\nInstalledDir: /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n\nrustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: aarch64-apple-darwin\nrelease: 1.95.0\nLLVM version: 22.1.2\n",
       "streams": {
         "capture/compact-inputs.tsv": {
@@ -840,7 +840,7 @@
         "rust/crates/mds-bullet/tests/pure_bullet/body_kernel.rs": "09e13d791de950206da6b070670b980ea5dd6311a05a77f06283132e1f220c17",
         "rust/crates/mds-bullet/tests/pure_bullet/box_box.rs": "50e68e46e7e640d25c4ce1678b30127539ebc0970911813aa452530703aa2a0f",
         "rust/crates/mds-bullet/tests/pure_bullet/capsule_capsule.rs": "d7cf61e8b25f6b4cc0dd6e2b08debf71792d2000810cc46a975ef0144c509628",
-        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "503db22ba239d397aea785efdc0c4935461977bd18722c0c67b7ca71821484e1",
+        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "b70a2a51876d6c58e04c70994c945a6b98ae106ade2b24599b8512cecf67951e",
         "rust/crates/mds-bullet/tests/pure_bullet/contacts.rs": "63af7af42ab88eac332fd36a694214c8319e72da794e059b6713c28444951591",
         "rust/crates/mds-bullet/tests/pure_bullet/gjk_epa.rs": "8a141d4c43fd349b53dd2be2ae46667163494e37cd17d587518a2cdded3351e4",
         "rust/crates/mds-bullet/tests/pure_bullet/joint_coordinates.rs": "9c9e7987ea8208994743091199c8e08670d9b973c284f3c9dd09a64d8074300d",
@@ -906,8 +906,8 @@
       }
     },
     "linux-x64": {
-      "artifact_id": 12708884712,
-      "zip_sha256": "ec7b22862f029cd4853a4619a020d7832adfeb951990ca7ffc148c43fd51e52f",
+      "artifact_id": 12712430663,
+      "zip_sha256": "6d38a6791042a226a15f468f0c223cd9793b4abbf59c42db5d40548b94bdda04",
       "compiler_provenance": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39\nUbuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\n\nrustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2\n",
       "streams": {
         "capture/compact-inputs.tsv": {
@@ -1795,7 +1795,7 @@
         "rust/crates/mds-bullet/tests/pure_bullet/body_kernel.rs": "09e13d791de950206da6b070670b980ea5dd6311a05a77f06283132e1f220c17",
         "rust/crates/mds-bullet/tests/pure_bullet/box_box.rs": "50e68e46e7e640d25c4ce1678b30127539ebc0970911813aa452530703aa2a0f",
         "rust/crates/mds-bullet/tests/pure_bullet/capsule_capsule.rs": "d7cf61e8b25f6b4cc0dd6e2b08debf71792d2000810cc46a975ef0144c509628",
-        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "503db22ba239d397aea785efdc0c4935461977bd18722c0c67b7ca71821484e1",
+        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "b70a2a51876d6c58e04c70994c945a6b98ae106ade2b24599b8512cecf67951e",
         "rust/crates/mds-bullet/tests/pure_bullet/contacts.rs": "63af7af42ab88eac332fd36a694214c8319e72da794e059b6713c28444951591",
         "rust/crates/mds-bullet/tests/pure_bullet/gjk_epa.rs": "8a141d4c43fd349b53dd2be2ae46667163494e37cd17d587518a2cdded3351e4",
         "rust/crates/mds-bullet/tests/pure_bullet/joint_coordinates.rs": "9c9e7987ea8208994743091199c8e08670d9b973c284f3c9dd09a64d8074300d",
@@ -1861,8 +1861,8 @@
       }
     },
     "linux-arm64": {
-      "artifact_id": 12709846017,
-      "zip_sha256": "3dfb0ae2332917315df38bbf48d8a5ae1dc9ce2fdc69b43b66e6ab46c2d64a8d",
+      "artifact_id": 12711474497,
+      "zip_sha256": "b9bc61b25c9d63f7d71990309409cb4e07a8e340a79a9fb32532b95eee9e3ea4",
       "compiler_provenance": "Linux-6.17.0-1022-azure-aarch64-with-glibc2.39\nUbuntu clang version 18.1.3 (1ubuntu1)\nTarget: aarch64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\n\nrustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: aarch64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2\n",
       "streams": {
         "capture/compact-inputs.tsv": {
@@ -2695,7 +2695,7 @@
         "rust/crates/mds-bullet/tests/pure_bullet/body_kernel.rs": "09e13d791de950206da6b070670b980ea5dd6311a05a77f06283132e1f220c17",
         "rust/crates/mds-bullet/tests/pure_bullet/box_box.rs": "50e68e46e7e640d25c4ce1678b30127539ebc0970911813aa452530703aa2a0f",
         "rust/crates/mds-bullet/tests/pure_bullet/capsule_capsule.rs": "d7cf61e8b25f6b4cc0dd6e2b08debf71792d2000810cc46a975ef0144c509628",
-        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "503db22ba239d397aea785efdc0c4935461977bd18722c0c67b7ca71821484e1",
+        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "b70a2a51876d6c58e04c70994c945a6b98ae106ade2b24599b8512cecf67951e",
         "rust/crates/mds-bullet/tests/pure_bullet/contacts.rs": "63af7af42ab88eac332fd36a694214c8319e72da794e059b6713c28444951591",
         "rust/crates/mds-bullet/tests/pure_bullet/gjk_epa.rs": "8a141d4c43fd349b53dd2be2ae46667163494e37cd17d587518a2cdded3351e4",
         "rust/crates/mds-bullet/tests/pure_bullet/joint_coordinates.rs": "9c9e7987ea8208994743091199c8e08670d9b973c284f3c9dd09a64d8074300d",
@@ -2761,8 +2761,8 @@
       }
     },
     "windows-x64": {
-      "artifact_id": 12709379042,
-      "zip_sha256": "942af122a071a7a0e5d2083538c794712979f98483ce8429a87caba68657009a",
+      "artifact_id": 12712710616,
+      "zip_sha256": "a8e116d64cee70fd944b5715da810bf44b270eb92d6b19f3b93064d153533349",
       "compiler_provenance": "Windows-2022Server-10.0.20348-SP0\r\nusage: cl [ option... ] filename... [ /link linkoption... ]\r\nMicrosoft (R) C/C++ Optimizing Compiler Version 19.44.35229 for x64\r\nCopyright (C) Microsoft Corporation.  All rights reserved.\r\n\r\n\r\nrustc 1.95.0 (59807616e 2026-04-14)\r\nbinary: rustc\r\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\r\ncommit-date: 2026-04-14\r\nhost: x86_64-pc-windows-msvc\r\nrelease: 1.95.0\r\nLLVM version: 22.1.2\r\n",
       "streams": {
         "capture/compact-inputs.tsv": {
@@ -3646,7 +3646,7 @@
         "rust/crates/mds-bullet/tests/pure_bullet/body_kernel.rs": "09e13d791de950206da6b070670b980ea5dd6311a05a77f06283132e1f220c17",
         "rust/crates/mds-bullet/tests/pure_bullet/box_box.rs": "50e68e46e7e640d25c4ce1678b30127539ebc0970911813aa452530703aa2a0f",
         "rust/crates/mds-bullet/tests/pure_bullet/capsule_capsule.rs": "d7cf61e8b25f6b4cc0dd6e2b08debf71792d2000810cc46a975ef0144c509628",
-        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "503db22ba239d397aea785efdc0c4935461977bd18722c0c67b7ca71821484e1",
+        "rust/crates/mds-bullet/tests/pure_bullet/contact_solver.rs": "b70a2a51876d6c58e04c70994c945a6b98ae106ade2b24599b8512cecf67951e",
         "rust/crates/mds-bullet/tests/pure_bullet/contacts.rs": "63af7af42ab88eac332fd36a694214c8319e72da794e059b6713c28444951591",
         "rust/crates/mds-bullet/tests/pure_bullet/gjk_epa.rs": "8a141d4c43fd349b53dd2be2ae46667163494e37cd17d587518a2cdded3351e4",
         "rust/crates/mds-bullet/tests/pure_bullet/joint_coordinates.rs": "9c9e7987ea8208994743091199c8e08670d9b973c284f3c9dd09a64d8074300d",

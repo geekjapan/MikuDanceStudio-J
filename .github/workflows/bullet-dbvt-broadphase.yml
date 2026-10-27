@@ -2,7 +2,7 @@ name: Bullet default-owned DBVT broadphase
 
 on:
   push:
-    branches: [w3-dbvt-default-owned-broadphase]
+    branches: [w3-dbvt-broadphase-current-integration]
   workflow_dispatch:
 
 permissions:

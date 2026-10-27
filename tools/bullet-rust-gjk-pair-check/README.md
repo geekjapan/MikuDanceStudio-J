@@ -52,7 +52,7 @@ projection to SHA256 `db3da5b75c9c53145e6be0aec4f83264f3a0bbce2a128ea321caf24ae0
 The bounded DBVT source admission binds reviewed main `4d6878ec` to integration
 `c31de920` and its tree. It permits exactly three replacements and seven additions
 in the collected source map, alongside the existing ten current verification paths.
-All 474 current entries excluding the manifest must match physical checkout bytes.
+The pre-broadphase admission has 474 entries excluding the manifest.
 The complete original `source_admission` object is anchored to canonical SHA256
 `f210f29ada5dfc664dc70bd738e561f84ce9c11c0db239674596fb557f5c6c63`.
 Exactly one `registration_format_admission` follows this fixed bridge. Its literal
@@ -100,3 +100,37 @@ exactly one match for the requested host and complete provenance. The captured
 commands and twelve streams match the existing ARM contract. This failed discovery
 run completed its full baseline but has no ARM semantic mutations or suite
 baselines. It remains an observation and cannot satisfy final-head acceptance.
+
+
+Schema 6 adds one fixed `broadphase_source_admission` after the original bridge
+and registration-format admission. It binds accepted main
+`06c1d0678ebf2abf62271a34d39311b2880757f7`, tree
+`6093aa13b91e63134a4ab8a56aa6553fc67aa48a`, to private integration
+`83ec9ed6208c10c5eb589a31214eab5f6b689775`, tree
+`382a56bb424f08edfbef33922e852795877a4e59`. Its ordered parents are original
+PR216 `ea13392ff8db43e1059c7037f571c136e72831f2` and accepted main.
+The complete admission is independently pinned in the loader. It permits only
+three replacements, `src/core/dbvt.rs`, `src/core/mod.rs`, and
+`tests/pure_bullet.rs`, and two additions, `src/core/dbvt_broadphase.rs` and
+`tests/pure_bullet/dbvt_broadphase.rs`, under `rust/crates/mds-bullet/`.
+Each host retains the exact old and new physical replacement hashes and exact
+addition hashes. Windows checkout transport is derived per path from retained
+captures. The added core module uses CRLF there, while its test remains LF.
+
+The actual collector contains 477 paths. Current admission requires all 476
+entries excluding this manifest. Current verification hashes remain separate
+from the captured ten-file identities. The manifest excludes itself to avoid a
+hash cycle. The admission binds an existing source merge, never the future
+author commit. It creates no measurement and admits no alternate source chain.
+`current_source.broadphase_source_admission` records this source identity, while
+`capture_head` continues to identify the actual capture. A replay of old actual
+streams remains old execution evidence. The current status is execution pending.
+
+The three independent support, internal GJK/EPA, and outer GJK comparison
+programs import their numerical modules directly. Their math, shape, simplex,
+GJK/EPA, pair, box and contact code, native sources, shim, CRT, fixtures,
+generators, observers and mutation commands remain unchanged. They do not import
+the new broadphase module through `core/mod.rs`. The whole-pure test registers
+new broadphase tests and requires fresh execution. Source equality of the direct
+comparison programs does not accept whole-pure, broadphase, DBVT, General,
+Shipping, public World cutover or native dependency removal.

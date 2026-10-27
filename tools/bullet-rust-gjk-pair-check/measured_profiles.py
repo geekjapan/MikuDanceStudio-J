@@ -30,6 +30,9 @@ REGISTRATION_FORMAT = {
     'old_sha256': '448ee12c55dfad95be039dd94f3bc33d223fdacdb3cc9c8497e374cc275f53c0',
     'new_sha256': 'db2ec5f155bf1f7a10654a7c0c263435349ba55c8fe1c5fcfdcc67853fba7157',
 }
+BROADPHASE_SHA256 = '12aafd16e106fe98db03326b9b354a80f1d3722bfc6e25eaad53fe22dd499c96'
+BROADPHASE_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
+                        ['src/core/dbvt_broadphase.rs', 'tests/pure_bullet/dbvt_broadphase.rs']}
 HISTORICAL_SHA256 = 'db3da5b75c9c53145e6be0aec4f83264f3a0bbce2a128ea321caf24ae0e7e501'
 REPLACEMENTS = {'rust/crates/mds-bullet/' + path for path in
                 ['src/core/dbvt.rs', 'src/core/mod.rs', 'tests/pure_bullet.rs']}
@@ -90,8 +93,8 @@ def normalize_provenance(value):
 
 def load_manifest(path):
     manifest = json.loads(path.read_text(), object_pairs_hook=unique_object)
-    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'registration_format_admission', 'supplemental_measurements'}, 'manifest')
-    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 5, 'schema_version')
+    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'registration_format_admission', 'broadphase_source_admission', 'supplemental_measurements'}, 'manifest')
+    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 6, 'schema_version')
     schema(manifest['status'] == 'reviewed-current-source-expectation-execution-pending', 'status')
     fields(manifest['profiles'], HOSTS, 'profiles')
     fields(manifest['verification_sha256'], HOSTS, 'verification hosts')
@@ -167,6 +170,8 @@ def load_manifest(path):
     fields(admission['hosts'], HOSTS, 'source admission hosts')
     schema(source_map_digest(admission) == BRIDGE_SHA256, 'immutable source admission')
     schema(manifest['registration_format_admission'] == REGISTRATION_FORMAT, 'fixed registration format admission')
+    schema(source_map_digest(manifest['broadphase_source_admission']) == BROADPHASE_SHA256,
+           'immutable broadphase source admission')
     for host in HOSTS:
         approved_source_map(manifest, host)
     supplemental = manifest['supplemental_measurements']
@@ -209,7 +214,20 @@ def approved_source_map(manifest, host):
     schema(admission == REGISTRATION_FORMAT, 'fixed registration format admission')
     schema(protected[admission['path']] == admission['old_sha256'], 'registration old identity')
     protected[admission['path']] = admission['new_sha256']
-    return {**protected, **manifest['verification_sha256'][host]}
+    delta = manifest['broadphase_source_admission']['hosts'][host]
+    fields(delta, {'replacements', 'additions'}, 'broadphase delta')
+    fields(delta['replacements'], REPLACEMENTS, 'broadphase replacements')
+    hash_map(delta['additions'], 2, 'broadphase additions')
+    schema(set(delta['additions']) == BROADPHASE_ADDITIONS, 'broadphase addition paths')
+    schema(not BROADPHASE_ADDITIONS & (set(protected) | set(manifest['verification_sha256'][host])),
+           'broadphase additions must be absent')
+    for path, identity in delta['replacements'].items():
+        fields(identity, {'old_sha256', 'new_sha256'}, 'broadphase replacement')
+        schema(protected[path] == identity['old_sha256'], 'broadphase old identity')
+        schema(digest(identity['new_sha256']) and identity['new_sha256'] != identity['old_sha256'],
+               'broadphase new identity')
+        protected[path] = identity['new_sha256']
+    return {**protected, **delta['additions'], **manifest['verification_sha256'][host]}
 
 
 def select_measurement(manifest, host, provenance):
@@ -284,6 +302,8 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
             'current_source': {
                 'bridge': {name: value for name, value in manifest['source_admission'].items() if name != 'hosts'},
                 'registration_format_admission': manifest['registration_format_admission'],
+                'broadphase_source_admission': {name: value for name, value in
+                    manifest['broadphase_source_admission'].items() if name != 'hosts'},
                 'capture_head': capture_head, 'source_sha256': current,
                 'source_map_sha256': source_map_digest(actual),
                 'status': manifest['status'],

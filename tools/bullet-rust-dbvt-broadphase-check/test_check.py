@@ -58,6 +58,28 @@ class Helpers(unittest.TestCase):
                 self.assertEqual(archived, inputs.encode())
                 self.assertNotIn(b'\r', archived)
                 self.assertEqual(check.digest(archived), manifest['sha256'])
+    def test_pr214_receipt_names_accepted_prerequisite_and_pending_current_execution(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder)
+            original_save = check.save
+            def stop_at_receipt(path, value):
+                original_save(path, value)
+                if path.name == 'report.json':
+                    raise RuntimeError('receipt boundary reached')
+            with patch.object(check.sys, 'argv', ['check.py', '--out-dir', str(out),
+                                                 '--policy', 'generic-reference']), \
+                    patch.object(check, 'snapshot', return_value={}), \
+                    patch.object(check, 'save', side_effect=stop_at_receipt), \
+                    patch.object(check.subprocess, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, 'receipt boundary reached'):
+                    check.main()
+                run.assert_not_called()
+            report = json.loads((out / 'report.json').read_bytes())
+            self.assertEqual(report['inherited_pr214_final_acceptance'], 'ACCEPTED_06c1d067')
+            self.assertEqual(report['inherited_pr214_limit'],
+                             'accepted prerequisite includes direct CRT closure; current broadphase execution remains required')
+            self.assertEqual(report['native'], 'UNRUN')
+            self.assertEqual(report['public_world'], 'HOLD')
     def test_empty_native_rank_binding_and_strict_equality(self):
         rows = validate(self.raw(), self.inputs, True)
         self.assertEqual(bind_inputs(self.inputs, rows), 'H 0\nB 0 - 0 -\n')

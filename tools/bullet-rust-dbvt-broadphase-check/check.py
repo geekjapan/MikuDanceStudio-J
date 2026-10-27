@@ -157,8 +157,8 @@ def main():
     commands = []
     status = {'schema': 1, 'status': 'FAIL', 'unit_base': BASE, 'policy': args.policy,
               'native': 'UNRUN', 'controlled_order': 'UNRUN', 'ordinary_raw_order': 'UNRUN',
-              'public_world': 'HOLD', 'inherited_pr214_final_acceptance': 'ROOT_GATE',
-              'inherited_pr214_limit': 'declared capture closure omitted directly consumed mds-crtmath/src/lib.rs'}
+              'public_world': 'HOLD', 'inherited_pr214_final_acceptance': 'ACCEPTED_06c1d067',
+              'inherited_pr214_limit': 'accepted prerequisite includes direct CRT closure; current broadphase execution remains required'}
     save(out / 'report.json', status)
     def run(command, label, data=None, cwd=None):
         argv = list(map(str, command))

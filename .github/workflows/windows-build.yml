@@ -103,6 +103,21 @@ jobs:
         run: >-
           ./tools/windows/provision_capture_vc90.ps1
           -Receipts "$env:GITHUB_WORKSPACE/out/d3d9-capture/vc90-provisioning"
+      - name: Test capture audio boundaries (stand-in services and DirectSound)
+        if: always() && !cancelled() && inputs.d3d9-capture && matrix.arch == 'x64'
+        run: |
+          python -I tools/windows/test_provision_capture_audio.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -I -O tools/windows/test_provision_capture_audio.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Measure and prepare existing audio services for capture only
+        if: always() && !cancelled() && inputs.d3d9-capture && matrix.arch == 'x64'
+        timeout-minutes: 8
+        env:
+          MDS_D3D9_CAPTURE: '1'
+        run: >-
+          ./tools/windows/provision_capture_audio.ps1
+          -Receipts "$env:GITHUB_WORKSPACE/out/d3d9-capture/audio-provisioning"
       - name: Capture unchanged selfshadow frames and D3D9 capabilities
         if: always() && inputs.d3d9-capture
         run: >-

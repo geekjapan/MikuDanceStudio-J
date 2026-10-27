@@ -105,7 +105,8 @@ const FAR: f32 = 5000.0;
 /// The PMM camera at one frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
-    /// The point looked at (the key's position).
+    /// The point the view turns about: the key's position in the camera view, the reference
+    /// point (the origin, or a bone) in the model view.
     pub target: [f32; 3],
     /// Pitch, yaw, roll in radians. Roll is not checked against a golden image.
     pub rotation: [f32; 3],
@@ -133,12 +134,44 @@ fn rotation_rows([pitch, yaw, roll]: [f32; 3]) -> [[f32; 3]; 3] {
     m3(m3(ry, rx), rz)
 }
 
+/// Render input with the already composed D3DX rotation rows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CameraFrame {
+    pub target: [f32; 3],
+    pub rotation: [[f32; 3]; 3],
+    pub distance: f32,
+    pub fov_deg: f32,
+    pub orthographic: bool,
+}
+impl From<Camera> for CameraFrame {
+    fn from(c: Camera) -> Self {
+        Self {
+            target: c.target,
+            rotation: rotation_rows(c.rotation),
+            distance: c.distance,
+            fov_deg: c.fov_deg,
+            orthographic: c.orthographic,
+        }
+    }
+}
 impl Camera {
+    #[cfg(test)]
+    pub(crate) fn world(&self) -> Mat {
+        CameraFrame::from(*self).world()
+    }
+    pub fn view(&self, width: u32, height: u32) -> View {
+        CameraFrame::from(*self).view(width, height)
+    }
+    pub fn view_with_offset(&self, offset: [f32; 2], width: u32, height: u32) -> View {
+        CameraFrame::from(*self).view_with_offset(offset, width, height)
+    }
+}
+impl CameraFrame {
     /// The frame world matrix of the C++ app: the target moved to the origin, then the camera
     /// rotation. A point of the scene ends up in a space where the camera sits at
     /// `(0, 0, distance)` and looks along +z.
-    pub(crate) fn world(&self) -> Mat {
-        let r = rotation_rows(self.rotation);
+    pub fn world(&self) -> Mat {
+        let r = self.rotation;
         let t = self.target;
         let mut m = IDENTITY;
         for i in 0..3 {
@@ -149,13 +182,26 @@ impl Camera {
     }
 
     pub fn view(&self, width: u32, height: u32) -> View {
+        self.view_with_offset([0.0, 0.0], width, height)
+    }
+
+    /// [`view`](Camera::view) with the model view's offsets (`camera_state[3..5]` of the PMM,
+    /// which the model-mode pans move): the eye sits at `(x, y, distance)` of the camera space
+    /// instead of `(0, 0, distance)` and looks along +z, so the picture is the one of the target
+    /// moved by `x` along the camera's right axis and `y` along its up axis. The frame world
+    /// matrix, the point the edge distance is measured to, and the self-shadow's light view do
+    /// not move with the offsets: they are those of the camera without them.
+    pub fn view_with_offset(&self, offset: [f32; 2], width: u32, height: u32) -> View {
         let aspect = width as f32 / height as f32;
         let world = self.world();
-        let r = rotation_rows(self.rotation);
-        // The eye is (0, 0, distance) of the camera space taken back to the scene: through R^T.
-        let eye = std::array::from_fn(|i| self.target[i] + self.distance * r[i][2]);
+        let r = self.rotation;
+        let local = [offset[0], offset[1], self.distance];
+        // The eye in the camera space taken back to the scene: through R^T.
+        let eye = std::array::from_fn(|i| {
+            self.target[i] + (0..3).map(|k| local[k] * r[i][k]).sum::<f32>()
+        });
         let mut back = IDENTITY;
-        back[3][2] = -self.distance;
+        back[3] = [-local[0], -local[1], -local[2], 1.0];
         let view = mul(&back, &world);
         let proj = if self.orthographic {
             let w = ORTHO_WIDTH_PER_DISTANCE * self.distance.abs();
@@ -344,6 +390,67 @@ mod tests {
         assert_eq!((probes, edges), (7, 35));
     }
 
+    /// The view offsets: no fixture has them (every golden2 PMM stores 0, 0), so the expected
+    /// values are derived. The offsets move the eye within the camera space, which draws the
+    /// picture of the target moved along the camera's right and up axes (the pan of mds-app's
+    /// model view); the frame world matrix, the edge distance's point and the self-shadow light
+    /// view are the unmoved camera's.
+    #[test]
+    fn view_offset_moves_the_picture_not_the_frame_world() {
+        let camera = Camera {
+            target: [1.0, 10.0, -2.0],
+            rotation: [0.3, -0.7, 0.2],
+            distance: -45.0,
+            fov_deg: 30.0,
+            orthographic: false,
+        };
+        let offset = [3.5, -1.25];
+        let r = rotation_rows(camera.rotation);
+        let moved = Camera {
+            target: std::array::from_fn(|i| {
+                camera.target[i] + offset[0] * r[i][0] + offset[1] * r[i][1]
+            }),
+            ..camera
+        };
+        for orthographic in [false, true] {
+            let c = Camera {
+                orthographic,
+                ..camera
+            };
+            let got = c.view_with_offset(offset, 640, 360);
+            let picture = Camera {
+                orthographic,
+                ..moved
+            }
+            .view(640, 360);
+            let plain = c.view(640, 360);
+            for (g, w) in got
+                .view_proj
+                .iter()
+                .flatten()
+                .zip(picture.view_proj.iter().flatten())
+            {
+                assert!((g - w).abs() <= 1e-5, "{got:?} {picture:?}");
+            }
+            for i in 0..3 {
+                assert!((got.eye[i] - picture.eye[i]).abs() <= 1e-4);
+            }
+            assert_ne!(got.view_proj, plain.view_proj);
+            assert_eq!(got.edge_world, plain.edge_world);
+            assert_eq!(got.edge_origin, plain.edge_origin);
+            assert_eq!(got.distance, plain.distance);
+            let light = DEFAULT_LIGHT;
+            assert_eq!(
+                got.self_shadow_view_proj(&light, 1, 0.01125),
+                plain.self_shadow_view_proj(&light, 1, 0.01125)
+            );
+        }
+        assert_eq!(
+            camera.view_with_offset([0.0; 2], 640, 360).view_proj,
+            camera.view(640, 360).view_proj
+        );
+    }
+
     /// Every `shadow` line of the golden2 probes: the light view and light view projection that
     /// `self_shadow_matrices` makes from the line's light direction, mode and distance, and the
     /// camera line's world matrix and distance, equal the recorded ones to float precision.
@@ -393,5 +500,48 @@ mod tests {
             }
         }
         assert_eq!(lines, 6);
+    }
+}
+
+#[cfg(test)]
+mod matrix_frame_tests {
+    use super::*;
+    #[test]
+    fn composed_matrix_offsets_preserve_edges_and_light() {
+        let mut c = CameraFrame::from(Camera {
+            target: [2.0, 4.0, -3.0],
+            rotation: [1.570795, -0.4, 0.7],
+            distance: -37.0,
+            fov_deg: 42.0,
+            orthographic: false,
+        });
+        let a = rotation_rows([0.3, -0.8, 0.2]);
+        c.rotation = std::array::from_fn(|i| {
+            std::array::from_fn(|j| (0..3).map(|k| a[i][k] * c.rotation[k][j]).sum())
+        });
+        let base = c.view(640, 480);
+        let moved = c.view_with_offset([3.0, -2.0], 640, 480);
+        assert_eq!(base.edge_world, moved.edge_world);
+        assert_eq!(base.edge_origin, moved.edge_origin);
+        assert_eq!(
+            base.self_shadow_view_proj(
+                &Light {
+                    direction: [0.2, -1.0, 0.5],
+                    color: [0.6; 3]
+                },
+                2,
+                0.03
+            ),
+            moved.self_shadow_view_proj(
+                &Light {
+                    direction: [0.2, -1.0, 0.5],
+                    color: [0.6; 3]
+                },
+                2,
+                0.03
+            )
+        );
+        assert_ne!(base.clip([4.0, 7.0, -2.0]), moved.clip([4.0, 7.0, -2.0]));
+        assert_eq!(base.edge_world, c.world());
     }
 }

@@ -6,7 +6,7 @@ use mds_app::editor::Editor;
 use mds_app::ui::camera_panel::{commit_fov, commit_readout};
 use mds_app::ui::light_panel::{color_edit, direction_edit};
 use mds_app::ui::shadow_panel::commit_range;
-use mds_doc::{Command, Document, GlobalTrack};
+use mds_doc::{Command, GlobalTrack};
 
 #[test]
 fn camera_txt_saves_the_bytes_of_the_cpp_application() {
@@ -70,13 +70,6 @@ fn camera_txt_saves_the_bytes_of_the_cpp_application() {
     );
 }
 
-/// The rows of these three areas that have no action, with what each needs. A row that gains an
-/// action must leave this list, and a row that loses one must join it.
-const MISSING: &[(&str, &str)] = &[(
-    "key:Shift+G",
-    "renderer state: the self-shadow map shown over the viewport (mds-render has none)",
-)];
-
 #[test]
 fn the_rows_without_an_action_are_the_listed_ones() {
     let text =
@@ -95,13 +88,7 @@ fn the_rows_without_an_action_are_the_listed_ones() {
         }
     }
     assert_eq!(rows, 51);
-    assert_eq!(
-        missing,
-        MISSING
-            .iter()
-            .map(|(id, _)| id.to_string())
-            .collect::<Vec<_>>()
-    );
+    assert_eq!(missing, Vec::<String>::new());
 }
 
 fn read_input(path: &str) -> Option<Vec<u8>> {
@@ -120,14 +107,18 @@ fn camref_txt_saves_the_bytes_of_the_cpp_application() {
     let root = fixtures().join("script3");
     let script = std::fs::read_to_string(root.join("camref.txt")).unwrap();
     let mut runner = Runner::new();
-    let mut e = Editor::new(Document::startup(), None).unwrap();
     let mut files = 0;
     for (n, line) in script.lines().enumerate() {
         let at = format!("camref.txt line {} ({line})", n + 1);
         let w: Vec<&str> = line.split_whitespace().collect();
         let saved = if let ["camera", "reference", m] = w.as_slice() {
             let want: u8 = m.parse().unwrap();
-            std::mem::swap(&mut e.doc, &mut runner.doc);
+            let mut e = Editor::new(
+                runner.doc.clone(),
+                Some(fixtures().join("camref-session.pmm")),
+            )
+            .unwrap();
+            e.pump(0).unwrap();
             let now = e.doc.pmm.timeline.camera_reference_mode;
             // Checking a box sets its mode; unchecking the checked box sets 0.
             let press = match (want, now) {
@@ -137,7 +128,7 @@ fn camref_txt_saves_the_bytes_of_the_cpp_application() {
             };
             let r = press.map_or(Ok(()), |id| run(&mut e, id));
             let modified = e.modified;
-            std::mem::swap(&mut e.doc, &mut runner.doc);
+            runner.doc = e.doc;
             r.unwrap_or_else(|x| panic!("{at}: {x}"));
             assert!(!modified, "{at}: the boxes do not set SceneModified");
             runner.pump(&mut |p| read_input(p)).unwrap();

@@ -69,7 +69,31 @@ fn the_window_draws_the_pixels_of_the_dump() {
     let Some(gpu) = gpu_or_skip() else { return };
     let mut viewport = Viewport::new(gpu.device(), gpu.queue()).unwrap();
     let mut editor = Editor::open(&dir().join("swing600-golden.pmm")).unwrap();
+    editor
+        .apply(mds_doc::Command::SetViewOffset([1.5, -0.75]))
+        .unwrap();
+    editor
+        .edit_camera_controls(|c| c.rotation = [0.1, 0.2, 0.05])
+        .unwrap();
+    editor.seek(0).unwrap();
+    editor
+        .apply(mds_doc::Command::SetSelfShadow {
+            mode: 2,
+            distance: 0.01,
+        })
+        .unwrap();
+    editor
+        .apply(mds_doc::Command::RegisterGlobalKeys(vec![
+            mds_doc::GlobalTrack::SelfShadow,
+        ]))
+        .unwrap();
     for (frame, now) in [(150, 100), (40, 200), (599, 300)] {
+        editor.shadow_map = if frame == 40 {
+            mds_render::ShadowMapSize::Texels4096
+        } else {
+            mds_render::ShadowMapSize::Texels2048
+        };
+        editor.shadow_map_display = frame == 40;
         editor.seek(frame).unwrap();
         editor.pump(now).unwrap();
         let (texture, _, _) = viewport.draw(&editor, SIZE, 1).unwrap();
@@ -79,10 +103,20 @@ fn the_window_draws_the_pixels_of_the_dump() {
             .unwrap()
             .unwrap();
         assert!(
-            covered(&window) > 1000,
+            editor.shadow_map_display || covered(&window) > 1000,
             "frame {frame}: the models are drawn"
         );
         assert!(window == dump, "frame {frame}: window and dump differ");
+        if editor.shadow_map_display {
+            assert!(
+                window.chunks_exact(4).all(|p| p[0] == p[1] && p[1] == p[2]),
+                "the displayed depth map is grayscale"
+            );
+            assert!(
+                window.chunks_exact(4).any(|p| p[0] < 255),
+                "the displayed map contains model depth"
+            );
+        }
         eprintln!("frame {frame}: {} px covered, identical", covered(&window));
     }
 }
@@ -111,7 +145,8 @@ fn without_physics_the_window_shows_the_dumped_frame() {
         let shot = Shot {
             physics: &physics,
             frame,
-            camera: &editor.camera,
+            camera: editor.camera_frame(),
+            view_offset: [0.0; 2],
             size: SIZE,
             samples: &ONE,
             picture_viewport: None,
@@ -124,4 +159,60 @@ fn without_physics_the_window_shows_the_dumped_frame() {
         assert!(window == dump, "frame {frame}: window and dump differ");
         eprintln!("frame {frame}: {} px covered, identical", covered(&window));
     }
+}
+
+#[test]
+fn standalone_dump_ignores_model_pan_while_the_editor_draws_it() {
+    let Some(gpu) = gpu_or_skip() else { return };
+    let scratch = std::env::temp_dir().join(format!("mds-dump-offset-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).unwrap();
+    let path = scratch.join("scene.pmm");
+    let mut doc = mds_app::file::read(&dir().join("swing600-nophys.pmm")).unwrap();
+    doc.pmm.settings.options[0] = 0;
+    doc.pmm.appearance.follow_camera = 0;
+    for model in &doc.pmm.models {
+        let staged = scene::resolve(&scratch, &model.path.text);
+        std::fs::create_dir_all(staged.parent().unwrap()).unwrap();
+        std::fs::copy(scene::resolve(&dir(), &model.path.text), staged).unwrap();
+    }
+    let mut dumps = Vec::new();
+    for (name, offset) in [("zero", [0.0; 2]), ("pan", [2.0, -1.0])] {
+        doc.pmm.camera_state[3] = offset[0];
+        doc.pmm.camera_state[4] = offset[1];
+        std::fs::write(&path, doc.save().unwrap()).unwrap();
+        let out = scratch.join(name);
+        mds_app::dump::run(
+            &gpu,
+            &mds_app::dump::Request {
+                pmm: path.clone(),
+                out: out.clone(),
+                frames: vec![0],
+                picture_viewport: None,
+            },
+        )
+        .unwrap();
+        dumps.push(std::fs::read(out.join("scene-0.png")).unwrap());
+    }
+    assert_eq!(
+        dumps[0], dumps[1],
+        "standalone dumping keeps the forced camera track view"
+    );
+    let editor = Editor::open(&path).unwrap();
+    editor
+        .with_stage(SIZE, &ONE, |frame, _| {
+            let point = [1.0, 2.0, 3.0];
+            assert_eq!(
+                frame.view.clip(point),
+                editor
+                    .camera_frame()
+                    .view_with_offset([2.0, -1.0], SIZE[0], SIZE[1])
+                    .clip(point)
+            );
+            assert_ne!(
+                frame.view.clip(point),
+                editor.camera_frame().view(SIZE[0], SIZE[1]).clip(point)
+            );
+        })
+        .unwrap();
+    std::fs::remove_dir_all(&scratch).unwrap();
 }

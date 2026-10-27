@@ -1,6 +1,8 @@
 """Exercise live provenance against compiled modules and compile-time fixtures."""
 import hashlib
+import os
 import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -30,7 +32,7 @@ class SourceClosureTests(unittest.TestCase):
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, dest)
         shutil.copytree(check.ROOT / 'rust/crates/mds-bullet/tests',
-                        cls.root / 'rust/crates/mds-bullet/tests', dirs_exist_ok=True)
+                        cls.root / 'rust/crates/mds-bullet/tests', dirs_exist_ok=True, symlinks=True)
 
     def test_compiled_contact_inputs_cannot_be_omitted(self):
         before = check.source_hashes(self.root)
@@ -85,6 +87,128 @@ class SourceClosureTests(unittest.TestCase):
                         check.verify_sources(before, self.root)
                 finally:
                     module.write_bytes(original)
+        check.verify_sources(before, self.root)
+
+    def test_directory_symlink_is_rejected_at_snapshot_and_end(self):
+        folder = self.root / 'rust/crates/mds-bullet/tests/contact_data'
+        before = check.source_hashes(self.root)
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'contact_data'
+            shutil.copytree(folder, target, symlinks=True)
+            try:
+                probe = Path(directory) / 'probe'
+                probe.symlink_to(target, target_is_directory=True)
+                probe.unlink()
+            except (OSError, NotImplementedError) as error:
+                self.skipTest(f'directory symlink unavailable: {error}')
+            shutil.rmtree(folder)
+            try:
+                folder.symlink_to(target, target_is_directory=True)
+                with self.subTest(phase='snapshot'):
+                    with self.assertRaisesRegex(AssertionError, 'compiled source closure'):
+                        check.source_hashes(self.root)
+                (target / 'inputs.tsv').write_bytes(b'changed through directory symlink\n')
+                with self.subTest(phase='end after replacement'):
+                    with self.assertRaisesRegex(AssertionError, 'compiled source closure'):
+                        check.verify_sources(before, self.root)
+            finally:
+                folder.unlink(missing_ok=True)
+                shutil.copytree(check.ROOT / 'rust/crates/mds-bullet/tests/contact_data',
+                                folder, symlinks=True)
+        check.verify_sources(before, self.root)
+
+    def test_directory_replacement_is_rejected_by_main_finally(self):
+        folder = self.root / 'rust/crates/mds-bullet/tests/contact_data'
+        source_hashes = check.source_hashes
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'contact_data'
+            try:
+                probe = Path(directory) / 'probe'
+                probe.symlink_to(folder, target_is_directory=True)
+                probe.unlink()
+            except (OSError, NotImplementedError) as error:
+                self.skipTest(f'directory symlink unavailable: {error}')
+
+            def replace_directory(*args, **kwargs):
+                shutil.move(folder, target)
+                folder.symlink_to(target, target_is_directory=True)
+                (target / 'inputs.tsv').write_bytes(b'changed during capture\n')
+                raise RuntimeError('stop before native execution')
+
+            original = (folder / 'inputs.tsv').read_bytes()
+            try:
+                with patch.object(check, 'ROOT', self.root), \
+                        patch.object(check, 'source_hashes', side_effect=lambda *args: source_hashes(self.root)), \
+                        patch.object(check.subprocess, 'run', side_effect=replace_directory) as run, \
+                        patch.object(sys, 'argv', ['check.py', '--out-dir', str(Path(directory) / 'out')]):
+                    with self.assertRaisesRegex(AssertionError, 'compiled source closure'):
+                        check.main()
+                    self.assertEqual(run.call_count, 1)
+                    self.assertIn('unittest', run.call_args.args[0])
+            finally:
+                if target.exists():
+                    folder.unlink(missing_ok=True)
+                    shutil.move(target, folder)
+                    (folder / 'inputs.tsv').write_bytes(original)
+
+    def test_tests_root_symlink_is_rejected(self):
+        folder = self.root / 'rust/crates/mds-bullet/tests'
+        before = check.source_hashes(self.root)
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'tests'
+            try:
+                probe = Path(directory) / 'probe'
+                probe.symlink_to(folder, target_is_directory=True)
+                probe.unlink()
+            except (OSError, NotImplementedError) as error:
+                self.skipTest(f'directory symlink unavailable: {error}')
+            shutil.move(folder, target)
+            try:
+                folder.symlink_to(target, target_is_directory=True)
+                with self.assertRaisesRegex(AssertionError, 'compiled source closure'):
+                    check.source_hashes(self.root)
+                with self.assertRaisesRegex(AssertionError, 'compiled source closure'):
+                    check.verify_sources(before, self.root)
+            finally:
+                folder.unlink(missing_ok=True)
+                shutil.move(target, folder)
+        check.verify_sources(before, self.root)
+
+    def test_file_and_dangling_symlinks_are_rejected(self):
+        folder = self.root / 'rust/crates/mds-bullet/tests'
+        before = check.source_hashes(self.root)
+        for target in [folder / 'contact_data/inputs.tsv', folder / 'absent.tsv']:
+            with self.subTest(target=target):
+                link = folder / 'symlink-control.tsv'
+                try:
+                    try:
+                        link.symlink_to(target)
+                    except (OSError, NotImplementedError) as error:
+                        self.skipTest(f'file symlink unavailable: {error}')
+                    with self.assertRaisesRegex(AssertionError, 'compiled source closure'):
+                        check.source_hashes(self.root)
+                    with self.assertRaisesRegex(AssertionError, 'compiled source closure'):
+                        check.verify_sources(before, self.root)
+                finally:
+                    link.unlink(missing_ok=True)
+        check.verify_sources(before, self.root)
+
+    def test_fifo_is_rejected_without_reading(self):
+        if not hasattr(os, 'mkfifo'):
+            self.skipTest('FIFO creation unavailable')
+        fifo = self.root / 'rust/crates/mds-bullet/tests/fifo-control'
+        before = check.source_hashes(self.root)
+        try:
+            try:
+                os.mkfifo(fifo)
+            except (OSError, NotImplementedError) as error:
+                self.skipTest(f'FIFO creation unavailable: {error}')
+            with self.assertRaisesRegex(AssertionError, 'compiled source closure'):
+                check.source_hashes(self.root)
+            with self.assertRaisesRegex(AssertionError, 'compiled source closure'):
+                check.verify_sources(before, self.root)
+        finally:
+            fifo.unlink(missing_ok=True)
         check.verify_sources(before, self.root)
 
     def test_manifest_keys_are_posix_and_hashes_preserve_bytes(self):

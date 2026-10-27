@@ -51,7 +51,10 @@ and every file under `rust/crates/mds-bullet/tests`. The tests tree is a
 conservative superset of compiled test modules and compile-time inputs, including
 `cfg(test)` modules and their `include_str!` fixtures. Filtering tests at runtime
 does not remove these compilation dependencies. This manifest is not an exact
-list of compiled files.
+list of compiled files. The tests tree must contain only regular directories and
+regular files; symlinks (including directory and dangling links) and other
+nonregular entries are rejected at both snapshot and end verification, without
+following them.
 
 Closure tests reject omitted manifest members, byte edits, additions and deletions
 of test modules and fixtures, and changes to CRT modules. Hashes use raw file

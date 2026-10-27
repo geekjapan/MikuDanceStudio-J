@@ -455,5 +455,100 @@ class CursorBindingTests(unittest.TestCase):
                     self.assertEqual(json.loads((output / 'proof.json').read_text()), proof)
                     self.assertTrue((output / 'export.log').is_file())
 
+class WorkflowFactsCaptureTests(unittest.TestCase):
+    def workflow(self):
+        repository = Path(__file__).resolve().parents[2]
+        workflow = (repository / '.github/workflows/vkd3d-rust-probe.yml').read_text()
+        script = workflow.split("          python3 - <<'PY_CAPTURE'\n", 1)[1].split('          PY_CAPTURE\n', 1)[0]
+        return repository, workflow, compile('\n'.join(line[10:] for line in script.splitlines()), 'workflow-capture', 'exec')
+
+    def run_capture(self, invalid=None, target=1):
+        repository, _, script = self.workflow()
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory).resolve()
+            prepared = temporary / 'prepared/work-linux-native/vkd3d-2.1'
+            production = prepared / 'libs/vkd3d-shader/spirv.c'
+            production.parent.mkdir(parents=True)
+            production.write_text('mock production input, never compiled')
+            calls = []
+            def collect(tool, database, output, execute, symbol):
+                entry, = json.loads(database.read_text())
+                calls.append((tool, entry, output, execute, symbol))
+                raw = output / 'raw/src'
+                raw.mkdir(parents=True)
+                witness = raw / 'unit.cursor-witness.json'
+                bad = invalid if len(calls) - 1 == target else None
+                facts = {'schema': 1 if bad == 'schema' else 2,
+                         'unit': '/wrong.c' if bad == 'unit' else entry['file'],
+                         'native_inputs': {} if bad == 'inputs' else {'mock': True}}
+                if bad != 'missing-witness': witness.write_text(json.dumps(facts))
+                if bad == 'duplicate-witness': (raw / 'duplicate.cursor-witness.json').write_text(json.dumps(facts))
+                for suffix in ('.cursor.cbor', '.typed-ast.txt', '.variadic.json'):
+                    if bad != suffix: (raw / ('unit' + suffix)).write_text('mock artifact')
+                return {'status': 'rejected'}
+            old_cwd = Path.cwd()
+            try:
+                os.chdir(repository)
+                with patch.dict(os.environ, {'RUNNER_TEMP': str(temporary),
+                        'MDS_VKD3D_OUT': str(temporary / 'prepared')}), patch.object(full, 'collect_cursor_witness', collect):
+                    if invalid:
+                        with self.assertRaises(SystemExit): exec(script, {})
+                    else:
+                        exec(script, {})
+            finally:
+                os.chdir(old_cwd)
+            logs = temporary / 'vkd3d-probe/logs'
+            if invalid:
+                failed = logs / ('cursor-native-facts' if target == 0 else 'cursor-production-facts')
+                self.assertFalse((failed / 'capture.json').exists())
+                if target == 1:
+                    pilot_capture = json.loads((logs / 'cursor-native-facts/capture.json').read_text())
+                    self.assertEqual(pilot_capture['proof_status'], 'rejected')
+                return
+            self.assertEqual(len(calls), 2)
+            pilot = logs / 'cursor-native-facts/pilot.c'
+            flags = ['-DHAVE_CONFIG_H', '-D_WIN32_WINNT=0x0600', '-std=c99']
+            flags += ['-I' + str(prepared / part) for part in ('.', 'include', 'include/private', 'libs/vkd3d-shader')]
+            flags += ['-I' + str(prepared.parent / part / 'include') for part in ('hdr', 'spv')]
+            flags += ['-DLIBVKD3D_SHADER_SOURCE', '-DVKD3D_DEBUG_ENV=VKD3D_SHADER_DEBUG']
+            for call, source, cwd, arguments, name in zip(calls, (pilot, production), (pilot.parent, prepared),
+                    (['-std=c11'], flags), ('cursor-native-facts', 'cursor-production-facts')):
+                tool, entry, output, execute, symbol = call
+                self.assertEqual(tool, temporary / 'vkd3d-probe/tool/bin/c2rust-transpile')
+                self.assertIs(execute, probe.run)
+                self.assertEqual(entry, {'directory': str(cwd), 'file': str(source),
+                    'arguments': ['/usr/bin/clang-18', *arguments, '-c', str(source)]})
+                self.assertEqual(symbol, {'unit': str(source), 'static': 'vkd3d_spirv_build_op_member_name'})
+                self.assertEqual(source, source.resolve())
+                self.assertEqual(output, logs / name / 'paired')
+                self.assertEqual(json.loads((logs / name / 'capture.json').read_text()),
+                    {'status': 'raw_facts_captured', 'authorization': 'witness_only', 'proof_status': 'rejected'})
+            self.assertEqual(production.read_text(), 'mock production input, never compiled')
+            self.assertEqual(pilot.read_bytes(),
+                (repository / 'tools/vkd3d-rust-probe/fixtures/cursor-witness/pilot.c').read_bytes())
+
+    def test_both_captures_use_exact_inputs_and_retain_rejected_status(self):
+        self.run_capture()
+
+    def test_both_captures_reject_missing_or_invalid_artifacts(self):
+        for target in (0, 1):
+            for invalid in ('schema', 'unit', 'inputs', 'missing-witness', 'duplicate-witness',
+                            '.cursor.cbor', '.typed-ast.txt', '.variadic.json'):
+                with self.subTest(target=target, invalid=invalid): self.run_capture(invalid, target)
+
+    def test_capture_order_and_setup_retention(self):
+        _, workflow, _ = self.workflow()
+        capture = workflow.index("python3 - <<'PY_CAPTURE'")
+        receipt = workflow.index('--tool "$RUNNER_TEMP/vkd3d-probe/tool"')
+        self.assertLess(workflow.index('cargo +1.95.0 install'), receipt)
+        self.assertLess(receipt, capture)
+        self.assertLess(capture, workflow.index('--tests --no-run'))
+        self.assertLess(capture, workflow.index('check_closed_variadic_inventory.py'))
+        upload = workflow.split('      - name: Preserve setup evidence\n', 1)[1].split('      - name:', 1)[0]
+        for required in ('if: always()', 'path: ${{ runner.temp }}/vkd3d-probe/logs/',
+                         'retention-days: 7', 'if-no-files-found: error'):
+            self.assertIn(required, upload)
+
+
 if __name__ == '__main__':
     unittest.main()

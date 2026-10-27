@@ -298,12 +298,12 @@ class Controls(unittest.TestCase):
     def test_16_cargo_json_is_readmitted(self):
         recipe=r.recipe('C:/runner/temp','observed','O2');source=r.PureWindowsPath(recipe['source'])/'rust/crates/mds-accessory'
         exe=str(r.PureWindowsPath(recipe['target'])/'release/deps/mds_accessory-abcdef.exe')
-        artifact={'reason':'compiler-artifact','package_id':'path+file:///'+source.as_posix()+'#mds-accessory@0.1.0','manifest_path':str(source/'Cargo.toml'),
+        artifact={'reason':'compiler-artifact','package_id':'path+file:///'+source.as_posix()+'#0.1.0','manifest_path':str(source/'Cargo.toml'),
                   'target':{'name':'mds_accessory','src_path':str(source/'src/lib.rs'),'kind':['lib'],'crate_types':['lib'],'test':True},
                   'profile':{'opt_level':'3','debuginfo':0,'debug_assertions':False,'overflow_checks':False,'test':True},'executable':exe,'filenames':[exe]}
         def cargo(row):return b'\n'.join(json.dumps(v).encode() for v in [row,{'reason':'build-finished','success':True}])+b'\n'
         self.assertEqual(r.cargo_binary(cargo(artifact),recipe,'O2'),exe)
-        for key,value in [('executable',exe.replace('release','debug')),('package_id',artifact['package_id'].replace('mds-accessory@','wrong@')),('manifest_path','C:/wrong/Cargo.toml'),('filenames',[])]:
+        for key,value in [('executable',exe.replace('release','debug')),('package_id',artifact['package_id'].replace('#0.1.0','#wrong@0.1.0')),('manifest_path','C:/wrong/Cargo.toml'),('filenames',[])]:
             bad=copy.deepcopy(artifact);bad[key]=value
             with self.assertRaises(ValueError):r.cargo_binary(cargo(bad),recipe,'O2')
         for key,value in [('src_path','C:/wrong/lib.rs'),('kind',['test']),('name','wrong')]:
@@ -340,9 +340,59 @@ class Controls(unittest.TestCase):
         for index,key,value in [(0,4,'/FoUNRELATED.obj'),(1,4,'/FoOTHER.obj'),(0,5,str(source/'wrong.cpp')),(2,2,str(native)),(3,2,'WRONG.obj'),(3,3,'wrong.lib'),(3,1,'/OUT:wrong.exe')]:
             bad=copy.deepcopy(commands);bad[index][key]=value
             with self.assertRaises(ValueError):r.native_provenance(bad,recipe,'Od',objects,archive)
+        lines=[]
+        for task,row in zip(('ClCompile','ClCompile','Lib','Link'),commands):
+            lines.extend(['       '+task+':','         '+' '.join('"'+v+'"' for v in row[:-1]),'         "'+row[-1]+'"','       FinalizeBuildStatus:'])
+        multiline=('\n'.join(lines)+'\n').encode()
+        def admitted(raw):
+            receipt={'argv':recipe['commands']['native-build'],'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
+            for suffix,value in [('stdout',raw),('stderr',b'')]:receipt[suffix]={'name':'native-build.'+suffix,'sha256':r.digest(value),'size':len(value)}
+            files={'.json':json.dumps(receipt).encode(),'.stdout':raw,'.stderr':b''}
+            with patch.object(Path,'read_bytes',lambda path:files[path.suffix]):
+                checked,stdout,_=r.checked(Path('/resealed'),'native-build')
+            r.admit_command(checked,recipe,'native-build')
+            return r.native_provenance(r.native_commands(stdout),recipe,'Od',objects,archive)
+        self.assertEqual(admitted(multiline),str(exe))
+        for old,new in [(str(accessory).encode(),b'wrong.obj'),(str(native).encode(),b'wrong.obj'),(str(library).encode(),b'wrong.lib'),(str(exe).encode(),b'wrong.exe'),(str(source/r.ACCESSORY).encode(),b'wrong.cpp')]:
+            with self.subTest(member=old),self.assertRaises(ValueError):admitted(multiline.replace(old,new))
+        with self.assertRaises(ValueError):admitted(multiline.replace(('         "'+str(accessory)+'"\n').encode(),b''))
+        with self.assertRaises(ValueError):admitted(multiline.replace(b'       FinalizeBuildStatus:',b'         /O1\n       FinalizeBuildStatus:',1))
         with self.assertRaises(ValueError):r.native_provenance(commands,recipe,'Od',objects,member(b'unrelated'))
         with self.assertRaises(ValueError):r.native_provenance(commands,recipe,'Od',{},archive)
         with self.assertRaises(ValueError):r.command_words('cl.exe @hidden.rsp')
+
+    def test_20_compact_cargo_identity_and_escaping(self):
+        recipe=r.recipe('C:/runner/temp','observed','Od');source=r.PureWindowsPath(recipe['source'])/'rust/crates/mds-accessory'
+        exe=str(r.PureWindowsPath(recipe['target'])/'debug/deps/mds_accessory-abc.exe')
+        package='path+file:///'+source.as_posix()+'#0.1.0'
+        row={'reason':'compiler-artifact','package_id':package,'manifest_path':str(source/'Cargo.toml'),
+             'target':{'name':'mds_accessory','src_path':str(source/'src/lib.rs'),'kind':['lib'],'crate_types':['lib'],'test':True},
+             'profile':{'opt_level':'0','debuginfo':2,'debug_assertions':True,'overflow_checks':True,'test':True},'executable':exe,'filenames':[exe]}
+        def cargo():return (json.dumps(row)+'\n'+json.dumps({'reason':'build-finished','success':True})+'\n').encode()
+        self.assertEqual(r.cargo_binary(cargo(),recipe,'Od'),exe)
+        for bad in (package.replace('mds-accessory#','other#'),package.replace('/rust/','/other/'),package.replace('#0.1.0','#0.2.0'),package+'#extra',package.replace('#0.1.0','#mds-accessory@0.1.0'),package.replace('/rust/','/%72ust/'),package.replace('/rust/','%2Frust/'),package.replace('/rust/','/%252e%252e/rust/'),package.replace('/rust/','/../rust/'),package.replace('/rust/','/%ZZ/rust/')):
+            row['package_id']=bad
+            with self.subTest(package=bad),self.assertRaises(ValueError):r.cargo_binary(cargo(),recipe,'Od')
+        row['package_id']=package;row['profile']['test']=False;row['executable']=None
+        with self.assertRaises(ValueError):r.cargo_binary(cargo(),recipe,'Od')
+
+    def test_21_observed_msbuild_continuations(self):
+        raw=b'       Lib:\r\n         C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\Lib.exe /OUT:"D:\\a\\_temp\\floor-native-build\\Release\\mikudancestudio_core.lib" /NOLOGO /MACHINE:X64  /machine:x64 mikudancestudio_core.dir\\Release\\mmd_app.obj\r\n         mikudancestudio_core.dir\\Release\\globals.obj\r\n         mikudancestudio_core.dir\\Release\\accessory.obj\r\n         mikudancestudio_core.dir\\Release\\model_renderers.obj\r\n         mikudancestudio_core.dir\\Release\\late_ports.obj\r\n         mikudancestudio_core.vcxproj -> D:\\a\\_temp\\floor-native-build\\Release\\mikudancestudio_core.lib\r\n'
+        command=r.native_commands(raw)[0]
+        self.assertEqual(r.PureWindowsPath(command[0]).name,'Lib.exe')
+        self.assertEqual([r.PureWindowsPath(v).name for v in command if v.endswith('.obj')],['mmd_app.obj','globals.obj','accessory.obj','model_renderers.obj','late_ports.obj'])
+        self.assertEqual(len(r.native_commands(raw+b'       UnrelatedTask:\r\n         foreign.obj\r\n')),1)
+        self.assertNotIn('foreign.obj',r.native_commands(raw+b'       UnrelatedTask:\r\n         foreign.obj\r\n')[0])
+        for bad in (raw.replace(b'accessory.obj',b'wrong.obj'),raw.replace(b'         mikudancestudio_core.dir\\Release\\accessory.obj\r\n',b'')):
+            self.assertNotIn('mikudancestudio_core.dir\\Release\\accessory.obj',r.native_commands(bad)[0])
+        for bad in (raw[:raw.index(b'         mikudancestudio_core.vcxproj')],raw.replace(b'globals.obj',b'globals.obj : diagnostic'),raw.replace(b'mikudancestudio_core.dir\\Release\\globals.obj',b'@hidden.rsp'),raw.replace(b'globals.obj',b'"globals.obj')):
+            with self.assertRaises(ValueError):r.native_commands(bad)
+        batch=b'       ClCompile:\n         C:\\VS\\cl.exe /c /O2 /Fo"core.dir\\Release\\\\" C:\\src\\one.cpp C:\\src\\accessory.cpp\n         /Od\n       Lib:\n'
+        args=r.native_commands(batch)[0]
+        self.assertEqual(args[-1],'/Od');self.assertEqual(r.option(args[1:],'/Fo'),'core.dir\\Release\\')
+        self.assertIn('C:\\src\\accessory.cpp',args)
+        emitted=b'       ClCompile:\n         C:\\VS\\cl.exe /c C:\\src\\accessory.cpp\n         accessory.cpp\n'
+        self.assertEqual(r.native_commands(emitted)[0],['C:\\VS\\cl.exe','/c','C:\\src\\accessory.cpp'])
 
     def test_18_fixed_schema_contract_even_after_reseal(self):
         manifest={'schema':r.SCHEMA,'fp_observation_contract':copy.deepcopy(r.FP_CONTRACT),'base':r.BASE,'paths':r.PATHS,'head':'1'*40}
@@ -404,7 +454,7 @@ class Controls(unittest.TestCase):
                 builds[0]['commands'][label]=old;receipt['argv']=old;seal()
 
     def test_zz_real_effects_rejected_before_effects(self):
-        target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-floor-profile-corrected/effect-probe')
+        target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-floor-profile-transport-fix/effect-probe')
         self.assertFalse(target.exists());r.readonly()
         probes=[lambda:target.write_bytes(b'forbidden'),lambda:target.mkdir(),lambda:subprocess.run([sys.executable,'-c','raise SystemExit(99)'],check=True),lambda:socket.socket()]
         for probe in probes:

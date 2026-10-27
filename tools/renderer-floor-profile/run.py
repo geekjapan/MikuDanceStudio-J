@@ -19,7 +19,7 @@ ROOT = HERE.parents[1]
 BASE = '77b3e431bc1ac2ab5610692f2e12c903a7629090'
 BASE_TREE = '778782dc8ad6352585a9b7eeb135c04150d1f2e4'
 SCHEMA = 'mds-floor-profile-v2'
-PARENT = 'd512df053e6025f958d2a8a106307d89237a63e1'
+PARENT = 'bf9141ea7425083f097f3fd58deb6ec8f32017a7'
 FP_CONTRACT = {'snapshot':'HardwareMxcsr', 'identity':'SourceSiteOnly',
                'rust_operation_ordering':'Unproved', 'exception_attribution':'Unsupported',
                'operation_environment':'Unproved'}
@@ -414,10 +414,11 @@ def cargo_binary(raw,r,opt):
     artifacts=[row for row in rows if row['reason']=='compiler-artifact' and row.get('target',{}).get('name')=='mds_accessory']
     require(len(artifacts)==1,'exact Cargo package target')
     row=artifacts[0];source=PureWindowsPath(r['source'])/'rust/crates/mds-accessory';t=row['target']
-    package=row.get('package_id');require(type(package) is str and package.startswith('path+file:///') and package.endswith('#mds-accessory@0.1.0'),'Cargo package identity')
-    from urllib.parse import unquote
-    package_path=unquote(package[len('path+file:///'):].split('#')[0])
-    require(PureWindowsPath(package_path)==source,'Cargo package source')
+    package=row.get('package_id');require(type(package) is str and package.startswith('path+file:///') and package.count('#')==1 and package.endswith('#0.1.0'),'Cargo package identity')
+    from urllib.parse import quote,unquote
+    encoded=package[len('path+file:///'):].split('#')[0]
+    package_path=unquote(encoded,errors='strict')
+    require(quote(package_path,safe='/:')==encoded and package_path==source.as_posix(),'Cargo package source')
     require(PureWindowsPath(row['manifest_path'])==source/'Cargo.toml' and PureWindowsPath(t['src_path'])==source/'src/lib.rs' and t['kind']==['lib'] and t['crate_types']==['lib'] and t['test'] is True,'Cargo target source/kind')
     profile={'opt_level':'3' if opt=='O2' else '0','debuginfo':0 if opt=='O2' else 2,'debug_assertions':opt=='Od','overflow_checks':opt=='Od','test':True}
     require(row['profile']==profile and type(row['profile']['debuginfo']) is int and all(type(row['profile'][key]) is bool for key in ('debug_assertions','overflow_checks','test')),'actual Cargo profile')
@@ -453,13 +454,31 @@ def command_words(line):
 
 
 def native_commands(raw):
-    result=[]
-    for line in raw.decode(errors='replace').splitlines():
-        match=re.search(r'(?i)(?:"[^"\r\n]*[\\/]|[A-Za-z]:[^"\r\n]*[\\/])(?:cl|link|lib)[.]exe"?(?=\s)',line)
+    result=[];task=None;active=None;indent=None;continued=False
+    for line in raw.decode(errors='strict').splitlines():
+        header=re.fullmatch(r'\s*(?:\d+>)?(ClCompile|Lib|Link):',line)
+        match=re.fullmatch(r'(\s*)(?:\d+>)?("?)([A-Za-z]:[^"\r\n]*[\\/](cl|link|lib)[.]exe)\2\s+(.+)',line,re.I)
         if match:
-            command=[line[match.start():match.end()].strip('"')]+command_words(line[match.end():].strip())
-            if command not in result:result.append(command)
-    return result
+            require(not active or not continued,'unterminated native command continuation')
+            tool=match[4].lower()
+            require(task is None or tool=={'ClCompile':'cl','Lib':'lib','Link':'link'}[task],'native task/tool identity')
+            active=[match[3]]+command_words(match[5]);indent=match[1];continued=False
+            result.append(active)
+            continue
+        if active is not None and task is not None and not re.fullmatch(r'\s*\S+[.]vcxproj -> .+',line) and line.startswith(indent) and line[len(indent):] and not line[len(indent):][0].isspace():
+            text=line[len(indent):]
+            if task=='ClCompile' and re.fullmatch(r'[^\\/\s]+[.]cpp',text,re.I):
+                active=None;task=None;continued=False;continue
+            # MSBuild emits archive members at the command's own indentation.
+            if re.search(r'(?i)[.](?:obj|lib|cpp)(?:"|\s|$)',text) or text.startswith(('/','-','@','"')):
+                args=command_words(text)
+                suffixes={'ClCompile':('.cpp',),'Lib':('.obj',),'Link':('.obj','.lib')}[task]
+                require(all(v.startswith(('/','-')) or (v.lower().endswith(suffixes) and not any(c in v for c in '"<>|?*')) for v in args),'ambiguous native continuation')
+                active.extend(args);continued=True;continue
+        active=None;continued=False
+        task=header[1] if header else None
+    require(not continued,'truncated native command continuation')
+    return [row for i,row in enumerate(result) if row not in result[:i]]
 
 
 def winpath(path,cwd):

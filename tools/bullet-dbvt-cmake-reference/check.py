@@ -326,6 +326,8 @@ def compile_source_index(args, source, cwd):
         if skip_next:
             skip_next = False
             continue
+        if arg.startswith(('/Tc', '/Tp', '/TC', '/TP', '-Tc', '-Tp', '-TC', '-TP')):
+            raise ValueError('unsupported explicit CL source mode')
         if arg in ('/D', '/U', '/I', '/FI', '/Fo', '/Fd', '/Fe', '/Fa', '/Fi', '/Fp', '/Yu', '/Yc'):
             skip_next = True
         elif arg.startswith(('/D', '/U', '/I', '/FI', '/Fo', '/Fd', '/Fe', '/Fa', '/Fi', '/Fp', '/Yu', '/Yc')):
@@ -699,14 +701,12 @@ def capture_tu(folder, name, out):
     if not any(p.name.lower() == 'btdbvt.h' for p in headers):
         raise ValueError(f'missing actual header closure for {name}')
     readlog = tlog.with_name('CL.read.1.tlog')
-    actual_headers = set()
-    active = False
-    readtext, _ = decode(readlog.read_bytes())
-    for line in readtext.splitlines():
-        if line.startswith('^'):
-            active = str(source).lower() in [p.lower() for p in line[1:].split('|')]
-        elif active and Path(line).suffix.lower() in ('.h', '.hpp', '.hxx', '.inl') and Path(line).is_file():
-            actual_headers.add(str(Path(line).resolve()).lower())
+    read_tasks = [(sources, reads) for sources, reads in tlog_commands(readlog, reads=True)
+                  if any((cwd / item).resolve() == source for item in sources)]
+    if len(read_tasks) != 1 or len(read_tasks[0][0]) != 1:
+        raise ValueError(f'{name} requires exactly one matching CL read task')
+    actual_headers = {str((cwd / item).resolve()).lower() for item in read_tasks[0][1]
+                      if Path(item).suffix.lower() in ('.h', '.hpp', '.hxx', '.inl') and (cwd / item).is_file()}
     replay_headers = {str(p.resolve()).lower() for p in headers}
     if not actual_headers or not actual_headers <= replay_headers:
         raise ValueError(f'{name} replay does not cover actual compiler header reads')

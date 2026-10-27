@@ -266,6 +266,70 @@ class Controls(unittest.TestCase):
                 with self.subTest(operands=operands), self.assertRaises(ValueError):
                     check.archive_commands(root, out, libs)
 
+    def test_explicit_cl_source_modes_fail_before_archive_or_replay(self):
+        modes = [[flag + name] for flag in ('/Tc', '/Tp', '-Tc', '-Tp') for name in ('other.h', 'other')]
+        modes += [[flag, name] for flag in ('/Tc', '/Tp', '-Tc', '-Tp') for name in ('other.h', 'other')]
+        modes += [[flag, 'other.h'] for flag in ('/TC', '/TP', '-TC', '-TP')]
+        modes += [[flag] for flag in ('/TC', '/TP', '-TC', '-TP')]
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            out, libs = self.archive_fixture(root)
+            project = root / 'BulletCollision'
+            tlog = project / 'BulletCollision.dir/Release/CL.command.1.tlog'
+            original = tlog.read_text().splitlines()
+            source = project / 'btDbvt.cpp'
+            for mode in modes:
+                with self.subTest(mode=mode):
+                    args = check.split_command(original[1]) + mode
+                    changed = original[:]
+                    changed[1] = subprocess.list2cmdline(args)
+                    tlog.write_text('\n'.join(changed) + '\n')
+                    with self.assertRaisesRegex(ValueError, 'source mode'):
+                        check.archive_commands(root, out, libs)
+                    with self.assertRaisesRegex(ValueError, 'source mode'):
+                        check.preprocess_args(args, source, cwd=project)
+            # The explicit input has no extension and /Fo names a directory.
+            changed = original[:]
+            changed[1] = subprocess.list2cmdline(['/c', '/Fo' + str(tlog.parent) + '/', str(source), '/Tcother'])
+            tlog.write_text('\n'.join(changed) + '\n')
+            with self.assertRaisesRegex(ValueError, 'source mode'):
+                check.archive_commands(root, out, libs)
+
+    def test_capture_tu_requires_one_distinct_matching_cl_read_task(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            out, _ = self.archive_fixture(root)
+            project = root / 'BulletCollision'
+            source = project / 'btDbvt.cpp'
+            header, other = project / 'btDbvt.h', project / 'other.h'
+            header.write_text('header')
+            other.write_text('other header')
+            compiler = root / 'cl.exe'
+            compiler.write_bytes(b'compiler')
+            (project / 'CMakeCXXCompiler.cmake').write_text('set(CMAKE_CXX_COMPILER "' + str(compiler) + '")')
+            (out / 'conan-create.stdout').write_text(str(compiler))
+            (out / 'conan-create.stderr').write_text('')
+            readlog = project / 'BulletCollision.dir/Release/CL.read.1.tlog'
+            preprocess = '\n'.join('# 1 "' + str(path) + '"' for path in (header, other))
+
+            def replay(*args, **kwargs):
+                (out / 'btDbvt-preprocess.stdout').write_text(preprocess)
+                (out / 'btDbvt-preprocess.stderr').write_text('')
+
+            good = '^' + str(source) + '\n' + str(header) + '\n'
+            with patch.object(check, 'run', side_effect=replay), \
+                 patch.object(check, 'developer_environment', return_value={}), \
+                 patch.object(check.consumer, 'classify', return_value=('profile', {})):
+                readlog.write_text(good)
+                self.assertEqual(check.capture_tu(root, 'btDbvt', out), 'profile')
+                for bad in (good + '^' + str(source) + '\n' + str(other) + '\n',
+                            good + good, '^' + str(other) + '\n' + str(header),
+                            good.replace(str(source), str(source) + '|' + str(other))):
+                    with self.subTest(readlog=bad):
+                        readlog.write_text(bad)
+                        with self.assertRaisesRegex(ValueError, 'read task'):
+                            check.capture_tu(root, 'btDbvt', out)
+
     def test_expanded_relative_source_is_preserved_and_mismatch_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -456,15 +520,43 @@ class Controls(unittest.TestCase):
                     kernel.OpenThread.assert_called_once_with(0x2, False, 43)
                     kernel.ResumeThread.assert_called_once_with(102)
 
-    @unittest.skipUnless(os.name == 'nt', 'requires actual Windows Job Object and suspended thread APIs')
-    def test_windows_delayed_assignment_prevents_escape_and_kills_orphan(self):
+    def close_windows_descendant(self, kernel, handle):
+        try:
+            if kernel.WaitForSingleObject(handle, 0) != 0:
+                self.assertTrue(kernel.TerminateProcess(handle, 1), 'could not terminate control descendant')
+            self.assertEqual(kernel.WaitForSingleObject(handle, 5000), 0, 'control descendant cleanup timed out')
+        finally:
+            kernel.CloseHandle(handle)
+
+    def test_windows_control_cleanup_terminates_surviving_handles(self):
+        kernel = MagicMock()
+        kernel.WaitForSingleObject.side_effect = [258, 0]
+        self.close_windows_descendant(kernel, 102)
+        kernel.TerminateProcess.assert_called_once_with(102, 1)
+        self.assertEqual(kernel.WaitForSingleObject.call_args_list[-1].args, (102, 5000))
+        kernel.CloseHandle.assert_called_once_with(102)
+
+    def test_windows_control_cleanup_waits_and_closes_on_failure(self):
+        for failure in ('terminate', 'wait'):
+            with self.subTest(failure=failure):
+                kernel = MagicMock()
+                kernel.TerminateProcess.return_value = failure != 'terminate'
+                kernel.WaitForSingleObject.side_effect = [258, 258]
+                with self.assertRaises(AssertionError):
+                    self.close_windows_descendant(kernel, 102)
+                kernel.TerminateProcess.assert_called_once_with(102, 1)
+                kernel.CloseHandle.assert_called_once_with(102)
+                if failure == 'wait':
+                    self.assertEqual(kernel.WaitForSingleObject.call_args_list[-1].args, (102, 5000))
+
+    def windows_race_control(self, failure=None):
         import ctypes
         from ctypes import wintypes
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as containment:
             out = Path(folder)
-            started, ready, release, pidfile = [out / name for name in ('started', 'ready', 'release', 'pid')]
-            child = ('import pathlib,time;pathlib.Path(' + repr(str(ready)) + ').touch();'
-                     'time.sleep(30)')
+            started, ready, release, pidfile, leftover = [out / name for name in ('started', 'ready', 'release', 'pid', 'leftover')]
+            child = ('import pathlib,time\npathlib.Path(' + repr(str(ready)) + ').touch()\ntime.sleep(.7)\n'
+                     'while True:\n pathlib.Path(' + repr(str(leftover)) + ').touch()\n time.sleep(.05)\n')
             parent = ('import pathlib,subprocess,sys,time\n'
                       'pathlib.Path(' + repr(str(started)) + ').touch()\n'
                       'child=subprocess.Popen([sys.executable,"-c",' + repr(child) + '])\n'
@@ -478,64 +570,101 @@ class Controls(unittest.TestCase):
             kernel.OpenProcess.restype = wintypes.HANDLE
             kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
             kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-
             kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
-            baseline = subprocess.Popen([sys.executable, '-c', parent], stdin=subprocess.DEVNULL,
-                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            baseline_handle, close_baseline_job = None, None
-            try:
-                deadline = time.monotonic() + 5
-                while not ready.exists() and time.monotonic() < deadline:
-                    time.sleep(.01)
-                self.assertTrue(ready.exists(), 'old schedule did not reach descendant barrier')
-                baseline_handle = kernel.OpenProcess(0x100001, False, int(pidfile.read_text()))
-                self.assertTrue(baseline_handle)
-                close_baseline_job = original_job(baseline)
-                release.touch()
-                self.assertEqual(baseline.wait(timeout=5), 0)
-                close_baseline_job()
-                close_baseline_job = None
-                self.assertEqual(kernel.WaitForSingleObject(baseline_handle, 0), 258,
-                                 'old schedule did not reproduce the escaped descendant')
-            finally:
-                if close_baseline_job:
-                    close_baseline_job()
-                check.stop(baseline)
-                baseline._handle.Close()
-                if baseline_handle:
-                    kernel.TerminateProcess(baseline_handle, 1)
-                    self.assertEqual(kernel.WaitForSingleObject(baseline_handle, 5000), 0)
-                    kernel.CloseHandle(baseline_handle)
-            for marker in (started, ready, release, pidfile):
-                marker.unlink(missing_ok=True)
 
-            def delayed_job(process):
-                time.sleep(.3)
-                self.assertFalse(started.exists(), 'child executed before job assignment')
-                self.assertFalse(pidfile.exists(), 'child spawned a descendant before job assignment')
-                return original_job(process)
+            def outer_job(process):
+                containment.callback(original_job(process))
 
-            def resume(process):
-                original_resume(process)
+            def wait_ready(label):
                 deadline = time.monotonic() + 5
-                while not ready.exists() and time.monotonic() < deadline:
+                while not (ready.exists() and pidfile.exists()) and time.monotonic() < deadline:
                     time.sleep(.01)
-                self.assertTrue(ready.exists(), 'descendant did not reach its ready barrier')
-                handle = kernel.OpenProcess(0x100000, False, int(pidfile.read_text()))
-                self.assertTrue(handle, 'could not retain descendant synchronization handle')
+                self.assertTrue(ready.exists() and pidfile.exists() and failure != label + '-ready',
+                                label + ' readiness timeout')
+
+            def retain_descendant():
+                handle = kernel.OpenProcess(0x100001, False, int(pidfile.read_text()))
+                self.assertTrue(handle, 'could not retain terminate-capable descendant handle')
                 handles.append(handle)
-                self.assertEqual(kernel.WaitForSingleObject(handle, 0), 258, 'descendant was not running')
-                release.touch()
-                self.assertEqual(process.wait(timeout=5), 0, 'parent did not exit before job close')
+                return handle
 
             try:
+                baseline = subprocess.Popen([sys.executable, '-c', parent], stdin=subprocess.DEVNULL,
+                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=0x4)
+                close_baseline_job = None
+                try:
+                    outer_job(baseline)
+                    original_resume(baseline)
+                    wait_ready('baseline')
+                    baseline_handle = retain_descendant()
+                    close_baseline_job = original_job(baseline)
+                    release.touch()
+                    self.assertEqual(baseline.wait(timeout=5), 0)
+                    close_baseline_job()
+                    close_baseline_job = None
+                    self.assertEqual(kernel.WaitForSingleObject(baseline_handle, 0), 258,
+                                     'old schedule did not reproduce the escaped descendant')
+                finally:
+                    try:
+                        if close_baseline_job:
+                            close_baseline_job()
+                    finally:
+                        try:
+                            check.stop(baseline)
+                        finally:
+                            baseline._handle.Close()
+                self.close_windows_descendant(kernel, handles.pop())
+                for marker in (started, ready, release, pidfile, leftover):
+                    marker.unlink(missing_ok=True)
+
+                def delayed_job(process):
+                    outer_job(process)
+                    time.sleep(.3)
+                    self.assertFalse(started.exists(), 'child executed before job assignment')
+                    self.assertFalse(pidfile.exists(), 'child spawned a descendant before job assignment')
+                    close_inner = original_job(process)
+                    if failure == 'survivor':
+                        containment.callback(close_inner)
+                        return lambda: None
+                    return close_inner
+
+                def resume(process):
+                    original_resume(process)
+                    wait_ready('corrected')
+                    handle = retain_descendant()
+                    self.assertEqual(kernel.WaitForSingleObject(handle, 0), 258, 'descendant was not running')
+                    release.touch()
+                    self.assertEqual(process.wait(timeout=5), 0, 'parent did not exit before job close')
+
                 with patch.object(check, 'windows_job', side_effect=delayed_job), patch.object(check, 'windows_resume', side_effect=resume):
                     check.run([sys.executable, '-c', parent], out, 'windows-race', timeout=15)
                 self.assertEqual(len(handles), 1)
-                self.assertEqual(kernel.WaitForSingleObject(handles[0], 5000), 0, 'orphan survived job close')
+                self.assertEqual(kernel.WaitForSingleObject(handles[0], 0 if failure == 'survivor' else 5000), 0,
+                                 'orphan survived job close')
             finally:
-                for handle in handles:
-                    kernel.CloseHandle(handle)
+                try:
+                    # Outer jobs own descendants even before their PID or handle is available.
+                    containment.close()
+                finally:
+                    try:
+                        for handle in handles:
+                            self.close_windows_descendant(kernel, handle)
+                    finally:
+                        leftover.unlink(missing_ok=True)
+                        time.sleep(.8)
+                        self.assertFalse(leftover.exists(), 'control descendant ran after failure cleanup')
+
+    @unittest.skipUnless(os.name == 'nt', 'requires actual Windows Job Object and suspended thread APIs')
+    def test_windows_delayed_assignment_prevents_escape_and_kills_orphan(self):
+        self.windows_race_control()
+
+    @unittest.skipUnless(os.name == 'nt', 'requires actual Windows Job Object and suspended thread APIs')
+    def test_windows_race_control_contains_injected_failures(self):
+        for failure, message in (('baseline-ready', 'baseline readiness timeout'),
+                                 ('corrected-ready', 'corrected readiness timeout'),
+                                 ('survivor', 'orphan survived job close')):
+            with self.subTest(failure=failure), self.assertRaisesRegex(AssertionError, message):
+                self.windows_race_control(failure)
 
     def test_probe_object_cannot_be_supplied_by_another_link_input(self):
         with tempfile.TemporaryDirectory() as folder:

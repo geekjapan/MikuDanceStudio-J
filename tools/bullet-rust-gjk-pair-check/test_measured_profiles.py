@@ -1,4 +1,3 @@
-"""Measured profile controls reject producer, transport, and semantic drift."""
 import copy
 import json
 import subprocess
@@ -78,7 +77,6 @@ class MeasuredProfileTests(unittest.TestCase):
                            if isinstance(node, ast.FunctionDef) and node.name == 'capture')
             call, = [node for node in ast.walk(capture) if isinstance(node, ast.Call)
                      and isinstance(node.func, ast.Name) and node.func.id == 'validate']
-            # Evaluate the production call with its real __main__ globals and validator.
             expression = compile(ast.Expression(call), str(outer), 'eval')
             scope = dict(vars(module), validate=validate, output=output)
             try:

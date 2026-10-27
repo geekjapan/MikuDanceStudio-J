@@ -1,4 +1,3 @@
-"""Source-bound outer GJK measurements, independent of support and GJK/EPA profiles."""
 import hashlib
 import json
 import re

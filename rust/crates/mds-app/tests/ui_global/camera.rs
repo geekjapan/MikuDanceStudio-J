@@ -300,7 +300,7 @@ fn the_follow_box_flips_camera_tracking() {
     assert_eq!(follow(&e), 0);
     run(&mut e, "ctl:535").unwrap();
     assert_eq!(follow(&e), 1);
-    assert_eq!(state(&e)[3..5], [0.0, 0.0]);
+    assert_eq!(state(&e)[3..5], [0.0, 10.0]);
     assert!(!e.modified);
     run(&mut e, "ctl:535").unwrap();
     assert_eq!(follow(&e), 0);
@@ -312,5 +312,170 @@ fn the_follow_box_flips_camera_tracking() {
             .appearance
             .follow_camera,
         0
+    );
+}
+
+#[test]
+fn the_bone_readout_displays_the_physics_backup_only_in_mode_three() {
+    for mode in 0..=3 {
+        for bone in [0, 5, -1] {
+            for has_backup in [false, true] {
+                let mut e = model_mode();
+                e.doc.pmm.physics.playback_mode = mode;
+                e.apply(Command::SelectBones(if bone < 0 {
+                    vec![]
+                } else {
+                    vec![bone as u32]
+                }))
+                .unwrap();
+                let b = bone.max(0) as usize;
+                e.doc.pmm.models[0].bone_pose[b].translation = [1.0, 2.0, 3.0];
+                e.doc.pmm.models[0].bone_pose[b].rotation = [0.0, 0.0, 0.0, 1.0];
+                let backup = ([0.0, 0.5, 0.0, 0.75f32.sqrt()], [11.0, 12.0, 13.0]);
+                e.doc.edit.models[0].physics_pose = has_backup.then(|| vec![backup; 9]);
+                let expected = if bone < 0 {
+                    ["-----"; 6]
+                } else if mode == 3 && bone == 5 {
+                    if has_backup {
+                        ["11.00", "12.00", "13.00", "0.0", "-60.0", "0.0"]
+                    } else {
+                        ["0.00", "0.00", "0.00", "0.0", "0.0", "0.0"]
+                    }
+                } else {
+                    ["1.00", "2.00", "3.00", "0.0", "0.0", "0.0"]
+                };
+                for (field, want) in expected.into_iter().enumerate() {
+                    assert_eq!(
+                        readout_text_of(&mut e, field),
+                        want,
+                        "mode={mode} bone={bone} backup={has_backup} field={field}"
+                    );
+                }
+                let physics_before = e.doc.edit.models[0].physics_pose.clone();
+                for field in 0..6 {
+                    with_ctx(&mut e, |c| commit_readout(c, field, "42"))
+                        .0
+                        .unwrap();
+                    assert_eq!(e.doc.edit.models[0].physics_pose, physics_before);
+                }
+                if bone >= 0 {
+                    assert_eq!(e.doc.pmm.models[0].bone_pose[b].flags[1], 1);
+                }
+                if mode == 3 && bone == 5 {
+                    for (field, want) in expected.into_iter().enumerate() {
+                        assert_eq!(readout_text_of(&mut e, field), want);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_pumped_rigid_bone_readout_uses_the_frame_loops_backup() {
+    let mut e = model_mode();
+    e.apply(Command::SetPhysicsMode(3)).unwrap();
+    e.apply(Command::SelectBones(vec![5])).unwrap();
+    e.pump(0).unwrap();
+    e.pump(33).unwrap();
+    let backup = e.doc.edit.models[0].physics_pose.as_ref().unwrap()[5];
+    e.doc.pmm.models[0].bone_pose[5].translation = [101.0, 102.0, 103.0];
+    for field in 0..3 {
+        assert_eq!(
+            readout_text_of(&mut e, field),
+            format!("{:.2}", backup.1[field])
+        );
+    }
+    with_ctx(&mut e, |c| commit_readout(c, 0, "42")).0.unwrap();
+    assert_eq!(
+        e.doc.pmm.models[0].bone_pose[5].translation,
+        [42.0, 102.0, 103.0]
+    );
+    assert_eq!(
+        e.doc.edit.models[0].physics_pose.as_ref().unwrap()[5],
+        backup
+    );
+}
+
+#[test]
+fn the_readout_backup_survives_seeks_and_refreshes_after_world_rebuilds() {
+    let mut e = model_mode();
+    e.apply(Command::SelectBones(vec![5])).unwrap();
+    e.apply(Command::SetPhysicsMode(3)).unwrap();
+    let check = |e: &Editor| {
+        let k = e.physics.scene.models[0].bones[5].ik_backup;
+        assert_eq!(
+            e.doc.edit.models[0].physics_pose.as_ref().unwrap()[5],
+            ([k[3], k[4], k[5], k[6]], [k[0], k[1], k[2]])
+        );
+    };
+    e.pump(0).unwrap();
+    check(&e);
+    e.seek(30).unwrap();
+    check(&e);
+    e.step_frame(true).unwrap();
+    check(&e);
+    e.reset_physics();
+    check(&e);
+    for (now, mode) in [(33, 0), (66, 1), (99, 2), (132, 3)] {
+        e.apply(Command::SetPhysicsMode(mode)).unwrap();
+        check(&e);
+        e.pump(now).unwrap();
+        check(&e);
+    }
+    e.toggle_play(132).unwrap();
+    e.pump(165).unwrap();
+    check(&e);
+    e.toggle_play(165).unwrap();
+    check(&e);
+    e.pump(198).unwrap();
+    check(&e);
+    e.apply(Command::DeleteModel(1)).unwrap();
+    check(&e);
+    assert_eq!(
+        e.doc.edit.models[0].physics_pose.as_ref().unwrap()[5],
+        mds_doc::model::NO_PHYSICS_POSE
+    );
+    e.apply(Command::SelectBones(vec![5])).unwrap();
+    e.pump(231).unwrap();
+    check(&e);
+}
+
+#[test]
+fn a_failed_camera_follow_still_publishes_the_advanced_physics_backup() {
+    let mut e = model_mode();
+    e.apply(Command::SelectBones(vec![5])).unwrap();
+    e.apply(Command::SetPhysicsMode(3)).unwrap();
+    e.pump(0).unwrap();
+    e.doc.pmm.camera.heads_mut()[0].next = 9999;
+    let loaded = mds_doc::Document::load(&saved(&e), |_| None).unwrap();
+    e.doc.pmm.camera = loaded.pmm.camera;
+    e.options.start_frame = 0;
+    e.options.from_current = true;
+    e.doc.pmm.appearance.follow_camera = 1;
+    e.toggle_play(0).unwrap();
+    let slot = e.doc.pmm.models[0].slot;
+    let live_backup = |e: &Editor| {
+        let model = e
+            .physics
+            .scene
+            .models
+            .iter()
+            .find(|m| m.slot == slot)
+            .unwrap();
+        let k = model.bones[5].ik_backup;
+        ([k[3], k[4], k[5], k[6]], [k[0], k[1], k[2]])
+    };
+    let before = live_backup(&e);
+    let error = e.pump(66).unwrap_err();
+    assert_eq!(error, "invalid playback camera track");
+    let after = live_backup(&e);
+    assert_ne!(
+        after, before,
+        "the failed pump must actually advance physics"
+    );
+    assert_eq!(
+        e.doc.edit.models[0].physics_pose.as_ref().unwrap()[5],
+        after
     );
 }

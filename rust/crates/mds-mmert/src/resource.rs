@@ -360,7 +360,7 @@ fn pack(rgba: &[u8], format: wgpu::TextureFormat) -> Option<Vec<u8>> {
     })
 }
 
-fn write_level(gpu: &Gpu, tex: &wgpu::Texture, level: u32, w: u32, h: u32, data: &[u8]) {
+pub(crate) fn write_level(gpu: &Gpu, tex: &wgpu::Texture, level: u32, w: u32, h: u32, data: &[u8]) {
     let format = tex.format();
     let (bw, bh) = format.block_dimensions();
     let block_bytes = format.block_copy_size(None).unwrap_or(4);

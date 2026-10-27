@@ -65,9 +65,15 @@ def observe(src, command, executable, inputs, output, environment):
         copied=output/(source.stem+'-observed.cpp');copied.write_text(changed)
         (output/(source.stem+'-observed.patch')).write_text(''.join(difflib.unified_diff(original.splitlines(True),changed.splitlines(True),fromfile=str(source),tofile=str(copied))))
         replacements[str(source)]=str(copied)
-    observed=output/'native-observed'
-    cmd=[replacements.get(str(x),str(observed) if x==executable else str(x)) for x in command]
-    cmd+=['-I',str(src/'BulletCollision/NarrowPhaseCollision'),'-I',str(src/'BulletCollision/CollisionDispatch')]
+    observed=output/('native-observed.exe' if executable.suffix == '.exe' else 'native-observed')
+    cmd=[replacements.get(str(x),str(observed) if str(x)==str(executable) else f'/Fe:{observed}' if str(x)==f'/Fe:{executable}' else str(x)) for x in command]
+    includes = [src/'BulletCollision/NarrowPhaseCollision', src/'BulletCollision/CollisionDispatch']
+    if '/link' in cmd:
+        index = cmd.index('/link')
+        cmd[index:index] = [f'/I{path}' for path in includes]
+    else:
+        cmd += [value for path in includes for value in ['-I', str(path)]]
+    (output/'observed-command.json').write_text(json.dumps(cmd, indent=2)+'\n')
     subprocess.run(cmd,check=True,env=environment)
     with (output/'coverage.log').open('wb') as log:
         result=subprocess.check_output([observed],input=inputs,stderr=log,env=environment)

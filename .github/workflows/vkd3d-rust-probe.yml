@@ -67,6 +67,11 @@ jobs:
         run: |
           rustup toolchain install 1.95.0 --profile minimal
           rustc +1.95.0 --version
+      - name: Run Python helper tests
+        timeout-minutes: 3
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s tools/vkd3d-rust-probe -p 'test_*.py' 2>&1 | tee "$RUNNER_TEMP/vkd3d-probe/logs/python-helper-tests.log"
       - name: Prepare pinned patched vkd3d source and generated headers
         id: source
         timeout-minutes: 8

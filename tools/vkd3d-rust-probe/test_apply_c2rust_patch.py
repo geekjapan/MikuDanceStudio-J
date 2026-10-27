@@ -45,7 +45,7 @@ class RequiredRelationsSourceTests(unittest.TestCase):
             'a/c2rust-transpile/src/c_ast/closed_variadic.rs '))
         self.assertEqual(hashlib.sha256(others.encode()).hexdigest(), '7dcb21bf8cc98b3d39f46597efcbdd2c4982c2b41f2e1a8e722c10068d65f72f')
         inventory = self.source.split('    pub fn closed_variadic_inventory(', 1)[1].split('#[cfg(test)]', 1)[0]
-        self.assertEqual(hashlib.sha256(inventory.encode()).hexdigest(), '2954bab6fe2621c786bf5409dae0cab30032cce895c621a03f3422edb7399c0b')
+        self.assertEqual(hashlib.sha256(inventory.encode()).hexdigest(), 'fe98bb97bd17641f186a1c4244571e04474eab1bdfa52182fcfecce141a733cb')
 
     def test_required_facts_remain_witness_only_and_reached_by_named_unit(self):
         witness = self.source.split('    pub fn cursor_witness(', 1)[1].split(

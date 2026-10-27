@@ -124,6 +124,89 @@ class HelperTests(unittest.TestCase):
             self.assertNotIn(f'#[test]\nfn {name}', fixtures)
             self.assertIn(f'#[test]\nfn {name}', (check.HERE / 'test.rs').read_text())
 
+    def numeric_policy_run(self, out, *, select=None, numeric=None):
+        fixtures = check.ROOT / 'rust/crates/mds-bullet/tests/dbvt_data'
+        captured = (fixtures / 'inline-aabb.tsv').read_bytes()
+        generic = captured.splitlines()
+        for index in range(27, 51):
+            words = generic[index].split(b',')
+            words[1] = b'0' if words[1] == b'1' else b'1'
+            generic[index] = b','.join(words)
+        outputs = {'mmd-win64-sse-numeric': captured,
+                   'generic-reference-numeric': b'\n'.join(generic) + b'\n',
+                   'mmd-win64-sse-select': b'3,2,1,\n',
+                   'generic-reference-select': b'2,3,1,\n'}
+        outputs.update(select or {})
+        outputs.update(numeric or {})
+
+        def run(command, directory, name, **kwargs):
+            if name == 'numeric-build':
+                Path(command[-1]).write_bytes(b'mocked numeric binary')
+            return outputs.get(name, b'')
+
+        with patch.object(check, 'run', side_effect=run) as mocked:
+            check.verify_numeric_policies(out)
+        return mocked
+
+    def test_numeric_policies_reject_invalid_select_for_both_policies(self):
+        for policy in check.POLICIES.values():
+            wrong = b'2,3,1,\n' if policy == 'mmd-win64-sse' else b'1,2,3,\n'
+            for data in (b'', b'2,3,', b'1,1,2,\n', b'bad\n',
+                         b'2,3,1,\nextra\n', wrong):
+                with self.subTest(policy=policy, data=data), tempfile.TemporaryDirectory() as directory:
+                    out = Path(directory)
+                    with self.assertRaises(ValueError):
+                        self.numeric_policy_run(out, select={policy + '-select': data})
+                    self.assertFalse((out / 'numeric-policy-results.json').exists())
+
+    def test_numeric_policies_keep_full_schema_and_exact_mismatch_cases(self):
+        fixtures = check.ROOT / 'rust/crates/mds-bullet/tests/dbvt_data'
+        captured = (fixtures / 'inline-aabb.tsv').read_bytes()
+        rows = captured.splitlines()
+        for policy in check.POLICIES.values():
+            for data in (b'', b'\n'.join(rows[:-1]) + b'\n',
+                         captured.replace(b',', b',bad,', 1),
+                         b'\n'.join([rows[0] + b',0', *rows[1:]]) + b'\n',
+                         b'\n'.join([rows[0], rows[0], *rows[2:]]) + b'\n'):
+                with self.subTest(policy=policy, data=data[:40]), tempfile.TemporaryDirectory() as directory:
+                    out = Path(directory)
+                    with self.assertRaises(ValueError):
+                        self.numeric_policy_run(out, numeric={policy + '-numeric': data})
+                    self.assertFalse((out / 'numeric-policy-results.json').exists())
+        for changed in (range(26, 51), range(28, 51), []):
+            generic = rows.copy()
+            for index in changed:
+                words = generic[index].split(b',')
+                words[1] = b'0' if words[1] == b'1' else b'1'
+                generic[index] = b','.join(words)
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(ValueError, 'expected semantic mismatches'):
+                    self.numeric_policy_run(Path(directory), numeric={
+                        'generic-reference-numeric': b'\n'.join(generic) + b'\n'})
+
+    def test_numeric_policies_accept_exact_policy_results(self):
+        for ending in (b'\n', b'\r\n'):
+            with self.subTest(ending=ending), tempfile.TemporaryDirectory() as directory:
+                out = Path(directory)
+                mocked = self.numeric_policy_run(out, select={
+                    'mmd-win64-sse-select': b'3,2,1,' + ending,
+                    'generic-reference-select': b'2,3,1,' + ending})
+                results = json.loads((out / 'numeric-policy-results.json').read_text())
+                self.assertEqual(results, {
+                    'mmd-win64-sse': {'numeric_mismatch_cases': [], 'select_matches': True},
+                    'generic-reference': {'numeric_mismatch_cases': list(range(27, 51)), 'select_matches': False}})
+                binary = json.loads((out / 'numeric-binary.json').read_text())
+                self.assertEqual(binary['sha256'], check.hashlib.sha256(b'mocked numeric binary').hexdigest())
+                self.assertEqual(binary['source_sha256'], check.hashlib.sha256((out / 'numeric.rs').read_bytes()).hexdigest())
+                self.assertEqual(binary['build_command'], 'numeric-build-command.json')
+                self.assertEqual([call.args[2] for call in mocked.call_args_list], [
+                    'numeric-crt-build', 'numeric-math-build', 'numeric-build',
+                    'mmd-win64-sse-numeric', 'mmd-win64-sse-select',
+                    'generic-reference-numeric', 'generic-reference-select'])
+                for call in mocked.call_args_list[3:]:
+                    policy, kind = call.args[2].rsplit('-', 1)
+                    self.assertEqual(call.args[0][1:], [policy, 'aabb' if kind == 'numeric' else 'select'])
+
     def test_replay_rejects_incomplete_or_foreign_captures_before_running_rust(self):
         inputs = check.subprocess.check_output([sys.executable, check.HERE / 'cases.py'])
         with tempfile.TemporaryDirectory() as directory:

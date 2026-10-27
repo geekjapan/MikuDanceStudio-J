@@ -135,7 +135,12 @@ def verify_numeric_policies(out):
     results = {}
     for policy in POLICIES.values():
         actual = reference.rows(run([exe, policy, 'aabb'], out, policy + '-numeric', capture=True, input=data), 13)
-        actual_select = run([exe, policy, 'select'], out, policy + '-select', capture=True).splitlines()
+        select_capture = run([exe, policy, 'select'], out, policy + '-select', capture=True)
+        reference.validate_select(select_capture)
+        actual_select = select_capture.splitlines()
+        expected_select = selected if policy == 'mmd-win64-sse' else [b'2,3,1,']
+        if actual_select != expected_select:
+            raise ValueError('Rust policy differs from expected directed Select capture')
         mismatches = [i for i, (a, b) in enumerate(zip(actual, expected)) if a != b]
         if policy == 'mmd-win64-sse':
             if mismatches or actual_select != selected:

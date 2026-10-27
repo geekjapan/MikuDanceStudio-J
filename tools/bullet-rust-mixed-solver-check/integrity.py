@@ -17,25 +17,27 @@ def regular_path(root, path):
     return path
 
 
-def input_files(folder, pattern, excluded=()):
+def input_files(folder, pattern, excluded=(), prune_python_cache=False):
     if folder.is_symlink():raise ValueError('symlink source directory: ' + str(folder))
     def failed(error):raise error
     for current, dirs, files in os.walk(folder, followlinks=False, onerror=failed):
         current=Path(current)
-        dirs[:]=[name for name in dirs if current/name not in excluded and name != '__pycache__']
+        dirs[:]=[name for name in dirs if current/name not in excluded and not (prune_python_cache and name == '__pycache__')]
         for name in dirs:
             if (current/name).is_symlink():raise ValueError('symlink source directory: ' + str(current/name))
             if (current/name).match(pattern):raise ValueError('nonregular source entry: ' + str(current/name))
         for name in files:
             path=current/name
-            if path not in excluded and path.match(pattern):yield path
+            if path not in excluded:
+                regular_path(folder, path)
+                if path.match(pattern):yield path
 
 
 def verifier_paths(root, out=None):
     here=root/'tools/bullet-rust-mixed-solver-check'
     excluded=() if out is None else (out,)
-    return sorted({*input_files(here, '*.json', excluded),
-                   *(p for p in input_files(here, '*.py', excluded) if p.parent == here)})
+    return sorted({*input_files(here, '*.json', excluded, prune_python_cache=True),
+                   *(p for p in input_files(here, '*.py', excluded, prune_python_cache=True) if p.parent == here)})
 
 
 def source_paths(root, out=None):

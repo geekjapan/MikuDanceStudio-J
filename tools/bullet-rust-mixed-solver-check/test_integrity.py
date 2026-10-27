@@ -65,7 +65,7 @@ class IntegrityTests(unittest.TestCase):
     def test_late_membership_changes_after_snapshot_and_selection(self):
         from observation import select_profile
         for stage in ['snapshot','selection']:
-            for change in ['header','verifier_py','verifier_json','delete_verifier','delete_producer']:
+            for change in ['header','cache_header','cache_symlink','verifier_py','verifier_json','delete_verifier','delete_producer']:
                 with self.subTest(stage=stage,change=change),tempfile.TemporaryDirectory() as directory:
                     root=Path(directory);here=self.membership_tree(root);out=root/'out';out.mkdir()
                     for name in ['compiler.txt','rust-target.txt','effective-profile.txt']:(out/name).write_text('identity')
@@ -78,6 +78,11 @@ class IntegrityTests(unittest.TestCase):
                     with patch('observation.__file__',str(here/'observation.py')):
                         if stage=='selection':self.assertEqual(select_profile(out,here/'profiles')['name'],'test')
                         if change=='header':(root/'recipes/bullet275/bullet-src/src/late.h').write_text('late')
+                        elif change in ['cache_header','cache_symlink']:
+                            cache=root/'recipes/bullet275/bullet-src/src/__pycache__'
+                            if change=='cache_symlink':cache.symlink_to(here,target_is_directory=True)
+                            else:
+                                cache.mkdir();(cache/'late.h').write_bytes(b'late\r\n')
                         elif change=='verifier_py':(here/'late.py').write_text('late')
                         elif change=='verifier_json':(here/'late.json').write_text('{}')
                         elif change=='delete_verifier':(here/'check.py').unlink()
@@ -87,12 +92,49 @@ class IntegrityTests(unittest.TestCase):
                         with self.assertRaises(ValueError):check_integrity(root,out,sources,{})
                     self.assertEqual(json.loads((out/'integrity.json').read_text())['status'],'FAIL')
 
+    def test_producer_cache_named_members_are_inputs(self):
+        from observation import select_profile
+        for producer in ['recipes/bullet275/bullet-src/src', 'rust/crates/mds-bullet-sys/shim',
+                         'rust/crates/mds-crtmath/src']:
+            for kind in ['header', 'symlink_directory', 'symlink_file', 'directory']:
+                with self.subTest(producer=producer,kind=kind),tempfile.TemporaryDirectory() as directory:
+                    root=Path(directory);here=self.membership_tree(root);out=root/'out';out.mkdir()
+                    identity={name:'identity' for name in ['compiler.txt','rust-target.txt','effective-profile.txt']}
+                    for name,value in identity.items():(out/name).write_text(value)
+                    profile={'name':'test','identity':identity,'producer_sources':snapshot(root,producer_paths(root)),
+                             'strict_producer_closure':True}
+                    (here/'profiles/base.json').write_text(json.dumps(profile))
+                    sources=snapshot(root,source_paths(root,out))
+                    (out/'source-sha256.json').write_text(json.dumps(sources))
+                    cache=root/producer/'__pycache__'
+                    suffix='.rs' if producer.endswith('/src') and producer.startswith('rust/') else '.h'
+                    late=cache/('late'+suffix)
+                    if kind=='symlink_directory':cache.symlink_to(root/'tools',target_is_directory=True)
+                    else:
+                        cache.mkdir()
+                        if kind=='header':late.write_bytes(b'late\r\n')
+                        elif kind=='symlink_file':(cache/'unmatched').symlink_to(here/'oracle.cpp')
+                        else:late.mkdir()
+                    if kind=='header':
+                        self.assertIn(late.relative_to(root).as_posix(),snapshot(root,source_paths(root,out)))
+                    else:
+                        with self.assertRaises(ValueError):snapshot(root,source_paths(root,out))
+                    with patch('observation.__file__',str(here/'observation.py')):
+                        with self.assertRaises(ValueError):select_profile(out,here/'profiles')
+                    with self.assertRaises(ValueError):check_integrity(root,out,sources,{})
+                    self.assertEqual(json.loads((out/'integrity.json').read_text())['status'],'FAIL')
+
     def test_finally_rediscovers_membership_on_failure(self):
-        for change in ['header','verifier_py','verifier_json','delete_verifier']:
+        for change in ['header','cache_header','cache_symlink','verifier_py','verifier_json','delete_verifier']:
             with self.subTest(change=change),tempfile.TemporaryDirectory() as directory:
                 root=Path(directory);here=self.membership_tree(root);out=root/'out'
                 def fail(*args,**kwargs):
                     if change=='header':(root/'recipes/bullet275/bullet-src/src/late.h').write_text('late')
+                    elif change in ['cache_header','cache_symlink']:
+                        cache=root/'recipes/bullet275/bullet-src/src/__pycache__'
+                        if change=='cache_symlink':cache.symlink_to(here,target_is_directory=True)
+                        else:
+                            cache.mkdir();(cache/'late.h').write_bytes(b'late\r\n')
                     elif change=='verifier_py':(here/'late.py').write_text('late')
                     elif change=='verifier_json':(here/'late.json').write_text('{}')
                     else:(here/'check.py').unlink()
@@ -130,7 +172,11 @@ class IntegrityTests(unittest.TestCase):
 
     @unittest.skipUnless(hasattr(os, 'mkfifo'), 'os.mkfifo is unavailable on this platform')
     def test_fifo_module_readers_are_rejected_without_blocking(self):
-        self.module_reader_controls('fifo')
+        self.module_reader_controls('fifo', ['tools/bullet-rust-mixed-solver-check/runner.rs',
+            'tools/bullet-rust-contact-solver-check/support.rs',
+            'recipes/bullet275/bullet-src/src/__pycache__/unmatched',
+            'rust/crates/mds-bullet-sys/shim/__pycache__/unmatched',
+            'rust/crates/mds-crtmath/src/__pycache__/unmatched'])
 
     def test_directory_module_readers_are_rejected_without_blocking(self):
         self.module_reader_controls('directory')
@@ -151,6 +197,7 @@ tempfile.tempdir=sys.argv[5]
 with tempfile.TemporaryDirectory() as directory:
     root=Path(directory);here=IntegrityTests().membership_tree(root);out=root/'out';out.mkdir()
     target=root/sys.argv[3]
+    target.parent.mkdir(parents=True,exist_ok=True)
     if not target.exists():target.write_bytes(b'frozen')
     identity={name:'identity' for name in ['compiler.txt','rust-target.txt','effective-profile.txt']}
     for name,value in identity.items():(out/name).write_text(value)

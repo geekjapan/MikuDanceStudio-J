@@ -6,6 +6,9 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
+import contextlib
+import io
 import unittest
 from unittest.mock import patch
 
@@ -129,44 +132,200 @@ class Controls(unittest.TestCase):
             self.assertNotIn('UNRELATED', (out / 'build.stdout').read_text())
             self.assertIn('cl.exe /c source.cpp', (out / 'build.stdout').read_text())
 
-    def test_link_proof_requires_each_exact_library_and_member(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            build, out = root / 'MikuDanceStudio-J', root / 'evidence'
-            out.mkdir()
-            tlog = build / 'MikuDanceStudio.dir/Release/link.command.1.tlog'
-            tlog.parent.mkdir(parents=True)
-            libs = {name: dict(package=str(root / (name + '.lib'))) for name in check.LIBS}
-            command = ' '.join(entry['package'] for entry in libs.values())
-            tlog.write_text('^app.obj\n' + command)
-            (out / 'app-build.stdout').write_text('Loaded BulletCollision.lib(btDbvt.obj)\nLoaded BulletCollision.lib(btDbvtBroadphase.obj)\n')
-            (out / 'app-build.stderr').write_text('')
-            self.assertEqual(len(check.link_proof(build, 'app', out, libs)['libraries']), 4)
-            (out / 'app-build.stdout').write_text('Loaded BulletCollision.lib(btDbvt.obj)\n')
-            with self.assertRaises(ValueError):
-                check.link_proof(build, 'app', out, libs)
-            tlog.write_text('^app.obj\n' + command.replace(libs['LinearMath']['package'], 'other/LinearMath.lib'))
-            with self.assertRaises(ValueError):
-                check.link_proof(build, 'app', out, libs)
+    def link_fixture(self, root, label='app'):
+        build, out = root / 'build with spaces', root / 'evidence'
+        out.mkdir(exist_ok=True)
+        target = 'dbvt_cmake_reference' if label == 'probe' else 'MikuDanceStudio'
+        tlog = build / (target + '.dir/Release/link.command.1.tlog')
+        tlog.parent.mkdir(parents=True)
+        exe = build / ('Release/' + target + '.exe')
+        exe.parent.mkdir(exist_ok=True)
+        exe.write_bytes(b'actual target')
+        libs = {}
+        for name in check.LIBS:
+            path = root / (name + '.lib')
+            path.write_bytes(name.encode())
+            libs[name] = dict(package=str(path), sha256=check.digest(path))
+        map_path = build / (target + '.map')
+        map_path.write_text(target + '\n 0001:00000000 symbol 140001000 f BulletCollision:btDbvt.obj\n'
+                            ' 0001:00000001 symbol 140001001 f BulletCollision:btDbvtBroadphase.obj\n')
+        args = ['/OUT:' + str(exe), '/MAP:' + str(map_path), *[entry['package'] for entry in libs.values()]]
+        objects = []
+        if label == 'probe':
+            source = build / 'probe.cpp'
+            source.write_text('probe source')
+            obj = tlog.parent / 'probe.obj'
+            obj.write_bytes(b'probe object')
+            objects.append(str(obj))
+            args.append(str(obj))
+            (build / (target + '.vcxproj')).write_text('project')
+            tlog.with_name('CL.command.1.tlog').write_text('^' + str(source) + '\n' + subprocess.list2cmdline(['/c', '/Fo' + str(obj), str(source)]))
+        tlog.write_text('^app.obj\n' + subprocess.list2cmdline(args))
+        tlog.with_name('link.read.1.tlog').write_text('^app.obj\n' + '\n'.join([*[entry['package'] for entry in libs.values()], *objects]))
+        (out / (label + '-build.stdout')).write_text('Loaded C:/other-package/BulletCollision.lib(btDbvt.obj)\nLoaded C:/other-package/BulletCollision.lib(btDbvtBroadphase.obj)\n')
+        (out / (label + '-build.stderr')).write_text('')
+        return build, out, libs, tlog, map_path
 
-    def test_librarian_output_and_dbvt_members_are_required(self):
+    def test_link_proof_requires_exact_target_map_and_each_library(self):
+        for label in ('app', 'probe'):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as folder:
+                build, out, libs, tlog, map_path = self.link_fixture(Path(folder), label)
+                self.assertEqual(len(check.link_proof(build, label, out, libs)['libraries']), 4)
+                map_path.write_text(map_path.read_text().replace(':btDbvt.obj', ':unrelated.obj'))
+                with self.assertRaisesRegex(ValueError, 'map lacks'):
+                    check.link_proof(build, label, out, libs)
+
+    def test_unrelated_test_or_other_archive_log_cannot_supply_member_proof(self):
+        with tempfile.TemporaryDirectory() as folder:
+            build, out, libs, tlog, map_path = self.link_fixture(Path(folder))
+            for bad in ('other_test\n', 'MikuDanceStudio\n C:/other-package/BulletCollision.lib(btDbvt.obj)\n'):
+                map_path.write_text(bad)
+                with self.assertRaises(ValueError):
+                    check.link_proof(build, 'app', out, libs)
+
+    def test_other_or_ambiguous_archive_reads_are_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            build, out, libs, tlog, map_path = self.link_fixture(Path(folder))
+            readlog = tlog.with_name('link.read.1.tlog')
+            original = readlog.read_text()
+            for bad in (original.replace(libs['BulletCollision']['package'], 'C:/other-package/BulletCollision.lib'),
+                        original + '\nC:/other-package/BulletCollision.lib', original.replace('^app.obj', '^test.obj')):
+                readlog.write_text(bad)
+                with self.assertRaises(ValueError):
+                    check.link_proof(build, 'app', out, libs)
+
+    def coff_archive(self, path, members):
+        names, bodies = b'', []
+        for name, body in members:
+            index = len(names)
+            names += name.encode() + b'\x00'
+            bodies.append(('/' + str(index), body))
+        data = b'!<arch>\n'
+        for name, body in [('//', names), *bodies]:
+            data += f'{name:<16}{0:<12}{0:<6}{0:<6}{0:<8}{len(body):<10}`\n'.encode() + body
+            if len(body) % 2:
+                data += b'\n'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    def archive_fixture(self, root):
+        out = root / 'evidence'
+        out.mkdir()
+        libs = {}
+        for name in check.LIBS:
+            project = root / name
+            project.mkdir()
+            (project / (name + '.vcxproj')).write_text('project')
+            tlog = project / (name + '.dir/Release/Lib.command.1.tlog')
+            tlog.parent.mkdir(parents=True)
+            library = project / ('Release/' + name + '.lib')
+            libs[name] = dict(build=str(library))
+            objects = []
+            for stem in ('btDbvt', 'btDbvtBroadphase') if name == 'BulletCollision' else ('other',):
+                source = project / (stem + '.cpp')
+                source.write_text('actual source')
+                obj = tlog.parent / (stem + '.obj')
+                obj.write_bytes(('object ' + stem).encode())
+                objects.append(obj)
+                with tlog.with_name('CL.command.1.tlog').open('a') as stream:
+                    stream.write('^' + str(source) + '\n' + subprocess.list2cmdline(['/c', '/Fo' + str(obj), str(source)]) + '\n')
+            self.coff_archive(library, [(str(obj.relative_to(project)), obj.read_bytes()) for obj in objects])
+            tlog.write_text('^inputs\n' + subprocess.list2cmdline(['/OUT:' + str(library), *map(str, objects)]))
+        return out, libs
+
+    def test_librarian_binds_real_compiler_output_and_archive_bytes(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            out = root / 'evidence'
-            out.mkdir()
-            libs = {}
-            for name in check.LIBS:
-                project = root / name
-                tlog = project / (name + '.dir') / 'Lib.command.1.tlog'
-                tlog.parent.mkdir(parents=True)
-                library = project / 'Release' / (name + '.lib')
-                libs[name] = dict(build=str(library))
-                tlog.write_text('^inputs\n/OUT:' + str(library) + ' btDbvt.obj btDbvtBroadphase.obj')
-            self.assertEqual(set(check.archive_commands(root, out, libs)), set(check.LIBS))
-            tlog = root / 'BulletCollision/BulletCollision.dir/Lib.command.1.tlog'
-            tlog.write_text(tlog.read_text().replace(' btDbvtBroadphase.obj', ''))
-            with self.assertRaises(ValueError):
+            out, libs = self.archive_fixture(root)
+            proof = check.archive_commands(root, out, libs)
+            record = proof['BulletCollision']['dbvt_objects']['btDbvt']
+            self.assertEqual(record['compile']['object_sha256'], record['member']['sha256'])
+            self.assertEqual(check.digest(out / 'archives/btDbvt.obj'), record['member']['sha256'])
+            Path(record['compile']['object']).unlink()
+            with self.assertRaisesRegex(ValueError, 'compiler output is missing'):
                 check.archive_commands(root, out, libs)
+
+    def test_unrelated_same_basename_or_missing_lib_input_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            out, libs = self.archive_fixture(root)
+            tlog = root / 'BulletCollision/BulletCollision.dir/Release/Lib.command.1.tlog'
+            original = tlog.read_text()
+            bad = root / 'unrelated/btDbvt.obj'
+            for exists in (False, True):
+                if exists:
+                    bad.parent.mkdir()
+                    bad.write_bytes(b'object btDbvt')
+                tlog.write_text(original.replace(str(root / 'BulletCollision/BulletCollision.dir/Release/btDbvt.obj'), str(bad)))
+                with self.assertRaises(ValueError):
+                    check.archive_commands(root, out, libs)
+
+    def test_archive_member_wrong_bytes_path_or_ambiguity_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            out, libs = self.archive_fixture(root)
+            path = Path(libs['BulletCollision']['build'])
+            a, b = 'BulletCollision.dir/Release/btDbvt.obj', 'BulletCollision.dir/Release/btDbvtBroadphase.obj'
+            for members in ([(a, b'wrong'), (b, b'object btDbvtBroadphase')],
+                            [('other/btDbvt.obj', b'object btDbvt'), (b, b'object btDbvtBroadphase')],
+                            [(a, b'object btDbvt'), (a, b'object btDbvt'), (b, b'object btDbvtBroadphase')]):
+                self.coff_archive(path, members)
+                with self.assertRaises(ValueError):
+                    check.archive_commands(root, out, libs)
+
+    def test_nonreading_child_with_large_stdin_is_bounded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            start = time.monotonic()
+            with self.assertRaisesRegex(ValueError, 'time bound'):
+                check.run([sys.executable, '-c', 'import time; time.sleep(10)'], Path(folder), 'nonreader',
+                          data=b'x' * 1048576, timeout=0.1)
+            self.assertLess(time.monotonic() - start, 2)
+
+    def test_owned_descendant_cannot_outlive_successful_parent(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder)
+            marker = out / 'leftover'
+            child = 'import pathlib,time;time.sleep(.4);pathlib.Path(' + repr(str(marker)) + ').write_text("leftover")'
+            parent = 'import subprocess,sys;subprocess.Popen([sys.executable,"-c",' + repr(child) + '])'
+            check.run([sys.executable, '-c', parent], out, 'descendant', timeout=2)
+            time.sleep(.5)
+            self.assertFalse(marker.exists())
+
+    def test_probe_object_cannot_be_supplied_by_another_link_input(self):
+        with tempfile.TemporaryDirectory() as folder:
+            build, out, libs, tlog, map_path = self.link_fixture(Path(folder), 'probe')
+            obj = tlog.parent / 'probe.obj'
+            other = build / 'other/probe.obj'
+            other.parent.mkdir()
+            other.write_bytes(obj.read_bytes())
+            tlog.write_text(tlog.read_text().replace(str(obj), str(other)))
+            with self.assertRaisesRegex(ValueError, 'exact linker input'):
+                check.link_proof(build, 'probe', out, libs)
+
+    def test_build_diagnostics_are_retained_and_forwarded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder)
+            text = 'source.cpp(1): error C2143: syntax error\nLINK : fatal error LNK1104: cannot open file\nCMake Error at CMakeLists.txt:7 (find_package):\n  Could not locate requested package Bullet275\n  TOKEN=secret\nERROR: Conan build failed\nUNRELATED=secret'
+            console = io.StringIO()
+            with contextlib.redirect_stdout(console), self.assertRaises(RuntimeError) as error:
+                check.run([sys.executable, '-c', 'print(' + repr(text) + ');raise SystemExit(1)'], out, 'diagnostics', build=True)
+            for marker in ('C2143', 'LNK1104', 'CMake Error', 'Could not locate', 'ERROR: Conan'):
+                self.assertIn(marker, (out / 'diagnostics.stdout').read_text())
+                self.assertIn(marker, console.getvalue())
+            self.assertNotIn('UNRELATED', console.getvalue())
+            self.assertNotIn('TOKEN', console.getvalue())
+            self.assertIn(str(out / 'diagnostics.stdout'), str(error.exception))
+            self.assertTrue((out / 'diagnostics.stderr').is_file())
+
+    def test_archive_merge_compares_insertion_order_without_masking_bits(self):
+        rust = [[1, 0x80000000, 0, 0, 0x7fc00001, 0, 0, 0, 0, 0, 0x7fc00002, 0, 0] for _ in range(51)]
+        merged = [row[7:13] + row[1:7] for row in rust]
+        result = check.comparison_report(b'3,2,1,\n', rust, merged, [[1]] * 51, b'3,2,1,\n', rust)
+        self.assertTrue(result['comparisons']['archive_merge'])
+        merged[15][0] ^= 0x80000000
+        merged[27][3] ^= 1
+        result = check.comparison_report(b'3,2,1,\n', rust, merged, [[1]] * 51, b'3,2,1,\n', rust)
+        self.assertEqual(result['different_cases']['archive_merge'], [15, 27])
 
     def test_policy_flags_preserve_override_order(self):
         self.assertEqual(check.policy_flags(['/D', 'WIN32', '/DUNRELATED', '/UWIN32', '/DWIN32', '/fp:precise', '/FI', 'forced.h']),

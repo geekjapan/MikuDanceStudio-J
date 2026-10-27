@@ -46,6 +46,7 @@ int main(int argc, char** argv) {
             Merge(a, b, ab); Merge(b, a, ba);
             words(ab); words(ba);
         } else if (mode == "archive-merge") {
+            // A then B creates the parent with Merge(B, A).
             for (int order = 0; order < 2; ++order) {
                 btDbvt tree;
                 tree.insert(order ? b : a, nullptr);

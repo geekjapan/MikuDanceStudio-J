@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -124,46 +125,124 @@ def identity():
     return data
 
 
+def windows_job(process):
+    """Closing the job kills descendants even when their parent already exited."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Limits(ctypes.Structure):
+        _fields_ = [('process_time', ctypes.c_int64), ('job_time', ctypes.c_int64),
+                    ('flags', wintypes.DWORD), ('minimum', ctypes.c_size_t),
+                    ('maximum', ctypes.c_size_t), ('active', wintypes.DWORD),
+                    ('affinity', ctypes.c_size_t), ('priority', wintypes.DWORD),
+                    ('scheduling', wintypes.DWORD)]
+
+    class Extended(ctypes.Structure):
+        _fields_ = [('basic', Limits), ('io', ctypes.c_uint64 * 6),
+                    ('process_memory', ctypes.c_size_t), ('job_memory', ctypes.c_size_t),
+                    ('peak_process', ctypes.c_size_t), ('peak_job', ctypes.c_size_t)]
+
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    kernel.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    job = kernel.CreateJobObjectW(None, None)
+    if not job:
+        raise ctypes.WinError(ctypes.get_last_error())
+    limits = Extended()
+    limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if not kernel.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)) or not kernel.AssignProcessToJobObject(job, int(process._handle)):
+        error = ctypes.WinError(ctypes.get_last_error())
+        kernel.CloseHandle(job)
+        raise error
+    return lambda: kernel.CloseHandle(job)
+
+
 def stop(process):
     if os.name == 'nt':
-        subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], capture_output=True, timeout=15)
+        if process.poll() is None:
+            subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
     else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    if process.poll() is None:
         process.kill()
-    process.wait(timeout=15)
+    process.wait(timeout=5)
+
+
+def build_lines(value):
+    pattern = re.compile(
+        r'(?i)(?:\b(?:cl|link|lib)\.exe\b|\b(?:Searching|Found|Loaded)\b.*(?:\.lib|\.obj)|'
+        r'\.lib\([^\n]*\.obj\)|\b(?:fatal error|error|warning)\s+(?:[A-Z]+\d+|MSB\d+)|'
+        r'\b(?:CMake (?:Error|Warning)|ERROR:|ConanException|BUILD FAILED|Build FAILED)|'
+        r'\b(?:could not|cannot|failed to)\b.*(?:build|compile|link|open|find)|^\s*Call Stack|^\s+[^=]+\.cmake:\d+)')
+    result, cmake_context = [], 0
+    for line in value.decode(errors='replace').splitlines():
+        recognized = bool(pattern.search(line))
+        context = cmake_context > 0 and line.startswith('  ') and '=' not in line and not re.search(r'(?i)secret|token|password|credential', line)
+        if recognized or context:
+            result.append(line[:4096])
+        cmake_context = 4 if re.search(r'(?i)CMake Error', line) else max(0, cmake_context - 1)
+    return result
 
 
 def run(argv, out, name, *, cwd=ROOT, data=None, timeout=300, build=False, env=None):
     argv = list(map(str, argv))
     save(out / (name + '-command.json'), dict(argv=argv, cwd=str(cwd)))
-    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
-        process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,
-                                   stdout=stdout, stderr=stderr, env=env)
+    start = time.monotonic()
+    failure = None
+    with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         if data is not None:
-            process.stdin.write(data)
-            process.stdin.close()
-        start = time.monotonic()
-        while process.poll() is None:
-            if time.monotonic() - start > timeout or max(os.fstat(stdout.fileno()).st_size, os.fstat(stderr.fileno()).st_size) > LIMIT:
-                stop(process)
-                raise ValueError(f'{name} exceeded time or output bound')
-            time.sleep(0.05)
+            if len(data) > LIMIT:
+                raise ValueError(f'{name} exceeded input bound')
+            stdin.write(data)
+            stdin.seek(0)
+        if time.monotonic() - start >= timeout:
+            raise ValueError(f'{name} exceeded time bound while preparing input')
+        process = subprocess.Popen(argv, cwd=cwd, stdin=stdin, stdout=stdout, stderr=stderr, env=env,
+                                   start_new_session=os.name != 'nt')
+        close_job = None
+        try:
+            if os.name == 'nt':
+                close_job = windows_job(process)
+            while process.poll() is None:
+                if time.monotonic() - start >= timeout:
+                    failure = 'time'
+                    break
+                if max(os.fstat(stdout.fileno()).st_size, os.fstat(stderr.fileno()).st_size) > LIMIT:
+                    failure = 'output'
+                    break
+                time.sleep(min(0.02, max(0, timeout - (time.monotonic() - start))))
+        finally:
+            if close_job:
+                close_job()
+            stop(process)
         stdout.seek(0); stderr.seek(0)
         outputs = (stdout.read(LIMIT + 1), stderr.read(LIMIT + 1))
     if any(len(value) > LIMIT for value in outputs):
-        raise ValueError(f'{name} exceeded output bound')
+        failure = 'output'
     for suffix, value in zip(('stdout', 'stderr'), outputs):
+        value = value[:LIMIT]
         if build:
-            text = value.decode(errors='replace')
-            lines = [line for line in text.splitlines() if re.search(
-                r'(?i)(?:\b(?:cl|link|lib)\.exe\b|\b(?:Searching|Found|Loaded)\b.*(?:\.lib|\.obj)|\.lib\([^\n]*\.obj\))', line)]
+            lines = build_lines(value)
             value = ('\n'.join(lines) + '\n').encode()
+            for line in lines:
+                print(line, flush=True)
         (out / (name + '.' + suffix)).write_bytes(value)
+    evidence = str(out / (name + '.stdout')) + ' and ' + str(out / (name + '.stderr'))
+    if failure:
+        raise ValueError(f'{name} exceeded {failure} bound; inspect {evidence}')
     if process.returncode:
-        raise RuntimeError(f'{name} exited {process.returncode}; inspect retained commands and normal Actions log')
+        raise RuntimeError(f'{name} exited {process.returncode}; inspect {evidence}')
     return outputs[0]
 
 
-def tlog_commands(path):
+def tlog_commands(path, *, reads=False):
     text, _ = decode(path.read_bytes())
     records = []
     sources = None
@@ -173,7 +252,10 @@ def tlog_commands(path):
         elif line.strip():
             if sources is None:
                 raise ValueError('command tlog lacks source association')
-            records.append((sources, split_command(line)))
+            if reads and records and records[-1][0] == sources:
+                records[-1][1].append(line.strip())
+            else:
+                records.append((sources, [line.strip()] if reads else split_command(line)))
     return records
 
 
@@ -309,48 +391,177 @@ def archives(paths):
     return result
 
 
+def option(args, prefix):
+    values = []
+    for i, arg in enumerate(args):
+        if arg.startswith(prefix):
+            values.append(arg[len(prefix):] or (args[i + 1] if i + 1 < len(args) else ''))
+    if len(values) != 1 or not values[0]:
+        raise ValueError(f'missing or ambiguous {prefix} output option')
+    return values[0]
+
+
+def archive_members(path):
+    data = Path(path).read_bytes()
+    if not data.startswith(b'!<arch>\n'):
+        raise ValueError('not a COFF archive')
+    offset, names, result = 8, b'', []
+    while offset < len(data):
+        header = data[offset:offset + 60]
+        if len(header) != 60 or header[58:60] != b'`\n':
+            raise ValueError('malformed archive header')
+        size = int(header[48:58])
+        if size < 0:
+            raise ValueError('negative archive member size')
+        body = data[offset + 60:offset + 60 + size]
+        if len(body) != size:
+            raise ValueError('truncated archive member')
+        name = header[:16].decode('ascii').strip()
+        if name == '//':
+            names = body
+        elif name != '/':
+            if re.fullmatch(r'/[0-9]+', name):
+                index = int(name[1:])
+                if index >= len(names) or (index and names[index - 1] not in (0, 10)):
+                    raise ValueError('invalid archive long-name offset')
+                tail = names[index:]
+                name = re.split(b'\x00|/\n', tail, maxsplit=1)[0].decode('utf-8')
+            else:
+                name = name.rstrip('/')
+            result.append(dict(name=name, sha256=hashlib.sha256(body).hexdigest()))
+        offset += 60 + size + size % 2
+    if offset != len(data):
+        raise ValueError('invalid archive alignment')
+    return result
+
+
+def compile_record(folder, name, out):
+    matches = []
+    for path in folder.glob('**/CL.command.1.tlog'):
+        for sources, args in tlog_commands(path):
+            for source in sources:
+                if Path(source).stem.lower() == name.lower():
+                    matches.append((path, source, args))
+    if len(matches) != 1:
+        raise ValueError(f'expected one actual compile command for {name}, found {len(matches)}')
+    tlog, source, args = matches[0]
+    cwd = next((p for p in tlog.parents if list(p.glob('*.vcxproj'))), None)
+    if cwd is None or not cwd.is_relative_to(folder):
+        raise ValueError(f'unresolved MSBuild project directory for {name}')
+    source = (cwd / source).resolve()
+    if not source.is_file():
+        raise ValueError(f'actual {name} source is missing')
+    responses = []
+    args = expand(args, cwd, responses)
+    output = option(args, '/Fo')
+    obj = (cwd / output).resolve()
+    if output.endswith(('\\', '/')) or obj.is_dir():
+        obj = obj / (source.stem + '.obj')
+    if not obj.is_file():
+        raise ValueError(f'actual {name} compiler output is missing: {obj}')
+    return dict(argv=args, source=str(source), source_sha256=digest(source), cwd=str(cwd),
+                tlog=str(tlog), responses=responses, object=str(obj), object_sha256=digest(obj))
+
+
 def archive_commands(native, out, libs):
     result = {}
+    compiles = {name: compile_record(native, name, out) for name in ('btDbvt', 'btDbvtBroadphase')}
     for name in LIBS:
         project = native / name
         logs = [p for p in project.glob('**/*.command.1.tlog') if p.name.lower() in ('lib.command.1.tlog', 'lib-link.command.1.tlog')]
         if len(logs) != 1:
             raise ValueError(f'missing or ambiguous actual librarian command for {name}')
-        text, encoding = decode(logs[0].read_bytes())
+        _, encoding = decode(logs[0].read_bytes())
+        tasks = tlog_commands(logs[0])
+        if len(tasks) != 1:
+            raise ValueError(f'ambiguous actual librarian task for {name}')
         records = []
-        args = expand(split_command(' '.join(line for line in text.splitlines() if not line.startswith('^'))), project, records)
-        outputs = [arg[5:] for arg in args if arg.upper().startswith('/OUT:')]
-        if len(outputs) != 1 or (project / outputs[0]).resolve() != Path(libs[name]['build']).resolve():
+        args = expand(tasks[0][1], project, records)
+        if (project / option(args, '/OUT:')).resolve() != Path(libs[name]['build']).resolve():
             raise ValueError(f'librarian output does not match resolved {name} archive')
+        inputs = [(project / arg).resolve() for arg in args if arg.lower().endswith('.obj')]
+        if not inputs or any(not obj.is_file() for obj in inputs):
+            raise ValueError(f'librarian {name} has missing object inputs')
+        if len(set(inputs)) != len(inputs):
+            raise ValueError(f'librarian {name} repeats object inputs')
+        entry = dict(tlog=str(logs[0]), argv=args, cwd=str(project), encoding=encoding, responses=records,
+                     inputs={str(obj): digest(obj) for obj in inputs}, archive_sha256=digest(libs[name]['build']))
         if name == 'BulletCollision':
-            members = {Path(arg).name.lower() for arg in args if arg.lower().endswith('.obj')}
-            if not {'btdbvt.obj', 'btdbvtbroadphase.obj'} <= members:
-                raise ValueError('librarian command lacks both DBVT object files')
-        result[name] = dict(tlog=str(logs[0]), argv=args, cwd=str(project), encoding=encoding, responses=records)
+            members = archive_members(libs[name]['build'])
+            association = {}
+            for stem, record in compiles.items():
+                obj = Path(record['object'])
+                same_name = [item for item in inputs if item.name.lower() == obj.name.lower()]
+                if same_name != [obj]:
+                    raise ValueError(f'librarian input does not uniquely match {stem} compiler output')
+                matching = [m for m in members if Path(m['name'].replace('\\', '/')).name.lower() == obj.name.lower()]
+                if len(matching) != 1 or (project / matching[0]['name'].replace('\\', '/')).resolve() != obj:
+                    raise ValueError(f'archive member path does not uniquely match {stem} librarian input')
+                if matching[0]['sha256'] != record['object_sha256']:
+                    raise ValueError(f'archive member bytes differ from {stem} compiler output')
+                association[stem] = dict(compile=record, member=matching[0])
+                dest = out / 'archives' / obj.name
+                dest.parent.mkdir(exist_ok=True)
+                shutil.copyfile(obj, dest)
+            entry['dbvt_objects'] = association
+        result[name] = entry
     save(out / 'archive-commands.json', result)
     return result
 
 
 def link_proof(build, label, out, libs):
-    candidates = list(build.glob('**/link.command.1.tlog'))
     target = 'dbvt_cmake_reference' if label == 'probe' else 'MikuDanceStudio'
-    candidates = [p for p in candidates if any(part.lower() == target.lower() + '.dir' for part in p.relative_to(build).parts)]
+    candidates = [p for p in build.glob('**/link.command.1.tlog')
+                  if any(part.lower() == target.lower() + '.dir' for part in p.relative_to(build).parts)]
     if len(candidates) != 1:
         raise ValueError(f'ambiguous actual {label} link command')
-    text, _ = decode(candidates[0].read_bytes())
+    tlog = candidates[0]
+    records = tlog_commands(tlog)
+    if len(records) != 1:
+        raise ValueError(f'ambiguous actual {label} linker task')
+    sources, args = records[0]
     responses = []
-    expanded = expand(split_command(' '.join(line for line in text.splitlines() if not line.startswith('^'))), build, responses)
-    save(out / (label + '-link.json'), dict(tlog=str(candidates[0]), argv=expanded, responses=responses))
+    expanded = expand(args, build, responses)
+    exe = (build / option(expanded, '/OUT:')).resolve()
+    map_path = (build / option(expanded, '/MAP:')).resolve()
+    if exe != (build / 'Release' / (target + '.exe')).resolve() or not exe.is_file():
+        raise ValueError(f'{label} linker output is not the exact target executable')
+    if not map_path.is_relative_to(build.resolve()) or not map_path.is_file():
+        raise ValueError(f'{label} target-specific map is missing')
     normalized = [arg.replace('\\', '/').lower() for arg in expanded]
+    read_records = tlog_commands(tlog.with_name('link.read.1.tlog'), reads=True)
+    if len(read_records) != 1 or [s.lower() for s in read_records[0][0]] != [s.lower() for s in sources]:
+        raise ValueError(f'{label} linker read task does not match command task')
+    reads = [arg.replace('\\', '/').lower() for arg in read_records[0][1]]
     for name, entry in libs.items():
         path = entry['package'].replace('\\', '/').lower()
-        if path not in normalized:
-            raise ValueError(f'{label} did not link resolved {name} archive')
-    log = (out / (label + '-build.stdout')).read_text() + (out / (label + '-build.stderr')).read_text()
+        for values in (normalized, reads):
+            matches = [v for v in values if v.endswith('/' + name.lower() + '.lib') or v == name.lower() + '.lib']
+            if matches != [path]:
+                raise ValueError(f'{label} did not uniquely link/read resolved {name} archive')
+        if digest(entry['package']) != entry['sha256']:
+            raise ValueError(f'{label} archive bytes changed')
+    text = map_path.read_text(errors='strict')
+    if not text.splitlines() or text.splitlines()[0].strip().lower() != target.lower():
+        raise ValueError(f'{label} map target identity differs')
     for member in ('btDbvt', 'btDbvtBroadphase'):
-        if not re.search(r'(?i)BulletCollision\.lib\([^\n)]*\b' + member + r'\.obj\)', log):
-            raise ValueError(f'{label} lacks archive member link evidence for {member}')
-    return dict(tlog=str(candidates[0]), libraries=list(libs), members=['btDbvt.obj', 'btDbvtBroadphase.obj'])
+        pattern = r'(?im)^.*\sBulletCollision(?:\.lib)?:' + member + r'\.obj\s*$'
+        if not re.search(pattern, text):
+            raise ValueError(f'{label} target map lacks unambiguous archive member {member}')
+    probe_compile = None
+    if label == 'probe':
+        probe_compile = compile_record(build, 'probe', out)
+        obj = Path(probe_compile['object'])
+        inputs = [(build / arg).resolve() for arg in expanded if arg.lower().endswith('.obj')]
+        read_objects = [(build / arg).resolve() for arg in read_records[0][1] if arg.lower().endswith('.obj')]
+        if inputs.count(obj) != 1 or read_objects.count(obj) != 1:
+            raise ValueError('probe compiler output is not the exact linker input/read object')
+    shutil.copyfile(map_path, out / (label + '-link.map'))
+    proof = dict(tlog=str(tlog), argv=expanded, responses=responses, libraries=libs,
+                 executable=str(exe), executable_sha256=digest(exe), map=str(map_path), map_sha256=digest(map_path),
+                 members=['btDbvt.obj', 'btDbvtBroadphase.obj'], probe_compile=probe_compile)
+    save(out / (label + '-link.json'), proof)
+    return proof
 
 
 def developer_environment(compiler, out, name):
@@ -371,21 +582,9 @@ def developer_environment(compiler, out, name):
 
 
 def capture_tu(folder, name, out):
-    matches = []
-    for path in folder.glob('**/CL.command.1.tlog'):
-        for sources, args in tlog_commands(path):
-            for source in sources:
-                if Path(source).stem.lower() == name.lower():
-                    matches.append((path, source, args))
-    if len(matches) != 1:
-        raise ValueError(f'expected one actual compile command for {name}, found {len(matches)}')
-    tlog, source, args = matches[0]
-    cwd = next((p for p in tlog.parents if list(p.glob('*.vcxproj'))), None)
-    if cwd is None or not cwd.is_relative_to(folder):
-        raise ValueError(f'unresolved MSBuild project directory for {name}')
-    source = Path(source)
-    if not source.is_file():
-        raise ValueError(f'actual {name} source is missing')
+    record = compile_record(folder, name, out)
+    tlog, source, cwd = Path(record['tlog']), Path(record['source']), Path(record['cwd'])
+    args = record['argv']
     compilers = list(folder.glob('**/CMakeCXXCompiler.cmake'))
     values = set()
     for path in compilers:
@@ -399,10 +598,7 @@ def capture_tu(folder, name, out):
     command_log = ''.join((out / (build_name + '.' + stream)).read_text() for stream in ('stdout', 'stderr'))
     if compiler.replace('\\', '/').lower() not in command_log.replace('\\', '/').lower():
         raise ValueError(f'{name} compiler path lacks actual build command evidence')
-    responses = []
-    args = expand(args, cwd, responses)
-    save(out / (name + '-actual-command.json'), dict(compiler=compiler, argv=args, source=str(source),
-         source_sha256=digest(source), cwd=str(cwd), tlog=str(tlog), responses=responses))
+    save(out / (name + '-actual-command.json'), dict(record, compiler=compiler, compiler_sha256=digest(compiler)))
     # /Bv with /E reports the version while preserving the actual TU flags.
     argv = [compiler, *preprocess_args(args, source), '/Bv']
     run(argv, out, name + '-preprocess', cwd=cwd, timeout=90, env=developer_environment(compiler, out, name))
@@ -531,18 +727,22 @@ def rust_probe(out, data):
     run(['rustup', 'run', '1.95.0', 'rustc', '-Vv'], out, 'rust-version', cwd=ROOT / 'rust')
     run(['rustup', 'run', '1.95.0', 'cargo', 'build', '--release', '--manifest-path', folder / 'Cargo.toml'], out, 'rust-build', cwd=ROOT / 'rust', timeout=600)
     exe = folder / 'target/release/cmake-dbvt-rust-reference.exe'
+    shutil.copyfile(exe, out / 'cmake-dbvt-rust-reference.exe')
+    save(out / 'rust-binary.json', dict(path=str(exe), sha256=digest(exe), source='rust-driver/main.rs',
+         source_sha256=digest(folder / 'main.rs'), build_command='rust-build-command.json', version='rust-version.stdout'))
     return run([exe, 'select'], out, 'rust-select', timeout=10), rows(run([exe, 'aabb'], out, 'rust-aabb', data=data, timeout=10), 13)
 
 
 def comparison_report(selected, aabb, merged, intersected, rust_selected, rust):
     comparisons = dict(select=selected.splitlines() == rust_selected.splitlines(),
-        inline_aabb=aabb == rust, archive_merge=merged == [row[1:] for row in rust],
+        inline_aabb=aabb == rust, archive_merge=merged == [row[7:13] + row[1:7] for row in rust],
         archive_intersect=intersected == [[row[0]] for row in rust])
     return dict(observation='complete', compatibility='PASS' if all(comparisons.values()) else 'FAIL',
         classification='compatible' if all(comparisons.values()) else 'compatibility-mismatch',
+        archive_merge_columns=['insert_A_then_B__Merge_B_A', 'insert_B_then_A__Merge_A_B'],
         comparisons=comparisons, different_cases=dict(
             inline_aabb=[i for i in range(51) if aabb[i] != rust[i]],
-            archive_merge=[i for i in range(51) if merged[i] != rust[i][1:]],
+            archive_merge=[i for i in range(51) if merged[i] != rust[i][7:13] + rust[i][1:7]],
             archive_intersect=[i for i in range(51) if intersected[i] != [rust[i][0]]]))
 
 
@@ -559,19 +759,11 @@ def measure(out):
             dest = out / 'archives' / (name + '.lib')
             dest.parent.mkdir(exist_ok=True)
             shutil.copyfile(entry['package'], dest)
-        objects = {}
-        for name in ('btDbvt', 'btDbvtBroadphase'):
-            candidates = list((Path(paths['build']) / 'BulletCollision').glob('**/' + name + '.obj'))
-            if len(candidates) != 1:
-                raise ValueError(f'ambiguous native {name} object')
-            obj = candidates[0]
-            objects[name] = dict(path=str(obj), sha256=digest(obj))
-            shutil.copyfile(obj, out / 'archives' / obj.name)
-        report['archive_objects'] = objects
         native, app, probe = Path(paths['build']), ROOT / 'out/ci/build', ROOT / 'out/ci/dbvt-probe'
         toolchain = app / 'generators/conan_toolchain.cmake'
         capture_build_tree(native, out, 'native-build-metadata')
         report['librarian_commands'] = archive_commands(native, out, libs)
+        report['archive_objects'] = report['librarian_commands']['BulletCollision']['dbvt_objects']
         capture_build_tree(app, out, 'app-build-metadata')
         run(['cmake', '-S', HERE, '-B', probe, '-G', 'Visual Studio 17 2022', '-A', 'x64', f'-DCMAKE_TOOLCHAIN_FILE={toolchain}'], out, 'probe-configure')
         run(['cmake', '--build', probe, '--config', 'Release', '--parallel', '4', '--', '/verbosity:normal', '/clp:ShowCommandLine'], out, 'probe-build', build=True, timeout=300)
@@ -592,8 +784,17 @@ def measure(out):
         (out / 'aabb-inputs.tsv').write_bytes(data)
         exe = probe / 'Release/dbvt_cmake_reference.exe'
         app_exe = app / 'Release/MikuDanceStudio.exe'
-        report['binaries'] = {str(p): digest(p) for p in (exe, app_exe)}
+        control_exe = probe / 'Release/dbvt_insert_order_control.exe'
+        report['binaries'] = {str(p): digest(p) for p in (exe, app_exe, control_exe)}
+        for label, binary in (('probe', exe), ('app', app_exe)):
+            if report['binaries'][str(binary)] != report['links'][label]['executable_sha256']:
+                raise ValueError(f'{label} binary changed after target link association')
+        probe_command = json.loads((out / 'probe-actual-command.json').read_text())
+        if probe_command['object_sha256'] != report['links']['probe']['probe_compile']['object_sha256']:
+            raise ValueError('probe object changed after target link association')
         shutil.copyfile(exe, out / 'dbvt_cmake_reference.exe')
+        shutil.copyfile(control_exe, out / 'dbvt_insert_order_control.exe')
+        run([control_exe], out, 'native-insert-order-control', timeout=10)
         selected = run([exe, 'select'], out, 'archive-select', timeout=10)
         consumer.validate_select(selected)
         aabb = rows(run([exe, 'aabb'], out, 'probe-inline-aabb', data=data, timeout=10), 13)
@@ -603,6 +804,11 @@ def measure(out):
             raise ValueError('invalid Intersect boolean')
         rust_selected, rust = rust_probe(out, data)
         consumer.validate_select(rust_selected)
+        report['rust_binary'] = json.loads((out / 'rust-binary.json').read_text())
+        if digest(report['rust_binary']['path']) != report['rust_binary']['sha256']:
+            raise ValueError('Rust executable changed during observation')
+        if any(digest(p) != sha for p, sha in report['binaries'].items()):
+            raise ValueError('native executable changed during observation')
         for name in TUS:
             closure = json.loads((out / (name + '-closure.json')).read_text())
             if any(digest(Path(p)) != sha for p, sha in closure.items()):
@@ -622,7 +828,7 @@ def measure(out):
         if report['source_sha256'] != start:
             report.update(observation='incomplete', compatibility='not-evaluated', classification='validation-gap', failure='protected source changed or start manifest missing')
         report['artifact_sha256'] = {str(p.relative_to(out)): digest(p) for p in sorted(out.rglob('*')) if p.is_file() and p.name != 'report.json' and 'target' not in p.relative_to(out).parts}
-        report['artifact_hash_exclusions'] = ['report.json (written after manifest)', 'rust-driver/target (build scratch)']
+        report['artifact_hash_exclusions'] = ['report.json (written after manifest)', 'rust-driver/target (build scratch; executed binary copied and hashed separately)', 'no open log files are included; run() closes streams before finalization']
         save(out / 'report.json', report)
         print(json.dumps({key: report[key] for key in ('observation', 'compatibility', 'classification')}))
     return 0 if report['observation'] == 'complete' and report['compatibility'] == 'PASS' else 1

@@ -22,6 +22,7 @@ SOURCES = (
     ".github/workflows/native-d3d9-capture.yml", "tools/oracle/d3d9_capture.py",
     "tools/oracle/d3d9_capability.cpp", "tools/oracle/test_d3d9_capture.py",
     "tools/oracle/golden2.ps1", "src/render/d3d_init.cpp", "src/tools/trace_mode.cpp",
+    "src/main/winmain.cpp", "src/window/ui_init.cpp", "src/window/window_init.cpp",
 )
 ASSETS = (
     "tests/fixtures/rust/chain8.pmd", "tests/fixtures/rust/chain8.pmx",
@@ -97,6 +98,190 @@ def run_command(command, directory, timeout=TIMEOUT):
     result["finished_utc"] = datetime.now(timezone.utc).isoformat()
     result["elapsed_seconds"] = round(time.monotonic() - start, 3)
     (directory / "command.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    return result
+
+
+class DialogWindows:
+    """PID-scoped Win32 observations and bounded real button messages."""
+
+    def __init__(self):
+        self.deadline = time.monotonic() + 30
+        import ctypes
+        from ctypes import wintypes as w
+        self.c, self.w = ctypes, w
+        self.api = ctypes.WinDLL("user32", use_last_error=True)
+        self.callback = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
+        signatures = {
+            "EnumWindows": ([self.callback, w.LPARAM], w.BOOL),
+            "EnumChildWindows": ([w.HWND, self.callback, w.LPARAM], w.BOOL),
+            "GetWindowThreadProcessId": ([w.HWND, ctypes.POINTER(w.DWORD)], w.DWORD),
+            "GetClassNameW": ([w.HWND, w.LPWSTR, ctypes.c_int], ctypes.c_int),
+            "GetDlgCtrlID": ([w.HWND], ctypes.c_int),
+            "GetParent": ([w.HWND], w.HWND),
+            "GetWindow": ([w.HWND, w.UINT], w.HWND),
+            "GetMenu": ([w.HWND], w.HMENU),
+            "IsWindowVisible": ([w.HWND], w.BOOL),
+            "IsWindowEnabled": ([w.HWND], w.BOOL),
+            "GetWindowRect": ([w.HWND, ctypes.POINTER(w.RECT)], w.BOOL),
+            "SendMessageTimeoutW": ([w.HWND, w.UINT, w.WPARAM, w.LPARAM, w.UINT,
+                                     w.UINT, ctypes.POINTER(ctypes.c_size_t)], w.LPARAM),
+        }
+        for name, (arguments, result) in signatures.items():
+            function = getattr(self.api, name)
+            function.argtypes, function.restype = arguments, result
+
+    def message(self, hwnd, message, parameter=0):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("GUI observation deadline exceeded")
+        result = self.c.c_size_t()
+        if not self.api.SendMessageTimeoutW(hwnd, message, 4096 if message == 13 else 0,
+                                            parameter, 0x22, max(1, min(200, int(remaining * 1000))), self.c.byref(result)):
+            raise OSError(f"SendMessageTimeout failed: hwnd={hwnd}, message={message}")
+        return result.value
+
+    def snapshot(self, pid):
+        records, errors = [], []
+        top_level = True
+
+        def read(hwnd, _):
+            try:
+                owner = self.w.DWORD()
+                if not self.api.GetWindowThreadProcessId(hwnd, self.c.byref(owner)):
+                    raise OSError("Cannot identify window PID")
+                if owner.value != pid:
+                    return True
+                if len(records) >= 256:
+                    raise ValueError("Window enumeration exceeded 256-window bound")
+                name = self.c.create_unicode_buffer(256)
+                if not self.api.GetClassNameW(hwnd, name, len(name)):
+                    raise OSError("Cannot read window class")
+                text = self.c.create_unicode_buffer(4096)
+                self.message(hwnd, 13, self.c.addressof(text))  # WM_GETTEXT reads remote controls.
+                rect = self.w.RECT()
+                if not self.api.GetWindowRect(hwnd, self.c.byref(rect)):
+                    raise OSError("Cannot read window rectangle")
+                records.append({"hwnd": hwnd, "pid": owner.value, "class": name.value, "top_level": top_level,
+                                "text": text.value, "id": self.api.GetDlgCtrlID(hwnd),
+                                "parent": self.api.GetParent(hwnd) or 0,
+                                "owner": self.api.GetWindow(hwnd, 4) or 0,
+                                "visible": bool(self.api.IsWindowVisible(hwnd)),
+                                "enabled": bool(self.api.IsWindowEnabled(hwnd)),
+                                "menu": bool(self.api.GetMenu(hwnd)),
+                                "rect": [rect.left, rect.top, rect.right, rect.bottom]})
+            except (OSError, ValueError) as error:
+                errors.append(str(error))
+                return False
+            return True
+
+        callback = self.callback(read)
+        if not self.api.EnumWindows(callback, 0) or errors:
+            raise OSError(f"Top-level window enumeration failed: {errors}")
+        top = list(records)
+        top_level = False
+        for window in top:
+            self.api.EnumChildWindows(window["hwnd"], callback, 0)
+            if errors:
+                raise OSError(f"Child window enumeration failed: {errors}")
+        return records
+
+
+def observe_recoverable_dialog(executable, pmm, directory, timeout=30):
+    if not 0 < timeout <= 30:
+        raise ValueError("GUI observation timeout must be in (0, 30] seconds")
+    directory.mkdir(parents=True, exist_ok=False)
+    result = {"status": "FAIL", "command": [str(executable), str(pmm)],
+              "cwd": str(directory), "exe_sha256": digest(executable), "pid": None, "process_started": False,
+              "timeout_seconds": timeout, "started_utc": datetime.now(timezone.utc).isoformat(),
+              "observations": [], "button_commands": 0, "cleanup": {},
+              "claim": "Normal GUI window continuation only; no rendering, frames, audio or playback proof"}
+    process = None
+    start = time.monotonic()
+    try:
+        if os.name != "nt":
+            raise OSError("Native Windows GUI observation requires Windows")
+        windows = DialogWindows()
+        windows.deadline = start + timeout
+        with (directory / "stdout.txt").open("wb") as stdout, (directory / "stderr.txt").open("wb") as stderr:
+            process = subprocess.Popen(result["command"], cwd=directory, stdout=stdout, stderr=stderr)
+            result["pid"] = process.pid
+            result["process_started"] = True
+            dialog_hwnd, ready_since = None, None
+            while time.monotonic() - start < timeout:
+                if process.poll() is not None:
+                    raise ValueError("GUI process exited before continuation observation")
+                facts = windows.snapshot(process.pid)
+                result["observations"].append({"elapsed_seconds": round(time.monotonic() - start, 3),
+                                               "windows": facts})
+                if any(window["pid"] != process.pid for window in facts):
+                    raise ValueError("Window snapshot contains wrong PID")
+                if any(window.get("top_level") and window["visible"] and
+                       window["class"] not in ("#32770", "Polygon Movie Maker") for window in facts):
+                    raise ValueError("Unexpected visible top-level window")
+                dialogs = [window for window in facts if window["class"] == "#32770"]
+                if dialogs:
+                    if result["button_commands"]:
+                        raise ValueError("Repeated or unresolved dialog after the one OK command")
+                    if len(dialogs) != 1:
+                        raise ValueError("Ambiguous GUI dialogs")
+                    dialog = dialogs[0]
+                    children = [window for window in facts if window["parent"] == dialog["hwnd"]]
+                    texts = [window for window in children if window["class"].lower() == "static" and window["text"]]
+                    buttons = [window for window in children if window["class"].lower() == "button"]
+                    if (dialog["text"] != "" or not dialog["visible"] or not dialog["enabled"] or
+                        [window["text"] for window in texts] != ["Cannot make DirectSound!!"] or
+                        len(buttons) != 1 or buttons[0]["id"] != 1 or
+                        not buttons[0]["visible"] or not buttons[0]["enabled"]):
+                        raise ValueError("Unexpected dialog text, title or IDOK control")
+                    # Re-read immediately before the single real BM_CLICK; never synthesize a return value.
+                    if windows.snapshot(process.pid) != facts:
+                        raise ValueError("Dialog changed before OK command")
+                    dialog_hwnd = dialog["hwnd"]
+                    result["dialog"] = dialog
+                    result["button"] = buttons[0]
+                    result["button_commands"] = 1
+                    result["button_command"] = {"hwnd": buttons[0]["hwnd"], "message": "BM_CLICK",
+                                                "message_id": 0xF5, "status": "ATTEMPTED"}
+                    windows.message(buttons[0]["hwnd"], 0xF5)
+                    result["button_command"]["status"] = "COMPLETED"
+                elif result["button_commands"]:
+                    main = [window for window in facts if window["class"] == "Polygon Movie Maker"
+                            and window["visible"] and window["enabled"] and window["menu"]
+                            and window["rect"][2] > window["rect"][0]
+                            and window["rect"][3] > window["rect"][1]]
+                    if len(main) == 1 and any(window["parent"] == main[0]["hwnd"] for window in facts):
+                        windows.message(main[0]["hwnd"], 0)  # WM_NULL responsiveness, not a render claim.
+                        ready_since = ready_since or time.monotonic()
+                        if time.monotonic() - ready_since >= 2:
+                            if process.poll() is not None:
+                                raise ValueError("GUI process exited at continuation observation")
+                            result.update(status="OBSERVED", cause="Single IDOK command followed by responsive visible main UI for two seconds",
+                                          main_window=main[0], dialog_hwnd=dialog_hwnd)
+                            break
+                    else:
+                        ready_since = None
+                time.sleep(0.2)
+            else:
+                raise ValueError("GUI continuation observation timed out")
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        result.update(status="FAIL", cause=str(error))
+    finally:
+        if process is not None:
+            try:
+                result["cleanup"]["pid"] = process.pid
+                result["cleanup"]["terminated_owned_process"] = process.poll() is None
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=10)
+                result["cleanup"]["returncode"] = process.returncode
+            except (OSError, subprocess.SubprocessError) as error:
+                result["cleanup"]["error"] = str(error)
+                result.update(status="FAIL", cause="Job-owned process cleanup failed")
+        result["finished_utc"] = datetime.now(timezone.utc).isoformat()
+        result["elapsed_seconds"] = round(time.monotonic() - start, 3)
+        for name in ("stdout.txt", "stderr.txt"):
+            (directory / name).touch(exist_ok=True)
+        (directory / "observation.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     return result
 
 
@@ -192,7 +377,7 @@ def validate_outputs(out):
             raise ValueError(f"Missing frame {frame} shadow probe")
 
 
-def capture(root, build, out, prepare=False):
+def capture(root, build, out, prepare=False, observe_dialog=False):
     root, build, out = root.resolve(), build.resolve(), out.resolve()
     if out == root or root in out.parents and not out.is_relative_to(root / "out"):
         raise ValueError("Output inside checkout must be under out/")
@@ -237,6 +422,13 @@ def capture(root, build, out, prepare=False):
                 copy_checked(root / relative, stage / Path(relative).name, report["copies"])
             save_report(out, report)
             pmm = stage / "selfshadow.pmm"
+            if observe_dialog:
+                try:
+                    report["recoverable_dialog_observation"] = observe_recoverable_dialog(
+                        stage / "MikuDanceStudio.exe", pmm, out / "recoverable-dialog")
+                except (OSError, ValueError, subprocess.SubprocessError) as error:
+                    report["recoverable_dialog_observation"] = {"status": "FAIL", "cause": str(error)}
+                save_report(out, report)
             commands = (
                 ("capability", [stage / "d3d9_capability.exe"]),
                 ("frames", [stage / "MikuDanceStudio.exe", "--mds-frame-dump", pmm, out / "frames", "0", "30"]),
@@ -305,8 +497,9 @@ def main():
     parser.add_argument("--build", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--prepare", action="store_true")
+    parser.add_argument("--observe-recoverable-dialog", action="store_true")
     args = parser.parse_args()
-    return capture(args.root, args.build, args.out, args.prepare)
+    return capture(args.root, args.build, args.out, args.prepare, args.observe_recoverable_dialog)
 
 
 if __name__ == "__main__":

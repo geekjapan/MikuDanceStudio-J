@@ -44,6 +44,7 @@ jobs:
           python -I tools/oracle/d3d9_capture.py --prepare --root .
           --build out/ci/build/Release --out out/d3d9-capture
       - name: Test D3D9 capture runner boundaries
+        id: capture_runner_selftests
         if: inputs.d3d9-capture
         run: |
           python -I tools/oracle/test_d3d9_capture.py
@@ -120,10 +121,16 @@ jobs:
           ./tools/windows/provision_capture_audio.ps1
           -Receipts "$env:GITHUB_WORKSPACE/out/d3d9-capture/audio-provisioning"
       - name: Capture unchanged selfshadow frames and D3D9 capabilities
-        if: always() && inputs.d3d9-capture
+        if: always() && !cancelled() && inputs.d3d9-capture
         run: >-
           python -I tools/oracle/d3d9_capture.py --root .
           --build out/ci/build/Release --out out/d3d9-capture
+          ${{ steps.capture_runner_selftests.outcome == 'success' && '--observe-recoverable-dialog' || '' }}
+      - name: Require bounded normal GUI continuation observation
+        if: always() && !cancelled() && inputs.d3d9-capture
+        run: |
+          $observation = Get-Content -Raw out/d3d9-capture/recoverable-dialog/observation.json -ErrorAction Stop | ConvertFrom-Json
+          if ($observation.status -ne 'OBSERVED') { throw "Normal GUI continuation was not observed; frame/audio/policy gates remain independent" }
       - name: Preserve D3D9 capture including partial failures
         if: always() && inputs.d3d9-capture
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

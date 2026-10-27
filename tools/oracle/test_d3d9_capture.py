@@ -28,6 +28,119 @@ MATCHING_EVENT = r'''<Event xmlns="http://schemas.microsoft.com/win/2004/08/even
 
 
 class CaptureBoundary(unittest.TestCase):
+    def test_recoverable_dialog_exact_match_and_fail_closed(self):
+        def window(hwnd, cls, text="", parent=0, identifier=0, **extra):
+            return dict(hwnd=hwnd, pid=77, **{"class": cls}, text=text, parent=parent,
+                        id=identifier, owner=0, visible=True, enabled=True, menu=False,
+                        rect=[0, 0, 640, 360], **extra)
+
+        dialog = window(10, "#32770")
+        text = window(11, "Static", "Cannot make DirectSound!!", 10)
+        button = window(12, "Button", "OK", 10, 1)
+        prompt = [dialog, text, button]
+        main = window(20, "Polygon Movie Maker", "MikuDanceStudio")
+        main["menu"] = True
+        continued = [main, window(21, "Button", "", 20)]
+        cases = {"exact": (prompt, continued), "timeout": ([], []),
+                 "no-dialog": (continued, continued), "repeated": (prompt, prompt),
+                 "ambiguous": (prompt + [window(13, "#32770")], continued)}
+        for label, index, field, value in (
+            ("title", 0, "text", "unexpected"), ("hidden", 0, "visible", False),
+            ("disabled", 0, "enabled", False), ("wrong-pid", 0, "pid", 78),
+            ("text", 1, "text", "Cannot make DirectSound!! extra"),
+            ("id", 2, "id", 2), ("button-disabled", 2, "enabled", False),
+            ("button-hidden", 2, "visible", False), ("wrong-parent", 2, "parent", 99),
+        ):
+            changed = [dict(item) for item in prompt]
+            changed[index][field] = value
+            cases[label] = (changed, continued)
+        unknown = window(50, "UnknownDialog")
+        unknown["top_level"] = True
+        cases["unknown-window"] = ([unknown], continued)
+        cases["missing-button"] = (prompt[:2], continued)
+        cases["extra-button"] = (prompt + [window(14, "Button", "Cancel", 10, 2)], continued)
+        cases["missing-static"] = ([dialog, button], continued)
+        for label, (first, later) in cases.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                executable = root / "trusted.exe"
+                executable.write_bytes(b"trusted fixture")
+                process = unittest.mock.Mock(pid=77, returncode=-9)
+                process.poll.return_value = None
+                windows = unittest.mock.Mock()
+                windows.snapshot.side_effect = [first, first] + [later] * 50
+                ticks = iter(index / 10 for index in range(1000))
+                with patch.object(capture, "os", SimpleNamespace(name="nt")), patch.object(capture, "DialogWindows", return_value=windows), patch.object(capture.subprocess, "Popen", return_value=process) as launch, patch.object(capture.time, "monotonic", side_effect=lambda: next(ticks)), patch.object(capture.time, "sleep"):
+                    result = capture.observe_recoverable_dialog(executable, root / "selfshadow.pmm", root / "observation", 8)
+                self.assertEqual(result["status"], "OBSERVED" if label == "exact" else "FAIL")
+                self.assertEqual(result["exe_sha256"], capture.digest(executable))
+                self.assertEqual(result["pid"], 77)
+                self.assertEqual(result["command"], [str(executable), str(root / "selfshadow.pmm")])
+                self.assertEqual(launch.call_args.kwargs["cwd"], root / "observation")
+                clicks = [call for call in windows.message.call_args_list if call.args[1] == 0xF5]
+                self.assertEqual(len(clicks), 1 if label in ("exact", "repeated") else 0)
+                if clicks:
+                    self.assertEqual(clicks[0].args, (12, 0xF5))
+                    self.assertEqual(result["button_command"], {"hwnd": 12, "message": "BM_CLICK", "message_id": 245, "status": "COMPLETED"})
+                process.kill.assert_called_once_with()
+                process.wait.assert_called_once_with(timeout=10)
+                self.assertEqual(json.loads((root / "observation/observation.json").read_text()), result)
+                self.assertTrue((root / "observation/stdout.txt").exists())
+                self.assertTrue((root / "observation/stderr.txt").exists())
+
+    def test_recoverable_dialog_launch_exit_revalidation_and_cleanup_failures(self):
+        for label in ("launch", "exit", "enumeration", "cleanup", "changed"):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                exe = root / "trusted.exe"
+                exe.write_bytes(b"trusted fixture")
+                process = unittest.mock.Mock(pid=77, returncode=7)
+                process.poll.return_value = 7 if label == "exit" else None
+                if label == "cleanup":
+                    process.wait.side_effect = capture.subprocess.TimeoutExpired("owned", 10)
+                windows = unittest.mock.Mock()
+                windows.snapshot.side_effect = OSError("enumeration failed")
+                if label == "changed":
+                    prompt = [dict(hwnd=10, pid=77, **{"class": "#32770"}, text="", parent=0, visible=True, enabled=True),
+                              dict(hwnd=11, pid=77, **{"class": "Static"}, text="Cannot make DirectSound!!", parent=10),
+                              dict(hwnd=12, pid=77, **{"class": "Button"}, text="OK", parent=10, id=1, visible=True, enabled=True)]
+                    windows.snapshot.side_effect = [prompt, []]
+                with patch.object(capture, "os", SimpleNamespace(name="nt")), patch.object(capture, "DialogWindows", return_value=windows), patch.object(capture.subprocess, "Popen", side_effect=OSError("launch failed") if label == "launch" else None, return_value=process):
+                    result = capture.observe_recoverable_dialog(exe, root / "selfshadow.pmm", root / "observation")
+                self.assertEqual(result["status"], "FAIL")
+                self.assertEqual(result["button_commands"], 0)
+                windows.message.assert_not_called()
+                self.assertEqual(bool(result["cleanup"].get("error")), label == "cleanup")
+                self.assertEqual(result["pid"], None if label == "launch" else 77)
+                if label != "launch":
+                    process.wait.assert_called_once_with(timeout=10)
+                with self.assertRaises(FileExistsError):
+                    capture.observe_recoverable_dialog(exe, root / "selfshadow.pmm", root / "observation")
+
+    def test_observation_failure_does_not_suppress_existing_capture_attempts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, out, build = (Path(tmp) / name for name in ("repo", "evidence", "build"))
+            root.mkdir()
+            build.mkdir()
+            for name in capture.SOURCES + capture.ASSETS:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("stand-in source")
+            for name in ("MikuDanceStudio.exe", "d3d9_capability.exe"):
+                (build / name).write_text("stand-in executable")
+            real_run = capture.run_command
+            attempts = []
+            def stand_in(command, directory):
+                attempts.append(directory.name)
+                return real_run([sys.executable, "-c", "raise SystemExit(7)" if directory.name == "frames" else "print('stand-in')"], directory)
+            with patch.object(capture, "run_command", side_effect=stand_in), patch.object(capture, "observe_recoverable_dialog", side_effect=OSError("observer failure")):
+                self.assertEqual(capture.capture(root, build, out, observe_dialog=True), 1)
+            report = json.loads((out / "report.json").read_text())
+            self.assertEqual(attempts, ["source-identity", "capability", "frames", "edge"])
+            self.assertEqual([item["status"] for item in report["commands"]], ["PASS", "PASS", "FAIL", "PASS"])
+            self.assertEqual(report["recoverable_dialog_observation"]["status"], "FAIL")
+            self.assertEqual(report["closure"]["status"], "PASS")
+
     def test_actual_exit_timeout_and_partial_streams(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

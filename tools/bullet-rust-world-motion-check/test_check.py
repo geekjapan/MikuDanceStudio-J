@@ -8,12 +8,13 @@ check = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(check)
 
 
-def main_probe(case, directory):
+def main_probe(case, directory, host='native'):
     import contextlib
     import io
     import json
     import subprocess
     import sys
+    from types import SimpleNamespace
     from unittest.mock import patch
 
     out = Path(directory) / 'evidence'
@@ -34,6 +35,8 @@ def main_probe(case, directory):
         if label == 'compiler-version':
             stderr = (f'Note: including file: {header}\n' if check.os.name == 'nt' else f'. {header}\n').encode()
             if case == 'nonzero': code = 9
+        if label == 'crt':
+            stderr = b'note: native-static-libs: kernel32.lib advapi32.lib bcrypt.lib ntdll.lib userenv.lib ws2_32.lib dbghelp.lib msvcrt.lib\n'
         if label == 'rust-version':
             if case == 'include-closure': header.write_text('changed')
             if case == 'source-closure': source['source'] = 'changed'
@@ -52,7 +55,11 @@ def main_probe(case, directory):
                 if case != 'survivor': stdout = changed
                 if case == 'final-closure': source['source'] = 'changed'
         return subprocess.CompletedProcess(argv, code, stdout, stderr)
-    with patch.object(sys, 'argv', ['check.py','--out-dir',str(out),'--mutation','gravity-ignore-active']), \
+    # Replace only the checker's OS view so pathlib keeps the real host's paths.
+    with patch.object(check, 'os', SimpleNamespace(**(vars(check.os) | {'name': 'nt' if host == 'Windows' else check.os.name}))), \
+         patch.object(check.platform, 'system', return_value='Windows' if host == 'Windows' else check.platform.system()), \
+         patch.object(check.platform, 'machine', return_value='AMD64' if host == 'Windows' else check.platform.machine()), \
+         patch.object(sys, 'argv', ['check.py','--out-dir',str(out),'--mutation','gravity-ignore-active']), \
          patch.object(check, 'source_snapshot', side_effect=lambda: dict(source)), \
          patch.object(check.subprocess, 'run', side_effect=command), \
          contextlib.redirect_stdout(io.StringIO()):
@@ -62,6 +69,7 @@ def main_probe(case, directory):
 
 class RuntimeChecks(unittest.TestCase):
     def test_main_acceptance_boundaries_in_normal_and_optimized_python(self):
+        from itertools import product
         import json
         import subprocess
         import sys
@@ -79,11 +87,11 @@ class RuntimeChecks(unittest.TestCase):
             'generated-closure': 'closure changed: generated',
             'final-closure': 'closure changed: source',
         }
-        for optimized in (False, True):
+        for host, optimized in product(('native', 'Windows'), (False, True)):
             for case, error in errors.items():
-                with self.subTest(optimized=optimized, case=case), tempfile.TemporaryDirectory() as directory:
+                with self.subTest(host=host, optimized=optimized, case=case), tempfile.TemporaryDirectory() as directory:
                     result = subprocess.run([sys.executable, *(['-O'] if optimized else []), '-c',
-                        'import test_check; test_check.main_probe(*__import__("sys").argv[1:])', case, directory],
+                        'import test_check; test_check.main_probe(*__import__("sys").argv[1:])', case, directory, host],
                         cwd=Path(__file__).parent, capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     out = Path(directory) / 'evidence'
@@ -93,6 +101,12 @@ class RuntimeChecks(unittest.TestCase):
                     else:
                         self.assertEqual(status['trace_lines'], 1368)
                         self.assertEqual(status['mutants'], {'gravity-ignore-active': 'CAUGHT'})
+                        if host == 'Windows':
+                            commands = json.loads((out / 'commands.json').read_text())
+                            for command in commands:
+                                if command['label'] in ('build-native', 'build-native-observed'):
+                                    self.assertIn('/link', command['argv'])
+                                    self.assertIn('kernel32.lib', command['argv'])
                     self.assertEqual(len(json.loads((out / 'native-includes.json').read_text())), 1 if case != 'observer-includes' else 2)
                     if 'closure' in case:
                         self.assertEqual(status['integrity'], 'FAIL')

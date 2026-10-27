@@ -268,7 +268,7 @@ def validate_test_result(data):
         raise AssertionError('expected all 11 DBVT tests with none ignored or filtered')
 
 
-def parse_snapshot(line, *, rust=False):
+def parse_snapshot(line, op, *, rust=False):
     fields = line.split('|')
     if len(fields) != 4 or not re.fullmatch(r'\d+,-?\d+,\d+,[01]', fields[0]):
         raise AssertionError('malformed DBVT snapshot')
@@ -303,7 +303,19 @@ def parse_snapshot(line, *, rust=False):
     if position != len(tokens):
         raise AssertionError('extra DBVT topology tokens')
     events = fields[3]
-    if not re.fullmatch(r'(?:\d+(?::\d+)?,)*|[01](?:,\d+){6}', events):
+    if op == 'h':
+        pattern = r'0|1(?:,\d+){6}'
+    elif op == 'p':
+        pattern = r'[01](?:,\d+){6}'
+    elif op in ('v', 'q'):
+        pattern = r'(?:\d+,)*'
+    elif op in ('s', 'x', 'f', 'g'):
+        pattern = r'(?:\d+:\d+,)*'
+    elif op in ('i', 'u', 'r', 'e', 'l', 'n', 't', 'b', 'c'):
+        pattern = r''
+    else:
+        raise AssertionError('unknown DBVT operation')
+    if not re.fullmatch(pattern, events):
         raise AssertionError('malformed DBVT events')
     return fields, sorted(leaves)
 
@@ -332,8 +344,8 @@ def compare_streams(out):
             identity = rust[i].split('\t')
             if len(identity) != 3 or identity[:2] != [str(i), inputs[i]]:
                 raise AssertionError((order, i, 'Rust operation identity differs'))
-            actual, actual_leaves = parse_snapshot(identity[2], rust=True)
-            expected, expected_leaves = parse_snapshot(native[i])
+            actual, actual_leaves = parse_snapshot(identity[2], inputs[i][0], rust=True)
+            expected, expected_leaves = parse_snapshot(native[i], inputs[i][0])
             if order < 3:
                 equal = [actual[j] for j in (0, 1, 3)] == [expected[j] for j in (0, 1, 3)]
             else:

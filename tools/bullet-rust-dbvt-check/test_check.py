@@ -20,6 +20,11 @@ def profile(selected, win32='0', sse='0', template='0'):
             'BT_USE_DOUBLE_PRECISION=0\n').encode()
 
 
+def mock_snapshot(operation):
+    event = {'h': '0', 'p': '0,0,0,0,0,0,0'}.get(operation[0], '')
+    return '0,0,0,0|_||' + event
+
+
 class HelperTests(unittest.TestCase):
     def test_msvc_profiles_do_not_share_win32_definition(self):
         output = Path('out') / 'oracle.exe'
@@ -109,7 +114,9 @@ class HelperTests(unittest.TestCase):
             'cases': check.subprocess.check_output([sys.executable, check.HERE / 'cases.py']),
             'rust-tests': b'\ntest result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n',
         }
-        captures.update({f'native-{order}': b'0,0,0,0|_||\n' * 2355 for order in range(4)})
+        captures.update({f'native-{order}': ''.join(
+            mock_snapshot(line) + '\n' for line in captures['cases'].decode().splitlines()).encode()
+            for order in range(4)})
         captures.update({f'ffi-default-native-{order}': b'state\n' * 2355 for order in range(4)})
         captures.update(overrides or {})
         with tempfile.TemporaryDirectory() as directory:
@@ -131,7 +138,7 @@ class HelperTests(unittest.TestCase):
                     self.assertEqual(command, [out / ('dbvt-tests.exe' if msvc else 'dbvt-tests')])
                     for order in range(4):
                         (out / f'rust-{order}.tsv').write_text(''.join(
-                            f'{i}\t{line}\t0,0,0,0|_||\n' for i, line in enumerate(captures['cases'].decode().splitlines())))
+                            f'{i}\t{line}\t{mock_snapshot(line)}\n' for i, line in enumerate(captures['cases'].decode().splitlines())))
                 if name == 'rust-tests-build':
                     self.assertEqual(kwargs['cwd'], check.ROOT / 'rust')
                     self.assertEqual(command[-2:], ['--no-run', '--message-format=json'])
@@ -287,7 +294,48 @@ class HelperTests(unittest.TestCase):
                     '0,0,0,0|B,0,0,0,0,0,0(_;)||', '0,0,0,0|B,0,0,0,0,0,0(_;_)||', '0,0,0,0|_||1:2',
                     '0,0,0,0|_|oops|'):
             with self.subTest(row=row), self.assertRaises(AssertionError):
-                check.parse_snapshot(row)
+                check.parse_snapshot(row, 's')
+
+    def test_empty_bounds_counterexample_is_bound_to_input_operation(self):
+        row = '1,-1,0,0|_||0'
+        for rust in (False, True):
+            self.assertEqual(check.parse_snapshot(row, 'h', rust=rust),
+                             (['1,-1,0,0', '_', '', '0'], []))
+            for op in 'pvqsxfgiurelntbc?':
+                with self.subTest(op=op, rust=rust), self.assertRaises(AssertionError):
+                    check.parse_snapshot(row, op, rust=rust)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.replay_fixture(root, input='h', native=row, rust=row)
+            check.compare_streams(root)
+            (root / 'inputs.tsv').write_text('p 1 0 0 0 1 1 1 0 0 0 1\n' * 2355)
+            for order in range(4):
+                path = root / f'rust-{order}.tsv'
+                path.write_text(path.read_text().replace('\th\t', '\tp 1 0 0 0 1 1 1 0 0 0 1\t'))
+            with self.assertRaisesRegex(AssertionError, 'malformed DBVT events'):
+                check.compare_streams(root)
+
+    def test_event_variants_require_exact_operation_grammar(self):
+        valid = [('h', '0'), ('h', '1,0,1,2,3,4,4294967295'),
+                 ('p', '0,0,1,2,3,4,5'), ('p', '1,0,1,2,3,4,5')]
+        valid += [(op, event) for op in 'vq' for event in ('', '0,12,12,')]
+        valid += [(op, event) for op in 'sxfg' for event in ('', '0:12,12:0,')]
+        valid += [(op, '') for op in 'iurelntbc']
+        invalid = [('h', event) for event in ('', '1', '0,', '0,0,1,2,3,4,5',
+                    '1,0,1,2,3,4', '1,0,1,2,3,4,5,6', '1,0,1,2,3,4,5,',
+                    '2,0,1,2,3,4,5', '1,-1,1,2,3,4,5', '1,+1,1,2,3,4,5',
+                    '1,1.0,1,2,3,4,5', '1,1e2,1,2,3,4,5', '1,0x1,1,2,3,4,5')]
+        invalid += [('p', event) for event in ('', '0', '1', '0,0,1,2,3,4,5,', '1,0,1,2,3,4')]
+        invalid += [(op, event) for op in 'vq' for event in ('1', '1:2,', '1,,', '-1,', '1.0,')]
+        invalid += [(op, event) for op in 'sxfg' for event in ('1:2', '1,', '1:2:3,', '-1:2,', '1:2,,')]
+        invalid += [(op, '1,') for op in 'iurelntbc']
+        invalid += [(op, '') for op in ('?', '', 'hh', 'vp')]
+        for op, event in valid:
+            with self.subTest(op=op, event=event):
+                self.assertEqual(check.parse_snapshot('0,0,0,0|_||' + event, op)[0][3], event)
+        for op, event in invalid:
+            with self.subTest(op=op, event=event), self.assertRaises(AssertionError):
+                check.parse_snapshot('0,0,0,0|_||' + event, op)
 
     def test_test_summary_rejects_filtered_ignored_empty_and_duplicate(self):
         valid = b'test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n'
@@ -601,7 +649,8 @@ class HelperTests(unittest.TestCase):
             out.mkdir()
             (captures / 'inputs.tsv').write_bytes(inputs)
             for order in range(4):
-                (captures / f'native-{order}.tsv').write_bytes(b'0,0,0,0|_||\n' * 2355)
+                (captures / f'native-{order}.tsv').write_text(''.join(
+                    mock_snapshot(line) + '\n' for line in inputs.decode().splitlines()))
             (captures / 'original-profile.txt').write_bytes(profile('1', '1', '1', '1'))
             (captures / 'provenance.json').write_text(json.dumps({
                 'commit': commit, 'source_lf_sha256': hashes}))
@@ -623,7 +672,7 @@ class HelperTests(unittest.TestCase):
                 self.assertEqual(kwargs['env']['DBVT_POLICY'], 'mmd-win64-sse')
                 for order in range(4):
                     (out / f'rust-{order}.tsv').write_text(''.join(
-                        f'{i}\t{line}\t0,0,0,0|_||\n' for i, line in enumerate(inputs.decode().splitlines())))
+                        f'{i}\t{line}\t{mock_snapshot(line)}\n' for i, line in enumerate(inputs.decode().splitlines())))
                 return b'test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n'
 
             with patch.object(check, 'run', side_effect=run), \

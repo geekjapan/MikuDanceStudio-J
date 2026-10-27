@@ -38,7 +38,7 @@ jobs:
             profile: sse
             policy: mmd-win64-sse
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Install the pinned Rust toolchain
@@ -79,7 +79,7 @@ jobs:
           exit /b %CHECK_RESULT%
       - name: Save logs, captures, profiles and provenance
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: bullet-dbvt-${{ matrix.os }}
           path: ${{ runner.temp }}/bullet-dbvt
@@ -95,10 +95,10 @@ jobs:
       matrix:
         os: [windows-2022, macos-15, ubuntu-24.04, ubuntu-24.04-arm]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: bullet-dbvt-windows-2022
           path: ${{ runner.temp }}/windows-capture
@@ -118,7 +118,7 @@ jobs:
           python3 tools/bullet-rust-math-check/check.py --rust-only --out-dir "$RUNNER_TEMP/pure-bullet" 2>&1 | tee "$RUNNER_TEMP/windows-replay/pure.log"
       - name: Save Windows-sourced replay evidence
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: dbvt-windows-sourced-replay-${{ matrix.os }}
           path: ${{ runner.temp }}/windows-replay

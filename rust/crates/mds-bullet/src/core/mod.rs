@@ -1,4 +1,3 @@
-//! Native-free Bullet 2.75 migration core. Not yet connected to the public World.
 //!
 //! Altered Rust translation of the vendored Bullet sources, including local
 //! changes. Pilot math/body/time operations were compared with stock Bullet 2.75

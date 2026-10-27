@@ -212,21 +212,41 @@ class CursorBindingTests(unittest.TestCase):
         tool = root / 'tool/bin/c2rust-transpile'
         tool.parent.mkdir(parents=True)
         tool.write_bytes(b'synthetic exporter identity')
-        (tool.parent.parent / 'source-receipt.json').write_text('{}')
+        from apply_c2rust_patch import REVISION, patch_destinations
+        tool.with_name('c2rust').write_bytes(b'synthetic driver identity')
+        evidence = tool.parent.parent / 'source-evidence'
+        evidence.mkdir()
+        patch_path = Path(__file__).parent / 'patches/c2rust-win64-abi.patch'
+        shutil.copy2(patch_path, evidence / 'c2rust-source.patch')
+        sources = {}
+        for name in patch_destinations(patch_path):
+            path = evidence / 'c2rust-applied-source' / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('synthetic source binding: ' + name)
+            sources[name] = full.digest(path)
+        record = {'original_revision': REVISION, 'patch_sha256': full.digest(patch_path),
+                  'applied_diff_sha256': full.digest(patch_path), 'modified_source_sha256': sources}
+        (evidence / 'c2rust-patch.json').write_text(json.dumps(record))
+        (tool.parent.parent / 'source-receipt.json').write_text(json.dumps({
+            'source_receipt_sha256': full.digest(evidence / 'c2rust-patch.json'),
+            'patch_sha256': full.digest(patch_path),
+            'binary_sha256': {name: full.digest(tool.with_name(name)) for name in ('c2rust', 'c2rust-transpile')}}))
         output = root / 'raw'
         output.mkdir()
         for suffix, data in [('.variadic.json', json.dumps(inv)), ('.cursor-witness.json', json.dumps(witness)),
                              ('.cursor.cbor', 'synthetic cbor'), ('.typed-ast.txt', 'synthetic typed AST')]:
             (output / ('pilot' + suffix)).write_text(data)
-        with patch('apply_c2rust_patch.verify_tool') as verify:
-            receipt = full.cursor_witness_receipt(tool, database, output)
-            verify.assert_called_once_with(tool.parent.parent)
+        receipt = full.cursor_witness_receipt(tool, database, output)
         return receipt, symbol
 
     def test_complete_receipt_binds_every_artifact_and_command(self):
         with tempfile.TemporaryDirectory() as directory:
             receipt, symbol = self.fixture(Path(directory))
-            self.assertEqual(full.prove_bound_cursor_witness(receipt, symbol)['status'], 'witness_proven')
+            self.assert_binding_valid(receipt, symbol)
+            from closed_variadic_plan import PlanError
+            with self.assertRaisesRegex(PlanError, 'schema 1 capture'):
+                full.prove_bound_cursor_witness(receipt, symbol)
+            self.assertEqual(receipt['source_input_consistency'], 'unsupported')
             self.assertFalse(receipt['authentic_job_proof'])
             self.assertEqual(len(receipt['pairs'][0]['files']), 5)
             self.assertEqual(len(receipt['files']), 3)
@@ -247,6 +267,106 @@ class CursorBindingTests(unittest.TestCase):
                         with self.assertRaises(PlanError): full.prove_bound_cursor_witness(tampered, symbol)
             receipt['pairs'][0]['compile_command']['arguments'].append('-funsigned-char')
             with self.assertRaises(PlanError): full.prove_bound_cursor_witness(receipt, symbol)
+
+    def assert_binding_valid(self, receipt, symbol):
+        # Transport check only; the real proof checker must still reject capture.
+        with patch('closed_variadic_plan.prove_cursor_witness', return_value='binding-only') as prove:
+            self.assertEqual(full.prove_bound_cursor_witness(receipt, symbol), 'binding-only')
+            prove.assert_called_once()
+
+    def test_nested_tool_inputs_rechecked_on_every_attempt(self):
+        from closed_variadic_plan import PlanError
+        with tempfile.TemporaryDirectory() as directory:
+            receipt, symbol = self.fixture(Path(directory))
+            tool_root = Path(receipt['tool']).parent.parent
+            for path in sorted(tool_root.rglob('*')):
+                if not path.is_file(): continue
+                with self.subTest(path=str(path)):
+                    data = path.read_bytes()
+                    try:
+                        path.write_bytes(data + b'changed')
+                        with self.assertRaises(PlanError):
+                            full.prove_bound_cursor_witness(receipt, symbol)
+                    finally:
+                        path.write_bytes(data)
+            self.assert_binding_valid(receipt, symbol)
+
+    def test_self_consistent_unreviewed_patch_rejected(self):
+        from closed_variadic_plan import PlanError
+        with tempfile.TemporaryDirectory() as directory:
+            receipt, symbol = self.fixture(Path(directory))
+            root = Path(receipt['tool']).parent.parent
+            saved = root / 'source-evidence/c2rust-source.patch'
+            saved.write_bytes(saved.read_bytes() + b'\n')
+            record_path = root / 'source-evidence/c2rust-patch.json'
+            record = json.loads(record_path.read_text())
+            record['patch_sha256'] = record['applied_diff_sha256'] = full.digest(saved)
+            record_path.write_text(json.dumps(record))
+            source_receipt = Path(receipt['source_receipt'])
+            record = json.loads(source_receipt.read_text())
+            record['patch_sha256'] = full.digest(saved)
+            record['source_receipt_sha256'] = full.digest(record_path)
+            source_receipt.write_text(json.dumps(record))
+            receipt['files'][str(source_receipt)] = full.digest(source_receipt)
+            with self.assertRaisesRegex(PlanError, 'reviewed patch'):
+                full.prove_bound_cursor_witness(receipt, symbol)
+
+    def test_source_pairs_are_bijective(self):
+        from copy import deepcopy
+        from closed_variadic_plan import PlanError
+        with tempfile.TemporaryDirectory() as directory:
+            receipt, symbol = self.fixture(Path(directory))
+            duplicate = deepcopy(receipt)
+            duplicate['pairs'].append(deepcopy(duplicate['pairs'][0]))
+            with self.assertRaisesRegex(PlanError, 'unit manifest'):
+                full.prove_bound_cursor_witness(duplicate, symbol)
+            database = Path(receipt['database'])
+            entries = json.loads(database.read_text())
+            entries[0]['file'] = 'other.c'
+            database.write_text(json.dumps(entries))
+            receipt['files'][str(database)] = full.digest(database)
+            receipt['pairs'][0]['compile_command'] = entries[0]
+            with self.assertRaisesRegex(PlanError, 'command binding'):
+                full.prove_bound_cursor_witness(receipt, symbol)
+
+    def test_directory_relative_commands_and_duplicate_canonical_units(self):
+        units = full.cursor_command_units([{'directory': '/tmp', 'file': 'pilot.c'}])
+        self.assertEqual(set(units), {str(Path('/tmp/pilot.c').resolve())})
+        entries = [{'directory': '/tmp', 'file': 'pilot.c'}, {'directory': '/tmp', 'file': './pilot.c'}]
+        with self.assertRaisesRegex(ValueError, 'duplicate'):
+            full.cursor_command_units(entries)
+        with self.assertRaisesRegex(ValueError, 'absolute'):
+            full.cursor_command_units([{'directory': '.', 'file': 'pilot.c'}])
+
+    def test_paired_witness_unit_and_target_rechecked(self):
+        from closed_variadic_plan import PlanError
+        with tempfile.TemporaryDirectory() as directory:
+            receipt, symbol = self.fixture(Path(directory))
+            pair = receipt['pairs'][0]
+            path = Path(pair['witness'])
+            original = path.read_text()
+            for field in ('unit', 'target'):
+                raw = json.loads(original)
+                raw[field] = 'different'
+                path.write_text(json.dumps(raw))
+                pair['files'][str(path)] = full.digest(path)
+                with self.assertRaisesRegex(PlanError, 'binding identity'):
+                    full.prove_bound_cursor_witness(receipt, symbol)
+
+    def test_failed_capture_retains_attempted_proof(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for status in (0, 1):
+                with self.subTest(status=status):
+                    output = root / str(status)
+                    def run(command, log, **kwargs):
+                        log.write_text('synthetic exporter failure' if status else 'synthetic empty capture')
+                        return {'exit_code': status}
+                    proof = full.collect_cursor_witness(root / 'missing/bin/c2rust-transpile',
+                        root / 'compile_commands.json', output, run, {'unit': '/pilot.c', 'static': 'pilot'})
+                    self.assertEqual(proof['status'], 'rejected')
+                    self.assertEqual(json.loads((output / 'proof.json').read_text()), proof)
+                    self.assertTrue((output / 'export.log').is_file())
 
 if __name__ == '__main__':
     unittest.main()

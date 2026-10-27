@@ -296,7 +296,8 @@ def check_cursor_cases(tool, root, clang, stage):
     from full_compiler import collect_cursor_witness
     fixture = Path(__file__).parent / 'fixtures/cursor-witness/pilot.c'
     results = {}
-    for case in ('positive', 'ESCAPE', 'ASSIGNMENT', 'COPY', 'BRANCH', 'MISSING_END', 'UNKNOWN_CALL', 'UNKNOWN_BUILTIN'):
+    for case in ('positive', 'ESCAPE', 'ASSIGNMENT', 'COPY', 'BRANCH', 'MISSING_END', 'UNKNOWN_CALL', 'UNKNOWN_BUILTIN',
+                 'FMT_REASSIGNMENT', 'FMT_ESCAPE', 'UNKNOWN_NON_CURSOR_CALL', 'MISSING_TERMINATOR'):
         case_root = root / ('cursor-' + case.lower())
         case_root.mkdir()
         source = case_root / 'pilot.c'
@@ -307,7 +308,7 @@ def check_cursor_cases(tool, root, clang, stage):
         stage('cursor-' + case + '-syntax', [*argv, '-fsyntax-only'])
         database.write_text(json.dumps([{'directory': str(case_root), 'file': str(source), 'arguments': argv}]))
         proof = collect_cursor_witness(tool.with_name('c2rust-transpile'), database, case_root / 'paired', run,
-                                       {'unit': str(source), 'static': 'cursor_pilot'})
+                                       {'unit': str(source), 'static': 'vkd3d_spirv_build_op_member_name'})
         expected = 'witness_proven' if case == 'positive' else 'rejected'
         if proof['status'] != expected:
             raise RuntimeError('actual cursor fixture oracle differs for ' + case + ': ' + str(proof))
@@ -322,7 +323,7 @@ def check_cursor_cases(tool, root, clang, stage):
             mutations = {}
             for name in ('unknown-builtin', 'unknown-cursor-reference', 'incomplete-body', 'call-set'):
                 witness = copy.deepcopy(original)
-                function = next(f for f in witness['functions'] if f['symbol']['static'] == 'cursor_pilot')
+                function = next(f for f in witness['functions'] if f['symbol']['static'] == 'vkd3d_spirv_build_op_member_name')
                 if name == 'unknown-builtin':
                     for statement in function['statements']:
                         for expression in statement['expressions']:
@@ -343,7 +344,7 @@ def check_cursor_cases(tool, root, clang, stage):
             tampered = copy.deepcopy(receipt)
             tampered['pairs'][0]['files'][pair['witness']] = '0' * 64
             try:
-                prove_bound_cursor_witness(tampered, {'unit': str(source), 'static': 'cursor_pilot'})
+                prove_bound_cursor_witness(tampered, {'unit': str(source), 'static': 'vkd3d_spirv_build_op_member_name'})
             except PlanError as error:
                 mutations['tampered-binding'] = {'receipt': tampered, 'reason': str(error)}
             else:

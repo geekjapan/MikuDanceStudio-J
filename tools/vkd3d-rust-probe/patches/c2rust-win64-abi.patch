@@ -2070,11 +2070,12 @@ diff --git a/c2rust-transpile/tests/common/mod.rs b/c2rust-transpile/tests/commo
 index b9bd350..ad1da96 100644
 --- a/c2rust-transpile/tests/common/mod.rs
 +++ b/c2rust-transpile/tests/common/mod.rs
-@@ -15,6 +15,7 @@ pub fn config(edition: RustEdition) -> TranspilerConfig {
+@@ -15,6 +15,8 @@ pub fn config(edition: RustEdition) -> TranspilerConfig {
          verbose: false,
          debug_ast_exporter: false,
          emit_c_decl_map: true, // Let snapshot tests validate the C declaration map.
 +        emit_variadic_inventory: false,
++        emit_cursor_witness: false,
          incremental_relooper: true,
          fail_on_multiple: false,
          filter: None,
@@ -2082,34 +2083,47 @@ diff --git a/c2rust-transpile/tests/module_paths.rs b/c2rust-transpile/tests/mod
 index d763a1d..566adfd 100644
 --- a/c2rust-transpile/tests/module_paths.rs
 +++ b/c2rust-transpile/tests/module_paths.rs
-@@ -18,6 +18,7 @@ fn config(output_dir: PathBuf) -> TranspilerConfig {
+@@ -18,6 +18,8 @@ fn config(output_dir: PathBuf) -> TranspilerConfig {
          verbose: false,
          debug_ast_exporter: false,
          emit_c_decl_map: false,
 +        emit_variadic_inventory: false,
++        emit_cursor_witness: false,
          incremental_relooper: true,
          fail_on_multiple: false,
          filter: None,
 diff --git a/c2rust-ast-exporter/src/lib.rs b/c2rust-ast-exporter/src/lib.rs
-index 55bc02c..61117bf 100644
 --- a/c2rust-ast-exporter/src/lib.rs
 +++ b/c2rust-ast-exporter/src/lib.rs
-@@ -36,6 +36,7 @@ pub fn get_untyped_ast(
+@@ -36,12 +36,27 @@
      extra_args: &[&str],
      debug: bool,
      emit_preprocessed: bool,
 +    retained_cbor: Option<&Path>,
  ) -> Result<(clang_ast::AstContext, Option<String>), Error> {
      let cbors = get_ast_cbors(file_path, cc_db, extra_args, debug, emit_preprocessed);
-     let (buffer, preprocessed) = cbors
-@@ -43,6 +44,10 @@ pub fn get_untyped_ast(
-         .next()
-         .ok_or_else(|| Error::new(ErrorKind::InvalidData, "Could not parse input file"))?;
-
+-    let (buffer, preprocessed) = cbors
+-        .into_values()
+-        .next()
+-        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "Could not parse input file"))?;
++    let (buffer, preprocessed) = if retained_cbor.is_some() {
++        if cbors.len() != 1 {
++            return Err(Error::new(ErrorKind::InvalidData, "Expected exactly one native translation unit"));
++        }
++        let requested = std::fs::canonicalize(file_path)?;
++        let (native_input, result) = cbors.into_iter().next().unwrap();
++        if std::fs::canonicalize(&native_input)? != requested {
++            return Err(Error::new(ErrorKind::InvalidData, "Native translation unit differs from requested input"));
++        }
++        result
++    } else {
++        cbors.into_values().next()
++            .ok_or_else(|| Error::new(ErrorKind::InvalidData, "Could not parse input file"))?
++    };
++
 +    if let Some(path) = retained_cbor {
 +        std::fs::write(path, &buffer)?;
 +    }
-+
+
      // let cbor_path = file_path.with_extension("cbor");
      // let mut cbor_file = File::create(&cbor_path)?;
-     // cbor_file.write_all(&buffer[..])?;

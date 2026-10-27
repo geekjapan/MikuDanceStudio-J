@@ -99,6 +99,8 @@ jobs:
             --source "$RUNNER_TEMP/c2rust-src" --artifacts "$RUNNER_TEMP/vkd3d-probe/logs"
           cargo +1.95.0 install --locked --path "$RUNNER_TEMP/c2rust-src/c2rust" --root "$RUNNER_TEMP/vkd3d-probe/tool"
           cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" \
+            -p c2rust-transpile --tests --no-run
+          cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" \
             -p c2rust-transpile --lib win64_foreign_block_names_and_reexports
           python3 tools/vkd3d-rust-probe/check_enum_constants.py \
             --source "$RUNNER_TEMP/c2rust-src" \
@@ -271,9 +273,11 @@ jobs:
           import os
           root = Path(os.environ['RUNNER_TEMP']) / 'vkd3d-probe'
           source = root / 'evidence/result/source/libs/vkd3d-shader/spirv.c'
-          collect_cursor_witness(root / 'tool/bin/c2rust-transpile',
+          proof = collect_cursor_witness(root / 'tool/bin/c2rust-transpile',
               root / 'evidence/result/compile_commands.json', root / 'evidence/cursor-witness', run,
               {'unit': str(source), 'static': 'vkd3d_spirv_build_op_member_name'})
+          if proof['status'] != 'witness_proven':
+              raise SystemExit('Actual pilot witness rejected: ' + proof['reason'])
           PYCODE
       - name: Validate and summarize actual output
         if: always()

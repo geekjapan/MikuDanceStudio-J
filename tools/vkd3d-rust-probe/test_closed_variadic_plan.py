@@ -549,43 +549,24 @@ class CursorWitnessTests(unittest.TestCase):
                    'functions': [function], 'calls': [raw_call]}
         return inv, witness, symbol
 
-    def test_pilot_proof_preserves_inventory_and_uses_statement_order(self):
+    def test_raw_schema_one_and_relabelled_v2_capture_cannot_prove(self):
+        from closed_variadic_plan import prove_cursor_witness
+        for name in ('cursor_pilot', 'vkd3d_spirv_build_op_member_name'):
+            for schema in (1, 2):
+                inv, witness, symbol = self.fixture()
+                symbol['static'], witness['schema'] = name, schema
+                before = json.dumps([inv, witness], sort_keys=True)
+                expected = 'schema 1 capture' if schema == 1 else 'witness v2 unsupported'
+                with self.assertRaisesRegex(PlanError, expected):
+                    prove_cursor_witness([inv], [witness], symbol)
+                self.assertEqual(before, json.dumps([inv, witness], sort_keys=True))
+
+    def test_missing_pairs_cannot_prove(self):
         from closed_variadic_plan import prove_cursor_witness
         inv, witness, symbol = self.fixture()
-        before = json.dumps(inv, sort_keys=True)
-        proof = prove_cursor_witness([inv], [witness], symbol)
-        self.assertEqual(proof['status'], 'witness_proven')
-        self.assertEqual(proof['stable_lowering'], 'not_authorized')
-        self.assertFalse(proof['global_cursor_proof'])
-        self.assertEqual(before, json.dumps(inv, sort_keys=True))
-        self.assertEqual([d['code'] for d in build_plan([inv], [inv['unit']], [])['diagnostics']], ['cursor_dataflow_unproved'])
-
-    def test_cursor_negative_controls(self):
-        from closed_variadic_plan import prove_cursor_witness
-        for name in ('escape', 'assignment', 'copy', 'branch', 'missing-end', 'unknown-builtin', 'unknown-ref',
-                     'incomplete', 'callset', 'signed-tail', 'format', 'order', 'last-fixed', 'extra-cursor', 'unwalked-statement'):
-            with self.subTest(name=name):
-                inv, witness, symbol = self.fixture()
-                f = witness['functions'][0]
-                if name == 'escape': f['statements'][1]['expressions'][0]['arguments'][0]['direct_decl'] = None
-                elif name == 'assignment': f['statements'][1]['expressions'][0]['kind'] = 'binary'
-                elif name == 'copy': f['statements'][2]['expressions'][0]['builtin'][1] = 'va_copy'
-                elif name == 'branch': f['statements'][2]['kind'] = 'unsupported'
-                elif name == 'missing-end': f['statements'].pop()
-                elif name == 'unknown-builtin': f['statements'][1]['expressions'][0]['builtin'][0] = 0
-                elif name == 'unknown-ref': f['cursor_references'].append({'id': 999, 'decl': 9, 'type': scalar('UInt')})
-                elif name == 'incomplete': f['complete_body'] = False
-                elif name == 'callset': witness['calls'] = []
-                elif name == 'signed-tail':
-                    inv['calls'][0]['arguments'][-1]['type'] = scalar('Int')
-                    witness['calls'][0]['arguments'][-1]['type'] = scalar('Int')
-                elif name == 'format': witness['calls'][0]['arguments'][0]['literal'] = [37, 100]
-                elif name == 'order': f['statements'][1:3] = reversed(f['statements'][1:3])
-                elif name == 'last-fixed': f['last_fixed_parameter'] = 99
-                elif name == 'extra-cursor': f['cursors'].append(99)
-                elif name == 'unwalked-statement': f['full_statement_ids'].append(999)
-                with self.assertRaises(PlanError):
-                    prove_cursor_witness([inv], [witness], symbol)
+        for inventories, witnesses in (([], []), ([inv], []), ([], [witness])):
+            with self.assertRaisesRegex(PlanError, 'incomplete paired units'):
+                prove_cursor_witness(inventories, witnesses, symbol)
 
 if __name__ == '__main__':
     unittest.main()

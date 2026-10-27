@@ -472,26 +472,36 @@ snapshots `*.typed-ast.txt` from the same translation. The flag defaults to fals
 Clang `FunctionDecl::getBuiltinID()` classifies start, end, copy, and vsnprintf;
 spellings and expression ID ordering do not establish cursor semantics.
 
-`full_compiler.collect_cursor_witness()` runs that separate export and retains a
-receipt binding every paired inventory, witness, CBOR, typed snapshot, source,
-compile command database, target, translator binary, and complete patched tool
-receipt. The proof checks these hashes before joining any IDs. These receipts
-establish artifact consistency, not authentic hosted-job provenance; the actual
-job and downloaded artifacts still require independent audit.
+`full_compiler.collect_cursor_witness()` retains each raw paired export and its
+attempted proof, including rejection. The schema-1 capture cannot establish a
+proof: it lacks native canonical cursor identity, complete typed body and
+reference edges, and the actual same-invocation Clang input buffers. Relabeling
+it schema 2 also rejects. Witness v2 is unsupported until those facts are
+implemented and exercised against the actual LLVM18 output.
 
-The only pilot is `vkd3d_spirv_build_op_member_name` in `spirv.c`: one local
-cursor, complete ordered compound body, direct start/one vsnprintf/end sequence,
-one literal `cb%u` caller, and one promoted UInt tail. Assignment, copy, escape,
-unsupported statements/expressions, unknown cursor uses, incomplete walks,
-missing end, differing call sets, and changed bindings reject. The fixture gate
-also records actual-export-derived payload mutations separately from C cases.
+The receipt revalidates the existing nested source/patch/metadata and both
+binary checks on every attempted proof. Its retained patch must match the
+reviewed patch beside this checker. Compile command directory plus file must
+resolve bijectively to the inventory and witness unit. The native exporter also
+requires exactly one returned translation unit matching the requested input
+when retaining cursor CBOR. Default translation keeps its existing behavior.
+These checks bind retained artifacts, not full source-input consistency or
+hosted-job authenticity. Included/generated/system/forced headers, macro-only
+inputs, builtins and effective native arguments are not yet captured. PCH,
+modules, VFS and unknown input shapes have no supported proof path.
 
-The existing all-24 inventory/plan and all 33 record cases plus six record
-mutations remain separate and unchanged. A new hosted step retains paired
-witness output and proof/rejection without changing the original plan. Even a
-`witness_proven` result has `authorization: witness_only`, explicitly denies
-stable lowering, and makes no global cursor claim. The remaining symbols,
-unknown signatures, record diagnostics, compiler failures, and runtime results
-remain visible in the original artifacts. No formatter or Rust lowering is
-implemented. Python checks and patch reconstruction do not execute the exporter;
-the rebuilt LLVM18 exporter and hosted fixture/all-unit proof are pending gates.
+The fixture now mirrors the actual production member-name body and its sole
+`cb%u` / `reg_idx` call, including the mandatory terminal zero assignment.
+Additional C controls cover format reassignment/address escape, an unknown
+non-cursor call and a missing terminal assignment. They are prepared controls,
+not executed proof evidence. The hosted positive fixture remains a required
+proof gate and fails while v2 is unsupported; it must never count rejection as
+PASS. The all-24 paired positive gate also returns nonzero after retaining a
+rejected attempt. Hosted test-target compilation covers explicit configuration
+literals as well as the existing library tests.
+
+The all-24 schema-2 inventory/plan, all 33 record cases, record boundary
+mutations, ABI/CVR checks and stable translation gates remain unchanged.
+No stable lowering, slots, generic formatter or global cursor proof is enabled.
+The complete witness-v2 implementation and actual exporter acceptance remain
+blocking work; this change is a bounded capture/tool-safety prerequisite.

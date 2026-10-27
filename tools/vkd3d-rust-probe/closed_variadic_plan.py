@@ -445,114 +445,12 @@ def main():
 
 
 def prove_cursor_witness(inventories, witnesses, symbol):
-    """Prove one straight-line UInt pilot; never authorize lowering or alter a plan."""
-    def require(condition, reason):
-        if not condition:
-            raise PlanError('cursor witness: ' + reason)
-
-    require(len(inventories) == len(witnesses) and bool(inventories), 'incomplete paired units')
-    pairs = {i['unit']: (i, w) for i, w in zip(inventories, witnesses)}
-    require(len(pairs) == len(inventories), 'duplicate units')
-    key = symbol_key(symbol)
-    require(key[0] == 'static' and key[1] in pairs
-            and key[2] in ('vkd3d_spirv_build_op_member_name', 'cursor_pilot'), 'outside straight-line pilot scope')
-    definitions = []
-    calls = []
-    for unit, (inv, witness) in pairs.items():
-        require(inv.get('schema') == 2 and inv.get('authorization') == 'inventory_only', 'inventory contract')
-        require(witness.get('schema') == 1 and witness.get('authorization') == 'witness_only'
-                and witness.get('unit') == unit and witness.get('target') == inv['target'], 'paired witness identity')
-        require(not any(symbol_key(r['symbol']) == key for r in inv['non_call_references']), 'function address escape')
-        for declaration in inv['declarations']:
-            if symbol_key(declaration['symbol']) == key:
-                require(not declaration.get('aliases'), 'function alias')
-                signature = function_signature(declaration)
-                require(signature['variadic'] and signature['abi'] == 'C' and signature['prototype'], 'function signature')
-                if declaration['definition']:
-                    definitions.append((inv, witness, declaration, signature))
-        matching_calls = [c for c in inv['calls'] if c['callee'] == symbol]
-        raw_calls = {c['id']: c for c in witness['calls']}
-        require(len(raw_calls) == len(witness['calls']), 'duplicate call IDs')
-        decl_ids = {d['id'] for d in inv['declarations'] if d['symbol'] == symbol}
-        require({c['id'] for c in witness['calls'] if c.get('callee_decl') in decl_ids}
-                == {c['id'] for c in matching_calls}, 'call set differs')
-        for call in matching_calls:
-            raw = raw_calls.get(call['id'])
-            require(raw is not None and len(raw['arguments']) == len(call['arguments']), 'missing paired call')
-            require([a['id'] for a in raw['arguments']] == [a['id'] for a in call['arguments']], 'call operands differ')
-            require([a['type'] for a in raw['arguments']] == [a['type'] for a in call['arguments']], 'call operand types differ')
-            calls.append((unit, call, raw))
-    require(len({i['target'] for i in inventories}) == 1, 'mixed targets')
-    require(len(definitions) == 1, 'definition set differs')
-    inv, witness, declaration, signature = definitions[0]
-    baseline = build_plan(inventories, list(pairs), [])
-    require(not any(tuple(d['symbol']) == key and d['code'] != 'cursor_dataflow_unproved'
-                    for d in baseline['diagnostics']), 'existing inventory gate rejects pilot')
-    functions = [f for f in witness['functions'] if f['declaration'] == declaration['id']]
-    require(len(functions) == 1, 'missing definition witness')
-    function = functions[0]
-    require(function['symbol'] == symbol and function['complete_body'] is True and bool(function['statements']), 'incomplete body')
-    require(len(function['cursors']) == 1, 'one local cursor required')
-    require(set(function['full_statement_ids']) == {function['body'], *(s['id'] for s in function['statements'])}
-            and len(function['full_statement_ids']) == len(function['statements']) + 1, 'incomplete statement walk')
-    cursor = function['cursors'][0]
-    parameters = function['parameters']
-    require(len(parameters) == len(signature['parameters']) and bool(parameters)
-            and function['last_fixed_parameter'] == parameters[-1] and cursor not in parameters, 'last fixed parameter')
-    global_refs = {r['id']: r for r in function['cursor_references']}
-    require(len(global_refs) == len(function['cursor_references']) and all(r['decl'] == cursor and r['type'] for r in global_refs.values()), 'cursor reference table')
-    seen_refs = set()
-    seen_exprs = set()
-    events = []
-    cursor_declarations = []
-    for statement in function['statements']:
-        require(statement['kind'] in ('declarations', 'expression', 'empty'), 'unsupported statement')
-        local_declarations = [d for d in statement['declarations'] if d['id'] == cursor]
-        require(not local_declarations or not events, 'cursor declared after use')
-        cursor_declarations.extend(local_declarations)
-        expressions = statement['expressions']
-        require(not any(e['kind'] == 'unsupported' for e in expressions), 'unsupported expression')
-        refs = [e for e in expressions if e.get('decl') == cursor]
-        require(not any(e['id'] in seen_exprs for e in expressions), 'repeated expression or incomplete ordering')
-        seen_exprs.update(e['id'] for e in expressions)
-        for ref in refs:
-            require(ref['id'] in global_refs and ref['type'] == global_refs[ref['id']]['type'], 'unknown cursor reference')
-            seen_refs.add(ref['id'])
-        if not refs:
-            continue
-        require(len(cursor_declarations) == 1, 'cursor use before declaration')
-        require(statement['kind'] == 'expression', 'cursor initializer or alias')
-        roots = [e for e in expressions if e['id'] == statement['root']]
-        require(len(roots) == 1 and roots[0]['kind'] == 'call', 'cursor assignment or escape')
-        call = roots[0]
-        builtin = call.get('builtin')
-        require(isinstance(builtin, list) and len(builtin) == 2 and type(builtin[0]) is int and builtin[0] > 0, 'unknown builtin identity')
-        semantic = builtin[1]
-        require(semantic in ('va_start', 'vsnprintf', 'va_end'), 'unknown cursor call or copy')
-        args = call['arguments']
-        index, count = {'va_start': (0, 2), 'vsnprintf': (3, 4), 'va_end': (0, 1)}[semantic]
-        require(len(args) == count and args[index]['direct_decl'] == cursor, 'cursor operand escape')
-        accounted = [r['id'] for r in args[index]['references'] if r['decl'] == cursor]
-        require(len(accounted) == 1 and accounted == [r['id'] for r in refs], 'unaccounted cursor use')
-        require(not any(r['decl'] == cursor for j, arg in enumerate(args) if j != index for r in arg['references']), 'cursor alias argument')
-        if semantic == 'va_start':
-            require(args[1]['direct_decl'] == parameters[-1], 'start last fixed parameter differs')
-        if semantic == 'vsnprintf':
-            require(args[2]['direct_decl'] == parameters[-1], 'consumer format differs')
-        events.append(semantic)
-    require(len(cursor_declarations) == 1 and cursor_declarations[0]['initialized'] is False, 'cursor declaration')
-    require(seen_refs == set(global_refs), 'unaccounted full-AST cursor reference')
-    require(events == ['va_start', 'vsnprintf', 'va_end'], 'start consume end order')
-    require(len(calls) == 1, 'pilot requires one exact call')
-    unit, call, raw = calls[0]
-    fixed = len(parameters)
-    require(len(call['arguments']) == fixed + 1, 'one tail required')
-    require(call['arguments'][-1]['type']['canonical'] == {'kind': 'UInt'}, 'promoted UInt tail required')
-    require(raw['arguments'][fixed - 1]['literal'] in ([99, 98, 37, 117], [99, 98, 37, 117, 0]), 'pilot literal format differs')
-    return {'schema': 1, 'authorization': 'witness_only', 'status': 'witness_proven',
-            'symbol': symbol, 'definition': {'unit': inv['unit'], 'declaration': declaration['id']},
-            'call': {'unit': unit, 'expression': call['id']}, 'events': events,
-            'stable_lowering': 'not_authorized', 'global_cursor_proof': False}
+    """Reject raw captures until complete native witness-v2 facts are implemented."""
+    if not inventories or len(inventories) != len(witnesses):
+        raise PlanError('cursor witness: incomplete paired units')
+    if any(w.get('schema') != 2 for w in witnesses):
+        raise PlanError('cursor witness: schema 1 capture cannot establish a proof')
+    raise PlanError('cursor witness: native input buffers and exact body witness v2 unsupported')
 
 
 if __name__ == '__main__':

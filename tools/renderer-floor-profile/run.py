@@ -19,7 +19,7 @@ ROOT = HERE.parents[1]
 BASE = '77b3e431bc1ac2ab5610692f2e12c903a7629090'
 BASE_TREE = '778782dc8ad6352585a9b7eeb135c04150d1f2e4'
 SCHEMA = 'mds-floor-profile-v2'
-PARENT = '4defdf8a58c3624c4cab1b7910ad54b33e0fb233'
+PARENT = 'f7b600b6c063b5174ac19c38f39ea8e2068a5604'
 FP_CONTRACT = {'snapshot':'HardwareMxcsr', 'identity':'SourceSiteOnly',
                'rust_operation_ordering':'Unproved', 'exception_attribution':'Unsupported',
                'operation_environment':'Unproved'}
@@ -374,7 +374,7 @@ def recipe(runner_temp,variant,opt):
     mode=['--release'] if opt=='O2' else []
     commands={
         'configure':['cmake','-S',str(source),'-B',str(native),'-G','Visual Studio 17 2022','-A','x64','-DCMAKE_TOOLCHAIN_FILE='+str(root/'floor-profile-deps/build/generators/conan_toolchain.cmake'),'-DBUILD_TESTING=OFF','-DMIKUDANCESTUDIO_DIAG=OFF'],
-        'native-build':['cmake','--build',str(native),'--config','Release','--target','floor_profile','--parallel','4','--verbose'],
+        'native-build':['cmake','--build',str(native),'--config','Release','--target','floor_profile','--parallel','1','--verbose'],
         'native':[str(directory/'floor_profile.exe'),'fixed',variant],
         'rust-build':['cargo','+1.95.0','test','-p','mds-accessory','--lib','--no-run','--message-format=json']+mode,
         'rust':[str(directory/'rust-profile.exe'),'mesh::floor_profile::diagnostic','--exact','--nocapture','--test-threads=1'],
@@ -453,36 +453,105 @@ def command_words(line):
     return result
 
 
-def native_commands(raw):
-    result=[];task=None;active=None;indent=None
-    for line in raw.decode(errors='strict').splitlines():
-        header=re.fullmatch(r'(\s*)(?:\d+>)?(\w+):',line)
-        project=re.fullmatch(r'\s*(?:\d+>)?(?:\S+[.]vcxproj -> .+|Done Building Project ".+" .+[.]|Project ".+[.]vcxproj"(?: \(\d+\) is building ".+[.]vcxproj" \(\d+\))? on node \d+ \(.+ targets\)[.])',line)
-        if header or project:
-            require(active is None or project or len(header[1])<len(indent),'ambiguous native task boundary')
-            active=None;task=header[2] if header else None
-            continue
-        match=re.fullmatch(r'(\s*)(?:\d+>)?("?)([A-Za-z]:[^"\r\n]*[\\/](cl|link|lib)[.]exe)\2\s+(.+)',line,re.I)
+def native_commands(stdout,stderr,r):
+    require(not stderr.strip(),'unordered native stderr')
+    require(r['commands']['native-build'][-3:]==['--parallel','1','--verbose'],'serial native recipe')
+    lines=stdout.decode(errors='strict').splitlines()
+    root=PureWindowsPath(r['native_target']);project_root=root/'floor_profile.vcxproj'
+    require(lines and lines[0]=="Change Dir: '"+root.as_posix()+"'",'native build directory banner')
+    launches=[line for line in lines if line.startswith('Run Build Command(s): ')]
+    require(len(launches)==1,'one native launch banner')
+    launch=command_words(launches[0][len('Run Build Command(s): '):])
+    require(PureWindowsPath(launch[0]).is_absolute() and PureWindowsPath(launch[0]).name.lower()=='msbuild.exe' and
+            launch[1:]==['floor_profile.vcxproj','/p:Configuration=Release','/p:Platform=x64','/p:VisualStudioVersion=17.0','/m:1','/v:n'],'serial native launch banner')
+    result=[];stack=[];task=None;active=None;indent=None;owner=None;warnings=[];summary=False;started=False
+    at=0
+    while at<len(lines):
+        line=lines[at];at+=1
+        prefix=re.match(r'^ {0,5}(\d+)>(.*)$',line)
+        number=prefix[1] if prefix else None
+        text=prefix[2] if prefix else line.lstrip()
+        space=line[:len(line)-len(line.lstrip())]
+        start=re.fullmatch(r'Project "(.+[.]vcxproj)"(?: \((\d+)\) is building "(.+[.]vcxproj)" \((\d+)\))? on node (\d+) \(default targets\)[.]',text)
+        if start:
+            require(not summary and active is None and start[5]=='1','serial project start')
+            if start[2]:
+                require(stack and (start[2],PureWindowsPath(start[1]))==stack[-1] and number in (None,start[2]),'serial project parent')
+                child=(start[4],PureWindowsPath(start[3]))
+                require(child[1].parent==root and child not in stack,'serial child project')
+                stack.append(child)
+            else:
+                require(not started and not stack and PureWindowsPath(start[1])==project_root,'native root project')
+                stack.append((number or '1',project_root));started=True
+            task=None;continue
+        done=re.fullmatch(r'Done Building Project "(.+[.]vcxproj)" \(default targets\)[.]',text)
+        if done:
+            require(stack and PureWindowsPath(done[1])==stack[-1][1] and number in (None,stack[-1][0]),'matching project completion')
+            require(active is None or owner==stack[-1],'pending project completion')
+            active=None;owner=None;stack.pop();task=None;continue
+        if number:
+            require(stack and number==stack[-1][0],'out-of-owner project activity')
+        if text=='Build succeeded.':
+            require(started and not stack and active is None and not summary,'closed native build summary')
+            summary=True;continue
+        warning=re.fullmatch(r'([A-Za-z]:.+)\((\d+),(\d+)\): warning (C4018|C4200): (.+) \[(.+[.]vcxproj)\]',text)
+        if warning:
+            if summary:
+                require(number is None and text in warnings,'matching warning summary');continue
+            require(active is not None and task=='ClCompile' and owner==stack[-1] and PureWindowsPath(warning[6])==owner[1],'compiler warning owner')
+            sources=[winpath(v,r['native_target']) for v in active[1:] if v.lower().endswith('.cpp')]
+            source=PureWindowsPath(warning[1]);location=warning[1]+'('+warning[2]+','+warning[3]+'):'
+            if warning[4]=='C4018':
+                require(source in sources and warning[5] in ("'<': signed/unsigned mismatch","'>': signed/unsigned mismatch"),'closed C4018 diagnostic')
+            else:
+                require(source==PureWindowsPath(r['source'])/'include/mikudancestudio/subrecord_layout.hpp' and (warning[2],warning[3])==('206','11') and
+                        warning[5]=='nonstandard extension used: zero-sized array in struct/union','closed C4200 diagnostic')
+                require(at+7<=len(lines),'truncated C4200 diagnostic')
+                context=lines[at:at+7]
+                compiled=re.fullmatch(re.escape(indent)+r"\(compiling source file '([^']+)'\)",context[0])
+                require(compiled is not None,'C4200 compiled source record')
+                compiled_source=winpath(compiled[1],r['native_target'])
+                require(compiled_source in sources and compiled_source==PureWindowsPath(r['source'])/'src/model/model_skinning.cpp','C4200 compiled source identity')
+                require(context[1:]==[indent+'    '+location,
+                    indent+'    This member will be ignored by a defaulted constructor or copy/move assignment operator',
+                    indent+'    '+location,
+                    indent+'    the template instantiation context (the oldest one first) is',
+                    indent+'        '+str(compiled_source)+'(667,20):',
+                    indent+"        see reference to class template instantiation 'mikudancestudio::mdl::SkinnedVertex<0>' being compiled"],'closed C4200 context')
+                at+=7
+            warnings.append(text);continue
+        header=re.fullmatch(r'(\w+):',text)
+        if header:
+            require(stack and not summary,'native task owner')
+            if active is not None:
+                require(owner==stack[-1] and len(space)<len(indent),'ambiguous native task boundary')
+                if header[1]==task:continue
+            active=None;owner=None;task=header[1];continue
+        project=re.fullmatch(r'(\S+[.]vcxproj) -> (.+)',text)
+        if project:
+            require(stack and PureWindowsPath(project[1]).name==stack[-1][1].name,'matching project output')
+            if active is not None:
+                require(owner==stack[-1] and task in ('Lib','Link') and winpath(project[2],root)==winpath(option(active[1:],'/OUT'),root),'matching command output')
+            active=None;owner=None;continue
+        match=re.fullmatch(r'("?)([A-Za-z]:[^"\r\n]*[\\/](cl|link|lib)[.]exe)\1\s+(.+)',text,re.I)
         if match:
-            tool=match[4].lower()
-            require(task is None or tool=={'ClCompile':'cl','Lib':'lib','Link':'link'}.get(task),'native task/tool identity')
-            active=[match[3]]+command_words(match[5]);indent=match[1]
-            result.append(active)
+            require(stack and not summary and match[3].lower()=={'ClCompile':'cl','Lib':'lib','Link':'link'}.get(task),'native task/tool identity')
+            require(active is None or owner==stack[-1],'native command owner')
+            active=[match[2]]+command_words(match[4]);indent=space;owner=stack[-1];result.append(active);continue
+        if not line.strip():continue
+        if active is None:
+            require(not re.match(r'(?:"?[/-][A-Za-z]|"?@|"?[A-Za-z]:.*[.](?:cpp|obj|lib)|\S+[.](?:cpp|obj|lib)(?:["\s]|$)|\(compiling source file|This member|the template instantiation|see reference|.*warning C|.*\(\d+,\d+\):)',text,re.I),'orphan native argument or diagnostic')
             continue
-        if active is None or not line.strip():continue
-        text=line[len(indent):] if line.startswith(indent) else ''
-        if task=='ClCompile':
-            if re.fullmatch(r'[^\\/\s]+[.]cpp',text,re.I):
-                require(text.lower() in [PureWindowsPath(v).name.lower() for v in active[1:] if v.lower().endswith('.cpp')],'unrelated compiler progress')
-                continue
-            if re.fullmatch(r'\s*(?:\d+>)?[A-Za-z]:.+\(\d+(?:,\d+)?\): warning C\d+: .+ \[.+[.]vcxproj\]',line):continue
+        continuation=line[len(indent):] if not number and line.startswith(indent) else ''
+        if task=='ClCompile' and re.fullmatch(r'[^\\/\s]+[.]cpp',continuation,re.I):
+            require(continuation.lower() in [PureWindowsPath(v).name.lower() for v in active[1:] if v.lower().endswith('.cpp')],'unrelated compiler progress');continue
         if task=='Link' and re.fullmatch(r'\s+Creating library .+[.]lib and object .+[.]exp',line):continue
-        require(task in ('ClCompile','Lib','Link') and text and not text[0].isspace(),'ambiguous native command content')
-        args=command_words(text)
+        require(task in ('ClCompile','Lib','Link') and continuation and not continuation[0].isspace(),'ambiguous native command content')
+        args=command_words(continuation)
         suffixes={'ClCompile':('.cpp',),'Lib':('.obj',),'Link':('.obj','.lib')}[task]
         require(all(v.startswith(('/','-')) or (v.lower().endswith(suffixes) and not any(c in v for c in '"<>|?*')) for v in args),'ambiguous native continuation')
         active.extend(args)
-    require(active is None,'truncated native command')
+    require(started and not stack and summary and active is None,'truncated native command or project')
     return [row for i,row in enumerate(result) if row not in result[:i]]
 
 
@@ -607,7 +676,7 @@ def replay(out,archive=None):
                 binary=(directory/('floor_profile.exe' if label=='native' else 'rust-profile.exe')).read_bytes()
                 require(receipt['executed_binary']=={'path':r['commands'][label][0],'sha256':digest(binary),'size':len(binary)},'executed retained binary receipt')
         _,build_stdout,build_stderr=checked(directory,'native-build')
-        commands=native_commands(build_stdout+b'\n'+build_stderr)
+        commands=native_commands(build_stdout,build_stderr,r)
         require(commands==b['actual_native_commands'],'retained parsed compile/archive/link commands')
         objects={}
         for path,row in b['objects'].items():
@@ -679,7 +748,7 @@ def run(out,build_root,toolchain):
             for label in ('configure','native-build'):
                 require(record(directory,label,commands[label],source,e,2400)['status']==0,'native '+label+' failure is not SemanticDifference')
             shutil.copyfile(native_target/'Release/floor_profile.exe',directory/'floor_profile.exe')
-            actual=native_commands((directory/'native-build.stdout').read_bytes()+b'\n'+(directory/'native-build.stderr').read_bytes())
+            actual=native_commands((directory/'native-build.stdout').read_bytes(),(directory/'native-build.stderr').read_bytes(),r)
             shutil.copyfile(native_target/'Release/mikudancestudio_core.lib',directory/'mikudancestudio_core.lib')
             require(record(directory,'native',commands['native'],source,e,300)['status']==0,'native normal exit required')
             native=parse((directory/'native.stdout').read_bytes(),'native',variant=='observed')

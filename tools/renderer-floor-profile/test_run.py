@@ -71,6 +71,18 @@ def tar_bytes(entries):
     return raw.getvalue()
 
 
+def native_log(body,recipe,project='floor_profile',number='1'):
+    root=r.PureWindowsPath(recipe['native_target']);parent=root/'floor_profile.vcxproj';owner=root/(project+'.vcxproj')
+    lines=["Change Dir: '"+root.as_posix()+"'",'',
+           'Run Build Command(s): "C:/VS/MSBuild.exe" floor_profile.vcxproj /p:Configuration=Release /p:Platform=x64 /p:VisualStudioVersion=17.0 /m:1 /v:n',
+           '     1>Project "'+str(parent)+'" on node 1 (default targets).']
+    if owner!=parent:lines.append('     1>Project "'+str(parent)+'" (1) is building "'+str(owner)+'" ('+number+') on node 1 (default targets).')
+    prefix=('\n'.join(lines)+'\n').encode()
+    suffix=('     '+number+'>Done Building Project "'+str(owner)+'" (default targets).\n').encode()
+    if owner!=parent:suffix+=('     1>Done Building Project "'+str(parent)+'" (default targets).\n').encode()
+    return prefix+body+suffix+b'Build succeeded.\n'
+
+
 class Controls(unittest.TestCase):
     def test_01_fixed_inputs_and_wrapper_inverse(self):
         rows=r.inputs(lambda p:(r.ROOT/p).read_bytes())
@@ -327,11 +339,11 @@ class Controls(unittest.TestCase):
         objects={accessory.relative_to(root).as_posix():b'accessory',native.relative_to(root).as_posix():b'native'}
         archive=member(b'accessory')
         self.assertEqual(r.native_provenance(commands,recipe,'Od',objects,archive),str(exe))
-        raw=('\n'.join(' '.join('"'+v+'"' if ' ' in v else v for v in row) for row in commands)+'\nresult.vcxproj -> C:/result\n').encode()
-        self.assertEqual(r.native_commands(raw),commands)
+        raw=native_log(('\n'.join('       '+task+':\n         '+' '.join('"'+v+'"' if ' ' in v else v for v in row) for task,row in zip(('ClCompile','ClCompile','Lib','Link'),commands))+'\n').encode(),recipe)
+        self.assertEqual(r.native_commands(raw,b'',recipe),commands)
         spaced=copy.deepcopy(commands);spaced[0][0]='C:\\Program Files\\VS\\cl.exe'
-        raw=('\n'.join(' '.join(row) for row in spaced)+'\nresult.vcxproj -> C:/result\n').encode()
-        self.assertEqual(r.native_commands(raw),spaced)
+        raw=native_log(('\n'.join('       '+task+':\n         '+' '.join(row) for task,row in zip(('ClCompile','ClCompile','Lib','Link'),spaced))+'\n').encode(),recipe)
+        self.assertEqual(r.native_commands(raw,b'',recipe),spaced)
         for opt in ('Od','O2'):
             for index in (0,1):
                 for override in ('/O1','-O1','/Ox'):
@@ -343,7 +355,7 @@ class Controls(unittest.TestCase):
         lines=[]
         for task,row in zip(('ClCompile','ClCompile','Lib','Link'),commands):
             lines.extend(['       '+task+':','         '+' '.join('"'+v+'"' for v in row[:-1]),'         "'+row[-1]+'"','       FinalizeBuildStatus:'])
-        multiline=('\n'.join(lines)+'\n').encode()
+        multiline=native_log(('\n'.join(lines)+'\n').encode(),recipe)
         def admitted(raw,stderr=b''):
             receipt={'argv':recipe['commands']['native-build'],'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
             for suffix,value in [('stdout',raw),('stderr',stderr)]:receipt[suffix]={'name':'native-build.'+suffix,'sha256':r.digest(value),'size':len(value)}
@@ -351,8 +363,16 @@ class Controls(unittest.TestCase):
             with patch.object(Path,'read_bytes',lambda path:files[path.suffix]):
                 checked,stdout,stderr=r.checked(Path('/resealed'),'native-build')
             r.admit_command(checked,recipe,'native-build')
-            return r.native_provenance(r.native_commands(stdout+b'\n'+stderr),recipe,'Od',objects,archive)
+            return r.native_provenance(r.native_commands(stdout,stderr,recipe),recipe,'Od',objects,archive)
         self.assertEqual(admitted(multiline),str(exe))
+        for separator in (b'       ClCompile:\n',b'     1>ClCompile:\n',b'\n',('     1>'+str(source/r.ACCESSORY)+"(1,2): warning C4018: '<': signed/unsigned mismatch ["+str(root/'floor_profile.vcxproj')+']\n').encode()):
+            for override in (b'/O1',b'-O1',b'/Ox'):
+                raw=multiline.replace(b'       FinalizeBuildStatus:',separator+b'         '+override+b'\n       FinalizeBuildStatus:',1)
+                self.assertEqual(r.native_commands(raw,b'',recipe)[0][-1],override.decode())
+                with self.assertRaisesRegex(ValueError,'effective ordered optimization'):admitted(raw)
+        self.assertEqual(admitted(multiline,b' \r\n\t'),str(exe))
+        for forged in (b'       FinalizeBuildStatus:\n',b'         /O1\n',b'         /OUT:wrong.exe\n',multiline,multiline[multiline.index(b'       FinalizeBuildStatus:'):]):
+            with self.assertRaisesRegex(ValueError,'unordered native stderr'):admitted(multiline,forged)
         for separator in (b'\n',b'\n\n',b'         unrecognized diagnostic\n'):
             with self.subTest(separator=separator),self.assertRaises(ValueError):
                 admitted(multiline.replace(b'       FinalizeBuildStatus:',separator+b'         /O1\n       FinalizeBuildStatus:',1))
@@ -383,37 +403,45 @@ class Controls(unittest.TestCase):
         with self.assertRaises(ValueError):r.cargo_binary(cargo(),recipe,'Od')
 
     def test_21_observed_msbuild_continuations(self):
-        raw=b'       Lib:\r\n         C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\Lib.exe /OUT:"D:\\a\\_temp\\floor-native-build\\Release\\mikudancestudio_core.lib" /NOLOGO /MACHINE:X64  /machine:x64 mikudancestudio_core.dir\\Release\\mmd_app.obj\r\n         mikudancestudio_core.dir\\Release\\globals.obj\r\n         mikudancestudio_core.dir\\Release\\accessory.obj\r\n         mikudancestudio_core.dir\\Release\\model_renderers.obj\r\n         mikudancestudio_core.dir\\Release\\late_ports.obj\r\n         mikudancestudio_core.vcxproj -> D:\\a\\_temp\\floor-native-build\\Release\\mikudancestudio_core.lib\r\n'
-        command=r.native_commands(raw)[0]
+        recipe=r.recipe('C:/runner/temp','observed','Od')
+        body=b'       Lib:\r\n         C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\Lib.exe /OUT:"D:\\a\\_temp\\floor-native-build\\Release\\mikudancestudio_core.lib" /NOLOGO /MACHINE:X64  /machine:x64 mikudancestudio_core.dir\\Release\\mmd_app.obj\r\n         mikudancestudio_core.dir\\Release\\globals.obj\r\n         mikudancestudio_core.dir\\Release\\accessory.obj\r\n         mikudancestudio_core.dir\\Release\\model_renderers.obj\r\n         mikudancestudio_core.dir\\Release\\late_ports.obj\r\n         mikudancestudio_core.vcxproj -> D:\\a\\_temp\\floor-native-build\\Release\\mikudancestudio_core.lib\r\n'
+        raw=native_log(body,recipe,'mikudancestudio_core','6')
+        command=r.native_commands(raw,b'',recipe)[0]
         self.assertEqual(r.PureWindowsPath(command[0]).name,'Lib.exe')
         self.assertEqual([r.PureWindowsPath(v).name for v in command if v.endswith('.obj')],['mmd_app.obj','globals.obj','accessory.obj','model_renderers.obj','late_ports.obj'])
-        self.assertEqual(len(r.native_commands(raw+b'       UnrelatedTask:\r\n         foreign.obj\r\n')),1)
-        self.assertNotIn('foreign.obj',r.native_commands(raw+b'       UnrelatedTask:\r\n         foreign.obj\r\n')[0])
+        clean=native_log(body+b'       UnrelatedTask:\r\n',recipe,'mikudancestudio_core','6')
+        self.assertEqual(len(r.native_commands(clean,b'',recipe)),1)
+        self.assertNotIn('foreign.obj',r.native_commands(clean,b'',recipe)[0])
+        with self.assertRaises(ValueError):r.native_commands(native_log(body+b'       UnrelatedTask:\r\n         foreign.obj\r\n',recipe,'mikudancestudio_core','6'),b'',recipe)
         for bad in (raw.replace(b'accessory.obj',b'wrong.obj'),raw.replace(b'         mikudancestudio_core.dir\\Release\\accessory.obj\r\n',b'')):
-            self.assertNotIn('mikudancestudio_core.dir\\Release\\accessory.obj',r.native_commands(bad)[0])
+            self.assertNotIn('mikudancestudio_core.dir\\Release\\accessory.obj',r.native_commands(bad,b'',recipe)[0])
         for bad in (raw[:raw.index(b'         mikudancestudio_core.vcxproj')],raw.replace(b'globals.obj',b'globals.obj : diagnostic'),raw.replace(b'mikudancestudio_core.dir\\Release\\globals.obj',b'@hidden.rsp'),raw.replace(b'globals.obj',b'"globals.obj')):
-            with self.assertRaises(ValueError):r.native_commands(bad)
+            with self.assertRaises(ValueError):r.native_commands(bad,b'',recipe)
         batch=b'       ClCompile:\n         C:\\VS\\cl.exe /c /O2 /Fo"core.dir\\Release\\\\" C:\\src\\one.cpp C:\\src\\accessory.cpp\n         /Od\n       Lib:\n'
-        args=r.native_commands(batch)[0]
+        args=r.native_commands(native_log(batch,recipe),b'',recipe)[0]
         self.assertEqual(args[-1],'/Od');self.assertEqual(r.option(args[1:],'/Fo'),'core.dir\\Release\\')
         self.assertIn('C:\\src\\accessory.cpp',args)
         emitted=b'       ClCompile:\n         C:\\VS\\cl.exe /c C:\\src\\accessory.cpp\n         accessory.cpp\n       Lib:\n'
-        self.assertEqual(r.native_commands(emitted)[0],['C:\\VS\\cl.exe','/c','C:\\src\\accessory.cpp'])
+        self.assertEqual(r.native_commands(native_log(emitted,recipe),b'',recipe)[0],['C:\\VS\\cl.exe','/c','C:\\src\\accessory.cpp'])
 
     def test_22_native_boundaries_and_progress_do_not_drop_options(self):
+        recipe=r.recipe('C:/runner/temp','observed','Od')
         compile=b'       ClCompile:\n         C:\\VS\\cl.exe /c /O2 /Od /Foaccessory.obj C:\\src\\accessory.cpp\n'
-        progress=b'         accessory.cpp\n'
-        self.assertEqual(r.native_commands(compile+b'         C:\\src\\other.cpp\n       Lib:\n')[0][-1],'C:\\src\\other.cpp')
-        boundary=b'       Lib:\n'
-        self.assertEqual(r.native_commands(compile+progress+b'\n         /O1\n'+boundary)[0][-1],'/O1')
-        warning=b'     6>C:\\src\\accessory.cpp(1,2): warning C4018: signed mismatch [C:\\build\\core.vcxproj]\n'
-        self.assertEqual(r.native_commands(compile+warning+progress+b'         /O1\n'+boundary)[0][-1],'/O1')
+        progress=b'         accessory.cpp\n';boundary=b'       Lib:\n'
+        def log(body):return native_log(body,recipe,'mikudancestudio_core','6')
+        self.assertEqual(r.native_commands(log(compile+b'         C:\\src\\other.cpp\n'+boundary),b'',recipe)[0][-1],'C:\\src\\other.cpp')
+        self.assertEqual(r.native_commands(log(compile+progress+b'\n         /O1\n'+boundary),b'',recipe)[0][-1],'/O1')
+        project=str(r.PureWindowsPath(recipe['native_target'])/'mikudancestudio_core.vcxproj')
+        warning=('     6>C:\\src\\accessory.cpp(1,2): warning C4018: \'<\': signed/unsigned mismatch ['+project+']\n').encode()
+        self.assertEqual(r.native_commands(log(compile+warning+progress+b'         /O1\n'+boundary),b'',recipe)[0][-1],'/O1')
         for tail in (b'',b'\n',b'\n\n',progress,progress+b'\n',warning):
-            with self.subTest(tail=tail),self.assertRaises(ValueError):r.native_commands(compile+tail)
+            with self.subTest(tail=tail),self.assertRaises(ValueError):r.native_commands(log(compile).split(b'     6>Done')[0]+tail,b'',recipe)
         for content in (b'         unrecognized diagnostic\n',b'         ClCompile:\n',b'         wrong.cpp\n',b'         @hidden.rsp\n',b'         "unterminated.cpp\n',b'       Lib:\n         C:\\VS\\cl.exe /c C:\\src\\accessory.cpp\n'):
-            with self.subTest(content=content),self.assertRaises(ValueError):r.native_commands(compile+content+boundary)
-        for transition in (boundary,b'         core.vcxproj -> C:\\build\\core.lib\n',b'     6>Done Building Project "C:\\build\\core.vcxproj" (default targets).\n',b'     1>Project "C:\\build\\one.vcxproj" (1) is building "C:\\build\\two.vcxproj" (2) on node 1 (default targets).\n'):
-            self.assertEqual(len(r.native_commands(compile+progress+transition)),1)
+            with self.subTest(content=content),self.assertRaises(ValueError):r.native_commands(log(compile+content+boundary),b'',recipe)
+        self.assertEqual(len(r.native_commands(log(compile+progress+boundary),b'',recipe)),1)
+        self.assertEqual(len(r.native_commands(log(compile+progress),b'',recipe)),1)
+        for transition in (b'         foreign.vcxproj -> C:\\build\\core.lib\n',b'     5>Done Building Project "C:\\build\\core.vcxproj" (default targets).\n',b'     1>Project "C:\\build\\one.vcxproj" (1) is building "C:\\build\\two.vcxproj" (2) on node 1 (default targets).\n'):
+            with self.assertRaises(ValueError):r.native_commands(log(compile+progress+transition),b'',recipe)
 
     def test_18_fixed_schema_contract_even_after_reseal(self):
         manifest={'schema':r.SCHEMA,'fp_observation_contract':copy.deepcopy(r.FP_CONTRACT),'base':r.BASE,'paths':r.PATHS,'head':'1'*40}
@@ -449,6 +477,7 @@ class Controls(unittest.TestCase):
                     receipt={'argv':copy.deepcopy(recipe['commands'][label]),'cwd':recipe['cwd'][label],
                              'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''}}
                     if label in ('native','rust'):receipt['executed_binary']={'path':recipe['commands'][label][0],'sha256':r.digest(b'MZ'),'size':2}
+                    if label=='native-build':stdout=native_log(b'',recipe)
                     receipts[(id,label)]=(receipt,stdout,b'');files[directory/(label+'.stdout')]=stdout;files[directory/(label+'.stderr')]=b''
         manifest={'schema':r.SCHEMA,'fp_observation_contract':r.FP_CONTRACT,'base':r.BASE,'head':'1'*40,'paths':r.PATHS,'runner_temp':'C:/runner/temp','input_root':r.recipe('C:/runner/temp','control','Od')['input_root'],'builds':builds}
         result={'schema':r.SCHEMA,'fp_observation_contract':r.FP_CONTRACT,'head':'1'*40,'results':{opt:r.classify(*parsed['observed-'+opt]) for opt in ('Od','O2')},'hosted':'ExecutedWindowsOnly','profile_adoption':'NotAuthorized'}
@@ -479,24 +508,73 @@ class Controls(unittest.TestCase):
             for variant in ('control','observed'):
                 recipe=r.recipe('C:/runner/temp',variant,opt)
                 self.assertEqual(recipe['commands']['native-build'][-1],'--verbose')
-                receipt={'argv':recipe['commands']['native-build'][:-1]+['--','/v:diag'],
-                         'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],
-                         'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)',
-                         'CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,
-                         'start_utc':'start','end_utc':'end'}
-                files={'.stdout':b'old diagnostic output\n','.stderr':b''}
-                for suffix in ('stdout','stderr'):
-                    raw=files['.'+suffix]
-                    receipt[suffix]={'name':'native-build.'+suffix,'sha256':r.digest(raw),'size':len(raw)}
-                files['.json']=json.dumps(receipt).encode()
-                with patch.object(Path,'read_bytes',lambda path:files[path.suffix]):
-                    checked,_,_=r.checked(Path('/resealed'),'native-build')
-                with self.assertRaises(ValueError):r.admit_command(checked,recipe,'native-build')
-                build={key:copy.deepcopy(recipe[key]) for key in ('id','source','target','evidence','commands')}
-                build.update(variant=variant,optimization=opt)
-                build['commands']['native-build']=checked['argv']
-                with self.assertRaises(ValueError):
-                    r.admit_recipe({'runner_temp':'C:/runner/temp','input_root':recipe['input_root']},build)
+                self.assertEqual(recipe['commands']['native-build'][-3:],['--parallel','1','--verbose'])
+                for argv in (recipe['commands']['native-build'][:-1]+['--','/v:diag'],recipe['commands']['native-build'][:-2]+['4','--verbose']):
+                    receipt={'argv':argv,
+                             'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],
+                             'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)',
+                             'CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,
+                             'start_utc':'start','end_utc':'end'}
+                    files={'.stdout':b'old diagnostic output\n','.stderr':b''}
+                    for suffix in ('stdout','stderr'):
+                        raw=files['.'+suffix]
+                        receipt[suffix]={'name':'native-build.'+suffix,'sha256':r.digest(raw),'size':len(raw)}
+                    files['.json']=json.dumps(receipt).encode()
+                    with patch.object(Path,'read_bytes',lambda path:files[path.suffix]):
+                        checked,_,_=r.checked(Path('/resealed'),'native-build')
+                    with self.assertRaises(ValueError):r.admit_command(checked,recipe,'native-build')
+                    build={key:copy.deepcopy(recipe[key]) for key in ('id','source','target','evidence','commands')}
+                    build.update(variant=variant,optimization=opt)
+                    build['commands']['native-build']=checked['argv']
+                    with self.assertRaises(ValueError):
+                        r.admit_recipe({'runner_temp':'C:/runner/temp','input_root':recipe['input_root']},build)
+
+    def test_24_closed_diagnostics_owner_and_channel_boundaries(self):
+        recipe=r.recipe('C:/runner/temp','observed','Od');root=r.PureWindowsPath(recipe['native_target']);source=r.PureWindowsPath(recipe['source'])
+        project=str(root/'mikudancestudio_core.vcxproj');compiled=source/'src/model/model_skinning.cpp'
+        location=str(source/'include/mikudancestudio/subrecord_layout.hpp')+'(206,11):'
+        warning='     6>'+location+' warning C4200: nonstandard extension used: zero-sized array in struct/union ['+project+']'
+        rows=[warning,"         (compiling source file '../../../floor-profile-evidence/sources/observed-Od/src/model/model_skinning.cpp')",
+              '             '+location,'             This member will be ignored by a defaulted constructor or copy/move assignment operator',
+              '             '+location,'             the template instantiation context (the oldest one first) is',
+              '                 '+str(compiled)+'(667,20):',"                 see reference to class template instantiation 'mikudancestudio::mdl::SkinnedVertex<0>' being compiled"]
+        compile=('       ClCompile:\n         C:\\VS\\cl.exe /c /Od "'+str(compiled)+'" "'+str(source/r.ACCESSORY)+'"\n').encode()
+        c4018=('     6>'+str(source/r.ACCESSORY)+"(1,2): warning C4018: '<': signed/unsigned mismatch ["+project+']\n').encode()
+        diagnostic=('\n'.join(rows)+'\n').encode()
+        def log(body):return native_log(body,recipe,'mikudancestudio_core','6')
+        baseline=log(compile+diagnostic+c4018)
+        expected=r.native_commands(log(compile),b'',recipe)
+        self.assertEqual(r.native_commands(baseline,b'',recipe),expected)
+        self.assertEqual(r.native_commands(baseline+b'         '+warning.split('>',1)[1].encode()+b'\n',b'',recipe),expected)
+        for separator in (b'     6>ClCompile:\n',diagnostic,c4018,b'\n',diagnostic+b'\n     6>ClCompile:\n'):
+            for option in (b'/O1',b'-O1',b'/Ox'):
+                self.assertEqual(r.native_commands(log(compile+separator+b'         '+option+b'\n'),b'',recipe)[0][-1],option.decode())
+        for index in range(8):
+            for change in ('missing','append','foreign'):
+                bad=rows[:]
+                if change=='missing':bad.pop(index)
+                elif change=='append':bad[index]+=' /O1'
+                else:bad[index]=bad[index].replace('model_skinning','foreign').replace('subrecord_layout','foreign').replace('This member','Unknown member').replace('the template','unknown template').replace('see reference','unknown reference')
+                self.assertNotEqual(bad,rows)
+                with self.subTest(index=index,change=change),self.assertRaises(ValueError):r.native_commands(log(compile+('\n'.join(bad)+'\n').encode()),b'',recipe)
+        for bad in (diagnostic.replace(b'6>',b'5>',1),diagnostic.replace(b'mikudancestudio_core.vcxproj',b'foreign.vcxproj'),c4018.replace(b'accessory.cpp',b'foreign.cpp'),c4018.replace(b'C4018',b'C4999'),c4018.replace(b'signed/unsigned mismatch',b'unknown warning'),c4018.rstrip()+b' /O1\n'):
+            with self.assertRaises(ValueError):r.native_commands(log(compile+bad),b'',recipe)
+        for context in rows[1:]:
+            with self.assertRaises(ValueError):r.native_commands(log((context+'\n').encode()),b'',recipe)
+        for index in range(8):
+            with self.assertRaises(ValueError):r.native_commands(log(compile)+b'\n'.join(row.encode() for row in rows[:index+1]),b'',recipe)
+        for orphan in (b'/O1',b'-O1',b'/Ox',b'"/O1"',b'@hidden.rsp',b'foreign.obj'):
+            with self.assertRaisesRegex(ValueError,'orphan native'):r.native_commands(log(b'         '+orphan+b'\n'),b'',recipe)
+        for stderr in (diagnostic,c4018,b'     6>Done Building Project "'+project.encode()+b'" (default targets).\n'):
+            with self.assertRaisesRegex(ValueError,'unordered native stderr'):r.native_commands(baseline,stderr,recipe)
+        for marker in (b'/m:1',b'/v:n',b"Change Dir: '"):
+            with self.assertRaises(ValueError):r.native_commands(baseline.replace(marker,marker+b'wrong',1),b'',recipe)
+        parent=root/'floor_profile.vcxproj';child=root/'child.vcxproj'
+        suspension=('       ClCompile:\n         C:\\VS\\cl.exe /c C:\\src\\one.cpp\n       FinalizeBuildStatus:\n'
+                    '     1>Project "'+str(parent)+'" (1) is building "'+str(child)+'" (2) on node 1 (default targets).\n'
+                    '     2>Done Building Project "'+str(child)+'" (default targets).\n').encode()
+        self.assertEqual(len(r.native_commands(native_log(suspension,recipe),b'',recipe)),1)
+        with self.assertRaisesRegex(ValueError,'serial project start'):r.native_commands(native_log(suspension.replace(b'       FinalizeBuildStatus:\n',b''),recipe),b'',recipe)
 
     def test_zz_real_effects_rejected_before_effects(self):
         target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-floor-profile-boundary-fix/effect-probe')

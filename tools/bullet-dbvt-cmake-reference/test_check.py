@@ -349,9 +349,80 @@ class Controls(unittest.TestCase):
         self.assertEqual(check.preprocess_args(['/c', '/FI', 'forced.h', '/Fo', 'a.obj', 'a.cpp'], 'a.cpp'),
                          ['/FI', 'forced.h', '/E', '/showIncludes', 'a.cpp'])
 
+    def test_replay_preserves_case_and_dash_switch_semantics(self):
+        self.assertEqual(check.preprocess_args(['-TP', '-c', '-FI', 'forced.h', '-Fo', 'output.obj', '-Fioutput.i', 'good.cpp'], 'good.cpp'),
+                         ['-TP', '-FI', 'forced.h', '/E', '/showIncludes', 'good.cpp'])
+        for flag in ('/fi', '/FO', '-fo', '-fI'):
+            with self.subTest(flag=flag), self.assertRaises(ValueError):
+                check.preprocess_args([flag, 'good.cpp'], 'good.cpp')
+
     def test_replay_rejects_other_source(self):
         with self.assertRaises(ValueError):
             check.preprocess_args(['/c', 'other.cpp'], 'source.cpp')
+
+    def test_actual_windows_dbvt_tlogs_keep_global_cpp_mode(self):
+        # Actions 40439880708, artifact 12705684917, captured caret and command records.
+        records = ['^D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC\\BULLETCOLLISION\\BROADPHASECOLLISION\\BTDBVT.CPP\n/c /I"D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC" /I\\SRC /I"D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC\\BULLETCOLLISION\\}" /nologo /W1 /WX- /diagnostics:column /O2 /Ob2 /D _MBCS /D WIN32 /D _WINDOWS /D NDEBUG /D "CMAKE_INTDIR=\\"Release\\"" /EHsc /MD /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /GR /std:c++17 /Fo"BULLETCOLLISION.DIR\\RELEASE\\\\" /Fd"D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BUILD\\BULLETCOLLISION\\RELEASE\\BULLETCOLLISION.PDB" /external:W1 /Gd /TP D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC\\BULLETCOLLISION\\BROADPHASECOLLISION\\BTDBVT.CPP\n', '^D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC\\BULLETCOLLISION\\BROADPHASECOLLISION\\BTDBVTBROADPHASE.CPP\n/c /I"D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC" /I\\SRC /I"D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC\\BULLETCOLLISION\\}" /nologo /W1 /WX- /diagnostics:column /O2 /Ob2 /D _MBCS /D WIN32 /D _WINDOWS /D NDEBUG /D "CMAKE_INTDIR=\\"Release\\"" /EHsc /MD /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /GR /std:c++17 /Fo"BULLETCOLLISION.DIR\\RELEASE\\\\" /Fd"D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BUILD\\BULLETCOLLISION\\RELEASE\\BULLETCOLLISION.PDB" /external:W1 /Gd /TP D:\\A\\_TEMP\\DBVT-CONAN-40439880708-1-X64\\P\\B\\BULLEA12CEBAAD519B\\B\\BULLET-SRC\\SRC\\BULLETCOLLISION\\BROADPHASECOLLISION\\BTDBVTBROADPHASE.CPP\n']
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'CL.command.1.tlog'
+            for record in records:
+                with self.subTest(source=record.splitlines()[0]):
+                    path.write_bytes(record.encode('utf-16'))
+                    [(sources, args)] = check.tlog_commands(path)
+                    self.assertEqual(check.compile_source_index(args, sources[0], path.parent), len(args) - 1)
+                    replay = check.preprocess_args(args, sources[0], cwd=path.parent)
+                    self.assertIn('/TP', replay)
+                    self.assertEqual(replay[-1], sources[0])
+
+    def test_global_cpp_mode_counts_every_positional_input(self):
+        for mode in ('/TP', '-TP'):
+            for source in ('good.cpp', 'good.h', 'extensionless', 'input.obj'):
+                for args in ([mode, '/c', source], ['/c', source, mode]):
+                    with self.subTest(args=args):
+                        self.assertEqual(check.preprocess_args(args, source), [mode, '/E', '/showIncludes', source])
+            for extra in ('other.cpp', 'other.h', 'extensionless', 'input.obj', 'input.lib', 'good.cpp'):
+                for args in ([mode, 'good.cpp', extra], ['good.cpp', extra, mode]):
+                    with self.subTest(args=args), self.assertRaises(ValueError):
+                        check.preprocess_args(args, 'good.cpp')
+            with self.assertRaisesRegex(ValueError, 'caret full path'):
+                check.preprocess_args([mode, 'other.cpp'], 'good.cpp')
+
+    def test_cl_option_values_are_not_source_operands(self):
+        options = ('D', 'U', 'I', 'FI', 'Fo', 'Fd', 'Fe', 'Fa', 'Fi', 'Fp', 'Yu', 'Yc', 'external:I')
+        for prefix in ('/', '-'):
+            for option in options:
+                for value in ('other.cpp', 'other.h', 'extensionless', 'input.obj'):
+                    for flags in ([prefix + option, value], [prefix + option + value]):
+                        args = ['/TP', *flags, 'good.cpp']
+                        with self.subTest(args=args):
+                            self.assertEqual(check.compile_source_index(args, 'good.cpp', Path.cwd()), len(args) - 1)
+            for option in (*options, 'sourceDependencies', 'sourceDependencies:directives', 'scanDependencies'):
+                with self.subTest(option=option), self.assertRaisesRegex(ValueError, 'missing its value'):
+                    check.compile_source_index(['good.cpp', prefix + option], 'good.cpp', Path.cwd())
+        for option in ('/sourceDependencies', '/sourceDependencies:directives', '/scanDependencies'):
+            args = ['/TP', option, 'dependency.json', 'good.cpp']
+            self.assertEqual(check.compile_source_index(args, 'good.cpp', Path.cwd()), 3)
+        with self.assertRaises(ValueError):
+            check.preprocess_args(['/D', '/TP', 'good.h'], 'good.h')
+        for option in ('/tp', '/tP', '/unknown', '/unknown:other.h', '/link', '/TPextra', '-TPextra'):
+            with self.subTest(option=option), self.assertRaises(ValueError):
+                check.preprocess_args(['/TP', option, 'good.cpp'], 'good.cpp')
+        for extra in ('other.h', 'extensionless', 'input.obj', 'input.lib'):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                check.preprocess_args(['good.cpp', extra], 'good.cpp')
+
+    def test_response_expanded_global_mode_preserves_single_source(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'inner.rsp').write_bytes('/TP /FI forced.h /D NAME=other.cpp good.cpp'.encode('utf-16'))
+            (root / 'outer.rsp').write_text('/c @inner.rsp /Fo output.obj')
+            args = check.expand(['@outer.rsp'], root, [])
+            self.assertEqual(check.preprocess_args(args, 'good.cpp', cwd=root),
+                             ['/TP', '/FI', 'forced.h', '/D', 'NAME=other.cpp', '/E', '/showIncludes', 'good.cpp'])
+            for suffix in (' other.h', ' extensionless', ' input.obj', ' /Tpother.h', ' /Tcother', ' /TC', ' /unknown value'):
+                (root / 'inner.rsp').write_text('/TP good.cpp' + suffix)
+                with self.subTest(suffix=suffix), self.assertRaises(ValueError):
+                    check.preprocess_args(check.expand(['@outer.rsp'], root, []), 'good.cpp', cwd=root)
 
     def test_tlog_requires_source_association(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -544,6 +615,25 @@ class Controls(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'compiler output is missing'):
                 check.archive_commands(root, out, libs)
 
+    def test_archive_global_cpp_mode_retains_argv_and_rejects_extra_inputs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            out, libs = self.archive_fixture(root)
+            tlog = root / 'BulletCollision/BulletCollision.dir/Release/CL.command.1.tlog'
+            lines = tlog.read_text().splitlines()
+            args = ['/TP', *check.split_command(lines[1])]
+            lines[1] = subprocess.list2cmdline(args)
+            tlog.write_text('\n'.join(lines) + '\n')
+            record = check.archive_commands(root, out, libs)['BulletCollision']['dbvt_objects']['btDbvt']['compile']
+            self.assertEqual(record['argv'], args)
+            self.assertIn('/TP', check.preprocess_args(record['argv'], record['source'], cwd=record['cwd']))
+            for extra in ('other.h', 'extensionless', 'input.obj', 'input.lib'):
+                changed = lines[:]
+                changed[1] = subprocess.list2cmdline([*args, extra])
+                tlog.write_text('\n'.join(changed) + '\n')
+                with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, 'exactly one source'):
+                    check.archive_commands(root, out, libs)
+
     def test_compile_source_operand_must_match_caret_full_path(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -567,8 +657,8 @@ class Controls(unittest.TestCase):
     def test_explicit_cl_source_modes_fail_before_archive_or_replay(self):
         modes = [[flag + name] for flag in ('/Tc', '/Tp', '-Tc', '-Tp') for name in ('other.h', 'other')]
         modes += [[flag, name] for flag in ('/Tc', '/Tp', '-Tc', '-Tp') for name in ('other.h', 'other')]
-        modes += [[flag, 'other.h'] for flag in ('/TC', '/TP', '-TC', '-TP')]
-        modes += [[flag] for flag in ('/TC', '/TP', '-TC', '-TP')]
+        modes += [[flag, 'other.h'] for flag in ('/TC', '-TC')]
+        modes += [[flag] for flag in ('/TC', '-TC')]
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             out, libs = self.archive_fixture(root)
@@ -637,6 +727,7 @@ class Controls(unittest.TestCase):
             lines = tlog.read_text().splitlines()
             args = check.split_command(lines[1])
             args[-1] = 'btDbvt.cpp'
+            args.insert(0, '/TP')
             response = project / 'compile.rsp'
             response.write_text(subprocess.list2cmdline(args))
             lines[1] = '@compile.rsp'

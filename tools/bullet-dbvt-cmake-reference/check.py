@@ -321,19 +321,46 @@ def tlog_commands(path, *, reads=False):
 
 def compile_source_index(args, source, cwd):
     operands = []
+    value_options = ('/D', '/U', '/I', '/FI', '/Fo', '/Fd', '/Fe', '/Fa', '/Fi', '/Fp', '/Yu', '/Yc', '/external:I')
+    global_cpp = False
+    dependency_options = ('/sourceDependencies', '/sourceDependencies:directives', '/scanDependencies')
+    flags = re.compile(
+        r'/(?:c|E|EP|P|nologo|showIncludes|FC|FS|bigobj|utf-8|'
+        r'W[0-4]|WX-?|external:W[0-4]|diagnostics:(?:column|classic|caret)|'
+        r'O(?:[012d]|b[0-3]|[gistxy]-?)|M[DT]d?|EH[a-z]+|'
+        r'G[RSdm]-?|G[drzv]|RTC[1csu]+|Z[7iI]|MP[0-9]*|'
+        r'Zc:[\w+-]+|std:c\+\+[\w]+|arch:[\w]+|fp:[\w]+|'
+        r'favor:[\w]+|openmp(?::[\w]+)?)')
     skip_next = False
     for index, arg in enumerate(args):
         if skip_next:
             skip_next = False
             continue
-        if arg.startswith(('/Tc', '/Tp', '/TC', '/TP', '-Tc', '-Tp', '-TC', '-TP')):
-            raise ValueError('unsupported explicit CL source mode')
-        if arg in ('/D', '/U', '/I', '/FI', '/Fo', '/Fd', '/Fe', '/Fa', '/Fi', '/Fp', '/Yu', '/Yc'):
-            skip_next = True
-        elif arg.startswith(('/D', '/U', '/I', '/FI', '/Fo', '/Fd', '/Fe', '/Fa', '/Fi', '/Fp', '/Yu', '/Yc')):
+        option = '/' + arg[1:] if arg.startswith('-') else arg
+        if option == '/TP':
+            global_cpp = True
             continue
-        elif arg.lower().endswith(('.cpp', '.c', '.cxx', '.cc', '.c++')):
+        if option.startswith(('/Tc', '/Tp', '/TC', '/TP')):
+            raise ValueError('unsupported explicit CL source mode')
+        if option in dependency_options or option in value_options:
+            if index + 1 == len(args) or not args[index + 1]:
+                raise ValueError('compiler option is missing its value')
+            skip_next = True
+        elif any(option.startswith(name) for name in value_options):
+            continue
+        elif flags.fullmatch(option):
+            continue
+        elif arg.startswith(('/', '-')):
+            # Portable controls use absolute POSIX paths; CL captures use Windows paths.
+            if os.name != 'nt' and Path(arg).is_absolute() and '/' in arg[1:]:
+                operands.append(index)
+            else:
+                raise ValueError('unsupported or ambiguous CL option')
+        else:
             operands.append(index)
+    if not global_cpp and any(
+            not args[index].lower().endswith(('.cpp', '.c', '.cxx', '.cc', '.c++')) for index in operands):
+        raise ValueError('unsupported or ambiguous CL input operand')
     if len(operands) != 1:
         raise ValueError('actual CL command must contain exactly one source operand')
     index = operands[0]
@@ -350,14 +377,11 @@ def preprocess_args(args, source, *, cwd=None):
         if skip_next:
             skip_next = False
             continue
-        if arg.lower() in ('/fo', '/fd', '/fe', '/fa', '/fi'):
-            # /FI is forced include; /Fi is preprocessor output. Preserve case.
-            if arg == '/FI':
-                result.append(arg)
-                continue
+        option = '/' + arg[1:] if arg.startswith('-') else arg
+        if option in ('/Fo', '/Fd', '/Fe', '/Fa', '/Fi'):
             skip_next = True
             continue
-        if index == source_index or arg in ('/c', '/E', '/EP', '/P', '/showIncludes') or arg.startswith(('/Fo', '/Fd', '/Fe', '/Fa', '/Fi')):
+        if index == source_index or option in ('/c', '/E', '/EP', '/P', '/showIncludes') or option.startswith(('/Fo', '/Fd', '/Fe', '/Fa', '/Fi')):
             continue
         result.append(arg)
     return [*result, '/E', '/showIncludes', args[source_index]]

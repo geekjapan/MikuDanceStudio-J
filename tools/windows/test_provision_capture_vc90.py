@@ -14,6 +14,20 @@ import unittest
 HERE = Path(__file__).resolve().parent
 PWSH = shutil.which("pwsh")
 
+
+def no_force_omits(location, attribute, windows):
+    if windows:
+        return "Hidden" in {part.strip() for part in (attribute or "").split(",")}
+    return location.startswith("dot_file")
+
+
+def discovered_entry(path, entries):
+    matches = [entry for raw_path, entry in entries.items() if path.samefile(raw_path)]
+    if len(matches) != 1:
+        raise AssertionError(f"Expected one physical match for {str(path)!r}, got {len(matches)} in {entries!r}")
+    return matches[0]
+
+
 HARNESS = r'''
 $ErrorActionPreference = 'Stop'
 . $env:TEST_HELPER
@@ -411,7 +425,7 @@ if ($env:TEST_ATTRIBUTE) {
     foreach ($path in (ConvertFrom-Json $env:TEST_MARKED)) {
         $item = Get-Item -LiteralPath $path -Force
         $item.Attributes = $item.Attributes -bor $attribute
-        if (-not ((Get-Item -LiteralPath $path -Force).Attributes -band $attribute)) {
+        if (((Get-Item -LiteralPath $path -Force).Attributes -band $attribute) -ne $attribute) {
             throw "Attribute was not applied to $path"
         }
     }
@@ -441,10 +455,16 @@ Get-Vc90PolicyEvidence -Destination $env:TEST_RECEIPTS
                 old = subprocess.run([PWSH, "-NoProfile", "-File", str(script)],
                                      env=dict(env, TEST_HELPER=str(baseline), TEST_RECEIPTS=str(baseline_receipts)),
                                      capture_output=True, text=True, timeout=15)
-                self.assertEqual(old.returncode, 1, "without -Force must reproduce omitted candidates: " + old.stdout + old.stderr)
+                omitted = no_force_omits(location, attribute, os.name == "nt")
+                self.assertEqual(old.returncode, 1 if omitted else 0,
+                                 "unexpected discovery without -Force: " + old.stdout + old.stderr)
                 old_evidence = json.loads((baseline_receipts / "policy.json").read_text(encoding="utf-8-sig"))
-                self.assertEqual(old_evidence["status"], "UNPROVEN")
-                self.assertLess(len(old_evidence["assemblies"]), 4)
+                self.assertEqual(old_evidence["status"], "UNPROVEN" if omitted else "POLICY_AND_TARGET_PRESENT")
+                if omitted:
+                    self.assertLess(len(old_evidence["assemblies"]), 4)
+                else:
+                    self.assertEqual(len(old_evidence["assemblies"]), 4)
+                    self.assertFalse(old_evidence["errors"])
             run = subprocess.run([PWSH, "-NoProfile", "-File", str(script)], env=env,
                                  capture_output=True, text=True, timeout=15)
             evidence = json.loads((receipts / "policy.json").read_text(encoding="utf-8-sig"))
@@ -464,10 +484,12 @@ Get-Vc90PolicyEvidence -Destination $env:TEST_RECEIPTS
                 self.assertEqual(Path(record["source"]).read_bytes(), Path(record["copy"]).read_bytes())
                 self.assertEqual(hashlib.sha256(Path(record["copy"]).read_bytes()).hexdigest().upper(), record["sha256"])
             for path in marked:
-                self.assertIn(str(path), entries)
+                entry = discovered_entry(path, entries)
                 if attribute:
-                    self.assertIn(attribute, entries[str(path)]["attributes"])
-                    self.assertTrue(entries[str(path)]["attributes_value"] & (2 if attribute == "Hidden" else 4))
+                    for part in attribute.split(","):
+                        part = part.strip()
+                        self.assertIn(part, entry["attributes"])
+                        self.assertTrue(entry["attributes_value"] & (2 if part == "Hidden" else 4))
             if enumeration_error:
                 self.assertTrue(any(q["error"] and 'Injected' in q["error"] for q in discovery))
                 self.assertTrue(evidence["errors"])
@@ -490,11 +512,73 @@ Get-Vc90PolicyEvidence -Destination $env:TEST_RECEIPTS
             with self.subTest(attribute=attribute, case="missing target"):
                 self.check_discovery("policy_file_Policies", attribute, missing_target=True)
 
+    @unittest.skipUnless(os.name == "nt", "SKIP: real Windows combined Hidden/System attributes require Windows")
+    def test_windows_combined_hidden_system_discovery(self):
+        self.check_discovery("policy_file_Policies", "Hidden, System")
+
     def test_discovery_observation_and_fail_closed(self):
         for location in ("dot_file_root", "dot_file_Policies"):
             with self.subTest(location=location):
                 self.check_discovery(location)
         self.check_discovery("policy_file_Policies", enumeration_error=True)
+
+
+class DiscoveryIdentity(unittest.TestCase):
+    def test_physical_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "policy.xml"
+            path.write_text("policy")
+            alias = root / "alias.xml"
+            os.link(path, alias)
+            entry = {"path": str(alias), "attributes": "Archive"}
+            self.assertIs(discovered_entry(path, {str(alias): entry}), entry)
+            other = root / "other"
+            other.mkdir()
+            self.assertEqual(discovered_entry(root, {str(other / ".."): {"directory": True}}),
+                             {"directory": True})
+            nonmatching = other / path.name
+            nonmatching.write_text("policy")
+            with self.assertRaises(AssertionError):
+                discovered_entry(path, {str(nonmatching): entry})
+            with self.assertRaises(AssertionError):
+                discovered_entry(path, {})
+            with self.assertRaises(FileNotFoundError):
+                discovered_entry(path, {str(root / "missing.xml"): entry})
+
+    def test_no_force_platform_expectations(self):
+        for windows, location, attribute, omitted in (
+            (True, "dot_file_root", None, False),
+            (True, "dot_file_Policies", None, False),
+            (True, "policy_file_root", "System", False),
+            (True, "policy_file_root", "Hidden", True),
+            (True, "policy_dir_root", "Hidden,System", True),
+            (False, "dot_file_root", None, True),
+            (False, "dot_file_Policies", None, True),
+        ):
+            with self.subTest(windows=windows, location=location, attribute=attribute):
+                self.assertEqual(no_force_omits(location, attribute, windows), omitted)
+
+    @unittest.skipUnless(os.name == "nt", "SKIP: real Windows short/long path identity requires Windows")
+    def test_windows_short_long_identity(self):
+        import ctypes
+        with tempfile.TemporaryDirectory(prefix="vc90 identity ") as tmp:
+            root = Path(tmp)
+            path = root / "long policy filename.xml"
+            path.write_text("policy")
+            get_short_path = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+            get_short_path.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
+            get_short_path.restype = ctypes.c_uint
+            for existing in (root, path):
+                buffer = ctypes.create_unicode_buffer(32768)
+                length = get_short_path(str(existing), buffer, len(buffer))
+                self.assertGreater(length, 0, ctypes.get_last_error())
+                self.assertLess(length, len(buffer))
+                if buffer.value.casefold() == str(existing).casefold():
+                    self.skipTest("SKIP: Windows volume did not provide a distinct short path")
+                entry = {"path": str(existing)}
+                self.assertIs(discovered_entry(Path(buffer.value), {str(existing): entry}), entry)
+                self.assertIs(discovered_entry(existing, {buffer.value: entry}), entry)
 
 
 if __name__ == "__main__":

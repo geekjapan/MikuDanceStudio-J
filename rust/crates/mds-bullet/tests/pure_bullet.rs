@@ -4,6 +4,8 @@
 mod axis_sweep;
 #[path = "pure_bullet/body_kernel.rs"]
 mod body_kernel;
+#[path = "pure_bullet/contact_solver.rs"]
+mod contact_solver;
 #[path = "../src/core/mod.rs"]
 mod core;
 #[path = "pure_bullet/joint_coordinates.rs"]

@@ -137,11 +137,15 @@ pub struct RigidBody {
     state: BodySnapshot,
     linear_factor: Vec3,
     angular_factor: Vec3,
+    friction: f32,
+    restitution: f32,
 }
 
 impl RigidBody {
     pub fn new(init: BodyInit) -> Self {
         let mut body = Self {
+            friction: 0.5,
+            restitution: 0.0,
             linear_factor: Vec3([1.0; 3]),
             angular_factor: Vec3([1.0; 3]),
             state: BodySnapshot {
@@ -167,6 +171,22 @@ impl RigidBody {
         body.set_mass_properties(init.mass, init.local_inertia);
         body.update_inertia_tensor();
         body
+    }
+
+    pub fn contact_body(&self) -> super::contact::ContactBody {
+        super::contact::ContactBody {
+            world: self.state.world,
+            friction: self.friction,
+            restitution: self.restitution,
+        }
+    }
+
+    pub fn set_friction(&mut self, friction: f32) {
+        self.friction = friction;
+    }
+
+    pub fn set_restitution(&mut self, restitution: f32) {
+        self.restitution = restitution;
     }
 
     pub fn linear_factor(&self) -> Vec3 {

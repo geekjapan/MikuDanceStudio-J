@@ -33,7 +33,7 @@ python3 -B tools/renderer-shadow-eligibility/run.py --archive /absolute/complete
 
 `--unpack --archive TAR --out FRESH_DIR` safely extracts and then verifies without executing binaries. `--bundle FRESH_TAR` explicitly writes a mode-preserving TAR after verification. These options are writers; omit them for read-only replay.
 
-The workflow initially triggers only on pushes to `w4-renderer-shadow-eligibility-probe`. Linux capture and Windows native execution are separate jobs using the same captured source and inputs. Actual hosted compilation and execution remain unrun until that workflow completes and its artifacts pass independent audit.
+The workflow initially triggers only on pushes to `w4-renderer-shadow-eligibility-probe`. Linux capture and Windows native execution are separate jobs using the same captured source and inputs. Failed Linux jobs retain a separately named incomplete artifact for diagnosis; its ZIP file modes are not comparison evidence. Actual hosted compilation and execution remain unrun until that workflow completes and its artifacts pass independent audit.
 
 ## Focused checks
 

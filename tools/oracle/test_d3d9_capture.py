@@ -64,10 +64,13 @@ class FakeWin32:
                             self.last_error = 123  # Must not overwrite the saved callback error.
                             return 0
                 return 1 if name == "EnumWindows" else 0  # Child API return value is unused.
+            if hwnd not in self.windows:
+                self.last_error = 1400
+                return 0
             window = self.windows[hwnd]
             if name == "GetWindowThreadProcessId":
                 args[0]._obj.value = window.get("pid", 77)
-                return 88
+                return window.get("tid", 88)
             if name == "GetClassNameW":
                 args[0].value = window["class"]
                 return len(window["class"])
@@ -109,6 +112,209 @@ def dialog_metadata():
 
 
 class DialogWin32Boundary(unittest.TestCase):
+    def rejected(self, fake, windows=None):
+        windows = windows or fake.observer(self)
+        with self.assertRaisesRegex(ValueError, "^Unexpected dialog Static or IDOK metadata$") as raised:
+            windows.snapshot(77)
+        error = raised.exception
+        self.assertFalse(hasattr(error, "api_error"))
+        self.assertTrue(all(window["text"] is None for window in error.partial_windows))
+        self.assertFalse(any(name == "SendMessageTimeoutW" and args[0] != 13
+                             for name, _, args in fake.calls))
+        return error
+
+    def test_rejected_id2_text_is_supplemental_even_when_known(self):
+        for body in ("Cannot make DirectSound!!", "Unknown warning"):
+            with self.subTest(body=body):
+                metadata = dialog_metadata()
+                metadata[12]["id"] = 2
+                metadata[10]["text"] = "Observed caption"
+                metadata[11]["text"] = body
+                metadata[20] = {"class": "Polygon Movie Maker", "visible": 0}
+                metadata[30] = {"class": "IME", "visible": 0}
+                fake = FakeWin32(metadata)
+                error = self.rejected(fake)
+                diagnostic = error.supplementary_diagnostics
+                self.assertEqual(diagnostic["status"], "OBSERVED")
+                self.assertEqual([query["text"] for query in diagnostic["queries"]], ["Observed caption", body])
+                self.assertEqual(len(diagnostic["revalidations"]), 4)
+                for validation in diagnostic["revalidations"]:
+                    self.assertEqual(validation["status"], "MATCHED")
+                    self.assertEqual([item["hwnd"] for item in validation["windows"]], [10, 11, 12])
+                self.assertEqual([(name, hwnd) for name, hwnd, _ in fake.calls if name in ("GetWindowTextW", "SendMessageTimeoutW")],
+                                 [("GetWindowTextW", 10), ("SendMessageTimeoutW", 11)])
+                for query in diagnostic["queries"]:
+                    context = query["context"]
+                    self.assertEqual(context["last_error"], 0)
+                    self.assertLessEqual(context["start_monotonic"], context["end_monotonic"])
+                    self.assertIn("return", context)
+                context = diagnostic["queries"][1]["context"]
+                self.assertEqual((context["message"], context["flags"]), (13, 0x22))
+                self.assertTrue(0 < context["timeout_ms"] <= 200)
+                self.assertEqual(diagnostic["queries"][1]["message_result"], len(body))
+                json.dumps(diagnostic)
+
+    def test_rejected_secondary_api_errors_never_replace_metadata_error(self):
+        for api, hwnd in (("SendMessageTimeoutW", 11), ("GetWindowTextW", 10)):
+            for last_error in (0, 1460, 5, 1400):
+                if api == "GetWindowTextW" and last_error == 0:
+                    continue
+                with self.subTest(api=api, last_error=last_error):
+                    metadata = dialog_metadata()
+                    metadata[12]["id"] = 2
+                    fake = FakeWin32(metadata)
+                    fake.failures[api, hwnd] = last_error
+                    diagnostic = self.rejected(fake).supplementary_diagnostics
+                    query = diagnostic["queries"][-1]
+                    self.assertEqual(query["status"], "UNAVAILABLE")
+                    self.assertNotIn("text", query)
+                    self.assertNotIn("message_result", query)
+                    self.assertEqual(query["api_error"]["last_error"], last_error)
+                    self.assertEqual(query["api_error"]["return"], 0)
+                    self.assertEqual(sum(name == api and handle == hwnd for name, handle, _ in fake.calls), 1)
+                    self.assertEqual(diagnostic["status"], "PARTIAL" if api == "SendMessageTimeoutW" else "UNAVAILABLE")
+
+    def test_rejected_metadata_changes_after_each_read_discard_its_text(self):
+        mutations = ((10, "pid", 78), (10, "tid", 89), (10, "class", "Other"),
+                     (10, "owner", 21), (10, "parent", 21), (10, "visible", 0),
+                     (10, "enabled", 0), (11, "id", 4), (11, "style", 3),
+                     (11, "parent", 20), (11, "visible", 0), (12, "id", 1),
+                     (12, "enabled", 0), (12, "pid", 78), (11, "destroy", None))
+        for trigger in ("GetWindowTextW", "SendMessageTimeoutW"):
+            for hwnd, key, value in mutations:
+                with self.subTest(trigger=trigger, hwnd=hwnd, key=key):
+                    metadata = dialog_metadata()
+                    metadata[12]["id"] = 2
+                    fake = FakeWin32(metadata)
+                    original = getattr(fake.user32, trigger).side_effect
+                    def mutate(*args):
+                        returned = original(*args)
+                        if key == "destroy":
+                            del metadata[hwnd]
+                        else:
+                            metadata[hwnd][key] = value
+                        return returned
+                    getattr(fake.user32, trigger).side_effect = mutate
+                    diagnostic = self.rejected(fake).supplementary_diagnostics
+                    self.assertNotEqual(diagnostic["status"], "OBSERVED")
+                    self.assertNotIn("text", diagnostic["queries"][-1])
+                    self.assertNotIn("message_result", diagnostic["queries"][-1])
+                    self.assertNotEqual(diagnostic["revalidations"][-1]["status"], "MATCHED")
+                    self.assertEqual(sum(name == trigger for name, _, _ in fake.calls), 1)
+
+    def test_rejected_prevalidation_failure_prevents_text_queries(self):
+        for label in ("changed", "destroyed", "api-error"):
+            with self.subTest(label=label):
+                metadata = dialog_metadata()
+                metadata[12]["id"] = 2
+                fake = FakeWin32(metadata)
+                original = fake.user32.GetWindowThreadProcessId.side_effect
+                counts = {}
+                def change_before(hwnd, *args):
+                    counts[hwnd] = counts.get(hwnd, 0) + 1
+                    if hwnd == 10 and counts[hwnd] == 2:
+                        if label == "changed":
+                            metadata[10]["pid"] = 78
+                        elif label == "destroyed":
+                            del metadata[10]
+                        else:
+                            fake.failures["GetWindowThreadProcessId", 10] = 5
+                    return original(hwnd, *args)
+                fake.user32.GetWindowThreadProcessId.side_effect = change_before
+                diagnostic = self.rejected(fake).supplementary_diagnostics
+                self.assertEqual(diagnostic["status"], "UNAVAILABLE")
+                self.assertEqual(diagnostic["queries"], [])
+                self.assertFalse(any(name in ("GetWindowTextW", "SendMessageTimeoutW") for name, _, _ in fake.calls))
+
+    def test_rejected_qualification_does_not_expand_text_scope(self):
+        for label in ("unknown", "hidden", "disabled", "ambiguous", "unowned", "hidden-static",
+                      "extra-static", "icon", "extra-button", "hidden-button", "disabled-button", "wrong-pid"):
+            with self.subTest(label=label):
+                metadata = dialog_metadata()
+                metadata[12]["id"] = 2
+                if label == "unknown":
+                    metadata[90] = {"class": "Unknown"}
+                elif label == "ambiguous":
+                    metadata[90] = {"class": "#32770"}
+                elif label == "hidden":
+                    metadata[10]["visible"] = 0
+                elif label == "disabled":
+                    metadata[10]["enabled"] = 0
+                elif label == "unowned":
+                    metadata[10]["owner"] = 0
+                elif label == "hidden-static":
+                    metadata[11]["visible"] = 0
+                elif label == "extra-static":
+                    metadata[13] = dict(metadata[11])
+                elif label == "icon":
+                    metadata[11]["style"] = 3
+                elif label == "extra-button":
+                    metadata[13] = dict(metadata[12])
+                elif label == "hidden-button":
+                    metadata[12]["visible"] = 0
+                elif label == "disabled-button":
+                    metadata[12]["enabled"] = 0
+                else:
+                    metadata[12]["pid"] = 78
+                fake = FakeWin32(metadata)
+                with self.assertRaises(ValueError) as raised:
+                    fake.observer(self).snapshot(77)
+                self.assertFalse(hasattr(raised.exception, "supplementary_diagnostics"))
+                self.assertFalse(any(name in ("GetWindowTextW", "SendMessageTimeoutW") for name, _, _ in fake.calls))
+
+    def test_rejected_uses_shared_deadline_without_extra_query_or_retry(self):
+        for phase in ("before", "after-caption", "body-timeout"):
+            with self.subTest(phase=phase):
+                metadata = dialog_metadata()
+                metadata[12]["id"] = 2
+                fake = FakeWin32(metadata)
+                windows = fake.observer(self)
+                windows.deadline = 20
+                original = fake.user32.GetWindowTextW.side_effect
+                def expire(*args):
+                    returned = original(*args)
+                    windows.deadline = 10.0005 if phase == "after-caption" else 10.025
+                    return returned
+                fake.user32.GetWindowTextW.side_effect = expire
+                if phase == "before":
+                    windows.deadline = 10.0005
+                with patch.object(capture.time, "monotonic", return_value=10):
+                    diagnostic = self.rejected(fake, windows).supplementary_diagnostics
+                queries = [args for name, _, args in fake.calls if name == "SendMessageTimeoutW"]
+                if phase == "body-timeout":
+                    self.assertEqual(len(queries), 1)
+                    self.assertTrue(0 < queries[0][4] <= 25)
+                    self.assertEqual(windows.deadline, 10.025)
+                else:
+                    self.assertEqual(queries, [])
+                    self.assertNotEqual(diagnostic["status"], "OBSERVED")
+                    self.assertEqual(sum(name == "GetWindowTextW" for name, _, _ in fake.calls), 0 if phase == "before" else 1)
+
+    def test_rejected_diagnostics_transfer_to_json_and_owned_cleanup(self):
+        metadata = dialog_metadata()
+        metadata[12]["id"] = 2
+        fake = FakeWin32(metadata)
+        windows = fake.observer(self)
+        process = unittest.mock.Mock(pid=77, returncode=-9)
+        process.poll.return_value = None
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executable = root / "trusted.exe"
+            executable.write_bytes(b"fixture")
+            with patch.object(capture, "os", SimpleNamespace(name="nt")), patch.object(capture, "DialogWindows", return_value=windows), patch.object(capture.subprocess, "Popen", return_value=process):
+                result = capture.observe_recoverable_dialog(executable, root / "input.pmm", root / "observation")
+            self.assertEqual(result["status"], "FAIL")
+            self.assertEqual(result["cause"], "Unexpected dialog Static or IDOK metadata")
+            self.assertEqual(result["button_commands"], 0)
+            self.assertNotIn("api_error", result)
+            self.assertNotIn("dialog", result)
+            self.assertNotIn("main_window", result)
+            self.assertEqual(result["supplementary_diagnostics"]["status"], "OBSERVED")
+            self.assertTrue(all(window["text"] is None for window in result["partial_windows"]))
+            self.assertEqual(json.loads((root / "observation/observation.json").read_text()), result)
+            process.kill.assert_called_once_with()
+            process.wait.assert_called_once_with(timeout=10)
+
     def test_metadata_only_for_hidden_main_ime_buttons_and_irrelevant_children(self):
         fake = FakeWin32({20: {"class": "Polygon Movie Maker", "visible": 0},
                           30: {"class": "IME", "visible": 0},

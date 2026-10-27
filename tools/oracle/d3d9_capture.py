@@ -172,6 +172,83 @@ class DialogWindows:
             raise self.api_error(context)
         return result.value
 
+    def rejected_dialog_diagnostics(self, error, dialog, static, button):
+        diagnostic = {"status": "UNAVAILABLE", "queries": [], "revalidations": [],
+                      "limit": "Metadata and text reads are not atomic"}
+        error.supplementary_diagnostics = diagnostic
+
+        def remaining():
+            milliseconds = int((self.deadline - time.monotonic()) * 1000)
+            if milliseconds < 1:
+                raise ValueError("GUI observation deadline has less than one millisecond remaining")
+            return min(200, milliseconds)
+
+        def revalidate(stage):
+            self.stage = stage
+            validation = {"stage": stage, "windows": [], "status": "UNAVAILABLE"}
+            diagnostic["revalidations"].append(validation)
+            for expected in (dialog, static, button):
+                hwnd = expected["hwnd"]
+                actual = {"hwnd": hwnd}
+                validation["windows"].append(actual)
+                remaining()
+                pid = self.w.DWORD()
+                tid, context = self.api_call("GetWindowThreadProcessId", hwnd, self.c.byref(pid))
+                if not tid:
+                    raise self.api_error(context)
+                actual.update(pid=pid.value, tid=tid)
+                remaining()
+                name = self.c.create_unicode_buffer(256)
+                returned, context = self.api_call("GetClassNameW", hwnd, name, len(name))
+                if not returned:
+                    raise self.api_error(context)
+                actual["class"] = name.value
+                fields = [("parent", "GetParent", ()), ("owner", "GetWindow", (4,)),
+                          ("visible", "IsWindowVisible", ()), ("enabled", "IsWindowEnabled", ())]
+                if expected is not dialog:
+                    fields.append(("id", "GetDlgCtrlID", ()))
+                if expected is static:
+                    fields.append(("style", "GetWindowLongW", (-16,)))
+                for key, api, arguments in fields:
+                    remaining()
+                    returned, context = self.api_call(api, hwnd, *arguments)
+                    if not returned and context["last_error"]:
+                        raise self.api_error(context)
+                    actual[key] = bool(returned) if key in ("visible", "enabled") else returned or 0
+                if any(expected[key] != value for key, value in actual.items()):
+                    validation["status"] = "CHANGED"
+                    raise ValueError("Rejected dialog identity changed")
+            validation["status"] = "MATCHED"
+
+        try:
+            for kind, window in (("caption", dialog), ("body", static)):
+                revalidate(f"supplementary {kind} before")
+                self.stage = f"supplementary {kind}"
+                text = self.c.create_unicode_buffer(4096)
+                timeout = remaining()
+                if kind == "caption":
+                    returned, context = self.api_call("GetWindowTextW", window["hwnd"], text, len(text))
+                else:
+                    result = self.c.c_size_t()
+                    returned, context = self.api_call(
+                        "SendMessageTimeoutW", window["hwnd"], 13, len(text), self.c.addressof(text),
+                        0x22, timeout, self.c.byref(result), message=13, flags=0x22, timeout=timeout)
+                query = {"kind": kind, "context": context, "status": "UNAVAILABLE"}
+                diagnostic["queries"].append(query)
+                if not returned and (kind == "body" or context["last_error"]):
+                    query["api_error"] = context
+                    raise self.api_error(context)
+                revalidate(f"supplementary {kind} after")
+                query.update(status="OBSERVED", text=text.value)
+                if kind == "body":
+                    query["message_result"] = result.value
+                diagnostic["status"] = "PARTIAL"
+            diagnostic["status"] = "OBSERVED"
+        except (OSError, ValueError) as secondary:
+            diagnostic["cause"] = str(secondary)
+            if hasattr(secondary, "api_error"):
+                diagnostic["api_error"] = secondary.api_error
+
     def snapshot(self, pid):
         self.records = records = []
         errors = []
@@ -254,7 +331,13 @@ class DialogWindows:
                     statics[0]["style"] & 0x1f not in (0, 1, 2, 11, 12) or
                     len(buttons) != 1 or buttons[0]["id"] != 1 or
                     not buttons[0]["visible"] or not buttons[0]["enabled"]):
-                    raise ValueError("Unexpected dialog Static or IDOK metadata")
+                    error = ValueError("Unexpected dialog Static or IDOK metadata")
+                    if (dialog["owner"] and len(statics) == 1 and statics[0]["visible"] and
+                        statics[0]["style"] & 0x1f in (0, 1, 2, 11, 12) and
+                        len(buttons) == 1 and buttons[0]["id"] != 1 and
+                        buttons[0]["visible"] and buttons[0]["enabled"]):
+                        self.rejected_dialog_diagnostics(error, dialog, statics[0], buttons[0])
+                    raise error
                 self.stage = "dialog caption"
                 text = self.c.create_unicode_buffer(4096)
                 returned, context = self.api_call("GetWindowTextW", dialog["hwnd"], text, len(text))
@@ -373,6 +456,8 @@ def observe_recoverable_dialog(executable, pmm, directory, timeout=30):
             result["api_error"] = error.api_error
         if hasattr(error, "partial_windows"):
             result["partial_windows"] = error.partial_windows
+        if hasattr(error, "supplementary_diagnostics"):
+            result["supplementary_diagnostics"] = error.supplementary_diagnostics
     finally:
         if process is not None:
             try:

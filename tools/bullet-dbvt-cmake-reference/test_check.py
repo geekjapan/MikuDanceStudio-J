@@ -85,7 +85,10 @@ class Controls(unittest.TestCase):
                 'CMAKE_CXX_FLAGS:STRING=\nUnrelated:STRING=first\nUnrelated:STRING=last\n'
                 'Unrelated:=ignored\nUnrelated:STRING\n=ignored\nUnrelated=ignored\n'
                 'CMAKE_GENERATOR_EXTRA:=ignored\n//CMAKE_GENERATOR:=Ninja\n'
-                '#CMAKE_GENERATOR_PLATFORM:=Win32\n')
+                '#CMAKE_GENERATOR_PLATFORM:=Win32\n'
+                ' Ordinary:STRING=value\n\t"Quoted:ordinary":STRING=value\n'
+                'CMAKE_GENERATOR :STRING=unrelated\nCMAKE_GENERATOR\t:STRING=unrelated\n'
+                '" CMAKE_GENERATOR":STRING=unrelated\n"CMAKE_GENERATOR ":STRING=unrelated\n')
         for newline in ('\n', '\r\n'):
             with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
@@ -115,6 +118,28 @@ class Controls(unittest.TestCase):
                             check.package_paths(graph, root)
                         self.assertFalse((root / 'resolved-package.json').exists())
                         self.assertEqual((root / 'native-CMakeCache.txt').read_bytes(), cache.read_bytes())
+
+    def test_package_cache_noncanonical_identity_spelling(self):
+        valid = ('CMAKE_GENERATOR:INTERNAL=Visual Studio 17 2022\n'
+                 'CMAKE_GENERATOR_PLATFORM:INTERNAL=x64\n'
+                 'CMAKE_HOME_DIRECTORY:INTERNAL=SOURCE\n')
+        for key, value in (('CMAKE_GENERATOR', 'Ninja'),
+                           ('CMAKE_GENERATOR_PLATFORM', 'Win32'), ('CMAKE_HOME_DIRECTORY', '/outside')):
+            for spelling in (' ' + key, '\t' + key, ' \t' + key,
+                             f'"{key}"', f' \t"{key}"'):
+                for suffix in (f':STRING={value}\n', f':={value}\n',
+                               f'={value}\n', ':INTERNAL\n', '\n'):
+                    for newline in ('\n', '\r\n'):
+                        with self.subTest(spelling=spelling, suffix=suffix, newline=repr(newline)), \
+                                tempfile.TemporaryDirectory() as folder:
+                            root = Path(folder)
+                            text = (valid + '# comment\n\n// comment\n' + spelling + suffix).replace('\n', newline)
+                            graph, cache, paths = self.package_cache_fixture(root, text)
+                            with patch.object(check, 'run', side_effect=paths), self.assertRaisesRegex(
+                                    ValueError, f'^malformed CMake cache key {key} at line 7$'):
+                                check.package_paths(graph, root)
+                            self.assertFalse((root / 'resolved-package.json').exists())
+                            self.assertEqual((root / 'native-CMakeCache.txt').read_bytes(), cache.read_bytes())
 
     def test_package_cache_duplicate_identity_diagnostic(self):
         for key, value in (('CMAKE_GENERATOR', 'Visual Studio 17 2022'),

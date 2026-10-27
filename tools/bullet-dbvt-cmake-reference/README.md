@@ -14,7 +14,7 @@ python -I tools/bullet-dbvt-cmake-reference/check.py record-build --out-dir out/
 python -I tools/bullet-dbvt-cmake-reference/check.py measure --out-dir out/ci/dbvt-reference
 ```
 
-`CONAN_HOME` must name a nonexistent directory directly inside `RUNNER_TEMP`. The workflow assigns a directory containing the run ID, attempt, and architecture. `prepare` captures the checkout, parents, event SHA, PR head and base, run, attempt, job key, runner image, and allowlisted `CL` and `_CL_` options. It saves the complete resolved Conan install graph. Cache paths use that graph's exact recipe revision, package ID, and package revision. The native CMake cache identifies the actual build and copied source directories.
+`CONAN_HOME` must name a nonexistent directory directly inside `RUNNER_TEMP`. The workflow assigns a directory containing the run ID, attempt, and architecture. `prepare` captures the checkout, parents, event SHA, PR head and base, run, attempt, job key, runner image, and allowlisted `CL` and `_CL_` options. It saves the complete resolved Conan install graph. Cache paths use that graph's exact recipe revision, package ID, and package revision. The native CMake cache identifies the actual build and copied source directories. Required identity keys must be unquoted and have no leading whitespace. Duplicate or malformed identity records fail with the key and physical line number after the raw cache is saved.
 
 The `dbvt-cmake-reference-x64` artifact contains these records.
 

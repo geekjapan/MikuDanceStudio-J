@@ -35,7 +35,18 @@ The ABI references are the [Microsoft x64 calling convention](https://learn.micr
 
 Rust obtains an actual `PFN_vkd3d_log` function pointer from C and calls it using the target candidate. C makes two independent `va_copy` objects and reads actual values through `va_arg`. One copy advances while the other must retain its first argument. Further fresh copies feed `vsnprintf` and `vfprintf` into a real temporary stream. A short first buffer must truncate, and a second fresh copy must reproduce the entire expected text.
 
-Four deliberate corruptions must fail the unchanged consumer assertions. They change the initial slot, shift the cursor, place an unpromoted float representation in a double slot, and reuse an advanced copy. The runner also compiles an intentionally invalid Rust configuration that rejects unpromoted `f32`, `i8`, and unsupported `u128` representations.
+Four deliberate corruptions must fail the actual C consumer comparisons. They change the initial slot, shift the cursor, place an unpromoted float representation in a double slot, and reuse an advanced copy. Each failed C condition emits `VALIST_REJECT field=<name>` and exits with code 86. Conditions evaluate once, including each `va_arg`. There are no platform assertion dialogs.
+
+| Corruption | Required rejected field |
+| --- | --- |
+| `wrong-slot` | `first_int` |
+| `wrong-offset` | `first_int` |
+| `wrong-promotion` | `promoted_double` (3.25) |
+| `wrong-copy` | `independent_copy` |
+
+The runner requires exit 86 and exactly one rejection marker naming the intended field. Missing, duplicate, or different markers, crashes, other exits, and timeouts fail the run.
+
+After a successful positive build, the runner compiles an intentionally invalid Rust configuration with JSON diagnostics. It requires exactly the three `E0308` errors at the `f32`, `i8`, and `u128` fixture expressions, with their expected promoted types. Unrelated compiler errors fail the run.
 
 Every fixture argument expression is wrapped by one evaluation counter. The successful call must evaluate exactly 14 arguments, and the C consumer must read all 14 in order. This tests this fixture's packing only. It does not prove future generator lowering.
 
@@ -43,4 +54,4 @@ Only the listed union representations are accepted. Aggregates, vectors, `long d
 
 `receipt.json` records exact command arrays, exits, host, source hashes before and in `finally`, and SHA256 for sources, binary, archive, IR, and raw logs. The four-host workflow uploads that evidence even after a failure. The evidence directory must be outside this source directory.
 
-A nonzero negative-control exit is diagnostic evidence; inspect its raw log to confirm the expected assertion. A compiler failure, timeout, queued job, or workflow file is not a successful ABI test. Neither C nor the prototype belongs in the product.
+Run `python3 tools/vkd3d-valist-probe/test_negative_gates.py` for cheap Python controls that reject false acceptance without launching a compiler or native process. The native runner retains raw diagnostics for independent inspection. A compiler failure, timeout, queued job, or workflow file is not a successful ABI test. Neither C nor the prototype belongs in the product.

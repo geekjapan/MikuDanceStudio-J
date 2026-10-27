@@ -1,0 +1,4 @@
+dispatch 0.2.0 (authors = ["Steven Sheldon"]) declares license = "MIT" in its Cargo.toml. Its
+package has no license file, and neither has its repository, http://github.com/SSheldon/rust-dispatch,
+at the published commit 82d6c7a5b75dc0c71c3f46f87bb6c16a476f7748 or on its default branch
+(checked 2026-10-26). No license text is reproduced here for it.

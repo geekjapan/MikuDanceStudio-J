@@ -1,13 +1,19 @@
 //! Can also run with rustc --test and only the pure mds-crtmath rlib.
 
+#[path = "pure_bullet/axis_sweep.rs"]
+mod axis_sweep;
 #[path = "pure_bullet/body_kernel.rs"]
 mod body_kernel;
+#[path = "pure_bullet/contact_solver.rs"]
+mod contact_solver;
 #[path = "../src/core/mod.rs"]
 mod core;
 #[path = "pure_bullet/joint_coordinates.rs"]
 mod joint_coordinates;
 #[path = "pure_bullet/joint_rows.rs"]
 mod joint_rows;
+#[path = "pure_bullet/joint_solver.rs"]
+mod joint_solver;
 #[path = "pure_bullet/math_vectors.rs"]
 mod math_vectors;
 #[path = "pure_bullet/pair_cache.rs"]
@@ -16,6 +22,9 @@ mod pair_cache;
 mod pilot_cases;
 #[path = "pure_bullet/shapes.rs"]
 mod shapes;
+
+#[path = "pure_bullet/simplex.rs"]
+mod simplex;
 
 use core::body::FreeBody;
 use core::math::{Quat, Vec3};
@@ -107,3 +116,18 @@ fn invalid_boundary_inputs_do_not_advance_the_clock() {
         .is_err());
     }
 }
+
+#[path = "pure_bullet/support.rs"]
+mod support;
+
+#[path = "pure_bullet/gjk_epa.rs"]
+mod gjk_epa;
+
+#[path = "pure_bullet/activation.rs"]
+mod activation;
+
+#[path = "pure_bullet/gjk_pair.rs"]
+mod gjk_pair;
+
+#[path = "pure_bullet/islands.rs"]
+mod islands;

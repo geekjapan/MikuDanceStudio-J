@@ -25,13 +25,22 @@ subject to the following restrictions:
 
 #![forbid(unsafe_code)]
 
+pub mod activation;
+pub mod axis_sweep;
 pub mod body;
+pub mod box_box;
 pub mod contact;
+pub mod contact_solver;
+pub mod gjk_epa;
+pub mod gjk_pair;
+pub mod islands;
 pub mod joint_coordinates;
 pub mod joint_rows;
 pub mod math;
 pub mod pair_cache;
 pub mod shape;
+pub mod simplex;
+pub mod solver;
 pub mod time;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

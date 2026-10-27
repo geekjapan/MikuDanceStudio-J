@@ -1285,7 +1285,6 @@ dependencies = [
  "mds-accessory",
  "mds-doc",
  "mds-formats",
- "mds-fx",
  "mds-kinect",
  "mds-math",
  "mds-media",
@@ -1361,6 +1360,7 @@ name = "mds-fx"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
+ "mds-formats",
 ]
 
 [[package]]

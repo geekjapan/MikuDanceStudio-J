@@ -114,15 +114,6 @@ pub(crate) fn posed_scene(doc: &Document) -> Vec<Option<PoseModel>> {
 /// the camera parent detach computes it (`command_dispatch.cpp` 243-263): in
 /// double, the Y term first, rounded once. `ApplyCameraReferenceModeChange`
 /// sums X first in float (`camera_reference.rs`); each matches its own C++.
-fn bone_world(file: &crate::ModelFile, m: &pmm::Model, bone: usize, mode: u8) -> Option<[f64; 3]> {
-    let pose = posed(file, m, mode, &[])?;
-    let b = pose.bones.get(bone)?;
-    let (p, t) = (b.position.map(f64::from), b.mat_init.0.map(f64::from));
-    Some(std::array::from_fn(|c| {
-        p[1] * t[4 + c] + p[0] * t[c] + p[2] * t[8 + c] + t[12 + c]
-    }))
-}
-
 impl Document {
     /// The frame-strip click (`HandleLButtonDown_FrameStripHit`,
     /// `ui_editor_click.cpp` 791-923): every model with an edited bone
@@ -130,7 +121,11 @@ impl Document {
     /// loses its edited marks (`bonePhysicsState`); the bone selection
     /// stays. Then the same seek, scroll and camera-mode refresh as
     /// [`crate::Command::SetFrame`].
-    pub(crate) fn click_frame(&mut self, frame: u32) {
+    pub(crate) fn click_frame(
+        &mut self,
+        frame: u32,
+        pose: &mut crate::CameraPoseProvider<'_>,
+    ) -> Result<(), Error> {
         let old = self.frame();
         for (m, e) in self.pmm.models.iter_mut().zip(&mut self.edit.models) {
             if m.bone_pose.iter().any(|p| p.flags[1] != 0) {
@@ -139,7 +134,7 @@ impl Document {
             }
         }
         self.pmm.timeline.current_frame = frame as i32;
-        self.seek_frame();
+        self.seek_frame(pose)
     }
 
     /// Button 494 (`command_panel_toggles.cpp` 658-690): selects every bone
@@ -381,7 +376,23 @@ impl Document {
     /// there was no parent before, and the parent bone becomes 0. Detaching
     /// moves the camera to the parent bone's world position, distance -20
     /// and no rotation.
-    pub(crate) fn set_camera_parent_model(&mut self, slot: Option<u8>) {
+    pub(crate) fn set_camera_parent_model(
+        &mut self,
+        slot: Option<u8>,
+        pose: &mut crate::CameraPoseProvider<'_>,
+    ) -> Result<(), Error> {
+        let anchors = if slot.is_none()
+            && self.pmm.appearance.camera_parent_model >= 0
+            && self
+                .pmm
+                .models
+                .iter()
+                .any(|m| i32::from(m.slot) == self.pmm.appearance.camera_parent_model)
+        {
+            Some(pose(self, crate::CameraPoseRequest::Current)?)
+        } else {
+            None
+        };
         let a = &self.pmm.appearance;
         match slot.filter(|s| self.pmm.models.iter().any(|m| m.slot == *s)) {
             Some(s) => {
@@ -396,18 +407,9 @@ impl Document {
             None if slot.is_some() => {}
             None => {
                 let parent = a.camera_parent_model;
-                let bone = a.camera_parent_bone.max(0) as usize;
-                let mode = self.pmm.physics.playback_mode;
-                if let Some(i) = self
-                    .pmm
-                    .models
-                    .iter()
-                    .position(|m| i32::from(m.slot) == parent)
-                {
-                    if let Some(w) = bone_world(&self.models[i], &self.pmm.models[i], bone, mode) {
-                        for (c, v) in w.into_iter().enumerate() {
-                            self.pmm.camera_state[c] = v as f32;
-                        }
+                if self.pmm.models.iter().any(|m| i32::from(m.slot) == parent) {
+                    if let Some(b) = anchors.and_then(|a| a.parent) {
+                        self.pmm.camera_state[..3].copy_from_slice(&b.detach_point());
                     }
                     self.pmm.camera_state[5] = -20.0;
                     self.pmm.camera_state[6..].fill(0.0);
@@ -415,6 +417,7 @@ impl Document {
                 self.pmm.appearance.camera_parent_model = -1;
             }
         }
+        Ok(())
     }
 
     /// The camera parent bone combo (450, `command_dispatch.cpp` 277-293):
@@ -437,7 +440,11 @@ impl Document {
     /// accessory state; in model mode the attachment transform is no longer
     /// suppressed. Turning it off in model mode with the selected model as
     /// the camera parent does the same to the suppression.
-    pub(crate) fn set_follow_camera(&mut self, on: bool) {
+    pub(crate) fn set_follow_camera(
+        &mut self,
+        on: bool,
+        pose: &mut crate::CameraPoseProvider<'_>,
+    ) -> Result<(), Error> {
         let p = &mut self.pmm;
         p.appearance.follow_camera = u8::from(on);
         if on {
@@ -460,6 +467,15 @@ impl Document {
                 p.appearance.suppress_camera_transform = 0;
             }
         }
+        if !self.camera_mode()
+            && (on
+                || self.pmm.appearance.camera_parent_model >= 0
+                    && self.pmm.appearance.camera_parent_model
+                        == i32::from(self.pmm.selected_model_slot))
+        {
+            self.post_model_reload(pose(self, crate::CameraPoseRequest::Current)?);
+        }
+        Ok(())
     }
 
     /// Copy curve (`CopyInterpolationCurve`, `command_frame_edit.cpp`

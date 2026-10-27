@@ -50,6 +50,7 @@ fn vector(out: &mut String, v: Vec3) {
 
 #[test]
 fn native_contact_traces_match_every_initialized_bit() {
+    let mut simplex = VoronoiSimplexSolver::default();
     let mut expected = include_str!("../contact_data/native.tsv").lines();
     let mut pair =
         PairManifold::new(Shape::Sphere { radius: 1.0 }, Shape::Sphere { radius: 1.0 }).unwrap();
@@ -92,15 +93,15 @@ fn native_contact_traces_match_every_initialized_bit() {
                     if pair.count == 0 {
                         let mut probe = PairManifold::new(pair.shapes[0], pair.shapes[1]).unwrap();
                         probe.plane_contact(Quat::IDENTITY, [a, b], swapped);
-                        pair.process(a, b);
+                        pair.process(a, b, &mut simplex);
                         if probe.count == 0 && pair.count > 0 {
                             perturb_only[usize::from(swapped)] = true;
                         }
                     } else {
-                        pair.process(a, b);
+                        pair.process(a, b, &mut simplex);
                     }
                 } else {
-                    pair.process(a, b);
+                    pair.process(a, b, &mut simplex);
                 }
             }
             "C" => {
@@ -120,6 +121,7 @@ fn native_contact_traces_match_every_initialized_bit() {
                     applied_impulse: input.word(),
                     lateral_impulses: [input.word(), input.word()],
                     lifetime: input.integer() as i32,
+                    ..ContactPoint::EMPTY
                 };
                 if pair.count == 4 && pair.nearest(p).is_none() {
                     replaced[pair.replacement(p)] = true;
@@ -167,13 +169,19 @@ fn native_contact_traces_match_every_initialized_bit() {
 }
 
 #[test]
-fn unsupported_pairs_have_no_manifold() {
+fn dedicated_and_generic_pairs_dispatch_without_plane_plane() {
     let b = Shape::box_shape(Vec3([1.0; 3]));
     let c = Shape::capsule_y(1.0, 1.0);
     let p = Shape::static_plane(Vec3([0.0, 1.0, 0.0]), 0.0);
-    for (a, b) in [(b, b), (b, c), (c, c), (p, p)] {
-        assert!(PairManifold::new(a, b).is_none());
+    assert_eq!(PairManifold::new(b, b).unwrap().kind(), PairKind::BoxBox);
+    let s = Shape::Sphere { radius: 1.0 };
+    for (a, b) in [(s, b), (b, s), (b, c), (c, b), (c, s), (s, c)] {
+        assert_eq!(
+            PairManifold::new(a, b).unwrap().kind(),
+            PairKind::ConvexConvex
+        );
     }
+    assert!(PairManifold::new(p, p).is_none());
 }
 
 #[test]
@@ -186,14 +194,19 @@ fn cache_threshold_ties_persistence_and_swap_removal() {
         distance: -0.1,
         ..ContactPoint::EMPTY
     };
+    assert!(m.contacts_mut().is_empty());
     let seed = ContactPoint {
         lifetime: 17,
-        applied_impulse: 3.0,
-        lateral_impulses: [-2.0, 4.0],
         ..point(0.0)
     };
     m.insert(seed);
+    let [cached] = m.contacts_mut() else {
+        panic!("one inserted contact must expose one mutable slot");
+    };
+    cached.applied_impulse = 3.0;
+    cached.lateral_impulses = [-2.0, 4.0];
     m.insert(point(0.5));
+    assert_eq!(m.contacts_mut().len(), 2);
     assert_eq!(m.nearest(point(0.25)), None, "merge threshold is strict");
     m.threshold = 0.3;
     assert_eq!(
@@ -212,8 +225,8 @@ fn cache_threshold_ties_persistence_and_swap_removal() {
     );
     m.remove(0);
     assert_eq!(
-        m.contacts(),
-        &[point(0.5)],
+        m.contacts_mut(),
+        &mut [point(0.5)],
         "removal fills the hole with the last slot"
     );
 
@@ -236,6 +249,7 @@ fn cache_threshold_ties_persistence_and_swap_removal() {
                 friction: 1.0,
                 ..body
             },
+            &mut VoronoiSimplexSolver::default(),
         );
         assert_eq!(m.contacts().len(), 1);
         let actual = m.contacts()[0].combined_friction;
@@ -290,5 +304,50 @@ fn full_cache_keeps_deepest_and_uses_earliest_area_tie() {
             ..ContactPoint::EMPTY
         }),
         0
+    );
+}
+
+#[test]
+fn lateral_state_survives_refresh_and_move_but_replacement_only_restores_impulses() {
+    let mut pair =
+        PairManifold::new(Shape::Sphere { radius: 1.0 }, Shape::Sphere { radius: 1.0 }).unwrap();
+    pair.threshold = 0.1;
+    let point = ContactPoint {
+        distance: -0.01,
+        normal_on_b: Vec3([0.0, 1.0, 0.0]),
+        lateral_initialized: true,
+        lateral_directions: [Vec3([1.0, 2.0, 3.0]), Vec3([4.0, 5.0, 6.0])],
+        applied_impulse: 0.75,
+        lateral_impulses: [0.25, -0.5],
+        lifetime: 4,
+        ..ContactPoint::EMPTY
+    };
+    pair.insert(point);
+    pair.refresh(Transform::IDENTITY, Transform::IDENTITY);
+    assert_eq!(pair.points[0].lateral_directions, point.lateral_directions);
+    assert!(pair.points[0].lateral_initialized);
+    let fresh = ContactPoint {
+        distance: -0.02,
+        ..ContactPoint::EMPTY
+    };
+    pair.insert(fresh);
+    assert!(!pair.points[0].lateral_initialized);
+    assert_eq!(pair.points[0].lateral_directions, [Vec3::ZERO; 2]);
+    assert_eq!(pair.points[0].lifetime, 5);
+    assert_eq!(pair.points[0].applied_impulse, 0.75);
+    assert_eq!(pair.points[0].lateral_impulses, [0.25, -0.5]);
+    pair.points[0] = point;
+    pair.points[1] = ContactPoint {
+        local_a: Vec3([2.0, 0.0, 0.0]),
+        ..point
+    };
+    pair.count = 2;
+    pair.remove(0);
+    assert_eq!(
+        pair.points[0],
+        ContactPoint {
+            local_a: Vec3([2.0, 0.0, 0.0]),
+            ..point
+        }
     );
 }

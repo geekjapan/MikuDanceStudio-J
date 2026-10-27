@@ -1,0 +1,72 @@
+name: Bullet joint host output probe
+
+on:
+  push:
+    branches: [w3-bullet-joint-host-probe]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bullet-joint-host-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnostic:
+    name: Joint diagnostic (${{ matrix.profile }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            profile: clang-helper
+          - os: windows-2022
+            profile: msvc-ffi-default
+          - os: windows-2022
+            profile: msvc-cmake-win32
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare evidence and the pinned toolchain
+        shell: bash
+        run: |
+          PROBE_OUT="$RUNNER_TEMP/bullet-joint-host-probe"
+          echo "PROBE_OUT=$PROBE_OUT" >> "$GITHUB_ENV"
+          mkdir -p "$PROBE_OUT"
+          set -o pipefail
+          rustup toolchain install 1.95.0 --profile minimal --component clippy 2>&1 | tee "$PROBE_OUT/toolchain-install.log"
+          git ls-files --stage recipes/bullet275/bullet-src/src rust/crates/mds-bullet rust/crates/mds-bullet-sys/shim rust/crates/mds-crtmath tools/bullet-rust-solver-check tools/bullet-joint-host-probe > "$PROBE_OUT/source-manifest.txt"
+          python3 -m unittest discover -s tools/bullet-joint-host-probe -v 2>&1 | tee "$PROBE_OUT/helper-tests.log"
+      - name: Capture Linux native and full Rust output
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          CXX: clang++
+        run: |
+          set -o pipefail
+          python3 tools/bullet-joint-host-probe/probe.py --profile clang-helper --out-dir "$PROBE_OUT/capture" 2>&1 | tee "$PROBE_OUT/check.log"
+      - name: Activate MSVC and capture the selected native profile and full Rust output
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          @echo on
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 > "%PROBE_OUT%\vsdevcmd.log" 2>&1
+          if errorlevel 1 exit /b 1
+          where cl > "%PROBE_OUT%\compiler-path.txt" 2>&1
+          if errorlevel 1 exit /b 1
+          set CXX=cl
+          python tools\bullet-joint-host-probe\probe.py --profile ${{ matrix.profile }} --out-dir "%PROBE_OUT%\capture" > "%PROBE_OUT%\check.log" 2>&1
+          set CHECK_RESULT=%ERRORLEVEL%
+          type "%PROBE_OUT%\check.log"
+          exit /b %CHECK_RESULT%
+      - name: Save complete captures, exact differences, adapters and provenance
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bullet-joint-host-${{ matrix.profile }}
+          path: ${{ runner.temp }}/bullet-joint-host-probe
+          if-no-files-found: error

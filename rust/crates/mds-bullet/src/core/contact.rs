@@ -1,12 +1,17 @@
 //! Altered Rust translation of Bullet 2.75 narrowphase and persistent manifold.
 //! Includes the vendored MMD local-coordinate patches. See mod.rs for zlib notice.
 
+use super::box_box::box_box_contacts;
 use super::math::{Basis, Quat, Transform, Vec3};
 use super::shape::Shape;
+use super::simplex::VoronoiSimplexSolver;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PairKind {
     SphereSphere,
+    BoxBox,
+    CapsuleCapsule,
+    ConvexConvex,
     /// Manifold body A is the convex input and body B is the plane input.
     ConvexPlane {
         swapped: bool,
@@ -33,10 +38,12 @@ pub struct ContactPoint {
     pub applied_impulse: f32,
     pub lateral_impulses: [f32; 2],
     pub lifetime: i32,
+    pub lateral_initialized: bool,
+    pub lateral_directions: [Vec3; 2],
 }
 
 impl ContactPoint {
-    const EMPTY: Self = Self {
+    pub const EMPTY: Self = Self {
         local_a: Vec3::ZERO,
         local_b: Vec3::ZERO,
         world_a: Vec3::ZERO,
@@ -48,6 +55,8 @@ impl ContactPoint {
         applied_impulse: 0.0,
         lateral_impulses: [0.0; 2],
         lifetime: 0,
+        lateral_initialized: false,
+        lateral_directions: [Vec3::ZERO; 2],
     };
 }
 
@@ -64,12 +73,18 @@ impl PairManifold {
         use Shape::*;
         let kind = match (shape0, shape1) {
             (Sphere { .. }, Sphere { .. }) => PairKind::SphereSphere,
+            (Box { .. }, Box { .. }) => PairKind::BoxBox,
+            (CapsuleY { .. }, CapsuleY { .. }) => PairKind::CapsuleCapsule,
             (Sphere { .. } | Box { .. } | CapsuleY { .. }, StaticPlane { .. }) => {
                 PairKind::ConvexPlane { swapped: false }
             }
             (StaticPlane { .. }, Sphere { .. } | Box { .. } | CapsuleY { .. }) => {
                 PairKind::ConvexPlane { swapped: true }
             }
+            (
+                Sphere { .. } | Box { .. } | CapsuleY { .. },
+                Sphere { .. } | Box { .. } | CapsuleY { .. },
+            ) => PairKind::ConvexConvex,
             _ => return None,
         };
         let a = shape0.angular_motion_disc() * 0.02;
@@ -96,9 +111,33 @@ impl PairManifold {
         &self.points[..self.count]
     }
 
-    pub fn process(&mut self, body0: ContactBody, body1: ContactBody) {
+    pub fn contacts_mut(&mut self) -> &mut [ContactPoint] {
+        &mut self.points[..self.count]
+    }
+
+    pub fn process(
+        &mut self,
+        body0: ContactBody,
+        body1: ContactBody,
+        simplex: &mut VoronoiSimplexSolver,
+    ) {
         let bodies = [body0, body1];
         match self.kind {
+            PairKind::ConvexConvex => {
+                let sum = self.shapes[1].margin() as f64
+                    + (self.threshold as f64 + self.shapes[0].margin() as f64);
+                if let Some(point) = super::gjk_pair::closest_points(
+                    self.shapes,
+                    [body0.world, body1.world],
+                    (sum * sum) as f32,
+                    simplex,
+                )
+                .contact
+                {
+                    self.add_contact(point.normal_on_b, point.point_on_b, point.distance, bodies);
+                }
+                self.refresh(body0.world, body1.world);
+            }
             PairKind::SphereSphere => {
                 let Shape::Sphere { radius: a } = self.shapes[0] else {
                     unreachable!()
@@ -120,6 +159,29 @@ impl PairManifold {
                         length - (a + b),
                         bodies,
                     );
+                }
+                self.refresh(body0.world, body1.world);
+            }
+            PairKind::CapsuleCapsule => {
+                if let Some((normal, point, distance)) = capsule_capsule_contact(
+                    self.shapes[0],
+                    body0.world,
+                    self.shapes[1],
+                    body1.world,
+                    self.threshold,
+                ) {
+                    if distance < self.threshold {
+                        self.add_contact(normal, point, distance, bodies);
+                    }
+                }
+                self.refresh(body0.world, body1.world);
+            }
+            PairKind::BoxBox => {
+                for point in
+                    box_box_contacts(self.shapes[0], body0.world, self.shapes[1], body1.world)
+                        .unwrap()
+                {
+                    self.add_contact(point.normal_on_b, point.point_on_b, point.distance, bodies);
                 }
                 self.refresh(body0.world, body1.world);
             }
@@ -325,7 +387,7 @@ fn local_point(transform: Transform, point: Vec3, order: [u8; 3]) -> Vec3 {
     }))
 }
 
-fn plane_space(n: Vec3) -> Vec3 {
+pub(crate) fn plane_space(n: Vec3) -> Vec3 {
     let [x, y, z] = n.0;
     if z.abs() > std::f32::consts::FRAC_1_SQRT_2 {
         let k = 1.0 / (y * y + z * z).sqrt();
@@ -339,3 +401,89 @@ fn plane_space(n: Vec3) -> Vec3 {
 #[cfg(test)]
 #[path = "../../tests/pure_bullet/contacts.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/pure_bullet/box_box.rs"]
+mod box_box_tests;
+
+fn capsule_capsule_contact(
+    shape_a: Shape,
+    a: Transform,
+    shape_b: Shape,
+    b: Transform,
+    threshold: f32,
+) -> Option<(Vec3, Vec3, f32)> {
+    let Shape::CapsuleY {
+        radius: ra,
+        half_height: ha,
+    } = shape_a
+    else {
+        unreachable!()
+    };
+    let Shape::CapsuleY {
+        radius: rb,
+        half_height: hb,
+    } = shape_b
+    else {
+        unreachable!()
+    };
+    let da = Vec3(std::array::from_fn(|i| a.basis.0[i][1]));
+    let db = Vec3(std::array::from_fn(|i| b.basis.0[i][1]));
+    let tr = b.origin.sub(a.origin);
+    let [x, y, z] = da.0;
+    let dot = (db.0[2] * z + db.0[0] * x) + db.0[1] * y;
+    let at = (tr.0[2] * z + tr.0[0] * x) + tr.0[1] * y;
+    let bt = (tr.0[2] * db.0[2] + tr.0[1] * db.0[1]) + tr.0[0] * db.0[0];
+    let denom = 1.0 - dot * dot;
+    // Native comparisons are lower-first even for inverted or NaN raw bounds.
+    let clamp_a = |value| {
+        if value < -ha {
+            -ha
+        } else if value > ha {
+            ha
+        } else {
+            value
+        }
+    };
+    let mut ta = if denom == 0.0 {
+        0.0
+    } else {
+        clamp_a((at - bt * dot) / denom)
+    };
+    let mut tb = ta * dot - bt;
+    if tb < -hb {
+        tb = -hb;
+        ta = clamp_a(tb * dot + at);
+    } else if tb > hb {
+        tb = hb;
+        ta = clamp_a(tb * dot + at);
+    }
+    let offset_b = db.scale(tb);
+    let pts = tr.sub(da.scale(ta)).add(offset_b);
+    let [px, py, pz] = pts.0;
+    let len2 = (pz * pz + py * py) + px * px;
+    let distance = (len2.sqrt() - ra) - rb;
+    if distance > threshold {
+        return None;
+    }
+    let normal = if len2 <= f32::EPSILON * f32::EPSILON {
+        if z.abs() > 0.70710677 {
+            let inv = 1.0 / (z * z + y * y).sqrt();
+            Vec3([0.0, -(z * inv), inv * y])
+        } else {
+            let inv = 1.0 / (x * x + y * y).sqrt();
+            Vec3([-(y * inv), x * inv, 0.0])
+        }
+    } else {
+        pts.scale(-(1.0 / len2.sqrt()))
+    };
+    Some((
+        normal,
+        b.origin.add(offset_b).add(normal.scale(rb)),
+        distance,
+    ))
+}
+
+#[cfg(test)]
+#[path = "../../tests/pure_bullet/capsule_capsule.rs"]
+mod capsule_capsule_tests;

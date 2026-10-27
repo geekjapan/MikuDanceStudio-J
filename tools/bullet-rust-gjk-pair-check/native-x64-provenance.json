@@ -1,0 +1,64 @@
+{
+  "run_id": 40425101852,
+  "head": "217c54d4e95829ea7761823c7b8c66eff2e6b873",
+  "artifact_id": 12699497293,
+  "zip_sha256": "231a23de72e46edc20215f26c2ecdd4bd2ae91232b9ae517ca61a03e9c213656",
+  "member": "capture/compact-native.tsv",
+  "raw_and_lf_sha256": "8dd1bbcc577f1f50594d444e925c45a9eb7fe7bcf9f1b991db3f5b40cf2f66ad",
+  "exact_differences": [
+    [
+      1252,
+      "query.axis.x",
+      "7fc00000",
+      "ffc00000"
+    ],
+    [
+      1252,
+      "query.axis.y",
+      "7fc00000",
+      "ffc00000"
+    ],
+    [
+      1252,
+      "query.axis.z",
+      "7fc00000",
+      "ffc00000"
+    ],
+    [
+      1253,
+      "query.axis.x",
+      "7fc00000",
+      "ffc00000"
+    ],
+    [
+      1253,
+      "query.axis.y",
+      "7fc00000",
+      "ffc00000"
+    ],
+    [
+      1253,
+      "query.axis.z",
+      "7fc00000",
+      "ffc00000"
+    ],
+    [
+      1411,
+      "query.axis.x",
+      "7fc00000",
+      "ffc00000"
+    ],
+    [
+      1411,
+      "query.axis.y",
+      "7fc00000",
+      "ffc00000"
+    ],
+    [
+      1411,
+      "query.axis.z",
+      "7fc00000",
+      "ffc00000"
+    ]
+  ]
+}

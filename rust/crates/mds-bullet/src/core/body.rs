@@ -135,11 +135,19 @@ pub struct BodySnapshot {
 /// Sleeping, activation, motion states and world registration are outside this kernel.
 pub struct RigidBody {
     state: BodySnapshot,
+    linear_factor: Vec3,
+    angular_factor: Vec3,
+    friction: f32,
+    restitution: f32,
 }
 
 impl RigidBody {
     pub fn new(init: BodyInit) -> Self {
         let mut body = Self {
+            friction: 0.5,
+            restitution: 0.0,
+            linear_factor: Vec3([1.0; 3]),
+            angular_factor: Vec3([1.0; 3]),
             state: BodySnapshot {
                 inverse_mass: 0.0,
                 inverse_inertia_local: Vec3::ZERO,
@@ -163,6 +171,38 @@ impl RigidBody {
         body.set_mass_properties(init.mass, init.local_inertia);
         body.update_inertia_tensor();
         body
+    }
+
+    pub fn contact_body(&self) -> super::contact::ContactBody {
+        super::contact::ContactBody {
+            world: self.state.world,
+            friction: self.friction,
+            restitution: self.restitution,
+        }
+    }
+
+    pub fn set_friction(&mut self, friction: f32) {
+        self.friction = friction;
+    }
+
+    pub fn set_restitution(&mut self, restitution: f32) {
+        self.restitution = restitution;
+    }
+
+    pub fn linear_factor(&self) -> Vec3 {
+        self.linear_factor
+    }
+
+    pub fn angular_factor(&self) -> Vec3 {
+        self.angular_factor
+    }
+
+    pub fn set_linear_factor(&mut self, factor: Vec3) {
+        self.linear_factor = factor;
+    }
+
+    pub fn set_angular_factor(&mut self, factor: Vec3) {
+        self.angular_factor = factor;
     }
 
     pub fn snapshot(&self) -> BodySnapshot {
@@ -196,11 +236,15 @@ impl RigidBody {
     }
 
     pub fn add_force(&mut self, force: Vec3) {
-        self.state.total_force = self.state.total_force.add(force.scale(1.0));
+        self.state.total_force = self.state.total_force.add(Vec3(std::array::from_fn(|i| {
+            force.0[i] * self.linear_factor.0[i]
+        })));
     }
 
     pub fn add_torque(&mut self, torque: Vec3) {
-        self.state.total_torque = self.state.total_torque.add(torque.scale(1.0));
+        self.state.total_torque = self.state.total_torque.add(Vec3(std::array::from_fn(|i| {
+            torque.0[i] * self.angular_factor.0[i]
+        })));
     }
 
     pub fn apply_gravity(&mut self) {

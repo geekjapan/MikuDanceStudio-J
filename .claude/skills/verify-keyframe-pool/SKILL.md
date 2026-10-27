@@ -193,13 +193,15 @@ Run the check if the diff touches any of these:
   case 438), and the pool
   setup in `add_model.cpp` / `pmx_load.cpp` / `pmd_load.cpp`.
 
-List what changed in the covered files since the sync commit:
+List what changed in the covered files since the sync tree:
 
 ```sh
-git diff --stat 4e5432f -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp include/mikudancestudio/ported_funcs.hpp include/mikudancestudio/bone_layout.hpp include/mikudancestudio/panel_controls.hpp src/window/command_file_menu.cpp src/model/bone_sort.cpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp src/model/pmd_load.cpp
+git diff --stat 75fb8a166e17a7045937f6b7321633213da326f8 -- src/model/keyframe_common.hpp src/model/key_registrars.cpp src/model/model_keyframe_edit.cpp src/model/model_init.cpp include/mikudancestudio/model.hpp include/mikudancestudio/model_layout.hpp include/mikudancestudio/ported_funcs.hpp include/mikudancestudio/bone_layout.hpp include/mikudancestudio/panel_controls.hpp src/window/command_file_menu.cpp src/model/bone_sort.cpp src/window/command_frame_edit.cpp src/window/command_frame_register.cpp src/window/frame_clipboard.cpp src/window/frame_range_apply.cpp src/model/vmd_load.cpp src/model/add_model.cpp src/model/pmx_load.cpp src/model/pmd_load.cpp
 ```
 
-Use the sync commit from the coverage record below as the base.
+The sync identity remains the actual workflow checkout `5dae4748c0b391c9ed6d77a3080b97d7388b43d3`. That synthetic checkout is absent from this local Git object store, so the command uses PR head `75fb8a166e17a7045937f6b7321633213da326f8`, whose complete tree was independently confirmed identical to the actual checkout by retained GitHub commit API evidence. This makes the local diff runnable against the checked source tree; it does not mean the workflow executed on the PR head or on current `main`.
+
+Use the sync commit from the coverage record below as the identity of the executed workflow checkout.
 
 ## Real bug or modeling error?
 
@@ -246,26 +248,96 @@ Camera, light, self-shadow, gravity, and accessory global pools (including
 this model. Existing unmodeled model-pool callers, undo/redo, and other
 limits listed above remain uncovered. This workflow does not prove them.
 
-The source at `4e5432f` was already checked at depth 4 and by removing the
-selector guard; its regenerated oracle matched the committed fixture.
-The CI maintenance change keeps that verified source baseline. Its own
-hosted run is pending until the workflow executes on the actual commit;
-local helper tests do not replace that run. No property or bound changed.
+The source at `4e5432f` was checked at depth 4 and by removing the selector
+guard; its regenerated oracle matched the committed fixture. No property or
+bound changed in the later CI maintenance work. The earlier hosted run
+`40355765898` exposed Linux ASan output-format drift: the fault frame and
+`heap-buffer-overflow` SUMMARY appeared in the same report, but the receipt
+helper expected another SUMMARY format. This was verification output drift,
+not a product bug or a changed property. The helper was corrected to accept
+the actual report structure.
 
-Hosted run `40355765898` passed the baseline and byte-identical oracle
-comparison. Its mutation exited 1 with the expected trace and source frame,
-but the receipt helper rejected Linux's `strcmp` SUMMARY. This is verification
-output-format drift, not a product bug or property change. The helper now
-checks the fault frame and SUMMARY within one report; hosted verification
-remains pending until the corrected workflow passes on its actual commit.
+Hosted run [`40425433107`](https://github.com/geekjapan/MikuDanceStudio-J/actions/runs/40425433107)
+passed on actual checkout `5dae4748c0b391c9ed6d77a3080b97d7388b43d3`
+(artifact `12699269892`, ZIP SHA-256
+`f6caca2c46a7f7a45b3367b5357b7fccdab76d0ccdb663f2462e2465ea39d4c7`). Its
+tree equals PR head `75fb8a166e17a7045937f6b7321633213da326f8`; that head
+is the checked source tree, not the literal workflow checkout. The
+Ubuntu run used clang 18.1.3 and built the real native C++ sources with
+AddressSanitizer. All four configurations completed depth 4 with 12,319
+states and 121,814 transitions each, zero cuts and zero violations. The
+baseline ASan log was empty; the display-1000 and morph-20000 capacity checks
+passed. The generated oracle matched the committed fixture byte-for-byte
+(SHA-256 `fa3ab370962892e45011deb10327ab0112b0056e81942588c398bb0e365d4069`),
+and the Rust 1.95 replay passed (1 passed, 0 failed, 0 ignored).
+
+The disposable mutation removed the real selector guard. It exited 1 with
+the shortest trace `paste display key at frame 0`; all 24 ASan reports tied a
+`RegisterDisplayKeyFromRecord` source frame at `key_registrars.cpp:739` to a
+`heap-buffer-overflow` SUMMARY in the same report. The corrected receipt
+helper accepted this evidence.
+
+Since sync `7006c9a4200d03efafbb643e54d24e207f2e95b4`, the input closure
+changed in four paths. Each change has no effect on the bounded keyframe
+property:
+
+- The skill records the earlier hosted receipt in `e5ec5a0`. The property,
+  command table, initial state, bounds, and exclusions are unchanged.
+- `rust/Cargo.lock` changes only the app and fx dependency edges. The six
+  packages compiled for the selected replay keep their versions, checksums,
+  and dependency records.
+- `mds-formats/src/lib.rs` exports the new `path` module.
+- `mds-formats/src/path.rs` contains the filesystem resolver added in
+  `bfb0574` and the native-path preservation change in `b5ad2f2`.
+  `resolve_ci` moved byte-for-byte from `mds-fx/src/preprocess.rs`, which
+  reexports it. The path module is compiled by the replay, but the replay
+  does not call it or run its tests. Filesystem behavior is outside the
+  keyframe property.
+
+The audit also read merge commits `d958acb8` and `e2fada3b`; neither adds a
+resolution change to covered paths. All native sources and headers, the
+harness, workflow, mds-edit, mds-math, workspace manifest, and toolchain are
+byte-identical to the prior sync. No covered function moved or split, and
+no new pool writer or key-registration caller appeared. The moved resolver
+and shared-toon lookup affect asset paths, not pool state or modeled call
+orders. No verification drift or product bug was found in this scope.
+
+The broad input manifest is the raw output of `git ls-tree -r COMMIT --`
+for `src`, `include`, `tools/keypool_check`,
+`.github/workflows/keyframe-pool.yml`, this skill, `rust/crates/mds-edit`,
+`rust/crates/mds-formats`, `rust/crates/mds-math`, `rust/Cargo.toml`,
+`rust/Cargo.lock`, and `rust/rust-toolchain.toml`. It includes modes, blob
+IDs, paths, tabs, and newlines. At the actual checkout it has 259 files and
+SHA-256 `dc820d7aa50725d6b5818db6a3d1f90409f03370864323776470f3bf0be4c554`.
+The old sync had 258 files and SHA-256
+`6a001b779dd625f7e811c3222fc67cae9efc0e7706b346c48978ba9ae0b13437`.
+These whole closures differ even though the native executable inputs and
+covered pool paths are unchanged.
+
+A separate comparison found the 259-file manifest identical at fixed main
+`e940935aa8fc517c578c6fd910843a7151318528`, before this receipt update.
+That comparison establishes input identity, not a workflow execution on
+main. This documentation edit changes the skill's own manifest entry.
+
+Only lightweight receipt validation was rerun for this documentation audit.
+It checked the retained ZIP digest, checkout identity, source manifests,
+exact oracle, replay result, and the production receipt validator against
+all 24 actual ASan reports. No local checker, mutation, Cargo, GPU, native
+UI, or full suite was rerun. Undo/redo, global pools, multi-key paste,
+bone-pool capacity, depth 5 and above, non-x64 layouts, and native UI remain outside the verified
+model.
 
 ## Coverage record
 
-Sync commit: `4e5432f`. The verification was last confirmed to describe the
-files and functions listed under "Does my change touch the verified code?" at
-this commit.
+Sync commit: `5dae4748c0b391c9ed6d77a3080b97d7388b43d3`. The successful
+hosted workflow checked this exact checkout. Its source tree equals
+`75fb8a166e17a7045937f6b7321633213da326f8`. The audit read the covered-file
+history since prior sync `7006c9a4200d03efafbb643e54d24e207f2e95b4` and
+confirmed that the table, initial state, and baseline still describe the
+covered code. The check is in sync. The fixed-main comparison above is
+separate from the actual execution identity. No property, bound, assumption,
+or uncovered area changed.
 
-Move the sync commit forward only after you have run the check at the new
-commit, read the diff of the covered files since the old sync commit, and
-confirmed that the table, the initial state, and the baseline still describe
-the code.
+Move the sync commit forward only after the check runs successfully at the new
+commit, the covered-file diff since the old sync commit is read, and the
+table, initial state, and baseline are confirmed to describe the code.

@@ -10,7 +10,7 @@ import time
 import contextlib
 import io
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location('cmake_reference', Path(__file__).with_name('check.py'))
@@ -85,16 +85,24 @@ class Controls(unittest.TestCase):
             path.write_text(json.dumps({'pull_request': {'head': {'sha': 'a' * 40}, 'base': {'sha': 'b' * 40}}}))
             env = {'GITHUB_EVENT_PATH': str(path), 'GITHUB_RUN_ID': '7', 'GITHUB_RUN_ATTEMPT': '2',
                    'GITHUB_JOB': 'build', 'GITHUB_SHA': 'c' * 40}
-            with patch.dict(os.environ, env, clear=True):
+            with patch.dict(os.environ, env, clear=True), \
+                 patch.object(check.subprocess, 'check_output', side_effect=[b'd' * 40, b'e' * 40]) as git:
                 result = check.identity()
+            self.assertEqual(git.call_args_list, [
+                call(['git', 'rev-parse', 'HEAD'], cwd=check.ROOT),
+                call(['git', 'show', '-s', '--format=%P', 'HEAD'], cwd=check.ROOT)])
             self.assertEqual(result['pr_head'], 'a' * 40)
             self.assertEqual(result['pr_base'], 'b' * 40)
-            self.assertEqual(len(result['checkout']), 40)
+            self.assertEqual(result['checkout'], 'd' * 40)
+            self.assertEqual(result['parents'], ['e' * 40])
             self.assertEqual(result['GITHUB_RUN_ATTEMPT'], '2')
 
     def test_missing_identity_fails(self):
-        with patch.dict(os.environ, {}, clear=True), self.assertRaises(ValueError):
-            check.identity()
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(check.subprocess, 'check_output', return_value=b'd' * 40) as git:
+            with self.assertRaisesRegex(ValueError, '^missing Actions run identity$'):
+                check.identity()
+        git.assert_called_once_with(['git', 'rev-parse', 'HEAD'], cwd=check.ROOT)
 
     def test_original_51_word_cases(self):
         cases = check.input_words()
@@ -521,10 +529,19 @@ class Controls(unittest.TestCase):
                     kernel.ResumeThread.assert_called_once_with(102)
 
     def close_windows_descendant(self, kernel, handle):
+        import ctypes
         try:
-            if kernel.WaitForSingleObject(handle, 0) != 0:
-                self.assertTrue(kernel.TerminateProcess(handle, 1), 'could not terminate control descendant')
-            self.assertEqual(kernel.WaitForSingleObject(handle, 5000), 0, 'control descendant cleanup timed out')
+            status = kernel.WaitForSingleObject(handle, 0)
+            error = ctypes.get_last_error() if status == 0xffffffff else None
+            self.assertIn(status, (0, 258), f'control descendant initial wait failed: result={status}, error={error}')
+            terminate_error = None
+            if status == 258:
+                if not kernel.TerminateProcess(handle, 1):
+                    terminate_error = ctypes.get_last_error()
+            status = kernel.WaitForSingleObject(handle, 5000)
+            wait_error = ctypes.get_last_error() if status == 0xffffffff else None
+            self.assertEqual(status, 0, f'control descendant cleanup failed: result={status}, '
+                                       f'TerminateProcess error={terminate_error}, wait error={wait_error}')
         finally:
             kernel.CloseHandle(handle)
 
@@ -536,18 +553,44 @@ class Controls(unittest.TestCase):
         self.assertEqual(kernel.WaitForSingleObject.call_args_list[-1].args, (102, 5000))
         kernel.CloseHandle.assert_called_once_with(102)
 
+    def test_windows_control_cleanup_accepts_concurrent_job_termination(self):
+        import ctypes
+        kernel = MagicMock()
+        kernel.WaitForSingleObject.side_effect = [258, 0]
+        kernel.TerminateProcess.return_value = 0
+        with patch.object(ctypes, 'get_last_error', return_value=123, create=True) as error:
+            self.close_windows_descendant(kernel, 102)
+        error.assert_called_once_with()
+        self.assertEqual(kernel.WaitForSingleObject.call_args_list, [call(102, 0), call(102, 5000)])
+        kernel.CloseHandle.assert_called_once_with(102)
+
     def test_windows_control_cleanup_waits_and_closes_on_failure(self):
-        for failure in ('terminate', 'wait'):
-            with self.subTest(failure=failure):
+        import ctypes
+        for terminated, result in ((True, 258), (False, 258), (True, 0xffffffff), (False, 0xffffffff)):
+            with self.subTest(terminated=terminated, result=result):
                 kernel = MagicMock()
-                kernel.TerminateProcess.return_value = failure != 'terminate'
-                kernel.WaitForSingleObject.side_effect = [258, 258]
-                with self.assertRaises(AssertionError):
+                kernel.TerminateProcess.return_value = terminated
+                kernel.WaitForSingleObject.side_effect = [258, result]
+                with patch.object(ctypes, 'get_last_error', side_effect=[123, 456], create=True), \
+                     self.assertRaisesRegex(AssertionError, 'control descendant cleanup failed') as failure:
                     self.close_windows_descendant(kernel, 102)
+                if not terminated:
+                    self.assertIn('TerminateProcess error=123', str(failure.exception))
+                if result == 0xffffffff:
+                    self.assertIn('wait error=' + str(456 if not terminated else 123), str(failure.exception))
                 kernel.TerminateProcess.assert_called_once_with(102, 1)
                 kernel.CloseHandle.assert_called_once_with(102)
-                if failure == 'wait':
-                    self.assertEqual(kernel.WaitForSingleObject.call_args_list[-1].args, (102, 5000))
+                self.assertEqual(kernel.WaitForSingleObject.call_args_list[-1].args, (102, 5000))
+
+    def test_windows_control_cleanup_rejects_initial_wait_failure(self):
+        import ctypes
+        kernel = MagicMock()
+        kernel.WaitForSingleObject.return_value = 0xffffffff
+        with patch.object(ctypes, 'get_last_error', return_value=123, create=True), \
+             self.assertRaisesRegex(AssertionError, 'control descendant initial wait failed.*error=123'):
+            self.close_windows_descendant(kernel, 102)
+        kernel.TerminateProcess.assert_not_called()
+        kernel.CloseHandle.assert_called_once_with(102)
 
     def windows_race_control(self, failure=None):
         import ctypes

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use mds_mme::sas::{parse, Location, Sas, BACKBUFFER, SEM_OFFSCREEN};
 use mds_mmert::bind::{look_at_lh, DRAW_OBJECT};
 use mds_mmert::emm::Assignment;
-use mds_mmert::scene::{turn_draw, TurnDraw, TurnObject};
+use mds_mmert::scene::{turn_draw, Overrides, TurnDraw, TurnObject, NO_OVERRIDES};
 use mds_mmert::{DrawInput, Effect, Gpu, Model, Scene, Target, BACKBUFFER as MAIN};
 
 mod common;
@@ -34,7 +34,13 @@ fn object<'a>(name: &'a str, main: &'a Assignment) -> TurnObject<'a> {
         owner: false,
         render_class: 0,
         main,
+        overrides: &NO_OVERRIDES,
+        resolve: &same,
     }
+}
+
+fn same(p: &str) -> PathBuf {
+    PathBuf::from(p)
 }
 
 #[test]
@@ -98,6 +104,63 @@ fn default_effect_rows_pick_the_turn_draw() {
     assert_eq!(
         turn_draw(r, &object("chain8.pmx", &plain), None),
         TurnDraw::Host
+    );
+}
+
+/// The dialog's overrides (`mme_dlg.cpp:357`, `:741`) win over the rows, a subset's over the
+/// object's (`MmeOffscreenEffectValue`, `MmeOffscreenObjectShown`, `material_bind.cpp:968-1060`).
+#[test]
+fn the_dialogs_overrides_pick_the_turn_draw_before_the_rows() {
+    let sas = load(&data(), "turn.fx");
+    let r = sas
+        .resources
+        .iter()
+        .find(|r| r.semantic == SEM_OFFSCREEN)
+        .unwrap();
+    let plain = Assignment::default();
+    let fx = |p: &str| PathBuf::from("/fx").join(p);
+    let with = |o: &Overrides, name: &'static str, owner: bool| {
+        let mut t = object(name, &plain);
+        t.owner = owner;
+        t.overrides = o;
+        t.resolve = &fx;
+        turn_draw(r, &t, Some(1))
+    };
+    let mut o = Overrides::default();
+    // `* = none` is the host's draw; an object override gives an effect, resolved as stored.
+    o.effects.insert(-1, "o.fx".into());
+    assert_eq!(
+        with(&o, "stage.x", false),
+        TurnDraw::Effect("/fx/o.fx".into())
+    );
+    // A subset's own override wins over the object's.
+    o.effects.insert(1, "none".into());
+    assert_eq!(with(&o, "stage.x", false), TurnDraw::Host);
+    o.effects.insert(1, "s.fx".into());
+    assert_eq!(
+        with(&o, "chain8.pmx", false),
+        TurnDraw::Effect("/fx/s.fx".into())
+    );
+    // Hidden by the dialog: the whole object, or the subset alone.
+    let mut o = Overrides::default();
+    o.shown.insert(-1, false);
+    assert_eq!(with(&o, "chain8.pmx", false), TurnDraw::Hide);
+    // A subset shown inherits the object's row through the object, which is hidden: the C++
+    // recursion to subset -1 re-checks the shown state and binds nothing, the host's draw.
+    o.shown.insert(1, true);
+    assert_eq!(with(&o, "chain8.pmx", false), TurnDraw::Host);
+    o.effects.insert(1, "s.fx".into());
+    assert_eq!(
+        with(&o, "chain8.pmx", false),
+        TurnDraw::Effect("/fx/s.fx".into())
+    );
+    // `self = hide` shown again by the dialog draws as the host.
+    let mut o = Overrides::default();
+    o.shown.insert(-1, true);
+    assert_eq!(with(&o, "chain8.pmx", true), TurnDraw::Host);
+    assert_eq!(
+        with(&Overrides::default(), "chain8.pmx", true),
+        TurnDraw::Hide
     );
 }
 

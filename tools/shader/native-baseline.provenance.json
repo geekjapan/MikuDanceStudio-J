@@ -1,0 +1,99 @@
+{
+  "schema": "mds-native-shader-baseline-provenance-v1",
+  "manifest": {
+    "path": "tools/shader/native-baseline.tsv",
+    "sha256": "e3b181f1ff1b248fc782caef1e7e424dc048b035ef146f610881c14b226156fd",
+    "format": "mds-shader-contracts-v2",
+    "entries": 1481
+  },
+  "capture": {
+    "repository": "geekjapan/MikuDanceStudio-J",
+    "run_id": 40369078702,
+    "run_attempt": 1,
+    "url": "https://github.com/geekjapan/MikuDanceStudio-J/actions/runs/40369078702",
+    "event": "pull_request",
+    "conclusion": "success",
+    "artifact_id": 12671468433,
+    "artifact_name": "native-shader-contracts-linux-x64",
+    "artifact_digest": "sha256:a9216a45a3517909a9a34b3048068e92d7a9e1b32af2d4898bc095d029624f77",
+    "artifact_expires_at": "2027-01-24T17:29:21Z",
+    "exit_code": 0
+  },
+  "source": {
+    "captured_commit": "9c8ed5c9ab43c3aa10f8081a841e4e39e92bbf0f",
+    "kind": "GitHub pull-request synthetic merge",
+    "parents": [
+      "d7a7ecca9431a4a11f48c16003c724ccef8c7817",
+      "5a3bb9b87c125d594d8c82d3e1f94c7d113c08a4"
+    ],
+    "tree": "71030bef8af1c8b685e9394a63117f6e75dd5943",
+    "reviewed_head": "5a3bb9b87c125d594d8c82d3e1f94c7d113c08a4",
+    "reviewed_head_tree": "71030bef8af1c8b685e9394a63117f6e75dd5943"
+  },
+  "corpus": {
+    "repository": "ray-cast/ray-mmd",
+    "commit": "218a91cd1c53f49850b2772ebbcb98bf258e75b1",
+    "discovered_fx_files": 515,
+    "unique_preprocessed_sources": 489,
+    "manifest_file_paths": 488,
+    "parse_failed": 0
+  },
+  "compiler": {
+    "version": "vkd3d-shader 2.1",
+    "build_script": "tools/vkd3d/build.sh",
+    "target": "linux-amd64",
+    "binary_path": "/tmp/mds-vkd3d/linux-amd64/lib/libvkd3d-shader.so.1",
+    "binary_sha256": "ad9bc7db40539965876cb7211b0cf3d89082b27bc43687fd7c25b77b333f1103",
+    "runner_label": "ubuntu-24.04",
+    "runner_name": "GitHub Actions 1000006610",
+    "build_container": "debian@sha256:854dd8ab51d62866dbd8f5431d15ce77b12983a2a4a1e1fe43a2395dc7ef9f61",
+    "binary_retained_in_artifact": false
+  },
+  "inventory": {
+    "contracts": {
+      "spirv": {
+        "OK": 1481
+      },
+      "wgsl": {
+        "OK": 1481
+      },
+      "msl": {
+        "OK": 1481
+      },
+      "hlsl": {
+        "OK": 1481
+      },
+      "scan": {
+        "OK": 1481
+      },
+      "reflection": {
+        "OK": 1481
+      },
+      "coverage": {
+        "OK": 1481
+      },
+      "probe": {
+        "OK": 1444,
+        "UNAVAILABLE": 37
+      },
+      "reparse": {
+        "OK": 1481
+      }
+    },
+    "reflection_origin": {
+      "ctab": 1444,
+      "probe": 37
+    },
+    "probe_equal": 1444,
+    "probe_differ": 0,
+    "rejected_entries": 0,
+    "reflection_gaps": 0
+  },
+  "limits": [
+    "The compiler binary hash was recorded by the hosted workflow; the binary itself was not uploaded.",
+    "The probe field is UNAVAILABLE for 37 entries whose reflection already comes from the probe.",
+    "Contracts preserve compile acceptance and scan/reflection/probe metadata, not generated backend byte equality.",
+    "Direct D3D9 bytecode or assembly instruction/hash equivalence and GPU behavior are not captured.",
+    "All native shader API contracts still require acceptance before replacing the compiler."
+  ]
+}

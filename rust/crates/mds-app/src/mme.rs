@@ -16,10 +16,11 @@ use std::path::{Path, PathBuf};
 
 use mds_doc::{Document, ModelFile};
 use mds_mmert::emm::{self, Assignment, Live};
-use mds_mmert::host::{Frame, Host, Source};
+use mds_mmert::host::{Frame, Host, OffscreenTarget, Source};
+use mds_mmert::scene::Offscreen;
 use mds_mmert::Gpu;
 use mds_physics::PhysicsScene;
-use mds_render::Camera;
+use mds_render::CameraFrame;
 use mds_shader::vkd3d::Vkd3d;
 
 /// The menu state of MMEffect (`MmeContext::effectEnabled`, `g_autoReload`, `g_emmAutoSave`).
@@ -46,7 +47,10 @@ impl Default for Switches {
 
 /// The view an MME frame is drawn from.
 pub struct View<'a> {
-    pub camera: &'a Camera,
+    pub camera: &'a CameraFrame,
+    pub view_offset: [f32; 2],
+    pub shadow_map: mds_render::ShadowMapSize,
+    pub shadow_map_display: bool,
     /// `[r, g, b, x, y, z]`: the light color and the direction it travels.
     pub light: [f32; 6],
     pub frame: u32,
@@ -66,6 +70,10 @@ pub struct Mme {
     pub default: String,
     /// The folder relative effect paths resolve against (the PMM's).
     dir: PathBuf,
+    /// The mapping dialog's edits of the offscreen targets (`SasResource::effectOverrides` and
+    /// `shownOverrides`). They outlive the effects loading again, which the dialog's every edit
+    /// causes here; Reload All clears them.
+    pub offscreen: Offscreen,
     /// The MME log (the log window, 40002).
     pub log: RefCell<Vec<String>>,
     /// The device, the compiler and the loaded effects, built at the first MME frame.
@@ -141,6 +149,7 @@ impl Mme {
             objects: Vec::new(),
             default: String::new(),
             dir: dir.to_path_buf(),
+            offscreen: Offscreen::new(),
             log: RefCell::new(Vec::new()),
             runtime: RefCell::new(None),
             failed: Cell::new(false),
@@ -215,6 +224,33 @@ impl Mme {
         &self.dir
     }
 
+    /// `DlgDisassembleFlow` (`mme_dlg.cpp:1459`): the effect `stored` (as an assignment stores
+    /// it) in shader assembly, with `\r\n` line breaks (`DlgDisassembleNormalizeLineEnds`,
+    /// `:1406`); empty when it does not load, as the C++ shows an empty window.
+    pub fn disassemble(&self, stored: &str) -> String {
+        let vk = match &self.vkd3d {
+            Some(p) => Vkd3d::open(p),
+            None => Vkd3d::load(),
+        };
+        let text =
+            vk.and_then(|vk| mds_shader::disassemble_file(&vk, &effect_file(&self.dir, stored)));
+        match text {
+            Ok(t) => crlf(&t),
+            Err(e) => {
+                self.log.borrow_mut().push(e);
+                String::new()
+            }
+        }
+    }
+
+    /// The offscreen targets of the loaded effects, the tabs of the mapping dialog.
+    pub fn offscreen_targets(&self) -> Vec<OffscreenTarget> {
+        self.runtime
+            .borrow()
+            .as_ref()
+            .map_or_else(Vec::new, |r| r.host.offscreen_targets())
+    }
+
     /// How many effects are loaded (assigned ones and those of the offscreen turns).
     pub fn loaded(&self) -> usize {
         self.runtime
@@ -237,13 +273,22 @@ impl Mme {
     /// the new list, the meshes load again.
     pub fn objects_changed(&mut self, doc: &Document) {
         let old = std::mem::take(&mut self.assignments);
-        self.assignments = live(doc)
+        let was: Vec<Option<usize>> = live(doc)
             .iter()
-            .map(|l| match self.objects.iter().position(|o| *o == key(l)) {
-                Some(i) => old[i].clone(),
-                None => Assignment::default(),
-            })
+            .map(|l| self.objects.iter().position(|o| *o == key(l)))
             .collect();
+        self.assignments = was
+            .iter()
+            .map(|i| i.map_or_else(Assignment::default, |i| old[i].clone()))
+            .collect();
+        for objects in self.offscreen.values_mut() {
+            let old = std::mem::take(objects);
+            for (now, i) in was.iter().enumerate() {
+                if let Some(o) = i.and_then(|i| old.get(&i)) {
+                    objects.insert(now, o.clone());
+                }
+            }
+        }
         self.assign_beside(doc);
         self.unload();
     }
@@ -329,11 +374,15 @@ impl Mme {
             pmm: &doc.pmm,
             poses: &physics.scene.models,
             camera: view.camera,
+            view_offset: view.view_offset,
+            shadow_map: view.shadow_map,
+            shadow_map_display: view.shadow_map_display,
             light: view.light,
             frame: view.frame,
             elapsed: view.elapsed,
             size: (view.size[0], view.size[1]),
             assignments: &self.assignments,
+            offscreen: &self.offscreen,
             resolve: &resolve,
         };
         let mut log = Vec::new();
@@ -373,14 +422,22 @@ impl Mme {
                 ModelFile::Pmd(pmd) => Source::Pmd(pmd),
                 ModelFile::Missing => Source::Missing,
             };
-            let added = host.add(&gpu, &m.path.text, source, m.edge_scale, beside(&path));
+            let added = host.add_with_shared(
+                &gpu,
+                &m.path.text,
+                source,
+                m.edge_scale,
+                beside(&path),
+                shared_toon,
+            );
             log.extend(added.err());
         }
         for a in &doc.pmm.accessories {
             let path = crate::scene::resolve(&self.dir, &a.path.text);
             let source =
                 mds_accessory::vac::load_file(&path).map_or(Source::Missing, Source::Accessory);
-            let added = host.add(&gpu, &a.path.text, source, 1.0, beside(&path));
+            let added =
+                host.add_with_shared(&gpu, &a.path.text, source, 1.0, beside(&path), shared_toon);
             log.extend(added.err());
         }
         Ok(Runtime {
@@ -392,6 +449,33 @@ impl Mme {
     }
 }
 
+/// `DlgDisassembleNormalizeLineEnds`: every `\n`, `\r` or `\r\n` ends a line with `\r\n`, NULs
+/// drop, and a last line without a break gets one.
+fn crlf(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + text.len() / 16);
+    let mut chars = text.chars().peekable();
+    let mut line = String::new();
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' | '\r' => {
+                out.push_str(&line);
+                out.push_str("\r\n");
+                line.clear();
+                if c == '\r' && chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+            }
+            '\0' => {}
+            c => line.push(c),
+        }
+    }
+    if !line.is_empty() {
+        out.push_str(&line);
+        out.push_str("\r\n");
+    }
+    out
+}
+
 fn key(l: &Live) -> (bool, i32, String) {
     (l.model, l.slot, l.path.clone())
 }
@@ -400,6 +484,11 @@ fn key(l: &Live) -> (bool, i32, String) {
 fn beside(file: &Path) -> impl FnMut(&str) -> Option<Vec<u8>> + '_ {
     let folder = file.parent().unwrap_or(Path::new("."));
     move |name| std::fs::read(effect_file(folder, name)).ok()
+}
+
+/// Shared toon files are application data, independently of the object's folder.
+fn shared_toon(name: &str) -> Option<Vec<u8>> {
+    std::fs::read(Path::new("data").join(name)).ok()
 }
 
 #[cfg(test)]

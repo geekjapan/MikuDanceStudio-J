@@ -30,6 +30,46 @@ pub fn element(usage: &str, index: u32) -> Option<(u64, wgpu::VertexFormat)> {
     }
 }
 
+/// Filterable D2 RGBA8 image uploaded once when its model loads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MaterialTexture(wgpu::Texture);
+
+impl MaterialTexture {
+    fn upload(gpu: &crate::Gpu, image: &mds_render::Image) -> Option<Self> {
+        let limit = gpu.device.limits().max_texture_dimension_2d;
+        if image.width > limit || image.height > limit {
+            return None;
+        }
+        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("MME material texture"),
+            size: wgpu::Extent3d {
+                width: image.width,
+                height: image.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        crate::resource::write_level(gpu, &texture, 0, image.width, image.height, &image.rgba);
+        Some(Self(texture))
+    }
+
+    pub(crate) fn view(&self) -> wgpu::TextureView {
+        self.0.create_view(&Default::default())
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MaterialTextures {
+    pub texture: Option<MaterialTexture>,
+    pub sphere: Option<MaterialTexture>,
+    pub toon: Option<MaterialTexture>,
+}
+
 /// One material subset: what the parameter binder reads and the index range it draws.
 #[derive(Clone, Debug)]
 pub struct Material {
@@ -40,12 +80,24 @@ pub struct Material {
     pub specular: [f32; 3],
     pub power: f32,
     pub edge_color: [f32; 4],
+    /// `UseTexture`: the material has a main texture that loaded (`GetTexture`, read from the
+    /// texture stages: a file that did not load binds none).
     pub has_texture: bool,
-    /// PMX sphere mode: 0 off, 1 multiply, 2 add, 3 sub-texture.
+    /// PMX sphere mode: 0 off, 1 multiply, 2 add, 3 sub-texture; 0 when the sphere did not load.
     pub sphere_mode: u8,
+    /// `UseToon` (`IsToonUsed`): every model material, no accessory's.
     pub toon: bool,
+    /// The main texture and sphere files the material names, relative to the object's folder;
+    /// [`Model::load_textures`] drops the flags of those that do not load.
+    pub texture: Option<String>,
+    pub sphere: Option<String>,
+    pub toon_texture: Option<String>,
+    pub textures: MaterialTextures,
     /// The material draws its edge (the PMX flag 0x10, the PMD edge byte).
     pub edge: bool,
+    /// Both sides of the faces draw, as `mds-render` culls: the PMX flag 0x01 or a diffuse alpha
+    /// below 1.
+    pub double_sided: bool,
     /// An accessory's `D3DMATERIAL9` (diffuse, ambient, specular, emissive), which
     /// `ExpGetAcsMaterial` returns in place of the fields above.
     pub accessory: Option<[[f32; 4]; 4]>,
@@ -83,6 +135,7 @@ impl Model {
                 _ => return Err(format!("index {i} is outside the {n} vertices")),
             }
         }
+        let tex = |i| pmx_texture(pmx, i);
         let mut start = 0u32;
         let mut materials = Vec::new();
         for m in &pmx.materials {
@@ -90,6 +143,13 @@ impl Model {
             if (start + count) as usize > indices.len() {
                 return Err("a material reaches past the index list".into());
             }
+            // pmx_load.cpp:627-646: the sphere is used only with a mode.
+            let texture = tex(m.texture);
+            let sphere = if m.sphere_mode != 0 {
+                tex(m.sphere)
+            } else {
+                None
+            };
             materials.push(Material {
                 diffuse: m.diffuse,
                 mirror: m.diffuse,
@@ -97,10 +157,15 @@ impl Model {
                 specular: m.specular,
                 power: m.specular_power,
                 edge_color: m.edge_color,
-                has_texture: m.texture >= 0,
-                sphere_mode: if m.sphere >= 0 { m.sphere_mode } else { 0 },
-                toon: m.shared_toon != 0 || m.toon >= 0,
+                has_texture: texture.is_some(),
+                sphere_mode: if sphere.is_some() { m.sphere_mode } else { 0 },
+                toon: true,
+                texture,
+                sphere,
+                toon_texture: pmx_toon(pmx, m),
+                textures: MaterialTextures::default(),
                 edge: m.flags & 0x10 != 0,
+                double_sided: m.flags & 0x01 != 0 || m.diffuse[3] < 1.0,
                 accessory: None,
                 start,
                 count,
@@ -110,8 +175,10 @@ impl Model {
         Ok(Model::new(device, &data, &indices, materials))
     }
 
-    /// A PMD model in its bind pose. Its texture name splits as an accessory's does
-    /// (`name*map.sph`); every PMD material draws with a toon (the file has no switch).
+    /// A PMD model in its bind pose. Its texture field is `texture*sphere` (`pmd_load.cpp:296`):
+    /// the sphere multiplies when its name has `.sph` or `.SPH`, else adds
+    /// (`model_renderers.cpp:551`); a field without `*` is a sphere alone when it has `.sph` or
+    /// `.spa` (`:521`, `:527`), else the texture. Every PMD material draws with a toon.
     pub fn from_pmd(device: &wgpu::Device, pmd: &Pmd) -> Result<Model, String> {
         let mut data = Vec::with_capacity(pmd.vertices.len() * VERTEX_FLOATS);
         for v in &pmd.vertices {
@@ -132,9 +199,7 @@ impl Model {
             if (start + count) as usize > indices.len() {
                 return Err("a material reaches past the index list".into());
             }
-            let name = &m.texture.raw;
-            let name = &name[..name.iter().position(|&b| b == 0).unwrap_or(name.len())];
-            let (has_texture, sphere_mode) = texture_use(&TextureSlot::parse(Some(name)));
+            let (texture, sphere, mode) = pmd_texture(&m.texture.text);
             materials.push(Material {
                 diffuse: m.diffuse,
                 mirror: m.diffuse,
@@ -142,10 +207,15 @@ impl Model {
                 specular: m.specular,
                 power: m.specular_power,
                 edge_color: [0.0, 0.0, 0.0, 1.0],
-                has_texture,
-                sphere_mode,
+                has_texture: texture.is_some(),
+                sphere_mode: if sphere.is_some() { mode } else { 0 },
                 toon: true,
+                texture,
+                sphere,
+                toon_texture: pmd_toon(pmd, m.toon),
+                textures: MaterialTextures::default(),
                 edge: m.edge != 0,
+                double_sided: m.diffuse[3] < 1.0,
                 accessory: None,
                 start,
                 count,
@@ -179,7 +249,7 @@ impl Model {
                 }
                 indices.extend(face);
             }
-            let (has_texture, sphere_mode) = texture_use(&m.texture);
+            let (texture, sphere, sphere_mode) = texture_use(&m.texture);
             materials.push(Material {
                 diffuse: m.diffuse,
                 mirror: m.ambient,
@@ -187,10 +257,15 @@ impl Model {
                 specular: [m.specular[0], m.specular[1], m.specular[2]],
                 power: m.power,
                 edge_color: [0.0; 4],
-                has_texture,
-                sphere_mode,
+                has_texture: texture.is_some(),
+                sphere_mode: if sphere.is_some() { sphere_mode } else { 0 },
                 toon: false,
+                texture,
+                sphere,
+                toon_texture: None,
+                textures: MaterialTextures::default(),
                 edge: false,
+                double_sided: false,
                 accessory: Some([m.diffuse, m.ambient, m.specular, m.emissive]),
                 start,
                 count: indices.len() as u32 - start,
@@ -219,6 +294,42 @@ impl Model {
         }
     }
 
+    /// Load immutable sampled images through the host's cached object reader and shared toon reader.
+    pub fn load_textures(
+        &mut self,
+        gpu: &crate::Gpu,
+        mut read: impl FnMut(&str) -> Option<Vec<u8>>,
+        mut shared: impl FnMut(&str) -> Option<Vec<u8>>,
+    ) {
+        let mut images = std::collections::HashMap::<String, Option<MaterialTexture>>::new();
+        for m in &mut self.materials {
+            let mut load = |name: &Option<String>, toon: bool| {
+                let name = name.as_ref()?;
+                let key = format!("{toon}:{name}");
+                images
+                    .entry(key)
+                    .or_insert_with(|| {
+                        let image = if toon {
+                            toon_image(name, &mut read, &mut shared)
+                        } else {
+                            read(name).and_then(|b| mds_render::Image::decode(&b).ok())
+                        }?;
+                        MaterialTexture::upload(gpu, &image)
+                    })
+                    .clone()
+            };
+            m.textures = MaterialTextures {
+                texture: load(&m.texture, false),
+                sphere: load(&m.sphere, false),
+                toon: load(&m.toon_texture, true),
+            };
+            m.has_texture = m.textures.texture.is_some();
+            if m.textures.sphere.is_none() {
+                m.sphere_mode = 0;
+            }
+        }
+    }
+
     /// The pose `skin` holds after `Skin::apply_morphs` and `Skin::update`: its vertex buffer
     /// (position, normal, uv and the additional uvs, padded to four) and its material values.
     pub fn update(&mut self, queue: &wgpu::Queue, skin: &Skin) {
@@ -240,15 +351,96 @@ impl Model {
     }
 }
 
-/// Whether a texture slot has a main texture, and its sphere mode as PMX numbers it.
-fn texture_use(t: &TextureSlot) -> (bool, u8) {
+fn pmx_texture(pmx: &Pmx, index: i32) -> Option<String> {
+    let t = usize::try_from(index)
+        .ok()
+        .and_then(|i| pmx.textures.get(i))?;
+    nonempty(&t.text)
+}
+
+fn pmx_toon(pmx: &Pmx, material: &mds_formats::pmx::Material) -> Option<String> {
+    if material.shared_toon != 0 {
+        shared_toon(material.toon)
+    } else {
+        pmx_texture(pmx, material.toon)
+    }
+}
+
+fn shared_toon(index: i32) -> Option<String> {
+    (0..10)
+        .contains(&index)
+        .then(|| format!("toon{:02}.bmp", index + 1))
+}
+
+fn pmd_toon(pmd: &Pmd, index: u8) -> Option<String> {
+    if index >= 10 {
+        return None;
+    }
+    match &pmd.extension {
+        Some(e) => e
+            .toon_textures
+            .get(index as usize)
+            .and_then(|n| nonempty(&n.text)),
+        None => None,
+    }
+}
+
+fn toon_image(
+    name: &str,
+    mut read: impl FnMut(&str) -> Option<Vec<u8>>,
+    mut shared: impl FnMut(&str) -> Option<Vec<u8>>,
+) -> Option<mds_render::Image> {
+    if name.is_empty() {
+        return None;
+    }
+    const BUILTIN: [&[u8]; 10] = [
+        include_bytes!("../../../../res/assets/toon01.png"),
+        include_bytes!("../../../../res/assets/toon02.png"),
+        include_bytes!("../../../../res/assets/toon03.png"),
+        include_bytes!("../../../../res/assets/toon04.png"),
+        include_bytes!("../../../../res/assets/toon05.png"),
+        include_bytes!("../../../../res/assets/toon06.png"),
+        include_bytes!("../../../../res/assets/toon07.png"),
+        include_bytes!("../../../../res/assets/toon08.png"),
+        include_bytes!("../../../../res/assets/toon09.png"),
+        include_bytes!("../../../../res/assets/toon10.png"),
+    ];
+    if let Some(i) = (0..10).find(|&i| shared_toon(i).as_deref() == Some(name)) {
+        shared(name)
+            .and_then(|b| mds_render::Image::decode(&b).ok())
+            .or_else(|| mds_render::Image::decode(BUILTIN[i as usize]).ok())
+    } else {
+        read(name).and_then(|b| mds_render::Image::decode(&b).ok())
+    }
+}
+
+/// A PMD texture field as [`Model::from_pmd`] reads it: texture, sphere, sphere mode.
+fn pmd_texture(field: &str) -> (Option<String>, Option<String>, u8) {
+    let has = |n: &str, ext: &str| n.contains(ext) || n.contains(&ext.to_uppercase());
+    match field.split_once('*') {
+        Some((t, s)) => (nonempty(t), nonempty(s), if has(s, ".sph") { 1 } else { 2 }),
+        None if has(field, ".sph") => (None, nonempty(field), 1),
+        None if has(field, ".spa") => (None, nonempty(field), 2),
+        None => (nonempty(field), None, 0),
+    }
+}
+
+fn nonempty(s: &str) -> Option<String> {
+    (!s.is_empty()).then(|| s.to_string())
+}
+
+/// An accessory's texture slot (`accessory.cpp:520-540`): its main texture, its sphere, and the
+/// sphere mode as PMX numbers it. `screen.bmp` is the capture texture (`:533`, `:162`), which the
+/// application creates only in screen capture mode, so it binds none here.
+fn texture_use(t: &TextureSlot) -> (Option<String>, Option<String>, u8) {
+    let (primary, sphere) = (nonempty(&t.primary.text), nonempty(&t.sphere.text));
     match t.kind {
-        TextureKind::Plain => (!t.primary.raw.is_empty(), 0),
-        TextureKind::SphereMultiply => (false, 1),
-        TextureKind::SphereAdd => (false, 2),
-        TextureKind::Screen => (true, 0),
-        TextureKind::SubMultiply => (true, 1),
-        TextureKind::SubAdd => (true, 2),
+        TextureKind::Plain => (primary, None, 0),
+        TextureKind::SphereMultiply => (None, primary, 1),
+        TextureKind::SphereAdd => (None, primary, 2),
+        TextureKind::Screen => (None, None, 0),
+        TextureKind::SubMultiply => (primary, sphere, 1),
+        TextureKind::SubAdd => (primary, sphere, 2),
     }
 }
 
@@ -288,4 +480,141 @@ pub fn quad(w: u32, h: u32) -> Vec<u8> {
         out.extend(floats(&vtx));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `pmd_load.cpp:296-316` and `model_renderers.cpp:517-560`.
+    #[test]
+    fn pmd_texture_fields_split_as_the_cpp_does() {
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(pmd_texture("a.bmp"), (s("a.bmp"), None, 0));
+        assert_eq!(pmd_texture("a.bmp*b.sph"), (s("a.bmp"), s("b.sph"), 1));
+        assert_eq!(pmd_texture("a.bmp*b.SPH"), (s("a.bmp"), s("b.SPH"), 1));
+        assert_eq!(pmd_texture("a.bmp*b.spa"), (s("a.bmp"), s("b.spa"), 2));
+        assert_eq!(pmd_texture("a.bmp*b.png"), (s("a.bmp"), s("b.png"), 2));
+        assert_eq!(pmd_texture("b.sph"), (None, s("b.sph"), 1));
+        assert_eq!(pmd_texture("b.SPA"), (None, s("b.SPA"), 2));
+        assert_eq!(pmd_texture("screen.bmp"), (s("screen.bmp"), None, 0));
+        assert_eq!(pmd_texture(""), (None, None, 0));
+    }
+
+    /// `accessory.cpp:520-540`; `screen.bmp` binds the capture texture (`:162`), none outside
+    /// screen capture (`frame_scene.cpp:271`).
+    #[test]
+    fn accessory_slots_use_their_texture_and_sphere() {
+        let t = |name: &str| texture_use(&TextureSlot::parse(Some(name.as_bytes())));
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(t("a.bmp"), (s("a.bmp"), None, 0));
+        assert_eq!(t("b.sph"), (None, s("b.sph"), 1));
+        assert_eq!(t("b.spa"), (None, s("b.spa"), 2));
+        assert_eq!(t("a.bmp*b.spa"), (s("a.bmp"), s("b.spa"), 2));
+        assert_eq!(t("a.bmp*b.sph"), (s("a.bmp"), s("b.sph"), 1));
+        assert_eq!(t("screen.bmp"), (None, None, 0));
+    }
+    #[test]
+    fn toon_resolution_keeps_shared_names_out_of_the_model_directory() {
+        let png = include_bytes!("../tests/data/blink.png");
+        let image = mds_render::Image::decode(png).unwrap();
+        let mut shared_names = Vec::new();
+        let actual = toon_image(
+            "toon02.bmp",
+            |_| panic!("shared toon read model directory"),
+            |n| {
+                shared_names.push(n.to_string());
+                Some(png.to_vec())
+            },
+        );
+        assert_eq!(actual, Some(image.clone()));
+        assert_eq!(shared_names, ["toon02.bmp"]);
+        for n in [
+            "Toon02.bmp",
+            "toon02.BMP",
+            "sub/toon02.bmp",
+            "sub\\toon02.bmp",
+            "custom.png",
+        ] {
+            assert_eq!(
+                toon_image(
+                    n,
+                    |name| {
+                        assert_eq!(name, n);
+                        Some(png.to_vec())
+                    },
+                    |_| panic!("custom toon read app data")
+                ),
+                Some(image.clone())
+            );
+        }
+        assert!(toon_image(
+            "",
+            |_| panic!("empty name read"),
+            |_| panic!("empty shared read")
+        )
+        .is_none());
+        assert!(toon_image(
+            "missing.png",
+            |_| None,
+            |_| panic!("missing custom read app data")
+        )
+        .is_none());
+        assert!(toon_image("broken.png", |_| Some(vec![0, 1]), |_| None).is_none());
+        for i in 0..10 {
+            let n = shared_toon(i).unwrap();
+            assert!(toon_image(
+                &n,
+                |_| panic!("embedded fallback read model directory"),
+                |_| None
+            )
+            .is_some());
+            assert!(toon_image(&n, |_| None, |_| Some(vec![0])).is_some());
+        }
+        assert_eq!(shared_toon(-1), None);
+        assert_eq!(shared_toon(10), None);
+    }
+
+    #[test]
+    fn pmd_toon_255_is_null_and_other_indices_read_the_table() {
+        let bytes = include_bytes!("../../../../tests/fixtures/rust/chain8.pmd");
+        let mut pmd = Pmd::read(bytes).unwrap();
+        assert_eq!(pmd_toon(&pmd, 255), None);
+        assert_eq!(pmd_toon(&pmd, 10), None);
+        assert_eq!(pmd_toon(&pmd, 0).as_deref(), Some("toon01.bmp"));
+        pmd.extension.as_mut().unwrap().toon_textures[0].text = "custom.png".into();
+        assert_eq!(pmd_toon(&pmd, 0).as_deref(), Some("custom.png"));
+        pmd.extension.as_mut().unwrap().toon_textures[0]
+            .text
+            .clear();
+        assert_eq!(pmd_toon(&pmd, 0), None);
+        pmd.extension = None;
+        assert_eq!(pmd_toon(&pmd, 9), None);
+    }
+    #[test]
+    fn pmx_toon_indices_select_custom_or_shared_names() {
+        let bytes = include_bytes!("../../../../tests/fixtures/rust/chain8.pmx");
+        let mut pmx = Pmx::read(bytes).unwrap();
+        let mut material = pmx.materials[0].clone();
+        material.shared_toon = 1;
+        material.toon = 0;
+        assert_eq!(pmx_toon(&pmx, &material).as_deref(), Some("toon01.bmp"));
+        material.toon = 9;
+        assert_eq!(pmx_toon(&pmx, &material).as_deref(), Some("toon10.bmp"));
+        material.toon = 10;
+        assert_eq!(pmx_toon(&pmx, &material), None);
+        material.shared_toon = 0;
+        material.toon = 0;
+        pmx.textures[0].text = "sub\\custom.png".into();
+        assert_eq!(
+            pmx_toon(&pmx, &material).as_deref(),
+            Some("sub\\custom.png")
+        );
+        for i in [-1, 1, i32::MAX] {
+            material.toon = i;
+            assert_eq!(pmx_toon(&pmx, &material), None);
+        }
+        pmx.textures[0].text.clear();
+        assert_eq!(pmx_texture(&pmx, 0), None);
+    }
 }

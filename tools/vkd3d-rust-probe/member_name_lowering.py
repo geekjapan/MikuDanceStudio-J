@@ -166,24 +166,25 @@ class Transport:
         import full_compiler as F
         import apply_c2rust_patch as A
         transport = self
+        reviewed_patch = Path(F.__file__).parent / 'patches/c2rust-win64-abi.patch'
         class RetainedPath(PosixPath):
             def read_bytes(self):
-                if str(self).startswith('/home/') or posixpath.normpath(str(self)) in transport.files or posixpath.normpath(str(self)) in transport.aliases:
+                if self != reviewed_patch and (str(self).startswith('/home/') or posixpath.normpath(str(self)) in transport.files or posixpath.normpath(str(self)) in transport.aliases):
                     return transport.read(self)
                 return super().read_bytes()
             def read_text(self, *args, **kwargs):
                 return self.read_bytes().decode(kwargs.get('encoding') or 'utf-8')
             def resolve(self, *args, **kwargs):
-                if str(self).startswith('/home/') or posixpath.normpath(str(self)) in transport.files or posixpath.normpath(str(self)) in transport.aliases:
+                if self != reviewed_patch and (str(self).startswith('/home/') or posixpath.normpath(str(self)) in transport.files or posixpath.normpath(str(self)) in transport.aliases):
                     s = posixpath.normpath(str(self))
                     return RetainedPath(transport.aliases.get(s, s))
                 return RetainedPath(super().resolve(*args, **kwargs))
             def is_file(self):
-                if str(self).startswith('/home/') or posixpath.normpath(str(self)) in transport.files or posixpath.normpath(str(self)) in transport.aliases:
+                if self != reviewed_patch and (str(self).startswith('/home/') or posixpath.normpath(str(self)) in transport.files or posixpath.normpath(str(self)) in transport.aliases):
                     return str(self.resolve()) in transport.files
                 return super().is_file()
             def is_symlink(self):
-                return False if str(self).startswith('/home/') else super().is_symlink()
+                return False if self != reviewed_patch and str(self).startswith('/home/') else super().is_symlink()
         stack = ExitStack()
         stack.enter_context(patch.object(F, 'Path', RetainedPath))
         stack.enter_context(patch.object(A, 'Path', RetainedPath))

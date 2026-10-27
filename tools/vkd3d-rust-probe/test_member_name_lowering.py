@@ -2,7 +2,7 @@ import copy
 from contextlib import contextmanager
 import io
 import os
-from pathlib import Path
+from pathlib import Path, PosixPath
 import sys
 import subprocess
 import tempfile
@@ -14,11 +14,71 @@ sys.dont_write_bytecode = True
 import member_name_lowering as M
 
 
+@contextmanager
+def hosted_verifier():
+    import full_compiler as F
+    original = Path(F.__file__).parent / 'patches/c2rust-win64-abi.patch'
+    module = '/home/runner/work/MikuDanceStudio-J/MikuDanceStudio-J/tools/vkd3d-rust-probe/full_compiler.py'
+    reviewed = Path(module).parent / 'patches/c2rust-win64-abi.patch'
+    live = {'bytes': original.read_bytes(), 'reads': []}
+    methods = {name: getattr(PosixPath, name) for name in ('read_bytes', 'resolve', 'is_file', 'is_symlink')}
+    def read(path):
+        live['reads'].append(str(path))
+        if path == reviewed:
+            return live['bytes']
+        if str(path).startswith('/home/'):
+            raise AssertionError('unexpected live captured read ' + str(path))
+        return methods['read_bytes'](path)
+    def resolve(path, *args, **kwargs):
+        return path if path == reviewed else methods['resolve'](path, *args, **kwargs)
+    def is_file(path):
+        return methods['is_file'](original if path == reviewed else path)
+    def is_symlink(path):
+        return methods['is_symlink'](original if path == reviewed else path)
+    with patch.object(F, '__file__', module), patch.object(PosixPath, 'read_bytes', read), \
+         patch.object(PosixPath, 'resolve', resolve), patch.object(PosixPath, 'is_file', is_file), \
+         patch.object(PosixPath, 'is_symlink', is_symlink):
+        yield reviewed, live
+
+
 class TraceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.z = zipfile.ZipFile(os.environ['MEMBER_NAME_ALL24'])
         cls.src = M.sources(cls.z)
+
+    def test_actual_hosted_transport_and_reviewed_patch(self):
+        import full_compiler as F
+        import apply_c2rust_patch as A
+        setup = Path(os.environ.get('MEMBER_NAME_SETUP', str(Path(os.environ['MEMBER_NAME_ALL24']).with_name('setup.zip'))))
+        with zipfile.ZipFile(setup) as retained:
+            transport = M.Transport(self.z, retained)
+        tool = next(p for p in transport.files if p.endswith('/bin/c2rust-transpile'))
+        original_paths = F.Path, A.Path
+        with hosted_verifier() as (reviewed, live):
+            transport.files[str(reviewed)] = b'untrusted captured replacement'
+            with transport.context():
+                F.verify_cursor_tool(F.Path(tool))
+                self.assertEqual(F.Path(reviewed).read_bytes(), live['bytes'])
+                self.assertEqual(F.Path(reviewed).resolve(), reviewed)
+                self.assertTrue(F.Path(reviewed).is_file())
+                self.assertFalse(F.Path(reviewed).is_symlink())
+                alias, target = next(iter(transport.aliases.items()))
+                self.assertEqual(F.Path(alias).read_bytes(), transport.read(target))
+                self.assertEqual(str(F.Path(alias).resolve()), target)
+                for unknown in ('/home/unknown/captured.c', str(reviewed)+'.other', str(reviewed)+'/child', str(reviewed.parent/'neighbor.patch')):
+                    before = list(live['reads'])
+                    with self.subTest(path=unknown), self.assertRaises(KeyError):
+                        F.Path(unknown).read_bytes()
+                    self.assertEqual(live['reads'], before)
+                    self.assertFalse(F.Path(unknown).is_file())
+            self.assertEqual((F.Path, A.Path), original_paths)
+            live['bytes'] += b'changed current reviewed patch'
+            with self.assertRaisesRegex(ValueError, 'differs from reviewed patch'):
+                with transport.context():
+                    F.verify_cursor_tool(F.Path(tool))
+            self.assertEqual((F.Path, A.Path), original_paths)
+        self.assertEqual((F.Path, A.Path), original_paths)
 
     def test_exact_source_and_inverse(self):
         lowered = M.lower(self.src['original.rs'])

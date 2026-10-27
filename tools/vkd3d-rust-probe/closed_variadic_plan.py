@@ -83,7 +83,7 @@ def record_table(inventory):
 
 SCALARS = {'Void', 'Bool', 'Char', 'SChar', 'Short', 'Int', 'Long', 'LongLong',
            'UChar', 'UShort', 'UInt', 'ULong', 'ULongLong', 'Float', 'Double',
-           'LongDouble', 'Int128', 'UInt128', 'Half'}
+           'Int128', 'UInt128', 'Half'}
 
 
 def validate_type(typ, table, visited=None, depth=0):

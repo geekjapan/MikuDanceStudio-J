@@ -25,6 +25,18 @@
 #ifndef CALLBACK_ABI
 #define CALLBACK_ABI
 #endif
+#ifndef ARRAY_CVR
+#define ARRAY_CVR
+#endif
+#ifndef POINTER_ARRAY_CVR
+#define POINTER_ARRAY_CVR
+#endif
+#ifndef CALLBACK_ARGUMENT_TYPE
+#define CALLBACK_ARGUMENT_TYPE int
+#endif
+#if defined(EXPECTED_LONG_DOUBLE_SIZE)
+_Static_assert(sizeof(long double) == EXPECTED_LONG_DOUBLE_SIZE, "long double ABI fixture");
+#endif
 struct self;
 typedef struct self self_alias;
 struct mutual;
@@ -39,17 +51,27 @@ DECL
 #elif defined(FORWARD_ONLY)
 struct shared_record;
 #elif defined(UNION_KIND)
-union shared_record { FIELD_TYPE FIELD_NAME; int array[ARRAY_LENGTH]; };
+union shared_record { FIELD_TYPE FIELD_NAME; ARRAY_CVR int array[ARRAY_LENGTH]; };
 #else
 #pragma pack(push, PACKING)
 struct shared_record {
 #if defined(REVERSE_FIELDS)
-    int array[ARRAY_LENGTH]; FIELD_TYPE FIELD_NAME;
+    ARRAY_CVR int array[ARRAY_LENGTH]; FIELD_TYPE FIELD_NAME;
 #else
-    FIELD_TYPE FIELD_NAME; int array[ARRAY_LENGTH];
+    FIELD_TYPE FIELD_NAME; ARRAY_CVR int array[ARRAY_LENGTH];
 #endif
+    ARRAY_CVR int nested_array[2][3];
+    int * POINTER_ARRAY_CVR pointer_array[2];
+#if defined(DEEP_POINTER)
+    int ****************************************deep;
+#endif
+#if defined(UNSUPPORTED_ATOMIC)
+    _Atomic int atomic_value;
+#endif
+    int (*abi_callback)(CALLBACK_ARGUMENT_TYPE);
     self_alias *next;
     struct nested { int x; } nested;
+    ARRAY_CVR int flexible[];
 } __attribute__((aligned(RECORD_ALIGNMENT)));
 #pragma pack(pop)
 #endif
@@ -71,5 +93,5 @@ int record_format(
 #endif
                   union shared_union *, enum shared_enum,
                   POINTER_CONST int *, int PARAMETER_CONST,
-                  int (CALLBACK_ABI *callback)(int), ...);
+                  int (CALLBACK_ABI *callback)(CALLBACK_ARGUMENT_TYPE), ...);
 #endif

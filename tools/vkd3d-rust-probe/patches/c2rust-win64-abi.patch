@@ -184,7 +184,7 @@ index ef9d929..986f7ad 100644
          };
 
 diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_ast/conversion.rs
-index de549e2..03d05c3 100644
+index de549e2..abc0ddb 100644
 --- a/c2rust-transpile/src/c_ast/conversion.rs
 +++ b/c2rust-transpile/src/c_ast/conversion.rs
 @@ -601,6 +601,7 @@ fn convert(&mut self, untyped_context: &AstContext) {
@@ -213,7 +213,29 @@ index de549e2..03d05c3 100644
                      self.add_type(new_id, not_located(function_ty));
                      self.processed_nodes.insert(new_id, FUNC_TYPE);
 
-@@ -2137,6 +2146,10 @@ fn visit_node(
+@@ -958,7 +967,9 @@ fn visit_node(
+
+                 TypeTag::TagConstantArrayType => {
+                     let element_id = from_value(ty_node.extras[0].clone()).expect("element id");
+-                    let element = self.visit_type(element_id);
++                    let qualified_element = self.visit_qualified_type(element_id);
++                    let element = qualified_element.ctype;
++                    self.typed_context.source_array_elements.insert(CTypeId(new_id), qualified_element);
+
+                     let count: usize = from_value(ty_node.extras[1].clone()).expect("count");
+
+@@ -969,7 +980,9 @@ fn visit_node(
+
+                 TypeTag::TagIncompleteArrayType => {
+                     let element_id = from_value(ty_node.extras[0].clone()).expect("element id");
+-                    let element = self.visit_type(element_id);
++                    let qualified_element = self.visit_qualified_type(element_id);
++                    let element = qualified_element.ctype;
++                    self.typed_context.source_array_elements.insert(CTypeId(new_id), qualified_element);
+
+                     let element_ty = CTypeKind::IncompleteArray(element);
+                     self.add_type(new_id, not_located(element_ty));
+@@ -2137,6 +2150,10 @@ fn visit_node(
                      let name = from_value::<String>(node.extras[0].clone())
                          .expect("Expected to find function name");
 
@@ -224,7 +246,7 @@ index de549e2..03d05c3 100644
                      let is_global =
                          from_value(node.extras[1].clone()).expect("Expected to find visibility");
                      let mut is_inline =
-@@ -2209,6 +2222,7 @@ fn visit_node(
+@@ -2209,6 +2226,7 @@ fn visit_node(
                          .type_id
                          .expect("Expected to find type on typedef declaration");
                      let mut typ = self.visit_qualified_type(typ_old);
@@ -232,7 +254,7 @@ index de549e2..03d05c3 100644
 
                      // Clang injects definitions of the form `#define __SIZE_TYPE__ unsigned int` into
                      // compilation units based on the target. (See lib/Frontend/InitPreprocessor.cpp
-@@ -2330,6 +2344,10 @@ fn visit_node(
+@@ -2330,6 +2348,10 @@ fn visit_node(
                  }
 
                  ASTEntryTag::TagEnumDecl if expected_ty & ENUM_DECL != 0 => {
@@ -243,7 +265,7 @@ index de549e2..03d05c3 100644
                      let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
 
                      let variants = node
-@@ -2426,6 +2444,10 @@ fn visit_node(
+@@ -2426,6 +2448,10 @@ fn visit_node(
                  }
 
                  ASTEntryTag::TagStructDecl if expected_ty & RECORD_DECL != 0 => {
@@ -254,7 +276,7 @@ index de549e2..03d05c3 100644
                      let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
                      let has_def = from_value(node.extras[1].clone())
                          .expect("Expected has_def flag on struct");
-@@ -2467,6 +2489,10 @@ fn visit_node(
+@@ -2467,6 +2493,10 @@ fn visit_node(
                  }
 
                  ASTEntryTag::TagUnionDecl if expected_ty & RECORD_DECL != 0 => {
@@ -279,7 +301,7 @@ index 123c377..75a3074 100644
              for p in params {
                  res.push(p.ctype.into())
 diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.rs
-index 0cbfdca..4e66a57 100644
+index 0cbfdca..8a2cefb 100644
 --- a/c2rust-transpile/src/c_ast/mod.rs
 +++ b/c2rust-transpile/src/c_ast/mod.rs
 @@ -18,6 +18,7 @@
@@ -290,18 +312,19 @@ index 0cbfdca..4e66a57 100644
  mod conversion;
  pub mod iterators;
  mod print;
-@@ -121,6 +122,10 @@ pub struct TypedAstContext {
+@@ -121,6 +122,11 @@ pub struct TypedAstContext {
 
      pub va_list_kind: BuiltinVaListKind,
      pub target: String,
 +    pub target_c_widths: [u64; 8],
 +    pub linker_names: HashMap<CDeclId, String>,
 +    pub source_typedef_types: HashMap<CDeclId, CQualTypeId>,
++    pub source_array_elements: HashMap<CTypeId, CQualTypeId>,
 +    pub record_evidence: HashMap<CDeclId, c2rust_ast_exporter::clang_ast::RecordEvidence>,
  }
 
  /// Information about a single macro invocation.
-@@ -1020,6 +1025,7 @@ pub(crate) fn type_kinds_eq(
+@@ -1020,6 +1026,7 @@ pub(crate) fn type_kinds_eq(
                      is_variable_argument1,
                      is_noreturn1,
                      has_prototype1,
@@ -309,7 +332,7 @@ index 0cbfdca..4e66a57 100644
                  ),
                  Function(
                      result_type_id2,
-@@ -1027,6 +1033,7 @@ pub(crate) fn type_kinds_eq(
+@@ -1027,6 +1034,7 @@ pub(crate) fn type_kinds_eq(
                      is_variable_argument2,
                      is_noreturn2,
                      has_prototype2,
@@ -317,7 +340,7 @@ index 0cbfdca..4e66a57 100644
                  ),
              ) => {
                  self.qual_types_eq(*result_type_id1, *result_type_id2, resolver)
-@@ -1040,6 +1047,7 @@ pub(crate) fn type_kinds_eq(
+@@ -1040,6 +1048,7 @@ pub(crate) fn type_kinds_eq(
                      && is_variable_argument1 == is_variable_argument2
                      && is_noreturn1 == is_noreturn2
                      && has_prototype1 == has_prototype2
@@ -325,7 +348,7 @@ index 0cbfdca..4e66a57 100644
              }
 
              (Attributed(type_id1, ref attribute1), Attributed(type_id2, ref attribute2)) => {
-@@ -1095,8 +1103,8 @@ pub fn fn_decl_ty_with_declared_args(&self, func_decl: &CDeclKind) -> CTypeKind
+@@ -1095,8 +1104,8 @@ pub fn fn_decl_ty_with_declared_args(&self, func_decl: &CDeclKind) -> CTypeKind
              let typ = self.resolve_type_id(*typ);
              let decl_arg_tys = self.tys_of_params(parameters).unwrap();
              let typ_kind = &self[typ].kind;
@@ -336,7 +359,7 @@ index 0cbfdca..4e66a57 100644
              }
              panic!("expected {typ:?} to be CTypeKind::Function, but it was {typ_kind:?}")
          }
-@@ -1179,7 +1187,7 @@ pub fn expr_diverges(&self, expr_id: CExprId) -> bool {
+@@ -1179,7 +1188,7 @@ pub fn expr_diverges(&self, expr_id: CExprId) -> bool {
          };
 
          match self.index(pointed_id).kind {
@@ -345,7 +368,7 @@ index 0cbfdca..4e66a57 100644
              _ => false,
          }
      }
-@@ -2830,9 +2838,25 @@ pub(crate) fn not_volatile(self) -> Self {
+@@ -2830,9 +2839,25 @@ pub(crate) fn not_volatile(self) -> Self {
  //  * UnaryTransformType <http://clang.llvm.org/doxygen/classclang_1_1UnaryTransformType.html>
  //  * AdjustedType <http://clang.llvm.org/doxygen/classclang_1_1AdjustedType.html>
 
@@ -374,7 +397,7 @@ index 0cbfdca..4e66a57 100644
  #[derive(Debug, Clone, PartialEq, Eq, Hash)]
  pub enum CTypeKind {
      Void,
-@@ -2894,7 +2918,7 @@ pub enum CTypeKind {
+@@ -2894,7 +2919,7 @@ pub enum CTypeKind {
      // Note a function taking no arguments should have one `void` argument. Functions without any
      // arguments are in K&R format.
      // Flags: is_variable_argument, is_noreturn, has prototype
@@ -1385,10 +1408,10 @@ index a96ee1c..6b279e9 100644
  }
 diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/src/c_ast/closed_variadic.rs
 new file mode 100644
-index 0000000..f4e6699
+index 0000000..2dfbfe9
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_variadic.rs
-@@ -0,0 +1,387 @@
+@@ -0,0 +1,443 @@
 +use super::*;
 +use serde_json::{Value, json};
 +
@@ -1432,12 +1455,17 @@ index 0000000..f4e6699
 +            CTypeKind::Struct(id) | CTypeKind::Union(id) | CTypeKind::Enum(id) => {
 +                json!({"record": self.inventory_record_identity(*id, 0)})
 +            }
-+            CTypeKind::ConstantArray(inner, len) => {
-+                json!({"array": self.inventory_type(CQualTypeId::new(*inner), depth + 1), "length": len})
++            CTypeKind::ConstantArray(_, _) | CTypeKind::IncompleteArray(_) => {
++                let Some(element) = self.source_array_elements.get(&canonical_type) else {
++                    return json!({"unproved": "missing original qualified array element"});
++                };
++                let mut array = json!({"array": self.inventory_type(*element, depth + 1)});
++                if let CTypeKind::ConstantArray(_, len) = kind {
++                    array["length"] = json!(len);
++                }
++                array
 +            }
-+            CTypeKind::IncompleteArray(inner) => {
-+                json!({"array": self.inventory_type(CQualTypeId::new(*inner), depth + 1)})
-+            }
++            CTypeKind::LongDouble => json!({"unproved": "long double ABI shape"}),
 +            CTypeKind::Void
 +            | CTypeKind::Bool
 +            | CTypeKind::Char
@@ -1453,7 +1481,6 @@ index 0000000..f4e6699
 +            | CTypeKind::ULongLong
 +            | CTypeKind::Float
 +            | CTypeKind::Double
-+            | CTypeKind::LongDouble
 +            | CTypeKind::Int128
 +            | CTypeKind::UInt128
 +            | CTypeKind::Half => json!({"kind": format!("{kind:?}")}),
@@ -1733,6 +1760,58 @@ index 0000000..f4e6699
 +            ast.inventory_type(CQualTypeId::new(CTypeId(9)), 0)["canonical"]["kind"],
 +            "Long"
 +        );
++        for (index, kind) in [(10, CTypeKind::ConstantArray(CTypeId(1), 2)),
++                              (11, CTypeKind::IncompleteArray(CTypeId(1))),
++                              (12, CTypeKind::ConstantArray(CTypeId(10), 3))] {
++            ast.c_types.insert(CTypeId(index), not_located(kind));
++        }
++        let mut qualified = int;
++        qualified.qualifiers.is_const = true;
++        qualified.qualifiers.is_volatile = true;
++        for index in [10, 11] {
++            ast.source_array_elements.insert(CTypeId(index), qualified);
++            let evidence = ast.inventory_type(CQualTypeId::new(CTypeId(index)), 0);
++            assert_eq!(evidence["canonical"]["array"]["const"], true);
++            assert_eq!(evidence["canonical"]["array"]["volatile"], true);
++        }
++        ast.source_array_elements.insert(CTypeId(12), CQualTypeId::new(CTypeId(10)));
++        assert_eq!(ast.inventory_type(CQualTypeId::new(CTypeId(12)), 0)
++                   ["canonical"]["array"]["canonical"]["array"]["const"], true);
++        ast.c_types.insert(CTypeId(14), not_located(CTypeKind::Pointer(int)));
++        let mut restricted = CQualTypeId::new(CTypeId(14));
++        restricted.qualifiers.is_restrict = true;
++        ast.source_array_elements.insert(CTypeId(11), restricted);
++        assert_eq!(ast.inventory_type(CQualTypeId::new(CTypeId(11)), 0)
++                   ["canonical"]["array"]["restrict"], true);
++        ast.source_array_elements.remove(&CTypeId(11));
++        assert!(ast.inventory_type(CQualTypeId::new(CTypeId(11)), 0)["unproved"].is_string());
++        ast.c_types.insert(CTypeId(13), not_located(CTypeKind::LongDouble));
++        assert_eq!(ast.inventory_type(CQualTypeId::new(CTypeId(13)), 0)
++                   ["canonical"]["unproved"], "long double ABI shape");
++        assert!(ast.inventory_type(int, 33)["unproved"].is_string());
++        use c2rust_ast_exporter::clang_ast::{RecordEvidence, from_value, Value as CborValue};
++        let tuple = CborValue::Array(vec![CborValue::Integer(2), CborValue::Text("struct".into()),
++            CborValue::Text("node".into()), CborValue::Text("/shared.h".into()),
++            CborValue::Integer(1), CborValue::Integer(1), CborValue::Text("file".into()),
++            CborValue::Null, CborValue::Bool(false), CborValue::Bool(true), CborValue::Null]);
++        let evidence: RecordEvidence = from_value(tuple.clone()).unwrap();
++        ast.record_evidence.insert(CDeclId(99), evidence);
++        assert_eq!(ast.inventory_record_identity(CDeclId(99), 0)["physical"]["line"], 1);
++        for index in [3, 4, 5] {
++            let mut invalid = tuple.clone();
++            let CborValue::Array(ref mut values) = invalid else { unreachable!() };
++            values[index] = if index == 3 { CborValue::Text("?".into()) } else { CborValue::Integer(0) };
++            ast.record_evidence.insert(CDeclId(99), from_value(invalid).unwrap());
++            assert!(ast.inventory_record_identity(CDeclId(99), 0)["unproved"].is_string());
++        }
++        for invalid in [CborValue::Array(vec![]), {
++            let mut invalid = tuple;
++            let CborValue::Array(ref mut values) = invalid else { unreachable!() };
++            values[4] = CborValue::Text("not a coordinate".into());
++            invalid
++        }] {
++            assert!(from_value::<RecordEvidence>(invalid).is_err());
++        }
 +        let a = ast.closed_variadic_inventory(Path::new("caller.c"));
 +        let b = ast.closed_variadic_inventory(Path::new("definition.c"));
 +        assert_eq!(a["declarations"][0]["symbol"]["linker"], "asm_format");

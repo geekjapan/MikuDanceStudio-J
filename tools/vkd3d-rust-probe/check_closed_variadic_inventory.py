@@ -1,5 +1,6 @@
 """Exercise the actual patched translator's two-TU inventory, not stable lowering."""
 import argparse
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -28,6 +29,15 @@ def require_inventory_outputs(output, stems):
 RECORD_CASES = {
     'same-header': ([], 'compatible'),
     'parameter-cvr': (['-DPARAMETER_CONST='], 'compatible'),
+    'array-const': (['-DARRAY_CVR=const'], 'mismatch'),
+    'array-volatile': (['-DARRAY_CVR=volatile'], 'mismatch'),
+    'array-const-volatile': (['-UARRAY_CVR', '-DARRAY_CVR=volatile'], 'mismatch'),
+    'array-qualified-same': ([], 'compatible'),
+    'array-restrict': (['-DPOINTER_ARRAY_CVR=restrict'], 'mismatch'),
+    'array-restrict-same': ([], 'compatible'),
+    'long-double-abi': (['-mlong-double-64', '-UEXPECTED_LONG_DOUBLE_SIZE', '-DEXPECTED_LONG_DOUBLE_SIZE=8'], 'unproved'),
+    'deep-pointer': ([], 'unproved'),
+    'unsupported-atomic': ([], 'unproved'),
     'field-type': (['-DFIELD_TYPE=long'], 'mismatch'),
     'field-name': (['-DFIELD_NAME=renamed'], 'mismatch'),
     'field-order': (['-DREVERSE_FIELDS'], 'mismatch'),
@@ -48,6 +58,40 @@ RECORD_CASES = {
 }
 
 
+RECORD_BASE_FLAGS = {
+    'array-const-volatile': ['-DARRAY_CVR=const'],
+    'array-qualified-same': ['-DARRAY_CVR=const volatile'],
+    'array-restrict-same': ['-DPOINTER_ARRAY_CVR=restrict'],
+    'long-double-abi': ['--target=x86_64-unknown-linux-gnu', '-DCALLBACK_ARGUMENT_TYPE=long double', '-DEXPECTED_LONG_DOUBLE_SIZE=16'],
+    'deep-pointer': ['-DDEEP_POINTER'],
+    'unsupported-atomic': ['-DUNSUPPORTED_ATOMIC'],
+}
+
+
+def check_physical_boundaries(inventories, units):
+    results = {}
+    for name, field, value in [('unknown-path', 'path', '?'), ('zero-line', 'line', 0),
+                                ('zero-column', 'column', 0)]:
+        mutated = copy.deepcopy(inventories)
+
+        def mutate(value_tree):
+            if isinstance(value_tree, dict):
+                if 'physical' in value_tree and isinstance(value_tree['physical'], dict):
+                    value_tree['physical'][field] = value
+                for child in value_tree.values():
+                    mutate(child)
+            elif isinstance(value_tree, list):
+                for child in value_tree:
+                    mutate(child)
+
+        mutate(mutated)
+        plan = build_plan(mutated, list(map(str, units)), [])
+        if 'record_compatibility_unproved' not in {d['code'] for d in plan['diagnostics']}:
+            raise RuntimeError('actual-export-derived physical boundary accepted ' + name)
+        results[name] = {'origin': 'actual-export-derived payload mutation', 'inventories': mutated, 'plan': plan}
+    return results
+
+
 def check_records(tool, root, clang, stage):
     fixtures = Path(__file__).resolve().parent / 'record-fixtures'
     summaries = {}
@@ -59,7 +103,7 @@ def check_records(tool, root, clang, stage):
         units = [case_root / name for name in ('definition.c', 'caller.c')]
         entries = []
         for index, unit in enumerate(units):
-            args = [clang, '-std=c11', '-DPACKING=8', *(flags if index else []), str(unit)]
+            args = [clang, '-std=c11', '-DPACKING=8', *RECORD_BASE_FLAGS.get(case, []), *(flags if index else []), str(unit)]
             stage('record-' + case + '-syntax-' + str(index), [*args, '-fsyntax-only'])
             entries.append({'directory': str(case_root), 'file': str(unit), 'arguments': [*args, '-c']})
         database = case_root / 'compile_commands.json'
@@ -74,7 +118,29 @@ def check_records(tool, root, clang, stage):
         rejects = codes & {'signature_mismatch', 'record_compatibility_unproved'}
         if expected == 'compatible' and rejects or expected == 'mismatch' and 'signature_mismatch' not in codes or expected == 'unproved' and 'record_compatibility_unproved' not in codes or expected == 'reject' and not rejects:
             raise RuntimeError('actual record evidence oracle failed for ' + case + ': ' + str(codes))
+        if case.startswith('array-') or case == 'same-header':
+            for index, inv in enumerate(inventories):
+                definition = next(d for d in inv['record_definitions'] if d['identity'].get('tag') == 'shared_record')
+                fields = {f['name']: f['type'] for f in definition['facts']['fields']}
+                expected_cvr = {'const': case == 'array-qualified-same' or case == 'array-const' and index == 1 or case == 'array-const-volatile' and index == 0,
+                                'volatile': case == 'array-qualified-same' or case in ('array-volatile', 'array-const-volatile') and index == 1}
+                for name, levels in [('array', 1), ('nested_array', 2), ('flexible', 1)]:
+                    element = fields[name]
+                    for _ in range(levels):
+                        element = element['canonical']['array']
+                    if any(element[q] != expected for q, expected in expected_cvr.items()):
+                        raise RuntimeError('actual array element qualifiers lost for ' + case + '/' + name)
+                restricted = fields['pointer_array']['canonical']['array']['restrict']
+                if restricted != (case == 'array-restrict-same' or case == 'array-restrict' and index == 1):
+                    raise RuntimeError('actual restrict pointer array element qualifier lost')
+        if case in ('deep-pointer', 'unsupported-atomic', 'long-double-abi'):
+            sentinel = {'deep-pointer': 'type depth limit', 'unsupported-atomic': 'unsupported type or wrapper limit',
+                        'long-double-abi': 'long double ABI shape'}[case]
+            if not all(sentinel in json.dumps(inv['record_definitions']) for inv in inventories):
+                raise RuntimeError('actual serializer did not emit expected unproved fact for ' + case)
         if case == 'same-header':
+            boundaries = check_physical_boundaries(inventories, units)
+            (case_root / 'physical-boundary-mutations.json').write_text(json.dumps(boundaries, indent=2) + '\n')
             declarations = [next(d for d in inv['record_definitions'] if d['identity'].get('tag') == 'shared_record') for inv in inventories]
             identities = [d['identity'] for d in declarations]
             fileids = [re.search(r'fileid (\d+)', d['diagnostic_location']) for d in declarations]

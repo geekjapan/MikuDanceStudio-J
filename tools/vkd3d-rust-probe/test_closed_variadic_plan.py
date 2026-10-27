@@ -266,6 +266,40 @@ class RecordEvidenceTests(unittest.TestCase):
             mutation(b)
             self.assertIn('record_compatibility_unproved', self.codes(a, b))
 
+    def test_long_double_is_unproved_through_callback_record_and_array(self):
+        for wrap in (lambda t: t,
+                     lambda t: {'canonical': {'array': t, 'length': 2}, 'const': False, 'volatile': False, 'restrict': False},
+                     lambda t: {'canonical': {'pointer': {'canonical': {'return': scalar('Int'), 'parameters': [t],
+                         'variadic': False, 'noreturn': False, 'prototype': True, 'abi': 'C'},
+                         'const': False, 'volatile': False, 'restrict': False}}, 'const': False, 'volatile': False, 'restrict': False}):
+            for unsupported in (scalar('LongDouble'), {'canonical': {'unproved': 'long double ABI shape'},
+                                                     'const': False, 'volatile': False, 'restrict': False}):
+                a, b = self.pair()
+                for item in (a, b):
+                    item['record_definitions'][0]['facts']['fields'][0]['type'] = wrap(unsupported)
+                self.assertIn('record_compatibility_unproved', self.codes(a, b))
+
+    def test_actual_export_boundary_mutator_rejects_identical_unknowns(self):
+        from check_closed_variadic_inventory import check_physical_boundaries
+        a, b = self.pair()
+        before = json.dumps([a, b], sort_keys=True)
+        results = check_physical_boundaries([a, b], ['a.c', 'b.c'])
+        self.assertEqual(set(results), {'unknown-path', 'zero-line', 'zero-column'})
+        self.assertEqual(json.dumps([a, b], sort_keys=True), before)
+        for result in results.values():
+            self.assertEqual(result['origin'], 'actual-export-derived payload mutation')
+            self.assertIn('record_compatibility_unproved', {d['code'] for d in result['plan']['diagnostics']})
+
+    def test_nested_array_qualifiers_must_match(self):
+        def array(t):
+            return {'canonical': {'array': t, 'length': 2}, 'const': False, 'volatile': False, 'restrict': False}
+        for qualifier in ('const', 'volatile', 'restrict'):
+            a, b = self.pair()
+            for item in (a, b):
+                item['record_definitions'][0]['facts']['fields'][0]['type'] = array(array(scalar('Int')))
+            b['record_definitions'][0]['facts']['fields'][0]['type']['canonical']['array']['canonical']['array'][qualifier] = True
+            self.assertIn('signature_mismatch', self.codes(a, b))
+
     def test_schema_one_mixed_and_unknown_versions_are_rejected(self):
         for schema, evidence in ((1, 2), (2, 1), (3, 3), (2, None)):
             a, b = self.pair()

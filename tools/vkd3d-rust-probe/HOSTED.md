@@ -415,3 +415,25 @@ field and array changes, packing, record and union alignment, enums, qualifiers,
 and function ABI. This evidence remains `inventory_only`. It does not authorize
 stable lowering or replace the complete 24-unit translation, build, link,
 runtime, native 23-export, target-width and source/binary provenance gates.
+
+
+Schema 2 array evidence retains the original qualified element type in an
+inventory-only side table for constant and incomplete arrays. Missing original
+elements are unproved. The actual record matrix checks const and volatile
+scalar elements, nested and flexible arrays, and valid restrict-qualified
+pointer elements, including identical-qualified positive cases. LongDouble is
+unproved even when both TUs report the same kind. Its ABI shape is not encoded;
+the negative callback fixture uses independent x86_64 Linux compile commands
+with default and `-mlong-double-64` modes and static size assertions of 16 and 8.
+This is a conservative type restriction, not a general ABI-option validator.
+
+The same gate exports valid 40-level pointer and atomic-field C fixtures and
+requires the actual serializer's depth and unsupported-type sentinels in both
+TUs. Identical unknown facts must remain unproved. Physical boundary cases
+mutate copies of the actual same-header exporter output and retain the mutated
+inventories and plans. They test rejection of unknown paths and zero physical
+coordinates; they do not claim Clang emitted invalid file mappings. Dedicated
+physical evidence carries a path directly, independent of diagnostic file IDs.
+The existing hosted Rust inventory unit test also exercises the actual typed
+CBOR decoder with malformed tuples and invalid physical coordinates. These
+checks still require execution by the newly built exporter in CI.

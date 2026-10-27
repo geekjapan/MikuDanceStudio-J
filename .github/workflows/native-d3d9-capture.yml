@@ -1,0 +1,13 @@
+name: Native D3D9 capability and unchanged capture
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    uses: ./.github/workflows/windows-build.yml
+    with:
+      d3d9-capture: true

@@ -230,6 +230,12 @@ endif()
 # contains none of that code.  Turn ON only while running A/B sessions:
 #   cmake -B build-x64/diag -DMIKUDANCESTUDIO_DIAG=ON ..
 # ---------------------------------------------------------------------------
+option(MIKUDANCESTUDIO_D3D9_CAPABILITY "Build the standalone HAL capability diagnostic" OFF)
+if (MIKUDANCESTUDIO_D3D9_CAPABILITY)
+    add_executable(d3d9_capability tools/oracle/d3d9_capability.cpp)
+    target_link_libraries(d3d9_capability PRIVATE d3d9 user32)
+endif()
+
 option(MIKUDANCESTUDIO_DIAG
        "Compile the porting-era diagnostics probes (MIKUDANCESTUDIO_* env dumps/traces)" OFF)
 if (MIKUDANCESTUDIO_DIAG)

@@ -74,11 +74,11 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     status_path = out / 'status.json'
     status_path.write_text('{"status":"RUNNING"}\n')
-    from integrity import producer_paths, snapshot, check_integrity
+    from integrity import source_paths, snapshot, check_integrity
     manifest = fixtures = {}
     snapshot_complete = False
     try:
-        manifest = snapshot(ROOT, [*producer_paths(ROOT),*HERE.glob('*.py'),*HERE.rglob('*.json')])
+        manifest = snapshot(ROOT, source_paths(ROOT, out))
         fixtures = snapshot(ROOT, [p for folder in ['solver_data','contact_solver_data'] for p in (ROOT / 'rust/crates/mds-bullet/tests' / folder).glob('*') if p.is_file()])
         (out / 'source-sha256.json').write_text(json.dumps(manifest,indent=2)+'\n')
         (out / 'frozen-fixture-sha256.json').write_text(json.dumps(fixtures,indent=2)+'\n')
@@ -166,10 +166,10 @@ def main():
         print(json.dumps(provenance,indent=2))
     finally:
         try:
-            check_integrity(ROOT,out,manifest,fixtures)
             if not snapshot_complete:
                 (out / 'integrity.json').write_text('{"status":"FAIL","details":"Initial source snapshot incomplete"}\n')
                 raise ValueError('initial source snapshot incomplete')
+            check_integrity(ROOT,out,manifest,fixtures)
         except BaseException:
             status_path.write_text('{"status":"FAIL","details":"Source or fixture integrity failed"}\n')
             raise

@@ -199,6 +199,75 @@ class AllocatorReceipts(unittest.TestCase):
             validate_allocator(encoded.encode(), rows, 'ascending')
         with self.assertRaises(ValueError):
             self.check(records, rows, 'unknown')
+    def test_checkpoint_counters_must_cover_live_arena_allocations(self):
+        records, rows = self.fixture()
+        for record in records[1:-1]:
+            record['counters'] = [3, 3, 0, 0]
+        records[-1]['counters'] = [5, 5, 0, 0]
+        for ordinal, event in enumerate(records[-1]['events'], 4):
+            event['ordinal'] = ordinal
+        with self.assertRaisesRegex(ValueError, 'allocator counter history'):
+            self.check(records, rows)
+    def test_ordered_callbacks_must_have_a_feasible_prefix(self):
+        for next_allocation, valid in [(2, False), (101, True)]:
+            records, rows = self.fixture()
+            first, second = records[1]['events']
+            third = copy.deepcopy(first)
+            third.update(ordinal=next_allocation+1, pointer=first['pointer']+256)
+            first['ordinal'] = 1
+            second['ordinal'] = next_allocation
+            free = copy.deepcopy(records[-1]['events'][0])
+            free['ordinal'] = 100
+            records[1]['events'] = [first, free, second, third]
+            for record in records[1:-1]:
+                record['counters'] = [102, 100, 0, 0]
+            for row in rows:
+                for nodes, cached in row[12]:
+                    for node in nodes:
+                        if node[1] == first['pointer']+16:
+                            node[1] = third['pointer']+16
+                if row[12][0][1] is not None:
+                    row[12][0][1] = third['pointer']+16
+            records[-1]['counters'] = [102, 102, 0, 0]
+            records[-1]['events'][0].update(pointer=third['pointer'], ordinal=101)
+            records[-1]['events'][1]['ordinal'] = 102
+            with self.subTest(valid=valid):
+                if valid:
+                    self.assertEqual(self.check(records, rows)['allocations'], 3)
+                else:
+                    with self.assertRaisesRegex(ValueError, 'allocator callback ordinal/delta'):
+                        self.check(records, rows)
+    def test_trailer_prefix_allows_only_feasible_hidden_fallbacks(self):
+        for ordinal, valid in [(4, False), (102, True)]:
+            records, rows = self.fixture()
+            first, second = records[-1]['events']
+            first['ordinal'] = 100
+            second['ordinal'] = 101
+            allocation = copy.deepcopy(records[1]['events'][0])
+            allocation.update(ordinal=ordinal, pointer=allocation['pointer']+256)
+            final_free = copy.deepcopy(first)
+            final_free.update(ordinal=102, pointer=allocation['pointer'])
+            records[-1].update(counters=[102, 102, 0, 0], events=[first, allocation, second, final_free])
+            with self.subTest(valid=valid):
+                if valid:
+                    self.assertEqual(self.check(records, rows)['allocations'], 3)
+                else:
+                    with self.assertRaisesRegex(ValueError, 'allocator callback ordinal/delta'):
+                        self.check(records, rows)
+    def test_checkpoint_boundary_preserves_hidden_fallback_balance(self):
+        for outstanding, valid in [(1, False), (2, True), (3, True)]:
+            records, rows = self.fixture()
+            records[2]['counters'] = [103, 103-outstanding, 0, 0]
+            records[3]['counters'] = records[2]['counters'].copy()
+            records[-1]['counters'] = [105, 105, 0, 0]
+            records[-1]['events'][0]['ordinal'] = 104
+            records[-1]['events'][1]['ordinal'] = 105
+            with self.subTest(outstanding=outstanding):
+                if valid:
+                    self.assertEqual(self.check(records, rows)['allocations'], 2)
+                else:
+                    with self.assertRaisesRegex(ValueError, 'allocator counter history'):
+                        self.check(records, rows)
     def test_live_and_cached_nodes_require_live_unique_exact_arena_allocations(self):
         records, rows = self.fixture()
         for field in ['live', 'cached']:

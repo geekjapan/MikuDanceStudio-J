@@ -65,8 +65,17 @@ def main():
                 for p in sorted(root.rglob('*')) if p.is_file() and '__pycache__' not in p.parts}
 
     def run(argv, name, negative=None):
-        result = subprocess.run(argv, env=env, cwd=out, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, timeout=60)
+        try:
+            result = subprocess.run(argv, env=env, cwd=out, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, timeout=60)
+        except subprocess.TimeoutExpired as error:
+            stdout, stderr = error.stdout or b'', error.stderr or b''
+            (out / (name + '.log')).write_bytes(stdout + stderr)
+            records.append({'argv': argv, 'exit': None, 'log': name + '.log',
+                            'timed_out': True, 'timeout_seconds': error.timeout,
+                            'stdout': stdout.decode(errors='replace'),
+                            'stderr': stderr.decode(errors='replace')})
+            raise
         (out / (name + '.log')).write_bytes(result.stdout)
         records.append({'argv': argv, 'exit': result.returncode, 'log': name + '.log'})
         print(name, result.returncode, result.stdout.decode(errors='replace'), flush=True)

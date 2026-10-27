@@ -84,7 +84,12 @@ static void consume(const char *format, va_list args)
     CHECK(vsnprintf(result, sizeof(result), format, a) == length);
     va_end(a);
     CHECK(!strcmp(result, expected));
+#if defined(_WIN32)
+    FILE *file = NULL;
+    CHECK(tmpfile_s(&file) == 0);
+#else
     FILE *file = tmpfile();
+#endif
     CHECK(file);
     va_copy(a, args);
     CHECK(vfprintf(file, format, a) == length);

@@ -1,5 +1,6 @@
 """Cheap rejection-gate controls; no compiler or native process is launched."""
 import copy
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -67,17 +68,40 @@ class NegativeGates(unittest.TestCase):
             probe.check_compile_rejection(1, 'compiler crashed', source)
 
     def test_timeout_fails_and_writes_integrity_receipt(self):
-        with tempfile.TemporaryDirectory() as directory:
-            argv = ['run.py', '--out', directory, '--expect', 'apple-arm64']
-            with patch.object(sys, 'argv', argv), \
-                    patch.object(probe.platform, 'system', return_value='Darwin'), \
-                    patch.object(probe.platform, 'machine', return_value='arm64'), \
-                    patch.object(probe.platform, 'platform', return_value='test-host'), \
-                    patch.object(probe.subprocess, 'run', side_effect=subprocess.TimeoutExpired('rustc', 60)):
-                with self.assertRaises(subprocess.TimeoutExpired):
-                    probe.main()
-            receipt = json.loads((Path(directory) / 'receipt.json').read_text())
-            self.assertTrue(receipt['source_unchanged'])
+        for stdout, stderr in [(b'partial stdout\n', b'partial stderr\n'), (None, None)]:
+            with self.subTest(stdout=stdout, stderr=stderr), tempfile.TemporaryDirectory() as directory:
+                self.check_timeout_receipt(directory, stdout, stderr)
+
+    def check_timeout_receipt(self, directory, stdout, stderr):
+        argv = ['run.py', '--out', directory, '--expect', 'apple-arm64']
+        command = ['rustc', '+1.95.0', '-Vv']
+        error = subprocess.TimeoutExpired(command, 60, output=stdout, stderr=stderr)
+        with patch.object(sys, 'argv', argv), \
+                patch.object(probe.platform, 'system', return_value='Darwin'), \
+                patch.object(probe.platform, 'machine', return_value='arm64'), \
+                patch.object(probe.platform, 'platform', return_value='test-host'), \
+                patch.object(probe.subprocess, 'run', side_effect=error) as run, \
+                patch.object(probe, 'check_runtime_rejection') as runtime_gate, \
+                patch.object(probe, 'check_compile_rejection') as compile_gate:
+            with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                probe.main()
+            self.assertIs(caught.exception, error)
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(run.call_args.args[0], command)
+            self.assertEqual(run.call_args.kwargs['timeout'], 60)
+            self.assertIs(run.call_args.kwargs['stderr'], subprocess.STDOUT)
+            runtime_gate.assert_not_called()
+            compile_gate.assert_not_called()
+        receipt = json.loads((Path(directory) / 'receipt.json').read_text())
+        self.assertTrue(receipt['source_unchanged'])
+        self.assertEqual(receipt['commands'], [{
+            'argv': command, 'exit': None, 'log': 'rust-version.log',
+            'timed_out': True, 'timeout_seconds': 60,
+            'stdout': (stdout or b'').decode(), 'stderr': (stderr or b'').decode(),
+        }])
+        log = (Path(directory) / 'rust-version.log').read_bytes()
+        self.assertEqual(log, (stdout or b'') + (stderr or b''))
+        self.assertEqual(receipt['artifacts']['rust-version.log'], hashlib.sha256(log).hexdigest())
 
 
 if __name__ == '__main__':

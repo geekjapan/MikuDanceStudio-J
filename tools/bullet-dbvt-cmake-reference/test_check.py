@@ -548,6 +548,65 @@ class Controls(unittest.TestCase):
             with self.assertRaises(ValueError):
                 check.tlog_commands(path)
 
+    def test_actual_link_tasks_preserve_lines_and_argv(self):
+        fixtures = Path(__file__).with_name('fixtures') / 'link'
+        for label, count in (('app', 9), ('probe', 1)):
+            path = fixtures / (label + '.tlog')
+            expected = json.loads(path.with_suffix('.tlog.json').read_text())
+            with self.subTest(label=label):
+                self.assertEqual(check.digest(path), expected['sha256'])
+                [(sources, lines)] = check.tlog_tasks(path)
+                raw_lines = path.read_bytes().decode('utf-16').splitlines()
+                self.assertEqual(sources, raw_lines[0][1:].split('|'))
+                self.assertEqual(lines, raw_lines[1:])
+                self.assertEqual(len(lines), count)
+                responses = []
+                argv = check.linker_args((sources, lines), path.parent, responses)
+                identity = json.dumps(argv, separators=(',', ':'), ensure_ascii=False).encode()
+                self.assertEqual(hashlib.sha256(identity).hexdigest(), expected['argv_sha256'])
+                self.assertEqual(responses, [])
+                if label == 'app':
+                    self.assertIn('D:/a/MikuDanceStudio-J/MikuDanceStudio-J/res/gen_resources_x64.res', argv)
+                    with self.assertRaisesRegex(ValueError, 'multiple command lines'):
+                        check.tlog_commands(path)
+
+    def test_linker_continuations_are_only_object_or_resource_operands(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            first = '/OUT:app.exe /MAP:app.map first.obj generated.res'
+            task = (['first.obj', 'a b.obj', 'icon.res'], [first, '', '  "a b.obj" icon.res  ', ''])
+            self.assertEqual(check.linker_args(task, root, []),
+                             ['/OUT:app.exe', '/MAP:app.map', 'first.obj', 'generated.res', 'a b.obj', 'icon.res'])
+            for line in ('/OUT:other.obj', '/MAP:other.res', '-OUT:other.obj', '@other.obj',
+                         'link.exe other.obj', 'cmd /c other.obj', 'other.lib', '""',
+                         'a.obj && b.obj', 'a.obj | b.obj', 'a.obj > b.obj',
+                         '"unterminated.obj', 'a.obj"', 'a.obj:stream.obj', 'a?.obj',
+                         '/NOLOGO a.obj', '/DEFAULTLIB:other.obj'):
+                with self.subTest(line=line), self.assertRaises(ValueError):
+                    check.linker_args((['first.obj'], [first, line]), root, [])
+            for lines in ([], [''], ['""'], ['"unterminated', 'a.obj"']):
+                with self.subTest(lines=lines), self.assertRaises(ValueError):
+                    check.linker_args((['a.obj'], lines), root, [])
+
+    def test_linker_first_line_responses_keep_provenance_and_order(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'inner.rsp').write_bytes('/MAP:app.map first.obj'.encode('utf-16'))
+            (root / 'outer.rsp').write_text('/OUT:app.exe @inner.rsp generated.res')
+            responses = []
+            self.assertEqual(check.linker_args((['first.obj'], ['@outer.rsp', 'last.obj']), root, responses),
+                             ['/OUT:app.exe', '/MAP:app.map', 'first.obj', 'generated.res', 'last.obj'])
+            self.assertEqual([r['sha256'] for r in responses],
+                             [check.digest(root / name) for name in ('outer.rsp', 'inner.rsp')])
+            self.assertEqual(responses[1]['encoding'], 'utf-16')
+            with self.assertRaises(ValueError):
+                check.linker_args((['first.obj'], ['/OUT:app.exe', '@outer.rsp']), root, [])
+            with self.assertRaises(OSError):
+                check.linker_args((['first.obj'], ['@missing.rsp']), root, [])
+            (root / 'loop.rsp').write_text('@loop.rsp')
+            with self.assertRaises(ValueError):
+                check.linker_args((['first.obj'], ['@loop.rsp']), root, [])
+
     def test_actual_librarian_tasks_preserve_lines_and_argv(self):
         import ntpath
         from pathlib import PureWindowsPath
@@ -805,6 +864,22 @@ class Controls(unittest.TestCase):
         (out / (label + '-build.stdout')).write_text('Loaded C:/other-package/BulletCollision.lib(btDbvt.obj)\nLoaded C:/other-package/BulletCollision.lib(btDbvtBroadphase.obj)\n')
         (out / (label + '-build.stderr')).write_text('')
         return build, out, libs, tlog, map_path
+
+    def test_link_proof_multiline_task_retains_original_evidence(self):
+        for label in ('app', 'probe'):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as folder:
+                build, out, libs, tlog, map_path = self.link_fixture(Path(folder), label)
+                sources, lines = check.tlog_tasks(tlog)[0]
+                lines += ['', '"extra resource.res" extra.obj', '']
+                tlog.write_bytes(('^' + '|'.join(sources) + '\r\n' + '\r\n'.join(lines) + '\r\n').encode('utf-16'))
+                proof = check.link_proof(build, label, out, libs)
+                self.assertEqual(proof['task'], dict(sources=sources, lines=lines))
+                self.assertEqual(proof['tlog_sha256'], check.digest(tlog))
+                self.assertEqual(proof['encoding'], 'utf-16')
+                self.assertEqual(proof['argv'][-2:], ['extra resource.res', 'extra.obj'])
+                map_path.write_text(map_path.read_text().replace(':btDbvt.obj', ':unrelated.obj'))
+                with self.assertRaisesRegex(ValueError, 'map lacks'):
+                    check.link_proof(build, label, out, libs)
 
     def test_link_proof_requires_exact_target_map_and_each_library(self):
         for label in ('app', 'probe'):

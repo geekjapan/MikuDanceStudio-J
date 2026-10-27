@@ -78,20 +78,31 @@ class ObservationTests(unittest.TestCase):
                 altered=json.loads(json.dumps(profile));altered['differences'][0][field]=value;profile_path.write_text(json.dumps(altered))
                 with self.assertRaises(ValueError):verify(out,profiles)
 
-    def test_current_records_select_exact_raw_sources_and_reject_unknown_closure(self):
+    def test_historical_records_select_exact_recorded_sources_and_reject_unknown_closure(self):
         from check import hooks, SOLVER, ROOT, HERE
-        from integrity import producer_paths, verifier_paths, snapshot
+        from integrity import verifier_paths, snapshot
         import hashlib
+        import subprocess
+        import io
+        import tarfile
         from unittest.mock import patch
-        producers={p.relative_to(ROOT).as_posix() for p in producer_paths(ROOT)}
-        source=sorted(producers)[0]
         for host,count in [('macarm',1948),('linuxarm',1948),('linuxx64',696),('windows',954)]:
             with self.subTest(host=host),tempfile.TemporaryDirectory() as directory:
                 out=Path(directory)
                 profile=json.loads((HERE/'profiles'/f'{host}-run40426173732-current219.json').read_text())
                 measured=profile['measurement']
-                self.assertEqual(set(profile['producer_sources']),producers)
-                self.assertEqual(len(producers),219)
+                archived=measured['all_233_raw_sources']
+                verifier_prefix='tools/bullet-rust-mixed-solver-check/'
+                archived_verifiers={n for n in archived if n.startswith(verifier_prefix) and Path(n).suffix in {'.py','.json'} and n!=verifier_prefix+'cases.py'}
+                producers=set(archived)-archived_verifiers
+                source=sorted(producers)[0]
+                self.assertEqual(profile['producer_sources'],{n:archived[n] for n in producers})
+                self.assertEqual(len(profile['producer_sources']),len(archived)-len(archived_verifiers))
+                self.assertEqual(len(archived_verifiers),14)
+                self.assertTrue(profile['strict_producer_closure'])
+                self.assertEqual(measured['actual_run'],40426173732)
+                self.assertEqual(measured['actual_artifact']['host'],host)
+                self.assertEqual(measured['difference_words'],count)
                 self.assertEqual(len(measured['all_233_raw_sources']),233)
                 self.assertEqual(len(profile['captures']),6)
                 self.assertEqual(len(profile['differences']),count)
@@ -99,8 +110,17 @@ class ObservationTests(unittest.TestCase):
                 old=json.loads((HERE/'profiles'/f'{host}-run40411448747.json').read_text())
                 self.assertEqual(profile['captures'],old['captures'])
                 self.assertEqual(profile['differences'],old['differences'])
+                self.assertEqual(measured['historical_profile'],old['name'])
+                self.assertTrue(measured['historical_difference_inventory_and_captures_identical'])
                 for name,raw in measured['identity_raw_text'].items():(out/name).write_bytes(raw.encode())
-                observed=hooks(SOLVER.read_text()).encode()
+                archive=subprocess.check_output(['git','archive',measured['head'],*sorted(producers)],cwd=ROOT)
+                with tarfile.open(fileobj=io.BytesIO(archive)) as pinned:
+                    for name in sorted(producers):
+                        raw=pinned.extractfile(name).read()
+                        if host=='windows':raw=raw.replace(b'\n',b'\r\n')
+                        self.assertEqual(hashlib.sha256(raw).hexdigest(),profile['producer_sources'][name],name)
+                    solver_source=pinned.extractfile(SOLVER.relative_to(ROOT).as_posix()).read().decode()
+                observed=hooks(solver_source).encode()
                 if host=='windows':observed=observed.replace(b'\n',b'\r\n')
                 (out/SOLVER.name).write_bytes(observed)
                 sources={**snapshot(ROOT,verifier_paths(ROOT)),**profile['producer_sources']}
@@ -110,25 +130,52 @@ class ObservationTests(unittest.TestCase):
                 manifest.write_text(json.dumps(aliases))
                 with self.assertRaisesRegex(ValueError,'ambiguous source manifest'):select_profile(out,HERE/'profiles')
                 manifest.write_text(json.dumps(sources))
-                self.assertEqual(select_profile(out,HERE/'profiles')['name'],profile['name'])
-                with patch('integrity.producer_paths',return_value=[ROOT/n for n in producers|{'unknown.rs'}]):
-                    with self.assertRaisesRegex(ValueError,'producer closure differs'):select_profile(out,HERE/'profiles')
-                for name in producers:
-                    raw=(ROOT/name).read_bytes().replace(b'\r\n',b'\n')
-                    if host=='windows':raw=raw.replace(b'\n',b'\r\n')
-                    self.assertEqual(hashlib.sha256(raw).hexdigest(),profile['producer_sources'][name])
+                with patch('integrity.producer_paths',return_value=[ROOT/n for n in producers]):
+                    self.assertEqual(select_profile(out,HERE/'profiles')['name'],profile['name'])
+                verifier=sorted(set(sources)-producers)[0]
+                independent=dict(sources,**{verifier:'changed verifier hash'})
+                manifest.write_text(json.dumps(independent))
+                with patch('integrity.producer_paths',return_value=[ROOT/n for n in producers]):
+                    self.assertEqual(select_profile(out,HERE/'profiles')['name'],profile['name'])
+                manifest.write_text(json.dumps(sources))
+                for closure in [producers|{'unknown.rs'},producers-{source}]:
+                    with patch('integrity.producer_paths',return_value=[ROOT/n for n in closure]):
+                        with self.assertRaisesRegex(ValueError,'producer closure differs'):select_profile(out,HERE/'profiles')
                 for changed in [dict(sources,**{source:'unknown'}),{n:h for n,h in sources.items() if n!=source},dict(sources,**{'unknown.rs':'unknown'})]:
                     manifest.write_text(json.dumps(changed))
                     with self.assertRaisesRegex(ValueError,'source profile differs|producer closure differs'):select_profile(out,HERE/'profiles')
                 manifest.write_text(json.dumps(sources))
                 (out/SOLVER.name).write_bytes(observed+b'\n')
-                with self.assertRaisesRegex(ValueError,'observer source differs'):select_profile(out,HERE/'profiles')
+                with patch('integrity.producer_paths',return_value=[ROOT/n for n in producers]):
+                    with self.assertRaisesRegex(ValueError,'observer source differs'):select_profile(out,HERE/'profiles')
                 (out/SOLVER.name).write_bytes(observed)
                 compiler=out/'compiler.txt';raw=compiler.read_bytes()
                 compiler.write_bytes(raw.replace(b'\r\n',b'\n') if b'\r\n' in raw else raw.replace(b'\n',b'\r\n'))
-                with self.assertRaisesRegex(ValueError,'raw compiler identity differs'):select_profile(out,HERE/'profiles')
+                with patch('integrity.producer_paths',return_value=[ROOT/n for n in producers]):
+                    with self.assertRaisesRegex(ValueError,'raw compiler identity differs'):select_profile(out,HERE/'profiles')
                 compiler.write_bytes(raw+b'unseen compiler')
                 with self.assertRaisesRegex(ValueError,'unknown or ambiguous'):select_profile(out,HERE/'profiles')
+
+    def test_actual_current_source_snapshot_requires_a_matching_profile(self):
+        from check import ROOT, HERE
+        from integrity import producer_paths, source_paths, snapshot
+        producers=snapshot(ROOT,producer_paths(ROOT))
+        for host in ['macarm','linuxarm','linuxx64','windows']:
+            with self.subTest(host=host),tempfile.TemporaryDirectory() as directory:
+                out=Path(directory)
+                profile=json.loads((HERE/'profiles'/f'{host}-run40426173732-current219.json').read_text())
+                for name,raw in profile['measurement']['identity_raw_text'].items():(out/name).write_bytes(raw.encode())
+                manifest=snapshot(ROOT,source_paths(ROOT,out))
+                self.assertEqual({n:manifest[n] for n in producers},producers)
+                (out/'source-sha256.json').write_text(json.dumps(manifest))
+                if producers!=profile['producer_sources']:
+                    # The real final gate must reject before reading any numeric capture.
+                    with self.assertRaisesRegex(ValueError,'source profile differs|producer closure differs'):
+                        verify(out,HERE/'profiles')
+                else:
+                    from check import SOLVER, hooks
+                    (out/SOLVER.name).write_text(hooks(SOLVER.read_text()))
+                    self.assertEqual(select_profile(out,HERE/'profiles')['name'],profile['name'])
 
     def test_actual_msvc_banner_is_required_and_raw_bound(self):
         with tempfile.TemporaryDirectory() as directory:

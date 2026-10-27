@@ -1,0 +1,3187 @@
+diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/AstExporter.cpp
+--- a/c2rust-ast-exporter/src/AstExporter.cpp
++++ b/c2rust-ast-exporter/src/AstExporter.cpp
+@@ -5,4 +5,5 @@
+ #include <iostream>
+ #include <iterator>
++#include <map>
+ #include <optional>
+ #include <set>
+@@ -13,5 +14,12 @@
+ #include "llvm/Support/CommandLine.h"
+ #include "llvm/Support/Debug.h"
++#include "llvm/Support/ErrorHandling.h"
+ #include "llvm/Support/Path.h"
++#include "llvm/Support/JSON.h"
++#include "llvm/Support/SHA256.h"
++#include "llvm/ADT/StringExtras.h"
++#include "clang/Lex/PPCallbacks.h"
++#include "clang/Lex/PreprocessorOptions.h"
++#include "clang/Lex/HeaderSearchOptions.h"
+ #include "llvm/Support/raw_ostream.h"
+ // Declares clang::SyntaxOnlyAction.
+@@ -59,4 +67,6 @@
+ using clang::QualType;
+ using std::string;
++
++static llvm::cl::opt<bool> CaptureCursorInputs("c2rust-cursor-inputs", llvm::cl::init(false));
+
+ namespace { // for local definitions, preferred to making each `static`
+@@ -224,4 +234,6 @@
+   public:
+     uintptr_t encodeQualType(QualType t) {
++        while (const auto *macro = dyn_cast<MacroQualifiedType>(t.getTypePtr()))
++            t = macro->getUnderlyingType().withCVRQualifiers(t.getCVRQualifiers());
+         auto s = t.split();
+
+@@ -260,4 +272,8 @@
+     void VisitQualType(const QualType &QT) {
+         if (!QT.isNull()) {
++            if (const auto *macro = dyn_cast<MacroQualifiedType>(QT.getTypePtr())) {
++                VisitQualType(macro->getUnderlyingType());
++                return;
++            }
+             auto s = QT.split();
+
+@@ -272,5 +288,5 @@
+
+     void VisitAttributedType(const AttributedType *T) {
+-        auto t = T->getModifiedType();
++        auto t = T->isCallingConv() ? T->getEquivalentType() : T->getModifiedType();
+         auto qt = encodeQualType(t);
+         auto k = T->getAttrKind();
+@@ -578,5 +594,11 @@
+         }();
+
+-        encodeType(T, tag);
++        if (tag == TagChar) {
++            encodeType(T, tag, [kind](CborEncoder *local) {
++                cbor_encode_boolean(local, kind == BuiltinType::Char_S);
++            });
++        } else {
++            encodeType(T, tag);
++        }
+     }
+
+@@ -586,4 +608,13 @@
+     // cases by overriding `VisitFunctionType` instead of the current
+     // two-function solution.
++    static const char *callingConvention(const clang::FunctionType *T) {
++        switch (T->getCallConv()) {
++        case CC_C: return "C";
++        case CC_Win64: return "win64";
++        case CC_X86_64SysV: return "sysv64";
++        default: llvm::report_fatal_error("unsupported C2Rust calling convention");
++        }
++    }
++
+     void VisitFunctionProtoType(const FunctionProtoType *T) {
+         LLVM_DEBUG(dbgs() << "Visit ");
+@@ -609,4 +640,5 @@
+             cbor_encode_boolean(local, T->getNoReturnAttr());
+             cbor_encode_boolean(local, true); // has arguments
++            cbor_encode_text_stringz(local, callingConvention(T));
+         });
+
+@@ -632,4 +664,5 @@
+             cbor_encode_boolean(local, T->getNoReturnAttr());
+             cbor_encode_boolean(local, false); // has arguments
++            cbor_encode_text_stringz(local, callingConvention(T));
+         });
+
+@@ -2253,4 +2286,25 @@
+
+                 cbor_encoder_close_container(array, &attr_array);
++                const AsmLabelAttr *label = nullptr;
++                for (const auto *redecl : FD->redecls()) {
++                    if (const auto *attr = redecl->getAttr<AsmLabelAttr>()) {
++                        if (label && label->getLabel() != attr->getLabel())
++                            llvm::report_fatal_error("conflicting function asm labels");
++                        label = attr;
++                    }
++                }
++                cbor_encode_string(array, label ? label->getLabel().str() : name);
++                auto builtin = FD->getBuiltinID();
++                const char *semantic = "unknown";
++                switch (builtin) {
++                case Builtin::BI__builtin_va_start: semantic = "va_start"; break;
++                case Builtin::BI__builtin_va_end: semantic = "va_end"; break;
++                case Builtin::BI__builtin_va_copy: semantic = "va_copy"; break;
++                case Builtin::BIvsnprintf:
++                case Builtin::BI__builtin_vsnprintf: semantic = "vsnprintf"; break;
++                default: break;
++                }
++                cbor_encode_uint(array, builtin);
++                cbor_encode_text_stringz(array, semantic);
+             });
+         typeEncoder.VisitQualTypeOf(functionType, paramsFD);
+@@ -2344,7 +2398,19 @@
+
+                 cbor_encoder_close_container(array, &attr_array);
++                if (CaptureCursorInputs && Context->hasSameType(VD->getType(), Context->getBuiltinVaListType())) {
++                    auto builtin = Context->getBuiltinVaListType();
++                    CborEncoder native;
++                    cbor_encoder_create_array(array, &native, 3);
++                    cbor_encode_uint(&native, typeEncoder.encodeQualType(Context->getCanonicalType(VD->getType())));
++                    cbor_encode_uint(&native, typeEncoder.encodeQualType(Context->getCanonicalType(builtin)));
++                    cbor_encode_uint(&native, Context->getTargetInfo().getBuiltinVaListKind());
++                    cbor_encoder_close_container(array, &native);
++                } else cbor_encode_null(array);
++                cbor_encode_boolean(array, CaptureCursorInputs && VD->isLocalVarDecl() && !isa<ParmVarDecl>(VD));
+             });
+
+         typeEncoder.VisitQualTypeOf(T, def);
++        if (CaptureCursorInputs && Context->hasSameType(VD->getType(), Context->getBuiltinVaListType()))
++            typeEncoder.VisitQualType(Context->getCanonicalType(Context->getBuiltinVaListType()));
+
+         return true;
+@@ -2358,4 +2424,45 @@
+      - name as string
+      */
++    void encodeRecordEvidence(CborEncoder *enc, const TagDecl *decl) {
++        const TagDecl *actual = decl->getDefinition();
++        if (!actual) actual = decl;
++        auto &sm = Context->getSourceManager();
++        auto begin = actual->getBeginLoc();
++        auto loc = sm.getFileLoc(begin);
++        auto fid = sm.getFileID(loc);
++        auto file = sm.getFileEntryForID(fid);
++        auto path = file ? file->tryGetRealPathName().str() : string();
++        auto context = actual->getLexicalDeclContext();
++        auto owner = dyn_cast<RecordDecl>(context);
++        bool lexicalMember = context->containsDecl(const_cast<TagDecl *>(actual));
++        CborEncoder a;
++        cbor_encoder_create_array(enc, &a, 11);
++        cbor_encode_uint(&a, 2);
++        cbor_encode_text_stringz(&a, actual->isEnum() ? "enum" : actual->isUnion() ? "union" : "struct");
++        auto name = actual->getNameAsString();
++        if (name.empty()) cbor_encode_null(&a); else cbor_encode_string(&a, name);
++        cbor_encode_string(&a, path);
++        cbor_encode_uint(&a, loc.isValid() ? sm.getSpellingLineNumber(loc) : 0);
++        cbor_encode_uint(&a, loc.isValid() ? sm.getSpellingColumnNumber(loc) : 0);
++        cbor_encode_text_stringz(&a, lexicalMember && context->isTranslationUnit() ? "file" : lexicalMember && owner ? "record" : "unproved");
++        if (owner) encodeRecordEvidence(&a, owner); else cbor_encode_null(&a);
++        cbor_encode_boolean(&a, begin.isMacroID() || actual->getLocation().isMacroID() || actual->getEndLoc().isMacroID());
++        cbor_encode_boolean(&a, actual->isCompleteDefinition());
++        if (auto record = dyn_cast<RecordDecl>(actual); record && record->isCompleteDefinition()) {
++            CborEncoder layout;
++            cbor_encoder_create_array(&a, &layout, 5);
++            cbor_encode_boolean(&layout, record->hasAttr<PackedAttr>());
++            if (auto align = record->getMaxAlignment()) cbor_encode_uint(&layout, align / 8);
++            else cbor_encode_null(&layout);
++            if (auto pack = record->getAttr<MaxFieldAlignmentAttr>()) cbor_encode_uint(&layout, pack->getAlignment() / 8);
++            else cbor_encode_null(&layout);
++            const auto &facts = Context->getASTRecordLayout(record);
++            cbor_encode_uint(&layout, facts.getSize().getQuantity());
++            cbor_encode_uint(&layout, facts.getAlignment().getQuantity());
++            cbor_encoder_close_container(&a, &layout);
++        } else cbor_encode_null(&a);
++        cbor_encoder_close_container(enc, &a);
++    }
++
+     bool VisitRecordDecl(RecordDecl *D) {
+         if (!D->isCanonicalDecl()) {
+@@ -2449,4 +2556,6 @@
+                 // 7. Encode the platform specific alignment of this record
+                 cbor_encode_uint(local, recordAlignment);
++                encodeRecordEvidence(local, D);
++                cbor_encode_boolean(local, CaptureCursorInputs && D == Context->getVaListTagDecl());
+             });
+
+@@ -2468,5 +2577,5 @@
+
+         encode_entry(D, TagEnumDecl, childIds, underlying_type,
+-                     [D](CborEncoder *local) {
++                     [this, D](CborEncoder *local) {
+                          auto name = D->getNameAsString();
+                          if (name.empty()) {
+@@ -2475,4 +2584,5 @@
+                              cbor_encode_string(local, name);
+                          }
++                         encodeRecordEvidence(local, D);
+                      });
+
+@@ -3003,15 +3113,205 @@
+ }
+
++
++
++// LLVM 18 SourceManager.h: getBufferIfLoaded never opens or refreshes a file.
++class CursorInputs {
++    struct Buffer {
++        std::string bytes, identifier, role, physical;
++        std::set<std::string> aliases, lexer_file_ids;
++        uint64_t device = 0, file = 0;
++        bool lexed = false;
++    };
++    std::map<const SrcMgr::ContentCache *, Buffer> buffers;
++    std::set<std::string> unsupported;
++    std::map<const FileEntry *, std::set<std::string>> aliases;
++    llvm::json::Array lexerEvents;
++    CompilerInstance &CI;
++    std::vector<std::string> argv;
++
++  public:
++    CursorInputs(CompilerInstance &CI, const std::vector<std::string> &argv)
++        : CI(CI), argv(argv) {}
++
++    void observe(const SrcMgr::ContentCache &cache, llvm::StringRef role,
++                 bool lexed, llvm::StringRef alias = {}) {
++        auto loaded = cache.getBufferIfLoaded();
++        if (!loaded) {
++            if (lexed) unsupported.insert("lexed_buffer_not_loaded");
++            return;
++        }
++        if (cache.IsBufferInvalid || cache.BufferOverridden ||
++            cache.OrigEntry != cache.ContentsEntry)
++            unsupported.insert("invalid_or_overridden_buffer");
++        auto text = loaded->getBuffer();
++        auto it = buffers.find(&cache);
++        if (it == buffers.end()) {
++            Buffer b;
++            b.bytes = text.str();
++            b.identifier = loaded->getBufferIdentifier().str();
++            b.role = role.str();
++            if (cache.OrigEntry) {
++                b.physical = cache.OrigEntry->getFileEntry().tryGetRealPathName().str();
++                auto uid = cache.OrigEntry->getFileEntry().getUniqueID();
++                b.device = uid.getDevice(); b.file = uid.getFile();
++                b.aliases.insert(cache.OrigEntry->getName().str());
++                if (b.physical.empty()) unsupported.insert("missing_physical_path");
++            } else if (role != "predefines" && role != "scratch") {
++                unsupported.insert("unknown_nonfile_buffer");
++            }
++            it = buffers.emplace(&cache, std::move(b)).first;
++        } else if (it->second.bytes != text) {
++            unsupported.insert("cached_buffer_changed");
++        }
++        if (cache.OrigEntry) {
++            const auto &known = aliases[&cache.OrigEntry->getFileEntry()];
++            it->second.aliases.insert(known.begin(), known.end());
++            if (!alias.empty()) it->second.aliases.insert(alias.str());
++            if (!cache.Filename.empty()) it->second.aliases.insert(cache.Filename.str());
++        }
++        if (role == "main" || role == "predefines") it->second.role = role.str();
++        it->second.lexed |= lexed;
++    }
++
++    void markMultipleInvocation() { unsupported.insert("multiple_native_invocations"); }
++
++    void included(OptionalFileEntryRef file) {
++        if (!file) return;
++        auto &names = aliases[&file->getFileEntry()];
++        names.insert(file->getName().str());
++        names.insert(file->getNameAsRequested().str());
++    }
++
++    void changed(FileID id, PPCallbacks::LexedFileChangeReason reason,
++                 SrcMgr::CharacteristicKind characteristic) {
++        lexerEvents.push_back(llvm::json::Object{
++            {"file_id", std::to_string(id.getHashValue())},
++            {"reason", reason == PPCallbacks::LexedFileChangeReason::EnterFile ? "enter" : "exit"},
++            {"characteristic", int64_t(characteristic)}});
++        if (reason != PPCallbacks::LexedFileChangeReason::EnterFile) return;
++        auto &sm = CI.getSourceManager();
++        bool invalid = false;
++        const auto &entry = sm.getSLocEntry(id, &invalid);
++        if (invalid || !entry.isFile()) { unsupported.insert("invalid_lexed_file"); return; }
++        auto role = id == sm.getMainFileID() ? "main" :
++            id == CI.getPreprocessor().getPredefinesFileID() ? "predefines" : "file";
++        const auto &cache = entry.getFile().getContentCache();
++        observe(cache, role, true);
++        auto found = buffers.find(&cache);
++        if (found != buffers.end()) found->second.lexer_file_ids.insert(std::to_string(id.getHashValue()));
++    }
++
++    std::string encode() {
++        auto &sm = CI.getSourceManager();
++        auto &pp = CI.getPreprocessor();
++        const auto &opts = CI.getPreprocessorOpts();
++        const auto &front = CI.getFrontendOpts();
++        if (sm.loaded_sloc_entry_size() || CI.getASTContext().getExternalSource() || pp.getExternalSource())
++            unsupported.insert("external_ast_or_preprocessor");
++        if (!opts.ImplicitPCHInclude.empty() || !opts.ChainedIncludes.empty() ||
++            opts.PrecompiledPreambleBytes.first || opts.GeneratePreamble ||
++            !opts.PCHThroughHeader.empty() || opts.PCHWithHdrStop || opts.PCHWithHdrStopCreate)
++            unsupported.insert("pch_or_preamble");
++        if (CI.getLangOpts().Modules) unsupported.insert("modules");
++        if (!CI.getHeaderSearchOpts().VFSOverlayFiles.empty() ||
++            !opts.RemappedFiles.empty() || !opts.RemappedFileBuffers.empty())
++            unsupported.insert("vfs_overlay_or_remap");
++        if (opts.SingleFileParseMode || opts.DependencyDirectivesForFile)
++            unsupported.insert("partial_preprocessing");
++        if (front.Inputs.size() != 1) unsupported.insert("multiple_inputs");
++        for (const auto &input : front.Inputs)
++            if (!input.isFile() || input.getFile() == "-" || input.isPreprocessed() ||
++                input.getKind().getFormat() != InputKind::Source ||
++                input.getKind().getLanguage() != Language::C)
++                unsupported.insert("unsupported_input_kind");
++        if (CI.getDiagnostics().hasErrorOccurred()) unsupported.insert("diagnostic_error");
++        for (unsigned i = 1; i < sm.local_sloc_entry_size(); ++i) {
++            const auto &entry = sm.getLocalSLocEntry(i);
++            if (!entry.isFile()) continue;
++            const auto &cache = entry.getFile().getContentCache();
++            auto loaded = cache.getBufferIfLoaded();
++            if (!loaded) continue;
++            auto role = loaded->getBufferIdentifier() == "<scratch space>" ? "scratch" : "file";
++            observe(cache, role, false);
++        }
++        for (auto i = sm.fileinfo_begin(); i != sm.fileinfo_end(); ++i)
++            observe(*i->second, "file", false, i->first.getName());
++        llvm::json::Array entries;
++        for (const auto &item : buffers) {
++            const auto &b = item.second;
++            if (!b.lexed && b.role != "scratch") unsupported.insert("loaded_buffer_without_lexer_callback");
++            llvm::json::Array aliases, lexerIds;
++            for (const auto &a : b.aliases) aliases.push_back(a);
++            for (const auto &id : b.lexer_file_ids) lexerIds.push_back(id);
++            auto data = llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(b.bytes.data()), b.bytes.size());
++            entries.push_back(llvm::json::Object{
++                {"role", b.role}, {"identifier", b.identifier}, {"physical_path", b.physical},
++                {"aliases", std::move(aliases)}, {"native_device", std::to_string(b.device)},
++                {"native_file", std::to_string(b.file)}, {"length", int64_t(b.bytes.size())},
++                {"bytes_hex", llvm::toHex(data, true)},
++                {"sha256", llvm::toHex(llvm::SHA256::hash(data), true)}, {"lexed", b.lexed},
++                {"lexer_file_ids", std::move(lexerIds)}});
++        }
++        llvm::json::Array args, cc1, errors, features, writtenFeatures;
++        for (const auto &a : argv) args.push_back(a);
++        CI.getInvocation().generateCC1CommandLine([&](const Twine &a) { cc1.push_back(a.str()); });
++        for (const auto &error : unsupported) errors.push_back(error);
++        const auto &target = CI.getTargetOpts();
++        for (const auto &f : target.Features) features.push_back(f);
++        for (const auto &f : target.FeaturesAsWritten) writtenFeatures.push_back(f);
++        auto cwd = CI.getFileManager().getVirtualFileSystem().getCurrentWorkingDirectory();
++        if (!cwd) errors.push_back("missing_cwd");
++        if (CI.getHeaderSearchOpts().ResourceDir.empty() ||
++            std::none_of(argv.begin(), argv.end(), [](const std::string &a) {
++                return a == "-resource-dir" || StringRef(a).starts_with("-resource-dir=");
++            })) errors.push_back("missing_explicit_resource_directory");
++        llvm::json::Object result{
++            {"schema", 2}, {"main_input", sm.getFileEntryForID(sm.getMainFileID()) ? sm.getFileEntryForID(sm.getMainFileID())->tryGetRealPathName().str() : ""},
++            {"cwd", cwd ? *cwd : ""}, {"adjusted_driver_argv", std::move(args)},
++            {"regenerated_cc1_argv", std::move(cc1)}, {"target", CI.getTarget().getTriple().str()},
++            {"cpu", target.CPU}, {"abi", target.ABI}, {"features", std::move(features)},
++            {"features_as_written", std::move(writtenFeatures)},
++            {"vfs", "clangtool_empty_overlay_on_real_filesystem"},
++            {"unsupported", std::move(errors)}, {"buffers", std::move(entries)},
++            {"lexer_events", std::move(lexerEvents)}};
++        std::string encoded;
++        llvm::raw_string_ostream out(encoded); out << llvm::json::Value(std::move(result)); out.flush();
++        return encoded;
++    }
++};
++
++class CursorInputCallbacks : public PPCallbacks {
++    std::shared_ptr<CursorInputs> inputs;
++  public:
++    explicit CursorInputCallbacks(std::shared_ptr<CursorInputs> inputs) : inputs(std::move(inputs)) {}
++    void LexedFileChanged(FileID id, LexedFileChangeReason reason,
++                          SrcMgr::CharacteristicKind characteristic, FileID, SourceLocation) override {
++        inputs->changed(id, reason, characteristic);
++    }
++    void InclusionDirective(SourceLocation, const Token &, StringRef, bool,
++                            CharSourceRange, OptionalFileEntryRef file, StringRef,
++                            StringRef, const clang::Module *, SrcMgr::CharacteristicKind) override {
++        inputs->included(file);
++    }
++    void FileSkipped(const FileEntryRef &file, const Token &, SrcMgr::CharacteristicKind) override {
++        inputs->included(file);
++    }
++};
++
+ class TranslateConsumer : public clang::ASTConsumer {
+     Outputs *outputs;
+     const std::string outfile;
+     Preprocessor &PP;
++    std::shared_ptr<CursorInputs> inputs;
+
+   public:
+-    explicit TranslateConsumer(Outputs *outputs, llvm::StringRef InFile, Preprocessor &PP)
+-        : outputs(outputs), outfile(InFile.str()), PP(PP) {}
++    explicit TranslateConsumer(Outputs *outputs, llvm::StringRef InFile, Preprocessor &PP, std::shared_ptr<CursorInputs> inputs)
++        : outputs(outputs), outfile(InFile.str()), PP(PP), inputs(std::move(inputs)) {}
+
+     virtual void HandleTranslationUnit(clang::ASTContext &Context) {
+-
++        if (!inputs) finish(Context);
++    }
++
++    void finish(clang::ASTContext &Context) {
+         CborEncoder encoder;
+
+@@ -3027,5 +3327,5 @@
+
+             CborEncoder outer;
+-            cbor_encoder_create_array(&encoder, &outer, 6);
++            cbor_encoder_create_array(&encoder, &outer, 8);
+
+             CborEncoder array;
+@@ -3137,4 +3437,14 @@
+             cbor_encode_string(&outer, target);
+
++            CborEncoder widths;
++            cbor_encoder_create_array(&outer, &widths, 8);
++            for (QualType type : {Context.CharTy, Context.ShortTy, Context.IntTy,
++                                  Context.LongTy, Context.LongLongTy, Context.VoidPtrTy,
++                                  Context.FloatTy, Context.DoubleTy})
++                cbor_encode_uint(&widths, Context.getTypeSize(type));
++            cbor_encoder_close_container(&outer, &widths);
++
++            if (inputs) cbor_encode_string(&outer, inputs->encode());
++            else cbor_encode_null(&outer);
+             cbor_encoder_close_container(&encoder, &outer);
+         };
+@@ -3159,7 +3469,13 @@
+ class TranslateAction : public clang::ASTFrontendAction {
+     Outputs *outputs;
++    const std::vector<std::string> *argv;
++    TranslateConsumer *consumer = nullptr;
+
+   public:
+-    TranslateAction(Outputs *outputs) : outputs(outputs) {}
++    void EndSourceFileAction() override {
++        if (CaptureCursorInputs && consumer) consumer->finish(getCompilerInstance().getASTContext());
++    }
++
++    TranslateAction(Outputs *outputs, const std::vector<std::string> *argv) : outputs(outputs), argv(argv) {}
+
+     virtual std::unique_ptr<clang::ASTConsumer>
+@@ -3176,6 +3492,13 @@
+         }
+
+-        return std::unique_ptr<clang::ASTConsumer>(
+-            new TranslateConsumer(outputs, InFile, Compiler.getPreprocessor()));
++        std::shared_ptr<CursorInputs> inputs;
++        if (CaptureCursorInputs) {
++            inputs = std::make_shared<CursorInputs>(Compiler, *argv);
++            if (!outputs->empty()) inputs->markMultipleInvocation();
++            Compiler.getPreprocessor().addPPCallbacks(std::make_unique<CursorInputCallbacks>(inputs));
++        }
++        auto result = std::make_unique<TranslateConsumer>(outputs, InFile, Compiler.getPreprocessor(), inputs);
++        consumer = result.get();
++        return result;
+     }
+ };
+@@ -3271,15 +3594,16 @@
+ class MyFrontendActionFactory : public FrontendActionFactory {
+     Outputs *outputs;
++    const std::vector<std::string> *argv;
+
+   public:
+-    MyFrontendActionFactory(Outputs *outputs) : outputs(outputs) {}
++    MyFrontendActionFactory(Outputs *outputs, const std::vector<std::string> *argv) : outputs(outputs), argv(argv) {}
+
+ #if CLANG_VERSION_MAJOR < 10
+     clang::FrontendAction *create() override {
+-        return new TranslateAction(outputs);
++        return new TranslateAction(outputs, argv);
+     }
+ #else
+     std::unique_ptr<FrontendAction> create() override {
+-        return std::make_unique<TranslateAction>(outputs);
++        return std::make_unique<TranslateAction>(outputs, argv);
+     }
+ #endif // CLANG_VERSION_MAJOR
+@@ -3374,5 +3698,10 @@
+
+     Outputs outputs;
+-    MyFrontendActionFactory myFrontendActionFactory(&outputs);
++    std::vector<std::string> adjustedArgv;
++    Tool.appendArgumentsAdjuster([&](const CommandLineArguments &args, StringRef) {
++        adjustedArgv = args;
++        return args;
++    });
++    MyFrontendActionFactory myFrontendActionFactory(&outputs, &adjustedArgv);
+
+     *result = Tool.run(&myFrontendActionFactory);
+diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_ast/conversion.rs
+--- a/c2rust-transpile/src/c_ast/conversion.rs
++++ b/c2rust-transpile/src/c_ast/conversion.rs
+@@ -602,4 +602,6 @@
+         self.typed_context.va_list_kind = untyped_context.va_list_kind;
+         self.typed_context.target = untyped_context.target.clone();
++        self.typed_context.target_c_widths = untyped_context.target_c_widths;
++        self.typed_context.cursor_inputs = untyped_context.cursor_inputs.clone();
+     }
+
+@@ -660,4 +662,7 @@
+
+                 TypeTag::TagChar if expected_ty & OTHER_TYPE != 0 => {
++                    if let [Value::Bool(signed)] = ty_node.extras.as_slice() {
++                        self.typed_context.source_char_signedness.insert(CTypeId(new_id), *signed);
++                    }
+                     self.add_type(new_id, not_located(CTypeKind::Char));
+                     self.processed_nodes.insert(new_id, OTHER_TYPE);
+@@ -827,6 +832,14 @@
+                     let has_proto = from_value(ty_node.extras[3].clone())
+                         .expect("HasProto of function type not found");
++                    let abi_name: String = from_value(ty_node.extras[4].clone())
++                        .expect("Calling convention of function type not found");
++                    let abi = match abi_name.as_str() {
++                        "C" => CCallingConvention::C,
++                        "win64" => CCallingConvention::Win64,
++                        "sysv64" => CCallingConvention::SysV64,
++                        _ => panic!("unsupported calling convention: {}", abi_name),
++                    };
+                     let function_ty =
+-                        CTypeKind::Function(ret, arguments, is_variadic, is_noreturn, has_proto);
++                        CTypeKind::Function(ret, arguments, is_variadic, is_noreturn, has_proto, abi);
+                     self.add_type(new_id, not_located(function_ty));
+                     self.processed_nodes.insert(new_id, FUNC_TYPE);
+@@ -959,5 +972,7 @@
+                 TypeTag::TagConstantArrayType => {
+                     let element_id = from_value(ty_node.extras[0].clone()).expect("element id");
+-                    let element = self.visit_type(element_id);
++                    let qualified_element = self.visit_qualified_type(element_id);
++                    let element = qualified_element.ctype;
++                    self.typed_context.source_array_elements.insert(CTypeId(new_id), qualified_element);
+
+                     let count: usize = from_value(ty_node.extras[1].clone()).expect("count");
+@@ -970,5 +985,7 @@
+                 TypeTag::TagIncompleteArrayType => {
+                     let element_id = from_value(ty_node.extras[0].clone()).expect("element id");
+-                    let element = self.visit_type(element_id);
++                    let qualified_element = self.visit_qualified_type(element_id);
++                    let element = qualified_element.ctype;
++                    self.typed_context.source_array_elements.insert(CTypeId(new_id), qualified_element);
+
+                     let element_ty = CTypeKind::IncompleteArray(element);
+@@ -2138,4 +2155,11 @@
+                         .expect("Expected to find function name");
+
++                    let linker_name = from_value::<String>(node.extras[8].clone())
++                        .expect("Expected to find function linker name");
++                    self.typed_context.linker_names.insert(CDeclId(new_id), linker_name);
++                    let builtin_id = from_value(node.extras[9].clone()).expect("Clang builtin ID");
++                    let semantic = from_value(node.extras[10].clone()).expect("Clang builtin semantic");
++                    self.typed_context.cursor_builtin_identity.insert(CDeclId(new_id), (builtin_id, semantic));
++
+                     let is_global =
+                         from_value(node.extras[1].clone()).expect("Expected to find visibility");
+@@ -2210,4 +2234,5 @@
+                         .expect("Expected to find type on typedef declaration");
+                     let mut typ = self.visit_qualified_type(typ_old);
++                    self.typed_context.source_typedef_types.insert(CDeclId(new_id), typ);
+
+                     // Clang injects definitions of the form `#define __SIZE_TYPE__ unsigned int` into
+@@ -2331,4 +2356,8 @@
+
+                 ASTEntryTag::TagEnumDecl if expected_ty & ENUM_DECL != 0 => {
++                    let evidence: c2rust_ast_exporter::clang_ast::RecordEvidence = from_value(node.extras[1].clone())
++                        .expect("Expected strict physical record evidence schema 2");
++                    assert_eq!(evidence.0, 2, "unsupported record evidence schema");
++                    self.typed_context.record_evidence.insert(CDeclId(new_id), evidence);
+                     let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
+
+@@ -2411,4 +2440,14 @@
+                     let typ = self.visit_qualified_type(typ_id);
+
++                    let native: Option<(u64, u64, u64)> = from_value(node.extras[6].clone())
++                        .expect("native canonical va_list equality facts");
++                    if let Some((declared, builtin, kind)) = native {
++                        let declared = self.visit_qualified_type(declared);
++                        let builtin = self.visit_qualified_type(builtin);
++                        self.typed_context.native_cursor_types.insert(CDeclId(new_id), (declared, builtin, kind));
++                    }
++
++                    let local: bool = from_value(node.extras[7].clone()).expect("native local variable identity");
++                    if local { self.typed_context.native_local_variables.insert(CDeclId(new_id)); }
+                     let variable_decl = CDeclKind::Variable {
+                         has_static_duration,
+@@ -2427,4 +2466,11 @@
+
+                 ASTEntryTag::TagStructDecl if expected_ty & RECORD_DECL != 0 => {
++                    let evidence: c2rust_ast_exporter::clang_ast::RecordEvidence = from_value(node.extras[7].clone())
++                        .expect("Expected strict physical record evidence schema 2");
++                    assert_eq!(evidence.0, 2, "unsupported record evidence schema");
++                    self.typed_context.record_evidence.insert(CDeclId(new_id), evidence);
++                    let native_builtin: bool = from_value(node.extras[8].clone())
++                        .expect("native ASTContext va_list tag declaration identity");
++                    if native_builtin { self.typed_context.native_va_list_records.insert(CDeclId(new_id)); }
+                     let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
+                     let has_def = from_value(node.extras[1].clone())
+@@ -2468,4 +2514,8 @@
+
+                 ASTEntryTag::TagUnionDecl if expected_ty & RECORD_DECL != 0 => {
++                    let evidence: c2rust_ast_exporter::clang_ast::RecordEvidence = from_value(node.extras[7].clone())
++                        .expect("Expected strict physical record evidence schema 2");
++                    assert_eq!(evidence.0, 2, "unsupported record evidence schema");
++                    self.typed_context.record_evidence.insert(CDeclId(new_id), evidence);
+                     let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
+                     let has_def = from_value(node.extras[1].clone())
+diff --git a/c2rust-transpile/src/c_ast/iterators.rs b/c2rust-transpile/src/c_ast/iterators.rs
+index 123c377..75a3074 100644
+--- a/c2rust-transpile/src/c_ast/iterators.rs
++++ b/c2rust-transpile/src/c_ast/iterators.rs
+@@ -320,7 +320,7 @@ fn immediate_type_children(kind: &CTypeKind) -> Vec<SomeId> {
+             }
+             res
+         }
+-        Function(ret, ref params, _, _, _) => {
++        Function(ret, ref params, _, _, _, _) => {
+             let mut res = intos![ret.ctype];
+             for p in params {
+                 res.push(p.ctype.into())
+diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.rs
+--- a/c2rust-transpile/src/c_ast/mod.rs
++++ b/c2rust-transpile/src/c_ast/mod.rs
+@@ -19,4 +19,5 @@
+ pub use c2rust_ast_exporter::clang_ast::{BuiltinVaListKind, SrcFile, SrcLoc, SrcSpan};
+
++mod closed_variadic;
+ mod conversion;
+ pub mod iterators;
+@@ -122,4 +123,15 @@
+     pub va_list_kind: BuiltinVaListKind,
+     pub target: String,
++    pub target_c_widths: [u64; 8],
++    pub cursor_inputs: Option<String>,
++    pub native_local_variables: HashSet<CDeclId>,
++    pub native_va_list_records: HashSet<CDeclId>,
++    pub native_cursor_types: HashMap<CDeclId, (CQualTypeId, CQualTypeId, u64)>,
++    pub linker_names: HashMap<CDeclId, String>,
++    pub cursor_builtin_identity: HashMap<CDeclId, (u64, String)>,
++    pub source_typedef_types: HashMap<CDeclId, CQualTypeId>,
++    pub source_array_elements: HashMap<CTypeId, CQualTypeId>,
++    pub source_char_signedness: HashMap<CTypeId, bool>,
++    pub record_evidence: HashMap<CDeclId, c2rust_ast_exporter::clang_ast::RecordEvidence>,
+ }
+
+@@ -1021,4 +1033,5 @@
+                     is_noreturn1,
+                     has_prototype1,
++                    abi1,
+                 ),
+                 Function(
+@@ -1028,4 +1041,5 @@
+                     is_noreturn2,
+                     has_prototype2,
++                    abi2,
+                 ),
+             ) => {
+@@ -1041,4 +1055,5 @@
+                     && is_noreturn1 == is_noreturn2
+                     && has_prototype1 == has_prototype2
++                    && abi1 == abi2
+             }
+
+@@ -1096,6 +1111,6 @@
+             let decl_arg_tys = self.tys_of_params(parameters).unwrap();
+             let typ_kind = &self[typ].kind;
+-            if let &CTypeKind::Function(ret, ref _arg_tys, a, b, c) = typ_kind {
+-                return CTypeKind::Function(ret, decl_arg_tys, a, b, c);
++            if let &CTypeKind::Function(ret, ref _arg_tys, a, b, c, abi) = typ_kind {
++                return CTypeKind::Function(ret, decl_arg_tys, a, b, c, abi);
+             }
+             panic!("expected {typ:?} to be CTypeKind::Function, but it was {typ_kind:?}")
+@@ -1180,5 +1195,5 @@
+
+         match self.index(pointed_id).kind {
+-            CTypeKind::Function(_, _, _, no_return, _) => no_return,
++            CTypeKind::Function(_, _, _, no_return, _, _) => no_return,
+             _ => false,
+         }
+@@ -2831,7 +2846,23 @@
+ //  * AdjustedType <http://clang.llvm.org/doxygen/classclang_1_1AdjustedType.html>
+
+-/// Represents a type in C (6.2.5 Types)
+-///
+-/// Reflects the types in <http://clang.llvm.org/doxygen/classclang_1_1Type.html>
++/// Calling conventions supported by the exporter and Rust backend.
++#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
++pub enum CCallingConvention {
++    C,
++    Win64,
++    SysV64,
++}
++
++impl CCallingConvention {
++    pub fn as_str(self) -> &'static str {
++        match self {
++            Self::C => "C",
++            Self::Win64 => "win64",
++            Self::SysV64 => "sysv64",
++        }
++    }
++}
++
++/// Represents a type in C (6.2.5 Types).
+ #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+ pub enum CTypeKind {
+@@ -2895,5 +2926,5 @@
+     // arguments are in K&R format.
+     // Flags: is_variable_argument, is_noreturn, has prototype
+-    Function(CQualTypeId, Vec<CQualTypeId>, bool, bool, bool),
++    Function(CQualTypeId, Vec<CQualTypeId>, bool, bool, bool, CCallingConvention),
+
+     // Type definition type (6.7.7)
+diff --git a/c2rust-transpile/src/convert_type.rs b/c2rust-transpile/src/convert_type.rs
+index a699cb7..11e8117 100644
+--- a/c2rust-transpile/src/convert_type.rs
++++ b/c2rust-transpile/src/convert_type.rs
+@@ -128,6 +128,7 @@ pub fn convert_function(
+         ret: Option<CQualTypeId>,
+         params: &[CQualTypeId],
+         is_variadic: bool,
++        abi: CCallingConvention,
+     ) -> TranslationResult<Box<Type>> {
+         let barefn_inputs = params
+             .iter()
+@@ -149,7 +150,7 @@ pub fn convert_function(
+             variadic,
+             ReturnType::Type(Default::default(), output),
+         );
+-        Ok(mk().unsafe_().extern_("C").barefn_ty(fn_ty))
++        Ok(mk().unsafe_().extern_(abi.as_str()).barefn_ty(fn_ty))
+     }
+
+     /// Converts the qualified type of a pointer.
+@@ -305,16 +306,16 @@ pub fn convert(
+             CTypeKind::Atomic(ty) => self.convert(ctxt, ty.ctype),
+
+             // ANSI/ISO C-style function
+-            CTypeKind::Function(ret, ref params, is_var, is_noreturn, true) => {
++            CTypeKind::Function(ret, ref params, is_var, is_noreturn, true, abi) => {
+                 let opt_ret = if is_noreturn { None } else { Some(ret) };
+-                let fn_ty = self.convert_function(ctxt, opt_ret, params, is_var)?;
++                let fn_ty = self.convert_function(ctxt, opt_ret, params, is_var, abi)?;
+                 Ok(fn_ty)
+             }
+
+             // K&R-style function
+-            CTypeKind::Function(ret, _, is_var, is_noreturn, false) => {
++            CTypeKind::Function(ret, _, is_var, is_noreturn, false, abi) => {
+                 let opt_ret = if is_noreturn { None } else { Some(ret) };
+-                let fn_ty = self.convert_function(ctxt, opt_ret, &[], is_var)?;
++                let fn_ty = self.convert_function(ctxt, opt_ret, &[], is_var, abi)?;
+                 Ok(fn_ty)
+             }
+
+@@ -351,10 +352,10 @@ pub fn knr_function_type_with_parameters(
+     ) -> TranslationResult<Option<Box<Type>>> {
+         match ctxt.index(ctype).kind {
+             // ANSI/ISO C-style function
+-            CTypeKind::Function(.., true) => Ok(None),
++            CTypeKind::Function(_, _, _, _, true, _) => Ok(None),
+
+             // K&R-style function
+-            CTypeKind::Function(ret, ref _params, is_var, is_noreturn, false) => {
++            CTypeKind::Function(ret, ref _params, is_var, is_noreturn, false, abi) => {
+                 // _params is empty here -> get params from function definition instead
+                 let params = params
+                     .iter()
+@@ -368,10 +369,13 @@ pub fn knr_function_type_with_parameters(
+                     .collect::<Vec<_>>();
+
+                 let opt_ret = if is_noreturn { None } else { Some(ret) };
+-                let fn_ty = self.convert_function(ctxt, opt_ret, &params, is_var)?;
++                let fn_ty = self.convert_function(ctxt, opt_ret, &params, is_var, abi)?;
+                 Ok(Some(fn_ty))
+             }
+
++            CTypeKind::Attributed(ty, _) => {
++                self.knr_function_type_with_parameters(ctxt, ty.ctype, params)
++            }
+             CTypeKind::Elaborated(ref ctype) => {
+                 self.knr_function_type_with_parameters(ctxt, *ctype, params)
+             }
+diff --git a/c2rust-transpile/src/translator/atomics.rs b/c2rust-transpile/src/translator/atomics.rs
+index f544ea6..6b801d6 100644
+--- a/c2rust-transpile/src/translator/atomics.rs
++++ b/c2rust-transpile/src/translator/atomics.rs
+@@ -420,7 +420,7 @@ fn static_order<T>(order: Option<T>) -> T {
+                         .get_qual_type()
+                         .ok_or_else(|| format_err!("bad val1 type"))?;
+                     ptr.zip(val).and_then_try(|(ptr, val)| {
+-                        self.convert_atomic_op(ctx, atomic_op, order, ptr, val, val_type_id)
++                        self.convert_atomic_op(ctx, atomic_op, order, ptr_id, ptr, val, val_type_id)
+                     })
+                 } else {
+                     unimplemented!("atomic not implemented: {}", name)
+@@ -471,16 +471,56 @@ pub(crate) fn convert_atomic_op(
+         ctx: ExprContext,
+         atomic_op: CAtomicBinOp,
+         order: Ordering,
++        ptr_id: CExprId,
+         dst: Box<Expr>,
+         src: Box<Expr>,
+         src_type_id: CQualTypeId,
+     ) -> TranslationResult<WithStmts<Box<Expr>>> {
+         // Emit `atomic_func(a0, a1) (op a1)?`
+-        let atomic_func =
+-            self.atomic_intrinsic_expr(atomic_op.rust_intrinsic_base_name(), &[order]);
++        let ptr_ty = self.ast_context[ptr_id].kind.get_qual_type().unwrap();
++        let mut value_ty = self
++            .ast_context
++            .get_pointee_qual_type(ptr_ty.ctype)
++            .unwrap();
++        if let CTypeKind::Atomic(inner) = self.ast_context.resolve_type(value_ty.ctype).kind {
++            value_ty = inner;
++        }
++        let stable_u32 = atomic_op == CAtomicBinOp::AddFetch
++            && order == Ordering::SeqCst
++            && matches!(
++                self.ast_context.resolve_type(value_ty.ctype).kind,
++                CTypeKind::UInt | CTypeKind::UInt32
++            )
++            && matches!(
++                self.ast_context.resolve_type(src_type_id.ctype).kind,
++                CTypeKind::UInt | CTypeKind::UInt32
++            );
++        let atomic_func = if stable_u32 {
++            None
++        } else {
++            Some(self.atomic_intrinsic_expr(atomic_op.rust_intrinsic_base_name(), &[order]))
++        };
++        let call_atomic = |dst, src| {
++            if let Some(ref atomic_func) = atomic_func {
++                mk().call_expr(atomic_func.clone(), vec![dst, src])
++            } else {
++                let atomic = mk().call_expr(
++                    mk().abs_path_expr(vec!["core", "sync", "atomic", "AtomicU32", "from_ptr"]),
++                    vec![dst],
++                );
++                mk().method_call_expr(
++                    atomic,
++                    "fetch_add",
++                    vec![
++                        src,
++                        mk().abs_path_expr(vec!["core", "sync", "atomic", "Ordering", "SeqCst"]),
++                    ],
++                )
++            }
++        };
+
+         if atomic_op.fetches_first() {
+-            let call_expr = mk().call_expr(atomic_func, vec![dst, src]);
++            let call_expr = call_atomic(dst, src);
+             Ok(self.convert_side_effects_expr(
+                 ctx,
+                 WithStmts::new_val(call_expr),
+@@ -510,10 +550,7 @@ pub(crate) fn convert_atomic_op(
+                 Some(src),
+             )));
+
+-            let call = mk().call_expr(
+-                atomic_func,
+-                vec![mk().ident_expr(&arg0_name), mk().ident_expr(&arg1_name)],
+-            );
++            let call = call_atomic(mk().ident_expr(&arg0_name), mk().ident_expr(&arg1_name));
+
+             let src_type_kind = &self.ast_context.resolve_type(src_type_id.ctype).kind;
+             let arg1 = mk().ident_expr(arg1_name);
+diff --git a/c2rust-transpile/src/translator/builtins.rs b/c2rust-transpile/src/translator/builtins.rs
+index 84f40e6..51b5f01 100644
+--- a/c2rust-transpile/src/translator/builtins.rs
++++ b/c2rust-transpile/src/translator/builtins.rs
+@@ -641,7 +641,15 @@ pub fn convert_builtin(
+                         .get_qual_type()
+                         .ok_or_else(|| format_err!("bad arg1 type"))?;
+                     arg0.zip(arg1).and_then_try(|(arg0, arg1)| {
+-                        self.convert_atomic_op(ctx, atomic_op, SeqCst, arg0, arg1, arg1_type_id)
++                        self.convert_atomic_op(
++                            ctx,
++                            atomic_op,
++                            SeqCst,
++                            args[0],
++                            arg0,
++                            arg1,
++                            arg1_type_id,
++                        )
+                     })
+                 } else if let Some(fn_name) = simd_fn_from_builtin_fn(builtin_name) {
+                     self.convert_simd_builtin(ctx, fn_name, args)
+diff --git a/c2rust-transpile/src/translator/functions.rs b/c2rust-transpile/src/translator/functions.rs
+index e423e49..30566ea 100644
+--- a/c2rust-transpile/src/translator/functions.rs
++++ b/c2rust-transpile/src/translator/functions.rs
+@@ -30,10 +30,10 @@ pub fn convert_function(
+             return Ok(ConvertedDecl::NoItem);
+         }
+
+-        let (ret, is_variadic): (Option<CQualTypeId>, bool) =
++        let (ret, is_variadic, abi): (Option<CQualTypeId>, bool, CCallingConvention) =
+             match self.ast_context.resolve_type(typ).kind {
+-                CTypeKind::Function(ret, _, is_var, is_noreturn, _) => {
+-                    (if is_noreturn { None } else { Some(ret) }, is_var)
++                CTypeKind::Function(ret, _, is_var, is_noreturn, _, abi) => {
++                    (if is_noreturn { None } else { Some(ret) }, is_var, abi)
+                 }
+                 ref k => {
+                     return Err(format_err!(
+@@ -67,6 +67,7 @@ pub fn convert_function(
+             is_inline,
+             is_main,
+             is_variadic,
++            abi,
+             is_extern,
+             new_name,
+             name,
+@@ -84,6 +85,7 @@ pub fn convert_function(
+                 false,
+                 is_main,
+                 is_variadic,
++                abi,
+                 is_extern,
+                 new_name,
+                 name,
+@@ -104,6 +106,7 @@ fn convert_function_inner(
+         is_inline: bool,
+         is_main: bool,
+         is_variadic: bool,
++        abi: CCallingConvention,
+         is_extern: bool,
+         new_name: &str,
+         name: &str,
+@@ -263,12 +266,12 @@ fn convert_function_inner(
+                     self.mk_cross_check(mk(), vec!["entry(djb2=\"main\")", "exit(djb2=\"main\")"])
+                 } else if (is_global && !is_inline) || is_extern_inline {
+                     mk_linkage(false, new_name, name, self.tcfg.edition)
+-                        .extern_("C")
++                        .extern_(abi.as_str())
+                         .pub_()
+                 } else if self.cur_file.get().is_some() {
+-                    mk().extern_("C").pub_()
++                    mk().extern_(abi.as_str()).pub_()
+                 } else {
+-                    mk().extern_("C")
++                    mk().extern_(abi.as_str())
+                 };
+
+                 // In Edition2024, `unsafe_op_in_unsafe_fn` is deny-by-default so we emit an allow pragma
+@@ -334,7 +337,14 @@ fn convert_function_inner(
+                 let mk_ = mk_.unsafety(extern_block_unsafety(self.tcfg.edition));
+                 let function_decl = mk_.fn_foreign_item(decl);
+
+-                Ok(ConvertedDecl::ForeignItem(function_decl))
++                if abi == CCallingConvention::C {
++                    Ok(ConvertedDecl::ForeignItem(function_decl))
++                } else {
++                    Ok(ConvertedDecl::Item(
++                        mk().unsafety(extern_block_unsafety(self.tcfg.edition))
++                            .extern_(abi.as_str()).foreign_items(vec![*function_decl]),
++                    ))
++                }
+             }
+         })
+     }
+@@ -373,7 +383,7 @@ pub fn convert_function_call(
+             )
+             .map(|ty| &self.ast_context.resolve_type(ty.ctype).kind);
+         let is_variadic = match fn_ty {
+-            Some(CTypeKind::Function(_, _, is_variadic, _, _)) => *is_variadic,
++            Some(CTypeKind::Function(_, _, is_variadic, _, _, _)) => *is_variadic,
+             _ => false,
+         };
+
+@@ -403,7 +413,7 @@ pub fn convert_function_call(
+             // Function pointer call
+             _ => {
+                 let callee = self.convert_expr(ctx.used(), func, None)?;
+-                let make_fn_ty = |ret_ty: Box<Type>| {
++                let make_fn_ty = |ret_ty: Box<Type>, abi: CCallingConvention| {
+                     let ret_ty = match *ret_ty {
+                         Type::Tuple(TypeTuple { elems: ref v, .. }) if v.is_empty() => ReturnType::Default,
+                         _ => ReturnType::Type(Default::default(), ret_ty),
+@@ -413,13 +423,13 @@ pub fn convert_function_call(
+                         None::<BareVariadic>,
+                         ret_ty
+                     );
+-                    mk().barefn_ty(bare_ty)
++                    mk().unsafe_().extern_(abi.as_str()).barefn_ty(bare_ty)
+                 };
+                 match fn_ty {
+-                    Some(CTypeKind::Function(ret_ty, _, _, _, false)) => {
++                    Some(CTypeKind::Function(ret_ty, _, _, _, false, abi)) => {
+                         // K&R function pointer without arguments
+                         let ret_ty = self.convert_type(ret_ty.ctype)?;
+-                        let target_ty = make_fn_ty(ret_ty);
++                        let target_ty = make_fn_ty(ret_ty, *abi);
+                         callee.map(|fn_ptr| {
+                             let fn_ptr = unwrap_function_pointer(fn_ptr);
+                             transmute_expr(mk().infer_ty(), target_ty, fn_ptr)
+@@ -428,7 +438,7 @@ pub fn convert_function_call(
+                     None => {
+                         // We have to infer the return type from our expression type
+                         let ret_ty = self.convert_type(call_expr_ty.ctype)?;
+-                        let target_ty = make_fn_ty(ret_ty);
++                        let target_ty = make_fn_ty(ret_ty, CCallingConvention::C);
+                         callee.map(|fn_ptr| {
+                             transmute_expr(mk().infer_ty(), target_ty, fn_ptr)
+                         }).set_unsafe()
+@@ -535,7 +545,7 @@ pub fn convert_main(&self, main_id: CDeclId) -> TranslationResult<Box<Item>> {
+         } = self.ast_context.index(main_id).kind
+         {
+             let ret: CTypeKind = match self.ast_context.resolve_type(typ).kind {
+-                CTypeKind::Function(ret, _, _, _, _) => {
++                CTypeKind::Function(ret, _, _, _, _, _) => {
+                     self.ast_context.resolve_type(ret.ctype).kind.clone()
+                 }
+                 ref k => {
+diff --git a/c2rust-transpile/src/translator/mod.rs b/c2rust-transpile/src/translator/mod.rs
+index 8fb6f5b..116fbe7 100644
+--- a/c2rust-transpile/src/translator/mod.rs
++++ b/c2rust-transpile/src/translator/mod.rs
+@@ -612,13 +612,15 @@ pub fn emit_c_decl_map(
+                 path_to_c_source_range.insert(ident, (decl, source_range));
+             }
+             Some(ConvertedDecl::Item(item)) => {
+-                let ident = item_ident(item).unwrap();
+-                path_to_c_source_range.insert(ident, (decl, source_range));
++                for ident in item_idents(item) {
++                    path_to_c_source_range.insert(ident, (decl, source_range));
++                }
+             }
+             Some(ConvertedDecl::Items(items)) => {
+                 for item in items {
+-                    let ident = item_ident(item).unwrap();
+-                    path_to_c_source_range.insert(ident, (decl, source_range));
++                    for ident in item_idents(item) {
++                        path_to_c_source_range.insert(ident, (decl, source_range));
++                    }
+                 }
+             }
+             Some(ConvertedDecl::NoItem) => {}
+@@ -1347,6 +1349,18 @@ fn item_ident(i: &Item) -> Option<&Ident> {
+     })
+ }
+
++fn item_idents(item: &Item) -> Vec<&Ident> {
++    if let Item::ForeignMod(block) = item {
++        block
++            .items
++            .iter()
++            .filter_map(|item| foreign_item_ident_vis(item).map(|(ident, _)| ident))
++            .collect()
++    } else {
++        item_ident(item).into_iter().collect()
++    }
++}
++
+ fn item_vis(i: &Item) -> Option<Visibility> {
+     use Item::*;
+     Some(
+@@ -1397,6 +1411,61 @@ fn foreign_item_ident_vis(fi: &ForeignItem) -> Option<(&Ident, Visibility)> {
+     })
+ }
+
++#[test]
++fn win64_foreign_block_names_and_reexports() {
++    let item: Item = syn::parse_quote! {
++        unsafe extern "win64" {
++            pub fn native_callback(a: i64, b: f64) -> f64;
++            pub fn native_second() -> i64;
++        }
++    };
++    let names: Vec<_> = item_idents(&item)
++        .into_iter()
++        .map(ToString::to_string)
++        .collect();
++    assert_eq!(names, ["native_callback", "native_second"]);
++    let path = Path::new("native_api.h");
++    let context = TypedAstContext::new(
++        path,
++        &[SrcFile {
++            path: Some(path.into()),
++            include_loc: None,
++        }],
++    );
++    let mut store = ItemStore::new();
++    store.add_item(Box::new(item));
++    let mut exports = ItemStore::new();
++    let module = make_submodule(
++        &context,
++        &mut store,
++        0,
++        &mut exports,
++        &RefCell::default(),
++        true,
++        Edition2024,
++    );
++    let (items, foreign, uses) = exports.drain();
++    assert!(items.is_empty() && foreign.is_empty());
++    let mut exported = Vec::new();
++    for item in uses.into_items() {
++        let Item::Use(item) = *item else {
++            panic!("expected module reexport")
++        };
++        let IdentsOrGlob::Idents(names) = use_idents(&item.tree) else {
++            panic!("expected named reexports")
++        };
++        exported.extend(names.into_iter().map(ToString::to_string));
++    }
++    assert_eq!(exported, ["native_callback", "native_second"]);
++    let Item::Mod(module) = *module else {
++        panic!("expected header module")
++    };
++    let Item::ForeignMod(block) = &module.content.unwrap().1[0] else {
++        panic!("expected preserved extern block")
++    };
++    assert_eq!(block.abi.name.as_ref().unwrap().value(), "win64");
++}
++
+ /// Create a submodule containing the items in `item_store`. Populates `use_item_store` with the set
+ /// of `use`s to import the submodule's exports.
+ fn make_submodule(
+@@ -1431,7 +1500,13 @@ fn make_submodule(
+         use_item_store.add_use_with_attr(false, use_path(), &ident_name, vis);
+     }
+
+-    for foreign_item in foreign_items.iter() {
++    for foreign_item in foreign_items.iter().chain(items.iter().flat_map(|item| {
++        if let Item::ForeignMod(block) = &**item {
++            block.items.iter()
++        } else {
++            [].iter()
++        }
++    })) {
+         let ident_name = match foreign_item_ident_vis(foreign_item) {
+             Some((ident, _vis)) => ident.to_string(),
+             None => continue,
+@@ -2084,9 +2159,17 @@ fn convert_decl(&self, ctx: ExprContext, decl_id: CDeclId) -> TranslationResult<
+
+         use CDeclKind::*;
+         match decl.kind {
+-            Struct { fields: None, .. }
+-            | Union { fields: None, .. }
+-            | Enum {
++            Struct { fields: None, .. } | Union { fields: None, .. } => {
++                let name = self
++                    .type_converter
++                    .borrow()
++                    .resolve_decl_name(decl_id)
++                    .unwrap();
++                Ok(ConvertedDecl::Item(opaque_record_item(syn::Ident::new(
++                    &name, span,
++                ))))
++            }
++            Enum {
+                 underlying_type_id: None,
+                 ..
+             } => {
+@@ -3554,7 +3637,15 @@ pub(crate) fn convert_expr(
+                     if ctx.is_pattern {
+                         self.convert_expr(ctx, child, override_ty)
+                     } else {
+-                        self.convert_constant(constant).map(WithStmts::new_val)
++                        let value = self.convert_constant(constant)?;
++                        let target_ty = override_ty.unwrap_or(ty);
++                        let value = match self.ast_context.resolve_type(target_ty.ctype).kind {
++                            CTypeKind::Enum(enum_id) => {
++                                self.enum_constructor_expr(enum_id, value, false)
++                            }
++                            _ => value,
++                        };
++                        Ok(WithStmts::new_val(value))
+                     }
+                 } else {
+                     self.convert_expr(ctx, child, Some(override_ty.unwrap_or(ty)))
+@@ -3574,62 +3665,42 @@ pub(crate) fn convert_expr(
+                     false,
+                 )?)),
+                 OffsetOfKind::Variable(qty, field_id, expr_id) => {
+-                    self.use_crate(ExternCrate::Memoffset);
+-
+-                    // Struct Type
+-                    let decl_id = {
+-                        let kind = match self.ast_context[qty.ctype].kind {
+-                            CTypeKind::Elaborated(ty_id) => &self.ast_context[ty_id].kind,
+-                            ref kind => kind,
+-                        };
+-
+-                        kind.as_decl_or_typedef()
+-                            .expect("Did not find decl_id for offsetof struct")
+-                    };
+-                    let name = self.resolve_decl_inner_name(decl_id);
+-                    let ty_ident = mk().ident(name);
+-
+-                    // Field name
++                    let struct_ty = self.convert_type(qty.ctype)?;
+                     let field_name = self
+                         .type_converter
+                         .borrow()
+                         .resolve_field_name(None, *field_id)
+                         .expect("Did not find name for offsetof struct field");
+                     let field_ident = mk().ident(field_name);
+-
+-                    // Index Expr
+-                    let expr = self
+-                        .convert_expr(ctx, *expr_id, None)?
+-                        .to_pure_expr()
+-                        .ok_or_else(|| {
+-                            format_err!("Expected Variable offsetof to be a side-effect free")
+-                        })?;
+-                    let expr = mk().cast_expr(expr, mk().ident_ty("usize"));
+-                    use syn::__private::ToTokens;
+-                    let index_expr = expr.to_token_stream();
+-
+-                    // offset_of!(Struct, field[expr as usize]) as ty
+-                    let macro_body = vec![
+-                        TokenTree::Ident(ty_ident),
+-                        TokenTree::Punct(Punct::new(',', Alone)),
+-                        TokenTree::Ident(field_ident),
+-                        TokenTree::Group(proc_macro2::Group::new(
+-                            proc_macro2::Delimiter::Bracket,
+-                            index_expr,
+-                        )),
+-                    ];
+-                    let path = mk().path("offset_of");
+-                    let mac = mk().mac_expr(mk().mac(
+-                        path,
+-                        macro_body,
+-                        MacroDelimiter::Paren(Default::default()),
+-                    ));
+-
+-                    // Cast type
++                    let record_id = self.ast_context.parents[field_id];
++                    let field_path: TokenStream = if self.ast_context.has_inner_struct_decl(record_id) {
++                        syn::parse_quote!(0 . #field_ident)
++                    } else {
++                        syn::parse_quote!(#field_ident)
++                    };
++                    let field_ty = match self.ast_context[*field_id].kind {
++                        CDeclKind::Field { typ, .. } => typ,
++                        _ => unreachable!("Expected offsetof field declaration"),
++                    };
++                    let element = match self.ast_context.resolve_type(field_ty.ctype).kind {
++                        CTypeKind::ConstantArray(element, _)
++                        | CTypeKind::IncompleteArray(element) => element,
++                        _ => {
++                            return Err(format_err!("Expected Variable offsetof array field").into())
++                        }
++                    };
++                    let element_ty = self.convert_type(element)?;
++                    let size_ty = self.convert_type(ty.ctype)?;
+                     let cast_ty = self.convert_type(override_ty.unwrap_or(ty).ctype)?;
+-                    let cast_expr = mk().cast_expr(mac, cast_ty);
+
+-                    Ok(WithStmts::new_val(cast_expr))
++                    // Clang computes the byte offset modulo the original C size_t width.
++                    Ok(self.convert_expr(ctx, *expr_id, None)?.map(|index| {
++                        syn::parse_quote! {
++                            ((::core::mem::offset_of!(#struct_ty, #field_path) as #size_ty)
++                                .wrapping_add(((#index) as #size_ty).wrapping_mul(
++                                    ::core::mem::size_of::<#element_ty>() as #size_ty))) as #cast_ty
++                        }
++                    }))
+                 }
+             },
+
+@@ -5068,3 +5139,14 @@ fn from(value: (Box<Expr>, CQualTypeId)) -> Self {
+         Self::Expr(value.0, value.1)
+     }
+ }
++
++// The marker is uninhabited and neither Send, Sync nor Unpin; only its thin pointers model C.
++fn opaque_record_item(name: syn::Ident) -> Box<Item> {
++    Box::new(syn::parse_quote! {
++        #[repr(C)]
++        pub struct #name {
++            _private: ::core::convert::Infallible,
++            _marker: ::core::marker::PhantomData<(*mut u8, ::core::marker::PhantomPinned)>,
++        }
++    })
++}
+diff --git a/c2rust-transpile/src/translator/variadic.rs b/c2rust-transpile/src/translator/variadic.rs
+index 8416eaf..7851312 100644
+--- a/c2rust-transpile/src/translator/variadic.rs
++++ b/c2rust-transpile/src/translator/variadic.rs
+@@ -204,7 +204,7 @@ enum VaArgCastKind {
+                 // The current implementation of the C-variadics feature doesn't allow us to
+                 // return `Option<fn(...) -> _>` from `VaList::arg`, so we detect function pointers
+                 // and construct the corresponding unsafe type `* mut fn(...) -> _`.
+-                if let CTypeKind::Function(ret, ref params, is_variadic, is_noreturn, _) =
++                if let CTypeKind::Function(ret, ref params, is_variadic, is_noreturn, _, abi) =
+                     resolved_ctype.kind
+                 {
+                     // ty is a function pointer type -> build Rust unsafe function pointer type
+@@ -215,6 +215,7 @@ enum VaArgCastKind {
+                         opt_ret,
+                         params,
+                         is_variadic,
++                        abi,
+                     )?;
+
+                     cast_kind = Some(VaArgCastKind::Transmute(self.convert_type(ty.ctype)?));
+diff --git a/tests/unit/builtins/src/stable_boundaries.c b/tests/unit/builtins/src/stable_boundaries.c
+new file mode 100644
+index 0000000..31aae9b
+--- /dev/null
++++ b/tests/unit/builtins/src/stable_boundaries.c
+@@ -0,0 +1,53 @@
++#include <stdint.h>
++struct _IO_wide_data;
++struct _IO_codecvt;
++struct _IO_marker;
++struct __locale_data;
++struct opaque_pointers {
++    unsigned char tag;
++    struct _IO_wide_data *wide;
++    struct _IO_codecvt *codecvt;
++    struct _IO_marker *marker;
++    struct __locale_data *locale;
++};
++struct refcount { unsigned char tag; unsigned int count; };
++unsigned int stable_sync(unsigned int *x, unsigned int value) {
++    return __sync_add_and_fetch(x, value);
++}
++unsigned int stable_atomic(unsigned int *x, unsigned int value) {
++    return __atomic_add_fetch(x, value, __ATOMIC_SEQ_CST);
++}
++unsigned int stable_effects(unsigned int *x, unsigned int value, unsigned int *pc, unsigned int *vc) {
++    return __sync_add_and_fetch(((*pc)++, x), ((*vc)++, value));
++}
++unsigned long long stable_layout(unsigned int which) {
++    switch (which) {
++    case 0: return sizeof(struct opaque_pointers);
++    case 1: return _Alignof(struct opaque_pointers);
++    case 2: return __builtin_offsetof(struct opaque_pointers, wide);
++    case 3: return __builtin_offsetof(struct opaque_pointers, codecvt);
++    case 4: return __builtin_offsetof(struct opaque_pointers, marker);
++    case 5: return __builtin_offsetof(struct opaque_pointers, locale);
++    case 6: return sizeof(struct refcount);
++    case 7: return _Alignof(struct refcount);
++    case 8: return __builtin_offsetof(struct refcount, count);
++    case 9: return sizeof(unsigned int);
++    case 10: return _Alignof(unsigned int);
++    default: return 999;
++    }
++}
++void *stable_opaque_roundtrip(void *value) {
++    struct opaque_pointers p = {0};
++    p.wide = value; p.codecvt = (void *)p.wide;
++    p.marker = (void *)p.codecvt; p.locale = (void *)p.marker;
++    return p.locale;
++}
++uint32_t stable_alias_sync(uint32_t volatile *x, uint32_t value) {
++    return __sync_add_and_fetch(x, value);
++}
++uint32_t stable_alias_atomic(uint32_t volatile *x, uint32_t value) {
++    return __atomic_add_fetch(x, value, __ATOMIC_SEQ_CST);
++}
++uint32_t stable_alias_effects(uint32_t volatile *x, uint32_t value, unsigned int *pc, unsigned int *vc) {
++    return __sync_add_and_fetch(((*pc)++, x), ((*vc)++, value));
++}
+diff --git a/tests/unit/builtins/src/stable_boundaries_negative.c b/tests/unit/builtins/src/stable_boundaries_negative.c
+new file mode 100644
+index 0000000..f2758af
+--- /dev/null
++++ b/tests/unit/builtins/src/stable_boundaries_negative.c
+@@ -0,0 +1,5 @@
++#include <stdint.h>
++int32_t negative_signed(int32_t volatile *x, int32_t value) { return __sync_add_and_fetch(x, value); }
++uint64_t negative_wide(uint64_t volatile *x, uint64_t value) { return __sync_add_and_fetch(x, value); }
++uint32_t negative_order(uint32_t volatile *x, uint32_t value) { return __atomic_add_fetch(x, value, __ATOMIC_RELAXED); }
++uint32_t negative_op(uint32_t volatile *x, uint32_t value) { return __sync_fetch_and_add(x, value); }
+diff --git a/tests/unit/builtins/src/test_stable_boundaries.rs b/tests/unit/builtins/src/test_stable_boundaries.rs
+new file mode 100644
+index 0000000..732c7bc
+--- /dev/null
++++ b/tests/unit/builtins/src/test_stable_boundaries.rs
+@@ -0,0 +1,45 @@
++use crate::stable_boundaries::{rust_stable_sync, rust_stable_atomic, rust_stable_alias_sync, rust_stable_alias_atomic};
++#[link(name = "test")]
++unsafe extern "C" {
++    fn stable_sync(x: *mut u32, value: u32) -> u32;
++    fn stable_atomic(x: *mut u32, value: u32) -> u32;
++    fn stable_alias_sync(x: *mut u32, value: u32) -> u32;
++    fn stable_alias_atomic(x: *mut u32, value: u32) -> u32;
++}
++#[test]
++fn stable_add_fetch_wraps_and_decrements() {
++    for initial in [0u32, 1, u32::MAX - 1, u32::MAX] {
++        for delta in [0u32, 1, 2, u32::MAX] {
++            unsafe {
++                let mut native = initial;
++                let mut rust = initial;
++                let expected = initial.wrapping_add(delta);
++                assert_eq!(stable_sync(&mut native, delta), expected);
++                assert_eq!(rust_stable_sync(&mut rust, delta), expected);
++                assert_eq!(native, rust);
++                assert_eq!(stable_atomic(&mut native, delta), expected.wrapping_add(delta));
++                assert_eq!(rust_stable_atomic(&mut rust, delta), expected.wrapping_add(delta));
++                assert_eq!(native, rust);
++            }
++        }
++    }
++}
++
++#[test]
++fn stable_stdint_add_fetch_wraps_and_decrements() {
++    for initial in [0u32, 1, u32::MAX - 1, u32::MAX] {
++        for delta in [0u32, 1, 2, u32::MAX] {
++            unsafe {
++                let mut native = initial;
++                let mut rust = initial;
++                let expected = initial.wrapping_add(delta);
++                assert_eq!(stable_alias_sync(&mut native, delta), expected);
++                assert_eq!(rust_stable_alias_sync(&mut rust, delta), expected);
++                assert_eq!(native, rust);
++                assert_eq!(stable_alias_atomic(&mut native, delta), expected.wrapping_add(delta));
++                assert_eq!(rust_stable_alias_atomic(&mut rust, delta), expected.wrapping_add(delta));
++                assert_eq!(native, rust);
++            }
++        }
++    }
++}
+diff --git a/tests/unit/enums/src/constant_array.c b/tests/unit/enums/src/constant_array.c
+new file mode 100644
+index 0000000..5f2c6e8
+--- /dev/null
++++ b/tests/unit/enums/src/constant_array.c
+@@ -0,0 +1,22 @@
++enum operand_type { OPERAND_INTEGER = 40, OPERAND_LARGE = 0x80000000u };
++enum signed_type { SIGNED_NEGATIVE = -7, SIGNED_POSITIVE = 13 };
++typedef enum signed_type signed_alias;
++
++static const enum operand_type *operands = (enum operand_type[]){OPERAND_INTEGER, 0, (enum operand_type)3, OPERAND_LARGE};
++static const signed_alias *signed_values = (signed_alias[]){SIGNED_NEGATIVE, 0, SIGNED_POSITIVE, (signed_alias)-3};
++static const int *integers = (int[]){OPERAND_INTEGER, 0, SIGNED_NEGATIVE, (int)SIGNED_POSITIVE};
++
++long long enum_array_probe(unsigned which) {
++    if (which < 4) return operands[which];
++    if (which < 8) return signed_values[which - 4];
++    if (which < 12) return integers[which - 8];
++    switch (which) {
++    case 12: return sizeof(enum operand_type);
++    case 13: return __alignof__(enum operand_type);
++    case 14: return sizeof(signed_alias);
++    case 15: return __alignof__(signed_alias);
++    case 16: return sizeof((enum operand_type[]){OPERAND_INTEGER, 0, (enum operand_type)3, OPERAND_LARGE});
++    case 17: return sizeof((signed_alias[]){SIGNED_NEGATIVE, 0, SIGNED_POSITIVE, (signed_alias)-3});
++    default: return -999;
++    }
++}
+diff --git a/tests/unit/enums/src/test_constant_array.rs b/tests/unit/enums/src/test_constant_array.rs
+new file mode 100644
+index 0000000..88d922a
+--- /dev/null
++++ b/tests/unit/enums/src/test_constant_array.rs
+@@ -0,0 +1,15 @@
++use crate::constant_array::rust_enum_array_probe;
++
++#[link(name = "test")]
++unsafe extern "C" { fn enum_array_probe(which: u32) -> i64; }
++
++#[test]
++fn constant_enum_array_values_and_layout() {
++    let expected = [40, 0, 3, 0x80000000, -7, 0, 13, -3, 40, 0, -7, 13, 4, 4, 4, 4, 16, 16];
++    for (which, value) in expected.into_iter().enumerate() {
++        unsafe {
++            assert_eq!(enum_array_probe(which as u32), value);
++            assert_eq!(rust_enum_array_probe(which as u32), value);
++        }
++    }
++}
+diff --git a/tests/unit/structs/src/test_variable_offsetof.rs b/tests/unit/structs/src/test_variable_offsetof.rs
+index 97f83ad..3e9b07d 100644
+--- a/tests/unit/structs/src/test_variable_offsetof.rs
++++ b/tests/unit/structs/src/test_variable_offsetof.rs
+@@ -1,5 +1,3 @@
+-//! extern_crate_memoffset
+-
+ use crate::variable_offsetof::{rust_get_offset, rust_get_offset2, size_t};
+
+ #[link(name = "test")]
+@@ -22,3 +20,20 @@ pub fn test_get_offset() {
+         assert_eq!(rust_ret2, c_ret2);
+     }
+ }
++
++#[link(name = "test")]
++extern "C" {
++    fn offset_case(which: u32, idx: i64) -> size_t;
++}
++
++#[test]
++fn test_layout_wrapping_and_effects() {
++    for which in 0..14 {
++        for idx in [0, 1, 3, -1, -5, u32::MAX as i64, i64::MAX, 1i64 << 62] {
++            unsafe {
++                assert_eq!(crate::variable_offsetof::rust_offset_case(which, idx), offset_case(which, idx),
++                           "case {} index {}", which, idx);
++            }
++        }
++    }
++}
+diff --git a/tests/unit/structs/src/variable_offsetof.c b/tests/unit/structs/src/variable_offsetof.c
+index 4c0ffb2..86ed44c 100644
+--- a/tests/unit/structs/src/variable_offsetof.c
++++ b/tests/unit/structs/src/variable_offsetof.c
+@@ -17,3 +17,36 @@ struct yield {
+ size_t get_offset2(size_t idx) {
+     return offsetof(struct yield, mod[idx]);
+ }
++
++typedef unsigned short row[3];
++struct matrix { char head; row mod[4]; };
++struct packed { char head; int mod[4]; } __attribute__((packed));
++struct aligned { char head; int mod[4]; } __attribute__((aligned(32)));
++struct flexible { unsigned long long head[2]; int mod[]; };
++struct element { unsigned long long wide; char tail; };
++struct elements { char head; struct element mod[4]; };
++typedef struct flexible alias;
++typedef struct aligned aligned_alias;
++static unsigned int counter;
++static unsigned int next_index(void) { return counter++; }
++
++size_t offset_case(unsigned int which, long long idx) {
++    counter = 3;
++    switch (which) {
++        case 0: return offsetof(struct matrix, mod[idx]);
++        case 1: return offsetof(struct packed, mod[idx]);
++        case 2: return offsetof(struct aligned, mod[idx]);
++        case 3: return offsetof(struct flexible, mod[idx]);
++        case 4: return offsetof(alias, mod[(unsigned int)idx]);
++        case 5: return offsetof(alias, mod[(size_t)idx]);
++        case 6: return offsetof(struct elements, mod[idx]);
++        case 7: { size_t result = offsetof(alias, mod[counter++]); return result + counter; }
++        case 8: { size_t result = offsetof(alias, mod[next_index()]); return result + counter; }
++        case 9: (void)offsetof(alias, mod[counter++]); return counter;
++        case 10: (void)offsetof(alias, mod[next_index()]); return counter;
++        case 11: return (unsigned char)offsetof(alias, mod[idx]);
++        case 12: return offsetof(alias, mod[(unsigned int)idx * 8u]);
++        case 13: return offsetof(aligned_alias, mod[idx]);
++    }
++    return 0;
++}
+diff --git a/c2rust-transpile/src/translator/pointers.rs b/c2rust-transpile/src/translator/pointers.rs
+index 08c5e17..c003f00 100644
+--- a/c2rust-transpile/src/translator/pointers.rs
++++ b/c2rust-transpile/src/translator/pointers.rs
+@@ -696,7 +696,10 @@ pub(crate) fn convert_pointer_is_null(
+
+         if self.ast_context.is_function_pointer(expr_type_id.ctype) {
+             let method = if is_null { "is_none" } else { "is_some" };
+-            Ok(expr_rs.map(|expr_rs| mk().method_call_expr(expr_rs, method, vec![])))
++            Ok(expr_rs.map(|expr_rs| {
++                let value = mk().block_expr(mk().block(vec![mk().expr_stmt(expr_rs)]));
++                mk().method_call_expr(value, method, vec![])
++            }))
+         } else {
+             // TODO: `pointer::is_null` becomes stably const in Rust 1.84.
+             if ctx.is_const {
+diff --git a/tests/unit/pointers/src/function_pointer_nulls.c b/tests/unit/pointers/src/function_pointer_nulls.c
+new file mode 100644
+index 0000000..e304b23
+--- /dev/null
++++ b/tests/unit/pointers/src/function_pointer_nulls.c
+@@ -0,0 +1,68 @@
++typedef int (*callback)(void);
++static int yes(void) { return 7; }
++static callback file_callback;
++static callback const immutable_callback = yes;
++static callback const immutable_null = 0;
++static callback volatile volatile_callback;
++static int calls;
++static callback next(callback p) { ++calls; return p; }
++struct holder { callback fp; };
++static struct holder *next_holder(struct holder *p) { ++calls; return p; }
++int fp_volatile_local(int nonnull) {
++    callback volatile p = nonnull ? yes : 0;
++    return !!p;
++}
++int fp_volatile_static(int nonnull) {
++    (void)nonnull;
++    return !!volatile_callback;
++}
++int fp_const_volatile(int nonnull) {
++    callback const volatile p = nonnull ? yes : 0;
++    return !!p;
++}
++#define CHECK(p) do { \
++    out[i++] = (p) ? 1 : 0; \
++    out[i++] = !(p); out[i++] = !!(p); \
++    out[i++] = (p) == 0; out[i++] = 0 == (p); \
++    out[i++] = (p) != 0; out[i++] = 0 != (p); \
++    if (p) out[i++] = 1; else out[i++] = 0; \
++    if (!(p)) out[i++] = 1; else out[i++] = 0; \
++    if (!!(p)) out[i++] = 1; else out[i++] = 0; \
++    if ((p) == 0) out[i++] = 1; else out[i++] = 0; \
++    if (0 == (p)) out[i++] = 1; else out[i++] = 0; \
++    if ((p) != 0) out[i++] = 1; else out[i++] = 0; \
++    if (0 != (p)) out[i++] = 1; else out[i++] = 0; \
++} while (0)
++static int argument(callback p, int *out) {
++    int i = 0;
++    callback const local = p;
++    static callback block_callback;
++    struct holder h = {p};
++    callback array[1] = {p};
++    file_callback = p;
++    block_callback = p;
++    volatile_callback = p;
++    CHECK(p); CHECK(local); CHECK(file_callback); CHECK(block_callback);
++    CHECK(immutable_callback); CHECK(immutable_null); CHECK(h.fp); CHECK(array[0]);
++    out[i++] = fp_volatile_local(!!p);
++    out[i++] = fp_volatile_static(!!p);
++    out[i++] = fp_const_volatile(!!p);
++    calls = 0; out[i++] = !!next(p); out[i++] = calls;
++    calls = 0; out[i++] = !!next_holder(&h)->fp; out[i++] = calls;
++    int index = 0; out[i++] = !!array[index++]; out[i++] = index;
++    calls = 0; out[i++] = next(p) && next(p); out[i++] = calls;
++    calls = 0; out[i++] = next(p) || next(p); out[i++] = calls;
++    calls = 0; out[i++] = !next(p) && next(p); out[i++] = calls;
++    calls = 0; out[i++] = !next(p) || next(p); out[i++] = calls;
++    calls = 0; out[i++] = p ? !!next(p) : !!next(p); out[i++] = calls;
++    int result = 0;
++    while (p) { result = 1; break; } out[i++] = result;
++    result = 0; for (; p;) { result = 1; break; } out[i++] = result;
++    if (p) goto present;
++    out[i++] = 0; return i;
++present:
++    out[i++] = 1; return i;
++}
++int function_pointer_nulls(int nonnull, int *out) {
++    return argument(nonnull ? yes : 0, out);
++}
+diff --git a/tests/unit/pointers/src/test_function_pointer_nulls.rs b/tests/unit/pointers/src/test_function_pointer_nulls.rs
+new file mode 100644
+index 0000000..377926c
+--- /dev/null
++++ b/tests/unit/pointers/src/test_function_pointer_nulls.rs
+@@ -0,0 +1,18 @@
++#[link(name = "test")]
++extern "C" {
++    fn function_pointer_nulls(nonnull: i32, out: *mut i32) -> i32;
++}
++#[test]
++fn test_function_pointer_nulls() {
++    for nonnull in [0, 1] {
++        let mut native = [0; 160];
++        let mut generated = [0; 160];
++        unsafe {
++            let n = function_pointer_nulls(nonnull, native.as_mut_ptr());
++            let r = crate::function_pointer_nulls::rust_function_pointer_nulls(nonnull, generated.as_mut_ptr());
++            assert_eq!(n, 134);
++            assert_eq!(r, n);
++        }
++        assert_eq!(native, generated);
++    }
++}
+diff --git a/c2rust-ast-exporter/src/clang_ast.rs b/c2rust-ast-exporter/src/clang_ast.rs
+--- a/c2rust-ast-exporter/src/clang_ast.rs
++++ b/c2rust-ast-exporter/src/clang_ast.rs
+@@ -1,3 +1,3 @@
+-use serde::Deserialize;
++use serde::{Deserialize, Serialize};
+ use serde_bytes::ByteBuf;
+ use serde_cbor::error;
+@@ -11,4 +11,12 @@
+
+ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
++
++// Dedicated physical facts. Diagnostic SrcLoc intentionally retains presumed coordinates.
++#[derive(Debug, Clone, Deserialize, Serialize)]
++pub struct RecordEvidence(
++    pub u64, pub String, pub Option<String>, pub String, pub u64, pub u64,
++    pub String, pub Option<Box<RecordEvidence>>, pub bool, pub bool,
++    pub Option<(bool, Option<u64>, Option<u64>, u64, u64)>,
++);
+
+ #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+@@ -157,4 +165,6 @@
+     pub va_list_kind: BuiltinVaListKind,
+     pub target: String,
++    pub target_c_widths: [u64; 8],
++    pub cursor_inputs: Option<String>,
+ }
+
+@@ -198,5 +208,5 @@
+     type VaListKind = u64;
+     type Target = String;
+-    let (all_nodes, top_nodes, files, raw_comments, va_list_kind, target): (
++    let (all_nodes, top_nodes, files, raw_comments, va_list_kind, target, target_c_widths, cursor_inputs): (
+         Vec<AllNode>,
+         Vec<TopNode>,
+@@ -205,4 +215,6 @@
+         VaListKind,
+         Target,
++        [u64; 8],
++        Option<String>,
+     ) = from_value(items)?;
+
+@@ -311,4 +323,6 @@
+         va_list_kind,
+         target,
++        target_c_widths,
++        cursor_inputs,
+     })
+ }
+diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/src/c_ast/closed_variadic.rs
+new file mode 100644
+--- /dev/null
++++ b/c2rust-transpile/src/c_ast/closed_variadic.rs
+@@ -0,0 +1,1328 @@
++use super::*;
++use serde_json::{Value, json};
++
++impl TypedAstContext {
++    fn inventory_type(&self, typ: CQualTypeId, depth: usize) -> Value {
++        self.evidence_type(typ, depth, false)
++    }
++
++    fn cursor_type(&self, typ: CQualTypeId, depth: usize) -> Value {
++        self.evidence_type(typ, depth, true)
++    }
++
++    fn evidence_type(&self, typ: CQualTypeId, depth: usize, cursor: bool) -> Value {
++        if depth > 32 {
++            return json!({"unproved": "type depth limit"});
++        }
++        let mut canonical_type = typ.ctype;
++        let mut qualifiers = typ.qualifiers;
++        let mut visited = HashSet::new();
++        for _ in 0..32 {
++            if !visited.insert(canonical_type) {
++                return json!({"unproved": "typedef or wrapper cycle"});
++            }
++            canonical_type = match self[canonical_type].kind {
++                CTypeKind::Typedef(id) => {
++                    let Some(original) = self.source_typedef_types.get(&id) else {
++                        return json!({"unproved": "missing original typedef"});
++                    };
++                    qualifiers = qualifiers.and(original.qualifiers);
++                    original.ctype
++                }
++                CTypeKind::TypeOf(id)
++                | CTypeKind::Paren(id)
++                | CTypeKind::Elaborated(id)
++                | CTypeKind::Decayed(id)
++                | CTypeKind::Auto(id) => id,
++                CTypeKind::Attributed(_, _) => return json!({"unproved": "attributed type facts"}),
++                _ => break,
++            };
++        }
++        let kind = &self[canonical_type].kind;
++        let canonical = match kind {
++            CTypeKind::Pointer(inner) => json!({"pointer": self.evidence_type(*inner, depth + 1, cursor)}),
++            CTypeKind::Function(ret, args, variadic, noreturn, prototype, abi) => json!({
++                "return": self.evidence_type(*ret, depth + 1, cursor),
++                "parameters": args.iter().map(|t| self.evidence_type(*t, depth + 1, cursor)).collect::<Vec<_>>(),
++                "variadic": variadic, "noreturn": noreturn, "prototype": prototype, "abi": abi.as_str()
++            }),
++            CTypeKind::Struct(id) | CTypeKind::Union(id) | CTypeKind::Enum(id) => {
++                if cursor && self.native_va_list_records.contains(id) {
++                    json!({"native_va_list_record": id.0})
++                } else {
++                    json!({"record": self.inventory_record_identity(*id, 0)})
++                }
++            }
++            CTypeKind::ConstantArray(_, _) | CTypeKind::IncompleteArray(_) => {
++                let Some(element) = self.source_array_elements.get(&canonical_type) else {
++                    return json!({"unproved": "missing original qualified array element"});
++                };
++                let mut array = json!({"array": self.evidence_type(*element, depth + 1, cursor)});
++                if let CTypeKind::ConstantArray(_, len) = kind {
++                    array["length"] = json!(len);
++                }
++                array
++            }
++            CTypeKind::Char => match self.source_char_signedness.get(&canonical_type) {
++                Some(signed) => json!({"kind": "Char", "signed": signed}),
++                None => json!({"unproved": "missing plain char signedness"}),
++            },
++            CTypeKind::LongDouble => json!({"unproved": "long double ABI shape"}),
++            CTypeKind::Void
++            | CTypeKind::Bool
++            | CTypeKind::SChar
++            | CTypeKind::Short
++            | CTypeKind::Int
++            | CTypeKind::Long
++            | CTypeKind::LongLong
++            | CTypeKind::UChar
++            | CTypeKind::UShort
++            | CTypeKind::UInt
++            | CTypeKind::ULong
++            | CTypeKind::ULongLong
++            | CTypeKind::Float
++            | CTypeKind::Double
++            | CTypeKind::Int128
++            | CTypeKind::UInt128
++            | CTypeKind::Half => json!({"kind": format!("{kind:?}")}),
++            _ => json!({"unproved": "unsupported type or wrapper limit"}),
++        };
++        json!({"canonical": canonical, "const": qualifiers.is_const, "volatile": qualifiers.is_volatile, "restrict": qualifiers.is_restrict})
++    }
++
++    fn inventory_record_identity(&self, id: CDeclId, depth: usize) -> Value {
++        fn identity(e: &c2rust_ast_exporter::clang_ast::RecordEvidence, depth: usize) -> Value {
++            if depth > 32
++                || e.0 != 2
++                || e.8
++                || e.3.is_empty()
++                || e.3 == "?"
++                || !Path::new(&e.3).is_absolute()
++                || e.4 == 0
++                || e.5 == 0
++            {
++                return json!({"unproved": "physical record location or macro declaration"});
++            }
++            let scope = match (e.6.as_str(), &e.7) {
++                ("file", None) => json!({"file": true}),
++                ("record", Some(owner)) => json!({"record": identity(owner, depth + 1)}),
++                _ => return json!({"unproved": "record owning scope"}),
++            };
++            json!({"kind": e.1, "tag": e.2,
++                "physical": {"path": e.3, "line": e.4, "column": e.5}, "scope": scope})
++        }
++        self.record_evidence
++            .get(&id)
++            .map(|e| identity(e, depth))
++            .unwrap_or_else(|| json!({"unproved": "missing physical record evidence"}))
++    }
++
++    fn inventory_record_definitions(&self) -> Vec<Value> {
++        self.iter_decls().filter_map(|(id, decl)| {
++            let mut facts = json!({});
++            match &decl.kind {
++                CDeclKind::Struct { fields, .. } | CDeclKind::Union { fields, .. } => {
++                    facts["fields"] = fields.as_ref().map(|fields| fields.iter().map(|field| {
++                        match &self[*field].kind {
++                            CDeclKind::Field { name, typ, bitfield_width, platform_bit_offset,
++                                platform_type_bitwidth, manual_alignment } => json!({
++                                    "name": name, "type": self.inventory_type(*typ, 0),
++                                    "bit_width": bitfield_width, "bit_offset": platform_bit_offset,
++                                    "type_bit_width": platform_type_bitwidth, "alignment": manual_alignment,
++                                }),
++                            _ => json!({"unproved": "non-field record child"}),
++                        }
++                    }).collect::<Vec<_>>()).map(Value::Array).unwrap_or(Value::Null);
++                    facts["layout"] = self.record_evidence.get(id).map(|e| json!(e.10)).unwrap_or(Value::Null);
++                }
++                CDeclKind::Enum { variants, underlying_type_id, .. } => {
++                    facts["underlying"] = underlying_type_id.map(|t| self.inventory_type(t, 0)).unwrap_or(Value::Null);
++                    facts["variants"] = json!(variants.iter().map(|variant| match &self[*variant].kind {
++                        CDeclKind::EnumConstant { name, value } => match value {
++                            ConstIntExpr::I(value) => json!({"name": name, "signed": true, "value": value}),
++                            ConstIntExpr::U(value) => json!({"name": name, "signed": false, "value": value}),
++                        },
++                        _ => json!({"unproved": "non-enumerator child"}),
++                    }).collect::<Vec<_>>());
++                }
++                _ => return None,
++            }
++            let state = match self.record_evidence.get(id) {
++                Some(e) if e.0 == 2 && e.9 => "complete",
++                Some(e) if e.0 == 2 => "incomplete",
++                _ => "unproved",
++            };
++            Some(json!({"identity": self.inventory_record_identity(*id, 0), "state": state, "facts": facts, "diagnostic_location": decl.begin_loc().map(|l| self.loc_to_string(l))}))
++        }).collect()
++    }
++
++    fn inventory_promotions(&self, mut expr: CExprId) -> Vec<Value> {
++        let mut types = vec![];
++        loop {
++            if let Some(typ) = self[expr].kind.get_qual_type() {
++                types.push(self.inventory_type(typ, 0));
++            }
++            match self[expr].kind {
++                CExprKind::ImplicitCast(_, inner, _, _, _) | CExprKind::Paren(_, inner) => {
++                    expr = inner
++                }
++                _ => return types,
++            }
++        }
++    }
++
++    fn inventory_symbol(&self, id: CDeclId, unit: &Path) -> Option<Value> {
++        if let CDeclKind::Function {
++            name, is_global, ..
++        } = &self[id].kind
++        {
++            Some(if *is_global {
++                json!({"linker": self.linker_names.get(&id).expect("missing Clang function linker identity")})
++            } else {
++                json!({"unit": unit, "static": name})
++            })
++        } else {
++            None
++        }
++    }
++
++    fn inventory_callee(&self, mut expr: CExprId) -> Option<CDeclId> {
++        loop {
++            match self[expr].kind {
++                CExprKind::Paren(_, inner) | CExprKind::ImplicitCast(_, inner, _, _, _) => {
++                    expr = inner
++                }
++                CExprKind::DeclRef(_, id, _) => {
++                    return self.inventory_symbol(id, &self.main_file).map(|_| id);
++                }
++                _ => return None,
++            }
++        }
++    }
++
++    fn cursor_operand(&self, mut id: CExprId) -> Value {
++        let original = id;
++        loop {
++            match &self[id].kind {
++                CExprKind::Paren(_, inner) | CExprKind::ImplicitCast(_, inner, _, _, _) => id = *inner,
++                _ => break,
++            }
++        }
++        json!({"id": original.0,
++            "direct_decl": match self[id].kind { CExprKind::DeclRef(_, d, _) => Some(d.0), _ => None },
++            "literal": match &self[id].kind { CExprKind::Literal(_, CLiteral::String(bytes, 1)) => Some(bytes), _ => None },
++            "type": self[original].kind.get_qual_type().map(|t| self.cursor_type(t, 0)),
++            "references": iterators::DFExpr::new(self, original.into()).filter_map(|n| n.expr())
++                .filter_map(|e| match self[e].kind { CExprKind::DeclRef(_, d, _) => Some(json!({"id": e.0, "decl": d.0})), _ => None }).collect::<Vec<_>>()})
++    }
++
++    fn cursor_declaration_owners(&self) -> HashMap<CDeclId, HashSet<CDeclId>> {
++        let mut owners: HashMap<CDeclId, HashSet<CDeclId>> = HashMap::new();
++        for (owner, decl) in self.iter_decls() {
++            match &decl.kind {
++                CDeclKind::Function { body: Some(body), .. } => {
++                    let mut pending = vec![iterators::SomeId::Stmt(*body)];
++                    let mut visited = HashSet::new();
++                    while let Some(node) = pending.pop() {
++                        if !visited.insert(node) { continue; }
++                        if let Some(stmt) = node.stmt().and_then(|id| self.c_stmts.get(&id)) {
++                            if let CStmtKind::Decls(decls) = &stmt.kind {
++                                for id in decls {
++                                    if self.native_local_variables.contains(id)
++                                        && matches!(self.c_decls.get(id).map(|d| &d.kind), Some(CDeclKind::Variable { .. })) {
++                                        owners.entry(*id).or_default().insert(*owner);
++                                    }
++                                }
++                            }
++                        }
++                        if node.type_().is_some() { continue; }
++                        if let Some(id) = node.decl() {
++                            if !matches!(self.c_decls.get(&id).map(|d| &d.kind), Some(CDeclKind::Variable { .. })) { continue; }
++                        }
++                        pending.extend(iterators::immediate_children_all_types(self, node)
++                            .into_iter().filter(|child| child.type_().is_none()));
++                    }
++                }
++                CDeclKind::Enum { variants, .. } => {
++                    for id in variants {
++                        if matches!(self.c_decls.get(id).map(|d| &d.kind), Some(CDeclKind::EnumConstant { .. })) {
++                            owners.entry(*id).or_default().insert(*owner);
++                        }
++                    }
++                }
++                _ => {}
++            }
++        }
++        owners
++    }
++
++    fn cursor_declaration(&self, id: CDeclId, owners: &HashMap<CDeclId, HashSet<CDeclId>>) -> Value {
++        let mut value = json!({"id": id.0});
++        match &self[id].kind {
++            CDeclKind::Variable { ident, typ, initializer, has_static_duration, has_thread_duration, is_externally_visible, .. } => {
++                value["kind"] = json!("variable");
++                value["name"] = json!(ident);
++                value["local"] = json!(self.native_local_variables.contains(&id));
++                value["owning_function"] = if self.native_local_variables.contains(&id) {
++                    match owners.get(&id) {
++                        Some(ids) if ids.len() == 1 => json!(ids.iter().next().unwrap().0),
++                        _ => json!({"unproved": "missing or ambiguous lexical function owner"}),
++                    }
++                } else { Value::Null };
++                value["type"] = self.cursor_type(*typ, 0);
++                value["type_id"] = json!(typ.ctype.0);
++                value["initializer"] = json!(initializer.map(|e| e.0));
++                value["static"] = json!(has_static_duration);
++                value["thread"] = json!(has_thread_duration);
++                value["externally_visible"] = json!(is_externally_visible);
++                value["native_va_list"] = self.native_cursor_types.get(&id).map(|(declared, builtin, kind)|
++                    json!({"same_canonical_type": true, "declared_type_id": declared.ctype.0,
++                        "builtin_type_id": builtin.ctype.0,
++                        "declared_canonical_type": self.cursor_type(*declared, 0),
++                        "builtin_canonical_type": self.cursor_type(*builtin, 0),
++                        "declared_const": declared.qualifiers.is_const,
++                        "declared_volatile": declared.qualifiers.is_volatile, "declared_restrict": declared.qualifiers.is_restrict,
++                        "builtin_const": builtin.qualifiers.is_const, "builtin_volatile": builtin.qualifiers.is_volatile,
++                        "builtin_restrict": builtin.qualifiers.is_restrict, "target_kind": kind})).unwrap_or(Value::Null);
++            }
++            CDeclKind::Field { name, typ, .. } => {
++                value["kind"] = json!("field"); value["name"] = json!(name);
++                value["type"] = self.cursor_type(*typ, 0);
++                value["type_id"] = json!(typ.ctype.0);
++                value["owners"] = json!(self.iter_decls().filter_map(|(owner, d)| match &d.kind {
++                    CDeclKind::Struct { fields: Some(fields), .. } | CDeclKind::Union { fields: Some(fields), .. }
++                        if fields.contains(&id) => Some(self.inventory_record_identity(*owner, 0)),
++                    _ => None,
++                }).collect::<Vec<_>>());
++            }
++            CDeclKind::EnumConstant { name, value: number } => {
++                value["kind"] = json!("enum_constant"); value["name"] = json!(name);
++                value["owning_enum"] = match owners.get(&id) {
++                    Some(ids) if ids.len() == 1 => {
++                        let owner = *ids.iter().next().unwrap();
++                        json!({"declaration": owner.0, "identity": self.inventory_record_identity(owner, 0)})
++                    }
++                    _ => json!({"unproved": "missing or ambiguous enum variant owner"}),
++                };
++                value["value"] = match number { ConstIntExpr::I(n) => json!(n), ConstIntExpr::U(n) => json!(n) };
++            }
++            _ => value["kind"] = json!("unsupported"),
++        }
++        value
++    }
++
++    fn cursor_expression(&self, id: CExprId) -> Value {
++        let mut value = json!({"id": id.0, "kind": "unsupported",
++            "type": self[id].kind.get_qual_type().map(|t| self.cursor_type(t, 0)),
++            "type_id": self[id].kind.get_qual_type().map(|t| t.ctype.0),
++            "children": []});
++        match &self[id].kind {
++            CExprKind::Literal(_, literal) => {
++                value["kind"] = json!("literal");
++                value["literal"] = match literal {
++                    CLiteral::Integer(n, _) => json!({"integer": n}),
++                    CLiteral::Character(n) => json!({"character": n}),
++                    CLiteral::String(bytes, width) => json!({"bytes": bytes, "width": width}),
++                    _ => json!({"unsupported": true}),
++                };
++            }
++            CExprKind::DeclRef(_, decl, _) => {
++                value["kind"] = json!("reference"); value["decl"] = json!(decl.0);
++            }
++            CExprKind::Paren(_, child) => {
++                value["kind"] = json!("paren"); value["children"] = json!([child.0]);
++            }
++            CExprKind::ImplicitCast(_, child, cast, field, _) |
++            CExprKind::ExplicitCast(_, child, cast, field, _) => {
++                value["kind"] = json!(if matches!(self[id].kind, CExprKind::ImplicitCast(..)) { "implicit_cast" } else { "explicit_cast" });
++                value["children"] = json!([child.0]); value["cast"] = json!(format!("{:?}", cast));
++                value["field"] = json!(field.map(|f| f.0));
++            }
++            CExprKind::Unary(_, op, child, _) => {
++                value["kind"] = json!("unary"); value["operator"] = json!(format!("{:?}", op));
++                value["children"] = json!([child.0]);
++            }
++            CExprKind::UnaryType(_, op, child, argument_type) => {
++                value["kind"] = json!("unary_type"); value["operator"] = json!(format!("{:?}", op));
++                value["children"] = json!(child.iter().map(|c| c.0).collect::<Vec<_>>());
++                value["argument_type"] = self.cursor_type(*argument_type, 0);
++            }
++            CExprKind::Binary(_, op, left, right, lhs_type, rhs_type) => {
++                value["kind"] = json!("binary"); value["operator"] = json!(format!("{:?}", op));
++                value["children"] = json!([left.0, right.0]);
++                value["computation_types"] = json!([lhs_type.map(|t| self.cursor_type(t, 0)), rhs_type.map(|t| self.cursor_type(t, 0))]);
++            }
++            CExprKind::Call(_, callee, args) => {
++                let decl = self.inventory_callee(*callee);
++                value["kind"] = json!("call");
++                value["children"] = json!(std::iter::once(callee.0).chain(args.iter().map(|a| a.0)).collect::<Vec<_>>());
++                value["callee_decl"] = json!(decl.map(|d| d.0));
++                value["builtin"] = json!(decl.and_then(|d| self.cursor_builtin_identity.get(&d)));
++                value["arguments"] = json!(args.iter().map(|a| self.cursor_operand(*a)).collect::<Vec<_>>());
++            }
++            CExprKind::Member(_, parent, member, kind, _) => {
++                value["kind"] = json!("member"); value["children"] = json!([parent.0]);
++                value["member"] = self.cursor_declaration(*member, &HashMap::new());
++                value["access"] = json!(format!("{:?}", kind));
++            }
++            CExprKind::ArraySubscript(_, base, index, _) => {
++                value["kind"] = json!("subscript"); value["children"] = json!([base.0, index.0]);
++            }
++            _ => {}
++        }
++        value
++    }
++
++    fn required_qualified_type(typ: CQualTypeId) -> Value {
++        json!({"type_id": typ.ctype.0, "const": typ.qualifiers.is_const,
++            "volatile": typ.qualifiers.is_volatile, "restrict": typ.qualifiers.is_restrict})
++    }
++
++    fn required_type_relation(&self, id: CTypeId) -> (Value, Vec<CTypeId>) {
++        let mut row = json!({"type_id": id.0});
++        let mut children = vec![];
++        match self.c_types.get(&id).map(|t| &t.kind) {
++            Some(CTypeKind::Typedef(decl)) => {
++                row["kind"] = json!("typedef"); row["declaration"] = json!(decl.0);
++                match (self.c_decls.get(decl).map(|d| &d.kind), self.source_typedef_types.get(decl)) {
++                    (Some(CDeclKind::Typedef { .. }), Some(original)) => {
++                        row["original"] = Self::required_qualified_type(*original); children.push(original.ctype);
++                    }
++                    _ => row["unproved"] = json!("missing original typedef declaration or type"),
++                }
++            }
++            Some(CTypeKind::Elaborated(inner)) | Some(CTypeKind::Paren(inner)) |
++            Some(CTypeKind::TypeOf(inner)) | Some(CTypeKind::Decayed(inner)) | Some(CTypeKind::Auto(inner)) => {
++                row["kind"] = json!(match &self[id].kind {
++                    CTypeKind::Elaborated(_) => "elaborated", CTypeKind::Paren(_) => "paren",
++                    CTypeKind::TypeOf(_) => "typeof", CTypeKind::Decayed(_) => "decayed", _ => "auto",
++                });
++                row["inner"] = json!(inner.0); children.push(*inner);
++            }
++            Some(CTypeKind::ConstantArray(element, _)) | Some(CTypeKind::IncompleteArray(element)) => {
++                row["kind"] = json!("array");
++                row["length"] = match &self[id].kind { CTypeKind::ConstantArray(_, n) => json!(n), _ => Value::Null };
++                match self.source_array_elements.get(&id) {
++                    Some(original) if original.ctype == *element => {
++                        row["element"] = Self::required_qualified_type(*original); children.push(original.ctype);
++                    }
++                    _ => row["unproved"] = json!("missing or inconsistent qualified array element"),
++                }
++            }
++            Some(CTypeKind::Pointer(inner)) => {
++                row["kind"] = json!("pointer"); row["pointee"] = Self::required_qualified_type(*inner);
++                children.push(inner.ctype);
++            }
++            Some(CTypeKind::Function(ret, args, variadic, noreturn, prototype, abi)) => {
++                row["kind"] = json!("function"); row["return"] = Self::required_qualified_type(*ret);
++                row["parameters"] = json!(args.iter().map(|t| Self::required_qualified_type(*t)).collect::<Vec<_>>());
++                row["variadic"] = json!(variadic); row["noreturn"] = json!(noreturn);
++                row["prototype"] = json!(prototype); row["abi"] = json!(abi.as_str());
++                children.push(ret.ctype); children.extend(args.iter().map(|t| t.ctype));
++            }
++            Some(CTypeKind::Struct(decl)) | Some(CTypeKind::Union(decl)) | Some(CTypeKind::Enum(decl)) => {
++                row["kind"] = json!(match &self[id].kind { CTypeKind::Struct(_) => "struct", CTypeKind::Union(_) => "union", _ => "enum" });
++                row["declaration"] = json!(decl.0);
++                let matching = matches!((&self[id].kind, self.c_decls.get(decl).map(|d| &d.kind)),
++                    (CTypeKind::Struct(_), Some(CDeclKind::Struct { .. })) |
++                    (CTypeKind::Union(_), Some(CDeclKind::Union { .. })) |
++                    (CTypeKind::Enum(_), Some(CDeclKind::Enum { .. })));
++                if !matching { row["unproved"] = json!("missing or inconsistent record declaration"); }
++            }
++            Some(CTypeKind::BuiltinFn) => {
++                row["kind"] = json!("builtin_function");
++                row["unproved"] = json!("BuiltinFn requires a native endpoint relation");
++            }
++            Some(kind @ (CTypeKind::Void | CTypeKind::Bool | CTypeKind::SChar | CTypeKind::UChar |
++                CTypeKind::Short | CTypeKind::UShort | CTypeKind::Int | CTypeKind::UInt |
++                CTypeKind::Long | CTypeKind::ULong | CTypeKind::LongLong | CTypeKind::ULongLong |
++                CTypeKind::Float | CTypeKind::Double | CTypeKind::Int128 | CTypeKind::UInt128 | CTypeKind::Half)) => {
++                row["kind"] = json!(format!("{kind:?}"));
++            }
++            Some(CTypeKind::Char) => {
++                row["kind"] = json!("Char");
++                match self.source_char_signedness.get(&id) {
++                    Some(signed) => row["signed"] = json!(signed),
++                    None => row["unproved"] = json!("missing plain char signedness"),
++                }
++            }
++            _ => row["unproved"] = json!("missing or unsupported required type"),
++        }
++        (row, children)
++    }
++
++    fn required_type_closure(&self, id: CTypeId,
++        rows: &mut std::collections::BTreeMap<CTypeId, (Value, Vec<CTypeId>)>,
++        visiting: &mut HashSet<CTypeId>, checked: &mut HashMap<(CTypeId, usize), bool>, depth: usize) -> bool {
++        if depth > 32 || visiting.contains(&id) { return false; }
++        if let Some(proved) = checked.get(&(id, depth)) { return *proved; }
++        let (row, children) = rows.entry(id).or_insert_with(|| self.required_type_relation(id));
++        let mut proved = row.get("unproved").is_none();
++        let children = children.clone();
++        visiting.insert(id);
++        for child in children {
++            if !self.required_type_closure(child, rows, visiting, checked, depth + 1) { proved = false; }
++        }
++        visiting.remove(&id);
++        checked.insert((id, depth), proved);
++        proved
++    }
++
++    fn required_native_record(&self, id: CDeclId) -> Value {
++        let mut row = json!({"declaration": id.0});
++        match (self.native_va_list_records.contains(&id), self.c_decls.get(&id).map(|d| &d.kind), self.record_evidence.get(&id)) {
++            (true, Some(CDeclKind::Struct { fields: Some(_), platform_byte_size, platform_alignment,
++                is_packed, manual_alignment, max_field_alignment, .. }), Some(e))
++                if e.0 == 2 && e.1 == "struct" && e.9 && e.10 == Some((*is_packed, *manual_alignment,
++                    *max_field_alignment, *platform_byte_size, *platform_alignment)) => {
++                row["origin"] = json!("ASTContext.getVaListTagDecl"); row["kind"] = json!("struct");
++                row["complete"] = json!(true); row["size"] = json!(platform_byte_size);
++                row["alignment"] = json!(platform_alignment);
++            }
++            _ => row["unproved"] = json!("missing or inconsistent native va_list tag origin and layout"),
++        }
++        row
++    }
++
++    fn cursor_required_relations(&self, unit: &Path, owners: &HashMap<CDeclId, HashSet<CDeclId>>) -> Value {
++        let mut roots = HashSet::new();
++        let mut expressions = std::collections::BTreeSet::new();
++        let mut declarations = std::collections::BTreeSet::new();
++        for (id, decl) in self.iter_decls() {
++            let CDeclKind::Function { typ, body: Some(body), parameters, .. } = &decl.kind else { continue };
++            if !matches!(self.c_types.get(typ).map(|t| &t.kind), Some(CTypeKind::Function(_, _, true, _, _, _))) { continue; }
++            roots.insert(CQualTypeId::new(*typ)); declarations.insert(*id);
++            declarations.extend(parameters.iter().copied());
++            let mut pending = vec![iterators::SomeId::Stmt(*body)];
++            let mut visited = HashSet::new();
++            while let Some(node) = pending.pop() {
++                if !visited.insert(node) || node.type_().is_some() { continue; }
++                if let Some(expr) = node.expr() { expressions.insert(expr); }
++                if let Some(decl) = node.decl() {
++                    if !matches!(self.c_decls.get(&decl).map(|d| &d.kind), Some(CDeclKind::Variable { .. })) { continue; }
++                    declarations.insert(decl);
++                }
++                pending.extend(iterators::immediate_children_all_types(self, node)
++                    .into_iter().filter(|child| child.type_().is_none()));
++            }
++        }
++        let mut builtin_ids = std::collections::BTreeSet::new();
++        let mut endpoints = vec![];
++        for id in &expressions {
++            let Some(expr) = self.c_exprs.get(id) else { continue };
++            if let Some(typ) = expr.kind.get_qual_type() { roots.insert(typ); }
++            match &expr.kind {
++                CExprKind::DeclRef(_, decl, _) => { declarations.insert(*decl); }
++                CExprKind::UnaryType(_, _, _, typ) => { roots.insert(*typ); }
++                CExprKind::Binary(_, _, _, _, left, right) => { roots.extend(left.iter().chain(right.iter()).copied()); }
++                _ => {}
++            }
++            if let CExprKind::Call(_, callee, _) = expr.kind {
++                if let Some(decl) = self.inventory_callee(callee) { builtin_ids.insert(decl); }
++            }
++            if let CExprKind::ImplicitCast(output, child, CastKind::BuiltinFnToFnPtr, _, _) = expr.kind {
++                let Some(CExprKind::DeclRef(input, decl, _)) = self.c_exprs.get(&child).map(|e| &e.kind) else {
++                    endpoints.push(json!({"expression": id.0, "unproved": "BuiltinFn cast input is not a direct declaration reference"}));
++                    continue;
++                };
++                let mut endpoint = json!({"expression": id.0, "reference": child.0, "declaration": decl.0, "cast": "BuiltinFnToFnPtr",
++                    "input": Self::required_qualified_type(*input), "output": Self::required_qualified_type(output)});
++                if !matches!(self.c_types.get(&input.ctype).map(|t| &t.kind), Some(CTypeKind::BuiltinFn)) {
++                    endpoint["unproved"] = json!("native endpoint input is not BuiltinFn");
++                }
++                builtin_ids.insert(*decl); endpoints.push(endpoint);
++            }
++        }
++        let mut cursors = vec![];
++        let mut selected: std::collections::BTreeMap<CDeclId, Vec<Value>> = std::collections::BTreeMap::new();
++        let mut enum_owners = vec![];
++        for id in &declarations {
++            match self.c_decls.get(id).map(|d| &d.kind) {
++                Some(CDeclKind::Variable { typ, .. }) | Some(CDeclKind::Field { typ, .. }) => { roots.insert(*typ); }
++                Some(CDeclKind::Function { typ, .. }) => { roots.insert(CQualTypeId::new(*typ)); }
++                Some(CDeclKind::EnumConstant { name, value }) => {
++                    match owners.get(id) {
++                        Some(ids) if ids.len() == 1 => {
++                            let owner = *ids.iter().next().unwrap();
++                            let member = match self.c_decls.get(&owner).map(|d| &d.kind) {
++                                Some(CDeclKind::Enum { variants, .. }) => variants.iter().filter(|d| *d == id).count() == 1,
++                                _ => false,
++                            };
++                            if member {
++                                let variant = match value {
++                                    ConstIntExpr::I(n) => json!({"declaration": id.0, "name": name, "signed": true, "value": n}),
++                                    ConstIntExpr::U(n) => json!({"declaration": id.0, "name": name, "signed": false, "value": n}),
++                                };
++                                selected.entry(owner).or_default().push(variant);
++                            } else { enum_owners.push(json!({"variant": id.0, "unproved": "missing or duplicate enum membership"})); }
++                        }
++                        _ => enum_owners.push(json!({"variant": id.0, "unproved": "missing or ambiguous enum owner"})),
++                    }
++                }
++                _ => {}
++            }
++            if let Some((declared, builtin, kind)) = self.native_cursor_types.get(id) {
++                roots.insert(*declared); roots.insert(*builtin);
++                let source = match self.c_decls.get(id).map(|d| &d.kind) {
++                    Some(CDeclKind::Variable { typ, .. }) => Self::required_qualified_type(*typ),
++                    _ => json!({"unproved": "native cursor is not a variable"}),
++                };
++                cursors.push(json!({"declaration": id.0, "source": source,
++                    "declared": Self::required_qualified_type(*declared), "builtin": Self::required_qualified_type(*builtin),
++                    "same_canonical_type": true, "target_kind": kind}));
++            }
++        }
++        for (owner, variants) in selected {
++            enum_owners.push(json!({"declaration": owner.0, "identity": self.inventory_record_identity(owner, 0), "variants": variants}));
++        }
++        enum_owners.sort_by_key(|v| (v["declaration"].as_u64(), v["variant"].as_u64()));
++        let mut builtins = vec![];
++        for id in builtin_ids {
++            let Some((builtin, semantic)) = self.cursor_builtin_identity.get(&id) else { continue };
++            if !matches!(semantic.as_str(), "va_start" | "va_end" | "va_copy" | "vsnprintf") { continue; }
++            let mut row = json!({"declaration": id.0, "builtin_id": builtin, "semantic": semantic});
++            match self.c_decls.get(&id).map(|d| &d.kind) {
++                Some(CDeclKind::Function { typ, name, is_global: true, .. }) if *builtin != 0 && self.linker_names.contains_key(&id) => {
++                    row["name"] = json!(name); row["symbol"] = self.inventory_symbol(id, unit).unwrap_or(Value::Null);
++                    row["type"] = Self::required_qualified_type(CQualTypeId::new(*typ)); roots.insert(CQualTypeId::new(*typ));
++                }
++                _ => row["unproved"] = json!("missing native builtin declaration or linker identity"),
++            }
++            builtins.push(row);
++        }
++        let mut types = std::collections::BTreeMap::new();
++        let mut ordered_roots: Vec<_> = roots.into_iter().collect();
++        ordered_roots.sort_by_key(|t| (t.ctype.0, t.qualifiers.is_const, t.qualifiers.is_volatile, t.qualifiers.is_restrict));
++        let mut root_facts = vec![];
++        let mut root_proved = HashMap::new();
++        for root in &ordered_roots {
++            let proved = self.required_type_closure(root.ctype, &mut types, &mut HashSet::new(), &mut HashMap::new(), 0);
++            root_proved.insert(root.ctype, proved);
++            let mut fact = Self::required_qualified_type(*root);
++            if !proved { fact["unproved"] = json!("required type dependency, cycle or depth limit"); }
++            root_facts.push(fact);
++        }
++        let mut native_ids = std::collections::BTreeSet::new();
++        for id in types.keys() {
++            if let Some(CTypeKind::Struct(decl)) = self.c_types.get(id).map(|t| &t.kind) {
++                if self.native_va_list_records.contains(decl) { native_ids.insert(*decl); }
++            }
++        }
++        for row in &mut builtins {
++            if let Some(id) = row["type"]["type_id"].as_u64() {
++                if root_proved.get(&CTypeId(id)) == Some(&true) {
++                    row["signature"] = self.cursor_type(CQualTypeId::new(CTypeId(id)), 0);
++                } else { row["unproved"] = json!("native builtin signature relation unproved"); }
++            }
++        }
++        for endpoint in &mut endpoints {
++            let decl = endpoint["declaration"].as_u64();
++            let builtin = builtins.iter().find(|b| b["declaration"].as_u64() == decl && b.get("unproved").is_none());
++            let output = endpoint["output"]["type_id"].as_u64().map(CTypeId);
++            let signature = builtin.and_then(|b| b["type"]["type_id"].as_u64()).map(CTypeId);
++            let matching = match output.and_then(|id| self.c_types.get(&id)).map(|t| &t.kind) {
++                Some(CTypeKind::Pointer(inner)) => Some(inner.ctype) == signature,
++                _ => false,
++            };
++            if !matching || builtin.is_none() { endpoint["unproved"] = json!("native builtin endpoint signature mismatch"); }
++        }
++        json!({"schema": 1, "authorization": "witness_only",
++            "roots": root_facts,
++            "types": types.into_values().map(|(row, _)| row).collect::<Vec<_>>(), "cursors": cursors,
++            "native_records": native_ids.into_iter().map(|id| self.required_native_record(id)).collect::<Vec<_>>(),
++            "enum_owners": enum_owners, "builtin_declarations": builtins, "builtin_endpoints": endpoints})
++    }
++
++    /// A separate raw witness. Statement order comes only from the compound body.
++    pub fn cursor_witness(&self, unit: &Path) -> Value {
++        let owners = self.cursor_declaration_owners();
++        let mut functions = vec![];
++        for (id, decl) in self.iter_decls() {
++            let CDeclKind::Function { body: Some(body), parameters, typ, .. } = &decl.kind else { continue };
++            let variadic = matches!(self[*typ].kind, CTypeKind::Function(_, _, true, _, _, _));
++            if !variadic { continue; }
++            let cursors: Vec<_> = iterators::DFExpr::new(self, (*body).into()).filter_map(|n| n.decl())
++                .filter(|d| self.native_cursor_types.contains_key(d))
++                .collect();
++            let statements = match &self[*body].kind {
++                CStmtKind::Compound(children) => children.iter().map(|stmt| {
++                    let (kind, root) = match self[*stmt].kind {
++                        CStmtKind::Decls(..) => ("declarations", None),
++                        CStmtKind::Expr(expr) => ("expression", Some(expr.0)),
++                        CStmtKind::Empty => ("empty", None), _ => ("unsupported", None),
++                    };
++                    json!({"id": stmt.0, "kind": kind, "root": root,
++                        "declarations": match &self[*stmt].kind {
++                            CStmtKind::Decls(ds) => ds.iter().map(|d| self.cursor_declaration(*d, &owners)).collect::<Vec<_>>(), _ => vec![] },
++                        "expressions": iterators::DFExpr::new(self, (*stmt).into()).filter_map(|n| n.expr())
++                            .map(|e| self.cursor_expression(e)).collect::<Vec<_>>()})
++                }).collect::<Vec<_>>(), _ => vec![],
++            };
++            let references = self.c_exprs.iter().filter_map(|(e, node)| match node.kind {
++                CExprKind::DeclRef(_, d, _) if parameters.contains(&d) || cursors.contains(&d) => Some(json!({"id": e.0, "decl": d.0,
++                    "type": node.kind.get_qual_type().map(|t| self.cursor_type(t, 0))})), _ => None,
++            }).collect::<Vec<_>>();
++            functions.push(json!({"declaration": id.0, "symbol": self.inventory_symbol(*id, unit),
++                "body": body.0, "complete_body": matches!(self[*body].kind, CStmtKind::Compound(_)),
++                "parameters": parameters.iter().map(|p| p.0).collect::<Vec<_>>(),
++                "parameter_declarations": parameters.iter().map(|p| self.cursor_declaration(*p, &owners)).collect::<Vec<_>>(),
++                "signature": self.cursor_type(CQualTypeId::new(*typ), 0),
++                "last_fixed_parameter": parameters.last().map(|p| p.0),
++                "cursors": cursors.iter().map(|c| c.0).collect::<Vec<_>>(),
++                "statements": statements, "parameter_and_cursor_references": references,
++                "full_statement_ids": iterators::DFExpr::new(self, (*body).into()).filter_map(|n| n.stmt()).map(|s| s.0).collect::<Vec<_>>() }));
++        }
++        let calls = self.c_exprs.iter().filter(|(_, e)| matches!(e.kind, CExprKind::Call(..)))
++            .map(|(id, _)| self.cursor_expression(*id)).collect::<Vec<_>>();
++        json!({"schema": 2, "authorization": "witness_only", "unit": unit, "target": self.target,
++            "native_va_list_kind": self.va_list_kind as u64,
++            "functions": functions, "calls": calls,
++            "required_relations": self.cursor_required_relations(unit, &owners),
++            "native_va_list_records": self.native_va_list_records.iter().map(|id| id.0).collect::<Vec<_>>(),
++            "expressions": self.c_exprs.iter().map(|(id, _)| self.cursor_expression(*id)).collect::<Vec<_>>(),
++            "declarations": self.iter_decls().filter(|(_, d)| matches!(d.kind, CDeclKind::Variable { .. } | CDeclKind::EnumConstant { .. })).map(|(id, _)| self.cursor_declaration(*id, &owners)).collect::<Vec<_>>(),
++            "native_inputs": self.cursor_inputs.as_ref().map(|s| serde_json::from_str::<Value>(s).expect("native input facts JSON"))})
++    }
++
++    /// Facts only. No inventory record authorizes lowering without the closed-program gates.
++    pub fn closed_variadic_inventory(&self, unit: &Path) -> Value {
++        let mut declarations = vec![];
++        let mut owners = HashMap::new();
++        for (id, decl) in self.iter_decls() {
++            if let CDeclKind::Function {
++                typ,
++                body,
++                parameters,
++                ..
++            } = &decl.kind
++            {
++                declarations.push(json!({
++                    "id": id.0, "symbol": self.inventory_symbol(*id, unit),
++                    "location": decl.begin_loc().map(|l| self.loc_to_string(l)),
++                    "signature": self.inventory_type(CQualTypeId::new(*typ), 0),
++                    "definition": body.is_some(),
++                    "aliases": match &decl.kind { CDeclKind::Function { attrs, .. } => attrs.iter().filter_map(|a| match a { Attribute::Alias(name) => Some(name.clone()), _ => None }).collect::<Vec<_>>(), _ => vec![] },
++                    "va_parameters": parameters.iter().filter(|p| match self[**p].kind {
++                        CDeclKind::Variable { typ, .. } => self.is_va_list(typ.ctype), _ => false,
++                    }).map(|p| p.0).collect::<Vec<_>>(),
++                }));
++                if let Some(body) = body {
++                    for node in iterators::DFExpr::new(self, (*body).into()) {
++                        if let Some(expr) = node.expr() {
++                            owners.insert(expr, *id);
++                        }
++                    }
++                }
++            }
++        }
++        let mut direct_refs = HashSet::new();
++        let mut calls = vec![];
++        let mut expressions: Vec<_> = self.c_exprs.iter().collect();
++        expressions.sort_by_key(|(id, _)| id.0);
++        for (id, expr) in &expressions {
++            if let CExprKind::Call(_, callee, args) = &expr.kind {
++                let callee_id = self.inventory_callee(*callee);
++                if callee_id.is_some() {
++                    for node in iterators::DFExpr::new(self, (*callee).into()) {
++                        if let Some(reference) = node.expr() {
++                            direct_refs.insert(reference);
++                        }
++                    }
++                }
++                calls.push(json!({
++                    "id": id.0, "owner": owners.get(id).map(|d| d.0),
++                    "location": expr.begin_loc().map(|l| self.loc_to_string(l)),
++                    "callee": callee_id.and_then(|d| self.inventory_symbol(d, unit)),
++                    "arguments": args.iter().map(|arg| json!({
++                        "id": arg.0,
++                        "promotion_chain": self.inventory_promotions(*arg),
++                        "type": self[*arg].kind.get_qual_type().map(|t| self.inventory_type(t, 0)),
++                        "va_list": self[*arg].kind.get_qual_type().map(|t| self.is_va_list(t.ctype)),
++                    })).collect::<Vec<_>>(),
++                }));
++            }
++        }
++        let mut escapes = vec![];
++        let mut va_arg = vec![];
++        for (id, expr) in expressions {
++            match expr.kind {
++                CExprKind::DeclRef(_, decl, _) if !direct_refs.contains(id) => {
++                    if let Some(symbol) = self.inventory_symbol(decl, unit) {
++                        escapes.push(json!({"symbol": symbol, "location": expr.begin_loc().map(|l| self.loc_to_string(l))}));
++                    }
++                }
++                CExprKind::VAArg(_, _) => va_arg.push(json!({"owner": owners.get(id).map(|d| d.0), "location": expr.begin_loc().map(|l| self.loc_to_string(l))})),
++                _ => (),
++            }
++        }
++        json!({"schema": 2, "record_evidence_schema": 2, "record_definitions": self.inventory_record_definitions(), "unit": unit, "target": self.target,
++            "target_c_widths_bits": {"char": self.target_c_widths[0], "short": self.target_c_widths[1], "int": self.target_c_widths[2], "long": self.target_c_widths[3], "long_long": self.target_c_widths[4], "pointer": self.target_c_widths[5], "float": self.target_c_widths[6], "double": self.target_c_widths[7]},
++            "authorization": "inventory_only", "declarations": declarations,
++            "calls": calls, "non_call_references": escapes, "va_arg": va_arg})
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn not_located<T>(kind: T) -> Located<T> {
++        Located { loc: None, kind }
++    }
++
++    fn function(body: CStmtId) -> CDeclKind {
++        CDeclKind::Function {
++            is_global: false, is_inline: false, is_implicit: false, is_extern: false,
++            is_inline_externally_visible: false, typ: CTypeId(1), name: "owner".into(),
++            parameters: vec![], body: Some(body), attrs: IndexSet::new(),
++        }
++    }
++
++    fn cursor_local_owners_use_lexical_declarations_not_references_or_names() {
++        let mut ast = TypedAstContext::default();
++        let typ = CQualTypeId::new(CTypeId(1));
++        ast.c_types.insert(typ.ctype, not_located(CTypeKind::UInt));
++        for id in [1, 2, 3, 4, 5] {
++            ast.c_decls.insert(CDeclId(id), not_located(CDeclKind::Variable {
++                ident: "reg_idx".into(), typ, initializer: None,
++                has_static_duration: false, has_thread_duration: false,
++                is_externally_visible: false, is_defn: true, attrs: IndexSet::new(),
++            }));
++            ast.native_local_variables.insert(CDeclId(id));
++        }
++        if let CDeclKind::Variable { initializer, .. } = &mut ast.c_decls.get_mut(&CDeclId(1)).unwrap().kind {
++            *initializer = Some(CExprId(2));
++        }
++        ast.c_exprs.insert(CExprId(2), not_located(CExprKind::Statements(typ, CStmtId(30))));
++        ast.c_stmts.insert(CStmtId(30), not_located(CStmtKind::Decls(vec![CDeclId(3)])));
++        ast.c_types.insert(CTypeId(2), not_located(CTypeKind::TypeOfExpr(CExprId(3))));
++        if let CDeclKind::Variable { typ, .. } = &mut ast.c_decls.get_mut(&CDeclId(2)).unwrap().kind {
++            *typ = CQualTypeId::new(CTypeId(2));
++        }
++        ast.c_exprs.insert(CExprId(3), not_located(CExprKind::Statements(typ, CStmtId(40))));
++        ast.c_stmts.insert(CStmtId(40), not_located(CStmtKind::Decls(vec![CDeclId(4)])));
++        ast.c_decls.insert(CDeclId(100), not_located(function(CStmtId(10))));
++        ast.c_decls.insert(CDeclId(200), not_located(function(CStmtId(20))));
++        ast.c_stmts.insert(CStmtId(10), not_located(CStmtKind::Compound(vec![CStmtId(11)])));
++        ast.c_stmts.insert(CStmtId(11), not_located(CStmtKind::Decls(vec![CDeclId(1), CDeclId(1)])));
++        ast.c_stmts.insert(CStmtId(20), not_located(CStmtKind::Compound(vec![CStmtId(21), CStmtId(22)])));
++        ast.c_stmts.insert(CStmtId(21), not_located(CStmtKind::Decls(vec![CDeclId(2)])));
++        ast.c_stmts.insert(CStmtId(22), not_located(CStmtKind::Expr(CExprId(1))));
++        ast.c_exprs.insert(CExprId(1), not_located(CExprKind::DeclRef(typ, CDeclId(1), LRValue::LValue)));
++        let owners = ast.cursor_declaration_owners();
++        assert_eq!(ast.cursor_declaration(CDeclId(1), &owners)["owning_function"], 100);
++        assert_eq!(ast.cursor_declaration(CDeclId(2), &owners)["owning_function"], 200);
++        assert_eq!(ast.cursor_declaration(CDeclId(3), &owners)["owning_function"], 100);
++        for id in [4, 5] {
++            assert!(ast.cursor_declaration(CDeclId(id), &owners)["owning_function"]["unproved"].is_string());
++        }
++        ast.c_stmts.insert(CStmtId(21), not_located(CStmtKind::Decls(vec![CDeclId(1), CDeclId(2)])));
++        let owners = ast.cursor_declaration_owners();
++        assert!(ast.cursor_declaration(CDeclId(1), &owners)["owning_function"]["unproved"].is_string());
++        ast.native_local_variables.remove(&CDeclId(2));
++        assert!(ast.cursor_declaration(CDeclId(2), &owners)["owning_function"].is_null());
++    }
++
++    fn cursor_enum_owners_use_variant_ids_and_preserve_distinct_tags() {
++        let mut ast = TypedAstContext::default();
++        for (owner, variant, tag) in [(10, 1, "SpvOp"), (20, 2, "SpvOp_")] {
++            ast.c_decls.insert(CDeclId(variant), not_located(CDeclKind::EnumConstant {
++                name: "SpvOpMemberName".into(), value: ConstIntExpr::I(6),
++            }));
++            ast.c_decls.insert(CDeclId(owner), not_located(CDeclKind::Enum {
++                name: Some(tag.into()), variants: vec![CDeclId(variant)], underlying_type_id: None,
++            }));
++            ast.record_evidence.insert(CDeclId(owner), c2rust_ast_exporter::clang_ast::RecordEvidence(
++                2, "enum".into(), Some(tag.into()), "/actual.h".into(), owner, 1,
++                "file".into(), None, false, true, None,
++            ));
++        }
++        let owners = ast.cursor_declaration_owners();
++        for (variant, owner, tag) in [(1, 10, "SpvOp"), (2, 20, "SpvOp_")] {
++            let declaration = ast.cursor_declaration(CDeclId(variant), &owners);
++            assert_eq!(declaration["owning_enum"]["declaration"], owner);
++            assert_eq!(declaration["owning_enum"]["identity"]["tag"], tag);
++        }
++        ast.c_decls.insert(CDeclId(30), not_located(CDeclKind::Enum {
++            name: Some("other".into()), variants: vec![CDeclId(1), CDeclId(999)], underlying_type_id: None,
++        }));
++        let owners = ast.cursor_declaration_owners();
++        assert!(ast.cursor_declaration(CDeclId(1), &owners)["owning_enum"]["unproved"].is_string());
++        assert!(!owners.contains_key(&CDeclId(999)));
++        ast.c_decls.remove(&CDeclId(20));
++        assert!(ast.cursor_declaration(CDeclId(2), &ast.cursor_declaration_owners())
++            ["owning_enum"]["unproved"].is_string());
++    }
++
++    fn cursor_required_relations_depth_is_per_root() {
++        fn normalize(value: &mut Value, mask: u64) {
++            match value {
++                Value::Object(object) => for (key, child) in object {
++                    if matches!(key.as_str(), "type_id" | "inner" | "declaration") && child.is_u64() {
++                        *child = json!(child.as_u64().unwrap() ^ mask);
++                    } else { normalize(child, mask); }
++                },
++                Value::Array(array) => for child in array { normalize(child, mask); },
++                _ => {}
++            }
++        }
++        let mut baseline = None;
++        for mask in [0u64, 20, 255] {
++            for reverse in [false, true] {
++                let mut ast = TypedAstContext::default();
++                let t = |id| CTypeId(id ^ mask);
++                let d = |id| CDeclId(id ^ mask);
++                let s = |id| CStmtId(id ^ mask);
++                let q = |id| CQualTypeId::new(t(id));
++                for id in 1..35 { ast.c_types.insert(t(id), not_located(CTypeKind::Paren(t(id + 1)))); }
++                ast.c_types.insert(t(35), not_located(CTypeKind::Void));
++                ast.c_types.insert(t(100), not_located(CTypeKind::Function(q(35), vec![], true, false, true, CCallingConvention::C)));
++                ast.c_decls.insert(d(60), not_located(CDeclKind::Function {
++                    is_global: true, is_inline: false, is_implicit: false, is_extern: true,
++                    is_inline_externally_visible: false, typ: t(100), name: "depth".into(),
++                    parameters: vec![], body: Some(s(60)), attrs: IndexSet::new(),
++                }));
++                ast.linker_names.insert(d(60), "depth".into());
++                for (decl, typ) in [(61, 1), (62, 20), (63, 2), (64, 3)] {
++                    ast.c_decls.insert(d(decl), not_located(CDeclKind::Variable {
++                        ident: format!("root_{typ}"), typ: q(typ), initializer: None, has_static_duration: false,
++                        has_thread_duration: false, is_externally_visible: false, is_defn: true, attrs: IndexSet::new(),
++                    }));
++                }
++                let mut declarations = vec![d(61), d(62), d(63), d(64)];
++                if reverse { declarations.reverse(); }
++                ast.c_stmts.insert(s(60), not_located(CStmtKind::Decls(declarations)));
++                let mut facts = ast.cursor_required_relations(Path::new("depth.c"), &ast.cursor_declaration_owners());
++                let roots = facts["roots"].as_array().unwrap();
++                assert!(roots.iter().find(|r| r["type_id"] == json!(t(1).0)).unwrap()["unproved"].is_string());
++                assert!(roots.iter().find(|r| r["type_id"] == json!(t(20).0)).unwrap().get("unproved").is_none());
++                assert!(roots.iter().find(|r| r["type_id"] == json!(t(2).0)).unwrap()["unproved"].is_string());
++                assert!(roots.iter().find(|r| r["type_id"] == json!(t(3).0)).unwrap().get("unproved").is_none());
++                assert!(facts["types"].as_array().unwrap().iter().all(|r| r.get("unproved").is_none()));
++                normalize(&mut facts, mask);
++                for table in ["roots", "types"] {
++                    facts[table].as_array_mut().unwrap().sort_by_key(|r| r["type_id"].as_u64());
++                }
++                if let Some(expected) = &baseline { assert_eq!(&facts, expected); }
++                else { baseline = Some(facts); }
++
++                ast.c_types.insert(t(100), not_located(CTypeKind::Function(q(20), vec![q(1)], true, false, true, CCallingConvention::C)));
++                let facts = ast.cursor_required_relations(Path::new("depth.c"), &ast.cursor_declaration_owners());
++                assert!(facts["roots"].as_array().unwrap().iter()
++                    .find(|r| r["type_id"] == json!(t(100).0)).unwrap()["unproved"].is_string());
++                ast.c_types.insert(t(35), not_located(CTypeKind::Paren(t(20))));
++                let facts = ast.cursor_required_relations(Path::new("depth.c"), &ast.cursor_declaration_owners());
++                assert!(facts["roots"].as_array().unwrap().iter().all(|r| r["unproved"].is_string()));
++            }
++        }
++    }
++
++    fn cursor_required_relations_are_bounded_native_facts() {
++        use c2rust_ast_exporter::clang_ast::RecordEvidence;
++        let mut ast = TypedAstContext::default();
++        let q = |n| CQualTypeId::new(CTypeId(n));
++        let function = |typ, name: &str, body| not_located(CDeclKind::Function {
++            is_global: true, is_inline: false, is_implicit: false, is_extern: true,
++            is_inline_externally_visible: false, typ: CTypeId(typ), name: name.into(),
++            parameters: vec![], body, attrs: IndexSet::new(),
++        });
++        ast.c_types.insert(CTypeId(1), not_located(CTypeKind::Void));
++        ast.c_types.insert(CTypeId(2), not_located(CTypeKind::Struct(CDeclId(20))));
++        ast.c_decls.insert(CDeclId(20), not_located(CDeclKind::Struct {
++            name: Some("arbitrary_native_tag".into()), fields: Some(vec![]), is_packed: false,
++            manual_alignment: None, max_field_alignment: None, platform_byte_size: 24, platform_alignment: 8,
++        }));
++        ast.record_evidence.insert(CDeclId(20), RecordEvidence(2, "struct".into(), None,
++            "".into(), 0, 0, "unproved".into(), None, false, true, Some((false, None, None, 24, 8))));
++        ast.native_va_list_records.insert(CDeclId(20));
++        let mut element = q(2); element.qualifiers.is_const = true;
++        element.qualifiers.is_volatile = true; element.qualifiers.is_restrict = true;
++        ast.c_types.insert(CTypeId(3), not_located(CTypeKind::ConstantArray(CTypeId(2), 1)));
++        ast.source_array_elements.insert(CTypeId(3), element);
++        let mut original = q(3); original.qualifiers.is_volatile = true;
++        ast.c_types.insert(CTypeId(4), not_located(CTypeKind::Typedef(CDeclId(40))));
++        ast.c_decls.insert(CDeclId(40), not_located(CDeclKind::Typedef {
++            name: "alias".into(), typ: q(1), is_implicit: false, target_dependent_macro: None,
++        }));
++        ast.source_typedef_types.insert(CDeclId(40), original);
++        ast.c_types.insert(CTypeId(5), not_located(CTypeKind::Elaborated(CTypeId(4))));
++        let mut source = q(5); source.qualifiers.is_const = true;
++        ast.c_decls.insert(CDeclId(50), not_located(CDeclKind::Variable {
++            ident: "args".into(), typ: source, initializer: None, has_static_duration: false,
++            has_thread_duration: false, is_externally_visible: false, is_defn: true, attrs: IndexSet::new(),
++        }));
++        ast.native_cursor_types.insert(CDeclId(50), (original, original, 5));
++        ast.c_types.insert(CTypeId(6), not_located(CTypeKind::Function(q(1), vec![], true, false, true, CCallingConvention::C)));
++        ast.c_decls.insert(CDeclId(60), function(6, "body", Some(CStmtId(60))));
++        ast.linker_names.insert(CDeclId(60), "body".into());
++        ast.c_stmts.insert(CStmtId(61), not_located(CStmtKind::Decls(vec![CDeclId(50)])));
++        ast.c_types.insert(CTypeId(7), not_located(CTypeKind::Pointer(q(2))));
++        ast.c_types.insert(CTypeId(8), not_located(CTypeKind::Function(q(1), vec![q(7)], true, false, true, CCallingConvention::C)));
++        ast.c_types.insert(CTypeId(9), not_located(CTypeKind::Pointer(q(8))));
++        ast.c_types.insert(CTypeId(10), not_located(CTypeKind::BuiltinFn));
++        for (decl, builtin, semantic) in [(70, 415, "va_start"), (71, 416, "va_end"), (72, 907, "vsnprintf")] {
++            ast.c_decls.insert(CDeclId(decl), function(8, "renamed", None));
++            ast.linker_names.insert(CDeclId(decl), format!("link_{decl}"));
++            ast.cursor_builtin_identity.insert(CDeclId(decl), (builtin, semantic.into()));
++            let reference = CExprId(decl * 10);
++            let cast = CExprId(decl * 10 + 1);
++            let call = CExprId(decl * 10 + 2);
++            ast.c_exprs.insert(reference, not_located(CExprKind::DeclRef(if decl == 72 { q(8) } else { q(10) }, CDeclId(decl), LRValue::RValue)));
++            ast.c_exprs.insert(cast, not_located(CExprKind::ImplicitCast(q(9), reference,
++                if decl == 72 { CastKind::FunctionToPointerDecay } else { CastKind::BuiltinFnToFnPtr }, None, LRValue::RValue)));
++            ast.c_exprs.insert(call, not_located(CExprKind::Call(q(1), cast, vec![])));
++            ast.c_stmts.insert(CStmtId(decl), not_located(CStmtKind::Expr(call)));
++        }
++        ast.c_decls.insert(CDeclId(80), not_located(CDeclKind::EnumConstant { name: "opcode".into(), value: ConstIntExpr::U(6) }));
++        ast.c_decls.insert(CDeclId(81), not_located(CDeclKind::EnumConstant { name: "unused".into(), value: ConstIntExpr::I(7) }));
++        ast.c_decls.insert(CDeclId(82), not_located(CDeclKind::Enum { name: Some("op".into()), variants: vec![CDeclId(80), CDeclId(81)], underlying_type_id: None }));
++        ast.record_evidence.insert(CDeclId(82), RecordEvidence(2, "enum".into(), Some("op".into()),
++            "/enum.h".into(), 2, 1, "file".into(), None, false, true, None));
++        ast.c_types.insert(CTypeId(11), not_located(CTypeKind::Enum(CDeclId(82))));
++        ast.c_exprs.insert(CExprId(80), not_located(CExprKind::DeclRef(q(11), CDeclId(80), LRValue::RValue)));
++        ast.c_stmts.insert(CStmtId(80), not_located(CStmtKind::Expr(CExprId(80))));
++        ast.c_stmts.insert(CStmtId(60), not_located(CStmtKind::Compound(vec![CStmtId(61), CStmtId(70), CStmtId(71), CStmtId(72), CStmtId(80)])));
++        ast.c_types.insert(CTypeId(999), not_located(CTypeKind::Int));
++        for (id, typ, initializer) in [(51, 11, Some(CExprId(810))), (52, 12, None), (53, 11, Some(CExprId(80)))] {
++            ast.c_decls.insert(CDeclId(id), not_located(CDeclKind::Variable {
++                ident: format!("local_{id}"), typ: q(typ), initializer, has_static_duration: false,
++                has_thread_duration: false, is_externally_visible: false, is_defn: true, attrs: IndexSet::new(),
++            }));
++        }
++        ast.c_exprs.insert(CExprId(810), not_located(CExprKind::Statements(q(11), CStmtId(810))));
++        ast.c_stmts.insert(CStmtId(810), not_located(CStmtKind::Decls(vec![CDeclId(53)])));
++        ast.c_decls.insert(CDeclId(90), not_located(CDeclKind::Struct {
++            name: Some("local_record".into()), fields: Some(vec![CDeclId(91)]), is_packed: false,
++            manual_alignment: None, max_field_alignment: None, platform_byte_size: 4, platform_alignment: 4,
++        }));
++        ast.c_decls.insert(CDeclId(91), not_located(CDeclKind::Field {
++            name: "unused".into(), typ: q(999), bitfield_width: None,
++            platform_bit_offset: 0, platform_type_bitwidth: 32, manual_alignment: None,
++        }));
++        ast.c_types.insert(CTypeId(12), not_located(CTypeKind::Struct(CDeclId(90))));
++        ast.c_stmts.insert(CStmtId(61), not_located(CStmtKind::Decls(vec![CDeclId(50), CDeclId(51), CDeclId(52), CDeclId(82), CDeclId(90)])));
++        ast.c_stmts.insert(CStmtId(60), not_located(CStmtKind::Compound(vec![CStmtId(61), CStmtId(70), CStmtId(71), CStmtId(72)])));
++        let facts = |ast: &TypedAstContext| ast.cursor_required_relations(Path::new("body.c"), &ast.cursor_declaration_owners());
++        let row = |rows: &Value, key: &str, id| rows.as_array().unwrap().iter().find(|r| r[key] == json!(id)).unwrap().clone();
++        let positive = facts(&ast);
++        assert_eq!(positive, facts(&ast));
++        assert_eq!(positive["schema"], 1);
++        assert_eq!(positive["authorization"], "witness_only");
++        assert!(positive["types"].as_array().unwrap().iter().all(|r| r["type_id"] != 999));
++        assert_eq!(row(&positive["types"], "type_id", 5)["inner"], 4);
++        assert_eq!(row(&positive["types"], "type_id", 4)["declaration"], 40);
++        assert_eq!(row(&positive["types"], "type_id", 4)["original"]["volatile"], true);
++        assert_eq!(positive["cursors"][0]["source"]["const"], true);
++        let array = row(&positive["types"], "type_id", 3);
++        assert_eq!(array["length"], 1);
++        for qualifier in ["const", "volatile", "restrict"] { assert_eq!(array["element"][qualifier], true); }
++        assert_eq!(positive["native_records"][0]["origin"], "ASTContext.getVaListTagDecl");
++        assert_eq!(positive["native_records"][0]["size"], 24);
++        assert!(ast.inventory_record_identity(CDeclId(20), 0)["unproved"].is_string());
++        assert_eq!(positive["enum_owners"].as_array().unwrap().len(), 1);
++        assert!(positive["roots"].as_array().unwrap().iter().any(|r| r["type_id"] == 12));
++        assert_eq!(positive["enum_owners"][0]["declaration"], 82);
++        assert_eq!(positive["enum_owners"][0]["variants"], json!([{"declaration": 80, "name": "opcode", "signed": false, "value": 6}]));
++        assert_eq!(positive["builtin_declarations"].as_array().unwrap().len(), 3);
++        assert_eq!(positive["builtin_endpoints"].as_array().unwrap().len(), 2);
++        assert!(positive["builtin_endpoints"].as_array().unwrap().iter().all(|r| r.get("unproved").is_none()));
++        assert_eq!(positive["builtin_declarations"][0]["signature"]["canonical"]["parameters"][0]["canonical"]["pointer"]["canonical"]["native_va_list_record"], 20);
++        assert!(ast.inventory_type(q(8), 0)["canonical"]["parameters"][0]["canonical"]["pointer"]["canonical"]["record"]["unproved"].is_string());
++        assert!(row(&positive["types"], "type_id", 10)["unproved"].is_string());
++        assert!(ast.cursor_type(q(10), 0)["canonical"]["unproved"].is_string());
++        ast.source_array_elements.remove(&CTypeId(3));
++        assert!(row(&facts(&ast)["types"], "type_id", 3)["unproved"].is_string());
++        ast.source_array_elements.insert(CTypeId(3), q(1));
++        assert!(row(&facts(&ast)["types"], "type_id", 3)["unproved"].is_string());
++        ast.source_array_elements.insert(CTypeId(3), element);
++        ast.source_typedef_types.remove(&CDeclId(40));
++        assert!(row(&facts(&ast)["types"], "type_id", 4)["unproved"].is_string());
++        ast.source_typedef_types.insert(CDeclId(40), q(5));
++        assert!(row(&facts(&ast)["roots"], "type_id", 5)["unproved"].is_string());
++        ast.source_typedef_types.insert(CDeclId(40), original);
++        ast.c_types.insert(CTypeId(4), not_located(CTypeKind::Elaborated(CTypeId(998))));
++        assert!(row(&facts(&ast)["types"], "type_id", 998)["unproved"].is_string());
++        ast.c_types.insert(CTypeId(4), not_located(CTypeKind::Typedef(CDeclId(40))));
++        ast.native_va_list_records.remove(&CDeclId(20));
++        assert!(ast.required_native_record(CDeclId(20))["unproved"].is_string());
++        assert!(facts(&ast)["native_records"].as_array().unwrap().is_empty());
++        ast.native_va_list_records.insert(CDeclId(20));
++        ast.record_evidence.get_mut(&CDeclId(20)).unwrap().10 = Some((false, None, None, 25, 8));
++        assert!(facts(&ast)["native_records"][0]["unproved"].is_string());
++        ast.record_evidence.get_mut(&CDeclId(20)).unwrap().10 = Some((false, None, None, 24, 8));
++        ast.c_decls.insert(CDeclId(83), not_located(CDeclKind::Enum { name: Some("op".into()), variants: vec![CDeclId(80)], underlying_type_id: None }));
++        assert!(facts(&ast)["enum_owners"][0]["unproved"].is_string());
++        ast.c_decls.remove(&CDeclId(83));
++        if let CDeclKind::Enum { variants, .. } = &mut ast.c_decls.get_mut(&CDeclId(82)).unwrap().kind { variants.push(CDeclId(80)); }
++        assert!(facts(&ast)["enum_owners"][0]["unproved"].is_string());
++        if let CDeclKind::Enum { variants, .. } = &mut ast.c_decls.get_mut(&CDeclId(82)).unwrap().kind { variants.pop(); }
++        ast.c_decls.remove(&CDeclId(82));
++        assert!(facts(&ast)["enum_owners"][0]["unproved"].is_string());
++        if let CExprKind::ImplicitCast(_, _, cast, _, _) = &mut ast.c_exprs.get_mut(&CExprId(701)).unwrap().kind {
++            *cast = CastKind::FunctionToPointerDecay;
++        }
++        assert_eq!(facts(&ast)["builtin_endpoints"].as_array().unwrap().len(), 1);
++        assert!(row(&facts(&ast)["types"], "type_id", 10)["unproved"].is_string());
++        if let CExprKind::ImplicitCast(_, _, cast, _, _) = &mut ast.c_exprs.get_mut(&CExprId(701)).unwrap().kind {
++            *cast = CastKind::BuiltinFnToFnPtr;
++        }
++        if let CExprKind::DeclRef(_, decl, _) = &mut ast.c_exprs.get_mut(&CExprId(700)).unwrap().kind { *decl = CDeclId(60); }
++        assert!(facts(&ast)["builtin_endpoints"][0]["unproved"].is_string());
++        if let CExprKind::DeclRef(_, decl, _) = &mut ast.c_exprs.get_mut(&CExprId(700)).unwrap().kind { *decl = CDeclId(70); }
++        ast.cursor_builtin_identity.get_mut(&CDeclId(70)).unwrap().0 = 0;
++        assert!(facts(&ast)["builtin_endpoints"][0]["unproved"].is_string());
++        ast.cursor_builtin_identity.get_mut(&CDeclId(70)).unwrap().0 = 415;
++        ast.cursor_builtin_identity.get_mut(&CDeclId(70)).unwrap().1 = "unknown".into();
++        assert!(facts(&ast)["builtin_endpoints"][0]["unproved"].is_string());
++        ast.cursor_builtin_identity.get_mut(&CDeclId(70)).unwrap().1 = "va_start".into();
++        ast.c_types.insert(CTypeId(9), not_located(CTypeKind::Pointer(q(6))));
++        assert!(facts(&ast)["builtin_endpoints"][0]["unproved"].is_string());
++        ast.c_types.insert(CTypeId(9), not_located(CTypeKind::Pointer(q(8))));
++        ast.c_types.insert(CTypeId(10), not_located(CTypeKind::Int));
++        assert!(facts(&ast)["builtin_endpoints"][0]["unproved"].is_string());
++    }
++
++    #[test]
++    fn closed_variadic_inventory_uses_promoted_ast_types_and_linker_identity() {
++        cursor_required_relations_are_bounded_native_facts();
++        cursor_required_relations_depth_is_per_root();
++        cursor_local_owners_use_lexical_declarations_not_references_or_names();
++        cursor_enum_owners_use_variant_ids_and_preserve_distinct_tags();
++        let mut ast = TypedAstContext::default();
++        let int = CQualTypeId::new(CTypeId(1));
++        let short = CQualTypeId::new(CTypeId(2));
++        let function = CTypeId(3);
++        ast.c_types.insert(int.ctype, not_located(CTypeKind::Int));
++        ast.c_types
++            .insert(short.ctype, not_located(CTypeKind::UShort));
++        ast.c_types.insert(
++            function,
++            not_located(CTypeKind::Function(
++                int,
++                vec![int],
++                true,
++                false,
++                true,
++                CCallingConvention::C,
++            )),
++        );
++        let declaration = CDeclId(1);
++        ast.linker_names.insert(declaration, "asm_format".into());
++        ast.target_c_widths = [8, 16, 32, 32, 64, 64, 32, 64];
++        ast.c_decls.insert(
++            declaration,
++            not_located(CDeclKind::Function {
++                is_global: true,
++                is_inline: false,
++                is_implicit: false,
++                is_extern: true,
++                is_inline_externally_visible: false,
++                typ: function,
++                name: "private_format".into(),
++                parameters: vec![],
++                body: None,
++                attrs: IndexSet::new(),
++            }),
++        );
++        ast.c_exprs.insert(
++            CExprId(1),
++            not_located(CExprKind::DeclRef(
++                CQualTypeId::new(function),
++                declaration,
++                LRValue::RValue,
++            )),
++        );
++        ast.c_exprs
++            .insert(CExprId(2), not_located(CExprKind::ImplicitValueInit(short)));
++        ast.c_exprs.insert(
++            CExprId(3),
++            not_located(CExprKind::ImplicitCast(
++                int,
++                CExprId(2),
++                CastKind::IntegralCast,
++                None,
++                LRValue::RValue,
++            )),
++        );
++        ast.c_exprs.insert(
++            CExprId(4),
++            not_located(CExprKind::Call(
++                int,
++                CExprId(1),
++                vec![CExprId(2), CExprId(3)],
++            )),
++        );
++        ast.c_types.insert(CTypeId(20), not_located(CTypeKind::Char));
++        let plain_char = CQualTypeId::new(CTypeId(20));
++        assert_eq!(ast.inventory_type(plain_char, 0)["canonical"]["unproved"],
++                   "missing plain char signedness");
++        for signed in [true, false] {
++            ast.source_char_signedness.insert(CTypeId(20), signed);
++            assert_eq!(ast.inventory_type(plain_char, 0)["canonical"],
++                       json!({"kind": "Char", "signed": signed}));
++        }
++        for (index, kind, name) in [(21, CTypeKind::SChar, "SChar"),
++                                     (22, CTypeKind::UChar, "UChar")] {
++            ast.c_types.insert(CTypeId(index), not_located(kind));
++            assert_eq!(ast.inventory_type(CQualTypeId::new(CTypeId(index)), 0)["canonical"],
++                       json!({"kind": name}));
++        }
++        ast.c_types.insert(CTypeId(8), not_located(CTypeKind::Long));
++        ast.c_types
++            .insert(CTypeId(9), not_located(CTypeKind::Typedef(CDeclId(9))));
++        ast.source_typedef_types
++            .insert(CDeclId(9), CQualTypeId::new(CTypeId(8)));
++        assert_eq!(
++            ast.inventory_type(CQualTypeId::new(CTypeId(9)), 0)["canonical"]["kind"],
++            "Long"
++        );
++        for (index, kind) in [(10, CTypeKind::ConstantArray(CTypeId(1), 2)),
++                              (11, CTypeKind::IncompleteArray(CTypeId(1))),
++                              (12, CTypeKind::ConstantArray(CTypeId(10), 3))] {
++            ast.c_types.insert(CTypeId(index), not_located(kind));
++        }
++        let mut qualified = int;
++        qualified.qualifiers.is_const = true;
++        qualified.qualifiers.is_volatile = true;
++        for index in [10, 11] {
++            ast.source_array_elements.insert(CTypeId(index), qualified);
++            let evidence = ast.inventory_type(CQualTypeId::new(CTypeId(index)), 0);
++            assert_eq!(evidence["canonical"]["array"]["const"], true);
++            assert_eq!(evidence["canonical"]["array"]["volatile"], true);
++        }
++        ast.source_array_elements.insert(CTypeId(12), CQualTypeId::new(CTypeId(10)));
++        assert_eq!(ast.inventory_type(CQualTypeId::new(CTypeId(12)), 0)
++                   ["canonical"]["array"]["canonical"]["array"]["const"], true);
++        ast.c_types.insert(CTypeId(14), not_located(CTypeKind::Pointer(int)));
++        let mut restricted = CQualTypeId::new(CTypeId(14));
++        restricted.qualifiers.is_restrict = true;
++        ast.source_array_elements.insert(CTypeId(11), restricted);
++        assert_eq!(ast.inventory_type(CQualTypeId::new(CTypeId(11)), 0)
++                   ["canonical"]["array"]["restrict"], true);
++        ast.source_array_elements.remove(&CTypeId(11));
++        assert!(ast.inventory_type(CQualTypeId::new(CTypeId(11)), 0)["unproved"].is_string());
++        ast.c_types.insert(CTypeId(13), not_located(CTypeKind::LongDouble));
++        assert_eq!(ast.inventory_type(CQualTypeId::new(CTypeId(13)), 0)
++                   ["canonical"]["unproved"], "long double ABI shape");
++        assert!(ast.inventory_type(int, 33)["unproved"].is_string());
++        use c2rust_ast_exporter::clang_ast::{RecordEvidence, from_value, Value as CborValue};
++        let tuple = CborValue::Array(vec![CborValue::Integer(2), CborValue::Text("struct".into()),
++            CborValue::Text("node".into()), CborValue::Text("/shared.h".into()),
++            CborValue::Integer(1), CborValue::Integer(1), CborValue::Text("file".into()),
++            CborValue::Null, CborValue::Bool(false), CborValue::Bool(true), CborValue::Null]);
++        let evidence: RecordEvidence = from_value(tuple.clone()).unwrap();
++        ast.record_evidence.insert(CDeclId(99), evidence);
++        assert_eq!(ast.inventory_record_identity(CDeclId(99), 0)["physical"]["line"], 1);
++        for index in [3, 4, 5] {
++            let mut invalid = tuple.clone();
++            let CborValue::Array(ref mut values) = invalid else { unreachable!() };
++            values[index] = if index == 3 { CborValue::Text("?".into()) } else { CborValue::Integer(0) };
++            ast.record_evidence.insert(CDeclId(99), from_value(invalid).unwrap());
++            assert!(ast.inventory_record_identity(CDeclId(99), 0)["unproved"].is_string());
++        }
++        for invalid in [CborValue::Array(vec![]), {
++            let mut invalid = tuple;
++            let CborValue::Array(ref mut values) = invalid else { unreachable!() };
++            values[4] = CborValue::Text("not a coordinate".into());
++            invalid
++        }] {
++            assert!(from_value::<RecordEvidence>(invalid).is_err());
++        }
++        let a = ast.closed_variadic_inventory(Path::new("caller.c"));
++        let b = ast.closed_variadic_inventory(Path::new("definition.c"));
++        assert_eq!(a["declarations"][0]["symbol"]["linker"], "asm_format");
++        assert_eq!(a["target_c_widths_bits"]["long"], 32);
++        assert_eq!(
++            a["declarations"][0]["symbol"],
++            b["declarations"][0]["symbol"]
++        );
++        assert_eq!(
++            a["calls"][0]["arguments"][1]["type"]["canonical"]["kind"],
++            "Int"
++        );
++        assert_eq!(
++            a["calls"][0]["arguments"][1]["promotion_chain"][1]["canonical"]["kind"],
++            "UShort"
++        );
++        assert_eq!(a["non_call_references"], json!([]));
++        ast.c_exprs.insert(
++            CExprId(5),
++            not_located(CExprKind::DeclRef(
++                CQualTypeId::new(function),
++                declaration,
++                LRValue::RValue,
++            )),
++        );
++        assert_eq!(
++            ast.closed_variadic_inventory(Path::new("caller.c"))["non_call_references"]
++                .as_array()
++                .unwrap()
++                .len(),
++            1
++        );
++        if let CDeclKind::Function { is_global, .. } =
++            &mut ast.c_decls.get_mut(&declaration).unwrap().kind
++        {
++            *is_global = false;
++        }
++        assert_ne!(
++            ast.closed_variadic_inventory(Path::new("caller.c"))["declarations"][0]["symbol"],
++            ast.closed_variadic_inventory(Path::new("definition.c"))["declarations"][0]["symbol"]
++        );
++        let builtin = CQualTypeId::new(CTypeId(90));
++        ast.c_types.insert(builtin.ctype, not_located(CTypeKind::Struct(CDeclId(99))));
++        ast.native_va_list_records.insert(CDeclId(99));
++        assert!(ast.inventory_type(builtin, 0)["canonical"]["record"]["unproved"].is_string());
++        assert_eq!(ast.cursor_type(builtin, 0)["canonical"], json!({"native_va_list_record": 99}));
++        let cursor = CDeclId(90);
++        ast.c_decls.insert(cursor, not_located(CDeclKind::Variable {
++            ident: "args".into(), typ: builtin, initializer: None,
++            has_static_duration: false, has_thread_duration: false,
++            is_externally_visible: false, is_defn: true, attrs: IndexSet::new(),
++        }));
++        ast.native_local_variables.insert(cursor);
++        ast.native_cursor_types.insert(cursor, (builtin, builtin, 0));
++        let declaration = ast.cursor_declaration(cursor, &ast.cursor_declaration_owners());
++        assert_eq!(declaration["local"], true);
++        assert_eq!(declaration["native_va_list"]["declared_type_id"], 90);
++        assert_eq!(declaration["native_va_list"]["builtin_type_id"], 90);
++        assert_eq!(declaration["native_va_list"]["declared_canonical_type"], ast.cursor_type(builtin, 0));
++        assert_eq!(declaration["native_va_list"]["builtin_canonical_type"], ast.cursor_type(builtin, 0));
++        ast.c_types.insert(CTypeId(91), not_located(CTypeKind::ConstantArray(builtin.ctype, 1)));
++        let mut element = builtin;
++        element.qualifiers.is_const = true;
++        ast.source_array_elements.insert(CTypeId(91), element);
++        let mut array = CQualTypeId::new(CTypeId(91));
++        array.qualifiers.is_volatile = true;
++        ast.c_types.insert(CTypeId(92), not_located(CTypeKind::Typedef(CDeclId(93))));
++        ast.source_typedef_types.insert(CDeclId(93), array);
++        if let CDeclKind::Variable { typ, .. } = &mut ast.c_decls.get_mut(&cursor).unwrap().kind {
++            *typ = CQualTypeId::new(CTypeId(92));
++        }
++        ast.native_cursor_types.insert(cursor, (array, array, 5));
++        let facts = ast.cursor_declaration(cursor, &ast.cursor_declaration_owners());
++        let native = &facts["native_va_list"];
++        assert_eq!(facts["type_id"], 92);
++        assert_eq!(native["declared_type_id"], 91);
++        assert_eq!(native["builtin_type_id"], 91);
++        assert_eq!(native["target_kind"], 5);
++        for field in ["declared_canonical_type", "builtin_canonical_type"] {
++            assert_eq!(native[field]["volatile"], true);
++            assert_eq!(native[field]["canonical"]["length"], 1);
++            assert_eq!(native[field]["canonical"]["array"]["const"], true);
++            assert_eq!(native[field]["canonical"]["array"]["canonical"]["native_va_list_record"], 99);
++        }
++        ast.source_array_elements.remove(&CTypeId(91));
++        assert!(ast.cursor_declaration(cursor, &ast.cursor_declaration_owners())
++            ["native_va_list"]["declared_canonical_type"]["unproved"].is_string());
++        ast.c_exprs.insert(CExprId(90), not_located(CExprKind::DeclRef(builtin, cursor, LRValue::LValue)));
++        ast.c_exprs.insert(CExprId(91), not_located(CExprKind::Unary(int, CUnOp::AddressOf, CExprId(90), LRValue::RValue)));
++        ast.c_exprs.insert(CExprId(92), not_located(CExprKind::Binary(int, CBinOp::Assign,
++            CExprId(90), CExprId(91), None, None)));
++        assert_eq!(ast.cursor_expression(CExprId(90))["decl"], 90);
++        assert_eq!(ast.cursor_expression(CExprId(91))["operator"], "AddressOf");
++        assert_eq!(ast.cursor_expression(CExprId(92))["children"], json!([90, 91]));
++        assert_eq!(ast.cursor_expression(CExprId(92))["operator"], "Assign");
++
++    }
++}
+diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
+index 28d34bd..67a525e 100644
+--- a/c2rust-transpile/src/lib.rs
++++ b/c2rust-transpile/src/lib.rs
+@@ -75,6 +75,8 @@ pub struct TranspilerConfig {
+     pub verbose: bool,
+     pub debug_ast_exporter: bool,
+     pub emit_c_decl_map: bool,
++    pub emit_variadic_inventory: bool,
++    pub emit_cursor_witness: bool,
+
+     // Options that control translation
+     pub incremental_relooper: bool,
+@@ -682,6 +684,7 @@ fn transpile_single(
+         extra_clang_args,
+         tcfg.debug_ast_exporter,
+         tcfg.emit_c_decl_map,
++        tcfg.emit_cursor_witness.then(|| output_path.with_extension("cursor.cbor")).as_deref(),
+     ) {
+         Err(e) => {
+             warn!(
+@@ -720,6 +723,20 @@ fn transpile_single(
+         println!("{:#?}", Printer::new(io::stdout()).print(&typed_context));
+     }
+
++    if tcfg.emit_cursor_witness {
++        let witness = typed_context.cursor_witness(input_path);
++        let file = File::create(output_path.with_extension("cursor-witness.json")).expect("create cursor witness");
++        serde_json::to_writer_pretty(file, &witness).expect("write cursor witness");
++        std::fs::write(output_path.with_extension("typed-ast.txt"), format!("{typed_context:#?}"))
++            .expect("retain typed AST witness");
++    }
++    if tcfg.emit_variadic_inventory || tcfg.emit_c_decl_map || tcfg.emit_cursor_witness {
++        let inventory_path = output_path.with_extension("variadic.json");
++        let inventory = typed_context.closed_variadic_inventory(input_path);
++        let file = File::create(&inventory_path).expect("create closed variadic inventory");
++        serde_json::to_writer_pretty(file, &inventory).expect("write closed variadic inventory");
++    }
++
+     // Extract preprocessed text for each function definition so the C decl
+     // map can carry it alongside the original source snippet.
+     let preprocessed_definitions = preprocessed_source
+diff --git a/c2rust/src/bin/c2rust-transpile.rs b/c2rust/src/bin/c2rust-transpile.rs
+index ce727c0..1bd3954 100644
+--- a/c2rust/src/bin/c2rust-transpile.rs
++++ b/c2rust/src/bin/c2rust-transpile.rs
+@@ -42,6 +42,14 @@ struct Args {
+     #[clap(long)]
+     emit_c_decl_map: bool,
+
++    /// Write typed variadic inventory without collecting C declaration source maps.
++    #[clap(long)]
++    emit_variadic_inventory: bool,
++
++    /// Retain a separate typed cursor witness and its same-session CBOR and inventory.
++    #[clap(long)]
++    emit_cursor_witness: bool,
++
+     /// Verbose mode
+     #[clap(short = 'v', long)]
+     verbose: bool,
+@@ -274,6 +282,8 @@ fn main() {
+         dump_structures: args.dump_structures,
+         debug_ast_exporter: args.debug_ast_exporter,
+         emit_c_decl_map: args.emit_c_decl_map,
++        emit_variadic_inventory: args.emit_variadic_inventory,
++        emit_cursor_witness: args.emit_cursor_witness,
+         verbose: args.verbose,
+
+         incremental_relooper: !args.no_incremental_relooper,
+diff --git a/c2rust-transpile/tests/common/mod.rs b/c2rust-transpile/tests/common/mod.rs
+index b9bd350..ad1da96 100644
+--- a/c2rust-transpile/tests/common/mod.rs
++++ b/c2rust-transpile/tests/common/mod.rs
+@@ -15,6 +15,8 @@ pub fn config(edition: RustEdition) -> TranspilerConfig {
+         verbose: false,
+         debug_ast_exporter: false,
+         emit_c_decl_map: true, // Let snapshot tests validate the C declaration map.
++        emit_variadic_inventory: false,
++        emit_cursor_witness: false,
+         incremental_relooper: true,
+         fail_on_multiple: false,
+         filter: None,
+diff --git a/c2rust-transpile/tests/module_paths.rs b/c2rust-transpile/tests/module_paths.rs
+index d763a1d..566adfd 100644
+--- a/c2rust-transpile/tests/module_paths.rs
++++ b/c2rust-transpile/tests/module_paths.rs
+@@ -18,6 +18,8 @@ fn config(output_dir: PathBuf) -> TranspilerConfig {
+         verbose: false,
+         debug_ast_exporter: false,
+         emit_c_decl_map: false,
++        emit_variadic_inventory: false,
++        emit_cursor_witness: false,
+         incremental_relooper: true,
+         fail_on_multiple: false,
+         filter: None,
+diff --git a/c2rust-ast-exporter/src/lib.rs b/c2rust-ast-exporter/src/lib.rs
+--- a/c2rust-ast-exporter/src/lib.rs
++++ b/c2rust-ast-exporter/src/lib.rs
+@@ -37,10 +37,25 @@
+     debug: bool,
+     emit_preprocessed: bool,
++    retained_cbor: Option<&Path>,
+ ) -> Result<(clang_ast::AstContext, Option<String>), Error> {
+-    let cbors = get_ast_cbors(file_path, cc_db, extra_args, debug, emit_preprocessed);
+-    let (buffer, preprocessed) = cbors
+-        .into_values()
+-        .next()
+-        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "Could not parse input file"))?;
++    let cbors = get_ast_cbors(file_path, cc_db, extra_args, debug, emit_preprocessed, retained_cbor.is_some());
++    let (buffer, preprocessed) = if retained_cbor.is_some() {
++        if cbors.len() != 1 {
++            return Err(Error::new(ErrorKind::InvalidData, "Expected exactly one native translation unit"));
++        }
++        let requested = std::fs::canonicalize(file_path)?;
++        let (native_input, result) = cbors.into_iter().next().unwrap();
++        if std::fs::canonicalize(&native_input)? != requested {
++            return Err(Error::new(ErrorKind::InvalidData, "Native translation unit differs from requested input"));
++        }
++        result
++    } else {
++        cbors.into_values().next()
++            .ok_or_else(|| Error::new(ErrorKind::InvalidData, "Could not parse input file"))?
++    };
++
++    if let Some(path) = retained_cbor {
++        std::fs::write(path, &buffer)?;
++    }
+
+     // let cbor_path = file_path.with_extension("cbor");
+@@ -72,4 +87,5 @@
+     debug: bool,
+     emit_preprocessed: bool,
++    cursor_inputs: bool,
+ ) -> HashMap<String, (Vec<u8>, Option<String>)> {
+     let mut args_owned = vec![CString::new("ast_exporter").unwrap()];
+@@ -81,4 +97,6 @@
+         args_owned.push(CString::new(["-extra-arg=", arg].join("")).unwrap())
+     }
++
++    args_owned.push(CString::new(format!("--c2rust-cursor-inputs={}", cursor_inputs)).unwrap());
+
+     let args_ptrs: Vec<*const c_char> = args_owned.iter().map(|x| x.as_ptr()).collect();

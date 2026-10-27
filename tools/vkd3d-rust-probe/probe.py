@@ -66,12 +66,14 @@ def outcome(result):
         return "translation_failure"
     if not result.get("complete_translation"):
         return "incomplete"
+    if result.get("translation_only"):
+        return "translation_only_success"
     if result.get("all_unit_prototype"):
         if result.get("raw_preserved") is False:
             return "incomplete"
-        if result.get("patch_failure"):
-            return "patch_failure"
-        builds = [result.get(mode + "_build", {}) for mode in ("stable", "patched_stable", "bootstrap", "prototype")]
+        if result.get("working_copy_failure"):
+            return "working_copy_failure"
+        builds = [result.get(mode + "_build", {}) for mode in ("stable", "working_stable", "bootstrap", "prototype")]
         if not any(build.get("exit_code") == 0 for build in builds):
             return "incomplete" if any(build.get("timed_out") for build in builds) else "compiler_failure"
         if result.get("link", {}).get("status") != "success":
@@ -86,6 +88,24 @@ def outcome(result):
     return "compiler_failure"
 
 
+def extern_inventory(sources):
+    declared, defined = set(), set()
+    by_abi = {}
+    for text in sources:
+        for abi, block in re.findall(r'(?:unsafe )?extern "([^"\n]+)" \{(.*?)^\}', text, re.M | re.S):
+            names = set(re.findall(r'\bfn (\w+)', block))
+            names.update(re.findall(r'\bstatic (?:mut )?(\w+)', block))
+            declared.update(names)
+            by_abi.setdefault(abi, {'declared': set(), 'defined': set()})['declared'].update(names)
+        for abi, name in re.findall(r'(?:unsafe )?extern "([^"\n]+)" fn (\w+)', text):
+            defined.add(name)
+            by_abi.setdefault(abi, {'declared': set(), 'defined': set()})['defined'].add(name)
+    return {'declared': sorted(declared), 'defined': sorted(defined),
+            'unresolved_declared': sorted(declared - defined),
+            'by_abi': {abi: {kind: sorted(names) for kind, names in groups.items()}
+                       for abi, groups in sorted(by_abi.items())}}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
@@ -94,6 +114,7 @@ def main():
     parser.add_argument("--clang", type=Path, required=True)
     parser.add_argument("--all-unit-prototype", action="store_true")
     parser.add_argument("--native-library", type=Path)
+    parser.add_argument("--translation-only", action="store_true", help="Stop after translation and extern inventory")
     parser.add_argument("--filter", help="Regular expression selecting C translation units")
     parser.add_argument("--timeout", type=int, default=300, help="Seconds per tool invocation")
     parser.add_argument("--build-timeout", type=int, default=120, help="Seconds per Rust build")
@@ -157,7 +178,7 @@ def main():
     output = artifacts / "rust"
     transpiler = args.c2rust.resolve().with_name("c2rust-transpile")
     result["transpile"] = run([str(transpiler), "--fail-on-error", "--disable-rustfmt", "--edition", "2024",
-                               "--emit-build-files", "--output-dir", str(output), str(database)],
+                               "--emit-build-files", "--emit-variadic-inventory", "--output-dir", str(output), str(database)],
                               artifacts / "transpile.log", cwd=source, timeout=args.timeout)
     checkpoint()
     if output.exists():
@@ -209,16 +230,13 @@ fn main() {''' + "".join(checks) + 'println!("6 MD5 vectors passed");}\n')
         if result["checksum_check_build"]["exit_code"] == 0:
             result["checksum_check_run"] = run([str(binary)], artifacts / "checksum-check-run.log", timeout=args.timeout)
     result["rust_files"] = [str(p.relative_to(output)) for p in sorted(output.rglob("*.rs"))]
-    declared, defined = set(), set()
-    for path in output.rglob("*.rs"):
-        text = path.read_text()
-        for block in re.findall(r'(?:unsafe )?extern "C" \{(.*?)^\}', text, re.M | re.S):
-            declared.update(re.findall(r'\bfn (\w+)', block))
-            declared.update(re.findall(r'\bstatic (?:mut )?(\w+)', block))
-        defined.update(re.findall(r'(?:unsafe )?extern "C" fn (\w+)', text))
-    inventory = {"declared": sorted(declared), "defined": sorted(defined),
-                 "unresolved_declared": sorted(declared - defined)}
+    inventory = extern_inventory(path.read_text() for path in output.rglob("*.rs"))
     (artifacts / "externs.json").write_text(json.dumps(inventory, indent=2) + "\n")
+    if args.translation_only:
+        result["translation_only"] = True
+        result["status"] = outcome(result)
+        checkpoint()
+        return
     if args.all_unit_prototype and result["complete_translation"] and (output / "Cargo.toml").exists():
         from full_compiler import collect
         shutil.copy2(source / "LICENSE", output / "LICENSE")

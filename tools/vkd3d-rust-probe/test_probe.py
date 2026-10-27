@@ -22,6 +22,13 @@ class ProbeTests(unittest.TestCase):
                 "input_sha256": {"libs/vkd3d-shader/hlsl.c": "fixture"},
                 "stable_build": {"exit_code": 0}}
 
+    def test_extern_inventory_preserves_all_abis_and_unresolved_symbols(self):
+        inventory = probe.extern_inventory(['unsafe extern "C" {\n    fn ordinary();\n}\nunsafe extern "win64" {\n    fn callback();\n}\nunsafe extern "sysv64" {\n    fn other();\n}\npub unsafe extern "win64" fn translated() {}\npub unsafe extern "C" fn ordinary() {}\n'])
+        self.assertEqual(inventory['declared'], ['callback', 'ordinary', 'other'])
+        self.assertEqual(inventory['defined'], ['ordinary', 'translated'])
+        self.assertEqual(inventory['unresolved_declared'], ['callback', 'other'])
+        self.assertEqual(inventory['by_abi']['win64']['defined'], ['translated'])
+
     def test_status_distinguishes_missing_timeout_translation_and_compiler_failures(self):
         self.assertEqual(probe.outcome({}), "incomplete")
         cases = [({"exit_code": 124, "timed_out": True}, "incomplete"),
@@ -37,6 +44,14 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(probe.outcome(result), "compiler_failure")
         result["prototype_build"] = {"exit_code": 0}
         self.assertEqual(probe.outcome(result), "prototype_success")
+
+    def test_translation_only_is_distinct_and_still_rejects_failed_translation(self):
+        result = self.result()
+        result.pop('stable_build')
+        result['translation_only'] = True
+        self.assertEqual(probe.outcome(result), 'translation_only_success')
+        result['transpile']['exit_code'] = 101
+        self.assertEqual(probe.outcome(result), 'translation_failure')
 
     def test_partial_or_placeholder_output_cannot_pass(self):
         result = self.result()
@@ -234,6 +249,8 @@ class ProbeTests(unittest.TestCase):
             def fake_tool(command, log, **kwargs):
                 log.write_text("fixture tool\n")
                 if "--emit-build-files" in command:
+                    self.assertIn("--emit-variadic-inventory", command)
+                    self.assertNotIn("--emit-c-decl-map", command)
                     output = artifacts / "rust"
                     (output / "src").mkdir(parents=True)
                     (output / "src/hlsl_tab.rs").write_text('pub unsafe extern "C" fn fixture() {}\n')

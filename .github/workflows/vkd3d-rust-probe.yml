@@ -3,11 +3,16 @@ name: vkd3d Rust translation probe
 on:
   workflow_dispatch:
   push:
-    branches: [w3-shader-full-compiler-probe]
+    branches: [w3-shader-full-compiler-probe, w3-c2rust-win64-abi, w3-shader-variable-offset-fix, w3-shader-offset-harness-fix]
     paths:
       - .github/workflows/vkd3d-rust-probe.yml
       - tools/vkd3d-rust-probe/*.py
       - tools/vkd3d-rust-probe/*.rs
+      - tools/vkd3d-rust-probe/patches/**
+      - tools/vkd3d-rust-probe/abi-fixtures/**
+      - tools/vkd3d-rust-probe/offset-fixtures/**
+      - tools/vkd3d-rust-probe/variadic-fixtures/**
+      - tools/vkd3d-rust-probe/fixtures/cursor-witness/**
       - tools/vkd3d/build.sh
 
 permissions:
@@ -45,8 +50,14 @@ jobs:
           exec > >(tee "$RUNNER_TEMP/vkd3d-probe/logs/packages.log") 2>&1
           echo "MDS_VKD3D_OUT=$RUNNER_TEMP/vkd3d-probe/prepared" >> "$GITHUB_ENV"
           echo "CARGO_TARGET_DIR=$RUNNER_TEMP/c2rust-target" >> "$GITHUB_ENV"
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends build-essential clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev cmake libssl-dev pkg-config bison flex libjson-perl xz-utils
+          cat /etc/apt/sources.list.d/ubuntu.sources
+          cat /etc/apt/apt-mirrors.txt
+          grep -Fx 'URIs: mirror+file:/etc/apt/apt-mirrors.txt' /etc/apt/sources.list.d/ubuntu.sources
+          # Bypass the hosted Azure mirror without changing the signed Ubuntu sources.
+          printf 'https://archive.ubuntu.com/ubuntu/\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo timeout --kill-after=10s 120s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update
+          apt-cache policy clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev
+          sudo timeout --kill-after=10s 300s apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends build-essential clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev cmake libssl-dev pkg-config bison flex libjson-perl xz-utils
           dpkg-query -W clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev
           clang-18 --version
           llvm-config-18 --version
@@ -58,6 +69,11 @@ jobs:
         run: |
           rustup toolchain install 1.95.0 --profile minimal
           rustc +1.95.0 --version
+      - name: Run Python helper tests
+        timeout-minutes: 3
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s tools/vkd3d-rust-probe -p 'test_*.py' 2>&1 | tee "$RUNNER_TEMP/vkd3d-probe/logs/python-helper-tests.log"
       - name: Prepare pinned patched vkd3d source and generated headers
         id: source
         timeout-minutes: 8
@@ -79,11 +95,84 @@ jobs:
           git -C "$RUNNER_TEMP/c2rust-src" fetch --depth 1 origin "$C2RUST_REV"
           git -C "$RUNNER_TEMP/c2rust-src" checkout --detach FETCH_HEAD
           test "$(git -C "$RUNNER_TEMP/c2rust-src" rev-parse HEAD)" = "$C2RUST_REV"
+          python3 tools/vkd3d-rust-probe/apply_c2rust_patch.py \
+            --source "$RUNNER_TEMP/c2rust-src" --artifacts "$RUNNER_TEMP/vkd3d-probe/logs"
           cargo +1.95.0 install --locked --path "$RUNNER_TEMP/c2rust-src/c2rust" --root "$RUNNER_TEMP/vkd3d-probe/tool"
+          python3 tools/vkd3d-rust-probe/apply_c2rust_patch.py \
+            --source "$RUNNER_TEMP/c2rust-src" --artifacts "$RUNNER_TEMP/vkd3d-probe/logs" \
+            --tool "$RUNNER_TEMP/vkd3d-probe/tool"
+          python3 - <<'PY_CAPTURE'
+          import json, os, shutil, sys
+          from pathlib import Path
+          sys.path.insert(0, 'tools/vkd3d-rust-probe')
+          from probe import run
+          from full_compiler import collect_cursor_witness
+          logs = Path(os.environ['RUNNER_TEMP']) / 'vkd3d-probe/logs'
+          tool = Path(os.environ['RUNNER_TEMP']) / 'vkd3d-probe/tool/bin/c2rust-transpile'
+          def capture(root, source, directory, flags):
+              database = root / 'compile_commands.json'
+              database.write_text(json.dumps([{'directory': str(directory), 'file': str(source),
+                  'arguments': ['/usr/bin/clang-18', *flags, '-c', str(source)]}]))
+              proof = collect_cursor_witness(tool, database, root / 'paired', run,
+                  {'unit': str(source), 'static': 'vkd3d_spirv_build_op_member_name'})
+              witnesses = sorted((root / 'paired/raw').rglob('*.cursor-witness.json'))
+              if len(witnesses) != 1:
+                  raise SystemExit('Native capture did not retain exactly one raw witness')
+              witness = witnesses[0]
+              raw = json.loads(witness.read_text())
+              prefix = witness.name.removesuffix('.cursor-witness.json')
+              if raw.get('schema') != 2 or raw.get('unit') != str(source) or not raw.get('native_inputs'):
+                  raise SystemExit('Native capture did not produce schema-2 input facts')
+              for suffix in ('.cursor.cbor', '.typed-ast.txt', '.variadic.json'):
+                  if not witness.with_name(prefix + suffix).is_file():
+                      raise SystemExit('Native capture missing paired raw artifact ' + suffix)
+              (root / 'capture.json').write_text(json.dumps({'status': 'raw_facts_captured',
+                  'authorization': 'witness_only', 'proof_status': proof['status']}, indent=2) + '\n')
+          root = (logs / 'cursor-native-facts').resolve()
+          root.mkdir(parents=True)
+          source = root / 'pilot.c'
+          shutil.copy2('tools/vkd3d-rust-probe/fixtures/cursor-witness/pilot.c', source)
+          capture(root, source, root, ['-std=c11'])
+          prepared = (Path(os.environ['MDS_VKD3D_OUT']) / 'work-linux-native/vkd3d-2.1').resolve()
+          root = (logs / 'cursor-production-facts').resolve()
+          root.mkdir(parents=True)
+          flags = ['-DHAVE_CONFIG_H', '-D_WIN32_WINNT=0x0600', '-std=c99']
+          flags += ['-I' + str(prepared / p) for p in ('.', 'include', 'include/private', 'libs/vkd3d-shader')]
+          flags += ['-I' + str(prepared.parent / p / 'include') for p in ('hdr', 'spv')]
+          flags += ['-DLIBVKD3D_SHADER_SOURCE', '-DVKD3D_DEBUG_ENV=VKD3D_SHADER_DEBUG']
+          capture(root, (prepared / 'libs/vkd3d-shader/spirv.c').resolve(), prepared, flags)
+          PY_CAPTURE
+          cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" \
+            -p c2rust-transpile --tests --no-run
+          cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" \
+            -p c2rust-transpile --lib win64_foreign_block_names_and_reexports
+          python3 tools/vkd3d-rust-probe/check_enum_constants.py \
+            --source "$RUNNER_TEMP/c2rust-src" \
+            --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
+            --clang /usr/bin/clang-18 \
+            --artifacts "$RUNNER_TEMP/vkd3d-probe/logs/enum-constants"
+          python3 tools/vkd3d-rust-probe/check_stable_boundaries.py \
+            --source "$RUNNER_TEMP/c2rust-src" \
+            --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
+            --clang /usr/bin/clang-18 \
+            --artifacts "$RUNNER_TEMP/vkd3d-probe/logs/stable-boundaries"
+          python3 tools/vkd3d-rust-probe/check_function_pointer_nulls.py \
+            --source "$RUNNER_TEMP/c2rust-src" \
+            --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
+            --clang /usr/bin/clang-18 \
+            --artifacts "$RUNNER_TEMP/vkd3d-probe/logs/function-pointer-nulls"
+          cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" \
+            -p c2rust-transpile --lib closed_variadic_inventory_uses_promoted_ast_types_and_linker_identity
+          python3 tools/vkd3d-rust-probe/check_closed_variadic_inventory.py \
+            --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
+            --clang /usr/bin/clang-18 \
+            --artifacts "$RUNNER_TEMP/vkd3d-probe/logs/closed-variadic-inventory"
           cp "$RUNNER_TEMP/c2rust-src/Cargo.lock" "$RUNNER_TEMP/vkd3d-probe/logs/c2rust-Cargo.lock"
           cp "$RUNNER_TEMP/c2rust-src/LICENSE" "$RUNNER_TEMP/vkd3d-probe/tool/LICENSE"
           "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" --version
-          ldd "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust-transpile"
+          python3 tools/vkd3d-rust-probe/check_runtime.py \
+            --tool "$RUNNER_TEMP/vkd3d-probe/tool" --record
+          sha256sum "$RUNNER_TEMP/vkd3d-probe/tool/bin/"* > "$RUNNER_TEMP/vkd3d-probe/logs/c2rust-binaries-sha256.txt"
       - name: Bundle prepared input and tool executables
         id: bundle
         timeout-minutes: 2
@@ -137,16 +226,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install matching LLVM runtime and pinned Rust
+      - name: Install pinned Rust and record the existing host
         timeout-minutes: 10
         run: |
           mkdir -p "$RUNNER_TEMP/vkd3d-probe/evidence"
           exec > >(tee "$RUNNER_TEMP/vkd3d-probe/evidence/unit-setup.log") 2>&1
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev
           rustup toolchain install 1.95.0 --profile minimal
           clang-18 --version
-          dpkg-query -W clang-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev
           uname -a
           free -b
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -155,6 +241,48 @@ jobs:
           path: ${{ runner.temp }}/vkd3d-probe
       - name: Extract prepared source and tool
         run: tar -xzf "$RUNNER_TEMP/vkd3d-probe/prepared.tar.gz" -C "$RUNNER_TEMP/vkd3d-probe"
+      - name: Require the matching prepared LLVM runtime
+        timeout-minutes: 1
+        run: |
+          python3 tools/vkd3d-rust-probe/check_runtime.py \
+            --tool "$RUNNER_TEMP/vkd3d-probe/tool" \
+            2>&1 | tee "$RUNNER_TEMP/vkd3d-probe/evidence/runtime-check.log"
+      - name: Prove C and translated Rust Win64 ABI in both directions
+        timeout-minutes: 4
+        run: |
+          python3 tools/vkd3d-rust-probe/abi_smoke.py \
+            --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
+            --artifacts "$RUNNER_TEMP/vkd3d-probe/evidence/abi-smoke"
+      - name: Compare variable offsetof against Clang using actual shader layouts
+        timeout-minutes: 4
+        run: |
+          python3 tools/vkd3d-rust-probe/check_variable_offsetof.py \
+            --source "$RUNNER_TEMP/vkd3d-probe/prepared/work-linux-native/vkd3d-2.1" \
+            --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
+            --artifacts "$RUNNER_TEMP/vkd3d-probe/evidence/variable-offsetof"
+      - name: Translate the real blob failure point before the all-unit probe
+        timeout-minutes: 4
+        run: |
+          python3 tools/vkd3d-rust-probe/probe.py \
+            --source "$RUNNER_TEMP/vkd3d-probe/prepared/work-linux-native/vkd3d-2.1" \
+            --artifacts "$RUNNER_TEMP/vkd3d-probe/evidence/blob" \
+            --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
+            --clang /usr/bin/clang-18 --rust-toolchain 1.95.0 \
+            --filter '/vkd3d-common/blob\.c$' --timeout 60 --translation-only
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'vkd3d-probe/evidence/blob'
+          result = json.loads((root / 'result.json').read_text())
+          assert result['transpile']['exit_code'] == 0, result
+          assert result['complete_translation'], result
+          assert result['translation_units'] == 1, result
+          entry = json.loads((root / 'compile_commands.json').read_text())[0]
+          command = entry['arguments'][:-2] + ['-Xclang', '-ast-dump-all', '-fsyntax-only', entry['file']]
+          with (root / 'clang18-blob-ast.log').open('w') as output:
+              subprocess.run(command, cwd=entry['directory'], stdout=output, stderr=subprocess.STDOUT, check=True, timeout=60)
+          assert result.get('invalid_output_markers', []) == [], result
+          PY
       - name: Translate all 24 units, build, link, and compare
         timeout-minutes: 55
         run: |
@@ -166,6 +294,32 @@ jobs:
             --clang /usr/bin/clang-18 --rust-toolchain 1.95.0 \
             --all-unit-prototype --timeout 1800 --build-timeout 300 \
             --native-library "$RUNNER_TEMP/vkd3d-probe/prepared/linux-native/lib/libvkd3d-shader.so.1"
+      - name: Inventory actual closed variadic symbols across all 24 units
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 tools/vkd3d-rust-probe/closed_variadic_plan.py \
+            --probe "$RUNNER_TEMP/vkd3d-probe/evidence/result" \
+            --output "$RUNNER_TEMP/vkd3d-probe/evidence/closed-variadic-plan.json"
+      - name: Collect separately paired cursor witness across all 24 units
+        if: always()
+        timeout-minutes: 35
+        run: |
+          python3 - <<'PYCODE'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'tools/vkd3d-rust-probe')
+          from full_compiler import collect_cursor_witness
+          from probe import run
+          import os
+          root = Path(os.environ['RUNNER_TEMP']) / 'vkd3d-probe'
+          source = root / 'evidence/result/source/libs/vkd3d-shader/spirv.c'
+          proof = collect_cursor_witness(root / 'tool/bin/c2rust-transpile',
+              root / 'evidence/result/compile_commands.json', root / 'evidence/cursor-witness', run,
+              {'unit': str(source), 'static': 'vkd3d_spirv_build_op_member_name'})
+          if proof['status'] != 'witness_proven':
+              raise SystemExit('Actual pilot witness rejected: ' + proof['reason'])
+          PYCODE
       - name: Validate and summarize actual output
         if: always()
         run: |

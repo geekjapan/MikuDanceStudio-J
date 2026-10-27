@@ -1,0 +1,3 @@
+Parser layout definitions and offsetof expression extracted from Actions artifact 12692086489, result/rust/src/vkd3d_shader/hlsl_tab.rs.
+ZIP SHA256 35a4ea64b076a62c47f7351edb3904d40a8cc3deb3b270769e50380a2c5df23f.
+Cargo.toml and lib.rs are unchanged generated files. Other modules are omitted; compilation is faked in collect path tests.

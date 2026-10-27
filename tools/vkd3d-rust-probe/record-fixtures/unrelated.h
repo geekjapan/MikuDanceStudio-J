@@ -1,0 +1,1 @@
+struct unrelated { double value; };

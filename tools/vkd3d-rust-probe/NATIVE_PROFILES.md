@@ -40,10 +40,24 @@ shared cache are `null`. Windows and Linux require hashes for every observed pat
 `native-profile-reference.json` comes from the actual d046 run 40457744278,
 artifact 12712854308. Its ZIP was verified against SHA-256
 `5e91fd623d475c8519a024e9f80a1db758e1a23a3e9af4fa6642263edf8f7d84`.
-It freezes the actual 24 production units, headers, fixture bytes, and patch.
-Handwritten source drift fails. Generated source differences are retained and
-prevent an identical source profile claim. Target configuration is recorded
-separately. No capture claims an identical producer profile or reproducible
+It freezes the actual 24 production units and a conservative superset of all
+headers under `include/`, `libs/vkd3d-shader/`, and `libs/vkd3d-common/`, plus
+all producer `.y`/`.l` grammars, the SPIR-V generator script and JSON input,
+the shader export map, fixture bytes, and patch. The authenticated tar contains
+no compiler-generated dependency records. Its Makefile producer lists and actual
+includes establish this boundary. Distributed IDL headers are frozen inputs
+because the recipe retains them without regeneration.
+Only the eight explicitly listed Makefile parser/lexer and private generated
+outputs may differ as generated files. Missing inputs, changed handwritten or
+external headers, and unclassified headers/grammars fail closed. The two actual
+SPIRV-Headers unified1 header dependencies are hashed, and the fixed Vulkan and
+SPIRV archive identities are retained. Vulkan headers do not enter the shader
+producer's include closure. System and SDK headers remain part of compiler and
+target evidence, outside any identical producer claim.
+Generated and target configuration differences retain their raw hashes and
+separate difference lists. Either prevents an identical source profile claim.
+Failed source checks retain observed hashes, missing paths, and difference lists
+in the partial receipt before any native cases run. No capture claims an identical producer profile or reproducible
 build, because the pinned image's APT packages are not version pinned.
 Synthetic `compile_commands.json` files are not native build commands.
 

@@ -52,16 +52,55 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def source_identity(source, reference):
-    files = {name: sha(source / name) for name in reference['source_files']}
-    differences = [name for name, digest in files.items() if digest != reference['source_files'][name]]
-    generated = [name for name in differences if name.endswith(('.tab.c', '.yy.c'))
-                 or name in ('include/private/spirv_grammar.h', 'include/private/vkd3d_version.h')]
-    require(not set(differences) - set(generated), f'non-generated reference source differs: {differences}')
-    return {'files': files, 'generated_source_differences': generated,
-            'identical_source_profile': not differences,
-            'identical_producer_profile': False,
-            'target_configuration': {name: sha(source / name) for name in reference['target_configuration']}}
+GENERATED_FILES = frozenset([
+    'include/private/spirv_grammar.h', 'include/private/vkd3d_version.h',
+    *('libs/vkd3d-shader/' + name for name in
+      ('hlsl.tab.c', 'hlsl.tab.h', 'hlsl.yy.c', 'preproc.tab.c', 'preproc.tab.h', 'preproc.yy.c')),
+])
+
+
+def source_identity(source, reference, receipt=None):
+    require(set(reference['generated_files']) == GENERATED_FILES,
+            'unknown or missing generated source classification')
+    require(GENERATED_FILES <= reference['source_files'].keys(), 'missing generated reference input')
+    identity = receipt if receipt is not None else {}
+    identity.update({'files': {}, 'external_headers': {}, 'target_configuration': {},
+                     'generated_source_differences': [], 'target_configuration_differences': [],
+                     'identical_source_profile': False, 'identical_producer_profile': False})
+    missing = []
+    for key, base in [('source_files', source), ('external_headers', source.parent),
+                      ('target_configuration', source)]:
+        output = identity['files' if key == 'source_files' else key]
+        for name in reference[key]:
+            path = base / name
+            if path.is_file():
+                output[name] = sha(path)
+            else:
+                missing.append(name)
+    identity['missing_inputs'] = missing
+    actual_headers = {str(path.relative_to(source)).replace(os.sep, '/')
+                      for directory in ('include', 'libs/vkd3d-shader', 'libs/vkd3d-common')
+                      for path in (source / directory).rglob('*')
+                      if path.is_file() and path.suffix in ('.h', '.y', '.l')
+                      and path != source / 'include/config.h'}
+    expected_headers = {name for name in reference['source_files'] if name.endswith(('.h', '.y', '.l'))}
+    identity['unclassified_inputs'] = sorted(actual_headers - expected_headers)
+    differences = [name for name, digest in identity['files'].items()
+                   if digest != reference['source_files'][name]]
+    identity['generated_source_differences'] = [name for name in differences if name in GENERATED_FILES]
+    identity['handwritten_source_differences'] = [name for name in differences if name not in GENERATED_FILES]
+    identity['external_header_differences'] = [name for name, digest in identity['external_headers'].items()
+                                              if digest != reference['external_headers'][name]]
+    identity['target_configuration_differences'] = [name for name, digest in identity['target_configuration'].items()
+                                                   if digest != reference['target_configuration'][name]]
+    require(not missing, f'missing required producer inputs: {missing}')
+    require(not identity['unclassified_inputs'], f'unclassified producer inputs: {identity["unclassified_inputs"]}')
+    require(not identity['handwritten_source_differences'],
+            f'non-generated reference source differs: {identity["handwritten_source_differences"]}')
+    require(not identity['external_header_differences'],
+            f'external producer headers differ: {identity["external_header_differences"]}')
+    identity['identical_source_profile'] = not differences and not identity['target_configuration_differences']
+    return identity
 
 
 def module_identity(output, library):
@@ -112,7 +151,7 @@ def check(args):
         result['reference'] = reference
         result['reference_manifest_sha256'] = sha(reference_path)
         require(sha(Path(__file__).parent.parent / 'vkd3d/patches/0001-vpos-vface-io.patch') == reference['patch_sha256'], 'native patch reference differs')
-        result['source'] = source_identity(args.source, reference)
+        source_identity(args.source, reference, result.setdefault('source', {}))
         require(args.build_record is not None, 'source profile requires --build-record')
         record = args.build_record
         require((record / 'build-exit-code').read_text().strip() == '0', 'native build did not succeed')

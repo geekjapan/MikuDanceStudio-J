@@ -33,6 +33,7 @@
   "source_files": {
     "include/private/list.h": "0a26ad30970b147c06f2068e6e419f88b638db03414aed653fc4df594ef73ae7",
     "include/private/rbtree.h": "7a9096144091e0ac49827bc554b192879a72b288df0c5c0525bb19ee798baef1",
+    "include/private/spirv.core.grammar.json": "4de2ef3e72c19d2a2f8947c4b7e1be889e5bfc77e7e9c68763b63d609110ee97",
     "include/private/spirv_grammar.h": "6247dcb53332a3498edc9493e5267cd9ab88a0ab61d38b07e3958460ddcec44b",
     "include/private/vkd3d_blob.h": "ad593430382d73af3e87f28358f576a602e2c72b9a3b3e13ebb1963db50ad6fd",
     "include/private/vkd3d_common.h": "3d2d4688656a633a20cabff7452cf2922ddbaa1bdd2034697b017c8304d9af7a",
@@ -41,8 +42,29 @@
     "include/private/vkd3d_test.h": "54c703ba1f359788598df9bc3f4a69730db4a7e7a9ba95ca332570803404f404",
     "include/private/vkd3d_utf8.h": "d720501047172fa7c5d7d83935e5cbf062d9bb42d95585d9c78d2b9645b98f09",
     "include/private/vkd3d_version.h": "c23bfcfbd556340778015b89f5f1ab3480a52fb4a61e558d4816a2dcaf164f07",
+    "include/vkd3d.h": "76306417111f4332536576e887ce146f48581ca0d7d53cd08e340c6230bdf0a2",
+    "include/vkd3d_d3d10_1shader.h": "3ad9d930a7fa479e223f83b87e70131c2b0cd1d083d47240779929a2688f6107",
+    "include/vkd3d_d3d10shader.h": "ad40c0f544a311042eb1fbef01676807e8370915e90d6cd49c498c5b8211cd8a",
+    "include/vkd3d_d3d11shader.h": "150b5a7ed4703c9affd33c56e8c818af84fdf47aa84ed6c975f4f2eaa3b39715",
+    "include/vkd3d_d3d12.h": "0f8d37e03931a6d228dba9a4a1f99e9e8b271c0ab9ef7a964eceef66c0405d18",
+    "include/vkd3d_d3d12sdklayers.h": "5512f565d56d6772ab6d8b8b7a78c50f7673d1d87b07edb51b035bc2d16ecdae",
+    "include/vkd3d_d3d12shader.h": "9803394fa2a3f12fd88b5292e6f3739c1cd866aa66cd60d6fc192c564e5aba0a",
+    "include/vkd3d_d3d9types.h": "31e6ffa0ed28f87447485ff9c0e36bba0742407805d0b55bc16e482002ca5c0f",
+    "include/vkd3d_d3dcommon.h": "6ba468f989afd3f9e79d4464a1cfa2c22a70035a49cbdb282a23220ca483c478",
+    "include/vkd3d_d3dcompiler.h": "aff2dee7c69e6dd95253e49167ee01a2234fea1e532b2a0367e2c1def2830954",
+    "include/vkd3d_d3dcompiler_types.h": "75aa5e32dbb5c653f4ef31a98725312efde82548d40b9fa1fd781a5974f9c42a",
+    "include/vkd3d_d3dx9shader.h": "87b1afc61549af6b4a4716973bc325bf252fa056eaa120e514262a1c320542b5",
+    "include/vkd3d_dxgi.h": "e39fa0076ddf2eaf4bbace3f5c6a7b40eeed04c3fe2d81a0b93170aa2d4abeb4",
+    "include/vkd3d_dxgi1_2.h": "a683292d1c40f22e05e11e90eee1e94b65e8245bb2329d87b0567b292aacdcf5",
+    "include/vkd3d_dxgi1_3.h": "5d6905f2394e280091be6173b7053cf5ace7eb307ca90a7a5fa5f09aa1d15a84",
+    "include/vkd3d_dxgi1_4.h": "4b6ab40f1b4856be7d5e3d01bb1c1f560e288a0b83211c602a627ed1c7ca12c2",
+    "include/vkd3d_dxgibase.h": "7565e70e427466007ad91002b6e9221e0fdcff32c077c8fefe3e1954867532a6",
+    "include/vkd3d_dxgiformat.h": "623ab6954867b6dbdb62f5d73b84fbdee0566a00e71c80605a0733841d89f6b3",
+    "include/vkd3d_dxgitype.h": "8c5752319326ec46d4f7cae6ab0ab87a8e89aecdacee36e43267b446128f13f6",
     "include/vkd3d_shader.h": "27bb621f86f2d4b2bd0aa1efe169c88551dc3a0f2914196617d74acc3798c89c",
     "include/vkd3d_types.h": "c3e55c06f6fbfe9523d3a35b0ecad474fcdc20fd8dfb077decf951e4659128d2",
+    "include/vkd3d_utils.h": "e655a67809f670db95793f0aaf6e2adb1616a1c93f800b7503f6b23c9694fe0e",
+    "include/vkd3d_windows.h": "9ec351c4a8bc51e9b290cd417ecc54c8c7faffd330bf55127f9ef721816c7455",
     "libs/vkd3d-common/blob.c": "6d70c648e0bc864bc3d278034f56beca81715f5366997c22a28c1b83d12d3190",
     "libs/vkd3d-common/debug.c": "205c251723176fedbf5b571efd1e4693c12056b861ee28aa8e6feafd021ff7d3",
     "libs/vkd3d-common/error.c": "0d22b3f957c186952473c0c20b284b0f29cf59c0bc346bef5d64d97be1dcdbc9",
@@ -56,17 +78,28 @@
     "libs/vkd3d-shader/fx.c": "12765a9dd1569aa1c6f1b7e5b01a4ff8759ac1edea8b6b7400933d5ff5ec13b5",
     "libs/vkd3d-shader/glsl.c": "5f81c3dcd74415bba2562551b785a1b4646e6ad709c05e68154cb91bc39b69a1",
     "libs/vkd3d-shader/hlsl.c": "c76b5227592d0e6345a9b342d88fb4d8477a0ddc0e04ab0c5e2e62add89c7d62",
+    "libs/vkd3d-shader/hlsl.h": "142ae96a0f46b00500f7f485bc0eb57e3a073619f2970cfd7e34cada3a9a3f1f",
+    "libs/vkd3d-shader/hlsl.l": "3850824807ff696f724b3c0595504a5b48c250861b10b62eec38791813dddf13",
     "libs/vkd3d-shader/hlsl.tab.c": "3e926d01c69ec0eab32f8864252caaccdb20b0e21597022afd54bb4f4a3f9cfd",
+    "libs/vkd3d-shader/hlsl.tab.h": "034a824ec3f809eb9809e29bef2a9727efd45073d18d25c3af6c8df675c60d58",
+    "libs/vkd3d-shader/hlsl.y": "03bf308f1cb129015624e9a8dfe3c75dd5828d73aec36227e842b2cf2e205301",
     "libs/vkd3d-shader/hlsl.yy.c": "fb2b085e69f1c7a7c205d4ebf6d788753fb8d71e049be99d1f1ceabe629b35b3",
     "libs/vkd3d-shader/hlsl_codegen.c": "6d54bdf032d41dbf05888e38ca41e91ad2949d36a344e8a47c6e27d09951abe3",
     "libs/vkd3d-shader/hlsl_constant_ops.c": "91bc7a0b404b0eaa75454851556864410a9e47d0c3ee5e208df6efac8ebc2868",
     "libs/vkd3d-shader/ir.c": "c19a6214197e84bd850bbb43e4bd2fca30ff3357fd4d7adc2a8914876b0b3db3",
+    "libs/vkd3d-shader/make_spirv": "264753c7fc6d326c4a699fabf61ce865f3d69e37a600ac119dbf170557172baf",
     "libs/vkd3d-shader/msl.c": "30e9e52eaf5bf57d8a8bb2ce4ebf296a6dbce4ba75dd9e9aa2a0bbe54572f4f9",
+    "libs/vkd3d-shader/preproc.h": "05c8427862789fdf581fecea4f38cfd6a80bb5a6a3cfcc0a1b03d5ceac3791c6",
+    "libs/vkd3d-shader/preproc.l": "d7b8c75751e2f8cec9f79aadf2a6ba61ffe3af7dfe8f271aa92d962caa477aee",
     "libs/vkd3d-shader/preproc.tab.c": "1b73eff54131fb29ac4b8907f72ea738085ccb3e2616a218d300937c6efc7a94",
+    "libs/vkd3d-shader/preproc.tab.h": "0cd7288b2a3300d61a49273630bd52e30f3c7e99bbdffdb4a5863d19d1a2cf15",
+    "libs/vkd3d-shader/preproc.y": "6d51044486832fa38ddf538ce199579bcf2ffaf361ca5c6ae722ba8ba484cd28",
     "libs/vkd3d-shader/preproc.yy.c": "022866f3b43b5aab0ac2d127eb32503c16dbb3145f100f91fe85254b815b4305",
     "libs/vkd3d-shader/spirv.c": "8b3aaa79d65011d9f4a3e190a6e4dea4dab80f696f43c7b0c89f3a9147dab41e",
     "libs/vkd3d-shader/tpf.c": "bfcb1fbdca545b8e5febdf4064d1ccee6d09e105c2294c551fd71824e85d1b3c",
-    "libs/vkd3d-shader/vkd3d_shader_main.c": "7cb33f12549f22f20717575aa0fe11bd363231df8351b5cf3942b90df9f1be24"
+    "libs/vkd3d-shader/vkd3d_shader.map": "cfd8cecb7e42556f203549cc60f5a3947c74c9db19db31d4fc6b717c20de3d3d",
+    "libs/vkd3d-shader/vkd3d_shader_main.c": "7cb33f12549f22f20717575aa0fe11bd363231df8351b5cf3942b90df9f1be24",
+    "libs/vkd3d-shader/vkd3d_shader_private.h": "775dfb70aba299ed2371ddf6623d90298a304aea63a68c4f93ae8db1d44c70fa"
   },
   "target_configuration": {
     "include/config.h": "3eb48753699269921021e83dd87af85f0b11c0e20d4ee13084463d81d9db76d9",
@@ -88,5 +121,24 @@
     "missing_float_controls": "f10a5dea7134c41f98de974e6f19ee7d6b76a7b8ab4d97e868bde67acd3b587b",
     "invalid_pixel_semantic": "1b205c200f9a9db564078cc1d2a56a827f34882186afec5579e239d7073fd840"
   },
-  "old_build_sha256": "4865d6fcd7632f07add8fb85b49b31b5273cd7b9606f2f246313d6fa1de77e0a"
+  "old_build_sha256": "4865d6fcd7632f07add8fb85b49b31b5273cd7b9606f2f246313d6fa1de77e0a",
+  "generated_files": [
+    "include/private/spirv_grammar.h",
+    "include/private/vkd3d_version.h",
+    "libs/vkd3d-shader/hlsl.tab.c",
+    "libs/vkd3d-shader/hlsl.tab.h",
+    "libs/vkd3d-shader/hlsl.yy.c",
+    "libs/vkd3d-shader/preproc.tab.c",
+    "libs/vkd3d-shader/preproc.tab.h",
+    "libs/vkd3d-shader/preproc.yy.c"
+  ],
+  "external_headers": {
+    "spv/include/spirv/unified1/GLSL.std.450.h": "8bca15bf3e149e5927e366adfe048c00535273e81dd21e3f0f0bc1f58fd9f293",
+    "spv/include/spirv/unified1/spirv.h": "11356988137205582c030435c29a9606b4a13f2d03955ffbdec52de9f9a9ef0a"
+  },
+  "external_archives": {
+    "Vulkan-Headers-v1.4.309": "437925ada160d86ed763d29dcb9318c1bb0d024d7deaf77bc7c170b8eb6b6f10",
+    "SPIRV-Headers-vulkan-sdk-1.4.309.0": "a96f8b4f2dfb18f7432e5c523e220ab0075372a9509e0c25fbff21c76af0de7c"
+  },
+  "dependency_boundary": "Conservative superset: all distributed include/ and producer-local .h/.y/.l, 24 Makefile production units, SPIR-V generator inputs and shader export map. Shipped IDL headers are frozen inputs (build.sh only touches them). Eight Makefile-generated outputs are classified separately. Actual includes use SPIRV-Headers unified1 spirv.h and GLSL.std.450.h; Vulkan-Headers has no shader producer header dependency. System/SDK headers remain compiler/target receipt inputs, not identical producer evidence. No compiler-generated dependency records are present in the authenticated archive."
 }

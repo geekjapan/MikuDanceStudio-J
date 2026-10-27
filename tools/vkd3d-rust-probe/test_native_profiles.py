@@ -1,5 +1,6 @@
 """Native profile boundary checks without a native compiler build."""
 import argparse
+import importlib.util
 import copy
 import os
 from unittest.mock import patch
@@ -16,6 +17,7 @@ import shlex
 import shutil
 import unittest
 
+import check_shader_inputs as collector
 from check_shader_inputs import source_identity, sha, include_recipe, literal_include_graph, input_inventory, producer_identity
 
 
@@ -202,6 +204,11 @@ class FreshProducerTest(unittest.TestCase):
                 path.write_text(json.dumps(value))
                 return producer_identity(record, reference, source, {})
             verify(receipt)  # Original Linux paths need not exist on the capture host.
+            configure = record / 'configure-argv.nul'
+            configure.write_bytes(b'./configure\0')
+            with self.assertRaisesRegex(RuntimeError, 'dependency tracking was not disabled'):
+                verify(receipt)
+            configure.write_bytes(b'./configure\0--disable-dependency-tracking\0')
             windows_root = PureWindowsPath(r'C:\runner\native-windows-capture')
             resolve = Path.resolve
             local_root = root.resolve()
@@ -263,6 +270,153 @@ class FreshProducerTest(unittest.TestCase):
             path.unlink()
             with self.assertRaisesRegex(RuntimeError, 'missing fresh producer receipt'):
                 producer_identity(record, reference, source, {})
+
+
+def verify_actual_record(packet, artifacts):
+    """Replay old producer facts separately from the current exact catalog contract."""
+    artifacts.mkdir(parents=True, exist_ok=False)
+    def check(condition, message):
+        if not condition:
+            raise RuntimeError(message)
+    seal = json.loads((packet / 'seal.json').read_text())
+    for name, digest in seal.items():
+        check(sha(packet / name) == digest, 'audit seal differs: ' + name)
+    reference = json.loads(Path(__file__).with_name('native-profile-reference.json').read_text())
+    provenance = reference['finite_record_compile_recipe']['observed_provenance']
+    run = json.loads((packet / 'run.json').read_text())
+    actual = json.loads((packet / 'actual-receipt.json').read_text())
+    artifact = next(item for item in json.loads((packet / 'artifacts.json').read_text())['artifacts']
+                    if item['id'] == provenance['artifact_id'])
+    check(provenance['run_id'] == run['id'] == actual['run_id']
+          and provenance['run_attempt'] == run['run_attempt'] == actual['run_attempt']
+          and provenance['api_head'] == run['head_sha'] == actual['api_head']
+          and provenance['checkout'] == actual['actual_checkout']
+          and provenance['job_id'] == actual['arm64']['job_id'], 'observed run provenance differs')
+    check(artifact['name'] == provenance['artifact_name']
+          and artifact['digest'] == 'sha256:' + provenance['artifact_sha256']
+          and sha(packet / (artifact['name'] + '.zip')) == provenance['artifact_sha256'], 'observed artifact differs')
+    with zipfile.ZipFile(packet / (artifact['name'] + '.zip')) as archive:
+        check(archive.read(provenance['makefile_member']) ==
+              (packet / 'extracted/native-linux-arm64-capture/record/work/vkd3d-2.1/Makefile').read_bytes(),
+              'observed Makefile differs from artifact')
+        check(hashlib.sha256(archive.read('record/build.sh')).hexdigest() ==
+              provenance['producer_recipe_sha256'], 'observed producer recipe differs')
+    old_source = packet / 'actual-source/tools/vkd3d-rust-probe'
+    old_reference = json.loads((old_source / 'native-profile-reference.json').read_text())
+    check(reference['include_recipe'] == old_reference['include_recipe'], 'historical recipe catalog changed')
+    check(all(reference[key] == value for key, value in old_reference.items()
+              if key != 'producer_contract'), 'historical catalog changed')
+    spec = importlib.util.spec_from_file_location('frozen_actual_collector', old_source / 'check_shader_inputs.py')
+    old_collector = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(old_collector)
+    record = packet / 'extracted/native-linux-arm64-capture/record'
+    source = record / 'work/vkd3d-2.1'
+    old_receipt = {}
+    old_collector.producer_identity(record, old_reference, source, old_receipt)
+    check(old_receipt['producer_contract_verified'], 'old producer facts rejected by old source')
+    try:
+        source_identity(source, reference, build_record=record)
+    except RuntimeError as error:
+        check(str(error) == 'untrusted producer recipe', str(error))
+    else:
+        raise RuntimeError('old receipt admitted under changed current recipe')
+    rejected_capture = artifacts / 'old-receipt-rejected'
+    completed = subprocess.run([sys.executable, str(Path(__file__).with_name('check_shader_inputs.py')),
+        '--source', str(source), '--build-record', str(record), '--header', str(source / 'include/vkd3d_shader.h'),
+        '--native-library', str(artifacts / 'never-loaded'), '--native-only', '--cc', 'never-run-compiler',
+        '--artifacts', str(rejected_capture)], capture_output=True)
+    rejected = json.loads((rejected_capture / 'result.json').read_text())
+    check(completed.returncode != 0 and rejected['error'] == 'untrusted producer recipe', 'current CLI admitted old recipe')
+    check(rejected['commands'] == rejected['cases'] == rejected['negative_controls'] == [], 'native work ran')
+    for name, digest in json.loads((rejected_capture / 'seal.json').read_text()).items():
+        check(sha(rejected_capture / name) == digest, 'rejected capture seal differs')
+    projection = include_recipe((source / 'Makefile').read_text())
+    expected = dict(reference['include_recipe'])
+    expected['compile_recipes_sha256'] = reference['finite_record_compile_recipe']['compile_recipes_sha256']
+    check(projection == expected, 'actual exact finite projection differs')
+    def recipes(text):
+        import re
+        return [line.strip() for line in text.replace('\\\n', ' ').splitlines()
+                if line.startswith('\t') and re.search(r'\$\((?:CC|COMPILE|LTCOMPILE)\)', line)]
+    actual_make = (source / 'Makefile').read_text()
+    historical_make = (packet / 'historical-reference-Makefile').read_text()
+    old, new = recipes(historical_make), recipes(actual_make)
+    check(len(old) == len(new) == 65 and all(a != b for a, b in zip(old, new)), '65 recipe delta differs')
+    check(include_recipe(historical_make) == reference['include_recipe'], 'historical Makefile projection differs')
+    # Keep the actual old receipt bound to its old recipe for this admission-logic replay.
+    replay_reference = copy.deepcopy(reference)
+    replay_reference['producer_contract'] = old_reference['producer_contract']
+    accepted = source_identity(source, replay_reference, build_record=record)
+    check(accepted['producer_contract_verified'] and not accepted['identical_source_profile'], 'finite record rejected')
+    reference_path = Path(__file__).with_name('native-profile-reference.json')
+    read_text = Path.read_text
+    def replay_catalog(path, *args, **kwargs):
+        return json.dumps(replay_reference) if path == reference_path else read_text(path, *args, **kwargs)
+    args = argparse.Namespace(artifacts=artifacts / 'pre-command-admission', source=source,
+        build_record=record, header=source / 'include/vkd3d_shader.h', native_only=True,
+        native_library=record / 'prefix/lib/libvkd3d-shader.so.1', cc='never-run-compiler', compare_driver=None)
+    with patch.object(Path, 'read_text', replay_catalog), patch.object(collector.subprocess, 'run',
+            side_effect=RuntimeError('compiler boundary sentinel')) as command:
+        try:
+            collector.check(args)
+        except RuntimeError as error:
+            check(str(error) == 'compiler boundary sentinel', str(error))
+        else:
+            raise RuntimeError('capture did not reach first compiler boundary')
+        check(command.call_count == 1, 'unexpected compiler boundary count')
+    check(args.receipt['producer_contract_verified'] and args.receipt['commands'] == [],
+          'capture admission receipt differs')
+    try:
+        source_identity(source, reference)
+    except RuntimeError as error:
+        check(str(error) == 'producer include recipe differs', str(error))
+    else:
+        raise RuntimeError('historical catalog admitted finite recipe without producer validation')
+    controls = []
+    with tempfile.TemporaryDirectory() as directory:
+        scratch = Path(directory) / 'record'
+        shutil.copytree(record, scratch)
+        target = scratch / 'work/vkd3d-2.1/Makefile'
+        original_receipt = json.loads((scratch / 'producer-receipt.json').read_text())
+        variants = {
+            'historical dependency-enabled recipe': '\n'.join(
+                next(line for line in actual_make.splitlines() if line.startswith('CPPFLAGS = '))
+                if line.startswith('CPPFLAGS = ') else line for line in historical_make.splitlines()) + '\n',
+            'unknown compile recipe': actual_make + '\n\t$(COMPILE) --unknown-recipe\n',
+            'include projection changed': actual_make.replace('AM_CPPFLAGS = ', 'AM_CPPFLAGS = -Iunknown ', 1),
+        }
+        for label, text in variants.items():
+            target.write_text(text)
+            changed = copy.deepcopy(original_receipt)
+            for stage in changed['stages']:
+                for item in stage['files']:
+                    if item['path'] == 'vkd3d-2.1/Makefile':
+                        item['sha256'] = sha(target)
+            (scratch / 'producer-receipt.json').write_text(json.dumps(changed))
+            try:
+                source_identity(target.parent, replay_reference, build_record=scratch)
+            except RuntimeError as error:
+                check(str(error) == 'producer include recipe differs', label + ': ' + str(error))
+            else:
+                raise RuntimeError('recipe tamper accepted: ' + label)
+            controls.append(label)
+        target.write_text(actual_make)
+        (scratch / 'producer-receipt.json').write_text(json.dumps(original_receipt))
+        (scratch / 'configure-argv.nul').write_bytes(b'./configure\0')
+        try:
+            source_identity(target.parent, replay_reference, build_record=scratch)
+        except RuntimeError as error:
+            check(str(error) == 'producer dependency tracking was not disabled', str(error))
+        else:
+            raise RuntimeError('dependency-enabled configure admitted')
+        controls.append('dependency-enabled configure')
+    report = {'old_source_producer_validation': True, 'current_recipe_rejects_old_receipt': True,
+              'current_catalog_exact_actual_projection': projection, 'sealed_packet_files': len(seal),
+              'old_recipe_bound_admission_replay': True, 'capture_all_pre_command_gates_replayed': True,
+              'changed_compile_recipes': 65,
+              'tamper_rejections': controls, 'native_commands': 0, 'optimized': bool(sys.flags.optimize)}
+    (artifacts / 'actual-record-verification.json').write_text(json.dumps(report, indent=2) + '\n')
+    print('Actual record verified with old source; current exact catalog and tamper controls verified separately.')
 
 
 def verify_authenticated_archive(archive, artifacts):
@@ -525,9 +679,14 @@ def verify_authenticated_archive(archive, artifacts):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--actual-packet', type=Path)
     parser.add_argument('--archive', type=Path)
     parser.add_argument('--artifacts', type=Path)
     args, remaining = parser.parse_known_args()
+    if args.actual_packet:
+        if args.artifacts is None:
+            parser.error('--actual-packet requires --artifacts')
+        verify_actual_record(args.actual_packet, args.artifacts)
     if args.archive:
         if args.artifacts is None:
             parser.error('--archive requires --artifacts for retained receipts')

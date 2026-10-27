@@ -1563,7 +1563,7 @@
   },
   "producer_contract": {
     "schema": "mds-vkd3d-fresh-producer-v1",
-    "recipe_sha256": "88b67b70a68f38f9042607ca4cdbc278ed40a731d57ee4d15b55f5779223d19f",
+    "recipe_sha256": "5d0b14c53e86988b6fe91b48deffa523f761ccd45c7da3ac2e78de8b621a3bb5",
     "archives": {
       "vkd3d-2.1.tar.xz": "7510146aff2adfb4ae07ab890701a607e5ff7c66e57100cfc9f630ec92eeda6a",
       "vulkan-headers.tar.gz": "437925ada160d86ed763d29dcb9318c1bb0d024d7deaf77bc7c170b8eb6b6f10",
@@ -1571,6 +1571,24 @@
     },
     "patches": {
       "0001-vpos-vface-io.patch": "08266707781812c410e732d349cc17adf41092c1e0eea041b75ce75126d82212"
+    }
+  },
+  "finite_record_compile_recipe": {
+    "compile_recipes_sha256": "4a247faa05bde2d300ac65c8493cd6c6ad2dc6b8ed8355992eaa30ac94ba5f6f",
+    "configure_argument": "--disable-dependency-tracking",
+    "observed_provenance": {
+      "repository": "geekjapan/MikuDanceStudio-J",
+      "run_id": 40479716813,
+      "run_attempt": 1,
+      "job_id": 122106673148,
+      "api_head": "8b358d87c798174e82c8be940b4a3610c5d4761e",
+      "checkout": "87451d36cffce385f088dca8f96570c7e0ad9883",
+      "artifact_id": 12722487135,
+      "artifact_name": "native-linux-arm64-capture",
+      "artifact_sha256": "3a58dbf756ec363d684f56db97dc4c019ff36a56727886247b11be9b555b483f",
+      "producer_recipe_sha256": "88b67b70a68f38f9042607ca4cdbc278ed40a731d57ee4d15b55f5779223d19f",
+      "makefile_member": "record/work/vkd3d-2.1/Makefile",
+      "compile_recipe_count": 65
     }
   }
 }

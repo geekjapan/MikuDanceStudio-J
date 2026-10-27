@@ -331,13 +331,15 @@ copy_mingw_runtime() { # bin dir
 docker_build() { # platform target [configure args...]
   local platform="$1" target="$2"; shift 2
   local args="$*"
+  local record_packages=""
+  if [ -n "$record" ] && [ "$target" = windows ]; then record_packages=python3; fi
   local record_mount=()
   if [ -n "$record" ]; then record_mount=(-v "$record:/record" -e MDS_VKD3D_RECORD_DIR=/record); fi
   docker run --rm "${record_mount[@]}" --platform "$platform" -v "$here:/tools:ro" -v "$dl:/dl:ro" -v "$root:/out" \
     -e MDS_VKD3D_OUT=/out -e IN_CONTAINER=1 "$IMAGE" bash -euc "
       apt-get update -qq >/dev/null
       apt-get install -y -qq --no-install-recommends build-essential bison flex pkg-config \
-        libjson-perl ca-certificates xz-utils $( [ "$target" = windows ] && echo gcc-mingw-w64-x86-64 ) >/dev/null
+        libjson-perl ca-certificates xz-utils $record_packages $( [ "$target" = windows ] && echo gcc-mingw-w64-x86-64 ) >/dev/null
       bash /tools/build.sh --inside $target $args"
 }
 

@@ -157,7 +157,7 @@ def literal_include_graph(source, production_units):
             'unresolved_system_sdk_or_disabled': sorted(map(list, unresolved))}
 
 
-def source_identity(source, reference, receipt=None):
+def source_identity(source, reference, receipt=None, *, build_record=None):
     require(set(reference['generated_files']) == GENERATED_FILES,
             'unknown or missing generated source classification')
     require(GENERATED_FILES <= reference['source_files'].keys(), 'missing generated reference input')
@@ -213,8 +213,12 @@ def source_identity(source, reference, receipt=None):
             f'external producer headers differ: {identity["external_header_differences"]}')
     require(tuple(reference['local_include_roots']) == LOCAL_INCLUDE_ROOTS,
             'unknown or missing local include root classification')
+    expected_recipe = dict(reference['include_recipe'])
+    if build_record is not None:
+        producer_identity(build_record, reference, source, identity)
+        expected_recipe['compile_recipes_sha256'] = reference['finite_record_compile_recipe']['compile_recipes_sha256']
     identity['include_recipe'] = include_recipe((source / 'Makefile').read_text())
-    require(identity['include_recipe'] == reference['include_recipe'], 'producer include recipe differs')
+    require(identity['include_recipe'] == expected_recipe, 'producer include recipe differs')
     identity['literal_include_graph'] = literal_include_graph(source, reference['production_units'])
     require(identity['literal_include_graph'] == reference['literal_include_graph'], 'producer literal include graph differs')
     identity['identical_source_profile'] = not differences and not identity['target_configuration_differences']
@@ -361,12 +365,14 @@ def check(args):
         result['reference'] = reference
         result['reference_manifest_sha256'] = sha(reference_path)
         require(sha(Path(__file__).parent.parent / 'vkd3d/patches/0001-vpos-vface-io.patch') == reference['patch_sha256'], 'native patch reference differs')
-        source_identity(args.source, reference, result.setdefault('source', {}))
-        require(args.build_record is not None, 'source profile requires --build-record')
         record = args.build_record
-        producer_identity(record, reference, args.source, result)
+        if record is None:
+            source_identity(args.source, reference, result.setdefault('source', {}))
+        require(record is not None, 'source profile requires --build-record')
+        source_identity(args.source, reference, result.setdefault('source', {}), build_record=record)
         require((record / 'build-exit-code').read_text().strip() == '0', 'native build did not succeed')
-        require(source_identity(record / 'work/vkd3d-2.1', reference) == result['source'], 'source differs from actual build record')
+        require(source_identity(record / 'work/vkd3d-2.1', reference, build_record=record) == result['source'], 'source differs from actual build record')
+        result.update({key: result['source'].pop(key) for key in ('producer', 'producer_contract_verified')})
         recorded_libraries = [path for path in (record / 'prefix').rglob(args.native_library.name) if path.is_file()]
         require(recorded_libraries and all(sha(path) == sha(args.native_library) for path in recorded_libraries), 'loaded library differs from native producer bundle')
         required = ['configure-argv.nul', 'compiler-path.txt', 'compiler-sha256.txt',

@@ -16,6 +16,19 @@ class BuildRecordTest(unittest.TestCase):
             self.assertEqual(completed.returncode, 2)
             self.assertEqual((root / 'existing').read_text(), 'preserve')
 
+    def test_python_package_is_declared_only_for_recorded_windows_container(self):
+        script = Path(__file__).with_name('build.sh').read_text()
+        function = 'docker_build() {' + script.split('docker_build() {', 1)[1].split('\nif [ "${1:-}" = "--inside" ]; then', 1)[0]
+        for recorded, target in ((False, 'windows'), (True, 'windows'), (False, 'linux-arm64'), (True, 'linux-arm64')):
+            with self.subTest(recorded=recorded, target=target):
+                harness = 'docker() { printf "%s\\n" "$@"; }\n' + function + '\n' + f'docker_build linux/amd64 {target}\n'
+                completed = subprocess.run(['bash', '-ec', harness], capture_output=True, text=True,
+                    env={**os.environ, 'record': '/record' if recorded else '', 'here': '/tools',
+                         'dl': '/dl', 'root': '/out', 'IMAGE': 'fixture'})
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                install = completed.stdout.split('apt-get install', 1)[1].split('>/dev/null', 1)[0]
+                self.assertEqual('python3' in install.split(), recorded and target == 'windows')
+
     def test_success_and_failure_retain_actual_work(self):
         script = Path(__file__).with_name('build.sh').read_text().split('if [ "${1:-}" = "--inside" ]; then')[0]
         for failure in (False, True):

@@ -1,15 +1,33 @@
-//! An AVI 1.0 writer for uncompressed BGR24 video with an optional PCM audio
-//! stream.
+//! An OpenDML (AVI 2.0) writer for uncompressed BGR24 video with an optional
+//! PCM audio stream.
 //!
-//! There is no C++ twin: the C++ records through DirectShow. The layout is the
-//! one of the Microsoft AVI RIFF reference: `RIFF 'AVI '` holding `LIST hdrl`
-//! (`avih`, then one `LIST strl` per stream), `LIST movi` with the data
-//! chunks in the order written, and a closing `idx1` index.
+//! There is no C++ twin: the C++ records through DirectShow, whose AVI mux
+//! writes OpenDML. The layout is the one of the Microsoft AVI RIFF reference
+//! and the OpenDML extension, as DirectShow's mux and libavformat write it:
 //!
-//! The format names 32-bit sizes and offsets, and old readers fail past 2 GB,
-//! so the writer stops at 1 GiB ([`MAX_FILE_BYTES`]) and returns
-//! [`Error::TooLarge`]. A longer recording needs OpenDML (`AVIX` extension
-//! RIFFs and a super index), which this writer does not have.
+//! ```text
+//! RIFF 'AVI '                      first RIFF, under MAX_RIFF_BYTES
+//!   LIST hdrl  avih, LIST strl (strh strf indx)..., LIST odml (dmlh)
+//!   LIST movi  data chunks in the order written, then ix00 [ix01]
+//!   idx1                           legacy index of the first RIFF only
+//! RIFF 'AVIX'                      one per further MAX_RIFF_BYTES
+//!   LIST movi  data chunks, then ix00 [ix01]
+//! ```
+//!
+//! Every RIFF stays under [`MAX_RIFF_BYTES`] (the 32-bit sizes, and readers
+//! that treat them as signed). A chunk that would pass the limit closes the
+//! RIFF (standard indexes `ix00`/`ix01`, one per stream with chunks in it) and
+//! opens the next `AVIX`. The super index (`indx`) in each `strl` has room for
+//! [`SUPER_ENTRIES`] standard indexes, so a file holds up to that many RIFFs;
+//! past it [`Error::TooLarge`]. The `idx1` of the first RIFF lets AVI 1.0
+//! readers play the first gibibyte. As in libavformat's muxer, `avih` counts the
+//! frames of the first RIFF (what `idx1` indexes), while `strh` and `dmlh`
+//! carry the totals of the file.
+//!
+//! The super index is reserved in the header from the start (the header is
+//! rewritten in place at the end, so its size cannot grow), so even a short
+//! file differs from the AVI 1.0 output this writer had before: the `indx`
+//! space, the `odml` list and the `ix` chunks.
 //!
 //! The caller passes frames top-down and tightly packed (`width * 3` bytes per
 //! row); the writer stores them bottom-up with 4-byte row padding, as a
@@ -17,15 +35,19 @@
 
 use std::io::{self, Seek, SeekFrom, Write};
 
-/// The largest file the writer produces.
-pub const MAX_FILE_BYTES: u64 = 1 << 30;
+/// The largest RIFF (the first one holds the header) the writer produces.
+pub const MAX_RIFF_BYTES: u64 = 1 << 30;
+
+/// Standard indexes a super index can name: the number of RIFFs a file holds
+/// (1 TiB with [`MAX_RIFF_BYTES`]).
+pub const SUPER_ENTRIES: usize = 1024;
 
 #[derive(Debug)]
 pub enum Error {
     Io(io::Error),
     /// A parameter the format cannot hold (the text names it).
     Param(&'static str),
-    /// The next chunk would take the file past [`MAX_FILE_BYTES`].
+    /// The file would need more than [`SUPER_ENTRIES`] RIFFs.
     TooLarge,
 }
 
@@ -40,7 +62,7 @@ impl std::fmt::Display for Error {
         match self {
             Error::Io(e) => write!(f, "{e}"),
             Error::Param(p) => write!(f, "bad AVI parameter: {p}"),
-            Error::TooLarge => write!(f, "AVI 1.0 file would pass 1 GiB"),
+            Error::TooLarge => write!(f, "AVI file would pass the super index capacity"),
         }
     }
 }
@@ -71,23 +93,56 @@ pub struct Config {
     pub audio: Option<AudioFormat>,
 }
 
-struct IndexEntry {
-    id: [u8; 4],
-    offset: u32,
+const VIDEO: usize = 0;
+const AUDIO: usize = 1;
+const DATA_IDS: [[u8; 4]; 2] = [*b"00db", *b"01wb"];
+const IX_IDS: [[u8; 4]; 2] = [*b"ix00", *b"ix01"];
+
+/// One data chunk of the open RIFF.
+struct Entry {
+    stream: usize,
+    /// File position of the chunk header.
+    pos: u64,
     size: u32,
 }
 
+/// The RIFF being written.
+struct Riff {
+    start: u64,
+    /// File position of the `LIST` tag of its `movi`.
+    movi: u64,
+    entries: Vec<Entry>,
+    /// Chunks per stream in `entries`.
+    counts: [u64; 2],
+}
+
+/// A super index entry: one standard index.
+struct Named {
+    offset: u64,
+    size: u32,
+    duration: u32,
+}
+
+/// After an output I/O error, further writes and finalization return an error.
+/// Parameter and capacity errors leave the writer available for finalization.
 pub struct AviWriter<W: Write + Seek> {
     out: W,
+    failed: bool,
     cfg: Config,
     /// Bytes of one stored frame (padded rows).
     frame_bytes: u32,
-    header_len: u64,
+    riff_limit: u64,
     /// File position of the next chunk.
     pos: u64,
     frames: u32,
-    audio_bytes: u32,
-    index: Vec<IndexEntry>,
+    /// Frames in the first RIFF: what `avih` counts, as the AVI 1.0 reader of
+    /// that RIFF sees it. The file total is `frames`.
+    first_frames: u32,
+    audio_bytes: u64,
+    riff: Riff,
+    /// RIFFs started, the open one included.
+    riffs: usize,
+    supers: [Vec<Named>; 2],
 }
 
 /// A chunk: tag, size, body, and a pad byte after an odd body.
@@ -140,9 +195,37 @@ fn strh(
     b
 }
 
+/// The tail of a RIFF holding `counts` chunks: its standard indexes and, in
+/// the first RIFF, the `idx1`.
+fn tail_len(counts: [u64; 2], first: bool) -> u64 {
+    let ix: u64 = counts
+        .iter()
+        .filter(|&&c| c > 0)
+        .map(|c| 8 + 24 + 8 * c)
+        .sum();
+    ix + if first {
+        8 + 16 * (counts[0] + counts[1])
+    } else {
+        0
+    }
+}
+
+/// `LIST movi` opened with sizes still unknown.
+fn movi_open(buf: &mut Vec<u8>) {
+    buf.extend(b"LIST");
+    buf.extend(le(&[0]));
+    buf.extend(b"movi");
+}
+
 impl<W: Write + Seek> AviWriter<W> {
     /// Writes the header (patched in [`finish`](Self::finish)) and opens `movi`.
     pub fn new(out: W, cfg: Config) -> Result<Self, Error> {
+        Self::with_riff_limit(out, cfg, MAX_RIFF_BYTES)
+    }
+
+    /// [`new`](Self::new) with RIFFs of at most `riff_limit` bytes (at most
+    /// [`MAX_RIFF_BYTES`]); a small limit makes a short recording cross RIFFs.
+    pub fn with_riff_limit(out: W, cfg: Config, riff_limit: u64) -> Result<Self, Error> {
         if cfg.width == 0 || cfg.height == 0 || cfg.width > 0xFFFF || cfg.height > 0xFFFF {
             return Err(Error::Param("size must be 1 to 65535"));
         }
@@ -154,99 +237,238 @@ impl<W: Write + Seek> AviWriter<W> {
                 return Err(Error::Param("audio must be 8 or 16 bit PCM with a rate"));
             }
         }
-        let frame_bytes = u64::from((cfg.width * 3).div_ceil(4) * 4) * u64::from(cfg.height);
-        if frame_bytes > MAX_FILE_BYTES / 2 {
-            return Err(Error::Param("frame is too large for AVI 1.0"));
+        if riff_limit > MAX_RIFF_BYTES {
+            return Err(Error::Param("RIFF limit is over 1 GiB"));
         }
-        let frame_bytes = frame_bytes as u32;
+        let frame_bytes = u64::from((cfg.width * 3).div_ceil(4) * 4) * u64::from(cfg.height);
+        if frame_bytes > riff_limit / 2 {
+            return Err(Error::Param("frame is too large for a RIFF"));
+        }
         let mut w = AviWriter {
             out,
+            failed: false,
             cfg,
-            frame_bytes,
-            header_len: 0,
+            frame_bytes: frame_bytes as u32,
+            riff_limit,
             pos: 0,
             frames: 0,
+            first_frames: 0,
             audio_bytes: 0,
-            index: Vec::new(),
+            riff: Riff {
+                start: 0,
+                movi: 0,
+                entries: Vec::new(),
+                counts: [0; 2],
+            },
+            riffs: 1,
+            supers: [Vec::new(), Vec::new()],
         };
-        let header = w.header(0);
-        w.out.write_all(&header)?;
-        w.header_len = header.len() as u64;
-        w.pos = w.header_len;
+        let mut head = b"RIFF".to_vec();
+        head.extend(le(&[0]));
+        head.extend(b"AVI ");
+        head.extend(w.hdrl());
+        w.riff.movi = head.len() as u64;
+        movi_open(&mut head);
+        if head.len() as u64 + tail_len([0; 2], true) > riff_limit {
+            return Err(Error::Param(
+                "RIFF limit cannot hold the header and indexes",
+            ));
+        }
+        w.out.write_all(&head)?;
+        w.pos = head.len() as u64;
         Ok(w)
     }
 
     /// Appends one frame: `width * height * 3` bytes, top-down BGR.
     pub fn write_frame(&mut self, bgr: &[u8]) -> Result<(), Error> {
+        self.check_failed()?;
         let (w, h) = (self.cfg.width as usize, self.cfg.height as usize);
         if bgr.len() != w * h * 3 {
             return Err(Error::Param("frame length is not width * height * 3"));
         }
+        let frames = self
+            .frames
+            .checked_add(1)
+            .ok_or(Error::Param("frame count exceeds u32"))?;
         let stride = (w * 3).div_ceil(4) * 4;
         let mut dib = vec![0u8; stride * h];
         for (y, src) in bgr.chunks_exact(w * 3).enumerate() {
             let at = (h - 1 - y) * stride;
             dib[at..at + src.len()].copy_from_slice(src);
         }
-        self.write_chunk(*b"00db", &dib)?;
-        self.frames += 1;
+        self.write_chunk(VIDEO, &dib)?;
+        self.frames = frames;
         Ok(())
     }
 
     /// Appends PCM bytes (a whole number of blocks) to the audio stream.
     pub fn write_audio(&mut self, pcm: &[u8]) -> Result<(), Error> {
+        self.check_failed()?;
         let Some(a) = self.cfg.audio else {
             return Err(Error::Param("the file has no audio stream"));
         };
         if !pcm.len().is_multiple_of(a.block_align() as usize) {
             return Err(Error::Param("audio is not a whole number of blocks"));
         }
-        self.write_chunk(*b"01wb", pcm)?;
-        self.audio_bytes += pcm.len() as u32;
+        let audio_bytes = self
+            .audio_bytes
+            .checked_add(pcm.len() as u64)
+            .filter(|bytes| bytes / u64::from(a.block_align()) <= u64::from(u32::MAX))
+            .ok_or(Error::Param("audio block count exceeds u32"))?;
+        self.write_chunk(AUDIO, pcm)?;
+        self.audio_bytes = audio_bytes;
         Ok(())
     }
 
-    /// Writes the index, patches the header, and returns the output.
+    /// Closes the last RIFF, patches the header, and returns the output.
     pub fn finish(mut self) -> Result<W, Error> {
-        let mut idx = Vec::with_capacity(self.index.len() * 16);
-        for e in &self.index {
-            idx.extend_from_slice(&e.id);
-            idx.extend(le(&[0x10, e.offset, e.size])); // AVIIF_KEYFRAME
-        }
-        let mut tail = Vec::new();
-        put(&mut tail, b"idx1", &idx);
-        self.out.write_all(&tail)?;
-        let end = self.pos + tail.len() as u64;
-        let header = self.header(end);
-        self.out.seek(SeekFrom::Start(0))?;
-        self.out.write_all(&header)?;
-        self.out.seek(SeekFrom::Start(end))?;
+        self.check_failed()?;
+        self.close_riff()?;
+        let hdrl = self.hdrl();
+        self.out.seek(SeekFrom::Start(12))?;
+        self.out.write_all(&hdrl)?;
+        self.out.seek(SeekFrom::Start(self.pos))?;
         self.out.flush()?;
         Ok(self.out)
     }
 
-    fn write_chunk(&mut self, id: [u8; 4], payload: &[u8]) -> Result<(), Error> {
-        let total = 8 + payload.len() as u64 + (payload.len() as u64 & 1);
-        let index_after = 8 + 16 * (self.index.len() as u64 + 1);
-        if self.pos + total + index_after > MAX_FILE_BYTES {
-            return Err(Error::TooLarge);
+    fn check_failed(&self) -> Result<(), Error> {
+        if self.failed {
+            return Err(Error::Io(io::Error::other("AVI output previously failed")));
         }
-        let mut chunk = Vec::with_capacity(total as usize);
-        put(&mut chunk, &id, payload);
-        self.out.write_all(&chunk)?;
-        self.index.push(IndexEntry {
-            id,
-            // Relative to the `movi` tag, the last four bytes of the header.
-            offset: (self.pos - (self.header_len - 4)) as u32,
-            size: payload.len() as u32,
+        Ok(())
+    }
+
+    fn write_chunk(&mut self, stream: usize, payload: &[u8]) -> Result<(), Error> {
+        let result = self.write_chunk_inner(stream, payload);
+        // An I/O error may leave partial chunks or patches that cannot be retried.
+        self.failed |= matches!(&result, Err(Error::Io(_)));
+        result
+    }
+
+    fn write_chunk_inner(&mut self, stream: usize, payload: &[u8]) -> Result<(), Error> {
+        let len = payload.len() as u64;
+        let total = 8 + len + (len & 1);
+        if !self.fits(stream, total) {
+            // A chunk that would not fit an empty RIFF either is refused.
+            if self.riff.entries.is_empty() {
+                return Err(Error::Param("chunk is too large for a RIFF"));
+            }
+            self.next_riff()?;
+            if !self.fits(stream, total) {
+                return Err(Error::Param("chunk is too large for a RIFF"));
+            }
+        }
+        let mut head = DATA_IDS[stream].to_vec();
+        head.extend(le(&[len as u32]));
+        self.out.write_all(&head)?;
+        self.out.write_all(payload)?;
+        if len & 1 == 1 {
+            self.out.write_all(&[0])?;
+        }
+        self.riff.entries.push(Entry {
+            stream,
+            pos: self.pos,
+            size: len as u32,
         });
+        self.riff.counts[stream] += 1;
         self.pos += total;
         Ok(())
     }
 
-    /// The header up to and including `LIST movi`, for a file `end` bytes
-    /// long (0 while the sizes are still unknown).
-    fn header(&self, end: u64) -> Vec<u8> {
+    /// Whether a chunk of `total` bytes and the tail of the RIFF behind it
+    /// stay under the limit.
+    fn fits(&self, stream: usize, total: u64) -> bool {
+        let mut counts = self.riff.counts;
+        counts[stream] += 1;
+        let tail = tail_len(counts, self.riff.start == 0);
+        self.pos + total + tail <= self.riff.start + self.riff_limit
+    }
+
+    /// Ends the open RIFF and starts an `AVIX`.
+    fn next_riff(&mut self) -> Result<(), Error> {
+        if self.riffs >= SUPER_ENTRIES {
+            return Err(Error::TooLarge);
+        }
+        self.close_riff()?;
+        let mut head = b"RIFF".to_vec();
+        head.extend(le(&[0]));
+        head.extend(b"AVIX");
+        let movi = self.pos + head.len() as u64;
+        movi_open(&mut head);
+        self.out.write_all(&head)?;
+        self.riff = Riff {
+            start: self.pos,
+            movi,
+            entries: Vec::new(),
+            counts: [0; 2],
+        };
+        self.pos += head.len() as u64;
+        self.riffs += 1;
+        Ok(())
+    }
+
+    /// Writes the standard indexes (and, in the first RIFF, `idx1`) behind the
+    /// chunks of the open RIFF and patches its sizes.
+    fn close_riff(&mut self) -> Result<(), Error> {
+        let base = self.riff.movi;
+        let mut tail = Vec::new();
+        for stream in [VIDEO, AUDIO] {
+            let mine = || self.riff.entries.iter().filter(|e| e.stream == stream);
+            let n = mine().count();
+            if n == 0 {
+                continue;
+            }
+            let mut ix = 2u16.to_le_bytes().to_vec();
+            ix.extend([0, 1]); // sub type 0, AVI_INDEX_OF_CHUNKS
+            ix.extend(le(&[n as u32]));
+            ix.extend(DATA_IDS[stream]);
+            ix.extend(base.to_le_bytes());
+            ix.extend(le(&[0]));
+            for e in mine() {
+                // The offset names the data, behind the 8-byte chunk header.
+                ix.extend(le(&[(e.pos + 8 - base) as u32, e.size]));
+            }
+            let duration = match (stream, self.cfg.audio) {
+                (AUDIO, Some(a)) => mine().map(|e| e.size / a.block_align()).sum(),
+                _ => n as u32,
+            };
+            self.supers[stream].push(Named {
+                offset: self.pos + tail.len() as u64,
+                size: 8 + ix.len() as u32,
+                duration,
+            });
+            put(&mut tail, &IX_IDS[stream], &ix);
+        }
+        self.out.write_all(&tail)?;
+        self.pos += tail.len() as u64;
+        let movi_size = (self.pos - base - 8) as u32;
+
+        if self.riff.start == 0 {
+            self.first_frames = self.frames;
+            // Offsets are relative to the `movi` tag, behind its `LIST` header.
+            let mut idx = Vec::with_capacity(self.riff.entries.len() * 16);
+            for e in &self.riff.entries {
+                idx.extend(DATA_IDS[e.stream]);
+                idx.extend(le(&[0x10, (e.pos - (base + 8)) as u32, e.size])); // AVIIF_KEYFRAME
+            }
+            let mut idx1 = Vec::new();
+            put(&mut idx1, b"idx1", &idx);
+            self.out.write_all(&idx1)?;
+            self.pos += idx1.len() as u64;
+        }
+        let riff_size = (self.pos - self.riff.start - 8) as u32;
+        for (at, v) in [(base + 4, movi_size), (self.riff.start + 4, riff_size)] {
+            self.out.seek(SeekFrom::Start(at))?;
+            self.out.write_all(&v.to_le_bytes())?;
+        }
+        self.out.seek(SeekFrom::Start(self.pos))?;
+        Ok(())
+    }
+
+    /// `LIST hdrl`. Its size does not depend on the counts, so the final
+    /// header replaces the first one in place.
+    fn hdrl(&self) -> Vec<u8> {
         let Config {
             width,
             height,
@@ -263,7 +485,7 @@ impl<W: Write + Seek> AviWriter<W> {
             (video_rate as u32).saturating_add(audio_rate),
             0,
             0x10 | if audio.is_some() { 0x100 } else { 0 }, // HASINDEX, ISINTERLEAVED
-            self.frames,
+            self.first_frames,
             0,
             1 + u32::from(audio.is_some()),
             self.frame_bytes,
@@ -297,6 +519,7 @@ impl<W: Write + Seek> AviWriter<W> {
         bih.extend(24u16.to_le_bytes());
         bih.extend(le(&[0, self.frame_bytes, 0, 0, 0, 0]));
         put(&mut video, b"strf", &bih);
+        put(&mut video, b"indx", &self.indx(VIDEO));
         list(&mut hdrl, b"strl", &video);
 
         if let Some(a) = audio {
@@ -309,7 +532,7 @@ impl<W: Write + Seek> AviWriter<W> {
                     b"auds",
                     1,
                     a.sample_rate,
-                    self.audio_bytes / block,
+                    (self.audio_bytes / u64::from(block)) as u32,
                     a.sample_rate * block,
                     block,
                     (0, 0),
@@ -323,19 +546,76 @@ impl<W: Write + Seek> AviWriter<W> {
             wfx.extend((block as u16).to_le_bytes());
             wfx.extend(a.bits.to_le_bytes());
             put(&mut stream, b"strf", &wfx);
+            put(&mut stream, b"indx", &self.indx(AUDIO));
             list(&mut hdrl, b"strl", &stream);
         }
 
+        // `dmlh`: dwGrandFrames, then 244 reserved bytes.
+        let mut dmlh = le(&[self.frames]);
+        dmlh.resize(248, 0);
+        let mut odml = Vec::new();
+        put(&mut odml, b"dmlh", &dmlh);
+        list(&mut hdrl, b"odml", &odml);
+
         let mut out = Vec::new();
         list(&mut out, b"hdrl", &hdrl);
-        let movi_data = self.pos.saturating_sub(self.header_len);
-        let mut head = b"RIFF".to_vec();
-        head.extend(le(&[end.saturating_sub(8) as u32]));
-        head.extend(b"AVI ");
-        head.extend(out);
-        head.extend(b"LIST");
-        head.extend(le(&[4 + movi_data as u32]));
-        head.extend(b"movi");
-        head
+        out
+    }
+
+    /// The super index of `stream`: `AVI_INDEX_OF_INDEXES`, with room for
+    /// [`SUPER_ENTRIES`] entries.
+    fn indx(&self, stream: usize) -> Vec<u8> {
+        let named = &self.supers[stream];
+        let mut b = 4u16.to_le_bytes().to_vec();
+        b.extend([0, 0]); // sub type 0, AVI_INDEX_OF_INDEXES
+        b.extend(le(&[named.len() as u32]));
+        b.extend(DATA_IDS[stream]);
+        b.extend(le(&[0, 0, 0]));
+        for n in named {
+            b.extend(n.offset.to_le_bytes());
+            b.extend(le(&[n.size, n.duration]));
+        }
+        b.resize(24 + 16 * SUPER_ENTRIES, 0);
+        b
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn stream_count_limits_reject_chunks_before_writing() {
+        let mut avi = AviWriter::new(
+            Cursor::new(Vec::new()),
+            Config {
+                width: 1,
+                height: 1,
+                fps_num: 30,
+                fps_den: 1,
+                audio: Some(AudioFormat {
+                    channels: 2,
+                    sample_rate: 48000,
+                    bits: 16,
+                }),
+            },
+        )
+        .unwrap();
+        avi.frames = u32::MAX - 1;
+        avi.write_frame(&[0; 3]).unwrap();
+        assert_eq!(avi.frames, u32::MAX);
+        let before = avi.out.get_ref().clone();
+        assert!(matches!(avi.write_frame(&[0; 3]), Err(Error::Param(_))));
+        assert_eq!(avi.frames, u32::MAX);
+        assert_eq!(avi.out.get_ref(), &before);
+
+        avi.audio_bytes = (u64::from(u32::MAX) - 1) * 4;
+        avi.write_audio(&[0; 4]).unwrap();
+        let before = avi.out.get_ref().clone();
+        assert!(matches!(avi.write_audio(&[0; 4]), Err(Error::Param(_))));
+        assert_eq!(avi.audio_bytes, u64::from(u32::MAX) * 4);
+        assert_eq!(avi.out.get_ref(), &before);
+        avi.finish().unwrap();
     }
 }

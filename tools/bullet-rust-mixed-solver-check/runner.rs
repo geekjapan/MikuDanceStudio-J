@@ -8,6 +8,7 @@ pub use base::{joint_coordinates, joint_rows, math, time, InvalidArgument};
 pub mod body;
 #[path = "../../rust/crates/mds-bullet/src/core/box_box.rs"]
 pub mod box_box;
+#[allow(dead_code)]
 #[path = "../../rust/crates/mds-bullet/src/core/contact.rs"]
 pub mod contact;
 #[path = "../../rust/crates/mds-bullet/src/core/contact_solver.rs"]

@@ -84,6 +84,102 @@ fn registration_history_and_active_state_control_gravity() {
 }
 
 #[test]
+fn public_transform_uses_registration_kinematic_state_after_classification_changes() {
+    for initially_kinematic in [false, true] {
+        let mut w = WorldObjects::public();
+        let mut d = desc(1.0);
+        d.kinematic = initially_kinematic;
+        let h = w.create_public_body(d).unwrap();
+        let initial = w.bodies()[0].snapshot();
+        for (step, current_kinematic) in [initially_kinematic, !initially_kinematic]
+            .into_iter()
+            .enumerate()
+        {
+            w.set_kinematic(h, current_kinematic).unwrap();
+            let target = Pose {
+                position: Vec3([3.0 + step as f32, -2.0, 5.0]),
+                rotation: Quat([0.0, 0.0, 1.0, 0.0]),
+            };
+            w.set_public_transform(h, target).unwrap();
+            let expected = target.transform();
+            assert_eq!(w.public_transform(h).unwrap(), expected);
+            assert_eq!(w.data()[0].motion.graphics_world, expected);
+            let body = w.bodies()[0].snapshot();
+            assert_eq!(body.is_kinematic, current_kinematic);
+            if initially_kinematic {
+                assert_eq!(body.world, initial.world);
+                assert_eq!(body.interpolation_world, initial.interpolation_world);
+            } else {
+                assert_eq!(body.world, expected);
+                assert_eq!(body.interpolation_world, expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn rejected_public_transforms_preserve_motion_body_and_interpolation() {
+    let mut w = WorldObjects::public();
+    let dynamic = w.create_public_body(desc(1.0)).unwrap();
+    let static_body = w.create_public_body(desc(0.0)).unwrap();
+    let mut other = WorldObjects::public();
+    let foreign = other.create_public_body(desc(1.0)).unwrap();
+    let mut mmd = WorldObjects::mmd();
+    let mmd_body = mmd.create_mmd_body(desc(1.0), 1).unwrap();
+    w.set_public_transform(dynamic, pose(4.0)).unwrap();
+    let before: Vec<_> = w.bodies().iter().map(|b| b.snapshot()).collect();
+    let motion: Vec<_> = w.data().iter().map(|d| d.motion.graphics_world).collect();
+    let mut invalid_rotation = pose(8.0);
+    invalid_rotation.rotation = Quat([0.0; 4]);
+    let mut infinite_rotation = pose(8.0);
+    infinite_rotation.rotation.0[1] = f32::INFINITY;
+    for (handle, target) in [
+        (dynamic, pose(f32::NAN)),
+        (dynamic, pose(f32::INFINITY)),
+        (dynamic, invalid_rotation),
+        (dynamic, infinite_rotation),
+        (static_body, pose(8.0)),
+        (foreign, pose(8.0)),
+        (mmd_body, pose(8.0)),
+    ] {
+        assert!(w.set_public_transform(handle, target).is_err());
+        for (i, body) in w.bodies().iter().enumerate() {
+            assert_eq!(body.snapshot(), before[i]);
+            assert_eq!(w.data()[i].motion.graphics_world, motion[i]);
+        }
+    }
+    assert_eq!(
+        other.public_transform(foreign).unwrap(),
+        pose(0.0).transform()
+    );
+    assert_eq!(
+        mmd.public_transform(mmd_body).unwrap(),
+        pose(0.0).transform()
+    );
+}
+
+#[test]
+fn public_gravity_getter_and_bodies_preserve_last_valid_change_on_rejection() {
+    let mut w = WorldObjects::public();
+    assert_eq!(w.gravity(), Vec3([0.0, -9.8, 0.0]));
+    let h = w.create_public_body(desc(1.0)).unwrap();
+    let gravity = Vec3([1.0, -4.0, 2.0]);
+    w.set_gravity(gravity).unwrap();
+    assert_eq!(w.gravity(), gravity);
+    let before = w.bodies()[w.index(h).unwrap()].snapshot();
+    assert_eq!(before.gravity_acceleration, gravity);
+    for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert!(w.set_gravity(Vec3([0.0, invalid, 0.0])).is_err());
+        assert_eq!(w.gravity(), gravity);
+        assert_eq!(w.bodies()[0].snapshot(), before);
+    }
+    let mut mmd = WorldObjects::mmd();
+    assert_eq!(mmd.gravity(), Vec3([0.0, -98.0, 0.0]));
+    mmd.set_gravity(gravity).unwrap();
+    assert_eq!(mmd.gravity(), gravity);
+}
+
+#[test]
 fn motion_body_and_interpolation_are_distinct_owned_state() {
     let mut w = WorldObjects::mmd();
     let h = w.create_mmd_body(desc(1.0), 1).unwrap();
@@ -119,6 +215,9 @@ fn joints_keep_collision_refs_and_shim_specific_equilibrium_and_zero_bits() {
     let b = w.create_public_body(d).unwrap();
     let j = joint(a, b);
     w.create_joint(j, None).unwrap();
+    assert!(!w.joint_data()[0].use_linear_reference_frame_a);
+    assert!(w.joint_data()[0].disable_collisions);
+    assert_eq!(w.joint_data()[0].mmd_uid, None);
     assert_eq!(w.joints()[0].state.springs[0].equilibrium, 0.0);
     assert_eq!(
         w.joints()[0].state.angular[0].motor.lower.to_bits(),
@@ -127,13 +226,22 @@ fn joints_keep_collision_refs_and_shim_specific_equilibrium_and_zero_bits() {
     assert_eq!(w.data()[0].disabled_collision_refs.len(), 1);
     let mut enabled = j;
     enabled.disable_collisions = false;
+    enabled.use_linear_reference_frame_a = true;
     w.create_joint(enabled, None).unwrap();
+    assert!(w.joint_data()[1].use_linear_reference_frame_a);
+    assert!(!w.joint_data()[1].disable_collisions);
     assert_eq!(w.data()[0].disabled_collision_refs.len(), 1);
     w.create_joint(j, Some(17)).unwrap();
     assert_eq!(w.joints()[2].state.springs[0].equilibrium, 2.0);
     assert_eq!(w.joints()[2].state.angular[0].motor.lower.to_bits(), 0);
     assert_eq!(w.data()[0].disabled_collision_refs.len(), 1);
     assert_eq!(w.joint_data()[2].mmd_uid, Some(17));
+    assert!(w.joint_data()[2].use_linear_reference_frame_a);
+    assert!(!w.joint_data()[2].disable_collisions);
+    for data in w.data() {
+        assert_eq!(data.disabled_collision_refs.len(), 1);
+        assert_eq!(data.disabled_collision_refs[0].bodies, [0, 1]);
+    }
 }
 
 #[test]

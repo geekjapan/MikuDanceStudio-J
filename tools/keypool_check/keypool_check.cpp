@@ -107,12 +107,9 @@ mdl::ModelRecord& M() { return *mdl::Mdl(g_model); }
 // fixed-axis (twist) bone. The selectors are bone_sort.cpp's root entry
 // (bone -1) and one for bone0.
 //
-// The loaders allocate exactly boneCount bone records, so the selector loop
-// of RegisterDisplayKeyFromRecord reads bones[-1] for the root entry
-// (FindingRun reports it). Unless `exactBoneTable`, one zeroed record sits in
-// front of the table: it models those heap bytes as a name that matches
-// nothing, and keeps that read from masking the pool checks.
-void BuildModel(bool exactBoneTable = false) {
+// The loaders allocate exactly boneCount bone records, including no slot
+// for the root selector's bone index -1.
+void BuildModel() {
     g_model = static_cast<unsigned char*>(operator new(mdl::kSize));
     std::memset(g_model, 0, mdl::kSize);
     ModelInitDefaults(g_model);
@@ -120,10 +117,7 @@ void BuildModel(bool exactBoneTable = false) {
     m.physicsMode = 2;  // PMX
     m.boneCount = kBones;
     m.morphCount = kMorphs;
-    const int pad = exactBoneTable ? 0 : 1;
-    auto* bones = static_cast<mdl::BoneRecord*>(operator new(sizeof(mdl::BoneRecord) * (kBones + pad)));
-    std::memset(static_cast<void*>(bones), 0, sizeof(mdl::BoneRecord) * (kBones + pad));
-    m.boneTable = bones + pad;
+    m.boneTable = new mdl::BoneRecord[kBones]();
     for (int b = 0; b < kBones; ++b) {
         std::snprintf(m.boneTable[b].name, 20, "%s", kBoneNames[b]);
         m.boneTable[b].rotQuat[3] = 1.0f;
@@ -756,26 +750,6 @@ int OverflowRuns() {
     return failures;
 }
 
-// A known C++ finding, kept out of the search by BuildModel's pad record:
-// with the bone table sized as the loaders size it, pasting one display key
-// reads bones[-1] (RegisterDisplayKeyFromRecord, the selector loop, for the
-// root selector whose bone index is -1). Returns 1 when the read is seen.
-int FindingRun() {
-    g_config = kConfigs[0];
-    BuildModel(true);
-    g_asan.clear();
-    Paste(kPasteDisplay, 0, 1);
-    if (g_asan.empty()) {
-        std::printf("\nroot selector of a pasted display key: ok\n");
-        return 0;
-    }
-    std::printf("\nKNOWN C++ FINDING: %s\n"
-                "  RegisterDisplayKeyFromRecord reads bones[-1] for the root selector\n"
-                "  shortest trace from a freshly loaded model:\n    1. %s\n",
-                g_asan.c_str(), Describe({kPasteDisplay, 0, 1}).c_str());
-    return 1;
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -809,9 +783,7 @@ int main(int argc, char** argv) {
             std::remove(tmpPath.c_str());
     }
     if (OverflowRuns() != 0) status = 1;
-    const int findings = FindingRun();
     if (status != 0) std::printf("\nresult: FAIL\n");
-    else if (findings != 0) std::printf("\nresult: PASS, with %d known C++ finding (above)\n", findings);
     else std::printf("\nresult: PASS\n");
     return status;
 }

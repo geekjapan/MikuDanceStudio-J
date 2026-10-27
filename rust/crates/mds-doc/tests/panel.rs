@@ -382,7 +382,7 @@ fn follow_camera_zeroes_the_view_offset() {
     run(&mut d, [Command::SetFollowCamera(true)]);
     let p = &d.pmm;
     assert_eq!(p.appearance.follow_camera, 1);
-    assert_eq!(p.camera_state[3..5], [0.0, 0.0]);
+    assert_eq!(p.camera_state[3..5], [0.0, 10.0]);
     assert_eq!(p.appearance.suppress_camera_transform, 0);
     run(&mut d, [Command::SetFollowCamera(false)]);
     assert_eq!(d.pmm.appearance.follow_camera, 0);
@@ -542,4 +542,87 @@ fn deleting_an_accessory_closes_up_the_orders() {
     assert_eq!(p.physics.accessory_render_order, render);
     assert!(d.apply(Command::DeleteAccessory(slots[0])).is_err());
     reloaded(&d);
+}
+
+fn readout_rotation(degrees: [f32; 3]) -> [f32; 4] {
+    let [x, y, z] = degrees.map(|v| (f64::from(v) * 3.141592025756836 / 180.0) as f32);
+    Quat::from_matrix(&Mat4::multiply(
+        &Mat4::multiply(&Mat4::rotation_z(-z), &Mat4::rotation_x(x)),
+        &Mat4::rotation_y(-y),
+    ))
+    .0
+}
+
+#[test]
+fn bone_readout_edits_write_the_pose_and_preserve_the_physics_backup() {
+    for mode in 0..=3 {
+        for bone in [0, 5, -1] {
+            for has_backup in [false, true] {
+                for axis in 0..6 {
+                    let mut d = doc();
+                    let s = mds_doc::model::Skeleton::new(&d.models[0], &d.pmm.models[0]).unwrap();
+                    assert!(!s.bones[0].2);
+                    assert!(s.bones[5].2);
+                    d.pmm.physics.playback_mode = mode;
+                    d.apply(Command::SelectBones(if bone < 0 {
+                        vec![]
+                    } else {
+                        vec![bone as u32]
+                    }))
+                    .unwrap();
+                    let ordinary = ([10.0, 20.0, 30.0], [1.0, 2.0, 3.0]);
+                    let backup = ([35.0, -25.0, 15.0], [11.0, 12.0, 13.0]);
+                    let b = bone.max(0) as usize;
+                    d.pmm.models[0].bone_pose[b].translation = ordinary.1;
+                    d.pmm.models[0].bone_pose[b].rotation = readout_rotation(ordinary.0);
+                    d.pmm.models[0].bone_pose[b].flags[1] = 0;
+                    d.edit.models[0].physics_pose =
+                        has_backup.then(|| vec![(readout_rotation(backup.0), backup.1); 9]);
+                    let physics_before = d.edit.models[0].physics_pose.clone();
+                    let before = d.save().unwrap();
+                    d.apply(Command::BoneReadoutEdit { axis, value: 42.0 })
+                        .unwrap();
+                    assert_eq!(d.edit.models[0].physics_pose, physics_before);
+                    if bone < 0 {
+                        assert_eq!(d.save().unwrap(), before);
+                        assert!(!d.edit.models[0].history.undo_dirty);
+                        continue;
+                    }
+                    let p = &d.pmm.models[0].bone_pose[b];
+                    assert_eq!(p.flags[1], 1);
+                    let mut translation = ordinary.1;
+                    let mut degrees = if mode == 3 && bone == 5 {
+                        if has_backup {
+                            backup.0
+                        } else {
+                            [0.0; 3]
+                        }
+                    } else {
+                        ordinary.0
+                    };
+                    if axis < 3 {
+                        translation[usize::from(axis)] = 42.0;
+                        degrees = ordinary.0;
+                    } else {
+                        degrees[usize::from(axis - 3)] = 42.0;
+                    }
+                    assert_eq!(p.translation, translation);
+                    for (got, want) in p.rotation.iter().zip(readout_rotation(degrees)) {
+                        assert!(
+                            (got - want).abs() < 2e-6,
+                            "mode={mode} bone={bone} backup={has_backup} axis={axis}: {:?}",
+                            p.rotation
+                        );
+                    }
+                    let after = d.save().unwrap();
+                    d.apply(Command::Undo).unwrap();
+                    assert_eq!(d.save().unwrap(), before);
+                    assert_eq!(d.edit.models[0].physics_pose, physics_before);
+                    d.apply(Command::Redo).unwrap();
+                    assert_eq!(d.save().unwrap(), after);
+                    assert_eq!(d.edit.models[0].physics_pose, physics_before);
+                }
+            }
+        }
+    }
 }

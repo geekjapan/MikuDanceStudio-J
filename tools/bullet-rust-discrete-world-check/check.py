@@ -25,7 +25,7 @@ FOLDERS = ['recipes/bullet275/bullet-src/src', 'rust/crates/mds-bullet/src/core'
            'rust/crates/mds-crtmath/src', 'tools/bullet-rust-discrete-world-check',
            'tools/bullet-rust-dbvt-check']
 EXTRA = ['.github/workflows/bullet-discrete-world.yml', 'rust/crates/mds-bullet-sys/build.rs',
-         'rust/crates/mds-bullet/Cargo.toml', 'rust/Cargo.lock', '.gitattributes']
+         'rust/crates/mds-bullet/Cargo.toml', 'rust/Cargo.lock', '.gitattributes', 'rust/.gitattributes']
 
 
 def digest(data):

@@ -258,6 +258,12 @@ class FiniteMeasurementTests(unittest.TestCase):
         admission = self.manifest['discrete_world_source_admission']
         self.assertEqual(measured_profiles.source_map_digest(admission), measured_profiles.DISCRETE_WORLD_SHA256)
         self.assertEqual(admission['execution'], 'UNRUN')
+        self.assertEqual((check.ROOT / 'rust/.gitattributes').read_bytes().replace(b'\r\n', b'\n'),
+                         b'crates/*/tests/** -text\n')
+        for path in measured_profiles.DISCRETE_WORLD_ADDITIONS:
+            raw = (check.ROOT / path).read_bytes().replace(b'\r\n', b'\n')
+            windows = raw if '/tests/' in path else raw.replace(b'\n', b'\r\n')
+            self.assertEqual(admission['hosts']['windows-x64']['additions'][path], measured_profiles.sha(windows))
         for field in admission:
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'schema'):
                 self.load_changed(lambda value: value['discrete_world_source_admission'].pop(field))

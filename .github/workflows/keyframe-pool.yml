@@ -1,0 +1,95 @@
+name: Keyframe pool verification
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/keyframe-pool.yml'
+      - '.claude/skills/verify-keyframe-pool/**'
+      - 'tools/keypool_check/**'
+      - 'src/**'
+      - 'include/**'
+      - 'rust/crates/mds-edit/**'
+      - 'rust/crates/mds-formats/**'
+      - 'rust/crates/mds-math/**'
+      - 'rust/Cargo.*'
+      - 'rust/rust-toolchain.toml'
+  pull_request:
+    paths:
+      - '.github/workflows/keyframe-pool.yml'
+      - '.claude/skills/verify-keyframe-pool/**'
+      - 'tools/keypool_check/**'
+      - 'src/**'
+      - 'include/**'
+      - 'rust/crates/mds-edit/**'
+      - 'rust/crates/mds-formats/**'
+      - 'rust/crates/mds-math/**'
+      - 'rust/Cargo.*'
+      - 'rust/rust-toolchain.toml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keyframe-pool-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'branch' }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  keyframe-pool:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CXX: clang++
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare compiler and isolated output
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm
+          mkdir -p "$RUNNER_TEMP/keyframe-pool/baseline" "$RUNNER_TEMP/keyframe-pool/mutation"
+          clang++ --version | tee "$RUNNER_TEMP/keyframe-pool/compiler.log"
+          git rev-parse HEAD | tee "$RUNNER_TEMP/keyframe-pool/commit.txt"
+      - name: Check the mutation gate
+        run: python3 -m unittest discover -s tools/keypool_check -p 'test_*.py'
+      - name: Run the unchanged depth-4 verifier and generate the oracle
+        run: |
+          set -o pipefail
+          export TMPDIR="$RUNNER_TEMP/keyframe-pool/baseline"
+          tools/keypool_check/run.sh 4 --dump "$TMPDIR/keypool-depth4.txt" 2>&1 | tee "$TMPDIR/depth4.log"
+          test ! -s "$TMPDIR/keypool_check/asan.log"
+          if grep -Eq 'VIOLATION|KNOWN.*FINDING|cut at tracked-window bound' "$TMPDIR/depth4.log"; then
+            echo '::error::A violation or exploration cut is not a verified baseline.'
+            exit 1
+          fi
+      - name: Compare the generated oracle with the committed fixture
+        run: |
+          set -o pipefail
+          cmp "$RUNNER_TEMP/keyframe-pool/baseline/keypool-depth4.txt" \
+            rust/crates/mds-edit/tests/data/keypool-depth4.txt 2>&1 | tee "$RUNNER_TEMP/keyframe-pool/oracle-comparison.log"
+          echo 'PASS: generated depth-4 oracle is byte-identical' | tee -a "$RUNNER_TEMP/keyframe-pool/oracle-comparison.log"
+      - name: Confirm the verifier catches removal of the production guard
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          python3 tools/keypool_check/check_selector_mutation.py "$RUNNER_TEMP/keyframe-pool/mutation" \
+            2>&1 | tee "$RUNNER_TEMP/keyframe-pool/mutation-check.log"
+      - name: Replay the committed oracle in Rust
+        working-directory: rust
+        run: |
+          set -o pipefail
+          cargo test --locked -p mds-edit --test keypool_replay 2>&1 | tee "$RUNNER_TEMP/keyframe-pool/rust-replay.log"
+      - name: Preserve verification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: keyframe-pool-${{ github.sha }}
+          path: ${{ runner.temp }}/keyframe-pool/
+          if-no-files-found: warn
+          retention-days: 14

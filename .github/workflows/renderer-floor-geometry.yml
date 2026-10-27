@@ -1,0 +1,117 @@
+name: Conditional native floor geometry
+on:
+  push:
+    branches: [w4-renderer-native-floor-geometry]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: renderer-floor-geometry-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  capture:
+    name: Actual floor upload capture (Linux x64 llvmpipe)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install existing Rust and Vulkan dependencies
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends clang pkg-config libvulkan1 mesa-vulkan-drivers vulkan-tools
+          rustup toolchain install 1.95.0 --profile minimal
+      - name: Compiler-free controls in both Python modes
+        run: |
+          python3 -B tools/renderer-floor-geometry/test_run.py
+          python3 -B -O tools/renderer-floor-geometry/test_run.py
+      - name: Sequential actual canonical capture under existing GPU lock
+        run: >-
+          flock "${TMPDIR:-/tmp}/mds-rust-test.lock"
+          python3 -B tools/renderer-floor-geometry/run.py --run rust-capture
+          --out "${{ runner.temp }}/floor-evidence"
+          --build-root "${{ runner.temp }}/floor-rust-build"
+          --bundle "${{ runner.temp }}/floor-capture.tar"
+      - name: Read-only replay in both Python modes
+        run: |
+          python3 -B tools/renderer-floor-geometry/run.py --out "${{ runner.temp }}/floor-evidence"
+          python3 -B -O tools/renderer-floor-geometry/run.py --out "${{ runner.temp }}/floor-evidence"
+      - name: Retain incomplete capture
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: floor-capture-incomplete-${{ github.sha }}
+          path: ${{ runner.temp }}/floor-evidence
+          include-hidden-files: true
+          if-no-files-found: warn
+      - name: Retain authenticated mode-preserving Linux source and inputs
+        if: success()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: floor-capture-${{ github.sha }}
+          path: ${{ runner.temp }}/floor-capture.tar
+          if-no-files-found: error
+  native:
+    name: Original floor geometry execution (Windows x64)
+    needs: capture
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Preserve source bytes
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: floor-capture-${{ github.sha }}
+          path: ${{ runner.temp }}/floor-download
+      - name: Install pinned existing Conan dependencies
+        run: |
+          python -m pip install conan==2.27.1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          conan profile detect --force
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          conan create recipes/bullet275 --profile:all profiles/x64 -s compiler.cppstd=17 -s build_type=Release --build=missing --lockfile=""
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          conan install . --profile:all profiles/x64 -s compiler.cppstd=17 -s build_type=Release --build=missing --lockfile="" --output-folder="${{ runner.temp }}/floor-deps"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Install hash-verified existing DirectX runtime
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'floor-directx_Jun2010_redist.exe'
+          $unpack = Join-Path $env:RUNNER_TEMP 'floor-directx-june2010'
+          New-Item -ItemType Directory $unpack | Out-Null
+          Invoke-WebRequest 'https://download.microsoft.com/download/8/4/a/84a35bf1-dafe-4ae8-82af-ad2ae20b6b14/directx_Jun2010_redist.exe' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '053F76DCBB28802E23341B6A787E3B0791C0FA5C8D4D011B1044172DBF89C73B') { throw 'Unexpected DirectX payload' }
+          $extract = Start-Process -FilePath $archive -ArgumentList '/Q', ('/T:"{0}"' -f $unpack) -Wait -PassThru -WindowStyle Hidden
+          if ($extract.ExitCode -ne 0) { throw 'DirectX extraction failed' }
+          $install = Start-Process -FilePath (Join-Path $unpack 'DXSETUP.exe') -ArgumentList '/silent' -Wait -PassThru -WindowStyle Hidden
+          if ($install.ExitCode -ne 0) { throw 'DirectX installation failed' }
+      - name: Build and execute genuine floor console and normal-exit interventions
+        run: |
+          python -B tools/renderer-floor-geometry/run.py --run native --archive "${{ runner.temp }}/floor-download/floor-capture.tar" --out "${{ runner.temp }}/floor-evidence" --build-root "${{ runner.temp }}/floor-native-build" --toolchain "${{ runner.temp }}/floor-deps/build/generators/conan_toolchain.cmake" --bundle "${{ runner.temp }}/floor-complete.tar"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Read-only complete replay in both Python modes
+        run: |
+          python -B tools/renderer-floor-geometry/run.py --out "${{ runner.temp }}/floor-evidence" --archive "${{ runner.temp }}/floor-download/floor-capture.tar"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -B -O tools/renderer-floor-geometry/run.py --out "${{ runner.temp }}/floor-evidence" --archive "${{ runner.temp }}/floor-download/floor-capture.tar"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Always retain complete or partial native evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: floor-native-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/floor-complete.tar
+            ${{ runner.temp }}/floor-evidence
+          include-hidden-files: true
+          if-no-files-found: warn

@@ -250,9 +250,34 @@ class FiniteMeasurementTests(unittest.TestCase):
                 self.load_changed(change)
         for host in measured_profiles.HOSTS:
             current = measured_profiles.approved_source_map(self.manifest, host)
-            self.assertEqual(len(current), 476)
+            self.assertEqual(len(current), 478)
             self.assertEqual(set(current), set(self.manifest['profiles'][host]['protected_source_sha256'])
-                             | measured_profiles.ADDITIONS | measured_profiles.BROADPHASE_ADDITIONS | set(self.manifest['verification_sha256'][host]))
+                             | measured_profiles.ADDITIONS | measured_profiles.BROADPHASE_ADDITIONS | measured_profiles.DISCRETE_WORLD_ADDITIONS | set(self.manifest['verification_sha256'][host]))
+
+    def test_discrete_world_current_only_admission_refuses_identity_and_scope_drift(self):
+        admission = self.manifest['discrete_world_source_admission']
+        self.assertEqual(measured_profiles.source_map_digest(admission), measured_profiles.DISCRETE_WORLD_SHA256)
+        self.assertEqual(admission['execution'], 'UNRUN')
+        for field in admission:
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'schema'):
+                self.load_changed(lambda value: value['discrete_world_source_admission'].pop(field))
+        for host in measured_profiles.HOSTS:
+            delta = admission['hosts'][host]
+            self.assertEqual(set(delta['additions']), measured_profiles.DISCRETE_WORLD_ADDITIONS)
+            self.assertEqual(set(delta['replacements']), measured_profiles.DISCRETE_WORLD_REPLACEMENTS)
+            for kind in ['replacements', 'additions']:
+                for path in delta[kind]:
+                    with self.subTest(host=host, path=path), self.assertRaisesRegex(ValueError, 'schema'):
+                        self.load_changed(lambda value: value['discrete_world_source_admission']['hosts'][host][kind].pop(path))
+            for path in measured_profiles.DISCRETE_WORLD_ADDITIONS | measured_profiles.DISCRETE_WORLD_REPLACEMENTS:
+                source = measured_profiles.approved_source_map(self.manifest, host)
+                for changed in [dict(source, **{path: '0' * 64}),
+                                {p: h for p, h in source.items() if p != path},
+                                dict(source, **{'unexpected-owner.rs': source[path]})]:
+                    with self.subTest(host=host, path=path), self.assertRaisesRegex(ValueError, 'source closure'):
+                        measured_profiles.validate(Path('/unused'), host=lambda: host,
+                            inventory=check.inventory, source_hashes=lambda: changed,
+                            stream=check.stream, transport=check.transport)
 
     def test_supplemental_exact_selection_and_global_identities(self):
         measurement, = self.manifest['supplemental_measurements']
@@ -440,12 +465,12 @@ class FiniteMeasurementTests(unittest.TestCase):
     def test_current_collector_and_broadphase_physical_source_refusals(self):
         current = check.source_hashes()
         current.pop(measured_profiles.MANIFEST_PATH)
-        self.assertEqual(len(current), 476)
+        self.assertEqual(len(current), 478)
         self.assertEqual(current, measured_profiles.approved_source_map(self.manifest, check.host()))
         for host in measured_profiles.HOSTS:
             source = measured_profiles.approved_source_map(self.manifest, host)
             self.assertNotIn(measured_profiles.MANIFEST_PATH, source)
-            for path in measured_profiles.REPLACEMENTS | measured_profiles.BROADPHASE_ADDITIONS:
+            for path in measured_profiles.REPLACEMENTS | measured_profiles.BROADPHASE_ADDITIONS | measured_profiles.DISCRETE_WORLD_ADDITIONS:
                 mutations = [dict(source, **{path: '0' * 64}),
                              {p: h for p, h in source.items() if p != path},
                              dict(source, **{'unknown.rs': source[path]})]

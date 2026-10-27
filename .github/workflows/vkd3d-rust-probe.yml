@@ -98,6 +98,11 @@ jobs:
             --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
             --clang /usr/bin/clang-18 \
             --artifacts "$RUNNER_TEMP/vkd3d-probe/logs/enum-constants"
+          python3 tools/vkd3d-rust-probe/check_stable_boundaries.py \
+            --source "$RUNNER_TEMP/c2rust-src" \
+            --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
+            --clang /usr/bin/clang-18 \
+            --artifacts "$RUNNER_TEMP/vkd3d-probe/logs/stable-boundaries"
           cp "$RUNNER_TEMP/c2rust-src/Cargo.lock" "$RUNNER_TEMP/vkd3d-probe/logs/c2rust-Cargo.lock"
           cp "$RUNNER_TEMP/c2rust-src/LICENSE" "$RUNNER_TEMP/vkd3d-probe/tool/LICENSE"
           "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" --version

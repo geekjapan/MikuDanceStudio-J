@@ -271,3 +271,20 @@ It does not execute the exporter, complete translator, or all 24 shader units.
 Use `--c2rust /path/to/c2rust` in place of `--focused` for the actual translator.
 The 145 enum-array diagnostics and the separate stable E0554 blocker still need
 a new hosted all-unit result. This regression does not waive any existing gate.
+
+The setup job also runs `check_stable_boundaries.py --c2rust` on the rebuilt
+pinned translator. It compiles the untouched Rust 2024 output with stable 1.95.0
+and compares 48 atomic cases and 11 pointer-container/refcount layouts with C,
+including wraparound, decrement and single argument evaluation. The fixture
+covers both legacy sync and AtomicExpr add-and-fetch callers. Other atomic
+operations retain their existing intrinsic lowering.
+
+For a bounded local check without the native exporter, use
+`check_stable_boundaries.py --source <patched-source> --artifacts <new-directory> --focused`.
+It compiles the actual shared atomic method, resolver and opaque item builder
+with AST-storage shims. It also checks that opaque records cannot be constructed
+and do not implement Send, Sync or Unpin. Their Rust marker layout is not a C
+pointee layout. Only thin pointers are supported by this incomplete-type model.
+This check does not establish libc portability or complete stable generation.
+The independent function-pointer null-check `static_mut_refs` issue, variadic
+ABI and all-unit acceptance remain separate.

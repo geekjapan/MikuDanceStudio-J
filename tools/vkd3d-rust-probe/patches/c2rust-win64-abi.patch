@@ -262,6 +262,112 @@ index a699cb7..11e8117 100644
              CTypeKind::Elaborated(ref ctype) => {
                  self.knr_function_type_with_parameters(ctxt, *ctype, params)
              }
+diff --git a/c2rust-transpile/src/translator/atomics.rs b/c2rust-transpile/src/translator/atomics.rs
+index f544ea6..deb82d3 100644
+--- a/c2rust-transpile/src/translator/atomics.rs
++++ b/c2rust-transpile/src/translator/atomics.rs
+@@ -420,7 +420,7 @@ fn static_order<T>(order: Option<T>) -> T {
+                         .get_qual_type()
+                         .ok_or_else(|| format_err!("bad val1 type"))?;
+                     ptr.zip(val).and_then_try(|(ptr, val)| {
+-                        self.convert_atomic_op(ctx, atomic_op, order, ptr, val, val_type_id)
++                        self.convert_atomic_op(ctx, atomic_op, order, ptr_id, ptr, val, val_type_id)
+                     })
+                 } else {
+                     unimplemented!("atomic not implemented: {}", name)
+@@ -471,16 +471,56 @@ pub(crate) fn convert_atomic_op(
+         ctx: ExprContext,
+         atomic_op: CAtomicBinOp,
+         order: Ordering,
++        ptr_id: CExprId,
+         dst: Box<Expr>,
+         src: Box<Expr>,
+         src_type_id: CQualTypeId,
+     ) -> TranslationResult<WithStmts<Box<Expr>>> {
+         // Emit `atomic_func(a0, a1) (op a1)?`
+-        let atomic_func =
+-            self.atomic_intrinsic_expr(atomic_op.rust_intrinsic_base_name(), &[order]);
++        let ptr_ty = self.ast_context[ptr_id].kind.get_qual_type().unwrap();
++        let mut value_ty = self
++            .ast_context
++            .get_pointee_qual_type(ptr_ty.ctype)
++            .unwrap();
++        if let CTypeKind::Atomic(inner) = self.ast_context.resolve_type(value_ty.ctype).kind {
++            value_ty = inner;
++        }
++        let stable_u32 = atomic_op == CAtomicBinOp::AddFetch
++            && order == Ordering::SeqCst
++            && matches!(
++                self.ast_context.resolve_type(value_ty.ctype).kind,
++                CTypeKind::UInt
++            )
++            && matches!(
++                self.ast_context.resolve_type(src_type_id.ctype).kind,
++                CTypeKind::UInt
++            );
++        let atomic_func = if stable_u32 {
++            None
++        } else {
++            Some(self.atomic_intrinsic_expr(atomic_op.rust_intrinsic_base_name(), &[order]))
++        };
++        let call_atomic = |dst, src| {
++            if let Some(ref atomic_func) = atomic_func {
++                mk().call_expr(atomic_func.clone(), vec![dst, src])
++            } else {
++                let atomic = mk().call_expr(
++                    mk().abs_path_expr(vec!["core", "sync", "atomic", "AtomicU32", "from_ptr"]),
++                    vec![dst],
++                );
++                mk().method_call_expr(
++                    atomic,
++                    "fetch_add",
++                    vec![
++                        src,
++                        mk().abs_path_expr(vec!["core", "sync", "atomic", "Ordering", "SeqCst"]),
++                    ],
++                )
++            }
++        };
+
+         if atomic_op.fetches_first() {
+-            let call_expr = mk().call_expr(atomic_func, vec![dst, src]);
++            let call_expr = call_atomic(dst, src);
+             Ok(self.convert_side_effects_expr(
+                 ctx,
+                 WithStmts::new_val(call_expr),
+@@ -510,10 +550,7 @@ pub(crate) fn convert_atomic_op(
+                 Some(src),
+             )));
+
+-            let call = mk().call_expr(
+-                atomic_func,
+-                vec![mk().ident_expr(&arg0_name), mk().ident_expr(&arg1_name)],
+-            );
++            let call = call_atomic(mk().ident_expr(&arg0_name), mk().ident_expr(&arg1_name));
+
+             let src_type_kind = &self.ast_context.resolve_type(src_type_id.ctype).kind;
+             let arg1 = mk().ident_expr(arg1_name);
+diff --git a/c2rust-transpile/src/translator/builtins.rs b/c2rust-transpile/src/translator/builtins.rs
+index 84f40e6..51b5f01 100644
+--- a/c2rust-transpile/src/translator/builtins.rs
++++ b/c2rust-transpile/src/translator/builtins.rs
+@@ -641,7 +641,15 @@ pub fn convert_builtin(
+                         .get_qual_type()
+                         .ok_or_else(|| format_err!("bad arg1 type"))?;
+                     arg0.zip(arg1).and_then_try(|(arg0, arg1)| {
+-                        self.convert_atomic_op(ctx, atomic_op, SeqCst, arg0, arg1, arg1_type_id)
++                        self.convert_atomic_op(
++                            ctx,
++                            atomic_op,
++                            SeqCst,
++                            args[0],
++                            arg0,
++                            arg1,
++                            arg1_type_id,
++                        )
+                     })
+                 } else if let Some(fn_name) = simd_fn_from_builtin_fn(builtin_name) {
+                     self.convert_simd_builtin(ctx, fn_name, args)
 diff --git a/c2rust-transpile/src/translator/functions.rs b/c2rust-transpile/src/translator/functions.rs
 index e423e49..30566ea 100644
 --- a/c2rust-transpile/src/translator/functions.rs
@@ -390,7 +496,7 @@ index e423e49..30566ea 100644
                  }
                  ref k => {
 diff --git a/c2rust-transpile/src/translator/mod.rs b/c2rust-transpile/src/translator/mod.rs
-index 8fb6f5b..9a7a118 100644
+index 8fb6f5b..116fbe7 100644
 --- a/c2rust-transpile/src/translator/mod.rs
 +++ b/c2rust-transpile/src/translator/mod.rs
 @@ -612,13 +612,15 @@ pub fn emit_c_decl_map(
@@ -509,7 +615,28 @@ index 8fb6f5b..9a7a118 100644
          let ident_name = match foreign_item_ident_vis(foreign_item) {
              Some((ident, _vis)) => ident.to_string(),
              None => continue,
-@@ -3554,7 +3629,15 @@ pub(crate) fn convert_expr(
+@@ -2084,9 +2159,17 @@ fn convert_decl(&self, ctx: ExprContext, decl_id: CDeclId) -> TranslationResult<
+
+         use CDeclKind::*;
+         match decl.kind {
+-            Struct { fields: None, .. }
+-            | Union { fields: None, .. }
+-            | Enum {
++            Struct { fields: None, .. } | Union { fields: None, .. } => {
++                let name = self
++                    .type_converter
++                    .borrow()
++                    .resolve_decl_name(decl_id)
++                    .unwrap();
++                Ok(ConvertedDecl::Item(opaque_record_item(syn::Ident::new(
++                    &name, span,
++                ))))
++            }
++            Enum {
+                 underlying_type_id: None,
+                 ..
+             } => {
+@@ -3554,7 +3637,15 @@ pub(crate) fn convert_expr(
                      if ctx.is_pattern {
                          self.convert_expr(ctx, child, override_ty)
                      } else {
@@ -526,7 +653,7 @@ index 8fb6f5b..9a7a118 100644
                      }
                  } else {
                      self.convert_expr(ctx, child, Some(override_ty.unwrap_or(ty)))
-@@ -3574,62 +3657,42 @@ pub(crate) fn convert_expr(
+@@ -3574,62 +3665,42 @@ pub(crate) fn convert_expr(
                      false,
                  )?)),
                  OffsetOfKind::Variable(qty, field_id, expr_id) => {
@@ -617,6 +744,21 @@ index 8fb6f5b..9a7a118 100644
                  }
              },
  
+@@ -5068,3 +5139,14 @@ fn from(value: (Box<Expr>, CQualTypeId)) -> Self {
+         Self::Expr(value.0, value.1)
+     }
+ }
++
++// The marker is uninhabited and neither Send, Sync nor Unpin; only its thin pointers model C.
++fn opaque_record_item(name: syn::Ident) -> Box<Item> {
++    Box::new(syn::parse_quote! {
++        #[repr(C)]
++        pub struct #name {
++            _private: ::core::convert::Infallible,
++            _marker: ::core::marker::PhantomData<(*mut u8, ::core::marker::PhantomPinned)>,
++        }
++    })
++}
 diff --git a/c2rust-transpile/src/translator/variadic.rs b/c2rust-transpile/src/translator/variadic.rs
 index 8416eaf..7851312 100644
 --- a/c2rust-transpile/src/translator/variadic.rs
@@ -638,6 +780,86 @@ index 8416eaf..7851312 100644
                      )?;
  
                      cast_kind = Some(VaArgCastKind::Transmute(self.convert_type(ty.ctype)?));
+diff --git a/tests/unit/builtins/src/stable_boundaries.c b/tests/unit/builtins/src/stable_boundaries.c
+new file mode 100644
+index 0000000..9edeecd
+--- /dev/null
++++ b/tests/unit/builtins/src/stable_boundaries.c
+@@ -0,0 +1,44 @@
++typedef unsigned int uint32_t;
++struct _IO_wide_data;
++struct _IO_codecvt;
++struct _IO_marker;
++struct __locale_data;
++struct opaque_pointers {
++    unsigned char tag;
++    struct _IO_wide_data *wide;
++    struct _IO_codecvt *codecvt;
++    struct _IO_marker *marker;
++    struct __locale_data *locale;
++};
++struct refcount { unsigned char tag; uint32_t count; };
++uint32_t stable_sync(uint32_t *x, uint32_t value) {
++    return __sync_add_and_fetch(x, value);
++}
++uint32_t stable_atomic(uint32_t *x, uint32_t value) {
++    return __atomic_add_fetch(x, value, __ATOMIC_SEQ_CST);
++}
++uint32_t stable_effects(uint32_t *x, uint32_t value, unsigned int *pc, unsigned int *vc) {
++    return __sync_add_and_fetch(((*pc)++, x), ((*vc)++, value));
++}
++unsigned long long stable_layout(unsigned int which) {
++    switch (which) {
++    case 0: return sizeof(struct opaque_pointers);
++    case 1: return _Alignof(struct opaque_pointers);
++    case 2: return __builtin_offsetof(struct opaque_pointers, wide);
++    case 3: return __builtin_offsetof(struct opaque_pointers, codecvt);
++    case 4: return __builtin_offsetof(struct opaque_pointers, marker);
++    case 5: return __builtin_offsetof(struct opaque_pointers, locale);
++    case 6: return sizeof(struct refcount);
++    case 7: return _Alignof(struct refcount);
++    case 8: return __builtin_offsetof(struct refcount, count);
++    case 9: return sizeof(uint32_t);
++    case 10: return _Alignof(uint32_t);
++    default: return 999;
++    }
++}
++void *stable_opaque_roundtrip(void *value) {
++    struct opaque_pointers p = {0};
++    p.wide = value; p.codecvt = (void *)p.wide;
++    p.marker = (void *)p.codecvt; p.locale = (void *)p.marker;
++    return p.locale;
++}
+diff --git a/tests/unit/builtins/src/test_stable_boundaries.rs b/tests/unit/builtins/src/test_stable_boundaries.rs
+new file mode 100644
+index 0000000..b9acff5
+--- /dev/null
++++ b/tests/unit/builtins/src/test_stable_boundaries.rs
+@@ -0,0 +1,24 @@
++use crate::stable_boundaries::{rust_stable_sync, rust_stable_atomic};
++#[link(name = "test")]
++unsafe extern "C" {
++    fn stable_sync(x: *mut u32, value: u32) -> u32;
++    fn stable_atomic(x: *mut u32, value: u32) -> u32;
++}
++#[test]
++fn stable_add_fetch_wraps_and_decrements() {
++    for initial in [0u32, 1, u32::MAX - 1, u32::MAX] {
++        for delta in [0u32, 1, 2, u32::MAX] {
++            unsafe {
++                let mut native = initial;
++                let mut rust = initial;
++                let expected = initial.wrapping_add(delta);
++                assert_eq!(stable_sync(&mut native, delta), expected);
++                assert_eq!(rust_stable_sync(&mut rust, delta), expected);
++                assert_eq!(native, rust);
++                assert_eq!(stable_atomic(&mut native, delta), expected.wrapping_add(delta));
++                assert_eq!(rust_stable_atomic(&mut rust, delta), expected.wrapping_add(delta));
++                assert_eq!(native, rust);
++            }
++        }
++    }
++}
 diff --git a/tests/unit/enums/src/constant_array.c b/tests/unit/enums/src/constant_array.c
 new file mode 100644
 index 0000000..5f2c6e8

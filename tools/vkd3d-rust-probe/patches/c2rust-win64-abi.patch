@@ -3,7 +3,7 @@ index ef9d929..4234ed4 100644
 --- a/c2rust-ast-exporter/src/AstExporter.cpp
 +++ b/c2rust-ast-exporter/src/AstExporter.cpp
 @@ -12,6 +12,7 @@
- 
+
  #include "llvm/Support/CommandLine.h"
  #include "llvm/Support/Debug.h"
 +#include "llvm/Support/ErrorHandling.h"
@@ -11,16 +11,16 @@ index ef9d929..4234ed4 100644
  #include "llvm/Support/raw_ostream.h"
  // Declares clang::SyntaxOnlyAction.
 @@ -223,6 +224,8 @@ private:
- 
+
    public:
      uintptr_t encodeQualType(QualType t) {
 +        while (const auto *macro = dyn_cast<MacroQualifiedType>(t.getTypePtr()))
 +            t = macro->getUnderlyingType().withCVRQualifiers(t.getCVRQualifiers());
          auto s = t.split();
- 
+
          auto desugared = sugared->find((void *)s.Ty);
 @@ -259,6 +262,10 @@ private:
- 
+
      void VisitQualType(const QualType &QT) {
          if (!QT.isNull()) {
 +            if (const auto *macro = dyn_cast<MacroQualifiedType>(QT.getTypePtr())) {
@@ -28,17 +28,17 @@ index ef9d929..4234ed4 100644
 +                return;
 +            }
              auto s = QT.split();
- 
+
              auto desugared = sugared->find((void *)s.Ty);
 @@ -271,7 +278,7 @@ private:
      }
- 
+
      void VisitAttributedType(const AttributedType *T) {
 -        auto t = T->getModifiedType();
 +        auto t = T->isCallingConv() ? T->getEquivalentType() : T->getModifiedType();
          auto qt = encodeQualType(t);
          auto k = T->getAttrKind();
- 
+
 @@ -585,6 +592,15 @@ private:
      // handled as `FunctionNoPrototype` instances. Note: we could handle both
      // cases by overriding `VisitFunctionType` instead of the current
@@ -61,7 +61,7 @@ index ef9d929..4234ed4 100644
              cbor_encode_boolean(local, true); // has arguments
 +            cbor_encode_text_stringz(local, callingConvention(T));
          });
- 
+
          VisitQualType(T->getReturnType());
 @@ -631,6 +648,7 @@ private:
              cbor_encode_boolean(local, false); // Variable argument function
@@ -69,7 +69,7 @@ index ef9d929..4234ed4 100644
              cbor_encode_boolean(local, false); // has arguments
 +            cbor_encode_text_stringz(local, callingConvention(T));
          });
- 
+
          VisitQualType(T->getReturnType());
 diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_ast/conversion.rs
 index de549e2..aac1017 100644
@@ -92,7 +92,7 @@ index de549e2..aac1017 100644
 +                        CTypeKind::Function(ret, arguments, is_variadic, is_noreturn, has_proto, abi);
                      self.add_type(new_id, not_located(function_ty));
                      self.processed_nodes.insert(new_id, FUNC_TYPE);
- 
+
 diff --git a/c2rust-transpile/src/c_ast/iterators.rs b/c2rust-transpile/src/c_ast/iterators.rs
 index 123c377..75a3074 100644
 --- a/c2rust-transpile/src/c_ast/iterators.rs
@@ -132,7 +132,7 @@ index 0cbfdca..b8ea7f2 100644
                      && has_prototype1 == has_prototype2
 +                    && abi1 == abi2
              }
- 
+
              (Attributed(type_id1, ref attribute1), Attributed(type_id2, ref attribute2)) => {
 @@ -1095,8 +1098,8 @@ pub fn fn_decl_ty_with_declared_args(&self, func_decl: &CDeclKind) -> CTypeKind
              let typ = self.resolve_type_id(*typ);
@@ -147,7 +147,7 @@ index 0cbfdca..b8ea7f2 100644
          }
 @@ -1179,7 +1182,7 @@ pub fn expr_diverges(&self, expr_id: CExprId) -> bool {
          };
- 
+
          match self.index(pointed_id).kind {
 -            CTypeKind::Function(_, _, _, no_return, _) => no_return,
 +            CTypeKind::Function(_, _, _, no_return, _, _) => no_return,
@@ -157,7 +157,7 @@ index 0cbfdca..b8ea7f2 100644
 @@ -2830,9 +2833,25 @@ pub(crate) fn not_volatile(self) -> Self {
  //  * UnaryTransformType <http://clang.llvm.org/doxygen/classclang_1_1UnaryTransformType.html>
  //  * AdjustedType <http://clang.llvm.org/doxygen/classclang_1_1AdjustedType.html>
- 
+
 -/// Represents a type in C (6.2.5 Types)
 -///
 -/// Reflects the types in <http://clang.llvm.org/doxygen/classclang_1_1Type.html>
@@ -189,7 +189,7 @@ index 0cbfdca..b8ea7f2 100644
      // Flags: is_variable_argument, is_noreturn, has prototype
 -    Function(CQualTypeId, Vec<CQualTypeId>, bool, bool, bool),
 +    Function(CQualTypeId, Vec<CQualTypeId>, bool, bool, bool, CCallingConvention),
- 
+
      // Type definition type (6.7.7)
      Typedef(CTypedefId),
 diff --git a/c2rust-transpile/src/convert_type.rs b/c2rust-transpile/src/convert_type.rs
@@ -211,11 +211,11 @@ index a699cb7..11e8117 100644
 -        Ok(mk().unsafe_().extern_("C").barefn_ty(fn_ty))
 +        Ok(mk().unsafe_().extern_(abi.as_str()).barefn_ty(fn_ty))
      }
- 
+
      /// Converts the qualified type of a pointer.
 @@ -305,16 +306,16 @@ pub fn convert(
              CTypeKind::Atomic(ty) => self.convert(ctxt, ty.ctype),
- 
+
              // ANSI/ISO C-style function
 -            CTypeKind::Function(ret, ref params, is_var, is_noreturn, true) => {
 +            CTypeKind::Function(ret, ref params, is_var, is_noreturn, true, abi) => {
@@ -224,7 +224,7 @@ index a699cb7..11e8117 100644
 +                let fn_ty = self.convert_function(ctxt, opt_ret, params, is_var, abi)?;
                  Ok(fn_ty)
              }
- 
+
              // K&R-style function
 -            CTypeKind::Function(ret, _, is_var, is_noreturn, false) => {
 +            CTypeKind::Function(ret, _, is_var, is_noreturn, false, abi) => {
@@ -233,14 +233,14 @@ index a699cb7..11e8117 100644
 +                let fn_ty = self.convert_function(ctxt, opt_ret, &[], is_var, abi)?;
                  Ok(fn_ty)
              }
- 
+
 @@ -351,10 +352,10 @@ pub fn knr_function_type_with_parameters(
      ) -> TranslationResult<Option<Box<Type>>> {
          match ctxt.index(ctype).kind {
              // ANSI/ISO C-style function
 -            CTypeKind::Function(.., true) => Ok(None),
 +            CTypeKind::Function(_, _, _, _, true, _) => Ok(None),
- 
+
              // K&R-style function
 -            CTypeKind::Function(ret, ref _params, is_var, is_noreturn, false) => {
 +            CTypeKind::Function(ret, ref _params, is_var, is_noreturn, false, abi) => {
@@ -249,13 +249,13 @@ index a699cb7..11e8117 100644
                      .iter()
 @@ -368,10 +369,13 @@ pub fn knr_function_type_with_parameters(
                      .collect::<Vec<_>>();
- 
+
                  let opt_ret = if is_noreturn { None } else { Some(ret) };
 -                let fn_ty = self.convert_function(ctxt, opt_ret, &params, is_var)?;
 +                let fn_ty = self.convert_function(ctxt, opt_ret, &params, is_var, abi)?;
                  Ok(Some(fn_ty))
              }
- 
+
 +            CTypeKind::Attributed(ty, _) => {
 +                self.knr_function_type_with_parameters(ctxt, ty.ctype, params)
 +            }
@@ -263,7 +263,7 @@ index a699cb7..11e8117 100644
                  self.knr_function_type_with_parameters(ctxt, *ctype, params)
              }
 diff --git a/c2rust-transpile/src/translator/atomics.rs b/c2rust-transpile/src/translator/atomics.rs
-index f544ea6..deb82d3 100644
+index f544ea6..6b801d6 100644
 --- a/c2rust-transpile/src/translator/atomics.rs
 +++ b/c2rust-transpile/src/translator/atomics.rs
 @@ -420,7 +420,7 @@ fn static_order<T>(order: Option<T>) -> T {
@@ -299,11 +299,11 @@ index f544ea6..deb82d3 100644
 +            && order == Ordering::SeqCst
 +            && matches!(
 +                self.ast_context.resolve_type(value_ty.ctype).kind,
-+                CTypeKind::UInt
++                CTypeKind::UInt | CTypeKind::UInt32
 +            )
 +            && matches!(
 +                self.ast_context.resolve_type(src_type_id.ctype).kind,
-+                CTypeKind::UInt
++                CTypeKind::UInt | CTypeKind::UInt32
 +            );
 +        let atomic_func = if stable_u32 {
 +            None
@@ -375,7 +375,7 @@ index e423e49..30566ea 100644
 @@ -30,10 +30,10 @@ pub fn convert_function(
              return Ok(ConvertedDecl::NoItem);
          }
- 
+
 -        let (ret, is_variadic): (Option<CQualTypeId>, bool) =
 +        let (ret, is_variadic, abi): (Option<CQualTypeId>, bool, CCallingConvention) =
              match self.ast_context.resolve_type(typ).kind {
@@ -424,12 +424,12 @@ index e423e49..30566ea 100644
 -                    mk().extern_("C")
 +                    mk().extern_(abi.as_str())
                  };
- 
+
                  // In Edition2024, `unsafe_op_in_unsafe_fn` is deny-by-default so we emit an allow pragma
 @@ -334,7 +337,14 @@ fn convert_function_inner(
                  let mk_ = mk_.unsafety(extern_block_unsafety(self.tcfg.edition));
                  let function_decl = mk_.fn_foreign_item(decl);
- 
+
 -                Ok(ConvertedDecl::ForeignItem(function_decl))
 +                if abi == CCallingConvention::C {
 +                    Ok(ConvertedDecl::ForeignItem(function_decl))
@@ -450,7 +450,7 @@ index e423e49..30566ea 100644
 +            Some(CTypeKind::Function(_, _, is_variadic, _, _, _)) => *is_variadic,
              _ => false,
          };
- 
+
 @@ -403,7 +413,7 @@ pub fn convert_function_call(
              // Function pointer call
              _ => {
@@ -522,7 +522,7 @@ index 8fb6f5b..116fbe7 100644
 @@ -1347,6 +1349,18 @@ fn item_ident(i: &Item) -> Option<&Ident> {
      })
  }
- 
+
 +fn item_idents(item: &Item) -> Vec<&Ident> {
 +    if let Item::ForeignMod(block) = item {
 +        block
@@ -541,7 +541,7 @@ index 8fb6f5b..116fbe7 100644
 @@ -1397,6 +1411,61 @@ fn foreign_item_ident_vis(fi: &ForeignItem) -> Option<(&Ident, Visibility)> {
      })
  }
- 
+
 +#[test]
 +fn win64_foreign_block_names_and_reexports() {
 +    let item: Item = syn::parse_quote! {
@@ -603,7 +603,7 @@ index 8fb6f5b..116fbe7 100644
 @@ -1431,7 +1500,13 @@ fn make_submodule(
          use_item_store.add_use_with_attr(false, use_path(), &ident_name, vis);
      }
- 
+
 -    for foreign_item in foreign_items.iter() {
 +    for foreign_item in foreign_items.iter().chain(items.iter().flat_map(|item| {
 +        if let Item::ForeignMod(block) = &**item {
@@ -731,7 +731,7 @@ index 8fb6f5b..116fbe7 100644
 +                    let size_ty = self.convert_type(ty.ctype)?;
                      let cast_ty = self.convert_type(override_ty.unwrap_or(ty).ctype)?;
 -                    let cast_expr = mk().cast_expr(mac, cast_ty);
- 
+
 -                    Ok(WithStmts::new_val(cast_expr))
 +                    // Clang computes the byte offset modulo the original C size_t width.
 +                    Ok(self.convert_expr(ctx, *expr_id, None)?.map(|index| {
@@ -743,7 +743,7 @@ index 8fb6f5b..116fbe7 100644
 +                    }))
                  }
              },
- 
+
 @@ -5068,3 +5139,14 @@ fn from(value: (Box<Expr>, CQualTypeId)) -> Self {
          Self::Expr(value.0, value.1)
      }
@@ -778,15 +778,15 @@ index 8416eaf..7851312 100644
                          is_variadic,
 +                        abi,
                      )?;
- 
+
                      cast_kind = Some(VaArgCastKind::Transmute(self.convert_type(ty.ctype)?));
 diff --git a/tests/unit/builtins/src/stable_boundaries.c b/tests/unit/builtins/src/stable_boundaries.c
 new file mode 100644
-index 0000000..9edeecd
+index 0000000..31aae9b
 --- /dev/null
 +++ b/tests/unit/builtins/src/stable_boundaries.c
-@@ -0,0 +1,44 @@
-+typedef unsigned int uint32_t;
+@@ -0,0 +1,53 @@
++#include <stdint.h>
 +struct _IO_wide_data;
 +struct _IO_codecvt;
 +struct _IO_marker;
@@ -798,14 +798,14 @@ index 0000000..9edeecd
 +    struct _IO_marker *marker;
 +    struct __locale_data *locale;
 +};
-+struct refcount { unsigned char tag; uint32_t count; };
-+uint32_t stable_sync(uint32_t *x, uint32_t value) {
++struct refcount { unsigned char tag; unsigned int count; };
++unsigned int stable_sync(unsigned int *x, unsigned int value) {
 +    return __sync_add_and_fetch(x, value);
 +}
-+uint32_t stable_atomic(uint32_t *x, uint32_t value) {
++unsigned int stable_atomic(unsigned int *x, unsigned int value) {
 +    return __atomic_add_fetch(x, value, __ATOMIC_SEQ_CST);
 +}
-+uint32_t stable_effects(uint32_t *x, uint32_t value, unsigned int *pc, unsigned int *vc) {
++unsigned int stable_effects(unsigned int *x, unsigned int value, unsigned int *pc, unsigned int *vc) {
 +    return __sync_add_and_fetch(((*pc)++, x), ((*vc)++, value));
 +}
 +unsigned long long stable_layout(unsigned int which) {
@@ -819,8 +819,8 @@ index 0000000..9edeecd
 +    case 6: return sizeof(struct refcount);
 +    case 7: return _Alignof(struct refcount);
 +    case 8: return __builtin_offsetof(struct refcount, count);
-+    case 9: return sizeof(uint32_t);
-+    case 10: return _Alignof(uint32_t);
++    case 9: return sizeof(unsigned int);
++    case 10: return _Alignof(unsigned int);
 +    default: return 999;
 +    }
 +}
@@ -830,17 +830,39 @@ index 0000000..9edeecd
 +    p.marker = (void *)p.codecvt; p.locale = (void *)p.marker;
 +    return p.locale;
 +}
++uint32_t stable_alias_sync(uint32_t volatile *x, uint32_t value) {
++    return __sync_add_and_fetch(x, value);
++}
++uint32_t stable_alias_atomic(uint32_t volatile *x, uint32_t value) {
++    return __atomic_add_fetch(x, value, __ATOMIC_SEQ_CST);
++}
++uint32_t stable_alias_effects(uint32_t volatile *x, uint32_t value, unsigned int *pc, unsigned int *vc) {
++    return __sync_add_and_fetch(((*pc)++, x), ((*vc)++, value));
++}
+diff --git a/tests/unit/builtins/src/stable_boundaries_negative.c b/tests/unit/builtins/src/stable_boundaries_negative.c
+new file mode 100644
+index 0000000..f2758af
+--- /dev/null
++++ b/tests/unit/builtins/src/stable_boundaries_negative.c
+@@ -0,0 +1,5 @@
++#include <stdint.h>
++int32_t negative_signed(int32_t volatile *x, int32_t value) { return __sync_add_and_fetch(x, value); }
++uint64_t negative_wide(uint64_t volatile *x, uint64_t value) { return __sync_add_and_fetch(x, value); }
++uint32_t negative_order(uint32_t volatile *x, uint32_t value) { return __atomic_add_fetch(x, value, __ATOMIC_RELAXED); }
++uint32_t negative_op(uint32_t volatile *x, uint32_t value) { return __sync_fetch_and_add(x, value); }
 diff --git a/tests/unit/builtins/src/test_stable_boundaries.rs b/tests/unit/builtins/src/test_stable_boundaries.rs
 new file mode 100644
-index 0000000..b9acff5
+index 0000000..732c7bc
 --- /dev/null
 +++ b/tests/unit/builtins/src/test_stable_boundaries.rs
-@@ -0,0 +1,24 @@
-+use crate::stable_boundaries::{rust_stable_sync, rust_stable_atomic};
+@@ -0,0 +1,45 @@
++use crate::stable_boundaries::{rust_stable_sync, rust_stable_atomic, rust_stable_alias_sync, rust_stable_alias_atomic};
 +#[link(name = "test")]
 +unsafe extern "C" {
 +    fn stable_sync(x: *mut u32, value: u32) -> u32;
 +    fn stable_atomic(x: *mut u32, value: u32) -> u32;
++    fn stable_alias_sync(x: *mut u32, value: u32) -> u32;
++    fn stable_alias_atomic(x: *mut u32, value: u32) -> u32;
 +}
 +#[test]
 +fn stable_add_fetch_wraps_and_decrements() {
@@ -855,6 +877,25 @@ index 0000000..b9acff5
 +                assert_eq!(native, rust);
 +                assert_eq!(stable_atomic(&mut native, delta), expected.wrapping_add(delta));
 +                assert_eq!(rust_stable_atomic(&mut rust, delta), expected.wrapping_add(delta));
++                assert_eq!(native, rust);
++            }
++        }
++    }
++}
++
++#[test]
++fn stable_stdint_add_fetch_wraps_and_decrements() {
++    for initial in [0u32, 1, u32::MAX - 1, u32::MAX] {
++        for delta in [0u32, 1, 2, u32::MAX] {
++            unsafe {
++                let mut native = initial;
++                let mut rust = initial;
++                let expected = initial.wrapping_add(delta);
++                assert_eq!(stable_alias_sync(&mut native, delta), expected);
++                assert_eq!(rust_stable_alias_sync(&mut rust, delta), expected);
++                assert_eq!(native, rust);
++                assert_eq!(stable_alias_atomic(&mut native, delta), expected.wrapping_add(delta));
++                assert_eq!(rust_stable_alias_atomic(&mut rust, delta), expected.wrapping_add(delta));
 +                assert_eq!(native, rust);
 +            }
 +        }
@@ -917,7 +958,7 @@ index 97f83ad..3e9b07d 100644
 -//! extern_crate_memoffset
 -
  use crate::variable_offsetof::{rust_get_offset, rust_get_offset2, size_t};
- 
+
  #[link(name = "test")]
 @@ -22,3 +20,20 @@ pub fn test_get_offset() {
          assert_eq!(rust_ret2, c_ret2);

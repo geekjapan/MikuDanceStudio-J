@@ -24,10 +24,10 @@ type CTypeId = usize;
 #[derive(Clone, Copy)] struct CExprId(usize);
 #[derive(Clone, Copy)] struct CQualTypeId { ctype: CTypeId }
 #[derive(Clone, Copy)] enum CTypeKind {
-    UInt, Int, Atomic(CQualTypeId), Pointer(CQualTypeId), Attributed(CQualTypeId, ()),
+    UInt, UInt32, ULongLong, UInt64, Int, Int32, Atomic(CQualTypeId), Pointer(CQualTypeId), Attributed(CQualTypeId, ()),
     Elaborated(CTypeId), Decayed(CTypeId), TypeOf(CTypeId), Paren(CTypeId), Typedef(DeclId), Auto(CTypeId),
 }
-impl CTypeKind { fn is_unsigned_integral_type(&self) -> bool { matches!(self, Self::UInt) } }
+impl CTypeKind { fn is_unsigned_integral_type(&self) -> bool { matches!(self, Self::UInt | Self::UInt32 | Self::ULongLong | Self::UInt64) } }
 #[derive(Clone, Copy)] struct DeclId(usize);
 enum CDeclKind { Typedef { typ: CQualTypeId }, Other }
 struct CType { kind: CTypeKind }
@@ -68,32 +68,37 @@ fn main() {
     let t = Translation { ast_context: Ast {
         types: vec![CType { kind: CTypeKind::UInt }, CType { kind: CTypeKind::Typedef(DeclId(0)) },
             CType { kind: CTypeKind::Pointer(CQualTypeId { ctype: 1 }) }, CType { kind: CTypeKind::Int },
-            CType { kind: CTypeKind::Pointer(CQualTypeId { ctype: 3 }) }],
-        decls: vec![Decl { kind: CDeclKind::Typedef { typ: CQualTypeId { ctype: 0 } } }], exprs: (0..5).map(|ctype| CExpr { kind: ExprKind(CQualTypeId { ctype }) }).collect(),
+            CType { kind: CTypeKind::Pointer(CQualTypeId { ctype: 3 }) },
+            CType { kind: CTypeKind::UInt32 }, CType { kind: CTypeKind::Pointer(CQualTypeId { ctype: 5 }) },
+            CType { kind: CTypeKind::ULongLong }, CType { kind: CTypeKind::Pointer(CQualTypeId { ctype: 7 }) },
+            CType { kind: CTypeKind::UInt64 }, CType { kind: CTypeKind::Pointer(CQualTypeId { ctype: 9 }) },
+            CType { kind: CTypeKind::Int32 }, CType { kind: CTypeKind::Pointer(CQualTypeId { ctype: 11 }) }],
+        decls: vec![Decl { kind: CDeclKind::Typedef { typ: CQualTypeId { ctype: 0 } } }], exprs: (0..13).map(|ctype| CExpr { kind: ExprKind(CQualTypeId { ctype }) }).collect(),
     }, renamer: RefCell::new(Names), features: Cell::new(false) };
     for name in ["_IO_wide_data", "_IO_codecvt", "_IO_marker", "__locale_data"] {
         println!("{}", opaque_record_item(syn::Ident::new(name, proc_macro2::Span::call_site())).to_token_stream());
     }
-    for (name, effect) in [("stable_sync", false), ("stable_atomic", false), ("stable_effects", true)] {
+    for (name, effect, pointer, value) in [("stable_sync", false, 2, 1), ("stable_atomic", false, 2, 1), ("stable_effects", true, 2, 1),
+        ("stable_alias_sync", false, 6, 5), ("stable_alias_atomic", false, 6, 5), ("stable_alias_effects", true, 6, 5)] {
         let dst = if effect { syn::parse_quote!({ *pc += 1; x }) } else { syn::parse_quote!(x) };
         let src = if effect { syn::parse_quote!({ *vc += 1; value }) } else { syn::parse_quote!(value) };
-        let ptr_id = CExprId(2);
-        let result = t.convert_atomic_op(ExprContext, CAtomicBinOp::AddFetch, Ordering::SeqCst, PTR_ID dst, src, CQualTypeId { ctype: 1 }).unwrap();
+        let ptr_id = CExprId(pointer);
+        let result = t.convert_atomic_op(ExprContext, CAtomicBinOp::AddFetch, Ordering::SeqCst, PTR_ID dst, src, CQualTypeId { ctype: value }).unwrap();
         let stmts = result.stmts.iter().map(|s| s.to_token_stream().to_string()).collect::<Vec<_>>().join("\n");
         let params = if effect { ", pc: *mut u32, vc: *mut u32" } else { "" };
         println!("unsafe extern \"C\" fn {name}(x: *mut u32, value: u32{params}) -> u32 {{ {stmts} {} }}", result.val.to_token_stream());
     }
-    let ptr_id = CExprId(2);
-    t.features.set(false);
-    let _ = t.convert_atomic_op(ExprContext, CAtomicBinOp::FetchAdd, Ordering::SeqCst, PTR_ID syn::parse_quote!(x), syn::parse_quote!(value), CQualTypeId { ctype: 1 }).unwrap();
-    assert!(t.features.get());
-    t.features.set(false);
-    let _ = t.convert_atomic_op(ExprContext, CAtomicBinOp::AddFetch, Ordering::Relaxed, PTR_ID syn::parse_quote!(x), syn::parse_quote!(value), CQualTypeId { ctype: 1 }).unwrap();
-    assert!(t.features.get());
-    t.features.set(false);
-    let ptr_id = CExprId(4);
-    let _ = t.convert_atomic_op(ExprContext, CAtomicBinOp::AddFetch, Ordering::SeqCst, PTR_ID syn::parse_quote!(x), syn::parse_quote!(value), CQualTypeId { ctype: 3 }).unwrap();
-    assert!(t.features.get());
+    for pointer in [2, 4, 6, 8, 10, 12] {
+        for value in [1, 3, 5, 7, 9, 11] {
+            for (op, order) in [(CAtomicBinOp::AddFetch, Ordering::SeqCst), (CAtomicBinOp::AddFetch, Ordering::Relaxed), (CAtomicBinOp::FetchAdd, Ordering::SeqCst)] {
+                t.features.set(false);
+                let ptr_id = CExprId(pointer);
+                let _ = t.convert_atomic_op(ExprContext, op, order, PTR_ID syn::parse_quote!(x), syn::parse_quote!(value), CQualTypeId { ctype: value }).unwrap();
+                assert_eq!(t.features.get(), !(matches!(pointer, 2 | 6) && matches!(value, 1 | 5) && op == CAtomicBinOp::AddFetch && order == Ordering::SeqCst));
+            }
+        }
+    }
+
 }
 '''
 
@@ -117,6 +122,9 @@ unsafe extern "C" {
     fn native_stable_sync(x: *mut u32, value: u32) -> u32;
     fn native_stable_atomic(x: *mut u32, value: u32) -> u32;
     fn native_stable_effects(x: *mut u32, value: u32, pc: *mut u32, vc: *mut u32) -> u32;
+    fn native_stable_alias_sync(x: *mut u32, value: u32) -> u32;
+    fn native_stable_alias_atomic(x: *mut u32, value: u32) -> u32;
+    fn native_stable_alias_effects(x: *mut u32, value: u32, pc: *mut u32, vc: *mut u32) -> u32;
     fn native_stable_layout(which: u32) -> u64;
     fn native_stable_opaque_roundtrip(value: *mut core::ffi::c_void) -> *mut core::ffi::c_void;
 }
@@ -132,6 +140,21 @@ fn main() { unsafe {
             let (mut n, mut r, mut np, mut nv, mut rp, mut rv) = (initial, initial, 0, 0, 0, 0);
             assert_eq!(native_stable_effects(&mut n, delta, &mut np, &mut nv), initial.wrapping_add(delta));
             assert_eq!(stable_effects(&mut r, delta, &mut rp, &mut rv), initial.wrapping_add(delta));
+            assert_eq!((n, np, nv), (r, rp, rv));
+            assert_eq!((rp, rv), (1, 1));
+        }
+    }
+    for initial in [0u32, 1, u32::MAX-1, u32::MAX] {
+        for delta in [0u32, 1, 2, u32::MAX] {
+            for (native, generated) in [(native_stable_alias_sync as unsafe extern "C" fn(*mut u32,u32)->u32, stable_alias_sync as unsafe extern "C" fn(*mut u32,u32)->u32), (native_stable_alias_atomic, stable_alias_atomic)] {
+                let (mut n, mut r) = (initial, initial);
+                assert_eq!(native(&mut n, delta), initial.wrapping_add(delta));
+                assert_eq!(generated(&mut r, delta), initial.wrapping_add(delta));
+                assert_eq!(n, r);
+            }
+            let (mut n, mut r, mut np, mut nv, mut rp, mut rv) = (initial, initial, 0, 0, 0, 0);
+            assert_eq!(native_stable_alias_effects(&mut n, delta, &mut np, &mut nv), initial.wrapping_add(delta));
+            assert_eq!(stable_alias_effects(&mut r, delta, &mut rp, &mut rv), initial.wrapping_add(delta));
             assert_eq!((n, np, nv), (r, rp, rv));
             assert_eq!((rp, rv), (1, 1));
         }
@@ -159,7 +182,7 @@ fn main() { unsafe {
     assert_eq!(stable_opaque_roundtrip(p), p);
     assert_eq!(native_stable_opaque_roundtrip(p), p);
     assert!(stable_opaque_roundtrip(core::ptr::null_mut()).is_null());
-    println!("Stable boundaries passed 48 native atomic cases, 11 layouts, single evaluation, refcounts and opaque pointers.");
+    println!("Stable boundaries passed 48 explicit unsigned int and 48 stdint uint32_t native atomic cases, 11 layouts, single evaluation, refcounts and opaque pointers.");
 } }
 '''
 
@@ -185,7 +208,7 @@ def check(source, artifacts, focused=False, c2rust=None, clang='clang', fixture=
             raise RuntimeError(f'{name} unexpected exit {proc.returncode}')
         return proc.stdout
 
-    names = ['stable_sync', 'stable_atomic', 'stable_effects', 'stable_layout', 'stable_opaque_roundtrip']
+    names = ['stable_sync', 'stable_atomic', 'stable_effects', 'stable_alias_sync', 'stable_alias_atomic', 'stable_alias_effects', 'stable_layout', 'stable_opaque_roundtrip']
     try:
         run('native', [clang, '-std=c11', *['-D' + n + '=native_' + n for n in names], '-c', str(translated), '-o', str(artifacts / 'native.o')])
         if focused:
@@ -221,11 +244,24 @@ def check(source, artifacts, focused=False, c2rust=None, clang='clang', fixture=
             if len(matches) != 1:
                 raise RuntimeError('expected one translated.rs')
             generated = matches[0]
+            negative = artifacts / 'negative.c'
+            negative.write_bytes((source / 'tests/unit/builtins/src/stable_boundaries_negative.c').read_bytes())
+            database.write_text(json.dumps([{'directory': str(artifacts), 'file': str(negative), 'arguments': [clang, '-std=c11', '-c', str(negative)]}]))
+            run('negative-transpile', [str(c2rust.with_name('c2rust-transpile')), '--fail-on-error', '--disable-rustfmt', '--edition', '2024', '--output-dir', str(artifacts / 'negative-rust'), str(database)])
+            negative_output = list((artifacts / 'negative-rust').rglob('negative.rs'))
+            if len(negative_output) != 1:
+                raise RuntimeError('expected one negative.rs')
+            negative_text = negative_output[0].read_text()
+            if negative_text.count('::core::intrinsics::atomic_') != 4 or 'AtomicU32::from_ptr' in negative_text:
+                raise RuntimeError('nonmatching atomic types, order or operation used stable lowering')
             run('generated-build', ['rustc', '+1.95.0', '--edition', '2024', '--crate-type', 'staticlib', str(generated), '-o', str(artifacts / 'libtranslated.a')])
             prefix = '''unsafe extern "C" {
 fn stable_sync(x: *mut u32, value: u32) -> u32;
 fn stable_atomic(x: *mut u32, value: u32) -> u32;
 fn stable_effects(x: *mut u32, value: u32, pc: *mut u32, vc: *mut u32) -> u32;
+fn stable_alias_sync(x: *mut u32, value: u32) -> u32;
+fn stable_alias_atomic(x: *mut u32, value: u32) -> u32;
+fn stable_alias_effects(x: *mut u32, value: u32, pc: *mut u32, vc: *mut u32) -> u32;
 fn stable_layout(which: u32) -> u64;
 fn stable_opaque_roundtrip(value: *mut core::ffi::c_void) -> *mut core::ffi::c_void;
 }\n'''

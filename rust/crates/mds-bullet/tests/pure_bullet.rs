@@ -140,3 +140,6 @@ mod world_objects;
 
 #[path = "pure_bullet/dbvt.rs"]
 mod dbvt;
+
+#[path = "pure_bullet/dbvt_broadphase.rs"]
+mod dbvt_broadphase;

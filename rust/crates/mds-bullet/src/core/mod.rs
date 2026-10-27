@@ -31,6 +31,7 @@ pub mod box_box;
 pub mod contact;
 pub mod contact_solver;
 pub mod dbvt;
+pub mod dbvt_broadphase;
 pub mod dispatcher;
 pub mod gjk_epa;
 pub mod gjk_pair;

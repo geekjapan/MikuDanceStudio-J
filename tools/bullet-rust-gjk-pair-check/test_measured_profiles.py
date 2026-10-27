@@ -250,9 +250,9 @@ class FiniteMeasurementTests(unittest.TestCase):
                 self.load_changed(change)
         for host in measured_profiles.HOSTS:
             current = measured_profiles.approved_source_map(self.manifest, host)
-            self.assertEqual(len(current), 474)
+            self.assertEqual(len(current), 476)
             self.assertEqual(set(current), set(self.manifest['profiles'][host]['protected_source_sha256'])
-                             | measured_profiles.ADDITIONS | set(self.manifest['verification_sha256'][host]))
+                             | measured_profiles.ADDITIONS | measured_profiles.BROADPHASE_ADDITIONS | set(self.manifest['verification_sha256'][host]))
 
     def test_supplemental_exact_selection_and_global_identities(self):
         measurement, = self.manifest['supplemental_measurements']
@@ -277,7 +277,8 @@ class FiniteMeasurementTests(unittest.TestCase):
             return value['supplemental_measurements'][0]
         def refresh_capture(value):
             measurement = supplemental(value)
-            current = measured_profiles.approved_source_map(value, 'linux-arm64')
+            current = measured_profiles.bridge_protected_source_map(value, 'linux-arm64')
+            current.update(value['verification_sha256']['linux-arm64'])
             measurement['capture_source_map_sha256'] = measured_profiles.source_map_digest({
                 **current, **measurement['captured_verification_sha256']})
         def coordinated(value):
@@ -347,7 +348,7 @@ class FiniteMeasurementTests(unittest.TestCase):
                              measured_profiles.REGISTRATION_FORMAT['old_sha256'])
             current = measured_profiles.approved_source_map(self.manifest, host)
             self.assertEqual({path for path in old if old[path] != current[path]},
-                             {measured_profiles.REGISTRATION_FORMAT['path']})
+                             measured_profiles.REPLACEMENTS)
         captured = {**measured_profiles.bridge_protected_source_map(self.manifest, 'linux-arm64'),
                     **measurement['captured_verification_sha256']}
         self.assertEqual(measured_profiles.source_map_digest(captured),
@@ -375,8 +376,9 @@ class FiniteMeasurementTests(unittest.TestCase):
     def test_exact_format_physical_bytes_and_source_refusals_on_every_host(self):
         admission = self.manifest['registration_format_admission']
         data = (check.ROOT / admission['path']).read_bytes()
-        self.assertEqual(measured_profiles.sha(data), admission['new_sha256'])
-        self.assertEqual(measured_profiles.sha(b'\n' + data), admission['old_sha256'])
+        current_identity = self.manifest['broadphase_source_admission']['hosts']['macos-arm64']['replacements'][admission['path']]
+        self.assertEqual(current_identity['old_sha256'], admission['new_sha256'])
+        self.assertEqual(measured_profiles.sha(data), current_identity['new_sha256'])
         for host in measured_profiles.HOSTS:
             source = measured_profiles.approved_source_map(self.manifest, host)
             for broken in [b'\n' + data, data.replace(b'\n', b'\r\n'), data + b' ',
@@ -385,6 +387,109 @@ class FiniteMeasurementTests(unittest.TestCase):
                 with self.subTest(host=host), self.assertRaisesRegex(ValueError, 'source closure'):
                     measured_profiles.validate(Path('/unused'), host=lambda: host, inventory=check.inventory,
                         source_hashes=lambda: changed, stream=check.stream, transport=check.transport)
+
+    def test_fixed_broadphase_admission_and_all_metadata_refusals(self):
+        admission = self.manifest['broadphase_source_admission']
+        self.assertEqual(measured_profiles.source_map_digest(admission),
+                         measured_profiles.BROADPHASE_SHA256)
+        self.assertEqual(admission['integration_head'], '83ec9ed6208c10c5eb589a31214eab5f6b689775')
+        self.assertEqual(admission['integration_tree'], '382a56bb424f08edfbef33922e852795877a4e59')
+        self.assertEqual(admission['integration_parents'], [
+            'ea13392ff8db43e1059c7037f571c136e72831f2',
+            '06c1d0678ebf2abf62271a34d39311b2880757f7'])
+        changes = [lambda v: v.pop('broadphase_source_admission'),
+                   lambda v: v.update(broadphase_source_admissions=[admission]),
+                   lambda v: v['broadphase_source_admission'].update(extra={}),
+                   lambda v: v['broadphase_source_admission'].update(integration_parents=list(reversed(admission['integration_parents']))) ]
+        for field in admission:
+            changes.append(lambda v, field=field: v['broadphase_source_admission'].pop(field))
+            changes.append(lambda v, field=field: v['broadphase_source_admission'].update({field: '0' * 40}))
+        for host in measured_profiles.HOSTS:
+            def delta(v):
+                return v['broadphase_source_admission']['hosts'][host]
+            for path in measured_profiles.REPLACEMENTS:
+                for field in ['old_sha256', 'new_sha256']:
+                    changes.append(lambda v, host=host, path=path, field=field:
+                        v['broadphase_source_admission']['hosts'][host]['replacements'][path].update({field: '0' * 64}))
+            for name, paths in [('replacements', measured_profiles.REPLACEMENTS),
+                                ('additions', measured_profiles.BROADPHASE_ADDITIONS)]:
+                path = sorted(paths)[0]
+                changes.append(lambda v, host=host, name=name, path=path:
+                    v['broadphase_source_admission']['hosts'][host][name].pop(path))
+                for substitute in ['unknown.rs', measured_profiles.MANIFEST_PATH,
+                                   '../escape', 'bad\\path', *measured_profiles.REPLACEMENTS,
+                                   *measured_profiles.BROADPHASE_ADDITIONS]:
+                    if substitute == path:
+                        continue
+                    def change(v, host=host, name=name, path=path, substitute=substitute):
+                        d = v['broadphase_source_admission']['hosts'][host][name]
+                        d[substitute] = d.pop(path)
+                    changes.append(change)
+        def coordinated(v):
+            for host in measured_profiles.HOSTS:
+                d = v['broadphase_source_admission']['hosts'][host]
+                for identity in d['replacements'].values():
+                    identity.update(old_sha256='0' * 64, new_sha256='1' * 64)
+                d['additions'] = {p: '2' * 64 for p in d['additions']}
+                v['verification_sha256'][host] = {p: '3' * 64 for p in v['verification_sha256'][host]}
+        changes.append(coordinated)
+        for change in changes:
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'schema'):
+                self.load_changed(change)
+
+    def test_current_collector_and_broadphase_physical_source_refusals(self):
+        current = check.source_hashes()
+        current.pop(measured_profiles.MANIFEST_PATH)
+        self.assertEqual(len(current), 476)
+        self.assertEqual(current, measured_profiles.approved_source_map(self.manifest, check.host()))
+        for host in measured_profiles.HOSTS:
+            source = measured_profiles.approved_source_map(self.manifest, host)
+            self.assertNotIn(measured_profiles.MANIFEST_PATH, source)
+            for path in measured_profiles.REPLACEMENTS | measured_profiles.BROADPHASE_ADDITIONS:
+                mutations = [dict(source, **{path: '0' * 64}),
+                             {p: h for p, h in source.items() if p != path},
+                             dict(source, **{'unknown.rs': source[path]})]
+                data = (check.ROOT / path).read_bytes()
+                physical = [data + b' ', data.replace(b'\n', b'\r\n')]
+                if path in measured_profiles.REPLACEMENTS:
+                    mutations.append(dict(source, **{path: self.manifest['broadphase_source_admission']['hosts'][host]['replacements'][path]['old_sha256']}))
+                for body in physical:
+                    identity = measured_profiles.sha(body)
+                    if identity != source[path]:
+                        mutations.append(dict(source, **{path: identity}))
+                for changed in mutations:
+                    with self.subTest(host=host, path=path), self.assertRaisesRegex(ValueError, 'source closure'):
+                        measured_profiles.validate(Path('/unused'), host=lambda: host,
+                            inventory=check.inventory, source_hashes=lambda: changed,
+                            stream=check.stream, transport=check.transport)
+
+    def test_physical_source_expectation_uses_exact_supported_host(self):
+        path = 'rust/crates/mds-bullet/src/core/dbvt.rs'
+        expectations = [
+            ('Darwin', 'arm64', 'macos-arm64', 'f70819446e34a506b5c71bd74410b618647f9c3c16c1deee0c009e4dc5f76bfe'),
+            ('Linux', 'x86_64', 'linux-x64', 'f70819446e34a506b5c71bd74410b618647f9c3c16c1deee0c009e4dc5f76bfe'),
+            ('Linux', 'aarch64', 'linux-arm64', 'f70819446e34a506b5c71bd74410b618647f9c3c16c1deee0c009e4dc5f76bfe'),
+            ('Windows', 'AMD64', 'windows-x64', '0dc9af5d7af0df8bf8492ab3c8ac5903fa27f29f674391679c372edaa147c26c'),
+        ]
+        for system, machine, host, identity in expectations:
+            source = measured_profiles.approved_source_map(self.manifest, host)
+            source[measured_profiles.MANIFEST_PATH] = measured_profiles.sha((measured_profiles.HERE / 'measured-profiles.json').read_bytes())
+            self.assertEqual(source[path], identity)
+            with self.subTest(host=host), patch('host_profiles.platform.system', return_value=system), \
+                    patch('host_profiles.platform.machine', return_value=machine), \
+                    patch.object(self, 'assertEqual', side_effect=lambda left, right: self.assertTrue(left == right)):
+                self.assertEqual(check.host(), host)
+                with patch.object(check, 'source_hashes', side_effect=lambda: dict(source)):
+                    self.test_current_collector_and_broadphase_physical_source_refusals()
+                crossed_host = 'macos-arm64' if host == 'windows-x64' else 'windows-x64'
+                crossed = measured_profiles.approved_source_map(self.manifest, crossed_host)
+                crossed[measured_profiles.MANIFEST_PATH] = source[measured_profiles.MANIFEST_PATH]
+                with patch.object(check, 'source_hashes', side_effect=lambda: dict(crossed)), self.assertRaises(AssertionError):
+                    self.test_current_collector_and_broadphase_physical_source_refusals()
+        for system, machine in [('Darwin', 'x86_64'), ('Windows', 'x86')]:
+            with self.subTest(system=system, machine=machine), patch('host_profiles.platform.system', return_value=system), \
+                    patch('host_profiles.platform.machine', return_value=machine), self.assertRaisesRegex(ValueError, 'Unsupported host'):
+                check.host()
 
     def test_synthetic_replay_receipts_and_contract_guards(self):
         fixture = check.ROOT / 'rust/crates/mds-bullet/tests/gjk_pair_data'
@@ -424,6 +529,9 @@ class FiniteMeasurementTests(unittest.TestCase):
                 self.assertEqual(receipt['current_source']['bridge']['integration_head'], self.manifest['source_admission']['integration_head'])
                 self.assertEqual(receipt['current_source']['verification_manifest_sha256'], measured_profiles.sha((measured_profiles.HERE / 'measured-profiles.json').read_bytes()))
                 self.assertEqual(receipt['current_source']['registration_format_admission'], measured_profiles.REGISTRATION_FORMAT)
+                self.assertEqual(receipt['current_source']['broadphase_source_admission'],
+                    {k: v for k, v in self.manifest['broadphase_source_admission'].items() if k != 'hosts'})
+                self.assertEqual(receipt['current_source']['status'], 'reviewed-current-source-expectation-execution-pending')
                 self.assertIn('requires fresh four-host gates', receipt['approval'])
                 (output.parent / 'source-head.txt').write_bytes(b'2' * 40 + b'\n')
                 for valid in [b'1' * 40 + b'\n', b'1' * 40 + b'\r\n']:

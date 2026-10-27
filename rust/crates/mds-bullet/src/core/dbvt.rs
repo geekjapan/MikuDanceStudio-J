@@ -350,6 +350,69 @@ impl Dbvt {
     pub fn leaf_count(&self) -> usize {
         self.leaves
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_counters(&self) -> (usize, i32, u32) {
+        (self.leaves, self.lookahead, self.opath)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bind_native_address_ranks(
+        &mut self,
+        preorder: &[(Option<ProxyKey>, Aabb, usize)],
+        free: Option<usize>,
+    ) {
+        fn visit(tree: &Dbvt, n: NodeId, ids: &mut Vec<NodeId>) {
+            ids.push(n);
+            if let Some(children) = tree.children(n) {
+                for child in children {
+                    visit(tree, child, ids);
+                }
+            }
+        }
+        let mut ids = Vec::new();
+        if let Some(root) = self.root {
+            visit(self, root, &mut ids);
+        }
+        assert_eq!(preorder.len(), ids.len(), "native preorder coverage");
+        assert_eq!(
+            free.is_some(),
+            self.free.is_some(),
+            "native cached-free coverage"
+        );
+        ids.extend(self.free);
+        for (&id, &(key, volume, _)) in ids.iter().zip(preorder) {
+            let actual = match self.node(id).kind {
+                Kind::Leaf(k) => Some(k),
+                Kind::Branch(_) => None,
+            };
+            assert_eq!(actual, key, "native preorder topology");
+            assert_eq!(
+                self.node(id).volume.min.0.map(f32::to_bits),
+                volume.min.0.map(f32::to_bits),
+                "native preorder minimum bits"
+            );
+            assert_eq!(
+                self.node(id).volume.max.0.map(f32::to_bits),
+                volume.max.0.map(f32::to_bits),
+                "native preorder maximum bits"
+            );
+        }
+        let ranks: Vec<_> = preorder.iter().map(|node| node.2).chain(free).collect();
+        let mut unique = ranks.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), ranks.len(), "native ranks must be unique");
+        assert!(
+            ranks.iter().all(|rank| *rank != 0),
+            "native ranks must be nonzero"
+        );
+        let mut map = vec![0; self.nodes.len()];
+        for (id, rank) in ids.into_iter().zip(ranks) {
+            map[id.0] = rank;
+        }
+        self.address_ranks = Some(map);
+    }
     fn fetch(&mut self, n: NodeId, leaves: &mut Vec<NodeId>) {
         if let Some([a, b]) = self.children(n) {
             self.fetch(a, leaves);

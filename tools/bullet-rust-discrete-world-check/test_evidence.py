@@ -273,6 +273,11 @@ class AdmissionControls(unittest.TestCase):
             name=json.loads(files['archive-bindings.json'])['members'][0]['object'];files[name]=b'foreign object'
             edit_json(files,'archive-bindings.json',lambda binding:binding['members'][0].update(sha256=sha(files[name])))
         self.rejected(foreign_object,'archive payload/extracted/object equality')
+        def reordered_payloads(files):
+            entries=json.loads(files['archive-bindings.json'])['members']
+            files['BulletWorld.lib']=archive({entry['object']:files[entry['object']] for entry in reversed(entries)})
+            edit_json(files,'archive-bindings.json',lambda binding:binding.update(archive_sha256=sha(files['BulletWorld.lib'])))
+        self.rejected(reordered_payloads,'raw archive payload order equals actual listing')
         def foreign_payload(files):
             name=json.loads(files['archive-bindings.json'])['members'][0]['object']
             files['BulletWorld.lib']=files['BulletWorld.lib'].replace(files[name],b'X'+files[name][1:],1)

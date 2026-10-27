@@ -486,7 +486,9 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
     objects = [path_type(source).stem+ext for source in sources]
     require(set(context['archive_names'])==set(objects) and set(members)==set(context['archive_names'].values()), 'exact archive payload member membership')
     listing = raw('archive-list.stdout').decode().splitlines()
-    require([line.strip() for line in listing if line.strip()]==[context['archive_names'][obj] for obj in objects], 'actual ordered archive listing')
+    actual_listing=[line.strip() for line in listing if line.strip()]
+    require(len(actual_listing)==len(objects) and set(actual_listing)==set(context['archive_names'].values()), 'actual archive listing membership')
+    require(actual_listing==list(members), 'raw archive payload order equals actual listing')
     for obj,member in context['archive_names'].items():
         require(type(member) is str and (member==obj or win and path_type(member)==out/obj), 'archive member producer path identity')
     for source,obj,entry in zip(sources,objects,bindings['members']):

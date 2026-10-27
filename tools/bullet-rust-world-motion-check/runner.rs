@@ -249,10 +249,145 @@ fn replay(mmd: bool, variant: usize) {
     w.clear_forces();
     dump(&w, k, variant, 17);
 }
+fn activation_dump(w: &WorldObjects, k: &str, case: usize, row: usize) {
+    dump(w, k, case, row);
+    for (i, o) in w.objects().iter().enumerate() {
+        print!(
+            "A {k} {case} {row} {i} {}",
+            match o.classification {
+                core::activation::CollisionClassification::Dynamic => 0,
+                core::activation::CollisionClassification::Static => 1,
+                core::activation::CollisionClassification::Kinematic => 2,
+                core::activation::CollisionClassification::StaticAndKinematic => 3,
+            }
+        );
+        for f in [
+            o.activation.deactivation_time,
+            o.activation.linear_sleeping_threshold,
+            o.activation.angular_sleeping_threshold,
+        ] {
+            word(f);
+        }
+        println!();
+    }
+}
+fn activation_replay(mmd: bool) {
+    use core::activation::DeactivationSettings;
+    let k = if mmd { "AM" } else { "AP" };
+    for case in 0..13 {
+        let mut w = if mmd {
+            WorldObjects::mmd()
+        } else {
+            WorldObjects::public()
+        };
+        let base = usize::from(mmd);
+        let mut handles = Vec::new();
+        if case != 0 {
+            for j in 0..13 {
+                let mut d = desc();
+                d.mass = if j == 8 { 0.0 } else { 2.0 };
+                d.kinematic = j == 7;
+                handles.push(if mmd {
+                    d.filter = Some([1, -1]);
+                    w.create_mmd_body(d, if j == 7 { 0 } else { 1 }).unwrap()
+                } else {
+                    w.create_public_body(d).unwrap()
+                });
+            }
+        }
+        activation_dump(&w, k, case, 0);
+        let dt = if case == 1 { 0.0 } else { 0.25 };
+        let settings = DeactivationSettings {
+            time: if case >= 10 {
+                0.0
+            } else if case >= 4 && case <= 6 {
+                1.0
+            } else {
+                2.0
+            },
+            disabled: (7..=9).contains(&case),
+        };
+        for j in 0..handles.len() {
+            let i = base + j;
+            if j == 6 || j == 9 {
+                w.set_kinematic(handles[j], true).unwrap();
+            }
+            let (b, o, _) = w.solver_parts();
+            o[i].activation.force_activation_state(match j {
+                0 => ActivationState::Moving,
+                2 => ActivationState::IslandSleeping,
+                3 => ActivationState::WantsDeactivation,
+                4 => ActivationState::DisableDeactivation,
+                5 => ActivationState::DisableSimulation,
+                _ => ActivationState::Active,
+            });
+            o[i].activation.deactivation_time = if j == 12 {
+                settings.time - dt + ((case - 1) % 3) as f32 * 0.25 - 0.25
+            } else {
+                3.0
+            };
+            o[i].activation.linear_sleeping_threshold = 0.5;
+            o[i].activation.angular_sleeping_threshold = 1.0;
+            let speed = match (case - 1) % 3 {
+                0 => 0.25,
+                1 => 0.5,
+                _ => 0.75,
+            };
+            b[i].set_linear_velocity(Vec3([
+                if j == 4 || j == 5 {
+                    2.0
+                } else if j == 10 {
+                    speed
+                } else {
+                    0.125
+                },
+                0.0,
+                0.0,
+            ]));
+            b[i].set_angular_velocity(Vec3([
+                if j == 4 || j == 5 {
+                    3.0
+                } else if j == 11 {
+                    speed * 2.0
+                } else {
+                    0.25
+                },
+                0.0,
+                0.0,
+            ]));
+            b[i].set_world_transform(fixture(case % 4, j, false, mmd));
+            b[i].set_interpolation_world_transform(fixture(case % 4, j + 1, false, mmd));
+            b[i].set_interpolation_velocities(Vec3([-2.0, 1.0, 0.25]), Vec3([0.25, 0.125, -0.5]));
+            b[i].add_force(Vec3([3.0, -2.0, 1.0]));
+            b[i].add_torque(Vec3([0.5, 0.25, -0.125]));
+            o[i].hit_fraction = 0.25;
+            w.set_motion_state(handles[j], fixture(case % 4, j, true, mmd))
+                .unwrap();
+        }
+        if mmd {
+            w.set_floor(false).unwrap();
+        }
+        activation_dump(&w, k, case, 1);
+        w.update_activation_state(dt, settings);
+        activation_dump(&w, k, case, 2);
+        if case != 0 {
+            w.set_kinematic(handles[9], false).unwrap();
+        }
+        if mmd {
+            w.set_floor(true).unwrap();
+        }
+        w.update_activation_state(0.25, settings);
+        activation_dump(&w, k, case, 3);
+        w.update_activation_state(0.25, settings);
+        activation_dump(&w, k, case, 4);
+    }
+}
 fn main() {
     for mmd in [false, true] {
         for variant in 0..4 {
             replay(mmd, variant);
         }
     }
+    activation_replay(false);
+    activation_replay(true);
 }

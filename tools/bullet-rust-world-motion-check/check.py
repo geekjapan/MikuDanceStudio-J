@@ -14,7 +14,9 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-BASE = '781e5209dada4d2196ee966de741b35a14cd6bc4'
+BASE = 'eb4d9e5f2d9c6d3144321f30de42a2177d70251f'
+LEGACY_LINES = 1368
+LEGACY_SHA256 = 'b335376402a05fbeb89b24071fd3e189c4270b5fdcbe978d2e5df3ab5a1479d4'
 
 def require(ok, message):
     if not ok: raise AssertionError(message)
@@ -45,6 +47,13 @@ def expected_records():
             for row in range(18):
                 records.append((['W', kind, str(variant), str(row)], None))
                 records.extend((['B', kind, str(variant), str(row), str(i)], 122) for i in range(count))
+    for kind in ['AP', 'AM']:
+        for case in range(13):
+            count = (13 if case else 0) + (kind == 'AM')
+            for row in range(5):
+                records.append((['W', kind, str(case), str(row)], None))
+                records.extend((['B', kind, str(case), str(row), str(i)], 122) for i in range(count))
+                records.extend((['A', kind, str(case), str(row), str(i)], 9) for i in range(count))
     return records
 
 
@@ -60,16 +69,19 @@ def validate(raw, reference=None):
         a = line.split()
         require(a[:len(prefix)] == prefix, 'trace record order or identity changed')
         if width is not None: require(len(a) == width, 'trace record width changed')
-        if a[0] == 'W':
+        activation = a[1] in ['AP', 'AM']
+        if a[0] == 'A':
+            integer(a[5], 0, 3); words(a[6:])
+        elif a[0] == 'W':
             require(len(a) >= 9 and a[7] == 'N', 'malformed registration trace')
-            words(a[4:7]); integer(a[8], 0, 9)
+            words(a[4:7]); integer(a[8], 0, 14 if activation else 9)
             require(len(a) == 9 + int(a[8]), 'registration count differs')
-            count = 8 if a[1] == 'P' else 9
+            count = ((13 if int(a[2]) else 0) + (a[1] == 'AM')) if activation else (8 if a[1] == 'P' else 9)
             for value in a[9:]: integer(value, 0, count - 1)
             require(len(set(a[9:])) == len(a[9:]), 'duplicate registration index')
         else:
             words(a[5:-6]); words(a[-1:])
-            integer(a[-6], -1, 127); integer(a[-5], 1, 5)
+            integer(a[-6], -1, 127); integer(a[-5], 0 if activation else 1, 5)
             for value in a[-4:-2]: integer(value, -32768, 32767)
             require(a[-2] == '0', 'unexpected constraint reference')
 
@@ -88,6 +100,46 @@ MUTANTS = {
     'sync-ignore-hit': ('world_objects.rs', 'local_time * self.objects[i].hit_fraction,', 'local_time,'),
     'sync-ignore-all': ('world_objects.rs', 'if synchronize_all {', 'if synchronize_all && false {'),
 }
+
+ACTIVATION_LOOP = """    pub fn update_activation_state(&mut self, dt: f32, settings: DeactivationSettings) {
+        for &i in &self.non_static {"""
+ACTIVATION_CALL = """            object.activation.update_activation_state(
+                dt,
+                object.classification,
+                &mut linear,
+                &mut angular,
+                settings,
+            );"""
+VELOCITY_WRITEBACK = """            self.bodies[i].set_angular_velocity(angular);
+            self.bodies[i].set_linear_velocity(linear);
+        }
+    }
+
+    pub fn clear_forces"""
+MUTANTS.update({
+    'activation-all-bodies': ('world_objects.rs', ACTIVATION_LOOP, ACTIVATION_LOOP.replace('for &i in &self.non_static', 'for i in 0..self.bodies.len()')),
+    'activation-active-only': ('world_objects.rs', ACTIVATION_LOOP, ACTIVATION_LOOP + '\n            if !self.objects[i].activation.is_active() { continue; }'),
+    'activation-dynamic-only': ('world_objects.rs', ACTIVATION_LOOP, ACTIVATION_LOOP + '\n            if self.objects[i].classification != CollisionClassification::Dynamic { continue; }'),
+    'activation-zero-dt': ('world_objects.rs', ACTIVATION_LOOP, ACTIVATION_LOOP.replace('        for &i', '        if dt == 0.0 { return; }\n        for &i')),
+    'activation-omit-kernel': ('world_objects.rs', ACTIVATION_CALL, ''),
+    'activation-omit-velocities': ('world_objects.rs', VELOCITY_WRITEBACK, VELOCITY_WRITEBACK.replace('            self.bodies[i].set_angular_velocity(angular);\n            self.bodies[i].set_linear_velocity(linear);\n', '')),
+    'activation-omit-angular': ('world_objects.rs', VELOCITY_WRITEBACK, VELOCITY_WRITEBACK.replace('            self.bodies[i].set_angular_velocity(angular);\n', '')),
+    'activation-omit-linear': ('world_objects.rs', VELOCITY_WRITEBACK, VELOCITY_WRITEBACK.replace('            self.bodies[i].set_linear_velocity(linear);\n', '')),
+    'activation-default-settings': ('world_objects.rs', ACTIVATION_CALL, ACTIVATION_CALL.replace('                settings,', '                DeactivationSettings::default(),')),
+    'activation-inclusive-time': ('activation.rs', 'self.deactivation_time > settings.time', 'self.deactivation_time >= settings.time'),
+    'activation-force-setter': ('activation.rs', """        if !matches!(
+            self.state,
+            ActivationState::DisableDeactivation | ActivationState::DisableSimulation
+        ) {
+            self.state = state;
+        }""", '        self.force_activation_state(state);'),
+    'activation-zero-wants': ('activation.rs', 'if self.state == ActivationState::IslandSleeping {', 'if self.state == ActivationState::WantsDeactivation {'),
+})
+
+def preserved_motion(raw):
+    prefix = b''.join(raw.splitlines(keepends=True)[:LEGACY_LINES])
+    require(hashlib.sha256(prefix).hexdigest() == LEGACY_SHA256, 'original motion segment changed')
+    return {'lines': LEGACY_LINES, 'snapshots': 144, 'sha256': LEGACY_SHA256}
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -126,7 +178,7 @@ def main():
         require(system != 'Windows' or machine in ['amd64','x86_64'], 'unsupported Windows architecture')
         status['host'] = {'system': platform.platform(), 'architecture': machine, 'runner_image': os.environ.get('ImageOS'), 'runner_version': os.environ.get('ImageVersion')}
         variants = ['observed'] + ([] if args.skip_mutations else args.mutation or list(MUTANTS))
-        sources = {name: (ROOT / 'rust/crates/mds-bullet/src/core' / name).read_text() for name in ['world_objects.rs', 'math.rs']}
+        sources = {name: (ROOT / 'rust/crates/mds-bullet/src/core' / name).read_text() for name in ['world_objects.rs', 'math.rs', 'activation.rs']}
         for name in variants:
             tree = generated_root / name
             shutil.copytree(ROOT / 'rust/crates/mds-bullet/src/core', tree / 'rust/crates/mds-bullet/src/core')
@@ -192,6 +244,7 @@ def main():
         require((out/'native-observed.stderr').read_bytes() == (out/'rust-observed.stderr').read_bytes(), 'observer counts differ')
         (out/'native-rust.diff').write_text(''.join(difflib.unified_diff(native.decode().splitlines(True),actual.decode().splitlines(True),fromfile='native',tofile='rust')))
         require(native == actual, 'raw mismatch; full capture retained; no numeric profile approved')
+        status['preserved_motion'] = preserved_motion(native)
         results = {}
         for name in variants:
             if name == 'observed': continue

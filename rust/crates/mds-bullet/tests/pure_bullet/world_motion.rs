@@ -116,3 +116,108 @@ fn calculate_velocity_uses_matrix_inverse_for_nonorthogonal_basis() {
     assert_eq!(linear, Vec3::ZERO);
     assert_eq!(angular, Vec3::ZERO);
 }
+
+#[test]
+fn activation_uses_captured_membership_and_the_shared_activation_owner() {
+    use crate::core::activation::DeactivationSettings;
+    let mut w = WorldObjects::public();
+    let dynamic = w.create_public_body(desc(2.0, false)).unwrap();
+    w.create_public_body(desc(0.0, true)).unwrap();
+    w.set_kinematic(dynamic, true).unwrap();
+    for o in w.solver_parts().1 {
+        o.activation.force_activation_state(ActivationState::Active);
+        o.activation.deactivation_time = 3.0;
+    }
+    w.update_activation_state(0.0, DeactivationSettings::default());
+    assert_eq!(
+        w.objects()[0].activation.state,
+        ActivationState::IslandSleeping
+    );
+    assert_eq!(w.objects()[1].activation.state, ActivationState::Active);
+    w.set_kinematic(dynamic, false).unwrap();
+    w.solver_parts().0[0].set_linear_velocity(Vec3([0.25, 0.0, 0.0]));
+    w.update_activation_state(0.25, DeactivationSettings::default());
+    assert_eq!(w.bodies()[0].snapshot().linear_velocity, Vec3::ZERO);
+    assert_eq!(
+        w.dispatch_objects()[0].activation.state,
+        ActivationState::IslandSleeping
+    );
+}
+
+#[test]
+fn activation_sleeping_zeros_both_velocities_and_wants_deactivation_keeps_them() {
+    use crate::core::activation::DeactivationSettings;
+    let mut w = WorldObjects::public();
+    for state in [
+        ActivationState::IslandSleeping,
+        ActivationState::WantsDeactivation,
+    ] {
+        let h = w.create_public_body(desc(2.0, false)).unwrap();
+        let i = w.index(h).unwrap();
+        let (b, o, _) = w.solver_parts();
+        b[i].set_linear_velocity(Vec3([0.25, 0.0, 0.0]));
+        b[i].set_angular_velocity(Vec3([0.5, 0.0, 0.0]));
+        b[i].set_interpolation_velocities(Vec3([3.0, 0.0, 0.0]), Vec3([4.0, 0.0, 0.0]));
+        o[i].activation.force_activation_state(state);
+    }
+    w.update_activation_state(0.25, DeactivationSettings::default());
+    let sleeping = w.bodies()[0].snapshot();
+    assert_eq!(sleeping.linear_velocity, Vec3::ZERO);
+    assert_eq!(sleeping.angular_velocity, Vec3::ZERO);
+    assert_eq!(
+        sleeping.interpolation_linear_velocity,
+        Vec3([3.0, 0.0, 0.0])
+    );
+    assert_eq!(
+        sleeping.interpolation_angular_velocity,
+        Vec3([4.0, 0.0, 0.0])
+    );
+    let wants = w.bodies()[1].snapshot();
+    assert_eq!(wants.linear_velocity, Vec3([0.25, 0.0, 0.0]));
+    assert_eq!(wants.angular_velocity, Vec3([0.5, 0.0, 0.0]));
+}
+
+#[test]
+fn activation_obeys_supplied_settings_strict_threshold_and_protected_states() {
+    use crate::core::activation::DeactivationSettings;
+    let mut w = WorldObjects::public();
+    for state in [
+        ActivationState::Active,
+        ActivationState::DisableDeactivation,
+        ActivationState::DisableSimulation,
+    ] {
+        let h = w.create_public_body(desc(2.0, false)).unwrap();
+        let i = w.index(h).unwrap();
+        w.solver_parts().1[i]
+            .activation
+            .force_activation_state(state);
+    }
+    let settings = DeactivationSettings {
+        time: 0.5,
+        disabled: false,
+    };
+    w.update_activation_state(0.5, settings);
+    assert_eq!(w.objects()[0].activation.state, ActivationState::Active);
+    w.update_activation_state(0.25, settings);
+    assert_eq!(
+        w.objects()[0].activation.state,
+        ActivationState::WantsDeactivation
+    );
+    assert_eq!(w.objects()[0].activation.deactivation_time, 0.75);
+    assert_eq!(
+        w.objects()[1].activation.state,
+        ActivationState::DisableDeactivation
+    );
+    assert_eq!(
+        w.objects()[2].activation.state,
+        ActivationState::DisableSimulation
+    );
+    w.update_activation_state(
+        0.25,
+        DeactivationSettings {
+            disabled: true,
+            ..settings
+        },
+    );
+    assert_eq!(w.objects()[0].activation.state, ActivationState::Active);
+}

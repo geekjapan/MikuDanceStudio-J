@@ -52,6 +52,11 @@ struct State {
     default_snapshot: String,
     /// The answers of the file dialogs without a window, in order; `None` is a cancel.
     answers: VecDeque<Option<PathBuf>>,
+    /// The text of the open Disassemble Effect window (40014).
+    disassembly: Option<String>,
+    /// The offscreen tab (1002): the file of the effect declaring the target and its name;
+    /// `None` is Main.
+    tab: Option<(PathBuf, String)>,
 }
 
 thread_local! {
@@ -71,6 +76,12 @@ pub fn open_windows() -> [bool; 3] {
 /// Selects the rows of the mapping dialog (a click in the list, 1003).
 pub fn select(rows: &[Row]) {
     STATE.with_borrow_mut(|s| s.selected = rows.iter().copied().collect());
+}
+
+/// Selects a tab of the mapping dialog (a click on the tab control, 1002): an offscreen target
+/// by its effect file and name, `None` Main.
+pub fn select_tab(tab: Option<(PathBuf, String)>) {
+    STATE.with_borrow_mut(|s| s.tab = tab);
 }
 
 /// Whether Apply (1005) is enabled.
@@ -119,6 +130,8 @@ fn toggle_auto_save(ctx: &mut Ctx) -> Result<(), String> {
 /// 40004: `MmeUiReloadAllEffects` (`mme_ui.cpp:614`): every effect compiles again from the
 /// assignment as it is; the EMM is not read again.
 fn reload_all(ctx: &mut Ctx) -> Result<(), String> {
+    // The C++ keeps the dialog's offscreen edits on the effect's targets, which load anew.
+    ctx.editor.mme.offscreen.clear();
     ctx.editor.mme.unload();
     Ok(())
 }
@@ -240,13 +253,17 @@ pub fn pass(ui: &mut egui::Ui, ctx: &mut Ctx) {
     }
 }
 
-/// The `mme-dialog` area: `IDD_MME_MAPPING` (`mme_dlg.cpp`) on the Main tab.
+/// The `mme-dialog` area: `IDD_MME_MAPPING` (`mme_dlg.cpp`), on the Main tab and on a tab per
+/// offscreen target of the loaded effects (`DlgSyncTabs`, `mme_dlg.cpp:440`), where the edits
+/// are the target's overrides of its `DefaultEffect` rows (`DlgUpsertOffscreenRow`, `:357`).
 pub mod dialog {
-    use super::{english, Row, State, STATE};
+    use super::{english, select_tab, Row, State, STATE};
     use crate::actions::Action;
     use crate::mme::{effect_file, live};
     use crate::ui::Ctx;
-    use mds_mmert::emm;
+    use mds_mmert::emm::{self, Assignment};
+    use mds_mmert::host::OffscreenTarget;
+    use mds_mmert::scene::{self, Overrides, RowText, TurnObject, NO_OVERRIDES};
     use std::path::{Path, PathBuf};
 
     const ACTIONS: &[Action] = &[
@@ -261,15 +278,23 @@ pub mod dialog {
         Action::run("menu:mme-dialog-40013", hide_show, false),
         Action::run("menu:mme-dialog-40008", reset_default, false),
         Action::run("menu:mme-dialog-40006", subset_extract, false),
+        Action::run("menu:mme-dialog-40014", disassemble, false),
         Action::run("ctl:mme-dialog-1", close, false),
         Action::run("ctl:mme-dialog-2", cancel, false),
         Action::run("ctl:mme-dialog-1005", apply, false),
         Action::run("ctl:mme-dialog-1007", set_effect, false),
         Action::run("ctl:mme-dialog-1008", remove_effect, false),
         Action::run("ctl:mme-dialog-1011", hide_show, false),
+        Action::inline("ctl:mme-dialog-1002"),
         Action::inline("ctl:mme-dialog-1003"),
         Action::inline("mouse:mme-dialog-dblclick"),
         Action::inline("drop:mme-dialog"),
+        // `DlgToggleSkipValidation` (mme_dlg.cpp:1992) flips the engine's SkipValidation, read
+        // when an effect loads; wgpu validates every pipeline and has no switch to skip it.
+        Action::dropped(
+            "menu:mme-dialog-40028",
+            "wgpu has no switch to skip device validation (default reported to the operator 2026-10-26)",
+        ),
     ];
 
     pub fn actions() -> &'static [Action] {
@@ -298,15 +323,116 @@ pub mod dialog {
         state(|s| s.dirty = true);
     }
 
-    /// The selected rows, without the `(default)` row when `objects`.
+    /// The selected rows, without the `(default)` row when `objects` or on an offscreen tab
+    /// (`DlgCollectSelected`, `mme_dlg.cpp:603`).
     fn selected(objects: bool) -> Vec<Row> {
         state(|s| {
+            let objects = objects || s.tab.is_some();
             s.selected
                 .iter()
                 .copied()
                 .filter(|r| !objects || *r != Row::Default)
                 .collect()
         })
+    }
+
+    /// The object and subset (`-1` the whole object) of a row.
+    fn subset_of(r: Row) -> Option<(usize, i32)> {
+        match r {
+            Row::Default => None,
+            Row::Object(o) => Some((o, -1)),
+            Row::Subset(o, s) => Some((o, s)),
+        }
+    }
+
+    /// The offscreen target of the selected tab (`DlgCurrentOffscreen`, `mme_dlg.cpp:326`):
+    /// `None` on Main, and when the tab's target is not loaded.
+    pub fn current_tab(ctx: &Ctx) -> Option<OffscreenTarget> {
+        let tab = state(|s| s.tab.clone())?;
+        let targets = ctx.editor.mme.offscreen_targets();
+        targets.into_iter().find(|t| key(t) == tab)
+    }
+
+    fn key(t: &OffscreenTarget) -> (PathBuf, String) {
+        (t.file.clone(), t.name.clone())
+    }
+
+    fn as_stored(p: &str) -> PathBuf {
+        PathBuf::from(p)
+    }
+
+    /// The overrides of object `o` in target `t`.
+    fn overrides<'a>(ctx: &'a Ctx, t: &OffscreenTarget, o: usize) -> &'a Overrides {
+        let m = ctx.editor.mme.offscreen.get(&key(t));
+        m.and_then(|m| m.get(&o)).unwrap_or(&NO_OVERRIDES)
+    }
+
+    fn overrides_mut<'a>(ctx: &'a mut Ctx, t: &OffscreenTarget, o: usize) -> &'a mut Overrides {
+        let m = ctx.editor.mme.offscreen.entry(key(t)).or_default();
+        m.entry(o).or_default()
+    }
+
+    /// Object `o` as the turn of target `t` sees it, for the row text and the shown state.
+    fn turn_object<'a>(
+        ctx: &'a Ctx,
+        t: &OffscreenTarget,
+        name: &'a str,
+        o: usize,
+    ) -> TurnObject<'a> {
+        TurnObject {
+            name,
+            owner: t.owner == o,
+            render_class: i32::from(t.carriers.get(o).copied().unwrap_or(false)),
+            main: &ctx.editor.mme.assignments[o],
+            overrides: overrides(ctx, t, o),
+            resolve: &as_stored,
+        }
+    }
+
+    fn file_name(path: &str) -> &str {
+        path.rsplit(['\\', '/']).next().unwrap_or("")
+    }
+
+    /// `MmeOffscreenObjectShown` of subset `s` of object `o` in target `t`.
+    fn tab_shown(ctx: &Ctx, t: &OffscreenTarget, o: usize, s: i32) -> bool {
+        let live = live(&ctx.editor.doc);
+        let obj = turn_object(ctx, t, file_name(&live[o].path), o);
+        scene::shown(&t.rows, &obj, s)
+    }
+
+    /// `EffectTextForModel` (`mme_dlg.cpp:240`): the main tab's effect of subset `s`.
+    fn main_text(a: &Assignment, s: i32) -> String {
+        if !a.subset_shown(s) {
+            return "(hide)".into();
+        }
+        let p = a.subsets.get(&s).filter(|_| s >= 0).unwrap_or(&a.effect);
+        if p.is_empty() {
+            "(none)".into()
+        } else {
+            p.clone()
+        }
+    }
+
+    /// `DlgOffscreenRowText` (`mme_dlg.cpp:383`): subset `s` of object `o` in target `t`.
+    fn tab_text(ctx: &Ctx, t: &OffscreenTarget, o: usize, s: i32) -> String {
+        let live = live(&ctx.editor.doc);
+        let obj = turn_object(ctx, t, file_name(&live[o].path), o);
+        match scene::row_text(&t.rows, &obj, s) {
+            RowText::Hide => "(hide)".into(),
+            RowText::None => "(none)".into(),
+            RowText::MainDefault => main_text(&ctx.editor.mme.assignments[o], s),
+            RowText::Effect(p) => p.to_string(),
+        }
+    }
+
+    /// `DlgOffscreenDefaultRowText` (`mme_dlg.cpp:393`): the target's rows.
+    fn rows_text(t: &OffscreenTarget) -> String {
+        let text: String = t.rows.iter().map(|(k, v)| format!("{k}={v}; ")).collect();
+        if text.is_empty() {
+            "*=none;".into()
+        } else {
+            text
+        }
     }
 
     /// The selected whole-object rows (`DlgCollectSelected(true, true)`).
@@ -409,8 +535,19 @@ pub mod dialog {
         Ok(())
     }
 
-    /// `DlgWriteEffectForSelection`: `effect` (`""` to unassign) on every selected row.
+    /// `DlgWriteEffectForSelection` (`mme_dlg.cpp:780`): `effect` (`""` to unassign) on every
+    /// selected row; on an offscreen tab the target's override, `none` to unassign.
     fn write_selection(ctx: &mut Ctx, effect: &str) {
+        if let Some(t) = current_tab(ctx) {
+            let value = if effect.is_empty() { "none" } else { effect };
+            for (o, s) in selected(false).into_iter().filter_map(subset_of) {
+                overrides_mut(ctx, &t, o)
+                    .effects
+                    .insert(s, value.to_string());
+            }
+            state(|s| s.dirty = true);
+            return;
+        }
         let mme = &mut ctx.editor.mme;
         for row in selected(false) {
             match row {
@@ -451,6 +588,16 @@ pub mod dialog {
     /// show them all.
     fn hide_show(ctx: &mut Ctx) -> Result<(), String> {
         let rows = selected(true);
+        if let Some(t) = current_tab(ctx) {
+            // `DlgApplyShown` (`mme_dlg.cpp:741`) writes the target's shown overrides.
+            let rows: Vec<(usize, i32)> = rows.into_iter().filter_map(subset_of).collect();
+            let show = !rows.iter().any(|&(o, s)| tab_shown(ctx, &t, o, s));
+            for (o, s) in rows {
+                overrides_mut(ctx, &t, o).shown.insert(s, show);
+            }
+            state(|s| s.dirty = true);
+            return Ok(());
+        }
         let mme = &mut ctx.editor.mme;
         let shown = |r: &Row| match *r {
             Row::Object(o) => mme.assignments[o].shown,
@@ -474,6 +621,18 @@ pub mod dialog {
     /// 40008 (`DlgResetWithDefaultFlow`): each selected whole object back to the effect it gets
     /// at load (the file beside it, else the default), its subset rows and shows cleared.
     fn reset_default(ctx: &mut Ctx) -> Result<(), String> {
+        if let Some(t) = current_tab(ctx) {
+            // `DlgRemoveOffscreenRows` (`mme_dlg.cpp:363`): every override of the object.
+            let rows = selected(true).into_iter().filter_map(subset_of);
+            let objects: Vec<usize> = rows.map(|(o, _)| o).collect();
+            if let Some(m) = ctx.editor.mme.offscreen.get_mut(&key(&t)) {
+                for o in objects {
+                    m.remove(&o);
+                }
+            }
+            state(|s| s.dirty = true);
+            return Ok(());
+        }
         let objects = whole_objects();
         let live = live(&ctx.editor.doc);
         let mme = &mut ctx.editor.mme;
@@ -508,6 +667,45 @@ pub mod dialog {
             }
         });
         Ok(())
+    }
+
+    /// `DlgSelectedEffectPath` (`mme_dlg.cpp:652`): the effect of the first selected row in
+    /// list order, the object's own for a subset row; `""` for the `(default)` row or none. On
+    /// an offscreen tab the row's text, unless it names no file.
+    pub fn selected_effect(ctx: &Ctx) -> String {
+        let selected = state(|s| s.selected.clone());
+        let row = rows(ctx).into_iter().find(|r| selected.contains(r));
+        let Some((o, s)) = row.and_then(subset_of) else {
+            return String::new();
+        };
+        match current_tab(ctx) {
+            Some(t) => {
+                let text = tab_text(ctx, &t, o, s);
+                let none = ["", "(none)", "none", "hide", "main_default"];
+                match none.iter().any(|n| text.eq_ignore_ascii_case(n)) {
+                    true => String::new(),
+                    false => text,
+                }
+            }
+            None => ctx.editor.mme.assignments[o].effect.clone(),
+        }
+    }
+
+    /// 40014 (`DlgDisassembleFlow`, `mme_dlg.cpp:1459`): the selected row's effect in shader
+    /// assembly, in the Disassemble Effect window; the window opens empty when there is none.
+    fn disassemble(ctx: &mut Ctx) -> Result<(), String> {
+        let path = selected_effect(ctx);
+        let text = match path.is_empty() {
+            true => String::new(),
+            false => ctx.editor.mme.disassemble(&path),
+        };
+        state(|s| s.disassembly = Some(text));
+        Ok(())
+    }
+
+    /// The text of the Disassemble Effect window, when it is open.
+    pub fn disassembly() -> Option<String> {
+        state(|s| s.disassembly.clone())
     }
 
     /// The dialog's `WM_DROPFILES`: one `.emm` loads, one `.fx`, `.fxm` or `.fxsub` goes to the
@@ -548,7 +746,29 @@ pub mod dialog {
         rows
     }
 
-    fn row_text(ctx: &Ctx, row: Row) -> (String, String) {
+    /// The name and effect columns of `row` on the selected tab.
+    pub fn row_text(ctx: &Ctx, row: Row) -> (String, String) {
+        if let Some(t) = current_tab(ctx) {
+            let (name, _) = main_row_text(ctx, row);
+            return match row {
+                Row::Default => (name, rows_text(&t)),
+                Row::Object(o) => {
+                    let live = live(&ctx.editor.doc);
+                    let hidden = if tab_shown(ctx, &t, o, -1) {
+                        ""
+                    } else {
+                        " (hide)"
+                    };
+                    let name = format!("{}{hidden}", file_name(&live[o].path));
+                    (name, tab_text(ctx, &t, o, -1))
+                }
+                Row::Subset(o, s) => (name, tab_text(ctx, &t, o, s)),
+            };
+        }
+        main_row_text(ctx, row)
+    }
+
+    fn main_row_text(ctx: &Ctx, row: Row) -> (String, String) {
         let mme = &ctx.editor.mme;
         let live = live(&ctx.editor.doc);
         let none = |p: &str| {
@@ -626,8 +846,30 @@ pub mod dialog {
                         let e = t("子集展开(&E)", "Subset-Extract(&E)");
                         b(ui, ctx, "menu:mme-dialog-40006", e);
                     });
+                    ui.menu_button(t("工具(&T)", "Tool(&T)"), |ui| {
+                        // Enabled only when the first selected row has an effect (mme_dlg.cpp:1088).
+                        let d = t("反编译特效文件(&D)", "Disassemble Effect(&D)");
+                        let has = !selected_effect(ctx).is_empty();
+                        ui.add_enabled_ui(has, |ui| b(ui, ctx, "menu:mme-dialog-40014", d));
+                    });
                 });
-                ui.label("Main RenderTarget");
+                // The tab control (1002) and its caption (1004, `DlgRefreshCaption`,
+                // `mme_dlg.cpp:423`).
+                let current = current_tab(ctx);
+                let targets = ctx.editor.mme.offscreen_targets();
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(current.is_none(), "Main").clicked() {
+                        select_tab(None);
+                    }
+                    for t in &targets {
+                        let on = current.as_ref() == Some(t);
+                        if ui.selectable_label(on, &t.name).clicked() {
+                            select_tab(Some(key(t)));
+                        }
+                    }
+                });
+                let caption = current.as_ref().map(|t| t.description.as_str());
+                ui.label(caption.unwrap_or("Main Render Target"));
                 egui::ScrollArea::vertical()
                     .max_height(240.0)
                     .show(ui, |ui| {
@@ -683,10 +925,48 @@ pub mod dialog {
         if !open {
             state(|s| s.dialog = false);
         }
+        if let Some(mut text) = disassembly() {
+            let (mut open, mut close) = (true, false);
+            egui::Window::new("Disassemble Effect")
+                .open(&mut open)
+                .show(ui.ctx(), |ui| {
+                    egui::ScrollArea::both().max_height(400.0).show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut text)
+                                .code_editor()
+                                .interactive(false),
+                        )
+                    });
+                    close = ui.button("Close").clicked();
+                });
+            if !open || close {
+                state(|s| s.disassembly = None);
+            }
+        }
+    }
+
+    /// `MDS_APP_MME_TAB=<target>` opens the dialog when the window starts and selects the tab
+    /// of the offscreen target of that name once its effect loads, for screenshots.
+    fn startup(ctx: &Ctx) {
+        thread_local!(static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+        if DONE.get() {
+            return;
+        }
+        let Ok(want) = std::env::var("MDS_APP_MME_TAB") else {
+            DONE.set(true);
+            return;
+        };
+        state(|s| s.dialog = true);
+        let targets = ctx.editor.mme.offscreen_targets();
+        if let Some(t) = targets.iter().find(|t| t.name == want) {
+            select_tab(Some(key(t)));
+            DONE.set(true);
+        }
     }
 
     /// Files dropped while the dialog is open go to it.
     pub fn pass(ui: &mut egui::Ui, ctx: &mut Ctx) {
+        startup(ctx);
         if !state(|s| s.dialog) {
             return;
         }

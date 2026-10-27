@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import venv
 import contextlib
 import io
 import unittest
@@ -20,6 +21,133 @@ spec.loader.exec_module(check)
 
 
 class Controls(unittest.TestCase):
+    def developer_fixture(self, root, *, unicode_paths=True):
+        vs = root / ('Visual Studio 日本 spaces' if unicode_paths else 'Visual Studio spaces')
+        batch = vs / 'Common7/Tools/VsDevCmd.bat'
+        batch.parent.mkdir(parents=True)
+        compiler = vs / 'VC/Tools/MSVC/bin/Hostx64/x64/cl.exe'
+        compiler.parent.mkdir(parents=True)
+        compiler.write_bytes(b'fake compiler')
+        out = root / 'evidence 日本 spaces'
+        out.mkdir()
+        (out / 'msbuild-version.stdout').write_bytes(b'fake version, not executed')
+        return batch, compiler, out
+
+    def test_developer_environment_mock_validates_fields_and_raw_transport(self):
+        with tempfile.TemporaryDirectory() as folder:
+            batch, compiler, out = self.developer_fixture(Path(folder))
+            batch.write_text('@exit /b 0\n')
+            valid = dict(INCLUDE='include path', LIB='lib path', LIBPATH='libpath', PATH='path')
+            for environment in (valid, {}, None, dict(valid, INCLUDE=''), dict(valid, LIB=7),
+                                dict(valid, LIBPATH='  '), dict(valid, PATH=None)):
+                with self.subTest(environment=environment), patch.object(check, 'run',
+                        return_value=b'setup diagnostics\n' + json.dumps(environment).encode() + b'\n') as run:
+                    if environment == valid:
+                        self.assertEqual(check.developer_environment(compiler, out, 'mock')['INCLUDE'], 'include path')
+                        command = run.call_args.args[0]
+                        self.assertIsInstance(command, str)
+                        self.assertTrue(command.startswith('cmd.exe /d /v:off /s /c "call "'))
+                        self.assertNotIn('\\"', command)
+                        self.assertEqual(run.call_args.kwargs, dict(cwd=out, timeout=30))
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'environment fields'):
+                            check.developer_environment(compiler, out, 'mock')
+
+    def test_developer_environment_mock_rejects_shell_path_expansion(self):
+        with tempfile.TemporaryDirectory() as folder:
+            batch, compiler, out = self.developer_fixture(Path(folder))
+            batch.write_text('@exit /b 0\n')
+            for python in ('percent%python.exe', 'caret^python.exe', 'quote"python.exe', 'line\npython.exe'):
+                with self.subTest(python=python), patch.object(check.sys, 'executable', python), \
+                        patch.object(check, 'run') as run, self.assertRaisesRegex(ValueError, 'metacharacter'):
+                    check.developer_environment(compiler, out, 'mock')
+                run.assert_not_called()
+
+    @unittest.skipUnless(os.name == 'nt', 'actual Windows cmd transport requires Windows')
+    def test_windows_developer_environment_old_red_new_green(self):
+        with tempfile.TemporaryDirectory(prefix='dbvt cmd spaces ') as folder:
+            root = Path(folder)
+            batch, compiler, out = self.developer_fixture(root)
+            python_root = root / 'Python 日本 spaces'
+            venv.EnvBuilder(with_pip=False).create(python_root)
+            python = str(python_root / 'Scripts/python.exe')
+            batch.write_text('@echo off\necho setup stdout\necho setup stderr 1>&2\n'
+                             'set "INCLUDE=include path"\nset "LIB=lib path"\nset "LIBPATH=libpath"\nexit /b 0\n')
+            with patch.object(check.sys, 'executable', python):
+                environment = check.developer_environment(compiler, out, 'transport')
+                self.assertEqual(environment['INCLUDE'], 'include path')
+                script = out / 'compiler-environment.py'
+                legacy = 'call "' + str(batch) + '" -no_logo -arch=x64 -host_arch=x64 >nul && "' + python + '" "' + str(script) + '"'
+                with self.assertRaisesRegex(RuntimeError, 'exited'):
+                    check.run(['cmd.exe', '/d', '/s', '/c', legacy], out, 'legacy', cwd=out, timeout=30)
+            self.assertNotEqual(json.loads((out / 'legacy-result.json').read_text())['returncode'], 0)
+            self.assertEqual(json.loads((out / 'transport-developer-environment-result.json').read_text())['returncode'], 0)
+            self.assertIn(b'setup stdout', (out / 'transport-developer-environment.stdout').read_bytes())
+            self.assertIn(b'setup stderr', (out / 'transport-developer-environment.stderr').read_bytes())
+            self.assertEqual(json.loads((out / 'transport-replay-include-paths.json').read_text()), ['include path'])
+
+    @unittest.skipUnless(os.name == 'nt', 'actual Windows cmd failure requires Windows')
+    def test_windows_developer_environment_failure_blocks_preprocessing(self):
+        with tempfile.TemporaryDirectory(prefix='dbvt cmd spaces ') as folder:
+            root = Path(folder)
+            batch, compiler, out = self.developer_fixture(root, unicode_paths=False)
+            batch.write_text('@echo off\necho setup failed stdout\necho setup failed stderr 1>&2\nexit /b 7\n')
+            source = root / 'btDbvt.cpp'
+            source.write_text('source')
+            (root / 'CMakeCXXCompiler.cmake').write_text('set(CMAKE_CXX_COMPILER "' + str(compiler) + '")')
+            (out / 'conan-create.stdout').write_text(str(compiler))
+            (out / 'conan-create.stderr').write_text('')
+            record = dict(tlog=str(root / 'CL.command.1.tlog'), source=str(source), cwd=str(root),
+                          argv=['/c', '/Fofoo.obj', str(source)])
+            with patch.object(check, 'compile_record', return_value=record), \
+                    self.assertRaisesRegex(RuntimeError, 'exited 7'):
+                check.capture_tu(root, 'btDbvt', out)
+            self.assertFalse((out / 'btDbvt-preprocess-command.json').exists())
+            self.assertFalse((out / 'btDbvt-replay-include-paths.json').exists())
+            self.assertIn(b'setup failed stdout', (out / 'btDbvt-developer-environment.stdout').read_bytes())
+            self.assertIn(b'setup failed stderr', (out / 'btDbvt-developer-environment.stderr').read_bytes())
+            receipt = json.loads((out / 'btDbvt-developer-environment-result.json').read_text())
+            self.assertEqual(receipt, dict(returncode=7, failure=None))
+
+    @unittest.skipUnless(os.name == 'nt', 'actual Windows cmd timeout requires Windows')
+    def test_windows_developer_environment_timeout_retains_partial_outputs(self):
+        with tempfile.TemporaryDirectory(prefix='dbvt cmd spaces ') as folder:
+            batch, compiler, out = self.developer_fixture(Path(folder))
+            batch.write_text('@echo off\necho partial stdout\necho partial stderr 1>&2\n'
+                             '"' + sys.executable + '" -c "import time; time.sleep(5)"\n')
+            original = check.run
+
+            def timed(command, output, name, **kwargs):
+                return original(command, output, name, cwd=kwargs['cwd'], timeout=0.5)
+
+            with patch.object(check, 'run', side_effect=timed), self.assertRaisesRegex(ValueError, 'time bound'):
+                check.developer_environment(compiler, out, 'windows-timeout')
+            prefix = out / 'windows-timeout-developer-environment'
+            self.assertIn(b'partial stdout', prefix.with_suffix('.stdout').read_bytes())
+            self.assertIn(b'partial stderr', prefix.with_suffix('.stderr').read_bytes())
+            self.assertEqual(json.loads((out / (prefix.name + '-result.json')).read_text())['failure'], 'time')
+            self.assertFalse((out / 'windows-timeout-replay-include-paths.json').exists())
+
+    def test_developer_environment_timeout_retains_partial_outputs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            batch, compiler, out = self.developer_fixture(Path(folder))
+            batch.write_text('@exit /b 0\n')
+            original = check.run
+
+            def timed(command, output, name, **kwargs):
+                # Portable process control proves retention, not Windows command transport.
+                return original([sys.executable, '-c',
+                                 'import sys,time; print("partial stdout",flush=True); '
+                                 'print("partial stderr",file=sys.stderr,flush=True); time.sleep(5)'],
+                                output, name, cwd=kwargs['cwd'], timeout=0.5)
+
+            with patch.object(check, 'run', side_effect=timed), self.assertRaisesRegex(ValueError, 'time bound'):
+                check.developer_environment(compiler, out, 'timeout')
+            self.assertIn(b'partial stdout', (out / 'timeout-developer-environment.stdout').read_bytes())
+            self.assertIn(b'partial stderr', (out / 'timeout-developer-environment.stderr').read_bytes())
+            self.assertEqual(json.loads((out / 'timeout-developer-environment-result.json').read_text())['failure'], 'time')
+            self.assertFalse((out / 'timeout-replay-include-paths.json').exists())
+
     def test_record_build_production_argv_reaches_run_unchanged(self):
         command = ['cmake', '--build', 'out/ci/build', '--config', 'Release',
                    '--parallel', '4', '--', '/verbosity:normal', '/clp:ShowCommandLine']

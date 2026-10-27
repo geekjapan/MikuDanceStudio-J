@@ -129,7 +129,8 @@ preprocessing/header, macro-policy, and numeric acceptance still require the
 actual Windows measurement.
 
 `fixtures/compiler/selected-tus.json` retains the six selected TU tasks from the
-same Windows run, with their original caret, payload line, ordered argv, tlog path,
+Windows run 40452363088, artifact 12711876690, with their original caret, payload
+line, ordered argv, tlog path,
 and complete original tlog hash. The app's `scene_create` uses eight additional
 operand-free flags. `/W3` and `/wd4267`, `/wd4244`, `/wd4245` control warnings.
 `/openmp` and `/permissive-` select language behavior. `/utf-8` selects character
@@ -139,3 +140,16 @@ preprocessing in its original order. These flags never consume a following
 source operand. Other warning numbers, language modes, encodings, and suffixes
 remain unsupported. The compiler environment's existing supported `/Zc:` rule
 also permits `/Zc:alignedNew-`. Its other option restrictions remain unchanged.
+
+Developer-environment setup uses the bounded process runner with a raw cmd command
+line. It retains `<TU>-developer-environment-command.json`, `-result.json`,
+`.stdout`, and `.stderr` before reporting a nonzero exit or timeout. The command
+receipt contains the exact command line and working directory. The result records
+the exit code and any time or output bound failure. VsDevCmd output is retained;
+the last stdout line must be the generated Python script's JSON with nonempty
+INCLUDE, LIB, LIBPATH, and PATH strings. Paths containing quotes, percent signs,
+carets, or line breaks fail before shell execution. Windows-only controls exercise
+real cmd transport with spaces and Unicode paths, failed setup, and timeout
+partial output. Portable mocks are not Windows acceptance. The original run
+40457905705 exited 1 before preprocessing and discarded its child streams. Its
+inner cause remains unknown until a new Windows measurement retains diagnostics.

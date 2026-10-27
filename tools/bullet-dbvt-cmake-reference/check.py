@@ -247,8 +247,12 @@ def build_lines(value):
 
 
 def run(argv, out, name, *, cwd=ROOT, data=None, timeout=300, build=False, env=None):
-    argv = list(map(str, argv))
-    save(out / (name + '-command.json'), dict(argv=argv, cwd=str(cwd)))
+    if isinstance(argv, str):
+        invocation = dict(command_line=argv)
+    else:
+        argv = list(map(str, argv))
+        invocation = dict(argv=argv)
+    save(out / (name + '-command.json'), dict(invocation, cwd=str(cwd)))
     start = time.monotonic()
     failure = None
     with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
@@ -298,6 +302,7 @@ def run(argv, out, name, *, cwd=ROOT, data=None, timeout=300, build=False, env=N
             for line in lines:
                 print(line, flush=True)
         (out / (name + '.' + suffix)).write_bytes(value)
+    save(out / (name + '-result.json'), dict(returncode=process.returncode, failure=failure))
     evidence = str(out / (name + '.stdout')) + ' and ' + str(out / (name + '.stderr'))
     if failure:
         raise ValueError(f'{name} exceeded {failure} bound; inspect {evidence}')
@@ -853,9 +858,18 @@ def developer_environment(compiler, out, name):
         raise ValueError('cannot resolve compiler developer environment')
     script = out / 'compiler-environment.py'
     script.write_text('import json, os\nprint(json.dumps({k:os.environ.get(k, "") for k in ("INCLUDE", "LIB", "LIBPATH", "PATH")}))\n')
-    command = 'call "' + str(vs / 'Common7/Tools/VsDevCmd.bat') + '" -no_logo -arch=x64 -host_arch=x64 >nul && "' + sys.executable + '" "' + str(script) + '"'
-    result = subprocess.run(['cmd.exe', '/d', '/s', '/c', command], capture_output=True, timeout=30, check=True)
-    environment = json.loads(result.stdout.decode())
+    paths = (str(vs / 'Common7/Tools/VsDevCmd.bat'), sys.executable, str(script))
+    if any(re.search(r'["%^\r\n]', path) for path in paths):
+        raise ValueError('unsupported cmd metacharacter in developer environment path')
+    # cmd parses its own quotes; list2cmdline applies incompatible C runtime escaping.
+    payload = 'call "' + paths[0] + '" -no_logo -arch=x64 -host_arch=x64 && "' + paths[1] + '" "' + paths[2] + '"'
+    command = 'cmd.exe /d /v:off /s /c "' + payload + '"'
+    output = run(command, out, name + '-developer-environment', cwd=out, timeout=30)
+    environment = json.loads(output.splitlines()[-1] if output.splitlines() else b'null')
+    if not isinstance(environment, dict) or any(
+            not isinstance(environment.get(key), str) or not environment[key].strip()
+            for key in ('INCLUDE', 'LIB', 'LIBPATH', 'PATH')):
+        raise ValueError('missing or empty compiler developer environment fields')
     save(out / (name + '-replay-include-paths.json'), environment['INCLUDE'].split(';'))
     msbuild = vs / 'MSBuild/Current/Bin/MSBuild.exe'
     if not (out / 'msbuild-version.stdout').is_file():

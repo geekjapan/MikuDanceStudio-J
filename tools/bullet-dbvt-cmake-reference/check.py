@@ -435,7 +435,9 @@ def package_paths(graph, out):
     shutil.copyfile(cache, out / 'native-CMakeCache.txt')
     values = {}
     identity_keys = ('CMAKE_GENERATOR', 'CMAKE_GENERATOR_PLATFORM', 'CMAKE_HOME_DIRECTORY')
-    for number, line in enumerate(cache.read_text().splitlines(), 1):
+    # CMake records end at LF; other Unicode line separators remain in values or comments.
+    for number, line in enumerate(cache.read_bytes().decode().split('\n'), 1):
+        line = line.removesuffix('\r')
         match = re.fullmatch(r'([^/#][^:=]*):[^=]+=(.*)', line)
         key = match.group(1) if match else re.split(r'[:=\s]', line.lstrip(' \t'), maxsplit=1)[0]
         key = key.lstrip(' \t')

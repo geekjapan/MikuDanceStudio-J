@@ -141,6 +141,44 @@ class Controls(unittest.TestCase):
                             self.assertFalse((root / 'resolved-package.json').exists())
                             self.assertEqual((root / 'native-CMakeCache.txt').read_bytes(), cache.read_bytes())
 
+    def test_package_cache_identity_requires_physical_record(self):
+        identities = ('CMAKE_GENERATOR:STRING=Visual Studio 17 2022',
+                      'CMAKE_GENERATOR_PLATFORM:STRING=x64',
+                      'CMAKE_HOME_DIRECTORY:STRING=SOURCE')
+        for index, identity in enumerate(identities):
+            for separator in ('\r', '\v', '\f', '\x1c', '\x1d', '\x1e', '\x85', '\u2028', '\u2029'):
+                for prefix in ('UNRELATED:STRING=x', '//comment', '#comment'):
+                    for newline in ('\n', '\r\n'):
+                        with self.subTest(identity=identity, separator=repr(separator),
+                                          prefix=prefix, newline=repr(newline)), \
+                                tempfile.TemporaryDirectory() as folder:
+                            root = Path(folder)
+                            lines = list(identities)
+                            lines[index] = prefix + separator + identity
+                            graph, cache, paths = self.package_cache_fixture(root, newline.join(lines) + newline)
+                            with patch.object(check, 'run', side_effect=paths), \
+                                    self.assertRaises((ValueError, KeyError)):
+                                check.package_paths(graph, root)
+                            self.assertFalse((root / 'resolved-package.json').exists())
+                            self.assertEqual((root / 'native-CMakeCache.txt').read_bytes(), cache.read_bytes())
+
+    def test_package_cache_unrelated_embedded_identity_is_not_duplicate(self):
+        valid = ('CMAKE_GENERATOR:STRING=Visual Studio 17 2022\n'
+                 'CMAKE_GENERATOR_PLATFORM:STRING=x64\n'
+                 'CMAKE_HOME_DIRECTORY:STRING=SOURCE\n')
+        for separator in ('\r', '\v', '\f', '\x1c', '\x1d', '\x1e', '\x85', '\u2028', '\u2029'):
+            for prefix in ('UNRELATED:STRING=x', '//comment', '#comment'):
+                with self.subTest(separator=repr(separator), prefix=prefix), \
+                        tempfile.TemporaryDirectory() as folder:
+                    root = Path(folder)
+                    text = valid + prefix + separator + 'CMAKE_GENERATOR:STRING=Ninja\n'
+                    graph, cache, paths = self.package_cache_fixture(root, text)
+                    with patch.object(check, 'run', side_effect=paths):
+                        result = check.package_paths(graph, root)
+                    self.assertEqual(result['source'], str(root / 'cache-build/bullet-src'))
+                    self.assertTrue((root / 'resolved-package.json').is_file())
+                    self.assertEqual((root / 'native-CMakeCache.txt').read_bytes(), cache.read_bytes())
+
     def test_package_cache_duplicate_identity_diagnostic(self):
         for key, value in (('CMAKE_GENERATOR', 'Visual Studio 17 2022'),
                            ('CMAKE_GENERATOR_PLATFORM', 'x64'), ('CMAKE_HOME_DIRECTORY', 'SOURCE')):

@@ -207,7 +207,7 @@
     "rust/crates/mds-bullet/src/core/activation.rs": "7535d6a2b09942ffd34e8a224f4f026d48253230255b0ba21b8152b60445b4d1",
     "rust/crates/mds-bullet/src/core/body.rs": "7f5f5b2f30206ccec1fdbb8ac961a3ff480ae14c3cfb61a5afd4595ed32e31bb",
     "rust/crates/mds-bullet/src/core/box_box.rs": "c40b69ace4dfda599e7ea7b83a35245b3f601dd748af898f9731d26fd6f4b72a",
-    "rust/crates/mds-bullet/src/core/contact.rs": "35f74a1ce4ed5f2087e1ceb72b68d7d3c6b4bb0fcee0a85d0567f572ed84f862",
+    "rust/crates/mds-bullet/src/core/contact.rs": "b473127a44fc4c4fcc381022ac0d46887e49e171cdbdbe5389e4689793a1fec4",
     "rust/crates/mds-bullet/src/core/contact_solver.rs": "cf75cd640c429e7e3bdaf5fbacfd541beab89b8aea29f5e44f789ed1e74de73a",
     "rust/crates/mds-bullet/src/core/gjk_epa.rs": "58eee56b1c34d29f0a1f6816f2722465d09015d8dd0467e3fae2f80b8a66ebe1",
     "rust/crates/mds-bullet/src/core/gjk_pair.rs": "d8181c2f1fe88fdeb263f6a61d3b21f43d29fb03122e56cdf460e01e71e10f88",
@@ -228,7 +228,7 @@
     "tools/bullet-rust-contact-solver-check/support.rs": "e5cbd283b8dd61bb81346e8bd50f659330d0253044f5c743b385660f3bb3a067",
     "tools/bullet-rust-mixed-solver-check/cases.py": "9d634aa3a9bd08239237edc7a316e1eab33883f930b26adf269c14508da5d0bb",
     "tools/bullet-rust-mixed-solver-check/oracle.cpp": "0de3e2dd716003322289b3ae42b87f311e52b246b7dfbb2ef804f2e98da6ed79",
-    "tools/bullet-rust-mixed-solver-check/runner.rs": "424a4455f80ee83a5cc0caf8a7985b951647db55308371974b80cded3cdaeebb"
+    "tools/bullet-rust-mixed-solver-check/runner.rs": "4876a0c33bf3c44c4d45bef74187aa9f5d3b717d5dc47c66551aa50594ad8a3d"
   },
   "observer_sources": {
     "btSequentialImpulseConstraintSolver.cpp": "6196ca312bc5cf0f9e6f718a15c5b140204a48ed3faeda56bdb2ea22dd7dad1b"
@@ -27801,5 +27801,43 @@
     "historical_profile": "macarm-run40411448747-rust1.95",
     "historical_difference_inventory_and_captures_identical": true,
     "status": "VERIFICATION_PROFILE_ONLY_NOT_FULL_GATE_ACCEPTANCE"
+  },
+  "source_admission": {
+    "actual_run": 40473401249,
+    "head": "07fa0792a56d9fa3c5c3af4cff3bd88a7567a033",
+    "actual_checkout": "c6bc51b118e14d6d3235b08cb01dbca110b37b1e",
+    "head_and_checkout_tree": "c66f1442ac5bcd85c0774c0ed9eedd2a42aa5518",
+    "actual_artifact": {
+      "id": 12721090702,
+      "name": "bullet-mixed-macos-15",
+      "digest": "sha256:8bcce03202a779c80fa5bb369cb215d7716f772cf26de32e6a75ea063a051dc9",
+      "bytes": 91951030
+    },
+    "source_manifest_raw_sha256": "085db80c4cf4db0ab355c96713d1897accb8aa4a89f3b3ee1fc2d630aab49328",
+    "source_entries": 237,
+    "producer_entries": 219,
+    "source_transport": {
+      "exact": 237
+    },
+    "changed_producer_sources": {
+      "rust/crates/mds-bullet/src/core/contact.rs": {
+        "previous": "35f74a1ce4ed5f2087e1ceb72b68d7d3c6b4bb0fcee0a85d0567f572ed84f862",
+        "observed": "b473127a44fc4c4fcc381022ac0d46887e49e171cdbdbe5389e4689793a1fec4",
+        "git_lf_sha256": "b473127a44fc4c4fcc381022ac0d46887e49e171cdbdbe5389e4689793a1fec4",
+        "transport": "exact"
+      },
+      "tools/bullet-rust-mixed-solver-check/runner.rs": {
+        "previous": "424a4455f80ee83a5cc0caf8a7985b951647db55308371974b80cded3cdaeebb",
+        "observed": "4876a0c33bf3c44c4d45bef74187aa9f5d3b717d5dc47c66551aa50594ad8a3d",
+        "git_lf_sha256": "4876a0c33bf3c44c4d45bef74187aa9f5d3b717d5dc47c66551aa50594ad8a3d",
+        "transport": "exact"
+      }
+    },
+    "commands_raw_sha256": "c8ec430d2036ca860f33e9c8888f057bc995edc61156f01e4aeb193139b1b6f6",
+    "historical_capture_provenance": "measurement remains the original run40426173732 capture provenance; captures, differences and identity are unchanged.",
+    "actual_run_status": "FAIL at arithmetic observation source profile differs after captures; clippy and mutants did not run.",
+    "fresh_compiled_mutants": 0,
+    "status": "MEASURED_SOURCE_ADMISSION_ONLY_NOT_FULL_GATE_ACCEPTANCE",
+    "limit": "Admits only these observed producer hashes with the existing exact capture gate. This is not a new passing producer run or acceptance of dispatcher behavior outside this compilation closure."
   }
 }

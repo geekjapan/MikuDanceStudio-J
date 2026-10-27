@@ -71,7 +71,8 @@ def capture_inputs(output, inputs):
         filename = f'{name}-inputs.tsv'
         (output / filename).write_bytes(data)
         text, facts[filename] = transport(data, count)
-        assert (fixture / expected).read_bytes() == text, 'Frozen inputs changed'
+        if not ((fixture / expected).read_bytes() == text):
+            raise AssertionError('Frozen inputs changed')
     write_json(output / 'input-transport.json', facts)
     return normalized
 
@@ -160,7 +161,8 @@ def capture(output, environment):
             (output / f'fallback-{implementation}.tsv').write_bytes(b''.join(lines[-6:]))
     fallback = subprocess.check_output([executable], input=(output / 'fallback-inputs.tsv').read_bytes(), env=environment)
     (output / 'fallback-independent-native.tsv').write_bytes(fallback)
-    assert fallback == (output / 'fallback-native.tsv').read_bytes(), 'Fallback requires prior history'
+    if not (fallback == (output / 'fallback-native.tsv').read_bytes()):
+        raise AssertionError('Fallback requires prior history')
     facts = audit(output)
     if observation_error or facts['collection'] != 'complete':
         raise ValueError('Collection incomplete or observer coverage failed')

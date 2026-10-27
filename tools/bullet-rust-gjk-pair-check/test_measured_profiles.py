@@ -52,6 +52,7 @@ class MeasuredProfileTests(unittest.TestCase):
     def test_cli_main_with_support_first_reaches_real_validator(self):
         script = textwrap.dedent("""
             import ast
+            import json
             import importlib.util
             from pathlib import Path
             import sys
@@ -76,11 +77,17 @@ class MeasuredProfileTests(unittest.TestCase):
                      and isinstance(node.func, ast.Name) and node.func.id == 'validate']
             # Evaluate the production call with its real __main__ globals and validator.
             expression = compile(ast.Expression(call), str(outer), 'eval')
-            scope = dict(vars(module), validate=validate, output=output)
+            manifest = json.loads(outer.with_name('measured-profiles.json').read_text())
+            selected = module.host()
+            reviewed = {**manifest['profiles'][selected]['protected_source_sha256'],
+                        **manifest['verification_sha256'][selected]}
+            scope = dict(vars(module), validate=validate, output=output,
+                         source_hashes=lambda: reviewed)
             try:
                 eval(expression, scope)
             except ValueError as error:
-                assert str(error) == 'Outer GJK compiler or toolchain differs from measured profile', str(error)
+                if str(error) != 'Outer GJK compiler or toolchain differs from measured profile':
+                    raise AssertionError(str(error))
                 print('real validator rejected compiler drift')
             else:
                 raise AssertionError('Compiler drift was accepted')

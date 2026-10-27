@@ -276,5 +276,59 @@ class CaptureTests(unittest.TestCase):
             self.assertIn('/fp:precise', effective)
 
 
+    def test_fallback_history_mismatch_is_rejected(self):
+        generated = subprocess.check_output([sys.executable, Path(check.__file__).with_name('cases.py')])
+        native = b''.join(f'{i}\tnative\n'.encode() for i in range(5081))
+        def output(command, **kwargs):
+            if '-Vv' in command:
+                return 'test rustc'
+            if str(command[-1]).endswith('cases.py'):
+                return generated
+            return b'independent mismatch\n' if 'input' in kwargs and kwargs['input'] != generated else native
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with patch.object(check, 'test_fallback_coverage'), patch.object(check, 'compiler_version', return_value='test'), patch.object(check.platform, 'platform', return_value='test platform'), patch.object(check, 'native_command', side_effect=lambda cmd, *args: list(map(str, cmd))), patch.object(check, 'run'), patch.object(check, 'observe'), patch.object(check.subprocess, 'check_output', side_effect=output), patch.object(mutations, 'run_harness', return_value={}):
+                # capture loads its runner by filename, so replace that loader's module too.
+                with patch.object(check.importlib.util, 'module_from_spec', return_value=mutations), patch('importlib.machinery.SourceFileLoader.exec_module', return_value=None):
+                    with self.assertRaisesRegex(AssertionError, 'Fallback requires prior history'):
+                        check.capture(root, {})
+            self.assertEqual((root / 'fallback-independent-native.tsv').read_bytes(), b'independent mismatch\n')
+
+    def test_observer_guards_reject_each_missing_evidence(self):
+        import observe
+        complete = [f'outer-{branch} {a} {b}' for a, b in observe.PAIRS
+                    for branch in ['penetration-adapter', 'distance-fallback', 'emitted']]
+        complete += [f'outer-{label} 8 0' for label in ['max-distance', 'duplicate', 'near-origin', 'penetration-replaced', 'tail']]
+        complete += ['manifold-depth 0', 'manifold-depth 1', 'manifold-refresh']
+        for branch in ['penetration-adapter', 'distance-fallback', 'emitted']:
+            with self.subTest(branch=branch), self.assertRaises(AssertionError):
+                observe.require_fallback_coverage([event for event in complete if event != f'outer-{branch} 8 0'])
+        with self.assertRaisesRegex(AssertionError, 'sphere-box'):
+            observe.require_fallback_coverage([])
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp)
+            (output / 'native.tsv').write_bytes(b'native\n')
+            src = check.ROOT / 'recipes/bullet275/bullet-src/src'
+            def attempt(events, stdout=b'native\n'):
+                def observed(command, **kwargs):
+                    kwargs['stderr'].write(('\n'.join(events) + '\n').encode())
+                    return stdout
+                with patch.object(observe.subprocess, 'run'), patch.object(observe.subprocess, 'check_output', side_effect=observed):
+                    return observe.observe(src, ['compiler'], output / 'native', b'', output, {})
+            self.assertEqual(len(attempt(complete)), 3)
+            with self.assertRaisesRegex(AssertionError, 'Observer changed output'):
+                attempt(complete, b'changed\n')
+            for missing in ['outer-max-distance 8 0', 'outer-duplicate 8 0', 'outer-near-origin 8 0', 'outer-penetration-replaced 8 0', 'outer-tail 8 0', 'manifold-depth 0', 'manifold-depth 1', 'manifold-refresh']:
+                with self.subTest(missing=missing), self.assertRaises(AssertionError):
+                    attempt([event for event in complete if event != missing])
+            anchors = ['checkSimplex=true;', 'if (m_curIter++ > gGjkMaxIter)\n\t\t\t\t  {', 'resultOut->refreshContactPoints();', 'if (depth > m_manifoldPtr->getContactBreakingThreshold())']
+            read_text = Path.read_text
+            for anchor in anchors:
+                def changed(path, *args, **kwargs):
+                    return read_text(path, *args, **kwargs).replace(anchor, '')
+                with self.subTest(anchor=anchor), patch.object(Path, 'read_text', changed), self.assertRaises(AssertionError):
+                    attempt(complete)
+
+
 if __name__ == '__main__':
     unittest.main()

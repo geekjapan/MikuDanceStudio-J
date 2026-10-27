@@ -48,7 +48,23 @@ log when available, and installed amd64 CRT/OpenMP XML. `policy.json` records
 identities, redirect ranges, target manifests, and target directories. Both
 families must redirect requested version `9.0.21022.8` to a present target.
 [Microsoft's publisher configuration documentation](https://learn.microsoft.com/en-us/windows/win32/sbscs/publisher-configuration-files)
-defines these version redirects. Missing policy evidence fails provisioning.
+defines these version redirects. Discovery reads only the exact amd64 VC90 CRT
+and OpenMP prefixes in `WinSxS/Manifests` and immediate policy directories in
+`WinSxS` and `WinSxS/Policies`. The latter contains version-named `.Policy`
+files as documented in [Publisher Configuration](https://learn.microsoft.com/en-us/windows/win32/sbscs/publisher-configuration).
+Absent optional stores are allowed; unreadable relevant evidence fails the gate.
+
+The helper checks the asm.v1 namespace, manifestVersion 1.0, one definition
+identity, matching reference identities, and one redirect per direct dependency against
+[Microsoft's policy schema](https://learn.microsoft.com/en-us/windows/win32/sbscs/publisher-configuration-file-schema).
+Versions have four decimal components in the range 0–65535, as specified by
+[Assembly Versions](https://learn.microsoft.com/en-us/windows/win32/sbscs/assembly-versions).
+Malformed records and conflicting overlapping redirects for the same policy
+identity and version fail the gate. Distinct installed policy versions and
+identical copies across stores retain separate provenance and XML receipts.
+`POLICY_AND_TARGET_PRESENT` reports candidates only. It does not identify the
+policy selected by Windows or verify target DLL contents. Missing policy
+evidence fails provisioning.
 No installer or runtime DLL is copied into application or capture artifacts.
 
 Provisioning never reports application activation success. The existing

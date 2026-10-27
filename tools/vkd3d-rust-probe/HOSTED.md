@@ -126,9 +126,14 @@ and those checks do not establish hosted translation, linkage, or semantics.
 
 The official source revision remains `ac687698b6c13491dfec45c6a9ad9e8b4da35227`.
 `apply_c2rust_patch.py` refuses another revision or dirty source, checks the patch
-with `git apply --check`, then records its SHA256, applied diff, original revision,
-and hashes for all eight modified upstream source files. The setup artifact also records executable hashes and
-retains the official LICENSE and Cargo.lock. Only the local patch is committed.
+with `git apply --check`, then saves the complete applied patch, original revision,
+and exact bytes and SHA256 hashes for every patch destination, including new modules.
+It rejects unsafe, duplicate, missing and symlink destinations. The tool bundle retains
+this evidence under `tool/source-evidence`. After the build, `--tool` verifies the
+compiler source against that evidence and binds both executable hashes to the source
+receipt. `check_runtime.py` verifies the binding and retained source before accepting
+the hosted runtime. The setup artifact also retains the official LICENSE and Cargo.lock.
+Only the local patch is committed.
 
 The exporter unwraps `MacroQualifiedType` for both type IDs and traversal, and
 uses the equivalent type for calling-convention attributes. Function prototype
@@ -337,3 +342,41 @@ pinned AST builder. Expression conversion, type classification, volatile inputs
 and surrounding control flow are shims. This does not execute the exporter or
 prove actual volatile lowering. Actual all-24 diagnostic removal and complete
 stable acceptance remain separate, including the public variadic VaList boundary.
+
+## Closed variadic inventory prerequisite
+
+The project patch emits a sibling `*.variadic.json` before Rust generation when
+`--emit-c-decl-map` is enabled. It records actual typed AST function signatures,
+ABI, target C widths read from Clang, original typedef types before portable
+pullback, promoted argument types and implicit conversion chains, direct
+calls, function references outside direct callees, and `va_arg` locations.
+Global identities include Clang asm labels and join across units; static identities include
+the unit. These records authorize no conversion.
+
+`check_closed_variadic_inventory.py --c2rust /path/to/c2rust --artifacts /new/path`
+uses the rebuilt tool on untouched `variadic-fixtures/definition.c` and
+`caller.c`. The separate C consumer checks the callback, two independent copies,
+14 mixed arguments, narrow unsigned and enum promotions, native long widths,
+15 fixed/tail evaluations, nested zero-tail calls, formatting retries and stream
+bytes. Only the native C executable runs at this stage. Generated Rust is kept
+and hashed, but is not yet stable or executed. The fixture deliberately leaves
+its indirect public callback unclassified in the inventory plan.
+
+The hosted all-unit probe now requests these sidecars. The subsequent
+`closed_variadic_plan.py --probe /path/to/result --output /new/plan.json` requires
+the exact 24 source paths and the actual 23-export map with `local: *`. It joins
+all declarations before distinguishing private definitions from external libc
+calls, and retains source, map and inventory hashes. The plan reports unsupported
+promoted tails, exported candidates, address escapes, signature conflicts,
+`va_arg` and unclassified indirect calls. Cursor alias/control-flow analysis,
+four-host C width execution, actual lowering, and four-host generated-code ABI execution
+remain required. No production variadic definition is enabled by this work.
+
+The new hosted inventory checks have not yet executed. The existing isolated
+four-host native cursor probe remains separate prerequisite evidence.
+
+The actual two-TU inventory gate also translates `exporter-fixtures/late_asm_label.c`.
+The fixture introduces an asm label after the first declaration. The gate requires
+both its exported declaration and direct call to use the effective later label.
+This check requires the rebuilt LLVM18 exporter. A local AST API check does not
+satisfy that hosted gate.

@@ -11,6 +11,7 @@ on:
       - tools/vkd3d-rust-probe/patches/**
       - tools/vkd3d-rust-probe/abi-fixtures/**
       - tools/vkd3d-rust-probe/offset-fixtures/**
+      - tools/vkd3d-rust-probe/variadic-fixtures/**
       - tools/vkd3d/build.sh
 
 permissions:
@@ -113,9 +114,18 @@ jobs:
             --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
             --clang /usr/bin/clang-18 \
             --artifacts "$RUNNER_TEMP/vkd3d-probe/logs/function-pointer-nulls"
+          cargo +1.95.0 test --locked --manifest-path "$RUNNER_TEMP/c2rust-src/Cargo.toml" \
+            -p c2rust-transpile --lib closed_variadic_inventory_uses_promoted_ast_types_and_linker_identity
+          python3 tools/vkd3d-rust-probe/check_closed_variadic_inventory.py \
+            --c2rust "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" \
+            --clang /usr/bin/clang-18 \
+            --artifacts "$RUNNER_TEMP/vkd3d-probe/logs/closed-variadic-inventory"
           cp "$RUNNER_TEMP/c2rust-src/Cargo.lock" "$RUNNER_TEMP/vkd3d-probe/logs/c2rust-Cargo.lock"
           cp "$RUNNER_TEMP/c2rust-src/LICENSE" "$RUNNER_TEMP/vkd3d-probe/tool/LICENSE"
           "$RUNNER_TEMP/vkd3d-probe/tool/bin/c2rust" --version
+          python3 tools/vkd3d-rust-probe/apply_c2rust_patch.py \
+            --source "$RUNNER_TEMP/c2rust-src" --artifacts "$RUNNER_TEMP/vkd3d-probe/logs" \
+            --tool "$RUNNER_TEMP/vkd3d-probe/tool"
           python3 tools/vkd3d-rust-probe/check_runtime.py \
             --tool "$RUNNER_TEMP/vkd3d-probe/tool" --record
           sha256sum "$RUNNER_TEMP/vkd3d-probe/tool/bin/"* > "$RUNNER_TEMP/vkd3d-probe/logs/c2rust-binaries-sha256.txt"
@@ -240,6 +250,13 @@ jobs:
             --clang /usr/bin/clang-18 --rust-toolchain 1.95.0 \
             --all-unit-prototype --timeout 1800 --build-timeout 300 \
             --native-library "$RUNNER_TEMP/vkd3d-probe/prepared/linux-native/lib/libvkd3d-shader.so.1"
+      - name: Inventory actual closed variadic symbols across all 24 units
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 tools/vkd3d-rust-probe/closed_variadic_plan.py \
+            --probe "$RUNNER_TEMP/vkd3d-probe/evidence/result" \
+            --output "$RUNNER_TEMP/vkd3d-probe/evidence/closed-variadic-plan.json"
       - name: Validate and summarize actual output
         if: always()
         run: |

@@ -432,7 +432,15 @@ def package_paths(graph, out):
     result['cache_build'], result['cache_source'] = result['build'], result['source']
     result['build'] = str(Path(result['cache_build']) / 'build')
     cache = Path(result['build']) / 'CMakeCache.txt'
-    values = dict(re.findall(r'^([^/#][^:=]*):[^=]*=(.*)$', cache.read_text(), re.M))
+    shutil.copyfile(cache, out / 'native-CMakeCache.txt')
+    values = {}
+    for number, line in enumerate(cache.read_text().splitlines(), 1):
+        match = re.fullmatch(r'([^/#][^:=]*):[^=]+=(.*)', line)
+        if match:
+            key, value = match.groups()
+            if key in values and key in ('CMAKE_GENERATOR', 'CMAKE_GENERATOR_PLATFORM', 'CMAKE_HOME_DIRECTORY'):
+                raise ValueError(f'duplicate CMake cache key {key} at line {number}')
+            values[key] = value
     if values.get('CMAKE_GENERATOR') != 'Visual Studio 17 2022' or values.get('CMAKE_GENERATOR_PLATFORM') != 'x64':
         raise ValueError('native archive generator or architecture differs')
     result['source'] = values['CMAKE_HOME_DIRECTORY']
@@ -916,17 +924,18 @@ def measure(out):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('mode', choices=('prepare', 'record-build', 'measure'))
     parser.add_argument('--out-dir', type=Path, required=True)
-    parser.add_argument('--build-command', nargs=argparse.REMAINDER)
-    args = parser.parse_args()
+    argv = sys.argv[1:]
+    boundary = argv.index('--build-command') if '--build-command' in argv else len(argv)
+    command = argv[boundary + 1:]
+    args = parser.parse_args(argv[:boundary])
     out = args.out_dir.resolve(); out.mkdir(parents=True, exist_ok=True)
     if args.mode == 'prepare':
         prepare(out)
         return 0
     if args.mode == 'record-build':
-        command = args.build_command
         if not command:
             raise ValueError('missing build command')
         run(command, out, 'app-build', build=True, timeout=900)

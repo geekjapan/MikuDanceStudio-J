@@ -22,6 +22,14 @@ class Controls(unittest.TestCase):
     def test_record_build_production_argv_reaches_run_unchanged(self):
         command = ['cmake', '--build', 'out/ci/build', '--config', 'Release',
                    '--parallel', '4', '--', '/verbosity:normal', '/clp:ShowCommandLine']
+        with tempfile.TemporaryDirectory() as folder, contextlib.chdir(folder):
+            argv = ['check.py', 'record-build', '--out-dir', 'out/ci/dbvt-reference', '--build-command', *command]
+            with patch.object(sys, 'argv', argv), patch.object(check, 'run') as run:
+                self.assertEqual(check.main(), 0)
+            run.assert_called_once_with(command, Path('out/ci/dbvt-reference').resolve(), 'app-build', build=True, timeout=900)
+
+    def test_only_first_exact_build_command_is_wrapper_boundary(self):
+        command = ['cmake', '--build-command', '--out-dir', '--unknown', '--']
         with tempfile.TemporaryDirectory() as folder:
             argv = ['check.py', 'record-build', '--out-dir', folder, '--build-command', *command]
             with patch.object(sys, 'argv', argv), patch.object(check, 'run') as run:
@@ -72,7 +80,9 @@ class Controls(unittest.TestCase):
         text = ('# This is the CMakeCache file.\n\n//Name of generator.\n'
                 'CMAKE_GENERATOR:INTERNAL=Visual Studio 17 2022\n\n//Platform.\n'
                 'CMAKE_GENERATOR_PLATFORM:INTERNAL=x64\n\n//Source directory.\n'
-                'CMAKE_HOME_DIRECTORY:INTERNAL=SOURCE\n')
+                'CMAKE_HOME_DIRECTORY:INTERNAL=SOURCE\n\n//Ordinary entries.\n'
+                'BUILD_SHARED_LIBS:BOOL=OFF\nCMAKE_CONFIGURATION_TYPES:STRING=Debug;Release\n'
+                'CMAKE_CXX_FLAGS:STRING=\nUnrelated:STRING=first\nUnrelated:STRING=last\n')
         for newline in ('\n', '\r\n'):
             with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)

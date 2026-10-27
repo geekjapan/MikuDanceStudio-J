@@ -35,6 +35,7 @@ pub mod joint_rows;
 pub mod math;
 pub mod pair_cache;
 pub mod shape;
+pub mod simplex;
 pub mod solver;
 pub mod time;
 

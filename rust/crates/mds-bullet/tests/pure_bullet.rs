@@ -23,6 +23,9 @@ mod pilot_cases;
 #[path = "pure_bullet/shapes.rs"]
 mod shapes;
 
+#[path = "pure_bullet/simplex.rs"]
+mod simplex;
+
 use core::body::FreeBody;
 use core::math::{Quat, Vec3};
 use core::time::StepClock;

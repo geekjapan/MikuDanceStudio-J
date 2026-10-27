@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -93,16 +94,56 @@ def provenance(out):
     (out / 'provenance.json').write_text(json.dumps(data, indent=2) + '\n')
 
 
+def cargo_objects(data):
+    def object_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('duplicate Cargo JSON key')
+            result[key] = value
+        return result
+
+    def finite_number(value):
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError('non-finite Cargo JSON number')
+        return number
+
+    objects = []
+    finished = False
+    for line in data.decode().splitlines():
+        # Cargo cannot control stdout from other tools; raw logs retain those lines.
+        if not line.startswith('{'):
+            continue
+        item = json.loads(line, object_pairs_hook=object_pairs,
+                          parse_constant=finite_number, parse_float=finite_number)
+        if not isinstance(item, dict) or not isinstance(item.get('reason'), str):
+            raise ValueError('expected Cargo JSON object with a reason')
+        if finished:
+            raise AssertionError('Cargo JSON object after build-finished')
+        if item['reason'] == 'build-finished':
+            if item.get('success') is not True:
+                raise AssertionError('Cargo build did not succeed')
+            finished = True
+        objects.append(item)
+    if not finished:
+        raise AssertionError('missing successful Cargo build-finished')
+    return objects
+
+
 def retain_test_binary(data, out):
     candidates = []
-    for line in data.decode().splitlines():
-        item = json.loads(line)
+    for item in cargo_objects(data):
         if item.get('reason') != 'compiler-artifact':
             continue
-        target = item.get('target', {})
+        target = item.get('target')
+        if not isinstance(target, dict) or not isinstance(item.get('profile'), dict):
+            raise ValueError('malformed Cargo compiler-artifact')
         if target.get('name') != 'dbvt':
             continue
         if (target.get('kind') != ['test'] or
+                not all(isinstance(value, str) and value for value in (
+                    target.get('src_path'), item.get('manifest_path'), item.get('executable'))) or
                 Path(target.get('src_path', '')).resolve() != (HERE / 'test.rs').resolve() or
                 Path(item.get('manifest_path', '')).resolve() != (HERE / 'Cargo.toml').resolve() or
                 item.get('profile', {}).get('test') is not True or not item.get('executable')):

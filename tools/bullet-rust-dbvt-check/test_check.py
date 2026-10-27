@@ -120,7 +120,8 @@ class HelperTests(unittest.TestCase):
             captures.setdefault('rust-tests-build', json.dumps(dict(
                 reason='compiler-artifact', target=dict(name='dbvt', kind=['test'],
                 src_path=str(check.HERE / 'test.rs')), manifest_path=str(check.HERE / 'Cargo.toml'),
-                profile=dict(test=True), executable=str(binary))).encode())
+                profile=dict(test=True), executable=str(binary))).encode() +
+                b'\n{"reason":"build-finished","success":true}\n')
 
             def capture(command, out, name, **kwargs):
                 if name == 'rust-tests':
@@ -286,8 +287,11 @@ class HelperTests(unittest.TestCase):
             item = dict(reason='compiler-artifact', target=dict(name='dbvt', kind=['test'],
                 src_path=str(check.HERE / 'test.rs')), manifest_path=str(check.HERE / 'Cargo.toml'),
                 profile=dict(test=True), executable=str(binary))
-            encode = lambda value: (json.dumps(value) + '\n').encode()
-            retained = check.retain_test_binary(encode(item), out)
+            encode = lambda value: (json.dumps(value) + '\n' +
+                '{"reason":"build-finished","success":true}\n').encode()
+            retained = check.retain_test_binary(
+                b'[quote 1.0.47] cargo:rerun-if-changed=build.rs\r\n' + encode(item) +
+                b'non-JSON trailing diagnostic\n', out)
             self.assertEqual(retained.read_bytes(), binary.read_bytes())
             manifest = json.loads((out / 'rust-test-binary.json').read_text())
             self.assertEqual(manifest['bytes'], binary.stat().st_size)
@@ -295,7 +299,13 @@ class HelperTests(unittest.TestCase):
             self.assertEqual(manifest['cwd'], str(check.ROOT / 'rust'))
             self.assertEqual(manifest['argv'], [str(retained)])
             for invalid in (b'', b'not JSON', encode(item) * 2,
+                            (json.dumps(item) + '\n').encode() + encode(item),
+                            b'{"reason":"build-finished","success":true}\n',
                             encode(dict(item, manifest_path=str(root / 'Cargo.toml'))),
+                            encode(dict(item, target=dict(item['target'], name='foreign'))),
+                            encode(dict(item, target=[])),
+                            encode(dict(item, profile=[])),
+                            encode(dict(item, executable=7)),
                             encode(dict(item, executable=None)),
                             encode(dict(item, executable=str(root / 'missing'))),
                             encode(dict(item, profile=dict(test=False))),
@@ -306,6 +316,29 @@ class HelperTests(unittest.TestCase):
             binary.write_bytes(b'')
             with self.assertRaisesRegex(AssertionError, 'empty'):
                 check.retain_test_binary(encode(item), out)
+
+    def test_cargo_object_stream_requires_strict_json_and_terminal_success(self):
+        artifact = b'{"reason":"compiler-artifact","target":{"name":"foreign"}}\n'
+        finish = b'{"reason":"build-finished","success":true}\n'
+        mixed = b'[quote 1.0.47] cargo:rerun-if-changed=build.rs\r\n' + artifact + finish
+        self.assertEqual(check.cargo_objects(mixed), [json.loads(artifact), json.loads(finish)])
+        self.assertEqual(check.cargo_objects(mixed + b'program output\n'),
+                         check.cargo_objects(mixed))
+        for invalid in (b'', b'non-JSON success=true', artifact, finish + finish,
+                        finish + artifact, b'{broken}\n' + finish,
+                        b'{"reason":"build-finished","reason":"build-finished","success":true}\n',
+                        b'{"reason":"message","nested":{"x":1,"x":2}}\n' + finish,
+                        b'{"reason":"message","x":NaN}\n' + finish,
+                        b'{"reason":"message","x":Infinity}\n' + finish,
+                        b'{"reason":"message","x":-Infinity}\n' + finish,
+                        b'{"reason":"message","x":1e999}\n' + finish,
+                        b'{"reason":"build-finished"}\n',
+                        b'{"reason":"build-finished","success":false}\n',
+                        b'{"reason":"build-finished","success":1}\n',
+                        b'{"reason":"build-finished","success":true',
+                        b'{}\n' + finish, b'{"reason":null}\n' + finish):
+            with self.subTest(invalid=invalid), self.assertRaises((AssertionError, ValueError)):
+                check.cargo_objects(invalid)
 
     def test_provenance_includes_consumed_crtmath_bytes(self):
         with tempfile.TemporaryDirectory() as directory:

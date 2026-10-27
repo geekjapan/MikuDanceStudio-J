@@ -40,48 +40,64 @@ shared cache are `null`. Windows and Linux require hashes for every observed pat
 `native-profile-reference.json` comes from the actual d046 run 40457744278,
 artifact 12712854308. Its ZIP was verified against SHA-256
 `5e91fd623d475c8519a024e9f80a1db758e1a23a3e9af4fa6642263edf8f7d84`.
-It freezes the actual 24 production units and a conservative superset of all
-headers under `include/`, `libs/vkd3d-shader/`, and `libs/vkd3d-common/`, plus
-all producer `.y`/`.l` grammars, the SPIR-V generator script and JSON input,
-the shader export map, fixture bytes, and patch. The authenticated tar contains
-no compiler-generated dependency records. Its Makefile producer lists and actual
-includes establish this boundary. Distributed IDL headers are frozen inputs
-because the recipe retains them without regeneration.
+It freezes the actual 24 production units and every `.h`, `.l`, and `.y` file
+recursively under the complete configured source directory, including demos,
+tests, and other libraries. `include/config.h` is classified separately as target
+configuration. Generator inputs, the shader export map, fixture bytes, and patch
+remain frozen. The complete authenticated `hdr/include/` Vulkan tree (45 files)
+and `spv/include/` SPIRV tree (73 files) include conditional, unused, C++, grammar,
+and `vk_video/` child inputs. This intentionally conservative inventory rejects
+changes to shipped files even when the current target does not use them.
+
+The retained in-tree Makefile has `srcdir`, `builddir`, `top_srcdir`, and
+`top_builddir` equal to `.`. Its actual compile recipes search the including file's
+directory for quoted includes, then `-I.`, `include/`, `include/private/`, the two
+vendor roots from `CPPFLAGS`, and (for shader units) `libs/vkd3d-shader/`.
+The checker binds these Makefile variables, the `COMPILE`/`LTCOMPILE` order,
+shader flags, and actual compiler recipe lines to the authenticated reference.
+Vendor absolute prefixes may relocate together with the retained bundle; their
+ordered sibling suffixes remain fixed. Raw Makefile hashes remain in target
+configuration. Different ordinary compiler flags retain separate configuration
+identity; include-affecting flags outside this contract fail closed.
+
+All files under both vendor roots and all local header/grammar files must be
+classified. Every symlink in the source tree or vendor include trees, including
+root and vendor-parent symlinks, fails before input hashing. The checker does not
+follow linked directories or cycles. The source remains `vkd3d-2.1/`, with `hdr/`
+and `spv/` siblings, matching the existing transport layout.
+
+A conservative traversal of literal includes across all conditional branches of
+all 24 production units reaches 84 files and records 40 distinct unresolved
+system, SDK, or disabled-branch include names. Every reachable non-system literal
+include has a `.h` filename and belongs to the frozen inventory or target
+configuration. Dynamic includes, `include_next`, imports, unsupported filename
+suffixes, changed resolution edges, and changed unresolved includes fail closed,
+including changes in generated files. This graph is source inspection, not a
+target preprocessor execution. The tar contains no compiler dependency records.
+
 Only the eight explicitly listed Makefile parser/lexer and private generated
 outputs may differ as generated files. Missing inputs, changed handwritten or
-external headers, and unclassified headers/grammars fail closed. The complete authenticated `hdr/include/` Vulkan tree (45 files) and
-`spv/include/` SPIRV tree (73 files) are hashed, including conditional, unused,
-C++, grammar, and `vk_video/` child inputs. The actual Makefile adds both roots
-to compiler include paths. `libs/vkd3d-common/blob.c` includes `vkd3d.h`, which
-includes `vulkan/vulkan.h`, `vulkan_core.h`, and video codec children.
-`VKD3D_NO_VULKAN_H` is not defined by the retained configuration or recipe.
-Both roots are fixed classifications. Missing or modified manifest files and
-any unclassified file under either root fail before native commands run.
-The source remains `vkd3d-2.1/`, with `hdr/` and `spv/` siblings, matching the
-existing Windows bundle and ARM recipe. The fixed vendor archive identities
-remain recorded. System C headers, compiler builtins, Windows/MinGW SDK headers,
-and conditional platform SDKs (for example X11, Wayland, and Zircon) are not
-hashed by this source profile. Disabled SPIRV-Tools and legacy Vulkan SPIRV
-fallback branches are not claims of extracted vendor dependencies. Target flags
-and generated configuration retain raw hashes and separate differences; this
-boundary does not claim complete toolchain or SDK identity.
+external inputs, and unclassified headers/grammars fail before native commands.
+Generated and target configuration differences retain raw hashes and separate
+lists; either prevents an identical source profile claim. Failure receipts retain
+observed hashes, missing paths, classifications, and available graph/recipe data.
 
 `python3 test_native_profiles.py --archive /path/to/vkd3d-probe-input.zip
 --artifacts /path/to/new/verification`
-authenticates the retained ZIP and prepared tar, derives the complete vendor
-inventory from both archive trees, and requires exact manifest path/hash equality.
-It checks Makefile include roots and the actual Vulkan include chain, then mutates
-and removes every frozen source, vendor, and target configuration input, including
-real Vulkan and transitive child headers. It also checks unclassified additions
-and sealed CLI rejection before native execution. Run the same command with
-`python3 -O` to verify that checks do not depend on assertions. No archive fetch
-or native build is performed by this check. The ordinary unit tests use small
-synthetic fixtures and do not replace authenticated archive verification.
-Generated and target configuration differences retain their raw hashes and
-separate difference lists. Either prevents an identical source profile claim.
-Failed source checks retain observed hashes, missing paths, and difference lists
-in the partial receipt before any native cases run. No capture claims an identical producer profile or reproducible
-build, because the pinned image's APT packages are not version pinned.
+authenticates the ZIP and prepared tar and requires exact local and vendor archive
+inventory equality with the manifest. It checks the complete include graph and
+actual Makefile binding, mutates and removes all 209 frozen inputs, and exercises
+first-root shadows throughout the search trees, unknown additions, linked roots
+and directories, cycles, unsupported includes, recipe/order drift, and separate
+configuration receipts. Real CLI rejections retain sealed partial receipts with
+zero native commands. Repeat with `python3 -O`; the checks do not use assertions.
+The ordinary synthetic unit tests do not replace authenticated verification.
+
+System C headers, compiler builtins, Windows/MinGW SDKs, and conditional platform
+SDKs (including X11, Wayland, and Zircon) remain outside source identity. Disabled
+SPIRV-Tools and legacy Vulkan SPIRV fallback branches remain unresolved records.
+No capture claims complete compiler/SDK identity, an identical producer profile,
+or reproducible builds. The image's APT packages are not version pinned.
 Synthetic `compile_commands.json` files are not native build commands.
 
 The ARM64 job also runs the frozen d046 caller against the same native library

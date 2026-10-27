@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -62,6 +63,100 @@ GENERATED_FILES = frozenset([
 ])
 
 
+# Search order follows the authenticated in-tree Automake recipe; quoted includes
+# first search the including file's directory.
+LOCAL_INCLUDE_ROOTS = ('.', 'include', 'include/private', 'libs/vkd3d-shader')
+LOCAL_INPUT_SUFFIXES = ('.h', '.l', '.y')
+
+
+def input_inventory(root):
+    files, links = set(), []
+    if root.is_symlink():
+        return files, ['.']
+    if not root.exists():
+        return files, links
+
+    def failed_walk(error):
+        raise error
+
+    for directory, directories, filenames in os.walk(root, followlinks=False, onerror=failed_walk):
+        for name in directories + filenames:
+            path = Path(directory) / name
+            relative = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                links.append(relative)
+            elif name in filenames:
+                files.add(relative)
+    return files, sorted(links)
+
+
+def include_recipe(makefile):
+    logical = makefile.replace('\\\n', ' ')
+    variables = dict(re.findall(r'^([A-Za-z_][A-Za-z_0-9]*) = (.*)$', logical, re.M))
+    names = ('DEFAULT_INCLUDES', 'AM_CPPFLAGS', 'COMPILE', 'LTCOMPILE',
+             'srcdir', 'builddir', 'top_srcdir', 'top_builddir', 'libvkd3d_shader_la_CFLAGS')
+    guarded = set(names) | {'CPPFLAGS', 'INCLUDES', 'CFLAGS', 'AM_CFLAGS', 'DEFS', 'CC',
+                            'AM_LIBTOOLFLAGS', 'LIBTOOLFLAGS'}
+    for name in guarded:
+        assignments = re.findall(r'^((?!\t)[^#=\n]*\b' + re.escape(name) + r'\s*[:+?!]?=.*)$', logical, re.M)
+        require(len(assignments) <= 1 and all(line.startswith(name + ' = ') for line in assignments),
+                'unsupported include recipe assignment: ' + name)
+    projection = {name: ' '.join(variables.get(name, '').split()) for name in names}
+    # Configured absolute vendor roots move with the retained source bundle.
+    flags = variables.get('CPPFLAGS', '').split()
+    require(len(flags) == 2 and all(flag.startswith('-I') and flag.endswith('/' + root)
+            for flag, root in zip(flags, ('hdr/include', 'spv/include'))),
+            'unsupported compiler vendor include paths')
+    require(flags[0][2:-len('/hdr/include')] == flags[1][2:-len('/spv/include')]
+            and flags[0].startswith('-I/'), 'vendor include roots are not siblings')
+    projection['CPPFLAGS'] = ['-I../hdr/include', '-I../spv/include']
+    projection['INCLUDES'] = variables.get('INCLUDES', '')
+    for name in ('CFLAGS', 'AM_CFLAGS', 'DEFS', 'CC', 'AM_LIBTOOLFLAGS', 'LIBTOOLFLAGS'):
+        require(not re.search(r'-(?:I|iquote|isystem|idirafter|include|imacros|iprefix|iwithprefix)|@|\$[({]',
+                              variables.get(name, '')), 'unsupported include-affecting compiler flags: ' + name)
+    recipes = [line.strip() for line in logical.splitlines()
+               if line.startswith('\t') and re.search(r'\$\((?:CC|COMPILE|LTCOMPILE)\)', line)]
+    projection['compile_recipes_sha256'] = hashlib.sha256('\n'.join(recipes).encode()).hexdigest()
+    return projection
+
+
+def literal_include_graph(source, production_units):
+    roots = [source / root for root in LOCAL_INCLUDE_ROOTS[:-1]]
+    roots += [source.parent / root for root in ('hdr/include', 'spv/include')]
+    # The shader-specific -I follows CPPFLAGS, and applies only to shader units.
+    visited, edges, unresolved = set(), set(), set()
+    for unit in production_units:
+        todo = [source / unit]
+        search = roots + ([source / LOCAL_INCLUDE_ROOTS[-1]] if unit.startswith('libs/vkd3d-shader/') else [])
+        local = set()
+        while todo:
+            path = todo.pop()
+            if path in local:
+                continue
+            local.add(path)
+            name = path.relative_to(source.parent).as_posix()
+            visited.add(name)
+            text = path.read_text(errors='replace').replace('\\\n', '')
+            text = re.sub(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"',
+                          lambda match: match[0] if match[0].startswith('"') else ' ', text, flags=re.S)
+            for kind, operand in re.findall(r'^\s*#\s*(include_next|include|import)\b([^\n]*)', text, re.M):
+                literal = re.fullmatch(r'\s*(?:"([^"\n]+)"|<([^>\n]+)>)\s*', operand)
+                require(kind == 'include' and literal is not None, 'unsupported include directive in ' + name)
+                child = literal[1] or literal[2]
+                require(Path(child).suffix == '.h' and not Path(child).is_absolute()
+                        and '..' not in Path(child).parts, 'unsupported include filename: ' + child)
+                candidates = ([path.parent] if literal[1] else []) + search
+                target = next((root / child for root in candidates if (root / child).is_file()), None)
+                if target is None:
+                    unresolved.add((name, child))
+                else:
+                    target = Path(os.path.normpath(target))
+                    edges.add((name, child, target.relative_to(source.parent).as_posix()))
+                    todo.append(target)
+    return {'visited': sorted(visited), 'edges': sorted(map(list, edges)),
+            'unresolved_system_sdk_or_disabled': sorted(map(list, unresolved))}
+
+
 def source_identity(source, reference, receipt=None):
     require(set(reference['generated_files']) == GENERATED_FILES,
             'unknown or missing generated source classification')
@@ -70,6 +165,21 @@ def source_identity(source, reference, receipt=None):
     identity.update({'files': {}, 'external_headers': {}, 'target_configuration': {},
                      'generated_source_differences': [], 'target_configuration_differences': [],
                      'identical_source_profile': False, 'identical_producer_profile': False})
+    local_files, local_links = input_inventory(source)
+    actual_headers = {name for name in local_files if name.endswith(LOCAL_INPUT_SUFFIXES)}
+    expected_headers = {name for name in reference['source_files'] if name.endswith(LOCAL_INPUT_SUFFIXES)}
+    expected_headers |= {name for name in reference['target_configuration'] if name.endswith(LOCAL_INPUT_SUFFIXES)}
+    actual_external, links = set(), ['vkd3d-2.1/' + name for name in local_links]
+    for directory in sorted(EXTERNAL_INCLUDE_ROOTS):
+        files, symlinks = input_inventory(source.parent / directory)
+        actual_external.update(directory + '/' + name for name in files)
+        links.extend(directory + '/' + name for name in symlinks)
+    links.extend(name for name in ('hdr', 'spv') if (source.parent / name).is_symlink())
+    identity['symlink_inputs'] = sorted(links)
+    identity['external_include_roots'] = sorted(EXTERNAL_INCLUDE_ROOTS)
+    identity['unclassified_inputs'] = sorted((actual_headers - expected_headers)
+                                             | (actual_external - reference['external_headers'].keys()))
+    require(not links, f'symlink producer inputs: {links}')
     missing = []
     for key, base in [('source_files', source), ('external_headers', source.parent),
                       ('target_configuration', source)]:
@@ -81,18 +191,6 @@ def source_identity(source, reference, receipt=None):
             else:
                 missing.append(name)
     identity['missing_inputs'] = missing
-    actual_headers = {str(path.relative_to(source)).replace(os.sep, '/')
-                      for directory in ('include', 'libs/vkd3d-shader', 'libs/vkd3d-common')
-                      for path in (source / directory).rglob('*')
-                      if path.is_file() and path.suffix in ('.h', '.y', '.l')
-                      and path != source / 'include/config.h'}
-    expected_headers = {name for name in reference['source_files'] if name.endswith(('.h', '.y', '.l'))}
-    actual_external = {path.relative_to(source.parent).as_posix()
-                       for directory in EXTERNAL_INCLUDE_ROOTS
-                       for path in (source.parent / directory).rglob('*') if path.is_file()}
-    identity['external_include_roots'] = sorted(EXTERNAL_INCLUDE_ROOTS)
-    identity['unclassified_inputs'] = sorted((actual_headers - expected_headers)
-                                             | (actual_external - reference['external_headers'].keys()))
     differences = [name for name, digest in identity['files'].items()
                    if digest != reference['source_files'][name]]
     identity['generated_source_differences'] = [name for name in differences if name in GENERATED_FILES]
@@ -113,6 +211,12 @@ def source_identity(source, reference, receipt=None):
             f'non-generated reference source differs: {identity["handwritten_source_differences"]}')
     require(not identity['external_header_differences'],
             f'external producer headers differ: {identity["external_header_differences"]}')
+    require(tuple(reference['local_include_roots']) == LOCAL_INCLUDE_ROOTS,
+            'unknown or missing local include root classification')
+    identity['include_recipe'] = include_recipe((source / 'Makefile').read_text())
+    require(identity['include_recipe'] == reference['include_recipe'], 'producer include recipe differs')
+    identity['literal_include_graph'] = literal_include_graph(source, reference['production_units'])
+    require(identity['literal_include_graph'] == reference['literal_include_graph'], 'producer literal include graph differs')
     identity['identical_source_profile'] = not differences and not identity['target_configuration_differences']
     return identity
 

@@ -11,12 +11,17 @@ import sys
 import tempfile
 import unittest
 
-from check_shader_inputs import source_identity, sha
+from check_shader_inputs import source_identity, sha, include_recipe, literal_include_graph, input_inventory
 
 
 class NativeProfileTest(unittest.TestCase):
     def test_frozen_reference_and_generated_difference(self):
         reference = json.loads(Path(__file__).with_name('native-profile-reference.json').read_text())
+        def content(name):
+            if name == 'Makefile':
+                return 'CPPFLAGS = -I/fixture/hdr/include -I/fixture/spv/include\nCFLAGS = -O2\n\t$(COMPILE)\n'
+            return 'original'
+
         self.assertEqual(len(reference['production_units']), 24)
         self.assertEqual(sha(Path(__file__).with_name('shader_matrix.py')), reference['matrix_sha256'])
         with tempfile.TemporaryDirectory() as directory:
@@ -26,8 +31,10 @@ class NativeProfileTest(unittest.TestCase):
                 for name in reference[key]:
                     path = base / name
                     path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text('original')
+                    path.write_text(content(name))
                     reference[key][name] = sha(path)
+            reference['include_recipe'] = include_recipe((root / 'Makefile').read_text())
+            reference['literal_include_graph'] = literal_include_graph(root, reference['production_units'])
             self.assertTrue(source_identity(root, reference)['identical_source_profile'])
             for name in reference['source_files']:
                 with self.subTest(changed=name):
@@ -44,7 +51,7 @@ class NativeProfileTest(unittest.TestCase):
                             source_identity(root, reference, receipt)
                         self.assertFalse(receipt['identical_source_profile'])
                         self.assertEqual(receipt['files'][name], sha(path))
-                    path.write_text('original')
+                    path.write_text(content(name))
             for key, base in [('source_files', root), ('external_headers', root.parent),
                               ('target_configuration', root)]:
                 for name in reference[key]:
@@ -56,22 +63,22 @@ class NativeProfileTest(unittest.TestCase):
                             source_identity(root, reference, receipt)
                         self.assertIn(name, receipt['missing_inputs'])
                         self.assertFalse(receipt['identical_source_profile'])
-                        path.write_text('original')
+                        path.write_text(content(name))
             for name in reference['target_configuration']:
                 path = root / name
-                path.write_text('new target')
+                path.write_text(content(name) + '\n# new target\n')
                 result = source_identity(root, reference)
                 self.assertFalse(result['identical_source_profile'])
                 self.assertEqual(result['generated_source_differences'], [])
                 self.assertEqual(result['target_configuration_differences'], [name])
                 self.assertEqual(result['target_configuration'][name], sha(path))
-                path.write_text('original')
+                path.write_text(content(name))
             for name in reference['external_headers']:
                 path = root.parent / name
                 path.write_text('new external header')
                 with self.assertRaisesRegex(RuntimeError, 'external producer headers differ'):
                     source_identity(root, reference)
-                path.write_text('original')
+                path.write_text(content(name))
             for vendor_root in reference['external_include_roots']:
                 unknown_external = root.parent / vendor_root / 'unclassified/input.inc'
                 unknown_external.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +93,16 @@ class NativeProfileTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'external include root classification'):
                 source_identity(root, reference)
             reference['external_include_roots'] = original_roots
+            original_local_roots = reference['local_include_roots']
+            reference['local_include_roots'] = ['include', 'include/private', 'libs/vkd3d-shader']
+            with self.assertRaisesRegex(RuntimeError, 'local include root classification'):
+                source_identity(root, reference)
+            reference['local_include_roots'] = original_local_roots
+            omitted_local = 'demos/demo.h'
+            digest = reference['source_files'].pop(omitted_local)
+            with self.assertRaisesRegex(RuntimeError, 'unclassified producer inputs'):
+                source_identity(root, reference)
+            reference['source_files'][omitted_local] = digest
             omitted = 'hdr/include/vulkan/vulkan.h'
             digest = reference['external_headers'].pop(omitted)
             with self.assertRaisesRegex(RuntimeError, 'unclassified producer inputs'):
@@ -165,6 +182,12 @@ def verify_authenticated_archive(archive, artifacts):
                             ('hdr/include/vulkan/vulkan.h', b'#include "vulkan_core.h"'),
                             ('hdr/include/vulkan/vulkan_core.h', b'#include "vk_video/vulkan_video_codec_h264std.h"')]:
         check(directive in files[name], 'actual include chain differs at ' + name)
+    local = {name[len('vkd3d-2.1/'):]: hashlib.sha256(data).hexdigest()
+             for name, data in files.items() if name.startswith('vkd3d-2.1/') and name.endswith(('.h', '.l', '.y'))}
+    expected_local = {name: digest for key in ('source_files', 'target_configuration')
+                      for name, digest in reference[key].items() if name.endswith(('.h', '.l', '.y'))}
+    check(local == expected_local, 'local manifest is not exhaustive for authenticated archive')
+    check(include_recipe(makefile) == reference['include_recipe'], 'actual Makefile include recipe differs')
     artifacts.mkdir(parents=True, exist_ok=False)
     source = artifacts / 'work/vkd3d-2.1'
     for key, base in [('source_files', source), ('target_configuration', source), ('external_headers', source.parent)]:
@@ -174,6 +197,15 @@ def verify_authenticated_archive(archive, artifacts):
             path = base / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
+    for name, data in files.items():
+        if name.startswith(('vkd3d-2.1/', 'hdr/include/', 'spv/include/')):
+            path = source.parent / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+    graph = literal_include_graph(source, reference['production_units'])
+    check(graph == reference['literal_include_graph'], 'complete actual include graph differs')
+    check(len(graph['visited']) == 84, 'actual include closure differs')
+    check(len({name for _, name in graph['unresolved_system_sdk_or_disabled']}) == 40, 'unresolved include inventory differs')
     check(source_identity(source, reference)['identical_source_profile'], 'unchanged authenticated source rejected')
     checks = []
     for key, base in [('source_files', source), ('target_configuration', source), ('external_headers', source.parent)]:
@@ -216,14 +248,109 @@ def verify_authenticated_archive(archive, artifacts):
             check(unknown.relative_to(source.parent).as_posix() in receipt['unclassified_inputs'], 'unclassified path lost')
         finally:
             unknown.unlink()
+    boundary_checks = []
+
+    def rejected(label, expected):
+        receipt = {}
+        try:
+            source_identity(source, reference, receipt)
+        except RuntimeError as error:
+            check(expected in str(error), label + ': ' + str(error))
+        else:
+            raise RuntimeError('boundary bypass accepted: ' + label)
+        check(not receipt['identical_source_profile'], label + ': claimed identical')
+        boundary_checks.append({'attack': label, 'receipt': receipt})
+
+    shadows = [(source / name) for name in ('config.h', 'vulkan/vulkan.h', 'spirv/unified1/spirv.h')]
+    shadows += [source / root / 'stdio.h' for root in
+                ('include', 'include/private', 'libs/vkd3d-shader', 'libs/vkd3d-common',
+                 'demos', 'tests', 'libs/vkd3d')]
+    shadows += [source.parent / root / 'stdio.h' for root in roots]
+    for path in shadows:
+        check(not path.exists(), 'shadow fixture already exists')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            path.write_text('#error first search root shadow\n')
+            rejected(path.relative_to(source.parent).as_posix(), 'unclassified producer inputs')
+        finally:
+            path.unlink()
+    outside = artifacts / 'outside'
+    outside.mkdir()
+    (outside / 'shadow.h').write_text('#error outside symlink root\n')
+    link_paths = [source, source / 'unknown-link', source / 'include', source / 'include/private',
+                  source / 'libs/vkd3d-common', source / 'libs/vkd3d-shader',
+                  *(source.parent / root / 'unknown-link' for root in roots),
+                  source.parent / 'hdr/include/vulkan', source.parent / 'spv/include/spirv',
+                  *(source.parent / root for root in roots), source.parent / 'hdr', source.parent / 'spv']
+    for index, path in enumerate(link_paths):
+        saved = artifacts / ('saved-directory-' + str(index))
+        existed = path.exists()
+        if existed:
+            path.rename(saved)
+        try:
+            path.symlink_to(outside, target_is_directory=True)
+            rejected(path.relative_to(source.parent).as_posix(), 'symlink producer inputs')
+        finally:
+            path.unlink()
+            if existed:
+                saved.rename(path)
+    cycle = source / 'cycle'
+    try:
+        cycle.symlink_to(source, target_is_directory=True)
+        rejected('source symlink cycle', 'symlink producer inputs')
+    finally:
+        cycle.unlink()
+    make_path = source / 'Makefile'
+    make_changes = [
+        ('default order', makefile.replace('DEFAULT_INCLUDES = -I. -I$(top_builddir)/include',
+                                          'DEFAULT_INCLUDES = -I$(top_builddir)/include -I.')),
+        ('appended root', makefile + '\nCPPFLAGS += -Iextra\n'),
+        ('target-specific root', makefile + '\nlibs/vkd3d-shader/hlsl.lo: CPPFLAGS = -Iextra\n'),
+        ('extra root', makefile.replace('AM_CPPFLAGS = ', 'AM_CPPFLAGS = -Iextra ')),
+        ('shader root', makefile.replace('-I$(srcdir)/libs/vkd3d-shader', '-Iextra')),
+        ('compile order', makefile.replace('$(DEFAULT_INCLUDES) $(INCLUDES)', '$(INCLUDES) $(DEFAULT_INCLUDES)')),
+        ('actual compile recipe', makefile.replace('$(AM_V_CC)$(LIBTOOL)', '$(AM_V_CC)$(LIBTOOL) -Iextra', 1)),
+        ('source directory', makefile.replace('srcdir = .\n', 'srcdir = other\n')),
+        ('forced include', makefile.replace('CFLAGS = -g -O2', 'CFLAGS = -g -O2 -include outside.h')),
+        ('vendor order', makefile.replace('CPPFLAGS = ', 'CPPFLAGS = -Ioutside ')),
+    ]
+    for label, changed in make_changes:
+        check(changed != makefile, 'ineffective Makefile test: ' + label)
+        try:
+            make_path.write_text(changed)
+            rejected(label, 'include')
+        finally:
+            make_path.write_text(makefile)
+    generated = source / 'libs/vkd3d-shader/hlsl.tab.c'
+    original = generated.read_bytes()
+    for directive in ('#include DYNAMIC_HEADER', '#include "future.inc"',
+                      '#include_next <stdio.h>', '#import <stdio.h>'):
+        try:
+            generated.write_bytes(original + ('\n' + directive + '\n').encode())
+            rejected(directive, 'unsupported include')
+        finally:
+            generated.write_bytes(original)
+    # Target configuration bytes remain separate even when the include graph is unchanged.
+    config = source / 'include/config.h'
+    original = config.read_bytes()
+    try:
+        config.write_bytes(original + b'\n/* target configuration drift */\n')
+        receipt = source_identity(source, reference)
+        check(receipt['target_configuration_differences'] == ['include/config.h']
+              and not receipt['identical_source_profile'], 'target config lost separate identity')
+    finally:
+        config.write_bytes(original)
     captures = []
     for name in ('hdr/include/vulkan/vulkan.h', 'hdr/include/vulkan/vulkan_core.h',
-                 'hdr/include/vk_video/vulkan_video_codec_h264std.h'):
+                 'hdr/include/vk_video/vulkan_video_codec_h264std.h',
+                 'vkd3d-2.1/config.h', 'vkd3d-2.1/vulkan/vulkan.h', 'vkd3d-2.1/spirv/unified1/spirv.h'):
         path = source.parent / name
-        original = path.read_bytes()
+        existed = path.exists()
+        original = path.read_bytes() if existed else b''
+        path.parent.mkdir(parents=True, exist_ok=True)
         try:
             path.write_bytes(original + b'\n#error authenticated Vulkan mutation\n')
-            capture = artifacts / ('capture-' + path.stem)
+            capture = artifacts / ('capture-' + name.replace('/', '-'))
             command = [sys.executable, *(['-O'] if sys.flags.optimize else []),
                        str(Path(__file__).with_name('check_shader_inputs.py')), '--source', str(source),
                        '--header', str(source / 'include/vkd3d_shader.h'), '--native-library', str(artifacts / 'never-loaded'),
@@ -232,20 +359,26 @@ def verify_authenticated_archive(archive, artifacts):
             check(completed.returncode != 0, 'mutated CLI accepted')
             result = json.loads((capture / 'result.json').read_text())
             check(result['status'] == 'failure' and result['commands'] == [] and result['cases'] == [], 'native command executed')
-            check(result['source']['external_header_differences'] == [name], 'CLI lost vendor difference')
-            check(result['source']['external_headers'][name] == sha(path), 'CLI lost vendor hash')
+            if existed:
+                check(result['source']['external_header_differences'] == [name], 'CLI lost vendor difference')
+                check(result['source']['external_headers'][name] == sha(path), 'CLI lost vendor hash')
+            else:
+                check(name[len('vkd3d-2.1/'):] in result['source']['unclassified_inputs'], 'CLI lost root shadow')
             seal = json.loads((capture / 'seal.json').read_text())
             check(seal['result.json'] == sha(capture / 'result.json'), 'CLI receipt seal differs')
             captures.append({'command': command, 'exit_code': completed.returncode, 'result_sha256': seal['result.json']})
         finally:
-            path.write_bytes(original)
+            if existed:
+                path.write_bytes(original)
+            else:
+                path.unlink()
     check(source_identity(source, reference)['identical_source_profile'], 'authenticated source restoration differs')
     report = {'zip_sha256': reference['zip_sha256'], 'prepared_tar_sha256': reference['prepared_tar_sha256'],
               'reference_sha256': sha(Path(__file__).with_name('native-profile-reference.json')),
-              'vendor_inventory': vendor, 'mutated_and_omitted_inputs': checks, 'sealed_cli_captures': captures,
-              'native_commands_executed': 0, 'optimized': bool(sys.flags.optimize)}
+              'vendor_inventory': vendor, 'local_inventory': local, 'include_graph': graph, 'include_recipe': include_recipe(makefile), 'mutated_and_omitted_inputs': checks, 'sealed_cli_captures': captures,
+              'boundary_checks': boundary_checks, 'native_commands_executed': 0, 'optimized': bool(sys.flags.optimize)}
     (artifacts / 'verification.json').write_text(json.dumps(report, indent=2) + '\n')
-    print('Authenticated archive verified; mutated and omitted', len(checks), 'inputs; three sealed CLI rejections before native commands.')
+    print('Authenticated archive verified; mutated and omitted', len(checks), 'inputs;', len(captures), 'sealed CLI rejections before native commands.')
 
 
 if __name__ == '__main__':

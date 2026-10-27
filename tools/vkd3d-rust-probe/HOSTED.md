@@ -274,10 +274,13 @@ a new hosted all-unit result. This regression does not waive any existing gate.
 
 The setup job also runs `check_stable_boundaries.py --c2rust` on the rebuilt
 pinned translator. It compiles the untouched Rust 2024 output with stable 1.95.0
-and compares 48 atomic cases and 11 pointer-container/refcount layouts with C,
+and compares 48 explicit unsigned int cases, 48 stdint uint32_t cases and 11
+pointer-container/refcount layouts with C,
 including wraparound, decrement and single argument evaluation. The fixture
 covers both legacy sync and AtomicExpr add-and-fetch callers. Other atomic
-operations retain their existing intrinsic lowering.
+operations retain their existing intrinsic lowering. A separate C fixture checks
+that signed and 64-bit types, relaxed ordering and fetch-first operations retain
+intrinsics in actual translated output.
 
 For a bounded local check without the native exporter, use
 `check_stable_boundaries.py --source <patched-source> --artifacts <new-directory> --focused`.

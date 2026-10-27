@@ -69,6 +69,7 @@ jobs:
           name: broadphase-${{ matrix.os }}
           path: ${{ runner.temp }}/broadphase
           if-no-files-found: error
+          include-hidden-files: true
 
   windows_replay:
     name: Actual Windows source replay (${{ matrix.os }})
@@ -105,3 +106,4 @@ jobs:
           name: broadphase-windows-replay-${{ matrix.os }}
           path: ${{ runner.temp }}/broadphase-replay
           if-no-files-found: error
+          include-hidden-files: true

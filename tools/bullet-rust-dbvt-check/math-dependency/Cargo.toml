@@ -1,0 +1,10 @@
+[package]
+name = "dbvt-math"
+version = "0.0.0"
+edition = "2021"
+
+[lib]
+path = "../../../rust/crates/mds-bullet/src/core/math.rs"
+
+[dependencies]
+mds-crtmath = { path = "../../../rust/crates/mds-crtmath" }

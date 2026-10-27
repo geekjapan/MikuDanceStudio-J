@@ -1,0 +1,81 @@
+name: Bullet DBVT hosted profiles
+
+on:
+  push:
+    branches: [w3-bullet-dbvt-hosted]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bullet-dbvt-hosted-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: DBVT (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x64
+            profile: generic
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            profile: generic
+          - os: macos-15
+            arch: arm64
+            profile: generic
+          - os: windows-2022
+            arch: x64
+            profile: sse
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: |
+          DBVT_OUT="$RUNNER_TEMP/bullet-dbvt"
+          echo "DBVT_OUT=$DBVT_OUT" >> "$GITHUB_ENV"
+          mkdir -p "$DBVT_OUT"
+          set -o pipefail
+          rustup toolchain install 1.95.0 --profile minimal 2>&1 | tee "$DBVT_OUT/toolchain-install.log"
+      - name: Validate helper commands and profiles
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s tools/bullet-rust-dbvt-check -p 'test_check.py' -v 2>&1 | tee "$DBVT_OUT/helper-tests.log"
+      - name: Recapture native DBVT and compare Rust
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          CXX: clang++
+        run: |
+          set -o pipefail
+          python3 tools/bullet-rust-dbvt-check/check.py --out-dir "$DBVT_OUT" --expected-profile '${{ matrix.profile }}' --expected-arch '${{ matrix.arch }}' 2>&1 | tee "$DBVT_OUT/check.log"
+      - name: Activate MSVC and recapture both native profiles
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          @echo on
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 > "%DBVT_OUT%\vsdevcmd.log" 2>&1
+          if errorlevel 1 exit /b 1
+          where cl > "%DBVT_OUT%\compiler-path.txt" 2>&1
+          if errorlevel 1 exit /b 1
+          set CXX=cl
+          python tools\bullet-rust-dbvt-check\check.py --out-dir "%DBVT_OUT%" --expected-profile sse --expected-arch x64 > "%DBVT_OUT%\check.log" 2>&1
+          set CHECK_RESULT=%ERRORLEVEL%
+          type "%DBVT_OUT%\check.log"
+          exit /b %CHECK_RESULT%
+      - name: Save logs, captures, profiles and provenance
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bullet-dbvt-${{ matrix.os }}
+          path: ${{ runner.temp }}/bullet-dbvt
+          if-no-files-found: error

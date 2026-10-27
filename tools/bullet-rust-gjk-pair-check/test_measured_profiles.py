@@ -1,5 +1,8 @@
 """Measured profile controls reject producer, transport, and semantic drift."""
 import json
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 import tempfile
 import unittest
@@ -37,10 +40,57 @@ class MeasuredProfileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             with patch.object(check, 'host', return_value='unknown'):
                 with self.assertRaisesRegex(ValueError, 'Unknown'):
-                    measured_profiles.validate(Path(temp))
+                    measured_profiles.validate(Path(temp), host=check.host, inventory=check.inventory,
+                                               source_hashes=check.source_hashes, stream=check.stream,
+                                               transport=check.transport)
             with patch.object(check, 'host', return_value='macos-arm64'), patch.object(check, 'source_hashes', return_value={}):
                 with self.assertRaisesRegex(ValueError, 'source closure'):
-                    measured_profiles.validate(Path(temp))
+                    measured_profiles.validate(Path(temp), host=check.host, inventory=check.inventory,
+                                               source_hashes=check.source_hashes, stream=check.stream,
+                                               transport=check.transport)
+
+    def test_cli_main_with_support_first_reaches_real_validator(self):
+        script = textwrap.dedent("""
+            import ast
+            import importlib.util
+            from pathlib import Path
+            import sys
+            outer = Path(sys.argv[1]).resolve()
+            output = Path(sys.argv[2])
+            sys.path.insert(0, str(outer.parent))
+            spec = importlib.util.spec_from_file_location('__main__', outer)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules['__main__'] = module
+            sys.argv = [str(outer), '--help']
+            try:
+                spec.loader.exec_module(module)
+            except SystemExit as error:
+                assert error.code == 0
+            assert Path(sys.path[0]).name == 'bullet-rust-support-check'
+            import check
+            assert Path(check.__file__).parent.name == 'bullet-rust-support-check'
+            from measured_profiles import validate
+            capture = next(node for node in ast.parse(outer.read_text()).body
+                           if isinstance(node, ast.FunctionDef) and node.name == 'capture')
+            call, = [node for node in ast.walk(capture) if isinstance(node, ast.Call)
+                     and isinstance(node.func, ast.Name) and node.func.id == 'validate']
+            # Evaluate the production call with its real __main__ globals and validator.
+            expression = compile(ast.Expression(call), str(outer), 'eval')
+            scope = dict(vars(module), validate=validate, output=output)
+            try:
+                eval(expression, scope)
+            except ValueError as error:
+                assert str(error) == 'Outer GJK compiler or toolchain differs from measured profile', str(error)
+                print('real validator rejected compiler drift')
+            else:
+                raise AssertionError('Compiler drift was accepted')
+        """)
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / 'provenance.txt').write_text('deliberately unreviewed compiler')
+            result = subprocess.run([sys.executable, '-c', script, check.__file__, temp],
+                                    capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('real validator rejected compiler drift', result.stdout)
 
     def test_command_root_relocation_keeps_every_flag(self):
         command = ['cl', '/O2', '/fp:precise', '/IC:\\repo\\shim', '/Fe:C:\\out\\native.exe']

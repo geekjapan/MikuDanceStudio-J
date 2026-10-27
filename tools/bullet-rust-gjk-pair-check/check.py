@@ -165,7 +165,8 @@ def capture(output, environment):
     if observation_error or facts['collection'] != 'complete':
         raise ValueError('Collection incomplete or observer coverage failed')
     from measured_profiles import validate
-    receipt = validate(output)
+    receipt = validate(output, host=host, inventory=inventory, source_hashes=source_hashes,
+                       stream=stream, transport=transport)
     write_json(output / 'measured-profile.json', receipt)
     run([sys.executable, HERE / 'mutations.py', '--out-dir', output / 'mutations',
          '--crt-rlib', output / 'libmds_crtmath.rlib', '--inputs', output / 'inputs.tsv',

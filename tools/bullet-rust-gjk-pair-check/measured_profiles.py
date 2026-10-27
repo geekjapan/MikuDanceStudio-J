@@ -17,8 +17,7 @@ def canonical_command(command, root, output):
             for word in command]
 
 
-def validate(output):
-    from check import host, inventory, source_hashes, stream, transport
+def validate(output, *, host, inventory, source_hashes, stream, transport):
     manifest = json.loads((HERE / 'measured-profiles.json').read_text())
     profile = manifest['profiles'].get(host())
     if profile is None:

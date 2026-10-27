@@ -111,7 +111,7 @@ void emit_accessory(int slot, DWORD material) {
 
 void evaluate_model(unsigned char* model, int slot) {
 @MODEL_LOAD@
-    const auto* materials = mdl::Materials(model);
+    auto* materials = mdl::Materials(model);
     constexpr bool shadowOnly = true;
 @MODEL_MATERIALS@
             const auto cull = @MODEL_CULL@;

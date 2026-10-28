@@ -321,7 +321,8 @@ def parse(raw,language,observed):
                 row=take('direct');require(row['operation']==operation and type(row['matrix']) is int and row['matrix']==mi and type(row['point']) is int and row['point']==pi,'direct operation/input/matrix identity')
                 require(len(finite(row['words']))==(4 if operation=='Transform' else 3),'direct operation output width')
                 row['fp']=[snapshot(row[k],language,k,operation=operation,matrix=mi,point=pi) for k in ('sample_a','sample_b')];result['direct'].append(row)
-    require(take('runtime-read')=={'stage':'runtime-read','words':corpus_words(operation_corpus())},'actual runtime corpus read')
+    runtime_read=take('runtime-read');words(runtime_read['words'])
+    require(runtime_read=={'stage':'runtime-read','words':corpus_words(operation_corpus())},'actual runtime corpus read')
     result['operations']=[]
     domain=corpus_words(operation_corpus())
     for i in range(2):
@@ -658,6 +659,7 @@ def admit_command(receipt,r,label):
 def admit_manifest(m):
     require(m['fp_observation_contract']==FP_CONTRACT,'fixed FP observation contract')
     require(m['schema']==SCHEMA and m['base']==BASE and m['paths']==PATHS and re.fullmatch('[0-9a-f]{40}',m['head']),'diagnostic generation/head')
+    words(m['operation_corpus']['words'])
     require(m['operation_corpus']=={'sha256':digest(operation_corpus()),'size':152,'words':corpus_words(operation_corpus())},'generation operation corpus')
 
 
@@ -888,6 +890,19 @@ def source_expected(base,observed,input_root,opt):
     return changes,patches,expected
 
 
+def generation_ancestry(out,m):
+    chain=m['generation_ancestry']
+    require(type(chain) is list and 0<len(chain)<=16 and len(set(chain))==len(chain) and chain[-1]==m['head'],'bounded ordinary generation ancestry')
+    parent=PARENT
+    for revision in chain:
+        require(type(revision) is str and re.fullmatch('[0-9a-f]{40}',revision),'ancestry commit identity')
+        raw=(out/'ancestry'/(revision+'.commit')).read_bytes()
+        require(h.git_hash('commit',raw)==revision,'retained ancestry commit hash')
+        lines=raw.decode('utf-8').split('\n\n',1)[0].splitlines()
+        require(re.fullmatch('tree [0-9a-f]{40}',lines[0]) and [line for line in lines if line.startswith('parent ')]==['parent '+parent],'ordinary linear descent from frozen generation parent')
+        parent=revision
+
+
 def verify_sources(out,m):
     base=out/'sources/base';base_inv=c.source_inventory(base)
     require(base_inv==m['base_inventory'],'complete base source closure')
@@ -898,7 +913,7 @@ def verify_sources(out,m):
         raw=(out/'tooling'/path).read_bytes();require(raw==(ROOT/path).read_bytes() and path not in entries,'six new tooling paths')
         entries[path]=['100644',h.git_hash('blob',raw)]
     h.commit_proof(out/'head.commit',m['head'],entries)
-    require(('parent '+PARENT) in (out/'head.commit').read_text().splitlines(),'frozen parent identity')
+    generation_ancestry(out,m)
     require(input_manifest(inputs(lambda p:(base/p).read_bytes()))==m['inputs'],'closed input manifest')
     for row in inputs(lambda p:(base/p).read_bytes()):require((out/'inputs'/(row['id']+'.x')).read_bytes()==row['bytes'],'retained exact input bytes')
     require((base/'rust/crates/mds-math/src/estimate_table.rs').read_bytes()==(ROOT/'rust/crates/mds-math/src/estimate_table.rs').read_bytes(),'oracle uses authenticated unchanged table source')
@@ -998,12 +1013,19 @@ def run(out,build_root,toolchain):
     base_modes=c.safe_tar(out/'base-source.tar',base)
     for path,row in base_modes.items():c.TRANSPORT_MODES[str((base/path).resolve())]=row['mode']
     for name in ('base','head'):shutil.copyfile(out/(name+'-commit.stdout'),out/(name+'.commit'))
+    require(record(out,'git-ancestry',['git','rev-list','--reverse',PARENT+'..HEAD'],ROOT,env)['status']==0,'ordinary generation ancestry command')
+    chain=(out/'git-ancestry.stdout').read_text().splitlines();(out/'ancestry').mkdir()
+    for revision in chain:
+        require(re.fullmatch('[0-9a-f]{40}',revision),'producer ancestry commit identity')
+        label='ancestor-'+revision
+        require(record(out,label,['git','cat-file','commit',revision],ROOT,env)['status']==0,'ancestor source identity command')
+        shutil.copyfile(out/(label+'.stdout'),out/'ancestry'/(revision+'.commit'))
     for path in PATHS:
         dest=out/'tooling'/path;dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/path,dest)
     input_root=Path(r['input_root']);input_root.mkdir();rows=inputs(lambda p:(base/p).read_bytes())
     for row in rows:(input_root/(row['id']+'.x')).write_bytes(row['bytes'])
     m={'schema':SCHEMA,'fp_observation_contract':FP_CONTRACT,'runner_temp':runner_temp,'base':BASE,'head':head,'paths':PATHS,'input_root':str(input_root),'inputs':input_manifest(rows),'base_inventory':c.source_inventory(base),'builds':[],
-       'operation_corpus':{'sha256':digest(operation_corpus()),'size':152,'words':corpus_words(operation_corpus())},
+       'operation_corpus':{'sha256':digest(operation_corpus()),'size':152,'words':corpus_words(operation_corpus())},'generation_ancestry':chain,
        'configuration_differences':'Native Release in both modes, appended /Od or /O2 on core and console; Rust dev versus release defaults, opt-level/debug assertions/overflow/debuginfo differ. Observed copies add private sink calls. Both copies include coarse private MXCSR snapshots with operation ordering unproved.'}
     parsed={}
     for opt in ('Od','O2'):

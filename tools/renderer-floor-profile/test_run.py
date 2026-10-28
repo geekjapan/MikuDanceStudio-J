@@ -835,9 +835,10 @@ class Controls(unittest.TestCase):
             elif name=='bad-sample':op['samples'][0]=65536
             elif name=='recipe-promotion':op['compiled_dataflow']='Proved'
             elif name=='corpus':next(v for v in rows if v['stage']=='runtime-read')['words'].pop()
+            elif name=='corpus-boolean':next(v for v in rows if v['stage']=='runtime-read')['words'][4]=False
             elif name=='fixture':next(v for v in rows if v['stage']=='merge-read')['bytes'][0]^=1
             elif name=='destination':next(v for v in rows if v.get('owner')==[2,0,0,0])['destination'][0]=r.word(.5)
-        for name in ('duplicate','missing','owner','word','boolean','nan','missing-site','bad-site','bad-sample','recipe-promotion','corpus','fixture','destination'):
+        for name in ('duplicate','missing','owner','word','boolean','nan','missing-site','bad-site','bad-sample','recipe-promotion','corpus','corpus-boolean','fixture','destination'):
             rows=packet('rust');mutate(rows,name)
             with self.subTest(name=name),self.assertRaises((ValueError,KeyError,IndexError)):r.parse(wire(rows),'rust',True)
         for key,value in [('values',[1,2,3]),('target',1),('kind','RustTable')]:
@@ -886,6 +887,23 @@ class Controls(unittest.TestCase):
             bad=copy.deepcopy(witness);bad['compiled_dataflow']='Proved'
             files[directory/'rust-code.json']=json.dumps(bad).encode()
             with self.assertRaises(ValueError):r.compiled_evidence(directory,parsed,recipe)
+
+    def test_33_ordinary_generation_ancestry_keeps_frozen_parent(self):
+        directory=Path('/synthetic-ancestry');files={};chain=[];parent=r.PARENT
+        for message in ('operation diagnostic','strict runtime words'):
+            raw=('tree '+'1'*40+'\nparent '+parent+'\nauthor Test <test@example.invalid> 0 +0000\ncommitter Test <test@example.invalid> 0 +0000\n\n'+message+'\n').encode()
+            parent=r.h.git_hash('commit',raw);chain.append(parent);files[directory/'ancestry'/(parent+'.commit')]=raw
+        manifest={'head':chain[-1],'generation_ancestry':chain}
+        with patch.object(Path,'read_bytes',lambda path:files[path]):
+            r.generation_ancestry(directory,manifest)
+            for bad in ([],chain[::-1],chain+chain,chain[1:]):
+                with self.assertRaises(ValueError):r.generation_ancestry(directory,dict(manifest,generation_ancestry=bad))
+            raw=files[directory/'ancestry'/(chain[-1]+'.commit')]
+            for changed in (raw.replace(('parent '+chain[0]).encode(),('parent '+r.PARENT).encode()),raw.replace(b'\nauthor',('\nparent '+'2'*40+'\nauthor').encode())):
+                revision=r.h.git_hash('commit',changed);files[directory/'ancestry'/(revision+'.commit')]=changed
+                with self.assertRaisesRegex(ValueError,'ordinary linear descent'):r.generation_ancestry(directory,{'head':revision,'generation_ancestry':[chain[0],revision]})
+            files[directory/'ancestry'/(chain[-1]+'.commit')]=raw+b'corrupt'
+            with self.assertRaisesRegex(ValueError,'ancestry commit hash'):r.generation_ancestry(directory,manifest)
 
     def test_zz_real_effects_rejected_before_effects(self):
         target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-operation-boundary/effect-probe')

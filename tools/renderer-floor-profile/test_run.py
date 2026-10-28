@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import copy
+import ast
 import importlib.util
 import io
 import json
@@ -868,7 +869,9 @@ class Controls(unittest.TestCase):
         files={}
         for language,binary,map_name in (('native','floor_profile.exe','native.map'),('rust','rust-profile.exe','rust.map')):
             files[directory/binary]=raw;files[directory/map_name]=mapping;files[directory/(language+'-code.json')]=json.dumps(witness).encode()
-        tool={'path':str(r.DISASSEMBLER),'sha256':'1'*64,'size':100}
+        tool_raw=b'retained tool bytes are data'
+        files[directory/'instruction-tool.bin']=tool_raw
+        tool={'path':str(r.DISASSEMBLER),'sha256':r.digest(tool_raw),'size':len(tool_raw)}
         help={'argv':[str(r.DISASSEMBLER),'--help'],'cwd':recipe['source'],'tool_binary':tool}
         receipts={'instruction-help':(help,b'--disassemble --start-address --stop-address',b'')}
         for language,name in (('native','floor_profile.exe'),('rust','rust-profile.exe')):
@@ -877,6 +880,12 @@ class Controls(unittest.TestCase):
         parsed=({'operations':rows},{'operations':rows})
         with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(r,'checked',lambda directory,label:receipts[label]):
             self.assertEqual(set(r.compiled_evidence(directory,parsed,recipe)),{'native','rust'})
+            del files[directory/'instruction-tool.bin']
+            with self.assertRaises(KeyError):r.compiled_evidence(directory,parsed,recipe)
+            for bad in (tool_raw[:-1],b'x'*len(tool_raw)):
+                files[directory/'instruction-tool.bin']=bad
+                with self.assertRaisesRegex(ValueError,'retained hosted instruction tool identity'):r.compiled_evidence(directory,parsed,recipe)
+            files[directory/'instruction-tool.bin']=tool_raw
             receipts['instruction-help']=(help,b'--disassemble',b'')
             with self.assertRaises(ValueError):r.compiled_evidence(directory,parsed,recipe)
             receipts['instruction-help']=(help,b'--disassemble --start-address --stop-address',b'')
@@ -904,6 +913,60 @@ class Controls(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'ordinary linear descent'):r.generation_ancestry(directory,{'head':revision,'generation_ancestry':[chain[0],revision]})
             files[directory/'ancestry'/(chain[-1]+'.commit')]=raw+b'corrupt'
             with self.assertRaisesRegex(ValueError,'ancestry commit hash'):r.generation_ancestry(directory,manifest)
+
+    def test_34_selected_range_capacity_preserves_byte_caps(self):
+        raw,mapping,rows,_=code_fixture()
+        for count in (128,129):
+            changed=bytearray(raw)+bytearray(2048)
+            struct.pack_into('<II',changed,288,0x2000,count*12)
+            struct.pack_into('<IIII',changed,440,count*12,0x2000,count*12,1280)
+            mapping=b' Preferred load address is 0000000140000000\n'
+            for i in range(count):
+                struct.pack_into('<III',changed,1280+i*12,0x1000+i,0x1001+i,0x3000)
+                mapping+=f' 0001:{i:08x} floor_profile_{i} {0x140001000+i:016x} f object.obj\n'.encode()
+            if count==128:self.assertEqual(len(r.code_ranges(bytes(changed),rows,mapping)['ranges']),128)
+            else:
+                with self.assertRaisesRegex(ValueError,'small bounded operation code regions'):r.code_ranges(bytes(changed),rows,mapping)
+        for spans in ([(1,131074)],[(i*131072,(i+1)*131072) for i in range(5)]):
+            mapping=b' Preferred load address is 0000000140000000\n'+b''.join(f' 0001:00000000 floor_profile_{i} {0x140000000+a:016x} f object.obj\n'.encode() for i,(a,b) in enumerate(spans))
+            with patch.object(r,'pe_code',return_value=(0x140000000,[],spans,None)),self.assertRaisesRegex(ValueError,'small bounded operation code regions'):
+                r.code_ranges(b'',[],mapping)
+
+    def test_35_retained_tool_bytes_follow_real_record_identity(self):
+        directory=Path('/synthetic-tool-retention');tool_path=Path(str(r.DISASSEMBLER));raw=b'tool data'
+        files={tool_path:raw}
+        with patch.object(Path,'read_bytes',lambda p:files[p]),patch.object(Path,'write_bytes',lambda p,v:files.__setitem__(p,v)),patch.object(r.previous,'record',return_value={'env':{},'status':0}),patch.object(r,'write_json'):
+            receipt=r.record(directory,'instruction-help',[str(r.DISASSEMBLER),'--help'],'source',{})
+            self.assertEqual(files[directory/'instruction-tool.bin'],raw)
+            self.assertEqual(receipt['tool_binary'],{'path':str(r.DISASSEMBLER),'sha256':r.digest(raw),'size':len(raw)})
+            files[directory/'instruction-tool.bin']=b'changed'
+            with self.assertRaisesRegex(ValueError,'retained hosted instruction tool changed'):
+                r.record(directory,'rust-instructions-0',[str(r.DISASSEMBLER)],'source',{})
+
+    def test_36_build_row_survives_optional_acquisition_failure(self):
+        tree=ast.parse(Path(r.__file__).read_bytes());run=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='run')
+        loop=next(n for n in run.body if isinstance(n,ast.For) and isinstance(n.target,ast.Name) and n.target.id=='opt').body[0]
+        start=next(i for i,n in enumerate(loop.body) if isinstance(n,ast.Assign) and isinstance(n.targets[0],ast.Name) and n.targets[0].id=='b')
+        block=compile(ast.Module(body=loop.body[start:],type_ignores=[]),str(r.__file__),'exec')
+        for failure in (True,False):
+            state=dict(r.__dict__,id='observed-Od',variant='observed',opt='Od',source=Path('/source'),target=Path('/target'),directory=Path('/evidence/observed-Od'),commands={},patches={},expected={},actual=[],binaries={},objects={},native_target=Path('/native'),executable='/rust.exe',creation=123,parsed={},out=Path('/evidence'),m={'builds':[]},native={},rust={},r={},e={})
+            retained=[]
+            def acquire(*args):
+                self.assertEqual(len(retained),1)
+                self.assertEqual(retained[0]['builds'][0]['runtime_corpus']['created_ns'],123)
+                self.assertNotIn('compiled_capture',retained[0]['builds'][0])
+                if failure:raise ValueError('acquisition failed')
+                return {'native':{},'rust':{}}
+            state['compiled_evidence']=acquire;state['write_json']=lambda path,value:retained.append(copy.deepcopy(value))
+            with patch.object(Path,'read_bytes',return_value=b'compiled image'),patch.object(r.c,'source_inventory',return_value={}):
+                if failure:
+                    with self.assertRaisesRegex(ValueError,'acquisition failed'):exec(block,state)
+                    self.assertEqual(len(retained),1)
+                    self.assertEqual(state['parsed'],{})
+                else:
+                    exec(block,state)
+                    self.assertEqual(len(retained),2)
+                    self.assertEqual(retained[1]['builds'][0]['compiled_capture'],{'native':{},'rust':{}})
 
     def test_zz_real_effects_rejected_before_effects(self):
         target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-operation-boundary/effect-probe')

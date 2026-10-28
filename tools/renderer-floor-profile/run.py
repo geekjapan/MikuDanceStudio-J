@@ -63,6 +63,8 @@ def record(out,label,argv,cwd,env,timeout=1200):
         row['executed_binary']={'path':str(argv[0]),'sha256':digest(binary),'size':len(binary)}
     if tool is not None:
         require(Path(argv[0]).read_bytes()==tool,'hosted instruction tool changed')
+        if label=='instruction-help':(out/'instruction-tool.bin').write_bytes(tool)
+        require((out/'instruction-tool.bin').read_bytes()==tool,'retained hosted instruction tool changed')
         row['tool_binary']={'path':str(argv[0]),'sha256':digest(tool),'size':len(tool)}
     write_json(out/(label+'.json'),row)
     return row
@@ -528,7 +530,7 @@ def code_ranges(raw,rows,map_raw):
         matches=[p for p in functions if p[0]<=site<p[1]]
         require(len(matches)==1,'runtime site has one exception-directory function extent')
         selected.add(matches[0])
-    require(0<len(selected)<=96 and sum(b-a for a,b in selected)<=512*1024 and all(b-a<=128*1024 for a,b in selected),'small bounded operation code regions')
+    require(0<len(selected)<=128 and sum(b-a for a,b in selected)<=512*1024 and all(b-a<=128*1024 for a,b in selected),'small bounded operation code regions')
     return {'image_sha256':digest(raw),'image_size':len(raw),'preferred_base':base,'sections':sections,
             'runtime_sites_rva':sites,'same_link_symbols':symbols,
             'ranges':[region(a,b,True) for a,b in sorted(selected)],
@@ -563,6 +565,8 @@ def compiled_evidence(directory,parsed,r,capture=False,env=None):
     require(all(option.encode() in stdout for option in ('--disassemble','--start-address','--stop-address')),'actual bounded disassembly capabilities prerequisite')
     tool=receipt.get('tool_binary');require(type(tool) is dict and set(tool)=={'path','sha256','size'} and
             tool['path']==str(DISASSEMBLER) and re.fullmatch('[0-9a-f]{64}',tool['sha256']) and type(tool['size']) is int and tool['size']>0,'actual hosted tool identity')
+    tool_raw=(directory/'instruction-tool.bin').read_bytes()
+    require(digest(tool_raw)==tool['sha256'] and len(tool_raw)==tool['size'],'retained hosted instruction tool identity')
     result={}
     for language,name,map_name in (('native','floor_profile.exe','native.map'),('rust','rust-profile.exe','rust.map')):
         raw=(directory/name).read_bytes();mapping=(directory/map_name).read_bytes()
@@ -1069,8 +1073,11 @@ def run(out,build_root,toolchain):
                 raw=(directory/name).read_bytes();binaries[name]={'sha256':digest(raw),'size':len(raw)}
             b={'id':id,'variant':variant,'optimization':opt,'source':str(source),'target':str(target),'evidence':str(directory),'commands':commands,'patches':patches,'before':expected,'after':c.source_inventory(source),'actual_native_commands':actual,'binaries':binaries,'objects':objects,'original_native_binary':{'path':str(native_target/'Release/floor_profile.exe'),'sha256':digest((native_target/'Release/floor_profile.exe').read_bytes())},'original_rust_binary':{'path':executable,'sha256':digest(Path(executable).read_bytes())}}
             b['runtime_corpus']={'sha256':digest(operation_corpus()),'size':152,'created_ns':creation}
-            if variant=='observed':b['compiled_capture']=compiled_evidence(directory,(native,rust),r,True,e)
-            m['builds'].append(b);write_json(out/'manifest.json',m);parsed[id]=(native,rust)
+            m['builds'].append(b);write_json(out/'manifest.json',m)
+            if variant=='observed':
+                b['compiled_capture']=compiled_evidence(directory,(native,rust),r,True,e)
+                write_json(out/'manifest.json',m)
+            parsed[id]=(native,rust)
     result={'schema':SCHEMA,'fp_observation_contract':FP_CONTRACT,'head':head,'results':{opt:classify(*parsed['observed-'+opt]) for opt in ('Od','O2')},'hosted':'ExecutedWindowsOnly','profile_adoption':'NotAuthorized'}
     write_json(out/'result.json',result);write_json(out/'seal.json',{'schema':SCHEMA,'files':previous.evidence_inventory(out)})
     return replay(out)

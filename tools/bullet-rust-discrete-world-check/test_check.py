@@ -194,7 +194,6 @@ class SourceControls(unittest.TestCase):
                 if self.name not in files: raise FileNotFoundError(self.name)
                 return files[self.name]
         argv=['/tools/ar','rcs','/capture/lib.a','/capture/a.o']
-        # The old positional-output classification read this absent archive before ar.
         with self.assertRaises(FileNotFoundError): File(argv[2]).read_bytes()
         value=command_files('archive-build',argv,context)
         self.assertEqual([File(name).read_bytes() for name in value.inputs],[b'object'])
@@ -273,7 +272,6 @@ class SourceControls(unittest.TestCase):
         validate_allocator(encoded(control),rows,'ascending',domain='unmodified-control')
         changed=copy.deepcopy(control);changed[5]['events'].pop()
         with self.assertRaisesRegex(ValueError,'all candidates'):validate_allocator(encoded(changed),rows,'ascending',domain='unmodified-control')
-        # A live same-size candidate remains present at the empty initial snapshot.
         self.assertEqual(control[1]['events'][0]['node_call'],0)
 
 

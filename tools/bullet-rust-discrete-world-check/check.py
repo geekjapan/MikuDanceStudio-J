@@ -12,9 +12,9 @@ import time
 
 from cases import corpus
 from evidence import (Capture, ENVIRONMENT, LIMITS, admit_capture, digest, include_paths, inventory,
-                      macro_source, native_flags, policy, selected_members, semantic_fields, command_input_paths, command_schedule, replay_report)
-from hooks import CORE, NATIVE, OWNER, SHIM, MUTANTS, instrument, inverse, mutate, require
-from trace import bind_inputs, comparison, validate, validate_allocator, validate_physical
+                      macro_source, native_flags, policy, selected_members, semantic_fields, command_files, command_schedule, replay_report)
+from hooks import CORE, NATIVE, OWNER, SHIM, MUTANTS, OBSERVATION_PATHS, NATIVE_OBSERVATIONS, instrument, inverse, mutate, require
+from trace import validate_noninterference, bind_inputs, comparison, validate, validate_allocator, validate_physical
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -83,6 +83,29 @@ def admit_windows(directory, **expected):
                          expected_policy='mmd-win64-sse', **expected)
 
 
+def executable_identity(executable):
+    invocation=shutil.which(str(executable))
+    require(invocation is not None,'resolved executable '+str(executable))
+    invocation=str(Path(invocation).absolute())
+    target=Path(invocation).resolve(strict=True)
+    return {'path':invocation,'target':str(target),'sha256':digest(target.read_bytes())}
+
+
+def retain_outputs(outputs, out, *, success):
+    retained={}
+    for output in outputs:
+        artifact=Path(output.physical)
+        if not artifact.is_file():
+            require(not success,'successful command missing output '+output.retained)
+            continue
+        target=out/output.retained
+        if target!=artifact:
+            target.parent.mkdir(parents=True,exist_ok=True)
+            target.write_bytes(artifact.read_bytes())
+        retained[output.retained]=digest(target.read_bytes())
+    return retained
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out-dir',type=Path,required=True)
@@ -98,7 +121,7 @@ def main():
         target=out/'source'/path;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes((ROOT/path).read_bytes())
     inputs,cases=corpus();(out/'inputs.txt').write_bytes(inputs.encode());save(out/'cases.json',cases)
     commands=[];dependencies={}
-    status={'schema':3 if args.replay_dir else 2,'status':'FAIL','base':BASE,'policy':args.policy,'native':'UNRUN','compiled_controls':'UNRUN',
+    status={'schema':5 if args.replay_dir else 4,'status':'FAIL','base':BASE,'policy':args.policy,'native':'UNRUN','compiled_controls':'UNRUN',
             'public_world':'UNCHANGED_NATIVE_BACKEND','scope':'private default-DBVT discrete collision owner',
             'host':{'system':platform.system(),'machine':platform.machine(),'image':os.environ.get('ImageVersion')}}
     save(out/'report.json',status)
@@ -106,32 +129,20 @@ def main():
     save(out/'environment-start.json',settings)
     tools={}
     def tool(name, executable):
-        resolved=shutil.which(str(executable))
-        require(resolved is not None,'resolved executable '+str(executable))
-        resolved=str(Path(resolved).resolve())
-        raw=Path(resolved).read_bytes(); identity=digest(raw)
-        tools[name]={'path':resolved,'sha256':identity}
+        binding=executable_identity(executable)
+        tools[name]=binding
         save(out/'tools-start.json',tools)
-        target=out/'tool-bytes'/identity;target.parent.mkdir(exist_ok=True)
-        if not target.exists():target.write_bytes(raw)
-        return resolved
+        target=out/'tool-bytes'/binding['sha256'];target.parent.mkdir(exist_ok=True)
+        if not target.exists():target.write_bytes(Path(binding['target']).read_bytes())
+        return binding['path']
     python=tool('python',sys.executable);git=tool('git','git');rustup=tool('rustup','rustup')
-    def resolve_executable(executable):
-        if Path(executable).is_file():return str(Path(executable).resolve())
-        resolved=shutil.which(executable);require(resolved is not None,'actual command executable')
-        return str(Path(resolved).resolve())
-    def produced(argv):
-        result=[]
-        for i,arg in enumerate(argv):
-            if arg=='-o':result.append(Path(argv[i+1]))
-            elif arg.startswith(('/Fo','/Fe','/OUT:')):
-                value=arg[5:] if arg.startswith('/OUT:') else arg[3:]
-                if value and not value.endswith(('/', '\\')):result.append(Path(value))
-        return result
+    file_context={'system':platform.system(),'root':str(ROOT),'out':str(out),'archive_objects':tuple(
+        p.stem+('.obj' if os.name=='nt' else '.o') for p in sorted((ROOT/'recipes/bullet275/bullet-src/src').rglob('*.cpp'))
+        if p.relative_to(ROOT/'recipes/bullet275/bullet-src/src').parts[0] in {'BulletCollision','BulletDynamics','LinearMath'})}
     def run(argv,label,data=None,cwd=None,compile=False):
         require(snapshot()==before,'fixed source closure before '+label)
         require(not any(c['label']==label for c in commands),'unique command output label')
-        argv=list(map(str,argv));argv[0]=resolve_executable(argv[0]);cwd=cwd or ROOT/'rust'
+        argv=list(map(str,argv));binding=executable_identity(argv[0]);argv[0]=binding['path'];cwd=cwd or ROOT/'rust'
         before_includes=None
         if compile:
             run(argv,label+'-discovery',data,cwd)
@@ -145,39 +156,28 @@ def main():
                 key=os.path.normcase(str(path));before_includes[key]=identity
             require(before_includes,'actual discovery include closure '+label)
             save(out/(label+'-includes-pre.json'),before_includes)
-        for value in tools.values():require(digest(Path(value['path']).read_bytes())==value['sha256'],'tool preserved before '+label)
+        for value in tools.values():require(executable_identity(value['path'])==value,'tool preserved before '+label)
+        require(executable_identity(argv[0])==binding,'invocation target preserved before '+label)
         record={'label':label,'argv':argv,'cwd':str(cwd),'stdin_sha256':None if data is None else digest(data),
-                'tool':argv[0],'tool_sha256':digest(Path(argv[0]).read_bytes()),'executable_sha256':digest(Path(argv[0]).read_bytes())}
-        record['inputs']={value:digest(Path(value).read_bytes()) for value in command_input_paths(argv,platform.system())}
+                'tool':argv[0],'tool_target':binding['target'],'tool_sha256':binding['sha256'],'executable_sha256':binding['sha256']}
+        roles=command_files(label,argv,file_context)
+        record['inputs']={value:digest(Path(value).read_bytes()) for value in roles.inputs}
         record['generated_inputs']=generated_snapshot(Path(argv[-3]).parents[2]) if label=='rust-observed-build' or label.startswith(('baseline-build-','mutant-build-')) else None
         commands.append(record);save(out/'commands.json',commands)
         start=time.monotonic()
         try:
             result=subprocess.run(argv,cwd=cwd,input=data,capture_output=True,timeout=600,env={**os.environ,'VSLANG':'1033'})
         except subprocess.TimeoutExpired as error:
-            record.update(returncode=None,timeout=True)
+            record.update(returncode=None,timeout=True,outputs=retain_outputs(roles.outputs,out,success=False),
+                          stdout_sha256=digest(error.stdout or b''),stderr_sha256=digest(error.stderr or b''))
             (out/(label+'.stdout')).write_bytes(error.stdout or b'');(out/(label+'.stderr')).write_bytes(error.stderr or b'')
             save(out/'commands.json',commands);raise
         record.update(returncode=result.returncode,timeout=False,seconds=time.monotonic()-start,
                       stdout_sha256=digest(result.stdout),stderr_sha256=digest(result.stderr))
         (out/(label+'.stdout')).write_bytes(result.stdout);(out/(label+'.stderr')).write_bytes(result.stderr);save(out/'commands.json',commands)
-        artifacts=produced(argv)
-        if label=='crt-build':artifacts=[out/('mds_crtmath.lib' if os.name=='nt' else 'libmds_crtmath.a'),out/'libmds_crtmath.rlib']
-        if label=='archive-extract':artifacts=list((out/'extracted').iterdir())
-        if label.startswith('extract-'):artifacts=[Path(next(a[5:] for a in argv if a.startswith('/OUT:')))]
-        if label.endswith('-link'):
-            artifacts.append(out/(label[:-5]+'.map'))
-        if label in [name+'-'+mode for name in ['native','observed'] for mode in MODES]:artifacts.append(Path(argv[-1]))
-        if os.name=='nt' and label in {'macro-build','macro-build-discovery'}:artifacts.append(out/'effective-macros.obj')
-        record['outputs']={}
-        for artifact in artifacts:
-            if not artifact.is_file():continue
-            retained=artifact
-            if label.endswith('-discovery'):
-                retained=out/'discovery'/label[:-10]/artifact.relative_to(out)
-                retained.parent.mkdir(parents=True,exist_ok=True);retained.write_bytes(artifact.read_bytes())
-            record['outputs'][retained.relative_to(out).as_posix()]=digest(retained.read_bytes())
+        record['outputs']=retain_outputs(roles.outputs,out,success=False)
         save(out/'commands.json',commands)
+        if result.returncode==0:require(set(record['outputs'])=={value.retained for value in roles.outputs},'successful command missing output '+label)
         if compile:
             found={}
             for name in include_paths(result.stdout+result.stderr,platform.system()):
@@ -218,7 +218,7 @@ def main():
         require('97 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' in pure_log,'unchanged native-free97 gate')
         shadow=out/'generated'
         copy_sources(shadow)
-        originals={path:(shadow/path).read_bytes() for path in [OWNER,CORE+'dispatcher.rs',CORE+'world_objects.rs',NATIVE+'btCollisionDispatcher.cpp',NATIVE+'btCollisionWorld.cpp',SHIM]}
+        originals={path:(shadow/path).read_bytes() for path in OBSERVATION_PATHS}
         changes=instrument(shadow,HERE);inverse(shadow,changes,originals);save(out/'observation-edits.json',changes)
         generated=generated_snapshot(shadow);save(out/'generated-start.json',generated)
         rust_exe=out/('rust-world'+suffix)
@@ -227,12 +227,12 @@ def main():
         if args.replay_dir:
             require(args.policy=='mmd-win64-sse','Windows replay policy required')
             producer=admit_windows(args.replay_dir.absolute(),expected_head=status['head'],canonical_sources={p:(ROOT/p).read_bytes() for p in before},inputs=inputs,cases=cases)
-            status['schema']=3;status['native']='WINDOWS_SOURCE_REPLAY';status['producer_report_sha256']=producer.report_sha256
+            status['schema']=5;status['native']='WINDOWS_SOURCE_REPLAY';status['producer_report_sha256']=producer.report_sha256
         else:
             capture=out
             compiler=shutil.which(os.environ.get('CXX','cl' if os.name=='nt' else 'clang++'))
             require(compiler is not None,'actual compiler available');compiler=tool('compiler',compiler)
-            status['compiler']={'path':compiler,'sha256':digest(Path(compiler).read_bytes())}
+            status['compiler']=dict(tools['compiler'])
             run([compiler,'/?'] if os.name=='nt' else [compiler,'--version'],'compiler-version')
             src=ROOT/'recipes/bullet275/bullet-src/src';shim=ROOT/'rust/crates/mds-bullet-sys/shim'
             if os.name=='nt':tool('native_linker','link.exe')
@@ -275,9 +275,9 @@ def main():
             observed_objects=[]
             hook_header=HERE/'observer.h'
             hook_flags=['/FI'+str(hook_header),'/DDW_OBSERVED=1'] if os.name=='nt' else ['-include',hook_header,'-DDW_OBSERVED=1']
-            for name in ['btCollisionDispatcher','btCollisionWorld']:
+            for name,source_path in NATIVE_OBSERVATIONS:
                 obj=out/('observed-'+name+extension)
-                compile_object(shadow/(NATIVE+name+'.cpp'),obj,'observed-'+name,hook_flags);observed_objects.append(obj)
+                compile_object(shadow/source_path,obj,'observed-'+name,hook_flags);observed_objects.append(obj)
             libs=(out/'crt-build.stderr').read_text().split('native-static-libs:')[-1].splitlines()[0].split() if os.name=='nt' else ([] if system=='Darwin' else ['-ldl','-lpthread','-lm'])
             for name,source,extra,prefix in [('native',HERE/'oracle.cpp',[],[]),('observed',shadow/'tools/bullet-rust-discrete-world-check/oracle.cpp',hook_flags,observed_objects)]:
                 obj=out/(name+'-consumer'+extension);compile_object(source,obj,name+'-consumer-build',extra)
@@ -292,7 +292,7 @@ def main():
                 for mode in MODES:
                     receipt=out/(name+'-allocator-'+mode+'.jsonl')
                     raw=run([exe,mode,receipt],name+'-'+mode,inputs.encode())
-                    rows=validate(raw,inputs,native=True,observed=name=='observed');validate_allocator(receipt.read_bytes(),rows,mode)
+                    rows=validate(raw,inputs,native=True,observed=name=='observed');validate_allocator(receipt.read_bytes(),rows,mode,domain='unmodified-control' if name=='native' else 'generated-dbvt-node-sites')
             status['native']='ACTUAL_ORIGINAL_PUBLIC_SHIM_WITH_UNMODIFIED_ARCHIVE_CONTROL'
         if not args.replay_dir:
             for mode in MODES:
@@ -304,8 +304,8 @@ def main():
             else:
                 observed=validate((capture/('observed-'+mode+'.stdout')).read_bytes(),inputs,native=True)
                 baseline=validate((capture/('native-'+mode+'.stdout')).read_bytes(),inputs,native=True,observed=False)
-                for name,rows in [('native',baseline),('observed',observed)]:validate_allocator((capture/(name+'-allocator-'+mode+'.jsonl')).read_bytes(),rows,mode)
-                require(comparison(observed,False)==comparison(baseline,False),'original observer unchanged common outputs '+mode)
+                for name,rows in [('native',baseline),('observed',observed)]:validate_allocator((capture/(name+'-allocator-'+mode+'.jsonl')).read_bytes(),rows,mode,domain='unmodified-control' if name=='native' else 'generated-dbvt-node-sites')
+                validate_noninterference((capture/('native-allocator-'+mode+'.jsonl')).read_bytes(),baseline,(capture/('observed-allocator-'+mode+'.jsonl')).read_bytes(),observed,mode)
                 bound=bind_inputs(inputs,observed).encode()
             (out/('bound-'+mode+'.txt')).write_bytes(bound)
             bound_raw=run([rust_exe,args.policy],'rust-bound-'+mode,bound)
@@ -349,10 +349,11 @@ def main():
         if final!=before: status.update(status='FAIL',error='fixed source closure changed')
         try:
             save(out/'environment-end.json',{key:os.environ.get(key) for key in ENVIRONMENT})
-            for value in tools.values():require(digest(Path(value['path']).read_bytes())==value['sha256'],'resolved tool end preservation')
-            save(out/'tools-start.json',tools);save(out/'tools-end.json',tools)
+            end_tools={name:executable_identity(value['path']) for name,value in tools.items()}
+            save(out/'tools-end.json',end_tools)
+            require(end_tools==tools,'resolved tool end preservation')
             if status['status']=='CONTROLLED_PASS' and not args.replay_dir:
-                save(out/'producer.json',{'schema':1,'system':system,'root':str(ROOT),'out':str(out),'tools':{name:value['path'] for name,value in tools.items()},'archive_names':members})
+                save(out/'producer.json',{'schema':2,'system':system,'root':str(ROOT),'out':str(out),'tools':{name:value['path'] for name,value in tools.items()},'archive_names':members})
                 finalize_native(out,status,expected_head=status['head'],canonical_sources={p:(ROOT/p).read_bytes() for p in before},inputs=inputs,cases=cases,
                                 expected_host={(system,machine)},expected_policy=args.policy)
             else:

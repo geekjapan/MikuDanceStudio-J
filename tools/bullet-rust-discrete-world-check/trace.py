@@ -178,45 +178,126 @@ def bind_inputs(inputs, rows):
     return '\n'.join(bound) + '\n'
 
 
-def validate_allocator(raw, rows, mode):
+def validate_allocator(raw, rows, mode, *, domain):
     records = [decode_json(line) for line in raw.decode().splitlines()]
     require(len(records) == len(rows)+2, 'complete allocator lifetime receipt')
     header = records[0]
-    require(set(header) == {'schema','mode','arena_base','slots','stride','node_bytes','raw_node_bytes','node_type_alignment'}, 'allocator header fields')
-    require(type(header['schema']) is int and header['schema'] == 1 and header['mode'] == mode and header['slots'] == 65536 and header['stride'] == 128, 'actual allocator mode/layout')
+    require(set(header) == {'schema','domain','mode','arena_base','slots','stride','node_bytes','raw_node_bytes','node_type_alignment'}, 'allocator header fields')
+    require(domain in {'unmodified-control','generated-dbvt-node-sites'} and header['domain']==domain, 'allocator evidence domain')
+    require(all(type(header[key]) is int for key in ['schema','arena_base','slots','stride','node_bytes','raw_node_bytes','node_type_alignment']), 'allocator header integer fields')
+    require(header['schema'] == 2 and header['mode'] == mode and mode in {'ascending','descending','alternating','ordinary'} and header['slots'] == 65536 and header['stride'] == 128, 'actual allocator mode/layout')
     require((header['node_bytes'],header['node_type_alignment']) in {(56,8),(64,16)} and header['raw_node_bytes'] == header['node_bytes']+23, 'supported original node layout')
-    require(type(header['arena_base']) is int and header['arena_base'] > 0 and header['arena_base'] % 64 == 0, 'aligned actual allocator arena')
-    live, allocation = {}, 0
-    ordinals = {}
-    counters = [0,0,0,0]
+    require(header['arena_base'] > 0 and header['arena_base'] % 64 == 0, 'aligned actual allocator arena')
+    live, allocation, nodes = {}, 0, {}
+    ordinals = {}; counters = [0]*4; node_counts=[0]*4
+    sequence=call=generation=world=0
+    trees=None; history=[]
+    observed=domain=='generated-dbvt-node-sites'
     for index, record in enumerate(records[1:]):
-        require(set(record) == {'kind','counters','events'} and record['kind'] == (index if index < len(rows) else 'final'), 'allocator checkpoint identity')
-        require(len(record['counters']) == 4 and all(type(n) is int and n >= old for n,old in zip(record['counters'],counters)), 'allocator monotonic counters')
+        require(set(record) == {'kind','counters','events','world','trees','node_counters','nodes'} and record['kind'] == (index if index < len(rows) else 'final') and (type(record['kind']) is int if index<len(rows) else True), 'allocator checkpoint identity')
+        require(type(record['counters']) is list and len(record['counters']) == 4 and all(type(n) is int and n >= old for n,old in zip(record['counters'],counters)), 'allocator monotonic counters')
         counters = record['counters']
+        require(type(record['world']) is int and type(record['trees']) is list and len(record['trees'])==2 and all(type(n) is int and n>0 for n in record['trees']) and len(set(record['trees']))==2, 'genuine world tree binding')
+        if index<len(rows) and rows[index].get('header',[''])[0]=='H':
+            require(not nodes and record['world']==world+1,'new world generation')
+            world=record['world'];trees=record['trees']
+        elif trees is None:
+            require(record['world']==1,'initial world generation');world=1;trees=record['trees']
+        require(record['world']==world and record['trees']==trees,'world tree binding through destruction')
+        scoped={}; normalized=[]
+        require(type(record['events']) is list,'candidate events array')
         for event in record['events']:
-            require(mode != 'ordinary' and event['op'] in {'alloc','free'} and event['route'] in {'aligned','raw'}, 'actual allocator event route')
-            require(set(event) == ({'op','route','ordinal','pointer','size','alignment'} if event['op']=='alloc' else {'op','route','ordinal','pointer'}), 'exact actual allocator event fields')
+            require(type(event) is dict and mode != 'ordinary' and event['op'] in {'alloc','free'} and event['route'] in {'aligned','raw'}, 'actual allocator event route')
+            require(set(event) == ({'op','route','ordinal','pointer','size','alignment','node_call'} if event['op']=='alloc' else {'op','route','ordinal','pointer','node_call'}), 'exact actual allocator event fields')
+            require(all(type(event[key]) is int and event[key]>=0 for key in set(event)-{'op','route'}),'allocator event integer fields')
             route=(event['op'],event['route'])
             counter_index={('alloc','raw'):0,('free','raw'):1,('alloc','aligned'):2,('free','aligned'):3}[route]
-            require(type(event['ordinal']) is int and ordinals.get(route,0)<event['ordinal']<=counters[counter_index], 'actual allocator callback ordinal prefix')
-            ordinals[route]=event['ordinal']
-            ptr = event['pointer']
-            require(type(ptr) is int and ptr>0,'actual allocator pointer')
+            require(ordinals.get(route,0)<event['ordinal']<=counters[counter_index], 'actual allocator callback ordinal prefix')
+            ordinals[route]=event['ordinal'];ptr=event['pointer']
+            require(ptr>0,'actual allocator pointer')
             if event['op'] == 'alloc':
                 slot = allocation
                 if mode == 'descending': slot = header['slots']-1-allocation
                 if mode == 'alternating': slot = allocation//2 if allocation%2 == 0 else header['slots']-1-allocation//2
-                require(ptr == header['arena_base']+slot*128 and ptr not in live, 'real controlled node allocation order')
+                require(allocation<header['slots'] and ptr == header['arena_base']+slot*128 and ptr not in live, 'real controlled candidate allocation order')
                 allocation += 1
-                require(event['size'] == header['node_bytes'] if event['route'] == 'aligned' else event['size'] == header['raw_node_bytes'], 'actual node allocation size')
-                require(event['alignment'] == (16 if event['route'] == 'aligned' else 0), 'actual node allocation alignment')
-                live[ptr] = (event['route'],ptr if event['route'] == 'aligned' else ptr+16)
+                require(event['size'] == (header['node_bytes'] if event['route'] == 'aligned' else header['raw_node_bytes']), 'actual candidate allocation size')
+                require(event['alignment'] == (16 if event['route'] == 'aligned' else 0), 'actual candidate allocation alignment')
+                value=(event['route'],ptr if event['route']=='aligned' else ptr+16,allocation)
+                live[ptr]=value
             else:
-                require(ptr in live and live[ptr][0]==event['route'], 'real free matches prior allocation route'); del live[ptr]
-        if index < len(rows) and mode != 'ordinary':
-            retained = {node[1] for tree,_ in rows[index]['trees'] for node in tree} | {free for _,free in rows[index]['trees'] if free}
-            require(retained == {value[1] for value in live.values()}, 'actual live/free tree nodes exhaust allocator prefix')
-    require(not live, 'all actual node allocations freed by owner drop')
+                require(ptr in live and live[ptr][0]==event['route'], 'real free matches prior allocation route')
+                value=live.pop(ptr)
+            normalized.append((event['op'],event['route'],event['ordinal'],(ptr-header['arena_base'])//128,value[2],event.get('size'),event.get('alignment')))
+            if event['node_call']:
+                require(observed and event['node_call'] not in scoped,'unique scoped raw callback')
+                scoped[event['node_call']]=(event['op'],value[1],value[2])
+        require(type(record['nodes']) is list and type(record['node_counters']) is list and len(record['node_counters'])==4, 'typed node receipt arrays')
+        for event in record['nodes']:
+            require(observed and type(event) is dict and set(event)=={'op','sequence','call','world','tree','pointer','generation'}, 'exact typed node event fields')
+            require(all(type(event[key]) is int and event[key]>=0 for key in set(event)-{'op'}),'typed node integer fields')
+            op=event['op'];p=event['pointer'];g=event['generation'];t=event['tree']
+            require(op in {'alloc','free','reuse','cache'} and event['sequence']==sequence+1 and event['world']==world and t in {0,1}, 'typed sequence world and tree')
+            sequence+=1;node_counts[{'alloc':0,'free':1,'reuse':2,'cache':3}[op]]+=1
+            raw_generation=None
+            if op in {'alloc','free'}:
+                require(event['call']==call+1,'monotonic nonnested node call');call+=1
+                if mode!='ordinary' and p:
+                    require(call in scoped and scoped[call][:2]==(op,p),'typed scoped callback route and aligned pointer')
+                    raw_generation=scoped.pop(call)[2]
+                else: require(call not in scoped,'null or ordinary node call has no callback')
+            else: require(event['call']==0,'cache transition has no allocation call')
+            if op=='alloc':
+                require(p>0 and p not in nodes and g==generation+1,'fresh node generation')
+                generation=g;nodes[p]=(world,t,g,'active',raw_generation)
+            elif op=='free' and p==0:
+                require(g==0,'null free has no generation')
+            else:
+                require(p in nodes and nodes[p][:3]==(world,t,g),'live typed node tree and generation')
+                entry=nodes[p]
+                if op=='free':
+                    require(entry[3]=='cached' and (mode=='ordinary' or entry[4]==raw_generation),'cached node physical generation free')
+                    del nodes[p]
+                elif op=='reuse':
+                    require(entry[3]=='cached','cached node reuse');nodes[p]=(*entry[:3],'active',entry[4])
+                else:
+                    require(entry[3]=='active' and not any(n[1]==t and n[3]=='cached' for n in nodes.values()),'one cached node per tree')
+                    nodes[p]=(*entry[:3],'cached',entry[4])
+        require(not scoped,'all scoped raw callbacks have typed events')
+        require(all(type(n) is int for n in record['node_counters']) and record['node_counters']==node_counts,'complete typed event counters')
+        retained={}
+        if index<len(rows):
+            for t,(tree,free) in enumerate(rows[index]['trees']):
+                for node in tree:
+                    require(node[1] not in retained,'disjoint typed snapshot nodes');retained[node[1]]=(t,'active')
+                if free:
+                    require(free not in retained,'disjoint typed cached node');retained[free]=(t,'cached')
+            if mode!='ordinary':require(set(retained)<={value[1] for value in live.values()},'original tree/cache backed by live candidates')
+            if observed:require({p:(n[1],n[3]) for p,n in nodes.items()}==retained,'proven nodes exhaust actual tree/cache snapshot')
+        else:require(not nodes,'all proven nodes freed by final checkpoint')
+        if mode=='ordinary':require(counters==[0]*4,'ordinary mode has no raw callbacks')
+        history.append((tuple(counters),normalized,tuple(sorted((p-header['arena_base'],*value[::2]) for p,value in live.items()))))
+    require(not live and not nodes, 'all candidates and proven nodes freed by owner drop')
+    return header,history
+
+
+def validate_noninterference(control_raw, control, observed_raw, observed, mode):
+    a,ah=validate_allocator(control_raw,control,mode,domain='unmodified-control')
+    b,bh=validate_allocator(observed_raw,observed,mode,domain='generated-dbvt-node-sites')
+    require(comparison(control,False)==comparison(observed,False),'unmodified native observer control '+mode)
+    if mode!='ordinary':require(ah==bh,'complete candidate history noninterference '+mode)
+    def topology(rows,header):
+        result=[]
+        for row in rows:
+            trees=[]
+            for nodes,free in row['trees']:
+                if mode=='ordinary':
+                    trees.append(([(node[0],*node[2:]) for node in nodes],bool(free)))
+                else:
+                    trees.append(([(node[0],node[1]-header['arena_base'],*node[2:]) for node in nodes],free-header['arena_base'] if free else None))
+            result.append(trees)
+        return result
+    require(topology(control,a)==topology(observed,b),'tree topology owners volumes and cache noninterference '+mode)
 
 
 def validate_physical(raw, inputs):

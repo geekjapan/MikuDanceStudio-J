@@ -4,6 +4,11 @@ CORE = 'rust/crates/mds-bullet/src/core/'
 NATIVE = 'recipes/bullet275/bullet-src/src/BulletCollision/CollisionDispatch/'
 SHIM = 'rust/crates/mds-bullet-sys/shim/mds_bt.cpp'
 OWNER = CORE + 'discrete_collision_world.rs'
+DBVT = 'recipes/bullet275/bullet-src/src/BulletCollision/BroadphaseCollision/btDbvt.cpp'
+NATIVE_OBSERVATIONS = (('btCollisionDispatcher', NATIVE+'btCollisionDispatcher.cpp'),
+                       ('btCollisionWorld', NATIVE+'btCollisionWorld.cpp'), ('btDbvt', DBVT))
+OBSERVATION_PATHS = (OWNER, CORE+'dispatcher.rs', CORE+'world_objects.rs',
+                     *(path for _,path in NATIVE_OBSERVATIONS), SHIM)
 
 
 def require(ok, message):
@@ -29,6 +34,12 @@ def instrument(root, here):
     changes = []
     def edit(path, old, new):
         replace(root, path, old, new, changes)
+    edit(DBVT, 'btAlignedAlloc(sizeof(btDbvtNode),16)', 'dw_node_alloc(pdbvt)')
+    edit(DBVT, '{ node=pdbvt->m_free;pdbvt->m_free=0; }',
+         '{ node=pdbvt->m_free;pdbvt->m_free=0; dw_node_reuse(pdbvt,node); }')
+    edit(DBVT, 'btAlignedFree(pdbvt->m_free);', 'dw_node_free(pdbvt,pdbvt->m_free);')
+    edit(DBVT, 'pdbvt->m_free=node;', 'pdbvt->m_free=node; dw_node_cache(pdbvt,node);')
+    edit(DBVT, 'btAlignedFree(m_free);', 'dw_node_free(this,m_free);')
     dispatcher = NATIVE + 'btCollisionDispatcher.cpp'
     edit(dispatcher, 'return m_collisionAlgorithmPoolAllocator->allocate(size);',
          'return dw_algorithm_alloc(m_collisionAlgorithmPoolAllocator->allocate(size));')

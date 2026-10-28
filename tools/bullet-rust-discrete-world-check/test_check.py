@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 
 from cases import corpus
-from hooks import CORE, NATIVE, OWNER, SHIM, MUTANTS, instrument, inverse, mutate
+from hooks import CORE, NATIVE, OWNER, SHIM, MUTANTS, OBSERVATION_PATHS, instrument, inverse, mutate
 from trace import bind_inputs, comparison, validate, validate_allocator, validate_physical, decode_json
 import check
 
@@ -79,28 +79,28 @@ class SourceControls(unittest.TestCase):
 
     def test_allocator_rejects_orphan_free_and_false_mode(self):
         rows=validate(b'O 0 H 0 0 0 1\nO 1 X 0 0 0 1\nZ 2\n','H x public\nX\n')
-        header={'schema':1,'mode':'ascending','arena_base':4096,'slots':65536,'stride':128,'node_bytes':56,'raw_node_bytes':79,'node_type_alignment':8}
-        records=[header,*[{'kind':kind,'counters':[0,0,0,0],'events':[]} for kind in [0,1,'final']]]
+        header={'schema':2,'domain':'unmodified-control','mode':'ascending','arena_base':4096,'slots':65536,'stride':128,'node_bytes':56,'raw_node_bytes':79,'node_type_alignment':8}
+        records=[header,*[{'kind':kind,'counters':[0,0,0,0],'events':[],'world':1,'trees':[1024,2048],'node_counters':[0]*4,'nodes':[]} for kind in [0,1,'final']]]
         raw=lambda:('\n'.join(json.dumps(r) for r in records)+'\n').encode()
-        validate_allocator(raw(),rows,'ascending')
+        validate_allocator(raw(),rows,'ascending',domain='unmodified-control')
         records[1]['events']=[{'op':'free','route':'raw','pointer':4096,'ordinal':1}]
-        with self.assertRaises(ValueError):validate_allocator(raw(),rows,'ascending')
+        with self.assertRaises(ValueError):validate_allocator(raw(),rows,'ascending',domain='unmodified-control')
         records[1]['events']=[]
-        with self.assertRaises(ValueError):validate_allocator(raw(),rows,'descending')
+        with self.assertRaises(ValueError):validate_allocator(raw(),rows,'descending',domain='unmodified-control')
 
     def test_allocator_live_node_prefix_and_full_free_are_required(self):
         rows=[{'trees':[[[[0,4112,*(['00000000']*6)]],0],[[],0]]},{'trees':[]}]
-        records=[{'schema':1,'mode':'ascending','arena_base':4096,'slots':65536,'stride':128,'node_bytes':56,'raw_node_bytes':79,'node_type_alignment':8},
-                 {'kind':0,'counters':[1,0,0,0],'events':[{'op':'alloc','route':'raw','ordinal':1,'pointer':4096,'size':79,'alignment':0}]},
-                 {'kind':1,'counters':[1,1,0,0],'events':[{'op':'free','route':'raw','ordinal':1,'pointer':4096}]},
-                 {'kind':'final','counters':[1,1,0,0],'events':[]}]
+        records=[{'schema':2,'domain':'unmodified-control','mode':'ascending','arena_base':4096,'slots':65536,'stride':128,'node_bytes':56,'raw_node_bytes':79,'node_type_alignment':8},
+                 {'kind':0,'counters':[1,0,0,0],'events':[{'op':'alloc','route':'raw','ordinal':1,'pointer':4096,'size':79,'alignment':0,'node_call':0}],'world':1,'trees':[1024,2048],'node_counters':[0]*4,'nodes':[]},
+                 {'kind':1,'counters':[1,1,0,0],'events':[{'op':'free','route':'raw','ordinal':1,'pointer':4096,'node_call':0}],'world':1,'trees':[1024,2048],'node_counters':[0]*4,'nodes':[]},
+                 {'kind':'final','counters':[1,1,0,0],'events':[],'world':1,'trees':[1024,2048],'node_counters':[0]*4,'nodes':[]}]
         raw=lambda value:('\n'.join(json.dumps(v) for v in value)+'\n').encode()
-        validate_allocator(raw(records),rows,'ascending')
+        validate_allocator(raw(records),rows,'ascending',domain='unmodified-control')
         for field,value in [('ordinal',2),('pointer',4224),('size',80),('alignment',16)]:
             changed=copy.deepcopy(records);changed[1]['events'][0][field]=value
-            with self.subTest(field=field),self.assertRaises(ValueError):validate_allocator(raw(changed),rows,'ascending')
+            with self.subTest(field=field),self.assertRaises(ValueError):validate_allocator(raw(changed),rows,'ascending',domain='unmodified-control')
         changed=copy.deepcopy(records);changed[2]['events']=[]
-        with self.assertRaises(ValueError):validate_allocator(raw(changed),rows,'ascending')
+        with self.assertRaises(ValueError):validate_allocator(raw(changed),rows,'ascending',domain='unmodified-control')
 
     def test_policy_classifier_rejects_unknown_mixed_and_incomplete_bodies(self):
         parameters='const btDbvtAabbMm& a, const btDbvtAabbMm& b'
@@ -127,7 +127,7 @@ class SourceControls(unittest.TestCase):
             with self.assertRaises(ValueError):validate_physical(changed,commands)
 
     def test_actual_source_hook_inverse_lf_and_windows_transport(self):
-        touched=[OWNER,CORE+'dispatcher.rs',CORE+'world_objects.rs',NATIVE+'btCollisionDispatcher.cpp',NATIVE+'btCollisionWorld.cpp',SHIM]
+        touched=OBSERVATION_PATHS
         for windows in [False,True]:
             originals={path:(check.ROOT/path).read_bytes().replace(b'\r\n',b'\n') for path in touched}
             if windows:originals={path:raw.replace(b'\n',b'\r\n') for path,raw in originals.items()}
@@ -158,6 +158,123 @@ class SourceControls(unittest.TestCase):
             diagonal=f32(2*f32(extent+f32(.02)))
             squared.append(f32(f32(diagonal*diagonal)+f32(2.04*2.04*2)))
         self.assertLess(squared[0],f32(1e12));self.assertEqual(squared[1],f32(1e12));self.assertGreater(squared[2],f32(1e12))
+
+    def test_literal_command_file_roles_and_success_outputs(self):
+        from evidence import command_files
+        from unittest.mock import patch
+        context={'system':'Linux','root':'/repo','out':'/capture','archive_objects':('a.o','b.o')}
+        def roles(label,argv,ctx=context):
+            value=command_files(label,argv,ctx)
+            return value.inputs,tuple((v.physical,v.retained) for v in value.outputs)
+        self.assertEqual(roles('archive-build',['/tools/ar','rcs','/capture/lib.a','/capture/a.o']),
+                         (('/capture/a.o',),(('/capture/lib.a','lib.a'),)))
+        self.assertEqual(roles('archive-list',['/tools/ar','t','/capture/lib.a']), (('/capture/lib.a',),()))
+        self.assertEqual(roles('archive-extract',['/tools/ar','x','/capture/lib.a']),
+                         (('/capture/lib.a',),(('/capture/extracted/a.o','extracted/a.o'),('/capture/extracted/b.o','extracted/b.o'))))
+        self.assertEqual(roles('crt-build',['/tools/rustup','/repo/lib.rs','--out-dir','/capture']),
+                         (('/repo/lib.rs',),(('/capture/libmds_crtmath.a','libmds_crtmath.a'),('/capture/libmds_crtmath.rlib','libmds_crtmath.rlib'))))
+        self.assertEqual(roles('native-link',['/tools/c++','/capture/a.o','/capture/lib.a','-o','/capture/native']),
+                         (('/capture/a.o','/capture/lib.a'),(('/capture/native','native'),('/capture/native.map','native.map'))))
+        self.assertEqual(roles('observed-ascending',['/capture/observed','ascending','/capture/receipt.jsonl']),
+                         ((),(('/capture/receipt.jsonl','receipt.jsonl'),)))
+        self.assertEqual(roles('compile-000-discovery',['/tools/c++','-include','/repo/det.h','-I','/repo/includes','-c','/repo/a.cpp','-o','/capture/a.o']),
+                         (('/repo/det.h','/repo/a.cpp'),(('/capture/a.o','discovery/compile-000/a.o'),)))
+        win={'system':'Windows','root':'C:/repo','out':'C:/capture','archive_objects':('a.obj','b.obj')}
+        self.assertEqual(roles('extract-a',['C:/tools/lib','/EXTRACT:a.obj','/OUT:C:/capture/extracted/a.obj','C:/capture/Bullet.lib'],win),
+                         (('C:\\capture\\Bullet.lib',),(('C:\\capture\\extracted\\a.obj','extracted/a.obj'),)))
+        self.assertEqual(roles('macro-build-discovery',['C:/tools/cl','/FIC:/repo/det.h','C:/capture/effective-macros.cpp','/FeC:/capture/macro.exe','/FoC:/capture/'],win),
+                         (('C:\\repo\\det.h','C:\\capture\\effective-macros.cpp'),(('C:\\capture\\macro.exe','discovery/macro-build/macro.exe'),('C:\\capture\\effective-macros.obj','discovery/macro-build/effective-macros.obj'))))
+        files={'/capture/a.o':b'object'}
+        class File:
+            def __init__(self,name): self.name=str(name)
+            def __truediv__(self,name): return File(self.name+'/'+name)
+            def __eq__(self,other): return isinstance(other,File) and self.name==other.name
+            def is_file(self): return self.name in files
+            def read_bytes(self):
+                if self.name not in files: raise FileNotFoundError(self.name)
+                return files[self.name]
+        argv=['/tools/ar','rcs','/capture/lib.a','/capture/a.o']
+        # The old positional-output classification read this absent archive before ar.
+        with self.assertRaises(FileNotFoundError): File(argv[2]).read_bytes()
+        value=command_files('archive-build',argv,context)
+        self.assertEqual([File(name).read_bytes() for name in value.inputs],[b'object'])
+        with patch.object(check,'Path',File):
+            with self.assertRaisesRegex(ValueError,'successful command missing output'):
+                check.retain_outputs(value.outputs,File('/capture'),success=True)
+            self.assertEqual(check.retain_outputs(value.outputs,File('/capture'),success=False),{})
+            files['/capture/lib.a']=b'archive'
+            self.assertEqual(check.retain_outputs(value.outputs,File('/capture'),success=True),{'lib.a':check.digest(b'archive')})
+
+    def test_tool_alias_persona_and_same_bytes_retarget_model(self):
+        from unittest.mock import patch
+        files={'/targets/rustup-init':b'one tool','/targets/other':b'one tool','/targets/clang':b'clang tool'}
+        aliases={'/tools/rustup':'/targets/rustup-init','/tools/clang++':'/targets/clang'}
+        class File:
+            def __init__(self,name): self.name=str(name)
+            def __str__(self): return self.name
+            def absolute(self): return self
+            def resolve(self,strict): return File(aliases.get(self.name,self.name))
+            def read_bytes(self): return files[self.name]
+        def dispatch_model(binding,args):
+            return binding['path'].rsplit('/',1)[-1]=='rustup' and args[0]=='which'
+        with patch.object(check,'Path',File),patch.object(check.shutil,'which',lambda name:name):
+            binding=check.executable_identity('/tools/rustup')
+            self.assertTrue(dispatch_model(binding,['which']))
+            self.assertFalse(dispatch_model({**binding,'path':binding['target']},['which']))
+            self.assertEqual(check.executable_identity('/tools/clang++')['path'],'/tools/clang++')
+            aliases['/tools/rustup']='/targets/other'
+            changed=check.executable_identity('/tools/rustup')
+            self.assertEqual(binding['sha256'],changed['sha256']);self.assertNotEqual(binding,changed)
+
+    def test_candidate_and_proven_node_domains_and_transient_controls(self):
+        from evidence import digest
+        rows=[{'header':['H'],'trees':[[[],0],[[],0]]},
+              {'trees':[[[[0,4368,*(['00000000']*6)]],0],[[],0]]},
+              {'trees':[[[],4368],[[],0]]},
+              {'trees':[[[[0,4368,*(['00000000']*6)]],0],[[],0]]}, {'trees':[]}]
+        header={'schema':2,'domain':'generated-dbvt-node-sites','mode':'ascending','arena_base':4096,'slots':65536,'stride':128,'node_bytes':56,'raw_node_bytes':79,'node_type_alignment':8}
+        def raw(op,pointer,ordinal,call):
+            event={'op':op,'route':'raw','pointer':pointer,'ordinal':ordinal,'node_call':call}
+            if op=='alloc':event.update(size=79,alignment=0)
+            return event
+        def node(op,seq,call,pointer,generation):
+            return dict(op=op,sequence=seq,call=call,world=1,tree=0,pointer=pointer,generation=generation)
+        def checkpoint(kind,counts,events,node_counts,nodes):
+            return dict(kind=kind,counters=counts,events=events,world=1,trees=[1024,2048],node_counters=node_counts,nodes=nodes)
+        records=[header,
+                 checkpoint(0,[2,1,0,0],[raw('alloc',4096,1,0),raw('alloc',4224,2,1),raw('free',4224,1,2)],[1,1,0,1],[node('alloc',1,1,4240,1),node('cache',2,0,4240,1),node('free',3,2,4240,1)]),
+                 checkpoint(1,[3,1,0,0],[raw('alloc',4352,3,3)],[2,1,0,1],[node('alloc',4,3,4368,2)]),
+                 checkpoint(2,[3,1,0,0],[],[2,1,0,2],[node('cache',5,0,4368,2)]),
+                 checkpoint(3,[3,1,0,0],[],[2,1,1,2],[node('reuse',6,0,4368,2)]),
+                 checkpoint(4,[3,3,0,0],[raw('free',4352,2,4),raw('free',4096,3,0)],[2,2,1,3],[node('cache',7,0,4368,2),node('free',8,4,4368,2)]),
+                 checkpoint('final',[3,3,0,0],[],[2,2,1,3],[])]
+        def encoded(value):return b''.join((json.dumps(record)+'\n').encode() for record in value)
+        def verify(value):return validate_allocator(encoded(value),rows,'ascending',domain='generated-dbvt-node-sites')
+        self.assertEqual(verify(records)[1][0][2],((0,'raw',1),))
+        changes=[]
+        for record,field,value in [(2,'tree',1),(2,'generation',1),(3,'op','reuse'),(4,'op','cache'),(5,'pointer',4240)]:
+            changed=copy.deepcopy(records);changed[record]['nodes'][0][field]=value;changes.append(changed)
+        changed=copy.deepcopy(records);changed[2]['nodes']=[];changes.append(changed)
+        changed=copy.deepcopy(records);changed[2]['nodes']*=2;changes.append(changed)
+        changed=copy.deepcopy(records);changed[5]['events'].pop();changes.append(changed)
+        changed=copy.deepcopy(records);changed[1]['nodes']=[]
+        for record in changed[1:]:
+            record['node_counters']=[a-b for a,b in zip(record['node_counters'],[1,1,0,1])]
+            for event in record['nodes']:event['sequence']-=3
+        changes.append(changed)
+        changed=copy.deepcopy(records);changed[2]['events'][0]['route']='aligned';changes.append(changed)
+        changed=copy.deepcopy(records);changed[3]['trees'][0]=3072;changes.append(changed)
+        for changed in changes:
+            with self.subTest(identity=digest(encoded(changed))),self.assertRaises(ValueError):verify(changed)
+        control=copy.deepcopy(records);control[0]['domain']='unmodified-control'
+        for record in control[1:]:
+            record['nodes']=[];record['node_counters']=[0]*4
+            for event in record['events']:event['node_call']=0
+        validate_allocator(encoded(control),rows,'ascending',domain='unmodified-control')
+        changed=copy.deepcopy(control);changed[5]['events'].pop()
+        with self.assertRaisesRegex(ValueError,'all candidates'):validate_allocator(encoded(changed),rows,'ascending',domain='unmodified-control')
+        # A live same-size candidate remains present at the empty initial snapshot.
+        self.assertEqual(control[1]['events'][0]['node_call'],0)
 
 
 def load_tests(loader, tests, pattern):

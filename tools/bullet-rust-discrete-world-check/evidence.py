@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import hashlib
 import math
 import ntpath
@@ -6,21 +7,22 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import stat
 
-from hooks import CORE, NATIVE, OWNER, SHIM, MUTANTS, instrument, inverse, mutate, require
-from trace import bind_inputs, comparison, validate, validate_allocator, validate_physical, decode_json
+from hooks import CORE, NATIVE, OWNER, SHIM, MUTANTS, OBSERVATION_PATHS, NATIVE_OBSERVATIONS, instrument, inverse, mutate, require
+from trace import validate_noninterference, bind_inputs, comparison, validate, validate_allocator, validate_physical, decode_json
 
 BASE = 'c8dc8a387a9d37442a84dbd8a3b81c90898b6d6d'
 MODES = ['ascending', 'descending', 'alternating', 'ordinary']
 LIMITS = ['finite allocator/corpus order only', 'debug drawer null', 'native physical deletes separate',
           'no public backend or solver/CCD/MMD adoption', 'discovery includes acquired after discovery and before measured compilation; no compiler-read attestation',
           'resolved tools and named settings only; no full compiler/OS/environment attestation',
-          'Rust linker driver and native linker identity recorded; inner subprocess chain unobserved']
+          'Rust linker driver and native linker identity recorded; inner subprocess chain unobserved',
+          'generated node provenance is not direct original-binary type observation',
+          'ordinary mode has no raw allocator callback corroboration']
 ENVIRONMENT = ['CL', '_CL_', 'INCLUDE', 'LIB', 'LIBPATH', 'CXX', 'CC', 'LD', 'AR', 'SDKROOT',
                'MACOSX_DEPLOYMENT_TARGET', 'CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS', 'RUSTFLAGS',
                'CARGO_ENCODED_RUSTFLAGS', 'RUSTUP_TOOLCHAIN']
 MAX_FILES, MAX_FILE, MAX_TOTAL, MAX_PATH = 24000, 512 * 1024**2, 4 * 1024**3, 1024
-TOUCHED = [OWNER, CORE+'dispatcher.rs', CORE+'world_objects.rs',
-           NATIVE+'btCollisionDispatcher.cpp', NATIVE+'btCollisionWorld.cpp', SHIM]
+TOUCHED = OBSERVATION_PATHS
 MACROS = ['BT_USE_SSE','BT_USE_DOUBLE_PRECISION','BT_NO_PROFILE','WIN32','_MSC_VER','_M_X64',
           '__x86_64__','__aarch64__','MDS_BT_SYSTEM_MATH','sinf','cosf','atan2f','pointer_bits','scalar_bytes']
 
@@ -299,11 +301,13 @@ def command_schedule(context, sources, policy_name, crt_libraries, *, replay=Fal
     if not replay:rust += ['-C','linker='+tools['rust_linker']]
     rargs = [*rust,'--extern','mds_crtmath='+str(out/'libmds_crtmath.rlib')]
     flags = native_flags(system,str(root)); compiler = tools.get('compiler'); shadow = out/'generated'
+    file_context={**context,'archive_objects':tuple(path(source).stem+ext for source in sources)}
     result = []
-    def add(label, argv, data=None, cwd=None, outputs=(), compile=False):
+    def add(label, argv, data=None, cwd=None, compile=False):
         argv = list(map(str,argv)); cwd = str(cwd or root/'rust')
-        if compile: result.append((label+'-discovery',argv,cwd,data,tuple(str(out/'discovery'/label/path(value).relative_to(out)) for value in outputs),False))
-        result.append((label,argv,cwd,data,tuple(map(str,outputs)),compile))
+        if compile: add(label+'-discovery',argv,data,cwd)
+        roles=command_files(label,argv,file_context)
+        result.append((label,argv,cwd,data,tuple(str(out/value.retained) for value in roles.outputs),compile))
     add('helpers-normal',[tools['python'],'-B',here/'test_check.py','-v'])
     add('helpers-optimized',[tools['python'],'-B','-O',here/'test_check.py','-v'])
     add('git-head',[tools['git'],'rev-parse','HEAD'])
@@ -313,22 +317,22 @@ def command_schedule(context, sources, policy_name, crt_libraries, *, replay=Fal
     add('rust-compiler-path',[tools['rustup'],'which','--toolchain','1.95.0','rustc'])
     add('rust-version',[tools['rustup'],'run','1.95.0','rustc','-Vv'])
     crt = out/('mds_crtmath.lib' if win else 'libmds_crtmath.a')
-    add('crt-build',[*rust,'--crate-name','mds_crtmath','--crate-type','rlib,staticlib','--print','native-static-libs',root/'rust/crates/mds-crtmath/src/lib.rs','--out-dir',out],outputs=[crt,out/'libmds_crtmath.rlib'])
+    add('crt-build',[*rust,'--crate-name','mds_crtmath','--crate-type','rlib,staticlib','--print','native-static-libs',root/'rust/crates/mds-crtmath/src/lib.rs','--out-dir',out])
     for name,source,extra in [('dedicated','discrete_collision_world.rs',['discrete_world_']),('pure','pure_bullet.rs',[])]:
         exe = out/(name+suffix)
-        add(name+'-build',[*rargs,'--test','-D','warnings',root/'rust/crates/mds-bullet/tests'/source,'-o',exe],outputs=[exe])
+        add(name+'-build',[*rargs,'--test','-D','warnings',root/'rust/crates/mds-bullet/tests'/source,'-o',exe])
         add(name+'-run',[exe,*extra])
     rust_exe = out/('rust-world'+suffix)
-    add('rust-observed-build',[*rargs,'--cfg','test',shadow/'tools/bullet-rust-discrete-world-check/runner.rs','-o',rust_exe],outputs=[rust_exe])
+    add('rust-observed-build',[*rargs,'--cfg','test',shadow/'tools/bullet-rust-discrete-world-check/runner.rs','-o',rust_exe])
     add('rust-ordinary',[rust_exe,policy_name],'inputs')
     if not replay:
         add('compiler-version',[compiler,'/?'] if win else [compiler,'--version'])
         if not win: add('native-linker-path',[compiler,'-print-prog-name=ld'])
         macro = out/'effective-macros.cpp'; macro_exe = out/('effective-macros'+suffix)
-        add('macro-build',[compiler,*flags,macro,'/Fe'+str(macro_exe),'/Fo'+str(out)+'/'] if win else [compiler,*flags,macro,'-o',macro_exe],outputs=[macro_exe,*([out/'effective-macros.obj'] if win else [])],compile=True)
+        add('macro-build',[compiler,*flags,macro,'/Fe'+str(macro_exe),'/Fo'+str(out)+'/'] if win else [compiler,*flags,macro,'-o',macro_exe],compile=True)
         add('actual-macros',[macro_exe])
         def object_command(source,obj,label,extra=()):
-            add(label,[compiler,*flags,*extra,'/c',source,'/Fo'+str(obj)] if win else [compiler,*flags,*extra,'-c',source,'-o',obj],outputs=[obj],compile=True)
+            add(label,[compiler,*flags,*extra,'/c',source,'/Fo'+str(obj)] if win else [compiler,*flags,*extra,'-c',source,'-o',obj],compile=True)
         objects = []
         for i,source in enumerate(sources):
             obj = out/(path(source).stem+ext); objects.append(obj)
@@ -336,36 +340,36 @@ def command_schedule(context, sources, policy_name, crt_libraries, *, replay=Fal
             if path(source).stem in {'btDbvt','btDbvtBroadphase'}:
                 add('expanded-'+path(source).stem,[compiler,*flags,'/E' if win else '-E',root/source])
         library = out/('BulletWorld.lib' if win else 'libBulletWorld.a')
-        add('archive-build',[tools['archiver'],'/NOLOGO','/OUT:'+str(library),*objects] if win else [tools['archiver'],'rcs',library,*objects],outputs=[library])
+        add('archive-build',[tools['archiver'],'/NOLOGO','/OUT:'+str(library),*objects] if win else [tools['archiver'],'rcs',library,*objects])
         add('archive-list',[tools['archiver'],'/NOLOGO','/LIST',library] if win else [tools['archiver'],'t',library])
         if win:
             for obj in objects:
-                add('extract-'+obj.stem,[tools['archiver'],'/NOLOGO','/EXTRACT:'+context['archive_names'][obj.name],'/OUT:'+str(out/'extracted'/obj.name),library],outputs=[out/'extracted'/obj.name])
-        else: add('archive-extract',[tools['archiver'],'x',library],cwd=out/'extracted',outputs=[out/'extracted'/obj.name for obj in objects])
+                add('extract-'+obj.stem,[tools['archiver'],'/NOLOGO','/EXTRACT:'+context['archive_names'][obj.name],'/OUT:'+str(out/'extracted'/obj.name),library])
+        else: add('archive-extract',[tools['archiver'],'x',library],cwd=out/'extracted')
         hook = ['/FI'+str(here/'observer.h'),'/DDW_OBSERVED=1'] if win else ['-include',here/'observer.h','-DDW_OBSERVED=1']
         overrides = []
-        for name in ['btCollisionDispatcher','btCollisionWorld']:
+        for name,source_path in NATIVE_OBSERVATIONS:
             obj = out/('observed-'+name+ext); overrides.append(obj)
-            object_command(shadow/(NATIVE+name+'.cpp'),obj,'observed-'+name,hook)
+            object_command(shadow/source_path,obj,'observed-'+name,hook)
         for name,source,extra,prefix in [('native',here/'oracle.cpp',[],[]),('observed',shadow/'tools/bullet-rust-discrete-world-check/oracle.cpp',hook,overrides)]:
             obj = out/(name+'-consumer'+ext); exe = out/(name+suffix); linkmap = out/(name+'.map')
             object_command(source,obj,name+'-consumer-build',extra)
             add(name+'-consumer-expanded',[compiler,*flags,*extra,'/E' if win else '-E',source])
             link = [compiler,'/nologo','/MD','/EHsc',obj,*prefix,library,crt,'/Fe'+str(exe),'/link','/MAP:'+str(linkmap),'/VERBOSE:LIB',*crt_libraries] if win else [compiler,obj,*prefix,library,crt,*crt_libraries,'-fuse-ld='+tools['native_linker'],('-Wl,-map,' if system=='Darwin' else '-Wl,-Map,')+str(linkmap),'-o',exe]
-            add(name+'-link',link,outputs=[exe,linkmap])
-            for mode in MODES: add(name+'-'+mode,[exe,mode,out/(name+'-allocator-'+mode+'.jsonl')],'inputs',outputs=[out/(name+'-allocator-'+mode+'.jsonl')])
+            add(name+'-link',link)
+            for mode in MODES: add(name+'-'+mode,[exe,mode,out/(name+'-allocator-'+mode+'.jsonl')],'inputs')
     for mode in MODES: add('rust-bound-'+mode,[rust_exe,policy_name],'bound-'+mode)
     for name in MUTANTS:
         for prefix in ['baseline','mutant']:
             exe = out/(prefix+'-'+name+suffix)
-            add(prefix+'-build-'+name,[*rargs,'--cfg','test',out/'mutants'/name/'tools/bullet-rust-discrete-world-check/runner.rs','-o',exe],outputs=[exe])
+            add(prefix+'-build-'+name,[*rargs,'--cfg','test',out/'mutants'/name/'tools/bullet-rust-discrete-world-check/runner.rs','-o',exe])
             add(prefix+'-run-'+name,[exe,policy_name],'inputs')
     return result
 
 
 def replay_report(report, head, inputs, cases):
     fields(report,['schema','status','base','policy','native','compiled_controls','public_world','scope','host','head','checkpoints','cases','controlled','ordinary_unbound','limits','producer_report_sha256'],'replay report')
-    require(type(report['schema']) is int and report['schema']==3 and report['status']=='CONTROLLED_PASS' and report['base']==BASE and report['head']==head, 'completed distinct replay schema')
+    require(type(report['schema']) is int and report['schema']==5 and report['status']=='CONTROLLED_PASS' and report['base']==BASE and report['head']==head, 'completed distinct replay schema')
     require(report['policy']=='mmd-win64-sse' and report['native']=='WINDOWS_SOURCE_REPLAY' and identity(report['producer_report_sha256']), 'admitted native Windows producer digest')
     require(type(report['compiled_controls']) is int and report['compiled_controls']==len(MUTANTS) and type(report['cases']) is int and report['cases']==len(cases) and type(report['checkpoints']) is int and report['checkpoints']==len(inputs.splitlines()), 'complete current-Rust replay corpus and controls')
     require(type(report['controlled']) is dict and report['controlled']=={mode:len(inputs.splitlines()) for mode in MODES} and all(type(value) is int for value in report['controlled'].values()), 'complete current-Rust replay modes')
@@ -375,18 +379,46 @@ def replay_report(report, head, inputs, cases):
     return report
 
 
-def command_input_paths(argv, system):
-    path = PureWindowsPath if system=='Windows' else PurePosixPath
-    output = {str(path(argv[i+1])) for i,value in enumerate(argv[:-1]) if value=='-o'}
-    for value in argv:
-        if value.startswith(('/Fo','/Fe','/OUT:')):output.add(str(path(value[5:] if value.startswith('/OUT:') else value[3:])))
+@dataclass(frozen=True)
+class _Output:
+    physical: str
+    retained: str
+
+
+@dataclass(frozen=True)
+class _CommandFiles:
+    inputs: tuple[str, ...]
+    outputs: tuple[_Output, ...]
+
+
+def command_files(label, argv, context):
+    path = PureWindowsPath if context['system']=='Windows' else PurePosixPath
+    out = path(context['out'])
+    physical = []
+    for i, value in enumerate(argv):
+        if value=='-o': physical.append(path(argv[i+1]))
+        elif value.startswith(('/Fo','/Fe','/OUT:')):
+            name=value[5:] if value.startswith('/OUT:') else value[3:]
+            if name and not name.endswith(('/', '\\')): physical.append(path(name))
+    base=label.removesuffix('-discovery')
+    if base=='archive-build' and context['system']!='Windows': physical.append(path(argv[2]))
+    if base=='crt-build': physical=[out/('mds_crtmath.lib' if context['system']=='Windows' else 'libmds_crtmath.a'),out/'libmds_crtmath.rlib']
+    if base=='archive-extract': physical=[out/'extracted'/name for name in context['archive_objects']]
+    if base.endswith('-link'): physical.append(out/(base[:-5]+'.map'))
+    if base in [name+'-'+mode for name in ['native','observed'] for mode in MODES]: physical.append(path(argv[-1]))
+    if context['system']=='Windows' and base=='macro-build': physical.append(out/'effective-macros.obj')
+    outputs=tuple(_Output(str(value), ('discovery/'+base+'/' if label.endswith('-discovery') else '')+value.relative_to(out).as_posix()) for value in physical)
     result=[]
+    forced=False
     for value in argv[1:]:
-        if value.startswith('mds_crtmath='):value=value.split('=',1)[1]
+        if value=='-include': forced=True;continue
+        is_forced=forced or value.startswith('/FI');forced=False
+        if value.startswith('/FI'): value=value[3:]
+        if value.startswith('mds_crtmath='): value=value.split('=',1)[1]
         candidate=path(value)
-        if candidate.is_absolute() and candidate.suffix.lower() in {'.rs','.cpp','.o','.obj','.a','.lib','.rlib'} and str(candidate) not in output:
-            result.append(str(candidate))
-    return result
+        if candidate.is_absolute() and (is_forced or candidate.suffix.lower() in {'.rs','.cpp','.o','.obj','.a','.lib','.rlib'}) and candidate not in physical:
+            if str(candidate) not in result: result.append(str(candidate))
+    return _CommandFiles(tuple(result),outputs)
 
 
 def captured_path(value, context):
@@ -421,7 +453,7 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
     manifest = data('artifact-manifest.json')
     inventory(manifest,{name:digest(files[name]) for name in names-{'artifact-manifest.json'}})
     report = fields(data('report.json'), ['schema','status','base','policy','native','compiled_controls','public_world','scope','host','head','compiler','checkpoints','cases','controlled','ordinary_unbound','limits'], 'native report')
-    require(type(report['schema']) is int and report['schema']==2 and report['status']=='CONTROLLED_PASS' and report['base']==BASE, 'completed native schema')
+    require(type(report['schema']) is int and report['schema']==4 and report['status']=='CONTROLLED_PASS' and report['base']==BASE, 'completed native schema')
     require(report['head']==expected_head and re.fullmatch('[0-9a-f]{40}',expected_head), 'current producer HEAD')
     host = fields(report['host'],['system','machine','image'],'host')
     require(type(host['system']) is str and type(host['machine']) is str and (host['image'] is None or type(host['image']) is str), 'host field types')
@@ -446,7 +478,7 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
     require(data('generated-start.json')==generation and data('generated-end.json')==generation, 'generated start/end exact source closure')
     for path,value in generation.items(): require(digest(raw('generated/'+path))==value, 'generated physical source '+path)
     context = fields(data('producer.json'),['schema','system','root','out','tools','archive_names'],'producer')
-    require(type(context['schema']) is int and context['schema']==1 and context['system']==host['system'], 'producer schema and host')
+    require(type(context['schema']) is int and context['schema']==2 and context['system']==host['system'], 'producer schema and host')
     system = context['system']; win = system=='Windows'; path_type = PureWindowsPath if win else PurePosixPath
     for value in [context['root'],context['out']]:
         require(type(value) is str and path_type(value).is_absolute() and len(value)<=MAX_PATH and '..' not in path_type(value).parts, 'producer absolute root')
@@ -456,13 +488,13 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
     tools = data('tools-start.json'); require(type(tools) is dict and set(tools)==set(context['tools']), 'resolved tool membership')
     require(data('tools-end.json')==tools, 'tool start/end preservation')
     for name,tool in tools.items():
-        fields(tool,['path','sha256'],'tool')
-        require(tool['path']==context['tools'][name] and path_type(tool['path']).is_absolute(), 'resolved actual tool path')
+        fields(tool,['path','target','sha256'],'tool')
+        require(tool['path']==context['tools'][name] and path_type(tool['path']).is_absolute() and path_type(tool['target']).is_absolute(), 'resolved actual tool path')
         require(digest(raw('tool-bytes/'+identity(tool['sha256'])))==tool['sha256'], 'retained resolved tool bytes')
     settings = fields(data('environment-start.json'),ENVIRONMENT,'named compiler/linker settings')
     require(all(value is None or type(value) is str for value in settings.values()) and data('environment-end.json')==settings, 'named settings preservation')
     require(not settings['CL'] and not settings['_CL_'], 'no ambient CL flag injection')
-    compiler = fields(report['compiler'],['path','sha256'],'compiler')
+    compiler = fields(report['compiler'],['path','target','sha256'],'compiler')
     require(compiler==tools['compiler'], 'actual native compiler binding')
     require(data('compiler-flags.json')==native_flags(system,str(root)), 'exact effective native flags')
     require(raw('effective-macros.cpp')==macro_source(), 'actual macro probe recipe')
@@ -511,20 +543,20 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
         for name,rows in [('native',baseline),('observed',observed)]:
             allocator = raw(name+'-allocator-'+mode+'.jsonl')
             for line in allocator.splitlines():json_value(line)
-            validate_allocator(allocator,rows,mode)
-        require(comparison(observed,False)==comparison(baseline,False), 'unmodified native observer control '+mode)
+            validate_allocator(allocator,rows,mode,domain='unmodified-control' if name=='native' else 'generated-dbvt-node-sites')
+        validate_noninterference(raw('native-allocator-'+mode+'.jsonl'),baseline,raw('observed-allocator-'+mode+'.jsonl'),observed,mode)
         bound = bind_inputs(inputs,observed).encode()
         require(raw('bound-'+mode+'.txt')==bound, 'native tree rank bound bytes '+mode)
         inputs_by_name['bound-'+mode] = bound; outputs[mode] = observed
     for record,(label,argv,cwd,input_name,produced,compile) in zip(commands,schedule):
-        fields(record,['label','argv','cwd','stdin_sha256','tool','tool_sha256','executable_sha256','returncode','timeout','seconds','stdout_sha256','stderr_sha256','outputs','inputs','generated_inputs'],'command')
+        fields(record,['label','argv','cwd','stdin_sha256','tool','tool_target','tool_sha256','executable_sha256','returncode','timeout','seconds','stdout_sha256','stderr_sha256','outputs','inputs','generated_inputs'],'command')
         require(record['label']==label and label not in command_map, 'ordered unique command '+label)
         require(record['argv']==argv and record['cwd']==cwd, 'exact effective command argv/cwd '+label)
         expected_stdin = None if input_name is None else digest(inputs_by_name[input_name])
         require(record['stdin_sha256']==expected_stdin, 'exact command stdin '+label)
         require(type(record['returncode']) is int and record['returncode']==0 and record['timeout'] is False and type(record['seconds']) in {int,float} and math.isfinite(record['seconds']) and record['seconds']>=0, 'normal successful command '+label)
         for stream in ['stdout','stderr']: require(record[stream+'_sha256']==digest(raw(label+'.'+stream)), 'retained command output '+label)
-        expected_inputs={value:digest(raw(captured_path(value,context))) for value in command_input_paths(argv,system)}
+        expected_inputs={value:digest(raw(captured_path(value,context))) for value in command_files(label,argv,{**context,'archive_objects':objects}).inputs}
         require(record['inputs']==expected_inputs, 'actual pre-use direct source/object/archive/CRT inputs '+label)
         expected_generation=None
         if label=='rust-observed-build' or label.startswith('baseline-build-'):expected_generation=generation
@@ -539,10 +571,10 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
         executable = argv[0]
         if path_type(executable).is_relative_to(out):
             expected_executable = digest(raw(path_type(executable).relative_to(out).as_posix()))
-            require(record['tool']==executable and record['tool_sha256']==expected_executable, 'actual executed produced binary '+label)
+            require(record['tool']==executable and record['tool_target']==executable and record['tool_sha256']==expected_executable, 'actual executed produced binary '+label)
         else:
             candidates = [tool for tool in tools.values() if tool['path']==executable]
-            require(candidates and record['tool']==executable and record['tool_sha256']==candidates[0]['sha256'], 'resolved command tool '+label)
+            require(candidates and record['tool']==executable and record['tool_target']==candidates[0]['target'] and record['tool_sha256']==candidates[0]['sha256'], 'resolved command tool '+label)
             expected_executable = candidates[0]['sha256']
         require(record['executable_sha256']==expected_executable, 'executed binary identity '+label)
         command_map[label] = record
@@ -604,17 +636,17 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
     for name in ['native','observed']:
         link_data = raw(name+'.map')+b'\n'+raw(name+'-link.stdout')+b'\n'+raw(name+'-link.stderr')
         selected = selected_members(link_data,system,str(out/archive))
-        required = {member+ext for member in ['btDbvt','btDbvtBroadphase','btDiscreteDynamicsWorld',*(['btCollisionWorld','btCollisionDispatcher'] if name=='native' else [])]}
+        required = {member+ext for member in ['btDbvtBroadphase','btDiscreteDynamicsWorld',*([member for member,_ in NATIVE_OBSERVATIONS] if name=='native' else [])]}
         require(required<=selected and selected<=set(objects), 'actual archive link member selection '+name)
         if name=='observed':
-            require(not {'btCollisionWorld'+ext,'btCollisionDispatcher'+ext}&selected, 'observed overrides exclude original dispatcher/world archive payloads')
-            for member in ['observed-btCollisionWorld'+ext,'observed-btCollisionDispatcher'+ext]:
+            require(not {member+ext for member,_ in NATIVE_OBSERVATIONS}&selected, 'observed overrides exclude original dispatcher/world archive payloads')
+            for member in ['observed-'+member+ext for member,_ in NATIVE_OBSERVATIONS]:
                 require(re.search(r'(?<![\w-])'+re.escape(member)+r'(?=[\s):]|$)',link_data.decode()), 'actual selected override object '+member)
         selection = data(name+'-link-selection.json')
         require(type(selection) is list and selection==sorted(selected), 'derived selected archive members '+name)
         receipt = fields(data(name+'-binary.json'),['produced_sha256','consumer_object_sha256','observed_override_objects'],'binary')
         require(receipt=={'produced_sha256':digest(raw(name+suffix)),'consumer_object_sha256':digest(raw(name+'-consumer'+ext)),
-                         'observed_override_objects':{member+ext:digest(raw(member+ext)) for member in (['observed-btCollisionDispatcher','observed-btCollisionWorld'] if name=='observed' else [])}}, 'genuine consumer/overrides/produced/executed/end binary '+name)
+                         'observed_override_objects':{member+ext:digest(raw(member+ext)) for member in (['observed-'+member for member,_ in NATIVE_OBSERVATIONS] if name=='observed' else [])}}, 'genuine consumer/overrides/produced/executed/end binary '+name)
     plain = validate(raw('rust-ordinary.stdout'),inputs)
     controlled = {}
     for mode in MODES:

@@ -23,6 +23,83 @@ struct LifetimeLedger {
     bool empty() const {for(unsigned i=0;i<count;++i)if(entries[i].live)return false;return true;}
 };
 static LifetimeLedger algorithms, manifolds;
+struct NodeEvent {
+    const char* op;
+    uint64_t sequence, call, world, generation;
+    unsigned tree;
+    uintptr_t pointer;
+};
+struct NodeEntry { uintptr_t pointer; uint64_t generation; unsigned tree; bool cached, live; };
+static NodeEvent node_events[65536];
+static NodeEntry node_entries[65536];
+static size_t node_event_count, node_entry_count;
+static uint64_t node_sequence, next_node_call, next_node_generation, world_generation;
+static uint64_t node_counters[4];
+static const void* node_trees[2];
+static unsigned node_tree(const void* tree) {
+    for(unsigned i=0;i<2;++i)if(tree==node_trees[i])return i;
+    std::abort();
+}
+static NodeEntry& node_entry(uintptr_t pointer) {
+    for(size_t i=0;i<node_entry_count;++i)if(node_entries[i].live && node_entries[i].pointer==pointer)return node_entries[i];
+    std::abort();
+}
+static void node_event(const char* op, unsigned counter, const void* tree, uintptr_t pointer, uint64_t generation, uint64_t call) {
+    if(node_event_count==65536)std::abort();
+    ++node_counters[counter];
+    node_events[node_event_count++]={op,++node_sequence,call,world_generation,generation,node_tree(tree),pointer};
+}
+extern "C" void* dw_node_alloc(const void* tree) {
+    if(node_call || node_entry_count==65536)std::abort();
+    const unsigned t=node_tree(tree);
+    const uint64_t call=++next_node_call;
+    node_call=call;
+    void* pointer=btAlignedAlloc(sizeof(btDbvtNode),16);
+    node_call=0;
+    if(!pointer)std::abort();
+    uintptr_t p=reinterpret_cast<uintptr_t>(pointer);
+    for(size_t i=0;i<node_entry_count;++i)if(node_entries[i].live && node_entries[i].pointer==p)std::abort();
+    node_entries[node_entry_count++]={p,++next_node_generation,t,false,true};
+    node_event("alloc",0,tree,p,next_node_generation,call);
+    return pointer;
+}
+extern "C" void dw_node_free(const void* tree, void* pointer) {
+    if(node_call)std::abort();
+    unsigned t=node_tree(tree);
+    uintptr_t p=reinterpret_cast<uintptr_t>(pointer);
+    uint64_t generation=0;
+    if(pointer) {
+        auto& entry=node_entry(p);
+        if(entry.tree!=t || !entry.cached)std::abort();
+        generation=entry.generation;entry.live=false;
+    }
+    const uint64_t call=++next_node_call;
+    node_call=call;
+    btAlignedFree(pointer);
+    node_call=0;
+    node_event("free",1,tree,p,generation,call);
+}
+extern "C" void dw_node_reuse(const void* tree, const void* pointer) {
+    auto& entry=node_entry(reinterpret_cast<uintptr_t>(pointer));
+    if(entry.tree!=node_tree(tree) || !entry.cached)std::abort();
+    entry.cached=false;node_event("reuse",2,tree,entry.pointer,entry.generation,0);
+}
+extern "C" void dw_node_cache(const void* tree, const void* pointer) {
+    auto& entry=node_entry(reinterpret_cast<uintptr_t>(pointer));
+    if(entry.tree!=node_tree(tree) || entry.cached)std::abort();
+    for(size_t i=0;i<node_entry_count;++i)if(node_entries[i].live && node_entries[i].tree==entry.tree && node_entries[i].cached)std::abort();
+    entry.cached=true;node_event("cache",3,tree,entry.pointer,entry.generation,0);
+}
+static void node_receipt(std::ostream& out) {
+    out << ",\"world\":" << world_generation << ",\"trees\":[" << reinterpret_cast<uintptr_t>(node_trees[0]) << ',' << reinterpret_cast<uintptr_t>(node_trees[1])
+        << "],\"node_counters\":[" << node_counters[0] << ',' << node_counters[1] << ',' << node_counters[2] << ',' << node_counters[3] << "],\"nodes\":[";
+    for(size_t i=0;i<node_event_count;++i) {
+        const auto& e=node_events[i];if(i)out << ',';
+        out << "{\"op\":\"" << e.op << "\",\"sequence\":" << e.sequence << ",\"call\":" << e.call << ",\"world\":" << e.world
+            << ",\"tree\":" << e.tree << ",\"pointer\":" << e.pointer << ",\"generation\":" << e.generation << '}';
+    }
+    out << ']';node_event_count=0;
+}
 static int owner(const void* p) {
     return int(reinterpret_cast<intptr_t>(static_cast<const btCollisionObject*>(p)->getUserPointer())) - 1;
 }
@@ -116,14 +193,20 @@ int main(int argc,char** argv) {
     if(argc!=3) return 2; allocation_mode=argv[1];
     if(allocation_mode!="ordinary" && allocation_mode!="ascending" && allocation_mode!="descending" && allocation_mode!="alternating") return 2;
     std::ofstream allocations(argv[2]); if(!allocations) return 2;
-    allocations << "{\"schema\":1,\"mode\":\"" << allocation_mode << "\",\"arena_base\":" << reinterpret_cast<uintptr_t>(arena)
+    const char* domain=
+#ifdef DW_OBSERVED
+        "generated-dbvt-node-sites";
+#else
+        "unmodified-control";
+#endif
+    allocations << "{\"schema\":2,\"domain\":\"" << domain << "\",\"mode\":\"" << allocation_mode << "\",\"arena_base\":" << reinterpret_cast<uintptr_t>(arena)
                 << ",\"slots\":" << SLOTS << ",\"stride\":" << STRIDE << ",\"node_bytes\":" << sizeof(btDbvtNode)
                 << ",\"raw_node_bytes\":" << RAW_NODE_BYTES << ",\"node_type_alignment\":" << alignof(btDbvtNode) << "}\n";
     if(allocation_mode!="ordinary") {btAlignedAllocSetCustomAligned(allocate,deallocate);btAlignedAllocSetCustom(allocate_raw,deallocate_raw);}
     mds_bt_world* w=nullptr; std::string line;
     while(std::getline(std::cin,line)) {
         std::istringstream in(line); std::string op; in>>op;
-        if(op=="H") {if(w) return 3; std::string name,scope;in>>name>>scope;w=mds_bt_world_create();if(!w)return 3;}
+        if(op=="H") {if(w) return 3; std::string name,scope;in>>name>>scope;w=mds_bt_world_create();if(!w)return 3;++world_generation;node_trees[0]=&w->bp.m_sets[0];node_trees[1]=&w->bp.m_sets[1];}
         else if(!w)return 3;
         else if(op=="C") {
             mds_bt_body_desc d{}; in>>d.shape_kind; d.mass=number(in); in>>d.kinematic;

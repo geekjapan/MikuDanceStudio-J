@@ -6,7 +6,7 @@ from unittest.mock import patch
 import check
 import evidence
 from cases import corpus
-from hooks import NATIVE, OWNER, MUTANTS, instrument, inverse, mutate
+from hooks import NATIVE, OWNER, MUTANTS, NATIVE_OBSERVATIONS, instrument, inverse, mutate
 from test_check import MemoryPath
 
 
@@ -17,17 +17,29 @@ def sha(raw): return evidence.digest(raw)
 def traces(inputs,mode,native,observed=True,mutation=None):
     commands=inputs.splitlines();lines=[];alloc=[];bodies=[];joints=[];physical=[]
     ordinal=0;live=[];counters=[0,0,0,0];changed=False;algorithm=False
-    header={'schema':1,'mode':mode,'arena_base':4096,'slots':65536,'stride':128,'node_bytes':56,'raw_node_bytes':79,'node_type_alignment':8}
+    header={'schema':2,'domain':'generated-dbvt-node-sites' if observed else 'unmodified-control','mode':mode,'arena_base':4096,'slots':65536,'stride':128,'node_bytes':56,'raw_node_bytes':79,'node_type_alignment':8}
+    world=0; sequence=0; call=0; node_counts=[0]*4; generations={}
     zero=' '.join(['00000000']*48)
     for row,command in enumerate(commands):
-        op=command.split()[0];events=[]
+        op=command.split()[0];events=[];typed=[]
+        if op=='H':world+=1
+        def node_event(kind,pointer,generation):
+            nonlocal sequence,call
+            if not observed:return 0
+            sequence+=1
+            if kind in {'alloc','free'}:call+=1
+            node_counts[{'alloc':0,'free':1,'reuse':2,'cache':3}[kind]]+=1
+            typed.append({'op':kind,'sequence':sequence,'call':call if kind in {'alloc','free'} else 0,'world':world,'tree':0,'pointer':pointer,'generation':generation})
+            return call
+
         if op=='C':
             slot=ordinal
             if mode=='descending':slot=65535-ordinal
             if mode=='alternating':slot=ordinal//2 if ordinal%2==0 else 65535-ordinal//2
             pointer=4096+slot*128;ordinal+=1;bodies.append(pointer+16);live.append(pointer)
+            generations[pointer]=ordinal;node_id=node_event('alloc',pointer+16,ordinal)
             if mode!='ordinary':
-                counters[0]+=1;events.append({'op':'alloc','route':'raw','ordinal':counters[0],'pointer':pointer,'size':79,'alignment':0})
+                counters[0]+=1;events.append({'op':'alloc','route':'raw','ordinal':counters[0],'pointer':pointer,'size':79,'alignment':0,'node_call':node_id})
         if op=='J':
             pointer=1048576+row;joints.append(pointer);physical.append(f'JOINT_CREATE {row} {len(joints)-1} {pointer}')
         if algorithm:
@@ -39,9 +51,11 @@ def traces(inputs,mode,native,observed=True,mutation=None):
             if observed:lines.extend(f'E {row} U {i}' for i in reversed(range(len(bodies))))
             physical.extend(f'PHYSICAL {row} joint {pointer} -1' for pointer in reversed(joints));joints=[]
             physical.extend(f'PHYSICAL {row} body {pointer} {i}' for i,pointer in reversed(list(enumerate(bodies))))
-            if mode!='ordinary':
-                for pointer in live:
-                    counters[1]+=1;events.append({'op':'free','route':'raw','ordinal':counters[1],'pointer':pointer})
+            for pointer in live:
+                node_event('cache',pointer+16,generations[pointer])
+                node_id=node_event('free',pointer+16,generations[pointer])
+                if mode!='ordinary':
+                    counters[1]+=1;events.append({'op':'free','route':'raw','ordinal':counters[1],'pointer':pointer,'node_call':node_id})
             bodies=[];live=[]
         force=0 if mutation=='default-force' and not changed else 1
         if force==0:changed=True
@@ -54,9 +68,9 @@ def traces(inputs,mode,native,observed=True,mutation=None):
         if native and op!='X':
             nodes=' '.join(f'{i} {pointer} '+ ' '.join(['00000000']*6) for i,pointer in enumerate(bodies))
             lines.append(f'T {row} 0 {len(bodies)} '+(nodes+' ' if nodes else '')+'0');lines.append(f'T {row} 1 0 0')
-        alloc.append({'kind':row,'counters':list(counters),'events':events})
+        alloc.append({'kind':row,'counters':list(counters),'events':events,'world':world,'trees':[1024+world*256,1152+world*256],'node_counters':list(node_counts),'nodes':typed})
     lines.append('Z '+str(len(commands)))
-    alloc.append({'kind':'final','counters':list(counters),'events':[]})
+    alloc.append({'kind':'final','counters':list(counters),'events':[],'world':world,'trees':[1024+world*256,1152+world*256],'node_counters':list(node_counts),'nodes':[]})
     return ('\n'.join(lines)+'\n').encode(), b''.join(encode(item) for item in [header,*alloc]), ('\n'.join(physical)+'\n').encode()
 
 
@@ -87,7 +101,7 @@ def fixture(system='Windows'):
     files.update({'generated/'+name:raw for name,raw in memory.files.items()})
     files['observation-edits.json']=encode(edits);files['generated-start.json']=encode(generated);files['generated-end.json']=encode(generated)
     tool_names=['python','git','rustup','rustc','rust_linker','compiler','archiver','native_linker']
-    tools={name:{'path':str(P('C:/tools' if win else '/tools')/(name+suffix)),'sha256':sha(('synthetic tool '+name).encode())} for name in tool_names}
+    tools={name:{'path':str(P('C:/tools' if win else '/tools')/(name+suffix)),'target':str(P('C:/targets' if win else '/targets')/(name+suffix)),'sha256':sha(('synthetic tool '+name).encode())} for name in tool_names}
     files.update({'tool-bytes/'+entry['sha256']:('synthetic tool '+name).encode() for name,entry in tools.items()})
     for stage in ['start','end']:
         files['tools-'+stage+'.json']=encode(tools);files['environment-'+stage+'.json']=encode(dict.fromkeys(evidence.ENVIRONMENT))
@@ -100,7 +114,7 @@ def fixture(system='Windows'):
     library='BulletWorld.lib' if win else 'libBulletWorld.a';files[library]=archive({name:files[name] for name in objects})
     bindings={'members':[{'source':name,'source_sha256':before[name],'object':obj,'sha256':sha(files[obj])} for name,obj in zip(sources,objects)],'archive_sha256':sha(files[library]),'actual_names':dict(zip(objects,objects))}
     files['archive-bindings.json']=encode(bindings)
-    context={'schema':1,'system':system,'root':str(root),'out':str(out),'tools':{name:entry['path'] for name,entry in tools.items()},'archive_names':bindings['actual_names']}
+    context={'schema':2,'system':system,'root':str(root),'out':str(out),'tools':{name:entry['path'] for name,entry in tools.items()},'archive_names':bindings['actual_names']}
     files['producer.json']=encode(context)
     plain,_,_=traces(inputs,'ordinary',False);files['rust-ordinary.stdout']=plain
     bound={};native_rows={}
@@ -133,24 +147,24 @@ def fixture(system='Windows'):
         files[name+suffix]=('synthetic executable '+name).encode()
     files['mds_crtmath.lib' if win else 'libmds_crtmath.a']=b'synthetic CRT archive';files['libmds_crtmath.rlib']=b'synthetic CRT rlib'
     if win:files['effective-macros.obj']=b'synthetic macro object'
-    for name in ['observed-btCollisionDispatcher','observed-btCollisionWorld','native-consumer','observed-consumer']:files[name+ext]=('synthetic object '+name).encode()
+    for name in ['observed-'+member for member,_ in NATIVE_OBSERVATIONS]+['native-consumer','observed-consumer']:files[name+ext]=('synthetic object '+name).encode()
     for name in ['native','observed']:
-        selected=sorted(member+ext for member in ['btDbvt','btDbvtBroadphase','btDiscreteDynamicsWorld',*(['btCollisionWorld','btCollisionDispatcher'] if name=='native' else [])])
+        selected=sorted(member+ext for member in ['btDbvtBroadphase','btDiscreteDynamicsWorld',*([member for member,_ in NATIVE_OBSERVATIONS] if name=='native' else [])])
         if win:maptext='\n'.join(' 0001:00000000 symbol 0000000140001000 '+library+':'+member for member in selected)
         elif system=='Darwin':maptext='\n'.join('[  '+str(i)+'] '+str(out/library)+'('+member+')' for i,member in enumerate(selected))
         else:maptext='\n'.join(str(out/library)+'('+member+') symbol' for member in selected)
-        if name=='observed':maptext+='\n'+ ' '.join('observed-'+member+ext for member in ['btCollisionDispatcher','btCollisionWorld'])
+        if name=='observed':maptext+='\n'+ ' '.join('observed-'+member+ext for member in [member for member,_ in NATIVE_OBSERVATIONS])
         files[name+'.map']=maptext.encode();files[name+'-link-selection.json']=encode(selected)
-        files[name+'-binary.json']=encode({'produced_sha256':sha(files[name+suffix]),'consumer_object_sha256':sha(files[name+'-consumer'+ext]),'observed_override_objects':{member+ext:sha(files[member+ext]) for member in (['observed-btCollisionDispatcher','observed-btCollisionWorld'] if name=='observed' else [])}})
+        files[name+'-binary.json']=encode({'produced_sha256':sha(files[name+suffix]),'consumer_object_sha256':sha(files[name+'-consumer'+ext]),'observed_override_objects':{member+ext:sha(files[member+ext]) for member in (['observed-'+member for member,_ in NATIVE_OBSERVATIONS] if name=='observed' else [])}})
     T=context['tools'];rust=[T['rustup'],'run','1.95.0','rustc','--edition=2021','-O','-C','linker='+T['rust_linker']]
     rargs=[*rust,'--extern','mds_crtmath='+str(out/'libmds_crtmath.rlib')];here=root/'tools/bullet-rust-discrete-world-check';shadow=out/'generated';commands=[];includes={}
-    def add(label,argv,data=None,cwd=None,outputs=(),compile=False):
+    def add(label,argv,data=None,cwd=None,compile=False):
         argv=list(map(str,argv))
+        roles=evidence.command_files(label,argv,{**context,'archive_objects':objects})
         if compile:
-            discovery=[]
-            for produced in outputs:
-                name='discovery/'+label+'/'+P(produced).relative_to(out).as_posix();files[name]=('synthetic discovery '+name).encode();discovery.append(out/name)
-            add(label+'-discovery',argv,data,cwd,discovery)
+            for output in evidence.command_files(label+'-discovery',argv,{**context,'archive_objects':objects}).outputs:
+                files[output.retained]=('synthetic discovery '+output.retained).encode()
+            add(label+'-discovery',argv,data,cwd)
             header=str(root/'rust/crates/mds-bullet-sys/shim/det_math.h');key=header.lower() if win else header;value=before['rust/crates/mds-bullet-sys/shim/det_math.h']
             include_raw=('Note: including file: '+header+'\n' if win else '. '+header+'\n').encode()
             for stage in [label+'-discovery',label]:files[stage+'.stdout']=include_raw;files[stage+'.stderr']=b''
@@ -175,48 +189,48 @@ def fixture(system='Windows'):
             files[label+'.stdout']=''.join(key+'='+macros[key]+'\n' for key in evidence.MACROS).encode()
         stdin=None if data is None else sha(data)
         exe=argv[0];exe_hash=sha(files[P(exe).relative_to(out).as_posix()]) if P(exe).is_relative_to(out) else next(tool['sha256'] for tool in tools.values() if tool['path']==exe)
-        commands.append({'label':label,'argv':argv,'cwd':str(cwd or root/'rust'),'stdin_sha256':stdin,'tool':exe,'tool_sha256':exe_hash,'executable_sha256':exe_hash,
+        commands.append({'label':label,'argv':argv,'cwd':str(cwd or root/'rust'),'stdin_sha256':stdin,'tool':exe,'tool_target':exe if P(exe).is_relative_to(out) else next(tool['target'] for tool in tools.values() if tool['path']==exe),'tool_sha256':exe_hash,'executable_sha256':exe_hash,
                          'returncode':0,'timeout':False,'seconds':0.01,'stdout_sha256':sha(files[label+'.stdout']),'stderr_sha256':sha(files[label+'.stderr']),
-                         'inputs':{value:sha(files[evidence.captured_path(value,context)]) for value in evidence.command_input_paths(argv,system)},
+                         'inputs':{value:sha(files[evidence.captured_path(value,context)]) for value in roles.inputs},
                          'generated_inputs':generated if label=='rust-observed-build' or label.startswith('baseline-build-') else controls[label[len('mutant-build-'):]]['source_after'] if label.startswith('mutant-build-') else None,
-                         'outputs':{P(produced).relative_to(out).as_posix():sha(files[P(produced).relative_to(out).as_posix()]) for produced in outputs}})
+                         'outputs':{output.retained:sha(files[output.retained]) for output in roles.outputs}})
     add('helpers-normal',[T['python'],'-B',here/'test_check.py','-v']);add('helpers-optimized',[T['python'],'-B','-O',here/'test_check.py','-v'])
     for label,args in [('git-head',['rev-parse','HEAD']),('git-status',['status','--porcelain=v1']),('git-transport',['ls-files','--eol']),('git-attributes',['check-attr','--stdin','text','eol'])]:add(label,[T['git'],*args], ('\n'.join(sorted(before))+'\n').encode() if label=='git-attributes' else None)
     add('rust-compiler-path',[T['rustup'],'which','--toolchain','1.95.0','rustc']);add('rust-version',[T['rustup'],'run','1.95.0','rustc','-Vv'])
     crt=out/('mds_crtmath.lib' if win else 'libmds_crtmath.a')
-    add('crt-build',[*rust,'--crate-name','mds_crtmath','--crate-type','rlib,staticlib','--print','native-static-libs',root/'rust/crates/mds-crtmath/src/lib.rs','--out-dir',out],outputs=[crt,out/'libmds_crtmath.rlib'])
+    add('crt-build',[*rust,'--crate-name','mds_crtmath','--crate-type','rlib,staticlib','--print','native-static-libs',root/'rust/crates/mds-crtmath/src/lib.rs','--out-dir',out])
     for name,source_name,extra in [('dedicated','discrete_collision_world.rs',['discrete_world_']),('pure','pure_bullet.rs',[])]:
-        add(name+'-build',[*rargs,'--test','-D','warnings',root/'rust/crates/mds-bullet/tests'/source_name,'-o',out/(name+suffix)],outputs=[out/(name+suffix)])
+        add(name+'-build',[*rargs,'--test','-D','warnings',root/'rust/crates/mds-bullet/tests'/source_name,'-o',out/(name+suffix)])
         add(name+'-run',[out/(name+suffix),*extra])
-    add('rust-observed-build',[*rargs,'--cfg','test',shadow/'tools/bullet-rust-discrete-world-check/runner.rs','-o',out/('rust-world'+suffix)],outputs=[out/('rust-world'+suffix)])
+    add('rust-observed-build',[*rargs,'--cfg','test',shadow/'tools/bullet-rust-discrete-world-check/runner.rs','-o',out/('rust-world'+suffix)])
     add('rust-ordinary',[out/('rust-world'+suffix),policy_name],inputs.encode())
     add('compiler-version',[T['compiler'],'/?' if win else '--version'])
     if not win:add('native-linker-path',[T['compiler'],'-print-prog-name=ld'])
-    add('macro-build',[T['compiler'],*flags,out/'effective-macros.cpp','/Fe'+str(out/('effective-macros'+suffix)),'/Fo'+str(out)+'/'] if win else [T['compiler'],*flags,out/'effective-macros.cpp','-o',out/('effective-macros'+suffix)],outputs=[out/('effective-macros'+suffix),*([out/'effective-macros.obj'] if win else [])],compile=True)
+    add('macro-build',[T['compiler'],*flags,out/'effective-macros.cpp','/Fe'+str(out/('effective-macros'+suffix)),'/Fo'+str(out)+'/'] if win else [T['compiler'],*flags,out/'effective-macros.cpp','-o',out/('effective-macros'+suffix)],compile=True)
     add('actual-macros',[out/('effective-macros'+suffix)])
-    def obj(source_name,output,label,extra=()):add(label,[T['compiler'],*flags,*extra,'/c',source_name,'/Fo'+str(output)] if win else [T['compiler'],*flags,*extra,'-c',source_name,'-o',output],outputs=[output],compile=True)
+    def obj(source_name,output,label,extra=()):add(label,[T['compiler'],*flags,*extra,'/c',source_name,'/Fo'+str(output)] if win else [T['compiler'],*flags,*extra,'-c',source_name,'-o',output],compile=True)
     for i,(source_name,output) in enumerate(zip(sources,objects)):
         obj(root/source_name,out/output,f'compile-{i:03d}')
         if P(source_name).stem in {'btDbvt','btDbvtBroadphase'}:add('expanded-'+P(source_name).stem,[T['compiler'],*flags,'/E' if win else '-E',root/source_name])
-    add('archive-build',[T['archiver'],'/NOLOGO','/OUT:'+str(out/library),*[out/name for name in objects]] if win else [T['archiver'],'rcs',out/library,*[out/name for name in objects]],outputs=[out/library])
+    add('archive-build',[T['archiver'],'/NOLOGO','/OUT:'+str(out/library),*[out/name for name in objects]] if win else [T['archiver'],'rcs',out/library,*[out/name for name in objects]])
     add('archive-list',[T['archiver'],'/NOLOGO','/LIST',out/library] if win else [T['archiver'],'t',out/library])
     if win:
-        for output in objects:add('extract-'+P(output).stem,[T['archiver'],'/NOLOGO','/EXTRACT:'+output,'/OUT:'+str(out/'extracted'/output),out/library],outputs=[out/'extracted'/output])
-    else:add('archive-extract',[T['archiver'],'x',out/library],cwd=out/'extracted',outputs=[out/'extracted'/name for name in objects])
+        for output in objects:add('extract-'+P(output).stem,[T['archiver'],'/NOLOGO','/EXTRACT:'+output,'/OUT:'+str(out/'extracted'/output),out/library])
+    else:add('archive-extract',[T['archiver'],'x',out/library],cwd=out/'extracted')
     hook=['/FI'+str(here/'observer.h'),'/DDW_OBSERVED=1'] if win else ['-include',here/'observer.h','-DDW_OBSERVED=1']
-    for name in ['btCollisionDispatcher','btCollisionWorld']:obj(shadow/(NATIVE+name+'.cpp'),out/('observed-'+name+ext),'observed-'+name,hook)
+    for name,source_path in NATIVE_OBSERVATIONS:obj(shadow/source_path,out/('observed-'+name+ext),'observed-'+name,hook)
     for name in ['native','observed']:
-        prefix=[out/('observed-'+member+ext) for member in ['btCollisionDispatcher','btCollisionWorld']] if name=='observed' else [];extra=hook if name=='observed' else [];src=(shadow if name=='observed' else root)/'tools/bullet-rust-discrete-world-check/oracle.cpp';consumer=out/(name+'-consumer'+ext);exe=out/(name+suffix);linkmap=out/(name+'.map')
+        prefix=[out/('observed-'+member+ext) for member in [member for member,_ in NATIVE_OBSERVATIONS]] if name=='observed' else [];extra=hook if name=='observed' else [];src=(shadow if name=='observed' else root)/'tools/bullet-rust-discrete-world-check/oracle.cpp';consumer=out/(name+'-consumer'+ext);exe=out/(name+suffix);linkmap=out/(name+'.map')
         obj(src,consumer,name+'-consumer-build',extra);add(name+'-consumer-expanded',[T['compiler'],*flags,*extra,'/E' if win else '-E',src])
         libs=['kernel32.lib'] if win else ([] if system=='Darwin' else ['-ldl','-lpthread','-lm'])
-        add(name+'-link',[T['compiler'],'/nologo','/MD','/EHsc',consumer,*prefix,out/library,crt,'/Fe'+str(exe),'/link','/MAP:'+str(linkmap),'/VERBOSE:LIB',*libs] if win else [T['compiler'],consumer,*prefix,out/library,crt,*libs,'-fuse-ld='+T['native_linker'],('-Wl,-map,' if system=='Darwin' else '-Wl,-Map,')+str(linkmap),'-o',exe],outputs=[exe,linkmap])
-        for mode in evidence.MODES:add(name+'-'+mode,[exe,mode,out/(name+'-allocator-'+mode+'.jsonl')],inputs.encode(),outputs=[out/(name+'-allocator-'+mode+'.jsonl')])
+        add(name+'-link',[T['compiler'],'/nologo','/MD','/EHsc',consumer,*prefix,out/library,crt,'/Fe'+str(exe),'/link','/MAP:'+str(linkmap),'/VERBOSE:LIB',*libs] if win else [T['compiler'],consumer,*prefix,out/library,crt,*libs,'-fuse-ld='+T['native_linker'],('-Wl,-map,' if system=='Darwin' else '-Wl,-Map,')+str(linkmap),'-o',exe])
+        for mode in evidence.MODES:add(name+'-'+mode,[exe,mode,out/(name+'-allocator-'+mode+'.jsonl')],inputs.encode())
     for mode in evidence.MODES:add('rust-bound-'+mode,[out/('rust-world'+suffix),policy_name],bound[mode])
     for name in MUTANTS:
         for prefix in ['baseline','mutant']:
-            exe=out/(prefix+'-'+name+suffix);add(prefix+'-build-'+name,[*rargs,'--cfg','test',out/'mutants'/name/'tools/bullet-rust-discrete-world-check/runner.rs','-o',exe],outputs=[exe]);add(prefix+'-run-'+name,[exe,policy_name],inputs.encode())
+            exe=out/(prefix+'-'+name+suffix);add(prefix+'-build-'+name,[*rargs,'--cfg','test',out/'mutants'/name/'tools/bullet-rust-discrete-world-check/runner.rs','-o',exe]);add(prefix+'-run-'+name,[exe,policy_name],inputs.encode())
     files['commands.json']=encode(commands);files['native-includes-end.json']=encode(includes)
-    report={'schema':2,'status':'CONTROLLED_PASS','base':evidence.BASE,'policy':policy_name,'native':'ACTUAL_ORIGINAL_PUBLIC_SHIM_WITH_UNMODIFIED_ARCHIVE_CONTROL','compiled_controls':17,'public_world':'UNCHANGED_NATIVE_BACKEND','scope':'private default-DBVT discrete collision owner','host':{'system':system,'machine':'amd64' if win else 'arm64' if system=='Darwin' else 'x86_64','image':'synthetic'},'head':'1'*40,'compiler':tools['compiler'],'checkpoints':len(inputs.splitlines()),'cases':len(cases),'controlled':{mode:len(inputs.splitlines()) for mode in evidence.MODES},'ordinary_unbound':'EQUAL','limits':evidence.LIMITS}
+    report={'schema':4,'status':'CONTROLLED_PASS','base':evidence.BASE,'policy':policy_name,'native':'ACTUAL_ORIGINAL_PUBLIC_SHIM_WITH_UNMODIFIED_ARCHIVE_CONTROL','compiled_controls':17,'public_world':'UNCHANGED_NATIVE_BACKEND','scope':'private default-DBVT discrete collision owner','host':{'system':system,'machine':'amd64' if win else 'arm64' if system=='Darwin' else 'x86_64','image':'synthetic'},'head':'1'*40,'compiler':tools['compiler'],'checkpoints':len(inputs.splitlines()),'cases':len(cases),'controlled':{mode:len(inputs.splitlines()) for mode in evidence.MODES},'ordinary_unbound':'EQUAL','limits':evidence.LIMITS}
     files['report.json']=encode(report);refresh(files)
     expected={'expected_head':'1'*40,'canonical_sources':source,'inputs':inputs,'cases':cases,'expected_host':{(system,report['host']['machine'])},'expected_policy':policy_name}
     return files,expected
@@ -247,7 +261,7 @@ class AdmissionControls(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,reason):evidence.admit_capture(files,**self.expected)
 
     def test_completed_native_claims_source_end_and_required_families(self):
-        for key,value in [('native','UNRUN'),('compiled_controls','UNRUN'),('schema',3),('checkpoints',True),('unrecognized','foreign')]:
+        for key,value in [('native','UNRUN'),('compiled_controls','UNRUN'),('schema',5),('checkpoints',True),('unrecognized','foreign')]:
             self.rejected(lambda files,key=key,value=value:edit_json(files,'report.json',lambda report:report.update({key:value})), 'complete genuine|completed native|boolean|fields')
         self.rejected(lambda files:edit_json(files,'report.json',lambda report:report['host'].update(image={})), 'host field types')
         self.rejected(lambda files:files.update({'source-end.json':b'{}\n'}),'source-start equals source-end')
@@ -266,6 +280,19 @@ class AdmissionControls(unittest.TestCase):
         self.rejected(injected,'no ambient CL flag injection')
         self.rejected(lambda files:edit_json(files,'compiler-flags.json',lambda flags:flags.append('/W0')),'exact effective native flags')
         self.rejected(lambda files:edit_json(files,'commands.json',lambda rows:next(row for row in rows if row['label']=='native-link')['argv'].append('foreign.lib')),'exact effective command')
+
+    def test_alias_target_and_generated_dbvt_refusals(self):
+        self.rejected(lambda files:edit_json(files,'tools-end.json',lambda tools:tools['rustup'].update(target='C:\\targets\\other.exe')), 'tool start/end preservation')
+        self.rejected(lambda files:edit_json(files,'commands.json',lambda rows:rows[0].update(tool_target='C:\\targets\\other.exe')), 'resolved command tool')
+        self.rejected(lambda files:edit_json(files,'commands.json',lambda rows:rows[0]['argv'].__setitem__(0,'C:\\tools\\other.exe')), 'exact effective command')
+        from hooks import DBVT
+        self.rejected(lambda files:files.update({'generated/'+DBVT:files['generated/'+DBVT]+b'foreign'}), 'generated physical source')
+        self.rejected(lambda files:files.update({'observed-btDbvt.obj':b'foreign object'}), 'actual pre-use direct|genuine consumer')
+        self.rejected(lambda files:files.update({'observed.map':files['observed.map'].replace(b'observed-btDbvt.obj',b'foreign-btDbvt.obj')}), 'actual selected override object')
+        def original_dbvt(files):
+            files['observed.map']+=b'\n 0001:00000000 symbol 0000000140001000 BulletWorld.lib:btDbvt.obj\n'
+            edit_json(files,'observed-link-selection.json',lambda selected:selected.append('btDbvt.obj'))
+        self.rejected(original_dbvt,'observed overrides exclude original')
 
     def test_physical_source_object_archive_and_member_bindings(self):
         source='source/'+OWNER
@@ -309,7 +336,7 @@ class AdmissionControls(unittest.TestCase):
         self.rejected(lambda files:edit_json(files,'semantic-controls.json',lambda controls:controls['default-force'].update(semantic_rows=[])), 'derived valid directed semantic witness')
         self.rejected(lambda files:edit_json(files,'semantic-controls.json',lambda controls:controls['default-force'].update(normal_exit='UNRUN')), 'derived valid directed semantic witness')
         self.rejected(lambda files:edit_json(files,'commands.json',lambda rows:rows[0].update(seconds=True)), 'boolean in integer receipt field')
-        self.rejected(lambda files:files.update({'report.json':files['report.json'].replace(b'"schema": 2',b'"schema": 2, "schema": 2')}), 'duplicate')
+        self.rejected(lambda files:files.update({'report.json':files['report.json'].replace(b'"schema": 4',b'"schema": 4, "schema": 4')}), 'duplicate')
         self.rejected(lambda files:files.update({'report.json':files['report.json'].replace(b'"checkpoints": 707',b'"checkpoints": NaN')}), 'finite JSON number')
 
     def test_native_finalization_and_windows_entry_share_refusal_and_exact_publication(self):
@@ -344,9 +371,9 @@ class AdmissionControls(unittest.TestCase):
             self.assertEqual(cwd,str(PureWindowsPath(context['root'])/'rust'))
             if '-o' in argv or label=='crt-build':self.assertEqual(argv[:6],[context['tools']['rustup'],'run','1.95.0','rustc','--edition=2021','-O'])
         report=json.loads(self.windows['report.json']);report.pop('compiler')
-        report.update(schema=3,native='WINDOWS_SOURCE_REPLAY',producer_report_sha256=sha(self.windows['report.json']),ordinary_unbound='WINDOWS_SOURCE_REPLAY',limits=evidence.LIMITS+['replay Rust inner linker chain unobserved'])
+        report.update(schema=5,native='WINDOWS_SOURCE_REPLAY',producer_report_sha256=sha(self.windows['report.json']),ordinary_unbound='WINDOWS_SOURCE_REPLAY',limits=evidence.LIMITS+['replay Rust inner linker chain unobserved'])
         self.assertEqual(evidence.replay_report(report,self.expected['expected_head'],self.expected['inputs'],self.expected['cases']),report)
-        for key,value in [('schema',2),('compiled_controls','UNRUN'),('producer_report_sha256','foreign'),('native','UNRUN'),('host',{**report['host'],'image':{}})]:
+        for key,value in [('schema',4),('compiled_controls','UNRUN'),('producer_report_sha256','foreign'),('native','UNRUN'),('host',{**report['host'],'image':{}})]:
             with self.assertRaises(ValueError):evidence.replay_report({**report,key:value},self.expected['expected_head'],self.expected['inputs'],self.expected['cases'])
 
     def test_bounds_closed_paths_and_container_payloads(self):

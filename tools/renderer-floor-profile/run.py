@@ -18,11 +18,12 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 BASE = '77b3e431bc1ac2ab5610692f2e12c903a7629090'
 BASE_TREE = '778782dc8ad6352585a9b7eeb135c04150d1f2e4'
-SCHEMA = 'mds-floor-profile-v2'
-PARENT = '2a8fe1eccb59e622bc24cdf800c4e28092cc72e8'
+SCHEMA = 'mds-floor-profile-v3-operation'
+PARENT = 'b7f1c87388606eee4328915504d34c5e9b63ab3a'
 FP_CONTRACT = {'snapshot':'HardwareMxcsr', 'identity':'SourceSiteOnly',
                'rust_operation_ordering':'Unproved', 'exception_attribution':'Unsupported',
                'operation_environment':'Unproved'}
+RUST_FLAGS = '--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile) -C link-arg=/MAP'
 PATHS = ['.github/workflows/renderer-floor-profile.yml'] + [
     'tools/renderer-floor-profile/'+n for n in
     ('run.py','native.cpp.in','native_observer.hpp','observer.rs','test_run.py')]
@@ -53,12 +54,16 @@ checked, readonly = previous.checked, previous.readonly
 
 def record(out,label,argv,cwd,env,timeout=1200):
     binary=Path(argv[0]).read_bytes() if label in ('native','rust') else None
+    tool=Path(argv[0]).read_bytes() if label=='instruction-help' or '-instructions-' in label else None
     row=previous.record(out,label,argv,cwd,env,timeout)
     if 'RUSTFLAGS' in env:
         for key in ('RUSTFLAGS','CL','_CL_'):row['env'][key]=env[key]
     if binary is not None:
         require(Path(argv[0]).read_bytes()==binary,'executed retained binary changed')
         row['executed_binary']={'path':str(argv[0]),'sha256':digest(binary),'size':len(binary)}
+    if tool is not None:
+        require(Path(argv[0]).read_bytes()==tool,'hosted instruction tool changed')
+        row['tool_binary']={'path':str(argv[0]),'sha256':digest(tool),'size':len(tool)}
     write_json(out/(label+'.json'),row)
     return row
 
@@ -80,6 +85,38 @@ def finite(values):
     words(values)
     require(all(math.isfinite(struct.unpack('<f',struct.pack('<I',v))[0]) for v in values),'finite initialized float')
     return values
+
+
+def operation_corpus():
+    return b''.join(struct.pack('<19f',*POINTS[-1],*matrix) for matrix in (IDENTITY,PROJECTIVE))
+
+
+def corpus_words(raw):
+    require(raw==operation_corpus(),'exact post-build two-case 152-byte corpus')
+    return list(struct.unpack('<38I',raw))
+
+
+def admit_operation(row,kind,owner,expected_input):
+    common={'stage','kind','owner','input','output','samples','sites','base'}
+    require(set(row)==common|({'target'} if kind=='DllCall' else {'values','destination'}),'closed operation record')
+    require(row['stage']=='operation' and row['kind']==kind and row['owner']==owner and
+            all(type(v) is int for v in row['owner']),'actual operation owner/order')
+    require(len(finite(row['input']))==19 and row['input']==expected_input,'runtime operation input words')
+    require(len(finite(row['output']))==3,'operation output words')
+    require(type(row['samples']) is list and len(row['samples'])==2,'operation samples')
+    row['fp']=[snapshot(v,kind,'operation-'+str(i),case=str(owner)) for i,v in enumerate(row['samples'])]
+    require(type(row['base']) is int and 0<row['base']<2**64,'runtime module base')
+    sites=row['sites'];require(type(sites) is list and len(sites)==(2 if kind=='DllCall' else 5) and
+            all(type(v) is int and (v==0 or row['base']<v<2**64) for v in sites),'runtime code sites')
+    required=range(2) if kind=='DllCall' else range(5) if kind=='RustTable' else (0,2)
+    require(all(sites[i] for i in required),'required actual code sites')
+    if kind=='DllCall':require(type(row['target']) is int and 0<row['target']<2**64,'actual DLL call target')
+    else:
+        require(len(finite(row['values']))==3 and len(finite(row['destination']))==3,'operation intermediate/destination words')
+        if owner[0]==2:require(row['destination']==row['output'],'actual merge return/destination agreement')
+        else:require(row['destination']==[0,0,0],'no direct merge destination')
+        if kind=='RustEndpoint':require(row['values']==[0,0,0],'uninstrumented endpoint has no observed intermediates')
+    return row
 
 
 def inputs(read):
@@ -122,8 +159,9 @@ def inverse(raw,patch):
     return result
 
 
-def generated(read,observed,input_root):
+def generated(read,observed,input_root,runtime_path=None):
     input_root=PureWindowsPath(str(input_root))
+    runtime_path=PureWindowsPath(str(runtime_path or input_root/'operations.bin'))
     patches={};result={}
     def add(path,anchor,text):
         raw=result.get(path,read(path))
@@ -138,6 +176,7 @@ target_include_directories(floor_profile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(floor_profile PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
 target_compile_options(mikudancestudio_core PRIVATE @OPT@)
 target_compile_options(floor_profile PRIVATE @OPT@)
+target_link_options(floor_profile PRIVATE /MAP)
 ''')
     if observed:
         add(ACCESSORY,b'#include "mikudancestudio/ported_funcs.hpp"',b'\n#include "../../native_observer.hpp"')
@@ -146,13 +185,21 @@ target_compile_options(floor_profile PRIVATE @OPT@)
         anchor=b'        return Err(Error::NoMesh);\n    }\n'
         add(MESH,anchor,b'    #[cfg(mds_floor_profile)] floor_profile::premerge(&containers);\n')
         add(MESH,b'    if single {\n        mesh.attribute_table = attribute_table(&mesh.indices, &mesh.face_material);\n    }\n',b'    #[cfg(mds_floor_profile)] floor_profile::merged(&mesh);\n')
+        add(MESH,b'fn transform_coord(p: [f32; 3], m: &Mat4) -> [f32; 3] {',b'\n    #[cfg(mds_floor_profile)] floor_profile::begin_operation(p, m);')
+        add(MESH,b'    let r = (e + e) - w * (e * e);',b'\n    #[cfg(mds_floor_profile)] floor_profile::intermediates(w, e, r);\n    let output =')
+        add(MESH,b'        (((x * m[2] + y * m[6]) + z * m[10]) + m[14]) * r,\n    ]',b';\n    #[cfg(mds_floor_profile)] floor_profile::finish_operation(output);\n    output')
+        add(MESH,b'    for c in containers {',b'\n        #[cfg(mds_floor_profile)] floor_profile::merge_container();')
+        add(MESH,b'        for v in &c.vertices {',b'\n            #[cfg(mds_floor_profile)] floor_profile::merge_source(mesh.vertices.len());')
+        add(MESH,b'                texcoord: v.texcoord,\n            });',b'\n            #[cfg(mds_floor_profile)] floor_profile::merge_destination(mesh.vertices.last().unwrap().position);')
     observer=(HERE/'observer.rs').read_text()
     observer=observer.replace('@CASES@',','.join('('+json.dumps(id)+',include_bytes!('+json.dumps(str(input_root/(id+'.x')))+'))' for id,_,_ in CASES))
     observer=observer.replace('@MATRICES@',repr(MATRICES)).replace('@POINTS@',repr(POINTS))
+    observer=observer.replace('@RUNTIME@',json.dumps(str(runtime_path))).replace('@MERGE_INPUT@',json.dumps(str(input_root/'floor-identity.x'))).replace('@OBSERVED@',str(observed).lower())
     add(MESH,read(MESH)[-40:],b'\n#[cfg(mds_floor_profile)]\nmod floor_profile {\n'+observer.encode()+b'\n}\n')
     cpp=(HERE/'native.cpp.in').read_text()
     cpp=cpp.replace('@IDS@',','.join(json.dumps(id) for id,_,_ in CASES))
     cpp=cpp.replace('@FILES@',','.join('L'+json.dumps(str(input_root/(id+'.x'))) for id,_,_ in CASES))
+    cpp=cpp.replace('@RUNTIME@','L'+json.dumps(str(runtime_path)))
     for key,value in [('@MATRICES@',MATRICES),('@POINTS@',POINTS)]:
         cpp=cpp.replace(key,repr(value).replace('[','{').replace(']','}'))
     result['native.cpp']=cpp.encode();result['native_observer.hpp']=(HERE/'native_observer.hpp').read_bytes()
@@ -274,6 +321,19 @@ def parse(raw,language,observed):
                 row=take('direct');require(row['operation']==operation and type(row['matrix']) is int and row['matrix']==mi and type(row['point']) is int and row['point']==pi,'direct operation/input/matrix identity')
                 require(len(finite(row['words']))==(4 if operation=='Transform' else 3),'direct operation output width')
                 row['fp']=[snapshot(row[k],language,k,operation=operation,matrix=mi,point=pi) for k in ('sample_a','sample_b')];result['direct'].append(row)
+    require(take('runtime-read')=={'stage':'runtime-read','words':corpus_words(operation_corpus())},'actual runtime corpus read')
+    result['operations']=[]
+    domain=corpus_words(operation_corpus())
+    for i in range(2):
+        for kind in (('DllCall',) if language=='native' else (('RustTable' if observed else 'RustEndpoint'),'HardwareSeedWithFrozenRefinement')):
+            row=admit_operation(take('operation'),kind,[1,i,0,0],domain[i*19:(i+1)*19])
+            if kind=='DllCall':require(row['target']==result['dll']['base']+result['dll']['rvas'][1],'wrapper actual DLL target')
+            result['operations'].append(row)
+    if language=='rust':
+        read=take('merge-read');raw=inputs(lambda p:(ROOT/p).read_bytes())[1]['bytes']
+        require(read=={'stage':'merge-read','bytes':list(raw)},'same retained fixture genuinely read at runtime')
+        expected=list(map(word,POINTS[0]+IDENTITY)) if observed else [0]*19
+        result['operations'].append(admit_operation(take('operation'),'RustTable' if observed else 'RustEndpoint',[2,0,0,0],expected))
     require(at==len(rows)-1,'extra/unknown records')
     if language=='native':
         q,t=result['direct'][-2:];require(q['words']!=t['words'][:3] and t['words'][3]==word(3.),'nonunit-w distinguishes operations')
@@ -282,6 +342,57 @@ def parse(raw,language,observed):
 
 def semantic(a,b):
     return {'classification':'Equal' if a==b else 'SemanticDifference','before':a,'after':b}
+
+
+def operation_assessment(native,rust):
+    table_source=(ROOT/'rust/crates/mds-math/src/estimate_table.rs').read_text()
+    match=re.search(r'const RCP: \[u32; 2048\] = \[(.*?)\];',table_source,re.S)
+    require(match is not None,'frozen RCP table source')
+    table=[int(v,16) for v in re.findall(r'0x[0-9a-f]{8}',match[1])]
+    require(len(table)==2048,'frozen RCP entries')
+    def f(v):return struct.unpack('<f',struct.pack('<I',v))[0]
+    def rnd(v):
+        try:return f(word(v))
+        except OverflowError:return math.copysign(math.inf,v)
+    def oracle(row,seed=None):
+        p=list(map(f,row['input'][:3]));m=list(map(f,row['input'][3:]))
+        w=rnd(rnd(rnd(p[0]*m[3])+rnd(p[1]*m[7]))+rnd(p[2]*m[11]));w=rnd(w+m[15])
+        wb=word(w);exp=wb>>23 & 255
+        require(w in (1.,3.) and 0<exp<253,'bounded Identity/W3 oracle domain')
+        e=f((253-exp)<<23 | table[(wb>>12)&2047]&0x7fffff) if seed is None else f(seed)
+        square=rnd(e*e);scaled=rnd(w*square);double=rnd(e+e);r=rnd(double-scaled)
+        output=[]
+        for i in range(3):
+            n=rnd(rnd(rnd(p[0]*m[i])+rnd(p[1]*m[i+4]))+rnd(p[2]*m[i+8]));n=rnd(n+m[i+12])
+            output.append(word(rnd(n*r)))
+        return {'values':[wb,word(e),word(r)],'output':output,
+                'refinement_derived_binary32':[word(square),word(scaled),word(double)],
+                'origin':'DerivedDefaultBinary32NotInstructionReconstruction'}
+    observations=[]
+    for row in rust['operations']:
+        if row['kind']=='RustEndpoint':continue
+        item={'kind':row['kind'],'owner':row['owner'],'observed':row,
+              'compiled_dataflow':'UnprovedAwaitingIndependentReview','operation_environment':'Unproved',
+              'instruction_reconstructed_values':'UnprovedAwaitingIndependentReview'}
+        if all(v['controls']==0x1f80 for v in row['fp']):
+            derived=oracle(row,row['values'][1] if row['kind']=='HardwareSeedWithFrozenRefinement' else None)
+            item['numerical_oracle']={'domain':'DefaultSampledControlsOnly','derived':derived,
+                'comparison':semantic({k:derived[k] for k in ('values','output')},{k:row[k] for k in ('values','output')})}
+        else:item['numerical_oracle']={'domain':'UnprovedNondefaultControls'}
+        observations.append(item)
+    relations=[]
+    for i in range(2):
+        table,hardware=rust['operations'][i*2:i*2+2];dll=native['operations'][i]
+        relations.append({'owner':[1,i,0,0],'table_vs_hardware_seed':semantic(table['values'][1],hardware['values'][1]),
+                          'table_vs_dll_output':semantic(table['output'],dll['output']),
+                          'hardware_vs_dll_output':semantic(hardware['output'],dll['output']),
+                          'dll_recipe':'HeldUnproved','cause_status':'Held'})
+    merge=rust['operations'][-1]
+    return {'state':'CapturedAwaitingIndependentCompiledReview','proof_status':'UnprovedAwaitingIndependentReview',
+            'observations':observations,'dll_observations':native['operations'],'relations':relations,
+            'runtime_direct_vs_merge':{'classification':'NotComparable','reason':'DifferentPointAndOwnerDomains'},
+            'merge_vs_retained_floor':semantic(merge['output'],rust['cases']['floor-identity']['merged']['positions'][0]),
+            'dll_internal_closure':'HeldOptional','arithmetic_adoption':'NotAuthorized'}
 
 
 def classify(native,rust):
@@ -334,6 +445,7 @@ def classify(native,rust):
     if native['cases']['floor-top']['production_raw']['positions']!=native['cases']['floor-identity']['production_raw']['positions']:
         findings.append({'finding':'TopVersusIdentityFrameInputTopologyDependence','qualification':'does not isolate Frame from explicit matrix'})
     return {'state':'CompleteSameHostDiagnostic','differences':differences,'findings':findings,
+            'operation_diagnostic':operation_assessment(native,rust),
             'output_relations':relations,'causal_qualification':qualifications,
             'fp_states':{'native':native['fp']+[v for case in native['cases'].values() for v in case['fp']]+[v for row in native['direct'] for v in row['fp']],
                          'rust':[v for case in rust['cases'].values() for v in case['fp']]+[v for row in rust['direct'] for v in row['fp']]},
@@ -362,6 +474,108 @@ def pe_exports(raw):
         nameoffset=offset(struct.unpack_from('<I',raw,no+4*i)[0]);end=raw.index(b'\0',nameoffset)
         name=raw[nameoffset:end].decode('ascii');ordinal=struct.unpack_from('<H',raw,oo+2*i)[0]
         require(ordinal<funcs,'PE export ordinal');result[name]=struct.unpack_from('<I',raw,fo+4*ordinal)[0]
+    return result
+
+
+def pe_code(raw):
+    require(len(raw)>=256 and raw[:2]==b'MZ','bounded final PE header')
+    pe=struct.unpack_from('<I',raw,60)[0];require(pe+264<=len(raw) and raw[pe:pe+6]==b'PE\0\0d\x86','final AMD64 PE')
+    count=struct.unpack_from('<H',raw,pe+6)[0];optional=pe+24;size=struct.unpack_from('<H',raw,pe+20)[0]
+    require(0<count<=96 and size>=144 and optional+size+count*40<=len(raw) and struct.unpack_from('<H',raw,optional)[0]==0x20b,'bounded PE32+ sections')
+    base=struct.unpack_from('<Q',raw,optional+24)[0];sections=[]
+    for i in range(count):
+        at=optional+size+i*40;vs,va,rs,offset=struct.unpack_from('<IIII',raw,at+8);flags=struct.unpack_from('<I',raw,at+36)[0]
+        require(offset+rs<=len(raw) and va+max(vs,rs)<2**32,'PE physical/virtual section bounds')
+        sections.append({'name':raw[at:at+8].rstrip(b'\0').decode('ascii'),'rva':va,'size':rs,'offset':offset,'flags':flags})
+    def region(start,end,executable=False):
+        require(type(start) is int and type(end) is int and 0<=start<end<2**32,'strict code range')
+        matches=[s for s in sections if s['rva']<=start<end<=s['rva']+s['size'] and (not executable or s['flags']&0x20000000)]
+        require(len(matches)==1,'unique physical PE section/range')
+        s=matches[0];offset=s['offset']+start-s['rva']
+        return {'start_rva':start,'end_rva':end,'section':s['name'],'offset':offset,'bytes':raw[offset:offset+end-start].hex()}
+    rva,length=struct.unpack_from('<II',raw,optional+112+3*8)
+    require(length and length%12==0 and length<=12*100000,'bounded exception directory')
+    table=bytes.fromhex(region(rva,rva+length)['bytes']);functions=[]
+    for at in range(0,len(table),12):
+        first,last,unwind=struct.unpack_from('<III',table,at)
+        require(first<last and unwind,'runtime function extent');region(first,last,True);functions.append((first,last))
+    require(functions==sorted(set(functions)),'unique sorted runtime function extents')
+    return base,sections,functions,region
+
+
+DISASSEMBLER=PureWindowsPath('C:/Program Files/LLVM/bin/llvm-objdump.exe')
+
+
+def code_ranges(raw,rows,map_raw):
+    base,sections,functions,region=pe_code(raw);sites=[]
+    for row in rows:
+        sites.extend(site-row['base'] for site in row['sites'] if site)
+    text=map_raw.decode('utf-8-sig');require('Preferred load address is' in text,'same-link map header')
+    preferred=re.findall(r'Preferred load address is\s+([0-9a-fA-F]+)',text)
+    require(len(preferred)==1 and int(preferred[0],16)==base,'same-link preferred image base')
+    symbols=[]
+    for line in text.splitlines():
+        match=re.fullmatch(r'\s*[0-9a-fA-F]{4}:[0-9a-fA-F]{8,16}\s+(\S+)\s+([0-9a-fA-F]{8,16})\s+(.*?)\s*',line)
+        if match and ('floor_profile' in match[1] or 'DllProbe' in match[1] or match[1]=='wmain' or
+                      'mds_accessory' in match[1] and any(name in match[1] for name in ('transform_coord','load_x','merge')) or
+                      'mds_math' in match[1] and 'rcp_estimate' in match[1]):
+            address=int(match[2],16)-base
+            if any(first<=address<last for first,last in functions):symbols.append({'symbol':match[1],'rva':address,'object':match[3]})
+    require(symbols,'selected same-link symbol mappings')
+    selected=set()
+    for site in sites+[s['rva'] for s in symbols]:
+        matches=[p for p in functions if p[0]<=site<p[1]]
+        require(len(matches)==1,'runtime site has one exception-directory function extent')
+        selected.add(matches[0])
+    require(0<len(selected)<=96 and sum(b-a for a,b in selected)<=512*1024 and all(b-a<=128*1024 for a,b in selected),'small bounded operation code regions')
+    return {'image_sha256':digest(raw),'image_size':len(raw),'preferred_base':base,'sections':sections,
+            'runtime_sites_rva':sites,'same_link_symbols':symbols,
+            'ranges':[region(a,b,True) for a,b in sorted(selected)],
+            'compiled_dataflow':'UnprovedAwaitingIndependentReview'}
+
+
+def disassembly_argv(binary,witness,span):
+    base=witness['preferred_base']
+    return [str(DISASSEMBLER),'--disassemble','--start-address='+hex(base+span['start_rva']),
+            '--stop-address='+hex(base+span['end_rva']),str(binary)]
+
+
+def disassembly_bytes(stdout,witness,span):
+    expected=bytes.fromhex(span['bytes']);cursor=span['start_rva'];count=0
+    for line in stdout.decode('utf-8').splitlines():
+        match=re.fullmatch(r'\s*([0-9a-fA-F]+):\s+((?:[0-9a-fA-F]{2}\s+)+)(\S.*)',line)
+        if match:
+            address=int(match[1],16)-witness['preferred_base'];raw=bytes.fromhex(match[2]);offset=address-span['start_rva']
+            require(address==cursor and raw and offset+len(raw)<=len(expected) and expected[offset:offset+len(raw)]==raw,'disassembly exact contiguous PE instruction bytes')
+            require('<unknown>' not in match[3] and '(bad)' not in match[3],'undecoded required instruction region')
+            cursor+=len(raw);count+=1
+    require(count and cursor==span['end_rva'],'complete bounded disassembly byte coverage')
+
+
+def compiled_evidence(directory,parsed,r,capture=False,env=None):
+    help_argv=[str(DISASSEMBLER),'--help']
+    if capture:
+        require(Path(DISASSEMBLER).is_file(),'hosted bounded disassembly tool availability prerequisite')
+        require(record(directory,'instruction-help',help_argv,r['source'],env)['status']==0,'actual hosted disassembler help prerequisite')
+    receipt,stdout,stderr=checked(directory,'instruction-help')
+    require(receipt['argv']==help_argv and receipt['cwd']==r['source'] and not stderr,'exact hosted disassembler help receipt')
+    require(all(option.encode() in stdout for option in ('--disassemble','--start-address','--stop-address')),'actual bounded disassembly capabilities prerequisite')
+    tool=receipt.get('tool_binary');require(type(tool) is dict and set(tool)=={'path','sha256','size'} and
+            tool['path']==str(DISASSEMBLER) and re.fullmatch('[0-9a-f]{64}',tool['sha256']) and type(tool['size']) is int and tool['size']>0,'actual hosted tool identity')
+    result={}
+    for language,name,map_name in (('native','floor_profile.exe','native.map'),('rust','rust-profile.exe','rust.map')):
+        raw=(directory/name).read_bytes();mapping=(directory/map_name).read_bytes()
+        witness=code_ranges(raw,parsed[0 if language=='native' else 1]['operations'],mapping)
+        witness['same_link_map']={'sha256':digest(mapping),'size':len(mapping)}
+        if capture:write_json(directory/(language+'-code.json'),witness)
+        require(load_json((directory/(language+'-code.json')).read_bytes())==witness,'rederived executed-image code witness')
+        for i,span in enumerate(witness['ranges']):
+            label=language+'-instructions-'+str(i);argv=disassembly_argv(PureWindowsPath(r['evidence'])/name,witness,span)
+            if capture:require(record(directory,label,argv,r['source'],env)['status']==0,'bounded hosted disassembly prerequisite')
+            row,assembly,error=checked(directory,label)
+            require(row['argv']==argv and row['cwd']==r['source'] and row.get('tool_binary')==tool and not error,'exact bounded tool/image/range command')
+            disassembly_bytes(assembly,witness,span)
+        result[language]=witness
     return result
 
 
@@ -437,13 +651,14 @@ def admit_recipe(m,b):
 def admit_command(receipt,r,label):
     require(receipt['argv']==r['commands'][label] and receipt['cwd']==r['cwd'][label],'exact command/cwd binding')
     expected={'CARGO_TARGET_DIR':r['target'],'CARGO_INCREMENTAL':'0',
-              'RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''}
+              'RUSTFLAGS':RUST_FLAGS,'CL':'','_CL_':''}
     require(all(receipt['env'].get(k)==v for k,v in expected.items()),'closed compiler environment')
 
 
 def admit_manifest(m):
     require(m['fp_observation_contract']==FP_CONTRACT,'fixed FP observation contract')
     require(m['schema']==SCHEMA and m['base']==BASE and m['paths']==PATHS and re.fullmatch('[0-9a-f]{40}',m['head']),'diagnostic generation/head')
+    require(m['operation_corpus']=={'sha256':digest(operation_corpus()),'size':152,'words':corpus_words(operation_corpus())},'generation operation corpus')
 
 
 def cargo_binary(raw,r,opt):
@@ -658,11 +873,13 @@ def native_provenance(commands,r,opt,objects,archive):
     require(len(links)==1,'exact final executable link')
     args=links[0][1:]
     require(native in [winpath(v,cwd) for v in args if v.lower().endswith('.obj')] and lib in [winpath(v,cwd) for v in args if v.lower().endswith('.lib')],'final link exact harness object and core archive')
+    require('/map' in [v.lower() for v in args],'selected same-link native map')
     return str(exe)
 
 
 def source_expected(base,observed,input_root,opt):
-    changes,patches=generated(lambda p:(base/p).read_bytes(),observed,input_root)
+    runtime=PureWindowsPath(str(input_root)).parent/(('observed' if observed else 'control')+'-'+opt.lstrip('/'))/'operations.bin'
+    changes,patches=generated(lambda p:(base/p).read_bytes(),observed,input_root,runtime)
     raw=changes['CMakeLists.txt'];replacement=raw.replace(b'@OPT@',opt.encode())
     patches['CMakeLists.txt'].append({'kind':'optimization','original_hex':raw.hex(),'original_sha256':digest(raw),'generated_sha256':digest(replacement),'option':opt})
     changes['CMakeLists.txt']=replacement
@@ -684,6 +901,7 @@ def verify_sources(out,m):
     require(('parent '+PARENT) in (out/'head.commit').read_text().splitlines(),'frozen parent identity')
     require(input_manifest(inputs(lambda p:(base/p).read_bytes()))==m['inputs'],'closed input manifest')
     for row in inputs(lambda p:(base/p).read_bytes()):require((out/'inputs'/(row['id']+'.x')).read_bytes()==row['bytes'],'retained exact input bytes')
+    require((base/'rust/crates/mds-math/src/estimate_table.rs').read_bytes()==(ROOT/'rust/crates/mds-math/src/estimate_table.rs').read_bytes(),'oracle uses authenticated unchanged table source')
     for build in m['builds']:
         variant,opt=build['variant'],build['optimization']
         changes,patches,expected=source_expected(base,variant=='observed',PureWindowsPath(m['input_root']),'/'+opt)
@@ -737,6 +955,13 @@ def replay(out,archive=None):
             raw=(directory/name).read_bytes();require(digest(raw)==row['sha256'] and len(raw)==row['size'],'binary/source binding');pe_exports(raw) if name=='d3dx9_43.dll' else require(raw[:2]==b'MZ','actual executable PE')
         _,nout,nerr=checked(directory,'native');require(not nerr,'native stderr');native=parse(nout,'native',b['variant']=='observed')
         _,rout,_=checked(directory,'rust');require(b'test result: ok. 1 passed; 0 failed; 0 ignored;' in rout,'one actual Rust unit probe with no ignored tests');rust=parse(rout,'rust',b['variant']=='observed')
+        corpus_words((directory/'operations.bin').read_bytes())
+        require(set(b['runtime_corpus'])=={'sha256','size','created_ns'} and b['runtime_corpus']['sha256']==digest(operation_corpus()) and b['runtime_corpus']['size']==152,'runtime corpus identity')
+        creation=b['runtime_corpus']['created_ns'];require(type(creation) is int,'runtime corpus creation time')
+        for label in ('native-build','rust-build'):require(checked(directory,label)[0]['end_ns']<=creation,'corpus created after both compilers completed')
+        for label in ('native','rust'):require(creation<=checked(directory,label)[0]['start_ns'],'corpus existed before actual runtime read')
+        if b['variant']=='observed':
+            require(compiled_evidence(directory,(native,rust),r)==b['compiled_capture'],'required bounded executed-code capture')
         dll=native['dll'];raw=(directory/'d3dx9_43.dll').read_bytes();exports=pe_exports(raw)
         require(digest(raw)==dll['sha256'] and len(raw)==dll['size'] and dll['rvas']==[exports[n] for n in ('D3DXLoadMeshFromXW','D3DXVec3TransformCoord','D3DXVec3Transform')],'actual loaded DLL bytes/exports')
         parsed[b['id']]=(native,rust)
@@ -750,6 +975,7 @@ def replay(out,archive=None):
                 require(mesh(a['final'])==mesh(b['final']) ,'control/observed bitwise initialized final state')
             a,b=[p[language]['cases'] for p in (control,observed)]
             require(mesh(a['floor-top']['final'])!=mesh(a['floor-affine']['final']) and mesh(b['floor-top']['final'])!=mesh(b['floor-affine']['final']),'genuine normal-exit affine sensitivity')
+            require([(row['owner'],row['output']) for row in control[language]['operations']]==[(row['owner'],row['output']) for row in observed[language]['operations']],'runtime control/observed endpoint invariance')
         results[opt]=classify(*observed)
     result={'schema':SCHEMA,'fp_observation_contract':FP_CONTRACT,'head':m['head'],'results':results,'hosted':'ExecutedWindowsOnly','profile_adoption':'NotAuthorized'}
     require(load_json((out/'result.json').read_bytes())==result,'rederived diagnostic result')
@@ -777,6 +1003,7 @@ def run(out,build_root,toolchain):
     input_root=Path(r['input_root']);input_root.mkdir();rows=inputs(lambda p:(base/p).read_bytes())
     for row in rows:(input_root/(row['id']+'.x')).write_bytes(row['bytes'])
     m={'schema':SCHEMA,'fp_observation_contract':FP_CONTRACT,'runner_temp':runner_temp,'base':BASE,'head':head,'paths':PATHS,'input_root':str(input_root),'inputs':input_manifest(rows),'base_inventory':c.source_inventory(base),'builds':[],
+       'operation_corpus':{'sha256':digest(operation_corpus()),'size':152,'words':corpus_words(operation_corpus())},
        'configuration_differences':'Native Release in both modes, appended /Od or /O2 on core and console; Rust dev versus release defaults, opt-level/debug assertions/overflow/debuginfo differ. Observed copies add private sink calls. Both copies include coarse private MXCSR snapshots with operation ordering unproved.'}
     parsed={}
     for opt in ('Od','O2'):
@@ -788,18 +1015,21 @@ def run(out,build_root,toolchain):
             for path,row in expected.items():c.TRANSPORT_MODES[str((source/path).resolve())]=row['mode']
             require(c.source_inventory(source)==expected,'generated source initial closure')
             native_target=Path(r['native_target']);target=Path(r['target'])
-            e=env|{'CARGO_TARGET_DIR':str(target),'CARGO_INCREMENTAL':'0','CARGO_TERM_COLOR':'never','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''}
+            e=env|{'CARGO_TARGET_DIR':str(target),'CARGO_INCREMENTAL':'0','CARGO_TERM_COLOR':'never','RUSTFLAGS':RUST_FLAGS,'CL':'','_CL_':''}
             for label in ('configure','native-build'):
                 require(record(directory,label,commands[label],source,e,2400)['status']==0,'native '+label+' failure is not SemanticDifference')
             shutil.copyfile(native_target/'Release/floor_profile.exe',directory/'floor_profile.exe')
             actual=native_commands((directory/'native-build.stdout').read_bytes(),(directory/'native-build.stderr').read_bytes(),r)
             shutil.copyfile(native_target/'Release/mikudancestudio_core.lib',directory/'mikudancestudio_core.lib')
-            require(record(directory,'native',commands['native'],source,e,300)['status']==0,'native normal exit required')
-            native=parse((directory/'native.stdout').read_bytes(),'native',variant=='observed')
-            shutil.copyfile(native['dll']['path'],directory/'d3dx9_43.dll')
             require(record(directory,'rust-build',commands['rust-build'],source/'rust',e)['status']==0,'Rust build')
             executable=cargo_binary((directory/'rust-build.stdout').read_bytes(),r,opt)
             shutil.copyfile(executable,directory/'rust-profile.exe')
+            shutil.copyfile(native_target/'Release/floor_profile.map',directory/'native.map')
+            shutil.copyfile(Path(executable).with_suffix('.map'),directory/'rust.map')
+            (directory/'operations.bin').write_bytes(operation_corpus());creation=previous.time.time_ns()
+            require(record(directory,'native',commands['native'],source,e,300)['status']==0,'native normal exit required')
+            native=parse((directory/'native.stdout').read_bytes(),'native',variant=='observed')
+            shutil.copyfile(native['dll']['path'],directory/'d3dx9_43.dll')
             require(record(directory,'rust',commands['rust'],source/'rust',e,300)['status']==0,'Rust probe normal exit')
             rust=parse((directory/'rust.stdout').read_bytes(),'rust',variant=='observed')
             for test in ('mesh_dump','x_files'):
@@ -816,6 +1046,8 @@ def run(out,build_root,toolchain):
             for name in ('floor_profile.exe','rust-profile.exe','d3dx9_43.dll'):
                 raw=(directory/name).read_bytes();binaries[name]={'sha256':digest(raw),'size':len(raw)}
             b={'id':id,'variant':variant,'optimization':opt,'source':str(source),'target':str(target),'evidence':str(directory),'commands':commands,'patches':patches,'before':expected,'after':c.source_inventory(source),'actual_native_commands':actual,'binaries':binaries,'objects':objects,'original_native_binary':{'path':str(native_target/'Release/floor_profile.exe'),'sha256':digest((native_target/'Release/floor_profile.exe').read_bytes())},'original_rust_binary':{'path':executable,'sha256':digest(Path(executable).read_bytes())}}
+            b['runtime_corpus']={'sha256':digest(operation_corpus()),'size':152,'created_ns':creation}
+            if variant=='observed':b['compiled_capture']=compiled_evidence(directory,(native,rust),r,True,e)
             m['builds'].append(b);write_json(out/'manifest.json',m);parsed[id]=(native,rust)
     result={'schema':SCHEMA,'fp_observation_contract':FP_CONTRACT,'head':head,'results':{opt:classify(*parsed['observed-'+opt]) for opt in ('Od','O2')},'hosted':'ExecutedWindowsOnly','profile_adoption':'NotAuthorized'}
     write_json(out/'result.json',result);write_json(out/'seal.json',{'schema':SCHEMA,'files':previous.evidence_inventory(out)})
@@ -844,4 +1076,4 @@ def main():
 if __name__=='__main__':
     try:main()
     except (ValueError,KeyError,IndexError,OSError,struct.error,tarfile.TarError) as error:
-        print(json.dumps({'result':'InvalidEvidence','error':str(error)}),file=sys.stderr);sys.exit(1)
+        print(json.dumps({'result':'IncompleteDiagnostic' if '--run' in sys.argv else 'InvalidEvidence','error':str(error)}),file=sys.stderr);sys.exit(1)

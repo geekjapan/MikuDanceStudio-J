@@ -125,6 +125,13 @@ void Cpu() {
     Emit("{\"stage\":\"cpu\",\"vendor\":"+Words(vendor,3)+",\"identity\":"+std::to_string(std::uint32_t(identity))+",\"brand\":"+Words(brand,12)+",\"features\":"+Words(features,3)+"}");
 }
 struct Record {mdl::AccessoryRecord value{};Record(){InitAccessoryRecord(&value);}~Record(){DisposeAccessory(&value);}};
+using Coord = D3DXVECTOR3* (WINAPI*)(D3DXVECTOR3*,const D3DXVECTOR3*,const D3DXMATRIX*);
+struct DllOperation { D3DXVECTOR3 output{};unsigned samples[2]{};std::uintptr_t caller=0;bool returned=false; };
+__declspec(noinline) DllOperation DllProbe(Coord coord,const D3DXVECTOR3& input,const D3DXMATRIX& matrix) {
+    DllOperation row;row.caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+    row.samples[0]=_mm_getcsr();row.returned=coord(&row.output,&input,&matrix)==&row.output;row.samples[1]=_mm_getcsr();
+    return row;
+}
 }
 void FloorProfileRaw(ID3DXMesh* mesh) { Fp("production-raw-before");Mesh("production-raw",mesh);Fp("production-raw-after"); }
 int wmain(int argc,wchar_t** argv) {
@@ -174,6 +181,17 @@ int wmain(int argc,wchar_t** argv) {
         if(op==0)returned=coord(&q,&input,&matrix)==&q;else returned=transform(&t,&input,&matrix)==&t;
         unsigned sample_b=_mm_getcsr();if(!returned)return 18;
         Emit("{\"stage\":\"direct\",\"operation\":"+Quote(op?"Transform":"TransformCoord")+",\"matrix\":"+std::to_string(m)+",\"point\":"+std::to_string(p)+",\"words\":"+Words(op?static_cast<void*>(&t):static_cast<void*>(&q),op?4:3)+",\"sample_a\":"+std::to_string(sample_a)+",\"sample_b\":"+std::to_string(sample_b)+"}");
+    }
+    auto corpus=Read(@RUNTIME@);if(corpus.size()!=152)return 20;
+    Emit("{\"stage\":\"runtime-read\",\"words\":"+Words(corpus.data(),38)+"}");
+    for(int i=0;i<2;++i) {
+        D3DXVECTOR3 input;D3DXMATRIX matrix;
+        std::memcpy(&input,corpus.data()+i*76,12);std::memcpy(&matrix,corpus.data()+i*76+12,64);
+        auto row=DllProbe(coord,input,matrix);if(!row.returned)return 21;
+        std::uintptr_t sites[2]={reinterpret_cast<std::uintptr_t>(&DllProbe),row.caller};
+        Emit("{\"stage\":\"operation\",\"kind\":\"DllCall\",\"owner\":[1,"+std::to_string(i)+",0,0],\"input\":"+Words(corpus.data()+i*76,19)+
+            ",\"output\":"+Words(&row.output,3)+",\"samples\":"+Array(row.samples,2)+",\"sites\":"+Array(sites,2)+
+            ",\"base\":"+std::to_string(reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)))+",\"target\":"+std::to_string(reinterpret_cast<std::uintptr_t>(coord))+"}");
     }
     DestroyWindow(window);Emit("{\"stage\":\"end\",\"status\":"+std::to_string(good?0:19)+"}");return good?0:19;
 }

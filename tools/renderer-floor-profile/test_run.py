@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import struct
 import string
 import subprocess
 import sys
@@ -55,6 +56,24 @@ def packet(language,observed=True):
             for op in (('TransformCoord','Transform') if language=='native' else ('TransformCoord',)):
                 rows.append({'stage':'direct','operation':op,'matrix':m,'point':p,'words':[r.word(1.)]*3+([r.word(3. if m==2 else 1.)] if op=='Transform' else []),'sample_a':8064,'sample_b':8064})
                 if m==2 and op=='TransformCoord':rows[-1]['words']=[r.word(1./3)]*3
+    rows.append({'stage':'runtime-read','words':r.corpus_words(r.operation_corpus())})
+    def op(kind,owner,input,output):
+        row={'stage':'operation','kind':kind,'owner':owner,'input':input,'output':output,
+             'samples':[8064,8064],'sites':[8200,8201] if kind=='DllCall' else [8200,8201,8202,8203,8204],'base':8192}
+        if kind=='DllCall':row['target']=4098
+        else:
+            row.update(values=[r.word(1. if owner[1]==0 else 3.),0x3f7ff000 if owner[1]==0 else 0x3eaaa000,0x3f7fffff if owner[1]==0 else 0x3eaaaaaa],
+                       destination=output[:] if owner[0]==2 else [0,0,0])
+            if kind=='RustEndpoint':row['values']=[0]*3;row['sites']=[8200,0,8202,0,0]
+        rows.append(row)
+    corpus=r.corpus_words(r.operation_corpus())
+    for i in range(2):
+        output=[0x3f7fffff,0x3f7fffff,0xbf7fffff] if i==0 else [0x3eaaaaaa,0x3eaaaaaa,0xbeaaaaaa]
+        for kind in (('DllCall',) if language=='native' else (('RustTable' if observed else 'RustEndpoint'),'HardwareSeedWithFrozenRefinement')):
+            op(kind,[1,i,0,0],corpus[i*19:(i+1)*19],output)
+    if language=='rust':
+        rows.append({'stage':'merge-read','bytes':list(r.inputs(lambda p:(r.ROOT/p).read_bytes())[1]['bytes'])})
+        op('RustTable' if observed else 'RustEndpoint',[2,0,0,0],list(map(r.word,r.POINTS[0]+r.IDENTITY)) if observed else [0]*19,[0]*3)
     rows.append({'stage':'end','status':0})
     return rows
 
@@ -99,6 +118,20 @@ def native_log(body,recipe,project='floor_profile',number='1'):
     return prefix+body+suffix+b'Build succeeded.\n'
 
 
+def code_fixture():
+    raw=bytearray(2048);raw[:2]=b'MZ';struct.pack_into('<I',raw,60,128)
+    raw[128:134]=b'PE\0\0d\x86';struct.pack_into('<H',raw,134,2);struct.pack_into('<H',raw,148,240)
+    optional=152;struct.pack_into('<H',raw,optional,0x20b);struct.pack_into('<Q',raw,optional+24,0x140000000)
+    struct.pack_into('<II',raw,optional+136,0x2000,12)
+    for i,(name,va,size,offset,flags) in enumerate([(b'.text',0x1000,256,1024,0x60000020),(b'.pdata',0x2000,12,1280,0x40000040)]):
+        at=392+i*40;raw[at:at+len(name)]=name;struct.pack_into('<IIII',raw,at+8,size,va,size,offset);struct.pack_into('<I',raw,at+36,flags)
+    struct.pack_into('<III',raw,1280,0x1000,0x1008,0x3000);raw[1024:1032]=b'\x90'*7+b'\xc3'
+    mapping=b' Preferred load address is 0000000140000000\n 0001:00000000 mds_accessory_transform_coord 0000000140001000 f object.obj\n'
+    rows=[{'base':8192,'sites':[8192+0x1001,0,8192+0x1007,0,0]}]
+    assembly=('\n'.join(f'14000100{i}:  {v:02x}  '+('ret' if i==7 else 'nop') for i,v in enumerate(raw[1024:1032]))+'\n').encode()
+    return bytes(raw),mapping,rows,assembly
+
+
 class Controls(unittest.TestCase):
     def test_01_fixed_inputs_and_wrapper_inverse(self):
         rows=r.inputs(lambda p:(r.ROOT/p).read_bytes())
@@ -118,7 +151,10 @@ class Controls(unittest.TestCase):
                 self.assertEqual(raw,(r.ROOT/path).read_bytes())
             original=(r.ROOT/r.MESH).read_bytes()
             transform=original[original.index(b'fn transform_coord('):original.index(b'/// `D3DXVec3TransformNormal`')]
-            self.assertIn(transform,generated[r.MESH])
+            if not observed:self.assertIn(transform,generated[r.MESH])
+            else:
+                for expression in (b'let w = ((x * m[3] + y * m[7]) + z * m[11]) + m[15];',b'let e = rcp_estimate(w);',b'let r = (e + e) - w * (e * e);'):
+                    self.assertEqual(generated[r.MESH].count(expression),1)
             self.assertNotIn(b'@',generated['native.cpp'])
             self.assertNotIn(b'@CASES@',generated[r.MESH])
             self.assertIn(b'#[cfg(mds_floor_profile)]\nmod floor_profile',generated[r.MESH])
@@ -308,7 +344,7 @@ class Controls(unittest.TestCase):
             with self.assertRaises(ValueError):r.admit_recipe(manifest,bad)
         for label in recipe['commands']:
             receipt={'argv':copy.deepcopy(recipe['commands'][label]),'cwd':recipe['cwd'][label],
-                     'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''}}
+                     'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':r.RUST_FLAGS,'CL':'','_CL_':''}}
             r.admit_command(receipt,recipe,label)
             for key in ('argv','cwd'):
                 bad=copy.deepcopy(receipt);bad[key]=['wrong.exe'] if key=='argv' else 'C:\\wrong'
@@ -348,7 +384,7 @@ class Controls(unittest.TestCase):
         commands=[['C:\\VS\\cl.exe','/c','/O2','/Od','/Fo'+str(accessory),str(source/r.ACCESSORY)],
                   ['C:\\VS\\cl.exe','/c','/O2','/Od','/Fo'+str(native),str(source/'native.cpp')],
                   ['C:\\VS\\lib.exe','/OUT:'+str(library),str(accessory)],
-                  ['C:\\VS\\link.exe','/OUT:'+str(exe),str(native),str(library)]]
+                  ['C:\\VS\\link.exe','/OUT:'+str(exe),str(native),str(library),'/MAP']]
         def member(raw):
             header=b'accessory.obj/'.ljust(16)+b'0'.ljust(12)+b'0'.ljust(6)+b'0'.ljust(6)+b'100644'.ljust(8)+str(len(raw)).encode().ljust(10)+b'`\n'
             return b'!<arch>\n'+header+raw+(b'\n' if len(raw)%2 else b'')
@@ -373,7 +409,7 @@ class Controls(unittest.TestCase):
             lines.extend(['       '+task+':','         '+' '.join('"'+v+'"' for v in row[:-1]),'         "'+row[-1]+'"','       FinalizeBuildStatus:'])
         multiline=native_log(('\n'.join(lines)+'\n').encode(),recipe)
         def admitted(raw,stderr=b''):
-            receipt={'argv':recipe['commands']['native-build'],'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
+            receipt={'argv':recipe['commands']['native-build'],'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':r.RUST_FLAGS,'CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
             for suffix,value in [('stdout',raw),('stderr',stderr)]:receipt[suffix]={'name':'native-build.'+suffix,'sha256':r.digest(value),'size':len(value)}
             files={'.json':json.dumps(receipt).encode(),'.stdout':raw,'.stderr':stderr}
             with patch.object(Path,'read_bytes',lambda path:files[path.suffix]):
@@ -461,6 +497,7 @@ class Controls(unittest.TestCase):
 
     def test_18_fixed_schema_contract_even_after_reseal(self):
         manifest={'schema':r.SCHEMA,'fp_observation_contract':copy.deepcopy(r.FP_CONTRACT),'base':r.BASE,'paths':r.PATHS,'head':'1'*40}
+        manifest['operation_corpus']={'sha256':r.digest(r.operation_corpus()),'size':152,'words':r.corpus_words(r.operation_corpus())}
         r.admit_manifest(manifest)
         for key in ('schema','fp_observation_contract'):
             bad=copy.deepcopy(manifest);bad[key]='wrong'
@@ -483,19 +520,23 @@ class Controls(unittest.TestCase):
                 binaries={name:{'sha256':r.digest(b'MZ'),'size':2} for name in ('floor_profile.exe','rust-profile.exe','d3dx9_43.dll')}
                 b={key:copy.deepcopy(recipe[key]) for key in ('id','source','target','evidence','commands')}
                 b.update(variant=variant,optimization=opt,objects={},binaries=binaries,actual_native_commands=[],
+                         runtime_corpus={'sha256':r.digest(r.operation_corpus()),'size':152,'created_ns':3},compiled_capture={},
                          original_native_binary={'path':str(r.PureWindowsPath(recipe['native_target'])/'Release/floor_profile.exe'),'sha256':r.digest(b'MZ')},
                          original_rust_binary={'path':'synthetic-cargo-executable','sha256':r.digest(b'MZ')})
                 builds.append(b)
                 for name in binaries:files[directory/name]=b'MZ'
                 files[directory/'mikudancestudio_core.lib']=b'synthetic-archive'
+                files[directory/'operations.bin']=r.operation_corpus()
                 for label in recipe['commands']:
                     stdout=(wire(n) if label=='native' else wire(p)+b'test result: ok. 1 passed; 0 failed; 0 ignored;\n' if label=='rust' else fixture_output(label) if label in ('mesh_dump','x_files') else b'')
                     receipt={'argv':copy.deepcopy(recipe['commands'][label]),'cwd':recipe['cwd'][label],
-                             'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''}}
+                             'start_ns':4 if label in ('native','rust') else 1,'end_ns':5 if label in ('native','rust') else 2,
+                             'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':r.RUST_FLAGS,'CL':'','_CL_':''}}
                     if label in ('native','rust'):receipt['executed_binary']={'path':recipe['commands'][label][0],'sha256':r.digest(b'MZ'),'size':2}
                     if label=='native-build':stdout=native_log(b'',recipe)
                     receipts[(id,label)]=(receipt,stdout,b'');files[directory/(label+'.stdout')]=stdout;files[directory/(label+'.stderr')]=b''
         manifest={'schema':r.SCHEMA,'fp_observation_contract':r.FP_CONTRACT,'base':r.BASE,'head':'1'*40,'paths':r.PATHS,'runner_temp':'C:/runner/temp','input_root':r.recipe('C:/runner/temp','control','Od')['input_root'],'builds':builds}
+        manifest['operation_corpus']={'sha256':r.digest(r.operation_corpus()),'size':152,'words':r.corpus_words(r.operation_corpus())}
         result={'schema':r.SCHEMA,'fp_observation_contract':r.FP_CONTRACT,'head':'1'*40,'results':{opt:r.classify(*parsed['observed-'+opt]) for opt in ('Od','O2')},'hosted':'ExecutedWindowsOnly','profile_adoption':'NotAuthorized'}
         def encode(value):return json.dumps(value).encode()
         def inventory(_):return {str(path.relative_to(out)):{'sha256':r.digest(raw),'size':len(raw)} for path,raw in files.items() if path!=out/'seal.json'}
@@ -503,7 +544,8 @@ class Controls(unittest.TestCase):
             files[out/'manifest.json']=encode(manifest);files[out/'result.json']=encode(result)
             files[out/'seal.json']=encode({'schema':r.SCHEMA,'files':inventory(out)})
         seal()
-        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(Path,'read_text',lambda path,**kwargs:files[path].decode()),patch.object(r.previous,'evidence_inventory',inventory),patch.object(r,'verify_sources'),patch.object(r,'checked',lambda directory,label:receipts[(directory.name,label)]),patch.object(r,'native_provenance',lambda commands,recipe,*args:str(r.PureWindowsPath(recipe['native_target'])/'Release/floor_profile.exe')),patch.object(r,'cargo_binary',return_value='synthetic-cargo-executable'),patch.object(r,'pe_exports',return_value=exports):
+        read_bytes=Path.read_bytes;read_text=Path.read_text
+        with patch.object(Path,'read_bytes',lambda path:files[path] if path in files else read_bytes(path)),patch.object(Path,'read_text',lambda path,**kwargs:files[path].decode() if path in files else read_text(path,**kwargs)),patch.object(r.previous,'evidence_inventory',inventory),patch.object(r,'verify_sources'),patch.object(r,'checked',lambda directory,label:receipts[(directory.name,label)]),patch.object(r,'native_provenance',lambda commands,recipe,*args:str(r.PureWindowsPath(recipe['native_target'])/'Release/floor_profile.exe')),patch.object(r,'cargo_binary',return_value='synthetic-cargo-executable'),patch.object(r,'pe_exports',return_value=exports),patch.object(r,'compiled_evidence',return_value={}):
             self.assertEqual(r.replay(out),result)
             result['results']['Od']['causal_qualification'][0]['operation_environment']='Proved';seal()
             with self.assertRaises(ValueError):r.replay(out)
@@ -528,7 +570,7 @@ class Controls(unittest.TestCase):
                 for argv in (recipe['commands']['native-build'][:-1]+['--','/v:diag'],recipe['commands']['native-build'][:-2]+['4','--verbose']):
                     receipt={'argv':argv,
                              'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],
-                             'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)',
+                             'CARGO_INCREMENTAL':'0','RUSTFLAGS':r.RUST_FLAGS,
                              'CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,
                              'start_utc':'start','end_utc':'end'}
                     files={'.stdout':b'old diagnostic output\n','.stderr':b''}
@@ -596,7 +638,7 @@ class Controls(unittest.TestCase):
         recipe=r.recipe('D:/a/_temp','control','Od');root=r.PureWindowsPath(recipe['native_target'])
         owner=root/'mikudancestudio_core.vcxproj'
         def admitted(raw):
-            receipt={'argv':recipe['commands']['native-build'],'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
+            receipt={'argv':recipe['commands']['native-build'],'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':r.RUST_FLAGS,'CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
             for suffix,value in [('stdout',raw),('stderr',b'')]:receipt[suffix]={'name':'native-build.'+suffix,'sha256':r.digest(value),'size':len(value)}
             files={'.json':json.dumps(receipt).encode(),'.stdout':raw,'.stderr':b''}
             with patch.object(Path,'read_bytes',lambda path:files[path.suffix]):
@@ -661,7 +703,7 @@ class Controls(unittest.TestCase):
                     def admitted(out,err,argv=None,coordinated=False):
                         command=recipe['commands'][label] if argv is None else argv
                         receipt={'argv':command,'cwd':recipe['cwd'][label],
-                                 'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''},
+                                 'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':r.RUST_FLAGS,'CL':'','_CL_':''},
                                  'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
                         files={label+'.stdout':out,label+'.stderr':err}
                         for suffix in ('stdout','stderr'):
@@ -748,7 +790,7 @@ class Controls(unittest.TestCase):
         def parse(raw,language,observed):return {'dll':{'path':'synthetic-dll'}} if language=='native' else {}
         with patch.object(r.sys,'platform','win32'),patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_TEMP':'C:/runner/temp','GITHUB_SHA':'1'*40}), \
              patch.object(Path,'exists',return_value=False),patch.object(Path,'is_file',return_value=True),patch.object(Path,'mkdir'), \
-             patch.object(Path,'read_bytes',lambda path:files.get(path,b'')),patch.object(Path,'read_text',lambda path,**kwargs:files.get(path,b'').decode()), \
+             patch.object(Path,'read_bytes',lambda path:files.get(path,b'')),patch.object(Path,'read_text',lambda path,**kwargs:files.get(path,b'').decode()),patch.object(Path,'write_bytes'), \
              patch.object(r,'record',record),patch.object(r.shutil,'copyfile'),patch.object(r.shutil,'copytree'),patch.object(r.c,'safe_tar',return_value={}), \
              patch.object(r.c,'source_inventory',return_value={}),patch.object(r,'inputs',return_value=[]),patch.object(r,'source_expected',return_value=({}, {}, {})), \
              patch.object(r,'native_commands',return_value=[]),patch.object(r,'parse',parse),patch.object(r,'cargo_binary',return_value='synthetic-cargo'), \
@@ -756,8 +798,97 @@ class Controls(unittest.TestCase):
             with self.assertRaises(Complete):r.run(out,build,toolchain)
         self.assertEqual(captured,['mesh_dump','x_files'])
 
+    def test_29_operation_domains_and_finite_alternatives(self):
+        n=r.parse(wire(packet('native')),'native',True);rows=packet('rust')
+        baseline=r.parse(wire(rows),'rust',True);proof=r.operation_assessment(n,baseline)
+        self.assertEqual(proof['proof_status'],'UnprovedAwaitingIndependentReview')
+        self.assertEqual(proof['runtime_direct_vs_merge']['classification'],'NotComparable')
+        self.assertTrue(all(v['cause_status']=='Held' for v in proof['relations']))
+        hardware=next(v for v in rows if v.get('kind')=='HardwareSeedWithFrozenRefinement')
+        hardware['values'][1]=r.word(.75);hardware['output'][0]=r.word(.5)
+        result=r.operation_assessment(n,r.parse(wire(rows),'rust',True))
+        self.assertEqual(result['relations'][0]['table_vs_hardware_seed']['classification'],'SemanticDifference')
+        self.assertEqual(result['observations'][1]['numerical_oracle']['comparison']['classification'],'SemanticDifference')
+        hardware['samples']=[0x9f81,0x9fa0]
+        result=r.operation_assessment(n,r.parse(wire(rows),'rust',True))
+        self.assertEqual(result['observations'][1]['numerical_oracle']['domain'],'UnprovedNondefaultControls')
+        self.assertEqual(result['observations'][1]['observed']['fp'][0]['sticky_flags'],1)
+        self.assertEqual(result['proof_status'],'UnprovedAwaitingIndependentReview')
+        for w,e,refined in [(1.,0x3f7ff000,0x3f7fffff),(3.,0x3eaaa000,0x3eaaaaaa)]:
+            observation=next(v for v in proof['observations'] if v['kind']=='RustTable' and v['owner']==[1,0 if w==1. else 1,0,0])
+            self.assertEqual(observation['numerical_oracle']['derived']['values'],[r.word(w),e,refined])
+
+    def test_30_operation_admission_rejects_malformed_provenance(self):
+        self.assertEqual(len(r.operation_corpus()),152)
+        for raw in (b'',r.operation_corpus()[:-1],r.operation_corpus()+b'\0',bytes(152)):
+            with self.assertRaises(ValueError):r.corpus_words(raw)
+        def mutate(rows,name):
+            op=next(v for v in rows if v.get('kind')=='RustTable')
+            if name=='duplicate':rows.insert(rows.index(op),copy.deepcopy(op))
+            elif name=='missing':rows.remove(op)
+            elif name=='owner':op['owner']=[2,0,0,0]
+            elif name=='word':op['input'][0]=2**32
+            elif name=='boolean':op['input'][0]=True
+            elif name=='nan':op['values'][1]=0x7fc00000
+            elif name=='missing-site':op['sites'][1]=0
+            elif name=='bad-site':op['sites'][0]=op['base']-1
+            elif name=='bad-sample':op['samples'][0]=65536
+            elif name=='recipe-promotion':op['compiled_dataflow']='Proved'
+            elif name=='corpus':next(v for v in rows if v['stage']=='runtime-read')['words'].pop()
+            elif name=='fixture':next(v for v in rows if v['stage']=='merge-read')['bytes'][0]^=1
+            elif name=='destination':next(v for v in rows if v.get('owner')==[2,0,0,0])['destination'][0]=r.word(.5)
+        for name in ('duplicate','missing','owner','word','boolean','nan','missing-site','bad-site','bad-sample','recipe-promotion','corpus','fixture','destination'):
+            rows=packet('rust');mutate(rows,name)
+            with self.subTest(name=name),self.assertRaises((ValueError,KeyError,IndexError)):r.parse(wire(rows),'rust',True)
+        for key,value in [('values',[1,2,3]),('target',1),('kind','RustTable')]:
+            rows=packet('native');next(v for v in rows if v.get('kind')=='DllCall')[key]=value
+            with self.assertRaises(ValueError):r.parse(wire(rows),'native',True)
+
+    def test_31_executed_image_ranges_and_disassembly_bytes(self):
+        raw,mapping,rows,assembly=code_fixture();witness=r.code_ranges(raw,rows,mapping);span=witness['ranges'][0]
+        self.assertEqual(span['bytes'],(b'\x90'*7+b'\xc3').hex())
+        r.disassembly_bytes(assembly,witness,span)
+        self.assertEqual(witness['compiled_dataflow'],'UnprovedAwaitingIndependentReview')
+        for changed in (assembly.replace(b'90',b'91',1),assembly.replace(b'140001000',b'140001001'),assembly.split(b'\n',1)[1],assembly.replace(b'nop',b'<unknown>',1),assembly+assembly):
+            with self.subTest(assembly=changed),self.assertRaises(ValueError):r.disassembly_bytes(changed,witness,span)
+        for sites in ([8192+0x2000],[8192+0x1100],[8192-1]):
+            with self.assertRaises(ValueError):r.code_ranges(raw,[{'base':8192,'sites':sites}],mapping)
+        for bad in (mapping.replace(b'140000000',b'150000000'),b'not a map'):
+            with self.assertRaises(ValueError):r.code_ranges(raw,rows,bad)
+        changed=bytearray(raw);struct.pack_into('<I',changed,428,0x40000040)
+        with self.assertRaises(ValueError):r.code_ranges(bytes(changed),rows,mapping)
+        bad=copy.deepcopy(span);bad['end_rva']+=1
+        with self.assertRaises(ValueError):r.disassembly_bytes(assembly,witness,bad)
+
+    def test_32_compiled_capture_requires_actual_capability_receipts(self):
+        raw,mapping,rows,assembly=code_fixture();witness=r.code_ranges(raw,rows,mapping)
+        witness['same_link_map']={'sha256':r.digest(mapping),'size':len(mapping)}
+        recipe=r.recipe('C:/runner/temp','observed','Od');directory=Path('/synthetic-compiled-capture')
+        files={}
+        for language,binary,map_name in (('native','floor_profile.exe','native.map'),('rust','rust-profile.exe','rust.map')):
+            files[directory/binary]=raw;files[directory/map_name]=mapping;files[directory/(language+'-code.json')]=json.dumps(witness).encode()
+        tool={'path':str(r.DISASSEMBLER),'sha256':'1'*64,'size':100}
+        help={'argv':[str(r.DISASSEMBLER),'--help'],'cwd':recipe['source'],'tool_binary':tool}
+        receipts={'instruction-help':(help,b'--disassemble --start-address --stop-address',b'')}
+        for language,name in (('native','floor_profile.exe'),('rust','rust-profile.exe')):
+            argv=r.disassembly_argv(r.PureWindowsPath(recipe['evidence'])/name,witness,witness['ranges'][0])
+            receipts[language+'-instructions-0']=({'argv':argv,'cwd':recipe['source'],'tool_binary':copy.deepcopy(tool)},assembly,b'')
+        parsed=({'operations':rows},{'operations':rows})
+        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(r,'checked',lambda directory,label:receipts[label]):
+            self.assertEqual(set(r.compiled_evidence(directory,parsed,recipe)),{'native','rust'})
+            receipts['instruction-help']=(help,b'--disassemble',b'')
+            with self.assertRaises(ValueError):r.compiled_evidence(directory,parsed,recipe)
+            receipts['instruction-help']=(help,b'--disassemble --start-address --stop-address',b'')
+            for key,value in [('argv',['foreign.exe']),('cwd','C:/wrong'),('tool_binary',dict(tool,sha256='2'*64))]:
+                row=receipts['rust-instructions-0'][0];old=copy.deepcopy(row[key]);row[key]=value
+                with self.assertRaises(ValueError):r.compiled_evidence(directory,parsed,recipe)
+                row[key]=old
+            bad=copy.deepcopy(witness);bad['compiled_dataflow']='Proved'
+            files[directory/'rust-code.json']=json.dumps(bad).encode()
+            with self.assertRaises(ValueError):r.compiled_evidence(directory,parsed,recipe)
+
     def test_zz_real_effects_rejected_before_effects(self):
-        target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-floor-profile-boundary-fix/effect-probe')
+        target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-operation-boundary/effect-probe')
         self.assertFalse(target.exists());r.readonly()
         probes=[lambda:target.write_bytes(b'forbidden'),lambda:target.mkdir(),lambda:subprocess.run([sys.executable,'-c','raise SystemExit(99)'],check=True),lambda:socket.socket()]
         for probe in probes:

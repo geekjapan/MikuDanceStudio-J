@@ -5,7 +5,7 @@ import unittest
 
 from cases import corpus
 from hooks import CORE, NATIVE, OWNER, SHIM, MUTANTS, OBSERVATION_PATHS, instrument, inverse, mutate
-from trace import bind_inputs, comparison, validate, validate_allocator, validate_physical, decode_json
+from trace import bind_inputs, comparison, validate, validate_allocator, validate_noninterference, validate_physical, decode_json
 import check
 
 
@@ -224,6 +224,61 @@ class SourceControls(unittest.TestCase):
             aliases['/tools/rustup']='/targets/other'
             changed=check.executable_identity('/tools/rustup')
             self.assertEqual(binding['sha256'],changed['sha256']);self.assertNotEqual(binding,changed)
+
+    def test_raw_scopes_follow_typed_calls_with_null_free_gaps(self):
+        inputs='H synthetic public\nX\n'
+        rows=validate(b'O 0 H 0 0 0 1\nT 0 0 0 0\nT 0 1 0 0\nO 1 X 0 0 0 1\nZ 2\n',inputs,native=True,observed=False)
+        header=dict(schema=2,domain='generated-dbvt-node-sites',mode='ascending',arena_base=4096,slots=65536,stride=128,node_bytes=56,raw_node_bytes=79,node_type_alignment=8)
+        def raw(op,pointer,ordinal,call):
+            value=dict(op=op,route='raw',pointer=pointer,ordinal=ordinal,node_call=call)
+            if op=='alloc':value.update(size=79,alignment=0)
+            return value
+        def node(op,sequence,call,pointer,generation):
+            return dict(op=op,sequence=sequence,call=call,world=1,tree=0,pointer=pointer,generation=generation)
+        def checkpoint(kind):
+            return dict(kind=kind,counters=[2,2,0,0],events=[],world=1,trees=[1024,2048],node_counters=[2,2,0,2],nodes=[])
+        good=[header,checkpoint(0),checkpoint(1),checkpoint('final')]
+        good[1]['events']=[raw('alloc',4096,1,1),raw('alloc',4224,2,2),raw('free',4096,1,3),raw('free',4224,2,4)]
+        good[1]['nodes']=[node('alloc',1,1,4112,1),node('alloc',2,2,4240,2),node('cache',3,0,4112,1),node('free',4,3,4112,1),node('cache',5,0,4240,2),node('free',6,4,4240,2)]
+        control=copy.deepcopy(good);control[0]['domain']='unmodified-control'
+        for record in control[1:]:
+            record['nodes']=[];record['node_counters']=[0]*4
+            for event in record['events']:event['node_call']=0
+        def encoded(value):return b''.join((json.dumps(record,sort_keys=True)+'\n').encode() for record in value)
+        control_bytes=encoded(control)
+        def verify(value):
+            validate_allocator(encoded(value),rows,'ascending',domain='generated-dbvt-node-sites')
+            validate_noninterference(control_bytes,rows,encoded(value),rows,'ascending')
+        validate_allocator(control_bytes,rows,'ascending',domain='unmodified-control')
+        verify(good)
+        bad=copy.deepcopy(good)
+        for event,call in zip(bad[1]['events'],[2,1,4,3]):event['node_call']=call
+        bad[1]['nodes']=[node('alloc',1,1,4240,1),node('alloc',2,2,4112,2),node('cache',3,0,4240,1),node('free',4,3,4240,1),node('cache',5,0,4112,2),node('free',6,4,4112,2)]
+        def candidate_view(value):
+            value=copy.deepcopy(value);value[0].pop('domain')
+            for record in value[1:]:
+                record.pop('nodes');record.pop('node_counters')
+                for event in record['events']:event.pop('node_call')
+            return value
+        self.assertEqual(candidate_view(control),candidate_view(good))
+        self.assertEqual(candidate_view(good),candidate_view(bad))
+        with self.assertRaisesRegex(ValueError,'monotonic nonnested raw node call'):verify(bad)
+        gaps=copy.deepcopy(good)
+        gaps[1]['nodes'].insert(1,node('free',0,2,0,0))
+        for sequence,event in enumerate(gaps[1]['nodes'],1):
+            event['sequence']=sequence
+            if event['call']>=2 and event['pointer']:event['call']+=1
+        for event in gaps[1]['events'][1:]:event['node_call']+=1
+        for record in gaps[1:]:record['node_counters'][1]+=1
+        verify(gaps)
+        for scopes in ([1,1,3,4],[1,2,4,3],[1,2,3,5]):
+            changed=copy.deepcopy(good)
+            for event,call in zip(changed[1]['events'],scopes):event['node_call']=call
+            with self.subTest(scopes=scopes),self.assertRaises(ValueError):verify(changed)
+        changed=copy.deepcopy(good)
+        changed[2]['events']=changed[1]['events'][2:];changed[1]['events']=changed[1]['events'][:2]
+        with self.assertRaisesRegex(ValueError,'typed scoped callback'):verify(changed)
+        self.assertEqual(encoded(control),control_bytes)
 
     def test_candidate_and_proven_node_domains_and_transient_controls(self):
         from evidence import digest

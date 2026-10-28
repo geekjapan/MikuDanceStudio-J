@@ -190,7 +190,7 @@ def validate_allocator(raw, rows, mode, *, domain):
     require(header['arena_base'] > 0 and header['arena_base'] % 64 == 0, 'aligned actual allocator arena')
     live, allocation, nodes = {}, 0, {}
     ordinals = {}; counters = [0]*4; node_counts=[0]*4
-    sequence=call=generation=world=0
+    sequence=call=raw_call=generation=world=0
     trees=None; history=[]
     observed=domain=='generated-dbvt-node-sites'
     for index, record in enumerate(records[1:]):
@@ -231,6 +231,8 @@ def validate_allocator(raw, rows, mode, *, domain):
             normalized.append((event['op'],event['route'],event['ordinal'],(ptr-header['arena_base'])//128,value[2],event.get('size'),event.get('alignment')))
             if event['node_call']:
                 require(observed and event['node_call'] not in scoped,'unique scoped raw callback')
+                require(event['node_call']>raw_call,'monotonic nonnested raw node call')
+                raw_call=event['node_call']
                 scoped[event['node_call']]=(event['op'],value[1],value[2])
         require(type(record['nodes']) is list and type(record['node_counters']) is list and len(record['node_counters'])==4, 'typed node receipt arrays')
         for event in record['nodes']:

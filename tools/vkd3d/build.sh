@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Build vkd3d-shader 2.1 as a shared library, for mds-shader to load at run time (gate G3).
 #
-# Usage: build.sh [macos|linux-amd64|linux-arm64|windows|all]   (default: the host target)
+# Usage: build.sh [macos|linux-native|linux-amd64|linux-arm64|windows|all]
 #
 #   macos        native build on this Mac (needs Xcode tools and bison >= 3, `brew install bison`)
-#   linux-*      build in a pinned debian:bookworm container for that platform
+#   linux-amd64, linux-arm64 build in a pinned debian:bookworm container for that platform
+#   linux-native build on Linux, retaining configured source in work-linux-native (fresh output only)
 #   windows      cross-build with mingw-w64 (x86_64-w64-mingw32) in the same container
 #
 # Output: ${TMPDIR:-/tmp}/mds-vkd3d/<target>/
@@ -125,6 +126,16 @@ if [ "${1:-}" = "--inside" ]; then
   exit 0
 fi
 
+if [ "${1:-}" = linux-native ]; then
+  [ "$(uname -s)" = Linux ] || { echo "build.sh: linux-native requires Linux" >&2; exit 2; }
+  for path in "$root/work-linux-native" "$root/linux-native"; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      echo "build.sh: linux-native requires fresh output; refusing to replace $path" >&2
+      exit 2
+    fi
+  done
+fi
+
 fetch "$VKD3D_URL" "$VKD3D_SHA" vkd3d-2.1.tar.xz
 fetch "$VK_URL" "$VK_SHA" vulkan-headers.tar.gz
 fetch "$SPV_URL" "$SPV_SHA" spirv-headers.tar.gz
@@ -142,10 +153,11 @@ macos() {
 case "${1:-host}" in
   host) if [ "$(uname -s)" = Darwin ]; then macos; else docker_build "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" "linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"; fi ;;
   macos) macos ;;
+  linux-native) build_in "$root/work-linux-native" "$root/linux-native" ;;
   linux-amd64) docker_build linux/amd64 linux-amd64 ;;
   linux-arm64) docker_build linux/arm64 linux-arm64 ;;
   windows) docker_build "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" windows --host=x86_64-w64-mingw32 ;;
   all) macos; docker_build linux/amd64 linux-amd64; docker_build linux/arm64 linux-arm64
        docker_build "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" windows --host=x86_64-w64-mingw32 ;;
-  *) echo "usage: build.sh [macos|linux-amd64|linux-arm64|windows|all]" >&2; exit 2 ;;
+  *) echo "usage: build.sh [macos|linux-native|linux-amd64|linux-arm64|windows|all]" >&2; exit 2 ;;
 esac

@@ -10,14 +10,35 @@ from check_closed_variadic_inventory import require_inventory_outputs
 
 
 ROOT = Path(__file__).resolve().parent
+TRANSPILE_SINGLE_PREFIX = '''fn transpile_single(
+    tcfg: &TranspilerConfig,
+    input_path: &Path,
+    ancestor_path: &Path,
+    build_dir: &Path,
+    cc_db: &Path,
+    extra_clang_args: &[&str],
+) -> TranspileResult {
+    let output_path = get_output_path(tcfg, input_path, ancestor_path, build_dir);
+    if output_path.exists() && !tcfg.overwrite_existing {
+        warn!("Skipping existing file {}", output_path.display());
+        return Err(());
+    }
+
+'''
 
 
 def patched_lines(name):
     patch = (ROOT / 'patches/c2rust-win64-abi.patch').read_text()
     sections = patch.split('diff --git ')
     section = next((s for s in sections if s.startswith(f'a/{name} b/{name}\n')), '')
-    return '\n'.join(line[1:] for line in section.splitlines()
-                     if line.startswith((' ', '+')) and not line.startswith('+++'))
+    source = '\n'.join(line[1:] for line in section.splitlines()
+                       if line.startswith((' ', '+')) and not line.startswith('+++'))
+    if name == 'c2rust-transpile/src/lib.rs':
+        boundary = '        return Err(());\n    }\n    let retained ='
+        if source.count(boundary) != 1:
+            raise ValueError('missing or duplicate retained patch-hunk boundary')
+        source = source.replace(boundary, TRANSPILE_SINGLE_PREFIX + '    let retained =', 1)
+    return source
 
 
 def inventory_condition(source):
@@ -46,10 +67,13 @@ def exporter_conditions(source):
     if (len(routes) != 1 or routes[0].split() != expected.split()
             or functions[0].count('ast_exporter::') != 2):
         raise ValueError('exporter source collection must remain map-only')
+    callers = re.findall(r'^fn transpile_single\([^\n]*(?:\n(?!}|(?:pub )?fn ).*)*\n}', source, re.M)
+    if len(callers) != 1 or len(re.findall(r'^fn transpile_single\(', source, re.M)) != 1:
+        raise ValueError('missing, duplicate, or incomplete transpile_single function')
     bindings = re.findall(
         r'    let retained = (.*?)\n    let \(typed_context, preprocessed_source, _\) = '
         r'prepare_single\(tcfg, input_path, cc_db, extra_clang_args, retained.as_deref\(\)\)\?;',
-        source, re.S)
+        callers[0], re.S)
     retained = ('(tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts)'
                 '.then(|| output_path.with_extension("cursor.cbor"));')
     if len(bindings) != 1 or ''.join(bindings[0].split()) != ''.join(retained.split()):
@@ -143,6 +167,26 @@ class InventoryRouteTests(unittest.TestCase):
                                '    let file = other(extra_clang_args,);\n'
                                '    ast_exporter::get_untyped_ast(file);\n}\n' + lib)
             check_source_tree(Path('.'))
+            files['lib.rs'] = lib
+            retained = ('    let retained = (tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts)\n'
+                        '        .then(|| output_path.with_extension("cursor.cbor"));\n')
+            caller = re.search(r'^fn transpile_single\([^\n]*(?:\n(?!}|(?:pub )?fn ).*)*\n}', lib, re.M)[0]
+            decoy = caller.replace('fn transpile_single(', 'fn unrelated_retained(') + '\n'
+            files['lib.rs'] = decoy + lib
+            check_source_tree(Path('.'))
+            for changed, error in (
+                    (decoy + lib.replace('retained.as_deref())?;', 'None)?;'), 'ordinary retained'),
+                    (lib.replace(caller, ''), 'transpile_single function'),
+                    (caller + '\n' + lib, 'transpile_single function'),
+                    (lib.replace(caller, caller[:-1]), 'transpile_single function'),
+                    ('fn transpile_single(\n' + lib, 'transpile_single function'),
+                    (decoy + lib.replace(retained, ''), 'ordinary retained'),
+                    (decoy + lib.replace(retained, retained.replace(' || tcfg.emit_closed_format_facts', '')),
+                     'ordinary retained')):
+                with self.subTest(caller=changed):
+                    files['lib.rs'] = changed
+                    with self.assertRaisesRegex(ValueError, error):
+                        check_source_tree(Path('.'))
             files['lib.rs'] = lib
             for changed in (
                     lib + lib,

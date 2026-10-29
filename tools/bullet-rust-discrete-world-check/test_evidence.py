@@ -145,15 +145,21 @@ def fixture(system='Windows'):
         files[label+'.stdout']=expanded.encode();files[receipt]=encode(evidence.policy(expanded))
     for name in ['dedicated','pure','rust-world','effective-macros','native','observed']:
         files[name+suffix]=('synthetic executable '+name).encode()
+    if win:
+        for name in ['dedicated','pure','rust-world',*[prefix+'-'+name for name in MUTANTS for prefix in ['baseline','mutant']]]:
+            files[name+'.pdb']=('synthetic PDB '+name).encode()
     files['mds_crtmath.lib' if win else 'libmds_crtmath.a']=b'synthetic CRT archive';files['libmds_crtmath.rlib']=b'synthetic CRT rlib'
     if win:files['effective-macros.obj']=b'synthetic macro object'
     for name in ['observed-'+member for member,_ in NATIVE_OBSERVATIONS]+['native-consumer','observed-consumer']:files[name+ext]=('synthetic object '+name).encode()
     for name in ['native','observed']:
         selected=sorted(member+ext for member in ['btDbvtBroadphase','btDiscreteDynamicsWorld',*([member for member,_ in NATIVE_OBSERVATIONS] if name=='native' else [])])
         if win:maptext='\n'.join(' 0001:00000000 symbol 0000000140001000 '+library+':'+member for member in selected)
-        elif system=='Darwin':maptext='\n'.join('[  '+str(i)+'] '+str(out/library)+'('+member+')' for i,member in enumerate(selected))
+        elif system=='Darwin':
+            records=[str(out/library)+'('+member+')' for member in selected]
+            if name=='observed':records += [str(out/('observed-'+member+ext)) for member,_ in NATIVE_OBSERVATIONS]
+            maptext='# Path: '+str(out/name)+'\n# Arch: arm64\n# Object files:\n'+'\n'.join('[  '+str(i)+'] '+record for i,record in enumerate(records))+'\n# Sections:\n'
         else:maptext='\n'.join(str(out/library)+'('+member+') symbol' for member in selected)
-        if name=='observed':maptext+='\n'+ ' '.join('observed-'+member+ext for member in [member for member,_ in NATIVE_OBSERVATIONS])
+        if name=='observed' and system!='Darwin':maptext+='\n'+ ' '.join('observed-'+member+ext for member in [member for member,_ in NATIVE_OBSERVATIONS])
         files[name+'.map']=maptext.encode();files[name+'-link-selection.json']=encode(selected)
         files[name+'-binary.json']=encode({'produced_sha256':sha(files[name+suffix]),'consumer_object_sha256':sha(files[name+'-consumer'+ext]),'observed_override_objects':{member+ext:sha(files[member+ext]) for member in (['observed-'+member for member,_ in NATIVE_OBSERVATIONS] if name=='observed' else [])}})
     T=context['tools'];rust=[T['rustup'],'run','1.95.0','rustc','--edition=2021','-O','-C','linker='+T['rust_linker']]
@@ -263,6 +269,41 @@ class AdmissionControls(unittest.TestCase):
         self.assertEqual(admitted.compare('ordinary',self.windows['rust-ordinary.stdout']),707)
         self.assertEqual(admitted.bound_input('ascending'),self.windows['bound-ascending.txt'])
         self.assertFalse(hasattr(admitted,'report'));self.assertFalse(hasattr(admitted,'directory'))
+
+    def test_required_windows_pdb_ownership_and_refreshed_peers(self):
+        evidence.admit_capture(self.windows,**self.expected)
+        owners={'dedicated-build':'dedicated.pdb','pure-build':'pure.pdb','rust-observed-build':'rust-world.pdb',
+                **{prefix+'-build-'+name:prefix+'-'+name+'.pdb' for name in MUTANTS for prefix in ['baseline','mutant']}}
+        rows=json.loads(self.windows['commands.json'])
+        self.assertEqual({row['label']:name for row in rows for name in row['outputs'] if name.endswith('.pdb')},owners)
+        self.assertEqual(len(owners),37)
+        def reject(change,reason):
+            files=dict(self.windows);receipts=json.loads(files['commands.json']);change(files,receipts)
+            files['commands.json']=encode(receipts);refresh(files)
+            with self.assertRaisesRegex(ValueError,reason):evidence.admit_capture(files,**self.expected)
+        for label,name in [('dedicated-build','dedicated.pdb'),('pure-build','pure.pdb'),('rust-observed-build','rust-world.pdb'),('baseline-build-default-force','baseline-default-force.pdb'),('mutant-build-default-force','mutant-default-force.pdb')]:
+            def missing(files,rows):
+                files.pop(name);next(row for row in rows if row['label']==label)['outputs'].pop(name)
+            reject(missing,'produced artifact membership '+label)
+        def move(files,rows):
+            value=next(row for row in rows if row['label']=='dedicated-build')['outputs'].pop('dedicated.pdb')
+            next(row for row in rows if row['label']=='pure-build')['outputs']['dedicated.pdb']=value
+        reject(move,'produced artifact membership dedicated-build')
+        def wrong_stem(files,rows):
+            files['other.pdb']=files.pop('dedicated.pdb')
+            output=next(row for row in rows if row['label']=='dedicated-build')['outputs'];output['other.pdb']=output.pop('dedicated.pdb')
+        reject(wrong_stem,'produced artifact membership dedicated-build')
+        def input_role(files,rows):
+            row=next(row for row in rows if row['label']=='dedicated-build');row['inputs']['C:\\capture\\world\\dedicated.pdb']=row['outputs'].pop('dedicated.pdb')
+        reject(input_role,'actual pre-use direct source/object/archive/CRT inputs dedicated-build')
+        reject(lambda files,rows:files.update({'dedicated.pdb':b'changed PDB bytes'}),'produced/use/end artifact identity dedicated-build dedicated.pdb')
+        reject(lambda files,rows:next(row for row in rows if row['label']=='dedicated-build')['outputs'].update({'dedicated.pdb':'0'*64}),'produced/use/end artifact identity dedicated-build dedicated.pdb')
+        def extra(files,rows):
+            files['native.pdb']=b'foreign native PDB';next(row for row in rows if row['label']=='native-link')['outputs']['native.pdb']=sha(files['native.pdb'])
+        reject(extra,'produced artifact membership native-link')
+        reject(lambda files,rows:files.update({'foreign.pdb':b'foreign'}),'closed complete capture file membership')
+        changed=dict(self.windows);changed['dedicated.pdb']=b'newly retained PDB';rehash(changed)
+        evidence.admit_capture(changed,**self.expected)
 
     def test_unix_complete_closure(self):
         for system in ['Linux','Darwin']:
@@ -432,6 +473,70 @@ class AdmissionControls(unittest.TestCase):
         malformed=[b'!<arch>\n'+b'x'*60, b'!<arch>\n'+b'//'.ljust(16)+b'0'.ljust(32)+b'1'.ljust(10)+b'`\n'+b'x', self.windows['BulletWorld.lib'][:-1]]
         for raw in malformed:
             with self.assertRaises(ValueError):evidence.decode_archive(raw)
+
+
+class PlatformControls(unittest.TestCase):
+    def test_pdb_retention_hashes_actual_command_boundary_bytes(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);physical=root/'physical';physical.mkdir();retained=root/'retained';retained.mkdir()
+            exe=physical/'dedicated.exe';pdb=physical/'dedicated.pdb'
+            exe.write_bytes(b'inert executable');pdb.write_bytes(b'actual first PDB bytes')
+            outputs=(evidence._Output(str(exe),'dedicated.exe'),evidence._Output(str(pdb),'dedicated.pdb'))
+            first=check.retain_outputs(outputs,retained,success=True)
+            self.assertEqual(first,{'dedicated.exe':sha(b'inert executable'),'dedicated.pdb':sha(b'actual first PDB bytes')})
+            self.assertEqual((retained/'dedicated.pdb').read_bytes(),b'actual first PDB bytes')
+            pdb.write_bytes(b'actual second PDB bytes')
+            second=check.retain_outputs(outputs,retained,success=True)
+            self.assertEqual(second['dedicated.pdb'],sha(b'actual second PDB bytes'))
+            self.assertNotEqual(first['dedicated.pdb'],second['dedicated.pdb'])
+            missing=(evidence._Output(str(physical/'missing.pdb'),'missing.pdb'),)
+            with self.assertRaisesRegex(ValueError,'successful command missing output missing.pdb'):check.retain_outputs(missing,retained,success=True)
+            self.assertEqual(check.retain_outputs(missing,retained,success=False),{})
+
+    def test_darwin_structural_bytes_and_override_paths(self):
+        library='/capture/libBulletWorld.a'
+        prefix=b'# Path: /capture/native\n# Arch: arm64\n# Object files:\n'
+        rows=b'[  0] linker synthesized\n[  1] /capture/libBulletWorld.a(btDbvt.o)\n[  2] /capture/observed-btDbvt.o\n'
+        tail=b'# Sections:\n# Symbols:\nliteral string: \xc0\n[ 99] /capture/libBulletWorld.a(spoof.o)\n# Object files:\n[ 99] /foreign/observed-btDbvt.o\n'
+        raw=prefix+rows+tail
+        self.assertEqual(evidence.selected_members(raw,'Darwin',library),{'btDbvt.o'})
+        evidence.selected_overrides(raw,['/capture/observed-btDbvt.o'])
+        for changed in [raw.replace(b'# Object files:',b'# Symbols:',1),raw.replace(b'# Sections:\n',b'',1),
+                        raw.replace(b'[  2]',b'[  1]',1),raw.replace(b'[  1]',b'[ -1]',1),
+                        prefix+rows+b'[  3] /capture/libBulletWorld.a(btDbvt.o)\n'+tail,
+                        raw.replace(b'btDbvt.o)',b'btDbvt.o',1),raw.replace(b'a(btDbvt.o)',b'a(\xff.o)',1),
+                        raw.replace(b'/capture/libBulletWorld.a',b'/foreign/libBulletWorld.a',1)]:
+            with self.subTest(raw=changed[:150]),self.assertRaises(ValueError):evidence.selected_members(changed,'Darwin',library)
+        for changed in [raw.replace(b'[  2] /capture/observed-btDbvt.o\n',b''),
+                        raw.replace(b'[  2] /capture/',b'[  2] /foreign/'),
+                        prefix+rows+b'[  3] /capture/observed-btDbvt.o\n'+tail]:
+            with self.assertRaisesRegex(ValueError,'actual selected override object'):evidence.selected_overrides(changed,['/capture/observed-btDbvt.o'])
+        self.assertEqual(evidence.selected_members(raw.replace(b'btDbvt.o)',b'unknown.o)',1),'Darwin',library),{'unknown.o'})
+        self.assertEqual(evidence.selected_members(prefix+b'[  0] linker synthesized\n'+tail,'Darwin',library),set())
+
+    def test_finite_windows_pdb_roles_and_other_hosts(self):
+        owners={'dedicated-build':'dedicated','pure-build':'pure','rust-observed-build':'rust-world',
+                **{prefix+'-build-'+name:prefix+'-'+name for name in MUTANTS for prefix in ['baseline','mutant']}}
+        self.assertEqual(len(owners),37)
+        for system,P,root,out in [('Windows',PureWindowsPath,'C:/repo','C:/capture'),('Darwin',PurePosixPath,'/repo','/capture'),('Linux',PurePosixPath,'/repo','/capture')]:
+            context={'system':system,'root':root,'out':out,'tools':{name:str(P(root)/'tools'/name) for name in ['python','git','rustup']}}
+            schedule=evidence.command_schedule(context,[],'mmd-win64-sse',[],replay=True)
+            actual={}
+            for label,argv,_,_,_,_ in schedule:
+                roles=evidence.command_files(label,argv,context)
+                self.assertFalse(any(name.endswith('.pdb') for name in roles.inputs))
+                sidecars=[v for v in roles.outputs if v.retained.endswith('.pdb')]
+                if sidecars:actual[label]=[(v.physical,v.retained) for v in sidecars]
+            expected={label:[(str(P(out)/(name+'.pdb')),name+'.pdb')] for label,name in owners.items()} if system=='Windows' else {}
+            self.assertEqual(actual,expected)
+        context={'system':'Windows','root':'C:/repo','out':'C:/capture','archive_objects':()}
+        for label in ['foreign-build','baseline-build-unknown','dedicated-build-discovery','native-link','crt-build']:
+            roles=evidence.command_files(label,['C:/tools/rustup','C:/repo/a.rs','-o','C:/capture/foreign.exe'],context)
+            self.assertFalse(any(value.retained.endswith('.pdb') for value in roles.outputs))
+        with self.assertRaisesRegex(ValueError,'exact Windows Rust executable output'):
+            evidence.command_files('dedicated-build',['C:/tools/rustup','-o','C:/capture/foreign.exe'],context)
 
 
 class IncludeControls(unittest.TestCase):

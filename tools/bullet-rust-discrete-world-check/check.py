@@ -300,7 +300,9 @@ def main():
                 exe=out/(name+suffix);linkmap=out/(name+'.map')
                 link=[compiler,'/nologo','/MD','/EHsc',obj,*prefix,library,crt,'/Fe'+str(exe),'/link','/MAP:'+str(linkmap),'/VERBOSE:LIB',*libs] if os.name=='nt' else [compiler,obj,*prefix,library,crt,*libs,'-fuse-ld='+tools['native_linker']['path'],('-Wl,-map,' if system=='Darwin' else '-Wl,-Map,')+str(linkmap),'-o',exe]
                 link_output=run(link,name+'-link')
-                selected=selected_members(linkmap.read_bytes()+b'\n'+link_output+b'\n'+(out/(name+'-link.stderr')).read_bytes(),system,str(library))
+                link_data=linkmap.read_bytes()
+                if system!='Darwin':link_data+=b'\n'+link_output+b'\n'+(out/(name+'-link.stderr')).read_bytes()
+                selected=selected_members(link_data,system,str(library))
                 save(out/(name+'-link-selection.json'),sorted(selected))
                 save(out/(name+'-binary.json'),{'produced_sha256':digest(exe.read_bytes()),'consumer_object_sha256':digest(obj.read_bytes()),'observed_override_objects':{p.name:digest(p.read_bytes()) for p in prefix}})
                 for mode in MODES:

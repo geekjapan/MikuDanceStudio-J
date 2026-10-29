@@ -383,9 +383,10 @@ class SourceControls(unittest.TestCase):
 
 
 def load_tests(loader, tests, pattern):
-    from test_evidence import AdmissionControls, IncludeControls
+    from test_evidence import AdmissionControls, IncludeControls, PlatformControls
     tests.addTests(loader.loadTestsFromTestCase(AdmissionControls))
     tests.addTests(loader.loadTestsFromTestCase(IncludeControls))
+    tests.addTests(loader.loadTestsFromTestCase(PlatformControls))
     return tests
 
 

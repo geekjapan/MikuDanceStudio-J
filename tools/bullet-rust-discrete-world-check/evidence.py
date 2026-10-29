@@ -361,17 +361,56 @@ def valid_symbol_table(name, raw, offsets, second=False):
     return strings(raw[end:],count)
 
 
+def darwin_object_records(raw):
+    # Symbol/literal payload is opaque; only the leading object table owns link identities.
+    prefix = re.match(rb'\A# Path: /[^\x00-\x1f]+\n# Arch: arm64\n# Object files:\n', raw)
+    require(prefix is not None and prefix.end()<=2*MAX_PATH, 'Darwin object table prefix')
+    records = []
+    indices = set()
+    offset = prefix.end()
+    while offset<len(raw):
+        end = raw.find(b'\n',offset)
+        require(end>=0 and end-offset<=MAX_PATH*2, 'Darwin object table line bounds')
+        line = raw[offset:end]; offset = end+1
+        if line==b'# Sections:':
+            require(records, 'Darwin nonempty object table')
+            return tuple(records)
+        match = re.fullmatch(rb'\[ *([0-9]+)\] ([^\x00-\x1f]+)',line)
+        require(match is not None, 'Darwin object table record')
+        index, value = int(match[1]), match[2]
+        require(index not in indices and len(records)<MAX_FILES, 'Darwin unique bounded object index')
+        require(value==value.strip(), 'Darwin object path framing')
+        indices.add(index); records.append(value)
+    raise ValueError('Darwin object table Sections boundary')
+
+
+def selected_overrides(raw, paths):
+    records = darwin_object_records(raw)
+    for path in paths:
+        require(records.count(path.encode())==1, 'actual selected override object '+path)
+
+
 def selected_members(raw, system, library):
+    if system=='Darwin':
+        expected = library.encode(); base = expected.rsplit(b'/',1)[-1]
+        selected = []
+        for value in darwin_object_records(raw):
+            match = re.fullmatch(rb'(.+)\(([^()]+\.o)\)',value)
+            if match and match[1].rsplit(b'/',1)[-1]==base:
+                require(match[1]==expected, 'Darwin exact archive library path')
+                member = match[2].decode(errors='strict')
+                require(member not in selected, 'Darwin unique archive member')
+                selected.append(member)
+            else:
+                require(base not in value, 'Darwin malformed archive member')
+        return set(selected)
     text = raw.decode(errors='strict').replace('\\','/')
     library = library.replace('\\','/')
     base = library.rsplit('/',1)[-1]
     if system == 'Windows':
         pattern = r'(?i)(?:'+re.escape(base)+r'|'+re.escape(base.rsplit('.',1)[0])+r')(?::|\()([^\s()]+\.obj)\)?(?=\s|$)'
         return {match.group(1).rsplit('/',1)[-1] for match in re.finditer(pattern,text)}
-    if system == 'Darwin':
-        pattern = r'^\[\s*[0-9]+\]\s+'+re.escape(library)+r'\(([^()]+\.o)\)\s*$'
-    else:
-        pattern = r'^'+re.escape(library)+r'\(([^()]+\.o)\)(?=\s|$)'
+    pattern = r'^'+re.escape(library)+r'\(([^()]+\.o)\)(?=\s|$)'
     return {match.group(1) for match in re.finditer(pattern,text,re.MULTILINE)}
 
 
@@ -501,6 +540,11 @@ def command_files(label, argv, context):
     if base.endswith('-link'): physical.append(out/(base[:-5]+'.map'))
     if base in [name+'-'+mode for name in ['native','observed'] for mode in MODES]: physical.append(path(argv[-1]))
     if context['system']=='Windows' and base=='macro-build': physical.append(out/'effective-macros.obj')
+    rust_executables = {'dedicated-build':'dedicated', 'pure-build':'pure', 'rust-observed-build':'rust-world',
+                        **{prefix+'-build-'+name:prefix+'-'+name for prefix in ['baseline','mutant'] for name in MUTANTS}}
+    if context['system']=='Windows' and label in rust_executables:
+        require(physical==[out/(rust_executables[label]+'.exe')], 'exact Windows Rust executable output '+label)
+        physical.append(physical[0].with_suffix('.pdb'))
     outputs=tuple(_Output(str(value), ('discovery/'+base+'/' if label.endswith('-discovery') else '')+value.relative_to(out).as_posix()) for value in physical)
     result=[]
     forced=False
@@ -699,14 +743,18 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
         observed_policy = policy(raw(label+'.stdout').decode())
         require(data(receipt)==observed_policy and observed_policy['policy']==expected_policy, 'actual expanded policy '+label)
     for name in ['native','observed']:
-        link_data = raw(name+'.map')+b'\n'+raw(name+'-link.stdout')+b'\n'+raw(name+'-link.stderr')
+        link_data = raw(name+'.map')
+        if system!='Darwin':link_data += b'\n'+raw(name+'-link.stdout')+b'\n'+raw(name+'-link.stderr')
         selected = selected_members(link_data,system,str(out/archive))
         required = {member+ext for member in ['btDbvtBroadphase','btDiscreteDynamicsWorld',*([member for member,_ in NATIVE_OBSERVATIONS] if name=='native' else [])]}
         require(required<=selected and selected<=set(objects), 'actual archive link member selection '+name)
         if name=='observed':
             require(not {member+ext for member,_ in NATIVE_OBSERVATIONS}&selected, 'observed overrides exclude original dispatcher/world archive payloads')
-            for member in ['observed-'+member+ext for member,_ in NATIVE_OBSERVATIONS]:
-                require(re.search(r'(?<![\w-])'+re.escape(member)+r'(?=[\s):]|$)',link_data.decode()), 'actual selected override object '+member)
+            override_members = ['observed-'+member+ext for member,_ in NATIVE_OBSERVATIONS]
+            if system=='Darwin':selected_overrides(link_data,[str(out/member) for member in override_members])
+            else:
+                for member in override_members:
+                    require(re.search(r'(?<![\w-])'+re.escape(member)+r'(?=[\s):]|$)',link_data.decode()), 'actual selected override object '+member)
         selection = data(name+'-link-selection.json')
         require(type(selection) is list and selection==sorted(selected), 'derived selected archive members '+name)
         receipt = fields(data(name+'-binary.json'),['produced_sha256','consumer_object_sha256','observed_override_objects'],'binary')

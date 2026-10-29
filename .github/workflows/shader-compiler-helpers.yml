@@ -1,0 +1,241 @@
+name: Shader compiler helper regressions at 206009
+
+on:
+  push:
+    branches: [w4-shader-helper-regressions-206009]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: shader-compiler-helpers-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  helpers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      EVIDENCE: ${{ runner.temp }}/shader-compiler-helpers
+      MEMBER_NAME_ALL24: ${{ runner.temp }}/shader-compiler-helpers/helper-inputs/all24.zip
+      MEMBER_NAME_SETUP: ${{ runner.temp }}/shader-compiler-helpers/helper-inputs/setup.zip
+    steps:
+      - name: Checkout workflow controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Checkout exact accepted tested source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 206009ac86fb29647184ea6efb25db3076c56d85
+          path: tested
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Prepare source identity and result recorder
+        id: prepare
+        timeout-minutes: 2
+        run: |
+          python3 -B - <<'PY_PREPARE'
+          import json, os, shutil, subprocess
+          from pathlib import Path
+          root = Path(os.environ['EVIDENCE'])
+          root.mkdir()
+          controller = Path('controller').resolve()
+          head = subprocess.check_output(['git', '-C', str(controller), 'rev-parse', 'HEAD'], text=True).strip()
+          if head != os.environ['GITHUB_SHA']:
+              raise SystemExit('Controller HEAD mismatch')
+          keys = ('GITHUB_SHA', 'GITHUB_REF', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_REPOSITORY',
+                  'GITHUB_WORKFLOW_REF', 'GITHUB_WORKFLOW_SHA', 'GITHUB_JOB', 'RUNNER_OS', 'RUNNER_ARCH',
+                  'RUNNER_NAME', 'ImageOS', 'ImageVersion')
+          metadata = {key: os.environ.get(key) for key in keys}
+          metadata['controller_head'] = head
+          metadata['controller_tree'] = subprocess.check_output(['git', '-C', str(controller), 'rev-parse', 'HEAD^{tree}'], text=True).strip()
+          (root / 'controller.json').write_text(json.dumps(metadata, indent=2) + '\n')
+          shutil.copyfile(controller / '.github/workflows/shader-compiler-helpers.yml', root / 'controller-workflow.yml')
+          runner = r'''import ast, datetime, hashlib, json, os, stat, subprocess, sys, traceback, unittest, zipfile
+          from pathlib import Path
+          ROOT = Path(os.environ['EVIDENCE'])
+          SOURCE = Path(os.environ['GITHUB_WORKSPACE']) / 'tested'
+          EXPECTED_HEAD = '206009ac86fb29647184ea6efb25db3076c56d85'
+          EXPECTED_TREE = 'c2137e56ceb29faefa690b1e8fbacb1874e5ba20'
+          def now():
+              return datetime.datetime.now(datetime.timezone.utc).isoformat()
+          def write(name, value):
+              (ROOT / name).write_text(json.dumps(value, indent=2) + '\n')
+          def require(ok, message):
+              if not ok:
+                  raise ValueError(message)
+          def git(*args):
+              return subprocess.check_output(['git', '-C', str(SOURCE), *args])
+          def identity():
+              leaves = []
+              for entry in git('ls-tree', '-rz', '--full-tree', 'HEAD').split(b'\0'):
+                  if not entry:
+                      continue
+                  info, path = entry.split(b'\t', 1)
+                  mode, kind, oid = info.decode().split()
+                  name = os.fsdecode(path)
+                  item = SOURCE / name
+                  require(kind == 'blob', 'Unexpected non-blob source leaf')
+                  raw = os.fsencode(os.readlink(item)) if item.is_symlink() else item.read_bytes()
+                  actual_mode = '120000' if item.is_symlink() else ('100755' if item.stat().st_mode & stat.S_IXUSR else '100644')
+                  require(mode == actual_mode, 'Source mode mismatch ' + name)
+                  require(hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() == oid, 'Source blob mismatch ' + name)
+                  leaves.append({'path': name, 'mode': mode, 'git_blob': oid, 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()})
+              return {'head': git('rev-parse', 'HEAD').decode().strip(),
+                      'tree': git('rev-parse', 'HEAD^{tree}').decode().strip(),
+                      'status': git('status', '--porcelain=v1', '--untracked-files=all').decode(), 'leaves': leaves}
+          def check_identity(value):
+              require(value['head'] == EXPECTED_HEAD and value['tree'] == EXPECTED_TREE and not value['status'], 'Tested source identity/cleanliness mismatch')
+          def definitions():
+              ids = []
+              for path in sorted((SOURCE / 'tools/vkd3d-rust-probe').glob('test_*.py')):
+                  for cls in ast.parse(path.read_text()).body:
+                      if isinstance(cls, ast.ClassDef):
+                          ids.extend(path.stem + '.' + cls.name + '.' + node.name for node in cls.body
+                                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith('test_'))
+              return sorted(ids)
+          def flatten(suite):
+              for item in suite:
+                  if isinstance(item, unittest.TestSuite):
+                      yield from flatten(item)
+                  else:
+                      yield item.id()
+          class Result(unittest.TextTestResult):
+              def startTest(self, test):
+                  super().startTest(test)
+                  self.events.append({'event': 'start', 'id': test.id(), 'time': now()})
+              def stopTest(self, test):
+                  self.events.append({'event': 'stop', 'id': test.id(), 'time': now()})
+                  super().stopTest(test)
+              def addSuccess(self, test):
+                  self.successes.append(test.id())
+                  super().addSuccess(test)
+              def __init__(self, *args):
+                  super().__init__(*args)
+                  self.events, self.successes = [], []
+          mode = sys.argv[1]
+          record = {'mode': mode, 'optimized': sys.flags.optimize, 'argv': [sys.executable, *sys.orig_argv[1:]],
+                    'pid': os.getpid(), 'cwd': os.getcwd(), 'start': now(), 'status': 'incomplete', 'exit_code': 1}
+          write(mode + '-start.json', record)
+          result = None
+          try:
+              require(mode in ('normal', 'optimized') and sys.flags.optimize == (mode == 'optimized'), 'Python mode mismatch')
+              record['before'] = identity()
+              write(mode + '-before.json', record['before'])
+              check_identity(record['before'])
+              if mode == 'normal':
+                  for name in ('all24', 'setup'):
+                      path = ROOT / 'helper-inputs' / (name + '.zip')
+                      with zipfile.ZipFile(path) as archive:
+                          inventory = [{'name': i.filename, 'bytes': i.file_size, 'crc': i.CRC, 'external_attr': i.external_attr} for i in archive.infolist()]
+                      write(name + '-zip-inventory.json', {'bytes': path.stat().st_size, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'members': inventory})
+              expected = definitions()
+              record['source_definition_ids'] = expected
+              require(len(expected) == 209 and len(set(expected)) == 209, 'Expected exact 209 source definitions')
+              os.chdir(SOURCE)
+              suite = unittest.defaultTestLoader.discover('tools/vkd3d-rust-probe', pattern='test_*.py')
+              discovered = list(flatten(suite))
+              record['discovered_ids'] = discovered
+              write(mode + '-discovery.json', record)
+              require(sorted(discovered) == expected, 'Runtime discovery does not match exact source definitions')
+              result = unittest.TextTestRunner(verbosity=2, resultclass=Result).run(suite)
+              record.update(tests_run=result.testsRun, successes=result.successes, events=result.events,
+                            failures=[{'id': t.id(), 'traceback': tb} for t, tb in result.failures],
+                            errors=[{'id': t.id(), 'traceback': tb} for t, tb in result.errors],
+                            skips=[{'id': t.id(), 'reason': reason} for t, reason in result.skipped],
+                            expected_failures=[{'id': t.id(), 'traceback': tb} for t, tb in result.expectedFailures],
+                            unexpected_successes=[t.id() for t in result.unexpectedSuccesses])
+              require(result.wasSuccessful() and result.testsRun == 209 and sorted(result.successes) == expected
+                      and not result.skipped and not result.expectedFailures, 'Full helper suite did not pass all 209 tests')
+              record['status'], record['exit_code'] = 'passed', 0
+          except BaseException:
+              record['status'] = 'failed'
+              record['exception'] = traceback.format_exc()
+              traceback.print_exc()
+          finally:
+              try:
+                  record['after'] = identity()
+                  write(mode + '-after.json', record['after'])
+                  check_identity(record['after'])
+                  require(record.get('before') == record['after'], 'Source changed during helper tests')
+              except BaseException:
+                  record['source_exception'] = traceback.format_exc()
+                  record['status'], record['exit_code'] = 'failed', 1
+                  traceback.print_exc()
+              record['end'] = now()
+              write(mode + '-result.json', record)
+          sys.exit(record['exit_code'])
+          '''
+          (root / 'run-suite.py').write_text(runner)
+          PY_PREPARE
+      - name: Install the existing inert driver test dependency
+        timeout-minutes: 4
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal > "$EVIDENCE/rust-toolchain.stdout" 2> "$EVIDENCE/rust-toolchain.stderr"
+      - name: Acquire unchanged fixed helper-purpose inputs
+        id: acquire
+        timeout-minutes: 7
+        working-directory: tested
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          python3 -B tools/vkd3d-rust-probe/member_name_lowering.py \
+            --acquire-helper-inputs "$EVIDENCE/helper-inputs" \
+            2>&1 | tee "$EVIDENCE/acquisition.log"
+      - name: Execute full helper suite normally
+        id: normal
+        timeout-minutes: 15
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.acquire.outcome == 'success' }}
+        run: |
+          python3 -B "$EVIDENCE/run-suite.py" normal > "$EVIDENCE/normal.stdout" 2> "$EVIDENCE/normal.stderr"
+      - name: Execute full helper suite explicitly optimized
+        id: optimized
+        timeout-minutes: 15
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.acquire.outcome == 'success' }}
+        run: |
+          python3 -B -O "$EVIDENCE/run-suite.py" optimized > "$EVIDENCE/optimized.stdout" 2> "$EVIDENCE/optimized.stderr"
+      - name: Record terminal mode outcomes
+        if: always()
+        timeout-minutes: 1
+        env:
+          PREPARE_OUTCOME: ${{ steps.prepare.outcome }}
+          ACQUIRE_OUTCOME: ${{ steps.acquire.outcome }}
+          NORMAL_OUTCOME: ${{ steps.normal.outcome }}
+          OPTIMIZED_OUTCOME: ${{ steps.optimized.outcome }}
+        run: |
+          python3 -B - <<'PY_STATUS'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path(os.environ['EVIDENCE'])
+          root.mkdir(exist_ok=True)
+          outcomes = {key: os.environ[key] for key in ('PREPARE_OUTCOME', 'ACQUIRE_OUTCOME', 'NORMAL_OUTCOME', 'OPTIMIZED_OUTCOME')}
+          for mode in ('normal', 'optimized'):
+              path = root / (mode + '-result.json')
+              if not path.exists():
+                  (root / (mode + '-unrun-or-interrupted.json')).write_text(json.dumps({'status': 'UNRUN_OR_INTERRUPTED', 'step_outcome': outcomes[mode.upper() + '_OUTCOME']}, indent=2) + '\n')
+          (root / 'job-outcomes.json').write_text(json.dumps(outcomes, indent=2) + '\n')
+          inventory = {str(p.relative_to(root)): {'bytes': p.stat().st_size, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted(root.rglob('*')) if p.is_file()}
+          (root / 'evidence-sha256.json').write_text(json.dumps(inventory, indent=2) + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write('Tested source `206009ac86fb29647184ea6efb25db3076c56d85`. Controller identity is recorded separately.\n\n' + json.dumps(outcomes) + '\n')
+          PY_STATUS
+      - name: Retain original helper inputs and complete or partial evidence once
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: shader-compiler-helpers-206009-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/shader-compiler-helpers/
+          retention-days: 7
+          include-hidden-files: true
+          if-no-files-found: error

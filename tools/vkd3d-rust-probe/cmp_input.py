@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import stat
+from typing import NamedTuple
 
 CONTRACT_SHA256 = '51e155ac7517976290e7d1b5028b51947c685f7cab306558480c8a629d86f8b8'
 CONTRACT_PATH = Path(__file__).with_name('cmp_input_contract.json')
@@ -71,6 +72,50 @@ def rewrite(source, contract, order):
     return normalized
 
 
+class AdmittedInputs(NamedTuple):
+    roots: dict
+    manifests: dict
+    members: dict
+    native_library: Path
+    native_identity: dict
+    tool: Path | None
+
+
+def canonical_input(path, name):
+    path = Path(path).absolute()
+    resolved = path.resolve(strict=True)
+    require(path == resolved, 'symlink or alias input ' + name)
+    return resolved
+
+
+def admit_inputs(original, target, native_library, destinations, contract, *, tool=None):
+    require(target == contract['target'], 'target has no reviewed immutable CMP contract')
+    original = canonical_input(original, 'source')
+    roots = {'source': original, 'hdr': original.parent / 'hdr/include', 'spv': original.parent / 'spv/include'}
+    roots = {key: canonical_input(path, key) for key, path in roots.items()}
+    native_library = canonical_input(native_library, 'native')
+    require(native_library.is_file(), 'native library must be regular')
+    if tool is not None:
+        tool = canonical_input(tool, 'tool')
+    domains = {**roots, 'native': native_library}
+    if tool is not None:
+        domains['tool'] = tool
+    for destination in destinations:
+        destination = Path(destination).absolute()
+        require(destination == destination.resolve(), 'symlink or alias output')
+        for key, path in domains.items():
+            require(destination != path and destination not in path.parents and path not in destination.parents,
+                    'owned parent/output overlaps input root ' + key)
+    manifests = {key: regular_tree(path) for key, path in roots.items()}
+    require(manifests == contract['manifests'], 'original source/header/configuration manifest differs')
+    library = file_identity(native_library)
+    require(all(library[key] == value for key, value in contract['native_library'].items()), 'fixed native library differs')
+    if tool is not None:
+        require(regular_tree(tool) == contract['tool_manifest'], 'unknown current translator tool manifest')
+    members = {key: sorted(p.relative_to(path).as_posix() for p in path.rglob('*')) for key, path in roots.items()}
+    return AdmittedInputs(roots, manifests, members, native_library, library, tool)
+
+
 def normalize(original, target, native_library, output, ownership_root, *, contract_path=CONTRACT_PATH,
               opposite_control=False):
     """Publish a new ready input or leave an explicit, unusable failed directory.
@@ -79,31 +124,17 @@ def normalize(original, target, native_library, output, ownership_root, *, contr
     It never admits a second production contract or target.
     """
     contract = reviewed_contract(contract_path)
-    require(target == contract['target'], 'target has no reviewed immutable CMP contract')
-    original, native_library = Path(original), Path(native_library)
     output, ownership_root = Path(output), Path(ownership_root)
-    require(not original.is_symlink(), 'symlink original source root')
-    original = original.resolve(strict=True)
     require(not ownership_root.is_symlink() and ownership_root.is_dir(), 'owned parent must already exist')
-    ownership_root = ownership_root.resolve(strict=True)
+    ownership_root = canonical_input(ownership_root, 'owned parent')
     require(output.parent.resolve(strict=True) == ownership_root and not output.is_symlink()
             and not output.exists(), 'output must be a fresh direct child of owned parent')
+    require(output.absolute() == output.resolve(), 'symlink or alias output')
     output = ownership_root / output.name
-    roots = {'source': original, 'hdr': original.parent / 'hdr/include', 'spv': original.parent / 'spv/include'}
-    for key, root in roots.items():
-        require(not root.is_symlink(), 'symlink input root ' + key)
-        resolved = root.resolve(strict=True)
-        require(resolved == root, 'symlink or escape in input root ' + key)
-        roots[key] = resolved
-        for destination in (ownership_root, output):
-            require(destination != resolved and destination not in resolved.parents
-                    and resolved not in destination.parents, 'owned parent/output overlaps input root ' + key)
-    native_library = native_library.resolve(strict=True)
-    require(native_library != output and output not in native_library.parents, 'output overlaps native library')
-    manifests = {key: regular_tree(root) for key, root in roots.items()}
-    require(manifests == contract['manifests'], 'original source/header/configuration manifest differs')
-    library = file_identity(native_library)
-    require(all(library[key] == value for key, value in contract['native_library'].items()), 'fixed native library differs')
+    admitted = admit_inputs(original, target, native_library, (ownership_root, output), contract)
+    roots, manifests = admitted.roots, admitted.manifests
+    original, native_library = roots['source'], admitted.native_library
+    library = admitted.native_identity
     order = 'type-first' if opposite_control else contract['order']
     normalized = rewrite((original / SITE).read_bytes(), contract, order)
     expected = json.loads(json.dumps(manifests))
@@ -118,7 +149,9 @@ def normalize(original, target, native_library, output, ownership_root, *, contr
         (destinations['source'] / SITE).write_bytes(normalized)
         actual = {key: regular_tree(root) for key, root in destinations.items()}
         require(actual == expected, 'copied normalized manifest differs')
-        require({key: regular_tree(root) for key, root in roots.items()} == manifests,
+        require({key: regular_tree(root) for key, root in roots.items()} == manifests
+                and {key: sorted(p.relative_to(root).as_posix() for p in root.rglob('*'))
+                     for key, root in roots.items()} == admitted.members,
                 'original source changed while normalizing')
         require(file_identity(native_library) == library, 'native oracle changed while normalizing')
         patch = contract['patches'][order]

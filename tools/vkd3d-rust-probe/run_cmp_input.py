@@ -18,7 +18,7 @@ import time
 import tomllib
 import zipfile
 
-from cmp_input import (CONTRACT_SHA256, file_identity, normalize, read_json,
+from cmp_input import (CONTRACT_SHA256, admit_inputs, canonical_input, file_identity, normalize, read_json,
                        regular_tree, require, reviewed_contract, sha)
 
 DIRECTED = {'branch-ps-2_0-1', 'branch-ps-3_0-1'}
@@ -116,11 +116,63 @@ def owned_children():
     return [int(pid) for pid in Path('/proc/self/task/' + str(os.getpid()) + '/children').read_text().split()]
 
 
+def preflight_pidfd():
+    hosted()
+    require(hasattr(os, 'pidfd_open') and hasattr(signal, 'pidfd_send_signal'),
+            'owned process custody requires Linux pidfd support')
+    descriptor = os.pidfd_open(os.getpid())
+    try:
+        signal.pidfd_send_signal(descriptor, 0)
+    finally:
+        os.close(descriptor)
+
+
+class WrapperCancellation:
+    def __init__(self):
+        self.cancelled = False
+        self.root = None
+        self.closing = False
+        self.previous = {}
+
+    def interrupt(self, signum, frame):
+        first = not self.cancelled
+        self.cancelled = True
+        if first and not self.closing:
+            raise KeyboardInterrupt('Interrupted by signal ' + str(signum))
+
+    def __enter__(self):
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            self.previous[signum] = signal.signal(signum, self.interrupt)
+        return self
+
+    def __exit__(self, kind, error, traceback):
+        self.cancelled = self.cancelled or isinstance(error, KeyboardInterrupt)
+        try:
+            if self.cancelled and self.root is not None:
+                for name in ('output-manifest.json', 'output-manifest.pending'):
+                    (self.root / name).unlink(missing_ok=True)
+                (self.root / 'CANCELLED').write_text('Cancelled wrapper; no final output publication.\n')
+                for name in ('correct-input', 'opposite-input'):
+                    directory = self.root / name
+                    if directory.is_dir():
+                        ready = directory / 'receipt.json'
+                        if ready.exists():
+                            os.replace(ready, directory / 'receipt.cancelled.json')
+                        (directory / 'INCOMPLETE').write_text('Cancelled wrapper; input is partial diagnostic data.\n')
+                report_path = self.root / 'report.json'
+                if report_path.is_file():
+                    report = read_json(report_path)
+                    report['status'] = 'cancelled'
+                    report_path.write_text(json.dumps(report, indent=2) + '\n')
+        finally:
+            for signum, handler in self.previous.items():
+                signal.signal(signum, handler)
+
+
 def enable_custody():
     hosted()
     import ctypes
-    require(hasattr(os, 'pidfd_open') and hasattr(signal, 'pidfd_send_signal'),
-            'owned process custody requires Linux pidfd support')
+    preflight_pidfd()
     require(not owned_children(), 'owned process custody requires no pre-existing children')
     libc = ctypes.CDLL(None, use_errno=True)
     enabled = ctypes.c_int()
@@ -152,25 +204,32 @@ def close_owned_children(process):
                 ended, status = os.waitpid(pid, os.WNOHANG)
                 if ended:
                     code = os.waitstatus_to_exitcode(status)
-                    if pid == process.pid:
+                    if process is not None and pid == process.pid:
                         process.returncode = code
                     receipts.append({'pid': pid, 'session': session, 'exit_code': code,
                                      'reaped_utc': datetime.now(timezone.utc).isoformat()})
             finally:
                 os.close(descriptor)
         time.sleep(0.01)
-    require(process.returncode is not None, 'primary process was not reaped')
+    require(process is None or process.returncode is not None, 'primary process was not reaped')
     return receipts
 
 
 def invoke(command, cwd, log, timeout):
+    with WrapperCancellation() as cancellation:
+        return invoke_owned(command, cwd, log, timeout, cancellation)
+
+
+def invoke_owned(command, cwd, log, timeout, cancellation):
     enable_custody()
     marker = log.parent / 'OWNED_WRITERS_UNPROVEN'
     require(not marker.exists(), 'unclosed earlier writers; refusing another launch')
     marker.write_text('No final manifest or artifact publication until owned children are reaped.\n')
+    cancellation.root = log.parent
     started = datetime.now(timezone.utc).isoformat()
     begin = time.monotonic()
     process = None
+    primary_session = None
     descendants = []
     with log.open('w') as stream:
         timed_out = False
@@ -181,20 +240,26 @@ def invoke(command, cwd, log, timeout):
         except subprocess.TimeoutExpired:
             timed_out = True
         finally:
+            cancellation.closing = True
             interrupted = sys.exc_info()[0] is not None
-            if process is not None:
-                descendants = close_owned_children(process)
+            descendants = close_owned_children(process)
             require(not owned_children(), 'owned writers remain; no final manifest')
-            if interrupted or timed_out or descendants:
+            if interrupted or cancellation.cancelled or timed_out or descendants:
                 (log.parent / 'CUSTODY_FAILED').write_text('Closed partial diagnostics only; no final output manifest.\n')
+            stream.close()
+            contaminated = not timed_out and bool(descendants)
+            receipt = {'command': command, 'cwd': str(cwd), 'pid': process.pid if process else None,
+                'started_utc': started, 'ended_utc': datetime.now(timezone.utc).isoformat(),
+                'wall_seconds': time.monotonic() - begin, 'exit_code': process.returncode if process else None,
+                'timed_out': timed_out, 'timeout': timeout, 'cancelled': cancellation.cancelled,
+                'log': str(log), 'log_identity': file_identity(log), 'owned_descendants_reaped': descendants,
+                'owned_writers_closed': True, 'session': primary_session,
+                'custody_status': 'contaminated' if contaminated else 'clean'}
+            log.with_suffix(log.suffix + '.custody.json').write_text(json.dumps(receipt, indent=2) + '\n')
             marker.unlink()
-    contaminated = not timed_out and bool(descendants)
-    return {'command': command, 'cwd': str(cwd), 'pid': process.pid, 'started_utc': started,
-            'ended_utc': datetime.now(timezone.utc).isoformat(), 'wall_seconds': time.monotonic() - begin,
-            'exit_code': process.returncode, 'timed_out': timed_out, 'timeout': timeout,
-            'log': str(log), 'log_identity': file_identity(log),
-            'owned_descendants_reaped': descendants, 'owned_writers_closed': True,
-            'session': primary_session, 'custody_status': 'contaminated' if contaminated else 'clean'}
+            if cancellation.cancelled:
+                raise KeyboardInterrupt('Cancelled invocation after owned writers closed')
+    return receipt
 
 
 def generated_sources(inventory, expected, toml_bytes, lock_bytes, build, manifest_path):
@@ -333,14 +398,20 @@ def validate_result(root, result, contract, opposite):
 
 
 def run(args):
+    with WrapperCancellation() as cancellation:
+        run_owned(args, cancellation)
+
+
+def run_owned(args, cancellation):
     hosted()
     contract = reviewed_contract()
-    root = args.artifacts
+    root = Path(args.artifacts).absolute()
     require(not root.exists() and not root.is_symlink(), 'hosted output must be new')
-    require(args.target == contract['target'], 'unsupported reviewed target')
     from apply_c2rust_patch import verify_tool, verify_evidence, retain_tool_identity
-    tool = args.c2rust.resolve().parent.parent
-    require(regular_tree(tool) == contract['tool_manifest'], 'unknown current translator tool manifest')
+    c2rust = canonical_input(args.c2rust, 'c2rust')
+    tool = c2rust.parent.parent
+    admitted = admit_inputs(args.source, args.target, args.native_library, (root,), contract, tool=tool)
+    require(c2rust == tool / 'bin/c2rust', 'unreviewed translator entry point')
     verify_tool(tool)
     patch = verify_evidence(tool / 'source-evidence')
     require(patch['patch_sha256'] == contract['compiler_patch_sha256']
@@ -348,13 +419,15 @@ def run(args):
     here = Path(__file__).resolve().parent
     require(all(sha((here / name).read_bytes()) == digest for name, digest in contract['bound_helpers'].items()),
             'frozen probe/comparator/compiler helper differs; new combined contract required')
+    require(not os.environ.get('CARGO_BUILD_TARGET'), 'ambient Cargo target override is not reviewed')
+    enable_custody()
     root.mkdir(parents=True)
+    cancellation.root = root
     retain_tool_identity(tool, root)
     host = invoke(['rustc', '+1.95.0', '-vV'], here, root / 'rust-host.log', 30)
     require(host['exit_code'] == 0 and not host['timed_out'] and host['custody_status'] == 'clean'
             and '\nhost: ' + args.target + '\n' in (root / 'rust-host.log').read_text(),
             'actual Rust compiler host differs from reviewed target')
-    require(not os.environ.get('CARGO_BUILD_TARGET'), 'ambient Cargo target override is not reviewed')
     report = {'status': 'incomplete', 'contract_sha256': CONTRACT_SHA256, 'variants': {},
               'stable_acceptance': 'UNRUN', 'four_target_execution': 'UNRUN',
               'product_integration': 'UNRUN', 'native_callback_Slots_cursor_23exports': 'UNRUN',
@@ -369,7 +442,7 @@ def run(args):
     checkpoint()
     try:
         for name, opposite in (('correct', False), ('opposite', True)):
-            boundary = normalize(args.source, args.target, args.native_library, root / (name + '-input'), root,
+            boundary = normalize(admitted.roots['source'], args.target, admitted.native_library, root / (name + '-input'), root,
                                  opposite_control=opposite)
             command = [sys.executable, '-B', str(here / 'probe.py'), '--source', boundary['translation_source'],
                        '--artifacts', str(root / name), '--c2rust', str(args.c2rust.resolve()),
@@ -398,7 +471,10 @@ def run(args):
             domains = {'source': original_root, 'hdr': original_root.parent / 'hdr/include',
                        'spv': original_root.parent / 'spv/include'}
             require({key: regular_tree(path) for key, path in domains.items()} == boundary['original_manifests']
-                    and file_identity(Path(boundary['native_library'])) == boundary['native_identity'],
+                    and file_identity(Path(boundary['native_library'])) == boundary['native_identity']
+                    and {key: sorted(p.relative_to(path).as_posix() for p in path.rglob('*'))
+                         for key, path in domains.items()} == admitted.members
+                    and regular_tree(tool) == contract['tool_manifest'],
                     'original source/native oracle changed during probe')
             report['variants'][name]['validation'] = validate_result(root / name, result, contract, opposite)
             checkpoint()
@@ -407,7 +483,8 @@ def run(args):
         report['stable_acceptance'] = 'PASS' if all(stable) else 'FAIL; retained actual stable logs; bootstrap diagnostic only'
         report['status'] = 'finite_cmp_boundary_pass'
     except BaseException as error:
-        report.update(status='failed', error=str(error))
+        report.update(status='cancelled' if isinstance(error, KeyboardInterrupt) or cancellation.cancelled else 'failed',
+                      error=str(error))
         raise
     finally:
         actual_stable = [build for v in report['variants'].values()
@@ -418,9 +495,12 @@ def run(args):
         elif len(actual_stable) == 4:
             report['stable_acceptance'] = 'PASS'
         checkpoint()
-        if not any((root / marker).exists() for marker in ('OWNED_WRITERS_UNPROVEN', 'CUSTODY_FAILED')):
+        if not cancellation.cancelled and report['status'] == 'finite_cmp_boundary_pass' and not any(
+                (root / marker).exists() for marker in ('OWNED_WRITERS_UNPROVEN', 'CUSTODY_FAILED', 'CANCELLED')):
             manifest = regular_tree(root)
-            (root / 'output-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+            pending = root / 'output-manifest.pending'
+            pending.write_text(json.dumps(manifest, indent=2) + '\n')
+            os.replace(pending, root / 'output-manifest.json')
 
 
 def main():
@@ -442,8 +522,4 @@ def main():
 
 
 if __name__ == '__main__':
-    def interrupted(signum, frame):
-        raise KeyboardInterrupt('Interrupted by signal ' + str(signum))
-    signal.signal(signal.SIGINT, interrupted)
-    signal.signal(signal.SIGTERM, interrupted)
     main()

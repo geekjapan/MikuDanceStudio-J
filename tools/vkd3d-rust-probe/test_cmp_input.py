@@ -1,12 +1,17 @@
+import argparse
+from contextlib import ExitStack
 import copy
 import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
+import signal
+import shutil
 from unittest.mock import patch
 
 import cmp_input as boundary
+import run_cmp_input as wrapper
 from run_cmp_input import checked_prepared, hosted, validate_result, DIRECTED
 
 
@@ -203,6 +208,224 @@ class CmpInputTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'hosted Linux only'):
                 hosted()
 
+    def wrapper_args(self):
+        tool = self.root / 'tool'
+        (tool / 'bin').mkdir(parents=True, exist_ok=True)
+        (tool / 'bin/c2rust').write_bytes(b'INERT TOOL; NEVER EXECUTE')
+        self.contract['tool_manifest'] = boundary.regular_tree(tool)
+        return argparse.Namespace(source=self.source, native_library=self.library,
+            c2rust=tool / 'bin/c2rust', clang=tool / 'bin/c2rust',
+            target=self.contract['target'], artifacts=self.root / 'wrapper-output')
+
+    def wrapper_patches(self, stack, args, invoke=None, *, real_custody=False):
+        import apply_c2rust_patch as tool_verifier
+        stack.enter_context(patch.object(wrapper, 'hosted'))
+        if not real_custody:
+            stack.enter_context(patch.object(wrapper, 'enable_custody'))
+        stack.enter_context(patch.object(wrapper, 'reviewed_contract', return_value=self.contract))
+        stack.enter_context(patch.object(boundary, 'reviewed_contract', return_value=self.contract))
+        stack.enter_context(patch.object(tool_verifier, 'verify_tool'))
+        stack.enter_context(patch.object(tool_verifier, 'verify_evidence', return_value={
+            'patch_sha256': self.contract['compiler_patch_sha256'],
+            'modified_source_sha256': dict.fromkeys(range(self.contract['compiler_patch_destinations']))}))
+        retained = stack.enter_context(patch.object(tool_verifier, 'retain_tool_identity'))
+        launched = stack.enter_context(patch.object(wrapper, 'invoke', side_effect=invoke))
+        return retained, launched
+
+    def synthetic_invoke(self, command, cwd, log, timeout):
+        log.write_text('INERT MOCKED INVOCATION; NO PROCESS')
+        if command[0] == 'rustc':
+            log.write_text('INERT MOCK host: ' + self.contract['target'] + '\nhost: ' + self.contract['target'] + '\n')
+        else:
+            source = Path(command[command.index('--source') + 1])
+            output = Path(command[command.index('--artifacts') + 1])
+            shutil.copytree(source, output / 'source')
+            (output / 'result.json').write_text('{}')
+        return {'exit_code': 0, 'timed_out': False, 'custody_status': 'clean'}
+
+    def test_wrapper_legal_baseline_and_full_domain_prewrite_refusals(self):
+        args = self.wrapper_args()
+        with ExitStack() as stack:
+            self.wrapper_patches(stack, args, self.synthetic_invoke)
+            stack.enter_context(patch.object(wrapper, 'validate_result', return_value={
+                'stable_build': {'exit_code': 101}, 'working_stable_build': {'exit_code': 101}}))
+            wrapper.run(args)
+        self.assertTrue((args.artifacts / 'output-manifest.json').is_file())
+        self.assertEqual(json.loads((args.artifacts / 'report.json').read_text())['status'], 'finite_cmp_boundary_pass')
+        domains = [self.source, self.source.parent / 'hdr/include', self.source.parent / 'spv/include',
+                   args.c2rust.parent.parent, self.library]
+        for domain in domains:
+            for destination in (domain, domain.parent, domain / 'NEW'):
+                with self.subTest(domain=domain, destination=destination):
+                    args.artifacts = destination
+                    before = boundary.regular_tree(self.root)
+                    members = sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*'))
+                    with ExitStack() as stack:
+                        retained, launched = self.wrapper_patches(stack, args)
+                        with self.assertRaises(ValueError):
+                            wrapper.run(args)
+                    retained.assert_not_called()
+                    launched.assert_not_called()
+                    self.assertEqual(boundary.regular_tree(self.root), before)
+                    self.assertEqual(sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*')), members)
+
+    def test_wrapper_alias_and_changed_input_refuse_without_write_or_launch(self):
+        args = self.wrapper_args()
+        cases = [('source', self.source), ('native_library', self.library), ('c2rust', args.c2rust)]
+        for field, path in cases:
+            alias = self.root / (field + '-alias')
+            alias.symlink_to(path)
+            original = getattr(args, field)
+            setattr(args, field, alias)
+            before = sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*'))
+            with ExitStack() as stack:
+                retained, launched = self.wrapper_patches(stack, args)
+                with self.assertRaisesRegex(ValueError, 'alias input'):
+                    wrapper.run(args)
+            retained.assert_not_called()
+            launched.assert_not_called()
+            self.assertEqual(sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*')), before)
+            setattr(args, field, original)
+            alias.unlink()
+        for path in (self.source / boundary.SITE, self.source.parent / 'hdr/include/fixture.h',
+                     self.source.parent / 'spv/include/fixture.h', self.library, args.c2rust):
+            data = path.read_bytes()
+            path.write_bytes(data + b'CHANGED')
+            before = boundary.regular_tree(self.root)
+            members = sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*'))
+            with ExitStack() as stack:
+                retained, launched = self.wrapper_patches(stack, args)
+                with self.assertRaisesRegex(ValueError, 'manifest|library differs'):
+                    wrapper.run(args)
+            retained.assert_not_called()
+            launched.assert_not_called()
+            self.assertEqual(boundary.regular_tree(self.root), before)
+            self.assertEqual(sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*')), members)
+            path.write_bytes(data)
+        alias = self.root / 'output-alias'
+        alias.symlink_to(self.root / 'unused')
+        args.artifacts = alias / 'NEW'
+        with ExitStack() as stack:
+            retained, launched = self.wrapper_patches(stack, args)
+            with self.assertRaisesRegex(ValueError, 'alias output'):
+                wrapper.run(args)
+        retained.assert_not_called()
+        launched.assert_not_called()
+        self.assertFalse((self.root / 'unused').exists())
+
+    def test_pidfd_preflight_denials_never_launch_and_close_open_descriptor(self):
+        args = self.wrapper_args()
+        for failure in ('open', 'send'):
+            with self.subTest(failure=failure), ExitStack() as stack:
+                stack.enter_context(patch.object(wrapper, 'hosted'))
+                opened = stack.enter_context(patch.object(wrapper.os, 'pidfd_open', create=True,
+                    side_effect=OSError('unsupported') if failure == 'open' else None, return_value=123))
+                sent = stack.enter_context(patch.object(wrapper.signal, 'pidfd_send_signal', create=True,
+                    side_effect=OSError('denied') if failure == 'send' else None))
+                closed = stack.enter_context(patch.object(wrapper.os, 'close'))
+                launched = stack.enter_context(patch.object(wrapper.subprocess, 'Popen'))
+                libc = stack.enter_context(patch('ctypes.CDLL'))
+                with self.assertRaises(OSError):
+                    wrapper.invoke(['NEVER EXECUTE'], self.root, self.root / 'never.log', 1)
+                opened.assert_called_once_with(os.getpid())
+                if failure == 'send':
+                    sent.assert_called_once_with(123, 0)
+                    closed.assert_called_once_with(123)
+                else:
+                    closed.assert_not_called()
+                launched.assert_not_called()
+                libc.assert_not_called()
+                self.assertFalse((self.root / 'never.log').exists())
+                self.assertFalse((self.root / 'OWNED_WRITERS_UNPROVEN').exists())
+
+    def test_wrapper_pidfd_refusal_precedes_artifact_creation(self):
+        args = self.wrapper_args()
+        for failure in ('open', 'send'):
+            before = boundary.regular_tree(self.root)
+            members = sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*'))
+            with ExitStack() as stack:
+                retained, launched = self.wrapper_patches(stack, args)
+                stack.enter_context(patch.object(wrapper, 'enable_custody', side_effect=wrapper.preflight_pidfd))
+                stack.enter_context(patch.object(wrapper.os, 'pidfd_open', create=True,
+                    side_effect=OSError('unsupported') if failure == 'open' else None, return_value=123))
+                stack.enter_context(patch.object(wrapper.signal, 'pidfd_send_signal', create=True,
+                    side_effect=OSError('denied') if failure == 'send' else None))
+                closed = stack.enter_context(patch.object(wrapper.os, 'close'))
+                with self.assertRaises(OSError):
+                    wrapper.run(args)
+                self.assertEqual(closed.call_count, int(failure == 'send'))
+            retained.assert_not_called()
+            launched.assert_not_called()
+            self.assertFalse(args.artifacts.exists())
+            self.assertEqual(boundary.regular_tree(self.root), before)
+            self.assertEqual(sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*')), members)
+
+    def test_wrapper_header_root_aliases_refuse_without_input_mutation(self):
+        args = self.wrapper_args()
+        for key in ('hdr', 'spv'):
+            directory = self.source.parent / key / 'include'
+            saved = directory.with_name('saved')
+            directory.rename(saved)
+            directory.symlink_to(saved)
+            members = sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*'))
+            data = boundary.regular_tree(saved)
+            with ExitStack() as stack:
+                retained, launched = self.wrapper_patches(stack, args)
+                with self.assertRaisesRegex(ValueError, 'alias input'):
+                    wrapper.run(args)
+            retained.assert_not_called()
+            launched.assert_not_called()
+            self.assertEqual(boundary.regular_tree(saved), data)
+            self.assertEqual(sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*')), members)
+            directory.unlink()
+            saved.rename(directory)
+
+    def test_wrapper_cancellation_outside_wait_has_no_final_manifest_and_restores_handlers(self):
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            args = self.wrapper_args()
+            args.artifacts = self.root / ('cancel-' + str(signum))
+            handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+            def cancel_after_clean_probe(*unused):
+                signal.getsignal(signum)(signum, None)
+            with ExitStack() as stack:
+                self.wrapper_patches(stack, args, self.synthetic_invoke)
+                stack.enter_context(patch.object(wrapper, 'validate_result', side_effect=cancel_after_clean_probe))
+                with self.assertRaises(KeyboardInterrupt):
+                    wrapper.run(args)
+            self.assertTrue((args.artifacts / 'CANCELLED').is_file())
+            self.assertFalse(list(args.artifacts.rglob('receipt.json')))
+            self.assertFalse((args.artifacts / 'output-manifest.json').exists())
+            self.assertEqual(json.loads((args.artifacts / 'report.json').read_text())['status'], 'cancelled')
+            self.assertEqual({sig: signal.getsignal(sig) for sig in handlers}, handlers)
+
+
+    def test_wrapper_cancellation_during_manifest_and_after_atomic_publication_is_partial(self):
+        for phase in ('hash', 'publish'):
+            args = self.wrapper_args()
+            args.artifacts = self.root / ('manifest-cancel-' + phase)
+            actual_tree, actual_replace = wrapper.regular_tree, wrapper.os.replace
+            def manifest_tree(path):
+                if Path(path) == args.artifacts:
+                    signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+                return actual_tree(path)
+            def publish(source, destination):
+                actual_replace(source, destination)
+                if Path(destination).name == 'output-manifest.json':
+                    signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+            with ExitStack() as stack:
+                self.wrapper_patches(stack, args, self.synthetic_invoke)
+                stack.enter_context(patch.object(wrapper, 'validate_result', return_value={
+                    'stable_build': {'exit_code': 101}, 'working_stable_build': {'exit_code': 101}}))
+                stack.enter_context(patch.object(wrapper, 'regular_tree', side_effect=manifest_tree if phase == 'hash' else actual_tree))
+                stack.enter_context(patch.object(wrapper.os, 'replace', side_effect=publish if phase == 'publish' else actual_replace))
+                with self.assertRaises(KeyboardInterrupt):
+                    wrapper.run(args)
+            self.assertTrue((args.artifacts / 'CANCELLED').is_file())
+            self.assertFalse(list(args.artifacts.rglob('receipt.json')))
+            self.assertFalse((args.artifacts / 'output-manifest.json').exists())
+            self.assertFalse((args.artifacts / 'output-manifest.pending').exists())
+
+
 
 class CmpValidationTests(unittest.TestCase):
     def setUp(self):
@@ -373,6 +596,124 @@ class CmpValidationTests(unittest.TestCase):
             self.check()
 
 
+def signal_custody_case(output, phase, signum, probe):
+    import time
+    hosted()
+    output, probe = Path(output), Path(probe)
+    fixture = CmpInputTests()
+    fixture.setUp()
+    args = fixture.wrapper_args()
+    args.artifacts = output / 'actual'
+    domains = {**{'source': fixture.source, 'hdr': fixture.source.parent / 'hdr/include',
+                 'spv': fixture.source.parent / 'spv/include'}, 'tool': args.c2rust.parent.parent}
+    before = {key: boundary.regular_tree(path) for key, path in domains.items()}
+    members = {key: sorted(p.relative_to(path).as_posix() for p in path.rglob('*')) for key, path in domains.items()}
+    library = boundary.file_identity(fixture.library)
+    actual_invoke = wrapper.invoke
+    def inert_invoke(command, cwd, log, timeout):
+        if command[0] == 'rustc':
+            return fixture.synthetic_invoke(command, cwd, log, timeout)
+        writers = output / 'nested'
+        writers.mkdir()
+        execution = actual_invoke([wrapper.sys.executable, '-B', str(probe), str(writers),
+                                   'timeout' if phase == 'wait' else 'clean'], output, log, 15)
+        source = Path(command[command.index('--source') + 1])
+        result = Path(command[command.index('--artifacts') + 1])
+        shutil.copytree(source, result / 'source')
+        (result / 'result.json').write_text('{}')
+        return execution
+    def validation(*unused):
+        (output / 'signal-ready').write_text('Clean probe wait returned; wrapper validation active.\n')
+        time.sleep(15)
+        raise ValueError('Expected external signal did not arrive')
+    started = wrapper.datetime.now(wrapper.timezone.utc).isoformat()
+    try:
+        with ExitStack() as stack:
+            fixture.wrapper_patches(stack, args, inert_invoke, real_custody=True)
+            stack.enter_context(patch.object(wrapper, 'validate_result', side_effect=validation))
+            wrapper.run(args)
+    except KeyboardInterrupt:
+        boundary.require((args.artifacts / 'CANCELLED').is_file()
+            and not (args.artifacts / 'output-manifest.json').exists()
+            and not list(args.artifacts.rglob('receipt.json'))
+            and not (args.artifacts / 'OWNED_WRITERS_UNPROVEN').exists()
+            and not wrapper.owned_children(), 'cancelled wrapper published output or retained writers')
+        boundary.require({key: boundary.regular_tree(path) for key, path in domains.items()} == before
+            and {key: sorted(p.relative_to(path).as_posix() for p in path.rglob('*'))
+                 for key, path in domains.items()} == members
+            and boundary.file_identity(fixture.library) == library, 'cancelled wrapper changed immutable inputs')
+        (output / 'signal-result.json').write_text(json.dumps({'status': 'cancelled_closed_partial',
+            'pid': os.getpid(), 'session': os.getsid(0), 'signal': signum, 'phase': phase,
+            'started_utc': started, 'ended_utc': wrapper.datetime.now(wrapper.timezone.utc).isoformat(),
+            'original_manifests': before, 'original_members': members, 'native_identity': library}, indent=2) + '\n')
+        raise SystemExit(130)
+    raise ValueError('Cancelled wrapper unexpectedly completed')
+
+
+def signal_custody_test(output, probe):
+    import subprocess
+    import sys
+    import time
+    receipts = {}
+    for phase in ('wait', 'after-wait'):
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            root = output / (phase + '-' + str(signum))
+            root.mkdir()
+            command = [sys.executable, '-B', *(['-O'] if sys.flags.optimize else []), str(Path(__file__).resolve()),
+                       '--signal-case', str(root), phase, str(signum), str(probe)]
+            started = wrapper.datetime.now(wrapper.timezone.utc).isoformat()
+            marker = root / 'OWNED_WRITERS_UNPROVEN'
+            marker.write_text('Hosted signal-fixture writers not yet proven closed.\n')
+            with (root / 'wrapper.log').open('w') as stream:
+                process = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+                descriptor = os.pidfd_open(process.pid)
+                try:
+                    deadline = time.monotonic() + 10
+                    while not ((root / 'signal-ready').exists() if phase == 'after-wait'
+                               else list((root / 'nested').glob('*.identity'))):
+                        boundary.require(process.poll() is None and time.monotonic() < deadline,
+                                         'signal fixture did not reach requested wrapper phase')
+                        time.sleep(0.01)
+                    signal.pidfd_send_signal(descriptor, signum)
+                    process.wait(timeout=15)
+                finally:
+                    os.close(descriptor)
+                    descendants = wrapper.close_owned_children(process)
+                    boundary.require(not wrapper.owned_children(), 'signal fixture cleanup unproven')
+                    marker.unlink()
+                    boundary.require(not descendants, 'signal fixture required forced cleanup; no acceptance')
+            boundary.require(process.returncode == 130 and not wrapper.owned_children(), 'signal wrapper not closed')
+            result = json.loads((root / 'signal-result.json').read_text())
+            boundary.require(result['pid'] == process.pid and result['signal'] == signum
+                             and result['phase'] == phase, 'signal identity/phase differs')
+            closed = json.loads((root / 'actual/correct-probe.log.custody.json').read_text())
+            boundary.require(closed['owned_writers_closed'], 'nested probe lacks closure receipt')
+            identities = [json.loads(path.read_text()) for path in (root / 'nested').glob('*.identity')]
+            reaped = {row['pid'] for row in closed['owned_descendants_reaped']}
+            boundary.require(phase != 'wait' or identities, 'wait cancellation missed actual writer')
+            for identity in identities:
+                boundary.require(identity['pid'] in reaped and identity['pid'] == identity['session'],
+                                 'cancelled separate-session writer lacks reap receipt')
+                try:
+                    os.kill(identity['pid'], 0)
+                except ProcessLookupError:
+                    pass
+                else:
+                    raise ValueError('cancelled writer remains live')
+            boundary.require(not (root / 'actual/output-manifest.json').exists()
+                             and not list(root.rglob('OWNED_WRITERS_UNPROVEN')), 'cancelled final publication')
+            before = boundary.regular_tree(root)
+            time.sleep(0.2)
+            boundary.require(boundary.regular_tree(root) == before, 'cancelled outputs changed after terminal custody')
+            receipts[root.name] = {'command': command, 'cwd': str(Path.cwd()), 'pid': process.pid,
+                'started_utc': started, 'ended_utc': wrapper.datetime.now(wrapper.timezone.utc).isoformat(),
+                'exit_code': process.returncode, 'log_identity': boundary.file_identity(root / 'wrapper.log'),
+                'result': result, 'closure': closed, 'writer_identities': identities,
+                'closed_partial_manifest': before, 'unchanged_after_seconds': 0.2}
+            (output / (root.name + '-receipt.json')).write_text(json.dumps(receipts[root.name], indent=2) + '\n')
+    return receipts
+
+
 def process_custody_test(output):
     import sys
     import time
@@ -444,12 +785,16 @@ else:
         receipts[mode] = {'execution': receipt, 'writer_identities': identities,
                           'closed_partial_manifest': before, 'unchanged_after_seconds': 0.2}
         (output / (mode + '-receipt.json')).write_text(json.dumps(receipts[mode], indent=2) + '\n')
-    (output / 'result.json').write_text(json.dumps({'status': 'owned_process_test_pass', 'cases': receipts}, indent=2) + '\n')
+    signals = signal_custody_test(output, fixture)
+    (output / 'result.json').write_text(json.dumps({'status': 'owned_process_test_pass',
+        'cases': receipts, 'signal_cancellation': signals}, indent=2) + '\n')
 
 
 if __name__ == '__main__':
     import sys
-    if len(sys.argv) == 3 and sys.argv[1] == '--process-custody':
+    if len(sys.argv) == 6 and sys.argv[1] == '--signal-case':
+        signal_custody_case(sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5])
+    elif len(sys.argv) == 3 and sys.argv[1] == '--process-custody':
         process_custody_test(sys.argv[2])
     else:
         unittest.main()

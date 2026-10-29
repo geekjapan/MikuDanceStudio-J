@@ -71,18 +71,32 @@ actual Cargo command and stage receipt, and requires the raw and working locks
 to agree for the same generated dependencies. Lockfiles remain build outputs
 outside the immutable translation-input manifest.
 
-Hosted execution requires Linux child-subreaper and pidfd support. The wrapper
+Before any output write or process launch, the wrapper uses the same typed
+admission boundary as the normalizer to authenticate source, HDR, SPIR-V,
+translator and native inputs. Output equality, ancestor and descendant overlap
+with any input refuses without changing input files or directory membership.
+Input aliases and symlinked output paths refuse.
+
+Hosted execution requires Linux child-subreaper and pidfd support. A real
+self pidfd open and signal 0 preflight must succeed and close before writers
+launch. Python attribute availability alone does not admit a host. The wrapper
 admits no pre-existing children and owns one probe at a time. Separate-session
 descendants become its adopted children when a parent exits. Cleanup signals
 only owned children through pidfds and reaps them until the child set is empty.
 A normal probe that leaves a writer is a custody failure even after cleanup.
-Timeouts and cancellation retain closed partial diagnostics without a final
-output manifest. Unproven cleanup retains `OWNED_WRITERS_UNPROVEN` and prevents
+SIGINT and SIGTERM cancel the whole wrapper, including validation and final
+publication after probe wait. Scoped handlers restore the caller's handlers.
+The first signal interrupts work; later signals defer while owned children
+are closed and reaped. Timeouts and cancellation retain closed partial
+diagnostics without a final output manifest. Cancellation leaves `CANCELLED`.
+Each proven invocation closure has a separate `.log.custody.json` receipt.
+Only a completed finite run publishes the final manifest atomically. Unproven cleanup retains `OWNED_WRITERS_UNPROVEN` and prevents
 artifact publication. The workflow job limit remains 110 minutes, with an
 85-minute actual-probe step and 3000-second deadline per probe.
 
 The hosted-only inert process check covers clean exit, an unexpected orphan,
-timeout, and child launch during cancellation. It records actual process and
+timeout, and child launch during cancellation. It also sends real SIGINT and
+SIGTERM to an owned wrapper during probe wait and after a clean probe wait. It records actual process and
 session IDs, exits, times, and task-directory hashes, then checks that writes
 stop after the terminal receipt. Run it only on hosted Linux:
 

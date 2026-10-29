@@ -82,7 +82,7 @@ jobs:
           python3 -B tools/vkd3d-rust-probe/check_runtime.py \
             --tool "$RUNNER_TEMP/cmp-input/current-input/unpacked/tool" \
             2>&1 | tee "$RUNNER_TEMP/cmp-input/logs/tool-runtime.log"
-      - name: Prove separate-session writer custody with inert hosted processes
+      - name: Prove owned writers and real wrapper signal cancellation with inert hosted processes
         timeout-minutes: 2
         run: |
           set -o pipefail

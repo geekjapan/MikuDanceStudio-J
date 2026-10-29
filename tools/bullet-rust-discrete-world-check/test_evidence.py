@@ -319,8 +319,26 @@ class AdmissionControls(unittest.TestCase):
             entries=json.loads(files['archive-bindings.json'])['members']
             files['BulletWorld.lib']=archive({entry['object']:files[entry['object']] for entry in reversed(entries)})
             edit_json(files,'archive-bindings.json',lambda binding:binding.update(archive_sha256=sha(files['BulletWorld.lib'])))
-        files=dict(self.windows);reordered_payloads(files);rehash(files)
+        self.rejected(reordered_payloads,'actual pre-use direct source/object/archive/CRT inputs archive-list')
+        files=dict(self.windows);reordered_payloads(files)
+        archive_path=str(PureWindowsPath(json.loads(files['producer.json'])['out'])/'BulletWorld.lib')
+        commands=json.loads(files['commands.json'])
+        consumers={row['label'] for row in commands if archive_path in row['inputs']}
+        entries=json.loads(files['archive-bindings.json'])['members']
+        self.assertEqual(consumers,{'archive-list','native-link','observed-link',*('extract-'+PureWindowsPath(entry['object']).stem for entry in entries)})
+        for row in commands:
+            if row['label'] in consumers:row['inputs'][archive_path]=sha(files['BulletWorld.lib'])
+        files['commands.json']=encode(commands);rehash(files)
         evidence.admit_capture(files,**self.expected)
+        for label in ['archive-list','extract-'+PureWindowsPath(entries[0]['object']).stem,'native-link','observed-link']:
+            for missing in [False,True]:
+                with self.subTest(label=label,missing=missing):
+                    malformed=dict(files);receipts=json.loads(malformed['commands.json'])
+                    inputs=next(row for row in receipts if row['label']==label)['inputs']
+                    if missing:inputs.pop(archive_path)
+                    else:inputs[archive_path]=sha(self.windows['BulletWorld.lib'])
+                    malformed['commands.json']=encode(receipts);rehash(malformed)
+                    with self.assertRaisesRegex(ValueError,'actual pre-use direct source/object/archive/CRT inputs '+label):evidence.admit_capture(malformed,**self.expected)
         def foreign_payload(files):
             name=json.loads(files['archive-bindings.json'])['members'][0]['object']
             files['BulletWorld.lib']=files['BulletWorld.lib'].replace(files[name],b'X'+files[name][1:],1)

@@ -14,6 +14,47 @@ import measured_profiles
 from test_capture import mutations
 
 
+class DynamicsAdmissionTests(unittest.TestCase):
+    def setUp(self):
+        self.manifest = measured_profiles.load_manifest(measured_profiles.HERE / 'measured-profiles.json')
+
+    def test_complete_exact_physical_projection_and_fixed_layer(self):
+        admission = self.manifest['dynamics_world_source_admission']
+        self.assertEqual(admission['execution'], 'UNRUN')
+        self.assertEqual(measured_profiles.source_map_digest(admission), measured_profiles.DYNAMICS_WORLD_SHA256)
+        for host in measured_profiles.HOSTS:
+            result = measured_profiles.approved_source_map(self.manifest, host)
+            for path in measured_profiles.DYNAMICS_WORLD_REPLACEMENTS | measured_profiles.DYNAMICS_WORLD_ADDITIONS:
+                raw = (check.ROOT / path).read_bytes().replace(b'\r\n', b'\n')
+                physical = raw.replace(b'\n', b'\r\n') if host == 'windows-x64' and '/tests/' not in path else raw
+                self.assertEqual(result[path], measured_profiles.sha(physical))
+
+    def test_scope_identity_hosts_and_fixed_base_fail_closed(self):
+        def delta(value): return value['dynamics_world_source_admission']['hosts']['linux-x64']
+        path = next(iter(measured_profiles.DYNAMICS_WORLD_REPLACEMENTS))
+        changes = [
+            lambda value: value['dynamics_world_source_admission'].update(base_head='0'*40),
+            lambda value: value['dynamics_world_source_admission'].update(base_tree='0'*40),
+            lambda value: value['dynamics_world_source_admission'].update(execution='PASS'),
+            lambda value: value['dynamics_world_source_admission']['hosts'].pop('windows-x64'),
+            lambda value: value['dynamics_world_source_admission']['hosts'].update(extra={}),
+            lambda value: delta(value)['replacements'].pop(path),
+            lambda value: delta(value)['replacements'].update({'foreign.rs': {'old_sha256':'0'*64,'new_sha256':'1'*64}}),
+            lambda value: delta(value)['replacements'][path].update(old_sha256='0'*64),
+            lambda value: delta(value)['replacements'][path].update(new_sha256=delta(value)['replacements'][path]['old_sha256']),
+            lambda value: delta(value)['additions'].update({path:'0'*64}),
+            lambda value: delta(value)['additions'].pop(next(iter(measured_profiles.DYNAMICS_WORLD_ADDITIONS))),
+        ]
+        for change in changes:
+            value = copy.deepcopy(self.manifest)
+            change(value)
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'schema'):
+                measured_profiles.approved_source_map(value, 'linux-x64')
+            reader = SimpleNamespace(read_text=lambda value=value: json.dumps(value))
+            with self.subTest(pinned_change=change), self.assertRaisesRegex(ValueError, 'schema'):
+                measured_profiles.load_manifest(reader)
+
+
 class MeasuredProfileTests(unittest.TestCase):
     def test_x64_fixture_has_only_measured_nine_words(self):
         fixture = check.ROOT / 'rust/crates/mds-bullet/tests/gjk_pair_data'
@@ -250,9 +291,9 @@ class FiniteMeasurementTests(unittest.TestCase):
                 self.load_changed(change)
         for host in measured_profiles.HOSTS:
             current = measured_profiles.approved_source_map(self.manifest, host)
-            self.assertEqual(len(current), 478)
+            self.assertEqual(len(current), 478 + len(measured_profiles.DYNAMICS_WORLD_ADDITIONS))
             self.assertEqual(set(current), set(self.manifest['profiles'][host]['protected_source_sha256'])
-                             | measured_profiles.ADDITIONS | measured_profiles.BROADPHASE_ADDITIONS | measured_profiles.DISCRETE_WORLD_ADDITIONS | set(self.manifest['verification_sha256'][host]))
+                             | measured_profiles.ADDITIONS | measured_profiles.BROADPHASE_ADDITIONS | measured_profiles.DISCRETE_WORLD_ADDITIONS | measured_profiles.DYNAMICS_WORLD_ADDITIONS | set(self.manifest['verification_sha256'][host]))
 
     def test_discrete_world_current_only_admission_refuses_identity_and_scope_drift(self):
         admission = self.manifest['discrete_world_source_admission']
@@ -263,7 +304,7 @@ class FiniteMeasurementTests(unittest.TestCase):
         for path in measured_profiles.DISCRETE_WORLD_ADDITIONS:
             raw = (check.ROOT / path).read_bytes().replace(b'\r\n', b'\n')
             windows = raw if '/tests/' in path else raw.replace(b'\n', b'\r\n')
-            self.assertEqual(admission['hosts']['windows-x64']['additions'][path], measured_profiles.sha(windows))
+            self.assertEqual(self.manifest['dynamics_world_source_admission']['hosts']['windows-x64']['replacements'][path]['new_sha256'] if path in measured_profiles.DYNAMICS_WORLD_REPLACEMENTS else self.manifest['dynamics_world_source_admission']['hosts']['windows-x64']['replacements'][path]['new_sha256'] if path in measured_profiles.DYNAMICS_WORLD_REPLACEMENTS else self.manifest['dynamics_world_source_admission']['hosts']['windows-x64']['replacements'][path]['new_sha256'] if path in measured_profiles.DYNAMICS_WORLD_REPLACEMENTS else self.manifest['dynamics_world_source_admission']['hosts']['windows-x64']['replacements'][path]['new_sha256'] if path in measured_profiles.DYNAMICS_WORLD_REPLACEMENTS else admission['hosts']['windows-x64']['additions'][path], measured_profiles.sha(windows))
         for field in admission:
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'schema'):
                 self.load_changed(lambda value: value['discrete_world_source_admission'].pop(field))
@@ -471,7 +512,7 @@ class FiniteMeasurementTests(unittest.TestCase):
     def test_current_collector_and_broadphase_physical_source_refusals(self):
         current = check.source_hashes()
         current.pop(measured_profiles.MANIFEST_PATH)
-        self.assertEqual(len(current), 478)
+        self.assertEqual(len(current), 478 + len(measured_profiles.DYNAMICS_WORLD_ADDITIONS))
         self.assertEqual(current, measured_profiles.approved_source_map(self.manifest, check.host()))
         for host in measured_profiles.HOSTS:
             source = measured_profiles.approved_source_map(self.manifest, host)

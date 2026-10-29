@@ -34,6 +34,8 @@ pub mod dbvt;
 pub mod dbvt_broadphase;
 #[allow(dead_code)]
 pub mod discrete_collision_world;
+#[allow(dead_code)]
+pub mod discrete_dynamics_world;
 
 pub mod dispatcher;
 pub mod gjk_epa;

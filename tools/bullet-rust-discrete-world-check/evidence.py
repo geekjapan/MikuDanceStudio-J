@@ -274,12 +274,13 @@ def worktree_ending(raw):
 class _Archive:
     payloads: dict
     specials: tuple
+    bsd_indexes: dict[str, bytes]
 
 
 def decode_archive(raw):
     require(raw.startswith(b'!<arch>\n'), 'actual ar/COFF archive container')
     offset, names, result, specials = 8, b'', {}, []
-    symbol_tables, member_offsets = [], set()
+    symbol_tables, member_offsets, bsd_indexes = [], set(), {}
     while offset < len(raw):
         header = raw[offset:offset+60]
         require(len(header)==60 and header[58:]==b'`\n' and re.fullmatch(rb' *[0-9]+ *', header[48:58]), 'archive header')
@@ -295,13 +296,9 @@ def decode_archive(raw):
             if name.startswith('#1/'):
                 require(name[3:].isdigit(), 'BSD archive name length')
                 length = int(name[3:]); require(0 < length <= len(body), 'BSD archive name bounds')
-                name = body[:length].rstrip(b'\x00').decode(); body = body[length:]
-                if name.startswith('__.SYMDEF'):
-                    require(name in {'__.SYMDEF','__.SYMDEF SORTED','__.SYMDEF_64','__.SYMDEF_64 SORTED'}, 'known archive symbol table')
-                    require(not any(value.startswith('__.SYMDEF') for value in specials), 'archive special member multiplicity')
-                    symbol_tables.append((name,body));specials.append(name)
-                    if size%2:require(raw[start+size:start+size+1]==b'\n', 'archive alignment byte')
-                    offset = start+size+size%2; continue
+                inline = body[:length].rstrip(b'\x00')
+                require(b'\x00' not in inline, 'BSD archive inline name padding')
+                name = inline.decode(); body = body[length:]
             elif re.fullmatch(r'/[0-9]+', name):
                 index = int(name[1:]); require(index < len(names) and (index==0 or names[index-1] in (0,10)), 'archive long name offset')
                 tail = names[index:]; match = re.search(b'\x00|/\n', tail)
@@ -309,6 +306,12 @@ def decode_archive(raw):
             else:
                 require(not name.startswith('/'), 'known archive table/name encoding')
                 name = name.rstrip('/')
+            if name.startswith('__.SYMDEF'):
+                require(name in {'__.SYMDEF','__.SYMDEF SORTED','__.SYMDEF_64','__.SYMDEF_64 SORTED'}, 'known archive symbol table')
+                require(not bsd_indexes, 'archive special member multiplicity')
+                symbol_tables.append((name,body));specials.append(name);bsd_indexes[name]=body
+                if size%2:require(raw[start+size:start+size+1]==b'\n', 'archive alignment byte')
+                offset = start+size+size%2; continue
             require(name and name.casefold() not in {key.casefold() for key in result}, 'unique archive payload member')
             result[name] = body;member_offsets.add(offset)
         if size%2: require(raw[start+size:start+size+1] == b'\n', 'archive alignment byte')
@@ -316,7 +319,7 @@ def decode_archive(raw):
     require(offset==len(raw), 'complete archive container')
     for i,(name,body) in enumerate(symbol_tables):
         require(valid_symbol_table(name,body,member_offsets,second=i==1 and name=='/'), 'archive symbol table payload/offsets')
-    return _Archive(result,tuple(specials))
+    return _Archive(result,tuple(specials),bsd_indexes)
 
 
 def archive_listing(archive, listing, system):
@@ -424,7 +427,7 @@ class _VerifiedCapture:
         return len(actual)
 
 
-def command_schedule(context, sources, policy_name, crt_libraries, *, replay=False):
+def command_schedule(context, sources, policy_name, crt_libraries, *, replay=False, archive_indexes=()):
     system, root, out = context['system'], context['root'], context['out']
     path = PureWindowsPath if system=='Windows' else PurePosixPath
     root, out = path(root), path(out)
@@ -439,7 +442,7 @@ def command_schedule(context, sources, policy_name, crt_libraries, *, replay=Fal
     def add(label, argv, data=None, cwd=None, compile=False):
         argv = list(map(str,argv)); cwd = str(cwd or root/'rust')
         if compile: add(label+'-discovery',argv,data,cwd)
-        roles=command_files(label,argv,file_context)
+        roles=command_files(label,argv,file_context,archive_indexes=archive_indexes)
         result.append((label,argv,cwd,data,tuple(str(out/value.retained) for value in roles.outputs),compile))
     add('helpers-normal',[tools['python'],'-B',here/'test_check.py','-v'])
     add('helpers-optimized',[tools['python'],'-B','-O',here/'test_check.py','-v'])
@@ -524,7 +527,7 @@ class _CommandFiles:
     outputs: tuple[_Output, ...]
 
 
-def command_files(label, argv, context):
+def command_files(label, argv, context, *, archive_indexes=()):
     path = PureWindowsPath if context['system']=='Windows' else PurePosixPath
     out = path(context['out'])
     physical = []
@@ -537,6 +540,7 @@ def command_files(label, argv, context):
     if base=='archive-build' and context['system']!='Windows': physical.append(path(argv[2]))
     if base=='crt-build': physical=[out/('mds_crtmath.lib' if context['system']=='Windows' else 'libmds_crtmath.a'),out/'libmds_crtmath.rlib']
     if base=='archive-extract': physical=[out/'extracted'/name for name in context['archive_objects']]
+    if context['system']=='Darwin' and label=='archive-extract': physical += [out/'extracted'/name for name in archive_indexes]
     if base.endswith('-link'): physical.append(out/(base[:-5]+'.map'))
     if base in [name+'-'+mode for name in ['native','observed'] for mode in MODES]: physical.append(path(argv[-1]))
     if context['system']=='Windows' and base=='macro-build': physical.append(out/'effective-macros.obj')
@@ -668,7 +672,10 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
         require(entry=={'source':source,'source_sha256':start[source],'object':obj,'sha256':digest(content)}, 'source/object binding '+obj)
         require(raw('extracted/'+obj)==content==members[context['archive_names'][obj]], 'actual archive payload/extracted/object equality '+obj)
     crt_libraries = raw('crt-build.stderr').decode().split('native-static-libs:')[-1].splitlines()[0].split() if win else ([] if system=='Darwin' else ['-ldl','-lpthread','-lm'])
-    schedule = command_schedule(context,sources,expected_policy,crt_libraries)
+    archive_indexes = parsed_archive.bsd_indexes if system=='Darwin' else {}
+    for name,body in archive_indexes.items():
+        require(raw('extracted/'+name)==body, 'actual archive index/extracted equality '+name)
+    schedule = command_schedule(context,sources,expected_policy,crt_libraries,archive_indexes=archive_indexes)
     commands = data('commands.json'); require(type(commands) is list and len(commands)==len(schedule), 'complete actual command schedule')
     command_map = {}
     inputs_by_name = {'inputs':inputs.encode(),'attributes':('\n'.join(sorted(start))+'\n').encode()}
@@ -693,7 +700,7 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
         require(record['stdin_sha256']==expected_stdin, 'exact command stdin '+label)
         require(type(record['returncode']) is int and record['returncode']==0 and record['timeout'] is False and type(record['seconds']) in {int,float} and math.isfinite(record['seconds']) and record['seconds']>=0, 'normal successful command '+label)
         for stream in ['stdout','stderr']: require(record[stream+'_sha256']==digest(raw(label+'.'+stream)), 'retained command output '+label)
-        expected_inputs={value:digest(raw(captured_path(value,context))) for value in command_files(label,argv,{**context,'archive_objects':objects}).inputs}
+        expected_inputs={value:digest(raw(captured_path(value,context))) for value in command_files(label,argv,{**context,'archive_objects':objects},archive_indexes=archive_indexes).inputs}
         require(record['inputs']==expected_inputs, 'actual pre-use direct source/object/archive/CRT inputs '+label)
         expected_generation=None
         if label=='rust-observed-build' or label.startswith('baseline-build-'):expected_generation=generation

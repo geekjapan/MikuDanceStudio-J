@@ -83,6 +83,19 @@ def archive(payloads):
     return result
 
 
+def bsd_archive(payloads, name='__.SYMDEF', order='little'):
+    def member(label, raw):
+        return label.encode().ljust(16)+b'0'.ljust(12)+b'0'.ljust(6)+b'0'.ljust(6)+b'100644'.ljust(8)+str(len(raw)).encode().ljust(10)+b'`\n'+raw+(b'\n' if len(raw)%2 else b'')
+    width=8 if '_64' in name else 4
+    inline=name.encode()+b'\0'*(-len(name)%4)
+    strings=b'synthetic_symbol\0';index_size=4*width+len(strings)
+    first=8+60+len(inline)+index_size+(len(inline)+index_size)%2
+    integer=lambda value:value.to_bytes(width,order)
+    body=integer(2*width)+integer(0)+integer(first)+integer(len(strings))+strings
+    entries=b''.join(member('#1/'+str(len(key.encode())),key.encode()+raw) for key,raw in payloads.items())
+    return b'!<arch>\n'+member('#1/'+str(len(inline)),inline+body)+entries,body
+
+
 def fixture(system='Windows'):
     win=system=='Windows';P=PureWindowsPath if win else PurePosixPath
     root=P('C:/work/repo' if win else '/work/repo');out=P('C:/capture/world' if win else '/capture/world')
@@ -112,6 +125,10 @@ def fixture(system='Windows'):
     objects=[P(name).stem+ext for name in sources]
     for name in objects:files[name]=('synthetic object '+name).encode();files['extracted/'+name]=files[name]
     library='BulletWorld.lib' if win else 'libBulletWorld.a';files[library]=archive({name:files[name] for name in objects})
+    archive_indexes={}
+    if system=='Darwin':
+        files[library],body=bsd_archive({name:files[name] for name in objects})
+        archive_indexes={'__.SYMDEF':body};files['extracted/__.SYMDEF']=body
     bindings={'members':[{'source':name,'source_sha256':before[name],'object':obj,'sha256':sha(files[obj])} for name,obj in zip(sources,objects)],'archive_sha256':sha(files[library]),'actual_names':dict(zip(objects,objects))}
     files['archive-bindings.json']=encode(bindings)
     context={'schema':3,'system':system,'root':str(root),'out':str(out),'tools':{name:entry['path'] for name,entry in tools.items()},'archive_names':bindings['actual_names']}
@@ -167,6 +184,8 @@ def fixture(system='Windows'):
     def add(label,argv,data=None,cwd=None,compile=False):
         argv=list(map(str,argv))
         roles=evidence.command_files(label,argv,{**context,'archive_objects':objects})
+        if label=='archive-extract':
+            roles=evidence._CommandFiles((str(out/library),),tuple(evidence._Output(str(out/'extracted'/name),'extracted/'+name) for name in [*objects,*archive_indexes]))
         if compile:
             for output in evidence.command_files(label+'-discovery',argv,{**context,'archive_objects':objects}).outputs:
                 files[output.retained]=('synthetic discovery '+output.retained).encode()
@@ -537,6 +556,125 @@ class PlatformControls(unittest.TestCase):
             self.assertFalse(any(value.retained.endswith('.pdb') for value in roles.outputs))
         with self.assertRaisesRegex(ValueError,'exact Windows Rust executable output'):
             evidence.command_files('dedicated-build',['C:/tools/rustup','-o','C:/capture/foreign.exe'],context)
+
+
+class ArchiveIndexControls(unittest.TestCase):
+    def test_finite_darwin_index_outputs_and_default_replay(self):
+        names=('__.SYMDEF','__.SYMDEF SORTED','__.SYMDEF_64','__.SYMDEF_64 SORTED')
+        for system in ['Darwin','Linux','Windows']:
+            P=PureWindowsPath if system=='Windows' else PurePosixPath
+            out=P('C:/capture' if system=='Windows' else '/capture')
+            context={'system':system,'root':str(out/'repo'),'out':str(out),'archive_objects':('a.o',),'tools':{name:str(out/name) for name in ['python','git','rustup']}}
+            argv=[str(out/'ar'),'x',str(out/'lib.a')]
+            for name in names:
+                for label in ['archive-extract','archive-extract-discovery','archive-list','foreign']:
+                    roles=evidence.command_files(label,argv,context,archive_indexes=(name,))
+                    expected=['extracted/a.o'] if label.startswith('archive-extract') else []
+                    if system=='Darwin' and label=='archive-extract':expected+=['extracted/'+name]
+                    retained=['discovery/archive-extract/'+v for v in expected] if label.endswith('-discovery') else expected
+                    self.assertEqual([v.retained for v in roles.outputs],retained)
+                    self.assertEqual([v.physical for v in roles.outputs],[str(out/P(v)) for v in expected])
+                    self.assertEqual(roles.inputs,(str(out/'lib.a'),))
+            default=evidence.command_schedule(context,[],'mmd-win64-sse',[],replay=True)
+            derived=evidence.command_schedule(context,[],'mmd-win64-sse',[],replay=True,archive_indexes=names[:1])
+            self.assertEqual(default,derived)
+            self.assertFalse(any('extracted/' in value for row in default for value in row[4]))
+
+    def test_index_retention_reads_actual_extracted_body(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);out=root/'capture';out.mkdir();extracted=out/'extracted';extracted.mkdir()
+            archive_raw,body=bsd_archive({'a.o':b'inert object'})
+            (out/'lib.a').write_bytes(archive_raw);(extracted/'a.o').write_bytes(b'inert object');index=extracted/'__.SYMDEF';index.write_bytes(body)
+            parsed=evidence.decode_archive((out/'lib.a').read_bytes())
+            roles=evidence.command_files('archive-extract',['/tools/ar','x',str(out/'lib.a')],{'system':'Darwin','out':str(out),'archive_objects':('a.o',)},archive_indexes=parsed.bsd_indexes)
+            self.assertEqual(check.retain_outputs(roles.outputs,out,success=True),{'extracted/a.o':sha(b'inert object'),'extracted/__.SYMDEF':sha(body)})
+            index.write_bytes(body+b'changed')
+            self.assertEqual(check.retain_outputs(roles.outputs,out,success=True)['extracted/__.SYMDEF'],sha(body+b'changed'))
+            index.unlink()
+            with self.assertRaisesRegex(ValueError,'successful command missing output extracted/__.SYMDEF'):check.retain_outputs(roles.outputs,out,success=True)
+            self.assertEqual(check.retain_outputs(roles.outputs,out,success=False),{'extracted/a.o':sha(b'inert object')})
+
+    def test_complete_darwin_baseline_and_refreshed_index_peers(self):
+        files,expected=fixture('Darwin')
+        admitted=evidence.admit_capture(files,**expected)
+        self.assertEqual(admitted.report_sha256,sha(files['report.json']))
+        self.assertEqual(json.loads(files['report.json'])['host']['system'],'Darwin')
+        key='extracted/__.SYMDEF';rows=json.loads(files['commands.json']);owner=next(row for row in rows if row['label']=='archive-extract')
+        self.assertEqual(len(owner['outputs']),115)
+        self.assertEqual(owner['outputs'][key],sha(files[key]))
+        self.assertEqual(owner['argv'],['/tools/archiver','x','/capture/world/libBulletWorld.a'])
+        self.assertEqual(owner['cwd'],'/capture/world/extracted')
+        with self.assertRaisesRegex(ValueError,'allowed actual producer host'):
+            evidence.admit_capture(files,**{**expected,'expected_host':{('Windows','amd64')}})
+        def reject(change,reason):
+            changed=dict(files);commands=json.loads(changed['commands.json']);change(changed,commands)
+            changed['commands.json']=encode(commands);refresh(changed)
+            with self.assertRaisesRegex(ValueError,reason):evidence.admit_capture(changed,**expected)
+        def arx(commands):return next(row for row in commands if row['label']=='archive-extract')
+        reject(lambda f,r:f.pop(key),'required capture file')
+        reject(lambda f,r:arx(r)['outputs'].pop(key),'produced artifact membership archive-extract')
+        def wrong_name(f,r):
+            f['extracted/__.SYMDEF SORTED']=f.pop(key);arx(r)['outputs']['extracted/__.SYMDEF SORTED']=arx(r)['outputs'].pop(key)
+        reject(wrong_name,'required capture file')
+        def changed_body(f,r):
+            f[key]+=b'changed';arx(r)['outputs'][key]=sha(f[key])
+        reject(changed_body,'actual archive index/extracted equality')
+        reject(lambda f,r:arx(r)['outputs'].update({key:'0'*64}),'produced/use/end artifact identity archive-extract')
+        def moved_owner(f,r):
+            next(row for row in r if row['label']=='archive-list')['outputs'][key]=arx(r)['outputs'].pop(key)
+        reject(moved_owner,'produced artifact membership archive-list')
+        def input_role(f,r):arx(r)['inputs']['/capture/world/'+key]=arx(r)['outputs'].pop(key)
+        reject(input_role,'actual pre-use direct source/object/archive/CRT inputs archive-extract')
+        for field,value in [('argv',['/tools/archiver','x','/capture/world/libBulletWorld.a','__.SYMDEF']),('cwd','/capture/world'),('label','foreign')]:
+            reject(lambda f,r:arx(r).update({field:value}),'exact effective command argv/cwd archive-extract' if field!='label' else 'ordered unique command archive-extract')
+        def swap(f,r):
+            i=next(i for i,row in enumerate(r) if row['label']=='archive-extract');r[i-1],r[i]=r[i],r[i-1]
+        reject(swap,'ordered unique command archive-list')
+        reject(lambda f,r:arx(r)['inputs'].update({'/capture/world/libBulletWorld.a':'0'*64}),'actual pre-use direct source/object/archive/CRT inputs archive-extract')
+        def extra(f,r):
+            f['extracted/__.SYMDEF_64']=f[key];arx(r)['outputs']['extracted/__.SYMDEF_64']=sha(f[key])
+        reject(extra,'produced artifact membership archive-extract')
+        reject(lambda f,r:f.update({'extracted/__.SYMDEF_UNKNOWN':b'foreign'}),'closed complete capture file membership')
+        payloads={name:files[name] for name in json.loads(files['archive-bindings.json'])['actual_names']}
+        def replace_archive(f,r,raw,body):
+            f['libBulletWorld.a']=raw;f[key]=body;arx(r)['outputs'][key]=sha(body)
+            binding=json.loads(f['archive-bindings.json']);binding['archive_sha256']=sha(raw);f['archive-bindings.json']=encode(binding)
+            for row in r:
+                if '/capture/world/libBulletWorld.a' in row['inputs']:row['inputs']['/capture/world/libBulletWorld.a']=sha(raw)
+                if 'libBulletWorld.a' in row['outputs']:row['outputs']['libBulletWorld.a']=sha(raw)
+        original=files['libBulletWorld.a'];body=files[key]
+        first=int.from_bytes(original[88:92],'little')
+        malformed=[(bsd_archive(payloads,'__.SYMDEF_BAD')[0],'known archive symbol table'),
+                   (original[:first]+original[8:],'archive special member multiplicity'),
+                   (original[:88]+(999).to_bytes(4,'little')+original[92:],'archive symbol table payload/offsets'),
+                   (original[:84]+(1).to_bytes(4,'little')+original[88:],'archive symbol table payload/offsets'),
+                   (original[:78]+b'X'+original[79:],'BSD archive inline name padding')]
+        for raw,reason in malformed:
+            changed_body=raw[80:80+len(body)]
+            reject(lambda f,r:replace_archive(f,r,raw,changed_body),reason)
+        replacement=original.replace(b'synthetic_symbol',b'synthetic_symboX',1)
+        replacement_body=body.replace(b'synthetic_symbol',b'synthetic_symboX',1)
+        coordinated=dict(files);commands=json.loads(files['commands.json'])
+        replace_archive(coordinated,commands,replacement,replacement_body);coordinated['commands.json']=encode(commands);refresh(coordinated)
+        self.assertEqual(evidence.admit_capture(coordinated,**expected).report_sha256,sha(files['report.json']))
+
+    def test_darwin_finalization_and_windows_source_boundary(self):
+        import tempfile
+        from pathlib import Path
+        files,expected=fixture('Darwin');status=json.loads(files['report.json'])
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            for name,raw in files.items():
+                target=root/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(raw)
+            self.assertEqual(check.finalize_native(root,status,**expected).report_sha256,sha(check.encoded(status)))
+            replay_expected={name:value for name,value in expected.items() if name not in {'expected_host','expected_policy'}}
+            with self.assertRaisesRegex(ValueError,'allowed actual producer host'):check.admit_windows(root,**replay_expected)
+            (root/'extracted/__.SYMDEF').write_bytes(b'changed')
+            before=(root/'report.json').read_bytes()
+            with self.assertRaises(ValueError):check.finalize_native(root,status,**expected)
+            self.assertEqual((root/'report.json').read_bytes(),before)
 
 
 class IncludeControls(unittest.TestCase):

@@ -57,3 +57,14 @@ Producer schema 3 requires include binding schema 1. Each measured compilation r
 Archive payload order, tool listing order, and command schedule order are distinct observations. Every listed member must match a parsed payload or a format-valid special member actually present and listable by that host tool. BSD symbol tables do not add source objects. Git attributes and transport run at repository root with root-relative inputs; other command working directories retain their prescribed values.
 
 Native 4, replay 5, producer 2, and older temporal evidence are refused. Failed historical captures cannot acquire missing binding observations through replay. Bindings do not attest compiler-internal reads, inner toolchain/SDK/OS behavior, TOCTOU freedom, or consistently fabricated complete external histories. Fresh legal actual captures and malformed actual peers remain separate hosted acceptance gates.
+
+Darwin archive extraction retains the validated BSD symbol index as a separate
+output beside the 114 payload objects. The archive parser supplies the exact
+name and extracted body for `__.SYMDEF`, `__.SYMDEF SORTED`, `__.SYMDEF_64`, or
+`__.SYMDEF_64 SORTED` (at most one). The producer declares that output before
+running the unchanged `ar x` command; ordinary output retention records its
+actual bytes. Admission independently derives the index from the original
+archive, checks exact body equality, and binds its name and digest to the unique
+extraction command. No prefix exception or inventory exclusion is used. Other
+hosts and replay schedules keep their existing output contracts and schemas.
+Old failed captures do not become complete under the new source contract.

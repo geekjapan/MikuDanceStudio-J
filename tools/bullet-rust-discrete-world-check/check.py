@@ -153,6 +153,7 @@ def main():
     file_context={'system':platform.system(),'root':str(ROOT),'out':str(out),'archive_objects':tuple(
         p.stem+('.obj' if os.name=='nt' else '.o') for p in sorted((ROOT/'recipes/bullet275/bullet-src/src').rglob('*.cpp'))
         if p.relative_to(ROOT/'recipes/bullet275/bullet-src/src').parts[0] in {'BulletCollision','BulletDynamics','LinearMath'})}
+    archive_indexes=()
     def run(argv,label,data=None,cwd=None,compile=False):
         require(snapshot()==before,'fixed source closure before '+label)
         require(not any(c['label']==label for c in commands),'unique command output label')
@@ -169,7 +170,7 @@ def main():
         require(executable_identity(argv[0])==binding,'invocation target preserved before '+label)
         record={'label':label,'argv':argv,'cwd':str(cwd),'stdin_sha256':None if data is None else digest(data),
                 'tool':argv[0],'tool_target':binding['target'],'tool_sha256':binding['sha256'],'executable_sha256':binding['sha256']}
-        roles=command_files(label,argv,file_context)
+        roles=command_files(label,argv,file_context,archive_indexes=archive_indexes)
         record['inputs']={value:digest(Path(value).read_bytes()) for value in roles.inputs}
         record['generated_inputs']=generated_snapshot(Path(argv[-3]).parents[2]) if label=='rust-observed-build' or label.startswith(('baseline-build-','mutant-build-')) else None
         commands.append(record);save(out/'commands.json',commands)
@@ -278,6 +279,7 @@ def main():
             listing=run([archiver,'/NOLOGO','/LIST',library] if os.name=='nt' else [archiver,'t',library],'archive-list').decode().splitlines()
             extracted=out/'extracted';extracted.mkdir();members={}
             parsed_archive=decode_archive(library.read_bytes())
+            archive_indexes=tuple(parsed_archive.bsd_indexes) if system=='Darwin' else ()
             archive_listing(parsed_archive,[line.strip() for line in listing if line.strip()],system)
             for obj in objects:
                 matched=[line.strip() for line in listing if line.strip().replace('\\','/').split('/')[-1].lower()==obj.name.lower()]

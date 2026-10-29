@@ -369,6 +369,26 @@ class SourceControls(unittest.TestCase):
         evidence.decode_archive(b'!<arch>\n'+first+second+member('first.obj/',b'x'))
         with self.assertRaises(ValueError):evidence.decode_archive(b'!<arch>\n'+first+second+first+member('first.obj/',b'x'))
 
+    def test_bsd_index_bodies_names_widths_endianness_and_offsets(self):
+        import evidence
+        from test_evidence import bsd_archive
+        payloads={'first.o':b'first','second.o':b'second'}
+        for name in ['__.SYMDEF','__.SYMDEF SORTED','__.SYMDEF_64','__.SYMDEF_64 SORTED']:
+            for order in ['little','big']:
+                raw,body=bsd_archive(payloads,name,order);parsed=evidence.decode_archive(raw)
+                self.assertEqual(parsed.bsd_indexes,{name:body});self.assertEqual(parsed.payloads,payloads);self.assertEqual(parsed.specials,(name,))
+                width=8 if '_64' in name else 4;start=68+len(name)+(-len(name)%4)
+                def replace(offset,value):return raw[:start+offset]+value.to_bytes(width,order)+raw[start+offset+width:]
+                for malformed in [replace(2*width,999),replace(width,1),replace(3*width,999),
+                                  raw[:8]+raw[8:start+len(body)+(len(name)+(-len(name)%4)+len(body))%2]+raw[8:],
+                                  raw.replace(name.encode(),(name+'_BAD').encode(),1),
+                                  raw.replace(body[-17:],b'unterminatedtext!',1)]:
+                    with self.subTest(name=name,order=order),self.assertRaises(ValueError):evidence.decode_archive(malformed)
+        with self.assertRaisesRegex(ValueError,'known archive symbol table'):evidence.decode_archive(bsd_archive(payloads,'__.SYMDEF_BAD')[0])
+        raw,body=bsd_archive(payloads)
+        with self.assertRaisesRegex(ValueError,'inline name padding'):evidence.decode_archive(raw[:78]+b'X'+raw[79:])
+        self.assertEqual(evidence.decode_archive(raw).bsd_indexes['__.SYMDEF'],body)
+
     def test_git_root_commands_preserve_independent_schedule(self):
         import evidence
         from pathlib import PurePosixPath, PureWindowsPath
@@ -383,10 +403,11 @@ class SourceControls(unittest.TestCase):
 
 
 def load_tests(loader, tests, pattern):
-    from test_evidence import AdmissionControls, IncludeControls, PlatformControls
+    from test_evidence import AdmissionControls, IncludeControls, PlatformControls, ArchiveIndexControls
     tests.addTests(loader.loadTestsFromTestCase(AdmissionControls))
     tests.addTests(loader.loadTestsFromTestCase(IncludeControls))
     tests.addTests(loader.loadTestsFromTestCase(PlatformControls))
+    tests.addTests(loader.loadTestsFromTestCase(ArchiveIndexControls))
     return tests
 
 

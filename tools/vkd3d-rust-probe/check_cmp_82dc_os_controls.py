@@ -1,7 +1,8 @@
 """Additional hosted OS controls for literal 82dc. Import and CLI parsing do no OS probes.
 
 Synthetic compiler data is not compiler, CMP, stable Rust, or product acceptance.
-Only --real-os may start processes or operate signals, and only on the reviewed GHA runtime.
+--real-os and its internal --worker-output/--fixture entrypoints operate processes and signals
+only on the reviewed GHA runtime. --source-only and --upload-gate are read-only checks.
 """
 import argparse
 import ast
@@ -95,13 +96,41 @@ def frozen_source(source):
     return dict(FROZEN)
 
 
+def validate_registry():
+    expected = (
+        ('baseline', 'baseline', 0, 0),
+        ('entry-2-2', 'entry', 2, 2),
+        ('entry-15-15', 'entry', 15, 15),
+        ('entry-2-15', 'entry', 2, 15),
+        ('entry-15-2', 'entry', 15, 2),
+        ('working-cleanup-2-2', 'working-cleanup', 2, 2),
+        ('working-cleanup-15-15', 'working-cleanup', 15, 15),
+        ('working-cleanup-2-15', 'working-cleanup', 2, 15),
+        ('working-cleanup-15-2', 'working-cleanup', 15, 2),
+        ('published-unblocked-2-2', 'published-unblocked', 2, 2),
+        ('published-unblocked-15-15', 'published-unblocked', 15, 15),
+        ('published-unblocked-2-15', 'published-unblocked', 2, 15),
+        ('published-unblocked-15-2', 'published-unblocked', 15, 2),
+        ('published-masked-2-2', 'published-masked', 2, 2),
+        ('published-masked-15-15', 'published-masked', 15, 15),
+        ('published-masked-2-15', 'published-masked', 2, 15),
+        ('published-masked-15-2', 'published-masked', 15, 2),
+        ('caller-blocked-2', 'caller-blocked', 2, 0),
+        ('caller-blocked-15', 'caller-blocked', 15, 0),
+        ('caller-pending-2', 'caller-pending', 2, 0),
+        ('caller-pending-15', 'caller-pending', 15, 0),
+    )
+    require(tuple(CASES) == expected, 'case registry differs')
+    return expected
+
+
 def source_only_check(source):
     frozen_source(source)
     tree = ast.parse((Path(source) / PREFIX / 'run_cmp_input.py').read_text())
     owner = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'WrapperRun')
     require({'execute', 'interrupt', 'invoke', '_finish', 'normalize', '_signal_runtime', '_drain_python'}
             <= {node.name for node in owner.body if isinstance(node, ast.FunctionDef)}, 'owner methods missing')
-    require(len(CASES) == 21 and len({case[0] for case in CASES}) == 21, 'case registry differs')
+    validate_registry()
     return {'kind': 'source-only; actual 42 OS cases UNRUN', 'frozen': FROZEN, 'cases_per_mode': 21}
 
 
@@ -197,7 +226,7 @@ def fixture_data(root, boundary):
     for name in ('hdr', 'spv'):
         directory = source.parent / name / 'include'
         directory.mkdir(parents=True)
-        (directory / 'fixture.h').write_text('/* inert fixture */\n')
+        (directory / 'fixture.h').write_text('\n')
     library = root / 'oracle.data'
     library.write_bytes(b'INERT ORACLE DATA; NEVER EXECUTE')
     tool = root / 'tool'
@@ -459,7 +488,6 @@ def worker(args):
         processes.append(process)
         return process
 
-    # These adapters change data and command selection only. All owner code objects stay literal 82dc.
     wrapper.reviewed_contract = boundary.reviewed_contract = lambda *unused: contract
     tool.verify_tool = lambda *unused: None
     tool.verify_evidence = lambda *unused: {'patch_sha256': contract['compiler_patch_sha256'],
@@ -564,8 +592,10 @@ def worker(args):
 
 
 def validate_case(receipt, case, mode, pid, events):
+    require(case in validate_registry(), 'case registry differs')
     name, phase, first, second = case
-    require(receipt['case'] == name and receipt['mode'] == mode and receipt['pid'] == pid,
+    require(receipt.get('phase') == phase and receipt.get('first') == first and receipt.get('second') == second
+            and receipt['case'] == name and receipt['mode'] == mode and receipt['pid'] == pid,
             'case/mode/PID identity differs')
     require(receipt['source'] == SOURCE_COMMIT and receipt['tree'] == SOURCE_TREE, 'receipt source differs')
     require(receipt['status'] == 'PASS' and receipt['runtime'] == [3, 12, 3], 'incomplete case')
@@ -574,19 +604,45 @@ def validate_case(receipt, case, mode, pid, events):
         and receipt['post_handoff_io'] == [], 'false closure')
     require(receipt['adapters'] == list(ADAPTERS), 'adapter inventory differs')
     require(receipt['native_fds_before'] == receipt['native_fds_after'], 'native descriptor identity differs')
+    require(all(event.get('kind') in ('send', 'handler-return', 'ready-first', 'ready-second',
+                'caller-pending-ready', 'wait-enter', 'writer-ready', 'worker-closed') for event in events), 'unknown event')
     require(all(event['pid'] == pid or (phase == 'working-cleanup' and event['kind'] == 'writer-ready')
                 for event in events), 'foreign event identity')
     worker_events = [event for event in events if event['pid'] == pid and event['kind'] != 'send']
     require([event['seq'] for event in worker_events] == list(range(1, len(worker_events) + 1)), 'IPC missing/duplicate/reordered')
     require(worker_events and worker_events[-1]['kind'] == 'worker-closed', 'terminal closure event absent')
+    require(worker_events[-1].get('case') == name and worker_events[-1].get('owned_closed') is True,
+            'terminal closure event differs')
     sends = [event for event in events if event['kind'] == 'send']
+    require(all(event.get('pidfd_retained') is True for event in sends), 'send pidfd identity differs')
+    delivery = [event['kind'] for event in events if event['kind'] not in ('wait-enter', 'writer-ready')]
+    acks = [{key: value for key, value in event.items() if key not in ('kind', 'pid', 'seq')}
+            for event in events if event['kind'] == 'handler-return']
+    kernel = receipt['kernel']
     handlers = receipt['handlers']
     counts = receipt['counts']
+    waits = [event for event in events if event['kind'] == 'wait-enter']
+    writers = [item.get('pid') for item in receipt['custody']]
+    require(len(waits) == counts['popen'] == len(writers) == len(set(writers))
+            and {event.get('writer') for event in waits} == set(writers)
+            and all(isinstance(event.get('writer'), int) and event['writer'] > 0
+                    and event.get('phase') == 'working' for event in waits), 'wait observation differs')
+    if sends and not phase.startswith('caller-'):
+        require(all(events.index(event) < events.index(sends[0]) for event in waits), 'wait after cancellation')
     if phase == 'baseline':
+        require(not kernel, 'baseline kernel transcript differs')
+        require(delivery == ['worker-closed'], 'delivery event order differs')
+        require(not acks and not any(event['kind'] == 'writer-ready' for event in events), 'extra baseline event')
         require(not sends and not handlers and counts['popen'] == 3 and counts['invoke'] == 3
                 and counts['normalize'] == 2 and len(receipt['custody']) == 3
                 and all(item['custody_status'] == 'clean' for item in receipt['custody']), 'baseline counts differ')
     elif phase.startswith('caller-'):
+        require(not kernel, 'refusal kernel transcript differs')
+        expected_delivery = ['caller-pending-ready', 'send', 'worker-closed'] if phase == 'caller-pending' else ['worker-closed']
+        require(delivery == expected_delivery, 'delivery event order differs')
+        require(not acks and not any(event['kind'] in ('wait-enter', 'writer-ready') for event in events), 'extra refusal event')
+        if phase == 'caller-pending':
+            require(events[0].get('signal') == first, 'caller pending readiness differs')
         require(not handlers and not any(counts.values()) and receipt['refusal_before'] == receipt['refusal_after'],
                 'refusal consumed caller state or entered body')
         require(receipt['caller_deliveries'] == ([first] if phase == 'caller-pending' else []), 'caller completion differs')
@@ -597,29 +653,56 @@ def validate_case(receipt, case, mode, pid, events):
         require([event['signal'] for event in sends] == [first, second], 'two distinct sends required')
         require(receipt['caller_deliveries'] == [], 'owner leaked delivery to caller')
         require(len(handlers) == (1 if phase == 'published-masked' else 2), 'handler ACK count differs')
-        require([event['signal'] for event in handlers] == ([first] if phase == 'published-masked' else [first, second]),
+        require([event.get('signal') for event in handlers] == ([first] if phase == 'published-masked' else [first, second]),
                 'handler signal order differs')
         expected_phases = ['installing', 'installing'] if phase == 'entry' else (
             ['working', 'closing'] if phase == 'working-cleanup' else
             (['finishing'] if phase == 'published-masked' else ['finishing', 'finishing']))
-        require([event['phase'] for event in handlers] == expected_phases
-                and all(event['cancelled'] is True for event in handlers)
-                and len({event['owner'] for event in handlers}) == 1, 'handler owner/phase/latch differs')
-        first_ack = next(i for i, event in enumerate(events) if event['kind'] == 'handler-return')
-        send_positions = [i for i, event in enumerate(events) if event['kind'] == 'send']
-        require(send_positions[0] < first_ack < send_positions[1], 'coalesced or unacknowledged second delivery')
+        require([event.get('phase') for event in handlers] == expected_phases
+                and all(set(event) == {'signal', 'phase', 'cancelled', 'handler', 'owner'}
+                        and event.get('cancelled') is True and isinstance(event.get('owner'), int) and event['owner'] > 0
+                        for event in handlers)
+                and [event.get('handler') for event in handlers] == list(range(1, len(handlers) + 1))
+                and len({event['owner'] for event in handlers}) == 1, 'handler owner/phase/latch/ordinal differs')
+        require(acks == handlers, 'handler transcript differs')
+        expected_delivery = ([] if phase == 'working-cleanup' else ['ready-first']) + [
+            'send', 'handler-return', 'ready-second', 'send'] + (
+            [] if phase == 'published-masked' else ['handler-return']) + ['worker-closed']
+        require(delivery == expected_delivery, 'delivery event order differs')
         second_ready = next(event for event in events if event['kind'] == 'ready-second')
-        require(first not in second_ready['pending'] and second_ready['pid'] == pid, 'first still pending at second send')
+        require(not {2, 15} & set(second_ready['pending'])
+                and second_ready.get('phase') == ('closing' if phase == 'working-cleanup' else expected_phases[0])
+                and second_ready.get('masked') is (phase == 'published-masked'), 'second readiness differs')
+        if phase != 'working-cleanup':
+            ready = next(event for event in events if event['kind'] == 'ready-first')
+            require(ready.get('phase') == expected_phases[0] and ready.get('blocked') is (phase == 'entry'),
+                    'first readiness differs')
+            require(not any(event['kind'] == 'writer-ready' for event in events), 'extra writer readiness')
+        expected_kernel = (['entry-first'] if phase == 'entry' else []) + ['second-after-send'] + (
+            ['original-sigtimedwait'] if phase == 'published-masked' else [])
+        require([event.get('point') for event in kernel] == expected_kernel, 'kernel event order differs')
+        if phase == 'entry':
+            require({2, 15} & set(kernel[0]['pending']) == {first}, 'entry kernel pending differs')
+        after_send = kernel[1 if phase == 'entry' else 0]
+        require({2, 15} & set(after_send['pending']) == ({second} if phase == 'published-masked' else set()),
+                'second kernel pending differs')
         if phase == 'published-masked':
-            require(any(event['point'] == 'second-after-send' and second in event['pending'] for event in receipt['kernel'])
-                    and any(event['point'] == 'original-sigtimedwait' and event['consumed'] == second
-                            and second not in event['pending'] for event in receipt['kernel']), 'masked consume proof absent')
+            consumed = kernel[-1]
+            require(consumed.get('requested') == [second] and consumed.get('consumed') == second
+                    and not {2, 15} & set(consumed['pending']), 'kernel consume proof differs')
         expected = (0, 0) if phase == 'entry' else ((2, 1) if phase == 'working-cleanup' else (3, 2))
         require(counts['popen'] == expected[0] and counts['normalize'] == expected[1], 'unexpected work after cancellation')
         if phase == 'working-cleanup':
             writers = [event for event in events if event['kind'] == 'writer-ready']
             require(len(writers) == 1, 'working writer readiness absent/duplicate')
             writer = writers[0]
+            first_send = next(i for i, event in enumerate(events) if event['kind'] == 'send')
+            require(writer.get('primary') == writer['pid'] == writer.get('session')
+                    and writer.get('descendant') == writer.get('descendant_session')
+                    and events.index(writer) < first_send
+                    and any(event['kind'] == 'wait-enter' and event['writer'] == writer['pid']
+                            and event['phase'] == 'working' for event in events[:first_send]),
+                    'working writer delivery order differs')
             reaped = [item for custody in receipt['custody'] for item in custody['owned_descendants_reaped']]
             require(any(item['pid'] == writer['primary'] and item['session'] == writer['session'] for item in reaped)
                     and any(item['pid'] == writer['descendant'] and item['session'] == writer['descendant_session']
@@ -628,17 +711,18 @@ def validate_case(receipt, case, mode, pid, events):
 
 
 def validate_index(index):
+    expected = validate_registry()
     require(index['schema'] == 1 and index['source'] == SOURCE_COMMIT and index['tree'] == SOURCE_TREE, 'index identity differs')
     require(index['closed'] is True and index['controller_children'] == [] and index['streams_closed'] is True,
             'index closure unproven')
     require(index['mode'] in ('normal', 'optimized') and index['cases'], 'empty index cannot authorize upload')
     require(len({case['case'] for case in index['cases']}) == len(index['cases']), 'duplicate index case')
-    require(all(case['case'] in {item[0] for item in CASES} and case['terminal'] is True
+    require(all(case['case'] in {item[0] for item in expected} and case['terminal'] is True
                 and case['owned_closed'] is True and case['streams_closed'] is True and case['pidfd_closed'] is True
                 and case['forced_cleanup'] is False and isinstance(case['exit'], int) for case in index['cases']),
             'case custody not proved')
     if index['status'] == 'PASS':
-        require([case['case'] for case in index['cases']] == [case[0] for case in CASES]
+        require([case['case'] for case in index['cases']] == [case[0] for case in expected]
                 and all(case['exit'] == 0 and case['validated'] is True for case in index['cases']), 'PASS case coverage differs')
     else:
         require(index['status'] == 'FAIL', 'unknown index status')
@@ -719,7 +803,6 @@ def controller(args):
                         send(first)
                 process.wait(timeout=max(0.01, 25 - (time.monotonic() - launched_at)))
             except BaseException:
-                # Unknown descendants stay unproven. Never hash or upload this mode after forced cleanup.
                 if process is not None and held_fd is not None and process.poll() is None:
                     signal.pidfd_send_signal(held_fd, signal.SIGKILL)
                     process.wait(timeout=5)
@@ -786,6 +869,7 @@ def upload_gate(root):
 
 
 def main():
+    validate_registry()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source-checkout', type=Path)
     choices = parser.add_mutually_exclusive_group(required=True)

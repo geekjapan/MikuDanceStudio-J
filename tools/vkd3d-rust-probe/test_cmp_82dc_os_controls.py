@@ -53,10 +53,36 @@ if DENIED_KERNEL:
     raise RuntimeError('harness import attempted kernel operation')
 
 
+EXPECTED_CASES = (
+    ('baseline', 'baseline', 0, 0),
+    ('entry-2-2', 'entry', 2, 2),
+    ('entry-15-15', 'entry', 15, 15),
+    ('entry-2-15', 'entry', 2, 15),
+    ('entry-15-2', 'entry', 15, 2),
+    ('working-cleanup-2-2', 'working-cleanup', 2, 2),
+    ('working-cleanup-15-15', 'working-cleanup', 15, 15),
+    ('working-cleanup-2-15', 'working-cleanup', 2, 15),
+    ('working-cleanup-15-2', 'working-cleanup', 15, 2),
+    ('published-unblocked-2-2', 'published-unblocked', 2, 2),
+    ('published-unblocked-15-15', 'published-unblocked', 15, 15),
+    ('published-unblocked-2-15', 'published-unblocked', 2, 15),
+    ('published-unblocked-15-2', 'published-unblocked', 15, 2),
+    ('published-masked-2-2', 'published-masked', 2, 2),
+    ('published-masked-15-15', 'published-masked', 15, 15),
+    ('published-masked-2-15', 'published-masked', 2, 15),
+    ('published-masked-15-2', 'published-masked', 15, 2),
+    ('caller-blocked-2', 'caller-blocked', 2, 0),
+    ('caller-blocked-15', 'caller-blocked', 15, 0),
+    ('caller-pending-2', 'caller-pending', 2, 0),
+    ('caller-pending-15', 'caller-pending', 15, 0),
+)
+
+
 def legal_case(case, mode='normal', pid=100):
     name, phase, first, second = case
     counts = dict(normalize=0, invoke=0, execute_body=0, popen=0, retain=0, finish=0, close=0)
-    receipt = dict(case=name, mode=mode, pid=pid, source=controls.SOURCE_COMMIT, tree=controls.SOURCE_TREE,
+    receipt = dict(case=name, phase=phase, first=first, second=second, mode=mode, pid=pid,
+        source=controls.SOURCE_COMMIT, tree=controls.SOURCE_TREE,
         status='PASS', runtime=[3, 12, 3], children=[], writer_none=True, pidfds_closed=True,
         subprocesses_reaped=True, streams_closed=True, caller_restored=True, post_handoff_io=[],
         adapters=list(controls.ADAPTERS), handlers=[], kernel=[], counts=counts, custody=[],
@@ -65,36 +91,54 @@ def legal_case(case, mode='normal', pid=100):
     events = []
     def event(kind, **data):
         events.append(dict(kind=kind, pid=pid, seq=1 + sum(e['kind'] != 'send' and e['pid'] == pid for e in events), **data))
+    def send(sig):
+        events.append(dict(kind='send', pid=pid, signal=sig, pidfd_retained=True))
+    def handler(sig, owner_phase):
+        record = dict(signal=sig, phase=owner_phase, cancelled=True, owner=7, handler=len(receipt['handlers']) + 1)
+        receipt['handlers'].append(record)
+        event('handler-return', **record)
     if phase == 'baseline':
         counts.update(popen=3, invoke=3, normalize=2)
-        receipt['custody'] = [dict(custody_status='clean') for _ in range(3)]
+        receipt['custody'] = [dict(pid=writer, custody_status='clean') for writer in (200, 201, 202)]
+        for writer in (200, 201, 202):
+            event('wait-enter', writer=writer, phase='working')
     elif phase.startswith('caller-'):
         pending = phase == 'caller-pending'
         state = dict(mask=[first, 10], pending=[first] if pending else [], handlers={'2': 1, '15': 2})
         receipt.update(refusal_before=state, refusal_after=copy.deepcopy(state), caller_deliveries=[first] if pending else [])
         if pending:
-            events.append(dict(kind='send', pid=pid, signal=first))
+            event('caller-pending-ready', signal=first)
+            send(first)
     else:
         expected = (0, 0) if phase == 'entry' else ((2, 1) if phase == 'working-cleanup' else (3, 2))
         counts.update(popen=expected[0], normalize=expected[1])
-        events.append(dict(kind='send', pid=pid, signal=first))
-        event('handler-return', signal=first)
         first_phase = 'installing' if phase == 'entry' else ('working' if phase == 'working-cleanup' else 'finishing')
-        receipt['handlers'].append(dict(signal=first, phase=first_phase, cancelled=True, owner=7))
-        event('ready-second', pending=[])
-        events.append(dict(kind='send', pid=pid, signal=second))
-        if phase == 'published-masked':
-            receipt['kernel'] = [dict(point='second-after-send', pending=[second]),
-                dict(point='original-sigtimedwait', requested=[second], consumed=second, pending=[])]
-        else:
-            event('handler-return', signal=second)
-            second_phase = 'installing' if phase == 'entry' else ('closing' if phase == 'working-cleanup' else 'finishing')
-            receipt['handlers'].append(dict(signal=second, phase=second_phase, cancelled=True, owner=7))
         if phase == 'working-cleanup':
-            events.insert(0, dict(kind='writer-ready', seq=1, pid=200, primary=200, descendant=201,
-                                 session=200, descendant_session=201))
-            receipt['custody'] = [dict(owned_descendants_reaped=[dict(pid=200, session=200), dict(pid=201, session=201)])]
-    event('worker-closed')
+            event('wait-enter', writer=200, phase='working')
+            event('wait-enter', writer=201, phase='working')
+            events.append(dict(kind='writer-ready', seq=1, pid=201, primary=201, descendant=202,
+                               session=201, descendant_session=202))
+            receipt['custody'] = [dict(pid=200, owned_descendants_reaped=[]),
+                dict(pid=201, owned_descendants_reaped=[dict(pid=201, session=201), dict(pid=202, session=202)])]
+        else:
+            if phase != 'entry':
+                for writer in (200, 201, 202):
+                    event('wait-enter', writer=writer, phase='working')
+                    receipt['custody'].append(dict(pid=writer, custody_status='clean'))
+            event('ready-first', phase=first_phase, blocked=phase == 'entry')
+        send(first)
+        handler(first, first_phase)
+        ready_phase = 'closing' if phase == 'working-cleanup' else first_phase
+        event('ready-second', phase=ready_phase, masked=phase == 'published-masked', pending=[])
+        send(second)
+        if phase == 'entry':
+            receipt['kernel'].append(dict(point='entry-first', pending=[first]))
+        receipt['kernel'].append(dict(point='second-after-send', pending=[second] if phase == 'published-masked' else []))
+        if phase == 'published-masked':
+            receipt['kernel'].append(dict(point='original-sigtimedwait', requested=[second], consumed=second, pending=[]))
+        else:
+            handler(second, ready_phase)
+    event('worker-closed', case=name, owned_closed=True)
     return receipt, events
 
 
@@ -102,7 +146,7 @@ def legal_index():
     return dict(schema=1, source=controls.SOURCE_COMMIT, tree=controls.SOURCE_TREE, mode='normal', status='PASS',
         closed=True, controller_children=[], streams_closed=True, cases=[dict(case=case[0], pid=100 + i,
         terminal=True, exit=0, owned_closed=True, streams_closed=True, pidfd_closed=True, forced_cleanup=False,
-        validated=True) for i, case in enumerate(controls.CASES)])
+        validated=True) for i, case in enumerate(EXPECTED_CASES)])
 
 
 class SourceDataTests(unittest.TestCase):
@@ -110,16 +154,16 @@ class SourceDataTests(unittest.TestCase):
     def setUpClass(cls):
         controls.source_only_check(SOURCE)
         for mode in ('normal', 'optimized'):
-            for case in controls.CASES:
+            for case in EXPECTED_CASES:
                 receipt, events = legal_case(case, mode)
                 controls.validate_case(receipt, case, mode, 100, events)
         controls.validate_index(legal_index())
 
     def test_source_and_complete_legal_receipts_first(self):
         controls.source_only_check(SOURCE)
-        self.assertEqual(len(controls.CASES), 21)
+        self.assertEqual(tuple(controls.CASES), EXPECTED_CASES)
         for mode in ('normal', 'optimized'):
-            for case in controls.CASES:
+            for case in EXPECTED_CASES:
                 receipt, events = legal_case(case, mode)
                 self.assertTrue(controls.validate_case(receipt, case, mode, 100, events))
         self.assertTrue(controls.validate_index(legal_index()))
@@ -175,9 +219,141 @@ class SourceDataTests(unittest.TestCase):
         case = next(case for case in controls.CASES if case[1] == 'published-masked')
         receipt, events = legal_case(case)
         controls.validate_case(receipt, case, 'normal', 100, events)
-        receipt['kernel'][1]['consumed'] = None
+        receipt['kernel'][-1]['consumed'] = None
         with self.assertRaises(ValueError):
             controls.validate_case(receipt, case, 'normal', 100, events)
+
+    def test_complete_ack_transcript_and_delivery_order(self):
+        for case in EXPECTED_CASES[1:17]:
+            legal, ordered = legal_case(case)
+            controls.validate_case(legal, case, 'normal', 100, ordered)
+            def second_ack(r, e):
+                return next(event for event in reversed(e) if event['kind'] == 'handler-return')
+            def move_ready(r, e):
+                ready = next(event for event in e if event['kind'] == 'ready-second')
+                e.remove(ready)
+                e.insert(next(i for i, event in enumerate(e) if event['kind'] == 'handler-return'), ready)
+            mutations = [
+                ('unknown event', lambda r, e: second_ack(r, e).update(kind='unknown-ack')),
+                ('handler transcript differs', lambda r, e: e.remove(second_ack(r, e))),
+                ('handler transcript differs', lambda r, e: e.insert(e.index(second_ack(r, e)), dict(second_ack(r, e)))),
+                ('handler transcript differs', lambda r, e: second_ack(r, e).update(owner=8)),
+                ('handler transcript differs', lambda r, e: second_ack(r, e).update(signal=10)),
+                ('handler transcript differs', lambda r, e: second_ack(r, e).update(phase='wrong')),
+                ('handler transcript differs', lambda r, e: second_ack(r, e).update(handler=9)),
+                ('handler transcript differs', lambda r, e: second_ack(r, e).pop('signal')),
+                ('handler transcript differs', lambda r, e: second_ack(r, e).pop('owner')),
+                ('handler transcript differs', lambda r, e: second_ack(r, e).pop('phase')),
+                ('handler transcript differs', lambda r, e: second_ack(r, e).pop('handler')),
+                ('handler transcript differs' if case[1] == 'published-masked' else 'handler owner/phase/latch/ordinal differs',
+                 lambda r, e: r['handlers'][-1].update(owner=8)),
+                ('handler owner/phase/latch/ordinal differs', lambda r, e: r['handlers'][-1].update(phase='wrong')),
+                ('handler owner/phase/latch/ordinal differs', lambda r, e: r['handlers'][-1].update(handler=9)),
+                ('handler signal order differs', lambda r, e: r['handlers'][-1].update(signal=10)),
+                ('delivery event order differs', move_ready),
+                ('delivery event order differs', lambda r, e: e.insert(0, e.pop(next(i for i, v in enumerate(e) if v['kind'] == 'ready-second')))),
+                ('delivery event order differs', lambda r, e: e.insert(e.index(next(v for v in e if v['kind'] == 'ready-second')), dict(next(v for v in e if v['kind'] == 'ready-second')))),
+                ('second readiness differs', lambda r, e: next(v for v in e if v['kind'] == 'ready-second').update(pending=[case[2]])),
+                ('second readiness differs', lambda r, e: next(v for v in e if v['kind'] == 'ready-second').update(phase='working')),
+                ('second readiness differs', lambda r, e: next(v for v in e if v['kind'] == 'ready-second').update(masked=case[1] != 'published-masked')),
+                ('case/mode/PID identity differs', lambda r, e: r.update(phase='baseline')),
+                ('two distinct sends required', lambda r, e: e.insert(e.index(next(v for v in e if v['kind'] == 'send')), dict(kind='send', signal=case[2], pid=100, pidfd_retained=True))),
+            ]
+            for error, mutate in mutations:
+                receipt, events = copy.deepcopy(legal), copy.deepcopy(ordered)
+                mutate(receipt, events)
+                serial = 0
+                for event in events:
+                    if event['pid'] == 100 and event['kind'] != 'send':
+                        serial += 1
+                        event['seq'] = serial
+                with self.subTest(case=case[0], error=error), self.assertRaisesRegex(ValueError, error):
+                    controls.validate_case(receipt, case, 'normal', 100, events)
+
+    def test_phase_specific_kernel_transcripts(self):
+        for case in EXPECTED_CASES:
+            legal, ordered = legal_case(case)
+            controls.validate_case(legal, case, 'normal', 100, ordered)
+            mutations = [lambda r: r['kernel'].append(dict(point='unknown', pending=[]))]
+            if legal['kernel']:
+                mutations += [lambda r: r['kernel'].pop(),
+                              lambda r: r['kernel'].append(copy.deepcopy(r['kernel'][-1]))]
+            if case[1] == 'entry':
+                mutations += [lambda r: r['kernel'].reverse(),
+                              lambda r: r['kernel'][0].update(pending=[])]
+            if case[1] == 'published-masked':
+                mutations += [lambda r: r['kernel'].reverse(),
+                              lambda r: r['kernel'][0].update(pending=[]),
+                              lambda r: r['kernel'][1].update(requested=[10]),
+                              lambda r: r['kernel'][1].update(consumed=None),
+                              lambda r: r['kernel'][1].update(pending=[case[3]])]
+            elif legal['kernel']:
+                mutations += [lambda r: r['kernel'][-1].update(pending=[case[3]])]
+            for index, mutate in enumerate(mutations):
+                receipt = copy.deepcopy(legal)
+                mutate(receipt)
+                with self.subTest(case=case[0], mutation=index), self.assertRaisesRegex(ValueError, 'kernel'):
+                    controls.validate_case(receipt, case, 'normal', 100, ordered)
+        case = EXPECTED_CASES[5]
+        receipt, events = legal_case(case)
+        writer = next(event for event in events if event['kind'] == 'writer-ready')
+        events.remove(writer)
+        events.insert(1, writer)
+        self.assertTrue(controls.validate_case(receipt, case, 'normal', 100, events))
+        for case in EXPECTED_CASES[1:17]:
+            receipt, events = legal_case(case)
+            next(event for event in events if event['kind'] == 'ready-second')['pending'] = [10]
+            receipt['kernel'][-1]['pending'] = [10]
+            self.assertTrue(controls.validate_case(receipt, case, 'normal', 100, events))
+        for case in (EXPECTED_CASES[0], EXPECTED_CASES[5], EXPECTED_CASES[9]):
+            legal, ordered = legal_case(case)
+            def missing(r, e):
+                e.remove(next(event for event in e if event['kind'] == 'wait-enter'))
+            def extra(r, e):
+                e.insert(0, dict(kind='wait-enter', pid=100, writer=200, phase='working'))
+            def foreign(r, e):
+                next(event for event in e if event['kind'] == 'wait-enter')['writer'] = 999
+            for mutate in (missing, extra, foreign):
+                receipt, events = copy.deepcopy(legal), copy.deepcopy(ordered)
+                mutate(receipt, events)
+                serial = 0
+                for event in events:
+                    if event['pid'] == 100 and event['kind'] != 'send':
+                        serial += 1
+                        event['seq'] = serial
+                with self.assertRaisesRegex(ValueError, 'wait observation differs'):
+                    controls.validate_case(receipt, case, 'normal', 100, events)
+
+    def test_independent_exact_registry_and_index(self):
+        self.assertEqual(tuple(controls.CASES), EXPECTED_CASES)
+        controls.source_only_check(SOURCE)
+        controls.validate_index(legal_index())
+        mutations = [lambda rows: rows.pop(), lambda rows: rows.append(rows[0]),
+            lambda rows: rows.__setitem__(4, ('entry-15-10', 'entry', 15, 10)),
+            lambda rows: rows.__setitem__(4, ('entry-15-2', 'entry', 15, 10)),
+            lambda rows: rows.__setitem__(4, ('foreign', 'entry', 15, 2)),
+            lambda rows: rows.__setitem__(4, ('entry-15-2', 'foreign', 15, 2)),
+            lambda rows: rows.__setitem__(4, rows[3]), lambda rows: rows.reverse()]
+        original = controls.CASES
+        for index, mutate in enumerate(mutations):
+            candidate = list(EXPECTED_CASES)
+            mutate(candidate)
+            controls.CASES = candidate
+            try:
+                with self.subTest(mutation=index), self.assertRaisesRegex(ValueError, 'case registry differs'):
+                    controls.source_only_check(SOURCE)
+                followed = legal_index()
+                followed['cases'] = [dict(followed['cases'][0], case=case[0]) for case in candidate]
+                with self.subTest(index_mutation=index), self.assertRaisesRegex(ValueError, 'case registry differs'):
+                    controls.validate_index(followed)
+            finally:
+                controls.CASES = original
+        for mutate in (lambda rows: rows[4].update(case='entry-15-10'),
+                       lambda rows: rows[4].update(case='entry-2-15'), lambda rows: rows.reverse()):
+            candidate = legal_index()
+            mutate(candidate['cases'])
+            with self.assertRaises(ValueError):
+                controls.validate_index(candidate)
 
     def test_no_import_time_probes_and_no_owner_patching(self):
         tree = ast.parse((HERE / 'check_cmp_82dc_os_controls.py').read_text())

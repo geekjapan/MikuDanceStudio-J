@@ -398,7 +398,8 @@ def validate_worker_error(event, case, pid, seq):
 
 
 def controller_context(mode, case, pid, events, error):
-    last = {key: events[-1].get(key) for key in ('kind', 'seq', 'pid')} if events else None
+    received = next((event for event in reversed(events) if event['kind'] != 'send'), None)
+    last = {key: received.get(key) for key in ('kind', 'seq', 'pid')} if received is not None else None
     return dict(mode=mode, case=case, pid=pid, last_received=last,
                 error_type=type(error).__name__, message=str(error)[:400],
                 worker_stage='unavailable unless received in worker-error')

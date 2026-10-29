@@ -576,6 +576,16 @@ class SourceDataTests(unittest.TestCase):
         context = controls.controller_context('optimized', 'entry-2-2', 100, [event], failure)
         self.assertEqual(context['last_received'], dict(kind='wait-enter', seq=3, pid=100))
         self.assertEqual(context['message'], 'IPC closed before terminal message')
+        send = dict(kind='send', signal=15, pid=100, pidfd_retained=True)
+        for history in ([send], [send, dict(send)]):
+            context = controls.controller_context('normal', 'baseline', 100, history, failure)
+            self.assertIsNone(context['last_received'])
+        for kind in ('ready-first', 'ready-second'):
+            received = dict(kind=kind, seq=7, pid=101, phase='finishing')
+            for outgoing in ([send], [send, dict(send)]):
+                for history in ([received] + outgoing, [send, event, send, received] + outgoing):
+                    context = controls.controller_context('optimized', 'entry-2-15', 101, history, failure)
+                    self.assertEqual(context['last_received'], dict(kind=kind, seq=7, pid=101))
         source = ast.parse((HERE / 'run_cmp_input.py').read_text())
         owner = next(node for node in source.body if isinstance(node, ast.ClassDef) and node.name == 'WrapperRun')
         methods = {node.name: node for node in owner.body if isinstance(node, ast.FunctionDef)}

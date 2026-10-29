@@ -6288,3 +6288,45 @@ diff --git a/tests/unit/structs/src/variable_offsetof.c b/tests/unit/structs/src
 +    }
 +    return 0;
 +}
+diff --git a/c2rust-transpile/src/rust_ast/mod.rs b/c2rust-transpile/src/rust_ast/mod.rs
+--- a/c2rust-transpile/src/rust_ast/mod.rs
++++ b/c2rust-transpile/src/rust_ast/mod.rs
+@@ -7,21 +7,25 @@
+ use proc_macro2::Span;
+ use syn::{punctuated::Punctuated, Expr, Pat};
+ 
+-use std::sync::atomic::{AtomicU32, Ordering};
+-
+-static SPAN_LIMIT: AtomicU32 = AtomicU32::new(0);
++use std::cell::Cell;
++
++thread_local! {
++    static SPAN_LIMIT: Cell<u32> = const { Cell::new(0) };
++}
+ 
+ fn raise_span_limit(_new_limit: u32) {
+-    let limit = SPAN_LIMIT.load(Ordering::Relaxed);
+-    let new_limit = 0x2000000;
+-    if new_limit >= limit {
+-        let delta = new_limit - limit;
+-        let s = str::repeat("        ", (delta as usize + 7) / 8);
+-        use std::str::FromStr;
+-        /* used only for its side-effect of expanding the source map */
+-        let _ = proc_macro2::TokenStream::from_str(&s);
+-        SPAN_LIMIT.store(new_limit, Ordering::Relaxed);
+-    }
++    SPAN_LIMIT.with(|span_limit| {
++        let limit = span_limit.get();
++        let new_limit = 0x2000000;
++        if new_limit >= limit {
++            let delta = new_limit - limit;
++            let s = str::repeat("        ", (delta as usize + 7) / 8);
++            use std::str::FromStr;
++            /* used only for its side-effect of expanding the source map */
++            let _ = proc_macro2::TokenStream::from_str(&s);
++            span_limit.set(new_limit);
++        }
++    });
+ }
+ 
+ /// Make a new span at `pos`

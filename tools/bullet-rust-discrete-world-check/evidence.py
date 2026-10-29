@@ -1,3 +1,4 @@
+from collections import Counter
 from dataclasses import dataclass
 import hashlib
 import math
@@ -161,12 +162,87 @@ def macro_source():
     return (text+'printf("pointer_bits=%zu\\nscalar_bytes=%zu\\n",sizeof(void*)*8,sizeof(btScalar));}\n').encode()
 
 
-def include_paths(raw, system):
+def include_occurrences(stdout, stderr, system):
     found = []
-    for line in raw.decode(errors='replace').splitlines():
-        match = re.match(r'^Note: including file:\s+(.+)$',line) if system == 'Windows' else re.match(r'^\.+ (.+)$',line)
-        if match: found.append(match[1])
+    for stream, raw in [('stdout',stdout),('stderr',stderr)]:
+        ordinal = 0
+        for line in raw.decode().splitlines():
+            match = re.match(r'^Note: including file:\s+(.+)$',line) if system == 'Windows' else re.match(r'^\.+ (.+)$',line)
+            if match:
+                found.append({'stream':stream,'ordinal':ordinal,'raw':match[1]})
+                ordinal += 1
     return found
+
+
+def include_projection(bindings, occurrences, system):
+    require(type(bindings) is list and len(bindings)==len(occurrences) and bindings, 'complete include occurrences')
+    path = PureWindowsPath if system=='Windows' else PurePosixPath
+    manifest, aliases = {}, {}
+    for binding, occurrence in zip(bindings,occurrences):
+        fields(binding,['stream','ordinal','raw','target','sha256'],'include binding')
+        require(type(binding['ordinal']) is int and {key:binding[key] for key in occurrence}==occurrence, 'exact include stream/ordinal/raw ownership')
+        target = binding['target']; raw = binding['raw']; value = identity(binding['sha256'])
+        require(type(raw) is str and 0<len(raw)<=MAX_PATH and '\x00' not in raw, 'include raw spelling')
+        require(type(target) is str and path(target).is_absolute() and '..' not in path(target).parts and len(target)<=MAX_PATH, 'resolved include absolute target')
+        require(target==(ntpath.normcase(str(path(target))) if system=='Windows' else str(path(target))), 'canonical resolved include target')
+        require(target not in manifest or manifest[target]==value, 'consistent include target bytes')
+        require(raw not in aliases or aliases[raw]==(target,value), 'consistent include alias binding')
+        manifest[target]=value; aliases[raw]=(target,value)
+    return manifest, aliases
+
+
+def include_evidence(data, raw, schedule, context, names):
+    system=context['system']; win=system=='Windows'
+    path=PureWindowsPath if win else PurePosixPath
+    root,out=path(context['root']),path(context['out'])
+    def canonical(value):
+        return ntpath.normcase(str(path(value))) if win else str(path(value))
+    def source(value):
+        target=path(value)
+        for base,prefix in [(out/'generated','generated/'),(root,'source/')]:
+            if target.is_relative_to(base):return prefix+target.relative_to(base).as_posix()
+        return None
+    retained={canonical(name):name for name in names}
+    dependencies, aliases = {}, {}
+    for label,argv,cwd,input_name,produced,compile in schedule:
+        if not compile:continue
+        receipt=fields(data(label+'-include-bindings.json'),['schema','label','cwd','pre','post'],'include receipt')
+        require(type(receipt['schema']) is int and receipt['schema']==1 and receipt['label']==label and receipt['cwd']==cwd, 'include receipt schema/label/cwd')
+        projections=[]
+        for stage,key,suffix in [(label+'-discovery','pre','-includes-pre.json'),(label,'post','-includes.json')]:
+            occurrences=include_occurrences(raw(stage+'.stdout'),raw(stage+'.stderr'),system)
+            manifest,bound=include_projection(receipt[key],occurrences,system)
+            require(data(label+suffix)==manifest, 'canonical include binding projection '+stage)
+            projections.append(bound)
+            for binding in receipt[key]:
+                target,value=binding['target'],binding['sha256']
+                content=raw('include-bytes/'+value)
+                require(digest(content)==value, 'retained include content '+label)
+                source_name=source(target)
+                if source_name is not None:
+                    match=retained.get(canonical(source_name))
+                    require(match is not None and raw(match)==content, 'source/generated include binding '+target)
+                raw_source=source(binding['raw']) if path(binding['raw']).is_absolute() else None
+                if raw_source is not None and canonical(raw_source) in retained:
+                    require(canonical(binding['raw'])==target and raw(retained[canonical(raw_source)])==content, 'raw source/generated include ownership')
+                require(target not in dependencies or dependencies[target]==value, 'consistent include dependency identity')
+                dependencies[target]=value
+            for spelling,binding in bound.items():
+                alias=(cwd,spelling)
+                require(alias not in aliases or aliases[alias]==binding, 'consistent temporal include alias')
+                aliases[alias]=binding
+        require(projections[0]==projections[1], 'discovery pre-use and measured include aliases preserved '+label)
+    ending=fields(data('native-include-bindings-end.json'),['schema','bindings'],'include end receipt')
+    require(type(ending['schema']) is int and ending['schema']==1 and type(ending['bindings']) is list, 'include end schema')
+    actual={}
+    for entry in ending['bindings']:
+        fields(entry,['cwd','raw','target','sha256'],'include end binding')
+        require(all(type(entry[key]) is str for key in entry), 'include end scalar fields')
+        alias=(entry['cwd'],entry['raw'])
+        require(alias not in actual, 'unique include end alias')
+        actual[alias]=(entry['target'],identity(entry['sha256']))
+    require(actual==aliases, 'complete original alias end resolution/bytes')
+    require(data('native-includes-end.json')==dependencies, 'complete native include end union')
 
 
 def source_attributes(name, sources):
@@ -194,7 +270,13 @@ def worktree_ending(raw):
     return 'lf' if b'\n' in raw else 'none'
 
 
-def archive_members(raw):
+@dataclass(frozen=True)
+class _Archive:
+    payloads: dict
+    specials: tuple
+
+
+def decode_archive(raw):
     require(raw.startswith(b'!<arch>\n'), 'actual ar/COFF archive container')
     offset, names, result, specials = 8, b'', {}, []
     symbol_tables, member_offsets = [], set()
@@ -216,6 +298,7 @@ def archive_members(raw):
                 name = body[:length].rstrip(b'\x00').decode(); body = body[length:]
                 if name.startswith('__.SYMDEF'):
                     require(name in {'__.SYMDEF','__.SYMDEF SORTED','__.SYMDEF_64','__.SYMDEF_64 SORTED'}, 'known archive symbol table')
+                    require(not any(value.startswith('__.SYMDEF') for value in specials), 'archive special member multiplicity')
                     symbol_tables.append((name,body));specials.append(name)
                     if size%2:require(raw[start+size:start+size+1]==b'\n', 'archive alignment byte')
                     offset = start+size+size%2; continue
@@ -223,7 +306,9 @@ def archive_members(raw):
                 index = int(name[1:]); require(index < len(names) and (index==0 or names[index-1] in (0,10)), 'archive long name offset')
                 tail = names[index:]; match = re.search(b'\x00|/\n', tail)
                 require(match is not None, 'terminated archive long name'); name = tail[:match.start()].decode()
-            else: name = name.rstrip('/')
+            else:
+                require(not name.startswith('/'), 'known archive table/name encoding')
+                name = name.rstrip('/')
             require(name and name.casefold() not in {key.casefold() for key in result}, 'unique archive payload member')
             result[name] = body;member_offsets.add(offset)
         if size%2: require(raw[start+size:start+size+1] == b'\n', 'archive alignment byte')
@@ -231,7 +316,16 @@ def archive_members(raw):
     require(offset==len(raw), 'complete archive container')
     for i,(name,body) in enumerate(symbol_tables):
         require(valid_symbol_table(name,body,member_offsets,second=i==1 and name=='/'), 'archive symbol table payload/offsets')
-    return result
+    return _Archive(result,tuple(specials))
+
+
+def archive_listing(archive, listing, system):
+    require(type(listing) is list and all(type(name) is str and name for name in listing), 'archive listing names')
+    actual=Counter(listing); payloads=Counter(archive.payloads.keys())
+    require(all(actual[name]==1 for name in payloads), 'actual archive listing payload membership')
+    extra=actual-payloads
+    allowed=Counter(name for name in archive.specials if system=='Darwin' and name.startswith('__.SYMDEF'))
+    require(not (extra-allowed), 'actual archive listing special membership')
 
 
 def valid_symbol_table(name, raw, offsets, second=False):
@@ -312,8 +406,8 @@ def command_schedule(context, sources, policy_name, crt_libraries, *, replay=Fal
     add('helpers-optimized',[tools['python'],'-B','-O',here/'test_check.py','-v'])
     add('git-head',[tools['git'],'rev-parse','HEAD'])
     add('git-status',[tools['git'],'status','--porcelain=v1'])
-    add('git-transport',[tools['git'],'ls-files','--eol'])
-    add('git-attributes',[tools['git'],'check-attr','--stdin','text','eol'],'attributes')
+    add('git-transport',[tools['git'],'ls-files','--eol'],cwd=root)
+    add('git-attributes',[tools['git'],'check-attr','--stdin','text','eol'],'attributes',cwd=root)
     add('rust-compiler-path',[tools['rustup'],'which','--toolchain','1.95.0','rustc'])
     add('rust-version',[tools['rustup'],'run','1.95.0','rustc','-Vv'])
     crt = out/('mds_crtmath.lib' if win else 'libmds_crtmath.a')
@@ -369,7 +463,7 @@ def command_schedule(context, sources, policy_name, crt_libraries, *, replay=Fal
 
 def replay_report(report, head, inputs, cases):
     fields(report,['schema','status','base','policy','native','compiled_controls','public_world','scope','host','head','checkpoints','cases','controlled','ordinary_unbound','limits','producer_report_sha256'],'replay report')
-    require(type(report['schema']) is int and report['schema']==5 and report['status']=='CONTROLLED_PASS' and report['base']==BASE and report['head']==head, 'completed distinct replay schema')
+    require(type(report['schema']) is int and report['schema']==7 and report['status']=='CONTROLLED_PASS' and report['base']==BASE and report['head']==head, 'completed distinct replay schema')
     require(report['policy']=='mmd-win64-sse' and report['native']=='WINDOWS_SOURCE_REPLAY' and identity(report['producer_report_sha256']), 'admitted native Windows producer digest')
     require(type(report['compiled_controls']) is int and report['compiled_controls']==len(MUTANTS) and type(report['cases']) is int and report['cases']==len(cases) and type(report['checkpoints']) is int and report['checkpoints']==len(inputs.splitlines()), 'complete current-Rust replay corpus and controls')
     require(type(report['controlled']) is dict and report['controlled']=={mode:len(inputs.splitlines()) for mode in MODES} and all(type(value) is int for value in report['controlled'].values()), 'complete current-Rust replay modes')
@@ -453,7 +547,7 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
     manifest = data('artifact-manifest.json')
     inventory(manifest,{name:digest(files[name]) for name in names-{'artifact-manifest.json'}})
     report = fields(data('report.json'), ['schema','status','base','policy','native','compiled_controls','public_world','scope','host','head','compiler','checkpoints','cases','controlled','ordinary_unbound','limits'], 'native report')
-    require(type(report['schema']) is int and report['schema']==4 and report['status']=='CONTROLLED_PASS' and report['base']==BASE, 'completed native schema')
+    require(type(report['schema']) is int and report['schema']==6 and report['status']=='CONTROLLED_PASS' and report['base']==BASE, 'completed native schema')
     require(report['head']==expected_head and re.fullmatch('[0-9a-f]{40}',expected_head), 'current producer HEAD')
     host = fields(report['host'],['system','machine','image'],'host')
     require(type(host['system']) is str and type(host['machine']) is str and (host['image'] is None or type(host['image']) is str), 'host field types')
@@ -478,7 +572,7 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
     require(data('generated-start.json')==generation and data('generated-end.json')==generation, 'generated start/end exact source closure')
     for path,value in generation.items(): require(digest(raw('generated/'+path))==value, 'generated physical source '+path)
     context = fields(data('producer.json'),['schema','system','root','out','tools','archive_names'],'producer')
-    require(type(context['schema']) is int and context['schema']==2 and context['system']==host['system'], 'producer schema and host')
+    require(type(context['schema']) is int and context['schema']==3 and context['system']==host['system'], 'producer schema and host')
     system = context['system']; win = system=='Windows'; path_type = PureWindowsPath if win else PurePosixPath
     for value in [context['root'],context['out']]:
         require(type(value) is str and path_type(value).is_absolute() and len(value)<=MAX_PATH and '..' not in path_type(value).parts, 'producer absolute root')
@@ -515,14 +609,13 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
     archive = 'BulletWorld.lib' if win else 'libBulletWorld.a'
     bindings = fields(data('archive-bindings.json'),['members','archive_sha256','actual_names'],'archive bindings')
     require(type(bindings['members']) is list and len(bindings['members'])==len(sources), 'complete archive source bindings')
-    members = archive_members(raw(archive)); require(bindings['archive_sha256']==digest(raw(archive)), 'raw archive identity')
+    parsed_archive = decode_archive(raw(archive)); members = parsed_archive.payloads; require(bindings['archive_sha256']==digest(raw(archive)), 'raw archive identity')
     require(type(context['archive_names']) is dict and context['archive_names']==bindings['actual_names'], 'actual member names binding')
     objects = [path_type(source).stem+ext for source in sources]
     require(set(context['archive_names'])==set(objects) and set(members)==set(context['archive_names'].values()), 'exact archive payload member membership')
     listing = raw('archive-list.stdout').decode().splitlines()
     actual_listing=[line.strip() for line in listing if line.strip()]
-    require(len(actual_listing)==len(objects) and set(actual_listing)==set(context['archive_names'].values()), 'actual archive listing membership')
-    require(actual_listing==list(members), 'raw archive payload order equals actual listing')
+    archive_listing(parsed_archive,actual_listing,system)
     for obj,member in context['archive_names'].items():
         require(type(member) is str and (member==obj or win and path_type(member)==out/obj), 'archive member producer path identity')
     for source,obj,entry in zip(sources,objects,bindings['members']):
@@ -601,35 +694,7 @@ def admit_capture(files, *, expected_head, canonical_sources, inputs, cases, exp
         attributes_for_source=source_attributes(name,canonical_sources)
         if attributes_for_source['eol']=='lf' or attributes_for_source['text']=='unset':
             require(physical==canonical_sources[name], 'explicit source attribute physical transport '+name)
-    def producer_path(value):
-        value = str(path_type(value))
-        return ntpath.normcase(ntpath.normpath(value)) if win else str(PurePosixPath(value))
-    def include_source(value):
-        target = path_type(value)
-        for base,prefix in [(out/'generated','generated/'),(root,'source/')]:
-            # PureWindowsPath performs case-insensitive component-aware comparison.
-            if target.is_relative_to(base): return prefix+target.relative_to(base).as_posix()
-        return None
-    retained_paths = {producer_path(name):name for name in names}
-    dependencies = {}
-    for label,argv,cwd,input_name,produced,compile in schedule:
-        if not compile: continue
-        before_include = data(label+'-includes-pre.json'); after_include = data(label+'-includes.json')
-        require(type(before_include) is dict and before_include and before_include==after_include, 'discovered pre-use/measured include equality '+label)
-        for stage in [label+'-discovery',label]:
-            included = include_paths(raw(stage+'.stdout')+raw(stage+'.stderr'),system)
-            require({producer_path(value) for value in included}==set(before_include), 'actual compiler include membership '+stage)
-        for name,value in before_include.items():
-            require(path_type(name).is_absolute() and len(name)<=MAX_PATH, 'producer include absolute identity')
-            content = raw('include-bytes/'+identity(value))
-            require(digest(content)==value, 'retained include content '+label)
-            source_name = include_source(name)
-            if source_name is not None:
-                match = retained_paths.get(producer_path(source_name))
-                require(match is not None and raw(match)==content, 'source/generated include binding '+name)
-            require(name not in dependencies or dependencies[name]==value, 'consistent include dependency identity')
-            dependencies[name] = value
-    require(data('native-includes-end.json')==dependencies, 'complete native include end union')
+    include_evidence(data,raw,schedule,context,names)
     for label,receipt in [('expanded-btDbvt','policy-btDbvt.json'),('expanded-btDbvtBroadphase','policy-btDbvtBroadphase.json'),('native-consumer-expanded','native-consumer-policy.json'),('observed-consumer-expanded','observed-consumer-policy.json')]:
         observed_policy = policy(raw(label+'.stdout').decode())
         require(data(receipt)==observed_policy and observed_policy['policy']==expected_policy, 'actual expanded policy '+label)

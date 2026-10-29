@@ -11,7 +11,7 @@ import sys
 import time
 
 from cases import corpus
-from evidence import (Capture, ENVIRONMENT, LIMITS, admit_capture, digest, include_paths, inventory,
+from evidence import (Capture, ENVIRONMENT, LIMITS, admit_capture, digest, include_occurrences, include_projection, decode_archive, archive_listing, inventory,
                       macro_source, native_flags, policy, selected_members, semantic_fields, command_files, command_schedule, replay_report)
 from hooks import CORE, NATIVE, OWNER, SHIM, MUTANTS, OBSERVATION_PATHS, NATIVE_OBSERVATIONS, instrument, inverse, mutate, require
 from trace import validate_noninterference, bind_inputs, comparison, validate, validate_allocator, validate_physical
@@ -106,6 +106,20 @@ def retain_outputs(outputs, out, *, success):
     return retained
 
 
+def acquire_include_bindings(occurrences, cwd, out):
+    bindings=[]
+    for occurrence in occurrences:
+        path=Path(occurrence['raw'])
+        if not path.is_absolute():path=Path(cwd)/path
+        target=path.resolve(strict=True)
+        require(target.is_file(), 'include resolves to regular file')
+        raw=target.read_bytes(); value=digest(raw)
+        retained=out/'include-bytes'/value;retained.parent.mkdir(exist_ok=True)
+        if not retained.exists():retained.write_bytes(raw)
+        bindings.append({**occurrence,'target':os.path.normcase(str(target)),'sha256':value})
+    return bindings
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out-dir',type=Path,required=True)
@@ -120,8 +134,8 @@ def main():
     for path in before:
         target=out/'source'/path;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes((ROOT/path).read_bytes())
     inputs,cases=corpus();(out/'inputs.txt').write_bytes(inputs.encode());save(out/'cases.json',cases)
-    commands=[];dependencies={}
-    status={'schema':5 if args.replay_dir else 4,'status':'FAIL','base':BASE,'policy':args.policy,'native':'UNRUN','compiled_controls':'UNRUN',
+    commands=[];include_aliases={}
+    status={'schema':7 if args.replay_dir else 6,'status':'FAIL','base':BASE,'policy':args.policy,'native':'UNRUN','compiled_controls':'UNRUN',
             'public_world':'UNCHANGED_NATIVE_BACKEND','scope':'private default-DBVT discrete collision owner',
             'host':{'system':platform.system(),'machine':platform.machine(),'image':os.environ.get('ImageVersion')}}
     save(out/'report.json',status)
@@ -146,16 +160,11 @@ def main():
         before_includes=None
         if compile:
             run(argv,label+'-discovery',data,cwd)
-            found=include_paths((out/(label+'-discovery.stdout')).read_bytes()+(out/(label+'-discovery.stderr')).read_bytes(),platform.system())
-            before_includes={}
-            for name in found:
-                path=Path(name).resolve();require(path.is_file(),'discovered compiler include exists')
-                raw=path.read_bytes();identity=digest(raw)
-                target=out/'include-bytes'/identity;target.parent.mkdir(exist_ok=True)
-                if not target.exists():target.write_bytes(raw)
-                key=os.path.normcase(str(path));before_includes[key]=identity
-            require(before_includes,'actual discovery include closure '+label)
+            occurrences=include_occurrences((out/(label+'-discovery.stdout')).read_bytes(),(out/(label+'-discovery.stderr')).read_bytes(),platform.system())
+            pre_bindings=acquire_include_bindings(occurrences,cwd,out)
+            before_includes,pre_aliases=include_projection(pre_bindings,occurrences,platform.system())
             save(out/(label+'-includes-pre.json'),before_includes)
+            save(out/(label+'-include-bindings.json'),{'schema':1,'label':label,'cwd':str(cwd),'pre':pre_bindings,'post':[]})
         for value in tools.values():require(executable_identity(value['path'])==value,'tool preserved before '+label)
         require(executable_identity(argv[0])==binding,'invocation target preserved before '+label)
         record={'label':label,'argv':argv,'cwd':str(cwd),'stdin_sha256':None if data is None else digest(data),
@@ -179,12 +188,16 @@ def main():
         save(out/'commands.json',commands)
         if result.returncode==0:require(set(record['outputs'])=={value.retained for value in roles.outputs},'successful command missing output '+label)
         if compile:
-            found={}
-            for name in include_paths(result.stdout+result.stderr,platform.system()):
-                path=Path(name).resolve();require(path.is_file(),'actual compiler include exists')
-                key=os.path.normcase(str(path));found[key]=digest(path.read_bytes());dependencies[key]=found[key]
-            require(found==before_includes,'discovery pre-use and measured compile includes preserved '+label)
+            occurrences=include_occurrences(result.stdout,result.stderr,platform.system())
+            post_bindings=acquire_include_bindings(occurrences,cwd,out)
+            found,post_aliases=include_projection(post_bindings,occurrences,platform.system())
+            save(out/(label+'-include-bindings.json'),{'schema':1,'label':label,'cwd':str(cwd),'pre':pre_bindings,'post':post_bindings})
             save(out/(label+'-includes.json'),found)
+            require(found==before_includes and post_aliases==pre_aliases,'discovery pre-use and measured compile includes preserved '+label)
+            for spelling,binding in post_aliases.items():
+                alias=(str(cwd),spelling)
+                require(alias not in include_aliases or include_aliases[alias]==binding,'include alias preserved across compilations')
+                include_aliases[alias]=binding
         require(result.returncode==0,label+' must exit normally with zero status')
         require(snapshot()==before,'fixed source closure after '+label)
         return result.stdout
@@ -195,8 +208,8 @@ def main():
         run([python,'-B','-O',HERE/'test_check.py','-v'],'helpers-optimized')
         status['head']=run([git,'rev-parse','HEAD'],'git-head').decode().strip()
         run([git,'status','--porcelain=v1'],'git-status')
-        run([git,'ls-files','--eol'],'git-transport')
-        run([git,'check-attr','--stdin','text','eol'],'git-attributes', ('\n'.join(sorted(before))+'\n').encode())
+        run([git,'ls-files','--eol'],'git-transport',cwd=ROOT)
+        run([git,'check-attr','--stdin','text','eol'],'git-attributes', ('\n'.join(sorted(before))+'\n').encode(),cwd=ROOT)
         rustc_path=run([rustup,'which','--toolchain','1.95.0','rustc'],'rust-compiler-path').decode().strip()
         tool('rustc',rustc_path)
         run([rustup,'run','1.95.0','rustc','-Vv'],'rust-version')
@@ -227,7 +240,7 @@ def main():
         if args.replay_dir:
             require(args.policy=='mmd-win64-sse','Windows replay policy required')
             producer=admit_windows(args.replay_dir.absolute(),expected_head=status['head'],canonical_sources={p:(ROOT/p).read_bytes() for p in before},inputs=inputs,cases=cases)
-            status['schema']=5;status['native']='WINDOWS_SOURCE_REPLAY';status['producer_report_sha256']=producer.report_sha256
+            status['schema']=7;status['native']='WINDOWS_SOURCE_REPLAY';status['producer_report_sha256']=producer.report_sha256
         else:
             capture=out
             compiler=shutil.which(os.environ.get('CXX','cl' if os.name=='nt' else 'clang++'))
@@ -264,7 +277,8 @@ def main():
             run([archiver,'/NOLOGO','/OUT:'+str(library),*objects] if os.name=='nt' else [archiver,'rcs',library,*objects],'archive-build')
             listing=run([archiver,'/NOLOGO','/LIST',library] if os.name=='nt' else [archiver,'t',library],'archive-list').decode().splitlines()
             extracted=out/'extracted';extracted.mkdir();members={}
-            require(len([s for s in listing if s.strip()])==len(objects),'exact complete archive member inventory')
+            parsed_archive=decode_archive(library.read_bytes())
+            archive_listing(parsed_archive,[line.strip() for line in listing if line.strip()],system)
             for obj in objects:
                 matched=[line.strip() for line in listing if line.strip().replace('\\','/').split('/')[-1].lower()==obj.name.lower()]
                 require(len(matched)==1,'one actual archive member '+obj.name);members[obj.name]=matched[0]
@@ -338,8 +352,14 @@ def main():
         save(out/'semantic-controls.json',controls)
         require(generated_snapshot(shadow)==generated,'generated observation source preserved')
         inverse(shadow,changes,originals)
-        require(all(digest(Path(p).read_bytes())==identity for p,identity in dependencies.items()),'actual native include closure preserved')
-        save(out/'native-includes-end.json',dependencies);save(out/'generated-end.json',generated_snapshot(shadow))
+        ending=[];end_dependencies={}
+        for (cwd,spelling),binding in include_aliases.items():
+            acquired=acquire_include_bindings([{'stream':'stdout','ordinal':0,'raw':spelling}],cwd,out)[0]
+            ending.append({'cwd':cwd,'raw':spelling,'target':acquired['target'],'sha256':acquired['sha256']})
+            end_dependencies[acquired['target']]=acquired['sha256']
+            require((acquired['target'],acquired['sha256'])==binding,'actual native include alias end preserved')
+        save(out/'native-include-bindings-end.json',{'schema':1,'bindings':ending})
+        save(out/'native-includes-end.json',end_dependencies);save(out/'generated-end.json',generated_snapshot(shadow))
         status.update(status='CONTROLLED_PASS',compiled_controls=len(controls),checkpoints=len(inputs.splitlines()),cases=len(cases),controlled=controlled,
                       limits=LIMITS)
     except Exception as error:
@@ -353,7 +373,7 @@ def main():
             save(out/'tools-end.json',end_tools)
             require(end_tools==tools,'resolved tool end preservation')
             if status['status']=='CONTROLLED_PASS' and not args.replay_dir:
-                save(out/'producer.json',{'schema':2,'system':system,'root':str(ROOT),'out':str(out),'tools':{name:value['path'] for name,value in tools.items()},'archive_names':members})
+                save(out/'producer.json',{'schema':3,'system':system,'root':str(ROOT),'out':str(out),'tools':{name:value['path'] for name,value in tools.items()},'archive_names':members})
                 finalize_native(out,status,expected_head=status['head'],canonical_sources={p:(ROOT/p).read_bytes() for p in before},inputs=inputs,cases=cases,
                                 expected_host={(system,machine)},expected_policy=args.policy)
             else:

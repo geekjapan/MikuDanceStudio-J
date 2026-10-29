@@ -330,9 +330,62 @@ class SourceControls(unittest.TestCase):
         self.assertEqual(control[1]['events'][0]['node_call'],0)
 
 
+    def test_archive_payload_presentation_and_validated_specials(self):
+        import evidence
+        from test_evidence import archive
+        def member(name,raw):
+            return name.encode().ljust(16)+b'0'.ljust(12)+b'0'.ljust(6)+b'0'.ljust(6)+b'100644'.ljust(8)+str(len(raw)).encode().ljust(10)+b'`\n'+raw+(b'\n' if len(raw)%2 else b'')
+        payload={'second.obj':b'second','first.obj':b'first'}
+        parsed=evidence.decode_archive(archive(payload))
+        self.assertEqual(list(parsed.payloads),list(payload))
+        evidence.archive_listing(parsed,['first.obj','second.obj'],'Windows')
+        for listing in [['first.obj'],['first.obj','second.obj','extra'],['first.obj','second.obj','second.obj'],['FIRST.obj','second.obj'],['first.obj','second.obj','__.SYMDEF']]:
+            with self.assertRaises(ValueError):evidence.archive_listing(parsed,listing,'Windows')
+        symbol=(0).to_bytes(4,'little')*2
+        symname=b'__.SYMDEF'+b'\0'*3
+        raw=b'!<arch>\n'+member('#1/12',symname+symbol)+member('first.o/',b'first')
+        parsed=evidence.decode_archive(raw)
+        self.assertEqual(parsed.specials,('__.SYMDEF',));self.assertEqual(parsed.payloads,{'first.o':b'first'})
+        evidence.archive_listing(parsed,['__.SYMDEF','first.o'],'Darwin')
+        for listing,system in [(['__.SYMDEF','first.o'],'Linux'),(['__.SYMDEF','__.SYMDEF','first.o'],'Darwin'),(['__.SYMDEF SORTED','first.o'],'Darwin')]:
+            with self.assertRaises(ValueError):evidence.archive_listing(parsed,listing,system)
+        malformed=[raw[:-1],raw.replace(b'#1/12',b'#1/99'),raw.replace(symname,b'__.SYMDEF_BAD'),
+                   raw[:8]+member('#1/12',symname+symbol)+raw[8:],
+                   b'!<arch>\n'+member('first.o/',b'x')+member('FIRST.o/',b'y'),
+                   b'!<arch>\n'+member('//',b'longname.obj/\n')+member('/2',b'x'),
+                   b'!<arch>\n'+member('//',b'unterminated')+member('/0',b'x'),
+                   b'!<arch>\n'+member('//',b'longname.obj/\n')+member('/999',b'x'),
+                   b'!<arch>\n'+member('/',(1).to_bytes(4,'big')+(999).to_bytes(4,'big')+b'symbol\0')+member('first.o/',b'x')]
+        for candidate in malformed:
+            with self.assertRaises(ValueError):evidence.decode_archive(candidate)
+        first_table=(1).to_bytes(4,'big')+(154).to_bytes(4,'big')+b's\0'
+        second_table=(1).to_bytes(4,'little')+(154).to_bytes(4,'little')+(1).to_bytes(4,'little')+(1).to_bytes(2,'little')+b's\0'
+        coff=b'!<arch>\n'+member('/',first_table)+member('/',second_table)+member('first.obj/',b'x')
+        self.assertEqual(evidence.decode_archive(coff).payloads,{'first.obj':b'x'})
+        for broken in [second_table[:12]+(2).to_bytes(2,'little')+second_table[14:],second_table[:4]+(999).to_bytes(4,'little')+second_table[8:]]:
+            with self.assertRaises(ValueError):evidence.decode_archive(b'!<arch>\n'+member('/',first_table)+member('/',broken)+member('first.obj/',b'x'))
+        first=member('/',(0).to_bytes(4,'big')+b'\0')
+        second=member('/',(0).to_bytes(4,'little')+(0).to_bytes(4,'little')+b'\0')
+        evidence.decode_archive(b'!<arch>\n'+first+second+member('first.obj/',b'x'))
+        with self.assertRaises(ValueError):evidence.decode_archive(b'!<arch>\n'+first+second+first+member('first.obj/',b'x'))
+
+    def test_git_root_commands_preserve_independent_schedule(self):
+        import evidence
+        from pathlib import PurePosixPath, PureWindowsPath
+        for system,P,root,out in [('Windows',PureWindowsPath,'C:/repo','C:/capture'),('Linux',PurePosixPath,'/repo','/capture'),('Darwin',PurePosixPath,'/repo','/capture')]:
+            context={'system':system,'root':root,'out':out,'tools':{name:str(P(root)/'tools'/name) for name in ['python','git','rustup']}}
+            rows=evidence.command_schedule(context,[],'mmd-win64-sse',[],replay=True)
+            self.assertEqual(len(rows),87)
+            for label,argv,cwd,data,outputs,compile in rows:
+                self.assertEqual(cwd,str(P(root) if label in {'git-attributes','git-transport'} else P(root)/'rust'))
+                if label=='git-attributes':self.assertEqual((argv[1:],data),(['check-attr','--stdin','text','eol'],'attributes'))
+                if label=='git-transport':self.assertEqual((argv[1:],data),(['ls-files','--eol'],None))
+
+
 def load_tests(loader, tests, pattern):
-    from test_evidence import AdmissionControls
+    from test_evidence import AdmissionControls, IncludeControls
     tests.addTests(loader.loadTestsFromTestCase(AdmissionControls))
+    tests.addTests(loader.loadTestsFromTestCase(IncludeControls))
     return tests
 
 

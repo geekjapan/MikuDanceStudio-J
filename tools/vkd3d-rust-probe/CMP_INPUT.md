@@ -84,19 +84,49 @@ admits no pre-existing children and owns one probe at a time. Separate-session
 descendants become its adopted children when a parent exits. Cleanup signals
 only owned children through pidfds and reaps them until the child set is empty.
 A normal probe that leaves a writer is a custody failure even after cleanup.
-SIGINT and SIGTERM cancel the whole wrapper, including validation and final
-publication after probe wait. Scoped handlers restore the caller's handlers.
-The first signal interrupts work; later signals defer while owned children
-are closed and reaped. Timeouts and cancellation retain closed partial
+A single `WrapperRun` owns SIGINT and SIGTERM handlers, cancellation, every
+invocation, input normalization, publication and final handoff. Cancellation never
+clears between invocations. The first signal interrupts work. First and repeated
+signals during child closure or finalization record cancellation without
+interrupting cleanup. No later normalization or writer launch is admitted. Timeouts and cancellation retain closed partial
 diagnostics without a final output manifest. Cancellation leaves `CANCELLED`.
 Each proven invocation closure has a separate `.log.custody.json` receipt.
-Only a completed finite run publishes the final manifest atomically. Unproven cleanup retains `OWNED_WRITERS_UNPROVEN` and prevents
+The atomic final manifest rename remains revocable until signal handoff completes.
+Handoff requires reviewed CPython 3.12.3 and one owned OS thread. Construction and
+import perform no OS probes. Entry refuses caller-blocked or already-pending
+SIGINT/SIGTERM before installing handlers. Finalization blocks those signals,
+flushes queued Python dispatch through `PyErr_CheckSignals` while owner handlers
+remain installed, and restores every saved caller handler once. It consumes
+observed OS-pending cancellation and adjudicates the shared cancellation state.
+Any cancellation before that point revokes final and pending manifests, moves ready
+receipts to `receipt.cancelled.json`, restores `INCOMPLETE`, and sets the report to
+`cancelled`. Handler or mask failures refuse completed publication and attempt
+remaining restoration without retrying failed operations.
+
+After successful adjudication, only the original mask is restored. Later signals
+belong to the restored caller, including exceptions raised by caller handlers.
+An exceptional mask-restore return permits a read-only mask query. A confirmed
+restored mask preserves completed outputs and propagates the caller exception.
+Failed or unprovable restoration revokes completed publication. The wrapper does
+no filesystem I/O after a successful handoff. This CPython signal mechanism and
+the real OS boundary require hosted execution; inert mocks alone do not prove it.
+Unproven cleanup retains `OWNED_WRITERS_UNPROVEN` and prevents
 artifact publication. The workflow job limit remains 110 minutes, with an
 85-minute actual-probe step and 3000-second deadline per probe.
 
 The hosted-only inert process check covers clean exit, an unexpected orphan,
-timeout, and child launch during cancellation. It also sends real SIGINT and
-SIGTERM to an owned wrapper during probe wait and after a clean probe wait. It records actual process and
+timeout, and child launch during cancellation. It sends real SIGINT and SIGTERM
+to the exact owned wrapper pidfd during probe wait, validation, before blocking,
+while masked, before and after the first handler restore, after the last restore,
+and at final pending adjudication. A posthandoff control delivers to the restored
+caller and preserves completed output even when that caller raises `OSError`.
+Synchronized markers keep masked pending and already-delivered callback cases
+separate. A separate hosted queued-callback control uses CPython
+`PyErr_SetInterruptEx` while masked with no OS-pending signal, then requires the
+actual Python dispatcher to latch owner cancellation. That control tests a CPython
+flag, rather than kernel signal delivery. All cases use actual owner teardown and
+restore caller handlers and mask.
+It records actual process and
 session IDs, exits, times, and task-directory hashes, then checks that writes
 stop after the terminal receipt. Run it only on hosted Linux:
 

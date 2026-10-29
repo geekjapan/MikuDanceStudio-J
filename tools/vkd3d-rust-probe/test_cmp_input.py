@@ -8,15 +8,80 @@ import tempfile
 import unittest
 import signal
 import shutil
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import cmp_input as boundary
 import run_cmp_input as wrapper
 from run_cmp_input import checked_prepared, hosted, validate_result, DIRECTED
 
 
+class InertSignals:
+    def __init__(self, stack):
+        self.handlers = {signum: (lambda signum, frame: None) for signum in wrapper.WrapperRun.signals}
+        self.mask = {signal.SIGUSR1}
+        self.pending = set()
+        self.python_pending = []
+        self.events = []
+        self.inject = lambda event: None
+        stack.enter_context(patch.object(signal, 'signal', side_effect=self.install))
+        stack.enter_context(patch.object(signal, 'getsignal', side_effect=lambda signum: self.handlers[signum]))
+        stack.enter_context(patch.object(signal, 'pthread_sigmask', side_effect=self.sigmask, create=True))
+        stack.enter_context(patch.object(signal, 'sigpending', side_effect=self.sigpending, create=True))
+        stack.enter_context(patch.object(signal, 'sigtimedwait', side_effect=self.wait, create=True))
+        stack.enter_context(patch.object(wrapper.WrapperRun, '_drain_python', side_effect=self.drain_python))
+        stack.enter_context(patch.object(wrapper.WrapperRun, '_signal_runtime'))
+
+    def event(self, name):
+        self.events.append(name)
+        self.inject(name)
+
+    def install(self, signum, handler):
+        kind = 'install' if getattr(handler, '__self__', None) is not None else 'restore'
+        self.event((kind, signum, 'before'))
+        previous = self.handlers[signum]
+        self.handlers[signum] = handler
+        self.event((kind, signum, 'after'))
+        return previous
+
+    def sigmask(self, how, signals):
+        self.event(('mask', how, frozenset(signals), 'before'))
+        previous = self.mask.copy()
+        if how == signal.SIG_BLOCK:
+            self.mask.update(signals)
+        else:
+            self.mask = set(signals)
+        self.event(('mask', how, frozenset(signals), 'after'))
+        for signum in sorted(self.pending - self.mask):
+            self.pending.remove(signum)
+            self.handlers[signum](signum, None)
+        return previous
+
+    def sigpending(self):
+        self.event(('pending', 'before'))
+        pending = self.pending.copy()
+        self.event(('pending', 'after'))
+        return pending
+
+    def drain_python(self):
+        for signum in self.python_pending:
+            self.handlers[signum](signum, None)
+        self.python_pending.clear()
+        self.event(('python-drained',))
+
+    def wait(self, signals, timeout):
+        found = self.pending & signals
+        if not found:
+            return None
+        signum = min(found)
+        self.pending.remove(signum)
+        return argparse.Namespace(si_signo=signum)
+
+
 class CmpInputTests(unittest.TestCase):
     def setUp(self):
+        self.signal_stack = ExitStack()
+        self.addCleanup(self.signal_stack.close)
+        self.signals = InertSignals(self.signal_stack)
         parent = os.environ.get('CMP_INPUT_TEST_TMP')
         self.temporary = tempfile.TemporaryDirectory(prefix='cmp-input-test-', dir=parent)
         self.addCleanup(self.temporary.cleanup)
@@ -217,7 +282,7 @@ class CmpInputTests(unittest.TestCase):
             c2rust=tool / 'bin/c2rust', clang=tool / 'bin/c2rust',
             target=self.contract['target'], artifacts=self.root / 'wrapper-output')
 
-    def wrapper_patches(self, stack, args, invoke=None, *, real_custody=False):
+    def wrapper_patches(self, stack, args, invoke=None, *, real_custody=False, mock_invocations=True):
         import apply_c2rust_patch as tool_verifier
         stack.enter_context(patch.object(wrapper, 'hosted'))
         if not real_custody:
@@ -229,7 +294,8 @@ class CmpInputTests(unittest.TestCase):
             'patch_sha256': self.contract['compiler_patch_sha256'],
             'modified_source_sha256': dict.fromkeys(range(self.contract['compiler_patch_destinations']))}))
         retained = stack.enter_context(patch.object(tool_verifier, 'retain_tool_identity'))
-        launched = stack.enter_context(patch.object(wrapper, 'invoke', side_effect=invoke))
+        launched = (stack.enter_context(patch.object(wrapper.WrapperRun, 'invoke', side_effect=invoke))
+                    if mock_invocations else None)
         return retained, launched
 
     def synthetic_invoke(self, command, cwd, log, timeout):
@@ -326,7 +392,8 @@ class CmpInputTests(unittest.TestCase):
                 launched = stack.enter_context(patch.object(wrapper.subprocess, 'Popen'))
                 libc = stack.enter_context(patch('ctypes.CDLL'))
                 with self.assertRaises(OSError):
-                    wrapper.invoke(['NEVER EXECUTE'], self.root, self.root / 'never.log', 1)
+                    with wrapper.WrapperRun() as owner:
+                        owner.invoke(['NEVER EXECUTE'], self.root, self.root / 'never.log', 1)
                 opened.assert_called_once_with(os.getpid())
                 if failure == 'send':
                     sent.assert_called_once_with(123, 0)
@@ -424,6 +491,310 @@ class CmpInputTests(unittest.TestCase):
             self.assertFalse(list(args.artifacts.rglob('receipt.json')))
             self.assertFalse((args.artifacts / 'output-manifest.json').exists())
             self.assertFalse((args.artifacts / 'output-manifest.pending').exists())
+
+    def actual_invoke_patches(self, stack):
+        stack.enter_context(patch.object(wrapper, 'hosted'))
+        stack.enter_context(patch.object(wrapper, 'enable_custody'))
+        stack.enter_context(patch.object(wrapper, 'owned_children', return_value=[]))
+        stack.enter_context(patch.object(wrapper.os, 'getsid', return_value=777))
+        def launch(command, cwd, stdout, **unused):
+            if command == ['INERT']:
+                stdout.write('Inert writer boundary; no actual process.\n')
+            else:
+                self.synthetic_invoke(command, cwd, Path(stdout.name), 1)
+            return Mock(pid=777, returncode=0)
+        launched = stack.enter_context(patch.object(wrapper.subprocess, 'Popen', side_effect=launch))
+        closed = stack.enter_context(patch.object(wrapper, 'close_owned_children', return_value=[]))
+        return launched, closed
+
+    def assert_cancelled_publication(self, root):
+        self.assertTrue((root / 'CANCELLED').is_file())
+        self.assertFalse(list(root.rglob('receipt.json')))
+        self.assertFalse((root / 'output-manifest.json').exists())
+        self.assertFalse((root / 'output-manifest.pending').exists())
+        report = root / 'report.json'
+        if report.exists():
+            self.assertEqual(json.loads(report.read_text())['status'], 'cancelled')
+
+    def published_owner(self, name):
+        owner = wrapper.WrapperRun()
+        owner.publication_ready = True
+        owner.root = self.root / name
+        owner.root.mkdir()
+        for variant in ('correct', 'opposite'):
+            directory = owner.root / (variant + '-input')
+            directory.mkdir()
+            (directory / 'receipt.json').write_text('inert ready receipt')
+        (owner.root / 'report.json').write_text('{"status":"finite_cmp_boundary_pass"}')
+        (owner.root / 'output-manifest.json').write_text('inert manifest')
+        return owner
+
+    def test_single_owner_actual_invoke_cancellation_closes_and_blocks_followon_work(self):
+        for phase in ('close', 'log-identity', 'marker-removal', 'last-check'):
+            with self.subTest(phase=phase), ExitStack() as stack:
+                owner = self.published_owner('invoke-' + phase)
+                launched, closed = self.actual_invoke_patches(stack)
+                identity, unlink, check = wrapper.file_identity, Path.unlink, wrapper.WrapperRun.checkpoint
+                def cancel():
+                    owner.interrupt(signal.SIGINT, None)
+                    owner.interrupt(signal.SIGTERM, None)
+                def close(process):
+                    cancel()
+                    return []
+                def log_identity(path):
+                    if path.name == 'test.log':
+                        cancel()
+                    return identity(path)
+                def remove(path, *args, **kwargs):
+                    result = unlink(path, *args, **kwargs)
+                    if path.name == 'OWNED_WRITERS_UNPROVEN':
+                        cancel()
+                    return result
+                checks = []
+                def checkpoint(current):
+                    check(current)
+                    checks.append(current.phase)
+                    if (owner.root / 'test.log.custody.json').exists():
+                        cancel()
+                if phase == 'close':
+                    closed.side_effect = close
+                elif phase == 'log-identity':
+                    stack.enter_context(patch.object(wrapper, 'file_identity', side_effect=log_identity))
+                elif phase == 'marker-removal':
+                    stack.enter_context(patch.object(Path, 'unlink', new=remove))
+                else:
+                    stack.enter_context(patch.object(wrapper.WrapperRun, 'checkpoint', new=checkpoint))
+                returned = []
+                with self.assertRaises(KeyboardInterrupt):
+                    with owner:
+                        returned.append(owner.invoke(['INERT'], self.root, owner.root / 'test.log', 1))
+                        owner.normalize()
+                self.assertEqual(returned, [])
+                self.assertTrue(owner.cancelled)
+                self.assertEqual(launched.call_count, 1)
+                self.assertEqual(closed.call_count, 1)
+                self.assertFalse((owner.root / 'OWNED_WRITERS_UNPROVEN').exists())
+                self.assert_cancelled_publication(owner.root)
+
+    def test_actual_invoke_unknown_closure_keeps_marker_and_never_hashes_log(self):
+        owner = self.published_owner('unknown-closure')
+        with ExitStack() as stack:
+            launched, closed = self.actual_invoke_patches(stack)
+            closed.side_effect = ValueError('closure unproven')
+            hashed = stack.enter_context(patch.object(wrapper, 'file_identity'))
+            with self.assertRaises(BaseExceptionGroup):
+                with owner:
+                    owner.invoke(['INERT'], self.root, owner.root / 'test.log', 1)
+            self.assertEqual(launched.call_count, 1)
+            hashed.assert_not_called()
+        self.assertTrue((owner.root / 'OWNED_WRITERS_UNPROVEN').exists())
+        self.assertFalse((owner.root / 'output-manifest.json').exists())
+        self.assertFalse(list(owner.root.rglob('receipt.json')))
+
+    def test_install_restore_and_final_pending_cancellation_revoke_all_publication(self):
+        events = [(kind, signum, side) for kind in ('install', 'restore')
+                  for signum in wrapper.WrapperRun.signals for side in ('before', 'after')]
+        events += [('python-drained',), ('pending', 'before'), ('pending', 'after')]
+        for index, target in enumerate(events):
+            with self.subTest(target=target):
+                owner = self.published_owner('transition-' + str(index))
+                saved_handlers = self.signals.handlers.copy()
+                saved_mask = self.signals.mask.copy()
+                fired = []
+                def inject(event):
+                    if event == target and not fired and (target[0] != 'pending' or owner.phase == 'finishing'):
+                        fired.append(event)
+                        owner.interrupt(signal.SIGINT, None)
+                        owner.interrupt(signal.SIGTERM, None)
+                self.signals.inject = inject
+                try:
+                    with self.assertRaises(KeyboardInterrupt):
+                        with owner:
+                            owner.checkpoint()
+                finally:
+                    self.signals.inject = lambda event: None
+                self.assertTrue(fired)
+                self.assertEqual(self.signals.handlers, saved_handlers)
+                self.assertEqual(self.signals.mask, saved_mask)
+                self.assert_cancelled_publication(owner.root)
+
+    def test_queued_python_and_masked_os_pending_are_adjudicated_before_caller_handoff(self):
+        for kind in ('python', 'os'):
+            with self.subTest(kind=kind):
+                owner = self.published_owner('queued-' + kind)
+                caller_signals = []
+                for signum in owner.signals:
+                    self.signals.handlers[signum] = lambda signum, frame: caller_signals.append(signum)
+                with self.assertRaises(KeyboardInterrupt):
+                    with owner:
+                        if kind == 'python':
+                            self.signals.python_pending.extend(owner.signals)
+                        else:
+                            self.signals.pending.update(owner.signals)
+                self.assertEqual(caller_signals, [])
+                self.assert_cancelled_publication(owner.root)
+
+    def test_repeated_cancellation_during_revocation_does_not_skip_restoration(self):
+        owner = self.published_owner('revoke')
+        original = Path.unlink
+        def revoke(path, *args, **kwargs):
+            owner.interrupt(signal.SIGINT, None)
+            owner.interrupt(signal.SIGTERM, None)
+            return original(path, *args, **kwargs)
+        with patch.object(Path, 'unlink', new=revoke):
+            with self.assertRaises(KeyboardInterrupt):
+                with owner:
+                    owner.interrupt(signal.SIGTERM, None)
+        self.assert_cancelled_publication(owner.root)
+        self.assertTrue(all(getattr(handler, '__self__', None) is not owner
+                            for handler in self.signals.handlers.values()))
+
+    def test_clean_completion_and_posthandoff_signal_belong_to_caller(self):
+        owner = self.published_owner('completed')
+        delivered = []
+        def caller(signum, frame):
+            delivered.append(signum)
+            raise OSError('caller raised after completed handoff')
+        self.signals.handlers[signal.SIGTERM] = caller
+        def posthandoff(event):
+            if event == ('mask', signal.SIG_SETMASK, frozenset({signal.SIGUSR1}), 'before'):
+                self.signals.pending.add(signal.SIGTERM)
+        with self.assertRaisesRegex(OSError, 'caller raised'):
+            with owner:
+                self.signals.inject = posthandoff
+        self.signals.inject = lambda event: None
+        self.assertEqual(delivered, [signal.SIGTERM])
+        self.assertFalse(owner.cancelled)
+        self.assertEqual(owner.phase, 'completed')
+        self.assertTrue((owner.root / 'output-manifest.json').is_file())
+        self.assertEqual(len(list(owner.root.rglob('receipt.json'))), 2)
+
+    def test_clean_actual_invoke_full_wrapper_preserves_finite_publication(self):
+        args = self.wrapper_args()
+        with ExitStack() as stack:
+            self.wrapper_patches(stack, args, mock_invocations=False)
+            launched, closed = self.actual_invoke_patches(stack)
+            stack.enter_context(patch.object(wrapper, 'validate_result', return_value={
+                'stable_build': {'exit_code': 101}, 'working_stable_build': {'exit_code': 101}}))
+            wrapper.run(args)
+            self.assertEqual(launched.call_count, 3)
+            self.assertEqual(closed.call_count, 3)
+        self.assertTrue((args.artifacts / 'output-manifest.json').is_file())
+        self.assertEqual(len(list(args.artifacts.rglob('receipt.json'))), 2)
+        self.assertEqual(len(list(args.artifacts.glob('*.custody.json'))), 3)
+        self.assertFalse((args.artifacts / 'CANCELLED').exists())
+
+    def test_handler_install_and_restore_failures_attempt_every_saved_handler(self):
+        for kind in ('install', 'restore'):
+            for signum in wrapper.WrapperRun.signals:
+                for side in ('before', 'after'):
+                    with self.subTest(kind=kind, signum=signum, side=side):
+                        owner = self.published_owner('failure-' + kind + '-' + str(signum) + '-' + side)
+                        saved = self.signals.handlers.copy()
+                        original_mask = self.signals.mask.copy()
+                        fired = []
+                        start = len(self.signals.events)
+                        def fail(event):
+                            if event == (kind, signum, side) and not fired:
+                                fired.append(event)
+                                raise OSError('injected signal transition failure')
+                        self.signals.inject = fail
+                        with self.assertRaises((OSError, BaseExceptionGroup)):
+                            with owner:
+                                pass
+                        self.signals.inject = lambda event: None
+                        restored = [event[1] for event in self.signals.events[start:]
+                                    if event[0] == 'restore' and event[-1] == 'before']
+                        self.assertEqual(restored, list(owner.previous))
+                        self.assertFalse((owner.root / 'output-manifest.json').exists())
+                        self.assertFalse(list(owner.root.rglob('receipt.json')))
+                        self.assertEqual(self.signals.mask, original_mask)
+                        self.signals.handlers = saved
+
+    def test_mask_setup_restore_and_readback_failures_refuse_completed_publication(self):
+        for phase in ('setup', 'restore', 'readback'):
+            with self.subTest(phase=phase):
+                owner = self.published_owner('mask-failure-' + phase)
+                saved_mask = self.signals.mask.copy()
+                fired = []
+                restores = []
+                def fail(event):
+                    if event[0] != 'mask' or event[-1] != 'before':
+                        return
+                    how, mask = event[1:3]
+                    if phase == 'setup' and how == signal.SIG_BLOCK and mask == frozenset(owner.signals) and not fired:
+                        fired.append(event)
+                        raise OSError('injected mask failure')
+                    if phase in ('restore', 'readback') and how == signal.SIG_SETMASK:
+                        restores.append(event)
+                        fired.append(event)
+                        raise OSError('injected mask failure')
+                    if phase == 'readback' and fired and how == signal.SIG_BLOCK and not mask:
+                        raise OSError('injected unreadable restoration state')
+                self.signals.inject = fail
+                with self.assertRaises(BaseExceptionGroup):
+                    with owner:
+                        pass
+                self.signals.inject = lambda event: None
+                self.assertTrue(fired)
+                self.assertEqual(len(restores), int(phase != 'setup'))
+                self.assertEqual(owner.phase, 'failed')
+                self.assertFalse((owner.root / 'output-manifest.json').exists())
+                self.assertFalse(list(owner.root.rglob('receipt.json')))
+                self.signals.mask = saved_mask
+
+    def test_preexisting_caller_blocked_or_pending_signals_are_not_consumed(self):
+        for phase in ('blocked', 'pending'):
+            with self.subTest(phase=phase):
+                owner = wrapper.WrapperRun()
+                saved_handlers = self.signals.handlers.copy()
+                if phase == 'blocked':
+                    self.signals.mask.add(signal.SIGINT)
+                else:
+                    self.signals.pending.add(signal.SIGTERM)
+                saved_mask = self.signals.mask.copy()
+                saved_pending = self.signals.pending.copy()
+                with self.assertRaisesRegex(ValueError, 'caller cancellation signals'):
+                    with owner:
+                        self.fail('ambiguous caller signal state admitted')
+                self.assertEqual(self.signals.mask, saved_mask)
+                self.assertEqual(self.signals.pending, saved_pending)
+                self.assertEqual(self.signals.handlers, saved_handlers)
+                self.signals.mask.discard(signal.SIGINT)
+                self.signals.pending.clear()
+
+    def test_pending_file_cancellation_and_late_actual_invoke_block_next_variant(self):
+        for phase in ('pending', 'after-clean-invoke'):
+            args = self.wrapper_args()
+            args.artifacts = self.root / ('full-actual-' + phase)
+            with self.subTest(phase=phase), ExitStack() as stack:
+                self.wrapper_patches(stack, args, mock_invocations=False)
+                launched, closed = self.actual_invoke_patches(stack)
+                stack.enter_context(patch.object(wrapper, 'validate_result', return_value={
+                    'stable_build': {'exit_code': 101}, 'working_stable_build': {'exit_code': 101}}))
+                written, identity = Path.write_text, wrapper.file_identity
+                def pending(path, data, *args, **kwargs):
+                    result = written(path, data, *args, **kwargs)
+                    if path.name == 'output-manifest.pending':
+                        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+                    return result
+                def late(path):
+                    result = identity(path)
+                    if path.name == 'correct-probe.log':
+                        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+                        signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
+                    return result
+                if phase == 'pending':
+                    stack.enter_context(patch.object(Path, 'write_text', new=pending))
+                else:
+                    stack.enter_context(patch.object(wrapper, 'file_identity', side_effect=late))
+                with self.assertRaises(KeyboardInterrupt):
+                    wrapper.run(args)
+                self.assertEqual(launched.call_count, 3 if phase == 'pending' else 2)
+                self.assertEqual(closed.call_count, launched.call_count)
+                self.assert_cancelled_publication(args.artifacts)
+                if phase != 'pending':
+                    self.assertFalse((args.artifacts / 'opposite-input').exists())
 
 
 
@@ -602,6 +973,7 @@ def signal_custody_case(output, phase, signum, probe):
     output, probe = Path(output), Path(probe)
     fixture = CmpInputTests()
     fixture.setUp()
+    fixture.signal_stack.close()
     args = fixture.wrapper_args()
     args.artifacts = output / 'actual'
     domains = {**{'source': fixture.source, 'hdr': fixture.source.parent / 'hdr/include',
@@ -609,13 +981,13 @@ def signal_custody_case(output, phase, signum, probe):
     before = {key: boundary.regular_tree(path) for key, path in domains.items()}
     members = {key: sorted(p.relative_to(path).as_posix() for p in path.rglob('*')) for key, path in domains.items()}
     library = boundary.file_identity(fixture.library)
-    actual_invoke = wrapper.invoke
-    def inert_invoke(command, cwd, log, timeout):
+    actual_invoke = wrapper.WrapperRun.invoke
+    def inert_invoke(owner, command, cwd, log, timeout):
         if command[0] == 'rustc':
             return fixture.synthetic_invoke(command, cwd, log, timeout)
-        writers = output / 'nested'
-        writers.mkdir()
-        execution = actual_invoke([wrapper.sys.executable, '-B', str(probe), str(writers),
+        writers = output / 'nested' / log.stem
+        writers.mkdir(parents=True)
+        execution = actual_invoke(owner, [wrapper.sys.executable, '-B', str(probe), str(writers),
                                    'timeout' if phase == 'wait' else 'clean'], output, log, 15)
         source = Path(command[command.index('--source') + 1])
         result = Path(command[command.index('--artifacts') + 1])
@@ -623,15 +995,86 @@ def signal_custody_case(output, phase, signum, probe):
         (result / 'result.json').write_text('{}')
         return execution
     def validation(*unused):
+        if phase not in ('wait', 'after-wait'):
+            return {'stable_build': {'exit_code': 101}, 'working_stable_build': {'exit_code': 101}}
         (output / 'signal-ready').write_text('Clean probe wait returned; wrapper validation active.\n')
         time.sleep(15)
         raise ValueError('Expected external signal did not arrive')
+    caller_signals = []
+    caller_handlers = {sig: signal.getsignal(sig) for sig in wrapper.WrapperRun.signals}
+    def caller(sig, frame):
+        caller_signals.append(sig)
+        if phase == 'handoff':
+            raise OSError('posthandoff caller delivery')
+    for sig in wrapper.WrapperRun.signals:
+        signal.signal(sig, caller)
+    original_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    actual_mask, actual_signal, actual_pending = signal.pthread_sigmask, signal.signal, signal.sigpending
+    actual_drain = wrapper.WrapperRun._drain_python
+    paused = []
+    def rendezvous():
+        if paused:
+            return
+        paused.append(phase)
+        (output / 'signal-ready').write_text('Synchronized real signal boundary ' + phase + '\n')
+        deadline = time.monotonic() + 10
+        while not (output / 'signal-sent').exists():
+            boundary.require(time.monotonic() < deadline, 'parent did not send synchronized signal')
+            time.sleep(0.001)
+    def mask(how, signals):
+        if how == signal.SIG_BLOCK and set(signals) == set(wrapper.WrapperRun.signals) and phase == 'before-block':
+            rendezvous()
+        if how == signal.SIG_SETMASK and phase == 'handoff':
+            rendezvous()
+        result = actual_mask(how, signals)
+        if how == signal.SIG_BLOCK and set(signals) == set(wrapper.WrapperRun.signals) and phase == 'masked':
+            rendezvous()
+        return result
+    def drain_python(owner):
+        if phase == 'python-queued':
+            import ctypes
+            rendezvous()
+            boundary.require(not set(owner.signals) & actual_pending(), 'queued control has an OS-pending signal')
+            enqueue = ctypes.pythonapi.PyErr_SetInterruptEx
+            enqueue.argtypes = [ctypes.c_int]
+            enqueue.restype = ctypes.c_int
+            boundary.require(enqueue(signum) == 0, 'CPython signal flag could not be queued')
+        actual_drain(owner)
+        if phase == 'python-queued':
+            boundary.require(owner.cancelled, 'queued Python callback did not reach the owner')
+    def install(sig, handler):
+        restoring = handler is caller
+        if restoring and sig == signal.SIGINT and phase == 'restore-first-before':
+            rendezvous()
+        result = actual_signal(sig, handler)
+        if restoring and ((sig == signal.SIGINT and phase == 'restore-first-after')
+                          or (sig == signal.SIGTERM and phase == 'restore-last-after')):
+            rendezvous()
+        return result
+    def pending():
+        if phase == 'final-pending' and signal.getsignal(signal.SIGTERM) is caller and not paused:
+            if (args.artifacts / 'output-manifest.json').exists():
+                rendezvous()
+        return actual_pending()
     started = wrapper.datetime.now(wrapper.timezone.utc).isoformat()
     try:
         with ExitStack() as stack:
-            fixture.wrapper_patches(stack, args, inert_invoke, real_custody=True)
+            fixture.wrapper_patches(stack, args, real_custody=True, mock_invocations=False)
+            stack.enter_context(patch.object(wrapper.WrapperRun, 'invoke', new=inert_invoke))
             stack.enter_context(patch.object(wrapper, 'validate_result', side_effect=validation))
+            stack.enter_context(patch.object(signal, 'pthread_sigmask', new=mask))
+            stack.enter_context(patch.object(signal, 'signal', new=install))
+            stack.enter_context(patch.object(signal, 'sigpending', new=pending))
+            stack.enter_context(patch.object(wrapper.WrapperRun, '_drain_python', new=drain_python))
             wrapper.run(args)
+    except OSError as error:
+        boundary.require(phase == 'handoff' and str(error) == 'posthandoff caller delivery'
+            and caller_signals == [signum], 'unexpected mask failure/caller delivery')
+        boundary.require((args.artifacts / 'output-manifest.json').is_file()
+            and len(list(args.artifacts.rglob('receipt.json'))) == 2
+            and json.loads((args.artifacts / 'report.json').read_text())['status'] == 'finite_cmp_boundary_pass',
+            'posthandoff caller signal revoked completed output')
+        status, code = 'completed_caller_delivery', 0
     except KeyboardInterrupt:
         boundary.require((args.artifacts / 'CANCELLED').is_file()
             and not (args.artifacts / 'output-manifest.json').exists()
@@ -642,12 +1085,22 @@ def signal_custody_case(output, phase, signum, probe):
             and {key: sorted(p.relative_to(path).as_posix() for p in path.rglob('*'))
                  for key, path in domains.items()} == members
             and boundary.file_identity(fixture.library) == library, 'cancelled wrapper changed immutable inputs')
-        (output / 'signal-result.json').write_text(json.dumps({'status': 'cancelled_closed_partial',
+        status, code = 'cancelled_closed_partial', 130
+    else:
+        raise ValueError('Signal fixture unexpectedly completed without the expected delivery')
+    boundary.require(actual_mask(signal.SIG_BLOCK, set()) == original_mask
+        and all(signal.getsignal(sig) is caller for sig in wrapper.WrapperRun.signals),
+        'actual caller handlers/mask not restored')
+    for sig, handler in caller_handlers.items():
+        actual_signal(sig, handler)
+    (output / 'signal-result.json').write_text(json.dumps({'status': status,
             'pid': os.getpid(), 'session': os.getsid(0), 'signal': signum, 'phase': phase,
             'started_utc': started, 'ended_utc': wrapper.datetime.now(wrapper.timezone.utc).isoformat(),
-            'original_manifests': before, 'original_members': members, 'native_identity': library}, indent=2) + '\n')
-        raise SystemExit(130)
-    raise ValueError('Cancelled wrapper unexpectedly completed')
+        'original_manifests': before, 'original_members': members, 'native_identity': library,
+        'caller_deliveries': caller_signals, 'caller_mask_restored': True, 'caller_handlers_restored': True,
+        'python_runtime': list(wrapper.sys.version_info[:3]), 'synchronized_phase': paused,
+        'delivery_mechanism': 'PyErr_SetInterruptEx flag' if phase == 'python-queued' else 'owned wrapper pidfd'}, indent=2) + '\n')
+    raise SystemExit(code)
 
 
 def signal_custody_test(output, probe):
@@ -655,7 +1108,8 @@ def signal_custody_test(output, probe):
     import sys
     import time
     receipts = {}
-    for phase in ('wait', 'after-wait'):
+    for phase in ('wait', 'after-wait', 'before-block', 'masked', 'restore-first-before',
+                  'restore-first-after', 'restore-last-after', 'final-pending', 'python-queued', 'handoff'):
         for signum in (signal.SIGINT, signal.SIGTERM):
             root = output / (phase + '-' + str(signum))
             root.mkdir()
@@ -669,12 +1123,14 @@ def signal_custody_test(output, probe):
                 descriptor = os.pidfd_open(process.pid)
                 try:
                     deadline = time.monotonic() + 10
-                    while not ((root / 'signal-ready').exists() if phase == 'after-wait'
-                               else list((root / 'nested').glob('*.identity'))):
+                    while not ((root / 'signal-ready').exists() if phase != 'wait'
+                               else list((root / 'nested').rglob('*.identity'))):
                         boundary.require(process.poll() is None and time.monotonic() < deadline,
                                          'signal fixture did not reach requested wrapper phase')
                         time.sleep(0.01)
-                    signal.pidfd_send_signal(descriptor, signum)
+                    if phase != 'python-queued':
+                        signal.pidfd_send_signal(descriptor, signum)
+                    (root / 'signal-sent').write_text('Parent synchronized requested signal delivery.\n')
                     process.wait(timeout=15)
                 finally:
                     os.close(descriptor)
@@ -682,13 +1138,14 @@ def signal_custody_test(output, probe):
                     boundary.require(not wrapper.owned_children(), 'signal fixture cleanup unproven')
                     marker.unlink()
                     boundary.require(not descendants, 'signal fixture required forced cleanup; no acceptance')
-            boundary.require(process.returncode == 130 and not wrapper.owned_children(), 'signal wrapper not closed')
+            boundary.require(process.returncode == (0 if phase == 'handoff' else 130)
+                             and not wrapper.owned_children(), 'signal wrapper not closed')
             result = json.loads((root / 'signal-result.json').read_text())
             boundary.require(result['pid'] == process.pid and result['signal'] == signum
                              and result['phase'] == phase, 'signal identity/phase differs')
             closed = json.loads((root / 'actual/correct-probe.log.custody.json').read_text())
             boundary.require(closed['owned_writers_closed'], 'nested probe lacks closure receipt')
-            identities = [json.loads(path.read_text()) for path in (root / 'nested').glob('*.identity')]
+            identities = [json.loads(path.read_text()) for path in (root / 'nested').rglob('*.identity')]
             reaped = {row['pid'] for row in closed['owned_descendants_reaped']}
             boundary.require(phase != 'wait' or identities, 'wait cancellation missed actual writer')
             for identity in identities:
@@ -700,8 +1157,8 @@ def signal_custody_test(output, probe):
                     pass
                 else:
                     raise ValueError('cancelled writer remains live')
-            boundary.require(not (root / 'actual/output-manifest.json').exists()
-                             and not list(root.rglob('OWNED_WRITERS_UNPROVEN')), 'cancelled final publication')
+            boundary.require((root / 'actual/output-manifest.json').exists() == (phase == 'handoff')
+                             and not list(root.rglob('OWNED_WRITERS_UNPROVEN')), 'signal publication state differs')
             before = boundary.regular_tree(root)
             time.sleep(0.2)
             boundary.require(boundary.regular_tree(root) == before, 'cancelled outputs changed after terminal custody')
@@ -717,7 +1174,7 @@ def signal_custody_test(output, probe):
 def process_custody_test(output):
     import sys
     import time
-    from run_cmp_input import invoke, owned_children
+    from run_cmp_input import WrapperRun, owned_children
     hosted()
     output = Path(output)
     if output.exists():
@@ -756,8 +1213,9 @@ else:
     for mode in ('clean', 'orphan', 'timeout', 'race'):
         root = output / mode
         root.mkdir()
-        receipt = invoke([sys.executable, '-B', str(fixture), str(root), mode], output,
-                         root / 'probe.log', 0.18 if mode == 'race' else 0.8)
+        with WrapperRun() as owner:
+            receipt = owner.invoke([sys.executable, '-B', str(fixture), str(root), mode], output,
+                                   root / 'probe.log', 0.18 if mode == 'race' else 0.8)
         boundary.require(receipt['owned_writers_closed'] and not owned_children(), 'owned children not closed')
         if mode == 'clean':
             boundary.require(receipt['custody_status'] == 'clean' and not receipt['timed_out'], 'clean fixture failed')

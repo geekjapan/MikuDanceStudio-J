@@ -127,46 +127,314 @@ def preflight_pidfd():
         os.close(descriptor)
 
 
-class WrapperCancellation:
+class WrapperRun:
+    signals = (signal.SIGINT, signal.SIGTERM)
+
     def __init__(self):
         self.cancelled = False
         self.root = None
-        self.closing = False
+        self.phase = 'new'
         self.previous = {}
+        self.original_mask = None
+        self.writer = None
+        self.publication_ready = False
 
     def interrupt(self, signum, frame):
         first = not self.cancelled
         self.cancelled = True
-        if first and not self.closing:
+        if first and self.phase == 'working':
             raise KeyboardInterrupt('Interrupted by signal ' + str(signum))
 
+    def checkpoint(self):
+        if self.cancelled:
+            raise KeyboardInterrupt('Cancelled wrapper')
+        require(self.phase == 'working', 'wrapper is not accepting work')
+
     def __enter__(self):
-        for signum in (signal.SIGINT, signal.SIGTERM):
-            self.previous[signum] = signal.signal(signum, self.interrupt)
+        require(self.phase == 'new', 'wrapper owner cannot be reused')
+        self.phase = 'installing'
+        try:
+            self._signal_runtime()
+            require(not set(self.signals) & signal.sigpending(), 'caller cancellation signals already pending')
+            self.original_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+            require(not set(self.signals) & self.original_mask, 'caller cancellation signals must be unblocked')
+            for signum in self.signals:
+                self.previous[signum] = signal.getsignal(signum)
+                signal.signal(signum, self.interrupt)
+            self.phase = 'working'
+            self.checkpoint()
+        except BaseException as error:
+            if self.previous:
+                self._finish(error)
+            else:
+                self.phase = 'failed'
+            raise
         return self
 
     def __exit__(self, kind, error, traceback):
+        self._finish(error)
+
+    def execute(self, args):
+        with self:
+            self._execute(args)
+
+    def normalize(self, *args, **kwargs):
+        self.checkpoint()
+        result = normalize(*args, **kwargs)
+        self.checkpoint()
+        return result
+
+    def _revoke(self, status):
+        if self.root is None:
+            return
+        for name in ('output-manifest.json', 'output-manifest.pending'):
+            (self.root / name).unlink(missing_ok=True)
+        if self.cancelled:
+            (self.root / 'CANCELLED').write_text('Cancelled wrapper; no final output publication.\n')
+        for name in ('correct-input', 'opposite-input'):
+            directory = self.root / name
+            if directory.is_dir():
+                ready = directory / 'receipt.json'
+                if ready.exists():
+                    os.replace(ready, directory / 'receipt.cancelled.json')
+                (directory / 'INCOMPLETE').write_text('Unfinished wrapper; input is partial diagnostic data.\n')
+        report_path = self.root / 'report.json'
+        if report_path.is_file():
+            report = read_json(report_path)
+            report['status'] = status
+            report_path.write_text(json.dumps(report, indent=2) + '\n')
+
+    def _signal_runtime(self):
+        hosted()
+        require(sys.implementation.name == 'cpython' and sys.version_info[:3] == (3, 12, 3),
+                'signal handoff requires reviewed CPython 3.12.3')
+        require(len(list(Path('/proc/self/task').iterdir())) == 1,
+                'signal handoff requires a single owned thread')
+
+    def _drain_python(self):
+        import ctypes
+        check = ctypes.pythonapi.PyErr_CheckSignals
+        check.argtypes = []
+        check.restype = ctypes.c_int
+        require(check() == 0, 'queued Python signal dispatch failed')
+
+    def _finish(self, error):
         self.cancelled = self.cancelled or isinstance(error, KeyboardInterrupt)
+        self.phase = 'finishing'
+        failures = []
+        blocked = False
         try:
-            if self.cancelled and self.root is not None:
-                for name in ('output-manifest.json', 'output-manifest.pending'):
-                    (self.root / name).unlink(missing_ok=True)
-                (self.root / 'CANCELLED').write_text('Cancelled wrapper; no final output publication.\n')
-                for name in ('correct-input', 'opposite-input'):
-                    directory = self.root / name
-                    if directory.is_dir():
-                        ready = directory / 'receipt.json'
-                        if ready.exists():
-                            os.replace(ready, directory / 'receipt.cancelled.json')
-                        (directory / 'INCOMPLETE').write_text('Cancelled wrapper; input is partial diagnostic data.\n')
-                report_path = self.root / 'report.json'
-                if report_path.is_file():
-                    report = read_json(report_path)
-                    report['status'] = 'cancelled'
-                    report_path.write_text(json.dumps(report, indent=2) + '\n')
-        finally:
-            for signum, handler in self.previous.items():
+            self._signal_runtime()
+            signal.pthread_sigmask(signal.SIG_BLOCK, self.signals)
+            blocked = True
+            self._drain_python()
+            require(self.writer is None, 'owned writer closure unproven at handoff')
+            if error is None and not self.cancelled:
+                require(self.root is None or self.publication_ready, 'finite publication incomplete at handoff')
+        except BaseException as failure:
+            failures.append(failure)
+        if self.cancelled or error is not None or failures:
+            try:
+                self._revoke('cancelled' if self.cancelled else 'failed')
+            except BaseException as failure:
+                failures.append(failure)
+        for signum, handler in self.previous.items():
+            try:
                 signal.signal(signum, handler)
+            except BaseException as failure:
+                failures.append(failure)
+        if blocked:
+            try:
+                pending = set(self.signals) & signal.sigpending()
+                if pending:
+                    self.cancelled = True
+                    for signum in pending:
+                        require(signal.sigtimedwait({signum}, 0) is not None,
+                                'owned pending signal could not be consumed')
+            except BaseException as failure:
+                failures.append(failure)
+        if self.cancelled or error is not None or failures:
+            self.phase = 'failed'
+            try:
+                self._revoke('cancelled' if self.cancelled else 'failed')
+            except BaseException as failure:
+                failures.append(failure)
+        else:
+            # The single thread is blocked and queued Python dispatch is drained.
+            self.phase = 'completed' if self.root is not None else 'closed'
+        try:
+            signal.pthread_sigmask(signal.SIG_SETMASK, self.original_mask)
+        except BaseException as failure:
+            try:
+                restored = signal.pthread_sigmask(signal.SIG_BLOCK, set()) == self.original_mask
+            except BaseException:
+                restored = False
+            if self.phase in ('completed', 'closed') and restored:
+                raise
+            self.phase = 'failed'
+            failures.append(failure)
+            try:
+                self._revoke('cancelled' if self.cancelled else 'failed')
+            except BaseException as revoke_failure:
+                failures.append(revoke_failure)
+        if failures:
+            raise BaseExceptionGroup('Wrapper handoff failed', failures)
+        if self.cancelled and error is None:
+            raise KeyboardInterrupt('Cancelled wrapper before completed handoff')
+
+    def invoke(self, command, cwd, log, timeout):
+        self.checkpoint()
+        enable_custody()
+        self.checkpoint()
+        marker = log.parent / 'OWNED_WRITERS_UNPROVEN'
+        require(not marker.exists(), 'unclosed earlier writers; refusing another launch')
+        marker.write_text('No final manifest or artifact publication until owned children are reaped.\n')
+        started = datetime.now(timezone.utc).isoformat()
+        begin = time.monotonic()
+        process = None
+        primary_session = None
+        descendants = []
+        with log.open('w') as stream:
+            timed_out = False
+            try:
+                self.checkpoint()
+                process = subprocess.Popen(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+                self.writer = process
+                primary_session = os.getsid(process.pid)
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+            finally:
+                self.phase = 'closing'
+                interrupted = sys.exc_info()[0] is not None
+                descendants = close_owned_children(process)
+                require(not owned_children(), 'owned writers remain; no final manifest')
+                if interrupted or self.cancelled or timed_out or descendants:
+                    (log.parent / 'CUSTODY_FAILED').write_text('Closed partial diagnostics only; no final output manifest.\n')
+                stream.close()
+                contaminated = not timed_out and bool(descendants)
+                receipt = {'command': command, 'cwd': str(cwd), 'pid': process.pid if process else None,
+                    'started_utc': started, 'ended_utc': datetime.now(timezone.utc).isoformat(),
+                    'wall_seconds': time.monotonic() - begin, 'exit_code': process.returncode if process else None,
+                    'timed_out': timed_out, 'timeout': timeout, 'cancelled': self.cancelled,
+                    'log': str(log), 'log_identity': file_identity(log), 'owned_descendants_reaped': descendants,
+                    'owned_writers_closed': True, 'session': primary_session,
+                    'custody_status': 'contaminated' if contaminated else 'clean'}
+                log.with_suffix(log.suffix + '.custody.json').write_text(json.dumps(receipt, indent=2) + '\n')
+                marker.unlink()
+                self.writer = None
+                self.phase = 'working'
+                if self.cancelled:
+                    raise KeyboardInterrupt('Cancelled invocation after owned writers closed')
+        self.checkpoint()
+        return receipt
+
+    def _execute(self, args):
+        hosted()
+        contract = reviewed_contract()
+        root = Path(args.artifacts).absolute()
+        require(not root.exists() and not root.is_symlink(), 'hosted output must be new')
+        from apply_c2rust_patch import verify_tool, verify_evidence, retain_tool_identity
+        c2rust = canonical_input(args.c2rust, 'c2rust')
+        tool = c2rust.parent.parent
+        admitted = admit_inputs(args.source, args.target, args.native_library, (root,), contract, tool=tool)
+        require(c2rust == tool / 'bin/c2rust', 'unreviewed translator entry point')
+        verify_tool(tool)
+        patch = verify_evidence(tool / 'source-evidence')
+        require(patch['patch_sha256'] == contract['compiler_patch_sha256']
+                and len(patch['modified_source_sha256']) == contract['compiler_patch_destinations'], 'compiler patch scope differs')
+        here = Path(__file__).resolve().parent
+        require(all(sha((here / name).read_bytes()) == digest for name, digest in contract['bound_helpers'].items()),
+                'frozen probe/comparator/compiler helper differs; new combined contract required')
+        require(not os.environ.get('CARGO_BUILD_TARGET'), 'ambient Cargo target override is not reviewed')
+        enable_custody()
+        self.checkpoint()
+        root.mkdir(parents=True)
+        self.root = root
+        self.checkpoint()
+        retain_tool_identity(tool, root)
+        host = self.invoke(['rustc', '+1.95.0', '-vV'], here, root / 'rust-host.log', 30)
+        require(host['exit_code'] == 0 and not host['timed_out'] and host['custody_status'] == 'clean'
+                and '\nhost: ' + args.target + '\n' in (root / 'rust-host.log').read_text(),
+                'actual Rust compiler host differs from reviewed target')
+        report = {'status': 'incomplete', 'contract_sha256': CONTRACT_SHA256, 'variants': {},
+                  'stable_acceptance': 'UNRUN', 'four_target_execution': 'UNRUN',
+                  'product_integration': 'UNRUN', 'native_callback_Slots_cursor_23exports': 'UNRUN',
+                  'rust_host': host, 'clang_identity': file_identity(args.clang.resolve()),
+                  'rust_toolchain': '1.95.0', 'compiler_source_receipt': patch,
+                  'github': {key: os.environ.get(key) for key in
+                             ('GITHUB_SHA', 'GITHUB_REF', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'ImageVersion')},
+                  'implementation': {name: file_identity(here / name) for name in
+                      ('cmp_input.py', 'run_cmp_input.py', 'cmp_input_contract.json')}}
+        def checkpoint():
+            self.checkpoint()
+            (root / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
+        checkpoint()
+        try:
+            for name, opposite in (('correct', False), ('opposite', True)):
+                boundary = self.normalize(admitted.roots['source'], args.target, admitted.native_library, root / (name + '-input'), root,
+                                     opposite_control=opposite)
+                command = [sys.executable, '-B', str(here / 'probe.py'), '--source', boundary['translation_source'],
+                           '--artifacts', str(root / name), '--c2rust', str(args.c2rust.resolve()),
+                           '--clang', str(args.clang.resolve()), '--rust-toolchain', '1.95.0',
+                           '--all-unit-prototype', '--timeout', '1800', '--build-timeout', '300',
+                           '--native-library', boundary['native_library']]
+                execution = self.invoke(command, here, root / (name + '-probe.log'), 3000)
+                report['variants'][name] = {'probe': execution, 'boundary': boundary}
+                checkpoint()
+                result_path = root / name / 'result.json'
+                if result_path.is_file():
+                    result = read_json(result_path)
+                    report['variants'][name]['actual_builds'] = {mode: result.get(mode) for mode in
+                        ('stable_build', 'working_stable_build', 'bootstrap_build', 'prototype_build')}
+                    checkpoint()
+                require(execution['exit_code'] == 0 and not execution['timed_out']
+                        and execution['custody_status'] == 'clean', 'actual probe failed or custody contaminated ' + name)
+                result = read_json(result_path)
+                translation_root = Path(boundary['translation_source'])
+                domains = {'source': translation_root, 'hdr': translation_root.parent / 'hdr/include',
+                           'spv': translation_root.parent / 'spv/include'}
+                require({key: regular_tree(path) for key, path in domains.items()} == boundary['normalized_manifests']
+                        and regular_tree(root / name / 'source') == boundary['normalized_manifests']['source'],
+                        'effective probe translation source domain changed')
+                original_root = Path(boundary['original_source'])
+                domains = {'source': original_root, 'hdr': original_root.parent / 'hdr/include',
+                           'spv': original_root.parent / 'spv/include'}
+                require({key: regular_tree(path) for key, path in domains.items()} == boundary['original_manifests']
+                        and file_identity(Path(boundary['native_library'])) == boundary['native_identity']
+                        and {key: sorted(p.relative_to(path).as_posix() for p in path.rglob('*'))
+                             for key, path in domains.items()} == admitted.members
+                        and regular_tree(tool) == contract['tool_manifest'],
+                        'original source/native oracle changed during probe')
+                self.checkpoint()
+                report['variants'][name]['validation'] = validate_result(root / name, result, contract, opposite)
+                checkpoint()
+            stable = [v['validation'][mode]['exit_code'] == 0 for v in report['variants'].values()
+                      for mode in ('stable_build', 'working_stable_build')]
+            report['stable_acceptance'] = 'PASS' if all(stable) else 'FAIL; retained actual stable logs; bootstrap diagnostic only'
+            report['status'] = 'finite_cmp_boundary_pass'
+        except BaseException as error:
+            report.update(status='cancelled' if isinstance(error, KeyboardInterrupt) or self.cancelled else 'failed',
+                          error=str(error))
+            raise
+        finally:
+            self.phase = 'finishing'
+            actual_stable = [build for v in report['variants'].values()
+                             for mode in ('stable_build', 'working_stable_build')
+                             if (build := v.get('actual_builds', {}).get(mode))]
+            if any(build['exit_code'] != 0 or build['timed_out'] for build in actual_stable):
+                report['stable_acceptance'] = 'FAIL; retained actual stable logs; bootstrap diagnostic only'
+            elif len(actual_stable) == 4:
+                report['stable_acceptance'] = 'PASS'
+            (root / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
+            if not self.cancelled and report['status'] == 'finite_cmp_boundary_pass' and not any(
+                    (root / marker).exists() for marker in ('OWNED_WRITERS_UNPROVEN', 'CUSTODY_FAILED', 'CANCELLED')):
+                manifest = regular_tree(root)
+                pending = root / 'output-manifest.pending'
+                pending.write_text(json.dumps(manifest, indent=2) + '\n')
+                if not self.cancelled:
+                    os.replace(pending, root / 'output-manifest.json')
+                    self.publication_ready = True
 
 
 def enable_custody():
@@ -213,53 +481,6 @@ def close_owned_children(process):
         time.sleep(0.01)
     require(process is None or process.returncode is not None, 'primary process was not reaped')
     return receipts
-
-
-def invoke(command, cwd, log, timeout):
-    with WrapperCancellation() as cancellation:
-        return invoke_owned(command, cwd, log, timeout, cancellation)
-
-
-def invoke_owned(command, cwd, log, timeout, cancellation):
-    enable_custody()
-    marker = log.parent / 'OWNED_WRITERS_UNPROVEN'
-    require(not marker.exists(), 'unclosed earlier writers; refusing another launch')
-    marker.write_text('No final manifest or artifact publication until owned children are reaped.\n')
-    cancellation.root = log.parent
-    started = datetime.now(timezone.utc).isoformat()
-    begin = time.monotonic()
-    process = None
-    primary_session = None
-    descendants = []
-    with log.open('w') as stream:
-        timed_out = False
-        try:
-            process = subprocess.Popen(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
-            primary_session = os.getsid(process.pid)
-            process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-        finally:
-            cancellation.closing = True
-            interrupted = sys.exc_info()[0] is not None
-            descendants = close_owned_children(process)
-            require(not owned_children(), 'owned writers remain; no final manifest')
-            if interrupted or cancellation.cancelled or timed_out or descendants:
-                (log.parent / 'CUSTODY_FAILED').write_text('Closed partial diagnostics only; no final output manifest.\n')
-            stream.close()
-            contaminated = not timed_out and bool(descendants)
-            receipt = {'command': command, 'cwd': str(cwd), 'pid': process.pid if process else None,
-                'started_utc': started, 'ended_utc': datetime.now(timezone.utc).isoformat(),
-                'wall_seconds': time.monotonic() - begin, 'exit_code': process.returncode if process else None,
-                'timed_out': timed_out, 'timeout': timeout, 'cancelled': cancellation.cancelled,
-                'log': str(log), 'log_identity': file_identity(log), 'owned_descendants_reaped': descendants,
-                'owned_writers_closed': True, 'session': primary_session,
-                'custody_status': 'contaminated' if contaminated else 'clean'}
-            log.with_suffix(log.suffix + '.custody.json').write_text(json.dumps(receipt, indent=2) + '\n')
-            marker.unlink()
-            if cancellation.cancelled:
-                raise KeyboardInterrupt('Cancelled invocation after owned writers closed')
-    return receipt
 
 
 def generated_sources(inventory, expected, toml_bytes, lock_bytes, build, manifest_path):
@@ -398,109 +619,7 @@ def validate_result(root, result, contract, opposite):
 
 
 def run(args):
-    with WrapperCancellation() as cancellation:
-        run_owned(args, cancellation)
-
-
-def run_owned(args, cancellation):
-    hosted()
-    contract = reviewed_contract()
-    root = Path(args.artifacts).absolute()
-    require(not root.exists() and not root.is_symlink(), 'hosted output must be new')
-    from apply_c2rust_patch import verify_tool, verify_evidence, retain_tool_identity
-    c2rust = canonical_input(args.c2rust, 'c2rust')
-    tool = c2rust.parent.parent
-    admitted = admit_inputs(args.source, args.target, args.native_library, (root,), contract, tool=tool)
-    require(c2rust == tool / 'bin/c2rust', 'unreviewed translator entry point')
-    verify_tool(tool)
-    patch = verify_evidence(tool / 'source-evidence')
-    require(patch['patch_sha256'] == contract['compiler_patch_sha256']
-            and len(patch['modified_source_sha256']) == contract['compiler_patch_destinations'], 'compiler patch scope differs')
-    here = Path(__file__).resolve().parent
-    require(all(sha((here / name).read_bytes()) == digest for name, digest in contract['bound_helpers'].items()),
-            'frozen probe/comparator/compiler helper differs; new combined contract required')
-    require(not os.environ.get('CARGO_BUILD_TARGET'), 'ambient Cargo target override is not reviewed')
-    enable_custody()
-    root.mkdir(parents=True)
-    cancellation.root = root
-    retain_tool_identity(tool, root)
-    host = invoke(['rustc', '+1.95.0', '-vV'], here, root / 'rust-host.log', 30)
-    require(host['exit_code'] == 0 and not host['timed_out'] and host['custody_status'] == 'clean'
-            and '\nhost: ' + args.target + '\n' in (root / 'rust-host.log').read_text(),
-            'actual Rust compiler host differs from reviewed target')
-    report = {'status': 'incomplete', 'contract_sha256': CONTRACT_SHA256, 'variants': {},
-              'stable_acceptance': 'UNRUN', 'four_target_execution': 'UNRUN',
-              'product_integration': 'UNRUN', 'native_callback_Slots_cursor_23exports': 'UNRUN',
-              'rust_host': host, 'clang_identity': file_identity(args.clang.resolve()),
-              'rust_toolchain': '1.95.0', 'compiler_source_receipt': patch,
-              'github': {key: os.environ.get(key) for key in
-                         ('GITHUB_SHA', 'GITHUB_REF', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'ImageVersion')},
-              'implementation': {name: file_identity(here / name) for name in
-                  ('cmp_input.py', 'run_cmp_input.py', 'cmp_input_contract.json')}}
-    def checkpoint():
-        (root / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
-    checkpoint()
-    try:
-        for name, opposite in (('correct', False), ('opposite', True)):
-            boundary = normalize(admitted.roots['source'], args.target, admitted.native_library, root / (name + '-input'), root,
-                                 opposite_control=opposite)
-            command = [sys.executable, '-B', str(here / 'probe.py'), '--source', boundary['translation_source'],
-                       '--artifacts', str(root / name), '--c2rust', str(args.c2rust.resolve()),
-                       '--clang', str(args.clang.resolve()), '--rust-toolchain', '1.95.0',
-                       '--all-unit-prototype', '--timeout', '1800', '--build-timeout', '300',
-                       '--native-library', boundary['native_library']]
-            execution = invoke(command, here, root / (name + '-probe.log'), 3000)
-            report['variants'][name] = {'probe': execution, 'boundary': boundary}
-            checkpoint()
-            result_path = root / name / 'result.json'
-            if result_path.is_file():
-                result = read_json(result_path)
-                report['variants'][name]['actual_builds'] = {mode: result.get(mode) for mode in
-                    ('stable_build', 'working_stable_build', 'bootstrap_build', 'prototype_build')}
-                checkpoint()
-            require(execution['exit_code'] == 0 and not execution['timed_out']
-                    and execution['custody_status'] == 'clean', 'actual probe failed or custody contaminated ' + name)
-            result = read_json(result_path)
-            translation_root = Path(boundary['translation_source'])
-            domains = {'source': translation_root, 'hdr': translation_root.parent / 'hdr/include',
-                       'spv': translation_root.parent / 'spv/include'}
-            require({key: regular_tree(path) for key, path in domains.items()} == boundary['normalized_manifests']
-                    and regular_tree(root / name / 'source') == boundary['normalized_manifests']['source'],
-                    'effective probe translation source domain changed')
-            original_root = Path(boundary['original_source'])
-            domains = {'source': original_root, 'hdr': original_root.parent / 'hdr/include',
-                       'spv': original_root.parent / 'spv/include'}
-            require({key: regular_tree(path) for key, path in domains.items()} == boundary['original_manifests']
-                    and file_identity(Path(boundary['native_library'])) == boundary['native_identity']
-                    and {key: sorted(p.relative_to(path).as_posix() for p in path.rglob('*'))
-                         for key, path in domains.items()} == admitted.members
-                    and regular_tree(tool) == contract['tool_manifest'],
-                    'original source/native oracle changed during probe')
-            report['variants'][name]['validation'] = validate_result(root / name, result, contract, opposite)
-            checkpoint()
-        stable = [v['validation'][mode]['exit_code'] == 0 for v in report['variants'].values()
-                  for mode in ('stable_build', 'working_stable_build')]
-        report['stable_acceptance'] = 'PASS' if all(stable) else 'FAIL; retained actual stable logs; bootstrap diagnostic only'
-        report['status'] = 'finite_cmp_boundary_pass'
-    except BaseException as error:
-        report.update(status='cancelled' if isinstance(error, KeyboardInterrupt) or cancellation.cancelled else 'failed',
-                      error=str(error))
-        raise
-    finally:
-        actual_stable = [build for v in report['variants'].values()
-                         for mode in ('stable_build', 'working_stable_build')
-                         if (build := v.get('actual_builds', {}).get(mode))]
-        if any(build['exit_code'] != 0 or build['timed_out'] for build in actual_stable):
-            report['stable_acceptance'] = 'FAIL; retained actual stable logs; bootstrap diagnostic only'
-        elif len(actual_stable) == 4:
-            report['stable_acceptance'] = 'PASS'
-        checkpoint()
-        if not cancellation.cancelled and report['status'] == 'finite_cmp_boundary_pass' and not any(
-                (root / marker).exists() for marker in ('OWNED_WRITERS_UNPROVEN', 'CUSTODY_FAILED', 'CANCELLED')):
-            manifest = regular_tree(root)
-            pending = root / 'output-manifest.pending'
-            pending.write_text(json.dumps(manifest, indent=2) + '\n')
-            os.replace(pending, root / 'output-manifest.json')
+    WrapperRun().execute(args)
 
 
 def main():

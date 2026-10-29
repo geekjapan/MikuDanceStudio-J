@@ -1670,7 +1670,7 @@ class CensusControls(unittest.TestCase):
         self.assertTrue(any(item['kind']=='RequiredRuntimeImports' for item in result['unknowns']))
 
     def test_four_variants_continue_only_after_proven_writer_closure(self):
-        for closed in (True,False):
+        for failure_at in (None,'git-head','native-build'):
             files={};calls=[];fixtures=[];acquired=[];saved={}
             out=Path('C:/runner/temp/closure-census-evidence');build=Path('C:/runner/temp/closure-census-build');toolchain=Path('C:/runner/temp/floor-profile-deps/build/generators/conan_toolchain.cmake')
             def save(path,value):saved[path]=copy.deepcopy(value);files[path]=json.dumps(value).encode()
@@ -1678,17 +1678,31 @@ class CensusControls(unittest.TestCase):
                 calls.append((directory.name,label))
                 raw=b'1'*40 if label=='git-head' else '\n'.join(r.CENSUS_PATHS).encode() if label=='git-paths' else b''
                 files[directory/(label+'.stdout')]=raw;files[directory/(label+'.stderr')]=b''
-                row={'status':0,'argv':list(argv),'writer_closure':closed}
-                save(directory/(label+'.json'),row);return row
+                r.census_custody(out)
+                if label==failure_at:
+                    save(out/'writer-pending.json',{'state':'unknown'})
+                    save(out/'writer-custody.json',{'schema':r.CUSTODY_SCHEMA,'state':'unknown','receipts':[]})
+                    raise ValueError('unclosed diagnostic writers')
+                row={'status':0,'argv':list(argv),'writer_closure':True}
+                save(directory/(label+'.json'),row)
+                prior=saved[out/'writer-custody.json']['receipts']
+                save(out/'writer-custody.json',{'schema':r.CUSTODY_SCHEMA,'state':'closed','receipts':prior+[(directory/(label+'.json')).relative_to(out).as_posix()]})
+                return row
             def acquire(directory,*args):
                 acquired.append(directory.name)
                 if len(acquired)==1:raise ValueError('closed diagnostic failure')
                 return {'status':'CENSUS_INCOMPLETE_UNRESOLVED'}
             def glob(path,pattern):return [file for file in files if file.parent==path and file.suffix=='.json']
+            def inventory(path):
+                self.assertNotIn(out/'writer-pending.json',files,'source read while writer closure unknown')
+                return {}
+            recipe=r.recipe
+            def inert_recipe(*args):return {key:value.replace('\\','/') if isinstance(value,str) else value for key,value in recipe(*args).items()}
             patches=[
+                patch.object(r,'recipe',inert_recipe),
                 patch.object(r.sys,'platform','win32'),
                 patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_TEMP':'C:/runner/temp','GITHUB_SHA':'1'*40}),
-                patch.object(Path,'exists',return_value=False),
+                patch.object(Path,'exists',lambda path:path in files),
                 patch.object(Path,'is_file',return_value=True),
                 patch.object(Path,'mkdir'),
                 patch.object(Path,'read_bytes',lambda path:files.get(path,b'binary')),
@@ -1699,7 +1713,7 @@ class CensusControls(unittest.TestCase):
                 patch.object(r.shutil,'copyfile'),
                 patch.object(r.shutil,'copytree'),
                 patch.object(r.c,'safe_tar',return_value={}),
-                patch.object(r.c,'source_inventory',return_value={}),
+                patch.object(r.c,'source_inventory',inventory),
                 patch.object(r,'inputs',return_value=[]),
                 patch.object(r,'source_expected',return_value=({}, {}, {})),
                 patch.object(r,'record',record),
@@ -1713,16 +1727,20 @@ class CensusControls(unittest.TestCase):
             ]
             with ExitStack() as stack:
                 for context in patches:stack.enter_context(context)
-                if closed:
+                if failure_at is None:
                     result=r.run(out,build,toolchain,True)
                     self.assertEqual(len(result['variants']),4)
-                    self.assertEqual(len(acquired),4);self.assertEqual(fixtures,['mesh_dump','x_files']*4)
+                    self.assertEqual(len(acquired),4,{str(k):v for k,v in saved.items() if k.name=='variant-failure.json'});self.assertEqual(fixtures,['mesh_dump','x_files']*4)
                     self.assertNotIn(out/'seal.json',saved)
                     self.assertIn(out/'closure-census-seal.json',saved)
                 else:
                     with self.assertRaisesRegex(ValueError,'unclosed diagnostic writers'):r.run(out,build,toolchain,True)
-                    self.assertEqual(len(acquired),1)
+                    self.assertEqual(len(acquired),0)
                     self.assertNotIn(out/'closure-census-seal.json',saved)
+                    self.assertFalse(any(path.name in ('source-after.json','variant-closure.json') for path in saved))
+                    self.assertNotIn(out/'closure-census-result.json',saved)
+                    self.assertNotIn(out/'manifest.json',saved)
+                    self.assertNotIn('observed-Od',[directory for directory,label in calls])
 
     def test_diagnostic_recipe_and_default_reader_remain_separate(self):
         for opt in ('Od','O2'):
@@ -1735,6 +1753,155 @@ class CensusControls(unittest.TestCase):
         with patch.object(sys,'argv',['run.py','--closure-census','--out','/inert']),self.assertRaisesRegex(ValueError,'explicit hosted --run'):r.main()
         with patch.object(r,'load_json',return_value={'schema':r.CENSUS_SCHEMA}),patch.object(Path,'read_bytes',return_value=b'{}'),self.assertRaises((ValueError,KeyError)):
             r.replay(Path('/inert-census'))
+
+
+class CustodyControls(unittest.TestCase):
+    def exercise(self,failure=None):
+        from types import SimpleNamespace
+        root=Path('/owned-custody');out=root/'control-Od';files={};events=[];reads=[];streams=[]
+        state={'schema':r.CUSTODY_SCHEMA,'state':'no_writer_started','receipts':[]}
+        files[root/'writer-custody.json']=json.dumps(state).encode()
+        def fail(name):
+            events.append(name)
+            if failure==name:raise OSError(name)
+            if failure==name+'-interrupt':raise KeyboardInterrupt(name)
+            if failure==name+'-base':raise BaseException(name)
+        def save(path,value):
+            fail('receipt' if path==out/'probe.json' else 'metadata')
+            files[path]=json.dumps(value).encode()
+        def read(path):
+            reads.append(path)
+            if path.suffix in ('.stdout','.stderr'):
+                self.assertTrue(all(stream.closed for stream in streams))
+                self.assertIn('handle-close',events);self.assertIn('job-close',events)
+                self.assertNotIn(failure,('terminate','accounting','active','wait-reap','handle-close','job-close','stream-close'))
+            return files[path]
+        class Stream:
+            closed=False
+            def __init__(self,path):self.path=path
+            def close(self):fail('stream-close');self.closed=True
+        def open_stream(path,mode):
+            fail('stream-open');stream=Stream(path);streams.append(stream);files[path]=b'partial';return stream
+        class Job:
+            def setup(self):fail('setup')
+            def assign(self,child):fail('assign')
+            def resume(self,child):fail('resume')
+            def terminate(self):fail('terminate')
+            def accounting(self):
+                fail('accounting')
+                return SimpleNamespace(active_processes=1 if failure=='active' else 0)
+            def resources(self,accounting):fail('resources');return {'peak':1}
+            def close(self):fail('job-close')
+        class Child:
+            pid=123
+            _handle=SimpleNamespace(Close=lambda:fail('handle-close'))
+            waits=0
+            def wait(self,timeout):
+                self.waits+=1;fail('wait-first' if self.waits==1 else 'wait-reap')
+                if self.waits==1 and failure=='timeout':raise subprocess.TimeoutExpired('inert',timeout)
+                return 7 if failure=='nonzero' else 0
+            def kill(self):fail('kill')
+        def launch(*args,**kwargs):
+            self.assertIn(root/'writer-pending.json',files)
+            self.assertEqual(json.loads(files[root/'writer-custody.json'])['state'],'unknown')
+            self.assertEqual(kwargs['creationflags'],4)
+            self.assertEqual(len(streams),2)
+            fail('launch');return Child()
+        clock=iter(range(1000))
+        contexts=[patch.object(r.sys,'platform','win32'),patch.dict(os.environ,{'GITHUB_ACTIONS':'true'}),
+                  patch.object(r,'census_windows_job',lambda:Job()),patch.object(r.previous.subprocess,'Popen',launch),
+                  patch.object(r.previous.time,'monotonic',lambda:next(clock)),patch.object(r.previous.time,'sleep',lambda value:None),
+                  patch.object(Path,'exists',lambda path:path in files),patch.object(Path,'open',open_stream),
+                  patch.object(Path,'read_bytes',read),patch.object(Path,'unlink',lambda path:files.pop(path)),patch.object(r,'write_json',save)]
+        error=None;row=None
+        with ExitStack() as stack:
+            for context in contexts:stack.enter_context(context)
+            try:row=r.census_command(out,'probe',['owned.exe'],out,{'MDS_CENSUS_CUSTODY':str(root),'MDS_CENSUS_DEADLINE':'500'},20)
+            except BaseException as caught:error=caught
+            unknown=root/'writer-pending.json' in files
+            if unknown:
+                with self.assertRaisesRegex(ValueError,'unclosed diagnostic writers'):r.census_custody(root)
+                if failure!='receipt':self.assertFalse(any(path.suffix in ('.stdout','.stderr') for path in reads))
+                self.assertNotIn('stdout',json.loads(files.get(out/'probe.json',b'{}')))
+                with self.assertRaisesRegex(ValueError,'unclosed diagnostic writers'):
+                    r.record(out,'native',['must-not-be-read'],out,{'MDS_CENSUS_CUSTODY':str(root)})
+                before=list(events)
+                with self.assertRaisesRegex(ValueError,'unclosed diagnostic writers'):
+                    r.census_command(out,'next',['unrelated.exe'],out,{'MDS_CENSUS_CUSTODY':str(root),'MDS_CENSUS_DEADLINE':'500'},20)
+                self.assertEqual(events,before)
+            else:
+                self.assertEqual(r.census_custody(root)['state'],'closed')
+                self.assertTrue(json.loads(files[out/'probe.json'])['writer_closure'])
+        self.assertFalse(any('unrelated' in event for event in events))
+        return row,error,unknown,events,files
+
+    def test_legal_closed_first_and_closed_partial_nonzero_timeout(self):
+        for failure in (None,'nonzero','timeout'):
+            row,error,unknown,events,files=self.exercise(failure)
+            self.assertIsNone(error);self.assertFalse(unknown)
+            self.assertIn('stdout',row)
+            self.assertEqual(row['terminal'],'timeout' if failure=='timeout' else 'exit')
+            self.assertEqual(row['status'],None if failure=='timeout' else 7 if failure=='nonzero' else 0)
+
+    def test_setup_assignment_resume_and_baseexception_close_owned_lifetime(self):
+        for failure in ('setup','assign','resume','assign-interrupt','resume-interrupt','resume-base','wait-first-interrupt'):
+            with self.subTest(failure=failure):
+                row,error,unknown,events,files=self.exercise(failure)
+                self.assertIsNotNone(error);self.assertFalse(unknown)
+                self.assertIn('job-close',events)
+                if failure not in ('setup','stream-open'):self.assertIn('handle-close',events)
+
+    def test_unknown_launch_and_all_cleanup_failures_prohibit_reads_and_next(self):
+        for failure in ('stream-open','launch','launch-interrupt','terminate','terminate-interrupt','kill','accounting','active','wait-reap','handle-close','job-close','stream-close'):
+            with self.subTest(failure=failure):
+                row,error,unknown,events,files=self.exercise(failure)
+                self.assertIsNotNone(error);self.assertTrue(unknown)
+                self.assertIn('job-close',events)
+
+    def test_resource_error_after_process_closure_still_closes_streams(self):
+        row,error,unknown,events,files=self.exercise('resources')
+        self.assertIsInstance(error,OSError);self.assertFalse(unknown)
+        self.assertIn('resource_error',json.loads(files[Path('/owned-custody/control-Od/probe.json')]))
+
+    def test_unwritten_receipt_never_clears_pending_marker(self):
+        row,error,unknown,events,files=self.exercise('receipt')
+        self.assertIsNotNone(error);self.assertTrue(unknown)
+
+    def test_zero_receipts_require_explicit_no_writer_startup(self):
+        root=Path('/owned-custody')
+        def state(value):return patch.object(Path,'read_bytes',return_value=json.dumps(value).encode())
+        with patch.object(Path,'exists',return_value=False):
+            with state({'schema':r.CUSTODY_SCHEMA,'state':'no_writer_started','receipts':[]}):
+                self.assertEqual(r.census_custody(root)['state'],'no_writer_started')
+            for value in ({'schema':r.CUSTODY_SCHEMA,'state':'closed','receipts':[]},
+                          {'schema':r.CUSTODY_SCHEMA,'state':'unknown','receipts':[]},
+                          {'schema':r.CUSTODY_SCHEMA,'state':'closed','receipts':['unwritten.json']}):
+                with state(value),self.assertRaises((ValueError,KeyError)):r.census_custody(root)
+            with patch.object(Path,'read_bytes',side_effect=FileNotFoundError),self.assertRaises(FileNotFoundError):r.census_custody(root)
+
+    def test_cli_custody_rejects_unknown_false_and_unwritten_receipts(self):
+        root=Path('/owned-custody')
+        for closure in (True,False,None):
+            state={'schema':r.CUSTODY_SCHEMA,'state':'closed','receipts':['command.json']}
+            def read(path):return json.dumps(state if path.name=='writer-custody.json' else {'writer_closure':closure}).encode()
+            output=io.StringIO()
+            with patch.object(sys,'argv',['run.py','--custody-check','--out',str(root)]),patch.object(Path,'exists',return_value=False),patch.object(Path,'read_bytes',read),patch.object(sys,'stdout',output):
+                if closure is True:r.main()
+                else:
+                    with self.assertRaisesRegex(ValueError,'unclosed diagnostic writers receipt'):r.main()
+            self.assertEqual(bool(output.getvalue()),closure is True)
+
+    def test_actual_workflow_upload_has_custody_selector(self):
+        workflow=(r.ROOT/'.github/workflows/renderer-closure-census.yml').read_text()
+        self.assertIn('id: custody',workflow)
+        self.assertIn('if: always() && steps.custody.outputs.upload == \'true\'',workflow)
+        gate=workflow.split('name: Derive diagnostic writer custody',1)[1].split('name: Retain closed',1)[0]
+        self.assertIn('"upload=false" >> $env:GITHUB_OUTPUT',gate)
+        self.assertIn('--custody-check --out $evidence',gate)
+        self.assertLess(gate.index('if ($LASTEXITCODE)'),gate.index('"upload=true"'))
+        self.assertIn("-eq 'no_acquisition_started'",gate)
+        self.assertIn("throw 'Acquisition custody is unknown",gate)
+        self.assertIn("branches: [w4-renderer-closure-census]",workflow)
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

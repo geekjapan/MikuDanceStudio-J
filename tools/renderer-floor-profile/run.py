@@ -58,6 +58,7 @@ require, digest, load_json = previous.require, previous.digest, previous.load_js
 checked, readonly = previous.checked, previous.readonly
 
 def record(out,label,argv,cwd,env,timeout=1200):
+    if env.get('MDS_CENSUS_CUSTODY'):census_custody(Path(env['MDS_CENSUS_CUSTODY']))
     binary=Path(argv[0]).read_bytes() if label in ('native','rust') else None
     tool=Path(argv[0]).read_bytes() if label=='instruction-help' or '-instructions-' in label else None
     if env.get('MDS_CENSUS_DEADLINE'):
@@ -96,14 +97,27 @@ def record(out,label,argv,cwd,env,timeout=1200):
     return row
 
 
-def census_command(out,label,argv,cwd,env,timeout):
+CUSTODY_SCHEMA = 'mds-census-writer-custody-v1'
+
+
+def census_custody(out):
+    marker=out/'writer-pending.json'
+    require(not marker.exists(),'unclosed diagnostic writers marker')
+    state=load_json((out/'writer-custody.json').read_bytes())
+    require(state['schema']==CUSTODY_SCHEMA and state['state'] in ('no_writer_started','closed'),
+            'unclosed diagnostic writers state')
+    receipts=state['receipts']
+    require(type(receipts) is list and len(set(receipts))==len(receipts),'explicit custody command receipts')
+    require((state['state']=='no_writer_started')==(len(receipts)==0),'explicit startup custody classification')
+    for name in receipts:
+        require(type(name) is str and not Path(name).is_absolute() and '..' not in Path(name).parts,'owned custody receipt path')
+        require(load_json((out/name).read_bytes()).get('writer_closure') is True,'unclosed diagnostic writers receipt')
+    return state
+
+
+def census_windows_job():
     import ctypes
     from ctypes import wintypes
-    require(sys.platform=='win32' and os.environ.get('GITHUB_ACTIONS')=='true','hosted census command only')
-    require(not (out/(label+'.json')).exists(),'fresh diagnostic command receipt')
-    remaining=float(env['MDS_CENSUS_DEADLINE'])-previous.time.monotonic()
-    require(remaining>0,'diagnostic variant wall time ceiling reached')
-    timeout=min(timeout,remaining)
     class BasicLimits(ctypes.Structure):
         _fields_=[('process_time',ctypes.c_int64),('job_time',ctypes.c_int64),('flags',wintypes.DWORD),
                   ('min_working_set',ctypes.c_size_t),('max_working_set',ctypes.c_size_t),
@@ -125,46 +139,111 @@ def census_command(out,label,argv,cwd,env,timeout):
     for name,(args,result) in declarations.items():
         function=getattr(kernel,name);function.argtypes=args;function.restype=result
     resume=ctypes.WinDLL('ntdll').NtResumeProcess;resume.argtypes=[wintypes.HANDLE];resume.restype=ctypes.c_long
-    limits=ExtendedLimits();limits.basic.flags=0x2000
-    job=kernel.CreateJobObjectW(None,None);require(job,'diagnostic process job creation')
+    class Job:
+        def __init__(self):self.handle=None;self.create_attempted=False
+        def setup(self):
+            self.create_attempted=True
+            self.handle=kernel.CreateJobObjectW(None,None)
+            require(self.handle,'diagnostic process job creation')
+            limits=ExtendedLimits();limits.basic.flags=0x2000
+            require(kernel.SetInformationJobObject(self.handle,9,ctypes.byref(limits),ctypes.sizeof(limits)),'kill-on-close diagnostic process job')
+        def assign(self,child):
+            require(kernel.AssignProcessToJobObject(self.handle,int(child._handle)),'diagnostic child tree containment before execution')
+        def resume(self,child):require(resume(int(child._handle))==0,'diagnostic suspended process resume')
+        def terminate(self):
+            if self.handle:require(kernel.TerminateJobObject(self.handle,1),'diagnostic descendants termination')
+        def accounting(self):
+            value=Accounting()
+            require(kernel.QueryInformationJobObject(self.handle,1,ctypes.byref(value),ctypes.sizeof(value),None),'diagnostic process closure accounting')
+            return value
+        def resources(self,accounting):
+            limits=ExtendedLimits()
+            require(kernel.QueryInformationJobObject(self.handle,9,ctypes.byref(limits),ctypes.sizeof(limits),None),'diagnostic memory accounting')
+            return {'peak_process_memory_bytes':limits.peak_process_memory,'peak_job_memory_bytes':limits.peak_job_memory,
+                    'user_time_100ns':accounting.user_time,'kernel_time_100ns':accounting.kernel_time,'total_processes':accounting.total_processes}
+        def close(self):
+            require(not self.create_attempted or self.handle is not None,'diagnostic job creation returned no owned handle')
+            if self.handle:
+                require(kernel.CloseHandle(self.handle),'diagnostic job handle close')
+                self.handle=None
+    return Job()
+
+
+def census_command(out,label,argv,cwd,env,timeout):
+    require(sys.platform=='win32' and os.environ.get('GITHUB_ACTIONS')=='true','hosted census command only')
+    root=Path(env['MDS_CENSUS_CUSTODY'])
+    state=census_custody(root)
+    require(not (out/(label+'.json')).exists(),'fresh diagnostic command receipt')
+    remaining=float(env['MDS_CENSUS_DEADLINE'])-previous.time.monotonic()
+    require(remaining>0,'diagnostic variant wall time ceiling reached')
+    timeout=min(timeout,remaining)
+    receipt=(out/(label+'.json')).relative_to(root).as_posix()
     row={'argv':list(map(str,argv)),'cwd':str(cwd),'env':{k:env[k] for k in ('PATH','HOME','CARGO_HOME','RUSTUP_HOME','TMPDIR','CARGO_TARGET_DIR','CARGO_INCREMENTAL','CARGO_TERM_COLOR','RUSTFLAGS','CL','_CL_','INCLUDE','LIB','LIBPATH','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion') if k in env},
          'start_utc':previous.utc(),'start_ns':previous.time.time_ns(),'status':None,'terminal':'launch_failure',
-         'timeout_seconds':timeout,'writer_closure':False}
-    child=None;assigned=False
+         'timeout_seconds':timeout,'writer_closure':None}
+    # This persists before any native resource, stream or child can be acquired.
+    write_json(root/'writer-pending.json',{'schema':CUSTODY_SCHEMA,'receipt':receipt,'state':'unknown'})
+    write_json(root/'writer-custody.json',dict(state,state='unknown'))
+    child=None;job=None;launch_attempted=False;streams=[];cleanup_errors=[];accounting=None;closed=True;stream_acquiring=False;resource_failure=None
+    def cleanup(action):
+        nonlocal closed
+        try:action()
+        except BaseException as error:
+            closed=False;cleanup_errors.append(type(error).__name__+': '+str(error))
     try:
-        require(kernel.SetInformationJobObject(job,9,ctypes.byref(limits),ctypes.sizeof(limits)),'kill-on-close diagnostic process job')
-        with (out/(label+'.stdout')).open('xb') as stdout,(out/(label+'.stderr')).open('xb') as stderr:
-            child=previous.subprocess.Popen(row['argv'],cwd=cwd,env=env,stdout=stdout,stderr=stderr,creationflags=4)
-            row['pid']=child.pid
-            require(kernel.AssignProcessToJobObject(job,int(child._handle)),'diagnostic child tree containment before execution')
-            assigned=True
-            require(resume(int(child._handle))==0,'diagnostic suspended process resume')
-            try:row.update(status=child.wait(timeout=timeout),terminal='exit')
-            except previous.subprocess.TimeoutExpired:row['terminal']='timeout'
-            require(kernel.TerminateJobObject(job,1),'diagnostic descendants termination')
-            child.wait()
-            accounting=Accounting()
-            require(kernel.QueryInformationJobObject(job,1,ctypes.byref(accounting),ctypes.sizeof(accounting),None),'diagnostic process accounting')
-            until=previous.time.monotonic()+10
-            while accounting.active_processes and previous.time.monotonic()<until:
-                previous.time.sleep(0.01)
-                require(kernel.QueryInformationJobObject(job,1,ctypes.byref(accounting),ctypes.sizeof(accounting),None),'diagnostic process closure accounting')
-            row['writer_closure']=accounting.active_processes==0
-            require(row['writer_closure'],'diagnostic writers are not closed')
-            require(kernel.QueryInformationJobObject(job,9,ctypes.byref(limits),ctypes.sizeof(limits),None),'diagnostic memory accounting')
-            row['resources']={'peak_process_memory_bytes':limits.peak_process_memory,'peak_job_memory_bytes':limits.peak_job_memory,
-                              'user_time_100ns':accounting.user_time,'kernel_time_100ns':accounting.kernel_time,'total_processes':accounting.total_processes}
-    finally:
-        kernel.TerminateJobObject(job,1);kernel.CloseHandle(job)
-        if child is not None:
-            if not assigned:child.kill()
-            child.wait(timeout=10);child.__exit__(None,None,None)
-        row.update(end_utc=previous.utc(),end_ns=previous.time.time_ns())
+        job=census_windows_job();job.setup()
         for suffix in ('stdout','stderr'):
-            path=out/(label+'.'+suffix)
-            if path.exists():
-                raw=path.read_bytes();row[suffix]={'name':path.name,'sha256':digest(raw),'size':len(raw)}
+            stream_acquiring=True
+            streams.append((out/(label+'.'+suffix)).open('xb'))
+            stream_acquiring=False
+        launch_attempted=True
+        child=previous.subprocess.Popen(row['argv'],cwd=cwd,env=env,stdout=streams[0],stderr=streams[1],creationflags=4)
+        row['pid']=child.pid
+        job.assign(child)
+        job.resume(child)
+        try:row.update(status=child.wait(timeout=timeout),terminal='exit')
+        except previous.subprocess.TimeoutExpired:row['terminal']='timeout'
+    except BaseException as error:
+        row['error']=type(error).__name__+': '+str(error)
+        raise
+    finally:
+        if stream_acquiring:
+            closed=False;cleanup_errors.append('stream acquisition returned no owned descriptor')
+        if launch_attempted and child is None:
+            closed=False;cleanup_errors.append('launch returned no owned process handle')
+        if job is not None:cleanup(job.terminate)
+        if child is not None:
+            # The owned suspended child can exist even if assignment raised.
+            cleanup(child.kill)
+            cleanup(lambda:child.wait(timeout=10))
+        if job is not None and child is not None:
+            try:
+                accounting=job.accounting();until=previous.time.monotonic()+10
+                while accounting.active_processes and previous.time.monotonic()<until:
+                    previous.time.sleep(0.01);accounting=job.accounting()
+                require(accounting.active_processes==0,'diagnostic writers are not closed')
+            except BaseException as error:
+                closed=False;cleanup_errors.append(type(error).__name__+': '+str(error))
+        if closed and accounting is not None:
+            try:row['resources']=job.resources(accounting)
+            except BaseException as error:
+                resource_failure=error;row['resource_error']=type(error).__name__+': '+str(error)
+        if child is not None:cleanup(child._handle.Close)
+        if job is not None:cleanup(job.close)
+        for stream in streams:cleanup(stream.close)
+        row['writer_closure']=True if closed else None
+        row.update(end_utc=previous.utc(),end_ns=previous.time.time_ns(),cleanup_errors=cleanup_errors)
+        if closed:
+            for suffix in ('stdout','stderr'):
+                path=out/(label+'.'+suffix)
+                if path.exists():
+                    raw=path.read_bytes();row[suffix]={'name':path.name,'sha256':digest(raw),'size':len(raw)}
         write_json(out/(label+'.json'),row)
+        if closed:
+            write_json(root/'writer-custody.json',{'schema':CUSTODY_SCHEMA,'state':'closed','receipts':state['receipts']+[receipt]})
+            (root/'writer-pending.json').unlink()
+        require(closed,'unclosed diagnostic writers; retain marker and prohibit publication')
+    if resource_failure is not None:raise resource_failure
     return row
 
 
@@ -1772,8 +1851,12 @@ def run(out,build_root,toolchain,census_mode=False):
     runner_temp=os.environ['RUNNER_TEMP']
     r=recipe(runner_temp,'control','Od',census_mode)
     require(PureWindowsPath(str(out))==PureWindowsPath(r['evidence']).parent and PureWindowsPath(str(build_root))==PureWindowsPath(runner_temp)/('closure-census-build' if census_mode else 'floor-profile-build') and PureWindowsPath(str(toolchain))==PureWindowsPath(runner_temp)/'floor-profile-deps/build/generators/conan_toolchain.cmake','fixed hosted roots/toolchain')
-    out.mkdir(parents=True);build_root.mkdir(parents=True);env=os.environ.copy()
-    if census_mode:env['MDS_CENSUS_DEADLINE']=str(previous.time.monotonic()+1200)
+    out.mkdir(parents=True)
+    if census_mode:write_json(out/'writer-custody.json',{'schema':CUSTODY_SCHEMA,'state':'no_writer_started','receipts':[]})
+    build_root.mkdir(parents=True);env=os.environ.copy()
+    if census_mode:
+        env['MDS_CENSUS_DEADLINE']=str(previous.time.monotonic()+1200)
+        env['MDS_CENSUS_CUSTODY']=str(out)
     scope=CENSUS_PATHS if census_mode else PATHS
     for label,argv in [('git-head',['git','rev-parse','HEAD']),('git-status',['git','status','--porcelain']),('git-paths',['git','diff','--name-only',CENSUS_BASE if census_mode else BASE,'HEAD']),('source-archive',['git','-c','tar.umask=0022','archive',BASE]),('base-commit',['git','cat-file','commit',BASE]),('head-commit',['git','cat-file','commit','HEAD'])]:
         require(record(out,label,argv,ROOT,env)['status']==0,'source identity command')
@@ -1865,17 +1948,17 @@ def run(out,build_root,toolchain,census_mode=False):
                 write_json(directory/'variant-failure.json',{'schema':CENSUS_SCHEMA,'error':str(error),'status':variant_results[id]})
             finally:
                 if census_mode:
+                    custody=census_custody(out)
                     if source.exists():write_json(directory/'source-after.json',c.source_inventory(source))
-                    receipts=[load_json(path.read_bytes()) for path in directory.glob('*.json') if path.name not in ('variant-failure.json','source-after.json') and 'argv' in load_json(path.read_bytes())]
-                    closed=all(row.get('writer_closure') is True for row in receipts)
-                    write_json(directory/'variant-closure.json',{'schema':CENSUS_SCHEMA,'writers_closed':closed,'command_count':len(receipts),'status':variant_results.get(id,'CENSUS_INCOMPLETE_UNRESOLVED')})
-                    require(closed,'cannot continue variant with unclosed diagnostic writers')
+                    receipts=[name for name in custody['receipts'] if Path(name).parent==Path(id)]
+                    write_json(directory/'variant-closure.json',{'schema':CENSUS_SCHEMA,'writers_closed':True,'command_count':len(receipts),'classification':'closed_commands' if receipts else 'no_writer_started','status':variant_results.get(id,'CENSUS_INCOMPLETE_UNRESOLVED')})
                     write_json(out/'manifest.json',m)
     if census_mode:
         result={'schema':CENSUS_SCHEMA,'variants':variant_results,'expected_variants':['control-Od','observed-Od','control-O2','observed-O2'],
                 'admission':'NotAuthorized','compiled_semantics':'UnprovedAwaitingIndependentReview',
                 'fixture_contract':{name:sorted(tests) for name,tests in FIXTURE_TESTS.items()}}
         write_json(out/'closure-census-result.json',result)
+        census_custody(out)
         write_json(out/'closure-census-seal.json',{'schema':CENSUS_SCHEMA,'files':previous.evidence_inventory(out)})
         return result
     result={'schema':SCHEMA,'fp_observation_contract':FP_CONTRACT,'head':head,'results':{opt:classify(*parsed['observed-'+opt]) for opt in ('Od','O2')},'hosted':'ExecutedWindowsOnly','profile_adoption':'NotAuthorized'}
@@ -1887,12 +1970,16 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run',action='store_true')
     parser.add_argument('--closure-census',action='store_true')
+    parser.add_argument('--custody-check',action='store_true')
     parser.add_argument('--out',type=Path,required=True)
     parser.add_argument('--archive',type=Path)
     parser.add_argument('--build-root',type=Path)
     parser.add_argument('--toolchain',type=Path)
     parser.add_argument('--bundle',type=Path)
     args=parser.parse_args();out=args.out.resolve()
+    if args.custody_check:
+        require(not any((args.run,args.closure_census,args.archive,args.build_root,args.toolchain,args.bundle)),'custody check only')
+        print(json.dumps(census_custody(out),sort_keys=True));return
     require(not args.closure_census or args.run,'diagnostic acquisition requires explicit hosted --run')
     if args.run:
         require(args.archive is None,'hosted run creates its own complete generation')

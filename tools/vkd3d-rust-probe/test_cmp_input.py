@@ -166,6 +166,18 @@ class CmpInputTests(unittest.TestCase):
         self.assertFalse((failed / 'receipt.json').exists())
         self.assertEqual(json.loads((failed / 'failure.json').read_text())['state'], 'failed')
 
+    def test_receipt_publication_failure_restores_incomplete_marker(self):
+        self.baseline()
+        with patch.object(boundary, 'reviewed_contract', return_value=self.contract):
+            with patch.object(boundary.os, 'replace', side_effect=OSError('injected publication failure')):
+                with self.assertRaisesRegex(OSError, 'injected publication'):
+                    boundary.normalize(self.source, self.contract['target'], self.library,
+                                       self.owned / 'publication-failed', self.owned)
+        failed = self.owned / 'publication-failed'
+        self.assertTrue((failed / 'INCOMPLETE').is_file())
+        self.assertFalse((failed / 'receipt.json').exists())
+        self.assertEqual(json.loads((failed / 'failure.json').read_text())['state'], 'failed')
+
     def test_archive_identity_failure_and_hosted_execution_guard(self):
         self.baseline()
         with self.assertRaisesRegex(ValueError, 'ZIP identity'):

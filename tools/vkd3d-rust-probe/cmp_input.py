@@ -127,9 +127,11 @@ def normalize(original, target, native_library, output, ownership_root, *, contr
                    'four_target_execution': 'UNRUN', 'product_integration': 'UNRUN'}
         temporary = output / 'receipt.pending'
         temporary.write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
-        os.replace(temporary, output / 'receipt.json')
         incomplete.unlink()
+        os.replace(temporary, output / 'receipt.json')
         return receipt
     except BaseException as error:
+        if not (output / 'receipt.json').exists():
+            incomplete.write_text('Failed input; no ready receipt was published.\n')
         (output / 'failure.json').write_text(json.dumps({'state': 'failed', 'error': str(error)}) + '\n')
         raise

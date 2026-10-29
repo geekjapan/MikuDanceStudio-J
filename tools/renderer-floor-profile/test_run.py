@@ -1565,9 +1565,10 @@ class CensusControls(unittest.TestCase):
 
     def test_finite_ceilings_are_independent_and_keep_lower_bound(self):
         for name in r.CENSUS_LIMITS:
-            census=r.ClosureCensus();view=self.view(2);census.register(view)
-            limits=dict(r.CENSUS_LIMITS);limits[name]=0
-            with self.subTest(ceiling=name),patch.dict(r.CENSUS_LIMITS,limits),self.assertRaisesRegex(r.CensusLimit,'diagnostic '+name):census.check()
+            with patch.object(r.previous.time,'monotonic',side_effect=[100,101]):
+                census=r.ClosureCensus();view=self.view(2);census.register(view)
+                limits=dict(r.CENSUS_LIMITS);limits[name]=0
+                with self.subTest(ceiling=name),patch.dict(r.CENSUS_LIMITS,limits),self.assertRaisesRegex(r.CensusLimit,'diagnostic '+name):census.check()
             view['pending']=[[0,8],[8,16]]
             summary=census.summary([{'witness':view}])
             self.assertEqual(summary['status'],'CENSUS_INCOMPLETE_UNRESOLVED')
@@ -1575,6 +1576,13 @@ class CensusControls(unittest.TestCase):
             self.assertEqual(len(summary['pending']),2)
         empty=r.ClosureCensus().summary([])
         self.assertEqual(empty['status'],'CENSUS_INCOMPLETE_UNRESOLVED')
+
+    def test_seconds_ceiling_accepts_equal_elapsed_and_refuses_above(self):
+        for deadline in (0,2):
+            with self.subTest(deadline=deadline),patch.dict(r.CENSUS_LIMITS,{'seconds':deadline}),patch.object(r.previous.time,'monotonic',side_effect=[100,100+deadline,101+deadline]):
+                census=r.ClosureCensus();census.register(self.view(2))
+                self.assertEqual(census.check()['seconds'],deadline)
+                with self.assertRaisesRegex(r.CensusLimit,'diagnostic seconds'):census.check()
 
     def test_unique_ranges_logical_roots_shared_reachability(self):
         raw,mapping,rows,_=code_fixture();census=r.ClosureCensus()

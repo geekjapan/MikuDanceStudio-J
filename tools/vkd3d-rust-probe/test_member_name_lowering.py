@@ -1,6 +1,7 @@
 import copy
 from contextlib import contextmanager
 import io
+import hashlib
 import os
 from pathlib import Path, PosixPath
 import sys
@@ -15,12 +16,12 @@ import member_name_lowering as M
 
 
 @contextmanager
-def hosted_verifier():
+def hosted_verifier(*, historical_review_bytes=None):
     import full_compiler as F
     original = Path(F.__file__).parent / 'patches/c2rust-win64-abi.patch'
     module = '/home/runner/work/MikuDanceStudio-J/MikuDanceStudio-J/tools/vkd3d-rust-probe/full_compiler.py'
     reviewed = Path(module).parent / 'patches/c2rust-win64-abi.patch'
-    live = {'bytes': original.read_bytes(), 'reads': []}
+    live = {'bytes': original.read_bytes() if historical_review_bytes is None else historical_review_bytes, 'reads': []}
     methods = {name: getattr(PosixPath, name) for name in ('read_bytes', 'resolve', 'is_file', 'is_symlink')}
     def read(path):
         live['reads'].append(str(path))
@@ -47,7 +48,7 @@ class TraceTests(unittest.TestCase):
         cls.z = zipfile.ZipFile(os.environ['MEMBER_NAME_ALL24'])
         cls.src = M.sources(cls.z)
 
-    def test_actual_hosted_transport_and_reviewed_patch(self):
+    def test_actual_historical_tool_rejected_by_current_reviewed_patch(self):
         import full_compiler as F
         import apply_c2rust_patch as A
         setup = Path(os.environ.get('MEMBER_NAME_SETUP', str(Path(os.environ['MEMBER_NAME_ALL24']).with_name('setup.zip'))))
@@ -58,7 +59,9 @@ class TraceTests(unittest.TestCase):
         with hosted_verifier() as (reviewed, live):
             transport.files[str(reviewed)] = b'untrusted captured replacement'
             with transport.context():
-                F.verify_cursor_tool(F.Path(tool))
+                A.verify_tool(A.Path(tool).parent.parent)
+                with self.assertRaisesRegex(ValueError, 'differs from reviewed patch'):
+                    F.verify_cursor_tool(F.Path(tool))
                 self.assertEqual(F.Path(reviewed).read_bytes(), live['bytes'])
                 self.assertEqual(F.Path(reviewed).resolve(), reviewed)
                 self.assertTrue(F.Path(reviewed).is_file())
@@ -74,6 +77,33 @@ class TraceTests(unittest.TestCase):
                     self.assertFalse(F.Path(unknown).is_file())
             self.assertEqual((F.Path, A.Path), original_paths)
             live['bytes'] += b'changed current reviewed patch'
+            with self.assertRaisesRegex(ValueError, 'differs from reviewed patch'):
+                with transport.context():
+                    F.verify_cursor_tool(F.Path(tool))
+            self.assertEqual((F.Path, A.Path), original_paths)
+        self.assertEqual((F.Path, A.Path), original_paths)
+
+    def test_actual_historical_tool_matches_only_pinned_historical_review_fixture(self):
+        import full_compiler as F
+        import apply_c2rust_patch as A
+        setup = Path(os.environ.get('MEMBER_NAME_SETUP', str(Path(os.environ['MEMBER_NAME_ALL24']).with_name('setup.zip'))))
+        with zipfile.ZipFile(setup) as retained:
+            transport = M.Transport(self.z, retained)
+        tool = next(p for p in transport.files if p.endswith('/bin/c2rust-transpile'))
+        historical = transport.read(str(Path(tool).parent.parent / 'source-evidence/c2rust-source.patch'))
+        self.assertEqual(len(historical), 165488)
+        self.assertEqual(M.sha(historical), 'e5cd48b433831627eaa6962d52ddc974203d396b74d85ec91971307b8c655673')
+        self.assertEqual(hashlib.sha1(b'blob ' + str(len(historical)).encode() + b'\0' + historical).hexdigest(),
+                         'd2ad62f5ddf6fbd29434cb932c94c06213fc5d2e')
+        original_paths = F.Path, A.Path
+        with hosted_verifier(historical_review_bytes=historical) as (reviewed, live):
+            transport.files[str(reviewed)] = b'untrusted captured replacement'
+            with transport.context():
+                A.verify_tool(A.Path(tool).parent.parent)
+                F.verify_cursor_tool(F.Path(tool))
+                self.assertEqual(F.Path(reviewed).read_bytes(), historical)
+            self.assertEqual((F.Path, A.Path), original_paths)
+            live['bytes'] += b'changed historical fixture reviewed patch'
             with self.assertRaisesRegex(ValueError, 'differs from reviewed patch'):
                 with transport.context():
                     F.verify_cursor_tool(F.Path(tool))

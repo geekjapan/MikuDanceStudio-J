@@ -1,6 +1,6 @@
 """Exact member-name dependency-call-trace experiment, never product authorization.
 
-Default replay reads retained artifacts only. --acquire and --run-hosted write
+Default replay reads retained artifacts only. Acquisition and --run-hosted write
 artifacts; only --run-hosted compiles. Captured Linux aliases identify retained bytes.
 """
 import argparse
@@ -813,7 +813,7 @@ def run_hosted(root, paths):
     return replay(root, paths)
 
 
-def acquire(root):
+def acquire(root, *, helper_inputs=False):
     import urllib.request
     need(os.environ.get('GITHUB_ACTIONS') == 'true' and sys.platform == 'linux', 'artifact acquisition is hosted-only')
     need(not root.exists(), 'acquisition output must be fresh')
@@ -826,7 +826,8 @@ def acquire(root):
                 redirected.remove_header('Authorization')
             return redirected
     opener = urllib.request.build_opener(Redirect())
-    for name, (ident, size, digest) in ARTIFACTS.items():
+    for name in (('all24', 'setup') if helper_inputs else ARTIFACTS):
+        ident, size, digest = ARTIFACTS[name]
         base = 'https://api.github.com/repos/geekjapan/MikuDanceStudio-J/actions/artifacts/'+str(ident)
         def fetch(url):
             request = urllib.request.Request(url,headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})
@@ -850,10 +851,14 @@ def main():
     parser.add_argument('--replay', type=Path)
     parser.add_argument('--run-hosted', type=Path)
     parser.add_argument('--acquire', type=Path)
+    parser.add_argument('--acquire-helper-inputs', type=Path)
     args = parser.parse_args()
-    need(sum(x is not None for x in (args.replay,args.run_hosted,args.acquire)) <= 1, 'exclusive operation')
+    need(sum(x is not None for x in (args.replay,args.run_hosted,args.acquire,args.acquire_helper_inputs)) <= 1, 'exclusive operation')
     if args.acquire:
         acquire(args.acquire)
+        return
+    if args.acquire_helper_inputs:
+        acquire(args.acquire_helper_inputs, helper_inputs=True)
         return
     paths = {k: getattr(args,k) or (args.artifacts/(k+'.zip') if args.artifacts else None) for k in ARTIFACTS}
     need(all(paths.values()), 'all three fixed artifact paths required')

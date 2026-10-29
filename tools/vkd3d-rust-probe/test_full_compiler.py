@@ -30,6 +30,29 @@ let size = offset_of!(
 
 
 class FullCompilerTests(unittest.TestCase):
+    def test_closed_format_pair_changes_only_flag_and_retains_extraction_failure(self):
+        for exit_code, timed_out, category in ((124, True, 'timeout'), (-9, False, 'crash'), (1, False, 'compiler_or_parse_failure')):
+            with self.subTest(category=category), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                database = root / 'compile_commands.json'
+                database.write_text(json.dumps([{'directory': '/source', 'file': '/source/' + unit,
+                    'arguments': ['/clang', '-c', '/source/' + unit]} for unit in full.UNITS]))
+                calls = []
+                def execute(argv, log, **kwargs):
+                    calls.append(argv)
+                    log.write_text('raw compiler failure fixture')
+                    return {'exit_code': exit_code, 'timed_out': timed_out}
+                with patch.object(full, 'verify_cursor_tool'):
+                    report = full.collect_closed_format_facts(root / 'tool/bin/c2rust-transpile', database,
+                                                              root / 'packet', execute, [
+                        {'exit_code': 0, 'command': ['/clang', '-fsyntax-only', '/source/' + unit]} for unit in full.UNITS])
+                self.assertEqual(report['status'], 'AnalysisFailure')
+                self.assertEqual(report['category'], category)
+                self.assertEqual(len(calls), 1)
+                self.assertTrue((root / 'packet/off.log').is_file())
+                self.assertTrue((root / 'packet/seal.json').is_file())
+                self.assertNotIn('semantic', report['category'])
+
     def collect_fixture(self, root, invalid=None, valid_new=False, working_success=False):
         artifacts = root / 'artifacts'
         artifacts.mkdir()
@@ -408,6 +431,18 @@ class CursorBindingTests(unittest.TestCase):
             pair['files'][str(path)] = full.digest(path)
             with self.assertRaisesRegex(PlanError, 'unaccounted native lexer event'):
                 full.prove_bound_cursor_witness(receipt, symbol)
+
+    def test_portable_replay_checks_cached_facts_without_original_runner_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory).resolve() / 'pilot.c'
+            source.write_text('int value;')
+            facts = native_inputs_fixture(source, 'x86_64-pc-linux-gnu')
+            source.unlink()
+            full.verify_native_cursor_inputs({'native_inputs': facts}, str(source), facts['target'],
+                                             {'directory': str(source.parent)}, read_current=False)
+            with self.assertRaises(OSError):
+                full.verify_native_cursor_inputs({'native_inputs': facts}, str(source), facts['target'],
+                                                 {'directory': str(source.parent)})
 
     def test_native_input_manifest_missing_tampered_or_unsupported_rejects(self):
         from copy import deepcopy

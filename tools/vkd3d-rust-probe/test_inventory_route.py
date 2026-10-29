@@ -1,5 +1,6 @@
 """Source-route guards, not execution of the compiled exporter."""
 from pathlib import Path
+from itertools import product
 import re
 import tempfile
 import unittest
@@ -24,8 +25,9 @@ def inventory_condition(source):
     if not match:
         raise ValueError('missing typed inventory writer guard')
     condition = match[1]
-    if condition != 'tcfg.emit_variadic_inventory || tcfg.emit_c_decl_map || tcfg.emit_cursor_witness':
-        raise ValueError('typed inventory must follow inventory, map, or witness requests')
+    if condition != ('tcfg.emit_variadic_inventory || tcfg.emit_c_decl_map || '
+                     'tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts'):
+        raise ValueError('typed inventory must follow inventory, map, witness, or format requests')
     return condition
 
 
@@ -35,18 +37,18 @@ def check_source_tree(source):
     exporter_call = re.search(r'ast_exporter::get_untyped_ast\((.*?)\) \{', lib, re.S)
     if not exporter_call or [line.strip() for line in exporter_call[1].strip().splitlines()[-2:]] != [
             'tcfg.emit_c_decl_map,',
-            'tcfg.emit_cursor_witness.then(|| output_path.with_extension("cursor.cbor")).as_deref(),']:
+            '(tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts).then(|| output_path.with_extension("cursor.cbor")).as_deref(),']:
         raise ValueError('exporter source collection must remain map-only')
     translator = (source / 'c2rust-transpile/src/translator/mod.rs').read_text()
     if 'let decl_source_ranges = if tcfg.emit_c_decl_map {' not in translator:
         raise ValueError('declaration source ranges must remain map-only')
-    if any(flag in translator for flag in ('emit_variadic_inventory', 'emit_cursor_witness')):
+    if any(flag in translator for flag in ('emit_variadic_inventory', 'emit_cursor_witness', 'emit_closed_format_facts')):
         raise ValueError('inventory flag must not enter source-map translation')
     for name in ('c2rust/src/bin/c2rust-transpile.rs',
                  'c2rust-transpile/tests/common/mod.rs',
                  'c2rust-transpile/tests/module_paths.rs'):
         text = (source / name).read_text()
-        for flag in ('emit_variadic_inventory', 'emit_cursor_witness'):
+        for flag in ('emit_variadic_inventory', 'emit_cursor_witness', 'emit_closed_format_facts'):
             value = 'args.' + flag if name.startswith('c2rust/') else 'false'
             if f'{flag}: {value},' not in text:
                 raise ValueError('missing config initializer in ' + name)
@@ -63,21 +65,28 @@ class InventoryRouteTests(unittest.TestCase):
             '    }', exporter)
 
     def test_inventory_only_and_legacy_map_route(self):
-        condition = inventory_condition(patched_lines('c2rust-transpile/src/lib.rs'))
-        for inventory, maps, witness, expected in (
-                (False, False, False, False), (False, False, True, True),
-                (False, True, False, True), (False, True, True, True),
-                (True, False, False, True), (True, False, True, True),
-                (True, True, False, True), (True, True, True, True)):
-            expression = condition.replace('tcfg.emit_variadic_inventory', str(inventory))
-            expression = expression.replace('tcfg.emit_c_decl_map', str(maps))
-            expression = expression.replace('tcfg.emit_cursor_witness', str(witness)).replace('||', 'or')
-            self.assertEqual(eval(expression, {'__builtins__': {}}), expected)
+        source = patched_lines('c2rust-transpile/src/lib.rs')
+        condition = inventory_condition(source)
+        exporter = source.split('extra_clang_args,', 1)[1].split(') {', 1)[0].strip().splitlines()
+        map_condition = exporter[-2].strip().removesuffix(',')
+        cbor_condition = exporter[-1].strip().split('.then(', 1)[0]
+        for inventory, maps, witness, formats in product((False, True), repeat=4):
+            with self.subTest(inventory=inventory, maps=maps, witness=witness, formats=formats):
+                for expression, expected in (
+                        (condition, inventory or maps or witness or formats),
+                        (map_condition, maps), (cbor_condition, witness or formats)):
+                    for flag, value in (('emit_variadic_inventory', inventory), ('emit_c_decl_map', maps),
+                                        ('emit_cursor_witness', witness), ('emit_closed_format_facts', formats)):
+                        expression = expression.replace('tcfg.' + flag, str(value))
+                    self.assertEqual(eval(expression.replace('||', 'or'), {'__builtins__': {}}), expected)
 
     def test_inventory_guard_rejects_changed_routes(self):
         source = patched_lines('c2rust-transpile/src/lib.rs')
         condition = inventory_condition(source)
         for changed in (
+                *(condition.replace(' || ' + flag, '').replace(flag + ' || ', '') for flag in (
+                    'tcfg.emit_variadic_inventory', 'tcfg.emit_c_decl_map',
+                    'tcfg.emit_cursor_witness', 'tcfg.emit_closed_format_facts')),
                 'tcfg.emit_c_decl_map',
                 'tcfg.emit_variadic_inventory || tcfg.emit_c_decl_map',
                 'tcfg.emit_c_decl_map || tcfg.emit_cursor_witness',
@@ -92,10 +101,7 @@ class InventoryRouteTests(unittest.TestCase):
             inventory_condition(source.replace('let inventory_path =', 'let other_path ='))
 
     def test_source_map_collection_guards(self):
-        lib = ('ast_exporter::get_untyped_ast(\n'
-               'tcfg.emit_c_decl_map,\n'
-               'tcfg.emit_cursor_witness.then(|| output_path.with_extension("cursor.cbor")).as_deref(),\n'
-               ') {\n' + patched_lines('c2rust-transpile/src/lib.rs'))
+        lib = 'ast_exporter::get_untyped_ast(\n' + patched_lines('c2rust-transpile/src/lib.rs')
         translator = 'let decl_source_ranges = if tcfg.emit_c_decl_map {'
         files = {'lib.rs': lib, 'translator': translator}
         for name in ('c2rust/src/bin/c2rust-transpile.rs',
@@ -116,13 +122,32 @@ class InventoryRouteTests(unittest.TestCase):
             for key, old, new in (
                     ('lib.rs', 'tcfg.emit_c_decl_map,', 'tcfg.emit_c_decl_map || tcfg.emit_variadic_inventory,'),
                     ('lib.rs', 'tcfg.emit_c_decl_map,', 'tcfg.emit_c_decl_map || tcfg.emit_cursor_witness,'),
+                    ('lib.rs', 'tcfg.emit_c_decl_map,', 'tcfg.emit_c_decl_map || tcfg.emit_closed_format_facts,'),
+                    ('lib.rs', 'ast_exporter::get_untyped_ast(', 'ast_exporter::other('),
+                    ('lib.rs', 'tcfg.emit_c_decl_map,', ''),
+                    ('lib.rs', ').as_deref(),', ').as_deref(),\ntcfg.unknown,'),
+                    ('lib.rs', 'tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts', 'tcfg.emit_cursor_witness'),
+                    ('lib.rs', 'tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts', 'tcfg.emit_closed_format_facts'),
+                    ('lib.rs', 'tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts', 'tcfg.emit_cursor_witness && tcfg.emit_closed_format_facts'),
+                    ('lib.rs', 'tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts', 'tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts || tcfg.emit_variadic_inventory'),
+                    ('lib.rs', 'tcfg.emit_cursor_witness || tcfg.emit_closed_format_facts', 'tcfg.unknown'),
                     ('translator', 'tcfg.emit_c_decl_map {', 'tcfg.emit_c_decl_map || tcfg.emit_cursor_witness {'),
                     ('translator', 'tcfg.emit_c_decl_map {', 'tcfg.emit_c_decl_map || tcfg.emit_variadic_inventory {'),
+                    ('translator', 'tcfg.emit_c_decl_map {', 'tcfg.emit_c_decl_map || tcfg.emit_closed_format_facts {'),
+                    ('translator', 'tcfg.emit_c_decl_map {', 'tcfg.other {'),
                     ('c2rust/src/bin/c2rust-transpile.rs', 'emit_cursor_witness: args.emit_cursor_witness,', ''),
                     ('c2rust-transpile/tests/common/mod.rs', 'emit_cursor_witness: false,', ''),
-                    ('c2rust-transpile/tests/module_paths.rs', 'emit_cursor_witness: false,', '')):
+                    ('c2rust-transpile/tests/module_paths.rs', 'emit_cursor_witness: false,', ''),
+                    *((name, f'{flag}: {value},', replacement)
+                      for name in ('c2rust/src/bin/c2rust-transpile.rs',
+                                   'c2rust-transpile/tests/common/mod.rs',
+                                   'c2rust-transpile/tests/module_paths.rs')
+                      for flag in ('emit_variadic_inventory', 'emit_cursor_witness', 'emit_closed_format_facts')
+                      for value in ['args.' + flag if name.startswith('c2rust/') else 'false']
+                      for replacement in ('', f'{flag}: true,'))):
                 with self.subTest(file=key, replacement=new):
                     original = files[key]
+                    self.assertIn(old, original)
                     files[key] = original.replace(old, new)
                     with self.assertRaises(ValueError):
                         check_source_tree(Path('.'))
@@ -147,10 +172,12 @@ class InventoryRouteTests(unittest.TestCase):
         self.assertIn('emit_variadic_inventory: args.emit_variadic_inventory,', cli)
         self.assertIn('#[clap(long)]\n    emit_cursor_witness: bool,', cli)
         self.assertIn('emit_cursor_witness: args.emit_cursor_witness,', cli)
-        for flag in ('emit_variadic_inventory', 'emit_cursor_witness'):
+        self.assertIn('#[clap(long)]\n    emit_closed_format_facts: bool,', cli)
+        self.assertIn('emit_closed_format_facts: args.emit_closed_format_facts,', cli)
+        for flag in ('emit_variadic_inventory', 'emit_cursor_witness', 'emit_closed_format_facts'):
             self.assertIn(f'pub {flag}: bool,', patched_lines('c2rust-transpile/src/lib.rs'))
         for name in ('common/mod.rs', 'module_paths.rs'):
-            for flag in ('emit_variadic_inventory', 'emit_cursor_witness'):
+            for flag in ('emit_variadic_inventory', 'emit_cursor_witness', 'emit_closed_format_facts'):
                 self.assertIn(f'{flag}: false,', patched_lines('c2rust-transpile/tests/' + name))
 
     def test_inventory_commands_do_not_request_maps_and_abi_still_does(self):

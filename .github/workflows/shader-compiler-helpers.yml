@@ -21,11 +21,19 @@ jobs:
   helpers:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
-    env:
-      EVIDENCE: ${{ runner.temp }}/shader-compiler-helpers
-      MEMBER_NAME_ALL24: ${{ runner.temp }}/shader-compiler-helpers/helper-inputs/all24.zip
-      MEMBER_NAME_SETUP: ${{ runner.temp }}/shader-compiler-helpers/helper-inputs/setup.zip
     steps:
+      - name: Initialize evidence paths
+        env:
+          EVIDENCE: ${{ runner.temp }}/shader-compiler-helpers
+          MEMBER_NAME_ALL24: ${{ runner.temp }}/shader-compiler-helpers/helper-inputs/all24.zip
+          MEMBER_NAME_SETUP: ${{ runner.temp }}/shader-compiler-helpers/helper-inputs/setup.zip
+        run: |
+          python3 -B - <<'PY_ENV'
+          import os
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              for key in ('EVIDENCE', 'MEMBER_NAME_ALL24', 'MEMBER_NAME_SETUP'):
+                  output.write(key + '=' + os.environ[key] + '\n')
+          PY_ENV
       - name: Checkout workflow controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

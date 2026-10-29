@@ -7,6 +7,7 @@ only on the reviewed GHA runtime. --source-only and --upload-gate are read-only 
 import argparse
 import ast
 import copy
+import datetime
 import hashlib
 import importlib.util
 import json
@@ -71,22 +72,66 @@ def atomic(path, data):
     os.replace(temporary, path)
 
 
-def inventory(root):
+def inventory(root, *, checkout_git_admin=False):
     result = {}
-    for path in sorted(Path(root).rglob('*')):
-        if '.git' in path.relative_to(root).parts:
-            continue
-        mode = path.lstat().st_mode
-        name = path.relative_to(root).as_posix()
-        if stat.S_ISDIR(mode):
-            result[name + '/'] = {'mode': stat.S_IMODE(mode)}
-        elif stat.S_ISLNK(mode):
-            result[name] = {'mode': stat.S_IMODE(mode), 'link': os.readlink(path)}
-        else:
-            require(stat.S_ISREG(mode), 'special filesystem member')
-            raw = path.read_bytes()
-            result[name] = {'mode': stat.S_IMODE(mode), 'size': len(raw), 'sha256': digest(raw)}
+    def visit(directory):
+        for path in sorted(directory.iterdir()):
+            name = path.relative_to(root).as_posix()
+            if checkout_git_admin and name == '.git':
+                continue
+            mode = path.lstat().st_mode
+            if stat.S_ISDIR(mode):
+                result[name + '/'] = {'kind': 'directory', 'mode': stat.S_IMODE(mode)}
+                visit(path)
+            elif stat.S_ISLNK(mode):
+                raw = os.fsencode(os.readlink(path))
+                result[name] = {'kind': 'symlink', 'mode': stat.S_IMODE(mode),
+                                'link': os.fsdecode(raw), 'git_blob': blob_oid(raw)}
+            else:
+                require(stat.S_ISREG(mode), 'special filesystem member')
+                raw = path.read_bytes()
+                result[name] = {'kind': 'file', 'mode': stat.S_IMODE(mode), 'size': len(raw),
+                                'sha256': digest(raw), 'git_blob': blob_oid(raw)}
+    root = Path(root)
+    visit(root)
     return result
+
+
+def blob_oid(raw):
+    return hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+
+
+def validate_git_filesystem(listing, files):
+    require(listing.endswith(b'\0') and listing != b'\0', 'incomplete Git listing')
+    tracked, directories = {}, set()
+    for item in listing[:-1].split(b'\0'):
+        metadata, name_raw = item.split(b'\t', 1)
+        mode, kind, oid = metadata.decode('ascii').split()
+        name = os.fsdecode(name_raw)
+        parts = name.split('/')
+        require(all(part not in ('', '.', '..') for part in parts) and parts[0] != '.git'
+                and name not in tracked, 'invalid or duplicate Git path')
+        require(kind == 'blob' and mode in ('100644', '100755', '120000')
+                and len(oid) == 40 and all(c in '0123456789abcdef' for c in oid), 'unsupported Git member')
+        tracked[name] = (mode, oid)
+        directories.update('/'.join(parts[:i]) + '/' for i in range(1, len(parts)))
+    require(set(files) == set(tracked) | directories, 'complete checkout membership differs')
+    for name in directories:
+        require(files[name] == {'kind': 'directory', 'mode': 0o755}, 'checkout directory identity differs ' + name)
+    for name, (mode, oid) in tracked.items():
+        member = files[name]
+        require(member.get('kind') == ('symlink' if mode == '120000' else 'file'), 'checkout kind differs ' + name)
+        require(member.get('mode') == (0o777 if mode == '120000' else 0o755 if mode == '100755' else 0o644),
+                'checkout mode differs ' + name)
+        require(member.get('git_blob') == oid, 'checkout blob differs ' + name)
+        if mode == '120000':
+            require(isinstance(member.get('link'), str) and blob_oid(os.fsencode(member['link'])) == oid,
+                    'checkout link differs ' + name)
+        else:
+            require(type(member.get('size')) is int and member['size'] >= 0
+                    and isinstance(member.get('sha256'), str) and len(member['sha256']) == 64,
+                    'checkout file identity missing ' + name)
+    return True
 
 
 def frozen_source(source):
@@ -153,21 +198,81 @@ def children():
     return [int(value) for value in Path(f'/proc/self/task/{os.getpid()}/children').read_text().split()]
 
 
-def git_identity(root, expected=None):
+def validate_git_receipt(receipt):
+    require(type(receipt.get('pid')) is int and receipt['pid'] > 0
+            and isinstance(receipt.get('argv'), list) and receipt['argv']
+            and all(isinstance(arg, str) for arg in receipt['argv'])
+            and isinstance(receipt.get('cwd'), str) and Path(receipt['cwd']).is_absolute(),
+            'Git PID/command receipt missing')
+    try:
+        start = datetime.datetime.fromisoformat(receipt['start'])
+        end = datetime.datetime.fromisoformat(receipt['end'])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError('Git UTC receipt missing') from error
+    require(start.utcoffset() == end.utcoffset() == datetime.timedelta(0) and start <= end,
+            'Git UTC receipt differs')
+    require(receipt.get('terminal') is True and type(receipt.get('exit')) is int
+            and type(receipt.get('wait')) is int and receipt['exit'] == receipt['wait'] == 0
+            and receipt.get('failure') is None, 'Git terminal receipt differs')
+    for name in ('stdout', 'stderr'):
+        stream = receipt.get('streams', {}).get(name, {})
+        require(stream.get('closed') is True and isinstance(stream.get('hex'), str), 'Git stream closure missing')
+        try:
+            raw = bytes.fromhex(stream['hex'])
+        except ValueError as error:
+            raise ValueError('Git stream body differs') from error
+        require(stream.get('size') == len(raw) and stream.get('sha256') == digest(raw), 'Git stream identity differs')
+    return True
+
+
+def validate_checkout_pair(before, after, expected):
+    require((before['head'], before['tree']) == (after['head'], after['tree']) == expected,
+            'checkout HEAD/TREE changed')
+    require(before['filesystem'] == after['filesystem'], 'checkout filesystem changed')
+    return True
+
+
+def git_identity(root, expected=None, *, receipts):
     commands = []
+    receipts = Path(receipts)
+    receipts.mkdir()
     def git(*args):
-        command = ['git', '-C', str(root), *args]
-        start = time.time_ns()
-        value = subprocess.run(command, capture_output=True, check=False)
-        commands.append({'argv': command, 'pid_scope': 'synchronous reaped child; communicate streams closed',
-                         'start_ns': start, 'end_ns': time.time_ns(), 'exit': value.returncode,
-                         'stdout_sha256': digest(value.stdout), 'stderr': value.stderr.decode()})
-        require(value.returncode == 0, 'Git identity command failed')
-        return value.stdout
+        command = ['git', '-c', 'core.hooksPath=/dev/null', '-C', str(root), *args]
+        receipt = dict(argv=command, cwd=str(root), pid=None,
+                       start=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                       terminal=False, exit=None, wait=None, failure=None, streams={})
+        process = None
+        stdout = stderr = None
+        try:
+            process = subprocess.Popen(command, cwd=root, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env=dict(os.environ, GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0'))
+            receipt['pid'] = process.pid
+            try:
+                stdout, stderr = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                receipt['failure'] = 'timeout; forced termination is failure'
+                process.kill()
+                stdout, stderr = process.communicate(timeout=5)
+            receipt.update(exit=process.returncode, wait=process.wait(timeout=5), terminal=True)
+        except BaseException as error:
+            receipt['failure'] = type(error).__name__ + ': ' + str(error)
+        finally:
+            receipt['end'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            if process is not None and receipt['terminal']:
+                for name, raw in (('stdout', stdout), ('stderr', stderr)):
+                    stream = getattr(process, name)
+                    if stream.closed and raw is not None:
+                        receipt['streams'][name] = dict(closed=True, size=len(raw), sha256=digest(raw), hex=raw.hex())
+            commands.append(receipt)
+            atomic(receipts / (str(len(commands)) + '.json'), receipt)
+        validate_git_receipt(receipt)
+        return stdout
     head = git('rev-parse', 'HEAD').decode().strip()
     raw_commit = git('cat-file', 'commit', head)
     require(hashlib.sha1(b'commit ' + str(len(raw_commit)).encode() + b'\0' + raw_commit).hexdigest() == head,
             'raw commit framing differs')
+    require(raw_commit.startswith(b'tree '), 'raw commit tree missing')
     tree = raw_commit.splitlines()[0].decode().removeprefix('tree ')
     raw_tree = git('cat-file', 'tree', tree)
     require(hashlib.sha1(b'tree ' + str(len(raw_tree)).encode() + b'\0' + raw_tree).hexdigest() == tree,
@@ -176,25 +281,10 @@ def git_identity(root, expected=None):
         require((head, tree) == expected, 'literal tested Git identity differs')
     require(not git('status', '--porcelain', '--untracked-files=all'), 'checkout must be clean')
     listing = git('ls-tree', '-rz', '--full-tree', head)
-    files = inventory(root)
-    tracked = set()
-    for item in listing.split(b'\0'):
-        if not item:
-            continue
-        metadata, name_raw = item.split(b'\t', 1)
-        mode, kind, oid = metadata.decode().split()
-        name = name_raw.decode()
-        tracked.add(name)
-        path = Path(root) / name
-        require(kind == 'blob', 'submodule unsupported')
-        raw = os.readlink(path).encode() if mode == '120000' else path.read_bytes()
-        require(hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() == oid,
-                'checkout blob differs ' + name)
-        require(mode == '120000' or stat.S_IMODE(path.stat().st_mode) == (0o755 if mode == '100755' else 0o644),
-                'checkout mode differs ' + name)
-    require({name for name in files if not name.endswith('/')} == tracked, 'complete checkout membership differs')
+    files = inventory(root, checkout_git_admin=True)
+    validate_git_filesystem(listing, files)
     return {'head': head, 'tree': tree, 'raw_commit': raw_commit.decode(),
-            'raw_tree_sha256': digest(raw_tree), 'filesystem': files, 'commands': commands}
+            'raw_tree_sha256': digest(raw_tree), 'listing_hex': listing.hex(), 'filesystem': files, 'commands': commands}
 
 
 def load_source(source):
@@ -737,8 +827,8 @@ def controller(args):
     (output / 'OWNED_WRITERS_UNPROVEN').write_text('No upload until explicit final custody index validates.\n')
     controller_root = Path(__file__).resolve().parents[2]
     require(controller_root != args.source_checkout.resolve(), 'controller and tested checkout must be separate')
-    source_before = git_identity(args.source_checkout, (SOURCE_COMMIT, SOURCE_TREE))
-    controller_before = git_identity(controller_root)
+    source_before = git_identity(args.source_checkout, (SOURCE_COMMIT, SOURCE_TREE), receipts=output / 'source-before-git')
+    controller_before = git_identity(controller_root, receipts=output / 'controller-before-git')
     require(controller_before['head'] == os.environ.get('GITHUB_SHA'), 'controller differs from actual GITHUB_SHA')
     frozen_source(args.source_checkout)
     wrapper, _, _ = load_source(args.source_checkout)
@@ -829,10 +919,11 @@ def controller(args):
             owned_closed=closed, streams_closed=log.closed, pidfd_closed=True, forced_cleanup=False, validated=valid))
         if not valid:
             break
-    source_after = git_identity(args.source_checkout, (SOURCE_COMMIT, SOURCE_TREE))
-    controller_after = git_identity(controller_root)
-    require(source_after['filesystem'] == source_before['filesystem'] and controller_after['filesystem'] == controller_before['filesystem'],
-            'source or controller filesystem changed')
+    source_after = git_identity(args.source_checkout, (SOURCE_COMMIT, SOURCE_TREE), receipts=output / 'source-after-git')
+    controller_after = git_identity(controller_root, (controller_before['head'], controller_before['tree']),
+                                    receipts=output / 'controller-after-git')
+    validate_checkout_pair(source_before, source_after, (SOURCE_COMMIT, SOURCE_TREE))
+    validate_checkout_pair(controller_before, controller_after, (os.environ.get('GITHUB_SHA'), controller_before['tree']))
     atomic(output / 'source-after.json', source_after)
     atomic(output / 'controller-after.json', controller_after)
     index.update(closed=True, streams_closed=True, controller_children=children())

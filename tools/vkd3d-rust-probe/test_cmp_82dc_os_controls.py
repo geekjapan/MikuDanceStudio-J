@@ -17,6 +17,17 @@ HERE = Path(__file__).resolve().parent
 SOURCE = HERE.parents[1]
 DENIED = []
 DENIED_KERNEL = []
+FIXTURE_WRITES = {}
+if 'CMP_PHYSICAL_FIXTURE' not in os.environ:
+    if os.environ.get('GITHUB_ACTIONS') != 'true' or 'RUNNER_TEMP' not in os.environ:
+        raise RuntimeError('provide owned CMP_PHYSICAL_FIXTURE for local source/data checks')
+    fixture_root = Path(os.environ['RUNNER_TEMP']) / ('cmp-physical-data-' + str(os.getpid()))
+    if fixture_root.exists() or fixture_root.is_symlink():
+        raise RuntimeError('hosted inert fixture must be new')
+    FIXTURE_WRITES = {str(fixture_root / name): operation for operation, names in (
+        ('os.mkdir', ('', '.git', 'nested', 'nested/.git')),
+        ('open', ('.git/config', 'nested/.git/hidden', 'file')),
+        ('os.symlink', ('link',))) for name in names}
 
 
 def deny_effects(event, args):
@@ -27,6 +38,11 @@ def deny_effects(event, args):
         mode, flags = args[1:3]
         blocked = (isinstance(mode, str) and any(letter in mode for letter in 'wax+')) or (
             isinstance(flags, int) and bool(flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND)))
+    if blocked and FIXTURE_WRITES:
+        target = args[1] if event == 'os.symlink' else args[0]
+        if FIXTURE_WRITES.get(str(target)) == event:
+            if event != 'os.symlink' or args[0] == '../outside-missing':
+                return
     if blocked:
         DENIED.append(event)
         raise PermissionError('source/data check denies ' + event)
@@ -46,6 +62,17 @@ for namespace, names in ((signal, ('signal', 'pthread_sigmask', 'sigpending', 's
     for name in names:
         if hasattr(namespace, name):
             setattr(namespace, name, deny_kernel(name))
+if FIXTURE_WRITES:
+    fixture_root.mkdir()
+    (fixture_root / '.git').mkdir()
+    (fixture_root / 'nested').mkdir()
+    (fixture_root / 'nested/.git').mkdir()
+    for name in ('.git/config', 'nested/.git/hidden', 'file'):
+        with (fixture_root / name).open('xb') as stream:
+            stream.write(b'inert data')
+    (fixture_root / 'link').symlink_to('../outside-missing')
+    FIXTURE_WRITES.clear()
+    os.environ['CMP_PHYSICAL_FIXTURE'] = str(fixture_root)
 spec = importlib.util.spec_from_file_location('os_controls_data_only', HERE / 'check_cmp_82dc_os_controls.py')
 controls = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(controls)
@@ -409,6 +436,96 @@ class SourceDataTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 operation()
 
+    def test_complete_physical_git_tree_admission(self):
+        raw = b'body'
+        leaf = dict(kind='file', mode=0o644, size=4, sha256=controls.digest(raw), git_blob=controls.blob_oid(raw))
+        target = '../outside-missing'
+        link = dict(kind='symlink', mode=0o777, link=target, git_blob=controls.blob_oid(target.encode()))
+        listing = (b'100644 blob ' + controls.blob_oid(raw).encode() + b'\tdir/file\0'
+                   + b'120000 blob ' + link['git_blob'].encode() + b'\tlink\0')
+        original = {'dir/': dict(kind='directory', mode=0o755), 'dir/file': leaf, 'link': link}
+        self.assertTrue(controls.validate_git_filesystem(listing, original))
+        mutations = [
+            lambda x: x.update({'empty/': dict(kind='directory', mode=0o755)}),
+            lambda x: x.update({'ignored-cache/': dict(kind='directory', mode=0o755)}),
+            lambda x: x.update({'dir/.git/': dict(kind='directory', mode=0o755)}),
+            lambda x: x.update({'dir/.git/hidden': dict(leaf)}),
+            lambda x: x.pop('dir/'), lambda x: x.pop('dir/file'),
+            lambda x: x.update(extra=dict(leaf)),
+            lambda x: x['dir/'].update(mode=0o700),
+            lambda x: x['dir/'].update(kind='symlink'),
+            lambda x: x['dir/file'].update(kind='symlink'),
+            lambda x: x['dir/file'].update(mode=0o755),
+            lambda x: x['dir/file'].update(git_blob=controls.blob_oid(b'changed')),
+            lambda x: x['link'].update(kind='file'),
+            lambda x: x['link'].update(link='different'),
+            lambda x: x['link'].update(mode=0o644),
+        ]
+        for index, mutate in enumerate(mutations):
+            candidate = copy.deepcopy(original)
+            mutate(candidate)
+            with self.subTest(mutation=index), self.assertRaises(ValueError):
+                controls.validate_git_filesystem(listing, candidate)
+        for malformed in (listing[:-1], listing + listing, listing.replace(b'dir/file', b'../file'),
+                          listing.replace(b'100644', b'160000')):
+            with self.assertRaises(ValueError):
+                controls.validate_git_filesystem(malformed, original)
+
+    def test_inventory_keeps_git_members_without_following_links(self):
+        fixture = Path(os.environ['CMP_PHYSICAL_FIXTURE'])
+        members = controls.inventory(fixture)
+        self.assertEqual(set(members), {'.git/', '.git/config', 'nested/', 'nested/.git/',
+                                       'nested/.git/hidden', 'link', 'file'})
+        self.assertEqual(members['link']['kind'], 'symlink')
+        self.assertEqual(members['link']['link'], '../outside-missing')
+        self.assertEqual(members['file']['kind'], 'file')
+        checkout = controls.inventory(fixture, checkout_git_admin=True)
+        self.assertEqual(set(checkout), set(members) - {'.git/', '.git/config'})
+        for context in ('packet', 'closed-artifact'):
+            with self.subTest(context=context):
+                expected = {key: value for key, value in members.items() if '.git' not in key.split('/')}
+                with self.assertRaises(ValueError):
+                    controls.validate_seal(expected, members)
+
+    def test_controller_exact_head_tree_and_github_sha(self):
+        before = dict(head='a' * 40, tree='b' * 40, filesystem={'file': 'same'})
+        self.assertTrue(controls.validate_checkout_pair(before, copy.deepcopy(before), ('a' * 40, 'b' * 40)))
+        for candidate, expected in ((dict(before, head='c' * 40), ('a' * 40, 'b' * 40)),
+                                    (dict(before, tree='c' * 40), ('a' * 40, 'b' * 40)),
+                                    (dict(before), ('c' * 40, 'b' * 40)),
+                                    (dict(before, filesystem={}), ('a' * 40, 'b' * 40))):
+            with self.assertRaises(ValueError):
+                controls.validate_checkout_pair(before, candidate, expected)
+
+    def test_git_child_pid_utc_terminal_closed_stream_receipts(self):
+        body = b'raw\0Git\xff'
+        legal = dict(pid=123, argv=['git', 'cat-file', 'tree', 'a' * 40], cwd='/owned/checkout',
+                     start='2026-10-30T00:00:00+00:00', end='2026-10-30T00:00:01+00:00',
+                     terminal=True, exit=0, wait=0, failure=None,
+                     streams={name: dict(closed=True, size=len(body), sha256=controls.digest(body), hex=body.hex())
+                              for name in ('stdout', 'stderr')})
+        self.assertTrue(controls.validate_git_receipt(legal))
+        mutations = [lambda x: x.pop('pid'), lambda x: x.update(pid=True), lambda x: x.update(pid=0),
+            lambda x: x.pop('start'), lambda x: x.update(start='not UTC'),
+            lambda x: x.update(end='2026-10-29T00:00:00+00:00'),
+            lambda x: x.update(start='2026-10-30T00:00:00'),
+            lambda x: x.update(start='2026-10-30T01:00:00+01:00'),
+            lambda x: x.update(terminal=False), lambda x: x.update(exit=1),
+            lambda x: x.pop('wait'), lambda x: x.update(wait=1), lambda x: x.update(wait=False),
+            lambda x: x.update(exit=False), lambda x: x.update(argv='git'), lambda x: x.update(cwd='relative'),
+            lambda x: x.update(failure='timeout'), lambda x: x.pop('streams'),
+            lambda x: x['streams']['stdout'].update(closed=False),
+            lambda x: x['streams']['stderr'].update(closed=False),
+            lambda x: x['streams']['stdout'].pop('hex'),
+            lambda x: x['streams']['stderr'].update(hex='zz'),
+            lambda x: x['streams']['stdout'].update(size=0),
+            lambda x: x['streams']['stderr'].update(sha256=controls.digest(b'wrong'))]
+        for index, mutate in enumerate(mutations):
+            candidate = copy.deepcopy(legal)
+            mutate(candidate)
+            with self.subTest(mutation=index), self.assertRaises(ValueError):
+                controls.validate_git_receipt(candidate)
+
     def test_four_seal_negatives(self):
         original = {'a': {'mode': 292, 'size': 1, 'sha256': controls.digest(b'a')}}
         controls.validate_seal(original, copy.deepcopy(original))
@@ -418,7 +535,9 @@ class SourceDataTests(unittest.TestCase):
         corrupt['a']['sha256'] = controls.digest(b'b')
         mode = copy.deepcopy(original)
         mode['a']['mode'] = 420
-        for candidate in (missing, extra, corrupt, mode):
+        hidden = dict(original, **{'.git/': {'kind': 'directory', 'mode': 0o555}, '.git/hidden': {'size': 1}})
+        empty = dict(original, **{'empty/': {'kind': 'directory', 'mode': 0o555}})
+        for candidate in (missing, extra, corrupt, mode, hidden, empty):
             with self.assertRaises(ValueError):
                 controls.validate_seal(original, candidate)
 

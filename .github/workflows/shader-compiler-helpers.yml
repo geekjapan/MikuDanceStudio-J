@@ -1,4 +1,4 @@
-name: Shader compiler helper regressions at 206009
+name: Shader compiler helper regressions
 
 on:
   push:
@@ -77,23 +77,50 @@ jobs:
           def git(*args):
               return subprocess.check_output(['git', '-C', str(SOURCE), *args])
           def identity():
-              leaves = []
+              leaves, expected_leaves, expected_dirs = [], set(), set()
+              entries = []
               for entry in git('ls-tree', '-rz', '--full-tree', 'HEAD').split(b'\0'):
                   if not entry:
                       continue
                   info, path = entry.split(b'\t', 1)
                   mode, kind, oid = info.decode().split()
                   name = os.fsdecode(path)
+                  require(kind == 'blob' and mode in ('100644', '100755', '120000'), 'Unexpected source leaf type')
+                  require(name not in expected_leaves and not Path(name).is_absolute()
+                          and '..' not in Path(name).parts and Path(name).parts[0] != '.git', 'Unsafe source leaf')
+                  expected_leaves.add(name)
+                  expected_dirs.update(str(parent) for parent in Path(name).parents if parent != Path('.'))
+                  entries.append((name, mode, oid))
+              actual_leaves, actual_dirs = set(), set()
+              pending = [SOURCE]
+              while pending:
+                  directory = pending.pop()
+                  with os.scandir(directory) as children:
+                      for child in children:
+                          name = str(Path(child.path).relative_to(SOURCE))
+                          if name == '.git':
+                              continue
+                          if child.is_dir(follow_symlinks=False):
+                              actual_dirs.add(name)
+                              pending.append(Path(child.path))
+                          else:
+                              require(child.is_file(follow_symlinks=False) or child.is_symlink(), 'Special source leaf ' + name)
+                              actual_leaves.add(name)
+              require(actual_leaves == expected_leaves, 'Source filesystem leaf membership mismatch')
+              require(actual_dirs == expected_dirs, 'Source filesystem directory membership mismatch')
+              for name, mode, oid in entries:
                   item = SOURCE / name
-                  require(kind == 'blob', 'Unexpected non-blob source leaf')
-                  raw = os.fsencode(os.readlink(item)) if item.is_symlink() else item.read_bytes()
-                  actual_mode = '120000' if item.is_symlink() else ('100755' if item.stat().st_mode & stat.S_IXUSR else '100644')
+                  item_mode = item.lstat().st_mode
+                  require(stat.S_ISLNK(item_mode) if mode == '120000' else stat.S_ISREG(item_mode), 'Source leaf type mismatch ' + name)
+                  raw = os.fsencode(os.readlink(item)) if mode == '120000' else item.read_bytes()
+                  actual_mode = '120000' if stat.S_ISLNK(item_mode) else ('100755' if item_mode & stat.S_IXUSR else '100644')
                   require(mode == actual_mode, 'Source mode mismatch ' + name)
                   require(hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() == oid, 'Source blob mismatch ' + name)
                   leaves.append({'path': name, 'mode': mode, 'git_blob': oid, 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()})
               return {'head': git('rev-parse', 'HEAD').decode().strip(),
                       'tree': git('rev-parse', 'HEAD^{tree}').decode().strip(),
-                      'status': git('status', '--porcelain=v1', '--untracked-files=all').decode(), 'leaves': leaves}
+                      'status': git('status', '--porcelain=v1', '--untracked-files=all').decode(),
+                      'directories': sorted(actual_dirs), 'leaves': leaves}
           def check_identity(value):
               require(value['head'] == EXPECTED_HEAD and value['tree'] == EXPECTED_TREE and not value['status'], 'Tested source identity/cleanliness mismatch')
           def definitions():

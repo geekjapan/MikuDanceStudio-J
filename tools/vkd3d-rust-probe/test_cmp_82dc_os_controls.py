@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import signal
 import socket
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import unittest
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE.parents[1]
 DENIED = []
+DENIED_KERNEL = []
 
 
 def deny_effects(event, args):
@@ -31,9 +33,24 @@ def deny_effects(event, args):
 
 
 sys.addaudithook(deny_effects)
+def deny_kernel(name):
+    def denied(*args, **kwargs):
+        DENIED_KERNEL.append(name)
+        raise PermissionError('source/data check denies ' + name)
+    return denied
+
+
+for namespace, names in ((signal, ('signal', 'pthread_sigmask', 'sigpending', 'sigtimedwait', 'pidfd_send_signal',
+                                   'raise_signal', 'pthread_kill', 'sigwait', 'sigwaitinfo')),
+                         (os, ('pidfd_open', 'kill', 'killpg', 'waitpid', 'setsid', 'setpgid', 'set_blocking'))):
+    for name in names:
+        if hasattr(namespace, name):
+            setattr(namespace, name, deny_kernel(name))
 spec = importlib.util.spec_from_file_location('os_controls_data_only', HERE / 'check_cmp_82dc_os_controls.py')
 controls = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(controls)
+if DENIED_KERNEL:
+    raise RuntimeError('harness import attempted kernel operation')
 
 
 def legal_case(case, mode='normal', pid=100):
@@ -210,6 +227,11 @@ class SourceDataTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 attempt()
         self.assertEqual(len(DENIED) - start, 4)
+
+    def test_kernel_apis_are_denied_before_harness_import(self):
+        for operation in (lambda: signal.signal(signal.SIGINT, None), lambda: os.kill(os.getpid(), 0)):
+            with self.assertRaises(PermissionError):
+                operation()
 
     def test_four_seal_negatives(self):
         original = {'a': {'mode': 292, 'size': 1, 'sha256': controls.digest(b'a')}}

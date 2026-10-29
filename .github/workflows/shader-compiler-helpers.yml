@@ -44,7 +44,7 @@ jobs:
       - name: Checkout exact accepted tested source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: 980d95ecf794d7a416101f592181f56139943986
+          ref: b539c4237385bfc4f9431bb986a16a321dc28f30
           path: tested
           persist-credentials: false
           fetch-depth: 1
@@ -73,8 +73,8 @@ jobs:
           from pathlib import Path
           ROOT = Path(os.environ['EVIDENCE'])
           SOURCE = Path(os.environ['GITHUB_WORKSPACE']) / 'tested'
-          EXPECTED_HEAD = '980d95ecf794d7a416101f592181f56139943986'
-          EXPECTED_TREE = 'bf5d0e237507ffe3dc6bc7345b8a4fc2e4d9a5f9'
+          EXPECTED_HEAD = 'b539c4237385bfc4f9431bb986a16a321dc28f30'
+          EXPECTED_TREE = 'f1f097af8099c4af7a2d255e47bbc904a6ce6e4c'
           def now():
               return datetime.datetime.now(datetime.timezone.utc).isoformat()
           def write(name, value):
@@ -263,7 +263,7 @@ jobs:
           inventory = {str(p.relative_to(root)): {'bytes': p.stat().st_size, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted(root.rglob('*')) if p.is_file()}
           (root / 'evidence-sha256.json').write_text(json.dumps(inventory, indent=2) + '\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
-              output.write('Tested source `980d95ecf794d7a416101f592181f56139943986`. Controller identity is recorded separately.\n\n' + json.dumps(outcomes) + '\n')
+              output.write('Tested source `b539c4237385bfc4f9431bb986a16a321dc28f30`. Controller identity is recorded separately.\n\n' + json.dumps(outcomes) + '\n')
           PY_STATUS
       - name: Retain original helper inputs and complete or partial evidence once
         if: always()

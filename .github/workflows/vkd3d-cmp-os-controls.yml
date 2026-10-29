@@ -1,0 +1,88 @@
+name: Additional literal 82dc OS controls
+
+on:
+  push:
+    branches: [w4-shader-cmp-82dc-os-controls]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vkd3d-cmp-os-controls-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  repeated-cancellation-and-caller-admission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: controller
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 82dc9998fbe5b6ed5b8e9f7182edc17b0c6f818c
+          path: source82dc
+          persist-credentials: false
+      - name: Guarded source and synthetic receipt checks
+        timeout-minutes: 1
+        working-directory: controller
+        run: |
+          python3 -B tools/vkd3d-rust-probe/test_cmp_82dc_os_controls.py
+          python3 -B -O tools/vkd3d-rust-probe/test_cmp_82dc_os_controls.py
+      - name: Actual normal OS controls with synthetic compiler data
+        id: normal
+        continue-on-error: true
+        timeout-minutes: 7
+        env:
+          CMP_OS_ROOT: ${{ runner.temp }}/cmp-82dc-os
+        run: |
+          python3 -B controller/tools/vkd3d-rust-probe/check_cmp_82dc_os_controls.py \
+            --source-checkout "$GITHUB_WORKSPACE/source82dc" --real-os "$CMP_OS_ROOT/normal"
+      - name: Actual optimized OS controls after fresh closure validation
+        if: always() && steps.normal.outcome != 'skipped'
+        id: optimized
+        continue-on-error: true
+        timeout-minutes: 7
+        env:
+          CMP_OS_ROOT: ${{ runner.temp }}/cmp-82dc-os
+        run: |
+          python3 -B controller/tools/vkd3d-rust-probe/check_cmp_82dc_os_controls.py --upload-gate "$CMP_OS_ROOT"
+          python3 -B -O controller/tools/vkd3d-rust-probe/check_cmp_82dc_os_controls.py \
+            --source-checkout "$GITHUB_WORKSPACE/source82dc" --real-os "$CMP_OS_ROOT/optimized"
+      - name: Read-only explicit custody gate
+        if: always()
+        id: custody
+        env:
+          CMP_OS_ROOT: ${{ runner.temp }}/cmp-82dc-os
+        run: |
+          echo 'closed=false' >> "$GITHUB_OUTPUT"
+          python3 -B controller/tools/vkd3d-rust-probe/check_cmp_82dc_os_controls.py --upload-gate "$CMP_OS_ROOT"
+          echo 'closed=true' >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always() && steps.custody.outputs.closed == 'true'
+        with:
+          name: cmp-82dc-additional-os-controls
+          path: ${{ runner.temp }}/cmp-82dc-os/
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+      - name: Require both complete independent modes
+        if: always()
+        env:
+          NORMAL: ${{ steps.normal.outcome }}
+          OPTIMIZED: ${{ steps.optimized.outcome }}
+          CLOSED: ${{ steps.custody.outputs.closed }}
+        run: |
+          test "$NORMAL" = success
+          test "$OPTIMIZED" = success
+          test "$CLOSED" = true

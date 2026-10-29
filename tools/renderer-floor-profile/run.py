@@ -18,11 +18,12 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 BASE = '77b3e431bc1ac2ab5610692f2e12c903a7629090'
 BASE_TREE = '778782dc8ad6352585a9b7eeb135c04150d1f2e4'
-SCHEMA = 'mds-floor-profile-v2'
-PARENT = '2a8fe1eccb59e622bc24cdf800c4e28092cc72e8'
+SCHEMA = 'mds-floor-profile-v6-witness-extent'
+PARENT = 'b7f1c87388606eee4328915504d34c5e9b63ab3a'
 FP_CONTRACT = {'snapshot':'HardwareMxcsr', 'identity':'SourceSiteOnly',
                'rust_operation_ordering':'Unproved', 'exception_attribution':'Unsupported',
                'operation_environment':'Unproved'}
+RUST_FLAGS = '--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile) -C link-arg=/MAP'
 PATHS = ['.github/workflows/renderer-floor-profile.yml'] + [
     'tools/renderer-floor-profile/'+n for n in
     ('run.py','native.cpp.in','native_observer.hpp','observer.rs','test_run.py')]
@@ -53,12 +54,37 @@ checked, readonly = previous.checked, previous.readonly
 
 def record(out,label,argv,cwd,env,timeout=1200):
     binary=Path(argv[0]).read_bytes() if label in ('native','rust') else None
-    row=previous.record(out,label,argv,cwd,env,timeout)
+    tool=Path(argv[0]).read_bytes() if label=='instruction-help' or '-instructions-' in label else None
+    if label=='rust':
+        require(not (out/(label+'.json')).exists(),'fresh own-process command')
+        row={'argv':list(map(str,argv)),'cwd':str(cwd),'env':{k:v for k,v in env.items() if k in
+             ('PATH','HOME','CARGO_HOME','RUSTUP_HOME','TMPDIR','LD_LIBRARY_PATH','WGPU_BACKEND','VK_ICD_FILENAMES',
+              'XDG_RUNTIME_DIR','CARGO_TERM_COLOR','CARGO_INCREMENTAL','CARGO_TARGET_DIR','CXX','MDS_RENDER_PNG_DIR',
+              'INCLUDE','LIB','LIBPATH','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion')},'start_utc':previous.utc(),
+             'start_ns':previous.time.time_ns(),'status':None,'terminal':'launch_failure'}
+        try:
+            with (out/(label+'.stdout')).open('xb') as stdout,(out/(label+'.stderr')).open('xb') as stderr:
+                with previous.subprocess.Popen(row['argv'],cwd=cwd,env=env,stdout=stdout,stderr=stderr) as child:
+                    row['pid']=child.pid
+                    try:row.update(status=child.wait(timeout=timeout),terminal='exit')
+                    except previous.subprocess.TimeoutExpired:
+                        child.kill();child.wait();row['terminal']='timeout'
+        finally:
+            row.update(end_utc=previous.utc(),end_ns=previous.time.time_ns())
+            for suffix in ('stdout','stderr'):
+                raw=(out/(label+'.'+suffix)).read_bytes();row[suffix]={'name':label+'.'+suffix,'sha256':digest(raw),'size':len(raw)}
+            write_json(out/(label+'.json'),row)
+    else:row=previous.record(out,label,argv,cwd,env,timeout)
     if 'RUSTFLAGS' in env:
         for key in ('RUSTFLAGS','CL','_CL_'):row['env'][key]=env[key]
     if binary is not None:
         require(Path(argv[0]).read_bytes()==binary,'executed retained binary changed')
         row['executed_binary']={'path':str(argv[0]),'sha256':digest(binary),'size':len(binary)}
+    if tool is not None:
+        require(Path(argv[0]).read_bytes()==tool,'hosted instruction tool changed')
+        if label=='instruction-help':(out/'instruction-tool.bin').write_bytes(tool)
+        require((out/'instruction-tool.bin').read_bytes()==tool,'retained hosted instruction tool changed')
+        row['tool_binary']={'path':str(argv[0]),'sha256':digest(tool),'size':len(tool)}
     write_json(out/(label+'.json'),row)
     return row
 
@@ -80,6 +106,83 @@ def finite(values):
     words(values)
     require(all(math.isfinite(struct.unpack('<f',struct.pack('<I',v))[0]) for v in values),'finite initialized float')
     return values
+
+
+def operation_corpus():
+    return b''.join(struct.pack('<19f',*POINTS[-1],*matrix) for matrix in (IDENTITY,PROJECTIVE))
+
+
+def corpus_words(raw):
+    require(raw==operation_corpus(),'exact post-build two-case 152-byte corpus')
+    return list(struct.unpack('<38I',raw))
+
+
+def admit_operation(row,kind,owner,expected_input):
+    common={'stage','kind','owner','input','output','samples','sites','base'}
+    require(set(row)==common|({'target'} if kind=='DllCall' else {'values','destination'}),'closed operation record')
+    require(row['stage']=='operation' and row['kind']==kind and row['owner']==owner and
+            all(type(v) is int for v in row['owner']),'actual operation owner/order')
+    require(len(finite(row['input']))==19 and row['input']==expected_input,'runtime operation input words')
+    require(len(finite(row['output']))==3,'operation output words')
+    require(type(row['samples']) is list and len(row['samples'])==2,'operation samples')
+    row['fp']=[snapshot(v,kind,'operation-'+str(i),case=str(owner)) for i,v in enumerate(row['samples'])]
+    require(type(row['base']) is int and 0<row['base']<2**64,'runtime module base')
+    sites=row['sites'];require(type(sites) is list and len(sites)==(2 if kind=='DllCall' else 5) and
+            all(type(v) is int and (v==0 or row['base']<v<2**64) for v in sites),'runtime code sites')
+    required=range(2) if kind=='DllCall' else range(5) if kind=='RustTable' else (0,2)
+    require(all(sites[i] for i in required),'required actual code sites')
+    if kind=='DllCall':require(type(row['target']) is int and 0<row['target']<2**64,'actual DLL call target')
+    else:
+        require(len(finite(row['values']))==3 and len(finite(row['destination']))==3,'operation intermediate/destination words')
+        if owner[0]==2:require(row['destination']==row['output'],'actual merge return/destination agreement')
+        else:require(row['destination']==[0,0,0],'no direct merge destination')
+        if kind=='RustEndpoint':require(row['values']==[0,0,0],'uninstrumented endpoint has no observed intermediates')
+    return row
+
+
+WITNESS_ROLES = ('RawCorpusThroughTableReturn', 'RawCorpusThroughHardwareReturn', 'RawFixtureThroughSelectedMeshReturn')
+WITNESS_FIELDS = (('operation',176,8),('raw',1024,1),('length',8,8),('pointer',8,8),
+                  ('ordinal',8,8),('sink',8,8),('sites',24,8),('handoff',24,8),
+                  ('handoff_sites',16,8),('handoff_ordinal',8,8),('handoff_kind',4,4),
+                  ('lineage',1280,8),('count',8,8),('returned',48,8),('caller',16,8))
+
+def witness_layout():
+    offsets=[];end=0;alignment=max(field[2] for field in WITNESS_FIELDS)
+    for name,size,align in WITNESS_FIELDS:
+        offset=(end+align-1)//align*align;offsets.append(offset);end=offset+size
+    size=(end+alignment-1)//alignment*alignment
+    return {'target':'windows-x86_64-repr-c-v1','facts':[size,alignment,8,8,176,8,*offsets]}
+
+
+def witness_range(pointer,size,alignment):
+    require(type(pointer) is int and 0<pointer<2**64 and type(size) is int and
+            0<size<2**64 and pointer+size<2**64,'nonoverflowing witness address range')
+    require(pointer%alignment==0 and pointer+size<=2**47,'canonical Windows x64 user witness range/alignment')
+    return pointer,pointer+size
+
+def admit_witness(row, operation, raw, role, ordinal, pointer):
+    require(set(row)=={'stage','schema','layout','role','owner','ordinal','handoff','handoff_sites','handoff_ordinal','handoff_kind','received','received_ordinal','bytes','sites','base'},'closed versioned witness record')
+    require(row['stage']=='witness' and type(row['schema']) is int and row['schema']==2 and
+            row['role']==role and role in WITNESS_ROLES,'versioned consumed witness role')
+    layout=row['layout'];expected=witness_layout()
+    require(type(layout) is dict and set(layout)=={'target','facts'} and type(layout['facts']) is list and
+            all(type(v) is int for v in layout['facts']) and layout==expected,'authenticated full Witness repr(C) layout')
+    require(type(row['ordinal']) is int and row['ordinal']==ordinal and type(row['received_ordinal']) is int and
+            row['received_ordinal']==ordinal and type(row['handoff_ordinal']) is int and row['handoff_ordinal']==ordinal and
+            type(row['handoff_kind']) is int and row['handoff_kind']==WITNESS_ROLES.index(role) and row['owner']==operation['owner'] and
+            all(type(v) is int for v in row['owner']),'witness owner/ordinal linkage')
+    for field in ('handoff','received'):
+        require(type(row[field]) is list and len(row[field])==3 and all(type(v) is int and 0<v<2**64 for v in row[field]),'actual raw-input and fixed-sink addresses')
+    require(0<len(raw)<=1024 and row['handoff']==row['received'] and row['handoff'][:2]==[pointer,len(raw)],'actual raw-input handoff/sink identity')
+    input_start,input_end=witness_range(pointer,len(raw),1)
+    sink_start,sink_end=witness_range(row['received'][2],layout['facts'][0],layout['facts'][1])
+    require(row['bytes']==list(raw) and all(type(v) is int for v in row['bytes']),'actual witness consumed raw bytes')
+    require(type(row['base']) is int and row['base']==operation['base'] and type(row['sites']) is list and
+            len(row['sites'])==3 and all(type(v) is int and row['base']<v<2**64 for v in row['sites']),'entry/materialization/fixed-sink runtime sites')
+    require(type(row['handoff_sites']) is list and len(row['handoff_sites'])==2 and
+            all(type(v) is int and row['base']<v<2**64 for v in row['handoff_sites']),'actual raw-input caller handoff sites')
+    require(input_end<=sink_start or sink_end<=input_start,'raw input and full Witness sink do not alias')
+    return dict(row,raw_sha256=digest(raw),compiled_dataflow='UnprovedAwaitingIndependentReview')
 
 
 def inputs(read):
@@ -122,8 +225,9 @@ def inverse(raw,patch):
     return result
 
 
-def generated(read,observed,input_root):
+def generated(read,observed,input_root,runtime_path=None):
     input_root=PureWindowsPath(str(input_root))
+    runtime_path=PureWindowsPath(str(runtime_path or input_root/'operations.bin'))
     patches={};result={}
     def add(path,anchor,text):
         raw=result.get(path,read(path))
@@ -138,6 +242,7 @@ target_include_directories(floor_profile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(floor_profile PRIVATE mikudancestudio_core MMEffect dsound bcrypt)
 target_compile_options(mikudancestudio_core PRIVATE @OPT@)
 target_compile_options(floor_profile PRIVATE @OPT@)
+target_link_options(floor_profile PRIVATE /MAP)
 ''')
     if observed:
         add(ACCESSORY,b'#include "mikudancestudio/ported_funcs.hpp"',b'\n#include "../../native_observer.hpp"')
@@ -146,13 +251,21 @@ target_compile_options(floor_profile PRIVATE @OPT@)
         anchor=b'        return Err(Error::NoMesh);\n    }\n'
         add(MESH,anchor,b'    #[cfg(mds_floor_profile)] floor_profile::premerge(&containers);\n')
         add(MESH,b'    if single {\n        mesh.attribute_table = attribute_table(&mesh.indices, &mesh.face_material);\n    }\n',b'    #[cfg(mds_floor_profile)] floor_profile::merged(&mesh);\n')
+        add(MESH,b'fn transform_coord(p: [f32; 3], m: &Mat4) -> [f32; 3] {',b'\n    #[cfg(mds_floor_profile)] floor_profile::begin_operation(p, m);')
+        add(MESH,b'    let r = (e + e) - w * (e * e);',b'\n    #[cfg(mds_floor_profile)] floor_profile::intermediates(w, e, r);\n    let output =')
+        add(MESH,b'        (((x * m[2] + y * m[6]) + z * m[10]) + m[14]) * r,\n    ]',b';\n    #[cfg(mds_floor_profile)] floor_profile::finish_operation(output);\n    output')
+        add(MESH,b'    for c in containers {',b'\n        #[cfg(mds_floor_profile)] floor_profile::merge_container();')
+        add(MESH,b'        for v in &c.vertices {',b'\n            #[cfg(mds_floor_profile)] floor_profile::merge_source(&mesh.vertices, v, &c.transform);')
+        add(MESH,b'                texcoord: v.texcoord,\n            });',b'\n            #[cfg(mds_floor_profile)] floor_profile::merge_destination(&mesh.vertices);')
     observer=(HERE/'observer.rs').read_text()
     observer=observer.replace('@CASES@',','.join('('+json.dumps(id)+',include_bytes!('+json.dumps(str(input_root/(id+'.x')))+'))' for id,_,_ in CASES))
     observer=observer.replace('@MATRICES@',repr(MATRICES)).replace('@POINTS@',repr(POINTS))
+    observer=observer.replace('@RUNTIME@',json.dumps(str(runtime_path))).replace('@MERGE_INPUT@',json.dumps(str(input_root/'floor-identity.x'))).replace('@OBSERVED@',str(observed).lower())
     add(MESH,read(MESH)[-40:],b'\n#[cfg(mds_floor_profile)]\nmod floor_profile {\n'+observer.encode()+b'\n}\n')
     cpp=(HERE/'native.cpp.in').read_text()
     cpp=cpp.replace('@IDS@',','.join(json.dumps(id) for id,_,_ in CASES))
     cpp=cpp.replace('@FILES@',','.join('L'+json.dumps(str(input_root/(id+'.x'))) for id,_,_ in CASES))
+    cpp=cpp.replace('@RUNTIME@','L'+json.dumps(str(runtime_path)))
     for key,value in [('@MATRICES@',MATRICES),('@POINTS@',POINTS)]:
         cpp=cpp.replace(key,repr(value).replace('[','{').replace(']','}'))
     result['native.cpp']=cpp.encode();result['native_observer.hpp']=(HERE/'native_observer.hpp').read_bytes()
@@ -274,14 +387,104 @@ def parse(raw,language,observed):
                 row=take('direct');require(row['operation']==operation and type(row['matrix']) is int and row['matrix']==mi and type(row['point']) is int and row['point']==pi,'direct operation/input/matrix identity')
                 require(len(finite(row['words']))==(4 if operation=='Transform' else 3),'direct operation output width')
                 row['fp']=[snapshot(row[k],language,k,operation=operation,matrix=mi,point=pi) for k in ('sample_a','sample_b')];result['direct'].append(row)
+    if language=='rust' and observed:result['runtime_imports']=[take('runtime-imports')]
+    runtime_read=take('runtime-read');words(runtime_read['words'])
+    require(set(runtime_read)==({'stage','words','pointer'} if language=='rust' else {'stage','words'}) and runtime_read['words']==corpus_words(operation_corpus()),'actual runtime corpus read')
+    result['operations']=[]
+    domain=corpus_words(operation_corpus())
+    for i in range(2):
+        for kind in (('DllCall',) if language=='native' else (('RustTable' if observed else 'RustEndpoint'),'HardwareSeedWithFrozenRefinement')):
+            boundary=take('witness') if language=='rust' else None
+            row=admit_operation(take('operation'),kind,[1,i,0,0],domain[i*19:(i+1)*19])
+            if boundary is not None:row['witness']=admit_witness(boundary,row,operation_corpus(),WITNESS_ROLES[0 if kind in ('RustTable','RustEndpoint') else 1],i,runtime_read['pointer'])
+            if kind=='DllCall':require(row['target']==result['dll']['base']+result['dll']['rvas'][1],'wrapper actual DLL target')
+            result['operations'].append(row)
+    if language=='rust':
+        read=take('merge-read');raw=inputs(lambda p:(ROOT/p).read_bytes())[1]['bytes']
+        require(set(read)=={'stage','bytes','pointer'} and read['bytes']==list(raw),'same retained fixture genuinely read at runtime')
+        expected=list(map(word,POINTS[0]+IDENTITY)) if observed else [0]*19
+        if observed:result['merge_lineage']=take('merge-lineage');admit_lineage(result['merge_lineage'])
+        boundary=take('witness')
+        row=admit_operation(take('operation'),'RustTable' if observed else 'RustEndpoint',[2,0,0,0],expected)
+        row['witness']=admit_witness(boundary,row,raw,WITNESS_ROLES[2],0,read['pointer'])
+        result['operations'].append(row)
+        if observed:result['runtime_imports'].append(take('runtime-imports'))
     require(at==len(rows)-1,'extra/unknown records')
     if language=='native':
         q,t=result['direct'][-2:];require(q['words']!=t['words'][:3] and t['words'][3]==word(3.),'nonunit-w distinguishes operations')
     return result
 
 
+def admit_lineage(row):
+    require(set(row)=={'stage','caller','rows','returned'} and row['stage']=='merge-lineage','closed merge pointer lineage')
+    require(type(row['caller']) is list and len(row['caller'])==2 and all(type(v) is int and 0<v<2**64 for v in row['caller']),'merge opening/closing caller sites')
+    rows=row['rows'];returned=row['returned']
+    require(type(rows) is list and 0<len(rows)<=16 and type(returned) is list and len(returned)==6,'bounded merge pointer records')
+    require(all(type(v) is int and 0<=v<2**64 for a in rows+[returned] for v in a),'strict merge pointer fields')
+    previous=None
+    for i,a in enumerate(rows):
+        require(len(a)==10 and a[1]==i and a[6]==i+1 and a[2]>=a[1] and a[7]>=a[6] and
+                a[3]>0 and a[4]>0 and a[5]>0 and 0<a[8]<=1024 and a[9]>0,'actual push source/storage bounds')
+        if previous:require(a[:3]==previous[5:8] and a[8]==previous[8],'continuous Vec storage/growth lineage')
+        previous=a
+    require(returned[:3]==rows[-1][5:8] and returned[3]==returned[0]+returned[5] and returned[5]+12<=rows[0][8] and returned[4]>0,
+            'returned mesh selected element is actual Vec storage')
+    return row
+
+
 def semantic(a,b):
     return {'classification':'Equal' if a==b else 'SemanticDifference','before':a,'after':b}
+
+
+def operation_assessment(native,rust):
+    table_source=(ROOT/'rust/crates/mds-math/src/estimate_table.rs').read_text()
+    match=re.search(r'const RCP: \[u32; 2048\] = \[(.*?)\];',table_source,re.S)
+    require(match is not None,'frozen RCP table source')
+    table=[int(v,16) for v in re.findall(r'0x[0-9a-f]{8}',match[1])]
+    require(len(table)==2048,'frozen RCP entries')
+    def f(v):return struct.unpack('<f',struct.pack('<I',v))[0]
+    def rnd(v):
+        try:return f(word(v))
+        except OverflowError:return math.copysign(math.inf,v)
+    def oracle(row,seed=None):
+        p=list(map(f,row['input'][:3]));m=list(map(f,row['input'][3:]))
+        w=rnd(rnd(rnd(p[0]*m[3])+rnd(p[1]*m[7]))+rnd(p[2]*m[11]));w=rnd(w+m[15])
+        wb=word(w);exp=wb>>23 & 255
+        require(w in (1.,3.) and 0<exp<253,'bounded Identity/W3 oracle domain')
+        e=f((253-exp)<<23 | table[(wb>>12)&2047]&0x7fffff) if seed is None else f(seed)
+        square=rnd(e*e);scaled=rnd(w*square);double=rnd(e+e);r=rnd(double-scaled)
+        output=[]
+        for i in range(3):
+            n=rnd(rnd(rnd(p[0]*m[i])+rnd(p[1]*m[i+4]))+rnd(p[2]*m[i+8]));n=rnd(n+m[i+12])
+            output.append(word(rnd(n*r)))
+        return {'values':[wb,word(e),word(r)],'output':output,
+                'refinement_derived_binary32':[word(square),word(scaled),word(double)],
+                'origin':'DerivedDefaultBinary32NotInstructionReconstruction'}
+    observations=[]
+    for row in rust['operations']:
+        if row['kind']=='RustEndpoint':continue
+        item={'kind':row['kind'],'owner':row['owner'],'observed':row,
+              'compiled_dataflow':'UnprovedAwaitingIndependentReview','operation_environment':'Unproved',
+              'instruction_reconstructed_values':'UnprovedAwaitingIndependentReview'}
+        if all(v['controls']==0x1f80 for v in row['fp']):
+            derived=oracle(row,row['values'][1] if row['kind']=='HardwareSeedWithFrozenRefinement' else None)
+            item['numerical_oracle']={'domain':'DefaultSampledControlsOnly','derived':derived,
+                'comparison':semantic({k:derived[k] for k in ('values','output')},{k:row[k] for k in ('values','output')})}
+        else:item['numerical_oracle']={'domain':'UnprovedNondefaultControls'}
+        observations.append(item)
+    relations=[]
+    for i in range(2):
+        table,hardware=rust['operations'][i*2:i*2+2];dll=native['operations'][i]
+        relations.append({'owner':[1,i,0,0],'table_vs_hardware_seed':semantic(table['values'][1],hardware['values'][1]),
+                          'table_vs_dll_output':semantic(table['output'],dll['output']),
+                          'hardware_vs_dll_output':semantic(hardware['output'],dll['output']),
+                          'dll_recipe':'HeldUnproved','cause_status':'Held'})
+    merge=rust['operations'][-1]
+    return {'state':'CapturedAwaitingIndependentCompiledReview','proof_status':'UnprovedAwaitingIndependentReview',
+            'observations':observations,'dll_observations':native['operations'],'relations':relations,
+            'runtime_direct_vs_merge':{'classification':'NotComparable','reason':'DifferentPointAndOwnerDomains'},
+            'merge_vs_retained_floor':semantic(merge['output'],rust['cases']['floor-identity']['merged']['positions'][0]),
+            'dll_internal_closure':'HeldOptional','arithmetic_adoption':'NotAuthorized'}
 
 
 def classify(native,rust):
@@ -334,6 +537,7 @@ def classify(native,rust):
     if native['cases']['floor-top']['production_raw']['positions']!=native['cases']['floor-identity']['production_raw']['positions']:
         findings.append({'finding':'TopVersusIdentityFrameInputTopologyDependence','qualification':'does not isolate Frame from explicit matrix'})
     return {'state':'CompleteSameHostDiagnostic','differences':differences,'findings':findings,
+            'operation_diagnostic':operation_assessment(native,rust),
             'output_relations':relations,'causal_qualification':qualifications,
             'fp_states':{'native':native['fp']+[v for case in native['cases'].values() for v in case['fp']]+[v for row in native['direct'] for v in row['fp']],
                          'rust':[v for case in rust['cases'].values() for v in case['fp']]+[v for row in rust['direct'] for v in row['fp']]},
@@ -362,6 +566,527 @@ def pe_exports(raw):
         nameoffset=offset(struct.unpack_from('<I',raw,no+4*i)[0]);end=raw.index(b'\0',nameoffset)
         name=raw[nameoffset:end].decode('ascii');ordinal=struct.unpack_from('<H',raw,oo+2*i)[0]
         require(ordinal<funcs,'PE export ordinal');result[name]=struct.unpack_from('<I',raw,fo+4*ordinal)[0]
+    return result
+
+
+def pe_code(raw):
+    require(len(raw)>=256 and raw[:2]==b'MZ','bounded final PE header')
+    pe=struct.unpack_from('<I',raw,60)[0];require(pe+264<=len(raw) and raw[pe:pe+6]==b'PE\0\0d\x86','final AMD64 PE')
+    count=struct.unpack_from('<H',raw,pe+6)[0];optional=pe+24;size=struct.unpack_from('<H',raw,pe+20)[0]
+    require(0<count<=96 and size>=144 and optional+size+count*40<=len(raw) and struct.unpack_from('<H',raw,optional)[0]==0x20b,'bounded PE32+ sections')
+    base=struct.unpack_from('<Q',raw,optional+24)[0];sections=[]
+    for i in range(count):
+        at=optional+size+i*40;vs,va,rs,offset=struct.unpack_from('<IIII',raw,at+8);flags=struct.unpack_from('<I',raw,at+36)[0]
+        require(offset+rs<=len(raw) and va+max(vs,rs)<2**32,'PE physical/virtual section bounds')
+        sections.append({'name':raw[at:at+8].rstrip(b'\0').decode('ascii'),'rva':va,'size':rs,'virtual_size':vs,'offset':offset,'flags':flags})
+    def region(start,end,executable=False):
+        require(type(start) is int and type(end) is int and 0<=start<end<2**32,'strict code range')
+        matches=[s for s in sections if s['rva']<=start<end<=s['rva']+s['size'] and (not executable or s['flags']&0x20000000)]
+        require(len(matches)==1,'unique physical PE section/range')
+        s=matches[0];offset=s['offset']+start-s['rva']
+        return {'start_rva':start,'end_rva':end,'section':s['name'],'offset':offset,'bytes':raw[offset:offset+end-start].hex()}
+    rva,length=struct.unpack_from('<II',raw,optional+112+3*8)
+    require(length%12==0 and length<=12*100000 and bool(rva)==bool(length),'bounded exception directory')
+    table=bytes.fromhex(region(rva,rva+length)['bytes']) if length else b'';functions=[]
+    for at in range(0,len(table),12):
+        first,last,unwind=struct.unpack_from('<III',table,at)
+        require(first<last and unwind,'runtime function extent');region(first,last,True);functions.append((first,last))
+    require(functions==sorted(set(functions)),'unique sorted runtime function extents')
+    return base,sections,functions,region
+
+
+DISASSEMBLER=PureWindowsPath('C:/Program Files/LLVM/bin/llvm-objdump.exe')
+
+
+def map_symbols(raw,base,sections):
+    text=raw.decode('utf-8-sig')
+    preferred=re.findall(r'Preferred load address is\s+([0-9a-fA-F]+)',text)
+    require(len(preferred)==1 and int(preferred[0],16)==base,'same-link preferred image base')
+    result=[]
+    for line in text.splitlines():
+        match=re.fullmatch(r'\s*[0-9a-fA-F]{4}:[0-9a-fA-F]{8,16}\s+(\S+)\s+([0-9a-fA-F]{8,16})\s+(.*?)\s*',line)
+        if match:
+            rva=int(match[2],16)-base
+            if any(s['rva']<=rva<s['rva']+s['size'] and s['flags']&0x20000000 for s in sections):
+                result.append({'symbol':match[1],'rva':rva,'object':match[3]})
+    return result
+
+
+def range_extent(raw,target,symbols,interior=False,exports=()):
+    _,sections,functions,region=pe_code(raw)
+    matches=[p for p in functions if p[0]<=target<p[1]]
+    if len(matches)==1:return matches[0], 'ExceptionDirectory'
+    require(not matches,'unique required runtime function')
+    head=region(target,target+6,True)
+    if bytes.fromhex(head['bytes'])[:2]==b'\xff\x25':return (target,target+6),'ImportThunkSixBytes'
+    if not symbols and exports:
+        entries=[entry for entry in exports if entry['rva']==target]
+        following=[entry['rva'] for entry in exports if entry['rva']>target]
+        require(len(entries)==1 and following,'required CRT export candidate start/next distinct extent')
+        region(target,min(following),True)
+        return (target,min(following)),'ExportCandidateOnly'
+    preceding=sorted({s['rva'] for s in symbols if s['rva']<=target})
+    require(preceding and (interior or preceding[-1]==target),'required leaf has same-link start symbol')
+    first=preceding[-1]
+    following=sorted({s['rva'] for s in symbols if s['rva']>first})
+    require(following,'required leaf has candidate upper bound')
+    region(first,following[0],True)
+    return (first,following[0]),'NextDistinctExecutableSymbolCandidateOnly'
+
+
+def closure_budget(witnesses):
+    spans=[s for w in witnesses for s in w['ranges']]
+    require(0<len(spans)<=128 and sum(s['end_rva']-s['start_rva'] for s in spans)<=512*1024 and
+            all(0<s['end_rva']-s['start_rva']<=128*1024 for s in spans),'small bounded operation code regions')
+    require(sum(len(w['sections']) for w in witnesses)<=96,'aggregate required PE section budget')
+
+
+def request_range(witness,raw,target,role,origin):
+    request={'image_sha256':digest(raw),'target_rva':target,'role':role,'origin':origin,'obligation':'Required'}
+    if any(all(previous.get(k)==v for k,v in request.items()) for previous in witness['requests']):return
+    try:extent,kind=range_extent(raw,target,witness['all_same_link_symbols'],origin['kind']=='RuntimeSite',witness.get('export_candidates',()))
+    except ValueError as error:
+        witness['requests'].append(dict(request,resolution='Unresolved',reason=str(error)))
+        raise
+    request['resolution']='Resolved'
+    request['extent_kind']=kind;request['start_rva'],request['end_rva']=extent
+    request['extent_source']={'ExceptionDirectory':'pdata','ImportThunkSixBytes':'exact_thunk',
+        'NextDistinctExecutableSymbolCandidateOnly':'map_candidate','ExportCandidateOnly':'export_candidate'}[kind]
+    witness['requests'].append(request)
+    if not any((s['start_rva'],s['end_rva'])==extent for s in witness['ranges']):
+        witness['ranges'].append(pe_code(raw)[3](*extent,True))
+        witness.setdefault('pending',[]).append(list(extent))
+    closure_budget([witness])
+
+
+def code_ranges(raw,rows,map_raw):
+    base,sections,functions,region=pe_code(raw);sites=[]
+    for row in rows:
+        sites.extend(site-row['base'] for site in row['sites'] if site)
+    text=map_raw.decode('utf-8-sig');require('Preferred load address is' in text,'same-link map header')
+    preferred=re.findall(r'Preferred load address is\s+([0-9a-fA-F]+)',text)
+    require(len(preferred)==1 and int(preferred[0],16)==base,'same-link preferred image base')
+    symbols=[]
+    for line in text.splitlines():
+        match=re.fullmatch(r'\s*[0-9a-fA-F]{4}:[0-9a-fA-F]{8,16}\s+(\S+)\s+([0-9a-fA-F]{8,16})\s+(.*?)\s*',line)
+        if match and ('floor_profile' in match[1] or 'DllProbe' in match[1] or match[1]=='wmain' or
+                      'mds_accessory' in match[1] and any(name in match[1] for name in ('transform_coord','load_x','merge')) or
+                      'mds_math' in match[1] and 'rcp_estimate' in match[1]):
+            address=int(match[2],16)-base
+            if any(first<=address<last for first,last in functions):symbols.append({'symbol':match[1],'rva':address,'object':match[3]})
+    require(symbols,'selected same-link symbol mappings')
+    selected=set()
+    for site in sites+[s['rva'] for s in symbols]:
+        matches=[p for p in functions if p[0]<=site<p[1]]
+        require(len(matches)==1,'runtime site has one exception-directory function extent')
+        selected.add(matches[0])
+    require(0<len(selected)<=128 and sum(b-a for a,b in selected)<=512*1024 and all(b-a<=128*1024 for a,b in selected),'small bounded operation code regions')
+    return {'image_sha256':digest(raw),'image_size':len(raw),'preferred_base':base,'sections':sections,
+            'runtime_sites_rva':sites,'same_link_symbols':symbols,
+            'ranges':[region(a,b,True) for a,b in sorted(selected)],
+            'compiled_dataflow':'UnprovedAwaitingIndependentReview'}
+
+
+def required_code_ranges(raw,rows,map_raw,witness=None):
+    base,sections,functions,_=pe_code(raw);symbols=map_symbols(map_raw,base,sections)
+    if witness is None:witness={}
+    witness.update({'image_sha256':digest(raw),'image_size':len(raw),'preferred_base':base,'sections':sections,
+             'all_same_link_symbols':symbols,'requests':[],'ranges':[],'edges':[],'data_requests':[],
+             'pending':[],'decoded':[],'semantic_origins':[],
+             'compiled_dataflow':'UnprovedAwaitingIndependentReview'})
+    for i,row in enumerate(rows):
+        boundary=row['witness'];role=boundary['role']
+        require(role in WITNESS_ROLES,'consumed semantic operation role')
+        extents=[]
+        for j,site in enumerate(boundary['sites']):
+            target=site-row['base'];matches=[p for p in functions if p[0]<=target<p[1]]
+            require(len(matches)==1,'witness site has exact exception-directory boundary')
+            extents.append(matches[0])
+            request_range(witness,raw,target,role,{'kind':'RuntimeSite','operation':i,'slot':j,'raw_sha256':boundary['raw_sha256'],'sink':boundary['received'][2]})
+        require(len(set(extents))==1,'entry/materialization/sink share actual witness function')
+        expected=('direct_witness','hardware_witness','merge_witness')[WITNESS_ROLES.index(role)]
+        owners=[s for s in symbols if s['rva']==extents[0][0] and expected in s['symbol']]
+        require(len(owners)==1,'exact same-link witness role owner')
+        handoff_extents=[]
+        for j,site in enumerate(boundary['handoff_sites']):
+            target=site-row['base'];matches=[p for p in functions if p[0]<=target<p[1]]
+            require(len(matches)==1,'handoff site has exact exception-directory boundary')
+            handoff_extents.append(matches[0])
+            request_range(witness,raw,target,'RawInputHandoffThroughFixedSink',{'kind':'RuntimeSite','operation':i,'slot':j,'raw_sha256':boundary['raw_sha256']})
+        require(len(set(handoff_extents))==1 and handoff_extents[0]!=extents[0],'separate actual handoff/witness function boundaries')
+        handoff_owners=[s for s in symbols if s['rva']==handoff_extents[0][0] and 'floor_profile' in s['symbol'] and 'handoff' in s['symbol']]
+        require(len(handoff_owners)==1,'exact same-link handoff owner')
+        witness['semantic_origins'].append({'operation':i,'role':role,'extent':list(extents[0]),'same_link_owner':owners[0],
+            'raw_sha256':boundary['raw_sha256'],'handoff':boundary['handoff'],'received':boundary['received'],'layout':boundary['layout'],
+            'ordinal':boundary['ordinal'],'owner':boundary['owner'],'sites':boundary['sites'],
+            'handoff_extent':list(handoff_extents[0]),'handoff_owner':handoff_owners[0],'handoff_sites':boundary['handoff_sites']})
+        for j,site in enumerate(row['sites']):
+            if site:request_range(witness,raw,site-row['base'],'ObservedOperationSite',{'kind':'RuntimeSite','operation':i,'slot':j})
+    require(witness['ranges'],'required operation roots')
+    return witness
+
+
+COPY_OBLIGATIONS = [
+    {'size':176,'role':'OperationReturn','status':'RequiresIndependentCallerRegionAndPathReview'},
+    {'size':8192,'role':'OdSeedTable','status':'RequiresIndependentCallerRegionAndPathReview'}]
+
+
+def complete_closure(images):
+    closure_budget([image['witness'] for image in images])
+    root=images[0]['witness']
+    require(root.get('semantic_origins') and root.get('copy_obligations')==COPY_OBLIGATIONS,'required input/sink/return/seed-copy obligations are INCOMPLETE')
+    require(sum(d.get('role')=='SeedTable' and d.get('size')==8192 for d in root['data_requests'])==1,'required seed data is INCOMPLETE')
+    for origin in root['semantic_origins']:
+        calls=[edge for edge in root['edges'] if origin['handoff_extent'][0]<=edge['instruction_rva']<origin['handoff_extent'][1] and
+               edge['target']['kind']=='DirectRva' and origin['extent'][0]<=edge['target']['rva']<origin['extent'][1] and edge['text'].startswith('call')]
+        require(calls,'actual handoff-to-witness call target is INCOMPLETE')
+        origin['actual_call_edges']=calls
+    for image in images:
+        view=image['witness']
+        require(not view.get('pending') and len(view.get('decoded',[]))==len(view['ranges']) and
+                {tuple(p) for p in view.get('decoded',[])}=={(s['start_rva'],s['end_rva']) for s in view['ranges']},'pending required code frontier is INCOMPLETE')
+        require(all(request.get('resolution')=='Resolved' for request in view['requests']),'unresolved required range is INCOMPLETE')
+        require(not any(e['obligation']=='Unresolved' for e in view['edges']),'unresolved required branch/import/dispatch data is INCOMPLETE')
+        require(all(e.get('resolution') in ('InRange','Acquired','Return','Trap') and e['obligation']=='Required' for e in view['edges']),'unresolved required edge coverage is INCOMPLETE')
+        require(all(d.get('resolution')=='Resolved' for d in view['data_requests']),'unresolved required data is INCOMPLETE')
+        view['logical_request_count']=len(view['requests']);view['physical_range_count']=len(view['ranges'])
+
+
+def follow_required_edge(directory,images,module_index,span,edge):
+    image=images[module_index];view=image['witness'];raw=image['raw'];target=edge['target']
+    origin={'kind':'RequiredTarget','instruction_rva':edge['instruction_rva'],
+            'caller_extent':[span['start_rva'],span['end_rva']]}
+    require(edge['obligation']=='Required','no unsupported edge waiver')
+    if target['kind']=='DirectRva':
+        if span['start_rva']<=target['rva']<span['end_rva']:edge['resolution']='InRange'
+        else:
+            request_range(view,raw,target['rva'],'RequiredCallOrBranch',origin)
+            edge['resolution']='Acquired'
+    elif target['kind']=='RipRelativeIatSlot':
+        slot=target['slot_rva'];data=pe_code(raw)[3](slot,slot+8)
+        request={'role':'RequiredImportOrDispatchSlot','origin':origin,'start_rva':slot,'size':8,'bytes':data['bytes'],'resolution':'Unresolved'}
+        view['data_requests'].append(request)
+        if module_index:
+            try:
+                dispatch,samples=loaded_dispatch_target(directory,image,slot)
+                edge['loaded_dispatch_samples']=samples
+                request_range(view,raw,dispatch,'RequiredLoadedDispatchTarget',origin)
+                request['resolution']='Resolved';edge['resolution']='Acquired'
+            except ValueError as error:
+                edge['obligation']='Unresolved';edge['reason']=str(error)
+        else:
+            owners=[m for m in images[1:] if m['pre']['slot']['slot_rva']==slot]
+            if len(owners)!=1:
+                edge['obligation']='Unresolved';edge['reason']='MissingRequiredSameProcessImportTarget'
+            else:
+                edge['target_image_sha256']=owners[0]['witness']['image_sha256']
+                request['resolution']='Resolved';edge['resolution']='Acquired'
+    elif target['kind'] in ('Return','Trap'):edge['resolution']=target['kind']
+    else:edge['obligation']='Unresolved'
+
+
+def instruction_edges(stdout,witness,span):
+    disassembly_bytes(stdout,witness,span);result=[];last=None
+    for line in stdout.decode('utf-8').splitlines():
+        match=re.fullmatch(r'\s*([0-9a-fA-F]+):\s+((?:[0-9a-fA-F]{2}\s+)+)(\S.*)',line)
+        if not match:continue
+        rva=int(match[1],16)-witness['preferred_base'];raw=bytes.fromhex(match[2]);text=match[3]
+        mnemonic=text.split()[0].lower()
+        last=(rva,raw,text,mnemonic)
+        if mnemonic.startswith(('call','j','loop','ret')):
+            edge={'instruction_rva':rva,'bytes':raw.hex(),'text':text,'obligation':'Required'}
+            if mnemonic.startswith('ret'):edge['target']={'kind':'Return'}
+            elif raw[:2] in (b'\xff\x25',b'\xff\x15') and len(raw)==6:
+                slot=rva+6+struct.unpack_from('<i',raw,2)[0]
+                require(0<=slot<2**32-8,'signed FF25 slot RVA bounds')
+                edge['target']={'kind':'RipRelativeIatSlot','slot_rva':slot}
+            else:
+                target=re.fullmatch(r'(?:callq?|j[a-z]+|loop[a-z]*)\s+(?:0x)?([0-9a-fA-F]+)(?:\s+<[^>]+>)?',text)
+                edge['target']=({'kind':'DirectRva','rva':int(target[1],16)-witness['preferred_base']} if target else {'kind':'Unresolved','reason':'RequiredIndirectOrUnknownBranch'})
+            result.append(edge)
+        elif mnemonic in ('ud2','int3'):
+            result.append({'instruction_rva':rva,'bytes':raw.hex(),'text':text,'obligation':'Required','target':{'kind':'Trap'}})
+    if last and not last[3].startswith(('ret','jmp')) and last[3] not in ('ud2','int3'):
+        result.append({'instruction_rva':last[0],'bytes':last[1].hex(),'text':'fallthrough after '+last[2],
+                       'obligation':'Required','target':{'kind':'DirectRva','rva':span['end_rva']}})
+    return result
+
+
+def pe_directory(raw,index):
+    pe=struct.unpack_from('<I',raw,60)[0];optional=pe+24
+    require(struct.unpack_from('<I',raw,optional+108)[0]>index,'required PE data directory')
+    return struct.unpack_from('<II',raw,optional+112+index*8)
+
+
+def export_metadata(raw):
+    _,sections,_,region=pe_code(raw);rva,size=pe_directory(raw,0)
+    require(40<=size<=128*1024,'bounded CRT export directory')
+    directory=bytes.fromhex(region(rva,rva+size)['bytes']);functions,names=struct.unpack_from('<II',directory,20)
+    require(0<functions<=8192 and names<=8192,'bounded CRT export metadata count')
+    fr,nr,orr=struct.unpack_from('<III',directory,28)
+    addresses=bytes.fromhex(region(fr,fr+4*functions)['bytes'])
+    name_table=bytes.fromhex(region(nr,nr+4*names)['bytes']) if names else b''
+    ordinals=bytes.fromhex(region(orr,orr+2*names)['bytes']) if names else b'';aliases={};retained=[]
+    for i in range(names):
+        at=struct.unpack_from('<I',name_table,i*4)[0];ordinal=struct.unpack_from('<H',ordinals,i*2)[0]
+        require(ordinal<functions,'CRT export ordinal bounds');value=bytearray()
+        for j in range(512):
+            byte=bytes.fromhex(region(at+j,at+j+1)['bytes'])[0]
+            if byte==0:break
+            value.append(byte)
+        else:require(False,'CRT export name termination')
+        name=value.decode('ascii');aliases.setdefault(ordinal,[]).append(name)
+        retained.append({'rva':at,'bytes':(bytes(value)+b'\0').hex(),'ordinal_index':ordinal})
+    candidates={};entries=[]
+    for i in range(functions):
+        target=struct.unpack_from('<I',addresses,i*4)[0]
+        executable=[s for s in sections if s['rva']<=target<s['rva']+s['size'] and s['flags']&0x20000000]
+        forwarded=rva<=target<rva+size
+        entries.append({'ordinal_index':i,'rva':target,'aliases':aliases.get(i,[]),'forwarded':forwarded,'executable':len(executable)==1})
+        if target and not forwarded and len(executable)==1:candidates.setdefault(target,[]).extend(aliases.get(i,[]))
+    return {'directory_rva':rva,'directory_bytes':directory.hex(),'function_table_rva':fr,'function_table_bytes':addresses.hex(),
+            'name_table_rva':nr,'name_table_bytes':name_table.hex(),'ordinal_table_rva':orr,'ordinal_table_bytes':ordinals.hex(),
+            'names':retained,'entries':entries},[{'rva':rva,'aliases':sorted(names)} for rva,names in sorted(candidates.items())]
+
+
+def import_slots(raw):
+    region=pe_code(raw)[3];rva,size=pe_directory(raw,1)
+    require(size and size<=128*1024,'bounded own-image import directory')
+    table=bytes.fromhex(region(rva,rva+size)['bytes']);result=[];terminated=False
+    def string(at):
+        data=bytearray()
+        for i in range(512):
+            v=bytes.fromhex(region(at+i,at+i+1)['bytes'])[0]
+            if v==0:return data.decode('ascii')
+            data.append(v)
+        require(False,'bounded import name termination')
+    for at in range(0,len(table)-19,20):
+        descriptor=table[at:at+20]
+        if descriptor==bytes(20):terminated=True;break
+        names,_,_,dll,iat=struct.unpack('<IIIII',descriptor)
+        require(names and iat,'own-image named import metadata')
+        dll_name=string(dll)
+        for n in range(8192):
+            entry=struct.unpack('<Q',bytes.fromhex(region(names+n*8,names+(n+1)*8)['bytes']))[0]
+            if not entry:break
+            if entry>>63:continue
+            name=string(entry+2)
+            if name=='memcpy':
+                region(iat+n*8,iat+(n+1)*8)
+                result.append({'descriptor_rva':rva+at,'dll_rva':dll,'name_rva':entry,
+                               'slot_rva':iat+n*8,'declared_dll':dll_name,'imported_symbol':name})
+        else:require(False,'bounded import slot termination')
+    require(terminated and 0<len(result)<=8,'required own-process copy import slots')
+    return result
+
+
+def relocated_code(raw,span,runtime_base):
+    base,_,_,region=pe_code(raw);data=bytearray.fromhex(span['bytes']);delta=runtime_base-base
+    rva,size=pe_directory(raw,5)
+    if not size:
+        require(delta==0,'relocation data required for moved loaded code');return bytes(data)
+    require(size<=128*1024,'bounded runtime relocation directory')
+    table=bytes.fromhex(region(rva,rva+size)['bytes']);at=0;seen=set()
+    while at<len(table):
+        require(at+8<=len(table),'relocation block header')
+        page,length=struct.unpack_from('<II',table,at)
+        require(length>=8 and length%2==0 and at+length<=len(table),'relocation block bounds')
+        for pos in range(at+8,at+length,2):
+            entry=struct.unpack_from('<H',table,pos)[0];kind=entry>>12;target=page+(entry&4095)
+            if not kind:continue
+            if target<span['end_rva'] and target+8>span['start_rva']:
+                require(kind==10 and span['start_rva']<=target and target+8<=span['end_rva'] and target not in seen,'exact DIR64 loaded code relocation')
+                seen.add(target);offset=target-span['start_rva'];value=struct.unpack_from('<Q',data,offset)[0]
+                require(0<=value+delta<2**64,'loaded code relocation overflow');struct.pack_into('<Q',data,offset,value+delta)
+        at+=length
+    return bytes(data)
+
+
+def loaded_header_binding(raw,headers,owner_base):
+    pe_code(raw);pe=struct.unpack_from('<I',raw,60)[0];optional=pe+24;field=optional+24
+    count=struct.unpack_from('<H',raw,pe+6)[0];size=struct.unpack_from('<H',raw,pe+20)[0]
+    header_size=struct.unpack_from('<I',raw,optional+60)[0]
+    require(field+8<=optional+size and optional+size+count*40<=header_size<=len(raw) and
+            len(headers)==header_size,'bounded loaded PE headers')
+    require(type(owner_base) is int and 0<owner_base<2**64 and
+            struct.unpack_from('<Q',headers,field)[0]==owner_base and
+            headers[:field]==raw[:field] and headers[field+8:]==raw[field+8:header_size],
+            'loaded owner file/PE/header binding')
+
+
+def runtime_images(directory,parsed,rust_raw):
+    snapshots=parsed['runtime_imports'];require(len(snapshots)==2,'pre/post own-process import snapshots')
+    receipt=checked(directory,'rust')[0];slots=import_slots(rust_raw);modules=[]
+    for phase,snapshot in zip(('pre','post'),snapshots):
+        require(set(snapshot)=={'stage','phase','process_id','image_base','image_size','slots'} and
+                snapshot['stage']=='runtime-imports' and snapshot['phase']==phase and
+                type(snapshot['process_id']) is int and snapshot['process_id']==receipt['pid'],'same executed Rust process import snapshot')
+        require(all(row['base']==snapshot['image_base'] for row in parsed['operations']),'own executed-image runtime base')
+        pe=struct.unpack_from('<I',rust_raw,60)[0]
+        require(snapshot['image_size']==struct.unpack_from('<I',rust_raw,pe+24+56)[0],'own executed-image extent')
+        require(len(snapshot['slots'])==len(slots),'complete required import slot snapshots')
+        for i,(actual,declared) in enumerate(zip(snapshot['slots'],slots)):
+            require(set(actual)=={'descriptor_rva','dll_rva','name_rva','slot_rva','target_va','owner_base','owner_size','path_utf16','sections'} and
+                    all(actual[k]==declared[k] for k in ('descriptor_rva','dll_rva','name_rva','slot_rva')),'actual own-image import descriptor/name/slot')
+            require(all(type(actual[k]) is int and 0<actual[k]<2**64 for k in ('target_va','owner_base','owner_size')),'strict loaded target identity')
+            require(type(actual['path_utf16']) is list and actual['path_utf16'] and all(type(v) is int and 0<v<65536 for v in actual['path_utf16']),'actual loaded owner path')
+            prefix=f'runtime-{phase}-{i}';raw=(directory/(prefix+'-module.bin')).read_bytes();headers=(directory/(prefix+'-headers.bin')).read_bytes()
+            require((directory/(prefix+'-iat.bin')).read_bytes()==struct.pack('<Q',actual['target_va']),'own-process actual IAT slot bytes/target')
+            base,sections,_,region=pe_code(raw);pe=struct.unpack_from('<I',raw,60)[0]
+            image_size=struct.unpack_from('<I',raw,pe+24+56)[0]
+            require(actual['owner_size']==image_size,'loaded owner file/PE/header binding')
+            loaded_header_binding(raw,headers,actual['owner_base'])
+            target=actual['target_va']-actual['owner_base'];region(target,target+1,True)
+            selected=[(j,s) for j,s in enumerate(sections) if s['flags']&0x40000000 and max(s['size'],s['virtual_size'])]
+            require(len(selected)==len(actual['sections']),'complete readable runtime section inventory')
+            data=[];total=0
+            for (j,s),item in zip(selected,actual['sections']):
+                at=pe+24+struct.unpack_from('<H',raw,pe+20)[0]+j*40;virtual=struct.unpack_from('<I',raw,at+8)[0]
+                length=max(virtual,s['size']);require(item==[j,s['rva'],length,s['flags']],'loaded readable section extent/flags')
+                loaded=(directory/(prefix+f'-section-{j}.bin')).read_bytes();total+=length
+                require(len(loaded)==length and length<=128*1024 and total<=512*1024,'bounded readable runtime section bytes')
+                if s['flags']&0x20000000:
+                    span=region(s['rva'],s['rva']+s['size'],True)
+                    require(loaded[:s['size']]==relocated_code(raw,span,actual['owner_base']) and loaded[s['size']:]==bytes(length-s['size']),'loaded runtime instructions/file/relocations')
+                data.append({'role':'LoadedExecutable' if s['flags']&0x20000000 else 'DispatchOrImportData',
+                             'rva':s['rva'],'size':length,'sha256':digest(loaded),'file':prefix+f'-section-{j}.bin','resolution':'Resolved'})
+            identity={'slot':declared,'runtime':actual,'module_sha256':digest(raw),'module_size':len(raw),
+                      'loaded_sections':data,'sampled_identity':'PrePostOnlyNotContinuous'}
+            if phase=='pre':
+                exports,candidates=export_metadata(raw)
+                witness={'image_sha256':digest(raw),'image_size':len(raw),'preferred_base':base,'sections':sections,
+                         'all_same_link_symbols':[],'requests':[],'ranges':[],'edges':[],'data_requests':data,
+                         'export_metadata':exports,'export_candidates':candidates,
+                         'compiled_dataflow':'UnprovedAwaitingIndependentReview'}
+                request_range(witness,raw,target,'ActualOwnProcessImportTarget',{'kind':'RuntimeImport','slot_rva':declared['slot_rva']})
+                modules.append({'raw':raw,'file':prefix+'-module.bin','witness':witness,'pre':identity})
+            else:
+                before=modules[i]['pre']
+                require(before['slot']==identity['slot'] and before['runtime']==identity['runtime'] and
+                        before['module_sha256']==identity['module_sha256'] and before['module_size']==identity['module_size'],
+                        'pre/post sampled import/module/target identity')
+                require([(s['rva'],s['sha256']) for s in before['loaded_sections'] if s['role']=='LoadedExecutable']==
+                        [(s['rva'],s['sha256']) for s in data if s['role']=='LoadedExecutable'],'pre/post sampled loaded instructions')
+                modules[i]['post']=identity
+    return modules
+
+
+def seed_data(raw,witness):
+    source=(ROOT/'rust/crates/mds-math/src/estimate_table.rs').read_text()
+    entries=re.findall(r'0x[0-9a-f]{8}',re.search(r'const RCP: \[u32; 2048\] = \[(.*?)\];',source,re.S)[1])
+    table=b''.join(struct.pack('<I',int(v,16)) for v in entries)
+    require(len(table)==8192 and raw.count(table)==1,'unique actual frozen 8192-byte seed table')
+    offset=raw.index(table);matches=[s for s in witness['sections'] if s['offset']<=offset and offset+len(table)<=s['offset']+s['size']]
+    require(len(matches)==1,'physical seed table PE section');start=matches[0]['rva']+offset-matches[0]['offset']
+    return {'role':'SeedTable','start_rva':start,'size':8192,'bytes':table.hex(),'resolution':'Resolved'}
+
+
+def caller_windows(parsed):
+    base=parsed['operations'][0]['base'];result=[]
+    for i,row in enumerate(parsed['operations']):
+        if row['owner'][0]==1 and row['sites'][3] and row['sites'][4]:
+            result.append({'start_rva':row['sites'][3]-base,'end_rva':row['sites'][4]-base,
+                           'role':'ActualCallerInputThroughReturn','operation':i})
+    before,after=parsed['merge_lineage']['caller']
+    result.append({'start_rva':before-base,'end_rva':after-base,'role':'ActualLoadXCallerThroughReturnedMesh','operation':len(parsed['operations'])-1})
+    return result
+
+
+def formatting_exclusion(edge,witness,span):
+    return False
+
+
+def loaded_dispatch_target(directory,image,slot):
+    samples=[]
+    for phase in ('pre','post'):
+        identity=image[phase]
+        matches=[s for s in identity['loaded_sections'] if s['rva']<=slot and slot+8<=s['rva']+s['size']]
+        require(len(matches)==1,'required loaded dispatch slot extent')
+        section=matches[0];raw=(directory/section['file']).read_bytes()
+        require(len(raw)==section['size'] and digest(raw)==section['sha256'],'required retained loaded dispatch data')
+        value=struct.unpack_from('<Q',raw,slot-section['rva'])[0]
+        samples.append({'phase':phase,'slot_rva':slot,'section':section,'target_va':value})
+    require(samples[0]['target_va']==samples[1]['target_va'],'unresolved changing sampled dispatch target')
+    base=image['pre']['runtime']['owner_base'];target=samples[0]['target_va']-base
+    pe_code(image['raw'])[3](target,target+1,True)
+    return target,samples
+
+
+def disassembly_argv(binary,witness,span):
+    base=witness['preferred_base']
+    return [str(DISASSEMBLER),'--disassemble','--start-address='+hex(base+span['start_rva']),
+            '--stop-address='+hex(base+span['end_rva']),str(binary)]
+
+
+def disassembly_bytes(stdout,witness,span):
+    expected=bytes.fromhex(span['bytes']);cursor=span['start_rva'];count=0
+    for line in stdout.decode('utf-8').splitlines():
+        match=re.fullmatch(r'\s*([0-9a-fA-F]+):\s+((?:[0-9a-fA-F]{2}\s+)+)(\S.*)',line)
+        if match:
+            address=int(match[1],16)-witness['preferred_base'];raw=bytes.fromhex(match[2]);offset=address-span['start_rva']
+            require(address==cursor and raw and offset+len(raw)<=len(expected) and expected[offset:offset+len(raw)]==raw,'disassembly exact contiguous PE instruction bytes')
+            require('<unknown>' not in match[3] and '(bad)' not in match[3],'undecoded required instruction region')
+            cursor+=len(raw);count+=1
+    require(count and cursor==span['end_rva'],'complete bounded disassembly byte coverage')
+
+
+def compiled_evidence(directory,parsed,r,capture=False,env=None):
+    help_argv=[str(DISASSEMBLER),'--help']
+    if capture:
+        require(Path(DISASSEMBLER).is_file(),'hosted bounded disassembly tool availability prerequisite')
+        require(record(directory,'instruction-help',help_argv,r['source'],env)['status']==0,'actual hosted disassembler help prerequisite')
+    receipt,stdout,stderr=checked(directory,'instruction-help')
+    require(receipt['argv']==help_argv and receipt['cwd']==r['source'] and not stderr,'exact hosted disassembler help receipt')
+    require(all(option.encode() in stdout for option in ('--disassemble','--start-address','--stop-address')),'actual bounded disassembly capabilities prerequisite')
+    tool=receipt.get('tool_binary');require(type(tool) is dict and set(tool)=={'path','sha256','size'} and
+            tool['path']==str(DISASSEMBLER) and re.fullmatch('[0-9a-f]{64}',tool['sha256']) and type(tool['size']) is int and tool['size']>0,'actual hosted tool identity')
+    tool_raw=(directory/'instruction-tool.bin').read_bytes()
+    require(digest(tool_raw)==tool['sha256'] and len(tool_raw)==tool['size'],'retained hosted instruction tool identity')
+    result={}
+    for language,name,map_name in (('native','floor_profile.exe','native.map'),('rust','rust-profile.exe','rust.map')):
+        raw=(directory/name).read_bytes();mapping=(directory/map_name).read_bytes()
+        witness={};images=[{'raw':raw,'file':name,'witness':witness}]
+        try:
+            if language=='native':witness.update(code_ranges(raw,parsed[0]['operations'],mapping))
+            else:required_code_ranges(raw,parsed[1]['operations'],mapping,witness)
+            witness['same_link_map']={'sha256':digest(mapping),'size':len(mapping)}
+            if language=='rust':
+                images+=runtime_images(directory,parsed[1],raw)
+                witness['caller_windows']=caller_windows(parsed[1])
+                witness['data_requests'].append(seed_data(raw,witness))
+                witness['copy_obligations']=[dict(row) for row in COPY_OBLIGATIONS]
+            if language=='rust':
+                for address in (parsed[1]['merge_lineage']['returned'][4],*[a[9] for a in parsed[1]['merge_lineage']['rows']]):
+                    request_range(witness,raw,address-parsed[1]['operations'][0]['base'],'MergePointerLineage',{'kind':'RuntimeSite','role':'MergeStorage'})
+            if language=='rust':closure_budget([image['witness'] for image in images])
+            for module_index,image in enumerate(images):
+                view=image['witness'];image_raw=image['raw']
+                view.setdefault('pending',[[s['start_rva'],s['end_rva']] for s in view['ranges']]);view.setdefault('decoded',[])
+                i=0
+                while view['pending']:
+                    extent=view['pending'][0]
+                    span=next(s for s in view['ranges'] if [s['start_rva'],s['end_rva']]==extent)
+                    label=language+('' if module_index==0 else '-runtime-'+str(module_index))+'-instructions-'+str(i)
+                    argv=disassembly_argv(PureWindowsPath(r['evidence'])/image['file'],view,span)
+                    if capture:require(record(directory,label,argv,r['source'],env)['status']==0,'bounded hosted disassembly prerequisite')
+                    row,assembly,error=checked(directory,label)
+                    require(row['argv']==argv and row['cwd']==r['source'] and row.get('tool_binary')==tool and not error,'exact bounded tool/image/range command')
+                    disassembly_bytes(assembly,view,span)
+                    if language=='rust':
+                        edges=instruction_edges(assembly,view,span);view['edges'].extend(edges)
+                        for edge in edges:
+                            follow_required_edge(directory,images,module_index,span,edge)
+                        closure_budget([item['witness'] for item in images])
+                    view['decoded'].append(view['pending'].pop(0));i+=1
+                    if capture:write_json(directory/(language+'-code-progress.json'),{'schema':SCHEMA,'images':[{k:v for k,v in item.items() if k!='raw'} for item in images]})
+            if language=='rust':
+                complete_closure(images)
+                witness['runtime_images']=[{k:v for k,v in item.items() if k!='raw'} for item in images[1:]]
+        finally:
+            if capture:write_json(directory/(language+'-code-progress.json'),{'schema':SCHEMA,'images':[{k:v for k,v in item.items() if k!='raw'} for item in images]})
+        if capture:write_json(directory/(language+'-code.json'),witness)
+        require(load_json((directory/(language+'-code.json')).read_bytes())==witness,'rederived executed-image code witness')
+        result[language]=witness
     return result
 
 
@@ -437,13 +1162,15 @@ def admit_recipe(m,b):
 def admit_command(receipt,r,label):
     require(receipt['argv']==r['commands'][label] and receipt['cwd']==r['cwd'][label],'exact command/cwd binding')
     expected={'CARGO_TARGET_DIR':r['target'],'CARGO_INCREMENTAL':'0',
-              'RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''}
+              'RUSTFLAGS':RUST_FLAGS,'CL':'','_CL_':''}
     require(all(receipt['env'].get(k)==v for k,v in expected.items()),'closed compiler environment')
 
 
 def admit_manifest(m):
     require(m['fp_observation_contract']==FP_CONTRACT,'fixed FP observation contract')
     require(m['schema']==SCHEMA and m['base']==BASE and m['paths']==PATHS and re.fullmatch('[0-9a-f]{40}',m['head']),'diagnostic generation/head')
+    words(m['operation_corpus']['words'])
+    require(m['operation_corpus']=={'sha256':digest(operation_corpus()),'size':152,'words':corpus_words(operation_corpus())},'generation operation corpus')
 
 
 def cargo_binary(raw,r,opt):
@@ -658,17 +1385,32 @@ def native_provenance(commands,r,opt,objects,archive):
     require(len(links)==1,'exact final executable link')
     args=links[0][1:]
     require(native in [winpath(v,cwd) for v in args if v.lower().endswith('.obj')] and lib in [winpath(v,cwd) for v in args if v.lower().endswith('.lib')],'final link exact harness object and core archive')
+    require('/map' in [v.lower() for v in args],'selected same-link native map')
     return str(exe)
 
 
 def source_expected(base,observed,input_root,opt):
-    changes,patches=generated(lambda p:(base/p).read_bytes(),observed,input_root)
+    runtime=PureWindowsPath(str(input_root)).parent/(('observed' if observed else 'control')+'-'+opt.lstrip('/'))/'operations.bin'
+    changes,patches=generated(lambda p:(base/p).read_bytes(),observed,input_root,runtime)
     raw=changes['CMakeLists.txt'];replacement=raw.replace(b'@OPT@',opt.encode())
     patches['CMakeLists.txt'].append({'kind':'optimization','original_hex':raw.hex(),'original_sha256':digest(raw),'generated_sha256':digest(replacement),'option':opt})
     changes['CMakeLists.txt']=replacement
     expected=c.source_inventory(base)
     for path,raw in changes.items():expected[path]={'sha256':digest(raw),'mode':expected.get(path,{}).get('mode',0o644)}
     return changes,patches,expected
+
+
+def generation_ancestry(out,m):
+    chain=m['generation_ancestry']
+    require(type(chain) is list and 0<len(chain)<=16 and len(set(chain))==len(chain) and chain[-1]==m['head'],'bounded ordinary generation ancestry')
+    parent=PARENT
+    for revision in chain:
+        require(type(revision) is str and re.fullmatch('[0-9a-f]{40}',revision),'ancestry commit identity')
+        raw=(out/'ancestry'/(revision+'.commit')).read_bytes()
+        require(h.git_hash('commit',raw)==revision,'retained ancestry commit hash')
+        lines=raw.decode('utf-8').split('\n\n',1)[0].splitlines()
+        require(re.fullmatch('tree [0-9a-f]{40}',lines[0]) and [line for line in lines if line.startswith('parent ')]==['parent '+parent],'ordinary linear descent from frozen generation parent')
+        parent=revision
 
 
 def verify_sources(out,m):
@@ -681,9 +1423,10 @@ def verify_sources(out,m):
         raw=(out/'tooling'/path).read_bytes();require(raw==(ROOT/path).read_bytes() and path not in entries,'six new tooling paths')
         entries[path]=['100644',h.git_hash('blob',raw)]
     h.commit_proof(out/'head.commit',m['head'],entries)
-    require(('parent '+PARENT) in (out/'head.commit').read_text().splitlines(),'frozen parent identity')
+    generation_ancestry(out,m)
     require(input_manifest(inputs(lambda p:(base/p).read_bytes()))==m['inputs'],'closed input manifest')
     for row in inputs(lambda p:(base/p).read_bytes()):require((out/'inputs'/(row['id']+'.x')).read_bytes()==row['bytes'],'retained exact input bytes')
+    require((base/'rust/crates/mds-math/src/estimate_table.rs').read_bytes()==(ROOT/'rust/crates/mds-math/src/estimate_table.rs').read_bytes(),'oracle uses authenticated unchanged table source')
     for build in m['builds']:
         variant,opt=build['variant'],build['optimization']
         changes,patches,expected=source_expected(base,variant=='observed',PureWindowsPath(m['input_root']),'/'+opt)
@@ -737,6 +1480,13 @@ def replay(out,archive=None):
             raw=(directory/name).read_bytes();require(digest(raw)==row['sha256'] and len(raw)==row['size'],'binary/source binding');pe_exports(raw) if name=='d3dx9_43.dll' else require(raw[:2]==b'MZ','actual executable PE')
         _,nout,nerr=checked(directory,'native');require(not nerr,'native stderr');native=parse(nout,'native',b['variant']=='observed')
         _,rout,_=checked(directory,'rust');require(b'test result: ok. 1 passed; 0 failed; 0 ignored;' in rout,'one actual Rust unit probe with no ignored tests');rust=parse(rout,'rust',b['variant']=='observed')
+        corpus_words((directory/'operations.bin').read_bytes())
+        require(set(b['runtime_corpus'])=={'sha256','size','created_ns'} and b['runtime_corpus']['sha256']==digest(operation_corpus()) and b['runtime_corpus']['size']==152,'runtime corpus identity')
+        creation=b['runtime_corpus']['created_ns'];require(type(creation) is int,'runtime corpus creation time')
+        for label in ('native-build','rust-build'):require(checked(directory,label)[0]['end_ns']<=creation,'corpus created after both compilers completed')
+        for label in ('native','rust'):require(creation<=checked(directory,label)[0]['start_ns'],'corpus existed before actual runtime read')
+        if b['variant']=='observed':
+            require(compiled_evidence(directory,(native,rust),r)==b['compiled_capture'],'required bounded executed-code capture')
         dll=native['dll'];raw=(directory/'d3dx9_43.dll').read_bytes();exports=pe_exports(raw)
         require(digest(raw)==dll['sha256'] and len(raw)==dll['size'] and dll['rvas']==[exports[n] for n in ('D3DXLoadMeshFromXW','D3DXVec3TransformCoord','D3DXVec3Transform')],'actual loaded DLL bytes/exports')
         parsed[b['id']]=(native,rust)
@@ -750,6 +1500,7 @@ def replay(out,archive=None):
                 require(mesh(a['final'])==mesh(b['final']) ,'control/observed bitwise initialized final state')
             a,b=[p[language]['cases'] for p in (control,observed)]
             require(mesh(a['floor-top']['final'])!=mesh(a['floor-affine']['final']) and mesh(b['floor-top']['final'])!=mesh(b['floor-affine']['final']),'genuine normal-exit affine sensitivity')
+            require([(row['owner'],row['output']) for row in control[language]['operations']]==[(row['owner'],row['output']) for row in observed[language]['operations']],'runtime control/observed endpoint invariance')
         results[opt]=classify(*observed)
     result={'schema':SCHEMA,'fp_observation_contract':FP_CONTRACT,'head':m['head'],'results':results,'hosted':'ExecutedWindowsOnly','profile_adoption':'NotAuthorized'}
     require(load_json((out/'result.json').read_bytes())==result,'rederived diagnostic result')
@@ -772,11 +1523,19 @@ def run(out,build_root,toolchain):
     base_modes=c.safe_tar(out/'base-source.tar',base)
     for path,row in base_modes.items():c.TRANSPORT_MODES[str((base/path).resolve())]=row['mode']
     for name in ('base','head'):shutil.copyfile(out/(name+'-commit.stdout'),out/(name+'.commit'))
+    require(record(out,'git-ancestry',['git','rev-list','--reverse',PARENT+'..HEAD'],ROOT,env)['status']==0,'ordinary generation ancestry command')
+    chain=(out/'git-ancestry.stdout').read_text().splitlines();(out/'ancestry').mkdir()
+    for revision in chain:
+        require(re.fullmatch('[0-9a-f]{40}',revision),'producer ancestry commit identity')
+        label='ancestor-'+revision
+        require(record(out,label,['git','cat-file','commit',revision],ROOT,env)['status']==0,'ancestor source identity command')
+        shutil.copyfile(out/(label+'.stdout'),out/'ancestry'/(revision+'.commit'))
     for path in PATHS:
         dest=out/'tooling'/path;dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/path,dest)
     input_root=Path(r['input_root']);input_root.mkdir();rows=inputs(lambda p:(base/p).read_bytes())
     for row in rows:(input_root/(row['id']+'.x')).write_bytes(row['bytes'])
     m={'schema':SCHEMA,'fp_observation_contract':FP_CONTRACT,'runner_temp':runner_temp,'base':BASE,'head':head,'paths':PATHS,'input_root':str(input_root),'inputs':input_manifest(rows),'base_inventory':c.source_inventory(base),'builds':[],
+       'operation_corpus':{'sha256':digest(operation_corpus()),'size':152,'words':corpus_words(operation_corpus())},'generation_ancestry':chain,
        'configuration_differences':'Native Release in both modes, appended /Od or /O2 on core and console; Rust dev versus release defaults, opt-level/debug assertions/overflow/debuginfo differ. Observed copies add private sink calls. Both copies include coarse private MXCSR snapshots with operation ordering unproved.'}
     parsed={}
     for opt in ('Od','O2'):
@@ -788,18 +1547,27 @@ def run(out,build_root,toolchain):
             for path,row in expected.items():c.TRANSPORT_MODES[str((source/path).resolve())]=row['mode']
             require(c.source_inventory(source)==expected,'generated source initial closure')
             native_target=Path(r['native_target']);target=Path(r['target'])
-            e=env|{'CARGO_TARGET_DIR':str(target),'CARGO_INCREMENTAL':'0','CARGO_TERM_COLOR':'never','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''}
+            e=env|{'CARGO_TARGET_DIR':str(target),'CARGO_INCREMENTAL':'0','CARGO_TERM_COLOR':'never','RUSTFLAGS':RUST_FLAGS,'CL':'','_CL_':''}
             for label in ('configure','native-build'):
                 require(record(directory,label,commands[label],source,e,2400)['status']==0,'native '+label+' failure is not SemanticDifference')
             shutil.copyfile(native_target/'Release/floor_profile.exe',directory/'floor_profile.exe')
             actual=native_commands((directory/'native-build.stdout').read_bytes(),(directory/'native-build.stderr').read_bytes(),r)
             shutil.copyfile(native_target/'Release/mikudancestudio_core.lib',directory/'mikudancestudio_core.lib')
-            require(record(directory,'native',commands['native'],source,e,300)['status']==0,'native normal exit required')
-            native=parse((directory/'native.stdout').read_bytes(),'native',variant=='observed')
-            shutil.copyfile(native['dll']['path'],directory/'d3dx9_43.dll')
             require(record(directory,'rust-build',commands['rust-build'],source/'rust',e)['status']==0,'Rust build')
             executable=cargo_binary((directory/'rust-build.stdout').read_bytes(),r,opt)
             shutil.copyfile(executable,directory/'rust-profile.exe')
+            shutil.copyfile(native_target/'Release/floor_profile.map',directory/'native.map')
+            shutil.copyfile(Path(executable).with_suffix('.map'),directory/'rust.map')
+            (directory/'operations.bin').write_bytes(operation_corpus());creation=previous.time.time_ns()
+            binaries={}
+            for name in ('floor_profile.exe','rust-profile.exe'):
+                raw=(directory/name).read_bytes();binaries[name]={'sha256':digest(raw),'size':len(raw)}
+            b={'id':id,'variant':variant,'optimization':opt,'source':str(source),'target':str(target),'evidence':str(directory),'commands':commands,'patches':patches,'before':expected,'actual_native_commands':actual,'binaries':binaries,'original_native_binary':{'path':str(native_target/'Release/floor_profile.exe'),'sha256':digest((native_target/'Release/floor_profile.exe').read_bytes())},'original_rust_binary':{'path':executable,'sha256':digest(Path(executable).read_bytes())}}
+            b['runtime_corpus']={'sha256':digest(operation_corpus()),'size':152,'created_ns':creation}
+            m['builds'].append(b);write_json(out/'manifest.json',m)
+            require(record(directory,'native',commands['native'],source,e,300)['status']==0,'native normal exit required')
+            native=parse((directory/'native.stdout').read_bytes(),'native',variant=='observed')
+            shutil.copyfile(native['dll']['path'],directory/'d3dx9_43.dll')
             require(record(directory,'rust',commands['rust'],source/'rust',e,300)['status']==0,'Rust probe normal exit')
             rust=parse((directory/'rust.stdout').read_bytes(),'rust',variant=='observed')
             for test in ('mesh_dump','x_files'):
@@ -812,11 +1580,13 @@ def run(out,build_root,toolchain):
                 retained=directory/'objects'/relative;retained.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(object_path,retained)
                 raw=retained.read_bytes();objects[relative]={'sha256':digest(raw),'size':len(raw)}
             require(any(path.endswith('/accessory.obj') for path in objects) and any(path.endswith('/native.obj') for path in objects),'actual core and console object files')
-            binaries={}
-            for name in ('floor_profile.exe','rust-profile.exe','d3dx9_43.dll'):
-                raw=(directory/name).read_bytes();binaries[name]={'sha256':digest(raw),'size':len(raw)}
-            b={'id':id,'variant':variant,'optimization':opt,'source':str(source),'target':str(target),'evidence':str(directory),'commands':commands,'patches':patches,'before':expected,'after':c.source_inventory(source),'actual_native_commands':actual,'binaries':binaries,'objects':objects,'original_native_binary':{'path':str(native_target/'Release/floor_profile.exe'),'sha256':digest((native_target/'Release/floor_profile.exe').read_bytes())},'original_rust_binary':{'path':executable,'sha256':digest(Path(executable).read_bytes())}}
-            m['builds'].append(b);write_json(out/'manifest.json',m);parsed[id]=(native,rust)
+            raw=(directory/'d3dx9_43.dll').read_bytes();binaries['d3dx9_43.dll']={'sha256':digest(raw),'size':len(raw)}
+            b.update(after=c.source_inventory(source),objects=objects)
+            write_json(out/'manifest.json',m)
+            if variant=='observed':
+                b['compiled_capture']=compiled_evidence(directory,(native,rust),r,True,e)
+                write_json(out/'manifest.json',m)
+            parsed[id]=(native,rust)
     result={'schema':SCHEMA,'fp_observation_contract':FP_CONTRACT,'head':head,'results':{opt:classify(*parsed['observed-'+opt]) for opt in ('Od','O2')},'hosted':'ExecutedWindowsOnly','profile_adoption':'NotAuthorized'}
     write_json(out/'result.json',result);write_json(out/'seal.json',{'schema':SCHEMA,'files':previous.evidence_inventory(out)})
     return replay(out)
@@ -844,4 +1614,4 @@ def main():
 if __name__=='__main__':
     try:main()
     except (ValueError,KeyError,IndexError,OSError,struct.error,tarfile.TarError) as error:
-        print(json.dumps({'result':'InvalidEvidence','error':str(error)}),file=sys.stderr);sys.exit(1)
+        print(json.dumps({'result':'IncompleteDiagnostic' if '--run' in sys.argv else 'InvalidEvidence','error':str(error)}),file=sys.stderr);sys.exit(1)

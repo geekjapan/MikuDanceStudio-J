@@ -1,7 +1,7 @@
 name: Same-host floor importer and math profile
 on:
   push:
-    branches: [w4-renderer-floor-profile]
+    branches: [w4-renderer-operation-boundary]
   workflow_dispatch:
 permissions:
   contents: read
@@ -57,7 +57,7 @@ jobs:
           if ($extract.ExitCode -ne 0) { throw 'DirectX extraction failed' }
           $install = Start-Process -FilePath (Join-Path $unpack 'DXSETUP.exe') -ArgumentList '/silent' -Wait -PassThru -WindowStyle Hidden
           if ($install.ExitCode -ne 0) { throw 'DirectX installation failed' }
-      - name: Build and execute control and observed source copies in both modes
+      - name: Build, execute and acquire bounded operation instructions in both modes
         run: |
           python -B tools/renderer-floor-profile/run.py --run --out "${{ runner.temp }}/floor-profile-evidence" --build-root "${{ runner.temp }}/floor-profile-build" --toolchain "${{ runner.temp }}/floor-profile-deps/build/generators/conan_toolchain.cmake" --bundle "${{ runner.temp }}/floor-profile-complete.tar"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

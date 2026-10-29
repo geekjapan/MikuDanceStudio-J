@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import copy
+import ast
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
 import socket
+import struct
 import string
 import subprocess
 import sys
@@ -55,11 +57,47 @@ def packet(language,observed=True):
             for op in (('TransformCoord','Transform') if language=='native' else ('TransformCoord',)):
                 rows.append({'stage':'direct','operation':op,'matrix':m,'point':p,'words':[r.word(1.)]*3+([r.word(3. if m==2 else 1.)] if op=='Transform' else []),'sample_a':8064,'sample_b':8064})
                 if m==2 and op=='TransformCoord':rows[-1]['words']=[r.word(1./3)]*3
+    if language=='rust' and observed:rows.append({'stage':'runtime-imports','phase':'pre'})
+    rows.append(dict(stage='runtime-read',words=r.corpus_words(r.operation_corpus()),**({'pointer':4096} if language=='rust' else {})))
+    def op(kind,owner,input,output):
+        row={'stage':'operation','kind':kind,'owner':owner,'input':input,'output':output,
+             'samples':[8064,8064],'sites':[8200,8201] if kind=='DllCall' else [8200,8201,8202,8203,8204],'base':8192}
+        if kind=='DllCall':row['target']=4098
+        else:
+            row.update(values=[r.word(1. if owner[1]==0 else 3.),0x3f7ff000 if owner[1]==0 else 0x3eaaa000,0x3f7fffff if owner[1]==0 else 0x3eaaaaaa],
+                       destination=output[:] if owner[0]==2 else [0,0,0])
+            if kind=='RustEndpoint':row['values']=[0]*3;row['sites']=[8200,0,8202,0,0]
+        if language=='rust':
+            raw=r.operation_corpus() if owner[0]==1 else r.inputs(lambda p:(r.ROOT/p).read_bytes())[1]['bytes']
+            rows.append(witness_record(row,raw,r.WITNESS_ROLES[2 if owner[0]==2 else 1 if kind=='HardwareSeedWithFrozenRefinement' else 0],owner[1] if owner[0]==1 else 0,4096 if owner[0]==1 else 6144))
+        rows.append(row)
+    corpus=r.corpus_words(r.operation_corpus())
+    for i in range(2):
+        output=[0x3f7fffff,0x3f7fffff,0xbf7fffff] if i==0 else [0x3eaaaaaa,0x3eaaaaaa,0xbeaaaaaa]
+        for kind in (('DllCall',) if language=='native' else (('RustTable' if observed else 'RustEndpoint'),'HardwareSeedWithFrozenRefinement')):
+            op(kind,[1,i,0,0],corpus[i*19:(i+1)*19],output)
+    if language=='rust':
+        rows.append({'stage':'merge-read','bytes':list(r.inputs(lambda p:(r.ROOT/p).read_bytes())[1]['bytes']),'pointer':6144})
+        if observed:rows.append(lineage())
+        op('RustTable' if observed else 'RustEndpoint',[2,0,0,0],list(map(r.word,r.POINTS[0]+r.IDENTITY)) if observed else [0]*19,[0]*3)
+        if observed:rows.append({'stage':'runtime-imports','phase':'post'})
     rows.append({'stage':'end','status':0})
     return rows
 
 
+def witness_record(op,raw,role,ordinal,pointer):
+    return {'stage':'witness','schema':2,'layout':r.witness_layout(),'role':role,'owner':op['owner'][:],'ordinal':ordinal,
+            'received_ordinal':ordinal,'handoff_ordinal':ordinal,'handoff_kind':r.WITNESS_ROLES.index(role),
+            'handoff_sites':[op['base']+0x1021,op['base']+0x1027],'handoff':[pointer,len(raw),16384],'received':[pointer,len(raw),16384],
+            'bytes':list(raw),'sites':[op['base']+0x1001,op['base']+0x1002,op['base']+0x1007],'base':op['base']}
+
+
 def wire(rows):return ('\n'.join('FP '+json.dumps(row) for row in rows)+'\n').encode()
+
+
+def lineage():
+    return {'stage':'merge-lineage','caller':[8192+0x1001,8192+0x1007],'rows':[[8,0,0,32,48,64,1,4,32,8192+0x1001],
+        [64,1,4,64,48,64,2,4,32,8192+0x1001]],'returned':[64,2,4,64,8192+0x1001,0]}
 
 
 
@@ -99,6 +137,63 @@ def native_log(body,recipe,project='floor_profile',number='1'):
     return prefix+body+suffix+b'Build succeeded.\n'
 
 
+def code_fixture():
+    raw=bytearray(2048);raw[:2]=b'MZ';struct.pack_into('<I',raw,60,128)
+    raw[128:134]=b'PE\0\0d\x86';struct.pack_into('<H',raw,134,2);struct.pack_into('<H',raw,148,240)
+    optional=152;struct.pack_into('<H',raw,optional,0x20b);struct.pack_into('<Q',raw,optional+24,0x140000000)
+    struct.pack_into('<II',raw,optional+136,0x2000,24)
+    for i,(name,va,size,offset,flags) in enumerate([(b'.text',0x1000,256,1024,0x60000020),(b'.pdata',0x2000,24,1280,0x40000040)]):
+        at=392+i*40;raw[at:at+len(name)]=name;struct.pack_into('<IIII',raw,at+8,size,va,size,offset);struct.pack_into('<I',raw,at+36,flags)
+    struct.pack_into('<III',raw,1280,0x1000,0x1008,0x3000);raw[1024:1032]=b'\x90'*7+b'\xc3'
+    struct.pack_into('<III',raw,1292,0x1020,0x1028,0x3000);raw[1056:1064]=b'\xe8\xdb\xff\xff\xff\x90\x90\xc3'
+    mapping=b' Preferred load address is 0000000140000000\n 0001:00000000 mds_accessory_transform_coord 0000000140001000 f object.obj\n'
+    rows=[{'owner':[1,0,0,0],'base':8192,'sites':[8192+0x1001,0,8192+0x1007,0,0]}]
+    mapping+=b' 0001:00000000 floor_profile_direct_witness 0000000140001000 f object.obj\n 0001:00000020 floor_profile_handoff 0000000140001020 f object.obj\n'
+    rows[0]['witness']=dict(witness_record(rows[0],r.operation_corpus(),r.WITNESS_ROLES[0],0,4096),raw_sha256=r.digest(r.operation_corpus()),compiled_dataflow='UnprovedAwaitingIndependentReview')
+    assembly=('\n'.join(f'14000100{i}:  {v:02x}  '+('ret' if i==7 else 'nop') for i,v in enumerate(raw[1024:1032]))+'\n').encode()
+    return bytes(raw),mapping,rows,assembly
+
+
+def instructions(span):
+    raw=bytes.fromhex(span['bytes']);lines=[];i=0
+    while i<len(raw):
+        address=0x140000000+span['start_rva']+i
+        if raw[i]==0xe8:
+            encoded=raw[i:i+5];text='callq '+hex(address+5+struct.unpack_from('<i',encoded,1)[0]);i+=5
+        else:
+            encoded=raw[i:i+1];text='ret' if raw[i]==0xc3 else 'nop';i+=1
+        lines.append(f'{address:x}: '+encoded.hex(' ')+' '+text+'\n')
+    return ''.join(lines).encode()
+
+
+def runtime_fixture():
+    raw=bytearray(code_fixture()[0])+bytearray(2048)
+    struct.pack_into('<H',raw,134,3);struct.pack_into('<II',raw,152+56,0x5000,1024)
+    struct.pack_into('<I',raw,152+108,16);struct.pack_into('<II',raw,152+120,0x3000,40)
+    at=472;raw[at:at+8]=b'.idata\0\0';struct.pack_into('<IIII',raw,at+8,256,0x3000,256,1536)
+    struct.pack_into('<I',raw,at+36,0x40000040)
+    struct.pack_into('<IIIII',raw,1536,0x3040,0,0,0x3080,0x3060)
+    struct.pack_into('<Q',raw,1536+64,0x30a0);raw[1536+128:1536+140]=b'example.dll\0'
+    raw[1536+160:1536+169]=b'\0\0memcpy\0'
+    struct.pack_into('<II',raw,152+112,0x30b0,80)
+    struct.pack_into('<IIIII',raw,1536+176+20,2,1,0x30d8,0x30e0,0x30e8)
+    struct.pack_into('<II',raw,1536+216,0x1000,0x1008);struct.pack_into('<I',raw,1536+224,0x30f0)
+    struct.pack_into('<H',raw,1536+232,0);raw[1536+240:1536+247]=b'memcpy\0'
+    raw=bytes(raw);base=0x140000000;directory=Path('/synthetic-runtime');files={};snapshots=[]
+    for phase in ('pre','post'):
+        prefix=f'runtime-{phase}-0'
+        files[directory/(prefix+'-module.bin')]=raw;files[directory/(prefix+'-headers.bin')]=raw[:1024]
+        files[directory/(prefix+'-iat.bin')]=struct.pack('<Q',base+0x1000)
+        sections=[]
+        for i,s in enumerate(r.pe_code(raw)[1]):
+            files[directory/(prefix+f'-section-{i}.bin')]=raw[s['offset']:s['offset']+s['size']]
+            sections.append([i,s['rva'],s['size'],s['flags']])
+        slots=[{'descriptor_rva':0x3000,'dll_rva':0x3080,'name_rva':0x30a0,'slot_rva':0x3060,
+                'target_va':base+0x1000,'owner_base':base,'owner_size':0x5000,'path_utf16':list(map(ord,'C:\\example.dll')),'sections':sections}]
+        snapshots.append({'stage':'runtime-imports','phase':phase,'process_id':123,'image_base':8192,'image_size':0x5000,'slots':slots})
+    return raw,directory,files,{'runtime_imports':snapshots,'operations':[{'base':8192}]}
+
+
 class Controls(unittest.TestCase):
     def test_01_fixed_inputs_and_wrapper_inverse(self):
         rows=r.inputs(lambda p:(r.ROOT/p).read_bytes())
@@ -118,7 +213,10 @@ class Controls(unittest.TestCase):
                 self.assertEqual(raw,(r.ROOT/path).read_bytes())
             original=(r.ROOT/r.MESH).read_bytes()
             transform=original[original.index(b'fn transform_coord('):original.index(b'/// `D3DXVec3TransformNormal`')]
-            self.assertIn(transform,generated[r.MESH])
+            if not observed:self.assertIn(transform,generated[r.MESH])
+            else:
+                for expression in (b'let w = ((x * m[3] + y * m[7]) + z * m[11]) + m[15];',b'let e = rcp_estimate(w);',b'let r = (e + e) - w * (e * e);'):
+                    self.assertEqual(generated[r.MESH].count(expression),1)
             self.assertNotIn(b'@',generated['native.cpp'])
             self.assertNotIn(b'@CASES@',generated[r.MESH])
             self.assertIn(b'#[cfg(mds_floor_profile)]\nmod floor_profile',generated[r.MESH])
@@ -308,7 +406,7 @@ class Controls(unittest.TestCase):
             with self.assertRaises(ValueError):r.admit_recipe(manifest,bad)
         for label in recipe['commands']:
             receipt={'argv':copy.deepcopy(recipe['commands'][label]),'cwd':recipe['cwd'][label],
-                     'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''}}
+                     'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':r.RUST_FLAGS,'CL':'','_CL_':''}}
             r.admit_command(receipt,recipe,label)
             for key in ('argv','cwd'):
                 bad=copy.deepcopy(receipt);bad[key]=['wrong.exe'] if key=='argv' else 'C:\\wrong'
@@ -348,7 +446,7 @@ class Controls(unittest.TestCase):
         commands=[['C:\\VS\\cl.exe','/c','/O2','/Od','/Fo'+str(accessory),str(source/r.ACCESSORY)],
                   ['C:\\VS\\cl.exe','/c','/O2','/Od','/Fo'+str(native),str(source/'native.cpp')],
                   ['C:\\VS\\lib.exe','/OUT:'+str(library),str(accessory)],
-                  ['C:\\VS\\link.exe','/OUT:'+str(exe),str(native),str(library)]]
+                  ['C:\\VS\\link.exe','/OUT:'+str(exe),str(native),str(library),'/MAP']]
         def member(raw):
             header=b'accessory.obj/'.ljust(16)+b'0'.ljust(12)+b'0'.ljust(6)+b'0'.ljust(6)+b'100644'.ljust(8)+str(len(raw)).encode().ljust(10)+b'`\n'
             return b'!<arch>\n'+header+raw+(b'\n' if len(raw)%2 else b'')
@@ -373,7 +471,7 @@ class Controls(unittest.TestCase):
             lines.extend(['       '+task+':','         '+' '.join('"'+v+'"' for v in row[:-1]),'         "'+row[-1]+'"','       FinalizeBuildStatus:'])
         multiline=native_log(('\n'.join(lines)+'\n').encode(),recipe)
         def admitted(raw,stderr=b''):
-            receipt={'argv':recipe['commands']['native-build'],'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
+            receipt={'argv':recipe['commands']['native-build'],'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':r.RUST_FLAGS,'CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
             for suffix,value in [('stdout',raw),('stderr',stderr)]:receipt[suffix]={'name':'native-build.'+suffix,'sha256':r.digest(value),'size':len(value)}
             files={'.json':json.dumps(receipt).encode(),'.stdout':raw,'.stderr':stderr}
             with patch.object(Path,'read_bytes',lambda path:files[path.suffix]):
@@ -461,6 +559,7 @@ class Controls(unittest.TestCase):
 
     def test_18_fixed_schema_contract_even_after_reseal(self):
         manifest={'schema':r.SCHEMA,'fp_observation_contract':copy.deepcopy(r.FP_CONTRACT),'base':r.BASE,'paths':r.PATHS,'head':'1'*40}
+        manifest['operation_corpus']={'sha256':r.digest(r.operation_corpus()),'size':152,'words':r.corpus_words(r.operation_corpus())}
         r.admit_manifest(manifest)
         for key in ('schema','fp_observation_contract'):
             bad=copy.deepcopy(manifest);bad[key]='wrong'
@@ -483,19 +582,23 @@ class Controls(unittest.TestCase):
                 binaries={name:{'sha256':r.digest(b'MZ'),'size':2} for name in ('floor_profile.exe','rust-profile.exe','d3dx9_43.dll')}
                 b={key:copy.deepcopy(recipe[key]) for key in ('id','source','target','evidence','commands')}
                 b.update(variant=variant,optimization=opt,objects={},binaries=binaries,actual_native_commands=[],
+                         runtime_corpus={'sha256':r.digest(r.operation_corpus()),'size':152,'created_ns':3},compiled_capture={},
                          original_native_binary={'path':str(r.PureWindowsPath(recipe['native_target'])/'Release/floor_profile.exe'),'sha256':r.digest(b'MZ')},
                          original_rust_binary={'path':'synthetic-cargo-executable','sha256':r.digest(b'MZ')})
                 builds.append(b)
                 for name in binaries:files[directory/name]=b'MZ'
                 files[directory/'mikudancestudio_core.lib']=b'synthetic-archive'
+                files[directory/'operations.bin']=r.operation_corpus()
                 for label in recipe['commands']:
                     stdout=(wire(n) if label=='native' else wire(p)+b'test result: ok. 1 passed; 0 failed; 0 ignored;\n' if label=='rust' else fixture_output(label) if label in ('mesh_dump','x_files') else b'')
                     receipt={'argv':copy.deepcopy(recipe['commands'][label]),'cwd':recipe['cwd'][label],
-                             'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''}}
+                             'start_ns':4 if label in ('native','rust') else 1,'end_ns':5 if label in ('native','rust') else 2,
+                             'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':r.RUST_FLAGS,'CL':'','_CL_':''}}
                     if label in ('native','rust'):receipt['executed_binary']={'path':recipe['commands'][label][0],'sha256':r.digest(b'MZ'),'size':2}
                     if label=='native-build':stdout=native_log(b'',recipe)
                     receipts[(id,label)]=(receipt,stdout,b'');files[directory/(label+'.stdout')]=stdout;files[directory/(label+'.stderr')]=b''
         manifest={'schema':r.SCHEMA,'fp_observation_contract':r.FP_CONTRACT,'base':r.BASE,'head':'1'*40,'paths':r.PATHS,'runner_temp':'C:/runner/temp','input_root':r.recipe('C:/runner/temp','control','Od')['input_root'],'builds':builds}
+        manifest['operation_corpus']={'sha256':r.digest(r.operation_corpus()),'size':152,'words':r.corpus_words(r.operation_corpus())}
         result={'schema':r.SCHEMA,'fp_observation_contract':r.FP_CONTRACT,'head':'1'*40,'results':{opt:r.classify(*parsed['observed-'+opt]) for opt in ('Od','O2')},'hosted':'ExecutedWindowsOnly','profile_adoption':'NotAuthorized'}
         def encode(value):return json.dumps(value).encode()
         def inventory(_):return {str(path.relative_to(out)):{'sha256':r.digest(raw),'size':len(raw)} for path,raw in files.items() if path!=out/'seal.json'}
@@ -503,7 +606,14 @@ class Controls(unittest.TestCase):
             files[out/'manifest.json']=encode(manifest);files[out/'result.json']=encode(result)
             files[out/'seal.json']=encode({'schema':r.SCHEMA,'files':inventory(out)})
         seal()
-        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(Path,'read_text',lambda path,**kwargs:files[path].decode()),patch.object(r.previous,'evidence_inventory',inventory),patch.object(r,'verify_sources'),patch.object(r,'checked',lambda directory,label:receipts[(directory.name,label)]),patch.object(r,'native_provenance',lambda commands,recipe,*args:str(r.PureWindowsPath(recipe['native_target'])/'Release/floor_profile.exe')),patch.object(r,'cargo_binary',return_value='synthetic-cargo-executable'),patch.object(r,'pe_exports',return_value=exports):
+        read_bytes=Path.read_bytes;read_text=Path.read_text
+        with patch.object(Path,'read_bytes',lambda path:files[path] if path in files else read_bytes(path)),patch.object(Path,'read_text',lambda path,**kwargs:files[path].decode() if path in files else read_text(path,**kwargs)),patch.object(r.previous,'evidence_inventory',inventory),patch.object(r,'verify_sources'),patch.object(r,'checked',lambda directory,label:receipts[(directory.name,label)]),patch.object(r,'native_provenance',lambda commands,recipe,*args:str(r.PureWindowsPath(recipe['native_target'])/'Release/floor_profile.exe')),patch.object(r,'cargo_binary',return_value='synthetic-cargo-executable'),patch.object(r,'pe_exports',return_value=exports),patch.object(r,'compiled_evidence',return_value={}):
+            self.assertEqual(r.replay(out),result)
+            complete=copy.deepcopy(builds[1])
+            for field in ('objects','compiled_capture'):builds[1].pop(field)
+            builds[1]['binaries'].pop('d3dx9_43.dll');seal()
+            with self.assertRaises((ValueError,KeyError)):r.replay(out)
+            builds[1].clear();builds[1].update(complete);seal()
             self.assertEqual(r.replay(out),result)
             result['results']['Od']['causal_qualification'][0]['operation_environment']='Proved';seal()
             with self.assertRaises(ValueError):r.replay(out)
@@ -528,7 +638,7 @@ class Controls(unittest.TestCase):
                 for argv in (recipe['commands']['native-build'][:-1]+['--','/v:diag'],recipe['commands']['native-build'][:-2]+['4','--verbose']):
                     receipt={'argv':argv,
                              'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],
-                             'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)',
+                             'CARGO_INCREMENTAL':'0','RUSTFLAGS':r.RUST_FLAGS,
                              'CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,
                              'start_utc':'start','end_utc':'end'}
                     files={'.stdout':b'old diagnostic output\n','.stderr':b''}
@@ -596,7 +706,7 @@ class Controls(unittest.TestCase):
         recipe=r.recipe('D:/a/_temp','control','Od');root=r.PureWindowsPath(recipe['native_target'])
         owner=root/'mikudancestudio_core.vcxproj'
         def admitted(raw):
-            receipt={'argv':recipe['commands']['native-build'],'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
+            receipt={'argv':recipe['commands']['native-build'],'cwd':recipe['cwd']['native-build'],'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':r.RUST_FLAGS,'CL':'','_CL_':''},'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
             for suffix,value in [('stdout',raw),('stderr',b'')]:receipt[suffix]={'name':'native-build.'+suffix,'sha256':r.digest(value),'size':len(value)}
             files={'.json':json.dumps(receipt).encode(),'.stdout':raw,'.stderr':b''}
             with patch.object(Path,'read_bytes',lambda path:files[path.suffix]):
@@ -661,7 +771,7 @@ class Controls(unittest.TestCase):
                     def admitted(out,err,argv=None,coordinated=False):
                         command=recipe['commands'][label] if argv is None else argv
                         receipt={'argv':command,'cwd':recipe['cwd'][label],
-                                 'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':'--cfg mds_floor_profile --check-cfg=cfg(mds_floor_profile)','CL':'','_CL_':''},
+                                 'env':{'CARGO_TARGET_DIR':recipe['target'],'CARGO_INCREMENTAL':'0','RUSTFLAGS':r.RUST_FLAGS,'CL':'','_CL_':''},
                                  'status':0,'terminal':'exit','start_ns':1,'end_ns':2,'start_utc':'start','end_utc':'end'}
                         files={label+'.stdout':out,label+'.stderr':err}
                         for suffix in ('stdout','stderr'):
@@ -748,16 +858,681 @@ class Controls(unittest.TestCase):
         def parse(raw,language,observed):return {'dll':{'path':'synthetic-dll'}} if language=='native' else {}
         with patch.object(r.sys,'platform','win32'),patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_TEMP':'C:/runner/temp','GITHUB_SHA':'1'*40}), \
              patch.object(Path,'exists',return_value=False),patch.object(Path,'is_file',return_value=True),patch.object(Path,'mkdir'), \
-             patch.object(Path,'read_bytes',lambda path:files.get(path,b'')),patch.object(Path,'read_text',lambda path,**kwargs:files.get(path,b'').decode()), \
+             patch.object(Path,'read_bytes',lambda path:files.get(path,b'')),patch.object(Path,'read_text',lambda path,**kwargs:files.get(path,b'').decode()),patch.object(Path,'write_bytes'), \
              patch.object(r,'record',record),patch.object(r.shutil,'copyfile'),patch.object(r.shutil,'copytree'),patch.object(r.c,'safe_tar',return_value={}), \
              patch.object(r.c,'source_inventory',return_value={}),patch.object(r,'inputs',return_value=[]),patch.object(r,'source_expected',return_value=({}, {}, {})), \
              patch.object(r,'native_commands',return_value=[]),patch.object(r,'parse',parse),patch.object(r,'cargo_binary',return_value='synthetic-cargo'), \
-             patch.object(r,'fixture_result',boundary):
+             patch.object(r,'fixture_result',boundary),patch.object(r,'write_json'):
             with self.assertRaises(Complete):r.run(out,build,toolchain)
         self.assertEqual(captured,['mesh_dump','x_files'])
 
+    def test_29_operation_domains_and_finite_alternatives(self):
+        n=r.parse(wire(packet('native')),'native',True);rows=packet('rust')
+        baseline=r.parse(wire(rows),'rust',True);proof=r.operation_assessment(n,baseline)
+        self.assertEqual(proof['proof_status'],'UnprovedAwaitingIndependentReview')
+        self.assertEqual(proof['runtime_direct_vs_merge']['classification'],'NotComparable')
+        self.assertTrue(all(v['cause_status']=='Held' for v in proof['relations']))
+        hardware=next(v for v in rows if v.get('kind')=='HardwareSeedWithFrozenRefinement')
+        hardware['values'][1]=r.word(.75);hardware['output'][0]=r.word(.5)
+        result=r.operation_assessment(n,r.parse(wire(rows),'rust',True))
+        self.assertEqual(result['relations'][0]['table_vs_hardware_seed']['classification'],'SemanticDifference')
+        self.assertEqual(result['observations'][1]['numerical_oracle']['comparison']['classification'],'SemanticDifference')
+        hardware['samples']=[0x9f81,0x9fa0]
+        result=r.operation_assessment(n,r.parse(wire(rows),'rust',True))
+        self.assertEqual(result['observations'][1]['numerical_oracle']['domain'],'UnprovedNondefaultControls')
+        self.assertEqual(result['observations'][1]['observed']['fp'][0]['sticky_flags'],1)
+        self.assertEqual(result['proof_status'],'UnprovedAwaitingIndependentReview')
+        for w,e,refined in [(1.,0x3f7ff000,0x3f7fffff),(3.,0x3eaaa000,0x3eaaaaaa)]:
+            observation=next(v for v in proof['observations'] if v['kind']=='RustTable' and v['owner']==[1,0 if w==1. else 1,0,0])
+            self.assertEqual(observation['numerical_oracle']['derived']['values'],[r.word(w),e,refined])
+
+    def test_30_operation_admission_rejects_malformed_provenance(self):
+        self.assertEqual(len(r.operation_corpus()),152)
+        for raw in (b'',r.operation_corpus()[:-1],r.operation_corpus()+b'\0',bytes(152)):
+            with self.assertRaises(ValueError):r.corpus_words(raw)
+        def mutate(rows,name):
+            op=next(v for v in rows if v.get('kind')=='RustTable')
+            if name=='duplicate':rows.insert(rows.index(op),copy.deepcopy(op))
+            elif name=='missing':rows.remove(op)
+            elif name=='owner':op['owner']=[2,0,0,0]
+            elif name=='word':op['input'][0]=2**32
+            elif name=='boolean':op['input'][0]=True
+            elif name=='nan':op['values'][1]=0x7fc00000
+            elif name=='missing-site':op['sites'][1]=0
+            elif name=='bad-site':op['sites'][0]=op['base']-1
+            elif name=='bad-sample':op['samples'][0]=65536
+            elif name=='recipe-promotion':op['compiled_dataflow']='Proved'
+            elif name=='corpus':next(v for v in rows if v['stage']=='runtime-read')['words'].pop()
+            elif name=='corpus-boolean':next(v for v in rows if v['stage']=='runtime-read')['words'][4]=False
+            elif name=='fixture':next(v for v in rows if v['stage']=='merge-read')['bytes'][0]^=1
+            elif name=='destination':next(v for v in rows if v.get('kind')=='RustTable' and v.get('owner')==[2,0,0,0])['destination'][0]=r.word(.5)
+        for name in ('duplicate','missing','owner','word','boolean','nan','missing-site','bad-site','bad-sample','recipe-promotion','corpus','corpus-boolean','fixture','destination'):
+            rows=packet('rust');mutate(rows,name)
+            with self.subTest(name=name),self.assertRaises((ValueError,KeyError,IndexError)):r.parse(wire(rows),'rust',True)
+        for key,value in [('values',[1,2,3]),('target',1),('kind','RustTable')]:
+            rows=packet('native');next(v for v in rows if v.get('kind')=='DllCall')[key]=value
+            with self.assertRaises(ValueError):r.parse(wire(rows),'native',True)
+
+    def test_31_executed_image_ranges_and_disassembly_bytes(self):
+        raw,mapping,rows,assembly=code_fixture();witness=r.code_ranges(raw,rows,mapping);span=witness['ranges'][0]
+        self.assertEqual(span['bytes'],(b'\x90'*7+b'\xc3').hex())
+        r.disassembly_bytes(assembly,witness,span)
+        self.assertEqual(witness['compiled_dataflow'],'UnprovedAwaitingIndependentReview')
+        for changed in (assembly.replace(b'90',b'91',1),assembly.replace(b'140001000',b'140001001'),assembly.split(b'\n',1)[1],assembly.replace(b'nop',b'<unknown>',1),assembly+assembly):
+            with self.subTest(assembly=changed),self.assertRaises(ValueError):r.disassembly_bytes(changed,witness,span)
+        for sites in ([8192+0x2000],[8192+0x1100],[8192-1]):
+            with self.assertRaises(ValueError):r.code_ranges(raw,[{'base':8192,'sites':sites}],mapping)
+        for bad in (mapping.replace(b'140000000',b'150000000'),b'not a map'):
+            with self.assertRaises(ValueError):r.code_ranges(raw,rows,bad)
+        changed=bytearray(raw);struct.pack_into('<I',changed,428,0x40000040)
+        with self.assertRaises(ValueError):r.code_ranges(bytes(changed),rows,mapping)
+        bad=copy.deepcopy(span);bad['end_rva']+=1
+        with self.assertRaises(ValueError):r.disassembly_bytes(assembly,witness,bad)
+
+    def test_32_compiled_capture_requires_actual_capability_receipts(self):
+        raw,mapping,rows,assembly=code_fixture();witness=r.code_ranges(raw,rows,mapping)
+        witness['same_link_map']={'sha256':r.digest(mapping),'size':len(mapping)}
+        witness.update(pending=[],decoded=[[s['start_rva'],s['end_rva']] for s in witness['ranges']])
+        rust_witness=r.required_code_ranges(raw,rows,mapping)
+        rust_witness['same_link_map']=witness['same_link_map']
+        rust_witness['caller_windows']=r.caller_windows({'operations':rows,'merge_lineage':lineage()})
+        rust_witness['data_requests']=[{'role':'SeedTable','size':8192,'synthetic':'seed bytes separately tested','resolution':'Resolved'}]
+        rust_witness['copy_obligations']=[{'size':176,'role':'OperationReturn','status':'RequiresIndependentCallerRegionAndPathReview'},
+                                         {'size':8192,'role':'OdSeedTable','status':'RequiresIndependentCallerRegionAndPathReview'}]
+        for address in (lineage()['returned'][4],*[a[9] for a in lineage()['rows']]):
+            r.request_range(rust_witness,raw,address-8192,'MergePointerLineage',{'kind':'RuntimeSite','role':'MergeStorage'})
+        rust_witness['edges']=[]
+        for span in rust_witness['ranges']:
+            for edge in r.instruction_edges(instructions(span),rust_witness,span):
+                r.follow_required_edge(None,[{'witness':rust_witness,'raw':raw}],0,span,edge);rust_witness['edges'].append(edge)
+        rust_witness.update(pending=[],decoded=[[s['start_rva'],s['end_rva']] for s in rust_witness['ranges']],runtime_images=[])
+        r.complete_closure([{'witness':rust_witness,'raw':raw}])
+        recipe=r.recipe('C:/runner/temp','observed','Od');directory=Path('/synthetic-compiled-capture')
+        files={}
+        for language,binary,map_name in (('native','floor_profile.exe','native.map'),('rust','rust-profile.exe','rust.map')):
+            files[directory/binary]=raw;files[directory/map_name]=mapping;files[directory/(language+'-code.json')]=json.dumps(witness if language=='native' else rust_witness).encode()
+        tool_raw=b'retained tool bytes are data'
+        files[directory/'instruction-tool.bin']=tool_raw
+        tool={'path':str(r.DISASSEMBLER),'sha256':r.digest(tool_raw),'size':len(tool_raw)}
+        help={'argv':[str(r.DISASSEMBLER),'--help'],'cwd':recipe['source'],'tool_binary':tool}
+        receipts={'instruction-help':(help,b'--disassemble --start-address --stop-address',b'')}
+        for language,name in (('native','floor_profile.exe'),('rust','rust-profile.exe')):
+            view=witness if language=='native' else rust_witness
+            for i,span in enumerate(view['ranges']):
+                argv=r.disassembly_argv(r.PureWindowsPath(recipe['evidence'])/name,view,span)
+                receipts[language+'-instructions-'+str(i)]=({'argv':argv,'cwd':recipe['source'],'tool_binary':copy.deepcopy(tool)},instructions(span),b'')
+        parsed=({'operations':rows},{'operations':rows,'merge_lineage':lineage()})
+        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(r,'checked',lambda directory,label:receipts[label]),patch.object(r,'runtime_images',return_value=[]),patch.object(r,'seed_data',return_value={'role':'SeedTable','size':8192,'synthetic':'seed bytes separately tested','resolution':'Resolved'}):
+            self.assertEqual(set(r.compiled_evidence(directory,parsed,recipe)),{'native','rust'})
+            del files[directory/'instruction-tool.bin']
+            with self.assertRaises(KeyError):r.compiled_evidence(directory,parsed,recipe)
+            for bad in (tool_raw[:-1],b'x'*len(tool_raw)):
+                files[directory/'instruction-tool.bin']=bad
+                with self.assertRaisesRegex(ValueError,'retained hosted instruction tool identity'):r.compiled_evidence(directory,parsed,recipe)
+            files[directory/'instruction-tool.bin']=tool_raw
+            receipts['instruction-help']=(help,b'--disassemble',b'')
+            with self.assertRaises(ValueError):r.compiled_evidence(directory,parsed,recipe)
+            receipts['instruction-help']=(help,b'--disassemble --start-address --stop-address',b'')
+            for key,value in [('argv',['foreign.exe']),('cwd','C:/wrong'),('tool_binary',dict(tool,sha256='2'*64))]:
+                row=receipts['rust-instructions-0'][0];old=copy.deepcopy(row[key]);row[key]=value
+                with self.assertRaises(ValueError):r.compiled_evidence(directory,parsed,recipe)
+                row[key]=old
+            bad=copy.deepcopy(rust_witness);bad['compiled_dataflow']='Proved'
+            files[directory/'rust-code.json']=json.dumps(bad).encode()
+            with self.assertRaises(ValueError):r.compiled_evidence(directory,parsed,recipe)
+
+    def test_33_ordinary_generation_ancestry_keeps_frozen_parent(self):
+        directory=Path('/synthetic-ancestry');files={};chain=[];parent=r.PARENT
+        for message in ('operation diagnostic','strict runtime words'):
+            raw=('tree '+'1'*40+'\nparent '+parent+'\nauthor Test <test@example.invalid> 0 +0000\ncommitter Test <test@example.invalid> 0 +0000\n\n'+message+'\n').encode()
+            parent=r.h.git_hash('commit',raw);chain.append(parent);files[directory/'ancestry'/(parent+'.commit')]=raw
+        manifest={'head':chain[-1],'generation_ancestry':chain}
+        with patch.object(Path,'read_bytes',lambda path:files[path]):
+            r.generation_ancestry(directory,manifest)
+            for bad in ([],chain[::-1],chain+chain,chain[1:]):
+                with self.assertRaises(ValueError):r.generation_ancestry(directory,dict(manifest,generation_ancestry=bad))
+            raw=files[directory/'ancestry'/(chain[-1]+'.commit')]
+            for changed in (raw.replace(('parent '+chain[0]).encode(),('parent '+r.PARENT).encode()),raw.replace(b'\nauthor',('\nparent '+'2'*40+'\nauthor').encode())):
+                revision=r.h.git_hash('commit',changed);files[directory/'ancestry'/(revision+'.commit')]=changed
+                with self.assertRaisesRegex(ValueError,'ordinary linear descent'):r.generation_ancestry(directory,{'head':revision,'generation_ancestry':[chain[0],revision]})
+            files[directory/'ancestry'/(chain[-1]+'.commit')]=raw+b'corrupt'
+            with self.assertRaisesRegex(ValueError,'ancestry commit hash'):r.generation_ancestry(directory,manifest)
+
+    def test_34_selected_range_capacity_preserves_byte_caps(self):
+        raw,mapping,rows,_=code_fixture()
+        for count in (128,129):
+            changed=bytearray(raw)+bytearray(2048)
+            struct.pack_into('<II',changed,288,0x2000,count*12)
+            struct.pack_into('<IIII',changed,440,count*12,0x2000,count*12,1280)
+            mapping=b' Preferred load address is 0000000140000000\n'
+            for i in range(count):
+                struct.pack_into('<III',changed,1280+i*12,0x1000+i,0x1001+i,0x3000)
+                mapping+=f' 0001:{i:08x} floor_profile_{i} {0x140001000+i:016x} f object.obj\n'.encode()
+            if count==128:self.assertEqual(len(r.code_ranges(bytes(changed),rows,mapping)['ranges']),128)
+            else:
+                with self.assertRaisesRegex(ValueError,'small bounded operation code regions'):r.code_ranges(bytes(changed),rows,mapping)
+        for spans in ([(1,131074)],[(i*131072,(i+1)*131072) for i in range(5)]):
+            mapping=b' Preferred load address is 0000000140000000\n'+b''.join(f' 0001:00000000 floor_profile_{i} {0x140000000+a:016x} f object.obj\n'.encode() for i,(a,b) in enumerate(spans))
+            with patch.object(r,'pe_code',return_value=(0x140000000,[],spans,None)),self.assertRaisesRegex(ValueError,'small bounded operation code regions'):
+                r.code_ranges(b'',[],mapping)
+
+    def test_35_retained_tool_bytes_follow_real_record_identity(self):
+        directory=Path('/synthetic-tool-retention');tool_path=Path(str(r.DISASSEMBLER));raw=b'tool data'
+        files={tool_path:raw}
+        with patch.object(Path,'read_bytes',lambda p:files[p]),patch.object(Path,'write_bytes',lambda p,v:files.__setitem__(p,v)),patch.object(r.previous,'record',return_value={'env':{},'status':0}),patch.object(r,'write_json'):
+            receipt=r.record(directory,'instruction-help',[str(r.DISASSEMBLER),'--help'],'source',{})
+            self.assertEqual(files[directory/'instruction-tool.bin'],raw)
+            self.assertEqual(receipt['tool_binary'],{'path':str(r.DISASSEMBLER),'sha256':r.digest(raw),'size':len(raw)})
+            files[directory/'instruction-tool.bin']=b'changed'
+            with self.assertRaisesRegex(ValueError,'retained hosted instruction tool changed'):
+                r.record(directory,'rust-instructions-0',[str(r.DISASSEMBLER)],'source',{})
+
+    def producer_receipts(self,failure):
+        tree=ast.parse(Path(r.__file__).read_bytes());run=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='run')
+        outer=next(n for n in run.body if isinstance(n,ast.For) and isinstance(n.target,ast.Name) and n.target.id=='opt');loop=outer.body[0]
+        start=next(i for i,n in enumerate(loop.body) if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call) and isinstance(n.value.func,ast.Attribute) and n.value.func.attr=='write_bytes')
+        tail=run.body[run.body.index(outer)+1:]
+        block=compile(ast.fix_missing_locations(ast.Module(body=loop.body[start:]+[ast.Expr(n.value) if isinstance(n,ast.Return) else n for n in tail],type_ignores=[])),str(r.__file__),'exec')
+        directory=Path('/evidence/observed-Od');out=directory.parent;prior={'id':'control-Od','retained':'prior receipt'}
+        state=dict(r.__dict__,id='observed-Od',variant='observed',opt='Od',source=Path('/source'),target=Path('/target'),directory=directory,commands={n:[n] for n in ('native','rust','mesh_dump','x_files')},patches={'known':'patch'},expected={'known':'source'},actual=['compiler argv'],native_target=Path('/native'),executable='/rust.exe',parsed={'observed-O2':({}, {})},out=out,m={'builds':[copy.deepcopy(prior)]},r={},e={},head='synthetic-head')
+        files={};retained=[];calls=[];parses=[];acquisitions=[]
+        def read(path):return files.get(path,b'compiled image')
+        def write(path,raw):files[path]=raw;return len(raw)
+        def save(path,value):files[path]=copy.deepcopy(value);retained.append((path,copy.deepcopy(value)))
+        def record(directory,label,*args):
+            calls.append(label)
+            self.assertEqual(files[out/'manifest.json']['builds'][0],prior)
+            self.assertEqual(files[out/'manifest.json']['builds'][1]['runtime_corpus']['created_ns'],123)
+            if failure==label+'-exception':raise OSError(label+' launch failed')
+            return {'status':1 if failure==label+'-nonzero' else 0}
+        def parse(raw,language,observed):
+            parses.append(language)
+            if failure==language+'-parse':return r.parse(b'',language,observed)
+            return {'dll':{'path':'/dll'}} if language=='native' else {}
+        def acquire(*args):
+            acquisitions.append(True)
+            row=files[out/'manifest.json']['builds'][1]
+            self.assertIn('after',row);self.assertIn('objects',row)
+            self.assertEqual(set(row['binaries']),{'floor_profile.exe','rust-profile.exe','d3dx9_43.dll'})
+            self.assertNotIn('compiled_capture',row)
+            if failure=='llvm':raise ValueError('acquisition failed')
+            if failure in ('budget','unknown'):
+                raw,mapping,rows,_=code_fixture();view=r.required_code_ranges(raw,rows,mapping)
+                view['copy_obligations']=copy.deepcopy(r.COPY_OBLIGATIONS)
+                view['data_requests']=[{'role':'SeedTable','size':8192,'resolution':'Resolved'}]
+                for span in view['ranges']:
+                    for edge in r.instruction_edges(instructions(span),view,span):
+                        r.follow_required_edge(None,[{'witness':view,'raw':raw}],0,span,edge);view['edges'].append(edge)
+                view['decoded']=view['pending'];view['pending']=[]
+                if failure=='budget':view['ranges']*=65
+                else:view['edges'][0]['obligation']='Unresolved'
+                try:r.complete_closure([{'witness':view,'raw':raw}])
+                finally:save(directory/'rust-code-progress.json',{'schema':r.SCHEMA,'images':[{'witness':view}]})
+            return {'native':{},'rust':{}}
+        state.update(record=record,parse=parse,write_json=save,compiled_evidence=acquire,fixture_result=lambda *args:None,classify=lambda *args:{},replay=lambda *args:{})
+        with patch.object(Path,'read_bytes',read),patch.object(Path,'write_bytes',write),patch.object(Path,'mkdir'),patch.object(Path,'rglob',return_value=[Path('/native/core/accessory.obj'),Path('/native/console/native.obj')]),patch.object(r.shutil,'copyfile',lambda source,target:write(target,read(source))),patch.object(r.c,'source_inventory',return_value=state['expected']),patch.object(r.previous.time,'time_ns',side_effect=[123]),patch.object(r.previous,'evidence_inventory',return_value={}):
+            if failure:
+                with self.assertRaises((OSError,ValueError)):exec(block,state)
+            else:exec(block,state)
+        manifests=[value for path,value in retained if path==out/'manifest.json']
+        self.assertEqual(files[directory/'operations.bin'],r.operation_corpus())
+        self.assertEqual(len(manifests[0]['builds']),2);self.assertEqual(manifests[0]['builds'][0],prior)
+        partial=manifests[0]['builds'][1]
+        self.assertEqual(partial['runtime_corpus'],{'sha256':r.digest(r.operation_corpus()),'size':152,'created_ns':123})
+        self.assertEqual(set(partial['binaries']),{'floor_profile.exe','rust-profile.exe'})
+        for field in ('after','objects','compiled_capture'):self.assertNotIn(field,partial)
+        for value in manifests:
+            self.assertEqual(len(value['builds']),2);self.assertEqual(value['builds'][0],prior)
+            self.assertEqual(value['builds'][1]['runtime_corpus'],partial['runtime_corpus'])
+        if failure:
+            self.assertNotIn('observed-Od',state['parsed'])
+            self.assertNotIn(out/'result.json',files);self.assertNotIn(out/'seal.json',files)
+            self.assertNotIn('compiled_capture',manifests[-1]['builds'][1])
+        else:
+            self.assertIn('observed-Od',state['parsed'])
+            self.assertEqual(manifests[-1]['builds'][1]['compiled_capture'],{'native':{},'rust':{}})
+            self.assertIn(out/'result.json',files);self.assertIn(out/'seal.json',files)
+        return manifests,calls,parses,acquisitions
+
+    def test_36_build_row_survives_optional_acquisition_failure(self):
+        for failure in ('llvm','budget','unknown',None):
+            with self.subTest(failure=failure):
+                manifests,calls,parses,acquisitions=self.producer_receipts(failure)
+                self.assertEqual(len(manifests),2 if failure else 3)
+                self.assertEqual(calls,['native','rust','mesh_dump','x_files'])
+                self.assertEqual(parses,['native','rust']);self.assertEqual(acquisitions,[True])
+
+    def test_47_early_runtime_failure_preserves_partial_receipts(self):
+        for failure in ('native-nonzero','native-exception','native-parse','rust-nonzero','rust-exception','rust-parse'):
+            with self.subTest(failure=failure):
+                manifests,calls,parses,acquisitions=self.producer_receipts(failure)
+                self.assertEqual(len(manifests),1);self.assertEqual(acquisitions,[])
+                self.assertEqual(calls,['native','rust'] if failure.startswith('rust') else ['native'])
+                self.assertEqual(parses,(['native','rust'] if failure=='rust-parse' else ['native']) if failure.startswith('rust') else (['native'] if failure=='native-parse' else []))
+
+    def test_37_leaf_candidate_and_signed_import_thunk(self):
+        raw,mapping,rows,_=code_fixture();changed=bytearray(raw)
+        struct.pack_into('<II',changed,288,0,0)
+        mapping+=b' 0001:00000008 next_leaf 0000000140001008 f object.obj\n'
+        with self.assertRaisesRegex(ValueError,'exception-directory boundary'):r.required_code_ranges(bytes(changed),rows,mapping)
+        extent,kind=r.range_extent(bytes(changed),0x1001,r.map_symbols(mapping,0x140000000,r.pe_code(bytes(changed))[1]),True)
+        self.assertEqual(r.range_extent(bytes(changed),0x1001,r.map_symbols(mapping,0x140000000,r.pe_code(bytes(changed))[1]),True)[1],'NextDistinctExecutableSymbolCandidateOnly')
+        self.assertEqual(extent[1],0x1008)
+        for bad in (mapping.splitlines()[0]+b'\n',mapping.replace(b'140001008',b'140003008')):
+            with self.assertRaises(ValueError):r.required_code_ranges(bytes(changed),rows,bad)
+        changed[1024:1030]=b'\xff\x25'+struct.pack('<i',-14)
+        extent,kind=r.range_extent(bytes(changed),0x1000,[])
+        self.assertEqual((extent,kind),((0x1000,0x1006),'ImportThunkSixBytes'))
+        view={'preferred_base':0x140000000};span=r.pe_code(bytes(changed))[3](*extent,True)
+        text=b'140001000: ff 25 f2 ff ff ff jmpq *-14(%rip)\n'
+        edge=r.instruction_edges(text,view,span)[0]
+        self.assertEqual(edge['target'],{'kind':'RipRelativeIatSlot','slot_rva':0xff8})
+        changed[1026:1030]=struct.pack('<i',-0x2000);span=r.pe_code(bytes(changed))[3](*extent,True)
+        with self.assertRaisesRegex(ValueError,'signed FF25'):r.instruction_edges(b'140001000: ff 25 00 e0 ff ff jmpq *-8192(%rip)\n',view,span)
+
+    def test_38_exact_required_branch_and_unknown_indirect(self):
+        raw,mapping,rows,_=code_fixture();changed=bytearray(raw)
+        changed[1024:1032]=b'\xe8\x03\x00\x00\x00\xff\xe0\xc3'
+        witness=r.required_code_ranges(bytes(changed),rows,mapping)
+        assembly=b'140001000: e8 03 00 00 00 callq 0x140001008\n140001005: ff e0 jmpq *%rax\n140001007: c3 retq\n'
+        edges=r.instruction_edges(assembly,witness,witness['ranges'][0])
+        self.assertEqual([e['target']['kind'] for e in edges],['DirectRva','Unresolved','Return'])
+        self.assertEqual(edges[0]['target']['rva'],0x1008)
+        with self.assertRaisesRegex(ValueError,'required leaf'):r.request_range(witness,bytes(changed),0x1008,'RequiredCallOrBranch',{'kind':'RequiredTarget'})
+
+    def test_39_aggregate_instruction_and_section_budget(self):
+        raw,mapping,rows,_=code_fixture();view=r.required_code_ranges(raw,rows,mapping)
+        r.closure_budget([view]*48)
+        with self.assertRaisesRegex(ValueError,'PE section budget'):r.closure_budget([view]*49)
+        many=dict(view,ranges=view['ranges'][:1]*128,sections=[])
+        r.closure_budget([many])
+        with self.assertRaisesRegex(ValueError,'small bounded'):r.closure_budget([many,dict(view,sections=[])])
+
+    def test_40_own_process_import_and_loaded_code_baseline(self):
+        raw,directory,files,parsed=runtime_fixture()
+        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(r,'checked',return_value=({'pid':123},b'',b'')):
+            modules=r.runtime_images(directory,parsed,raw)
+            self.assertEqual(len(modules),1)
+            self.assertEqual(modules[0]['witness']['compiled_dataflow'],'UnprovedAwaitingIndependentReview')
+            for name in ('process','slot','target','owner','code','headers','missing-section'):
+                p=copy.deepcopy(parsed);f=dict(files)
+                if name=='process':p['runtime_imports'][0]['process_id']=124
+                elif name=='slot':p['runtime_imports'][0]['slots'][0]['slot_rva']+=8
+                elif name=='target':p['runtime_imports'][0]['slots'][0]['target_va']+=1
+                elif name=='owner':p['runtime_imports'][0]['slots'][0]['owner_base']+=0x10000
+                else:
+                    suffix={'code':'section-0.bin','headers':'headers.bin','missing-section':'section-1.bin'}[name]
+                    key=directory/('runtime-pre-0-'+suffix)
+                    if name=='missing-section':del f[key]
+                    else:f[key]=b'x'+f[key][1:]
+                with patch.object(Path,'read_bytes',lambda path:f[path]),self.subTest(name=name),self.assertRaises((ValueError,KeyError)):
+                    r.runtime_images(directory,p,raw)
+
+    def test_48_loaded_header_base_is_bound_to_actual_owner(self):
+        raw,_,_,_=runtime_fixture();preferred=r.pe_code(raw)[0];owner=preferred+0x10000000
+        headers=bytearray(raw[:1024]);struct.pack_into('<Q',headers,176,owner)
+        r.loaded_header_binding(raw,raw[:1024],preferred)
+        r.loaded_header_binding(raw,bytes(headers),owner)
+        self.assertEqual(r.pe_code(raw)[0],preferred)
+        shifted=bytearray(raw);shifted[144:528]=raw[128:512];struct.pack_into('<I',shifted,60,144)
+        loaded=bytearray(shifted[:1024]);struct.pack_into('<Q',loaded,192,owner)
+        r.loaded_header_binding(bytes(shifted),bytes(loaded),owner)
+        for name in ('preferred-in-loaded','wrong-base','wrong-owner','bool-owner','zero-owner','overflow-owner',
+                     'wrong-slot','outside-byte','short','extra','magic','pe-bounds','optional-bounds','header-bounds'):
+            file=bytearray(raw);loaded=bytearray(headers);actual=owner
+            if name=='preferred-in-loaded':loaded=bytearray(raw[:1024])
+            elif name=='wrong-base':struct.pack_into('<Q',loaded,176,owner+1)
+            elif name=='wrong-owner':actual+=1
+            elif name=='bool-owner':actual=True
+            elif name=='zero-owner':actual=0
+            elif name=='overflow-owner':actual=2**64
+            elif name=='wrong-slot':loaded=bytearray(raw[:1024]);struct.pack_into('<Q',loaded,184,owner)
+            elif name=='outside-byte':loaded[304]^=1
+            elif name=='short':loaded=loaded[:-1]
+            elif name=='extra':loaded+=b'\0'
+            elif name=='magic':struct.pack_into('<H',file,152,0x10b)
+            elif name=='pe-bounds':struct.pack_into('<I',file,60,len(file))
+            elif name=='optional-bounds':struct.pack_into('<H',file,148,24)
+            elif name=='header-bounds':struct.pack_into('<I',file,212,176)
+            with self.subTest(name=name),self.assertRaises(ValueError):
+                r.loaded_header_binding(bytes(file),bytes(loaded),actual)
+
+    def test_49_rebased_runtime_images_use_file_preferred_relocations(self):
+        raw,directory,_,parsed=runtime_fixture();changed=bytearray(raw);owner=0x150000000
+        struct.pack_into('<H',changed,134,4)
+        at=512;changed[at:at+8]=b'.reloc\0\0'
+        struct.pack_into('<IIII',changed,at+8,12,0x4000,12,2048);struct.pack_into('<I',changed,at+36,0x40000040)
+        struct.pack_into('<II',changed,152+112+5*8,0x4000,12)
+        struct.pack_into('<IIHH',changed,2048,0x1000,12,0xa010,0)
+        struct.pack_into('<Q',changed,1040,0x140005000);raw=bytes(changed);files={}
+        for snapshot in parsed['runtime_imports']:
+            phase=snapshot['phase'];slot=snapshot['slots'][0];slot.update(owner_base=owner,target_va=owner+0x1000)
+            prefix=f'runtime-{phase}-0';headers=bytearray(raw[:1024]);struct.pack_into('<Q',headers,176,owner)
+            files[directory/(prefix+'-module.bin')]=raw;files[directory/(prefix+'-headers.bin')]=bytes(headers)
+            files[directory/(prefix+'-iat.bin')]=struct.pack('<Q',slot['target_va']);slot['sections']=[]
+            for i,s in enumerate(r.pe_code(raw)[1]):
+                loaded=bytearray(raw[s['offset']:s['offset']+s['size']])
+                if i==0:struct.pack_into('<Q',loaded,16,owner+0x5000)
+                files[directory/(prefix+f'-section-{i}.bin')]=bytes(loaded)
+                slot['sections'].append([i,s['rva'],s['size'],s['flags']])
+        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(r,'checked',return_value=({'pid':123},b'',b'')):
+            image=r.runtime_images(directory,parsed,raw)[0]
+            self.assertEqual(image['witness']['preferred_base'],0x140000000)
+            self.assertEqual(image['raw'],raw)
+            self.assertEqual(image['pre']['runtime']['owner_base'],owner)
+            self.assertEqual(image['post']['runtime']['owner_base'],owner)
+            for phase in ('pre','post'):
+                for suffix in ('headers.bin','section-0.bin'):
+                    key=directory/(f'runtime-{phase}-0-'+suffix);original=files[key]
+                    files[key]=original[:176]+raw[176:184]+original[184:] if suffix=='headers.bin' else raw[1024:1280]
+                    with self.subTest(phase=phase,suffix=suffix),self.assertRaises(ValueError):
+                        r.runtime_images(directory,parsed,raw)
+                    files[key]=original
+
+    def test_41_loaded_code_requires_exact_relocations(self):
+        raw,_,_,_=runtime_fixture();changed=bytearray(raw)
+        struct.pack_into('<II',changed,152+112+5*8,0x30c0,12)
+        struct.pack_into('<IIHH',changed,1536+192,0x1000,12,0xa000,0)
+        struct.pack_into('<Q',changed,1024,0x140005000)
+        raw=bytes(changed);span=r.pe_code(raw)[3](0x1000,0x1008,True)
+        relocated=r.relocated_code(raw,span,0x150000000)
+        self.assertEqual(struct.unpack('<Q',relocated)[0],0x150005000)
+        changed[1536+200:1536+202]=struct.pack('<H',0x3000)
+        with self.assertRaisesRegex(ValueError,'DIR64'):r.relocated_code(bytes(changed),span,0x150000000)
+        with self.assertRaisesRegex(ValueError,'relocation data required'):r.relocated_code(runtime_fixture()[0],span,0x150000000)
+
+    def test_42_merge_return_requires_pointer_continuity(self):
+        baseline=lineage();self.assertEqual(r.admit_lineage(baseline),baseline)
+        grown=copy.deepcopy(baseline);grown['rows'][1][5:8]=[128,2,8];grown['returned'][:4]=[128,2,8,128]
+        r.admit_lineage(grown)
+        for name in ('same-values-other-destination','discontinuous-storage','missing-push','wrong-index','bad-offset'):
+            changed=copy.deepcopy(baseline)
+            if name=='same-values-other-destination':changed['returned'][3]+=32
+            elif name=='discontinuous-storage':changed['rows'][1][0]+=32
+            elif name=='missing-push':changed['rows'].pop()
+            elif name=='wrong-index':changed['rows'][0][1]=1
+            else:changed['returned'][5]=32
+            with self.subTest(name=name),self.assertRaises(ValueError):r.admit_lineage(changed)
+
+    def test_43_crt_export_candidate_is_not_function_size_proof(self):
+        raw,_,_,_=runtime_fixture();changed=bytearray(raw);struct.pack_into('<II',changed,288,0,0)
+        metadata,candidates=r.export_metadata(bytes(changed))
+        extent,kind=r.range_extent(bytes(changed),0x1000,[],exports=candidates)
+        self.assertEqual((extent,kind),((0x1000,0x1008),'ExportCandidateOnly'))
+        self.assertEqual(candidates[0]['aliases'],['memcpy'])
+        with self.assertRaisesRegex(ValueError,'export candidate'):r.range_extent(bytes(changed),0x1008,[],exports=candidates)
+        struct.pack_into('<I',changed,1536+216,0x30f0)
+        _,bad=r.export_metadata(bytes(changed))
+        with self.assertRaises(ValueError):r.range_extent(bytes(changed),0x1000,[],exports=bad)
+
+    def test_44_formatting_candidate_requires_caller_context(self):
+        raw,mapping,rows,_=code_fixture();view=r.required_code_ranges(raw,rows,mapping)
+        view['caller_windows']=[{'start_rva':0x1002,'end_rva':0x1004,'role':'ActualCallerInputThroughReturn','operation':0}]
+        view['all_same_link_symbols'].append({'rva':0x1080,'symbol':'std2io5stdio6_print','object':'actual.obj'})
+        edge={'instruction_rva':0x1001,'target':{'kind':'DirectRva','rva':0x1080},'text':'callq 0x140001080','obligation':'Required'}
+        candidate=copy.deepcopy(edge);self.assertFalse(r.formatting_exclusion(candidate,view,view['ranges'][0]))
+        self.assertEqual(candidate['obligation'],'Required')
+        self.assertEqual(view['compiled_dataflow'],'UnprovedAwaitingIndependentReview')
+        for name in ('inside','missing-window','non-formatting','indirect'):
+            changed=copy.deepcopy(edge);v=copy.deepcopy(view)
+            if name=='inside':changed['instruction_rva']=0x1003
+            elif name=='missing-window':v['caller_windows']=[]
+            elif name=='non-formatting':v['all_same_link_symbols'][-1]['symbol']='memcpy'
+            else:changed['target']={'kind':'Unresolved'}
+            with self.subTest(name=name):self.assertFalse(r.formatting_exclusion(changed,v,v['ranges'][0]))
+
+    def test_45_required_loaded_dispatch_data_is_bound(self):
+        raw,directory,files,parsed=runtime_fixture()
+        for phase in ('pre','post'):
+            path=directory/(f'runtime-{phase}-0-section-2.bin');data=bytearray(files[path]);struct.pack_into('<Q',data,0x60,0x140001000);files[path]=bytes(data)
+        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(r,'checked',return_value=({'pid':123},b'',b'')):
+            image=r.runtime_images(directory,parsed,raw)[0]
+            target,samples=r.loaded_dispatch_target(directory,image,0x3060)
+            self.assertEqual(target,0x1000);self.assertEqual(len(samples),2)
+            key=directory/'runtime-post-0-section-2.bin';original=files[key]
+            files[key]=original[:0x60]+struct.pack('<Q',0x140001001)+original[0x68:]
+            with self.assertRaisesRegex(ValueError,'retained loaded dispatch data'):r.loaded_dispatch_target(directory,image,0x3060)
+            refreshed=r.runtime_images(directory,parsed,raw)[0]
+            with self.assertRaisesRegex(ValueError,'changing sampled dispatch target'):r.loaded_dispatch_target(directory,refreshed,0x3060)
+            files[key]=original
+            with self.assertRaisesRegex(ValueError,'dispatch slot extent'):r.loaded_dispatch_target(directory,image,0x4000)
+
+    def test_50_raw_witness_handoff_and_role_peers(self):
+        legal=packet('rust');parsed=r.parse(wire(legal),'rust',True)
+        self.assertEqual([op['witness']['role'] for op in parsed['operations']],
+                         [r.WITNESS_ROLES[0],r.WITNESS_ROLES[1]]*2+[r.WITNESS_ROLES[2]])
+        for name in ('old-schema','role','owner','ordinal','received-ordinal','pointer','length','sink','bytes',
+                     'stale-handoff','base','missing-site','boolean','refreshed-extra-role','missing-sink','handoff-kind','handoff-ordinal','handoff-site','raw-sink-alias'):
+            rows=copy.deepcopy(legal);row=next(v for v in rows if v['stage']=='witness')
+            if name=='old-schema':row['schema']=0
+            elif name=='role':row['role']=r.WITNESS_ROLES[1]
+            elif name=='owner':row['owner'][0]=2
+            elif name=='ordinal':row['ordinal']=1
+            elif name=='received-ordinal':row['received_ordinal']=1
+            elif name=='pointer':row['received'][0]+=4
+            elif name=='length':row['received'][1]-=4
+            elif name=='sink':row['received'][2]+=176
+            elif name=='bytes':row['bytes'][0]^=1
+            elif name=='stale-handoff':
+                row['handoff'][0]+=4;row['received'][0]+=4
+            elif name=='base':row['base']+=1
+            elif name=='missing-site':row['sites'][2]=0
+            elif name=='boolean':row['received'][0]=True
+            elif name=='refreshed-extra-role':row['raw_sha256']=r.digest(bytes(row['bytes']))
+            elif name=='handoff-kind':row['handoff_kind']=1
+            elif name=='handoff-ordinal':row['handoff_ordinal']=1
+            elif name=='handoff-site':row['handoff_sites'][0]=0
+            elif name=='raw-sink-alias':row['handoff'][2]=row['received'][2]=row['handoff'][0]
+            else:row['received'].pop()
+            with self.subTest(name=name),self.assertRaises(ValueError):r.parse(wire(rows),'rust',True)
+        refreshed=copy.deepcopy(legal)
+        for row in refreshed:
+            if row['stage']=='runtime-read':row['pointer']+=32
+            if row['stage']=='witness' and row['owner'][0]==1:
+                row['handoff'][0]+=32;row['received'][0]+=32
+        r.parse(wire(refreshed),'rust',True)
+
+    def test_51_collector_named_required_targets_are_retained(self):
+        raw,mapping,rows,_=code_fixture();raw=bytearray(raw)
+        struct.pack_into('<II',raw,288,0x2000,36);struct.pack_into('<IIII',raw,440,36,0x2000,36,1280)
+        struct.pack_into('<III',raw,1292,0x1008,0x1010,0x3000)
+        struct.pack_into('<III',raw,1304,0x1020,0x1028,0x3000)
+        mapping+=b' 0001:00000008 floor_profile_runtime_imports_collector 0000000140001008 f object.obj\n'
+        raw[1024:1032]=b'\xe8\x03\0\0\0\x90\x90\xc3';raw=bytes(raw)
+        view=r.required_code_ranges(raw,rows,mapping);images=[{'witness':view,'raw':raw}]
+        span=view['ranges'][0]
+        assembly=b'140001000: e8 03 00 00 00 callq 0x140001008\n140001005: 90 nop\n140001006: 90 nop\n140001007: c3 retq\n'
+        edge=r.instruction_edges(assembly,view,span)[0]
+        view['caller_windows']=[{'start_rva':0x1000,'end_rva':0x1007}]
+        self.assertFalse(r.formatting_exclusion(edge,view,span))
+        r.follow_required_edge(None,images,0,span,edge)
+        self.assertEqual(view['ranges'][-1]['start_rva'],0x1008)
+        self.assertEqual(edge['resolution'],'Acquired')
+        r.request_range(view,raw,0x1008,'RequiredReturn',{'kind':'RequiredTarget','instruction_rva':0x1005})
+        self.assertEqual(len(view['ranges']),3)
+        self.assertEqual(len([q for q in view['requests'] if q['target_rva']==0x1008]),2)
+        denied=dict(edge,obligation='OutsideClaim')
+        with self.assertRaisesRegex(ValueError,'unsupported edge waiver'):r.follow_required_edge(None,images,0,span,denied)
+        self.assertEqual(edge['obligation'],'Required')
+
+    def test_52_frontier_and_obligation_completion_is_strict(self):
+        raw,mapping,rows,assembly=code_fixture();view=r.required_code_ranges(raw,rows,mapping)
+        view['copy_obligations']=copy.deepcopy(r.COPY_OBLIGATIONS)
+        view['data_requests']=[{'role':'SeedTable','size':8192,'resolution':'Resolved'}]
+        view['edges']=[];images=[{'witness':view,'raw':raw}]
+        for span in view['ranges']:
+            for edge in r.instruction_edges(instructions(span),view,span):
+                r.follow_required_edge(None,images,0,span,edge);view['edges'].append(edge)
+        with self.assertRaisesRegex(ValueError,'pending'):r.complete_closure(images)
+        view['decoded']=view['pending'];view['pending']=[];r.complete_closure(images)
+        self.assertEqual(view['compiled_dataflow'],'UnprovedAwaitingIndependentReview')
+        for name in ('pending','unknown-edge','unresolved-import','required-return','seed-copy','data','sink','range','missing-edge-resolution','missing-handoff-target'):
+            peer=copy.deepcopy(images);v=peer[0]['witness']
+            if name=='pending':v['pending']=[[0x1000,0x1008]]
+            elif name in ('unknown-edge','unresolved-import'):v['edges'][0]['obligation']='Unresolved'
+            elif name=='required-return':v['copy_obligations'].pop(0)
+            elif name=='seed-copy':v['copy_obligations'].pop()
+            elif name=='data':v['data_requests']=[]
+            elif name=='sink':v['semantic_origins']=[]
+            elif name=='range':v['requests'][0]['resolution']='Unresolved'
+            elif name=='missing-edge-resolution':del v['edges'][0]['resolution']
+            else:v['edges']=[e for e in v['edges'] if not e['text'].startswith('call')]
+            with self.subTest(name=name),self.assertRaisesRegex(ValueError,'INCOMPLETE'):r.complete_closure(peer)
+        import_raw=runtime_fixture()[0];v=copy.deepcopy(view);edge={'instruction_rva':0x1000,'obligation':'Required','target':{'kind':'RipRelativeIatSlot','slot_rva':0x3060}}
+        r.follow_required_edge(None,[{'witness':v,'raw':import_raw}],0,v['ranges'][0],edge)
+        self.assertEqual(edge['reason'],'MissingRequiredSameProcessImportTarget')
+        self.assertEqual(v['data_requests'][-1]['resolution'],'Unresolved')
+
+    def test_53_versioned_boundary_owner_is_not_a_name_waiver(self):
+        raw,mapping,rows,_=code_fixture();r.required_code_ranges(raw,rows,mapping)
+        for name in ('missing-role','wrong-role','wrong-owner','wrong-site','wrong-symbol','same-handoff-extent','wrong-handoff-owner'):
+            peer=copy.deepcopy(rows);m=mapping
+            if name=='missing-role':del peer[0]['witness']
+            elif name=='wrong-role':peer[0]['witness']['role']='AcquisitionUtility'
+            elif name=='wrong-owner':peer[0]['witness']['role']=r.WITNESS_ROLES[1]
+            elif name=='wrong-site':peer[0]['witness']['sites'][2]=8192+0x2000
+            elif name=='wrong-symbol':m=mapping.replace(b'direct_witness',b'runtime_imports')
+            elif name=='same-handoff-extent':peer[0]['witness']['handoff_sites']=peer[0]['witness']['sites'][:2]
+            else:m=mapping.replace(b'floor_profile_handoff',b'floor_profile_collector')
+            with self.subTest(name=name),self.assertRaises((ValueError,KeyError)):r.required_code_ranges(raw,peer,m)
+
+    def test_54_producer_and_default_reader_share_real_pure_boundaries(self):
+        module,directory,files,runtime=runtime_fixture();own=bytearray(module)
+        source=(r.ROOT/'rust/crates/mds-math/src/estimate_table.rs').read_text()
+        table=b''.join(struct.pack('<I',int(v,16)) for v in r.re.findall(r'0x[0-9a-f]{8}',r.re.search(r'const RCP: \[u32; 2048\] = \[(.*?)\];',source,r.re.S)[1]))
+        self.assertEqual(len(table),8192)
+        struct.pack_into('<H',own,134,4);struct.pack_into('<II',own,152+56,0x8000,1024)
+        at=512;own[at:at+8]=b'.seeds\0\0';struct.pack_into('<IIII',own,at+8,8192,0x5000,8192,4096);struct.pack_into('<I',own,at+36,0x40000040)
+        own.extend(table);own=bytes(own)
+        _,mapping,rows,_=code_fixture()
+        for snap in runtime['runtime_imports']:snap['image_size']=0x8000
+        runtime.update(operations=rows,merge_lineage=lineage());parsed=({'operations':rows},runtime)
+        recipe=r.recipe('C:/runner/temp','observed','Od');tool_raw=b'pure fixture tool identity, never executed'
+        tool={'path':str(r.DISASSEMBLER),'sha256':r.digest(tool_raw),'size':len(tool_raw)}
+        for binary,map_name in (('floor_profile.exe','native.map'),('rust-profile.exe','rust.map')):
+            files[directory/binary]=own;files[directory/map_name]=mapping
+        files[directory/'instruction-tool.bin']=tool_raw
+        def receipt(label,argv,stdout):
+            row={'argv':list(map(str,argv)),'cwd':recipe['source'],'env':{},'status':0,'terminal':'exit',
+                 'start_ns':1,'end_ns':2,'start_utc':'synthetic','end_utc':'synthetic','pid':123}
+            if label.startswith('instruction-') or '-instructions-' in label:row['tool_binary']=tool
+            for suffix,raw in (('stdout',stdout),('stderr',b'')):
+                files[directory/(label+'.'+suffix)]=raw
+                row[suffix]={'name':label+'.'+suffix,'size':len(raw),'sha256':r.digest(raw)}
+            files[directory/(label+'.json')]=json.dumps(row).encode();return row
+        receipt('rust',['synthetic-fixture-process'],b'')
+        original_read=Path.read_bytes
+        def read(path):return files[path] if path in files else original_read(path)
+        def write(path,value):files[path]=value;return len(value)
+        def emit(directory_arg,label,argv,*args):
+            self.assertEqual(directory_arg,directory)
+            if label=='instruction-help':return receipt(label,argv,b'--disassemble --start-address --stop-address')
+            start=int(argv[2].split('=')[1],16)-0x140000000;end=int(argv[3].split('=')[1],16)-0x140000000
+            binary=module if '-runtime-' in label else own
+            span=r.pe_code(binary)[3](start,end,True)
+            return receipt(label,argv,instructions(span))
+        with patch.object(Path,'read_bytes',read),patch.object(Path,'write_bytes',write),patch.object(Path,'write_text',lambda path,value,**kw:write(path,value.encode())),patch.object(Path,'is_file',return_value=True),patch.object(r,'record',emit):
+            captured=r.compiled_evidence(directory,parsed,recipe,True,{})
+            self.assertEqual(r.compiled_evidence(directory,parsed,recipe),captured)
+            self.assertTrue(all(not view['pending'] for view in (captured['rust'],captured['rust']['runtime_images'][0]['witness'])))
+            for name in ('required-return','seed-copy','data','sink','layout','owner','role','pending','unresolved-import'):
+                key=directory/'rust-code.json';legal=files[key];peer=json.loads(legal)
+                if name=='required-return':peer['copy_obligations'].pop(0)
+                elif name=='seed-copy':peer['copy_obligations'].pop()
+                elif name=='data':peer['data_requests']=[]
+                elif name=='sink':peer['semantic_origins'][0]['received'][2]+=176
+                elif name=='layout':peer['semantic_origins'][0]['layout']['facts'][0]=176
+                elif name=='owner':peer['semantic_origins'][0]['owner']=[2,0,0,0]
+                elif name=='role':peer['semantic_origins'][0]['role']='AcquisitionUtility'
+                elif name=='pending':peer['pending']=[[0x1000,0x1008]]
+                else:peer['edges'][0]['obligation']='Unresolved'
+                files[key]=json.dumps(peer).encode()
+                with self.subTest(name=name),self.assertRaisesRegex(ValueError,'rederived executed-image'):r.compiled_evidence(directory,parsed,recipe)
+                files[key]=legal
+            old=files[directory/'rust-code.json'];del files[directory/'rust-code.json']
+            broken=copy.deepcopy(parsed);broken[1]['operations'][0]['witness']['handoff_sites'][0]=8192+0x2000
+            with self.assertRaisesRegex(ValueError,'handoff site'):r.compiled_evidence(directory,broken,recipe,True,{})
+            progress=json.loads(files[directory/'rust-code-progress.json'])
+            self.assertTrue(progress['images'][0]['witness']['pending'])
+            self.assertNotIn(directory/'rust-code.json',files)
+            self.assertNotIn(directory/'seal.json',files)
+            files[directory/'rust-code.json']=old
+
+    def test_55_full_witness_ranges_and_exact_adjacency(self):
+        for role in r.WITNESS_ROLES:
+            raw=r.operation_corpus();op={'owner':[1,0,0,0],'base':8192}
+            size=r.witness_layout()['facts'][0]
+            def admit(pointer,sink):
+                row=witness_record(op,raw,role,0,pointer)
+                row['handoff'][2]=row['received'][2]=sink
+                return r.admit_witness(row,op,raw,role,0,pointer)
+            self.assertEqual(admit(4096,16384)['layout']['facts'][0],2664)
+            for pointer,sink in ((4096-152,4096),(4096+size,4096)):
+                self.assertEqual(admit(pointer,sink)['compiled_dataflow'],'UnprovedAwaitingIndependentReview')
+            for name,pointer,sink in (
+                ('exact-coordinated-3920',4096,3920),
+                ('raw-beyond-operation',4096+176,4096),
+                ('sink-start-inside-raw',4096,4104),
+                ('partial-sink-start',4096-151,4096),
+                ('partial-sink-end',4096+size-1,4096)):
+                with self.subTest(role=role,name=name),self.assertRaisesRegex(ValueError,'full Witness sink do not alias'):
+                    admit(pointer,sink)
+            for name,pointer,sink in (
+                ('raw-end-overflow',2**64-128,4096),
+                ('full-sink-end-overflow',4096,2**64-256),
+                ('sink-zero',4096,0),('sink-boolean',4096,True),
+                ('raw-zero',0,16384),('raw-boolean',True,16384),
+                ('sink-unaligned',4096,16385),('raw-noncanonical',2**47,4096),
+                ('sink-noncanonical',4096,2**47)):
+                with self.subTest(role=role,name=name),self.assertRaises(ValueError):admit(pointer,sink)
+
+    def test_56_closed_full_layout_peers_use_real_admission(self):
+        legal=packet('rust');r.parse(wire(legal),'rust',True)
+        for name in ('missing','extra-record','stale-schema','zero','boolean','short-size','long-size',
+                     'forged-offset','forged-align','forged-operation','forged-usize','short-facts','long-facts',
+                     'missing-target','extra-layout','unknown-target','boolean-offset','coordinated-3920'):
+            rows=copy.deepcopy(legal);row=next(v for v in rows if v['stage']=='witness');layout=row['layout']
+            if name=='missing':del row['layout']
+            elif name=='extra-record':row['sink_size']=2664
+            elif name=='stale-schema':row['schema']=1
+            elif name=='zero':layout['facts'][0]=0
+            elif name=='boolean':layout['facts'][0]=True
+            elif name=='short-size':layout['facts'][0]=176
+            elif name=='long-size':layout['facts'][0]+=8
+            elif name=='forged-offset':layout['facts'][-1]-=8
+            elif name=='forged-align':layout['facts'][1]=4
+            elif name=='forged-operation':layout['facts'][4]=168
+            elif name=='forged-usize':layout['facts'][2]=4
+            elif name=='short-facts':layout['facts'].pop()
+            elif name=='long-facts':layout['facts'].append(0)
+            elif name=='missing-target':del layout['target']
+            elif name=='extra-layout':layout['size']=2664
+            elif name=='unknown-target':layout['target']='untrusted-layout'
+            elif name=='coordinated-3920':row['handoff'][2]=row['received'][2]=3920
+            else:layout['facts'][6]=False
+            with self.subTest(name=name),self.assertRaises(ValueError):r.parse(wire(rows),'rust',True)
+
+    def test_57_witness_repr_c_source_type_contract(self):
+        source=(r.HERE/'observer.rs').read_text()
+        body=r.re.search(r'#\[repr\(C\)\]\nstruct Witness \{(.*?)\n\}',source,r.re.S)[1]
+        fields=r.re.findall(r'(\w+):\s*(Operation|usize|u32|\[u8; 1024\]|\[usize; \d+\]|\[\[usize; 10\]; 16\])\s*,',body)
+        types={'Operation':(176,8),'usize':(8,8),'u32':(4,4),'[u8; 1024]':(1024,1),'[[usize; 10]; 16]':(1280,8)}
+        actual=[]
+        for name,kind in fields:
+            if kind.startswith('[usize;'):size,align=int(r.re.search(r'\d+',kind)[0])*8,8
+            else:size,align=types[kind]
+            actual.append((name,size,align))
+        self.assertEqual(tuple(actual),r.WITNESS_FIELDS)
+        self.assertEqual(r.re.sub(r'\s+','',body),''.join(name+':'+r.re.sub(r'\s+','',kind)+',' for name,kind in fields))
+        layout=r.re.search(r'fn layout\(&self\) -> \[usize; 21\] \{(.*?)\n    \}',source,r.re.S)[1]
+        self.assertEqual(r.re.findall(r'offset_of!\(Self, (\w+)\)',layout),[field[0] for field in r.WITNESS_FIELDS])
+        self.assertIn('std::mem::size_of_val(self), std::mem::align_of::<Self>()',layout)
+        self.assertIn('std::mem::size_of::<usize>(), std::mem::align_of::<usize>()',layout)
+        self.assertIn('std::mem::size_of::<Operation>(), std::mem::align_of::<Operation>()',layout)
+        self.assertIn('cfg!(all(target_os = "windows", target_arch = "x86_64"))',source)
+
     def test_zz_real_effects_rejected_before_effects(self):
-        target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-floor-profile-boundary-fix/effect-probe')
+        target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-operation-boundary/effect-probe')
         self.assertFalse(target.exists());r.readonly()
         probes=[lambda:target.write_bytes(b'forbidden'),lambda:target.mkdir(),lambda:subprocess.run([sys.executable,'-c','raise SystemExit(99)'],check=True),lambda:socket.socket()]
         for probe in probes:

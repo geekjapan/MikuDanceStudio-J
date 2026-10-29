@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import tomllib
 import zipfile
 
 from cmp_input import (CONTRACT_SHA256, file_identity, normalize, read_json,
@@ -111,22 +112,171 @@ def acquire(output):
     (output / 'complete-prepared-inventory.json').write_text(json.dumps(inventory, indent=2) + '\n')
 
 
+def owned_children():
+    return [int(pid) for pid in Path('/proc/self/task/' + str(os.getpid()) + '/children').read_text().split()]
+
+
+def enable_custody():
+    hosted()
+    import ctypes
+    require(hasattr(os, 'pidfd_open') and hasattr(signal, 'pidfd_send_signal'),
+            'owned process custody requires Linux pidfd support')
+    require(not owned_children(), 'owned process custody requires no pre-existing children')
+    libc = ctypes.CDLL(None, use_errno=True)
+    enabled = ctypes.c_int()
+    require(libc.prctl(36, 1, 0, 0, 0) == 0
+            and libc.prctl(37, ctypes.byref(enabled), 0, 0, 0) == 0 and enabled.value == 1,
+            'Linux child subreaper unavailable; refusing to launch writers')
+
+
+def close_owned_children(process):
+    receipts = []
+    deadline = time.monotonic() + 10
+    while owned_children():
+        require(time.monotonic() < deadline, 'owned descendant cleanup unproven; no final manifest')
+        for pid in owned_children():
+            try:
+                descriptor = os.pidfd_open(pid)
+            except ProcessLookupError:
+                continue
+            try:
+                require(pid in owned_children(), 'owned child changed before signaling')
+                try:
+                    session = os.getsid(pid)
+                except ProcessLookupError:
+                    session = None
+                try:
+                    signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                ended, status = os.waitpid(pid, os.WNOHANG)
+                if ended:
+                    code = os.waitstatus_to_exitcode(status)
+                    if pid == process.pid:
+                        process.returncode = code
+                    receipts.append({'pid': pid, 'session': session, 'exit_code': code,
+                                     'reaped_utc': datetime.now(timezone.utc).isoformat()})
+            finally:
+                os.close(descriptor)
+        time.sleep(0.01)
+    require(process.returncode is not None, 'primary process was not reaped')
+    return receipts
+
+
 def invoke(command, cwd, log, timeout):
+    enable_custody()
+    marker = log.parent / 'OWNED_WRITERS_UNPROVEN'
+    require(not marker.exists(), 'unclosed earlier writers; refusing another launch')
+    marker.write_text('No final manifest or artifact publication until owned children are reaped.\n')
     started = datetime.now(timezone.utc).isoformat()
     begin = time.monotonic()
+    process = None
+    descendants = []
     with log.open('w') as stream:
-        process = subprocess.Popen(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
         timed_out = False
         try:
+            process = subprocess.Popen(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+            primary_session = os.getsid(process.pid)
             process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
+        finally:
+            interrupted = sys.exc_info()[0] is not None
+            if process is not None:
+                descendants = close_owned_children(process)
+            require(not owned_children(), 'owned writers remain; no final manifest')
+            if interrupted or timed_out or descendants:
+                (log.parent / 'CUSTODY_FAILED').write_text('Closed partial diagnostics only; no final output manifest.\n')
+            marker.unlink()
+    contaminated = not timed_out and bool(descendants)
     return {'command': command, 'cwd': str(cwd), 'pid': process.pid, 'started_utc': started,
             'ended_utc': datetime.now(timezone.utc).isoformat(), 'wall_seconds': time.monotonic() - begin,
             'exit_code': process.returncode, 'timed_out': timed_out, 'timeout': timeout,
-            'log': str(log), 'log_identity': file_identity(log)}
+            'log': str(log), 'log_identity': file_identity(log),
+            'owned_descendants_reaped': descendants, 'owned_writers_closed': True,
+            'session': primary_session, 'custody_status': 'contaminated' if contaminated else 'clean'}
+
+
+def generated_sources(inventory, expected, toml_bytes, lock_bytes, build, manifest_path):
+    domain = manifest_path.parent.name
+    source = {name: record for name, record in inventory.items() if name != 'Cargo.lock'}
+    require({name: record['sha256'] for name, record in source.items()} == expected,
+            'generated source inventory differs ' + domain)
+    if lock_bytes is None:
+        require('Cargo.lock' not in inventory, 'missing build lock bytes ' + domain)
+        return source, None
+    require('Cargo.lock' in inventory and inventory['Cargo.lock']['sha256'] == sha(lock_bytes)
+            and inventory['Cargo.lock']['size'] == len(lock_bytes), 'build lock identity differs ' + domain)
+    command = build.get('command', [])
+    require(len(command) == 5 and command[:4] == ['cargo', '+1.95.0', 'build', '--manifest-path']
+            and Path(command[4]) == manifest_path
+            and isinstance(build.get('exit_code'), int) and isinstance(build.get('timed_out'), bool)
+            and isinstance(build.get('process_exit_code'), int)
+            and build.get('started_utc') and build.get('ended_utc') and build.get('log'),
+            'Cargo.lock lacks actual build-stage association ' + domain)
+    manifest = tomllib.loads(toml_bytes.decode())
+    lock = tomllib.loads(lock_bytes.decode())
+    packages = lock.get('package', [])
+    require(lock.get('version') == 4 and isinstance(packages, list) and packages,
+            'invalid Cargo.lock package inventory ' + domain)
+    package = manifest['package']
+    own = [item for item in packages if item.get('name') == package['name']
+           and item.get('version') == package['version'] and 'source' not in item]
+    require(len(own) == 1 and {item.split()[0] for item in own[0].get('dependencies', [])}
+            == set(manifest.get('dependencies', {})), 'Cargo.lock dependencies differ ' + domain)
+    identities = {(item['name'], item['version']) for item in packages}
+    require(len(identities) == len(packages), 'duplicate Cargo.lock package ' + domain)
+    for item in packages:
+        require(isinstance(item['name'], str) and isinstance(item['version'], str), 'invalid lock package')
+        require(all(dep.split()[0] in {p['name'] for p in packages} for dep in item.get('dependencies', [])),
+                'Cargo.lock dependency absent ' + domain)
+    for name, version in manifest.get('dependencies', {}).items():
+        require(isinstance(version, str), 'unreviewed generated dependency requirement')
+        lower = version.removeprefix('^').split('.')
+        require(1 <= len(lower) <= 3 and all(part.isdecimal() for part in lower),
+                'unreviewed generated dependency version')
+        precision = len(lower)
+        lower = tuple(map(int, lower)) + (0,) * (3 - len(lower))
+        pivot = next((i for i, part in enumerate(lower) if part), precision - 1)
+        upper = lower[:pivot] + (lower[pivot] + 1,) + (0,) * (2 - pivot)
+        candidates = [item for item in packages if item['name'] == name]
+        require(len(candidates) == 1, 'ambiguous locked generated dependency ' + name)
+        parts = candidates[0]['version'].split('.')
+        require(len(parts) == 3 and all(part.isdecimal() for part in parts)
+                and lower <= tuple(map(int, parts)) < upper, 'locked generated dependency version differs ' + name)
+    return source, {'identity': inventory['Cargo.lock'], 'parsed': lock, 'build_stage': build,
+                    'provenance': 'actual Cargo build output; not translation input'}
+
+
+def generated_trees(root, result):
+    emitted = regular_tree(root / 'rust')
+    working = result['working_source_identity']
+    require(working['equal'] and working['original_sha256'] == {k: v['sha256'] for k, v in emitted.items()},
+            'actual compilation copy differs from license-preserved emitted Rust')
+    records, locks = {}, {}
+    for domain, expected, stage in (
+            ('rust-raw', result['raw_sha256'], 'stable_build'),
+            ('rust-working', working['working_sha256'], 'working_stable_build')):
+        directory = root / domain
+        inventory = regular_tree(directory)
+        lock = directory / 'Cargo.lock'
+        records[domain], locks[domain] = generated_sources(
+            inventory, expected, (directory / 'Cargo.toml').read_bytes(),
+            lock.read_bytes() if lock.exists() else None, result.get(stage, {}), directory / 'Cargo.toml')
+        if locks[domain] is not None:
+            build_log = Path(result[stage]['log'])
+            require(build_log.parent == root and not build_log.is_symlink() and build_log.is_file(),
+                    'build-stage log outside actual result root')
+            locks[domain]['build_log_identity'] = file_identity(build_log)
+    require(result['raw_preserved'], 'pristine emitted Rust identity differs')
+    require(records['rust-working'] == emitted, 'actual compilation copy differs from license-preserved emitted Rust')
+    require(all(record['mode'] == emitted[name]['mode'] for name, record in records['rust-raw'].items()),
+            'pristine emitted Rust mode differs')
+    require((locks['rust-raw'] is None) == (locks['rust-working'] is None), 'raw/working lock availability differs')
+    if locks['rust-raw'] is not None:
+        require(locks['rust-raw']['identity'] == locks['rust-working']['identity']
+                and locks['rust-raw']['parsed'] == locks['rust-working']['parsed'], 'raw/working Cargo.lock differs')
+    return records, locks
 
 
 def validate_result(root, result, contract, opposite):
@@ -135,15 +285,7 @@ def validate_result(root, result, contract, opposite):
             and len(result['syntax']) == 24
             and all(s['exit_code'] == 0 and not s['timed_out'] for s in result['syntax'])
             and not result['invalid_output_markers'], 'actual all24 translation incomplete')
-    raw = regular_tree(root / 'rust-raw')
-    require({k: v['sha256'] for k, v in raw.items()} == result['raw_sha256'] and result['raw_preserved'],
-            'pristine emitted Rust identity differs')
-    working = result['working_source_identity']
-    actual = {k: v['sha256'] for k, v in regular_tree(root / 'rust-working').items()}
-    emitted = {k: v['sha256'] for k, v in regular_tree(root / 'rust').items()}
-    require(working['equal'] and working['original_sha256'] == emitted
-            and working['working_sha256'] == actual and emitted == actual,
-            'actual compilation copy differs from license-preserved emitted Rust')
+    generated, locks = generated_trees(root, result)
     require(result['link']['status'] == 'success' and result['link']['exit_code'] == 0
             and not result['link']['timed_out'], 'generated library/driver link failed')
     corpus = {path.name: {'sha256': sha(path.read_bytes()), 'size': path.stat().st_size}
@@ -184,7 +326,8 @@ def validate_result(root, result, contract, opposite):
     return {'positive_equal': 48 - len(mismatches), 'directed_mismatches': sorted(mismatches),
             'negative_rejections': 2, 'stable_build': result['stable_build'],
             'working_stable_build': result['working_stable_build'], 'diagnostic_only': True,
-            'pristine_rust_manifest': raw, 'compilation_copy_manifest': actual,
+            'pristine_rust_manifest': generated['rust-raw'], 'compilation_copy_manifest': generated['rust-working'],
+            'cargo_build_outputs': locks,
             'driver_identity': file_identity(root / 'shader-driver'),
             'effective_compile_database': read_json(root / 'compile_commands.json')}
 
@@ -208,7 +351,7 @@ def run(args):
     root.mkdir(parents=True)
     retain_tool_identity(tool, root)
     host = invoke(['rustc', '+1.95.0', '-vV'], here, root / 'rust-host.log', 30)
-    require(host['exit_code'] == 0 and not host['timed_out']
+    require(host['exit_code'] == 0 and not host['timed_out'] and host['custody_status'] == 'clean'
             and '\nhost: ' + args.target + '\n' in (root / 'rust-host.log').read_text(),
             'actual Rust compiler host differs from reviewed target')
     require(not os.environ.get('CARGO_BUILD_TARGET'), 'ambient Cargo target override is not reviewed')
@@ -242,7 +385,8 @@ def run(args):
                 report['variants'][name]['actual_builds'] = {mode: result.get(mode) for mode in
                     ('stable_build', 'working_stable_build', 'bootstrap_build', 'prototype_build')}
                 checkpoint()
-            require(execution['exit_code'] == 0 and not execution['timed_out'], 'actual probe failed ' + name)
+            require(execution['exit_code'] == 0 and not execution['timed_out']
+                    and execution['custody_status'] == 'clean', 'actual probe failed or custody contaminated ' + name)
             result = read_json(result_path)
             translation_root = Path(boundary['translation_source'])
             domains = {'source': translation_root, 'hdr': translation_root.parent / 'hdr/include',
@@ -274,8 +418,9 @@ def run(args):
         elif len(actual_stable) == 4:
             report['stable_acceptance'] = 'PASS'
         checkpoint()
-        manifest = regular_tree(root)
-        (root / 'output-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+        if not any((root / marker).exists() for marker in ('OWNED_WRITERS_UNPROVEN', 'CUSTODY_FAILED')):
+            manifest = regular_tree(root)
+            (root / 'output-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
 
 
 def main():
@@ -297,4 +442,8 @@ def main():
 
 
 if __name__ == '__main__':
+    def interrupted(signum, frame):
+        raise KeyboardInterrupt('Interrupted by signal ' + str(signum))
+    signal.signal(signal.SIGINT, interrupted)
+    signal.signal(signal.SIGTERM, interrupted)
     main()

@@ -1,4 +1,3 @@
-"""Bounded inert fixtures. Synthetic contracts never enter the reviewed loader."""
 import copy
 import json
 import os
@@ -123,6 +122,24 @@ class CmpInputTests(unittest.TestCase):
                                    self.root / 'outside', self.owned)
         self.assertFalse((self.root / 'outside').exists())
 
+    def test_all_input_roots_reject_overlap_before_any_directory_change(self):
+        self.baseline()
+        roots = [self.source, self.source.parent / 'hdr/include', self.source.parent / 'spv/include']
+        for root in roots:
+            empty = root / 'already-empty'
+            empty.mkdir()
+            for parent in (root, empty, root.parent):
+                with self.subTest(root=root, parent=parent):
+                    before = {str(p): boundary.regular_tree(p) for p in roots}
+                    members = {str(p): sorted(str(q.relative_to(p)) for q in p.rglob('*')) for p in roots}
+                    output = parent / 'must-not-appear'
+                    with patch.object(boundary, 'reviewed_contract', return_value=self.contract):
+                        with self.assertRaisesRegex(ValueError, 'overlaps input root'):
+                            boundary.normalize(self.source, self.contract['target'], self.library, output, parent)
+                    self.assertFalse(output.exists())
+                    self.assertEqual({str(p): boundary.regular_tree(p) for p in roots}, before)
+                    self.assertEqual({str(p): sorted(str(q.relative_to(p)) for q in p.rglob('*')) for p in roots}, members)
+
     def test_extra_missing_symlink_and_mode_source_negatives(self):
         self.baseline()
         extra = self.source / 'extra.h'
@@ -188,7 +205,6 @@ class CmpInputTests(unittest.TestCase):
 
 
 class CmpValidationTests(unittest.TestCase):
-    """Synthetic result records test the checker, never runtime acceptance."""
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='cmp-validator-', dir=os.environ.get('CMP_INPUT_TEST_TMP'))
         self.addCleanup(self.temporary.cleanup)
@@ -204,6 +220,7 @@ class CmpValidationTests(unittest.TestCase):
             directory = self.root / name
             directory.mkdir()
             (directory / 'fixture.rs').write_text('// inert synthetic bytes; never compile\n')
+            (directory / 'Cargo.toml').write_text('[package]\nname = "fixture"\nversion = "0.0.0"\n[dependencies]\n')
         identity = {k: v['sha256'] for k, v in boundary.regular_tree(self.root / 'rust').items()}
         self.result['raw_sha256'] = identity
         self.result['working_source_identity'] = {'equal': True, 'original_sha256': identity, 'working_sha256': identity}
@@ -266,13 +283,173 @@ class CmpValidationTests(unittest.TestCase):
         path = self.root / 'rust-raw/fixture.rs'
         original = path.read_bytes()
         path.write_bytes(b'altered generated Rust')
-        with self.assertRaisesRegex(ValueError, 'pristine emitted Rust identity differs'):
+        with self.assertRaisesRegex(ValueError, 'generated source inventory differs'):
             self.check()
         path.write_bytes(original)
         (self.root / 'rust-working/fixture.rs').write_bytes(b'altered compilation copy')
+        with self.assertRaisesRegex(ValueError, 'generated source inventory differs'):
+            self.check()
+
+    def add_locks(self):
+        data = b'version = 4\n[[package]]\nname = "fixture"\nversion = "0.0.0"\n'
+        for domain, stage in (('rust-raw', 'stable_build'), ('rust-working', 'working_stable_build')):
+            (self.root / domain / 'Cargo.lock').write_bytes(data)
+            log = self.root / (stage + '.log')
+            log.write_bytes(b'INERT SYNTHETIC BUILD LOG')
+            self.result[stage].update(command=['cargo', '+1.95.0', 'build', '--manifest-path',
+                                               str(self.root / domain / 'Cargo.toml')],
+                timed_out=False, process_exit_code=101, started_utc='synthetic fixture start',
+                ended_utc='synthetic fixture end', log=str(log))
+
+    def test_cargo_locks_are_separate_build_outputs_and_sources_remain_exact(self):
+        self.check()
+        self.add_locks()
+        result = self.check()
+        self.assertNotIn('Cargo.lock', result['pristine_rust_manifest'])
+        self.assertNotIn('Cargo.lock', result['compilation_copy_manifest'])
+        self.assertEqual(set(result['cargo_build_outputs']), {'rust-raw', 'rust-working'})
+        self.assertEqual(result['cargo_build_outputs']['rust-raw']['parsed']['version'], 4)
+
+    def test_unknown_extra_changed_toml_and_mode_refuse_with_locks(self):
+        self.add_locks()
+        self.check()
+        for domain in ('rust-raw', 'rust-working', 'rust'):
+            for name in ('unexpected.data', 'Cargo.toml', 'fixture.rs'):
+                path = self.root / domain / name
+                before = path.read_bytes() if path.exists() else None
+                path.write_bytes(b'changed')
+                with self.assertRaisesRegex(ValueError, 'inventory differs|compilation copy differs'):
+                    self.check()
+                if before is None:
+                    path.unlink()
+                else:
+                    path.write_bytes(before)
+        path = self.root / 'rust-working/fixture.rs'
+        path.chmod(0o600)
         with self.assertRaisesRegex(ValueError, 'compilation copy differs'):
             self.check()
 
+    def test_invalid_mismatched_symlink_and_unattempted_build_locks_refuse(self):
+        self.add_locks()
+        self.check()
+        path = self.root / 'rust-working/Cargo.lock'
+        original = path.read_bytes()
+        for data in (b'invalid toml', b'version = 3\n', original + b'other = "changed"\n'):
+            path.write_bytes(data)
+            with self.assertRaises((ValueError, KeyError)):
+                self.check()
+        path.write_bytes(original)
+        path.unlink()
+        path.symlink_to(self.root / 'rust-raw/Cargo.lock')
+        with self.assertRaisesRegex(ValueError, 'nonregular'):
+            self.check()
+        path.unlink()
+        path.write_bytes(original)
+        del self.result['working_stable_build']['command']
+        with self.assertRaisesRegex(ValueError, 'actual build-stage association'):
+            self.check()
+
+    def test_lock_dependency_versions_and_build_domain_are_bound(self):
+        self.add_locks()
+        for domain in ('rust-raw', 'rust-working', 'rust'):
+            path = self.root / domain / 'Cargo.toml'
+            path.write_text(path.read_text() + 'dependency = "0.2"\n')
+        expected = {k: v['sha256'] for k, v in boundary.regular_tree(self.root / 'rust').items()}
+        self.result['raw_sha256'] = expected
+        self.result['working_source_identity'].update(original_sha256=expected, working_sha256=expected)
+        lock = (b'version = 4\n[[package]]\nname = "fixture"\nversion = "0.0.0"\n'
+                b'dependencies = ["dependency"]\n[[package]]\nname = "dependency"\nversion = "0.2.191"\n')
+        for domain in ('rust-raw', 'rust-working'):
+            (self.root / domain / 'Cargo.lock').write_bytes(lock)
+        self.check()
+        for domain in ('rust-raw', 'rust-working'):
+            (self.root / domain / 'Cargo.lock').write_bytes(lock.replace(b'0.2.191', b'0.3.0'))
+        with self.assertRaisesRegex(ValueError, 'dependency version differs'):
+            self.check()
+        for domain in ('rust-raw', 'rust-working'):
+            (self.root / domain / 'Cargo.lock').write_bytes(lock)
+        self.result['stable_build']['command'][-1] = str(self.root / 'unrelated/rust-raw/Cargo.toml')
+        with self.assertRaisesRegex(ValueError, 'actual build-stage association'):
+            self.check()
+
+
+def process_custody_test(output):
+    import sys
+    import time
+    from run_cmp_input import invoke, owned_children
+    hosted()
+    output = Path(output)
+    if output.exists():
+        raise ValueError('process test output must be new')
+    output.mkdir()
+    fixture = output / 'inert_probe.py'
+    fixture.write_text('''import json, os, subprocess, sys, time
+from pathlib import Path
+root = Path(sys.argv[1])
+mode = sys.argv[2]
+if mode == 'writer':
+    identity = {'pid': os.getpid(), 'session': os.getsid(0), 'started_ns': time.time_ns()}
+    (root / (str(os.getpid()) + '.identity')).write_text(json.dumps(identity))
+    with (root / (str(os.getpid()) + '.writes')).open('ab', buffering=0) as stream:
+        while True:
+            stream.write(b'inert task-only writer\\n')
+            time.sleep(0.01)
+elif mode == 'clean':
+    pass
+else:
+    children = []
+    for index in range(3 if mode == 'race' else 1):
+        children.append(subprocess.Popen([sys.executable, '-B', __file__, str(root), 'writer'], start_new_session=True))
+        if mode == 'race':
+            time.sleep(0.07)
+    deadline = time.monotonic() + 3
+    while not list(root.glob('*.identity')) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if not list(root.glob('*.identity')):
+        raise SystemExit('writer launch failed')
+    if mode == 'orphan':
+        raise SystemExit(0)
+    time.sleep(10)
+''')
+    receipts = {}
+    for mode in ('clean', 'orphan', 'timeout', 'race'):
+        root = output / mode
+        root.mkdir()
+        receipt = invoke([sys.executable, '-B', str(fixture), str(root), mode], output,
+                         root / 'probe.log', 0.18 if mode == 'race' else 0.8)
+        boundary.require(receipt['owned_writers_closed'] and not owned_children(), 'owned children not closed')
+        if mode == 'clean':
+            boundary.require(receipt['custody_status'] == 'clean' and not receipt['timed_out'], 'clean fixture failed')
+        elif mode == 'orphan':
+            boundary.require(receipt['custody_status'] == 'contaminated' and not receipt['timed_out'],
+                             'unexpected normal orphan was silently accepted')
+        else:
+            boundary.require(receipt['timed_out'], 'fixture did not time out')
+        identities = [json.loads(path.read_text()) for path in root.glob('*.identity')]
+        if mode in ('orphan', 'timeout'):
+            boundary.require(identities, 'fixture writer did not start')
+        reaped = {record['pid'] for record in receipt['owned_descendants_reaped']}
+        for identity in identities:
+            boundary.require(identity['pid'] in reaped and identity['pid'] == identity['session'],
+                             'separate-session writer missing terminal receipt')
+            try:
+                os.kill(identity['pid'], 0)
+            except ProcessLookupError:
+                pass
+            else:
+                raise ValueError('writer still live after terminal custody receipt')
+        before = boundary.regular_tree(root)
+        time.sleep(0.2)
+        boundary.require(boundary.regular_tree(root) == before, 'writes continued after terminal custody receipt')
+        receipts[mode] = {'execution': receipt, 'writer_identities': identities,
+                          'closed_partial_manifest': before, 'unchanged_after_seconds': 0.2}
+        (output / (mode + '-receipt.json')).write_text(json.dumps(receipts[mode], indent=2) + '\n')
+    (output / 'result.json').write_text(json.dumps({'status': 'owned_process_test_pass', 'cases': receipts}, indent=2) + '\n')
+
 
 if __name__ == '__main__':
-    unittest.main()
+    import sys
+    if len(sys.argv) == 3 and sys.argv[1] == '--process-custody':
+        process_custody_test(sys.argv[2])
+    else:
+        unittest.main()

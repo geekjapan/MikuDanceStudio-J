@@ -3,7 +3,9 @@
 `cmp_input.normalize(original, target, native_library, output, ownership_root)`
 returns a ready input receipt after copying and validating the original source
 and external headers. `output` must be a new direct child of an existing owned
-parent outside the original source. An interrupted copy retains `INCOMPLETE` and
+parent outside all original source, HDR and SPIR-V include roots. Both the parent
+and output reject identical, ancestor and descendant overlap before output creation.
+An interrupted copy retains `INCOMPLETE` and
 never becomes a ready input. Existing directories are never removed or reused.
 
 The checked-in contract admits only `x86_64-unknown-linux-gnu` with the immutable
@@ -60,6 +62,34 @@ immutable native library remain the authority. Correct input predicts 48/48.
 Actual opposite C input must produce only `branch-ps-2_0-1` and
 `branch-ps-3_0-1` mismatches, with the other 46 outputs unchanged. Both API rejection
 controls must retain -4, empty bytes, equal diagnostics and E2004/E5013.
+
+Cargo may add one regular `Cargo.lock` to each actual build tree. The wrapper
+preserves every recorded generated Rust and TOML hash, rejects unknown extra
+paths, and checks generated file modes against the emitted compilation copy.
+It records lockfile bytes by size and SHA256, parses the lock, binds it to the
+actual Cargo command and stage receipt, and requires the raw and working locks
+to agree for the same generated dependencies. Lockfiles remain build outputs
+outside the immutable translation-input manifest.
+
+Hosted execution requires Linux child-subreaper and pidfd support. The wrapper
+admits no pre-existing children and owns one probe at a time. Separate-session
+descendants become its adopted children when a parent exits. Cleanup signals
+only owned children through pidfds and reaps them until the child set is empty.
+A normal probe that leaves a writer is a custody failure even after cleanup.
+Timeouts and cancellation retain closed partial diagnostics without a final
+output manifest. Unproven cleanup retains `OWNED_WRITERS_UNPROVEN` and prevents
+artifact publication. The workflow job limit remains 110 minutes, with an
+85-minute actual-probe step and 3000-second deadline per probe.
+
+The hosted-only inert process check covers clean exit, an unexpected orphan,
+timeout, and child launch during cancellation. It records actual process and
+session IDs, exits, times, and task-directory hashes, then checks that writes
+stop after the terminal receipt. Run it only on hosted Linux:
+
+```sh
+python3 -B tools/vkd3d-rust-probe/test_cmp_input.py --process-custody NEW_OUTPUT
+python3 -B -O tools/vkd3d-rust-probe/test_cmp_input.py --process-custody OTHER_NEW_OUTPUT
+```
 
 `report.json` separates finite diagnostic success from actual stable build
 results. Historical stable E0554 remains a failure until actual stable compilation

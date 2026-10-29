@@ -2,7 +2,7 @@ name: Exact CMP translation input diagnostic
 
 on:
   push:
-    branches: [w4-shader-cmp-input]
+    branches: [w4-shader-cmp-input-review-fix]
   workflow_dispatch:
 
 permissions:
@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 110
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Install the existing LLVM 18 and pinned Rust runtime
@@ -82,6 +82,24 @@ jobs:
           python3 -B tools/vkd3d-rust-probe/check_runtime.py \
             --tool "$RUNNER_TEMP/cmp-input/current-input/unpacked/tool" \
             2>&1 | tee "$RUNNER_TEMP/cmp-input/logs/tool-runtime.log"
+      - name: Prove separate-session writer custody with inert hosted processes
+        timeout-minutes: 2
+        run: |
+          set -o pipefail
+          python3 -B tools/vkd3d-rust-probe/test_cmp_input.py \
+            --process-custody "$RUNNER_TEMP/cmp-input/custody-normal" \
+            2>&1 | tee "$RUNNER_TEMP/cmp-input/logs/custody-normal.log"
+          python3 -B -O tools/vkd3d-rust-probe/test_cmp_input.py \
+            --process-custody "$RUNNER_TEMP/cmp-input/custody-optimized" \
+            2>&1 | tee "$RUNNER_TEMP/cmp-input/logs/custody-optimized.log"
+      - name: Existing probe, compilation-copy and strict comparator regressions
+        timeout-minutes: 3
+        run: |
+          set -o pipefail
+          for pattern in test_probe.py test_full_compiler.py test_shader_matrix.py; do
+            python3 -B -m unittest discover -s tools/vkd3d-rust-probe -p "$pattern" -v \
+              2>&1 | tee "$RUNNER_TEMP/cmp-input/logs/$pattern-normal.log"
+          done
       - name: Normalize actual C, translate all24 twice, build and compare both input orders
         timeout-minutes: 85
         run: |
@@ -95,11 +113,17 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/cmp-input/logs/actual-boundary.log"
       - name: Preserve partial evidence and the separate stable acceptance state
         if: always()
+        id: custody
         run: |
           python3 -B - <<'PY'
           import json, os
           from pathlib import Path
           root = Path(os.environ['RUNNER_TEMP']) / 'cmp-input'
+          closed = not any(root.rglob('OWNED_WRITERS_UNPROVEN'))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('closed=' + str(closed).lower() + '\n')
+          if not closed:
+              raise SystemExit('Owned writer closure unproven; no artifact publication or final manifest')
           report = root / 'actual/report.json'
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
               if report.is_file():
@@ -109,8 +133,8 @@ jobs:
               else:
                   output.write('CMP boundary: FAILED before an actual probe report; inspect partial logs.\n')
           PY
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always() && steps.custody.outputs.closed == 'true'
         with:
           name: vkd3d-cmp-input-boundary
           path: |

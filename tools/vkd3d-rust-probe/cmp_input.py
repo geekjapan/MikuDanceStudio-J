@@ -1,4 +1,3 @@
-"""Exact build-owned CMP input boundary for one reviewed immutable native oracle."""
 import hashlib
 import json
 import os
@@ -90,11 +89,17 @@ def normalize(original, target, native_library, output, ownership_root, *, contr
     require(output.parent.resolve(strict=True) == ownership_root and not output.is_symlink()
             and not output.exists(), 'output must be a fresh direct child of owned parent')
     output = ownership_root / output.name
-    require(original != ownership_root and original not in ownership_root.parents
-            and ownership_root not in original.parents, 'owned parent overlaps source tree')
+    roots = {'source': original, 'hdr': original.parent / 'hdr/include', 'spv': original.parent / 'spv/include'}
+    for key, root in roots.items():
+        require(not root.is_symlink(), 'symlink input root ' + key)
+        resolved = root.resolve(strict=True)
+        require(resolved == root, 'symlink or escape in input root ' + key)
+        roots[key] = resolved
+        for destination in (ownership_root, output):
+            require(destination != resolved and destination not in resolved.parents
+                    and resolved not in destination.parents, 'owned parent/output overlaps input root ' + key)
     native_library = native_library.resolve(strict=True)
     require(native_library != output and output not in native_library.parents, 'output overlaps native library')
-    roots = {'source': original, 'hdr': original.parent / 'hdr/include', 'spv': original.parent / 'spv/include'}
     manifests = {key: regular_tree(root) for key, root in roots.items()}
     require(manifests == contract['manifests'], 'original source/header/configuration manifest differs')
     library = file_identity(native_library)

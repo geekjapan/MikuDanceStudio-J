@@ -181,7 +181,6 @@ def census_command(out,label,argv,cwd,env,timeout):
     row={'argv':list(map(str,argv)),'cwd':str(cwd),'env':{k:env[k] for k in ('PATH','HOME','CARGO_HOME','RUSTUP_HOME','TMPDIR','CARGO_TARGET_DIR','CARGO_INCREMENTAL','CARGO_TERM_COLOR','RUSTFLAGS','CL','_CL_','INCLUDE','LIB','LIBPATH','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion') if k in env},
          'start_utc':previous.utc(),'start_ns':previous.time.time_ns(),'status':None,'terminal':'launch_failure',
          'timeout_seconds':timeout,'writer_closure':None}
-    # This persists before any native resource, stream or child can be acquired.
     write_json(root/'writer-pending.json',{'schema':CUSTODY_SCHEMA,'receipt':receipt,'state':'unknown'})
     write_json(root/'writer-custody.json',dict(state,state='unknown'))
     child=None;job=None;launch_attempted=False;streams=[];cleanup_errors=[];accounting=None;closed=True;stream_acquiring=False;resource_failure=None
@@ -213,7 +212,6 @@ def census_command(out,label,argv,cwd,env,timeout):
             closed=False;cleanup_errors.append('launch returned no owned process handle')
         if job is not None:cleanup(job.terminate)
         if child is not None:
-            # The owned suspended child can exist even if assignment raised.
             cleanup(child.kill)
             cleanup(lambda:child.wait(timeout=10))
         if job is not None and child is not None:
@@ -801,6 +799,27 @@ class CensusLimit(ValueError):
     pass
 
 
+def census_import_request(image,root_image,slot):
+    view=image['witness'];before=image.get('pre',{});after=image.get('post',{})
+    runtime=before.get('runtime',{})
+    if (image.get('root_image_sha256')!=root_image or before.get('slot',{}).get('slot_rva')!=slot or
+            any(before.get(k)!=after.get(k) for k in ('slot','runtime','module_sha256','module_size')) or
+            before.get('module_sha256')!=view['image_sha256'] or
+            type(runtime.get('target_va')) is not int or type(runtime.get('owner_base')) is not int):return None
+    target=runtime['target_va']-runtime['owner_base']
+    raw=image.get('raw',b'')
+    if digest(raw)!=view['image_sha256']:return None
+    try:extent,kind=range_extent(raw,target,view['all_same_link_symbols'],False,view.get('export_candidates',()))
+    except ValueError:return None
+    requests=[request for request in view.get('requests',[]) if
+              request.get('role')=='ActualOwnProcessImportTarget' and request.get('resolution')=='Resolved' and
+              request.get('image_sha256')==view['image_sha256'] and request.get('target_rva')==target and
+              request.get('origin')=={'kind':'RuntimeImport','root_image_sha256':root_image,'slot_rva':slot} and
+              (request.get('start_rva'),request.get('end_rva'))==extent and request.get('extent_kind')==kind and
+              any((span['start_rva'],span['end_rva'])==(request.get('start_rva'),request.get('end_rva')) for span in view['ranges'])]
+    return requests[0] if len(requests)==1 else None
+
+
 class ClosureCensus:
     def __init__(self):
         self.witnesses=[]
@@ -833,7 +852,7 @@ class ClosureCensus:
         return values
 
     def summary(self,images):
-        nodes={};adjacency={};roots={}
+        nodes={};adjacency={};roots={};import_unknowns=[]
         def key(view,span):return view['image_sha256']+':'+str(span[0])+':'+str(span[1])
         for image in images:
             view=image['witness']
@@ -841,18 +860,27 @@ class ClosureCensus:
                 node=key(view,(span['start_rva'],span['end_rva']));nodes[node]=span;adjacency.setdefault(node,set())
             for request in view.get('requests',[]):
                 if request.get('resolution')!='Resolved':continue
-                target=key(view,(request['start_rva'],request['end_rva']));origin=request['origin']
+                target=key(view,(request['start_rva'],request['end_rva']));origin=request.get('origin',{})
+                if request.get('role')=='ActualOwnProcessImportTarget' and census_import_request(image,image.get('root_image_sha256'),origin.get('slot_rva'))!=request:
+                    import_unknowns.append({'kind':'RequiredImportOrigin','request':request})
+                    continue
                 if origin['kind']=='RequiredTarget':
                     adjacency.setdefault(key(view,origin['caller_extent']),set()).add(target)
                 else:roots.setdefault(json.dumps({'image':view['image_sha256'],'role':request['role'],'origin':origin},sort_keys=True),set()).add(target)
             for edge in view.get('edges',[]):
                 if 'target_image_sha256' not in edge:continue
                 callers=[n for n,s in nodes.items() if n.startswith(view['image_sha256']+':') and s['start_rva']<=edge['instruction_rva']<s['end_rva']]
-                owners=[m['witness'] for m in images if m['witness']['image_sha256']==edge['target_image_sha256']]
-                for owner in owners:
-                    for request in owner.get('requests',[]):
-                        if request.get('role')=='ActualOwnProcessImportTarget' and request.get('resolution')=='Resolved':
-                            for caller in callers:adjacency[caller].add(key(owner,(request['start_rva'],request['end_rva'])))
+                slot=edge.get('target',{}).get('slot_rva')
+                owners=[(image,request) for image in images
+                        if image['witness']['image_sha256']==edge['target_image_sha256']
+                        for request in [census_import_request(image,view['image_sha256'],slot)] if request is not None]
+                if len(owners)!=1 or owners[0][1]!=edge.get('target_import_request'):
+                    import_unknowns.append({'kind':'RequiredImportReachability','image_sha256':view['image_sha256'],
+                                            'instruction_rva':edge['instruction_rva'],'slot_rva':slot,
+                                            'reason':'MissingWrongOrAmbiguousImportOrigin'})
+                    continue
+                owner,request=owners[0]
+                for caller in callers:adjacency[caller].add(key(owner['witness'],(request['start_rva'],request['end_rva'])))
         reachable={}
         for root,seed in roots.items():
             seen=set();pending=list(seed)
@@ -865,7 +893,7 @@ class ClosureCensus:
         views=[image['witness'] for image in images]
         unresolved=[edge for view in views for edge in view.get('edges',[]) if edge.get('obligation')=='Unresolved']
         pending=[{'image':view['image_sha256'],'extent':span} for view in views for span in view.get('pending',[])]
-        unknowns=self.unknowns+[request for view in views for request in view.get('requests',[]) if request.get('resolution')!='Resolved']
+        unknowns=self.unknowns+import_unknowns+[request for view in views for request in view.get('requests',[]) if request.get('resolution')!='Resolved']
         unknowns += [data for view in views for data in view.get('data_requests',[]) if data.get('resolution')!='Resolved']
         status='CENSUS_INCOMPLETE_UNRESOLVED' if not nodes or unknowns or unresolved or pending else 'CENSUS_COMPLETE_DIAGNOSTIC_ONLY'
         return {'schema':CENSUS_SCHEMA,'status':status,'admission':'NotAuthorized','limits':CENSUS_LIMITS,
@@ -1036,6 +1064,12 @@ def follow_required_edge(directory,images,module_index,span,edge,census=None):
             if len(owners)!=1:
                 edge['obligation']='Unresolved';edge['reason']='MissingRequiredSameProcessImportTarget'
             else:
+                if census is not None:
+                    imported=census_import_request(owners[0],view['image_sha256'],slot)
+                    if imported is None:
+                        edge['obligation']='Unresolved';edge['reason']='MissingRequiredSameProcessImportTarget'
+                        return
+                    edge['target_import_request']=dict(imported)
                 edge['target_image_sha256']=owners[0]['witness']['image_sha256']
                 if census is not None:
                     edge['obligation']='Unresolved';edge['reason']='SampledDispatchIsNotCompleteFiniteTargetSet'
@@ -1221,7 +1255,9 @@ def runtime_images(directory,parsed,rust_raw,census=None):
                     image={'raw':raw,'file':prefix+'-module.bin','witness':witness,'pre':identity}
                     if census is not None:image['root_image_sha256']=digest(rust_raw)
                     modules.append(image);by_slot[i]=image
-                    request_range(witness,raw,target,'ActualOwnProcessImportTarget',{'kind':'RuntimeImport','slot_rva':declared['slot_rva']},census)
+                    origin={'kind':'RuntimeImport','slot_rva':declared['slot_rva']}
+                    if census is not None:origin['root_image_sha256']=image['root_image_sha256']
+                    request_range(witness,raw,target,'ActualOwnProcessImportTarget',origin,census)
                 else:
                     before=by_slot[i]['pre']
                     require(before['slot']==identity['slot'] and before['runtime']==identity['runtime'] and

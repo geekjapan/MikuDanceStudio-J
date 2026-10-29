@@ -1755,6 +1755,120 @@ class CensusControls(unittest.TestCase):
             r.replay(Path('/inert-census'))
 
 
+class ImportReachabilityControls(unittest.TestCase):
+    def imported(self,shared=False):
+        raw,directory,files,parsed=runtime_fixture()
+        declarations=r.import_slots(raw,r.ClosureCensus())
+        declarations.append(dict(declarations[0],slot_rva=0x3068,imported_symbol='memset'))
+        for phase,snapshot in zip(('pre','post'),parsed['runtime_imports']):
+            actual=dict(snapshot['slots'][0],slot_rva=0x3068,target_va=0x140000000+(0x1000 if shared else 0x1020))
+            snapshot['slots'].append(actual)
+            for path,body in list(files.items()):
+                if f'runtime-{phase}-0-' in path.name:
+                    files[path.with_name(path.name.replace('-0-','-1-'))]=body
+            files[directory/f'runtime-{phase}-1-iat.bin']=struct.pack('<Q',actual['target_va'])
+        caller_raw=raw[:1800]+b'x'+raw[1801:]
+        census=r.ClosureCensus()
+        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(r,'checked',return_value=({'pid':123},b'',b'')),patch.object(r,'import_slots',return_value=declarations):
+            imports=r.runtime_images(directory,parsed,caller_raw,census)
+        self.assertFalse(census.unknowns);self.assertEqual(len(imports),2)
+        view={'image_sha256':r.digest(caller_raw),'sections':r.pe_code(caller_raw)[1],
+              'ranges':[],'requests':[],'edges':[],'data_requests':[],'pending':[],'decoded':[]}
+        for i,slot in enumerate((0x3060,0x3068)):
+            start=0x1040+i*16
+            view['ranges'].append(r.pe_code(caller_raw)[3](start,start+8,True))
+            view['requests'].append({'role':'CallerRoot','origin':{'kind':'RuntimeSite','owner':i},
+                                     'resolution':'Resolved','start_rva':start,'end_rva':start+8})
+            view['edges'].append({'instruction_rva':start,'obligation':'Required',
+                                  'target':{'kind':'RipRelativeIatSlot','slot_rva':slot}})
+        images=[{'raw':caller_raw,'witness':view}]+imports
+        for span,edge in zip(view['ranges'],view['edges']):r.follow_required_edge(directory,images,0,span,edge,census)
+        return census,images
+
+    def callers(self,summary):
+        return {json.loads(root)['origin']['owner']:set(nodes) for root,nodes in summary['root_reachability'].items()
+                if json.loads(root)['role']=='CallerRoot'}
+
+    def test_same_dll_distinct_slots_keep_exact_targets_and_roots(self):
+        census,images=self.imported();result=census.summary(images);callers=self.callers(result)
+        sha=images[1]['witness']['image_sha256'];first=sha+':4096:4104';second=sha+':4128:4136'
+        self.assertIn(first,callers[0]);self.assertNotIn(second,callers[0])
+        self.assertIn(second,callers[1]);self.assertNotIn(first,callers[1])
+        self.assertEqual(result['physical_unique'],4);self.assertEqual(result['logical_requests'],4)
+        for node,roots in result['shared_sets'].items():
+            self.assertLessEqual(sum(json.loads(root)['role']=='CallerRoot' for root in roots),1)
+        self.assertEqual(result['status'],'CENSUS_INCOMPLETE_UNRESOLVED')
+        self.assertTrue(all(edge['reason']=='SampledDispatchIsNotCompleteFiniteTargetSet' for edge in images[0]['witness']['edges']))
+
+    def test_two_slots_can_share_one_physical_target_without_losing_requests(self):
+        census,images=self.imported(True);result=census.summary(images);callers=self.callers(result)
+        target=images[1]['witness']['image_sha256']+':4096:4104'
+        self.assertIn(target,callers[0]&callers[1]);self.assertEqual(result['physical_unique'],3)
+        self.assertEqual(result['logical_requests'],4)
+        self.assertEqual(sum(json.loads(root)['role']=='CallerRoot' for root in result['shared_sets'][target]),2)
+        self.assertNotEqual(images[1]['witness']['requests'][0]['origin'],images[2]['witness']['requests'][0]['origin'])
+
+    def test_same_dll_and_slot_from_different_root_images_stay_separate(self):
+        census,images=self.imported();first,second=images[1:]
+        caller=images[0];other=copy.deepcopy(caller)
+        other['raw']=other['raw'][:1801]+b'y'+other['raw'][1802:]
+        other['witness']['image_sha256']=r.digest(other['raw'])
+        caller['witness']['ranges']=caller['witness']['ranges'][:1]
+        caller['witness']['requests']=caller['witness']['requests'][:1]
+        caller['witness']['edges']=caller['witness']['edges'][:1]
+        other['witness']['ranges']=other['witness']['ranges'][1:]
+        other['witness']['requests']=other['witness']['requests'][1:]
+        other['witness']['edges']=other['witness']['edges'][1:]
+        second['root_image_sha256']=other['witness']['image_sha256']
+        for phase in ('pre','post'):second[phase]['slot']['slot_rva']=0x3060
+        second['witness']['requests'][0]['origin'].update(root_image_sha256=second['root_image_sha256'],slot_rva=0x3060)
+        edge=other['witness']['edges'][0];edge['target']['slot_rva']=0x3060;edge['obligation']='Required'
+        edge.pop('target_image_sha256');edge.pop('target_import_request')
+        images=[caller,other,first,second]
+        r.follow_required_edge(None,images,1,other['witness']['ranges'][0],edge,census)
+        result=census.summary(images);callers=self.callers(result);sha=first['witness']['image_sha256']
+        self.assertIn(sha+':4096:4104',callers[0]);self.assertNotIn(sha+':4128:4136',callers[0])
+        self.assertIn(sha+':4128:4136',callers[1]);self.assertNotIn(sha+':4096:4104',callers[1])
+        self.assertEqual(result['physical_unique'],4);self.assertEqual(result['logical_requests'],4)
+
+    def test_wrong_missing_ambiguous_import_identity_cannot_invent_edges(self):
+        census,original=self.imported();legal=self.callers(census.summary(original))
+        target=original[1]['witness']['image_sha256']+':4096:4104';self.assertIn(target,legal[0])
+        def refreshed_hashes(images):
+            owner=images[1];sha='f'*64;owner['witness']['image_sha256']=sha
+            owner['pre']['module_sha256']=sha;owner['post']['module_sha256']=sha
+            owner['witness']['requests'][0]['image_sha256']=sha
+            edge=images[0]['witness']['edges'][0];edge['target_image_sha256']=sha;edge['target_import_request']['image_sha256']=sha
+            owner['witness']['requests'][0]['origin']['root_image_sha256']='e'*64
+        def refreshed_extent(images):
+            request=images[1]['witness']['requests'][0];request['end_rva']=0x1007
+            images[1]['witness']['ranges'][0]['end_rva']=0x1007
+            images[0]['witness']['edges'][0]['target_import_request']['end_rva']=0x1007
+        peers={
+            'slot':lambda images:images[1]['witness']['requests'][0]['origin'].update(slot_rva=0x3068),
+            'root':lambda images:images[1].update(root_image_sha256='e'*64),
+            'origin-root':lambda images:images[1]['witness']['requests'][0]['origin'].update(root_image_sha256='e'*64),
+            'extent':lambda images:images[1]['witness']['requests'][0].update(end_rva=0x1007),
+            'actual-target':lambda images:images[1]['pre']['runtime'].update(target_va=0x140001020),
+            'edge-extent':lambda images:images[0]['witness']['edges'][0]['target_import_request'].update(end_rva=0x1007),
+            'missing-origin':lambda images:images[1]['witness']['requests'][0].pop('origin'),
+            'missing-edge-key':lambda images:images[0]['witness']['edges'][0].pop('target_import_request'),
+            'same-sha-alias':lambda images:images.append(copy.deepcopy(images[1])),
+            'refreshed-incidental-hashes':refreshed_hashes,
+            'refreshed-wrong-extent':refreshed_extent,
+        }
+        for name,mutate in peers.items():
+            with self.subTest(peer=name):
+                images=copy.deepcopy(original);mutate(images);result=census.summary(images);callers=self.callers(result)
+                self.assertEqual(len(callers[0]),1)
+                self.assertEqual(result['status'],'CENSUS_INCOMPLETE_UNRESOLVED')
+                self.assertTrue(any(row.get('kind')=='RequiredImportReachability' for row in result['unknowns']))
+                edge=images[0]['witness']['edges'][0];edge.pop('target_image_sha256',None);edge.pop('target_import_request',None);edge['obligation']='Required'
+                r.follow_required_edge(None,images,0,images[0]['witness']['ranges'][0],edge,census)
+                if name not in ('edge-extent','missing-edge-key'):
+                    self.assertNotIn('target_import_request',edge)
+
+
 class CustodyControls(unittest.TestCase):
     def exercise(self,failure=None):
         from types import SimpleNamespace

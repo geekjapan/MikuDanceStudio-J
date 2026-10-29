@@ -584,6 +584,12 @@ class Controls(unittest.TestCase):
         read_bytes=Path.read_bytes;read_text=Path.read_text
         with patch.object(Path,'read_bytes',lambda path:files[path] if path in files else read_bytes(path)),patch.object(Path,'read_text',lambda path,**kwargs:files[path].decode() if path in files else read_text(path,**kwargs)),patch.object(r.previous,'evidence_inventory',inventory),patch.object(r,'verify_sources'),patch.object(r,'checked',lambda directory,label:receipts[(directory.name,label)]),patch.object(r,'native_provenance',lambda commands,recipe,*args:str(r.PureWindowsPath(recipe['native_target'])/'Release/floor_profile.exe')),patch.object(r,'cargo_binary',return_value='synthetic-cargo-executable'),patch.object(r,'pe_exports',return_value=exports),patch.object(r,'compiled_evidence',return_value={}):
             self.assertEqual(r.replay(out),result)
+            complete=copy.deepcopy(builds[1])
+            for field in ('objects','compiled_capture'):builds[1].pop(field)
+            builds[1]['binaries'].pop('d3dx9_43.dll');seal()
+            with self.assertRaises((ValueError,KeyError)):r.replay(out)
+            builds[1].clear();builds[1].update(complete);seal()
+            self.assertEqual(r.replay(out),result)
             result['results']['Od']['causal_qualification'][0]['operation_environment']='Proved';seal()
             with self.assertRaises(ValueError):r.replay(out)
             result['results']['Od']=r.classify(*parsed['observed-Od']);seal()
@@ -831,7 +837,7 @@ class Controls(unittest.TestCase):
              patch.object(r,'record',record),patch.object(r.shutil,'copyfile'),patch.object(r.shutil,'copytree'),patch.object(r.c,'safe_tar',return_value={}), \
              patch.object(r.c,'source_inventory',return_value={}),patch.object(r,'inputs',return_value=[]),patch.object(r,'source_expected',return_value=({}, {}, {})), \
              patch.object(r,'native_commands',return_value=[]),patch.object(r,'parse',parse),patch.object(r,'cargo_binary',return_value='synthetic-cargo'), \
-             patch.object(r,'fixture_result',boundary):
+             patch.object(r,'fixture_result',boundary),patch.object(r,'write_json'):
             with self.assertRaises(Complete):r.run(out,build,toolchain)
         self.assertEqual(captured,['mesh_dump','x_files'])
 
@@ -989,30 +995,76 @@ class Controls(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'retained hosted instruction tool changed'):
                 r.record(directory,'rust-instructions-0',[str(r.DISASSEMBLER)],'source',{})
 
-    def test_36_build_row_survives_optional_acquisition_failure(self):
+    def producer_receipts(self,failure):
         tree=ast.parse(Path(r.__file__).read_bytes());run=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='run')
-        loop=next(n for n in run.body if isinstance(n,ast.For) and isinstance(n.target,ast.Name) and n.target.id=='opt').body[0]
-        start=next(i for i,n in enumerate(loop.body) if isinstance(n,ast.Assign) and isinstance(n.targets[0],ast.Name) and n.targets[0].id=='b')
-        block=compile(ast.Module(body=loop.body[start:],type_ignores=[]),str(r.__file__),'exec')
-        for failure in (True,False):
-            state=dict(r.__dict__,id='observed-Od',variant='observed',opt='Od',source=Path('/source'),target=Path('/target'),directory=Path('/evidence/observed-Od'),commands={},patches={},expected={},actual=[],binaries={},objects={},native_target=Path('/native'),executable='/rust.exe',creation=123,parsed={},out=Path('/evidence'),m={'builds':[]},native={},rust={},r={},e={})
-            retained=[]
-            def acquire(*args):
-                self.assertEqual(len(retained),1)
-                self.assertEqual(retained[0]['builds'][0]['runtime_corpus']['created_ns'],123)
-                self.assertNotIn('compiled_capture',retained[0]['builds'][0])
-                if failure:raise ValueError('acquisition failed')
-                return {'native':{},'rust':{}}
-            state['compiled_evidence']=acquire;state['write_json']=lambda path,value:retained.append(copy.deepcopy(value))
-            with patch.object(Path,'read_bytes',return_value=b'compiled image'),patch.object(r.c,'source_inventory',return_value={}):
-                if failure:
-                    with self.assertRaisesRegex(ValueError,'acquisition failed'):exec(block,state)
-                    self.assertEqual(len(retained),1)
-                    self.assertEqual(state['parsed'],{})
-                else:
-                    exec(block,state)
-                    self.assertEqual(len(retained),2)
-                    self.assertEqual(retained[1]['builds'][0]['compiled_capture'],{'native':{},'rust':{}})
+        outer=next(n for n in run.body if isinstance(n,ast.For) and isinstance(n.target,ast.Name) and n.target.id=='opt');loop=outer.body[0]
+        start=next(i for i,n in enumerate(loop.body) if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call) and isinstance(n.value.func,ast.Attribute) and n.value.func.attr=='write_bytes')
+        tail=run.body[run.body.index(outer)+1:]
+        block=compile(ast.fix_missing_locations(ast.Module(body=loop.body[start:]+[ast.Expr(n.value) if isinstance(n,ast.Return) else n for n in tail],type_ignores=[])),str(r.__file__),'exec')
+        directory=Path('/evidence/observed-Od');out=directory.parent;prior={'id':'control-Od','retained':'prior receipt'}
+        state=dict(r.__dict__,id='observed-Od',variant='observed',opt='Od',source=Path('/source'),target=Path('/target'),directory=directory,commands={n:[n] for n in ('native','rust','mesh_dump','x_files')},patches={'known':'patch'},expected={'known':'source'},actual=['compiler argv'],native_target=Path('/native'),executable='/rust.exe',parsed={'observed-O2':({}, {})},out=out,m={'builds':[copy.deepcopy(prior)]},r={},e={},head='synthetic-head')
+        files={};retained=[];calls=[];parses=[];acquisitions=[]
+        def read(path):return files.get(path,b'compiled image')
+        def write(path,raw):files[path]=raw;return len(raw)
+        def save(path,value):files[path]=copy.deepcopy(value);retained.append((path,copy.deepcopy(value)))
+        def record(directory,label,*args):
+            calls.append(label)
+            self.assertEqual(files[out/'manifest.json']['builds'][0],prior)
+            self.assertEqual(files[out/'manifest.json']['builds'][1]['runtime_corpus']['created_ns'],123)
+            if failure==label+'-exception':raise OSError(label+' launch failed')
+            return {'status':1 if failure==label+'-nonzero' else 0}
+        def parse(raw,language,observed):
+            parses.append(language)
+            if failure==language+'-parse':return r.parse(b'',language,observed)
+            return {'dll':{'path':'/dll'}} if language=='native' else {}
+        def acquire(*args):
+            acquisitions.append(True)
+            row=files[out/'manifest.json']['builds'][1]
+            self.assertIn('after',row);self.assertIn('objects',row)
+            self.assertEqual(set(row['binaries']),{'floor_profile.exe','rust-profile.exe','d3dx9_43.dll'})
+            self.assertNotIn('compiled_capture',row)
+            if failure=='llvm':raise ValueError('acquisition failed')
+            return {'native':{},'rust':{}}
+        state.update(record=record,parse=parse,write_json=save,compiled_evidence=acquire,fixture_result=lambda *args:None,classify=lambda *args:{},replay=lambda *args:{})
+        with patch.object(Path,'read_bytes',read),patch.object(Path,'write_bytes',write),patch.object(Path,'mkdir'),patch.object(Path,'rglob',return_value=[Path('/native/core/accessory.obj'),Path('/native/console/native.obj')]),patch.object(r.shutil,'copyfile',lambda source,target:write(target,read(source))),patch.object(r.c,'source_inventory',return_value=state['expected']),patch.object(r.previous.time,'time_ns',side_effect=[123]),patch.object(r.previous,'evidence_inventory',return_value={}):
+            if failure:
+                with self.assertRaises((OSError,ValueError)):exec(block,state)
+            else:exec(block,state)
+        manifests=[value for path,value in retained if path==out/'manifest.json']
+        self.assertEqual(files[directory/'operations.bin'],r.operation_corpus())
+        self.assertEqual(len(manifests[0]['builds']),2);self.assertEqual(manifests[0]['builds'][0],prior)
+        partial=manifests[0]['builds'][1]
+        self.assertEqual(partial['runtime_corpus'],{'sha256':r.digest(r.operation_corpus()),'size':152,'created_ns':123})
+        self.assertEqual(set(partial['binaries']),{'floor_profile.exe','rust-profile.exe'})
+        for field in ('after','objects','compiled_capture'):self.assertNotIn(field,partial)
+        for value in manifests:
+            self.assertEqual(len(value['builds']),2);self.assertEqual(value['builds'][0],prior)
+            self.assertEqual(value['builds'][1]['runtime_corpus'],partial['runtime_corpus'])
+        if failure:
+            self.assertNotIn('observed-Od',state['parsed'])
+            self.assertNotIn(out/'result.json',files);self.assertNotIn(out/'seal.json',files)
+            self.assertNotIn('compiled_capture',manifests[-1]['builds'][1])
+        else:
+            self.assertIn('observed-Od',state['parsed'])
+            self.assertEqual(manifests[-1]['builds'][1]['compiled_capture'],{'native':{},'rust':{}})
+            self.assertIn(out/'result.json',files);self.assertIn(out/'seal.json',files)
+        return manifests,calls,parses,acquisitions
+
+    def test_36_build_row_survives_optional_acquisition_failure(self):
+        for failure in ('llvm',None):
+            with self.subTest(failure=failure):
+                manifests,calls,parses,acquisitions=self.producer_receipts(failure)
+                self.assertEqual(len(manifests),2 if failure else 3)
+                self.assertEqual(calls,['native','rust','mesh_dump','x_files'])
+                self.assertEqual(parses,['native','rust']);self.assertEqual(acquisitions,[True])
+
+    def test_47_early_runtime_failure_preserves_partial_receipts(self):
+        for failure in ('native-nonzero','native-exception','native-parse','rust-nonzero','rust-exception','rust-parse'):
+            with self.subTest(failure=failure):
+                manifests,calls,parses,acquisitions=self.producer_receipts(failure)
+                self.assertEqual(len(manifests),1);self.assertEqual(acquisitions,[])
+                self.assertEqual(calls,['native','rust'] if failure.startswith('rust') else ['native'])
+                self.assertEqual(parses,(['native','rust'] if failure=='rust-parse' else ['native']) if failure.startswith('rust') else (['native'] if failure=='native-parse' else []))
 
     def test_37_leaf_candidate_and_signed_import_thunk(self):
         raw,mapping,rows,_=code_fixture();changed=bytearray(raw)

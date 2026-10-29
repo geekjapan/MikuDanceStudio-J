@@ -1437,6 +1437,12 @@ def run(out,build_root,toolchain):
             shutil.copyfile(native_target/'Release/floor_profile.map',directory/'native.map')
             shutil.copyfile(Path(executable).with_suffix('.map'),directory/'rust.map')
             (directory/'operations.bin').write_bytes(operation_corpus());creation=previous.time.time_ns()
+            binaries={}
+            for name in ('floor_profile.exe','rust-profile.exe'):
+                raw=(directory/name).read_bytes();binaries[name]={'sha256':digest(raw),'size':len(raw)}
+            b={'id':id,'variant':variant,'optimization':opt,'source':str(source),'target':str(target),'evidence':str(directory),'commands':commands,'patches':patches,'before':expected,'actual_native_commands':actual,'binaries':binaries,'original_native_binary':{'path':str(native_target/'Release/floor_profile.exe'),'sha256':digest((native_target/'Release/floor_profile.exe').read_bytes())},'original_rust_binary':{'path':executable,'sha256':digest(Path(executable).read_bytes())}}
+            b['runtime_corpus']={'sha256':digest(operation_corpus()),'size':152,'created_ns':creation}
+            m['builds'].append(b);write_json(out/'manifest.json',m)
             require(record(directory,'native',commands['native'],source,e,300)['status']==0,'native normal exit required')
             native=parse((directory/'native.stdout').read_bytes(),'native',variant=='observed')
             shutil.copyfile(native['dll']['path'],directory/'d3dx9_43.dll')
@@ -1452,12 +1458,9 @@ def run(out,build_root,toolchain):
                 retained=directory/'objects'/relative;retained.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(object_path,retained)
                 raw=retained.read_bytes();objects[relative]={'sha256':digest(raw),'size':len(raw)}
             require(any(path.endswith('/accessory.obj') for path in objects) and any(path.endswith('/native.obj') for path in objects),'actual core and console object files')
-            binaries={}
-            for name in ('floor_profile.exe','rust-profile.exe','d3dx9_43.dll'):
-                raw=(directory/name).read_bytes();binaries[name]={'sha256':digest(raw),'size':len(raw)}
-            b={'id':id,'variant':variant,'optimization':opt,'source':str(source),'target':str(target),'evidence':str(directory),'commands':commands,'patches':patches,'before':expected,'after':c.source_inventory(source),'actual_native_commands':actual,'binaries':binaries,'objects':objects,'original_native_binary':{'path':str(native_target/'Release/floor_profile.exe'),'sha256':digest((native_target/'Release/floor_profile.exe').read_bytes())},'original_rust_binary':{'path':executable,'sha256':digest(Path(executable).read_bytes())}}
-            b['runtime_corpus']={'sha256':digest(operation_corpus()),'size':152,'created_ns':creation}
-            m['builds'].append(b);write_json(out/'manifest.json',m)
+            raw=(directory/'d3dx9_43.dll').read_bytes();binaries['d3dx9_43.dll']={'sha256':digest(raw),'size':len(raw)}
+            b.update(after=c.source_inventory(source),objects=objects)
+            write_json(out/'manifest.json',m)
             if variant=='observed':
                 b['compiled_capture']=compiled_evidence(directory,(native,rust),r,True,e)
                 write_json(out/'manifest.json',m)

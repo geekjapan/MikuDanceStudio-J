@@ -1408,7 +1408,7 @@ diff --git a/c2rust-transpile/src/c_ast/closed_plan_tests.rs b/c2rust-transpile/
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_plan_tests.rs
-@@ -0,0 +1,321 @@
+@@ -0,0 +1,350 @@
 +use super::*;
 +use crate::program::{command_identity, native_database_row, native_sources};
 +
@@ -1460,6 +1460,26 @@ new file mode 100644
 +fn reasons(plan: &ClosedVariadicPlan, name: &str) -> BTreeSet<Blocker> {
 +    plan.units.values().flat_map(|u| u.declarations.values()).filter(|d| d.name == name)
 +        .flat_map(|d| d.blockers.iter().cloned()).collect()
++}
++
++#[test]
++fn closed_variadic_plan_fresh_threads_own_span_reservations() {
++    for stage in ["first", "second"] {
++        std::thread::spawn(move || {
++            let mut units = vec![native(
++                "int f(int n,...){return n;} int g(void){return f(1,2);}", "threads.c", &[])];
++            let p = plan(&mut units);
++            assert!(!p.units[&units[0].identity.key].calls.is_empty());
++            let output = emit(&p, units.pop().unwrap());
++            assert!(output.contains("f") && output.contains("g"));
++            let left = <proc_macro2::Span as crate::rust_ast::SpanExt>::new(1, 2);
++            let right = <proc_macro2::Span as crate::rust_ast::SpanExt>::new(3, 4);
++            let joined = left.join(right).unwrap();
++            assert_eq!(joined.start(), left.start());
++            assert_eq!(joined.end(), right.end());
++            println!("COMMON_PLAN_THREAD_EMIT {stage}");
++        }).join().unwrap();
++    }
 +}
 +
 +#[test]
@@ -1588,12 +1608,21 @@ new file mode 100644
 +
 +#[test]
 +fn closed_variadic_plan_missing_authentic_call_is_used_by_emitter() {
-+    let mut units=vec![native("int f(int n,...){return n;} int g(void){return f(1,2);}","calls.c",&[])];
++    let source = "int f(int n,...){return n;} int g(void){return f(1,2);}";
++    let mut baseline = vec![native(source, "calls.c", &[])];
++    let legal = plan(&mut baseline);
++    let output = emit(&legal, baseline.pop().unwrap());
++    assert!(output.contains("f") && output.contains("g"));
++    let mut units=vec![native(source,"calls.c",&[])];
 +    let mut p=plan(&mut units);
 +    let key=units[0].identity.key.clone();
 +    p.units.get_mut(&key).unwrap().calls.clear();
 +    let u=units.pop().unwrap();
-+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(||emit(&p,u))).is_err());
++    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||emit(&p,u)))
++        .expect_err("emitter must reject a missing authentic enclosing Call ID");
++    let message = panic.downcast_ref::<String>().map(String::as_str)
++        .or_else(|| panic.downcast_ref::<&str>().copied());
++    assert_eq!(message, Some("closed plan missing authentic enclosing Call ID"));
 +}
 +
 +#[test]
@@ -6294,7 +6323,7 @@ diff --git a/c2rust-transpile/src/rust_ast/mod.rs b/c2rust-transpile/src/rust_as
 @@ -7,21 +7,25 @@
  use proc_macro2::Span;
  use syn::{punctuated::Punctuated, Expr, Pat};
- 
+
 -use std::sync::atomic::{AtomicU32, Ordering};
 -
 -static SPAN_LIMIT: AtomicU32 = AtomicU32::new(0);
@@ -6303,7 +6332,7 @@ diff --git a/c2rust-transpile/src/rust_ast/mod.rs b/c2rust-transpile/src/rust_as
 +thread_local! {
 +    static SPAN_LIMIT: Cell<u32> = const { Cell::new(0) };
 +}
- 
+
  fn raise_span_limit(_new_limit: u32) {
 -    let limit = SPAN_LIMIT.load(Ordering::Relaxed);
 -    let new_limit = 0x2000000;
@@ -6328,5 +6357,5 @@ diff --git a/c2rust-transpile/src/rust_ast/mod.rs b/c2rust-transpile/src/rust_as
 +        }
 +    });
  }
- 
+
  /// Make a new span at `pos`

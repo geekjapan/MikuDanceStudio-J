@@ -398,7 +398,10 @@ def validate_worker_error(event, case, pid, seq):
 
 
 def controller_context(mode, case, pid, events, error):
-    received = next((event for event in reversed(events) if event['kind'] != 'send'), None)
+    received = next((event for event in reversed(events)
+                     if type(event) is dict and type(event.get('kind')) is str
+                     and event['kind'] and event['kind'] != 'send'
+                     and all(type(event.get(key)) is int and event[key] > 0 for key in ('seq', 'pid'))), None)
     last = {key: received.get(key) for key in ('kind', 'seq', 'pid')} if received is not None else None
     return dict(mode=mode, case=case, pid=pid, last_received=last,
                 error_type=type(error).__name__, message=str(error)[:400],
@@ -980,10 +983,14 @@ def controller(args):
                         send(first)
                 process.wait(timeout=max(0.01, 25 - (time.monotonic() - launched_at)))
             except BaseException as error:
-                diagnostic('worker-failure', **controller_context(mode, name, process.pid if process else None, events, error))
-                if process is not None and held_fd is not None and process.poll() is None:
-                    signal.pidfd_send_signal(held_fd, signal.SIGKILL)
-                    process.wait(timeout=5)
+                try:
+                    diagnostic('worker-failure', **controller_context(mode, name, process.pid if process else None, events, error))
+                except Exception:
+                    pass
+                finally:
+                    if process is not None and held_fd is not None and process.poll() is None:
+                        signal.pidfd_send_signal(held_fd, signal.SIGKILL)
+                        process.wait(timeout=5)
                 raise
             finally:
                 if held_fd is not None:

@@ -586,6 +586,18 @@ class SourceDataTests(unittest.TestCase):
                 for history in ([received] + outgoing, [send, event, send, received] + outgoing):
                     context = controls.controller_context('optimized', 'entry-2-15', 101, history, failure)
                     self.assertEqual(context['last_received'], dict(kind=kind, seq=7, pid=101))
+        malformed = [dict(seq=1, pid=100), None, False, 0, 1.5, 'ready-first', [], [event], {},
+                     dict(kind=None, seq=1, pid=100), dict(kind=[], seq=1, pid=100),
+                     dict(kind='', seq=1, pid=100), dict(kind='ready-first', pid=100),
+                     dict(kind='ready-first', seq=True, pid=100), dict(kind='ready-first', seq=1, pid='100'),
+                     dict(kind='ready-first', seq=0, pid=100), dict(kind='ready-first', seq=1, pid=-1)]
+        for value in malformed:
+            for history in ([value], [send, value, send]):
+                context = controls.controller_context('normal', 'baseline', 100, history, failure)
+                self.assertIsNone(context['last_received'])
+            for history in ([event, value], [send, event, send, value, send]):
+                context = controls.controller_context('normal', 'baseline', 100, history, failure)
+                self.assertEqual(context['last_received'], dict(kind='wait-enter', seq=3, pid=100))
         source = ast.parse((HERE / 'run_cmp_input.py').read_text())
         owner = next(node for node in source.body if isinstance(node, ast.ClassDef) and node.name == 'WrapperRun')
         methods = {node.name: node for node in owner.body if isinstance(node, ast.FunctionDef)}
@@ -604,6 +616,47 @@ class SourceDataTests(unittest.TestCase):
         self.assertIn('owner.execute(product_args)', body)
         self.assertIn("state['stage'] = 'source-import'", body)
         self.assertIn("state['execute_error'] = error", body)
+
+    def test_controller_diagnostic_failure_preserves_cleanup_and_error(self):
+        tree = ast.parse((HERE / 'check_cmp_82dc_os_controls.py').read_text())
+        controller = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'controller')
+        handler = next(node for node in ast.walk(controller) if isinstance(node, ast.ExceptHandler)
+                       and isinstance(node.type, ast.Name) and node.type.id == 'BaseException' and node.name == 'error')
+        for original in (ValueError('original IPC failure'), KeyboardInterrupt(), SystemExit(7)):
+            for stage in ('context', 'serialization', 'stderr'):
+                for reporting in (None, ValueError('diagnostic failure'), KeyboardInterrupt(), SystemExit(9)):
+                    with self.subTest(original=type(original).__name__, stage=stage, reporting=type(reporting).__name__):
+                        calls = []
+                        def fail_at(point):
+                            calls.append(point)
+                            if stage == point and reporting is not None:
+                                raise reporting
+                        def context(*args):
+                            fail_at('context')
+                            return {}
+                        def diagnostic(*args, **kwargs):
+                            fail_at('serialization')
+                            fail_at('stderr')
+                        def poll():
+                            calls.append('poll')
+                            return None
+                        def kill(fd, sig):
+                            self.assertEqual((fd, sig), (10, 9))
+                            calls.append('kill')
+                        def wait(timeout):
+                            self.assertEqual(timeout, 5)
+                            calls.append('wait')
+                        namespace = dict(controller_context=context, diagnostic=diagnostic, mode='normal', name='baseline',
+                            process=SimpleNamespace(pid=100, poll=poll, wait=wait), held_fd=10, events=[], original=original,
+                            signal=SimpleNamespace(pidfd_send_signal=kill, SIGKILL=9))
+                        attempt = ast.Try(body=[ast.Raise(exc=ast.Name(id='original', ctx=ast.Load()))],
+                                          handlers=[copy.deepcopy(handler)], orelse=[], finalbody=[])
+                        program = ast.fix_missing_locations(ast.Module(body=[attempt], type_ignores=[]))
+                        expected = reporting if isinstance(reporting, (KeyboardInterrupt, SystemExit)) else original
+                        with self.assertRaises(type(expected)) as raised:
+                            exec(compile(program, '<controller-error-handler>', 'exec'), namespace)
+                        self.assertIs(raised.exception, expected)
+                        self.assertEqual(calls[-3:], ['poll', 'kill', 'wait'])
 
     def test_four_seal_negatives(self):
         original = {'a': {'mode': 292, 'size': 1, 'sha256': controls.digest(b'a')}}

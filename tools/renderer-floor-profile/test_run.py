@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import copy
+from contextlib import ExitStack
 import ast
 import importlib.util
 import io
@@ -1030,11 +1031,14 @@ class Controls(unittest.TestCase):
     def producer_receipts(self,failure):
         tree=ast.parse(Path(r.__file__).read_bytes());run=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='run')
         outer=next(n for n in run.body if isinstance(n,ast.For) and isinstance(n.target,ast.Name) and n.target.id=='opt');loop=outer.body[0]
-        start=next(i for i,n in enumerate(loop.body) if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call) and isinstance(n.value.func,ast.Attribute) and n.value.func.attr=='write_bytes')
+        producer=next(n for n in loop.body if isinstance(n,ast.Try)).body
+        start=next(i for i,n in enumerate(producer) if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call) and isinstance(n.value.func,ast.Attribute) and n.value.func.attr=='write_bytes')
         tail=run.body[run.body.index(outer)+1:]
-        block=compile(ast.fix_missing_locations(ast.Module(body=loop.body[start:]+[ast.Expr(n.value) if isinstance(n,ast.Return) else n for n in tail],type_ignores=[])),str(r.__file__),'exec')
+        class ReturnAsExpression(ast.NodeTransformer):
+            def visit_Return(self,node):return ast.copy_location(ast.Expr(node.value),node)
+        block=compile(ast.fix_missing_locations(ReturnAsExpression().visit(ast.Module(body=producer[start:]+tail,type_ignores=[]))),str(r.__file__),'exec')
         directory=Path('/evidence/observed-Od');out=directory.parent;prior={'id':'control-Od','retained':'prior receipt'}
-        state=dict(r.__dict__,id='observed-Od',variant='observed',opt='Od',source=Path('/source'),target=Path('/target'),directory=directory,commands={n:[n] for n in ('native','rust','mesh_dump','x_files')},patches={'known':'patch'},expected={'known':'source'},actual=['compiler argv'],native_target=Path('/native'),executable='/rust.exe',parsed={'observed-O2':({}, {})},out=out,m={'builds':[copy.deepcopy(prior)]},r={},e={},head='synthetic-head')
+        state=dict(r.__dict__,census_mode=False,id='observed-Od',variant='observed',opt='Od',source=Path('/source'),target=Path('/target'),directory=directory,commands={n:[n] for n in ('native','rust','mesh_dump','x_files')},patches={'known':'patch'},expected={'known':'source'},actual=['compiler argv'],native_target=Path('/native'),executable='/rust.exe',parsed={'observed-O2':({}, {})},out=out,m={'builds':[copy.deepcopy(prior)]},r={},e={},head='synthetic-head')
         files={};retained=[];calls=[];parses=[];acquisitions=[]
         def read(path):return files.get(path,b'compiled image')
         def write(path,raw):files[path]=raw;return len(raw)
@@ -1538,6 +1542,199 @@ class Controls(unittest.TestCase):
         for probe in probes:
             with self.assertRaises(ValueError):probe()
         self.assertFalse(target.exists())
+
+
+class CensusControls(unittest.TestCase):
+    def view(self,count=1):
+        return {'image_sha256':'a'*64,'sections':[{}],
+                'ranges':[{'start_rva':i*8,'end_rva':i*8+8,'bytes':'00'*8} for i in range(count)],
+                'requests':[],'edges':[],'data_requests':[],'pending':[],'decoded':[]}
+
+    def test_default_cap_and_exact_first_violation(self):
+        view=self.view(128);r.closure_budget([view]);census=r.ClosureCensus();census.register(view);census.check()
+        self.assertIsNone(census.first_ordinary_violation)
+        view['ranges'].append({'start_rva':1024,'end_rva':1032,'bytes':'00'*8})
+        with self.assertRaisesRegex(ValueError,'small bounded operation'):r.closure_budget([view])
+        census.check();saved=copy.deepcopy(census.first_ordinary_violation)
+        self.assertEqual(saved['error'],'small bounded operation code regions')
+        self.assertEqual(len(saved['images'][0]['ranges']),129)
+        view['ranges'].append({'start_rva':1032,'end_rva':1040,'bytes':'00'*8});census.check()
+        self.assertEqual(census.first_ordinary_violation,saved)
+        self.assertNotEqual(r.SCHEMA,r.CENSUS_SCHEMA)
+        with self.assertRaisesRegex(ValueError,'generation/head'):r.admit_manifest({'schema':r.CENSUS_SCHEMA,'fp_observation_contract':r.FP_CONTRACT})
+
+    def test_finite_ceilings_are_independent_and_keep_lower_bound(self):
+        for name in r.CENSUS_LIMITS:
+            census=r.ClosureCensus();view=self.view(2);census.register(view)
+            limits=dict(r.CENSUS_LIMITS);limits[name]=0
+            with self.subTest(ceiling=name),patch.dict(r.CENSUS_LIMITS,limits),self.assertRaisesRegex(r.CensusLimit,'diagnostic '+name):census.check()
+            view['pending']=[[0,8],[8,16]]
+            summary=census.summary([{'witness':view}])
+            self.assertEqual(summary['status'],'CENSUS_INCOMPLETE_UNRESOLVED')
+            self.assertEqual(summary['count_interpretation'],'LowerBound')
+            self.assertEqual(len(summary['pending']),2)
+        empty=r.ClosureCensus().summary([])
+        self.assertEqual(empty['status'],'CENSUS_INCOMPLETE_UNRESOLVED')
+
+    def test_unique_ranges_logical_roots_shared_reachability(self):
+        raw,mapping,rows,_=code_fixture();census=r.ClosureCensus()
+        view=r.required_code_ranges(raw,rows,mapping,census=census)
+        before=len(view['ranges'])
+        r.request_range(view,raw,0x1001,'SecondRoot',{'kind':'RuntimeSite','owner':'other'},census)
+        for span in list(view['ranges']):
+            for edge in r.instruction_edges(instructions(span),view,span):
+                view['edges'].append(edge);r.follow_required_edge(None,[{'raw':raw,'witness':view}],0,span,edge,census)
+        view['decoded']=view['pending'];view['pending']=[]
+        result=census.summary([{'raw':raw,'witness':view},{'raw':raw,'witness':view}])
+        self.assertEqual(result['physical_unique'],before)
+        self.assertGreater(result['logical_requests'],before)
+        self.assertTrue(result['shared_sets'])
+        self.assertTrue(any(len(nodes)==2 for nodes in result['root_reachability'].values()))
+
+    def test_unresolved_edge_does_not_block_next_known_edge(self):
+        raw,mapping,rows,_=code_fixture();view=r.required_code_ranges(raw,rows,mapping);census=r.ClosureCensus();census.register(view)
+        span=view['ranges'][0];images=[{'raw':raw,'witness':view}]
+        unknown={'instruction_rva':0x1000,'bytes':'ffd0','text':'callq *%rax','obligation':'Required','target':{'kind':'Unresolved'}}
+        known={'instruction_rva':0x1002,'bytes':'e819000000','text':'callq 0x140001020','obligation':'Required','target':{'kind':'DirectRva','rva':0x1020}}
+        for edge in (unknown,known):
+            view['edges'].append(edge);r.follow_required_edge(None,images,0,span,edge,census)
+        self.assertEqual(unknown['obligation'],'Unresolved');self.assertEqual(known['resolution'],'Acquired')
+        result=census.summary(images)
+        self.assertEqual(result['unresolved_edges'][0]['bytes'],'ffd0')
+        self.assertEqual(result['status'],'CENSUS_INCOMPLETE_UNRESOLVED')
+
+    def test_ceiling_request_retains_unknown_without_acquiring_range(self):
+        raw,mapping,rows,_=code_fixture();view=r.required_code_ranges(raw,rows,mapping);census=r.ClosureCensus();census.register(view)
+        view['ranges']=view['ranges'][:1];view['pending']=[[0x1000,0x1008]];view['requests']=[]
+        with patch.dict(r.CENSUS_LIMITS,{'ranges':1}),self.assertRaises(r.CensusLimit):
+            r.request_range(view,raw,0x1020,'KnownBeyondCeiling',{'kind':'RequiredTarget','caller_extent':[0x1000,0x1008]},census)
+        self.assertEqual(len(view['ranges']),1);self.assertEqual(len(view['pending']),1)
+        self.assertEqual(view['requests'][-1]['resolution'],'Unresolved')
+        self.assertEqual(view['requests'][-1]['start_rva'],0x1020)
+
+    def test_import_owner_binding_negative_retained(self):
+        raw,directory,files,parsed=runtime_fixture();parsed['runtime_imports'][0]['slots'][0]['owner_base']+=1
+        census=r.ClosureCensus()
+        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(r,'checked',return_value=({'pid':123},b'',b'')):
+            self.assertEqual(r.runtime_images(directory,parsed,raw,census),[])
+        self.assertTrue(census.unknowns)
+        self.assertEqual(census.unknowns[0]['kind'],'RequiredImportOwnerBinding')
+        self.assertIn('slot_rva',census.unknowns[0]['slot'])
+
+    def test_memset_import_is_diagnostic_only_and_owner_authenticated(self):
+        raw,directory,files,parsed=runtime_fixture();changed=bytearray(raw)
+        changed[1536+162:1536+169]=b'memset\0';raw=bytes(changed)
+        with self.assertRaisesRegex(ValueError,'copy import slots'):r.import_slots(raw)
+        self.assertEqual(r.import_slots(raw,r.ClosureCensus())[0]['imported_symbol'],'memset')
+        for phase in ('pre','post'):
+            files[directory/(f'runtime-{phase}-0-module.bin')]=raw
+            files[directory/(f'runtime-{phase}-0-section-2.bin')]=raw[1536:1792]
+        census=r.ClosureCensus()
+        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(r,'checked',return_value=({'pid':123},b'',b'')):
+            images=r.runtime_images(directory,parsed,raw,census)
+        self.assertEqual(len(images),1);self.assertFalse(census.unknowns)
+        self.assertEqual(images[0]['pre']['slot']['imported_symbol'],'memset')
+        self.assertIn('post',images[0])
+
+    def test_sampled_loaded_dispatch_is_not_universal_target_set(self):
+        raw,mapping,rows,_=code_fixture();view=r.required_code_ranges(raw,rows,mapping);census=r.ClosureCensus();census.register(view)
+        edge={'instruction_rva':0x1000,'bytes':'ff1500100000','text':'callq *slot','obligation':'Required','target':{'kind':'RipRelativeIatSlot','slot_rva':0x1000}}
+        image={'raw':raw,'witness':view,'pre':{},'post':{}}
+        with patch.object(r,'loaded_dispatch_target',return_value=(0x1020,[{'target_va':123}])):
+            r.follow_required_edge(None,[image],0,view['ranges'][0],edge,census)
+        self.assertEqual(edge['reason'],'SampledDispatchIsNotCompleteFiniteTargetSet')
+        self.assertEqual(edge['obligation'],'Unresolved')
+        self.assertEqual(view['data_requests'][-1]['resolution'],'Unresolved')
+
+    def test_actual_worklist_continues_after_unknown_and_decode_failure(self):
+        raw,mapping,rows,_=code_fixture();directory=Path('/synthetic-census');recipe={'source':'source','evidence':str(directory)}
+        files={directory/name:raw for name in ('floor_profile.exe','rust-profile.exe')}
+        files.update({directory/name:mapping for name in ('native.map','rust.map')});files[directory/'instruction-tool.bin']=b'tool'
+        tool={'path':str(r.DISASSEMBLER),'sha256':r.digest(b'tool'),'size':4};commands={};outputs={};saved={}
+        def record(out,label,argv,cwd,env,timeout=1200):
+            commands[label]=list(argv)
+            return {'status':1 if label=='census-0-instructions-0' else 0}
+        def checked(out,label):
+            argv=commands[label];receipt={'argv':argv,'cwd':'source','tool_binary':tool}
+            if label=='instruction-help':return receipt,b'--disassemble --start-address --stop-address',b''
+            first=int(argv[2].split('=')[1],16)-0x140000000;last=int(argv[3].split('=')[1],16)-0x140000000
+            return receipt,instructions(r.pe_code(raw)[3](first,last,True)),b''
+        census=r.ClosureCensus();parsed=({'operations':rows},{'operations':rows})
+        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(Path,'is_file',return_value=True),patch.object(r,'record',record),patch.object(r,'checked',checked),patch.object(r,'write_json',lambda path,value:saved.__setitem__(path,copy.deepcopy(value))),patch.object(r,'seed_data',return_value={'role':'SeedTable','size':8192,'resolution':'Resolved'}):
+            result=r.census_evidence(directory,parsed,recipe,{},census)
+        self.assertEqual(result['status'],'CENSUS_INCOMPLETE_UNRESOLVED')
+        self.assertEqual(len([label for label in commands if '-instructions-' in label]),4)
+        self.assertTrue(result['pending']);self.assertEqual(result['decoded'],3)
+        self.assertIn(directory/'closure-census.json',saved)
+        self.assertTrue(any(item['kind']=='Decode' for item in result['unknowns']))
+        self.assertTrue(any(item['kind']=='RequiredRuntimeImports' for item in result['unknowns']))
+
+    def test_four_variants_continue_only_after_proven_writer_closure(self):
+        for closed in (True,False):
+            files={};calls=[];fixtures=[];acquired=[];saved={}
+            out=Path('C:/runner/temp/closure-census-evidence');build=Path('C:/runner/temp/closure-census-build');toolchain=Path('C:/runner/temp/floor-profile-deps/build/generators/conan_toolchain.cmake')
+            def save(path,value):saved[path]=copy.deepcopy(value);files[path]=json.dumps(value).encode()
+            def record(directory,label,argv,cwd,env,timeout=1200):
+                calls.append((directory.name,label))
+                raw=b'1'*40 if label=='git-head' else '\n'.join(r.CENSUS_PATHS).encode() if label=='git-paths' else b''
+                files[directory/(label+'.stdout')]=raw;files[directory/(label+'.stderr')]=b''
+                row={'status':0,'argv':list(argv),'writer_closure':closed}
+                save(directory/(label+'.json'),row);return row
+            def acquire(directory,*args):
+                acquired.append(directory.name)
+                if len(acquired)==1:raise ValueError('closed diagnostic failure')
+                return {'status':'CENSUS_INCOMPLETE_UNRESOLVED'}
+            def glob(path,pattern):return [file for file in files if file.parent==path and file.suffix=='.json']
+            patches=[
+                patch.object(r.sys,'platform','win32'),
+                patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_TEMP':'C:/runner/temp','GITHUB_SHA':'1'*40}),
+                patch.object(Path,'exists',return_value=False),
+                patch.object(Path,'is_file',return_value=True),
+                patch.object(Path,'mkdir'),
+                patch.object(Path,'read_bytes',lambda path:files.get(path,b'binary')),
+                patch.object(Path,'read_text',lambda path,**kwargs:files.get(path,b'').decode()),
+                patch.object(Path,'write_bytes',lambda path,raw:files.__setitem__(path,raw)),
+                patch.object(Path,'glob',glob),
+                patch.object(Path,'rglob',lambda path,pattern:[path/'core/accessory.obj',path/'console/native.obj']),
+                patch.object(r.shutil,'copyfile'),
+                patch.object(r.shutil,'copytree'),
+                patch.object(r.c,'safe_tar',return_value={}),
+                patch.object(r.c,'source_inventory',return_value={}),
+                patch.object(r,'inputs',return_value=[]),
+                patch.object(r,'source_expected',return_value=({}, {}, {})),
+                patch.object(r,'record',record),
+                patch.object(r,'write_json',save),
+                patch.object(r,'native_commands',return_value=[]),
+                patch.object(r,'cargo_binary',return_value='synthetic-cargo'),
+                patch.object(r,'parse',lambda raw,language,observed:{'dll':{'path':'dll'}} if language=='native' else {}),
+                patch.object(r,'fixture_result',lambda label,*args:fixtures.append(label)),
+                patch.object(r,'census_evidence',acquire),
+                patch.object(r.previous,'evidence_inventory',return_value={}),
+            ]
+            with ExitStack() as stack:
+                for context in patches:stack.enter_context(context)
+                if closed:
+                    result=r.run(out,build,toolchain,True)
+                    self.assertEqual(len(result['variants']),4)
+                    self.assertEqual(len(acquired),4);self.assertEqual(fixtures,['mesh_dump','x_files']*4)
+                    self.assertNotIn(out/'seal.json',saved)
+                    self.assertIn(out/'closure-census-seal.json',saved)
+                else:
+                    with self.assertRaisesRegex(ValueError,'unclosed diagnostic writers'):r.run(out,build,toolchain,True)
+                    self.assertEqual(len(acquired),1)
+                    self.assertNotIn(out/'closure-census-seal.json',saved)
+
+    def test_diagnostic_recipe_and_default_reader_remain_separate(self):
+        for opt in ('Od','O2'):
+            for variant in ('control','observed'):
+                ordinary=r.recipe('C:/runner/temp',variant,opt);diagnostic=r.recipe('C:/runner/temp',variant,opt,True)
+                self.assertIn('floor-profile-evidence',ordinary['evidence']);self.assertIn('closure-census-evidence',diagnostic['evidence'])
+                self.assertEqual(ordinary['commands']['rust-build'],diagnostic['commands']['rust-build'])
+                self.assertEqual(set(r.FIXTURE_TESTS),{'mesh_dump','x_files'})
+                self.assertEqual(sum(map(len,r.FIXTURE_TESTS.values())),14)
+        with patch.object(sys,'argv',['run.py','--closure-census','--out','/inert']),self.assertRaisesRegex(ValueError,'explicit hosted --run'):r.main()
+        with patch.object(r,'load_json',return_value={'schema':r.CENSUS_SCHEMA}),patch.object(Path,'read_bytes',return_value=b'{}'),self.assertRaises((ValueError,KeyError)):
+            r.replay(Path('/inert-census'))
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

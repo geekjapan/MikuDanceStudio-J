@@ -391,7 +391,7 @@ fn runtime_imports(phase: &str, base: usize) {
             if name_rva == 0 { terminated = true; break; }
             if name_rva >> 63 != 0 { continue; }
             let name = loaded_bytes(base, name_rva + 2, 7, image_size);
-            if name != b"memcpy\0" { continue; }
+            if name != b"memcpy\0" && !(@CENSUS@ && name == b"memset\0") { continue; }
             let slot_rva = iat + n * 8; let slot_bytes = loaded_bytes(base, slot_rva, 8, image_size); let target = u64_at(&slot_bytes, 0);
             let mut owner = 0usize;
             assert_ne!(unsafe { GetModuleHandleExW(6, target as *const u16, &mut owner) }, 0);
@@ -412,7 +412,7 @@ fn runtime_imports(phase: &str, base: usize) {
                 let at = section_at + i * 40; let rva = u32_at(&owner_header, at + 12);
                 let size = u32_at(&owner_header, at + 8).max(u32_at(&owner_header, at + 16)); let flags = u32_at(&owner_header, at + 36);
                 if flags & 0x40000000 == 0 || size == 0 { continue; }
-                total = total.checked_add(size).unwrap(); assert!(total <= 512 * 1024 && size <= 128 * 1024);
+                total = total.checked_add(size).unwrap(); assert!(total <= (if @CENSUS@ { 16 * 1024 * 1024 } else { 512 * 1024 }) && size <= 128 * 1024);
                 let bytes = loaded_bytes(owner, rva, size, owner_size);
                 std::fs::write(root.join(format!("{prefix}-section-{i}.bin")), bytes).unwrap();
                 sections.push(format!("[{i},{rva},{size},{flags}]"));

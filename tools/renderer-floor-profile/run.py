@@ -19,6 +19,11 @@ ROOT = HERE.parents[1]
 BASE = '77b3e431bc1ac2ab5610692f2e12c903a7629090'
 BASE_TREE = '778782dc8ad6352585a9b7eeb135c04150d1f2e4'
 SCHEMA = 'mds-floor-profile-v6-witness-extent'
+CENSUS_SCHEMA = 'mds-renderer-required-closure-census-v1'
+CENSUS_BASE = 'b1d81447991df6d1e530f8032170d1a8c308c56f'
+CENSUS_PATHS = ['.github/workflows/renderer-closure-census.yml'] + [
+    'tools/renderer-floor-profile/'+name for name in ('run.py','observer.rs','test_run.py')]
+CENSUS_LIMITS = {'ranges':4096,'bytes':16*1024*1024,'single':128*1024,'sections':96,'seconds':1200}
 PARENT = 'b7f1c87388606eee4328915504d34c5e9b63ab3a'
 FP_CONTRACT = {'snapshot':'HardwareMxcsr', 'identity':'SourceSiteOnly',
                'rust_operation_ordering':'Unproved', 'exception_attribution':'Unsupported',
@@ -55,7 +60,9 @@ checked, readonly = previous.checked, previous.readonly
 def record(out,label,argv,cwd,env,timeout=1200):
     binary=Path(argv[0]).read_bytes() if label in ('native','rust') else None
     tool=Path(argv[0]).read_bytes() if label=='instruction-help' or '-instructions-' in label else None
-    if label=='rust':
+    if env.get('MDS_CENSUS_DEADLINE'):
+        row=census_command(out,label,argv,cwd,env,timeout)
+    elif label=='rust':
         require(not (out/(label+'.json')).exists(),'fresh own-process command')
         row={'argv':list(map(str,argv)),'cwd':str(cwd),'env':{k:v for k,v in env.items() if k in
              ('PATH','HOME','CARGO_HOME','RUSTUP_HOME','TMPDIR','LD_LIBRARY_PATH','WGPU_BACKEND','VK_ICD_FILENAMES',
@@ -86,6 +93,78 @@ def record(out,label,argv,cwd,env,timeout=1200):
         require((out/'instruction-tool.bin').read_bytes()==tool,'retained hosted instruction tool changed')
         row['tool_binary']={'path':str(argv[0]),'sha256':digest(tool),'size':len(tool)}
     write_json(out/(label+'.json'),row)
+    return row
+
+
+def census_command(out,label,argv,cwd,env,timeout):
+    import ctypes
+    from ctypes import wintypes
+    require(sys.platform=='win32' and os.environ.get('GITHUB_ACTIONS')=='true','hosted census command only')
+    require(not (out/(label+'.json')).exists(),'fresh diagnostic command receipt')
+    remaining=float(env['MDS_CENSUS_DEADLINE'])-previous.time.monotonic()
+    require(remaining>0,'diagnostic variant wall time ceiling reached')
+    timeout=min(timeout,remaining)
+    class BasicLimits(ctypes.Structure):
+        _fields_=[('process_time',ctypes.c_int64),('job_time',ctypes.c_int64),('flags',wintypes.DWORD),
+                  ('min_working_set',ctypes.c_size_t),('max_working_set',ctypes.c_size_t),
+                  ('active_limit',wintypes.DWORD),('affinity',ctypes.c_size_t),('priority',wintypes.DWORD),('scheduling',wintypes.DWORD)]
+    class IoCounters(ctypes.Structure):
+        _fields_=[(name,ctypes.c_uint64) for name in ('read_ops','write_ops','other_ops','read_bytes','write_bytes','other_bytes')]
+    class ExtendedLimits(ctypes.Structure):
+        _fields_=[('basic',BasicLimits),('io',IoCounters),('process_memory_limit',ctypes.c_size_t),
+                  ('job_memory_limit',ctypes.c_size_t),('peak_process_memory',ctypes.c_size_t),('peak_job_memory',ctypes.c_size_t)]
+    class Accounting(ctypes.Structure):
+        _fields_=[(name,ctypes.c_int64) for name in ('user_time','kernel_time','period_user_time','period_kernel_time')]+[(name,wintypes.DWORD) for name in ('page_faults','total_processes','active_processes','terminated_processes')]
+    kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+    declarations={'CreateJobObjectW':([ctypes.c_void_p,wintypes.LPCWSTR],wintypes.HANDLE),
+                  'SetInformationJobObject':([wintypes.HANDLE,ctypes.c_int,ctypes.c_void_p,wintypes.DWORD],wintypes.BOOL),
+                  'QueryInformationJobObject':([wintypes.HANDLE,ctypes.c_int,ctypes.c_void_p,wintypes.DWORD,ctypes.c_void_p],wintypes.BOOL),
+                  'AssignProcessToJobObject':([wintypes.HANDLE,wintypes.HANDLE],wintypes.BOOL),
+                  'TerminateJobObject':([wintypes.HANDLE,wintypes.UINT],wintypes.BOOL),
+                  'CloseHandle':([wintypes.HANDLE],wintypes.BOOL)}
+    for name,(args,result) in declarations.items():
+        function=getattr(kernel,name);function.argtypes=args;function.restype=result
+    resume=ctypes.WinDLL('ntdll').NtResumeProcess;resume.argtypes=[wintypes.HANDLE];resume.restype=ctypes.c_long
+    limits=ExtendedLimits();limits.basic.flags=0x2000
+    job=kernel.CreateJobObjectW(None,None);require(job,'diagnostic process job creation')
+    row={'argv':list(map(str,argv)),'cwd':str(cwd),'env':{k:env[k] for k in ('PATH','HOME','CARGO_HOME','RUSTUP_HOME','TMPDIR','CARGO_TARGET_DIR','CARGO_INCREMENTAL','CARGO_TERM_COLOR','RUSTFLAGS','CL','_CL_','INCLUDE','LIB','LIBPATH','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion') if k in env},
+         'start_utc':previous.utc(),'start_ns':previous.time.time_ns(),'status':None,'terminal':'launch_failure',
+         'timeout_seconds':timeout,'writer_closure':False}
+    child=None;assigned=False
+    try:
+        require(kernel.SetInformationJobObject(job,9,ctypes.byref(limits),ctypes.sizeof(limits)),'kill-on-close diagnostic process job')
+        with (out/(label+'.stdout')).open('xb') as stdout,(out/(label+'.stderr')).open('xb') as stderr:
+            child=previous.subprocess.Popen(row['argv'],cwd=cwd,env=env,stdout=stdout,stderr=stderr,creationflags=4)
+            row['pid']=child.pid
+            require(kernel.AssignProcessToJobObject(job,int(child._handle)),'diagnostic child tree containment before execution')
+            assigned=True
+            require(resume(int(child._handle))==0,'diagnostic suspended process resume')
+            try:row.update(status=child.wait(timeout=timeout),terminal='exit')
+            except previous.subprocess.TimeoutExpired:row['terminal']='timeout'
+            require(kernel.TerminateJobObject(job,1),'diagnostic descendants termination')
+            child.wait()
+            accounting=Accounting()
+            require(kernel.QueryInformationJobObject(job,1,ctypes.byref(accounting),ctypes.sizeof(accounting),None),'diagnostic process accounting')
+            until=previous.time.monotonic()+10
+            while accounting.active_processes and previous.time.monotonic()<until:
+                previous.time.sleep(0.01)
+                require(kernel.QueryInformationJobObject(job,1,ctypes.byref(accounting),ctypes.sizeof(accounting),None),'diagnostic process closure accounting')
+            row['writer_closure']=accounting.active_processes==0
+            require(row['writer_closure'],'diagnostic writers are not closed')
+            require(kernel.QueryInformationJobObject(job,9,ctypes.byref(limits),ctypes.sizeof(limits),None),'diagnostic memory accounting')
+            row['resources']={'peak_process_memory_bytes':limits.peak_process_memory,'peak_job_memory_bytes':limits.peak_job_memory,
+                              'user_time_100ns':accounting.user_time,'kernel_time_100ns':accounting.kernel_time,'total_processes':accounting.total_processes}
+    finally:
+        kernel.TerminateJobObject(job,1);kernel.CloseHandle(job)
+        if child is not None:
+            if not assigned:child.kill()
+            child.wait(timeout=10);child.__exit__(None,None,None)
+        row.update(end_utc=previous.utc(),end_ns=previous.time.time_ns())
+        for suffix in ('stdout','stderr'):
+            path=out/(label+'.'+suffix)
+            if path.exists():
+                raw=path.read_bytes();row[suffix]={'name':path.name,'sha256':digest(raw),'size':len(raw)}
+        write_json(out/(label+'.json'),row)
     return row
 
 
@@ -225,7 +304,7 @@ def inverse(raw,patch):
     return result
 
 
-def generated(read,observed,input_root,runtime_path=None):
+def generated(read,observed,input_root,runtime_path=None,census=False):
     input_root=PureWindowsPath(str(input_root))
     runtime_path=PureWindowsPath(str(runtime_path or input_root/'operations.bin'))
     patches={};result={}
@@ -258,6 +337,11 @@ target_link_options(floor_profile PRIVATE /MAP)
         add(MESH,b'        for v in &c.vertices {',b'\n            #[cfg(mds_floor_profile)] floor_profile::merge_source(&mesh.vertices, v, &c.transform);')
         add(MESH,b'                texcoord: v.texcoord,\n            });',b'\n            #[cfg(mds_floor_profile)] floor_profile::merge_destination(&mesh.vertices);')
     observer=(HERE/'observer.rs').read_text()
+    if census:observer=observer.replace('@CENSUS@','true')
+    else:
+        observer=observer.replace(' && !(@CENSUS@ && name == b"memset\\0")','')
+        observer=observer.replace('(if @CENSUS@ { 16 * 1024 * 1024 } else { 512 * 1024 })','512 * 1024')
+    require('@CENSUS@' not in observer,'closed diagnostic collector template')
     observer=observer.replace('@CASES@',','.join('('+json.dumps(id)+',include_bytes!('+json.dumps(str(input_root/(id+'.x')))+'))' for id,_,_ in CASES))
     observer=observer.replace('@MATRICES@',repr(MATRICES)).replace('@POINTS@',repr(POINTS))
     observer=observer.replace('@RUNTIME@',json.dumps(str(runtime_path))).replace('@MERGE_INPUT@',json.dumps(str(input_root/'floor-identity.x'))).replace('@OBSERVED@',str(observed).lower())
@@ -634,6 +718,86 @@ def range_extent(raw,target,symbols,interior=False,exports=()):
     return (first,following[0]),'NextDistinctExecutableSymbolCandidateOnly'
 
 
+class CensusLimit(ValueError):
+    pass
+
+
+class ClosureCensus:
+    def __init__(self):
+        self.witnesses=[]
+        self.first_ordinary_violation=None
+        self.unknowns=[]
+        self.started=previous.time.monotonic()
+
+    def register(self,witness):
+        if not any(w is witness for w in self.witnesses):self.witnesses.append(witness)
+
+    def check(self):
+        ordinary=[w for w in self.witnesses if w.get('census_language')!='native']
+        try:
+            if any(w['ranges'] for w in ordinary):closure_budget(ordinary)
+        except ValueError as error:
+            if self.first_ordinary_violation is None:
+                self.first_ordinary_violation={'error':str(error),'images':[
+                    {'image_sha256':w['image_sha256'],'requests':list(w.get('requests',[])),
+                     'ranges':list(w['ranges']),'pending':list(w.get('pending',[])),
+                     'decoded':list(w.get('decoded',[]))} for w in self.witnesses if w.get('census_language')!='native']}
+        physical={(w['image_sha256'],s['start_rva'],s['end_rva']) for w in self.witnesses for s in w['ranges']}
+        sections={(w['image_sha256'],i) for w in self.witnesses for i in range(len(w['sections']))}
+        sizes=[b-a for _,a,b in physical]
+        values={'ranges':len(physical),'bytes':sum(sizes),'single':max(sizes,default=0),
+                'sections':len(sections),'seconds':previous.time.monotonic()-self.started}
+        for key,limit in CENSUS_LIMITS.items():
+            if values[key]>limit:raise CensusLimit('diagnostic '+key+' ceiling reached')
+        if self.first_ordinary_violation is not None:
+            self.first_ordinary_violation=json.loads(json.dumps(self.first_ordinary_violation))
+        return values
+
+    def summary(self,images):
+        nodes={};adjacency={};roots={}
+        def key(view,span):return view['image_sha256']+':'+str(span[0])+':'+str(span[1])
+        for image in images:
+            view=image['witness']
+            for span in view['ranges']:
+                node=key(view,(span['start_rva'],span['end_rva']));nodes[node]=span;adjacency.setdefault(node,set())
+            for request in view.get('requests',[]):
+                if request.get('resolution')!='Resolved':continue
+                target=key(view,(request['start_rva'],request['end_rva']));origin=request['origin']
+                if origin['kind']=='RequiredTarget':
+                    adjacency.setdefault(key(view,origin['caller_extent']),set()).add(target)
+                else:roots.setdefault(json.dumps({'image':view['image_sha256'],'role':request['role'],'origin':origin},sort_keys=True),set()).add(target)
+            for edge in view.get('edges',[]):
+                if 'target_image_sha256' not in edge:continue
+                callers=[n for n,s in nodes.items() if n.startswith(view['image_sha256']+':') and s['start_rva']<=edge['instruction_rva']<s['end_rva']]
+                owners=[m['witness'] for m in images if m['witness']['image_sha256']==edge['target_image_sha256']]
+                for owner in owners:
+                    for request in owner.get('requests',[]):
+                        if request.get('role')=='ActualOwnProcessImportTarget' and request.get('resolution')=='Resolved':
+                            for caller in callers:adjacency[caller].add(key(owner,(request['start_rva'],request['end_rva'])))
+        reachable={}
+        for root,seed in roots.items():
+            seen=set();pending=list(seed)
+            while pending:
+                node=pending.pop()
+                if node in seen:continue
+                seen.add(node);pending.extend(adjacency.get(node,set())-seen)
+            reachable[root]=sorted(seen)
+        shared={node:[root for root,seen in reachable.items() if node in seen] for node in nodes}
+        views=[image['witness'] for image in images]
+        unresolved=[edge for view in views for edge in view.get('edges',[]) if edge.get('obligation')=='Unresolved']
+        pending=[{'image':view['image_sha256'],'extent':span} for view in views for span in view.get('pending',[])]
+        unknowns=self.unknowns+[request for view in views for request in view.get('requests',[]) if request.get('resolution')!='Resolved']
+        unknowns += [data for view in views for data in view.get('data_requests',[]) if data.get('resolution')!='Resolved']
+        status='CENSUS_INCOMPLETE_UNRESOLVED' if not nodes or unknowns or unresolved or pending else 'CENSUS_COMPLETE_DIAGNOSTIC_ONLY'
+        return {'schema':CENSUS_SCHEMA,'status':status,'admission':'NotAuthorized','limits':CENSUS_LIMITS,
+                'first_ordinary_violation':self.first_ordinary_violation,'count_interpretation':'LowerBound' if status!='CENSUS_COMPLETE_DIAGNOSTIC_ONLY' else 'CompleteDiagnosticOnly',
+                'physical_unique':len(nodes),'logical_requests':sum(len(v.get('requests',[])) for v in views),
+                'range_bytes':sum(s['end_rva']-s['start_rva'] for s in nodes.values()),
+                'decoded':sum(len(v.get('decoded',[])) for v in views),'pending':pending,'unresolved_edges':unresolved,
+                'unknowns':unknowns,'root_reachability':reachable,'shared_sets':{node:r for node,r in shared.items() if len(r)>1},
+                'images':[{k:v for k,v in image.items() if k!='raw'} for image in images]}
+
+
 def closure_budget(witnesses):
     spans=[s for w in witnesses for s in w['ranges']]
     require(0<len(spans)<=128 and sum(s['end_rva']-s['start_rva'] for s in spans)<=512*1024 and
@@ -641,7 +805,7 @@ def closure_budget(witnesses):
     require(sum(len(w['sections']) for w in witnesses)<=96,'aggregate required PE section budget')
 
 
-def request_range(witness,raw,target,role,origin):
+def request_range(witness,raw,target,role,origin,census=None):
     request={'image_sha256':digest(raw),'target_rva':target,'role':role,'origin':origin,'obligation':'Required'}
     if any(all(previous.get(k)==v for k,v in request.items()) for previous in witness['requests']):return
     try:extent,kind=range_extent(raw,target,witness['all_same_link_symbols'],origin['kind']=='RuntimeSite',witness.get('export_candidates',()))
@@ -653,10 +817,19 @@ def request_range(witness,raw,target,role,origin):
     request['extent_source']={'ExceptionDirectory':'pdata','ImportThunkSixBytes':'exact_thunk',
         'NextDistinctExecutableSymbolCandidateOnly':'map_candidate','ExportCandidateOnly':'export_candidate'}[kind]
     witness['requests'].append(request)
-    if not any((s['start_rva'],s['end_rva'])==extent for s in witness['ranges']):
+    added=not any((s['start_rva'],s['end_rva'])==extent for s in witness['ranges'])
+    if added:
         witness['ranges'].append(pe_code(raw)[3](*extent,True))
         witness.setdefault('pending',[]).append(list(extent))
-    closure_budget([witness])
+    if census is None:closure_budget([witness])
+    else:
+        census.register(witness)
+        try:census.check()
+        except CensusLimit:
+            if added:witness['ranges'].pop();witness['pending'].pop()
+            request['resolution']='Unresolved';request['reason']='DiagnosticCeilingKnownExtentNotAcquired'
+            raise
+
 
 
 def code_ranges(raw,rows,map_raw):
@@ -687,13 +860,14 @@ def code_ranges(raw,rows,map_raw):
             'compiled_dataflow':'UnprovedAwaitingIndependentReview'}
 
 
-def required_code_ranges(raw,rows,map_raw,witness=None):
+def required_code_ranges(raw,rows,map_raw,witness=None,census=None):
     base,sections,functions,_=pe_code(raw);symbols=map_symbols(map_raw,base,sections)
     if witness is None:witness={}
     witness.update({'image_sha256':digest(raw),'image_size':len(raw),'preferred_base':base,'sections':sections,
              'all_same_link_symbols':symbols,'requests':[],'ranges':[],'edges':[],'data_requests':[],
              'pending':[],'decoded':[],'semantic_origins':[],
              'compiled_dataflow':'UnprovedAwaitingIndependentReview'})
+    if census is not None:census.register(witness)
     for i,row in enumerate(rows):
         boundary=row['witness'];role=boundary['role']
         require(role in WITNESS_ROLES,'consumed semantic operation role')
@@ -702,7 +876,7 @@ def required_code_ranges(raw,rows,map_raw,witness=None):
             target=site-row['base'];matches=[p for p in functions if p[0]<=target<p[1]]
             require(len(matches)==1,'witness site has exact exception-directory boundary')
             extents.append(matches[0])
-            request_range(witness,raw,target,role,{'kind':'RuntimeSite','operation':i,'slot':j,'raw_sha256':boundary['raw_sha256'],'sink':boundary['received'][2]})
+            request_range(witness,raw,target,role,{'kind':'RuntimeSite','operation':i,'slot':j,'raw_sha256':boundary['raw_sha256'],'sink':boundary['received'][2]},census)
         require(len(set(extents))==1,'entry/materialization/sink share actual witness function')
         expected=('direct_witness','hardware_witness','merge_witness')[WITNESS_ROLES.index(role)]
         owners=[s for s in symbols if s['rva']==extents[0][0] and expected in s['symbol']]
@@ -712,7 +886,7 @@ def required_code_ranges(raw,rows,map_raw,witness=None):
             target=site-row['base'];matches=[p for p in functions if p[0]<=target<p[1]]
             require(len(matches)==1,'handoff site has exact exception-directory boundary')
             handoff_extents.append(matches[0])
-            request_range(witness,raw,target,'RawInputHandoffThroughFixedSink',{'kind':'RuntimeSite','operation':i,'slot':j,'raw_sha256':boundary['raw_sha256']})
+            request_range(witness,raw,target,'RawInputHandoffThroughFixedSink',{'kind':'RuntimeSite','operation':i,'slot':j,'raw_sha256':boundary['raw_sha256']},census)
         require(len(set(handoff_extents))==1 and handoff_extents[0]!=extents[0],'separate actual handoff/witness function boundaries')
         handoff_owners=[s for s in symbols if s['rva']==handoff_extents[0][0] and 'floor_profile' in s['symbol'] and 'handoff' in s['symbol']]
         require(len(handoff_owners)==1,'exact same-link handoff owner')
@@ -721,7 +895,7 @@ def required_code_ranges(raw,rows,map_raw,witness=None):
             'ordinal':boundary['ordinal'],'owner':boundary['owner'],'sites':boundary['sites'],
             'handoff_extent':list(handoff_extents[0]),'handoff_owner':handoff_owners[0],'handoff_sites':boundary['handoff_sites']})
         for j,site in enumerate(row['sites']):
-            if site:request_range(witness,raw,site-row['base'],'ObservedOperationSite',{'kind':'RuntimeSite','operation':i,'slot':j})
+            if site:request_range(witness,raw,site-row['base'],'ObservedOperationSite',{'kind':'RuntimeSite','operation':i,'slot':j},census)
     require(witness['ranges'],'required operation roots')
     return witness
 
@@ -731,8 +905,9 @@ COPY_OBLIGATIONS = [
     {'size':8192,'role':'OdSeedTable','status':'RequiresIndependentCallerRegionAndPathReview'}]
 
 
-def complete_closure(images):
-    closure_budget([image['witness'] for image in images])
+def complete_closure(images,census=None):
+    if census is None:closure_budget([image['witness'] for image in images])
+    else:census.check()
     root=images[0]['witness']
     require(root.get('semantic_origins') and root.get('copy_obligations')==COPY_OBLIGATIONS,'required input/sink/return/seed-copy obligations are INCOMPLETE')
     require(sum(d.get('role')=='SeedTable' and d.get('size')==8192 for d in root['data_requests'])==1,'required seed data is INCOMPLETE')
@@ -752,7 +927,7 @@ def complete_closure(images):
         view['logical_request_count']=len(view['requests']);view['physical_range_count']=len(view['ranges'])
 
 
-def follow_required_edge(directory,images,module_index,span,edge):
+def follow_required_edge(directory,images,module_index,span,edge,census=None):
     image=images[module_index];view=image['witness'];raw=image['raw'];target=edge['target']
     origin={'kind':'RequiredTarget','instruction_rva':edge['instruction_rva'],
             'caller_extent':[span['start_rva'],span['end_rva']]}
@@ -760,27 +935,32 @@ def follow_required_edge(directory,images,module_index,span,edge):
     if target['kind']=='DirectRva':
         if span['start_rva']<=target['rva']<span['end_rva']:edge['resolution']='InRange'
         else:
-            request_range(view,raw,target['rva'],'RequiredCallOrBranch',origin)
+            request_range(view,raw,target['rva'],'RequiredCallOrBranch',origin,census)
             edge['resolution']='Acquired'
     elif target['kind']=='RipRelativeIatSlot':
         slot=target['slot_rva'];data=pe_code(raw)[3](slot,slot+8)
         request={'role':'RequiredImportOrDispatchSlot','origin':origin,'start_rva':slot,'size':8,'bytes':data['bytes'],'resolution':'Unresolved'}
         view['data_requests'].append(request)
-        if module_index:
+        if (module_index if census is None else 'pre' in image):
             try:
                 dispatch,samples=loaded_dispatch_target(directory,image,slot)
                 edge['loaded_dispatch_samples']=samples
-                request_range(view,raw,dispatch,'RequiredLoadedDispatchTarget',origin)
-                request['resolution']='Resolved';edge['resolution']='Acquired'
-            except ValueError as error:
+                request_range(view,raw,dispatch,'RequiredLoadedDispatchTarget',origin,census)
+                if census is not None:
+                    edge['obligation']='Unresolved';edge['reason']='SampledDispatchIsNotCompleteFiniteTargetSet'
+                else:request['resolution']='Resolved';edge['resolution']='Acquired'
+            except (ValueError,KeyError) as error:
                 edge['obligation']='Unresolved';edge['reason']=str(error)
         else:
-            owners=[m for m in images[1:] if m['pre']['slot']['slot_rva']==slot]
+            owners=[m for m in images if 'pre' in m and m['pre']['slot']['slot_rva']==slot and
+                    (census is None or m.get('root_image_sha256')==view['image_sha256'])]
             if len(owners)!=1:
                 edge['obligation']='Unresolved';edge['reason']='MissingRequiredSameProcessImportTarget'
             else:
                 edge['target_image_sha256']=owners[0]['witness']['image_sha256']
-                request['resolution']='Resolved';edge['resolution']='Acquired'
+                if census is not None:
+                    edge['obligation']='Unresolved';edge['reason']='SampledDispatchIsNotCompleteFiniteTargetSet'
+                else:request['resolution']='Resolved';edge['resolution']='Acquired'
     elif target['kind'] in ('Return','Trap'):edge['resolution']=target['kind']
     else:edge['obligation']='Unresolved'
 
@@ -849,7 +1029,7 @@ def export_metadata(raw):
             'names':retained,'entries':entries},[{'rva':rva,'aliases':sorted(names)} for rva,names in sorted(candidates.items())]
 
 
-def import_slots(raw):
+def import_slots(raw,census=None):
     region=pe_code(raw)[3];rva,size=pe_directory(raw,1)
     require(size and size<=128*1024,'bounded own-image import directory')
     table=bytes.fromhex(region(rva,rva+size)['bytes']);result=[];terminated=False
@@ -871,7 +1051,7 @@ def import_slots(raw):
             if not entry:break
             if entry>>63:continue
             name=string(entry+2)
-            if name=='memcpy':
+            if name=='memcpy' or census is not None and name=='memset':
                 region(iat+n*8,iat+(n+1)*8)
                 result.append({'descriptor_rva':rva+at,'dll_rva':dll,'name_rva':entry,
                                'slot_rva':iat+n*8,'declared_dll':dll_name,'imported_symbol':name})
@@ -914,9 +1094,9 @@ def loaded_header_binding(raw,headers,owner_base):
             'loaded owner file/PE/header binding')
 
 
-def runtime_images(directory,parsed,rust_raw):
+def runtime_images(directory,parsed,rust_raw,census=None):
     snapshots=parsed['runtime_imports'];require(len(snapshots)==2,'pre/post own-process import snapshots')
-    receipt=checked(directory,'rust')[0];slots=import_slots(rust_raw);modules=[]
+    receipt=checked(directory,'rust')[0];slots=import_slots(rust_raw,census);modules=[];by_slot={}
     for phase,snapshot in zip(('pre','post'),snapshots):
         require(set(snapshot)=={'stage','phase','process_id','image_base','image_size','slots'} and
                 snapshot['stage']=='runtime-imports' and snapshot['phase']==phase and
@@ -926,48 +1106,54 @@ def runtime_images(directory,parsed,rust_raw):
         require(snapshot['image_size']==struct.unpack_from('<I',rust_raw,pe+24+56)[0],'own executed-image extent')
         require(len(snapshot['slots'])==len(slots),'complete required import slot snapshots')
         for i,(actual,declared) in enumerate(zip(snapshot['slots'],slots)):
-            require(set(actual)=={'descriptor_rva','dll_rva','name_rva','slot_rva','target_va','owner_base','owner_size','path_utf16','sections'} and
-                    all(actual[k]==declared[k] for k in ('descriptor_rva','dll_rva','name_rva','slot_rva')),'actual own-image import descriptor/name/slot')
-            require(all(type(actual[k]) is int and 0<actual[k]<2**64 for k in ('target_va','owner_base','owner_size')),'strict loaded target identity')
-            require(type(actual['path_utf16']) is list and actual['path_utf16'] and all(type(v) is int and 0<v<65536 for v in actual['path_utf16']),'actual loaded owner path')
-            prefix=f'runtime-{phase}-{i}';raw=(directory/(prefix+'-module.bin')).read_bytes();headers=(directory/(prefix+'-headers.bin')).read_bytes()
-            require((directory/(prefix+'-iat.bin')).read_bytes()==struct.pack('<Q',actual['target_va']),'own-process actual IAT slot bytes/target')
-            base,sections,_,region=pe_code(raw);pe=struct.unpack_from('<I',raw,60)[0]
-            image_size=struct.unpack_from('<I',raw,pe+24+56)[0]
-            require(actual['owner_size']==image_size,'loaded owner file/PE/header binding')
-            loaded_header_binding(raw,headers,actual['owner_base'])
-            target=actual['target_va']-actual['owner_base'];region(target,target+1,True)
-            selected=[(j,s) for j,s in enumerate(sections) if s['flags']&0x40000000 and max(s['size'],s['virtual_size'])]
-            require(len(selected)==len(actual['sections']),'complete readable runtime section inventory')
-            data=[];total=0
-            for (j,s),item in zip(selected,actual['sections']):
-                at=pe+24+struct.unpack_from('<H',raw,pe+20)[0]+j*40;virtual=struct.unpack_from('<I',raw,at+8)[0]
-                length=max(virtual,s['size']);require(item==[j,s['rva'],length,s['flags']],'loaded readable section extent/flags')
-                loaded=(directory/(prefix+f'-section-{j}.bin')).read_bytes();total+=length
-                require(len(loaded)==length and length<=128*1024 and total<=512*1024,'bounded readable runtime section bytes')
-                if s['flags']&0x20000000:
-                    span=region(s['rva'],s['rva']+s['size'],True)
-                    require(loaded[:s['size']]==relocated_code(raw,span,actual['owner_base']) and loaded[s['size']:]==bytes(length-s['size']),'loaded runtime instructions/file/relocations')
-                data.append({'role':'LoadedExecutable' if s['flags']&0x20000000 else 'DispatchOrImportData',
-                             'rva':s['rva'],'size':length,'sha256':digest(loaded),'file':prefix+f'-section-{j}.bin','resolution':'Resolved'})
-            identity={'slot':declared,'runtime':actual,'module_sha256':digest(raw),'module_size':len(raw),
-                      'loaded_sections':data,'sampled_identity':'PrePostOnlyNotContinuous'}
-            if phase=='pre':
-                exports,candidates=export_metadata(raw)
-                witness={'image_sha256':digest(raw),'image_size':len(raw),'preferred_base':base,'sections':sections,
-                         'all_same_link_symbols':[],'requests':[],'ranges':[],'edges':[],'data_requests':data,
-                         'export_metadata':exports,'export_candidates':candidates,
-                         'compiled_dataflow':'UnprovedAwaitingIndependentReview'}
-                request_range(witness,raw,target,'ActualOwnProcessImportTarget',{'kind':'RuntimeImport','slot_rva':declared['slot_rva']})
-                modules.append({'raw':raw,'file':prefix+'-module.bin','witness':witness,'pre':identity})
-            else:
-                before=modules[i]['pre']
-                require(before['slot']==identity['slot'] and before['runtime']==identity['runtime'] and
-                        before['module_sha256']==identity['module_sha256'] and before['module_size']==identity['module_size'],
-                        'pre/post sampled import/module/target identity')
-                require([(s['rva'],s['sha256']) for s in before['loaded_sections'] if s['role']=='LoadedExecutable']==
-                        [(s['rva'],s['sha256']) for s in data if s['role']=='LoadedExecutable'],'pre/post sampled loaded instructions')
-                modules[i]['post']=identity
+            try:
+                require(set(actual)=={'descriptor_rva','dll_rva','name_rva','slot_rva','target_va','owner_base','owner_size','path_utf16','sections'} and
+                        all(actual[k]==declared[k] for k in ('descriptor_rva','dll_rva','name_rva','slot_rva')),'actual own-image import descriptor/name/slot')
+                require(all(type(actual[k]) is int and 0<actual[k]<2**64 for k in ('target_va','owner_base','owner_size')),'strict loaded target identity')
+                require(type(actual['path_utf16']) is list and actual['path_utf16'] and all(type(v) is int and 0<v<65536 for v in actual['path_utf16']),'actual loaded owner path')
+                prefix=f'runtime-{phase}-{i}';raw=(directory/(prefix+'-module.bin')).read_bytes();headers=(directory/(prefix+'-headers.bin')).read_bytes()
+                require((directory/(prefix+'-iat.bin')).read_bytes()==struct.pack('<Q',actual['target_va']),'own-process actual IAT slot bytes/target')
+                base,sections,_,region=pe_code(raw);pe=struct.unpack_from('<I',raw,60)[0]
+                image_size=struct.unpack_from('<I',raw,pe+24+56)[0]
+                require(actual['owner_size']==image_size,'loaded owner file/PE/header binding')
+                loaded_header_binding(raw,headers,actual['owner_base'])
+                target=actual['target_va']-actual['owner_base'];region(target,target+1,True)
+                selected=[(j,s) for j,s in enumerate(sections) if s['flags']&0x40000000 and max(s['size'],s['virtual_size'])]
+                require(len(selected)==len(actual['sections']),'complete readable runtime section inventory')
+                data=[];total=0
+                for (j,s),item in zip(selected,actual['sections']):
+                    at=pe+24+struct.unpack_from('<H',raw,pe+20)[0]+j*40;virtual=struct.unpack_from('<I',raw,at+8)[0]
+                    length=max(virtual,s['size']);require(item==[j,s['rva'],length,s['flags']],'loaded readable section extent/flags')
+                    loaded=(directory/(prefix+f'-section-{j}.bin')).read_bytes();total+=length
+                    require(len(loaded)==length and length<=128*1024 and total<=(16*1024*1024 if census is not None else 512*1024),'bounded readable runtime section bytes')
+                    if s['flags']&0x20000000:
+                        span=region(s['rva'],s['rva']+s['size'],True)
+                        require(loaded[:s['size']]==relocated_code(raw,span,actual['owner_base']) and loaded[s['size']:]==bytes(length-s['size']),'loaded runtime instructions/file/relocations')
+                    data.append({'role':'LoadedExecutable' if s['flags']&0x20000000 else 'DispatchOrImportData',
+                                 'rva':s['rva'],'size':length,'sha256':digest(loaded),'file':prefix+f'-section-{j}.bin','resolution':'Resolved'})
+                identity={'slot':declared,'runtime':actual,'module_sha256':digest(raw),'module_size':len(raw),
+                          'loaded_sections':data,'sampled_identity':'PrePostOnlyNotContinuous'}
+                if phase=='pre':
+                    exports,candidates=export_metadata(raw)
+                    witness={'image_sha256':digest(raw),'image_size':len(raw),'preferred_base':base,'sections':sections,
+                             'all_same_link_symbols':[],'requests':[],'ranges':[],'edges':[],'data_requests':data,
+                             'export_metadata':exports,'export_candidates':candidates,
+                             'compiled_dataflow':'UnprovedAwaitingIndependentReview'}
+                    image={'raw':raw,'file':prefix+'-module.bin','witness':witness,'pre':identity}
+                    if census is not None:image['root_image_sha256']=digest(rust_raw)
+                    modules.append(image);by_slot[i]=image
+                    request_range(witness,raw,target,'ActualOwnProcessImportTarget',{'kind':'RuntimeImport','slot_rva':declared['slot_rva']},census)
+                else:
+                    before=by_slot[i]['pre']
+                    require(before['slot']==identity['slot'] and before['runtime']==identity['runtime'] and
+                            before['module_sha256']==identity['module_sha256'] and before['module_size']==identity['module_size'],
+                            'pre/post sampled import/module/target identity')
+                    require([(s['rva'],s['sha256']) for s in before['loaded_sections'] if s['role']=='LoadedExecutable']==
+                            [(s['rva'],s['sha256']) for s in data if s['role']=='LoadedExecutable'],'pre/post sampled loaded instructions')
+                    by_slot[i]['post']=identity
+            except (ValueError,OSError,KeyError,IndexError,struct.error) as error:
+                if census is None:raise
+                census.unknowns.append({'kind':'RequiredImportOwnerBinding','slot':declared,'phase':phase,'reason':str(error)})
     return modules
 
 
@@ -1091,6 +1277,79 @@ def compiled_evidence(directory,parsed,r,capture=False,env=None):
 
 
 
+def census_evidence(directory,parsed,r,env,census):
+    images=[]
+    census.unknowns.append({'kind':'RequiredNonBranchDataTargets','reason':'BranchDecoderDoesNotProveCompleteMachineDataReferenceCoverage'})
+    try:
+        help_argv=[str(DISASSEMBLER),'--help']
+        require(Path(DISASSEMBLER).is_file(),'hosted diagnostic disassembler unavailable')
+        require(record(directory,'instruction-help',help_argv,r['source'],env)['status']==0,'diagnostic disassembler help')
+        receipt,stdout,stderr=checked(directory,'instruction-help')
+        require(not stderr and all(flag.encode() in stdout for flag in ('--disassemble','--start-address','--stop-address')),'bounded diagnostic tool capabilities')
+        tool=receipt['tool_binary']
+        tool_raw=(directory/'instruction-tool.bin').read_bytes()
+        require(receipt['argv']==help_argv and receipt['cwd']==r['source'] and
+                tool=={'path':str(DISASSEMBLER),'sha256':digest(tool_raw),'size':len(tool_raw)},'diagnostic retained tool and exact help command')
+        for language,name,map_name in (('native','floor_profile.exe','native.map'),('rust','rust-profile.exe','rust.map')):
+            raw=(directory/name).read_bytes();mapping=(directory/map_name).read_bytes();view={}
+            image={'raw':raw,'file':name,'language':language,'witness':view};images.append(image)
+            try:
+                if language=='rust':required_code_ranges(raw,parsed[1]['operations'],mapping,view,census)
+                else:
+                    view.update(code_ranges(raw,parsed[0]['operations'],mapping))
+                    view.update(census_language='native',requests=[],edges=[],data_requests=[],all_same_link_symbols=map_symbols(mapping,view['preferred_base'],view['sections']),pending=[[s['start_rva'],s['end_rva']] for s in view['ranges']],decoded=[])
+                    for span in view['ranges']:
+                        view['requests'].append({'resolution':'Resolved','start_rva':span['start_rva'],'end_rva':span['end_rva'],'role':'NativeOperationRoot','origin':{'kind':'RuntimeSite'}})
+                    census.register(view);census.check()
+                view['same_link_map']={'sha256':digest(mapping),'size':len(mapping)}
+                if language=='rust':
+                    view['copy_obligations']=[dict(row) for row in COPY_OBLIGATIONS]
+                    view['data_requests'].append(seed_data(raw,view))
+                    if parsed[1].get('runtime_imports'):
+                        try:images.extend(runtime_images(directory,parsed[1],raw,census))
+                        except (ValueError,OSError,KeyError,struct.error) as error:census.unknowns.append({'kind':'RequiredRuntimeImports','reason':str(error)})
+                    else:census.unknowns.append({'kind':'RequiredRuntimeImports','reason':'ControlHasNoOwnProcessImportSnapshots'})
+                    if 'merge_lineage' in parsed[1]:
+                        view['caller_windows']=caller_windows(parsed[1])
+                        for address in (parsed[1]['merge_lineage']['returned'][4],*[a[9] for a in parsed[1]['merge_lineage']['rows']]):
+                            request_range(view,raw,address-parsed[1]['operations'][0]['base'],'MergePointerLineage',{'kind':'RuntimeSite','role':'MergeStorage'},census)
+                    else:census.unknowns.append({'kind':'MergePointerLineage','reason':'ControlHasNoObservedLineage'})
+            except (ValueError,OSError,KeyError,struct.error) as error:
+                census.unknowns.append({'kind':'RequiredRoots','image':name,'reason':str(error)})
+        for module_index,image in enumerate(images):
+            view=image['witness'];attempted=set();i=0
+            while any(tuple(span) not in attempted for span in view.get('pending',[])):
+                extent=next(span for span in view['pending'] if tuple(span) not in attempted);attempted.add(tuple(extent))
+                try:
+                    census.check()
+                    span=next(s for s in view['ranges'] if [s['start_rva'],s['end_rva']]==extent)
+                    label='census-'+str(module_index)+'-instructions-'+str(i);i+=1
+                    argv=disassembly_argv(PureWindowsPath(r['evidence'])/image['file'],view,span)
+                    require(record(directory,label,argv,r['source'],env)['status']==0,'diagnostic bounded disassembly')
+                    row,assembly,error=checked(directory,label)
+                    require(row['argv']==argv and row['cwd']==r['source'] and row.get('tool_binary')==tool and not error,'exact diagnostic tool/image/extent receipt')
+                    edges=instruction_edges(assembly,view,span);view['edges'].extend(edges)
+                    for edge in edges:
+                        try:follow_required_edge(directory,images,module_index,span,edge,census)
+                        except (ValueError,OSError,KeyError,struct.error) as error:
+                            edge['obligation']='Unresolved';edge['reason']=str(error)
+                    view['decoded'].append(extent);view['pending'].remove(extent)
+                except CensusLimit as error:
+                    census.unknowns.append({'kind':'DiagnosticCeiling','reason':str(error)});break
+                except (ValueError,OSError,KeyError,struct.error) as error:
+                    census.unknowns.append({'kind':'Decode','image':image['file'],'extent':extent,'reason':str(error)})
+                finally:write_json(directory/'closure-census-progress.json',census.summary(images))
+        rust_images=[image for image in images if image.get('language')!='native']
+        try:complete_closure(rust_images,census)
+        except (ValueError,KeyError,IndexError) as error:
+            census.unknowns.append({'kind':'OrdinaryClosurePredicate','reason':str(error)})
+    except (ValueError,OSError,KeyError,struct.error) as error:
+        census.unknowns.append({'kind':'AcquisitionPrerequisite','reason':str(error)})
+    result=census.summary(images)
+    write_json(directory/'closure-census.json',result)
+    return result
+
+
 FIXTURE_TESTS = {
     'mesh_dump': {'every_fixture_equals_its_windows_dump'},
     'x_files': {'cube_text','cube_binary_matches_text',
@@ -1131,10 +1390,10 @@ def fixture_result(label,stdout,stderr):
         require(re.search(r'running [0-9]+ tests?|test .* \.\.\.|test result:',line) is None,'fixture stderr forged libtest output')
 
 
-def recipe(runner_temp,variant,opt):
+def recipe(runner_temp,variant,opt,census=False):
     root=PureWindowsPath(runner_temp)
     require(root.is_absolute() and '..' not in root.parts and variant in ('control','observed') and opt in ('Od','O2'),'closed recipe inputs')
-    out=root/'floor-profile-evidence';build=root/'floor-profile-build'
+    out=root/('closure-census-evidence' if census else 'floor-profile-evidence');build=root/('closure-census-build' if census else 'floor-profile-build')
     id=variant+'-'+opt;source=out/'sources'/id;directory=out/id
     native=build/id/'native';target=build/id/'rust'
     mode=['--release'] if opt=='O2' else []
@@ -1389,9 +1648,9 @@ def native_provenance(commands,r,opt,objects,archive):
     return str(exe)
 
 
-def source_expected(base,observed,input_root,opt):
+def source_expected(base,observed,input_root,opt,census=False):
     runtime=PureWindowsPath(str(input_root)).parent/(('observed' if observed else 'control')+'-'+opt.lstrip('/'))/'operations.bin'
-    changes,patches=generated(lambda p:(base/p).read_bytes(),observed,input_root,runtime)
+    changes,patches=generated(lambda p:(base/p).read_bytes(),observed,input_root,runtime,census)
     raw=changes['CMakeLists.txt'];replacement=raw.replace(b'@OPT@',opt.encode())
     patches['CMakeLists.txt'].append({'kind':'optimization','original_hex':raw.hex(),'original_sha256':digest(raw),'generated_sha256':digest(replacement),'option':opt})
     changes['CMakeLists.txt']=replacement
@@ -1507,18 +1766,20 @@ def replay(out,archive=None):
     return result
 
 
-def run(out,build_root,toolchain):
+def run(out,build_root,toolchain,census_mode=False):
     require(sys.platform=='win32' and os.environ.get('GITHUB_ACTIONS')=='true','explicit hosted Windows execution only')
     require(build_root and toolchain and toolchain.is_file() and not out.exists() and not build_root.exists() and not out.is_relative_to(ROOT) and not build_root.is_relative_to(ROOT) and not out.is_relative_to(build_root) and not build_root.is_relative_to(out),'fresh external evidence/build roots')
     runner_temp=os.environ['RUNNER_TEMP']
-    r=recipe(runner_temp,'control','Od')
-    require(PureWindowsPath(str(out))==PureWindowsPath(r['evidence']).parent and PureWindowsPath(str(build_root))==PureWindowsPath(runner_temp)/'floor-profile-build' and PureWindowsPath(str(toolchain))==PureWindowsPath(runner_temp)/'floor-profile-deps/build/generators/conan_toolchain.cmake','fixed hosted roots/toolchain')
+    r=recipe(runner_temp,'control','Od',census_mode)
+    require(PureWindowsPath(str(out))==PureWindowsPath(r['evidence']).parent and PureWindowsPath(str(build_root))==PureWindowsPath(runner_temp)/('closure-census-build' if census_mode else 'floor-profile-build') and PureWindowsPath(str(toolchain))==PureWindowsPath(runner_temp)/'floor-profile-deps/build/generators/conan_toolchain.cmake','fixed hosted roots/toolchain')
     out.mkdir(parents=True);build_root.mkdir(parents=True);env=os.environ.copy()
-    for label,argv in [('git-head',['git','rev-parse','HEAD']),('git-status',['git','status','--porcelain']),('git-paths',['git','diff','--name-only',BASE,'HEAD']),('source-archive',['git','-c','tar.umask=0022','archive',BASE]),('base-commit',['git','cat-file','commit',BASE]),('head-commit',['git','cat-file','commit','HEAD'])]:
+    if census_mode:env['MDS_CENSUS_DEADLINE']=str(previous.time.monotonic()+1200)
+    scope=CENSUS_PATHS if census_mode else PATHS
+    for label,argv in [('git-head',['git','rev-parse','HEAD']),('git-status',['git','status','--porcelain']),('git-paths',['git','diff','--name-only',CENSUS_BASE if census_mode else BASE,'HEAD']),('source-archive',['git','-c','tar.umask=0022','archive',BASE]),('base-commit',['git','cat-file','commit',BASE]),('head-commit',['git','cat-file','commit','HEAD'])]:
         require(record(out,label,argv,ROOT,env)['status']==0,'source identity command')
     head=(out/'git-head.stdout').read_text().strip()
     require(head==os.environ.get('GITHUB_SHA') and not (out/'git-status.stdout').read_bytes(),'clean exact workflow HEAD')
-    require(set((out/'git-paths.stdout').read_text().splitlines())==set(PATHS),'exact six paths')
+    require(set((out/'git-paths.stdout').read_text().splitlines())==set(scope),'exact source paths')
     shutil.copyfile(out/'source-archive.stdout',out/'base-source.tar');base=out/'sources/base'
     base_modes=c.safe_tar(out/'base-source.tar',base)
     for path,row in base_modes.items():c.TRANSPORT_MODES[str((base/path).resolve())]=row['mode']
@@ -1530,63 +1791,93 @@ def run(out,build_root,toolchain):
         label='ancestor-'+revision
         require(record(out,label,['git','cat-file','commit',revision],ROOT,env)['status']==0,'ancestor source identity command')
         shutil.copyfile(out/(label+'.stdout'),out/'ancestry'/(revision+'.commit'))
-    for path in PATHS:
+    for path in sorted(set(PATHS+scope)):
         dest=out/'tooling'/path;dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/path,dest)
     input_root=Path(r['input_root']);input_root.mkdir();rows=inputs(lambda p:(base/p).read_bytes())
     for row in rows:(input_root/(row['id']+'.x')).write_bytes(row['bytes'])
-    m={'schema':SCHEMA,'fp_observation_contract':FP_CONTRACT,'runner_temp':runner_temp,'base':BASE,'head':head,'paths':PATHS,'input_root':str(input_root),'inputs':input_manifest(rows),'base_inventory':c.source_inventory(base),'builds':[],
+    m={'schema':CENSUS_SCHEMA if census_mode else SCHEMA,'fp_observation_contract':FP_CONTRACT,'runner_temp':runner_temp,'base':BASE,'head':head,'paths':scope,'input_root':str(input_root),'inputs':input_manifest(rows),'base_inventory':c.source_inventory(base),'builds':[],
        'operation_corpus':{'sha256':digest(operation_corpus()),'size':152,'words':corpus_words(operation_corpus())},'generation_ancestry':chain,
        'configuration_differences':'Native Release in both modes, appended /Od or /O2 on core and console; Rust dev versus release defaults, opt-level/debug assertions/overflow/debuginfo differ. Observed copies add private sink calls. Both copies include coarse private MXCSR snapshots with operation ordering unproved.'}
-    parsed={}
+    parsed={};variant_results={}
     for opt in ('Od','O2'):
         for variant in ('control','observed'):
-            r=recipe(runner_temp,variant,opt);commands=r['commands']
-            id=r['id'];directory=Path(r['evidence']);directory.mkdir();source=Path(r['source']);shutil.copytree(base,source)
-            changes,patches,expected=source_expected(base,variant=='observed',input_root,'/'+opt)
-            for path,raw in changes.items():(source/path).write_bytes(raw)
-            for path,row in expected.items():c.TRANSPORT_MODES[str((source/path).resolve())]=row['mode']
-            require(c.source_inventory(source)==expected,'generated source initial closure')
-            native_target=Path(r['native_target']);target=Path(r['target'])
-            e=env|{'CARGO_TARGET_DIR':str(target),'CARGO_INCREMENTAL':'0','CARGO_TERM_COLOR':'never','RUSTFLAGS':RUST_FLAGS,'CL':'','_CL_':''}
-            for label in ('configure','native-build'):
-                require(record(directory,label,commands[label],source,e,2400)['status']==0,'native '+label+' failure is not SemanticDifference')
-            shutil.copyfile(native_target/'Release/floor_profile.exe',directory/'floor_profile.exe')
-            actual=native_commands((directory/'native-build.stdout').read_bytes(),(directory/'native-build.stderr').read_bytes(),r)
-            shutil.copyfile(native_target/'Release/mikudancestudio_core.lib',directory/'mikudancestudio_core.lib')
-            require(record(directory,'rust-build',commands['rust-build'],source/'rust',e)['status']==0,'Rust build')
-            executable=cargo_binary((directory/'rust-build.stdout').read_bytes(),r,opt)
-            shutil.copyfile(executable,directory/'rust-profile.exe')
-            shutil.copyfile(native_target/'Release/floor_profile.map',directory/'native.map')
-            shutil.copyfile(Path(executable).with_suffix('.map'),directory/'rust.map')
-            (directory/'operations.bin').write_bytes(operation_corpus());creation=previous.time.time_ns()
-            binaries={}
-            for name in ('floor_profile.exe','rust-profile.exe'):
-                raw=(directory/name).read_bytes();binaries[name]={'sha256':digest(raw),'size':len(raw)}
-            b={'id':id,'variant':variant,'optimization':opt,'source':str(source),'target':str(target),'evidence':str(directory),'commands':commands,'patches':patches,'before':expected,'actual_native_commands':actual,'binaries':binaries,'original_native_binary':{'path':str(native_target/'Release/floor_profile.exe'),'sha256':digest((native_target/'Release/floor_profile.exe').read_bytes())},'original_rust_binary':{'path':executable,'sha256':digest(Path(executable).read_bytes())}}
-            b['runtime_corpus']={'sha256':digest(operation_corpus()),'size':152,'created_ns':creation}
-            m['builds'].append(b);write_json(out/'manifest.json',m)
-            require(record(directory,'native',commands['native'],source,e,300)['status']==0,'native normal exit required')
-            native=parse((directory/'native.stdout').read_bytes(),'native',variant=='observed')
-            shutil.copyfile(native['dll']['path'],directory/'d3dx9_43.dll')
-            require(record(directory,'rust',commands['rust'],source/'rust',e,300)['status']==0,'Rust probe normal exit')
-            rust=parse((directory/'rust.stdout').read_bytes(),'rust',variant=='observed')
-            for test in ('mesh_dump','x_files'):
-                require(record(directory,test,commands[test],source/'rust',e)['status']==0,'unchanged fixture contract '+test)
-                fixture_result(test,(directory/(test+'.stdout')).read_bytes(),(directory/(test+'.stderr')).read_bytes())
-            require(c.source_inventory(source)==expected,'source end drift')
-            objects={}
-            for object_path in sorted(native_target.rglob('*.obj')):
-                relative=object_path.relative_to(native_target).as_posix()
-                retained=directory/'objects'/relative;retained.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(object_path,retained)
-                raw=retained.read_bytes();objects[relative]={'sha256':digest(raw),'size':len(raw)}
-            require(any(path.endswith('/accessory.obj') for path in objects) and any(path.endswith('/native.obj') for path in objects),'actual core and console object files')
-            raw=(directory/'d3dx9_43.dll').read_bytes();binaries['d3dx9_43.dll']={'sha256':digest(raw),'size':len(raw)}
-            b.update(after=c.source_inventory(source),objects=objects)
-            write_json(out/'manifest.json',m)
-            if variant=='observed':
-                b['compiled_capture']=compiled_evidence(directory,(native,rust),r,True,e)
+            r=recipe(runner_temp,variant,opt,census_mode);commands=r['commands']
+            id=r['id'];directory=Path(r['evidence']);directory.mkdir();source=Path(r['source'])
+            census=ClosureCensus() if census_mode else None
+            if census_mode:env['MDS_CENSUS_DEADLINE']=str(census.started+CENSUS_LIMITS['seconds'])
+            try:
+                shutil.copytree(base,source)
+                changes,patches,expected=source_expected(base,variant=='observed',input_root,'/'+opt,census_mode)
+                for path,raw in changes.items():(source/path).write_bytes(raw)
+                for path,row in expected.items():c.TRANSPORT_MODES[str((source/path).resolve())]=row['mode']
+                require(c.source_inventory(source)==expected,'generated source initial closure')
+                if census_mode:
+                    write_json(directory/'source-before.json',expected)
+                    write_json(directory/'source-inverses.json',patches)
+                native_target=Path(r['native_target']);target=Path(r['target'])
+                e=env|{'CARGO_TARGET_DIR':str(target),'CARGO_INCREMENTAL':'0','CARGO_TERM_COLOR':'never','RUSTFLAGS':RUST_FLAGS,'CL':'','_CL_':''}
+                for label in ('configure','native-build'):
+                    require(record(directory,label,commands[label],source,e,2400)['status']==0,'native '+label+' failure is not SemanticDifference')
+                shutil.copyfile(native_target/'Release/floor_profile.exe',directory/'floor_profile.exe')
+                actual=native_commands((directory/'native-build.stdout').read_bytes(),(directory/'native-build.stderr').read_bytes(),r)
+                shutil.copyfile(native_target/'Release/mikudancestudio_core.lib',directory/'mikudancestudio_core.lib')
+                require(record(directory,'rust-build',commands['rust-build'],source/'rust',e)['status']==0,'Rust build')
+                executable=cargo_binary((directory/'rust-build.stdout').read_bytes(),r,opt)
+                shutil.copyfile(executable,directory/'rust-profile.exe')
+                shutil.copyfile(native_target/'Release/floor_profile.map',directory/'native.map')
+                shutil.copyfile(Path(executable).with_suffix('.map'),directory/'rust.map')
+                (directory/'operations.bin').write_bytes(operation_corpus());creation=previous.time.time_ns()
+                binaries={}
+                for name in ('floor_profile.exe','rust-profile.exe'):
+                    raw=(directory/name).read_bytes();binaries[name]={'sha256':digest(raw),'size':len(raw)}
+                b={'id':id,'variant':variant,'optimization':opt,'source':str(source),'target':str(target),'evidence':str(directory),'commands':commands,'patches':patches,'before':expected,'actual_native_commands':actual,'binaries':binaries,'original_native_binary':{'path':str(native_target/'Release/floor_profile.exe'),'sha256':digest((native_target/'Release/floor_profile.exe').read_bytes())},'original_rust_binary':{'path':executable,'sha256':digest(Path(executable).read_bytes())}}
+                b['runtime_corpus']={'sha256':digest(operation_corpus()),'size':152,'created_ns':creation}
+                m['builds'].append(b);write_json(out/'manifest.json',m)
+                require(record(directory,'native',commands['native'],source,e,300)['status']==0,'native normal exit required')
+                native=parse((directory/'native.stdout').read_bytes(),'native',variant=='observed')
+                shutil.copyfile(native['dll']['path'],directory/'d3dx9_43.dll')
+                require(record(directory,'rust',commands['rust'],source/'rust',e,300)['status']==0,'Rust probe normal exit')
+                rust=parse((directory/'rust.stdout').read_bytes(),'rust',variant=='observed')
+                for test in ('mesh_dump','x_files'):
+                    require(record(directory,test,commands[test],source/'rust',e)['status']==0,'unchanged fixture contract '+test)
+                    fixture_result(test,(directory/(test+'.stdout')).read_bytes(),(directory/(test+'.stderr')).read_bytes())
+                require(c.source_inventory(source)==expected,'source end drift')
+                objects={}
+                for object_path in sorted(native_target.rglob('*.obj')):
+                    relative=object_path.relative_to(native_target).as_posix()
+                    retained=directory/'objects'/relative;retained.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(object_path,retained)
+                    raw=retained.read_bytes();objects[relative]={'sha256':digest(raw),'size':len(raw)}
+                require(any(path.endswith('/accessory.obj') for path in objects) and any(path.endswith('/native.obj') for path in objects),'actual core and console object files')
+                raw=(directory/'d3dx9_43.dll').read_bytes();binaries['d3dx9_43.dll']={'sha256':digest(raw),'size':len(raw)}
+                b.update(after=c.source_inventory(source),objects=objects)
                 write_json(out/'manifest.json',m)
-            parsed[id]=(native,rust)
+                if census_mode:
+                    b['closure_census']=census_evidence(directory,(native,rust),r,e,census)
+                    variant_results[id]=b['closure_census']['status']
+                    write_json(out/'manifest.json',m)
+                elif variant=='observed':
+                    b['compiled_capture']=compiled_evidence(directory,(native,rust),r,True,e)
+                    write_json(out/'manifest.json',m)
+                parsed[id]=(native,rust)
+            except (ValueError,OSError,KeyError,IndexError,struct.error) as error:
+                if not census_mode:raise
+                variant_results[id]='CENSUS_INCOMPLETE_UNRESOLVED'
+                write_json(directory/'variant-failure.json',{'schema':CENSUS_SCHEMA,'error':str(error),'status':variant_results[id]})
+            finally:
+                if census_mode:
+                    if source.exists():write_json(directory/'source-after.json',c.source_inventory(source))
+                    receipts=[load_json(path.read_bytes()) for path in directory.glob('*.json') if path.name not in ('variant-failure.json','source-after.json') and 'argv' in load_json(path.read_bytes())]
+                    closed=all(row.get('writer_closure') is True for row in receipts)
+                    write_json(directory/'variant-closure.json',{'schema':CENSUS_SCHEMA,'writers_closed':closed,'command_count':len(receipts),'status':variant_results.get(id,'CENSUS_INCOMPLETE_UNRESOLVED')})
+                    require(closed,'cannot continue variant with unclosed diagnostic writers')
+                    write_json(out/'manifest.json',m)
+    if census_mode:
+        result={'schema':CENSUS_SCHEMA,'variants':variant_results,'expected_variants':['control-Od','observed-Od','control-O2','observed-O2'],
+                'admission':'NotAuthorized','compiled_semantics':'UnprovedAwaitingIndependentReview',
+                'fixture_contract':{name:sorted(tests) for name,tests in FIXTURE_TESTS.items()}}
+        write_json(out/'closure-census-result.json',result)
+        write_json(out/'closure-census-seal.json',{'schema':CENSUS_SCHEMA,'files':previous.evidence_inventory(out)})
+        return result
     result={'schema':SCHEMA,'fp_observation_contract':FP_CONTRACT,'head':head,'results':{opt:classify(*parsed['observed-'+opt]) for opt in ('Od','O2')},'hosted':'ExecutedWindowsOnly','profile_adoption':'NotAuthorized'}
     write_json(out/'result.json',result);write_json(out/'seal.json',{'schema':SCHEMA,'files':previous.evidence_inventory(out)})
     return replay(out)
@@ -1595,15 +1886,17 @@ def run(out,build_root,toolchain):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run',action='store_true')
+    parser.add_argument('--closure-census',action='store_true')
     parser.add_argument('--out',type=Path,required=True)
     parser.add_argument('--archive',type=Path)
     parser.add_argument('--build-root',type=Path)
     parser.add_argument('--toolchain',type=Path)
     parser.add_argument('--bundle',type=Path)
     args=parser.parse_args();out=args.out.resolve()
+    require(not args.closure_census or args.run,'diagnostic acquisition requires explicit hosted --run')
     if args.run:
         require(args.archive is None,'hosted run creates its own complete generation')
-        result=run(out,args.build_root.resolve() if args.build_root else None,args.toolchain)
+        result=run(out,args.build_root.resolve() if args.build_root else None,args.toolchain,args.closure_census)
         if args.bundle:result=result|{'bundle':c.bundle(out,args.bundle.resolve())}
     else:
         require(not any((args.build_root,args.toolchain,args.bundle)),'default replay cannot request effects')

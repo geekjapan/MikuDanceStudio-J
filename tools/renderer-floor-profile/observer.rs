@@ -165,7 +165,7 @@ pub(super) fn merge_destination(vertices: &Vec<Vertex>) {
     }
     CAPTURE.with(|slot| if let Capture::Finished(mut op) = slot.get() {
         if op.owner[0] == 2 && op.sites[4] == 0 {
-            op.destination = vertices.last().unwrap().position.map(f32::to_bits); op.sites[4] = code_site();
+            op.destination = vertices[op.owner[3] as usize].position.map(f32::to_bits); op.sites[4] = code_site();
             slot.set(Capture::Finished(op));
         }
     });
@@ -174,14 +174,14 @@ fn emit_operation(kind: &str, op: Operation, base: usize) {
     println!("FP {{\"stage\":\"operation\",\"kind\":{kind:?},\"owner\":{:?},\"input\":{:?},\"values\":{:?},\"output\":{:?},\"destination\":{:?},\"samples\":{:?},\"sites\":{:?},\"base\":{base}}}",
         op.owner, op.input, op.values, op.output, op.destination, op.samples, op.sites);
 }
-fn complete(output: [f32; 3], caller: [usize; 2], base: usize) {
+fn complete(output: [f32; 3], caller: [usize; 2]) -> Operation {
     let mut op = CAPTURE.with(|slot| { let old = slot.replace(Capture::Idle);
         match old { Capture::Finished(op) => op, _ => panic!("missing actual operation") } });
     assert_eq!(op.output, output.map(f32::to_bits));
     op.sites[3] = caller[0];
     if op.owner[0] == 1 { op.sites[4] = caller[1]; }
     else { assert_eq!(op.destination, op.output); assert_ne!(op.sites[4], 0); }
-    emit_operation("RustTable", op, base);
+    op
 }
 #[inline(never)]
 fn hardware(p: [f32; 3], m: &Mat4, owner: [u32; 4]) -> Operation {
@@ -209,6 +209,87 @@ fn hardware(p: [f32; 3], m: &Mat4, owner: [u32; 4]) -> Operation {
         options(nostack, preserves_flags)); }
     op
 }
+struct Witness {
+    operation: Operation, raw: [u8; 1024], length: usize, pointer: usize,
+    ordinal: usize, sink: usize, sites: [usize; 3],
+    handoff: [usize; 3], handoff_sites: [usize; 2], handoff_ordinal: usize, handoff_kind: u32,
+    lineage: [[usize; 10]; 16], count: usize, returned: [usize; 6], caller: [usize; 2],
+}
+impl Witness {
+    const EMPTY: Self = Self { operation: Operation::EMPTY, raw: [0; 1024], length: 0,
+        pointer: 0, ordinal: 0, sink: 0, sites: [0; 3], handoff: [0; 3], handoff_sites: [0; 2],
+        handoff_ordinal: 0, handoff_kind: 0, lineage: [[0; 10]; 16],
+        count: 0, returned: [0; 6], caller: [0; 2] };
+}
+fn receive(raw: &[u8], ordinal: usize, sink: &mut Witness) {
+    assert!(!raw.is_empty() && raw.len() <= sink.raw.len());
+    sink.pointer = raw.as_ptr() as usize; sink.length = raw.len(); sink.ordinal = ordinal;
+    sink.sink = sink as *mut Witness as usize;
+    sink.raw[..raw.len()].copy_from_slice(raw);
+}
+fn operands(raw: &[u8], ordinal: usize) -> ([f32; 3], Mat4) {
+    assert_eq!(raw.len(), 152); assert!(ordinal < 2);
+    let start = ordinal * 76;
+    let input: [f32; 19] = std::array::from_fn(|i| {
+        f32::from_bits(u32::from_le_bytes(raw[start + i * 4..start + i * 4 + 4].try_into().unwrap()))
+    });
+    ([input[0], input[1], input[2]], Mat4(std::array::from_fn(|i| input[i + 3])))
+}
+#[inline(never)]
+fn direct_witness(raw: &[u8], ordinal: usize, sink: &mut Witness) {
+    sink.sites[0] = code_site(); receive(raw, ordinal, sink);
+    let (p, m) = operands(raw, ordinal); sink.sites[1] = code_site();
+    if @OBSERVED@ { arm([1, ordinal as u32, 0, 0]); }
+    let before = boundary(); let output = transform_coord(p, &m); let after = boundary();
+    sink.operation = if @OBSERVED@ { complete(output, [before.1, after.1]) }
+        else { Operation { owner: [1, ordinal as u32, 0, 0], input: input_words(p, &m), output: output.map(f32::to_bits),
+            samples: [before.0, after.0], sites: [before.1, 0, after.1, 0, 0], ..Operation::EMPTY } };
+    sink.sites[2] = code_site();
+}
+#[inline(never)]
+fn hardware_witness(raw: &[u8], ordinal: usize, sink: &mut Witness) {
+    sink.sites[0] = code_site(); receive(raw, ordinal, sink);
+    let (p, m) = operands(raw, ordinal); sink.sites[1] = code_site();
+    let before = code_site(); let mut op = hardware(p, &m, [1, ordinal as u32, 0, 0]); let after = code_site();
+    op.sites[3] = before; op.sites[4] = after; sink.operation = op;
+    sink.sites[2] = code_site();
+}
+#[inline(never)]
+fn merge_witness(raw: &[u8], ordinal: usize, sink: &mut Witness) {
+    sink.sites[0] = code_site(); receive(raw, ordinal, sink); sink.sites[1] = code_site();
+    assert_eq!(ordinal, 0);
+    if @OBSERVED@ { arm([2, 0, 0, 0]); }
+    let before = boundary(); let mesh = crate::load_x(raw).expect("actual runtime importer"); let after = boundary();
+    let output = mesh.vertices[0].position;
+    sink.caller = [before.1, after.1];
+    sink.returned = [mesh.vertices.as_ptr() as usize, mesh.vertices.len(), mesh.vertices.capacity(),
+        &mesh.vertices[0].position as *const [f32; 3] as usize, code_site(), std::mem::offset_of!(Vertex, position)];
+    if @OBSERVED@ {
+        LINEAGE.with(|slot| { let lineage = slot.borrow(); sink.lineage = lineage.0; sink.count = lineage.1; });
+    }
+    sink.operation = if @OBSERVED@ { complete(output, [before.1, after.1]) }
+        else { Operation { owner: [2, 0, 0, 0], output: output.map(f32::to_bits), destination: output.map(f32::to_bits),
+            samples: [before.0, after.0], sites: [before.1, 0, after.1, 0, 0], ..Operation::EMPTY } };
+    sink.sites[2] = code_site();
+}
+#[inline(never)]
+fn handoff(raw: &[u8], ordinal: usize, sink: &mut Witness, kind: u32) {
+    sink.handoff = [raw.as_ptr() as usize, raw.len(), sink as *mut Witness as usize];
+    sink.handoff_ordinal = ordinal; sink.handoff_kind = kind;
+    let before = code_site();
+    match kind {
+        0 => direct_witness(raw, ordinal, sink),
+        1 => hardware_witness(raw, ordinal, sink),
+        2 => merge_witness(raw, ordinal, sink),
+        _ => panic!("unknown witness kind"),
+    }
+    sink.handoff_sites = [before, code_site()];
+}
+fn emit_witness(role: &str, ordinal: usize, sink: &Witness, base: usize) {
+    println!("FP {{\"stage\":\"witness\",\"schema\":1,\"role\":{role:?},\"owner\":{:?},\"ordinal\":{ordinal},\"handoff\":{:?},\"handoff_sites\":{:?},\"handoff_ordinal\":{},\"handoff_kind\":{},\"received\":[{},{},{}],\"received_ordinal\":{},\"bytes\":{:?},\"sites\":{:?},\"base\":{base}}}",
+        sink.operation.owner, sink.handoff, sink.handoff_sites, sink.handoff_ordinal, sink.handoff_kind,
+        sink.pointer, sink.length, sink.sink, sink.ordinal, &sink.raw[..sink.length], sink.sites);
+}
 fn operation_diagnostic() {
     unsafe extern "system" { fn GetModuleHandleW(name: *const u16) -> *mut std::ffi::c_void; }
     let base = unsafe { GetModuleHandleW(std::ptr::null()) } as usize;
@@ -216,36 +297,25 @@ fn operation_diagnostic() {
     if @OBSERVED@ { runtime_imports("pre", base); }
     let raw = std::fs::read(@RUNTIME@).expect("post-build runtime corpus"); assert_eq!(raw.len(), 152);
     let words: Vec<u32> = raw.chunks_exact(4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).collect();
-    println!("FP {{\"stage\":\"runtime-read\",\"words\":{words:?}}}");
-    for (id, input) in words.chunks_exact(19).enumerate() {
-        let p: [f32; 3] = std::array::from_fn(|i| f32::from_bits(input[i]));
-        let m = Mat4(std::array::from_fn(|i| f32::from_bits(input[i + 3])));
-        if @OBSERVED@ { arm([1, id as u32, 0, 0]); }
-        let before = boundary(); let output = transform_coord(p, &m); let after = boundary();
-        if @OBSERVED@ { complete(output, [before.1, after.1], base); }
-        else { emit_operation("RustEndpoint", Operation { owner: [1, id as u32, 0, 0], input: input_words(p, &m), output: output.map(f32::to_bits),
-            samples: [before.0, after.0], sites: [before.1, 0, after.1, 0, 0], ..Operation::EMPTY }, base); }
-        let caller_before = code_site(); let mut hardware_output = hardware(p, &m, [1, id as u32, 0, 0]); let caller_after = code_site();
-        hardware_output.sites[3] = caller_before; hardware_output.sites[4] = caller_after;
-        emit_operation("HardwareSeedWithFrozenRefinement", hardware_output, base);
+    println!("FP {{\"stage\":\"runtime-read\",\"words\":{words:?},\"pointer\":{}}}", raw.as_ptr() as usize);
+    for ordinal in 0..2 {
+        let mut sink = Witness::EMPTY;
+        handoff(&raw, ordinal, &mut sink, 0);
+        emit_witness("RawCorpusThroughTableReturn", ordinal, &sink, base);
+        emit_operation(if @OBSERVED@ { "RustTable" } else { "RustEndpoint" }, sink.operation, base);
+        handoff(&raw, ordinal, &mut sink, 1);
+        emit_witness("RawCorpusThroughHardwareReturn", ordinal, &sink, base);
+        emit_operation("HardwareSeedWithFrozenRefinement", sink.operation, base);
     }
     let raw = std::fs::read(@MERGE_INPUT@).expect("runtime merge fixture");
-    println!("FP {{\"stage\":\"merge-read\",\"bytes\":{raw:?}}}");
-    if @OBSERVED@ { arm([2, 0, 0, 0]); }
-    let before = boundary(); let mesh = crate::load_x(&raw).expect("actual runtime importer"); let after = boundary();
-    let output = mesh.vertices[0].position;
+    println!("FP {{\"stage\":\"merge-read\",\"bytes\":{raw:?},\"pointer\":{}}}", raw.as_ptr() as usize);
+    let mut sink = Witness::EMPTY;
+    handoff(&raw, 0, &mut sink, 2);
     if @OBSERVED@ {
-        LINEAGE.with(|slot| {
-        let lineage = slot.borrow();
-        println!("FP {{\"stage\":\"merge-lineage\",\"caller\":[{},{}],\"rows\":{:?},\"returned\":[{},{},{},{},{},{}]}}", before.1, after.1, &lineage.0[..lineage.1],
-            mesh.vertices.as_ptr() as usize, mesh.vertices.len(), mesh.vertices.capacity(),
-            &mesh.vertices[0].position as *const [f32; 3] as usize, code_site(),
-            std::mem::offset_of!(Vertex, position));
-        });
+        println!("FP {{\"stage\":\"merge-lineage\",\"caller\":{:?},\"rows\":{:?},\"returned\":{:?}}}", sink.caller, &sink.lineage[..sink.count], sink.returned);
     }
-    if @OBSERVED@ { complete(output, [before.1, after.1], base); }
-    else { emit_operation("RustEndpoint", Operation { owner: [2, 0, 0, 0], output: output.map(f32::to_bits), destination: output.map(f32::to_bits),
-        samples: [before.0, after.0], sites: [before.1, 0, after.1, 0, 0], ..Operation::EMPTY }, base); }
+    emit_witness("RawFixtureThroughSelectedMeshReturn", 0, &sink, base);
+    emit_operation(if @OBSERVED@ { "RustTable" } else { "RustEndpoint" }, sink.operation, base);
     if @OBSERVED@ { runtime_imports("post", base); }
 }
 

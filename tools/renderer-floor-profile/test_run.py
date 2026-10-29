@@ -58,7 +58,7 @@ def packet(language,observed=True):
                 rows.append({'stage':'direct','operation':op,'matrix':m,'point':p,'words':[r.word(1.)]*3+([r.word(3. if m==2 else 1.)] if op=='Transform' else []),'sample_a':8064,'sample_b':8064})
                 if m==2 and op=='TransformCoord':rows[-1]['words']=[r.word(1./3)]*3
     if language=='rust' and observed:rows.append({'stage':'runtime-imports','phase':'pre'})
-    rows.append({'stage':'runtime-read','words':r.corpus_words(r.operation_corpus())})
+    rows.append(dict(stage='runtime-read',words=r.corpus_words(r.operation_corpus()),**({'pointer':4096} if language=='rust' else {})))
     def op(kind,owner,input,output):
         row={'stage':'operation','kind':kind,'owner':owner,'input':input,'output':output,
              'samples':[8064,8064],'sites':[8200,8201] if kind=='DllCall' else [8200,8201,8202,8203,8204],'base':8192}
@@ -67,6 +67,9 @@ def packet(language,observed=True):
             row.update(values=[r.word(1. if owner[1]==0 else 3.),0x3f7ff000 if owner[1]==0 else 0x3eaaa000,0x3f7fffff if owner[1]==0 else 0x3eaaaaaa],
                        destination=output[:] if owner[0]==2 else [0,0,0])
             if kind=='RustEndpoint':row['values']=[0]*3;row['sites']=[8200,0,8202,0,0]
+        if language=='rust':
+            raw=r.operation_corpus() if owner[0]==1 else r.inputs(lambda p:(r.ROOT/p).read_bytes())[1]['bytes']
+            rows.append(witness_record(row,raw,r.WITNESS_ROLES[2 if owner[0]==2 else 1 if kind=='HardwareSeedWithFrozenRefinement' else 0],owner[1] if owner[0]==1 else 0,4096 if owner[0]==1 else 6144))
         rows.append(row)
     corpus=r.corpus_words(r.operation_corpus())
     for i in range(2):
@@ -74,12 +77,19 @@ def packet(language,observed=True):
         for kind in (('DllCall',) if language=='native' else (('RustTable' if observed else 'RustEndpoint'),'HardwareSeedWithFrozenRefinement')):
             op(kind,[1,i,0,0],corpus[i*19:(i+1)*19],output)
     if language=='rust':
-        rows.append({'stage':'merge-read','bytes':list(r.inputs(lambda p:(r.ROOT/p).read_bytes())[1]['bytes'])})
+        rows.append({'stage':'merge-read','bytes':list(r.inputs(lambda p:(r.ROOT/p).read_bytes())[1]['bytes']),'pointer':6144})
         if observed:rows.append(lineage())
         op('RustTable' if observed else 'RustEndpoint',[2,0,0,0],list(map(r.word,r.POINTS[0]+r.IDENTITY)) if observed else [0]*19,[0]*3)
         if observed:rows.append({'stage':'runtime-imports','phase':'post'})
     rows.append({'stage':'end','status':0})
     return rows
+
+
+def witness_record(op,raw,role,ordinal,pointer):
+    return {'stage':'witness','schema':1,'role':role,'owner':op['owner'][:],'ordinal':ordinal,
+            'received_ordinal':ordinal,'handoff_ordinal':ordinal,'handoff_kind':r.WITNESS_ROLES.index(role),
+            'handoff_sites':[op['base']+0x1021,op['base']+0x1027],'handoff':[pointer,len(raw),16384],'received':[pointer,len(raw),16384],
+            'bytes':list(raw),'sites':[op['base']+0x1001,op['base']+0x1002,op['base']+0x1007],'base':op['base']}
 
 
 def wire(rows):return ('\n'.join('FP '+json.dumps(row) for row in rows)+'\n').encode()
@@ -131,14 +141,29 @@ def code_fixture():
     raw=bytearray(2048);raw[:2]=b'MZ';struct.pack_into('<I',raw,60,128)
     raw[128:134]=b'PE\0\0d\x86';struct.pack_into('<H',raw,134,2);struct.pack_into('<H',raw,148,240)
     optional=152;struct.pack_into('<H',raw,optional,0x20b);struct.pack_into('<Q',raw,optional+24,0x140000000)
-    struct.pack_into('<II',raw,optional+136,0x2000,12)
-    for i,(name,va,size,offset,flags) in enumerate([(b'.text',0x1000,256,1024,0x60000020),(b'.pdata',0x2000,12,1280,0x40000040)]):
+    struct.pack_into('<II',raw,optional+136,0x2000,24)
+    for i,(name,va,size,offset,flags) in enumerate([(b'.text',0x1000,256,1024,0x60000020),(b'.pdata',0x2000,24,1280,0x40000040)]):
         at=392+i*40;raw[at:at+len(name)]=name;struct.pack_into('<IIII',raw,at+8,size,va,size,offset);struct.pack_into('<I',raw,at+36,flags)
     struct.pack_into('<III',raw,1280,0x1000,0x1008,0x3000);raw[1024:1032]=b'\x90'*7+b'\xc3'
+    struct.pack_into('<III',raw,1292,0x1020,0x1028,0x3000);raw[1056:1064]=b'\xe8\xdb\xff\xff\xff\x90\x90\xc3'
     mapping=b' Preferred load address is 0000000140000000\n 0001:00000000 mds_accessory_transform_coord 0000000140001000 f object.obj\n'
     rows=[{'owner':[1,0,0,0],'base':8192,'sites':[8192+0x1001,0,8192+0x1007,0,0]}]
+    mapping+=b' 0001:00000000 floor_profile_direct_witness 0000000140001000 f object.obj\n 0001:00000020 floor_profile_handoff 0000000140001020 f object.obj\n'
+    rows[0]['witness']=dict(witness_record(rows[0],r.operation_corpus(),r.WITNESS_ROLES[0],0,4096),raw_sha256=r.digest(r.operation_corpus()),compiled_dataflow='UnprovedAwaitingIndependentReview')
     assembly=('\n'.join(f'14000100{i}:  {v:02x}  '+('ret' if i==7 else 'nop') for i,v in enumerate(raw[1024:1032]))+'\n').encode()
     return bytes(raw),mapping,rows,assembly
+
+
+def instructions(span):
+    raw=bytes.fromhex(span['bytes']);lines=[];i=0
+    while i<len(raw):
+        address=0x140000000+span['start_rva']+i
+        if raw[i]==0xe8:
+            encoded=raw[i:i+5];text='callq '+hex(address+5+struct.unpack_from('<i',encoded,1)[0]);i+=5
+        else:
+            encoded=raw[i:i+1];text='ret' if raw[i]==0xc3 else 'nop';i+=1
+        lines.append(f'{address:x}: '+encoded.hex(' ')+' '+text+'\n')
+    return ''.join(lines).encode()
 
 
 def runtime_fixture():
@@ -880,7 +905,7 @@ class Controls(unittest.TestCase):
             elif name=='corpus':next(v for v in rows if v['stage']=='runtime-read')['words'].pop()
             elif name=='corpus-boolean':next(v for v in rows if v['stage']=='runtime-read')['words'][4]=False
             elif name=='fixture':next(v for v in rows if v['stage']=='merge-read')['bytes'][0]^=1
-            elif name=='destination':next(v for v in rows if v.get('owner')==[2,0,0,0])['destination'][0]=r.word(.5)
+            elif name=='destination':next(v for v in rows if v.get('kind')=='RustTable' and v.get('owner')==[2,0,0,0])['destination'][0]=r.word(.5)
         for name in ('duplicate','missing','owner','word','boolean','nan','missing-site','bad-site','bad-sample','recipe-promotion','corpus','corpus-boolean','fixture','destination'):
             rows=packet('rust');mutate(rows,name)
             with self.subTest(name=name),self.assertRaises((ValueError,KeyError,IndexError)):r.parse(wire(rows),'rust',True)
@@ -907,16 +932,21 @@ class Controls(unittest.TestCase):
     def test_32_compiled_capture_requires_actual_capability_receipts(self):
         raw,mapping,rows,assembly=code_fixture();witness=r.code_ranges(raw,rows,mapping)
         witness['same_link_map']={'sha256':r.digest(mapping),'size':len(mapping)}
+        witness.update(pending=[],decoded=[[s['start_rva'],s['end_rva']] for s in witness['ranges']])
         rust_witness=r.required_code_ranges(raw,rows,mapping)
         rust_witness['same_link_map']=witness['same_link_map']
         rust_witness['caller_windows']=r.caller_windows({'operations':rows,'merge_lineage':lineage()})
-        rust_witness['data_requests']=[{'synthetic':'seed bytes separately tested'}]
+        rust_witness['data_requests']=[{'role':'SeedTable','size':8192,'synthetic':'seed bytes separately tested','resolution':'Resolved'}]
         rust_witness['copy_obligations']=[{'size':176,'role':'OperationReturn','status':'RequiresIndependentCallerRegionAndPathReview'},
                                          {'size':8192,'role':'OdSeedTable','status':'RequiresIndependentCallerRegionAndPathReview'}]
         for address in (lineage()['returned'][4],*[a[9] for a in lineage()['rows']]):
             r.request_range(rust_witness,raw,address-8192,'MergePointerLineage',{'kind':'RuntimeSite','role':'MergeStorage'})
-        rust_witness['edges']=r.instruction_edges(assembly,rust_witness,rust_witness['ranges'][0])
-        rust_witness.update(runtime_images=[],logical_request_count=len(rust_witness['requests']),physical_range_count=len(rust_witness['ranges']))
+        rust_witness['edges']=[]
+        for span in rust_witness['ranges']:
+            for edge in r.instruction_edges(instructions(span),rust_witness,span):
+                r.follow_required_edge(None,[{'witness':rust_witness,'raw':raw}],0,span,edge);rust_witness['edges'].append(edge)
+        rust_witness.update(pending=[],decoded=[[s['start_rva'],s['end_rva']] for s in rust_witness['ranges']],runtime_images=[])
+        r.complete_closure([{'witness':rust_witness,'raw':raw}])
         recipe=r.recipe('C:/runner/temp','observed','Od');directory=Path('/synthetic-compiled-capture')
         files={}
         for language,binary,map_name in (('native','floor_profile.exe','native.map'),('rust','rust-profile.exe','rust.map')):
@@ -927,10 +957,12 @@ class Controls(unittest.TestCase):
         help={'argv':[str(r.DISASSEMBLER),'--help'],'cwd':recipe['source'],'tool_binary':tool}
         receipts={'instruction-help':(help,b'--disassemble --start-address --stop-address',b'')}
         for language,name in (('native','floor_profile.exe'),('rust','rust-profile.exe')):
-            argv=r.disassembly_argv(r.PureWindowsPath(recipe['evidence'])/name,witness,witness['ranges'][0])
-            receipts[language+'-instructions-0']=({'argv':argv,'cwd':recipe['source'],'tool_binary':copy.deepcopy(tool)},assembly,b'')
+            view=witness if language=='native' else rust_witness
+            for i,span in enumerate(view['ranges']):
+                argv=r.disassembly_argv(r.PureWindowsPath(recipe['evidence'])/name,view,span)
+                receipts[language+'-instructions-'+str(i)]=({'argv':argv,'cwd':recipe['source'],'tool_binary':copy.deepcopy(tool)},instructions(span),b'')
         parsed=({'operations':rows},{'operations':rows,'merge_lineage':lineage()})
-        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(r,'checked',lambda directory,label:receipts[label]),patch.object(r,'runtime_images',return_value=[]),patch.object(r,'seed_data',return_value={'synthetic':'seed bytes separately tested'}):
+        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(r,'checked',lambda directory,label:receipts[label]),patch.object(r,'runtime_images',return_value=[]),patch.object(r,'seed_data',return_value={'role':'SeedTable','size':8192,'synthetic':'seed bytes separately tested','resolution':'Resolved'}):
             self.assertEqual(set(r.compiled_evidence(directory,parsed,recipe)),{'native','rust'})
             del files[directory/'instruction-tool.bin']
             with self.assertRaises(KeyError):r.compiled_evidence(directory,parsed,recipe)
@@ -1024,6 +1056,18 @@ class Controls(unittest.TestCase):
             self.assertEqual(set(row['binaries']),{'floor_profile.exe','rust-profile.exe','d3dx9_43.dll'})
             self.assertNotIn('compiled_capture',row)
             if failure=='llvm':raise ValueError('acquisition failed')
+            if failure in ('budget','unknown'):
+                raw,mapping,rows,_=code_fixture();view=r.required_code_ranges(raw,rows,mapping)
+                view['copy_obligations']=copy.deepcopy(r.COPY_OBLIGATIONS)
+                view['data_requests']=[{'role':'SeedTable','size':8192,'resolution':'Resolved'}]
+                for span in view['ranges']:
+                    for edge in r.instruction_edges(instructions(span),view,span):
+                        r.follow_required_edge(None,[{'witness':view,'raw':raw}],0,span,edge);view['edges'].append(edge)
+                view['decoded']=view['pending'];view['pending']=[]
+                if failure=='budget':view['ranges']*=65
+                else:view['edges'][0]['obligation']='Unresolved'
+                try:r.complete_closure([{'witness':view,'raw':raw}])
+                finally:save(directory/'rust-code-progress.json',{'schema':r.SCHEMA,'images':[{'witness':view}]})
             return {'native':{},'rust':{}}
         state.update(record=record,parse=parse,write_json=save,compiled_evidence=acquire,fixture_result=lambda *args:None,classify=lambda *args:{},replay=lambda *args:{})
         with patch.object(Path,'read_bytes',read),patch.object(Path,'write_bytes',write),patch.object(Path,'mkdir'),patch.object(Path,'rglob',return_value=[Path('/native/core/accessory.obj'),Path('/native/console/native.obj')]),patch.object(r.shutil,'copyfile',lambda source,target:write(target,read(source))),patch.object(r.c,'source_inventory',return_value=state['expected']),patch.object(r.previous.time,'time_ns',side_effect=[123]),patch.object(r.previous,'evidence_inventory',return_value={}):
@@ -1051,7 +1095,7 @@ class Controls(unittest.TestCase):
         return manifests,calls,parses,acquisitions
 
     def test_36_build_row_survives_optional_acquisition_failure(self):
-        for failure in ('llvm',None):
+        for failure in ('llvm','budget','unknown',None):
             with self.subTest(failure=failure):
                 manifests,calls,parses,acquisitions=self.producer_receipts(failure)
                 self.assertEqual(len(manifests),2 if failure else 3)
@@ -1070,9 +1114,10 @@ class Controls(unittest.TestCase):
         raw,mapping,rows,_=code_fixture();changed=bytearray(raw)
         struct.pack_into('<II',changed,288,0,0)
         mapping+=b' 0001:00000008 next_leaf 0000000140001008 f object.obj\n'
-        witness=r.required_code_ranges(bytes(changed),rows,mapping)
-        self.assertEqual(witness['requests'][0]['extent_kind'],'NextDistinctExecutableSymbolCandidateOnly')
-        self.assertEqual(witness['ranges'][0]['end_rva'],0x1008)
+        with self.assertRaisesRegex(ValueError,'exception-directory boundary'):r.required_code_ranges(bytes(changed),rows,mapping)
+        extent,kind=r.range_extent(bytes(changed),0x1001,r.map_symbols(mapping,0x140000000,r.pe_code(bytes(changed))[1]),True)
+        self.assertEqual(r.range_extent(bytes(changed),0x1001,r.map_symbols(mapping,0x140000000,r.pe_code(bytes(changed))[1]),True)[1],'NextDistinctExecutableSymbolCandidateOnly')
+        self.assertEqual(extent[1],0x1008)
         for bad in (mapping.splitlines()[0]+b'\n',mapping.replace(b'140001008',b'140003008')):
             with self.assertRaises(ValueError):r.required_code_ranges(bytes(changed),rows,bad)
         changed[1024:1030]=b'\xff\x25'+struct.pack('<i',-14)
@@ -1099,7 +1144,7 @@ class Controls(unittest.TestCase):
         raw,mapping,rows,_=code_fixture();view=r.required_code_ranges(raw,rows,mapping)
         r.closure_budget([view]*48)
         with self.assertRaisesRegex(ValueError,'PE section budget'):r.closure_budget([view]*49)
-        many=dict(view,ranges=view['ranges']*128,sections=[])
+        many=dict(view,ranges=view['ranges'][:1]*128,sections=[])
         r.closure_budget([many])
         with self.assertRaisesRegex(ValueError,'small bounded'):r.closure_budget([many,dict(view,sections=[])])
 
@@ -1225,8 +1270,8 @@ class Controls(unittest.TestCase):
         view['caller_windows']=[{'start_rva':0x1002,'end_rva':0x1004,'role':'ActualCallerInputThroughReturn','operation':0}]
         view['all_same_link_symbols'].append({'rva':0x1080,'symbol':'std2io5stdio6_print','object':'actual.obj'})
         edge={'instruction_rva':0x1001,'target':{'kind':'DirectRva','rva':0x1080},'text':'callq 0x140001080','obligation':'Required'}
-        candidate=copy.deepcopy(edge);self.assertTrue(r.formatting_exclusion(candidate,view,view['ranges'][0]))
-        self.assertEqual(candidate['classification'],'CandidateRequiringIndependentSemanticReview')
+        candidate=copy.deepcopy(edge);self.assertFalse(r.formatting_exclusion(candidate,view,view['ranges'][0]))
+        self.assertEqual(candidate['obligation'],'Required')
         self.assertEqual(view['compiled_dataflow'],'UnprovedAwaitingIndependentReview')
         for name in ('inside','missing-window','non-formatting','indirect'):
             changed=copy.deepcopy(edge);v=copy.deepcopy(view)
@@ -1251,6 +1296,166 @@ class Controls(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'changing sampled dispatch target'):r.loaded_dispatch_target(directory,refreshed,0x3060)
             files[key]=original
             with self.assertRaisesRegex(ValueError,'dispatch slot extent'):r.loaded_dispatch_target(directory,image,0x4000)
+
+    def test_50_raw_witness_handoff_and_role_peers(self):
+        legal=packet('rust');parsed=r.parse(wire(legal),'rust',True)
+        self.assertEqual([op['witness']['role'] for op in parsed['operations']],
+                         [r.WITNESS_ROLES[0],r.WITNESS_ROLES[1]]*2+[r.WITNESS_ROLES[2]])
+        for name in ('old-schema','role','owner','ordinal','received-ordinal','pointer','length','sink','bytes',
+                     'stale-handoff','base','missing-site','boolean','refreshed-extra-role','missing-sink','handoff-kind','handoff-ordinal','handoff-site','raw-sink-alias'):
+            rows=copy.deepcopy(legal);row=next(v for v in rows if v['stage']=='witness')
+            if name=='old-schema':row['schema']=0
+            elif name=='role':row['role']=r.WITNESS_ROLES[1]
+            elif name=='owner':row['owner'][0]=2
+            elif name=='ordinal':row['ordinal']=1
+            elif name=='received-ordinal':row['received_ordinal']=1
+            elif name=='pointer':row['received'][0]+=4
+            elif name=='length':row['received'][1]-=4
+            elif name=='sink':row['received'][2]+=176
+            elif name=='bytes':row['bytes'][0]^=1
+            elif name=='stale-handoff':
+                row['handoff'][0]+=4;row['received'][0]+=4
+            elif name=='base':row['base']+=1
+            elif name=='missing-site':row['sites'][2]=0
+            elif name=='boolean':row['received'][0]=True
+            elif name=='refreshed-extra-role':row['raw_sha256']=r.digest(bytes(row['bytes']))
+            elif name=='handoff-kind':row['handoff_kind']=1
+            elif name=='handoff-ordinal':row['handoff_ordinal']=1
+            elif name=='handoff-site':row['handoff_sites'][0]=0
+            elif name=='raw-sink-alias':row['handoff'][2]=row['received'][2]=row['handoff'][0]
+            else:row['received'].pop()
+            with self.subTest(name=name),self.assertRaises(ValueError):r.parse(wire(rows),'rust',True)
+        refreshed=copy.deepcopy(legal)
+        for row in refreshed:
+            if row['stage']=='runtime-read':row['pointer']+=32
+            if row['stage']=='witness' and row['owner'][0]==1:
+                row['handoff'][0]+=32;row['received'][0]+=32
+        r.parse(wire(refreshed),'rust',True)
+
+    def test_51_collector_named_required_targets_are_retained(self):
+        raw,mapping,rows,_=code_fixture();raw=bytearray(raw)
+        struct.pack_into('<II',raw,288,0x2000,36);struct.pack_into('<IIII',raw,440,36,0x2000,36,1280)
+        struct.pack_into('<III',raw,1292,0x1008,0x1010,0x3000)
+        struct.pack_into('<III',raw,1304,0x1020,0x1028,0x3000)
+        mapping+=b' 0001:00000008 floor_profile_runtime_imports_collector 0000000140001008 f object.obj\n'
+        raw[1024:1032]=b'\xe8\x03\0\0\0\x90\x90\xc3';raw=bytes(raw)
+        view=r.required_code_ranges(raw,rows,mapping);images=[{'witness':view,'raw':raw}]
+        span=view['ranges'][0]
+        assembly=b'140001000: e8 03 00 00 00 callq 0x140001008\n140001005: 90 nop\n140001006: 90 nop\n140001007: c3 retq\n'
+        edge=r.instruction_edges(assembly,view,span)[0]
+        view['caller_windows']=[{'start_rva':0x1000,'end_rva':0x1007}]
+        self.assertFalse(r.formatting_exclusion(edge,view,span))
+        r.follow_required_edge(None,images,0,span,edge)
+        self.assertEqual(view['ranges'][-1]['start_rva'],0x1008)
+        self.assertEqual(edge['resolution'],'Acquired')
+        r.request_range(view,raw,0x1008,'RequiredReturn',{'kind':'RequiredTarget','instruction_rva':0x1005})
+        self.assertEqual(len(view['ranges']),3)
+        self.assertEqual(len([q for q in view['requests'] if q['target_rva']==0x1008]),2)
+        denied=dict(edge,obligation='OutsideClaim')
+        with self.assertRaisesRegex(ValueError,'unsupported edge waiver'):r.follow_required_edge(None,images,0,span,denied)
+        self.assertEqual(edge['obligation'],'Required')
+
+    def test_52_frontier_and_obligation_completion_is_strict(self):
+        raw,mapping,rows,assembly=code_fixture();view=r.required_code_ranges(raw,rows,mapping)
+        view['copy_obligations']=copy.deepcopy(r.COPY_OBLIGATIONS)
+        view['data_requests']=[{'role':'SeedTable','size':8192,'resolution':'Resolved'}]
+        view['edges']=[];images=[{'witness':view,'raw':raw}]
+        for span in view['ranges']:
+            for edge in r.instruction_edges(instructions(span),view,span):
+                r.follow_required_edge(None,images,0,span,edge);view['edges'].append(edge)
+        with self.assertRaisesRegex(ValueError,'pending'):r.complete_closure(images)
+        view['decoded']=view['pending'];view['pending']=[];r.complete_closure(images)
+        self.assertEqual(view['compiled_dataflow'],'UnprovedAwaitingIndependentReview')
+        for name in ('pending','unknown-edge','unresolved-import','required-return','seed-copy','data','sink','range','missing-edge-resolution','missing-handoff-target'):
+            peer=copy.deepcopy(images);v=peer[0]['witness']
+            if name=='pending':v['pending']=[[0x1000,0x1008]]
+            elif name in ('unknown-edge','unresolved-import'):v['edges'][0]['obligation']='Unresolved'
+            elif name=='required-return':v['copy_obligations'].pop(0)
+            elif name=='seed-copy':v['copy_obligations'].pop()
+            elif name=='data':v['data_requests']=[]
+            elif name=='sink':v['semantic_origins']=[]
+            elif name=='range':v['requests'][0]['resolution']='Unresolved'
+            elif name=='missing-edge-resolution':del v['edges'][0]['resolution']
+            else:v['edges']=[e for e in v['edges'] if not e['text'].startswith('call')]
+            with self.subTest(name=name),self.assertRaisesRegex(ValueError,'INCOMPLETE'):r.complete_closure(peer)
+        import_raw=runtime_fixture()[0];v=copy.deepcopy(view);edge={'instruction_rva':0x1000,'obligation':'Required','target':{'kind':'RipRelativeIatSlot','slot_rva':0x3060}}
+        r.follow_required_edge(None,[{'witness':v,'raw':import_raw}],0,v['ranges'][0],edge)
+        self.assertEqual(edge['reason'],'MissingRequiredSameProcessImportTarget')
+        self.assertEqual(v['data_requests'][-1]['resolution'],'Unresolved')
+
+    def test_53_versioned_boundary_owner_is_not_a_name_waiver(self):
+        raw,mapping,rows,_=code_fixture();r.required_code_ranges(raw,rows,mapping)
+        for name in ('missing-role','wrong-role','wrong-owner','wrong-site','wrong-symbol','same-handoff-extent','wrong-handoff-owner'):
+            peer=copy.deepcopy(rows);m=mapping
+            if name=='missing-role':del peer[0]['witness']
+            elif name=='wrong-role':peer[0]['witness']['role']='AcquisitionUtility'
+            elif name=='wrong-owner':peer[0]['witness']['role']=r.WITNESS_ROLES[1]
+            elif name=='wrong-site':peer[0]['witness']['sites'][2]=8192+0x2000
+            elif name=='wrong-symbol':m=mapping.replace(b'direct_witness',b'runtime_imports')
+            elif name=='same-handoff-extent':peer[0]['witness']['handoff_sites']=peer[0]['witness']['sites'][:2]
+            else:m=mapping.replace(b'floor_profile_handoff',b'floor_profile_collector')
+            with self.subTest(name=name),self.assertRaises((ValueError,KeyError)):r.required_code_ranges(raw,peer,m)
+
+    def test_54_producer_and_default_reader_share_real_pure_boundaries(self):
+        module,directory,files,runtime=runtime_fixture();own=bytearray(module)
+        source=(r.ROOT/'rust/crates/mds-math/src/estimate_table.rs').read_text()
+        table=b''.join(struct.pack('<I',int(v,16)) for v in r.re.findall(r'0x[0-9a-f]{8}',r.re.search(r'const RCP: \[u32; 2048\] = \[(.*?)\];',source,r.re.S)[1]))
+        self.assertEqual(len(table),8192)
+        struct.pack_into('<H',own,134,4);struct.pack_into('<II',own,152+56,0x8000,1024)
+        at=512;own[at:at+8]=b'.seeds\0\0';struct.pack_into('<IIII',own,at+8,8192,0x5000,8192,4096);struct.pack_into('<I',own,at+36,0x40000040)
+        own.extend(table);own=bytes(own)
+        _,mapping,rows,_=code_fixture()
+        for snap in runtime['runtime_imports']:snap['image_size']=0x8000
+        runtime.update(operations=rows,merge_lineage=lineage());parsed=({'operations':rows},runtime)
+        recipe=r.recipe('C:/runner/temp','observed','Od');tool_raw=b'pure fixture tool identity, never executed'
+        tool={'path':str(r.DISASSEMBLER),'sha256':r.digest(tool_raw),'size':len(tool_raw)}
+        for binary,map_name in (('floor_profile.exe','native.map'),('rust-profile.exe','rust.map')):
+            files[directory/binary]=own;files[directory/map_name]=mapping
+        files[directory/'instruction-tool.bin']=tool_raw
+        def receipt(label,argv,stdout):
+            row={'argv':list(map(str,argv)),'cwd':recipe['source'],'env':{},'status':0,'terminal':'exit',
+                 'start_ns':1,'end_ns':2,'start_utc':'synthetic','end_utc':'synthetic','pid':123}
+            if label.startswith('instruction-') or '-instructions-' in label:row['tool_binary']=tool
+            for suffix,raw in (('stdout',stdout),('stderr',b'')):
+                files[directory/(label+'.'+suffix)]=raw
+                row[suffix]={'name':label+'.'+suffix,'size':len(raw),'sha256':r.digest(raw)}
+            files[directory/(label+'.json')]=json.dumps(row).encode();return row
+        receipt('rust',['synthetic-fixture-process'],b'')
+        original_read=Path.read_bytes
+        def read(path):return files[path] if path in files else original_read(path)
+        def write(path,value):files[path]=value;return len(value)
+        def emit(directory_arg,label,argv,*args):
+            self.assertEqual(directory_arg,directory)
+            if label=='instruction-help':return receipt(label,argv,b'--disassemble --start-address --stop-address')
+            start=int(argv[2].split('=')[1],16)-0x140000000;end=int(argv[3].split('=')[1],16)-0x140000000
+            binary=module if '-runtime-' in label else own
+            span=r.pe_code(binary)[3](start,end,True)
+            return receipt(label,argv,instructions(span))
+        with patch.object(Path,'read_bytes',read),patch.object(Path,'write_bytes',write),patch.object(Path,'write_text',lambda path,value,**kw:write(path,value.encode())),patch.object(Path,'is_file',return_value=True),patch.object(r,'record',emit):
+            captured=r.compiled_evidence(directory,parsed,recipe,True,{})
+            self.assertEqual(r.compiled_evidence(directory,parsed,recipe),captured)
+            self.assertTrue(all(not view['pending'] for view in (captured['rust'],captured['rust']['runtime_images'][0]['witness'])))
+            for name in ('required-return','seed-copy','data','sink','owner','role','pending','unresolved-import'):
+                key=directory/'rust-code.json';legal=files[key];peer=json.loads(legal)
+                if name=='required-return':peer['copy_obligations'].pop(0)
+                elif name=='seed-copy':peer['copy_obligations'].pop()
+                elif name=='data':peer['data_requests']=[]
+                elif name=='sink':peer['semantic_origins'][0]['received'][2]+=176
+                elif name=='owner':peer['semantic_origins'][0]['owner']=[2,0,0,0]
+                elif name=='role':peer['semantic_origins'][0]['role']='AcquisitionUtility'
+                elif name=='pending':peer['pending']=[[0x1000,0x1008]]
+                else:peer['edges'][0]['obligation']='Unresolved'
+                files[key]=json.dumps(peer).encode()
+                with self.subTest(name=name),self.assertRaisesRegex(ValueError,'rederived executed-image'):r.compiled_evidence(directory,parsed,recipe)
+                files[key]=legal
+            old=files[directory/'rust-code.json'];del files[directory/'rust-code.json']
+            broken=copy.deepcopy(parsed);broken[1]['operations'][0]['witness']['handoff_sites'][0]=8192+0x2000
+            with self.assertRaisesRegex(ValueError,'handoff site'):r.compiled_evidence(directory,broken,recipe,True,{})
+            progress=json.loads(files[directory/'rust-code-progress.json'])
+            self.assertTrue(progress['images'][0]['witness']['pending'])
+            self.assertNotIn(directory/'rust-code.json',files)
+            self.assertNotIn(directory/'seal.json',files)
+            files[directory/'rust-code.json']=old
 
     def test_zz_real_effects_rejected_before_effects(self):
         target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-operation-boundary/effect-probe')

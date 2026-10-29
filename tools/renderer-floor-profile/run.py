@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 BASE = '77b3e431bc1ac2ab5610692f2e12c903a7629090'
 BASE_TREE = '778782dc8ad6352585a9b7eeb135c04150d1f2e4'
-SCHEMA = 'mds-floor-profile-v4-compiled-closure'
+SCHEMA = 'mds-floor-profile-v5-operation-witness'
 PARENT = 'b7f1c87388606eee4328915504d34c5e9b63ab3a'
 FP_CONTRACT = {'snapshot':'HardwareMxcsr', 'identity':'SourceSiteOnly',
                'rust_operation_ordering':'Unproved', 'exception_attribution':'Unsupported',
@@ -138,6 +138,28 @@ def admit_operation(row,kind,owner,expected_input):
         else:require(row['destination']==[0,0,0],'no direct merge destination')
         if kind=='RustEndpoint':require(row['values']==[0,0,0],'uninstrumented endpoint has no observed intermediates')
     return row
+
+
+WITNESS_ROLES = ('RawCorpusThroughTableReturn', 'RawCorpusThroughHardwareReturn', 'RawFixtureThroughSelectedMeshReturn')
+
+def admit_witness(row, operation, raw, role, ordinal, pointer):
+    require(set(row)=={'stage','schema','role','owner','ordinal','handoff','handoff_sites','handoff_ordinal','handoff_kind','received','received_ordinal','bytes','sites','base'},'closed versioned witness record')
+    require(row['stage']=='witness' and type(row['schema']) is int and row['schema']==1 and
+            row['role']==role and role in WITNESS_ROLES,'versioned consumed witness role')
+    require(type(row['ordinal']) is int and row['ordinal']==ordinal and type(row['received_ordinal']) is int and
+            row['received_ordinal']==ordinal and type(row['handoff_ordinal']) is int and row['handoff_ordinal']==ordinal and
+            type(row['handoff_kind']) is int and row['handoff_kind']==WITNESS_ROLES.index(role) and row['owner']==operation['owner'] and
+            all(type(v) is int for v in row['owner']),'witness owner/ordinal linkage')
+    for field in ('handoff','received'):
+        require(type(row[field]) is list and len(row[field])==3 and all(type(v) is int and 0<v<2**64 for v in row[field]),'actual raw-input and fixed-sink addresses')
+    require(type(pointer) is int and 0<len(raw)<=1024 and pointer+len(raw)<2**64 and row['received'][2]+176<2**64 and row['handoff']==row['received'] and row['handoff'][:2]==[pointer,len(raw)],'actual raw-input handoff/sink identity')
+    require(row['bytes']==list(raw) and all(type(v) is int for v in row['bytes']),'actual witness consumed raw bytes')
+    require(type(row['base']) is int and row['base']==operation['base'] and type(row['sites']) is list and
+            len(row['sites'])==3 and all(type(v) is int and row['base']<v<2**64 for v in row['sites']),'entry/materialization/fixed-sink runtime sites')
+    require(type(row['handoff_sites']) is list and len(row['handoff_sites'])==2 and
+            all(type(v) is int and row['base']<v<2**64 for v in row['handoff_sites']),'actual raw-input caller handoff sites')
+    require(pointer+len(raw)<=row['received'][2] or row['received'][2]+176<=pointer,'raw input and fixed record sink do not alias')
+    return dict(row,raw_sha256=digest(raw),compiled_dataflow='UnprovedAwaitingIndependentReview')
 
 
 def inputs(read):
@@ -344,20 +366,25 @@ def parse(raw,language,observed):
                 row['fp']=[snapshot(row[k],language,k,operation=operation,matrix=mi,point=pi) for k in ('sample_a','sample_b')];result['direct'].append(row)
     if language=='rust' and observed:result['runtime_imports']=[take('runtime-imports')]
     runtime_read=take('runtime-read');words(runtime_read['words'])
-    require(runtime_read=={'stage':'runtime-read','words':corpus_words(operation_corpus())},'actual runtime corpus read')
+    require(set(runtime_read)==({'stage','words','pointer'} if language=='rust' else {'stage','words'}) and runtime_read['words']==corpus_words(operation_corpus()),'actual runtime corpus read')
     result['operations']=[]
     domain=corpus_words(operation_corpus())
     for i in range(2):
         for kind in (('DllCall',) if language=='native' else (('RustTable' if observed else 'RustEndpoint'),'HardwareSeedWithFrozenRefinement')):
+            boundary=take('witness') if language=='rust' else None
             row=admit_operation(take('operation'),kind,[1,i,0,0],domain[i*19:(i+1)*19])
+            if boundary is not None:row['witness']=admit_witness(boundary,row,operation_corpus(),WITNESS_ROLES[0 if kind in ('RustTable','RustEndpoint') else 1],i,runtime_read['pointer'])
             if kind=='DllCall':require(row['target']==result['dll']['base']+result['dll']['rvas'][1],'wrapper actual DLL target')
             result['operations'].append(row)
     if language=='rust':
         read=take('merge-read');raw=inputs(lambda p:(ROOT/p).read_bytes())[1]['bytes']
-        require(read=={'stage':'merge-read','bytes':list(raw)},'same retained fixture genuinely read at runtime')
+        require(set(read)=={'stage','bytes','pointer'} and read['bytes']==list(raw),'same retained fixture genuinely read at runtime')
         expected=list(map(word,POINTS[0]+IDENTITY)) if observed else [0]*19
         if observed:result['merge_lineage']=take('merge-lineage');admit_lineage(result['merge_lineage'])
-        result['operations'].append(admit_operation(take('operation'),'RustTable' if observed else 'RustEndpoint',[2,0,0,0],expected))
+        boundary=take('witness')
+        row=admit_operation(take('operation'),'RustTable' if observed else 'RustEndpoint',[2,0,0,0],expected)
+        row['witness']=admit_witness(boundary,row,raw,WITNESS_ROLES[2],0,read['pointer'])
+        result['operations'].append(row)
         if observed:result['runtime_imports'].append(take('runtime-imports'))
     require(at==len(rows)-1,'extra/unknown records')
     if language=='native':
@@ -594,13 +621,18 @@ def closure_budget(witnesses):
 def request_range(witness,raw,target,role,origin):
     request={'image_sha256':digest(raw),'target_rva':target,'role':role,'origin':origin,'obligation':'Required'}
     if any(all(previous.get(k)==v for k,v in request.items()) for previous in witness['requests']):return
-    extent,kind=range_extent(raw,target,witness['all_same_link_symbols'],origin['kind']=='RuntimeSite',witness.get('export_candidates',()))
+    try:extent,kind=range_extent(raw,target,witness['all_same_link_symbols'],origin['kind']=='RuntimeSite',witness.get('export_candidates',()))
+    except ValueError as error:
+        witness['requests'].append(dict(request,resolution='Unresolved',reason=str(error)))
+        raise
+    request['resolution']='Resolved'
     request['extent_kind']=kind;request['start_rva'],request['end_rva']=extent
     request['extent_source']={'ExceptionDirectory':'pdata','ImportThunkSixBytes':'exact_thunk',
         'NextDistinctExecutableSymbolCandidateOnly':'map_candidate','ExportCandidateOnly':'export_candidate'}[kind]
     witness['requests'].append(request)
     if not any((s['start_rva'],s['end_rva'])==extent for s in witness['ranges']):
         witness['ranges'].append(pe_code(raw)[3](*extent,True))
+        witness.setdefault('pending',[]).append(list(extent))
     closure_budget([witness])
 
 
@@ -632,21 +664,102 @@ def code_ranges(raw,rows,map_raw):
             'compiled_dataflow':'UnprovedAwaitingIndependentReview'}
 
 
-def required_code_ranges(raw,rows,map_raw):
-    base,sections,_,_=pe_code(raw);symbols=map_symbols(map_raw,base,sections)
-    witness={'image_sha256':digest(raw),'image_size':len(raw),'preferred_base':base,'sections':sections,
+def required_code_ranges(raw,rows,map_raw,witness=None):
+    base,sections,functions,_=pe_code(raw);symbols=map_symbols(map_raw,base,sections)
+    if witness is None:witness={}
+    witness.update({'image_sha256':digest(raw),'image_size':len(raw),'preferred_base':base,'sections':sections,
              'all_same_link_symbols':symbols,'requests':[],'ranges':[],'edges':[],'data_requests':[],
-             'compiled_dataflow':'UnprovedAwaitingIndependentReview'}
+             'pending':[],'decoded':[],'semantic_origins':[],
+             'compiled_dataflow':'UnprovedAwaitingIndependentReview'})
     for i,row in enumerate(rows):
+        boundary=row['witness'];role=boundary['role']
+        require(role in WITNESS_ROLES,'consumed semantic operation role')
+        extents=[]
+        for j,site in enumerate(boundary['sites']):
+            target=site-row['base'];matches=[p for p in functions if p[0]<=target<p[1]]
+            require(len(matches)==1,'witness site has exact exception-directory boundary')
+            extents.append(matches[0])
+            request_range(witness,raw,target,role,{'kind':'RuntimeSite','operation':i,'slot':j,'raw_sha256':boundary['raw_sha256'],'sink':boundary['received'][2]})
+        require(len(set(extents))==1,'entry/materialization/sink share actual witness function')
+        expected=('direct_witness','hardware_witness','merge_witness')[WITNESS_ROLES.index(role)]
+        owners=[s for s in symbols if s['rva']==extents[0][0] and expected in s['symbol']]
+        require(len(owners)==1,'exact same-link witness role owner')
+        handoff_extents=[]
+        for j,site in enumerate(boundary['handoff_sites']):
+            target=site-row['base'];matches=[p for p in functions if p[0]<=target<p[1]]
+            require(len(matches)==1,'handoff site has exact exception-directory boundary')
+            handoff_extents.append(matches[0])
+            request_range(witness,raw,target,'RawInputHandoffThroughFixedSink',{'kind':'RuntimeSite','operation':i,'slot':j,'raw_sha256':boundary['raw_sha256']})
+        require(len(set(handoff_extents))==1 and handoff_extents[0]!=extents[0],'separate actual handoff/witness function boundaries')
+        handoff_owners=[s for s in symbols if s['rva']==handoff_extents[0][0] and 'floor_profile' in s['symbol'] and 'handoff' in s['symbol']]
+        require(len(handoff_owners)==1,'exact same-link handoff owner')
+        witness['semantic_origins'].append({'operation':i,'role':role,'extent':list(extents[0]),'same_link_owner':owners[0],
+            'raw_sha256':boundary['raw_sha256'],'handoff':boundary['handoff'],'received':boundary['received'],
+            'ordinal':boundary['ordinal'],'owner':boundary['owner'],'sites':boundary['sites'],
+            'handoff_extent':list(handoff_extents[0]),'handoff_owner':handoff_owners[0],'handoff_sites':boundary['handoff_sites']})
         for j,site in enumerate(row['sites']):
             if site:request_range(witness,raw,site-row['base'],'ObservedOperationSite',{'kind':'RuntimeSite','operation':i,'slot':j})
-    names=('transform_coord','rcp_estimate','input_words','begin_operation','intermediates','finish_operation',
-           'merge_source','merge_destination','merge_container','load_x','hardware')
-    for symbol in symbols:
-        if any(name in symbol['symbol'] for name in names):
-            request_range(witness,raw,symbol['rva'],'InputArithmeticReturnOrMerge',{'kind':'SameLinkSymbol','symbol':symbol['symbol']})
     require(witness['ranges'],'required operation roots')
     return witness
+
+
+COPY_OBLIGATIONS = [
+    {'size':176,'role':'OperationReturn','status':'RequiresIndependentCallerRegionAndPathReview'},
+    {'size':8192,'role':'OdSeedTable','status':'RequiresIndependentCallerRegionAndPathReview'}]
+
+
+def complete_closure(images):
+    closure_budget([image['witness'] for image in images])
+    root=images[0]['witness']
+    require(root.get('semantic_origins') and root.get('copy_obligations')==COPY_OBLIGATIONS,'required input/sink/return/seed-copy obligations are INCOMPLETE')
+    require(sum(d.get('role')=='SeedTable' and d.get('size')==8192 for d in root['data_requests'])==1,'required seed data is INCOMPLETE')
+    for origin in root['semantic_origins']:
+        calls=[edge for edge in root['edges'] if origin['handoff_extent'][0]<=edge['instruction_rva']<origin['handoff_extent'][1] and
+               edge['target']['kind']=='DirectRva' and origin['extent'][0]<=edge['target']['rva']<origin['extent'][1] and edge['text'].startswith('call')]
+        require(calls,'actual handoff-to-witness call target is INCOMPLETE')
+        origin['actual_call_edges']=calls
+    for image in images:
+        view=image['witness']
+        require(not view.get('pending') and len(view.get('decoded',[]))==len(view['ranges']) and
+                {tuple(p) for p in view.get('decoded',[])}=={(s['start_rva'],s['end_rva']) for s in view['ranges']},'pending required code frontier is INCOMPLETE')
+        require(all(request.get('resolution')=='Resolved' for request in view['requests']),'unresolved required range is INCOMPLETE')
+        require(not any(e['obligation']=='Unresolved' for e in view['edges']),'unresolved required branch/import/dispatch data is INCOMPLETE')
+        require(all(e.get('resolution') in ('InRange','Acquired','Return','Trap') and e['obligation']=='Required' for e in view['edges']),'unresolved required edge coverage is INCOMPLETE')
+        require(all(d.get('resolution')=='Resolved' for d in view['data_requests']),'unresolved required data is INCOMPLETE')
+        view['logical_request_count']=len(view['requests']);view['physical_range_count']=len(view['ranges'])
+
+
+def follow_required_edge(directory,images,module_index,span,edge):
+    image=images[module_index];view=image['witness'];raw=image['raw'];target=edge['target']
+    origin={'kind':'RequiredTarget','instruction_rva':edge['instruction_rva'],
+            'caller_extent':[span['start_rva'],span['end_rva']]}
+    require(edge['obligation']=='Required','no unsupported edge waiver')
+    if target['kind']=='DirectRva':
+        if span['start_rva']<=target['rva']<span['end_rva']:edge['resolution']='InRange'
+        else:
+            request_range(view,raw,target['rva'],'RequiredCallOrBranch',origin)
+            edge['resolution']='Acquired'
+    elif target['kind']=='RipRelativeIatSlot':
+        slot=target['slot_rva'];data=pe_code(raw)[3](slot,slot+8)
+        request={'role':'RequiredImportOrDispatchSlot','origin':origin,'start_rva':slot,'size':8,'bytes':data['bytes'],'resolution':'Unresolved'}
+        view['data_requests'].append(request)
+        if module_index:
+            try:
+                dispatch,samples=loaded_dispatch_target(directory,image,slot)
+                edge['loaded_dispatch_samples']=samples
+                request_range(view,raw,dispatch,'RequiredLoadedDispatchTarget',origin)
+                request['resolution']='Resolved';edge['resolution']='Acquired'
+            except ValueError as error:
+                edge['obligation']='Unresolved';edge['reason']=str(error)
+        else:
+            owners=[m for m in images[1:] if m['pre']['slot']['slot_rva']==slot]
+            if len(owners)!=1:
+                edge['obligation']='Unresolved';edge['reason']='MissingRequiredSameProcessImportTarget'
+            else:
+                edge['target_image_sha256']=owners[0]['witness']['image_sha256']
+                request['resolution']='Resolved';edge['resolution']='Acquired'
+    elif target['kind'] in ('Return','Trap'):edge['resolution']=target['kind']
+    else:edge['obligation']='Unresolved'
 
 
 def instruction_edges(stdout,witness,span):
@@ -813,7 +926,7 @@ def runtime_images(directory,parsed,rust_raw):
                     span=region(s['rva'],s['rva']+s['size'],True)
                     require(loaded[:s['size']]==relocated_code(raw,span,actual['owner_base']) and loaded[s['size']:]==bytes(length-s['size']),'loaded runtime instructions/file/relocations')
                 data.append({'role':'LoadedExecutable' if s['flags']&0x20000000 else 'DispatchOrImportData',
-                             'rva':s['rva'],'size':length,'sha256':digest(loaded),'file':prefix+f'-section-{j}.bin'})
+                             'rva':s['rva'],'size':length,'sha256':digest(loaded),'file':prefix+f'-section-{j}.bin','resolution':'Resolved'})
             identity={'slot':declared,'runtime':actual,'module_sha256':digest(raw),'module_size':len(raw),
                       'loaded_sections':data,'sampled_identity':'PrePostOnlyNotContinuous'}
             if phase=='pre':
@@ -842,7 +955,7 @@ def seed_data(raw,witness):
     require(len(table)==8192 and raw.count(table)==1,'unique actual frozen 8192-byte seed table')
     offset=raw.index(table);matches=[s for s in witness['sections'] if s['offset']<=offset and offset+len(table)<=s['offset']+s['size']]
     require(len(matches)==1,'physical seed table PE section');start=matches[0]['rva']+offset-matches[0]['offset']
-    return {'role':'SeedTable','start_rva':start,'size':8192,'bytes':table.hex()}
+    return {'role':'SeedTable','start_rva':start,'size':8192,'bytes':table.hex(),'resolution':'Resolved'}
 
 
 def caller_windows(parsed):
@@ -857,18 +970,7 @@ def caller_windows(parsed):
 
 
 def formatting_exclusion(edge,witness,span):
-    target=edge['target']
-    if target['kind']!='DirectRva' or not edge['text'].startswith('call'):return False
-    windows=[w for w in witness.get('caller_windows',[]) if span['start_rva']<=w['start_rva']<w['end_rva']<=span['end_rva']]
-    if not windows or any(w['start_rva']<=edge['instruction_rva']<=w['end_rva'] for w in windows):return False
-    symbols=[s for s in witness['all_same_link_symbols'] if s['rva']==target['rva'] and any(name in s['symbol'] for name in
-             ('std2io5stdio6_print','core3fmt9Arguments','alloc3fmt6format','core3fmt8builders'))]
-    if not symbols:return False
-    edge.update(obligation='OutsideClaim',classification='CandidateRequiringIndependentSemanticReview',role='InterOperationFormatting',evidence_ref={
-        'image_sha256':witness['image_sha256'],'caller_range':[span['start_rva'],span['end_rva']],
-        'runtime_caller_windows':windows,'target_same_link_symbols':symbols,
-        'independent_review_obligation':'ValidateTemporalBranchesAndNoRequiredCarriedValueThroughReturn'})
-    return True
+    return False
 
 
 def loaded_dispatch_target(directory,image,slot):
@@ -920,22 +1022,27 @@ def compiled_evidence(directory,parsed,r,capture=False,env=None):
     result={}
     for language,name,map_name in (('native','floor_profile.exe','native.map'),('rust','rust-profile.exe','rust.map')):
         raw=(directory/name).read_bytes();mapping=(directory/map_name).read_bytes()
-        witness=(code_ranges if language=='native' else required_code_ranges)(raw,parsed[0 if language=='native' else 1]['operations'],mapping)
-        witness['same_link_map']={'sha256':digest(mapping),'size':len(mapping)}
-        images=[{'raw':raw,'file':name,'witness':witness}]
-        if language=='rust':
-            images+=runtime_images(directory,parsed[1],raw)
-            witness['caller_windows']=caller_windows(parsed[1])
-            witness['data_requests'].append(seed_data(raw,witness))
-            witness['copy_obligations']=[{'size':176,'role':'OperationReturn','status':'RequiresIndependentCallerRegionAndPathReview'},
-                                          {'size':8192,'role':'OdSeedTable','status':'RequiresIndependentCallerRegionAndPathReview'}]
-            for address in (parsed[1]['merge_lineage']['returned'][4],*[a[9] for a in parsed[1]['merge_lineage']['rows']]):
-                request_range(witness,raw,address-parsed[1]['operations'][0]['base'],'MergePointerLineage',{'kind':'RuntimeSite','role':'MergeStorage'})
+        witness={};images=[{'raw':raw,'file':name,'witness':witness}]
         try:
+            if language=='native':witness.update(code_ranges(raw,parsed[0]['operations'],mapping))
+            else:required_code_ranges(raw,parsed[1]['operations'],mapping,witness)
+            witness['same_link_map']={'sha256':digest(mapping),'size':len(mapping)}
+            if language=='rust':
+                images+=runtime_images(directory,parsed[1],raw)
+                witness['caller_windows']=caller_windows(parsed[1])
+                witness['data_requests'].append(seed_data(raw,witness))
+                witness['copy_obligations']=[dict(row) for row in COPY_OBLIGATIONS]
+            if language=='rust':
+                for address in (parsed[1]['merge_lineage']['returned'][4],*[a[9] for a in parsed[1]['merge_lineage']['rows']]):
+                    request_range(witness,raw,address-parsed[1]['operations'][0]['base'],'MergePointerLineage',{'kind':'RuntimeSite','role':'MergeStorage'})
             if language=='rust':closure_budget([image['witness'] for image in images])
             for module_index,image in enumerate(images):
                 view=image['witness'];image_raw=image['raw']
-                for i,span in enumerate(view['ranges']):
+                view.setdefault('pending',[[s['start_rva'],s['end_rva']] for s in view['ranges']]);view.setdefault('decoded',[])
+                i=0
+                while view['pending']:
+                    extent=view['pending'][0]
+                    span=next(s for s in view['ranges'] if [s['start_rva'],s['end_rva']]==extent)
                     label=language+('' if module_index==0 else '-runtime-'+str(module_index))+'-instructions-'+str(i)
                     argv=disassembly_argv(PureWindowsPath(r['evidence'])/image['file'],view,span)
                     if capture:require(record(directory,label,argv,r['source'],env)['status']==0,'bounded hosted disassembly prerequisite')
@@ -945,34 +1052,13 @@ def compiled_evidence(directory,parsed,r,capture=False,env=None):
                     if language=='rust':
                         edges=instruction_edges(assembly,view,span);view['edges'].extend(edges)
                         for edge in edges:
-                            target=edge['target'];origin={'kind':'RequiredTarget','instruction_rva':edge['instruction_rva']}
-                            if formatting_exclusion(edge,view,span):continue
-                            if target['kind']=='DirectRva':
-                                if not span['start_rva']<=target['rva']<span['end_rva']:
-                                    request_range(view,image_raw,target['rva'],'RequiredCallOrBranch',origin)
-                            elif target['kind']=='RipRelativeIatSlot':
-                                pe_code(image_raw)[3](target['slot_rva'],target['slot_rva']+8)
-                                if module_index:
-                                    try:
-                                        dispatch,samples=loaded_dispatch_target(directory,image,target['slot_rva'])
-                                        edge['loaded_dispatch_samples']=samples
-                                        request_range(view,image_raw,dispatch,'RequiredLoadedDispatchTarget',origin)
-                                    except ValueError as error:
-                                        edge['obligation']='Unresolved';edge['reason']=str(error)
-                                else:
-                                    owners=[m for m in images[1:] if m['pre']['slot']['slot_rva']==target['slot_rva']]
-                                    if len(owners)!=1:
-                                        edge['obligation']='Unresolved';edge['reason']='MissingRequiredSameProcessImportTarget'
-                                    else:edge['target_image_sha256']=owners[0]['witness']['image_sha256']
-                            elif target['kind']=='Unresolved':edge['obligation']='Unresolved'
+                            follow_required_edge(directory,images,module_index,span,edge)
                         closure_budget([item['witness'] for item in images])
+                    view['decoded'].append(view['pending'].pop(0));i+=1
                     if capture:write_json(directory/(language+'-code-progress.json'),{'schema':SCHEMA,'images':[{k:v for k,v in item.items() if k!='raw'} for item in images]})
             if language=='rust':
-                require(not any(e['obligation']=='Unresolved' for item in images for e in item['witness']['edges']),'unresolved required branch/import/dispatch data is INCOMPLETE')
+                complete_closure(images)
                 witness['runtime_images']=[{k:v for k,v in item.items() if k!='raw'} for item in images[1:]]
-                for image in images:
-                    image['witness']['logical_request_count']=len(image['witness']['requests'])
-                    image['witness']['physical_range_count']=len(image['witness']['ranges'])
         finally:
             if capture:write_json(directory/(language+'-code-progress.json'),{'schema':SCHEMA,'images':[{k:v for k,v in item.items() if k!='raw'} for item in images]})
         if capture:write_json(directory/(language+'-code.json'),witness)

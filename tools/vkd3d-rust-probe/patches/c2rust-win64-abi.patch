@@ -1408,13 +1408,13 @@ diff --git a/c2rust-transpile/src/c_ast/closed_plan_tests.rs b/c2rust-transpile/
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_plan_tests.rs
-@@ -0,0 +1,214 @@
+@@ -0,0 +1,321 @@
 +use super::*;
 +use crate::program::{command_identity, native_database_row, native_sources};
 +
 +use crate::test_config;
 +
-+struct NativeUnit { directory: Rc<tempfile::TempDir>, identity: UnitIdentity, ast: TypedAstContext, sources: BTreeMap<PathBuf, Vec<u8>> }
++struct NativeUnit { directory: Rc<tempfile::TempDir>, identity: UnitIdentity, ast: TypedAstContext, sources: BTreeMap<PathBuf, Vec<u8>>, inputs: serde_json::Value, effective: serde_json::Value }
 +
 +fn native(text: &str, name: &str, flags: &[&str]) -> NativeUnit {
 +    let directory = Rc::new(tempfile::tempdir().unwrap());
@@ -1436,10 +1436,11 @@ new file mode 100644
 +    assert!(!conversion.invalid_clang_ast, "legal native baseline must import");
 +    let mut ast = conversion.into_typed_context();
 +    ast.plan_instance = Some(instance.clone());
++    let inputs = serde_json::from_str(ast.cursor_inputs.as_ref().unwrap()).unwrap();
 +    let sources = native_sources(&mut ast, &source, &effective, &[]).unwrap();
 +    let identity = UnitIdentity { key, command, source, domain: "test-link".into(), ast_instance: instance,
 +        target: ast.target.clone(), widths: ast.target_c_widths };
-+    NativeUnit { directory, identity, ast, sources }
++    NativeUnit { directory, identity, ast, sources, inputs, effective }
 +}
 +
 +fn plan(units: &mut [NativeUnit]) -> ClosedVariadicPlan {
@@ -1622,6 +1623,112 @@ new file mode 100644
 +    let p=plan(&mut units);
 +    assert!(reasons(&p,"f").contains(&Blocker::SignatureMismatch));
 +    for u in units { emit(&p,u); }
++}
++
++fn cc1_features(inputs: &serde_json::Value) -> Vec<String> {
++    inputs["regenerated_cc1_argv"].as_array().unwrap().windows(2)
++        .filter(|pair| pair[0] == "-target-feature")
++        .map(|pair| pair[1].as_str().unwrap().to_owned()).collect()
++}
++
++fn feature_receipt(unit: &NativeUnit, label: &str) {
++    println!("COMMON_PLAN_NATIVE_FEATURES {}", serde_json::json!({
++        "label": label, "target": unit.inputs["target"], "cpu": unit.inputs["cpu"],
++        "abi": unit.inputs["abi"], "resolved_features": unit.inputs["features"],
++        "features_as_written": unit.inputs["features_as_written"], "cc1_features": cc1_features(&unit.inputs),
++        "ast_instance": unit.identity.ast_instance, "command": unit.identity.command, "key": unit.identity.key
++    }));
++}
++
++#[test]
++fn closed_variadic_plan_native_default_features_bind_as_written() {
++    let mut units = vec![native("int legal(int n,...){return n;}\n", "default_features.c",
++        &["--target=x86_64-unknown-linux-gnu"])];
++    let unit = &units[0];
++    feature_receipt(unit, "default-x86_64");
++    let written: Vec<String> = serde_json::from_value(unit.inputs["features_as_written"].clone()).unwrap();
++    let resolved: Vec<String> = serde_json::from_value(unit.inputs["features"].clone()).unwrap();
++    assert_eq!(cc1_features(&unit.inputs), written);
++    assert_ne!(resolved, written, "native default expansion must exercise the old comparison failure");
++    let inputs = unit.inputs.clone();
++    let instance = unit.identity.ast_instance.clone();
++    let p = plan(&mut units);
++    let unit = &mut units[0];
++    assert_eq!(unit.inputs, inputs);
++    assert_eq!(unit.ast.plan_instance.as_deref(), Some(instance.as_str()));
++    p.bind(&unit.identity, &unit.ast).unwrap();
++    unit.ast.plan_instance = Some(format!("{instance}changed"));
++    assert!(p.bind(&unit.identity, &unit.ast).err().unwrap().contains("AST-instance binding differs"));
++    unit.ast.plan_instance = Some(instance);
++    p.bind(&unit.identity, &unit.ast).unwrap();
++    emit(&p, units.pop().unwrap());
++}
++
++#[test]
++fn closed_variadic_plan_native_explicit_features_change_macro_ast_and_command() {
++    let enabled = native("#ifdef __AVX2__\nint avx2_enabled(int n,...){return n;}\n#else\nint avx2_disabled(int n,...){return n;}\n#endif\n",
++        "explicit_features.c", &["--target=x86_64-unknown-linux-gnu", "-mavx2"]);
++    let disabled = native_in(enabled.directory.clone(), enabled.identity.source.clone(),
++        &["--target=x86_64-unknown-linux-gnu", "-mno-avx2"]);
++    assert_eq!(enabled.identity.source, disabled.identity.source);
++    assert_eq!(enabled.sources[&enabled.identity.source], disabled.sources[&disabled.identity.source]);
++    assert_ne!(enabled.identity.key, disabled.identity.key);
++    assert_ne!(enabled.identity.command, disabled.identity.command);
++    assert_ne!(enabled.identity.ast_instance, disabled.identity.ast_instance);
++    assert_ne!(enabled.inputs["features"], disabled.inputs["features"]);
++    assert_ne!(enabled.inputs["features_as_written"], disabled.inputs["features_as_written"]);
++    assert_ne!(cc1_features(&enabled.inputs), cc1_features(&disabled.inputs));
++    for (unit, label, present, absent) in [(&enabled, "explicit-enable", "avx2_enabled", "avx2_disabled"),
++        (&disabled, "explicit-disable", "avx2_disabled", "avx2_enabled")] {
++        feature_receipt(unit, label);
++        let names = unit.ast.c_decls.values().filter_map(|decl| match &decl.kind {
++            CDeclKind::Function { name, .. } => Some(name.as_str()), _ => None
++        }).collect::<BTreeSet<_>>();
++        assert!(names.contains(present));
++        assert!(!names.contains(absent));
++        let written: Vec<String> = serde_json::from_value(unit.inputs["features_as_written"].clone()).unwrap();
++        assert_eq!(cc1_features(&unit.inputs), written);
++    }
++    let mut units = vec![enabled, disabled];
++    let p = plan(&mut units);
++    for unit in units { emit(&p, unit); }
++}
++
++#[test]
++fn closed_variadic_plan_native_cc1_feature_tamper_refuses_after_legal_baseline() {
++    let unit = native("int legal(int n,...){return n;}\n", "cc1_features.c",
++        &["--target=x86_64-unknown-linux-gnu", "-mavx2"]);
++    assert!(crate::native_intake::capture(&unit.inputs.to_string(), &unit.ast,
++        &unit.identity.source, &unit.effective, &[]).is_ok());
++    let mut changed = unit.inputs.clone();
++    let argv = changed["regenerated_cc1_argv"].as_array_mut().unwrap();
++    let feature = argv.iter().position(|arg| arg == "-target-feature").unwrap() + 1;
++    let original = argv[feature].as_str().unwrap();
++    argv[feature] = serde_json::json!(format!("{}{}", if original.starts_with('+') { "-" } else { "+" }, &original[1..]));
++    assert_eq!(changed["features"], unit.inputs["features"]);
++    assert_eq!(changed["features_as_written"], unit.inputs["features_as_written"]);
++    let error = crate::native_intake::capture(&changed.to_string(), &unit.ast,
++        &unit.identity.source, &unit.effective, &[]).unwrap_err();
++    assert_eq!(error.to_string(), "common plan native intake: native cc1 target features differ");
++    assert_eq!(unit.ast.plan_instance.as_deref(), Some(unit.identity.ast_instance.as_str()));
++}
++
++#[test]
++fn closed_variadic_plan_native_as_written_feature_tamper_refuses_after_legal_baseline() {
++    let unit = native("int legal(int n,...){return n;}\n", "written_features.c",
++        &["--target=x86_64-unknown-linux-gnu", "-mno-avx2"]);
++    assert!(crate::native_intake::capture(&unit.inputs.to_string(), &unit.ast,
++        &unit.identity.source, &unit.effective, &[]).is_ok());
++    let mut changed = unit.inputs.clone();
++    let written = changed["features_as_written"].as_array_mut().unwrap();
++    let original = written[0].as_str().unwrap();
++    written[0] = serde_json::json!(format!("{}{}", if original.starts_with('+') { "-" } else { "+" }, &original[1..]));
++    assert_eq!(changed["features"], unit.inputs["features"]);
++    assert_eq!(changed["regenerated_cc1_argv"], unit.inputs["regenerated_cc1_argv"]);
++    let error = crate::native_intake::capture(&changed.to_string(), &unit.ast,
++        &unit.identity.source, &unit.effective, &[]).unwrap_err();
++    assert_eq!(error.to_string(), "common plan native intake: native cc1 target features differ");
++    assert_eq!(unit.ast.plan_instance.as_deref(), Some(unit.identity.ast_instance.as_str()));
 +}
 diff --git a/c2rust-transpile/src/c_ast/closed_variadic.rs b/c2rust-transpile/src/c_ast/closed_variadic.rs
 new file mode 100644
@@ -4668,8 +4775,8 @@ new file mode 100644
 +    }
 +    let cc1_features=inputs.regenerated_cc1_argv.windows(2).filter(|pair|pair[0]=="-target-feature")
 +        .map(|pair|pair[1].clone()).collect::<Vec<_>>();
-+    require(cc1_features == inputs.features, "native cc1 target features differ")?;
-+    let _written_features = inputs.features_as_written;
++    require(cc1_features == inputs.features_as_written, "native cc1 target features differ")?;
++    let _resolved_features = inputs.features;
 +    let mut entered = BTreeSet::new();
 +    require(!inputs.lexer_events.is_empty(), "missing native lexer coverage")?;
 +    for event in &inputs.lexer_events {

@@ -718,7 +718,8 @@ def worker_body(args, channel, state):
                     raise ValueError('cancelled follow-on work admitted')
             in_followon = False
             require(snapshot == counts, 'follow-on work reached a body')
-        require(not wrapper.owned_children() and owner.writer is None, 'owned closure unproven')
+        observed_children = children()
+        require(not observed_children and owner.writer is None, 'owned closure unproven')
         require(not fs_after_handoff, 'post-handoff wrapper I/O')
         require(all(value <= 1 for value in max_active.values()), 'reentrant close or finish')
         require(real['mask'](signal.SIG_BLOCK, set()) == original_mask, 'caller original mask not restored')
@@ -746,7 +747,7 @@ def worker_body(args, channel, state):
             source=SOURCE_COMMIT, tree=SOURCE_TREE, pid=os.getpid(), session=os.getsid(0), phase=phase,
             first=first, second=second, handlers=handler_events, kernel=kernel_events, counts=counts,
             exception=exception, refusal_before=refusal_before, refusal_after=refusal_after,
-            caller_deliveries=callers, caller_restored=True, children=[], writer_none=True, pidfds_closed=True,
+            caller_deliveries=callers, caller_restored=True, children=observed_children, writer_none=True, pidfds_closed=True,
             subprocesses_reaped=True, streams_closed=True, post_handoff_io=[], commands=commands,
             native_fds_before=fds_before, native_fds_after=fd_snapshot(),
             custody=receipts, adapters=list(ADAPTERS), status='PASS', runtime=list(sys.version_info[:3])))

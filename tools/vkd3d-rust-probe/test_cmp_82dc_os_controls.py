@@ -176,6 +176,63 @@ def legal_index():
         validated=True) for i, case in enumerate(EXPECTED_CASES)])
 
 
+def handoff_ast_fixture():
+    harness_path = HERE / 'check_cmp_82dc_os_controls.py'
+    product_path = HERE / 'run_cmp_input.py'
+    harness = ast.parse(harness_path.read_text())
+    product = ast.parse(product_path.read_text())
+    worker = next(node for node in harness.body if isinstance(node, ast.FunctionDef) and node.name == 'worker_body')
+    nested = {node.name: node for node in worker.body if isinstance(node, ast.FunctionDef)}
+    owner_class = next(node for node in product.body if isinstance(node, ast.ClassDef) and node.name == 'WrapperRun')
+    reads, events = [], []
+    state = dict(text='', error=None, event='open')
+    namespace = dict(require=controls.require, sys=sys, handoff=True, module_file=str(product_path),
+                     fs_after_handoff=events, os=SimpleNamespace(getpid=lambda: 123))
+
+    class InertPath:
+        def __init__(self, name):
+            controls.require(name == '/proc/self/task/123/children', 'unexpected child observation identity')
+            self.name = name
+
+        def read_text(self):
+            reads.append(self.name)
+            namespace['audit'](state['event'], (self.name, 'r', 0))
+            if state['error'] is not None:
+                raise state['error']
+            return state['text']
+
+    namespace['Path'] = InertPath
+    def execute(nodes, filename):
+        tree = ast.fix_missing_locations(ast.Module(body=copy.deepcopy(nodes), type_ignores=[]))
+        exec(compile(tree, str(filename), 'exec'), namespace)
+    execute([nested['audit']], harness_path)
+    execute([node for node in harness.body if isinstance(node, ast.FunctionDef) and node.name == 'children'], harness_path)
+    namespace['signal'] = SimpleNamespace(SIGINT=2, SIGTERM=15)
+    execute([owner_class] + [node for node in product.body if isinstance(node, ast.FunctionDef)
+                            and node.name == 'owned_children'], product_path)
+    owner = namespace['WrapperRun']()
+    namespace.update(owner=owner, wrapper=SimpleNamespace(WrapperRun=namespace['WrapperRun']))
+    attempt = next(node for node in worker.body if isinstance(node, ast.Try))
+    closure = next(index for index, node in enumerate(attempt.body) if isinstance(node, ast.Assign)
+                   and any(isinstance(target, ast.Name) and target.id == 'observed_children' for target in node.targets))
+    statements = attempt.body[closure:closure + 2]
+    controls.require(ast.unparse(statements[0]) == 'observed_children = children()', 'closure sample differs')
+    controls.require(ast.unparse(statements[1]) ==
+        "require(not observed_children and owner.writer is None, 'owned closure unproven')", 'closure predicate differs')
+    receipt_call = next(node for node in ast.walk(attempt) if isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Name) and node.func.id == 'dict'
+                        and any(keyword.arg == 'caller_deliveries' for keyword in node.keywords))
+    receipt_children = next(keyword for keyword in receipt_call.keywords if keyword.arg == 'children')
+    receipt = ast.Assign(targets=[ast.Name(id='receipt', ctx=ast.Store())],
+        value=ast.Call(func=ast.Name(id='dict', ctx=ast.Load()), args=[], keywords=[copy.deepcopy(receipt_children)]))
+    def observe():
+        execute(statements + [receipt], harness_path)
+        return namespace['receipt']
+    return SimpleNamespace(namespace=namespace, owner=owner, state=state, reads=reads, events=events,
+                           observe=observe, execute=execute, profile=nested['profile'], product_path=product_path,
+                           harness_path=harness_path)
+
+
 class SourceDataTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -657,6 +714,94 @@ class SourceDataTests(unittest.TestCase):
                             exec(compile(program, '<controller-error-handler>', 'exec'), namespace)
                         self.assertIs(raised.exception, expected)
                         self.assertEqual(calls[-3:], ['poll', 'kill', 'wait'])
+
+    def test_handoff_legal_observation_once_and_receipt_identity(self):
+        fixture = handoff_ast_fixture()
+        receipt = fixture.observe()
+        self.assertEqual(receipt, dict(children=[]))
+        self.assertIs(receipt['children'], fixture.namespace['observed_children'])
+        self.assertEqual(fixture.reads, ['/proc/self/task/123/children'])
+        self.assertEqual(fixture.events, [])
+        fixture.state['text'] = '201 202\n'
+        self.assertEqual(fixture.namespace['children'](), [201, 202])
+
+    def test_handoff_old_product_reader_refuses_after_legal_baseline(self):
+        fixture = handoff_ast_fixture()
+        fixture.observe()
+        with self.assertRaisesRegex(ValueError, 'wrapper filesystem I/O after confirmed handoff'):
+            fixture.namespace['owned_children']()
+        self.assertEqual(fixture.events, ['open'])
+        fixture.namespace['handoff'] = False
+        self.assertEqual(fixture.namespace['owned_children'](), [])
+
+    def test_handoff_nonempty_writer_read_error_and_malformed_pid_refuse(self):
+        for text, writer, error, expected in (
+                ('201\n', None, None, ValueError), ('', object(), None, ValueError),
+                ('', None, OSError('inert read failure'), OSError), ('bad-pid', None, None, ValueError)):
+            with self.subTest(text=text, writer=writer, error=error):
+                fixture = handoff_ast_fixture()
+                fixture.observe()
+                fixture.namespace.pop('receipt')
+                fixture.state.update(text=text, error=error)
+                fixture.owner.writer = writer
+                with self.assertRaises(expected):
+                    fixture.observe()
+                self.assertNotIn('receipt', fixture.namespace)
+                self.assertEqual(len(fixture.reads), 2)
+
+    def test_handoff_product_same_path_helper_and_all_audit_events_refuse(self):
+        for event in ('open', 'os.rename', 'os.remove', 'os.mkdir', 'os.rmdir', 'os.listdir', 'os.scandir'):
+            for helper in ('owned_children', 'children'):
+                with self.subTest(event=event, helper=helper):
+                    fixture = handoff_ast_fixture()
+                    fixture.observe()
+                    fixture.state['event'] = event
+                    fixture.owner.phase = 'working'
+                    fixture.namespace['normalize'] = lambda *args, **kwargs: fixture.namespace[helper]()
+                    with self.assertRaisesRegex(ValueError, 'wrapper filesystem I/O after confirmed handoff'):
+                        fixture.owner.normalize(None)
+                    self.assertEqual(fixture.events, [event])
+
+    def test_handoff_profile_callback_product_io_remains_refused(self):
+        fixture = handoff_ast_fixture()
+        fixture.observe()
+        namespace = fixture.namespace
+        owner = fixture.owner
+        owner.phase, owner.cancelled = 'working', True
+        frame = SimpleNamespace(f_code=namespace['WrapperRun'].interrupt.__code__,
+                                f_locals=dict(self=owner, signum=2))
+        def send(*args, **kwargs):
+            namespace['children']()
+        namespace.update(cancelled_seen=False, handler_events=[], channel=SimpleNamespace(send=send),
+            signal=SimpleNamespace(getsignal=lambda sig: owner.interrupt), counts={}, active={}, max_active={},
+            in_followon=False, wait_code=None, processes=[])
+        profile_factory = ast.FunctionDef(name='profile_factory', args=ast.arguments(
+            posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[
+                ast.Assign(targets=[ast.Name(id='cancelled_seen', ctx=ast.Store())], value=ast.Constant(False)),
+                copy.deepcopy(fixture.profile), ast.Return(value=ast.Name(id='profile', ctx=ast.Load()))],
+            decorator_list=[])
+        fixture.execute([profile_factory], fixture.harness_path)
+        callback = namespace['profile_factory']()
+        callback(frame, 'return', None)
+        self.assertEqual(fixture.events, [])
+        owner.cancelled = False
+        def boundary(*args):
+            owner.cancelled = True
+            callback(frame, 'return', None)
+        namespace['normalize'] = boundary
+        with self.assertRaisesRegex(ValueError, 'wrapper filesystem I/O after confirmed handoff'):
+            owner.normalize(None)
+        self.assertEqual(fixture.events, ['open'])
+
+    def test_handoff_genuine_followon_refuses_before_io(self):
+        fixture = handoff_ast_fixture()
+        fixture.observe()
+        fixture.owner.cancelled = True
+        for operation in (lambda: fixture.owner.normalize(None), lambda: fixture.owner.invoke([], None, None, 1)):
+            with self.assertRaisesRegex(KeyboardInterrupt, 'Cancelled wrapper'):
+                operation()
+        self.assertEqual(fixture.reads, ['/proc/self/task/123/children'])
+        self.assertEqual(fixture.events, [])
 
     def test_four_seal_negatives(self):
         original = {'a': {'mode': 292, 'size': 1, 'sha256': controls.digest(b'a')}}

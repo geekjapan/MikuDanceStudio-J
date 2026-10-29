@@ -1551,7 +1551,7 @@ new file mode 100644
 +fn manual_unsupported_attributed_wrapper(mut unit: NativeUnit) -> NativeUnit {
 +    let function=unit.ast.c_decls.iter().find_map(|(_,d)| if let CDeclKind::Function {typ,..}=d.kind {Some(typ)} else {None}).unwrap();
 +    let wrapper=CTypeId(unit.ast.c_types.keys().map(|id|id.0).max().unwrap()+1);
-+    unit.ast.c_types.insert(wrapper,not_located(CTypeKind::Attributed(CQualTypeId::new(function),Some(Attribute::NoReturn))));
++    unit.ast.c_types.insert(wrapper,Located { loc: None, kind: CTypeKind::Attributed(CQualTypeId::new(function),Some(Attribute::NoReturn)) });
 +    for d in unit.ast.c_decls.values_mut() { if let CDeclKind::Function {typ,..}=&mut d.kind {*typ=wrapper;} }
 +    unit
 +}

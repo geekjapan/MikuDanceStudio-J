@@ -4533,7 +4533,7 @@ diff --git a/c2rust-transpile/src/native_intake.rs b/c2rust-transpile/src/native
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/native_intake.rs
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,186 @@
 +use crate::*;
 +use serde_derive::Deserialize;
 +use std::collections::{BTreeMap, BTreeSet};
@@ -4640,9 +4640,10 @@ new file mode 100644
 +        "native source or target binding differs")?;
 +    let invocation = &inputs.prepared_invocation;
 +    let directory = Path::new(effective["directory"].as_str().ok_or_else(|| format_err!("missing effective directory"))?);
++    let expected_output: Option<String> = serde_json::from_value(effective["output"].clone())?;
 +    require(canonical(&inputs.cwd)? == directory && invocation.command.directory == directory
 +        && invocation.command.file == source && effective["arguments"] == serde_json::json!(invocation.command.arguments)
-+        && effective["output"].as_str().unwrap_or("") == invocation.command.output
++        && expected_output.as_deref().unwrap_or("") == invocation.command.output
 +        && invocation.requested_extra_args.iter().map(String::as_str).eq(extra.iter().copied()),
 +        "native effective command binding differs")?;
 +    let selected = &invocation.selected_driver_argv;
@@ -4723,7 +4724,7 @@ diff --git a/c2rust-transpile/src/program.rs b/c2rust-transpile/src/program.rs
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/program.rs
-@@ -0,0 +1,389 @@
+@@ -0,0 +1,416 @@
 +use crate::*;
 +use crate::c_ast::closed_plan::{ClosedVariadicPlan, UnitIdentity, UnitKey};
 +use crate::compile_cmds::LinkCmd;
@@ -5110,6 +5111,33 @@ new file mode 100644
 +            }
 +            refuse(changed);
 +        }
++    }
++
++    #[test]
++    fn closed_variadic_plan_native_optional_output_binding_is_explicit() {
++        let directory=tempfile::tempdir().unwrap();
++        let (source,database,base)=native_fixture(directory.path(),"int legal(void){return 1;}");
++        let c=config(directory.path().join("unused"));
++        let mut keys=Vec::new();
++        for output in [None,Some(serde_json::Value::Null),Some(serde_json::json!("")),Some(serde_json::json!("native.o"))] {
++            let mut row=base.clone();
++            if let Some(output)=output { row["output"]=output; }
++            let (key,_,_,effective)=command_identity(&row,&[],"output-test").unwrap();
++            keys.push(key);
++            let expected=effective["output"].as_str().unwrap_or("");
++            fs::write(&database,serde_json::to_vec(&vec![native_database_row(&effective)]).unwrap()).unwrap();
++            let (ast,_,_)=prepare_single(&c,&source,&database,&[],None).unwrap();
++            let raw=ast.cursor_inputs.as_ref().unwrap();
++            let mut metadata: serde_json::Value=serde_json::from_str(raw).unwrap();
++            assert_eq!(metadata["prepared_invocation"]["command"]["output"].as_str(),Some(expected));
++            assert!(crate::native_intake::capture(raw,&ast,&source,&effective,&[]).is_ok());
++            metadata["prepared_invocation"]["command"]["output"]=serde_json::json!("different.o");
++            assert!(crate::native_intake::capture(&metadata.to_string(),&ast,&source,&effective,&[]).is_err());
++        }
++        assert_eq!(keys[0],keys[1]);
++        assert_ne!(keys[0],keys[2]);
++        assert_ne!(keys[0],keys[3]);
++        assert_ne!(keys[2],keys[3]);
 +    }
 +
 +}

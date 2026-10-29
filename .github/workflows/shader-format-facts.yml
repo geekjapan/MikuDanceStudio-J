@@ -22,6 +22,45 @@ defaults:
     shell: bash
 
 jobs:
+  arm64-ordinary-types:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    env:
+      LLVM_CONFIG_PATH: /usr/bin/llvm-config-18
+      LIBCLANG_PATH: /usr/lib/llvm-18/lib
+      DOCS_RS: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install ARM64 type-check dependencies
+        timeout-minutes: 8
+        run: |
+          sudo timeout --kill-after=10s 120s apt-get -o Acquire::Retries=0 update
+          sudo timeout --kill-after=10s 300s apt-get -o Acquire::Retries=0 install -y --no-install-recommends clang-18 llvm-18-dev libclang-18-dev libssl-dev pkg-config
+          rustup toolchain install 1.95.0 --profile minimal
+      - name: Type-check actual ordinary tool source on Linux ARM64
+        timeout-minutes: 15
+        run: |
+          mkdir -p "$RUNNER_TEMP/arm64-types"
+          exec > >(tee "$RUNNER_TEMP/arm64-types/check.log") 2>&1
+          test "$(uname -m)" = aarch64
+          git init "$RUNNER_TEMP/c2rust-arm64"
+          git -C "$RUNNER_TEMP/c2rust-arm64" remote add origin https://github.com/immunant/c2rust.git
+          git -C "$RUNNER_TEMP/c2rust-arm64" fetch --depth 1 origin "$C2RUST_REV"
+          git -C "$RUNNER_TEMP/c2rust-arm64" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/c2rust-arm64" rev-parse HEAD)" = "$C2RUST_REV"
+          python3 -B tools/vkd3d-rust-probe/apply_c2rust_patch.py --source "$RUNNER_TEMP/c2rust-arm64" --artifacts "$RUNNER_TEMP/arm64-types"
+          cargo +1.95.0 check --locked --manifest-path "$RUNNER_TEMP/c2rust-arm64/Cargo.toml" -p c2rust --bin c2rust-transpile
+      - name: Retain ARM64 typing evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: shader-common-plan-arm64-types
+          path: ${{ runner.temp }}/arm64-types/
+          retention-days: 7
+          if-no-files-found: error
+
   prepare:
     runs-on: ubuntu-24.04
     timeout-minutes: 60

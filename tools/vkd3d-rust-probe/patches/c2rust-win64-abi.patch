@@ -9,7 +9,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
  #include <optional>
  #include <set>
  #include <unordered_map>
-@@ -12,7 +13,15 @@
+@@ -12,13 +13,23 @@
 
  #include "llvm/Support/CommandLine.h"
  #include "llvm/Support/Debug.h"
@@ -25,16 +25,26 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
  #include "llvm/Support/raw_ostream.h"
  // Declares clang::SyntaxOnlyAction.
  #include "clang/Frontend/FrontendActions.h"
-@@ -58,6 +67,8 @@
+ // Declares clang::DoPrintPreprocessedInput.
+ #include "clang/Frontend/Utils.h"
+ #include "clang/Tooling/CommonOptionsParser.h"
++#include "clang/Tooling/JSONCompilationDatabase.h"
++#include "clang/Tooling/ArgumentsAdjusters.h"
+
+ #include "clang/AST/DeclVisitor.h"
+ #include "clang/AST/ExprCXX.h"
+@@ -58,6 +69,10 @@
  using clang::ASTContext;
  using clang::QualType;
  using std::string;
 +
 +static llvm::cl::opt<bool> CaptureCursorInputs("c2rust-cursor-inputs", llvm::cl::init(false));
++static llvm::cl::opt<std::string> PreparedDatabase("c2rust-prepared-database", llvm::cl::init(""));
++static std::string PreparedInvocation;
 
  namespace { // for local definitions, preferred to making each `static`
 
-@@ -223,6 +234,8 @@
+@@ -223,6 +238,8 @@
 
    public:
      uintptr_t encodeQualType(QualType t) {
@@ -43,7 +53,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
          auto s = t.split();
 
          auto desugared = sugared->find((void *)s.Ty);
-@@ -259,6 +272,10 @@
+@@ -259,6 +276,10 @@
 
      void VisitQualType(const QualType &QT) {
          if (!QT.isNull()) {
@@ -54,7 +64,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
              auto s = QT.split();
 
              auto desugared = sugared->find((void *)s.Ty);
-@@ -271,7 +288,7 @@
+@@ -271,7 +292,7 @@
      }
 
      void VisitAttributedType(const AttributedType *T) {
@@ -63,7 +73,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
          auto qt = encodeQualType(t);
          auto k = T->getAttrKind();
 
-@@ -577,7 +594,13 @@
+@@ -577,7 +598,13 @@
              }
          }();
 
@@ -78,7 +88,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
      }
 
      // Clang represents function declarations with parameters as
-@@ -585,6 +608,15 @@
+@@ -585,6 +612,15 @@
      // handled as `FunctionNoPrototype` instances. Note: we could handle both
      // cases by overriding `VisitFunctionType` instead of the current
      // two-function solution.
@@ -94,7 +104,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
      void VisitFunctionProtoType(const FunctionProtoType *T) {
          LLVM_DEBUG(dbgs() << "Visit ");
          LLVM_DEBUG(T->dump());
-@@ -608,6 +640,7 @@
+@@ -608,6 +644,7 @@
              cbor_encode_boolean(local, T->getExtProtoInfo().Variadic);
              cbor_encode_boolean(local, T->getNoReturnAttr());
              cbor_encode_boolean(local, true); // has arguments
@@ -102,7 +112,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
          });
 
          VisitQualType(T->getReturnType());
-@@ -631,6 +664,7 @@
+@@ -631,6 +668,7 @@
              cbor_encode_boolean(local, false); // Variable argument function
              cbor_encode_boolean(local, T->getNoReturnAttr());
              cbor_encode_boolean(local, false); // has arguments
@@ -110,7 +120,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
          });
 
          VisitQualType(T->getReturnType());
-@@ -2252,6 +2286,55 @@
+@@ -2252,6 +2290,55 @@
                  }
 
                  cbor_encoder_close_container(array, &attr_array);
@@ -166,7 +176,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
              });
          typeEncoder.VisitQualTypeOf(functionType, paramsFD);
 
-@@ -2343,9 +2426,21 @@
+@@ -2343,9 +2430,21 @@
                  }
 
                  cbor_encoder_close_container(array, &attr_array);
@@ -188,7 +198,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 
          return true;
      }
-@@ -2357,6 +2452,47 @@
+@@ -2357,6 +2456,47 @@
       Extras:
       - name as string
       */
@@ -236,7 +246,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
      bool VisitRecordDecl(RecordDecl *D) {
          if (!D->isCanonicalDecl()) {
              // Emit non-canonical decl so we have a placeholder to attach comments to.
-@@ -2448,6 +2584,8 @@
+@@ -2448,6 +2588,8 @@
 
                  // 7. Encode the platform specific alignment of this record
                  cbor_encode_uint(local, recordAlignment);
@@ -245,7 +255,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
              });
 
          return true;
-@@ -2467,13 +2605,14 @@
+@@ -2467,13 +2609,14 @@
          typeEncoder.VisitQualTypeOf(underlying_type, D);
 
          encode_entry(D, TagEnumDecl, childIds, underlying_type,
@@ -261,7 +271,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
                       });
 
          return true;
-@@ -3002,17 +3141,278 @@
+@@ -3002,17 +3145,284 @@
    VisitQualType(t);
  }
 
@@ -498,6 +508,12 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 +            {"vfs", "clangtool_empty_overlay_on_real_filesystem"},
 +            {"unsupported", std::move(errors)}, {"buffers", std::move(entries)},
 +            {"lexer_events", std::move(lexerEvents)}};
++        if (!PreparedDatabase.getValue().empty()) {
++            auto invocation = llvm::json::parse(PreparedInvocation);
++            if (!invocation) llvm::report_fatal_error("missing prepared native invocation");
++            result["schema"] = 3;
++            result["prepared_invocation"] = std::move(*invocation);
++        }
 +        std::string encoded;
 +        llvm::raw_string_ostream out(encoded); out << llvm::json::Value(std::move(result)); out.flush();
 +        return encoded;
@@ -543,7 +559,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
          CborEncoder encoder;
 
          // There are some type nodes (see `TypedefType` and `RecordType`) which
-@@ -3026,7 +3426,7 @@
+@@ -3026,7 +3436,7 @@
              cbor_encoder_init(&encoder, buffer, len, 0);
 
              CborEncoder outer;
@@ -552,7 +568,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 
              CborEncoder array;
 
-@@ -3136,6 +3536,16 @@
+@@ -3136,6 +3546,16 @@
              auto target = Context.getTargetInfo().getTriple().str();
              cbor_encode_string(&outer, target);
 
@@ -569,7 +585,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
              cbor_encoder_close_container(&encoder, &outer);
          };
 
-@@ -3158,9 +3568,15 @@
+@@ -3158,9 +3578,15 @@
 
  class TranslateAction : public clang::ASTFrontendAction {
      Outputs *outputs;
@@ -586,7 +602,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 
      virtual std::unique_ptr<clang::ASTConsumer>
      CreateASTConsumer(clang::CompilerInstance &Compiler,
-@@ -3175,8 +3591,15 @@
+@@ -3175,8 +3601,15 @@
              return nullptr;
          }
 
@@ -604,7 +620,7 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
      }
  };
 
-@@ -3270,17 +3693,18 @@
+@@ -3270,17 +3703,18 @@
 
  class MyFrontendActionFactory : public FrontendActionFactory {
      Outputs *outputs;
@@ -626,9 +642,47 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
      }
  #endif // CLANG_VERSION_MAJOR
  };
-@@ -3373,7 +3797,12 @@
+@@ -3372,8 +3806,50 @@
+     std::vector<std::string> sourcePathList(1, sourcePath);
      ClangTool Tool(OptionsParser.getCompilations(), sourcePathList);
 
++    PreparedInvocation.clear();
++    if (!PreparedDatabase.getValue().empty()) {
++        std::string error;
++        auto rawDatabase = JSONCompilationDatabase::loadFromFile(
++            PreparedDatabase.getValue(), error, JSONCommandLineSyntax::AutoDetect);
++        if (!rawDatabase) llvm::report_fatal_error("prepared database could not be loaded");
++        const auto raw = rawDatabase->getCompileCommands(sourcePath);
++        const auto selected = OptionsParser.getCompilations().getCompileCommands(sourcePath);
++        if (raw.size() != 1 || selected.size() != 1)
++            llvm::report_fatal_error("ambiguous prepared native command selection");
++        const auto &command = raw.front();
++        const auto expectedSelected = OptionsParser.getArgumentsAdjuster()(command.CommandLine, sourcePath);
++        if (selected.front().Directory != command.Directory || selected.front().Filename != command.Filename ||
++            selected.front().Output != command.Output || selected.front().CommandLine != expectedSelected)
++            llvm::report_fatal_error("prepared native database selection differs");
++        auto pipeline = combineAdjusters(getClangStripOutputAdjuster(), getClangSyntaxOnlyAdjuster());
++        pipeline = combineAdjusters(pipeline, getClangStripDependencyFileAdjuster());
++        Tool.clearArgumentsAdjusters();
++        Tool.appendArgumentsAdjuster(pipeline);
++        llvm::json::Array original, selectedArgs, expectedArgs, requestedExtra;
++        for (int i = 1; i < argc; ++i) {
++            StringRef arg(argv[i]);
++            if (arg.starts_with("-extra-arg=")) requestedExtra.push_back(arg.drop_front(11).str());
++        }
++        for (const auto &a : command.CommandLine) original.push_back(a);
++        for (const auto &a : selected.front().CommandLine) selectedArgs.push_back(a);
++        for (const auto &a : pipeline(expectedSelected, sourcePath)) expectedArgs.push_back(a);
++        llvm::json::Object evidence{
++            {"schema", 1}, {"requested_extra_args", std::move(requestedExtra)}, {"command", llvm::json::Object{
++                {"directory", command.Directory}, {"file", command.Filename},
++                {"arguments", std::move(original)}, {"output", command.Output}}},
++            {"selected_driver_argv", std::move(selectedArgs)},
++            {"expected_adjusted_driver_argv", std::move(expectedArgs)}};
++        llvm::raw_string_ostream out(PreparedInvocation);
++        out << llvm::json::Value(std::move(evidence)); out.flush();
++    }
++
      Outputs outputs;
 -    MyFrontendActionFactory myFrontendActionFactory(&outputs);
 +    std::vector<std::string> adjustedArgv;
@@ -640,15 +694,30 @@ diff --git a/c2rust-ast-exporter/src/AstExporter.cpp b/c2rust-ast-exporter/src/A
 
      *result = Tool.run(&myFrontendActionFactory);
      assert(outputs.size() == 1 && "Expected exactly one output.");
-@@ -3411,5 +3840,10 @@
+@@ -3409,7 +3885,25 @@
+     return make_export_result(outputs, preprocessed);
+ }
 
++ExportResult *ast_exporter_prepared(int argc, const char *argv[], int debug,
++                                    int emit_preprocessed, int *status) {
++#ifndef NDEBUG
++    if (debug) {
++        llvm::DebugFlag = true;
++        llvm::setCurrentDebugType(DEBUG_TYPE);
++    }
++#endif
++    PreprocessedOutputs preprocessed;
++    auto outputs = process(argc, argv, status, emit_preprocessed ? &preprocessed : nullptr);
++    return make_export_result(outputs, preprocessed);
++}
++
  void drop_export_result(ExportResult *result) { delete result; }
-
++
 +void c2rust_sha256(const uint8_t *data, size_t size, uint8_t *output) {
 +    auto hash = llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(data, size));
 +    std::copy(hash.begin(), hash.end(), output);
 +}
-+
+
  const char *clang_version() { return "" CLANG_VERSION_STRING; }
  }
 diff --git a/c2rust-ast-exporter/src/clang_ast.rs b/c2rust-ast-exporter/src/clang_ast.rs
@@ -754,7 +823,7 @@ diff --git a/c2rust-ast-exporter/src/lib.rs b/c2rust-ast-exporter/src/lib.rs
 +    retained_cbor: Option<&Path>, instance: Option<&mut String>,
 +) -> Result<(clang_ast::AstContext, Option<String>), Error> {
 +    let strict = retained_cbor.is_some() || instance.is_some();
-+    let cbors = get_ast_cbors(file_path, cc_db, extra_args, debug, emit_preprocessed, strict);
++    let cbors = get_ast_cbors(file_path, cc_db, extra_args, debug, emit_preprocessed, strict, instance.is_some())?;
 +    let (buffer, preprocessed) = if strict {
 +        if cbors.len() != 1 {
 +            return Err(Error::new(ErrorKind::InvalidData, "Expected exactly one native translation unit"));
@@ -777,22 +846,65 @@ diff --git a/c2rust-ast-exporter/src/lib.rs b/c2rust-ast-exporter/src/lib.rs
 
      // let cbor_path = file_path.with_extension("cbor");
      // let mut cbor_file = File::create(&cbor_path)?;
-@@ -71,6 +111,7 @@
+@@ -71,7 +111,9 @@
      extra_args: &[&str],
      debug: bool,
      emit_preprocessed: bool,
+-) -> HashMap<String, (Vec<u8>, Option<String>)> {
 +    cursor_inputs: bool,
- ) -> HashMap<String, (Vec<u8>, Option<String>)> {
++    prepared: bool,
++) -> Result<HashMap<String, (Vec<u8>, Option<String>)>, Error> {
      let mut args_owned = vec![CString::new("ast_exporter").unwrap()];
      args_owned.push(CString::new(file_path.to_str().unwrap()).unwrap());
-@@ -80,6 +121,8 @@
-     for &arg in extra_args {
+     args_owned.push(CString::new("-p").unwrap());
+@@ -81,22 +123,30 @@
          args_owned.push(CString::new(["-extra-arg=", arg].join("")).unwrap())
      }
-+
-+    args_owned.push(CString::new(format!("--c2rust-cursor-inputs={}", cursor_inputs)).unwrap());
 
++    args_owned.push(CString::new(format!("--c2rust-cursor-inputs={}", cursor_inputs)).unwrap());
++
++    args_owned.push(CString::new(format!("--c2rust-prepared-database={}",
++        if prepared { cc_db.to_str().unwrap() } else { "" })).unwrap());
      let args_ptrs: Vec<*const c_char> = args_owned.iter().map(|x| x.as_ptr()).collect();
+
+     let hashmap;
+     unsafe {
+         let lock = CLANG_MUTEX.lock().unwrap();
+-        let ptr = ast_exporter(
+-            args_ptrs.len() as c_int,
+-            args_ptrs.as_ptr(),
+-            debug.into(),
+-            emit_preprocessed.into(),
+-        );
++        let mut status = 0;
++        let ptr = if prepared {
++            ast_exporter_prepared(args_ptrs.len() as c_int, args_ptrs.as_ptr(),
++                debug.into(), emit_preprocessed.into(), &mut status)
++        } else {
++            ast_exporter(args_ptrs.len() as c_int, args_ptrs.as_ptr(), debug.into(), emit_preprocessed.into())
++        };
+         drop(lock);
+         hashmap = marshal_result(ptr);
+         drop_export_result(ptr);
+-    }
+-    hashmap
++        if prepared && status != 0 {
++            return Err(Error::new(ErrorKind::InvalidData, "common plan native Tool.run failed"));
++        }
++    }
++    Ok(hashmap)
+ }
+
+ #[allow(non_camel_case_types)]
+@@ -122,6 +172,9 @@
+     // void drop_export_result(ExportResult *result);
+     fn drop_export_result(ptr: *mut ffi::ExportResult);
+
++    fn ast_exporter_prepared(argc: c_int, argv: *const *const c_char, debug: c_int,
++        emit_preprocessed: c_int, status: *mut c_int) -> *mut ffi::ExportResult;
++
+     fn clang_version() -> *const c_char;
+ }
 
 diff --git a/c2rust-transpile/src/c_ast/closed_plan.rs b/c2rust-transpile/src/c_ast/closed_plan.rs
 new file mode 100644
@@ -1296,7 +1408,7 @@ diff --git a/c2rust-transpile/src/c_ast/closed_plan_tests.rs b/c2rust-transpile/
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_plan_tests.rs
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,214 @@
 +use super::*;
 +use crate::program::{command_identity, native_sources};
 +
@@ -1318,13 +1430,13 @@ new file mode 100644
 +    let row = serde_json::json!({"directory": directory.path(), "file": source, "arguments": argv});
 +    let (key, command, source, effective) = command_identity(&row, &[], "test-link").unwrap();
 +    let database = directory.path().join("compile_commands.json");
-+    std::fs::write(&database, serde_json::to_vec(&vec![effective]).unwrap()).unwrap();
++    std::fs::write(&database, serde_json::to_vec(&vec![&effective]).unwrap()).unwrap();
 +    let (untyped, _, instance) = c2rust_ast_exporter::get_prepared_untyped_ast(&source, &database, &[], false, false).unwrap();
 +    let conversion = ConversionContext::new(&source, &untyped);
 +    assert!(!conversion.invalid_clang_ast, "legal native baseline must import");
 +    let mut ast = conversion.into_typed_context();
 +    ast.plan_instance = Some(instance.clone());
-+    let sources = native_sources(&mut ast, &source).unwrap();
++    let sources = native_sources(&mut ast, &source, &effective, &[]).unwrap();
 +    let identity = UnitIdentity { key, command, source, domain: "test-link".into(), ast_instance: instance,
 +        target: ast.target.clone(), widths: ast.target_c_widths };
 +    NativeUnit { directory, identity, ast, sources }
@@ -1407,7 +1519,6 @@ new file mode 100644
 +    let p=plan(&mut units);
 +    assert!(reasons(&p,"a").contains(&Blocker::AliasCycle));
 +    assert!(reasons(&p,"b").contains(&Blocker::AliasCycle));
-+    // Conversion stays on the existing path. The cycle never becomes a lowering permit.
 +    emit(&p,units.pop().unwrap());
 +}
 +
@@ -1437,19 +1548,24 @@ new file mode 100644
 +    assert!(ClosedVariadicPlan::capture(units.iter_mut().map(|u|(&u.identity,&u.ast,std::mem::take(&mut u.sources)))).is_err());
 +}
 +
++fn manual_unsupported_attributed_wrapper(mut unit: NativeUnit) -> NativeUnit {
++    let function=unit.ast.c_decls.iter().find_map(|(_,d)| if let CDeclKind::Function {typ,..}=d.kind {Some(typ)} else {None}).unwrap();
++    let wrapper=CTypeId(unit.ast.c_types.keys().map(|id|id.0).max().unwrap()+1);
++    unit.ast.c_types.insert(wrapper,not_located(CTypeKind::Attributed(CQualTypeId::new(function),Some(Attribute::NoReturn))));
++    for d in unit.ast.c_decls.values_mut() { if let CDeclKind::Function {typ,..}=&mut d.kind {*typ=wrapper;} }
++    unit
++}
++
 +#[test]
-+fn closed_variadic_plan_unknown_attributed_signature_is_never_ordinary() {
-+    let mut units=vec![native("int f(int n,...) __attribute__((ms_abi)); int f(int n,...){return n;}","attributed.c",&[])];
-+    // This native signature may already be resolved by Clang. Exercise the unsupported original wrapper explicitly.
-+    let function=units[0].ast.c_decls.iter().find_map(|(_,d)| if let CDeclKind::Function {typ,..}=d.kind {Some(typ)} else {None}).unwrap();
-+    let wrapper=CTypeId(units[0].ast.c_types.keys().map(|id|id.0).max().unwrap()+1);
-+    units[0].ast.c_types.insert(wrapper,not_located(CTypeKind::Attributed(CQualTypeId::new(function),Some(Attribute::NoReturn))));
-+    for d in units[0].ast.c_decls.values_mut() { if let CDeclKind::Function {typ,..}=&mut d.kind {*typ=wrapper;} }
++fn closed_variadic_plan_manual_unsupported_attributed_wrapper_is_blocked_at_binding() {
++    let mut units=vec![manual_unsupported_attributed_wrapper(native(
++        "int f(int n,...) __attribute__((ms_abi)); int f(int n,...){return n;}","attributed.c",&[]))];
 +    let p=plan(&mut units);
 +    assert!(reasons(&p,"f").contains(&Blocker::UnknownSignature));
 +    assert!(p.units.values().flat_map(|u|u.declarations.values()).all(|f|!f.blockers.is_empty()));
-+    // Bind the original context. Existing emitter support for attributed definitions remains a separate limitation.
-+    let u=&units[0]; p.bind(&u.identity,&u.ast).unwrap().declaration(*p.units[&u.identity.key].declarations.keys().next().unwrap());
++    let u=&units[0];
++    let bound=p.bind(&u.identity,&u.ast).unwrap();
++    bound.declaration(*p.units[&u.identity.key].declarations.keys().next().unwrap());
 +}
 +
 +#[test]
@@ -3634,35 +3750,113 @@ new file mode 100644
 diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_ast/conversion.rs
 --- a/c2rust-transpile/src/c_ast/conversion.rs
 +++ b/c2rust-transpile/src/c_ast/conversion.rs
-@@ -341,6 +341,27 @@
-         };
+@@ -77,7 +77,7 @@
+     }
 
-         ctx.convert(untyped_context);
-+        // Diagnostic metadata uses only existing mappings, preserving emission allocation order.
+     /// Lookup the NEW_ID corresponding to a CLANG_ID
+-    pub fn get_new(&mut self, old_id: ClangId) -> Option<ImporterId> {
++    pub fn get_new(&self, old_id: ClangId) -> Option<ImporterId> {
+         self.old_to_new.get(&old_id).copied()
+     }
+
+@@ -188,23 +188,28 @@
+         let attr_str =
+             from_value::<String>(attr_info[0].clone()).expect("Decl attributes should be strings");
+
+-        match attr_str.as_str() {
++        if attr_str == "cleanup" {
++            match from_value::<ClangId>(attr_info[1].clone()) {
++                Ok(func_id) => Some(Attribute::Cleanup(self.visit_decl(func_id))),
++                Err(_) => {
++                    diag!(Diagnostic::ClangAst, "cleanup attribute is missing its function decl id");
++                    self.invalid_clang_ast = true;
++                    None
++                }
++            }
++        } else {
++            parse_noncleanup_attribute(&attr_str, &attr_info)
++        }
++    }
++}
++
++fn parse_noncleanup_attribute(name: &str, attr_info: &[Value]) -> Option<Attribute> {
++        match name {
+             "alias" => {
+                 let alias = from_value(attr_info[1].clone()).expect("alias name not found");
+                 Some(Attribute::Alias(alias))
+             }
+             "always_inline" => Some(Attribute::AlwaysInline),
+-            "cleanup" => match from_value::<ClangId>(attr_info[1].clone()) {
+-                Ok(func_id) => Some(Attribute::Cleanup(self.visit_decl(func_id))),
+-                Err(_) => {
+-                    diag!(
+-                        Diagnostic::ClangAst,
+-                        "cleanup attribute is missing its function decl id",
+-                    );
+-                    self.invalid_clang_ast = true;
+-                    None
+-                }
+-            },
+             "cold" => Some(Attribute::Cold),
+             "fallthrough" | "__fallthrough__" => Some(Attribute::Fallthrough),
+             "gnu_inline" => Some(Attribute::GnuInline),
+@@ -227,6 +232,42 @@
+                 None
+             }
+         }
++}
++
++struct OriginalDeclarationMetadata {
++    id: CDeclId,
++    types: Vec<Option<CQualTypeId>>,
++    attrs: IndexSet<Attribute>,
++    visibility: Vec<(bool, String)>,
++    names: Vec<String>,
++}
++
++impl OriginalDeclarationMetadata {
++    fn collect(untyped_context: &AstContext, mapping: &IdMapper) -> Vec<Self> {
++        let mut metadata = Vec::new();
 +        for (&native, node) in &untyped_context.ast_nodes {
 +            if node.tag != ASTEntryTag::TagFunctionDecl || node.extras.len() < 15 { continue; }
-+            let Some(id) = ctx.id_mapper.get_new(native) else { continue; };
++            let Some(id) = mapping.get_new(native) else { continue; };
 +            let attributes = from_value::<Vec<Value>>(node.extras[11].clone()).expect("original function attributes");
-+            let attributes = attributes.into_iter().filter(|attribute| {
++            let attributes: Vec<Value> = attributes.into_iter().filter(|attribute| {
 +                !matches!(attribute, Value::Array(fields) if matches!(fields.first(), Some(Value::Text(name)) if name == "cleanup"))
 +            }).collect();
-+            let attrs = ctx.parse_attributes(attributes);
++            let attrs = attributes.into_iter().filter_map(|attribute| {
++                let fields=from_value::<Vec<Value>>(attribute).expect("original attribute fields");
++                let name=from_value::<String>(fields[0].clone()).expect("original attribute name");
++                parse_noncleanup_attribute(&name, &fields)
++            }).collect();
 +            let types = from_value::<Vec<u64>>(node.extras[12].clone()).expect("original function redeclaration types");
-+            let types = types.into_iter().map(|old| ctx.id_mapper.get_new(old & TypeNode::ID_MASK).map(|id| CQualTypeId {
++            let types = types.into_iter().map(|old| mapping.get_new(old & TypeNode::ID_MASK).map(|id| CQualTypeId {
 +                ctype: CTypeId(id), qualifiers: Qualifiers { is_const: old & TypeNode::CONST_MASK != 0,
 +                    is_volatile: old & TypeNode::VOLATILE_MASK != 0, is_restrict: old & TypeNode::RESTRICT_MASK != 0 }
 +            })).collect();
 +            let visibility = from_value(node.extras[13].clone()).expect("original function visibility");
-+            ctx.typed_context.source_function_types.insert(CDeclId(id), types);
-+            ctx.typed_context.source_function_attrs.insert(CDeclId(id), attrs);
-+            ctx.typed_context.source_function_visibility.insert(CDeclId(id), visibility);
++
 +            let names = from_value(node.extras[14].clone()).expect("all original function attribute spellings");
-+            ctx.typed_context.source_function_attribute_names.insert(CDeclId(id), names);
++            metadata.push(OriginalDeclarationMetadata { id: CDeclId(id), types, attrs, visibility, names });
++        }
++        metadata
+     }
+ }
+
+@@ -341,6 +382,12 @@
+         };
+
+         ctx.convert(untyped_context);
++        for metadata in OriginalDeclarationMetadata::collect(untyped_context, &ctx.id_mapper) {
++            ctx.typed_context.source_function_types.insert(metadata.id, metadata.types);
++            ctx.typed_context.source_function_attrs.insert(metadata.id, metadata.attrs);
++            ctx.typed_context.source_function_visibility.insert(metadata.id, metadata.visibility);
++            ctx.typed_context.source_function_attribute_names.insert(metadata.id, metadata.names);
 +        }
          ctx
      }
 
-@@ -601,6 +622,25 @@
+@@ -601,6 +648,25 @@
 
          self.typed_context.va_list_kind = untyped_context.va_list_kind;
          self.typed_context.target = untyped_context.target.clone();
@@ -3688,7 +3882,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
      }
 
      /// Visit child nodes of a `RecordDecl` (`struct` or `union`) and collect `FieldDecl` node IDs.
-@@ -659,6 +699,9 @@
+@@ -659,6 +725,9 @@
                  }
 
                  TypeTag::TagChar if expected_ty & OTHER_TYPE != 0 => {
@@ -3698,7 +3892,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
                      self.add_type(new_id, not_located(CTypeKind::Char));
                      self.processed_nodes.insert(new_id, OTHER_TYPE);
                  }
-@@ -826,8 +869,16 @@
+@@ -826,8 +895,16 @@
                          .expect("NoReturn of function type not found");
                      let has_proto = from_value(ty_node.extras[3].clone())
                          .expect("HasProto of function type not found");
@@ -3716,7 +3910,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
                      self.add_type(new_id, not_located(function_ty));
                      self.processed_nodes.insert(new_id, FUNC_TYPE);
 
-@@ -958,7 +1009,9 @@
+@@ -958,7 +1035,9 @@
 
                  TypeTag::TagConstantArrayType => {
                      let element_id = from_value(ty_node.extras[0].clone()).expect("element id");
@@ -3727,7 +3921,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
 
                      let count: usize = from_value(ty_node.extras[1].clone()).expect("count");
 
-@@ -969,7 +1022,9 @@
+@@ -969,7 +1048,9 @@
 
                  TypeTag::TagIncompleteArrayType => {
                      let element_id = from_value(ty_node.extras[0].clone()).expect("element id");
@@ -3738,7 +3932,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
 
                      let element_ty = CTypeKind::IncompleteArray(element);
                      self.add_type(new_id, not_located(element_ty));
-@@ -2137,6 +2192,13 @@
+@@ -2137,6 +2218,13 @@
                      let name = from_value::<String>(node.extras[0].clone())
                          .expect("Expected to find function name");
 
@@ -3752,7 +3946,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
                      let is_global =
                          from_value(node.extras[1].clone()).expect("Expected to find visibility");
                      let mut is_inline =
-@@ -2209,6 +2271,7 @@
+@@ -2209,6 +2297,7 @@
                          .type_id
                          .expect("Expected to find type on typedef declaration");
                      let mut typ = self.visit_qualified_type(typ_old);
@@ -3760,7 +3954,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
 
                      // Clang injects definitions of the form `#define __SIZE_TYPE__ unsigned int` into
                      // compilation units based on the target. (See lib/Frontend/InitPreprocessor.cpp
-@@ -2330,6 +2393,10 @@
+@@ -2330,6 +2419,10 @@
                  }
 
                  ASTEntryTag::TagEnumDecl if expected_ty & ENUM_DECL != 0 => {
@@ -3771,7 +3965,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
                      let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
 
                      let variants = node
-@@ -2410,6 +2477,16 @@
+@@ -2410,6 +2503,16 @@
                          .expect("Expected to find type on variable declaration");
                      let typ = self.visit_qualified_type(typ_id);
 
@@ -3788,7 +3982,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
                      let variable_decl = CDeclKind::Variable {
                          has_static_duration,
                          has_thread_duration,
-@@ -2426,6 +2503,13 @@
+@@ -2426,6 +2529,13 @@
                  }
 
                  ASTEntryTag::TagStructDecl if expected_ty & RECORD_DECL != 0 => {
@@ -3802,7 +3996,7 @@ diff --git a/c2rust-transpile/src/c_ast/conversion.rs b/c2rust-transpile/src/c_a
                      let name = expect_opt_str(&node.extras[0]).unwrap().map(str::to_string);
                      let has_def = from_value(node.extras[1].clone())
                          .expect("Expected has_def flag on struct");
-@@ -2467,6 +2551,10 @@
+@@ -2467,6 +2577,10 @@
                  }
 
                  ASTEntryTag::TagUnionDecl if expected_ty & RECORD_DECL != 0 => {
@@ -3905,7 +4099,18 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
  }
 
  /// Information about a single macro invocation.
-@@ -1020,6 +1039,7 @@
+@@ -238,6 +257,10 @@
+ }
+
+ impl TypedAstContext {
++    pub(crate) fn original_source_paths(&self) -> impl Iterator<Item = &Path> {
++        self.files.iter().filter_map(|file| file.path.as_deref())
++    }
++
+     // TODO: build the TypedAstContext during initialization, rather than
+     // building an empty one and filling it later.
+     pub fn new(input_path: &Path, clang_files: &[SrcFile]) -> TypedAstContext {
+@@ -1020,6 +1043,7 @@
                      is_variable_argument1,
                      is_noreturn1,
                      has_prototype1,
@@ -3913,7 +4118,7 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
                  ),
                  Function(
                      result_type_id2,
-@@ -1027,6 +1047,7 @@
+@@ -1027,6 +1051,7 @@
                      is_variable_argument2,
                      is_noreturn2,
                      has_prototype2,
@@ -3921,7 +4126,7 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
                  ),
              ) => {
                  self.qual_types_eq(*result_type_id1, *result_type_id2, resolver)
-@@ -1040,6 +1061,7 @@
+@@ -1040,6 +1065,7 @@
                      && is_variable_argument1 == is_variable_argument2
                      && is_noreturn1 == is_noreturn2
                      && has_prototype1 == has_prototype2
@@ -3929,7 +4134,7 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
              }
 
              (Attributed(type_id1, ref attribute1), Attributed(type_id2, ref attribute2)) => {
-@@ -1095,8 +1117,8 @@
+@@ -1095,8 +1121,8 @@
              let typ = self.resolve_type_id(*typ);
              let decl_arg_tys = self.tys_of_params(parameters).unwrap();
              let typ_kind = &self[typ].kind;
@@ -3940,7 +4145,7 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
              }
              panic!("expected {typ:?} to be CTypeKind::Function, but it was {typ_kind:?}")
          }
-@@ -1179,7 +1201,7 @@
+@@ -1179,7 +1205,7 @@
          };
 
          match self.index(pointed_id).kind {
@@ -3949,7 +4154,7 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
              _ => false,
          }
      }
-@@ -2830,9 +2852,25 @@
+@@ -2830,9 +2856,25 @@
  //  * UnaryTransformType <http://clang.llvm.org/doxygen/classclang_1_1UnaryTransformType.html>
  //  * AdjustedType <http://clang.llvm.org/doxygen/classclang_1_1AdjustedType.html>
 
@@ -3978,7 +4183,7 @@ diff --git a/c2rust-transpile/src/c_ast/mod.rs b/c2rust-transpile/src/c_ast/mod.
  #[derive(Debug, Clone, PartialEq, Eq, Hash)]
  pub enum CTypeKind {
      Void,
-@@ -2894,7 +2932,7 @@
+@@ -2894,7 +2936,7 @@
      // Note a function taking no arguments should have one `void` argument. Functions without any
      // arguments are in K&R format.
      // Flags: is_variable_argument, is_noreturn, has prototype
@@ -4099,7 +4304,7 @@ diff --git a/c2rust-transpile/src/convert_type.rs b/c2rust-transpile/src/convert
 diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
 --- a/c2rust-transpile/src/lib.rs
 +++ b/c2rust-transpile/src/lib.rs
-@@ -1,11 +1,17 @@
+@@ -1,11 +1,18 @@
  #![allow(clippy::too_many_arguments)]
 
  mod diagnostics;
@@ -4114,10 +4319,11 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
  pub mod cfg;
  mod compile_cmds;
 +mod program;
++mod native_intake;
  pub mod convert_type;
  pub mod renamer;
  pub mod rust_ast;
-@@ -75,6 +81,10 @@
+@@ -75,6 +82,10 @@
      pub verbose: bool,
      pub debug_ast_exporter: bool,
      pub emit_c_decl_map: bool,
@@ -4128,43 +4334,58 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
 
      // Options that control translation
      pub incremental_relooper: bool,
-@@ -328,12 +338,22 @@
-
+@@ -329,28 +340,35 @@
  /// Main entry point to transpiler. Called from CLI tools with the result of
  /// clap::App::get_matches().
--pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
-+pub fn transpile(mut tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
-+    let transaction = if tcfg.diagnostic_common_plan {
-+        Some(program::OutputTransaction::new(&mut tcfg).expect("common plan output layout"))
-+    } else { None };
-+    transpile_impl(&tcfg, cc_db, extra_clang_args);
-+    if let Some(transaction) = transaction { transaction.publish().expect("publish complete program"); }
+ pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
++    if tcfg.diagnostic_common_plan {
++        program::PreparedProgram::run(tcfg, cc_db, extra_clang_args).expect("complete common plan publication");
++    } else {
++        let (links, clang_args) = transpile_inputs(&tcfg, cc_db, extra_clang_args);
++        let clang_args = clang_args.iter().map(String::as_str).collect::<Vec<_>>();
++        transpile_impl(&tcfg, cc_db, &links, &clang_args, None);
++    }
 +}
 +
-+fn transpile_impl(tcfg: &TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
++fn transpile_inputs(tcfg: &TranspilerConfig, cc_db: &Path, extra: &[&str]) -> (Vec<compile_cmds::LinkCmd>, Vec<String>) {
      diagnostics::init(tcfg.enabled_warnings.clone(), tcfg.log_level);
-
-     let build_dir = get_build_dir(&tcfg, cc_db);
-
--    let lcmds = get_compile_commands(cc_db, &tcfg.filter).unwrap_or_else(|_| {
-+    let lcmds = if tcfg.diagnostic_common_plan {
+-
++    let links = if tcfg.diagnostic_common_plan {
 +        compile_cmds::get_complete_compile_commands(cc_db)
 +    } else { get_compile_commands(cc_db, &tcfg.filter) }.unwrap_or_else(|_| {
-         panic!(
-             "Could not parse compile commands from {}",
-             cc_db.to_string_lossy()
-@@ -345,6 +365,10 @@
-     let mut clang_args: Vec<&str> = clang_args.iter().map(AsRef::as_ref).collect();
-     clang_args.extend_from_slice(extra_clang_args);
-
-+    let mut prepared = if tcfg.diagnostic_common_plan {
-+        Some(program::PreparedProgram::prepare(tcfg, cc_db, &lcmds, &clang_args)
-+            .expect("prepare complete common plan"))
-+    } else { None };
++        panic!("Could not parse compile commands from {}", cc_db.to_string_lossy())
++    });
++    let mut clang_args = get_extra_args_macos();
++    clang_args.extend(extra.iter().map(|a| a.to_string()));
++    (links, clang_args)
++}
++
++fn transpile_impl(tcfg: &TranspilerConfig, cc_db: &Path, lcmds: &[compile_cmds::LinkCmd], clang_args: &[&str], mut prepared: Option<&mut program::PreparedProgram>) {
+     let build_dir = get_build_dir(&tcfg, cc_db);
+-
+-    let lcmds = get_compile_commands(cc_db, &tcfg.filter).unwrap_or_else(|_| {
+-        panic!(
+-            "Could not parse compile commands from {}",
+-            cc_db.to_string_lossy()
+-        )
+-    });
+-
+-    // Specify path to system include dir on macOS 10.14 and later. Disable the blocks extension.
+-    let clang_args: Vec<String> = get_extra_args_macos();
+-    let mut clang_args: Vec<&str> = clang_args.iter().map(AsRef::as_ref).collect();
+-    clang_args.extend_from_slice(extra_clang_args);
+-
      let mut top_level_ccfg = None;
      let mut workspace_members = vec![];
      let mut num_transpiled_files = 0;
-@@ -394,15 +418,18 @@
+     let mut transpiled_modules = Vec::new();
+
+-    for lcmd in &lcmds {
++    for lcmd in lcmds {
+         let cmds = &lcmd.cmd_inputs;
+         let lcmd_name = lcmd
+             .output
+@@ -394,15 +412,18 @@
 
          let results = cmds
              .iter()
@@ -4185,15 +4406,16 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
              })
              .collect::<Vec<TranspileResult>>();
          let mut modules = vec![];
-@@ -473,6 +500,7 @@
-         run_postprocess(&tcfg, &build_dir, crate_file).unwrap_or_else(|e| warn!("{e}"));
-     }
+@@ -432,7 +453,7 @@
 
-+    if let Some(program) = &prepared { program.finish(); }
-     tcfg.check_if_all_binaries_used(&transpiled_modules);
- }
+         transpiled_modules.extend(modules.iter().cloned());
 
-@@ -662,6 +690,16 @@
+-        if tcfg.emit_build_files {
++        if tcfg.emit_build_files && (!tcfg.diagnostic_common_plan || !modules.is_empty()) {
+             if modules_skipped {
+                 // If we skipped a file, we may not have collected all required pragmas
+                 warn!("Can't emit build files after incremental transpiler run; skipped.");
+@@ -662,6 +683,16 @@
          return Err(());
      }
 
@@ -4210,7 +4432,7 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
      let file = input_path.file_name().unwrap().to_str().unwrap();
      if !input_path.exists() {
          warn!(
-@@ -676,13 +714,15 @@
+@@ -676,13 +707,15 @@
      }
 
      // Extract the untyped AST from the CBOR file
@@ -4233,7 +4455,7 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
          Err(e) => {
              warn!(
                  "Error: {}. Skipping {}; is it well-formed C?",
-@@ -704,12 +744,22 @@
+@@ -704,12 +737,22 @@
      // Convert this into a typed AST
      let typed_context = {
          let conv = ConversionContext::new(input_path, &untyped_context);
@@ -4256,7 +4478,7 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
      if tcfg.dump_typed_context {
          println!("Clang AST");
          println!("{:#?}", typed_context);
-@@ -718,19 +768,48 @@
+@@ -718,19 +761,48 @@
      if tcfg.pretty_typed_context {
          println!("Pretty-printed Clang AST");
          println!("{:#?}", Printer::new(io::stdout()).print(&typed_context));
@@ -4307,24 +4529,214 @@ diff --git a/c2rust-transpile/src/lib.rs b/c2rust-transpile/src/lib.rs
 
      if let Some(decl_map) = maybe_decl_map {
          let decl_map_path = output_path.with_extension("c_decls.json");
+diff --git a/c2rust-transpile/src/native_intake.rs b/c2rust-transpile/src/native_intake.rs
+new file mode 100644
+--- /dev/null
++++ b/c2rust-transpile/src/native_intake.rs
+@@ -0,0 +1,185 @@
++use crate::*;
++use serde_derive::Deserialize;
++use std::collections::{BTreeMap, BTreeSet};
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct NativeInputs {
++    schema: u32,
++    main_input: PathBuf,
++    cwd: PathBuf,
++    adjusted_driver_argv: Vec<String>,
++    regenerated_cc1_argv: Vec<String>,
++    target: String,
++    cpu: String,
++    abi: String,
++    features: Vec<String>,
++    features_as_written: Vec<String>,
++    vfs: String,
++    unsupported: Vec<String>,
++    buffers: Vec<Buffer>,
++    lexer_events: Vec<LexerEvent>,
++    prepared_invocation: PreparedInvocation,
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct PreparedInvocation {
++    schema: u32,
++    command: NativeCommand,
++    requested_extra_args: Vec<String>,
++    selected_driver_argv: Vec<String>,
++    expected_adjusted_driver_argv: Vec<String>,
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct NativeCommand {
++    directory: PathBuf,
++    file: PathBuf,
++    arguments: Vec<String>,
++    output: String,
++}
++
++#[derive(Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "lowercase")]
++enum Role { Main, File, Predefines, Scratch }
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct Buffer {
++    role: Role,
++    identifier: String,
++    physical_path: PathBuf,
++    aliases: Vec<String>,
++    native_device: String,
++    native_file: String,
++    length: u64,
++    bytes_hex: String,
++    sha256: String,
++    lexed: bool,
++    lexer_file_ids: Vec<String>,
++}
++
++#[derive(Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "lowercase")]
++enum Reason { Enter, Exit }
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct LexerEvent { file_id: String, reason: Reason, characteristic: u32 }
++
++fn require(condition: bool, message: &str) -> Result<(), Error> {
++    if condition { Ok(()) } else { Err(format_err!("common plan native intake: {message}")) }
++}
++
++fn canonical(path: &Path) -> Result<PathBuf, Error> {
++    require(path.is_absolute(), "nonabsolute native path")?;
++    let resolved = path.canonicalize()?;
++    require(resolved == path, "unresolved native path")?;
++    Ok(resolved)
++}
++
++fn decimal(value: &str) -> bool {
++    !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) && value.parse::<u64>().is_ok()
++}
++
++fn decode(buffer: &Buffer) -> Result<Vec<u8>, Error> {
++    require(buffer.bytes_hex.len() % 2 == 0 && buffer.bytes_hex.bytes().all(|b|
++        b.is_ascii_digit() || (b'a'..=b'f').contains(&b)), "invalid native buffer hex")?;
++    let bytes = (0..buffer.bytes_hex.len()).step_by(2).map(|i|
++        u8::from_str_radix(&buffer.bytes_hex[i..i+2], 16)).collect::<Result<Vec<_>, _>>()?;
++    require(buffer.length == bytes.len() as u64 && buffer.sha256 == c2rust_ast_exporter::sha256(&bytes),
++        "native buffer bytes differ")?;
++    Ok(bytes)
++}
++
++pub(crate) fn capture(raw: &str, ast: &TypedAstContext, source: &Path, effective: &serde_json::Value,
++    extra: &[&str]) -> Result<BTreeMap<PathBuf, Vec<u8>>, Error> {
++    let inputs: NativeInputs = serde_json::from_str(raw)?;
++    require(inputs.schema == 3 && inputs.prepared_invocation.schema == 1, "unsupported prepared schema")?;
++    require(inputs.unsupported.is_empty(), "unsupported native input mode or diagnostic failure")?;
++    require(inputs.vfs == "clangtool_empty_overlay_on_real_filesystem", "unresolved native filesystem")?;
++    require(canonical(&inputs.main_input)? == source && inputs.target == ast.target,
++        "native source or target binding differs")?;
++    let invocation = &inputs.prepared_invocation;
++    let directory = Path::new(effective["directory"].as_str().ok_or_else(|| format_err!("missing effective directory"))?);
++    require(canonical(&inputs.cwd)? == directory && invocation.command.directory == directory
++        && invocation.command.file == source && effective["arguments"] == serde_json::json!(invocation.command.arguments)
++        && effective["output"].as_str().unwrap_or("") == invocation.command.output
++        && invocation.requested_extra_args.iter().map(String::as_str).eq(extra.iter().copied()),
++        "native effective command binding differs")?;
++    let selected = &invocation.selected_driver_argv;
++    let mut prefix = invocation.command.arguments.clone();
++    prefix.extend(extra.iter().map(|a| a.to_string()));
++    require(!prefix.is_empty() && selected.starts_with(&prefix) && selected.len() > prefix.len(),
++        "native selected invocation differs")?;
++    require(!inputs.adjusted_driver_argv.is_empty()
++        && inputs.adjusted_driver_argv == invocation.expected_adjusted_driver_argv
++        && inputs.adjusted_driver_argv.iter().any(|a| a == "-fsyntax-only")
++        && inputs.adjusted_driver_argv.iter().any(|a| a == "-resource-dir" || a.starts_with("-resource-dir=")),
++        "native adjusted invocation differs")?;
++    let triples = inputs.regenerated_cc1_argv.windows(2).filter(|a| a[0] == "-triple").collect::<Vec<_>>();
++    require(triples.len() == 1 && triples[0][1] == inputs.target
++        && inputs.regenerated_cc1_argv.iter().any(|a| a == source.to_string_lossy().as_ref()),
++        "native cc1 target or main input differs")?;
++    for (flag, value) in [("-target-cpu", &inputs.cpu), ("-target-abi", &inputs.abi)] {
++        let values=inputs.regenerated_cc1_argv.windows(2).filter(|pair|pair[0]==flag)
++            .map(|pair|&pair[1]).collect::<Vec<_>>();
++        require(if value.is_empty() { values.is_empty() } else { values == vec![value] },
++            "native cc1 target options differ")?;
++    }
++    let cc1_features=inputs.regenerated_cc1_argv.windows(2).filter(|pair|pair[0]=="-target-feature")
++        .map(|pair|pair[1].clone()).collect::<Vec<_>>();
++    require(cc1_features == inputs.features, "native cc1 target features differ")?;
++    let _written_features = inputs.features_as_written;
++    let mut entered = BTreeSet::new();
++    require(!inputs.lexer_events.is_empty(), "missing native lexer coverage")?;
++    for event in &inputs.lexer_events {
++        require(decimal(&event.file_id) && event.characteristic < 5, "invalid native lexer event")?;
++        if event.reason == Reason::Enter { entered.insert(event.file_id.clone()); }
++    }
++    let mut covered = BTreeSet::new();
++    let mut identities = BTreeSet::new();
++    let mut sources = BTreeMap::new();
++    let (mut main, mut predefines) = (0, 0);
++    for buffer in &inputs.buffers {
++        let bytes = decode(buffer)?;
++        require(decimal(&buffer.native_device) && decimal(&buffer.native_file), "invalid native file identity")?;
++        require(buffer.lexed || buffer.role == Role::Scratch, "native buffer lacks lexer coverage")?;
++        require(buffer.lexed == !buffer.lexer_file_ids.is_empty(), "native buffer lexer state differs")?;
++        for id in &buffer.lexer_file_ids {
++            require(entered.contains(id) && covered.insert(id.clone()), "native lexer/cache coverage differs")?;
++        }
++        let aliases = buffer.aliases.iter().collect::<BTreeSet<_>>();
++        require(aliases.len() == buffer.aliases.len() && !aliases.iter().any(|a| a.is_empty()), "invalid native path aliases")?;
++        if buffer.role == Role::Main || buffer.role == Role::File {
++            let path = canonical(&buffer.physical_path)?;
++            require(fs::read(&path)? == bytes, "native physical source snapshot differs")?;
++            for alias in aliases {
++                let alias = inputs.cwd.join(alias);
++                require(alias.canonicalize()? == path && fs::read(alias)? == bytes, "native physical alias differs")?;
++            }
++            require(identities.insert(("file".to_string(), path.to_string_lossy().into_owned(), String::new())),
++                "duplicate physical native buffer")?;
++            if buffer.role == Role::Main {
++                main += 1;
++                require(path == source, "native main buffer differs")?;
++            }
++            sources.insert(path, bytes);
++        } else {
++            require(buffer.physical_path.as_os_str().is_empty() && buffer.aliases.is_empty()
++                && buffer.native_device == "0" && buffer.native_file == "0", "builtin buffer has physical identity")?;
++            if buffer.role == Role::Predefines { predefines += 1; }
++            else { require(buffer.identifier == "<scratch space>", "unknown native scratch buffer")?; }
++            require(identities.insert((if buffer.role == Role::Predefines { "predefines" } else { "scratch" }.into(),
++                buffer.identifier.clone(), buffer.sha256.clone())), "duplicate builtin native buffer")?;
++        }
++    }
++    require(entered == covered && main == 1 && predefines == 1, "incomplete native source/lexer coverage")?;
++    for path in ast.original_source_paths() {
++        if path == Path::new("vararg") { continue; }
++        require(sources.contains_key(&canonical(path)?), "AST source is missing from native buffers")?;
++    }
++    Ok(sources)
++}
 diff --git a/c2rust-transpile/src/program.rs b/c2rust-transpile/src/program.rs
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/program.rs
-@@ -0,0 +1,261 @@
+@@ -0,0 +1,383 @@
 +use crate::*;
 +use crate::c_ast::closed_plan::{ClosedVariadicPlan, UnitIdentity, UnitKey};
 +use crate::compile_cmds::LinkCmd;
 +use std::collections::{BTreeMap, BTreeSet};
 +
-+pub(crate) struct OutputTransaction {
++struct OutputTransaction {
 +    temporary: TempDir,
 +    staged: PathBuf,
 +    destination: PathBuf,
 +}
 +
 +impl OutputTransaction {
-+    pub(crate) fn new(tcfg: &mut TranspilerConfig) -> Result<Self, Error> {
++    fn new(tcfg: &mut TranspilerConfig) -> Result<Self, Error> {
 +        if !cfg!(target_os = "linux") {
 +            return Err(format_err!("common plan publication currently requires Linux renameat2"));
 +        }
@@ -4343,12 +4755,12 @@ new file mode 100644
 +        Ok(Self { temporary, staged, destination })
 +    }
 +
-+    pub(crate) fn publish(self) -> Result<(), Error> {
++    fn publish(self) -> Result<(), Error> {
 +        #[cfg(target_os = "linux")]
 +        {
 +            use std::ffi::CString;
 +            use std::os::unix::ffi::OsStrExt;
-+            extern "C" { fn renameat2(oldfd: i32, old: *const i8, newfd: i32, new: *const i8, flags: u32) -> i32; }
++            extern "C" { fn renameat2(oldfd: i32, old: *const std::ffi::c_char, newfd: i32, new: *const std::ffi::c_char, flags: u32) -> i32; }
 +            let from = CString::new(self.staged.as_os_str().as_bytes())?;
 +            let to = CString::new(self.destination.as_os_str().as_bytes())?;
 +            if unsafe { renameat2(-100, from.as_ptr(), -100, to.as_ptr(), 1) } != 0 {
@@ -4372,6 +4784,7 @@ new file mode 100644
 +    units: BTreeMap<UnitKey, PreparedUnit>,
 +    emission: BTreeMap<(PathBuf, Option<String>, Vec<String>), UnitKey>,
 +    plan: ClosedVariadicPlan,
++    transaction: OutputTransaction,
 +}
 +
 +pub(crate) fn command_identity(row: &serde_json::Value, extra: &[&str], domain: &str) -> Result<(UnitKey, String, PathBuf, serde_json::Value), Error> {
@@ -4379,7 +4792,7 @@ new file mode 100644
 +    let source = Path::new(row["file"].as_str().ok_or_else(|| format_err!("missing command file"))?);
 +    let source = directory.join(source).canonicalize()?;
 +    let args = row["arguments"].as_array().ok_or_else(|| format_err!("common plan requires explicit arguments, not shell command strings"))?;
-+    if args.is_empty() || args.iter().any(|a| a.as_str().is_none()) || !row["command"].is_null() {
++    if args.is_empty() || args.iter().any(|a| a.as_str().is_none_or(|a| a == "--" || a.starts_with('@'))) || !row["command"].is_null() {
 +        return Err(format_err!("unresolved or ambiguous effective command"));
 +    }
 +    let row = serde_json::json!({"directory": directory, "file": source, "arguments": args, "output": row["output"]});
@@ -4388,36 +4801,13 @@ new file mode 100644
 +    Ok((key, command, source, row))
 +}
 +
-+pub(crate) fn native_sources(ast: &mut TypedAstContext, source: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, Error> {
++pub(crate) fn native_sources(ast: &mut TypedAstContext, source: &Path, effective: &serde_json::Value, extra: &[&str]) -> Result<BTreeMap<PathBuf, Vec<u8>>, Error> {
 +    let raw = ast.cursor_inputs.take().ok_or_else(|| format_err!("missing native input capture"))?;
-+    let inputs: serde_json::Value = serde_json::from_str(&raw)?;
-+    if inputs["target"].as_str() != Some(ast.target.as_str())
-+        || inputs["main_input"].as_str() != source.to_str() {
-+        return Err(format_err!("native source or target binding differs"));
-+    }
-+    let mut sources = BTreeMap::new();
-+    for row in inputs["buffers"].as_array().ok_or_else(|| format_err!("missing native buffers"))? {
-+        let Some(name) = row["physical_path"].as_str().filter(|p| !p.is_empty()) else { continue };
-+        let path = Path::new(name).canonicalize()?;
-+        if path.to_str() != Some(name) { return Err(format_err!("unresolved native physical source")); }
-+        let hex = row["bytes_hex"].as_str().ok_or_else(|| format_err!("missing native buffer bytes"))?;
-+        if hex.len() % 2 != 0 { return Err(format_err!("invalid native buffer hex")); }
-+        let bytes = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i+2], 16)).collect::<Result<Vec<_>, _>>()?;
-+        if row["length"].as_u64() != Some(bytes.len() as u64)
-+            || row["sha256"].as_str() != Some(c2rust_ast_exporter::sha256(&bytes).as_str())
-+            || fs::read(&path)? != bytes {
-+            return Err(format_err!("native source snapshot differs: {}", path.display()));
-+        }
-+        if let Some(previous) = sources.insert(path, bytes.clone()) {
-+            if previous != bytes { return Err(format_err!("conflicting native source buffers")); }
-+        }
-+    }
-+    if !sources.contains_key(source) { return Err(format_err!("native main source buffer missing")); }
-+    Ok(sources)
++    crate::native_intake::capture(&raw, ast, source, effective, extra)
 +}
 +
 +impl PreparedProgram {
-+    pub(crate) fn prepare(tcfg: &TranspilerConfig, cc_db: &Path, links: &[LinkCmd], extra: &[&str]) -> Result<Self, Error> {
++    fn prepare(tcfg: &TranspilerConfig, cc_db: &Path, links: &[LinkCmd], extra: &[&str], transaction: OutputTransaction) -> Result<Self, Error> {
 +        if tcfg.emit_closed_format_facts || tcfg.emit_cursor_witness {
 +            return Err(format_err!("common plan does not retain per-unit raw debug reports; use a separate report-only run"));
 +        }
@@ -4454,12 +4844,12 @@ new file mode 100644
 +                let (index, row) = candidates[0];
 +                if !admitted.insert(index) { return Err(format_err!("duplicate command membership")); }
 +                let (_, command, source, effective) = command_identity(row, extra, &domain)?;
-+                fs::write(&database, serde_json::to_vec(&vec![effective])?)?;
++                fs::write(&database, serde_json::to_vec(&vec![&effective])?)?;
 +                let (mut ast, preprocessed, instance) = prepare_single(tcfg, &source, &database, extra, None)
 +                    .map_err(|_| format_err!("common plan native preparation failed"))?;
 +                let instance = instance.expect("prepared native AST digest");
 +                ast.plan_instance = Some(instance.clone());
-+                let sources = native_sources(&mut ast, &source)?;
++                let sources = native_sources(&mut ast, &source, &effective, extra)?;
 +                ast.format_locations = None;
 +                let source_seal = sources.iter().map(|(p,b)| (p.to_string_lossy().into_owned(), c2rust_ast_exporter::sha256(b))).collect::<BTreeMap<_,_>>();
 +                let key = UnitKey(c2rust_ast_exporter::sha256(&serde_json::to_vec(&serde_json::json!({
@@ -4481,13 +4871,28 @@ new file mode 100644
 +            .map_err(|e| format_err!("common plan: {e}"))?;
 +        for unit in units.values() { plan.bind(&unit.identity, &unit.ast).map_err(|e| format_err!("common plan: {e}"))?; }
 +        let root = tcfg.output_dir.as_ref().unwrap();
++        fs::create_dir_all(root)?;
 +        fs::write(root.join("closed-variadic-plan.json"), serde_json::to_vec_pretty(&plan.report())?)?;
 +        println!("COMMON_PLAN_CLOSED {}", units.len());
-+        Ok(Self { units, emission, plan })
++        Ok(Self { units, emission, plan, transaction })
 +    }
 +
-+    pub(crate) fn finish(&self) {
-+        self.plan.verify_sources().expect("common plan source consistency before publication");
++    fn commit(self) -> Result<(), Error> {
++        self.plan.verify_sources().map_err(|e| format_err!("common plan source consistency before publication: {e}"))?;
++        self.transaction.publish()
++    }
++
++    fn emit_and_publish(mut self, tcfg: &TranspilerConfig, cc_db: &Path, links: &[LinkCmd], extra: &[&str]) -> Result<(), Error> {
++        crate::transpile_impl(tcfg, cc_db, links, extra, Some(&mut self));
++        self.commit()
++    }
++
++    pub(crate) fn run(mut tcfg: TranspilerConfig, cc_db: &Path, extra: &[&str]) -> Result<(), Error> {
++        let transaction = OutputTransaction::new(&mut tcfg)?;
++        let (links, clang_args) = crate::transpile_inputs(&tcfg, cc_db, extra);
++        let clang_args = clang_args.iter().map(String::as_str).collect::<Vec<_>>();
++        Self::prepare(&tcfg, cc_db, &links, &clang_args, transaction)?
++            .emit_and_publish(&tcfg, cc_db, &links, &clang_args)
 +    }
 +
 +    pub(crate) fn emit(&mut self, tcfg: &TranspilerConfig, cmd: &CompileCmd, ancestor: &Path, build: &Path) -> TranspileResult {
@@ -4538,8 +4943,8 @@ new file mode 100644
 +        std::fs::write(t.staged.join("partial.rs"),"partial").unwrap();
 +        let database=directory.path().join("compile_commands.json");
 +        std::fs::write(&database,"[]").unwrap();
-+        assert!(PreparedProgram::prepare(&c,&database,&[],&[]).is_err());
-+        let staged=t.staged.clone(); drop(t);
++        let staged=t.staged.clone();
++        assert!(PreparedProgram::prepare(&c,&database,&[],&[],t).is_err());
 +        assert!(!destination.exists()); assert!(!staged.exists());
 +    }
 +
@@ -4572,6 +4977,135 @@ new file mode 100644
 +        t.publish().unwrap();
 +        assert_eq!(std::fs::read(destination.join("lib.rs")).unwrap(),b"fn f() {}\n");
 +    }
++    fn native_fixture(directory: &Path, text: &str) -> (PathBuf, PathBuf, serde_json::Value) {
++        let directory=directory.canonicalize().unwrap();
++        let source=directory.join("legal.c");
++        fs::write(&source,text).unwrap();
++        let database=directory.join("compile_commands.json");
++        let effective=serde_json::json!({"directory":directory,"file":source,
++            "arguments":["clang","-x","c","-std=gnu11","-c",source],"output":null});
++        fs::write(&database,serde_json::to_vec(&vec![&effective]).unwrap()).unwrap();
++        (source,database,effective)
++    }
++
++    #[test]
++    #[cfg(target_os="linux")]
++    fn closed_variadic_plan_filter_zero_checks_sources_at_owned_commit() {
++        let directory=tempfile::tempdir().unwrap();
++        let (source,database,_)=native_fixture(directory.path(),"int legal(void){return 1;}");
++        for changed in [false,true] {
++            let destination=directory.path().join(if changed {"changed"} else {"unchanged"});
++            let mut c=config(destination.clone());
++            c.filter=Some(regex::Regex::new("matches_no_source").unwrap());
++            c.emit_build_files=true;
++            let transaction=OutputTransaction::new(&mut c).unwrap();
++            let (links,args)=crate::transpile_inputs(&c,&database,&[]);
++            let args=args.iter().map(String::as_str).collect::<Vec<_>>();
++            let program=PreparedProgram::prepare(&c,&database,&links,&args,transaction).unwrap();
++            if changed { fs::write(&source,"int changed(void){return 2;}").unwrap(); }
++            let result=program.emit_and_publish(&c,&database,&links,&args);
++            if changed {
++                assert!(result.unwrap_err().to_string().contains("source consistency before publication"));
++                assert!(!destination.exists());
++            } else {
++                result.unwrap();
++                assert!(destination.join("closed-variadic-plan.json").is_file());
++                assert_eq!(fs::read_dir(destination).unwrap().count(),1);
++            }
++        }
++    }
++
++    #[test]
++    #[cfg(target_os="linux")]
++    fn closed_variadic_plan_unemitted_source_change_refuses_owned_commit() {
++        let directory=tempfile::tempdir().unwrap();
++        let (source,database,first)=native_fixture(directory.path(),"int legal(void){return 1;}");
++        let second_source=directory.path().join("unemitted.c");
++        fs::write(&second_source,"int unemitted(void){return 2;}").unwrap();
++        let second=serde_json::json!({"directory":directory.path(),"file":second_source,
++            "arguments":["clang","-c",second_source],"output":null});
++        fs::write(&database,serde_json::to_vec(&vec![first,second]).unwrap()).unwrap();
++        let destination=directory.path().join("output");
++        let mut c=config(destination.clone());
++        c.filter=Some(regex::Regex::new("/legal\\.c$").unwrap());
++        let transaction=OutputTransaction::new(&mut c).unwrap();
++        let (links,args)=crate::transpile_inputs(&c,&database,&[]);
++        let args=args.iter().map(String::as_str).collect::<Vec<_>>();
++        let program=PreparedProgram::prepare(&c,&database,&links,&args,transaction).unwrap();
++        fs::write(&second_source,"int changed(void){return 3;}").unwrap();
++        assert!(program.emit_and_publish(&c,&database,&links,&args).is_err());
++        assert!(!destination.exists());
++        assert!(source.exists());
++    }
++
++    #[test]
++    #[cfg(target_os="linux")]
++    fn closed_variadic_plan_recoverable_diagnostic_rejects_structurally_valid_ast_and_publication() {
++        let directory=tempfile::tempdir().unwrap();
++        let (source,database,_)=native_fixture(directory.path(),"#error reject_common_plan\nint legal(void){return 1;}\n");
++        let (untyped,_)=c2rust_ast_exporter::get_untyped_ast(&source,&database,&[],false,false,None).unwrap();
++        let recovered=ConversionContext::new(&source,&untyped);
++        assert!(!recovered.invalid_clang_ast);
++        assert!(!recovered.into_typed_context().c_decls_top.is_empty());
++        assert!(c2rust_ast_exporter::get_prepared_untyped_ast(&source,&database,&[],false,false).is_err());
++        let destination=directory.path().join("output");
++        let error=PreparedProgram::run(config(destination.clone()),&database,&[]).unwrap_err();
++        assert!(error.to_string().contains("native preparation failed"));
++        assert!(!destination.exists());
++    }
++
++    #[test]
++    fn closed_variadic_plan_native_metadata_controls_reach_typed_intake() {
++        let directory=tempfile::tempdir().unwrap();
++        fs::write(directory.path().join("header.h"),"struct Header { int field; };\n").unwrap();
++        let (source,database,effective)=native_fixture(directory.path(),
++            "#include \"header.h\"\nint legal(struct Header *p){return p->field;}\n");
++        let c=config(directory.path().join("unused"));
++        let (ast,_,_)=prepare_single(&c,&source,&database,&[],None).unwrap();
++        let raw=ast.cursor_inputs.as_ref().unwrap();
++        let baseline: serde_json::Value=serde_json::from_str(raw).unwrap();
++        assert!(crate::native_intake::capture(raw,&ast,&source,&effective,&[]).is_ok());
++        let refuse=|changed: serde_json::Value| {
++            assert!(crate::native_intake::capture(&changed.to_string(),&ast,&source,&effective,&[]).is_err());
++        };
++        for unsupported in ["diagnostic_error","external_ast_or_preprocessor","pch_or_preamble","modules",
++            "vfs_overlay_or_remap","partial_preprocessing","multiple_inputs","unsupported_input_kind",
++            "loaded_buffer_without_lexer_callback","lexed_buffer_not_loaded","invalid_or_overridden_buffer"] {
++            let mut changed=baseline.clone(); changed["unsupported"]=serde_json::json!([unsupported]); refuse(changed);
++        }
++        for field in ["schema","coverage","lexer","builtin","vfs","command","extra","adjusted","target","cc1"] {
++            let mut changed=baseline.clone();
++            match field {
++                "schema"=>changed["schema"]=serde_json::json!(2),
++                "coverage"=>{
++                    let buffers=changed["buffers"].as_array_mut().unwrap();
++                    let removed=buffers.iter().position(|b|b["physical_path"].as_str().is_some_and(|p|p.ends_with("/header.h"))).unwrap();
++                    let ids=buffers.remove(removed)["lexer_file_ids"].as_array().unwrap().clone();
++                    changed["lexer_events"].as_array_mut().unwrap().retain(|event|!ids.contains(&event["file_id"]));
++                },
++                "lexer"=>{changed["lexer_events"].as_array_mut().unwrap().push(serde_json::json!({"file_id":"999999","reason":"enter","characteristic":0}));},
++                "builtin"=>{
++                    let b=changed["buffers"].as_array_mut().unwrap().iter_mut().find(|b|b["role"]=="predefines").unwrap();
++                    let data=fs::read(&source).unwrap();
++                    b["physical_path"]=serde_json::json!(source);
++                    b["bytes_hex"]=serde_json::json!(data.iter().map(|b|format!("{b:02x}")).collect::<String>());
++                    b["length"]=serde_json::json!(data.len()); b["sha256"]=serde_json::json!(c2rust_ast_exporter::sha256(&data));
++                },
++                "vfs"=>changed["vfs"]=serde_json::json!("unresolved_overlay"),
++                "command"=>changed["prepared_invocation"]["command"]["arguments"][0]=serde_json::json!("other-clang"),
++                "extra"=>changed["prepared_invocation"]["requested_extra_args"]=serde_json::json!(["-DUNBOUND=1"]),
++                "adjusted"=>changed["adjusted_driver_argv"].as_array_mut().unwrap().push(serde_json::json!("-DUNBOUND=1")),
++                "target"=>changed["target"]=serde_json::json!("unbound-target"),
++                _=>{
++                    let argv=changed["regenerated_cc1_argv"].as_array_mut().unwrap();
++                    let index=argv.iter().position(|a|a=="-triple").unwrap()+1;
++                    argv[index]=serde_json::json!("unbound-target");
++                },
++            }
++            refuse(changed);
++        }
++    }
++
 +}
 diff --git a/c2rust-transpile/src/translator/atomics.rs b/c2rust-transpile/src/translator/atomics.rs
 --- a/c2rust-transpile/src/translator/atomics.rs

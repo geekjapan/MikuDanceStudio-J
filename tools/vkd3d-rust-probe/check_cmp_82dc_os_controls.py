@@ -19,6 +19,7 @@ import stat
 import subprocess
 import sys
 import time
+import traceback
 
 SOURCE_COMMIT = '82dc9998fbe5b6ed5b8e9f7182edc17b0c6f818c'
 SOURCE_TREE = 'cf2862b301001448dc0e932e87b3a05c8d9246a1'
@@ -362,6 +363,51 @@ def fd_snapshot():
     return result
 
 
+ERROR_STAGES = ('runtime-guard', 'ipc-setup', 'case-selection', 'source-import', 'custody-enable',
+                'fixture-setup', 'owner-setup', 'execute', 'validation', 'restoration', 'unavailable')
+
+
+def encode_worker_error(case, pid, seq, stage, exception_type, message, trace):
+    require(case in [row[0] for row in CASES] and stage in ERROR_STAGES, 'unknown worker error context')
+    record = dict(kind='worker-error', schema=1, case=case, pid=pid, seq=seq, stage=stage,
+                  exception_type=exception_type[:80], message=message[:400], traceback=trace[:1800],
+                  truncated=len(exception_type) > 80 or len(message) > 400 or len(trace) > 1800)
+    while True:
+        raw = json.dumps(record, ensure_ascii=True).encode('utf-8') + b'\n'
+        if len(raw) < 4096:
+            return raw
+        field = 'traceback' if record['traceback'] else 'message'
+        require(record[field], 'error envelope framing exceeds bound')
+        record[field] = record[field][:len(record[field]) // 2]
+        record['truncated'] = True
+
+
+def validate_worker_error(event, case, pid, seq):
+    require(type(event) is dict and set(event) == {'kind', 'schema', 'case', 'pid', 'seq', 'stage',
+            'exception_type', 'message', 'traceback', 'truncated'}, 'worker error schema differs')
+    require(event['kind'] == 'worker-error' and type(event['schema']) is int and event['schema'] == 1,
+            'worker error kind/schema differs')
+    require(event['case'] == case and type(event['pid']) is int and event['pid'] == pid
+            and type(event['seq']) is int and event['seq'] == seq and seq > 0, 'worker error identity differs')
+    require(type(event['stage']) is str and event['stage'] in ERROR_STAGES and type(event['truncated']) is bool, 'worker error stage differs')
+    for field, limit in (('exception_type', 80), ('message', 400), ('traceback', 1800)):
+        require(type(event[field]) is str and len(event[field]) <= limit, 'worker error text differs')
+    require(event['exception_type'] and len(json.dumps(event, ensure_ascii=True).encode('utf-8') + b'\n') < 4096,
+            'worker error exceeds bound')
+    return True
+
+
+def controller_context(mode, case, pid, events, error):
+    last = {key: events[-1].get(key) for key in ('kind', 'seq', 'pid')} if events else None
+    return dict(mode=mode, case=case, pid=pid, last_received=last,
+                error_type=type(error).__name__, message=str(error)[:400],
+                worker_stage='unavailable unless received in worker-error')
+
+
+def diagnostic(label, **data):
+    print(json.dumps(dict(diagnostic=label, **data), ensure_ascii=True)[:8192], file=sys.stderr, flush=True)
+
+
 class Channel:
     def __init__(self, incoming, outgoing):
         self.incoming, self.outgoing = incoming, outgoing
@@ -413,17 +459,40 @@ def fixture_process(args):
 
 
 def worker(args):
-    runtime_guard()
-    os.set_blocking(args.output_fd, False)
     channel = Channel(args.input_fd, args.output_fd)
+    state = dict(stage='runtime-guard')
+    try:
+        runtime_guard()
+        state['stage'] = 'ipc-setup'
+        os.set_blocking(args.output_fd, False)
+        state['stage'] = 'case-selection'
+        worker_body(args, channel, state)
+    except BaseException as failure:
+        try:
+            os.set_blocking(channel.outgoing, False)
+            error = state.get('execute_error', failure)
+            stage = 'execute' if 'execute_error' in state else state['stage']
+            raw = encode_worker_error(args.case, os.getpid(), channel.serial + 1, stage,
+                type(error).__name__, str(error), ''.join(traceback.format_exception(error)))
+            os.write(channel.outgoing, raw)
+        except BaseException:
+            pass
+        raise
+
+
+def worker_body(args, channel, state):
     case = next(case for case in CASES if case[0] == args.case)
     _, phase, first, second = case
+    state['stage'] = 'source-import'
     wrapper, boundary, tool = load_source(args.source_checkout)
+    state['stage'] = 'custody-enable'
     wrapper.enable_custody()
+    state['stage'] = 'fixture-setup'
     root = Path(args.worker_output)
     root.mkdir()
     contract, product_args = fixture_data(root, boundary)
     fixture_before = inventory(root)
+    state['stage'] = 'owner-setup'
     owner = wrapper.WrapperRun()
     real = dict(mask=signal.pthread_sigmask, install=signal.signal, pending=signal.sigpending,
                 timedwait=signal.sigtimedwait, replace=os.replace, pidfd=os.pidfd_open, close=os.close,
@@ -599,10 +668,17 @@ def worker(args):
                 return {'mask': sorted(real['mask'](signal.SIG_BLOCK, set())), 'pending': sorted(real['pending']()),
                         'handlers': {str(sig): id(signal.getsignal(sig)) for sig in owner.signals}}
             refusal_before = caller_state()
+        state['stage'] = 'execute'
         try:
             owner.execute(product_args)
         except (KeyboardInterrupt, ValueError) as error:
             exception = {'type': type(error).__name__, 'message': str(error)}
+            expected = 'already pending' if phase == 'caller-pending' else 'must be unblocked'
+            if (phase == 'baseline' or (phase.startswith('caller-') and
+                    (not isinstance(error, ValueError) or expected not in str(error))) or
+                    (not phase.startswith('caller-') and not isinstance(error, KeyboardInterrupt))):
+                state['execute_error'] = error
+        state['stage'] = 'validation'
         if phase.startswith('caller-'):
             refusal_after = caller_state()
             require(refusal_before == refusal_after, 'caller state changed on refusal')
@@ -672,6 +748,8 @@ def worker(args):
             custody=receipts, adapters=list(ADAPTERS), status='PASS', runtime=list(sys.version_info[:3])))
         channel.send('worker-closed', case=args.case, owned_closed=True)
     finally:
+        failure_stage = state['stage']
+        state['stage'] = 'restoration'
         sys.setprofile(None)
         subprocess.Popen = real['popen']
         signal.signal, signal.pthread_sigmask, signal.sigtimedwait = real['install'], real['mask'], real['timedwait']
@@ -679,6 +757,7 @@ def worker(args):
         for sig, callback in old_handlers.items():
             real['install'](sig, callback)
         real['mask'](signal.SIG_SETMASK, old_mask)
+        state['stage'] = failure_stage
 
 
 def validate_case(receipt, case, mode, pid, events):
@@ -849,12 +928,14 @@ def controller(args):
         command = [sys.executable, '-B'] + (['-O'] if sys.flags.optimize else []) + [str(Path(__file__).resolve()),
             '--source-checkout', str(args.source_checkout), '--worker-output', str(output / name), '--case', name,
             '--input-fd', str(worker_input), '--output-fd', str(worker_output)]
+        diagnostic('worker-launch', mode=mode, case=name, argv=command)
         events, held_fd, process, closed = [], None, None, False
         launched_at = time.monotonic()
         with log_path.open('wb') as log:
             try:
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log,
                                            pass_fds=(worker_input, worker_output), start_new_session=True)
+                diagnostic('worker-started', mode=mode, case=name, pid=process.pid)
                 held_fd = os.pidfd_open(process.pid)
                 os.close(worker_input)
                 os.close(worker_output)
@@ -872,6 +953,11 @@ def controller(args):
                     events.append(event)
                     kind = event['kind']
                     require(event['pid'] == process.pid or kind == 'writer-ready', 'foreign IPC PID')
+                    if kind == 'worker-error':
+                        seq = sum(event['pid'] == process.pid and event['kind'] != 'send' for event in events)
+                        validate_worker_error(event, name, process.pid, seq)
+                        diagnostic('worker-error', mode=mode, **event)
+                        raise ValueError('worker reported failure; owned closure unproven')
                     if kind in ('ready-first', 'caller-pending-ready'):
                         send(first)
                         channel.send('continue')
@@ -892,7 +978,8 @@ def controller(args):
                     if phase == 'working-cleanup' and ready_writer == waiting_writer and ready_writer and not first_sent:
                         send(first)
                 process.wait(timeout=max(0.01, 25 - (time.monotonic() - launched_at)))
-            except BaseException:
+            except BaseException as error:
+                diagnostic('worker-failure', **controller_context(mode, name, process.pid if process else None, events, error))
                 if process is not None and held_fd is not None and process.poll() is None:
                     signal.pidfd_send_signal(held_fd, signal.SIGKILL)
                     process.wait(timeout=5)

@@ -526,6 +526,75 @@ class SourceDataTests(unittest.TestCase):
             with self.subTest(mutation=index), self.assertRaises(ValueError):
                 controls.validate_git_receipt(candidate)
 
+    def test_bounded_worker_error_envelope(self):
+        for stage in controls.ERROR_STAGES:
+            raw = controls.encode_worker_error('baseline', 100, 1, stage, 'ValueError', 'failed', 'trace')
+            self.assertLess(len(raw), 4096)
+            event = json.loads(raw)
+            self.assertTrue(controls.validate_worker_error(event, 'baseline', 100, 1))
+            self.assertFalse(event['truncated'])
+            self.assertEqual(event['message'], 'failed')
+        for text in ('x' * 10000, '\u754c' * 10000, '\U0001f600' * 10000):
+            raw = controls.encode_worker_error('baseline', 100, 1, 'execute', text, text, text)
+            self.assertLess(len(raw), 4096)
+            self.assertTrue(raw.endswith(b'\n'))
+            event = json.loads(raw)
+            self.assertTrue(event['truncated'])
+            self.assertTrue(controls.validate_worker_error(event, 'baseline', 100, 1))
+        with self.assertRaises(json.JSONDecodeError):
+            json.loads(raw[:-2])
+
+    def test_worker_error_malformed_identity_and_closure_refuse(self):
+        legal = json.loads(controls.encode_worker_error('baseline', 100, 1, 'execute', 'ValueError', 'failed', 'trace'))
+        controls.validate_worker_error(legal, 'baseline', 100, 1)
+        mutations = [lambda x: x.pop('traceback'), lambda x: x.update(extra=True),
+            lambda x: x.update(kind='worker-closed'), lambda x: x.update(case='entry-2-2'),
+            lambda x: x.update(pid=101), lambda x: x.update(pid=True), lambda x: x.update(seq=2),
+            lambda x: x.update(seq=True), lambda x: x.update(schema=True), lambda x: x.update(stage='invented'),
+            lambda x: x.update(stage=[]), lambda x: x.update(truncated='yes'),
+            lambda x: x.update(message='x' * 401), lambda x: x.update(traceback=42),
+            lambda x: x.update(exception_type=''), lambda x: x.update(owned_closed=True),
+            lambda x: x.update(traceback='\U0001f600' * 1800)]
+        for mutate in mutations:
+            candidate = copy.deepcopy(legal)
+            mutate(candidate)
+            with self.assertRaises(ValueError):
+                controls.validate_worker_error(candidate, 'baseline', 100, 1)
+        receipt, events = legal_case(EXPECTED_CASES[0])
+        diagnostic = dict(legal, seq=events[-1]['seq'])
+        for candidate in (events[:-1] + [diagnostic], events + [diagnostic]):
+            with self.assertRaisesRegex(ValueError, 'unknown event'):
+                controls.validate_case(receipt, EXPECTED_CASES[0], 'normal', 100, candidate)
+
+    def test_eof_context_and_worker_source_boundaries(self):
+        failure = ValueError('IPC closed before terminal message')
+        context = controls.controller_context('normal', 'baseline', 100, [], failure)
+        self.assertEqual(context['case'], 'baseline')
+        self.assertIsNone(context['last_received'])
+        self.assertIn('unavailable', context['worker_stage'])
+        event = dict(kind='wait-enter', seq=3, pid=100, writer=200)
+        context = controls.controller_context('optimized', 'entry-2-2', 100, [event], failure)
+        self.assertEqual(context['last_received'], dict(kind='wait-enter', seq=3, pid=100))
+        self.assertEqual(context['message'], 'IPC closed before terminal message')
+        source = ast.parse((HERE / 'run_cmp_input.py').read_text())
+        owner = next(node for node in source.body if isinstance(node, ast.ClassDef) and node.name == 'WrapperRun')
+        methods = {node.name: node for node in owner.body if isinstance(node, ast.FunctionDef)}
+        self.assertEqual([arg.arg for arg in methods['__init__'].args.args], ['self'])
+        self.assertEqual([arg.arg for arg in methods['execute'].args.args], ['self', 'args'])
+        tree = ast.parse((HERE / 'check_cmp_82dc_os_controls.py').read_text())
+        functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+        wrapper = functions['worker']
+        calls = [ast.unparse(node.func) for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+        self.assertEqual(calls.count('os.write'), 1)
+        self.assertNotIn('channel.send', calls)
+        self.assertNotIn('select.select', calls)
+        self.assertTrue(any(isinstance(node, ast.Raise) and node.exc is None for node in ast.walk(wrapper)))
+        body = ast.unparse(functions['worker_body'])
+        self.assertIn('wrapper.WrapperRun()', body)
+        self.assertIn('owner.execute(product_args)', body)
+        self.assertIn("state['stage'] = 'source-import'", body)
+        self.assertIn("state['execute_error'] = error", body)
+
     def test_four_seal_negatives(self):
         original = {'a': {'mode': 292, 'size': 1, 'sha256': controls.digest(b'a')}}
         controls.validate_seal(original, copy.deepcopy(original))
@@ -537,7 +606,10 @@ class SourceDataTests(unittest.TestCase):
         mode['a']['mode'] = 420
         hidden = dict(original, **{'.git/': {'kind': 'directory', 'mode': 0o555}, '.git/hidden': {'size': 1}})
         empty = dict(original, **{'empty/': {'kind': 'directory', 'mode': 0o555}})
-        for candidate in (missing, extra, corrupt, mode, hidden, empty):
+        nested_seal = dict(original, **{'nested/': {'kind': 'directory'}, 'nested/seal.json': {}})
+        with self.assertRaises(ValueError):
+            controls.validate_seal({}, {})
+        for candidate in (missing, extra, corrupt, mode, hidden, empty, nested_seal):
             with self.assertRaises(ValueError):
                 controls.validate_seal(original, candidate)
 

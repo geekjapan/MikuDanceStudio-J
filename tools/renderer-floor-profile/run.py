@@ -1249,7 +1249,7 @@ def runtime_images(directory,parsed,rust_raw,census=None):
                 if phase=='pre':
                     exports,candidates=export_metadata(raw)
                     witness={'image_sha256':digest(raw),'image_size':len(raw),'preferred_base':base,'sections':sections,
-                             'all_same_link_symbols':[],'requests':[],'ranges':[],'edges':[],'data_requests':data,
+                             'all_same_link_symbols':[],'requests':[],'ranges':[],'pending':[],'decoded':[],'edges':[],'data_requests':data,
                              'export_metadata':exports,'export_candidates':candidates,
                              'compiled_dataflow':'UnprovedAwaitingIndependentReview'}
                     image={'raw':raw,'file':prefix+'-module.bin','witness':witness,'pre':identity}

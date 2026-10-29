@@ -1677,6 +1677,58 @@ class CensusControls(unittest.TestCase):
         self.assertTrue(any(item['kind']=='Decode' for item in result['unknowns']))
         self.assertTrue(any(item['kind']=='RequiredRuntimeImports' for item in result['unknowns']))
 
+    def test_observed_runtime_worklist_preserves_decode_journal(self):
+        for failed in (None,'census-2-instructions-1'):
+            with self.subTest(failed=failed):
+                raw,directory,files,observed=runtime_fixture()
+                changed=bytearray(raw);changed[1024:1032]=b'\xe8\x1b\x00\x00\x00\x90\x90\xc3';raw=bytes(changed)
+                for phase in ('pre','post'):
+                    files[directory/(f'runtime-{phase}-0-module.bin')]=raw
+                    files[directory/(f'runtime-{phase}-0-section-0.bin')]=raw[1024:1280]
+                _,mapping,rows,_=code_fixture();observed['operations']=rows
+                files.update({directory/name:raw for name in ('floor_profile.exe','rust-profile.exe')})
+                files.update({directory/name:mapping for name in ('native.map','rust.map')})
+                files[directory/'instruction-tool.bin']=b'tool'
+                tool={'path':str(r.DISASSEMBLER),'sha256':r.digest(b'tool'),'size':4}
+                commands={};saved={};progress=[]
+                def record(out,label,argv,cwd,env,timeout=1200):
+                    commands[label]=list(argv)
+                    return {'status':int(label==failed)}
+                def checked(out,label):
+                    if label=='rust':return {'pid':123},b'',b''
+                    argv=commands[label];receipt={'argv':argv,'cwd':'source','tool_binary':tool}
+                    if label=='instruction-help':return receipt,b'--disassemble --start-address --stop-address',b''
+                    first=int(argv[2].split('=')[1],16)-0x140000000
+                    last=int(argv[3].split('=')[1],16)-0x140000000
+                    return receipt,instructions(r.pe_code(raw)[3](first,last,True)),b''
+                def save(path,value):
+                    saved[path]=json.loads(json.dumps(value))
+                    self.assertEqual(saved[path],value)
+                    if path.name=='closure-census-progress.json':progress.append(saved[path])
+                with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(Path,'is_file',return_value=True),patch.object(r,'record',record),patch.object(r,'checked',checked),patch.object(r,'write_json',save),patch.object(r,'seed_data',return_value={'role':'SeedTable','size':8192,'resolution':'Resolved'}):
+                    result=r.census_evidence(directory,({'operations':rows},observed),{'source':'source','evidence':str(directory)},{},r.ClosureCensus())
+                runtime=lambda summary:next(image['witness'] for image in summary['images'] if image['file']=='runtime-pre-0-module.bin')
+                first,last=[0x1000,0x1008],[0x1020,0x1028]
+                self.assertEqual(runtime(progress[0])['pending'],[first])
+                self.assertEqual(runtime(progress[0])['decoded'],[])
+                after_first=next(runtime(row) for row in progress if runtime(row)['decoded']==[first])
+                self.assertEqual(after_first['pending'],[last])
+                journal=runtime(result)
+                self.assertEqual(journal['decoded'],[first] if failed else [first,last])
+                self.assertEqual(journal['pending'],[last] if failed else [])
+                self.assertEqual(len(journal['ranges']),2)
+                self.assertEqual([label for label in commands if label.startswith('census-2-instructions-')],['census-2-instructions-0','census-2-instructions-1'])
+                decode=[item for item in result['unknowns'] if item['kind']=='Decode']
+                self.assertEqual(decode,[{'kind':'Decode','image':'runtime-pre-0-module.bin','extent':last,'reason':'diagnostic bounded disassembly'}] if failed else [])
+                self.assertEqual(saved[directory/'closure-census.json'],result)
+                for field in ('pending','decoded','ranges','requests','compiled_dataflow'):
+                    self.assertEqual(runtime(progress[-1])[field],journal[field])
+                self.assertEqual(result['status'],'CENSUS_INCOMPLETE_UNRESOLVED')
+                self.assertEqual(result['admission'],'NotAuthorized')
+                self.assertEqual(journal['compiled_dataflow'],'UnprovedAwaitingIndependentReview')
+                self.assertTrue(any(item['kind']=='RequiredNonBranchDataTargets' for item in result['unknowns']))
+                self.assertFalse(any(item['kind']=='RequiredRuntimeImports' for item in result['unknowns']))
+
     def test_four_variants_continue_only_after_proven_writer_closure(self):
         for failure_at in (None,'git-head','native-build'):
             files={};calls=[];fixtures=[];acquired=[];saved={}

@@ -1123,6 +1123,67 @@ class Controls(unittest.TestCase):
                 with patch.object(Path,'read_bytes',lambda path:f[path]),self.subTest(name=name),self.assertRaises((ValueError,KeyError)):
                     r.runtime_images(directory,p,raw)
 
+    def test_48_loaded_header_base_is_bound_to_actual_owner(self):
+        raw,_,_,_=runtime_fixture();preferred=r.pe_code(raw)[0];owner=preferred+0x10000000
+        headers=bytearray(raw[:1024]);struct.pack_into('<Q',headers,176,owner)
+        r.loaded_header_binding(raw,raw[:1024],preferred)
+        r.loaded_header_binding(raw,bytes(headers),owner)
+        self.assertEqual(r.pe_code(raw)[0],preferred)
+        shifted=bytearray(raw);shifted[144:528]=raw[128:512];struct.pack_into('<I',shifted,60,144)
+        loaded=bytearray(shifted[:1024]);struct.pack_into('<Q',loaded,192,owner)
+        r.loaded_header_binding(bytes(shifted),bytes(loaded),owner)
+        for name in ('preferred-in-loaded','wrong-base','wrong-owner','bool-owner','zero-owner','overflow-owner',
+                     'wrong-slot','outside-byte','short','extra','magic','pe-bounds','optional-bounds','header-bounds'):
+            file=bytearray(raw);loaded=bytearray(headers);actual=owner
+            if name=='preferred-in-loaded':loaded=bytearray(raw[:1024])
+            elif name=='wrong-base':struct.pack_into('<Q',loaded,176,owner+1)
+            elif name=='wrong-owner':actual+=1
+            elif name=='bool-owner':actual=True
+            elif name=='zero-owner':actual=0
+            elif name=='overflow-owner':actual=2**64
+            elif name=='wrong-slot':loaded=bytearray(raw[:1024]);struct.pack_into('<Q',loaded,184,owner)
+            elif name=='outside-byte':loaded[304]^=1
+            elif name=='short':loaded=loaded[:-1]
+            elif name=='extra':loaded+=b'\0'
+            elif name=='magic':struct.pack_into('<H',file,152,0x10b)
+            elif name=='pe-bounds':struct.pack_into('<I',file,60,len(file))
+            elif name=='optional-bounds':struct.pack_into('<H',file,148,24)
+            elif name=='header-bounds':struct.pack_into('<I',file,212,176)
+            with self.subTest(name=name),self.assertRaises(ValueError):
+                r.loaded_header_binding(bytes(file),bytes(loaded),actual)
+
+    def test_49_rebased_runtime_images_use_file_preferred_relocations(self):
+        raw,directory,_,parsed=runtime_fixture();changed=bytearray(raw);owner=0x150000000
+        struct.pack_into('<H',changed,134,4)
+        at=512;changed[at:at+8]=b'.reloc\0\0'
+        struct.pack_into('<IIII',changed,at+8,12,0x4000,12,2048);struct.pack_into('<I',changed,at+36,0x40000040)
+        struct.pack_into('<II',changed,152+112+5*8,0x4000,12)
+        struct.pack_into('<IIHH',changed,2048,0x1000,12,0xa010,0)
+        struct.pack_into('<Q',changed,1040,0x140005000);raw=bytes(changed);files={}
+        for snapshot in parsed['runtime_imports']:
+            phase=snapshot['phase'];slot=snapshot['slots'][0];slot.update(owner_base=owner,target_va=owner+0x1000)
+            prefix=f'runtime-{phase}-0';headers=bytearray(raw[:1024]);struct.pack_into('<Q',headers,176,owner)
+            files[directory/(prefix+'-module.bin')]=raw;files[directory/(prefix+'-headers.bin')]=bytes(headers)
+            files[directory/(prefix+'-iat.bin')]=struct.pack('<Q',slot['target_va']);slot['sections']=[]
+            for i,s in enumerate(r.pe_code(raw)[1]):
+                loaded=bytearray(raw[s['offset']:s['offset']+s['size']])
+                if i==0:struct.pack_into('<Q',loaded,16,owner+0x5000)
+                files[directory/(prefix+f'-section-{i}.bin')]=bytes(loaded)
+                slot['sections'].append([i,s['rva'],s['size'],s['flags']])
+        with patch.object(Path,'read_bytes',lambda path:files[path]),patch.object(r,'checked',return_value=({'pid':123},b'',b'')):
+            image=r.runtime_images(directory,parsed,raw)[0]
+            self.assertEqual(image['witness']['preferred_base'],0x140000000)
+            self.assertEqual(image['raw'],raw)
+            self.assertEqual(image['pre']['runtime']['owner_base'],owner)
+            self.assertEqual(image['post']['runtime']['owner_base'],owner)
+            for phase in ('pre','post'):
+                for suffix in ('headers.bin','section-0.bin'):
+                    key=directory/(f'runtime-{phase}-0-'+suffix);original=files[key]
+                    files[key]=original[:176]+raw[176:184]+original[184:] if suffix=='headers.bin' else raw[1024:1280]
+                    with self.subTest(phase=phase,suffix=suffix),self.assertRaises(ValueError):
+                        r.runtime_images(directory,parsed,raw)
+                    files[key]=original
+
     def test_41_loaded_code_requires_exact_relocations(self):
         raw,_,_,_=runtime_fixture();changed=bytearray(raw)
         struct.pack_into('<II',changed,152+112+5*8,0x30c0,12)

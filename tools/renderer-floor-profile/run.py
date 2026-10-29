@@ -766,6 +766,18 @@ def relocated_code(raw,span,runtime_base):
     return bytes(data)
 
 
+def loaded_header_binding(raw,headers,owner_base):
+    pe_code(raw);pe=struct.unpack_from('<I',raw,60)[0];optional=pe+24;field=optional+24
+    count=struct.unpack_from('<H',raw,pe+6)[0];size=struct.unpack_from('<H',raw,pe+20)[0]
+    header_size=struct.unpack_from('<I',raw,optional+60)[0]
+    require(field+8<=optional+size and optional+size+count*40<=header_size<=len(raw) and
+            len(headers)==header_size,'bounded loaded PE headers')
+    require(type(owner_base) is int and 0<owner_base<2**64 and
+            struct.unpack_from('<Q',headers,field)[0]==owner_base and
+            headers[:field]==raw[:field] and headers[field+8:]==raw[field+8:header_size],
+            'loaded owner file/PE/header binding')
+
+
 def runtime_images(directory,parsed,rust_raw):
     snapshots=parsed['runtime_imports'];require(len(snapshots)==2,'pre/post own-process import snapshots')
     receipt=checked(directory,'rust')[0];slots=import_slots(rust_raw);modules=[]
@@ -785,8 +797,9 @@ def runtime_images(directory,parsed,rust_raw):
             prefix=f'runtime-{phase}-{i}';raw=(directory/(prefix+'-module.bin')).read_bytes();headers=(directory/(prefix+'-headers.bin')).read_bytes()
             require((directory/(prefix+'-iat.bin')).read_bytes()==struct.pack('<Q',actual['target_va']),'own-process actual IAT slot bytes/target')
             base,sections,_,region=pe_code(raw);pe=struct.unpack_from('<I',raw,60)[0]
-            image_size,header_size=struct.unpack_from('<II',raw,pe+24+56)
-            require(actual['owner_size']==image_size and headers==raw[:header_size] and len(headers)==header_size,'loaded owner file/PE/header binding')
+            image_size=struct.unpack_from('<I',raw,pe+24+56)[0]
+            require(actual['owner_size']==image_size,'loaded owner file/PE/header binding')
+            loaded_header_binding(raw,headers,actual['owner_base'])
             target=actual['target_va']-actual['owner_base'];region(target,target+1,True)
             selected=[(j,s) for j,s in enumerate(sections) if s['flags']&0x40000000 and max(s['size'],s['virtual_size'])]
             require(len(selected)==len(actual['sections']),'complete readable runtime section inventory')

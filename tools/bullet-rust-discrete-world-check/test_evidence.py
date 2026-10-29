@@ -254,7 +254,9 @@ def refresh(files):
 
 class AdmissionControls(unittest.TestCase):
     @classmethod
-    def setUpClass(cls):cls.windows,cls.expected=fixture()
+    def setUpClass(cls):
+        cls.windows,cls.expected=fixture()
+        evidence.admit_capture(cls.windows,**cls.expected)
 
     def test_complete_independent_native_closure(self):
         admitted=evidence.admit_capture(self.windows,**self.expected)
@@ -399,7 +401,7 @@ class AdmissionControls(unittest.TestCase):
         report=json.loads(self.windows['report.json']);report.pop('compiler')
         report.update(schema=7,native='WINDOWS_SOURCE_REPLAY',producer_report_sha256=sha(self.windows['report.json']),ordinary_unbound='WINDOWS_SOURCE_REPLAY',limits=evidence.LIMITS+['replay Rust inner linker chain unobserved'])
         self.assertEqual(evidence.replay_report(report,self.expected['expected_head'],self.expected['inputs'],self.expected['cases']),report)
-        for key,value in [('schema',4),('compiled_controls','UNRUN'),('producer_report_sha256','foreign'),('native','UNRUN'),('host',{**report['host'],'image':{}})]:
+        for key,value in [('schema',4),('schema',5),('schema',6),('compiled_controls','UNRUN'),('producer_report_sha256','foreign'),('native','UNRUN'),('host',{**report['host'],'image':{}})]:
             with self.assertRaises(ValueError):evidence.replay_report({**report,key:value},self.expected['expected_head'],self.expected['inputs'],self.expected['cases'])
 
     def test_bounds_closed_paths_and_container_payloads(self):
@@ -452,7 +454,7 @@ class IncludeControls(unittest.TestCase):
 
     def test_refreshed_receipt_log_and_end_peers(self):
         import copy
-        original,schedule,context=self.sample()
+        original,schedule,context=self.sample();self.verify(original,schedule,context)
         peers=[]
         for stage in ['pre','post']:
             for key,value in [('stream','stderr'),('ordinal',True),('ordinal',4),('raw','/false.h'),('target','/other.h'),('sha256','0'*64)]:

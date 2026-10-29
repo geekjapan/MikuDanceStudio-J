@@ -84,6 +84,7 @@ enum Capture { Idle, Armed(Operation), Running(Operation), Finished(Operation) }
 thread_local! {
     static CAPTURE: Cell<Capture> = const { Cell::new(Capture::Idle) };
     static MERGE_CURSOR: Cell<[u32; 2]> = const { Cell::new([u32::MAX, 0]) };
+    static LINEAGE: Cell<([[usize; 10]; 16], usize)> = const { Cell::new(([[0; 10]; 16], 0)) };
 }
 #[inline(always)]
 fn boundary() -> (u32, usize) {
@@ -107,6 +108,7 @@ fn arm(owner: [u32; 4]) {
     CAPTURE.with(|slot| { assert!(matches!(slot.get(), Capture::Idle));
         slot.set(Capture::Armed(Operation { owner, ..Operation::EMPTY })); });
     MERGE_CURSOR.with(|c| c.set([u32::MAX, 0]));
+    LINEAGE.with(|c| c.set(([[0; 10]; 16], 0)));
 }
 #[inline(always)]
 pub(super) fn begin_operation(p: [f32; 3], m: &Mat4) {
@@ -136,19 +138,35 @@ pub(super) fn merge_container() {
         MERGE_CURSOR.with(|c| c.set([c.get()[0].wrapping_add(1), 0]));
     }
 }
-pub(super) fn merge_source(destination: usize) {
+pub(super) fn merge_source(vertices: &Vec<Vertex>, source: &Vertex, matrix: &Mat4) {
+    if CAPTURE.with(|s| !matches!(s.get(), Capture::Idle)) {
+        LINEAGE.with(|slot| {
+            let (mut rows, n) = slot.get(); assert!(n < rows.len());
+            rows[n] = [vertices.as_ptr() as usize, vertices.len(), vertices.capacity(),
+                source as *const Vertex as usize, matrix as *const Mat4 as usize, 0, 0, 0,
+                std::mem::size_of::<Vertex>(), code_site()];
+            slot.set((rows, n));
+        });
+    }
     CAPTURE.with(|slot| if let Capture::Armed(mut op) = slot.get() {
         if op.owner[0] == 2 {
             let [container, vertex] = MERGE_CURSOR.with(|c| c.get());
-            op.owner = [2, container, vertex, destination as u32];
+            op.owner = [2, container, vertex, vertices.len() as u32];
             slot.set(Capture::Armed(op));
         }
     });
 }
-pub(super) fn merge_destination(output: [f32; 3]) {
+pub(super) fn merge_destination(vertices: &Vec<Vertex>) {
+    if CAPTURE.with(|s| !matches!(s.get(), Capture::Idle)) {
+        LINEAGE.with(|slot| {
+            let (mut rows, n) = slot.get(); assert!(n < rows.len());
+            rows[n][5] = vertices.as_ptr() as usize; rows[n][6] = vertices.len(); rows[n][7] = vertices.capacity();
+            slot.set((rows, n + 1));
+        });
+    }
     CAPTURE.with(|slot| if let Capture::Finished(mut op) = slot.get() {
         if op.owner[0] == 2 && op.sites[4] == 0 {
-            op.destination = output.map(f32::to_bits); op.sites[4] = code_site();
+            op.destination = vertices.last().unwrap().position.map(f32::to_bits); op.sites[4] = code_site();
             slot.set(Capture::Finished(op));
         }
     });
@@ -196,6 +214,7 @@ fn operation_diagnostic() {
     unsafe extern "system" { fn GetModuleHandleW(name: *const u16) -> *mut std::ffi::c_void; }
     let base = unsafe { GetModuleHandleW(std::ptr::null()) } as usize;
     assert_ne!(base, 0);
+    if @OBSERVED@ { runtime_imports("pre", base); }
     let raw = std::fs::read(@RUNTIME@).expect("post-build runtime corpus"); assert_eq!(raw.len(), 152);
     let words: Vec<u32> = raw.chunks_exact(4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).collect();
     println!("FP {{\"stage\":\"runtime-read\",\"words\":{words:?}}}");
@@ -207,14 +226,115 @@ fn operation_diagnostic() {
         if @OBSERVED@ { complete(output, [before.1, after.1], base); }
         else { emit_operation("RustEndpoint", Operation { owner: [1, id as u32, 0, 0], input: input_words(p, &m), output: output.map(f32::to_bits),
             samples: [before.0, after.0], sites: [before.1, 0, after.1, 0, 0], ..Operation::EMPTY }, base); }
-        emit_operation("HardwareSeedWithFrozenRefinement", hardware(p, &m, [1, id as u32, 0, 0]), base);
+        let caller_before = code_site(); let mut hardware_output = hardware(p, &m, [1, id as u32, 0, 0]); let caller_after = code_site();
+        hardware_output.sites[3] = caller_before; hardware_output.sites[4] = caller_after;
+        emit_operation("HardwareSeedWithFrozenRefinement", hardware_output, base);
     }
     let raw = std::fs::read(@MERGE_INPUT@).expect("runtime merge fixture");
     println!("FP {{\"stage\":\"merge-read\",\"bytes\":{raw:?}}}");
     if @OBSERVED@ { arm([2, 0, 0, 0]); }
     let before = boundary(); let mesh = crate::load_x(&raw).expect("actual runtime importer"); let after = boundary();
     let output = mesh.vertices[0].position;
+    if @OBSERVED@ {
+        let (rows, count) = LINEAGE.with(|s| s.get());
+        println!("FP {{\"stage\":\"merge-lineage\",\"caller\":[{},{}],\"rows\":{:?},\"returned\":[{},{},{},{},{},{}]}}", before.1, after.1, &rows[..count],
+            mesh.vertices.as_ptr() as usize, mesh.vertices.len(), mesh.vertices.capacity(),
+            &mesh.vertices[0].position as *const [f32; 3] as usize, code_site(),
+            std::mem::offset_of!(Vertex, position));
+    }
     if @OBSERVED@ { complete(output, [before.1, after.1], base); }
     else { emit_operation("RustEndpoint", Operation { owner: [2, 0, 0, 0], output: output.map(f32::to_bits), destination: output.map(f32::to_bits),
         samples: [before.0, after.0], sites: [before.1, 0, after.1, 0, 0], ..Operation::EMPTY }, base); }
+    if @OBSERVED@ { runtime_imports("post", base); }
+}
+
+#[repr(C)]
+struct MemoryRegion {
+    base: usize, allocation_base: usize, allocation_protect: u32, partition: u16,
+    size: usize, state: u32, protect: u32, kind: u32,
+}
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn VirtualQuery(address: *const std::ffi::c_void, info: *mut MemoryRegion, size: usize) -> usize;
+    fn GetModuleHandleExW(flags: u32, address: *const u16, module: *mut usize) -> i32;
+    fn GetModuleFileNameW(module: usize, path: *mut u16, size: u32) -> u32;
+    fn GetCurrentProcessId() -> u32;
+}
+fn loaded_bytes(base: usize, rva: usize, length: usize, limit: usize) -> Vec<u8> {
+    assert!(length > 0 && rva.checked_add(length).is_some_and(|end| end <= limit));
+    let first = base.checked_add(rva).unwrap(); let last = first.checked_add(length).unwrap();
+    let mut at = first;
+    while at < last {
+        let mut info = std::mem::MaybeUninit::<MemoryRegion>::uninit();
+        let size = unsafe { VirtualQuery(at as *const _, info.as_mut_ptr(), std::mem::size_of::<MemoryRegion>()) };
+        assert_eq!(size, std::mem::size_of::<MemoryRegion>());
+        let info = unsafe { info.assume_init() };
+        assert!(info.allocation_base == base && info.state == 0x1000 && info.protect & 0x101 == 0);
+        assert!([2, 4, 8, 0x20, 0x40, 0x80].contains(&(info.protect & 0xff)));
+        let end = info.base.checked_add(info.size).unwrap(); assert!(info.base <= at && at < end);
+        at = end.min(last);
+    }
+    unsafe { std::slice::from_raw_parts(first as *const u8, length) }.to_vec()
+}
+fn u16_at(raw: &[u8], at: usize) -> u16 { u16::from_le_bytes(raw[at..at + 2].try_into().unwrap()) }
+fn u32_at(raw: &[u8], at: usize) -> usize { u32::from_le_bytes(raw[at..at + 4].try_into().unwrap()) as usize }
+fn u64_at(raw: &[u8], at: usize) -> usize { usize::from_le_bytes(raw[at..at + 8].try_into().unwrap()) }
+fn loaded_header(base: usize) -> (Vec<u8>, usize, usize) {
+    let prefix = loaded_bytes(base, 0, 4096, 4096);
+    assert_eq!(&prefix[..2], b"MZ"); let pe = u32_at(&prefix, 60); assert!(pe + 264 <= prefix.len());
+    assert_eq!(&prefix[pe..pe + 6], b"PE\0\0d\x86"); assert_eq!(u16_at(&prefix, pe + 24), 0x20b);
+    let image_size = u32_at(&prefix, pe + 24 + 56); let header_size = u32_at(&prefix, pe + 24 + 60);
+    assert!(image_size <= 512 * 1024 * 1024 && header_size <= 128 * 1024);
+    (loaded_bytes(base, 0, header_size, image_size), pe, image_size)
+}
+fn runtime_imports(phase: &str, base: usize) {
+    assert_eq!(std::mem::size_of::<Operation>(), 176);
+    let root = std::path::Path::new(@RUNTIME@).parent().unwrap();
+    let (header, pe, image_size) = loaded_header(base); let optional = pe + 24;
+    let import_rva = u32_at(&header, optional + 120); let import_size = u32_at(&header, optional + 124);
+    assert!(import_size > 0 && import_size <= 128 * 1024);
+    let descriptors = loaded_bytes(base, import_rva, import_size, image_size); let mut slots = Vec::new();
+    for (ordinal, descriptor) in descriptors.chunks_exact(20).enumerate() {
+        if descriptor.iter().all(|b| *b == 0) { break; }
+        let names = u32_at(descriptor, 0); let dll_rva = u32_at(descriptor, 12); let iat = u32_at(descriptor, 16);
+        assert!(names != 0 && iat != 0);
+        let mut terminated = false;
+        for n in 0..8192 {
+            let entry = loaded_bytes(base, names + n * 8, 8, image_size); let name_rva = u64_at(&entry, 0);
+            if name_rva == 0 { terminated = true; break; }
+            if name_rva >> 63 != 0 { continue; }
+            let name = loaded_bytes(base, name_rva + 2, 7, image_size);
+            if name != b"memcpy\0" { continue; }
+            let slot_rva = iat + n * 8; let slot_bytes = loaded_bytes(base, slot_rva, 8, image_size); let target = u64_at(&slot_bytes, 0);
+            let mut owner = 0usize;
+            assert_ne!(unsafe { GetModuleHandleExW(6, target as *const u16, &mut owner) }, 0);
+            let (owner_header, owner_pe, owner_size) = loaded_header(owner);
+            assert!(owner <= target && target - owner < owner_size);
+            let mut path = [0u16; 32768]; let length = unsafe { GetModuleFileNameW(owner, path.as_mut_ptr(), path.len() as u32) } as usize;
+            assert!(length > 0 && length < path.len());
+            use std::os::windows::ffi::OsStringExt;
+            let owner_path = std::ffi::OsString::from_wide(&path[..length]);
+            let id = slots.len(); let prefix = format!("runtime-{phase}-{id}");
+            std::fs::write(root.join(format!("{prefix}-iat.bin")), slot_bytes).unwrap();
+            std::fs::write(root.join(format!("{prefix}-module.bin")), std::fs::read(&owner_path).unwrap()).unwrap();
+            std::fs::write(root.join(format!("{prefix}-headers.bin")), &owner_header).unwrap();
+            let count = u16_at(&owner_header, owner_pe + 6) as usize; assert!(count > 0 && count <= 96);
+            let section_at = owner_pe + 24 + u16_at(&owner_header, owner_pe + 20) as usize;
+            let mut sections = Vec::new(); let mut total = 0usize;
+            for i in 0..count {
+                let at = section_at + i * 40; let rva = u32_at(&owner_header, at + 12);
+                let size = u32_at(&owner_header, at + 8).max(u32_at(&owner_header, at + 16)); let flags = u32_at(&owner_header, at + 36);
+                if flags & 0x40000000 == 0 || size == 0 { continue; }
+                total = total.checked_add(size).unwrap(); assert!(total <= 512 * 1024 && size <= 128 * 1024);
+                let bytes = loaded_bytes(owner, rva, size, owner_size);
+                std::fs::write(root.join(format!("{prefix}-section-{i}.bin")), bytes).unwrap();
+                sections.push(format!("[{i},{rva},{size},{flags}]"));
+            }
+            slots.push(format!("{{\"descriptor_rva\":{},\"dll_rva\":{dll_rva},\"name_rva\":{name_rva},\"slot_rva\":{slot_rva},\"target_va\":{target},\"owner_base\":{owner},\"owner_size\":{owner_size},\"path_utf16\":{:?},\"sections\":[{}]}}",
+                import_rva + ordinal * 20, &path[..length], sections.join(",")));
+        }
+        assert!(terminated);
+    }
+    assert!(!slots.is_empty() && slots.len() <= 8);
+    println!("FP {{\"stage\":\"runtime-imports\",\"phase\":{phase:?},\"process_id\":{},\"image_base\":{base},\"image_size\":{image_size},\"slots\":[{}]}}", unsafe { GetCurrentProcessId() }, slots.join(","));
 }

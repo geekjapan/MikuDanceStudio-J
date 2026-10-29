@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 BASE = '77b3e431bc1ac2ab5610692f2e12c903a7629090'
 BASE_TREE = '778782dc8ad6352585a9b7eeb135c04150d1f2e4'
-SCHEMA = 'mds-floor-profile-v3-operation'
+SCHEMA = 'mds-floor-profile-v4-compiled-closure'
 PARENT = 'b7f1c87388606eee4328915504d34c5e9b63ab3a'
 FP_CONTRACT = {'snapshot':'HardwareMxcsr', 'identity':'SourceSiteOnly',
                'rust_operation_ordering':'Unproved', 'exception_attribution':'Unsupported',
@@ -55,7 +55,26 @@ checked, readonly = previous.checked, previous.readonly
 def record(out,label,argv,cwd,env,timeout=1200):
     binary=Path(argv[0]).read_bytes() if label in ('native','rust') else None
     tool=Path(argv[0]).read_bytes() if label=='instruction-help' or '-instructions-' in label else None
-    row=previous.record(out,label,argv,cwd,env,timeout)
+    if label=='rust':
+        require(not (out/(label+'.json')).exists(),'fresh own-process command')
+        row={'argv':list(map(str,argv)),'cwd':str(cwd),'env':{k:v for k,v in env.items() if k in
+             ('PATH','HOME','CARGO_HOME','RUSTUP_HOME','TMPDIR','LD_LIBRARY_PATH','WGPU_BACKEND','VK_ICD_FILENAMES',
+              'XDG_RUNTIME_DIR','CARGO_TERM_COLOR','CARGO_INCREMENTAL','CARGO_TARGET_DIR','CXX','MDS_RENDER_PNG_DIR',
+              'INCLUDE','LIB','LIBPATH','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion')},'start_utc':previous.utc(),
+             'start_ns':previous.time.time_ns(),'status':None,'terminal':'launch_failure'}
+        try:
+            with (out/(label+'.stdout')).open('xb') as stdout,(out/(label+'.stderr')).open('xb') as stderr:
+                with previous.subprocess.Popen(row['argv'],cwd=cwd,env=env,stdout=stdout,stderr=stderr) as child:
+                    row['pid']=child.pid
+                    try:row.update(status=child.wait(timeout=timeout),terminal='exit')
+                    except previous.subprocess.TimeoutExpired:
+                        child.kill();child.wait();row['terminal']='timeout'
+        finally:
+            row.update(end_utc=previous.utc(),end_ns=previous.time.time_ns())
+            for suffix in ('stdout','stderr'):
+                raw=(out/(label+'.'+suffix)).read_bytes();row[suffix]={'name':label+'.'+suffix,'sha256':digest(raw),'size':len(raw)}
+            write_json(out/(label+'.json'),row)
+    else:row=previous.record(out,label,argv,cwd,env,timeout)
     if 'RUSTFLAGS' in env:
         for key in ('RUSTFLAGS','CL','_CL_'):row['env'][key]=env[key]
     if binary is not None:
@@ -191,8 +210,8 @@ target_link_options(floor_profile PRIVATE /MAP)
         add(MESH,b'    let r = (e + e) - w * (e * e);',b'\n    #[cfg(mds_floor_profile)] floor_profile::intermediates(w, e, r);\n    let output =')
         add(MESH,b'        (((x * m[2] + y * m[6]) + z * m[10]) + m[14]) * r,\n    ]',b';\n    #[cfg(mds_floor_profile)] floor_profile::finish_operation(output);\n    output')
         add(MESH,b'    for c in containers {',b'\n        #[cfg(mds_floor_profile)] floor_profile::merge_container();')
-        add(MESH,b'        for v in &c.vertices {',b'\n            #[cfg(mds_floor_profile)] floor_profile::merge_source(mesh.vertices.len());')
-        add(MESH,b'                texcoord: v.texcoord,\n            });',b'\n            #[cfg(mds_floor_profile)] floor_profile::merge_destination(mesh.vertices.last().unwrap().position);')
+        add(MESH,b'        for v in &c.vertices {',b'\n            #[cfg(mds_floor_profile)] floor_profile::merge_source(&mesh.vertices, v, &c.transform);')
+        add(MESH,b'                texcoord: v.texcoord,\n            });',b'\n            #[cfg(mds_floor_profile)] floor_profile::merge_destination(&mesh.vertices);')
     observer=(HERE/'observer.rs').read_text()
     observer=observer.replace('@CASES@',','.join('('+json.dumps(id)+',include_bytes!('+json.dumps(str(input_root/(id+'.x')))+'))' for id,_,_ in CASES))
     observer=observer.replace('@MATRICES@',repr(MATRICES)).replace('@POINTS@',repr(POINTS))
@@ -323,6 +342,7 @@ def parse(raw,language,observed):
                 row=take('direct');require(row['operation']==operation and type(row['matrix']) is int and row['matrix']==mi and type(row['point']) is int and row['point']==pi,'direct operation/input/matrix identity')
                 require(len(finite(row['words']))==(4 if operation=='Transform' else 3),'direct operation output width')
                 row['fp']=[snapshot(row[k],language,k,operation=operation,matrix=mi,point=pi) for k in ('sample_a','sample_b')];result['direct'].append(row)
+    if language=='rust' and observed:result['runtime_imports']=[take('runtime-imports')]
     runtime_read=take('runtime-read');words(runtime_read['words'])
     require(runtime_read=={'stage':'runtime-read','words':corpus_words(operation_corpus())},'actual runtime corpus read')
     result['operations']=[]
@@ -336,11 +356,30 @@ def parse(raw,language,observed):
         read=take('merge-read');raw=inputs(lambda p:(ROOT/p).read_bytes())[1]['bytes']
         require(read=={'stage':'merge-read','bytes':list(raw)},'same retained fixture genuinely read at runtime')
         expected=list(map(word,POINTS[0]+IDENTITY)) if observed else [0]*19
+        if observed:result['merge_lineage']=take('merge-lineage');admit_lineage(result['merge_lineage'])
         result['operations'].append(admit_operation(take('operation'),'RustTable' if observed else 'RustEndpoint',[2,0,0,0],expected))
+        if observed:result['runtime_imports'].append(take('runtime-imports'))
     require(at==len(rows)-1,'extra/unknown records')
     if language=='native':
         q,t=result['direct'][-2:];require(q['words']!=t['words'][:3] and t['words'][3]==word(3.),'nonunit-w distinguishes operations')
     return result
+
+
+def admit_lineage(row):
+    require(set(row)=={'stage','caller','rows','returned'} and row['stage']=='merge-lineage','closed merge pointer lineage')
+    require(type(row['caller']) is list and len(row['caller'])==2 and all(type(v) is int and 0<v<2**64 for v in row['caller']),'merge opening/closing caller sites')
+    rows=row['rows'];returned=row['returned']
+    require(type(rows) is list and 0<len(rows)<=16 and type(returned) is list and len(returned)==6,'bounded merge pointer records')
+    require(all(type(v) is int and 0<=v<2**64 for a in rows+[returned] for v in a),'strict merge pointer fields')
+    previous=None
+    for i,a in enumerate(rows):
+        require(len(a)==10 and a[1]==i and a[6]==i+1 and a[2]>=a[1] and a[7]>=a[6] and
+                a[3]>0 and a[4]>0 and a[5]>0 and 0<a[8]<=1024 and a[9]>0,'actual push source/storage bounds')
+        if previous:require(a[:3]==previous[5:8] and a[8]==previous[8],'continuous Vec storage/growth lineage')
+        previous=a
+    require(returned[:3]==rows[-1][5:8] and returned[3]==returned[0]+returned[5] and returned[5]+12<=rows[0][8] and returned[4]>0,
+            'returned mesh selected element is actual Vec storage')
+    return row
 
 
 def semantic(a,b):
@@ -489,7 +528,7 @@ def pe_code(raw):
     for i in range(count):
         at=optional+size+i*40;vs,va,rs,offset=struct.unpack_from('<IIII',raw,at+8);flags=struct.unpack_from('<I',raw,at+36)[0]
         require(offset+rs<=len(raw) and va+max(vs,rs)<2**32,'PE physical/virtual section bounds')
-        sections.append({'name':raw[at:at+8].rstrip(b'\0').decode('ascii'),'rva':va,'size':rs,'offset':offset,'flags':flags})
+        sections.append({'name':raw[at:at+8].rstrip(b'\0').decode('ascii'),'rva':va,'size':rs,'virtual_size':vs,'offset':offset,'flags':flags})
     def region(start,end,executable=False):
         require(type(start) is int and type(end) is int and 0<=start<end<2**32,'strict code range')
         matches=[s for s in sections if s['rva']<=start<end<=s['rva']+s['size'] and (not executable or s['flags']&0x20000000)]
@@ -497,8 +536,8 @@ def pe_code(raw):
         s=matches[0];offset=s['offset']+start-s['rva']
         return {'start_rva':start,'end_rva':end,'section':s['name'],'offset':offset,'bytes':raw[offset:offset+end-start].hex()}
     rva,length=struct.unpack_from('<II',raw,optional+112+3*8)
-    require(length and length%12==0 and length<=12*100000,'bounded exception directory')
-    table=bytes.fromhex(region(rva,rva+length)['bytes']);functions=[]
+    require(length%12==0 and length<=12*100000 and bool(rva)==bool(length),'bounded exception directory')
+    table=bytes.fromhex(region(rva,rva+length)['bytes']) if length else b'';functions=[]
     for at in range(0,len(table),12):
         first,last,unwind=struct.unpack_from('<III',table,at)
         require(first<last and unwind,'runtime function extent');region(first,last,True);functions.append((first,last))
@@ -507,6 +546,62 @@ def pe_code(raw):
 
 
 DISASSEMBLER=PureWindowsPath('C:/Program Files/LLVM/bin/llvm-objdump.exe')
+
+
+def map_symbols(raw,base,sections):
+    text=raw.decode('utf-8-sig')
+    preferred=re.findall(r'Preferred load address is\s+([0-9a-fA-F]+)',text)
+    require(len(preferred)==1 and int(preferred[0],16)==base,'same-link preferred image base')
+    result=[]
+    for line in text.splitlines():
+        match=re.fullmatch(r'\s*[0-9a-fA-F]{4}:[0-9a-fA-F]{8,16}\s+(\S+)\s+([0-9a-fA-F]{8,16})\s+(.*?)\s*',line)
+        if match:
+            rva=int(match[2],16)-base
+            if any(s['rva']<=rva<s['rva']+s['size'] and s['flags']&0x20000000 for s in sections):
+                result.append({'symbol':match[1],'rva':rva,'object':match[3]})
+    return result
+
+
+def range_extent(raw,target,symbols,interior=False,exports=()):
+    _,sections,functions,region=pe_code(raw)
+    matches=[p for p in functions if p[0]<=target<p[1]]
+    if len(matches)==1:return matches[0], 'ExceptionDirectory'
+    require(not matches,'unique required runtime function')
+    head=region(target,target+6,True)
+    if bytes.fromhex(head['bytes'])[:2]==b'\xff\x25':return (target,target+6),'ImportThunkSixBytes'
+    if not symbols and exports:
+        entries=[entry for entry in exports if entry['rva']==target]
+        following=[entry['rva'] for entry in exports if entry['rva']>target]
+        require(len(entries)==1 and following,'required CRT export candidate start/next distinct extent')
+        region(target,min(following),True)
+        return (target,min(following)),'ExportCandidateOnly'
+    preceding=sorted({s['rva'] for s in symbols if s['rva']<=target})
+    require(preceding and (interior or preceding[-1]==target),'required leaf has same-link start symbol')
+    first=preceding[-1]
+    following=sorted({s['rva'] for s in symbols if s['rva']>first})
+    require(following,'required leaf has candidate upper bound')
+    region(first,following[0],True)
+    return (first,following[0]),'NextDistinctExecutableSymbolCandidateOnly'
+
+
+def closure_budget(witnesses):
+    spans=[s for w in witnesses for s in w['ranges']]
+    require(0<len(spans)<=128 and sum(s['end_rva']-s['start_rva'] for s in spans)<=512*1024 and
+            all(0<s['end_rva']-s['start_rva']<=128*1024 for s in spans),'small bounded operation code regions')
+    require(sum(len(w['sections']) for w in witnesses)<=96,'aggregate required PE section budget')
+
+
+def request_range(witness,raw,target,role,origin):
+    request={'image_sha256':digest(raw),'target_rva':target,'role':role,'origin':origin,'obligation':'Required'}
+    if any(all(previous.get(k)==v for k,v in request.items()) for previous in witness['requests']):return
+    extent,kind=range_extent(raw,target,witness['all_same_link_symbols'],origin['kind']=='RuntimeSite',witness.get('export_candidates',()))
+    request['extent_kind']=kind;request['start_rva'],request['end_rva']=extent
+    request['extent_source']={'ExceptionDirectory':'pdata','ImportThunkSixBytes':'exact_thunk',
+        'NextDistinctExecutableSymbolCandidateOnly':'map_candidate','ExportCandidateOnly':'export_candidate'}[kind]
+    witness['requests'].append(request)
+    if not any((s['start_rva'],s['end_rva'])==extent for s in witness['ranges']):
+        witness['ranges'].append(pe_code(raw)[3](*extent,True))
+    closure_budget([witness])
 
 
 def code_ranges(raw,rows,map_raw):
@@ -535,6 +630,248 @@ def code_ranges(raw,rows,map_raw):
             'runtime_sites_rva':sites,'same_link_symbols':symbols,
             'ranges':[region(a,b,True) for a,b in sorted(selected)],
             'compiled_dataflow':'UnprovedAwaitingIndependentReview'}
+
+
+def required_code_ranges(raw,rows,map_raw):
+    base,sections,_,_=pe_code(raw);symbols=map_symbols(map_raw,base,sections)
+    witness={'image_sha256':digest(raw),'image_size':len(raw),'preferred_base':base,'sections':sections,
+             'all_same_link_symbols':symbols,'requests':[],'ranges':[],'edges':[],'data_requests':[],
+             'compiled_dataflow':'UnprovedAwaitingIndependentReview'}
+    for i,row in enumerate(rows):
+        for j,site in enumerate(row['sites']):
+            if site:request_range(witness,raw,site-row['base'],'ObservedOperationSite',{'kind':'RuntimeSite','operation':i,'slot':j})
+    names=('transform_coord','rcp_estimate','input_words','begin_operation','intermediates','finish_operation',
+           'merge_source','merge_destination','merge_container','load_x','hardware')
+    for symbol in symbols:
+        if any(name in symbol['symbol'] for name in names):
+            request_range(witness,raw,symbol['rva'],'InputArithmeticReturnOrMerge',{'kind':'SameLinkSymbol','symbol':symbol['symbol']})
+    require(witness['ranges'],'required operation roots')
+    return witness
+
+
+def instruction_edges(stdout,witness,span):
+    disassembly_bytes(stdout,witness,span);result=[];last=None
+    for line in stdout.decode('utf-8').splitlines():
+        match=re.fullmatch(r'\s*([0-9a-fA-F]+):\s+((?:[0-9a-fA-F]{2}\s+)+)(\S.*)',line)
+        if not match:continue
+        rva=int(match[1],16)-witness['preferred_base'];raw=bytes.fromhex(match[2]);text=match[3]
+        mnemonic=text.split()[0].lower()
+        last=(rva,raw,text,mnemonic)
+        if mnemonic.startswith(('call','j','loop','ret')):
+            edge={'instruction_rva':rva,'bytes':raw.hex(),'text':text,'obligation':'Required'}
+            if mnemonic.startswith('ret'):edge['target']={'kind':'Return'}
+            elif raw[:2] in (b'\xff\x25',b'\xff\x15') and len(raw)==6:
+                slot=rva+6+struct.unpack_from('<i',raw,2)[0]
+                require(0<=slot<2**32-8,'signed FF25 slot RVA bounds')
+                edge['target']={'kind':'RipRelativeIatSlot','slot_rva':slot}
+            else:
+                target=re.fullmatch(r'(?:callq?|j[a-z]+|loop[a-z]*)\s+(?:0x)?([0-9a-fA-F]+)(?:\s+<[^>]+>)?',text)
+                edge['target']=({'kind':'DirectRva','rva':int(target[1],16)-witness['preferred_base']} if target else {'kind':'Unresolved','reason':'RequiredIndirectOrUnknownBranch'})
+            result.append(edge)
+        elif mnemonic in ('ud2','int3'):
+            result.append({'instruction_rva':rva,'bytes':raw.hex(),'text':text,'obligation':'Required','target':{'kind':'Trap'}})
+    if last and not last[3].startswith(('ret','jmp')) and last[3] not in ('ud2','int3'):
+        result.append({'instruction_rva':last[0],'bytes':last[1].hex(),'text':'fallthrough after '+last[2],
+                       'obligation':'Required','target':{'kind':'DirectRva','rva':span['end_rva']}})
+    return result
+
+
+def pe_directory(raw,index):
+    pe=struct.unpack_from('<I',raw,60)[0];optional=pe+24
+    require(struct.unpack_from('<I',raw,optional+108)[0]>index,'required PE data directory')
+    return struct.unpack_from('<II',raw,optional+112+index*8)
+
+
+def export_metadata(raw):
+    _,sections,_,region=pe_code(raw);rva,size=pe_directory(raw,0)
+    require(40<=size<=128*1024,'bounded CRT export directory')
+    directory=bytes.fromhex(region(rva,rva+size)['bytes']);functions,names=struct.unpack_from('<II',directory,20)
+    require(0<functions<=8192 and names<=8192,'bounded CRT export metadata count')
+    fr,nr,orr=struct.unpack_from('<III',directory,28)
+    addresses=bytes.fromhex(region(fr,fr+4*functions)['bytes'])
+    name_table=bytes.fromhex(region(nr,nr+4*names)['bytes']) if names else b''
+    ordinals=bytes.fromhex(region(orr,orr+2*names)['bytes']) if names else b'';aliases={};retained=[]
+    for i in range(names):
+        at=struct.unpack_from('<I',name_table,i*4)[0];ordinal=struct.unpack_from('<H',ordinals,i*2)[0]
+        require(ordinal<functions,'CRT export ordinal bounds');value=bytearray()
+        for j in range(512):
+            byte=bytes.fromhex(region(at+j,at+j+1)['bytes'])[0]
+            if byte==0:break
+            value.append(byte)
+        else:require(False,'CRT export name termination')
+        name=value.decode('ascii');aliases.setdefault(ordinal,[]).append(name)
+        retained.append({'rva':at,'bytes':(bytes(value)+b'\0').hex(),'ordinal_index':ordinal})
+    candidates={};entries=[]
+    for i in range(functions):
+        target=struct.unpack_from('<I',addresses,i*4)[0]
+        executable=[s for s in sections if s['rva']<=target<s['rva']+s['size'] and s['flags']&0x20000000]
+        forwarded=rva<=target<rva+size
+        entries.append({'ordinal_index':i,'rva':target,'aliases':aliases.get(i,[]),'forwarded':forwarded,'executable':len(executable)==1})
+        if target and not forwarded and len(executable)==1:candidates.setdefault(target,[]).extend(aliases.get(i,[]))
+    return {'directory_rva':rva,'directory_bytes':directory.hex(),'function_table_rva':fr,'function_table_bytes':addresses.hex(),
+            'name_table_rva':nr,'name_table_bytes':name_table.hex(),'ordinal_table_rva':orr,'ordinal_table_bytes':ordinals.hex(),
+            'names':retained,'entries':entries},[{'rva':rva,'aliases':sorted(names)} for rva,names in sorted(candidates.items())]
+
+
+def import_slots(raw):
+    region=pe_code(raw)[3];rva,size=pe_directory(raw,1)
+    require(size and size<=128*1024,'bounded own-image import directory')
+    table=bytes.fromhex(region(rva,rva+size)['bytes']);result=[];terminated=False
+    def string(at):
+        data=bytearray()
+        for i in range(512):
+            v=bytes.fromhex(region(at+i,at+i+1)['bytes'])[0]
+            if v==0:return data.decode('ascii')
+            data.append(v)
+        require(False,'bounded import name termination')
+    for at in range(0,len(table)-19,20):
+        descriptor=table[at:at+20]
+        if descriptor==bytes(20):terminated=True;break
+        names,_,_,dll,iat=struct.unpack('<IIIII',descriptor)
+        require(names and iat,'own-image named import metadata')
+        dll_name=string(dll)
+        for n in range(8192):
+            entry=struct.unpack('<Q',bytes.fromhex(region(names+n*8,names+(n+1)*8)['bytes']))[0]
+            if not entry:break
+            if entry>>63:continue
+            name=string(entry+2)
+            if name=='memcpy':
+                region(iat+n*8,iat+(n+1)*8)
+                result.append({'descriptor_rva':rva+at,'dll_rva':dll,'name_rva':entry,
+                               'slot_rva':iat+n*8,'declared_dll':dll_name,'imported_symbol':name})
+        else:require(False,'bounded import slot termination')
+    require(terminated and 0<len(result)<=8,'required own-process copy import slots')
+    return result
+
+
+def relocated_code(raw,span,runtime_base):
+    base,_,_,region=pe_code(raw);data=bytearray.fromhex(span['bytes']);delta=runtime_base-base
+    rva,size=pe_directory(raw,5)
+    if not size:
+        require(delta==0,'relocation data required for moved loaded code');return bytes(data)
+    require(size<=128*1024,'bounded runtime relocation directory')
+    table=bytes.fromhex(region(rva,rva+size)['bytes']);at=0;seen=set()
+    while at<len(table):
+        require(at+8<=len(table),'relocation block header')
+        page,length=struct.unpack_from('<II',table,at)
+        require(length>=8 and length%2==0 and at+length<=len(table),'relocation block bounds')
+        for pos in range(at+8,at+length,2):
+            entry=struct.unpack_from('<H',table,pos)[0];kind=entry>>12;target=page+(entry&4095)
+            if not kind:continue
+            if target<span['end_rva'] and target+8>span['start_rva']:
+                require(kind==10 and span['start_rva']<=target and target+8<=span['end_rva'] and target not in seen,'exact DIR64 loaded code relocation')
+                seen.add(target);offset=target-span['start_rva'];value=struct.unpack_from('<Q',data,offset)[0]
+                require(0<=value+delta<2**64,'loaded code relocation overflow');struct.pack_into('<Q',data,offset,value+delta)
+        at+=length
+    return bytes(data)
+
+
+def runtime_images(directory,parsed,rust_raw):
+    snapshots=parsed['runtime_imports'];require(len(snapshots)==2,'pre/post own-process import snapshots')
+    receipt=checked(directory,'rust')[0];slots=import_slots(rust_raw);modules=[]
+    for phase,snapshot in zip(('pre','post'),snapshots):
+        require(set(snapshot)=={'stage','phase','process_id','image_base','image_size','slots'} and
+                snapshot['stage']=='runtime-imports' and snapshot['phase']==phase and
+                type(snapshot['process_id']) is int and snapshot['process_id']==receipt['pid'],'same executed Rust process import snapshot')
+        require(all(row['base']==snapshot['image_base'] for row in parsed['operations']),'own executed-image runtime base')
+        pe=struct.unpack_from('<I',rust_raw,60)[0]
+        require(snapshot['image_size']==struct.unpack_from('<I',rust_raw,pe+24+56)[0],'own executed-image extent')
+        require(len(snapshot['slots'])==len(slots),'complete required import slot snapshots')
+        for i,(actual,declared) in enumerate(zip(snapshot['slots'],slots)):
+            require(set(actual)=={'descriptor_rva','dll_rva','name_rva','slot_rva','target_va','owner_base','owner_size','path_utf16','sections'} and
+                    all(actual[k]==declared[k] for k in ('descriptor_rva','dll_rva','name_rva','slot_rva')),'actual own-image import descriptor/name/slot')
+            require(all(type(actual[k]) is int and 0<actual[k]<2**64 for k in ('target_va','owner_base','owner_size')),'strict loaded target identity')
+            require(type(actual['path_utf16']) is list and actual['path_utf16'] and all(type(v) is int and 0<v<65536 for v in actual['path_utf16']),'actual loaded owner path')
+            prefix=f'runtime-{phase}-{i}';raw=(directory/(prefix+'-module.bin')).read_bytes();headers=(directory/(prefix+'-headers.bin')).read_bytes()
+            require((directory/(prefix+'-iat.bin')).read_bytes()==struct.pack('<Q',actual['target_va']),'own-process actual IAT slot bytes/target')
+            base,sections,_,region=pe_code(raw);pe=struct.unpack_from('<I',raw,60)[0]
+            image_size,header_size=struct.unpack_from('<II',raw,pe+24+56)
+            require(actual['owner_size']==image_size and headers==raw[:header_size] and len(headers)==header_size,'loaded owner file/PE/header binding')
+            target=actual['target_va']-actual['owner_base'];region(target,target+1,True)
+            selected=[(j,s) for j,s in enumerate(sections) if s['flags']&0x40000000 and max(s['size'],s['virtual_size'])]
+            require(len(selected)==len(actual['sections']),'complete readable runtime section inventory')
+            data=[];total=0
+            for (j,s),item in zip(selected,actual['sections']):
+                at=pe+24+struct.unpack_from('<H',raw,pe+20)[0]+j*40;virtual=struct.unpack_from('<I',raw,at+8)[0]
+                length=max(virtual,s['size']);require(item==[j,s['rva'],length,s['flags']],'loaded readable section extent/flags')
+                loaded=(directory/(prefix+f'-section-{j}.bin')).read_bytes();total+=length
+                require(len(loaded)==length and length<=128*1024 and total<=512*1024,'bounded readable runtime section bytes')
+                if s['flags']&0x20000000:
+                    span=region(s['rva'],s['rva']+s['size'],True)
+                    require(loaded[:s['size']]==relocated_code(raw,span,actual['owner_base']) and loaded[s['size']:]==bytes(length-s['size']),'loaded runtime instructions/file/relocations')
+                data.append({'role':'LoadedExecutable' if s['flags']&0x20000000 else 'DispatchOrImportData',
+                             'rva':s['rva'],'size':length,'sha256':digest(loaded),'file':prefix+f'-section-{j}.bin'})
+            identity={'slot':declared,'runtime':actual,'module_sha256':digest(raw),'module_size':len(raw),
+                      'loaded_sections':data,'sampled_identity':'PrePostOnlyNotContinuous'}
+            if phase=='pre':
+                exports,candidates=export_metadata(raw)
+                witness={'image_sha256':digest(raw),'image_size':len(raw),'preferred_base':base,'sections':sections,
+                         'all_same_link_symbols':[],'requests':[],'ranges':[],'edges':[],'data_requests':data,
+                         'export_metadata':exports,'export_candidates':candidates,
+                         'compiled_dataflow':'UnprovedAwaitingIndependentReview'}
+                request_range(witness,raw,target,'ActualOwnProcessImportTarget',{'kind':'RuntimeImport','slot_rva':declared['slot_rva']})
+                modules.append({'raw':raw,'file':prefix+'-module.bin','witness':witness,'pre':identity})
+            else:
+                before=modules[i]['pre']
+                require(before['slot']==identity['slot'] and before['runtime']==identity['runtime'] and
+                        before['module_sha256']==identity['module_sha256'] and before['module_size']==identity['module_size'],
+                        'pre/post sampled import/module/target identity')
+                require([(s['rva'],s['sha256']) for s in before['loaded_sections'] if s['role']=='LoadedExecutable']==
+                        [(s['rva'],s['sha256']) for s in data if s['role']=='LoadedExecutable'],'pre/post sampled loaded instructions')
+                modules[i]['post']=identity
+    return modules
+
+
+def seed_data(raw,witness):
+    source=(ROOT/'rust/crates/mds-math/src/estimate_table.rs').read_text()
+    entries=re.findall(r'0x[0-9a-f]{8}',re.search(r'const RCP: \[u32; 2048\] = \[(.*?)\];',source,re.S)[1])
+    table=b''.join(struct.pack('<I',int(v,16)) for v in entries)
+    require(len(table)==8192 and raw.count(table)==1,'unique actual frozen 8192-byte seed table')
+    offset=raw.index(table);matches=[s for s in witness['sections'] if s['offset']<=offset and offset+len(table)<=s['offset']+s['size']]
+    require(len(matches)==1,'physical seed table PE section');start=matches[0]['rva']+offset-matches[0]['offset']
+    return {'role':'SeedTable','start_rva':start,'size':8192,'bytes':table.hex()}
+
+
+def caller_windows(parsed):
+    base=parsed['operations'][0]['base'];result=[]
+    for i,row in enumerate(parsed['operations']):
+        if row['owner'][0]==1 and row['sites'][3] and row['sites'][4]:
+            result.append({'start_rva':row['sites'][3]-base,'end_rva':row['sites'][4]-base,
+                           'role':'ActualCallerInputThroughReturn','operation':i})
+    before,after=parsed['merge_lineage']['caller']
+    result.append({'start_rva':before-base,'end_rva':after-base,'role':'ActualLoadXCallerThroughReturnedMesh','operation':len(parsed['operations'])-1})
+    return result
+
+
+def formatting_exclusion(edge,witness,span):
+    target=edge['target']
+    if target['kind']!='DirectRva' or not edge['text'].startswith('call'):return False
+    windows=[w for w in witness.get('caller_windows',[]) if span['start_rva']<=w['start_rva']<w['end_rva']<=span['end_rva']]
+    if not windows or any(w['start_rva']<=edge['instruction_rva']<=w['end_rva'] for w in windows):return False
+    symbols=[s for s in witness['all_same_link_symbols'] if s['rva']==target['rva'] and any(name in s['symbol'] for name in
+             ('std2io5stdio6_print','core3fmt9Arguments','alloc3fmt6format','core3fmt8builders'))]
+    if not symbols:return False
+    edge.update(obligation='OutsideClaim',classification='CandidateRequiringIndependentSemanticReview',role='InterOperationFormatting',evidence_ref={
+        'image_sha256':witness['image_sha256'],'caller_range':[span['start_rva'],span['end_rva']],
+        'runtime_caller_windows':windows,'target_same_link_symbols':symbols,
+        'independent_review_obligation':'ValidateTemporalBranchesAndNoRequiredCarriedValueThroughReturn'})
+    return True
+
+
+def loaded_dispatch_target(directory,image,slot):
+    samples=[]
+    for phase in ('pre','post'):
+        identity=image[phase]
+        matches=[s for s in identity['loaded_sections'] if s['rva']<=slot and slot+8<=s['rva']+s['size']]
+        require(len(matches)==1,'required loaded dispatch slot extent')
+        section=matches[0];raw=(directory/section['file']).read_bytes()
+        require(len(raw)==section['size'] and digest(raw)==section['sha256'],'required retained loaded dispatch data')
+        value=struct.unpack_from('<Q',raw,slot-section['rva'])[0]
+        samples.append({'phase':phase,'slot_rva':slot,'section':section,'target_va':value})
+    require(samples[0]['target_va']==samples[1]['target_va'],'unresolved changing sampled dispatch target')
+    base=image['pre']['runtime']['owner_base'];target=samples[0]['target_va']-base
+    pe_code(image['raw'])[3](target,target+1,True)
+    return target,samples
 
 
 def disassembly_argv(binary,witness,span):
@@ -570,16 +907,63 @@ def compiled_evidence(directory,parsed,r,capture=False,env=None):
     result={}
     for language,name,map_name in (('native','floor_profile.exe','native.map'),('rust','rust-profile.exe','rust.map')):
         raw=(directory/name).read_bytes();mapping=(directory/map_name).read_bytes()
-        witness=code_ranges(raw,parsed[0 if language=='native' else 1]['operations'],mapping)
+        witness=(code_ranges if language=='native' else required_code_ranges)(raw,parsed[0 if language=='native' else 1]['operations'],mapping)
         witness['same_link_map']={'sha256':digest(mapping),'size':len(mapping)}
+        images=[{'raw':raw,'file':name,'witness':witness}]
+        if language=='rust':
+            images+=runtime_images(directory,parsed[1],raw)
+            witness['caller_windows']=caller_windows(parsed[1])
+            witness['data_requests'].append(seed_data(raw,witness))
+            witness['copy_obligations']=[{'size':176,'role':'OperationReturn','status':'RequiresIndependentCallerRegionAndPathReview'},
+                                          {'size':8192,'role':'OdSeedTable','status':'RequiresIndependentCallerRegionAndPathReview'}]
+            for address in (parsed[1]['merge_lineage']['returned'][4],*[a[9] for a in parsed[1]['merge_lineage']['rows']]):
+                request_range(witness,raw,address-parsed[1]['operations'][0]['base'],'MergePointerLineage',{'kind':'RuntimeSite','role':'MergeStorage'})
+        try:
+            if language=='rust':closure_budget([image['witness'] for image in images])
+            for module_index,image in enumerate(images):
+                view=image['witness'];image_raw=image['raw']
+                for i,span in enumerate(view['ranges']):
+                    label=language+('' if module_index==0 else '-runtime-'+str(module_index))+'-instructions-'+str(i)
+                    argv=disassembly_argv(PureWindowsPath(r['evidence'])/image['file'],view,span)
+                    if capture:require(record(directory,label,argv,r['source'],env)['status']==0,'bounded hosted disassembly prerequisite')
+                    row,assembly,error=checked(directory,label)
+                    require(row['argv']==argv and row['cwd']==r['source'] and row.get('tool_binary')==tool and not error,'exact bounded tool/image/range command')
+                    disassembly_bytes(assembly,view,span)
+                    if language=='rust':
+                        edges=instruction_edges(assembly,view,span);view['edges'].extend(edges)
+                        for edge in edges:
+                            target=edge['target'];origin={'kind':'RequiredTarget','instruction_rva':edge['instruction_rva']}
+                            if formatting_exclusion(edge,view,span):continue
+                            if target['kind']=='DirectRva':
+                                if not span['start_rva']<=target['rva']<span['end_rva']:
+                                    request_range(view,image_raw,target['rva'],'RequiredCallOrBranch',origin)
+                            elif target['kind']=='RipRelativeIatSlot':
+                                pe_code(image_raw)[3](target['slot_rva'],target['slot_rva']+8)
+                                if module_index:
+                                    try:
+                                        dispatch,samples=loaded_dispatch_target(directory,image,target['slot_rva'])
+                                        edge['loaded_dispatch_samples']=samples
+                                        request_range(view,image_raw,dispatch,'RequiredLoadedDispatchTarget',origin)
+                                    except ValueError as error:
+                                        edge['obligation']='Unresolved';edge['reason']=str(error)
+                                else:
+                                    owners=[m for m in images[1:] if m['pre']['slot']['slot_rva']==target['slot_rva']]
+                                    if len(owners)!=1:
+                                        edge['obligation']='Unresolved';edge['reason']='MissingRequiredSameProcessImportTarget'
+                                    else:edge['target_image_sha256']=owners[0]['witness']['image_sha256']
+                            elif target['kind']=='Unresolved':edge['obligation']='Unresolved'
+                        closure_budget([item['witness'] for item in images])
+                    if capture:write_json(directory/(language+'-code-progress.json'),{'schema':SCHEMA,'images':[{k:v for k,v in item.items() if k!='raw'} for item in images]})
+            if language=='rust':
+                require(not any(e['obligation']=='Unresolved' for item in images for e in item['witness']['edges']),'unresolved required branch/import/dispatch data is INCOMPLETE')
+                witness['runtime_images']=[{k:v for k,v in item.items() if k!='raw'} for item in images[1:]]
+                for image in images:
+                    image['witness']['logical_request_count']=len(image['witness']['requests'])
+                    image['witness']['physical_range_count']=len(image['witness']['ranges'])
+        finally:
+            if capture:write_json(directory/(language+'-code-progress.json'),{'schema':SCHEMA,'images':[{k:v for k,v in item.items() if k!='raw'} for item in images]})
         if capture:write_json(directory/(language+'-code.json'),witness)
         require(load_json((directory/(language+'-code.json')).read_bytes())==witness,'rederived executed-image code witness')
-        for i,span in enumerate(witness['ranges']):
-            label=language+'-instructions-'+str(i);argv=disassembly_argv(PureWindowsPath(r['evidence'])/name,witness,span)
-            if capture:require(record(directory,label,argv,r['source'],env)['status']==0,'bounded hosted disassembly prerequisite')
-            row,assembly,error=checked(directory,label)
-            require(row['argv']==argv and row['cwd']==r['source'] and row.get('tool_binary')==tool and not error,'exact bounded tool/image/range command')
-            disassembly_bytes(assembly,witness,span)
         result[language]=witness
     return result
 

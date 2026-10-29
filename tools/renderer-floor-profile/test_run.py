@@ -86,7 +86,7 @@ def packet(language,observed=True):
 
 
 def witness_record(op,raw,role,ordinal,pointer):
-    return {'stage':'witness','schema':1,'role':role,'owner':op['owner'][:],'ordinal':ordinal,
+    return {'stage':'witness','schema':2,'layout':r.witness_layout(),'role':role,'owner':op['owner'][:],'ordinal':ordinal,
             'received_ordinal':ordinal,'handoff_ordinal':ordinal,'handoff_kind':r.WITNESS_ROLES.index(role),
             'handoff_sites':[op['base']+0x1021,op['base']+0x1027],'handoff':[pointer,len(raw),16384],'received':[pointer,len(raw),16384],
             'bytes':list(raw),'sites':[op['base']+0x1001,op['base']+0x1002,op['base']+0x1007],'base':op['base']}
@@ -1435,12 +1435,13 @@ class Controls(unittest.TestCase):
             captured=r.compiled_evidence(directory,parsed,recipe,True,{})
             self.assertEqual(r.compiled_evidence(directory,parsed,recipe),captured)
             self.assertTrue(all(not view['pending'] for view in (captured['rust'],captured['rust']['runtime_images'][0]['witness'])))
-            for name in ('required-return','seed-copy','data','sink','owner','role','pending','unresolved-import'):
+            for name in ('required-return','seed-copy','data','sink','layout','owner','role','pending','unresolved-import'):
                 key=directory/'rust-code.json';legal=files[key];peer=json.loads(legal)
                 if name=='required-return':peer['copy_obligations'].pop(0)
                 elif name=='seed-copy':peer['copy_obligations'].pop()
                 elif name=='data':peer['data_requests']=[]
                 elif name=='sink':peer['semantic_origins'][0]['received'][2]+=176
+                elif name=='layout':peer['semantic_origins'][0]['layout']['facts'][0]=176
                 elif name=='owner':peer['semantic_origins'][0]['owner']=[2,0,0,0]
                 elif name=='role':peer['semantic_origins'][0]['role']='AcquisitionUtility'
                 elif name=='pending':peer['pending']=[[0x1000,0x1008]]
@@ -1456,6 +1457,79 @@ class Controls(unittest.TestCase):
             self.assertNotIn(directory/'rust-code.json',files)
             self.assertNotIn(directory/'seal.json',files)
             files[directory/'rust-code.json']=old
+
+    def test_55_full_witness_ranges_and_exact_adjacency(self):
+        for role in r.WITNESS_ROLES:
+            raw=r.operation_corpus();op={'owner':[1,0,0,0],'base':8192}
+            size=r.witness_layout()['facts'][0]
+            def admit(pointer,sink):
+                row=witness_record(op,raw,role,0,pointer)
+                row['handoff'][2]=row['received'][2]=sink
+                return r.admit_witness(row,op,raw,role,0,pointer)
+            self.assertEqual(admit(4096,16384)['layout']['facts'][0],2664)
+            for pointer,sink in ((4096-152,4096),(4096+size,4096)):
+                self.assertEqual(admit(pointer,sink)['compiled_dataflow'],'UnprovedAwaitingIndependentReview')
+            for name,pointer,sink in (
+                ('exact-coordinated-3920',4096,3920),
+                ('raw-beyond-operation',4096+176,4096),
+                ('sink-start-inside-raw',4096,4104),
+                ('partial-sink-start',4096-151,4096),
+                ('partial-sink-end',4096+size-1,4096)):
+                with self.subTest(role=role,name=name),self.assertRaisesRegex(ValueError,'full Witness sink do not alias'):
+                    admit(pointer,sink)
+            for name,pointer,sink in (
+                ('raw-end-overflow',2**64-128,4096),
+                ('full-sink-end-overflow',4096,2**64-256),
+                ('sink-zero',4096,0),('sink-boolean',4096,True),
+                ('raw-zero',0,16384),('raw-boolean',True,16384),
+                ('sink-unaligned',4096,16385),('raw-noncanonical',2**47,4096),
+                ('sink-noncanonical',4096,2**47)):
+                with self.subTest(role=role,name=name),self.assertRaises(ValueError):admit(pointer,sink)
+
+    def test_56_closed_full_layout_peers_use_real_admission(self):
+        legal=packet('rust');r.parse(wire(legal),'rust',True)
+        for name in ('missing','extra-record','stale-schema','zero','boolean','short-size','long-size',
+                     'forged-offset','forged-align','forged-operation','forged-usize','short-facts','long-facts',
+                     'missing-target','extra-layout','unknown-target','boolean-offset','coordinated-3920'):
+            rows=copy.deepcopy(legal);row=next(v for v in rows if v['stage']=='witness');layout=row['layout']
+            if name=='missing':del row['layout']
+            elif name=='extra-record':row['sink_size']=2664
+            elif name=='stale-schema':row['schema']=1
+            elif name=='zero':layout['facts'][0]=0
+            elif name=='boolean':layout['facts'][0]=True
+            elif name=='short-size':layout['facts'][0]=176
+            elif name=='long-size':layout['facts'][0]+=8
+            elif name=='forged-offset':layout['facts'][-1]-=8
+            elif name=='forged-align':layout['facts'][1]=4
+            elif name=='forged-operation':layout['facts'][4]=168
+            elif name=='forged-usize':layout['facts'][2]=4
+            elif name=='short-facts':layout['facts'].pop()
+            elif name=='long-facts':layout['facts'].append(0)
+            elif name=='missing-target':del layout['target']
+            elif name=='extra-layout':layout['size']=2664
+            elif name=='unknown-target':layout['target']='untrusted-layout'
+            elif name=='coordinated-3920':row['handoff'][2]=row['received'][2]=3920
+            else:layout['facts'][6]=False
+            with self.subTest(name=name),self.assertRaises(ValueError):r.parse(wire(rows),'rust',True)
+
+    def test_57_witness_repr_c_source_type_contract(self):
+        source=(r.HERE/'observer.rs').read_text()
+        body=r.re.search(r'#\[repr\(C\)\]\nstruct Witness \{(.*?)\n\}',source,r.re.S)[1]
+        fields=r.re.findall(r'(\w+):\s*(Operation|usize|u32|\[u8; 1024\]|\[usize; \d+\]|\[\[usize; 10\]; 16\])\s*,',body)
+        types={'Operation':(176,8),'usize':(8,8),'u32':(4,4),'[u8; 1024]':(1024,1),'[[usize; 10]; 16]':(1280,8)}
+        actual=[]
+        for name,kind in fields:
+            if kind.startswith('[usize;'):size,align=int(r.re.search(r'\d+',kind)[0])*8,8
+            else:size,align=types[kind]
+            actual.append((name,size,align))
+        self.assertEqual(tuple(actual),r.WITNESS_FIELDS)
+        self.assertEqual(r.re.sub(r'\s+','',body),''.join(name+':'+r.re.sub(r'\s+','',kind)+',' for name,kind in fields))
+        layout=r.re.search(r'fn layout\(&self\) -> \[usize; 21\] \{(.*?)\n    \}',source,r.re.S)[1]
+        self.assertEqual(r.re.findall(r'offset_of!\(Self, (\w+)\)',layout),[field[0] for field in r.WITNESS_FIELDS])
+        self.assertIn('std::mem::size_of_val(self), std::mem::align_of::<Self>()',layout)
+        self.assertIn('std::mem::size_of::<usize>(), std::mem::align_of::<usize>()',layout)
+        self.assertIn('std::mem::size_of::<Operation>(), std::mem::align_of::<Operation>()',layout)
+        self.assertIn('cfg!(all(target_os = "windows", target_arch = "x86_64"))',source)
 
     def test_zz_real_effects_rejected_before_effects(self):
         target=Path('/Users/geekjapan/.codex/orchestrate/mikudance-rust-20261027/renderer-operation-boundary/effect-probe')

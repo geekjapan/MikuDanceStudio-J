@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 BASE = '77b3e431bc1ac2ab5610692f2e12c903a7629090'
 BASE_TREE = '778782dc8ad6352585a9b7eeb135c04150d1f2e4'
-SCHEMA = 'mds-floor-profile-v5-operation-witness'
+SCHEMA = 'mds-floor-profile-v6-witness-extent'
 PARENT = 'b7f1c87388606eee4328915504d34c5e9b63ab3a'
 FP_CONTRACT = {'snapshot':'HardwareMxcsr', 'identity':'SourceSiteOnly',
                'rust_operation_ordering':'Unproved', 'exception_attribution':'Unsupported',
@@ -141,24 +141,47 @@ def admit_operation(row,kind,owner,expected_input):
 
 
 WITNESS_ROLES = ('RawCorpusThroughTableReturn', 'RawCorpusThroughHardwareReturn', 'RawFixtureThroughSelectedMeshReturn')
+WITNESS_FIELDS = (('operation',176,8),('raw',1024,1),('length',8,8),('pointer',8,8),
+                  ('ordinal',8,8),('sink',8,8),('sites',24,8),('handoff',24,8),
+                  ('handoff_sites',16,8),('handoff_ordinal',8,8),('handoff_kind',4,4),
+                  ('lineage',1280,8),('count',8,8),('returned',48,8),('caller',16,8))
+
+def witness_layout():
+    offsets=[];end=0;alignment=max(field[2] for field in WITNESS_FIELDS)
+    for name,size,align in WITNESS_FIELDS:
+        offset=(end+align-1)//align*align;offsets.append(offset);end=offset+size
+    size=(end+alignment-1)//alignment*alignment
+    return {'target':'windows-x86_64-repr-c-v1','facts':[size,alignment,8,8,176,8,*offsets]}
+
+
+def witness_range(pointer,size,alignment):
+    require(type(pointer) is int and 0<pointer<2**64 and type(size) is int and
+            0<size<2**64 and pointer+size<2**64,'nonoverflowing witness address range')
+    require(pointer%alignment==0 and pointer+size<=2**47,'canonical Windows x64 user witness range/alignment')
+    return pointer,pointer+size
 
 def admit_witness(row, operation, raw, role, ordinal, pointer):
-    require(set(row)=={'stage','schema','role','owner','ordinal','handoff','handoff_sites','handoff_ordinal','handoff_kind','received','received_ordinal','bytes','sites','base'},'closed versioned witness record')
-    require(row['stage']=='witness' and type(row['schema']) is int and row['schema']==1 and
+    require(set(row)=={'stage','schema','layout','role','owner','ordinal','handoff','handoff_sites','handoff_ordinal','handoff_kind','received','received_ordinal','bytes','sites','base'},'closed versioned witness record')
+    require(row['stage']=='witness' and type(row['schema']) is int and row['schema']==2 and
             row['role']==role and role in WITNESS_ROLES,'versioned consumed witness role')
+    layout=row['layout'];expected=witness_layout()
+    require(type(layout) is dict and set(layout)=={'target','facts'} and type(layout['facts']) is list and
+            all(type(v) is int for v in layout['facts']) and layout==expected,'authenticated full Witness repr(C) layout')
     require(type(row['ordinal']) is int and row['ordinal']==ordinal and type(row['received_ordinal']) is int and
             row['received_ordinal']==ordinal and type(row['handoff_ordinal']) is int and row['handoff_ordinal']==ordinal and
             type(row['handoff_kind']) is int and row['handoff_kind']==WITNESS_ROLES.index(role) and row['owner']==operation['owner'] and
             all(type(v) is int for v in row['owner']),'witness owner/ordinal linkage')
     for field in ('handoff','received'):
         require(type(row[field]) is list and len(row[field])==3 and all(type(v) is int and 0<v<2**64 for v in row[field]),'actual raw-input and fixed-sink addresses')
-    require(type(pointer) is int and 0<len(raw)<=1024 and pointer+len(raw)<2**64 and row['received'][2]+176<2**64 and row['handoff']==row['received'] and row['handoff'][:2]==[pointer,len(raw)],'actual raw-input handoff/sink identity')
+    require(0<len(raw)<=1024 and row['handoff']==row['received'] and row['handoff'][:2]==[pointer,len(raw)],'actual raw-input handoff/sink identity')
+    input_start,input_end=witness_range(pointer,len(raw),1)
+    sink_start,sink_end=witness_range(row['received'][2],layout['facts'][0],layout['facts'][1])
     require(row['bytes']==list(raw) and all(type(v) is int for v in row['bytes']),'actual witness consumed raw bytes')
     require(type(row['base']) is int and row['base']==operation['base'] and type(row['sites']) is list and
             len(row['sites'])==3 and all(type(v) is int and row['base']<v<2**64 for v in row['sites']),'entry/materialization/fixed-sink runtime sites')
     require(type(row['handoff_sites']) is list and len(row['handoff_sites'])==2 and
             all(type(v) is int and row['base']<v<2**64 for v in row['handoff_sites']),'actual raw-input caller handoff sites')
-    require(pointer+len(raw)<=row['received'][2] or row['received'][2]+176<=pointer,'raw input and fixed record sink do not alias')
+    require(input_end<=sink_start or sink_end<=input_start,'raw input and full Witness sink do not alias')
     return dict(row,raw_sha256=digest(raw),compiled_dataflow='UnprovedAwaitingIndependentReview')
 
 
@@ -694,7 +717,7 @@ def required_code_ranges(raw,rows,map_raw,witness=None):
         handoff_owners=[s for s in symbols if s['rva']==handoff_extents[0][0] and 'floor_profile' in s['symbol'] and 'handoff' in s['symbol']]
         require(len(handoff_owners)==1,'exact same-link handoff owner')
         witness['semantic_origins'].append({'operation':i,'role':role,'extent':list(extents[0]),'same_link_owner':owners[0],
-            'raw_sha256':boundary['raw_sha256'],'handoff':boundary['handoff'],'received':boundary['received'],
+            'raw_sha256':boundary['raw_sha256'],'handoff':boundary['handoff'],'received':boundary['received'],'layout':boundary['layout'],
             'ordinal':boundary['ordinal'],'owner':boundary['owner'],'sites':boundary['sites'],
             'handoff_extent':list(handoff_extents[0]),'handoff_owner':handoff_owners[0],'handoff_sites':boundary['handoff_sites']})
         for j,site in enumerate(row['sites']):

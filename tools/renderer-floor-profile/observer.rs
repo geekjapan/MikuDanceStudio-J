@@ -209,6 +209,7 @@ fn hardware(p: [f32; 3], m: &Mat4, owner: [u32; 4]) -> Operation {
         options(nostack, preserves_flags)); }
     op
 }
+#[repr(C)]
 struct Witness {
     operation: Operation, raw: [u8; 1024], length: usize, pointer: usize,
     ordinal: usize, sink: usize, sites: [usize; 3],
@@ -220,6 +221,19 @@ impl Witness {
         pointer: 0, ordinal: 0, sink: 0, sites: [0; 3], handoff: [0; 3], handoff_sites: [0; 2],
         handoff_ordinal: 0, handoff_kind: 0, lineage: [[0; 10]; 16],
         count: 0, returned: [0; 6], caller: [0; 2] };
+    fn layout(&self) -> [usize; 21] {
+        [std::mem::size_of_val(self), std::mem::align_of::<Self>(),
+         std::mem::size_of::<usize>(), std::mem::align_of::<usize>(),
+         std::mem::size_of::<Operation>(), std::mem::align_of::<Operation>(),
+         std::mem::offset_of!(Self, operation), std::mem::offset_of!(Self, raw),
+         std::mem::offset_of!(Self, length), std::mem::offset_of!(Self, pointer),
+         std::mem::offset_of!(Self, ordinal), std::mem::offset_of!(Self, sink),
+         std::mem::offset_of!(Self, sites), std::mem::offset_of!(Self, handoff),
+         std::mem::offset_of!(Self, handoff_sites), std::mem::offset_of!(Self, handoff_ordinal),
+         std::mem::offset_of!(Self, handoff_kind), std::mem::offset_of!(Self, lineage),
+         std::mem::offset_of!(Self, count), std::mem::offset_of!(Self, returned),
+         std::mem::offset_of!(Self, caller)]
+    }
 }
 fn receive(raw: &[u8], ordinal: usize, sink: &mut Witness) {
     assert!(!raw.is_empty() && raw.len() <= sink.raw.len());
@@ -286,7 +300,9 @@ fn handoff(raw: &[u8], ordinal: usize, sink: &mut Witness, kind: u32) {
     sink.handoff_sites = [before, code_site()];
 }
 fn emit_witness(role: &str, ordinal: usize, sink: &Witness, base: usize) {
-    println!("FP {{\"stage\":\"witness\",\"schema\":1,\"role\":{role:?},\"owner\":{:?},\"ordinal\":{ordinal},\"handoff\":{:?},\"handoff_sites\":{:?},\"handoff_ordinal\":{},\"handoff_kind\":{},\"received\":[{},{},{}],\"received_ordinal\":{},\"bytes\":{:?},\"sites\":{:?},\"base\":{base}}}",
+    assert!(cfg!(all(target_os = "windows", target_arch = "x86_64")));
+    println!("FP {{\"stage\":\"witness\",\"schema\":2,\"layout\":{{\"target\":\"windows-x86_64-repr-c-v1\",\"facts\":{:?}}},\"role\":{role:?},\"owner\":{:?},\"ordinal\":{ordinal},\"handoff\":{:?},\"handoff_sites\":{:?},\"handoff_ordinal\":{},\"handoff_kind\":{},\"received\":[{},{},{}],\"received_ordinal\":{},\"bytes\":{:?},\"sites\":{:?},\"base\":{base}}}",
+        sink.layout(),
         sink.operation.owner, sink.handoff, sink.handoff_sites, sink.handoff_ordinal, sink.handoff_kind,
         sink.pointer, sink.length, sink.sink, sink.ordinal, &sink.raw[..sink.length], sink.sites);
 }

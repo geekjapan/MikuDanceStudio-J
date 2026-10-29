@@ -34,6 +34,7 @@ DISCRETE_WORLD_SHA256 = 'ad4394ab65ef522aa251da2cd91ccfa18afe0a7e63de9ffe1233141
 DISCRETE_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
                             ['src/core/discrete_collision_world.rs', 'tests/discrete_collision_world.rs']}
 DISCRETE_WORLD_REPLACEMENTS = {'rust/crates/mds-bullet/src/core/mod.rs'}
+DYNAMICS_WORLD_FORMAT_SHA256 = 'afff937521417b8c762b4c485417b374be72f26499fb71294cc85b741f658128'
 DYNAMICS_WORLD_SHA256 = 'a978d073cff65ea0f017924e245697202bf8763eef79895bf1e2b5ee5c407c06'
 DYNAMICS_WORLD_ADDITIONS = {'rust/crates/mds-bullet/' + path for path in
                            ['src/core/discrete_dynamics_world.rs', 'tests/discrete_dynamics_world.rs']}
@@ -102,8 +103,8 @@ def normalize_provenance(value):
 
 def load_manifest(path):
     manifest = json.loads(path.read_text(), object_pairs_hook=unique_object)
-    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'registration_format_admission', 'broadphase_source_admission', 'discrete_world_source_admission', 'dynamics_world_source_admission', 'supplemental_measurements'}, 'manifest')
-    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 8, 'schema_version')
+    fields(manifest, {'schema_version', 'status', 'frozen_fixtures', 'profiles', 'verification_sha256', 'source_admission', 'registration_format_admission', 'broadphase_source_admission', 'discrete_world_source_admission', 'dynamics_world_source_admission', 'dynamics_world_format_admission', 'supplemental_measurements'}, 'manifest')
+    schema(type(manifest['schema_version']) is int and manifest['schema_version'] == 9, 'schema_version')
     schema(manifest['status'] == 'reviewed-current-source-expectation-execution-pending', 'status')
     fields(manifest['profiles'], HOSTS, 'profiles')
     fields(manifest['verification_sha256'], HOSTS, 'verification hosts')
@@ -185,6 +186,8 @@ def load_manifest(path):
            'immutable discrete world source admission')
     schema(source_map_digest(manifest['dynamics_world_source_admission']) == DYNAMICS_WORLD_SHA256,
            'immutable dynamics world source admission')
+    schema(source_map_digest(manifest['dynamics_world_format_admission']) == DYNAMICS_WORLD_FORMAT_SHA256,
+           'immutable dynamics world format admission')
     for host in HOSTS:
         approved_source_map(manifest, host)
     supplemental = manifest['supplemental_measurements']
@@ -282,7 +285,26 @@ def approved_source_map(manifest, host):
         schema(digest(identity['new_sha256']) and identity['new_sha256'] != identity['old_sha256'],
                'dynamics world new identity')
         protected[path] = identity['new_sha256']
-    return {**protected, **delta['additions'], **manifest['verification_sha256'][host]}
+    protected = {**protected, **delta['additions']}
+    admission = manifest['dynamics_world_format_admission']
+    fields(admission, {'kind', 'base_head', 'base_tree', 'execution', 'hosts'}, 'dynamics world format admission')
+    schema(admission['kind'] == 'private-dynamics-world-format-source-only'
+           and admission['base_head'] == 'cdfd6d19f2e46a2526f61a4dff49a2065da767ef'
+           and admission['base_tree'] == 'b51ac697c13fcddce69ee99ebdae4091698521f7'
+           and admission['execution'] == 'UNRUN', 'fixed dynamics world format base and execution')
+    fields(admission['hosts'], HOSTS, 'dynamics world format hosts')
+    delta = admission['hosts'][host]
+    fields(delta, {'replacements'}, 'dynamics world format delta')
+    fields(delta['replacements'], DYNAMICS_WORLD_ADDITIONS, 'dynamics world format replacements')
+    for path, identity in delta['replacements'].items():
+        fields(identity, {'old_sha256', 'new_sha256'}, 'dynamics world format replacement')
+        schema(protected[path] == identity['old_sha256'], 'dynamics world format old identity')
+        schema(digest(identity['new_sha256']) and identity['new_sha256'] != identity['old_sha256'],
+               'dynamics world format new identity')
+        protected[path] = identity['new_sha256']
+    schema(source_map_digest(admission) == DYNAMICS_WORLD_FORMAT_SHA256,
+           'immutable dynamics world format admission')
+    return {**protected, **manifest['verification_sha256'][host]}
 
 
 def select_measurement(manifest, host, provenance):
@@ -363,6 +385,8 @@ def validate(output, *, host, inventory, source_hashes, stream, transport):
                     manifest['discrete_world_source_admission'].items() if name != 'hosts'},
                 'dynamics_world_source_admission': {name: value for name, value in
                     manifest['dynamics_world_source_admission'].items() if name != 'hosts'},
+                'dynamics_world_format_admission': {name: value for name, value in
+                    manifest['dynamics_world_format_admission'].items() if name != 'hosts'},
                 'capture_head': capture_head, 'source_sha256': current,
                 'source_map_sha256': source_map_digest(actual),
                 'status': manifest['status'],

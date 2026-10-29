@@ -44,7 +44,14 @@ fn dynamics_world_initial_zero_time_executes_and_clamp_returns_requested() {
         Ok(1)
     );
     assert_eq!(clock.unwrap().executed, 1);
-    assert!(w.collision().objects().bodies()[0].snapshot().world.origin.0[1] < 10.0);
+    assert!(
+        w.collision().objects().bodies()[0]
+            .snapshot()
+            .world
+            .origin
+            .0[1]
+            < 10.0
+    );
     assert_eq!(
         w.step_simulation(0.125, 2, 0.03125, |event| {
             if let DynamicsEvent::Clock(step) = event {
@@ -103,7 +110,8 @@ fn dynamics_world_collision_solver_writes_persistent_contact_impulses() {
     assert_eq!(groups, 1);
     let key = w.collision().manifolds()[0].owner();
     assert!(w.collision().manifolds()[0].manifold.contacts()[0].applied_impulse > 0.0);
-    w.step_simulation(1.0 / 60.0, 1, 1.0 / 60.0, |_| {}).unwrap();
+    w.step_simulation(1.0 / 60.0, 1, 1.0 / 60.0, |_| {})
+        .unwrap();
     assert_eq!(w.collision().manifolds()[0].owner(), key);
     assert!(w.collision().manifolds()[0].manifold.contacts()[0].lifetime > 0);
     assert_eq!(w.solver_workspace().live_len(), 0);
@@ -152,16 +160,10 @@ fn dynamics_world_multiple_islands_preserve_global_joint_and_body_indices() {
     .unwrap();
     assert_eq!(groups.len(), 2);
     assert!(groups.iter().any(|(bodies, joints)| {
-        bodies.len() == 2
-            && bodies.contains(&0)
-            && bodies.contains(&1)
-            && joints == &[0]
+        bodies.len() == 2 && bodies.contains(&0) && bodies.contains(&1) && joints == &[0]
     }));
     assert!(groups.iter().any(|(bodies, joints)| {
-        bodies.len() == 2
-            && bodies.contains(&2)
-            && bodies.contains(&3)
-            && joints == &[1]
+        bodies.len() == 2 && bodies.contains(&2) && bodies.contains(&3) && joints == &[1]
     }));
 }
 

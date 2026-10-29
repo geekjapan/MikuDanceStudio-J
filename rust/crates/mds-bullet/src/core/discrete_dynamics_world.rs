@@ -19,10 +19,7 @@ pub enum StepError {
 pub enum DynamicsEvent<'a> {
     Clock(Step),
     Solver(SolverEvent<'a>),
-    Workspace {
-        live: usize,
-        capacity: usize,
-    },
+    Workspace { live: usize, capacity: usize },
 }
 
 pub struct DiscreteDynamicsWorld {
@@ -96,7 +93,8 @@ impl DiscreteDynamicsWorld {
                 self.collision.predict_dynamics_motion(step.dt);
                 self.collision.perform_discrete_collision_detection();
                 self.solve_constraints(step.dt, &mut observe)?;
-                self.collision.finish_dynamics_substep(step.dt, step.remainder);
+                self.collision
+                    .finish_dynamics_substep(step.dt, step.remainder);
             }
         }
         self.collision

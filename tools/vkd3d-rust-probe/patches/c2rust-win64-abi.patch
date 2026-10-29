@@ -798,7 +798,7 @@ diff --git a/c2rust-transpile/src/c_ast/closed_plan.rs b/c2rust-transpile/src/c_
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_plan.rs
-@@ -0,0 +1,492 @@
+@@ -0,0 +1,493 @@
 +use super::*;
 +use serde_derive::Serialize;
 +use std::collections::{BTreeMap, BTreeSet};
@@ -1039,7 +1039,8 @@ new file mode 100644
 +            domain: identity.domain.clone(),
 +            linker: ast.linker_names.get(&id).ok_or("missing original linker identity")?.clone(),
 +        }),
-+        CDeclKind::Function { name, .. } => Ok(SymbolKey::Internal { unit: identity.key.clone(), name: name.clone() }),
++        CDeclKind::Function { .. } => Ok(SymbolKey::Internal { unit: identity.key.clone(),
++            name: ast.linker_names.get(&id).ok_or("missing original static linker identity")?.clone() }),
 +        _ => Err("function identity names a non-function".into()),
 +    }
 +}

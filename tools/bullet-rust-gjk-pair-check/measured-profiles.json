@@ -1,5 +1,5 @@
 {
-  "schema_version": 6,
+  "schema_version": 7,
   "status": "reviewed-current-source-expectation-execution-pending",
   "frozen_fixtures": {
     "fallback-inputs.tsv": {
@@ -3867,11 +3867,11 @@
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "6465504fc34c83537439f8d77742d9ccd6b8a0f85f34db5b09176cc75bc7eea5",
       "tools/bullet-rust-gjk-pair-check/check.py": "363e144267110687b6982a3f68f4b54a1f4de252a52e54923fc73a867f8bbcbc",
-      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "6ede71e9735090ce18508f6d9540fe60096340100dd150c1b9d52dfa1ef73887",
+      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "78b33baefcadc45416646df6f1de1d879456f127b57d1f0c6f2c36ec14a7d727",
       "tools/bullet-rust-gjk-pair-check/mutations.py": "a291052539ac00fcd7bd786bca7c09ebad71488480e30ac4bf2be97b122ec79a",
       "tools/bullet-rust-gjk-pair-check/native-x64-provenance.json": "630f0fa5a7404b92ab4dfbd645e008554419aac413f524704c58f3c63b6dcefa",
       "tools/bullet-rust-gjk-pair-check/test_capture.py": "2741346f823de39b120ced7cdcdaad287238f55194291619aa6c6c2457613038",
-      "tools/bullet-rust-gjk-pair-check/test_measured_profiles.py": "ebfd96bcea87ed5e82e83fce2dd862c3a66584220fc66d1cd6b0b9f6eb523e9f"
+      "tools/bullet-rust-gjk-pair-check/test_measured_profiles.py": "c51cb579d9be962e6ef987affabe284fd6013802c427a144ba6d236520e7975e"
     },
     "linux-x64": {
       ".github/workflows/bullet-outer-gjk-host-capture.yml": "023c602b42d5e3fbf605588ca4bb4ac7632d39aa9e63f7ef721925f237d1b585",
@@ -3879,11 +3879,11 @@
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "6465504fc34c83537439f8d77742d9ccd6b8a0f85f34db5b09176cc75bc7eea5",
       "tools/bullet-rust-gjk-pair-check/check.py": "363e144267110687b6982a3f68f4b54a1f4de252a52e54923fc73a867f8bbcbc",
-      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "6ede71e9735090ce18508f6d9540fe60096340100dd150c1b9d52dfa1ef73887",
+      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "78b33baefcadc45416646df6f1de1d879456f127b57d1f0c6f2c36ec14a7d727",
       "tools/bullet-rust-gjk-pair-check/mutations.py": "a291052539ac00fcd7bd786bca7c09ebad71488480e30ac4bf2be97b122ec79a",
       "tools/bullet-rust-gjk-pair-check/native-x64-provenance.json": "630f0fa5a7404b92ab4dfbd645e008554419aac413f524704c58f3c63b6dcefa",
       "tools/bullet-rust-gjk-pair-check/test_capture.py": "2741346f823de39b120ced7cdcdaad287238f55194291619aa6c6c2457613038",
-      "tools/bullet-rust-gjk-pair-check/test_measured_profiles.py": "ebfd96bcea87ed5e82e83fce2dd862c3a66584220fc66d1cd6b0b9f6eb523e9f"
+      "tools/bullet-rust-gjk-pair-check/test_measured_profiles.py": "c51cb579d9be962e6ef987affabe284fd6013802c427a144ba6d236520e7975e"
     },
     "linux-arm64": {
       ".github/workflows/bullet-outer-gjk-host-capture.yml": "023c602b42d5e3fbf605588ca4bb4ac7632d39aa9e63f7ef721925f237d1b585",
@@ -3891,11 +3891,11 @@
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "6465504fc34c83537439f8d77742d9ccd6b8a0f85f34db5b09176cc75bc7eea5",
       "tools/bullet-rust-gjk-pair-check/check.py": "363e144267110687b6982a3f68f4b54a1f4de252a52e54923fc73a867f8bbcbc",
-      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "6ede71e9735090ce18508f6d9540fe60096340100dd150c1b9d52dfa1ef73887",
+      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "78b33baefcadc45416646df6f1de1d879456f127b57d1f0c6f2c36ec14a7d727",
       "tools/bullet-rust-gjk-pair-check/mutations.py": "a291052539ac00fcd7bd786bca7c09ebad71488480e30ac4bf2be97b122ec79a",
       "tools/bullet-rust-gjk-pair-check/native-x64-provenance.json": "630f0fa5a7404b92ab4dfbd645e008554419aac413f524704c58f3c63b6dcefa",
       "tools/bullet-rust-gjk-pair-check/test_capture.py": "2741346f823de39b120ced7cdcdaad287238f55194291619aa6c6c2457613038",
-      "tools/bullet-rust-gjk-pair-check/test_measured_profiles.py": "ebfd96bcea87ed5e82e83fce2dd862c3a66584220fc66d1cd6b0b9f6eb523e9f"
+      "tools/bullet-rust-gjk-pair-check/test_measured_profiles.py": "c51cb579d9be962e6ef987affabe284fd6013802c427a144ba6d236520e7975e"
     },
     "windows-x64": {
       ".github/workflows/bullet-outer-gjk-host-capture.yml": "114fa75c201be2602cde39b9a6ef73409770f100d221518ed1e45ca08221767a",
@@ -3903,11 +3903,11 @@
       "rust/crates/mds-bullet/tests/pure_bullet/gjk_pair.rs": "3e0c6029a9a60d08fbb112ab69d790b03dd7ae5aca02bd525cc1b8dd4e9b9564",
       "tools/bullet-rust-gjk-pair-check/README.md": "c9aa97f3e582c1613e85cbbbda966248771677813654c2f33e3a8401b29b98ea",
       "tools/bullet-rust-gjk-pair-check/check.py": "9204fa0498fa85a68f0e0ad8860a1e40f89cbd9640174315f341d4d54e46412b",
-      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "33313688f82f9ccea79807b230f8c7048f4db6420fc556479cbff3f9bca704c3",
+      "tools/bullet-rust-gjk-pair-check/measured_profiles.py": "cb9db59ad80282c693e59665e03afcac8c59c5506a76a8a16931d0074ab58ca7",
       "tools/bullet-rust-gjk-pair-check/mutations.py": "61d9cf572923b5d5007b4bfd576f657a68e8b5a121bee66877cfbd6d1536d132",
       "tools/bullet-rust-gjk-pair-check/native-x64-provenance.json": "b5ea3c0fa1b625a37bb7e94c576deca0e4cee895b3dfedfe9e1a1823d0e170af",
       "tools/bullet-rust-gjk-pair-check/test_capture.py": "4bf98fb11a8e65b08792ea5fbd812a6f4d8a455339bb40c70c734f526b6c5e3b",
-      "tools/bullet-rust-gjk-pair-check/test_measured_profiles.py": "32206fa8a2e0cfd47e69b08d5026c382e28064c4f08497a810e61998af0278c3"
+      "tools/bullet-rust-gjk-pair-check/test_measured_profiles.py": "6eb0a6428dd8d4552000b837a78a188c3ace13aab339dd2d7d070af9547af73b"
     }
   },
   "source_admission": {
@@ -4107,6 +4107,62 @@
         "additions": {
           "rust/crates/mds-bullet/src/core/dbvt_broadphase.rs": "379e54a80d47e77fed3973ce1077092c24226ea2e02656346befe9153482a07b",
           "rust/crates/mds-bullet/tests/pure_bullet/dbvt_broadphase.rs": "ad6b3c3f52a9b6dd4ae9a10bdda5b58fe38eea22d9bfa3aeed6706c24b0967c6"
+        }
+      }
+    }
+  },
+  "discrete_world_source_admission": {
+    "kind": "private-discrete-world-source-only",
+    "base_head": "c8dc8a387a9d37442a84dbd8a3b81c90898b6d6d",
+    "base_tree": "58cbf7ede0dc2e22958765d4856e72ed9addc033",
+    "execution": "UNRUN",
+    "hosts": {
+      "macos-arm64": {
+        "replacements": {
+          "rust/crates/mds-bullet/src/core/mod.rs": {
+            "old_sha256": "6bc8d76b19fe8fac3a2a896e10bcfdb0ba48281d4a23c644db4415e57c0ebe21",
+            "new_sha256": "f00dfda50276e675f0442d5d2dfa501599ac6c6df9995dec989b9e287c1a2a3d"
+          }
+        },
+        "additions": {
+          "rust/crates/mds-bullet/src/core/discrete_collision_world.rs": "574091251e35e2db54ec62d0afc2c719db2efec613091d8adc0ab94110ba3929",
+          "rust/crates/mds-bullet/tests/discrete_collision_world.rs": "70ceaeaf379f7499d8722c1aa52a734d68a8e695c26c9e5f605f022f5fb4f2fd"
+        }
+      },
+      "linux-x64": {
+        "replacements": {
+          "rust/crates/mds-bullet/src/core/mod.rs": {
+            "old_sha256": "6bc8d76b19fe8fac3a2a896e10bcfdb0ba48281d4a23c644db4415e57c0ebe21",
+            "new_sha256": "f00dfda50276e675f0442d5d2dfa501599ac6c6df9995dec989b9e287c1a2a3d"
+          }
+        },
+        "additions": {
+          "rust/crates/mds-bullet/src/core/discrete_collision_world.rs": "574091251e35e2db54ec62d0afc2c719db2efec613091d8adc0ab94110ba3929",
+          "rust/crates/mds-bullet/tests/discrete_collision_world.rs": "70ceaeaf379f7499d8722c1aa52a734d68a8e695c26c9e5f605f022f5fb4f2fd"
+        }
+      },
+      "linux-arm64": {
+        "replacements": {
+          "rust/crates/mds-bullet/src/core/mod.rs": {
+            "old_sha256": "6bc8d76b19fe8fac3a2a896e10bcfdb0ba48281d4a23c644db4415e57c0ebe21",
+            "new_sha256": "f00dfda50276e675f0442d5d2dfa501599ac6c6df9995dec989b9e287c1a2a3d"
+          }
+        },
+        "additions": {
+          "rust/crates/mds-bullet/src/core/discrete_collision_world.rs": "574091251e35e2db54ec62d0afc2c719db2efec613091d8adc0ab94110ba3929",
+          "rust/crates/mds-bullet/tests/discrete_collision_world.rs": "70ceaeaf379f7499d8722c1aa52a734d68a8e695c26c9e5f605f022f5fb4f2fd"
+        }
+      },
+      "windows-x64": {
+        "replacements": {
+          "rust/crates/mds-bullet/src/core/mod.rs": {
+            "old_sha256": "89a9bd4bea60bf899fd8ec83f4cd04d05f3ced87b1b596c147ff63a0e79089b8",
+            "new_sha256": "8dfb25ae460c57b99e754d9994af2ce318909730f0018778ff9f6a2271e8c2be"
+          }
+        },
+        "additions": {
+          "rust/crates/mds-bullet/src/core/discrete_collision_world.rs": "e845ada45adeb47ecfbbd4ac1f09682f054947360e5c04d051abc218b35faf0b",
+          "rust/crates/mds-bullet/tests/discrete_collision_world.rs": "70ceaeaf379f7499d8722c1aa52a734d68a8e695c26c9e5f605f022f5fb4f2fd"
         }
       }
     }

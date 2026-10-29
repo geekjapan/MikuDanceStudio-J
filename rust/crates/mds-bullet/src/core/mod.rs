@@ -32,6 +32,9 @@ pub mod contact;
 pub mod contact_solver;
 pub mod dbvt;
 pub mod dbvt_broadphase;
+#[allow(dead_code)]
+pub mod discrete_collision_world;
+
 pub mod dispatcher;
 pub mod gjk_epa;
 pub mod gjk_pair;

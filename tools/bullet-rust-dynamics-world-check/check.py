@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Hosted-only original public-shim collision-world capture and strict Rust replay."""
 import argparse
 import datetime
 import json

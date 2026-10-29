@@ -1,4 +1,3 @@
-"""Inert protocol fixtures. These values are not physics calculations or execution evidence."""
 
 
 def complete(raw, inputs, *, native=False, observed=True, mutation=None):

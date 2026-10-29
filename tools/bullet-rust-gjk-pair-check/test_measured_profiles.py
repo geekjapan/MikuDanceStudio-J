@@ -419,8 +419,16 @@ class FiniteMeasurementTests(unittest.TestCase):
             self.assertEqual(old[measured_profiles.REGISTRATION_FORMAT['path']],
                              measured_profiles.REGISTRATION_FORMAT['old_sha256'])
             current = measured_profiles.approved_source_map(self.manifest, host)
-            self.assertEqual({path for path in old if old[path] != current[path]},
-                             measured_profiles.REPLACEMENTS)
+            historical=set(self.manifest['profiles'][host]['protected_source_sha256'])
+            self.assertEqual(set(old),historical | measured_profiles.ADDITIONS)
+            replacements={measured_profiles.REGISTRATION_FORMAT['path']}
+            for layer in ['broadphase_source_admission','discrete_world_source_admission',
+                          'dynamics_world_source_admission']:
+                replacements.update(self.manifest[layer]['hosts'][host]['replacements'])
+            expected=replacements & historical
+            self.assertEqual(expected,measured_profiles.REPLACEMENTS | {
+                'rust/crates/mds-bullet/src/core/world_objects.rs'})
+            self.assertEqual({path for path in old if old[path] != current[path]},expected)
         captured = {**measured_profiles.bridge_protected_source_map(self.manifest, 'linux-arm64'),
                     **measurement['captured_verification_sha256']}
         self.assertEqual(measured_profiles.source_map_digest(captured),

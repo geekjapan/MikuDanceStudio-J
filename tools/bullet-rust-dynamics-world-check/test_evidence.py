@@ -289,7 +289,7 @@ class AdmissionControls(unittest.TestCase):
                 **{prefix+'-build-'+name:prefix+'-'+name+'.pdb' for name in MUTANTS for prefix in ['baseline','mutant']}}
         rows=json.loads(self.windows['commands.json'])
         self.assertEqual({row['label']:name for row in rows for name in row['outputs'] if name.endswith('.pdb')},owners)
-        self.assertEqual(len(owners),37)
+        self.assertEqual(len(owners),3 + 2 * len(MUTANTS))
         def reject(change,reason):
             files=dict(self.windows);receipts=json.loads(files['commands.json']);change(files,receipts)
             files['commands.json']=encode(receipts);refresh(files)
@@ -319,8 +319,16 @@ class AdmissionControls(unittest.TestCase):
         evidence.admit_capture(changed,**self.expected)
 
     def test_unix_complete_closure(self):
+        inputs,cases=corpus();commands=inputs.splitlines()
+        self.assertEqual(len(commands),sum(case['end']-case['start']+1 for case in cases))
+        bindings=sum(command.split()[0]!='X' for command in commands)
+        self.assertEqual(bindings,len(commands)-len(cases))
         for system in ['Linux','Darwin']:
-            files,expected=fixture(system);self.assertEqual(len(evidence.admit_capture(files,**expected).bound_input('ordinary').splitlines()),1333)
+            files,expected=fixture(system)
+            bound=evidence.admit_capture(files,**expected).bound_input('ordinary').splitlines()
+            self.assertEqual(len(bound),len(commands)+bindings)
+            self.assertEqual([line for line in bound if not line.startswith(b'BIND ')],inputs.encode().splitlines())
+            self.assertEqual(sum(line.startswith(b'BIND ') for line in bound),bindings)
 
     def rejected(self, change, reason):
         files=dict(self.windows)
@@ -543,7 +551,7 @@ class PlatformControls(unittest.TestCase):
     def test_finite_windows_pdb_roles_and_other_hosts(self):
         owners={'dedicated-build':'dedicated','pure-build':'pure','rust-observed-build':'rust-world',
                 **{prefix+'-build-'+name:prefix+'-'+name for name in MUTANTS for prefix in ['baseline','mutant']}}
-        self.assertEqual(len(owners),37)
+        self.assertEqual(len(owners),3 + 2 * len(MUTANTS))
         for system,P,root,out in [('Windows',PureWindowsPath,'C:/repo','C:/capture'),('Darwin',PurePosixPath,'/repo','/capture'),('Linux',PurePosixPath,'/repo','/capture')]:
             context={'system':system,'root':root,'out':out,'tools':{name:str(P(root)/'tools'/name) for name in ['python','git','rustup']}}
             schedule=evidence.command_schedule(context,[],'mmd-win64-sse',[],replay=True)

@@ -22,7 +22,7 @@ python3 -B tools/bullet-rust-dynamics-world-check/check.py --out-dir PATH --poli
 
 The native consumer includes the original `mds_bt.cpp`, uses its genuine constructors, and calls actual `mds_bt_world_step`. A separately observed build adds reversible diagnostic hooks to copied sources. The unmodified archive consumer and observed consumer must agree on all common outputs. No native manifolds are injected into the Rust owner.
 
-The corpus includes warmstart contacts, joint and contact solves, multiple islands, six shared nonzero-mass kinematic registration orders, moving kinematic bodies, sleep and wake, first `dt=0`, zero, variable and clamped calls, active gravity updates, motion synchronization, hash, forces, and shutdown. Counts come from `cases.py` and parsed records.
+The corpus includes warmstart contacts, joint and contact solves, multiple islands, six shared kinematic registration orders through the zero-effective-mass public constructor, moving kinematic bodies, sleep and wake, first `dt=0`, zero, variable and clamped calls, active gravity updates, motion synchronization, hash, forces, and shutdown. Counts come from `cases.py` and parsed records.
 
 ## Retained evidence
 
@@ -31,6 +31,8 @@ The reader and producer retain the accepted archive, include, allocator, source,
 `R` records the actual returned count and state hash. `W` records initialized dynamics state in body order. `K` records the native clock. `Y` records actual prepare, ordered global body, manifold and joint selections, and completion. `V` records the cleared live prefix and retained workspace capacity. The reader rejects missing records, reordered phases, malformed words, duplicate indices, and unknown fields. Comparisons retain exact numeric words and order. Synthetic receipts in tests are inert protocol fixtures, not physics calculations or runtime evidence.
 
 Every compiled mutant has a clean same-host baseline and must exit normally with a complete trace and a directed numeric or order difference. Mutants cover requested versus executed return, gravity accumulation, pair ownership, contact-only union, group and step workspace resets, missing normal impulse writeback, COM integration, zero-step synchronization, and force clearing. The group-reset mutant targets groups without kinematic endpoints, so an unknown retained slot does not replace its intended capacity witness with a crash.
+
+The unchanged public constructor forces kinematic descriptor mass to zero, even when the descriptor supplies a nonzero mass. The public shim has no kinematic setter. The six shared registration cases cover this reachable zero-effective-mass state. Nonzero-inverse-mass kinematic retained-slot coverage is UNRUN and remains a future obligation for broader state coverage.
 
 `UninitializedSolverSlot` is a promotion hold. The implementation does not initialize unknown slots, reset companions outside the accepted island boundary, or invent values. New NaN differences require an actual causal diagnosis and independent review. Existing GJK and mixed profiles grant no waiver for this corpus.
 

@@ -152,22 +152,29 @@ class WrapperRun:
 
     def __enter__(self):
         require(self.phase == 'new', 'wrapper owner cannot be reused')
-        self.phase = 'installing'
+        self.phase = 'admitting'
         try:
             self._signal_runtime()
             require(not set(self.signals) & signal.sigpending(), 'caller cancellation signals already pending')
             self.original_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
             require(not set(self.signals) & self.original_mask, 'caller cancellation signals must be unblocked')
+            self.phase = 'installing'
             for signum in self.signals:
                 self.previous[signum] = signal.getsignal(signum)
+            signal.pthread_sigmask(signal.SIG_BLOCK, self.signals)
+            self._drain_python()
+            for signum in self.signals:
                 signal.signal(signum, self.interrupt)
+            self._drain_python()
+            signal.pthread_sigmask(signal.SIG_SETMASK, self.original_mask)
             self.phase = 'working'
             self.checkpoint()
         except BaseException as error:
-            if self.previous:
+            if self.phase != 'admitting' and self.original_mask is not None:
                 self._finish(error)
             else:
                 self.phase = 'failed'
+                self._revoke('cancelled' if isinstance(error, KeyboardInterrupt) else 'failed')
             raise
         return self
 
@@ -260,7 +267,6 @@ class WrapperRun:
             except BaseException as failure:
                 failures.append(failure)
         else:
-            # The single thread is blocked and queued Python dispatch is drained.
             self.phase = 'completed' if self.root is not None else 'closed'
         try:
             signal.pthread_sigmask(signal.SIG_SETMASK, self.original_mask)

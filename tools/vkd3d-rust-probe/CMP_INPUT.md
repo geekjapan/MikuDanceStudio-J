@@ -94,7 +94,15 @@ Each proven invocation closure has a separate `.log.custody.json` receipt.
 The atomic final manifest rename remains revocable until signal handoff completes.
 Handoff requires reviewed CPython 3.12.3 and one owned OS thread. Construction and
 import perform no OS probes. Entry refuses caller-blocked or already-pending
-SIGINT/SIGTERM before installing handlers. Finalization blocks those signals,
+SIGINT/SIGTERM before installing handlers. It saves the caller mask and both
+handlers before blocking both signals. Queued caller callbacks are flushed before
+either handler changes. Both owner handlers are installed under that mask, then
+queued owner callbacks are flushed. The original mask is restored while entry
+still records cancellation without interrupting restoration. A checkpoint refuses
+all work if cancellation arrived during entry. Setup failures attempt caller-state
+restoration even if no handler was saved or the blocking call applied its mask
+before raising. Signals before ownership begins remain the caller's responsibility.
+Finalization blocks those signals,
 flushes queued Python dispatch through `PyErr_CheckSignals` while owner handlers
 remain installed, and restores every saved caller handler once. It consumes
 observed OS-pending cancellation and adjudicates the shared cancellation state.
@@ -126,6 +134,10 @@ separate. A separate hosted queued-callback control uses CPython
 actual Python dispatcher to latch owner cancellation. That control tests a CPython
 flag, rather than kernel signal delivery. All cases use actual owner teardown and
 restore caller handlers and mask.
+Eight additional hosted controls deliver each signal before and after each owner
+handler installation. They verify that the signal remains kernel pending while
+both signals are blocked, cancellation reaches the owner after registration,
+and no normalization, writer, ready receipt, or final manifest follows.
 It records actual process and
 session IDs, exits, times, and task-directory hashes, then checks that writes
 stop after the terminal receipt. Run it only on hosted Linux:

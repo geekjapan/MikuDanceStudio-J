@@ -62,6 +62,12 @@ class InertSignals:
         self.event(('pending', 'after'))
         return pending
 
+    def send(self, signum):
+        if signum in self.mask:
+            self.pending.add(signum)
+        else:
+            self.handlers[signum](signum, None)
+
     def drain_python(self):
         for signum in self.python_pending:
             self.handlers[signum](signum, None)
@@ -618,6 +624,104 @@ class CmpInputTests(unittest.TestCase):
                 self.assertEqual(self.signals.mask, saved_mask)
                 self.assert_cancelled_publication(owner.root)
 
+    def test_entry_registered_handlers_receive_initial_and_repeated_cancellation(self):
+        events = [('install', signum, side) for signum in wrapper.WrapperRun.signals
+                  for side in ('before', 'after')]
+        events += [('mask', signal.SIG_SETMASK, frozenset({signal.SIGUSR1}), side)
+                   for side in ('before', 'after')]
+        for index, target in enumerate(events):
+            for first in wrapper.WrapperRun.signals:
+                with self.subTest(target=target, first=first):
+                    owner = self.published_owner('registered-' + str(index) + '-' + str(first))
+                    caller_deliveries = []
+                    saved = {sig: (lambda sig, frame: caller_deliveries.append(sig)) for sig in owner.signals}
+                    self.signals.handlers = saved.copy()
+                    original_mask = self.signals.mask.copy()
+                    observed = []
+                    def inject(event):
+                        if event == target and owner.phase == 'installing' and not observed:
+                            observed.append((self.signals.mask.copy(), self.signals.handlers.copy()))
+                            for sig in (first, *owner.signals, first):
+                                self.signals.send(sig)
+                    self.signals.inject = inject
+                    with patch.object(owner, '_execute') as execute:
+                        with self.assertRaises(KeyboardInterrupt):
+                            owner.execute(None)
+                        execute.assert_not_called()
+                    self.signals.inject = lambda event: None
+                    self.assertTrue(observed)
+                    if target[0] == 'install':
+                        self.assertTrue(set(owner.signals) <= observed[0][0])
+                    self.assertTrue(owner.cancelled)
+                    self.assertEqual(caller_deliveries, [])
+                    self.assertEqual(self.signals.handlers, saved)
+                    self.assertEqual(self.signals.mask, original_mask)
+                    self.assertEqual(self.signals.pending, set())
+                    self.assert_cancelled_publication(owner.root)
+                    with self.assertRaises(KeyboardInterrupt):
+                        owner.normalize()
+                    with self.assertRaises(KeyboardInterrupt):
+                        owner.invoke([], None, None, None)
+
+    def test_entry_queued_dispatch_after_registration_cannot_grant_work(self):
+        owner = self.published_owner('entry-queued')
+        caller_deliveries = []
+        saved = {sig: (lambda sig, frame: caller_deliveries.append(sig)) for sig in owner.signals}
+        self.signals.handlers = saved.copy()
+        def inject(event):
+            if event == ('install', signal.SIGTERM, 'after'):
+                self.signals.python_pending.extend((*owner.signals, *owner.signals))
+        self.signals.inject = inject
+        with self.assertRaises(KeyboardInterrupt):
+            with owner:
+                self.fail('queued entry cancellation admitted work')
+        self.signals.inject = lambda event: None
+        self.assertTrue(owner.cancelled)
+        self.assertEqual(caller_deliveries, [])
+        self.assertEqual(self.signals.handlers, saved)
+        self.assertEqual(self.signals.python_pending, [])
+        self.assert_cancelled_publication(owner.root)
+
+    def test_entry_failure_before_saved_handler_and_after_mask_application_restores_caller(self):
+        for target in ('runtime', 'getsignal-first', 'getsignal-last', 'block-before', 'block-after',
+                       'unmask-before', 'unmask-after', 'preownership-dispatch'):
+            with self.subTest(target=target):
+                owner = self.published_owner('entry-failure-' + target)
+                saved = self.signals.handlers.copy()
+                original_mask = self.signals.mask.copy()
+                fired = []
+                def fail(event):
+                    match = (event == ('mask', signal.SIG_BLOCK, frozenset(owner.signals),
+                                       target.removeprefix('block-')) if target.startswith('block-') else
+                             event == ('mask', signal.SIG_SETMASK, frozenset(original_mask),
+                                       target.removeprefix('unmask-')) if target.startswith('unmask-') else False)
+                    if match and owner.phase == 'installing' and not fired:
+                        fired.append(event)
+                        raise OSError('entry setup failure')
+                self.signals.inject = fail
+                def getsignal(sig):
+                    if target == ('getsignal-first' if sig == signal.SIGINT else 'getsignal-last') and not fired:
+                        fired.append(sig)
+                        raise OSError('entry handler read failure')
+                    return self.signals.handlers[sig]
+                with ExitStack() as stack:
+                    stack.enter_context(patch.object(signal, 'getsignal', side_effect=getsignal))
+                    if target == 'runtime':
+                        stack.enter_context(patch.object(owner, '_signal_runtime', side_effect=OSError('runtime failure')))
+                    if target == 'preownership-dispatch':
+                        stack.enter_context(patch.object(owner, '_drain_python', side_effect=OSError('queued caller failure')))
+                    with patch.object(owner, '_execute') as execute:
+                        with self.assertRaises((OSError, BaseExceptionGroup)):
+                            owner.execute(None)
+                        execute.assert_not_called()
+                self.signals.inject = lambda event: None
+                self.assertEqual(owner.phase, 'failed')
+                self.assertEqual(self.signals.handlers, saved)
+                self.assertEqual(self.signals.mask, original_mask)
+                self.assertEqual(self.signals.pending, set())
+                self.assertFalse((owner.root / 'output-manifest.json').exists())
+                self.assertFalse(list(owner.root.rglob('receipt.json')))
+
     def test_queued_python_and_masked_os_pending_are_adjudicated_before_caller_handoff(self):
         for kind in ('python', 'os'):
             with self.subTest(kind=kind):
@@ -732,12 +836,12 @@ class CmpInputTests(unittest.TestCase):
                     if phase == 'readback' and fired and how == signal.SIG_BLOCK and not mask:
                         raise OSError('injected unreadable restoration state')
                 self.signals.inject = fail
-                with self.assertRaises(BaseExceptionGroup):
+                with self.assertRaises((OSError, BaseExceptionGroup)):
                     with owner:
                         pass
                 self.signals.inject = lambda event: None
                 self.assertTrue(fired)
-                self.assertEqual(len(restores), int(phase != 'setup'))
+                self.assertEqual(len(restores), 0 if phase == 'setup' else 2)
                 self.assertEqual(owner.phase, 'failed')
                 self.assertFalse((owner.root / 'output-manifest.json').exists())
                 self.assertFalse(list(owner.root.rglob('receipt.json')))
@@ -1012,6 +1116,8 @@ def signal_custody_case(output, phase, signum, probe):
     actual_mask, actual_signal, actual_pending = signal.pthread_sigmask, signal.signal, signal.sigpending
     actual_drain = wrapper.WrapperRun._drain_python
     paused = []
+    entry_pending = []
+    active_owner = []
     def rendezvous():
         if paused:
             return
@@ -1022,16 +1128,17 @@ def signal_custody_case(output, phase, signum, probe):
             boundary.require(time.monotonic() < deadline, 'parent did not send synchronized signal')
             time.sleep(0.001)
     def mask(how, signals):
-        if how == signal.SIG_BLOCK and set(signals) == set(wrapper.WrapperRun.signals) and phase == 'before-block':
+        finishing = active_owner and active_owner[0].phase == 'finishing'
+        if finishing and how == signal.SIG_BLOCK and set(signals) == set(wrapper.WrapperRun.signals) and phase == 'before-block':
             rendezvous()
-        if how == signal.SIG_SETMASK and phase == 'handoff':
+        if active_owner and active_owner[0].phase in ('completed', 'closed') and how == signal.SIG_SETMASK and phase == 'handoff':
             rendezvous()
         result = actual_mask(how, signals)
-        if how == signal.SIG_BLOCK and set(signals) == set(wrapper.WrapperRun.signals) and phase == 'masked':
+        if finishing and how == signal.SIG_BLOCK and set(signals) == set(wrapper.WrapperRun.signals) and phase == 'masked':
             rendezvous()
         return result
     def drain_python(owner):
-        if phase == 'python-queued':
+        if phase == 'python-queued' and owner.phase == 'finishing':
             import ctypes
             rendezvous()
             boundary.require(not set(owner.signals) & actual_pending(), 'queued control has an OS-pending signal')
@@ -1040,13 +1147,26 @@ def signal_custody_case(output, phase, signum, probe):
             enqueue.restype = ctypes.c_int
             boundary.require(enqueue(signum) == 0, 'CPython signal flag could not be queued')
         actual_drain(owner)
-        if phase == 'python-queued':
+        if phase == 'python-queued' and owner.phase == 'finishing':
             boundary.require(owner.cancelled, 'queued Python callback did not reach the owner')
     def install(sig, handler):
         restoring = handler is caller
+        if not restoring:
+            active_owner[:] = [handler.__self__]
+        entry_phase = 'entry-' + ('first' if sig == signal.SIGINT else 'last')
+        def entry(side):
+            if not restoring and phase == entry_phase + '-' + side:
+                boundary.require(set(wrapper.WrapperRun.signals) <= actual_mask(signal.SIG_BLOCK, set()),
+                                 'entry registration did not block both owned signals')
+                rendezvous()
+                boundary.require(signum in actual_pending(), 'entry delivery was not kernel pending')
+                boundary.require(not caller_signals, 'partial registration delivered to caller')
+                entry_pending.append(signum)
+        entry('before')
         if restoring and sig == signal.SIGINT and phase == 'restore-first-before':
             rendezvous()
         result = actual_signal(sig, handler)
+        entry('after')
         if restoring and ((sig == signal.SIGINT and phase == 'restore-first-after')
                           or (sig == signal.SIGTERM and phase == 'restore-last-after')):
             rendezvous()
@@ -1076,11 +1196,16 @@ def signal_custody_case(output, phase, signum, probe):
             'posthandoff caller signal revoked completed output')
         status, code = 'completed_caller_delivery', 0
     except KeyboardInterrupt:
-        boundary.require((args.artifacts / 'CANCELLED').is_file()
+        boundary.require((not args.artifacts.exists() if phase.startswith('entry-')
+                          else (args.artifacts / 'CANCELLED').is_file())
             and not (args.artifacts / 'output-manifest.json').exists()
             and not list(args.artifacts.rglob('receipt.json'))
             and not (args.artifacts / 'OWNED_WRITERS_UNPROVEN').exists()
             and not wrapper.owned_children(), 'cancelled wrapper published output or retained writers')
+        if phase.startswith('entry-'):
+            boundary.require(entry_pending == [signum] and active_owner[0].cancelled
+                and not caller_signals and not (output / 'nested').exists(),
+                'entry cancellation was lost or admitted a writer')
         boundary.require({key: boundary.regular_tree(path) for key, path in domains.items()} == before
             and {key: sorted(p.relative_to(path).as_posix() for p in path.rglob('*'))
                  for key, path in domains.items()} == members
@@ -1099,6 +1224,7 @@ def signal_custody_case(output, phase, signum, probe):
         'original_manifests': before, 'original_members': members, 'native_identity': library,
         'caller_deliveries': caller_signals, 'caller_mask_restored': True, 'caller_handlers_restored': True,
         'python_runtime': list(wrapper.sys.version_info[:3]), 'synchronized_phase': paused,
+        'entry_kernel_pending': entry_pending,
         'delivery_mechanism': 'PyErr_SetInterruptEx flag' if phase == 'python-queued' else 'owned wrapper pidfd'}, indent=2) + '\n')
     raise SystemExit(code)
 
@@ -1109,7 +1235,8 @@ def signal_custody_test(output, probe):
     import time
     receipts = {}
     for phase in ('wait', 'after-wait', 'before-block', 'masked', 'restore-first-before',
-                  'restore-first-after', 'restore-last-after', 'final-pending', 'python-queued', 'handoff'):
+                  'restore-first-after', 'restore-last-after', 'final-pending', 'python-queued', 'handoff',
+                  'entry-first-before', 'entry-first-after', 'entry-last-before', 'entry-last-after'):
         for signum in (signal.SIGINT, signal.SIGTERM):
             root = output / (phase + '-' + str(signum))
             root.mkdir()
@@ -1143,10 +1270,11 @@ def signal_custody_test(output, probe):
             result = json.loads((root / 'signal-result.json').read_text())
             boundary.require(result['pid'] == process.pid and result['signal'] == signum
                              and result['phase'] == phase, 'signal identity/phase differs')
-            closed = json.loads((root / 'actual/correct-probe.log.custody.json').read_text())
-            boundary.require(closed['owned_writers_closed'], 'nested probe lacks closure receipt')
+            closed = (None if phase.startswith('entry-') else
+                      json.loads((root / 'actual/correct-probe.log.custody.json').read_text()))
+            boundary.require(phase.startswith('entry-') or closed['owned_writers_closed'], 'nested probe lacks closure receipt')
             identities = [json.loads(path.read_text()) for path in (root / 'nested').rglob('*.identity')]
-            reaped = {row['pid'] for row in closed['owned_descendants_reaped']}
+            reaped = {row['pid'] for row in closed['owned_descendants_reaped']} if closed else set()
             boundary.require(phase != 'wait' or identities, 'wait cancellation missed actual writer')
             for identity in identities:
                 boundary.require(identity['pid'] in reaped and identity['pid'] == identity['session'],

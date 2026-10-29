@@ -511,30 +511,41 @@ class IncludeControls(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'raw source/generated include ownership|temporal include alias'):self.verify(candidate,schedule,context)
 
     def test_filesystem_resolution_temporal_bytes_and_cwd(self):
+        import os
+        import platform
         import tempfile
         from pathlib import Path
+        system=platform.system()
+        emit=lambda name:('Note: including file: '+name+'\n' if system=='Windows' else '. '+name+'\n').encode()
         with tempfile.TemporaryDirectory() as temporary:
             base=Path(temporary).resolve();out=base/'capture';out.mkdir();physical=base/'physical';physical.mkdir();(physical/'sub').mkdir()
             header=physical/'header.h';header.write_bytes(b'original')
             other=base/'other.h';other.write_bytes(b'original')
-            alias=base/'directory';alias.symlink_to(physical/'sub',target_is_directory=True)
+            alias=base/'directory';alias.symlink_to(physical,target_is_directory=True)
             direct=base/'alias.h';direct.symlink_to(header)
-            spelling=str(alias/'..'/'header.h')
-            occurrences=evidence.include_occurrences(('. '+spelling+'\n. alias.h\n. alias.h\n').encode(),b'. alias.h\n','Linux')
+            spellings=[str(alias/'sub'/'..'/'header.h'),'alias.h','alias.h']
+            if os.name=='posix':
+                parent_alias=base/'parent-directory';parent_alias.symlink_to(physical/'sub',target_is_directory=True)
+                spellings.append(str(parent_alias/'..'/'header.h'))
+                self.assertNotEqual(os.path.normpath(spellings[-1]),str(header))
+            stdout=b''.join(emit(name) for name in spellings);stderr=emit('alias.h')
+            for name in spellings:
+                self.assertEqual((base/name).read_bytes(),b'original')
+            occurrences=evidence.include_occurrences(stdout,stderr,system)
             pre=check.acquire_include_bindings(occurrences,base,out)
-            self.assertEqual({row['target'] for row in pre},{str(header)})
-            self.assertEqual(len(pre),4)
+            target=os.path.normcase(str(header))
+            self.assertEqual(pre,[{'stream':'stdout','ordinal':i,'raw':name,'target':target,'sha256':sha(b'original')} for i,name in enumerate(spellings)]+[{'stream':'stderr','ordinal':0,'raw':'alias.h','target':target,'sha256':sha(b'original')}])
             post=check.acquire_include_bindings(occurrences,base,out);self.assertEqual(post,pre)
             def verify(after,end):
-                manifest,_=evidence.include_projection(pre,occurrences,'Linux');post_manifest,_=evidence.include_projection(after,occurrences,'Linux')
+                manifest,_=evidence.include_projection(pre,occurrences,system);post_manifest,_=evidence.include_projection(after,occurrences,system)
                 files={name:path.read_bytes() for path in (out/'include-bytes').iterdir() for name in ['include-bytes/'+path.name]}
                 for stage in ['compile','compile-discovery']:
-                    files[stage+'.stdout']=('. '+spelling+'\n. alias.h\n. alias.h\n').encode();files[stage+'.stderr']=b'. alias.h\n'
+                    files[stage+'.stdout']=stdout;files[stage+'.stderr']=stderr
                 files['compile-include-bindings.json']=encode({'schema':1,'label':'compile','cwd':str(base),'pre':pre,'post':after})
                 files['compile-includes-pre.json']=encode(manifest);files['compile-includes.json']=encode(post_manifest);files['native-includes-end.json']=encode(manifest)
                 unique={row['raw']:(row['target'],row['sha256']) for row in end}
                 files['native-include-bindings-end.json']=encode({'schema':1,'bindings':[{'cwd':str(base),'raw':raw,'target':target,'sha256':value} for raw,(target,value) in unique.items()]})
-                self.verify(files,[('compile',[],str(base),None,(),True)],{'system':'Linux','root':str(base/'repo'),'out':str(out)})
+                self.verify(files,[('compile',[],str(base),None,(),True)],{'system':system,'root':str(base/'repo'),'out':str(out)})
             verify(post,check.acquire_include_bindings(occurrences,base,out))
             direct.unlink();direct.symlink_to(other)
             changed=check.acquire_include_bindings(occurrences,base,out)
@@ -545,7 +556,7 @@ class IncludeControls(unittest.TestCase):
             with self.assertRaises(ValueError):verify(changed,changed)
             with self.assertRaises(ValueError):verify(post,changed)
             relative=[{'stream':'stdout','ordinal':0,'raw':'header.h'}]
-            self.assertEqual(check.acquire_include_bindings(relative,physical,out)[0]['target'],str(header))
+            self.assertEqual(check.acquire_include_bindings(relative,physical,out)[0]['target'],target)
             with self.assertRaises(FileNotFoundError):check.acquire_include_bindings(relative,base,out)
             direct.unlink();direct.symlink_to(base/'missing')
             with self.assertRaises(FileNotFoundError):check.acquire_include_bindings([occurrences[1]],base,out)

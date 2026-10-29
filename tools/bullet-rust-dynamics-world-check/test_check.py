@@ -79,15 +79,16 @@ class SourceControls(unittest.TestCase):
         self.assertEqual(comparison(rows),comparison(validate(synthetic()[1],commands)))
 
     def test_allocator_rejects_orphan_free_and_false_mode(self):
-        rows=validate(b'O 0 H 0 0 0 1\nO 1 X 0 0 0 1\nZ 2\n','H x public\nX\n')
+        rows=validate(b'O 0 H 0 0 0 1\nR 0 -1 1469598103934665603\nO 1 X 0 0 0 1\nZ 2\n','H x public\nX\n')
         header={'schema':2,'domain':'unmodified-control','mode':'ascending','arena_base':4096,'slots':65536,'stride':128,'node_bytes':56,'raw_node_bytes':79,'node_type_alignment':8}
         records=[header,*[{'kind':kind,'counters':[0,0,0,0],'events':[],'world':1,'trees':[1024,2048],'node_counters':[0]*4,'nodes':[]} for kind in [0,1,'final']]]
         raw=lambda:('\n'.join(json.dumps(r) for r in records)+'\n').encode()
         validate_allocator(raw(),rows,'ascending',domain='unmodified-control')
-        records[1]['events']=[{'op':'free','route':'raw','pointer':4096,'ordinal':1}]
-        with self.assertRaises(ValueError):validate_allocator(raw(),rows,'ascending',domain='unmodified-control')
-        records[1]['events']=[]
-        with self.assertRaises(ValueError):validate_allocator(raw(),rows,'descending',domain='unmodified-control')
+        records[1]['events']=[{'op':'free','route':'raw','pointer':4096,'ordinal':1,'node_call':0}]
+        records[1]['counters'][1]=1
+        with self.assertRaisesRegex(ValueError,'^real free matches prior allocation route$'):validate_allocator(raw(),rows,'ascending',domain='unmodified-control')
+        records[1]['events']=[];records[1]['counters'][1]=0
+        with self.assertRaisesRegex(ValueError,'^actual allocator mode/layout$'):validate_allocator(raw(),rows,'descending',domain='unmodified-control')
 
     def test_allocator_live_node_prefix_and_full_free_are_required(self):
         rows=[{'trees':[[[[0,4112,*(['00000000']*6)]],0],[[],0]]},{'trees':[]}]
@@ -222,7 +223,7 @@ class SourceControls(unittest.TestCase):
 
     def test_raw_scopes_follow_typed_calls_with_null_free_gaps(self):
         inputs='H synthetic public\nX\n'
-        rows=validate(b'O 0 H 0 0 0 1\nT 0 0 0 0\nT 0 1 0 0\nO 1 X 0 0 0 1\nZ 2\n',inputs,native=True,observed=False)
+        rows=validate(b'O 0 H 0 0 0 1\nR 0 -1 1469598103934665603\nT 0 0 0 0\nT 0 1 0 0\nO 1 X 0 0 0 1\nZ 2\n',inputs,native=True,observed=False)
         header=dict(schema=2,domain='generated-dbvt-node-sites',mode='ascending',arena_base=4096,slots=65536,stride=128,node_bytes=56,raw_node_bytes=79,node_type_alignment=8)
         def raw(op,pointer,ordinal,call):
             value=dict(op=op,route='raw',pointer=pointer,ordinal=ordinal,node_call=call)

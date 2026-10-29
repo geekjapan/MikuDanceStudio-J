@@ -347,7 +347,14 @@ class AdmissionControls(unittest.TestCase):
             self.rejected(lambda files,name=name:files.pop(name),'required capture file')
 
     def test_commands_flags_tools_environment_and_generated_use(self):
-        self.rejected(lambda files:edit_json(files,'commands.json',lambda rows:rows.reverse()),'ordered unique command')
+        self.rejected(lambda files:edit_json(files,'commands.json',lambda rows:rows.reverse()),'^closed sequential process chronology mutant-build-force-clear$')
+        def reordered(rows):
+            stamps=[(row['start_utc'],row['end_utc']) for row in rows]
+            rows.reverse()
+            for row,(start,end) in zip(rows,stamps):row.update(start_utc=start,end_utc=end)
+        self.rejected(lambda files:edit_json(files,'commands.json',reordered),'^ordered unique command helpers-normal$')
+        self.rejected(lambda files:edit_json(files,'commands.json',lambda rows:rows[0].update(label=rows[1]['label'])),'^ordered unique command helpers-normal$')
+        self.rejected(lambda files:edit_json(files,'commands.json',lambda rows:rows.pop()),'^complete actual command schedule$')
         self.rejected(lambda files:edit_json(files,'commands.json',lambda rows:rows[0]['argv'].append('--foreign')),'exact effective command')
         self.rejected(lambda files:edit_json(files,'commands.json',lambda rows:rows[0].update(tool_sha256='0'*64)),'resolved command tool')
         self.rejected(lambda files:edit_json(files,'commands.json',lambda rows:next(row for row in rows if row['label']=='rust-observed-build').update(generated_inputs={})), 'actual generated source pre-use')
@@ -644,7 +651,13 @@ class ArchiveIndexControls(unittest.TestCase):
             reject(lambda f,r:arx(r).update({field:value}),'exact effective command argv/cwd archive-extract' if field!='label' else 'ordered unique command archive-extract')
         def swap(f,r):
             i=next(i for i,row in enumerate(r) if row['label']=='archive-extract');r[i-1],r[i]=r[i],r[i-1]
-        reject(swap,'ordered unique command archive-list')
+        reject(swap,'^closed sequential process chronology archive-list$')
+        def reordered(f,r):
+            stamps=[(row['start_utc'],row['end_utc']) for row in r]
+            swap(f,r)
+            for row,(start,end) in zip(r,stamps):row.update(start_utc=start,end_utc=end)
+        reject(reordered,'^ordered unique command archive-list$')
+        reject(lambda f,r:arx(r).update(label='archive-list'),'^ordered unique command archive-extract$')
         reject(lambda f,r:arx(r)['inputs'].update({'/capture/world/libBulletWorld.a':'0'*64}),'actual pre-use direct source/object/archive/CRT inputs archive-extract')
         def extra(f,r):
             f['extracted/__.SYMDEF_64']=f[key];arx(r)['outputs']['extracted/__.SYMDEF_64']=sha(f[key])

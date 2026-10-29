@@ -1410,7 +1410,7 @@ new file mode 100644
 +++ b/c2rust-transpile/src/c_ast/closed_plan_tests.rs
 @@ -0,0 +1,214 @@
 +use super::*;
-+use crate::program::{command_identity, native_sources};
++use crate::program::{command_identity, native_database_row, native_sources};
 +
 +use crate::test_config;
 +
@@ -1430,7 +1430,7 @@ new file mode 100644
 +    let row = serde_json::json!({"directory": directory.path(), "file": source, "arguments": argv});
 +    let (key, command, source, effective) = command_identity(&row, &[], "test-link").unwrap();
 +    let database = directory.path().join("compile_commands.json");
-+    std::fs::write(&database, serde_json::to_vec(&vec![&effective]).unwrap()).unwrap();
++    std::fs::write(&database, serde_json::to_vec(&vec![native_database_row(&effective)]).unwrap()).unwrap();
 +    let (untyped, _, instance) = c2rust_ast_exporter::get_prepared_untyped_ast(&source, &database, &[], false, false).unwrap();
 +    let conversion = ConversionContext::new(&source, &untyped);
 +    assert!(!conversion.invalid_clang_ast, "legal native baseline must import");
@@ -4723,7 +4723,7 @@ diff --git a/c2rust-transpile/src/program.rs b/c2rust-transpile/src/program.rs
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/program.rs
-@@ -0,0 +1,383 @@
+@@ -0,0 +1,389 @@
 +use crate::*;
 +use crate::c_ast::closed_plan::{ClosedVariadicPlan, UnitIdentity, UnitKey};
 +use crate::compile_cmds::LinkCmd;
@@ -4801,6 +4801,12 @@ new file mode 100644
 +    Ok((key, command, source, row))
 +}
 +
++pub(crate) fn native_database_row(effective: &serde_json::Value) -> serde_json::Value {
++    let mut row = effective.clone();
++    if row["output"].is_null() { row.as_object_mut().unwrap().remove("output"); }
++    row
++}
++
 +pub(crate) fn native_sources(ast: &mut TypedAstContext, source: &Path, effective: &serde_json::Value, extra: &[&str]) -> Result<BTreeMap<PathBuf, Vec<u8>>, Error> {
 +    let raw = ast.cursor_inputs.take().ok_or_else(|| format_err!("missing native input capture"))?;
 +    crate::native_intake::capture(&raw, ast, source, effective, extra)
@@ -4844,7 +4850,7 @@ new file mode 100644
 +                let (index, row) = candidates[0];
 +                if !admitted.insert(index) { return Err(format_err!("duplicate command membership")); }
 +                let (_, command, source, effective) = command_identity(row, extra, &domain)?;
-+                fs::write(&database, serde_json::to_vec(&vec![&effective])?)?;
++                fs::write(&database, serde_json::to_vec(&vec![native_database_row(&effective)])?)?;
 +                let (mut ast, preprocessed, instance) = prepare_single(tcfg, &source, &database, extra, None)
 +                    .map_err(|_| format_err!("common plan native preparation failed"))?;
 +                let instance = instance.expect("prepared native AST digest");
@@ -4983,7 +4989,7 @@ new file mode 100644
 +        fs::write(&source,text).unwrap();
 +        let database=directory.join("compile_commands.json");
 +        let effective=serde_json::json!({"directory":directory,"file":source,
-+            "arguments":["clang","-x","c","-std=gnu11","-c",source],"output":null});
++            "arguments":["clang","-x","c","-std=gnu11","-c",source]});
 +        fs::write(&database,serde_json::to_vec(&vec![&effective]).unwrap()).unwrap();
 +        (source,database,effective)
 +    }

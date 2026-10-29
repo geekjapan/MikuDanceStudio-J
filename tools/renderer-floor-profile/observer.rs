@@ -1,5 +1,5 @@
 use super::*;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 thread_local! { static ACTIVE: Cell<bool> = const { Cell::new(false) }; }
 fn emit(value: String) { ACTIVE.with(|a| if a.get() { println!("FP {value}"); }); }
 fn bits(v: &[f32]) -> Vec<u32> { v.iter().map(|x| x.to_bits()).collect() }
@@ -84,7 +84,7 @@ enum Capture { Idle, Armed(Operation), Running(Operation), Finished(Operation) }
 thread_local! {
     static CAPTURE: Cell<Capture> = const { Cell::new(Capture::Idle) };
     static MERGE_CURSOR: Cell<[u32; 2]> = const { Cell::new([u32::MAX, 0]) };
-    static LINEAGE: Cell<([[usize; 10]; 16], usize)> = const { Cell::new(([[0; 10]; 16], 0)) };
+    static LINEAGE: RefCell<([[usize; 10]; 16], usize)> = const { RefCell::new(([[0; 10]; 16], 0)) };
 }
 #[inline(always)]
 fn boundary() -> (u32, usize) {
@@ -108,7 +108,7 @@ fn arm(owner: [u32; 4]) {
     CAPTURE.with(|slot| { assert!(matches!(slot.get(), Capture::Idle));
         slot.set(Capture::Armed(Operation { owner, ..Operation::EMPTY })); });
     MERGE_CURSOR.with(|c| c.set([u32::MAX, 0]));
-    LINEAGE.with(|c| c.set(([[0; 10]; 16], 0)));
+    LINEAGE.with(|c| c.borrow_mut().1 = 0);
 }
 #[inline(always)]
 pub(super) fn begin_operation(p: [f32; 3], m: &Mat4) {
@@ -141,11 +141,10 @@ pub(super) fn merge_container() {
 pub(super) fn merge_source(vertices: &Vec<Vertex>, source: &Vertex, matrix: &Mat4) {
     if CAPTURE.with(|s| !matches!(s.get(), Capture::Idle)) {
         LINEAGE.with(|slot| {
-            let (mut rows, n) = slot.get(); assert!(n < rows.len());
-            rows[n] = [vertices.as_ptr() as usize, vertices.len(), vertices.capacity(),
+            let mut lineage = slot.borrow_mut(); let n = lineage.1; assert!(n < lineage.0.len());
+            lineage.0[n] = [vertices.as_ptr() as usize, vertices.len(), vertices.capacity(),
                 source as *const Vertex as usize, matrix as *const Mat4 as usize, 0, 0, 0,
                 std::mem::size_of::<Vertex>(), code_site()];
-            slot.set((rows, n));
         });
     }
     CAPTURE.with(|slot| if let Capture::Armed(mut op) = slot.get() {
@@ -159,9 +158,9 @@ pub(super) fn merge_source(vertices: &Vec<Vertex>, source: &Vertex, matrix: &Mat
 pub(super) fn merge_destination(vertices: &Vec<Vertex>) {
     if CAPTURE.with(|s| !matches!(s.get(), Capture::Idle)) {
         LINEAGE.with(|slot| {
-            let (mut rows, n) = slot.get(); assert!(n < rows.len());
-            rows[n][5] = vertices.as_ptr() as usize; rows[n][6] = vertices.len(); rows[n][7] = vertices.capacity();
-            slot.set((rows, n + 1));
+            let mut lineage = slot.borrow_mut(); let n = lineage.1; assert!(n < lineage.0.len());
+            lineage.0[n][5] = vertices.as_ptr() as usize; lineage.0[n][6] = vertices.len(); lineage.0[n][7] = vertices.capacity();
+            lineage.1 = n + 1;
         });
     }
     CAPTURE.with(|slot| if let Capture::Finished(mut op) = slot.get() {
@@ -236,11 +235,13 @@ fn operation_diagnostic() {
     let before = boundary(); let mesh = crate::load_x(&raw).expect("actual runtime importer"); let after = boundary();
     let output = mesh.vertices[0].position;
     if @OBSERVED@ {
-        let (rows, count) = LINEAGE.with(|s| s.get());
-        println!("FP {{\"stage\":\"merge-lineage\",\"caller\":[{},{}],\"rows\":{:?},\"returned\":[{},{},{},{},{},{}]}}", before.1, after.1, &rows[..count],
+        LINEAGE.with(|slot| {
+        let lineage = slot.borrow();
+        println!("FP {{\"stage\":\"merge-lineage\",\"caller\":[{},{}],\"rows\":{:?},\"returned\":[{},{},{},{},{},{}]}}", before.1, after.1, &lineage.0[..lineage.1],
             mesh.vertices.as_ptr() as usize, mesh.vertices.len(), mesh.vertices.capacity(),
             &mesh.vertices[0].position as *const [f32; 3] as usize, code_site(),
             std::mem::offset_of!(Vertex, position));
+        });
     }
     if @OBSERVED@ { complete(output, [before.1, after.1], base); }
     else { emit_operation("RustEndpoint", Operation { owner: [2, 0, 0, 0], output: output.map(f32::to_bits), destination: output.map(f32::to_bits),

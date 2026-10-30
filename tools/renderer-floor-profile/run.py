@@ -298,7 +298,6 @@ def bound_bytes(value):
 
 
 def bound_preflight(value):
-    """Bound the LF serializer and reconstruction before creating output bytes."""
     state={'bytes':1,'estimate':0,'references':0};active=set()
     def charge(size=0,estimate=0):
         state['bytes']+=size;state['estimate']+=estimate
@@ -326,7 +325,6 @@ def bound_preflight(value):
             finally:active.remove(id(item))
         elif kind is str:
             charge(2,len(item)*12+8)
-            # Count escaped ASCII bytes without constructing an encoding or copy.
             for char in item:
                 code=ord(char)
                 bound_check(not 0xd800<=code<=0xdfff,'bounded UTF-8 string')
@@ -376,7 +374,6 @@ def bound_document(value,original,page_budget=BOUND_PAGE_BYTES,*,serialized=None
     """Pure producer: typed preorder pages; original JSON is never parsed."""
     bound_check(type(page_budget) is int and 512<=page_budget<=BOUND_PAGE_BYTES,'bounded page budget')
     bound_name(original)
-    # Validate finite work before allocating the original serialization.
     bound_preflight(value)
     raw=bound_bytes(value) if serialized is None else serialized
     bound_check(len(raw)<=BOUND_LIMITS['document_bytes'],'bounded original bytes')
@@ -407,10 +404,8 @@ def bound_document(value,original,page_budget=BOUND_PAGE_BYTES,*,serialized=None
 
 
 def write_bound_document(path,value):
-    """Only final documents use the explicit LF byte serializer."""
     try:bound_preflight(value)
     except BoundDocumentLimit as error:
-        # Refusal precedes all writes, including any pre-existing binding.
         return {'schema':BOUND_SCHEMA,'kind':'incomplete','reason':str(error),
                 'original_created':False,'semantic_status':'UNRUN'}
     raw=bound_bytes(value)

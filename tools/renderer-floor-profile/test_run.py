@@ -1292,7 +1292,10 @@ class Controls(unittest.TestCase):
                 frames['head.commit']=raw;frames['head.tree']=tree(entries)
             self.assertEqual(len(m['generation_ancestry']),33)
             self.assertEqual(r.verify_source_data(*args),entries)
-            m['generation_ancestry'].append('f'*40);m['head']='f'*40
+            head,raw=commit(entries,[m['head']],'current tail thirty-four')
+            m['generation_ancestry'].append(head);m['head']=head
+            frames['ancestry/'+head+'.commit']=raw;frames['tail/'+head+'.tree']=tree(entries)
+            frames['head.commit']=raw;frames['head.tree']=tree(entries)
             with self.assertRaisesRegex(ValueError,'bounded ordinary'):r.verify_source_data(*args)
 
     def test_source_admission_authenticates_full_union_and_current_bodies(self):

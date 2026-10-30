@@ -27,6 +27,18 @@ CENSUS_LIMITS = {'ranges':4096,'bytes':16*1024*1024,'single':128*1024,'sections'
 PARENT = 'b7f1c87388606eee4328915504d34c5e9b63ab3a'
 LEGACY_SOURCE_ADMISSION = 'fixed-main-9df59aec-v1'
 SOURCE_ADMISSION = 'fixed-main-5f9fec72-v1'
+MAIN_SOURCE_ADMISSION = 'fixed-main-0363e9ac-v1'
+MAIN_IMPORT = {
+    'origin':'0363e9ac9f4ca3eae1f1c73de502f45ede1d6d7f',
+    'origin_tree':'6e73c71cb121fe11e5bc3affc2064d3ae3eb225f',
+    'origin_parents':['5f9fec72843431d09d21fa1a324376a36b0a3d17','4bc29bd854f2e9ae73da22a01a0d4084ea707ff3'],
+    'preceding':'94fdeac3fbbcdf4558e7f9b1948bcbdb9d4e100e',
+    'applied':'278b17e9885bc0875ecfdb78e84f8a776a252dfc',
+    'applied_tree':'13b0311f6754b412e4ecf89c65916d81a747e3d1'}
+MAIN_IMPORT_ENTRIES = {
+    '.github/workflows/windows-build.yml':['100644','a3d258a8bdaa6e24e79e8871e2a054aa4ee75d58'],
+    'tools/ci/install-directx-runtime.ps1':['100644','8d341f77c143d2e6b1d939a03a17431fbc886b50'],
+    'tools/ci/test-directx-runtime.ps1':['100644','fe451045a0211a0c3d687b3f73914980c063170c']}
 CURRENT_IMPORT = {
     'origin':'5f9fec72843431d09d21fa1a324376a36b0a3d17',
     'origin_tree':'c05f458380c1352e1e650facdb90d454e730ed7c',
@@ -2145,8 +2157,8 @@ def source_history_bound(chain,head,admitted):
 
 def source_ancestry(m,commits):
     chain=m['generation_ancestry']
-    admitted=m.get('source_admission') in (LEGACY_SOURCE_ADMISSION,SOURCE_ADMISSION)
-    require(m.get('source_admission') in (None,LEGACY_SOURCE_ADMISSION,SOURCE_ADMISSION),'closed source admission tag')
+    admitted=m.get('source_admission') in (LEGACY_SOURCE_ADMISSION,SOURCE_ADMISSION,MAIN_SOURCE_ADMISSION)
+    require(m.get('source_admission') in (None,LEGACY_SOURCE_ADMISSION,SOURCE_ADMISSION,MAIN_SOURCE_ADMISSION),'closed source admission tag')
     source_history_bound(chain,m['head'],admitted)
     parent=PARENT
     for revision in chain:
@@ -2213,15 +2225,49 @@ def verify_current_transition(frames,raw,previous,tail,renderer):
     require(restored==previous,'current main import inverse to preceding generation')
 
 
+def main_import_frames():
+    return {'main-import/origin.commit','main-import/origin.tree'}|{
+        'main-import/bodies/'+path for path in MAIN_IMPORT_ENTRIES}
+
+
+def verify_main_import(frames):
+    previous=source_tree(frames['current-import/origin.tree'])
+    origin=source_tree(frames['main-import/origin.tree'])
+    require(h.tree_hash(origin)==MAIN_IMPORT['origin_tree'],'fixed new main origin tree')
+    source_commit(frames['main-import/origin.commit'],MAIN_IMPORT['origin'],origin,MAIN_IMPORT['origin_parents'])
+    changed={p for p in set(previous)|set(origin) if previous.get(p)!=origin.get(p)}
+    require(changed==set(MAIN_IMPORT_ENTRIES) and origin==previous|MAIN_IMPORT_ENTRIES,'exact new main three-path origin overlay')
+    bodies={p:frames['main-import/bodies/'+p] for p in MAIN_IMPORT_ENTRIES}
+    require(all(h.git_hash('blob',raw)==MAIN_IMPORT_ENTRIES[p][1] for p,raw in bodies.items()),'authenticated new main import bodies')
+    return MAIN_IMPORT_ENTRIES,bodies
+
+
+def verify_main_transition(frames,raw,previous,tail,renderer):
+    source_commit(raw,MAIN_IMPORT['applied'],tail,[MAIN_IMPORT['preceding']])
+    source_commit(frames['ancestry/'+MAIN_IMPORT['preceding']+'.commit'],MAIN_IMPORT['preceding'],previous)
+    origin=source_tree(frames['main-import/origin.tree'])
+    old_origin=source_tree(frames['current-import/origin.tree'])
+    changed={p for p in set(previous)|set(tail) if previous.get(p)!=tail.get(p)}
+    require(h.tree_hash(tail)==MAIN_IMPORT['applied_tree'] and
+            changed==set(MAIN_IMPORT_ENTRIES) and tail==previous|MAIN_IMPORT_ENTRIES,
+            'one exact new main import overlay')
+    require(not renderer&origin.keys() and tail==origin|{p:previous[p] for p in renderer},'complete new main and renderer union')
+    restored={p:row for p,row in tail.items() if p not in MAIN_IMPORT_ENTRIES}|{
+        p:old_origin[p] for p in MAIN_IMPORT_ENTRIES if p in old_origin}
+    require(restored==previous,'new main import inverse to preceding generation')
+
+
 def verify_source_data(m,frames,base,tooling,imports,current):
-    require(m.get('source_admission') in (LEGACY_SOURCE_ADMISSION,SOURCE_ADMISSION),'required fixed source admission tag')
-    current_main=m['source_admission']==SOURCE_ADMISSION
+    require(m.get('source_admission') in (LEGACY_SOURCE_ADMISSION,SOURCE_ADMISSION,MAIN_SOURCE_ADMISSION),'required fixed source admission tag')
+    new_main=m['source_admission']==MAIN_SOURCE_ADMISSION
+    current_main=m['source_admission'] in (SOURCE_ADMISSION,MAIN_SOURCE_ADMISSION)
     require(m['base']==BASE and m['paths'] in (PATHS,CENSUS_PATHS),'frozen measured source contract')
     chain=m['generation_ancestry'];commits={revision:frames['ancestry/'+revision+'.commit'] for revision in chain}
     source_ancestry(m,commits)
     tail_revisions=chain[chain.index(ACCEPTED_MAIN['merge'])+1:]
     expected_frames=fixed_import_frames()|{name+suffix for name in ACCEPTED_MAIN for suffix in ('.commit','.tree')}|{'base.commit','head.commit','head.tree','paths'}|{'ancestry/'+revision+'.commit' for revision in chain}|{'tail/'+revision+'.tree' for revision in tail_revisions}
     if current_main:expected_frames|=current_import_frames()
+    if new_main:expected_frames|=main_import_frames()
     require(set(frames)==expected_frames,'closed complete source frame set')
     old_fixed,new_fixed,fixed_bodies=verify_fixed_import(frames)
     trees={name:source_tree(frames[name+'.tree']) for name in ACCEPTED_MAIN}
@@ -2239,7 +2285,7 @@ def verify_source_data(m,frames,base,tooling,imports,current):
     for path,raw in imports.items():require(h.git_hash('blob',raw)==trees['merge'][path][1],'authenticated main import body')
     union=set(PATHS+CENSUS_PATHS)
     paths=frames['paths'].decode('utf-8').splitlines()
-    require(len(paths)==len(set(paths)) and set(paths)==(set(CURRENT_IMPORT_ENTRIES) if current_main else set())|set(FIXED_IMPORT_BLOBS)|imported|(set(CENSUS_PATHS) if m['paths']==CENSUS_PATHS else union),'complete acquired source delta')
+    require(len(paths)==len(set(paths)) and set(paths)==(set(MAIN_IMPORT_ENTRIES) if new_main else set())|(set(CURRENT_IMPORT_ENTRIES) if current_main else set())|set(FIXED_IMPORT_BLOBS)|imported|(set(CENSUS_PATHS) if m['paths']==CENSUS_PATHS else union),'complete acquired source delta')
     require(set(tooling)==union and union<=renderer,'complete seven current tooling bodies')
     base_entries={p:[mode,h.git_hash('blob',raw)] for p,(mode,raw) in base.items()}
     source_commit(frames['base.commit'],BASE,base_entries)
@@ -2248,7 +2294,9 @@ def verify_source_data(m,frames,base,tooling,imports,current):
     entries=base_entries|{p:trees['merge'][p] for p in imported}|{p:['100644',h.git_hash('blob',raw)] for p,raw in tooling.items()}|new_fixed
     current_entries,current_bodies=verify_current_import(frames) if current_main else ({},{})
     entries|=current_entries
-    previous=trees['merge'];fixed_count=0;current_count=0
+    main_entries,main_bodies=verify_main_import(frames) if new_main else ({},{})
+    entries|=main_entries
+    previous=trees['merge'];fixed_count=0;current_count=0;main_count=0
     for revision in tail_revisions:
         tail=source_tree(frames['tail/'+revision+'.tree'])
         source_commit(commits[revision],revision,tail)
@@ -2262,21 +2310,25 @@ def verify_source_data(m,frames,base,tooling,imports,current):
         elif current_main and revision==CURRENT_IMPORT['applied']:
             current_count+=1
             verify_current_transition(frames,commits[revision],previous,tail,renderer)
+        elif new_main and revision==MAIN_IMPORT['applied']:
+            main_count+=1
+            verify_main_transition(frames,commits[revision],previous,tail,renderer)
         else:require(delta(previous,tail)<=set(m['paths']),'allowed ordinary renderer tail paths')
         previous=tail
     require(fixed_count==1,'exactly one fixed import tail transition')
     require(current_count==int(current_main),'exactly one current main import tail transition')
+    require(main_count==int(new_main),'exactly one new main import tail transition')
     require(previous==entries,'complete current controller source bodies')
     source_commit(frames['head.commit'],m['head'],entries)
     require(source_tree(frames['head.tree'])==entries,'actual current HEAD tree frame')
-    bodies={p:raw for p,(_,raw) in base.items()}|imports|tooling|fixed_bodies|current_bodies
+    bodies={p:raw for p,(_,raw) in base.items()}|imports|tooling|fixed_bodies|current_bodies|main_bodies
     expected={p:{'sha256':digest(bodies[p]),'mode':int(mode,8)&0o777} for p,(mode,_) in entries.items()}
     require(current==expected,'complete current checkout source identity')
     return entries
 
 
 def retained_source_admission(out,m,complete=True):
-    root=out/'controller';frames={p.relative_to(root).as_posix():p.read_bytes() for p in root.rglob('*') if p.is_file() and (p.suffix in ('.commit','.tree') or any(prefix in p.relative_to(root).as_posix() for prefix in ('fixed-import/bodies/','current-import/bodies/')))}
+    root=out/'controller';frames={p.relative_to(root).as_posix():p.read_bytes() for p in root.rglob('*') if p.is_file() and (p.suffix in ('.commit','.tree') or any(prefix in p.relative_to(root).as_posix() for prefix in ('fixed-import/bodies/','current-import/bodies/','main-import/bodies/')))}
     frames['paths']=(root/'paths').read_bytes()
     base={p:('100755' if row['mode']&0o111 else '100644',(out/'sources/base'/p).read_bytes()) for p,row in m['base_inventory'].items()}
     tooling={p:(out/'tooling'/p).read_bytes() for p in sorted(set(PATHS+CENSUS_PATHS))}
@@ -2305,11 +2357,16 @@ def acquire_source_admission(out,m,env):
     def acquire(label,argv,dest):
         require(record(out,label,argv,ROOT,env)['status']==0,'controller source identity command')
         dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(out/(label+'.stdout'),dest)
-    if m['source_admission']==SOURCE_ADMISSION:
+    if m['source_admission'] in (SOURCE_ADMISSION,MAIN_SOURCE_ADMISSION):
         acquire('current-import-origin-commit',['git','cat-file','commit',CURRENT_IMPORT['origin']],root/'current-import/origin.commit')
         acquire('current-import-origin-tree',['git','ls-tree','-rz','--full-tree',CURRENT_IMPORT['origin']],root/'current-import/origin.tree')
         for path,(_,oid) in CURRENT_IMPORT_ENTRIES.items():
             acquire('current-import-body-'+digest(path.encode()),['git','cat-file','blob',oid],root/'current-import/bodies'/path)
+    if m['source_admission']==MAIN_SOURCE_ADMISSION:
+        acquire('main-import-origin-commit',['git','cat-file','commit',MAIN_IMPORT['origin']],root/'main-import/origin.commit')
+        acquire('main-import-origin-tree',['git','ls-tree','-rz','--full-tree',MAIN_IMPORT['origin']],root/'main-import/origin.tree')
+        for path,(_,oid) in MAIN_IMPORT_ENTRIES.items():
+            acquire('main-import-body-'+digest(path.encode()),['git','cat-file','blob',oid],root/'main-import/bodies'/path)
     for name in ('parent','origin'):
         revision=FIXED_IMPORT[name]
         acquire('fixed-import-'+name+'-commit',['git','cat-file','commit',revision],root/'fixed-import'/(name+'.commit'))
@@ -2488,7 +2545,7 @@ def run(out,build_root,toolchain,census_mode=False):
     input_root=Path(r['input_root']);input_root.mkdir();rows=inputs(lambda p:(base/p).read_bytes())
     for row in rows:(input_root/(row['id']+'.x')).write_bytes(row['bytes'])
     m={'schema':CENSUS_SCHEMA if census_mode else SCHEMA,'fp_observation_contract':FP_CONTRACT,'runner_temp':runner_temp,'base':BASE,'head':head,'paths':scope,'input_root':str(input_root),'inputs':input_manifest(rows),'base_inventory':c.source_inventory(base),'builds':[],
-       'operation_corpus':{'sha256':digest(operation_corpus()),'size':152,'words':corpus_words(operation_corpus())},'generation_ancestry':chain,'source_admission':SOURCE_ADMISSION,
+       'operation_corpus':{'sha256':digest(operation_corpus()),'size':152,'words':corpus_words(operation_corpus())},'generation_ancestry':chain,'source_admission':MAIN_SOURCE_ADMISSION,
        'configuration_differences':'Native Release in both modes, appended /Od or /O2 on core and console; Rust dev versus release defaults, opt-level/debug assertions/overflow/debuginfo differ. Observed copies add private sink calls. Both copies include coarse private MXCSR snapshots with operation ordering unproved.'}
     acquire_source_admission(out,m,env)
     parsed={};variant_results={}

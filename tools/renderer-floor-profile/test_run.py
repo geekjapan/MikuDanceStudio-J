@@ -1298,6 +1298,201 @@ class Controls(unittest.TestCase):
             frames['head.commit']=raw;frames['head.tree']=tree(entries)
             with self.assertRaisesRegex(ValueError,'bounded ordinary'):r.verify_source_data(*args)
 
+    def new_main_admission_fixture(self):
+        args,patches,tree,commit=self.current_admission_fixture()
+        m,frames,base,tooling,imports,current=args
+        preceding=m['head'];previous=r.source_tree(frames['head.tree'])
+        renderer=set(r.source_tree(frames['renderer.tree']))-set(r.source_tree(frames['common.tree']))
+        bodies={p:b'new main '+p.encode() for p in r.MAIN_IMPORT_ENTRIES}
+        entries={p:['100644',r.h.git_hash('blob',raw)] for p,raw in bodies.items()}
+        origin=r.source_tree(frames['current-import/origin.tree'])|entries
+        parents=[r.h.git_hash('commit',frames['current-import/origin.commit']),preceding]
+        origin_id,origin_raw=commit(origin,parents,'new fixed main')
+        applied_entries=previous|entries
+        applied,applied_raw=commit(applied_entries,[preceding],'preserve new main')
+        tooling['tools/renderer-floor-profile/run.py']=b'new main admission reader'
+        final=applied_entries|{p:['100644',r.h.git_hash('blob',raw)] for p,raw in tooling.items()}
+        head,head_raw=commit(final,[applied],'new main admission')
+        frames.update({'main-import/origin.commit':origin_raw,'main-import/origin.tree':tree(origin)})
+        frames.update({'main-import/bodies/'+p:raw for p,raw in bodies.items()})
+        for revision,raw,rows in ((applied,applied_raw,applied_entries),(head,head_raw,final)):
+            frames['ancestry/'+revision+'.commit']=raw;frames['tail/'+revision+'.tree']=tree(rows)
+        frames['head.commit']=head_raw;frames['head.tree']=tree(final)
+        frames['paths']=b'\n'.join(sorted(set(frames['paths'].splitlines())|{p.encode() for p in entries}))
+        m.update(head=head,generation_ancestry=m['generation_ancestry']+[applied,head],source_admission=r.MAIN_SOURCE_ADMISSION)
+        current.update({p:{'sha256':r.digest(raw),'mode':0o644} for p,raw in (bodies|tooling).items()})
+        fixed={'origin':origin_id,'origin_tree':r.h.tree_hash(origin),'origin_parents':parents,
+               'preceding':preceding,'applied':applied,'applied_tree':r.h.tree_hash(applied_entries)}
+        patches+=[patch.object(r,'MAIN_IMPORT',fixed),patch.object(r,'MAIN_IMPORT_ENTRIES',entries)]
+        return args,patches,tree,commit
+
+    def test_new_main_admission_full_union_and_forward_inverse(self):
+        args,patches,_,_=self.new_main_admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            entries=r.verify_source_data(*args)
+            self.assertEqual(set(entries),set(args[-1]))
+            self.assertEqual(len(args[1]['paths'].splitlines()),110)
+            ordinary=copy.deepcopy(args);ordinary[0]['paths']=r.PATHS
+            ordinary[1]['paths']=b'\n'.join(sorted(set(args[1]['paths'].splitlines())|{p.encode() for p in r.PATHS+r.CENSUS_PATHS}))
+            self.assertEqual(len(ordinary[1]['paths'].splitlines()),113)
+            self.assertEqual(r.verify_source_data(*ordinary),entries)
+            self.assertEqual(entries['.github/workflows/windows-build.yml'],r.MAIN_IMPORT_ENTRIES['.github/workflows/windows-build.yml'])
+            self.assertNotEqual(args[1]['fixed-import/bodies/.github/workflows/windows-build.yml'],args[1]['main-import/bodies/.github/workflows/windows-build.yml'])
+
+    def test_new_main_admission_rejects_closed_frame_body_and_path_drift(self):
+        args,patches,_,_=self.new_main_admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            r.verify_source_data(*args)
+            for name in r.main_import_frames():
+                for kind in ('missing','tamper','duplicate'):
+                    bad=copy.deepcopy(args)
+                    if kind=='missing':del bad[1][name]
+                    elif kind=='tamper':bad[1][name]+=b'corrupt'
+                    else:bad[1][name]+=bad[1][name]
+                    with self.subTest(frame=name,kind=kind),self.assertRaises((ValueError,KeyError,UnicodeError)):r.verify_source_data(*bad)
+            for name in ('main-import/extra.tree','main-import/bodies/extra'):
+                bad=copy.deepcopy(args);bad[1][name]=b'extra'
+                with self.assertRaisesRegex(ValueError,'closed complete source frame'):r.verify_source_data(*bad)
+            for path in r.MAIN_IMPORT_ENTRIES:
+                for kind in ('missing','duplicate'):
+                    bad=copy.deepcopy(args);rows=bad[1]['paths'].splitlines()
+                    if kind=='missing':rows.remove(path.encode())
+                    else:rows.append(path.encode())
+                    bad[1]['paths']=b'\n'.join(rows)
+                    with self.subTest(path=path,kind=kind),self.assertRaisesRegex(ValueError,'complete acquired source delta'):r.verify_source_data(*bad)
+
+    def test_new_main_admission_rejects_old_and_unknown_tags(self):
+        args,patches,_,_=self.new_main_admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            for tag in (r.LEGACY_SOURCE_ADMISSION,r.SOURCE_ADMISSION,None,'floating-main',{},True):
+                bad=copy.deepcopy(args);bad[0]['source_admission']=tag
+                with self.subTest(tag=tag),self.assertRaises(ValueError):r.verify_source_data(*bad)
+            bad=copy.deepcopy(args);del bad[0]['source_admission']
+            with self.assertRaises(ValueError):r.verify_source_data(*bad)
+
+    def test_new_main_admission_rejects_origin_identity_and_ordered_parents(self):
+        args,patches,tree,commit=self.new_main_admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            origin=r.source_tree(args[1]['main-import/origin.tree']);parents=r.MAIN_IMPORT['origin_parents']
+            bad=copy.deepcopy(args);bad[1]['main-import/origin.commit']=args[1]['current-import/origin.commit']
+            with self.assertRaisesRegex(ValueError,'ancestry commit hash'):r.verify_source_data(*bad)
+            for wrong in (parents[::-1],parents+[r.PARENT],[parents[0],r.PARENT]):
+                revision,raw=commit(origin,wrong,'wrong new main parents')
+                bad=copy.deepcopy(args);bad[1]['main-import/origin.commit']=raw
+                with patch.dict(r.MAIN_IMPORT,origin=revision):
+                    with self.subTest(parents=wrong),self.assertRaisesRegex(ValueError,'ordinary linear descent'):r.verify_source_data(*bad)
+            for kind in ('mode','body','extra','deletion'):
+                entries=copy.deepcopy(origin);path=next(iter(r.MAIN_IMPORT_ENTRIES))
+                if kind=='mode':entries[path][0]='100755'
+                elif kind=='body':entries[path][1]=r.h.git_hash('blob',b'wrong')
+                elif kind=='extra':entries['extra']=['100644',r.h.git_hash('blob',b'extra')]
+                else:del entries['main/0']
+                revision,raw=commit(entries,parents,kind)
+                bad=copy.deepcopy(args);bad[1]['main-import/origin.commit']=raw;bad[1]['main-import/origin.tree']=tree(entries)
+                with patch.dict(r.MAIN_IMPORT,origin=revision,origin_tree=r.h.tree_hash(entries)):
+                    with self.subTest(kind=kind),self.assertRaisesRegex(ValueError,'exact new main three-path'):r.verify_source_data(*bad)
+
+    def test_new_main_admission_rejects_transition_and_inverse_drift(self):
+        args,patches,tree,commit=self.new_main_admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            r.verify_source_data(*args)
+            original=r.MAIN_IMPORT['applied'];preceding=r.MAIN_IMPORT['preceding']
+            previous=r.source_tree(args[1]['tail/'+preceding+'.tree'])
+            legal=r.source_tree(args[1]['tail/'+original+'.tree'])
+            for kind in ('mode','body','rollback','deletion','renderer-loss','extra','inverse','wrong-parent','second-parent','omitted'):
+                entries=copy.deepcopy(legal);parents=[preceding];path=next(iter(r.MAIN_IMPORT_ENTRIES))
+                if kind=='mode':entries[path][0]='100755'
+                elif kind=='body':entries[path][1]=r.h.git_hash('blob',b'wrong')
+                elif kind=='rollback':entries[path]=previous[path]
+                elif kind=='deletion':del entries['main/0']
+                elif kind=='renderer-loss':del entries['r0']
+                elif kind=='extra':entries['extra']=['100644',r.h.git_hash('blob',b'extra')]
+                elif kind=='wrong-parent':parents=[r.PARENT]
+                elif kind=='second-parent':parents.append(r.MAIN_IMPORT['origin'])
+                elif kind=='omitted':entries=previous
+                else:entries['stable']=['100644',r.h.git_hash('blob',b'inverse mismatch')]
+                revision,raw=commit(entries,parents,kind)
+                bad=copy.deepcopy(args);m,frames=bad[:2]
+                m['generation_ancestry'][m['generation_ancestry'].index(original)]=revision
+                del frames['ancestry/'+original+'.commit'];del frames['tail/'+original+'.tree']
+                frames['ancestry/'+revision+'.commit']=raw;frames['tail/'+revision+'.tree']=tree(entries)
+                head,head_raw=commit(r.source_tree(frames['head.tree']),[revision],'follow altered import')
+                old=m['head'];m['head']=head;m['generation_ancestry'][-1]=head
+                del frames['ancestry/'+old+'.commit'];del frames['tail/'+old+'.tree']
+                frames['ancestry/'+head+'.commit']=head_raw;frames['tail/'+head+'.tree']=frames['head.tree'];frames['head.commit']=head_raw
+                with patch.dict(r.MAIN_IMPORT,applied=revision,applied_tree=r.h.tree_hash(entries)):
+                    with self.subTest(kind=kind),self.assertRaises(ValueError):r.verify_source_data(*bad)
+            inverse_previous=copy.deepcopy(previous)
+            inverse_previous[next(iter(r.MAIN_IMPORT_ENTRIES))]=['100644',r.h.git_hash('blob',b'wrong inverse source')]
+            before,before_raw=commit(inverse_previous,[r.CURRENT_IMPORT['applied']],'wrong inverse preceding')
+            revision,raw=commit(legal,[before],'exact forward with wrong inverse')
+            frames=copy.deepcopy(args[1]);frames['ancestry/'+before+'.commit']=before_raw
+            renderer=set(r.source_tree(frames['renderer.tree']))-set(r.source_tree(frames['common.tree']))
+            with patch.dict(r.MAIN_IMPORT,preceding=before,applied=revision):
+                with self.assertRaisesRegex(ValueError,'new main import inverse'):r.verify_main_transition(frames,raw,inverse_previous,legal,renderer)
+
+    def test_new_main_admission_rejects_import_count_and_unapproved_tail(self):
+        args,patches,tree,commit=self.new_main_admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            for kind in ('omitted','duplicate','unapproved'):
+                bad=copy.deepcopy(args);m,frames=bad[:2];applied=r.MAIN_IMPORT['applied']
+                if kind=='omitted':m['generation_ancestry'].remove(applied)
+                elif kind=='duplicate':m['generation_ancestry'].insert(-1,applied)
+                else:
+                    entries=r.source_tree(frames['head.tree']);entries['stable']=['100644',r.h.git_hash('blob',b'wrong')]
+                    head,raw=commit(entries,[m['head']],'forbidden new main tail')
+                    m['generation_ancestry'].append(head);m['head']=head
+                    frames['ancestry/'+head+'.commit']=raw;frames['tail/'+head+'.tree']=tree(entries)
+                    frames['head.commit']=raw;frames['head.tree']=tree(entries)
+                with self.subTest(kind=kind),self.assertRaises((ValueError,KeyError)):r.verify_source_data(*bad)
+
+    def test_new_main_admission_keeps_genuine_33_34_history_boundary(self):
+        args,patches,tree,commit=self.new_main_admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            entries=r.verify_source_data(*args);m,frames=args[:2]
+            for ordinal in range(34-len(m['generation_ancestry'])):
+                head,raw=commit(entries,[m['head']],'bounded new main tail '+str(ordinal))
+                m['generation_ancestry'].append(head);m['head']=head
+                frames['ancestry/'+head+'.commit']=raw;frames['tail/'+head+'.tree']=tree(entries)
+                frames['head.commit']=raw;frames['head.tree']=tree(entries)
+                if len(m['generation_ancestry'])==33:self.assertEqual(r.verify_source_data(*args),entries)
+            self.assertEqual(len(m['generation_ancestry']),34)
+            with self.assertRaisesRegex(ValueError,'bounded ordinary'):r.verify_source_data(*args)
+
+    def test_new_main_retained_admission_reads_closed_body_frames(self):
+        args,patches,_,_=self.new_main_admission_fixture()
+        m,frames,base,tooling,imports,current=args
+        out=Path('/inert-new-main-retained');root=out/'controller'
+        m['base_inventory']={p:{'mode':int(mode,8)&0o777,'sha256':r.digest(raw)} for p,(mode,raw) in base.items()}
+        files={root/p:raw for p,raw in frames.items()}
+        files.update({out/'sources/base'/p:raw for p,(_,raw) in base.items()})
+        files.update({out/'tooling'/p:raw for p,raw in tooling.items()})
+        files.update({r.ROOT/p:raw for p,raw in tooling.items()})
+        files.update({root/'imports'/p:raw for p,raw in imports.items()})
+        for phase in ('before','after'):files[out/('controller-source-'+phase+'.json')]=json.dumps(current).encode()
+        def descendants(path,pattern):return [p for p in files if p.is_relative_to(path) and p!=path]
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            stack.enter_context(patch.object(Path,'rglob',descendants))
+            stack.enter_context(patch.object(Path,'is_file',lambda path:path in files))
+            stack.enter_context(patch.object(Path,'read_bytes',lambda path:files[path]))
+            stack.enter_context(patch.object(r,'checkout_inventory',return_value=current))
+            self.assertEqual(r.retained_source_admission(out,m),r.verify_source_data(*args))
+            extra=root/'main-import/bodies/unapproved';files[extra]=b'unapproved'
+            with self.assertRaisesRegex(ValueError,'closed complete source frame'):r.retained_source_admission(out,m)
+            del files[extra]
+            for path in r.MAIN_IMPORT_ENTRIES:
+                name=root/'main-import/bodies'/path;raw=files.pop(name)
+                with self.subTest(path=path),self.assertRaisesRegex(ValueError,'closed complete source frame'):r.retained_source_admission(out,m)
+                files[name]=raw
+
     def test_source_admission_authenticates_full_union_and_current_bodies(self):
         args,patches,_,_=self.admission_fixture()
         with ExitStack() as stack:

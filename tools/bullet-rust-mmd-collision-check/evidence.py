@@ -1,7 +1,6 @@
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import ntpath
 import math
 import re
 import stat
@@ -250,7 +249,7 @@ def include_projection(bindings, occurrences, system):
         target = binding['target']; raw = binding['raw']; value = sha_identity(binding['sha256'])
         require(type(raw) is str and 0<len(raw)<=MAX_PATH and '\x00' not in raw, 'include raw spelling')
         require(type(target) is str and path(target).is_absolute() and '..' not in path(target).parts and len(target)<=MAX_PATH, 'resolved include absolute target')
-        require(target==(ntpath.normcase(str(path(target))) if system=='Windows' else str(path(target))), 'canonical resolved include target')
+        require(target==str(path(target)), 'canonical resolved include target')
         require(target not in manifest or manifest[target]==value, 'consistent include target bytes')
         require(raw not in aliases or aliases[raw]==(target,value), 'consistent include alias binding')
         manifest[target]=value; aliases[raw]=(target,value)
@@ -946,11 +945,9 @@ def _admit_capture(directory, *, authority, expected_head, canonical_sources, in
     capture = directory if isinstance(directory, Capture) else Capture.open(directory, expected=authority)
     require(capture.authority == authority, 'bound capture authority')
     names, used = set(capture), set()
-    folded = {name.casefold(): name for name in names}
     def raw(name):
         safe_name(name)
-        require(name.casefold() in folded, 'required capture member ' + name)
-        name = folded[name.casefold()]
+        require(name in names, 'required capture member ' + name)
         used.add(name)
         return capture[name]
     def data(name):

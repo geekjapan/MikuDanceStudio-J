@@ -10,6 +10,54 @@ class AdmissionBoundaryTests(unittest.TestCase):
 
 
 class ByteAuthorityTests(unittest.TestCase):
+    def test_casefold_collision_rejects_equal_and_different_bytes(self):
+        from evidence import ByteIdentity, ExpectedEvidence
+        for other in (b'header', b'different'):
+            with self.assertRaisesRegex(ValueError, 'case collision'):
+                ExpectedEvidence({'source/Header.h': ByteIdentity.of(b'header'),
+                                  'source/header.h': ByteIdentity.of(other)}, [])
+
+    def test_capture_references_require_exact_member_and_input_role(self):
+        import ast
+        from pathlib import Path, PureWindowsPath, PurePosixPath
+        from evidence import digest, require, safe_name, sha_identity
+        tree = ast.parse((Path(__file__).resolve().parent / 'evidence.py').read_text())
+        admission = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                         and node.name == '_admit_capture')
+        helpers = [node for node in admission.body if isinstance(node, ast.FunctionDef)
+                   and node.name in {'raw', 'artifact'}]
+        roles = next(node for node in ast.walk(admission) if isinstance(node, ast.Expr)
+                     and isinstance(node.value, ast.Call) and node.value.args
+                     and isinstance(node.value.args[-1], ast.Constant)
+                     and node.value.args[-1].value == 'exact direct input roles and preservation')
+        for system in ('Linux', 'Darwin', 'Windows'):
+            path = PureWindowsPath if system == 'Windows' else PurePosixPath
+            root = path('C:/source' if system == 'Windows' else '/source')
+            out = path('C:/capture' if system == 'Windows' else '/capture')
+            content = {'source/Header.h': b'header', 'generated/Header.h': b'header'}
+            namespace = dict(names=set(content), capture=content, used=set(),
+                             folded={name.casefold(): name for name in content},
+                             require=require, safe_name=safe_name, sha_identity=sha_identity,
+                             digest=digest, path=path, root=root, out=out)
+            exec(compile(ast.Module(body=helpers, type_ignores=[]), 'exact-member-helpers', 'exec'), namespace)
+            artifact = namespace['artifact']
+            for base in (root, out / 'generated'):
+                self.assertEqual(artifact(str(base / 'Header.h'), digest(b'header')), b'header')
+                with self.assertRaisesRegex(ValueError, 'required capture member'):
+                    artifact(str(base / 'header.h'), digest(b'header'))
+                with self.assertRaisesRegex(ValueError, 'input identity'):
+                    artifact(str(base / 'Header.h'), digest(b'different'))
+            declared = [str(root / 'Header.h')]
+            for name in (declared[0], str(out / 'generated/Header.h')):
+                identities = {name: digest(b'header')}
+                namespace.update(declared=declared, command={'inputs_before': identities, 'inputs_end': identities})
+                code = compile(ast.Module(body=[roles], type_ignores=[]), 'exact-input-roles', 'exec')
+                if name == declared[0]:
+                    exec(code, namespace)
+                else:
+                    with self.assertRaisesRegex(ValueError, 'exact direct input roles'):
+                        exec(code, namespace)
+
     def test_exact_identity_types_and_deep_immutable_members(self):
         from evidence import ByteIdentity, ExpectedEvidence, digest, freeze
         for size in (True, False, 1.0, -1):
@@ -242,6 +290,22 @@ class CommandRecordFramingTests(unittest.TestCase):
 
 
 class NativeEvidenceFramingTests(unittest.TestCase):
+    def test_windows_include_projection_preserves_physical_case_and_raw_aliases(self):
+        from evidence import digest, include_occurrences, include_projection
+        physical = r'C:\capture\generated\BulletCollision\Header.h'
+        alias = r'c:\capture\generated\bulletcollision\header.h'
+        raw = ('Note: including file: ' + alias + '\nNote: including file: ' + physical + '\n').encode()
+        occurrences = include_occurrences(raw, b'', 'Windows')
+        bindings = [{**item, 'target': physical, 'sha256': digest(b'header')} for item in occurrences]
+        manifest, aliases = include_projection(bindings, occurrences, 'Windows')
+        self.assertEqual(manifest, {physical: digest(b'header')})
+        self.assertEqual(aliases, {alias: (physical, digest(b'header')), physical: (physical, digest(b'header'))})
+        for target in (r'C:\capture\..\Header.h', 'C:/capture/Header.h', r'capture\Header.h'):
+            with self.assertRaises(ValueError):
+                include_projection([{**bindings[0], 'target': target}], occurrences[:1], 'Windows')
+        changed = [{**bindings[0], 'target': physical.lower()}, bindings[1]]
+        self.assertEqual(len(include_projection(changed, occurrences, 'Windows')[0]), 2)
+
     def test_exact_archive_payload_and_compiled_source_binding(self):
         from evidence import digest, verify_archive
         source = 'recipes/bullet275/bullet-src/src/LinearMath/tiny.cpp'

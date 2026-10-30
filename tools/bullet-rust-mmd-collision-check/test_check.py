@@ -23,6 +23,49 @@ class Memory:
 
 
 class CorpusTests(unittest.TestCase):
+    def test_include_acquisition_preserves_resolved_windows_case_and_raw_alias(self):
+        import ntpath
+        from pathlib import PureWindowsPath
+        from types import SimpleNamespace
+        from unittest.mock import Mock, MagicMock
+        from evidence import digest, require
+        tree = ast.parse((Path(__file__).resolve().parent / 'check.py').read_text())
+        acquire = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                       and node.name == 'acquire')
+        physical = r'C:\capture\generated\BulletCollision\btBroadphaseInterface.h'
+        target = Mock()
+        target.__str__ = Mock(return_value=physical)
+        target.is_file.return_value = True
+        target.read_bytes.return_value = b'header'
+        alias = r'c:\capture\generated\bulletcollision\btbroadphaseinterface.h'
+        source = Mock()
+        source.is_absolute.return_value = True
+        source.resolve.return_value = target
+        out, recorder = MagicMock(), Mock()
+        namespace = dict(Path=Mock(return_value=source), out=out, recorder=recorder,
+                         digest=digest, require=require, os=SimpleNamespace(normcase=ntpath.normcase))
+        exec(compile(ast.Module(body=[acquire], type_ignores=[]), 'include-acquisition', 'exec'), namespace)
+        occurrence = {'stream': 'stdout', 'ordinal': 3, 'raw': alias}
+        self.assertEqual(namespace['acquire']([occurrence], PureWindowsPath('C:/source')),
+                         [{**occurrence, 'target': physical, 'sha256': digest(b'header')}])
+        source.resolve.assert_called_once_with(strict=True)
+        source.resolve.side_effect = FileNotFoundError(alias)
+        with self.assertRaises(FileNotFoundError):
+            namespace['acquire']([occurrence], PureWindowsPath('C:/source'))
+        preservation = next(node for node in ast.walk(tree) if isinstance(node, ast.Expr)
+                            and isinstance(node.value, ast.Call) and node.value.args
+                            and isinstance(node.value.args[-1], ast.Constant)
+                            and node.value.args[-1].value == 'discovery pre-use/measured include preservation')
+        manifest = {physical: digest(b'header')}
+        aliases = {alias: (physical, digest(b'header'))}
+        code = compile(ast.Module(body=[preservation], type_ignores=[]), 'include-preservation', 'exec')
+        exec(code, dict(require=require, pre_manifest=manifest, post_manifest=manifest,
+                        pre_aliases=aliases, post_aliases=aliases))
+        with self.assertRaisesRegex(ValueError, 'include preservation'):
+            exec(code, dict(require=require, pre_manifest=manifest,
+                            post_manifest={physical: digest(b'changed')},
+                            pre_aliases=aliases, post_aliases=aliases))
+
     def test_expanded_commands_preserve_source_and_policy_names(self):
         from types import SimpleNamespace
         from unittest.mock import Mock

@@ -185,7 +185,7 @@ def capture(out, authority_path):
                 retained.parent.mkdir(exist_ok=True)
                 if not retained.exists():
                     recorder.write(retained, raw)
-                result.append({**occurrence, 'target': os.path.normcase(str(target)), 'sha256': value})
+                result.append({**occurrence, 'target': str(target), 'sha256': value})
             return result
         def compile_object(source, obj, label, root=ROOT, extra=()):
             flags = native_flags(root)

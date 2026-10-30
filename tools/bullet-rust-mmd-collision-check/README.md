@@ -51,6 +51,10 @@ delayed-release control remains a valid complete trace and differs in event
 timing. Counts come from the corpus, command records, and control definitions.
 
 `admit_capture` requires frozen producer member size/SHA and closed-command authority.
+Resolved include targets preserve physical path spelling, including Windows case.
+Raw compiler spellings and occurrence order remain separate provenance. Captured
+source, include and artifact references require exact member names on every host;
+equal bytes do not authorize a different path or command role.
 It authenticates each member once and parses only the retained immutable bytes, including
 the manifest itself. It rederives observations
 and mutations from current source, checks command and include ownership, and

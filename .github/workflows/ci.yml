@@ -85,6 +85,7 @@ jobs:
           run_cpu_tests 1 cargo +1.95.0 test --locked --target "$TARGET" -p mds-app --no-default-features --test asset_paths -- --test-threads=1
           run_cpu_tests 1 cargo +1.95.0 test --locked --target "$TARGET" -p mds-app --no-default-features --lib mme::tests:: -- --test-threads=1
           run_cpu_tests 1 cargo +1.95.0 test --locked --target "$TARGET" -p mds-mmert --lib model::tests::toon_resolution_keeps_shared_names_out_of_the_model_directory -- --exact --test-threads=1
+          run_cpu_tests 1 cargo +1.95.0 test --locked --target "$TARGET" -p mds-bullet --test mmd_dynamics_world -- mmd_dynamics_ --test-threads=1
       - name: Build the Rust workspace
         working-directory: rust
         run: cargo build --locked --release --workspace --target ${{ matrix.target }}

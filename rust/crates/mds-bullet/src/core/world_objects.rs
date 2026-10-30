@@ -286,6 +286,40 @@ impl WorldObjects {
         }
     }
 
+    pub(crate) fn integrate_transforms(&mut self, dt: f32) {
+        for &i in &self.non_static {
+            self.objects[i].hit_fraction = 1.0;
+            if self.objects[i].activation.is_active() && self.data[i].collision_flags & 3 == 0 {
+                let predicted = self.bodies[i].predict_transform(dt);
+                self.bodies[i].set_center_of_mass_transform(predicted);
+            }
+        }
+    }
+
+    pub(crate) fn public_state_hash(&self) -> u64 {
+        let mut hash = 1_469_598_103_934_665_603u64;
+        for (i, data) in self.data.iter().enumerate() {
+            if !data.hashed {
+                continue;
+            }
+            let world = data.motion.get_world_transform();
+            let body = self.bodies[i].snapshot();
+            let words = world
+                .basis
+                .0
+                .into_iter()
+                .flatten()
+                .chain(world.origin.0)
+                .chain([body.linear_velocity.0[0], body.angular_velocity.0[1], 0.0]);
+            for word in words {
+                for byte in word.to_le_bytes() {
+                    hash = (hash ^ u64::from(byte)).wrapping_mul(1_099_511_628_211);
+                }
+            }
+        }
+        hash
+    }
+
     fn synchronize_motion_state(&mut self, i: usize, local_time: f32) {
         if self.data[i].collision_flags & 3 == 0 {
             let state = self.bodies[i].snapshot();

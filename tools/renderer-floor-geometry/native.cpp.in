@@ -1,0 +1,109 @@
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+#include <d3dx9.h>
+#include <algorithm>
+#include <cstdarg>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <cwchar>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <string>
+#include <vector>
+#include "mikudancestudio/mmd_app.hpp"
+#include "mikudancestudio/accessory_layout.hpp"
+#include "mikudancestudio/ported_funcs.hpp"
+#include "mikudancestudio/model.hpp"
+#include "mikudancestudio/d3dx_dyn.hpp"
+using namespace mikudancestudio;
+namespace {
+using Matrix = d3dx::D3DXMATRIXF;
+bool Checked(std::string& out, const char* name, HRESULT hr) {
+    char line[256]; std::snprintf(line, sizeof line, "hr %s %08lx\n", name, (unsigned long)hr);
+    out += line; return SUCCEEDED(hr);
+}
+void Raw(std::string& out, const char* name, const void* bytes, size_t n) {
+    out += name; out += ' ';
+    const auto* p = static_cast<const unsigned char*>(bytes);
+    static const char digits[] = "0123456789abcdef";
+    for (size_t i=0; i<n; ++i) { out += digits[p[i]>>4]; out += digits[p[i]&15]; }
+    out += '\n';
+}
+const Matrix* projectedWorld = nullptr;
+@READER@
+@PLACEMENT@
+template<class T> struct Com { T* p=nullptr; ~Com(){if(p)p->Release();} T* operator->()const{return p;} };
+struct Window { HWND h=CreateWindowW(L"STATIC", L"Floor geometry", WS_OVERLAPPED,0,0,64,64,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr); ~Window(){if(h)DestroyWindow(h);} };
+struct Record { mdl::AccessoryRecord value{}; Record(){InitAccessoryRecord(&value);} ~Record(){DisposeAccessory(&value);} };
+bool Snapshot(std::string& out, mdl::AccessoryRecord& r, IDirect3DDevice9* d, const Matrix& world) {
+    projectedWorld = &world;
+    if (!r.mesh || !r.materials || !r.textureTypes || !r.materialCount) return false;
+    if(!AddMesh(out,"record",static_cast<ID3DXMesh*>(r.mesh)))return false;
+    Add(out,"materials %u\n",r.materialCount);
+    Raw(out,"material_bits",r.materials,sizeof(D3DMATERIAL9)*r.materialCount);
+    Raw(out,"texture_types",r.textureTypes,r.materialCount);
+    Raw(out,"texture_paths",r.texturePaths,sizeof(mdl::AccessoryTexturePaths)*r.materialCount);
+    Raw(out,"name",r.name,sizeof r.name);
+    Raw(out,"directory",r.directory,sizeof r.directory);
+    Raw(out,"source_path",r.sourcePath,sizeof r.sourcePath);
+    Add(out,"record_metadata %u %d %u\n",r.order,r.currentMaterial,r.rowSelected);
+    Raw(out,"world",&world,sizeof world);
+    Raw(out,"position",r.position,sizeof r.position);
+    Raw(out,"rotation",r.rotation,sizeof r.rotation);
+    Raw(out,"scale",&r.scale,4);
+    Add(out,"state %d %d %d %d %d\n",r.visible,r.shadowEnabled,r.additiveBlend,r.parentModel,r.parentBone);
+    Raw(out,"opacity",&r.opacity,4);
+    for(D3DRENDERSTATETYPE s: {D3DRS_CULLMODE,D3DRS_ZENABLE,D3DRS_ZWRITEENABLE,D3DRS_ZFUNC,D3DRS_ALPHABLENDENABLE}) {
+        DWORD v=0; if(!Checked(out,"GetRenderState",d->GetRenderState(s,&v)))return false;
+        Add(out,"device %u %lu\n",unsigned(s),v);
+    }
+    return true;
+}
+}
+int wmain(int argc,wchar_t** argv) {
+    if(argc!=5)return 2;
+    std::string out="MDS_FLOOR_V1\n";
+    auto finish=[&](int status){out += "end "+std::to_string(status)+"\n"; std::fwrite(out.data(),1,out.size(),stdout);return status;};
+    Window window; Com<IDirect3D9> d3d; d3d.p=Direct3DCreate9(D3D_SDK_VERSION);
+    if(!window.h || !d3d.p)return finish(3);
+    D3DPRESENT_PARAMETERS pp{}; pp.BackBufferWidth=pp.BackBufferHeight=64; pp.BackBufferFormat=D3DFMT_A8R8G8B8;
+    pp.SwapEffect=D3DSWAPEFFECT_DISCARD; pp.Windowed=TRUE; pp.hDeviceWindow=window.h;
+    Com<IDirect3DDevice9> device;
+    if(!Checked(out,"CreateDevice",d3d->CreateDevice(D3DADAPTER_DEFAULT,D3DDEVTYPE_HAL,window.h,D3DCREATE_SOFTWARE_VERTEXPROCESSING,&pp,&device.p)))return finish(4);
+    auto app=std::make_unique<MMDApp>(); std::memset(&app->state,0,sizeof app->state);
+    auto renderer=std::make_unique<D3DRenderer>(); renderer->device=device.p; app->Renderer()=renderer.get();
+    Com<ID3DXMesh> raw; Com<ID3DXBuffer> materials; DWORD count=0;
+    if(!Checked(out,"D3DXLoadMeshFromXW",D3DXLoadMeshFromXW(argv[1],544,device.p,nullptr,&materials.p,nullptr,&count,&raw.p)))return finish(5);
+    if(!raw.p || !materials.p || !count || materials->GetBufferSize() < count*sizeof(D3DXMATERIAL) || !materials->GetBufferPointer())return finish(6);
+    if(!AddMesh(out,"raw",raw.p))return finish(7);
+    Add(out,"materials %lu\n",count);
+    auto* m=static_cast<const D3DXMATERIAL*>(materials->GetBufferPointer());
+    for(DWORD i=0;i<count;++i)Raw(out,"material",&m[i].MatD3D,sizeof(D3DMATERIAL9));
+    Record record; auto& r=record.value;
+    bool loaded=LoadAccessoryObject(app.get(),&r,argv[1]); Add(out,"loader %u\n",unsigned(loaded));
+    if(!loaded)return finish(8);
+    std::ifstream input{std::filesystem::path(argv[2])};
+    std::uint32_t bits[7]; int parent,bone,visible,shadow,additive;
+    if(!(input>>parent>>bone>>visible>>shadow>>additive))return finish(9);
+    for(auto& b:bits)if(!(input>>b))return finish(9);
+    std::string extra;if(input>>extra)return finish(9);
+    r.parentModel=parent;r.parentBone=bone;r.visible=visible;r.shadowEnabled=shadow;r.additiveBlend=additive;
+    std::memcpy(r.rotation,bits,12);std::memcpy(&r.scale,bits+3,4);std::memcpy(r.position,bits+4,12);r.opacity=1.0f;
+    const std::wstring kind=argv[3]; if(kind!=L"canonical" && kind!=L"winding" && kind!=L"scale")return finish(10);
+    if(kind==L"scale")r.scale*=2.0f;
+    if(kind==L"winding") {
+        auto* mesh=static_cast<ID3DXMesh*>(r.mesh);void* ib=nullptr;
+        if(mesh->GetNumFaces()==0 || !Checked(out,"InterventionLock",mesh->LockIndexBuffer(0,&ib)))return finish(11);
+        if(mesh->GetOptions()&1)std::swap(static_cast<DWORD*>(ib)[0],static_cast<DWORD*>(ib)[1]);
+        else std::swap(static_cast<WORD*>(ib)[0],static_cast<WORD*>(ib)[1]);
+        if(!Checked(out,"InterventionUnlock",mesh->UnlockIndexBuffer()))return finish(11);
+    }
+    Matrix world; AccessoryPlacement(app.get(),&r,&world);
+    const std::wstring mode=argv[4];if(mode!=L"control" && mode!=L"observed")return finish(12);
+    if(mode==L"observed") {out+="snapshot observation\n";if(!Snapshot(out,r,device.p,world))return finish(13);}
+    out+="snapshot final\n";if(!Snapshot(out,r,device.p,world))return finish(14);
+    return finish(0);
+}

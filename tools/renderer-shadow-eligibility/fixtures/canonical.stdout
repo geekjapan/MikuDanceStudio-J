@@ -1,0 +1,25 @@
+
+running 14 tests
+test accessory_0 ... ok
+test accessory_30 ... ok
+test background_0 ... ok
+test grid_lines ... ok
+test groundshadow_0 ... ok
+test groundshadow_30 ... ok
+test perspective_0 ... ok
+test perspective_30 ... ok
+test selfshadow_0 ... ok
+test selfshadow_0_map_4096 ... ok
+test selfshadow_30 ... FAILED
+test shadow_map_display_draws_the_map_in_gray ... ok
+test skin_0 ... FAILED
+test skin_30 ... FAILED
+
+failures:
+
+failures:
+    selfshadow_30
+    skin_0
+    skin_30
+
+test result: FAILED. 11 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.51s

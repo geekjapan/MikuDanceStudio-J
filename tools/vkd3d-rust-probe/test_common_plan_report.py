@@ -61,6 +61,25 @@ def rebind_fixture(root, padding=None):
                                                               for name in report.report_members(root)})
 
 
+def source_order_plan(root):
+    plan, row = logical_plan(root)
+    unit = plan['units'][0]
+    (root / 'types').mkdir()
+    for name in ('types/wint_t.h', 'types.h', 'Z.h', 'a.h', '界.h'):
+        path = root / name
+        path.write_bytes(name.encode('utf-8'))
+        unit['source_sha256'][str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    identity = unit['identity']
+    identity['key'] = hashlib.sha256(report.canonical(dict(command=identity['command'], domain=identity['domain'],
+        target=identity['target'], widths=identity['widths'], sources=unit['source_sha256']))).hexdigest()
+    for declaration in unit['declarations']:
+        declaration['key']['unit'] = identity['key']
+        declaration['symbol']['Internal']['unit'] = identity['key']
+    for call in unit['calls']:
+        call['key']['unit'] = identity['key']
+    return plan, row
+
+
 class BoundedReportTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -206,6 +225,70 @@ class BoundedReportTests(unittest.TestCase):
         path.write_bytes(encode(index))
         with self.assertRaisesRegex(ValueError, 'count bound'):
             self.validate(self.authority())
+
+
+class SourceOrderTests(unittest.TestCase):
+    def test_native_component_order_and_string_key_hash_across_pages_and_units(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            plans, entries = [], []
+            for name in ('first', 'second'):
+                folder = root / name
+                folder.mkdir()
+                plan, row = source_order_plan(folder)
+                unit = plan['units'][0]
+                records = list(plan_records(plan))
+                wire = [records[i + 1][1] for i, record in enumerate(records) if record[0] == 'source']
+                self.assertLess(wire.index(str(folder / 'types/wint_t.h')), wire.index(str(folder / 'types.h')))
+                self.assertNotEqual(wire, sorted(unit['source_sha256']))
+                plans.append(unit)
+                entries.append(row)
+            plans.sort(key=lambda unit: unit['identity']['key'])
+            write_records(root, plan_records(dict(units=plans)), units=2, page_records=1)
+            authority = rebind_fixture(root)
+            with report.ReportValidation(root, entries, authority) as validation:
+                self.assertEqual(validation.counts['units'], 2)
+                self.assertEqual(validation.db.execute('SELECT count(*) FROM source').fetchone()[0], 6)
+
+    def test_source_order_and_semantic_guards(self):
+        cases = [('lexical', 'source seal order or path differs'),
+                 ('duplicate', 'source seal order or path differs'),
+                 ('relative', 'source seal order or path differs'),
+                 ('ordinal', 'domain collection ordinal differs'), ('sha', 'source SHA type'),
+                 ('missing-main', 'missing original main buffer seal'),
+                 ('changed-bytes', 'original native source changed'),
+                 ('wrong-key', 'semantic UnitKey differs')]
+        for mode, error in cases:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                plan, row = source_order_plan(root)
+                records = list(plan_records(plan))
+                positions = [i for i, record in enumerate(records) if record[0] == 'source']
+                if mode == 'lexical':
+                    pairs = sorted(([records[i], records[i + 1]] for i in positions), key=lambda pair: pair[1][1])
+                    for ordinal, (i, pair) in enumerate(zip(positions, pairs)):
+                        records[i:i + 2] = [[pair[0][0], ordinal, pair[0][2]], pair[1]]
+                elif mode == 'duplicate':
+                    records[positions[1] + 1] = records[positions[0] + 1].copy()
+                elif mode == 'relative':
+                    records[positions[0] + 1] = ['text', 'relative.h']
+                elif mode == 'ordinal':
+                    records[positions[0]][1] = 1
+                elif mode == 'sha':
+                    records[positions[0]][2] = 'wrong'
+                elif mode == 'missing-main':
+                    i = next(i for i in positions if records[i + 1] == ['text', row['file']])
+                    del records[i:i + 2]
+                    records[0][5] -= 1
+                    for ordinal, record in enumerate(r for r in records if r[0] == 'source'):
+                        record[1] = ordinal
+                elif mode == 'changed-bytes':
+                    (root / 'types.h').write_bytes(b'changed')
+                else:
+                    records[1] = ['text', '0' * 64]
+                write_records(root, records, page_records=2)
+                with self.assertRaisesRegex(ValueError, '^' + error + '$'):
+                    report.ReportValidation(root, [row], rebind_fixture(root))
 
 
 class HostedGiantReportTests(unittest.TestCase):

@@ -44,6 +44,11 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
 
 
+def source_path_order(path):
+    # Compare native components without WindowsPath's case folding.
+    return tuple(part.encode('utf-8') for part in Path(path).parts)
+
+
 def unique(pairs):
     result = {}
     for key, value in pairs:
@@ -128,6 +133,7 @@ class UnknownLedger:
             'CREATE TABLE chunk(text INTEGER, ordinal INTEGER, data BLOB, PRIMARY KEY(text,ordinal));'
             'CREATE TABLE declaration(unit TEXT,id BLOB,PRIMARY KEY(unit,id));'
             'CREATE TABLE unknown(source INTEGER,name INTEGER);'
+            'CREATE TABLE source(path BLOB PRIMARY KEY,sha TEXT);'
             'CREATE TABLE independent(source BLOB,name BLOB,PRIMARY KEY(source,name));')
 
     def close(self):
@@ -502,15 +508,21 @@ class ReportValidation(UnknownLedger):
             h.update(b'{"command":' + canonical(command) + b',"domain":')
             self.escaped_text(h, domain)
             h.update(b',"sources":{')
-            previous_path = ''
+            self.db.execute('DELETE FROM source')
+            previous_path = ()
             main = False
             for ordinal in range(source_count):
                 seal = self.ordinal('source', ordinal, 3)
                 require(digest(seal[2]), 'source SHA type')
                 # Native canonical source names must be usable by this filesystem.
                 path = self.text(limit=os.pathconf('/', 'PC_PATH_MAX'))
-                require(Path(path).is_absolute() and path > previous_path, 'source seal order or path differs')
-                previous_path = path
+                path_order = source_path_order(path)
+                require(Path(path).is_absolute() and path_order > previous_path, 'source seal order or path differs')
+                previous_path = path_order
+                path_bytes = path.encode('utf-8')
+                require(self.db.execute('SELECT 1 FROM source WHERE path=?', (path_bytes,)).fetchone() is None,
+                        'duplicate source key')
+                self.db.execute('INSERT INTO source VALUES(?,?)', (path_bytes, seal[2]))
                 main = main or path == expected[command]
                 source_hash = hashlib.sha256()
                 with os.fdopen(os.open(path, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0)), 'rb') as stream:
@@ -526,10 +538,12 @@ class ReportValidation(UnknownLedger):
                     require(not stream.read(1) and (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
                             == (after.st_size, after.st_mtime_ns, after.st_ctime_ns), 'original native source changed')
                 require(source_hash.hexdigest() == seal[2], 'original native source changed')
+            require(main, 'missing original main buffer seal')
+            # UnitKey uses String-key order, independently of PathBuf wire order.
+            for ordinal, (path_bytes, source_sha) in enumerate(self.db.execute('SELECT path,sha FROM source ORDER BY path')):
                 if ordinal:
                     h.update(b',')
-                h.update(canonical(path) + b':' + canonical(seal[2]))
-            require(main, 'missing original main buffer seal')
+                h.update(canonical(path_bytes.decode('utf-8')) + b':' + canonical(source_sha))
             h.update(b'},"target":')
             self.escaped_text(h, target)
             h.update(b',"widths":' + canonical(widths) + b'}')

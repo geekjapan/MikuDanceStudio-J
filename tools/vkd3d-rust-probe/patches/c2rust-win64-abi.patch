@@ -1836,7 +1836,7 @@ diff --git a/c2rust-transpile/src/c_ast/closed_plan_tests.rs b/c2rust-transpile/
 new file mode 100644
 --- /dev/null
 +++ b/c2rust-transpile/src/c_ast/closed_plan_tests.rs
-@@ -0,0 +1,624 @@
+@@ -0,0 +1,664 @@
 +use super::*;
 +use crate::program::{command_identity, native_database_row, native_sources};
 +
@@ -2111,6 +2111,46 @@ new file mode 100644
 +    empty.write_report(directory.path()).unwrap();
 +    assert_eq!(wire_report(directory.path()), legacy_report(&empty));
 +    assert_eq!(serde_json::to_vec_pretty(&empty.report()).unwrap(), serde_json::to_vec_pretty(&legacy_report(&empty)).unwrap());
++}
++
++#[test]
++fn closed_variadic_plan_paged_source_component_order_matches_owned_sources() {
++    let directory = Rc::new(tempfile::tempdir().unwrap());
++    std::fs::create_dir(directory.path().join("types")).unwrap();
++    std::fs::write(directory.path().join("types/wint_t.h"), "int included_nested;\n").unwrap();
++    std::fs::write(directory.path().join("types.h"), "int included_sibling;\n").unwrap();
++    let source = directory.path().join("source.c");
++    std::fs::write(&source, "#include \"types/wint_t.h\"\n#include \"types.h\"\nint source;\n").unwrap();
++    let mut units = vec![native_in(directory, source, &[])];
++    let p = plan(&mut units);
++    let expected = p.units.values().next().unwrap().sources.keys()
++        .map(|path| path.to_str().unwrap().to_owned()).collect::<Vec<_>>();
++    let nested = expected.iter().position(|path| Path::new(path).ends_with("types/wint_t.h")).unwrap();
++    let sibling = expected.iter().position(|path| Path::new(path).ends_with("types.h")).unwrap();
++    assert!(nested < sibling);
++    let mut string_order = expected.clone();
++    string_order.sort();
++    assert_ne!(expected, string_order);
++    let output = tempfile::tempdir().unwrap();
++    p.write_report(output.path()).unwrap();
++    let index: serde_json::Value = serde_json::from_slice(&std::fs::read(output.path().join("closed-variadic-plan.json")).unwrap()).unwrap();
++    let mut records = Vec::new();
++    for descriptor in index["catalogs"].as_array().unwrap() {
++        let catalog: serde_json::Value = serde_json::from_slice(&std::fs::read(output.path().join(descriptor["path"].as_str().unwrap())).unwrap()).unwrap();
++        for descriptor in catalog["pages"].as_array().unwrap() {
++            let page: serde_json::Value = serde_json::from_slice(&std::fs::read(output.path().join(descriptor["path"].as_str().unwrap())).unwrap()).unwrap();
++            records.extend(page["records"].as_array().unwrap().iter().cloned());
++        }
++    }
++    let mut oracle = WireOracle { records: records.into_iter() };
++    let unit = oracle.row("unit");
++    for _ in 0..6 { oracle.text(); }
++    let emitted = (0..unit[5].as_u64().unwrap()).map(|ordinal| {
++        assert_eq!(oracle.row("source")[1], ordinal);
++        oracle.text().as_str().unwrap().to_owned()
++    }).collect::<Vec<_>>();
++    assert_eq!(emitted, expected);
++    assert_eq!(wire_report(output.path()), legacy_report(&p));
 +}
 +
 +#[test]

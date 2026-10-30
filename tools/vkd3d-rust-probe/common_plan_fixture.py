@@ -76,7 +76,8 @@ def plan_records(plan):
                len(unit['source_sha256']), len(unit['declarations']), len(unit['calls'])]
         for field in ('key', 'command', 'domain', 'source', 'ast_instance', 'target'):
             yield from text_records(identity[field])
-        for j, (name, digest) in enumerate(sorted(unit['source_sha256'].items())):
+        for j, (name, digest) in enumerate(sorted(unit['source_sha256'].items(),
+                                               key=lambda item: tuple(part.encode('utf-8') for part in Path(item[0]).parts))):
             yield ['source', j, digest]
             yield from text_records(name)
         for j, d in enumerate(unit['declarations']):

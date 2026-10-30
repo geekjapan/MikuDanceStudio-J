@@ -1,0 +1,162 @@
+# Windows CMake DBVT reference
+
+This verification measures the current repository's native Windows x64 CMake target. It does not establish the behavior of a shipped MMD executable. Product Rust DBVT policy remains a separate decision.
+
+The existing Windows build creates Bullet with Conan 2.27.1 in a fresh job-owned cache. The probe uses the application's generated Conan toolchain, Visual Studio 2022 generator, x64 architecture, Release configuration, C++17, and `BULLET275::BULLET275`. It compiles no Bullet implementation source. The normal application build gains logging-only `/VERBOSE:LIB`; its existing tests, camera oracle, and release packaging run before the measurement.
+
+This measurement is independently usable without `tools/bullet-dbvt-consumer-profile`, its Cargo build hook, or its diagnostic workflow. The three pure body-classification and Select-schema functions live in `check.py`; their behavior is unchanged from the consumer checker. The measurement requires the checked-in Bullet recipe and source, x64 Conan profile, application CMake build, Python standard library, Conan 2.27.1, CMake, Visual Studio 2022 with the Windows SDK, and Rust 1.95.0. Its generated Rust driver reads the existing DBVT, pair-cache, math, CRT-math, and `math-dependency` sources. The DBVT core module remains unregistered and the public World continues to use native Bullet.
+
+The audited Windows run at source `60115a2` measured all six translation units and 51 numeric cases. That historical execution is not execution evidence for this extracted head. It did not measure the final Rust FFI consumer. The separate actual FFI diagnostic remains unintegrated with a Windows compatibility failure; this extraction neither changes product WIN32 definitions nor resolves that failure. A new Windows run must execute both normal and optimized helper controls and the full measurement.
+
+The workflow runs these commands from the repository root.
+
+```powershell
+python -I tools/bullet-dbvt-cmake-reference/test_check.py
+python -I -O tools/bullet-dbvt-cmake-reference/test_check.py
+python tools/bullet-rust-dbvt-check/test_check.py
+python -O tools/bullet-rust-dbvt-check/test_check.py
+python -I tools/bullet-dbvt-cmake-reference/check.py prepare --out-dir out/ci/dbvt-reference
+# Existing normal CMake configuration, with logging-only /VERBOSE:LIB.
+python -I tools/bullet-dbvt-cmake-reference/check.py record-build --out-dir out/ci/dbvt-reference --build-command cmake --build out/ci/build --config Release --parallel 4 -- /verbosity:normal /clp:ShowCommandLine
+python -I tools/bullet-dbvt-cmake-reference/check.py measure --out-dir out/ci/dbvt-reference
+```
+
+`CONAN_HOME` must name a nonexistent directory directly inside `RUNNER_TEMP`. The workflow assigns a directory containing the run ID, attempt, and architecture. `prepare` captures the checkout, parents, event SHA, PR head and base, run, attempt, job key, runner image, and allowlisted `CL` and `_CL_` options. It saves the complete resolved Conan install graph. Cache paths use that graph's exact recipe revision, package ID, and package revision. The native CMake cache identifies the actual build and copied source directories through the installed CMake reader. The preliminary physical-record scan rejects canonical duplicate required keys and required names spelled with leading spaces or tabs or surrounding quotes. Duplicate or malformed identity records fail with the key and physical line number after the raw cache is saved.
+
+The `dbvt-cmake-reference-x64` artifact contains these records.
+
+- Actual CL, LIB, and LINK command evidence from normal build output and MSBuild tlogs, including expanded response files and their encodings, contents, and hashes.
+- Project files, CMake caches, toolchains, compiler and MSBuild versions, and actual compiler source and header reads.
+- Four package archives, their matching build-output hashes, and the DBVT object files. App and probe LINK commands must name those same four archive paths. Each target-specific LINK map must identify both `btDbvt.obj` and `btDbvtBroadphase.obj` from `BulletCollision`. Its exact LINK output, map path, executable hash, and matching linker-read task are recorded. Both LINK arguments and reads must uniquely name each canonical archive. Whole-build member log lines cannot supply this proof. The real CL `/Fo` output must exist, be the exact LIB input, and match the uniquely resolved archive member path and bytes. The probe object must also be the exact LINK input and read object.
+- Original-flag preprocessing of `btDbvt.cpp`, `btDbvtBroadphase.cpp`, `btCompoundShape.cpp`, `btCompoundCollisionAlgorithm.cpp`, `scene_create.cpp`, and the probe. Replays remove compile and output modes and add `/E`, `/showIncludes`, and logging-only `/Bv`. They preserve ordered semantic flags. SDK include paths come from the matched compiler's `VsDevCmd.bat`; replay headers must cover actual CL read tlogs. Unknown or missing response files fail validation. Each expanded CL command must have exactly one source operand whose canonical full path matches its single caret source. Standalone `/TP` and `-TP` select C++ mode and remain in replay. Explicit `/Tc`, `/Tp`, and `/TC` modes, including dash forms, fail validation before archive proof or replay. Replay keeps the validated source operand. A same-basename source in another directory cannot supply proof. Every tlog caret starts a separate task, including repeated caret source names. CL header capture and LINK proof each require exactly one matching read task. Partial read sections cannot be pooled.
+- Separate inline `Intersect`, `Select`, `Merge`, and template or virtual policy classifications. The post-header-undef aligned-local branches in `btDbvt.cpp` are recorded separately. Ordered DBVT definitions, undefinitions, floating-point, architecture, C++ standard, and forced-include flags must agree across translation units.
+- Raw numeric inputs and outputs, native and Rust command records, executable hashes, source and header hashes, and a finalized artifact hash manifest. The report excludes itself and Rust build scratch from that manifest. The executed Rust executable is copied outside scratch and hashed with its generated source, build command, and toolchain record. Native probe source, compiler command, object bytes, LINK inputs, and executable bytes are associated explicitly. All captured process streams are closed before finalization.
+
+`--build-command` ends strict wrapper option parsing. Every following argument, including the native `--`, is passed unchanged to the build process. The resolved native `CMakeCache.txt` is retained as `native-CMakeCache.txt` before generator, architecture, and source checks. Duplicate identity keys and malformed physical lines naming an identity key fail with the key and line number. Cache records are separated by LF, with the trailing CR removed for CRLF. Lone CR and Unicode line separators stay inside their physical record. CMake itself determines whether unrelated records are valid.
+
+Cache validation saves the original bytes once, copies them into a fresh scratch input directory, and runs a constant `load_cache` script with `INCLUDE_INTERNALS`. CMake runs with `-N` and both `-S` and `-B` pointing to the fresh scratch root, which has no cache or `PreLoad.cmake`. It never runs against the native build or source directories. Acceptance requires zero exit status, empty stderr, and exactly one strict UTF-8 hex marker for each required identity. Only these CMake-derived values authorize the generator, platform, and source checks. The original cache, saved raw cache, and copied input must still match byte for byte. The retained scratch input, reader script, command, stdout, stderr, and source and command hashes provide failure evidence. Portable controls require `cmake` on PATH.
+
+Build output is bounded and filtered to compiler, librarian, linker, archive-member, and recognized compiler, linker, CMake, and Conan diagnostics. Retained lines are also forwarded to Actions output. Failures name the retained stdout and stderr paths. It does not retain an MSBuild diagnostic environment dump. Only compiler-relevant `CL` and `_CL_` options and replay include paths are saved. Missing identities, source association, link evidence, compiler flags, header closure, or changed archives produce an incomplete observation.
+
+The runtime probes each have a ten-second deadline and bounded input and output. Input uses a temporary file, so a child that never reads stdin cannot block the caller. Process groups on POSIX and a kill-on-close Windows job terminate owned descendants. Windows children start with `CREATE_SUSPENDED`, join the job, then resume through their single primary thread. Job assignment failure kills the suspended child without running it. Snapshot, thread, job, and process handles close during teardown. Teardown has an additional bounded five-second wait. They execute these operations.
+
+| Capture | Execution | Comparison |
+| --- | --- | --- |
+| Directed Select | Three finite point inserts call the archive's `btDbvt::insert`; one probe-TU inline volume query records leaf order. | Current pure Rust DBVT inserts and query. |
+| Direct AABB | Probe-TU inline `Intersect` and `Merge` in both orders on 51 runtime word rows. | Current Rust `Aabb::intersects` and both-order `merge`, 13 result words. |
+| Archive Merge | Two archive inserts in a fresh tree in both orders for each row. | Insertion A then B compares against Rust `Merge(B,A)`; B then A compares against `Merge(A,B)`. All six words retain their exact bits. |
+| Archive Intersect | Two proxies in a fresh archive broadphase. Immediate collision must be enabled. Read the sole pair's presence, then explicitly destroy both proxies. | Pair presence against current Rust AABB intersection. |
+
+A separate native `dbvt_insert_order_control` links the same imported library and checks real two-leaf inserts with signed zeros and distinct quiet-NaN payloads against explicit reversed Merge arguments. It uses explicit failure returns even in Release. A local portable build of this small control exercises the checked-in DBVT source only and supplies no Windows reference evidence.
+
+There is no NaN optimization, `calculateOverlappingPairs`, or additional tree mutation. Inputs retain zero signs and quiet-NaN payloads. Rust uses the existing DBVT, pair cache, math, and CRT math dependency sources with the pinned 1.95.0 toolchain and its existing host-specific profile. The generated Rust driver has no native Bullet FFI dependency and never changes the CMake probe's link or CRT settings.
+
+`report.json` distinguishes observation from compatibility. A complete, valid numeric mismatch reports `observation=complete`, `compatibility=FAIL`, and `classification=compatibility-mismatch`. A missing or malformed capture reports `observation=incomplete`, `compatibility=not-evaluated`, and `classification=validation-gap`. Both exit nonzero. Neither outcome authorizes a product profile change.
+
+Local parser controls and a portable syntax check do not execute the Windows reference. Only a completed Actions artifact can supply that evidence.
+
+The focused suite includes Windows-only race controls. Each parent starts suspended and joins an outer kill-on-close job before execution. A barrier forces the old inner-job launch-before-assignment schedule and confirms its descendant escapes the inner job. The outer job still owns that descendant. The corrected launch delays inner-job assignment, checks that no child code ran, and retains a terminate-capable descendant handle before allowing the parent to exit. Closing the inner job must signal that handle. Deterministic failures exercise baseline and corrected readiness timeouts before a descendant handle is acquired, and an orphan that survives the inner job. Every exit closes outer containment. Known descendant handles support explicit termination, a bounded wait, and handle close. A delayed repeated marker detects activity after cleanup. Portable mocks check survivor termination and cleanup failures, suspended launch order, assignment and resume failures, and snapshot and thread handle cleanup. The actual Windows controls are skipped on other hosts and require Windows CI acceptance.
+
+The CL boundary uses one strict grammar for source validation, preprocessing, compiler environment options, and policy extraction. Both `/` and `-` introduce case-sensitive options. Compile records retain the exact expanded argv. Policy comparisons normalize the option prefix to `/` and join separated values without changing override order.
+
+| Option class | Supported spelling | Preprocessing |
+| --- | --- | --- |
+| Definitions and includes | `/Dvalue`, `/Uvalue`, `/Ipath`, `/FIpath`, `/external:Ipath`, or the same option followed by a separate nonempty value. | Preserve the original tokens. |
+| Output paths | `/Fopath`, `/Fdpath`, `/Fepath`, `/Fapath`, `/Fipath`, `/Fppath`. A nonempty attached path is required. Bare and colon forms are unsupported, including documented `/Fo:` and `/Fe:` alternatives. | Remove `/Fo`, `/Fd`, `/Fe`, `/Fa`, and `/Fi` with their attached paths. Preserve `/Fp`. |
+| PCH | Bare `/Yu` and `/Yc`, or an attached filename. They never consume the next token. Colon forms are unsupported. | Preserve the original token. |
+| Dependency output | `/sourceDependencies path`, `/sourceDependencies:directives path`, `/scanDependencies path`, or each exact option with a trailing `-` for stdout. Attached filenames and colon filename forms are unsupported. | Preserve the original tokens. |
+| Source | Exactly one positional input whose canonical full path matches the single tlog caret. Standalone `/TP` permits any input extension. Without `/TP`, the input must end in `.cpp`, `.c`, `.cxx`, `.cc`, or `.c++`. | Move the original source token to the end. |
+
+Missing or empty values, values beginning with `:`, and option-like values fail closed. Portable tests also allow absolute POSIX paths for path values and source operands. `/D` and `/U` cannot take option-like values. Extra inputs, empty positional tokens, `/Tc`, `/Tp`, `/TC`, and unknown options fail before archive proof or replay.
+
+The exact supported flags are:
+
+```text
+/c /E /EP /P /showIncludes /TP /nologo
+/W0 /W1 /W3 /WX- /wd4267 /wd4244 /wd4245
+/diagnostics:column /external:W0 /external:W1
+/O2 /Ob2 /Od /EHsc /MD /MDd /GS /GR /Gd /Gm- /RTC1 /FC
+/Zc:wchar_t /Zc:forScope /Zc:inline /Zc:alignedNew-
+/std:c++17 /openmp /permissive- /utf-8
+/fp:precise /fp:fast /fp:strict /arch:SSE2 /arch:AVX /arch:AVX2
+```
+
+Other valid MSVC flags require an explicit grammar change and a parser control. In particular, other `/EH`, `/Zc`, `/std`, `/arch`, and `/fp` forms, all `/favor` forms, and `/openmp` variants such as `/openmp:llvm`, are unsupported. Preprocessing removes only classified `/c`, `/E`, `/EP`, `/P`, `/showIncludes`, and output-path tokens, then adds `/E` and `/showIncludes`. Every other accepted option retains its original tokens and order. The logging-only `/Bv` is added after parsing by the replay runner.
+
+`CL` and `_CL_` accept definitions and includes from the same grammar, plus supported flags beginning with `/std:`, `/arch:`, `/fp:`, `/O`, `/MD`, `/MT`, `/EH`, `/Zc:`, and `/nologo`. Output paths, source modes, positional inputs, and other flags are rejected in these environment variables.
+
+The retained Actions 40439880708 capture has 122 CL commands. They use 606 `/D` options, 363 `/I` options, 122 attached `/Fo` paths, and 122 attached `/Fd` paths. The flag list above contains their exact flags plus explicit replay and floating-point or architecture controls. The capture has no PCH or dependency-output options.
+
+Microsoft documents [output pathname attachment](https://learn.microsoft.com/en-us/cpp/build/reference/specifying-the-pathname?view=msvc-170), [compiler option forms](https://learn.microsoft.com/en-us/cpp/build/reference/compiler-options-listed-alphabetically?view=msvc-170), and the optional attached PCH syntax for [`/Yu`](https://learn.microsoft.com/en-us/cpp/build/reference/yu-use-precompiled-header-file?view=msvc-170) and [`/Yc`](https://learn.microsoft.com/en-us/cpp/build/reference/yc-create-precompiled-header-file?view=msvc-170). Required separated dependency paths and stdout forms are documented for [`/sourceDependencies`](https://learn.microsoft.com/en-us/cpp/build/reference/sourcedependencies?view=msvc-170), [`/sourceDependencies:directives`](https://learn.microsoft.com/en-us/cpp/build/reference/sourcedependencies-directives?view=msvc-170), and [`/scanDependencies`](https://learn.microsoft.com/en-us/cpp/build/reference/scandependencies?view=msvc-170).
+
+### Tlog task contracts
+
+`tlog_tasks` retains each caret's source identities and every physical payload
+line, including blank lines. It rejects missing carets, empty identities, NULs,
+and empty tasks. CL command consumers require exactly one nonempty command
+line per task. Read-log consumers retain one path per nonempty line.
+
+The LINK consumer requires exactly one task. It expands response files on the
+first nonempty payload line with the existing recursion and quoting checks.
+Later physical lines accept only object or resource operands ending in `.obj`
+or `.res`. Options, response files, commands, invalid Windows filename characters,
+and incomplete quoting fail on each continuation line. Ordered argv retains all
+first-line operands, including generated resources outside the caret identities.
+LINK evidence retains the original carets and physical lines, tlog SHA256,
+encoding, expanded argv, and response provenance. The executable, map, library,
+matching read task, archive-member, and probe-object checks remain required.
+
+`fixtures/link/` contains unmodified UTF-16 app and probe LINK tlogs from Windows
+run 40452363088, artifact 12711876690. Their adjacent JSON files record source
+identity and byte and argv hashes. The app task has nine payload lines. The probe
+task has one. These fixtures establish parsing only. Downstream Windows proof
+and complete measurement acceptance require an actual Windows run.
+
+The librarian consumer requires exactly one task. Its first payload line accepts
+`/OUT:`, `/NOLOGO`, `/MACHINE:X64`, object operands, and response files expanded
+with the existing recursion and quoting checks. Later payload lines accept only
+object operands. Each physical line must have complete quoting. The expanded
+argv must contain exactly one nonempty attached `/OUT:` value, matched without
+regard to option-name case. Duplicate output options fail regardless of casing
+or response expansion. Parsing retains the output path spelling and uses that
+same value to bind the archive identity. The argv must contain supported options
+and unique object paths that
+exactly match the caret identities after path resolution and case normalization.
+Unknown options, extra commands, missing or extra objects, and repeated identities
+fail validation. Archive/object byte checks remain required after parsing.
+Archive evidence retains the original caret identities, payload lines, tlog
+SHA256, ordered expanded argv, and response-file identities.
+
+`fixtures/librarian/` contains the four unmodified UTF-16 librarian tlogs from
+Windows run 40447023256, artifact 12709290514. Each adjacent JSON file records its
+original member path, source head, ZIP and tlog SHA256, ordered argv SHA256, and
+operand count. The tasks contain 7, 20, 89, and 5 payload lines. These fixtures
+prove parsing of the captured records. Complete archive, object, LINK/read/map,
+preprocessing/header, macro-policy, and numeric acceptance still require the
+actual Windows measurement.
+
+`fixtures/compiler/selected-tus.json` retains the six selected TU tasks from the
+Windows run 40452363088, artifact 12711876690, with their original caret, payload
+line, ordered argv, tlog path,
+and complete original tlog hash. The app's `scene_create` uses eight additional
+operand-free flags. `/W3` and `/wd4267`, `/wd4244`, `/wd4245` control warnings.
+`/openmp` and `/permissive-` select language behavior. `/utf-8` selects character
+encoding. `/Zc:alignedNew-` selects allocation behavior. Each exact token is
+supported with the existing slash or dash prefix normalization and remains in
+preprocessing in its original order. These flags never consume a following
+source operand. Other warning numbers, language modes, encodings, and suffixes
+remain unsupported. The compiler environment's existing supported `/Zc:` rule
+also permits `/Zc:alignedNew-`. Its other option restrictions remain unchanged.
+
+Developer-environment setup uses the bounded process runner with a raw cmd command
+line. It retains `<TU>-developer-environment-command.json`, `-result.json`,
+`.stdout`, and `.stderr` before reporting a nonzero exit or timeout. The command
+receipt contains the exact command line and working directory. The result records
+the exit code and any time or output bound failure. VsDevCmd output is retained;
+the last stdout line must be the generated Python script's JSON with nonempty
+INCLUDE, LIB, LIBPATH, and PATH strings. Paths containing quotes, percent signs,
+carets, or line breaks fail before shell execution. Windows-only controls exercise
+real cmd transport with spaces and Unicode paths, failed setup, and timeout
+partial output. Portable mocks are not Windows acceptance. The original run
+40457905705 exited 1 before preprocessing and discarded its child streams. Its
+inner cause remains unknown until a new Windows measurement retains diagnostics.

@@ -267,7 +267,15 @@ impl Staged {
     /// today's mask.
     fn old_host_mask(&self, physics: &PhysicsScene, frame: u32) -> Vec<bool> {
         let light = evaluate_light(&self.pmm.light, f64::from(frame), LightMode::Playback).unwrap();
-        let (scene, _, _) = scene(&camera(&self.pmm, frame), light, frame, 0.0, (W, H)).unwrap();
+        let (scene, _, _) = scene(
+            &camera(&self.pmm, frame).into(),
+            [0.0; 2],
+            light,
+            frame,
+            0.0,
+            (W, H),
+        )
+        .unwrap();
         let view_proj = mul(&scene.view, &scene.projection);
         let mut mask = vec![false; (W * H) as usize];
         for (i, (m, pmx)) in self.pmm.models.iter().zip(&self.pmxs).enumerate().skip(1) {
@@ -332,12 +340,16 @@ impl Staged {
         let f = Frame {
             pmm: &self.pmm,
             poses: &physics.scene.models,
-            camera: &camera,
+            camera: &camera.into(),
+            view_offset: [0.0; 2],
+            shadow_map: Default::default(),
+            shadow_map_display: false,
             light,
             frame,
             elapsed,
             size: (W, H),
             assignments: &self.assignments,
+            offscreen: &Default::default(),
             resolve: &resolve,
         };
         let mut log = Vec::new();

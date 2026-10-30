@@ -1,0 +1,12 @@
+{
+  "run": 40447023256,
+  "artifact": 12709290514,
+  "artifact_sha256": "ca9738ccaf91c9cdf62655c7c3368ec48c38eaafee40f831916ffaf8ab78f795",
+  "head": "62a00441d4b4152d05469f4f627e2f7d99d1508c",
+  "tlog": "native-build-metadata/BulletCollision/BulletCollision.dir/Release/BulletCollision.tlog/Lib.command.1.tlog",
+  "sha256": "bc2b040e5681b5a77c8306649f9457616a2c8aa1e8d7390820c0f1166942b7fa",
+  "argument_lines": 89,
+  "argv_sha256": "2bc582cceba31b51ecf08c00c7b724aefbf13ae81bef87a848bb2a6a15fcc18b",
+  "input_objects": 89,
+  "failure_line": 3
+}

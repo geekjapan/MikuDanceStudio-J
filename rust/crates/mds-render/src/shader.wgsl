@@ -22,6 +22,8 @@ struct Scene {
     // x: 1 when the self-shadow map applies; y: the depth difference factor; z: 1 when the factor
     // is also scaled by the map's v (mode 2, `parthf`); w: the map's size in texels.
     self_shadow: vec4<f32>,
+    // The self-shadow map display: left, top, right, bottom in output pixels.
+    display: vec4<f32>,
 }
 
 struct Material {
@@ -342,13 +344,7 @@ fn ground_shadow_clip(position: vec3<f32>) -> vec4<f32> {
     return shifted(scene.view_proj * vec4<f32>(p, 1.0));
 }
 
-@vertex
-fn vs_ground_shadow(v: VsIn) -> @builtin(position) vec4<f32> {
-    return ground_shadow_clip(v.position);
-}
-
-// The edge hull casts a ground shadow too (golden2 `groundshadow-*.png`: the shadow's edges reach
-// as far as the hull's shadow does, one multisample past the body's).
+// The ground shadow is the edge hull's (winprobe2: no body is drawn under the ground matrix).
 @vertex
 fn vs_ground_shadow_edge(v: EdgeIn) -> @builtin(position) vec4<f32> {
     return ground_shadow_clip(v.position);
@@ -357,4 +353,67 @@ fn vs_ground_shadow_edge(v: EdgeIn) -> @builtin(position) vec4<f32> {
 @fragment
 fn fs_ground_shadow() -> @location(0) vec4<f32> {
     return scene.ground_shadow;
+}
+
+// The ground grid and the axes: each segment from `a` to `b` is a quad one pixel wide across the
+// line, as Direct3D 9 rasterizes a line under multisampling (golden2 `perspective-0.png`: the
+// eight samples of a column across a horizontal grid line fall on exactly one row each).
+struct LineIn {
+    @location(0) a: vec3<f32>,
+    @location(1) b: vec3<f32>,
+    @location(2) color: vec4<f32>,
+    // x: 0 at `a`, 1 at `b`; y: -1 or 1, the side of the line.
+    @location(3) corner: vec2<f32>,
+}
+
+@vertex
+fn vs_line(v: LineIn) -> EdgeOut {
+    var o: EdgeOut;
+    o.color = v.color;
+    var a = scene.view_proj * vec4<f32>(v.a, 1.0);
+    var b = scene.view_proj * vec4<f32>(v.b, 1.0);
+    if a.z < 0.0 && b.z < 0.0 {
+        o.clip = vec4<f32>(0.0, 0.0, -1.0, 1.0);
+        return o;
+    }
+    // Cut at the near plane, so a line that passes the camera keeps its part in front.
+    if a.z < 0.0 {
+        a = mix(a, b, a.z / (a.z - b.z));
+    } else if b.z < 0.0 {
+        b = mix(b, a, b.z / (b.z - a.z));
+    }
+    let half = scene.screen.xy * 0.5;
+    var d = b.xy / b.w * half - a.xy / a.w * half;
+    if dot(d, d) == 0.0 {
+        d = vec2<f32>(1.0, 0.0);
+    }
+    d = normalize(d);
+    var p = a;
+    if v.corner.x == 1.0 {
+        p = b;
+    }
+    let across = vec2<f32>(-d.y, d.x) * (0.5 * v.corner.y) / half;
+    o.clip = shifted(vec4<f32>(p.xy + across * p.w, p.z, p.w));
+    return o;
+}
+
+// The self-shadow map display: a quad in output pixels (`scene.display`), the map's depth in gray.
+@vertex
+fn vs_display(@builtin(vertex_index) k: u32) -> PictureOut {
+    let c = array<u32, 6>(0u, 1u, 2u, 2u, 1u, 3u)[k];
+    let corner = vec2<f32>(f32(c & 1u), f32((c >> 1u) & 1u));
+    let r = scene.display;
+    let p = mix(r.xy, r.zw, corner);
+    var o: PictureOut;
+    o.clip = shifted(vec4<f32>(2.0 * p.x / scene.screen.x - 1.0, 1.0 - 2.0 * p.y / scene.screen.y, 0.0, 1.0));
+    o.uv = corner;
+    return o;
+}
+
+@fragment
+fn fs_display(i: PictureOut) -> @location(0) vec4<f32> {
+    let n = i32(scene.self_shadow.w);
+    let texel = clamp(vec2<i32>(i.uv * scene.self_shadow.w), vec2<i32>(0), vec2<i32>(n - 1));
+    let depth = textureLoad(shadow_map, texel, 0);
+    return vec4<f32>(depth, depth, depth, 1.0);
 }

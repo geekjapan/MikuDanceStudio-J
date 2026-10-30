@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""Compare raw registered objects from both unchanged native shims and Rust."""
+import argparse
+import difflib
+import hashlib
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import shutil
+import subprocess
+import sys
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
+BASE = 'ba741bc903404a680481578b871a613213b4f949'
+
+def require(ok, message):
+    if not ok: raise AssertionError(message)
+
+def hashes(root):
+    return {p.relative_to(root).as_posix(): 'symlink:' + os.readlink(p) if p.is_symlink() else hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(root.rglob('*')) if p.is_file() or p.is_symlink()}
+
+def source_snapshot():
+    folders = ['recipes/bullet275/bullet-src/src', 'rust/crates/mds-bullet/src/core',
+               'rust/crates/mds-bullet/tests', 'rust/crates/mds-bullet-sys/shim',
+               'rust/crates/mds-crtmath/src', 'tools/bullet-rust-world-objects-check']
+    result = {str(Path(folder) / name): digest for folder in folders for name, digest in hashes(ROOT / folder).items()
+              if '__pycache__' not in name}
+    result['.github/workflows/bullet-world-objects.yml'] = hashlib.sha256((ROOT / '.github/workflows/bullet-world-objects.yml').read_bytes()).hexdigest()
+    return result
+
+def includes(raw):
+    pattern = r'^Note: including file:\s+(.+)$' if os.name == 'nt' else r'^\.+ (.+)$'
+    return sorted({Path(m[1]).resolve() for line in raw.decode(errors='replace').splitlines()
+                   if (m := re.match(pattern, line)) and Path(m[1]).is_file()})
+
+def expected_records(extended=True):
+    records = []
+    def snapshot(kind, row, bodies, joints):
+        records.append((['W',kind,str(row)], None))
+        records.extend((['B',kind,str(row),str(i)],120) for i in range(bodies))
+        for i in range(joints):
+            records.append((['J',kind,str(row),str(i)],64 if kind in ('P','Q') else 65))
+            if kind in ('Q','N'): records.append((['T',kind,str(row),str(i)],28))
+    snapshot('P',0,0,0)
+    for i in range(7):
+        records.append((['C','P',str(i)],4));snapshot('P',i+1,i+1,0)
+    for row in [8,9,10]: snapshot('P',row,7,0)
+    for j in range(3):
+        records.append((['K','P',str(j)],4));snapshot('P',11+j,7,j+1)
+    records.extend([(['R','P','-2'],4),(['F','P','-1'],3)])
+    snapshot('P',14,7,3);snapshot('M',0,1,0)
+    for i in range(4):
+        records.append((['C','M',str(i)],4));snapshot('M',i+1,i+2,0)
+    for row in range(5,12):snapshot('M',row,5,0)
+    for j in range(3):
+        records.append((['K','M',str(j)],4));snapshot('M',12+j,5,j+1)
+    if extended:
+        records.insert(0, (['W','P','15'], None))
+        public = [r for r in records if r[0][1] == 'P']
+        mmd = [r for r in records if r[0][1] == 'M']
+        def rotated(rs, kind):
+            result = []
+            for prefix,width in rs:
+                result.append(([prefix[0],kind,*prefix[2:]],width))
+                if prefix[0] == 'J': result.append((['T',kind,*prefix[2:]],28))
+            return result
+        records = public + rotated(public,'Q') + mmd + rotated(mmd,'N')
+        mmd_start = next(i for i,(prefix,_) in enumerate(records) if prefix[1] == 'M')
+        tail = records[mmd_start:]; records = records[:mmd_start]
+        records += [(['V','Q',str(i)],5) for i in range(4)]
+        snapshot('Q',16,7,3)
+        records += tail
+        for i in range(2):
+            records.append((['V','N',str(i)],5));snapshot('N',15+i,6+i,3)
+        records += [(['O','P',str(i)],51) for i in range(2)]
+    return records
+
+
+def validate(raw, reference=None, extended=True):
+    rows = raw.decode().splitlines(); records = expected_records(extended)
+    def integer(value, low, high):
+        require(re.fullmatch(r'-?(0|[1-9][0-9]*)', value) is not None, 'malformed integer')
+        require(low <= int(value) <= high, 'integer out of range')
+    def words(values):
+        require(all(re.fullmatch(r'[0-9a-f]{8}', v) for v in values), 'malformed float word')
+    require(len(rows) == len(records), 'incomplete trace')
+    for line, (prefix, width) in zip(rows, records):
+        a = line.split()
+        require(a[:len(prefix)] == prefix, 'trace record order or identity changed')
+        if width is not None: require(len(a) == width, 'trace record width changed')
+        if a[0] == 'W':
+            require(len(a) >= 8 and a[6] == 'N', 'malformed registration trace')
+            words(a[3:6]); integer(a[7], 0, 2147483647)
+            require(len(a) == 8 + int(a[7]), 'registration count differs')
+            bodies = sum(p[:3] == ['B', *prefix[1:]] for p,_ in records)
+            for value in a[8:]: integer(value, 0, bodies - 1)
+            require(len(set(a[8:])) == len(a[8:]), 'duplicate registration index')
+        elif a[0] == 'B':
+            words(a[4:-5])
+            integer(a[-5], -1, 127); integer(a[-4], 1, 5)
+            for value in a[-3:-1]: integer(value, -32768, 32767)
+            joints = sum(p[:3] == ['J', *prefix[1:3]] for p,_ in records)
+            integer(a[-1], 0, joints)
+        elif a[0] == 'J':
+            boolean = {6,11,16,21,28,35,40,44,48,52,56,60}
+            for i in range(4,64):
+                if i in boolean: require(a[i] in ('0','1'), 'malformed boolean')
+                else: words([a[i]])
+            if len(a) == 65: integer(a[64], -2147483648, 2147483647)
+        elif a[0] == 'O': words(a[3:])
+        elif a[0] == 'T': words(a[4:])
+        elif a[0] == 'V':
+            require(a[3] == ('-2' if a[1] == 'Q' else '0'), 'boundary status changed')
+            integer(a[4], 7 if a[1] == 'Q' else 6 + int(a[2]), 7 if a[1] == 'Q' else 6 + int(a[2]))
+        elif a[0] in ('C','K'): require(a[3] == '0', 'creation status differs from registered count')
+        elif a[0] == 'R': integer(a[3], 7, 7)
+        elif a[0] != 'F': require(False, 'unknown record')
+
+MUTANTS = {
+    'motion-body-confusion': ('self.data[i].motion.set_world_transform(world);\n        Ok(())', 'self.bodies[i].set_world_transform(world);\n        Ok(())'),
+    'reseat-interpolation-write': ('self.bodies[i].set_interpolation_velocities(Vec3::ZERO, Vec3::ZERO);\n        Ok(())', 'self.bodies[i].set_interpolation_velocities(Vec3::ZERO, Vec3::ZERO);\n        self.bodies[i].set_interpolation_world_transform(world);\n        Ok(())'),
+    'stop-interpolation-clear': ('let mut world = self.bodies[i].snapshot().world;\n        world.origin = origin;', 'self.bodies[i].set_interpolation_velocities(Vec3::ZERO, Vec3::ZERO);\n        let mut world = self.bodies[i].snapshot().world; world.origin = origin;'),
+    'ignore-active': ('self.gravity = gravity;\n        for &i in &self.non_static {\n            if self.objects[i].activation.is_active()', 'self.gravity = gravity;\n        for &i in &self.non_static {\n            if true'),
+    'rebuild-nonstatic': ('self.gravity = gravity;\n        for &i in &self.non_static {', 'self.gravity = gravity;\n        let rebuilt: Vec<_> = self.bodies.iter().enumerate().filter(|(_, b)| !b.snapshot().is_static && !b.snapshot().is_kinematic).map(|(i, _)| i).collect();\n        for &i in &rebuilt {'),
+    'filter-sign-loss': ('filter: filter.unwrap_or(', 'filter: filter.map(|v| v.map(|x| x & 0x7fff)).unwrap_or('),
+    'all-joints-disable-collisions': ('let disable_collisions = mmd_uid.is_none() && desc.disable_collisions;', 'let disable_collisions = true;'),
+    'public-equilibrium-calculation': ('if mmd_uid.is_some() && state.springs.iter().any(|s| s.enabled)', 'if state.springs.iter().any(|s| s.enabled)'),
+    'omit-mmd-equilibrium': ('if mmd_uid.is_some() && state.springs.iter().any(|s| s.enabled)', 'if false && state.springs.iter().any(|s| s.enabled)'),
+    'global-zero-normalize': ('if mmd && v == 0.0 { 0.0 } else { v }', 'if v == 0.0 { 0.0 } else { v }'),
+    'floor-mask-toggle': ('self.set_flags(0, if on { 1 } else { -1 });', 'self.data[0].filter[1] = if on { -1 } else { 0 };'),
+}
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--out-dir', type=Path, required=True)
+    parser.add_argument('--skip-mutations', action='store_true')
+    parser.add_argument('--mutation', action='append', choices=sorted(MUTANTS))
+    args = parser.parse_args()
+    out = args.out_dir.resolve(); out.mkdir(parents=True, exist_ok=True)
+    generated_root = out / 'generated-sources'; generated_root.mkdir()
+    before = source_snapshot(); generated = {}; dependencies = {}; commands = []
+    status = {'status': 'FAIL', 'base': BASE, 'product_world': 'NOT_MIGRATED', 'four_host': 'PENDING'}
+    def save(name, value): (out / name).write_text(json.dumps(value, indent=2) + '\n')
+    def dep_snapshot(): return {name: hashlib.sha256(Path(name).read_bytes()).hexdigest() if Path(name).is_file() else None for name in dependencies}
+    def run(argv, label, inputs=None):
+        require(source_snapshot() == before, 'source closure changed before command')
+        require(hashes(generated_root) == generated, 'generated closure changed before command')
+        require(dep_snapshot() == dependencies, 'include closure changed before command')
+        argv = list(map(str, argv)); commands.append({'label': label, 'argv': argv}); save('commands.json', commands)
+        p = subprocess.run(argv, cwd=ROOT / 'rust', capture_output=True, env=env, input=inputs, timeout=240)
+        (out / (label + '.stdout')).write_bytes(p.stdout); (out / (label + '.stderr')).write_bytes(p.stderr)
+        included = includes(p.stdout + p.stderr)
+        save(label + '-includes.json', list(map(str,included)))
+        for path in included:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            previous = dependencies.setdefault(str(path), digest)
+            require(previous == digest, 'include closure changed during command')
+        save('native-includes.json', dependencies)
+        require(p.returncode == 0, f'{label} failed ({p.returncode}): {p.stderr.decode(errors="replace")[-2000:]}')
+        return p.stdout
+    env = {k:v for k,v in os.environ.items() if not k.startswith('OPENMMD_DUMP_')}; env['VSLANG'] = '1033'
+    save('source-start.json', before)
+    try:
+        machine = platform.machine().lower(); system = platform.system()
+        require(machine in ['x86_64','amd64','aarch64','arm64'], 'unsupported host architecture')
+        require(system != 'Darwin' or machine == 'arm64', 'unsupported macOS architecture')
+        require(system != 'Windows' or machine in ['amd64','x86_64'], 'unsupported Windows architecture')
+        status['host'] = {'system': platform.platform(), 'architecture': machine, 'runner_image': os.environ.get('ImageOS'), 'runner_version': os.environ.get('ImageVersion')}
+        variants = ['observed'] + ([] if args.skip_mutations else args.mutation or list(MUTANTS))
+        source = (ROOT / 'rust/crates/mds-bullet/src/core/world_objects.rs').read_text()
+        for name in variants:
+            tree = generated_root / name
+            shutil.copytree(ROOT / 'rust/crates/mds-bullet/src/core', tree / 'rust/crates/mds-bullet/src/core')
+            runner = tree / 'tools/bullet-rust-world-objects-check/runner.rs'; runner.parent.mkdir(parents=True)
+            code = (HERE / 'runner.rs').read_text()
+            if name == 'observed':
+                code = code.replace('// OBSERVER_ANCHOR', 'eprintln!("OBS {} {} {} {}",k,r,w.bodies().len(),w.joints().len());')
+            else:
+                old, new = MUTANTS[name]; require(source.count(old) == 1, f'missing or ambiguous mutant anchor {name}')
+                (tree / 'rust/crates/mds-bullet/src/core/world_objects.rs').write_text(source.replace(old,new))
+            runner.write_text(code)
+        macro = generated_root / 'macros.cpp'
+        code = '#include "LinearMath/btScalar.h"\n#include <cstdio>\n#define S_(x) #x\n#define S(x) S_(x)\nint main(){\n'
+        for name in ['BT_USE_SSE','BT_USE_DOUBLE_PRECISION','BT_NO_PROFILE','_MSC_VER','_M_X64','__x86_64__','__aarch64__']:
+            code += f'#ifdef {name}\nputs("{name}=" S({name}));\n#else\nputs("{name}=<undefined>");\n#endif\n'
+        macro.write_text(code + 'printf("pointer_bits=%zu\\n",sizeof(void*)*8);}\n')
+        generated = hashes(generated_root); save('generated-start.json', generated)
+        require(all(not value.startswith('symlink:') for value in generated.values()), 'generated source symlink forbidden')
+        compiler = os.environ.get('CXX', 'cl' if os.name == 'nt' else 'clang++')
+        src = ROOT / 'recipes/bullet275/bullet-src/src'; shim = ROOT / 'rust/crates/mds-bullet-sys/shim'
+        flags = ['/showIncludes','/nologo','/std:c++17','/O2','/MD','/EHsc','/fp:precise','/W0','/DBT_NO_PROFILE=1',f'/I{src}',f'/I{shim}',f'/FI{shim / "det_math.h"}'] if os.name == 'nt' else ['-H','-std=c++17','-O2','-ffp-contract=off','-fno-fast-math','-fdeclspec','-w','-DBT_NO_PROFILE=1','-I',shim/'sse_emu','-I',src,'-I',shim,'-include',shim/'det_math.h']
+        save('compiler-flags.json', list(map(str,flags)))
+        run([compiler,'/?'] if os.name == 'nt' else [compiler,'--version'],'compiler-version')
+        run(['rustup','run','1.95.0','rustc','-Vv'],'rust-version')
+        run(['git','-C',ROOT,'ls-files','--eol'],'git-transport')
+        run(['git','-C',ROOT,'rev-parse','HEAD'],'git-head')
+        run(['git','-C',ROOT,'status','--porcelain=v1'],'git-status')
+        run(['git','-C',ROOT,'check-attr','--stdin','text','eol'],'source-attributes', ('\n'.join(before)+'\n').encode())
+        run([sys.executable,'-m','unittest','discover','-s',HERE,'-p','test_*.py'],'checker-tests')
+        rust = ['rustup','run','1.95.0','rustc','--edition=2021','-O']
+        run([*rust,'--crate-name','mds_crtmath','--crate-type','rlib,staticlib','--print','native-static-libs',ROOT/'rust/crates/mds-crtmath/src/lib.rs','--out-dir',out],'crt')
+        suffix = '.exe' if os.name == 'nt' else ''
+        macro_exe = out / ('macros'+suffix)
+        run([compiler,*flags,macro,f'/Fe:{macro_exe}',f'/Fo:{out}/'] if os.name == 'nt' else [compiler,*flags,macro,'-o',macro_exe],'macro-build');run([macro_exe],'effective-macros')
+        objects = []
+        sources = sorted(p for folder in ['LinearMath','BulletCollision','BulletDynamics'] for p in (src / folder).rglob('*.cpp'))
+        save('compiled-cpp.json', [str(p.relative_to(ROOT)) for p in sources] + ['tools/bullet-rust-world-objects-check/'+n for n in ['public.cpp','mmd.cpp','main.cpp']])
+        for i,path in enumerate(sources):
+            obj = out / (f'native-{i}'+('.obj' if os.name == 'nt' else '.o'))
+            run([compiler,*flags,'/c',path,f'/Fo{obj}'] if os.name == 'nt' else [compiler,*flags,'-c',path,'-o',obj],f'compile-{i}');objects.append(obj)
+        crt = out / ('mds_crtmath.lib' if os.name == 'nt' else 'libmds_crtmath.a')
+        for name, observer in [('native',False),('native-observed',True)]:
+            exe = out / (name+suffix); defs = ['/DOBSERVER=1'] if os.name == 'nt' and observer else ['-DOBSERVER=1'] if observer else []
+            units = [HERE/'public.cpp',HERE/'mmd.cpp',HERE/'main.cpp']
+            if os.name == 'nt':
+                libs = (out/'crt.stderr').read_text().split('native-static-libs:')[-1].splitlines()[0].split()
+                command = [compiler,*flags,*defs,*units,*objects,crt,f'/Fe:{exe}',f'/Fo:{out}/','/link','/OPT:REF',*libs]
+            else:
+                command = [compiler,*flags,*defs,*units,*objects,crt,'-o',exe,*(['-Wl,-dead_strip'] if system=='Darwin' else ['-Wl,--gc-sections','-ldl','-lpthread','-lm'])]
+            run(command,'build-'+name)
+        original_headers = json.loads((out / 'build-native-includes.json').read_text())
+        observer_headers = json.loads((out / 'build-native-observed-includes.json').read_text())
+        require(original_headers and original_headers == observer_headers, 'observer include resolution differs')
+        rargs = [*rust,'--extern',f'mds_crtmath={out / "libmds_crtmath.rlib"}']
+        for name,path in [('rust',HERE/'runner.rs'),*[(name,generated_root/name/'tools/bullet-rust-world-objects-check/runner.rs') for name in variants]]:
+            run([*rargs,path,'-o',out/(name+suffix)],'build-'+name)
+        run([*rargs,'--test','-D','warnings',HERE/'harness.rs','-o',out/('tests'+suffix)],'build-tests');run([out/('tests'+suffix)],'focused-tests')
+        native = run([out/('native'+suffix)],'native'); observed = run([out/('native-observed'+suffix)],'native-observed')
+        actual = run([out/('rust'+suffix)],'rust'); robserved = run([out/('observed'+suffix)],'rust-observed')
+        for raw in [native,observed,actual,robserved]:validate(raw,native)
+        require(native == observed, 'native observer changed stdout');require(actual == robserved, 'Rust observer changed stdout')
+        require((out/'native-observed.stderr').read_bytes() == (out/'rust-observed.stderr').read_bytes(), 'observer counts differ')
+        (out/'native-rust.diff').write_text(''.join(difflib.unified_diff(native.decode().splitlines(True),actual.decode().splitlines(True),fromfile='native',tofile='rust')))
+        require(native == actual, 'raw mismatch; full capture retained; no numeric profile approved')
+        results = {}
+        for name in variants:
+            if name == 'observed': continue
+            raw = run([out/(name+suffix)],'mutant-'+name);validate(raw,native)
+            results[name] = 'CAUGHT' if raw != native else 'SURVIVED';save('mutations.json',results)
+            require(raw != native, f'mutant survived: {name}')
+        status['status'] = 'PASS_FOCUSED_ONLY' if args.skip_mutations else 'PASS_SAME_HOST_RAW_AND_MUTATIONS'
+        status['trace_lines'] = len(native.splitlines());status['mutants'] = results
+        if args.mutation: status['status'] = 'PASS_SELECTED_MUTATIONS_ONLY'
+        save('source-end.json',source_snapshot()); save('generated-end.json',hashes(generated_root)); save('native-includes-end.json',dep_snapshot())
+    except BaseException as error:
+        status['status'] = 'FAIL'; status['error'] = str(error);raise
+    finally:
+        after = source_snapshot(); generated_after=hashes(generated_root);deps_after=dep_snapshot()
+        save('source-finally.json',after);save('generated-finally.json',generated_after);save('native-includes-finally.json',deps_after)
+        status['integrity'] = 'PASS' if before==after and generated==generated_after and dependencies==deps_after else 'FAIL'
+        if status['integrity'] != 'PASS':
+            if 'error' in status: status['original_error'] = status['error']
+            changed = [name for name, old, new in [('source',before,after), ('generated',generated,generated_after), ('include',dependencies,deps_after)] if old != new]
+            status['status'] = 'FAIL'
+            status['error'] = 'closure changed: ' + ', '.join(changed)
+        save('status.json',status)
+        if status['integrity'] != 'PASS': raise AssertionError(status['error'])
+    print(json.dumps(status,indent=2))
+
+if __name__ == '__main__': main()

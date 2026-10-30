@@ -1,0 +1,8 @@
+[package]
+name = "mds-vkd3d"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Stable Rust port of the vkd3d-shader checksum core"
+license = "LGPL-2.1-or-later"

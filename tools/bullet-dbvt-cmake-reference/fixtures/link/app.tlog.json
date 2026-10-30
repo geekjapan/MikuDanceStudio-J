@@ -1,0 +1,10 @@
+{
+  "run": 40452363088,
+  "artifact": 12711876690,
+  "artifact_sha256": "55823f2297ed5071658dcfce087c628b01f21c988c5dd80d3da3a12312286757",
+  "head": "ceab8eb3ec06dab17ae632bef1d5915d7d556052",
+  "tlog": "app-build-metadata/MikuDanceStudio.dir/Release/MikuDanceStudio.tlog/link.command.1.tlog",
+  "sha256": "0e1a05034a0960cc834cdde09bcab7a022a4a1fe6c2bb6149c54ed0908e7e946",
+  "argument_lines": 9,
+  "argv_sha256": "161155ba19514f69ecff7e5c8c40b5ad05261d3153e6146a1e8b1b74ea9de3fa"
+}

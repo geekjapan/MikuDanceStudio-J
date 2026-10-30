@@ -1134,13 +1134,13 @@ class Controls(unittest.TestCase):
         def commit(entries,parents,message):
             raw=('tree '+r.h.tree_hash(entries)+'\n'+''.join('parent '+p+'\n' for p in parents)+'author Test <test@example.invalid> 0 +0000\ncommitter Test <test@example.invalid> 0 +0000\n\n'+message+'\n').encode()
             return r.h.git_hash('commit',raw),raw
-        common_bodies={p:b'o'+str(i).encode() for i,p in enumerate(list(r.FIXED_IMPORT_BLOBS)+['p'+str(i) for i in range(6)])}
+        common_bodies={p:b'o'+str(i).encode() for i,p in enumerate(list(r.FIXED_IMPORT_BLOBS)+['p'+str(i) for i in range(6)]+['stable'])}
         common={p:entry(raw) for p,raw in common_bodies.items()}
         tooling={p:b'frozen '+p.encode() for p in set(r.PATHS+r.CENSUS_PATHS)}
         additions={**tooling,**{'r'+str(i):b'r'+str(i).encode() for i in range(20)}}
         renderer=common|{p:entry(raw) for p,raw in additions.items()}
-        imports={p:b'i'+str(i).encode() for i,p in enumerate(common)}|{('main/0' if i==0 else 'm'+str(i)):b'n'+str(i).encode() for i in range(73)}
-        main={p:entry(raw) for p,raw in imports.items()}
+        imports={p:b'i'+str(i).encode() for i,p in enumerate(common) if p!='stable'}|{('main/0' if i==0 else 'm'+str(i)):b'n'+str(i).encode() for i in range(73)}
+        main=common|{p:entry(raw) for p,raw in imports.items()}
         merged=main|{p:entry(raw) for p,raw in additions.items()}
         common_id,common_raw=commit(common,[],'common')
         renderer_id,renderer_raw=commit(renderer,[r.PARENT],'renderer')
@@ -1174,9 +1174,126 @@ class Controls(unittest.TestCase):
         frames.update({'fixed-import/bodies/'+p:raw for p,raw in fixed_bodies.items()})
         bodies=base_bodies|imports|tooling|fixed_bodies
         current={p:{'sha256':r.digest(raw),'mode':0o644} for p,raw in bodies.items()}
-        m={'head':head,'base':base_id,'paths':r.CENSUS_PATHS,'generation_ancestry':[renderer_id,merge_id,preceding_id,head],'source_admission':r.SOURCE_ADMISSION}
+        m={'head':head,'base':base_id,'paths':r.CENSUS_PATHS,'generation_ancestry':[renderer_id,merge_id,preceding_id,head],'source_admission':r.LEGACY_SOURCE_ADMISSION}
         patches=[patch.object(r,'FIXED_IMPORT',fixed),patch.object(r,'FIXED_IMPORT_BLOBS',fixed_blobs),patch.object(r,'ACCEPTED_MAIN',anchors),patch.object(r,'ACCEPTED_MERGE_TREE',r.h.tree_hash(merged)),patch.object(r,'BASE',base_id),patch.object(r,'BASE_TREE',r.h.tree_hash(base_entries))]
         return (m,frames,base,tooling,imports,current),patches,tree,commit
+
+    def current_admission_fixture(self):
+        args,patches,tree,commit=self.admission_fixture()
+        m,frames,base,tooling,imports,current=args
+        preceding=m['head'];previous=r.source_tree(frames['head.tree'])
+        renderer=set(r.source_tree(frames['renderer.tree']))-set(r.source_tree(frames['common.tree']))
+        bodies={p:b'current '+p.encode() for p in ['p'+str(i) for i in range(6)]+['stable']+['current/'+str(i) for i in range(21)]}
+        entries={p:['100644',r.h.git_hash('blob',raw)] for p,raw in bodies.items()}
+        applied_entries=previous|entries
+        origin={p:row for p,row in applied_entries.items() if p not in renderer}
+        parents=[m['generation_ancestry'][1],preceding]
+        origin_id,origin_raw=commit(origin,parents,'fixed current main')
+        applied,applied_raw=commit(applied_entries,[preceding],'preserve current main')
+        tooling['tools/renderer-floor-profile/run.py']=b'admission reader'
+        final=applied_entries|{p:['100644',r.h.git_hash('blob',raw)] for p,raw in tooling.items()}
+        head,head_raw=commit(final,[applied],'current main admission')
+        frames.update({'current-import/origin.commit':origin_raw,'current-import/origin.tree':tree(origin)})
+        frames.update({'current-import/bodies/'+p:raw for p,raw in bodies.items()})
+        for revision,raw,rows in ((applied,applied_raw,applied_entries),(head,head_raw,final)):
+            frames['ancestry/'+revision+'.commit']=raw;frames['tail/'+revision+'.tree']=tree(rows)
+        frames['head.commit']=head_raw;frames['head.tree']=tree(final)
+        frames['paths']='\n'.join(sorted(set(imports)|set(r.CENSUS_PATHS)|set(r.FIXED_IMPORT_BLOBS)|set(entries))).encode()
+        m.update(head=head,generation_ancestry=m['generation_ancestry']+[applied,head],source_admission=r.SOURCE_ADMISSION)
+        current.update({p:{'sha256':r.digest(raw),'mode':0o644} for p,raw in (bodies|tooling).items()})
+        fixed={'origin':origin_id,'origin_tree':r.h.tree_hash(origin),'origin_parents':parents,
+               'preceding':preceding,'applied':applied,'applied_tree':r.h.tree_hash(applied_entries)}
+        patches+=[patch.object(r,'CURRENT_IMPORT',fixed),patch.object(r,'CURRENT_IMPORT_ENTRIES',entries)]
+        return args,patches,tree,commit
+
+    def test_current_main_admission_preserves_both_import_generations(self):
+        args,patches,_,_=self.current_admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            entries=r.verify_source_data(*args)
+            self.assertEqual(set(entries),set(args[-1]))
+            self.assertEqual(len(set(r.CURRENT_IMPORT_ENTRIES)&set(args[4])),6)
+            self.assertEqual(len(set(r.CURRENT_IMPORT_ENTRIES)-set(args[2])-set(args[4])),21)
+            self.assertEqual(len(args[1]['paths'].splitlines()),108)
+            old=args[4]['p0'];new=args[1]['current-import/bodies/p0']
+            self.assertNotEqual(old,new)
+            self.assertEqual(entries['p0'][1],r.h.git_hash('blob',new))
+            ordinary=copy.deepcopy(args);ordinary[0]['paths']=r.PATHS
+            ordinary[1]['paths']='\n'.join(sorted(set(args[4])|set(r.PATHS+r.CENSUS_PATHS)|set(r.FIXED_IMPORT_BLOBS)|set(r.CURRENT_IMPORT_ENTRIES))).encode()
+            self.assertEqual(len(ordinary[1]['paths'].splitlines()),111)
+            self.assertEqual(r.verify_source_data(*ordinary),entries)
+
+    def test_current_main_admission_rejects_frame_and_body_drift(self):
+        args,patches,_,_=self.current_admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            r.verify_source_data(*args)
+            for name in r.current_import_frames():
+                for kind in ('missing','tamper','duplicate'):
+                    bad=copy.deepcopy(args)
+                    if kind=='missing':del bad[1][name]
+                    elif kind=='tamper':bad[1][name]+=b'corrupt'
+                    else:bad[1][name]+=bad[1][name]
+                    with self.subTest(frame=name,kind=kind),self.assertRaises((ValueError,KeyError,UnicodeError)):r.verify_source_data(*bad)
+            for name in ('current-import/extra.tree','current-import/bodies/extra'):
+                bad=copy.deepcopy(args);bad[1][name]=b'extra'
+                with self.assertRaisesRegex(ValueError,'closed complete source frame'):r.verify_source_data(*bad)
+            for tag in (r.LEGACY_SOURCE_ADMISSION,None,'floating-main'):
+                bad=copy.deepcopy(args);bad[0]['source_admission']=tag
+                with self.assertRaises(ValueError):r.verify_source_data(*bad)
+            for path in ('p0','stable','current/0'):
+                bad=copy.deepcopy(args);bad[1]['paths']=b'\n'.join(p for p in bad[1]['paths'].splitlines() if p!=path.encode())
+                with self.assertRaisesRegex(ValueError,'complete acquired source delta'):r.verify_source_data(*bad)
+
+    def test_current_main_admission_rejects_import_transition_drift(self):
+        args,patches,tree,commit=self.current_admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            r.verify_source_data(*args)
+            original=r.CURRENT_IMPORT['applied'];preceding=r.CURRENT_IMPORT['preceding']
+            previous=r.source_tree(args[1]['tail/'+preceding+'.tree'])
+            legal=r.source_tree(args[1]['tail/'+original+'.tree'])
+            for kind in ('mode','rollback','deletion','renderer-loss','extra','inverse','wrong-parent','second-parent','omitted'):
+                entries=copy.deepcopy(legal);parents=[preceding]
+                if kind=='mode':entries['p0'][0]='100755'
+                elif kind=='rollback':entries['p0']=previous['p0']
+                elif kind=='deletion':del entries['main/0']
+                elif kind=='renderer-loss':del entries['r0']
+                elif kind=='extra':entries['unexpected']=['100644',r.h.git_hash('blob',b'extra')]
+                elif kind=='inverse':entries['stable']=previous['stable']
+                elif kind=='wrong-parent':parents=[r.PARENT]
+                elif kind=='second-parent':parents.append(r.CURRENT_IMPORT['origin'])
+                else:entries=previous
+                revision,raw=commit(entries,parents,kind)
+                frames=copy.deepcopy(args[1]);frames['ancestry/'+preceding+'.commit']=args[1]['ancestry/'+preceding+'.commit']
+                with patch.dict(r.CURRENT_IMPORT,applied=revision,applied_tree=r.h.tree_hash(entries)):
+                    with self.subTest(kind=kind),self.assertRaises(ValueError):r.verify_current_transition(frames,raw,previous,entries,set(r.source_tree(frames['renderer.tree']))-set(r.source_tree(frames['common.tree'])))
+            for kind in ('omitted','duplicate','ordinary-extra'):
+                bad=copy.deepcopy(args);m,frames=bad[:2]
+                if kind=='omitted':m['generation_ancestry'].remove(original)
+                elif kind=='duplicate':m['generation_ancestry'].insert(-1,original)
+                else:
+                    entries=r.source_tree(frames['head.tree']);entries['stable']=['100644',r.h.git_hash('blob',b'wrong')]
+                    head,raw=commit(entries,[m['head']],'forbidden ordinary tail')
+                    m['generation_ancestry'].append(head);m['head']=head
+                    frames['ancestry/'+head+'.commit']=raw;frames['tail/'+head+'.tree']=tree(entries)
+                    frames['head.commit']=raw;frames['head.tree']=tree(entries)
+                with self.subTest(kind=kind),self.assertRaises((ValueError,KeyError)):r.verify_source_data(*bad)
+
+    def test_current_main_admission_keeps_existing_history_bound(self):
+        args,patches,tree,commit=self.current_admission_fixture()
+        with ExitStack() as stack:
+            for context in patches:stack.enter_context(context)
+            entries=r.verify_source_data(*args);m,frames=args[:2]
+            for ordinal in range(33-len(m['generation_ancestry'])):
+                head,raw=commit(entries,[m['head']],'bounded current tail '+str(ordinal))
+                m['generation_ancestry'].append(head);m['head']=head
+                frames['ancestry/'+head+'.commit']=raw;frames['tail/'+head+'.tree']=tree(entries)
+                frames['head.commit']=raw;frames['head.tree']=tree(entries)
+            self.assertEqual(len(m['generation_ancestry']),33)
+            self.assertEqual(r.verify_source_data(*args),entries)
+            m['generation_ancestry'].append('f'*40);m['head']='f'*40
+            with self.assertRaisesRegex(ValueError,'bounded ordinary'):r.verify_source_data(*args)
 
     def test_source_admission_authenticates_full_union_and_current_bodies(self):
         args,patches,_,_=self.admission_fixture()

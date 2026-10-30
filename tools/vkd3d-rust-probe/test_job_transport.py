@@ -66,27 +66,63 @@ class TransportTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     T.read_json(path)
 
-    def test_bad_archive_metadata_is_rejected_before_any_payload_write(self):
+    def assert_bad_archive_metadata(self, bad_name, kind=tarfile.REGTYPE):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory).resolve()
             root = base / 'format-facts'
             archive = base / 'bad.tar'
-            for bad_name, kind in (('../escape', tarfile.REGTYPE), ('/absolute', tarfile.REGTYPE),
-                                   ('tool/first', tarfile.REGTYPE), ('tool/link', tarfile.SYMTYPE),
-                                   ('tool/hard', tarfile.LNKTYPE), ('tool/fifo', tarfile.FIFOTYPE),
-                                   ('tool/../escape', tarfile.REGTYPE)):
-                with self.subTest(name=bad_name, kind=kind):
-                    with tarfile.open(archive, 'w') as output:
-                        first = tarfile.TarInfo('tool/first')
-                        first.size = 1
-                        output.addfile(first, io.BytesIO(b'x'))
-                        bad = tarfile.TarInfo(bad_name)
-                        bad.type = kind
-                        bad.linkname = 'tool/first' if kind in (tarfile.SYMTYPE, tarfile.LNKTYPE) else ''
-                        output.addfile(bad)
-                    with self.assertRaises(ValueError):
-                        T.unpack(root, archive, archive.stat().st_size, T.digest(archive), str(root))
-                    self.assertFalse(root.exists())
+            with tarfile.open(archive, 'w') as output:
+                first = tarfile.TarInfo('tool/first')
+                first.size = 1
+                output.addfile(first, io.BytesIO(b'x'))
+                bad = tarfile.TarInfo(bad_name)
+                bad.type = kind
+                bad.linkname = 'tool/first' if kind in (tarfile.SYMTYPE, tarfile.LNKTYPE) else ''
+                output.addfile(bad)
+            with self.assertRaises(ValueError):
+                T.unpack(root, archive, archive.stat().st_size, T.digest(archive), str(root))
+            self.assertFalse(root.exists())
+
+    def test_bad_archive_metadata_is_rejected_before_any_payload_write(self):
+        self.assert_bad_archive_metadata('../escape')
+
+    def test_absolute_archive_path_is_rejected_before_writes(self):
+        self.assert_bad_archive_metadata('/absolute')
+
+    def test_duplicate_archive_path_is_rejected_before_writes(self):
+        self.assert_bad_archive_metadata('tool/first')
+
+    def test_archive_symlink_is_rejected_before_writes(self):
+        self.assert_bad_archive_metadata('tool/link', tarfile.SYMTYPE)
+
+    def test_archive_hardlink_is_rejected_before_writes(self):
+        self.assert_bad_archive_metadata('tool/hard', tarfile.LNKTYPE)
+
+    def test_archive_fifo_is_rejected_before_writes(self):
+        self.assert_bad_archive_metadata('tool/fifo', tarfile.FIFOTYPE)
+
+    def test_archive_parent_traversal_is_rejected_before_writes(self):
+        self.assert_bad_archive_metadata('tool/../escape')
+
+    def test_pax_nul_path_is_rejected_before_any_destination_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            root = base / 'format-facts'
+            root.mkdir()
+            sentinel = root / 'sentinel'
+            sentinel.write_bytes(b'unchanged')
+            archive = base / 'bad.tar'
+            with tarfile.open(archive, 'w', format=tarfile.PAX_FORMAT) as output:
+                first = tarfile.TarInfo('tool/first')
+                first.size = 1
+                output.addfile(first, io.BytesIO(b'x'))
+                bad = tarfile.TarInfo('tool/safe-header-name')
+                bad.pax_headers['path'] = 'tool/bad\0name'
+                output.addfile(bad)
+            with self.assertRaises(ValueError):
+                T.unpack(root, archive, archive.stat().st_size, T.digest(archive), str(root))
+            self.assertEqual(list(root.iterdir()), [sentinel])
+            self.assertEqual(sentinel.read_bytes(), b'unchanged')
 
     def test_external_anchor_and_namespace_are_required(self):
         with tempfile.TemporaryDirectory() as directory:

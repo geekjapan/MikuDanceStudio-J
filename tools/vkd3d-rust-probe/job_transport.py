@@ -53,7 +53,7 @@ def read_json(path, expected_size=None, expected_sha=None):
 
 
 def relative(name):
-    require(type(name) is str and bool(name) and '\\' not in name
+    require(type(name) is str and bool(name) and '\\' not in name and '\0' not in name
             and name == PurePosixPath(name).as_posix()
             and not name.startswith('/')
             and all(part not in ('.', '..') for part in name.split('/')), 'unsafe transport path')

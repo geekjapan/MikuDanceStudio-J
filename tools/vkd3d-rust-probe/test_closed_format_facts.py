@@ -578,7 +578,7 @@ class ClosedFormatFactsTests(unittest.TestCase):
                 mutate(value)
                 raw = F.handoff_bytes(value)
                 path.write_bytes(raw)
-                with self.assertRaisesRegex(F.FactsError, 'trusted replay (manifest|unit command or session bindings) differs'):
+                with self.assertRaisesRegex(F.FactsError, 'trusted replay (manifest differs|unit command or session bindings differ)'):
                     F.authority_packet(self.root, commands, self.root / 'tool/bin/c2rust-transpile',
                                        path, len(raw), F.sha(raw))
 
